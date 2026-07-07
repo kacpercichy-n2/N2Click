@@ -1,4 +1,4 @@
-# N2ub Planner — agent handoff & project guide
+# N2Hub Planner — agent handoff & project guide
 
 Project-management + workload-planning tool for N2 Media. The **v2 feature expansion** (clients → projects → tasks, pipeline statuses, kanban, timeline, workload dashboard, admin panel, comments, paid coins — 2026-07) is complete and verified end-to-end on top of the deployed alpha (see `vercel.json`). This file is the single source of truth for any agent working on this codebase — read it fully before changing anything.
 
@@ -21,12 +21,12 @@ Core model: **Client → Project → Tasks → Time blocks**, with supporting mo
 ## Tech stack & commands
 
 - Vite 5 + React 18 + TypeScript 5 (strict), react-router-dom 6, date-fns 3. Plain CSS — **no UI framework, no Tailwind**. No drag libraries: kanban uses native HTML5 DnD, timeline uses pointer events.
-- `npm run dev` (port 5173, launch config in `.claude/launch.json` as `n2ub-dev`), `npx tsc --noEmit`, `npm run build`. All three must pass before you finish any change.
+- `npm run dev` (port 5173, launch config in `.claude/launch.json` as `n2hub-dev`), `npx tsc --noEmit`, `npm run build`. All three must pass before you finish any change.
 - No tests exist yet. Verification is typecheck + build + browser walkthrough (checklist below).
 
 ## Architecture (do not break these decisions)
 
-- **No backend.** Persistence is localStorage under key `n2ub.data.v1` with a legacy fallback for `n2click.data.v1` (payload is versioned — currently `version: 3`), wrapped entirely in `src/store/storage.ts`, which also owns the **v1→v2 migration** (task `project` labels → real Projects under an "N2 Media" client; people name-split + capacity/admin defaults; workload `sortIndex` assignment). The planned extension path is swapping that one module for an API — never scatter direct localStorage calls into components.
+- **No backend.** Persistence is localStorage under key `n2hub.data.v1` with legacy fallbacks for `n2ub.data.v1` and `n2click.data.v1` (payload is versioned — currently `version: 3`), wrapped entirely in `src/store/storage.ts`, which also owns the **v1→v2 migration** (task `project` labels → real Projects under an "N2 Media" client; people name-split + capacity/admin defaults; workload `sortIndex` assignment). The planned extension path is swapping that one module for an API — never scatter direct localStorage calls into components.
 - **State**: single Context + useReducer provider in `src/store/AppStore.tsx`. Every mutation is one reducer action; `SAVE_TASK` atomically rebuilds a task's assignments and workload entries (preserving existing blocks' day positions); `SAVE_PROJECT` can atomically create a client via `newClientName`. **Activity-log rows are appended inside the same action** (`withActivity`) so the log can't drift. State persists on every action.
 - **All reads go through pure selectors** in `src/store/selectors.ts` so views can never disagree.
 - **Dates are `'yyyy-MM-dd'` strings everywhere.** Parsed at local noon (`src/utils/dates.ts` → `parseDate`). Never store `Date` objects or ISO datetimes for calendar dates. (Comment/activity timestamps are ISO strings — those are fine.)

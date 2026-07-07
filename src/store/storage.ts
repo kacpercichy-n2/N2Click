@@ -2,8 +2,8 @@
 // The stored JSON is versioned; loadData migrates older payloads forward.
 import type { AppData, Person, Status } from '../types';
 
-const STORAGE_KEY = 'n2ub.data.v1';
-const LEGACY_STORAGE_KEYS = ['n2click.data.v1'];
+const STORAGE_KEY = 'n2hub.data.v1';
+const LEGACY_STORAGE_KEYS = ['n2ub.data.v1', 'n2click.data.v1'];
 export const DATA_VERSION = 3;
 
 export const DEFAULT_CAPACITY = 8; // hours available per person per day

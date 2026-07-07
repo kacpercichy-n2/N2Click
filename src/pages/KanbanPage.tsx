@@ -52,7 +52,7 @@ export function KanbanPage() {
   const onDrop = (statusId: string, e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(null);
-    const projectId = e.dataTransfer.getData('text/n2ub-project');
+    const projectId = e.dataTransfer.getData('text/n2hub-project');
     if (projectId) dispatch({ type: 'SET_PROJECT_STATUS', projectId, statusId });
   };
 
@@ -137,7 +137,7 @@ export function KanbanPage() {
                         // onDragStartCapture (not motion's gesture onDragStart) keeps
                         // native HTML5 drag-and-drop working on the animated card.
                         onDragStartCapture={(e) => {
-                          e.dataTransfer.setData('text/n2ub-project', p.id);
+                          e.dataTransfer.setData('text/n2hub-project', p.id);
                           e.dataTransfer.effectAllowed = 'move';
                         }}
                         onClick={() => navigate(`/projects/${p.id}`)}
