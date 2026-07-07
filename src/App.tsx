@@ -44,7 +44,7 @@ export function App() {
       <aside className="app-sidebar">
         <div className="app-brand">
           <span className="app-brand-mark" aria-hidden />
-          <span className="app-brand-name">N2click</span>
+          <span className="app-brand-name">N2ub</span>
         </div>
         <nav className="app-nav">
           {NAV.map(([to, label]) => (

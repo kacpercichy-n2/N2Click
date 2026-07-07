@@ -2,7 +2,8 @@
 // The stored JSON is versioned; loadData migrates older payloads forward.
 import type { AppData, Person, Status } from '../types';
 
-const STORAGE_KEY = 'n2click.data.v1';
+const STORAGE_KEY = 'n2ub.data.v1';
+const LEGACY_STORAGE_KEYS = ['n2click.data.v1'];
 export const DATA_VERSION = 3;
 
 export const DEFAULT_CAPACITY = 8; // hours available per person per day
@@ -314,7 +315,9 @@ function localizeLegacyData(data: AppData): AppData {
 
 export function loadData(): AppData {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw =
+      localStorage.getItem(STORAGE_KEY) ??
+      LEGACY_STORAGE_KEYS.map((key) => localStorage.getItem(key)).find(Boolean);
     if (!raw) return emptyData();
     const parsed: unknown = JSON.parse(raw);
     if (!looksLikeData(parsed)) return emptyData();
@@ -343,6 +346,7 @@ export function saveData(data: AppData): void {
 export function clearData(): void {
   try {
     localStorage.removeItem(STORAGE_KEY);
+    LEGACY_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
   } catch {
     // ignore
   }

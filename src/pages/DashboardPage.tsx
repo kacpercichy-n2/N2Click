@@ -64,7 +64,7 @@ export function DashboardPage() {
 
       {state.projects.length === 0 && state.tasks.length === 0 ? (
         <div className="empty-state">
-          <p className="empty-title">Witaj w N2click</p>
+          <p className="empty-title">Witaj w N2ub</p>
           <p className="empty-hint">
             Zacznij od dodania klienta i projektu, a potem zaplanuj zadania oraz godziny.
           </p>
