@@ -45,35 +45,35 @@ export function CalendarPage() {
   return (
     <section className="page">
       <div className="page-head">
-        <h1>Calendar</h1>
+        <h1>Kalendarz</h1>
       </div>
 
       <div className="cal-toolbar">
-        <div className="cal-view-toggle" role="group" aria-label="Calendar view">
+        <div className="cal-view-toggle" role="group" aria-label="Widok kalendarza">
           <button
             type="button"
             className={view === 'week' ? 'toggle-btn active' : 'toggle-btn'}
             onClick={() => setView('week')}
           >
-            Week
+            Tydzień
           </button>
           <button
             type="button"
             className={view === 'month' ? 'toggle-btn active' : 'toggle-btn'}
             onClick={() => setView('month')}
           >
-            Month
+            Miesiąc
           </button>
         </div>
 
         <div className="cal-nav">
-          <button type="button" className="nav-btn" onClick={prev} aria-label="Previous">
+          <button type="button" className="nav-btn" onClick={prev} aria-label="Poprzedni">
             ‹
           </button>
           <button type="button" className="btn ghost" onClick={goToday}>
-            Today
+            Dzisiaj
           </button>
-          <button type="button" className="nav-btn" onClick={next} aria-label="Next">
+          <button type="button" className="nav-btn" onClick={next} aria-label="Następny">
             ›
           </button>
           <span className="cal-range-label">{label}</span>

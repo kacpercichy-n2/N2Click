@@ -3,7 +3,7 @@
 import type { AppData, Person, Status } from '../types';
 
 const STORAGE_KEY = 'n2click.data.v1';
-export const DATA_VERSION = 2;
+export const DATA_VERSION = 3;
 
 export const DEFAULT_CAPACITY = 8; // hours available per person per day
 
@@ -21,14 +21,11 @@ function uid(): string {
 
 /** The default pipeline. Admins can extend/rename/reorder/archive from /admin. */
 export function buildDefaultStatuses(): Status[] {
-  // Brand-compatible, dark-legible hues (used as pill text on a translucent tint
-  // in StatusBadge and as bright accents on kanban columns / timeline bars):
-  //   To do = cool slate, WIP = info cyan, Accept = warning amber, Done = success lime.
   const defs: Array<[string, string]> = [
-    ['To do', '#9aa7c4'],
-    ['Work in progress', '#5bdcff'],
-    ['Accept', '#ffc857'],
-    ['Done', '#b9ff4d'],
+    ['Do zrobienia', '#9aa7c4'],
+    ['W trakcie', '#5bdcff'],
+    ['Akceptacja', '#ffc857'],
+    ['Gotowe', '#b9ff4d'],
   ];
   return defs.map(([name, color], order) => ({
     id: uid(),
@@ -130,7 +127,7 @@ function migrateV1(raw: Record<string, unknown>): AppData {
   const projectByLabel = new Map<string, string>(); // label -> projectId
   const projects: AppData['projects'] = [];
   const projectIdFor = (label: string): string => {
-    const key = label || 'General';
+    const key = label || 'Ogólne';
     const found = projectByLabel.get(key);
     if (found) return found;
     const id = uid();
@@ -196,6 +193,125 @@ function migrateV1(raw: Record<string, unknown>): AppData {
   };
 }
 
+function translateKnownName(name: string, map: Record<string, string>): string {
+  return map[name] ?? name;
+}
+
+function localizeLegacyData(data: AppData): AppData {
+  const statusNames: Record<string, string> = {
+    'To do': 'Do zrobienia',
+    'Work in progress': 'W trakcie',
+    Accept: 'Akceptacja',
+    Done: 'Gotowe',
+  };
+  const departments: Record<string, string> = {
+    Design: 'Projektowanie',
+    Development: 'Programowanie',
+    Management: 'Zarządzanie',
+  };
+  const serviceTypes: Record<string, string> = {
+    Web: 'WWW',
+    Branding: 'Marka',
+    'Social media': 'Media społecznościowe',
+  };
+  const roles: Record<string, string> = {
+    Designer: 'Projektantka',
+    Developer: 'Programista',
+    'Project Manager': 'Kierowniczka projektu',
+  };
+  const projectNames: Record<string, string> = {
+    'Website redesign': 'Redesign strony',
+    'Summer campaign': 'Kampania letnia',
+    'App release 2.4': 'Wydanie aplikacji 2.4',
+  };
+  const projectDescriptions: Record<string, string> = {
+    'Full refresh of the Acme marketing site: hero, pricing, case studies.':
+      'Pełne odświeżenie strony marketingowej Acme: sekcja hero, cennik i studia przypadków.',
+    'Q3 social campaign for the Nordic Fitness summer launch.':
+      'Kampania w mediach społecznościowych Q3 dla letniej premiery Nordic Fitness.',
+    'Stabilise and ship the 2.4 release of the ordering app.':
+      'Stabilizacja i publikacja wersji 2.4 aplikacji do zamówień.',
+  };
+  const milestoneNames: Record<string, string> = {
+    'Design approved': 'Projekt zaakceptowany',
+    'Go live': 'Publikacja',
+    'Concept review': 'Przegląd koncepcji',
+    'Release cut': 'Zamknięcie wydania',
+  };
+  const taskTitles: Record<string, string> = {
+    'Homepage & pricing pages': 'Strona główna i cennik',
+    'Campaign concept & plan': 'Koncepcja i plan kampanii',
+    'Release bugfix sprint': 'Sprint poprawek do wydania',
+    'Regression QA pass': 'Regresja QA',
+  };
+  const taskDescriptions: Record<string, string> = {
+    'Design and build the new hero, pricing table, and case studies.':
+      'Zaprojektowanie i wdrożenie nowej sekcji hero, tabeli cen oraz studiów przypadków.',
+    'Scope the summer campaign; mid-week reserved for stakeholder review.':
+      'Zakres kampanii letniej; środek tygodnia zarezerwowany na przegląd z interesariuszami.',
+    'Critical fixes before the release cut.': 'Krytyczne poprawki przed zamknięciem wydania.',
+    'Full regression suite on staging.': 'Pełny zestaw testów regresji na stagingu.',
+  };
+  const commentBodies: Record<string, string> = {
+    '@Ola client approved the moodboard — go ahead with the hero designs.':
+      '@Ola klient zaakceptował moodboard — można ruszać z projektami sekcji hero.',
+    'Two blockers left, rest is polish. Release cut still looks safe.':
+      'Zostały dwa blokery, reszta to dopracowanie. Zamknięcie wydania nadal wygląda bezpiecznie.',
+  };
+  const activityMessages: Record<string, string> = {
+    'created the project': 'utworzył(a) projekt',
+    'marked the project as paid': 'oznaczył(a) projekt jako opłacony',
+    'marked the project as unpaid': 'oznaczył(a) projekt jako nieopłacony',
+    'updated the project': 'zaktualizował(a) projekt',
+    'created the task': 'utworzył(a) zadanie',
+    'updated the task': 'zaktualizował(a) zadanie',
+    commented: 'dodał(a) komentarz',
+  };
+
+  return {
+    ...data,
+    version: DATA_VERSION,
+    statuses: data.statuses.map((s) => {
+      const name = translateKnownName(s.name, statusNames);
+      return name === s.name ? s : { ...s, name, slug: slugify(name) };
+    }),
+    departments: data.departments.map((d) => ({
+      ...d,
+      name: translateKnownName(d.name, departments),
+    })),
+    serviceTypes: data.serviceTypes.map((s) => ({
+      ...s,
+      name: translateKnownName(s.name, serviceTypes),
+    })),
+    people: data.people.map((p) => ({
+      ...p,
+      role: translateKnownName(p.role, roles),
+    })),
+    projects: data.projects.map((p) => ({
+      ...p,
+      name: translateKnownName(p.name, projectNames),
+      description: translateKnownName(p.description, projectDescriptions),
+    })),
+    milestones: data.milestones.map((m) => ({
+      ...m,
+      name: translateKnownName(m.name, milestoneNames),
+    })),
+    tasks: data.tasks.map((t) => ({
+      ...t,
+      title: translateKnownName(t.title, taskTitles),
+      description: translateKnownName(t.description, taskDescriptions),
+    })),
+    comments: data.comments.map((c) => ({
+      ...c,
+      body: translateKnownName(c.body, commentBodies),
+    })),
+    activity: data.activity.map((a) => ({
+      ...a,
+      message: translateKnownName(a.message, activityMessages),
+    })),
+  };
+}
+
 export function loadData(): AppData {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -203,13 +319,14 @@ export function loadData(): AppData {
     const parsed: unknown = JSON.parse(raw);
     if (!looksLikeData(parsed)) return emptyData();
     const version = typeof parsed.version === 'number' ? parsed.version : 1;
-    if (version < 2) return migrateV1(parsed);
+    if (version < 2) return localizeLegacyData(migrateV1(parsed));
     // Same-version load: fill any missing fields with defaults.
-    return {
+    const loaded = {
       ...emptyData(),
       ...(parsed as Partial<AppData>),
       version: DATA_VERSION,
     };
+    return version < DATA_VERSION ? localizeLegacyData(loaded) : loaded;
   } catch {
     return emptyData();
   }

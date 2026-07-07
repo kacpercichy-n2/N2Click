@@ -46,15 +46,15 @@ function CoinSvg({ paid, size }: { paid: boolean; size: number }) {
 }
 
 export function Coin({ paid, size = 18, onToggle }: Props) {
-  const label = paid ? 'Paid project' : 'Unpaid project';
+  const label = paid ? 'Projekt opłacony' : 'Projekt nieopłacony';
   if (onToggle) {
     return (
       <button
         type="button"
         className="coin-btn"
         onClick={onToggle}
-        title={`${label} — click to mark as ${paid ? 'unpaid' : 'paid'}`}
-        aria-label={`${label} — toggle`}
+        title={`${label} — kliknij, aby oznaczyć jako ${paid ? 'nieopłacony' : 'opłacony'}`}
+        aria-label={`${label} — przełącz`}
       >
         <CoinSvg paid={paid} size={size} />
       </button>

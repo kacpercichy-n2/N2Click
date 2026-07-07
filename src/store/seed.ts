@@ -29,14 +29,14 @@ export function buildSampleData(): AppData {
   const [todo, wip, accept, done] = statuses;
 
   // Departments & service types (the structured tag categories)
-  const depDesign = { id: uid(), name: 'Design' };
-  const depDev = { id: uid(), name: 'Development' };
-  const depMgmt = { id: uid(), name: 'Management' };
+  const depDesign = { id: uid(), name: 'Projektowanie' };
+  const depDev = { id: uid(), name: 'Programowanie' };
+  const depMgmt = { id: uid(), name: 'Zarządzanie' };
   const departments = [depDesign, depDev, depMgmt];
 
-  const svcWeb = { id: uid(), name: 'Web' };
-  const svcBrand = { id: uid(), name: 'Branding' };
-  const svcSocial = { id: uid(), name: 'Social media' };
+  const svcWeb = { id: uid(), name: 'WWW' };
+  const svcBrand = { id: uid(), name: 'Marka' };
+  const svcSocial = { id: uid(), name: 'Media społecznościowe' };
   const serviceTypes = [svcWeb, svcBrand, svcSocial];
 
   // People
@@ -46,7 +46,7 @@ export function buildSampleData(): AppData {
     lastName: 'Nowak',
     name: 'Ola Nowak',
     email: 'ola@n2.example',
-    role: 'Designer',
+    role: 'Projektantka',
     departmentId: depDesign.id,
     avatar: '🎨',
     capacity: DEFAULT_CAPACITY,
@@ -58,7 +58,7 @@ export function buildSampleData(): AppData {
     lastName: 'Wiśniewski',
     name: 'Marek Wiśniewski',
     email: 'marek@n2.example',
-    role: 'Developer',
+    role: 'Programista',
     departmentId: depDev.id,
     avatar: '💻',
     capacity: DEFAULT_CAPACITY,
@@ -70,7 +70,7 @@ export function buildSampleData(): AppData {
     lastName: 'Kowalska',
     name: 'Kasia Kowalska',
     email: 'kasia@n2.example',
-    role: 'Project Manager',
+    role: 'Kierowniczka projektu',
     departmentId: depMgmt.id,
     avatar: '📋',
     capacity: DEFAULT_CAPACITY,
@@ -86,8 +86,8 @@ export function buildSampleData(): AppData {
   const projRedesign = {
     id: uid(),
     clientId: acme.id,
-    name: 'Website redesign',
-    description: 'Full refresh of the Acme marketing site: hero, pricing, case studies.',
+    name: 'Redesign strony',
+    description: 'Pełne odświeżenie strony marketingowej Acme: sekcja hero, cennik i studia przypadków.',
     statusId: wip.id,
     paid: true, // gold coin
     startDate: mon,
@@ -100,8 +100,8 @@ export function buildSampleData(): AppData {
   const projCampaign = {
     id: uid(),
     clientId: nordic.id,
-    name: 'Summer campaign',
-    description: 'Q3 social campaign for the Nordic Fitness summer launch.',
+    name: 'Kampania letnia',
+    description: 'Kampania w mediach społecznościowych Q3 dla letniej premiery Nordic Fitness.',
     statusId: todo.id,
     paid: false, // bronze coin
     startDate: mon,
@@ -114,8 +114,8 @@ export function buildSampleData(): AppData {
   const projRelease = {
     id: uid(),
     clientId: acme.id,
-    name: 'App release 2.4',
-    description: 'Stabilise and ship the 2.4 release of the ordering app.',
+    name: 'Wydanie aplikacji 2.4',
+    description: 'Stabilizacja i publikacja wersji 2.4 aplikacji do zamówień.',
     statusId: accept.id,
     paid: true,
     startDate: addDaysStr(mon, -7),
@@ -128,10 +128,10 @@ export function buildSampleData(): AppData {
   const projects = [projRedesign, projCampaign, projRelease];
 
   const milestones = [
-    { id: uid(), projectId: projRedesign.id, name: 'Design approved', date: thu },
-    { id: uid(), projectId: projRedesign.id, name: 'Go live', date: addDaysStr(fri, 14) },
-    { id: uid(), projectId: projCampaign.id, name: 'Concept review', date: addDaysStr(fri, 7) },
-    { id: uid(), projectId: projRelease.id, name: 'Release cut', date: fri },
+    { id: uid(), projectId: projRedesign.id, name: 'Projekt zaakceptowany', date: thu },
+    { id: uid(), projectId: projRedesign.id, name: 'Publikacja', date: addDaysStr(fri, 14) },
+    { id: uid(), projectId: projCampaign.id, name: 'Przegląd koncepcji', date: addDaysStr(fri, 7) },
+    { id: uid(), projectId: projRelease.id, name: 'Zamknięcie wydania', date: fri },
   ];
 
   const tasks: Task[] = [];
@@ -159,8 +159,8 @@ export function buildSampleData(): AppData {
     id: uid(),
     projectId: projRedesign.id,
     statusId: wip.id,
-    title: 'Homepage & pricing pages',
-    description: 'Design and build the new hero, pricing table, and case studies.',
+    title: 'Strona główna i cennik',
+    description: 'Zaprojektowanie i wdrożenie nowej sekcji hero, tabeli cen oraz studiów przypadków.',
     startDate: mon,
     endDate: fri,
     estimatedHours: 40,
@@ -188,9 +188,9 @@ export function buildSampleData(): AppData {
     id: uid(),
     projectId: projCampaign.id,
     statusId: todo.id,
-    title: 'Campaign concept & plan',
+    title: 'Koncepcja i plan kampanii',
     description:
-      'Scope the summer campaign; mid-week reserved for stakeholder review.',
+      'Zakres kampanii letniej; środek tygodnia zarezerwowany na przegląd z interesariuszami.',
     startDate: mon,
     endDate: fri,
     estimatedHours: 12,
@@ -210,8 +210,8 @@ export function buildSampleData(): AppData {
     id: uid(),
     projectId: projRelease.id,
     statusId: accept.id,
-    title: 'Release bugfix sprint',
-    description: 'Critical fixes before the release cut.',
+    title: 'Sprint poprawek do wydania',
+    description: 'Krytyczne poprawki przed zamknięciem wydania.',
     startDate: wed,
     endDate: fri,
     estimatedHours: 16,
@@ -229,8 +229,8 @@ export function buildSampleData(): AppData {
     id: uid(),
     projectId: projRelease.id,
     statusId: done.id,
-    title: 'Regression QA pass',
-    description: 'Full regression suite on staging.',
+    title: 'Regresja QA',
+    description: 'Pełny zestaw testów regresji na stagingu.',
     startDate: addDaysStr(mon, -7),
     endDate: addDaysStr(fri, -7),
     estimatedHours: 10,
@@ -250,7 +250,7 @@ export function buildSampleData(): AppData {
       entityType: 'project' as const,
       entityId: projRedesign.id,
       authorId: kasia.id,
-      body: `@${ola.firstName} client approved the moodboard — go ahead with the hero designs.`,
+      body: `@${ola.firstName} klient zaakceptował moodboard — można ruszać z projektami sekcji hero.`,
       mentionIds: [ola.id],
       createdAt: now,
     },
@@ -259,7 +259,7 @@ export function buildSampleData(): AppData {
       entityType: 'task' as const,
       entityId: t3.id,
       authorId: marek.id,
-      body: 'Two blockers left, rest is polish. Release cut still looks safe.',
+      body: 'Zostały dwa blokery, reszta to dopracowanie. Zamknięcie wydania nadal wygląda bezpiecznie.',
       mentionIds: [],
       createdAt: now,
     },
@@ -270,7 +270,7 @@ export function buildSampleData(): AppData {
       entityType: 'project' as const,
       entityId: projRedesign.id,
       actorId: kasia.id,
-      message: 'created the project',
+      message: 'utworzył(a) projekt',
       createdAt: now,
     },
     {
@@ -278,7 +278,7 @@ export function buildSampleData(): AppData {
       entityType: 'project' as const,
       entityId: projRedesign.id,
       actorId: kasia.id,
-      message: 'marked the project as paid',
+      message: 'oznaczył(a) projekt jako opłacony',
       createdAt: now,
     },
   ];

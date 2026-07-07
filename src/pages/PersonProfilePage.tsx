@@ -33,9 +33,9 @@ export function PersonProfilePage() {
     return (
       <section className="page">
         <div className="empty-state">
-          <p className="empty-title">Person not found</p>
+          <p className="empty-title">Nie znaleziono osoby</p>
           <Link to="/people" className="btn primary">
-            Back to people
+            Wróć do zespołu
           </Link>
         </div>
       </section>
@@ -91,7 +91,7 @@ function PersonProfile({ personId }: { personId: string }) {
           <Avatar person={person} size={44} />
           <span>
             {person.name}
-            {person.isAdmin && <span className="admin-tag">admin</span>}
+            {person.isAdmin && <span className="admin-tag">administrator</span>}
             <span className="profile-subtitle">
               {[person.role, getDepartment(state, person.departmentId)?.name]
                 .filter(Boolean)
@@ -101,20 +101,20 @@ function PersonProfile({ personId }: { personId: string }) {
         </h1>
         <div className="page-head-actions">
           <Link to="/people" className="btn ghost">
-            Back
+            Wróć
           </Link>
           <button type="button" className="btn soft" onClick={() => setEditing((v) => !v)}>
-            {editing ? 'Close editor' : 'Edit profile'}
+            {editing ? 'Zamknij edycję' : 'Edytuj profil'}
           </button>
         </div>
       </div>
 
       {editing && (
         <div className="editor-section">
-          <h2>Edit profile</h2>
+          <h2>Edytuj profil</h2>
           <div className="field-row">
             <div className="field">
-              <label htmlFor="pp-first">First name *</label>
+              <label htmlFor="pp-first">Imię *</label>
               <input
                 id="pp-first"
                 value={draft.firstName}
@@ -122,7 +122,7 @@ function PersonProfile({ personId }: { personId: string }) {
               />
             </div>
             <div className="field">
-              <label htmlFor="pp-last">Last name</label>
+              <label htmlFor="pp-last">Nazwisko</label>
               <input
                 id="pp-last"
                 value={draft.lastName}
@@ -130,11 +130,11 @@ function PersonProfile({ personId }: { personId: string }) {
               />
             </div>
             <div className="field">
-              <label htmlFor="pp-role">Job title</label>
+              <label htmlFor="pp-role">Stanowisko</label>
               <input id="pp-role" value={draft.role} onChange={(e) => set('role', e.target.value)} />
             </div>
             <div className="field">
-              <label htmlFor="pp-dep">Department</label>
+              <label htmlFor="pp-dep">Dział</label>
               <select
                 id="pp-dep"
                 value={draft.departmentId}
@@ -170,7 +170,7 @@ function PersonProfile({ personId }: { personId: string }) {
               />
             </div>
             <div className="field field-narrow">
-              <label htmlFor="pp-cap">Hours/day</label>
+              <label htmlFor="pp-cap">Godziny/dzień</label>
               <input
                 id="pp-cap"
                 type="number"
@@ -187,7 +187,7 @@ function PersonProfile({ personId }: { personId: string }) {
                 checked={draft.isAdmin}
                 onChange={(e) => set('isAdmin', e.target.checked)}
               />
-              Admin
+              Administrator
             </label>
           </div>
           <div className="editor-actions">
@@ -197,18 +197,18 @@ function PersonProfile({ personId }: { personId: string }) {
               onClick={save}
               disabled={!draft.firstName.trim()}
             >
-              Save profile
+              Zapisz profil
             </button>
           </div>
         </div>
       )}
 
       <div className="editor-section">
-        <h2>This week</h2>
+        <h2>Ten tydzień</h2>
         <p>
-          <strong>{fmtHours(weekHours)}h</strong> assigned of{' '}
-          <strong>{fmtHours(available)}h</strong> available ({capacity}h/day capacity) ·{' '}
-          {fmtHours(personTotalHours(state, person.id))}h assigned in total.
+          Przypisano <strong>{fmtHours(weekHours)}h</strong> z{' '}
+          <strong>{fmtHours(available)}h</strong> dostępnych ({capacity}h/dzień) ·{' '}
+          łącznie przypisano {fmtHours(personTotalHours(state, person.id))}h.
         </p>
         <div className="profile-week">
           {week.map((d) => {
@@ -237,9 +237,9 @@ function PersonProfile({ personId }: { personId: string }) {
       </div>
 
       <div className="editor-section">
-        <h2>Projects ({projects.length})</h2>
+        <h2>Projekty ({projects.length})</h2>
         {projects.length === 0 ? (
-          <p className="field-hint">Not on any project yet.</p>
+          <p className="field-hint">Ta osoba nie jest jeszcze w żadnym projekcie.</p>
         ) : (
           <ul className="project-task-list">
             {projects.map((p) => (
@@ -263,9 +263,9 @@ function PersonProfile({ personId }: { personId: string }) {
       </div>
 
       <div className="editor-section">
-        <h2>Tasks ({tasks.length})</h2>
+        <h2>Zadania ({tasks.length})</h2>
         {tasks.length === 0 ? (
-          <p className="field-hint">No assigned tasks.</p>
+          <p className="field-hint">Brak przypisanych zadań.</p>
         ) : (
           <ul className="project-task-list">
             {tasks.map((t) => (
@@ -279,7 +279,7 @@ function PersonProfile({ personId }: { personId: string }) {
                   <StatusBadge status={getStatus(state, t.statusId)} />
                   <span className="muted">
                     {formatShort(t.startDate)} – {formatShort(t.endDate)} ·{' '}
-                    {fmtHours(taskPlannedTotalForPerson(state, t.id, person.id))}h for{' '}
+                    {fmtHours(taskPlannedTotalForPerson(state, t.id, person.id))}h dla{' '}
                     {person.firstName}
                   </span>
                 </button>

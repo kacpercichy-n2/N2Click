@@ -34,7 +34,7 @@ export function PeoplePage() {
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!draft.firstName.trim()) {
-      setError('First name is required');
+      setError('Imię jest wymagane');
       return;
     }
     dispatch({ type: 'ADD_PERSON', person: draft });
@@ -45,7 +45,7 @@ export function PeoplePage() {
   const remove = (personId: string, personName: string) => {
     if (
       window.confirm(
-        `Remove ${personName}? All their assignments and planned hours will be deleted.`,
+        `Usunąć ${personName}? Wszystkie przypisania i zaplanowane godziny tej osoby zostaną usunięte.`,
       )
     ) {
       dispatch({ type: 'DELETE_PERSON', personId });
@@ -55,12 +55,12 @@ export function PeoplePage() {
   return (
     <section className="page">
       <div className="page-head">
-        <h1>People</h1>
+        <h1>Zespół</h1>
       </div>
 
       <form className="person-form" onSubmit={submit}>
         <div className="field">
-          <label htmlFor="p-first">First name *</label>
+          <label htmlFor="p-first">Imię *</label>
           <input
             id="p-first"
             value={draft.firstName}
@@ -68,29 +68,29 @@ export function PeoplePage() {
               set('firstName', e.target.value);
               if (error) setError('');
             }}
-            placeholder="e.g. Ola"
+            placeholder="np. Ola"
           />
         </div>
         <div className="field">
-          <label htmlFor="p-last">Last name</label>
+          <label htmlFor="p-last">Nazwisko</label>
           <input
             id="p-last"
             value={draft.lastName}
             onChange={(e) => set('lastName', e.target.value)}
-            placeholder="optional"
+            placeholder="opcjonalnie"
           />
         </div>
         <div className="field">
-          <label htmlFor="p-role">Job title</label>
+          <label htmlFor="p-role">Stanowisko</label>
           <input
             id="p-role"
             value={draft.role}
             onChange={(e) => set('role', e.target.value)}
-            placeholder="e.g. Designer"
+            placeholder="np. Projektantka"
           />
         </div>
         <div className="field">
-          <label htmlFor="p-dep">Department</label>
+          <label htmlFor="p-dep">Dział</label>
           <select
             id="p-dep"
             value={draft.departmentId}
@@ -111,7 +111,7 @@ export function PeoplePage() {
             type="email"
             value={draft.email}
             onChange={(e) => set('email', e.target.value)}
-            placeholder="optional"
+            placeholder="opcjonalnie"
           />
         </div>
         <div className="field field-narrow">
@@ -125,7 +125,7 @@ export function PeoplePage() {
           />
         </div>
         <div className="field field-narrow">
-          <label htmlFor="p-cap">Hours/day</label>
+          <label htmlFor="p-cap">Godziny/dzień</label>
           <input
             id="p-cap"
             type="number"
@@ -142,18 +142,18 @@ export function PeoplePage() {
             checked={draft.isAdmin}
             onChange={(e) => set('isAdmin', e.target.checked)}
           />
-          Admin
+          Administrator
         </label>
         <button type="submit" className="btn primary">
-          Add person
+          Dodaj osobę
         </button>
         {error && <p className="field-error inline">{error}</p>}
       </form>
 
       {state.people.length === 0 ? (
         <div className="empty-state">
-          <p className="empty-title">No people yet</p>
-          <p className="empty-hint">Add your team members to start assigning work.</p>
+          <p className="empty-title">Brak osób</p>
+          <p className="empty-hint">Dodaj członków zespołu, żeby zacząć przypisywać pracę.</p>
         </div>
       ) : (
         <ul className="people-list">
@@ -163,7 +163,7 @@ export function PeoplePage() {
               <Link to={`/people/${p.id}`} className="person-row-main">
                 <span className="person-row-name">
                   {p.name}
-                  {p.isAdmin && <span className="admin-tag">admin</span>}
+                  {p.isAdmin && <span className="admin-tag">administrator</span>}
                 </span>
                 <span className="person-row-sub">
                   {p.role && <span className="person-row-role">{p.role}</span>}
@@ -176,14 +176,14 @@ export function PeoplePage() {
                 </span>
               </Link>
               <span className="person-row-hours">
-                {fmtHours(personTotalHours(state, p.id))}h assigned
+                przypisano {fmtHours(personTotalHours(state, p.id))}h
               </span>
               <button
                 type="button"
                 className="btn danger-ghost"
                 onClick={() => remove(p.id, p.name)}
               >
-                Delete
+                Usuń
               </button>
             </li>
           ))}

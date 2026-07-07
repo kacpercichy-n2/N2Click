@@ -278,7 +278,7 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
       state,
       'task',
       realTaskId,
-      created ? 'created the task' : 'updated the task',
+      created ? 'utworzył(a) zadanie' : 'zaktualizował(a) zadanie',
     ),
   };
 }
@@ -328,7 +328,7 @@ function moveTask(state: AppData, taskId: string, dayDelta: number): AppData {
       state,
       'task',
       taskId,
-      `rescheduled the task by ${dayDelta > 0 ? '+' : ''}${dayDelta} day${Math.abs(dayDelta) === 1 ? '' : 's'}`,
+      `przesunął/przesunęła zadanie o ${dayDelta > 0 ? '+' : ''}${dayDelta} dni`,
     ),
   };
 }
@@ -355,7 +355,7 @@ function setTaskDates(
       state,
       'task',
       taskId,
-      `changed the task period to ${startDate} – ${endDate}`,
+      `zmienił(a) okres zadania na ${startDate} – ${endDate}`,
     ),
   };
 }
@@ -393,7 +393,7 @@ function saveProject(
       ...state,
       clients,
       projects: [...state.projects, project],
-      activity: withActivity(state, 'project', project.id, 'created the project'),
+      activity: withActivity(state, 'project', project.id, 'utworzył(a) projekt'),
     };
   }
   return {
@@ -402,7 +402,7 @@ function saveProject(
     projects: state.projects.map((p) =>
       p.id === projectId ? { ...p, ...resolved, updatedAt: ts } : p,
     ),
-    activity: withActivity(state, 'project', projectId, 'updated the project'),
+    activity: withActivity(state, 'project', projectId, 'zaktualizował(a) projekt'),
   };
 }
 
@@ -481,7 +481,7 @@ function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
       state,
       'task',
       payload.taskId,
-      `inserted a ${payload.hours}h block ${payload.position} "${state.tasks.find((t) => t.id === ref.taskId)?.title ?? 'a block'}" for ${person?.name ?? 'someone'} on ${ref.date}`,
+      `wstawił(a) blok ${payload.hours}h ${payload.position === 'before' ? 'przed' : 'po'} „${state.tasks.find((t) => t.id === ref.taskId)?.title ?? 'blok'}” dla ${person?.name ?? 'kogoś'} w dniu ${ref.date}`,
     ),
   };
 }
@@ -581,7 +581,7 @@ function saveMilestone(
     return {
       ...state,
       milestones: [...state.milestones, m],
-      activity: withActivity(state, 'project', projectId, `added milestone "${m.name}" on ${date}`),
+      activity: withActivity(state, 'project', projectId, `dodał(a) kamień milowy „${m.name}” na ${date}`),
     };
   }
   return {
@@ -589,7 +589,7 @@ function saveMilestone(
     milestones: state.milestones.map((m) =>
       m.id === milestoneId ? { ...m, name: name.trim(), date } : m,
     ),
-    activity: withActivity(state, 'project', projectId, `updated milestone "${name.trim()}"`),
+    activity: withActivity(state, 'project', projectId, `zaktualizował(a) kamień milowy „${name.trim()}”`),
   };
 }
 
@@ -618,7 +618,7 @@ export function reducer(state: AppData, action: Action): AppData {
           state,
           'task',
           action.taskId,
-          `moved the task to "${status?.name ?? '?'}"`,
+          `przeniósł/przeniosła zadanie do statusu „${status?.name ?? '?'}”`,
         ),
       };
     }
@@ -641,7 +641,7 @@ export function reducer(state: AppData, action: Action): AppData {
           state,
           'project',
           action.projectId,
-          `moved the project to "${status?.name ?? '?'}"`,
+          `przeniósł/przeniosła projekt do statusu „${status?.name ?? '?'}”`,
         ),
       };
     }
@@ -657,7 +657,7 @@ export function reducer(state: AppData, action: Action): AppData {
           state,
           'project',
           action.projectId,
-          action.paid ? 'marked the project as paid' : 'marked the project as unpaid',
+          action.paid ? 'oznaczył(a) projekt jako opłacony' : 'oznaczył(a) projekt jako nieopłacony',
         ),
       };
     case 'SET_PROJECT_DATES':
@@ -672,7 +672,7 @@ export function reducer(state: AppData, action: Action): AppData {
           state,
           'project',
           action.projectId,
-          `rescheduled the project to ${action.startDate} – ${action.endDate}`,
+          `zmienił(a) termin projektu na ${action.startDate} – ${action.endDate}`,
         ),
       };
     case 'SAVE_MILESTONE':
@@ -689,7 +689,7 @@ export function reducer(state: AppData, action: Action): AppData {
           state,
           'project',
           m.projectId,
-          `moved milestone "${m.name}" to ${action.date}`,
+          `przeniósł/przeniosła kamień milowy „${m.name}” na ${action.date}`,
         ),
       };
     }
@@ -699,7 +699,7 @@ export function reducer(state: AppData, action: Action): AppData {
         ...state,
         milestones: state.milestones.filter((x) => x.id !== action.milestoneId),
         activity: m
-          ? withActivity(state, 'project', m.projectId, `removed milestone "${m.name}"`)
+          ? withActivity(state, 'project', m.projectId, `usunął/usunęła kamień milowy „${m.name}”`)
           : state.activity,
       };
     }
@@ -720,7 +720,7 @@ export function reducer(state: AppData, action: Action): AppData {
             createdAt: nowIso(),
           },
         ],
-        activity: withActivity(state, action.entityType, action.entityId, 'commented'),
+        activity: withActivity(state, action.entityType, action.entityId, 'dodał(a) komentarz'),
       };
     }
     case 'ADD_PERSON':

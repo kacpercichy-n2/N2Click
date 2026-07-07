@@ -113,7 +113,7 @@ function TaskModalShell({ taskParam, projectParam, onClose }: ShellProps) {
     if (!existing) return;
     if (
       window.confirm(
-        `Delete "${existing.title}"? This removes its assignments and planned hours.`,
+        `Usunąć „${existing.title}”? To usunie przypisania i zaplanowane godziny.`,
       )
     ) {
       dispatch({ type: 'DELETE_TASK', taskId: existing.id });
@@ -121,7 +121,7 @@ function TaskModalShell({ taskParam, projectParam, onClose }: ShellProps) {
     }
   };
 
-  const heading = notFound ? 'Task not found' : isNew ? 'New task' : 'Edit task';
+  const heading = notFound ? 'Nie znaleziono zadania' : isNew ? 'Nowe zadanie' : 'Edytuj zadanie';
 
   return (
     <>
@@ -149,14 +149,14 @@ function TaskModalShell({ taskParam, projectParam, onClose }: ShellProps) {
             <div className="task-modal-head-actions">
               {existing && (
                 <button type="button" className="btn danger-ghost" onClick={handleDelete}>
-                  Delete
+                  Usuń
                 </button>
               )}
               <button
                 type="button"
                 className="task-modal-close"
                 onClick={onClose}
-                aria-label="Close"
+                aria-label="Zamknij"
               >
                 ×
               </button>
@@ -165,12 +165,12 @@ function TaskModalShell({ taskParam, projectParam, onClose }: ShellProps) {
           <div className="task-modal-body">
             {notFound ? (
               <div className="empty-state">
-                <p className="empty-title">Task not found</p>
+                <p className="empty-title">Nie znaleziono zadania</p>
                 <p className="empty-hint">
-                  This task may have been deleted, or the link is out of date.
+                  Zadanie mogło zostać usunięte albo link jest nieaktualny.
                 </p>
                 <button type="button" className="btn primary" onClick={onClose}>
-                  Close
+                  Zamknij
                 </button>
               </div>
             ) : (
@@ -313,9 +313,9 @@ function TaskEditor({ taskId, initialProjectId, onSaved, onCancel }: EditorProps
         .reduce((s, [, h]) => s + h, 0);
       if (plannedOnThisTask > 0) {
         const ok = window.confirm(
-          `Remove ${person?.name ?? 'this person'} and their ${fmtHours(
+          `Usunąć ${person?.name ?? 'tę osobę'} oraz ${fmtHours(
             plannedOnThisTask,
-          )}h of planned work on this task?`,
+          )}h zaplanowanej pracy z tego zadania?`,
         );
         if (!ok) return;
       }
@@ -381,9 +381,9 @@ function TaskEditor({ taskId, initialProjectId, onSaved, onCancel }: EditorProps
     <div className="editor task-editor">
       {/* a) Details */}
       <div className="editor-section">
-        <h2>Details</h2>
+        <h2>Szczegóły</h2>
         <div className="field">
-          <label htmlFor="t-title">Title *</label>
+          <label htmlFor="t-title">Tytuł *</label>
           <input
             id="t-title"
             ref={titleRef}
@@ -391,27 +391,27 @@ function TaskEditor({ taskId, initialProjectId, onSaved, onCancel }: EditorProps
             onChange={(e) => setTitle(e.target.value)}
             onBlur={() => setTitleTouched(true)}
             className={titleTouched && titleError ? 'invalid' : undefined}
-            placeholder="What needs doing?"
+            placeholder="Co trzeba zrobić?"
           />
-          {titleTouched && titleError && <p className="field-error">Title is required</p>}
+          {titleTouched && titleError && <p className="field-error">Tytuł jest wymagany</p>}
         </div>
         <div className="field">
-          <label htmlFor="t-desc">Description</label>
+          <label htmlFor="t-desc">Opis</label>
           <textarea
             id="t-desc"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={3}
-            placeholder="Optional details"
+            placeholder="Opcjonalne szczegóły"
           />
         </div>
         <div className="field-row">
           <div className="field">
-            <label htmlFor="t-project">Project *</label>
+            <label htmlFor="t-project">Projekt *</label>
             {state.projects.length === 0 ? (
               <p className="field-hint">
-                No projects yet — <Link to="/projects">create a project</Link> first. Every
-                task belongs to a project.
+                Nie ma jeszcze projektów — najpierw <Link to="/projects">utwórz projekt</Link>.
+                Każde zadanie musi należeć do projektu.
               </p>
             ) : (
               <select
@@ -445,7 +445,7 @@ function TaskEditor({ taskId, initialProjectId, onSaved, onCancel }: EditorProps
             </select>
           </div>
           <div className="field">
-            <label htmlFor="t-est">Estimated hours</label>
+            <label htmlFor="t-est">Szacowane godziny</label>
             <input
               id="t-est"
               type="number"
@@ -453,22 +453,22 @@ function TaskEditor({ taskId, initialProjectId, onSaved, onCancel }: EditorProps
               step={0.5}
               value={estimatedRaw}
               onChange={(e) => setEstimatedRaw(e.target.value)}
-              placeholder="Optional"
+              placeholder="Opcjonalnie"
             />
           </div>
         </div>
         <div className="estimate-compare">
           <span>
-            <strong>{fmtHours(plannedTotalAll)}h</strong> planned
+            zaplanowano <strong>{fmtHours(plannedTotalAll)}h</strong>
           </span>
           <span className="muted">vs</span>
           <span>
             {estNum != null && !Number.isNaN(estNum) ? (
               <>
-                <strong>{fmtHours(estNum)}h</strong> estimated
+                szacunek <strong>{fmtHours(estNum)}h</strong>
               </>
             ) : (
-              <span className="muted">no estimate</span>
+              <span className="muted">brak szacunku</span>
             )}
           </span>
         </div>
@@ -476,10 +476,10 @@ function TaskEditor({ taskId, initialProjectId, onSaved, onCancel }: EditorProps
 
       {/* b) Period */}
       <div className="editor-section">
-        <h2>Period</h2>
+        <h2>Okres</h2>
         <div className="field-row">
           <div className="field">
-            <label htmlFor="t-start">Start date</label>
+            <label htmlFor="t-start">Data startu</label>
             <input
               id="t-start"
               type="date"
@@ -488,7 +488,7 @@ function TaskEditor({ taskId, initialProjectId, onSaved, onCancel }: EditorProps
             />
           </div>
           <div className="field">
-            <label htmlFor="t-end">End date</label>
+            <label htmlFor="t-end">Data końca</label>
             <input
               id="t-end"
               type="date"
@@ -498,27 +498,26 @@ function TaskEditor({ taskId, initialProjectId, onSaved, onCancel }: EditorProps
           </div>
         </div>
         {endBeforeStart && (
-          <p className="field-error">End date must be on or after the start date.</p>
+          <p className="field-error">Data końca musi być taka sama jak data startu albo późniejsza.</p>
         )}
         {periodTooLong && (
           <p className="field-error">
-            Period is {periodDays} days — the maximum is {MAX_PERIOD_DAYS} days. Shorten the
-            range.
+            Okres ma {periodDays} dni — maksimum to {MAX_PERIOD_DAYS} dni. Skróć zakres.
           </p>
         )}
         {periodValid && (
           <p className="field-hint">
-            {periodDays} day{periodDays === 1 ? '' : 's'} in this period.
+            Liczba dni w okresie: {periodDays}.
           </p>
         )}
       </div>
 
       {/* c) Assignees */}
       <div className="editor-section">
-        <h2>Assignees</h2>
+        <h2>Przypisane osoby</h2>
         {state.people.length === 0 ? (
           <p className="field-hint">
-            No people yet. <Link to="/people">Add people</Link> to assign work.
+            Nie ma jeszcze osób. <Link to="/people">Dodaj osoby</Link>, aby przypisać pracę.
           </p>
         ) : (
           <div className="assignee-picker">
@@ -549,17 +548,16 @@ function TaskEditor({ taskId, initialProjectId, onSaved, onCancel }: EditorProps
 
       {/* d) Daily allocation grid */}
       <div className="editor-section">
-        <h2>Daily allocation</h2>
+        <h2>Dzienny przydział godzin</h2>
         {!periodValid ? (
-          <p className="field-hint">Set a valid period to plan hours.</p>
+          <p className="field-hint">Ustaw prawidłowy okres, aby planować godziny.</p>
         ) : assignedPeople.length === 0 ? (
-          <p className="field-hint">Assign at least one person to plan hours.</p>
+          <p className="field-hint">Przypisz co najmniej jedną osobę, aby planować godziny.</p>
         ) : (
           <>
             {outOfRangeCount > 0 && (
               <p className="field-notice">
-                {outOfRangeCount} allocation{outOfRangeCount === 1 ? '' : 's'} outside the
-                new period will be removed on save.
+                Przy zapisie zostanie usunięta liczba wpisów poza nowym okresem: {outOfRangeCount}.
               </p>
             )}
             <AllocationGrid
@@ -580,14 +578,14 @@ function TaskEditor({ taskId, initialProjectId, onSaved, onCancel }: EditorProps
       {/* e) Discussion (existing tasks only) */}
       {existing && (
         <div className="editor-section">
-          <h2>Discussion</h2>
+          <h2>Dyskusja</h2>
           <CommentsPanel entityType="task" entityId={existing.id} />
         </div>
       )}
 
       {/* f) Save / Cancel */}
       {projectError && state.projects.length > 0 && (
-        <p className="field-error">Pick a project for this task.</p>
+        <p className="field-error">Wybierz projekt dla tego zadania.</p>
       )}
       <div className="editor-actions">
         <button
@@ -595,12 +593,12 @@ function TaskEditor({ taskId, initialProjectId, onSaved, onCancel }: EditorProps
           className="btn primary"
           onClick={handleSave}
           disabled={state.projects.length === 0}
-          title={state.projects.length === 0 ? 'Create a project first' : undefined}
+          title={state.projects.length === 0 ? 'Najpierw utwórz projekt' : undefined}
         >
-          {isEdit ? 'Save changes' : 'Create task'}
+          {isEdit ? 'Zapisz zmiany' : 'Utwórz zadanie'}
         </button>
         <button type="button" className="btn ghost" onClick={onCancel}>
-          Cancel
+          Anuluj
         </button>
       </div>
     </div>

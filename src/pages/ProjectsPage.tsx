@@ -17,6 +17,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { addDaysStr, todayStr } from '../utils/dates';
 import { parseDate } from '../utils/dates';
 import { format } from 'date-fns';
+import { pl } from 'date-fns/locale/pl';
 
 export type PaidFilter = 'all' | 'paid' | 'unpaid';
 
@@ -28,12 +29,12 @@ export function PaidFilterToggle({
   onChange: (v: PaidFilter) => void;
 }) {
   const opts: Array<[PaidFilter, string]> = [
-    ['all', 'All'],
-    ['paid', 'Paid'],
-    ['unpaid', 'Unpaid'],
+    ['all', 'Wszystkie'],
+    ['paid', 'Opłacone'],
+    ['unpaid', 'Nieopłacone'],
   ];
   return (
-    <div className="cal-view-toggle" role="group" aria-label="Paid filter">
+    <div className="cal-view-toggle" role="group" aria-label="Filtr płatności">
       {opts.map(([v, label]) => (
         <button
           key={v}
@@ -51,16 +52,24 @@ export function PaidFilterToggle({
 function rangeLabel(start: string, end: string): string {
   const s = parseDate(start);
   const e = parseDate(end);
-  if (start === end) return format(s, 'd MMM yyyy');
+  if (start === end) return format(s, 'd MMM yyyy', { locale: pl });
   const sameYear = s.getFullYear() === e.getFullYear();
   if (sameYear && s.getMonth() === e.getMonth())
-    return `${format(s, 'd')}–${format(e, 'd MMM yyyy')}`;
-  if (sameYear) return `${format(s, 'd MMM')} – ${format(e, 'd MMM yyyy')}`;
-  return `${format(s, 'd MMM yyyy')} – ${format(e, 'd MMM yyyy')}`;
+    return `${format(s, 'd')}–${format(e, 'd MMM yyyy', { locale: pl })}`;
+  if (sameYear) return `${format(s, 'd MMM', { locale: pl })} – ${format(e, 'd MMM yyyy', { locale: pl })}`;
+  return `${format(s, 'd MMM yyyy', { locale: pl })} – ${format(e, 'd MMM yyyy', { locale: pl })}`;
 }
 
 function fmtHours(n: number): string {
   return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
+}
+
+function polishCount(n: number, one: string, few: string, many: string): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (n === 1) return one;
+  if (mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14)) return few;
+  return many;
 }
 
 export function ProjectsPage() {
@@ -102,7 +111,7 @@ export function ProjectsPage() {
     const known = new Set(state.clients.map((c) => c.id));
     const orphans = filtered.filter((p) => !known.has(p.clientId));
     if (orphans.length > 0)
-      out.push({ clientId: '', clientName: 'No client', projects: orphans });
+      out.push({ clientId: '', clientName: 'Bez klienta', projects: orphans });
     return out;
   }, [filtered, state.clients]);
 
@@ -110,15 +119,15 @@ export function ProjectsPage() {
     e.preventDefault();
     const trimmed = name.trim();
     if (!trimmed) {
-      setError('Project name is required');
+      setError('Nazwa projektu jest wymagana');
       return;
     }
     if (endDate < startDate) {
-      setError('End date must be on or after the start date');
+      setError('Data końca musi być taka sama jak data startu albo późniejsza');
       return;
     }
     if (!clientId && !newClientName.trim()) {
-      setError('Pick a client or type a new client name');
+      setError('Wybierz klienta albo wpisz nazwę nowego klienta');
       return;
     }
     const draft: ProjectDraft = {
@@ -147,9 +156,9 @@ export function ProjectsPage() {
   return (
     <section className="page">
       <div className="page-head">
-        <h1>Projects</h1>
+        <h1>Projekty</h1>
         <button type="button" className="btn primary" onClick={() => setCreating((v) => !v)}>
-          {creating ? 'Close' : '+ New project'}
+          {creating ? 'Zamknij' : '+ Nowy projekt'}
         </button>
       </div>
 
@@ -157,22 +166,22 @@ export function ProjectsPage() {
         <form className="project-create" onSubmit={submit}>
           <div className="field-row">
             <div className="field">
-              <label htmlFor="pr-name">Project name *</label>
+              <label htmlFor="pr-name">Nazwa projektu *</label>
               <input
                 id="pr-name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Website redesign"
+                placeholder="np. Redesign strony"
               />
             </div>
             <div className="field">
-              <label htmlFor="pr-client">Client *</label>
+              <label htmlFor="pr-client">Klient *</label>
               <select
                 id="pr-client"
                 value={clientId}
                 onChange={(e) => setClientId(e.target.value)}
               >
-                <option value="">— new client —</option>
+                <option value="">— nowy klient —</option>
                 {state.clients
                   .filter((c) => !c.archived)
                   .map((c) => (
@@ -184,19 +193,19 @@ export function ProjectsPage() {
             </div>
             {clientId === '' && (
               <div className="field">
-                <label htmlFor="pr-new-client">New client name</label>
+                <label htmlFor="pr-new-client">Nazwa nowego klienta</label>
                 <input
                   id="pr-new-client"
                   value={newClientName}
                   onChange={(e) => setNewClientName(e.target.value)}
-                  placeholder="e.g. Acme Foods"
+                  placeholder="np. Acme Foods"
                 />
               </div>
             )}
           </div>
           <div className="field-row">
             <div className="field">
-              <label htmlFor="pr-start">Start date</label>
+              <label htmlFor="pr-start">Data startu</label>
               <input
                 id="pr-start"
                 type="date"
@@ -205,7 +214,7 @@ export function ProjectsPage() {
               />
             </div>
             <div className="field">
-              <label htmlFor="pr-end">End date</label>
+              <label htmlFor="pr-end">Data końca</label>
               <input
                 id="pr-end"
                 type="date"
@@ -217,12 +226,12 @@ export function ProjectsPage() {
           {error && <p className="field-error">{error}</p>}
           <div className="editor-actions">
             <button type="submit" className="btn primary">
-              Create project
+              Utwórz projekt
             </button>
           </div>
           <p className="field-hint">
-            Status, paid state, department, service type, milestones, and description
-            are edited on the project card after creating.
+            Status, płatność, dział, typ usługi, kamienie milowe i opis edytujesz
+            później na karcie projektu.
           </p>
         </form>
       )}
@@ -232,9 +241,9 @@ export function ProjectsPage() {
         <select
           value={clientFilter}
           onChange={(e) => setClientFilter(e.target.value)}
-          aria-label="Filter by client"
+          aria-label="Filtruj po kliencie"
         >
-          <option value="">All clients</option>
+          <option value="">Wszyscy klienci</option>
           {state.clients.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
@@ -244,9 +253,9 @@ export function ProjectsPage() {
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          aria-label="Filter by status"
+          aria-label="Filtruj po statusie"
         >
-          <option value="">All statuses</option>
+          <option value="">Wszystkie statusy</option>
           {statuses.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}
@@ -257,9 +266,9 @@ export function ProjectsPage() {
 
       {groups.length === 0 ? (
         <div className="empty-state">
-          <p className="empty-title">No projects</p>
+          <p className="empty-title">Brak projektów</p>
           <p className="empty-hint">
-            Create a project under a client, then add tasks and plan hours.
+            Dodaj projekt pod klientem, a potem utwórz zadania i zaplanuj godziny.
           </p>
         </div>
       ) : (
@@ -291,11 +300,12 @@ export function ProjectsPage() {
                         {svc && <span className="project-badge">{svc.name}</span>}
                       </div>
                       <div className="task-card-hours">
-                        <strong>{tasks.length}</strong> task{tasks.length === 1 ? '' : 's'}
-                        <span className="muted"> · {fmtHours(planned)}h planned</span>
+                        <strong>{tasks.length}</strong>{' '}
+                        {polishCount(tasks.length, 'zadanie', 'zadania', 'zadań')}
+                        <span className="muted"> · zaplanowano {fmtHours(planned)}h</span>
                         <span className="muted">
                           {' '}
-                          · {teamSize} {teamSize === 1 ? 'person' : 'people'}
+                          · {teamSize} {polishCount(teamSize, 'osoba', 'osoby', 'osób')}
                         </span>
                       </div>
                     </button>
@@ -309,8 +319,8 @@ export function ProjectsPage() {
 
       {state.clients.length === 0 && state.projects.length === 0 && (
         <p className="field-hint">
-          Tip: clients and other structure can also be managed in{' '}
-          <Link to="/admin">Admin</Link>.
+          Wskazówka: klientami i pozostałą strukturą możesz też zarządzać w panelu{' '}
+          <Link to="/admin">Administracja</Link>.
         </p>
       )}
     </section>

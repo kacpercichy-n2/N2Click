@@ -15,6 +15,7 @@ import {
   startOfMonth,
   startOfWeek,
 } from 'date-fns';
+import { pl } from 'date-fns/locale/pl';
 import type { DateStr } from '../types';
 
 export const DATE_FMT = 'yyyy-MM-dd';
@@ -48,12 +49,12 @@ export function diffDays(a: DateStr, b: DateStr): number {
 
 /** Short label like "3 Aug". */
 export function formatShort(d: DateStr): string {
-  return format(parseDate(d), 'd MMM');
+  return format(parseDate(d), 'd MMM', { locale: pl });
 }
 
 /** Timestamp label like "3 Aug 2026, 14:05" from an ISO string. */
 export function formatTimestamp(iso: string): string {
-  return format(new Date(iso), 'd MMM yyyy, HH:mm');
+  return format(new Date(iso), 'd MMM yyyy, HH:mm', { locale: pl });
 }
 
 /** Inclusive list of 'yyyy-MM-dd' between start and end (start<=end assumed). */
@@ -84,7 +85,7 @@ export function isTodayStr(d: DateStr): boolean {
 
 /** Row label like "Mon 03.08". */
 export function formatRowLabel(d: DateStr): string {
-  return format(parseDate(d), 'EEE dd.MM');
+  return format(parseDate(d), 'EEE dd.MM', { locale: pl });
 }
 
 // ---- Week helpers (Monday start) ----
@@ -114,12 +115,12 @@ export function weekRangeLabel(d: DateStr): string {
   const sameMonth = start.getMonth() === end.getMonth();
   const sameYear = start.getFullYear() === end.getFullYear();
   if (sameMonth && sameYear) {
-    return `${format(start, 'd')}–${format(end, 'd MMM yyyy')}`;
+    return `${format(start, 'd')}–${format(end, 'd MMM yyyy', { locale: pl })}`;
   }
   if (sameYear) {
-    return `${format(start, 'd MMM')}–${format(end, 'd MMM yyyy')}`;
+    return `${format(start, 'd MMM', { locale: pl })}–${format(end, 'd MMM yyyy', { locale: pl })}`;
   }
-  return `${format(start, 'd MMM yyyy')}–${format(end, 'd MMM yyyy')}`;
+  return `${format(start, 'd MMM yyyy', { locale: pl })}–${format(end, 'd MMM yyyy', { locale: pl })}`;
 }
 
 // ---- Month helpers (Monday start grid) ----
@@ -129,7 +130,7 @@ export function shiftMonth(d: DateStr, delta: number): DateStr {
 }
 
 export function monthLabel(d: DateStr): string {
-  return format(parseDate(d), 'MMMM yyyy');
+  return format(parseDate(d), 'LLLL yyyy', { locale: pl });
 }
 
 export function monthKey(d: DateStr): string {
@@ -154,7 +155,7 @@ export function dayNumber(d: DateStr): number {
 }
 
 export function weekdayHeader(d: DateStr): string {
-  return format(parseDate(d), 'EEE');
+  return format(parseDate(d), 'EEE', { locale: pl });
 }
 
-export const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+export const WEEKDAY_LABELS = ['Pon', 'Wt', 'Śr', 'Czw', 'Pt', 'Sob', 'Nd'];

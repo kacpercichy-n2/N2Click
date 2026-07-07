@@ -145,7 +145,7 @@ function MilestoneMark({
     <span
       className={drag ? 'timeline-milestone dragging' : 'timeline-milestone'}
       style={{ left: (dayIdx + (drag?.delta ?? 0)) * DAY_W + DAY_W / 2 }}
-      title={`◆ ${milestone.name} — ${formatShort(milestone.date)} (drag to move)`}
+      title={`◆ ${milestone.name} — ${formatShort(milestone.date)} (przeciągnij, aby przesunąć)`}
       onPointerDown={(e) => {
         e.stopPropagation();
         try {
@@ -200,7 +200,7 @@ export function TimelinePage() {
     }
     const known = new Set(state.clients.map((c) => c.id));
     const orphans = state.projects.filter((p) => !known.has(p.clientId));
-    if (orphans.length > 0) out.push({ name: 'No client', projects: orphans });
+    if (orphans.length > 0) out.push({ name: 'Bez klienta', projects: orphans });
     return out;
   }, [state.clients, state.projects]);
 
@@ -224,24 +224,24 @@ export function TimelinePage() {
   return (
     <section className="page page-wide">
       <div className="page-head">
-        <h1>Timeline</h1>
+        <h1>Oś czasu</h1>
         <div className="cal-nav">
           <button
             type="button"
             className="nav-btn"
             onClick={() => setAnchor((a) => shiftWeek(a, -2))}
-            aria-label="Earlier"
+            aria-label="Wcześniej"
           >
             ‹
           </button>
           <button type="button" className="btn ghost" onClick={() => setAnchor(todayStr())}>
-            Today
+            Dzisiaj
           </button>
           <button
             type="button"
             className="nav-btn"
             onClick={() => setAnchor((a) => shiftWeek(a, 2))}
-            aria-label="Later"
+            aria-label="Później"
           >
             ›
           </button>
@@ -251,14 +251,14 @@ export function TimelinePage() {
         </div>
       </div>
       <p className="field-hint">
-        Drag a bar to reschedule; drag its edges to change start/end. Moving a task
-        moves its planned hours with it. ◆ milestones drag too.
+        Przeciągnij pasek, aby zmienić termin; przeciągnij krawędzie, aby zmienić start lub koniec.
+        Przesunięcie zadania przesuwa razem z nim zaplanowane godziny. ◆ kamienie milowe też można przeciągać.
       </p>
 
       {state.projects.length === 0 ? (
         <div className="empty-state">
-          <p className="empty-title">Nothing to schedule</p>
-          <p className="empty-hint">Create a project to see it on the timeline.</p>
+          <p className="empty-title">Brak elementów do zaplanowania</p>
+          <p className="empty-hint">Utwórz projekt, aby zobaczyć go na osi czasu.</p>
         </div>
       ) : (
         <div className="timeline-scroll">
@@ -313,7 +313,7 @@ export function TimelinePage() {
                             className={
                               overdue ? 'timeline-bar project overdue' : 'timeline-bar project'
                             }
-                            title={`${p.name}: ${formatShort(p.startDate)} – ${formatShort(p.endDate)}${overdue ? ' (past deadline)' : ''}`}
+                            title={`${p.name}: ${formatShort(p.startDate)} – ${formatShort(p.endDate)}${overdue ? ' (po terminie)' : ''}`}
                             resizable
                             onCommit={commitProject(p)}
                             onOpen={() => navigate(`/projects/${p.id}`)}

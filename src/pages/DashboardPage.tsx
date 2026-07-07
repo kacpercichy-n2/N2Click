@@ -59,17 +59,17 @@ export function DashboardPage() {
   return (
     <section className="page">
       <div className="page-head">
-        <h1>Dashboard</h1>
+        <h1>Panel</h1>
       </div>
 
       {state.projects.length === 0 && state.tasks.length === 0 ? (
         <div className="empty-state">
-          <p className="empty-title">Welcome to N2click</p>
+          <p className="empty-title">Witaj w N2click</p>
           <p className="empty-hint">
-            Start by creating a client and a project, then plan tasks and hours.
+            Zacznij od dodania klienta i projektu, a potem zaplanuj zadania oraz godziny.
           </p>
           <Link to="/projects" className="btn primary">
-            Go to projects
+            Przejdź do projektów
           </Link>
         </div>
       ) : (
@@ -80,7 +80,7 @@ export function DashboardPage() {
           animate="show"
         >
           <motion.div className="dash-card" variants={dashCardVariants}>
-            <h2>Pipeline</h2>
+            <h2>Lejek projektów</h2>
             <ul className="dash-pipeline">
               {statuses.map((s) => {
                 const count = state.projects.filter((p) => p.statusId === s.id).length;
@@ -93,14 +93,14 @@ export function DashboardPage() {
               })}
             </ul>
             <Link to="/kanban" className="link-btn">
-              Open kanban →
+              Otwórz kanban →
             </Link>
           </motion.div>
 
           <motion.div className="dash-card" variants={dashCardVariants}>
-            <h2>Deadlines (14 days)</h2>
+            <h2>Terminy (14 dni)</h2>
             {overdue.length === 0 && deadlines.length === 0 ? (
-              <p className="muted">Nothing due in the next two weeks.</p>
+              <p className="muted">Brak terminów w najbliższych dwóch tygodniach.</p>
             ) : (
               <ul className="dash-list">
                 {overdue.map((p) => (
@@ -112,7 +112,7 @@ export function DashboardPage() {
                     >
                       <Coin paid={p.paid} size={14} />
                       <span className="dash-row-name">{p.name}</span>
-                      <span className="dash-row-when">overdue ({formatShort(p.endDate)})</span>
+                      <span className="dash-row-when">po terminie ({formatShort(p.endDate)})</span>
                     </button>
                   </li>
                 ))}
@@ -133,7 +133,7 @@ export function DashboardPage() {
             )}
             {milestones.length > 0 && (
               <>
-                <h3 className="dash-subhead">Milestones</h3>
+                <h3 className="dash-subhead">Kamienie milowe</h3>
                 <ul className="dash-list">
                   {milestones.map((m) => (
                     <li key={m.id}>
@@ -154,11 +154,11 @@ export function DashboardPage() {
           </motion.div>
 
           <motion.div className="dash-card" variants={dashCardVariants}>
-            <h2>Payments</h2>
+            <h2>Płatności</h2>
             <p>
-              <Coin paid size={16} /> <strong>{state.projects.length - unpaid.length}</strong> paid
+              <Coin paid size={16} /> <strong>{state.projects.length - unpaid.length}</strong> opłacone
               {' · '}
-              <Coin paid={false} size={16} /> <strong>{unpaid.length}</strong> unpaid
+              <Coin paid={false} size={16} /> <strong>{unpaid.length}</strong> nieopłacone
             </p>
             {unpaid.length > 0 && (
               <ul className="dash-list">
@@ -180,14 +180,14 @@ export function DashboardPage() {
               </ul>
             )}
             <Link to="/projects" className="link-btn">
-              All projects →
+              Wszystkie projekty →
             </Link>
           </motion.div>
 
           <motion.div className="dash-card" variants={dashCardVariants}>
-            <h2>Overloads this week</h2>
+            <h2>Przeciążenia w tym tygodniu</h2>
             {overloads.length === 0 ? (
-              <p className="muted">Nobody is over capacity this week. 🎉</p>
+              <p className="muted">Nikt nie przekracza dostępności w tym tygodniu.</p>
             ) : (
               <ul className="dash-list">
                 {overloads.map(({ date, personId }) => {
@@ -213,7 +213,7 @@ export function DashboardPage() {
               </ul>
             )}
             <Link to="/workload" className="link-btn">
-              Workload dashboard →
+              Panel obciążenia →
             </Link>
           </motion.div>
         </motion.div>

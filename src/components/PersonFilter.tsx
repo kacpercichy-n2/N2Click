@@ -12,13 +12,13 @@ interface Props {
 export function PersonFilter({ people, selected, onToggle, onAll }: Props) {
   const allActive = selected.size === 0;
   return (
-    <div className="person-filter" role="group" aria-label="Filter by person">
+    <div className="person-filter" role="group" aria-label="Filtruj po osobie">
       <button
         type="button"
         className={allActive ? 'filter-chip active' : 'filter-chip'}
         onClick={onAll}
       >
-        All
+        Wszyscy
       </button>
       {people.map((p) => {
         const active = selected.has(p.id);

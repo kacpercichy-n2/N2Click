@@ -75,7 +75,7 @@ export function MonthView({ state, anchor, filter, onPickDay }: Props) {
                 .filter(Boolean)
                 .join(' ')}
               onClick={() => onPickDay(d)}
-              title={total > 0 ? `${total}h planned` : 'No work'}
+              title={total > 0 ? `zaplanowano ${total}h` : 'Brak pracy'}
             >
               <span className="month-cell-num">{dayNumber(d)}</span>
               {total > 0 && <span className="month-cell-hours">{total}h</span>}

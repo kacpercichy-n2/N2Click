@@ -20,6 +20,14 @@ import { formatShort } from '../utils/dates';
 // Dark-legible, on-brand rotation for admin quick-created statuses.
 const STATUS_COLORS = ['#9aa7c4', '#5bdcff', '#ffc857', '#b9ff4d', '#c496ff', '#ff9640'];
 
+function polishCount(n: number, one: string, few: string, many: string): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (n === 1) return one;
+  if (mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14)) return few;
+  return many;
+}
+
 export function KanbanPage() {
   const { state, dispatch } = useStore();
   const navigate = useNavigate();
@@ -71,9 +79,9 @@ export function KanbanPage() {
           <select
             value={clientFilter}
             onChange={(e) => setClientFilter(e.target.value)}
-            aria-label="Filter by client"
+            aria-label="Filtruj po kliencie"
           >
-            <option value="">All clients</option>
+            <option value="">Wszyscy klienci</option>
             {state.clients.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
@@ -85,8 +93,8 @@ export function KanbanPage() {
 
       {statuses.length === 0 ? (
         <div className="empty-state">
-          <p className="empty-title">No statuses</p>
-          <p className="empty-hint">An admin can create pipeline statuses in Admin.</p>
+          <p className="empty-title">Brak statusów</p>
+          <p className="empty-hint">Administrator może utworzyć statusy lejka w panelu Administracja.</p>
         </div>
       ) : (
         <div className="kanban-board">
@@ -112,7 +120,7 @@ export function KanbanPage() {
                   <span className="kanban-col-count">{cards.length}</span>
                 </div>
                 <div className="kanban-col-body">
-                  {cards.length === 0 && <div className="kanban-empty">Drop here</div>}
+                  {cards.length === 0 && <div className="kanban-empty">Upuść tutaj</div>}
                   {cards.map((p) => {
                     const client = getClient(state, p.clientId);
                     const taskCount = tasksOfProject(state, p.id).length;
@@ -148,8 +156,8 @@ export function KanbanPage() {
                           {formatShort(p.startDate)} – {formatShort(p.endDate)}
                         </div>
                         <div className="kanban-card-meta muted">
-                          {taskCount} task{taskCount === 1 ? '' : 's'} · {planned}h ·{' '}
-                          {team} {team === 1 ? 'person' : 'people'}
+                          {taskCount} {polishCount(taskCount, 'zadanie', 'zadania', 'zadań')} ·{' '}
+                          {planned}h · {team} {polishCount(team, 'osoba', 'osoby', 'osób')}
                         </div>
                       </motion.div>
                     );
@@ -164,12 +172,12 @@ export function KanbanPage() {
               <input
                 value={quickStatus}
                 onChange={(e) => setQuickStatus(e.target.value)}
-                placeholder="/New status name"
-                aria-label="Quick-create status"
-                title='Type "/Status name" and press Enter (admin only)'
+                placeholder="/Nazwa nowego statusu"
+                aria-label="Szybkie dodanie statusu"
+                title='Wpisz "/Nazwa statusu" i naciśnij Enter (tylko admin)'
               />
               <button type="submit" className="btn soft" disabled={!quickStatus.trim()}>
-                Add
+                Dodaj
               </button>
             </form>
           )}

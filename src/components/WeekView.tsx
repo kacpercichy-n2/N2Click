@@ -12,6 +12,7 @@ import { useOpenTask } from './TaskModal';
 import { personColor } from '../utils/colors';
 import { isTodayStr, isWeekend, parseDate, weekDays } from '../utils/dates';
 import { format } from 'date-fns';
+import { pl } from 'date-fns/locale/pl';
 import {
   blocksForPersonDate,
   dayTotal,
@@ -145,11 +146,11 @@ export function WeekView({ state, anchor, filter }: Props) {
               .join(' ')}
           >
             <div className="week-col-head">
-              <div className="week-col-weekday">{format(parseDate(d), 'EEE')}</div>
-              <div className="week-col-date">{format(parseDate(d), 'd MMM')}</div>
+              <div className="week-col-weekday">{format(parseDate(d), 'EEE', { locale: pl })}</div>
+              <div className="week-col-date">{format(parseDate(d), 'd MMM', { locale: pl })}</div>
               <div className="week-col-total">{empty ? '—' : `${fmt(total)}h`}</div>
               {overloadNames && (
-                <div className="week-col-overload" title={`Over capacity: ${overloadNames}`}>
+                <div className="week-col-overload" title={`Powyżej dostępności: ${overloadNames}`}>
                   ⚠ {overloadNames}
                 </div>
               )}
@@ -172,7 +173,7 @@ export function WeekView({ state, anchor, filter }: Props) {
                         style={{ borderLeftColor: personColor(person.id) }}
                         onClick={() => openTask(task.id)}
                         onContextMenu={(ev) => openMenu(e, ev)}
-                        title={`${task.title} — ${person.name}: ${e.plannedHours}h. Right-click to insert a block before/after.`}
+                        title={`${task.title} — ${person.name}: ${e.plannedHours}h. Kliknij prawym przyciskiem, aby wstawić blok przed lub po.`}
                       >
                         <span className="week-block-title">
                           {project && <Coin paid={project.paid} size={12} />}
@@ -220,7 +221,7 @@ export function WeekView({ state, anchor, filter }: Props) {
                 className="context-menu-item"
                 onClick={() => setMenu({ ...menu, step: 'form', position: 'before' })}
               >
-                ↑ Add before
+                ↑ Dodaj przed
               </button>
               <button
                 type="button"
@@ -228,16 +229,16 @@ export function WeekView({ state, anchor, filter }: Props) {
                 className="context-menu-item"
                 onClick={() => setMenu({ ...menu, step: 'form', position: 'after' })}
               >
-                ↓ Add after
+                ↓ Dodaj po
               </button>
             </>
           ) : (
             <div className="context-insert-form">
               <div className="context-menu-title">
-                Insert {menu.position} for {menuPerson?.name}
+                Wstaw {menu.position === 'before' ? 'przed' : 'po'} dla {menuPerson?.name}
               </div>
               <label className="context-field">
-                Task
+                Zadanie
                 <select
                   value={insertTaskId}
                   onChange={(e) => setInsertTaskId(e.target.value)}
@@ -255,7 +256,7 @@ export function WeekView({ state, anchor, filter }: Props) {
                 </select>
               </label>
               <label className="context-field">
-                Hours
+                Godziny
                 <input
                   type="number"
                   min={0.5}
@@ -271,8 +272,8 @@ export function WeekView({ state, anchor, filter }: Props) {
               </label>
               {wouldOverload && (
                 <p className="context-warning">
-                  ⚠ {menuPerson?.name} would be at {fmt(projectedTotal)}h — over their{' '}
-                  {fmt(menuCapacity)}h/day capacity.
+                  ⚠ {menuPerson?.name} będzie mieć {fmt(projectedTotal)}h — powyżej dostępności{' '}
+                  {fmt(menuCapacity)}h/dzień.
                 </p>
               )}
               <div className="context-actions">
@@ -282,10 +283,10 @@ export function WeekView({ state, anchor, filter }: Props) {
                   onClick={confirmInsert}
                   disabled={Number.isNaN(parsedHours) || parsedHours <= 0}
                 >
-                  Insert
+                  Wstaw
                 </button>
                 <button type="button" className="btn ghost" onClick={() => setMenu(null)}>
-                  Cancel
+                  Anuluj
                 </button>
               </div>
             </div>

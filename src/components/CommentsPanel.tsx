@@ -102,7 +102,7 @@ export function CommentsPanel({ entityType, entityId }: Props) {
           className={tab === 'comments' ? 'toggle-btn active' : 'toggle-btn'}
           onClick={() => setTab('comments')}
         >
-          Comments ({comments.length})
+          Komentarze ({comments.length})
         </button>
         <button
           type="button"
@@ -111,14 +111,14 @@ export function CommentsPanel({ entityType, entityId }: Props) {
           className={tab === 'activity' ? 'toggle-btn active' : 'toggle-btn'}
           onClick={() => setTab('activity')}
         >
-          Activity ({activity.length})
+          Aktywność ({activity.length})
         </button>
       </div>
 
       {tab === 'comments' ? (
         <>
           {comments.length === 0 ? (
-            <p className="muted comments-empty">No comments yet.</p>
+            <p className="muted comments-empty">Brak komentarzy.</p>
           ) : (
             <ul className="comment-list">
               {comments.map((c) => {
@@ -132,7 +132,7 @@ export function CommentsPanel({ entityType, entityId }: Props) {
                     )}
                     <div className="comment-main">
                       <div className="comment-head">
-                        <strong>{author?.name ?? 'Someone'}</strong>
+                        <strong>{author?.name ?? 'Ktoś'}</strong>
                         <span className="muted comment-time">
                           {formatTimestamp(c.createdAt)}
                         </span>
@@ -154,8 +154,8 @@ export function CommentsPanel({ entityType, entityId }: Props) {
               rows={2}
               placeholder={
                 me
-                  ? `Comment as ${me.name}… use @name to mention someone`
-                  : 'Write a comment… (pick who you are in the header to sign it)'
+                  ? `Komentujesz jako ${me.name}… użyj @imię, żeby kogoś oznaczyć`
+                  : 'Napisz komentarz… (wybierz użytkownika w nagłówku, żeby go podpisać)'
               }
             />
             <div className="comment-form-actions">
@@ -166,20 +166,20 @@ export function CommentsPanel({ entityType, entityId }: Props) {
                     type="button"
                     className="link-btn"
                     onClick={() => insertMention(p)}
-                    title={`Mention ${p.name}`}
+                    title={`Oznacz ${p.name}`}
                   >
                     @{p.firstName}
                   </button>
                 ))}
               </div>
               <button type="submit" className="btn primary" disabled={!body.trim()}>
-                Comment
+                Skomentuj
               </button>
             </div>
           </form>
         </>
       ) : activity.length === 0 ? (
-        <p className="muted comments-empty">No activity yet.</p>
+        <p className="muted comments-empty">Brak aktywności.</p>
       ) : (
         <ul className="activity-list">
           {activity.map((e) => {
@@ -187,7 +187,7 @@ export function CommentsPanel({ entityType, entityId }: Props) {
             return (
               <li key={e.id} className="activity-item">
                 <span className="activity-msg">
-                  <strong>{actor?.name ?? 'Someone'}</strong> {e.message}
+                  <strong>{actor?.name ?? 'Ktoś'}</strong> {e.message}
                 </span>
                 <span className="muted activity-time">{formatTimestamp(e.createdAt)}</span>
               </li>

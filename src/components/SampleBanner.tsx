@@ -16,7 +16,7 @@ export function SampleBanner() {
   return (
     <div className="sample-banner" role="status">
       <span className="sample-banner-text">
-        No data yet — load some sample tasks and people to explore the planner.
+        Brak danych — wczytaj przykładowe zadania i osoby, żeby poznać planer.
       </span>
       <div className="sample-banner-actions">
         <button
@@ -24,14 +24,14 @@ export function SampleBanner() {
           className="btn primary"
           onClick={() => dispatch({ type: 'LOAD_SAMPLE', data: buildSampleData() })}
         >
-          Load sample data
+          Wczytaj przykładowe dane
         </button>
         <button
           type="button"
           className="btn ghost"
           onClick={() => dispatch({ type: 'DISMISS_SAMPLE_BANNER' })}
         >
-          Dismiss
+          Ukryj
         </button>
       </div>
     </div>

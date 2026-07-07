@@ -65,24 +65,24 @@ export function WorkloadPage() {
   return (
     <section className="page page-wide">
       <div className="page-head">
-        <h1>Workload</h1>
+        <h1>Obciążenie</h1>
         <div className="cal-nav">
           <button
             type="button"
             className="nav-btn"
             onClick={() => setAnchor((a) => shiftWeek(a, -1))}
-            aria-label="Previous week"
+            aria-label="Poprzedni tydzień"
           >
             ‹
           </button>
           <button type="button" className="btn ghost" onClick={() => setAnchor(todayStr())}>
-            Today
+            Dzisiaj
           </button>
           <button
             type="button"
             className="nav-btn"
             onClick={() => setAnchor((a) => shiftWeek(a, 1))}
-            aria-label="Next week"
+            aria-label="Następny tydzień"
           >
             ›
           </button>
@@ -94,9 +94,9 @@ export function WorkloadPage() {
         <select
           value={departmentFilter}
           onChange={(e) => setDepartmentFilter(e.target.value)}
-          aria-label="Filter by department"
+          aria-label="Filtruj po dziale"
         >
-          <option value="">All departments</option>
+          <option value="">Wszystkie działy</option>
           {state.departments.map((d) => (
             <option key={d.id} value={d.id}>
               {d.name}
@@ -106,9 +106,9 @@ export function WorkloadPage() {
         <select
           value={clientFilter}
           onChange={(e) => setClientFilter(e.target.value)}
-          aria-label="Filter by client"
+          aria-label="Filtruj po kliencie"
         >
-          <option value="">All clients</option>
+          <option value="">Wszyscy klienci</option>
           {state.clients.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
@@ -118,9 +118,9 @@ export function WorkloadPage() {
         <select
           value={serviceFilter}
           onChange={(e) => setServiceFilter(e.target.value)}
-          aria-label="Filter by service type"
+          aria-label="Filtruj po typie usługi"
         >
-          <option value="">All service types</option>
+          <option value="">Wszystkie typy usług</option>
           {state.serviceTypes.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}
@@ -131,9 +131,9 @@ export function WorkloadPage() {
 
       {people.length === 0 ? (
         <div className="empty-state">
-          <p className="empty-title">No people</p>
+          <p className="empty-title">Brak osób</p>
           <p className="empty-hint">
-            Add team members on the <Link to="/people">People</Link> page.
+            Dodaj członków zespołu na stronie <Link to="/people">Zespół</Link>.
           </p>
         </div>
       ) : (
@@ -141,7 +141,7 @@ export function WorkloadPage() {
           <table className="alloc-grid workload-table">
             <thead>
               <tr>
-                <th className="alloc-day-col">Person</th>
+                <th className="alloc-day-col">Osoba</th>
                 {days.map((d) => (
                   <th
                     key={d}
@@ -150,9 +150,9 @@ export function WorkloadPage() {
                     {formatRowLabel(d)}
                   </th>
                 ))}
-                <th>Assigned</th>
-                <th>Available</th>
-                <th>Load</th>
+                <th>Przypisane</th>
+                <th>Dostępne</th>
+                <th>Obciążenie</th>
               </tr>
             </thead>
             <tbody>
@@ -189,7 +189,7 @@ export function WorkloadPage() {
                           ]
                             .filter(Boolean)
                             .join(' ')}
-                          title={over ? `${p.name}: ${fmtHours(h)}h > ${capacity}h capacity` : undefined}
+                          title={over ? `${p.name}: ${fmtHours(h)}h > ${capacity}h dostępności` : undefined}
                         >
                           {h === 0 ? '—' : `${fmtHours(h)}h`}
                           {over && ' ⚠'}
@@ -202,7 +202,7 @@ export function WorkloadPage() {
                       <div
                         className="load-bar"
                         role="img"
-                        aria-label={`${pct}% of available hours`}
+                        aria-label={`${pct}% dostępnych godzin`}
                       >
                         <div
                           className={pct > 100 ? 'load-bar-fill over' : 'load-bar-fill'}
@@ -215,9 +215,9 @@ export function WorkloadPage() {
                       {overloadedDays.length > 0 && (
                         <span
                           className="workload-warn"
-                          title={`Over capacity on: ${overloadedDays.map(formatRowLabel).join(', ')}`}
+                          title={`Powyżej dostępności: ${overloadedDays.map(formatRowLabel).join(', ')}`}
                         >
-                          ⚠ {overloadedDays.length} day{overloadedDays.length === 1 ? '' : 's'}
+                          ⚠ {overloadedDays.length} {overloadedDays.length === 1 ? 'dzień' : 'dni'}
                         </span>
                       )}
                     </td>
@@ -229,8 +229,8 @@ export function WorkloadPage() {
         </div>
       )}
       <p className="field-hint">
-        Available = daily capacity × {workdays.length} workdays. Filters by client and
-        service type narrow which planned hours are counted.
+        Dostępne = dzienna dostępność × {workdays.length} dni roboczych. Filtry klienta i
+        typu usługi zawężają godziny uwzględniane w podsumowaniu.
       </p>
     </section>
   );

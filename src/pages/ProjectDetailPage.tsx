@@ -34,9 +34,9 @@ export function ProjectDetailPage() {
     return (
       <section className="page">
         <div className="empty-state">
-          <p className="empty-title">Project not found</p>
+          <p className="empty-title">Nie znaleziono projektu</p>
           <Link to="/projects" className="btn primary">
-            Back to projects
+            Wróć do projektów
           </Link>
         </div>
       </section>
@@ -84,11 +84,11 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   const save = () => {
     const trimmed = name.trim();
     if (!trimmed) {
-      setError('Project name is required');
+      setError('Nazwa projektu jest wymagana');
       return;
     }
     if (endDate < startDate) {
-      setError('End date must be on or after the start date');
+      setError('Data końca musi być taka sama jak data startu albo późniejsza');
       return;
     }
     const draft: ProjectDraft = {
@@ -112,7 +112,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   const remove = () => {
     if (
       window.confirm(
-        `Delete project "${project.name}"? This removes its ${tasks.length} task(s), assignments, planned hours, milestones, and comments.`,
+        `Usunąć projekt „${project.name}”? To usunie ${tasks.length} zadań, przypisania, zaplanowane godziny, kamienie milowe i komentarze.`,
       )
     ) {
       dispatch({ type: 'DELETE_PROJECT', projectId: project.id });
@@ -153,23 +153,23 @@ function ProjectDetail({ projectId }: { projectId: string }) {
         </h1>
         <div className="page-head-actions">
           <Link to="/projects" className="btn ghost">
-            Back
+            Wróć
           </Link>
           <button type="button" className="btn danger-ghost" onClick={remove}>
-            Delete project
+            Usuń projekt
           </button>
         </div>
       </div>
 
       <div className="editor-section">
-        <h2>Details</h2>
+        <h2>Szczegóły</h2>
         <div className="field-row">
           <div className="field">
-            <label htmlFor="pd-name">Name *</label>
+            <label htmlFor="pd-name">Nazwa *</label>
             <input id="pd-name" value={name} onChange={(e) => setName(e.target.value)} />
           </div>
           <div className="field">
-            <label htmlFor="pd-client">Client</label>
+            <label htmlFor="pd-client">Klient</label>
             <select
               id="pd-client"
               value={clientId}
@@ -192,7 +192,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               {pickableStatuses.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
-                  {s.archived ? ' (archived)' : ''}
+                  {s.archived ? ' (zarchiwizowany)' : ''}
                 </option>
               ))}
             </select>
@@ -200,7 +200,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
         </div>
         <div className="field-row">
           <div className="field">
-            <label htmlFor="pd-start">Start date</label>
+            <label htmlFor="pd-start">Data startu</label>
             <input
               id="pd-start"
               type="date"
@@ -209,7 +209,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
             />
           </div>
           <div className="field">
-            <label htmlFor="pd-end">End date</label>
+            <label htmlFor="pd-end">Data końca</label>
             <input
               id="pd-end"
               type="date"
@@ -218,7 +218,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
             />
           </div>
           <div className="field">
-            <label htmlFor="pd-dep">Department</label>
+            <label htmlFor="pd-dep">Dział</label>
             <select
               id="pd-dep"
               value={departmentId}
@@ -233,7 +233,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
             </select>
           </div>
           <div className="field">
-            <label htmlFor="pd-svc">Service type</label>
+            <label htmlFor="pd-svc">Typ usługi</label>
             <select
               id="pd-svc"
               value={serviceTypeId}
@@ -249,7 +249,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
           </div>
         </div>
         <div className="field">
-          <label htmlFor="pd-desc">Description</label>
+          <label htmlFor="pd-desc">Opis</label>
           <textarea
             id="pd-desc"
             rows={3}
@@ -259,24 +259,24 @@ function ProjectDetail({ projectId }: { projectId: string }) {
         </div>
         <div className="field-row payment-row">
           <span className="field-hint">
-            Payment: <Coin paid={project.paid} onToggle={togglePaid} />{' '}
-            <strong>{project.paid ? 'Paid' : 'Unpaid'}</strong> (click the coin to toggle)
+            Płatność: <Coin paid={project.paid} onToggle={togglePaid} />{' '}
+            <strong>{project.paid ? 'opłacony' : 'nieopłacony'}</strong> (kliknij monetę, aby przełączyć)
           </span>
         </div>
         {error && <p className="field-error">{error}</p>}
         {dirty && (
           <div className="editor-actions">
             <button type="button" className="btn primary" onClick={save}>
-              Save changes
+              Zapisz zmiany
             </button>
           </div>
         )}
       </div>
 
       <div className="editor-section">
-        <h2>Milestones</h2>
+        <h2>Kamienie milowe</h2>
         {milestones.length === 0 ? (
-          <p className="field-hint">No milestones yet.</p>
+          <p className="field-hint">Brak kamieni milowych.</p>
         ) : (
           <ul className="milestone-list">
             {milestones.map((m) => (
@@ -295,14 +295,14 @@ function ProjectDetail({ projectId }: { projectId: string }) {
                       date: e.target.value,
                     })
                   }
-                  aria-label={`Date for ${m.name}`}
+                  aria-label={`Data dla ${m.name}`}
                 />
                 <button
                   type="button"
                   className="btn danger-ghost"
                   onClick={() => dispatch({ type: 'DELETE_MILESTONE', milestoneId: m.id })}
                 >
-                  Remove
+                  Usuń
                 </button>
               </li>
             ))}
@@ -312,37 +312,37 @@ function ProjectDetail({ projectId }: { projectId: string }) {
           <input
             value={msName}
             onChange={(e) => setMsName(e.target.value)}
-            placeholder="Milestone name"
-            aria-label="Milestone name"
+            placeholder="Nazwa kamienia milowego"
+            aria-label="Nazwa kamienia milowego"
           />
           <input
             type="date"
             value={msDate}
             onChange={(e) => setMsDate(e.target.value)}
-            aria-label="Milestone date"
+            aria-label="Data kamienia milowego"
           />
           <button type="submit" className="btn soft" disabled={!msName.trim()}>
-            Add milestone
+            Dodaj kamień milowy
           </button>
         </form>
       </div>
 
       <div className="editor-section">
         <div className="section-head">
-          <h2>Tasks ({tasks.length})</h2>
+          <h2>Zadania ({tasks.length})</h2>
           <button
             type="button"
             className="btn soft"
             onClick={() => openNewTask(project.id)}
           >
-            + New task
+            + Nowe zadanie
           </button>
         </div>
         <p className="field-hint">
-          {fmtHours(projectPlannedTotal(state, project.id))}h planned across the project.
+          Zaplanowano {fmtHours(projectPlannedTotal(state, project.id))}h w całym projekcie.
         </p>
         {tasks.length === 0 ? (
-          <p className="field-hint">No tasks in this project yet.</p>
+          <p className="field-hint">W tym projekcie nie ma jeszcze zadań.</p>
         ) : (
           <ul className="project-task-list">
             {tasks.map((t) => (
@@ -371,7 +371,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
       </div>
 
       <div className="editor-section">
-        <h2>Discussion</h2>
+        <h2>Dyskusja</h2>
         <CommentsPanel entityType="project" entityId={project.id} />
       </div>
     </section>

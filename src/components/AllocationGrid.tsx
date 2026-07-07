@@ -79,7 +79,7 @@ export function AllocationGrid({
       <table className="alloc-grid">
         <thead>
           <tr>
-            <th className="alloc-day-col">Day</th>
+            <th className="alloc-day-col">Dzień</th>
             {people.map((p) => (
               <th key={p.id} className="alloc-person-col">
                 <div className="alloc-person-head">
@@ -95,22 +95,22 @@ export function AllocationGrid({
                     type="button"
                     className="link-btn"
                     onClick={() => onFillWeekdays(p.id)}
-                    title="Set 8h on all weekday cells"
+                    title="Ustaw 8h we wszystkie dni robocze"
                   >
-                    Fill weekdays
+                    Wypełnij dni robocze
                   </button>
                   <button
                     type="button"
                     className="link-btn"
                     onClick={() => onClearPerson(p.id)}
-                    title="Set all cells to 0"
+                    title="Ustaw wszystkie komórki na 0"
                   >
-                    Clear
+                    Wyczyść
                   </button>
                 </div>
               </th>
             ))}
-            <th className="alloc-total-col">Day total</th>
+            <th className="alloc-total-col">Suma dnia</th>
           </tr>
         </thead>
         <tbody>
@@ -131,7 +131,7 @@ export function AllocationGrid({
                       className={overloaded ? 'alloc-cell overload' : 'alloc-cell'}
                       title={
                         overloaded
-                          ? `${p.name}: ${dayTotalForPerson}h total on this day`
+                          ? `${p.name}: ${dayTotalForPerson}h łącznie tego dnia`
                           : undefined
                       }
                     >
@@ -162,7 +162,7 @@ export function AllocationGrid({
         <tfoot>
           <tr>
             <th scope="row" className="alloc-day-label">
-              Person total
+              Suma osoby
             </th>
             {people.map((p) => (
               <td key={p.id} className="alloc-person-total">

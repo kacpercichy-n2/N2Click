@@ -24,13 +24,13 @@ export function AdminPage() {
     return (
       <section className="page">
         <div className="page-head">
-          <h1>Admin</h1>
+          <h1>Administracja</h1>
         </div>
         <div className="empty-state">
-          <p className="empty-title">Admins only</p>
+          <p className="empty-title">Tylko dla adminów</p>
           <p className="empty-hint">
-            Switch "Acting as" in the header to a person with admin rights to manage
-            statuses, clients, departments, and service types.
+            Przełącz „Występuj jako” w nagłówku na osobę z uprawnieniami admina,
+            aby zarządzać statusami, klientami, działami i typami usług.
           </p>
         </div>
       </section>
@@ -55,15 +55,15 @@ export function AdminPage() {
   return (
     <section className="page">
       <div className="page-head">
-        <h1>Admin</h1>
+        <h1>Administracja</h1>
       </div>
 
       <div className="editor-section">
-        <h2>Pipeline statuses</h2>
+        <h2>Statusy lejka</h2>
         <p className="field-hint">
-          Statuses drive the kanban columns and the status of every project and task.
-          Order here = order in the pipeline. Archived statuses disappear from pickers
-          but keep historical items intact; delete is only possible when unused.
+          Statusy sterują kolumnami kanbana oraz statusem każdego projektu i zadania.
+          Kolejność tutaj jest kolejnością w lejku. Zarchiwizowane statusy znikają
+          z list wyboru, ale zachowują historię; usunięcie jest możliwe tylko, gdy status nie jest używany.
         </p>
         <ul className="admin-status-list">
           {statuses.map((s, i) => (
@@ -74,7 +74,7 @@ export function AdminPage() {
                 onChange={(e) =>
                   dispatch({ type: 'SAVE_STATUS', statusId: s.id, name: s.name, color: e.target.value })
                 }
-                aria-label={`Color of ${s.name}`}
+                aria-label={`Kolor statusu ${s.name}`}
               />
               <input
                 className="admin-status-name"
@@ -82,7 +82,7 @@ export function AdminPage() {
                 onChange={(e) =>
                   dispatch({ type: 'SAVE_STATUS', statusId: s.id, name: e.target.value, color: s.color })
                 }
-                aria-label={`Name of status ${s.name}`}
+                aria-label={`Nazwa statusu ${s.name}`}
               />
               <code className="muted admin-status-slug">/{s.slug}</code>
               <StatusBadge status={s} />
@@ -92,7 +92,7 @@ export function AdminPage() {
                   className="nav-btn"
                   disabled={i === 0}
                   onClick={() => dispatch({ type: 'REORDER_STATUS', statusId: s.id, direction: -1 })}
-                  aria-label={`Move ${s.name} earlier`}
+                  aria-label={`Przesuń ${s.name} wcześniej`}
                 >
                   ↑
                 </button>
@@ -101,7 +101,7 @@ export function AdminPage() {
                   className="nav-btn"
                   disabled={i === statuses.length - 1}
                   onClick={() => dispatch({ type: 'REORDER_STATUS', statusId: s.id, direction: 1 })}
-                  aria-label={`Move ${s.name} later`}
+                  aria-label={`Przesuń ${s.name} później`}
                 >
                   ↓
                 </button>
@@ -112,16 +112,16 @@ export function AdminPage() {
                     dispatch({ type: 'SET_STATUS_ARCHIVED', statusId: s.id, archived: !s.archived })
                   }
                 >
-                  {s.archived ? 'Restore' : 'Archive'}
+                  {s.archived ? 'Przywróć' : 'Archiwizuj'}
                 </button>
                 <button
                   type="button"
                   className="btn danger-ghost"
                   disabled={statusInUse(s.id)}
-                  title={statusInUse(s.id) ? 'In use by projects or tasks — archive instead' : undefined}
+                  title={statusInUse(s.id) ? 'Używany przez projekty lub zadania — zamiast tego zarchiwizuj' : undefined}
                   onClick={() => dispatch({ type: 'DELETE_STATUS', statusId: s.id })}
                 >
-                  Delete
+                  Usuń
                 </button>
               </span>
             </li>
@@ -131,23 +131,23 @@ export function AdminPage() {
           <input
             value={statusInput}
             onChange={(e) => setStatusInput(e.target.value)}
-            placeholder='New status — try the quick command "/Client review"'
-            aria-label="New status name"
+            placeholder='Nowy status — spróbuj szybkiej komendy "/Akcept klienta"'
+            aria-label="Nazwa nowego statusu"
           />
           <input
             type="color"
             value={statusColor}
             onChange={(e) => setStatusColor(e.target.value)}
-            aria-label="New status color"
+            aria-label="Kolor nowego statusu"
           />
           <button type="submit" className="btn primary" disabled={!statusInput.replace(/^\//, '').trim()}>
-            Add status
+            Dodaj status
           </button>
         </form>
       </div>
 
       <div className="editor-section">
-        <h2>Clients</h2>
+        <h2>Klienci</h2>
         <SimpleList
           items={state.clients.map((c) => ({ id: c.id, name: c.name }))}
           onRename={(id, name) => dispatch({ type: 'RENAME_CLIENT', clientId: id, name })}
@@ -155,7 +155,7 @@ export function AdminPage() {
             const count = state.projects.filter((p) => p.clientId === id).length;
             if (
               window.confirm(
-                `Delete client "${name}"?${count > 0 ? ` This also deletes their ${count} project(s) with all tasks and planned hours.` : ''}`,
+                `Usunąć klienta „${name}”?${count > 0 ? ` To usunie też jego projekty (${count}) wraz ze wszystkimi zadaniami i zaplanowanymi godzinami.` : ''}`,
               )
             ) {
               dispatch({ type: 'DELETE_CLIENT', clientId: id });
@@ -174,22 +174,22 @@ export function AdminPage() {
           <input
             value={clientInput}
             onChange={(e) => setClientInput(e.target.value)}
-            placeholder="New client name"
-            aria-label="New client name"
+            placeholder="Nazwa nowego klienta"
+            aria-label="Nazwa nowego klienta"
           />
           <button type="submit" className="btn primary" disabled={!clientInput.trim()}>
-            Add client
+            Dodaj klienta
           </button>
         </form>
       </div>
 
       <div className="editor-section">
-        <h2>Departments</h2>
+        <h2>Działy</h2>
         <SimpleList
           items={state.departments}
           onRename={(id, name) => dispatch({ type: 'RENAME_DEPARTMENT', departmentId: id, name })}
           onDelete={(id, name) => {
-            if (window.confirm(`Delete department "${name}"? People and projects lose the tag.`)) {
+            if (window.confirm(`Usunąć dział „${name}”? Osoby i projekty stracą tę etykietę.`)) {
               dispatch({ type: 'DELETE_DEPARTMENT', departmentId: id });
             }
           }}
@@ -206,24 +206,24 @@ export function AdminPage() {
           <input
             value={depInput}
             onChange={(e) => setDepInput(e.target.value)}
-            placeholder="New department name"
-            aria-label="New department name"
+            placeholder="Nazwa nowego działu"
+            aria-label="Nazwa nowego działu"
           />
           <button type="submit" className="btn primary" disabled={!depInput.trim()}>
-            Add department
+            Dodaj dział
           </button>
         </form>
       </div>
 
       <div className="editor-section">
-        <h2>Service types</h2>
+        <h2>Typy usług</h2>
         <SimpleList
           items={state.serviceTypes}
           onRename={(id, name) =>
             dispatch({ type: 'RENAME_SERVICE_TYPE', serviceTypeId: id, name })
           }
           onDelete={(id, name) => {
-            if (window.confirm(`Delete service type "${name}"? Projects lose the tag.`)) {
+            if (window.confirm(`Usunąć typ usługi „${name}”? Projekty stracą tę etykietę.`)) {
               dispatch({ type: 'DELETE_SERVICE_TYPE', serviceTypeId: id });
             }
           }}
@@ -240,11 +240,11 @@ export function AdminPage() {
           <input
             value={svcInput}
             onChange={(e) => setSvcInput(e.target.value)}
-            placeholder="New service type name"
-            aria-label="New service type name"
+            placeholder="Nazwa nowego typu usługi"
+            aria-label="Nazwa nowego typu usługi"
           />
           <button type="submit" className="btn primary" disabled={!svcInput.trim()}>
-            Add service type
+            Dodaj typ usługi
           </button>
         </form>
       </div>
@@ -261,7 +261,7 @@ function SimpleList({
   onRename: (id: string, name: string) => void;
   onDelete: (id: string, name: string) => void;
 }) {
-  if (items.length === 0) return <p className="field-hint">None yet.</p>;
+  if (items.length === 0) return <p className="field-hint">Na razie brak.</p>;
   return (
     <ul className="admin-simple-list">
       {items.map((item) => (
@@ -269,14 +269,14 @@ function SimpleList({
           <input
             value={item.name}
             onChange={(e) => onRename(item.id, e.target.value)}
-            aria-label={`Rename ${item.name}`}
+            aria-label={`Zmień nazwę ${item.name}`}
           />
           <button
             type="button"
             className="btn danger-ghost"
             onClick={() => onDelete(item.id, item.name)}
           >
-            Delete
+            Usuń
           </button>
         </li>
       ))}

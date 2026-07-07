@@ -24,15 +24,15 @@ import { SampleBanner } from './components/SampleBanner';
 import { TaskModal } from './components/TaskModal';
 
 const NAV: Array<[string, string]> = [
-  ['/dashboard', 'Dashboard'],
-  ['/projects', 'Projects'],
+  ['/dashboard', 'Panel'],
+  ['/projects', 'Projekty'],
   ['/kanban', 'Kanban'],
-  ['/timeline', 'Timeline'],
-  ['/tasks', 'Tasks'],
-  ['/calendar', 'Calendar'],
-  ['/people', 'People'],
-  ['/workload', 'Workload'],
-  ['/admin', 'Admin'],
+  ['/timeline', 'Oś czasu'],
+  ['/tasks', 'Zadania'],
+  ['/calendar', 'Kalendarz'],
+  ['/people', 'Zespół'],
+  ['/workload', 'Obciążenie'],
+  ['/admin', 'Administracja'],
 ];
 
 export function App() {
@@ -54,8 +54,8 @@ export function App() {
           ))}
         </nav>
         {state.people.length > 0 && (
-          <label className="acting-as" title="Who is using the app (comment author, admin rights)">
-            <span className="acting-as-label">Acting as</span>
+          <label className="acting-as" title="Aktualny użytkownik aplikacji (autor komentarzy, uprawnienia admina)">
+            <span className="acting-as-label">Występuj jako</span>
             <select
               value={state.currentUserId}
               onChange={(e) =>
@@ -66,7 +66,7 @@ export function App() {
               {state.people.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
-                  {p.isAdmin ? ' (admin)' : ''}
+                  {p.isAdmin ? ' (administrator)' : ''}
                 </option>
               ))}
             </select>
