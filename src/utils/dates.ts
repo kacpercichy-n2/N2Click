@@ -36,6 +36,26 @@ export function todayStr(): DateStr {
   return toDateStr(new Date());
 }
 
+/** Shift a 'yyyy-MM-dd' string by whole days. */
+export function addDaysStr(d: DateStr, delta: number): DateStr {
+  return toDateStr(addDays(parseDate(d), delta));
+}
+
+/** Whole-day difference b - a for 'yyyy-MM-dd' strings. */
+export function diffDays(a: DateStr, b: DateStr): number {
+  return differenceInCalendarDays(parseDate(b), parseDate(a));
+}
+
+/** Short label like "3 Aug". */
+export function formatShort(d: DateStr): string {
+  return format(parseDate(d), 'd MMM');
+}
+
+/** Timestamp label like "3 Aug 2026, 14:05" from an ISO string. */
+export function formatTimestamp(iso: string): string {
+  return format(new Date(iso), 'd MMM yyyy, HH:mm');
+}
+
 /** Inclusive list of 'yyyy-MM-dd' between start and end (start<=end assumed). */
 export function eachDayInclusive(start: DateStr, end: DateStr): DateStr[] {
   const s = parseDate(start);

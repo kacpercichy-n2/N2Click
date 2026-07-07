@@ -1,19 +1,26 @@
-// Deterministic person colours. A fixed palette of accessible, visually distinct
-// hues. To guarantee distinctness for a real team, colours are assigned by each
-// person's stable position in the people list (registered once by the store).
-// A hash fallback keeps personColor(id) usable for ids not yet registered.
+// Deterministic person colours. A fixed palette of visually distinct hues,
+// re-picked for the N2 Media DARK theme. Constraints for this palette:
+//   1. Every colour must read clearly on dark glass surfaces (--n2-surface),
+//      so they are light/saturated variants (also used as dark-text avatar fills).
+//   2. No hue may be confusable with --n2-danger (#ff4f72, a rose-red) used for
+//      overload/error tinting — the rose/red-pink region (~330-360°) is dropped
+//      entirely (sweep runs orange → gold → green → cyan → blue → violet only).
+//   3. Colours are assigned by each person's stable position in the people list
+//      (registered once by the store); a hash fallback keeps personColor(id)
+//      usable for ids not yet registered.
+// Order interleaves the most-different hues first so small teams stay maximal.
 
 const PALETTE = [
-  '#2563eb', // blue
-  '#e11d48', // rose
-  '#059669', // emerald
-  '#d97706', // amber
-  '#7c3aed', // violet
-  '#db2777', // pink
-  '#0891b2', // cyan
-  '#65a30d', // lime
-  '#ea580c', // orange
-  '#4f46e5', // indigo
+  '#5b9dff', // azure blue
+  '#3fe0a3', // spring green
+  '#ffca45', // gold
+  '#c58bff', // violet
+  '#38d0e0', // cyan
+  '#ff9640', // orange
+  '#7fe05b', // green
+  '#a98bff', // indigo
+  '#d8e84f', // chartreuse
+  '#7c8cff', // cornflower
 ];
 
 // personId -> palette index, keyed by stable creation/list order.

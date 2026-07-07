@@ -1,33 +1,44 @@
+// People: employee list + add form (first/last name, job title, department,
+// avatar emoji, daily capacity, admin flag). Click a person for their profile.
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
-import { personTotalHours } from '../store/selectors';
-import { personColor } from '../utils/colors';
+import type { PersonDraft } from '../store/AppStore';
+import { getDepartment, personTotalHours } from '../store/selectors';
+import { Avatar } from '../components/Avatar';
+import { DEFAULT_CAPACITY } from '../store/storage';
 
 function fmtHours(n: number): string {
   return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
 }
 
+const emptyDraft = (): PersonDraft => ({
+  firstName: '',
+  lastName: '',
+  email: '',
+  role: '',
+  departmentId: '',
+  avatar: '',
+  capacity: DEFAULT_CAPACITY,
+  isAdmin: false,
+});
+
 export function PeoplePage() {
   const { state, dispatch } = useStore();
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [role, setRole] = useState('');
+  const [draft, setDraft] = useState<PersonDraft>(emptyDraft);
   const [error, setError] = useState('');
+
+  const set = <K extends keyof PersonDraft>(key: K, value: PersonDraft[K]) =>
+    setDraft((d) => ({ ...d, [key]: value }));
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    const trimmed = name.trim();
-    if (!trimmed) {
-      setError('Name is required');
+    if (!draft.firstName.trim()) {
+      setError('First name is required');
       return;
     }
-    dispatch({
-      type: 'ADD_PERSON',
-      person: { name: trimmed, email: email.trim(), role: role.trim() },
-    });
-    setName('');
-    setEmail('');
-    setRole('');
+    dispatch({ type: 'ADD_PERSON', person: draft });
+    setDraft(emptyDraft());
     setError('');
   };
 
@@ -49,36 +60,90 @@ export function PeoplePage() {
 
       <form className="person-form" onSubmit={submit}>
         <div className="field">
-          <label htmlFor="p-name">Name *</label>
+          <label htmlFor="p-first">First name *</label>
           <input
-            id="p-name"
-            value={name}
+            id="p-first"
+            value={draft.firstName}
             onChange={(e) => {
-              setName(e.target.value);
+              set('firstName', e.target.value);
               if (error) setError('');
             }}
             placeholder="e.g. Ola"
           />
         </div>
         <div className="field">
-          <label htmlFor="p-email">Email</label>
+          <label htmlFor="p-last">Last name</label>
           <input
-            id="p-email"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            id="p-last"
+            value={draft.lastName}
+            onChange={(e) => set('lastName', e.target.value)}
             placeholder="optional"
           />
         </div>
         <div className="field">
-          <label htmlFor="p-role">Role</label>
+          <label htmlFor="p-role">Job title</label>
           <input
             id="p-role"
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
+            value={draft.role}
+            onChange={(e) => set('role', e.target.value)}
+            placeholder="e.g. Designer"
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="p-dep">Department</label>
+          <select
+            id="p-dep"
+            value={draft.departmentId}
+            onChange={(e) => set('departmentId', e.target.value)}
+          >
+            <option value="">—</option>
+            {state.departments.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="p-email">Email</label>
+          <input
+            id="p-email"
+            type="email"
+            value={draft.email}
+            onChange={(e) => set('email', e.target.value)}
             placeholder="optional"
           />
         </div>
+        <div className="field field-narrow">
+          <label htmlFor="p-avatar">Avatar</label>
+          <input
+            id="p-avatar"
+            value={draft.avatar}
+            onChange={(e) => set('avatar', e.target.value)}
+            placeholder="🙂"
+            maxLength={4}
+          />
+        </div>
+        <div className="field field-narrow">
+          <label htmlFor="p-cap">Hours/day</label>
+          <input
+            id="p-cap"
+            type="number"
+            min={1}
+            max={24}
+            step={0.5}
+            value={draft.capacity}
+            onChange={(e) => set('capacity', Number(e.target.value) || DEFAULT_CAPACITY)}
+          />
+        </div>
+        <label className="field-check">
+          <input
+            type="checkbox"
+            checked={draft.isAdmin}
+            onChange={(e) => set('isAdmin', e.target.checked)}
+          />
+          Admin
+        </label>
         <button type="submit" className="btn primary">
           Add person
         </button>
@@ -94,18 +159,22 @@ export function PeoplePage() {
         <ul className="people-list">
           {state.people.map((p) => (
             <li key={p.id} className="person-row">
-              <span
-                className="person-dot lg"
-                style={{ background: personColor(p.id) }}
-                aria-hidden
-              />
-              <div className="person-row-main">
-                <span className="person-row-name">{p.name}</span>
+              <Avatar person={p} size={36} />
+              <Link to={`/people/${p.id}`} className="person-row-main">
+                <span className="person-row-name">
+                  {p.name}
+                  {p.isAdmin && <span className="admin-tag">admin</span>}
+                </span>
                 <span className="person-row-sub">
                   {p.role && <span className="person-row-role">{p.role}</span>}
+                  {p.departmentId && (
+                    <span className="person-row-role">
+                      {getDepartment(state, p.departmentId)?.name}
+                    </span>
+                  )}
                   {p.email && <span className="person-row-email">{p.email}</span>}
                 </span>
-              </div>
+              </Link>
               <span className="person-row-hours">
                 {fmtHours(personTotalHours(state, p.id))}h assigned
               </span>

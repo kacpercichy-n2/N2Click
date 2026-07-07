@@ -10,7 +10,7 @@ import {
   isWeekend,
   parseDate,
 } from '../utils/dates';
-import { hoursForPersonOnDate, OVERLOAD_THRESHOLD } from '../store/selectors';
+import { hoursForPersonOnDate, personCapacity } from '../store/selectors';
 
 /** allocations keyed as `${personId}|${date}` -> hours. */
 export type AllocMap = Record<string, number>;
@@ -124,7 +124,7 @@ export function AllocationGrid({
                 {people.map((p) => {
                   const value = cellValue(p.id, d);
                   const dayTotalForPerson = baseHoursFor(p.id, d) + value;
-                  const overloaded = dayTotalForPerson > OVERLOAD_THRESHOLD;
+                  const overloaded = dayTotalForPerson > personCapacity(state, p.id);
                   return (
                     <td
                       key={p.id}

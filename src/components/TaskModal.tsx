@@ -1,14 +1,15 @@
-import { useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+// Task popout modal. Opening a task never leaves the current page — it renders
+// as an overlay driven by the `?task=<id>` (or `?task=new[&project=<id>]`)
+// search params. Rendered ONCE at App level. Closing removes the task/project
+// params while keeping the rest of the URL (and the page's scroll) intact.
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { AnimatePresence, motion } from 'motion/react';
 import { useStore } from '../store/AppStore';
 import type { AllocationCell, TaskDraft } from '../store/AppStore';
-import { assigneeIdsOfTask } from '../store/selectors';
-import {
-  AllocationGrid,
-  allocKey,
-  isWeekdayDate,
-  type AllocMap,
-} from '../components/AllocationGrid';
+import { activeStatuses, assigneeIdsOfTask, getClient } from '../store/selectors';
+import { CommentsPanel } from './CommentsPanel';
+import { AllocationGrid, allocKey, isWeekdayDate, type AllocMap } from './AllocationGrid';
 import { personColor } from '../utils/colors';
 import { eachDayInclusive, inclusiveDayCount, todayStr } from '../utils/dates';
 
@@ -18,20 +19,200 @@ function fmtHours(n: number): string {
   return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
 }
 
-export function TaskEditorPage() {
-  const { id } = useParams();
+/**
+ * Shared opener hook. Merges the task/project search params onto the CURRENT
+ * location so the page underneath never changes.
+ */
+export function useOpenTask() {
   const navigate = useNavigate();
-  const { state, dispatch } = useStore();
+  const location = useLocation();
 
-  const existing = id ? state.tasks.find((t) => t.id === id) : undefined;
+  const openTask = useCallback(
+    (id: string) => {
+      const params = new URLSearchParams(location.search);
+      params.set('task', id);
+      params.delete('project');
+      navigate({ pathname: location.pathname, search: params.toString() });
+    },
+    [navigate, location.pathname, location.search],
+  );
+
+  const openNewTask = useCallback(
+    (projectId?: string) => {
+      const params = new URLSearchParams(location.search);
+      params.set('task', 'new');
+      if (projectId) params.set('project', projectId);
+      else params.delete('project');
+      navigate({ pathname: location.pathname, search: params.toString() });
+    },
+    [navigate, location.pathname, location.search],
+  );
+
+  return { openTask, openNewTask };
+}
+
+/** App-level mount point. Present on every route; only visible when `?task=` is set. */
+export function TaskModal() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const taskParam = searchParams.get('task');
+  const projectParam = searchParams.get('project');
+
+  const close = useCallback(() => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('task');
+        next.delete('project');
+        return next;
+      },
+      { replace: false },
+    );
+  }, [setSearchParams]);
+
+  return (
+    <AnimatePresence>
+      {taskParam !== null && (
+        <TaskModalShell
+          key="task-modal"
+          taskParam={taskParam}
+          projectParam={projectParam}
+          onClose={close}
+        />
+      )}
+    </AnimatePresence>
+  );
+}
+
+interface ShellProps {
+  taskParam: string;
+  projectParam: string | null;
+  onClose: () => void;
+}
+
+function TaskModalShell({ taskParam, projectParam, onClose }: ShellProps) {
+  const { state, dispatch } = useStore();
+  const isNew = taskParam === 'new';
+  const existing = isNew ? undefined : state.tasks.find((t) => t.id === taskParam);
+  const notFound = !isNew && !existing;
+
+  // Escape closes; body scroll locked while the modal is open.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [onClose]);
+
+  const handleDelete = () => {
+    if (!existing) return;
+    if (
+      window.confirm(
+        `Delete "${existing.title}"? This removes its assignments and planned hours.`,
+      )
+    ) {
+      dispatch({ type: 'DELETE_TASK', taskId: existing.id });
+      onClose();
+    }
+  };
+
+  const heading = notFound ? 'Task not found' : isNew ? 'New task' : 'Edit task';
+
+  return (
+    <>
+      <motion.div
+        className="task-modal-scrim"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.18 }}
+      />
+      <div className="task-modal-viewport" onClick={onClose}>
+        <motion.div
+          className="task-modal-card"
+          role="dialog"
+          aria-modal="true"
+          aria-label={heading}
+          onClick={(e) => e.stopPropagation()}
+          initial={{ opacity: 0, scale: 0.96, y: 8 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.96, y: 8 }}
+          transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+        >
+          <div className="task-modal-head">
+            <h1 className="task-modal-title">{heading}</h1>
+            <div className="task-modal-head-actions">
+              {existing && (
+                <button type="button" className="btn danger-ghost" onClick={handleDelete}>
+                  Delete
+                </button>
+              )}
+              <button
+                type="button"
+                className="task-modal-close"
+                onClick={onClose}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+          <div className="task-modal-body">
+            {notFound ? (
+              <div className="empty-state">
+                <p className="empty-title">Task not found</p>
+                <p className="empty-hint">
+                  This task may have been deleted, or the link is out of date.
+                </p>
+                <button type="button" className="btn primary" onClick={onClose}>
+                  Close
+                </button>
+              </div>
+            ) : (
+              <TaskEditor
+                key={taskParam}
+                taskId={existing ? existing.id : null}
+                initialProjectId={projectParam ?? undefined}
+                onSaved={onClose}
+                onCancel={onClose}
+              />
+            )}
+          </div>
+        </motion.div>
+      </div>
+    </>
+  );
+}
+
+interface EditorProps {
+  taskId: string | null;
+  initialProjectId?: string;
+  onSaved: () => void;
+  onCancel: () => void;
+}
+
+/** The full task editor form (moved out of the old TaskEditorPage). */
+function TaskEditor({ taskId, initialProjectId, onSaved, onCancel }: EditorProps) {
+  const { state, dispatch } = useStore();
+  const existing = taskId ? state.tasks.find((t) => t.id === taskId) : undefined;
   const isEdit = Boolean(existing);
-  // Guard: an :id route that doesn't resolve to a task.
-  const notFound = Boolean(id && !existing);
+
+  const statuses = activeStatuses(state);
 
   // ---- Details ----
   const [title, setTitle] = useState(existing?.title ?? '');
   const [description, setDescription] = useState(existing?.description ?? '');
-  const [project, setProject] = useState(existing?.project ?? '');
+  const [projectId, setProjectId] = useState(
+    existing?.projectId ?? initialProjectId ?? state.projects[0]?.id ?? '',
+  );
+  const [statusId, setStatusId] = useState(
+    existing?.statusId ?? statuses[0]?.id ?? state.statuses[0]?.id ?? '',
+  );
   const [estimatedRaw, setEstimatedRaw] = useState(
     existing?.estimatedHours != null ? String(existing.estimatedHours) : '',
   );
@@ -58,6 +239,12 @@ export function TaskEditorPage() {
 
   const [titleTouched, setTitleTouched] = useState(false);
 
+  // Focus the title input when the editor opens.
+  const titleRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    titleRef.current?.focus();
+  }, []);
+
   const titleError = title.trim() === '';
   const periodDays = inclusiveDayCount(startDate, endDate);
   const endBeforeStart = endDate < startDate;
@@ -69,14 +256,11 @@ export function TaskEditorPage() {
     [state.people, assigneeIds],
   );
 
-  // Days currently inside the period, for the out-of-range notice + save filter.
   const periodDaysSet = useMemo(
     () => new Set(periodValid ? eachDayInclusive(startDate, endDate) : []),
     [periodValid, startDate, endDate],
   );
 
-  // Count allocations (hours>0) that fall outside the current period — these are
-  // dropped on save. Shown as a one-line notice before saving.
   const outOfRangeCount = useMemo(() => {
     let n = 0;
     for (const [key, hours] of Object.entries(allocations)) {
@@ -95,7 +279,7 @@ export function TaskEditorPage() {
       const next = { ...prev };
       const key = allocKey(personId, date);
       if (hours > 0) next[key] = hours;
-      else delete next[key]; // editing to 0 removes the entry
+      else delete next[key];
       return next;
     });
   };
@@ -123,7 +307,6 @@ export function TaskEditorPage() {
   const toggleAssignee = (personId: string) => {
     const isAssigned = assigneeIds.includes(personId);
     if (isAssigned) {
-      // Removing: if this person has planned hours on this task, confirm.
       const person = state.people.find((p) => p.id === personId);
       const plannedOnThisTask = Object.entries(allocations)
         .filter(([key, h]) => h > 0 && key.startsWith(`${personId}|`))
@@ -137,7 +320,6 @@ export function TaskEditorPage() {
         if (!ok) return;
       }
       setAssigneeIds((prev) => prev.filter((pid) => pid !== personId));
-      // Drop their allocations for this task.
       setAllocations((prev) => {
         const next: AllocMap = {};
         for (const [key, h] of Object.entries(prev)) {
@@ -150,25 +332,28 @@ export function TaskEditorPage() {
     }
   };
 
+  const projectError = projectId === '' || !state.projects.some((p) => p.id === projectId);
+
   const handleSave = () => {
     setTitleTouched(true);
     if (titleError) return;
     if (!periodValid) return;
+    if (projectError) return;
 
-    // Build the allocation list, keeping only in-period cells with hours>0.
     const cells: AllocationCell[] = [];
     for (const [key, hours] of Object.entries(allocations)) {
       if (hours <= 0) continue;
       const [personId, date] = key.split('|');
-      if (!periodDaysSet.has(date)) continue; // drop out-of-range
-      if (!assigneeIds.includes(personId)) continue; // drop unassigned
+      if (!periodDaysSet.has(date)) continue;
+      if (!assigneeIds.includes(personId)) continue;
       cells.push({ personId, date, plannedHours: hours });
     }
 
     const draft: TaskDraft = {
+      projectId,
+      statusId,
       title: title.trim(),
       description: description.trim(),
-      project: project.trim(),
       startDate,
       endDate,
       estimatedHours: estimatedRaw.trim() === '' ? null : Number(estimatedRaw),
@@ -183,23 +368,9 @@ export function TaskEditorPage() {
         allocations: cells,
       },
     });
-    navigate('/tasks');
+    onSaved();
   };
 
-  if (notFound) {
-    return (
-      <section className="page">
-        <div className="empty-state">
-          <p className="empty-title">Task not found</p>
-          <Link to="/tasks" className="btn primary">
-            Back to tasks
-          </Link>
-        </div>
-      </section>
-    );
-  }
-
-  // Live per-person planned totals for the details vs allocation comparison.
   const plannedTotalAll = Object.values(allocations).reduce(
     (s, h) => s + (h > 0 ? h : 0),
     0,
@@ -207,11 +378,7 @@ export function TaskEditorPage() {
   const estNum = estimatedRaw.trim() === '' ? null : Number(estimatedRaw);
 
   return (
-    <section className="page editor">
-      <div className="page-head">
-        <h1>{isEdit ? 'Edit task' : 'New task'}</h1>
-      </div>
-
+    <div className="editor task-editor">
       {/* a) Details */}
       <div className="editor-section">
         <h2>Details</h2>
@@ -219,15 +386,14 @@ export function TaskEditorPage() {
           <label htmlFor="t-title">Title *</label>
           <input
             id="t-title"
+            ref={titleRef}
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             onBlur={() => setTitleTouched(true)}
             className={titleTouched && titleError ? 'invalid' : undefined}
             placeholder="What needs doing?"
           />
-          {titleTouched && titleError && (
-            <p className="field-error">Title is required</p>
-          )}
+          {titleTouched && titleError && <p className="field-error">Title is required</p>}
         </div>
         <div className="field">
           <label htmlFor="t-desc">Description</label>
@@ -241,13 +407,42 @@ export function TaskEditorPage() {
         </div>
         <div className="field-row">
           <div className="field">
-            <label htmlFor="t-project">Project</label>
-            <input
-              id="t-project"
-              value={project}
-              onChange={(e) => setProject(e.target.value)}
-              placeholder="Optional category"
-            />
+            <label htmlFor="t-project">Project *</label>
+            {state.projects.length === 0 ? (
+              <p className="field-hint">
+                No projects yet — <Link to="/projects">create a project</Link> first. Every
+                task belongs to a project.
+              </p>
+            ) : (
+              <select
+                id="t-project"
+                value={projectId}
+                onChange={(e) => setProjectId(e.target.value)}
+              >
+                {state.projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                    {getClient(state, p.clientId)
+                      ? ` — ${getClient(state, p.clientId)?.name}`
+                      : ''}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+          <div className="field">
+            <label htmlFor="t-status">Status</label>
+            <select
+              id="t-status"
+              value={statusId}
+              onChange={(e) => setStatusId(e.target.value)}
+            >
+              {statuses.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="field">
             <label htmlFor="t-est">Estimated hours</label>
@@ -307,8 +502,8 @@ export function TaskEditorPage() {
         )}
         {periodTooLong && (
           <p className="field-error">
-            Period is {periodDays} days — the maximum is {MAX_PERIOD_DAYS} days.
-            Shorten the range.
+            Period is {periodDays} days — the maximum is {MAX_PERIOD_DAYS} days. Shorten the
+            range.
           </p>
         )}
         {periodValid && (
@@ -363,8 +558,8 @@ export function TaskEditorPage() {
           <>
             {outOfRangeCount > 0 && (
               <p className="field-notice">
-                {outOfRangeCount} allocation{outOfRangeCount === 1 ? '' : 's'} outside
-                the new period will be removed on save.
+                {outOfRangeCount} allocation{outOfRangeCount === 1 ? '' : 's'} outside the
+                new period will be removed on save.
               </p>
             )}
             <AllocationGrid
@@ -382,19 +577,32 @@ export function TaskEditorPage() {
         )}
       </div>
 
-      {/* e) Save / Cancel */}
+      {/* e) Discussion (existing tasks only) */}
+      {existing && (
+        <div className="editor-section">
+          <h2>Discussion</h2>
+          <CommentsPanel entityType="task" entityId={existing.id} />
+        </div>
+      )}
+
+      {/* f) Save / Cancel */}
+      {projectError && state.projects.length > 0 && (
+        <p className="field-error">Pick a project for this task.</p>
+      )}
       <div className="editor-actions">
-        <button type="button" className="btn primary" onClick={handleSave}>
-          {isEdit ? 'Save changes' : 'Create task'}
-        </button>
         <button
           type="button"
-          className="btn ghost"
-          onClick={() => navigate('/tasks')}
+          className="btn primary"
+          onClick={handleSave}
+          disabled={state.projects.length === 0}
+          title={state.projects.length === 0 ? 'Create a project first' : undefined}
         >
+          {isEdit ? 'Save changes' : 'Create task'}
+        </button>
+        <button type="button" className="btn ghost" onClick={onCancel}>
           Cancel
         </button>
       </div>
-    </section>
+    </div>
   );
 }

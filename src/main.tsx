@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
+import { MotionConfig } from 'motion/react';
 import { AppStoreProvider } from './store/AppStore';
 import { App } from './App';
 import './styles.css';
@@ -12,7 +13,10 @@ createRoot(rootEl).render(
   <StrictMode>
     <BrowserRouter future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
       <AppStoreProvider>
-        <App />
+        {/* Respect OS "reduce motion" for every animation in the app. */}
+        <MotionConfig reducedMotion="user">
+          <App />
+        </MotionConfig>
       </AppStoreProvider>
     </BrowserRouter>
   </StrictMode>,

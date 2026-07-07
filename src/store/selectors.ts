@@ -1,6 +1,23 @@
-// Pure selector functions. Both the tasks page and the calendar derive from
-// these so the views are always consistent.
-import type { AppData, DateStr, Person, Task, WorkloadEntry } from '../types';
+// Pure selector functions. Every page derives from these so views never disagree.
+import type {
+  ActivityEvent,
+  AppData,
+  Client,
+  Comment,
+  CommentEntityType,
+  DateStr,
+  Department,
+  Milestone,
+  Person,
+  Project,
+  ServiceType,
+  Status,
+  Task,
+  WorkloadEntry,
+} from '../types';
+import { DEFAULT_CAPACITY } from './storage';
+
+// ---- Basic lookups ----
 
 export function getTask(state: AppData, taskId: string): Task | undefined {
   return state.tasks.find((t) => t.id === taskId);
@@ -9,6 +26,86 @@ export function getTask(state: AppData, taskId: string): Task | undefined {
 export function getPerson(state: AppData, personId: string): Person | undefined {
   return state.people.find((p) => p.id === personId);
 }
+
+export function getProject(state: AppData, projectId: string): Project | undefined {
+  return state.projects.find((p) => p.id === projectId);
+}
+
+export function getClient(state: AppData, clientId: string): Client | undefined {
+  return state.clients.find((c) => c.id === clientId);
+}
+
+export function getStatus(state: AppData, statusId: string): Status | undefined {
+  return state.statuses.find((s) => s.id === statusId);
+}
+
+export function getDepartment(
+  state: AppData,
+  departmentId: string,
+): Department | undefined {
+  return state.departments.find((d) => d.id === departmentId);
+}
+
+export function getServiceType(
+  state: AppData,
+  serviceTypeId: string,
+): ServiceType | undefined {
+  return state.serviceTypes.find((s) => s.id === serviceTypeId);
+}
+
+// ---- Statuses ----
+
+/** Active (non-archived) statuses in pipeline order. */
+export function activeStatuses(state: AppData): Status[] {
+  return state.statuses
+    .filter((s) => !s.archived)
+    .sort((a, b) => a.order - b.order);
+}
+
+/** All statuses in pipeline order (admin panel). */
+export function allStatusesOrdered(state: AppData): Status[] {
+  return [...state.statuses].sort((a, b) => a.order - b.order);
+}
+
+// ---- Clients & projects ----
+
+export function activeClients(state: AppData): Client[] {
+  return state.clients.filter((c) => !c.archived);
+}
+
+export function projectsOfClient(state: AppData, clientId: string): Project[] {
+  return state.projects.filter((p) => p.clientId === clientId);
+}
+
+export function tasksOfProject(state: AppData, projectId: string): Task[] {
+  return state.tasks.filter((t) => t.projectId === projectId);
+}
+
+export function milestonesOfProject(state: AppData, projectId: string): Milestone[] {
+  return state.milestones
+    .filter((m) => m.projectId === projectId)
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/** Total planned hours across all tasks of a project (derived, never stored). */
+export function projectPlannedTotal(state: AppData, projectId: string): number {
+  const taskIds = new Set(tasksOfProject(state, projectId).map((t) => t.id));
+  return state.workload
+    .filter((w) => taskIds.has(w.taskId))
+    .reduce((sum, w) => sum + w.plannedHours, 0);
+}
+
+/** Distinct person ids working on (assigned to any task of) a project. */
+export function peopleIdsOfProject(state: AppData, projectId: string): string[] {
+  const taskIds = new Set(tasksOfProject(state, projectId).map((t) => t.id));
+  return Array.from(
+    new Set(
+      state.assignments.filter((a) => taskIds.has(a.taskId)).map((a) => a.personId),
+    ),
+  );
+}
+
+// ---- Assignments ----
 
 /** Person ids assigned to a task. */
 export function assigneeIdsOfTask(state: AppData, taskId: string): string[] {
@@ -22,6 +119,24 @@ export function assigneesOfTask(state: AppData, taskId: string): Person[] {
   const ids = new Set(assigneeIdsOfTask(state, taskId));
   return state.people.filter((p) => ids.has(p.id));
 }
+
+/** Task ids a person is assigned to. */
+export function taskIdsOfPerson(state: AppData, personId: string): string[] {
+  return state.assignments
+    .filter((a) => a.personId === personId)
+    .map((a) => a.taskId);
+}
+
+/** Distinct projects a person works on (via task assignments). */
+export function projectsOfPerson(state: AppData, personId: string): Project[] {
+  const taskIds = new Set(taskIdsOfPerson(state, personId));
+  const projectIds = new Set(
+    state.tasks.filter((t) => taskIds.has(t.id)).map((t) => t.projectId),
+  );
+  return state.projects.filter((p) => projectIds.has(p.id));
+}
+
+// ---- Workload ----
 
 /** All workload entries for a task. */
 export function entriesForTask(state: AppData, taskId: string): WorkloadEntry[] {
@@ -87,6 +202,17 @@ export function personTotalHours(state: AppData, personId: string): number {
     .reduce((sum, w) => sum + w.plannedHours, 0);
 }
 
+/** A person's ordered time blocks on one date (the per-day schedule). */
+export function blocksForPersonDate(
+  state: AppData,
+  personId: string,
+  date: DateStr,
+): WorkloadEntry[] {
+  return state.workload
+    .filter((w) => w.personId === personId && w.date === date)
+    .sort((a, b) => a.sortIndex - b.sortIndex);
+}
+
 /** All entries on a single date (optionally restricted to a set of people). */
 export function entriesForDate(
   state: AppData,
@@ -112,9 +238,17 @@ export function dayTotal(
   );
 }
 
-export const OVERLOAD_THRESHOLD = 8;
+// ---- Capacity & overload ----
 
-/** People (ids) whose TOTAL for the date exceeds 8h, within the filter set. */
+export const OVERLOAD_THRESHOLD = DEFAULT_CAPACITY;
+
+/** A person's daily capacity in hours (falls back to the 8h default). */
+export function personCapacity(state: AppData, personId: string): number {
+  const p = getPerson(state, personId);
+  return p && p.capacity > 0 ? p.capacity : DEFAULT_CAPACITY;
+}
+
+/** People (ids) whose TOTAL for the date exceeds their capacity, within the filter. */
 export function overloadedPeopleOnDate(
   state: AppData,
   date: DateStr,
@@ -125,6 +259,45 @@ export function overloadedPeopleOnDate(
       ? state.people.filter((p) => personFilter.has(p.id))
       : state.people;
   return relevant
-    .filter((p) => hoursForPersonOnDate(state, p.id, date) > OVERLOAD_THRESHOLD)
+    .filter(
+      (p) => hoursForPersonOnDate(state, p.id, date) > personCapacity(state, p.id),
+    )
     .map((p) => p.id);
+}
+
+// ---- Comments & activity ----
+
+export function commentsFor(
+  state: AppData,
+  entityType: CommentEntityType,
+  entityId: string,
+): Comment[] {
+  return state.comments
+    .filter((c) => c.entityType === entityType && c.entityId === entityId)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+export function activityFor(
+  state: AppData,
+  entityType: CommentEntityType,
+  entityId: string,
+): ActivityEvent[] {
+  return state.activity
+    .filter((e) => e.entityType === entityType && e.entityId === entityId)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+// ---- Permissions ----
+
+export function currentUser(state: AppData): Person | undefined {
+  return state.currentUserId ? getPerson(state, state.currentUserId) : undefined;
+}
+
+/**
+ * Admin gate for the admin panel and status management. With no people yet
+ * there is nobody to be admin, so setup stays unlocked (prevents lockout).
+ */
+export function isAdminUser(state: AppData): boolean {
+  if (state.people.length === 0) return true;
+  return currentUser(state)?.isAdmin ?? false;
 }

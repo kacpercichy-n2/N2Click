@@ -1,7 +1,15 @@
-import { Link, useNavigate } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
-import { assigneesOfTask, taskPlannedTotal } from '../store/selectors';
+import { useOpenTask } from '../components/TaskModal';
+import {
+  assigneesOfTask,
+  getClient,
+  getProject,
+  getStatus,
+  taskPlannedTotal,
+} from '../store/selectors';
 import { PersonChip } from '../components/PersonChip';
+import { StatusBadge } from '../components/StatusBadge';
+import { Coin } from '../components/Coin';
 import { parseDate } from '../utils/dates';
 import { format } from 'date-fns';
 
@@ -22,7 +30,7 @@ function rangeLabel(start: string, end: string): string {
 
 export function TasksPage() {
   const { state, dispatch } = useStore();
-  const navigate = useNavigate();
+  const { openTask, openNewTask } = useOpenTask();
 
   // Sort by start date, then title, for a stable predictable list.
   const tasks = [...state.tasks].sort((a, b) =>
@@ -41,9 +49,9 @@ export function TasksPage() {
     <section className="page">
       <div className="page-head">
         <h1>Tasks</h1>
-        <Link to="/tasks/new" className="btn primary">
+        <button type="button" className="btn primary" onClick={() => openNewTask()}>
           + New task
-        </Link>
+        </button>
       </div>
 
       {tasks.length === 0 ? (
@@ -52,26 +60,33 @@ export function TasksPage() {
           <p className="empty-hint">
             Create a task, assign people, and plan their hours day by day.
           </p>
-          <Link to="/tasks/new" className="btn primary">
+          <button type="button" className="btn primary" onClick={() => openNewTask()}>
             + New task
-          </Link>
+          </button>
         </div>
       ) : (
         <ul className="task-list">
           {tasks.map((task) => {
             const assignees = assigneesOfTask(state, task.id);
             const planned = taskPlannedTotal(state, task.id);
+            const project = getProject(state, task.projectId);
+            const client = project ? getClient(state, project.clientId) : undefined;
             return (
               <li key={task.id} className="task-card">
                 <button
                   type="button"
                   className="task-card-main"
-                  onClick={() => navigate(`/tasks/${task.id}`)}
+                  onClick={() => openTask(task.id)}
                 >
                   <div className="task-card-top">
                     <span className="task-title">{task.title}</span>
-                    {task.project && (
-                      <span className="project-badge">{task.project}</span>
+                    <StatusBadge status={getStatus(state, task.statusId)} />
+                    {project && (
+                      <span className="project-badge">
+                        <Coin paid={project.paid} size={13} />
+                        {client ? `${client.name} / ` : ''}
+                        {project.name}
+                      </span>
                     )}
                   </div>
                   <div className="task-card-range">{rangeLabel(task.startDate, task.endDate)}</div>
