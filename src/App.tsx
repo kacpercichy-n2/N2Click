@@ -23,6 +23,7 @@ import { WorkloadPage } from './pages/WorkloadPage';
 import { AdminPage } from './pages/AdminPage';
 import { LoginPage } from './pages/LoginPage';
 import { can } from './store/permissions';
+import { isImpersonating, realUser } from './store/selectors';
 import { SampleBanner } from './components/SampleBanner';
 import { TaskModal } from './components/TaskModal';
 import { GlobalSearch } from './components/GlobalSearch';
@@ -79,6 +80,11 @@ export function App() {
   };
 
   const currentUser = state.people.find((p) => p.id === state.currentUserId);
+  // Real logged-in identity (the impersonator while impersonating). Only the
+  // "Występuj jako" switcher visibility and the return banner key off this;
+  // everything else is a true preview of the acted-as `currentUser`.
+  const actualUser = realUser(state);
+  const impersonating = isImpersonating(state);
   const peopleCount = state.people.length;
   const canAdmin = can(currentUser, 'admin.panel', { peopleCount });
   // Session gate: with people present and nobody resolving to a current user,
@@ -216,17 +222,18 @@ export function App() {
                 <Users size={20} aria-hidden />
               )}
             </button>
-            {/* "Występuj jako" is an administrator-only quick switch now. */}
-            {can(currentUser, 'users.impersonate', { peopleCount: state.people.length }) && (
+            {/* "Występuj jako" is an administrator-only quick switch now. Gated
+                on the REAL logged-in user so it never vanishes while the admin
+                is previewing another identity. */}
+            {can(actualUser, 'users.impersonate', { peopleCount: state.people.length }) && (
               <label className="acting-as" title="Aktualny użytkownik aplikacji (autor komentarzy, uprawnienia admina)">
                 <span className="acting-as-label">Występuj jako</span>
                 <select
                   value={state.currentUserId}
                   onChange={(e) =>
-                    dispatch({ type: 'SET_CURRENT_USER', personId: e.target.value })
+                    dispatch({ type: 'IMPERSONATE', personId: e.target.value })
                   }
                 >
-                  <option value="">—</option>
                   {state.people.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
@@ -249,6 +256,20 @@ export function App() {
       </aside>
 
       <main className="app-main">
+        {impersonating && currentUser && actualUser && (
+          <div className="impersonation-banner" role="status">
+            <span className="impersonation-banner-text">
+              Występujesz jako {currentUser.name} — aktywne są uprawnienia tej osoby.
+            </span>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => dispatch({ type: 'STOP_IMPERSONATION' })}
+            >
+              Wróć do {actualUser.name}
+            </button>
+          </div>
+        )}
         <SampleBanner />
         <motion.div
           key={location.pathname}

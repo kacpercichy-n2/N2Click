@@ -367,3 +367,91 @@ describe('loadData migration v4 -> v5', () => {
     expect(twice).toEqual(data);
   });
 });
+
+// ---------------------------------------------------------------------------
+// impersonatorId default/round-trip/sanitize (PKG-20260708-b2-tests, covering
+// the additive field shipped by PKG-20260708-b2-impersonation). Version stays
+// 5 (additive, no bump) — payloads here are already v5-shaped.
+// ---------------------------------------------------------------------------
+
+describe('impersonatorId persistence (PKG-20260708-b2-tests)', () => {
+  function v5Payload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      version: 5,
+      clients: [],
+      departments: [],
+      serviceTypes: [],
+      statuses: [],
+      projects: [],
+      milestones: [],
+      tasks: [],
+      people: [
+        {
+          id: 'p1',
+          firstName: 'Ann',
+          lastName: 'Admin',
+          name: 'Ann Admin',
+          email: '',
+          role: '',
+          departmentId: '',
+          avatar: '',
+          capacity: 8,
+          accessRole: 'administrator',
+        },
+        {
+          id: 'p2',
+          firstName: 'Bob',
+          lastName: 'Staff',
+          name: 'Bob Staff',
+          email: '',
+          role: '',
+          departmentId: '',
+          avatar: '',
+          capacity: 8,
+          accessRole: 'pracownik',
+        },
+      ],
+      assignments: [],
+      workload: [],
+      comments: [],
+      activity: [],
+      currentUserId: 'p1',
+      sampleBannerDismissed: false,
+      savedFilters: [],
+      ...overrides,
+    };
+  }
+
+  it("a persisted payload WITHOUT impersonatorId loads with the '' default", () => {
+    const payload = v5Payload(); // no impersonatorId key at all
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+    expect(data.impersonatorId).toBe('');
+  });
+
+  it('a valid non-empty impersonatorId round-trips', () => {
+    const payload = v5Payload({ currentUserId: 'p2', impersonatorId: 'p1' });
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+    expect(data.impersonatorId).toBe('p1');
+    expect(data.currentUserId).toBe('p2');
+  });
+
+  it("sanitizes an impersonatorId referencing a non-existent person to ''", () => {
+    const payload = v5Payload({ currentUserId: 'p2', impersonatorId: 'ghost' });
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+    expect(data.impersonatorId).toBe('');
+  });
+
+  it("sanitizes an impersonatorId equal to currentUserId to ''", () => {
+    const payload = v5Payload({ currentUserId: 'p1', impersonatorId: 'p1' });
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+    expect(data.impersonatorId).toBe('');
+  });
+
+  it('loading is idempotent: load -> save-shape -> load again yields the same impersonatorId', () => {
+    const payload = v5Payload({ currentUserId: 'p2', impersonatorId: 'p1' });
+    const once = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+    const twice = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(once) }, () => loadData());
+    expect(twice).toEqual(once);
+    expect(twice.impersonatorId).toBe('p1');
+  });
+});

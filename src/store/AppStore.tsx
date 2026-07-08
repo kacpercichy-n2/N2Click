@@ -131,6 +131,8 @@ export type Action =
   | { type: 'UPDATE_PERSON'; personId: string; person: PersonDraft }
   | { type: 'DELETE_PERSON'; personId: string }
   | { type: 'SET_CURRENT_USER'; personId: string }
+  | { type: 'IMPERSONATE'; personId: string }
+  | { type: 'STOP_IMPERSONATION' }
   | { type: 'SET_PASSWORD'; personId: string; passwordHash: string }
   | { type: 'LOGOUT' }
   | { type: 'ADD_CLIENT'; name: string }
@@ -546,6 +548,24 @@ function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
   const hours = snapHours(payload.hours);
   if (hours <= 0) return state;
 
+  // Budget enforcement (PKG-20260708-b2): a right-click insert may never mint
+  // hours past the task's plan. Draw from the inserted task's same-person bin
+  // row (note: `payload.taskId` may differ from `ref.taskId` when the picker
+  // chose another task), plus the task's headroom when it carries an estimate.
+  const binRow = state.workload.find(
+    (w) => w.taskId === payload.taskId && w.personId === ref.personId && isBinEntry(w),
+  );
+  const binQ = binRow ? toQuarters(binRow.plannedHours) : 0;
+  const totalAllQ = state.workload
+    .filter((w) => w.taskId === payload.taskId)
+    .reduce((sum, w) => sum + toQuarters(w.plannedHours), 0);
+  const headroomQ =
+    task.estimatedHours === null ? 0 : Math.max(0, toQuarters(task.estimatedHours) - totalAllQ);
+  const hoursQ = toQuarters(hours);
+  // Safety net — the UI package adds the live warning/disable.
+  if (hoursQ > binQ + headroomQ) return state;
+  const takenFromBinQ = Math.min(hoursQ, binQ); // bin first, then headroom
+
   // Ripple insert. "Przed": take the ref's start; "Po": start at the ref's end.
   const dur = hoursToMinutes(hours);
   const rawStart =
@@ -586,10 +606,24 @@ function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
       cursor = blockEndMinutes(b.startMinutes, b.plannedHours);
     }
   }
-  const shifted = state.workload.map((w) => {
+  let shifted = state.workload.map((w) => {
     const m = moves.get(w.id);
     return m === undefined ? w : { ...w, startMinutes: m };
   });
+
+  // Draw the consumed hours from the same-task bin row (delete it at 0h). The
+  // bin row is dateless (BIN_DATE) so it never collides with the ripple sweep.
+  const touchedKeys = new Set([dayKey(ref.personId, ref.date)]);
+  if (takenFromBinQ > 0 && binRow) {
+    const remainingQ = binQ - takenFromBinQ;
+    shifted =
+      remainingQ <= 0
+        ? shifted.filter((w) => w.id !== binRow.id)
+        : shifted.map((w) =>
+            w.id === binRow.id ? { ...w, plannedHours: remainingQ * HOURS_STEP } : w,
+          );
+    touchedKeys.add(dayKey(ref.personId, BIN_DATE));
+  }
 
   // Keep invariants: the person must be assigned to the task, and the task
   // period must cover the block's date.
@@ -609,17 +643,16 @@ function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
   });
 
   const person = state.people.find((p) => p.id === ref.personId);
+  let message = `wstawił(a) blok ${formatDuration(hours)} ${payload.position === 'before' ? 'przed' : 'po'} „${state.tasks.find((t) => t.id === ref.taskId)?.title ?? 'blok'}” dla ${person?.name ?? 'kogoś'} w dniu ${ref.date}`;
+  if (takenFromBinQ > 0) {
+    message += `; pobrano z zasobnika: ${formatDuration(takenFromBinQ * HOURS_STEP)}`;
+  }
   return {
     ...state,
     tasks,
     assignments,
-    workload: reindexDays([...shifted, entry], new Set([dayKey(ref.personId, ref.date)])),
-    activity: withActivity(
-      state,
-      'task',
-      payload.taskId,
-      `wstawił(a) blok ${formatDuration(hours)} ${payload.position === 'before' ? 'przed' : 'po'} „${state.tasks.find((t) => t.id === ref.taskId)?.title ?? 'blok'}” dla ${person?.name ?? 'kogoś'} w dniu ${ref.date}`,
-    ),
+    workload: reindexDays([...shifted, entry], touchedKeys),
+    activity: withActivity(state, 'task', payload.taskId, message),
   };
 }
 
@@ -804,15 +837,19 @@ function setBlockTime(
       w.id !== entryId,
   );
 
-  // Budget enforcement + hour-conserving consumption on GROW (budgeted tasks only).
+  // Budget enforcement + hour-conserving consumption on GROW (ALL tasks).
+  // The allowance is the person's same-task bin hours plus — for tasks with an
+  // estimate — the task's remaining headroom. Null-estimate tasks have 0
+  // headroom, so they may only draw from the bin (no free minting).
   let takenFromBinQ = 0;
-  if (grow && task.estimatedHours !== null) {
+  if (grow) {
     const growDeltaQ = toQuarters(plannedHours) - toQuarters(entry.plannedHours);
     const binSameQ = binRow ? toQuarters(binRow.plannedHours) : 0;
     const totalAllQ = state.workload
       .filter((w) => w.taskId === entry.taskId)
       .reduce((sum, w) => sum + toQuarters(w.plannedHours), 0);
-    const headroomQ = Math.max(0, toQuarters(task.estimatedHours) - totalAllQ);
+    const headroomQ =
+      task.estimatedHours === null ? 0 : Math.max(0, toQuarters(task.estimatedHours) - totalAllQ);
     // Safety net — the UI clamps growth live (PKG-20260708-budget-week-ui).
     if (growDeltaQ > binSameQ + headroomQ) return state;
     takenFromBinQ = Math.min(growDeltaQ, binSameQ); // bin first, then headroom
@@ -1083,6 +1120,21 @@ function personFromDraft(draft: PersonDraft): Omit<Person, 'id' | 'passwordHash'
 }
 
 function deletePerson(state: AppData, personId: string): AppData {
+  // Impersonation interplay: deleting the impersonated person (currentUserId)
+  // while impersonating returns the session to the impersonator; deleting the
+  // impersonator ends the bookkeeping but keeps the acted-as identity. Falls
+  // back to the plain currentUserId reset when not impersonating.
+  const impersonating = state.impersonatorId !== '';
+  let currentUserId = state.currentUserId;
+  let impersonatorId = state.impersonatorId;
+  if (impersonating && personId === state.currentUserId) {
+    currentUserId = state.impersonatorId;
+    impersonatorId = '';
+  } else if (personId === state.impersonatorId) {
+    impersonatorId = '';
+  } else if (personId === state.currentUserId) {
+    currentUserId = '';
+  }
   return {
     ...state,
     // Cascade (invariant 5): drop the person, their assignments/workload, and
@@ -1092,7 +1144,8 @@ function deletePerson(state: AppData, personId: string): AppData {
       .map((p) => (p.supervisorId === personId ? { ...p, supervisorId: '' } : p)),
     assignments: state.assignments.filter((a) => a.personId !== personId),
     workload: state.workload.filter((w) => w.personId !== personId),
-    currentUserId: state.currentUserId === personId ? '' : state.currentUserId,
+    currentUserId,
+    impersonatorId,
   };
 }
 
@@ -1362,7 +1415,26 @@ export function reducer(state: AppData, action: Action): AppData {
       return deletePerson(state, action.personId);
     }
     case 'SET_CURRENT_USER':
-      return { ...state, currentUserId: action.personId };
+      // Login / direct identity set: always ends any impersonation.
+      return { ...state, currentUserId: action.personId, impersonatorId: '' };
+    case 'IMPERSONATE': {
+      // No-op when the target doesn't exist or is already the acted-as identity.
+      const exists = state.people.some((p) => p.id === action.personId);
+      if (!exists || action.personId === state.currentUserId) return state;
+      // Picking the current impersonator's own row means "return".
+      if (action.personId === state.impersonatorId) {
+        return { ...state, currentUserId: state.impersonatorId, impersonatorId: '' };
+      }
+      // Chained switches keep the ORIGINAL real user as the impersonator.
+      return {
+        ...state,
+        currentUserId: action.personId,
+        impersonatorId: state.impersonatorId || state.currentUserId,
+      };
+    }
+    case 'STOP_IMPERSONATION':
+      if (state.impersonatorId === '') return state;
+      return { ...state, currentUserId: state.impersonatorId, impersonatorId: '' };
     case 'SET_PASSWORD':
       // Stores the given hash verbatim ('' clears the password). No activity row.
       return {
@@ -1372,7 +1444,8 @@ export function reducer(state: AppData, action: Action): AppData {
         ),
       };
     case 'LOGOUT':
-      return { ...state, currentUserId: '' };
+      // Full logout (not "return"): clears both the acted-as and real identity.
+      return { ...state, currentUserId: '', impersonatorId: '' };
     case 'ADD_CLIENT': {
       const name = action.name.trim();
       if (!name) return state;

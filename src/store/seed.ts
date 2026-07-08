@@ -333,6 +333,7 @@ export function buildSampleData(): AppData {
     comments,
     activity,
     currentUserId: kasia.id,
+    impersonatorId: '',
     sampleBannerDismissed: true,
     savedFilters: [],
   };

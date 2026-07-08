@@ -84,6 +84,7 @@ export function emptyData(): AppData {
     comments: [],
     activity: [],
     currentUserId: '',
+    impersonatorId: '',
     sampleBannerDismissed: false,
     savedFilters: [],
   };
@@ -279,6 +280,7 @@ function migrateV1(raw: Record<string, unknown>): AppData {
     assignments: v1Assignments,
     workload,
     currentUserId: people[0]?.id ?? '',
+    impersonatorId: '',
     sampleBannerDismissed: Boolean(raw.sampleBannerDismissed),
   };
 }
@@ -511,6 +513,22 @@ export function ensureStartMinutes(data: AppData): AppData {
   };
 }
 
+/**
+ * Clears a stale `impersonatorId` on every load (idempotent, like
+ * ensureStartMinutes). Impersonation bookkeeping must reference a real person
+ * distinct from the acted-as identity; anything else resets to '' (= not
+ * impersonating). Disjoint from ensureStartMinutes — order is irrelevant.
+ */
+export function sanitizeImpersonator(data: AppData): AppData {
+  const id = data.impersonatorId;
+  if (id === '') return data;
+  const dangling = !data.people.some((p) => p.id === id);
+  if (dangling || id === data.currentUserId) {
+    return { ...data, impersonatorId: '' };
+  }
+  return data;
+}
+
 export function loadData(): AppData {
   try {
     const raw =
@@ -521,7 +539,9 @@ export function loadData(): AppData {
     if (!looksLikeData(parsed)) return emptyData();
     const version = typeof parsed.version === 'number' ? parsed.version : 1;
     if (version < 2) {
-      return ensureStartMinutes(migrateV4toV5(localizeLegacyData(migrateV1(parsed))));
+      return sanitizeImpersonator(
+        ensureStartMinutes(migrateV4toV5(localizeLegacyData(migrateV1(parsed)))),
+      );
     }
     // Same-version load: fill any missing fields with defaults.
     const loaded = {
@@ -538,7 +558,7 @@ export function loadData(): AppData {
     // MATRIX[undefined] deny every action → permanent login-screen lockout.
     // migratePerson preserves valid existing values and fills only what's absent.
     const migrated = migrateV4toV5(localized);
-    return ensureStartMinutes(migrated);
+    return sanitizeImpersonator(ensureStartMinutes(migrated));
   } catch {
     return emptyData();
   }

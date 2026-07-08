@@ -5,6 +5,7 @@
 // time overlap shows a danger tint and the drop reverts. Right-clicking a block
 // still opens "Dodaj przed / Dodaj po" to ripple-insert a new block.
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import type { AppData, Person, Project, Task, WorkloadEntry } from '../types';
 import { useStore } from '../store/AppStore';
@@ -28,6 +29,7 @@ import {
   hoursForPersonOnDate,
   overloadedPeopleOnDate,
   personCapacity,
+  taskGrowAllowance,
   taskIdsOfPerson,
 } from '../store/selectors';
 import {
@@ -41,6 +43,7 @@ import {
   isBinEntry,
   minutesToHours,
   packDayBlocks,
+  snapHours,
   snapToStep,
 } from '../utils/time';
 import { Coin } from './Coin';
@@ -159,9 +162,8 @@ function TimedBlock({
     const rect = gridRef.current?.getBoundingClientRect();
     const colWidth = rect ? rect.width / DAY_COLS : 0;
     // Capture the grow allowance ONCE at drag start (state won't change mid-drag).
-    // null ⇒ the task has no estimate ⇒ free grow (no cap).
-    const allowance = growAllowanceHours(state, entry.id);
-    const maxHours = allowance === null ? Infinity : baseHours + allowance;
+    // Always a number now: bin hours + headroom (0 for null-estimate tasks).
+    const maxHours = baseHours + growAllowanceHours(state, entry.id);
     setDrag({
       mode,
       originX: e.clientX,
@@ -415,8 +417,11 @@ function TimedBlock({
 interface BinDragState {
   originX: number;
   originY: number;
-  dx: number;
-  dy: number;
+  clientX: number; // current pointer position (drives the fixed ghost)
+  clientY: number;
+  grabX: number; // pointer offset within the card at drag begin (keeps the ghost aligned)
+  grabY: number;
+  width: number; // card offsetWidth captured at begin (ghost keeps its size out of flow)
   colIndex: number; // projected day column (0–6); -1 = not over a day column
   startMin: number; // projected startMinutes
   valid: boolean; // over a real day column
@@ -453,6 +458,7 @@ function BinCard({
   const { dispatch } = useStore();
   const [drag, setDrag] = useState<BinDragState | null>(null);
   const moved = useRef(false);
+  const cardRef = useRef<HTMLDivElement | null>(null);
 
   // Cancel the drag on Escape (no dispatch → the card snaps home).
   useEffect(() => {
@@ -473,11 +479,17 @@ function BinCard({
       // No active pointer (synthetic events) — drag still works.
     }
     moved.current = false;
+    // Capture the card geometry once so the fixed ghost keeps its size and stays
+    // aligned under the cursor (the in-pane original stays put and dims).
+    const rect = cardRef.current?.getBoundingClientRect();
     setDrag({
       originX: e.clientX,
       originY: e.clientY,
-      dx: 0,
-      dy: 0,
+      clientX: e.clientX,
+      clientY: e.clientY,
+      grabX: rect ? e.clientX - rect.left : 0,
+      grabY: rect ? e.clientY - rect.top : 0,
+      width: rect ? rect.width : 0,
       colIndex: -1,
       startMin: 0,
       valid: false,
@@ -514,7 +526,9 @@ function BinCard({
       ? blockCollides(state, person.id, days[colIndex], startMin, entry.plannedHours)
       : false;
 
-    setDrag((d) => (d ? { ...d, dx, dy, colIndex, startMin, valid, colliding } : d));
+    setDrag((d) =>
+      d ? { ...d, clientX: e.clientX, clientY: e.clientY, colIndex, startMin, valid, colliding } : d,
+    );
   };
 
   const finish = () => {
@@ -532,48 +546,74 @@ function BinCard({
     });
   };
 
+  // In-pane original: stays mounted (keeps pointer capture + all handlers) and
+  // just dims while dragging. The visible card that follows the pointer is a
+  // fixed-position portal ghost, so the bin pane's overflow can't clip it.
   const className = [
     'week-bin-block',
     editable ? '' : 'readonly',
-    drag ? 'dragging' : '',
-    drag?.colliding ? 'colliding' : '',
+    drag ? 'drag-source' : '',
   ]
     .filter(Boolean)
     .join(' ');
 
-  return (
-    <div
-      className={className}
-      style={{
-        borderLeftColor: personColor(person.id),
-        transform: drag ? `translate(${drag.dx}px, ${drag.dy}px)` : undefined,
-      }}
-      role="button"
-      tabIndex={0}
-      title={
-        editable
-          ? `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu. Przeciągnij na siatkę, aby nadać termin.`
-          : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.`
-      }
-      onPointerDown={editable ? begin : undefined}
-      onPointerMove={editable ? onPointerMove : undefined}
-      onPointerUp={editable ? finish : undefined}
-      onPointerCancel={editable ? () => setDrag(null) : undefined}
-      onClick={(e) => {
-        e.stopPropagation();
-        if (!moved.current) onOpen();
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') onOpen();
-      }}
-      onContextMenu={editable ? onContextMenu : undefined}
-    >
+  const content = (
+    <>
       <span className="week-bin-block-title">
         {project && <Coin paid={project.paid} size={12} />}
         {task.title}
       </span>
       <span className="week-bin-block-hours">{formatDuration(entry.plannedHours)}</span>
-    </div>
+    </>
+  );
+
+  return (
+    <>
+      <div
+        ref={cardRef}
+        className={className}
+        style={{ borderLeftColor: personColor(person.id) }}
+        role="button"
+        tabIndex={0}
+        title={
+          editable
+            ? `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu. Przeciągnij na siatkę, aby nadać termin.`
+            : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.`
+        }
+        onPointerDown={editable ? begin : undefined}
+        onPointerMove={editable ? onPointerMove : undefined}
+        onPointerUp={editable ? finish : undefined}
+        onPointerCancel={editable ? () => setDrag(null) : undefined}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (!moved.current) onOpen();
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') onOpen();
+        }}
+        onContextMenu={editable ? onContextMenu : undefined}
+      >
+        {content}
+      </div>
+      {drag &&
+        createPortal(
+          <div
+            className={['week-bin-block', 'week-bin-ghost', drag.colliding ? 'colliding' : '']
+              .filter(Boolean)
+              .join(' ')}
+            style={{
+              left: drag.clientX - drag.grabX,
+              top: drag.clientY - drag.grabY,
+              width: drag.width || undefined,
+              borderLeftColor: personColor(person.id),
+            }}
+            aria-hidden
+          >
+            {content}
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
 
@@ -662,15 +702,18 @@ export function WeekView({ state, anchor, filter }: Props) {
 
   const confirmInsert = () => {
     if (!menu) return;
-    const hours = Number(hoursRaw);
-    if (Number.isNaN(hours) || hours <= 0) return;
+    // parsedHours / overAllowance are the snapped-and-clamped values (defined
+    // below) — the same ones that drive the disabled `Wstaw` button, so the
+    // Enter-key path can never dispatch what the button would refuse.
+    if (Number.isNaN(parsedHours) || parsedHours <= 0) return;
+    if (overAllowance) return;
     dispatch({
       type: 'INSERT_BLOCK',
       payload: {
         refEntryId: menu.entry.id,
         position: menu.position,
         taskId: insertTaskId || menu.entry.taskId,
-        hours: Math.min(24, hours),
+        hours: parsedHours,
       },
     });
     setMenu(null);
@@ -715,10 +758,22 @@ export function WeekView({ state, anchor, filter }: Props) {
     ? hoursForPersonOnDate(state, menu.entry.personId, menu.entry.date)
     : 0;
   const menuCapacity = menu ? personCapacity(state, menu.entry.personId) : 0;
-  const parsedHours = Number(hoursRaw);
+  // Snap/clamp the insert hours ONCE to exactly what INSERT_BLOCK will store
+  // (Math.min(24, …) then 0.25-step snap). Reused for the overload preview, the
+  // allowance check, the disabled state, and confirmInsert so the form can never
+  // disagree with the reducer (e.g. 1.01 snaps to 1.0 and is accepted).
+  const rawHours = Number(hoursRaw);
+  const parsedHours = Number.isNaN(rawHours) ? NaN : snapHours(Math.min(24, rawHours));
   const projectedTotal =
     menuDayHours + (Number.isNaN(parsedHours) ? 0 : Math.max(parsedHours, 0));
   const wouldOverload = menu !== null && projectedTotal > menuCapacity;
+  // Budget allowance for the picked task + this block's person (recomputed when
+  // the task select changes). The reducer enforces the same cap on INSERT_BLOCK.
+  const insertAllowance = menu
+    ? taskGrowAllowance(state, insertTaskId || menu.entry.taskId, menu.entry.personId)
+    : 0;
+  const overAllowance =
+    menu !== null && !Number.isNaN(parsedHours) && parsedHours > insertAllowance + 1e-9;
 
   const hours = Array.from({ length: 24 }, (_, h) => h);
 
@@ -1015,12 +1070,19 @@ export function WeekView({ state, anchor, filter }: Props) {
                   {formatDuration(menuCapacity)}/dzień.
                 </p>
               )}
+              {overAllowance && (
+                <p className="context-warning">
+                  {insertAllowance <= 0
+                    ? '⚠ Brak dostępnych godzin w budżecie zadania — zwiększ szacunek lub godziny w edytorze zadania.'
+                    : `⚠ Budżet zadania pozwala dodać najwyżej ${formatDuration(insertAllowance)}.`}
+                </p>
+              )}
               <div className="context-actions">
                 <button
                   type="button"
                   className="btn primary"
                   onClick={confirmInsert}
-                  disabled={Number.isNaN(parsedHours) || parsedHours <= 0}
+                  disabled={Number.isNaN(parsedHours) || parsedHours <= 0 || overAllowance}
                 >
                   Wstaw
                 </button>

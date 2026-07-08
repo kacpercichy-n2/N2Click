@@ -185,6 +185,10 @@ export interface AppData {
   comments: Comment[];
   activity: ActivityEvent[];
   currentUserId: string; // "acting as" person; '' when unset
+  // Safe impersonation: '' when not impersonating; otherwise the REAL logged-in
+  // person's id while `currentUserId` holds the impersonated identity. Additive
+  // (no version bump) — defaulted + sanitized on every load in storage.ts.
+  impersonatorId: string;
   sampleBannerDismissed: boolean;
   savedFilters: SavedFilter[]; // named filter presets for Projects/Tasks pages
 }

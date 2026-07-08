@@ -652,6 +652,37 @@ textarea {
   flex-shrink: 0;
 }
 
+/* Persistent impersonation banner (admin previewing another identity). Warning
+   tones so it reads as a temporary, reversible mode. No animation by design. */
+.impersonation-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--n2-space-4);
+  border: 1px solid var(--n2-warning);
+  border-radius: var(--n2-radius-md);
+  background: var(--n2-warning-soft);
+  padding: var(--n2-space-3) var(--n2-space-5);
+  margin-bottom: var(--n2-space-6);
+}
+.impersonation-banner-text {
+  color: var(--n2-warning);
+  font-weight: 600;
+}
+.impersonation-banner .btn {
+  flex-shrink: 0;
+}
+@media (max-width: 760px) {
+  .impersonation-banner {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--n2-space-2);
+  }
+  .impersonation-banner .btn {
+    width: 100%;
+  }
+}
+
 /* ---------- Person chips / dots ---------- */
 
 .person-dot {
@@ -878,6 +909,17 @@ option {
   font-size: var(--n2-type-sm);
   font-family: var(--n2-font-data);
   font-variant-numeric: tabular-nums;
+}
+.estimate-compare strong.over-budget {
+  color: var(--n2-danger);
+}
+.estimate-over {
+  margin-top: 8px;
+  font-size: var(--n2-type-sm);
+  color: var(--n2-danger);
+  background: var(--n2-danger-soft);
+  border-radius: var(--n2-radius-xs);
+  padding: 8px 12px;
 }
 
 .assignee-picker {
@@ -1683,6 +1725,21 @@ option {
   border-color: var(--n2-danger);
   border-left-color: var(--n2-danger) !important;
   background: var(--n2-danger-soft, rgba(255, 79, 114, 0.25));
+}
+/* In-pane original while its ghost is being dragged out of the bin */
+.week-bin-block.drag-source {
+  opacity: 0.35;
+  cursor: grabbing;
+}
+/* Fixed-position drag ghost portalled to <body> — escapes the bin overflow.
+   Purely visual: no pointer events, no transitions, above menus/modals. */
+.week-bin-ghost {
+  position: fixed;
+  z-index: 1000;
+  margin: 0;
+  pointer-events: none;
+  transition: none;
+  box-shadow: var(--n2-shadow-violet, 0 8px 24px rgba(0, 0, 0, 0.4));
 }
 .week-bin-block-title {
   font-size: var(--n2-type-xs);

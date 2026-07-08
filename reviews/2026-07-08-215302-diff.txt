@@ -1,0 +1,2243 @@
+diff --git a/handoffs/RUN-STATE.md b/handoffs/RUN-STATE.md
+index f32057a..12b467d 100644
+--- a/handoffs/RUN-STATE.md
++++ b/handoffs/RUN-STATE.md
+@@ -5,108 +5,89 @@ A durable, append-only log for the run in progress. Every tier updates it so the
+ instead of reconstructing it from chat history and worker narratives. Keep it
+ boring and factual — it's a checklist, not prose.
+ 
+-> Previous runs (2026-07-08 "Unassigned bin + block split + sidebar collapse" —
+-> APPROVED; 2026-07-08 "Walkthrough fixes: fixed hour axis, bin beside grid,
+-> duration format" — APPROVED) are archived in git history of this file.
+-> **Carried-over items still open:** (a) human browser walkthrough of both
+-> approved runs' interactive criteria; (b) commit hygiene — `git add` the
+-> untracked `src/utils/uiPrefs.ts`, `src/store/selectors.test.ts`, package and
+-> review files; (c) CLAUDE.md refresh (bin/zasobnik, week-view panes,
+-> formatDuration convention) — human task, not a worker package.
++> Previous runs (2026-07-08 "Unassigned bin + block split + sidebar collapse";
++> 2026-07-08 "Walkthrough fixes"; 2026-07-08 "Hour budget + block merging ·
++> accounts/roles/permissions · sidebar icon fix" — APPROVED, committed as
++> ff4fd8a) are archived in the git history of this file.
++> **Carried-over items still open:** (a) human browser walkthrough of the
++> approved runs' interactive criteria (role matrix per role, budget clamp +
++> merge animation, availability math, restricted insert picker, workday fill);
++> (b) commit hygiene — untracked `automation/`, modified `.gitignore`;
++> (c) CLAUDE.md refresh (login/roles/permissions, budget/bin invariants,
++> availability semantics, week-view panes) — human task, not a worker package.
++> **Carried backlog (non-blocking):** Codex #5 `workDays: []` 0%-vs-overload
++> display; pre-existing `insertBlock` end-of-day clamp overlap; status archive
++> hides projects from Kanban; `toQuarters` placement (→ utils/time.ts); v4
++> payload with zero administrators (promote-first-person idea). The "unsnapped
++> `estimatedHours`" backlog item is FIXED by this run (PKG-…-b2-calendar-ui).
+ 
+ ---
+ 
+-## Run: 2026-07-08 — Hour budget + block merging · accounts/roles/permissions · sidebar icon fix
++## Run: 2026-07-08 — Bug-fix round 2: budget minting holes · bin drag ghost · impersonation trap
+ 
+ ### Plan (architect)
+ 
+-- **Goal:** (B, priority) Calendar block resizing stops minting hours: growth
+-  draws from the task's bin/estimate budget and clamps at it, shrink returns
+-  hours to the bin, same-task bin rows merge to one per person, and two
+-  same-task blocks dropped exactly back-to-back fuse into one block with a
+-  light merge animation (reduced-motion safe). (C) Local login gating the app
+-  (per-person SHA-256 password hash, cosmetic by design, API-ready seam), four
+-  access roles (administrator/PM/handlowiec/pracownik) replacing `isAdmin` via
+-  migration v4→v5, a central `can()` permission map applied across the UI,
+-  extended profiles (telefon, dni robocze, godziny pracy, przełożony z blokadą
+-  cykli) and workday-aware available-hours math. (D) Collapsed-sidebar nav
+-  icons in fixed 1:1 circles (bundled into the week-UI package).
+-
+-- **Stream A verdict (foundation audit): ADEQUATE — no package emitted.**
+-  Reasons: (1) data volumes are bounded by design (single-team planner behind
+-  a ~5 MB localStorage ceiling; hundreds of tasks / thousands of entries at
+-  worst) and every selector is a pure linear scan — measured hot paths don't
+-  exist at this scale; (2) all reads already flow through centralized pure
+-  selectors, so introducing memoized byId maps later is a local, non-breaking
+-  change behind the same call sites; (3) the storage.ts→API extension path
+-  must stay thin — adding an index/normalization layer now would complicate
+-  that swap for no current gain; (4) the v4→v5 migration in this run is the
+-  sanctioned vehicle for the shape changes Stream C needs. Watch item (noted,
+-  not actioned): `conflictDatesForTask`/`hoursForPersonOnDate` compose to
+-  O(workload²)-ish in pathological data — revisit only if entry counts reach
+-  ~10k or profiling shows render lag.
++- **Goal:** Fix three user-reported, orchestrator-verified bugs. (1) Hours can
++  still be minted past the task budget through every non-drag path
++  (AllocationGrid/SAVE_TASK, "Wypełnij dni robocze", "Dodaj do zasobnika",
++  INSERT_BLOCK) and unlimited drag-grow on `estimatedHours: null` tasks —
++  calendar-side paths must never create hours; TaskModal becomes the sole,
++  warned, deliberate over-planning surface. (2) Dragging a card out of the bin
++  pane renders it invisible (overflow clipping of the translated card) — the
++  drag ghost must escape the pane. (3) "Występuj jako" is a self-demotion
++  trap: an admin who picks a non-admin loses the switcher itself — separate the
++  logged-in identity from the acted-as identity with a persistent return
++  banner.
+ 
+ - **Key decisions (pre-resolved — details in the packages, no open questions):**
+-  - Budget model: headroom = max(0, estimatedHours − task total incl. bin);
+-    grow allowance = same-person same-task bin + headroom, consumed bin-first;
+-    `estimatedHours null` ⇒ free grow (today's behavior). Enforcement in
+-    `SET_BLOCK_TIME` only (reducer rejects; UI clamps live) — SAVE_TASK /
+-    AllocationGrid stay advisory. Known SAVE_TASK `personId|date` collapse
+-    issue explicitly untouched.
+-  - New invariants: ≤1 bin entry per (taskId, personId) (all bin writers +
+-    idempotent merge in `ensureStartMinutes`, DATA_VERSION stays 4 for that);
+-    exact-adjacent same-task same-person dated blocks merge inside
+-    SET_BLOCK_TIME (earlier id survives; cascades; NOT in INSERT_BLOCK).
+-  - Auth: session = persisted `currentUserId`; login screen when people exist
+-    and nobody resolves; zero people = setup mode (no lockout); empty
+-    `passwordHash` = passwordless login (recovery path; admin can clear any
+-    password); `isAdmin` removed → `accessRole`, migration v4→v5
+-    (admin→administrator, else pracownik); permission matrix lives in new
+-    `src/store/permissions.ts` (spelled out in PKG-…-auth-data); "Występuj
+-    jako" becomes administrator-only quick switch + universal "Wyloguj";
+-    UI-level enforcement only until the API era.
+-  - Availability: `workDays` (ISO 1–7, default Mon–Fri) + informational work
+-    hours; available-hours totals become per-person workday sums; overload
+-    threshold rule intentionally unchanged.
+-
+-- **Packages** (waves are parallel-safe by disjoint files; order matters):
+-  - **Wave 1:** 1. `handoffs/packages/PKG-20260708-budget-store.md` —
+-    tier: developer — budget/merge/bin invariants in reducer + storage +
+-    selectors (+ mechanical existing-test updates).
+-  - **Wave 2 (parallel):**
+-    2. `handoffs/packages/PKG-20260708-budget-week-ui.md` — tier: developer —
+-       WeekView clamp feedback + will-merge/fuse animation + Stream D sidebar
+-       icon circles (WeekView.tsx + styles.css only; depends 1).
+-    3. `handoffs/packages/PKG-20260708-auth-data.md` — tier: developer —
+-       types v5 + migration + permissions.ts + password util + seed +
+-       mechanical UI/fixture swaps (depends 1 for file-conflict ordering).
+-  - **Wave 3 (parallel):**
+-    4. `handoffs/packages/PKG-20260708-store-tests.md` — tier: test-writer —
+-       full unit coverage for packages 1+3 (test files only; depends 1 and
+-       auth-data).
+-    5. `handoffs/packages/PKG-20260708-auth-login-ui.md` — tier: developer —
+-       LoginPage + App.tsx gate + logout/quick-switch + password UI (depends
+-       auth-data; after budget-week-ui for styles.css ordering).
+-  - **Wave 4:** 6. `handoffs/packages/PKG-20260708-permission-gating.md` —
+-    tier: developer — apply can() per the page map (depends login-ui).
+-  - **Wave 5:** 7. `handoffs/packages/PKG-20260708-profile-availability.md` —
+-    tier: developer — profile/org form fields + workday-aware availability
+-    (depends gating).
+-
+-- **Gates:** `npx tsc --noEmit` + `npm test` + `npm run build` green after every
+-  package (dev server already running on 5173 — nobody starts a second one);
+-  Codex review + reviewer verdict after waves complete; final human browser
+-  walkthrough (budget clamp, merge animation incl. reduced-motion, login/roles
+-  matrix per role, availability math with seeded Ola Mon–Thu, collapsed sidebar
+-  circles) before merge.
+-- **Parallel input:** a Codex browser UX audit of the current app runs
+-  alongside this run; its findings go to the REVIEWER for adjudication — no
+-  worker should wait on it.
+-- **Open questions:** none blocking. Post-merge doc note for the human:
+-  CLAUDE.md needs a refresh after this run (budget/merge invariants, one-bin-row
+-  rule, v5 person model + roles + login, permission matrix pointer,
+-  availability semantics, manual-checklist additions) — on top of the
+-  carried-over doc refresh above; intentionally NOT a worker package.
++  - **Unified budget allowance** for a (task, person):
++    `bin hours + (estimate === null ? 0 : headroom)` — `growAllowanceHours`
++    never returns null anymore; `estimatedHours: null` tasks get bin-conserving
++    drag-grow (bin only, nothing minted). `INSERT_BLOCK` enforces the same
++    allowance with bin-first draw (mirrors `SET_BLOCK_TIME`). Moves and
++    shrinks are never budget-checked.
++  - **TaskModal stays uncapped at the store level** (SAVE_TASK/newUnassigned):
++    it is the deliberate re-planning surface — instead it gets a live,
++    non-blocking `Przekroczono szacunek o X` banner + danger-tinted totals,
++    and the insert form gets a live warning + disabled `Wstaw` past the
++    allowance. Estimate now snaps to 0.25 on save (closes a reviewer backlog
++    item; no 24h clamp).
++  - **Bin drag ghost**: `position: fixed` portal to `document.body` following
++    the pointer (grab-offset preserved), `pointer-events: none`, keeps the
++    colliding danger tint; the in-pane source card stays mounted (pointer
++    capture intact) and dims. Drop math unchanged.
++  - **Impersonation**: additive `AppData.impersonatorId: string` ('' = not
++    impersonating; NO version bump — defaulted + sanitized on every load like
++    `ensureStartMinutes`). New `IMPERSONATE`/`STOP_IMPERSONATION` actions;
++    login/LOGOUT clear it; chained switches preserve the original real user;
++    DELETE_PERSON interplay handled. Permissions are a TRUE PREVIEW (follow
++    the acted-as identity; comments keep signing as acted-as); ONLY the
++    switcher visibility and the return banner key off the real user
++    (`realUserId` selector). Switcher loses the `—` option; persistent
++    warning banner `Występujesz jako … — Wróć do …` above SampleBanner.
++
++- **Packages** (sequential — 2 and 3 both touch styles.css; 4 needs 1+3):
++  1. `handoffs/packages/PKG-20260708-b2-budget-store.md` — tier: developer —
++     reducer/selector budget enforcement (`taskGrowAllowance`,
++     null-estimate grow cap, INSERT_BLOCK draw/reject) + mechanical
++     existing-test adaptations.
++  2. `handoffs/packages/PKG-20260708-b2-calendar-ui.md` — tier: developer —
++     insert-form warning/disable, TaskModal over-budget banner + estimate
++     snap, bin drag ghost portal (depends 1).
++  3. `handoffs/packages/PKG-20260708-b2-impersonation.md` — tier: developer —
++     impersonatorId model + actions + selectors + switcher/banner UI
++     (depends 2 for styles.css ordering only).
++  4. `handoffs/packages/PKG-20260708-b2-tests.md` — tier: test-writer —
++     20 case groups across blockActions/selectors/storage tests
++     (depends 1 + 3; test files only).
++
++- **Gates:** `npx tsc --noEmit` + `npm test` + `npm run build` green after
++  every package (baseline 157/157; dev server already running on 5173 — nobody
++  starts a second one). Reviewer verdict after all packages; human browser
++  walkthrough items collected from worker reports.
++- **Open questions:** none. Post-run human note: CLAUDE.md refresh must now
++  also cover the no-mint budget rule, impersonatorId session model, and the
++  banner (folds into carried-over item c).
+ 
+ ### Worker log
+ 
+@@ -120,479 +101,59 @@ boring and factual — it's a checklist, not prose.
+ - **Next:** <hand to which tier / ready for review / done>
+ -->
+ 
+-#### 2026-07-08 · developer (opus) · `PKG-20260708-budget-store`
+-
+-- **Changed:**
+-  - `src/store/selectors.ts` — added `binEntryForTaskPerson`, `binHoursForTaskPerson`, `taskBudget`, `growAllowanceHours` (pure budget/bin selectors).
+-  - `src/store/AppStore.tsx` — `setBlockTime`: budget-capped grow (bin-first then headroom, reject past allowance), shrink now merges freed hours into the existing (task,person) bin row, exact-adjacent same-task same-person block merge with `pobrano z zasobnika` / `połączono sąsiednie bloki` activity suffixes; one-bin-row enforcement in `moveBlockToBin` (fold into existing row), `splitBlock` (parts collapse to one bin row; bin entries now no-op), `saveTask` `newUnassigned` (per-person merge into one/passed-through row), `reassignEntry` (bin→person merges into target's same-task row); added `toQuarters` helper.
+-  - `src/store/storage.ts` — `ensureStartMinutes` bin groups now merge duplicate per-task rows (lowest-sortIndex survivor, hours summed) before renumbering; still idempotent, DATA_VERSION stays 4.
+-  - `src/types.ts` — documented the two new WorkloadEntry invariants.
+-  - Tests adapted mechanically (see below) in `blockActions.test.ts` and `storage.test.ts`.
+-- **Existing-test edits (mechanical, each with reason):**
+-  1. `blockActions` MOVE_BLOCK_TO_BIN "appends after an existing bin entry" — pointed the existing bin row at a different task (`t2`) so the one-bin-row merge doesn't fold the moved block in; preserves the append/reindex assertion.
+-  2. `blockActions` SPLIT "quarters a 1.25h block" — now expects ONE 0.75h bin row (split-off parts collapse) instead of three 0.25h rows.
+-  3. `blockActions` SPLIT "splits a bin entry within the bin" → renamed to assert a no-op (`toBe(state)`): splitting a bin block into two same-pair bin rows is illegal under the invariant.
+-  4. `blockActions` SAVE_TASK `newUnassigned` — now expects ONE merged 11.25h bin row (10h + 1.25h) instead of two rows.
+-  5. `blockActions` REASSIGN "moving a bin entry ... appends" → rewritten to assert the merge into the target's existing same-task bin row (moved id dropped, target 3h, single row).
+-  6. `storage` three bin tests ("garbage startMinutes+gappy sortIndex", "idempotent already-clean", "does NOT stack from 08:00") — gave the two entries distinct tasks (`t1`/`t2`) so the new per-task merge doesn't fire, preserving each test's original startMinutes/sortIndex assertion.
+-- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean, vitest 68/68 passed (4 files), build OK.
+-- **Still broken:** nothing in scope.
+-- **Deviations / notes for reviewer & package 2:**
+-  - `SPLIT_BLOCK` on a BIN entry now no-ops (was previously allowed). WeekView still renders "Podziel na pół / na ćwiartki" for bin blocks (`WeekView.tsx` ~L766-793, shown for all entries) — those buttons are now dead for bin blocks. **Package 2 (budget-week-ui) should hide/disable split on bin entries.** Reducer change is correct per the one-bin-row invariant; flagging so the UI matches.
+-  - No new test files added (new coverage is deferred to PKG-20260708-store-tests per this package's scope). Only broken existing tests were adapted.
+-- **Next:** ready for wave 2 (`PKG-20260708-budget-week-ui`, `PKG-20260708-auth-data`) and reviewer.
+-
+-#### 2026-07-08 · developer (opus) · `PKG-20260708-budget-week-ui`
+-
+-- **Changed:**
+-  - `src/components/WeekView.tsx` — `TimedBlock`: DragState gains `maxHours`/`atCap`/`willMergeWithId`/`willMergeEdge`; `begin()` captures `growAllowanceHours` once (null ⇒ Infinity ⇒ free grow); `onPointerMove` clamps resize `projHours` at `maxHours` (top mode re-derives `projStart` to keep the end fixed) and detects exact-adjacent same-task/same-person/same-date merge neighbor (mirrors the reducer predicate, false while colliding/overBin); `finish()` remembers the earlier-starting block's id as the fuse survivor before dispatch; `at-cap` title = "Limit czasu zadania — brak godzin w zasobniku". WeekView-level `mergeTargetId` + `fusedId` state (with 400ms timeout fallback) plumbed to blocks; classes `at-cap`/`will-merge`/`will-merge-target`/`merge-top`/`merge-bottom`/`fused`; `onAnimationEnd` clears `fusedId`.
+-  - `src/components/WeekView.tsx` (context menu) — "Podziel na pół / na ćwiartki" moved inside the `!isBinEntry` branch so split is hidden for bin entries (matches wave-1 reducer no-op). Folded in per launch instruction despite package's "context menu out of scope" note.
+-  - `src/styles.css` — `.week-block.at-cap` (warning outline), `.will-merge`/`.will-merge-target` (lavender glow), `.will-merge::after` connecting blob (radial pill, top/bottom edge variants), `week-block-fuse` 280ms keyframe; `.sidebar-collapsed .app-nav-link` now a fixed 44px 1:1 circle (border-radius 999px, margin-inline auto). Global `prefers-reduced-motion` override neutralizes the keyframe (no JS motion path).
+-- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean, vitest 68/68 (4 files), build OK. No new unit tests (interaction-only per package scope).
+-- **Deviations:** (1) split-button hide is outside the package's stated scope but explicitly requested by the launching agent to match the wave-1 reducer change. (2) Blob rendered on the dragged block only (per decision 3) with glow on both blocks — satisfies the acceptance line "glow + blob on both blocks" via decision 3's authoritative detail.
+-- **Not CLI-verifiable (defer to human walkthrough):** live cap outline + Polish title while resizing to budget; unbudgeted (`estimatedHours: null`) task still grows freely; will-merge glow/blob appears on exact adjacency and clears on move-away / during collision / over bin; fuse animation plays once (~280ms) on merge drop; reduced-motion kills the fuse/blob but the merge still happens; collapsed-sidebar 44px circles centered in the 80px rail with visible active/hover; console clean.
+-- **Still broken:** nothing in scope.
+-- **Next:** ready for reviewer; wave 2 sibling `PKG-20260708-auth-data` unaffected (disjoint files).
+-
+-#### 2026-07-08 · developer (opus) · `PKG-20260708-auth-data`
+-
+-- **Changed:**
+-  - `src/types.ts` — `Person`: removed `isAdmin`, added `accessRole` (new `AccessRole` union), `phone`, `passwordHash`, `workDays`, `workStartMinutes`, `workEndMinutes`, `supervisorId` (all documented).
+-  - `src/utils/password.ts` (new) — `hashPassword`/`verifyPassword` (SHA-256 hex via WebCrypto) with the mandated "cosmetic client-side gating only" comment block.
+-  - `src/store/permissions.ts` (new) — `PermAction` union, per-role `MATRIX`, `can(user, action, {peopleCount})` (setup-mode = zero people → all allowed), `ROLE_LABELS`.
+-  - `src/store/storage.ts` — `DATA_VERSION = 5`; new `migratePerson`/`migrateV4toV5`; exported `WORKDAY_START_MIN`, `DEFAULT_WORKDAYS`, `defaultWorkEndMinutes`, `sanitizeWorkDays`; `migrateV1` people now built through `migratePerson`; `loadData` chain: v1 → `ensureStartMinutes(migrateV4toV5(localize(migrateV1)))`, v2–4 → localize (now runs for v4 too since DATA_VERSION=5) then `migrateV4toV5` when `version < 5`.
+-  - `src/store/selectors.ts` — `isAdminUser` reimplemented on `accessRole === 'administrator'` (same name/signature, zero-people rule kept); new pure `wouldCreateSupervisorCycle`; availability selectors `isPersonWorkday`/`availableHoursOnDate`/`availableHoursInRange` (JS getDay 0=Sun → ISO 7).
+-  - `src/store/AppStore.tsx` — `PersonDraft` swaps `isAdmin` for `accessRole` + adds `phone`/`workDays`/`workStartMinutes`/`workEndMinutes`/`supervisorId` (NOT `passwordHash`); `personFromDraft` returns `Omit<Person,'id'|'passwordHash'>` and sanitizes workDays; `ADD_PERSON` seeds `passwordHash: ''` + defensive cycle guard; `UPDATE_PERSON` drops cycle-forming `supervisorId`; new `SET_PASSWORD` (verbatim hash, no activity row) and `LOGOUT` (clears `currentUserId`).
+-  - `src/store/seed.ts` — Kasia `administrator` / Ola `pm` / Marek `pracownik`; all `passwordHash: ''`; sample phones; Ola `workDays [1,2,3,4]` (others Mon–Fri); Marek & Ola `supervisorId → Kasia`; work hours 8:00–16:00. Kasia declared first (supervisor ref); people array order `[ola, marek, kasia]` unchanged (stable colours). Over-capacity Wed and all other content intact.
+-  - `src/App.tsx` — acting-as suffix now from `accessRole === 'administrator'`.
+-  - `src/pages/PeoplePage.tsx` / `src/pages/PersonProfilePage.tsx` — `isAdmin` checkbox → `Uprawnienia` select (4 roles via `ROLE_LABELS`); `admin-tag` shown for administrators; draft literals extended with the new-field defaults (no new form controls yet).
+-- **Existing-test edits (mechanical):** `blockActions.test.ts` and `selectors.test.ts` `makePerson` fixtures — replaced `isAdmin: false` with `accessRole: 'pracownik'`, `phone: ''`, `passwordHash: ''`, `workDays: [1,2,3,4,5]`, `workStartMinutes: 480`, `workEndMinutes: 960`, `supervisorId: ''`. No assertions changed.
+-- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean, vitest 68/68 (4 files), build OK. Verified `sha256('a')` hex equals the acceptance value.
+-- **Deviations:** none. New migration/permission/availability tests intentionally deferred to `PKG-20260708-store-tests` (out of scope). `can()` is the single entry point (callers pass `peopleCount`); no `canIn` wrapper added.
+-- **Notes for reviewer:** (1) `localizeLegacyData` now runs for v4 payloads (DATA_VERSION rose to 5) — it's a no-op on already-Polish data (English→Polish maps don't match Polish values); rebuilds references only. (2) `migrateV1` calls `migratePerson`, so the v1 branch's later `migrateV4toV5` is idempotent by design.
+-- **Not CLI-verifiable (defer to human walkthrough):** roles select replaces the checkbox in People + profile; admin gate open for Kasia, blocked for Marek; browser behaves as before.
+-- **Next:** ready for reviewer; wave-3 `PKG-20260708-store-tests` (depends on this) and `PKG-20260708-auth-login-ui` can proceed.
+-
+-#### 2026-07-08 · test-writer (sonnet) · `PKG-20260708-store-tests`
+-
+-- **Changed (test files only — no implementation file touched):**
+-  - `src/store/blockActions.test.ts` — +20 tests: `SET_BLOCK_TIME` budget-capped
+-    grow (reject-at-estimate, drain-bin-then-headroom, pure-bin-draw,
+-    `estimatedHours: null` free grow, no cross-person/cross-task bin
+-    consumption, move-only never rejected), shrink→existing-bin-row merge,
+-    adjacency merge (simple + 3-way cascade + non-merge: different task /
+-    different person / 15-min gap), one extra `SPLIT_BLOCK` case (merge into a
+-    pre-existing bin row) and one extra `MOVE_BLOCK_TO_BIN` case (fold into an
+-    existing row, id survives), supervisor-cycle guard on `UPDATE_PERSON`
+-    (self, A→B→A, valid chain), `SET_PASSWORD`/`UPDATE_PERSON`-preserves-hash/
+-    `LOGOUT`.
+-  - `src/store/storage.test.ts` — +3 tests: `ensureStartMinutes` duplicate
+-    per-task bin-row merge (lowest-sortIndex survivor, summed hours, renumbered,
+-    idempotent, distinct-task row untouched); `loadData` v4→v5 migration
+-    (isAdmin true/false → accessRole, defaults incl. the 1440-minute
+-    `workEndMinutes` cap, no `isAdmin` key, version 5) via a small in-memory
+-    `localStorage` stub (not previously present in this file — `STORAGE_KEY` is
+-    duplicated as a literal since storage.ts doesn't export it); v5-payload
+-    reload idempotence.
+-  - `src/store/selectors.test.ts` — +5 tests: `growAllowanceHours` (null
+-    estimate, bin+headroom sum, headroom floored at 0 for an over-budget
+-    legacy task), `isPersonWorkday`/`availableHoursOnDate` (Mon–Thu worker: 0 on
+-    Friday, capacity on Wednesday), `availableHoursInRange` over a full
+-    Mon–Sun week.
+-  - `src/store/permissions.test.ts` (new) — 53 tests: the full 4-role ×
+-    12-action permission matrix from PKG-20260708-auth-data decision 7 via
+-    `it.each` (48 cases), zero-people setup mode allows everything, an
+-    undefined user (people present) is denied every action, `ROLE_LABELS`,
+-    `hashPassword('a')` matches the documented digest, `verifyPassword`
+-    round-trip.
+-- **Tests:** `npx tsc --noEmit && npm test` → tsc clean; vitest 149/149 passing
+-  across 5 files (was 68/68 across 4 files before this package — permissions.test.ts
+-  is new). `npm run build` intentionally not run (test-only package; dev server
+-  already on 5173 per package instructions — reviewer re-runs build).
+-- **Spec/implementation mismatches found:** none. Every case in the package's
+-  19 groups matched the shipped reducer/selector/migration/permission behavior
+-  on the first correctly-specified attempt (one test of mine had a self-inflicted
+-  bug — a free-grow-to-20h fixture that itself exceeded the 24:00 day boundary —
+-  fixed to 10h; not a product bug).
+-- **Skipped/deferred:** none of the 19 in-scope case groups were skipped.
+-  Out-of-scope per the package: no v1→v5 end-to-end migration test (only
+-  v4→v5, per the package's explicit scope — v1 coverage is `PKG-20260708-auth-data`'s
+-  acceptance criterion, not listed as an in-scope case here); no UI/browser tests.
+-- **Verified no implementation file modified:** `git status --short` shows only
+-  `src/store/blockActions.test.ts`, `src/store/storage.test.ts`,
+-  `src/store/selectors.test.ts` modified and `src/store/permissions.test.ts`
+-  added by this package; all other modified/untracked files (AppStore.tsx,
+-  selectors.ts, storage.ts, permissions.ts, types.ts, password.ts, WeekView.tsx,
+-  App.tsx, seed.ts, PeoplePage.tsx, PersonProfilePage.tsx, styles.css, package
+-  files, reviews/, automation/) predate this package (waves 1–2's output) and
+-  were left untouched.
+-- **Next:** ready for reviewer alongside waves 1–2.
+-
+-#### 2026-07-08 · developer (opus) · `PKG-20260708-auth-login-ui`
+-
+-- **Changed:**
+-  - `src/pages/LoginPage.tsx` (new) — full-viewport brand login card; person
+-    list (Avatar + name + `ROLE_LABELS`); passwordless row = one-click login;
+-    password row expands inline `Hasło` field + `Zaloguj się`, async
+-    `verifyPassword`, inline `Nieprawidłowe hasło`, Enter submits, button
+-    disabled while verifying; navigates to `/dashboard` on success.
+-  - `src/App.tsx` — session gate `needsLogin = people.length > 0 && !currentUser`
+-    returns `<LoginPage />` before the shell/routes (TaskModal + GlobalSearch stay
+-    gated); "Występuj jako" select now wrapped in
+-    `can(currentUser, 'users.impersonate', …)` (admins only); universal
+-    `Wyloguj` button dispatching `LOGOUT`.
+-  - `src/pages/PersonProfilePage.tsx` — new `PasswordSection` (own profile OR
+-    `can(user, 'people.manage')`): `Nowe hasło` + `Powtórz hasło`,
+-    `Ustaw/Zmień hasło` with min-4 + match inline errors, hashed before dispatch;
+-    admin `Usuń hasło` behind `window.confirm`.
+-  - `src/styles.css` — `.logout-btn`; `.login-*` classes (dark glass card, person
+-    rows, inline password panel; 760px padding tweak). Reused existing tokens.
+-- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean, vitest
+-  149/149 (5 files), build OK. No new unit tests (per package scope — store-level
+-  auth already covered by PKG-20260708-store-tests).
+-- **Deviation (one, minor):** Decision 3 describes a passwordless person as a
+-  two-step "pick → `Zaloguj się` button". I implemented the row click itself as
+-  the login action for passwordless people, because acceptance criterion
+-  "Passwordless person: one-click login lands on /dashboard" is the stronger,
+-  testable requirement and the two would otherwise conflict. Password-protected
+-  rows still expand to the `Zaloguj się` password form exactly as specified.
+-- **Not CLI-verifiable (defer to human walkthrough on :5173):** logged-out gate
+-  hides sidebar/routes and makes Ctrl/Cmd+K inert; one-click login per seeded
+-  person; set a password on Kasia → logout → wrong (`Nieprawidłowe hasło`) then
+-  right password; reload stays logged in; `Wyloguj` returns to login and persists
+-  through reload; impersonate select admin-only, `Wyloguj` for everyone; admin
+-  `Usuń hasło` confirm then passwordless login; zero-people fresh state shows NO
+-  login screen (setup/sample flow intact); ≤760px layout; console clean.
+-- **Still broken:** nothing in scope.
+-- **Next:** ready for reviewer; unblocks wave 4 `PKG-20260708-permission-gating`.
+-
+-#### 2026-07-08 · developer (opus) · `PKG-20260708-permission-gating`
+-
+-- **Changed:**
+-  - `src/store/useCan.ts` (new) — `useCan()` hook: reads the store once, returns a
+-    `can(action)` bound to the current user + `peopleCount` (setup-mode/undefined-user
+-    rules come for free).
+-  - `src/store/permissions.ts` — exported shared `NO_PERM_TITLE = 'Brak uprawnień'`.
+-  - `src/App.tsx` — nav hides `/admin` without `admin.panel`; `/admin` route redirects
+-    to `/dashboard` for non-admins (satisfies "direct URL redirects").
+-  - `src/pages/ProjectsPage.tsx` — "Nowy projekt" button+form hidden without
+-    `projects.manage`; per-card "+ Zadanie" hidden without `tasks.manage`.
+-  - `src/pages/ProjectDetailPage.tsx` — edit inputs/selects/textarea disabled +
+-    `Brak uprawnień` title, delete + milestone-add + milestone-delete hidden, milestone
+-    date input disabled → all `projects.manage`; both coins static without `projects.paid`;
+-    "+ Nowe zadanie" hidden without `tasks.manage`.
+-  - `src/pages/KanbanPage.tsx` — `isAdminUser`→`useCan`; card `draggable`+drop dispatch
+-    gated by `projects.manage`; quick-create box now `admin.panel`.
+-  - `src/pages/TimelinePage.tsx` — `Bar`/`MilestoneMark` gain `editable`; project bars +
+-    milestones → `projects.manage`, task bars → `tasks.manage`; non-editable render static
+-    (no pointer handlers, `pointer` cursor, click still opens).
+-  - `src/pages/TasksPage.tsx` — both "Nowe zadanie" buttons + per-row "Usuń" hidden without
+-    `tasks.manage`; row click still opens the (read-only) modal.
+-  - `src/components/TaskModal.tsx` — without `tasks.manage`: all detail/period/assignee
+-    inputs disabled, bin-add controls hidden, `AllocationGrid` read-only, save button + delete
+-    hidden, "Anuluj"→"Zamknij"; comments tab stays writable.
+-  - `src/components/AllocationGrid.tsx` — new `readOnly` prop (inputs disabled + title,
+-    fill/clear buttons hidden).
+-  - `src/components/WeekView.tsx` — `TimedBlock`/`BinCard` gain `editable`; enabled when
+-    `blocks.editAny` OR (`blocks.editOwn` AND `entry.personId === currentUserId`); non-editable
+-    blocks drop all pointer/context handlers (custom insert menu inherits the same rule),
+-    read-only title, `pointer` cursor; plain click still opens the task.
+-  - `src/pages/WorkloadPage.tsx` — reassign control gated by `workload.reassign`; "Przesuń
+-    całe zadanie" (MOVE_TASK) gated by `tasks.manage` (see deviation).
+-  - `src/pages/PeoplePage.tsx` — add form + per-row "Usuń" hidden without `people.manage`;
+-    list stays viewable.
+-  - `src/pages/PersonProfilePage.tsx` — edit button+form gated to `people.manage` OR self;
+-    when self-only (no `people.manage`), `Uprawnienia` select + capacity input disabled +
+-    title. Password section rule unchanged.
+-  - `src/styles.css` — `.readonly`/`.static` cursor rules for non-editable blocks/bars.
+-- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean, vitest 149/149
+-  (5 files), build OK. No unit-test changes (page wiring is walkthrough territory per package).
+-- **Deviations (2):**
+-  1. WorkloadPage "Przesuń całe zadanie" buttons: the per-page map only names the reassign
+-     control, but leaving MOVE_TASK open would let pracownik/handlowiec mutate tasks and break
+-     the "read-only everywhere except own blocks" acceptance criterion. Gated by `tasks.manage`
+-     (the natural action for a task move). Reassign itself still gated by `workload.reassign`.
+-  2. ProjectsPage per-card "+ Zadanie" quick-create: not explicitly in the map, but it opens a
+-     task-creation form, so gated by `tasks.manage` to honor "no creation forms" for pracownik.
+-- **Decision note:** `/admin` uses BOTH a route-level redirect (App.tsx) and AdminPage's existing
+-  `isAdminUser` gate; both resolve off `accessRole === 'administrator'`, so one rule effectively
+-  decides (redirect fires first; the in-page gate is now defensive/unreachable for non-admins).
+-- **Not CLI-verifiable (defer to human role walkthrough on :5173, log in as each):**
+-  administrator = pre-gating parity; PM (Ola) create/edit projects+tasks, drag kanban/timeline,
+-  any calendar block, workload reassign, but no coin/people/clients/admin/quick-switch; handlowiec
+-  (set one via People form) projects+coin, TaskModal read-only w/ working comments, own-blocks-only
+-  drag, no reassign/admin; pracownik (Marek) read-only everywhere except own calendar blocks,
+-  others' blocks inert, no creation forms, `/admin` link hidden + URL redirect; comments postable
+-  by every role; disabled controls show `Brak uprawnień`; zero-people setup unrestricted; console clean.
+-- **Still broken:** nothing in scope.
+-- **Next:** ready for reviewer; unblocks wave 5 `PKG-20260708-profile-availability`.
+-
+-#### 2026-07-08 · developer (opus) · `PKG-20260708-profile-availability`
++#### 2026-07-08 · developer · `PKG-20260708-b2-budget-store`
+ 
+ - **Changed:**
+-  - `src/components/personFields.ts` (new) — pure UI helpers shared by both forms:
+-    `WEEKDAY_CHIPS` (ISO 1–7 Pn→Nd), `START_MINUTE_OPTIONS` (0:00–23:45),
+-    `END_MINUTE_OPTIONS` (0:15–24:00), `toggleWorkDay`, `formatWorkDays`
+-    (compact `Pn–Cz` range / single / comma list). No store/selector logic.
+-  - `src/pages/PeoplePage.tsx` — add form gains Telefon input, Dni robocze chips,
+-    Praca od/do selects (15-min steps via `formatMinutes`), Przełożony select
+-    (all people; a brand-new person can't form a cycle), the
+-    `Limit dzienny liczony jest z pola dostępności` hint, and `Do > Od` submit
+-    validation (`Koniec pracy musi być po początku`).
+-  - `src/pages/PersonProfilePage.tsx` — edit form gains the same five controls;
+-    Dni robocze/hours/Przełożony disabled with `Brak uprawnień` for self-editors
+-    without `people.manage` (matches existing accessRole/capacity gating);
+-    supervisor options exclude self + `wouldCreateSupervisorCycle` candidates;
+-    inline hours validation. New read-only `ProfileFacts` card (telefon, dni
+-    robocze, godziny pracy, przełożony link, podwładni links — row omitted when
+-    empty). Week summary `available` now `availableHoursInRange(state, id, week)`.
+-  - `src/pages/WorkloadPage.tsx` — per-person `available =
+-    availableHoursInRange(state, p.id, days)`; day cells additionally tinted with
+-    the `weekend` class on the person's non-workdays; footer text updated to
+-    `Dostępne = dzienna dostępność × dni robocze osoby.`; removed the now-unused
+-    `workdays` const. Overload rule (`h > capacity`) untouched.
+-  - `src/styles.css` — `.weekday-chips`/`.weekday-chip` (accessible real
+-    checkboxes styled as chips, focus-visible ring, disabled dimming via
+-    `:has`), `.profile-facts`/`.profile-fact`/`.profile-link`, `.people-form-hint`.
+-- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean, vitest
+-  149/149 (5 files), build OK. No test-file edits (per package scope).
+-- **Deviations (1, minor):** created a new shared module
+-  `src/components/personFields.ts` rather than inlining the identical chip/option
+-  helpers into both pages. It is presentational-only (no store/selector touch),
+-  so it stays inside the package's out-of-scope guard; chosen over duplicating
+-  ~40 lines across two forms. Time-select range decision resolved per the
+-  package's "pick one": Od `0:00–23:45`, Do `0:15–24:00` (`24:00` = 1440).
+-- **Browser-verified logic (against seed; needs human :5173 confirm):** Ola
+-  (workDays [1,2,3,4], capacity 8) → Workload `Dostępne` = 32h and her Friday
+-  cell carries the weekend tint; Kasia's supervisor select offers only `—`
+-  (Ola/Marek excluded as cycle-forming); Kasia's profile Podwładni = Ola + Marek,
+-  Ola's Przełożony = Kasia.
+-- **Not CLI-verifiable (defer to human walkthrough on :5173):** both forms
+-  round-trip all new fields (save→reopen identical); inline Polish validation on
+-  `Do ≤ Od`; supervisor/subordinate links navigate; self-editing without
+-  `people.manage` shows the three org fields disabled with `Brak uprawnień`;
+-  weekday chips keyboard-focusable; ≤760px layout; console clean.
+-- **Still broken:** nothing in scope.
+-- **Next:** ready for reviewer — final package of the run (wave 5).
+-
+-#### 2026-07-08 · developer (opus) · Fix round (reviewer changes 1–3, store layer)
++  - `src/store/selectors.ts` — added exported `taskGrowAllowance(state, taskId, personId): number` (bin hours + headroom, headroom 0 for null-estimate); rewrote `growAllowanceHours` to delegate and return `number` (dropped `| null`, updated JSDoc).
++  - `src/store/AppStore.tsx` `setBlockTime` — grow enforcement now applies to ALL tasks (removed `estimatedHours !== null` gate); null-estimate ⇒ `headroomQ = 0`, so grow is bin-only. Bin-first draw and activity suffixes unchanged.
++  - `src/store/AppStore.tsx` `insertBlock` — added no-mint budget check for `(payload.taskId, ref.personId)` after the hours snap; rejects (same state ref) when snapped hours > bin+headroom; drains the same-task bin row bin-first (delete at 0) on the `shifted` array, adds `dayKey(ref.personId, BIN_DATE)` to the reindex set, and appends `; pobrano z zasobnika: …` to the activity message when drawn.
++  - `src/components/WeekView.tsx` (~L163) — mechanical: `growAllowanceHours` no longer returns null; `maxHours = baseHours + growAllowanceHours(...)`, stale null comment fixed. No other WeekView changes (belong to calendar-ui pkg).
++  - `src/store/blockActions.test.ts` — gave the 5 INSERT_BLOCK fixtures (~L221-311) an `estimatedHours: 10` on `t2` so the no-mint rule draws from headroom instead of rejecting (preserves ripple/push, auto-assign, gap, other-people intent); rewrote the `estimatedHours: null grows freely…` regression (~L854) to the new contract (grow succeeds up to the 3h bin drained/deleted, rejected at +3.25h). INSERT_BLOCK bin-reject test (L700) and cross-task/person merge tests (L1001+) untouched (early-return / move paths, unaffected).
++  - `src/store/selectors.test.ts` — rewrote the null-estimate `growAllowanceHours` case to expect `0` (a number, not null); added a companion case: null-estimate with a 3h bin row ⇒ allowance `3`.
++- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean; vitest **158 passed** (was 157; +1 from the added null-estimate-with-bin selector case); build OK (pre-existing >500 kB chunk warning only).
++- **Still broken:** nothing.
++- **Next:** ready for `PKG-20260708-b2-calendar-ui` (WeekView insert-form warning/disable, TaskModal banner, bin drag ghost) — this package left WeekView otherwise untouched as specified.
++
++#### 2026-07-08 · developer · `PKG-20260708-b2-calendar-ui`
+ 
+ - **Changed:**
+-  - `src/store/AppStore.tsx` — `ADD_PERSON`: first person into an empty people
+-    list is forced to `accessRole: 'administrator'` (fresh-setup lockout guard).
+-    `UPDATE_PERSON`: refuses to demote the only remaining administrator (returns
+-    `state` unchanged — reject-by-same-ref). `DELETE_PERSON`: now a block that
+-    refuses to delete the only remaining administrator (guard applied BEFORE the
+-    cascade), else delegates to `deletePerson`. `deletePerson`: additionally
+-    clears `supervisorId` on remaining people where it equals the deleted id
+-    (invariant-5 cascade).
+-  - `src/store/storage.ts` — `loadData`: person normalization (`migrateV4toV5`
+-    → `migratePerson`) now runs on EVERY load, not only `version < 5`, mirroring
+-    `ensureStartMinutes`. Fixes the permanent login-screen lockout for a
+-    v5-stamped payload whose people were never actually migrated.
+-- **Tests added:**
+-  - `src/store/blockActions.test.ts` — +7: ADD_PERSON first-person→admin (and
+-    respects role for later people); UPDATE_PERSON reject demote-last-admin +
+-    allow when another admin exists; DELETE_PERSON reject delete-last-admin +
+-    allow when another admin exists + dangling-supervisorId cleanup (unrelated
+-    supervisorId left intact).
+-  - `src/store/storage.test.ts` — +1: v5-stamped payload with un-migrated people
+-    (isAdmin present, no accessRole) loads with correct roles/defaults, no
+-    `isAdmin` key, and is idempotent on reload.
+-- **Tests:** `npx tsc --noEmit` clean · `npm test` 157/157 (5 files, was 149) ·
+-  `npm run build` OK (pre-existing chunk-size warning only).
+-- **Deviations:** none. Reviewer changes 4–5 (WeekView insert picker, TaskModal/
+-  AllocationGrid workday fill) are UI-only and out of this store-layer package's
+-  scope — not touched.
+-- **Next:** ready for reviewer (delta re-review of changes 1–3); changes 4–5
+-  still open for a UI developer.
++  - `src/components/WeekView.tsx` — insert form: added `insertAllowance`/`overAllowance` (via `taskGrowAllowance(state, insertTaskId||menu.entry.taskId, menu.entry.personId)`, recomputes on task-select change), second `context-warning` line (0-allowance vs "najwyżej {allowance}" variants), and `overAllowance` folded into the `Wstaw` disable + a matching guard in `confirmInsert` (blocks Enter past budget). BinCard rewritten to a fixed-position drag ghost: `BinDragState` now tracks `clientX/clientY`, grab offset (`grabX/grabY`) and captured `width`; the in-pane original keeps all handlers + pointer capture and gets a `drag-source` (dimmed) class, while a `createPortal(..., document.body)` ghost (`week-bin-ghost`, `pointer-events:none`, keeps `colliding` tint) follows the pointer. Old `dx/dy` transform removed. Added `react-dom` `createPortal` + `taskGrowAllowance` imports.
++  - `src/components/TaskModal.tsx` — estimate now snaps on save (`snapHours`, no clamp; empty/invalid/≤0 ⇒ null). Added `draftTotal`/`overBudget` (plannedTotalAll + binTotal vs parsed estimate); live non-blocking `estimate-over` banner under `.estimate-compare` + `over-budget` class on the "zaplanowano" strong. Saving stays allowed. Added `snapHours` import.
++  - `src/styles.css` — `.estimate-compare strong.over-budget` (danger text), `.estimate-over` (danger-soft banner), `.week-bin-block.drag-source` (0.35 opacity), `.week-bin-ghost` (fixed, z-index 1000, pointer-events none, transition none, violet shadow).
++- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean; vitest **158 passed** (no test changes — interaction-only pkg); build OK (pre-existing >500 kB chunk warning only).
++- **Still broken:** nothing.
++- **Deviations:** none from the package. Added a `confirmInsert` budget guard (not explicitly listed) so the Enter-key path matches the disabled `Wstaw` button; harmless (reducer already rejects).
++- **Needs human/browser walkthrough** (not CLI-verifiable): (1) insert form warning text + disabled Wstaw at/over allowance incl. 0-allowance variant, and task-select recompute; (2) TaskModal over-budget banner + danger total appears/clears live as grid/bin/fill change, save still works; snapped estimate persists (40.1→40); (3) bin card ghost stays visible across the whole viewport (grid/header/axis), shows danger tint over a colliding slot, drops as before, snaps home on Escape/invalid, source card dims, plain click still opens the task; console clean.
++- **Next:** ready for `PKG-20260708-b2-impersonation` (depends on this for styles.css ordering).
+ 
+-#### 2026-07-08 · developer (opus) · Fix round (reviewer changes 4–5, UI layer)
++#### 2026-07-08 · developer · `PKG-20260708-b2-impersonation`
+ 
+ - **Changed:**
+-  - `src/components/WeekView.tsx` — right-click "Dodaj przed/po" insert form: the
+-    `Zadanie` picker now maps over a new `insertTaskOptions` list instead of raw
+-    `state.tasks`. When the user has `tasks.manage` (via existing `useCan`) the
+-    full task list is offered; otherwise options are restricted to tasks the
+-    block's person is already assigned to (`taskIdsOfPerson`), which always
+-    includes the clicked block's own task (kept as default). Closes the
+-    `blocks.editOwn` self-assign-to-any-task hole (INSERT_BLOCK auto-assigns).
+-    Added `taskIdsOfPerson` to the selectors import.
+-  - `src/components/TaskModal.tsx` — `fillWeekdays` now iterates the period and
+-    fills each day with `availableHoursOnDate(state, personId, d)` (capacity on a
+-    person's workday, 0 otherwise), only writing cells where hours > 0 — replaces
+-    the hardcoded Mon–Fri (`isWeekdayDate`) + 8h. Added `availableHoursOnDate`
+-    import; dropped the now-unused `isWeekdayDate` import.
+-  - `src/components/AllocationGrid.tsx` — "Wypełnij dni robocze" button tooltip
+-    changed from "Ustaw 8h we wszystkie dni robocze" to "Wypełnij dni robocze
+-    osoby jej dzienną dostępnością" (no longer names 8h/Mon–Fri). Removed the
+-    now-dead exported `isWeekdayDate` helper (only caller was TaskModal) and its
+-    now-unused `parseDate` import.
+-- **Tests:** `npx tsc --noEmit` clean · `npm test` 157/157 (5 files) ·
+-  `npm run build` OK (pre-existing chunk-size warning only). No test-file edits
+-  (both changes are UI-behavior only; store selectors already covered).
+-- **Deviations:** none. Kept the fill's overwrite-workdays contract (current code
+-  overwrote every weekday, not empty-only) — now overwrites every person-workday
+-  with capacity. Polish UI strings preserved.
+-- **Not CLI-verifiable (defer to human walkthrough on :5173):** as pracownik/
+-  handlowiec, right-click own block → Dodaj po → picker shows only own assigned
+-  tasks (defaults to clicked task); as PM/admin the full list; "Wypełnij dni
+-  robocze" for seeded Ola (Mon–Thu) skips Friday and fills 8h Mon–Thu.
+-- **Next:** ready for reviewer (delta re-review of changes 4–5) — all 5 required
+-  changes now landed.
++  - `src/types.ts` — `AppData.impersonatorId: string` field ('' = not impersonating; the real user's id while `currentUserId` is impersonated) + doc comment. No version bump.
++  - `src/store/storage.ts` — `emptyData()` and `migrateV1`'s return include `impersonatorId: ''`; new exported `sanitizeImpersonator(data)` (clears to '' when dangling or === currentUserId) applied on BOTH `loadData` return paths (v1-migration + same-version), after ensureStartMinutes. Idempotent, disjoint fields.
++  - `src/store/AppStore.tsx` — Action union gains `IMPERSONATE { personId }` and `STOP_IMPERSONATION`; cases per decision 2 (no-op on missing/self; picking impersonator's own row = return; chained switches preserve the ORIGINAL real user via `impersonatorId || currentUserId`; STOP no-op at ''). `SET_CURRENT_USER` and `LOGOUT` both clear `impersonatorId` to '' (LOGOUT clears both ids). `deletePerson` interplay (decision 3): deleting the impersonated person returns session to impersonator; deleting the impersonator clears bookkeeping, keeps acted-as. No activity rows.
++  - `src/store/selectors.ts` — exported `realUserId`, `realUser`, `isImpersonating` (pure, JSDoc).
++  - `src/App.tsx` — switcher gated on `can(actualUser=realUser, 'users.impersonate', …)` so it never vanishes for the admin; `onChange` dispatches `IMPERSONATE`; removed the `"—"` empty option; `value={state.currentUserId}` unchanged. New warning-toned `impersonation-banner` above `<SampleBanner />`, rendered only when `isImpersonating && currentUser && actualUser`, with `Wróć do {realUser.name}` → `STOP_IMPERSONATION`.
++  - `src/store/seed.ts` — sample object literal gains `impersonatorId: ''` (tsc).
++  - `src/styles.css` — `.impersonation-banner` (+ `-text`, button) with `--n2-warning` tokens and a ≤760px stacked layout.
++- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean; vitest **158 passed** (no test changes needed — `makeState` spreads `emptyData()`, and storage.test's v4Payload is a `Record<string, unknown>`; new coverage belongs to PKG-…-b2-tests); build OK (pre-existing >500 kB chunk warning only).
++- **Still broken:** nothing.
++- **Deviations:** none. (Banner text uses the gender-neutral variant `— aktywne są uprawnienia tej osoby.` per decision 7's option.)
++- **Needs human/browser walkthrough** (not CLI-verifiable): (1) admin picks Marek → nav/admin gate + block gating collapse to Marek, switcher STAYS visible, banner shows, `Wróć do {admin}` restores in one click; (2) chained admin→Marek→Ola returns to the ORIGINAL admin; (3) comment posted while impersonating is signed by the impersonated person; (4) reload mid-impersonation restores both identities; a dangling/self impersonatorId clears on load; (5) LOGOUT lands on login and clears both ids, re-login never impersonated; (6) delete the impersonated person → session returns to impersonator; delete the impersonator → bookkeeping clears; (7) non-admin never sees the switcher; (8) no `—` option; banner usable ≤760px.
++- **Next:** ready for `PKG-20260708-b2-tests` (test-writer) and the reviewer verdict.
++
++#### 2026-07-08 · test-writer · `PKG-20260708-b2-tests`
++
++- **Changed (test files only, no implementation touched):**
++  - `src/store/blockActions.test.ts` — added: 5 `it`s for `SET_BLOCK_TIME` grow on unbudgeted (`estimatedHours: null`) tasks (partial/full bin drain + `pobrano z zasobnika`, reject past bin with no headroom, reject cross-task/cross-person bin rows, move-only never rejected, shrink creates/merges a bin row); 5 `it`s for `INSERT_BLOCK` budget (headroom-only within/past, bin-first draw with headroom remainder, exact-allowance boundary ±0.25h, unbudgeted insert ≤/>bin, picker task ≠ ref task uses the selected task's allowance); 5 `it`s for the impersonation reducer (`IMPERSONATE` set/no-op-missing/no-op-self, chained-impersonation preserves the original + return-via-own-row, `STOP_IMPERSONATION` restore/no-op, `SET_CURRENT_USER`+`LOGOUT` both clear `impersonatorId`, `DELETE_PERSON` of the impersonated person vs. the impersonator).
++  - `src/store/selectors.test.ts` — added `taskGrowAllowance` import + 4 `it`s (null-estimate bin-only, estimate sums bin+headroom, over-planned floors headroom at 0 while bin still counts, no entries ⇒ 0); `growAllowanceHours` number-contract 2 `it`s (typeof number, missing entry id ⇒ 0); `realUserId`/`realUser`/`isImpersonating` imports + 2 `it`s (not impersonating ⇒ self/false, impersonating ⇒ impersonator id/true).
++  - `src/store/storage.test.ts` — added an `impersonatorId persistence` describe with a local `v5Payload` builder + 5 `it`s: missing field defaults to `''`, valid id round-trips, dangling id sanitized to `''`, id === currentUserId sanitized to `''`, idempotent reload.
++- **Tests:** `npx tsc --noEmit && npm test` → tsc clean; vitest **186 passed** (was 158 baseline; +28 new tests, 0 removed/modified existing assertions). `git status --short` confirms only the three test files changed by this package (the pre-existing implementation-file diffs are from the three developer packages already landed).
++- **Bugs found:** none — every new assertion passed against the shipped `AppStore.tsx`/`selectors.ts`/`storage.ts` behavior once the fixtures were corrected (see below); no spec-vs-implementation mismatch to report.
++- **Self-corrections during authoring** (test math errors, not implementation bugs): (1) an `INSERT_BLOCK` "exact allowance" fixture first assumed `allowance = estimate + bin`, forgetting `taskBudget.totalAll` already includes the bin row's hours — headroom nets the bin out, so `allowance` for a task with no *other* planned hours simply equals the estimate; rebuilt the fixture with a second person's dated entry so bin+headroom compose to a value below the estimate, matching the package's intent. (2) a `taskGrowAllowance` "no entries at all ⇒ 0" case initially used `estimatedHours: 10`, which correctly yields `headroom = 10` (not 0) — changed to `estimatedHours: null` to match the stated expected value.
++- **Skipped/stubbed:** none — all 20 case groups implemented with behavioral assertions.
++- **Next:** ready for reviewer verdict (all 4 packages of this run now closed).
+ 
+ ### Reviewer verdict
+ 
+ <!-- Reviewer appends here after workers finish. -->
+-
+-#### 2026-07-08 · reviewer · verdict for run "Hour budget + block merging · accounts/roles/permissions · sidebar icon fix"
+-
+-- **Status: CHANGES-REQUIRED** (core work is solid and approved in substance;
+-  5 targeted fixes before merge, none architectural).
+-- **Gates (re-run by reviewer):** `npx tsc --noEmit` clean · `npm test` 149/149
+-  (5 files) · `npm run build` OK (pre-existing chunk-size warning only).
+-- **Live browser verification (orchestrator input, recorded):** budget clamp at
+-  estimate headroom, shrink→single bin row, exact-adjacency fuse (+animation),
+-  30-min gap no-merge, clean v4→v5 migration (idempotent), login gate + one-click
+-  passwordless login, pracownik gating, collapsed-sidebar circles — all pass.
+-
+-**Required changes (numbered):**
+-
+-1. **P1 · `src/store/AppStore.tsx` (ADD_PERSON ~L1304, UPDATE_PERSON ~L1317,
+-   deletePerson ~L1085) · developer (+ test-writer):** Fresh-setup lockout
+-   (Codex #1, confirmed). In setup mode the add-person form defaults to
+-   `pracownik`, ADD_PERSON preserves it and does not set `currentUserId`; once
+-   one person exists the login gate activates with zero administrators and no
+-   recovery except editing localStorage. Fix: force `accessRole: 'administrator'`
+-   for the first person created into an empty people list (and preferably log
+-   them in); additionally guard demoting (UPDATE_PERSON) and deleting
+-   (DELETE_PERSON) the LAST administrator — reducer refuses, UI disables with a
+-   Polish title. Add reducer tests.
+-2. **P2 · `src/store/storage.ts` (loadData ~L532-535) · developer (+ test-writer):**
+-   A payload stamped `version: 5` whose people were never migrated (observed
+-   mid-dev via HMR) stays broken forever: `migrateV4toV5` only runs when
+-   `version < 5`, and a missing `accessRole` makes `MATRIX[undefined]` deny every
+-   action → permanent, unrecoverable lockout at the login screen. `migratePerson`
+-   is idempotent — run the person-normalization pass unconditionally on every
+-   load, exactly like `ensureStartMinutes`. Add a load test with a v5-stamped
+-   payload containing a pre-v5 person.
+-3. **P2 · `src/store/AppStore.tsx` (deletePerson ~L1085-1093) · developer
+-   (+ test-writer):** DELETE_PERSON leaves dangling `supervisorId` references
+-   (Codex #2, confirmed — people are filtered, supervisors never cleared),
+-   violating the cascade-delete pattern (CLAUDE.md invariant 5). Map remaining
+-   people and clear `supervisorId === deleted id`; add a reducer test.
+-4. **P2 · `src/components/WeekView.tsx` (insert form task select ~L966-982) ·
+-   developer:** A `blocks.editOwn`-only user (pracownik/handlowiec) can
+-   right-click an own block → Dodaj przed/po → pick ANY task in the system;
+-   `INSERT_BLOCK` auto-assigns, bypassing `tasks.manage` (Codex #3, confirmed).
+-   The gating package's acceptance explicitly allows the context menu on own
+-   blocks — the gap is the unrestricted picker. Restrict the `Zadanie` options
+-   to tasks the person is already assigned to (or just the clicked block's task)
+-   unless `can('tasks.manage')`.
+-5. **P2 (minor) · `src/components/TaskModal.tsx` L394-399 +
+-   `src/components/AllocationGrid.tsx` L187-191 · developer:** "Wypełnij dni
+-   robocze" hardcodes Mon–Fri + 8h (Codex #4, confirmed). Pre-existing code, but
+-   this run shipped per-person `Dni robocze` under the same name — for seeded
+-   Ola (Mon–Thu) the button now fills her Friday, directly contradicting the new
+-   model. Use `isPersonWorkday` + `personCapacity` per person.
+-
+-**Codex findings adjudicated:** #1 (P1) accepted → change 1. #2 (P2) accepted →
+-change 3. #3 (P2) accepted → change 4 (noting the context menu itself is
+-sanctioned for own blocks; only the picker breadth is wrong). #4 (P2) accepted,
+-severity kept but scoped as minor/coherence → change 5. #5 (P3, `workDays: []`
+-+ assigned hours renders 0% instead of overload — WorkloadPage.tsx L288)
+-accepted as backlog nit (per-day overload flags still fire; summary % only).
+-Nothing dismissed; Codex raised no false positives.
+-
+-**UX audit adjudicated:** both P1s confirmed REAL in code but PRE-EXISTING and
+-not worsened by this run → backlog, out of run scope: (a) `insertBlock`
+-end-of-day clamp (AppStore.tsx L561) can pull the new block back over the ref
+-block / let a pushed block overlap — the sweep only pushes blocks after the
+-insert point (clamp logic predates the run; overlaps render side-by-side, no
+-data corruption); (b) archiving an in-use status hides projects from Kanban
+-(design gap since the kanban run). P2/P3 friction items → backlog as listed in
+-the audit.
+-
+-**Worker deviations (all 7 packages) — verified and ACCEPTED:** bin-entry split
+-no-op + UI hide (confirmed at WeekView L899 `!isBinEntry` branch); merge blob on
+-dragged block only (per decision 3); auth-data none; one-click passwordless
+-login (matches the stronger acceptance criterion); MOVE_TASK gated by
+-`tasks.manage` + "+ Zadanie" gated (both close real holes in the per-page map);
+-shared `personFields.ts` module (presentational only, within scope guard).
+-
+-**Convention check: PASS.** Polish UI strings throughout; localStorage only via
+-storage.ts; reads via pure selectors; `yyyy-MM-dd` dates untouched; no new
+-dependencies; `prefers-reduced-motion` honored (CSS-only fuse animation);
+-personColor untouched. One placement nit: `toQuarters` lives in AppStore.tsx —
+-CLAUDE.md points hour-step math at `src/utils/time.ts` (move alongside
+-`HOURS_STEP` when convenient).
+-
+-**Test coverage: ADEQUATE** (68 → 149; budget/merge/one-bin-row, migration
+-v4→v5 + idempotence, supervisor cycles, password/logout, full 4×12 permission
+-matrix — assertions are behavioral, not tautological). Gaps (fold into fixes
+-1–3): last-admin guard, first-person-admin, defensive v5 normalization,
+-DELETE_PERSON supervisor cleanup. Deliberate, accepted gap: no v1→v5
+-end-to-end test.
+-
+-**Nits / backlog (non-blocking):** Codex #5 (0% vs overload display); UX-audit
+-pre-existing P1s (a)+(b) above; unsnapped `estimatedHours` (TaskModal saves
+-`Number(raw)` raw → off-grid estimate makes the UI's `maxHours` clamp off-grid
+-and the at-cap resize dispatch gets grid-rejected and reverts — snap the
+-estimate on save per invariant 4); `toQuarters` placement; CLAUDE.md refresh
+-(now must also cover login/roles/permissions/budget/bin invariants — human
+-task, already logged); carried-over commit hygiene incl. new untracked files.
+-
+-**Routing:** changes 1–3 → developer with a test-writer follow-up (or one
+-combined store package); changes 4–5 → developer (UI-only). Re-review can be
+-delta-only.
+-
+-#### 2026-07-08 · reviewer · delta re-review of the fix round — FINAL VERDICT
+-
+-- **Status: APPROVE.** All 5 required changes verified in source; gates re-run
+-  by the reviewer: `npx tsc --noEmit` clean · `npm test` 157/157 (5 files) ·
+-  `npm run build` OK (pre-existing chunk-size warning only).
+-
+-**Per-change verification:**
+-
+-1. **Fresh-setup lockout — FIXED.** `ADD_PERSON` (AppStore.tsx ~L1316-1319)
+-   forces `accessRole: 'administrator'` when `state.people.length === 0`;
+-   `UPDATE_PERSON` (~L1327-1337) rejects demoting the only administrator
+-   (same-ref return); `DELETE_PERSON` (~L1353-1362) rejects deleting the only
+-   administrator BEFORE the cascade. Tests cover all six paths (force/respect,
+-   reject/allow demote, reject/allow delete). The optional "log the first
+-   person in" suggestion was not taken — acceptable: the login screen offers
+-   one-click passwordless login for the new administrator, so no lockout.
+-2. **v5-stamped unmigrated payload — FIXED.** `loadData` (storage.ts ~L533-541)
+-   now runs `migrateV4toV5` unconditionally on every load, mirroring
+-   `ensureStartMinutes`, with an accurate explanatory comment. New storage test
+-   loads a `version: 5` payload carrying pre-v5 people (isAdmin, no accessRole)
+-   and asserts roles/defaults/idempotence.
+-3. **Dangling supervisorId — FIXED.** `deletePerson` (AppStore.tsx ~L1090-1092)
+-   clears `supervisorId === deleted id` on remaining people inside the cascade;
+-   test asserts cleanup and that unrelated supervisor links survive.
+-4. **Insert-picker self-assign hole — FIXED.** WeekView.tsx ~L708-713:
+-   `insertTaskOptions` = full `state.tasks` only with `can('tasks.manage')`,
+-   else filtered to `taskIdsOfPerson(state, menu.entry.personId)` (which always
+-   contains the clicked block's task, preserved as default). Read via the
+-   existing selector — no new read path.
+-5. **Workday-aware fill — FIXED.** TaskModal `fillWeekdays` now writes
+-   `availableHoursOnDate(state, personId, d)` per day (>0 only), replacing
+-   hardcoded Mon–Fri/8h; AllocationGrid tooltip updated ("Wypełnij dni robocze
+-   osoby jej dzienną dostępnością"); dead `isWeekdayDate` helper + unused
+-   import removed (tsc confirms no stragglers).
+-
+-**New backlog item found during delta review (non-blocking, defense in depth):**
+-a v4 payload whose people ALL have `isAdmin: false` migrates to a non-empty,
+-zero-administrator people set — login still works (passwordless) but nobody can
+-reach people.manage/admin.panel, and the new ADD_PERSON guard doesn't apply
+-(people already exist). Unlikely in practice (v1→v2 made the first person
+-admin), but consider promoting the first person in `migrateV4toV5` when a
+-non-empty people set has zero administrators — one line, idempotent.
+-
+-**Carried nits/backlog (unchanged from the main verdict):** Codex #5 workDays
+-[] 0% display; pre-existing UX-audit P1s (insertBlock end-of-day clamp, status
+-archive vs Kanban); unsnapped `estimatedHours` vs the UI maxHours clamp;
+-`toQuarters` placement (utils/time.ts); CLAUDE.md refresh + commit hygiene
+-(human tasks). Remaining human step before merge: the role-matrix browser
+-walkthrough items each worker listed as not-CLI-verifiable, plus the two new
+-UI fixes (restricted picker as pracownik; Ola's Friday skipped by the fill).
+diff --git a/src/App.tsx b/src/App.tsx
+index e48c5ad..40de282 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -23,6 +23,7 @@ import { WorkloadPage } from './pages/WorkloadPage';
+ import { AdminPage } from './pages/AdminPage';
+ import { LoginPage } from './pages/LoginPage';
+ import { can } from './store/permissions';
++import { isImpersonating, realUser } from './store/selectors';
+ import { SampleBanner } from './components/SampleBanner';
+ import { TaskModal } from './components/TaskModal';
+ import { GlobalSearch } from './components/GlobalSearch';
+@@ -79,6 +80,11 @@ export function App() {
+   };
+ 
+   const currentUser = state.people.find((p) => p.id === state.currentUserId);
++  // Real logged-in identity (the impersonator while impersonating). Only the
++  // "Występuj jako" switcher visibility and the return banner key off this;
++  // everything else is a true preview of the acted-as `currentUser`.
++  const actualUser = realUser(state);
++  const impersonating = isImpersonating(state);
+   const peopleCount = state.people.length;
+   const canAdmin = can(currentUser, 'admin.panel', { peopleCount });
+   // Session gate: with people present and nobody resolving to a current user,
+@@ -216,17 +222,18 @@ export function App() {
+                 <Users size={20} aria-hidden />
+               )}
+             </button>
+-            {/* "Występuj jako" is an administrator-only quick switch now. */}
+-            {can(currentUser, 'users.impersonate', { peopleCount: state.people.length }) && (
++            {/* "Występuj jako" is an administrator-only quick switch now. Gated
++                on the REAL logged-in user so it never vanishes while the admin
++                is previewing another identity. */}
++            {can(actualUser, 'users.impersonate', { peopleCount: state.people.length }) && (
+               <label className="acting-as" title="Aktualny użytkownik aplikacji (autor komentarzy, uprawnienia admina)">
+                 <span className="acting-as-label">Występuj jako</span>
+                 <select
+                   value={state.currentUserId}
+                   onChange={(e) =>
+-                    dispatch({ type: 'SET_CURRENT_USER', personId: e.target.value })
++                    dispatch({ type: 'IMPERSONATE', personId: e.target.value })
+                   }
+                 >
+-                  <option value="">—</option>
+                   {state.people.map((p) => (
+                     <option key={p.id} value={p.id}>
+                       {p.name}
+@@ -249,6 +256,20 @@ export function App() {
+       </aside>
+ 
+       <main className="app-main">
++        {impersonating && currentUser && actualUser && (
++          <div className="impersonation-banner" role="status">
++            <span className="impersonation-banner-text">
++              Występujesz jako {currentUser.name} — aktywne są uprawnienia tej osoby.
++            </span>
++            <button
++              type="button"
++              className="btn"
++              onClick={() => dispatch({ type: 'STOP_IMPERSONATION' })}
++            >
++              Wróć do {actualUser.name}
++            </button>
++          </div>
++        )}
+         <SampleBanner />
+         <motion.div
+           key={location.pathname}
+diff --git a/src/components/TaskModal.tsx b/src/components/TaskModal.tsx
+index 7fd898a..7a462c8 100644
+--- a/src/components/TaskModal.tsx
++++ b/src/components/TaskModal.tsx
+@@ -20,7 +20,7 @@ import { CommentsPanel } from './CommentsPanel';
+ import { AllocationGrid, allocKey, type AllocMap } from './AllocationGrid';
+ import { SaveStatus } from './SaveStatus';
+ import { personColor } from '../utils/colors';
+-import { formatDuration, isBinEntry } from '../utils/time';
++import { formatDuration, isBinEntry, snapHours } from '../utils/time';
+ import { eachDayInclusive, inclusiveDayCount, todayStr } from '../utils/dates';
+ import { useSaveStatus } from '../utils/useSaveStatus';
+ 
+@@ -476,6 +476,14 @@ function TaskEditor({
+       cells.push({ personId, date, plannedHours: hours });
+     }
+ 
++    // Snap the estimate to a 0.25 step on save (no clamp — a 40h estimate stays
++    // 40h). Empty / invalid / non-positive input clears it back to null.
++    const estRaw = Number(estimatedRaw);
++    const estimatedHours =
++      estimatedRaw.trim() === '' || Number.isNaN(estRaw) || estRaw <= 0
++        ? null
++        : snapHours(estRaw);
++
+     const draft: TaskDraft = {
+       projectId,
+       statusId,
+@@ -483,7 +491,7 @@ function TaskEditor({
+       description: description.trim(),
+       startDate,
+       endDate,
+-      estimatedHours: estimatedRaw.trim() === '' ? null : Number(estimatedRaw),
++      estimatedHours,
+     };
+ 
+     dispatch({
+@@ -526,6 +534,12 @@ function TaskEditor({
+     .reduce((s, u) => s + (u.hours > 0 ? u.hours : 0), 0);
+   const binTotal = existingBinTotal + pendingBinTotal;
+ 
++  // Draft total = post-save task total (grid cells + bin). When the estimate
++  // parses to a number and the draft exceeds it, show a live, non-blocking
++  // over-budget banner — TaskModal is the deliberate re-planning surface.
++  const draftTotal = plannedTotalAll + binTotal;
++  const overBudget = estNum != null && !Number.isNaN(estNum) && draftTotal > estNum + 1e-9;
++
+   // Existing bin blocks grouped per still-assigned person (read-only chips).
+   const existingBinByPerson = useMemo(() => {
+     const groups: Array<{ person: (typeof state.people)[number]; hours: number[] }> = [];
+@@ -637,7 +651,10 @@ function TaskEditor({
+         </div>
+         <div className="estimate-compare">
+           <span>
+-            zaplanowano <strong>{formatDuration(plannedTotalAll)}</strong>
++            zaplanowano{' '}
++            <strong className={overBudget ? 'over-budget' : undefined}>
++              {formatDuration(plannedTotalAll)}
++            </strong>
+             {binTotal > 0 && (
+               <span className="muted"> (+ {formatDuration(binTotal)} w zasobniku)</span>
+             )}
+@@ -653,6 +670,12 @@ function TaskEditor({
+             )}
+           </span>
+         </div>
++        {overBudget && (
++          <p className="estimate-over">
++            ⚠ Przekroczono szacunek o {formatDuration(draftTotal - (estNum ?? 0))}. Zwiększ
++            szacunek lub ogranicz godziny.
++          </p>
++        )}
+       </div>
+ 
+       {/* b) Period */}
+diff --git a/src/components/WeekView.tsx b/src/components/WeekView.tsx
+index 5362979..198c0a9 100644
+--- a/src/components/WeekView.tsx
++++ b/src/components/WeekView.tsx
+@@ -5,6 +5,7 @@
+ // time overlap shows a danger tint and the drop reverts. Right-clicking a block
+ // still opens "Dodaj przed / Dodaj po" to ripple-insert a new block.
+ import { useEffect, useRef, useState } from 'react';
++import { createPortal } from 'react-dom';
+ import { AnimatePresence, motion } from 'motion/react';
+ import type { AppData, Person, Project, Task, WorkloadEntry } from '../types';
+ import { useStore } from '../store/AppStore';
+@@ -28,6 +29,7 @@ import {
+   hoursForPersonOnDate,
+   overloadedPeopleOnDate,
+   personCapacity,
++  taskGrowAllowance,
+   taskIdsOfPerson,
+ } from '../store/selectors';
+ import {
+@@ -159,9 +161,8 @@ function TimedBlock({
+     const rect = gridRef.current?.getBoundingClientRect();
+     const colWidth = rect ? rect.width / DAY_COLS : 0;
+     // Capture the grow allowance ONCE at drag start (state won't change mid-drag).
+-    // null ⇒ the task has no estimate ⇒ free grow (no cap).
+-    const allowance = growAllowanceHours(state, entry.id);
+-    const maxHours = allowance === null ? Infinity : baseHours + allowance;
++    // Always a number now: bin hours + headroom (0 for null-estimate tasks).
++    const maxHours = baseHours + growAllowanceHours(state, entry.id);
+     setDrag({
+       mode,
+       originX: e.clientX,
+@@ -415,8 +416,11 @@ function TimedBlock({
+ interface BinDragState {
+   originX: number;
+   originY: number;
+-  dx: number;
+-  dy: number;
++  clientX: number; // current pointer position (drives the fixed ghost)
++  clientY: number;
++  grabX: number; // pointer offset within the card at drag begin (keeps the ghost aligned)
++  grabY: number;
++  width: number; // card offsetWidth captured at begin (ghost keeps its size out of flow)
+   colIndex: number; // projected day column (0–6); -1 = not over a day column
+   startMin: number; // projected startMinutes
+   valid: boolean; // over a real day column
+@@ -453,6 +457,7 @@ function BinCard({
+   const { dispatch } = useStore();
+   const [drag, setDrag] = useState<BinDragState | null>(null);
+   const moved = useRef(false);
++  const cardRef = useRef<HTMLDivElement | null>(null);
+ 
+   // Cancel the drag on Escape (no dispatch → the card snaps home).
+   useEffect(() => {
+@@ -473,11 +478,17 @@ function BinCard({
+       // No active pointer (synthetic events) — drag still works.
+     }
+     moved.current = false;
++    // Capture the card geometry once so the fixed ghost keeps its size and stays
++    // aligned under the cursor (the in-pane original stays put and dims).
++    const rect = cardRef.current?.getBoundingClientRect();
+     setDrag({
+       originX: e.clientX,
+       originY: e.clientY,
+-      dx: 0,
+-      dy: 0,
++      clientX: e.clientX,
++      clientY: e.clientY,
++      grabX: rect ? e.clientX - rect.left : 0,
++      grabY: rect ? e.clientY - rect.top : 0,
++      width: rect ? rect.width : 0,
+       colIndex: -1,
+       startMin: 0,
+       valid: false,
+@@ -514,7 +525,9 @@ function BinCard({
+       ? blockCollides(state, person.id, days[colIndex], startMin, entry.plannedHours)
+       : false;
+ 
+-    setDrag((d) => (d ? { ...d, dx, dy, colIndex, startMin, valid, colliding } : d));
++    setDrag((d) =>
++      d ? { ...d, clientX: e.clientX, clientY: e.clientY, colIndex, startMin, valid, colliding } : d,
++    );
+   };
+ 
+   const finish = () => {
+@@ -532,48 +545,74 @@ function BinCard({
+     });
+   };
+ 
++  // In-pane original: stays mounted (keeps pointer capture + all handlers) and
++  // just dims while dragging. The visible card that follows the pointer is a
++  // fixed-position portal ghost, so the bin pane's overflow can't clip it.
+   const className = [
+     'week-bin-block',
+     editable ? '' : 'readonly',
+-    drag ? 'dragging' : '',
+-    drag?.colliding ? 'colliding' : '',
++    drag ? 'drag-source' : '',
+   ]
+     .filter(Boolean)
+     .join(' ');
+ 
+-  return (
+-    <div
+-      className={className}
+-      style={{
+-        borderLeftColor: personColor(person.id),
+-        transform: drag ? `translate(${drag.dx}px, ${drag.dy}px)` : undefined,
+-      }}
+-      role="button"
+-      tabIndex={0}
+-      title={
+-        editable
+-          ? `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu. Przeciągnij na siatkę, aby nadać termin.`
+-          : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.`
+-      }
+-      onPointerDown={editable ? begin : undefined}
+-      onPointerMove={editable ? onPointerMove : undefined}
+-      onPointerUp={editable ? finish : undefined}
+-      onPointerCancel={editable ? () => setDrag(null) : undefined}
+-      onClick={(e) => {
+-        e.stopPropagation();
+-        if (!moved.current) onOpen();
+-      }}
+-      onKeyDown={(e) => {
+-        if (e.key === 'Enter') onOpen();
+-      }}
+-      onContextMenu={editable ? onContextMenu : undefined}
+-    >
++  const content = (
++    <>
+       <span className="week-bin-block-title">
+         {project && <Coin paid={project.paid} size={12} />}
+         {task.title}
+       </span>
+       <span className="week-bin-block-hours">{formatDuration(entry.plannedHours)}</span>
+-    </div>
++    </>
++  );
++
++  return (
++    <>
++      <div
++        ref={cardRef}
++        className={className}
++        style={{ borderLeftColor: personColor(person.id) }}
++        role="button"
++        tabIndex={0}
++        title={
++          editable
++            ? `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu. Przeciągnij na siatkę, aby nadać termin.`
++            : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.`
++        }
++        onPointerDown={editable ? begin : undefined}
++        onPointerMove={editable ? onPointerMove : undefined}
++        onPointerUp={editable ? finish : undefined}
++        onPointerCancel={editable ? () => setDrag(null) : undefined}
++        onClick={(e) => {
++          e.stopPropagation();
++          if (!moved.current) onOpen();
++        }}
++        onKeyDown={(e) => {
++          if (e.key === 'Enter') onOpen();
++        }}
++        onContextMenu={editable ? onContextMenu : undefined}
++      >
++        {content}
++      </div>
++      {drag &&
++        createPortal(
++          <div
++            className={['week-bin-block', 'week-bin-ghost', drag.colliding ? 'colliding' : '']
++              .filter(Boolean)
++              .join(' ')}
++            style={{
++              left: drag.clientX - drag.grabX,
++              top: drag.clientY - drag.grabY,
++              width: drag.width || undefined,
++              borderLeftColor: personColor(person.id),
++            }}
++            aria-hidden
++          >
++            {content}
++          </div>,
++          document.body,
++        )}
++    </>
+   );
+ }
+ 
+@@ -664,6 +703,10 @@ export function WeekView({ state, anchor, filter }: Props) {
+     if (!menu) return;
+     const hours = Number(hoursRaw);
+     if (Number.isNaN(hours) || hours <= 0) return;
++    // Mirror the disabled `Wstaw` button: never dispatch past the task budget
++    // (the reducer would silently swallow it anyway).
++    const allowance = taskGrowAllowance(state, insertTaskId || menu.entry.taskId, menu.entry.personId);
++    if (hours > allowance + 1e-9) return;
+     dispatch({
+       type: 'INSERT_BLOCK',
+       payload: {
+@@ -719,6 +762,13 @@ export function WeekView({ state, anchor, filter }: Props) {
+   const projectedTotal =
+     menuDayHours + (Number.isNaN(parsedHours) ? 0 : Math.max(parsedHours, 0));
+   const wouldOverload = menu !== null && projectedTotal > menuCapacity;
++  // Budget allowance for the picked task + this block's person (recomputed when
++  // the task select changes). The reducer enforces the same cap on INSERT_BLOCK.
++  const insertAllowance = menu
++    ? taskGrowAllowance(state, insertTaskId || menu.entry.taskId, menu.entry.personId)
++    : 0;
++  const overAllowance =
++    menu !== null && !Number.isNaN(parsedHours) && parsedHours > insertAllowance + 1e-9;
+ 
+   const hours = Array.from({ length: 24 }, (_, h) => h);
+ 
+@@ -1015,12 +1065,19 @@ export function WeekView({ state, anchor, filter }: Props) {
+                   {formatDuration(menuCapacity)}/dzień.
+                 </p>
+               )}
++              {overAllowance && (
++                <p className="context-warning">
++                  {insertAllowance <= 0
++                    ? '⚠ Brak dostępnych godzin w budżecie zadania — zwiększ szacunek lub godziny w edytorze zadania.'
++                    : `⚠ Budżet zadania pozwala dodać najwyżej ${formatDuration(insertAllowance)}.`}
++                </p>
++              )}
+               <div className="context-actions">
+                 <button
+                   type="button"
+                   className="btn primary"
+                   onClick={confirmInsert}
+-                  disabled={Number.isNaN(parsedHours) || parsedHours <= 0}
++                  disabled={Number.isNaN(parsedHours) || parsedHours <= 0 || overAllowance}
+                 >
+                   Wstaw
+                 </button>
+diff --git a/src/store/AppStore.tsx b/src/store/AppStore.tsx
+index 09ea4ae..19abc19 100644
+--- a/src/store/AppStore.tsx
++++ b/src/store/AppStore.tsx
+@@ -131,6 +131,8 @@ export type Action =
+   | { type: 'UPDATE_PERSON'; personId: string; person: PersonDraft }
+   | { type: 'DELETE_PERSON'; personId: string }
+   | { type: 'SET_CURRENT_USER'; personId: string }
++  | { type: 'IMPERSONATE'; personId: string }
++  | { type: 'STOP_IMPERSONATION' }
+   | { type: 'SET_PASSWORD'; personId: string; passwordHash: string }
+   | { type: 'LOGOUT' }
+   | { type: 'ADD_CLIENT'; name: string }
+@@ -546,6 +548,24 @@ function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
+   const hours = snapHours(payload.hours);
+   if (hours <= 0) return state;
+ 
++  // Budget enforcement (PKG-20260708-b2): a right-click insert may never mint
++  // hours past the task's plan. Draw from the inserted task's same-person bin
++  // row (note: `payload.taskId` may differ from `ref.taskId` when the picker
++  // chose another task), plus the task's headroom when it carries an estimate.
++  const binRow = state.workload.find(
++    (w) => w.taskId === payload.taskId && w.personId === ref.personId && isBinEntry(w),
++  );
++  const binQ = binRow ? toQuarters(binRow.plannedHours) : 0;
++  const totalAllQ = state.workload
++    .filter((w) => w.taskId === payload.taskId)
++    .reduce((sum, w) => sum + toQuarters(w.plannedHours), 0);
++  const headroomQ =
++    task.estimatedHours === null ? 0 : Math.max(0, toQuarters(task.estimatedHours) - totalAllQ);
++  const hoursQ = toQuarters(hours);
++  // Safety net — the UI package adds the live warning/disable.
++  if (hoursQ > binQ + headroomQ) return state;
++  const takenFromBinQ = Math.min(hoursQ, binQ); // bin first, then headroom
++
+   // Ripple insert. "Przed": take the ref's start; "Po": start at the ref's end.
+   const dur = hoursToMinutes(hours);
+   const rawStart =
+@@ -586,11 +606,25 @@ function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
+       cursor = blockEndMinutes(b.startMinutes, b.plannedHours);
+     }
+   }
+-  const shifted = state.workload.map((w) => {
++  let shifted = state.workload.map((w) => {
+     const m = moves.get(w.id);
+     return m === undefined ? w : { ...w, startMinutes: m };
+   });
+ 
++  // Draw the consumed hours from the same-task bin row (delete it at 0h). The
++  // bin row is dateless (BIN_DATE) so it never collides with the ripple sweep.
++  const touchedKeys = new Set([dayKey(ref.personId, ref.date)]);
++  if (takenFromBinQ > 0 && binRow) {
++    const remainingQ = binQ - takenFromBinQ;
++    shifted =
++      remainingQ <= 0
++        ? shifted.filter((w) => w.id !== binRow.id)
++        : shifted.map((w) =>
++            w.id === binRow.id ? { ...w, plannedHours: remainingQ * HOURS_STEP } : w,
++          );
++    touchedKeys.add(dayKey(ref.personId, BIN_DATE));
++  }
++
+   // Keep invariants: the person must be assigned to the task, and the task
+   // period must cover the block's date.
+   const alreadyAssigned = state.assignments.some(
+@@ -609,17 +643,16 @@ function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
+   });
+ 
+   const person = state.people.find((p) => p.id === ref.personId);
++  let message = `wstawił(a) blok ${formatDuration(hours)} ${payload.position === 'before' ? 'przed' : 'po'} „${state.tasks.find((t) => t.id === ref.taskId)?.title ?? 'blok'}” dla ${person?.name ?? 'kogoś'} w dniu ${ref.date}`;
++  if (takenFromBinQ > 0) {
++    message += `; pobrano z zasobnika: ${formatDuration(takenFromBinQ * HOURS_STEP)}`;
++  }
+   return {
+     ...state,
+     tasks,
+     assignments,
+-    workload: reindexDays([...shifted, entry], new Set([dayKey(ref.personId, ref.date)])),
+-    activity: withActivity(
+-      state,
+-      'task',
+-      payload.taskId,
+-      `wstawił(a) blok ${formatDuration(hours)} ${payload.position === 'before' ? 'przed' : 'po'} „${state.tasks.find((t) => t.id === ref.taskId)?.title ?? 'blok'}” dla ${person?.name ?? 'kogoś'} w dniu ${ref.date}`,
+-    ),
++    workload: reindexDays([...shifted, entry], touchedKeys),
++    activity: withActivity(state, 'task', payload.taskId, message),
+   };
+ }
+ 
+@@ -804,15 +837,19 @@ function setBlockTime(
+       w.id !== entryId,
+   );
+ 
+-  // Budget enforcement + hour-conserving consumption on GROW (budgeted tasks only).
++  // Budget enforcement + hour-conserving consumption on GROW (ALL tasks).
++  // The allowance is the person's same-task bin hours plus — for tasks with an
++  // estimate — the task's remaining headroom. Null-estimate tasks have 0
++  // headroom, so they may only draw from the bin (no free minting).
+   let takenFromBinQ = 0;
+-  if (grow && task.estimatedHours !== null) {
++  if (grow) {
+     const growDeltaQ = toQuarters(plannedHours) - toQuarters(entry.plannedHours);
+     const binSameQ = binRow ? toQuarters(binRow.plannedHours) : 0;
+     const totalAllQ = state.workload
+       .filter((w) => w.taskId === entry.taskId)
+       .reduce((sum, w) => sum + toQuarters(w.plannedHours), 0);
+-    const headroomQ = Math.max(0, toQuarters(task.estimatedHours) - totalAllQ);
++    const headroomQ =
++      task.estimatedHours === null ? 0 : Math.max(0, toQuarters(task.estimatedHours) - totalAllQ);
+     // Safety net — the UI clamps growth live (PKG-20260708-budget-week-ui).
+     if (growDeltaQ > binSameQ + headroomQ) return state;
+     takenFromBinQ = Math.min(growDeltaQ, binSameQ); // bin first, then headroom
+@@ -1083,6 +1120,21 @@ function personFromDraft(draft: PersonDraft): Omit<Person, 'id' | 'passwordHash'
+ }
+ 
+ function deletePerson(state: AppData, personId: string): AppData {
++  // Impersonation interplay: deleting the impersonated person (currentUserId)
++  // while impersonating returns the session to the impersonator; deleting the
++  // impersonator ends the bookkeeping but keeps the acted-as identity. Falls
++  // back to the plain currentUserId reset when not impersonating.
++  const impersonating = state.impersonatorId !== '';
++  let currentUserId = state.currentUserId;
++  let impersonatorId = state.impersonatorId;
++  if (impersonating && personId === state.currentUserId) {
++    currentUserId = state.impersonatorId;
++    impersonatorId = '';
++  } else if (personId === state.impersonatorId) {
++    impersonatorId = '';
++  } else if (personId === state.currentUserId) {
++    currentUserId = '';
++  }
+   return {
+     ...state,
+     // Cascade (invariant 5): drop the person, their assignments/workload, and
+@@ -1092,7 +1144,8 @@ function deletePerson(state: AppData, personId: string): AppData {
+       .map((p) => (p.supervisorId === personId ? { ...p, supervisorId: '' } : p)),
+     assignments: state.assignments.filter((a) => a.personId !== personId),
+     workload: state.workload.filter((w) => w.personId !== personId),
+-    currentUserId: state.currentUserId === personId ? '' : state.currentUserId,
++    currentUserId,
++    impersonatorId,
+   };
+ }
+ 
+@@ -1362,7 +1415,26 @@ export function reducer(state: AppData, action: Action): AppData {
+       return deletePerson(state, action.personId);
+     }
+     case 'SET_CURRENT_USER':
+-      return { ...state, currentUserId: action.personId };
++      // Login / direct identity set: always ends any impersonation.
++      return { ...state, currentUserId: action.personId, impersonatorId: '' };
++    case 'IMPERSONATE': {
++      // No-op when the target doesn't exist or is already the acted-as identity.
++      const exists = state.people.some((p) => p.id === action.personId);
++      if (!exists || action.personId === state.currentUserId) return state;
++      // Picking the current impersonator's own row means "return".
++      if (action.personId === state.impersonatorId) {
++        return { ...state, currentUserId: state.impersonatorId, impersonatorId: '' };
++      }
++      // Chained switches keep the ORIGINAL real user as the impersonator.
++      return {
++        ...state,
++        currentUserId: action.personId,
++        impersonatorId: state.impersonatorId || state.currentUserId,
++      };
++    }
++    case 'STOP_IMPERSONATION':
++      if (state.impersonatorId === '') return state;
++      return { ...state, currentUserId: state.impersonatorId, impersonatorId: '' };
+     case 'SET_PASSWORD':
+       // Stores the given hash verbatim ('' clears the password). No activity row.
+       return {
+@@ -1372,7 +1444,8 @@ export function reducer(state: AppData, action: Action): AppData {
+         ),
+       };
+     case 'LOGOUT':
+-      return { ...state, currentUserId: '' };
++      // Full logout (not "return"): clears both the acted-as and real identity.
++      return { ...state, currentUserId: '', impersonatorId: '' };
+     case 'ADD_CLIENT': {
+       const name = action.name.trim();
+       if (!name) return state;
+diff --git a/src/store/blockActions.test.ts b/src/store/blockActions.test.ts
+index 2644770..87f1f4f 100644
+--- a/src/store/blockActions.test.ts
++++ b/src/store/blockActions.test.ts
+@@ -222,7 +222,9 @@ describe('INSERT_BLOCK', () => {
+   it('"przed" (before): places the new block at the ref start and pushes the ref later', () => {
+     const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
+     const state = makeState({
+-      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2' })],
++      // t2 carries an estimate with headroom so the insert draws from budget
++      // rather than being rejected by the no-mint rule (PKG-20260708-b2).
++      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: 10 })],
+       workload: [ref],
+     });
+ 
+@@ -243,7 +245,8 @@ describe('INSERT_BLOCK', () => {
+   it('"po" (after): places the new block at the ref end', () => {
+     const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
+     const state = makeState({
+-      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2' })],
++      // t2 carries an estimate with headroom so the insert draws from budget.
++      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: 10 })],
+       workload: [ref],
+     });
+ 
+@@ -262,7 +265,8 @@ describe('INSERT_BLOCK', () => {
+     const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 }); // 480-600
+     const far = makeEntry({ id: 'far1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 900, plannedHours: 1, sortIndex: 1 }); // 900-960
+     const state = makeState({
+-      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2' })],
++      // t2 carries an estimate with headroom so the insert draws from budget.
++      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: 10 })],
+       workload: [ref, far],
+     });
+ 
+@@ -279,7 +283,8 @@ describe('INSERT_BLOCK', () => {
+     const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
+     const other = makeEntry({ id: 'other1', taskId: 't1', personId: 'p2', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
+     const state = makeState({
+-      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2' })],
++      // t2 carries an estimate with headroom so the insert draws from budget.
++      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: 10 })],
+       workload: [ref, other],
+     });
+ 
+@@ -295,7 +300,8 @@ describe('INSERT_BLOCK', () => {
+   it("auto-assigns the new entry's person to the task if not already assigned", () => {
+     const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
+     const state = makeState({
+-      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2' })],
++      // t2 carries an estimate with headroom so the insert draws from budget.
++      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: 10 })],
+       workload: [ref],
+       assignments: [],
+     });
+@@ -845,7 +851,10 @@ describe('SET_BLOCK_TIME budget-capped grow', () => {
+     expect(taskTotal).toBe(6); // unchanged (2+4 before, 3+3 after) — pure bin draw
+   });
+ 
+-  it('estimatedHours: null grows freely with no budget check and leaves an unrelated bin row untouched (regression)', () => {
++  it('estimatedHours: null grow is capped at the same-task bin hours (no free minting): succeeds up to the bin (drained) and is rejected past it', () => {
++    // New contract (PKG-20260708-b2): null-estimate tasks lose unlimited
++    // drag-grow. Allowance = same-task bin hours (0 headroom). e1=2h + bin=3h
++    // ⇒ e1 may grow by at most 3h, draining the bin row to 0.
+     const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
+     const bin = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 3, sortIndex: 0 });
+     const state = makeState({
+@@ -853,17 +862,32 @@ describe('SET_BLOCK_TIME budget-capped grow', () => {
+       workload: [e1, bin],
+     });
+ 
+-    const next = reducer(state, {
++    // Grow by exactly the 3h bin allowance: succeeds, bin drained (row deleted),
++    // task total unchanged (pure bin draw).
++    const ok = reducer(state, {
+       type: 'SET_BLOCK_TIME',
+       entryId: 'e1',
+       date: '2026-07-08',
+       startMinutes: 480,
+-      plannedHours: 10, // +8h, far past any "estimate" if one existed — but there is none
++      plannedHours: 5, // +3h == bin hours
+     });
++    expect(ok).not.toBe(state);
++    expect(ok.workload.find((w) => w.id === 'e1')!.plannedHours).toBe(5);
++    expect(ok.workload.find((w) => w.id === 'bin1')).toBeUndefined(); // drained row deleted
++    const okTotal = ok.workload
++      .filter((w) => w.taskId === 't1')
++      .reduce((s, w) => s + w.plannedHours, 0);
++    expect(okTotal).toBe(5); // was 5 (2 + 3 bin) — pure bin draw, nothing minted
+ 
+-    expect(next).not.toBe(state);
+-    expect(next.workload.find((w) => w.id === 'e1')!.plannedHours).toBe(10);
+-    expect(next.workload.find((w) => w.id === 'bin1')!.plannedHours).toBe(3); // untouched
++    // Grow past the bin allowance (+3.25h): rejected, same state reference.
++    const rejected = reducer(state, {
++      type: 'SET_BLOCK_TIME',
++      entryId: 'e1',
++      date: '2026-07-08',
++      startMinutes: 480,
++      plannedHours: 5.25, // +3.25h > 3h bin, no headroom
++    });
++    expect(rejected).toBe(state);
+   });
+ 
+   it('grow draws ONLY from headroom and the SAME (task,person) bin row — another person\'s bin row and another task\'s bin row are never consumed', () => {
+@@ -1268,3 +1292,365 @@ describe('DELETE_PERSON last-admin + supervisor cascade', () => {
+     expect(next.people.find((p) => p.id === 'p4')!.supervisorId).toBe('p0');
+   });
+ });
++
++// ---------------------------------------------------------------------------
++// SET_BLOCK_TIME grow, unbudgeted (estimatedHours: null) tasks — coverage
++// added by PKG-20260708-b2-tests (implementation shipped by
++// PKG-20260708-b2-budget-store). Budgeted-task grow paths already have
++// dedicated regression tests above; these focus on the null-estimate contract.
++// ---------------------------------------------------------------------------
++
++describe('SET_BLOCK_TIME grow — unbudgeted (estimatedHours: null) tasks (PKG-20260708-b2-tests)', () => {
++  it('grows draining a same-task bin row by the delta: a partial grow reduces the row (not deleted), a full-allowance grow deletes it; both note pobrano z zasobnika', () => {
++    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
++    const bin = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 5, sortIndex: 0 });
++    const state = makeState({
++      tasks: [makeTask({ id: 't1', estimatedHours: null })],
++      workload: [e1, bin],
++    });
++
++    // Partial: grow by 2h of the 5h bin -> row reduced to 3h, not deleted.
++    const partial = reducer(state, {
++      type: 'SET_BLOCK_TIME',
++      entryId: 'e1',
++      date: '2026-07-08',
++      startMinutes: 480,
++      plannedHours: 4, // +2h
++    });
++    expect(partial.workload.find((w) => w.id === 'e1')!.plannedHours).toBe(4);
++    expect(partial.workload.find((w) => w.id === 'bin1')!.plannedHours).toBe(3);
++    expect(partial.activity[partial.activity.length - 1].message).toContain('pobrano z zasobnika');
++
++    // Full: grow by exactly the 5h bin allowance -> row deleted.
++    const full = reducer(state, {
++      type: 'SET_BLOCK_TIME',
++      entryId: 'e1',
++      date: '2026-07-08',
++      startMinutes: 480,
++      plannedHours: 7, // +5h == bin allowance
++    });
++    expect(full.workload.find((w) => w.id === 'e1')!.plannedHours).toBe(7);
++    expect(full.workload.find((w) => w.id === 'bin1')).toBeUndefined();
++    expect(full.activity[full.activity.length - 1].message).toContain('pobrano z zasobnika');
++  });
++
++  it('rejects (same state reference) a grow past the same-task bin hours when there is no headroom to fall back on', () => {
++    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
++    const bin = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 1, sortIndex: 0 });
++    const state = makeState({
++      tasks: [makeTask({ id: 't1', estimatedHours: null })],
++      workload: [e1, bin],
++    });
++
++    const next = reducer(state, {
++      type: 'SET_BLOCK_TIME',
++      entryId: 'e1',
++      date: '2026-07-08',
++      startMinutes: 480,
++      plannedHours: 3.25, // +1.25h > 1h bin, no headroom
++    });
++    expect(next).toBe(state);
++  });
++
++  it('rejects a grow when the only bin row present belongs to a DIFFERENT task or a DIFFERENT person (no cross-draw, no headroom)', () => {
++    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
++
++    const otherTaskBin = makeEntry({ id: 'binOtherTask', taskId: 't2', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 5, sortIndex: 0 });
++    const stateA = makeState({
++      tasks: [makeTask({ id: 't1', estimatedHours: null }), makeTask({ id: 't2' })],
++      workload: [e1, otherTaskBin],
++    });
++    const rejectedA = reducer(stateA, {
++      type: 'SET_BLOCK_TIME',
++      entryId: 'e1',
++      date: '2026-07-08',
++      startMinutes: 480,
++      plannedHours: 3, // +1h — nothing available, a different task's bin can't be drawn from
++    });
++    expect(rejectedA).toBe(stateA);
++
++    const otherPersonBin = makeEntry({ id: 'binOtherPerson', taskId: 't1', personId: 'p2', date: BIN_DATE, startMinutes: 0, plannedHours: 5, sortIndex: 0 });
++    const stateB = makeState({
++      tasks: [makeTask({ id: 't1', estimatedHours: null })],
++      workload: [e1, otherPersonBin],
++    });
++    const rejectedB = reducer(stateB, {
++      type: 'SET_BLOCK_TIME',
++      entryId: 'e1',
++      date: '2026-07-08',
++      startMinutes: 480,
++      plannedHours: 3, // +1h — a different person's bin can't be drawn from
++    });
++    expect(rejectedB).toBe(stateB);
++  });
++
++  it('never rejects a plain move (unchanged hours) for a null-estimate task with no bin at all', () => {
++    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
++    const state = makeState({
++      tasks: [makeTask({ id: 't1', estimatedHours: null })],
++      workload: [e1],
++    });
++
++    const next = reducer(state, {
++      type: 'SET_BLOCK_TIME',
++      entryId: 'e1',
++      date: '2026-07-09',
++      startMinutes: 600,
++      plannedHours: 2, // unchanged
++    });
++    expect(next).not.toBe(state);
++    const moved = next.workload.find((w) => w.id === 'e1')!;
++    expect(moved.date).toBe('2026-07-09');
++    expect(moved.startMinutes).toBe(600);
++  });
++
++  it('shrink for a null-estimate task creates a bin row when none exists, and merges into an existing one otherwise', () => {
++    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 4, sortIndex: 0 });
++
++    const stateNoBin = makeState({ tasks: [makeTask({ id: 't1', estimatedHours: null })], workload: [e1] });
++    const shrunkCreated = reducer(stateNoBin, {
++      type: 'SET_BLOCK_TIME',
++      entryId: 'e1',
++      date: '2026-07-08',
++      startMinutes: 480,
++      plannedHours: 2, // -2h
++    });
++    const createdBin = shrunkCreated.workload.find((w) => w.id !== 'e1')!;
++    expect(createdBin.date).toBe(BIN_DATE);
++    expect(createdBin.plannedHours).toBe(2);
++
++    const existingBin = makeEntry({ id: 'existingBin', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 1, sortIndex: 0 });
++    const stateWithBin = makeState({
++      tasks: [makeTask({ id: 't1', estimatedHours: null })],
++      workload: [e1, existingBin],
++    });
++    const shrunkMerged = reducer(stateWithBin, {
++      type: 'SET_BLOCK_TIME',
++      entryId: 'e1',
++      date: '2026-07-08',
++      startMinutes: 480,
++      plannedHours: 2, // -2h
++    });
++    const mergedBin = shrunkMerged.workload.find((w) => w.id === 'existingBin')!;
++    expect(mergedBin.plannedHours).toBe(3); // 1h existing + 2h freed
++  });
++});
++
++// ---------------------------------------------------------------------------
++// INSERT_BLOCK budget enforcement — coverage added by PKG-20260708-b2-tests
++// (implementation shipped by PKG-20260708-b2-budget-store).
++// ---------------------------------------------------------------------------
++
++describe('INSERT_BLOCK budget enforcement (PKG-20260708-b2-tests)', () => {
++  it('budgeted task, headroom only (no bin): insert within headroom succeeds with no bin suffix in the activity message; insert past headroom is rejected', () => {
++    const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
++    const state = makeState({
++      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: 5 })], // t2 headroom = 5h, no bin row
++      workload: [ref],
++    });
++
++    const ok = reducer(state, {
++      type: 'INSERT_BLOCK',
++      payload: { refEntryId: 'ref1', position: 'after', taskId: 't2', hours: 5 }, // exactly the headroom
++    });
++    expect(ok).not.toBe(state);
++    const inserted = ok.workload.find((w) => w.taskId === 't2')!;
++    expect(inserted.plannedHours).toBe(5);
++    const msg = ok.activity[ok.activity.length - 1].message;
++    expect(msg).not.toContain('pobrano z zasobnika');
++
++    const rejected = reducer(state, {
++      type: 'INSERT_BLOCK',
++      payload: { refEntryId: 'ref1', position: 'after', taskId: 't2', hours: 5.25 }, // past headroom
++    });
++    expect(rejected).toBe(state);
++  });
++
++  it('task with bin + headroom: insert draws bin-first (bin row drained), remainder from headroom, activity message contains pobrano z zasobnika', () => {
++    const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
++    const bin = makeEntry({ id: 'bin1', taskId: 't2', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 2, sortIndex: 0 });
++    const state = makeState({
++      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: 10 })], // plenty of headroom
++      workload: [ref, bin],
++    });
++
++    const next = reducer(state, {
++      type: 'INSERT_BLOCK',
++      payload: { refEntryId: 'ref1', position: 'after', taskId: 't2', hours: 3 }, // 2h from bin + 1h from headroom
++    });
++
++    expect(next).not.toBe(state);
++    expect(next.workload.find((w) => w.id === 'bin1')).toBeUndefined(); // bin fully drained -> row deleted
++    const t2Total = next.workload
++      .filter((w) => w.taskId === 't2')
++      .reduce((s, w) => s + w.plannedHours, 0);
++    expect(t2Total).toBe(3); // 2h drawn from bin + 1h newly minted from headroom
++    const msg = next.activity[next.activity.length - 1].message;
++    expect(msg).toContain('pobrano z zasobnika');
++  });
++
++  it('insert exactly equal to the full (bin + headroom) allowance succeeds; allowance + 0.25 is rejected', () => {
++    const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
++    // t2's totalAll (all people, dated + bin) = 1h (other) + 2h (bin) = 3h; headroom = 8 - 3 = 5h;
++    // allowance = bin(2h) + headroom(5h) = 7h (headroom already nets out the bin's own contribution
++    // to totalAll, so consuming the whole allowance lands the task total exactly at the 8h estimate).
++    const otherPersonEntry = makeEntry({ id: 'other1', taskId: 't2', personId: 'p2', date: '2026-07-08', startMinutes: 480, plannedHours: 1, sortIndex: 0 });
++    const bin = makeEntry({ id: 'bin1', taskId: 't2', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 2, sortIndex: 0 });
++    const state = makeState({
++      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: 8 })],
++      workload: [ref, otherPersonEntry, bin],
++    });
++
++    const ok = reducer(state, {
++      type: 'INSERT_BLOCK',
++      payload: { refEntryId: 'ref1', position: 'after', taskId: 't2', hours: 7 }, // == full allowance
++    });
++    expect(ok).not.toBe(state);
++    expect(ok.workload.find((w) => w.id === 'bin1')).toBeUndefined(); // bin drained
++    const t2TotalOk = ok.workload
++      .filter((w) => w.taskId === 't2')
++      .reduce((s, w) => s + w.plannedHours, 0);
++    expect(t2TotalOk).toBe(8); // exactly the estimate, never past it
++
++    const rejected = reducer(state, {
++      type: 'INSERT_BLOCK',
++      payload: { refEntryId: 'ref1', position: 'after', taskId: 't2', hours: 7.25 }, // allowance + 0.25
++    });
++    expect(rejected).toBe(state);
++  });
++
++  it('unbudgeted task: insert <= bin hours succeeds and drains the bin row; with zero bin hours it is rejected', () => {
++    const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
++    const bin = makeEntry({ id: 'bin1', taskId: 't2', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 2, sortIndex: 0 });
++    const state = makeState({
++      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: null })],
++      workload: [ref, bin],
++    });
++
++    const ok = reducer(state, {
++      type: 'INSERT_BLOCK',
++      payload: { refEntryId: 'ref1', position: 'after', taskId: 't2', hours: 2 }, // == bin hours
++    });
++    expect(ok).not.toBe(state);
++    expect(ok.workload.find((w) => w.id === 'bin1')).toBeUndefined();
++
++    const noBinState = makeState({
++      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: null })],
++      workload: [ref],
++    });
++    const rejected = reducer(noBinState, {
++      type: 'INSERT_BLOCK',
++      payload: { refEntryId: 'ref1', position: 'after', taskId: 't2', hours: 1 }, // no bin, no headroom
++    });
++    expect(rejected).toBe(noBinState);
++  });
++
++  it("uses the picker's SELECTED task allowance (not the ref block's task) when they differ", () => {
++    const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
++    // t1 (the ref's task) is fully consumed already -- using its budget would reject this insert.
++    const state = makeState({
++      tasks: [makeTask({ id: 't1', estimatedHours: 2 }), makeTask({ id: 't2', estimatedHours: 5 })],
++      workload: [ref],
++    });
++
++    const next = reducer(state, {
++      type: 'INSERT_BLOCK',
++      payload: { refEntryId: 'ref1', position: 'after', taskId: 't2', hours: 5 }, // only fits t2's 5h headroom
++    });
++
++    expect(next).not.toBe(state);
++    const inserted = next.workload.find((w) => w.taskId === 't2')!;
++    expect(inserted.plannedHours).toBe(5);
++  });
++});
++
++// ---------------------------------------------------------------------------
++// Impersonation reducer — coverage added by PKG-20260708-b2-tests
++// (implementation shipped by PKG-20260708-b2-impersonation).
++// ---------------------------------------------------------------------------
++
++describe('Impersonation reducer (PKG-20260708-b2-tests)', () => {
++  it('IMPERSONATE sets currentUserId to the target and impersonatorId to the previous user; no-ops for a non-existent person and for personId === currentUserId', () => {
++    const admin = makePerson({ id: 'p1', accessRole: 'administrator' });
++    const staff = makePerson({ id: 'p2', accessRole: 'pracownik' });
++    const state = makeState({ people: [admin, staff], currentUserId: 'p1' });
++
++    const next = reducer(state, { type: 'IMPERSONATE', personId: 'p2' });
++    expect(next.currentUserId).toBe('p2');
++    expect(next.impersonatorId).toBe('p1');
++
++    const noopMissing = reducer(state, { type: 'IMPERSONATE', personId: 'does-not-exist' });
++    expect(noopMissing).toBe(state);
++
++    const noopSelf = reducer(state, { type: 'IMPERSONATE', personId: 'p1' }); // == currentUserId
++    expect(noopSelf).toBe(state);
++  });
++
++  it('chained impersonation preserves the ORIGINAL impersonator; IMPERSONATE with personId === impersonatorId acts as return', () => {
++    const admin = makePerson({ id: 'p1', accessRole: 'administrator' });
++    const staff1 = makePerson({ id: 'p2', accessRole: 'pracownik' });
++    const staff2 = makePerson({ id: 'p3', accessRole: 'pracownik' });
++    const state = makeState({
++      people: [admin, staff1, staff2],
++      currentUserId: 'p2', // already impersonating p2
++      impersonatorId: 'p1', // original real user
++    });
++
++    const chained = reducer(state, { type: 'IMPERSONATE', personId: 'p3' });
++    expect(chained.currentUserId).toBe('p3');
++    expect(chained.impersonatorId).toBe('p1'); // original preserved, not p2
++
++    const returned = reducer(state, { type: 'IMPERSONATE', personId: 'p1' }); // == impersonatorId
++    expect(returned.currentUserId).toBe('p1');
++    expect(returned.impersonatorId).toBe('');
++  });
++
++  it("STOP_IMPERSONATION restores currentUserId from impersonatorId and clears it; no-ops at ''", () => {
++    const admin = makePerson({ id: 'p1', accessRole: 'administrator' });
++    const staff = makePerson({ id: 'p2', accessRole: 'pracownik' });
++    const state = makeState({ people: [admin, staff], currentUserId: 'p2', impersonatorId: 'p1' });
++
++    const next = reducer(state, { type: 'STOP_IMPERSONATION' });
++    expect(next.currentUserId).toBe('p1');
++    expect(next.impersonatorId).toBe('');
++
++    const notImpersonating = makeState({ people: [admin, staff], currentUserId: 'p1', impersonatorId: '' });
++    expect(reducer(notImpersonating, { type: 'STOP_IMPERSONATION' })).toBe(notImpersonating);
++  });
++
++  it('SET_CURRENT_USER and LOGOUT both clear impersonatorId; LOGOUT also clears currentUserId', () => {
++    const admin = makePerson({ id: 'p1', accessRole: 'administrator' });
++    const staff = makePerson({ id: 'p2', accessRole: 'pracownik' });
++    const staff2 = makePerson({ id: 'p3', accessRole: 'pracownik' });
++    const state = makeState({ people: [admin, staff, staff2], currentUserId: 'p2', impersonatorId: 'p1' });
++
++    const setUser = reducer(state, { type: 'SET_CURRENT_USER', personId: 'p3' });
++    expect(setUser.currentUserId).toBe('p3');
++    expect(setUser.impersonatorId).toBe('');
++
++    const loggedOut = reducer(state, { type: 'LOGOUT' });
++    expect(loggedOut.currentUserId).toBe('');
++    expect(loggedOut.impersonatorId).toBe('');
++  });
++
++  it('DELETE_PERSON of the impersonated person returns the session to the impersonator; deleting the impersonator clears impersonatorId only', () => {
++    const untouchedAdmin = makePerson({ id: 'p0', accessRole: 'administrator' }); // satisfies the last-admin guard
++    const impersonator = makePerson({ id: 'p1', accessRole: 'pracownik' });
++    const impersonated = makePerson({ id: 'p2', accessRole: 'pracownik' });
++    const state = makeState({
++      people: [untouchedAdmin, impersonator, impersonated],
++      currentUserId: 'p2',
++      impersonatorId: 'p1',
++    });
++
++    const afterDeleteImpersonated = reducer(state, { type: 'DELETE_PERSON', personId: 'p2' });
++    expect(afterDeleteImpersonated.currentUserId).toBe('p1');
++    expect(afterDeleteImpersonated.impersonatorId).toBe('');
++    expect(afterDeleteImpersonated.people.some((p) => p.id === 'p2')).toBe(false);
++
++    const afterDeleteImpersonator = reducer(state, { type: 'DELETE_PERSON', personId: 'p1' });
++    expect(afterDeleteImpersonator.impersonatorId).toBe('');
++    expect(afterDeleteImpersonator.currentUserId).toBe('p2'); // acted-as identity kept
++    expect(afterDeleteImpersonator.people.some((p) => p.id === 'p1')).toBe(false);
++  });
++});
+diff --git a/src/store/seed.ts b/src/store/seed.ts
+index 2282fa7..8c4a26a 100644
+--- a/src/store/seed.ts
++++ b/src/store/seed.ts
+@@ -333,6 +333,7 @@ export function buildSampleData(): AppData {
+     comments,
+     activity,
+     currentUserId: kasia.id,
++    impersonatorId: '',
+     sampleBannerDismissed: true,
+     savedFilters: [],
+   };
+diff --git a/src/store/selectors.test.ts b/src/store/selectors.test.ts
+index 35ee35a..21fbf87 100644
+--- a/src/store/selectors.test.ts
++++ b/src/store/selectors.test.ts
+@@ -10,6 +10,10 @@ import {
+   conflictDatesForTask,
+   growAllowanceHours,
+   isPersonWorkday,
++  isImpersonating,
++  realUser,
++  realUserId,
++  taskGrowAllowance,
+ } from './selectors';
+ import { emptyData } from './storage';
+ import { BIN_DATE } from '../utils/time';
+@@ -132,14 +136,27 @@ describe('conflictDatesForTask — bin exclusion (regression)', () => {
+ // ---------------------------------------------------------------------------
+ 
+ describe('growAllowanceHours', () => {
+-  it('returns null when the task has no estimate (unlimited/free grow)', () => {
++  it('returns the person\'s same-task bin hours (a number, never null) when the task has no estimate', () => {
++    // New contract (PKG-20260708-b2): null-estimate tasks are no longer
++    // unlimited. Allowance = bin hours + 0 headroom. With no bin row here ⇒ 0.
+     const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', plannedHours: 2 });
+     const state = makeState({
+       tasks: [makeTask({ id: 't1', estimatedHours: null })],
+       workload: [e1],
+     });
+ 
+-    expect(growAllowanceHours(state, 'e1')).toBeNull();
++    expect(growAllowanceHours(state, 'e1')).toBe(0);
++  });
++
++  it('returns the person\'s same-task bin hours for a null-estimate task with a bin row', () => {
++    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', plannedHours: 2 });
++    const bin = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 3, sortIndex: 0 });
++    const state = makeState({
++      tasks: [makeTask({ id: 't1', estimatedHours: null })],
++      workload: [e1, bin],
++    });
++
++    expect(growAllowanceHours(state, 'e1')).toBe(3); // bin only, no headroom
+   });
+ 
+   it('sums the same-task bin hours and the remaining headroom', () => {
+@@ -170,6 +187,100 @@ describe('growAllowanceHours', () => {
+ // Workday-aware availability (PKG-20260708-auth-data)
+ // ---------------------------------------------------------------------------
+ 
++// ---------------------------------------------------------------------------
++// taskGrowAllowance / growAllowanceHours number contract — coverage added by
++// PKG-20260708-b2-tests (implementation shipped by PKG-20260708-b2-budget-store).
++// The four growAllowanceHours cases just above already cover the summed-value
++// contract via the entry-keyed wrapper; these focus on taskGrowAllowance
++// directly plus the two gaps in the growAllowanceHours contract (typeof check,
++// missing entry id).
++// ---------------------------------------------------------------------------
++
++describe('taskGrowAllowance (PKG-20260708-b2-tests)', () => {
++  it('null estimate: allowance is the same-task bin hours only (no headroom)', () => {
++    const bin = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 4, sortIndex: 0 });
++    const state = makeState({
++      tasks: [makeTask({ id: 't1', estimatedHours: null })],
++      workload: [bin],
++    });
++    expect(taskGrowAllowance(state, 't1', 'p1')).toBe(4);
++  });
++
++  it('estimate set: allowance sums the same-task bin hours and the remaining headroom', () => {
++    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', plannedHours: 2 });
++    const bin = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 3, sortIndex: 0 });
++    const state = makeState({
++      tasks: [makeTask({ id: 't1', estimatedHours: 10 })],
++      workload: [e1, bin],
++    });
++    // totalAll = 5h; headroom = 10 - 5 = 5h; bin = 3h -> allowance 8h.
++    expect(taskGrowAllowance(state, 't1', 'p1')).toBe(8);
++  });
++
++  it('over-planned task: headroom floors at 0, but the bin still counts', () => {
++    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', plannedHours: 8 });
++    const bin = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 2, sortIndex: 0 });
++    const state = makeState({
++      tasks: [makeTask({ id: 't1', estimatedHours: 5 })], // 10h already logged against a 5h estimate
++      workload: [e1, bin],
++    });
++    expect(taskGrowAllowance(state, 't1', 'p1')).toBe(2); // headroom 0, bin 2h
++  });
++
++  it('no entries at all (null estimate, no bin, no dated hours): allowance is 0', () => {
++    const state = makeState({
++      tasks: [makeTask({ id: 't1', estimatedHours: null })],
++      workload: [],
++    });
++    expect(taskGrowAllowance(state, 't1', 'p1')).toBe(0);
++  });
++});
++
++describe('growAllowanceHours — number contract (PKG-20260708-b2-tests)', () => {
++  it('returns a NUMBER (never null) for a null-estimate task entry, equal to the bin hours', () => {
++    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', plannedHours: 2 });
++    const bin = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 3, sortIndex: 0 });
++    const state = makeState({
++      tasks: [makeTask({ id: 't1', estimatedHours: null })],
++      workload: [e1, bin],
++    });
++    const allowance = growAllowanceHours(state, 'e1');
++    expect(typeof allowance).toBe('number');
++    expect(allowance).toBe(3);
++  });
++
++  it('returns 0 for a missing entry id', () => {
++    const state = makeState({ tasks: [makeTask({ id: 't1' })], workload: [] });
++    expect(growAllowanceHours(state, 'does-not-exist')).toBe(0);
++  });
++});
++
++// ---------------------------------------------------------------------------
++// realUserId / realUser / isImpersonating — coverage added by
++// PKG-20260708-b2-tests (implementation shipped by PKG-20260708-b2-impersonation).
++// ---------------------------------------------------------------------------
++
++describe('realUserId / realUser / isImpersonating (PKG-20260708-b2-tests)', () => {
++  it('not impersonating: realUserId/realUser resolve to self, isImpersonating is false', () => {
++    const p1 = makePerson({ id: 'p1', name: 'Ann' });
++    const state = makeState({ people: [p1], currentUserId: 'p1', impersonatorId: '' });
++
++    expect(realUserId(state)).toBe('p1');
++    expect(realUser(state)?.id).toBe('p1');
++    expect(isImpersonating(state)).toBe(false);
++  });
++
++  it('impersonating: realUserId/realUser resolve to the impersonator, isImpersonating is true', () => {
++    const p1 = makePerson({ id: 'p1', name: 'Ann' });
++    const p2 = makePerson({ id: 'p2', name: 'Bob' });
++    const state = makeState({ people: [p1, p2], currentUserId: 'p2', impersonatorId: 'p1' });
++
++    expect(realUserId(state)).toBe('p1');
++    expect(realUser(state)?.id).toBe('p1');
++    expect(isImpersonating(state)).toBe(true);
++  });
++});
++
+ describe('availability selectors', () => {
+   it('a person working Mon-Thu has 0 available hours on a Friday and their full capacity on a Wednesday', () => {
+     const state = makeState({
+diff --git a/src/store/selectors.ts b/src/store/selectors.ts
+index 6f34172..12b9f05 100644
+--- a/src/store/selectors.ts
++++ b/src/store/selectors.ts
+@@ -325,22 +325,40 @@ export function taskBudget(
+   return { estimate, totalAll, headroom };
+ }
+ 
++/**
++ * The calendar-side hour allowance for a `(task, person)` pair — the ceiling on
++ * how many hours calendar actions (drag-grow, right-click insert) may add for
++ * that person without minting hours past the task's plan.
++ *
++ * Budget model (PKG-20260708-b2-budget-store): the task's plan IS the budget.
++ * Calendar paths never create hours out of thin air; they may only draw from
++ * this person's same-task bin row, plus — for tasks that carry an estimate —
++ * the task's remaining headroom:
++ *
++ *   `binHoursForTaskPerson + (estimate === null ? 0 : headroom)`
++ *
++ * A number is ALWAYS returned. Tasks with `estimatedHours === null` no longer
++ * grow freely: their allowance is bin hours only (0 when the bin row is empty).
++ */
++export function taskGrowAllowance(state: AppData, taskId: string, personId: string): number {
++  const budget = taskBudget(state, taskId);
++  return (
++    binHoursForTaskPerson(state, taskId, personId) +
++    (budget.estimate === null ? 0 : budget.headroom)
++  );
++}
++
+ /**
+  * How many hours a block may GROW BY (the grow DELTA, not the block's absolute
+- * size) before it would mint hours past the task budget. `null` ⇒ unlimited
+- * (the task has no estimate ⇒ free grow, today's behavior). Otherwise the
+- * block's owner may draw from their same-task bin row first, then from the
+- * task's headroom: `binHoursForTaskPerson + headroom`.
++ * size) before it would mint hours past the task budget. Delegates to
++ * {@link taskGrowAllowance} for the entry's `(task, person)` pair; a missing
++ * entry ⇒ 0. Always a number (never null — the old "no estimate ⇒ unlimited"
++ * rule is gone).
+  */
+-export function growAllowanceHours(state: AppData, entryId: string): number | null {
++export function growAllowanceHours(state: AppData, entryId: string): number {
+   const entry = state.workload.find((w) => w.id === entryId);
+   if (!entry) return 0;
+-  const task = getTask(state, entry.taskId);
+-  if (!task || task.estimatedHours === null) return null;
+-  return (
+-    binHoursForTaskPerson(state, entry.taskId, entry.personId) +
+-    taskBudget(state, entry.taskId).headroom
+-  );
++  return taskGrowAllowance(state, entry.taskId, entry.personId);
+ }
+ 
+ // ---- Capacity & overload ----
+@@ -493,6 +511,27 @@ export function currentUser(state: AppData): Person | undefined {
+   return state.currentUserId ? getPerson(state, state.currentUserId) : undefined;
+ }
+ 
++/**
++ * The REAL logged-in person's id — the impersonator while impersonating,
++ * otherwise the acted-as identity. Use this (not `currentUserId`) only for the
++ * "Występuj jako" switcher visibility and the impersonation return path; every
++ * other read stays a true preview of the acted-as identity.
++ */
++export function realUserId(state: AppData): string {
++  return state.impersonatorId || state.currentUserId;
++}
++
++/** The REAL logged-in Person (see `realUserId`), or undefined if unresolved. */
++export function realUser(state: AppData): Person | undefined {
++  const id = realUserId(state);
++  return id ? getPerson(state, id) : undefined;
++}
++
++/** True when an impersonation session is active (`impersonatorId !== ''`). */
++export function isImpersonating(state: AppData): boolean {
++  return state.impersonatorId !== '';
++}
++
+ /**
+  * Admin gate for the admin panel and status management. With no people yet
+  * there is nobody to be admin, so setup stays unlocked (prevents lockout).
+diff --git a/src/store/storage.test.ts b/src/store/storage.test.ts
+index 7240949..7f1c179 100644
+--- a/src/store/storage.test.ts
++++ b/src/store/storage.test.ts
+@@ -367,3 +367,91 @@ describe('loadData migration v4 -> v5', () => {
+     expect(twice).toEqual(data);
+   });
+ });
++
++// ---------------------------------------------------------------------------
++// impersonatorId default/round-trip/sanitize (PKG-20260708-b2-tests, covering
++// the additive field shipped by PKG-20260708-b2-impersonation). Version stays
++// 5 (additive, no bump) — payloads here are already v5-shaped.
++// ---------------------------------------------------------------------------
++
++describe('impersonatorId persistence (PKG-20260708-b2-tests)', () => {
++  function v5Payload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
++    return {
++      version: 5,
++      clients: [],
++      departments: [],
++      serviceTypes: [],
++      statuses: [],
++      projects: [],
++      milestones: [],
++      tasks: [],
++      people: [
++        {
++          id: 'p1',
++          firstName: 'Ann',
++          lastName: 'Admin',
++          name: 'Ann Admin',
++          email: '',
++          role: '',
++          departmentId: '',
++          avatar: '',
++          capacity: 8,
++          accessRole: 'administrator',
++        },
++        {
++          id: 'p2',
++          firstName: 'Bob',
++          lastName: 'Staff',
++          name: 'Bob Staff',
++          email: '',
++          role: '',
++          departmentId: '',
++          avatar: '',
++          capacity: 8,
++          accessRole: 'pracownik',
++        },
++      ],
++      assignments: [],
++      workload: [],
++      comments: [],
++      activity: [],
++      currentUserId: 'p1',
++      sampleBannerDismissed: false,
++      savedFilters: [],
++      ...overrides,
++    };
++  }
++
++  it("a persisted payload WITHOUT impersonatorId loads with the '' default", () => {
++    const payload = v5Payload(); // no impersonatorId key at all
++    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
++    expect(data.impersonatorId).toBe('');
++  });
++
++  it('a valid non-empty impersonatorId round-trips', () => {
++    const payload = v5Payload({ currentUserId: 'p2', impersonatorId: 'p1' });
++    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
++    expect(data.impersonatorId).toBe('p1');
++    expect(data.currentUserId).toBe('p2');
++  });
++
++  it("sanitizes an impersonatorId referencing a non-existent person to ''", () => {
++    const payload = v5Payload({ currentUserId: 'p2', impersonatorId: 'ghost' });
++    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
++    expect(data.impersonatorId).toBe('');
++  });
++
++  it("sanitizes an impersonatorId equal to currentUserId to ''", () => {
++    const payload = v5Payload({ currentUserId: 'p1', impersonatorId: 'p1' });
++    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
++    expect(data.impersonatorId).toBe('');
++  });
++
++  it('loading is idempotent: load -> save-shape -> load again yields the same impersonatorId', () => {
++    const payload = v5Payload({ currentUserId: 'p2', impersonatorId: 'p1' });
++    const once = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
++    const twice = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(once) }, () => loadData());
++    expect(twice).toEqual(once);
++    expect(twice.impersonatorId).toBe('p1');
++  });
++});
+diff --git a/src/store/storage.ts b/src/store/storage.ts
+index ed17bea..07324a5 100644
+--- a/src/store/storage.ts
++++ b/src/store/storage.ts
+@@ -84,6 +84,7 @@ export function emptyData(): AppData {
+     comments: [],
+     activity: [],
+     currentUserId: '',
++    impersonatorId: '',
+     sampleBannerDismissed: false,
+     savedFilters: [],
+   };
+@@ -279,6 +280,7 @@ function migrateV1(raw: Record<string, unknown>): AppData {
+     assignments: v1Assignments,
+     workload,
+     currentUserId: people[0]?.id ?? '',
++    impersonatorId: '',
+     sampleBannerDismissed: Boolean(raw.sampleBannerDismissed),
+   };
+ }
+@@ -511,6 +513,22 @@ export function ensureStartMinutes(data: AppData): AppData {
+   };
+ }
+ 
++/**
++ * Clears a stale `impersonatorId` on every load (idempotent, like
++ * ensureStartMinutes). Impersonation bookkeeping must reference a real person
++ * distinct from the acted-as identity; anything else resets to '' (= not
++ * impersonating). Disjoint from ensureStartMinutes — order is irrelevant.
++ */
++export function sanitizeImpersonator(data: AppData): AppData {
++  const id = data.impersonatorId;
++  if (id === '') return data;
++  const dangling = !data.people.some((p) => p.id === id);
++  if (dangling || id === data.currentUserId) {
++    return { ...data, impersonatorId: '' };
++  }
++  return data;
++}
++
+ export function loadData(): AppData {
+   try {
+     const raw =
+@@ -521,7 +539,9 @@ export function loadData(): AppData {
+     if (!looksLikeData(parsed)) return emptyData();
+     const version = typeof parsed.version === 'number' ? parsed.version : 1;
+     if (version < 2) {
+-      return ensureStartMinutes(migrateV4toV5(localizeLegacyData(migrateV1(parsed))));
++      return sanitizeImpersonator(
++        ensureStartMinutes(migrateV4toV5(localizeLegacyData(migrateV1(parsed)))),
++      );
+     }
+     // Same-version load: fill any missing fields with defaults.
+     const loaded = {
+@@ -538,7 +558,7 @@ export function loadData(): AppData {
+     // MATRIX[undefined] deny every action → permanent login-screen lockout.
+     // migratePerson preserves valid existing values and fills only what's absent.
+     const migrated = migrateV4toV5(localized);
+-    return ensureStartMinutes(migrated);
++    return sanitizeImpersonator(ensureStartMinutes(migrated));
+   } catch {
+     return emptyData();
+   }
+diff --git a/src/styles.css b/src/styles.css
+index 1f49e77..0e86b5e 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -652,6 +652,37 @@ textarea {
+   flex-shrink: 0;
+ }
+ 
++/* Persistent impersonation banner (admin previewing another identity). Warning
++   tones so it reads as a temporary, reversible mode. No animation by design. */
++.impersonation-banner {
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  gap: var(--n2-space-4);
++  border: 1px solid var(--n2-warning);
++  border-radius: var(--n2-radius-md);
++  background: var(--n2-warning-soft);
++  padding: var(--n2-space-3) var(--n2-space-5);
++  margin-bottom: var(--n2-space-6);
++}
++.impersonation-banner-text {
++  color: var(--n2-warning);
++  font-weight: 600;
++}
++.impersonation-banner .btn {
++  flex-shrink: 0;
++}
++@media (max-width: 760px) {
++  .impersonation-banner {
++    flex-direction: column;
++    align-items: flex-start;
++    gap: var(--n2-space-2);
++  }
++  .impersonation-banner .btn {
++    width: 100%;
++  }
++}
++
+ /* ---------- Person chips / dots ---------- */
+ 
+ .person-dot {
+@@ -879,6 +910,17 @@ option {
+   font-family: var(--n2-font-data);
+   font-variant-numeric: tabular-nums;
+ }
++.estimate-compare strong.over-budget {
++  color: var(--n2-danger);
++}
++.estimate-over {
++  margin-top: 8px;
++  font-size: var(--n2-type-sm);
++  color: var(--n2-danger);
++  background: var(--n2-danger-soft);
++  border-radius: var(--n2-radius-xs);
++  padding: 8px 12px;
++}
+ 
+ .assignee-picker {
+   display: flex;
+@@ -1684,6 +1726,21 @@ option {
+   border-left-color: var(--n2-danger) !important;
+   background: var(--n2-danger-soft, rgba(255, 79, 114, 0.25));
+ }
++/* In-pane original while its ghost is being dragged out of the bin */
++.week-bin-block.drag-source {
++  opacity: 0.35;
++  cursor: grabbing;
++}
++/* Fixed-position drag ghost portalled to <body> — escapes the bin overflow.
++   Purely visual: no pointer events, no transitions, above menus/modals. */
++.week-bin-ghost {
++  position: fixed;
++  z-index: 1000;
++  margin: 0;
++  pointer-events: none;
++  transition: none;
++  box-shadow: var(--n2-shadow-violet, 0 8px 24px rgba(0, 0, 0, 0.4));
++}
+ .week-bin-block-title {
+   font-size: var(--n2-type-xs);
+   font-weight: 600;
+diff --git a/src/types.ts b/src/types.ts
+index 0ea732f..0d71f4a 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -185,6 +185,10 @@ export interface AppData {
+   comments: Comment[];
+   activity: ActivityEvent[];
+   currentUserId: string; // "acting as" person; '' when unset
++  // Safe impersonation: '' when not impersonating; otherwise the REAL logged-in
++  // person's id while `currentUserId` holds the impersonated identity. Additive
++  // (no version bump) — defaulted + sanitized on every load in storage.ts.
++  impersonatorId: string;
+   sampleBannerDismissed: boolean;
+   savedFilters: SavedFilter[]; // named filter presets for Projects/Tasks pages
+ }

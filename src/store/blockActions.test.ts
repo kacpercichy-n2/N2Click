@@ -222,7 +222,9 @@ describe('INSERT_BLOCK', () => {
   it('"przed" (before): places the new block at the ref start and pushes the ref later', () => {
     const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
     const state = makeState({
-      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2' })],
+      // t2 carries an estimate with headroom so the insert draws from budget
+      // rather than being rejected by the no-mint rule (PKG-20260708-b2).
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: 10 })],
       workload: [ref],
     });
 
@@ -243,7 +245,8 @@ describe('INSERT_BLOCK', () => {
   it('"po" (after): places the new block at the ref end', () => {
     const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
     const state = makeState({
-      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2' })],
+      // t2 carries an estimate with headroom so the insert draws from budget.
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: 10 })],
       workload: [ref],
     });
 
@@ -262,7 +265,8 @@ describe('INSERT_BLOCK', () => {
     const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 }); // 480-600
     const far = makeEntry({ id: 'far1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 900, plannedHours: 1, sortIndex: 1 }); // 900-960
     const state = makeState({
-      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2' })],
+      // t2 carries an estimate with headroom so the insert draws from budget.
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: 10 })],
       workload: [ref, far],
     });
 
@@ -279,7 +283,8 @@ describe('INSERT_BLOCK', () => {
     const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
     const other = makeEntry({ id: 'other1', taskId: 't1', personId: 'p2', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
     const state = makeState({
-      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2' })],
+      // t2 carries an estimate with headroom so the insert draws from budget.
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: 10 })],
       workload: [ref, other],
     });
 
@@ -295,7 +300,8 @@ describe('INSERT_BLOCK', () => {
   it("auto-assigns the new entry's person to the task if not already assigned", () => {
     const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
     const state = makeState({
-      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2' })],
+      // t2 carries an estimate with headroom so the insert draws from budget.
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: 10 })],
       workload: [ref],
       assignments: [],
     });
@@ -845,7 +851,10 @@ describe('SET_BLOCK_TIME budget-capped grow', () => {
     expect(taskTotal).toBe(6); // unchanged (2+4 before, 3+3 after) — pure bin draw
   });
 
-  it('estimatedHours: null grows freely with no budget check and leaves an unrelated bin row untouched (regression)', () => {
+  it('estimatedHours: null grow is capped at the same-task bin hours (no free minting): succeeds up to the bin (drained) and is rejected past it', () => {
+    // New contract (PKG-20260708-b2): null-estimate tasks lose unlimited
+    // drag-grow. Allowance = same-task bin hours (0 headroom). e1=2h + bin=3h
+    // ⇒ e1 may grow by at most 3h, draining the bin row to 0.
     const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
     const bin = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 3, sortIndex: 0 });
     const state = makeState({
@@ -853,17 +862,32 @@ describe('SET_BLOCK_TIME budget-capped grow', () => {
       workload: [e1, bin],
     });
 
-    const next = reducer(state, {
+    // Grow by exactly the 3h bin allowance: succeeds, bin drained (row deleted),
+    // task total unchanged (pure bin draw).
+    const ok = reducer(state, {
       type: 'SET_BLOCK_TIME',
       entryId: 'e1',
       date: '2026-07-08',
       startMinutes: 480,
-      plannedHours: 10, // +8h, far past any "estimate" if one existed — but there is none
+      plannedHours: 5, // +3h == bin hours
     });
+    expect(ok).not.toBe(state);
+    expect(ok.workload.find((w) => w.id === 'e1')!.plannedHours).toBe(5);
+    expect(ok.workload.find((w) => w.id === 'bin1')).toBeUndefined(); // drained row deleted
+    const okTotal = ok.workload
+      .filter((w) => w.taskId === 't1')
+      .reduce((s, w) => s + w.plannedHours, 0);
+    expect(okTotal).toBe(5); // was 5 (2 + 3 bin) — pure bin draw, nothing minted
 
-    expect(next).not.toBe(state);
-    expect(next.workload.find((w) => w.id === 'e1')!.plannedHours).toBe(10);
-    expect(next.workload.find((w) => w.id === 'bin1')!.plannedHours).toBe(3); // untouched
+    // Grow past the bin allowance (+3.25h): rejected, same state reference.
+    const rejected = reducer(state, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'e1',
+      date: '2026-07-08',
+      startMinutes: 480,
+      plannedHours: 5.25, // +3.25h > 3h bin, no headroom
+    });
+    expect(rejected).toBe(state);
   });
 
   it('grow draws ONLY from headroom and the SAME (task,person) bin row — another person\'s bin row and another task\'s bin row are never consumed', () => {
@@ -1266,5 +1290,367 @@ describe('DELETE_PERSON last-admin + supervisor cascade', () => {
     expect(next.people.find((p) => p.id === 'p3')!.supervisorId).toBe('');
     // An unrelated supervisorId is left intact.
     expect(next.people.find((p) => p.id === 'p4')!.supervisorId).toBe('p0');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SET_BLOCK_TIME grow, unbudgeted (estimatedHours: null) tasks — coverage
+// added by PKG-20260708-b2-tests (implementation shipped by
+// PKG-20260708-b2-budget-store). Budgeted-task grow paths already have
+// dedicated regression tests above; these focus on the null-estimate contract.
+// ---------------------------------------------------------------------------
+
+describe('SET_BLOCK_TIME grow — unbudgeted (estimatedHours: null) tasks (PKG-20260708-b2-tests)', () => {
+  it('grows draining a same-task bin row by the delta: a partial grow reduces the row (not deleted), a full-allowance grow deletes it; both note pobrano z zasobnika', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
+    const bin = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 5, sortIndex: 0 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', estimatedHours: null })],
+      workload: [e1, bin],
+    });
+
+    // Partial: grow by 2h of the 5h bin -> row reduced to 3h, not deleted.
+    const partial = reducer(state, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'e1',
+      date: '2026-07-08',
+      startMinutes: 480,
+      plannedHours: 4, // +2h
+    });
+    expect(partial.workload.find((w) => w.id === 'e1')!.plannedHours).toBe(4);
+    expect(partial.workload.find((w) => w.id === 'bin1')!.plannedHours).toBe(3);
+    expect(partial.activity[partial.activity.length - 1].message).toContain('pobrano z zasobnika');
+
+    // Full: grow by exactly the 5h bin allowance -> row deleted.
+    const full = reducer(state, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'e1',
+      date: '2026-07-08',
+      startMinutes: 480,
+      plannedHours: 7, // +5h == bin allowance
+    });
+    expect(full.workload.find((w) => w.id === 'e1')!.plannedHours).toBe(7);
+    expect(full.workload.find((w) => w.id === 'bin1')).toBeUndefined();
+    expect(full.activity[full.activity.length - 1].message).toContain('pobrano z zasobnika');
+  });
+
+  it('rejects (same state reference) a grow past the same-task bin hours when there is no headroom to fall back on', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
+    const bin = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 1, sortIndex: 0 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', estimatedHours: null })],
+      workload: [e1, bin],
+    });
+
+    const next = reducer(state, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'e1',
+      date: '2026-07-08',
+      startMinutes: 480,
+      plannedHours: 3.25, // +1.25h > 1h bin, no headroom
+    });
+    expect(next).toBe(state);
+  });
+
+  it('rejects a grow when the only bin row present belongs to a DIFFERENT task or a DIFFERENT person (no cross-draw, no headroom)', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
+
+    const otherTaskBin = makeEntry({ id: 'binOtherTask', taskId: 't2', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 5, sortIndex: 0 });
+    const stateA = makeState({
+      tasks: [makeTask({ id: 't1', estimatedHours: null }), makeTask({ id: 't2' })],
+      workload: [e1, otherTaskBin],
+    });
+    const rejectedA = reducer(stateA, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'e1',
+      date: '2026-07-08',
+      startMinutes: 480,
+      plannedHours: 3, // +1h — nothing available, a different task's bin can't be drawn from
+    });
+    expect(rejectedA).toBe(stateA);
+
+    const otherPersonBin = makeEntry({ id: 'binOtherPerson', taskId: 't1', personId: 'p2', date: BIN_DATE, startMinutes: 0, plannedHours: 5, sortIndex: 0 });
+    const stateB = makeState({
+      tasks: [makeTask({ id: 't1', estimatedHours: null })],
+      workload: [e1, otherPersonBin],
+    });
+    const rejectedB = reducer(stateB, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'e1',
+      date: '2026-07-08',
+      startMinutes: 480,
+      plannedHours: 3, // +1h — a different person's bin can't be drawn from
+    });
+    expect(rejectedB).toBe(stateB);
+  });
+
+  it('never rejects a plain move (unchanged hours) for a null-estimate task with no bin at all', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', estimatedHours: null })],
+      workload: [e1],
+    });
+
+    const next = reducer(state, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'e1',
+      date: '2026-07-09',
+      startMinutes: 600,
+      plannedHours: 2, // unchanged
+    });
+    expect(next).not.toBe(state);
+    const moved = next.workload.find((w) => w.id === 'e1')!;
+    expect(moved.date).toBe('2026-07-09');
+    expect(moved.startMinutes).toBe(600);
+  });
+
+  it('shrink for a null-estimate task creates a bin row when none exists, and merges into an existing one otherwise', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 4, sortIndex: 0 });
+
+    const stateNoBin = makeState({ tasks: [makeTask({ id: 't1', estimatedHours: null })], workload: [e1] });
+    const shrunkCreated = reducer(stateNoBin, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'e1',
+      date: '2026-07-08',
+      startMinutes: 480,
+      plannedHours: 2, // -2h
+    });
+    const createdBin = shrunkCreated.workload.find((w) => w.id !== 'e1')!;
+    expect(createdBin.date).toBe(BIN_DATE);
+    expect(createdBin.plannedHours).toBe(2);
+
+    const existingBin = makeEntry({ id: 'existingBin', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 1, sortIndex: 0 });
+    const stateWithBin = makeState({
+      tasks: [makeTask({ id: 't1', estimatedHours: null })],
+      workload: [e1, existingBin],
+    });
+    const shrunkMerged = reducer(stateWithBin, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'e1',
+      date: '2026-07-08',
+      startMinutes: 480,
+      plannedHours: 2, // -2h
+    });
+    const mergedBin = shrunkMerged.workload.find((w) => w.id === 'existingBin')!;
+    expect(mergedBin.plannedHours).toBe(3); // 1h existing + 2h freed
+  });
+});
+
+// ---------------------------------------------------------------------------
+// INSERT_BLOCK budget enforcement — coverage added by PKG-20260708-b2-tests
+// (implementation shipped by PKG-20260708-b2-budget-store).
+// ---------------------------------------------------------------------------
+
+describe('INSERT_BLOCK budget enforcement (PKG-20260708-b2-tests)', () => {
+  it('budgeted task, headroom only (no bin): insert within headroom succeeds with no bin suffix in the activity message; insert past headroom is rejected', () => {
+    const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: 5 })], // t2 headroom = 5h, no bin row
+      workload: [ref],
+    });
+
+    const ok = reducer(state, {
+      type: 'INSERT_BLOCK',
+      payload: { refEntryId: 'ref1', position: 'after', taskId: 't2', hours: 5 }, // exactly the headroom
+    });
+    expect(ok).not.toBe(state);
+    const inserted = ok.workload.find((w) => w.taskId === 't2')!;
+    expect(inserted.plannedHours).toBe(5);
+    const msg = ok.activity[ok.activity.length - 1].message;
+    expect(msg).not.toContain('pobrano z zasobnika');
+
+    const rejected = reducer(state, {
+      type: 'INSERT_BLOCK',
+      payload: { refEntryId: 'ref1', position: 'after', taskId: 't2', hours: 5.25 }, // past headroom
+    });
+    expect(rejected).toBe(state);
+  });
+
+  it('task with bin + headroom: insert draws bin-first (bin row drained), remainder from headroom, activity message contains pobrano z zasobnika', () => {
+    const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
+    const bin = makeEntry({ id: 'bin1', taskId: 't2', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 2, sortIndex: 0 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: 10 })], // plenty of headroom
+      workload: [ref, bin],
+    });
+
+    const next = reducer(state, {
+      type: 'INSERT_BLOCK',
+      payload: { refEntryId: 'ref1', position: 'after', taskId: 't2', hours: 3 }, // 2h from bin + 1h from headroom
+    });
+
+    expect(next).not.toBe(state);
+    expect(next.workload.find((w) => w.id === 'bin1')).toBeUndefined(); // bin fully drained -> row deleted
+    const t2Total = next.workload
+      .filter((w) => w.taskId === 't2')
+      .reduce((s, w) => s + w.plannedHours, 0);
+    expect(t2Total).toBe(3); // 2h drawn from bin + 1h newly minted from headroom
+    const msg = next.activity[next.activity.length - 1].message;
+    expect(msg).toContain('pobrano z zasobnika');
+  });
+
+  it('insert exactly equal to the full (bin + headroom) allowance succeeds; allowance + 0.25 is rejected', () => {
+    const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
+    // t2's totalAll (all people, dated + bin) = 1h (other) + 2h (bin) = 3h; headroom = 8 - 3 = 5h;
+    // allowance = bin(2h) + headroom(5h) = 7h (headroom already nets out the bin's own contribution
+    // to totalAll, so consuming the whole allowance lands the task total exactly at the 8h estimate).
+    const otherPersonEntry = makeEntry({ id: 'other1', taskId: 't2', personId: 'p2', date: '2026-07-08', startMinutes: 480, plannedHours: 1, sortIndex: 0 });
+    const bin = makeEntry({ id: 'bin1', taskId: 't2', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 2, sortIndex: 0 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: 8 })],
+      workload: [ref, otherPersonEntry, bin],
+    });
+
+    const ok = reducer(state, {
+      type: 'INSERT_BLOCK',
+      payload: { refEntryId: 'ref1', position: 'after', taskId: 't2', hours: 7 }, // == full allowance
+    });
+    expect(ok).not.toBe(state);
+    expect(ok.workload.find((w) => w.id === 'bin1')).toBeUndefined(); // bin drained
+    const t2TotalOk = ok.workload
+      .filter((w) => w.taskId === 't2')
+      .reduce((s, w) => s + w.plannedHours, 0);
+    expect(t2TotalOk).toBe(8); // exactly the estimate, never past it
+
+    const rejected = reducer(state, {
+      type: 'INSERT_BLOCK',
+      payload: { refEntryId: 'ref1', position: 'after', taskId: 't2', hours: 7.25 }, // allowance + 0.25
+    });
+    expect(rejected).toBe(state);
+  });
+
+  it('unbudgeted task: insert <= bin hours succeeds and drains the bin row; with zero bin hours it is rejected', () => {
+    const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
+    const bin = makeEntry({ id: 'bin1', taskId: 't2', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 2, sortIndex: 0 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: null })],
+      workload: [ref, bin],
+    });
+
+    const ok = reducer(state, {
+      type: 'INSERT_BLOCK',
+      payload: { refEntryId: 'ref1', position: 'after', taskId: 't2', hours: 2 }, // == bin hours
+    });
+    expect(ok).not.toBe(state);
+    expect(ok.workload.find((w) => w.id === 'bin1')).toBeUndefined();
+
+    const noBinState = makeState({
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: null })],
+      workload: [ref],
+    });
+    const rejected = reducer(noBinState, {
+      type: 'INSERT_BLOCK',
+      payload: { refEntryId: 'ref1', position: 'after', taskId: 't2', hours: 1 }, // no bin, no headroom
+    });
+    expect(rejected).toBe(noBinState);
+  });
+
+  it("uses the picker's SELECTED task allowance (not the ref block's task) when they differ", () => {
+    const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
+    // t1 (the ref's task) is fully consumed already -- using its budget would reject this insert.
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', estimatedHours: 2 }), makeTask({ id: 't2', estimatedHours: 5 })],
+      workload: [ref],
+    });
+
+    const next = reducer(state, {
+      type: 'INSERT_BLOCK',
+      payload: { refEntryId: 'ref1', position: 'after', taskId: 't2', hours: 5 }, // only fits t2's 5h headroom
+    });
+
+    expect(next).not.toBe(state);
+    const inserted = next.workload.find((w) => w.taskId === 't2')!;
+    expect(inserted.plannedHours).toBe(5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Impersonation reducer — coverage added by PKG-20260708-b2-tests
+// (implementation shipped by PKG-20260708-b2-impersonation).
+// ---------------------------------------------------------------------------
+
+describe('Impersonation reducer (PKG-20260708-b2-tests)', () => {
+  it('IMPERSONATE sets currentUserId to the target and impersonatorId to the previous user; no-ops for a non-existent person and for personId === currentUserId', () => {
+    const admin = makePerson({ id: 'p1', accessRole: 'administrator' });
+    const staff = makePerson({ id: 'p2', accessRole: 'pracownik' });
+    const state = makeState({ people: [admin, staff], currentUserId: 'p1' });
+
+    const next = reducer(state, { type: 'IMPERSONATE', personId: 'p2' });
+    expect(next.currentUserId).toBe('p2');
+    expect(next.impersonatorId).toBe('p1');
+
+    const noopMissing = reducer(state, { type: 'IMPERSONATE', personId: 'does-not-exist' });
+    expect(noopMissing).toBe(state);
+
+    const noopSelf = reducer(state, { type: 'IMPERSONATE', personId: 'p1' }); // == currentUserId
+    expect(noopSelf).toBe(state);
+  });
+
+  it('chained impersonation preserves the ORIGINAL impersonator; IMPERSONATE with personId === impersonatorId acts as return', () => {
+    const admin = makePerson({ id: 'p1', accessRole: 'administrator' });
+    const staff1 = makePerson({ id: 'p2', accessRole: 'pracownik' });
+    const staff2 = makePerson({ id: 'p3', accessRole: 'pracownik' });
+    const state = makeState({
+      people: [admin, staff1, staff2],
+      currentUserId: 'p2', // already impersonating p2
+      impersonatorId: 'p1', // original real user
+    });
+
+    const chained = reducer(state, { type: 'IMPERSONATE', personId: 'p3' });
+    expect(chained.currentUserId).toBe('p3');
+    expect(chained.impersonatorId).toBe('p1'); // original preserved, not p2
+
+    const returned = reducer(state, { type: 'IMPERSONATE', personId: 'p1' }); // == impersonatorId
+    expect(returned.currentUserId).toBe('p1');
+    expect(returned.impersonatorId).toBe('');
+  });
+
+  it("STOP_IMPERSONATION restores currentUserId from impersonatorId and clears it; no-ops at ''", () => {
+    const admin = makePerson({ id: 'p1', accessRole: 'administrator' });
+    const staff = makePerson({ id: 'p2', accessRole: 'pracownik' });
+    const state = makeState({ people: [admin, staff], currentUserId: 'p2', impersonatorId: 'p1' });
+
+    const next = reducer(state, { type: 'STOP_IMPERSONATION' });
+    expect(next.currentUserId).toBe('p1');
+    expect(next.impersonatorId).toBe('');
+
+    const notImpersonating = makeState({ people: [admin, staff], currentUserId: 'p1', impersonatorId: '' });
+    expect(reducer(notImpersonating, { type: 'STOP_IMPERSONATION' })).toBe(notImpersonating);
+  });
+
+  it('SET_CURRENT_USER and LOGOUT both clear impersonatorId; LOGOUT also clears currentUserId', () => {
+    const admin = makePerson({ id: 'p1', accessRole: 'administrator' });
+    const staff = makePerson({ id: 'p2', accessRole: 'pracownik' });
+    const staff2 = makePerson({ id: 'p3', accessRole: 'pracownik' });
+    const state = makeState({ people: [admin, staff, staff2], currentUserId: 'p2', impersonatorId: 'p1' });
+
+    const setUser = reducer(state, { type: 'SET_CURRENT_USER', personId: 'p3' });
+    expect(setUser.currentUserId).toBe('p3');
+    expect(setUser.impersonatorId).toBe('');
+
+    const loggedOut = reducer(state, { type: 'LOGOUT' });
+    expect(loggedOut.currentUserId).toBe('');
+    expect(loggedOut.impersonatorId).toBe('');
+  });
+
+  it('DELETE_PERSON of the impersonated person returns the session to the impersonator; deleting the impersonator clears impersonatorId only', () => {
+    const untouchedAdmin = makePerson({ id: 'p0', accessRole: 'administrator' }); // satisfies the last-admin guard
+    const impersonator = makePerson({ id: 'p1', accessRole: 'pracownik' });
+    const impersonated = makePerson({ id: 'p2', accessRole: 'pracownik' });
+    const state = makeState({
+      people: [untouchedAdmin, impersonator, impersonated],
+      currentUserId: 'p2',
+      impersonatorId: 'p1',
+    });
+
+    const afterDeleteImpersonated = reducer(state, { type: 'DELETE_PERSON', personId: 'p2' });
+    expect(afterDeleteImpersonated.currentUserId).toBe('p1');
+    expect(afterDeleteImpersonated.impersonatorId).toBe('');
+    expect(afterDeleteImpersonated.people.some((p) => p.id === 'p2')).toBe(false);
+
+    const afterDeleteImpersonator = reducer(state, { type: 'DELETE_PERSON', personId: 'p1' });
+    expect(afterDeleteImpersonator.impersonatorId).toBe('');
+    expect(afterDeleteImpersonator.currentUserId).toBe('p2'); // acted-as identity kept
+    expect(afterDeleteImpersonator.people.some((p) => p.id === 'p1')).toBe(false);
   });
 });

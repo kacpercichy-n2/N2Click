@@ -5,108 +5,89 @@ A durable, append-only log for the run in progress. Every tier updates it so the
 instead of reconstructing it from chat history and worker narratives. Keep it
 boring and factual — it's a checklist, not prose.
 
-> Previous runs (2026-07-08 "Unassigned bin + block split + sidebar collapse" —
-> APPROVED; 2026-07-08 "Walkthrough fixes: fixed hour axis, bin beside grid,
-> duration format" — APPROVED) are archived in git history of this file.
-> **Carried-over items still open:** (a) human browser walkthrough of both
-> approved runs' interactive criteria; (b) commit hygiene — `git add` the
-> untracked `src/utils/uiPrefs.ts`, `src/store/selectors.test.ts`, package and
-> review files; (c) CLAUDE.md refresh (bin/zasobnik, week-view panes,
-> formatDuration convention) — human task, not a worker package.
+> Previous runs (2026-07-08 "Unassigned bin + block split + sidebar collapse";
+> 2026-07-08 "Walkthrough fixes"; 2026-07-08 "Hour budget + block merging ·
+> accounts/roles/permissions · sidebar icon fix" — APPROVED, committed as
+> ff4fd8a) are archived in the git history of this file.
+> **Carried-over items still open:** (a) human browser walkthrough of the
+> approved runs' interactive criteria (role matrix per role, budget clamp +
+> merge animation, availability math, restricted insert picker, workday fill);
+> (b) commit hygiene — untracked `automation/`, modified `.gitignore`;
+> (c) CLAUDE.md refresh (login/roles/permissions, budget/bin invariants,
+> availability semantics, week-view panes) — human task, not a worker package.
+> **Carried backlog (non-blocking):** Codex #5 `workDays: []` 0%-vs-overload
+> display; pre-existing `insertBlock` end-of-day clamp overlap; status archive
+> hides projects from Kanban; `toQuarters` placement (→ utils/time.ts); v4
+> payload with zero administrators (promote-first-person idea). The "unsnapped
+> `estimatedHours`" backlog item is FIXED by this run (PKG-…-b2-calendar-ui).
 
 ---
 
-## Run: 2026-07-08 — Hour budget + block merging · accounts/roles/permissions · sidebar icon fix
+## Run: 2026-07-08 — Bug-fix round 2: budget minting holes · bin drag ghost · impersonation trap
 
 ### Plan (architect)
 
-- **Goal:** (B, priority) Calendar block resizing stops minting hours: growth
-  draws from the task's bin/estimate budget and clamps at it, shrink returns
-  hours to the bin, same-task bin rows merge to one per person, and two
-  same-task blocks dropped exactly back-to-back fuse into one block with a
-  light merge animation (reduced-motion safe). (C) Local login gating the app
-  (per-person SHA-256 password hash, cosmetic by design, API-ready seam), four
-  access roles (administrator/PM/handlowiec/pracownik) replacing `isAdmin` via
-  migration v4→v5, a central `can()` permission map applied across the UI,
-  extended profiles (telefon, dni robocze, godziny pracy, przełożony z blokadą
-  cykli) and workday-aware available-hours math. (D) Collapsed-sidebar nav
-  icons in fixed 1:1 circles (bundled into the week-UI package).
-
-- **Stream A verdict (foundation audit): ADEQUATE — no package emitted.**
-  Reasons: (1) data volumes are bounded by design (single-team planner behind
-  a ~5 MB localStorage ceiling; hundreds of tasks / thousands of entries at
-  worst) and every selector is a pure linear scan — measured hot paths don't
-  exist at this scale; (2) all reads already flow through centralized pure
-  selectors, so introducing memoized byId maps later is a local, non-breaking
-  change behind the same call sites; (3) the storage.ts→API extension path
-  must stay thin — adding an index/normalization layer now would complicate
-  that swap for no current gain; (4) the v4→v5 migration in this run is the
-  sanctioned vehicle for the shape changes Stream C needs. Watch item (noted,
-  not actioned): `conflictDatesForTask`/`hoursForPersonOnDate` compose to
-  O(workload²)-ish in pathological data — revisit only if entry counts reach
-  ~10k or profiling shows render lag.
+- **Goal:** Fix three user-reported, orchestrator-verified bugs. (1) Hours can
+  still be minted past the task budget through every non-drag path
+  (AllocationGrid/SAVE_TASK, "Wypełnij dni robocze", "Dodaj do zasobnika",
+  INSERT_BLOCK) and unlimited drag-grow on `estimatedHours: null` tasks —
+  calendar-side paths must never create hours; TaskModal becomes the sole,
+  warned, deliberate over-planning surface. (2) Dragging a card out of the bin
+  pane renders it invisible (overflow clipping of the translated card) — the
+  drag ghost must escape the pane. (3) "Występuj jako" is a self-demotion
+  trap: an admin who picks a non-admin loses the switcher itself — separate the
+  logged-in identity from the acted-as identity with a persistent return
+  banner.
 
 - **Key decisions (pre-resolved — details in the packages, no open questions):**
-  - Budget model: headroom = max(0, estimatedHours − task total incl. bin);
-    grow allowance = same-person same-task bin + headroom, consumed bin-first;
-    `estimatedHours null` ⇒ free grow (today's behavior). Enforcement in
-    `SET_BLOCK_TIME` only (reducer rejects; UI clamps live) — SAVE_TASK /
-    AllocationGrid stay advisory. Known SAVE_TASK `personId|date` collapse
-    issue explicitly untouched.
-  - New invariants: ≤1 bin entry per (taskId, personId) (all bin writers +
-    idempotent merge in `ensureStartMinutes`, DATA_VERSION stays 4 for that);
-    exact-adjacent same-task same-person dated blocks merge inside
-    SET_BLOCK_TIME (earlier id survives; cascades; NOT in INSERT_BLOCK).
-  - Auth: session = persisted `currentUserId`; login screen when people exist
-    and nobody resolves; zero people = setup mode (no lockout); empty
-    `passwordHash` = passwordless login (recovery path; admin can clear any
-    password); `isAdmin` removed → `accessRole`, migration v4→v5
-    (admin→administrator, else pracownik); permission matrix lives in new
-    `src/store/permissions.ts` (spelled out in PKG-…-auth-data); "Występuj
-    jako" becomes administrator-only quick switch + universal "Wyloguj";
-    UI-level enforcement only until the API era.
-  - Availability: `workDays` (ISO 1–7, default Mon–Fri) + informational work
-    hours; available-hours totals become per-person workday sums; overload
-    threshold rule intentionally unchanged.
+  - **Unified budget allowance** for a (task, person):
+    `bin hours + (estimate === null ? 0 : headroom)` — `growAllowanceHours`
+    never returns null anymore; `estimatedHours: null` tasks get bin-conserving
+    drag-grow (bin only, nothing minted). `INSERT_BLOCK` enforces the same
+    allowance with bin-first draw (mirrors `SET_BLOCK_TIME`). Moves and
+    shrinks are never budget-checked.
+  - **TaskModal stays uncapped at the store level** (SAVE_TASK/newUnassigned):
+    it is the deliberate re-planning surface — instead it gets a live,
+    non-blocking `Przekroczono szacunek o X` banner + danger-tinted totals,
+    and the insert form gets a live warning + disabled `Wstaw` past the
+    allowance. Estimate now snaps to 0.25 on save (closes a reviewer backlog
+    item; no 24h clamp).
+  - **Bin drag ghost**: `position: fixed` portal to `document.body` following
+    the pointer (grab-offset preserved), `pointer-events: none`, keeps the
+    colliding danger tint; the in-pane source card stays mounted (pointer
+    capture intact) and dims. Drop math unchanged.
+  - **Impersonation**: additive `AppData.impersonatorId: string` ('' = not
+    impersonating; NO version bump — defaulted + sanitized on every load like
+    `ensureStartMinutes`). New `IMPERSONATE`/`STOP_IMPERSONATION` actions;
+    login/LOGOUT clear it; chained switches preserve the original real user;
+    DELETE_PERSON interplay handled. Permissions are a TRUE PREVIEW (follow
+    the acted-as identity; comments keep signing as acted-as); ONLY the
+    switcher visibility and the return banner key off the real user
+    (`realUserId` selector). Switcher loses the `—` option; persistent
+    warning banner `Występujesz jako … — Wróć do …` above SampleBanner.
 
-- **Packages** (waves are parallel-safe by disjoint files; order matters):
-  - **Wave 1:** 1. `handoffs/packages/PKG-20260708-budget-store.md` —
-    tier: developer — budget/merge/bin invariants in reducer + storage +
-    selectors (+ mechanical existing-test updates).
-  - **Wave 2 (parallel):**
-    2. `handoffs/packages/PKG-20260708-budget-week-ui.md` — tier: developer —
-       WeekView clamp feedback + will-merge/fuse animation + Stream D sidebar
-       icon circles (WeekView.tsx + styles.css only; depends 1).
-    3. `handoffs/packages/PKG-20260708-auth-data.md` — tier: developer —
-       types v5 + migration + permissions.ts + password util + seed +
-       mechanical UI/fixture swaps (depends 1 for file-conflict ordering).
-  - **Wave 3 (parallel):**
-    4. `handoffs/packages/PKG-20260708-store-tests.md` — tier: test-writer —
-       full unit coverage for packages 1+3 (test files only; depends 1 and
-       auth-data).
-    5. `handoffs/packages/PKG-20260708-auth-login-ui.md` — tier: developer —
-       LoginPage + App.tsx gate + logout/quick-switch + password UI (depends
-       auth-data; after budget-week-ui for styles.css ordering).
-  - **Wave 4:** 6. `handoffs/packages/PKG-20260708-permission-gating.md` —
-    tier: developer — apply can() per the page map (depends login-ui).
-  - **Wave 5:** 7. `handoffs/packages/PKG-20260708-profile-availability.md` —
-    tier: developer — profile/org form fields + workday-aware availability
-    (depends gating).
+- **Packages** (sequential — 2 and 3 both touch styles.css; 4 needs 1+3):
+  1. `handoffs/packages/PKG-20260708-b2-budget-store.md` — tier: developer —
+     reducer/selector budget enforcement (`taskGrowAllowance`,
+     null-estimate grow cap, INSERT_BLOCK draw/reject) + mechanical
+     existing-test adaptations.
+  2. `handoffs/packages/PKG-20260708-b2-calendar-ui.md` — tier: developer —
+     insert-form warning/disable, TaskModal over-budget banner + estimate
+     snap, bin drag ghost portal (depends 1).
+  3. `handoffs/packages/PKG-20260708-b2-impersonation.md` — tier: developer —
+     impersonatorId model + actions + selectors + switcher/banner UI
+     (depends 2 for styles.css ordering only).
+  4. `handoffs/packages/PKG-20260708-b2-tests.md` — tier: test-writer —
+     20 case groups across blockActions/selectors/storage tests
+     (depends 1 + 3; test files only).
 
-- **Gates:** `npx tsc --noEmit` + `npm test` + `npm run build` green after every
-  package (dev server already running on 5173 — nobody starts a second one);
-  Codex review + reviewer verdict after waves complete; final human browser
-  walkthrough (budget clamp, merge animation incl. reduced-motion, login/roles
-  matrix per role, availability math with seeded Ola Mon–Thu, collapsed sidebar
-  circles) before merge.
-- **Parallel input:** a Codex browser UX audit of the current app runs
-  alongside this run; its findings go to the REVIEWER for adjudication — no
-  worker should wait on it.
-- **Open questions:** none blocking. Post-merge doc note for the human:
-  CLAUDE.md needs a refresh after this run (budget/merge invariants, one-bin-row
-  rule, v5 person model + roles + login, permission matrix pointer,
-  availability semantics, manual-checklist additions) — on top of the
-  carried-over doc refresh above; intentionally NOT a worker package.
+- **Gates:** `npx tsc --noEmit` + `npm test` + `npm run build` green after
+  every package (baseline 157/157; dev server already running on 5173 — nobody
+  starts a second one). Reviewer verdict after all packages; human browser
+  walkthrough items collected from worker reports.
+- **Open questions:** none. Post-run human note: CLAUDE.md refresh must now
+  also cover the no-mint budget rule, impersonatorId session model, and the
+  banner (folds into carried-over item c).
 
 ### Worker log
 
@@ -120,479 +101,207 @@ boring and factual — it's a checklist, not prose.
 - **Next:** <hand to which tier / ready for review / done>
 -->
 
-#### 2026-07-08 · developer (opus) · `PKG-20260708-budget-store`
+#### 2026-07-08 · developer · `PKG-20260708-b2-budget-store`
 
 - **Changed:**
-  - `src/store/selectors.ts` — added `binEntryForTaskPerson`, `binHoursForTaskPerson`, `taskBudget`, `growAllowanceHours` (pure budget/bin selectors).
-  - `src/store/AppStore.tsx` — `setBlockTime`: budget-capped grow (bin-first then headroom, reject past allowance), shrink now merges freed hours into the existing (task,person) bin row, exact-adjacent same-task same-person block merge with `pobrano z zasobnika` / `połączono sąsiednie bloki` activity suffixes; one-bin-row enforcement in `moveBlockToBin` (fold into existing row), `splitBlock` (parts collapse to one bin row; bin entries now no-op), `saveTask` `newUnassigned` (per-person merge into one/passed-through row), `reassignEntry` (bin→person merges into target's same-task row); added `toQuarters` helper.
-  - `src/store/storage.ts` — `ensureStartMinutes` bin groups now merge duplicate per-task rows (lowest-sortIndex survivor, hours summed) before renumbering; still idempotent, DATA_VERSION stays 4.
-  - `src/types.ts` — documented the two new WorkloadEntry invariants.
-  - Tests adapted mechanically (see below) in `blockActions.test.ts` and `storage.test.ts`.
-- **Existing-test edits (mechanical, each with reason):**
-  1. `blockActions` MOVE_BLOCK_TO_BIN "appends after an existing bin entry" — pointed the existing bin row at a different task (`t2`) so the one-bin-row merge doesn't fold the moved block in; preserves the append/reindex assertion.
-  2. `blockActions` SPLIT "quarters a 1.25h block" — now expects ONE 0.75h bin row (split-off parts collapse) instead of three 0.25h rows.
-  3. `blockActions` SPLIT "splits a bin entry within the bin" → renamed to assert a no-op (`toBe(state)`): splitting a bin block into two same-pair bin rows is illegal under the invariant.
-  4. `blockActions` SAVE_TASK `newUnassigned` — now expects ONE merged 11.25h bin row (10h + 1.25h) instead of two rows.
-  5. `blockActions` REASSIGN "moving a bin entry ... appends" → rewritten to assert the merge into the target's existing same-task bin row (moved id dropped, target 3h, single row).
-  6. `storage` three bin tests ("garbage startMinutes+gappy sortIndex", "idempotent already-clean", "does NOT stack from 08:00") — gave the two entries distinct tasks (`t1`/`t2`) so the new per-task merge doesn't fire, preserving each test's original startMinutes/sortIndex assertion.
-- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean, vitest 68/68 passed (4 files), build OK.
-- **Still broken:** nothing in scope.
-- **Deviations / notes for reviewer & package 2:**
-  - `SPLIT_BLOCK` on a BIN entry now no-ops (was previously allowed). WeekView still renders "Podziel na pół / na ćwiartki" for bin blocks (`WeekView.tsx` ~L766-793, shown for all entries) — those buttons are now dead for bin blocks. **Package 2 (budget-week-ui) should hide/disable split on bin entries.** Reducer change is correct per the one-bin-row invariant; flagging so the UI matches.
-  - No new test files added (new coverage is deferred to PKG-20260708-store-tests per this package's scope). Only broken existing tests were adapted.
-- **Next:** ready for wave 2 (`PKG-20260708-budget-week-ui`, `PKG-20260708-auth-data`) and reviewer.
+  - `src/store/selectors.ts` — added exported `taskGrowAllowance(state, taskId, personId): number` (bin hours + headroom, headroom 0 for null-estimate); rewrote `growAllowanceHours` to delegate and return `number` (dropped `| null`, updated JSDoc).
+  - `src/store/AppStore.tsx` `setBlockTime` — grow enforcement now applies to ALL tasks (removed `estimatedHours !== null` gate); null-estimate ⇒ `headroomQ = 0`, so grow is bin-only. Bin-first draw and activity suffixes unchanged.
+  - `src/store/AppStore.tsx` `insertBlock` — added no-mint budget check for `(payload.taskId, ref.personId)` after the hours snap; rejects (same state ref) when snapped hours > bin+headroom; drains the same-task bin row bin-first (delete at 0) on the `shifted` array, adds `dayKey(ref.personId, BIN_DATE)` to the reindex set, and appends `; pobrano z zasobnika: …` to the activity message when drawn.
+  - `src/components/WeekView.tsx` (~L163) — mechanical: `growAllowanceHours` no longer returns null; `maxHours = baseHours + growAllowanceHours(...)`, stale null comment fixed. No other WeekView changes (belong to calendar-ui pkg).
+  - `src/store/blockActions.test.ts` — gave the 5 INSERT_BLOCK fixtures (~L221-311) an `estimatedHours: 10` on `t2` so the no-mint rule draws from headroom instead of rejecting (preserves ripple/push, auto-assign, gap, other-people intent); rewrote the `estimatedHours: null grows freely…` regression (~L854) to the new contract (grow succeeds up to the 3h bin drained/deleted, rejected at +3.25h). INSERT_BLOCK bin-reject test (L700) and cross-task/person merge tests (L1001+) untouched (early-return / move paths, unaffected).
+  - `src/store/selectors.test.ts` — rewrote the null-estimate `growAllowanceHours` case to expect `0` (a number, not null); added a companion case: null-estimate with a 3h bin row ⇒ allowance `3`.
+- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean; vitest **158 passed** (was 157; +1 from the added null-estimate-with-bin selector case); build OK (pre-existing >500 kB chunk warning only).
+- **Still broken:** nothing.
+- **Next:** ready for `PKG-20260708-b2-calendar-ui` (WeekView insert-form warning/disable, TaskModal banner, bin drag ghost) — this package left WeekView otherwise untouched as specified.
 
-#### 2026-07-08 · developer (opus) · `PKG-20260708-budget-week-ui`
+#### 2026-07-08 · developer · `PKG-20260708-b2-calendar-ui`
 
 - **Changed:**
-  - `src/components/WeekView.tsx` — `TimedBlock`: DragState gains `maxHours`/`atCap`/`willMergeWithId`/`willMergeEdge`; `begin()` captures `growAllowanceHours` once (null ⇒ Infinity ⇒ free grow); `onPointerMove` clamps resize `projHours` at `maxHours` (top mode re-derives `projStart` to keep the end fixed) and detects exact-adjacent same-task/same-person/same-date merge neighbor (mirrors the reducer predicate, false while colliding/overBin); `finish()` remembers the earlier-starting block's id as the fuse survivor before dispatch; `at-cap` title = "Limit czasu zadania — brak godzin w zasobniku". WeekView-level `mergeTargetId` + `fusedId` state (with 400ms timeout fallback) plumbed to blocks; classes `at-cap`/`will-merge`/`will-merge-target`/`merge-top`/`merge-bottom`/`fused`; `onAnimationEnd` clears `fusedId`.
-  - `src/components/WeekView.tsx` (context menu) — "Podziel na pół / na ćwiartki" moved inside the `!isBinEntry` branch so split is hidden for bin entries (matches wave-1 reducer no-op). Folded in per launch instruction despite package's "context menu out of scope" note.
-  - `src/styles.css` — `.week-block.at-cap` (warning outline), `.will-merge`/`.will-merge-target` (lavender glow), `.will-merge::after` connecting blob (radial pill, top/bottom edge variants), `week-block-fuse` 280ms keyframe; `.sidebar-collapsed .app-nav-link` now a fixed 44px 1:1 circle (border-radius 999px, margin-inline auto). Global `prefers-reduced-motion` override neutralizes the keyframe (no JS motion path).
-- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean, vitest 68/68 (4 files), build OK. No new unit tests (interaction-only per package scope).
-- **Deviations:** (1) split-button hide is outside the package's stated scope but explicitly requested by the launching agent to match the wave-1 reducer change. (2) Blob rendered on the dragged block only (per decision 3) with glow on both blocks — satisfies the acceptance line "glow + blob on both blocks" via decision 3's authoritative detail.
-- **Not CLI-verifiable (defer to human walkthrough):** live cap outline + Polish title while resizing to budget; unbudgeted (`estimatedHours: null`) task still grows freely; will-merge glow/blob appears on exact adjacency and clears on move-away / during collision / over bin; fuse animation plays once (~280ms) on merge drop; reduced-motion kills the fuse/blob but the merge still happens; collapsed-sidebar 44px circles centered in the 80px rail with visible active/hover; console clean.
-- **Still broken:** nothing in scope.
-- **Next:** ready for reviewer; wave 2 sibling `PKG-20260708-auth-data` unaffected (disjoint files).
+  - `src/components/WeekView.tsx` — insert form: added `insertAllowance`/`overAllowance` (via `taskGrowAllowance(state, insertTaskId||menu.entry.taskId, menu.entry.personId)`, recomputes on task-select change), second `context-warning` line (0-allowance vs "najwyżej {allowance}" variants), and `overAllowance` folded into the `Wstaw` disable + a matching guard in `confirmInsert` (blocks Enter past budget). BinCard rewritten to a fixed-position drag ghost: `BinDragState` now tracks `clientX/clientY`, grab offset (`grabX/grabY`) and captured `width`; the in-pane original keeps all handlers + pointer capture and gets a `drag-source` (dimmed) class, while a `createPortal(..., document.body)` ghost (`week-bin-ghost`, `pointer-events:none`, keeps `colliding` tint) follows the pointer. Old `dx/dy` transform removed. Added `react-dom` `createPortal` + `taskGrowAllowance` imports.
+  - `src/components/TaskModal.tsx` — estimate now snaps on save (`snapHours`, no clamp; empty/invalid/≤0 ⇒ null). Added `draftTotal`/`overBudget` (plannedTotalAll + binTotal vs parsed estimate); live non-blocking `estimate-over` banner under `.estimate-compare` + `over-budget` class on the "zaplanowano" strong. Saving stays allowed. Added `snapHours` import.
+  - `src/styles.css` — `.estimate-compare strong.over-budget` (danger text), `.estimate-over` (danger-soft banner), `.week-bin-block.drag-source` (0.35 opacity), `.week-bin-ghost` (fixed, z-index 1000, pointer-events none, transition none, violet shadow).
+- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean; vitest **158 passed** (no test changes — interaction-only pkg); build OK (pre-existing >500 kB chunk warning only).
+- **Still broken:** nothing.
+- **Deviations:** none from the package. Added a `confirmInsert` budget guard (not explicitly listed) so the Enter-key path matches the disabled `Wstaw` button; harmless (reducer already rejects).
+- **Needs human/browser walkthrough** (not CLI-verifiable): (1) insert form warning text + disabled Wstaw at/over allowance incl. 0-allowance variant, and task-select recompute; (2) TaskModal over-budget banner + danger total appears/clears live as grid/bin/fill change, save still works; snapped estimate persists (40.1→40); (3) bin card ghost stays visible across the whole viewport (grid/header/axis), shows danger tint over a colliding slot, drops as before, snaps home on Escape/invalid, source card dims, plain click still opens the task; console clean.
+- **Next:** ready for `PKG-20260708-b2-impersonation` (depends on this for styles.css ordering).
 
-#### 2026-07-08 · developer (opus) · `PKG-20260708-auth-data`
-
-- **Changed:**
-  - `src/types.ts` — `Person`: removed `isAdmin`, added `accessRole` (new `AccessRole` union), `phone`, `passwordHash`, `workDays`, `workStartMinutes`, `workEndMinutes`, `supervisorId` (all documented).
-  - `src/utils/password.ts` (new) — `hashPassword`/`verifyPassword` (SHA-256 hex via WebCrypto) with the mandated "cosmetic client-side gating only" comment block.
-  - `src/store/permissions.ts` (new) — `PermAction` union, per-role `MATRIX`, `can(user, action, {peopleCount})` (setup-mode = zero people → all allowed), `ROLE_LABELS`.
-  - `src/store/storage.ts` — `DATA_VERSION = 5`; new `migratePerson`/`migrateV4toV5`; exported `WORKDAY_START_MIN`, `DEFAULT_WORKDAYS`, `defaultWorkEndMinutes`, `sanitizeWorkDays`; `migrateV1` people now built through `migratePerson`; `loadData` chain: v1 → `ensureStartMinutes(migrateV4toV5(localize(migrateV1)))`, v2–4 → localize (now runs for v4 too since DATA_VERSION=5) then `migrateV4toV5` when `version < 5`.
-  - `src/store/selectors.ts` — `isAdminUser` reimplemented on `accessRole === 'administrator'` (same name/signature, zero-people rule kept); new pure `wouldCreateSupervisorCycle`; availability selectors `isPersonWorkday`/`availableHoursOnDate`/`availableHoursInRange` (JS getDay 0=Sun → ISO 7).
-  - `src/store/AppStore.tsx` — `PersonDraft` swaps `isAdmin` for `accessRole` + adds `phone`/`workDays`/`workStartMinutes`/`workEndMinutes`/`supervisorId` (NOT `passwordHash`); `personFromDraft` returns `Omit<Person,'id'|'passwordHash'>` and sanitizes workDays; `ADD_PERSON` seeds `passwordHash: ''` + defensive cycle guard; `UPDATE_PERSON` drops cycle-forming `supervisorId`; new `SET_PASSWORD` (verbatim hash, no activity row) and `LOGOUT` (clears `currentUserId`).
-  - `src/store/seed.ts` — Kasia `administrator` / Ola `pm` / Marek `pracownik`; all `passwordHash: ''`; sample phones; Ola `workDays [1,2,3,4]` (others Mon–Fri); Marek & Ola `supervisorId → Kasia`; work hours 8:00–16:00. Kasia declared first (supervisor ref); people array order `[ola, marek, kasia]` unchanged (stable colours). Over-capacity Wed and all other content intact.
-  - `src/App.tsx` — acting-as suffix now from `accessRole === 'administrator'`.
-  - `src/pages/PeoplePage.tsx` / `src/pages/PersonProfilePage.tsx` — `isAdmin` checkbox → `Uprawnienia` select (4 roles via `ROLE_LABELS`); `admin-tag` shown for administrators; draft literals extended with the new-field defaults (no new form controls yet).
-- **Existing-test edits (mechanical):** `blockActions.test.ts` and `selectors.test.ts` `makePerson` fixtures — replaced `isAdmin: false` with `accessRole: 'pracownik'`, `phone: ''`, `passwordHash: ''`, `workDays: [1,2,3,4,5]`, `workStartMinutes: 480`, `workEndMinutes: 960`, `supervisorId: ''`. No assertions changed.
-- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean, vitest 68/68 (4 files), build OK. Verified `sha256('a')` hex equals the acceptance value.
-- **Deviations:** none. New migration/permission/availability tests intentionally deferred to `PKG-20260708-store-tests` (out of scope). `can()` is the single entry point (callers pass `peopleCount`); no `canIn` wrapper added.
-- **Notes for reviewer:** (1) `localizeLegacyData` now runs for v4 payloads (DATA_VERSION rose to 5) — it's a no-op on already-Polish data (English→Polish maps don't match Polish values); rebuilds references only. (2) `migrateV1` calls `migratePerson`, so the v1 branch's later `migrateV4toV5` is idempotent by design.
-- **Not CLI-verifiable (defer to human walkthrough):** roles select replaces the checkbox in People + profile; admin gate open for Kasia, blocked for Marek; browser behaves as before.
-- **Next:** ready for reviewer; wave-3 `PKG-20260708-store-tests` (depends on this) and `PKG-20260708-auth-login-ui` can proceed.
-
-#### 2026-07-08 · test-writer (sonnet) · `PKG-20260708-store-tests`
-
-- **Changed (test files only — no implementation file touched):**
-  - `src/store/blockActions.test.ts` — +20 tests: `SET_BLOCK_TIME` budget-capped
-    grow (reject-at-estimate, drain-bin-then-headroom, pure-bin-draw,
-    `estimatedHours: null` free grow, no cross-person/cross-task bin
-    consumption, move-only never rejected), shrink→existing-bin-row merge,
-    adjacency merge (simple + 3-way cascade + non-merge: different task /
-    different person / 15-min gap), one extra `SPLIT_BLOCK` case (merge into a
-    pre-existing bin row) and one extra `MOVE_BLOCK_TO_BIN` case (fold into an
-    existing row, id survives), supervisor-cycle guard on `UPDATE_PERSON`
-    (self, A→B→A, valid chain), `SET_PASSWORD`/`UPDATE_PERSON`-preserves-hash/
-    `LOGOUT`.
-  - `src/store/storage.test.ts` — +3 tests: `ensureStartMinutes` duplicate
-    per-task bin-row merge (lowest-sortIndex survivor, summed hours, renumbered,
-    idempotent, distinct-task row untouched); `loadData` v4→v5 migration
-    (isAdmin true/false → accessRole, defaults incl. the 1440-minute
-    `workEndMinutes` cap, no `isAdmin` key, version 5) via a small in-memory
-    `localStorage` stub (not previously present in this file — `STORAGE_KEY` is
-    duplicated as a literal since storage.ts doesn't export it); v5-payload
-    reload idempotence.
-  - `src/store/selectors.test.ts` — +5 tests: `growAllowanceHours` (null
-    estimate, bin+headroom sum, headroom floored at 0 for an over-budget
-    legacy task), `isPersonWorkday`/`availableHoursOnDate` (Mon–Thu worker: 0 on
-    Friday, capacity on Wednesday), `availableHoursInRange` over a full
-    Mon–Sun week.
-  - `src/store/permissions.test.ts` (new) — 53 tests: the full 4-role ×
-    12-action permission matrix from PKG-20260708-auth-data decision 7 via
-    `it.each` (48 cases), zero-people setup mode allows everything, an
-    undefined user (people present) is denied every action, `ROLE_LABELS`,
-    `hashPassword('a')` matches the documented digest, `verifyPassword`
-    round-trip.
-- **Tests:** `npx tsc --noEmit && npm test` → tsc clean; vitest 149/149 passing
-  across 5 files (was 68/68 across 4 files before this package — permissions.test.ts
-  is new). `npm run build` intentionally not run (test-only package; dev server
-  already on 5173 per package instructions — reviewer re-runs build).
-- **Spec/implementation mismatches found:** none. Every case in the package's
-  19 groups matched the shipped reducer/selector/migration/permission behavior
-  on the first correctly-specified attempt (one test of mine had a self-inflicted
-  bug — a free-grow-to-20h fixture that itself exceeded the 24:00 day boundary —
-  fixed to 10h; not a product bug).
-- **Skipped/deferred:** none of the 19 in-scope case groups were skipped.
-  Out-of-scope per the package: no v1→v5 end-to-end migration test (only
-  v4→v5, per the package's explicit scope — v1 coverage is `PKG-20260708-auth-data`'s
-  acceptance criterion, not listed as an in-scope case here); no UI/browser tests.
-- **Verified no implementation file modified:** `git status --short` shows only
-  `src/store/blockActions.test.ts`, `src/store/storage.test.ts`,
-  `src/store/selectors.test.ts` modified and `src/store/permissions.test.ts`
-  added by this package; all other modified/untracked files (AppStore.tsx,
-  selectors.ts, storage.ts, permissions.ts, types.ts, password.ts, WeekView.tsx,
-  App.tsx, seed.ts, PeoplePage.tsx, PersonProfilePage.tsx, styles.css, package
-  files, reviews/, automation/) predate this package (waves 1–2's output) and
-  were left untouched.
-- **Next:** ready for reviewer alongside waves 1–2.
-
-#### 2026-07-08 · developer (opus) · `PKG-20260708-auth-login-ui`
+#### 2026-07-08 · developer · `PKG-20260708-b2-impersonation`
 
 - **Changed:**
-  - `src/pages/LoginPage.tsx` (new) — full-viewport brand login card; person
-    list (Avatar + name + `ROLE_LABELS`); passwordless row = one-click login;
-    password row expands inline `Hasło` field + `Zaloguj się`, async
-    `verifyPassword`, inline `Nieprawidłowe hasło`, Enter submits, button
-    disabled while verifying; navigates to `/dashboard` on success.
-  - `src/App.tsx` — session gate `needsLogin = people.length > 0 && !currentUser`
-    returns `<LoginPage />` before the shell/routes (TaskModal + GlobalSearch stay
-    gated); "Występuj jako" select now wrapped in
-    `can(currentUser, 'users.impersonate', …)` (admins only); universal
-    `Wyloguj` button dispatching `LOGOUT`.
-  - `src/pages/PersonProfilePage.tsx` — new `PasswordSection` (own profile OR
-    `can(user, 'people.manage')`): `Nowe hasło` + `Powtórz hasło`,
-    `Ustaw/Zmień hasło` with min-4 + match inline errors, hashed before dispatch;
-    admin `Usuń hasło` behind `window.confirm`.
-  - `src/styles.css` — `.logout-btn`; `.login-*` classes (dark glass card, person
-    rows, inline password panel; 760px padding tweak). Reused existing tokens.
-- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean, vitest
-  149/149 (5 files), build OK. No new unit tests (per package scope — store-level
-  auth already covered by PKG-20260708-store-tests).
-- **Deviation (one, minor):** Decision 3 describes a passwordless person as a
-  two-step "pick → `Zaloguj się` button". I implemented the row click itself as
-  the login action for passwordless people, because acceptance criterion
-  "Passwordless person: one-click login lands on /dashboard" is the stronger,
-  testable requirement and the two would otherwise conflict. Password-protected
-  rows still expand to the `Zaloguj się` password form exactly as specified.
-- **Not CLI-verifiable (defer to human walkthrough on :5173):** logged-out gate
-  hides sidebar/routes and makes Ctrl/Cmd+K inert; one-click login per seeded
-  person; set a password on Kasia → logout → wrong (`Nieprawidłowe hasło`) then
-  right password; reload stays logged in; `Wyloguj` returns to login and persists
-  through reload; impersonate select admin-only, `Wyloguj` for everyone; admin
-  `Usuń hasło` confirm then passwordless login; zero-people fresh state shows NO
-  login screen (setup/sample flow intact); ≤760px layout; console clean.
-- **Still broken:** nothing in scope.
-- **Next:** ready for reviewer; unblocks wave 4 `PKG-20260708-permission-gating`.
+  - `src/types.ts` — `AppData.impersonatorId: string` field ('' = not impersonating; the real user's id while `currentUserId` is impersonated) + doc comment. No version bump.
+  - `src/store/storage.ts` — `emptyData()` and `migrateV1`'s return include `impersonatorId: ''`; new exported `sanitizeImpersonator(data)` (clears to '' when dangling or === currentUserId) applied on BOTH `loadData` return paths (v1-migration + same-version), after ensureStartMinutes. Idempotent, disjoint fields.
+  - `src/store/AppStore.tsx` — Action union gains `IMPERSONATE { personId }` and `STOP_IMPERSONATION`; cases per decision 2 (no-op on missing/self; picking impersonator's own row = return; chained switches preserve the ORIGINAL real user via `impersonatorId || currentUserId`; STOP no-op at ''). `SET_CURRENT_USER` and `LOGOUT` both clear `impersonatorId` to '' (LOGOUT clears both ids). `deletePerson` interplay (decision 3): deleting the impersonated person returns session to impersonator; deleting the impersonator clears bookkeeping, keeps acted-as. No activity rows.
+  - `src/store/selectors.ts` — exported `realUserId`, `realUser`, `isImpersonating` (pure, JSDoc).
+  - `src/App.tsx` — switcher gated on `can(actualUser=realUser, 'users.impersonate', …)` so it never vanishes for the admin; `onChange` dispatches `IMPERSONATE`; removed the `"—"` empty option; `value={state.currentUserId}` unchanged. New warning-toned `impersonation-banner` above `<SampleBanner />`, rendered only when `isImpersonating && currentUser && actualUser`, with `Wróć do {realUser.name}` → `STOP_IMPERSONATION`.
+  - `src/store/seed.ts` — sample object literal gains `impersonatorId: ''` (tsc).
+  - `src/styles.css` — `.impersonation-banner` (+ `-text`, button) with `--n2-warning` tokens and a ≤760px stacked layout.
+- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean; vitest **158 passed** (no test changes needed — `makeState` spreads `emptyData()`, and storage.test's v4Payload is a `Record<string, unknown>`; new coverage belongs to PKG-…-b2-tests); build OK (pre-existing >500 kB chunk warning only).
+- **Still broken:** nothing.
+- **Deviations:** none. (Banner text uses the gender-neutral variant `— aktywne są uprawnienia tej osoby.` per decision 7's option.)
+- **Needs human/browser walkthrough** (not CLI-verifiable): (1) admin picks Marek → nav/admin gate + block gating collapse to Marek, switcher STAYS visible, banner shows, `Wróć do {admin}` restores in one click; (2) chained admin→Marek→Ola returns to the ORIGINAL admin; (3) comment posted while impersonating is signed by the impersonated person; (4) reload mid-impersonation restores both identities; a dangling/self impersonatorId clears on load; (5) LOGOUT lands on login and clears both ids, re-login never impersonated; (6) delete the impersonated person → session returns to impersonator; delete the impersonator → bookkeeping clears; (7) non-admin never sees the switcher; (8) no `—` option; banner usable ≤760px.
+- **Next:** ready for `PKG-20260708-b2-tests` (test-writer) and the reviewer verdict.
 
-#### 2026-07-08 · developer (opus) · `PKG-20260708-permission-gating`
+#### 2026-07-08 · test-writer · `PKG-20260708-b2-tests`
 
-- **Changed:**
-  - `src/store/useCan.ts` (new) — `useCan()` hook: reads the store once, returns a
-    `can(action)` bound to the current user + `peopleCount` (setup-mode/undefined-user
-    rules come for free).
-  - `src/store/permissions.ts` — exported shared `NO_PERM_TITLE = 'Brak uprawnień'`.
-  - `src/App.tsx` — nav hides `/admin` without `admin.panel`; `/admin` route redirects
-    to `/dashboard` for non-admins (satisfies "direct URL redirects").
-  - `src/pages/ProjectsPage.tsx` — "Nowy projekt" button+form hidden without
-    `projects.manage`; per-card "+ Zadanie" hidden without `tasks.manage`.
-  - `src/pages/ProjectDetailPage.tsx` — edit inputs/selects/textarea disabled +
-    `Brak uprawnień` title, delete + milestone-add + milestone-delete hidden, milestone
-    date input disabled → all `projects.manage`; both coins static without `projects.paid`;
-    "+ Nowe zadanie" hidden without `tasks.manage`.
-  - `src/pages/KanbanPage.tsx` — `isAdminUser`→`useCan`; card `draggable`+drop dispatch
-    gated by `projects.manage`; quick-create box now `admin.panel`.
-  - `src/pages/TimelinePage.tsx` — `Bar`/`MilestoneMark` gain `editable`; project bars +
-    milestones → `projects.manage`, task bars → `tasks.manage`; non-editable render static
-    (no pointer handlers, `pointer` cursor, click still opens).
-  - `src/pages/TasksPage.tsx` — both "Nowe zadanie" buttons + per-row "Usuń" hidden without
-    `tasks.manage`; row click still opens the (read-only) modal.
-  - `src/components/TaskModal.tsx` — without `tasks.manage`: all detail/period/assignee
-    inputs disabled, bin-add controls hidden, `AllocationGrid` read-only, save button + delete
-    hidden, "Anuluj"→"Zamknij"; comments tab stays writable.
-  - `src/components/AllocationGrid.tsx` — new `readOnly` prop (inputs disabled + title,
-    fill/clear buttons hidden).
-  - `src/components/WeekView.tsx` — `TimedBlock`/`BinCard` gain `editable`; enabled when
-    `blocks.editAny` OR (`blocks.editOwn` AND `entry.personId === currentUserId`); non-editable
-    blocks drop all pointer/context handlers (custom insert menu inherits the same rule),
-    read-only title, `pointer` cursor; plain click still opens the task.
-  - `src/pages/WorkloadPage.tsx` — reassign control gated by `workload.reassign`; "Przesuń
-    całe zadanie" (MOVE_TASK) gated by `tasks.manage` (see deviation).
-  - `src/pages/PeoplePage.tsx` — add form + per-row "Usuń" hidden without `people.manage`;
-    list stays viewable.
-  - `src/pages/PersonProfilePage.tsx` — edit button+form gated to `people.manage` OR self;
-    when self-only (no `people.manage`), `Uprawnienia` select + capacity input disabled +
-    title. Password section rule unchanged.
-  - `src/styles.css` — `.readonly`/`.static` cursor rules for non-editable blocks/bars.
-- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean, vitest 149/149
-  (5 files), build OK. No unit-test changes (page wiring is walkthrough territory per package).
-- **Deviations (2):**
-  1. WorkloadPage "Przesuń całe zadanie" buttons: the per-page map only names the reassign
-     control, but leaving MOVE_TASK open would let pracownik/handlowiec mutate tasks and break
-     the "read-only everywhere except own blocks" acceptance criterion. Gated by `tasks.manage`
-     (the natural action for a task move). Reassign itself still gated by `workload.reassign`.
-  2. ProjectsPage per-card "+ Zadanie" quick-create: not explicitly in the map, but it opens a
-     task-creation form, so gated by `tasks.manage` to honor "no creation forms" for pracownik.
-- **Decision note:** `/admin` uses BOTH a route-level redirect (App.tsx) and AdminPage's existing
-  `isAdminUser` gate; both resolve off `accessRole === 'administrator'`, so one rule effectively
-  decides (redirect fires first; the in-page gate is now defensive/unreachable for non-admins).
-- **Not CLI-verifiable (defer to human role walkthrough on :5173, log in as each):**
-  administrator = pre-gating parity; PM (Ola) create/edit projects+tasks, drag kanban/timeline,
-  any calendar block, workload reassign, but no coin/people/clients/admin/quick-switch; handlowiec
-  (set one via People form) projects+coin, TaskModal read-only w/ working comments, own-blocks-only
-  drag, no reassign/admin; pracownik (Marek) read-only everywhere except own calendar blocks,
-  others' blocks inert, no creation forms, `/admin` link hidden + URL redirect; comments postable
-  by every role; disabled controls show `Brak uprawnień`; zero-people setup unrestricted; console clean.
-- **Still broken:** nothing in scope.
-- **Next:** ready for reviewer; unblocks wave 5 `PKG-20260708-profile-availability`.
-
-#### 2026-07-08 · developer (opus) · `PKG-20260708-profile-availability`
-
-- **Changed:**
-  - `src/components/personFields.ts` (new) — pure UI helpers shared by both forms:
-    `WEEKDAY_CHIPS` (ISO 1–7 Pn→Nd), `START_MINUTE_OPTIONS` (0:00–23:45),
-    `END_MINUTE_OPTIONS` (0:15–24:00), `toggleWorkDay`, `formatWorkDays`
-    (compact `Pn–Cz` range / single / comma list). No store/selector logic.
-  - `src/pages/PeoplePage.tsx` — add form gains Telefon input, Dni robocze chips,
-    Praca od/do selects (15-min steps via `formatMinutes`), Przełożony select
-    (all people; a brand-new person can't form a cycle), the
-    `Limit dzienny liczony jest z pola dostępności` hint, and `Do > Od` submit
-    validation (`Koniec pracy musi być po początku`).
-  - `src/pages/PersonProfilePage.tsx` — edit form gains the same five controls;
-    Dni robocze/hours/Przełożony disabled with `Brak uprawnień` for self-editors
-    without `people.manage` (matches existing accessRole/capacity gating);
-    supervisor options exclude self + `wouldCreateSupervisorCycle` candidates;
-    inline hours validation. New read-only `ProfileFacts` card (telefon, dni
-    robocze, godziny pracy, przełożony link, podwładni links — row omitted when
-    empty). Week summary `available` now `availableHoursInRange(state, id, week)`.
-  - `src/pages/WorkloadPage.tsx` — per-person `available =
-    availableHoursInRange(state, p.id, days)`; day cells additionally tinted with
-    the `weekend` class on the person's non-workdays; footer text updated to
-    `Dostępne = dzienna dostępność × dni robocze osoby.`; removed the now-unused
-    `workdays` const. Overload rule (`h > capacity`) untouched.
-  - `src/styles.css` — `.weekday-chips`/`.weekday-chip` (accessible real
-    checkboxes styled as chips, focus-visible ring, disabled dimming via
-    `:has`), `.profile-facts`/`.profile-fact`/`.profile-link`, `.people-form-hint`.
-- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean, vitest
-  149/149 (5 files), build OK. No test-file edits (per package scope).
-- **Deviations (1, minor):** created a new shared module
-  `src/components/personFields.ts` rather than inlining the identical chip/option
-  helpers into both pages. It is presentational-only (no store/selector touch),
-  so it stays inside the package's out-of-scope guard; chosen over duplicating
-  ~40 lines across two forms. Time-select range decision resolved per the
-  package's "pick one": Od `0:00–23:45`, Do `0:15–24:00` (`24:00` = 1440).
-- **Browser-verified logic (against seed; needs human :5173 confirm):** Ola
-  (workDays [1,2,3,4], capacity 8) → Workload `Dostępne` = 32h and her Friday
-  cell carries the weekend tint; Kasia's supervisor select offers only `—`
-  (Ola/Marek excluded as cycle-forming); Kasia's profile Podwładni = Ola + Marek,
-  Ola's Przełożony = Kasia.
-- **Not CLI-verifiable (defer to human walkthrough on :5173):** both forms
-  round-trip all new fields (save→reopen identical); inline Polish validation on
-  `Do ≤ Od`; supervisor/subordinate links navigate; self-editing without
-  `people.manage` shows the three org fields disabled with `Brak uprawnień`;
-  weekday chips keyboard-focusable; ≤760px layout; console clean.
-- **Still broken:** nothing in scope.
-- **Next:** ready for reviewer — final package of the run (wave 5).
-
-#### 2026-07-08 · developer (opus) · Fix round (reviewer changes 1–3, store layer)
-
-- **Changed:**
-  - `src/store/AppStore.tsx` — `ADD_PERSON`: first person into an empty people
-    list is forced to `accessRole: 'administrator'` (fresh-setup lockout guard).
-    `UPDATE_PERSON`: refuses to demote the only remaining administrator (returns
-    `state` unchanged — reject-by-same-ref). `DELETE_PERSON`: now a block that
-    refuses to delete the only remaining administrator (guard applied BEFORE the
-    cascade), else delegates to `deletePerson`. `deletePerson`: additionally
-    clears `supervisorId` on remaining people where it equals the deleted id
-    (invariant-5 cascade).
-  - `src/store/storage.ts` — `loadData`: person normalization (`migrateV4toV5`
-    → `migratePerson`) now runs on EVERY load, not only `version < 5`, mirroring
-    `ensureStartMinutes`. Fixes the permanent login-screen lockout for a
-    v5-stamped payload whose people were never actually migrated.
-- **Tests added:**
-  - `src/store/blockActions.test.ts` — +7: ADD_PERSON first-person→admin (and
-    respects role for later people); UPDATE_PERSON reject demote-last-admin +
-    allow when another admin exists; DELETE_PERSON reject delete-last-admin +
-    allow when another admin exists + dangling-supervisorId cleanup (unrelated
-    supervisorId left intact).
-  - `src/store/storage.test.ts` — +1: v5-stamped payload with un-migrated people
-    (isAdmin present, no accessRole) loads with correct roles/defaults, no
-    `isAdmin` key, and is idempotent on reload.
-- **Tests:** `npx tsc --noEmit` clean · `npm test` 157/157 (5 files, was 149) ·
-  `npm run build` OK (pre-existing chunk-size warning only).
-- **Deviations:** none. Reviewer changes 4–5 (WeekView insert picker, TaskModal/
-  AllocationGrid workday fill) are UI-only and out of this store-layer package's
-  scope — not touched.
-- **Next:** ready for reviewer (delta re-review of changes 1–3); changes 4–5
-  still open for a UI developer.
-
-#### 2026-07-08 · developer (opus) · Fix round (reviewer changes 4–5, UI layer)
-
-- **Changed:**
-  - `src/components/WeekView.tsx` — right-click "Dodaj przed/po" insert form: the
-    `Zadanie` picker now maps over a new `insertTaskOptions` list instead of raw
-    `state.tasks`. When the user has `tasks.manage` (via existing `useCan`) the
-    full task list is offered; otherwise options are restricted to tasks the
-    block's person is already assigned to (`taskIdsOfPerson`), which always
-    includes the clicked block's own task (kept as default). Closes the
-    `blocks.editOwn` self-assign-to-any-task hole (INSERT_BLOCK auto-assigns).
-    Added `taskIdsOfPerson` to the selectors import.
-  - `src/components/TaskModal.tsx` — `fillWeekdays` now iterates the period and
-    fills each day with `availableHoursOnDate(state, personId, d)` (capacity on a
-    person's workday, 0 otherwise), only writing cells where hours > 0 — replaces
-    the hardcoded Mon–Fri (`isWeekdayDate`) + 8h. Added `availableHoursOnDate`
-    import; dropped the now-unused `isWeekdayDate` import.
-  - `src/components/AllocationGrid.tsx` — "Wypełnij dni robocze" button tooltip
-    changed from "Ustaw 8h we wszystkie dni robocze" to "Wypełnij dni robocze
-    osoby jej dzienną dostępnością" (no longer names 8h/Mon–Fri). Removed the
-    now-dead exported `isWeekdayDate` helper (only caller was TaskModal) and its
-    now-unused `parseDate` import.
-- **Tests:** `npx tsc --noEmit` clean · `npm test` 157/157 (5 files) ·
-  `npm run build` OK (pre-existing chunk-size warning only). No test-file edits
-  (both changes are UI-behavior only; store selectors already covered).
-- **Deviations:** none. Kept the fill's overwrite-workdays contract (current code
-  overwrote every weekday, not empty-only) — now overwrites every person-workday
-  with capacity. Polish UI strings preserved.
-- **Not CLI-verifiable (defer to human walkthrough on :5173):** as pracownik/
-  handlowiec, right-click own block → Dodaj po → picker shows only own assigned
-  tasks (defaults to clicked task); as PM/admin the full list; "Wypełnij dni
-  robocze" for seeded Ola (Mon–Thu) skips Friday and fills 8h Mon–Thu.
-- **Next:** ready for reviewer (delta re-review of changes 4–5) — all 5 required
-  changes now landed.
+- **Changed (test files only, no implementation touched):**
+  - `src/store/blockActions.test.ts` — added: 5 `it`s for `SET_BLOCK_TIME` grow on unbudgeted (`estimatedHours: null`) tasks (partial/full bin drain + `pobrano z zasobnika`, reject past bin with no headroom, reject cross-task/cross-person bin rows, move-only never rejected, shrink creates/merges a bin row); 5 `it`s for `INSERT_BLOCK` budget (headroom-only within/past, bin-first draw with headroom remainder, exact-allowance boundary ±0.25h, unbudgeted insert ≤/>bin, picker task ≠ ref task uses the selected task's allowance); 5 `it`s for the impersonation reducer (`IMPERSONATE` set/no-op-missing/no-op-self, chained-impersonation preserves the original + return-via-own-row, `STOP_IMPERSONATION` restore/no-op, `SET_CURRENT_USER`+`LOGOUT` both clear `impersonatorId`, `DELETE_PERSON` of the impersonated person vs. the impersonator).
+  - `src/store/selectors.test.ts` — added `taskGrowAllowance` import + 4 `it`s (null-estimate bin-only, estimate sums bin+headroom, over-planned floors headroom at 0 while bin still counts, no entries ⇒ 0); `growAllowanceHours` number-contract 2 `it`s (typeof number, missing entry id ⇒ 0); `realUserId`/`realUser`/`isImpersonating` imports + 2 `it`s (not impersonating ⇒ self/false, impersonating ⇒ impersonator id/true).
+  - `src/store/storage.test.ts` — added an `impersonatorId persistence` describe with a local `v5Payload` builder + 5 `it`s: missing field defaults to `''`, valid id round-trips, dangling id sanitized to `''`, id === currentUserId sanitized to `''`, idempotent reload.
+- **Tests:** `npx tsc --noEmit && npm test` → tsc clean; vitest **186 passed** (was 158 baseline; +28 new tests, 0 removed/modified existing assertions). `git status --short` confirms only the three test files changed by this package (the pre-existing implementation-file diffs are from the three developer packages already landed).
+- **Bugs found:** none — every new assertion passed against the shipped `AppStore.tsx`/`selectors.ts`/`storage.ts` behavior once the fixtures were corrected (see below); no spec-vs-implementation mismatch to report.
+- **Self-corrections during authoring** (test math errors, not implementation bugs): (1) an `INSERT_BLOCK` "exact allowance" fixture first assumed `allowance = estimate + bin`, forgetting `taskBudget.totalAll` already includes the bin row's hours — headroom nets the bin out, so `allowance` for a task with no *other* planned hours simply equals the estimate; rebuilt the fixture with a second person's dated entry so bin+headroom compose to a value below the estimate, matching the package's intent. (2) a `taskGrowAllowance` "no entries at all ⇒ 0" case initially used `estimatedHours: 10`, which correctly yields `headroom = 10` (not 0) — changed to `estimatedHours: null` to match the stated expected value.
+- **Skipped/stubbed:** none — all 20 case groups implemented with behavioral assertions.
+- **Next:** ready for reviewer verdict (all 4 packages of this run now closed).
 
 ### Reviewer verdict
 
 <!-- Reviewer appends here after workers finish. -->
 
-#### 2026-07-08 · reviewer · verdict for run "Hour budget + block merging · accounts/roles/permissions · sidebar icon fix"
+## Reviewer verdict (bug-fix round 2)
 
-- **Status: CHANGES-REQUIRED** (core work is solid and approved in substance;
-  5 targeted fixes before merge, none architectural).
-- **Gates (re-run by reviewer):** `npx tsc --noEmit` clean · `npm test` 149/149
-  (5 files) · `npm run build` OK (pre-existing chunk-size warning only).
-- **Live browser verification (orchestrator input, recorded):** budget clamp at
-  estimate headroom, shrink→single bin row, exact-adjacency fuse (+animation),
-  30-min gap no-merge, clean v4→v5 migration (idempotent), login gate + one-click
-  passwordless login, pracownik gating, collapsed-sidebar circles — all pass.
+- **Status:** CHANGES-REQUIRED (one low-severity blocker; everything else clean — re-review can be a fast delta check)
+- **Gates (re-run by reviewer):** `npx tsc --noEmit` clean · vitest **186/186** · `npm run build` OK (pre-existing >500 kB chunk warning only).
 
-**Required changes (numbered):**
+### Blockers
 
-1. **P1 · `src/store/AppStore.tsx` (ADD_PERSON ~L1304, UPDATE_PERSON ~L1317,
-   deletePerson ~L1085) · developer (+ test-writer):** Fresh-setup lockout
-   (Codex #1, confirmed). In setup mode the add-person form defaults to
-   `pracownik`, ADD_PERSON preserves it and does not set `currentUserId`; once
-   one person exists the login gate activates with zero administrators and no
-   recovery except editing localStorage. Fix: force `accessRole: 'administrator'`
-   for the first person created into an empty people list (and preferably log
-   them in); additionally guard demoting (UPDATE_PERSON) and deleting
-   (DELETE_PERSON) the LAST administrator — reducer refuses, UI disables with a
-   Polish title. Add reducer tests.
-2. **P2 · `src/store/storage.ts` (loadData ~L532-535) · developer (+ test-writer):**
-   A payload stamped `version: 5` whose people were never migrated (observed
-   mid-dev via HMR) stays broken forever: `migrateV4toV5` only runs when
-   `version < 5`, and a missing `accessRole` makes `MATRIX[undefined]` deny every
-   action → permanent, unrecoverable lockout at the login screen. `migratePerson`
-   is idempotent — run the person-normalization pass unconditionally on every
-   load, exactly like `ensureStartMinutes`. Add a load test with a v5-stamped
-   payload containing a pre-v5 person.
-3. **P2 · `src/store/AppStore.tsx` (deletePerson ~L1085-1093) · developer
-   (+ test-writer):** DELETE_PERSON leaves dangling `supervisorId` references
-   (Codex #2, confirmed — people are filtered, supervisors never cleared),
-   violating the cascade-delete pattern (CLAUDE.md invariant 5). Map remaining
-   people and clear `supervisorId === deleted id`; add a reducer test.
-4. **P2 · `src/components/WeekView.tsx` (insert form task select ~L966-982) ·
-   developer:** A `blocks.editOwn`-only user (pracownik/handlowiec) can
-   right-click an own block → Dodaj przed/po → pick ANY task in the system;
-   `INSERT_BLOCK` auto-assigns, bypassing `tasks.manage` (Codex #3, confirmed).
-   The gating package's acceptance explicitly allows the context menu on own
-   blocks — the gap is the unrestricted picker. Restrict the `Zadanie` options
-   to tasks the person is already assigned to (or just the clicked block's task)
-   unless `can('tasks.manage')`.
-5. **P2 (minor) · `src/components/TaskModal.tsx` L394-399 +
-   `src/components/AllocationGrid.tsx` L187-191 · developer:** "Wypełnij dni
-   robocze" hardcodes Mon–Fri + 8h (Codex #4, confirmed). Pre-existing code, but
-   this run shipped per-person `Dni robocze` under the same name — for seeded
-   Ola (Mon–Thu) the button now fills her Friday, directly contradicting the new
-   model. Use `isPersonWorkday` + `personCapacity` per person.
+1. **[P2 · developer tier · `src/components/TaskModal.tsx:481-485`]** Estimate
+   normalization checks `estRaw <= 0` BEFORE snapping, so positive inputs in
+   (0, 0.125) — e.g. `0.1` — persist as `estimatedHours: 0` instead of `null`,
+   contradicting the code's own comment ("non-positive input clears it back to
+   null"). A 0-estimate task has `taskGrowAllowance = bin only` ⇒ all calendar
+   inserts/grows blocked and the over-budget banner shows permanently — the
+   exact trap class this run exists to close. Fix (one line, snap-then-clear):
+   `const snapped = snapHours(estRaw); estimatedHours = empty || NaN || snapped <= 0 ? null : snapped;`
+   and reuse the normalized value for the live comparison (see nit 1). Note:
+   the worker was FAITHFUL to the package's literal formula — the spec carried
+   the bug; route as a micro-fix to the developer, no design decision needed.
 
-**Codex findings adjudicated:** #1 (P1) accepted → change 1. #2 (P2) accepted →
-change 3. #3 (P2) accepted → change 4 (noting the context menu itself is
-sanctioned for own blocks; only the picker breadth is wrong). #4 (P2) accepted,
-severity kept but scoped as minor/coherence → change 5. #5 (P3, `workDays: []`
-+ assigned hours renders 0% instead of overload — WorkloadPage.tsx L288)
-accepted as backlog nit (per-day overload flags still fire; summary % only).
-Nothing dismissed; Codex raised no false positives.
+### Nits (non-blocking; recommend folding into the same fix pass)
 
-**UX audit adjudicated:** both P1s confirmed REAL in code but PRE-EXISTING and
-not worsened by this run → backlog, out of run scope: (a) `insertBlock`
-end-of-day clamp (AppStore.tsx L561) can pull the new block back over the ref
-block / let a pushed block overlap — the sweep only pushes blocks after the
-insert point (clamp logic predates the run; overlaps render side-by-side, no
-data corruption); (b) archiving an in-use status hides projects from Kanban
-(design gap since the kanban run). P2/P3 friction items → backlog as listed in
-the audit.
+1. `TaskModal.tsx:519,541` — `overBudget` compares `draftTotal` against the RAW
+   `estNum` while save persists the snapped value: typing `1.13` with `1.25`
+   planned shows a false over-budget banner that vanishes after save. Derive
+   one normalized estimate used for save, display, and `overBudget`.
+2. `WeekView.tsx:704,761-771` — the insert form checks raw `hoursRaw` against
+   the allowance before reducer-equivalent snapping: `1.01` is blocked though
+   the reducer would snap to `1.0` and accept. Verified over-strict ONLY —
+   `snapHours` is monotone and the allowance is always a quarter multiple, so
+   the form can never let through what the reducer rejects. UX polish, not a
+   safety hole.
 
-**Worker deviations (all 7 packages) — verified and ACCEPTED:** bin-entry split
-no-op + UI hide (confirmed at WeekView L899 `!isBinEntry` branch); merge blob on
-dragged block only (per decision 3); auth-data none; one-click passwordless
-login (matches the stronger acceptance criterion); MOVE_TASK gated by
-`tasks.manage` + "+ Zadanie" gated (both close real holes in the per-page map);
-shared `personFields.ts` module (presentational only, within scope guard).
+### Codex findings (reviews/2026-07-08-215302-codex-review.md) — adjudicated
 
-**Convention check: PASS.** Polish UI strings throughout; localStorage only via
-storage.ts; reads via pure selectors; `yyyy-MM-dd` dates untouched; no new
-dependencies; `prefers-reduced-motion` honored (CSS-only fuse animation);
-personColor untouched. One placement nit: `toQuarters` lives in AppStore.tsx —
-CLAUDE.md points hour-step math at `src/utils/time.ts` (move alongside
-`HOURS_STEP` when convenient).
+- **#1 (P2, TaskModal estimate 0.1→0):** ACCEPTED → blocker 1. Verified in code.
+- **#2 (P3, banner vs snapped estimate):** ACCEPTED → nit 1. Verified.
+- **#3 (P3, insert form raw-hours check):** ACCEPTED → nit 2. Verified, and
+  confirmed the mismatch is one-directional (over-strict), so no reject-path bypass.
+- Nothing dismissed; Codex missed nothing material in the store/impersonation diff.
 
-**Test coverage: ADEQUATE** (68 → 149; budget/merge/one-bin-row, migration
-v4→v5 + idempotence, supervisor cycles, password/logout, full 4×12 permission
-matrix — assertions are behavioral, not tautological). Gaps (fold into fixes
-1–3): last-admin guard, first-person-admin, defensive v5 normalization,
-DELETE_PERSON supervisor cleanup. Deliberate, accepted gap: no v1→v5
-end-to-end test.
+### PopChild console warning — root-caused, DISMISSED as a this-round defect
 
-**Nits / backlog (non-blocking):** Codex #5 (0% vs overload display); UX-audit
-pre-existing P1s (a)+(b) above; unsnapped `estimatedHours` (TaskModal saves
-`Number(raw)` raw → off-grid estimate makes the UI's `maxHours` clamp off-grid
-and the at-cap resize dispatch gets grid-rejected and reverts — snap the
-estimate on save per invariant 4); `toQuarters` placement; CLAUDE.md refresh
-(now must also cover login/roles/permissions/budget/bin invariants — human
-task, already logged); carried-over commit hygiene incl. new untracked files.
+The dev-mode warning "PopChild: `ref` is not a prop" is NOT from the new bin
+drag ghost: the ghost is a plain portaled `<div>` with zero motion/
+AnimatePresence involvement. Root cause is framer-motion 12 internals —
+`PresenceChild` always wraps AnimatePresence children in `PopChild`, whose
+React-19 compat shim reads `children.props?.ref` (PopChild.mjs:61), which
+React 18.3 dev mode warns about whenever a direct AnimatePresence child
+carries a `ref`. The trigger here is the context menu's
+`<motion.div ref={menuRef}>` (WeekView), present at the ff4fd8a baseline
+(line 897) — pre-existing, dev-only, zero prod impact. → **Backlog:** bump
+`motion` when a fixed release lands, or move `menuRef` to an inner wrapper.
+The orchestrator's attribution to the ghost path is corrected.
 
-**Routing:** changes 1–3 → developer with a test-writer follow-up (or one
-combined store package); changes 4–5 → developer (UI-only). Re-review can be
-delta-only.
+### Convention check — PASS
 
-#### 2026-07-08 · reviewer · delta re-review of the fix round — FINAL VERDICT
+Polish UI strings throughout; localStorage stays confined to `storage.ts`
+(`sanitizeImpersonator` follows the `ensureStartMinutes` every-load pattern,
+additive field, no version bump per plan); budget math in integer quarters
+(`toQuarters`); activity rows appended in-action (`pobrano z zasobnika`
+suffix on INSERT_BLOCK); `--n2-warning`/`--n2-danger` tokens; ≤760px banner
+layout; ghost has `transition: none` + `pointer-events: none` (reduced-motion
+safe); week grid `user-select: none` untouched; no new dependencies
+(`createPortal` from existing react-dom).
 
-- **Status: APPROVE.** All 5 required changes verified in source; gates re-run
-  by the reviewer: `npx tsc --noEmit` clean · `npm test` 157/157 (5 files) ·
-  `npm run build` OK (pre-existing chunk-size warning only).
+### Test coverage — ADEQUATE
 
-**Per-change verification:**
+All 20 planned case groups landed as behavioral assertions (reject paths use
+same-reference `toBe(state)`; bin drain values, activity suffixes, chained
+impersonation, DELETE_PERSON interplay, storage sanitize + idempotence).
+Accepted gaps: component-level UI (insert-form warning, TaskModal banner/snap,
+ghost, impersonation banner) — verified live by the orchestrator and listed
+for the human walkthrough, consistent with repo practice. Blocker 1's fix
+needs no new unit test (component layer), but the fixed formula should keep
+the "empty/invalid/≤0 ⇒ null" contract stated in its comment.
 
-1. **Fresh-setup lockout — FIXED.** `ADD_PERSON` (AppStore.tsx ~L1316-1319)
-   forces `accessRole: 'administrator'` when `state.people.length === 0`;
-   `UPDATE_PERSON` (~L1327-1337) rejects demoting the only administrator
-   (same-ref return); `DELETE_PERSON` (~L1353-1362) rejects deleting the only
-   administrator BEFORE the cascade. Tests cover all six paths (force/respect,
-   reject/allow demote, reject/allow delete). The optional "log the first
-   person in" suggestion was not taken — acceptable: the login screen offers
-   one-click passwordless login for the new administrator, so no lockout.
-2. **v5-stamped unmigrated payload — FIXED.** `loadData` (storage.ts ~L533-541)
-   now runs `migrateV4toV5` unconditionally on every load, mirroring
-   `ensureStartMinutes`, with an accurate explanatory comment. New storage test
-   loads a `version: 5` payload carrying pre-v5 people (isAdmin, no accessRole)
-   and asserts roles/defaults/idempotence.
-3. **Dangling supervisorId — FIXED.** `deletePerson` (AppStore.tsx ~L1090-1092)
-   clears `supervisorId === deleted id` on remaining people inside the cascade;
-   test asserts cleanup and that unrelated supervisor links survive.
-4. **Insert-picker self-assign hole — FIXED.** WeekView.tsx ~L708-713:
-   `insertTaskOptions` = full `state.tasks` only with `can('tasks.manage')`,
-   else filtered to `taskIdsOfPerson(state, menu.entry.personId)` (which always
-   contains the clicked block's task, preserved as default). Read via the
-   existing selector — no new read path.
-5. **Workday-aware fill — FIXED.** TaskModal `fillWeekdays` now writes
-   `availableHoursOnDate(state, personId, d)` per day (>0 only), replacing
-   hardcoded Mon–Fri/8h; AllocationGrid tooltip updated ("Wypełnij dni robocze
-   osoby jej dzienną dostępnością"); dead `isWeekdayDate` helper + unused
-   import removed (tsc confirms no stragglers).
+### Faithfulness
 
-**New backlog item found during delta review (non-blocking, defense in depth):**
-a v4 payload whose people ALL have `isAdmin: false` migrates to a non-empty,
-zero-administrator people set — login still works (passwordless) but nobody can
-reach people.manage/admin.panel, and the new ADD_PERSON guard doesn't apply
-(people already exist). Unlikely in practice (v1→v2 made the first person
-admin), but consider promoting the first person in `migrateV4toV5` when a
-non-empty people set has zero administrators — one line, idempotent.
+All 4 packages match the architect's decisions; the single declared deviation
+(`confirmInsert` Enter-path budget guard) is harmless and correct. Live
+orchestrator verification of budget warning/disable, ghost visibility/drop,
+and impersonation banner/return accepted as input; the two scripted-pointer
+quirks are consistent with synthetic-event artifacts given the code reads
+(pointer-capture + real `clientX/Y` driven state).
 
-**Carried nits/backlog (unchanged from the main verdict):** Codex #5 workDays
-[] 0% display; pre-existing UX-audit P1s (insertBlock end-of-day clamp, status
-archive vs Kanban); unsnapped `estimatedHours` vs the UI maxHours clamp;
-`toQuarters` placement (utils/time.ts); CLAUDE.md refresh + commit hygiene
-(human tasks). Remaining human step before merge: the role-matrix browser
-walkthrough items each worker listed as not-CLI-verifiable, plus the two new
-UI fixes (restricted picker as pracownik; Ola's Friday skipped by the fill).
+### Fix round (post-review, bug-fix round 2)
+
+#### 2026-07-08 · developer · review-fix (P2 blocker + 2 P3 nits)
+
+- **Changed:**
+  - `src/components/TaskModal.tsx` — **P2**: replaced the snap-after-check estimate
+    normalization with a single component-scope `normalizedEstimate` (snap FIRST
+    via `snapHours`, then clear to null when empty/invalid/`<= 0` after snapping),
+    so inputs in (0, 0.125) — e.g. 0.1 → snaps to 0 → null instead of persisting a
+    0-budget task. **P3 nit 1**: removed the raw `estNum` and routed save
+    (`draft.estimatedHours`), the `overBudget` comparison, the `vs szacunek`
+    display, and the over-budget banner delta all through `normalizedEstimate` —
+    banner/display/save can no longer disagree (no transient false banner).
+  - `src/components/WeekView.tsx` — **P3 nit 2**: added `snapHours` import; the
+    insert form now computes `parsedHours = snapHours(Math.min(24, rawHours))`
+    once (reducer-equivalent) and reuses it for `projectedTotal`/`wouldOverload`,
+    `overAllowance`, the `Wstaw` disabled state, and `confirmInsert` (which now
+    reuses `parsedHours`/`overAllowance` instead of re-reading raw `hoursRaw`), so
+    e.g. 1.01 snaps to 1.0 and is accepted like the reducer would.
+- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean; vitest
+  **186 passed** (baseline unchanged); build OK (pre-existing >500 kB chunk
+  warning only). No new tests: the snap-then-clear rule lives inline in the
+  component (UI-only), and the insert-form snap mirrors the already-tested
+  reducer path — no pure function was added, per package note.
+- **Deviations:** none.
+- **Needs human/browser walkthrough** (not CLI-verifiable): (1) TaskModal — type
+  `0.1` into Szacowane godziny, save, reopen → estimate is empty (null), calendar
+  inserts/grows for that task are NOT blocked; (2) type `1.13` with 1.25h planned
+  → over-budget banner does NOT appear (normalized to 1.25 == planned); (3) insert
+  form — `1.01` against a 1.0 allowance → `Wstaw` enabled and Enter inserts (snaps
+  to 1.0), while `1.5` against 1.0 stays disabled with the allowance warning.
+- **Next:** ready for reviewer delta re-check.
+
+### Reviewer verdict — delta re-check (bug-fix round 2, final)
+
+- **Status:** APPROVE (blocker + both nits resolved; run is done pending the
+  human walkthrough items already collected above)
+- **Gates (re-run by reviewer):** `npx tsc --noEmit` clean · vitest **186/186** ·
+  `npm run build` OK (pre-existing >500 kB chunk warning only).
+- **Delta verified in code:**
+  - Blocker 1 FIXED — `TaskModal.tsx:470-472` derives `normalizedEstimate`
+    snap-first (`snapHours` then clear to null when NaN/`<= 0`), so `0.1` →
+    snap `0` → `null` (no more persisted 0-budget task); negative input also
+    lands on null.
+  - Nit 1 FIXED — `normalizedEstimate` is the single source for save (:496),
+    `overBudget` (:542), the `szacunek` display (:665-667), and the banner
+    delta (:676); raw `estNum` removed — no transient false banner possible.
+  - Nit 2 FIXED — `WeekView.tsx:765-766` computes
+    `parsedHours = snapHours(Math.min(24, rawHours))` once, reused by the
+    overload preview (:768), `overAllowance` (:775-776), the `Wstaw` disable
+    (:1085), and `confirmInsert` (:708-716), which now dispatches the snapped
+    `parsedHours` — form and reducer can no longer disagree in either direction.
+- **Scope check:** diff limited to the two components; no store/selector/test
+  changes; no new deps; Polish strings intact. No new tests required (UI-only,
+  reducer path already covered) — agreed.
+- **Carried backlog (unchanged):** framer-motion PopChild dev-only ref warning
+  (library-internal, pre-existing — bump `motion` or move `menuRef` inward);
+  plus the previously listed carried items.
+- **Human walkthrough additions from the fix round:** TaskModal `0.1` estimate
+  → reopens empty (null), task not insert-blocked; `1.13` vs 1.25h planned →
+  no banner; insert form `1.01` vs 1.0 allowance → enabled and inserts 1.0,
+  `1.5` vs 1.0 → disabled with warning.

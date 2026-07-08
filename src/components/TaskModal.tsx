@@ -20,7 +20,7 @@ import { CommentsPanel } from './CommentsPanel';
 import { AllocationGrid, allocKey, type AllocMap } from './AllocationGrid';
 import { SaveStatus } from './SaveStatus';
 import { personColor } from '../utils/colors';
-import { formatDuration, isBinEntry } from '../utils/time';
+import { formatDuration, isBinEntry, snapHours } from '../utils/time';
 import { eachDayInclusive, inclusiveDayCount, todayStr } from '../utils/dates';
 import { useSaveStatus } from '../utils/useSaveStatus';
 
@@ -461,6 +461,16 @@ function TaskEditor({
 
   const projectError = projectId === '' || !state.projects.some((p) => p.id === projectId);
 
+  // Normalize the estimate ONCE and reuse it for save, the over-budget banner,
+  // and the display so they can never disagree. Snap to a 0.25 step first (no
+  // clamp — a 40h estimate stays 40h), then clear to null when the input is
+  // empty, invalid, or non-positive AFTER snapping (so e.g. 0.1 snaps to 0 and
+  // clears, instead of persisting a 0-budget task that blocks all calendar
+  // inserts/grows).
+  const estParsed = estimatedRaw.trim() === '' ? NaN : Number(estimatedRaw);
+  const estSnapped = Number.isNaN(estParsed) ? NaN : snapHours(estParsed);
+  const normalizedEstimate = Number.isNaN(estSnapped) || estSnapped <= 0 ? null : estSnapped;
+
   const handleSave = () => {
     setTitleTouched(true);
     if (titleError) return;
@@ -483,7 +493,7 @@ function TaskEditor({
       description: description.trim(),
       startDate,
       endDate,
-      estimatedHours: estimatedRaw.trim() === '' ? null : Number(estimatedRaw),
+      estimatedHours: normalizedEstimate,
     };
 
     dispatch({
@@ -508,7 +518,6 @@ function TaskEditor({
     (s, h) => s + (h > 0 ? h : 0),
     0,
   );
-  const estNum = estimatedRaw.trim() === '' ? null : Number(estimatedRaw);
 
   // Existing bin blocks of this task belonging to still-assigned people.
   const existingBin = useMemo(
@@ -525,6 +534,12 @@ function TaskEditor({
     .filter((u) => assigneeIds.includes(u.personId))
     .reduce((s, u) => s + (u.hours > 0 ? u.hours : 0), 0);
   const binTotal = existingBinTotal + pendingBinTotal;
+
+  // Draft total = post-save task total (grid cells + bin). When the estimate
+  // parses to a number and the draft exceeds it, show a live, non-blocking
+  // over-budget banner — TaskModal is the deliberate re-planning surface.
+  const draftTotal = plannedTotalAll + binTotal;
+  const overBudget = normalizedEstimate != null && draftTotal > normalizedEstimate + 1e-9;
 
   // Existing bin blocks grouped per still-assigned person (read-only chips).
   const existingBinByPerson = useMemo(() => {
@@ -637,22 +652,31 @@ function TaskEditor({
         </div>
         <div className="estimate-compare">
           <span>
-            zaplanowano <strong>{formatDuration(plannedTotalAll)}</strong>
+            zaplanowano{' '}
+            <strong className={overBudget ? 'over-budget' : undefined}>
+              {formatDuration(plannedTotalAll)}
+            </strong>
             {binTotal > 0 && (
               <span className="muted"> (+ {formatDuration(binTotal)} w zasobniku)</span>
             )}
           </span>
           <span className="muted">vs</span>
           <span>
-            {estNum != null && !Number.isNaN(estNum) ? (
+            {normalizedEstimate != null ? (
               <>
-                szacunek <strong>{formatDuration(estNum)}</strong>
+                szacunek <strong>{formatDuration(normalizedEstimate)}</strong>
               </>
             ) : (
               <span className="muted">brak szacunku</span>
             )}
           </span>
         </div>
+        {overBudget && (
+          <p className="estimate-over">
+            ⚠ Przekroczono szacunek o {formatDuration(draftTotal - (normalizedEstimate ?? 0))}. Zwiększ
+            szacunek lub ogranicz godziny.
+          </p>
+        )}
       </div>
 
       {/* b) Period */}

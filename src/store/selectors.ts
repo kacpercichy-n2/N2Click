@@ -326,21 +326,39 @@ export function taskBudget(
 }
 
 /**
- * How many hours a block may GROW BY (the grow DELTA, not the block's absolute
- * size) before it would mint hours past the task budget. `null` ⇒ unlimited
- * (the task has no estimate ⇒ free grow, today's behavior). Otherwise the
- * block's owner may draw from their same-task bin row first, then from the
- * task's headroom: `binHoursForTaskPerson + headroom`.
+ * The calendar-side hour allowance for a `(task, person)` pair — the ceiling on
+ * how many hours calendar actions (drag-grow, right-click insert) may add for
+ * that person without minting hours past the task's plan.
+ *
+ * Budget model (PKG-20260708-b2-budget-store): the task's plan IS the budget.
+ * Calendar paths never create hours out of thin air; they may only draw from
+ * this person's same-task bin row, plus — for tasks that carry an estimate —
+ * the task's remaining headroom:
+ *
+ *   `binHoursForTaskPerson + (estimate === null ? 0 : headroom)`
+ *
+ * A number is ALWAYS returned. Tasks with `estimatedHours === null` no longer
+ * grow freely: their allowance is bin hours only (0 when the bin row is empty).
  */
-export function growAllowanceHours(state: AppData, entryId: string): number | null {
+export function taskGrowAllowance(state: AppData, taskId: string, personId: string): number {
+  const budget = taskBudget(state, taskId);
+  return (
+    binHoursForTaskPerson(state, taskId, personId) +
+    (budget.estimate === null ? 0 : budget.headroom)
+  );
+}
+
+/**
+ * How many hours a block may GROW BY (the grow DELTA, not the block's absolute
+ * size) before it would mint hours past the task budget. Delegates to
+ * {@link taskGrowAllowance} for the entry's `(task, person)` pair; a missing
+ * entry ⇒ 0. Always a number (never null — the old "no estimate ⇒ unlimited"
+ * rule is gone).
+ */
+export function growAllowanceHours(state: AppData, entryId: string): number {
   const entry = state.workload.find((w) => w.id === entryId);
   if (!entry) return 0;
-  const task = getTask(state, entry.taskId);
-  if (!task || task.estimatedHours === null) return null;
-  return (
-    binHoursForTaskPerson(state, entry.taskId, entry.personId) +
-    taskBudget(state, entry.taskId).headroom
-  );
+  return taskGrowAllowance(state, entry.taskId, entry.personId);
 }
 
 // ---- Capacity & overload ----
@@ -491,6 +509,27 @@ export function searchAll(
 
 export function currentUser(state: AppData): Person | undefined {
   return state.currentUserId ? getPerson(state, state.currentUserId) : undefined;
+}
+
+/**
+ * The REAL logged-in person's id — the impersonator while impersonating,
+ * otherwise the acted-as identity. Use this (not `currentUserId`) only for the
+ * "Występuj jako" switcher visibility and the impersonation return path; every
+ * other read stays a true preview of the acted-as identity.
+ */
+export function realUserId(state: AppData): string {
+  return state.impersonatorId || state.currentUserId;
+}
+
+/** The REAL logged-in Person (see `realUserId`), or undefined if unresolved. */
+export function realUser(state: AppData): Person | undefined {
+  const id = realUserId(state);
+  return id ? getPerson(state, id) : undefined;
+}
+
+/** True when an impersonation session is active (`impersonatorId !== ''`). */
+export function isImpersonating(state: AppData): boolean {
+  return state.impersonatorId !== '';
 }
 
 /**
