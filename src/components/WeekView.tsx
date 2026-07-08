@@ -133,6 +133,21 @@ function TimedBlock({
   const { dispatch } = useStore();
   const [drag, setDrag] = useState<DragState | null>(null);
   const moved = useRef(false);
+  // Pointer-capture bookkeeping — released before any dispatch (a drop-to-bin
+  // unmounts this block; releasing after would wedge document-wide pointer
+  // delivery, matching the bin-card freeze fix).
+  const captureRef = useRef<{ el: HTMLElement; pointerId: number } | null>(null);
+  const releaseCapture = () => {
+    const c = captureRef.current;
+    if (c) {
+      try {
+        c.el.releasePointerCapture(c.pointerId);
+      } catch {
+        // Already released — ignore.
+      }
+      captureRef.current = null;
+    }
+  };
 
   const baseStart = entry.startMinutes;
   const baseHours = entry.plannedHours;
@@ -142,6 +157,7 @@ function TimedBlock({
     if (!drag) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        releaseCapture();
         setDrag(null);
         setMergeTargetId(null);
       }
@@ -153,10 +169,13 @@ function TimedBlock({
   const begin = (mode: DragMode) => (e: React.PointerEvent) => {
     if (e.button !== 0) return; // right/middle button → let the context menu open
     e.stopPropagation();
+    const el = e.currentTarget as HTMLElement;
     try {
-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      el.setPointerCapture(e.pointerId);
+      captureRef.current = { el, pointerId: e.pointerId };
     } catch {
       // No active pointer (synthetic events) — dragging still works within the block.
+      captureRef.current = null;
     }
     moved.current = false;
     const rect = gridRef.current?.getBoundingClientRect();
@@ -292,6 +311,8 @@ function TimedBlock({
   const finish = () => {
     if (!drag) return;
     const { projStart, projHours, projDayIndex, overBin, colliding, willMergeWithId } = drag;
+    // Release capture before dispatch — a drop-to-bin unmounts this block.
+    releaseCapture();
     setDrag(null);
     setMergeTargetId(null);
     if (!moved.current) return; // treated as a click by onClick
@@ -369,6 +390,7 @@ function TimedBlock({
       onPointerCancel={
         editable
           ? () => {
+              releaseCapture();
               setDrag(null);
               setMergeTargetId(null);
             }
@@ -459,12 +481,45 @@ function BinCard({
   const [drag, setDrag] = useState<BinDragState | null>(null);
   const moved = useRef(false);
   const cardRef = useRef<HTMLDivElement | null>(null);
+  // The element + pointer that hold the drag's pointer capture. A successful
+  // drop UNMOUNTS this card (the entry leaves the bin); the capture MUST be
+  // released before that unmount, or the browser leaves pointer-capture cleanup
+  // wedged and the whole page stops receiving pointer events (site "freeze").
+  const captureRef = useRef<{ el: HTMLElement; pointerId: number } | null>(null);
+  const releaseCapture = () => {
+    const c = captureRef.current;
+    if (c) {
+      try {
+        c.el.releasePointerCapture(c.pointerId);
+      } catch {
+        // Already released (implicit release on pointerup/cancel) — ignore.
+      }
+      captureRef.current = null;
+    }
+  };
+
+  // A bin row wider than a day (or off the 15-min/0.25h grid) can NEVER be
+  // dropped — the reducer rejects it (SET_BLOCK_TIME > 24h / off-quarter). Flag
+  // it so the drag shows the danger tint the whole time and reverts cleanly.
+  const quarters = entry.plannedHours * 4;
+  const unplaceable =
+    !Number.isFinite(entry.plannedHours) ||
+    entry.plannedHours < 0.25 ||
+    entry.plannedHours > 24 ||
+    Math.abs(quarters - Math.round(quarters)) > 1e-9;
+  const unplaceableHint =
+    entry.plannedHours > 24
+      ? 'Blok jest dłuższy niż doba — podziel go, aby nadać termin.'
+      : 'Nieprawidłowy czas trwania — podziel blok, aby nadać termin.';
 
   // Cancel the drag on Escape (no dispatch → the card snaps home).
   useEffect(() => {
     if (!drag) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setDrag(null);
+      if (e.key === 'Escape') {
+        releaseCapture();
+        setDrag(null);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -473,10 +528,15 @@ function BinCard({
   const begin = (e: React.PointerEvent) => {
     if (e.button !== 0) return; // right button → context menu
     e.stopPropagation();
+    // Capture on the stable card root (currentTarget), not e.target — a child
+    // <span> would be detached first on drop, worsening the capture leak.
+    const el = e.currentTarget as HTMLElement;
     try {
-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      el.setPointerCapture(e.pointerId);
+      captureRef.current = { el, pointerId: e.pointerId };
     } catch {
       // No active pointer (synthetic events) — drag still works.
+      captureRef.current = null;
     }
     moved.current = false;
     // Capture the card geometry once so the fixed ghost keeps its size and stays
@@ -522,9 +582,14 @@ function BinCard({
     const dur = entry.plannedHours * 60;
     const relY = e.clientY - gridRect.top;
     const startMin = clampBlockStart(snapToStep((relY / HOUR_PX) * 60), dur);
-    const colliding = valid
-      ? blockCollides(state, person.id, days[colIndex], startMin, entry.plannedHours)
-      : false;
+    // An unplaceable row (> 24h / off-grid) always reads as colliding so the
+    // ghost stays danger-tinted and the drop reverts instead of firing a
+    // doomed dispatch the reducer would reject anyway.
+    const colliding = unplaceable
+      ? true
+      : valid
+        ? blockCollides(state, person.id, days[colIndex], startMin, entry.plannedHours)
+        : false;
 
     setDrag((d) =>
       d ? { ...d, clientX: e.clientX, clientY: e.clientY, colIndex, startMin, valid, colliding } : d,
@@ -534,6 +599,9 @@ function BinCard({
   const finish = () => {
     if (!drag) return;
     const { colIndex, startMin, valid, colliding } = drag;
+    // Release BEFORE any dispatch: a valid drop unmounts this card, and an
+    // unreleased capture on a node being removed mid-pointerup wedges the page.
+    releaseCapture();
     setDrag(null);
     if (!moved.current) return; // plain click → open
     if (!valid || colliding) return; // invalid target / collision → snap home
@@ -577,13 +645,22 @@ function BinCard({
         tabIndex={0}
         title={
           editable
-            ? `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu. Przeciągnij na siatkę, aby nadać termin.`
+            ? unplaceable
+              ? `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu. ${unplaceableHint}`
+              : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu. Przeciągnij na siatkę, aby nadać termin.`
             : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.`
         }
         onPointerDown={editable ? begin : undefined}
         onPointerMove={editable ? onPointerMove : undefined}
         onPointerUp={editable ? finish : undefined}
-        onPointerCancel={editable ? () => setDrag(null) : undefined}
+        onPointerCancel={
+          editable
+            ? () => {
+                releaseCapture();
+                setDrag(null);
+              }
+            : undefined
+        }
         onClick={(e) => {
           e.stopPropagation();
           if (!moved.current) onOpen();

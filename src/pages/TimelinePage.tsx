@@ -9,16 +9,20 @@ import { useCan } from '../store/useCan';
 import { useOpenTask } from '../components/TaskModal';
 import { PersonFilter } from '../components/PersonFilter';
 import { ZoomIn, ZoomOut } from '../components/icons';
-import type { Milestone, Project, Task } from '../types';
+import type { Milestone, Person, Project, Task } from '../types';
 import {
   activeStatuses,
   assigneeIdsOfTask,
   conflictDatesForTask,
+  entriesForTaskPerson,
+  getProject,
   getStatus,
   milestonesOfProject,
   tasksOfProject,
 } from '../store/selectors';
 import { Coin } from '../components/Coin';
+import { personColor } from '../utils/colors';
+import { formatDuration } from '../utils/time';
 import {
   addDaysStr,
   diffDays,
@@ -232,6 +236,7 @@ export function TimelinePage() {
   const can = useCan();
   const canManageProjects = can('projects.manage');
   const canManageTasks = can('tasks.manage');
+  const [mode, setMode] = useState<'projects' | 'people'>('projects');
   const [anchor, setAnchor] = useState(() => todayStr());
   const [dayW, setDayW] = useState<number>(DEFAULT_DAY_W);
   const [weeks, setWeeks] = useState(10);
@@ -314,6 +319,63 @@ export function TimelinePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groups, ownerKey, state.tasks, state.assignments, state.workload, state.people]);
 
+  // People mode: one group per person (people-list order), narrowed by the
+  // owner filter (empty = everyone). Each group lists the tasks the person is
+  // involved in — an assignment OR at least one workload entry (dated or bin) —
+  // narrowed by the client filter, sorted by startDate then title. A person
+  // with no matching tasks is omitted entirely.
+  const peopleView = useMemo(() => {
+    const out: Array<{
+      person: Person;
+      tasks: Array<{ task: Task; hours: number; conflictOffsets: number[] }>;
+    }> = [];
+    for (const person of state.people) {
+      if (ownerFilter.size > 0 && !ownerFilter.has(person.id)) continue;
+      const involvedIds = new Set<string>();
+      for (const a of state.assignments) {
+        if (a.personId === person.id) involvedIds.add(a.taskId);
+      }
+      for (const w of state.workload) {
+        if (w.personId === person.id) involvedIds.add(w.taskId);
+      }
+      const tasks = state.tasks
+        .filter((t) => involvedIds.has(t.id))
+        .filter((t) => {
+          if (!clientFilter) return true;
+          const proj = getProject(state, t.projectId);
+          return proj?.clientId === clientFilter;
+        })
+        .sort(
+          (a, b) =>
+            a.startDate.localeCompare(b.startDate) || a.title.localeCompare(b.title),
+        );
+      if (tasks.length === 0) continue;
+      out.push({
+        person,
+        tasks: tasks.map((t) => ({
+          task: t,
+          hours: entriesForTaskPerson(state, t.id, person.id).reduce(
+            (sum, w) => sum + w.plannedHours,
+            0,
+          ),
+          conflictOffsets: conflictDatesForTask(state, t.id).map((d) =>
+            diffDays(t.startDate, d),
+          ),
+        })),
+      });
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    ownerKey,
+    clientFilter,
+    state.people,
+    state.tasks,
+    state.assignments,
+    state.workload,
+    state.projects,
+  ]);
+
   const commitProject = (p: Project) => (mode: DragMode, delta: number) => {
     const startDate =
       mode === 'end' ? p.startDate : addDaysStr(p.startDate, delta);
@@ -381,11 +443,28 @@ export function TimelinePage() {
         </div>
       </div>
       <p className="field-hint">
-        Przeciągnij pasek, aby zmienić termin; przeciągnij krawędzie, aby zmienić start lub koniec.
-        Przesunięcie zadania przesuwa razem z nim zaplanowane godziny. ◆ kamienie milowe też można przeciągać.
+        {mode === 'projects'
+          ? 'Przeciągnij pasek, aby zmienić termin; przeciągnij krawędzie, aby zmienić start lub koniec. Przesunięcie zadania przesuwa razem z nim zaplanowane godziny. ◆ kamienie milowe też można przeciągać.'
+          : 'Widok według osób: każdy wiersz to zadanie danej osoby. Kliknij pasek, aby otworzyć zadanie. Paski są tylko do odczytu — terminy zmieniasz w trybie Projekty.'}
       </p>
 
       <div className="cal-toolbar">
+        <div className="cal-view-toggle" role="group" aria-label="Tryb widoku">
+          <button
+            type="button"
+            className={mode === 'projects' ? 'toggle-btn active' : 'toggle-btn'}
+            onClick={() => setMode('projects')}
+          >
+            Projekty
+          </button>
+          <button
+            type="button"
+            className={mode === 'people' ? 'toggle-btn active' : 'toggle-btn'}
+            onClick={() => setMode('people')}
+          >
+            Osoby
+          </button>
+        </div>
         <div className="cal-view-toggle" role="group" aria-label="Zakres widoku">
           {WEEK_PRESETS.map(([w, label]) => (
             <button
@@ -425,10 +504,19 @@ export function TimelinePage() {
         </select>
       </div>
 
-      {state.projects.length === 0 ? (
+      {(mode === 'projects' ? state.projects.length === 0 : peopleView.length === 0) ? (
         <div className="empty-state">
-          <p className="empty-title">Brak elementów do zaplanowania</p>
-          <p className="empty-hint">Utwórz projekt, aby zobaczyć go na osi czasu.</p>
+          {mode === 'projects' ? (
+            <>
+              <p className="empty-title">Brak elementów do zaplanowania</p>
+              <p className="empty-hint">Utwórz projekt, aby zobaczyć go na osi czasu.</p>
+            </>
+          ) : (
+            <>
+              <p className="empty-title">Brak zadań do wyświetlenia</p>
+              <p className="empty-hint">Przypisz osoby do zadań, aby zobaczyć oś czasu zespołu.</p>
+            </>
+          )}
         </div>
       ) : (
         <div className="timeline-scroll">
@@ -447,7 +535,8 @@ export function TimelinePage() {
               </div>
             </div>
 
-            {view.map((g) => (
+            {mode === 'projects' &&
+              view.map((g) => (
               <div key={g.name} className="timeline-group">
                 <div className="timeline-row timeline-client-row">
                   <div className="timeline-label timeline-client">{g.name}</div>
@@ -538,6 +627,49 @@ export function TimelinePage() {
                 })}
               </div>
             ))}
+
+            {mode === 'people' &&
+              peopleView.map(({ person, tasks }) => (
+                <div key={person.id} className="timeline-group">
+                  <div className="timeline-row timeline-person-row">
+                    <div className="timeline-label timeline-person-label">
+                      <span
+                        className="timeline-person-dot"
+                        style={{ background: personColor(person.id) }}
+                        aria-hidden
+                      />
+                      <span className="timeline-label-text">{person.name}</span>
+                    </div>
+                    <div className="timeline-track" />
+                  </div>
+                  {tasks.map(({ task: t, hours, conflictOffsets }) => (
+                    <div key={t.id} className="timeline-row timeline-task-row">
+                      <div className="timeline-label timeline-task-label" title={t.title}>
+                        {t.title}
+                      </div>
+                      <div className="timeline-track">
+                        <DayStripes days={days} todayIdx={todayIdx} dayW={dayW} />
+                        <Bar
+                          startIdx={dayIdx(t.startDate)}
+                          span={diffDays(t.startDate, t.endDate) + 1}
+                          totalDays={totalDays}
+                          dayW={dayW}
+                          color={getStatus(state, t.statusId)?.color ?? '#94a3b8'}
+                          className="timeline-bar task"
+                          title={`${t.title}: ${formatShort(t.startDate)} – ${formatShort(t.endDate)} — ${person.name}: ${formatDuration(hours)} zaplanowane`}
+                          resizable={false}
+                          editable={false}
+                          onCommit={() => {}}
+                          onOpen={() => openTask(t.id)}
+                          conflictOffsets={conflictOffsets}
+                        >
+                          {t.title}
+                        </Bar>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))}
           </div>
         </div>
       )}

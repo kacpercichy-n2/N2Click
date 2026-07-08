@@ -13,6 +13,7 @@ import {
   getClient,
   getDepartment,
   getProject,
+  getServiceType,
   getTask,
   hoursForPersonOnDate,
   isPersonWorkday,
@@ -20,6 +21,7 @@ import {
 } from '../store/selectors';
 import { Avatar } from '../components/Avatar';
 import { useOpenTask } from '../components/TaskModal';
+import { FilterPanel, type FilterChip, type FilterGroup } from '../components/FilterPanel';
 import { ArrowRightLeft, ChevronLeft, ChevronRight, X } from '../components/icons';
 import {
   formatRowLabel,
@@ -180,6 +182,68 @@ export function WorkloadPage() {
     (p) => !departmentFilter || p.departmentId === departmentFilter,
   );
 
+  const filterGroups: FilterGroup[] = [
+    {
+      key: 'department',
+      label: 'Dział',
+      value: departmentFilter,
+      onChange: setDepartmentFilter,
+      options: [
+        { value: '', label: 'Wszystkie działy' },
+        ...state.departments.map((d) => ({ value: d.id, label: d.name })),
+      ],
+    },
+    {
+      key: 'client',
+      label: 'Klient',
+      value: clientFilter,
+      onChange: setClientFilter,
+      options: [
+        { value: '', label: 'Wszyscy klienci' },
+        ...state.clients.map((c) => ({ value: c.id, label: c.name })),
+      ],
+    },
+    {
+      key: 'service',
+      label: 'Rodzaj usługi',
+      value: serviceFilter,
+      onChange: setServiceFilter,
+      options: [
+        { value: '', label: 'Wszystkie typy usług' },
+        ...state.serviceTypes.map((s) => ({ value: s.id, label: s.name })),
+      ],
+    },
+  ];
+
+  const activeCount =
+    (departmentFilter ? 1 : 0) + (clientFilter ? 1 : 0) + (serviceFilter ? 1 : 0);
+
+  const chips: FilterChip[] = [];
+  if (departmentFilter)
+    chips.push({
+      key: 'department',
+      label: `Dział: ${getDepartment(state, departmentFilter)?.name ?? '—'}`,
+      onRemove: () => setDepartmentFilter(''),
+    });
+  if (clientFilter)
+    chips.push({
+      key: 'client',
+      label: `Klient: ${getClient(state, clientFilter)?.name ?? '—'}`,
+      onRemove: () => setClientFilter(''),
+    });
+  if (serviceFilter)
+    chips.push({
+      key: 'service',
+      label: `Rodzaj usługi: ${getServiceType(state, serviceFilter)?.name ?? '—'}`,
+      onRemove: () => setServiceFilter(''),
+    });
+
+  const clearAll = () => {
+    setDepartmentFilter('');
+    setClientFilter('');
+    setServiceFilter('');
+  };
+
   // hours[personId][date] for this week, under the current filters.
   const weekEntries = state.workload.filter((w) => daySet.has(w.date) && entryPasses(w));
   const hoursFor = (personId: string, date: string) =>
@@ -216,42 +280,12 @@ export function WorkloadPage() {
       </div>
 
       <div className="cal-toolbar">
-        <select
-          value={departmentFilter}
-          onChange={(e) => setDepartmentFilter(e.target.value)}
-          aria-label="Filtruj po dziale"
-        >
-          <option value="">Wszystkie działy</option>
-          {state.departments.map((d) => (
-            <option key={d.id} value={d.id}>
-              {d.name}
-            </option>
-          ))}
-        </select>
-        <select
-          value={clientFilter}
-          onChange={(e) => setClientFilter(e.target.value)}
-          aria-label="Filtruj po kliencie"
-        >
-          <option value="">Wszyscy klienci</option>
-          {state.clients.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-        <select
-          value={serviceFilter}
-          onChange={(e) => setServiceFilter(e.target.value)}
-          aria-label="Filtruj po typie usługi"
-        >
-          <option value="">Wszystkie typy usług</option>
-          {state.serviceTypes.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
+        <FilterPanel
+          groups={filterGroups}
+          activeCount={activeCount}
+          onClearAll={clearAll}
+          chips={chips}
+        />
       </div>
 
       {people.length === 0 ? (

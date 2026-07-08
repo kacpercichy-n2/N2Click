@@ -1,27 +1,35 @@
-// Dashboard: at-a-glance overview — pipeline counts, upcoming deadlines and
-// milestones, unpaid projects, and this week's overload warnings.
-import { Link, useNavigate } from 'react-router-dom';
+// Panel — the logged-in worker's morning page. Four sections: today's tasks,
+// a MOCK team chat with fake presence, an SVG donut workload summary, and a
+// week strip of the user's blocks. All reads go through selectors; nothing here
+// mutates or persists (the chat is a mockup).
+import { Link } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { useStore } from '../store/AppStore';
 import {
-  activeStatuses,
+  availableHoursInRange,
+  availableHoursOnDate,
+  currentUser,
   getClient,
-  getPerson,
+  getProject,
+  getStatus,
   hoursForPersonOnDate,
-  overloadedPeopleOnDate,
-  personCapacity,
+  todayAgendaForPerson,
+  weekBlocksForPerson,
 } from '../store/selectors';
-import { Coin } from '../components/Coin';
 import { StatusBadge } from '../components/StatusBadge';
-import { ChevronRight } from '../components/icons';
+import { ChatMock } from '../components/ChatMock';
+import { useOpenTask } from '../components/TaskModal';
 import {
-  addDaysStr,
   formatRowLabel,
   formatShort,
+  isTodayStr,
+  isWeekend,
   todayStr,
   weekDays,
+  weekdayHeader,
+  dayNumber,
 } from '../utils/dates';
-import { formatDuration } from '../utils/time';
+import { formatMinutes, formatDuration } from '../utils/time';
 
 // Staggered entrance for the dashboard cards.
 const dashGridVariants = {
@@ -33,38 +41,77 @@ const dashCardVariants = {
   show: { opacity: 1, y: 0, transition: { duration: 0.2, ease: 'easeOut' } },
 } as const;
 
-export function DashboardPage() {
-  const { state } = useStore();
-  const navigate = useNavigate();
-  const today = todayStr();
-  const statuses = activeStatuses(state);
-  const doneStatusId = statuses.slice(-1)[0]?.id;
+const MAX_DAY_BLOCKS = 4;
 
-  const unpaid = state.projects.filter((p) => !p.paid);
-  const horizon = addDaysStr(today, 14);
-  const deadlines = state.projects
-    .filter((p) => p.endDate >= today && p.endDate <= horizon)
-    .sort((a, b) => a.endDate.localeCompare(b.endDate));
-  const overdue = state.projects.filter(
-    (p) => p.endDate < today && p.statusId !== doneStatusId,
-  );
-  const milestones = state.milestones
-    .filter((m) => m.date >= today && m.date <= horizon)
-    .sort((a, b) => a.date.localeCompare(b.date));
-
-  // Overloads across this week.
-  const week = weekDays(today);
-  const overloads = week.flatMap((d) =>
-    overloadedPeopleOnDate(state, d).map((personId) => ({ date: d, personId })),
-  );
+/** An SVG ring showing booked vs available hours. Never divides by zero. */
+function WorkloadDonut({
+  label,
+  booked,
+  available,
+}: {
+  label: string;
+  booked: number;
+  available: number;
+}) {
+  const size = 120;
+  const stroke = 12;
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const ratio = available > 0 ? Math.min(booked / available, 1) : 0;
+  const over = available > 0 && booked > available;
+  const pct = available > 0 ? Math.round((booked / available) * 100) : 0;
+  const fill = over ? 'var(--n2-danger)' : 'var(--n2-lavender)';
 
   return (
-    <section className="page">
-      <div className="page-head">
-        <h1>Panel</h1>
+    <div className="donut">
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden>
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="var(--n2-surface-muted)"
+          strokeWidth={stroke}
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke={fill}
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={`${ratio * circumference} ${circumference}`}
+          transform={`rotate(-90 ${size / 2} ${size / 2})`}
+        />
+      </svg>
+      <div className="donut-center">
+        <span className={`donut-value${over ? ' over' : ''}`}>
+          {formatDuration(booked)} / {formatDuration(available)}
+        </span>
       </div>
+      <div className="donut-caption">
+        <span className="donut-label">{label}</span>
+        <span className={`donut-pct${over ? ' over' : ''}`}>{pct}%</span>
+      </div>
+    </div>
+  );
+}
 
-      {state.projects.length === 0 && state.tasks.length === 0 ? (
+export function DashboardPage() {
+  const { state } = useStore();
+  const { openTask } = useOpenTask();
+  const me = currentUser(state);
+  const today = todayStr();
+
+  // Edge case: setup mode (no people) or no resolvable acting user → keep the
+  // original welcome empty-state exactly.
+  if (!me) {
+    return (
+      <section className="page">
+        <div className="page-head">
+          <h1>Panel</h1>
+        </div>
         <div className="empty-state">
           <p className="empty-title">Witaj w N2Hub</p>
           <p className="empty-hint">
@@ -74,157 +121,158 @@ export function DashboardPage() {
             Przejdź do projektów
           </Link>
         </div>
-      ) : (
-        <motion.div
-          className="dash-grid"
-          variants={dashGridVariants}
-          initial="hidden"
-          animate="show"
-        >
-          <motion.div className="dash-card" variants={dashCardVariants}>
-            <h2>Lejek projektów</h2>
-            <ul className="dash-pipeline">
-              {statuses.map((s) => {
-                const count = state.projects.filter((p) => p.statusId === s.id).length;
+      </section>
+    );
+  }
+
+  const agenda = todayAgendaForPerson(state, me.id, today);
+  const coworkers = state.people.filter((p) => p.id !== me.id);
+
+  // Workload donuts (today + this week).
+  const week = weekDays(today);
+  const bookedToday = hoursForPersonOnDate(state, me.id, today);
+  const availableToday = availableHoursOnDate(state, me.id, today);
+  const bookedWeek = week.reduce((sum, d) => sum + hoursForPersonOnDate(state, me.id, d), 0);
+  const availableWeek = availableHoursInRange(state, me.id, week);
+
+  const weekMap = weekBlocksForPerson(state, me.id, week);
+
+  return (
+    <section className="page">
+      <div className="page-head dash-greeting">
+        <h1>Dzień dobry, {me.firstName}</h1>
+        <p className="dash-date">{formatRowLabel(today)}</p>
+      </div>
+
+      <motion.div
+        className="dash-grid dash-welcome-grid"
+        variants={dashGridVariants}
+        initial="hidden"
+        animate="show"
+      >
+        {/* (a) Today's tasks */}
+        <motion.div className="dash-card" variants={dashCardVariants}>
+          <h2>Zadania na dziś</h2>
+          {agenda.timed.length === 0 && agenda.dateless.length === 0 ? (
+            <p className="muted">
+              Brak zadań na dziś —{' '}
+              <Link to="/calendar" className="inline-link">
+                zajrzyj do kalendarza
+              </Link>
+              .
+            </p>
+          ) : (
+            <ul className="dash-list agenda-list">
+              {agenda.timed.map((w) => {
+                const task = state.tasks.find((t) => t.id === w.taskId);
+                if (!task) return null;
+                const project = getProject(state, task.projectId);
+                const client = project ? getClient(state, project.clientId) : undefined;
+                const startM = w.startMinutes;
+                const endM = startM + w.plannedHours * 60;
                 return (
-                  <li key={s.id}>
-                    <StatusBadge status={s} />
-                    <strong>{count}</strong>
+                  <li key={w.id}>
+                    <button
+                      type="button"
+                      className="dash-row"
+                      onClick={() => openTask(task.id)}
+                    >
+                      <span className="agenda-time">
+                        {formatMinutes(startM)}–{formatMinutes(endM)}
+                      </span>
+                      <span className="dash-row-name">{task.title}</span>
+                      <span className="agenda-meta">
+                        {project?.name ?? '—'}
+                        {client ? ` → ${client.name}` : ''}
+                      </span>
+                      <StatusBadge status={getStatus(state, task.statusId)} />
+                    </button>
                   </li>
                 );
               })}
+              {agenda.dateless.map((task) => (
+                <li key={task.id}>
+                  <button
+                    type="button"
+                    className="dash-row agenda-dateless"
+                    onClick={() => openTask(task.id)}
+                  >
+                    <span className="agenda-time muted">bez godziny</span>
+                    <span className="dash-row-name">{task.title}</span>
+                    <span className="agenda-meta muted">do {formatShort(task.endDate)}</span>
+                  </button>
+                </li>
+              ))}
             </ul>
-            <Link to="/kanban" className="link-btn">
-              Otwórz kanban →
-            </Link>
-          </motion.div>
-
-          <motion.div className="dash-card" variants={dashCardVariants}>
-            <h2>Terminy (14 dni)</h2>
-            {overdue.length === 0 && deadlines.length === 0 ? (
-              <p className="muted">Brak terminów w najbliższych dwóch tygodniach.</p>
-            ) : (
-              <ul className="dash-list">
-                {overdue.map((p) => (
-                  <li key={p.id}>
-                    <button
-                      type="button"
-                      className="dash-row danger"
-                      onClick={() => navigate(`/projects/${p.id}`)}
-                    >
-                      <Coin paid={p.paid} size={14} />
-                      <span className="dash-row-name">{p.name}</span>
-                      <span className="dash-row-when">po terminie ({formatShort(p.endDate)})</span>
-                      <ChevronRight className="card-chevron" size={16} aria-hidden />
-                    </button>
-                  </li>
-                ))}
-                {deadlines.map((p) => (
-                  <li key={p.id}>
-                    <button
-                      type="button"
-                      className="dash-row"
-                      onClick={() => navigate(`/projects/${p.id}`)}
-                    >
-                      <Coin paid={p.paid} size={14} />
-                      <span className="dash-row-name">{p.name}</span>
-                      <span className="dash-row-when">{formatShort(p.endDate)}</span>
-                      <ChevronRight className="card-chevron" size={16} aria-hidden />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {milestones.length > 0 && (
-              <>
-                <h3 className="dash-subhead">Kamienie milowe</h3>
-                <ul className="dash-list">
-                  {milestones.map((m) => (
-                    <li key={m.id}>
-                      <button
-                        type="button"
-                        className="dash-row"
-                        onClick={() => navigate(`/projects/${m.projectId}`)}
-                      >
-                        <span aria-hidden>◆</span>
-                        <span className="dash-row-name">{m.name}</span>
-                        <span className="dash-row-when">{formatShort(m.date)}</span>
-                        <ChevronRight className="card-chevron" size={16} aria-hidden />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-          </motion.div>
-
-          <motion.div className="dash-card" variants={dashCardVariants}>
-            <h2>Płatności</h2>
-            <p>
-              <Coin paid size={16} /> <strong>{state.projects.length - unpaid.length}</strong> opłacone
-              {' · '}
-              <Coin paid={false} size={16} /> <strong>{unpaid.length}</strong> nieopłacone
-            </p>
-            {unpaid.length > 0 && (
-              <ul className="dash-list">
-                {unpaid.slice(0, 5).map((p) => (
-                  <li key={p.id}>
-                    <button
-                      type="button"
-                      className="dash-row"
-                      onClick={() => navigate(`/projects/${p.id}`)}
-                    >
-                      <Coin paid={false} size={14} />
-                      <span className="dash-row-name">{p.name}</span>
-                      <span className="dash-row-when muted">
-                        {getClient(state, p.clientId)?.name ?? ''}
-                      </span>
-                      <ChevronRight className="card-chevron" size={16} aria-hidden />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <Link to="/projects" className="link-btn">
-              Wszystkie projekty →
-            </Link>
-          </motion.div>
-
-          <motion.div className="dash-card" variants={dashCardVariants}>
-            <h2>Przeciążenia w tym tygodniu</h2>
-            {overloads.length === 0 ? (
-              <p className="muted">Nikt nie przekracza dostępności w tym tygodniu.</p>
-            ) : (
-              <ul className="dash-list">
-                {overloads.map(({ date, personId }) => {
-                  const person = getPerson(state, personId);
-                  if (!person) return null;
-                  return (
-                    <li key={`${date}-${personId}`}>
-                      <button
-                        type="button"
-                        className="dash-row danger"
-                        onClick={() => navigate(`/people/${personId}`)}
-                      >
-                        <span className="dash-row-name">⚠ {person.name}</span>
-                        <span className="dash-row-when">
-                          {formatRowLabel(date)} —{' '}
-                          {formatDuration(hoursForPersonOnDate(state, personId, date))} /{' '}
-                          {formatDuration(personCapacity(state, personId))}
-                        </span>
-                        <ChevronRight className="card-chevron" size={16} aria-hidden />
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-            <Link to="/workload" className="link-btn">
-              Panel obciążenia →
-            </Link>
-          </motion.div>
+          )}
         </motion.div>
-      )}
+
+        {/* (b) Team chat (mockup) */}
+        <motion.div className="dash-card" variants={dashCardVariants}>
+          <div className="dash-card-head">
+            <h2>Zespół</h2>
+            <span className="demo-badge">Wersja demonstracyjna</span>
+          </div>
+          <ChatMock coworkers={coworkers} />
+        </motion.div>
+
+        {/* (c) Workload summary */}
+        <motion.div className="dash-card" variants={dashCardVariants}>
+          <h2>Obciążenie</h2>
+          <div className="donut-row">
+            <WorkloadDonut label="Dziś" booked={bookedToday} available={availableToday} />
+            <WorkloadDonut label="Ten tydzień" booked={bookedWeek} available={availableWeek} />
+          </div>
+        </motion.div>
+
+        {/* (d) Week strip */}
+        <motion.div className="dash-card" variants={dashCardVariants}>
+          <div className="dash-card-head">
+            <h2>Twój tydzień</h2>
+            <Link to="/calendar" className="link-btn">
+              Otwórz kalendarz →
+            </Link>
+          </div>
+          <div className="week-strip">
+            {week.map((d) => {
+              const blocks = weekMap.get(d) ?? [];
+              const shown = blocks.slice(0, MAX_DAY_BLOCKS);
+              const extra = blocks.length - shown.length;
+              const classes = [
+                'week-strip-day',
+                isTodayStr(d) ? 'is-today' : '',
+                isWeekend(d) ? 'is-weekend' : '',
+              ]
+                .filter(Boolean)
+                .join(' ');
+              return (
+                <div key={d} className={classes}>
+                  <div className="week-strip-head">
+                    <span className="week-strip-dow">{weekdayHeader(d)}</span>
+                    <span className="week-strip-num">{dayNumber(d)}</span>
+                  </div>
+                  {blocks.length === 0 ? (
+                    <p className="week-strip-empty">—</p>
+                  ) : (
+                    <ul className="week-strip-blocks">
+                      {shown.map((w) => {
+                        const task = state.tasks.find((t) => t.id === w.taskId);
+                        return (
+                          <li key={w.id}>
+                            <span className="week-strip-time">{formatMinutes(w.startMinutes)}</span>{' '}
+                            {task?.title ?? '—'}
+                          </li>
+                        );
+                      })}
+                      {extra > 0 && <li className="week-strip-more">+{extra} więcej</li>}
+                    </ul>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </motion.div>
+      </motion.div>
     </section>
   );
 }

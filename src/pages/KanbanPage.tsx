@@ -14,7 +14,8 @@ import {
   tasksOfProject,
 } from '../store/selectors';
 import { Coin } from '../components/Coin';
-import { PaidFilterToggle, type PaidFilter } from './ProjectsPage';
+import { FilterPanel, type FilterChip, type FilterGroup } from '../components/FilterPanel';
+import { type PaidFilter } from './ProjectsPage';
 import { formatShort } from '../utils/dates';
 import { formatDuration } from '../utils/time';
 
@@ -52,6 +53,50 @@ export function KanbanPage() {
     [state.projects, paidFilter, clientFilter],
   );
 
+  const paidLabel = (v: PaidFilter) =>
+    v === 'paid' ? 'Opłacone' : v === 'unpaid' ? 'Nieopłacone' : 'Wszystkie';
+
+  const filterGroups: FilterGroup[] = [
+    {
+      key: 'paid',
+      label: 'Płatność',
+      value: paidFilter,
+      onChange: (v) => setPaidFilter(v as PaidFilter),
+      options: [
+        { value: 'all', label: 'Wszystkie' },
+        { value: 'paid', label: 'Opłacone' },
+        { value: 'unpaid', label: 'Nieopłacone' },
+      ],
+    },
+    {
+      key: 'client',
+      label: 'Klient',
+      value: clientFilter,
+      onChange: setClientFilter,
+      options: [
+        { value: '', label: 'Wszyscy klienci' },
+        ...state.clients.map((c) => ({ value: c.id, label: c.name })),
+      ],
+    },
+  ];
+
+  const activeCount = (paidFilter !== 'all' ? 1 : 0) + (clientFilter ? 1 : 0);
+
+  const chips: FilterChip[] = [];
+  if (paidFilter !== 'all')
+    chips.push({ key: 'paid', label: `Płatność: ${paidLabel(paidFilter)}`, onRemove: () => setPaidFilter('all') });
+  if (clientFilter)
+    chips.push({
+      key: 'client',
+      label: `Klient: ${getClient(state, clientFilter)?.name ?? '—'}`,
+      onRemove: () => setClientFilter(''),
+    });
+
+  const clearAll = () => {
+    setPaidFilter('all');
+    setClientFilter('');
+  };
+
   const onDrop = (statusId: string, e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(null);
@@ -79,19 +124,12 @@ export function KanbanPage() {
       <div className="page-head">
         <h1>Kanban</h1>
         <div className="cal-toolbar">
-          <PaidFilterToggle value={paidFilter} onChange={setPaidFilter} />
-          <select
-            value={clientFilter}
-            onChange={(e) => setClientFilter(e.target.value)}
-            aria-label="Filtruj po kliencie"
-          >
-            <option value="">Wszyscy klienci</option>
-            {state.clients.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+          <FilterPanel
+            groups={filterGroups}
+            activeCount={activeCount}
+            onClearAll={clearAll}
+            chips={chips}
+          />
         </div>
       </div>
 

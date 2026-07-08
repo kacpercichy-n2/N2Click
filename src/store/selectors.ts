@@ -263,6 +263,63 @@ export function dayTotal(
   );
 }
 
+/**
+ * A person's day agenda for the dashboard "Zadania na dziś" section. Pure.
+ * - `timed`: that person's dated (non-bin) workload entries on `date`, ascending
+ *   `startMinutes` (ties by `sortIndex`) — the calendar order IS the priority.
+ * - `dateless`: tasks the person is assigned to whose period covers `date` but
+ *   which have NO entry for that person that day, excluding done-status tasks
+ *   (the last active status), sorted by nearest `endDate` then title.
+ * There is intentionally no priority field — ordering is derived here only.
+ */
+export function todayAgendaForPerson(
+  state: AppData,
+  personId: string,
+  date: DateStr,
+): { timed: WorkloadEntry[]; dateless: Task[] } {
+  const timed = state.workload
+    .filter((w) => w.personId === personId && w.date === date)
+    .sort((a, b) => a.startMinutes - b.startMinutes || a.sortIndex - b.sortIndex);
+
+  const doneStatusId = activeStatuses(state).slice(-1)[0]?.id;
+  const timedTaskIds = new Set(timed.map((w) => w.taskId));
+  const assignedTaskIds = new Set(taskIdsOfPerson(state, personId));
+
+  const dateless = state.tasks
+    .filter(
+      (t) =>
+        assignedTaskIds.has(t.id) &&
+        t.startDate <= date &&
+        date <= t.endDate &&
+        t.statusId !== doneStatusId &&
+        !timedTaskIds.has(t.id),
+    )
+    .sort((a, b) => a.endDate.localeCompare(b.endDate) || a.title.localeCompare(b.title));
+
+  return { timed, dateless };
+}
+
+/**
+ * A person's dated blocks for each of `dates`, keyed by date string, each day's
+ * entries sorted ascending by `startMinutes` (ties by `sortIndex`). Days with no
+ * blocks map to an empty array. Pure — keeps the dashboard week strip
+ * selector-only.
+ */
+export function weekBlocksForPerson(
+  state: AppData,
+  personId: string,
+  dates: DateStr[],
+): Map<DateStr, WorkloadEntry[]> {
+  const map = new Map<DateStr, WorkloadEntry[]>();
+  for (const d of dates) {
+    const blocks = state.workload
+      .filter((w) => w.personId === personId && w.date === d)
+      .sort((a, b) => a.startMinutes - b.startMinutes || a.sortIndex - b.sortIndex);
+    map.set(d, blocks);
+  }
+  return map;
+}
+
 // ---- Bin (zasobnik) — dateless unassigned entries ----
 
 /** A person's bin entries (date === ''), ordered by their bin sortIndex. */

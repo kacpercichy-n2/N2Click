@@ -14,10 +14,12 @@ import {
   realUser,
   realUserId,
   taskGrowAllowance,
+  todayAgendaForPerson,
+  weekBlocksForPerson,
 } from './selectors';
 import { emptyData } from './storage';
 import { BIN_DATE } from '../utils/time';
-import type { AppData, Person, Task, WorkloadEntry } from '../types';
+import type { AppData, Person, Task, TaskAssignment, WorkloadEntry } from '../types';
 
 function makeState(overrides: Partial<AppData> = {}): AppData {
   return { ...emptyData(), ...overrides };
@@ -69,6 +71,12 @@ function makeEntry(overrides: Partial<WorkloadEntry> & { id: string }): Workload
     sortIndex: 0,
     ...overrides,
   };
+}
+
+function makeAssignment(
+  overrides: Partial<TaskAssignment> & { id: string; taskId: string; personId: string },
+): TaskAssignment {
+  return { ...overrides };
 }
 
 describe('conflictDatesForTask — bin exclusion (regression)', () => {
@@ -309,5 +317,207 @@ describe('availability selectors', () => {
     ];
 
     expect(availableHoursInRange(state, 'p1', week)).toBe(24); // 4 workdays * 6h
+  });
+});
+
+// ---------------------------------------------------------------------------
+// todayAgendaForPerson / weekBlocksForPerson (PKG-20260709-dashboard-selector-tests)
+// Implementation shipped by PKG-20260709-dashboard-welcome.
+// ---------------------------------------------------------------------------
+
+describe('todayAgendaForPerson', () => {
+  const DATE = '2026-07-08'; // Wednesday
+
+  it('timed: returns this person\'s entries on the date, sorted by startMinutes, excluding other people/dates', () => {
+    const late = makeEntry({ id: 'e-late', taskId: 't1', personId: 'p1', date: DATE, startMinutes: 600 });
+    const early = makeEntry({ id: 'e-early', taskId: 't1', personId: 'p1', date: DATE, startMinutes: 480 });
+    const otherPerson = makeEntry({ id: 'e-other-person', taskId: 't1', personId: 'p2', date: DATE, startMinutes: 500 });
+    const otherDate = makeEntry({ id: 'e-other-date', taskId: 't1', personId: 'p1', date: '2026-07-09', startMinutes: 490 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      people: [makePerson({ id: 'p1' }), makePerson({ id: 'p2' })],
+      workload: [late, early, otherPerson, otherDate],
+    });
+
+    const { timed } = todayAgendaForPerson(state, 'p1', DATE);
+    expect(timed.map((w) => w.id)).toEqual(['e-early', 'e-late']);
+  });
+
+  it('timed: a bin entry (date === BIN_DATE) for the same person never shows up when querying a real date', () => {
+    const dated = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: DATE, startMinutes: 480 });
+    const bin = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, sortIndex: 0 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      people: [makePerson({ id: 'p1' })],
+      workload: [dated, bin],
+    });
+
+    const { timed } = todayAgendaForPerson(state, 'p1', DATE);
+    expect(timed.map((w) => w.id)).toEqual(['e1']);
+    expect(timed.some((w) => w.date === BIN_DATE)).toBe(false);
+  });
+
+  it('dateless: an assigned task covering the date with NO entry that day appears; the same task WITH an entry that day does not', () => {
+    const withoutEntry = makeTask({
+      id: 't-no-entry',
+      title: 'No entry today',
+      startDate: '2026-07-06',
+      endDate: '2026-07-10',
+    });
+    const withEntry = makeTask({
+      id: 't-with-entry',
+      title: 'Has entry today',
+      startDate: '2026-07-06',
+      endDate: '2026-07-10',
+    });
+    const entryToday = makeEntry({ id: 'e1', taskId: 't-with-entry', personId: 'p1', date: DATE });
+    const state = makeState({
+      tasks: [withoutEntry, withEntry],
+      people: [makePerson({ id: 'p1' })],
+      assignments: [
+        makeAssignment({ id: 'a1', taskId: 't-no-entry', personId: 'p1' }),
+        makeAssignment({ id: 'a2', taskId: 't-with-entry', personId: 'p1' }),
+      ],
+      workload: [entryToday],
+    });
+
+    const { dateless, timed } = todayAgendaForPerson(state, 'p1', DATE);
+    expect(dateless.map((t) => t.id)).toEqual(['t-no-entry']);
+    expect(timed.map((w) => w.taskId)).toEqual(['t-with-entry']);
+  });
+
+  it('dateless excludes: task period before/after the date, task assigned to someone else, and a done-status task', () => {
+    const base = emptyData();
+    const doneStatusId = base.statuses[base.statuses.length - 1].id; // last active status = "done"
+    const activeStatusId = base.statuses[0].id;
+
+    const before = makeTask({
+      id: 't-before',
+      statusId: activeStatusId,
+      startDate: '2026-07-01',
+      endDate: '2026-07-05', // ends before DATE
+    });
+    const after = makeTask({
+      id: 't-after',
+      statusId: activeStatusId,
+      startDate: '2026-07-10',
+      endDate: '2026-07-12', // starts after DATE
+    });
+    const someoneElse = makeTask({
+      id: 't-someone-else',
+      statusId: activeStatusId,
+      startDate: '2026-07-06',
+      endDate: '2026-07-10',
+    });
+    const done = makeTask({
+      id: 't-done',
+      statusId: doneStatusId,
+      startDate: '2026-07-06',
+      endDate: '2026-07-10',
+    });
+
+    const state = makeState({
+      ...base,
+      tasks: [before, after, someoneElse, done],
+      people: [makePerson({ id: 'p1' }), makePerson({ id: 'p2' })],
+      assignments: [
+        makeAssignment({ id: 'a1', taskId: 't-before', personId: 'p1' }),
+        makeAssignment({ id: 'a2', taskId: 't-after', personId: 'p1' }),
+        makeAssignment({ id: 'a3', taskId: 't-someone-else', personId: 'p2' }),
+        makeAssignment({ id: 'a4', taskId: 't-done', personId: 'p1' }),
+      ],
+      workload: [],
+    });
+
+    const { dateless } = todayAgendaForPerson(state, 'p1', DATE);
+    expect(dateless).toEqual([]);
+  });
+
+  it('dateless ordering: ascending endDate, ties broken by title', () => {
+    const zebra = makeTask({ id: 't-zebra', title: 'Zebra', startDate: '2026-07-01', endDate: '2026-07-10' });
+    const banana = makeTask({ id: 't-banana', title: 'Banana', startDate: '2026-07-01', endDate: '2026-07-10' });
+    const apple = makeTask({ id: 't-apple', title: 'Apple', startDate: '2026-07-01', endDate: '2026-07-09' });
+    const state = makeState({
+      tasks: [zebra, banana, apple],
+      people: [makePerson({ id: 'p1' })],
+      assignments: [
+        makeAssignment({ id: 'a1', taskId: 't-zebra', personId: 'p1' }),
+        makeAssignment({ id: 'a2', taskId: 't-banana', personId: 'p1' }),
+        makeAssignment({ id: 'a3', taskId: 't-apple', personId: 'p1' }),
+      ],
+      workload: [],
+    });
+
+    const { dateless } = todayAgendaForPerson(state, 'p1', DATE);
+    expect(dateless.map((t) => t.id)).toEqual(['t-apple', 't-banana', 't-zebra']);
+  });
+
+  it('empty results: a person with no assignments and no entries gets both arrays empty', () => {
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      people: [makePerson({ id: 'p1' })],
+      workload: [],
+      assignments: [],
+    });
+
+    const { timed, dateless } = todayAgendaForPerson(state, 'p1', DATE);
+    expect(timed).toEqual([]);
+    expect(dateless).toEqual([]);
+  });
+});
+
+describe('weekBlocksForPerson', () => {
+  const WEEK = [
+    '2026-07-06', // Mon
+    '2026-07-07', // Tue
+    '2026-07-08', // Wed
+    '2026-07-09', // Thu
+    '2026-07-10', // Fri
+    '2026-07-11', // Sat
+    '2026-07-12', // Sun
+  ];
+
+  it('returns one key per requested date, each sorted by startMinutes, and an empty array (not a missing key) for days with no entries', () => {
+    const monLate = makeEntry({ id: 'mon-late', taskId: 't1', personId: 'p1', date: '2026-07-06', startMinutes: 600 });
+    const monEarly = makeEntry({ id: 'mon-early', taskId: 't1', personId: 'p1', date: '2026-07-06', startMinutes: 480 });
+    const wed = makeEntry({ id: 'wed1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 540 });
+    const fri = makeEntry({ id: 'fri1', taskId: 't1', personId: 'p1', date: '2026-07-10', startMinutes: 500 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      people: [makePerson({ id: 'p1' })],
+      workload: [monLate, monEarly, wed, fri],
+    });
+
+    const map = weekBlocksForPerson(state, 'p1', WEEK);
+
+    expect(Array.from(map.keys())).toEqual(WEEK);
+    expect(map.get('2026-07-06')?.map((w) => w.id)).toEqual(['mon-early', 'mon-late']);
+    expect(map.get('2026-07-08')?.map((w) => w.id)).toEqual(['wed1']);
+    expect(map.get('2026-07-10')?.map((w) => w.id)).toEqual(['fri1']);
+    // Days with no blocks -> present as an explicit empty array per the JSDoc contract.
+    expect(map.has('2026-07-07')).toBe(true);
+    expect(map.get('2026-07-07')).toEqual([]);
+    expect(map.get('2026-07-09')).toEqual([]);
+    expect(map.get('2026-07-11')).toEqual([]);
+    expect(map.get('2026-07-12')).toEqual([]);
+  });
+
+  it('excludes other people\'s entries and bin entries', () => {
+    const mine = makeEntry({ id: 'mine', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480 });
+    const theirs = makeEntry({ id: 'theirs', taskId: 't1', personId: 'p2', date: '2026-07-08', startMinutes: 480 });
+    const bin = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, sortIndex: 0 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      people: [makePerson({ id: 'p1' }), makePerson({ id: 'p2' })],
+      workload: [mine, theirs, bin],
+    });
+
+    const map = weekBlocksForPerson(state, 'p1', WEEK);
+
+    expect(map.get('2026-07-08')?.map((w) => w.id)).toEqual(['mine']);
+    for (const d of WEEK) {
+      expect(map.get(d)?.some((w) => w.personId === 'p2')).toBe(false);
+      expect(map.get(d)?.some((w) => w.date === BIN_DATE)).toBe(false);
+    }
   });
 });

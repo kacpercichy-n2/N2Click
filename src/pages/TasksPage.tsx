@@ -7,12 +7,15 @@ import {
   assigneeIdsOfTask,
   assigneesOfTask,
   getClient,
+  getPerson,
   getProject,
   getStatus,
   taskPlannedTotal,
 } from '../store/selectors';
 import { FilterPresets, DEFAULT_CRITERIA } from '../components/FilterPresets';
+import { FilterPanel, type FilterChip, type FilterGroup } from '../components/FilterPanel';
 import { ChevronRight } from '../components/icons';
+import { formatShort } from '../utils/dates';
 import { PersonChip } from '../components/PersonChip';
 import { StatusBadge } from '../components/StatusBadge';
 import { Coin } from '../components/Coin';
@@ -56,13 +59,6 @@ export function TasksPage() {
     [state.tasks],
   );
 
-  const anyFilter =
-    clientFilter !== '' ||
-    statusFilter !== '' ||
-    personFilter !== '' ||
-    from !== '' ||
-    to !== '';
-
   const tasks = useMemo(
     () =>
       allTasks.filter((t) => {
@@ -105,6 +101,68 @@ export function TasksPage() {
     setTo('');
   };
 
+  const filterGroups: FilterGroup[] = [
+    {
+      key: 'client',
+      label: 'Klient',
+      value: clientFilter,
+      onChange: setClientFilter,
+      options: [
+        { value: '', label: 'Wszyscy klienci' },
+        ...state.clients.map((c) => ({ value: c.id, label: c.name })),
+      ],
+    },
+    {
+      key: 'status',
+      label: 'Status',
+      value: statusFilter,
+      onChange: setStatusFilter,
+      options: [
+        { value: '', label: 'Wszystkie statusy' },
+        ...statuses.map((s) => ({ value: s.id, label: s.name })),
+      ],
+    },
+    {
+      key: 'person',
+      label: 'Osoba',
+      value: personFilter,
+      onChange: setPersonFilter,
+      options: [
+        { value: '', label: 'Wszystkie osoby' },
+        ...state.people.map((p) => ({ value: p.id, label: p.name })),
+      ],
+    },
+  ];
+
+  const activeCount =
+    (clientFilter ? 1 : 0) +
+    (statusFilter ? 1 : 0) +
+    (personFilter ? 1 : 0) +
+    (from ? 1 : 0) +
+    (to ? 1 : 0);
+
+  const chips: FilterChip[] = [];
+  if (clientFilter)
+    chips.push({
+      key: 'client',
+      label: `Klient: ${getClient(state, clientFilter)?.name ?? '—'}`,
+      onRemove: () => setClientFilter(''),
+    });
+  if (statusFilter)
+    chips.push({
+      key: 'status',
+      label: `Status: ${getStatus(state, statusFilter)?.name ?? '—'}`,
+      onRemove: () => setStatusFilter(''),
+    });
+  if (personFilter)
+    chips.push({
+      key: 'person',
+      label: `Osoba: ${getPerson(state, personFilter)?.name ?? '—'}`,
+      onRemove: () => setPersonFilter(''),
+    });
+  if (from) chips.push({ key: 'from', label: `Od: ${formatShort(from)}`, onRemove: () => setFrom('') });
+  if (to) chips.push({ key: 'to', label: `Do: ${formatShort(to)}`, onRemove: () => setTo('') });
+
   const handleDelete = (taskId: string, title: string) => {
     if (window.confirm(`Usunąć „${title}”? To usunie przypisania i zaplanowane godziny.`)) {
       dispatch({ type: 'DELETE_TASK', taskId });
@@ -137,63 +195,13 @@ export function TasksPage() {
       ) : (
         <>
           <div className="cal-toolbar">
-            <div className="filter-controls">
-              <select
-                value={clientFilter}
-                onChange={(e) => setClientFilter(e.target.value)}
-                aria-label="Filtruj po kliencie"
-              >
-                <option value="">Wszyscy klienci</option>
-                {state.clients.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                aria-label="Filtruj po statusie"
-              >
-                <option value="">Wszystkie statusy</option>
-                {statuses.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={personFilter}
-                onChange={(e) => setPersonFilter(e.target.value)}
-                aria-label="Filtruj po osobie"
-              >
-                <option value="">Wszystkie osoby</option>
-                {state.people.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="date"
-                value={from}
-                onChange={(e) => setFrom(e.target.value)}
-                aria-label="Filtruj od daty"
-                title="Od"
-              />
-              <input
-                type="date"
-                value={to}
-                onChange={(e) => setTo(e.target.value)}
-                aria-label="Filtruj do daty"
-                title="Do"
-              />
-              {anyFilter && (
-                <button type="button" className="btn ghost small" onClick={clearFilters}>
-                  Wyczyść filtry
-                </button>
-              )}
-            </div>
+            <FilterPanel
+              groups={filterGroups}
+              dates={{ from, to, onFrom: setFrom, onTo: setTo }}
+              activeCount={activeCount}
+              onClearAll={clearFilters}
+              chips={chips}
+            />
             <span className="filter-count muted">
               {tasks.length} z {allTasks.length} zadań
             </span>

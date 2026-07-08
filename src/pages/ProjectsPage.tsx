@@ -7,6 +7,7 @@ import { useCan } from '../store/useCan';
 import type { ProjectDraft } from '../store/AppStore';
 import {
   activeStatuses,
+  getClient,
   getServiceType,
   getStatus,
   peopleIdsOfProject,
@@ -16,44 +17,17 @@ import {
 import { Coin } from '../components/Coin';
 import { StatusBadge } from '../components/StatusBadge';
 import { FilterPresets, DEFAULT_CRITERIA } from '../components/FilterPresets';
+import { FilterPanel, type FilterChip, type FilterGroup } from '../components/FilterPanel';
 import { useOpenTask } from '../components/TaskModal';
 import { ChevronRight, GanttChart, Plus } from '../components/icons';
 import type { SavedFilterCriteria } from '../types';
-import { addDaysStr, todayStr } from '../utils/dates';
+import { addDaysStr, formatShort, todayStr } from '../utils/dates';
 import { parseDate } from '../utils/dates';
 import { formatDuration } from '../utils/time';
 import { format } from 'date-fns';
 import { pl } from 'date-fns/locale/pl';
 
 export type PaidFilter = 'all' | 'paid' | 'unpaid';
-
-export function PaidFilterToggle({
-  value,
-  onChange,
-}: {
-  value: PaidFilter;
-  onChange: (v: PaidFilter) => void;
-}) {
-  const opts: Array<[PaidFilter, string]> = [
-    ['all', 'Wszystkie'],
-    ['paid', 'Opłacone'],
-    ['unpaid', 'Nieopłacone'],
-  ];
-  return (
-    <div className="cal-view-toggle" role="group" aria-label="Filtr płatności">
-      {opts.map(([v, label]) => (
-        <button
-          key={v}
-          type="button"
-          className={value === v ? 'toggle-btn active' : 'toggle-btn'}
-          onClick={() => onChange(v)}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 function rangeLabel(start: string, end: string): string {
   const s = parseDate(start);
@@ -138,6 +112,68 @@ export function ProjectsPage() {
     setFrom(c.from);
     setTo(c.to);
   };
+
+  const paidLabel = (v: PaidFilter) =>
+    v === 'paid' ? 'Opłacone' : v === 'unpaid' ? 'Nieopłacone' : 'Wszystkie';
+
+  const filterGroups: FilterGroup[] = [
+    {
+      key: 'paid',
+      label: 'Płatność',
+      value: paidFilter,
+      onChange: (v) => setPaidFilter(v as PaidFilter),
+      options: [
+        { value: 'all', label: 'Wszystkie' },
+        { value: 'paid', label: 'Opłacone' },
+        { value: 'unpaid', label: 'Nieopłacone' },
+      ],
+    },
+    {
+      key: 'client',
+      label: 'Klient',
+      value: clientFilter,
+      onChange: setClientFilter,
+      options: [
+        { value: '', label: 'Wszyscy klienci' },
+        ...state.clients.map((c) => ({ value: c.id, label: c.name })),
+      ],
+    },
+    {
+      key: 'status',
+      label: 'Status',
+      value: statusFilter,
+      onChange: setStatusFilter,
+      options: [
+        { value: '', label: 'Wszystkie statusy' },
+        ...statuses.map((s) => ({ value: s.id, label: s.name })),
+      ],
+    },
+  ];
+
+  const activeCount =
+    (paidFilter !== 'all' ? 1 : 0) +
+    (clientFilter ? 1 : 0) +
+    (statusFilter ? 1 : 0) +
+    (from ? 1 : 0) +
+    (to ? 1 : 0);
+
+  const chips: FilterChip[] = [];
+  if (paidFilter !== 'all')
+    chips.push({ key: 'paid', label: `Płatność: ${paidLabel(paidFilter)}`, onRemove: () => setPaidFilter('all') });
+  if (clientFilter)
+    chips.push({
+      key: 'client',
+      label: `Klient: ${getClient(state, clientFilter)?.name ?? '—'}`,
+      onRemove: () => setClientFilter(''),
+    });
+  if (statusFilter)
+    chips.push({
+      key: 'status',
+      label: `Status: ${getStatus(state, statusFilter)?.name ?? '—'}`,
+      onRemove: () => setStatusFilter(''),
+    });
+  if (from) chips.push({ key: 'from', label: `Od: ${formatShort(from)}`, onRemove: () => setFrom('') });
+  if (to) chips.push({ key: 'to', label: `Do: ${formatShort(to)}`, onRemove: () => setTo('') });
 
   // Group by client (clients in list order, then any orphaned projects).
   const groups = useMemo(() => {
@@ -277,45 +313,17 @@ export function ProjectsPage() {
       )}
 
       <div className="cal-toolbar">
-        <PaidFilterToggle value={paidFilter} onChange={setPaidFilter} />
-        <select
-          value={clientFilter}
-          onChange={(e) => setClientFilter(e.target.value)}
-          aria-label="Filtruj po kliencie"
-        >
-          <option value="">Wszyscy klienci</option>
-          {state.clients.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          aria-label="Filtruj po statusie"
-        >
-          <option value="">Wszystkie statusy</option>
-          {statuses.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
-        <input
-          type="date"
-          value={from}
-          onChange={(e) => setFrom(e.target.value)}
-          aria-label="Filtruj od daty"
-          title="Od"
+        <FilterPanel
+          groups={filterGroups}
+          dates={{ from, to, onFrom: setFrom, onTo: setTo }}
+          activeCount={activeCount}
+          onClearAll={() => applyPreset(DEFAULT_CRITERIA)}
+          chips={chips}
         />
-        <input
-          type="date"
-          value={to}
-          onChange={(e) => setTo(e.target.value)}
-          aria-label="Filtruj do daty"
-          title="Do"
-        />
+        <span className="filter-count muted">
+          {filtered.length} z {state.projects.length}{' '}
+          {polishCount(state.projects.length, 'projekt', 'projekty', 'projektów')}
+        </span>
       </div>
 
       <FilterPresets page="projects" criteria={criteria} onApply={applyPreset} />

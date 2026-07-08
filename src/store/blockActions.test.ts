@@ -179,6 +179,34 @@ describe('SET_BLOCK_TIME', () => {
     expect(next).toBe(state);
   });
 
+  // PKG-20260709-bin-drop-freeze: a bin row wider than a day can never be
+  // dropped — the reducer rejects plannedHours > 24 and returns the same state
+  // ref. The BinCard UI now mirrors this (danger tint + Polish hint) so the
+  // doomed drop reverts with feedback instead of silently snapping home.
+  it('rejects dropping a > 24h bin row onto the grid (same state ref)', () => {
+    const binRow = makeEntry({
+      id: 'bigbin',
+      taskId: 't1',
+      personId: 'p1',
+      date: BIN_DATE,
+      startMinutes: 0,
+      plannedHours: 30,
+      sortIndex: 0,
+    });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      workload: [binRow],
+    });
+    const next = reducer(state, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'bigbin',
+      date: '2026-07-08',
+      startMinutes: 0,
+      plannedHours: 30,
+    });
+    expect(next).toBe(state);
+  });
+
   it('rejects an unknown entryId', () => {
     const state = makeState({
       tasks: [makeTask({ id: 't1' })],

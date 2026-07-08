@@ -1,0 +1,2915 @@
+diff --git a/handoffs/RUN-STATE.md b/handoffs/RUN-STATE.md
+index 0118694..8c90bf5 100644
+--- a/handoffs/RUN-STATE.md
++++ b/handoffs/RUN-STATE.md
+@@ -7,87 +7,94 @@ boring and factual — it's a checklist, not prose.
+ 
+ > Previous runs (2026-07-08 "Unassigned bin + block split + sidebar collapse";
+ > 2026-07-08 "Walkthrough fixes"; 2026-07-08 "Hour budget + block merging ·
+-> accounts/roles/permissions · sidebar icon fix" — APPROVED, committed as
+-> ff4fd8a) are archived in the git history of this file.
++> accounts/roles/permissions · sidebar icon fix" — committed as ff4fd8a;
++> 2026-07-08 "Bug-fix round 2: budget minting holes · bin drag ghost ·
++> impersonation trap" — APPROVED after delta re-check, committed as 28b9dae)
++> are archived in the git history of this file.
+ > **Carried-over items still open:** (a) human browser walkthrough of the
+ > approved runs' interactive criteria (role matrix per role, budget clamp +
+-> merge animation, availability math, restricted insert picker, workday fill);
++> merge animation, availability math, restricted insert picker, workday fill,
++> round-2 items: insert-form allowance warnings, TaskModal over-budget banner +
++> estimate snap, bin ghost visibility, impersonation banner/return);
+ > (b) commit hygiene — untracked `automation/`, modified `.gitignore`;
+-> (c) CLAUDE.md refresh (login/roles/permissions, budget/bin invariants,
+-> availability semantics, week-view panes) — human task, not a worker package.
++> (c) CLAUDE.md refresh (login/roles/permissions, budget/bin invariants +
++> no-mint rule, impersonatorId session model + banner, availability semantics,
++> week-view panes) — human task, not a worker package.
+ > **Carried backlog (non-blocking):** Codex #5 `workDays: []` 0%-vs-overload
+ > display; pre-existing `insertBlock` end-of-day clamp overlap; status archive
+ > hides projects from Kanban; `toQuarters` placement (→ utils/time.ts); v4
+-> payload with zero administrators (promote-first-person idea). The "unsnapped
+-> `estimatedHours`" backlog item is FIXED by this run (PKG-…-b2-calendar-ui).
++> payload with zero administrators (promote-first-person idea); framer-motion
++> PopChild dev-only ref warning (bump `motion` when fixed or move `menuRef`
++> to an inner wrapper).
+ 
+ ---
+ 
+-## Run: 2026-07-08 — Bug-fix round 2: budget minting holes · bin drag ghost · impersonation trap
++## Run: 2026-07-09 — Bin-drag freeze fix · Timeline people mode · Filter panel UX · Dashboard welcome page
+ 
+ ### Plan (architect)
+ 
+-- **Goal:** Fix three user-reported, orchestrator-verified bugs. (1) Hours can
+-  still be minted past the task budget through every non-drag path
+-  (AllocationGrid/SAVE_TASK, "Wypełnij dni robocze", "Dodaj do zasobnika",
+-  INSERT_BLOCK) and unlimited drag-grow on `estimatedHours: null` tasks —
+-  calendar-side paths must never create hours; TaskModal becomes the sole,
+-  warned, deliberate over-planning surface. (2) Dragging a card out of the bin
+-  pane renders it invisible (overflow clipping of the translated card) — the
+-  drag ghost must escape the pane. (3) "Występuj jako" is a self-demotion
+-  trap: an admin who picks a non-admin loses the switcher itself — separate the
+-  logged-in identity from the acted-as identity with a persistent return
+-  banner.
+-
+-- **Key decisions (pre-resolved — details in the packages, no open questions):**
+-  - **Unified budget allowance** for a (task, person):
+-    `bin hours + (estimate === null ? 0 : headroom)` — `growAllowanceHours`
+-    never returns null anymore; `estimatedHours: null` tasks get bin-conserving
+-    drag-grow (bin only, nothing minted). `INSERT_BLOCK` enforces the same
+-    allowance with bin-first draw (mirrors `SET_BLOCK_TIME`). Moves and
+-    shrinks are never budget-checked.
+-  - **TaskModal stays uncapped at the store level** (SAVE_TASK/newUnassigned):
+-    it is the deliberate re-planning surface — instead it gets a live,
+-    non-blocking `Przekroczono szacunek o X` banner + danger-tinted totals,
+-    and the insert form gets a live warning + disabled `Wstaw` past the
+-    allowance. Estimate now snaps to 0.25 on save (closes a reviewer backlog
+-    item; no 24h clamp).
+-  - **Bin drag ghost**: `position: fixed` portal to `document.body` following
+-    the pointer (grab-offset preserved), `pointer-events: none`, keeps the
+-    colliding danger tint; the in-pane source card stays mounted (pointer
+-    capture intact) and dims. Drop math unchanged.
+-  - **Impersonation**: additive `AppData.impersonatorId: string` ('' = not
+-    impersonating; NO version bump — defaulted + sanitized on every load like
+-    `ensureStartMinutes`). New `IMPERSONATE`/`STOP_IMPERSONATION` actions;
+-    login/LOGOUT clear it; chained switches preserve the original real user;
+-    DELETE_PERSON interplay handled. Permissions are a TRUE PREVIEW (follow
+-    the acted-as identity; comments keep signing as acted-as); ONLY the
+-    switcher visibility and the return banner key off the real user
+-    (`realUserId` selector). Switcher loses the `—` option; persistent
+-    warning banner `Występujesz jako … — Wróć do …` above SampleBanner.
+-
+-- **Packages** (sequential — 2 and 3 both touch styles.css; 4 needs 1+3):
+-  1. `handoffs/packages/PKG-20260708-b2-budget-store.md` — tier: developer —
+-     reducer/selector budget enforcement (`taskGrowAllowance`,
+-     null-estimate grow cap, INSERT_BLOCK draw/reject) + mechanical
+-     existing-test adaptations.
+-  2. `handoffs/packages/PKG-20260708-b2-calendar-ui.md` — tier: developer —
+-     insert-form warning/disable, TaskModal over-budget banner + estimate
+-     snap, bin drag ghost portal (depends 1).
+-  3. `handoffs/packages/PKG-20260708-b2-impersonation.md` — tier: developer —
+-     impersonatorId model + actions + selectors + switcher/banner UI
+-     (depends 2 for styles.css ordering only).
+-  4. `handoffs/packages/PKG-20260708-b2-tests.md` — tier: test-writer —
+-     20 case groups across blockActions/selectors/storage tests
+-     (depends 1 + 3; test files only).
++- **Goal:** Four user asks. (1) BUG, highest priority: dragging a card from
++  the Zasobnik onto the week grid freezes the site — root-cause and fix.
++  (2) Timeline gains a people mode (rows = people with their task bars;
++  read-only bars, click opens the task). (3) Replace the select-bar filtering
++  on Projects/Tasks/Kanban/Workload with a `Filtry` button + popover panel +
++  applied-filter chips + clear-all (presets keep working). (4) Rebuild the
++  Panel as the worker's morning page: today's tasks, mock team chat with fake
++  presence, SVG donut workload summary (today/week), week strip of the user's
++  blocks.
++
++- **Architect's freeze analysis (pre-resolved for the developer):** a full
++  static pass found NO unconditional infinite loop in the drop path — the
++  `setBlockTime` adjacency-merge `for (;;)` (AppStore ~L913) strictly removes
++  one entry per iteration; all reducer/util loops are bounded; every mounted
++  effect has deps; no rAF/interval/ResizeObserver. The freeze is therefore
++  state- or environment-dependent: reproduce first, then instrument. Ranked
++  hypotheses + instrumentation plan are in the package. One adjacent defect is
++  CONFIRMED from code: a bin row with `plannedHours > 24` can never be dropped
++  (reducer rejects >24h) and reverts with zero feedback — its UX fix is in
++  scope of the bug package (danger-tint the ghost + Polish title hint;
++  reducer unchanged).
++
++- **Key decisions (pinned in the packages — no open questions):**
++  - Timeline people mode: `Projekty | Osoby` toggle; person groups in list
++    order; one row per involved task (assignment OR workload entry); bars
++    STATIC (`editable={false}`) — no drag in people mode (dragging one
++    person's bar would reschedule every assignee); click opens TaskModal;
++    PersonFilter narrows people, client select narrows tasks.
++  - Filter panel: single-select radio groups (SavedFilterCriteria and stored
++    presets stay 100% compatible — no storage change); live apply, no
++    "Zastosuj"; chips per active criterion + `Wyczyść wszystko`; pages:
++    Projects, Tasks, Kanban, Workload; PersonFilter chip rows untouched;
++    `PaidFilterToggle` retired once both users are migrated.
++  - Dashboard: NO new priority field this run — ordering = today's blocks by
++    `startMinutes`, then dateless in-period assigned tasks by nearest
++    deadline; chat is an explicit mockup (deterministic fake presence,
++    component-state-only messages + canned reply, `Wersja demonstracyjna`
++    badge, nothing persisted); donuts are plain SVG; old dashboard cards
++    removed entirely; two new pure selectors (`todayAgendaForPerson`,
++    `weekBlocksForPerson`) so the page stays selector-only.
++
++- **Packages** (sequential — 2/3/4 all touch styles.css; 5 needs 4):
++  1. `handoffs/packages/PKG-20260709-bin-drop-freeze.md` — tier: developer —
++     reproduce + root-cause + fix the freeze; >24h bin-drop UX; regression
++     test if reducer-level.
++  2. `handoffs/packages/PKG-20260709-timeline-people-view.md` — tier:
++     developer — Osoby mode on the timeline (read-only bars, shared zoom/nav).
++  3. `handoffs/packages/PKG-20260709-filter-panel.md` — tier: developer —
++     shared FilterPanel component + 4 page integrations + chips/badge CSS.
++  4. `handoffs/packages/PKG-20260709-dashboard-welcome.md` — tier: developer —
++     Panel rewrite (4 sections) + 2 new selectors + ChatMock.
++  5. `handoffs/packages/PKG-20260709-dashboard-selector-tests.md` — tier:
++     test-writer — unit tests for the 2 new selectors (test file only).
+ 
+ - **Gates:** `npx tsc --noEmit` + `npm test` + `npm run build` green after
+-  every package (baseline 157/157; dev server already running on 5173 — nobody
+-  starts a second one). Reviewer verdict after all packages; human browser
+-  walkthrough items collected from worker reports.
+-- **Open questions:** none. Post-run human note: CLAUDE.md refresh must now
+-  also cover the no-mint budget rule, impersonatorId session model, and the
+-  banner (folds into carried-over item c).
++  every package (baseline 186/186; dev server already running on 5173 —
++  nobody starts a second one). Console free of errors on the walked-through
++  pages. Reviewer verdict after all packages; human walkthrough items
++  collected from worker reports.
++- **Open questions:** none. Post-run human note: CLAUDE.md refresh (carried
++  item c) must additionally cover the timeline people mode, the FilterPanel
++  pattern, the rebuilt Panel, and the bug's root cause once known.
+ 
+ ### Worker log
+ 
+@@ -101,207 +108,203 @@ boring and factual — it's a checklist, not prose.
+ - **Next:** <hand to which tier / ready for review / done>
+ -->
+ 
+-#### 2026-07-08 · developer · `PKG-20260708-b2-budget-store`
+-
+-- **Changed:**
+-  - `src/store/selectors.ts` — added exported `taskGrowAllowance(state, taskId, personId): number` (bin hours + headroom, headroom 0 for null-estimate); rewrote `growAllowanceHours` to delegate and return `number` (dropped `| null`, updated JSDoc).
+-  - `src/store/AppStore.tsx` `setBlockTime` — grow enforcement now applies to ALL tasks (removed `estimatedHours !== null` gate); null-estimate ⇒ `headroomQ = 0`, so grow is bin-only. Bin-first draw and activity suffixes unchanged.
+-  - `src/store/AppStore.tsx` `insertBlock` — added no-mint budget check for `(payload.taskId, ref.personId)` after the hours snap; rejects (same state ref) when snapped hours > bin+headroom; drains the same-task bin row bin-first (delete at 0) on the `shifted` array, adds `dayKey(ref.personId, BIN_DATE)` to the reindex set, and appends `; pobrano z zasobnika: …` to the activity message when drawn.
+-  - `src/components/WeekView.tsx` (~L163) — mechanical: `growAllowanceHours` no longer returns null; `maxHours = baseHours + growAllowanceHours(...)`, stale null comment fixed. No other WeekView changes (belong to calendar-ui pkg).
+-  - `src/store/blockActions.test.ts` — gave the 5 INSERT_BLOCK fixtures (~L221-311) an `estimatedHours: 10` on `t2` so the no-mint rule draws from headroom instead of rejecting (preserves ripple/push, auto-assign, gap, other-people intent); rewrote the `estimatedHours: null grows freely…` regression (~L854) to the new contract (grow succeeds up to the 3h bin drained/deleted, rejected at +3.25h). INSERT_BLOCK bin-reject test (L700) and cross-task/person merge tests (L1001+) untouched (early-return / move paths, unaffected).
+-  - `src/store/selectors.test.ts` — rewrote the null-estimate `growAllowanceHours` case to expect `0` (a number, not null); added a companion case: null-estimate with a 3h bin row ⇒ allowance `3`.
+-- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean; vitest **158 passed** (was 157; +1 from the added null-estimate-with-bin selector case); build OK (pre-existing >500 kB chunk warning only).
+-- **Still broken:** nothing.
+-- **Next:** ready for `PKG-20260708-b2-calendar-ui` (WeekView insert-form warning/disable, TaskModal banner, bin drag ghost) — this package left WeekView otherwise untouched as specified.
+-
+-#### 2026-07-08 · developer · `PKG-20260708-b2-calendar-ui`
+-
+-- **Changed:**
+-  - `src/components/WeekView.tsx` — insert form: added `insertAllowance`/`overAllowance` (via `taskGrowAllowance(state, insertTaskId||menu.entry.taskId, menu.entry.personId)`, recomputes on task-select change), second `context-warning` line (0-allowance vs "najwyżej {allowance}" variants), and `overAllowance` folded into the `Wstaw` disable + a matching guard in `confirmInsert` (blocks Enter past budget). BinCard rewritten to a fixed-position drag ghost: `BinDragState` now tracks `clientX/clientY`, grab offset (`grabX/grabY`) and captured `width`; the in-pane original keeps all handlers + pointer capture and gets a `drag-source` (dimmed) class, while a `createPortal(..., document.body)` ghost (`week-bin-ghost`, `pointer-events:none`, keeps `colliding` tint) follows the pointer. Old `dx/dy` transform removed. Added `react-dom` `createPortal` + `taskGrowAllowance` imports.
+-  - `src/components/TaskModal.tsx` — estimate now snaps on save (`snapHours`, no clamp; empty/invalid/≤0 ⇒ null). Added `draftTotal`/`overBudget` (plannedTotalAll + binTotal vs parsed estimate); live non-blocking `estimate-over` banner under `.estimate-compare` + `over-budget` class on the "zaplanowano" strong. Saving stays allowed. Added `snapHours` import.
+-  - `src/styles.css` — `.estimate-compare strong.over-budget` (danger text), `.estimate-over` (danger-soft banner), `.week-bin-block.drag-source` (0.35 opacity), `.week-bin-ghost` (fixed, z-index 1000, pointer-events none, transition none, violet shadow).
+-- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean; vitest **158 passed** (no test changes — interaction-only pkg); build OK (pre-existing >500 kB chunk warning only).
+-- **Still broken:** nothing.
+-- **Deviations:** none from the package. Added a `confirmInsert` budget guard (not explicitly listed) so the Enter-key path matches the disabled `Wstaw` button; harmless (reducer already rejects).
+-- **Needs human/browser walkthrough** (not CLI-verifiable): (1) insert form warning text + disabled Wstaw at/over allowance incl. 0-allowance variant, and task-select recompute; (2) TaskModal over-budget banner + danger total appears/clears live as grid/bin/fill change, save still works; snapped estimate persists (40.1→40); (3) bin card ghost stays visible across the whole viewport (grid/header/axis), shows danger tint over a colliding slot, drops as before, snaps home on Escape/invalid, source card dims, plain click still opens the task; console clean.
+-- **Next:** ready for `PKG-20260708-b2-impersonation` (depends on this for styles.css ordering).
+-
+-#### 2026-07-08 · developer · `PKG-20260708-b2-impersonation`
+-
+-- **Changed:**
+-  - `src/types.ts` — `AppData.impersonatorId: string` field ('' = not impersonating; the real user's id while `currentUserId` is impersonated) + doc comment. No version bump.
+-  - `src/store/storage.ts` — `emptyData()` and `migrateV1`'s return include `impersonatorId: ''`; new exported `sanitizeImpersonator(data)` (clears to '' when dangling or === currentUserId) applied on BOTH `loadData` return paths (v1-migration + same-version), after ensureStartMinutes. Idempotent, disjoint fields.
+-  - `src/store/AppStore.tsx` — Action union gains `IMPERSONATE { personId }` and `STOP_IMPERSONATION`; cases per decision 2 (no-op on missing/self; picking impersonator's own row = return; chained switches preserve the ORIGINAL real user via `impersonatorId || currentUserId`; STOP no-op at ''). `SET_CURRENT_USER` and `LOGOUT` both clear `impersonatorId` to '' (LOGOUT clears both ids). `deletePerson` interplay (decision 3): deleting the impersonated person returns session to impersonator; deleting the impersonator clears bookkeeping, keeps acted-as. No activity rows.
+-  - `src/store/selectors.ts` — exported `realUserId`, `realUser`, `isImpersonating` (pure, JSDoc).
+-  - `src/App.tsx` — switcher gated on `can(actualUser=realUser, 'users.impersonate', …)` so it never vanishes for the admin; `onChange` dispatches `IMPERSONATE`; removed the `"—"` empty option; `value={state.currentUserId}` unchanged. New warning-toned `impersonation-banner` above `<SampleBanner />`, rendered only when `isImpersonating && currentUser && actualUser`, with `Wróć do {realUser.name}` → `STOP_IMPERSONATION`.
+-  - `src/store/seed.ts` — sample object literal gains `impersonatorId: ''` (tsc).
+-  - `src/styles.css` — `.impersonation-banner` (+ `-text`, button) with `--n2-warning` tokens and a ≤760px stacked layout.
+-- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean; vitest **158 passed** (no test changes needed — `makeState` spreads `emptyData()`, and storage.test's v4Payload is a `Record<string, unknown>`; new coverage belongs to PKG-…-b2-tests); build OK (pre-existing >500 kB chunk warning only).
+-- **Still broken:** nothing.
+-- **Deviations:** none. (Banner text uses the gender-neutral variant `— aktywne są uprawnienia tej osoby.` per decision 7's option.)
+-- **Needs human/browser walkthrough** (not CLI-verifiable): (1) admin picks Marek → nav/admin gate + block gating collapse to Marek, switcher STAYS visible, banner shows, `Wróć do {admin}` restores in one click; (2) chained admin→Marek→Ola returns to the ORIGINAL admin; (3) comment posted while impersonating is signed by the impersonated person; (4) reload mid-impersonation restores both identities; a dangling/self impersonatorId clears on load; (5) LOGOUT lands on login and clears both ids, re-login never impersonated; (6) delete the impersonated person → session returns to impersonator; delete the impersonator → bookkeeping clears; (7) non-admin never sees the switcher; (8) no `—` option; banner usable ≤760px.
+-- **Next:** ready for `PKG-20260708-b2-tests` (test-writer) and the reviewer verdict.
+-
+-#### 2026-07-08 · test-writer · `PKG-20260708-b2-tests`
+-
+-- **Changed (test files only, no implementation touched):**
+-  - `src/store/blockActions.test.ts` — added: 5 `it`s for `SET_BLOCK_TIME` grow on unbudgeted (`estimatedHours: null`) tasks (partial/full bin drain + `pobrano z zasobnika`, reject past bin with no headroom, reject cross-task/cross-person bin rows, move-only never rejected, shrink creates/merges a bin row); 5 `it`s for `INSERT_BLOCK` budget (headroom-only within/past, bin-first draw with headroom remainder, exact-allowance boundary ±0.25h, unbudgeted insert ≤/>bin, picker task ≠ ref task uses the selected task's allowance); 5 `it`s for the impersonation reducer (`IMPERSONATE` set/no-op-missing/no-op-self, chained-impersonation preserves the original + return-via-own-row, `STOP_IMPERSONATION` restore/no-op, `SET_CURRENT_USER`+`LOGOUT` both clear `impersonatorId`, `DELETE_PERSON` of the impersonated person vs. the impersonator).
+-  - `src/store/selectors.test.ts` — added `taskGrowAllowance` import + 4 `it`s (null-estimate bin-only, estimate sums bin+headroom, over-planned floors headroom at 0 while bin still counts, no entries ⇒ 0); `growAllowanceHours` number-contract 2 `it`s (typeof number, missing entry id ⇒ 0); `realUserId`/`realUser`/`isImpersonating` imports + 2 `it`s (not impersonating ⇒ self/false, impersonating ⇒ impersonator id/true).
+-  - `src/store/storage.test.ts` — added an `impersonatorId persistence` describe with a local `v5Payload` builder + 5 `it`s: missing field defaults to `''`, valid id round-trips, dangling id sanitized to `''`, id === currentUserId sanitized to `''`, idempotent reload.
+-- **Tests:** `npx tsc --noEmit && npm test` → tsc clean; vitest **186 passed** (was 158 baseline; +28 new tests, 0 removed/modified existing assertions). `git status --short` confirms only the three test files changed by this package (the pre-existing implementation-file diffs are from the three developer packages already landed).
+-- **Bugs found:** none — every new assertion passed against the shipped `AppStore.tsx`/`selectors.ts`/`storage.ts` behavior once the fixtures were corrected (see below); no spec-vs-implementation mismatch to report.
+-- **Self-corrections during authoring** (test math errors, not implementation bugs): (1) an `INSERT_BLOCK` "exact allowance" fixture first assumed `allowance = estimate + bin`, forgetting `taskBudget.totalAll` already includes the bin row's hours — headroom nets the bin out, so `allowance` for a task with no *other* planned hours simply equals the estimate; rebuilt the fixture with a second person's dated entry so bin+headroom compose to a value below the estimate, matching the package's intent. (2) a `taskGrowAllowance` "no entries at all ⇒ 0" case initially used `estimatedHours: 10`, which correctly yields `headroom = 10` (not 0) — changed to `estimatedHours: null` to match the stated expected value.
+-- **Skipped/stubbed:** none — all 20 case groups implemented with behavioral assertions.
+-- **Next:** ready for reviewer verdict (all 4 packages of this run now closed).
++#### 2026-07-09 · developer (opus) · `PKG-20260709-bin-drop-freeze`
++
++- **Root cause (H4 — confirmed, component-level, cross-checked with Codex):**
++  `src/components/WeekView.tsx` `BinCard.begin` called
++  `(e.target as HTMLElement).setPointerCapture(e.pointerId)`. `e.target` is the
++  innermost node under the pointer — a child `<span>` of the card. On a valid
++  bin→grid drop, `finish` dispatches `SET_BLOCK_TIME`; the entry stops being a
++  bin entry, so React synchronously (discrete pointerup flush) UNMOUNTS the
++  BinCard and the captured child span mid-event. The browser's implicit
++  pointer-capture release never completes cleanly on a node detached during its
++  own pointerup, wedging document-wide pointer delivery → the site "freezes"
++  (no unconditional render/reducer loop — the `setBlockTime` merge `for(;;)`
++  is strictly bounded, as the architect's static pass found). The portal ghost
++  makes it reproduce reliably (visible drag target lives outside the captured
++  subtree). `TimedBlock` used the same `e.target` capture but a same-grid move
++  never unmounts it, so it never freezes — but its grid→bin drop
++  (`MOVE_BLOCK_TO_BIN`) has the same latent risk, so it got the same fix.
++- **Fix:** capture on the stable card/block root (`e.currentTarget`) instead of
++  `e.target`, and explicitly `releasePointerCapture` (via a `captureRef`) BEFORE
++  any state-changing dispatch and on the Escape / pointercancel paths, in both
++  `BinCard` and `TimedBlock`.
++- **Adjacent defect fixed (confirmed):** a bin row with `plannedHours > 24`
++  (or off the 0.25h grid) can never be dropped — `setBlockTime` L789 rejects
++  it. Previously it snapped home silently. Now `BinCard` flags it `unplaceable`:
++  the drag reads as colliding the whole time (danger-tinted ghost, drop reverts
++  with no doomed dispatch) and the card `title` explains why in Polish
++  (`Blok jest dłuższy niż doba — podziel go, aby nadać termin.`). Reducer
++  unchanged.
++- **Changed:** `src/components/WeekView.tsx` — `BinCard` + `TimedBlock` capture
++  on `currentTarget` + `releaseCapture()` before dispatch/on cancel/Escape;
++  `BinCard` `unplaceable` danger-tint + Polish title hint for > 24h/off-grid
++  rows; `src/store/blockActions.test.ts` — regression case asserting a > 24h bin
++  drop returns the same state ref.
++- **Tests:** `npx tsc --noEmit` clean · `npm test` → 187 passed (186 baseline +
++  1 new) · `npm run build` → OK.
++- **Still broken:** nothing found. The freeze root cause is component-level
++  (pointer-capture/unmount) so it has no unit test — see manual walkthrough
++  below.
++- **Manual walkthrough (for the human/reviewer):** (a) drag a normal bin card
++  onto a free grid slot → it lands with the target date + snapped startMinutes,
++  the bin row disappears, day totals update, page stays responsive, console
++  clean; (b) repeat several times in a row → no lockup; (c) a > 24h bin row
++  (e.g. from repeated shrink/merge) shows the danger tint the whole drag, its
++  drop reverts, and its tooltip explains why; (d) plain click on a bin card
++  still opens the task; Escape mid-drag still cancels; a bin drop onto an
++  occupied slot still reverts (collision).
++- **Next:** ready for review; then next package `PKG-20260709-timeline-people-view`.
++
++#### 2026-07-09 · developer (opus) · `PKG-20260709-timeline-people-view`
++
++- **Changed:** `src/pages/TimelinePage.tsx` — added `Projekty | Osoby` mode
++  toggle (`cal-view-toggle` button group, plain `useState`, not persisted);
++  new `peopleView` useMemo (person groups in people-list order, narrowed by
++  ownerFilter + client filter; involved task = assignment OR any workload entry
++  dated/bin; sorted startDate then title; per-person planned total via
++  `entriesForTaskPerson`); people-mode rendering reuses `Bar` with
++  `editable={false}` + `resizable={false}` (click/Enter opens TaskModal), shared
++  `DayStripes`/zoom/range/nav; mode-aware hint text + empty state
++  (`Brak zadań do wyświetlenia`). `src/styles.css` — `.timeline-person-row`,
++  `.timeline-person-label`, `.timeline-person-dot` (person color dot) using
++  existing `--n2-*` tokens.
++- **Decisions within bounds:** people-mode `Bar` gets a no-op `onCommit`
++  (required prop; no pointer handlers fire because `editable`/`resizable` are
++  false, verified in the `Bar` body — drag/resize handlers are gated on
++  `editable`). Added a second `cal-view-toggle` group rather than merging with
++  the week-range presets. peopleView memo depends on state slices
++  (people/tasks/assignments/workload/projects) + filters, mirroring the `view`
++  memo style — not whole `state`.
++- **Tests:** `npx tsc --noEmit` clean · `npm test` → 187 passed (no new tests;
++  read-only view, per package) · `npm run build` → OK.
++- **Still broken:** nothing found.
++- **Manual walkthrough (for the human/reviewer):** (a) Oś czasu defaults to
++  `Projekty`; project mode unchanged (bars drag/resize, milestones, overdue
++  tint); (b) switch to `Osoby` → one group per seeded person with their task
++  bars at correct offsets/spans, status colors match, tooltip shows
++  `{title}: {start} – {end} — {osoba}: {Xh} zaplanowane`; (c) click a bar →
++  TaskModal opens; bars don't drag/resize; (d) PersonFilter narrows which
++  person groups show, client select narrows tasks; person with no matching
++  task is omitted; empty state appears when nothing matches; (e) zoom +
++  week-range presets + prev/today/next + weekend stripes + today line all work
++  in Osoby mode; console clean.
++- **Next:** ready for review; then next package `PKG-20260709-filter-panel`.
++
++#### 2026-07-09 · developer (opus) · `PKG-20260709-filter-panel`
++
++- **Changed:** `src/components/FilterPanel.tsx` — NEW shared component: `Filtry`
++  button + active-count badge, popover of radio option groups + optional
++  date inputs (`<fieldset><legend>` + native inputs), applied-filter chips with
++  per-chip ✕, footer `Wyczyść wszystko`; closes on outside mousedown / Escape /
++  toggle (WeekView pattern, no scrim). `src/pages/ProjectsPage.tsx` — removed
++  `PaidFilterToggle` component (kept `PaidFilter` type export); toolbar now
++  renders `FilterPanel` (groups Płatność/Klient/Status + dates) + a result
++  count. `src/pages/TasksPage.tsx` — replaced the `<select>` filter-controls with
++  `FilterPanel` (Klient/Status/Osoba + dates); dropped now-unused `anyFilter`;
++  kept the `X z Y zadań` count. `src/pages/KanbanPage.tsx` — `FilterPanel`
++  (Płatność/Klient, no dates); import switched from `PaidFilterToggle` to
++  `type PaidFilter`. `src/pages/WorkloadPage.tsx` — `FilterPanel`
++  (Dział/Klient/Rodzaj usługi, no dates). `src/styles.css` — filter panel/badge/
++  popover/group/option/chip styles + ≤760px full-width static popover.
++- **Decisions within bounds:** (a) added a `X z Y projektów` result count to
++  Projects (it had none) so the acceptance line "result counts still render on
++  Projects/Tasks" holds; no filtering-logic change. (b) date criteria (`from`/
++  `to`) each render as their own chip (`Od:`/`Do:` via `formatShort`) and count
++  toward the badge — consistent with "one chip per active criterion". (c) date
++  group legend labeled `Okres` (labels inside are `Od`/`Do` per pinned #9). (d)
++  `PaidFilter` type export kept on ProjectsPage (Kanban still uses it); only the
++  `PaidFilterToggle` component was deleted. Filtering `useMemo` predicates and
++  `SavedFilterCriteria`/presets left untouched — presentation swap only.
++- **Tests:** `npx tsc --noEmit` clean · `npm test` → 187 passed (no logic
++  change, no new tests) · `npm run build` → OK · `rg PaidFilterToggle src` → no
++  hits.
++- **Still broken:** nothing found. (Dead `.filter-controls` CSS left in place —
++  harmless, was Tasks-only; not removed to keep the diff tight.)
++- **Manual walkthrough (for the human/reviewer):** (a) each of Projects/Tasks/
++  Kanban/Workload shows a `Filtry` button; no inline `<select>` bar remains;
++  (b) opening the panel shows radio groups (first option neutral) + date inputs
++  where applicable; picking an option applies live and updates results, badge
++  and chips; (c) badge count == number of active criteria; each chip ✕ clears
++  only its criterion; `Wyczyść wszystko` resets all + hides badge; (d) panel
++  closes on outside click / Escape / button re-click; usable full-width at
++  ≤760px; (e) Projects `?client=` deep-link still pre-filters and shows its
++  Klient chip; (f) Projects/Tasks presets: applying a saved preset updates panel
++  state/badge/chips; saving a preset from panel-set filters round-trips; (g)
++  console clean.
++- **Next:** ready for review; then next package `PKG-20260709-dashboard-welcome`.
++
++#### 2026-07-09 · developer (opus) · `PKG-20260709-dashboard-welcome`
++
++- **Changed:** `src/pages/DashboardPage.tsx` — full rewrite into the worker's
++  morning page: greeting header (`Dzień dobry, {firstName}` + `formatRowLabel`)
++  and 4 motion-staggered cards — (a) `Zadania na dziś` (timed blocks then
++  dateless in-period assigned tasks, rows open the TaskModal via `useOpenTask`),
++  (b) `Zespół` mock chat card with `Wersja demonstracyjna` badge, (c)
++  `Obciążenie` two SVG donuts (Dziś / Ten tydzień), (d) `Twój tydzień` 7-col Mon–Sun
++  block strip; old pipeline/terminy/płatności/przeciążenia cards removed; setup
++  empty-state (no resolvable current user) preserved verbatim.
++  `src/components/ChatMock.tsx` — NEW: coworkers list + deterministic-per-day
++  fake presence dots + bottom-right chat popup with component-state-only messages
++  and a ~1s canned reply; nothing persisted. `src/store/selectors.ts` — NEW pure
++  selectors `todayAgendaForPerson` (timed + dateless split per pinned rule) and
++  `weekBlocksForPerson` (Map<DateStr, WorkloadEntry[]>). `src/styles.css` — new
++  dashboard-welcome section: 2×2 grid ≥1180px / single-column ≤1180px, agenda
++  rows, chat people/popup (full-width bottom sheet ≤760px), donuts, week strip
++  (2-col ≤760px).
++- **Decisions within bounds:** (a) `WorkloadDonut` is a local component in
++  DashboardPage (plain SVG two-circle ring, `--n2-lavender` fill / `--n2-danger`
++  when booked > available, guarded ratio/pct so 0 availability → empty ring +
++  `0h / 0h`, 0%). (b) Row separators from pinned #2/#5 rendered as flex layout +
++  a `→` between project and client rather than literal `·` glyphs, matching the
++  existing `dash-row` style. (c) Presence hash lives inside ChatMock (pure, uses
++  only `todayStr()`), not a selector — it is mock data, not app state. (d)
++  Greeting date uses `text-transform: capitalize` since `formatRowLabel` is
++  lowercase Polish weekday.
++- **Tests:** `npx tsc --noEmit` clean · `npm test` → 187 passed (no new tests;
++  selector unit tests are the follow-up test-writer package) · `npm run build`
++  → OK.
++- **Still broken:** nothing found.
++- **Manual walkthrough (for the human/reviewer):** (a) `/dashboard` shows the
++  greeting + exactly 4 sections; old cards gone; (b) as Kasia, `Zadania na dziś`
++  lists today's blocks in start-time order with `H:MM–H:MM` ranges + project→client
++  + StatusBadge, clicking opens the TaskModal; switching acting user re-renders
++  (a)/(c)/(d); (c) chat: coworkers with presence dots, popup opens/closes, sending
++  echoes + canned reply after ~1s, `n2hub.data.v1` byte-identical after chatting;
++  (d) donuts show correct ratio, danger color when overloaded, no NaN with 0
++  availability; (e) week strip Mon–Sun, today highlighted, weekend tinted,
++  `+n więcej` past 4; (f) empty store → welcome empty-state + sample banner still
++  works; console clean.
++- **Next:** ready for review; then final package `PKG-20260709-dashboard-selector-tests` (test-writer).
++
++#### 2026-07-09 · test-writer (sonnet) · `PKG-20260709-dashboard-selector-tests`
++
++- **Changed:** `src/store/selectors.test.ts` — 8 new behavioral tests, test
++  file only (`git diff --stat` confirms 211 insertions / 1 deletion in this
++  file alone; no production file touched). `describe('todayAgendaForPerson')`
++  (6 tests — one per case group in the package): timed sorted by
++  `startMinutes` excluding other people/dates; a bin entry (`date===BIN_DATE`)
++  never appears in `timed` for a real-date query; a dateless task with no
++  same-day entry appears while the same task WITH a same-day entry doesn't
++  (and shows up in `timed` instead); dateless excludes period-before, period-
++  after, assigned-to-someone-else, and done-status (last active status)
++  tasks all in one fixture; dateless ordering by ascending `endDate` then
++  title tiebreak; empty assignments/entries → both arrays `[]`.
++  `describe('weekBlocksForPerson')` (2 tests): a 7-day Mon-start week fixture
++  asserts one key per requested date (`Array.from(map.keys())` order-equal to
++  the input dates), each list sorted by `startMinutes`, and days with no
++  entries map to an explicit empty array (verified `map.has(...)` true +
++  `toEqual([])`, matching the JSDoc "days with no blocks map to an empty
++  array" contract — no missing keys); a second test confirms other people's
++  entries and bin entries (`date===BIN_DATE`) never leak into any date's list.
++- **Tests:** `npx tsc --noEmit` → clean · `npm test` → 195 passed (187
++  baseline + 8 new, 0 removed).
++- **Spec-vs-implementation mismatches:** none found — both selectors matched
++  their JSDoc/package contract on every case tried (no fix needed, none made).
++- **Still broken:** nothing found.
++- **Next:** ready for review — this was the last package in the 2026-07-09
++  run.
+ 
+ ### Reviewer verdict
+ 
+ <!-- Reviewer appends here after workers finish. -->
+-
+-## Reviewer verdict (bug-fix round 2)
+-
+-- **Status:** CHANGES-REQUIRED (one low-severity blocker; everything else clean — re-review can be a fast delta check)
+-- **Gates (re-run by reviewer):** `npx tsc --noEmit` clean · vitest **186/186** · `npm run build` OK (pre-existing >500 kB chunk warning only).
+-
+-### Blockers
+-
+-1. **[P2 · developer tier · `src/components/TaskModal.tsx:481-485`]** Estimate
+-   normalization checks `estRaw <= 0` BEFORE snapping, so positive inputs in
+-   (0, 0.125) — e.g. `0.1` — persist as `estimatedHours: 0` instead of `null`,
+-   contradicting the code's own comment ("non-positive input clears it back to
+-   null"). A 0-estimate task has `taskGrowAllowance = bin only` ⇒ all calendar
+-   inserts/grows blocked and the over-budget banner shows permanently — the
+-   exact trap class this run exists to close. Fix (one line, snap-then-clear):
+-   `const snapped = snapHours(estRaw); estimatedHours = empty || NaN || snapped <= 0 ? null : snapped;`
+-   and reuse the normalized value for the live comparison (see nit 1). Note:
+-   the worker was FAITHFUL to the package's literal formula — the spec carried
+-   the bug; route as a micro-fix to the developer, no design decision needed.
+-
+-### Nits (non-blocking; recommend folding into the same fix pass)
+-
+-1. `TaskModal.tsx:519,541` — `overBudget` compares `draftTotal` against the RAW
+-   `estNum` while save persists the snapped value: typing `1.13` with `1.25`
+-   planned shows a false over-budget banner that vanishes after save. Derive
+-   one normalized estimate used for save, display, and `overBudget`.
+-2. `WeekView.tsx:704,761-771` — the insert form checks raw `hoursRaw` against
+-   the allowance before reducer-equivalent snapping: `1.01` is blocked though
+-   the reducer would snap to `1.0` and accept. Verified over-strict ONLY —
+-   `snapHours` is monotone and the allowance is always a quarter multiple, so
+-   the form can never let through what the reducer rejects. UX polish, not a
+-   safety hole.
+-
+-### Codex findings (reviews/2026-07-08-215302-codex-review.md) — adjudicated
+-
+-- **#1 (P2, TaskModal estimate 0.1→0):** ACCEPTED → blocker 1. Verified in code.
+-- **#2 (P3, banner vs snapped estimate):** ACCEPTED → nit 1. Verified.
+-- **#3 (P3, insert form raw-hours check):** ACCEPTED → nit 2. Verified, and
+-  confirmed the mismatch is one-directional (over-strict), so no reject-path bypass.
+-- Nothing dismissed; Codex missed nothing material in the store/impersonation diff.
+-
+-### PopChild console warning — root-caused, DISMISSED as a this-round defect
+-
+-The dev-mode warning "PopChild: `ref` is not a prop" is NOT from the new bin
+-drag ghost: the ghost is a plain portaled `<div>` with zero motion/
+-AnimatePresence involvement. Root cause is framer-motion 12 internals —
+-`PresenceChild` always wraps AnimatePresence children in `PopChild`, whose
+-React-19 compat shim reads `children.props?.ref` (PopChild.mjs:61), which
+-React 18.3 dev mode warns about whenever a direct AnimatePresence child
+-carries a `ref`. The trigger here is the context menu's
+-`<motion.div ref={menuRef}>` (WeekView), present at the ff4fd8a baseline
+-(line 897) — pre-existing, dev-only, zero prod impact. → **Backlog:** bump
+-`motion` when a fixed release lands, or move `menuRef` to an inner wrapper.
+-The orchestrator's attribution to the ghost path is corrected.
+-
+-### Convention check — PASS
+-
+-Polish UI strings throughout; localStorage stays confined to `storage.ts`
+-(`sanitizeImpersonator` follows the `ensureStartMinutes` every-load pattern,
+-additive field, no version bump per plan); budget math in integer quarters
+-(`toQuarters`); activity rows appended in-action (`pobrano z zasobnika`
+-suffix on INSERT_BLOCK); `--n2-warning`/`--n2-danger` tokens; ≤760px banner
+-layout; ghost has `transition: none` + `pointer-events: none` (reduced-motion
+-safe); week grid `user-select: none` untouched; no new dependencies
+-(`createPortal` from existing react-dom).
+-
+-### Test coverage — ADEQUATE
+-
+-All 20 planned case groups landed as behavioral assertions (reject paths use
+-same-reference `toBe(state)`; bin drain values, activity suffixes, chained
+-impersonation, DELETE_PERSON interplay, storage sanitize + idempotence).
+-Accepted gaps: component-level UI (insert-form warning, TaskModal banner/snap,
+-ghost, impersonation banner) — verified live by the orchestrator and listed
+-for the human walkthrough, consistent with repo practice. Blocker 1's fix
+-needs no new unit test (component layer), but the fixed formula should keep
+-the "empty/invalid/≤0 ⇒ null" contract stated in its comment.
+-
+-### Faithfulness
+-
+-All 4 packages match the architect's decisions; the single declared deviation
+-(`confirmInsert` Enter-path budget guard) is harmless and correct. Live
+-orchestrator verification of budget warning/disable, ghost visibility/drop,
+-and impersonation banner/return accepted as input; the two scripted-pointer
+-quirks are consistent with synthetic-event artifacts given the code reads
+-(pointer-capture + real `clientX/Y` driven state).
+-
+-### Fix round (post-review, bug-fix round 2)
+-
+-#### 2026-07-08 · developer · review-fix (P2 blocker + 2 P3 nits)
+-
+-- **Changed:**
+-  - `src/components/TaskModal.tsx` — **P2**: replaced the snap-after-check estimate
+-    normalization with a single component-scope `normalizedEstimate` (snap FIRST
+-    via `snapHours`, then clear to null when empty/invalid/`<= 0` after snapping),
+-    so inputs in (0, 0.125) — e.g. 0.1 → snaps to 0 → null instead of persisting a
+-    0-budget task. **P3 nit 1**: removed the raw `estNum` and routed save
+-    (`draft.estimatedHours`), the `overBudget` comparison, the `vs szacunek`
+-    display, and the over-budget banner delta all through `normalizedEstimate` —
+-    banner/display/save can no longer disagree (no transient false banner).
+-  - `src/components/WeekView.tsx` — **P3 nit 2**: added `snapHours` import; the
+-    insert form now computes `parsedHours = snapHours(Math.min(24, rawHours))`
+-    once (reducer-equivalent) and reuses it for `projectedTotal`/`wouldOverload`,
+-    `overAllowance`, the `Wstaw` disabled state, and `confirmInsert` (which now
+-    reuses `parsedHours`/`overAllowance` instead of re-reading raw `hoursRaw`), so
+-    e.g. 1.01 snaps to 1.0 and is accepted like the reducer would.
+-- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean; vitest
+-  **186 passed** (baseline unchanged); build OK (pre-existing >500 kB chunk
+-  warning only). No new tests: the snap-then-clear rule lives inline in the
+-  component (UI-only), and the insert-form snap mirrors the already-tested
+-  reducer path — no pure function was added, per package note.
+-- **Deviations:** none.
+-- **Needs human/browser walkthrough** (not CLI-verifiable): (1) TaskModal — type
+-  `0.1` into Szacowane godziny, save, reopen → estimate is empty (null), calendar
+-  inserts/grows for that task are NOT blocked; (2) type `1.13` with 1.25h planned
+-  → over-budget banner does NOT appear (normalized to 1.25 == planned); (3) insert
+-  form — `1.01` against a 1.0 allowance → `Wstaw` enabled and Enter inserts (snaps
+-  to 1.0), while `1.5` against 1.0 stays disabled with the allowance warning.
+-- **Next:** ready for reviewer delta re-check.
+-
+-### Reviewer verdict — delta re-check (bug-fix round 2, final)
+-
+-- **Status:** APPROVE (blocker + both nits resolved; run is done pending the
+-  human walkthrough items already collected above)
+-- **Gates (re-run by reviewer):** `npx tsc --noEmit` clean · vitest **186/186** ·
+-  `npm run build` OK (pre-existing >500 kB chunk warning only).
+-- **Delta verified in code:**
+-  - Blocker 1 FIXED — `TaskModal.tsx:470-472` derives `normalizedEstimate`
+-    snap-first (`snapHours` then clear to null when NaN/`<= 0`), so `0.1` →
+-    snap `0` → `null` (no more persisted 0-budget task); negative input also
+-    lands on null.
+-  - Nit 1 FIXED — `normalizedEstimate` is the single source for save (:496),
+-    `overBudget` (:542), the `szacunek` display (:665-667), and the banner
+-    delta (:676); raw `estNum` removed — no transient false banner possible.
+-  - Nit 2 FIXED — `WeekView.tsx:765-766` computes
+-    `parsedHours = snapHours(Math.min(24, rawHours))` once, reused by the
+-    overload preview (:768), `overAllowance` (:775-776), the `Wstaw` disable
+-    (:1085), and `confirmInsert` (:708-716), which now dispatches the snapped
+-    `parsedHours` — form and reducer can no longer disagree in either direction.
+-- **Scope check:** diff limited to the two components; no store/selector/test
+-  changes; no new deps; Polish strings intact. No new tests required (UI-only,
+-  reducer path already covered) — agreed.
+-- **Carried backlog (unchanged):** framer-motion PopChild dev-only ref warning
+-  (library-internal, pre-existing — bump `motion` or move `menuRef` inward);
+-  plus the previously listed carried items.
+-- **Human walkthrough additions from the fix round:** TaskModal `0.1` estimate
+-  → reopens empty (null), task not insert-blocked; `1.13` vs 1.25h planned →
+-  no banner; insert form `1.01` vs 1.0 allowance → enabled and inserts 1.0,
+-  `1.5` vs 1.0 → disabled with warning.
+diff --git a/src/components/WeekView.tsx b/src/components/WeekView.tsx
+index a7c97b8..e7b9c80 100644
+--- a/src/components/WeekView.tsx
++++ b/src/components/WeekView.tsx
+@@ -133,6 +133,21 @@ function TimedBlock({
+   const { dispatch } = useStore();
+   const [drag, setDrag] = useState<DragState | null>(null);
+   const moved = useRef(false);
++  // Pointer-capture bookkeeping — released before any dispatch (a drop-to-bin
++  // unmounts this block; releasing after would wedge document-wide pointer
++  // delivery, matching the bin-card freeze fix).
++  const captureRef = useRef<{ el: HTMLElement; pointerId: number } | null>(null);
++  const releaseCapture = () => {
++    const c = captureRef.current;
++    if (c) {
++      try {
++        c.el.releasePointerCapture(c.pointerId);
++      } catch {
++        // Already released — ignore.
++      }
++      captureRef.current = null;
++    }
++  };
+ 
+   const baseStart = entry.startMinutes;
+   const baseHours = entry.plannedHours;
+@@ -142,6 +157,7 @@ function TimedBlock({
+     if (!drag) return;
+     const onKey = (e: KeyboardEvent) => {
+       if (e.key === 'Escape') {
++        releaseCapture();
+         setDrag(null);
+         setMergeTargetId(null);
+       }
+@@ -153,10 +169,13 @@ function TimedBlock({
+   const begin = (mode: DragMode) => (e: React.PointerEvent) => {
+     if (e.button !== 0) return; // right/middle button → let the context menu open
+     e.stopPropagation();
++    const el = e.currentTarget as HTMLElement;
+     try {
+-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
++      el.setPointerCapture(e.pointerId);
++      captureRef.current = { el, pointerId: e.pointerId };
+     } catch {
+       // No active pointer (synthetic events) — dragging still works within the block.
++      captureRef.current = null;
+     }
+     moved.current = false;
+     const rect = gridRef.current?.getBoundingClientRect();
+@@ -292,6 +311,8 @@ function TimedBlock({
+   const finish = () => {
+     if (!drag) return;
+     const { projStart, projHours, projDayIndex, overBin, colliding, willMergeWithId } = drag;
++    // Release capture before dispatch — a drop-to-bin unmounts this block.
++    releaseCapture();
+     setDrag(null);
+     setMergeTargetId(null);
+     if (!moved.current) return; // treated as a click by onClick
+@@ -369,6 +390,7 @@ function TimedBlock({
+       onPointerCancel={
+         editable
+           ? () => {
++              releaseCapture();
+               setDrag(null);
+               setMergeTargetId(null);
+             }
+@@ -459,12 +481,45 @@ function BinCard({
+   const [drag, setDrag] = useState<BinDragState | null>(null);
+   const moved = useRef(false);
+   const cardRef = useRef<HTMLDivElement | null>(null);
++  // The element + pointer that hold the drag's pointer capture. A successful
++  // drop UNMOUNTS this card (the entry leaves the bin); the capture MUST be
++  // released before that unmount, or the browser leaves pointer-capture cleanup
++  // wedged and the whole page stops receiving pointer events (site "freeze").
++  const captureRef = useRef<{ el: HTMLElement; pointerId: number } | null>(null);
++  const releaseCapture = () => {
++    const c = captureRef.current;
++    if (c) {
++      try {
++        c.el.releasePointerCapture(c.pointerId);
++      } catch {
++        // Already released (implicit release on pointerup/cancel) — ignore.
++      }
++      captureRef.current = null;
++    }
++  };
++
++  // A bin row wider than a day (or off the 15-min/0.25h grid) can NEVER be
++  // dropped — the reducer rejects it (SET_BLOCK_TIME > 24h / off-quarter). Flag
++  // it so the drag shows the danger tint the whole time and reverts cleanly.
++  const quarters = entry.plannedHours * 4;
++  const unplaceable =
++    !Number.isFinite(entry.plannedHours) ||
++    entry.plannedHours < 0.25 ||
++    entry.plannedHours > 24 ||
++    Math.abs(quarters - Math.round(quarters)) > 1e-9;
++  const unplaceableHint =
++    entry.plannedHours > 24
++      ? 'Blok jest dłuższy niż doba — podziel go, aby nadać termin.'
++      : 'Nieprawidłowy czas trwania — podziel blok, aby nadać termin.';
+ 
+   // Cancel the drag on Escape (no dispatch → the card snaps home).
+   useEffect(() => {
+     if (!drag) return;
+     const onKey = (e: KeyboardEvent) => {
+-      if (e.key === 'Escape') setDrag(null);
++      if (e.key === 'Escape') {
++        releaseCapture();
++        setDrag(null);
++      }
+     };
+     window.addEventListener('keydown', onKey);
+     return () => window.removeEventListener('keydown', onKey);
+@@ -473,10 +528,15 @@ function BinCard({
+   const begin = (e: React.PointerEvent) => {
+     if (e.button !== 0) return; // right button → context menu
+     e.stopPropagation();
++    // Capture on the stable card root (currentTarget), not e.target — a child
++    // <span> would be detached first on drop, worsening the capture leak.
++    const el = e.currentTarget as HTMLElement;
+     try {
+-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
++      el.setPointerCapture(e.pointerId);
++      captureRef.current = { el, pointerId: e.pointerId };
+     } catch {
+       // No active pointer (synthetic events) — drag still works.
++      captureRef.current = null;
+     }
+     moved.current = false;
+     // Capture the card geometry once so the fixed ghost keeps its size and stays
+@@ -522,9 +582,14 @@ function BinCard({
+     const dur = entry.plannedHours * 60;
+     const relY = e.clientY - gridRect.top;
+     const startMin = clampBlockStart(snapToStep((relY / HOUR_PX) * 60), dur);
+-    const colliding = valid
+-      ? blockCollides(state, person.id, days[colIndex], startMin, entry.plannedHours)
+-      : false;
++    // An unplaceable row (> 24h / off-grid) always reads as colliding so the
++    // ghost stays danger-tinted and the drop reverts instead of firing a
++    // doomed dispatch the reducer would reject anyway.
++    const colliding = unplaceable
++      ? true
++      : valid
++        ? blockCollides(state, person.id, days[colIndex], startMin, entry.plannedHours)
++        : false;
+ 
+     setDrag((d) =>
+       d ? { ...d, clientX: e.clientX, clientY: e.clientY, colIndex, startMin, valid, colliding } : d,
+@@ -534,6 +599,9 @@ function BinCard({
+   const finish = () => {
+     if (!drag) return;
+     const { colIndex, startMin, valid, colliding } = drag;
++    // Release BEFORE any dispatch: a valid drop unmounts this card, and an
++    // unreleased capture on a node being removed mid-pointerup wedges the page.
++    releaseCapture();
+     setDrag(null);
+     if (!moved.current) return; // plain click → open
+     if (!valid || colliding) return; // invalid target / collision → snap home
+@@ -577,13 +645,22 @@ function BinCard({
+         tabIndex={0}
+         title={
+           editable
+-            ? `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu. Przeciągnij na siatkę, aby nadać termin.`
++            ? unplaceable
++              ? `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu. ${unplaceableHint}`
++              : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu. Przeciągnij na siatkę, aby nadać termin.`
+             : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.`
+         }
+         onPointerDown={editable ? begin : undefined}
+         onPointerMove={editable ? onPointerMove : undefined}
+         onPointerUp={editable ? finish : undefined}
+-        onPointerCancel={editable ? () => setDrag(null) : undefined}
++        onPointerCancel={
++          editable
++            ? () => {
++                releaseCapture();
++                setDrag(null);
++              }
++            : undefined
++        }
+         onClick={(e) => {
+           e.stopPropagation();
+           if (!moved.current) onOpen();
+diff --git a/src/pages/DashboardPage.tsx b/src/pages/DashboardPage.tsx
+index fa2c047..1c1bd1a 100644
+--- a/src/pages/DashboardPage.tsx
++++ b/src/pages/DashboardPage.tsx
+@@ -1,27 +1,35 @@
+-// Dashboard: at-a-glance overview — pipeline counts, upcoming deadlines and
+-// milestones, unpaid projects, and this week's overload warnings.
+-import { Link, useNavigate } from 'react-router-dom';
++// Panel — the logged-in worker's morning page. Four sections: today's tasks,
++// a MOCK team chat with fake presence, an SVG donut workload summary, and a
++// week strip of the user's blocks. All reads go through selectors; nothing here
++// mutates or persists (the chat is a mockup).
++import { Link } from 'react-router-dom';
+ import { motion } from 'motion/react';
+ import { useStore } from '../store/AppStore';
+ import {
+-  activeStatuses,
++  availableHoursInRange,
++  availableHoursOnDate,
++  currentUser,
+   getClient,
+-  getPerson,
++  getProject,
++  getStatus,
+   hoursForPersonOnDate,
+-  overloadedPeopleOnDate,
+-  personCapacity,
++  todayAgendaForPerson,
++  weekBlocksForPerson,
+ } from '../store/selectors';
+-import { Coin } from '../components/Coin';
+ import { StatusBadge } from '../components/StatusBadge';
+-import { ChevronRight } from '../components/icons';
++import { ChatMock } from '../components/ChatMock';
++import { useOpenTask } from '../components/TaskModal';
+ import {
+-  addDaysStr,
+   formatRowLabel,
+   formatShort,
++  isTodayStr,
++  isWeekend,
+   todayStr,
+   weekDays,
++  weekdayHeader,
++  dayNumber,
+ } from '../utils/dates';
+-import { formatDuration } from '../utils/time';
++import { formatMinutes, formatDuration } from '../utils/time';
+ 
+ // Staggered entrance for the dashboard cards.
+ const dashGridVariants = {
+@@ -33,38 +41,77 @@ const dashCardVariants = {
+   show: { opacity: 1, y: 0, transition: { duration: 0.2, ease: 'easeOut' } },
+ } as const;
+ 
+-export function DashboardPage() {
+-  const { state } = useStore();
+-  const navigate = useNavigate();
+-  const today = todayStr();
+-  const statuses = activeStatuses(state);
+-  const doneStatusId = statuses.slice(-1)[0]?.id;
++const MAX_DAY_BLOCKS = 4;
+ 
+-  const unpaid = state.projects.filter((p) => !p.paid);
+-  const horizon = addDaysStr(today, 14);
+-  const deadlines = state.projects
+-    .filter((p) => p.endDate >= today && p.endDate <= horizon)
+-    .sort((a, b) => a.endDate.localeCompare(b.endDate));
+-  const overdue = state.projects.filter(
+-    (p) => p.endDate < today && p.statusId !== doneStatusId,
+-  );
+-  const milestones = state.milestones
+-    .filter((m) => m.date >= today && m.date <= horizon)
+-    .sort((a, b) => a.date.localeCompare(b.date));
+-
+-  // Overloads across this week.
+-  const week = weekDays(today);
+-  const overloads = week.flatMap((d) =>
+-    overloadedPeopleOnDate(state, d).map((personId) => ({ date: d, personId })),
+-  );
++/** An SVG ring showing booked vs available hours. Never divides by zero. */
++function WorkloadDonut({
++  label,
++  booked,
++  available,
++}: {
++  label: string;
++  booked: number;
++  available: number;
++}) {
++  const size = 120;
++  const stroke = 12;
++  const radius = (size - stroke) / 2;
++  const circumference = 2 * Math.PI * radius;
++  const ratio = available > 0 ? Math.min(booked / available, 1) : 0;
++  const over = available > 0 && booked > available;
++  const pct = available > 0 ? Math.round((booked / available) * 100) : 0;
++  const fill = over ? 'var(--n2-danger)' : 'var(--n2-lavender)';
+ 
+   return (
+-    <section className="page">
+-      <div className="page-head">
+-        <h1>Panel</h1>
++    <div className="donut">
++      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden>
++        <circle
++          cx={size / 2}
++          cy={size / 2}
++          r={radius}
++          fill="none"
++          stroke="var(--n2-surface-muted)"
++          strokeWidth={stroke}
++        />
++        <circle
++          cx={size / 2}
++          cy={size / 2}
++          r={radius}
++          fill="none"
++          stroke={fill}
++          strokeWidth={stroke}
++          strokeLinecap="round"
++          strokeDasharray={`${ratio * circumference} ${circumference}`}
++          transform={`rotate(-90 ${size / 2} ${size / 2})`}
++        />
++      </svg>
++      <div className="donut-center">
++        <span className={`donut-value${over ? ' over' : ''}`}>
++          {formatDuration(booked)} / {formatDuration(available)}
++        </span>
++      </div>
++      <div className="donut-caption">
++        <span className="donut-label">{label}</span>
++        <span className={`donut-pct${over ? ' over' : ''}`}>{pct}%</span>
+       </div>
++    </div>
++  );
++}
++
++export function DashboardPage() {
++  const { state } = useStore();
++  const { openTask } = useOpenTask();
++  const me = currentUser(state);
++  const today = todayStr();
+ 
+-      {state.projects.length === 0 && state.tasks.length === 0 ? (
++  // Edge case: setup mode (no people) or no resolvable acting user → keep the
++  // original welcome empty-state exactly.
++  if (!me) {
++    return (
++      <section className="page">
++        <div className="page-head">
++          <h1>Panel</h1>
++        </div>
+         <div className="empty-state">
+           <p className="empty-title">Witaj w N2Hub</p>
+           <p className="empty-hint">
+@@ -74,157 +121,158 @@ export function DashboardPage() {
+             Przejdź do projektów
+           </Link>
+         </div>
+-      ) : (
+-        <motion.div
+-          className="dash-grid"
+-          variants={dashGridVariants}
+-          initial="hidden"
+-          animate="show"
+-        >
+-          <motion.div className="dash-card" variants={dashCardVariants}>
+-            <h2>Lejek projektów</h2>
+-            <ul className="dash-pipeline">
+-              {statuses.map((s) => {
+-                const count = state.projects.filter((p) => p.statusId === s.id).length;
+-                return (
+-                  <li key={s.id}>
+-                    <StatusBadge status={s} />
+-                    <strong>{count}</strong>
+-                  </li>
+-                );
+-              })}
+-            </ul>
+-            <Link to="/kanban" className="link-btn">
+-              Otwórz kanban →
+-            </Link>
+-          </motion.div>
++      </section>
++    );
++  }
+ 
+-          <motion.div className="dash-card" variants={dashCardVariants}>
+-            <h2>Terminy (14 dni)</h2>
+-            {overdue.length === 0 && deadlines.length === 0 ? (
+-              <p className="muted">Brak terminów w najbliższych dwóch tygodniach.</p>
+-            ) : (
+-              <ul className="dash-list">
+-                {overdue.map((p) => (
+-                  <li key={p.id}>
+-                    <button
+-                      type="button"
+-                      className="dash-row danger"
+-                      onClick={() => navigate(`/projects/${p.id}`)}
+-                    >
+-                      <Coin paid={p.paid} size={14} />
+-                      <span className="dash-row-name">{p.name}</span>
+-                      <span className="dash-row-when">po terminie ({formatShort(p.endDate)})</span>
+-                      <ChevronRight className="card-chevron" size={16} aria-hidden />
+-                    </button>
+-                  </li>
+-                ))}
+-                {deadlines.map((p) => (
+-                  <li key={p.id}>
+-                    <button
+-                      type="button"
+-                      className="dash-row"
+-                      onClick={() => navigate(`/projects/${p.id}`)}
+-                    >
+-                      <Coin paid={p.paid} size={14} />
+-                      <span className="dash-row-name">{p.name}</span>
+-                      <span className="dash-row-when">{formatShort(p.endDate)}</span>
+-                      <ChevronRight className="card-chevron" size={16} aria-hidden />
+-                    </button>
+-                  </li>
+-                ))}
+-              </ul>
+-            )}
+-            {milestones.length > 0 && (
+-              <>
+-                <h3 className="dash-subhead">Kamienie milowe</h3>
+-                <ul className="dash-list">
+-                  {milestones.map((m) => (
+-                    <li key={m.id}>
+-                      <button
+-                        type="button"
+-                        className="dash-row"
+-                        onClick={() => navigate(`/projects/${m.projectId}`)}
+-                      >
+-                        <span aria-hidden>◆</span>
+-                        <span className="dash-row-name">{m.name}</span>
+-                        <span className="dash-row-when">{formatShort(m.date)}</span>
+-                        <ChevronRight className="card-chevron" size={16} aria-hidden />
+-                      </button>
+-                    </li>
+-                  ))}
+-                </ul>
+-              </>
+-            )}
+-          </motion.div>
++  const agenda = todayAgendaForPerson(state, me.id, today);
++  const coworkers = state.people.filter((p) => p.id !== me.id);
+ 
+-          <motion.div className="dash-card" variants={dashCardVariants}>
+-            <h2>Płatności</h2>
+-            <p>
+-              <Coin paid size={16} /> <strong>{state.projects.length - unpaid.length}</strong> opłacone
+-              {' · '}
+-              <Coin paid={false} size={16} /> <strong>{unpaid.length}</strong> nieopłacone
++  // Workload donuts (today + this week).
++  const week = weekDays(today);
++  const bookedToday = hoursForPersonOnDate(state, me.id, today);
++  const availableToday = availableHoursOnDate(state, me.id, today);
++  const bookedWeek = week.reduce((sum, d) => sum + hoursForPersonOnDate(state, me.id, d), 0);
++  const availableWeek = availableHoursInRange(state, me.id, week);
++
++  const weekMap = weekBlocksForPerson(state, me.id, week);
++
++  return (
++    <section className="page">
++      <div className="page-head dash-greeting">
++        <h1>Dzień dobry, {me.firstName}</h1>
++        <p className="dash-date">{formatRowLabel(today)}</p>
++      </div>
++
++      <motion.div
++        className="dash-grid dash-welcome-grid"
++        variants={dashGridVariants}
++        initial="hidden"
++        animate="show"
++      >
++        {/* (a) Today's tasks */}
++        <motion.div className="dash-card" variants={dashCardVariants}>
++          <h2>Zadania na dziś</h2>
++          {agenda.timed.length === 0 && agenda.dateless.length === 0 ? (
++            <p className="muted">
++              Brak zadań na dziś —{' '}
++              <Link to="/calendar" className="inline-link">
++                zajrzyj do kalendarza
++              </Link>
++              .
+             </p>
+-            {unpaid.length > 0 && (
+-              <ul className="dash-list">
+-                {unpaid.slice(0, 5).map((p) => (
+-                  <li key={p.id}>
++          ) : (
++            <ul className="dash-list agenda-list">
++              {agenda.timed.map((w) => {
++                const task = state.tasks.find((t) => t.id === w.taskId);
++                if (!task) return null;
++                const project = getProject(state, task.projectId);
++                const client = project ? getClient(state, project.clientId) : undefined;
++                const startM = w.startMinutes;
++                const endM = startM + w.plannedHours * 60;
++                return (
++                  <li key={w.id}>
+                     <button
+                       type="button"
+                       className="dash-row"
+-                      onClick={() => navigate(`/projects/${p.id}`)}
++                      onClick={() => openTask(task.id)}
+                     >
+-                      <Coin paid={false} size={14} />
+-                      <span className="dash-row-name">{p.name}</span>
+-                      <span className="dash-row-when muted">
+-                        {getClient(state, p.clientId)?.name ?? ''}
++                      <span className="agenda-time">
++                        {formatMinutes(startM)}–{formatMinutes(endM)}
++                      </span>
++                      <span className="dash-row-name">{task.title}</span>
++                      <span className="agenda-meta">
++                        {project?.name ?? '—'}
++                        {client ? ` → ${client.name}` : ''}
+                       </span>
+-                      <ChevronRight className="card-chevron" size={16} aria-hidden />
++                      <StatusBadge status={getStatus(state, task.statusId)} />
+                     </button>
+                   </li>
+-                ))}
+-              </ul>
+-            )}
+-            <Link to="/projects" className="link-btn">
+-              Wszystkie projekty →
+-            </Link>
+-          </motion.div>
++                );
++              })}
++              {agenda.dateless.map((task) => (
++                <li key={task.id}>
++                  <button
++                    type="button"
++                    className="dash-row agenda-dateless"
++                    onClick={() => openTask(task.id)}
++                  >
++                    <span className="agenda-time muted">bez godziny</span>
++                    <span className="dash-row-name">{task.title}</span>
++                    <span className="agenda-meta muted">do {formatShort(task.endDate)}</span>
++                  </button>
++                </li>
++              ))}
++            </ul>
++          )}
++        </motion.div>
++
++        {/* (b) Team chat (mockup) */}
++        <motion.div className="dash-card" variants={dashCardVariants}>
++          <div className="dash-card-head">
++            <h2>Zespół</h2>
++            <span className="demo-badge">Wersja demonstracyjna</span>
++          </div>
++          <ChatMock coworkers={coworkers} />
++        </motion.div>
++
++        {/* (c) Workload summary */}
++        <motion.div className="dash-card" variants={dashCardVariants}>
++          <h2>Obciążenie</h2>
++          <div className="donut-row">
++            <WorkloadDonut label="Dziś" booked={bookedToday} available={availableToday} />
++            <WorkloadDonut label="Ten tydzień" booked={bookedWeek} available={availableWeek} />
++          </div>
++        </motion.div>
+ 
+-          <motion.div className="dash-card" variants={dashCardVariants}>
+-            <h2>Przeciążenia w tym tygodniu</h2>
+-            {overloads.length === 0 ? (
+-              <p className="muted">Nikt nie przekracza dostępności w tym tygodniu.</p>
+-            ) : (
+-              <ul className="dash-list">
+-                {overloads.map(({ date, personId }) => {
+-                  const person = getPerson(state, personId);
+-                  if (!person) return null;
+-                  return (
+-                    <li key={`${date}-${personId}`}>
+-                      <button
+-                        type="button"
+-                        className="dash-row danger"
+-                        onClick={() => navigate(`/people/${personId}`)}
+-                      >
+-                        <span className="dash-row-name">⚠ {person.name}</span>
+-                        <span className="dash-row-when">
+-                          {formatRowLabel(date)} —{' '}
+-                          {formatDuration(hoursForPersonOnDate(state, personId, date))} /{' '}
+-                          {formatDuration(personCapacity(state, personId))}
+-                        </span>
+-                        <ChevronRight className="card-chevron" size={16} aria-hidden />
+-                      </button>
+-                    </li>
+-                  );
+-                })}
+-              </ul>
+-            )}
+-            <Link to="/workload" className="link-btn">
+-              Panel obciążenia →
++        {/* (d) Week strip */}
++        <motion.div className="dash-card" variants={dashCardVariants}>
++          <div className="dash-card-head">
++            <h2>Twój tydzień</h2>
++            <Link to="/calendar" className="link-btn">
++              Otwórz kalendarz →
+             </Link>
+-          </motion.div>
++          </div>
++          <div className="week-strip">
++            {week.map((d) => {
++              const blocks = weekMap.get(d) ?? [];
++              const shown = blocks.slice(0, MAX_DAY_BLOCKS);
++              const extra = blocks.length - shown.length;
++              const classes = [
++                'week-strip-day',
++                isTodayStr(d) ? 'is-today' : '',
++                isWeekend(d) ? 'is-weekend' : '',
++              ]
++                .filter(Boolean)
++                .join(' ');
++              return (
++                <div key={d} className={classes}>
++                  <div className="week-strip-head">
++                    <span className="week-strip-dow">{weekdayHeader(d)}</span>
++                    <span className="week-strip-num">{dayNumber(d)}</span>
++                  </div>
++                  {blocks.length === 0 ? (
++                    <p className="week-strip-empty">—</p>
++                  ) : (
++                    <ul className="week-strip-blocks">
++                      {shown.map((w) => {
++                        const task = state.tasks.find((t) => t.id === w.taskId);
++                        return (
++                          <li key={w.id}>
++                            <span className="week-strip-time">{formatMinutes(w.startMinutes)}</span>{' '}
++                            {task?.title ?? '—'}
++                          </li>
++                        );
++                      })}
++                      {extra > 0 && <li className="week-strip-more">+{extra} więcej</li>}
++                    </ul>
++                  )}
++                </div>
++              );
++            })}
++          </div>
+         </motion.div>
+-      )}
++      </motion.div>
+     </section>
+   );
+ }
+diff --git a/src/pages/KanbanPage.tsx b/src/pages/KanbanPage.tsx
+index d9f60b4..f892a9b 100644
+--- a/src/pages/KanbanPage.tsx
++++ b/src/pages/KanbanPage.tsx
+@@ -14,7 +14,8 @@ import {
+   tasksOfProject,
+ } from '../store/selectors';
+ import { Coin } from '../components/Coin';
+-import { PaidFilterToggle, type PaidFilter } from './ProjectsPage';
++import { FilterPanel, type FilterChip, type FilterGroup } from '../components/FilterPanel';
++import { type PaidFilter } from './ProjectsPage';
+ import { formatShort } from '../utils/dates';
+ import { formatDuration } from '../utils/time';
+ 
+@@ -52,6 +53,50 @@ export function KanbanPage() {
+     [state.projects, paidFilter, clientFilter],
+   );
+ 
++  const paidLabel = (v: PaidFilter) =>
++    v === 'paid' ? 'Opłacone' : v === 'unpaid' ? 'Nieopłacone' : 'Wszystkie';
++
++  const filterGroups: FilterGroup[] = [
++    {
++      key: 'paid',
++      label: 'Płatność',
++      value: paidFilter,
++      onChange: (v) => setPaidFilter(v as PaidFilter),
++      options: [
++        { value: 'all', label: 'Wszystkie' },
++        { value: 'paid', label: 'Opłacone' },
++        { value: 'unpaid', label: 'Nieopłacone' },
++      ],
++    },
++    {
++      key: 'client',
++      label: 'Klient',
++      value: clientFilter,
++      onChange: setClientFilter,
++      options: [
++        { value: '', label: 'Wszyscy klienci' },
++        ...state.clients.map((c) => ({ value: c.id, label: c.name })),
++      ],
++    },
++  ];
++
++  const activeCount = (paidFilter !== 'all' ? 1 : 0) + (clientFilter ? 1 : 0);
++
++  const chips: FilterChip[] = [];
++  if (paidFilter !== 'all')
++    chips.push({ key: 'paid', label: `Płatność: ${paidLabel(paidFilter)}`, onRemove: () => setPaidFilter('all') });
++  if (clientFilter)
++    chips.push({
++      key: 'client',
++      label: `Klient: ${getClient(state, clientFilter)?.name ?? '—'}`,
++      onRemove: () => setClientFilter(''),
++    });
++
++  const clearAll = () => {
++    setPaidFilter('all');
++    setClientFilter('');
++  };
++
+   const onDrop = (statusId: string, e: React.DragEvent) => {
+     e.preventDefault();
+     setDragOver(null);
+@@ -79,19 +124,12 @@ export function KanbanPage() {
+       <div className="page-head">
+         <h1>Kanban</h1>
+         <div className="cal-toolbar">
+-          <PaidFilterToggle value={paidFilter} onChange={setPaidFilter} />
+-          <select
+-            value={clientFilter}
+-            onChange={(e) => setClientFilter(e.target.value)}
+-            aria-label="Filtruj po kliencie"
+-          >
+-            <option value="">Wszyscy klienci</option>
+-            {state.clients.map((c) => (
+-              <option key={c.id} value={c.id}>
+-                {c.name}
+-              </option>
+-            ))}
+-          </select>
++          <FilterPanel
++            groups={filterGroups}
++            activeCount={activeCount}
++            onClearAll={clearAll}
++            chips={chips}
++          />
+         </div>
+       </div>
+ 
+diff --git a/src/pages/ProjectsPage.tsx b/src/pages/ProjectsPage.tsx
+index 4730e46..45aceda 100644
+--- a/src/pages/ProjectsPage.tsx
++++ b/src/pages/ProjectsPage.tsx
+@@ -7,6 +7,7 @@ import { useCan } from '../store/useCan';
+ import type { ProjectDraft } from '../store/AppStore';
+ import {
+   activeStatuses,
++  getClient,
+   getServiceType,
+   getStatus,
+   peopleIdsOfProject,
+@@ -16,10 +17,11 @@ import {
+ import { Coin } from '../components/Coin';
+ import { StatusBadge } from '../components/StatusBadge';
+ import { FilterPresets, DEFAULT_CRITERIA } from '../components/FilterPresets';
++import { FilterPanel, type FilterChip, type FilterGroup } from '../components/FilterPanel';
+ import { useOpenTask } from '../components/TaskModal';
+ import { ChevronRight, GanttChart, Plus } from '../components/icons';
+ import type { SavedFilterCriteria } from '../types';
+-import { addDaysStr, todayStr } from '../utils/dates';
++import { addDaysStr, formatShort, todayStr } from '../utils/dates';
+ import { parseDate } from '../utils/dates';
+ import { formatDuration } from '../utils/time';
+ import { format } from 'date-fns';
+@@ -27,34 +29,6 @@ import { pl } from 'date-fns/locale/pl';
+ 
+ export type PaidFilter = 'all' | 'paid' | 'unpaid';
+ 
+-export function PaidFilterToggle({
+-  value,
+-  onChange,
+-}: {
+-  value: PaidFilter;
+-  onChange: (v: PaidFilter) => void;
+-}) {
+-  const opts: Array<[PaidFilter, string]> = [
+-    ['all', 'Wszystkie'],
+-    ['paid', 'Opłacone'],
+-    ['unpaid', 'Nieopłacone'],
+-  ];
+-  return (
+-    <div className="cal-view-toggle" role="group" aria-label="Filtr płatności">
+-      {opts.map(([v, label]) => (
+-        <button
+-          key={v}
+-          type="button"
+-          className={value === v ? 'toggle-btn active' : 'toggle-btn'}
+-          onClick={() => onChange(v)}
+-        >
+-          {label}
+-        </button>
+-      ))}
+-    </div>
+-  );
+-}
+-
+ function rangeLabel(start: string, end: string): string {
+   const s = parseDate(start);
+   const e = parseDate(end);
+@@ -139,6 +113,68 @@ export function ProjectsPage() {
+     setTo(c.to);
+   };
+ 
++  const paidLabel = (v: PaidFilter) =>
++    v === 'paid' ? 'Opłacone' : v === 'unpaid' ? 'Nieopłacone' : 'Wszystkie';
++
++  const filterGroups: FilterGroup[] = [
++    {
++      key: 'paid',
++      label: 'Płatność',
++      value: paidFilter,
++      onChange: (v) => setPaidFilter(v as PaidFilter),
++      options: [
++        { value: 'all', label: 'Wszystkie' },
++        { value: 'paid', label: 'Opłacone' },
++        { value: 'unpaid', label: 'Nieopłacone' },
++      ],
++    },
++    {
++      key: 'client',
++      label: 'Klient',
++      value: clientFilter,
++      onChange: setClientFilter,
++      options: [
++        { value: '', label: 'Wszyscy klienci' },
++        ...state.clients.map((c) => ({ value: c.id, label: c.name })),
++      ],
++    },
++    {
++      key: 'status',
++      label: 'Status',
++      value: statusFilter,
++      onChange: setStatusFilter,
++      options: [
++        { value: '', label: 'Wszystkie statusy' },
++        ...statuses.map((s) => ({ value: s.id, label: s.name })),
++      ],
++    },
++  ];
++
++  const activeCount =
++    (paidFilter !== 'all' ? 1 : 0) +
++    (clientFilter ? 1 : 0) +
++    (statusFilter ? 1 : 0) +
++    (from ? 1 : 0) +
++    (to ? 1 : 0);
++
++  const chips: FilterChip[] = [];
++  if (paidFilter !== 'all')
++    chips.push({ key: 'paid', label: `Płatność: ${paidLabel(paidFilter)}`, onRemove: () => setPaidFilter('all') });
++  if (clientFilter)
++    chips.push({
++      key: 'client',
++      label: `Klient: ${getClient(state, clientFilter)?.name ?? '—'}`,
++      onRemove: () => setClientFilter(''),
++    });
++  if (statusFilter)
++    chips.push({
++      key: 'status',
++      label: `Status: ${getStatus(state, statusFilter)?.name ?? '—'}`,
++      onRemove: () => setStatusFilter(''),
++    });
++  if (from) chips.push({ key: 'from', label: `Od: ${formatShort(from)}`, onRemove: () => setFrom('') });
++  if (to) chips.push({ key: 'to', label: `Do: ${formatShort(to)}`, onRemove: () => setTo('') });
++
+   // Group by client (clients in list order, then any orphaned projects).
+   const groups = useMemo(() => {
+     const out: Array<{ clientId: string; clientName: string; projects: typeof filtered }> = [];
+@@ -277,45 +313,17 @@ export function ProjectsPage() {
+       )}
+ 
+       <div className="cal-toolbar">
+-        <PaidFilterToggle value={paidFilter} onChange={setPaidFilter} />
+-        <select
+-          value={clientFilter}
+-          onChange={(e) => setClientFilter(e.target.value)}
+-          aria-label="Filtruj po kliencie"
+-        >
+-          <option value="">Wszyscy klienci</option>
+-          {state.clients.map((c) => (
+-            <option key={c.id} value={c.id}>
+-              {c.name}
+-            </option>
+-          ))}
+-        </select>
+-        <select
+-          value={statusFilter}
+-          onChange={(e) => setStatusFilter(e.target.value)}
+-          aria-label="Filtruj po statusie"
+-        >
+-          <option value="">Wszystkie statusy</option>
+-          {statuses.map((s) => (
+-            <option key={s.id} value={s.id}>
+-              {s.name}
+-            </option>
+-          ))}
+-        </select>
+-        <input
+-          type="date"
+-          value={from}
+-          onChange={(e) => setFrom(e.target.value)}
+-          aria-label="Filtruj od daty"
+-          title="Od"
+-        />
+-        <input
+-          type="date"
+-          value={to}
+-          onChange={(e) => setTo(e.target.value)}
+-          aria-label="Filtruj do daty"
+-          title="Do"
++        <FilterPanel
++          groups={filterGroups}
++          dates={{ from, to, onFrom: setFrom, onTo: setTo }}
++          activeCount={activeCount}
++          onClearAll={() => applyPreset(DEFAULT_CRITERIA)}
++          chips={chips}
+         />
++        <span className="filter-count muted">
++          {filtered.length} z {state.projects.length}{' '}
++          {polishCount(state.projects.length, 'projekt', 'projekty', 'projektów')}
++        </span>
+       </div>
+ 
+       <FilterPresets page="projects" criteria={criteria} onApply={applyPreset} />
+diff --git a/src/pages/TasksPage.tsx b/src/pages/TasksPage.tsx
+index 0d26bbf..1592744 100644
+--- a/src/pages/TasksPage.tsx
++++ b/src/pages/TasksPage.tsx
+@@ -7,12 +7,15 @@ import {
+   assigneeIdsOfTask,
+   assigneesOfTask,
+   getClient,
++  getPerson,
+   getProject,
+   getStatus,
+   taskPlannedTotal,
+ } from '../store/selectors';
+ import { FilterPresets, DEFAULT_CRITERIA } from '../components/FilterPresets';
++import { FilterPanel, type FilterChip, type FilterGroup } from '../components/FilterPanel';
+ import { ChevronRight } from '../components/icons';
++import { formatShort } from '../utils/dates';
+ import { PersonChip } from '../components/PersonChip';
+ import { StatusBadge } from '../components/StatusBadge';
+ import { Coin } from '../components/Coin';
+@@ -56,13 +59,6 @@ export function TasksPage() {
+     [state.tasks],
+   );
+ 
+-  const anyFilter =
+-    clientFilter !== '' ||
+-    statusFilter !== '' ||
+-    personFilter !== '' ||
+-    from !== '' ||
+-    to !== '';
+-
+   const tasks = useMemo(
+     () =>
+       allTasks.filter((t) => {
+@@ -105,6 +101,68 @@ export function TasksPage() {
+     setTo('');
+   };
+ 
++  const filterGroups: FilterGroup[] = [
++    {
++      key: 'client',
++      label: 'Klient',
++      value: clientFilter,
++      onChange: setClientFilter,
++      options: [
++        { value: '', label: 'Wszyscy klienci' },
++        ...state.clients.map((c) => ({ value: c.id, label: c.name })),
++      ],
++    },
++    {
++      key: 'status',
++      label: 'Status',
++      value: statusFilter,
++      onChange: setStatusFilter,
++      options: [
++        { value: '', label: 'Wszystkie statusy' },
++        ...statuses.map((s) => ({ value: s.id, label: s.name })),
++      ],
++    },
++    {
++      key: 'person',
++      label: 'Osoba',
++      value: personFilter,
++      onChange: setPersonFilter,
++      options: [
++        { value: '', label: 'Wszystkie osoby' },
++        ...state.people.map((p) => ({ value: p.id, label: p.name })),
++      ],
++    },
++  ];
++
++  const activeCount =
++    (clientFilter ? 1 : 0) +
++    (statusFilter ? 1 : 0) +
++    (personFilter ? 1 : 0) +
++    (from ? 1 : 0) +
++    (to ? 1 : 0);
++
++  const chips: FilterChip[] = [];
++  if (clientFilter)
++    chips.push({
++      key: 'client',
++      label: `Klient: ${getClient(state, clientFilter)?.name ?? '—'}`,
++      onRemove: () => setClientFilter(''),
++    });
++  if (statusFilter)
++    chips.push({
++      key: 'status',
++      label: `Status: ${getStatus(state, statusFilter)?.name ?? '—'}`,
++      onRemove: () => setStatusFilter(''),
++    });
++  if (personFilter)
++    chips.push({
++      key: 'person',
++      label: `Osoba: ${getPerson(state, personFilter)?.name ?? '—'}`,
++      onRemove: () => setPersonFilter(''),
++    });
++  if (from) chips.push({ key: 'from', label: `Od: ${formatShort(from)}`, onRemove: () => setFrom('') });
++  if (to) chips.push({ key: 'to', label: `Do: ${formatShort(to)}`, onRemove: () => setTo('') });
++
+   const handleDelete = (taskId: string, title: string) => {
+     if (window.confirm(`Usunąć „${title}”? To usunie przypisania i zaplanowane godziny.`)) {
+       dispatch({ type: 'DELETE_TASK', taskId });
+@@ -137,63 +195,13 @@ export function TasksPage() {
+       ) : (
+         <>
+           <div className="cal-toolbar">
+-            <div className="filter-controls">
+-              <select
+-                value={clientFilter}
+-                onChange={(e) => setClientFilter(e.target.value)}
+-                aria-label="Filtruj po kliencie"
+-              >
+-                <option value="">Wszyscy klienci</option>
+-                {state.clients.map((c) => (
+-                  <option key={c.id} value={c.id}>
+-                    {c.name}
+-                  </option>
+-                ))}
+-              </select>
+-              <select
+-                value={statusFilter}
+-                onChange={(e) => setStatusFilter(e.target.value)}
+-                aria-label="Filtruj po statusie"
+-              >
+-                <option value="">Wszystkie statusy</option>
+-                {statuses.map((s) => (
+-                  <option key={s.id} value={s.id}>
+-                    {s.name}
+-                  </option>
+-                ))}
+-              </select>
+-              <select
+-                value={personFilter}
+-                onChange={(e) => setPersonFilter(e.target.value)}
+-                aria-label="Filtruj po osobie"
+-              >
+-                <option value="">Wszystkie osoby</option>
+-                {state.people.map((p) => (
+-                  <option key={p.id} value={p.id}>
+-                    {p.name}
+-                  </option>
+-                ))}
+-              </select>
+-              <input
+-                type="date"
+-                value={from}
+-                onChange={(e) => setFrom(e.target.value)}
+-                aria-label="Filtruj od daty"
+-                title="Od"
+-              />
+-              <input
+-                type="date"
+-                value={to}
+-                onChange={(e) => setTo(e.target.value)}
+-                aria-label="Filtruj do daty"
+-                title="Do"
+-              />
+-              {anyFilter && (
+-                <button type="button" className="btn ghost small" onClick={clearFilters}>
+-                  Wyczyść filtry
+-                </button>
+-              )}
+-            </div>
++            <FilterPanel
++              groups={filterGroups}
++              dates={{ from, to, onFrom: setFrom, onTo: setTo }}
++              activeCount={activeCount}
++              onClearAll={clearFilters}
++              chips={chips}
++            />
+             <span className="filter-count muted">
+               {tasks.length} z {allTasks.length} zadań
+             </span>
+diff --git a/src/pages/TimelinePage.tsx b/src/pages/TimelinePage.tsx
+index d57e899..2765d2b 100644
+--- a/src/pages/TimelinePage.tsx
++++ b/src/pages/TimelinePage.tsx
+@@ -9,16 +9,20 @@ import { useCan } from '../store/useCan';
+ import { useOpenTask } from '../components/TaskModal';
+ import { PersonFilter } from '../components/PersonFilter';
+ import { ZoomIn, ZoomOut } from '../components/icons';
+-import type { Milestone, Project, Task } from '../types';
++import type { Milestone, Person, Project, Task } from '../types';
+ import {
+   activeStatuses,
+   assigneeIdsOfTask,
+   conflictDatesForTask,
++  entriesForTaskPerson,
++  getProject,
+   getStatus,
+   milestonesOfProject,
+   tasksOfProject,
+ } from '../store/selectors';
+ import { Coin } from '../components/Coin';
++import { personColor } from '../utils/colors';
++import { formatDuration } from '../utils/time';
+ import {
+   addDaysStr,
+   diffDays,
+@@ -232,6 +236,7 @@ export function TimelinePage() {
+   const can = useCan();
+   const canManageProjects = can('projects.manage');
+   const canManageTasks = can('tasks.manage');
++  const [mode, setMode] = useState<'projects' | 'people'>('projects');
+   const [anchor, setAnchor] = useState(() => todayStr());
+   const [dayW, setDayW] = useState<number>(DEFAULT_DAY_W);
+   const [weeks, setWeeks] = useState(10);
+@@ -314,6 +319,63 @@ export function TimelinePage() {
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, [groups, ownerKey, state.tasks, state.assignments, state.workload, state.people]);
+ 
++  // People mode: one group per person (people-list order), narrowed by the
++  // owner filter (empty = everyone). Each group lists the tasks the person is
++  // involved in — an assignment OR at least one workload entry (dated or bin) —
++  // narrowed by the client filter, sorted by startDate then title. A person
++  // with no matching tasks is omitted entirely.
++  const peopleView = useMemo(() => {
++    const out: Array<{
++      person: Person;
++      tasks: Array<{ task: Task; hours: number; conflictOffsets: number[] }>;
++    }> = [];
++    for (const person of state.people) {
++      if (ownerFilter.size > 0 && !ownerFilter.has(person.id)) continue;
++      const involvedIds = new Set<string>();
++      for (const a of state.assignments) {
++        if (a.personId === person.id) involvedIds.add(a.taskId);
++      }
++      for (const w of state.workload) {
++        if (w.personId === person.id) involvedIds.add(w.taskId);
++      }
++      const tasks = state.tasks
++        .filter((t) => involvedIds.has(t.id))
++        .filter((t) => {
++          if (!clientFilter) return true;
++          const proj = getProject(state, t.projectId);
++          return proj?.clientId === clientFilter;
++        })
++        .sort(
++          (a, b) =>
++            a.startDate.localeCompare(b.startDate) || a.title.localeCompare(b.title),
++        );
++      if (tasks.length === 0) continue;
++      out.push({
++        person,
++        tasks: tasks.map((t) => ({
++          task: t,
++          hours: entriesForTaskPerson(state, t.id, person.id).reduce(
++            (sum, w) => sum + w.plannedHours,
++            0,
++          ),
++          conflictOffsets: conflictDatesForTask(state, t.id).map((d) =>
++            diffDays(t.startDate, d),
++          ),
++        })),
++      });
++    }
++    return out;
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [
++    ownerKey,
++    clientFilter,
++    state.people,
++    state.tasks,
++    state.assignments,
++    state.workload,
++    state.projects,
++  ]);
++
+   const commitProject = (p: Project) => (mode: DragMode, delta: number) => {
+     const startDate =
+       mode === 'end' ? p.startDate : addDaysStr(p.startDate, delta);
+@@ -381,11 +443,28 @@ export function TimelinePage() {
+         </div>
+       </div>
+       <p className="field-hint">
+-        Przeciągnij pasek, aby zmienić termin; przeciągnij krawędzie, aby zmienić start lub koniec.
+-        Przesunięcie zadania przesuwa razem z nim zaplanowane godziny. ◆ kamienie milowe też można przeciągać.
++        {mode === 'projects'
++          ? 'Przeciągnij pasek, aby zmienić termin; przeciągnij krawędzie, aby zmienić start lub koniec. Przesunięcie zadania przesuwa razem z nim zaplanowane godziny. ◆ kamienie milowe też można przeciągać.'
++          : 'Widok według osób: każdy wiersz to zadanie danej osoby. Kliknij pasek, aby otworzyć zadanie. Paski są tylko do odczytu — terminy zmieniasz w trybie Projekty.'}
+       </p>
+ 
+       <div className="cal-toolbar">
++        <div className="cal-view-toggle" role="group" aria-label="Tryb widoku">
++          <button
++            type="button"
++            className={mode === 'projects' ? 'toggle-btn active' : 'toggle-btn'}
++            onClick={() => setMode('projects')}
++          >
++            Projekty
++          </button>
++          <button
++            type="button"
++            className={mode === 'people' ? 'toggle-btn active' : 'toggle-btn'}
++            onClick={() => setMode('people')}
++          >
++            Osoby
++          </button>
++        </div>
+         <div className="cal-view-toggle" role="group" aria-label="Zakres widoku">
+           {WEEK_PRESETS.map(([w, label]) => (
+             <button
+@@ -425,10 +504,19 @@ export function TimelinePage() {
+         </select>
+       </div>
+ 
+-      {state.projects.length === 0 ? (
++      {(mode === 'projects' ? state.projects.length === 0 : peopleView.length === 0) ? (
+         <div className="empty-state">
+-          <p className="empty-title">Brak elementów do zaplanowania</p>
+-          <p className="empty-hint">Utwórz projekt, aby zobaczyć go na osi czasu.</p>
++          {mode === 'projects' ? (
++            <>
++              <p className="empty-title">Brak elementów do zaplanowania</p>
++              <p className="empty-hint">Utwórz projekt, aby zobaczyć go na osi czasu.</p>
++            </>
++          ) : (
++            <>
++              <p className="empty-title">Brak zadań do wyświetlenia</p>
++              <p className="empty-hint">Przypisz osoby do zadań, aby zobaczyć oś czasu zespołu.</p>
++            </>
++          )}
+         </div>
+       ) : (
+         <div className="timeline-scroll">
+@@ -447,7 +535,8 @@ export function TimelinePage() {
+               </div>
+             </div>
+ 
+-            {view.map((g) => (
++            {mode === 'projects' &&
++              view.map((g) => (
+               <div key={g.name} className="timeline-group">
+                 <div className="timeline-row timeline-client-row">
+                   <div className="timeline-label timeline-client">{g.name}</div>
+@@ -538,6 +627,49 @@ export function TimelinePage() {
+                 })}
+               </div>
+             ))}
++
++            {mode === 'people' &&
++              peopleView.map(({ person, tasks }) => (
++                <div key={person.id} className="timeline-group">
++                  <div className="timeline-row timeline-person-row">
++                    <div className="timeline-label timeline-person-label">
++                      <span
++                        className="timeline-person-dot"
++                        style={{ background: personColor(person.id) }}
++                        aria-hidden
++                      />
++                      <span className="timeline-label-text">{person.name}</span>
++                    </div>
++                    <div className="timeline-track" />
++                  </div>
++                  {tasks.map(({ task: t, hours, conflictOffsets }) => (
++                    <div key={t.id} className="timeline-row timeline-task-row">
++                      <div className="timeline-label timeline-task-label" title={t.title}>
++                        {t.title}
++                      </div>
++                      <div className="timeline-track">
++                        <DayStripes days={days} todayIdx={todayIdx} dayW={dayW} />
++                        <Bar
++                          startIdx={dayIdx(t.startDate)}
++                          span={diffDays(t.startDate, t.endDate) + 1}
++                          totalDays={totalDays}
++                          dayW={dayW}
++                          color={getStatus(state, t.statusId)?.color ?? '#94a3b8'}
++                          className="timeline-bar task"
++                          title={`${t.title}: ${formatShort(t.startDate)} – ${formatShort(t.endDate)} — ${person.name}: ${formatDuration(hours)} zaplanowane`}
++                          resizable={false}
++                          editable={false}
++                          onCommit={() => {}}
++                          onOpen={() => openTask(t.id)}
++                          conflictOffsets={conflictOffsets}
++                        >
++                          {t.title}
++                        </Bar>
++                      </div>
++                    </div>
++                  ))}
++                </div>
++              ))}
+           </div>
+         </div>
+       )}
+diff --git a/src/pages/WorkloadPage.tsx b/src/pages/WorkloadPage.tsx
+index f30ecbd..b96ac56 100644
+--- a/src/pages/WorkloadPage.tsx
++++ b/src/pages/WorkloadPage.tsx
+@@ -13,6 +13,7 @@ import {
+   getClient,
+   getDepartment,
+   getProject,
++  getServiceType,
+   getTask,
+   hoursForPersonOnDate,
+   isPersonWorkday,
+@@ -20,6 +21,7 @@ import {
+ } from '../store/selectors';
+ import { Avatar } from '../components/Avatar';
+ import { useOpenTask } from '../components/TaskModal';
++import { FilterPanel, type FilterChip, type FilterGroup } from '../components/FilterPanel';
+ import { ArrowRightLeft, ChevronLeft, ChevronRight, X } from '../components/icons';
+ import {
+   formatRowLabel,
+@@ -180,6 +182,68 @@ export function WorkloadPage() {
+     (p) => !departmentFilter || p.departmentId === departmentFilter,
+   );
+ 
++  const filterGroups: FilterGroup[] = [
++    {
++      key: 'department',
++      label: 'Dział',
++      value: departmentFilter,
++      onChange: setDepartmentFilter,
++      options: [
++        { value: '', label: 'Wszystkie działy' },
++        ...state.departments.map((d) => ({ value: d.id, label: d.name })),
++      ],
++    },
++    {
++      key: 'client',
++      label: 'Klient',
++      value: clientFilter,
++      onChange: setClientFilter,
++      options: [
++        { value: '', label: 'Wszyscy klienci' },
++        ...state.clients.map((c) => ({ value: c.id, label: c.name })),
++      ],
++    },
++    {
++      key: 'service',
++      label: 'Rodzaj usługi',
++      value: serviceFilter,
++      onChange: setServiceFilter,
++      options: [
++        { value: '', label: 'Wszystkie typy usług' },
++        ...state.serviceTypes.map((s) => ({ value: s.id, label: s.name })),
++      ],
++    },
++  ];
++
++  const activeCount =
++    (departmentFilter ? 1 : 0) + (clientFilter ? 1 : 0) + (serviceFilter ? 1 : 0);
++
++  const chips: FilterChip[] = [];
++  if (departmentFilter)
++    chips.push({
++      key: 'department',
++      label: `Dział: ${getDepartment(state, departmentFilter)?.name ?? '—'}`,
++      onRemove: () => setDepartmentFilter(''),
++    });
++  if (clientFilter)
++    chips.push({
++      key: 'client',
++      label: `Klient: ${getClient(state, clientFilter)?.name ?? '—'}`,
++      onRemove: () => setClientFilter(''),
++    });
++  if (serviceFilter)
++    chips.push({
++      key: 'service',
++      label: `Rodzaj usługi: ${getServiceType(state, serviceFilter)?.name ?? '—'}`,
++      onRemove: () => setServiceFilter(''),
++    });
++
++  const clearAll = () => {
++    setDepartmentFilter('');
++    setClientFilter('');
++    setServiceFilter('');
++  };
++
+   // hours[personId][date] for this week, under the current filters.
+   const weekEntries = state.workload.filter((w) => daySet.has(w.date) && entryPasses(w));
+   const hoursFor = (personId: string, date: string) =>
+@@ -216,42 +280,12 @@ export function WorkloadPage() {
+       </div>
+ 
+       <div className="cal-toolbar">
+-        <select
+-          value={departmentFilter}
+-          onChange={(e) => setDepartmentFilter(e.target.value)}
+-          aria-label="Filtruj po dziale"
+-        >
+-          <option value="">Wszystkie działy</option>
+-          {state.departments.map((d) => (
+-            <option key={d.id} value={d.id}>
+-              {d.name}
+-            </option>
+-          ))}
+-        </select>
+-        <select
+-          value={clientFilter}
+-          onChange={(e) => setClientFilter(e.target.value)}
+-          aria-label="Filtruj po kliencie"
+-        >
+-          <option value="">Wszyscy klienci</option>
+-          {state.clients.map((c) => (
+-            <option key={c.id} value={c.id}>
+-              {c.name}
+-            </option>
+-          ))}
+-        </select>
+-        <select
+-          value={serviceFilter}
+-          onChange={(e) => setServiceFilter(e.target.value)}
+-          aria-label="Filtruj po typie usługi"
+-        >
+-          <option value="">Wszystkie typy usług</option>
+-          {state.serviceTypes.map((s) => (
+-            <option key={s.id} value={s.id}>
+-              {s.name}
+-            </option>
+-          ))}
+-        </select>
++        <FilterPanel
++          groups={filterGroups}
++          activeCount={activeCount}
++          onClearAll={clearAll}
++          chips={chips}
++        />
+       </div>
+ 
+       {people.length === 0 ? (
+diff --git a/src/store/blockActions.test.ts b/src/store/blockActions.test.ts
+index 87f1f4f..672c9ed 100644
+--- a/src/store/blockActions.test.ts
++++ b/src/store/blockActions.test.ts
+@@ -179,6 +179,34 @@ describe('SET_BLOCK_TIME', () => {
+     expect(next).toBe(state);
+   });
+ 
++  // PKG-20260709-bin-drop-freeze: a bin row wider than a day can never be
++  // dropped — the reducer rejects plannedHours > 24 and returns the same state
++  // ref. The BinCard UI now mirrors this (danger tint + Polish hint) so the
++  // doomed drop reverts with feedback instead of silently snapping home.
++  it('rejects dropping a > 24h bin row onto the grid (same state ref)', () => {
++    const binRow = makeEntry({
++      id: 'bigbin',
++      taskId: 't1',
++      personId: 'p1',
++      date: BIN_DATE,
++      startMinutes: 0,
++      plannedHours: 30,
++      sortIndex: 0,
++    });
++    const state = makeState({
++      tasks: [makeTask({ id: 't1' })],
++      workload: [binRow],
++    });
++    const next = reducer(state, {
++      type: 'SET_BLOCK_TIME',
++      entryId: 'bigbin',
++      date: '2026-07-08',
++      startMinutes: 0,
++      plannedHours: 30,
++    });
++    expect(next).toBe(state);
++  });
++
+   it('rejects an unknown entryId', () => {
+     const state = makeState({
+       tasks: [makeTask({ id: 't1' })],
+diff --git a/src/store/selectors.test.ts b/src/store/selectors.test.ts
+index 21fbf87..6cd9574 100644
+--- a/src/store/selectors.test.ts
++++ b/src/store/selectors.test.ts
+@@ -14,10 +14,12 @@ import {
+   realUser,
+   realUserId,
+   taskGrowAllowance,
++  todayAgendaForPerson,
++  weekBlocksForPerson,
+ } from './selectors';
+ import { emptyData } from './storage';
+ import { BIN_DATE } from '../utils/time';
+-import type { AppData, Person, Task, WorkloadEntry } from '../types';
++import type { AppData, Person, Task, TaskAssignment, WorkloadEntry } from '../types';
+ 
+ function makeState(overrides: Partial<AppData> = {}): AppData {
+   return { ...emptyData(), ...overrides };
+@@ -71,6 +73,12 @@ function makeEntry(overrides: Partial<WorkloadEntry> & { id: string }): Workload
+   };
+ }
+ 
++function makeAssignment(
++  overrides: Partial<TaskAssignment> & { id: string; taskId: string; personId: string },
++): TaskAssignment {
++  return { ...overrides };
++}
++
+ describe('conflictDatesForTask — bin exclusion (regression)', () => {
+   it("never returns BIN_DATE/'' even when a person's bin hours alone exceed their capacity", () => {
+     const binOver = makeEntry({
+@@ -311,3 +319,205 @@ describe('availability selectors', () => {
+     expect(availableHoursInRange(state, 'p1', week)).toBe(24); // 4 workdays * 6h
+   });
+ });
++
++// ---------------------------------------------------------------------------
++// todayAgendaForPerson / weekBlocksForPerson (PKG-20260709-dashboard-selector-tests)
++// Implementation shipped by PKG-20260709-dashboard-welcome.
++// ---------------------------------------------------------------------------
++
++describe('todayAgendaForPerson', () => {
++  const DATE = '2026-07-08'; // Wednesday
++
++  it('timed: returns this person\'s entries on the date, sorted by startMinutes, excluding other people/dates', () => {
++    const late = makeEntry({ id: 'e-late', taskId: 't1', personId: 'p1', date: DATE, startMinutes: 600 });
++    const early = makeEntry({ id: 'e-early', taskId: 't1', personId: 'p1', date: DATE, startMinutes: 480 });
++    const otherPerson = makeEntry({ id: 'e-other-person', taskId: 't1', personId: 'p2', date: DATE, startMinutes: 500 });
++    const otherDate = makeEntry({ id: 'e-other-date', taskId: 't1', personId: 'p1', date: '2026-07-09', startMinutes: 490 });
++    const state = makeState({
++      tasks: [makeTask({ id: 't1' })],
++      people: [makePerson({ id: 'p1' }), makePerson({ id: 'p2' })],
++      workload: [late, early, otherPerson, otherDate],
++    });
++
++    const { timed } = todayAgendaForPerson(state, 'p1', DATE);
++    expect(timed.map((w) => w.id)).toEqual(['e-early', 'e-late']);
++  });
++
++  it('timed: a bin entry (date === BIN_DATE) for the same person never shows up when querying a real date', () => {
++    const dated = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: DATE, startMinutes: 480 });
++    const bin = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, sortIndex: 0 });
++    const state = makeState({
++      tasks: [makeTask({ id: 't1' })],
++      people: [makePerson({ id: 'p1' })],
++      workload: [dated, bin],
++    });
++
++    const { timed } = todayAgendaForPerson(state, 'p1', DATE);
++    expect(timed.map((w) => w.id)).toEqual(['e1']);
++    expect(timed.some((w) => w.date === BIN_DATE)).toBe(false);
++  });
++
++  it('dateless: an assigned task covering the date with NO entry that day appears; the same task WITH an entry that day does not', () => {
++    const withoutEntry = makeTask({
++      id: 't-no-entry',
++      title: 'No entry today',
++      startDate: '2026-07-06',
++      endDate: '2026-07-10',
++    });
++    const withEntry = makeTask({
++      id: 't-with-entry',
++      title: 'Has entry today',
++      startDate: '2026-07-06',
++      endDate: '2026-07-10',
++    });
++    const entryToday = makeEntry({ id: 'e1', taskId: 't-with-entry', personId: 'p1', date: DATE });
++    const state = makeState({
++      tasks: [withoutEntry, withEntry],
++      people: [makePerson({ id: 'p1' })],
++      assignments: [
++        makeAssignment({ id: 'a1', taskId: 't-no-entry', personId: 'p1' }),
++        makeAssignment({ id: 'a2', taskId: 't-with-entry', personId: 'p1' }),
++      ],
++      workload: [entryToday],
++    });
++
++    const { dateless, timed } = todayAgendaForPerson(state, 'p1', DATE);
++    expect(dateless.map((t) => t.id)).toEqual(['t-no-entry']);
++    expect(timed.map((w) => w.taskId)).toEqual(['t-with-entry']);
++  });
++
++  it('dateless excludes: task period before/after the date, task assigned to someone else, and a done-status task', () => {
++    const base = emptyData();
++    const doneStatusId = base.statuses[base.statuses.length - 1].id; // last active status = "done"
++    const activeStatusId = base.statuses[0].id;
++
++    const before = makeTask({
++      id: 't-before',
++      statusId: activeStatusId,
++      startDate: '2026-07-01',
++      endDate: '2026-07-05', // ends before DATE
++    });
++    const after = makeTask({
++      id: 't-after',
++      statusId: activeStatusId,
++      startDate: '2026-07-10',
++      endDate: '2026-07-12', // starts after DATE
++    });
++    const someoneElse = makeTask({
++      id: 't-someone-else',
++      statusId: activeStatusId,
++      startDate: '2026-07-06',
++      endDate: '2026-07-10',
++    });
++    const done = makeTask({
++      id: 't-done',
++      statusId: doneStatusId,
++      startDate: '2026-07-06',
++      endDate: '2026-07-10',
++    });
++
++    const state = makeState({
++      ...base,
++      tasks: [before, after, someoneElse, done],
++      people: [makePerson({ id: 'p1' }), makePerson({ id: 'p2' })],
++      assignments: [
++        makeAssignment({ id: 'a1', taskId: 't-before', personId: 'p1' }),
++        makeAssignment({ id: 'a2', taskId: 't-after', personId: 'p1' }),
++        makeAssignment({ id: 'a3', taskId: 't-someone-else', personId: 'p2' }),
++        makeAssignment({ id: 'a4', taskId: 't-done', personId: 'p1' }),
++      ],
++      workload: [],
++    });
++
++    const { dateless } = todayAgendaForPerson(state, 'p1', DATE);
++    expect(dateless).toEqual([]);
++  });
++
++  it('dateless ordering: ascending endDate, ties broken by title', () => {
++    const zebra = makeTask({ id: 't-zebra', title: 'Zebra', startDate: '2026-07-01', endDate: '2026-07-10' });
++    const banana = makeTask({ id: 't-banana', title: 'Banana', startDate: '2026-07-01', endDate: '2026-07-10' });
++    const apple = makeTask({ id: 't-apple', title: 'Apple', startDate: '2026-07-01', endDate: '2026-07-09' });
++    const state = makeState({
++      tasks: [zebra, banana, apple],
++      people: [makePerson({ id: 'p1' })],
++      assignments: [
++        makeAssignment({ id: 'a1', taskId: 't-zebra', personId: 'p1' }),
++        makeAssignment({ id: 'a2', taskId: 't-banana', personId: 'p1' }),
++        makeAssignment({ id: 'a3', taskId: 't-apple', personId: 'p1' }),
++      ],
++      workload: [],
++    });
++
++    const { dateless } = todayAgendaForPerson(state, 'p1', DATE);
++    expect(dateless.map((t) => t.id)).toEqual(['t-apple', 't-banana', 't-zebra']);
++  });
++
++  it('empty results: a person with no assignments and no entries gets both arrays empty', () => {
++    const state = makeState({
++      tasks: [makeTask({ id: 't1' })],
++      people: [makePerson({ id: 'p1' })],
++      workload: [],
++      assignments: [],
++    });
++
++    const { timed, dateless } = todayAgendaForPerson(state, 'p1', DATE);
++    expect(timed).toEqual([]);
++    expect(dateless).toEqual([]);
++  });
++});
++
++describe('weekBlocksForPerson', () => {
++  const WEEK = [
++    '2026-07-06', // Mon
++    '2026-07-07', // Tue
++    '2026-07-08', // Wed
++    '2026-07-09', // Thu
++    '2026-07-10', // Fri
++    '2026-07-11', // Sat
++    '2026-07-12', // Sun
++  ];
++
++  it('returns one key per requested date, each sorted by startMinutes, and an empty array (not a missing key) for days with no entries', () => {
++    const monLate = makeEntry({ id: 'mon-late', taskId: 't1', personId: 'p1', date: '2026-07-06', startMinutes: 600 });
++    const monEarly = makeEntry({ id: 'mon-early', taskId: 't1', personId: 'p1', date: '2026-07-06', startMinutes: 480 });
++    const wed = makeEntry({ id: 'wed1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 540 });
++    const fri = makeEntry({ id: 'fri1', taskId: 't1', personId: 'p1', date: '2026-07-10', startMinutes: 500 });
++    const state = makeState({
++      tasks: [makeTask({ id: 't1' })],
++      people: [makePerson({ id: 'p1' })],
++      workload: [monLate, monEarly, wed, fri],
++    });
++
++    const map = weekBlocksForPerson(state, 'p1', WEEK);
++
++    expect(Array.from(map.keys())).toEqual(WEEK);
++    expect(map.get('2026-07-06')?.map((w) => w.id)).toEqual(['mon-early', 'mon-late']);
++    expect(map.get('2026-07-08')?.map((w) => w.id)).toEqual(['wed1']);
++    expect(map.get('2026-07-10')?.map((w) => w.id)).toEqual(['fri1']);
++    // Days with no blocks -> present as an explicit empty array per the JSDoc contract.
++    expect(map.has('2026-07-07')).toBe(true);
++    expect(map.get('2026-07-07')).toEqual([]);
++    expect(map.get('2026-07-09')).toEqual([]);
++    expect(map.get('2026-07-11')).toEqual([]);
++    expect(map.get('2026-07-12')).toEqual([]);
++  });
++
++  it('excludes other people\'s entries and bin entries', () => {
++    const mine = makeEntry({ id: 'mine', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480 });
++    const theirs = makeEntry({ id: 'theirs', taskId: 't1', personId: 'p2', date: '2026-07-08', startMinutes: 480 });
++    const bin = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, sortIndex: 0 });
++    const state = makeState({
++      tasks: [makeTask({ id: 't1' })],
++      people: [makePerson({ id: 'p1' }), makePerson({ id: 'p2' })],
++      workload: [mine, theirs, bin],
++    });
++
++    const map = weekBlocksForPerson(state, 'p1', WEEK);
++
++    expect(map.get('2026-07-08')?.map((w) => w.id)).toEqual(['mine']);
++    for (const d of WEEK) {
++      expect(map.get(d)?.some((w) => w.personId === 'p2')).toBe(false);
++      expect(map.get(d)?.some((w) => w.date === BIN_DATE)).toBe(false);
++    }
++  });
++});
+diff --git a/src/store/selectors.ts b/src/store/selectors.ts
+index 12b9f05..bf28d33 100644
+--- a/src/store/selectors.ts
++++ b/src/store/selectors.ts
+@@ -263,6 +263,63 @@ export function dayTotal(
+   );
+ }
+ 
++/**
++ * A person's day agenda for the dashboard "Zadania na dziś" section. Pure.
++ * - `timed`: that person's dated (non-bin) workload entries on `date`, ascending
++ *   `startMinutes` (ties by `sortIndex`) — the calendar order IS the priority.
++ * - `dateless`: tasks the person is assigned to whose period covers `date` but
++ *   which have NO entry for that person that day, excluding done-status tasks
++ *   (the last active status), sorted by nearest `endDate` then title.
++ * There is intentionally no priority field — ordering is derived here only.
++ */
++export function todayAgendaForPerson(
++  state: AppData,
++  personId: string,
++  date: DateStr,
++): { timed: WorkloadEntry[]; dateless: Task[] } {
++  const timed = state.workload
++    .filter((w) => w.personId === personId && w.date === date)
++    .sort((a, b) => a.startMinutes - b.startMinutes || a.sortIndex - b.sortIndex);
++
++  const doneStatusId = activeStatuses(state).slice(-1)[0]?.id;
++  const timedTaskIds = new Set(timed.map((w) => w.taskId));
++  const assignedTaskIds = new Set(taskIdsOfPerson(state, personId));
++
++  const dateless = state.tasks
++    .filter(
++      (t) =>
++        assignedTaskIds.has(t.id) &&
++        t.startDate <= date &&
++        date <= t.endDate &&
++        t.statusId !== doneStatusId &&
++        !timedTaskIds.has(t.id),
++    )
++    .sort((a, b) => a.endDate.localeCompare(b.endDate) || a.title.localeCompare(b.title));
++
++  return { timed, dateless };
++}
++
++/**
++ * A person's dated blocks for each of `dates`, keyed by date string, each day's
++ * entries sorted ascending by `startMinutes` (ties by `sortIndex`). Days with no
++ * blocks map to an empty array. Pure — keeps the dashboard week strip
++ * selector-only.
++ */
++export function weekBlocksForPerson(
++  state: AppData,
++  personId: string,
++  dates: DateStr[],
++): Map<DateStr, WorkloadEntry[]> {
++  const map = new Map<DateStr, WorkloadEntry[]>();
++  for (const d of dates) {
++    const blocks = state.workload
++      .filter((w) => w.personId === personId && w.date === d)
++      .sort((a, b) => a.startMinutes - b.startMinutes || a.sortIndex - b.sortIndex);
++    map.set(d, blocks);
++  }
++  return map;
++}
++
+ // ---- Bin (zasobnik) — dateless unassigned entries ----
+ 
+ /** A person's bin entries (date === ''), ordered by their bin sortIndex. */
+diff --git a/src/styles.css b/src/styles.css
+index 0e86b5e..6199967 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -2329,6 +2329,20 @@ option {
+   background: rgba(255, 255, 255, 0.03);
+   min-height: 26px;
+ }
++.timeline-person-row .timeline-person-label {
++  gap: 8px;
++  font-weight: 600;
++  background: rgba(255, 255, 255, 0.05);
++}
++.timeline-person-row .timeline-track {
++  background: rgba(255, 255, 255, 0.03);
++}
++.timeline-person-dot {
++  flex: 0 0 auto;
++  width: 10px;
++  height: 10px;
++  border-radius: 50%;
++}
+ .timeline-weekend {
+   position: absolute;
+   top: 0;
+@@ -2585,6 +2599,388 @@ option {
+   color: var(--n2-danger);
+ }
+ 
++/* ---------- Dashboard: worker welcome page ---------- */
++
++.dash-greeting h1 {
++  margin-bottom: 2px;
++}
++.dash-date {
++  margin: 0;
++  color: var(--text-muted);
++  font-family: var(--n2-font-data);
++  font-size: var(--n2-type-sm);
++  text-transform: capitalize;
++}
++
++/* 2×2 grid on wide screens; single column on narrow. */
++.dash-welcome-grid {
++  grid-template-columns: repeat(2, minmax(0, 1fr));
++}
++@media (max-width: 1180px) {
++  .dash-welcome-grid {
++    grid-template-columns: 1fr;
++  }
++}
++
++.dash-card-head {
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  gap: 8px;
++  margin-bottom: 8px;
++}
++.dash-card-head h2 {
++  margin: 0;
++}
++.dash-card-head .link-btn {
++  margin: 0;
++}
++
++.inline-link {
++  color: var(--n2-lavender);
++  text-decoration: underline;
++}
++
++.demo-badge {
++  font-size: var(--n2-type-xs);
++  font-family: var(--n2-font-mono);
++  text-transform: uppercase;
++  letter-spacing: 0.04em;
++  color: var(--n2-warning);
++  background: var(--n2-warning-soft);
++  border: 1px solid var(--n2-warning);
++  border-radius: var(--n2-radius-pill);
++  padding: 2px 10px;
++  white-space: nowrap;
++}
++
++/* (a) Today's agenda rows */
++.agenda-list .dash-row {
++  gap: 10px;
++}
++.agenda-time {
++  font-family: var(--n2-font-data);
++  font-size: var(--n2-type-sm);
++  font-weight: 600;
++  white-space: nowrap;
++  min-width: 88px;
++}
++.agenda-meta {
++  font-size: var(--n2-type-xs);
++  color: var(--text-muted);
++  white-space: nowrap;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  max-width: 40%;
++}
++.agenda-dateless .dash-row-name {
++  font-weight: 500;
++}
++
++/* (b) Team chat mock */
++.chat-people {
++  list-style: none;
++  margin: 0;
++  padding: 0;
++  display: flex;
++  flex-direction: column;
++  gap: 4px;
++}
++.chat-person {
++  display: flex;
++  align-items: center;
++  gap: 10px;
++  width: 100%;
++  background: none;
++  border: none;
++  font: inherit;
++  color: inherit;
++  text-align: left;
++  padding: 6px 8px;
++  border-radius: var(--n2-radius-sm);
++  cursor: pointer;
++}
++.chat-person:hover {
++  background: var(--card-bg-hover);
++}
++.chat-person-text {
++  display: flex;
++  flex-direction: column;
++  flex: 1;
++  min-width: 0;
++}
++.chat-person-name {
++  font-weight: 600;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++.chat-person-role {
++  font-size: var(--n2-type-xs);
++  color: var(--text-muted);
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++.presence-dot {
++  width: 10px;
++  height: 10px;
++  border-radius: 50%;
++  flex-shrink: 0;
++}
++.presence-online {
++  background: var(--n2-success);
++}
++.presence-away {
++  background: var(--n2-warning);
++}
++.presence-offline {
++  background: var(--n2-text-faint);
++}
++
++.chat-popup {
++  position: fixed;
++  right: 24px;
++  bottom: 24px;
++  width: 320px;
++  max-height: 460px;
++  display: flex;
++  flex-direction: column;
++  background: var(--n2-surface-strong);
++  border: 1px solid var(--n2-border-strong);
++  border-radius: var(--n2-radius-md);
++  box-shadow: var(--n2-shadow-soft);
++  z-index: 60;
++  overflow: hidden;
++}
++.chat-popup-head {
++  display: flex;
++  align-items: center;
++  gap: 10px;
++  padding: 12px 14px;
++  border-bottom: 1px solid var(--n2-border);
++}
++.chat-popup-text {
++  display: flex;
++  flex-direction: column;
++  flex: 1;
++  min-width: 0;
++}
++.chat-popup-name {
++  font-weight: 600;
++}
++.chat-popup-presence {
++  font-size: var(--n2-type-xs);
++  color: var(--text-muted);
++  display: inline-flex;
++  align-items: center;
++  gap: 6px;
++}
++.chat-popup-presence::before {
++  content: '';
++  width: 8px;
++  height: 8px;
++  border-radius: 50%;
++  background: currentColor;
++}
++.chat-popup-presence.presence-online::before {
++  background: var(--n2-success);
++}
++.chat-popup-presence.presence-away::before {
++  background: var(--n2-warning);
++}
++.chat-popup-presence.presence-offline::before {
++  background: var(--n2-text-faint);
++}
++.chat-popup-close {
++  background: none;
++  border: none;
++  color: var(--text-muted);
++  font-size: 22px;
++  line-height: 1;
++  cursor: pointer;
++  padding: 0 4px;
++}
++.chat-popup-close:hover {
++  color: var(--n2-text);
++}
++.chat-popup-body {
++  flex: 1;
++  overflow-y: auto;
++  padding: 12px 14px;
++  display: flex;
++  flex-direction: column;
++  gap: 8px;
++}
++.chat-empty {
++  margin: auto 0;
++  text-align: center;
++  font-size: var(--n2-type-sm);
++}
++.chat-msg {
++  max-width: 80%;
++  padding: 8px 12px;
++  border-radius: var(--n2-radius-md);
++  font-size: var(--n2-type-sm);
++  line-height: 1.4;
++  word-break: break-word;
++}
++.chat-msg.mine {
++  align-self: flex-end;
++  background: var(--n2-violet);
++  color: #fff;
++  border-bottom-right-radius: var(--n2-radius-xs);
++}
++.chat-msg.theirs {
++  align-self: flex-start;
++  background: var(--n2-surface-muted);
++  border-bottom-left-radius: var(--n2-radius-xs);
++}
++.chat-popup-input {
++  display: flex;
++  gap: 8px;
++  padding: 12px 14px;
++  border-top: 1px solid var(--n2-border);
++}
++.chat-popup-input input {
++  flex: 1;
++  min-width: 0;
++}
++@media (max-width: 760px) {
++  .chat-popup {
++    left: 0;
++    right: 0;
++    bottom: 0;
++    width: auto;
++    max-height: 70vh;
++    border-radius: var(--n2-radius-md) var(--n2-radius-md) 0 0;
++  }
++}
++
++/* (c) Workload donuts */
++.donut-row {
++  display: flex;
++  gap: 24px;
++  flex-wrap: wrap;
++  justify-content: space-around;
++}
++.donut {
++  position: relative;
++  display: flex;
++  flex-direction: column;
++  align-items: center;
++  gap: 6px;
++}
++.donut-center {
++  position: absolute;
++  top: 60px;
++  left: 0;
++  right: 0;
++  transform: translateY(-50%);
++  text-align: center;
++  pointer-events: none;
++}
++.donut-value {
++  font-family: var(--n2-font-data);
++  font-weight: 700;
++  font-size: var(--n2-type-md);
++}
++.donut-value.over,
++.donut-pct.over {
++  color: var(--n2-danger);
++}
++.donut-caption {
++  display: flex;
++  flex-direction: column;
++  align-items: center;
++}
++.donut-label {
++  font-size: var(--n2-type-sm);
++  font-weight: 600;
++}
++.donut-pct {
++  font-size: var(--n2-type-xs);
++  color: var(--text-muted);
++  font-family: var(--n2-font-data);
++}
++
++/* (d) Week strip */
++.week-strip {
++  display: grid;
++  grid-template-columns: repeat(7, minmax(0, 1fr));
++  gap: 6px;
++}
++.week-strip-day {
++  background: var(--n2-surface-muted);
++  border: 1px solid var(--n2-border-soft);
++  border-radius: var(--n2-radius-sm);
++  padding: 8px 6px;
++  min-height: 96px;
++  display: flex;
++  flex-direction: column;
++  gap: 6px;
++}
++.week-strip-day.is-weekend {
++  background: transparent;
++}
++.week-strip-day.is-today {
++  border-color: var(--n2-border-strong);
++  box-shadow: inset 0 0 0 1px var(--n2-border-strong);
++}
++.week-strip-head {
++  display: flex;
++  align-items: baseline;
++  justify-content: space-between;
++}
++.week-strip-dow {
++  font-size: var(--n2-type-xs);
++  text-transform: uppercase;
++  color: var(--text-muted);
++  letter-spacing: 0.03em;
++}
++.week-strip-num {
++  font-family: var(--n2-font-data);
++  font-weight: 700;
++  font-size: var(--n2-type-sm);
++}
++.is-today .week-strip-num {
++  color: var(--n2-lavender);
++}
++.week-strip-empty {
++  margin: auto 0;
++  text-align: center;
++  color: var(--text-muted);
++}
++.week-strip-blocks {
++  list-style: none;
++  margin: 0;
++  padding: 0;
++  display: flex;
++  flex-direction: column;
++  gap: 3px;
++}
++.week-strip-blocks li {
++  font-size: var(--n2-type-xs);
++  line-height: 1.3;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++.week-strip-time {
++  font-family: var(--n2-font-data);
++  color: var(--n2-lavender);
++  font-weight: 600;
++}
++.week-strip-more {
++  color: var(--text-muted);
++  font-style: italic;
++}
++@media (max-width: 760px) {
++  .week-strip {
++    grid-template-columns: repeat(2, minmax(0, 1fr));
++  }
++}
++
+ /* ---------- Admin ---------- */
+ 
+ .admin-status-list,
+@@ -3496,6 +3892,150 @@ option {
+   color: var(--n2-text-faint);
+ }
+ 
++/* ---------- Filter panel (button + popover + chips) ---------- */
++
++.filter-bar {
++  display: flex;
++  align-items: center;
++  flex-wrap: wrap;
++  gap: 8px;
++}
++.filter-panel-wrap {
++  position: relative;
++}
++.filter-btn {
++  display: inline-flex;
++  align-items: center;
++  gap: 6px;
++}
++.filter-btn.active {
++  border-color: var(--n2-border-strong);
++  color: var(--n2-text);
++}
++.filter-badge {
++  display: inline-grid;
++  place-items: center;
++  min-width: 18px;
++  height: 18px;
++  padding: 0 5px;
++  border-radius: var(--n2-radius-pill);
++  background: var(--n2-violet);
++  color: #fff;
++  font-size: var(--n2-type-xs);
++  font-weight: 600;
++  line-height: 1;
++}
++.filter-popover {
++  position: absolute;
++  top: calc(100% + 6px);
++  left: 0;
++  z-index: 40;
++  min-width: 260px;
++  max-width: 320px;
++  max-height: 70vh;
++  overflow-y: auto;
++  display: flex;
++  flex-direction: column;
++  gap: var(--n2-space-4);
++  padding: var(--n2-space-4);
++  background: var(--n2-surface-2, var(--n2-surface));
++  border: 1px solid var(--n2-border-strong);
++  border-radius: var(--n2-radius-md);
++  box-shadow: var(--n2-shadow-lg, 0 12px 32px rgba(0, 0, 0, 0.4));
++}
++.filter-group {
++  border: none;
++  margin: 0;
++  padding: 0;
++  min-width: 0;
++}
++.filter-group legend {
++  padding: 0 0 6px;
++  font-size: var(--n2-type-xs);
++  font-weight: 600;
++  letter-spacing: 0.02em;
++  text-transform: uppercase;
++  color: var(--n2-text-faint);
++}
++.filter-options {
++  display: flex;
++  flex-direction: column;
++  gap: 4px;
++}
++.filter-option {
++  display: flex;
++  align-items: center;
++  gap: 8px;
++  padding: 4px 6px;
++  border-radius: var(--n2-radius-sm);
++  cursor: pointer;
++  font-size: var(--n2-type-sm);
++  color: var(--n2-text);
++}
++.filter-option:hover {
++  background: rgba(196, 150, 255, 0.1);
++}
++.filter-option input {
++  accent-color: var(--n2-violet);
++}
++.filter-dates {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 8px;
++}
++.filter-date {
++  display: flex;
++  flex-direction: column;
++  gap: 4px;
++  font-size: var(--n2-type-xs);
++  color: var(--n2-text-faint);
++}
++.filter-popover-foot {
++  display: flex;
++  justify-content: flex-end;
++  border-top: 1px solid var(--n2-border);
++  padding-top: var(--n2-space-4);
++}
++.filter-chip {
++  display: inline-flex;
++  align-items: center;
++  border: 1px solid var(--n2-border);
++  background: rgba(196, 150, 255, 0.1);
++  border-radius: var(--n2-radius-pill);
++  overflow: hidden;
++}
++.filter-chip-label {
++  padding: 5px 4px 5px 12px;
++  font-size: var(--n2-type-sm);
++  font-weight: 500;
++  color: var(--n2-text);
++  white-space: nowrap;
++}
++.filter-chip-del {
++  display: inline-flex;
++  align-items: center;
++  border: none;
++  background: transparent;
++  padding: 5px 9px 5px 4px;
++  cursor: pointer;
++  color: var(--text-muted);
++}
++.filter-chip-del:hover {
++  color: var(--n2-danger);
++}
++
++@media (max-width: 760px) {
++  .filter-popover {
++    position: static;
++    width: 100%;
++    max-width: none;
++    margin-top: 6px;
++  }
++  .filter-panel-wrap {
++    width: 100%;
++  }
++}
++
+ /* ---------- Filter presets ---------- */
+ 
+ .filter-controls {
