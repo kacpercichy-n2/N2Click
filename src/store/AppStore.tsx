@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from 'react';
 import type {
+  AccessRole,
   ActivityEvent,
   AppData,
   CommentEntityType,
@@ -23,7 +24,8 @@ import type {
   TaskAssignment,
   WorkloadEntry,
 } from '../types';
-import { DEFAULT_CAPACITY, loadData, saveData, slugify } from './storage';
+import { DEFAULT_CAPACITY, loadData, sanitizeWorkDays, saveData, slugify } from './storage';
+import { wouldCreateSupervisorCycle } from './selectors';
 import { registerPersonOrder } from '../utils/colors';
 import { addDaysStr, eachDayInclusive, inclusiveDayCount } from '../utils/dates';
 import {
@@ -72,11 +74,18 @@ export interface PersonDraft {
   firstName: string;
   lastName: string;
   email: string;
+  phone: string;
   role: string;
   departmentId: string;
   avatar: string;
   capacity: number;
-  isAdmin: boolean;
+  accessRole: AccessRole;
+  workDays: number[];
+  workStartMinutes: number;
+  workEndMinutes: number;
+  supervisorId: string;
+  // NOTE: passwordHash is intentionally NOT part of the draft — it is set only
+  // via SET_PASSWORD so a profile save can never clobber a stored hash.
 }
 
 /** One planned-hours cell to persist: hours>0 keeps/creates, hours<=0 deletes. */
@@ -122,6 +131,8 @@ export type Action =
   | { type: 'UPDATE_PERSON'; personId: string; person: PersonDraft }
   | { type: 'DELETE_PERSON'; personId: string }
   | { type: 'SET_CURRENT_USER'; personId: string }
+  | { type: 'SET_PASSWORD'; personId: string; passwordHash: string }
+  | { type: 'LOGOUT' }
   | { type: 'ADD_CLIENT'; name: string }
   | { type: 'RENAME_CLIENT'; clientId: string; name: string }
   | { type: 'DELETE_CLIENT'; clientId: string }
@@ -328,23 +339,37 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
     });
   }
 
-  // Append explicitly-requested bin hours (person must be assigned; snap hours,
-  // skip <= 0). Computed against the accumulated workload so multiple items for
-  // one person get consecutive bin sortIndexes.
-  const newBinEntries: WorkloadEntry[] = [];
+  // Explicitly-requested bin hours (person must be assigned; snap hours, skip
+  // <= 0). One-bin-row invariant: aggregate all items per person into a single
+  // total, then merge into the person's passed-through bin row when present,
+  // otherwise create one fresh bin row.
+  const addByPersonQ = new Map<string, number>();
   for (const item of payload.newUnassigned ?? []) {
     if (!assignedSet.has(item.personId)) continue;
     const hours = snapHours(item.hours);
     if (hours <= 0) continue;
-    const accumulated = [...workloadOther, ...taskBinKept, ...workloadForTask, ...newBinEntries];
+    addByPersonQ.set(
+      item.personId,
+      (addByPersonQ.get(item.personId) ?? 0) + Math.round(hours / HOURS_STEP),
+    );
+  }
+  const mergedTaskBinKept = taskBinKept.map((w) => {
+    const addQ = addByPersonQ.get(w.personId);
+    if (addQ === undefined) return w;
+    addByPersonQ.delete(w.personId); // consumed — the rest become fresh rows
+    return { ...w, plannedHours: (Math.round(w.plannedHours / HOURS_STEP) + addQ) * HOURS_STEP };
+  });
+  const newBinEntries: WorkloadEntry[] = [];
+  for (const [personId, addQ] of addByPersonQ) {
+    const accumulated = [...workloadOther, ...mergedTaskBinKept, ...workloadForTask, ...newBinEntries];
     newBinEntries.push({
       id: uid(),
       taskId: realTaskId,
-      personId: item.personId,
+      personId,
       date: BIN_DATE,
-      plannedHours: hours,
+      plannedHours: addQ * HOURS_STEP,
       startMinutes: 0,
-      sortIndex: nextSortIndex(accumulated, item.personId, BIN_DATE),
+      sortIndex: nextSortIndex(accumulated, personId, BIN_DATE),
     });
   }
 
@@ -352,7 +377,7 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
     ...state,
     tasks,
     assignments: [...assignmentsOther, ...assignmentsForTask],
-    workload: [...workloadOther, ...taskBinKept, ...workloadForTask, ...newBinEntries],
+    workload: [...workloadOther, ...mergedTaskBinKept, ...workloadForTask, ...newBinEntries],
     activity: withActivity(
       state,
       'task',
@@ -608,6 +633,44 @@ function reassignEntry(state: AppData, entryId: string, toPersonId: string): App
   const fromPersonId = entry.personId;
   const { date, plannedHours, taskId } = entry;
 
+  // Bin entry → another person: merge into the target's existing same-task bin
+  // row when one exists (one-bin-row invariant) — the target row's id survives
+  // and the moved entry is dropped.
+  if (isBinEntry(entry)) {
+    const targetBin = state.workload.find(
+      (w) => w.taskId === taskId && w.personId === toPersonId && isBinEntry(w),
+    );
+    if (targetBin) {
+      const sumQ = toQuarters(targetBin.plannedHours) + toQuarters(plannedHours);
+      const workload = reindexDays(
+        state.workload
+          .filter((w) => w.id !== entryId)
+          .map((w) =>
+            w.id === targetBin.id ? { ...w, plannedHours: sumQ * HOURS_STEP } : w,
+          ),
+        new Set([dayKey(fromPersonId, BIN_DATE), dayKey(toPersonId, BIN_DATE)]),
+      );
+      const alreadyAssigned = state.assignments.some(
+        (a) => a.taskId === taskId && a.personId === toPersonId,
+      );
+      const assignments = alreadyAssigned
+        ? state.assignments
+        : [...state.assignments, { id: uid(), taskId, personId: toPersonId }];
+      const fromName = state.people.find((p) => p.id === fromPersonId)?.name ?? 'kogoś';
+      return {
+        ...state,
+        assignments,
+        workload,
+        activity: withActivity(
+          state,
+          'task',
+          taskId,
+          `przeniósł/przeniosła blok ${formatDuration(plannedHours)} (${date}) z ${fromName} na ${target.name}`,
+        ),
+      };
+    }
+  }
+
   // Compute the target's next free sortIndex against the workload WITHOUT the
   // moved entry, then append the moved entry to the end of the target's day.
   const without = state.workload.filter((w) => w.id !== entryId);
@@ -655,10 +718,22 @@ function reassignEntry(state: AppData, entryId: string, toPersonId: string): App
   };
 }
 
+/** Hours -> integer quarter-units (0.25h grid) to keep hour math free of float drift. */
+function toQuarters(hours: number): number {
+  return Math.round(hours / HOURS_STEP);
+}
+
 /**
  * Move/resize one block in time (the timed Week view). Rejects (returns state
  * unchanged) on any invalid input or a same-person time overlap. Extends the
  * task period to cover a new date unless that would exceed the 92-day cap.
+ *
+ * This is the ONLY budget-enforcing path (mirroring how a same-person time
+ * overlap is blocked only here — CLAUDE.md invariant 3). For a task with an
+ * estimate, GROWING a block draws hours from the owner's same-task bin row
+ * first, then from the task headroom, and is rejected past that budget; SHRINK
+ * returns freed hours to (merges into) the same bin row. SAVE_TASK /
+ * AllocationGrid edits stay unrestricted — the estimate is advisory there.
  */
 function setBlockTime(
   state: AppData,
@@ -715,32 +790,117 @@ function setBlockTime(
 
   const oldDate = entry.date;
   const fromBin = isBinEntry(entry); // dropped in from the bin
+  const grow = plannedHours > entry.plannedHours;
   const shrink = plannedHours < entry.plannedHours; // freed hours go back to the bin
-  const delta = entry.plannedHours - plannedHours; // grid-safe (both on the 0.25h grid)
+  const shrinkDelta = shrink ? entry.plannedHours - plannedHours : 0; // grid-safe
 
-  let updated = state.workload.map((w) =>
-    w.id === entryId ? { ...w, date, startMinutes, plannedHours } : w,
+  // The owner's single (task, person) bin row, excluding this entry (the entry
+  // itself may be a bin block being dropped onto the grid — it is leaving the bin).
+  const binRow = state.workload.find(
+    (w) =>
+      w.taskId === entry.taskId &&
+      w.personId === entry.personId &&
+      isBinEntry(w) &&
+      w.id !== entryId,
   );
+
+  // Budget enforcement + hour-conserving consumption on GROW (budgeted tasks only).
+  let takenFromBinQ = 0;
+  if (grow && task.estimatedHours !== null) {
+    const growDeltaQ = toQuarters(plannedHours) - toQuarters(entry.plannedHours);
+    const binSameQ = binRow ? toQuarters(binRow.plannedHours) : 0;
+    const totalAllQ = state.workload
+      .filter((w) => w.taskId === entry.taskId)
+      .reduce((sum, w) => sum + toQuarters(w.plannedHours), 0);
+    const headroomQ = Math.max(0, toQuarters(task.estimatedHours) - totalAllQ);
+    // Safety net — the UI clamps growth live (PKG-20260708-budget-week-ui).
+    if (growDeltaQ > binSameQ + headroomQ) return state;
+    takenFromBinQ = Math.min(growDeltaQ, binSameQ); // bin first, then headroom
+  }
+
   const touchedKeys = new Set([
     dayKey(entry.personId, oldDate),
     dayKey(entry.personId, date),
   ]);
-  if (shrink) {
-    updated = [
-      ...updated,
-      {
-        id: uid(),
-        taskId: entry.taskId,
-        personId: entry.personId,
-        date: BIN_DATE,
-        plannedHours: delta,
-        startMinutes: 0,
-        sortIndex: nextSortIndex(updated, entry.personId, BIN_DATE),
-      },
-    ];
+
+  // Apply the new geometry to the moved entry.
+  let workloadArr = state.workload.map((w) =>
+    w.id === entryId ? { ...w, date, startMinutes, plannedHours } : w,
+  );
+
+  // GROW: draw the consumed hours from the same-task bin row (delete it at 0h);
+  // any remainder is minted from headroom (no row change, task total rises).
+  if (takenFromBinQ > 0 && binRow) {
+    const remainingQ = toQuarters(binRow.plannedHours) - takenFromBinQ;
+    workloadArr =
+      remainingQ <= 0
+        ? workloadArr.filter((w) => w.id !== binRow.id)
+        : workloadArr.map((w) =>
+            w.id === binRow.id ? { ...w, plannedHours: remainingQ * HOURS_STEP } : w,
+          );
     touchedKeys.add(dayKey(entry.personId, BIN_DATE));
   }
-  const workload = reindexDays(updated, touchedKeys);
+
+  // SHRINK: return freed hours to the bin, MERGING into the existing (task,
+  // person) bin row when one exists (create a fresh row only when none does).
+  if (shrink) {
+    const freedQ = toQuarters(shrinkDelta);
+    if (binRow) {
+      workloadArr = workloadArr.map((w) =>
+        w.id === binRow.id
+          ? { ...w, plannedHours: (toQuarters(w.plannedHours) + freedQ) * HOURS_STEP }
+          : w,
+      );
+    } else {
+      workloadArr = [
+        ...workloadArr,
+        {
+          id: uid(),
+          taskId: entry.taskId,
+          personId: entry.personId,
+          date: BIN_DATE,
+          plannedHours: freedQ * HOURS_STEP,
+          startMinutes: 0,
+          sortIndex: nextSortIndex(workloadArr, entry.personId, BIN_DATE),
+        },
+      ];
+    }
+    touchedKeys.add(dayKey(entry.personId, BIN_DATE));
+  }
+
+  // Adjacency merge: fuse exactly-touching same-task same-person blocks on the
+  // drop day into one (the EARLIER block keeps its id; hours summed). Repeat
+  // until stable — a merge can create a new adjacency. Merging happens here
+  // only (not in INSERT_BLOCK — the ripple insert keeps its behavior).
+  let survivorId: string | null = null;
+  for (;;) {
+    const group = workloadArr
+      .filter(
+        (w) => w.personId === entry.personId && w.date === date && w.taskId === entry.taskId,
+      )
+      .sort((a, b) => a.startMinutes - b.startMinutes);
+    let merged = false;
+    for (let i = 0; i < group.length - 1; i++) {
+      const a = group[i];
+      const b = group[i + 1];
+      if (blockEndMinutes(a.startMinutes, a.plannedHours) === b.startMinutes) {
+        const sumQ = toQuarters(a.plannedHours) + toQuarters(b.plannedHours);
+        workloadArr = workloadArr
+          .filter((w) => w.id !== b.id)
+          .map((w) => (w.id === a.id ? { ...w, plannedHours: sumQ * HOURS_STEP } : w));
+        survivorId = a.id;
+        merged = true;
+        break;
+      }
+    }
+    if (!merged) break;
+  }
+  const mergedHours =
+    survivorId !== null
+      ? workloadArr.find((w) => w.id === survivorId)?.plannedHours ?? 0
+      : 0;
+
+  const workload = reindexDays(workloadArr, touchedKeys);
 
   let message: string;
   if (fromBin) {
@@ -750,7 +910,13 @@ function setBlockTime(
   } else {
     message = `zmienił(a) blok na ${formatMinutes(startMinutes)}–${formatMinutes(startMinutes + dur)} (${formatDuration(plannedHours)})`;
   }
-  if (shrink) message += `; ${formatDuration(delta)} wróciło do zasobnika`;
+  if (takenFromBinQ > 0) {
+    message += `; pobrano z zasobnika: ${formatDuration(takenFromBinQ * HOURS_STEP)}`;
+  }
+  if (shrink) message += `; ${formatDuration(shrinkDelta)} wróciło do zasobnika`;
+  if (survivorId !== null) {
+    message += `; połączono sąsiednie bloki (razem ${formatDuration(mergedHours)})`;
+  }
 
   return {
     ...state,
@@ -767,20 +933,35 @@ function moveBlockToBin(state: AppData, entryId: string): AppData {
   const entry = state.workload.find((w) => w.id === entryId);
   if (!entry || isBinEntry(entry)) return state;
   const oldDate = entry.date;
-  const without = state.workload.filter((w) => w.id !== entryId);
-  const moved: WorkloadEntry = {
-    ...entry,
-    date: BIN_DATE,
-    startMinutes: 0,
-    sortIndex: nextSortIndex(without, entry.personId, BIN_DATE),
-  };
   const touched = new Set([
     dayKey(entry.personId, oldDate),
     dayKey(entry.personId, BIN_DATE),
   ]);
+
+  // One-bin-row invariant: when the (task, person) pair already has a bin row,
+  // fold this block's hours into it and drop the moved entry (existing id survives).
+  const existingBin = state.workload.find(
+    (w) => w.taskId === entry.taskId && w.personId === entry.personId && isBinEntry(w),
+  );
+  let workload: WorkloadEntry[];
+  if (existingBin) {
+    const sumQ = toQuarters(existingBin.plannedHours) + toQuarters(entry.plannedHours);
+    workload = state.workload
+      .filter((w) => w.id !== entryId)
+      .map((w) => (w.id === existingBin.id ? { ...w, plannedHours: sumQ * HOURS_STEP } : w));
+  } else {
+    const without = state.workload.filter((w) => w.id !== entryId);
+    const moved: WorkloadEntry = {
+      ...entry,
+      date: BIN_DATE,
+      startMinutes: 0,
+      sortIndex: nextSortIndex(without, entry.personId, BIN_DATE),
+    };
+    workload = [...without, moved];
+  }
   return {
     ...state,
-    workload: reindexDays([...without, moved], touched),
+    workload: reindexDays(workload, touched),
     activity: withActivity(
       state,
       'task',
@@ -791,13 +972,17 @@ function moveBlockToBin(state: AppData, entryId: string): AppData {
 }
 
 /**
- * Split a block into `parts` (halves/quarters) on the 0.25h grid. The largest
- * part stays on the original entry (dated or bin); the rest become bin entries
- * appended to the person's bin. Rejects when the block is too small to divide.
+ * Split a dated block into `parts` (halves/quarters) on the 0.25h grid. The
+ * largest part stays scheduled on the original entry; the rest collapse into a
+ * SINGLE bin row (summed), merged into the (task, person) bin row when one
+ * already exists. Rejects when the block is too small to divide, and no-ops on
+ * a bin entry — splitting a bin block would create a second same-pair bin row,
+ * violating the one-bin-row invariant.
  */
 function splitBlock(state: AppData, entryId: string, parts: 2 | 4): AppData {
   const entry = state.workload.find((w) => w.id === entryId);
   if (!entry || entry.plannedHours < parts * HOURS_STEP) return state;
+  if (isBinEntry(entry)) return state;
 
   const q = Math.round(entry.plannedHours / HOURS_STEP);
   const base = Math.floor(q / parts);
@@ -805,29 +990,39 @@ function splitBlock(state: AppData, entryId: string, parts: 2 | 4): AppData {
   // First `r` parts (the largest) get base+1 quarters; part 1 stays scheduled.
   const quarters: number[] = [];
   for (let i = 0; i < parts; i++) quarters.push(base + (i < r ? 1 : 0));
+  const binQ = quarters.slice(1).reduce((s, x) => s + x, 0); // all split-off parts
 
   let workload = state.workload.map((w) =>
     w.id === entryId ? { ...w, plannedHours: quarters[0] * HOURS_STEP } : w,
   );
-  const newBin: WorkloadEntry[] = [];
-  for (let i = 1; i < parts; i++) {
-    const accumulated = [...workload, ...newBin];
-    newBin.push({
-      id: uid(),
-      taskId: entry.taskId,
-      personId: entry.personId,
-      date: BIN_DATE,
-      plannedHours: quarters[i] * HOURS_STEP,
-      startMinutes: 0,
-      sortIndex: nextSortIndex(accumulated, entry.personId, BIN_DATE),
-    });
+  const existingBin = state.workload.find(
+    (w) => w.taskId === entry.taskId && w.personId === entry.personId && isBinEntry(w),
+  );
+  if (existingBin) {
+    workload = workload.map((w) =>
+      w.id === existingBin.id
+        ? { ...w, plannedHours: (toQuarters(w.plannedHours) + binQ) * HOURS_STEP }
+        : w,
+    );
+  } else {
+    workload = [
+      ...workload,
+      {
+        id: uid(),
+        taskId: entry.taskId,
+        personId: entry.personId,
+        date: BIN_DATE,
+        plannedHours: binQ * HOURS_STEP,
+        startMinutes: 0,
+        sortIndex: nextSortIndex(workload, entry.personId, BIN_DATE),
+      },
+    ];
   }
-  workload = [...workload, ...newBin];
   const touched = new Set([
     dayKey(entry.personId, entry.date),
     dayKey(entry.personId, BIN_DATE),
   ]);
-  const binSum = newBin.reduce((s, w) => s + w.plannedHours, 0);
+  const binSum = binQ * HOURS_STEP;
   return {
     ...state,
     workload: reindexDays(workload, touched),
@@ -861,26 +1056,40 @@ function deleteBlock(state: AppData, entryId: string): AppData {
 
 // ---- People ----
 
-function personFromDraft(draft: PersonDraft): Omit<Person, 'id'> {
+// Everything a draft owns EXCEPT the id and passwordHash — those are managed
+// separately (id on create, passwordHash only via SET_PASSWORD) so a profile
+// save never clobbers a stored password.
+function personFromDraft(draft: PersonDraft): Omit<Person, 'id' | 'passwordHash'> {
   const firstName = draft.firstName.trim();
   const lastName = draft.lastName.trim();
+  const capacity = draft.capacity > 0 ? draft.capacity : DEFAULT_CAPACITY;
   return {
     firstName,
     lastName,
     name: [firstName, lastName].filter(Boolean).join(' '),
     email: draft.email.trim(),
+    phone: draft.phone.trim(),
     role: draft.role.trim(),
     departmentId: draft.departmentId,
     avatar: draft.avatar.trim(),
-    capacity: draft.capacity > 0 ? draft.capacity : DEFAULT_CAPACITY,
-    isAdmin: draft.isAdmin,
+    capacity,
+    accessRole: draft.accessRole,
+    // Work hours are informational only — no coupling to capacity is enforced.
+    workDays: sanitizeWorkDays(draft.workDays),
+    workStartMinutes: draft.workStartMinutes,
+    workEndMinutes: draft.workEndMinutes,
+    supervisorId: draft.supervisorId,
   };
 }
 
 function deletePerson(state: AppData, personId: string): AppData {
   return {
     ...state,
-    people: state.people.filter((p) => p.id !== personId),
+    // Cascade (invariant 5): drop the person, their assignments/workload, and
+    // clear any dangling supervisorId that pointed at them on remaining people.
+    people: state.people
+      .filter((p) => p.id !== personId)
+      .map((p) => (p.supervisorId === personId ? { ...p, supervisorId: '' } : p)),
     assignments: state.assignments.filter((a) => a.personId !== personId),
     workload: state.workload.filter((w) => w.personId !== personId),
     currentUserId: state.currentUserId === personId ? '' : state.currentUserId,
@@ -1096,22 +1305,74 @@ export function reducer(state: AppData, action: Action): AppData {
         activity: withActivity(state, action.entityType, action.entityId, 'dodał(a) komentarz'),
       };
     }
-    case 'ADD_PERSON':
+    case 'ADD_PERSON': {
+      const id = uid();
+      const base = personFromDraft(action.person);
+      // Defensive cycle guard (a fresh id is unreferenced, so this only trips on
+      // a self-pointing supervisorId). passwordHash starts empty (passwordless).
+      const supervisorId = wouldCreateSupervisorCycle(state.people, id, base.supervisorId)
+        ? ''
+        : base.supervisorId;
+      // Fresh-setup lockout guard: the FIRST person created into an empty people
+      // list is forced to administrator. Otherwise the login gate would activate
+      // (people.length > 0) with zero admins and no in-app recovery path.
+      const accessRole = state.people.length === 0 ? 'administrator' : base.accessRole;
       return {
         ...state,
-        people: [...state.people, { id: uid(), ...personFromDraft(action.person) }],
+        people: [...state.people, { id, ...base, accessRole, supervisorId, passwordHash: '' }],
       };
-    case 'UPDATE_PERSON':
+    }
+    case 'UPDATE_PERSON': {
+      const base = personFromDraft(action.person);
+      // Guard the last administrator: refuse a save that would demote the only
+      // remaining admin (returns state unchanged — reject-by-same-ref).
+      const target = state.people.find((p) => p.id === action.personId);
+      const adminCount = state.people.filter((p) => p.accessRole === 'administrator').length;
+      if (
+        target?.accessRole === 'administrator' &&
+        base.accessRole !== 'administrator' &&
+        adminCount === 1
+      ) {
+        return state;
+      }
+      // Never let a save form a supervisor cycle; drop the value if it would.
+      const supervisorId = wouldCreateSupervisorCycle(
+        state.people,
+        action.personId,
+        base.supervisorId,
+      )
+        ? ''
+        : base.supervisorId;
       return {
         ...state,
         people: state.people.map((p) =>
-          p.id === action.personId ? { ...p, ...personFromDraft(action.person) } : p,
+          p.id === action.personId ? { ...p, ...base, supervisorId } : p,
         ),
       };
-    case 'DELETE_PERSON':
+    }
+    case 'DELETE_PERSON': {
+      // Guard the last administrator: refuse to delete the only remaining admin
+      // (returns state unchanged). Applied BEFORE the deletePerson cascade so the
+      // supervisorId cleanup only runs on an allowed delete.
+      const target = state.people.find((p) => p.id === action.personId);
+      const adminCount = state.people.filter((p) => p.accessRole === 'administrator').length;
+      if (target?.accessRole === 'administrator' && adminCount === 1) {
+        return state;
+      }
       return deletePerson(state, action.personId);
+    }
     case 'SET_CURRENT_USER':
       return { ...state, currentUserId: action.personId };
+    case 'SET_PASSWORD':
+      // Stores the given hash verbatim ('' clears the password). No activity row.
+      return {
+        ...state,
+        people: state.people.map((p) =>
+          p.id === action.personId ? { ...p, passwordHash: action.passwordHash } : p,
+        ),
+      };
+    case 'LOGOUT':
+      return { ...state, currentUserId: '' };
     case 'ADD_CLIENT': {
       const name = action.name.trim();
       if (!name) return state;

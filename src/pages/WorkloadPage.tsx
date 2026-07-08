@@ -4,15 +4,18 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
+import { useCan } from '../store/useCan';
 import type { AppData } from '../types';
 import type { WorkloadEntry } from '../types';
 import {
+  availableHoursInRange,
   blocksForPersonDate,
   getClient,
   getDepartment,
   getProject,
   getTask,
   hoursForPersonOnDate,
+  isPersonWorkday,
   personCapacity,
 } from '../store/selectors';
 import { Avatar } from '../components/Avatar';
@@ -34,6 +37,8 @@ function BlockRow({
   entry,
   personId,
   date,
+  canReassign,
+  canMoveTask,
   onReassign,
   onOpenTask,
   onMove,
@@ -42,6 +47,8 @@ function BlockRow({
   entry: WorkloadEntry;
   personId: string;
   date: string;
+  canReassign: boolean;
+  canMoveTask: boolean;
   onReassign: (entryId: string, toPersonId: string) => void;
   onOpenTask: (taskId: string) => void;
   onMove: (taskId: string, dayDelta: number) => void;
@@ -63,7 +70,7 @@ function BlockRow({
       </div>
       <span className="wr-block-hours">{formatDuration(entry.plannedHours)}</span>
       <div className="wr-block-actions">
-        {others.length > 0 && (
+        {canReassign && others.length > 0 && (
           <div className="wr-reassign">
             <select
               value={target}
@@ -97,23 +104,25 @@ function BlockRow({
         >
           Otwórz zadanie
         </button>
-        <div className="wr-move">
-          <span className="muted wr-move-label">Przesuń całe zadanie:</span>
-          <button
-            type="button"
-            className="btn ghost small"
-            onClick={() => onMove(entry.taskId, -1)}
-          >
-            <ChevronLeft size={14} /> −1 dzień
-          </button>
-          <button
-            type="button"
-            className="btn ghost small"
-            onClick={() => onMove(entry.taskId, 1)}
-          >
-            +1 dzień <ChevronRight size={14} />
-          </button>
-        </div>
+        {canMoveTask && (
+          <div className="wr-move">
+            <span className="muted wr-move-label">Przesuń całe zadanie:</span>
+            <button
+              type="button"
+              className="btn ghost small"
+              onClick={() => onMove(entry.taskId, -1)}
+            >
+              <ChevronLeft size={14} /> −1 dzień
+            </button>
+            <button
+              type="button"
+              className="btn ghost small"
+              onClick={() => onMove(entry.taskId, 1)}
+            >
+              +1 dzień <ChevronRight size={14} />
+            </button>
+          </div>
+        )}
       </div>
     </li>
   );
@@ -122,6 +131,9 @@ function BlockRow({
 export function WorkloadPage() {
   const { state, dispatch } = useStore();
   const { openTask } = useOpenTask();
+  const can = useCan();
+  const canReassign = can('workload.reassign');
+  const canMoveTask = can('tasks.manage');
   const [anchor, setAnchor] = useState(() => todayStr());
   const [departmentFilter, setDepartmentFilter] = useState('');
   const [clientFilter, setClientFilter] = useState('');
@@ -174,8 +186,6 @@ export function WorkloadPage() {
     weekEntries
       .filter((w) => w.personId === personId && w.date === date)
       .reduce((s, w) => s + w.plannedHours, 0);
-
-  const workdays = days.filter((d) => !isWeekend(d));
 
   return (
     <section className="page page-wide">
@@ -274,7 +284,7 @@ export function WorkloadPage() {
               {people.map((p) => {
                 const capacity = personCapacity(state, p.id);
                 const assigned = days.reduce((s, d) => s + hoursFor(p.id, d), 0);
-                const available = workdays.length * capacity;
+                const available = availableHoursInRange(state, p.id, days);
                 const pct = available > 0 ? Math.round((assigned / available) * 100) : 0;
                 const overloadedDays = days.filter((d) => hoursFor(p.id, d) > capacity);
                 return (
@@ -302,7 +312,9 @@ export function WorkloadPage() {
                           key={d}
                           className={[
                             'workload-cell',
-                            isWeekend(d) ? 'weekend' : '',
+                            isWeekend(d) || !isPersonWorkday(state, p.id, d)
+                              ? 'weekend'
+                              : '',
                             over ? 'overload' : '',
                             h === 0 ? 'free' : '',
                             clickable ? 'clickable' : '',
@@ -397,6 +409,8 @@ export function WorkloadPage() {
                                   entry={entry}
                                   personId={p.id}
                                   date={date}
+                                  canReassign={canReassign}
+                                  canMoveTask={canMoveTask}
                                   onReassign={(entryId, toPersonId) =>
                                     dispatch({ type: 'REASSIGN_ENTRY', entryId, toPersonId })
                                   }
@@ -420,8 +434,8 @@ export function WorkloadPage() {
         </div>
       )}
       <p className="field-hint">
-        Dostępne = dzienna dostępność × {workdays.length} dni roboczych. Filtry klienta i
-        typu usługi zawężają godziny uwzględniane w podsumowaniu.
+        Dostępne = dzienna dostępność × dni robocze osoby. Filtry klienta i typu usługi
+        zawężają godziny uwzględniane w podsumowaniu.
       </p>
     </section>
   );

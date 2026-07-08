@@ -17,6 +17,7 @@ import type {
 } from '../types';
 import { DEFAULT_CAPACITY } from './storage';
 import { blockEndMinutes, hasCollision, hoursToMinutes, isBinEntry } from '../utils/time';
+import { parseDate } from '../utils/dates';
 
 // ---- Basic lookups ----
 
@@ -281,6 +282,67 @@ export function binTotalForPerson(state: AppData, personId: string): number {
   return binEntriesForPerson(state, personId).reduce((sum, w) => sum + w.plannedHours, 0);
 }
 
+/**
+ * The single bin (zasobnik) entry for a (task, person) pair, if any. Invariant
+ * (PKG-20260708-budget-store): at most one bin row per (taskId, personId) — this
+ * returns the first by sortIndex to stay deterministic even if a stray duplicate
+ * slips in before the next normalize pass.
+ */
+export function binEntryForTaskPerson(
+  state: AppData,
+  taskId: string,
+  personId: string,
+): WorkloadEntry | undefined {
+  return state.workload
+    .filter((w) => w.taskId === taskId && w.personId === personId && isBinEntry(w))
+    .sort((a, b) => a.sortIndex - b.sortIndex)[0];
+}
+
+/** Summed bin hours for a (task, person) pair (post-invariant: a single row). */
+export function binHoursForTaskPerson(
+  state: AppData,
+  taskId: string,
+  personId: string,
+): number {
+  return state.workload
+    .filter((w) => w.taskId === taskId && w.personId === personId && isBinEntry(w))
+    .reduce((sum, w) => sum + w.plannedHours, 0);
+}
+
+/**
+ * A task's hour budget derived from its optional estimate.
+ * - `estimate`: the task's `estimatedHours` (null ⇒ no budget).
+ * - `totalAll`: sum of ALL the task's workload entries (dated + bin, all people).
+ * - `headroom`: `max(0, estimate − totalAll)`, or 0 when there is no estimate.
+ */
+export function taskBudget(
+  state: AppData,
+  taskId: string,
+): { estimate: number | null; totalAll: number; headroom: number } {
+  const estimate = getTask(state, taskId)?.estimatedHours ?? null;
+  const totalAll = taskPlannedTotal(state, taskId);
+  const headroom = estimate === null ? 0 : Math.max(0, estimate - totalAll);
+  return { estimate, totalAll, headroom };
+}
+
+/**
+ * How many hours a block may GROW BY (the grow DELTA, not the block's absolute
+ * size) before it would mint hours past the task budget. `null` ⇒ unlimited
+ * (the task has no estimate ⇒ free grow, today's behavior). Otherwise the
+ * block's owner may draw from their same-task bin row first, then from the
+ * task's headroom: `binHoursForTaskPerson + headroom`.
+ */
+export function growAllowanceHours(state: AppData, entryId: string): number | null {
+  const entry = state.workload.find((w) => w.id === entryId);
+  if (!entry) return 0;
+  const task = getTask(state, entry.taskId);
+  if (!task || task.estimatedHours === null) return null;
+  return (
+    binHoursForTaskPerson(state, entry.taskId, entry.personId) +
+    taskBudget(state, entry.taskId).headroom
+  );
+}
+
 // ---- Capacity & overload ----
 
 export const OVERLOAD_THRESHOLD = DEFAULT_CAPACITY;
@@ -434,8 +496,60 @@ export function currentUser(state: AppData): Person | undefined {
 /**
  * Admin gate for the admin panel and status management. With no people yet
  * there is nobody to be admin, so setup stays unlocked (prevents lockout).
+ * Reimplemented on `accessRole` (v5); keeps its name/signature and the rule.
  */
 export function isAdminUser(state: AppData): boolean {
   if (state.people.length === 0) return true;
-  return currentUser(state)?.isAdmin ?? false;
+  return currentUser(state)?.accessRole === 'administrator';
+}
+
+/**
+ * Would setting `personId`'s supervisor to `supervisorId` create a cycle? True
+ * when the supervisor is the person themselves, or when walking the supervisor
+ * chain UP from `supervisorId` reaches `personId`. Pure and deterministic; a
+ * pre-existing cycle that does NOT involve `personId` terminates safely (false).
+ * Package 7's inline validation reuses this; the reducer uses it as a guard.
+ */
+export function wouldCreateSupervisorCycle(
+  people: Person[],
+  personId: string,
+  supervisorId: string,
+): boolean {
+  if (!supervisorId) return false;
+  if (supervisorId === personId) return true;
+  const byId = new Map(people.map((p) => [p.id, p]));
+  const seen = new Set<string>();
+  let current: string = supervisorId;
+  while (current) {
+    if (current === personId) return true;
+    if (seen.has(current)) return false; // pre-existing cycle, not through personId
+    seen.add(current);
+    current = byId.get(current)?.supervisorId ?? '';
+  }
+  return false;
+}
+
+// ---- Availability (workday-aware) ----
+
+/** Is `date` one of the person's work days? (JS getDay 0=Sun mapped to ISO 7.) */
+export function isPersonWorkday(state: AppData, personId: string, date: DateStr): boolean {
+  const person = getPerson(state, personId);
+  if (!person) return false;
+  const jsDay = parseDate(date).getDay(); // 0 = Sun … 6 = Sat
+  const isoDay = jsDay === 0 ? 7 : jsDay;
+  return person.workDays.includes(isoDay);
+}
+
+/** Available hours on a date: the person's daily capacity on a workday, else 0. */
+export function availableHoursOnDate(state: AppData, personId: string, date: DateStr): number {
+  return isPersonWorkday(state, personId, date) ? personCapacity(state, personId) : 0;
+}
+
+/** Summed available hours across a list of dates. */
+export function availableHoursInRange(
+  state: AppData,
+  personId: string,
+  dates: DateStr[],
+): number {
+  return dates.reduce((sum, d) => sum + availableHoursOnDate(state, personId, d), 0);
 }

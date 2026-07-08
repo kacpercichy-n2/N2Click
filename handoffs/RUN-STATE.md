@@ -5,83 +5,108 @@ A durable, append-only log for the run in progress. Every tier updates it so the
 instead of reconstructing it from chat history and worker narratives. Keep it
 boring and factual — it's a checklist, not prose.
 
+> Previous runs (2026-07-08 "Unassigned bin + block split + sidebar collapse" —
+> APPROVED; 2026-07-08 "Walkthrough fixes: fixed hour axis, bin beside grid,
+> duration format" — APPROVED) are archived in git history of this file.
+> **Carried-over items still open:** (a) human browser walkthrough of both
+> approved runs' interactive criteria; (b) commit hygiene — `git add` the
+> untracked `src/utils/uiPrefs.ts`, `src/store/selectors.test.ts`, package and
+> review files; (c) CLAUDE.md refresh (bin/zasobnik, week-view panes,
+> formatDuration convention) — human task, not a worker package.
+
 ---
 
-## Run: 2026-07-08 — Unassigned bin + block split + sidebar collapse
+## Run: 2026-07-08 — Hour budget + block merging · accounts/roles/permissions · sidebar icon fix
 
 ### Plan (architect)
 
-- **Goal:** (1) Per-person "Zasobnik" (bin) of dateless workload entries,
-  rendered as an 8th column in the calendar week grid behind horizontal scroll
-  (Mon–Fri fill the visible width, weekend + bin scroll in from the right);
-  bin blocks drag onto the grid (assign date+time) and grid blocks drag into
-  the bin; the task editor can add hours to the bin. (2) Context-menu split
-  (halves/quarters — split-off parts become bin entries) and calendar-resize
-  shrink returns the freed hours to the bin. (3) Sidebar collapse to ~80px
-  (icon-only) with a persisted, device-local preference.
-- **Key decisions (pre-resolved, no open questions):**
-  - **Sentinel, no migration:** `WorkloadEntry.date === ''` (`BIN_DATE`) means
-    unassigned. `DATA_VERSION` stays 4 — the JSON shape is unchanged and no v4
-    payload contains `''`; the idempotent `ensureStartMinutes` pass is extended
-    instead (bin entries → `startMinutes: 0`, contiguous per-bin `sortIndex`;
-    bin groups excluded from the 08:00 stacking rule).
-  - Bin invariants: `startMinutes: 0`; `sortIndex` contiguous per
-    `(personId, '')` (invariant 7 extends naturally — `dayKey(person, '')`
-    already works in `reindexDays`/`nextSortIndex`). Bin hours count in
-    task/project/person TOTALS but never in any per-date total or overload
-    (all day math filters by exact date equality — audited: selectors,
-    AllocationGrid, Dashboard/Workload/PersonProfile pages all safe untouched).
-  - Actions: `MOVE_BLOCK_TO_BIN {entryId}`; `SPLIT_BLOCK {entryId, parts: 2|4}`
-    (quarter-unit distribution, largest part stays scheduled on the original
-    entry: 1.25h halved → 0.75 stays + 0.5 to bin; min 0.25h/part else reject);
-    `DELETE_BLOCK {entryId}` (bin entries only, behind confirm in the UI);
-    `SET_BLOCK_TIME` gains shrink-to-bin (hours reduced ⇒ delta becomes a bin
-    entry — this makes "return to bin" calendar-resize-only by construction;
-    editor edits via SAVE_TASK never create bin entries; growing never consumes
-    bin hours) and already handles bin→grid drops (period extension + 92-day
-    cap apply). `SaveTaskPayload.newUnassigned` appends bin entries; SAVE_TASK's
-    rebuild passes existing bin entries through untouched (drops them only when
-    the person is unassigned) — this also means bin entries are exempt from the
-    known pre-existing `personId|date` collapse issue, which stays unfixed.
-  - Guards: MOVE_TASK skips bin entries; SET_TASK_DATES keeps them;
-    INSERT_BLOCK rejects a bin ref; REASSIGN_ENTRY appends to the target bin.
-  - Week grid: 52px axis + 8 equal columns; grid width
-    `calc((100% - 52px)/5*8 + 52px)` inside a horizontally scrollable wrapper;
-    axis sticky-left. Bin column = stacked per-person cards (not
-    time-positioned), week-independent. Context menu is one component, mode by
-    `isBinEntry`. Polish strings fixed in the packages ("Zasobnik",
-    "Podziel na pół", "Podziel na ćwiartki", "Usuń blok",
-    "Dodaj do zasobnika", activity: "…do zasobnika" / "…z zasobnika").
-  - Sidebar pref: new `src/utils/uiPrefs.ts` wrapping localStorage key
-    `n2hub.ui.v1` — an explicit, architect-approved exception to the
-    storage.ts-only rule (UI prefs are device-local and must not migrate to
-    the future API). Collapsed styles scoped to `@media (min-width: 1181px)`
-    so the 1180px strip and 760px drawer are untouched; GlobalSearch stays
-    mounted (Ctrl/Cmd+K keeps working), its trigger CSS-hidden when collapsed.
-  - Seed gains one 3h bin block (Ola, task 1) so the bin is visible in sample
-    data and browser QA.
-- **Packages** (execution order; waves are parallel-safe by disjoint files):
-  - Wave 1 (parallel):
-    1. `handoffs/packages/PKG-20260708-bin-core.md` — sentinel + normalize +
-       selectors + all reducer changes + seed — tier: developer
-    2. `handoffs/packages/PKG-20260708-sidebar-collapse.md` — uiPrefs module,
-       App.tsx, sidebar CSS, icons — tier: developer (touches styles.css:
-       must NOT run concurrently with bin-week-ui)
-  - Wave 2 (parallel, after bin-core):
-    3. `handoffs/packages/PKG-20260708-bin-week-ui.md` — WeekView 8-col layout,
-       bin column + two-way drag, split/delete context menu, TaskModal bin
-       section, week-cal CSS — tier: developer (depends: bin-core)
-    4. `handoffs/packages/PKG-20260708-bin-tests.md` — reducer + storage tests
-       for all bin behavior — tier: test-writer (depends: bin-core; test files
-       only)
-- **Gates:** `npm run dev` walkthrough + `npx tsc --noEmit` + `npm test` +
-  `npm run build` all green before review; interactive drag criteria need a
-  human/dev-server browser pass (flag anything unverified in worker logs).
+- **Goal:** (B, priority) Calendar block resizing stops minting hours: growth
+  draws from the task's bin/estimate budget and clamps at it, shrink returns
+  hours to the bin, same-task bin rows merge to one per person, and two
+  same-task blocks dropped exactly back-to-back fuse into one block with a
+  light merge animation (reduced-motion safe). (C) Local login gating the app
+  (per-person SHA-256 password hash, cosmetic by design, API-ready seam), four
+  access roles (administrator/PM/handlowiec/pracownik) replacing `isAdmin` via
+  migration v4→v5, a central `can()` permission map applied across the UI,
+  extended profiles (telefon, dni robocze, godziny pracy, przełożony z blokadą
+  cykli) and workday-aware available-hours math. (D) Collapsed-sidebar nav
+  icons in fixed 1:1 circles (bundled into the week-UI package).
+
+- **Stream A verdict (foundation audit): ADEQUATE — no package emitted.**
+  Reasons: (1) data volumes are bounded by design (single-team planner behind
+  a ~5 MB localStorage ceiling; hundreds of tasks / thousands of entries at
+  worst) and every selector is a pure linear scan — measured hot paths don't
+  exist at this scale; (2) all reads already flow through centralized pure
+  selectors, so introducing memoized byId maps later is a local, non-breaking
+  change behind the same call sites; (3) the storage.ts→API extension path
+  must stay thin — adding an index/normalization layer now would complicate
+  that swap for no current gain; (4) the v4→v5 migration in this run is the
+  sanctioned vehicle for the shape changes Stream C needs. Watch item (noted,
+  not actioned): `conflictDatesForTask`/`hoursForPersonOnDate` compose to
+  O(workload²)-ish in pathological data — revisit only if entry counts reach
+  ~10k or profiling shows render lag.
+
+- **Key decisions (pre-resolved — details in the packages, no open questions):**
+  - Budget model: headroom = max(0, estimatedHours − task total incl. bin);
+    grow allowance = same-person same-task bin + headroom, consumed bin-first;
+    `estimatedHours null` ⇒ free grow (today's behavior). Enforcement in
+    `SET_BLOCK_TIME` only (reducer rejects; UI clamps live) — SAVE_TASK /
+    AllocationGrid stay advisory. Known SAVE_TASK `personId|date` collapse
+    issue explicitly untouched.
+  - New invariants: ≤1 bin entry per (taskId, personId) (all bin writers +
+    idempotent merge in `ensureStartMinutes`, DATA_VERSION stays 4 for that);
+    exact-adjacent same-task same-person dated blocks merge inside
+    SET_BLOCK_TIME (earlier id survives; cascades; NOT in INSERT_BLOCK).
+  - Auth: session = persisted `currentUserId`; login screen when people exist
+    and nobody resolves; zero people = setup mode (no lockout); empty
+    `passwordHash` = passwordless login (recovery path; admin can clear any
+    password); `isAdmin` removed → `accessRole`, migration v4→v5
+    (admin→administrator, else pracownik); permission matrix lives in new
+    `src/store/permissions.ts` (spelled out in PKG-…-auth-data); "Występuj
+    jako" becomes administrator-only quick switch + universal "Wyloguj";
+    UI-level enforcement only until the API era.
+  - Availability: `workDays` (ISO 1–7, default Mon–Fri) + informational work
+    hours; available-hours totals become per-person workday sums; overload
+    threshold rule intentionally unchanged.
+
+- **Packages** (waves are parallel-safe by disjoint files; order matters):
+  - **Wave 1:** 1. `handoffs/packages/PKG-20260708-budget-store.md` —
+    tier: developer — budget/merge/bin invariants in reducer + storage +
+    selectors (+ mechanical existing-test updates).
+  - **Wave 2 (parallel):**
+    2. `handoffs/packages/PKG-20260708-budget-week-ui.md` — tier: developer —
+       WeekView clamp feedback + will-merge/fuse animation + Stream D sidebar
+       icon circles (WeekView.tsx + styles.css only; depends 1).
+    3. `handoffs/packages/PKG-20260708-auth-data.md` — tier: developer —
+       types v5 + migration + permissions.ts + password util + seed +
+       mechanical UI/fixture swaps (depends 1 for file-conflict ordering).
+  - **Wave 3 (parallel):**
+    4. `handoffs/packages/PKG-20260708-store-tests.md` — tier: test-writer —
+       full unit coverage for packages 1+3 (test files only; depends 1 and
+       auth-data).
+    5. `handoffs/packages/PKG-20260708-auth-login-ui.md` — tier: developer —
+       LoginPage + App.tsx gate + logout/quick-switch + password UI (depends
+       auth-data; after budget-week-ui for styles.css ordering).
+  - **Wave 4:** 6. `handoffs/packages/PKG-20260708-permission-gating.md` —
+    tier: developer — apply can() per the page map (depends login-ui).
+  - **Wave 5:** 7. `handoffs/packages/PKG-20260708-profile-availability.md` —
+    tier: developer — profile/org form fields + workday-aware availability
+    (depends gating).
+
+- **Gates:** `npx tsc --noEmit` + `npm test` + `npm run build` green after every
+  package (dev server already running on 5173 — nobody starts a second one);
+  Codex review + reviewer verdict after waves complete; final human browser
+  walkthrough (budget clamp, merge animation incl. reduced-motion, login/roles
+  matrix per role, availability math with seeded Ola Mon–Thu, collapsed sidebar
+  circles) before merge.
+- **Parallel input:** a Codex browser UX audit of the current app runs
+  alongside this run; its findings go to the REVIEWER for adjudication — no
+  worker should wait on it.
 - **Open questions:** none blocking. Post-merge doc note for the human:
-  CLAUDE.md needs refreshing after this lands (WorkloadEntry `''` sentinel,
-  bin description in the Calendar section, new actions, `n2hub.ui.v1` key,
-  sidebar collapse, manual-checklist additions) — intentionally NOT part of
-  any worker package.
+  CLAUDE.md needs a refresh after this run (budget/merge invariants, one-bin-row
+  rule, v5 person model + roles + login, permission matrix pointer,
+  availability semantics, manual-checklist additions) — on top of the
+  carried-over doc refresh above; intentionally NOT a worker package.
 
 ### Worker log
 
@@ -95,681 +120,479 @@ boring and factual — it's a checklist, not prose.
 - **Next:** <hand to which tier / ready for review / done>
 -->
 
-#### 2026-07-08 · developer · `PKG-20260708-sidebar-collapse`
+#### 2026-07-08 · developer (opus) · `PKG-20260708-budget-store`
 
 - **Changed:**
-  - `src/utils/uiPrefs.ts` (new) — device-local UI prefs behind localStorage key
-    `n2hub.ui.v1`; `loadUiPrefs`/`saveUiPrefs`, both try/catch-safe. Does not
-    touch storage.ts.
-  - `src/components/icons.ts` — added `ChevronsLeft` / `ChevronsRight` exports.
-  - `src/App.tsx` — `collapsed` state seeded from `loadUiPrefs()`, persisted in
-    the toggle handler (no effect); root class gains ` sidebar-collapsed`;
-    brand row now holds a `.sidebar-toggle` (Zwiń/Rozwiń menu); nav labels
-    wrapped in `<span className="nav-label">` + unconditional `title={label}`;
-    acting-as block gains a collapsed avatar shortcut (Avatar / Users fallback)
-    that expands the sidebar.
-  - `src/styles.css` — base styles for `.app-brand-row`, `.sidebar-toggle`,
-    `.acting-as-wrap`, `.acting-as-collapsed`; toggle+avatar hidden ≤1180px;
-    new `@media (min-width: 1181px)` block with all `.sidebar-collapsed` rules
-    (80px grid col, centered brand mark, hidden brand name, icon-only nav,
-    hidden search trigger, select→avatar swap, grid-col transition).
-- **Tests:** `npx tsc --noEmit` → clean; `npm test` → 37 passed (3 files).
-  Skipped `npm run build` per launcher instruction (reviewer owns it;
-  concurrent store edits could fail an unrelated build).
-- **Deviation:** Decision 4 suggested conditional JSX on `collapsed` for the
-  acting-as block. Used CSS-only visibility toggle instead (both the avatar
-  button and the select are always rendered, gated by the min-width:1181px
-  scope). Reason: conditional JSX would swap the control at ≤1180px too when
-  the collapsed pref is set, violating the "≤1180px identical with the pref set
-  either way" acceptance criterion. CSS scoping keeps the strip/drawer
-  pixel-identical. All other decisions followed verbatim.
-- **Still broken:** nothing.
-- **Next:** ready for review. Interactive/responsive criteria (collapse at
-  >1180px, Ctrl/Cmd+K while collapsed, avatar-click expand, reload persistence,
-  ≤1180px + ≤760px parity) need a dev-server browser pass — not verifiable from
-  CLI here.
+  - `src/store/selectors.ts` — added `binEntryForTaskPerson`, `binHoursForTaskPerson`, `taskBudget`, `growAllowanceHours` (pure budget/bin selectors).
+  - `src/store/AppStore.tsx` — `setBlockTime`: budget-capped grow (bin-first then headroom, reject past allowance), shrink now merges freed hours into the existing (task,person) bin row, exact-adjacent same-task same-person block merge with `pobrano z zasobnika` / `połączono sąsiednie bloki` activity suffixes; one-bin-row enforcement in `moveBlockToBin` (fold into existing row), `splitBlock` (parts collapse to one bin row; bin entries now no-op), `saveTask` `newUnassigned` (per-person merge into one/passed-through row), `reassignEntry` (bin→person merges into target's same-task row); added `toQuarters` helper.
+  - `src/store/storage.ts` — `ensureStartMinutes` bin groups now merge duplicate per-task rows (lowest-sortIndex survivor, hours summed) before renumbering; still idempotent, DATA_VERSION stays 4.
+  - `src/types.ts` — documented the two new WorkloadEntry invariants.
+  - Tests adapted mechanically (see below) in `blockActions.test.ts` and `storage.test.ts`.
+- **Existing-test edits (mechanical, each with reason):**
+  1. `blockActions` MOVE_BLOCK_TO_BIN "appends after an existing bin entry" — pointed the existing bin row at a different task (`t2`) so the one-bin-row merge doesn't fold the moved block in; preserves the append/reindex assertion.
+  2. `blockActions` SPLIT "quarters a 1.25h block" — now expects ONE 0.75h bin row (split-off parts collapse) instead of three 0.25h rows.
+  3. `blockActions` SPLIT "splits a bin entry within the bin" → renamed to assert a no-op (`toBe(state)`): splitting a bin block into two same-pair bin rows is illegal under the invariant.
+  4. `blockActions` SAVE_TASK `newUnassigned` — now expects ONE merged 11.25h bin row (10h + 1.25h) instead of two rows.
+  5. `blockActions` REASSIGN "moving a bin entry ... appends" → rewritten to assert the merge into the target's existing same-task bin row (moved id dropped, target 3h, single row).
+  6. `storage` three bin tests ("garbage startMinutes+gappy sortIndex", "idempotent already-clean", "does NOT stack from 08:00") — gave the two entries distinct tasks (`t1`/`t2`) so the new per-task merge doesn't fire, preserving each test's original startMinutes/sortIndex assertion.
+- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean, vitest 68/68 passed (4 files), build OK.
+- **Still broken:** nothing in scope.
+- **Deviations / notes for reviewer & package 2:**
+  - `SPLIT_BLOCK` on a BIN entry now no-ops (was previously allowed). WeekView still renders "Podziel na pół / na ćwiartki" for bin blocks (`WeekView.tsx` ~L766-793, shown for all entries) — those buttons are now dead for bin blocks. **Package 2 (budget-week-ui) should hide/disable split on bin entries.** Reducer change is correct per the one-bin-row invariant; flagging so the UI matches.
+  - No new test files added (new coverage is deferred to PKG-20260708-store-tests per this package's scope). Only broken existing tests were adapted.
+- **Next:** ready for wave 2 (`PKG-20260708-budget-week-ui`, `PKG-20260708-auth-data`) and reviewer.
 
-#### 2026-07-08 · developer · `PKG-20260708-bin-core`
+#### 2026-07-08 · developer (opus) · `PKG-20260708-budget-week-ui`
 
 - **Changed:**
-  - `src/utils/time.ts` — added `BIN_DATE = ''` sentinel + `isBinEntry()`.
-  - `src/types.ts` — documented the `''` bin sentinel on `WorkloadEntry`
-    (date / startMinutes:0 / sortIndex ordering). No field added or removed.
-  - `src/store/storage.ts` — `ensureStartMinutes` now excludes bin groups from
-    08:00 stacking; normalizes bin entries to `startMinutes:0` + contiguous
-    per-bin `sortIndex`; still idempotent + same-reference on no change.
-  - `src/store/AppStore.tsx` — `SaveTaskPayload.newUnassigned`; `saveTask`
-    passes bin entries through (kept if person still assigned, dropped if not)
-    and appends `newUnassigned` bin hours; new actions `MOVE_BLOCK_TO_BIN`,
-    `SPLIT_BLOCK` (2|4, quarter-unit split, largest part stays), `DELETE_BLOCK`
-    (bin-only); `SET_BLOCK_TIME` shrink-to-bin + dedicated bin→grid activity
-    string; guards on `moveTask`/`setTaskDates`/`insertBlock`/`reassignEntry`.
-    All new activity strings verbatim from the package.
-  - `src/store/selectors.ts` — `binEntriesForPerson`, `binEntriesForTask`,
-    `binTotalForPerson`.
-  - `src/store/seed.ts` — `addBinWork` helper; one 3h bin block for Ola on t1.
-- **Tests:** `npx tsc --noEmit` clean; `npm test` → 37/37 pass (unchanged);
-  `npm run build` → success (package listed build in its Tests command).
-- **Deviations:** none. Left the existing `REASSIGN_ENTRY` activity string as-is
-  (package specifies no new string for it; for a bin entry it renders `()` for
-  the empty date — cosmetic, unchanged by design). Did not touch App.tsx /
-  styles.css / uiPrefs.ts (concurrent sidebar package).
-- **Still broken:** nothing.
-- **Next:** ready for Wave 2 — `PKG-20260708-bin-week-ui` (UI) and
-  `PKG-20260708-bin-tests` (test-writer) can build on these actions/selectors.
+  - `src/components/WeekView.tsx` — `TimedBlock`: DragState gains `maxHours`/`atCap`/`willMergeWithId`/`willMergeEdge`; `begin()` captures `growAllowanceHours` once (null ⇒ Infinity ⇒ free grow); `onPointerMove` clamps resize `projHours` at `maxHours` (top mode re-derives `projStart` to keep the end fixed) and detects exact-adjacent same-task/same-person/same-date merge neighbor (mirrors the reducer predicate, false while colliding/overBin); `finish()` remembers the earlier-starting block's id as the fuse survivor before dispatch; `at-cap` title = "Limit czasu zadania — brak godzin w zasobniku". WeekView-level `mergeTargetId` + `fusedId` state (with 400ms timeout fallback) plumbed to blocks; classes `at-cap`/`will-merge`/`will-merge-target`/`merge-top`/`merge-bottom`/`fused`; `onAnimationEnd` clears `fusedId`.
+  - `src/components/WeekView.tsx` (context menu) — "Podziel na pół / na ćwiartki" moved inside the `!isBinEntry` branch so split is hidden for bin entries (matches wave-1 reducer no-op). Folded in per launch instruction despite package's "context menu out of scope" note.
+  - `src/styles.css` — `.week-block.at-cap` (warning outline), `.will-merge`/`.will-merge-target` (lavender glow), `.will-merge::after` connecting blob (radial pill, top/bottom edge variants), `week-block-fuse` 280ms keyframe; `.sidebar-collapsed .app-nav-link` now a fixed 44px 1:1 circle (border-radius 999px, margin-inline auto). Global `prefers-reduced-motion` override neutralizes the keyframe (no JS motion path).
+- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean, vitest 68/68 (4 files), build OK. No new unit tests (interaction-only per package scope).
+- **Deviations:** (1) split-button hide is outside the package's stated scope but explicitly requested by the launching agent to match the wave-1 reducer change. (2) Blob rendered on the dragged block only (per decision 3) with glow on both blocks — satisfies the acceptance line "glow + blob on both blocks" via decision 3's authoritative detail.
+- **Not CLI-verifiable (defer to human walkthrough):** live cap outline + Polish title while resizing to budget; unbudgeted (`estimatedHours: null`) task still grows freely; will-merge glow/blob appears on exact adjacency and clears on move-away / during collision / over bin; fuse animation plays once (~280ms) on merge drop; reduced-motion kills the fuse/blob but the merge still happens; collapsed-sidebar 44px circles centered in the 80px rail with visible active/hover; console clean.
+- **Still broken:** nothing in scope.
+- **Next:** ready for reviewer; wave 2 sibling `PKG-20260708-auth-data` unaffected (disjoint files).
 
-#### 2026-07-08 · test-writer · `PKG-20260708-bin-tests`
+#### 2026-07-08 · developer (opus) · `PKG-20260708-auth-data`
 
 - **Changed:**
-  - `src/store/blockActions.test.ts` — added 20 `it`s across 8 new `describe`
-    blocks covering all bin-core reducer changes: `MOVE_BLOCK_TO_BIN` (bin
-    move + reindex + activity; no-op on already-bin/unknown id), `SPLIT_BLOCK`
-    (even halves, odd-quarter halves, quarters, splitting a bin entry,
-    too-small/unknown-id rejections), `DELETE_BLOCK` (delete + reindex; reject
-    dated/unknown), `SET_BLOCK_TIME` bin behavior (shrink-to-bin activity
-    string, plain move creates no bin entry, bin→grid drop with period
-    extension + reindex, bin→grid collision rejection), `SAVE_TASK` bin
-    behavior (existing bin entries survive/drop by assignment,
-    `newUnassigned` creates+snaps+skips), `MOVE_TASK`/`SET_TASK_DATES` bin
-    guards, `INSERT_BLOCK` bin-ref rejection.
-  - `src/store/storage.test.ts` — added 3 `it`s in a new
-    `ensureStartMinutes — bin normalization` describe: garbage
-    startMinutes/gappy sortIndex → `0`/contiguous, idempotence + same-reference
-    on a clean bin group, and proof the bin is excluded from 08:00 stacking
-    (contrasted against the existing dated-group stacking test).
-- **Tests:** `npm test` → 60/60 passed (37 existing + 23 new, 3 files);
-  `npx tsc --noEmit` → clean; `npm run build` → succeeds. (One transient tsc
-  run mid-session showed 5 unused-var errors in `WeekView.tsx` — the
-  concurrent `bin-week-ui` developer's in-progress edit at that moment, not
-  caused by these test files; a re-run after their next save was clean. Not
-  investigated further per the "don't touch WeekView.tsx" instruction.)
-- **Deviations/gaps found in bin-core:** none. Implementation in
-  `src/store/AppStore.tsx` matches PKG-20260708-bin-core's spec exactly on
-  every case in scope: split rounding (largest part stays), shrink-to-bin
-  delta + Polish activity suffix, bin→grid activity string, all four guards
-  (`moveTask`/`setTaskDates`/`insertBlock`/`reassignEntry` — `reassignEntry`
-  not covered here, out of this package's scope list), and
-  `ensureStartMinutes`'s bin exclusion from 08:00 stacking. No implementation
-  files modified.
-- **Skipped/not written:** none of the 19 in-scope cases were skipped; wrote
-  20 `it`s for the 16 blockActions.test.ts cases (some cases split into 2
-  `it`s for clarity, e.g. SET_BLOCK_TIME bin→grid happy-path vs its collision
-  rejection) and 3 for the 3 storage.test.ts cases.
-- **Next:** ready for review alongside `PKG-20260708-bin-week-ui`.
+  - `src/types.ts` — `Person`: removed `isAdmin`, added `accessRole` (new `AccessRole` union), `phone`, `passwordHash`, `workDays`, `workStartMinutes`, `workEndMinutes`, `supervisorId` (all documented).
+  - `src/utils/password.ts` (new) — `hashPassword`/`verifyPassword` (SHA-256 hex via WebCrypto) with the mandated "cosmetic client-side gating only" comment block.
+  - `src/store/permissions.ts` (new) — `PermAction` union, per-role `MATRIX`, `can(user, action, {peopleCount})` (setup-mode = zero people → all allowed), `ROLE_LABELS`.
+  - `src/store/storage.ts` — `DATA_VERSION = 5`; new `migratePerson`/`migrateV4toV5`; exported `WORKDAY_START_MIN`, `DEFAULT_WORKDAYS`, `defaultWorkEndMinutes`, `sanitizeWorkDays`; `migrateV1` people now built through `migratePerson`; `loadData` chain: v1 → `ensureStartMinutes(migrateV4toV5(localize(migrateV1)))`, v2–4 → localize (now runs for v4 too since DATA_VERSION=5) then `migrateV4toV5` when `version < 5`.
+  - `src/store/selectors.ts` — `isAdminUser` reimplemented on `accessRole === 'administrator'` (same name/signature, zero-people rule kept); new pure `wouldCreateSupervisorCycle`; availability selectors `isPersonWorkday`/`availableHoursOnDate`/`availableHoursInRange` (JS getDay 0=Sun → ISO 7).
+  - `src/store/AppStore.tsx` — `PersonDraft` swaps `isAdmin` for `accessRole` + adds `phone`/`workDays`/`workStartMinutes`/`workEndMinutes`/`supervisorId` (NOT `passwordHash`); `personFromDraft` returns `Omit<Person,'id'|'passwordHash'>` and sanitizes workDays; `ADD_PERSON` seeds `passwordHash: ''` + defensive cycle guard; `UPDATE_PERSON` drops cycle-forming `supervisorId`; new `SET_PASSWORD` (verbatim hash, no activity row) and `LOGOUT` (clears `currentUserId`).
+  - `src/store/seed.ts` — Kasia `administrator` / Ola `pm` / Marek `pracownik`; all `passwordHash: ''`; sample phones; Ola `workDays [1,2,3,4]` (others Mon–Fri); Marek & Ola `supervisorId → Kasia`; work hours 8:00–16:00. Kasia declared first (supervisor ref); people array order `[ola, marek, kasia]` unchanged (stable colours). Over-capacity Wed and all other content intact.
+  - `src/App.tsx` — acting-as suffix now from `accessRole === 'administrator'`.
+  - `src/pages/PeoplePage.tsx` / `src/pages/PersonProfilePage.tsx` — `isAdmin` checkbox → `Uprawnienia` select (4 roles via `ROLE_LABELS`); `admin-tag` shown for administrators; draft literals extended with the new-field defaults (no new form controls yet).
+- **Existing-test edits (mechanical):** `blockActions.test.ts` and `selectors.test.ts` `makePerson` fixtures — replaced `isAdmin: false` with `accessRole: 'pracownik'`, `phone: ''`, `passwordHash: ''`, `workDays: [1,2,3,4,5]`, `workStartMinutes: 480`, `workEndMinutes: 960`, `supervisorId: ''`. No assertions changed.
+- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean, vitest 68/68 (4 files), build OK. Verified `sha256('a')` hex equals the acceptance value.
+- **Deviations:** none. New migration/permission/availability tests intentionally deferred to `PKG-20260708-store-tests` (out of scope). `can()` is the single entry point (callers pass `peopleCount`); no `canIn` wrapper added.
+- **Notes for reviewer:** (1) `localizeLegacyData` now runs for v4 payloads (DATA_VERSION rose to 5) — it's a no-op on already-Polish data (English→Polish maps don't match Polish values); rebuilds references only. (2) `migrateV1` calls `migratePerson`, so the v1 branch's later `migrateV4toV5` is idempotent by design.
+- **Not CLI-verifiable (defer to human walkthrough):** roles select replaces the checkbox in People + profile; admin gate open for Kasia, blocked for Marek; browser behaves as before.
+- **Next:** ready for reviewer; wave-3 `PKG-20260708-store-tests` (depends on this) and `PKG-20260708-auth-login-ui` can proceed.
 
-#### 2026-07-08 · developer · `PKG-20260708-bin-week-ui`
+#### 2026-07-08 · test-writer (sonnet) · `PKG-20260708-store-tests`
+
+- **Changed (test files only — no implementation file touched):**
+  - `src/store/blockActions.test.ts` — +20 tests: `SET_BLOCK_TIME` budget-capped
+    grow (reject-at-estimate, drain-bin-then-headroom, pure-bin-draw,
+    `estimatedHours: null` free grow, no cross-person/cross-task bin
+    consumption, move-only never rejected), shrink→existing-bin-row merge,
+    adjacency merge (simple + 3-way cascade + non-merge: different task /
+    different person / 15-min gap), one extra `SPLIT_BLOCK` case (merge into a
+    pre-existing bin row) and one extra `MOVE_BLOCK_TO_BIN` case (fold into an
+    existing row, id survives), supervisor-cycle guard on `UPDATE_PERSON`
+    (self, A→B→A, valid chain), `SET_PASSWORD`/`UPDATE_PERSON`-preserves-hash/
+    `LOGOUT`.
+  - `src/store/storage.test.ts` — +3 tests: `ensureStartMinutes` duplicate
+    per-task bin-row merge (lowest-sortIndex survivor, summed hours, renumbered,
+    idempotent, distinct-task row untouched); `loadData` v4→v5 migration
+    (isAdmin true/false → accessRole, defaults incl. the 1440-minute
+    `workEndMinutes` cap, no `isAdmin` key, version 5) via a small in-memory
+    `localStorage` stub (not previously present in this file — `STORAGE_KEY` is
+    duplicated as a literal since storage.ts doesn't export it); v5-payload
+    reload idempotence.
+  - `src/store/selectors.test.ts` — +5 tests: `growAllowanceHours` (null
+    estimate, bin+headroom sum, headroom floored at 0 for an over-budget
+    legacy task), `isPersonWorkday`/`availableHoursOnDate` (Mon–Thu worker: 0 on
+    Friday, capacity on Wednesday), `availableHoursInRange` over a full
+    Mon–Sun week.
+  - `src/store/permissions.test.ts` (new) — 53 tests: the full 4-role ×
+    12-action permission matrix from PKG-20260708-auth-data decision 7 via
+    `it.each` (48 cases), zero-people setup mode allows everything, an
+    undefined user (people present) is denied every action, `ROLE_LABELS`,
+    `hashPassword('a')` matches the documented digest, `verifyPassword`
+    round-trip.
+- **Tests:** `npx tsc --noEmit && npm test` → tsc clean; vitest 149/149 passing
+  across 5 files (was 68/68 across 4 files before this package — permissions.test.ts
+  is new). `npm run build` intentionally not run (test-only package; dev server
+  already on 5173 per package instructions — reviewer re-runs build).
+- **Spec/implementation mismatches found:** none. Every case in the package's
+  19 groups matched the shipped reducer/selector/migration/permission behavior
+  on the first correctly-specified attempt (one test of mine had a self-inflicted
+  bug — a free-grow-to-20h fixture that itself exceeded the 24:00 day boundary —
+  fixed to 10h; not a product bug).
+- **Skipped/deferred:** none of the 19 in-scope case groups were skipped.
+  Out-of-scope per the package: no v1→v5 end-to-end migration test (only
+  v4→v5, per the package's explicit scope — v1 coverage is `PKG-20260708-auth-data`'s
+  acceptance criterion, not listed as an in-scope case here); no UI/browser tests.
+- **Verified no implementation file modified:** `git status --short` shows only
+  `src/store/blockActions.test.ts`, `src/store/storage.test.ts`,
+  `src/store/selectors.test.ts` modified and `src/store/permissions.test.ts`
+  added by this package; all other modified/untracked files (AppStore.tsx,
+  selectors.ts, storage.ts, permissions.ts, types.ts, password.ts, WeekView.tsx,
+  App.tsx, seed.ts, PeoplePage.tsx, PersonProfilePage.tsx, styles.css, package
+  files, reviews/, automation/) predate this package (waves 1–2's output) and
+  were left untouched.
+- **Next:** ready for reviewer alongside waves 1–2.
+
+#### 2026-07-08 · developer (opus) · `PKG-20260708-auth-login-ui`
 
 - **Changed:**
-  - `src/components/WeekView.tsx` — 8-column layout (`GRID_COLS=8`,
-    `BIN_COL_INDEX=7`, inline grid template `52px repeat(8, …)`); `TimedBlock`
-    day projection now clamps 0..7 (`colWidth` `/7`→`/8`), index 7 = bin →
-    `to-bin` tint + `MOVE_BLOCK_TO_BIN` on drop (collision check skipped there);
-    new `BinCard` component (pointer-drag a dateless block onto a day column via
-    `gridRef`+`bodyRef` geometry → `SET_BLOCK_TIME`, live `blockCollides` tint,
-    Escape/cancel/revert, click opens task); new bin header + bin body column
-    (per-person stacked groups, filtered, `Brak bloków bez terminu` empty state,
-    week-independent); context menu extended — one menu, mode by `isBinEntry`:
-    dated blocks get `Dodaj przed/po` + separator + `Podziel na pół`/`na ćwiartki`
-    (disabled <0.5h / <1h with the Polish title), bin cards get the two split
-    items + `Usuń blok` (danger, confirm). `bodyRef` attached to first day column.
-  - `src/components/TaskModal.tsx` — new `Zasobnik (bez terminu)` section between
-    assignees and the allocation grid: read-only existing-bin chips grouped per
-    still-assigned person + hint, add-row (assignee select + 0.25-step hours +
-    `Dodaj do zasobnika`) feeding `pendingUnassigned` rendered as removable chips
-    (remove aria-label `Usuń`); `handleSave` passes `newUnassigned`;
-    `serializeDraft` includes `pendingUnassigned` (dirty tracking); estimate line
-    now `zaplanowano {dated}h (+ {bin}h w zasobniku)`.
-  - `src/styles.css` — week-cal: `.week-cal-scroll { overflow-x:auto }`,
-    `.week-cal-grid` width `calc((100% - 52px)/5*8 + 52px)`, sticky-left hour axis
-    + sticky corner, `.week-block.to-bin`, full `.week-bin-*` block; context-menu
-    separator/disabled/danger; task-modal `.bin-*` chip/add-row styles; 760px
-    query `min-width` 720px→820px. `user-select:none` on the grid kept.
-- **Key decisions (within package bounds):**
-  - Necessary in-scope correctness fix in TaskModal: the allocations-seeding loop
-    now excludes bin entries (`!isBinEntry(w)`) — otherwise bin entries (date `''`)
-    leaked into the allocation map via `allocKey(personId, '')`, inflating
-    `plannedTotalAll`/`outOfRangeCount`. No store change; TaskModal is in-scope.
-  - Bin-card drop geometry: x from `gridRef` rect (colWidth `/8`, valid day cols
-    0..6 only), y (0:00 origin) from the first day column's rect (`bodyRef`), so
-    it stays correct under vertical scroll. Dragged card floats via `transform`.
-  - Sticky-axis z-index: hour axis `z:5` (covers resting blocks `z:0`; a dragged
-    block `z:30`/bin card `z:40` still floats above), corner `z:9` highest.
-- **Tests:** `npx tsc --noEmit` clean; `npm test` → 60/60 pass (includes the
-  test-writer's bin tests); `npm run build` → success. The >500kB chunk warning
-  is pre-existing, not introduced here.
-- **Deviations:** none beyond the TaskModal seeding fix noted above. Did not
-  touch any store/selector/util/*.test.ts/sidebar files.
-- **Still broken:** nothing.
-- **Reviewer should look closely at (interactive — needs a browser pass, not
-  CLI-verifiable):**
-  - Horizontal scroll: Mon–Fri fill width, Sat/Sun/Zasobnik scroll in from the
-    right; hour axis stays pinned; vertical auto-scroll to ~7:00 still fires.
-  - Bin→grid drag (seeded Ola 3h on t1): drop onto a free slot assigns date/time;
-    drop onto same-person block shows danger + reverts; drop on axis/header/bin
-    reverts. Grid→bin drag shows `to-bin` lavender tint and empties the day.
-  - Context menu split/delete on both dated and bin entries; disabled titles;
-    `Dodaj przed/po` still works on dated blocks only.
-  - Bottom-resize shrink returning hours to the bin re-renders the bin column.
-  - TaskModal: add-to-bin → chip + dirty; save carries `newUnassigned`; reopen
-    shows existing bin chips; estimate `(+ {n}h w zasobniku)`.
-  - ≤760px: all 8 columns ≥~96px, no overlap, no console errors/warnings.
-- **Next:** ready for review.
+  - `src/pages/LoginPage.tsx` (new) — full-viewport brand login card; person
+    list (Avatar + name + `ROLE_LABELS`); passwordless row = one-click login;
+    password row expands inline `Hasło` field + `Zaloguj się`, async
+    `verifyPassword`, inline `Nieprawidłowe hasło`, Enter submits, button
+    disabled while verifying; navigates to `/dashboard` on success.
+  - `src/App.tsx` — session gate `needsLogin = people.length > 0 && !currentUser`
+    returns `<LoginPage />` before the shell/routes (TaskModal + GlobalSearch stay
+    gated); "Występuj jako" select now wrapped in
+    `can(currentUser, 'users.impersonate', …)` (admins only); universal
+    `Wyloguj` button dispatching `LOGOUT`.
+  - `src/pages/PersonProfilePage.tsx` — new `PasswordSection` (own profile OR
+    `can(user, 'people.manage')`): `Nowe hasło` + `Powtórz hasło`,
+    `Ustaw/Zmień hasło` with min-4 + match inline errors, hashed before dispatch;
+    admin `Usuń hasło` behind `window.confirm`.
+  - `src/styles.css` — `.logout-btn`; `.login-*` classes (dark glass card, person
+    rows, inline password panel; 760px padding tweak). Reused existing tokens.
+- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean, vitest
+  149/149 (5 files), build OK. No new unit tests (per package scope — store-level
+  auth already covered by PKG-20260708-store-tests).
+- **Deviation (one, minor):** Decision 3 describes a passwordless person as a
+  two-step "pick → `Zaloguj się` button". I implemented the row click itself as
+  the login action for passwordless people, because acceptance criterion
+  "Passwordless person: one-click login lands on /dashboard" is the stronger,
+  testable requirement and the two would otherwise conflict. Password-protected
+  rows still expand to the `Zaloguj się` password form exactly as specified.
+- **Not CLI-verifiable (defer to human walkthrough on :5173):** logged-out gate
+  hides sidebar/routes and makes Ctrl/Cmd+K inert; one-click login per seeded
+  person; set a password on Kasia → logout → wrong (`Nieprawidłowe hasło`) then
+  right password; reload stays logged in; `Wyloguj` returns to login and persists
+  through reload; impersonate select admin-only, `Wyloguj` for everyone; admin
+  `Usuń hasło` confirm then passwordless login; zero-people fresh state shows NO
+  login screen (setup/sample flow intact); ≤760px layout; console clean.
+- **Still broken:** nothing in scope.
+- **Next:** ready for reviewer; unblocks wave 4 `PKG-20260708-permission-gating`.
+
+#### 2026-07-08 · developer (opus) · `PKG-20260708-permission-gating`
+
+- **Changed:**
+  - `src/store/useCan.ts` (new) — `useCan()` hook: reads the store once, returns a
+    `can(action)` bound to the current user + `peopleCount` (setup-mode/undefined-user
+    rules come for free).
+  - `src/store/permissions.ts` — exported shared `NO_PERM_TITLE = 'Brak uprawnień'`.
+  - `src/App.tsx` — nav hides `/admin` without `admin.panel`; `/admin` route redirects
+    to `/dashboard` for non-admins (satisfies "direct URL redirects").
+  - `src/pages/ProjectsPage.tsx` — "Nowy projekt" button+form hidden without
+    `projects.manage`; per-card "+ Zadanie" hidden without `tasks.manage`.
+  - `src/pages/ProjectDetailPage.tsx` — edit inputs/selects/textarea disabled +
+    `Brak uprawnień` title, delete + milestone-add + milestone-delete hidden, milestone
+    date input disabled → all `projects.manage`; both coins static without `projects.paid`;
+    "+ Nowe zadanie" hidden without `tasks.manage`.
+  - `src/pages/KanbanPage.tsx` — `isAdminUser`→`useCan`; card `draggable`+drop dispatch
+    gated by `projects.manage`; quick-create box now `admin.panel`.
+  - `src/pages/TimelinePage.tsx` — `Bar`/`MilestoneMark` gain `editable`; project bars +
+    milestones → `projects.manage`, task bars → `tasks.manage`; non-editable render static
+    (no pointer handlers, `pointer` cursor, click still opens).
+  - `src/pages/TasksPage.tsx` — both "Nowe zadanie" buttons + per-row "Usuń" hidden without
+    `tasks.manage`; row click still opens the (read-only) modal.
+  - `src/components/TaskModal.tsx` — without `tasks.manage`: all detail/period/assignee
+    inputs disabled, bin-add controls hidden, `AllocationGrid` read-only, save button + delete
+    hidden, "Anuluj"→"Zamknij"; comments tab stays writable.
+  - `src/components/AllocationGrid.tsx` — new `readOnly` prop (inputs disabled + title,
+    fill/clear buttons hidden).
+  - `src/components/WeekView.tsx` — `TimedBlock`/`BinCard` gain `editable`; enabled when
+    `blocks.editAny` OR (`blocks.editOwn` AND `entry.personId === currentUserId`); non-editable
+    blocks drop all pointer/context handlers (custom insert menu inherits the same rule),
+    read-only title, `pointer` cursor; plain click still opens the task.
+  - `src/pages/WorkloadPage.tsx` — reassign control gated by `workload.reassign`; "Przesuń
+    całe zadanie" (MOVE_TASK) gated by `tasks.manage` (see deviation).
+  - `src/pages/PeoplePage.tsx` — add form + per-row "Usuń" hidden without `people.manage`;
+    list stays viewable.
+  - `src/pages/PersonProfilePage.tsx` — edit button+form gated to `people.manage` OR self;
+    when self-only (no `people.manage`), `Uprawnienia` select + capacity input disabled +
+    title. Password section rule unchanged.
+  - `src/styles.css` — `.readonly`/`.static` cursor rules for non-editable blocks/bars.
+- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean, vitest 149/149
+  (5 files), build OK. No unit-test changes (page wiring is walkthrough territory per package).
+- **Deviations (2):**
+  1. WorkloadPage "Przesuń całe zadanie" buttons: the per-page map only names the reassign
+     control, but leaving MOVE_TASK open would let pracownik/handlowiec mutate tasks and break
+     the "read-only everywhere except own blocks" acceptance criterion. Gated by `tasks.manage`
+     (the natural action for a task move). Reassign itself still gated by `workload.reassign`.
+  2. ProjectsPage per-card "+ Zadanie" quick-create: not explicitly in the map, but it opens a
+     task-creation form, so gated by `tasks.manage` to honor "no creation forms" for pracownik.
+- **Decision note:** `/admin` uses BOTH a route-level redirect (App.tsx) and AdminPage's existing
+  `isAdminUser` gate; both resolve off `accessRole === 'administrator'`, so one rule effectively
+  decides (redirect fires first; the in-page gate is now defensive/unreachable for non-admins).
+- **Not CLI-verifiable (defer to human role walkthrough on :5173, log in as each):**
+  administrator = pre-gating parity; PM (Ola) create/edit projects+tasks, drag kanban/timeline,
+  any calendar block, workload reassign, but no coin/people/clients/admin/quick-switch; handlowiec
+  (set one via People form) projects+coin, TaskModal read-only w/ working comments, own-blocks-only
+  drag, no reassign/admin; pracownik (Marek) read-only everywhere except own calendar blocks,
+  others' blocks inert, no creation forms, `/admin` link hidden + URL redirect; comments postable
+  by every role; disabled controls show `Brak uprawnień`; zero-people setup unrestricted; console clean.
+- **Still broken:** nothing in scope.
+- **Next:** ready for reviewer; unblocks wave 5 `PKG-20260708-profile-availability`.
+
+#### 2026-07-08 · developer (opus) · `PKG-20260708-profile-availability`
+
+- **Changed:**
+  - `src/components/personFields.ts` (new) — pure UI helpers shared by both forms:
+    `WEEKDAY_CHIPS` (ISO 1–7 Pn→Nd), `START_MINUTE_OPTIONS` (0:00–23:45),
+    `END_MINUTE_OPTIONS` (0:15–24:00), `toggleWorkDay`, `formatWorkDays`
+    (compact `Pn–Cz` range / single / comma list). No store/selector logic.
+  - `src/pages/PeoplePage.tsx` — add form gains Telefon input, Dni robocze chips,
+    Praca od/do selects (15-min steps via `formatMinutes`), Przełożony select
+    (all people; a brand-new person can't form a cycle), the
+    `Limit dzienny liczony jest z pola dostępności` hint, and `Do > Od` submit
+    validation (`Koniec pracy musi być po początku`).
+  - `src/pages/PersonProfilePage.tsx` — edit form gains the same five controls;
+    Dni robocze/hours/Przełożony disabled with `Brak uprawnień` for self-editors
+    without `people.manage` (matches existing accessRole/capacity gating);
+    supervisor options exclude self + `wouldCreateSupervisorCycle` candidates;
+    inline hours validation. New read-only `ProfileFacts` card (telefon, dni
+    robocze, godziny pracy, przełożony link, podwładni links — row omitted when
+    empty). Week summary `available` now `availableHoursInRange(state, id, week)`.
+  - `src/pages/WorkloadPage.tsx` — per-person `available =
+    availableHoursInRange(state, p.id, days)`; day cells additionally tinted with
+    the `weekend` class on the person's non-workdays; footer text updated to
+    `Dostępne = dzienna dostępność × dni robocze osoby.`; removed the now-unused
+    `workdays` const. Overload rule (`h > capacity`) untouched.
+  - `src/styles.css` — `.weekday-chips`/`.weekday-chip` (accessible real
+    checkboxes styled as chips, focus-visible ring, disabled dimming via
+    `:has`), `.profile-facts`/`.profile-fact`/`.profile-link`, `.people-form-hint`.
+- **Tests:** `npx tsc --noEmit && npm test && npm run build` → tsc clean, vitest
+  149/149 (5 files), build OK. No test-file edits (per package scope).
+- **Deviations (1, minor):** created a new shared module
+  `src/components/personFields.ts` rather than inlining the identical chip/option
+  helpers into both pages. It is presentational-only (no store/selector touch),
+  so it stays inside the package's out-of-scope guard; chosen over duplicating
+  ~40 lines across two forms. Time-select range decision resolved per the
+  package's "pick one": Od `0:00–23:45`, Do `0:15–24:00` (`24:00` = 1440).
+- **Browser-verified logic (against seed; needs human :5173 confirm):** Ola
+  (workDays [1,2,3,4], capacity 8) → Workload `Dostępne` = 32h and her Friday
+  cell carries the weekend tint; Kasia's supervisor select offers only `—`
+  (Ola/Marek excluded as cycle-forming); Kasia's profile Podwładni = Ola + Marek,
+  Ola's Przełożony = Kasia.
+- **Not CLI-verifiable (defer to human walkthrough on :5173):** both forms
+  round-trip all new fields (save→reopen identical); inline Polish validation on
+  `Do ≤ Od`; supervisor/subordinate links navigate; self-editing without
+  `people.manage` shows the three org fields disabled with `Brak uprawnień`;
+  weekday chips keyboard-focusable; ≤760px layout; console clean.
+- **Still broken:** nothing in scope.
+- **Next:** ready for reviewer — final package of the run (wave 5).
+
+#### 2026-07-08 · developer (opus) · Fix round (reviewer changes 1–3, store layer)
+
+- **Changed:**
+  - `src/store/AppStore.tsx` — `ADD_PERSON`: first person into an empty people
+    list is forced to `accessRole: 'administrator'` (fresh-setup lockout guard).
+    `UPDATE_PERSON`: refuses to demote the only remaining administrator (returns
+    `state` unchanged — reject-by-same-ref). `DELETE_PERSON`: now a block that
+    refuses to delete the only remaining administrator (guard applied BEFORE the
+    cascade), else delegates to `deletePerson`. `deletePerson`: additionally
+    clears `supervisorId` on remaining people where it equals the deleted id
+    (invariant-5 cascade).
+  - `src/store/storage.ts` — `loadData`: person normalization (`migrateV4toV5`
+    → `migratePerson`) now runs on EVERY load, not only `version < 5`, mirroring
+    `ensureStartMinutes`. Fixes the permanent login-screen lockout for a
+    v5-stamped payload whose people were never actually migrated.
+- **Tests added:**
+  - `src/store/blockActions.test.ts` — +7: ADD_PERSON first-person→admin (and
+    respects role for later people); UPDATE_PERSON reject demote-last-admin +
+    allow when another admin exists; DELETE_PERSON reject delete-last-admin +
+    allow when another admin exists + dangling-supervisorId cleanup (unrelated
+    supervisorId left intact).
+  - `src/store/storage.test.ts` — +1: v5-stamped payload with un-migrated people
+    (isAdmin present, no accessRole) loads with correct roles/defaults, no
+    `isAdmin` key, and is idempotent on reload.
+- **Tests:** `npx tsc --noEmit` clean · `npm test` 157/157 (5 files, was 149) ·
+  `npm run build` OK (pre-existing chunk-size warning only).
+- **Deviations:** none. Reviewer changes 4–5 (WeekView insert picker, TaskModal/
+  AllocationGrid workday fill) are UI-only and out of this store-layer package's
+  scope — not touched.
+- **Next:** ready for reviewer (delta re-review of changes 1–3); changes 4–5
+  still open for a UI developer.
+
+#### 2026-07-08 · developer (opus) · Fix round (reviewer changes 4–5, UI layer)
+
+- **Changed:**
+  - `src/components/WeekView.tsx` — right-click "Dodaj przed/po" insert form: the
+    `Zadanie` picker now maps over a new `insertTaskOptions` list instead of raw
+    `state.tasks`. When the user has `tasks.manage` (via existing `useCan`) the
+    full task list is offered; otherwise options are restricted to tasks the
+    block's person is already assigned to (`taskIdsOfPerson`), which always
+    includes the clicked block's own task (kept as default). Closes the
+    `blocks.editOwn` self-assign-to-any-task hole (INSERT_BLOCK auto-assigns).
+    Added `taskIdsOfPerson` to the selectors import.
+  - `src/components/TaskModal.tsx` — `fillWeekdays` now iterates the period and
+    fills each day with `availableHoursOnDate(state, personId, d)` (capacity on a
+    person's workday, 0 otherwise), only writing cells where hours > 0 — replaces
+    the hardcoded Mon–Fri (`isWeekdayDate`) + 8h. Added `availableHoursOnDate`
+    import; dropped the now-unused `isWeekdayDate` import.
+  - `src/components/AllocationGrid.tsx` — "Wypełnij dni robocze" button tooltip
+    changed from "Ustaw 8h we wszystkie dni robocze" to "Wypełnij dni robocze
+    osoby jej dzienną dostępnością" (no longer names 8h/Mon–Fri). Removed the
+    now-dead exported `isWeekdayDate` helper (only caller was TaskModal) and its
+    now-unused `parseDate` import.
+- **Tests:** `npx tsc --noEmit` clean · `npm test` 157/157 (5 files) ·
+  `npm run build` OK (pre-existing chunk-size warning only). No test-file edits
+  (both changes are UI-behavior only; store selectors already covered).
+- **Deviations:** none. Kept the fill's overwrite-workdays contract (current code
+  overwrote every weekday, not empty-only) — now overwrites every person-workday
+  with capacity. Polish UI strings preserved.
+- **Not CLI-verifiable (defer to human walkthrough on :5173):** as pracownik/
+  handlowiec, right-click own block → Dodaj po → picker shows only own assigned
+  tasks (defaults to clicked task); as PM/admin the full list; "Wypełnij dni
+  robocze" for seeded Ola (Mon–Thu) skips Friday and fills 8h Mon–Thu.
+- **Next:** ready for reviewer (delta re-review of changes 4–5) — all 5 required
+  changes now landed.
 
 ### Reviewer verdict
 
 <!-- Reviewer appends here after workers finish. -->
 
-#### 2026-07-08 · reviewer · verdict
+#### 2026-07-08 · reviewer · verdict for run "Hour budget + block merging · accounts/roles/permissions · sidebar icon fix"
 
-- **Status:** CHANGES-REQUIRED
-- **Gates (re-run by reviewer):** `npx tsc --noEmit` clean; `npm test` 60/60;
-  `npm run build` success (500kB chunk warning pre-existing).
-- **Blockers:**
-  1. **[bin-core / developer] [P1]** `src/store/selectors.ts:312-321`
-     (`conflictDatesForTask`) iterates bin entries: for a bin entry it calls
-     `hoursForPersonOnDate(person, '')`, which sums the person's ENTIRE bin
-     (date `'' === ''`), and when that exceeds capacity it adds `''` as a
-     conflict date. `src/pages/TimelinePage.tsx:273` then computes
-     `diffDays(t.startDate, '')` → NaN marker offsets + false overload
-     warnings. Violates the architect decision "bin hours never in any
-     per-date total or overload". Fix: skip `isBinEntry(w)` in
-     `conflictDatesForTask`. Test-writer: add a selector test (bin hours >
-     capacity must NOT create a conflict date).
-  2. **[bin-week-ui / developer] [P2]** `src/components/TaskModal.tsx:412-434`
-     (`toggleAssignee`): the unassign confirm counts only dated allocation
-     hours. A person whose hours sit only in the bin is unassigned with NO
-     confirm, and their bin entries are silently dropped by `saveTask`
-     (invariant 5: destructive drops go behind confirm). Fix: include
-     existing bin hours (+ pending chips) in the confirm text, and clear
-     `pendingUnassigned` rows (and `binPersonId` if pointing at) for the
-     unassigned person.
-  3. **[bin-week-ui / developer] [P2]** `src/components/WeekView.tsx:365-393`
-     (`BinCard`): drop validation is x-only (`colIndex 0..6`). A drop with
-     the pointer over the sticky header (relY < 0 → clamped to 0:00) or over
-     the sticky hour axis while horizontally scrolled (relX computed against
-     the overflowing grid rect) still dispatches `SET_BLOCK_TIME`. The
-     package requires "invalid target → revert". Fix: also require the
-     pointer inside the day-body bounds (y within `bodyRect` top/bottom) and
-     not over the visible sticky axis (`e.clientX` ≥ scroll-container left +
-     AXIS_W).
-- **Codex findings (reviews/2026-07-08-150949-codex-review.md), adjudicated:**
-  - Finding 1 (conflictDatesForTask) — CONFIRMED → blocker 1.
-  - Finding 2 (unassign drops bin hours without warning) — CONFIRMED → blocker 2.
-  - Finding 3 (bin-card drop hit-testing) — CONFIRMED → blocker 3.
-  - Finding 4 (uiPrefs.ts "missing") — REJECTED as a code bug: the file exists,
-    is correct (try/catch-safe, `n2hub.ui.v1` only), and tsc/build pass. It is
-    merely untracked, so the review script's committed-diff omitted it. NOTED
-    for whoever commits: `git add src/utils/uiPrefs.ts` (and the handoff/review
-    files) or the commit breaks the build exactly as Codex warned.
-- **Convention check:** PASS otherwise. Polish strings verbatim from the
-  packages; dates stay `yyyy-MM-dd` + documented `''` sentinel; no direct
-  localStorage outside storage.ts except the architect-sanctioned uiPrefs.ts;
-  all collapsed-sidebar CSS scoped to `@media (min-width: 1181px)`; 1180/760
-  breakpoints and `prefers-reduced-motion` override intact; week grid keeps
-  `user-select: none`; `reindexDays` used with bin keys everywhere sortIndex
-  can change; `withActivity` inside every new mutation; rejections return the
-  same state reference. Audited per-date consumers (WeekView `dayTotal`,
-  MonthView, WorkloadPage, DashboardPage, PersonProfilePage, AllocationGrid):
-  all filter by real-date equality — `conflictDatesForTask` was the single
-  miss (blocker 1).
-- **Test coverage:** adequate for the store layer (23 new tests: all new
-  actions, SAVE_TASK bin rules, guards, ensureStartMinutes bin normalization;
-  assertions are real, rejections use reference equality). Gaps: (a) no test
-  for `conflictDatesForTask` bin exclusion — add with blocker 1; (b)
-  REASSIGN_ENTRY's bin path (append to target bin, startMinutes 0) untested;
-  (c) interactive criteria (drag both directions, sticky axis, collapse
-  toggle, ≤1180/≤760 parity) still need the human browser walkthrough — no
-  worker or reviewer ran a dev-server pass this run.
-- **Nits (non-blocking):**
-  - TaskModal `addBinHours` doesn't snap to 0.25 client-side (reducer snaps on
-    save, but a typed `1.3` renders as a 1.3h chip until then).
-  - `setBlockTime` doesn't reject `date === BIN_DATE` input; only
-    MOVE_BLOCK_TO_BIN is the sanctioned bin path today, but a defensive guard
-    would keep a future caller from corrupting `task.startDate` to `''`.
-  - REASSIGN_ENTRY activity renders `()` for a bin entry's date — accepted by
-    the plan, fine to leave.
-- **Routing:** blocker 1 → bin-core developer (+ test-writer for the selector
-  test); blockers 2–3 → bin-week-ui developer. Re-run all four gates after
-  fixes; then the human browser checklist (week-view items + sidebar items)
-  before merge. CLAUDE.md refresh stays a post-merge human task per the plan.
+- **Status: CHANGES-REQUIRED** (core work is solid and approved in substance;
+  5 targeted fixes before merge, none architectural).
+- **Gates (re-run by reviewer):** `npx tsc --noEmit` clean · `npm test` 149/149
+  (5 files) · `npm run build` OK (pre-existing chunk-size warning only).
+- **Live browser verification (orchestrator input, recorded):** budget clamp at
+  estimate headroom, shrink→single bin row, exact-adjacency fuse (+animation),
+  30-min gap no-merge, clean v4→v5 migration (idempotent), login gate + one-click
+  passwordless login, pracownik gating, collapsed-sidebar circles — all pass.
 
-#### 2026-07-08 · developer · `PKG-20260708-bin-core` (fix pass)
+**Required changes (numbered):**
 
-- **Blocker 1 (P1) — FIXED:** `src/store/selectors.ts` `conflictDatesForTask`
-  now skips bin entries (`w.taskId !== taskId || isBinEntry(w)`), so a bin total
-  over capacity can no longer add `''` as a conflict date → no more
-  `diffDays(start, '')` NaN in TimelinePage / false overload warnings. Restores
-  the "bin hours never in any per-date overload" invariant.
-- **Reviewer nit — applied (cheap, no test disturbance):**
-  `src/store/AppStore.tsx` `setBlockTime` now defensively rejects
-  `date === BIN_DATE` (returns state unchanged) so a future caller can't corrupt
-  `task.startDate` to `''`. MOVE_BLOCK_TO_BIN remains the only sanctioned
-  grid→bin path.
-- **Tests:** `npx tsc --noEmit` clean; `npm test` → 60/60 pass (unchanged count;
-  test-writer's selector regression test lands separately).
-- **Deviations:** none. Did not touch test files or the concurrent
-  WeekView/TaskModal/sidebar files.
-- **Still broken:** nothing in bin-core. Blockers 2–3 remain with the
-  bin-week-ui developer.
-- **Next:** ready for re-review; test-writer to add the `conflictDatesForTask`
-  bin-exclusion selector test.
+1. **P1 · `src/store/AppStore.tsx` (ADD_PERSON ~L1304, UPDATE_PERSON ~L1317,
+   deletePerson ~L1085) · developer (+ test-writer):** Fresh-setup lockout
+   (Codex #1, confirmed). In setup mode the add-person form defaults to
+   `pracownik`, ADD_PERSON preserves it and does not set `currentUserId`; once
+   one person exists the login gate activates with zero administrators and no
+   recovery except editing localStorage. Fix: force `accessRole: 'administrator'`
+   for the first person created into an empty people list (and preferably log
+   them in); additionally guard demoting (UPDATE_PERSON) and deleting
+   (DELETE_PERSON) the LAST administrator — reducer refuses, UI disables with a
+   Polish title. Add reducer tests.
+2. **P2 · `src/store/storage.ts` (loadData ~L532-535) · developer (+ test-writer):**
+   A payload stamped `version: 5` whose people were never migrated (observed
+   mid-dev via HMR) stays broken forever: `migrateV4toV5` only runs when
+   `version < 5`, and a missing `accessRole` makes `MATRIX[undefined]` deny every
+   action → permanent, unrecoverable lockout at the login screen. `migratePerson`
+   is idempotent — run the person-normalization pass unconditionally on every
+   load, exactly like `ensureStartMinutes`. Add a load test with a v5-stamped
+   payload containing a pre-v5 person.
+3. **P2 · `src/store/AppStore.tsx` (deletePerson ~L1085-1093) · developer
+   (+ test-writer):** DELETE_PERSON leaves dangling `supervisorId` references
+   (Codex #2, confirmed — people are filtered, supervisors never cleared),
+   violating the cascade-delete pattern (CLAUDE.md invariant 5). Map remaining
+   people and clear `supervisorId === deleted id`; add a reducer test.
+4. **P2 · `src/components/WeekView.tsx` (insert form task select ~L966-982) ·
+   developer:** A `blocks.editOwn`-only user (pracownik/handlowiec) can
+   right-click an own block → Dodaj przed/po → pick ANY task in the system;
+   `INSERT_BLOCK` auto-assigns, bypassing `tasks.manage` (Codex #3, confirmed).
+   The gating package's acceptance explicitly allows the context menu on own
+   blocks — the gap is the unrestricted picker. Restrict the `Zadanie` options
+   to tasks the person is already assigned to (or just the clicked block's task)
+   unless `can('tasks.manage')`.
+5. **P2 (minor) · `src/components/TaskModal.tsx` L394-399 +
+   `src/components/AllocationGrid.tsx` L187-191 · developer:** "Wypełnij dni
+   robocze" hardcodes Mon–Fri + 8h (Codex #4, confirmed). Pre-existing code, but
+   this run shipped per-person `Dni robocze` under the same name — for seeded
+   Ola (Mon–Thu) the button now fills her Friday, directly contradicting the new
+   model. Use `isPersonWorkday` + `personCapacity` per person.
 
-#### 2026-07-08 · developer · `PKG-20260708-bin-week-ui` (fix pass)
+**Codex findings adjudicated:** #1 (P1) accepted → change 1. #2 (P2) accepted →
+change 3. #3 (P2) accepted → change 4 (noting the context menu itself is
+sanctioned for own blocks; only the picker breadth is wrong). #4 (P2) accepted,
+severity kept but scoped as minor/coherence → change 5. #5 (P3, `workDays: []`
++ assigned hours renders 0% instead of overload — WorkloadPage.tsx L288)
+accepted as backlog nit (per-day overload flags still fire; summary % only).
+Nothing dismissed; Codex raised no false positives.
 
-- **Blocker 2 (P2) — FIXED:** `src/components/TaskModal.tsx` `toggleAssignee`
-  now, on unassign, counts dated allocation hours PLUS this person's existing
-  bin hours (`binEntriesForTask`) PLUS their queued `pendingUnassigned` hours.
-  The confirm fires whenever that combined total > 0 and its Polish text appends
-  ` (w tym {n}h w zasobniku)` when any bin hours are involved; on confirm it also
-  drops that person's `pendingUnassigned` chips (so saveTask can't silently
-  discard queued bin hours). Restores invariant 5 (destructive drops behind
-  confirm).
-- **Blocker 3 (P2) — FIXED:** `src/components/WeekView.tsx` `BinCard`
-  `onPointerMove` now hit-tests the VISIBLE day body, not just `colIndex`. Using
-  the scroll container rect (`gridRef.parentElement`) it requires the pointer
-  below the sticky header (`scrollRect.top + headerH`, `headerH = bodyRect.top -
-  gridRect.top` — stable under scroll), above the body's 24:00 line
-  (`bodyRect.bottom`), right of the sticky hour axis
-  (`scrollRect.left + AXIS_W`) and left of the visible right edge. A drop over a
-  header/axis or outside the body now reverts, consistent with collision-revert.
-  `finish` already gates on `!valid` → no dispatch.
-- **Tests:** `npx tsc --noEmit` clean; `npm test` → 60/60 pass.
-- **Deviations:** none. Touched only TaskModal.tsx and WeekView.tsx (no CSS class
-  needed); no store/test files touched.
-- **Still broken:** nothing. Interactive re-verification of the reverted-drop
-  cases (drop over day header, drop over the axis while scrolled right) and the
-  bin-only-person unassign confirm still needs a human browser pass.
-- **Next:** ready for re-review.
+**UX audit adjudicated:** both P1s confirmed REAL in code but PRE-EXISTING and
+not worsened by this run → backlog, out of run scope: (a) `insertBlock`
+end-of-day clamp (AppStore.tsx L561) can pull the new block back over the ref
+block / let a pushed block overlap — the sweep only pushes blocks after the
+insert point (clamp logic predates the run; overlaps render side-by-side, no
+data corruption); (b) archiving an in-use status hides projects from Kanban
+(design gap since the kanban run). P2/P3 friction items → backlog as listed in
+the audit.
 
-#### 2026-07-08 · test-writer · follow-up on reviewer CHANGES-REQUIRED (`conflictDatesForTask` regression + REASSIGN_ENTRY bin gap)
+**Worker deviations (all 7 packages) — verified and ACCEPTED:** bin-entry split
+no-op + UI hide (confirmed at WeekView L899 `!isBinEntry` branch); merge blob on
+dragged block only (per decision 3); auth-data none; one-click passwordless
+login (matches the stronger acceptance criterion); MOVE_TASK gated by
+`tasks.manage` + "+ Zadanie" gated (both close real holes in the per-page map);
+shared `personFields.ts` module (presentational only, within scope guard).
 
-- **Context:** reviewer's blocker 1 (P1, `conflictDatesForTask` counting bin
-  hours as a `''`/BIN_DATE conflict date) was already fixed by the bin-core
-  developer before this task started (`src/store/selectors.ts:315`); this
-  entry adds the regression test the reviewer asked for, plus the noted
-  coverage gap on `REASSIGN_ENTRY`'s bin path. No implementation changed here.
-- **Changed:**
-  - `src/store/selectors.test.ts` (new file) — 2 `it`s in
-    `conflictDatesForTask — bin exclusion (regression)`: a person whose ONLY
-    entry is a 20h bin block (over an 8h capacity) yields `[]` and the result
-    never contains `''`/BIN_DATE; a mixed fixture (huge bin total + one
-    under-capacity dated day + one over-capacity dated day) yields exactly the
-    genuine dated conflict date, proving real overload is still reported while
-    the bin stays excluded.
-  - `src/store/blockActions.test.ts` — added a `makePerson` fixture helper +
-    2 `it`s in a new `REASSIGN_ENTRY bin behavior` describe: reassigning a bin
-    entry to a person with an existing bin entry keeps `date`/`startMinutes`
-    at bin values (`BIN_DATE`/`0`) and appends at the next contiguous bin
-    `sortIndex` (verified against `reassignEntry`'s actual behavior — it skips
-    `nextFreeStart` for bin entries and computes `sortIndex` via
-    `nextSortIndex(without, toPersonId, date)` with `date` still `BIN_DATE`);
-    a second case checks an empty target bin lands at `sortIndex: 0` and that
-    an already-assigned target person doesn't get a duplicate assignment row.
-- **Tests:** `npm test` → 64/64 passed (60 prior + 4 new, 4 files);
-  `npx tsc --noEmit` → clean.
-- **Deviations/gaps:** none. Did not touch `WeekView.tsx`/`TaskModal.tsx`
-  (concurrent developer edits) or any other implementation file.
-- **Next:** ready for re-review.
+**Convention check: PASS.** Polish UI strings throughout; localStorage only via
+storage.ts; reads via pure selectors; `yyyy-MM-dd` dates untouched; no new
+dependencies; `prefers-reduced-motion` honored (CSS-only fuse animation);
+personColor untouched. One placement nit: `toQuarters` lives in AppStore.tsx —
+CLAUDE.md points hour-step math at `src/utils/time.ts` (move alongside
+`HOURS_STEP` when convenient).
 
-#### 2026-07-08 · reviewer · final verdict (re-review after fix pass)
+**Test coverage: ADEQUATE** (68 → 149; budget/merge/one-bin-row, migration
+v4→v5 + idempotence, supervisor cycles, password/logout, full 4×12 permission
+matrix — assertions are behavioral, not tautological). Gaps (fold into fixes
+1–3): last-admin guard, first-person-admin, defensive v5 normalization,
+DELETE_PERSON supervisor cleanup. Deliberate, accepted gap: no v1→v5
+end-to-end test.
 
-- **Status:** APPROVE (with nits)
-- **Gates (re-run by reviewer):** `npx tsc --noEmit` clean; `npm test` 64/64
-  (4 files); `npm run build` success (500kB chunk warning pre-existing).
-- **Blocker verification:**
-  1. FIXED — `src/store/selectors.ts:315` now skips `isBinEntry(w)` in
-     `conflictDatesForTask`; bin hours can no longer surface `''` as a
-     conflict date (no NaN offsets in TimelinePage). Covered by 2 regression
-     tests in the new `src/store/selectors.test.ts` (bin-only overload → `[]`;
-     mixed fixture still reports the genuine dated conflict). Bonus: the
-     defensive nit was applied — `setBlockTime` rejects `date === BIN_DATE`
-     early (`src/store/AppStore.tsx:672-674`), keeping MOVE_BLOCK_TO_BIN the
-     only grid→bin path.
-  2. FIXED — `src/components/TaskModal.tsx:412-454` `toggleAssignee` now sums
-     dated + existing-bin + pending-bin hours, fires the confirm whenever the
-     combined total > 0 with the Polish suffix
-     ` (w tym {n}h w zasobniku)`, and clears the person's `pendingUnassigned`
-     chips on confirm. No more silent bin-hour loss on unassign.
-  3. FIXED — `src/components/WeekView.tsx:369-380` `BinCard.onPointerMove`
-     hit-tests the visible day body against the scroll container rect:
-     below the sticky header (`scrollRect.top + headerH`, headerH derived from
-     `bodyRect.top - gridRect.top` so it's scroll-stable), above
-     `bodyRect.bottom`, right of the sticky axis (`scrollRect.left + AXIS_W`),
-     left of the visible right edge; `finish` still gates on `!valid` → drops
-     over header/axis/outside revert. Math checks out under both scroll axes.
-- **New tests:** 4, all meaningful — 2 selector regressions (above) + 2
-  REASSIGN_ENTRY bin-path tests in `blockActions.test.ts` (bin values kept,
-  contiguous target-bin sortIndex, empty-bin lands at 0, no duplicate
-  assignment). Closes coverage gaps (a) and (b) from the first verdict.
-- **Remaining nits (non-blocking, note for a future pass):**
-  - `TaskModal` `binPersonId` is not reset when the person it points at is
-    unassigned: the add-row select then shows the first assignee while
-    `addBinHours` (line 536) still uses the stale id — the resulting chip is
-    excluded from totals and skipped by the reducer on save, so no data risk,
-    just a confusing chip. One-line fix whenever TaskModal is next touched.
-  - `addBinHours` still doesn't snap to 0.25 client-side (reducer snaps).
-  - REASSIGN_ENTRY activity renders `()` for a bin date — accepted by plan.
-- **Human browser walkthrough still required before merge** (code approved;
-  these are the interactive criteria no agent could verify from CLI):
-  1. Week grid: Mon–Fri fill the width; Sat/Sun/Zasobnik scroll in from the
-     right; hour axis + corner stay pinned; auto-scroll to ~7:00.
-  2. Bin→grid drag (seeded Ola 3h): drop on a free slot schedules; drop on the
-     same person's block shows danger + reverts; drop on the sticky header,
-     on the hour axis while scrolled right, and outside the grid ALL revert
-     (blocker-3 regression check).
-  3. Grid→bin drag: `to-bin` lavender tint on hover, day empties on drop.
-  4. Context menu: split pół/ćwiartki on dated + bin blocks; disabled titles
-     on 0.25h; `Usuń blok` confirm on bin cards; `Dodaj przed/po` unchanged.
-  5. Bottom-resize shrink returns hours to the bin and the bin column
-     re-renders; two consecutive drags on one block both register.
-  6. TaskModal: add-to-bin chip + dirty; save round-trips; estimate shows
-     `(+ {n}h w zasobniku)`; unassigning a bin-only person now confirms with
-     the `(w tym …h w zasobniku)` text (blocker-2 regression check).
-  7. Sidebar: collapse to 80px >1180px, tooltips, Ctrl/Cmd+K while collapsed,
-     avatar click expands, pref survives reload; ≤1180px strip and ≤760px
-     drawer pixel-identical with the pref set either way.
-  8. Console free of errors/warnings throughout.
-- **Commit hygiene:** remember to `git add` the untracked files —
-  `src/utils/uiPrefs.ts` (build breaks without it), `src/store/selectors.test.ts`,
-  the four `handoffs/packages/PKG-20260708-*.md`, and the review artifacts.
-  CLAUDE.md's in-tree diff is the PREVIOUS run's doc refresh; the bin/sidebar
-  doc update remains a post-merge human task per the plan.
+**Nits / backlog (non-blocking):** Codex #5 (0% vs overload display); UX-audit
+pre-existing P1s (a)+(b) above; unsnapped `estimatedHours` (TaskModal saves
+`Number(raw)` raw → off-grid estimate makes the UI's `maxHours` clamp off-grid
+and the at-cap resize dispatch gets grid-rejected and reverts — snap the
+estimate on save per invariant 4); `toQuarters` placement; CLAUDE.md refresh
+(now must also cover login/roles/permissions/budget/bin invariants — human
+task, already logged); carried-over commit hygiene incl. new untracked files.
 
----
+**Routing:** changes 1–3 → developer with a test-writer follow-up (or one
+combined store package); changes 4–5 → developer (UI-only). Re-review can be
+delta-only.
 
-## Run: 2026-07-08 — Walkthrough fixes: fixed hour axis, bin beside grid, duration format
+#### 2026-07-08 · reviewer · delta re-review of the fix round — FINAL VERDICT
 
-### Plan (architect)
+- **Status: APPROVE.** All 5 required changes verified in source; gates re-run
+  by the reviewer: `npx tsc --noEmit` clean · `npm test` 157/157 (5 files) ·
+  `npm run build` OK (pre-existing chunk-size warning only).
 
-- **Context:** the previous run was APPROVED, but the human browser
-  walkthrough surfaced three defects: (1) the sticky-left hour axis is
-  translucent and overlaps day headers/blocks during horizontal scroll;
-  (2) the Zasobnik is the 8th in-grid column and only visible after scrolling
-  past Sunday — it must sit BESIDE the calendar, always visible; (3) durations
-  render inconsistently (clock ranges + decimal `2.75h` in the calendar vs
-  `0.25h` elsewhere).
-- **Goal:** restructure the week view to
-  [fixed hour axis][h-scrollable 7-day grid, Mon–Fri primary][always-visible
-  Zasobnik panel], with no translucent overlap in any scroll position and both
-  drag directions intact; unify every read-only duration display behind one
-  `formatDuration(hours)` helper ("2h 45m" / "45m" / "8h").
-- **Key decisions (pre-resolved, no open questions):**
-  - **Week view structure (replaces ALL sticky positioning):** a non-scrolling
-    header row (`52px corner | overflow-hidden day-header track | 200px bin
-    header`) above a flex main row of three panes: `.week-axis-pane` (52px,
-    overflow hidden), `.week-days-viewport` (flex:1, overflow auto BOTH axes —
-    both scrollbars visible there; inner `.week-days-grid` 7 columns, width
-    `max(calc(100%/5*7), 672px)`, height 1152px), `.week-bin-pane` (200px,
-    own overflow-y). One viewport `onScroll` syncs `axisPane.scrollTop` and
-    `headTrack.scrollLeft` by direct ref assignment; `scrollbar-gutter:
-    stable` on viewport + head track prevents header/column misalignment with
-    classic scrollbars. Auto-scroll-to-7:00 moves to the viewport.
-  - **Drag geometry:** `gridRef` → `.week-days-grid` (colWidth = width/7, day
-    clamp 0..6; `GRID_COLS`/`BIN_COL_INDEX`/AXIS_W offsets deleted); grid→bin
-    detection becomes a `binRef` rect hit-test (replaces "column index 7");
-    BinCard drop validation simplifies to grid-rect projection ∩ viewport
-    client rect (supersedes the previous blocker-3 sticky-exclusion math —
-    same reverted-drop guarantees must hold). No drag edge auto-scroll: to
-    drop on Sat/Sun the user scrolls first (accepted gap, unchanged from the
-    approved run).
-  - ≤760px: grid min-width floor 672px (~96px/day), bin pane 160px.
-  - **Duration format:** new pure `formatDuration(hours)` in
-    `src/utils/time.ts` — round to whole minutes; `8h`, `2h 45m`, `45m`, `0h`;
-    applied at EVERY read-only hours display (audited exhaustive list in the
-    package: WeekView, AllocationGrid totals, TaskModal, MonthView,
-    PersonChip, Workload, Dashboard, PersonProfile, People, Projects,
-    ProjectDetail, Tasks, Kanban — TimelinePage/GlobalSearch show no duration
-    numbers), including capacity (`8h/dzień` renders identically), tooltips
-    and confirm texts. Numeric inputs stay decimal 0.25-step; clock ranges
-    (`8:00–10:45`, `formatMinutes`) stay. AppStore activity templates also
-    switch (future rows only; old persisted rows keep their wording —
-    accepted). Helper unit tests ride in the same developer package (6
-    assertions — a separate test-writer handoff would cost more than it
-    saves); message-assertion updates in existing tests limited to number
-    formatting and itemized.
-- **Packages** (STRICTLY SEQUENTIAL — both edit WeekView.tsx; layout first):
-  1. `handoffs/packages/PKG-20260708-week-layout-fix.md` — WeekView pane
-     restructure + scroll sync + drag-geometry rework + week-cal CSS rewrite —
-     tier: developer
-  2. `handoffs/packages/PKG-20260708-duration-format.md` — `formatDuration` +
-     repo-wide display sweep + activity templates + helper tests — tier:
-     developer (depends: 1)
-  - No test-writer package this run (per orchestrator; the only new unit
-    surface is the 6-line formatter, folded into package 2).
-- **Gates:** `npx tsc --noEmit` + `npm test` (64 + new formatter tests) +
-  `npm run build` green after EACH package; dev-server walkthrough by the
-  worker; final human browser pass focused on: axis overlap at every scroll
-  position, bin visible without scrolling, both drags incl. reverted drops,
-  header/column alignment, `2h 45m` formatting sweep, ≤760px.
-- **Risks:** (a) scroll-sync via refs must not jitter or drift — direct
-  property assignment in one handler, no state; (b) the drag rework
-  supersedes the reviewed blocker-3 hit-test — its reverted-drop cases are
-  explicit acceptance criteria again; (c) duration sweep may break
-  activity-message assertions in `blockActions.test.ts` — allowed only as
-  formatting-part edits, itemized; (d) both packages touch WeekView.tsx —
-  never parallelize.
-- **Open questions:** none. Post-merge doc note stands: CLAUDE.md week-view
-  description + duration-format convention need a human refresh after this
-  run.
+**Per-change verification:**
 
-### Worker log
+1. **Fresh-setup lockout — FIXED.** `ADD_PERSON` (AppStore.tsx ~L1316-1319)
+   forces `accessRole: 'administrator'` when `state.people.length === 0`;
+   `UPDATE_PERSON` (~L1327-1337) rejects demoting the only administrator
+   (same-ref return); `DELETE_PERSON` (~L1353-1362) rejects deleting the only
+   administrator BEFORE the cascade. Tests cover all six paths (force/respect,
+   reject/allow demote, reject/allow delete). The optional "log the first
+   person in" suggestion was not taken — acceptable: the login screen offers
+   one-click passwordless login for the new administrator, so no lockout.
+2. **v5-stamped unmigrated payload — FIXED.** `loadData` (storage.ts ~L533-541)
+   now runs `migrateV4toV5` unconditionally on every load, mirroring
+   `ensureStartMinutes`, with an accurate explanatory comment. New storage test
+   loads a `version: 5` payload carrying pre-v5 people (isAdmin, no accessRole)
+   and asserts roles/defaults/idempotence.
+3. **Dangling supervisorId — FIXED.** `deletePerson` (AppStore.tsx ~L1090-1092)
+   clears `supervisorId === deleted id` on remaining people inside the cascade;
+   test asserts cleanup and that unrelated supervisor links survive.
+4. **Insert-picker self-assign hole — FIXED.** WeekView.tsx ~L708-713:
+   `insertTaskOptions` = full `state.tasks` only with `can('tasks.manage')`,
+   else filtered to `taskIdsOfPerson(state, menu.entry.personId)` (which always
+   contains the clicked block's task, preserved as default). Read via the
+   existing selector — no new read path.
+5. **Workday-aware fill — FIXED.** TaskModal `fillWeekdays` now writes
+   `availableHoursOnDate(state, personId, d)` per day (>0 only), replacing
+   hardcoded Mon–Fri/8h; AllocationGrid tooltip updated ("Wypełnij dni robocze
+   osoby jej dzienną dostępnością"); dead `isWeekdayDate` helper + unused
+   import removed (tsc confirms no stragglers).
 
-<!-- Append one block per worker completion. Newest at the bottom. -->
+**New backlog item found during delta review (non-blocking, defense in depth):**
+a v4 payload whose people ALL have `isAdmin: false` migrates to a non-empty,
+zero-administrator people set — login still works (passwordless) but nobody can
+reach people.manage/admin.panel, and the new ADD_PERSON guard doesn't apply
+(people already exist). Unlikely in practice (v1→v2 made the first person
+admin), but consider promoting the first person in `migrateV4toV5` when a
+non-empty people set has zero administrators — one line, idempotent.
 
-#### 2026-07-08 · developer · `PKG-20260708-week-layout-fix`
-
-- **Changed:**
-  - `src/components/WeekView.tsx` — restructured the week view into a header row
-    (`.week-head-row`: `.week-corner` 52px + `.week-head-track`→`.week-head-inner`
-    7-col grid + `.week-bin-head` 200px) over `.week-main` three panes
-    (`.week-axis-pane` 52px overflow-hidden with the 1152px `.week-axis` inside;
-    `.week-days-viewport` the sole scroller — both axes — wrapping
-    `.week-days-grid` 7-col; `.week-bin-pane` 200px, own vertical scroll). All
-    sticky positioning removed. New refs `viewportRef/axisPaneRef/headTrackRef/
-    binRef`; one `onViewportScroll` handler sets `axisPane.scrollTop` +
-    `headTrack.scrollLeft` (direct assignment, no state). Auto-scroll-to-7:00
-    effect repointed to `viewportRef`. Deleted `GRID_COLS`/`BIN_COL_INDEX`/
-    `AXIS_W`/`bodyRef`/`scrollRef`; added `DAY_COLS=7`.
-  - Drag geometry: `TimedBlock.colWidth = gridRect.width / 7`, day projection
-    clamps 0..6; grid→bin is now a rect hit-test of `binRef` (`overBin` boolean
-    in DragState, replaces `projDayIndex===7`) keeping the `to-bin` tint +
-    `MOVE_BLOCK_TO_BIN` drop. `BinCard` targeting simplified: column/time off
-    `.week-days-grid` rect (y-origin = `gridRect.top`, no header inside), valid
-    iff the pointer is inside `viewportRef`'s client rect — that single clamp
-    supersedes the old sticky-header/axis exclusion math (blocker-3 stays fixed:
-    header row / axis pane / bin / outside-viewport all fall outside the rect →
-    revert). Escape-cancel, pointer capture, `moved` click-guard, collision tint
-    unchanged.
-  - `src/styles.css` — week-cal section rewrite: `.week-cal` is now the bordered
-    opaque frame; new `.week-head-row/.week-corner/.week-head-track/
-    .week-head-inner`, `.week-main/.week-axis-pane/.week-days-viewport/
-    .week-days-grid/.week-bin-pane`; header-inner and days-grid share
-    `width: max(calc(100%/5*7), 672px)` so Mon–Fri fill and columns align;
-    `scrollbar-gutter: stable` on both `.week-days-viewport` and
-    `.week-head-track`. All surfaces opaque (`--card-bg`/`--card-bg-2`).
-    `user-select: none` moved onto the three panes (not `.week-cal` root, so the
-    context-menu select/input still work). ≤760px block: dropped the old
-    `.week-cal-scroll/.week-cal-grid` rules (the 672px floor lives in the width
-    rule) and narrowed `.week-bin-head/.week-bin-pane` to 160px. Kept
-    day-column gradient lines, weekend/today tints, block/handle/bin-card styles,
-    `.week-day-col { overflow: visible }`.
-- **Decisions within package bounds:**
-  - `.week-head-inner` uses the SAME `max(calc(100%/5*7), 672px)` as the days
-    grid (package decision 1 wrote head-inner as plain `calc(100%/5*7)`); the
-    identical form is required so headers stay column-aligned at the ≤760px
-    672px floor — matches acceptance criterion "day headers stay perfectly
-    column-aligned while scrolling". Minor, alignment-preserving.
-- **Duration strings:** untouched — all `fmt(...)h` / `formatMinutes` byte-
-  identical for the next package.
-- **Tests:** `npx tsc --noEmit` clean; `npm test` → 64/64; `npm run build`
-  success (pre-existing >500kB chunk warning only). No store/util/test files
-  touched. Verified no stale `AXIS_W/GRID_COLS/BIN_COL_INDEX/bodyRef/scrollRef`
-  or `.week-cal-scroll/.week-cal-grid/.week-axis-head` references remain.
-- **Needs human browser pass (not CLI-verifiable):**
-  - Axis opacity/overlap at every horizontal scroll position; Mon–Fri fill at
-    scrollLeft 0; Sat/Sun on scroll; header↔column alignment (incl. macOS
-    "always show scrollbars"); vertical axis/grid sync after fast scrolling +
-    open at ~7:00; Zasobnik visible with no scroll at 1920px and ~1000px.
-  - Both drag directions incl. the reverted-drop cases (drop over header row /
-    axis pane / bin / outside viewport must revert; same-person collision
-    danger+revert); grid→bin `to-bin` tint; Mon→Tue ±1h snap+persist; top/bottom
-    resize; two consecutive drags on one block; context menu on dated + bin.
-  - **Observation for the reviewer (not a spec deviation):** the mandated bin
-    pane is `overflow-y:auto` (no `overflow:visible` as the old in-grid bin had),
-    so while dragging a bin CARD out onto the grid its visual ghost is clipped at
-    the pane's left edge. The DROP is rect-based and correct (block lands at the
-    projected day/time); only the drag-ghost preview is clipped. If a floating
-    ghost is wanted that's a follow-up (would need a portal/fixed-position ghost)
-    — flagging so the human can judge during the walkthrough.
-  - No horizontal-edge drag auto-scroll (accepted gap per decision 4): to drop on
-    Sat/Sun the user scrolls first.
-- **Next:** ready for `PKG-20260708-duration-format` (package 2, same files —
-  strictly sequential) then review.
-
-#### 2026-07-08 · developer · `PKG-20260708-duration-format`
-
-- **Changed:**
-  - `src/utils/time.ts` — new pure `formatDuration(hours)` → `8h` / `2h 45m` /
-    `45m` / `0h` (rounds to whole minutes; no new imports).
-  - `src/utils/time.test.ts` — new `describe('formatDuration')`: the six spec
-    examples + a rounding case (7 assertions across 4 `it`s).
-  - `src/components/WeekView.tsx` — deleted local `fmt`; block hours label +
-    `title`, bin card hours + `title`, day-head totals, bin header/group totals,
-    context-menu title, overload warning, delete-confirm all via
-    `formatDuration`. Clock ranges (`formatMinutes`) untouched.
-  - `src/components/AllocationGrid.tsx` — deleted local `fmt`; `Suma dnia`
-    column, person totals, grand total, overload tooltip formatted. Cell inputs
-    untouched.
-  - `src/components/TaskModal.tsx` — deleted local `fmtHours`; estimate-compare
-    line, `(+ … w zasobniku)` suffix, existing-bin chips, pending chips, and the
-    unassign confirm (incl. `(w tym … w zasobniku)`) formatted. Inputs untouched.
-  - `src/components/MonthView.tsx` — cell hours + cell `title`.
-  - `src/components/PersonChip.tsx` — the `hours` suffix.
-  - `src/pages/WorkloadPage.tsx` — deleted local `fmtHours`; block hours,
-    reassign-option preview (`{name} — …/{cap} tego dnia`), table cells,
-    assigned/available sums, overload tooltip + panel title all formatted;
-    capacity now via `formatDuration`. `aria-label` percentages left as-is.
-  - `src/pages/DashboardPage.tsx` — `Xh / Yh` load line (value + capacity).
-  - `src/pages/PersonProfilePage.tsx` — deleted local `fmtHours`; week summary
-    (assigned / available / `/dzień` / total), day cells, per-task hours.
-  - `src/pages/PeoplePage.tsx` — deleted local `fmtHours`; `przypisano …`.
-  - `src/pages/ProjectsPage.tsx` — deleted local `fmtHours`; `zaplanowano …`.
-  - `src/pages/ProjectDetailPage.tsx` — deleted local `fmtHours`; project total +
-    per-task totals.
-  - `src/pages/TasksPage.tsx` — deleted local `fmtHours`; `zaplanowano … / szac.
-    …`.
-  - `src/pages/KanbanPage.tsx` — card `{planned}h` → `formatDuration(planned)`.
-  - `src/store/AppStore.tsx` — activity templates switched to `formatDuration`:
-    INSERT_BLOCK, REASSIGN_ENTRY, SET_BLOCK_TIME (all three variants + shrink
-    suffix), MOVE_BLOCK_TO_BIN, SPLIT_BLOCK, DELETE_BLOCK. Clock ranges in the
-    same-time-resize message stay `formatMinutes`.
-- **Self-audit:** repo-wide `}h` / `h/dzień` / `fmtHours` / `fmt(` sweep over
-  `src/**/*.{ts,tsx}` (excluding tests) leaves ONLY the two `${h}h` literals
-  inside `formatDuration` itself. All local `fmt`/`fmtHours` helpers removed (no
-  non-duration uses existed). Numeric `<input>`s (AllocationGrid cells, estimate,
-  insert-hours, bin add-row), clock times, and `%`/counts untouched.
-- **Assertion edits:** none. `blockActions.test.ts` only asserts non-numeric
-  substrings of activity messages (`'wróciło do zasobnika'`, `'z zasobnika'`),
-  so no formatting-part edits were required.
-- **Tests:** `npx tsc --noEmit` clean; `npm test` → 68/68 (64 prior + 4 new
-  formatDuration `it`s); `npm run build` success (pre-existing >500kB chunk
-  warning only).
-- **Deviations:** none. No layout/CSS/WeekView-structure changes; Polish strings
-  otherwise byte-identical.
-- **Next:** ready for review. Human browser pass should spot-check the sweep:
-  a 2h 45m block shows `2h 45m` with `8:00–10:45` clock range intact; day totals
-  like `12h 30m`; capacity renders `8h` / `8h/dzień` unchanged for whole hours;
-  new activity rows read e.g. `podzielił(a) blok 1h 15m na 2 części (do
-  zasobnika: 30m)`.
-
-### Reviewer verdict
-
-<!-- Reviewer appends here after workers finish. -->
-
-#### 2026-07-08 · reviewer · verdict (walkthrough-fixes run)
-
-- **Status:** APPROVE (with nits)
-- **Gates (re-run by reviewer):** `npx tsc --noEmit` clean; `npm test` 68/68
-  (4 files, incl. 4 new formatDuration tests); `npm run build` success
-  (500kB chunk warning pre-existing).
-- **PKG-20260708-week-layout-fix — verified against the package:**
-  - Structure matches decision 1 exactly: `.week-head-row` (52px corner +
-    overflow-hidden head track + 200px bin head) over `.week-main`
-    (52px axis pane / days viewport / 200px bin pane); grep confirms zero
-    sticky positioning left in the week-view CSS (remaining sticky rules are
-    sidebar/alloc-grid/timeline/drawer — untouched) and zero stale
-    `AXIS_W`/`GRID_COLS`/`BIN_COL_INDEX`/`bodyRef`/`scrollRef`/
-    `.week-cal-scroll`/`.week-cal-grid` references.
-  - Scroll sync is one `onScroll` handler with direct ref assignment
-    (WeekView.tsx:477-482), no state/rAF; auto-scroll-to-7:00 repointed to
-    the viewport; `scrollbar-gutter: stable` present on BOTH
-    `.week-days-viewport` and `.week-head-track`; head-inner and days-grid
-    share the identical `max(calc(100%/5*7), 672px)` width formula (the
-    worker's in-bounds deviation — correct, required for the 672px floor).
-  - **Blocker-3 regression stays fixed under the new geometry:** BinCard
-    validity = pointer inside the days-viewport client rect AND column 0..6
-    (WeekView.tsx:382-387), with `finish` gating on `!valid` — the viewport
-    contains only the grid, so header row, axis pane, bin pane and
-    outside-drops all fall outside the rect and revert. Grid→bin is a clean
-    `binRef` rect hit-test with collision skipped and `to-bin` tint kept.
-  - ≤760px: 672px grid floor lives in the width rule; bin head+pane both
-    narrowed to 160px together (alignment preserved).
-- **PKG-20260708-duration-format — verified:** `formatDuration` is pure,
-  correct, documented as duration-not-clock (time.ts:60-67), 4 meaningful
-  tests. Repo-wide audit re-run by me: the only `${…}h` literals left in
-  non-test src are inside `formatDuration` itself; all local `fmt`/`fmtHours`
-  helpers gone; all seven activity templates in AppStore.tsx use
-  `formatDuration` while clock ranges keep `formatMinutes`; numeric inputs
-  untouched; no store-logic change beyond message strings; existing
-  activity-message assertions unaffected (they assert non-numeric substrings).
-- **Codex finding (reviews/2026-07-08-161041-codex-review.md), adjudicated:**
-  - P2 `.week-bin-head` wider than `.week-bin-pane` (content-box premise) —
-    **REJECTED.** A universal `* { box-sizing: border-box; }` reset exists at
-    styles.css:156-158 (pre-dates this run), so the 200px flex basis of
-    `.week-bin-head` INCLUDES its 8px/10px padding and 1px border; head cell
-    and pane are both exactly 200px outer (160px at ≤760px, narrowed as a
-    pair). `.week-corner` (52px) matches `.week-axis-pane` (52px) the same
-    way, and `scrollbar-gutter: stable` on both scroll-synced tracks guards
-    the remaining misalignment vector Codex worried about. No fix needed;
-    header/column alignment stays on the human walkthrough list regardless.
-- **Worker-flagged gap, adjudicated:** bin-card drag ghost clipping at the
-  bin pane's edge (`overflow-y: auto` pane) — **acceptable-deferred.** Drop
-  targeting is pointer/rect-based and unaffected; only the preview visual
-  clips. A proper fix needs a portal/fixed-position ghost — out of scope,
-  fine as a follow-up if the human wants it.
-- **Reviewer nits (non-blocking):**
-  - BinCard's `inView` rect includes the viewport's scrollbar strips, so a
-    drop on the few-pixel scrollbar area still schedules at a clamped time —
-    same tolerance class as the previously approved geometry, negligible.
-  - Dated-block (TimedBlock) drags released over the axis/header still clamp
-    to a valid day/time — pre-existing behavior carried over unchanged from
-    the approved run, not a regression.
-  - `formatDuration` assumes non-negative input (no caller passes negative).
-- **Convention check:** PASS — no store/selector changes in the layout
-  package; Polish strings preserved; `user-select: none` correctly moved onto
-  the three panes (context-menu inputs excluded); opaque pane backgrounds;
-  reduced-motion untouched; no new localStorage.
-- **Human walkthrough (required before merge; code approved):**
-  1. Axis fully opaque + never overlaps at every horizontal/vertical scroll
-     position; opens at ~7:00; no axis/grid drift after fast wheel scrolling.
-  2. Mon–Fri fill at scrollLeft 0; Sat/Sun behind scroll; header↔column
-     alignment while scrolling — INCLUDING with macOS "always show scroll
-     bars" forced (the scrollbar-gutter path).
-  3. Zasobnik + seeded Ola 3h card visible with NO scrolling at 1920px and
-     ~1000px widths.
-  4. Bin→grid: free-slot drop schedules; same-person collision danger+revert;
-     drops over header row / axis pane / bin / outside viewport revert
-     (blocker-3 regression cases under the new geometry).
-  5. Grid→bin: `to-bin` tint over the pane, drop lands in the bin; Mon→Tue
-     ±1h snap+persist; top/bottom resize; two consecutive drags register;
-     context menu (przed/po, split, Usuń blok) on dated + bin.
-  6. Duration sweep spot-checks: a 2.75h block shows `2h 45m` with
-     `8:00–10:45` intact; day total like `12h 30m`; capacity `8h`/`8h/dzień`;
-     new activity row e.g. `podzielił(a) blok 1h 15m na 2 części (do
-     zasobnika: 30m)`; judge the clipped bin-card drag ghost (deferred item).
-  7. ≤760px: 96px/day columns behind scroll, 160px bin, no overlap; month
-     view untouched; console clean throughout.
-- **Post-merge doc note stands:** CLAUDE.md week-view description + the new
-  duration-format convention need the human refresh (per plan, not a worker
-  task). Commit hygiene from the previous verdict still applies (untracked
-  `src/utils/uiPrefs.ts`, `src/store/selectors.test.ts`, package/review files).
+**Carried nits/backlog (unchanged from the main verdict):** Codex #5 workDays
+[] 0% display; pre-existing UX-audit P1s (insertBlock end-of-day clamp, status
+archive vs Kanban); unsnapped `estimatedHours` vs the UI maxHours clamp;
+`toQuarters` placement (utils/time.ts); CLAUDE.md refresh + commit hygiene
+(human tasks). Remaining human step before merge: the role-matrix browser
+walkthrough items each worker listed as not-CLI-verifiable, plus the two new
+UI fixes (restricted picker as pracownik; Ola's Friday skipped by the fill).

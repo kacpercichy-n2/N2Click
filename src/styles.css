@@ -378,6 +378,122 @@ textarea {
   cursor: pointer;
 }
 
+/* Universal logout, pinned below the (admin-only) impersonate select. */
+.logout-btn {
+  width: 100%;
+  margin-top: var(--n2-space-3);
+  justify-content: center;
+}
+
+/* ---------- Login screen (outside the app shell) ---------- */
+
+.login-screen {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: var(--n2-space-6);
+  background:
+    radial-gradient(circle at 50% -10%, rgba(112, 0, 255, 0.28), transparent 46%),
+    radial-gradient(circle at 100% 100%, rgba(196, 150, 255, 0.12), transparent 40%),
+    var(--n2-carbon);
+}
+.login-card {
+  width: 100%;
+  max-width: 420px;
+  padding: var(--n2-space-8);
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-xl);
+  background: var(--n2-surface);
+  box-shadow: var(--n2-shadow-soft);
+  backdrop-filter: var(--n2-blur-glass);
+}
+.login-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--n2-space-3);
+  margin-bottom: var(--n2-space-3);
+}
+.login-lead {
+  margin: 0 0 var(--n2-space-6);
+  text-align: center;
+  color: var(--n2-text-muted);
+  font-size: var(--n2-type-sm);
+}
+.login-people {
+  display: grid;
+  gap: var(--n2-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.login-person {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-3);
+  width: 100%;
+  padding: var(--n2-space-3) var(--n2-space-4);
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-lg);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--n2-text);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color var(--n2-transition), background var(--n2-transition),
+    transform var(--n2-transition);
+}
+.login-person:hover {
+  border-color: var(--n2-border-strong);
+  background: rgba(196, 150, 255, 0.1);
+}
+.login-person.selected {
+  border-color: var(--n2-border-strong);
+  background: rgba(196, 150, 255, 0.16);
+}
+.login-person:active {
+  transform: scale(0.99);
+}
+.login-person-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.login-person-name {
+  font-weight: 600;
+}
+.login-person-role {
+  font-size: var(--n2-type-xs);
+  color: var(--n2-lavender);
+  font-family: var(--n2-font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.login-person-lock {
+  flex: none;
+  font-size: var(--n2-type-sm);
+  opacity: 0.7;
+}
+.login-password {
+  display: grid;
+  gap: var(--n2-space-2);
+  margin-top: var(--n2-space-2);
+  padding: var(--n2-space-4);
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-lg);
+  background: rgba(255, 255, 255, 0.03);
+}
+.login-password .btn.primary {
+  justify-content: center;
+}
+
+@media (max-width: 760px) {
+  .login-card {
+    padding: var(--n2-space-6);
+  }
+}
+
 /* ---------- Page ---------- */
 
 .page {
@@ -1352,6 +1468,14 @@ option {
   box-shadow: var(--n2-shadow-violet, 0 8px 24px rgba(0, 0, 0, 0.4));
   opacity: 0.96;
 }
+/* Read-only blocks/bars (role lacks edit permission): click still opens the
+   task, but no drag/resize affordance. */
+.week-block.readonly,
+.week-bin-block.readonly,
+.timeline-bar.static,
+.timeline-milestone.static {
+  cursor: pointer;
+}
 .week-block.colliding {
   cursor: not-allowed;
   border-color: var(--n2-danger);
@@ -1364,6 +1488,62 @@ option {
   border-color: var(--n2-lavender);
   border-left-color: var(--n2-lavender) !important;
   background: rgba(196, 150, 255, 0.22);
+}
+/* Resize clamped at the task budget: thin warning outline, no color takeover. */
+.week-block.at-cap {
+  outline: 1px solid var(--n2-warning);
+  outline-offset: -1px;
+}
+/* Will-merge affordance: a soft lavender glow on the dragged block and its
+   neighbor while the projected geometry is exactly adjacent (touching edge). */
+.week-block.will-merge,
+.week-block.will-merge-target {
+  border-color: var(--n2-lavender);
+  box-shadow: 0 0 0 1px rgba(196, 150, 255, 0.55),
+    0 0 14px 2px rgba(196, 150, 255, 0.4);
+}
+/* Small connecting "blob" bridging the touching edge on the dragged block. */
+.week-block.will-merge::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: radial-gradient(
+    circle,
+    rgba(196, 150, 255, 0.75) 0%,
+    rgba(196, 150, 255, 0) 70%
+  );
+  opacity: 0.75;
+  pointer-events: none;
+  z-index: 31;
+}
+.week-block.will-merge.merge-top::after {
+  top: -5px;
+}
+.week-block.will-merge.merge-bottom::after {
+  bottom: -5px;
+}
+/* Fuse animation after a merge drop: quick squash + lavender glow fade-out. */
+.week-block.fused {
+  animation: week-block-fuse 280ms ease-out;
+  z-index: 20;
+}
+@keyframes week-block-fuse {
+  0% {
+    transform: scaleY(0.9);
+    box-shadow: 0 0 0 1px rgba(196, 150, 255, 0.7),
+      0 0 18px 4px rgba(196, 150, 255, 0.55);
+  }
+  60% {
+    transform: scaleY(1.02);
+  }
+  100% {
+    transform: scaleY(1);
+    box-shadow: 0 0 0 0 rgba(196, 150, 255, 0);
+  }
 }
 .week-block-handle {
   position: absolute;
@@ -2447,6 +2627,92 @@ option {
   font-weight: 400;
   color: var(--text-muted);
 }
+/* Weekday toggle chips (person forms) */
+.weekday-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.weekday-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-sm);
+  background: var(--n2-surface-muted);
+  color: var(--text-muted);
+  font-size: var(--n2-type-sm);
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+.weekday-chip:hover {
+  border-color: var(--n2-border-strong);
+}
+.weekday-chip.on {
+  background: rgba(196, 150, 255, 0.16);
+  border-color: var(--n2-border-strong);
+  color: var(--n2-lavender);
+}
+.weekday-chip input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+}
+.weekday-chip input:focus-visible + span {
+  outline: 2px solid var(--n2-lavender);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+.weekday-chip input:disabled {
+  cursor: not-allowed;
+}
+.weekday-chip:has(input:disabled) {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.people-form-hint {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+/* Read-only profile facts */
+.profile-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px 20px;
+  margin: 0;
+}
+.profile-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.profile-fact dt {
+  font-size: var(--n2-type-sm);
+  color: var(--text-muted);
+}
+.profile-fact dd {
+  margin: 0;
+  font-weight: 600;
+}
+.profile-link {
+  color: var(--n2-lavender);
+  text-decoration: none;
+}
+.profile-link:hover {
+  text-decoration: underline;
+}
+.profile-fact-links {
+  font-weight: 500;
+}
+
 .profile-week {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
@@ -2748,11 +3014,17 @@ option {
   .sidebar-collapsed .app-brand-name {
     display: none;
   }
-  /* Icon-only nav: hide the labels, center the icons, keep the tap target. */
+  /* Icon-only nav: fixed 1:1 circles, centered in the 80px rail. Active/hover
+     backgrounds fill the circle (border-radius already pill on the base rule). */
   .sidebar-collapsed .app-nav-link {
     justify-content: center;
-    padding-inline: 0;
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+    padding: 0;
     gap: 0;
+    border-radius: 999px;
+    margin-inline: auto;
   }
   .sidebar-collapsed .app-nav-link .nav-label {
     display: none;

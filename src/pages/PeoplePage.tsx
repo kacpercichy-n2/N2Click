@@ -3,26 +3,41 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
+import { useCan } from '../store/useCan';
 import type { PersonDraft } from '../store/AppStore';
 import { getDepartment, personTotalHours } from '../store/selectors';
+import { ROLE_LABELS } from '../store/permissions';
+import type { AccessRole } from '../types';
 import { Avatar } from '../components/Avatar';
 import { ChevronRight } from '../components/icons';
-import { DEFAULT_CAPACITY } from '../store/storage';
-import { formatDuration } from '../utils/time';
+import { DEFAULT_CAPACITY, defaultWorkEndMinutes } from '../store/storage';
+import { formatDuration, formatMinutes } from '../utils/time';
+import {
+  END_MINUTE_OPTIONS,
+  START_MINUTE_OPTIONS,
+  WEEKDAY_CHIPS,
+  toggleWorkDay,
+} from '../components/personFields';
 
 const emptyDraft = (): PersonDraft => ({
   firstName: '',
   lastName: '',
   email: '',
+  phone: '',
   role: '',
   departmentId: '',
   avatar: '',
   capacity: DEFAULT_CAPACITY,
-  isAdmin: false,
+  accessRole: 'pracownik',
+  workDays: [1, 2, 3, 4, 5],
+  workStartMinutes: 480,
+  workEndMinutes: defaultWorkEndMinutes(DEFAULT_CAPACITY),
+  supervisorId: '',
 });
 
 export function PeoplePage() {
   const { state, dispatch } = useStore();
+  const canManage = useCan()('people.manage');
   const [draft, setDraft] = useState<PersonDraft>(emptyDraft);
   const [error, setError] = useState('');
 
@@ -33,6 +48,10 @@ export function PeoplePage() {
     e.preventDefault();
     if (!draft.firstName.trim()) {
       setError('Imię jest wymagane');
+      return;
+    }
+    if (draft.workEndMinutes <= draft.workStartMinutes) {
+      setError('Koniec pracy musi być po początku');
       return;
     }
     dispatch({ type: 'ADD_PERSON', person: draft });
@@ -56,6 +75,7 @@ export function PeoplePage() {
         <h1>Zespół</h1>
       </div>
 
+      {canManage && (
       <form className="person-form" onSubmit={submit}>
         <div className="field">
           <label htmlFor="p-first">Imię *</label>
@@ -112,6 +132,15 @@ export function PeoplePage() {
             placeholder="opcjonalnie"
           />
         </div>
+        <div className="field">
+          <label htmlFor="p-phone">Telefon</label>
+          <input
+            id="p-phone"
+            value={draft.phone}
+            onChange={(e) => set('phone', e.target.value)}
+            placeholder="opcjonalnie"
+          />
+        </div>
         <div className="field field-narrow">
           <label htmlFor="p-avatar">Avatar</label>
           <input
@@ -134,19 +163,96 @@ export function PeoplePage() {
             onChange={(e) => set('capacity', Number(e.target.value) || DEFAULT_CAPACITY)}
           />
         </div>
-        <label className="field-check">
-          <input
-            type="checkbox"
-            checked={draft.isAdmin}
-            onChange={(e) => set('isAdmin', e.target.checked)}
-          />
-          Administrator
-        </label>
+        <div className="field field-narrow">
+          <label htmlFor="p-role-access">Uprawnienia</label>
+          <select
+            id="p-role-access"
+            value={draft.accessRole}
+            onChange={(e) => set('accessRole', e.target.value as AccessRole)}
+          >
+            {(Object.keys(ROLE_LABELS) as AccessRole[]).map((r) => (
+              <option key={r} value={r}>
+                {ROLE_LABELS[r]}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label>Dni robocze</label>
+          <div className="weekday-chips" role="group" aria-label="Dni robocze">
+            {WEEKDAY_CHIPS.map((c) => (
+              <label
+                key={c.iso}
+                className={`weekday-chip${draft.workDays.includes(c.iso) ? ' on' : ''}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={draft.workDays.includes(c.iso)}
+                  onChange={() => set('workDays', toggleWorkDay(draft.workDays, c.iso))}
+                />
+                <span>{c.label}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+        <div className="field field-narrow">
+          <label htmlFor="p-work-start">Praca od</label>
+          <select
+            id="p-work-start"
+            value={draft.workStartMinutes}
+            onChange={(e) => {
+              set('workStartMinutes', Number(e.target.value));
+              if (error) setError('');
+            }}
+          >
+            {START_MINUTE_OPTIONS.map((m) => (
+              <option key={m} value={m}>
+                {formatMinutes(m)}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field field-narrow">
+          <label htmlFor="p-work-end">Praca do</label>
+          <select
+            id="p-work-end"
+            value={draft.workEndMinutes}
+            onChange={(e) => {
+              set('workEndMinutes', Number(e.target.value));
+              if (error) setError('');
+            }}
+          >
+            {END_MINUTE_OPTIONS.map((m) => (
+              <option key={m} value={m}>
+                {formatMinutes(m)}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="p-supervisor">Przełożony</label>
+          <select
+            id="p-supervisor"
+            value={draft.supervisorId}
+            onChange={(e) => set('supervisorId', e.target.value)}
+          >
+            <option value="">—</option>
+            {state.people.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <p className="field-hint people-form-hint">
+          Limit dzienny liczony jest z pola dostępności.
+        </p>
         <button type="submit" className="btn primary">
           Dodaj osobę
         </button>
         {error && <p className="field-error inline">{error}</p>}
       </form>
+      )}
 
       {state.people.length === 0 ? (
         <div className="empty-state">
@@ -161,7 +267,9 @@ export function PeoplePage() {
               <Link to={`/people/${p.id}`} className="person-row-main">
                 <span className="person-row-name">
                   {p.name}
-                  {p.isAdmin && <span className="admin-tag">administrator</span>}
+                  {p.accessRole === 'administrator' && (
+                    <span className="admin-tag">administrator</span>
+                  )}
                 </span>
                 <span className="person-row-sub">
                   {p.role && <span className="person-row-role">{p.role}</span>}
@@ -177,13 +285,15 @@ export function PeoplePage() {
               <span className="person-row-hours">
                 przypisano {formatDuration(personTotalHours(state, p.id))}
               </span>
-              <button
-                type="button"
-                className="btn danger-ghost"
-                onClick={() => remove(p.id, p.name)}
-              >
-                Usuń
-              </button>
+              {canManage && (
+                <button
+                  type="button"
+                  className="btn danger-ghost"
+                  onClick={() => remove(p.id, p.name)}
+                >
+                  Usuń
+                </button>
+              )}
             </li>
           ))}
         </ul>

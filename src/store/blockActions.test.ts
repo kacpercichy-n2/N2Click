@@ -2,7 +2,7 @@
 // Pure reducer tests: no React rendering, no localStorage — build AppData
 // fixtures by hand from emptyData() + literal tasks/people/workload rows.
 import { describe, expect, it } from 'vitest';
-import { reducer, type TaskDraft } from './AppStore';
+import { reducer, type PersonDraft, type TaskDraft } from './AppStore';
 import { emptyData } from './storage';
 import { BIN_DATE } from '../utils/time';
 import type { AppData, Person, Task, WorkloadEntry } from '../types';
@@ -48,7 +48,13 @@ function makePerson(overrides: Partial<Person> & { id: string }): Person {
     departmentId: '',
     avatar: '',
     capacity: 8,
-    isAdmin: false,
+    phone: '',
+    accessRole: 'pracownik',
+    passwordHash: '',
+    workDays: [1, 2, 3, 4, 5],
+    workStartMinutes: 480,
+    workEndMinutes: 960,
+    supervisorId: '',
     ...overrides,
   };
 }
@@ -313,9 +319,10 @@ describe('MOVE_BLOCK_TO_BIN', () => {
   it('moves a dated entry into the bin, reindexes the vacated day, and appends after an existing bin entry', () => {
     const e1 = makeEntry({ id: 'e1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
     const e2 = makeEntry({ id: 'e2', date: '2026-07-08', startMinutes: 600, plannedHours: 2, sortIndex: 1 });
-    const existingBin = makeEntry({ id: 'bin0', date: BIN_DATE, startMinutes: 0, plannedHours: 1, sortIndex: 0 });
+    // Different task (t2) so the one-bin-row invariant doesn't merge e1 into it.
+    const existingBin = makeEntry({ id: 'bin0', taskId: 't2', date: BIN_DATE, startMinutes: 0, plannedHours: 1, sortIndex: 0 });
     const state = makeState({
-      tasks: [makeTask({ id: 't1' })],
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2' })],
       workload: [e1, e2, existingBin],
     });
 
@@ -331,6 +338,20 @@ describe('MOVE_BLOCK_TO_BIN', () => {
     expect(remainingE2.sortIndex).toBe(0); // vacated day reindexed contiguous 0..n
 
     expect(next.activity.length).toBe(state.activity.length + 1);
+  });
+
+  it('folds into an existing SAME-TASK bin row when one already exists (existing row id survives, moved entry gone)', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
+    const existingBin = makeEntry({ id: 'existingBin', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 3, sortIndex: 0 });
+    const state = makeState({ tasks: [makeTask({ id: 't1' })], workload: [e1, existingBin] });
+
+    const next = reducer(state, { type: 'MOVE_BLOCK_TO_BIN', entryId: 'e1' });
+
+    expect(next.workload.find((w) => w.id === 'e1')).toBeUndefined(); // moved entry dropped
+    const bin = next.workload.find((w) => w.taskId === 't1' && w.personId === 'p1')!;
+    expect(bin.id).toBe('existingBin'); // existing row's id survives
+    expect(bin.plannedHours).toBe(5); // 3h existing + 2h moved
+    expect(next.workload.filter((w) => w.taskId === 't1' && w.personId === 'p1')).toHaveLength(1);
   });
 
   it('no-ops on an already-bin entry (same state reference)', () => {
@@ -377,7 +398,7 @@ describe('SPLIT_BLOCK', () => {
     expect(binEntry.plannedHours).toBe(0.5);
   });
 
-  it('quarters a 1.25h block: original 0.5h + three 0.25h bin entries, bin sortIndex contiguous in creation order', () => {
+  it('quarters a 1.25h block: original 0.5h stays, the three split-off parts collapse into ONE 0.75h bin row', () => {
     const e1 = makeEntry({ id: 'e1', date: '2026-07-08', startMinutes: 480, plannedHours: 1.25, sortIndex: 0 });
     const state = makeState({ tasks: [makeTask({ id: 't1' })], workload: [e1] });
 
@@ -386,18 +407,32 @@ describe('SPLIT_BLOCK', () => {
     const original = next.workload.find((w) => w.id === 'e1')!;
     expect(original.plannedHours).toBe(0.5);
 
-    const binEntries = next.workload
-      .filter((w) => w.id !== 'e1')
-      .sort((a, b) => a.sortIndex - b.sortIndex);
-    expect(binEntries).toHaveLength(3);
-    binEntries.forEach((w) => {
-      expect(w.date).toBe(BIN_DATE);
-      expect(w.plannedHours).toBe(0.25);
-    });
-    expect(binEntries.map((w) => w.sortIndex)).toEqual([0, 1, 2]);
+    // One-bin-row invariant: the 3 × 0.25h parts merge into a single bin entry.
+    const binEntries = next.workload.filter((w) => w.id !== 'e1');
+    expect(binEntries).toHaveLength(1);
+    expect(binEntries[0].date).toBe(BIN_DATE);
+    expect(binEntries[0].plannedHours).toBe(0.75);
+    expect(binEntries[0].sortIndex).toBe(0);
   });
 
-  it('splits a bin entry within the bin: original stays a bin entry, new part appended to the bin end', () => {
+  it('quarters a block and merges the split-off parts into a PRE-EXISTING (task, person) bin row (one-bin-row invariant across writers)', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 4, sortIndex: 0 });
+    const existingBin = makeEntry({ id: 'existingBin', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 1, sortIndex: 0 });
+    const state = makeState({ tasks: [makeTask({ id: 't1' })], workload: [e1, existingBin] });
+
+    const next = reducer(state, { type: 'SPLIT_BLOCK', entryId: 'e1', parts: 4 });
+
+    const original = next.workload.find((w) => w.id === 'e1')!;
+    expect(original.plannedHours).toBe(1); // 4h/4 = 1h stays scheduled
+
+    // The 3 split-off quarters (3h total) merge into the EXISTING row — no second row.
+    const binRows = next.workload.filter((w) => w.taskId === 't1' && w.personId === 'p1' && w.id !== 'e1');
+    expect(binRows).toHaveLength(1);
+    expect(binRows[0].id).toBe('existingBin');
+    expect(binRows[0].plannedHours).toBe(4); // 1h existing + 3h split-off
+  });
+
+  it('no-ops on a bin entry (same state reference): splitting would create a second same-pair bin row', () => {
     const e0 = makeEntry({ id: 'e0', taskId: 't2', date: BIN_DATE, startMinutes: 0, plannedHours: 1, sortIndex: 0 });
     const target = makeEntry({ id: 'target', taskId: 't1', date: BIN_DATE, startMinutes: 0, plannedHours: 4, sortIndex: 1 });
     const state = makeState({
@@ -405,18 +440,9 @@ describe('SPLIT_BLOCK', () => {
       workload: [e0, target],
     });
 
-    const next = reducer(state, { type: 'SPLIT_BLOCK', entryId: 'target', parts: 2 });
-
-    const original = next.workload.find((w) => w.id === 'target')!;
-    expect(original.date).toBe(BIN_DATE);
-    expect(original.startMinutes).toBe(0);
-    expect(original.plannedHours).toBe(2);
-    expect(original.sortIndex).toBe(1); // keeps its bin position
-
-    const newPart = next.workload.find((w) => w.id !== 'e0' && w.id !== 'target')!;
-    expect(newPart.date).toBe(BIN_DATE);
-    expect(newPart.plannedHours).toBe(2);
-    expect(newPart.sortIndex).toBe(2); // appended to the bin end
+    // Under the one-bin-row invariant, splitting a bin block into two bin rows is
+    // illegal, so SPLIT_BLOCK rejects a bin entry (returns the same state).
+    expect(reducer(state, { type: 'SPLIT_BLOCK', entryId: 'target', parts: 2 })).toBe(state);
   });
 
   it('rejects when the block is too small for the requested parts, and rejects an unknown id', () => {
@@ -595,7 +621,7 @@ describe('SAVE_TASK bin behavior', () => {
     expect(next.workload.find((w) => w.id === 'binP2')).toBeUndefined();
   });
 
-  it('newUnassigned: appends bin hours for assigned people, snaps off-grid hours, skips <=0 hours and unassigned people', () => {
+  it('newUnassigned: merges a person\'s items into ONE bin row, snaps off-grid hours, skips <=0 hours and unassigned people', () => {
     const task = makeTask({ id: 't1' });
     const state = makeState({
       tasks: [task],
@@ -619,13 +645,11 @@ describe('SAVE_TASK bin behavior', () => {
       },
     });
 
-    const p1Bin = next.workload
-      .filter((w) => w.personId === 'p1' && w.date === BIN_DATE)
-      .sort((a, b) => a.sortIndex - b.sortIndex);
-    expect(p1Bin).toHaveLength(2);
-    expect(p1Bin[0].plannedHours).toBe(10);
-    expect(p1Bin[1].plannedHours).toBe(1.25);
-    expect(p1Bin.map((w) => w.sortIndex)).toEqual([0, 1]);
+    // One-bin-row invariant: 10h + 1.25h merge into a single 11.25h bin row.
+    const p1Bin = next.workload.filter((w) => w.personId === 'p1' && w.date === BIN_DATE);
+    expect(p1Bin).toHaveLength(1);
+    expect(p1Bin[0].plannedHours).toBe(11.25);
+    expect(p1Bin[0].sortIndex).toBe(0);
 
     expect(next.workload.some((w) => w.personId === 'p2')).toBe(false);
   });
@@ -691,7 +715,7 @@ describe('INSERT_BLOCK bin behavior', () => {
 });
 
 describe('REASSIGN_ENTRY bin behavior', () => {
-  it("moving a bin entry to another person appends it to the target's bin (date/startMinutes stay bin values, contiguous sortIndex)", () => {
+  it("moving a bin entry onto a person who already has a same-task bin row merges into it (one-bin-row invariant)", () => {
     const bin1 = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 2, sortIndex: 0 });
     const targetExistingBin = makeEntry({ id: 'binT', taskId: 't1', personId: 'p2', date: BIN_DATE, startMinutes: 0, plannedHours: 1, sortIndex: 0 });
     const state = makeState({
@@ -706,14 +730,16 @@ describe('REASSIGN_ENTRY bin behavior', () => {
 
     const next = reducer(state, { type: 'REASSIGN_ENTRY', entryId: 'bin1', toPersonId: 'p2' });
 
-    const moved = next.workload.find((w) => w.id === 'bin1')!;
-    expect(moved.personId).toBe('p2');
-    expect(moved.date).toBe(BIN_DATE); // stays in the bin, not nextFreeStart'd onto a day
-    expect(moved.startMinutes).toBe(0);
-    expect(moved.sortIndex).toBe(1); // appended after the target's existing bin entry (sortIndex 0)
-
-    const untouchedTargetBin = next.workload.find((w) => w.id === 'binT')!;
-    expect(untouchedTargetBin.sortIndex).toBe(0);
+    // The moved entry is folded into the target's existing row (its id survives).
+    expect(next.workload.find((w) => w.id === 'bin1')).toBeUndefined();
+    const targetBin = next.workload.find((w) => w.id === 'binT')!;
+    expect(targetBin.personId).toBe('p2');
+    expect(targetBin.plannedHours).toBe(3); // 1h + 2h
+    expect(targetBin.date).toBe(BIN_DATE);
+    expect(targetBin.startMinutes).toBe(0);
+    expect(targetBin.sortIndex).toBe(0);
+    // No second bin row survives for (t1, p2).
+    expect(next.workload.filter((w) => w.taskId === 't1' && w.personId === 'p2')).toHaveLength(1);
   });
 
   it("appends to an empty target bin at sortIndex 0 and doesn't duplicate the task assignment when already assigned", () => {
@@ -736,5 +762,509 @@ describe('REASSIGN_ENTRY bin behavior', () => {
     expect(
       next.assignments.filter((a) => a.taskId === 't1' && a.personId === 'p2'),
     ).toHaveLength(1); // no duplicate assignment added
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SET_BLOCK_TIME hour-budget + bin conservation + adjacent-block merge added
+// by PKG-20260708-budget-store.
+// ---------------------------------------------------------------------------
+
+describe('SET_BLOCK_TIME budget-capped grow', () => {
+  it('rejects (same state reference) any positive grow delta once the task total already equals the estimate and the person has no same-task bin hours', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 10, sortIndex: 0 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', estimatedHours: 10 })],
+      workload: [e1],
+    });
+
+    const next = reducer(state, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'e1',
+      date: '2026-07-08',
+      startMinutes: 480,
+      plannedHours: 10.5,
+    });
+
+    expect(next).toBe(state);
+  });
+
+  it('grow by 2h with a 1.5h same-task bin row and headroom succeeds: bin drained to 0 (row deleted), remaining 0.5h drawn from headroom, task total rises by exactly 0.5h', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
+    const bin = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 1.5, sortIndex: 0 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', estimatedHours: 10 })],
+      workload: [e1, bin],
+    });
+
+    const next = reducer(state, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'e1',
+      date: '2026-07-08',
+      startMinutes: 480,
+      plannedHours: 4, // +2h
+    });
+
+    const grown = next.workload.find((w) => w.id === 'e1')!;
+    expect(grown.plannedHours).toBe(4);
+    expect(next.workload.find((w) => w.id === 'bin1')).toBeUndefined(); // drained bin row deleted
+
+    const taskTotal = next.workload
+      .filter((w) => w.taskId === 't1')
+      .reduce((s, w) => s + w.plannedHours, 0);
+    expect(taskTotal).toBe(4); // was 3.5h (2 + 1.5 bin), rose by exactly 0.5h, never past the 10h estimate
+
+    const activityMsg = next.activity[next.activity.length - 1].message;
+    expect(activityMsg).toContain('pobrano z zasobnika');
+  });
+
+  it('grow by 1h with a 4h same-task bin row draws purely from the bin: row reduced to 3h, task total unchanged', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
+    const bin = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 4, sortIndex: 0 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', estimatedHours: 10 })],
+      workload: [e1, bin],
+    });
+
+    const next = reducer(state, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'e1',
+      date: '2026-07-08',
+      startMinutes: 480,
+      plannedHours: 3, // +1h
+    });
+
+    const grown = next.workload.find((w) => w.id === 'e1')!;
+    expect(grown.plannedHours).toBe(3);
+    const shrunkBin = next.workload.find((w) => w.id === 'bin1')!;
+    expect(shrunkBin.plannedHours).toBe(3); // 4h - 1h taken
+
+    const taskTotal = next.workload
+      .filter((w) => w.taskId === 't1')
+      .reduce((s, w) => s + w.plannedHours, 0);
+    expect(taskTotal).toBe(6); // unchanged (2+4 before, 3+3 after) — pure bin draw
+  });
+
+  it('estimatedHours: null grows freely with no budget check and leaves an unrelated bin row untouched (regression)', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
+    const bin = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 3, sortIndex: 0 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', estimatedHours: null })],
+      workload: [e1, bin],
+    });
+
+    const next = reducer(state, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'e1',
+      date: '2026-07-08',
+      startMinutes: 480,
+      plannedHours: 10, // +8h, far past any "estimate" if one existed — but there is none
+    });
+
+    expect(next).not.toBe(state);
+    expect(next.workload.find((w) => w.id === 'e1')!.plannedHours).toBe(10);
+    expect(next.workload.find((w) => w.id === 'bin1')!.plannedHours).toBe(3); // untouched
+  });
+
+  it('grow draws ONLY from headroom and the SAME (task,person) bin row — another person\'s bin row and another task\'s bin row are never consumed', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
+    const otherPersonBin = makeEntry({ id: 'binOtherPerson', taskId: 't1', personId: 'p2', date: BIN_DATE, startMinutes: 0, plannedHours: 3, sortIndex: 0 });
+    const otherTaskBin = makeEntry({ id: 'binOtherTask', taskId: 't2', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 5, sortIndex: 0 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', estimatedHours: 10 }), makeTask({ id: 't2', estimatedHours: null })],
+      workload: [e1, otherPersonBin, otherTaskBin],
+    });
+
+    const next = reducer(state, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'e1',
+      date: '2026-07-08',
+      startMinutes: 480,
+      plannedHours: 5, // +3h, drawn purely from headroom (10 - (2+3) = 5h available)
+    });
+
+    expect(next).not.toBe(state);
+    expect(next.workload.find((w) => w.id === 'e1')!.plannedHours).toBe(5);
+    expect(next.workload.find((w) => w.id === 'binOtherPerson')!.plannedHours).toBe(3); // untouched
+    expect(next.workload.find((w) => w.id === 'binOtherTask')!.plannedHours).toBe(5); // untouched
+
+    const activityMsg = next.activity[next.activity.length - 1].message;
+    expect(activityMsg).not.toContain('pobrano z zasobnika'); // nothing was taken from any bin
+  });
+
+  it('a move-only drag (hours unchanged) is never budget-rejected, even when the task budget allowance is zero', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 5, sortIndex: 0 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', estimatedHours: 5 })], // fully consumed already; headroom = 0, no bin
+      workload: [e1],
+    });
+
+    const next = reducer(state, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'e1',
+      date: '2026-07-09',
+      startMinutes: 600,
+      plannedHours: 5, // same hours -> move only
+    });
+
+    expect(next).not.toBe(state);
+    const moved = next.workload.find((w) => w.id === 'e1')!;
+    expect(moved.date).toBe('2026-07-09');
+    expect(moved.startMinutes).toBe(600);
+    expect(moved.plannedHours).toBe(5);
+  });
+});
+
+describe('SET_BLOCK_TIME shrink → bin merge', () => {
+  it('merges the freed delta into an EXISTING (task, person) bin row instead of appending a second row', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 6, sortIndex: 0 });
+    const existingBin = makeEntry({ id: 'existingBin', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 1, sortIndex: 0 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      workload: [e1, existingBin],
+    });
+
+    const next = reducer(state, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'e1',
+      date: '2026-07-08',
+      startMinutes: 480,
+      plannedHours: 4, // -2h
+    });
+
+    const shrunk = next.workload.find((w) => w.id === 'e1')!;
+    expect(shrunk.plannedHours).toBe(4);
+
+    const binRows = next.workload.filter((w) => w.taskId === 't1' && w.personId === 'p1' && w.id !== 'e1');
+    expect(binRows).toHaveLength(1);
+    expect(binRows[0].id).toBe('existingBin'); // existing row's id survives
+    expect(binRows[0].plannedHours).toBe(3); // 1h existing + 2h freed
+  });
+});
+
+describe('SET_BLOCK_TIME adjacent-block merge', () => {
+  it('a drop landing EXACTLY at a same-task same-person block\'s end merges into ONE entry: earlier block keeps its id, hours summed, sortIndex contiguous', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 }); // 480-600
+    const e2 = makeEntry({ id: 'e2', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 100, plannedHours: 1, sortIndex: 1 }); // elsewhere
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      workload: [e1, e2],
+    });
+
+    const next = reducer(state, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'e2',
+      date: '2026-07-08',
+      startMinutes: 600, // exactly touches e1's end — move only, hours unchanged
+      plannedHours: 1,
+    });
+
+    expect(next.workload).toHaveLength(1);
+    const survivor = next.workload[0];
+    expect(survivor.id).toBe('e1'); // earlier startMinutes (480) keeps its id
+    expect(survivor.startMinutes).toBe(480);
+    expect(survivor.plannedHours).toBe(3); // 2h + 1h summed
+    expect(survivor.sortIndex).toBe(0);
+
+    const activityMsg = next.activity[next.activity.length - 1].message;
+    expect(activityMsg).toContain('połączono sąsiednie bloki');
+  });
+
+  it('cascade: A|B|C all become exactly touching in one drop -> a single merged entry', () => {
+    const a = makeEntry({ id: 'a', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 }); // 480-600
+    const c = makeEntry({ id: 'c', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 660, plannedHours: 1, sortIndex: 1 }); // 660-720
+    const b = makeEntry({ id: 'b', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 100, plannedHours: 1, sortIndex: 2 }); // elsewhere, 1h
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      workload: [a, c, b],
+    });
+
+    const next = reducer(state, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'b',
+      date: '2026-07-08',
+      startMinutes: 600, // 600-660: touches a's end (600) AND c's start (660)
+      plannedHours: 1,
+    });
+
+    expect(next.workload).toHaveLength(1);
+    const survivor = next.workload[0];
+    expect(survivor.id).toBe('a'); // earliest startMinutes across the whole cascade
+    expect(survivor.startMinutes).toBe(480);
+    expect(survivor.plannedHours).toBe(4); // 2h + 1h + 1h
+    expect(survivor.sortIndex).toBe(0);
+
+    const activityMsg = next.activity[next.activity.length - 1].message;
+    expect(activityMsg).toContain('połączono sąsiednie bloki');
+  });
+
+  it('does NOT merge across different tasks even when exactly touching', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 }); // 480-600
+    const eb = makeEntry({ id: 'eb', taskId: 't2', personId: 'p1', date: '2026-07-08', startMinutes: 100, plannedHours: 1, sortIndex: 1 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2' })],
+      workload: [e1, eb],
+    });
+
+    const next = reducer(state, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'eb',
+      date: '2026-07-08',
+      startMinutes: 600, // touches e1's end, but different task
+      plannedHours: 1,
+    });
+
+    expect(next.workload).toHaveLength(2);
+    expect(next.workload.find((w) => w.id === 'e1')!.plannedHours).toBe(2);
+    expect(next.workload.find((w) => w.id === 'eb')!.startMinutes).toBe(600);
+    const activityMsg = next.activity[next.activity.length - 1].message;
+    expect(activityMsg).not.toContain('połączono sąsiednie bloki');
+  });
+
+  it('does NOT merge across different people even when exactly touching', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 }); // 480-600
+    const ep2 = makeEntry({ id: 'ep2', taskId: 't1', personId: 'p2', date: '2026-07-08', startMinutes: 100, plannedHours: 1, sortIndex: 1 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      workload: [e1, ep2],
+    });
+
+    const next = reducer(state, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'ep2',
+      date: '2026-07-08',
+      startMinutes: 600, // touches e1's end, but different person
+      plannedHours: 1,
+    });
+
+    expect(next.workload).toHaveLength(2);
+    expect(next.workload.find((w) => w.id === 'e1')!.plannedHours).toBe(2);
+    expect(next.workload.find((w) => w.id === 'ep2')!.startMinutes).toBe(600);
+  });
+
+  it('does NOT merge a same-task same-person block separated by a 15-minute gap', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 }); // 480-600
+    const eb = makeEntry({ id: 'eb', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 100, plannedHours: 1, sortIndex: 1 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      workload: [e1, eb],
+    });
+
+    const next = reducer(state, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'eb',
+      date: '2026-07-08',
+      startMinutes: 615, // 600 + 15min gap — NOT touching
+      plannedHours: 1,
+    });
+
+    expect(next.workload).toHaveLength(2);
+    expect(next.workload.find((w) => w.id === 'e1')!.plannedHours).toBe(2);
+    expect(next.workload.find((w) => w.id === 'eb')!.startMinutes).toBe(615);
+    const activityMsg = next.activity[next.activity.length - 1].message;
+    expect(activityMsg).not.toContain('połączono sąsiednie bloki');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Supervisor cycle guard + password/logout actions added by PKG-20260708-auth-data.
+// ---------------------------------------------------------------------------
+
+function draftFromPerson(p: Person, overrides: Partial<PersonDraft> = {}): PersonDraft {
+  return {
+    firstName: p.firstName,
+    lastName: p.lastName,
+    email: p.email,
+    phone: p.phone,
+    role: p.role,
+    departmentId: p.departmentId,
+    avatar: p.avatar,
+    capacity: p.capacity,
+    accessRole: p.accessRole,
+    workDays: p.workDays,
+    workStartMinutes: p.workStartMinutes,
+    workEndMinutes: p.workEndMinutes,
+    supervisorId: p.supervisorId,
+    ...overrides,
+  };
+}
+
+describe('UPDATE_PERSON supervisor cycle guard', () => {
+  it('self-supervision is dropped to \'\'', () => {
+    const p1 = makePerson({ id: 'p1', supervisorId: '' });
+    const state = makeState({ people: [p1] });
+
+    const next = reducer(state, {
+      type: 'UPDATE_PERSON',
+      personId: 'p1',
+      person: draftFromPerson(p1, { supervisorId: 'p1' }),
+    });
+
+    expect(next.people.find((p) => p.id === 'p1')!.supervisorId).toBe('');
+  });
+
+  it('a 2-hop cycle (A -> B -> A) is dropped to \'\'', () => {
+    // p2 already reports to p1; setting p1's supervisor to p2 would close the loop.
+    const p1 = makePerson({ id: 'p1', supervisorId: '' });
+    const p2 = makePerson({ id: 'p2', supervisorId: 'p1' });
+    const state = makeState({ people: [p1, p2] });
+
+    const next = reducer(state, {
+      type: 'UPDATE_PERSON',
+      personId: 'p1',
+      person: draftFromPerson(p1, { supervisorId: 'p2' }),
+    });
+
+    expect(next.people.find((p) => p.id === 'p1')!.supervisorId).toBe('');
+    // The pre-existing (unrelated) edge is untouched.
+    expect(next.people.find((p) => p.id === 'p2')!.supervisorId).toBe('p1');
+  });
+
+  it('a valid (acyclic) chain is stored as given', () => {
+    const p1 = makePerson({ id: 'p1', supervisorId: '' });
+    const p2 = makePerson({ id: 'p2', supervisorId: 'p1' });
+    const p3 = makePerson({ id: 'p3', supervisorId: '' });
+    const state = makeState({ people: [p1, p2, p3] });
+
+    // p3 -> p2 -> p1 -> '' : acyclic.
+    const next = reducer(state, {
+      type: 'UPDATE_PERSON',
+      personId: 'p3',
+      person: draftFromPerson(p3, { supervisorId: 'p2' }),
+    });
+
+    expect(next.people.find((p) => p.id === 'p3')!.supervisorId).toBe('p2');
+  });
+});
+
+describe('SET_PASSWORD / LOGOUT', () => {
+  it('SET_PASSWORD updates only the hash, leaving every other field untouched', () => {
+    const p1 = makePerson({ id: 'p1', passwordHash: '' });
+    const state = makeState({ people: [p1] });
+
+    const next = reducer(state, { type: 'SET_PASSWORD', personId: 'p1', passwordHash: 'abc123' });
+
+    const updated = next.people.find((p) => p.id === 'p1')!;
+    expect(updated.passwordHash).toBe('abc123');
+    expect({ ...updated, passwordHash: '' }).toEqual({ ...p1, passwordHash: '' });
+  });
+
+  it('UPDATE_PERSON never clobbers a previously-stored password hash (the draft has no passwordHash field)', () => {
+    const p1 = makePerson({ id: 'p1', passwordHash: 'existinghash' });
+    const state = makeState({ people: [p1] });
+
+    const next = reducer(state, {
+      type: 'UPDATE_PERSON',
+      personId: 'p1',
+      person: draftFromPerson(p1, { role: 'Nowa rola' }),
+    });
+
+    const updated = next.people.find((p) => p.id === 'p1')!;
+    expect(updated.passwordHash).toBe('existinghash');
+    expect(updated.role).toBe('Nowa rola');
+  });
+
+  it('LOGOUT clears currentUserId', () => {
+    const state = makeState({ currentUserId: 'p1' });
+    const next = reducer(state, { type: 'LOGOUT' });
+    expect(next.currentUserId).toBe('');
+  });
+});
+
+describe('ADD_PERSON fresh-setup admin guard', () => {
+  it('forces the FIRST person into an empty people list to administrator, even when the draft asks for pracownik', () => {
+    const state = makeState({ people: [] });
+
+    const next = reducer(state, {
+      type: 'ADD_PERSON',
+      person: draftFromPerson(makePerson({ id: 'ignored', accessRole: 'pracownik' })),
+    });
+
+    expect(next.people).toHaveLength(1);
+    expect(next.people[0].accessRole).toBe('administrator');
+  });
+
+  it('respects the draft role for subsequent people (list is non-empty)', () => {
+    const admin = makePerson({ id: 'p1', accessRole: 'administrator' });
+    const state = makeState({ people: [admin] });
+
+    const next = reducer(state, {
+      type: 'ADD_PERSON',
+      person: draftFromPerson(makePerson({ id: 'ignored', accessRole: 'pracownik' })),
+    });
+
+    expect(next.people).toHaveLength(2);
+    expect(next.people[1].accessRole).toBe('pracownik');
+  });
+});
+
+describe('UPDATE_PERSON last-admin demote guard', () => {
+  it('rejects demoting the ONLY administrator (returns state unchanged, same ref)', () => {
+    const admin = makePerson({ id: 'p1', accessRole: 'administrator' });
+    const staff = makePerson({ id: 'p2', accessRole: 'pracownik' });
+    const state = makeState({ people: [admin, staff] });
+
+    const next = reducer(state, {
+      type: 'UPDATE_PERSON',
+      personId: 'p1',
+      person: draftFromPerson(admin, { accessRole: 'pm' }),
+    });
+
+    expect(next).toBe(state);
+  });
+
+  it('allows demoting an administrator when another administrator remains', () => {
+    const a1 = makePerson({ id: 'p1', accessRole: 'administrator' });
+    const a2 = makePerson({ id: 'p2', accessRole: 'administrator' });
+    const state = makeState({ people: [a1, a2] });
+
+    const next = reducer(state, {
+      type: 'UPDATE_PERSON',
+      personId: 'p1',
+      person: draftFromPerson(a1, { accessRole: 'pm' }),
+    });
+
+    expect(next).not.toBe(state);
+    expect(next.people.find((p) => p.id === 'p1')!.accessRole).toBe('pm');
+    expect(next.people.find((p) => p.id === 'p2')!.accessRole).toBe('administrator');
+  });
+});
+
+describe('DELETE_PERSON last-admin + supervisor cascade', () => {
+  it('rejects deleting the ONLY administrator (returns state unchanged, same ref)', () => {
+    const admin = makePerson({ id: 'p1', accessRole: 'administrator' });
+    const staff = makePerson({ id: 'p2', accessRole: 'pracownik' });
+    const state = makeState({ people: [admin, staff] });
+
+    const next = reducer(state, { type: 'DELETE_PERSON', personId: 'p1' });
+
+    expect(next).toBe(state);
+  });
+
+  it('allows deleting an administrator when another administrator remains', () => {
+    const a1 = makePerson({ id: 'p1', accessRole: 'administrator' });
+    const a2 = makePerson({ id: 'p2', accessRole: 'administrator' });
+    const state = makeState({ people: [a1, a2] });
+
+    const next = reducer(state, { type: 'DELETE_PERSON', personId: 'p1' });
+
+    expect(next.people.map((p) => p.id)).toEqual(['p2']);
+  });
+
+  it('clears dangling supervisorId on remaining people when their supervisor is deleted', () => {
+    const boss = makePerson({ id: 'p1', accessRole: 'administrator' });
+    const admin2 = makePerson({ id: 'p0', accessRole: 'administrator' });
+    const sub1 = makePerson({ id: 'p2', accessRole: 'pracownik', supervisorId: 'p1' });
+    const sub2 = makePerson({ id: 'p3', accessRole: 'pracownik', supervisorId: 'p1' });
+    const other = makePerson({ id: 'p4', accessRole: 'pracownik', supervisorId: 'p0' });
+    const state = makeState({ people: [admin2, boss, sub1, sub2, other] });
+
+    const next = reducer(state, { type: 'DELETE_PERSON', personId: 'p1' });
+
+    expect(next.people.find((p) => p.id === 'p1')).toBeUndefined();
+    expect(next.people.find((p) => p.id === 'p2')!.supervisorId).toBe('');
+    expect(next.people.find((p) => p.id === 'p3')!.supervisorId).toBe('');
+    // An unrelated supervisorId is left intact.
+    expect(next.people.find((p) => p.id === 'p4')!.supervisorId).toBe('p0');
   });
 });

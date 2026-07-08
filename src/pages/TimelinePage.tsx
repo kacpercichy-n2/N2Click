@@ -5,6 +5,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
+import { useCan } from '../store/useCan';
 import { useOpenTask } from '../components/TaskModal';
 import { PersonFilter } from '../components/PersonFilter';
 import { ZoomIn, ZoomOut } from '../components/icons';
@@ -48,6 +49,7 @@ interface BarProps {
   className: string;
   title: string;
   resizable: boolean;
+  editable: boolean; // false ⇒ static bar (click opens, but no drag/resize)
   onCommit: (mode: DragMode, deltaDays: number) => void;
   onOpen: () => void;
   conflictOffsets?: number[]; // day offsets from bar start with an overload
@@ -64,6 +66,7 @@ function Bar({
   className,
   title,
   resizable,
+  editable,
   onCommit,
   onOpen,
   conflictOffsets,
@@ -117,12 +120,14 @@ function Bar({
 
   return (
     <div
-      className={drag ? `${className} dragging` : className}
+      className={[className, drag ? 'dragging' : '', editable ? '' : 'static']
+        .filter(Boolean)
+        .join(' ')}
       style={{ left, width, borderColor: color }}
       title={title}
-      onPointerDown={begin('move')}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
+      onPointerDown={editable ? begin('move') : undefined}
+      onPointerMove={editable ? onPointerMove : undefined}
+      onPointerUp={editable ? onPointerUp : undefined}
       onClick={(e) => {
         e.stopPropagation();
         if (!moved.current) onOpen();
@@ -133,11 +138,11 @@ function Bar({
         if (e.key === 'Enter') onOpen();
       }}
     >
-      {resizable && (
+      {resizable && editable && (
         <span className="bar-handle left" onPointerDown={begin('start')} aria-hidden />
       )}
       <span className="bar-label">{children}</span>
-      {resizable && (
+      {resizable && editable && (
         <span className="bar-handle right" onPointerDown={begin('end')} aria-hidden />
       )}
       {conflictOffsets?.map((off) => (
@@ -157,39 +162,63 @@ function MilestoneMark({
   milestone,
   dayIdx,
   dayW,
+  editable,
   onCommit,
 }: {
   milestone: Milestone;
   dayIdx: number;
   dayW: number;
+  editable: boolean;
   onCommit: (deltaDays: number) => void;
 }) {
   const [drag, setDrag] = useState<{ originX: number; delta: number } | null>(null);
   return (
     <span
-      className={drag ? 'timeline-milestone dragging' : 'timeline-milestone'}
+      className={[
+        'timeline-milestone',
+        drag ? 'dragging' : '',
+        editable ? '' : 'static',
+      ]
+        .filter(Boolean)
+        .join(' ')}
       style={{ left: (dayIdx + (drag?.delta ?? 0)) * dayW + dayW / 2 }}
-      title={`◆ ${milestone.name} — ${formatShort(milestone.date)} (przeciągnij, aby przesunąć)`}
-      onPointerDown={(e) => {
-        e.stopPropagation();
-        try {
-          (e.target as HTMLElement).setPointerCapture(e.pointerId);
-        } catch {
-          // No active pointer (synthetic events) — see Bar.begin.
-        }
-        setDrag({ originX: e.clientX, delta: 0 });
-      }}
-      onPointerMove={(e) => {
-        if (!drag) return;
-        const delta = Math.round((e.clientX - drag.originX) / dayW);
-        setDrag((d) => (d ? { ...d, delta } : d));
-      }}
-      onPointerUp={() => {
-        if (!drag) return;
-        const { delta } = drag;
-        setDrag(null);
-        if (delta !== 0) onCommit(delta);
-      }}
+      title={
+        editable
+          ? `◆ ${milestone.name} — ${formatShort(milestone.date)} (przeciągnij, aby przesunąć)`
+          : `◆ ${milestone.name} — ${formatShort(milestone.date)}`
+      }
+      onPointerDown={
+        editable
+          ? (e) => {
+              e.stopPropagation();
+              try {
+                (e.target as HTMLElement).setPointerCapture(e.pointerId);
+              } catch {
+                // No active pointer (synthetic events) — see Bar.begin.
+              }
+              setDrag({ originX: e.clientX, delta: 0 });
+            }
+          : undefined
+      }
+      onPointerMove={
+        editable
+          ? (e) => {
+              if (!drag) return;
+              const delta = Math.round((e.clientX - drag.originX) / dayW);
+              setDrag((d) => (d ? { ...d, delta } : d));
+            }
+          : undefined
+      }
+      onPointerUp={
+        editable
+          ? () => {
+              if (!drag) return;
+              const { delta } = drag;
+              setDrag(null);
+              if (delta !== 0) onCommit(delta);
+            }
+          : undefined
+      }
     >
       ◆
     </span>
@@ -200,6 +229,9 @@ export function TimelinePage() {
   const { state, dispatch } = useStore();
   const navigate = useNavigate();
   const { openTask } = useOpenTask();
+  const can = useCan();
+  const canManageProjects = can('projects.manage');
+  const canManageTasks = can('tasks.manage');
   const [anchor, setAnchor] = useState(() => todayStr());
   const [dayW, setDayW] = useState<number>(DEFAULT_DAY_W);
   const [weeks, setWeeks] = useState(10);
@@ -451,6 +483,7 @@ export function TimelinePage() {
                             }
                             title={`${p.name}: ${formatShort(p.startDate)} – ${formatShort(p.endDate)}${overdue ? ' (po terminie)' : ''}`}
                             resizable
+                            editable={canManageProjects}
                             onCommit={commitProject(p)}
                             onOpen={() => navigate(`/projects/${p.id}`)}
                           >
@@ -462,6 +495,7 @@ export function TimelinePage() {
                               milestone={m}
                               dayIdx={dayIdx(m.date)}
                               dayW={dayW}
+                              editable={canManageProjects}
                               onCommit={(delta) =>
                                 dispatch({
                                   type: 'MOVE_MILESTONE',
@@ -489,6 +523,7 @@ export function TimelinePage() {
                               className="timeline-bar task"
                               title={`${t.title}: ${formatShort(t.startDate)} – ${formatShort(t.endDate)}${conflictOffsets.length > 0 ? ` — ⚠ konflikty: ${conflictOffsets.length === 1 ? '1 dzień' : `${conflictOffsets.length} dni`}` : ''}`}
                               resizable
+                              editable={canManageTasks}
                               onCommit={commitTask(t)}
                               onOpen={() => openTask(t.id)}
                               conflictOffsets={conflictOffsets}

@@ -67,17 +67,37 @@ export interface Task {
   updatedAt: string; // ISO timestamp
 }
 
+/** Access role — the app-permission tier (distinct from `role`, the job title). */
+export type AccessRole = 'administrator' | 'pm' | 'handlowiec' | 'pracownik';
+
 export interface Person {
   id: string;
   firstName: string; // required
   lastName: string; // '' when unset
   name: string; // display name, kept in sync with firstName + lastName
   email: string; // '' when unset
+  phone: string; // '' when unset
   role: string; // job title; '' when unset
   departmentId: string; // '' when unset
   avatar: string; // emoji; '' -> initials fallback
-  capacity: number; // available hours per day (overload threshold)
-  isAdmin: boolean;
+  capacity: number; // available hours per day (overload threshold + availability quantum)
+  // App-permission tier (replaced the old `isAdmin` flag in migration v4→v5).
+  accessRole: AccessRole;
+  // SHA-256 hex of the person's login password. '' = no password set: that person
+  // logs in without a password (the no-lockout rule, mirroring the zero-people
+  // admin gate). Cosmetic client-side gating only — see src/utils/password.ts.
+  passwordHash: string;
+  // Availability: ISO weekdays worked, 1 (Mon) … 7 (Sun); default [1,2,3,4,5].
+  // Deduped, 1–7 only, sorted ascending; empty array is allowed (= no workdays).
+  workDays: number[];
+  // Informational work hours (minutes from midnight): profile display / future
+  // hints only. `capacity` stays THE overload threshold and availability quantum —
+  // there is intentionally NO validation coupling between work hours and capacity.
+  workStartMinutes: number; // default 480 (8:00)
+  workEndMinutes: number; // default min(1440, 480 + capacity*60)
+  // Supervisor (przełożony); '' when none. Must never form a cycle — the reducer
+  // drops a cycle-forming value (see wouldCreateSupervisorCycle in selectors.ts).
+  supervisorId: string;
 }
 
 export interface TaskAssignment {
@@ -101,6 +121,14 @@ export interface WorkloadEntry {
   // Order within the person's day == rank by startMinutes. For bin entries
   // (date === '') it orders the person's bin (contiguous per (personId, '')).
   sortIndex: number;
+  // Two invariants added by the hour-budget work (PKG-20260708-budget-store):
+  // 1. At most ONE bin entry per (taskId, personId). All bin-writing paths merge
+  //    into the existing row, and ensureStartMinutes merges stray duplicates on
+  //    load. (Selectors: binEntryForTaskPerson / binHoursForTaskPerson.)
+  // 2. No two same-task same-person DATED blocks that are exactly adjacent
+  //    (one's end == the other's start, no gap) survive a SET_BLOCK_TIME — the
+  //    calendar drag/resize path fuses them into one block (earlier id survives).
+
 }
 
 export type CommentEntityType = 'project' | 'task';

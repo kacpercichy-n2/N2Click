@@ -4,6 +4,8 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
+import { useCan } from '../store/useCan';
+import { NO_PERM_TITLE } from '../store/permissions';
 import type { ProjectDraft } from '../store/AppStore';
 import {
   activeStatuses,
@@ -50,6 +52,11 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   const navigate = useNavigate();
   const { openTask, openNewTask } = useOpenTask();
   const { state, dispatch } = useStore();
+  const can = useCan();
+  const canManage = can('projects.manage');
+  const canPaid = can('projects.paid');
+  const canManageTasks = can('tasks.manage');
+  const disabledTitle = canManage ? undefined : NO_PERM_TITLE;
   const project = state.projects.find((p) => p.id === projectId);
 
   // ---- Editable draft (component remounts per project id) ----
@@ -155,7 +162,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
     <section className="page editor">
       <div className="page-head">
         <h1 className="project-detail-title">
-          <Coin paid={project.paid} size={24} onToggle={togglePaid} />
+          <Coin paid={project.paid} size={24} onToggle={canPaid ? togglePaid : undefined} />
           {project.name}
           <StatusBadge status={currentStatus} />
         </h1>
@@ -176,9 +183,11 @@ function ProjectDetail({ projectId }: { projectId: string }) {
           >
             Wróć
           </button>
-          <button type="button" className="btn danger-ghost" onClick={remove}>
-            Usuń projekt
-          </button>
+          {canManage && (
+            <button type="button" className="btn danger-ghost" onClick={remove}>
+              Usuń projekt
+            </button>
+          )}
         </div>
       </div>
 
@@ -187,7 +196,13 @@ function ProjectDetail({ projectId }: { projectId: string }) {
         <div className="field-row">
           <div className="field">
             <label htmlFor="pd-name">Nazwa *</label>
-            <input id="pd-name" value={name} onChange={(e) => setName(e.target.value)} />
+            <input
+              id="pd-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              disabled={!canManage}
+              title={disabledTitle}
+            />
           </div>
           <div className="field">
             <label htmlFor="pd-client">Klient</label>
@@ -195,6 +210,8 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               id="pd-client"
               value={clientId}
               onChange={(e) => setClientId(e.target.value)}
+              disabled={!canManage}
+              title={disabledTitle}
             >
               {state.clients.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -209,6 +226,8 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               id="pd-status"
               value={statusId}
               onChange={(e) => setStatusId(e.target.value)}
+              disabled={!canManage}
+              title={disabledTitle}
             >
               {pickableStatuses.map((s) => (
                 <option key={s.id} value={s.id}>
@@ -227,6 +246,8 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               type="date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
+              disabled={!canManage}
+              title={disabledTitle}
             />
           </div>
           <div className="field">
@@ -236,6 +257,8 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               type="date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
+              disabled={!canManage}
+              title={disabledTitle}
             />
           </div>
           <div className="field">
@@ -244,6 +267,8 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               id="pd-dep"
               value={departmentId}
               onChange={(e) => setDepartmentId(e.target.value)}
+              disabled={!canManage}
+              title={disabledTitle}
             >
               <option value="">—</option>
               {state.departments.map((d) => (
@@ -259,6 +284,8 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               id="pd-svc"
               value={serviceTypeId}
               onChange={(e) => setServiceTypeId(e.target.value)}
+              disabled={!canManage}
+              title={disabledTitle}
             >
               <option value="">—</option>
               {state.serviceTypes.map((s) => (
@@ -276,12 +303,15 @@ function ProjectDetail({ projectId }: { projectId: string }) {
             rows={3}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
+            disabled={!canManage}
+            title={disabledTitle}
           />
         </div>
         <div className="field-row payment-row">
           <span className="field-hint">
-            Płatność: <Coin paid={project.paid} onToggle={togglePaid} />{' '}
-            <strong>{project.paid ? 'opłacony' : 'nieopłacony'}</strong> (kliknij monetę, aby przełączyć)
+            Płatność: <Coin paid={project.paid} onToggle={canPaid ? togglePaid : undefined} />{' '}
+            <strong>{project.paid ? 'opłacony' : 'nieopłacony'}</strong>
+            {canPaid && ' (kliknij monetę, aby przełączyć)'}
           </span>
         </div>
         {error && <p className="field-error">{error}</p>}
@@ -317,47 +347,55 @@ function ProjectDetail({ projectId }: { projectId: string }) {
                     })
                   }
                   aria-label={`Data dla ${m.name}`}
+                  disabled={!canManage}
+                  title={disabledTitle}
                 />
-                <button
-                  type="button"
-                  className="btn danger-ghost"
-                  onClick={() => dispatch({ type: 'DELETE_MILESTONE', milestoneId: m.id })}
-                >
-                  Usuń
-                </button>
+                {canManage && (
+                  <button
+                    type="button"
+                    className="btn danger-ghost"
+                    onClick={() => dispatch({ type: 'DELETE_MILESTONE', milestoneId: m.id })}
+                  >
+                    Usuń
+                  </button>
+                )}
               </li>
             ))}
           </ul>
         )}
-        <form className="milestone-form" onSubmit={addMilestone}>
-          <input
-            value={msName}
-            onChange={(e) => setMsName(e.target.value)}
-            placeholder="Nazwa kamienia milowego"
-            aria-label="Nazwa kamienia milowego"
-          />
-          <input
-            type="date"
-            value={msDate}
-            onChange={(e) => setMsDate(e.target.value)}
-            aria-label="Data kamienia milowego"
-          />
-          <button type="submit" className="btn soft" disabled={!msName.trim()}>
-            Dodaj kamień milowy
-          </button>
-        </form>
+        {canManage && (
+          <form className="milestone-form" onSubmit={addMilestone}>
+            <input
+              value={msName}
+              onChange={(e) => setMsName(e.target.value)}
+              placeholder="Nazwa kamienia milowego"
+              aria-label="Nazwa kamienia milowego"
+            />
+            <input
+              type="date"
+              value={msDate}
+              onChange={(e) => setMsDate(e.target.value)}
+              aria-label="Data kamienia milowego"
+            />
+            <button type="submit" className="btn soft" disabled={!msName.trim()}>
+              Dodaj kamień milowy
+            </button>
+          </form>
+        )}
       </div>
 
       <div className="editor-section">
         <div className="section-head">
           <h2>Zadania ({tasks.length})</h2>
-          <button
-            type="button"
-            className="btn soft"
-            onClick={() => openNewTask(project.id)}
-          >
-            + Nowe zadanie
-          </button>
+          {canManageTasks && (
+            <button
+              type="button"
+              className="btn soft"
+              onClick={() => openNewTask(project.id)}
+            >
+              + Nowe zadanie
+            </button>
+          )}
         </div>
         <p className="field-hint">
           Zaplanowano {formatDuration(projectPlannedTotal(state, project.id))} w całym projekcie.

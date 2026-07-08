@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useStore } from '../store/AppStore';
+import { useCan } from '../store/useCan';
 import { useOpenTask } from '../components/TaskModal';
 import {
   activeStatuses,
@@ -34,6 +35,7 @@ function rangeLabel(start: string, end: string): string {
 export function TasksPage() {
   const { state, dispatch } = useStore();
   const { openTask, openNewTask } = useOpenTask();
+  const canManageTasks = useCan()('tasks.manage');
   const statuses = activeStatuses(state);
 
   const [clientFilter, setClientFilter] = useState('');
@@ -113,9 +115,11 @@ export function TasksPage() {
     <section className="page">
       <div className="page-head">
         <h1>Zadania</h1>
-        <button type="button" className="btn primary" onClick={() => openNewTask()}>
-          + Nowe zadanie
-        </button>
+        {canManageTasks && (
+          <button type="button" className="btn primary" onClick={() => openNewTask()}>
+            + Nowe zadanie
+          </button>
+        )}
       </div>
 
       {allTasks.length === 0 ? (
@@ -124,9 +128,11 @@ export function TasksPage() {
           <p className="empty-hint">
             Utwórz zadanie, przypisz osoby i zaplanuj ich godziny dzień po dniu.
           </p>
-          <button type="button" className="btn primary" onClick={() => openNewTask()}>
-            + Nowe zadanie
-          </button>
+          {canManageTasks && (
+            <button type="button" className="btn primary" onClick={() => openNewTask()}>
+              + Nowe zadanie
+            </button>
+          )}
         </div>
       ) : (
         <>
@@ -241,17 +247,19 @@ export function TasksPage() {
                   </div>
                   <ChevronRight className="card-chevron" size={16} aria-hidden />
                 </button>
-                <div className="card-actions">
-                  <button
-                    type="button"
-                    className="btn danger-ghost task-delete"
-                    onClick={() => handleDelete(task.id, task.title)}
-                    aria-label={`Usuń ${task.title}`}
-                    title="Usuń"
-                  >
-                    Usuń
-                  </button>
-                </div>
+                {canManageTasks && (
+                  <div className="card-actions">
+                    <button
+                      type="button"
+                      className="btn danger-ghost task-delete"
+                      onClick={() => handleDelete(task.id, task.title)}
+                      aria-label={`Usuń ${task.title}`}
+                      title="Usuń"
+                    >
+                      Usuń
+                    </button>
+                  </div>
+                )}
               </li>
             );
           })}

@@ -5,10 +5,10 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { useStore } from '../store/AppStore';
+import { useCan } from '../store/useCan';
 import {
   activeStatuses,
   getClient,
-  isAdminUser,
   peopleIdsOfProject,
   projectPlannedTotal,
   tasksOfProject,
@@ -33,7 +33,9 @@ export function KanbanPage() {
   const { state, dispatch } = useStore();
   const navigate = useNavigate();
   const statuses = activeStatuses(state);
-  const admin = isAdminUser(state);
+  const can = useCan();
+  const admin = can('admin.panel');
+  const canManage = can('projects.manage');
 
   const [paidFilter, setPaidFilter] = useState<PaidFilter>('all');
   const [clientFilter, setClientFilter] = useState('');
@@ -53,6 +55,7 @@ export function KanbanPage() {
   const onDrop = (statusId: string, e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(null);
+    if (!canManage) return;
     const projectId = e.dataTransfer.getData('text/n2hub-project');
     if (projectId) dispatch({ type: 'SET_PROJECT_STATUS', projectId, statusId });
   };
@@ -134,13 +137,17 @@ export function KanbanPage() {
                         whileHover={{ y: -2 }}
                         transition={{ duration: 0.18, ease: 'easeOut' }}
                         className="kanban-card"
-                        draggable
+                        draggable={canManage}
                         // onDragStartCapture (not motion's gesture onDragStart) keeps
                         // native HTML5 drag-and-drop working on the animated card.
-                        onDragStartCapture={(e) => {
-                          e.dataTransfer.setData('text/n2hub-project', p.id);
-                          e.dataTransfer.effectAllowed = 'move';
-                        }}
+                        onDragStartCapture={
+                          canManage
+                            ? (e) => {
+                                e.dataTransfer.setData('text/n2hub-project', p.id);
+                                e.dataTransfer.effectAllowed = 'move';
+                              }
+                            : undefined
+                        }
                         onClick={() => navigate(`/projects/${p.id}`)}
                         role="button"
                         tabIndex={0}

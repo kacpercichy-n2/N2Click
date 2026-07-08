@@ -6,15 +6,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import { useStore } from '../store/AppStore';
+import { useCan } from '../store/useCan';
+import { NO_PERM_TITLE } from '../store/permissions';
 import type { AllocationCell, TaskDraft } from '../store/AppStore';
 import {
   activeStatuses,
   assigneeIdsOfTask,
+  availableHoursOnDate,
   binEntriesForTask,
   getClient,
 } from '../store/selectors';
 import { CommentsPanel } from './CommentsPanel';
-import { AllocationGrid, allocKey, isWeekdayDate, type AllocMap } from './AllocationGrid';
+import { AllocationGrid, allocKey, type AllocMap } from './AllocationGrid';
 import { SaveStatus } from './SaveStatus';
 import { personColor } from '../utils/colors';
 import { formatDuration, isBinEntry } from '../utils/time';
@@ -95,6 +98,7 @@ interface ShellProps {
 
 function TaskModalShell({ taskParam, projectParam, onClose }: ShellProps) {
   const { state, dispatch } = useStore();
+  const canManageTasks = useCan()('tasks.manage');
   const isNew = taskParam === 'new';
   const existing = isNew ? undefined : state.tasks.find((t) => t.id === taskParam);
   const notFound = !isNew && !existing;
@@ -174,7 +178,7 @@ function TaskModalShell({ taskParam, projectParam, onClose }: ShellProps) {
             <h1 className="task-modal-title">{heading}</h1>
             <div className="task-modal-head-actions">
               {!notFound && <SaveStatus status={status} />}
-              {existing && (
+              {existing && canManageTasks && (
                 <button type="button" className="btn danger-ghost" onClick={handleDelete}>
                   Usuń
                 </button>
@@ -266,6 +270,9 @@ function TaskEditor({
   markSaved,
 }: EditorProps) {
   const { state, dispatch } = useStore();
+  const canManage = useCan()('tasks.manage');
+  const readOnly = !canManage;
+  const roTitle = readOnly ? NO_PERM_TITLE : undefined;
   const existing = taskId ? state.tasks.find((t) => t.id === taskId) : undefined;
   const isEdit = Boolean(existing);
 
@@ -389,7 +396,10 @@ function TaskEditor({
     setAllocations((prev) => {
       const next = { ...prev };
       for (const d of eachDayInclusive(startDate, endDate)) {
-        if (isWeekdayDate(d)) next[allocKey(personId, d)] = 8;
+        // Fill the person's own workdays with their daily availability
+        // (capacity on a workday, 0 otherwise) instead of hardcoded Mon–Fri/8h.
+        const hours = availableHoursOnDate(state, personId, d);
+        if (hours > 0) next[allocKey(personId, d)] = hours;
       }
       return next;
     });
@@ -550,6 +560,8 @@ function TaskEditor({
             onBlur={() => setTitleTouched(true)}
             className={titleTouched && titleError ? 'invalid' : undefined}
             placeholder="Co trzeba zrobić?"
+            disabled={readOnly}
+            title={roTitle}
           />
           {titleTouched && titleError && <p className="field-error">Tytuł jest wymagany</p>}
         </div>
@@ -561,6 +573,8 @@ function TaskEditor({
             onChange={(e) => setDescription(e.target.value)}
             rows={3}
             placeholder="Opcjonalne szczegóły"
+            disabled={readOnly}
+            title={roTitle}
           />
         </div>
         <div className="field-row">
@@ -576,6 +590,8 @@ function TaskEditor({
                 id="t-project"
                 value={projectId}
                 onChange={(e) => setProjectId(e.target.value)}
+                disabled={readOnly}
+                title={roTitle}
               >
                 {state.projects.map((p) => (
                   <option key={p.id} value={p.id}>
@@ -594,6 +610,8 @@ function TaskEditor({
               id="t-status"
               value={statusId}
               onChange={(e) => setStatusId(e.target.value)}
+              disabled={readOnly}
+              title={roTitle}
             >
               {statuses.map((s) => (
                 <option key={s.id} value={s.id}>
@@ -612,6 +630,8 @@ function TaskEditor({
               value={estimatedRaw}
               onChange={(e) => setEstimatedRaw(e.target.value)}
               placeholder="Opcjonalnie"
+              disabled={readOnly}
+              title={roTitle}
             />
           </div>
         </div>
@@ -646,6 +666,8 @@ function TaskEditor({
               type="date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
+              disabled={readOnly}
+              title={roTitle}
             />
           </div>
           <div className="field">
@@ -655,6 +677,8 @@ function TaskEditor({
               type="date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
+              disabled={readOnly}
+              title={roTitle}
             />
           </div>
         </div>
@@ -693,6 +717,8 @@ function TaskEditor({
                     type="checkbox"
                     checked={checked}
                     onChange={() => toggleAssignee(p.id)}
+                    disabled={readOnly}
+                    title={roTitle}
                   />
                   <span
                     className="person-dot"
@@ -734,7 +760,7 @@ function TaskEditor({
         <p className="field-hint">
           Bloki bez terminu przeciągniesz na siatkę w widoku tygodnia kalendarza.
         </p>
-        {assignedPeople.length === 0 ? (
+        {readOnly ? null : assignedPeople.length === 0 ? (
           <p className="field-hint">
             Przypisz co najmniej jedną osobę, aby dodać godziny do zasobnika.
           </p>
@@ -820,6 +846,7 @@ function TaskEditor({
               onChange={setCell}
               onFillWeekdays={fillWeekdays}
               onClearPerson={clearPerson}
+              readOnly={readOnly}
             />
           </>
         )}
@@ -838,17 +865,19 @@ function TaskEditor({
         <p className="field-error">Wybierz projekt dla tego zadania.</p>
       )}
       <div className="editor-actions">
-        <button
-          type="button"
-          className="btn primary"
-          onClick={handleSave}
-          disabled={state.projects.length === 0}
-          title={state.projects.length === 0 ? 'Najpierw utwórz projekt' : undefined}
-        >
-          {isEdit ? 'Zapisz zmiany' : 'Utwórz zadanie'}
-        </button>
+        {!readOnly && (
+          <button
+            type="button"
+            className="btn primary"
+            onClick={handleSave}
+            disabled={state.projects.length === 0}
+            title={state.projects.length === 0 ? 'Najpierw utwórz projekt' : undefined}
+          >
+            {isEdit ? 'Zapisz zmiany' : 'Utwórz zadanie'}
+          </button>
+        )}
         <button type="button" className="btn ghost" onClick={onCancel}>
-          Anuluj
+          {readOnly ? 'Zamknij' : 'Anuluj'}
         </button>
       </div>
     </div>

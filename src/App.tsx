@@ -21,6 +21,8 @@ import { PeoplePage } from './pages/PeoplePage';
 import { PersonProfilePage } from './pages/PersonProfilePage';
 import { WorkloadPage } from './pages/WorkloadPage';
 import { AdminPage } from './pages/AdminPage';
+import { LoginPage } from './pages/LoginPage';
+import { can } from './store/permissions';
 import { SampleBanner } from './components/SampleBanner';
 import { TaskModal } from './components/TaskModal';
 import { GlobalSearch } from './components/GlobalSearch';
@@ -77,6 +79,14 @@ export function App() {
   };
 
   const currentUser = state.people.find((p) => p.id === state.currentUserId);
+  const peopleCount = state.people.length;
+  const canAdmin = can(currentUser, 'admin.panel', { peopleCount });
+  // Session gate: with people present and nobody resolving to a current user,
+  // only the login screen renders (no sidebar, no routes). Zero people = setup
+  // mode (no lockout — mirrors the admin gate). `currentUserId` persists, so a
+  // logged-in session survives reload BY DESIGN; real sessions/tokens land with
+  // the API. A deleted current user falls back here (DELETE_PERSON clears it).
+  const needsLogin = state.people.length > 0 && !currentUser;
 
   // Close the mobile drawer whenever the route changes.
   useEffect(() => {
@@ -114,6 +124,10 @@ export function App() {
       hamburgerRef.current?.focus();
     }
   }, [menuOpen]);
+
+  if (needsLogin) {
+    return <LoginPage />;
+  }
 
   return (
     <div className={collapsed ? 'app-shell sidebar-collapsed' : 'app-shell'}>
@@ -169,7 +183,7 @@ export function App() {
         </div>
         <GlobalSearch />
         <nav className="app-nav">
-          {NAV.map(([to, label, Icon]) => (
+          {NAV.filter(([to]) => to !== '/admin' || canAdmin).map(([to, label, Icon]) => (
             <NavLink
               key={to}
               to={to}
@@ -202,23 +216,34 @@ export function App() {
                 <Users size={20} aria-hidden />
               )}
             </button>
-            <label className="acting-as" title="Aktualny użytkownik aplikacji (autor komentarzy, uprawnienia admina)">
-              <span className="acting-as-label">Występuj jako</span>
-              <select
-                value={state.currentUserId}
-                onChange={(e) =>
-                  dispatch({ type: 'SET_CURRENT_USER', personId: e.target.value })
-                }
-              >
-                <option value="">—</option>
-                {state.people.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                    {p.isAdmin ? ' (administrator)' : ''}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {/* "Występuj jako" is an administrator-only quick switch now. */}
+            {can(currentUser, 'users.impersonate', { peopleCount: state.people.length }) && (
+              <label className="acting-as" title="Aktualny użytkownik aplikacji (autor komentarzy, uprawnienia admina)">
+                <span className="acting-as-label">Występuj jako</span>
+                <select
+                  value={state.currentUserId}
+                  onChange={(e) =>
+                    dispatch({ type: 'SET_CURRENT_USER', personId: e.target.value })
+                  }
+                >
+                  <option value="">—</option>
+                  {state.people.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                      {p.accessRole === 'administrator' ? ' (administrator)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {/* Everyone can log out (returns to the login screen). */}
+            <button
+              type="button"
+              className="btn ghost logout-btn"
+              onClick={() => dispatch({ type: 'LOGOUT' })}
+            >
+              Wyloguj
+            </button>
           </div>
         )}
       </aside>
@@ -246,7 +271,10 @@ export function App() {
             <Route path="/people" element={<PeoplePage />} />
             <Route path="/people/:id" element={<PersonProfilePage />} />
             <Route path="/workload" element={<WorkloadPage />} />
-            <Route path="/admin" element={<AdminPage />} />
+            <Route
+              path="/admin"
+              element={canAdmin ? <AdminPage /> : <Navigate to="/dashboard" replace />}
+            />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </motion.div>

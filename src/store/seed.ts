@@ -40,18 +40,45 @@ export function buildSampleData(): AppData {
   const svcSocial = { id: uid(), name: 'Media społecznościowe' };
   const serviceTypes = [svcWeb, svcBrand, svcSocial];
 
-  // People
+  // People. Work hours default to 8:00–16:00 (480 → min(1440, 480+capacity*60)).
+  // All passwordless (passwordHash: '') so the demo can log in without a password.
+  // Kasia is defined first so she can be the others' supervisor; the `people`
+  // array order [ola, marek, kasia] is preserved for stable person colours.
+  const kasia: Person = {
+    id: uid(),
+    firstName: 'Kasia',
+    lastName: 'Kowalska',
+    name: 'Kasia Kowalska',
+    email: 'kasia@n2.example',
+    phone: '+48 501 100 100',
+    role: 'Kierowniczka projektu',
+    departmentId: depMgmt.id,
+    avatar: '📋',
+    capacity: DEFAULT_CAPACITY,
+    accessRole: 'administrator', // Kasia manages statuses & admin settings
+    passwordHash: '',
+    workDays: [1, 2, 3, 4, 5],
+    workStartMinutes: 480,
+    workEndMinutes: Math.min(1440, 480 + DEFAULT_CAPACITY * 60),
+    supervisorId: '',
+  };
   const ola: Person = {
     id: uid(),
     firstName: 'Ola',
     lastName: 'Nowak',
     name: 'Ola Nowak',
     email: 'ola@n2.example',
+    phone: '+48 502 200 200',
     role: 'Projektantka',
     departmentId: depDesign.id,
     avatar: '🎨',
     capacity: DEFAULT_CAPACITY,
-    isAdmin: false,
+    accessRole: 'pm',
+    passwordHash: '',
+    workDays: [1, 2, 3, 4], // Mon–Thu — availability math is visibly non-uniform
+    workStartMinutes: 480,
+    workEndMinutes: Math.min(1440, 480 + DEFAULT_CAPACITY * 60),
+    supervisorId: kasia.id,
   };
   const marek: Person = {
     id: uid(),
@@ -59,23 +86,17 @@ export function buildSampleData(): AppData {
     lastName: 'Wiśniewski',
     name: 'Marek Wiśniewski',
     email: 'marek@n2.example',
+    phone: '+48 503 300 300',
     role: 'Programista',
     departmentId: depDev.id,
     avatar: '💻',
     capacity: DEFAULT_CAPACITY,
-    isAdmin: false,
-  };
-  const kasia: Person = {
-    id: uid(),
-    firstName: 'Kasia',
-    lastName: 'Kowalska',
-    name: 'Kasia Kowalska',
-    email: 'kasia@n2.example',
-    role: 'Kierowniczka projektu',
-    departmentId: depMgmt.id,
-    avatar: '📋',
-    capacity: DEFAULT_CAPACITY,
-    isAdmin: true, // Kasia manages statuses & admin settings
+    accessRole: 'pracownik',
+    passwordHash: '',
+    workDays: [1, 2, 3, 4, 5],
+    workStartMinutes: 480,
+    workEndMinutes: Math.min(1440, 480 + DEFAULT_CAPACITY * 60),
+    supervisorId: kasia.id,
   };
   const people: Person[] = [ola, marek, kasia];
 

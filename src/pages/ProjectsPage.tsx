@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
+import { useCan } from '../store/useCan';
 import type { ProjectDraft } from '../store/AppStore';
 import {
   activeStatuses,
@@ -77,6 +78,9 @@ export function ProjectsPage() {
   const { state, dispatch } = useStore();
   const navigate = useNavigate();
   const { openNewTask } = useOpenTask();
+  const can = useCan();
+  const canManageProjects = can('projects.manage');
+  const canManageTasks = can('tasks.manage');
   const [searchParams] = useSearchParams();
   const statuses = activeStatuses(state);
 
@@ -191,12 +195,14 @@ export function ProjectsPage() {
     <section className="page">
       <div className="page-head">
         <h1>Projekty</h1>
-        <button type="button" className="btn primary" onClick={() => setCreating((v) => !v)}>
-          {creating ? 'Zamknij' : '+ Nowy projekt'}
-        </button>
+        {canManageProjects && (
+          <button type="button" className="btn primary" onClick={() => setCreating((v) => !v)}>
+            {creating ? 'Zamknij' : '+ Nowy projekt'}
+          </button>
+        )}
       </div>
 
-      {creating && (
+      {canManageProjects && creating && (
         <form className="project-create" onSubmit={submit}>
           <div className="field-row">
             <div className="field">
@@ -373,18 +379,20 @@ export function ProjectsPage() {
                       >
                         <GanttChart size={14} aria-hidden />
                       </button>
-                      <button
-                        type="button"
-                        className="card-action-btn"
-                        title="+ Zadanie"
-                        aria-label={`Dodaj zadanie do ${p.name}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openNewTask(p.id);
-                        }}
-                      >
-                        <Plus size={14} aria-hidden />
-                      </button>
+                      {canManageTasks && (
+                        <button
+                          type="button"
+                          className="card-action-btn"
+                          title="+ Zadanie"
+                          aria-label={`Dodaj zadanie do ${p.name}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openNewTask(p.id);
+                          }}
+                        >
+                          <Plus size={14} aria-hidden />
+                        </button>
+                      )}
                     </div>
                   </li>
                 );

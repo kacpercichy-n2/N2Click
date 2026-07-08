@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import type { AppData, Person, Project, Task, WorkloadEntry } from '../types';
 import { useStore } from '../store/AppStore';
+import { useCan } from '../store/useCan';
 import { useOpenTask } from './TaskModal';
 import { personColor } from '../utils/colors';
 import { isTodayStr, isWeekend, parseDate, weekDays } from '../utils/dates';
@@ -23,9 +24,11 @@ import {
   getPerson,
   getProject,
   getTask,
+  growAllowanceHours,
   hoursForPersonOnDate,
   overloadedPeopleOnDate,
   personCapacity,
+  taskIdsOfPerson,
 } from '../store/selectors';
 import {
   DAY_MINUTES,
@@ -34,6 +37,7 @@ import {
   clampBlockStart,
   formatDuration,
   formatMinutes,
+  hoursToMinutes,
   isBinEntry,
   minutesToHours,
   packDayBlocks,
@@ -76,6 +80,10 @@ interface DragState {
   projDayIndex: number; // projected day column (0–6)
   overBin: boolean; // pointer is over the bin panel → strip date/time on drop
   colliding: boolean;
+  maxHours: number; // resize cap = baseHours + growAllowance (Infinity when unbudgeted)
+  atCap: boolean; // the raw resize projection exceeded maxHours (clamped)
+  willMergeWithId: string | null; // neighbor id the drop would fuse into (exact adjacency)
+  willMergeEdge: 'top' | 'bottom' | null; // which edge touches the neighbor
 }
 
 interface BlockProps {
@@ -90,6 +98,11 @@ interface BlockProps {
   cols: number;
   gridRef: React.RefObject<HTMLDivElement | null>;
   binRef: React.RefObject<HTMLDivElement | null>;
+  mergeTargetId: string | null;
+  setMergeTargetId: (id: string | null) => void;
+  fusedId: string | null;
+  setFusedId: (id: string | null) => void;
+  editable: boolean;
   onOpen: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
 }
@@ -106,6 +119,11 @@ function TimedBlock({
   cols,
   gridRef,
   binRef,
+  mergeTargetId,
+  setMergeTargetId,
+  fusedId,
+  setFusedId,
+  editable,
   onOpen,
   onContextMenu,
 }: BlockProps) {
@@ -120,11 +138,14 @@ function TimedBlock({
   useEffect(() => {
     if (!drag) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setDrag(null);
+      if (e.key === 'Escape') {
+        setDrag(null);
+        setMergeTargetId(null);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [drag]);
+  }, [drag, setMergeTargetId]);
 
   const begin = (mode: DragMode) => (e: React.PointerEvent) => {
     if (e.button !== 0) return; // right/middle button → let the context menu open
@@ -137,6 +158,10 @@ function TimedBlock({
     moved.current = false;
     const rect = gridRef.current?.getBoundingClientRect();
     const colWidth = rect ? rect.width / DAY_COLS : 0;
+    // Capture the grow allowance ONCE at drag start (state won't change mid-drag).
+    // null ⇒ the task has no estimate ⇒ free grow (no cap).
+    const allowance = growAllowanceHours(state, entry.id);
+    const maxHours = allowance === null ? Infinity : baseHours + allowance;
     setDrag({
       mode,
       originX: e.clientX,
@@ -147,6 +172,10 @@ function TimedBlock({
       projDayIndex: dayIndex,
       overBin: false,
       colliding: false,
+      maxHours,
+      atCap: false,
+      willMergeWithId: null,
+      willMergeEdge: null,
     });
   };
 
@@ -187,6 +216,18 @@ function TimedBlock({
       projHours = minutesToHours(newEnd - baseStart);
     }
 
+    // Budget clamp on resize: growth stops at maxHours (bin + headroom). Moving
+    // never changes hours, so it is never capped. For a top resize the end stays
+    // fixed, so re-derive the start from the clamped hours.
+    let atCap = false;
+    if (drag.mode !== 'move' && projHours > drag.maxHours + 1e-9) {
+      atCap = true;
+      projHours = drag.maxHours;
+      if (drag.mode === 'top') {
+        projStart = baseEnd - hoursToMinutes(projHours);
+      }
+    }
+
     if (
       projStart !== baseStart ||
       projHours !== baseHours ||
@@ -202,19 +243,69 @@ function TimedBlock({
       ? false
       : blockCollides(state, person.id, days[projDayIndex], projStart, projHours, entry.id);
 
-    setDrag((d) => (d ? { ...d, projStart, projHours, projDayIndex, overBin, colliding } : d));
+    // Will-merge affordance: mirror the reducer's merge predicate exactly — same
+    // task, same person, same date, exact adjacency (touching edge), no collision,
+    // not over the bin. The drop would fuse into that neighbor.
+    let willMergeWithId: string | null = null;
+    let willMergeEdge: 'top' | 'bottom' | null = null;
+    if (!overBin && !colliding) {
+      const projDate = days[projDayIndex];
+      const projEnd = blockEndMinutes(projStart, projHours);
+      const neighbor = state.workload.find(
+        (w) =>
+          w.id !== entry.id &&
+          w.personId === person.id &&
+          w.taskId === entry.taskId &&
+          w.date === projDate &&
+          (blockEndMinutes(w.startMinutes, w.plannedHours) === projStart ||
+            projEnd === w.startMinutes),
+      );
+      if (neighbor) {
+        willMergeWithId = neighbor.id;
+        willMergeEdge =
+          blockEndMinutes(neighbor.startMinutes, neighbor.plannedHours) === projStart
+            ? 'top'
+            : 'bottom';
+      }
+    }
+    setMergeTargetId(willMergeWithId);
+
+    setDrag((d) =>
+      d
+        ? {
+            ...d,
+            projStart,
+            projHours,
+            projDayIndex,
+            overBin,
+            colliding,
+            atCap,
+            willMergeWithId,
+            willMergeEdge,
+          }
+        : d,
+    );
   };
 
   const finish = () => {
     if (!drag) return;
-    const { projStart, projHours, projDayIndex, overBin, colliding } = drag;
+    const { projStart, projHours, projDayIndex, overBin, colliding, willMergeWithId } = drag;
     setDrag(null);
+    setMergeTargetId(null);
     if (!moved.current) return; // treated as a click by onClick
     if (overBin) {
       dispatch({ type: 'MOVE_BLOCK_TO_BIN', entryId: entry.id });
       return;
     }
     if (colliding) return; // invalid drop → snap back (re-render restores it)
+    // Merge drop: the reducer keeps the EARLIER-starting block's id. Remember it
+    // so the surviving block plays the fuse animation after it re-renders.
+    if (willMergeWithId) {
+      const neighbor = state.workload.find((w) => w.id === willMergeWithId);
+      if (neighbor) {
+        setFusedId(projStart < neighbor.startMinutes ? entry.id : neighbor.id);
+      }
+    }
     dispatch({
       type: 'SET_BLOCK_TIME',
       entryId: entry.id,
@@ -233,11 +324,19 @@ function TimedBlock({
   const top = (start / 60) * HOUR_PX;
   const height = Math.max(MIN_BLOCK_H, hours * HOUR_PX);
 
+  const isMergeTarget = !drag && mergeTargetId === entry.id;
   const className = [
     'week-block',
+    editable ? '' : 'readonly',
     drag ? 'dragging' : '',
     drag?.colliding ? 'colliding' : '',
     drag?.overBin ? 'to-bin' : '',
+    drag?.atCap ? 'at-cap' : '',
+    drag?.willMergeWithId ? 'will-merge' : '',
+    drag?.willMergeEdge === 'top' ? 'merge-top' : '',
+    drag?.willMergeEdge === 'bottom' ? 'merge-bottom' : '',
+    isMergeTarget ? 'will-merge-target' : '',
+    fusedId === entry.id ? 'fused' : '',
   ]
     .filter(Boolean)
     .join(' ');
@@ -255,11 +354,27 @@ function TimedBlock({
       }}
       role="button"
       tabIndex={0}
-      title={`${task.title} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${formatDuration(hours)}). Przeciągnij, aby przenieść; przeciągnij krawędź, aby zmienić czas trwania; kliknij prawym przyciskiem, aby wstawić blok.`}
-      onPointerDown={begin('move')}
-      onPointerMove={onPointerMove}
-      onPointerUp={finish}
-      onPointerCancel={() => setDrag(null)}
+      title={
+        !editable
+          ? `${task.title} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${formatDuration(hours)}).`
+          : drag?.atCap
+            ? 'Limit czasu zadania — brak godzin w zasobniku'
+            : `${task.title} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${formatDuration(hours)}). Przeciągnij, aby przenieść; przeciągnij krawędź, aby zmienić czas trwania; kliknij prawym przyciskiem, aby wstawić blok.`
+      }
+      onPointerDown={editable ? begin('move') : undefined}
+      onPointerMove={editable ? onPointerMove : undefined}
+      onPointerUp={editable ? finish : undefined}
+      onPointerCancel={
+        editable
+          ? () => {
+              setDrag(null);
+              setMergeTargetId(null);
+            }
+          : undefined
+      }
+      onAnimationEnd={() => {
+        if (fusedId === entry.id) setFusedId(null);
+      }}
       onClick={(e) => {
         e.stopPropagation();
         if (!moved.current) onOpen();
@@ -267,9 +382,11 @@ function TimedBlock({
       onKeyDown={(e) => {
         if (e.key === 'Enter') onOpen();
       }}
-      onContextMenu={onContextMenu}
+      onContextMenu={editable ? onContextMenu : undefined}
     >
-      <span className="week-block-handle top" onPointerDown={begin('top')} aria-hidden />
+      {editable && (
+        <span className="week-block-handle top" onPointerDown={begin('top')} aria-hidden />
+      )}
       <span className="week-block-title">
         {project && <Coin paid={project.paid} size={12} />}
         {task.title}
@@ -286,7 +403,9 @@ function TimedBlock({
         {person.name}
         <span className="week-block-hours">{formatDuration(hours)}</span>
       </span>
-      <span className="week-block-handle bottom" onPointerDown={begin('bottom')} aria-hidden />
+      {editable && (
+        <span className="week-block-handle bottom" onPointerDown={begin('bottom')} aria-hidden />
+      )}
     </div>
   );
 }
@@ -313,6 +432,7 @@ interface BinCardProps {
   days: string[];
   gridRef: React.RefObject<HTMLDivElement | null>;
   viewportRef: React.RefObject<HTMLDivElement | null>;
+  editable: boolean;
   onOpen: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
 }
@@ -326,6 +446,7 @@ function BinCard({
   days,
   gridRef,
   viewportRef,
+  editable,
   onOpen,
   onContextMenu,
 }: BinCardProps) {
@@ -413,6 +534,7 @@ function BinCard({
 
   const className = [
     'week-bin-block',
+    editable ? '' : 'readonly',
     drag ? 'dragging' : '',
     drag?.colliding ? 'colliding' : '',
   ]
@@ -428,11 +550,15 @@ function BinCard({
       }}
       role="button"
       tabIndex={0}
-      title={`${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu. Przeciągnij na siatkę, aby nadać termin.`}
-      onPointerDown={begin}
-      onPointerMove={onPointerMove}
-      onPointerUp={finish}
-      onPointerCancel={() => setDrag(null)}
+      title={
+        editable
+          ? `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu. Przeciągnij na siatkę, aby nadać termin.`
+          : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.`
+      }
+      onPointerDown={editable ? begin : undefined}
+      onPointerMove={editable ? onPointerMove : undefined}
+      onPointerUp={editable ? finish : undefined}
+      onPointerCancel={editable ? () => setDrag(null) : undefined}
       onClick={(e) => {
         e.stopPropagation();
         if (!moved.current) onOpen();
@@ -440,7 +566,7 @@ function BinCard({
       onKeyDown={(e) => {
         if (e.key === 'Enter') onOpen();
       }}
-      onContextMenu={onContextMenu}
+      onContextMenu={editable ? onContextMenu : undefined}
     >
       <span className="week-bin-block-title">
         {project && <Coin paid={project.paid} size={12} />}
@@ -454,6 +580,15 @@ function BinCard({
 export function WeekView({ state, anchor, filter }: Props) {
   const { openTask } = useOpenTask();
   const { dispatch } = useStore();
+  const can = useCan();
+  const canEditAny = can('blocks.editAny');
+  const canEditOwn = can('blocks.editOwn');
+  // A block is editable when the role edits anyone's blocks, or edits its own and
+  // this block belongs to the logged-in user. The right-click insert flow lives
+  // on the block itself, so it inherits the same rule.
+  const canEditEntry = (personId: string): boolean =>
+    canEditAny ||
+    (canEditOwn && personId === state.currentUserId && state.currentUserId !== '');
   const days = weekDays(anchor);
 
   const gridRef = useRef<HTMLDivElement | null>(null); // .week-days-grid (7 columns, 0:00 at top)
@@ -466,6 +601,20 @@ export function WeekView({ state, anchor, filter }: Props) {
   const [hoursRaw, setHoursRaw] = useState('1');
   const [insertTaskId, setInsertTaskId] = useState('');
   const menuRef = useRef<HTMLDivElement | null>(null);
+
+  // Transient cross-block drag state (a dragged block and its merge neighbor live
+  // in different day-column component instances). mergeTargetId = the neighbor a
+  // drop would fuse into; fusedId = the surviving block that plays the fuse anim.
+  const [mergeTargetId, setMergeTargetId] = useState<string | null>(null);
+  const [fusedId, setFusedId] = useState<string | null>(null);
+
+  // Fallback clear in case animationend never fires (reduced motion neutralizes
+  // the keyframe, and re-parenting can drop the event).
+  useEffect(() => {
+    if (!fusedId) return;
+    const t = setTimeout(() => setFusedId(null), 400);
+    return () => clearTimeout(t);
+  }, [fusedId]);
 
   // Open the grid scrolled to ~07:00 (once, on mount).
   useEffect(() => {
@@ -550,6 +699,18 @@ export function WeekView({ state, anchor, filter }: Props) {
 
   // Overload preview for the insert form.
   const menuPerson = menu ? getPerson(state, menu.entry.personId) : undefined;
+  // Task picker options for the insert form. Users who can manage tasks pick any
+  // task; users limited to their own blocks (blocks.editOwn) may only insert for
+  // tasks the block's person is ALREADY assigned to — INSERT_BLOCK auto-assigns,
+  // so an unrestricted list would let them self-allocate to arbitrary tasks and
+  // bypass the read-only TaskModal. The clicked block's own task is always in
+  // this set, so it stays available as the default.
+  const insertTaskOptions = (() => {
+    if (!menu) return [];
+    if (can('tasks.manage')) return state.tasks;
+    const allowed = new Set(taskIdsOfPerson(state, menu.entry.personId));
+    return state.tasks.filter((t) => allowed.has(t.id));
+  })();
   const menuDayHours = menu
     ? hoursForPersonOnDate(state, menu.entry.personId, menu.entry.date)
     : 0;
@@ -664,6 +825,11 @@ export function WeekView({ state, anchor, filter }: Props) {
                         cols={cols}
                         gridRef={gridRef}
                         binRef={binRef}
+                        mergeTargetId={mergeTargetId}
+                        setMergeTargetId={setMergeTargetId}
+                        fusedId={fusedId}
+                        setFusedId={setFusedId}
+                        editable={canEditEntry(e.personId)}
                         onOpen={() => openTask(task.id)}
                         onContextMenu={(ev) => openMenu(e, ev)}
                       />
@@ -711,6 +877,7 @@ export function WeekView({ state, anchor, filter }: Props) {
                           days={days}
                           gridRef={gridRef}
                           viewportRef={viewportRef}
+                          editable={canEditEntry(p.id)}
                           onOpen={() => openTask(task.id)}
                           onContextMenu={(ev) => openMenu(e, ev)}
                         />
@@ -761,36 +928,38 @@ export function WeekView({ state, anchor, filter }: Props) {
                     ↓ Dodaj po
                   </button>
                   <div className="context-menu-sep" role="separator" />
+                  {/* Split only applies to dated blocks — SPLIT_BLOCK no-ops on a
+                      bin entry (one-bin-row-per-(task,person) invariant). */}
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="context-menu-item"
+                    disabled={menu.entry.plannedHours < 0.5}
+                    title={
+                      menu.entry.plannedHours < 0.5
+                        ? 'Blok jest za krótki, aby go podzielić'
+                        : undefined
+                    }
+                    onClick={() => doSplit(2)}
+                  >
+                    Podziel na pół
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="context-menu-item"
+                    disabled={menu.entry.plannedHours < 1}
+                    title={
+                      menu.entry.plannedHours < 1
+                        ? 'Blok jest za krótki, aby go podzielić'
+                        : undefined
+                    }
+                    onClick={() => doSplit(4)}
+                  >
+                    Podziel na ćwiartki
+                  </button>
                 </>
               )}
-              <button
-                type="button"
-                role="menuitem"
-                className="context-menu-item"
-                disabled={menu.entry.plannedHours < 0.5}
-                title={
-                  menu.entry.plannedHours < 0.5
-                    ? 'Blok jest za krótki, aby go podzielić'
-                    : undefined
-                }
-                onClick={() => doSplit(2)}
-              >
-                Podziel na pół
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="context-menu-item"
-                disabled={menu.entry.plannedHours < 1}
-                title={
-                  menu.entry.plannedHours < 1
-                    ? 'Blok jest za krótki, aby go podzielić'
-                    : undefined
-                }
-                onClick={() => doSplit(4)}
-              >
-                Podziel na ćwiartki
-              </button>
               {isBinEntry(menu.entry) && (
                 <button
                   type="button"
@@ -813,7 +982,7 @@ export function WeekView({ state, anchor, filter }: Props) {
                   value={insertTaskId}
                   onChange={(e) => setInsertTaskId(e.target.value)}
                 >
-                  {state.tasks.map((t) => {
+                  {insertTaskOptions.map((t) => {
                     const proj = getProject(state, t.projectId);
                     const client = proj ? getClient(state, proj.clientId) : undefined;
                     return (

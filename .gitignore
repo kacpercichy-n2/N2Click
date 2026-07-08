@@ -5,3 +5,5 @@ dist
 .claude/
 .vercel
 fabletieredworkflow/
+automation/claude-scheduler/logs/
+automation/claude-scheduler/state/

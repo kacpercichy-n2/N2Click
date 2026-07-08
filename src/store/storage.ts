@@ -1,9 +1,10 @@
 // Single persistence module. Wraps localStorage so it can be swapped for an API later.
 // The stored JSON is versioned; loadData migrates older payloads forward.
-import type { AppData, Person, Status, WorkloadEntry } from '../types';
+import type { AccessRole, AppData, Person, Status, WorkloadEntry } from '../types';
 import {
   BIN_DATE,
   DAY_MINUTES,
+  HOURS_STEP,
   MINUTE_STEP,
   clampBlockStart,
   hoursToMinutes,
@@ -13,9 +14,29 @@ import {
 
 const STORAGE_KEY = 'n2hub.data.v1';
 const LEGACY_STORAGE_KEYS = ['n2ub.data.v1', 'n2click.data.v1'];
-export const DATA_VERSION = 4;
+export const DATA_VERSION = 5;
 
 export const DEFAULT_CAPACITY = 8; // hours available per person per day
+export const WORKDAY_START_MIN = 480; // 8:00 — default person work-hours start
+export const DEFAULT_WORKDAYS: number[] = [1, 2, 3, 4, 5]; // Mon–Fri (ISO weekdays)
+
+/** Default informational work-end minute for a given daily capacity. */
+export function defaultWorkEndMinutes(capacity: number): number {
+  return Math.min(DAY_MINUTES, WORKDAY_START_MIN + Math.round(capacity * 60));
+}
+
+/**
+ * Sanitize a workDays array: keep only integer ISO weekdays 1–7, dedupe, sort
+ * ascending. An empty array is allowed (= no workdays). Non-arrays collapse to
+ * empty here — callers decide when a MISSING value should default to Mon–Fri.
+ */
+export function sanitizeWorkDays(days: unknown): number[] {
+  if (!Array.isArray(days)) return [];
+  const cleaned = days.filter(
+    (d): d is number => typeof d === 'number' && Number.isInteger(d) && d >= 1 && d <= 7,
+  );
+  return Array.from(new Set(cleaned)).sort((a, b) => a - b);
+}
 
 export function slugify(name: string): string {
   return name
@@ -74,6 +95,61 @@ function looksLikeData(value: unknown): value is Record<string, unknown> {
   return Array.isArray(v.tasks) && Array.isArray(v.people) && Array.isArray(v.workload);
 }
 
+const ACCESS_ROLES: AccessRole[] = ['administrator', 'pm', 'handlowiec', 'pracownik'];
+
+/**
+ * Normalize one stored person (any pre-v5 or v5 shape) into the current Person.
+ * - `accessRole`: kept if already a valid role; otherwise derived from the old
+ *   `isAdmin` flag (`true` → 'administrator', else 'pracownik').
+ * - new fields (`phone`, `passwordHash`, `workDays`, work hours, `supervisorId`)
+ *   get the documented defaults when absent. `workDays` MISSING ⇒ Mon–Fri;
+ *   PRESENT ⇒ sanitized (empty allowed).
+ * Idempotent: an already-v5 person round-trips unchanged (`isAdmin` is dropped).
+ */
+function migratePerson(raw: Record<string, unknown>): Person {
+  const capacity =
+    typeof raw.capacity === 'number' && raw.capacity > 0 ? raw.capacity : DEFAULT_CAPACITY;
+  const accessRole: AccessRole = ACCESS_ROLES.includes(raw.accessRole as AccessRole)
+    ? (raw.accessRole as AccessRole)
+    : raw.isAdmin === true
+      ? 'administrator'
+      : 'pracownik';
+  const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+  return {
+    id: str(raw.id),
+    firstName: str(raw.firstName),
+    lastName: str(raw.lastName),
+    name: str(raw.name),
+    email: str(raw.email),
+    phone: str(raw.phone),
+    role: str(raw.role),
+    departmentId: str(raw.departmentId),
+    avatar: str(raw.avatar),
+    capacity,
+    accessRole,
+    passwordHash: str(raw.passwordHash),
+    workDays: raw.workDays === undefined ? [...DEFAULT_WORKDAYS] : sanitizeWorkDays(raw.workDays),
+    workStartMinutes:
+      typeof raw.workStartMinutes === 'number' ? raw.workStartMinutes : WORKDAY_START_MIN,
+    workEndMinutes:
+      typeof raw.workEndMinutes === 'number' ? raw.workEndMinutes : defaultWorkEndMinutes(capacity),
+    supervisorId: str(raw.supervisorId),
+  };
+}
+
+/**
+ * Migration v4→v5: replace `isAdmin` with `accessRole` and add the account
+ * fields (phone, passwordHash, availability, supervisor). Person-only shape
+ * change — everything else passes through untouched. Idempotent.
+ */
+function migrateV4toV5(data: AppData): AppData {
+  return {
+    ...data,
+    version: DATA_VERSION,
+    people: (data.people as unknown as Record<string, unknown>[]).map(migratePerson),
+  };
+}
+
 /**
  * Migrate a v1 payload (flat tasks with a free-text `project` label) to v2:
  * - each distinct project label becomes a Project under a default client;
@@ -113,13 +189,15 @@ function migrateV1(raw: Record<string, unknown>): AppData {
   const v1Assignments =
     (raw.assignments as Array<{ id: string; taskId: string; personId: string }>) ?? [];
 
-  // People: split "First Last", defaults for the new fields.
+  // People: split "First Last", defaults for the new fields. Built through
+  // migratePerson so v1 people land in the current (v5) shape directly; the
+  // shared v4→v5 pass in loadData is then idempotent over them.
   const people: Person[] = v1People.map((p, i) => {
     const name = (p.name ?? '').trim();
     const spaceIdx = name.indexOf(' ');
     const firstName = spaceIdx === -1 ? name : name.slice(0, spaceIdx);
     const lastName = spaceIdx === -1 ? '' : name.slice(spaceIdx + 1);
-    return {
+    return migratePerson({
       id: p.id,
       firstName,
       lastName,
@@ -130,7 +208,7 @@ function migrateV1(raw: Record<string, unknown>): AppData {
       avatar: '',
       capacity: DEFAULT_CAPACITY,
       isAdmin: i === 0, // someone has to be able to open the admin panel
-    };
+    });
   });
 
   // Projects from distinct v1 task.project labels, under one default client.
@@ -341,6 +419,11 @@ function hasValidStart(w: WorkloadEntry): boolean {
  * with a missing/invalid value). Deterministic rule: if a (person, date) group
  * contains ANY invalid entry, restack the WHOLE group from 08:00 in sortIndex
  * order; fully-valid groups are left alone except off-grid values are snapped.
+ *
+ * Bin groups additionally enforce the one-bin-row invariant (PKG-20260708-
+ * budget-store): duplicate rows for the same taskId are merged into the
+ * lowest-sortIndex survivor (hours summed) and the rest dropped, before the
+ * group's sortIndex is renumbered 0..n.
  */
 export function ensureStartMinutes(data: AppData): AppData {
   const groups = new Map<string, WorkloadEntry[]>();
@@ -353,13 +436,32 @@ export function ensureStartMinutes(data: AppData): AppData {
 
   const patched = new Map<string, number>(); // entryId -> startMinutes
   const patchedSort = new Map<string, number>(); // entryId -> sortIndex
+  const patchedHours = new Map<string, number>(); // entryId -> plannedHours (bin merges)
+  const removed = new Set<string>(); // entryIds merged away
   for (const list of groups.values()) {
     const ordered = [...list].sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0));
     // Bin groups (date === '') don't follow the 08:00 stacking rule: every
     // entry sits at startMinutes 0 and the group's sortIndex is renumbered
-    // 0..n in existing sortIndex order.
+    // 0..n in existing sortIndex order. First merge duplicate per-task rows.
     if (ordered.length > 0 && ordered[0].date === BIN_DATE) {
-      ordered.forEach((w, i) => {
+      const survivorByTask = new Map<string, WorkloadEntry>(); // taskId -> survivor
+      const mergedQ = new Map<string, number>(); // survivorId -> total quarters
+      for (const w of ordered) {
+        const survivor = survivorByTask.get(w.taskId);
+        if (survivor) {
+          removed.add(w.id);
+          mergedQ.set(
+            survivor.id,
+            (mergedQ.get(survivor.id) ?? Math.round(survivor.plannedHours / HOURS_STEP)) +
+              Math.round(w.plannedHours / HOURS_STEP),
+          );
+        } else {
+          survivorByTask.set(w.taskId, w);
+        }
+      }
+      for (const [id, q] of mergedQ) patchedHours.set(id, q * HOURS_STEP);
+      const survivors = ordered.filter((w) => !removed.has(w.id));
+      survivors.forEach((w, i) => {
         if (w.startMinutes !== 0) patched.set(w.id, 0);
         if (w.sortIndex !== i) patchedSort.set(w.id, i);
       });
@@ -382,19 +484,30 @@ export function ensureStartMinutes(data: AppData): AppData {
     }
   }
 
-  if (patched.size === 0 && patchedSort.size === 0) return data;
+  if (
+    patched.size === 0 &&
+    patchedSort.size === 0 &&
+    patchedHours.size === 0 &&
+    removed.size === 0
+  ) {
+    return data;
+  }
   return {
     ...data,
-    workload: data.workload.map((w) => {
-      const s = patched.get(w.id);
-      const si = patchedSort.get(w.id);
-      if (s === undefined && si === undefined) return w;
-      return {
-        ...w,
-        ...(s === undefined ? null : { startMinutes: s }),
-        ...(si === undefined ? null : { sortIndex: si }),
-      };
-    }),
+    workload: data.workload
+      .filter((w) => !removed.has(w.id))
+      .map((w) => {
+        const s = patched.get(w.id);
+        const si = patchedSort.get(w.id);
+        const h = patchedHours.get(w.id);
+        if (s === undefined && si === undefined && h === undefined) return w;
+        return {
+          ...w,
+          ...(s === undefined ? null : { startMinutes: s }),
+          ...(si === undefined ? null : { sortIndex: si }),
+          ...(h === undefined ? null : { plannedHours: h }),
+        };
+      }),
   };
 }
 
@@ -407,7 +520,9 @@ export function loadData(): AppData {
     const parsed: unknown = JSON.parse(raw);
     if (!looksLikeData(parsed)) return emptyData();
     const version = typeof parsed.version === 'number' ? parsed.version : 1;
-    if (version < 2) return ensureStartMinutes(localizeLegacyData(migrateV1(parsed)));
+    if (version < 2) {
+      return ensureStartMinutes(migrateV4toV5(localizeLegacyData(migrateV1(parsed))));
+    }
     // Same-version load: fill any missing fields with defaults.
     const loaded = {
       ...emptyData(),
@@ -415,7 +530,15 @@ export function loadData(): AppData {
       version: DATA_VERSION,
     };
     const localized = version < DATA_VERSION ? localizeLegacyData(loaded) : loaded;
-    return ensureStartMinutes(localized);
+    // Person normalization runs on EVERY load (defensive + idempotent), exactly
+    // like ensureStartMinutes below — NOT only when `version < 5`. A payload
+    // stamped v5 whose people were never actually migrated (e.g. persisted
+    // mid-dev via HMR, still carrying `isAdmin` and no `accessRole`) would
+    // otherwise stay broken forever: a missing `accessRole` makes
+    // MATRIX[undefined] deny every action → permanent login-screen lockout.
+    // migratePerson preserves valid existing values and fills only what's absent.
+    const migrated = migrateV4toV5(localized);
+    return ensureStartMinutes(migrated);
   } catch {
     return emptyData();
   }

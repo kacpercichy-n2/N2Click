@@ -8,7 +8,6 @@ import {
   eachDayInclusive,
   formatRowLabel,
   isWeekend,
-  parseDate,
 } from '../utils/dates';
 import { hoursForPersonOnDate, personCapacity } from '../store/selectors';
 import { formatDuration } from '../utils/time';
@@ -30,6 +29,7 @@ interface Props {
   onChange: (personId: string, date: string, hours: number) => void;
   onFillWeekdays: (personId: string) => void;
   onClearPerson: (personId: string) => void;
+  readOnly?: boolean; // gate: disable inputs + hide fill/clear when the role can't manage tasks
 }
 
 export function AllocationGrid({
@@ -42,6 +42,7 @@ export function AllocationGrid({
   onChange,
   onFillWeekdays,
   onClearPerson,
+  readOnly = false,
 }: Props) {
   const days = useMemo(
     () => eachDayInclusive(startDate, endDate),
@@ -91,24 +92,26 @@ export function AllocationGrid({
                   />
                   <span className="alloc-person-name">{p.name}</span>
                 </div>
-                <div className="alloc-person-actions">
-                  <button
-                    type="button"
-                    className="link-btn"
-                    onClick={() => onFillWeekdays(p.id)}
-                    title="Ustaw 8h we wszystkie dni robocze"
-                  >
-                    Wypełnij dni robocze
-                  </button>
-                  <button
-                    type="button"
-                    className="link-btn"
-                    onClick={() => onClearPerson(p.id)}
-                    title="Ustaw wszystkie komórki na 0"
-                  >
-                    Wyczyść
-                  </button>
-                </div>
+                {!readOnly && (
+                  <div className="alloc-person-actions">
+                    <button
+                      type="button"
+                      className="link-btn"
+                      onClick={() => onFillWeekdays(p.id)}
+                      title="Wypełnij dni robocze osoby jej dzienną dostępnością"
+                    >
+                      Wypełnij dni robocze
+                    </button>
+                    <button
+                      type="button"
+                      className="link-btn"
+                      onClick={() => onClearPerson(p.id)}
+                      title="Ustaw wszystkie komórki na 0"
+                    >
+                      Wyczyść
+                    </button>
+                  </div>
+                )}
               </th>
             ))}
             <th className="alloc-total-col">Suma dnia</th>
@@ -144,6 +147,8 @@ export function AllocationGrid({
                         className="alloc-input"
                         value={value === 0 ? '' : value}
                         placeholder="0"
+                        disabled={readOnly}
+                        title={readOnly ? 'Brak uprawnień' : undefined}
                         onChange={(e) => {
                           const raw = e.target.value;
                           const n = raw === '' ? 0 : Number(raw);
@@ -176,10 +181,4 @@ export function AllocationGrid({
       </table>
     </div>
   );
-}
-
-/** Weekday check reused by the "Fill weekdays" action in the editor page. */
-export function isWeekdayDate(date: string): boolean {
-  const day = parseDate(date).getDay();
-  return day >= 1 && day <= 5;
 }
