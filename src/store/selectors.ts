@@ -16,7 +16,7 @@ import type {
   WorkloadEntry,
 } from '../types';
 import { DEFAULT_CAPACITY } from './storage';
-import { blockEndMinutes, hasCollision, hoursToMinutes } from '../utils/time';
+import { blockEndMinutes, hasCollision, hoursToMinutes, isBinEntry } from '../utils/time';
 
 // ---- Basic lookups ----
 
@@ -262,6 +262,25 @@ export function dayTotal(
   );
 }
 
+// ---- Bin (zasobnik) — dateless unassigned entries ----
+
+/** A person's bin entries (date === ''), ordered by their bin sortIndex. */
+export function binEntriesForPerson(state: AppData, personId: string): WorkloadEntry[] {
+  return state.workload
+    .filter((w) => w.personId === personId && isBinEntry(w))
+    .sort((a, b) => a.sortIndex - b.sortIndex);
+}
+
+/** A task's bin entries (any person). */
+export function binEntriesForTask(state: AppData, taskId: string): WorkloadEntry[] {
+  return state.workload.filter((w) => w.taskId === taskId && isBinEntry(w));
+}
+
+/** Summed hours a person has sitting in their bin. */
+export function binTotalForPerson(state: AppData, personId: string): number {
+  return binEntriesForPerson(state, personId).reduce((sum, w) => sum + w.plannedHours, 0);
+}
+
 // ---- Capacity & overload ----
 
 export const OVERLOAD_THRESHOLD = DEFAULT_CAPACITY;
@@ -293,7 +312,7 @@ export function overloadedPeopleOnDate(
 export function conflictDatesForTask(state: AppData, taskId: string): DateStr[] {
   const out = new Set<DateStr>();
   for (const w of state.workload) {
-    if (w.taskId !== taskId) continue;
+    if (w.taskId !== taskId || isBinEntry(w)) continue; // bin entries have no date -> never an overload date
     if (hoursForPersonOnDate(state, w.personId, w.date) > personCapacity(state, w.personId)) {
       out.add(w.date);
     }

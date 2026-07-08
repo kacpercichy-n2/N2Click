@@ -27,6 +27,7 @@ import { DEFAULT_CAPACITY, loadData, saveData, slugify } from './storage';
 import { registerPersonOrder } from '../utils/colors';
 import { addDaysStr, eachDayInclusive, inclusiveDayCount } from '../utils/dates';
 import {
+  BIN_DATE,
   DAY_MINUTES,
   HOURS_STEP,
   MINUTE_STEP,
@@ -35,6 +36,7 @@ import {
   formatMinutes,
   hasCollision,
   hoursToMinutes,
+  isBinEntry,
   nextFreeStart,
   snapHours,
 } from '../utils/time';
@@ -88,6 +90,9 @@ export interface SaveTaskPayload {
   draft: TaskDraft;
   assigneeIds: string[]; // final set of assigned people
   allocations: AllocationCell[]; // full desired allocation for this task
+  // Extra dateless hours to append to the bin (per person). Existing bin
+  // entries pass through untouched; these are added on top.
+  newUnassigned?: Array<{ personId: string; hours: number }>;
 }
 
 export interface InsertBlockPayload {
@@ -132,6 +137,9 @@ export type Action =
   | { type: 'INSERT_BLOCK'; payload: InsertBlockPayload }
   | { type: 'REASSIGN_ENTRY'; entryId: string; toPersonId: string }
   | { type: 'SET_BLOCK_TIME'; entryId: string; date: string; startMinutes: number; plannedHours: number }
+  | { type: 'MOVE_BLOCK_TO_BIN'; entryId: string }
+  | { type: 'SPLIT_BLOCK'; entryId: string; parts: 2 | 4 }
+  | { type: 'DELETE_BLOCK'; entryId: string }
   | { type: 'SAVE_FILTER_PRESET'; name: string; page: FilterPage; criteria: SavedFilterCriteria }
   | { type: 'DELETE_FILTER_PRESET'; filterId: string }
   | { type: 'LOAD_SAMPLE'; data: AppData }
@@ -270,10 +278,16 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
   // hours>0 and only for people who are still assigned. Existing cells keep
   // their position in the person's day; new cells go to the end of the day.
   const assignedSet = new Set(assigneeIds);
+  // Existing BIN entries of this task pass through untouched: kept when the
+  // person is still assigned, dropped when they are unassigned. Only DATED
+  // entries go through the rebuild below.
+  const taskBinKept = state.workload.filter(
+    (w) => w.taskId === realTaskId && isBinEntry(w) && assignedSet.has(w.personId),
+  );
   // person|date -> the prior block's position, so kept cells keep their slot.
   const oldPos = new Map<string, { sortIndex: number; startMinutes: number }>();
   for (const w of state.workload) {
-    if (w.taskId === realTaskId) {
+    if (w.taskId === realTaskId && !isBinEntry(w)) {
       oldPos.set(dayKey(w.personId, w.date), { sortIndex: w.sortIndex, startMinutes: w.startMinutes });
     }
   }
@@ -295,7 +309,7 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
       startMinutes = kept.startMinutes;
     } else {
       // New cell: append to the end of that person's day.
-      const around = [...workloadOther, ...workloadForTask];
+      const around = [...workloadOther, ...taskBinKept, ...workloadForTask];
       sortIndex = nextSortIndex(around, c.personId, c.date);
       startMinutes = nextFreeStart(
         around.filter((w) => w.personId === c.personId && w.date === c.date),
@@ -313,11 +327,31 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
     });
   }
 
+  // Append explicitly-requested bin hours (person must be assigned; snap hours,
+  // skip <= 0). Computed against the accumulated workload so multiple items for
+  // one person get consecutive bin sortIndexes.
+  const newBinEntries: WorkloadEntry[] = [];
+  for (const item of payload.newUnassigned ?? []) {
+    if (!assignedSet.has(item.personId)) continue;
+    const hours = snapHours(item.hours);
+    if (hours <= 0) continue;
+    const accumulated = [...workloadOther, ...taskBinKept, ...workloadForTask, ...newBinEntries];
+    newBinEntries.push({
+      id: uid(),
+      taskId: realTaskId,
+      personId: item.personId,
+      date: BIN_DATE,
+      plannedHours: hours,
+      startMinutes: 0,
+      sortIndex: nextSortIndex(accumulated, item.personId, BIN_DATE),
+    });
+  }
+
   return {
     ...state,
     tasks,
     assignments: [...assignmentsOther, ...assignmentsForTask],
-    workload: [...workloadOther, ...workloadForTask],
+    workload: [...workloadOther, ...taskBinKept, ...workloadForTask, ...newBinEntries],
     activity: withActivity(
       state,
       'task',
@@ -349,7 +383,7 @@ function moveTask(state: AppData, taskId: string, dayDelta: number): AppData {
   if (!task) return state;
   const touched = new Set<string>();
   const workload = state.workload.map((w) => {
-    if (w.taskId !== taskId) return w;
+    if (w.taskId !== taskId || isBinEntry(w)) return w; // bin entries stay in the bin
     const newDate = addDaysStr(w.date, dayDelta);
     touched.add(dayKey(w.personId, w.date));
     touched.add(dayKey(w.personId, newDate));
@@ -393,7 +427,7 @@ function setTaskDates(
       t.id === taskId ? { ...t, startDate, endDate, updatedAt: nowIso() } : t,
     ),
     workload: state.workload.filter(
-      (w) => w.taskId !== taskId || inPeriod.has(w.date),
+      (w) => w.taskId !== taskId || isBinEntry(w) || inPeriod.has(w.date),
     ),
     activity: withActivity(
       state,
@@ -478,7 +512,7 @@ function deleteProject(state: AppData, projectId: string): AppData {
 
 function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
   const ref = state.workload.find((w) => w.id === payload.refEntryId);
-  if (!ref || payload.hours <= 0) return state;
+  if (!ref || payload.hours <= 0 || isBinEntry(ref)) return state; // no ripple insert around a bin block
   const task = state.tasks.find((t) => t.id === payload.taskId);
   if (!task) return state;
 
@@ -579,10 +613,14 @@ function reassignEntry(state: AppData, entryId: string, toPersonId: string): App
   const moved: WorkloadEntry = {
     ...entry,
     personId: toPersonId,
-    startMinutes: nextFreeStart(
-      without.filter((w) => w.personId === toPersonId && w.date === date),
-      hoursToMinutes(plannedHours),
-    ),
+    // Bin entries stay in the bin (date '', startMinutes 0) and append to the
+    // target person's bin; dated entries append to the target's day schedule.
+    startMinutes: isBinEntry(entry)
+      ? 0
+      : nextFreeStart(
+          without.filter((w) => w.personId === toPersonId && w.date === date),
+          hoursToMinutes(plannedHours),
+        ),
     sortIndex: nextSortIndex(without, toPersonId, date),
   };
   const touched = new Set<string>([
@@ -631,6 +669,10 @@ function setBlockTime(
   const entry = state.workload.find((w) => w.id === entryId);
   if (!entry) return state;
 
+  // A grid drop always targets a real calendar day. Use MOVE_BLOCK_TO_BIN to
+  // send a block back to the bin — never the empty-date sentinel here.
+  if (date === BIN_DATE) return state;
+
   // Grid + range validation.
   if (!Number.isFinite(startMinutes) || startMinutes < 0 || startMinutes % MINUTE_STEP !== 0) {
     return state;
@@ -671,21 +713,148 @@ function setBlockTime(
   }
 
   const oldDate = entry.date;
-  const workload = reindexDays(
-    state.workload.map((w) => (w.id === entryId ? { ...w, date, startMinutes, plannedHours } : w)),
-    new Set([dayKey(entry.personId, oldDate), dayKey(entry.personId, date)]),
-  );
+  const fromBin = isBinEntry(entry); // dropped in from the bin
+  const shrink = plannedHours < entry.plannedHours; // freed hours go back to the bin
+  const delta = entry.plannedHours - plannedHours; // grid-safe (both on the 0.25h grid)
 
-  const message =
-    date !== oldDate
-      ? `przeniósł/przeniosła blok ${plannedHours}h na ${date} ${formatMinutes(startMinutes)}`
-      : `zmienił(a) blok na ${formatMinutes(startMinutes)}–${formatMinutes(startMinutes + dur)} (${plannedHours}h)`;
+  let updated = state.workload.map((w) =>
+    w.id === entryId ? { ...w, date, startMinutes, plannedHours } : w,
+  );
+  const touchedKeys = new Set([
+    dayKey(entry.personId, oldDate),
+    dayKey(entry.personId, date),
+  ]);
+  if (shrink) {
+    updated = [
+      ...updated,
+      {
+        id: uid(),
+        taskId: entry.taskId,
+        personId: entry.personId,
+        date: BIN_DATE,
+        plannedHours: delta,
+        startMinutes: 0,
+        sortIndex: nextSortIndex(updated, entry.personId, BIN_DATE),
+      },
+    ];
+    touchedKeys.add(dayKey(entry.personId, BIN_DATE));
+  }
+  const workload = reindexDays(updated, touchedKeys);
+
+  let message: string;
+  if (fromBin) {
+    message = `zaplanował(a) blok ${plannedHours}h z zasobnika na ${date} ${formatMinutes(startMinutes)}`;
+  } else if (date !== oldDate) {
+    message = `przeniósł/przeniosła blok ${plannedHours}h na ${date} ${formatMinutes(startMinutes)}`;
+  } else {
+    message = `zmienił(a) blok na ${formatMinutes(startMinutes)}–${formatMinutes(startMinutes + dur)} (${plannedHours}h)`;
+  }
+  if (shrink) message += `; ${delta}h wróciło do zasobnika`;
 
   return {
     ...state,
     tasks,
     workload,
     activity: withActivity(state, 'task', entry.taskId, message),
+  };
+}
+
+// ---- Bin (zasobnik) block handlers ----
+
+/** Move one dated block into the person's bin (unassign its calendar day). */
+function moveBlockToBin(state: AppData, entryId: string): AppData {
+  const entry = state.workload.find((w) => w.id === entryId);
+  if (!entry || isBinEntry(entry)) return state;
+  const oldDate = entry.date;
+  const without = state.workload.filter((w) => w.id !== entryId);
+  const moved: WorkloadEntry = {
+    ...entry,
+    date: BIN_DATE,
+    startMinutes: 0,
+    sortIndex: nextSortIndex(without, entry.personId, BIN_DATE),
+  };
+  const touched = new Set([
+    dayKey(entry.personId, oldDate),
+    dayKey(entry.personId, BIN_DATE),
+  ]);
+  return {
+    ...state,
+    workload: reindexDays([...without, moved], touched),
+    activity: withActivity(
+      state,
+      'task',
+      entry.taskId,
+      `przeniósł/przeniosła blok ${entry.plannedHours}h (${oldDate}) do zasobnika`,
+    ),
+  };
+}
+
+/**
+ * Split a block into `parts` (halves/quarters) on the 0.25h grid. The largest
+ * part stays on the original entry (dated or bin); the rest become bin entries
+ * appended to the person's bin. Rejects when the block is too small to divide.
+ */
+function splitBlock(state: AppData, entryId: string, parts: 2 | 4): AppData {
+  const entry = state.workload.find((w) => w.id === entryId);
+  if (!entry || entry.plannedHours < parts * HOURS_STEP) return state;
+
+  const q = Math.round(entry.plannedHours / HOURS_STEP);
+  const base = Math.floor(q / parts);
+  const r = q % parts;
+  // First `r` parts (the largest) get base+1 quarters; part 1 stays scheduled.
+  const quarters: number[] = [];
+  for (let i = 0; i < parts; i++) quarters.push(base + (i < r ? 1 : 0));
+
+  let workload = state.workload.map((w) =>
+    w.id === entryId ? { ...w, plannedHours: quarters[0] * HOURS_STEP } : w,
+  );
+  const newBin: WorkloadEntry[] = [];
+  for (let i = 1; i < parts; i++) {
+    const accumulated = [...workload, ...newBin];
+    newBin.push({
+      id: uid(),
+      taskId: entry.taskId,
+      personId: entry.personId,
+      date: BIN_DATE,
+      plannedHours: quarters[i] * HOURS_STEP,
+      startMinutes: 0,
+      sortIndex: nextSortIndex(accumulated, entry.personId, BIN_DATE),
+    });
+  }
+  workload = [...workload, ...newBin];
+  const touched = new Set([
+    dayKey(entry.personId, entry.date),
+    dayKey(entry.personId, BIN_DATE),
+  ]);
+  const binSum = newBin.reduce((s, w) => s + w.plannedHours, 0);
+  return {
+    ...state,
+    workload: reindexDays(workload, touched),
+    activity: withActivity(
+      state,
+      'task',
+      entry.taskId,
+      `podzielił(a) blok ${entry.plannedHours}h na ${parts} części (do zasobnika: ${binSum}h)`,
+    ),
+  };
+}
+
+/** Delete a single bin entry (dated entries are never deleted here). */
+function deleteBlock(state: AppData, entryId: string): AppData {
+  const entry = state.workload.find((w) => w.id === entryId);
+  if (!entry || !isBinEntry(entry)) return state;
+  return {
+    ...state,
+    workload: reindexDays(
+      state.workload.filter((w) => w.id !== entryId),
+      new Set([dayKey(entry.personId, BIN_DATE)]),
+    ),
+    activity: withActivity(
+      state,
+      'task',
+      entry.taskId,
+      `usunął/usunęła blok ${entry.plannedHours}h z zasobnika`,
+    ),
   };
 }
 
@@ -1040,6 +1209,12 @@ export function reducer(state: AppData, action: Action): AppData {
         action.startMinutes,
         action.plannedHours,
       );
+    case 'MOVE_BLOCK_TO_BIN':
+      return moveBlockToBin(state, action.entryId);
+    case 'SPLIT_BLOCK':
+      return splitBlock(state, action.entryId, action.parts);
+    case 'DELETE_BLOCK':
+      return deleteBlock(state, action.entryId);
     case 'SAVE_FILTER_PRESET': {
       const name = action.name.trim();
       if (!name) return state;

@@ -1,0 +1,2867 @@
+diff --git a/CLAUDE.md b/CLAUDE.md
+index 5b11510..79a6948 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -1,107 +1,91 @@
+ # N2Hub Planner — agent handoff & project guide
+ 
+-Project-management + workload-planning tool for N2 Media. The **v2 feature expansion** (clients → projects → tasks, pipeline statuses, kanban, timeline, workload dashboard, admin panel, comments, paid coins — 2026-07) is complete and verified end-to-end on top of the deployed alpha (see `vercel.json`). This file is the single source of truth for any agent working on this codebase — read it fully before changing anything.
++Project-management + workload-planning tool for N2 Media. Complete and verified end-to-end: the **v2 feature expansion** (clients → projects → tasks, pipeline statuses, kanban, timeline, workload dashboard, admin panel, comments, paid coins), the **N2 brand dark restyle**, the **Polish UI translation**, a follow-up UX batch (global search, saved filter presets, task modal, save-state indicator, timeline zoom, mobile nav), and **timed work blocks** in the calendar week view (2026-07-08). This file is the single source of truth for any agent working on this codebase — read it fully before changing anything. The whole interface is in **Polish**; keep new UI strings Polish.
+ 
+ ## What the app does
+ 
+ Core model: **Client → Project → Tasks → Time blocks**, with supporting models Statuses, Departments, Service types, People, Comments, Assignments, Milestones.
+ 
+ - **Dashboard** — pipeline counts, deadlines + milestones (14-day horizon, overdue flagged), paid/unpaid split, this week's overload warnings.
+-- **Projects** — list grouped by client with paid coin + status badge + filters (paid/unpaid, client, status); create form (can create a client inline); detail card edits all fields, toggles the coin, manages milestones, lists tasks, and hosts the comments/@mentions/activity panel.
++- **Projects** — list grouped by client with paid coin + status badge + filters (paid/unpaid, client, status; savable as named presets via `FilterPresets`); create form (can create a client inline); detail card edits all fields, toggles the coin, manages milestones, lists tasks, and hosts the comments/@mentions/activity panel.
+ - **Kanban** — PROJECT pipeline board. Columns = active statuses in pipeline order; dragging a card into a column dispatches `SET_PROJECT_STATUS`. Filters: paid + client. Admins get a quick-create box accepting the `/Status name` command form.
+-- **Timeline** — horizontal day axis (10 weeks, 26px/day, scrollable; sticky 240px label column). Project bars (status-colored, coin, overdue = danger tint) grouped by client, task bars beneath. Bars drag to move and edge-drag to resize (pointer events, day snapping). ◆ milestones drag. **Moving a task shifts its time blocks with it; resizing drops blocks outside the new period.** Moving a project moves only the project dates (tasks are moved individually — intentional).
+-- **Tasks + editor** — alpha behavior, plus required project select (`?project=<id>` pre-fills from the project card), status select, and a per-task discussion panel.
+-- **Calendar** — week/month with person filter. Week blocks are each person's ORDERED day schedule (`WorkloadEntry.sortIndex`) and show the project coin. **Right-click a block → "Add before / Add after"**: small form (task picker defaulting to the clicked block's task + hours) inserts a block at that position and pushes only that person's later blocks down; shows a live warning when the day would exceed the person's capacity; auto-assigns the person / extends the task period if needed to keep invariants.
++- **Timeline** — horizontal day axis (10 weeks, scrollable, zoomable px-per-day via `ZOOM_LEVELS`; sticky label column). Project bars (status-colored, coin, overdue = danger tint) grouped by client, task bars beneath. Bars drag to move and edge-drag to resize (pointer events, day snapping). ◆ milestones drag. **Moving a task shifts its time blocks with it; resizing drops blocks outside the new period.** Moving a project moves only the project dates (tasks are moved individually — intentional).
++- **Tasks** — list with filters (+ presets); the editor is `TaskModal` (the old TaskEditorPage folded into a modal): required project select, status select, estimate, `AllocationGrid` for per-person per-day hours, per-task discussion panel.
++- **Calendar** — week/month with person filter. **The week view is a Google-Calendar-style timed grid**: left hour axis, day columns, blocks absolutely positioned by `WorkloadEntry.startMinutes` with height ∝ `plannedHours`, auto-scrolls to 7:00. Pointer-drag moves a block to another time and/or day; top/bottom edge-drag resizes in 15-min steps; a **same-person time overlap blocks the drop** (live danger tint, invalid drops revert; touching edges are fine). Cross-person overlaps in one day column pack side-by-side (`packDayBlocks`). Cross-day drops extend the task period when needed. **Right-click a block → "Dodaj przed / Dodaj po"**: small form (task picker defaulting to the clicked block's task + hours) ripple-inserts a block at the reference block's start/end, pushing only that person's overlapping later blocks down; warns live when the day would exceed capacity; auto-assigns the person / extends the task period to keep invariants. Month view: occupancy shading, person dots, overload markers, day click drills into week.
+ - **People** — profiles: avatar (emoji, else initials on person color), first/last name, job title, department, daily capacity (per-person overload threshold), admin flag. Profile page (`/people/:id`) shows week load vs availability, projects, tasks, and edits the profile.
+ - **Workload** — weekly dashboard: per-person day cells, assigned vs available (capacity × workdays), load bar + %, overload day flags; filters by department (filters people) and client/service type (filters which hours are counted).
+ - **Admin** — statuses (create incl. `/name` quick command, rename, recolor, reorder ↑↓, archive/restore, delete only when unused), clients (delete cascades their projects behind confirm), departments, service types (deletes clear references).
++- **Global search** — `Ctrl/Cmd+K` (`GlobalSearch` in the sidebar) across projects/tasks/people/clients.
+ 
+-**Users/permissions**: no auth. The header **"Acting as"** select sets `currentUserId` — it signs comments/activity and gates the admin panel via `person.isAdmin` (`isAdminUser` selector). With zero people the admin gate stays open (prevents lockout). v1→v2 migration makes the first person admin.
++**Users/permissions**: no auth. The sidebar **"Występuj jako"** (acting as) select sets `currentUserId` — it signs comments/activity and gates the admin panel via `person.isAdmin` (`isAdminUser` selector). With zero people the admin gate stays open (prevents lockout). The v1→v2 migration makes the first person admin.
+ 
+ ## Tech stack & commands
+ 
+-- Vite 5 + React 18 + TypeScript 5 (strict), react-router-dom 6, date-fns 3. Plain CSS — **no UI framework, no Tailwind**. No drag libraries: kanban uses native HTML5 DnD, timeline uses pointer events.
+-- `npm run dev` (port 5173, launch config in `.claude/launch.json` as `n2hub-dev`), `npx tsc --noEmit`, `npm run build`. All three must pass before you finish any change.
+-- No tests exist yet. Verification is typecheck + build + browser walkthrough (checklist below).
++- Vite 5 + React 18 + TypeScript 5 (strict), react-router-dom 6, date-fns 3, vitest (dev). Plain CSS — **no UI framework, no Tailwind**. No drag libraries: kanban uses native HTML5 DnD; timeline and calendar week view use pointer events.
++- `npm run dev` (port 5173, launch config in `.claude/launch.json` as `n2hub-dev`), `npx tsc --noEmit`, `npm test` (vitest, node env, `src/**/*.test.ts`), `npm run build`. All four must pass before you finish any change.
++- Unit tests cover the pure time math (`src/utils/time.test.ts`), the block reducer actions (`src/store/blockActions.test.ts`), and the storage migration (`src/store/storage.test.ts`). UI behavior is still verified by browser walkthrough (checklist below).
+ 
+ ## Architecture (do not break these decisions)
+ 
+-- **No backend.** Persistence is localStorage under key `n2hub.data.v1` with legacy fallbacks for `n2ub.data.v1` and `n2click.data.v1` (payload is versioned — currently `version: 3`), wrapped entirely in `src/store/storage.ts`, which also owns the **v1→v2 migration** (task `project` labels → real Projects under an "N2 Media" client; people name-split + capacity/admin defaults; workload `sortIndex` assignment). The planned extension path is swapping that one module for an API — never scatter direct localStorage calls into components.
+-- **State**: single Context + useReducer provider in `src/store/AppStore.tsx`. Every mutation is one reducer action; `SAVE_TASK` atomically rebuilds a task's assignments and workload entries (preserving existing blocks' day positions); `SAVE_PROJECT` can atomically create a client via `newClientName`. **Activity-log rows are appended inside the same action** (`withActivity`) so the log can't drift. State persists on every action.
+-- **All reads go through pure selectors** in `src/store/selectors.ts` so views can never disagree.
+-- **Dates are `'yyyy-MM-dd'` strings everywhere.** Parsed at local noon (`src/utils/dates.ts` → `parseDate`). Never store `Date` objects or ISO datetimes for calendar dates. (Comment/activity timestamps are ISO strings — those are fine.)
++- **No backend.** Persistence is localStorage under key `n2hub.data.v1` with legacy fallbacks for `n2ub.data.v1` and `n2click.data.v1` (payload is versioned — currently `version: 4`), wrapped entirely in `src/store/storage.ts`, which owns all migrations: **v1→v2** (task `project` labels → real Projects under an "N2 Media" client; people name-split + capacity/admin defaults; workload `sortIndex` assignment) and **v3→v4** (`ensureStartMinutes` — idempotent pass run on every load that gives blocks missing/invalid `startMinutes` a sequential stack from 08:00 in `sortIndex` order, and snaps off-grid values). The planned extension path is swapping that one module for an API — never scatter direct localStorage calls into components.
++- **State**: single Context + useReducer provider in `src/store/AppStore.tsx`. Every mutation is one reducer action; `SAVE_TASK` atomically rebuilds a task's assignments and workload entries (preserving existing blocks' day positions and start times); `SAVE_PROJECT` can atomically create a client via `newClientName`; `SET_BLOCK_TIME` moves/resizes one block (validates 15-min grid, day bounds, same-person collision, 92-day task cap — returns state unchanged on any violation). **Activity-log rows are appended inside the same action** (`withActivity`) so the log can't drift. State persists on every action.
++- **All reads go through pure selectors** in `src/store/selectors.ts` so views can never disagree. Time math lives in the pure, dependency-free `src/utils/time.ts` (`MINUTE_STEP=15`, `HOURS_STEP=0.25`, `WORKDAY_START_MIN=480`, overlap/stacking/packing helpers) — reuse it, don't duplicate it.
++- **Dates are `'yyyy-MM-dd'` strings everywhere.** Parsed at local noon (`src/utils/dates.ts` → `parseDate`). Never store `Date` objects or ISO datetimes for calendar dates. (Comment/activity timestamps are ISO strings — those are fine.) Time-of-day is **only** `WorkloadEntry.startMinutes` — never a datetime.
+ - **Weeks start Monday** throughout (`weekStartsOn: 1`).
+ 
+ ## Data model & invariants (src/types.ts)
+ 
+ - `Client { id, name*, archived }` · `Department { id, name }` · `ServiceType { id, name }`
+-- `Status { id, name*, slug, color, order, archived }` — shared pipeline for projects AND tasks; defaults seeded: To do → Work in progress → Accept → Done.
++- `Status { id, name*, slug, color, order, archived }` — shared pipeline for projects AND tasks; defaults seeded: To do → Work in progress → Accept → Done (Polish names in seed).
+ - `Project { id, clientId, name*, description, statusId, paid, startDate, endDate, departmentId, serviceTypeId, createdAt, updatedAt }` — `paid` drives the gold/bronze coin.
+ - `Milestone { id, projectId, name, date }`
+ - `Task { id, projectId*, statusId, title*, description, startDate, endDate, estimatedHours|null, createdAt, updatedAt }`
+ - `Person { id, firstName*, lastName, name (derived display, kept in sync), email, role (job title), departmentId, avatar (emoji|''), capacity (h/day), isAdmin }`
+ - `TaskAssignment { id, taskId, personId }`
+-- `WorkloadEntry { id, taskId, personId, date, plannedHours, sortIndex }` — `sortIndex` orders blocks WITHIN one person's day (calendar insert before/after).
++- `WorkloadEntry { id, taskId, personId, date, plannedHours, startMinutes, sortIndex }` — `startMinutes` = minutes from midnight (multiple of 15; block must fit inside 0–1440); `sortIndex` orders blocks WITHIN one person's day and **equals the rank by `startMinutes`**.
++- `SavedFilter { id, name, page: 'projects'|'tasks', criteria }` — named filter presets.
+ - `Comment { id, entityType: 'project'|'task', entityId, authorId, body, mentionIds, createdAt }` · `ActivityEvent { …, actorId, message, createdAt }`
+ 
+ Hard invariants:
+ 1. **Hours exist only as explicit per-person per-day `WorkloadEntry` rows.** A task's/project's total is derived (`taskPlannedTotal` / `projectPlannedTotal`), never stored, and is NEVER auto-split among assignees.
+ 2. Entries are stored only when `plannedHours > 0`; a missing entry means 0h. Zero-hour days still belong to the task period — the period is defined by `startDate`/`endDate`, not by which days have entries.
+-3. Overload = a person's total across ALL tasks on one date **> their daily `capacity`** (default 8h, `DEFAULT_CAPACITY` in storage; `personCapacity` selector). It's a warning (red tint/marker/⚠), it never blocks input.
+-4. Task period is capped at 92 days; hours are 0–24 in 0.5 steps; `endDate >= startDate`; title/name required. Every task belongs to an existing project; a workload entry's person is always assigned to its task, and its date is inside the task period (INSERT_BLOCK auto-assigns / extends the period to keep this true).
++3. Overload = a person's total across ALL tasks on one date **> their daily `capacity`** (default 8h, `DEFAULT_CAPACITY` in storage; `personCapacity` selector). It's a warning (danger tint/marker/⚠), it **never blocks input**. The only thing that *blocks* is a same-person time overlap, and only in the calendar drag/resize path (`SET_BLOCK_TIME`); editor hour edits may create overlaps, which the week view renders side-by-side.
++4. Task period is capped at 92 days; hours are 0–24 in **0.25 steps** (`snapHours` — write paths snap silently); `startMinutes` is a multiple of 15 and the block fits within the day; `endDate >= startDate`; title/name required. Every task belongs to an existing project; a workload entry's person is always assigned to its task, and its date is inside the task period (INSERT_BLOCK and cross-day SET_BLOCK_TIME auto-assign / extend the period to keep this true).
+ 5. Deletes cascade behind `window.confirm`: task → assignments + entries + its comments/activity; person → assignments + entries; project → tasks + all of the above + milestones; client → its projects (full chain). Statuses are archive-first — delete is refused while referenced.
+ 6. Person colors come from one shared helper `personColor(id)` (`src/utils/colors.ts`), assigned by stable list order (id-hashing collided; don't revert to it). Same color for a person in every view. Status colors live on the Status row; paid/unpaid uses the `Coin` component only.
+-7. `sortIndex` is contiguous per (person, date) — mutations that move blocks between days go through `reindexDays` in AppStore.
++7. `sortIndex` is contiguous per (person, date) and equals time order — mutations that move blocks between days or times go through `reindexDays` in AppStore (it sorts by `(startMinutes, sortIndex)` before renumbering).
+ 
+-## File map
+-
+-- `src/App.tsx` — router + header/nav + "Acting as" switcher. `src/main.tsx` — entry (BrowserRouter with v7 future flags — keep them).
+-- Pages: `DashboardPage`, `ProjectsPage` (also exports `PaidFilterToggle`), `ProjectDetailPage` (inner component keyed by project id so drafts reset), `KanbanPage`, `TimelinePage` (drag `Bar` + `MilestoneMark`), `TasksPage`, `TaskEditorPage`, `CalendarPage`, `PeoplePage`, `PersonProfilePage` (keyed like project detail), `WorkloadPage`, `AdminPage`.
+-- Components: `AllocationGrid` (rows = days, columns = assignees, per-person-capacity overload tinting), `WeekView` (ordered blocks + right-click insert context menu), `MonthView`, `PersonFilter`, `PersonChip`, `SampleBanner`, `Coin` (gold/bronze SVG, optional toggle button), `StatusBadge`, `Avatar`, `CommentsPanel` (comments/activity tabs, `parseMentions` matches `@First` / `@First Last`).
+-- `src/store/seed.ts` — sample data relative to today: 2 clients, 3 projects across the pipeline (paid + unpaid), 4 tasks, 3 people (Kasia = admin = default acting user), milestones, comments with an @mention, a zero-hour gap day, and an over-capacity day.
+-- `src/styles.css` — ALL styling (light theme, CSS variables; v2 additions appended at the bottom).
+-
+-## ⚠️ Next major task: restyle to the N2 Media brand
+-
+-The current UI is a neutral **light** theme. The target is the official N2 Media brand: **dark, violet/lavender, glassmorphism**. Two sources of truth, in this order:
++Known issue (pre-existing, needs a design decision before fixing): `SAVE_TASK`'s allocation rebuild is keyed by `personId|date`, so two blocks of the same task+person+day collapse into one when the task is saved through the editor. The timed calendar makes multi-block days likelier — if asked to fix, plan it as its own package (multi-cell support vs duplicate prevention).
+ 
+-### 1. Style guide CSS (in this repo): `n2media-agency-dashboard-style.css`
+-
+-Authoritative token set and component patterns, observed from n2media.agency. Key facts:
+-- Brand colors: `#7000ff` violet, `#c496ff` lavender, `#1e1e1e` charcoal, cosmic dark gradient `#1c1c1c → #3c005e`, translucent white glass surfaces. `color-scheme: dark`.
+-- All tokens are prefixed `--n2-*` (colors, spacing `--n2-space-*`, radii `--n2-radius-*`, type scale `--n2-type-*`, shadows, glass blur, gradients). Fonts via Google Fonts import: Plus Jakarta Sans (sans), Inter (data/numbers, tabular-nums), Fragment Mono (labels/uppercase kickers), Orbitron (display/brand only).
+-- Ready-made component classes to map onto the app: `.n2-shell` (280px sidebar + main grid — good fit for the 9-item nav), `.n2-sidebar`, `.n2-topbar`, `.n2-nav-item` (pill nav), `.n2-card` / `.n2-card--compact` / `.n2-glass-card` / `.n2-ambient-card` (hero), `.n2-button--primary/soft/ghost` (pill, lavender primary), `.n2-chip` (with `aria-pressed` — person filter chips), `.n2-table` (min-width 760 + `.n2-table-wrap` scroll — AllocationGrid AND the workload table), `.n2-field`/`.n2-input`/`.n2-select`/`.n2-textarea`/`.n2-help` (forms), `.n2-status[data-tone]` (map pipeline status badges), `.n2-delta[data-tone]`, `.n2-progress` (workload load bars), `.n2-empty` (dashed empty states), `.n2-kicker`/`.n2-title`/`.n2-subtitle`.
+-- Semantic tones: success `#b9ff4d` (lime), info `#5bdcff`, warning `#ffc857`, danger `#ff4f72` (each with a `-soft` translucent bg). **Use `--n2-danger` for overload markers/tinting** instead of the current reds.
+-- Breakpoints: 1180px (sidebar collapses, nav becomes 4-col) and 760px (single column, horizontal-scroll nav). `prefers-reduced-motion` handled — keep it.
+-
+-v2 surfaces that ALSO need dark-theme treatment: kanban columns/cards, timeline tracks (weekend stripes, today line, bars, milestone diamonds), context menu, comments panel, dashboard cards, coin contrast on dark, status colors legibility (statuses store their own hex — re-seed defaults with brand-compatible hues), month-cell occupancy shading (translucent lavender/violet instead of green tints). **Person colors must stay distinguishable on dark surfaces** — re-pick the palette in `src/utils/colors.ts` against `--n2-surface`, and check the danger tint is not confusable with a person color.
++## File map
+ 
+-### 2. Figma: N2 Media design system (via the Figma MCP plugin)
++- `src/App.tsx` — router + sidebar nav (with `GlobalSearch`, "Występuj jako" switcher, mobile hamburger) + `TaskModal` mount. `src/main.tsx` — entry (BrowserRouter with v7 future flags — keep them).
++- Pages: `DashboardPage`, `ProjectsPage` (also exports `PaidFilterToggle`), `ProjectDetailPage` (inner component keyed by project id so drafts reset), `KanbanPage`, `TimelinePage` (drag `Bar` + `MilestoneMark`, zoom), `TasksPage`, `CalendarPage`, `PeoplePage`, `PersonProfilePage` (keyed like project detail), `WorkloadPage`, `AdminPage`. (There is no TaskEditorPage — the editor is `TaskModal`.)
++- Components: `AllocationGrid` (rows = days, columns = assignees, per-person-capacity overload tinting, 0.25h inputs), `WeekView` (timed grid: hour axis, `TimedBlock` pointer drag/move/resize, collision tint, right-click insert context menu), `MonthView`, `TaskModal`, `GlobalSearch`, `FilterPresets`, `SaveStatus` (dirty/saved indicator), `PersonFilter`, `PersonChip`, `SampleBanner`, `Coin` (gold/bronze SVG, optional toggle button), `StatusBadge`, `Avatar`, `CommentsPanel` (comments/activity tabs, `parseMentions` matches `@First` / `@First Last`), `icons.ts`.
++- `src/utils/time.ts` — ALL time-of-day math (steps, overlap, collision, stacking, packing). `src/utils/dates.ts` — calendar-date parsing/format. `src/utils/colors.ts` — person palette.
++- `src/store/seed.ts` — sample data relative to today: 2 clients, 3 projects across the pipeline (paid + unpaid), 4 tasks, 3 people (Kasia = admin = default acting user), milestones, comments with an @mention, a zero-hour gap day, and an over-capacity day (Marek: 8:00–14:00 + 14:00–18:00). Blocks get realistic `startMinutes` via `nextFreeStart`.
++- `src/styles.css` — ALL styling: **dark N2 Media brand theme** (violet `#7000ff` / lavender `#c496ff`, glass surfaces, `--n2-*` tokens; token reference in `n2media-agency-dashboard-style.css`). Use `--n2-danger` for overload/danger tints; semantic tones success/info/warning/danger each have a `-soft` translucent bg. Breakpoints 1180px / 760px; `prefers-reduced-motion` handled — keep it. The week grid sets `user-select: none` (selectable text hijacks pointer drags — don't remove it).
+ 
+-The workspace has a Figma MCP connection (`plugin:figma:figma`) with access to the N2 Media Figma account and design system. **As of 2026-07-07 it still requires OAuth authorization** — a non-interactive session cannot complete it; the user must authorize via `/mcp` in an interactive `claude` session (or claude.ai connector settings). Before relying on it, check whether the Figma tools respond; if not, tell the user it needs authorizing and fall back to the CSS guide above (the CSS is derived from the same brand and is sufficient for implementation).
++## Figma (optional design source)
+ 
+-When Figma access works, follow the skill protocol strictly:
+-- Load the `figma:figma-use` skill BEFORE any `use_figma` call (mandatory prerequisite).
+-- Use `get_design_context` / library search to pull real component specs, variables, and styles from the N2 design system rather than guessing.
+-- For pushing app screens back to Figma, load `figma:figma-generate-design`; for building/updating the token library, `figma:figma-generate-library`.
+-- Where Figma tokens and `n2media-agency-dashboard-style.css` disagree, ask the user which wins; absent an answer, the CSS file in this repo wins because it ships.
++The workspace has a Figma MCP connection (`plugin:figma:figma`) to the N2 Media design system. It may require OAuth (`/mcp` in an interactive session) — check whether the tools respond before relying on them; the shipped CSS tokens win over Figma when they disagree (absent an explicit user decision). Load `figma:figma-use` before any `use_figma` call; use `figma:figma-generate-design` / `figma:figma-generate-library` for pushing designs/tokens back.
+ 
+ ## Manual test checklist (must still pass after any change)
+ 
+-1. Fresh load (empty localStorage) → sample banner; "Load sample data" seeds 2 clients / 3 projects / 4 tasks / 3 people around today; "Acting as" defaults to Kasia (admin).
+-2. **Migration**: a `version: 1` payload in localStorage loads without data loss — project labels become Projects under an "N2 Media" client, first person becomes admin, blocks get `sortIndex`.
+-3. Create task: title/project/status/estimate, Mon–Fri period, assign a person, enter 0/0/6/4/2 → grand total 12h; save. Reopen → values round-trip; edit a cell → total updates; save persists. Zero-hour days stay inside the task period.
+-4. Projects: filters (paid/unpaid, client, status) narrow the list; detail card saves edits; coin click toggles paid everywhere (list, kanban, timeline, week blocks, dashboard); milestone add/date-change/remove works.
+-5. Comments: posting signs as the acting user; `@First` renders highlighted and lands in `mentionIds`; activity tab records status/paid/reschedule/comment events.
++1. Fresh load (empty localStorage) → sample banner; "Load sample data" seeds 2 clients / 3 projects / 4 tasks / 3 people around today; acting user defaults to Kasia (admin).
++2. **Migration**: a `version: 1` payload loads without data loss (project labels → Projects under an "N2 Media" client, first person admin, blocks get `sortIndex`); a `version: 3` payload gets `startMinutes` stacked from 08:00 in `sortIndex` order. Loading is idempotent.
++3. Create task (TaskModal): title/project/status/estimate, Mon–Fri period, assign a person, enter 0/0/6/4/2 → grand total 12h; save. Reopen → values round-trip; edit a cell → total updates; save persists. Zero-hour days stay inside the task period. Hours snap to 0.25 steps.
++4. Projects: filters (paid/unpaid, client, status) narrow the list and can be saved/applied as presets; detail card saves edits; coin click toggles paid everywhere (list, kanban, timeline, week blocks, dashboard); milestone add/date-change/remove works.
++5. Comments: posting signs as the acting user; `@First` renders highlighted and lands in `mentionIds`; activity tab records status/paid/reschedule/comment events (and block move/resize events).
+ 6. Kanban: drag a card between columns → status changes and persists; `/New status` quick-create appends a column (admin only).
+-7. Timeline: project/task bars render grouped by client; dragging a task ±N days moves its blocks with it (gap days preserved); edge-resize changes one end; milestones drag; overdue projects tinted.
+-8. Calendar week: blocks per person in `sortIndex` order; right-click → Add before/after → hours form warns when over capacity → inserted block lands at the right position and pushes ONLY that person's later blocks; month view: occupancy shading, person dots, overload marker, day click drills into week; person filter applies to both views.
++7. Timeline: project/task bars render grouped by client; zoom in/out; dragging a task ±N days moves its blocks with it (gap days preserved); edge-resize changes one end; milestones drag; overdue projects tinted.
++8. Calendar week (timed grid): blocks render at their `startMinutes` with height ∝ hours; grid auto-scrolls to ~7:00; drag a block ±1h in the same day → snaps to 15-min grid and persists; drag onto the same person's other block → danger tint and revert on drop (touching edges allowed); drag to a free slot on another day → moves, day totals update, task period extends if needed; edge-resize top/bottom in 15-min steps updates hours; overlapping blocks pack side-by-side; two consecutive drags on one block both register (text-selection guard); right-click → Dodaj przed/po → warns when over capacity → inserted block lands adjacent to the clicked block and pushes only that person's overlapping later blocks; month view: occupancy shading, person dots, overload marker, day click drills into week; person filter applies to both views.
+ 9. Workload: assigned vs available uses per-person capacity; overload cells flagged; department filter narrows people; client/service filters narrow counted hours.
+-10. Admin: gated for non-admins ("Acting as" someone without the flag); status reorder/archive/restore works; delete disabled while a status is referenced; clients/departments/service types CRUD (client delete cascade behind confirm).
++10. Admin: gated for non-admins (acting as someone without the flag); status reorder/archive/restore works; delete disabled while a status is referenced; clients/departments/service types CRUD (client delete cascade behind confirm).
+ 11. People: add with all profile fields; profile page shows week load, projects, tasks; delete cascades (confirm).
+ 12. Validation: empty title, end-before-start, and missing project all block save with inline errors.
+-13. Browser reload → everything persists. Console free of errors and warnings.
++13. Browser reload → everything persists. `npm test` green. Console free of errors and warnings.
+ 
+ ## Scope guardrails
+ 
+-Out of scope (intentionally, do not add without an explicit ask): backend/auth/multi-user sync, file attachments (comments mention "later" — still not built), notifications, billing/invoicing beyond the paid flag, timers/time tracking, task dependencies, automations, advanced reporting, deliverables layer, separate content calendar, free-form tag categories (tags are ONLY department/client/service type by design). The most valuable next functional step after the restyle is replacing `storage.ts` with a small API for shared team data.
++Out of scope (intentionally, do not add without an explicit ask): backend/auth/multi-user sync, file attachments (comments mention "later" — still not built), notifications, billing/invoicing beyond the paid flag, timers/time tracking, task dependencies, automations, advanced reporting, deliverables layer, separate content calendar, free-form tag categories (tags are ONLY department/client/service type by design), keyboard-drag a11y for calendar blocks (known accepted gap). The most valuable next functional step is replacing `storage.ts` with a small API for shared team data.
+diff --git a/handoffs/RUN-STATE.md b/handoffs/RUN-STATE.md
+index 0cf318b..adea5a3 100644
+--- a/handoffs/RUN-STATE.md
++++ b/handoffs/RUN-STATE.md
+@@ -7,57 +7,80 @@ boring and factual — it's a checklist, not prose.
+ 
+ ---
+ 
+-## Run: 2026-07-08 — Timed week-view scheduling (Google-Calendar-style)
++## Run: 2026-07-08 — Unassigned bin + block split + sidebar collapse
+ 
+ ### Plan (architect)
+ 
+-- **Goal:** Add time-of-day scheduling to the calendar Week view: hour axis,
+-  blocks positioned/sized by start time + duration on a 15-min grid,
+-  pointer-drag to move (same day or cross-day) and edge-drag to resize, with
+-  same-person collision rejection (visual danger feedback, invalid drops
+-  revert). Capacity overload stays a warning, never a block.
+-- **Codebase note for reviewer:** CLAUDE.md remains partially stale — dark
+-  `--n2-*` restyle done, `TaskModal` replaced TaskEditorPage, UI is Polish,
+-  icons via `src/components/icons.ts`, `motion` is a dependency,
+-  `savedFilters`/`REASSIGN_ENTRY` exist. Packages reflect real code.
++- **Goal:** (1) Per-person "Zasobnik" (bin) of dateless workload entries,
++  rendered as an 8th column in the calendar week grid behind horizontal scroll
++  (Mon–Fri fill the visible width, weekend + bin scroll in from the right);
++  bin blocks drag onto the grid (assign date+time) and grid blocks drag into
++  the bin; the task editor can add hours to the bin. (2) Context-menu split
++  (halves/quarters — split-off parts become bin entries) and calendar-resize
++  shrink returns the freed hours to the bin. (3) Sidebar collapse to ~80px
++  (icon-only) with a persisted, device-local preference.
+ - **Key decisions (pre-resolved, no open questions):**
+-  - `WorkloadEntry.startMinutes: number` (minutes from midnight, multiple of
+-    15, block fits 0–1440). `DATA_VERSION` 3 → 4; idempotent
+-    `ensureStartMinutes` pass in `loadData` stacks legacy entries per
+-    (person, day) from 08:00 in `sortIndex` order.
+-  - `sortIndex` KEPT but derived from time order: `reindexDays` now sorts by
+-    `(startMinutes, sortIndex)` and renumbers — invariant 7 (contiguous per
+-    person/day) holds and equals time rank.
+-  - Hours granularity: ONE rule — multiples of 0.25 h in [0.25, 24]
+-    everywhere (AllocationGrid + insert form move from step 0.5 to 0.25).
+-  - One new action `SET_BLOCK_TIME { entryId, date, startMinutes, plannedHours }`
+-    handles move AND resize; reducer validates grid/range/collision/92-day
+-    task cap and returns state unchanged on rejection; activity via
+-    `withActivity`; UI also pre-checks via new `blockCollides` selector.
+-  - New-entry start times: append-to-end-of-day (`nextFreeStart`); SAVE_TASK
+-    keeps existing cells' startMinutes; INSERT_BLOCK becomes a ripple insert
+-    at ref start/end pushing only that person's later overlapping blocks;
+-    REASSIGN_ENTRY appends to the target's day end.
+-  - Non-calendar mutations MAY create same-person overlaps (task editor hour
+-    edits); the week grid renders overlaps side-by-side via a pure
+-    `packDayBlocks` packing helper. Only calendar drag/resize enforces
+-    no-overlap.
+-  - New pure module `src/utils/time.ts` (constants, snapping, formatting,
+-    collision, stacking, packing) — unit-testable; vitest introduced (node
+-    env, `npm test`) as the repo's first test setup.
+-- **Packages** (execution order):
+-  1. `PKG-20260708-timed-blocks-core` — types, v4 migration, utils/time.ts,
+-     selectors, reducer (`SET_BLOCK_TIME`, ripple INSERT_BLOCK, SAVE_TASK
+-     start rules, reindexDays), seed, step=0.25 inputs — tier: developer
+-  2. `PKG-20260708-week-timed-ui` — WeekView timed grid + drag/resize +
+-     collision feedback + context-menu preservation + CSS — tier: developer
+-     (depends: 1)
+-  3. `PKG-20260708-time-tests` — vitest setup + unit tests for utils/time.ts
+-     and SET_BLOCK_TIME/INSERT_BLOCK reducer behavior — tier: test-writer
+-     (depends: 1; parallel-safe with 2, owns package.json)
++  - **Sentinel, no migration:** `WorkloadEntry.date === ''` (`BIN_DATE`) means
++    unassigned. `DATA_VERSION` stays 4 — the JSON shape is unchanged and no v4
++    payload contains `''`; the idempotent `ensureStartMinutes` pass is extended
++    instead (bin entries → `startMinutes: 0`, contiguous per-bin `sortIndex`;
++    bin groups excluded from the 08:00 stacking rule).
++  - Bin invariants: `startMinutes: 0`; `sortIndex` contiguous per
++    `(personId, '')` (invariant 7 extends naturally — `dayKey(person, '')`
++    already works in `reindexDays`/`nextSortIndex`). Bin hours count in
++    task/project/person TOTALS but never in any per-date total or overload
++    (all day math filters by exact date equality — audited: selectors,
++    AllocationGrid, Dashboard/Workload/PersonProfile pages all safe untouched).
++  - Actions: `MOVE_BLOCK_TO_BIN {entryId}`; `SPLIT_BLOCK {entryId, parts: 2|4}`
++    (quarter-unit distribution, largest part stays scheduled on the original
++    entry: 1.25h halved → 0.75 stays + 0.5 to bin; min 0.25h/part else reject);
++    `DELETE_BLOCK {entryId}` (bin entries only, behind confirm in the UI);
++    `SET_BLOCK_TIME` gains shrink-to-bin (hours reduced ⇒ delta becomes a bin
++    entry — this makes "return to bin" calendar-resize-only by construction;
++    editor edits via SAVE_TASK never create bin entries; growing never consumes
++    bin hours) and already handles bin→grid drops (period extension + 92-day
++    cap apply). `SaveTaskPayload.newUnassigned` appends bin entries; SAVE_TASK's
++    rebuild passes existing bin entries through untouched (drops them only when
++    the person is unassigned) — this also means bin entries are exempt from the
++    known pre-existing `personId|date` collapse issue, which stays unfixed.
++  - Guards: MOVE_TASK skips bin entries; SET_TASK_DATES keeps them;
++    INSERT_BLOCK rejects a bin ref; REASSIGN_ENTRY appends to the target bin.
++  - Week grid: 52px axis + 8 equal columns; grid width
++    `calc((100% - 52px)/5*8 + 52px)` inside a horizontally scrollable wrapper;
++    axis sticky-left. Bin column = stacked per-person cards (not
++    time-positioned), week-independent. Context menu is one component, mode by
++    `isBinEntry`. Polish strings fixed in the packages ("Zasobnik",
++    "Podziel na pół", "Podziel na ćwiartki", "Usuń blok",
++    "Dodaj do zasobnika", activity: "…do zasobnika" / "…z zasobnika").
++  - Sidebar pref: new `src/utils/uiPrefs.ts` wrapping localStorage key
++    `n2hub.ui.v1` — an explicit, architect-approved exception to the
++    storage.ts-only rule (UI prefs are device-local and must not migrate to
++    the future API). Collapsed styles scoped to `@media (min-width: 1181px)`
++    so the 1180px strip and 760px drawer are untouched; GlobalSearch stays
++    mounted (Ctrl/Cmd+K keeps working), its trigger CSS-hidden when collapsed.
++  - Seed gains one 3h bin block (Ola, task 1) so the bin is visible in sample
++    data and browser QA.
++- **Packages** (execution order; waves are parallel-safe by disjoint files):
++  - Wave 1 (parallel):
++    1. `handoffs/packages/PKG-20260708-bin-core.md` — sentinel + normalize +
++       selectors + all reducer changes + seed — tier: developer
++    2. `handoffs/packages/PKG-20260708-sidebar-collapse.md` — uiPrefs module,
++       App.tsx, sidebar CSS, icons — tier: developer (touches styles.css:
++       must NOT run concurrently with bin-week-ui)
++  - Wave 2 (parallel, after bin-core):
++    3. `handoffs/packages/PKG-20260708-bin-week-ui.md` — WeekView 8-col layout,
++       bin column + two-way drag, split/delete context menu, TaskModal bin
++       section, week-cal CSS — tier: developer (depends: bin-core)
++    4. `handoffs/packages/PKG-20260708-bin-tests.md` — reducer + storage tests
++       for all bin behavior — tier: test-writer (depends: bin-core; test files
++       only)
++- **Gates:** `npm run dev` walkthrough + `npx tsc --noEmit` + `npm test` +
++  `npm run build` all green before review; interactive drag criteria need a
++  human/dev-server browser pass (flag anything unverified in worker logs).
+ - **Open questions:** none blocking. Post-merge doc note for the human:
+-  CLAUDE.md invariant text ("0.5 steps", sortIndex wording, week-view
+-  description) needs refreshing once this lands — intentionally NOT part of
++  CLAUDE.md needs refreshing after this lands (WorkloadEntry `''` sentinel,
++  bin description in the Calendar section, new actions, `n2hub.ui.v1` key,
++  sidebar collapse, manual-checklist additions) — intentionally NOT part of
+   any worker package.
+ 
+ ### Worker log
+@@ -72,185 +95,166 @@ boring and factual — it's a checklist, not prose.
+ - **Next:** <hand to which tier / ready for review / done>
+ -->
+ 
+-#### 2026-07-08 · developer · `PKG-20260708-timed-blocks-core`
++#### 2026-07-08 · developer · `PKG-20260708-sidebar-collapse`
+ 
+ - **Changed:**
+-  - `src/utils/time.ts` (NEW) — pure time math: constants, snap/clamp/format,
+-    `rangesOverlap`/`hasCollision`, `stackStartTimes`, `nextFreeStart`,
+-    `packDayBlocks`; no React/date-fns/state imports.
+-  - `src/types.ts` — `WorkloadEntry.startMinutes: number` (required) + invariant comment.
+-  - `src/store/storage.ts` — `DATA_VERSION = 4`; `ensureStartMinutes(data)` normalize
+-    pass wired into every `loadData` path (v1 + v<4 + valid); migrateV1 emits sentinel
+-    `startMinutes: -1` for restacking.
+-  - `src/store/seed.ts` — `addWork` stacks `startMinutes` from 08:00 per person/day
+-    via `nextFreeStart` (Marek Wed = 8:00–14:00 then 14:00–18:00).
+-  - `src/store/AppStore.tsx` — `reindexDays` sorts by `(startMinutes, sortIndex)`;
+-    `saveTask` keeps kept cells' start/sortIndex + appends new cells; `insertBlock`
+-    is now a ripple insert (ref start/end + forward sweep, reindex); `reassignEntry`
+-    appends to target day end; new `SET_BLOCK_TIME` action + handler (validation,
+-    collision reject, 92-day period extend, activity).
+-  - `src/store/selectors.ts` — `blockEnd(entry)`, `blockCollides(...)`; `blocksForPersonDate`
+-    still sorted by sortIndex (now == time order).
+-  - Step attrs → 0.25: `AllocationGrid` cell input, `WeekView` insert-form (`min`+`step`),
+-    `TaskModal` estimate input. (Capacity inputs in People pages left at 0.5 — not in
+-    package's file list, capacity is a distinct concept.)
+-- **Tests:** `npx tsc --noEmit` → No errors; `npm run build` → built OK, no new warnings.
+-  (Unit tests are PKG-20260708-time-tests.)
++  - `src/utils/uiPrefs.ts` (new) — device-local UI prefs behind localStorage key
++    `n2hub.ui.v1`; `loadUiPrefs`/`saveUiPrefs`, both try/catch-safe. Does not
++    touch storage.ts.
++  - `src/components/icons.ts` — added `ChevronsLeft` / `ChevronsRight` exports.
++  - `src/App.tsx` — `collapsed` state seeded from `loadUiPrefs()`, persisted in
++    the toggle handler (no effect); root class gains ` sidebar-collapsed`;
++    brand row now holds a `.sidebar-toggle` (Zwiń/Rozwiń menu); nav labels
++    wrapped in `<span className="nav-label">` + unconditional `title={label}`;
++    acting-as block gains a collapsed avatar shortcut (Avatar / Users fallback)
++    that expands the sidebar.
++  - `src/styles.css` — base styles for `.app-brand-row`, `.sidebar-toggle`,
++    `.acting-as-wrap`, `.acting-as-collapsed`; toggle+avatar hidden ≤1180px;
++    new `@media (min-width: 1181px)` block with all `.sidebar-collapsed` rules
++    (80px grid col, centered brand mark, hidden brand name, icon-only nav,
++    hidden search trigger, select→avatar swap, grid-col transition).
++- **Tests:** `npx tsc --noEmit` → clean; `npm test` → 37 passed (3 files).
++  Skipped `npm run build` per launcher instruction (reviewer owns it;
++  concurrent store edits could fail an unrelated build).
++- **Deviation:** Decision 4 suggested conditional JSX on `collapsed` for the
++  acting-as block. Used CSS-only visibility toggle instead (both the avatar
++  button and the select are always rendered, gated by the min-width:1181px
++  scope). Reason: conditional JSX would swap the control at ≤1180px too when
++  the collapsed pref is set, violating the "≤1180px identical with the pref set
++  either way" acceptance criterion. CSS scoping keeps the strip/drawer
++  pixel-identical. All other decisions followed verbatim.
+ - **Still broken:** nothing.
+-- **Next:** ready for `PKG-20260708-week-timed-ui` (developer) + `PKG-20260708-time-tests`
+-  (test-writer); then reviewer.
++- **Next:** ready for review. Interactive/responsive criteria (collapse at
++  >1180px, Ctrl/Cmd+K while collapsed, avatar-click expand, reload persistence,
++  ≤1180px + ≤760px parity) need a dev-server browser pass — not verifiable from
++  CLI here.
+ 
+-#### 2026-07-08 · test-writer · `PKG-20260708-time-tests`
++#### 2026-07-08 · developer · `PKG-20260708-bin-core`
+ 
+ - **Changed:**
+-  - `package.json` — added devDependency `vitest@^4.1.10`; new script `"test": "vitest run"` (existing scripts untouched).
+-  - `package-lock.json` — updated by `npm install --save-dev vitest`.
+-  - `vitest.config.ts` (NEW) — `test: { environment: 'node', include: ['src/**/*.test.ts'] }`, no `globals`.
+-  - `src/utils/time.test.ts` (NEW) — 17 tests covering `snapToStep`, `formatMinutes`, `rangesOverlap`, `hasCollision` (incl. `excludeId`), `stackStartTimes` (incl. 24:00-clamp quirk), `nextFreeStart` (empty day / snap-up / end-clamp), `packDayBlocks` (empty / non-overlap / overlap-cols / transitive chain).
+-  - `src/store/blockActions.test.ts` (NEW) — 15 tests against `reducer` from `src/store/AppStore.tsx`: `SET_BLOCK_TIME` happy-path same-day move (sortIndex re-rank + 1 activity row), cross-day move (date update, contiguous sortIndex both days, task period extends), 5 rejection cases (same-person overlap, off-grid start, non-0.25 hours, past-24:00, unknown entryId — all assert `toBe(state)` reference equality), cross-person non-collision; `INSERT_BLOCK` przed/po placement + ref push, large-gap block untouched, other person's entry untouched (`toEqual` unchanged), auto-assign on insert.
+-- **Tests:** `npm test` → 2 files, **32/32 passed**. `npx tsc --noEmit` → no errors. `npm run build` → succeeds (492KB bundle, unchanged shape).
+-- **Core-package gaps found:** none — every exported name in `src/utils/time.ts` and both reducer actions matched the package's described signatures/behavior on first read; no app source files were touched.
+-- **Deviations/notes:** none from spec. One authoring mistake caught by the test run itself (an initial "happy path" fixture used a non-15-min-grid `startMinutes`, which the reducer correctly rejected) — fixed the fixture, not the assertion.
++  - `src/utils/time.ts` — added `BIN_DATE = ''` sentinel + `isBinEntry()`.
++  - `src/types.ts` — documented the `''` bin sentinel on `WorkloadEntry`
++    (date / startMinutes:0 / sortIndex ordering). No field added or removed.
++  - `src/store/storage.ts` — `ensureStartMinutes` now excludes bin groups from
++    08:00 stacking; normalizes bin entries to `startMinutes:0` + contiguous
++    per-bin `sortIndex`; still idempotent + same-reference on no change.
++  - `src/store/AppStore.tsx` — `SaveTaskPayload.newUnassigned`; `saveTask`
++    passes bin entries through (kept if person still assigned, dropped if not)
++    and appends `newUnassigned` bin hours; new actions `MOVE_BLOCK_TO_BIN`,
++    `SPLIT_BLOCK` (2|4, quarter-unit split, largest part stays), `DELETE_BLOCK`
++    (bin-only); `SET_BLOCK_TIME` shrink-to-bin + dedicated bin→grid activity
++    string; guards on `moveTask`/`setTaskDates`/`insertBlock`/`reassignEntry`.
++    All new activity strings verbatim from the package.
++  - `src/store/selectors.ts` — `binEntriesForPerson`, `binEntriesForTask`,
++    `binTotalForPerson`.
++  - `src/store/seed.ts` — `addBinWork` helper; one 3h bin block for Ola on t1.
++- **Tests:** `npx tsc --noEmit` clean; `npm test` → 37/37 pass (unchanged);
++  `npm run build` → success (package listed build in its Tests command).
++- **Deviations:** none. Left the existing `REASSIGN_ENTRY` activity string as-is
++  (package specifies no new string for it; for a bin entry it renders `()` for
++  the empty date — cosmetic, unchanged by design). Did not touch App.tsx /
++  styles.css / uiPrefs.ts (concurrent sidebar package).
+ - **Still broken:** nothing.
+-- **Next:** ready for Codex review / reviewer, once `PKG-20260708-week-timed-ui` also lands.
++- **Next:** ready for Wave 2 — `PKG-20260708-bin-week-ui` (UI) and
++  `PKG-20260708-bin-tests` (test-writer) can build on these actions/selectors.
+ 
+-#### 2026-07-08 · developer · `PKG-20260708-week-timed-ui`
++#### 2026-07-08 · test-writer · `PKG-20260708-bin-tests`
+ 
+ - **Changed:**
+-  - `src/components/WeekView.tsx` — full rewrite of the grid + interactions. New
+-    `.week-cal` layout: sticky day headers (totals + ⚠ overload names kept), a
+-    52px left hour axis (0:00–23:00 labels), 7 day columns (1152px = 24×48px)
+-    inside a `max-height:70vh` scroll wrapper that auto-scrolls to 07:00 on mount.
+-    New `TimedBlock` component (pointer-capture drag, TimelinePage `Bar` pattern):
+-    move (vertical→time 15-min snap, horizontal→day column via grid rect),
+-    top-edge resize (start moves, end fixed), bottom-edge resize (hours only);
+-    live `blockCollides` check adds `.colliding` danger tint; drop dispatches ONE
+-    `SET_BLOCK_TIME`, reverts on collision, treats no-move as a click (opens task).
+-    Escape / `onPointerCancel` cancel the drag. Blocks pack side-by-side via
+-    `packDayBlocks`; show coin + title + `H:mm–H:mm` range + person dot/name/hours.
+-    Context menu (Dodaj przed/po, overload warning, INSERT_BLOCK) preserved
+-    verbatim; drag guarded to primary button so right-click still opens the menu.
+-  - `src/styles.css` — replaced the `.week-*` section (grid template
+-    `52px repeat(7,1fr)`, sticky headers, hour+half-hour lines via
+-    repeating-linear-gradient, absolute-positioned blocks, `.dragging`/`.colliding`,
+-    6px `ns-resize` handle strips, `touch-action:none`). 760px media query now
+-    horizontal-scrolls the grid (min-width 720px) instead of collapsing to 1 col.
+-  - `src/pages/CalendarPage.tsx` — unchanged (confirmed: `Props { state, anchor,
+-    filter }` kept identical).
+-- **Tests:** `npx tsc --noEmit` → No errors; `npm run build` → built OK (492KB
+-  JS / 52.6KB CSS, no new warnings). package.json NOT touched.
+-- **Could not verify without a browser:** the interactive acceptance items
+-  (drag/resize persistence + reload, side-by-side render on cross-person overlap,
+-  collision revert, scroll-to-7 on mount, overload ⚠ on resize). Logic follows the
+-  package decisions and the store/selectors are the source of truth for all drops.
+-- **Deviations:** blocks are now `div[role=button]` (was `<button>`) because the
+-  two resize handles are nested interactive elements — a button can't contain them.
+-- **Known gap (per package):** no keyboard-drag a11y — blocks stay
+-  click-to-open / Enter-to-open only.
+-- **Still broken:** nothing.
+-- **Next:** ready for Codex review / reviewer.
+-- **Follow-up (browser QA fix):** added `user-select: none` (+ `-webkit-`) to
+-  `.week-cal-grid` in `src/styles.css` — a drag across a block used to select its
+-  text and hijack the next drag into a native text-drag. `tsc` clean, `npm test`
+-  37/37, `npm run build` OK.
+-
+-### Reviewer verdict
+-
+-<!-- Reviewer appends here after workers finish. -->
++  - `src/store/blockActions.test.ts` — added 20 `it`s across 8 new `describe`
++    blocks covering all bin-core reducer changes: `MOVE_BLOCK_TO_BIN` (bin
++    move + reindex + activity; no-op on already-bin/unknown id), `SPLIT_BLOCK`
++    (even halves, odd-quarter halves, quarters, splitting a bin entry,
++    too-small/unknown-id rejections), `DELETE_BLOCK` (delete + reindex; reject
++    dated/unknown), `SET_BLOCK_TIME` bin behavior (shrink-to-bin activity
++    string, plain move creates no bin entry, bin→grid drop with period
++    extension + reindex, bin→grid collision rejection), `SAVE_TASK` bin
++    behavior (existing bin entries survive/drop by assignment,
++    `newUnassigned` creates+snaps+skips), `MOVE_TASK`/`SET_TASK_DATES` bin
++    guards, `INSERT_BLOCK` bin-ref rejection.
++  - `src/store/storage.test.ts` — added 3 `it`s in a new
++    `ensureStartMinutes — bin normalization` describe: garbage
++    startMinutes/gappy sortIndex → `0`/contiguous, idempotence + same-reference
++    on a clean bin group, and proof the bin is excluded from 08:00 stacking
++    (contrasted against the existing dated-group stacking test).
++- **Tests:** `npm test` → 60/60 passed (37 existing + 23 new, 3 files);
++  `npx tsc --noEmit` → clean; `npm run build` → succeeds. (One transient tsc
++  run mid-session showed 5 unused-var errors in `WeekView.tsx` — the
++  concurrent `bin-week-ui` developer's in-progress edit at that moment, not
++  caused by these test files; a re-run after their next save was clean. Not
++  investigated further per the "don't touch WeekView.tsx" instruction.)
++- **Deviations/gaps found in bin-core:** none. Implementation in
++  `src/store/AppStore.tsx` matches PKG-20260708-bin-core's spec exactly on
++  every case in scope: split rounding (largest part stays), shrink-to-bin
++  delta + Polish activity suffix, bin→grid activity string, all four guards
++  (`moveTask`/`setTaskDates`/`insertBlock`/`reassignEntry` — `reassignEntry`
++  not covered here, out of this package's scope list), and
++  `ensureStartMinutes`'s bin exclusion from 08:00 stacking. No implementation
++  files modified.
++- **Skipped/not written:** none of the 19 in-scope cases were skipped; wrote
++  20 `it`s for the 16 blockActions.test.ts cases (some cases split into 2
++  `it`s for clarity, e.g. SET_BLOCK_TIME bin→grid happy-path vs its collision
++  rejection) and 3 for the 3 storage.test.ts cases.
++- **Next:** ready for review alongside `PKG-20260708-bin-week-ui`.
+ 
+-#### 2026-07-08 · reviewer · verdict
+-
+-- **Status:** approve-with-nits
+-- **Verified myself:** `npx tsc --noEmit` clean; `npm run build` OK (492.35KB JS /
+-  52.64KB CSS); `npm test` 32/32. Diff read structurally against all three
+-  packages + CLAUDE.md invariants.
+-- **Blockers:** none.
+-- **Nits / follow-ups (non-blocking):**
+-  1. [P1, PRE-EXISTING — route to ARCHITECT for a follow-up package]
+-     `src/components/TaskModal.tsx:297` + `src/store/AppStore.tsx:273` — the
+-     editor's allocation map and SAVE_TASK's `oldPos` are keyed `personId|date`,
+-     so two same-task/person/date blocks (creatable via the insert menu, whose
+-     task picker defaults to the ref block's task) collapse to one on task save
+-     — silent hours loss. Verified identical at HEAD, so NOT introduced by this
+-     run, but the timed view makes multi-block days more likely. Needs a design
+-     decision (support multiple cells vs. prevent duplicates) — not a mechanical
+-     dev fix.
+-  2. [P3 — route to DEVELOPER] Off-grid planned hours (typed, e.g. 1.3 —
+-     `step=0.25` is UI-only) persist via SAVE_TASK/INSERT_BLOCK
+-     (`src/components/WeekView.tsx:317-326`, `src/store/AppStore.tsx:474`) and
+-     then `SET_BLOCK_TIME` (`src/store/AppStore.tsx:615`) rejects every drag of
+-     that block silently. Suggested: snap/validate hours in the write paths.
+-     (`ensureStartMinutes` heals startMinutes on reload but not hours.)
+-  3. [P3 — route to TEST-WRITER] No unit test for `ensureStartMinutes`
+-     (`src/store/storage.ts`) — the architect's declared riskiest area. It's
+-     exported; cheap to cover (v3 payload without startMinutes, invalid-group
+-     restack, idempotency). Package didn't require it, so gap not a violation.
+-  4. Interactive acceptance items (drag/resize persistence, collision revert,
+-     scroll-to-7:00, side-by-side render) unverified by any tier — human browser
+-     pass of the week-timed-ui criteria recommended before commit.
+-- **Codex findings (script ran OK this time — 4 findings, adjudicated):**
+-  - #1 TaskModal collapse → ACCEPTED as nit 1 (pre-existing, architect follow-up).
+-  - #2 "untracked files won't be committed" → DISMISSED as a code finding;
+-    valid process note: `git add` must include `src/utils/time.ts`,
+-    `src/utils/time.test.ts`, `src/store/blockActions.test.ts`, `vitest.config.ts`.
+-  - #3 INSERT_BLOCK end-of-day clamp overlap → DISMISSED: explicitly accepted in
+-    the architect's decisions (clamp rule; overlaps allowed for non-calendar
+-    mutations, rendered side-by-side). Same for `stackStartTimes` 24:00-clamp
+-    (test-writer's flag) — migration-only pathological >16h days, accepted.
+-  - #4 step=0.25 not enforced → ACCEPTED as nit 2.
+-- **Convention check:** PASS — no localStorage outside storage.ts; every
+-  mutation one reducer action with `withActivity`; reads via selectors; dates
+-  stay yyyy-MM-dd; overload warns, never blocks; deletes/cascades untouched;
+-  `reindexDays` keeps sortIndex contiguous (== time rank); plain CSS with
+-  `--n2-*` tokens incl. `--n2-danger` for collision; pointer events, no drag
+-  lib; only new dep is vitest (dev). Deviations accepted: capacity inputs stay
+-  step 0.5 (capacity ≠ planned hours); block is `div[role=button]` (nested
+-  resize handles); known gap: no keyboard-drag a11y (per package).
+-- **Test coverage:** adequate for utils/time.ts + SET_BLOCK_TIME/INSERT_BLOCK
+-  (real assertions incl. reference-equality rejection checks); gaps: migration
+-  normalize pass (nit 3), no UI tests (out of scope by design).
+-- **Next:** architect final eval → commit (include untracked files). CLAUDE.md
+-  refresh (0.5→0.25 wording, week-view description) stays a post-merge human task.
+-
+-#### 2026-07-08 · test-writer · follow-up (reviewer nit 3)
++#### 2026-07-08 · developer · `PKG-20260708-bin-week-ui`
+ 
+ - **Changed:**
+-  - `src/store/storage.test.ts` (NEW) — 5 tests for `ensureStartMinutes`:
+-    (a) a group with an invalid/missing `startMinutes` (sentinel `-1`, matching
+-    `migrateV1`'s own convention) gets fully restacked from 08:00 in `sortIndex`
+-    order, including the case where only ONE entry in the group is invalid but
+-    the whole group still restacks; (b) a fully valid, on-grid group is left
+-    untouched — asserted via `toBe(state)` reference equality, and a second
+-    pass on the result is also a no-op (idempotence); (c) an off-grid but
+-    in-range value (487) is snapped to the grid (480) without restacking its
+-    valid sibling; (d) a pathological >24h restacked day clamps the second
+-    block's start below where the first ends (240 < 1080 end) — asserted as
+-    the implemented/accepted behavior per the reviewer's note, not treated as
+-    a bug.
+-- **Tests:** `npm test` → 3 files, **37/37 passed** (32 pre-existing + 5 new).
+-  `npx tsc --noEmit` → no errors. `npm run build` → succeeds, bundle shape
+-  unchanged.
+-- **Concurrent-edit check:** re-ran the full existing suite before and after
+-  adding the new file while `PKG-20260708-week-timed-ui`'s AppStore.tsx edits
+-  were landing; all 32 pre-existing tests still passed unchanged — no stale
+-  hours-snapping assertions found, nothing needed updating.
++  - `src/components/WeekView.tsx` — 8-column layout (`GRID_COLS=8`,
++    `BIN_COL_INDEX=7`, inline grid template `52px repeat(8, …)`); `TimedBlock`
++    day projection now clamps 0..7 (`colWidth` `/7`→`/8`), index 7 = bin →
++    `to-bin` tint + `MOVE_BLOCK_TO_BIN` on drop (collision check skipped there);
++    new `BinCard` component (pointer-drag a dateless block onto a day column via
++    `gridRef`+`bodyRef` geometry → `SET_BLOCK_TIME`, live `blockCollides` tint,
++    Escape/cancel/revert, click opens task); new bin header + bin body column
++    (per-person stacked groups, filtered, `Brak bloków bez terminu` empty state,
++    week-independent); context menu extended — one menu, mode by `isBinEntry`:
++    dated blocks get `Dodaj przed/po` + separator + `Podziel na pół`/`na ćwiartki`
++    (disabled <0.5h / <1h with the Polish title), bin cards get the two split
++    items + `Usuń blok` (danger, confirm). `bodyRef` attached to first day column.
++  - `src/components/TaskModal.tsx` — new `Zasobnik (bez terminu)` section between
++    assignees and the allocation grid: read-only existing-bin chips grouped per
++    still-assigned person + hint, add-row (assignee select + 0.25-step hours +
++    `Dodaj do zasobnika`) feeding `pendingUnassigned` rendered as removable chips
++    (remove aria-label `Usuń`); `handleSave` passes `newUnassigned`;
++    `serializeDraft` includes `pendingUnassigned` (dirty tracking); estimate line
++    now `zaplanowano {dated}h (+ {bin}h w zasobniku)`.
++  - `src/styles.css` — week-cal: `.week-cal-scroll { overflow-x:auto }`,
++    `.week-cal-grid` width `calc((100% - 52px)/5*8 + 52px)`, sticky-left hour axis
++    + sticky corner, `.week-block.to-bin`, full `.week-bin-*` block; context-menu
++    separator/disabled/danger; task-modal `.bin-*` chip/add-row styles; 760px
++    query `min-width` 720px→820px. `user-select:none` on the grid kept.
++- **Key decisions (within package bounds):**
++  - Necessary in-scope correctness fix in TaskModal: the allocations-seeding loop
++    now excludes bin entries (`!isBinEntry(w)`) — otherwise bin entries (date `''`)
++    leaked into the allocation map via `allocKey(personId, '')`, inflating
++    `plannedTotalAll`/`outOfRangeCount`. No store change; TaskModal is in-scope.
++  - Bin-card drop geometry: x from `gridRef` rect (colWidth `/8`, valid day cols
++    0..6 only), y (0:00 origin) from the first day column's rect (`bodyRef`), so
++    it stays correct under vertical scroll. Dragged card floats via `transform`.
++  - Sticky-axis z-index: hour axis `z:5` (covers resting blocks `z:0`; a dragged
++    block `z:30`/bin card `z:40` still floats above), corner `z:9` highest.
++- **Tests:** `npx tsc --noEmit` clean; `npm test` → 60/60 pass (includes the
++  test-writer's bin tests); `npm run build` → success. The >500kB chunk warning
++  is pre-existing, not introduced here.
++- **Deviations:** none beyond the TaskModal seeding fix noted above. Did not
++  touch any store/selector/util/*.test.ts/sidebar files.
+ - **Still broken:** nothing.
+-- **Next:** ready for re-review / architect final eval.
++- **Reviewer should look closely at (interactive — needs a browser pass, not
++  CLI-verifiable):**
++  - Horizontal scroll: Mon–Fri fill width, Sat/Sun/Zasobnik scroll in from the
++    right; hour axis stays pinned; vertical auto-scroll to ~7:00 still fires.
++  - Bin→grid drag (seeded Ola 3h on t1): drop onto a free slot assigns date/time;
++    drop onto same-person block shows danger + reverts; drop on axis/header/bin
++    reverts. Grid→bin drag shows `to-bin` lavender tint and empties the day.
++  - Context menu split/delete on both dated and bin entries; disabled titles;
++    `Dodaj przed/po` still works on dated blocks only.
++  - Bottom-resize shrink returning hours to the bin re-renders the bin column.
++  - TaskModal: add-to-bin → chip + dirty; save carries `newUnassigned`; reopen
++    shows existing bin chips; estimate `(+ {n}h w zasobniku)`.
++  - ≤760px: all 8 columns ≥~96px, no overlap, no console errors/warnings.
++- **Next:** ready for review.
+ 
+-#### 2026-07-08 · developer · follow-up (reviewer nit 2 — off-grid hours on write)
++### Reviewer verdict
+ 
+-- **Changed:**
+-  - `src/utils/time.ts` — new `snapHours(h)` helper (rounds planned hours to the
+-    0.25h grid).
+-  - `src/store/AppStore.tsx` — `saveTask` and `insertBlock` snap `plannedHours`
+-    via `snapHours` before persisting (silent snap, no blocking error); the
+-    zero-guard now runs on the snapped value so a value rounding to 0 is dropped;
+-    INSERT_BLOCK activity message uses the snapped hours. Closes the loop where a
+-    typed off-grid value (e.g. 1.3) made every later `SET_BLOCK_TIME` drag reject
+-    silently. (Kept cells in SAVE_TASK still hold their existing start/sortIndex;
+-    only the persisted hours are now grid-safe.)
+-- **Tests:** `npx tsc --noEmit` → No errors; `npm test` → 3 files, **37/37 passed**;
+-  `npm run build` → built OK. Did NOT touch test files or package.json.
+-- **Still broken:** nothing. (Nit 1 = pre-existing architect decision; nit 3 now
+-  covered by test-writer above; nit 4 = human browser pass.)
+-- **Next:** ready for re-review / architect final eval.
++<!-- Reviewer appends here after workers finish. -->
+diff --git a/src/App.tsx b/src/App.tsx
+index 680733b..05da8a2 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -24,6 +24,7 @@ import { AdminPage } from './pages/AdminPage';
+ import { SampleBanner } from './components/SampleBanner';
+ import { TaskModal } from './components/TaskModal';
+ import { GlobalSearch } from './components/GlobalSearch';
++import { Avatar } from './components/Avatar';
+ import {
+   LayoutDashboard,
+   FolderKanban,
+@@ -36,8 +37,11 @@ import {
+   Settings,
+   Menu,
+   X,
++  ChevronsLeft,
++  ChevronsRight,
+ } from './components/icons';
+ import type { LucideIcon } from './components/icons';
++import { loadUiPrefs, saveUiPrefs } from './utils/uiPrefs';
+ 
+ const NAV: Array<[string, string, LucideIcon]> = [
+   ['/dashboard', 'Panel', LayoutDashboard],
+@@ -55,9 +59,25 @@ export function App() {
+   const { state, dispatch } = useStore();
+   const location = useLocation();
+   const [menuOpen, setMenuOpen] = useState(false);
++  const [collapsed, setCollapsed] = useState(() => loadUiPrefs().sidebarCollapsed);
+   const hamburgerRef = useRef<HTMLButtonElement>(null);
+   const drawerRef = useRef<HTMLElement>(null);
+ 
++  const toggleCollapsed = () => {
++    setCollapsed((v) => {
++      const next = !v;
++      saveUiPrefs({ sidebarCollapsed: next });
++      return next;
++    });
++  };
++  const expandSidebar = () => {
++    if (!collapsed) return;
++    setCollapsed(false);
++    saveUiPrefs({ sidebarCollapsed: false });
++  };
++
++  const currentUser = state.people.find((p) => p.id === state.currentUserId);
++
+   // Close the mobile drawer whenever the route changes.
+   useEffect(() => {
+     setMenuOpen(false);
+@@ -96,7 +116,7 @@ export function App() {
+   }, [menuOpen]);
+ 
+   return (
+-    <div className="app-shell">
++    <div className={collapsed ? 'app-shell sidebar-collapsed' : 'app-shell'}>
+       <header className="app-topbar">
+         <div className="app-brand">
+           <span className="app-brand-mark" aria-hidden />
+@@ -128,9 +148,24 @@ export function App() {
+         ref={drawerRef}
+         className={menuOpen ? 'app-sidebar open' : 'app-sidebar'}
+       >
+-        <div className="app-brand">
+-          <span className="app-brand-mark" aria-hidden />
+-          <span className="app-brand-name">N2Hub</span>
++        <div className="app-brand-row">
++          <div className="app-brand">
++            <span className="app-brand-mark" aria-hidden />
++            <span className="app-brand-name">N2Hub</span>
++          </div>
++          <button
++            type="button"
++            className="sidebar-toggle"
++            aria-label={collapsed ? 'Rozwiń menu' : 'Zwiń menu'}
++            title={collapsed ? 'Rozwiń menu' : 'Zwiń menu'}
++            onClick={toggleCollapsed}
++          >
++            {collapsed ? (
++              <ChevronsRight size={18} aria-hidden />
++            ) : (
++              <ChevronsLeft size={18} aria-hidden />
++            )}
++          </button>
+         </div>
+         <GlobalSearch />
+         <nav className="app-nav">
+@@ -139,31 +174,52 @@ export function App() {
+               key={to}
+               to={to}
+               className={navClass}
++              title={label}
+               onClick={() => setMenuOpen(false)}
+             >
+               <Icon size={18} aria-hidden className="nav-icon" />
+-              {label}
++              <span className="nav-label">{label}</span>
+             </NavLink>
+           ))}
+         </nav>
+         {state.people.length > 0 && (
+-          <label className="acting-as" title="Aktualny użytkownik aplikacji (autor komentarzy, uprawnienia admina)">
+-            <span className="acting-as-label">Występuj jako</span>
+-            <select
+-              value={state.currentUserId}
+-              onChange={(e) =>
+-                dispatch({ type: 'SET_CURRENT_USER', personId: e.target.value })
++          <div className="acting-as-wrap">
++            {/* Collapsed avatar shortcut (CSS-shown only >1180px + collapsed). */}
++            <button
++              type="button"
++              className="acting-as-collapsed"
++              title={
++                currentUser ? `Występuj jako: ${currentUser.name}` : 'Występuj jako'
++              }
++              aria-label={
++                currentUser ? `Występuj jako: ${currentUser.name}` : 'Występuj jako'
+               }
++              onClick={expandSidebar}
+             >
+-              <option value="">—</option>
+-              {state.people.map((p) => (
+-                <option key={p.id} value={p.id}>
+-                  {p.name}
+-                  {p.isAdmin ? ' (administrator)' : ''}
+-                </option>
+-              ))}
+-            </select>
+-          </label>
++              {currentUser ? (
++                <Avatar person={currentUser} size={32} />
++              ) : (
++                <Users size={20} aria-hidden />
++              )}
++            </button>
++            <label className="acting-as" title="Aktualny użytkownik aplikacji (autor komentarzy, uprawnienia admina)">
++              <span className="acting-as-label">Występuj jako</span>
++              <select
++                value={state.currentUserId}
++                onChange={(e) =>
++                  dispatch({ type: 'SET_CURRENT_USER', personId: e.target.value })
++                }
++              >
++                <option value="">—</option>
++                {state.people.map((p) => (
++                  <option key={p.id} value={p.id}>
++                    {p.name}
++                    {p.isAdmin ? ' (administrator)' : ''}
++                  </option>
++                ))}
++              </select>
++            </label>
++          </div>
+         )}
+       </aside>
+ 
+diff --git a/src/components/TaskModal.tsx b/src/components/TaskModal.tsx
+index 4b212ac..889aa71 100644
+--- a/src/components/TaskModal.tsx
++++ b/src/components/TaskModal.tsx
+@@ -7,11 +7,17 @@ import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-do
+ import { AnimatePresence, motion } from 'motion/react';
+ import { useStore } from '../store/AppStore';
+ import type { AllocationCell, TaskDraft } from '../store/AppStore';
+-import { activeStatuses, assigneeIdsOfTask, getClient } from '../store/selectors';
++import {
++  activeStatuses,
++  assigneeIdsOfTask,
++  binEntriesForTask,
++  getClient,
++} from '../store/selectors';
+ import { CommentsPanel } from './CommentsPanel';
+ import { AllocationGrid, allocKey, isWeekdayDate, type AllocMap } from './AllocationGrid';
+ import { SaveStatus } from './SaveStatus';
+ import { personColor } from '../utils/colors';
++import { isBinEntry } from '../utils/time';
+ import { eachDayInclusive, inclusiveDayCount, todayStr } from '../utils/dates';
+ import { useSaveStatus } from '../utils/useSaveStatus';
+ 
+@@ -236,6 +242,7 @@ function serializeDraft(v: {
+   endDate: string;
+   assigneeIds: string[];
+   allocations: AllocMap;
++  pendingUnassigned: Array<{ personId: string; hours: number }>;
+ }): string {
+   return JSON.stringify({
+     title: v.title,
+@@ -249,6 +256,7 @@ function serializeDraft(v: {
+     allocations: Object.entries(v.allocations)
+       .filter(([, h]) => h > 0)
+       .sort(([a], [b]) => a.localeCompare(b)),
++    pendingUnassigned: v.pendingUnassigned.map((u) => [u.personId, u.hours]),
+   });
+ }
+ 
+@@ -289,17 +297,28 @@ function TaskEditor({
+     existing ? assigneeIdsOfTask(state, existing.id) : [],
+   );
+ 
+-  // ---- Allocation map (personId|date -> hours), seeded from existing entries ----
++  // ---- Allocation map (personId|date -> hours), seeded from existing DATED
++  // entries only. Bin entries (date === '') are shown in a separate section and
++  // never enter the allocation grid. ----
+   const [allocations, setAllocations] = useState<AllocMap>(() => {
+     const map: AllocMap = {};
+     if (existing) {
+-      for (const w of state.workload.filter((w) => w.taskId === existing.id)) {
++      for (const w of state.workload.filter(
++        (w) => w.taskId === existing.id && !isBinEntry(w),
++      )) {
+         map[allocKey(w.personId, w.date)] = w.plannedHours;
+       }
+     }
+     return map;
+   });
+ 
++  // ---- Bin (zasobnik): hours queued to be appended as dateless blocks ----
++  const [pendingUnassigned, setPendingUnassigned] = useState<
++    Array<{ personId: string; hours: number }>
++  >([]);
++  const [binPersonId, setBinPersonId] = useState('');
++  const [binHoursRaw, setBinHoursRaw] = useState('1');
++
+   const [titleTouched, setTitleTouched] = useState(false);
+ 
+   // Focus the title input when the editor opens.
+@@ -348,6 +367,7 @@ function TaskEditor({
+     endDate,
+     assigneeIds,
+     allocations,
++    pendingUnassigned,
+   });
+   const snapshotRef = useRef<string | null>(null);
+   if (snapshotRef.current === null) snapshotRef.current = currentSerialized;
+@@ -451,6 +471,7 @@ function TaskEditor({
+         draft,
+         assigneeIds,
+         allocations: cells,
++        newUnassigned: pendingUnassigned.filter((u) => u.hours > 0),
+       },
+     });
+     // Rebase the snapshot so the close path fires no confirm, and show the
+@@ -467,6 +488,41 @@ function TaskEditor({
+   );
+   const estNum = estimatedRaw.trim() === '' ? null : Number(estimatedRaw);
+ 
++  // Existing bin blocks of this task belonging to still-assigned people.
++  const existingBin = useMemo(
++    () =>
++      existing
++        ? binEntriesForTask(state, existing.id).filter((w) =>
++            assigneeIds.includes(w.personId),
++          )
++        : [],
++    [state, existing, assigneeIds],
++  );
++  const existingBinTotal = existingBin.reduce((s, w) => s + w.plannedHours, 0);
++  const pendingBinTotal = pendingUnassigned
++    .filter((u) => assigneeIds.includes(u.personId))
++    .reduce((s, u) => s + (u.hours > 0 ? u.hours : 0), 0);
++  const binTotal = existingBinTotal + pendingBinTotal;
++
++  // Existing bin blocks grouped per still-assigned person (read-only chips).
++  const existingBinByPerson = useMemo(() => {
++    const groups: Array<{ person: (typeof state.people)[number]; hours: number[] }> = [];
++    for (const p of assignedPeople) {
++      const hours = existingBin
++        .filter((w) => w.personId === p.id)
++        .map((w) => w.plannedHours);
++      if (hours.length > 0) groups.push({ person: p, hours });
++    }
++    return groups;
++  }, [assignedPeople, existingBin, state.people]);
++
++  const addBinHours = () => {
++    const personId = binPersonId || assignedPeople[0]?.id || '';
++    const hours = Number(binHoursRaw);
++    if (personId === '' || Number.isNaN(hours) || hours <= 0) return;
++    setPendingUnassigned((prev) => [...prev, { personId, hours: Math.min(24, hours) }]);
++  };
++
+   return (
+     <div className="editor task-editor">
+       {/* a) Details */}
+@@ -550,6 +606,9 @@ function TaskEditor({
+         <div className="estimate-compare">
+           <span>
+             zaplanowano <strong>{fmtHours(plannedTotalAll)}h</strong>
++            {binTotal > 0 && (
++              <span className="muted"> (+ {fmtHours(binTotal)}h w zasobniku)</span>
++            )}
+           </span>
+           <span className="muted">vs</span>
+           <span>
+@@ -636,6 +695,95 @@ function TaskEditor({
+         )}
+       </div>
+ 
++      {/* c2) Bin (zasobnik) — dateless hours */}
++      <div className="editor-section">
++        <h2>Zasobnik (bez terminu)</h2>
++        {existingBinByPerson.length > 0 && (
++          <div className="bin-existing">
++            {existingBinByPerson.map(({ person, hours }) => (
++              <div key={person.id} className="bin-existing-row">
++                <span
++                  className="person-dot"
++                  style={{ background: personColor(person.id) }}
++                  aria-hidden
++                />
++                <span className="bin-existing-name">{person.name}</span>
++                <span className="bin-chips">
++                  {hours.map((h, i) => (
++                    <span key={i} className="bin-chip readonly">
++                      {fmtHours(h)}h
++                    </span>
++                  ))}
++                </span>
++              </div>
++            ))}
++          </div>
++        )}
++        <p className="field-hint">
++          Bloki bez terminu przeciągniesz na siatkę w widoku tygodnia kalendarza.
++        </p>
++        {assignedPeople.length === 0 ? (
++          <p className="field-hint">
++            Przypisz co najmniej jedną osobę, aby dodać godziny do zasobnika.
++          </p>
++        ) : (
++          <>
++            <div className="bin-add-row">
++              <select
++                aria-label="Osoba"
++                value={binPersonId || assignedPeople[0]?.id || ''}
++                onChange={(e) => setBinPersonId(e.target.value)}
++              >
++                {assignedPeople.map((p) => (
++                  <option key={p.id} value={p.id}>
++                    {p.name}
++                  </option>
++                ))}
++              </select>
++              <input
++                type="number"
++                aria-label="Godziny"
++                min={0.25}
++                step={0.25}
++                max={24}
++                value={binHoursRaw}
++                onChange={(e) => setBinHoursRaw(e.target.value)}
++              />
++              <button type="button" className="btn ghost" onClick={addBinHours}>
++                Dodaj do zasobnika
++              </button>
++            </div>
++            {pendingUnassigned.length > 0 && (
++              <div className="bin-pending">
++                {pendingUnassigned.map((u, i) => {
++                  const person = state.people.find((p) => p.id === u.personId);
++                  return (
++                    <span key={i} className="bin-chip">
++                      <span
++                        className="person-dot"
++                        style={{ background: personColor(u.personId) }}
++                        aria-hidden
++                      />
++                      {person?.name ?? 'Osoba'}: {fmtHours(u.hours)}h
++                      <button
++                        type="button"
++                        className="bin-chip-remove"
++                        aria-label="Usuń"
++                        onClick={() =>
++                          setPendingUnassigned((prev) => prev.filter((_, j) => j !== i))
++                        }
++                      >
++                        ×
++                      </button>
++                    </span>
++                  );
++                })}
++              </div>
++            )}
++          </>
++        )}
++      </div>
++
+       {/* d) Daily allocation grid */}
+       <div className="editor-section">
+         <h2>Dzienny przydział godzin</h2>
+diff --git a/src/components/WeekView.tsx b/src/components/WeekView.tsx
+index 9a3827b..f865d8f 100644
+--- a/src/components/WeekView.tsx
++++ b/src/components/WeekView.tsx
+@@ -14,6 +14,8 @@ import { isTodayStr, isWeekend, parseDate, weekDays } from '../utils/dates';
+ import { format } from 'date-fns';
+ import { pl } from 'date-fns/locale/pl';
+ import {
++  binEntriesForPerson,
++  binTotalForPerson,
+   blockCollides,
+   dayTotal,
+   entriesForDate,
+@@ -31,6 +33,7 @@ import {
+   blockEndMinutes,
+   clampBlockStart,
+   formatMinutes,
++  isBinEntry,
+   minutesToHours,
+   packDayBlocks,
+   snapToStep,
+@@ -49,6 +52,8 @@ const AXIS_W = 52; // left time-axis column width (px)
+ const DAY_BODY_H = 24 * HOUR_PX; // 1152px full-day column height
+ const MIN_BLOCK_H = 14; // keep 0.25h blocks clickable
+ const SCROLL_TO_MIN = 7 * 60; // open scrolled to 07:00
++const GRID_COLS = 8; // 7 day columns + 1 bin column
++const BIN_COL_INDEX = 7; // day projection index that lands a block in the bin
+ 
+ function fmt(n: number): string {
+   return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
+@@ -73,7 +78,7 @@ interface DragState {
+   colWidth: number;
+   projStart: number; // projected startMinutes
+   projHours: number; // projected plannedHours
+-  projDayIndex: number; // projected day column (0–6)
++  projDayIndex: number; // projected column: 0–6 day cols, 7 = bin column
+   colliding: boolean;
+ }
+ 
+@@ -133,7 +138,7 @@ function TimedBlock({
+     }
+     moved.current = false;
+     const rect = gridRef.current?.getBoundingClientRect();
+-    const colWidth = rect ? (rect.width - AXIS_W) / 7 : 0;
++    const colWidth = rect ? (rect.width - AXIS_W) / GRID_COLS : 0;
+     setDrag({
+       mode,
+       originX: e.clientX,
+@@ -161,7 +166,8 @@ function TimedBlock({
+       projStart = clampBlockStart(baseStart + deltaMin, dur);
+       const dx = e.clientX - drag.originX;
+       const dayDelta = drag.colWidth > 0 ? Math.round(dx / drag.colWidth) : 0;
+-      projDayIndex = Math.max(0, Math.min(6, dayIndex + dayDelta));
++      // Index 7 (the last column) targets the bin instead of a calendar day.
++      projDayIndex = Math.max(0, Math.min(BIN_COL_INDEX, dayIndex + dayDelta));
+     } else if (drag.mode === 'top') {
+       // Move the start, keep the end fixed. Min duration one step (0.25h).
+       const newStart = Math.max(0, Math.min(baseStart + deltaMin, baseEnd - MINUTE_STEP));
+@@ -177,8 +183,12 @@ function TimedBlock({
+       moved.current = true;
+     }
+ 
+-    const projDate = days[projDayIndex];
+-    const colliding = blockCollides(state, person.id, projDate, projStart, projHours, entry.id);
++    // The bin column (index 7) has no date and no collision — it's always a
++    // valid drop that just strips the block's date/time.
++    const toBin = projDayIndex === BIN_COL_INDEX;
++    const colliding = toBin
++      ? false
++      : blockCollides(state, person.id, days[projDayIndex], projStart, projHours, entry.id);
+ 
+     setDrag((d) => (d ? { ...d, projStart, projHours, projDayIndex, colliding } : d));
+   };
+@@ -188,6 +198,10 @@ function TimedBlock({
+     const { projStart, projHours, projDayIndex, colliding } = drag;
+     setDrag(null);
+     if (!moved.current) return; // treated as a click by onClick
++    if (projDayIndex === BIN_COL_INDEX) {
++      dispatch({ type: 'MOVE_BLOCK_TO_BIN', entryId: entry.id });
++      return;
++    }
+     if (colliding) return; // invalid drop → snap back (re-render restores it)
+     dispatch({
+       type: 'SET_BLOCK_TIME',
+@@ -207,10 +221,12 @@ function TimedBlock({
+   const top = (start / 60) * HOUR_PX;
+   const height = Math.max(MIN_BLOCK_H, hours * HOUR_PX);
+ 
++  const overBin = drag?.projDayIndex === BIN_COL_INDEX;
+   const className = [
+     'week-block',
+     drag ? 'dragging' : '',
+     drag?.colliding ? 'colliding' : '',
++    overBin ? 'to-bin' : '',
+   ]
+     .filter(Boolean)
+     .join(' ');
+@@ -264,6 +280,158 @@ function TimedBlock({
+   );
+ }
+ 
++// ---- Bin card: a dateless block that drags OUT of the bin onto the grid ----
++
++interface BinDragState {
++  originX: number;
++  originY: number;
++  dx: number;
++  dy: number;
++  colIndex: number; // projected day column (0–6); -1 = not over a day column
++  startMin: number; // projected startMinutes
++  valid: boolean; // over a real day column
++  colliding: boolean;
++}
++
++interface BinCardProps {
++  state: AppData;
++  entry: WorkloadEntry;
++  task: Task;
++  person: Person;
++  project?: Project;
++  days: string[];
++  gridRef: React.RefObject<HTMLDivElement | null>;
++  bodyRef: React.RefObject<HTMLDivElement | null>;
++  onOpen: () => void;
++  onContextMenu: (e: React.MouseEvent) => void;
++}
++
++function BinCard({
++  state,
++  entry,
++  task,
++  person,
++  project,
++  days,
++  gridRef,
++  bodyRef,
++  onOpen,
++  onContextMenu,
++}: BinCardProps) {
++  const { dispatch } = useStore();
++  const [drag, setDrag] = useState<BinDragState | null>(null);
++  const moved = useRef(false);
++
++  // Cancel the drag on Escape (no dispatch → the card snaps home).
++  useEffect(() => {
++    if (!drag) return;
++    const onKey = (e: KeyboardEvent) => {
++      if (e.key === 'Escape') setDrag(null);
++    };
++    window.addEventListener('keydown', onKey);
++    return () => window.removeEventListener('keydown', onKey);
++  }, [drag]);
++
++  const begin = (e: React.PointerEvent) => {
++    if (e.button !== 0) return; // right button → context menu
++    e.stopPropagation();
++    try {
++      (e.target as HTMLElement).setPointerCapture(e.pointerId);
++    } catch {
++      // No active pointer (synthetic events) — drag still works.
++    }
++    moved.current = false;
++    setDrag({
++      originX: e.clientX,
++      originY: e.clientY,
++      dx: 0,
++      dy: 0,
++      colIndex: -1,
++      startMin: 0,
++      valid: false,
++      colliding: false,
++    });
++  };
++
++  const onPointerMove = (e: React.PointerEvent) => {
++    if (!drag) return;
++    const gridRect = gridRef.current?.getBoundingClientRect();
++    const bodyRect = bodyRef.current?.getBoundingClientRect();
++    if (!gridRect || !bodyRect) return;
++    const dx = e.clientX - drag.originX;
++    const dy = e.clientY - drag.originY;
++    if (dx !== 0 || dy !== 0) moved.current = true;
++
++    const colWidth = (gridRect.width - AXIS_W) / GRID_COLS;
++    const relX = e.clientX - gridRect.left - AXIS_W;
++    const colIndex = colWidth > 0 ? Math.floor(relX / colWidth) : -1;
++    const valid = colIndex >= 0 && colIndex <= 6;
++
++    const dur = entry.plannedHours * 60;
++    const relY = e.clientY - bodyRect.top;
++    const startMin = clampBlockStart(snapToStep((relY / HOUR_PX) * 60), dur);
++    const colliding = valid
++      ? blockCollides(state, person.id, days[colIndex], startMin, entry.plannedHours)
++      : false;
++
++    setDrag((d) => (d ? { ...d, dx, dy, colIndex, startMin, valid, colliding } : d));
++  };
++
++  const finish = () => {
++    if (!drag) return;
++    const { colIndex, startMin, valid, colliding } = drag;
++    setDrag(null);
++    if (!moved.current) return; // plain click → open
++    if (!valid || colliding) return; // invalid target / collision → snap home
++    dispatch({
++      type: 'SET_BLOCK_TIME',
++      entryId: entry.id,
++      date: days[colIndex],
++      startMinutes: startMin,
++      plannedHours: entry.plannedHours,
++    });
++  };
++
++  const className = [
++    'week-bin-block',
++    drag ? 'dragging' : '',
++    drag?.colliding ? 'colliding' : '',
++  ]
++    .filter(Boolean)
++    .join(' ');
++
++  return (
++    <div
++      className={className}
++      style={{
++        borderLeftColor: personColor(person.id),
++        transform: drag ? `translate(${drag.dx}px, ${drag.dy}px)` : undefined,
++      }}
++      role="button"
++      tabIndex={0}
++      title={`${task.title} — ${person.name}: ${fmt(entry.plannedHours)}h bez terminu. Przeciągnij na siatkę, aby nadać termin.`}
++      onPointerDown={begin}
++      onPointerMove={onPointerMove}
++      onPointerUp={finish}
++      onPointerCancel={() => setDrag(null)}
++      onClick={(e) => {
++        e.stopPropagation();
++        if (!moved.current) onOpen();
++      }}
++      onKeyDown={(e) => {
++        if (e.key === 'Enter') onOpen();
++      }}
++      onContextMenu={onContextMenu}
++    >
++      <span className="week-bin-block-title">
++        {project && <Coin paid={project.paid} size={12} />}
++        {task.title}
++      </span>
++      <span className="week-bin-block-hours">{fmt(entry.plannedHours)}h</span>
++    </div>
++  );
++}
++
+ export function WeekView({ state, anchor, filter }: Props) {
+   const { openTask } = useOpenTask();
+   const { dispatch } = useStore();
+@@ -271,6 +439,7 @@ export function WeekView({ state, anchor, filter }: Props) {
+ 
+   const gridRef = useRef<HTMLDivElement | null>(null);
+   const scrollRef = useRef<HTMLDivElement | null>(null);
++  const bodyRef = useRef<HTMLDivElement | null>(null); // a body-row cell → y-origin (0:00) for bin-card drops
+ 
+   const [menu, setMenu] = useState<MenuState | null>(null);
+   const [hoursRaw, setHoursRaw] = useState('1');
+@@ -328,6 +497,27 @@ export function WeekView({ state, anchor, filter }: Props) {
+     setMenu(null);
+   };
+ 
++  const doSplit = (parts: 2 | 4) => {
++    if (!menu) return;
++    dispatch({ type: 'SPLIT_BLOCK', entryId: menu.entry.id, parts });
++    setMenu(null);
++  };
++
++  const doDelete = () => {
++    if (!menu) return;
++    if (window.confirm(`Usunąć blok ${fmt(menu.entry.plannedHours)}h z zasobnika?`)) {
++      dispatch({ type: 'DELETE_BLOCK', entryId: menu.entry.id });
++    }
++    setMenu(null);
++  };
++
++  // Bin (zasobnik) content — week-independent, per-person, filtered.
++  const inFilter = (id: string) => filter.size === 0 || filter.has(id);
++  const binPeople = state.people.filter(
++    (p) => inFilter(p.id) && binEntriesForPerson(state, p.id).length > 0,
++  );
++  const binGrandTotal = binPeople.reduce((s, p) => s + binTotalForPerson(state, p.id), 0);
++
+   // Overload preview for the insert form.
+   const menuPerson = menu ? getPerson(state, menu.entry.personId) : undefined;
+   const menuDayHours = menu
+@@ -348,11 +538,11 @@ export function WeekView({ state, anchor, filter }: Props) {
+           className="week-cal-grid"
+           ref={gridRef}
+           style={{
+-            gridTemplateColumns: `${AXIS_W}px repeat(7, minmax(0, 1fr))`,
++            gridTemplateColumns: `${AXIS_W}px repeat(${GRID_COLS}, minmax(0, 1fr))`,
+             gridTemplateRows: `auto ${DAY_BODY_H}px`,
+           }}
+         >
+-          {/* Header row: corner + 7 day headers (sticky). */}
++          {/* Header row: corner + 7 day headers + bin header (sticky). */}
+           <div className="week-axis-head" />
+           {days.map((d) => {
+             const total = dayTotal(state, d, filter);
+@@ -386,8 +576,16 @@ export function WeekView({ state, anchor, filter }: Props) {
+               </div>
+             );
+           })}
++          {/* Bin header (8th column). */}
++          <div className="week-bin-head">
++            <div className="week-bin-head-title">Zasobnik</div>
++            <div className="week-bin-head-sub">bez terminu</div>
++            <div className="week-col-total">
++              {binGrandTotal > 0 ? `${fmt(binGrandTotal)}h` : '—'}
++            </div>
++          </div>
+ 
+-          {/* Body row: hour axis + 7 day columns. */}
++          {/* Body row: hour axis + 7 day columns + bin column. */}
+           <div className="week-axis">
+             {hours.map((h) => (
+               <span key={h} className="week-axis-label" style={{ top: h * HOUR_PX }}>
+@@ -401,6 +599,7 @@ export function WeekView({ state, anchor, filter }: Props) {
+             return (
+               <div
+                 key={`col-${d}`}
++                ref={dayIndex === 0 ? bodyRef : undefined}
+                 className={[
+                   'week-day-col',
+                   isTodayStr(d) ? 'today' : '',
+@@ -435,6 +634,52 @@ export function WeekView({ state, anchor, filter }: Props) {
+               </div>
+             );
+           })}
++
++          {/* Bin column (8th): stacked per-person cards, not time-positioned. */}
++          <div className="week-bin-col">
++            {binPeople.length === 0 ? (
++              <p className="week-bin-empty">Brak bloków bez terminu</p>
++            ) : (
++              binPeople.map((p) => {
++                const entries = binEntriesForPerson(state, p.id);
++                return (
++                  <div key={`bin-${p.id}`} className="week-bin-group">
++                    <div className="week-bin-group-head">
++                      <span
++                        className="person-dot"
++                        style={{ background: personColor(p.id) }}
++                        aria-hidden
++                      />
++                      {p.name}
++                      <span className="week-bin-group-total">
++                        {fmt(binTotalForPerson(state, p.id))}h
++                      </span>
++                    </div>
++                    {entries.map((e) => {
++                      const task = getTask(state, e.taskId);
++                      if (!task) return null;
++                      const project = getProject(state, task.projectId);
++                      return (
++                        <BinCard
++                          key={e.id}
++                          state={state}
++                          entry={e}
++                          task={task}
++                          person={p}
++                          project={project}
++                          days={days}
++                          gridRef={gridRef}
++                          bodyRef={bodyRef}
++                          onOpen={() => openTask(task.id)}
++                          onContextMenu={(ev) => openMenu(e, ev)}
++                        />
++                      );
++                    })}
++                  </div>
++                );
++              })
++            )}
++          </div>
+         </div>
+       </div>
+ 
+@@ -456,22 +701,65 @@ export function WeekView({ state, anchor, filter }: Props) {
+                 {getTask(state, menu.entry.taskId)?.title} — {menuPerson?.name},{' '}
+                 {fmt(menu.entry.plannedHours)}h
+               </div>
++              {!isBinEntry(menu.entry) && (
++                <>
++                  <button
++                    type="button"
++                    role="menuitem"
++                    className="context-menu-item"
++                    onClick={() => setMenu({ ...menu, step: 'form', position: 'before' })}
++                  >
++                    ↑ Dodaj przed
++                  </button>
++                  <button
++                    type="button"
++                    role="menuitem"
++                    className="context-menu-item"
++                    onClick={() => setMenu({ ...menu, step: 'form', position: 'after' })}
++                  >
++                    ↓ Dodaj po
++                  </button>
++                  <div className="context-menu-sep" role="separator" />
++                </>
++              )}
+               <button
+                 type="button"
+                 role="menuitem"
+                 className="context-menu-item"
+-                onClick={() => setMenu({ ...menu, step: 'form', position: 'before' })}
++                disabled={menu.entry.plannedHours < 0.5}
++                title={
++                  menu.entry.plannedHours < 0.5
++                    ? 'Blok jest za krótki, aby go podzielić'
++                    : undefined
++                }
++                onClick={() => doSplit(2)}
+               >
+-                ↑ Dodaj przed
++                Podziel na pół
+               </button>
+               <button
+                 type="button"
+                 role="menuitem"
+                 className="context-menu-item"
+-                onClick={() => setMenu({ ...menu, step: 'form', position: 'after' })}
++                disabled={menu.entry.plannedHours < 1}
++                title={
++                  menu.entry.plannedHours < 1
++                    ? 'Blok jest za krótki, aby go podzielić'
++                    : undefined
++                }
++                onClick={() => doSplit(4)}
+               >
+-                ↓ Dodaj po
++                Podziel na ćwiartki
+               </button>
++              {isBinEntry(menu.entry) && (
++                <button
++                  type="button"
++                  role="menuitem"
++                  className="context-menu-item danger"
++                  onClick={doDelete}
++                >
++                  Usuń blok
++                </button>
++              )}
+             </>
+           ) : (
+             <div className="context-insert-form">
+diff --git a/src/components/icons.ts b/src/components/icons.ts
+index 321b2a9..ef70a00 100644
+--- a/src/components/icons.ts
++++ b/src/components/icons.ts
+@@ -19,6 +19,8 @@ export {
+   X,
+   ChevronRight,
+   ChevronLeft,
++  ChevronsLeft,
++  ChevronsRight,
+   Plus,
+   Trash2,
+   Pencil,
+diff --git a/src/store/AppStore.tsx b/src/store/AppStore.tsx
+index 8157a18..c3c5321 100644
+--- a/src/store/AppStore.tsx
++++ b/src/store/AppStore.tsx
+@@ -27,6 +27,7 @@ import { DEFAULT_CAPACITY, loadData, saveData, slugify } from './storage';
+ import { registerPersonOrder } from '../utils/colors';
+ import { addDaysStr, eachDayInclusive, inclusiveDayCount } from '../utils/dates';
+ import {
++  BIN_DATE,
+   DAY_MINUTES,
+   HOURS_STEP,
+   MINUTE_STEP,
+@@ -35,6 +36,7 @@ import {
+   formatMinutes,
+   hasCollision,
+   hoursToMinutes,
++  isBinEntry,
+   nextFreeStart,
+   snapHours,
+ } from '../utils/time';
+@@ -88,6 +90,9 @@ export interface SaveTaskPayload {
+   draft: TaskDraft;
+   assigneeIds: string[]; // final set of assigned people
+   allocations: AllocationCell[]; // full desired allocation for this task
++  // Extra dateless hours to append to the bin (per person). Existing bin
++  // entries pass through untouched; these are added on top.
++  newUnassigned?: Array<{ personId: string; hours: number }>;
+ }
+ 
+ export interface InsertBlockPayload {
+@@ -132,6 +137,9 @@ export type Action =
+   | { type: 'INSERT_BLOCK'; payload: InsertBlockPayload }
+   | { type: 'REASSIGN_ENTRY'; entryId: string; toPersonId: string }
+   | { type: 'SET_BLOCK_TIME'; entryId: string; date: string; startMinutes: number; plannedHours: number }
++  | { type: 'MOVE_BLOCK_TO_BIN'; entryId: string }
++  | { type: 'SPLIT_BLOCK'; entryId: string; parts: 2 | 4 }
++  | { type: 'DELETE_BLOCK'; entryId: string }
+   | { type: 'SAVE_FILTER_PRESET'; name: string; page: FilterPage; criteria: SavedFilterCriteria }
+   | { type: 'DELETE_FILTER_PRESET'; filterId: string }
+   | { type: 'LOAD_SAMPLE'; data: AppData }
+@@ -270,10 +278,16 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
+   // hours>0 and only for people who are still assigned. Existing cells keep
+   // their position in the person's day; new cells go to the end of the day.
+   const assignedSet = new Set(assigneeIds);
++  // Existing BIN entries of this task pass through untouched: kept when the
++  // person is still assigned, dropped when they are unassigned. Only DATED
++  // entries go through the rebuild below.
++  const taskBinKept = state.workload.filter(
++    (w) => w.taskId === realTaskId && isBinEntry(w) && assignedSet.has(w.personId),
++  );
+   // person|date -> the prior block's position, so kept cells keep their slot.
+   const oldPos = new Map<string, { sortIndex: number; startMinutes: number }>();
+   for (const w of state.workload) {
+-    if (w.taskId === realTaskId) {
++    if (w.taskId === realTaskId && !isBinEntry(w)) {
+       oldPos.set(dayKey(w.personId, w.date), { sortIndex: w.sortIndex, startMinutes: w.startMinutes });
+     }
+   }
+@@ -295,7 +309,7 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
+       startMinutes = kept.startMinutes;
+     } else {
+       // New cell: append to the end of that person's day.
+-      const around = [...workloadOther, ...workloadForTask];
++      const around = [...workloadOther, ...taskBinKept, ...workloadForTask];
+       sortIndex = nextSortIndex(around, c.personId, c.date);
+       startMinutes = nextFreeStart(
+         around.filter((w) => w.personId === c.personId && w.date === c.date),
+@@ -313,11 +327,31 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
+     });
+   }
+ 
++  // Append explicitly-requested bin hours (person must be assigned; snap hours,
++  // skip <= 0). Computed against the accumulated workload so multiple items for
++  // one person get consecutive bin sortIndexes.
++  const newBinEntries: WorkloadEntry[] = [];
++  for (const item of payload.newUnassigned ?? []) {
++    if (!assignedSet.has(item.personId)) continue;
++    const hours = snapHours(item.hours);
++    if (hours <= 0) continue;
++    const accumulated = [...workloadOther, ...taskBinKept, ...workloadForTask, ...newBinEntries];
++    newBinEntries.push({
++      id: uid(),
++      taskId: realTaskId,
++      personId: item.personId,
++      date: BIN_DATE,
++      plannedHours: hours,
++      startMinutes: 0,
++      sortIndex: nextSortIndex(accumulated, item.personId, BIN_DATE),
++    });
++  }
++
+   return {
+     ...state,
+     tasks,
+     assignments: [...assignmentsOther, ...assignmentsForTask],
+-    workload: [...workloadOther, ...workloadForTask],
++    workload: [...workloadOther, ...taskBinKept, ...workloadForTask, ...newBinEntries],
+     activity: withActivity(
+       state,
+       'task',
+@@ -349,7 +383,7 @@ function moveTask(state: AppData, taskId: string, dayDelta: number): AppData {
+   if (!task) return state;
+   const touched = new Set<string>();
+   const workload = state.workload.map((w) => {
+-    if (w.taskId !== taskId) return w;
++    if (w.taskId !== taskId || isBinEntry(w)) return w; // bin entries stay in the bin
+     const newDate = addDaysStr(w.date, dayDelta);
+     touched.add(dayKey(w.personId, w.date));
+     touched.add(dayKey(w.personId, newDate));
+@@ -393,7 +427,7 @@ function setTaskDates(
+       t.id === taskId ? { ...t, startDate, endDate, updatedAt: nowIso() } : t,
+     ),
+     workload: state.workload.filter(
+-      (w) => w.taskId !== taskId || inPeriod.has(w.date),
++      (w) => w.taskId !== taskId || isBinEntry(w) || inPeriod.has(w.date),
+     ),
+     activity: withActivity(
+       state,
+@@ -478,7 +512,7 @@ function deleteProject(state: AppData, projectId: string): AppData {
+ 
+ function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
+   const ref = state.workload.find((w) => w.id === payload.refEntryId);
+-  if (!ref || payload.hours <= 0) return state;
++  if (!ref || payload.hours <= 0 || isBinEntry(ref)) return state; // no ripple insert around a bin block
+   const task = state.tasks.find((t) => t.id === payload.taskId);
+   if (!task) return state;
+ 
+@@ -579,10 +613,14 @@ function reassignEntry(state: AppData, entryId: string, toPersonId: string): App
+   const moved: WorkloadEntry = {
+     ...entry,
+     personId: toPersonId,
+-    startMinutes: nextFreeStart(
+-      without.filter((w) => w.personId === toPersonId && w.date === date),
+-      hoursToMinutes(plannedHours),
+-    ),
++    // Bin entries stay in the bin (date '', startMinutes 0) and append to the
++    // target person's bin; dated entries append to the target's day schedule.
++    startMinutes: isBinEntry(entry)
++      ? 0
++      : nextFreeStart(
++          without.filter((w) => w.personId === toPersonId && w.date === date),
++          hoursToMinutes(plannedHours),
++        ),
+     sortIndex: nextSortIndex(without, toPersonId, date),
+   };
+   const touched = new Set<string>([
+@@ -671,15 +709,43 @@ function setBlockTime(
+   }
+ 
+   const oldDate = entry.date;
+-  const workload = reindexDays(
+-    state.workload.map((w) => (w.id === entryId ? { ...w, date, startMinutes, plannedHours } : w)),
+-    new Set([dayKey(entry.personId, oldDate), dayKey(entry.personId, date)]),
++  const fromBin = isBinEntry(entry); // dropped in from the bin
++  const shrink = plannedHours < entry.plannedHours; // freed hours go back to the bin
++  const delta = entry.plannedHours - plannedHours; // grid-safe (both on the 0.25h grid)
++
++  let updated = state.workload.map((w) =>
++    w.id === entryId ? { ...w, date, startMinutes, plannedHours } : w,
+   );
++  const touchedKeys = new Set([
++    dayKey(entry.personId, oldDate),
++    dayKey(entry.personId, date),
++  ]);
++  if (shrink) {
++    updated = [
++      ...updated,
++      {
++        id: uid(),
++        taskId: entry.taskId,
++        personId: entry.personId,
++        date: BIN_DATE,
++        plannedHours: delta,
++        startMinutes: 0,
++        sortIndex: nextSortIndex(updated, entry.personId, BIN_DATE),
++      },
++    ];
++    touchedKeys.add(dayKey(entry.personId, BIN_DATE));
++  }
++  const workload = reindexDays(updated, touchedKeys);
+ 
+-  const message =
+-    date !== oldDate
+-      ? `przeniósł/przeniosła blok ${plannedHours}h na ${date} ${formatMinutes(startMinutes)}`
+-      : `zmienił(a) blok na ${formatMinutes(startMinutes)}–${formatMinutes(startMinutes + dur)} (${plannedHours}h)`;
++  let message: string;
++  if (fromBin) {
++    message = `zaplanował(a) blok ${plannedHours}h z zasobnika na ${date} ${formatMinutes(startMinutes)}`;
++  } else if (date !== oldDate) {
++    message = `przeniósł/przeniosła blok ${plannedHours}h na ${date} ${formatMinutes(startMinutes)}`;
++  } else {
++    message = `zmienił(a) blok na ${formatMinutes(startMinutes)}–${formatMinutes(startMinutes + dur)} (${plannedHours}h)`;
++  }
++  if (shrink) message += `; ${delta}h wróciło do zasobnika`;
+ 
+   return {
+     ...state,
+@@ -689,6 +755,105 @@ function setBlockTime(
+   };
+ }
+ 
++// ---- Bin (zasobnik) block handlers ----
++
++/** Move one dated block into the person's bin (unassign its calendar day). */
++function moveBlockToBin(state: AppData, entryId: string): AppData {
++  const entry = state.workload.find((w) => w.id === entryId);
++  if (!entry || isBinEntry(entry)) return state;
++  const oldDate = entry.date;
++  const without = state.workload.filter((w) => w.id !== entryId);
++  const moved: WorkloadEntry = {
++    ...entry,
++    date: BIN_DATE,
++    startMinutes: 0,
++    sortIndex: nextSortIndex(without, entry.personId, BIN_DATE),
++  };
++  const touched = new Set([
++    dayKey(entry.personId, oldDate),
++    dayKey(entry.personId, BIN_DATE),
++  ]);
++  return {
++    ...state,
++    workload: reindexDays([...without, moved], touched),
++    activity: withActivity(
++      state,
++      'task',
++      entry.taskId,
++      `przeniósł/przeniosła blok ${entry.plannedHours}h (${oldDate}) do zasobnika`,
++    ),
++  };
++}
++
++/**
++ * Split a block into `parts` (halves/quarters) on the 0.25h grid. The largest
++ * part stays on the original entry (dated or bin); the rest become bin entries
++ * appended to the person's bin. Rejects when the block is too small to divide.
++ */
++function splitBlock(state: AppData, entryId: string, parts: 2 | 4): AppData {
++  const entry = state.workload.find((w) => w.id === entryId);
++  if (!entry || entry.plannedHours < parts * HOURS_STEP) return state;
++
++  const q = Math.round(entry.plannedHours / HOURS_STEP);
++  const base = Math.floor(q / parts);
++  const r = q % parts;
++  // First `r` parts (the largest) get base+1 quarters; part 1 stays scheduled.
++  const quarters: number[] = [];
++  for (let i = 0; i < parts; i++) quarters.push(base + (i < r ? 1 : 0));
++
++  let workload = state.workload.map((w) =>
++    w.id === entryId ? { ...w, plannedHours: quarters[0] * HOURS_STEP } : w,
++  );
++  const newBin: WorkloadEntry[] = [];
++  for (let i = 1; i < parts; i++) {
++    const accumulated = [...workload, ...newBin];
++    newBin.push({
++      id: uid(),
++      taskId: entry.taskId,
++      personId: entry.personId,
++      date: BIN_DATE,
++      plannedHours: quarters[i] * HOURS_STEP,
++      startMinutes: 0,
++      sortIndex: nextSortIndex(accumulated, entry.personId, BIN_DATE),
++    });
++  }
++  workload = [...workload, ...newBin];
++  const touched = new Set([
++    dayKey(entry.personId, entry.date),
++    dayKey(entry.personId, BIN_DATE),
++  ]);
++  const binSum = newBin.reduce((s, w) => s + w.plannedHours, 0);
++  return {
++    ...state,
++    workload: reindexDays(workload, touched),
++    activity: withActivity(
++      state,
++      'task',
++      entry.taskId,
++      `podzielił(a) blok ${entry.plannedHours}h na ${parts} części (do zasobnika: ${binSum}h)`,
++    ),
++  };
++}
++
++/** Delete a single bin entry (dated entries are never deleted here). */
++function deleteBlock(state: AppData, entryId: string): AppData {
++  const entry = state.workload.find((w) => w.id === entryId);
++  if (!entry || !isBinEntry(entry)) return state;
++  return {
++    ...state,
++    workload: reindexDays(
++      state.workload.filter((w) => w.id !== entryId),
++      new Set([dayKey(entry.personId, BIN_DATE)]),
++    ),
++    activity: withActivity(
++      state,
++      'task',
++      entry.taskId,
++      `usunął/usunęła blok ${entry.plannedHours}h z zasobnika`,
++    ),
++  };
++}
++
+ // ---- People ----
+ 
+ function personFromDraft(draft: PersonDraft): Omit<Person, 'id'> {
+@@ -1040,6 +1205,12 @@ export function reducer(state: AppData, action: Action): AppData {
+         action.startMinutes,
+         action.plannedHours,
+       );
++    case 'MOVE_BLOCK_TO_BIN':
++      return moveBlockToBin(state, action.entryId);
++    case 'SPLIT_BLOCK':
++      return splitBlock(state, action.entryId, action.parts);
++    case 'DELETE_BLOCK':
++      return deleteBlock(state, action.entryId);
+     case 'SAVE_FILTER_PRESET': {
+       const name = action.name.trim();
+       if (!name) return state;
+diff --git a/src/store/blockActions.test.ts b/src/store/blockActions.test.ts
+index a3b2213..c37f756 100644
+--- a/src/store/blockActions.test.ts
++++ b/src/store/blockActions.test.ts
+@@ -2,8 +2,9 @@
+ // Pure reducer tests: no React rendering, no localStorage — build AppData
+ // fixtures by hand from emptyData() + literal tasks/people/workload rows.
+ import { describe, expect, it } from 'vitest';
+-import { reducer } from './AppStore';
++import { reducer, type TaskDraft } from './AppStore';
+ import { emptyData } from './storage';
++import { BIN_DATE } from '../utils/time';
+ import type { AppData, Task, WorkloadEntry } from '../types';
+ 
+ function makeState(overrides: Partial<AppData> = {}): AppData {
+@@ -288,3 +289,388 @@ describe('INSERT_BLOCK', () => {
+     ).toBe(true);
+   });
+ });
++
++// ---------------------------------------------------------------------------
++// Bin ("zasobnik") behavior added by PKG-20260708-bin-core.
++// ---------------------------------------------------------------------------
++
++describe('MOVE_BLOCK_TO_BIN', () => {
++  it('moves a dated entry into the bin, reindexes the vacated day, and appends after an existing bin entry', () => {
++    const e1 = makeEntry({ id: 'e1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
++    const e2 = makeEntry({ id: 'e2', date: '2026-07-08', startMinutes: 600, plannedHours: 2, sortIndex: 1 });
++    const existingBin = makeEntry({ id: 'bin0', date: BIN_DATE, startMinutes: 0, plannedHours: 1, sortIndex: 0 });
++    const state = makeState({
++      tasks: [makeTask({ id: 't1' })],
++      workload: [e1, e2, existingBin],
++    });
++
++    const next = reducer(state, { type: 'MOVE_BLOCK_TO_BIN', entryId: 'e1' });
++
++    const movedE1 = next.workload.find((w) => w.id === 'e1')!;
++    expect(movedE1.date).toBe(BIN_DATE);
++    expect(movedE1.startMinutes).toBe(0);
++    expect(movedE1.sortIndex).toBe(1); // appended after existingBin (sortIndex 0)
++
++    const remainingE2 = next.workload.find((w) => w.id === 'e2')!;
++    expect(remainingE2.date).toBe('2026-07-08');
++    expect(remainingE2.sortIndex).toBe(0); // vacated day reindexed contiguous 0..n
++
++    expect(next.activity.length).toBe(state.activity.length + 1);
++  });
++
++  it('no-ops on an already-bin entry (same state reference)', () => {
++    const bin1 = makeEntry({ id: 'bin1', date: BIN_DATE, startMinutes: 0, sortIndex: 0 });
++    const state = makeState({ tasks: [makeTask({ id: 't1' })], workload: [bin1] });
++    expect(reducer(state, { type: 'MOVE_BLOCK_TO_BIN', entryId: 'bin1' })).toBe(state);
++  });
++
++  it('no-ops on an unknown entryId', () => {
++    const state = makeState({ tasks: [makeTask({ id: 't1' })], workload: [] });
++    expect(reducer(state, { type: 'MOVE_BLOCK_TO_BIN', entryId: 'nope' })).toBe(state);
++  });
++});
++
++describe('SPLIT_BLOCK', () => {
++  it('halves an even 6h dated block: original keeps date/startMinutes/sortIndex at 3h, one 3h bin entry created', () => {
++    const e1 = makeEntry({ id: 'e1', date: '2026-07-08', startMinutes: 480, plannedHours: 6, sortIndex: 0 });
++    const state = makeState({ tasks: [makeTask({ id: 't1' })], workload: [e1] });
++
++    const next = reducer(state, { type: 'SPLIT_BLOCK', entryId: 'e1', parts: 2 });
++
++    const original = next.workload.find((w) => w.id === 'e1')!;
++    expect(original.date).toBe('2026-07-08');
++    expect(original.startMinutes).toBe(480);
++    expect(original.sortIndex).toBe(0);
++    expect(original.plannedHours).toBe(3);
++
++    const binEntries = next.workload.filter((w) => w.id !== 'e1');
++    expect(binEntries).toHaveLength(1);
++    expect(binEntries[0].date).toBe(BIN_DATE);
++    expect(binEntries[0].plannedHours).toBe(3);
++  });
++
++  it('halves an odd-quarter 1.25h block: larger half (0.75h) stays, smaller half (0.5h) goes to the bin', () => {
++    const e1 = makeEntry({ id: 'e1', date: '2026-07-08', startMinutes: 480, plannedHours: 1.25, sortIndex: 0 });
++    const state = makeState({ tasks: [makeTask({ id: 't1' })], workload: [e1] });
++
++    const next = reducer(state, { type: 'SPLIT_BLOCK', entryId: 'e1', parts: 2 });
++
++    const original = next.workload.find((w) => w.id === 'e1')!;
++    expect(original.plannedHours).toBe(0.75);
++    const binEntry = next.workload.find((w) => w.id !== 'e1')!;
++    expect(binEntry.date).toBe(BIN_DATE);
++    expect(binEntry.plannedHours).toBe(0.5);
++  });
++
++  it('quarters a 1.25h block: original 0.5h + three 0.25h bin entries, bin sortIndex contiguous in creation order', () => {
++    const e1 = makeEntry({ id: 'e1', date: '2026-07-08', startMinutes: 480, plannedHours: 1.25, sortIndex: 0 });
++    const state = makeState({ tasks: [makeTask({ id: 't1' })], workload: [e1] });
++
++    const next = reducer(state, { type: 'SPLIT_BLOCK', entryId: 'e1', parts: 4 });
++
++    const original = next.workload.find((w) => w.id === 'e1')!;
++    expect(original.plannedHours).toBe(0.5);
++
++    const binEntries = next.workload
++      .filter((w) => w.id !== 'e1')
++      .sort((a, b) => a.sortIndex - b.sortIndex);
++    expect(binEntries).toHaveLength(3);
++    binEntries.forEach((w) => {
++      expect(w.date).toBe(BIN_DATE);
++      expect(w.plannedHours).toBe(0.25);
++    });
++    expect(binEntries.map((w) => w.sortIndex)).toEqual([0, 1, 2]);
++  });
++
++  it('splits a bin entry within the bin: original stays a bin entry, new part appended to the bin end', () => {
++    const e0 = makeEntry({ id: 'e0', taskId: 't2', date: BIN_DATE, startMinutes: 0, plannedHours: 1, sortIndex: 0 });
++    const target = makeEntry({ id: 'target', taskId: 't1', date: BIN_DATE, startMinutes: 0, plannedHours: 4, sortIndex: 1 });
++    const state = makeState({
++      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2' })],
++      workload: [e0, target],
++    });
++
++    const next = reducer(state, { type: 'SPLIT_BLOCK', entryId: 'target', parts: 2 });
++
++    const original = next.workload.find((w) => w.id === 'target')!;
++    expect(original.date).toBe(BIN_DATE);
++    expect(original.startMinutes).toBe(0);
++    expect(original.plannedHours).toBe(2);
++    expect(original.sortIndex).toBe(1); // keeps its bin position
++
++    const newPart = next.workload.find((w) => w.id !== 'e0' && w.id !== 'target')!;
++    expect(newPart.date).toBe(BIN_DATE);
++    expect(newPart.plannedHours).toBe(2);
++    expect(newPart.sortIndex).toBe(2); // appended to the bin end
++  });
++
++  it('rejects when the block is too small for the requested parts, and rejects an unknown id', () => {
++    const tooSmallHalf = makeEntry({ id: 'e1', plannedHours: 0.25, sortIndex: 0 });
++    const state1 = makeState({ tasks: [makeTask({ id: 't1' })], workload: [tooSmallHalf] });
++    expect(reducer(state1, { type: 'SPLIT_BLOCK', entryId: 'e1', parts: 2 })).toBe(state1);
++
++    const tooSmallQuarter = makeEntry({ id: 'e2', plannedHours: 0.75, sortIndex: 0 });
++    const state2 = makeState({ tasks: [makeTask({ id: 't1' })], workload: [tooSmallQuarter] });
++    expect(reducer(state2, { type: 'SPLIT_BLOCK', entryId: 'e2', parts: 4 })).toBe(state2);
++
++    const state3 = makeState({ tasks: [makeTask({ id: 't1' })], workload: [] });
++    expect(reducer(state3, { type: 'SPLIT_BLOCK', entryId: 'nope', parts: 2 })).toBe(state3);
++  });
++});
++
++describe('DELETE_BLOCK', () => {
++  it("removes a bin entry and reindexes the person's remaining bin entries", () => {
++    const bin0 = makeEntry({ id: 'bin0', date: BIN_DATE, startMinutes: 0, plannedHours: 1, sortIndex: 0 });
++    const bin1 = makeEntry({ id: 'bin1', date: BIN_DATE, startMinutes: 0, plannedHours: 2, sortIndex: 1 });
++    const state = makeState({ tasks: [makeTask({ id: 't1' })], workload: [bin0, bin1] });
++
++    const next = reducer(state, { type: 'DELETE_BLOCK', entryId: 'bin0' });
++
++    expect(next.workload.find((w) => w.id === 'bin0')).toBeUndefined();
++    const remaining = next.workload.find((w) => w.id === 'bin1')!;
++    expect(remaining.sortIndex).toBe(0);
++    expect(next.activity.length).toBe(state.activity.length + 1);
++  });
++
++  it('rejects a dated entry (same state reference)', () => {
++    const dated = makeEntry({ id: 'e1', date: '2026-07-08' });
++    const state = makeState({ tasks: [makeTask({ id: 't1' })], workload: [dated] });
++    expect(reducer(state, { type: 'DELETE_BLOCK', entryId: 'e1' })).toBe(state);
++  });
++
++  it('rejects an unknown entryId', () => {
++    const state = makeState({ tasks: [makeTask({ id: 't1' })], workload: [] });
++    expect(reducer(state, { type: 'DELETE_BLOCK', entryId: 'nope' })).toBe(state);
++  });
++});
++
++describe('SET_BLOCK_TIME (bin behavior)', () => {
++  it('shrink-to-bin: resizing 8h to 6h keeps the entry in place and returns 2h to the bin', () => {
++    const e1 = makeEntry({ id: 'e1', date: '2026-07-08', startMinutes: 480, plannedHours: 8, sortIndex: 0 });
++    const state = makeState({ tasks: [makeTask({ id: 't1' })], workload: [e1] });
++
++    const next = reducer(state, {
++      type: 'SET_BLOCK_TIME',
++      entryId: 'e1',
++      date: '2026-07-08',
++      startMinutes: 480,
++      plannedHours: 6,
++    });
++
++    const resized = next.workload.find((w) => w.id === 'e1')!;
++    expect(resized.plannedHours).toBe(6);
++    expect(resized.date).toBe('2026-07-08');
++
++    const binEntry = next.workload.find((w) => w.id !== 'e1')!;
++    expect(binEntry.date).toBe(BIN_DATE);
++    expect(binEntry.plannedHours).toBe(2);
++    expect(binEntry.taskId).toBe(e1.taskId);
++    expect(binEntry.personId).toBe(e1.personId);
++
++    const activityMsg = next.activity[next.activity.length - 1].message;
++    expect(activityMsg).toContain('wróciło do zasobnika');
++  });
++
++  it('plain move (same hours, new time/day) creates no bin entry', () => {
++    const e1 = makeEntry({ id: 'e1', date: '2026-07-08', startMinutes: 480, plannedHours: 4, sortIndex: 0 });
++    const state = makeState({ tasks: [makeTask({ id: 't1' })], workload: [e1] });
++
++    const next = reducer(state, {
++      type: 'SET_BLOCK_TIME',
++      entryId: 'e1',
++      date: '2026-07-07',
++      startMinutes: 600,
++      plannedHours: 4,
++    });
++
++    expect(next.workload).toHaveLength(1);
++    expect(next.workload.some((w) => w.date === BIN_DATE)).toBe(false);
++  });
++
++  it('bin→grid: dropping a bin entry onto a date/time assigns it, extends the task period, and reindexes both groups', () => {
++    const binA = makeEntry({ id: 'binA', date: BIN_DATE, startMinutes: 0, plannedHours: 2, sortIndex: 0 });
++    const binB = makeEntry({ id: 'binB', date: BIN_DATE, startMinutes: 0, plannedHours: 1, sortIndex: 1 });
++    const state = makeState({
++      tasks: [makeTask({ id: 't1', startDate: '2026-07-06', endDate: '2026-07-08' })],
++      workload: [binA, binB],
++    });
++
++    const next = reducer(state, {
++      type: 'SET_BLOCK_TIME',
++      entryId: 'binA',
++      date: '2026-07-10',
++      startMinutes: 480,
++      plannedHours: 2,
++    });
++
++    const dropped = next.workload.find((w) => w.id === 'binA')!;
++    expect(dropped.date).toBe('2026-07-10');
++    expect(dropped.startMinutes).toBe(480);
++
++    const remainingBin = next.workload.find((w) => w.id === 'binB')!;
++    expect(remainingBin.date).toBe(BIN_DATE);
++    expect(remainingBin.sortIndex).toBe(0); // bin reindexed after binA left
++
++    const task = next.tasks.find((t) => t.id === 't1')!;
++    expect(task.endDate).toBe('2026-07-10');
++
++    const activityMsg = next.activity[next.activity.length - 1].message;
++    expect(activityMsg).toContain('z zasobnika');
++  });
++
++  it("bin→grid drop that collides with the same person's existing block is rejected", () => {
++    const binA = makeEntry({ id: 'binA', date: BIN_DATE, startMinutes: 0, plannedHours: 2, sortIndex: 0 });
++    const existing = makeEntry({ id: 'existing', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 }); // 480-600
++    const state = makeState({
++      tasks: [makeTask({ id: 't1' })],
++      workload: [binA, existing],
++    });
++
++    const next = reducer(state, {
++      type: 'SET_BLOCK_TIME',
++      entryId: 'binA',
++      date: '2026-07-08',
++      startMinutes: 500, // 500-620 overlaps existing's 480-600
++      plannedHours: 2,
++    });
++
++    expect(next).toBe(state);
++  });
++});
++
++describe('SAVE_TASK bin behavior', () => {
++  function draftFor(task: Task): TaskDraft {
++    return {
++      projectId: task.projectId,
++      statusId: task.statusId,
++      title: task.title,
++      description: task.description,
++      startDate: task.startDate,
++      endDate: task.endDate,
++      estimatedHours: task.estimatedHours,
++    };
++  }
++
++  it('preserves an existing bin entry for a still-assigned person, drops it for an unassigned person', () => {
++    const task = makeTask({ id: 't1' });
++    const binP1 = makeEntry({ id: 'binP1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 3, sortIndex: 0 });
++    const binP2 = makeEntry({ id: 'binP2', taskId: 't1', personId: 'p2', date: BIN_DATE, startMinutes: 0, plannedHours: 4, sortIndex: 0 });
++    const state = makeState({
++      tasks: [task],
++      assignments: [
++        { id: 'a1', taskId: 't1', personId: 'p1' },
++        { id: 'a2', taskId: 't1', personId: 'p2' },
++      ],
++      workload: [binP1, binP2],
++    });
++
++    const next = reducer(state, {
++      type: 'SAVE_TASK',
++      payload: {
++        taskId: 't1',
++        draft: draftFor(task),
++        assigneeIds: ['p1'], // p2 unassigned
++        allocations: [],
++      },
++    });
++
++    const keptBin = next.workload.find((w) => w.id === 'binP1');
++    expect(keptBin).toBeDefined();
++    expect(keptBin!.plannedHours).toBe(3);
++    expect(next.workload.find((w) => w.id === 'binP2')).toBeUndefined();
++  });
++
++  it('newUnassigned: appends bin hours for assigned people, snaps off-grid hours, skips <=0 hours and unassigned people', () => {
++    const task = makeTask({ id: 't1' });
++    const state = makeState({
++      tasks: [task],
++      assignments: [{ id: 'a1', taskId: 't1', personId: 'p1' }],
++      workload: [],
++    });
++
++    const next = reducer(state, {
++      type: 'SAVE_TASK',
++      payload: {
++        taskId: 't1',
++        draft: draftFor(task),
++        assigneeIds: ['p1'],
++        allocations: [],
++        newUnassigned: [
++          { personId: 'p1', hours: 10 },
++          { personId: 'p1', hours: 1.3 }, // off-grid -> snaps to 1.25
++          { personId: 'p1', hours: 0 }, // skipped
++          { personId: 'p2', hours: 5 }, // p2 not in assigneeIds -> skipped
++        ],
++      },
++    });
++
++    const p1Bin = next.workload
++      .filter((w) => w.personId === 'p1' && w.date === BIN_DATE)
++      .sort((a, b) => a.sortIndex - b.sortIndex);
++    expect(p1Bin).toHaveLength(2);
++    expect(p1Bin[0].plannedHours).toBe(10);
++    expect(p1Bin[1].plannedHours).toBe(1.25);
++    expect(p1Bin.map((w) => w.sortIndex)).toEqual([0, 1]);
++
++    expect(next.workload.some((w) => w.personId === 'p2')).toBe(false);
++  });
++});
++
++describe('MOVE_TASK bin behavior', () => {
++  it('shifts dated entries but leaves bin entries untouched', () => {
++    const dated = makeEntry({ id: 'e1', taskId: 't1', date: '2026-07-07', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
++    const bin = makeEntry({ id: 'bin1', taskId: 't1', date: BIN_DATE, startMinutes: 0, plannedHours: 2, sortIndex: 0 });
++    const state = makeState({
++      tasks: [makeTask({ id: 't1', startDate: '2026-07-06', endDate: '2026-07-08' })],
++      workload: [dated, bin],
++    });
++
++    const next = reducer(state, { type: 'MOVE_TASK', taskId: 't1', dayDelta: 2 });
++
++    const movedDated = next.workload.find((w) => w.id === 'e1')!;
++    expect(movedDated.date).toBe('2026-07-09');
++
++    const untouchedBin = next.workload.find((w) => w.id === 'bin1')!;
++    expect(untouchedBin).toEqual(bin);
++  });
++});
++
++describe('SET_TASK_DATES bin behavior', () => {
++  it('drops out-of-period dated entries but keeps the bin entry', () => {
++    const inPeriod = makeEntry({ id: 'e1', taskId: 't1', date: '2026-07-07', sortIndex: 0 });
++    const outOfPeriod = makeEntry({ id: 'e2', taskId: 't1', date: '2026-07-08', sortIndex: 0 });
++    const bin = makeEntry({ id: 'bin1', taskId: 't1', date: BIN_DATE, startMinutes: 0, plannedHours: 2, sortIndex: 0 });
++    const state = makeState({
++      tasks: [makeTask({ id: 't1', startDate: '2026-07-06', endDate: '2026-07-08' })],
++      workload: [inPeriod, outOfPeriod, bin],
++    });
++
++    const next = reducer(state, {
++      type: 'SET_TASK_DATES',
++      taskId: 't1',
++      startDate: '2026-07-06',
++      endDate: '2026-07-07', // shrinks the period, dropping 07-08
++    });
++
++    expect(next.workload.find((w) => w.id === 'e2')).toBeUndefined();
++    expect(next.workload.find((w) => w.id === 'e1')).toBeDefined();
++    expect(next.workload.find((w) => w.id === 'bin1')).toBeDefined();
++  });
++});
++
++describe('INSERT_BLOCK bin behavior', () => {
++  it('rejects when the ref entry is a bin entry', () => {
++    const bin = makeEntry({ id: 'bin1', date: BIN_DATE, startMinutes: 0, plannedHours: 2, sortIndex: 0 });
++    const state = makeState({
++      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2' })],
++      workload: [bin],
++    });
++
++    const next = reducer(state, {
++      type: 'INSERT_BLOCK',
++      payload: { refEntryId: 'bin1', position: 'before', taskId: 't2', hours: 1 },
++    });
++
++    expect(next).toBe(state);
++  });
++});
+diff --git a/src/store/seed.ts b/src/store/seed.ts
+index 03145fb..0aabdbe 100644
+--- a/src/store/seed.ts
++++ b/src/store/seed.ts
+@@ -12,7 +12,7 @@ import type {
+ } from '../types';
+ import { buildDefaultStatuses, DATA_VERSION, DEFAULT_CAPACITY } from './storage';
+ import { addDaysStr, todayStr, weekDays } from '../utils/dates';
+-import { hoursToMinutes, nextFreeStart } from '../utils/time';
++import { BIN_DATE, hoursToMinutes, nextFreeStart } from '../utils/time';
+ 
+ function uid(): string {
+   return crypto.randomUUID();
+@@ -157,6 +157,14 @@ export function buildSampleData(): AppData {
+     const startMinutes = nextFreeStart(existing, hoursToMinutes(plannedHours));
+     workload.push({ id: uid(), taskId, personId, date, plannedHours, startMinutes, sortIndex });
+   };
++  // A dateless "bin" block: startMinutes 0, contiguous sortIndex per person bin.
++  const addBinWork = (taskId: string, personId: string, plannedHours: number) => {
++    if (plannedHours <= 0) return;
++    const key = `${personId}|${BIN_DATE}`;
++    const sortIndex = sortCounters.get(key) ?? 0;
++    sortCounters.set(key, sortIndex + 1);
++    workload.push({ id: uid(), taskId, personId, date: BIN_DATE, plannedHours, startMinutes: 0, sortIndex });
++  };
+ 
+   // --- Task 1: multi-person design/dev task (Mon–Fri this week) ---
+   const t1: Task = {
+@@ -184,6 +192,8 @@ export function buildSampleData(): AppData {
+   addWork(t1.id, marek.id, wed, 6);
+   addWork(t1.id, marek.id, thu, 6);
+   addWork(t1.id, marek.id, fri, 5);
++  // Ola has 3h of unscheduled hero work sitting in her bin (zasobnik).
++  addBinWork(t1.id, ola.id, 3);
+ 
+   // --- Task 2: task with zero-hour gap days inside its period ---
+   // Kasia plans the campaign: works Mon and Thu/Fri, but Tue/Wed are intentional
+diff --git a/src/store/selectors.ts b/src/store/selectors.ts
+index d5464c7..b8f1951 100644
+--- a/src/store/selectors.ts
++++ b/src/store/selectors.ts
+@@ -16,7 +16,7 @@ import type {
+   WorkloadEntry,
+ } from '../types';
+ import { DEFAULT_CAPACITY } from './storage';
+-import { blockEndMinutes, hasCollision, hoursToMinutes } from '../utils/time';
++import { blockEndMinutes, hasCollision, hoursToMinutes, isBinEntry } from '../utils/time';
+ 
+ // ---- Basic lookups ----
+ 
+@@ -262,6 +262,25 @@ export function dayTotal(
+   );
+ }
+ 
++// ---- Bin (zasobnik) — dateless unassigned entries ----
++
++/** A person's bin entries (date === ''), ordered by their bin sortIndex. */
++export function binEntriesForPerson(state: AppData, personId: string): WorkloadEntry[] {
++  return state.workload
++    .filter((w) => w.personId === personId && isBinEntry(w))
++    .sort((a, b) => a.sortIndex - b.sortIndex);
++}
++
++/** A task's bin entries (any person). */
++export function binEntriesForTask(state: AppData, taskId: string): WorkloadEntry[] {
++  return state.workload.filter((w) => w.taskId === taskId && isBinEntry(w));
++}
++
++/** Summed hours a person has sitting in their bin. */
++export function binTotalForPerson(state: AppData, personId: string): number {
++  return binEntriesForPerson(state, personId).reduce((sum, w) => sum + w.plannedHours, 0);
++}
++
+ // ---- Capacity & overload ----
+ 
+ export const OVERLOAD_THRESHOLD = DEFAULT_CAPACITY;
+diff --git a/src/store/storage.test.ts b/src/store/storage.test.ts
+index 581162c..ca93086 100644
+--- a/src/store/storage.test.ts
++++ b/src/store/storage.test.ts
+@@ -5,6 +5,7 @@
+ // from localStorage/loadData.
+ import { describe, expect, it } from 'vitest';
+ import { ensureStartMinutes, emptyData } from './storage';
++import { BIN_DATE } from '../utils/time';
+ import type { AppData, WorkloadEntry } from '../types';
+ 
+ function makeEntry(overrides: Partial<WorkloadEntry> & { id: string }): WorkloadEntry {
+@@ -93,3 +94,43 @@ describe('ensureStartMinutes', () => {
+     expect(n2.startMinutes).toBe(240);
+   });
+ });
++
++describe('ensureStartMinutes — bin normalization (PKG-20260708-bin-core)', () => {
++  it('normalizes a bin entry with garbage startMinutes and gappy sortIndex to startMinutes:0 and contiguous sortIndex', () => {
++    const e1 = makeEntry({ id: 'e1', date: BIN_DATE, startMinutes: 300, sortIndex: 0 });
++    const e2 = makeEntry({ id: 'e2', date: BIN_DATE, startMinutes: 999, sortIndex: 3 }); // gappy: 0, 3
++    const next = ensureStartMinutes(makeState([e1, e2]));
++
++    const n1 = next.workload.find((w) => w.id === 'e1')!;
++    const n2 = next.workload.find((w) => w.id === 'e2')!;
++    expect(n1.startMinutes).toBe(0);
++    expect(n2.startMinutes).toBe(0);
++    expect(n1.sortIndex).toBe(0);
++    expect(n2.sortIndex).toBe(1); // renumbered contiguous, order preserved from old sortIndex
++  });
++
++  it('is idempotent and returns the same reference for an already-clean bin group', () => {
++    const e1 = makeEntry({ id: 'e1', date: BIN_DATE, startMinutes: 0, sortIndex: 0 });
++    const e2 = makeEntry({ id: 'e2', date: BIN_DATE, startMinutes: 0, sortIndex: 1 });
++    const state = makeState([e1, e2]);
++
++    const once = ensureStartMinutes(state);
++    expect(once).toBe(state); // no patch needed -> same reference
++
++    const twice = ensureStartMinutes(once);
++    expect(twice).toBe(once); // running the pass again is a no-op
++  });
++
++  it('does NOT stack a bin group from 08:00, even with garbage startMinutes on every entry (unlike a dated group)', () => {
++    const e1 = makeEntry({ id: 'e1', date: BIN_DATE, startMinutes: -1, plannedHours: 3, sortIndex: 0 });
++    const e2 = makeEntry({ id: 'e2', date: BIN_DATE, startMinutes: 5000, plannedHours: 2, sortIndex: 1 });
++    const next = ensureStartMinutes(makeState([e1, e2]));
++
++    const n1 = next.workload.find((w) => w.id === 'e1')!;
++    const n2 = next.workload.find((w) => w.id === 'e2')!;
++    // A dated group with this input would stack at 480 then 660 (see the
++    // "restacks a group from 08:00" test above) — bin entries always land at 0.
++    expect(n1.startMinutes).toBe(0);
++    expect(n2.startMinutes).toBe(0);
++  });
++});
+diff --git a/src/store/storage.ts b/src/store/storage.ts
+index 9008dbb..152a38b 100644
+--- a/src/store/storage.ts
++++ b/src/store/storage.ts
+@@ -2,6 +2,7 @@
+ // The stored JSON is versioned; loadData migrates older payloads forward.
+ import type { AppData, Person, Status, WorkloadEntry } from '../types';
+ import {
++  BIN_DATE,
+   DAY_MINUTES,
+   MINUTE_STEP,
+   clampBlockStart,
+@@ -351,8 +352,19 @@ export function ensureStartMinutes(data: AppData): AppData {
+   }
+ 
+   const patched = new Map<string, number>(); // entryId -> startMinutes
++  const patchedSort = new Map<string, number>(); // entryId -> sortIndex
+   for (const list of groups.values()) {
+     const ordered = [...list].sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0));
++    // Bin groups (date === '') don't follow the 08:00 stacking rule: every
++    // entry sits at startMinutes 0 and the group's sortIndex is renumbered
++    // 0..n in existing sortIndex order.
++    if (ordered.length > 0 && ordered[0].date === BIN_DATE) {
++      ordered.forEach((w, i) => {
++        if (w.startMinutes !== 0) patched.set(w.id, 0);
++        if (w.sortIndex !== i) patchedSort.set(w.id, i);
++      });
++      continue;
++    }
+     if (ordered.some((w) => !hasValidStart(w))) {
+       const starts = stackStartTimes(ordered.map((w) => ({ plannedHours: w.plannedHours })));
+       ordered.forEach((w, i) => {
+@@ -370,12 +382,18 @@ export function ensureStartMinutes(data: AppData): AppData {
+     }
+   }
+ 
+-  if (patched.size === 0) return data;
++  if (patched.size === 0 && patchedSort.size === 0) return data;
+   return {
+     ...data,
+     workload: data.workload.map((w) => {
+       const s = patched.get(w.id);
+-      return s === undefined ? w : { ...w, startMinutes: s };
++      const si = patchedSort.get(w.id);
++      if (s === undefined && si === undefined) return w;
++      return {
++        ...w,
++        ...(s === undefined ? null : { startMinutes: s }),
++        ...(si === undefined ? null : { sortIndex: si }),
++      };
+     }),
+   };
+ }
+diff --git a/src/styles.css b/src/styles.css
+index d9054c6..c06358f 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -330,6 +330,54 @@ textarea {
+   min-height: 40px;
+ }
+ 
++/* Brand row now holds the brand + the collapse toggle. */
++.app-brand-row {
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  gap: var(--n2-space-3);
++}
++.sidebar-toggle {
++  display: inline-grid;
++  place-items: center;
++  width: 34px;
++  height: 34px;
++  flex: none;
++  padding: 0;
++  border: 1px solid var(--n2-border);
++  border-radius: var(--n2-radius-md);
++  background: rgba(255, 255, 255, 0.05);
++  color: var(--n2-text-soft);
++  cursor: pointer;
++  transition: background var(--n2-transition), border-color var(--n2-transition),
++    color var(--n2-transition);
++}
++.sidebar-toggle:hover {
++  background: rgba(196, 150, 255, 0.12);
++  border-color: var(--n2-border-strong);
++  color: var(--n2-text);
++}
++
++/* Wrapper pins the acting-as controls to the bottom of the sidebar. */
++.acting-as-wrap {
++  margin-top: auto;
++}
++.acting-as-wrap .acting-as {
++  margin-top: 0;
++}
++/* Collapsed-only avatar shortcut — hidden by default, revealed >1180px. */
++.acting-as-collapsed {
++  display: none;
++  place-items: center;
++  width: 100%;
++  padding: var(--n2-space-2) 0;
++  border: none;
++  border-top: 1px solid var(--n2-border);
++  background: transparent;
++  color: var(--n2-text-soft);
++  cursor: pointer;
++}
++
+ /* ---------- Page ---------- */
+ 
+ .page {
+@@ -754,6 +802,78 @@ option {
+   margin-top: 8px;
+ }
+ 
++/* ---------- Bin (zasobnik) editor section ---------- */
++
++.bin-existing {
++  display: flex;
++  flex-direction: column;
++  gap: 8px;
++  margin-bottom: 10px;
++}
++.bin-existing-row {
++  display: flex;
++  align-items: center;
++  gap: 8px;
++  flex-wrap: wrap;
++}
++.bin-existing-name {
++  font-size: var(--n2-type-sm);
++  font-weight: 500;
++  color: var(--text);
++}
++.bin-chips {
++  display: inline-flex;
++  flex-wrap: wrap;
++  gap: 6px;
++}
++.bin-add-row {
++  display: flex;
++  flex-wrap: wrap;
++  align-items: center;
++  gap: 8px;
++  margin-top: 8px;
++}
++.bin-add-row select {
++  min-width: 160px;
++}
++.bin-add-row input {
++  width: 90px;
++}
++.bin-pending {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 8px;
++  margin-top: 10px;
++}
++.bin-chip {
++  display: inline-flex;
++  align-items: center;
++  gap: 6px;
++  border: 1px solid var(--n2-border);
++  border-radius: var(--n2-radius-pill);
++  padding: 5px 10px;
++  font-size: var(--n2-type-sm);
++  font-weight: 500;
++  background: rgba(196, 150, 255, 0.14);
++}
++.bin-chip.readonly {
++  background: rgba(255, 255, 255, 0.045);
++  font-family: var(--n2-font-data);
++  font-variant-numeric: tabular-nums;
++}
++.bin-chip-remove {
++  border: none;
++  background: none;
++  color: var(--text-muted);
++  cursor: pointer;
++  font-size: 15px;
++  line-height: 1;
++  padding: 0 0 0 2px;
++}
++.bin-chip-remove:hover {
++  color: var(--n2-danger);
++}
++
+ /* ---------- Allocation grid (data table) ---------- */
+ 
+ .alloc-wrap {
+@@ -1049,7 +1169,8 @@ option {
+ .week-cal-scroll {
+   max-height: 70vh;
+   overflow-y: auto;
+-  overflow-x: hidden;
++  /* Mon–Fri fill the visible width; Sat, Sun and the bin scroll in from the right. */
++  overflow-x: auto;
+   border: 1px solid var(--n2-border);
+   border-radius: var(--n2-radius-md);
+   background: var(--card-bg);
+@@ -1057,11 +1178,15 @@ option {
+ .week-cal-grid {
+   display: grid;
+   position: relative;
++  /* 52px axis + 8 equal columns, but sized so exactly the 5 weekday columns fill
++     the scroll container's visible width; the weekend + bin columns overflow to
++     the right behind horizontal scroll. */
++  width: calc((100% - 52px) / 5 * 8 + 52px);
+   /* Drag gestures cross block text; text-selection would hijack the next drag
+      into a native text-drag. Nothing in the grid is useful to select anyway. */
+   -webkit-user-select: none;
+   user-select: none;
+-  /* columns + rows set inline (52px axis + 7 day cols; auto header + 1152px body) */
++  /* columns + rows set inline (52px axis + 7 day cols + bin; auto header + 1152px body) */
+ }
+ 
+ /* Sticky headers (corner + day headers) */
+@@ -1075,7 +1200,10 @@ option {
+ }
+ .week-axis-head {
+   border-right: 1px solid var(--n2-border);
+-  z-index: 7;
++  /* Corner stays pinned to both edges while scrolling either axis. */
++  position: sticky;
++  left: 0;
++  z-index: 9;
+ }
+ .week-day-head {
+   padding: 8px 10px;
+@@ -1116,9 +1244,12 @@ option {
+   font-weight: 600;
+ }
+ 
+-/* Left hour axis */
++/* Left hour axis — sticky so it stays visible during horizontal scroll. */
+ .week-axis {
+-  position: relative;
++  position: sticky;
++  left: 0;
++  z-index: 5;
++  background: var(--card-bg);
+   border-right: 1px solid var(--n2-border);
+ }
+ .week-axis-label {
+@@ -1195,6 +1326,13 @@ option {
+   border-left-color: var(--n2-danger) !important;
+   background: var(--n2-danger-soft, rgba(255, 79, 114, 0.25));
+ }
++/* Hovering the bin column while dragging a dated block: info/lavender, NOT danger. */
++.week-block.to-bin {
++  cursor: grabbing;
++  border-color: var(--n2-lavender);
++  border-left-color: var(--n2-lavender) !important;
++  background: rgba(196, 150, 255, 0.22);
++}
+ .week-block-handle {
+   position: absolute;
+   left: 0;
+@@ -1245,6 +1383,120 @@ option {
+   font-variant-numeric: tabular-nums;
+ }
+ 
++/* ---------- Bin column (Zasobnik: dateless blocks) ---------- */
++
++/* Bin header cell (8th column header). */
++.week-bin-head {
++  position: sticky;
++  top: 0;
++  z-index: 6;
++  padding: 8px 10px;
++  background: var(--card-bg-2);
++  border-left: 1px solid var(--n2-border-strong);
++  border-bottom: 1px solid var(--n2-border);
++}
++.week-bin-head-title {
++  font-size: var(--n2-type-sm);
++  font-weight: 600;
++  color: var(--text);
++}
++.week-bin-head-sub {
++  font-size: var(--n2-type-xs);
++  text-transform: uppercase;
++  letter-spacing: 0.03em;
++  color: var(--text-muted);
++  font-family: var(--n2-font-mono);
++}
++
++/* Bin body column: stacked from the top, not time-positioned. */
++.week-bin-col {
++  position: relative;
++  border-left: 1px solid var(--n2-border-strong);
++  background: var(--card-bg-2);
++  overflow: visible; /* let a dragged bin card extend over the day columns */
++  padding: 8px 8px 16px;
++  display: flex;
++  flex-direction: column;
++  gap: 12px;
++}
++.week-bin-empty {
++  font-size: var(--n2-type-xs);
++  color: var(--text-faint);
++  margin: 8px 2px 0;
++}
++.week-bin-group {
++  display: flex;
++  flex-direction: column;
++  gap: 6px;
++}
++.week-bin-group-head {
++  display: flex;
++  align-items: center;
++  gap: 6px;
++  font-size: var(--n2-type-xs);
++  font-weight: 600;
++  color: var(--text-muted);
++}
++.week-bin-group-total {
++  margin-left: auto;
++  color: var(--text);
++  font-family: var(--n2-font-data);
++  font-variant-numeric: tabular-nums;
++}
++.week-bin-block {
++  box-sizing: border-box;
++  text-align: left;
++  border: 1px solid var(--n2-border);
++  border-left: 3px solid var(--n2-lavender);
++  border-radius: var(--n2-radius-xs);
++  background: rgba(45, 30, 70, 0.92);
++  padding: 5px 8px;
++  cursor: grab;
++  font-family: inherit;
++  color: inherit;
++  display: flex;
++  flex-direction: column;
++  gap: 2px;
++  overflow: hidden;
++  touch-action: none; /* pointer drag instead of scroll */
++  transition: background var(--n2-transition);
++}
++.week-bin-block:hover {
++  background: rgba(60, 40, 92, 0.95);
++}
++.week-bin-block.dragging {
++  cursor: grabbing;
++  position: relative;
++  z-index: 40;
++  box-shadow: var(--n2-shadow-violet, 0 8px 24px rgba(0, 0, 0, 0.4));
++  opacity: 0.96;
++}
++.week-bin-block.colliding {
++  cursor: not-allowed;
++  border-color: var(--n2-danger);
++  border-left-color: var(--n2-danger) !important;
++  background: var(--n2-danger-soft, rgba(255, 79, 114, 0.25));
++}
++.week-bin-block-title {
++  font-size: var(--n2-type-xs);
++  font-weight: 600;
++  color: var(--text);
++  line-height: 1.2;
++  display: flex;
++  align-items: center;
++  gap: 5px;
++  white-space: nowrap;
++  overflow: hidden;
++  text-overflow: ellipsis;
++}
++.week-bin-block-hours {
++  font-size: var(--n2-type-xs);
++  font-weight: 600;
++  color: var(--text);
++  font-family: var(--n2-font-data);
++  font-variant-numeric: tabular-nums;
++}
++
+ /* ---------- Month view ---------- */
+ 
+ .month-grid-wrap {
+@@ -2233,10 +2485,26 @@ option {
+   border-radius: var(--n2-radius-xs);
+   cursor: pointer;
+ }
+-.context-menu-item:hover {
++.context-menu-item:hover:not(:disabled) {
+   background: rgba(196, 150, 255, 0.16);
+   color: var(--n2-text);
+ }
++.context-menu-item:disabled {
++  opacity: 0.4;
++  cursor: not-allowed;
++}
++.context-menu-item.danger {
++  color: var(--n2-danger);
++}
++.context-menu-item.danger:hover:not(:disabled) {
++  background: var(--n2-danger-soft);
++  color: var(--n2-danger);
++}
++.context-menu-sep {
++  height: 1px;
++  background: var(--n2-border);
++  margin: 4px 6px;
++}
+ .context-insert-form {
+   padding: 2px;
+ }
+@@ -2371,6 +2639,12 @@ option {
+   .app-shell {
+     grid-template-columns: 1fr;
+   }
++  /* The collapse toggle + collapsed avatar are desktop-only; the 1-column
++     strip and mobile drawer ignore the stored pref entirely. */
++  .sidebar-toggle,
++  .acting-as-collapsed {
++    display: none;
++  }
+   .app-sidebar {
+     position: relative;
+     top: auto;
+@@ -2406,12 +2680,12 @@ option {
+   .app-nav-link {
+     justify-content: flex-start;
+   }
+-  /* Keep the 7 columns usable by allowing horizontal scroll of the grid. */
++  /* Keep all 8 columns usable by allowing horizontal scroll of the grid. */
+   .week-cal-scroll {
+     overflow-x: auto;
+   }
+   .week-cal-grid {
+-    min-width: 720px;
++    min-width: 820px; /* 52 axis + 8 × 96 */
+   }
+   .cal-toolbar {
+     justify-content: flex-start;
+@@ -2421,6 +2695,58 @@ option {
+   }
+ }
+ 
++/* ---------- Collapsed sidebar (desktop only) ----------
++   Every rule here is scoped to >1180px so the 1-column strip (≤1180px) and the
++   mobile drawer (≤760px) stay pixel-identical regardless of the stored pref. */
++@media (min-width: 1181px) {
++  .app-shell {
++    transition: grid-template-columns var(--n2-transition);
++  }
++  .app-shell.sidebar-collapsed {
++    grid-template-columns: 80px minmax(0, 1fr);
++  }
++  .sidebar-collapsed .app-sidebar {
++    padding-inline: var(--n2-space-3);
++    align-items: center;
++  }
++  /* Stack the brand mark over the toggle, both centered in 80px. */
++  .sidebar-collapsed .app-brand-row {
++    flex-direction: column;
++    justify-content: center;
++    gap: var(--n2-space-2);
++  }
++  .sidebar-collapsed .app-brand {
++    justify-content: center;
++  }
++  .sidebar-collapsed .app-brand-name {
++    display: none;
++  }
++  /* Icon-only nav: hide the labels, center the icons, keep the tap target. */
++  .sidebar-collapsed .app-nav-link {
++    justify-content: center;
++    padding-inline: 0;
++    gap: 0;
++  }
++  .sidebar-collapsed .app-nav-link .nav-label {
++    display: none;
++  }
++  /* Search trigger hides (Ctrl/Cmd+K still works — component stays mounted). */
++  .sidebar-collapsed .search-trigger {
++    display: none;
++  }
++  /* Keep the hovered icon centered (no horizontal nudge when icon-only). */
++  .sidebar-collapsed .app-nav-link:hover .nav-icon {
++    transform: scale(1.08);
++  }
++  /* Swap the acting-as select for the avatar shortcut. */
++  .sidebar-collapsed .acting-as {
++    display: none;
++  }
++  .sidebar-collapsed .acting-as-collapsed {
++    display: grid;
++  }
++}
++
+ @media (prefers-reduced-motion: reduce) {
+   *,
+   *::before,
+diff --git a/src/types.ts b/src/types.ts
+index 1f8f38a..094a6ea 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -90,12 +90,17 @@ export interface WorkloadEntry {
+   id: string;
+   taskId: string;
+   personId: string;
++  // Calendar day of the block, OR the empty string '' (BIN_DATE) sentinel for an
++  // "unassigned / bin" (zasobnik) block that has no calendar day yet.
+   date: DateStr;
+   plannedHours: number;
+   // Time-of-day the block starts, in minutes from local midnight. Invariant:
+   // multiple of 15, 0 <= startMinutes and startMinutes + plannedHours*60 <= 1440.
++  // Bin entries (date === '') always have startMinutes: 0.
+   startMinutes: number;
+-  sortIndex: number; // order within the person's day == rank by startMinutes
++  // Order within the person's day == rank by startMinutes. For bin entries
++  // (date === '') it orders the person's bin (contiguous per (personId, '')).
++  sortIndex: number;
+ }
+ 
+ export type CommentEntityType = 'project' | 'task';
+diff --git a/src/utils/time.ts b/src/utils/time.ts
+index 8155e8c..f93cbb0 100644
+--- a/src/utils/time.ts
++++ b/src/utils/time.ts
+@@ -10,6 +10,18 @@ export const WORKDAY_START_MIN = 480;
+ /** Minutes in a day. */
+ export const DAY_MINUTES = 1440;
+ 
++/**
++ * Sentinel `WorkloadEntry.date` for an unassigned block sitting in a person's
++ * "bin" (zasobnik): no calendar day. Bin entries always have startMinutes: 0
++ * and a contiguous sortIndex per (personId, '') group.
++ */
++export const BIN_DATE = '';
++
++/** True when an entry lives in the bin (unassigned / no calendar day). */
++export function isBinEntry(e: { date: string }): boolean {
++  return e.date === BIN_DATE;
++}
++
+ export function hoursToMinutes(h: number): number {
+   return h * 60;
+ }

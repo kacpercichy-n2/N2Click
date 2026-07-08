@@ -90,12 +90,17 @@ export interface WorkloadEntry {
   id: string;
   taskId: string;
   personId: string;
+  // Calendar day of the block, OR the empty string '' (BIN_DATE) sentinel for an
+  // "unassigned / bin" (zasobnik) block that has no calendar day yet.
   date: DateStr;
   plannedHours: number;
   // Time-of-day the block starts, in minutes from local midnight. Invariant:
   // multiple of 15, 0 <= startMinutes and startMinutes + plannedHours*60 <= 1440.
+  // Bin entries (date === '') always have startMinutes: 0.
   startMinutes: number;
-  sortIndex: number; // order within the person's day == rank by startMinutes
+  // Order within the person's day == rank by startMinutes. For bin entries
+  // (date === '') it orders the person's bin (contiguous per (personId, '')).
+  sortIndex: number;
 }
 
 export type CommentEntityType = 'project' | 'task';

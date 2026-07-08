@@ -19,6 +19,8 @@ export {
   X,
   ChevronRight,
   ChevronLeft,
+  ChevronsLeft,
+  ChevronsRight,
   Plus,
   Trash2,
   Pencil,

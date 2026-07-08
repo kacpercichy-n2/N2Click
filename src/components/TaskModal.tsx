@@ -7,11 +7,17 @@ import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-do
 import { AnimatePresence, motion } from 'motion/react';
 import { useStore } from '../store/AppStore';
 import type { AllocationCell, TaskDraft } from '../store/AppStore';
-import { activeStatuses, assigneeIdsOfTask, getClient } from '../store/selectors';
+import {
+  activeStatuses,
+  assigneeIdsOfTask,
+  binEntriesForTask,
+  getClient,
+} from '../store/selectors';
 import { CommentsPanel } from './CommentsPanel';
 import { AllocationGrid, allocKey, isWeekdayDate, type AllocMap } from './AllocationGrid';
 import { SaveStatus } from './SaveStatus';
 import { personColor } from '../utils/colors';
+import { isBinEntry } from '../utils/time';
 import { eachDayInclusive, inclusiveDayCount, todayStr } from '../utils/dates';
 import { useSaveStatus } from '../utils/useSaveStatus';
 
@@ -236,6 +242,7 @@ function serializeDraft(v: {
   endDate: string;
   assigneeIds: string[];
   allocations: AllocMap;
+  pendingUnassigned: Array<{ personId: string; hours: number }>;
 }): string {
   return JSON.stringify({
     title: v.title,
@@ -249,6 +256,7 @@ function serializeDraft(v: {
     allocations: Object.entries(v.allocations)
       .filter(([, h]) => h > 0)
       .sort(([a], [b]) => a.localeCompare(b)),
+    pendingUnassigned: v.pendingUnassigned.map((u) => [u.personId, u.hours]),
   });
 }
 
@@ -289,16 +297,27 @@ function TaskEditor({
     existing ? assigneeIdsOfTask(state, existing.id) : [],
   );
 
-  // ---- Allocation map (personId|date -> hours), seeded from existing entries ----
+  // ---- Allocation map (personId|date -> hours), seeded from existing DATED
+  // entries only. Bin entries (date === '') are shown in a separate section and
+  // never enter the allocation grid. ----
   const [allocations, setAllocations] = useState<AllocMap>(() => {
     const map: AllocMap = {};
     if (existing) {
-      for (const w of state.workload.filter((w) => w.taskId === existing.id)) {
+      for (const w of state.workload.filter(
+        (w) => w.taskId === existing.id && !isBinEntry(w),
+      )) {
         map[allocKey(w.personId, w.date)] = w.plannedHours;
       }
     }
     return map;
   });
+
+  // ---- Bin (zasobnik): hours queued to be appended as dateless blocks ----
+  const [pendingUnassigned, setPendingUnassigned] = useState<
+    Array<{ personId: string; hours: number }>
+  >([]);
+  const [binPersonId, setBinPersonId] = useState('');
+  const [binHoursRaw, setBinHoursRaw] = useState('1');
 
   const [titleTouched, setTitleTouched] = useState(false);
 
@@ -348,6 +367,7 @@ function TaskEditor({
     endDate,
     assigneeIds,
     allocations,
+    pendingUnassigned,
   });
   const snapshotRef = useRef<string | null>(null);
   if (snapshotRef.current === null) snapshotRef.current = currentSerialized;
@@ -393,14 +413,28 @@ function TaskEditor({
     const isAssigned = assigneeIds.includes(personId);
     if (isAssigned) {
       const person = state.people.find((p) => p.id === personId);
-      const plannedOnThisTask = Object.entries(allocations)
+      // Dated allocation hours for this person on this task.
+      const datedOnThisTask = Object.entries(allocations)
         .filter(([key, h]) => h > 0 && key.startsWith(`${personId}|`))
         .reduce((s, [, h]) => s + h, 0);
-      if (plannedOnThisTask > 0) {
+      // Bin hours saveTask would silently drop when the person is unassigned:
+      // existing dateless entries + any pending (unsaved) additions.
+      const existingBinForPerson = existing
+        ? binEntriesForTask(state, existing.id)
+            .filter((w) => w.personId === personId)
+            .reduce((s, w) => s + w.plannedHours, 0)
+        : 0;
+      const pendingBinForPerson = pendingUnassigned
+        .filter((u) => u.personId === personId && u.hours > 0)
+        .reduce((s, u) => s + u.hours, 0);
+      const binForPerson = existingBinForPerson + pendingBinForPerson;
+      const droppedTotal = datedOnThisTask + binForPerson;
+      if (droppedTotal > 0) {
+        const binSuffix = binForPerson > 0 ? ` (w tym ${fmtHours(binForPerson)}h w zasobniku)` : '';
         const ok = window.confirm(
           `Usunąć ${person?.name ?? 'tę osobę'} oraz ${fmtHours(
-            plannedOnThisTask,
-          )}h zaplanowanej pracy z tego zadania?`,
+            droppedTotal,
+          )}h zaplanowanej pracy z tego zadania${binSuffix}?`,
         );
         if (!ok) return;
       }
@@ -412,6 +446,8 @@ function TaskEditor({
         }
         return next;
       });
+      // Drop this person's queued bin chips too (saveTask would ignore them).
+      setPendingUnassigned((prev) => prev.filter((u) => u.personId !== personId));
     } else {
       setAssigneeIds((prev) => [...prev, personId]);
     }
@@ -451,6 +487,7 @@ function TaskEditor({
         draft,
         assigneeIds,
         allocations: cells,
+        newUnassigned: pendingUnassigned.filter((u) => u.hours > 0),
       },
     });
     // Rebase the snapshot so the close path fires no confirm, and show the
@@ -466,6 +503,41 @@ function TaskEditor({
     0,
   );
   const estNum = estimatedRaw.trim() === '' ? null : Number(estimatedRaw);
+
+  // Existing bin blocks of this task belonging to still-assigned people.
+  const existingBin = useMemo(
+    () =>
+      existing
+        ? binEntriesForTask(state, existing.id).filter((w) =>
+            assigneeIds.includes(w.personId),
+          )
+        : [],
+    [state, existing, assigneeIds],
+  );
+  const existingBinTotal = existingBin.reduce((s, w) => s + w.plannedHours, 0);
+  const pendingBinTotal = pendingUnassigned
+    .filter((u) => assigneeIds.includes(u.personId))
+    .reduce((s, u) => s + (u.hours > 0 ? u.hours : 0), 0);
+  const binTotal = existingBinTotal + pendingBinTotal;
+
+  // Existing bin blocks grouped per still-assigned person (read-only chips).
+  const existingBinByPerson = useMemo(() => {
+    const groups: Array<{ person: (typeof state.people)[number]; hours: number[] }> = [];
+    for (const p of assignedPeople) {
+      const hours = existingBin
+        .filter((w) => w.personId === p.id)
+        .map((w) => w.plannedHours);
+      if (hours.length > 0) groups.push({ person: p, hours });
+    }
+    return groups;
+  }, [assignedPeople, existingBin, state.people]);
+
+  const addBinHours = () => {
+    const personId = binPersonId || assignedPeople[0]?.id || '';
+    const hours = Number(binHoursRaw);
+    if (personId === '' || Number.isNaN(hours) || hours <= 0) return;
+    setPendingUnassigned((prev) => [...prev, { personId, hours: Math.min(24, hours) }]);
+  };
 
   return (
     <div className="editor task-editor">
@@ -550,6 +622,9 @@ function TaskEditor({
         <div className="estimate-compare">
           <span>
             zaplanowano <strong>{fmtHours(plannedTotalAll)}h</strong>
+            {binTotal > 0 && (
+              <span className="muted"> (+ {fmtHours(binTotal)}h w zasobniku)</span>
+            )}
           </span>
           <span className="muted">vs</span>
           <span>
@@ -633,6 +708,95 @@ function TaskEditor({
               );
             })}
           </div>
+        )}
+      </div>
+
+      {/* c2) Bin (zasobnik) — dateless hours */}
+      <div className="editor-section">
+        <h2>Zasobnik (bez terminu)</h2>
+        {existingBinByPerson.length > 0 && (
+          <div className="bin-existing">
+            {existingBinByPerson.map(({ person, hours }) => (
+              <div key={person.id} className="bin-existing-row">
+                <span
+                  className="person-dot"
+                  style={{ background: personColor(person.id) }}
+                  aria-hidden
+                />
+                <span className="bin-existing-name">{person.name}</span>
+                <span className="bin-chips">
+                  {hours.map((h, i) => (
+                    <span key={i} className="bin-chip readonly">
+                      {fmtHours(h)}h
+                    </span>
+                  ))}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+        <p className="field-hint">
+          Bloki bez terminu przeciągniesz na siatkę w widoku tygodnia kalendarza.
+        </p>
+        {assignedPeople.length === 0 ? (
+          <p className="field-hint">
+            Przypisz co najmniej jedną osobę, aby dodać godziny do zasobnika.
+          </p>
+        ) : (
+          <>
+            <div className="bin-add-row">
+              <select
+                aria-label="Osoba"
+                value={binPersonId || assignedPeople[0]?.id || ''}
+                onChange={(e) => setBinPersonId(e.target.value)}
+              >
+                {assignedPeople.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="number"
+                aria-label="Godziny"
+                min={0.25}
+                step={0.25}
+                max={24}
+                value={binHoursRaw}
+                onChange={(e) => setBinHoursRaw(e.target.value)}
+              />
+              <button type="button" className="btn ghost" onClick={addBinHours}>
+                Dodaj do zasobnika
+              </button>
+            </div>
+            {pendingUnassigned.length > 0 && (
+              <div className="bin-pending">
+                {pendingUnassigned.map((u, i) => {
+                  const person = state.people.find((p) => p.id === u.personId);
+                  return (
+                    <span key={i} className="bin-chip">
+                      <span
+                        className="person-dot"
+                        style={{ background: personColor(u.personId) }}
+                        aria-hidden
+                      />
+                      {person?.name ?? 'Osoba'}: {fmtHours(u.hours)}h
+                      <button
+                        type="button"
+                        className="bin-chip-remove"
+                        aria-label="Usuń"
+                        onClick={() =>
+                          setPendingUnassigned((prev) => prev.filter((_, j) => j !== i))
+                        }
+                      >
+                        ×
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+          </>
         )}
       </div>
 

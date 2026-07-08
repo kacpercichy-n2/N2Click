@@ -24,6 +24,7 @@ import { AdminPage } from './pages/AdminPage';
 import { SampleBanner } from './components/SampleBanner';
 import { TaskModal } from './components/TaskModal';
 import { GlobalSearch } from './components/GlobalSearch';
+import { Avatar } from './components/Avatar';
 import {
   LayoutDashboard,
   FolderKanban,
@@ -36,8 +37,11 @@ import {
   Settings,
   Menu,
   X,
+  ChevronsLeft,
+  ChevronsRight,
 } from './components/icons';
 import type { LucideIcon } from './components/icons';
+import { loadUiPrefs, saveUiPrefs } from './utils/uiPrefs';
 
 const NAV: Array<[string, string, LucideIcon]> = [
   ['/dashboard', 'Panel', LayoutDashboard],
@@ -55,8 +59,24 @@ export function App() {
   const { state, dispatch } = useStore();
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => loadUiPrefs().sidebarCollapsed);
   const hamburgerRef = useRef<HTMLButtonElement>(null);
   const drawerRef = useRef<HTMLElement>(null);
+
+  const toggleCollapsed = () => {
+    setCollapsed((v) => {
+      const next = !v;
+      saveUiPrefs({ sidebarCollapsed: next });
+      return next;
+    });
+  };
+  const expandSidebar = () => {
+    if (!collapsed) return;
+    setCollapsed(false);
+    saveUiPrefs({ sidebarCollapsed: false });
+  };
+
+  const currentUser = state.people.find((p) => p.id === state.currentUserId);
 
   // Close the mobile drawer whenever the route changes.
   useEffect(() => {
@@ -96,7 +116,7 @@ export function App() {
   }, [menuOpen]);
 
   return (
-    <div className="app-shell">
+    <div className={collapsed ? 'app-shell sidebar-collapsed' : 'app-shell'}>
       <header className="app-topbar">
         <div className="app-brand">
           <span className="app-brand-mark" aria-hidden />
@@ -128,9 +148,24 @@ export function App() {
         ref={drawerRef}
         className={menuOpen ? 'app-sidebar open' : 'app-sidebar'}
       >
-        <div className="app-brand">
-          <span className="app-brand-mark" aria-hidden />
-          <span className="app-brand-name">N2Hub</span>
+        <div className="app-brand-row">
+          <div className="app-brand">
+            <span className="app-brand-mark" aria-hidden />
+            <span className="app-brand-name">N2Hub</span>
+          </div>
+          <button
+            type="button"
+            className="sidebar-toggle"
+            aria-label={collapsed ? 'Rozwiń menu' : 'Zwiń menu'}
+            title={collapsed ? 'Rozwiń menu' : 'Zwiń menu'}
+            onClick={toggleCollapsed}
+          >
+            {collapsed ? (
+              <ChevronsRight size={18} aria-hidden />
+            ) : (
+              <ChevronsLeft size={18} aria-hidden />
+            )}
+          </button>
         </div>
         <GlobalSearch />
         <nav className="app-nav">
@@ -139,31 +174,52 @@ export function App() {
               key={to}
               to={to}
               className={navClass}
+              title={label}
               onClick={() => setMenuOpen(false)}
             >
               <Icon size={18} aria-hidden className="nav-icon" />
-              {label}
+              <span className="nav-label">{label}</span>
             </NavLink>
           ))}
         </nav>
         {state.people.length > 0 && (
-          <label className="acting-as" title="Aktualny użytkownik aplikacji (autor komentarzy, uprawnienia admina)">
-            <span className="acting-as-label">Występuj jako</span>
-            <select
-              value={state.currentUserId}
-              onChange={(e) =>
-                dispatch({ type: 'SET_CURRENT_USER', personId: e.target.value })
+          <div className="acting-as-wrap">
+            {/* Collapsed avatar shortcut (CSS-shown only >1180px + collapsed). */}
+            <button
+              type="button"
+              className="acting-as-collapsed"
+              title={
+                currentUser ? `Występuj jako: ${currentUser.name}` : 'Występuj jako'
               }
+              aria-label={
+                currentUser ? `Występuj jako: ${currentUser.name}` : 'Występuj jako'
+              }
+              onClick={expandSidebar}
             >
-              <option value="">—</option>
-              {state.people.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                  {p.isAdmin ? ' (administrator)' : ''}
-                </option>
-              ))}
-            </select>
-          </label>
+              {currentUser ? (
+                <Avatar person={currentUser} size={32} />
+              ) : (
+                <Users size={20} aria-hidden />
+              )}
+            </button>
+            <label className="acting-as" title="Aktualny użytkownik aplikacji (autor komentarzy, uprawnienia admina)">
+              <span className="acting-as-label">Występuj jako</span>
+              <select
+                value={state.currentUserId}
+                onChange={(e) =>
+                  dispatch({ type: 'SET_CURRENT_USER', personId: e.target.value })
+                }
+              >
+                <option value="">—</option>
+                {state.people.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                    {p.isAdmin ? ' (administrator)' : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
         )}
       </aside>
 

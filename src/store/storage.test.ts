@@ -5,6 +5,7 @@
 // from localStorage/loadData.
 import { describe, expect, it } from 'vitest';
 import { ensureStartMinutes, emptyData } from './storage';
+import { BIN_DATE } from '../utils/time';
 import type { AppData, WorkloadEntry } from '../types';
 
 function makeEntry(overrides: Partial<WorkloadEntry> & { id: string }): WorkloadEntry {
@@ -91,5 +92,45 @@ describe('ensureStartMinutes', () => {
     const n2 = next.workload.find((w) => w.id === 'e2')!;
     expect(n1.startMinutes).toBe(480);
     expect(n2.startMinutes).toBe(240);
+  });
+});
+
+describe('ensureStartMinutes — bin normalization (PKG-20260708-bin-core)', () => {
+  it('normalizes a bin entry with garbage startMinutes and gappy sortIndex to startMinutes:0 and contiguous sortIndex', () => {
+    const e1 = makeEntry({ id: 'e1', date: BIN_DATE, startMinutes: 300, sortIndex: 0 });
+    const e2 = makeEntry({ id: 'e2', date: BIN_DATE, startMinutes: 999, sortIndex: 3 }); // gappy: 0, 3
+    const next = ensureStartMinutes(makeState([e1, e2]));
+
+    const n1 = next.workload.find((w) => w.id === 'e1')!;
+    const n2 = next.workload.find((w) => w.id === 'e2')!;
+    expect(n1.startMinutes).toBe(0);
+    expect(n2.startMinutes).toBe(0);
+    expect(n1.sortIndex).toBe(0);
+    expect(n2.sortIndex).toBe(1); // renumbered contiguous, order preserved from old sortIndex
+  });
+
+  it('is idempotent and returns the same reference for an already-clean bin group', () => {
+    const e1 = makeEntry({ id: 'e1', date: BIN_DATE, startMinutes: 0, sortIndex: 0 });
+    const e2 = makeEntry({ id: 'e2', date: BIN_DATE, startMinutes: 0, sortIndex: 1 });
+    const state = makeState([e1, e2]);
+
+    const once = ensureStartMinutes(state);
+    expect(once).toBe(state); // no patch needed -> same reference
+
+    const twice = ensureStartMinutes(once);
+    expect(twice).toBe(once); // running the pass again is a no-op
+  });
+
+  it('does NOT stack a bin group from 08:00, even with garbage startMinutes on every entry (unlike a dated group)', () => {
+    const e1 = makeEntry({ id: 'e1', date: BIN_DATE, startMinutes: -1, plannedHours: 3, sortIndex: 0 });
+    const e2 = makeEntry({ id: 'e2', date: BIN_DATE, startMinutes: 5000, plannedHours: 2, sortIndex: 1 });
+    const next = ensureStartMinutes(makeState([e1, e2]));
+
+    const n1 = next.workload.find((w) => w.id === 'e1')!;
+    const n2 = next.workload.find((w) => w.id === 'e2')!;
+    // A dated group with this input would stack at 480 then 660 (see the
+    // "restacks a group from 08:00" test above) — bin entries always land at 0.
+    expect(n1.startMinutes).toBe(0);
+    expect(n2.startMinutes).toBe(0);
   });
 });

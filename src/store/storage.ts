@@ -2,6 +2,7 @@
 // The stored JSON is versioned; loadData migrates older payloads forward.
 import type { AppData, Person, Status, WorkloadEntry } from '../types';
 import {
+  BIN_DATE,
   DAY_MINUTES,
   MINUTE_STEP,
   clampBlockStart,
@@ -351,8 +352,19 @@ export function ensureStartMinutes(data: AppData): AppData {
   }
 
   const patched = new Map<string, number>(); // entryId -> startMinutes
+  const patchedSort = new Map<string, number>(); // entryId -> sortIndex
   for (const list of groups.values()) {
     const ordered = [...list].sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0));
+    // Bin groups (date === '') don't follow the 08:00 stacking rule: every
+    // entry sits at startMinutes 0 and the group's sortIndex is renumbered
+    // 0..n in existing sortIndex order.
+    if (ordered.length > 0 && ordered[0].date === BIN_DATE) {
+      ordered.forEach((w, i) => {
+        if (w.startMinutes !== 0) patched.set(w.id, 0);
+        if (w.sortIndex !== i) patchedSort.set(w.id, i);
+      });
+      continue;
+    }
     if (ordered.some((w) => !hasValidStart(w))) {
       const starts = stackStartTimes(ordered.map((w) => ({ plannedHours: w.plannedHours })));
       ordered.forEach((w, i) => {
@@ -370,12 +382,18 @@ export function ensureStartMinutes(data: AppData): AppData {
     }
   }
 
-  if (patched.size === 0) return data;
+  if (patched.size === 0 && patchedSort.size === 0) return data;
   return {
     ...data,
     workload: data.workload.map((w) => {
       const s = patched.get(w.id);
-      return s === undefined ? w : { ...w, startMinutes: s };
+      const si = patchedSort.get(w.id);
+      if (s === undefined && si === undefined) return w;
+      return {
+        ...w,
+        ...(s === undefined ? null : { startMinutes: s }),
+        ...(si === undefined ? null : { sortIndex: si }),
+      };
     }),
   };
 }

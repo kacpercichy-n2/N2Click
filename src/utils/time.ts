@@ -10,6 +10,18 @@ export const WORKDAY_START_MIN = 480;
 /** Minutes in a day. */
 export const DAY_MINUTES = 1440;
 
+/**
+ * Sentinel `WorkloadEntry.date` for an unassigned block sitting in a person's
+ * "bin" (zasobnik): no calendar day. Bin entries always have startMinutes: 0
+ * and a contiguous sortIndex per (personId, '') group.
+ */
+export const BIN_DATE = '';
+
+/** True when an entry lives in the bin (unassigned / no calendar day). */
+export function isBinEntry(e: { date: string }): boolean {
+  return e.date === BIN_DATE;
+}
+
 export function hoursToMinutes(h: number): number {
   return h * 60;
 }

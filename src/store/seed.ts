@@ -12,7 +12,7 @@ import type {
 } from '../types';
 import { buildDefaultStatuses, DATA_VERSION, DEFAULT_CAPACITY } from './storage';
 import { addDaysStr, todayStr, weekDays } from '../utils/dates';
-import { hoursToMinutes, nextFreeStart } from '../utils/time';
+import { BIN_DATE, hoursToMinutes, nextFreeStart } from '../utils/time';
 
 function uid(): string {
   return crypto.randomUUID();
@@ -157,6 +157,14 @@ export function buildSampleData(): AppData {
     const startMinutes = nextFreeStart(existing, hoursToMinutes(plannedHours));
     workload.push({ id: uid(), taskId, personId, date, plannedHours, startMinutes, sortIndex });
   };
+  // A dateless "bin" block: startMinutes 0, contiguous sortIndex per person bin.
+  const addBinWork = (taskId: string, personId: string, plannedHours: number) => {
+    if (plannedHours <= 0) return;
+    const key = `${personId}|${BIN_DATE}`;
+    const sortIndex = sortCounters.get(key) ?? 0;
+    sortCounters.set(key, sortIndex + 1);
+    workload.push({ id: uid(), taskId, personId, date: BIN_DATE, plannedHours, startMinutes: 0, sortIndex });
+  };
 
   // --- Task 1: multi-person design/dev task (Mon–Fri this week) ---
   const t1: Task = {
@@ -184,6 +192,8 @@ export function buildSampleData(): AppData {
   addWork(t1.id, marek.id, wed, 6);
   addWork(t1.id, marek.id, thu, 6);
   addWork(t1.id, marek.id, fri, 5);
+  // Ola has 3h of unscheduled hero work sitting in her bin (zasobnik).
+  addBinWork(t1.id, ola.id, 3);
 
   // --- Task 2: task with zero-hour gap days inside its period ---
   // Kasia plans the campaign: works Mon and Thu/Fri, but Tue/Wed are intentional

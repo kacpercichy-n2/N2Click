@@ -14,6 +14,8 @@ import { isTodayStr, isWeekend, parseDate, weekDays } from '../utils/dates';
 import { format } from 'date-fns';
 import { pl } from 'date-fns/locale/pl';
 import {
+  binEntriesForPerson,
+  binTotalForPerson,
   blockCollides,
   dayTotal,
   entriesForDate,
@@ -31,6 +33,7 @@ import {
   blockEndMinutes,
   clampBlockStart,
   formatMinutes,
+  isBinEntry,
   minutesToHours,
   packDayBlocks,
   snapToStep,
@@ -49,6 +52,8 @@ const AXIS_W = 52; // left time-axis column width (px)
 const DAY_BODY_H = 24 * HOUR_PX; // 1152px full-day column height
 const MIN_BLOCK_H = 14; // keep 0.25h blocks clickable
 const SCROLL_TO_MIN = 7 * 60; // open scrolled to 07:00
+const GRID_COLS = 8; // 7 day columns + 1 bin column
+const BIN_COL_INDEX = 7; // day projection index that lands a block in the bin
 
 function fmt(n: number): string {
   return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
@@ -73,7 +78,7 @@ interface DragState {
   colWidth: number;
   projStart: number; // projected startMinutes
   projHours: number; // projected plannedHours
-  projDayIndex: number; // projected day column (0–6)
+  projDayIndex: number; // projected column: 0–6 day cols, 7 = bin column
   colliding: boolean;
 }
 
@@ -133,7 +138,7 @@ function TimedBlock({
     }
     moved.current = false;
     const rect = gridRef.current?.getBoundingClientRect();
-    const colWidth = rect ? (rect.width - AXIS_W) / 7 : 0;
+    const colWidth = rect ? (rect.width - AXIS_W) / GRID_COLS : 0;
     setDrag({
       mode,
       originX: e.clientX,
@@ -161,7 +166,8 @@ function TimedBlock({
       projStart = clampBlockStart(baseStart + deltaMin, dur);
       const dx = e.clientX - drag.originX;
       const dayDelta = drag.colWidth > 0 ? Math.round(dx / drag.colWidth) : 0;
-      projDayIndex = Math.max(0, Math.min(6, dayIndex + dayDelta));
+      // Index 7 (the last column) targets the bin instead of a calendar day.
+      projDayIndex = Math.max(0, Math.min(BIN_COL_INDEX, dayIndex + dayDelta));
     } else if (drag.mode === 'top') {
       // Move the start, keep the end fixed. Min duration one step (0.25h).
       const newStart = Math.max(0, Math.min(baseStart + deltaMin, baseEnd - MINUTE_STEP));
@@ -177,8 +183,12 @@ function TimedBlock({
       moved.current = true;
     }
 
-    const projDate = days[projDayIndex];
-    const colliding = blockCollides(state, person.id, projDate, projStart, projHours, entry.id);
+    // The bin column (index 7) has no date and no collision — it's always a
+    // valid drop that just strips the block's date/time.
+    const toBin = projDayIndex === BIN_COL_INDEX;
+    const colliding = toBin
+      ? false
+      : blockCollides(state, person.id, days[projDayIndex], projStart, projHours, entry.id);
 
     setDrag((d) => (d ? { ...d, projStart, projHours, projDayIndex, colliding } : d));
   };
@@ -188,6 +198,10 @@ function TimedBlock({
     const { projStart, projHours, projDayIndex, colliding } = drag;
     setDrag(null);
     if (!moved.current) return; // treated as a click by onClick
+    if (projDayIndex === BIN_COL_INDEX) {
+      dispatch({ type: 'MOVE_BLOCK_TO_BIN', entryId: entry.id });
+      return;
+    }
     if (colliding) return; // invalid drop → snap back (re-render restores it)
     dispatch({
       type: 'SET_BLOCK_TIME',
@@ -207,10 +221,12 @@ function TimedBlock({
   const top = (start / 60) * HOUR_PX;
   const height = Math.max(MIN_BLOCK_H, hours * HOUR_PX);
 
+  const overBin = drag?.projDayIndex === BIN_COL_INDEX;
   const className = [
     'week-block',
     drag ? 'dragging' : '',
     drag?.colliding ? 'colliding' : '',
+    overBin ? 'to-bin' : '',
   ]
     .filter(Boolean)
     .join(' ');
@@ -264,6 +280,170 @@ function TimedBlock({
   );
 }
 
+// ---- Bin card: a dateless block that drags OUT of the bin onto the grid ----
+
+interface BinDragState {
+  originX: number;
+  originY: number;
+  dx: number;
+  dy: number;
+  colIndex: number; // projected day column (0–6); -1 = not over a day column
+  startMin: number; // projected startMinutes
+  valid: boolean; // over a real day column
+  colliding: boolean;
+}
+
+interface BinCardProps {
+  state: AppData;
+  entry: WorkloadEntry;
+  task: Task;
+  person: Person;
+  project?: Project;
+  days: string[];
+  gridRef: React.RefObject<HTMLDivElement | null>;
+  bodyRef: React.RefObject<HTMLDivElement | null>;
+  onOpen: () => void;
+  onContextMenu: (e: React.MouseEvent) => void;
+}
+
+function BinCard({
+  state,
+  entry,
+  task,
+  person,
+  project,
+  days,
+  gridRef,
+  bodyRef,
+  onOpen,
+  onContextMenu,
+}: BinCardProps) {
+  const { dispatch } = useStore();
+  const [drag, setDrag] = useState<BinDragState | null>(null);
+  const moved = useRef(false);
+
+  // Cancel the drag on Escape (no dispatch → the card snaps home).
+  useEffect(() => {
+    if (!drag) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setDrag(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [drag]);
+
+  const begin = (e: React.PointerEvent) => {
+    if (e.button !== 0) return; // right button → context menu
+    e.stopPropagation();
+    try {
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      // No active pointer (synthetic events) — drag still works.
+    }
+    moved.current = false;
+    setDrag({
+      originX: e.clientX,
+      originY: e.clientY,
+      dx: 0,
+      dy: 0,
+      colIndex: -1,
+      startMin: 0,
+      valid: false,
+      colliding: false,
+    });
+  };
+
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (!drag) return;
+    const gridRect = gridRef.current?.getBoundingClientRect();
+    const bodyRect = bodyRef.current?.getBoundingClientRect();
+    if (!gridRect || !bodyRect) return;
+    const dx = e.clientX - drag.originX;
+    const dy = e.clientY - drag.originY;
+    if (dx !== 0 || dy !== 0) moved.current = true;
+
+    const colWidth = (gridRect.width - AXIS_W) / GRID_COLS;
+    const relX = e.clientX - gridRect.left - AXIS_W;
+    const colIndex = colWidth > 0 ? Math.floor(relX / colWidth) : -1;
+
+    // Hit-test the VISIBLE day-body: exclude the sticky header (top), the sticky
+    // left hour axis (under horizontal scroll) and anything past the body's
+    // 0:00–24:00 vertical span, so a drop over a header/axis reverts.
+    const scrollRect = gridRef.current?.parentElement?.getBoundingClientRect();
+    const headerH = bodyRect.top - gridRect.top; // stable under scroll
+    const yTop = scrollRect ? Math.max(bodyRect.top, scrollRect.top + headerH) : bodyRect.top;
+    const yBottom = scrollRect ? Math.min(bodyRect.bottom, scrollRect.bottom) : bodyRect.bottom;
+    const xLeft = scrollRect ? scrollRect.left + AXIS_W : gridRect.left + AXIS_W;
+    const xRight = scrollRect ? Math.min(gridRect.right, scrollRect.right) : gridRect.right;
+    const inBody =
+      e.clientY >= yTop && e.clientY <= yBottom && e.clientX >= xLeft && e.clientX <= xRight;
+    const valid = inBody && colIndex >= 0 && colIndex <= 6;
+
+    const dur = entry.plannedHours * 60;
+    const relY = e.clientY - bodyRect.top;
+    const startMin = clampBlockStart(snapToStep((relY / HOUR_PX) * 60), dur);
+    const colliding = valid
+      ? blockCollides(state, person.id, days[colIndex], startMin, entry.plannedHours)
+      : false;
+
+    setDrag((d) => (d ? { ...d, dx, dy, colIndex, startMin, valid, colliding } : d));
+  };
+
+  const finish = () => {
+    if (!drag) return;
+    const { colIndex, startMin, valid, colliding } = drag;
+    setDrag(null);
+    if (!moved.current) return; // plain click → open
+    if (!valid || colliding) return; // invalid target / collision → snap home
+    dispatch({
+      type: 'SET_BLOCK_TIME',
+      entryId: entry.id,
+      date: days[colIndex],
+      startMinutes: startMin,
+      plannedHours: entry.plannedHours,
+    });
+  };
+
+  const className = [
+    'week-bin-block',
+    drag ? 'dragging' : '',
+    drag?.colliding ? 'colliding' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  return (
+    <div
+      className={className}
+      style={{
+        borderLeftColor: personColor(person.id),
+        transform: drag ? `translate(${drag.dx}px, ${drag.dy}px)` : undefined,
+      }}
+      role="button"
+      tabIndex={0}
+      title={`${task.title} — ${person.name}: ${fmt(entry.plannedHours)}h bez terminu. Przeciągnij na siatkę, aby nadać termin.`}
+      onPointerDown={begin}
+      onPointerMove={onPointerMove}
+      onPointerUp={finish}
+      onPointerCancel={() => setDrag(null)}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (!moved.current) onOpen();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') onOpen();
+      }}
+      onContextMenu={onContextMenu}
+    >
+      <span className="week-bin-block-title">
+        {project && <Coin paid={project.paid} size={12} />}
+        {task.title}
+      </span>
+      <span className="week-bin-block-hours">{fmt(entry.plannedHours)}h</span>
+    </div>
+  );
+}
+
 export function WeekView({ state, anchor, filter }: Props) {
   const { openTask } = useOpenTask();
   const { dispatch } = useStore();
@@ -271,6 +451,7 @@ export function WeekView({ state, anchor, filter }: Props) {
 
   const gridRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null); // a body-row cell → y-origin (0:00) for bin-card drops
 
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [hoursRaw, setHoursRaw] = useState('1');
@@ -328,6 +509,27 @@ export function WeekView({ state, anchor, filter }: Props) {
     setMenu(null);
   };
 
+  const doSplit = (parts: 2 | 4) => {
+    if (!menu) return;
+    dispatch({ type: 'SPLIT_BLOCK', entryId: menu.entry.id, parts });
+    setMenu(null);
+  };
+
+  const doDelete = () => {
+    if (!menu) return;
+    if (window.confirm(`Usunąć blok ${fmt(menu.entry.plannedHours)}h z zasobnika?`)) {
+      dispatch({ type: 'DELETE_BLOCK', entryId: menu.entry.id });
+    }
+    setMenu(null);
+  };
+
+  // Bin (zasobnik) content — week-independent, per-person, filtered.
+  const inFilter = (id: string) => filter.size === 0 || filter.has(id);
+  const binPeople = state.people.filter(
+    (p) => inFilter(p.id) && binEntriesForPerson(state, p.id).length > 0,
+  );
+  const binGrandTotal = binPeople.reduce((s, p) => s + binTotalForPerson(state, p.id), 0);
+
   // Overload preview for the insert form.
   const menuPerson = menu ? getPerson(state, menu.entry.personId) : undefined;
   const menuDayHours = menu
@@ -348,11 +550,11 @@ export function WeekView({ state, anchor, filter }: Props) {
           className="week-cal-grid"
           ref={gridRef}
           style={{
-            gridTemplateColumns: `${AXIS_W}px repeat(7, minmax(0, 1fr))`,
+            gridTemplateColumns: `${AXIS_W}px repeat(${GRID_COLS}, minmax(0, 1fr))`,
             gridTemplateRows: `auto ${DAY_BODY_H}px`,
           }}
         >
-          {/* Header row: corner + 7 day headers (sticky). */}
+          {/* Header row: corner + 7 day headers + bin header (sticky). */}
           <div className="week-axis-head" />
           {days.map((d) => {
             const total = dayTotal(state, d, filter);
@@ -386,8 +588,16 @@ export function WeekView({ state, anchor, filter }: Props) {
               </div>
             );
           })}
+          {/* Bin header (8th column). */}
+          <div className="week-bin-head">
+            <div className="week-bin-head-title">Zasobnik</div>
+            <div className="week-bin-head-sub">bez terminu</div>
+            <div className="week-col-total">
+              {binGrandTotal > 0 ? `${fmt(binGrandTotal)}h` : '—'}
+            </div>
+          </div>
 
-          {/* Body row: hour axis + 7 day columns. */}
+          {/* Body row: hour axis + 7 day columns + bin column. */}
           <div className="week-axis">
             {hours.map((h) => (
               <span key={h} className="week-axis-label" style={{ top: h * HOUR_PX }}>
@@ -401,6 +611,7 @@ export function WeekView({ state, anchor, filter }: Props) {
             return (
               <div
                 key={`col-${d}`}
+                ref={dayIndex === 0 ? bodyRef : undefined}
                 className={[
                   'week-day-col',
                   isTodayStr(d) ? 'today' : '',
@@ -435,6 +646,52 @@ export function WeekView({ state, anchor, filter }: Props) {
               </div>
             );
           })}
+
+          {/* Bin column (8th): stacked per-person cards, not time-positioned. */}
+          <div className="week-bin-col">
+            {binPeople.length === 0 ? (
+              <p className="week-bin-empty">Brak bloków bez terminu</p>
+            ) : (
+              binPeople.map((p) => {
+                const entries = binEntriesForPerson(state, p.id);
+                return (
+                  <div key={`bin-${p.id}`} className="week-bin-group">
+                    <div className="week-bin-group-head">
+                      <span
+                        className="person-dot"
+                        style={{ background: personColor(p.id) }}
+                        aria-hidden
+                      />
+                      {p.name}
+                      <span className="week-bin-group-total">
+                        {fmt(binTotalForPerson(state, p.id))}h
+                      </span>
+                    </div>
+                    {entries.map((e) => {
+                      const task = getTask(state, e.taskId);
+                      if (!task) return null;
+                      const project = getProject(state, task.projectId);
+                      return (
+                        <BinCard
+                          key={e.id}
+                          state={state}
+                          entry={e}
+                          task={task}
+                          person={p}
+                          project={project}
+                          days={days}
+                          gridRef={gridRef}
+                          bodyRef={bodyRef}
+                          onOpen={() => openTask(task.id)}
+                          onContextMenu={(ev) => openMenu(e, ev)}
+                        />
+                      );
+                    })}
+                  </div>
+                );
+              })
+            )}
+          </div>
         </div>
       </div>
 
@@ -456,22 +713,65 @@ export function WeekView({ state, anchor, filter }: Props) {
                 {getTask(state, menu.entry.taskId)?.title} — {menuPerson?.name},{' '}
                 {fmt(menu.entry.plannedHours)}h
               </div>
+              {!isBinEntry(menu.entry) && (
+                <>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="context-menu-item"
+                    onClick={() => setMenu({ ...menu, step: 'form', position: 'before' })}
+                  >
+                    ↑ Dodaj przed
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="context-menu-item"
+                    onClick={() => setMenu({ ...menu, step: 'form', position: 'after' })}
+                  >
+                    ↓ Dodaj po
+                  </button>
+                  <div className="context-menu-sep" role="separator" />
+                </>
+              )}
               <button
                 type="button"
                 role="menuitem"
                 className="context-menu-item"
-                onClick={() => setMenu({ ...menu, step: 'form', position: 'before' })}
+                disabled={menu.entry.plannedHours < 0.5}
+                title={
+                  menu.entry.plannedHours < 0.5
+                    ? 'Blok jest za krótki, aby go podzielić'
+                    : undefined
+                }
+                onClick={() => doSplit(2)}
               >
-                ↑ Dodaj przed
+                Podziel na pół
               </button>
               <button
                 type="button"
                 role="menuitem"
                 className="context-menu-item"
-                onClick={() => setMenu({ ...menu, step: 'form', position: 'after' })}
+                disabled={menu.entry.plannedHours < 1}
+                title={
+                  menu.entry.plannedHours < 1
+                    ? 'Blok jest za krótki, aby go podzielić'
+                    : undefined
+                }
+                onClick={() => doSplit(4)}
               >
-                ↓ Dodaj po
+                Podziel na ćwiartki
               </button>
+              {isBinEntry(menu.entry) && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="context-menu-item danger"
+                  onClick={doDelete}
+                >
+                  Usuń blok
+                </button>
+              )}
             </>
           ) : (
             <div className="context-insert-form">

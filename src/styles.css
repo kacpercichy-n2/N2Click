@@ -330,6 +330,54 @@ textarea {
   min-height: 40px;
 }
 
+/* Brand row now holds the brand + the collapse toggle. */
+.app-brand-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--n2-space-3);
+}
+.sidebar-toggle {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-md);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--n2-text-soft);
+  cursor: pointer;
+  transition: background var(--n2-transition), border-color var(--n2-transition),
+    color var(--n2-transition);
+}
+.sidebar-toggle:hover {
+  background: rgba(196, 150, 255, 0.12);
+  border-color: var(--n2-border-strong);
+  color: var(--n2-text);
+}
+
+/* Wrapper pins the acting-as controls to the bottom of the sidebar. */
+.acting-as-wrap {
+  margin-top: auto;
+}
+.acting-as-wrap .acting-as {
+  margin-top: 0;
+}
+/* Collapsed-only avatar shortcut — hidden by default, revealed >1180px. */
+.acting-as-collapsed {
+  display: none;
+  place-items: center;
+  width: 100%;
+  padding: var(--n2-space-2) 0;
+  border: none;
+  border-top: 1px solid var(--n2-border);
+  background: transparent;
+  color: var(--n2-text-soft);
+  cursor: pointer;
+}
+
 /* ---------- Page ---------- */
 
 .page {
@@ -754,6 +802,78 @@ option {
   margin-top: 8px;
 }
 
+/* ---------- Bin (zasobnik) editor section ---------- */
+
+.bin-existing {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.bin-existing-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.bin-existing-name {
+  font-size: var(--n2-type-sm);
+  font-weight: 500;
+  color: var(--text);
+}
+.bin-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.bin-add-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.bin-add-row select {
+  min-width: 160px;
+}
+.bin-add-row input {
+  width: 90px;
+}
+.bin-pending {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.bin-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-pill);
+  padding: 5px 10px;
+  font-size: var(--n2-type-sm);
+  font-weight: 500;
+  background: rgba(196, 150, 255, 0.14);
+}
+.bin-chip.readonly {
+  background: rgba(255, 255, 255, 0.045);
+  font-family: var(--n2-font-data);
+  font-variant-numeric: tabular-nums;
+}
+.bin-chip-remove {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 0 0 2px;
+}
+.bin-chip-remove:hover {
+  color: var(--n2-danger);
+}
+
 /* ---------- Allocation grid (data table) ---------- */
 
 .alloc-wrap {
@@ -1049,7 +1169,8 @@ option {
 .week-cal-scroll {
   max-height: 70vh;
   overflow-y: auto;
-  overflow-x: hidden;
+  /* Mon–Fri fill the visible width; Sat, Sun and the bin scroll in from the right. */
+  overflow-x: auto;
   border: 1px solid var(--n2-border);
   border-radius: var(--n2-radius-md);
   background: var(--card-bg);
@@ -1057,11 +1178,15 @@ option {
 .week-cal-grid {
   display: grid;
   position: relative;
+  /* 52px axis + 8 equal columns, but sized so exactly the 5 weekday columns fill
+     the scroll container's visible width; the weekend + bin columns overflow to
+     the right behind horizontal scroll. */
+  width: calc((100% - 52px) / 5 * 8 + 52px);
   /* Drag gestures cross block text; text-selection would hijack the next drag
      into a native text-drag. Nothing in the grid is useful to select anyway. */
   -webkit-user-select: none;
   user-select: none;
-  /* columns + rows set inline (52px axis + 7 day cols; auto header + 1152px body) */
+  /* columns + rows set inline (52px axis + 7 day cols + bin; auto header + 1152px body) */
 }
 
 /* Sticky headers (corner + day headers) */
@@ -1075,7 +1200,10 @@ option {
 }
 .week-axis-head {
   border-right: 1px solid var(--n2-border);
-  z-index: 7;
+  /* Corner stays pinned to both edges while scrolling either axis. */
+  position: sticky;
+  left: 0;
+  z-index: 9;
 }
 .week-day-head {
   padding: 8px 10px;
@@ -1116,9 +1244,12 @@ option {
   font-weight: 600;
 }
 
-/* Left hour axis */
+/* Left hour axis — sticky so it stays visible during horizontal scroll. */
 .week-axis {
-  position: relative;
+  position: sticky;
+  left: 0;
+  z-index: 5;
+  background: var(--card-bg);
   border-right: 1px solid var(--n2-border);
 }
 .week-axis-label {
@@ -1195,6 +1326,13 @@ option {
   border-left-color: var(--n2-danger) !important;
   background: var(--n2-danger-soft, rgba(255, 79, 114, 0.25));
 }
+/* Hovering the bin column while dragging a dated block: info/lavender, NOT danger. */
+.week-block.to-bin {
+  cursor: grabbing;
+  border-color: var(--n2-lavender);
+  border-left-color: var(--n2-lavender) !important;
+  background: rgba(196, 150, 255, 0.22);
+}
 .week-block-handle {
   position: absolute;
   left: 0;
@@ -1239,6 +1377,120 @@ option {
 }
 .week-block-hours {
   margin-left: auto;
+  font-weight: 600;
+  color: var(--text);
+  font-family: var(--n2-font-data);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Bin column (Zasobnik: dateless blocks) ---------- */
+
+/* Bin header cell (8th column header). */
+.week-bin-head {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  padding: 8px 10px;
+  background: var(--card-bg-2);
+  border-left: 1px solid var(--n2-border-strong);
+  border-bottom: 1px solid var(--n2-border);
+}
+.week-bin-head-title {
+  font-size: var(--n2-type-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+.week-bin-head-sub {
+  font-size: var(--n2-type-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  font-family: var(--n2-font-mono);
+}
+
+/* Bin body column: stacked from the top, not time-positioned. */
+.week-bin-col {
+  position: relative;
+  border-left: 1px solid var(--n2-border-strong);
+  background: var(--card-bg-2);
+  overflow: visible; /* let a dragged bin card extend over the day columns */
+  padding: 8px 8px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.week-bin-empty {
+  font-size: var(--n2-type-xs);
+  color: var(--text-faint);
+  margin: 8px 2px 0;
+}
+.week-bin-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.week-bin-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--n2-type-xs);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.week-bin-group-total {
+  margin-left: auto;
+  color: var(--text);
+  font-family: var(--n2-font-data);
+  font-variant-numeric: tabular-nums;
+}
+.week-bin-block {
+  box-sizing: border-box;
+  text-align: left;
+  border: 1px solid var(--n2-border);
+  border-left: 3px solid var(--n2-lavender);
+  border-radius: var(--n2-radius-xs);
+  background: rgba(45, 30, 70, 0.92);
+  padding: 5px 8px;
+  cursor: grab;
+  font-family: inherit;
+  color: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+  touch-action: none; /* pointer drag instead of scroll */
+  transition: background var(--n2-transition);
+}
+.week-bin-block:hover {
+  background: rgba(60, 40, 92, 0.95);
+}
+.week-bin-block.dragging {
+  cursor: grabbing;
+  position: relative;
+  z-index: 40;
+  box-shadow: var(--n2-shadow-violet, 0 8px 24px rgba(0, 0, 0, 0.4));
+  opacity: 0.96;
+}
+.week-bin-block.colliding {
+  cursor: not-allowed;
+  border-color: var(--n2-danger);
+  border-left-color: var(--n2-danger) !important;
+  background: var(--n2-danger-soft, rgba(255, 79, 114, 0.25));
+}
+.week-bin-block-title {
+  font-size: var(--n2-type-xs);
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.2;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.week-bin-block-hours {
+  font-size: var(--n2-type-xs);
   font-weight: 600;
   color: var(--text);
   font-family: var(--n2-font-data);
@@ -2233,9 +2485,25 @@ option {
   border-radius: var(--n2-radius-xs);
   cursor: pointer;
 }
-.context-menu-item:hover {
+.context-menu-item:hover:not(:disabled) {
   background: rgba(196, 150, 255, 0.16);
   color: var(--n2-text);
+}
+.context-menu-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.context-menu-item.danger {
+  color: var(--n2-danger);
+}
+.context-menu-item.danger:hover:not(:disabled) {
+  background: var(--n2-danger-soft);
+  color: var(--n2-danger);
+}
+.context-menu-sep {
+  height: 1px;
+  background: var(--n2-border);
+  margin: 4px 6px;
 }
 .context-insert-form {
   padding: 2px;
@@ -2371,6 +2639,12 @@ option {
   .app-shell {
     grid-template-columns: 1fr;
   }
+  /* The collapse toggle + collapsed avatar are desktop-only; the 1-column
+     strip and mobile drawer ignore the stored pref entirely. */
+  .sidebar-toggle,
+  .acting-as-collapsed {
+    display: none;
+  }
   .app-sidebar {
     position: relative;
     top: auto;
@@ -2406,18 +2680,70 @@ option {
   .app-nav-link {
     justify-content: flex-start;
   }
-  /* Keep the 7 columns usable by allowing horizontal scroll of the grid. */
+  /* Keep all 8 columns usable by allowing horizontal scroll of the grid. */
   .week-cal-scroll {
     overflow-x: auto;
   }
   .week-cal-grid {
-    min-width: 720px;
+    min-width: 820px; /* 52 axis + 8 × 96 */
   }
   .cal-toolbar {
     justify-content: flex-start;
   }
   .profile-week {
     grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* ---------- Collapsed sidebar (desktop only) ----------
+   Every rule here is scoped to >1180px so the 1-column strip (≤1180px) and the
+   mobile drawer (≤760px) stay pixel-identical regardless of the stored pref. */
+@media (min-width: 1181px) {
+  .app-shell {
+    transition: grid-template-columns var(--n2-transition);
+  }
+  .app-shell.sidebar-collapsed {
+    grid-template-columns: 80px minmax(0, 1fr);
+  }
+  .sidebar-collapsed .app-sidebar {
+    padding-inline: var(--n2-space-3);
+    align-items: center;
+  }
+  /* Stack the brand mark over the toggle, both centered in 80px. */
+  .sidebar-collapsed .app-brand-row {
+    flex-direction: column;
+    justify-content: center;
+    gap: var(--n2-space-2);
+  }
+  .sidebar-collapsed .app-brand {
+    justify-content: center;
+  }
+  .sidebar-collapsed .app-brand-name {
+    display: none;
+  }
+  /* Icon-only nav: hide the labels, center the icons, keep the tap target. */
+  .sidebar-collapsed .app-nav-link {
+    justify-content: center;
+    padding-inline: 0;
+    gap: 0;
+  }
+  .sidebar-collapsed .app-nav-link .nav-label {
+    display: none;
+  }
+  /* Search trigger hides (Ctrl/Cmd+K still works — component stays mounted). */
+  .sidebar-collapsed .search-trigger {
+    display: none;
+  }
+  /* Keep the hovered icon centered (no horizontal nudge when icon-only). */
+  .sidebar-collapsed .app-nav-link:hover .nav-icon {
+    transform: scale(1.08);
+  }
+  /* Swap the acting-as select for the avatar shortcut. */
+  .sidebar-collapsed .acting-as {
+    display: none;
+  }
+  .sidebar-collapsed .acting-as-collapsed {
+    display: grid;
   }
 }
 
