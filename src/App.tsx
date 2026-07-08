@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import {
   NavLink,
   Navigate,
@@ -22,33 +23,125 @@ import { WorkloadPage } from './pages/WorkloadPage';
 import { AdminPage } from './pages/AdminPage';
 import { SampleBanner } from './components/SampleBanner';
 import { TaskModal } from './components/TaskModal';
+import { GlobalSearch } from './components/GlobalSearch';
+import {
+  LayoutDashboard,
+  FolderKanban,
+  Columns3,
+  GanttChart,
+  ListChecks,
+  CalendarDays,
+  Users,
+  Gauge,
+  Settings,
+  Menu,
+  X,
+} from './components/icons';
+import type { LucideIcon } from './components/icons';
 
-const NAV: Array<[string, string]> = [
-  ['/dashboard', 'Panel'],
-  ['/projects', 'Projekty'],
-  ['/kanban', 'Kanban'],
-  ['/timeline', 'Oś czasu'],
-  ['/tasks', 'Zadania'],
-  ['/calendar', 'Kalendarz'],
-  ['/people', 'Zespół'],
-  ['/workload', 'Obciążenie'],
-  ['/admin', 'Administracja'],
+const NAV: Array<[string, string, LucideIcon]> = [
+  ['/dashboard', 'Panel', LayoutDashboard],
+  ['/projects', 'Projekty', FolderKanban],
+  ['/kanban', 'Kanban', Columns3],
+  ['/timeline', 'Oś czasu', GanttChart],
+  ['/tasks', 'Zadania', ListChecks],
+  ['/calendar', 'Kalendarz', CalendarDays],
+  ['/people', 'Zespół', Users],
+  ['/workload', 'Obciążenie', Gauge],
+  ['/admin', 'Administracja', Settings],
 ];
 
 export function App() {
   const { state, dispatch } = useStore();
   const location = useLocation();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const hamburgerRef = useRef<HTMLButtonElement>(null);
+  const drawerRef = useRef<HTMLElement>(null);
+
+  // Close the mobile drawer whenever the route changes.
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [location.pathname]);
+
+  // While the drawer is open: lock body scroll, focus the first nav link, and
+  // close on Escape. Cleanup restores everything (same pattern as TaskModal).
+  useEffect(() => {
+    if (!menuOpen) return;
+    const firstLink = drawerRef.current?.querySelector<HTMLElement>('.app-nav-link');
+    firstLink?.focus();
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setMenuOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen]);
+
+  // Return focus to the hamburger after closing (only when it was open).
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (menuOpen) {
+      wasOpen.current = true;
+    } else if (wasOpen.current) {
+      wasOpen.current = false;
+      hamburgerRef.current?.focus();
+    }
+  }, [menuOpen]);
 
   return (
     <div className="app-shell">
-      <aside className="app-sidebar">
+      <header className="app-topbar">
         <div className="app-brand">
           <span className="app-brand-mark" aria-hidden />
           <span className="app-brand-name">N2Hub</span>
         </div>
+        <button
+          ref={hamburgerRef}
+          type="button"
+          className="app-hamburger"
+          aria-label={menuOpen ? 'Zamknij menu' : 'Otwórz menu'}
+          aria-expanded={menuOpen}
+          aria-controls="app-drawer"
+          onClick={() => setMenuOpen((v) => !v)}
+        >
+          {menuOpen ? <X size={22} aria-hidden /> : <Menu size={22} aria-hidden />}
+        </button>
+      </header>
+
+      {menuOpen && (
+        <div
+          className="app-drawer-scrim"
+          aria-hidden
+          onClick={() => setMenuOpen(false)}
+        />
+      )}
+
+      <aside
+        id="app-drawer"
+        ref={drawerRef}
+        className={menuOpen ? 'app-sidebar open' : 'app-sidebar'}
+      >
+        <div className="app-brand">
+          <span className="app-brand-mark" aria-hidden />
+          <span className="app-brand-name">N2Hub</span>
+        </div>
+        <GlobalSearch />
         <nav className="app-nav">
-          {NAV.map(([to, label]) => (
-            <NavLink key={to} to={to} className={navClass}>
+          {NAV.map(([to, label, Icon]) => (
+            <NavLink
+              key={to}
+              to={to}
+              className={navClass}
+              onClick={() => setMenuOpen(false)}
+            >
+              <Icon size={18} aria-hidden className="nav-icon" />
               {label}
             </NavLink>
           ))}

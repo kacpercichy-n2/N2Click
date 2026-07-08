@@ -265,6 +265,18 @@ export function overloadedPeopleOnDate(
     .map((p) => p.id);
 }
 
+/** Dates inside the task period where an assignee working on THIS task that day exceeds their capacity. */
+export function conflictDatesForTask(state: AppData, taskId: string): DateStr[] {
+  const out = new Set<DateStr>();
+  for (const w of state.workload) {
+    if (w.taskId !== taskId) continue;
+    if (hoursForPersonOnDate(state, w.personId, w.date) > personCapacity(state, w.personId)) {
+      out.add(w.date);
+    }
+  }
+  return [...out].sort();
+}
+
 // ---- Comments & activity ----
 
 export function commentsFor(
@@ -285,6 +297,89 @@ export function activityFor(
   return state.activity
     .filter((e) => e.entityType === entityType && e.entityId === entityId)
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+// ---- Global search ----
+
+export interface SearchResults {
+  projects: Project[];
+  tasks: Task[];
+  clients: Client[];
+  people: Person[];
+}
+
+/** Lowercase + strip diacritics so `zolty` matches `Żółty` (ł/Ł are not decomposed by NFD). */
+function normalize(s: string): string {
+  return s
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/ł/g, 'l')
+    .replace(/Ł/g, 'l')
+    .toLowerCase();
+}
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Search projects, tasks, clients and people by a free-text query. Matches
+ * normalized substrings across name/description/email/role, plus two extra
+ * dimensions: a matching status name pulls in entities in that status, and a
+ * `yyyy-MM-dd` query pulls in projects/tasks whose period contains that date.
+ * Pure and unit-testable — no Date.now, no locale APIs beyond string normalize.
+ */
+export function searchAll(
+  state: AppData,
+  query: string,
+  limitPerGroup = 8,
+): SearchResults {
+  const empty: SearchResults = { projects: [], tasks: [], clients: [], people: [] };
+  const raw = query.trim();
+  if (raw === '') return empty;
+
+  const q = normalize(raw);
+
+  // Statuses whose (normalized) name contains the query.
+  const matchedStatusIds = new Set(
+    state.statuses.filter((s) => normalize(s.name).includes(q)).map((s) => s.id),
+  );
+
+  // Date coverage: only when the raw query parses as a calendar date.
+  const dateQuery = DATE_RE.test(raw) ? raw : null;
+
+  const inPeriod = (start: DateStr, end: DateStr): boolean =>
+    dateQuery !== null && start <= dateQuery && dateQuery <= end;
+
+  const projects = state.projects.filter(
+    (p) =>
+      normalize(p.name).includes(q) ||
+      normalize(p.description).includes(q) ||
+      matchedStatusIds.has(p.statusId) ||
+      inPeriod(p.startDate, p.endDate),
+  );
+
+  const tasks = state.tasks.filter(
+    (t) =>
+      normalize(t.title).includes(q) ||
+      normalize(t.description).includes(q) ||
+      matchedStatusIds.has(t.statusId) ||
+      inPeriod(t.startDate, t.endDate),
+  );
+
+  const clients = state.clients.filter((c) => normalize(c.name).includes(q));
+
+  const people = state.people.filter(
+    (p) =>
+      normalize(p.name).includes(q) ||
+      normalize(p.email).includes(q) ||
+      normalize(p.role).includes(q),
+  );
+
+  return {
+    projects: projects.slice(0, limitPerGroup),
+    tasks: tasks.slice(0, limitPerGroup),
+    clients: clients.slice(0, limitPerGroup),
+    people: people.slice(0, limitPerGroup),
+  };
 }
 
 // ---- Permissions ----

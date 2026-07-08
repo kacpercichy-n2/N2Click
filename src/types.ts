@@ -116,6 +116,24 @@ export interface ActivityEvent {
   createdAt: string; // ISO timestamp
 }
 
+export type FilterPage = 'projects' | 'tasks';
+
+export interface SavedFilterCriteria {
+  paid: 'all' | 'paid' | 'unpaid'; // meaningful on projects; keep 'all' for tasks
+  clientId: string; // '' = all
+  statusId: string; // '' = all
+  personId: string; // '' = all; assignee — meaningful on tasks
+  from: DateStr | ''; // period overlap lower bound
+  to: DateStr | ''; // period overlap upper bound
+}
+
+export interface SavedFilter {
+  id: string;
+  name: string;
+  page: FilterPage;
+  criteria: SavedFilterCriteria;
+}
+
 export interface AppData {
   version: number;
   clients: Client[];
@@ -132,4 +150,5 @@ export interface AppData {
   activity: ActivityEvent[];
   currentUserId: string; // "acting as" person; '' when unset
   sampleBannerDismissed: boolean;
+  savedFilters: SavedFilter[]; // named filter presets for Projects/Tasks pages
 }

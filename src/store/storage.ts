@@ -55,6 +55,7 @@ export function emptyData(): AppData {
     activity: [],
     currentUserId: '',
     sampleBannerDismissed: false,
+    savedFilters: [],
   };
 }
 

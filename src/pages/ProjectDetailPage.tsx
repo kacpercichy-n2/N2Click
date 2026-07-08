@@ -18,8 +18,11 @@ import { Coin } from '../components/Coin';
 import { StatusBadge } from '../components/StatusBadge';
 import { PersonChip } from '../components/PersonChip';
 import { CommentsPanel } from '../components/CommentsPanel';
+import { SaveStatus } from '../components/SaveStatus';
 import { useOpenTask } from '../components/TaskModal';
+import { ChevronRight } from '../components/icons';
 import { formatShort, todayStr } from '../utils/dates';
+import { useSaveStatus } from '../utils/useSaveStatus';
 
 function fmtHours(n: number): string {
   return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
@@ -67,6 +70,18 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   const [msName, setMsName] = useState('');
   const [msDate, setMsDate] = useState(todayStr());
 
+  const dirty = project
+    ? name !== project.name ||
+      description !== project.description ||
+      clientId !== project.clientId ||
+      statusId !== project.statusId ||
+      startDate !== project.startDate ||
+      endDate !== project.endDate ||
+      departmentId !== project.departmentId ||
+      serviceTypeId !== project.serviceTypeId
+    : false;
+  const { status, markSaved } = useSaveStatus(dirty);
+
   // Deleted mid-render (e.g. right after the delete dispatch, before the route
   // change lands): render nothing for that frame.
   if (!project) return null;
@@ -91,10 +106,11 @@ function ProjectDetail({ projectId }: { projectId: string }) {
       setError('Data końca musi być taka sama jak data startu albo późniejsza');
       return;
     }
+    const trimmedDescription = description.trim();
     const draft: ProjectDraft = {
       clientId,
       name: trimmed,
-      description: description.trim(),
+      description: trimmedDescription,
       statusId,
       paid: project.paid,
       startDate,
@@ -103,7 +119,12 @@ function ProjectDetail({ projectId }: { projectId: string }) {
       serviceTypeId,
     };
     dispatch({ type: 'SAVE_PROJECT', projectId: project.id, draft });
+    // Normalize local state to exactly what was persisted so `dirty` clears
+    // (otherwise untrimmed whitespace keeps the form permanently dirty).
+    setName(trimmed);
+    setDescription(trimmedDescription);
     setError('');
+    markSaved();
   };
 
   const togglePaid = () =>
@@ -133,16 +154,6 @@ function ProjectDetail({ projectId }: { projectId: string }) {
     setMsName('');
   };
 
-  const dirty =
-    name !== project.name ||
-    description !== project.description ||
-    clientId !== project.clientId ||
-    statusId !== project.statusId ||
-    startDate !== project.startDate ||
-    endDate !== project.endDate ||
-    departmentId !== project.departmentId ||
-    serviceTypeId !== project.serviceTypeId;
-
   return (
     <section className="page editor">
       <div className="page-head">
@@ -152,9 +163,22 @@ function ProjectDetail({ projectId }: { projectId: string }) {
           <StatusBadge status={currentStatus} />
         </h1>
         <div className="page-head-actions">
-          <Link to="/projects" className="btn ghost">
+          <SaveStatus status={status} />
+          <button
+            type="button"
+            className="btn ghost"
+            onClick={() => {
+              if (
+                dirty &&
+                !window.confirm('Masz niezapisane zmiany. Opuścić bez zapisywania?')
+              ) {
+                return;
+              }
+              navigate('/projects');
+            }}
+          >
             Wróć
-          </Link>
+          </button>
           <button type="button" className="btn danger-ghost" onClick={remove}>
             Usuń projekt
           </button>
@@ -264,9 +288,9 @@ function ProjectDetail({ projectId }: { projectId: string }) {
           </span>
         </div>
         {error && <p className="field-error">{error}</p>}
-        {dirty && (
+        {(dirty || status !== 'clean') && (
           <div className="editor-actions">
-            <button type="button" className="btn primary" onClick={save}>
+            <button type="button" className="btn primary" onClick={save} disabled={!dirty}>
               Zapisz zmiany
             </button>
           </div>
@@ -363,6 +387,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
                       <PersonChip key={p.id} person={p} />
                     ))}
                   </span>
+                  <ChevronRight className="card-chevron" size={16} aria-hidden />
                 </button>
               </li>
             ))}

@@ -6,6 +6,7 @@ import { useStore } from '../store/AppStore';
 import type { PersonDraft } from '../store/AppStore';
 import { getDepartment, personTotalHours } from '../store/selectors';
 import { Avatar } from '../components/Avatar';
+import { ChevronRight } from '../components/icons';
 import { DEFAULT_CAPACITY } from '../store/storage';
 
 function fmtHours(n: number): string {
@@ -175,6 +176,7 @@ export function PeoplePage() {
                   {p.email && <span className="person-row-email">{p.email}</span>}
                 </span>
               </Link>
+              <ChevronRight className="card-chevron" size={16} aria-hidden />
               <span className="person-row-hours">
                 przypisano {fmtHours(personTotalHours(state, p.id))}h
               </span>

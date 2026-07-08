@@ -10,8 +10,10 @@ import type { AllocationCell, TaskDraft } from '../store/AppStore';
 import { activeStatuses, assigneeIdsOfTask, getClient } from '../store/selectors';
 import { CommentsPanel } from './CommentsPanel';
 import { AllocationGrid, allocKey, isWeekdayDate, type AllocMap } from './AllocationGrid';
+import { SaveStatus } from './SaveStatus';
 import { personColor } from '../utils/colors';
 import { eachDayInclusive, inclusiveDayCount, todayStr } from '../utils/dates';
+import { useSaveStatus } from '../utils/useSaveStatus';
 
 const MAX_PERIOD_DAYS = 92;
 
@@ -95,10 +97,32 @@ function TaskModalShell({ taskParam, projectParam, onClose }: ShellProps) {
   const existing = isNew ? undefined : state.tasks.find((t) => t.id === taskParam);
   const notFound = !isNew && !existing;
 
-  // Escape closes; body scroll locked while the modal is open.
+  // Dirty state lives in the TaskEditor; it reports up here so every close path
+  // can guard. A ref backs the Escape handler (which registers once), and the
+  // state drives the save-status badge + beforeunload prompt.
+  const dirtyRef = useRef(false);
+  const [dirty, setDirty] = useState(false);
+  const handleDirtyChange = useCallback((d: boolean) => {
+    dirtyRef.current = d;
+    setDirty(d);
+  }, []);
+  const { status, markSaved } = useSaveStatus(dirty);
+
+  // Any close path prompts when there are unsaved changes.
+  const requestClose = useCallback(() => {
+    if (
+      dirtyRef.current &&
+      !window.confirm('Masz niezapisane zmiany. Zamknąć bez zapisywania?')
+    ) {
+      return;
+    }
+    onClose();
+  }, [onClose]);
+
+  // Escape closes (with guard); body scroll locked while the modal is open.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') requestClose();
     };
     window.addEventListener('keydown', onKey);
     const prevOverflow = document.body.style.overflow;
@@ -107,7 +131,7 @@ function TaskModalShell({ taskParam, projectParam, onClose }: ShellProps) {
       window.removeEventListener('keydown', onKey);
       document.body.style.overflow = prevOverflow;
     };
-  }, [onClose]);
+  }, [requestClose]);
 
   const handleDelete = () => {
     if (!existing) return;
@@ -132,7 +156,7 @@ function TaskModalShell({ taskParam, projectParam, onClose }: ShellProps) {
         exit={{ opacity: 0 }}
         transition={{ duration: 0.18 }}
       />
-      <div className="task-modal-viewport" onClick={onClose}>
+      <div className="task-modal-viewport" onClick={requestClose}>
         <motion.div
           className="task-modal-card"
           role="dialog"
@@ -147,6 +171,7 @@ function TaskModalShell({ taskParam, projectParam, onClose }: ShellProps) {
           <div className="task-modal-head">
             <h1 className="task-modal-title">{heading}</h1>
             <div className="task-modal-head-actions">
+              {!notFound && <SaveStatus status={status} />}
               {existing && (
                 <button type="button" className="btn danger-ghost" onClick={handleDelete}>
                   Usuń
@@ -155,7 +180,7 @@ function TaskModalShell({ taskParam, projectParam, onClose }: ShellProps) {
               <button
                 type="button"
                 className="task-modal-close"
-                onClick={onClose}
+                onClick={requestClose}
                 aria-label="Zamknij"
               >
                 ×
@@ -179,7 +204,9 @@ function TaskModalShell({ taskParam, projectParam, onClose }: ShellProps) {
                 taskId={existing ? existing.id : null}
                 initialProjectId={projectParam ?? undefined}
                 onSaved={onClose}
-                onCancel={onClose}
+                onCancel={requestClose}
+                onDirtyChange={handleDirtyChange}
+                markSaved={markSaved}
               />
             )}
           </div>
@@ -194,10 +221,46 @@ interface EditorProps {
   initialProjectId?: string;
   onSaved: () => void;
   onCancel: () => void;
+  onDirtyChange: (dirty: boolean) => void;
+  markSaved: () => void;
+}
+
+/** Stable serialization of all form state, used for dirty detection. */
+function serializeDraft(v: {
+  title: string;
+  description: string;
+  projectId: string;
+  statusId: string;
+  estimatedRaw: string;
+  startDate: string;
+  endDate: string;
+  assigneeIds: string[];
+  allocations: AllocMap;
+}): string {
+  return JSON.stringify({
+    title: v.title,
+    description: v.description,
+    projectId: v.projectId,
+    statusId: v.statusId,
+    estimatedRaw: v.estimatedRaw,
+    startDate: v.startDate,
+    endDate: v.endDate,
+    assigneeIds: [...v.assigneeIds].sort(),
+    allocations: Object.entries(v.allocations)
+      .filter(([, h]) => h > 0)
+      .sort(([a], [b]) => a.localeCompare(b)),
+  });
 }
 
 /** The full task editor form (moved out of the old TaskEditorPage). */
-function TaskEditor({ taskId, initialProjectId, onSaved, onCancel }: EditorProps) {
+function TaskEditor({
+  taskId,
+  initialProjectId,
+  onSaved,
+  onCancel,
+  onDirtyChange,
+  markSaved,
+}: EditorProps) {
   const { state, dispatch } = useStore();
   const existing = taskId ? state.tasks.find((t) => t.id === taskId) : undefined;
   const isEdit = Boolean(existing);
@@ -271,6 +334,28 @@ function TaskEditor({ taskId, initialProjectId, onSaved, onCancel }: EditorProps
     }
     return n;
   }, [allocations, periodDaysSet]);
+
+  // ---- Dirty tracking ----
+  // Serialize the current form state; the first render's value is the baseline
+  // snapshot (state is initialized to the existing task / new-task defaults).
+  const currentSerialized = serializeDraft({
+    title,
+    description,
+    projectId,
+    statusId,
+    estimatedRaw,
+    startDate,
+    endDate,
+    assigneeIds,
+    allocations,
+  });
+  const snapshotRef = useRef<string | null>(null);
+  if (snapshotRef.current === null) snapshotRef.current = currentSerialized;
+  const dirty = snapshotRef.current !== currentSerialized;
+
+  useEffect(() => {
+    onDirtyChange(dirty);
+  }, [dirty, onDirtyChange]);
 
   // ---- Handlers ----
 
@@ -368,6 +453,11 @@ function TaskEditor({ taskId, initialProjectId, onSaved, onCancel }: EditorProps
         allocations: cells,
       },
     });
+    // Rebase the snapshot so the close path fires no confirm, and show the
+    // save feedback before the modal dismisses.
+    snapshotRef.current = currentSerialized;
+    onDirtyChange(false);
+    markSaved();
     onSaved();
   };
 

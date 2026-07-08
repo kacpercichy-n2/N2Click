@@ -1,0 +1,2594 @@
+diff --git a/package-lock.json b/package-lock.json
+index e1a70dd..e9cae4a 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -9,6 +9,7 @@
+       "version": "0.1.0",
+       "dependencies": {
+         "date-fns": "^3.6.0",
++        "lucide-react": "^1.23.0",
+         "motion": "^12.42.2",
+         "react": "^18.3.1",
+         "react-dom": "^18.3.1",
+@@ -1484,6 +1485,15 @@
+         "yallist": "^3.0.2"
+       }
+     },
++    "node_modules/lucide-react": {
++      "version": "1.23.0",
++      "resolved": "https://registry.npmjs.org/lucide-react/-/lucide-react-1.23.0.tgz",
++      "integrity": "sha512-38BpJcD0JhFosxHApP/BYsBetLpQFRoTRzEzstM/XCc3jsAG7wqaY1lgVwxiUe3xqYE+lNxo2PkCmYwXWrwwIw==",
++      "license": "ISC",
++      "peerDependencies": {
++        "react": "^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0"
++      }
++    },
+     "node_modules/motion": {
+       "version": "12.42.2",
+       "resolved": "https://registry.npmjs.org/motion/-/motion-12.42.2.tgz",
+diff --git a/package.json b/package.json
+index f0d12ca..22bbebf 100644
+--- a/package.json
++++ b/package.json
+@@ -11,6 +11,7 @@
+   },
+   "dependencies": {
+     "date-fns": "^3.6.0",
++    "lucide-react": "^1.23.0",
+     "motion": "^12.42.2",
+     "react": "^18.3.1",
+     "react-dom": "^18.3.1",
+diff --git a/src/App.tsx b/src/App.tsx
+index ff6a05e..680733b 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -1,3 +1,4 @@
++import { useEffect, useRef, useState } from 'react';
+ import {
+   NavLink,
+   Navigate,
+@@ -22,33 +23,125 @@ import { WorkloadPage } from './pages/WorkloadPage';
+ import { AdminPage } from './pages/AdminPage';
+ import { SampleBanner } from './components/SampleBanner';
+ import { TaskModal } from './components/TaskModal';
++import { GlobalSearch } from './components/GlobalSearch';
++import {
++  LayoutDashboard,
++  FolderKanban,
++  Columns3,
++  GanttChart,
++  ListChecks,
++  CalendarDays,
++  Users,
++  Gauge,
++  Settings,
++  Menu,
++  X,
++} from './components/icons';
++import type { LucideIcon } from './components/icons';
+ 
+-const NAV: Array<[string, string]> = [
+-  ['/dashboard', 'Panel'],
+-  ['/projects', 'Projekty'],
+-  ['/kanban', 'Kanban'],
+-  ['/timeline', 'Oś czasu'],
+-  ['/tasks', 'Zadania'],
+-  ['/calendar', 'Kalendarz'],
+-  ['/people', 'Zespół'],
+-  ['/workload', 'Obciążenie'],
+-  ['/admin', 'Administracja'],
++const NAV: Array<[string, string, LucideIcon]> = [
++  ['/dashboard', 'Panel', LayoutDashboard],
++  ['/projects', 'Projekty', FolderKanban],
++  ['/kanban', 'Kanban', Columns3],
++  ['/timeline', 'Oś czasu', GanttChart],
++  ['/tasks', 'Zadania', ListChecks],
++  ['/calendar', 'Kalendarz', CalendarDays],
++  ['/people', 'Zespół', Users],
++  ['/workload', 'Obciążenie', Gauge],
++  ['/admin', 'Administracja', Settings],
+ ];
+ 
+ export function App() {
+   const { state, dispatch } = useStore();
+   const location = useLocation();
++  const [menuOpen, setMenuOpen] = useState(false);
++  const hamburgerRef = useRef<HTMLButtonElement>(null);
++  const drawerRef = useRef<HTMLElement>(null);
++
++  // Close the mobile drawer whenever the route changes.
++  useEffect(() => {
++    setMenuOpen(false);
++  }, [location.pathname]);
++
++  // While the drawer is open: lock body scroll, focus the first nav link, and
++  // close on Escape. Cleanup restores everything (same pattern as TaskModal).
++  useEffect(() => {
++    if (!menuOpen) return;
++    const firstLink = drawerRef.current?.querySelector<HTMLElement>('.app-nav-link');
++    firstLink?.focus();
++    const prevOverflow = document.body.style.overflow;
++    document.body.style.overflow = 'hidden';
++    const onKey = (e: KeyboardEvent) => {
++      if (e.key === 'Escape') {
++        e.preventDefault();
++        setMenuOpen(false);
++      }
++    };
++    window.addEventListener('keydown', onKey);
++    return () => {
++      document.body.style.overflow = prevOverflow;
++      window.removeEventListener('keydown', onKey);
++    };
++  }, [menuOpen]);
++
++  // Return focus to the hamburger after closing (only when it was open).
++  const wasOpen = useRef(false);
++  useEffect(() => {
++    if (menuOpen) {
++      wasOpen.current = true;
++    } else if (wasOpen.current) {
++      wasOpen.current = false;
++      hamburgerRef.current?.focus();
++    }
++  }, [menuOpen]);
+ 
+   return (
+     <div className="app-shell">
+-      <aside className="app-sidebar">
++      <header className="app-topbar">
++        <div className="app-brand">
++          <span className="app-brand-mark" aria-hidden />
++          <span className="app-brand-name">N2Hub</span>
++        </div>
++        <button
++          ref={hamburgerRef}
++          type="button"
++          className="app-hamburger"
++          aria-label={menuOpen ? 'Zamknij menu' : 'Otwórz menu'}
++          aria-expanded={menuOpen}
++          aria-controls="app-drawer"
++          onClick={() => setMenuOpen((v) => !v)}
++        >
++          {menuOpen ? <X size={22} aria-hidden /> : <Menu size={22} aria-hidden />}
++        </button>
++      </header>
++
++      {menuOpen && (
++        <div
++          className="app-drawer-scrim"
++          aria-hidden
++          onClick={() => setMenuOpen(false)}
++        />
++      )}
++
++      <aside
++        id="app-drawer"
++        ref={drawerRef}
++        className={menuOpen ? 'app-sidebar open' : 'app-sidebar'}
++      >
+         <div className="app-brand">
+           <span className="app-brand-mark" aria-hidden />
+           <span className="app-brand-name">N2Hub</span>
+         </div>
++        <GlobalSearch />
+         <nav className="app-nav">
+-          {NAV.map(([to, label]) => (
+-            <NavLink key={to} to={to} className={navClass}>
++          {NAV.map(([to, label, Icon]) => (
++            <NavLink
++              key={to}
++              to={to}
++              className={navClass}
++              onClick={() => setMenuOpen(false)}
++            >
++              <Icon size={18} aria-hidden className="nav-icon" />
+               {label}
+             </NavLink>
+           ))}
+diff --git a/src/components/TaskModal.tsx b/src/components/TaskModal.tsx
+index 89ee7dc..0512013 100644
+--- a/src/components/TaskModal.tsx
++++ b/src/components/TaskModal.tsx
+@@ -10,8 +10,10 @@ import type { AllocationCell, TaskDraft } from '../store/AppStore';
+ import { activeStatuses, assigneeIdsOfTask, getClient } from '../store/selectors';
+ import { CommentsPanel } from './CommentsPanel';
+ import { AllocationGrid, allocKey, isWeekdayDate, type AllocMap } from './AllocationGrid';
++import { SaveStatus } from './SaveStatus';
+ import { personColor } from '../utils/colors';
+ import { eachDayInclusive, inclusiveDayCount, todayStr } from '../utils/dates';
++import { useSaveStatus } from '../utils/useSaveStatus';
+ 
+ const MAX_PERIOD_DAYS = 92;
+ 
+@@ -95,10 +97,32 @@ function TaskModalShell({ taskParam, projectParam, onClose }: ShellProps) {
+   const existing = isNew ? undefined : state.tasks.find((t) => t.id === taskParam);
+   const notFound = !isNew && !existing;
+ 
+-  // Escape closes; body scroll locked while the modal is open.
++  // Dirty state lives in the TaskEditor; it reports up here so every close path
++  // can guard. A ref backs the Escape handler (which registers once), and the
++  // state drives the save-status badge + beforeunload prompt.
++  const dirtyRef = useRef(false);
++  const [dirty, setDirty] = useState(false);
++  const handleDirtyChange = useCallback((d: boolean) => {
++    dirtyRef.current = d;
++    setDirty(d);
++  }, []);
++  const { status, markSaved } = useSaveStatus(dirty);
++
++  // Any close path prompts when there are unsaved changes.
++  const requestClose = useCallback(() => {
++    if (
++      dirtyRef.current &&
++      !window.confirm('Masz niezapisane zmiany. Zamknąć bez zapisywania?')
++    ) {
++      return;
++    }
++    onClose();
++  }, [onClose]);
++
++  // Escape closes (with guard); body scroll locked while the modal is open.
+   useEffect(() => {
+     const onKey = (e: KeyboardEvent) => {
+-      if (e.key === 'Escape') onClose();
++      if (e.key === 'Escape') requestClose();
+     };
+     window.addEventListener('keydown', onKey);
+     const prevOverflow = document.body.style.overflow;
+@@ -107,7 +131,7 @@ function TaskModalShell({ taskParam, projectParam, onClose }: ShellProps) {
+       window.removeEventListener('keydown', onKey);
+       document.body.style.overflow = prevOverflow;
+     };
+-  }, [onClose]);
++  }, [requestClose]);
+ 
+   const handleDelete = () => {
+     if (!existing) return;
+@@ -132,7 +156,7 @@ function TaskModalShell({ taskParam, projectParam, onClose }: ShellProps) {
+         exit={{ opacity: 0 }}
+         transition={{ duration: 0.18 }}
+       />
+-      <div className="task-modal-viewport" onClick={onClose}>
++      <div className="task-modal-viewport" onClick={requestClose}>
+         <motion.div
+           className="task-modal-card"
+           role="dialog"
+@@ -147,6 +171,7 @@ function TaskModalShell({ taskParam, projectParam, onClose }: ShellProps) {
+           <div className="task-modal-head">
+             <h1 className="task-modal-title">{heading}</h1>
+             <div className="task-modal-head-actions">
++              {!notFound && <SaveStatus status={status} />}
+               {existing && (
+                 <button type="button" className="btn danger-ghost" onClick={handleDelete}>
+                   Usuń
+@@ -155,7 +180,7 @@ function TaskModalShell({ taskParam, projectParam, onClose }: ShellProps) {
+               <button
+                 type="button"
+                 className="task-modal-close"
+-                onClick={onClose}
++                onClick={requestClose}
+                 aria-label="Zamknij"
+               >
+                 ×
+@@ -179,7 +204,9 @@ function TaskModalShell({ taskParam, projectParam, onClose }: ShellProps) {
+                 taskId={existing ? existing.id : null}
+                 initialProjectId={projectParam ?? undefined}
+                 onSaved={onClose}
+-                onCancel={onClose}
++                onCancel={requestClose}
++                onDirtyChange={handleDirtyChange}
++                markSaved={markSaved}
+               />
+             )}
+           </div>
+@@ -194,10 +221,46 @@ interface EditorProps {
+   initialProjectId?: string;
+   onSaved: () => void;
+   onCancel: () => void;
++  onDirtyChange: (dirty: boolean) => void;
++  markSaved: () => void;
++}
++
++/** Stable serialization of all form state, used for dirty detection. */
++function serializeDraft(v: {
++  title: string;
++  description: string;
++  projectId: string;
++  statusId: string;
++  estimatedRaw: string;
++  startDate: string;
++  endDate: string;
++  assigneeIds: string[];
++  allocations: AllocMap;
++}): string {
++  return JSON.stringify({
++    title: v.title,
++    description: v.description,
++    projectId: v.projectId,
++    statusId: v.statusId,
++    estimatedRaw: v.estimatedRaw,
++    startDate: v.startDate,
++    endDate: v.endDate,
++    assigneeIds: [...v.assigneeIds].sort(),
++    allocations: Object.entries(v.allocations)
++      .filter(([, h]) => h > 0)
++      .sort(([a], [b]) => a.localeCompare(b)),
++  });
+ }
+ 
+ /** The full task editor form (moved out of the old TaskEditorPage). */
+-function TaskEditor({ taskId, initialProjectId, onSaved, onCancel }: EditorProps) {
++function TaskEditor({
++  taskId,
++  initialProjectId,
++  onSaved,
++  onCancel,
++  onDirtyChange,
++  markSaved,
++}: EditorProps) {
+   const { state, dispatch } = useStore();
+   const existing = taskId ? state.tasks.find((t) => t.id === taskId) : undefined;
+   const isEdit = Boolean(existing);
+@@ -272,6 +335,28 @@ function TaskEditor({ taskId, initialProjectId, onSaved, onCancel }: EditorProps
+     return n;
+   }, [allocations, periodDaysSet]);
+ 
++  // ---- Dirty tracking ----
++  // Serialize the current form state; the first render's value is the baseline
++  // snapshot (state is initialized to the existing task / new-task defaults).
++  const currentSerialized = serializeDraft({
++    title,
++    description,
++    projectId,
++    statusId,
++    estimatedRaw,
++    startDate,
++    endDate,
++    assigneeIds,
++    allocations,
++  });
++  const snapshotRef = useRef<string | null>(null);
++  if (snapshotRef.current === null) snapshotRef.current = currentSerialized;
++  const dirty = snapshotRef.current !== currentSerialized;
++
++  useEffect(() => {
++    onDirtyChange(dirty);
++  }, [dirty, onDirtyChange]);
++
+   // ---- Handlers ----
+ 
+   const setCell = (personId: string, date: string, hours: number) => {
+@@ -368,6 +453,11 @@ function TaskEditor({ taskId, initialProjectId, onSaved, onCancel }: EditorProps
+         allocations: cells,
+       },
+     });
++    // Rebase the snapshot so the close path fires no confirm, and show the
++    // save feedback before the modal dismisses.
++    snapshotRef.current = currentSerialized;
++    onDirtyChange(false);
++    markSaved();
+     onSaved();
+   };
+ 
+diff --git a/src/pages/DashboardPage.tsx b/src/pages/DashboardPage.tsx
+index 7ddcf8b..b394cdf 100644
+--- a/src/pages/DashboardPage.tsx
++++ b/src/pages/DashboardPage.tsx
+@@ -13,6 +13,7 @@ import {
+ } from '../store/selectors';
+ import { Coin } from '../components/Coin';
+ import { StatusBadge } from '../components/StatusBadge';
++import { ChevronRight } from '../components/icons';
+ import {
+   addDaysStr,
+   formatRowLabel,
+@@ -113,6 +114,7 @@ export function DashboardPage() {
+                       <Coin paid={p.paid} size={14} />
+                       <span className="dash-row-name">{p.name}</span>
+                       <span className="dash-row-when">po terminie ({formatShort(p.endDate)})</span>
++                      <ChevronRight className="card-chevron" size={16} aria-hidden />
+                     </button>
+                   </li>
+                 ))}
+@@ -126,6 +128,7 @@ export function DashboardPage() {
+                       <Coin paid={p.paid} size={14} />
+                       <span className="dash-row-name">{p.name}</span>
+                       <span className="dash-row-when">{formatShort(p.endDate)}</span>
++                      <ChevronRight className="card-chevron" size={16} aria-hidden />
+                     </button>
+                   </li>
+                 ))}
+@@ -145,6 +148,7 @@ export function DashboardPage() {
+                         <span aria-hidden>◆</span>
+                         <span className="dash-row-name">{m.name}</span>
+                         <span className="dash-row-when">{formatShort(m.date)}</span>
++                        <ChevronRight className="card-chevron" size={16} aria-hidden />
+                       </button>
+                     </li>
+                   ))}
+@@ -174,6 +178,7 @@ export function DashboardPage() {
+                       <span className="dash-row-when muted">
+                         {getClient(state, p.clientId)?.name ?? ''}
+                       </span>
++                      <ChevronRight className="card-chevron" size={16} aria-hidden />
+                     </button>
+                   </li>
+                 ))}
+@@ -206,6 +211,7 @@ export function DashboardPage() {
+                           {hoursForPersonOnDate(state, personId, date)}h /{' '}
+                           {personCapacity(state, personId)}h
+                         </span>
++                        <ChevronRight className="card-chevron" size={16} aria-hidden />
+                       </button>
+                     </li>
+                   );
+diff --git a/src/pages/PeoplePage.tsx b/src/pages/PeoplePage.tsx
+index 78c73b5..f41bf82 100644
+--- a/src/pages/PeoplePage.tsx
++++ b/src/pages/PeoplePage.tsx
+@@ -6,6 +6,7 @@ import { useStore } from '../store/AppStore';
+ import type { PersonDraft } from '../store/AppStore';
+ import { getDepartment, personTotalHours } from '../store/selectors';
+ import { Avatar } from '../components/Avatar';
++import { ChevronRight } from '../components/icons';
+ import { DEFAULT_CAPACITY } from '../store/storage';
+ 
+ function fmtHours(n: number): string {
+@@ -175,6 +176,7 @@ export function PeoplePage() {
+                   {p.email && <span className="person-row-email">{p.email}</span>}
+                 </span>
+               </Link>
++              <ChevronRight className="card-chevron" size={16} aria-hidden />
+               <span className="person-row-hours">
+                 przypisano {fmtHours(personTotalHours(state, p.id))}h
+               </span>
+diff --git a/src/pages/ProjectDetailPage.tsx b/src/pages/ProjectDetailPage.tsx
+index 2ccaaac..4c12b60 100644
+--- a/src/pages/ProjectDetailPage.tsx
++++ b/src/pages/ProjectDetailPage.tsx
+@@ -18,8 +18,11 @@ import { Coin } from '../components/Coin';
+ import { StatusBadge } from '../components/StatusBadge';
+ import { PersonChip } from '../components/PersonChip';
+ import { CommentsPanel } from '../components/CommentsPanel';
++import { SaveStatus } from '../components/SaveStatus';
+ import { useOpenTask } from '../components/TaskModal';
++import { ChevronRight } from '../components/icons';
+ import { formatShort, todayStr } from '../utils/dates';
++import { useSaveStatus } from '../utils/useSaveStatus';
+ 
+ function fmtHours(n: number): string {
+   return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
+@@ -67,6 +70,18 @@ function ProjectDetail({ projectId }: { projectId: string }) {
+   const [msName, setMsName] = useState('');
+   const [msDate, setMsDate] = useState(todayStr());
+ 
++  const dirty = project
++    ? name !== project.name ||
++      description !== project.description ||
++      clientId !== project.clientId ||
++      statusId !== project.statusId ||
++      startDate !== project.startDate ||
++      endDate !== project.endDate ||
++      departmentId !== project.departmentId ||
++      serviceTypeId !== project.serviceTypeId
++    : false;
++  const { status, markSaved } = useSaveStatus(dirty);
++
+   // Deleted mid-render (e.g. right after the delete dispatch, before the route
+   // change lands): render nothing for that frame.
+   if (!project) return null;
+@@ -104,6 +119,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
+     };
+     dispatch({ type: 'SAVE_PROJECT', projectId: project.id, draft });
+     setError('');
++    markSaved();
+   };
+ 
+   const togglePaid = () =>
+@@ -133,16 +149,6 @@ function ProjectDetail({ projectId }: { projectId: string }) {
+     setMsName('');
+   };
+ 
+-  const dirty =
+-    name !== project.name ||
+-    description !== project.description ||
+-    clientId !== project.clientId ||
+-    statusId !== project.statusId ||
+-    startDate !== project.startDate ||
+-    endDate !== project.endDate ||
+-    departmentId !== project.departmentId ||
+-    serviceTypeId !== project.serviceTypeId;
+-
+   return (
+     <section className="page editor">
+       <div className="page-head">
+@@ -152,9 +158,22 @@ function ProjectDetail({ projectId }: { projectId: string }) {
+           <StatusBadge status={currentStatus} />
+         </h1>
+         <div className="page-head-actions">
+-          <Link to="/projects" className="btn ghost">
++          <SaveStatus status={status} />
++          <button
++            type="button"
++            className="btn ghost"
++            onClick={() => {
++              if (
++                dirty &&
++                !window.confirm('Masz niezapisane zmiany. Opuścić bez zapisywania?')
++              ) {
++                return;
++              }
++              navigate('/projects');
++            }}
++          >
+             Wróć
+-          </Link>
++          </button>
+           <button type="button" className="btn danger-ghost" onClick={remove}>
+             Usuń projekt
+           </button>
+@@ -264,9 +283,9 @@ function ProjectDetail({ projectId }: { projectId: string }) {
+           </span>
+         </div>
+         {error && <p className="field-error">{error}</p>}
+-        {dirty && (
++        {(dirty || status !== 'clean') && (
+           <div className="editor-actions">
+-            <button type="button" className="btn primary" onClick={save}>
++            <button type="button" className="btn primary" onClick={save} disabled={!dirty}>
+               Zapisz zmiany
+             </button>
+           </div>
+@@ -363,6 +382,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
+                       <PersonChip key={p.id} person={p} />
+                     ))}
+                   </span>
++                  <ChevronRight className="card-chevron" size={16} aria-hidden />
+                 </button>
+               </li>
+             ))}
+diff --git a/src/pages/ProjectsPage.tsx b/src/pages/ProjectsPage.tsx
+index ad70e44..8a8cf10 100644
+--- a/src/pages/ProjectsPage.tsx
++++ b/src/pages/ProjectsPage.tsx
+@@ -1,7 +1,7 @@
+ // Project list grouped by client, with paid/unpaid coin markers, status badges,
+ // filters (client, status, paid/unpaid), and a create form.
+ import { useMemo, useState } from 'react';
+-import { Link, useNavigate } from 'react-router-dom';
++import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+ import { useStore } from '../store/AppStore';
+ import type { ProjectDraft } from '../store/AppStore';
+ import {
+@@ -14,6 +14,10 @@ import {
+ } from '../store/selectors';
+ import { Coin } from '../components/Coin';
+ import { StatusBadge } from '../components/StatusBadge';
++import { FilterPresets, DEFAULT_CRITERIA } from '../components/FilterPresets';
++import { useOpenTask } from '../components/TaskModal';
++import { ChevronRight, GanttChart, Plus } from '../components/icons';
++import type { SavedFilterCriteria } from '../types';
+ import { addDaysStr, todayStr } from '../utils/dates';
+ import { parseDate } from '../utils/dates';
+ import { format } from 'date-fns';
+@@ -75,11 +79,16 @@ function polishCount(n: number, one: string, few: string, many: string): string
+ export function ProjectsPage() {
+   const { state, dispatch } = useStore();
+   const navigate = useNavigate();
++  const { openNewTask } = useOpenTask();
++  const [searchParams] = useSearchParams();
+   const statuses = activeStatuses(state);
+ 
+   const [paidFilter, setPaidFilter] = useState<PaidFilter>('all');
+-  const [clientFilter, setClientFilter] = useState('');
++  // Deep-link: a `?client=` param (e.g. from global search) pre-filters the list.
++  const [clientFilter, setClientFilter] = useState(() => searchParams.get('client') ?? '');
+   const [statusFilter, setStatusFilter] = useState('');
++  const [from, setFrom] = useState('');
++  const [to, setTo] = useState('');
+   const [creating, setCreating] = useState(false);
+ 
+   // ---- Create form state ----
+@@ -96,11 +105,31 @@ export function ProjectsPage() {
+         (p) =>
+           (paidFilter === 'all' || p.paid === (paidFilter === 'paid')) &&
+           (!clientFilter || p.clientId === clientFilter) &&
+-          (!statusFilter || p.statusId === statusFilter),
++          (!statusFilter || p.statusId === statusFilter) &&
++          // Period overlap: [startDate, endDate] vs [from, to].
++          (!from || p.endDate >= from) &&
++          (!to || p.startDate <= to),
+       ),
+-    [state.projects, paidFilter, clientFilter, statusFilter],
++    [state.projects, paidFilter, clientFilter, statusFilter, from, to],
+   );
+ 
++  const criteria: SavedFilterCriteria = {
++    ...DEFAULT_CRITERIA,
++    paid: paidFilter,
++    clientId: clientFilter,
++    statusId: statusFilter,
++    from,
++    to,
++  };
++
++  const applyPreset = (c: SavedFilterCriteria) => {
++    setPaidFilter(c.paid);
++    setClientFilter(c.clientId);
++    setStatusFilter(c.statusId);
++    setFrom(c.from);
++    setTo(c.to);
++  };
++
+   // Group by client (clients in list order, then any orphaned projects).
+   const groups = useMemo(() => {
+     const out: Array<{ clientId: string; clientName: string; projects: typeof filtered }> = [];
+@@ -262,8 +291,24 @@ export function ProjectsPage() {
+             </option>
+           ))}
+         </select>
++        <input
++          type="date"
++          value={from}
++          onChange={(e) => setFrom(e.target.value)}
++          aria-label="Filtruj od daty"
++          title="Od"
++        />
++        <input
++          type="date"
++          value={to}
++          onChange={(e) => setTo(e.target.value)}
++          aria-label="Filtruj do daty"
++          title="Do"
++        />
+       </div>
+ 
++      <FilterPresets page="projects" criteria={criteria} onApply={applyPreset} />
++
+       {groups.length === 0 ? (
+         <div className="empty-state">
+           <p className="empty-title">Brak projektów</p>
+@@ -308,7 +353,34 @@ export function ProjectsPage() {
+                           · {teamSize} {polishCount(teamSize, 'osoba', 'osoby', 'osób')}
+                         </span>
+                       </div>
++                      <ChevronRight className="card-chevron" size={16} aria-hidden />
+                     </button>
++                    <div className="card-actions">
++                      <button
++                        type="button"
++                        className="card-action-btn"
++                        title="Oś czasu"
++                        aria-label="Otwórz oś czasu"
++                        onClick={(e) => {
++                          e.stopPropagation();
++                          navigate('/timeline');
++                        }}
++                      >
++                        <GanttChart size={14} aria-hidden />
++                      </button>
++                      <button
++                        type="button"
++                        className="card-action-btn"
++                        title="+ Zadanie"
++                        aria-label={`Dodaj zadanie do ${p.name}`}
++                        onClick={(e) => {
++                          e.stopPropagation();
++                          openNewTask(p.id);
++                        }}
++                      >
++                        <Plus size={14} aria-hidden />
++                      </button>
++                    </div>
+                   </li>
+                 );
+               })}
+diff --git a/src/pages/TasksPage.tsx b/src/pages/TasksPage.tsx
+index d96c229..75d9344 100644
+--- a/src/pages/TasksPage.tsx
++++ b/src/pages/TasksPage.tsx
+@@ -1,12 +1,17 @@
++import { useMemo, useState } from 'react';
+ import { useStore } from '../store/AppStore';
+ import { useOpenTask } from '../components/TaskModal';
+ import {
++  activeStatuses,
++  assigneeIdsOfTask,
+   assigneesOfTask,
+   getClient,
+   getProject,
+   getStatus,
+   taskPlannedTotal,
+ } from '../store/selectors';
++import { FilterPresets, DEFAULT_CRITERIA } from '../components/FilterPresets';
++import { ChevronRight } from '../components/icons';
+ import { PersonChip } from '../components/PersonChip';
+ import { StatusBadge } from '../components/StatusBadge';
+ import { Coin } from '../components/Coin';
+@@ -32,14 +37,70 @@ function rangeLabel(start: string, end: string): string {
+ export function TasksPage() {
+   const { state, dispatch } = useStore();
+   const { openTask, openNewTask } = useOpenTask();
++  const statuses = activeStatuses(state);
++
++  const [clientFilter, setClientFilter] = useState('');
++  const [statusFilter, setStatusFilter] = useState('');
++  const [personFilter, setPersonFilter] = useState('');
++  const [from, setFrom] = useState('');
++  const [to, setTo] = useState('');
+ 
+   // Sort by start date, then title, for a stable predictable list.
+-  const tasks = [...state.tasks].sort((a, b) =>
++  const allTasks = [...state.tasks].sort((a, b) =>
+     a.startDate === b.startDate
+       ? a.title.localeCompare(b.title)
+       : a.startDate.localeCompare(b.startDate),
+   );
+ 
++  const anyFilter =
++    clientFilter !== '' ||
++    statusFilter !== '' ||
++    personFilter !== '' ||
++    from !== '' ||
++    to !== '';
++
++  const tasks = useMemo(
++    () =>
++      allTasks.filter((t) => {
++        if (statusFilter && t.statusId !== statusFilter) return false;
++        if (clientFilter) {
++          const clientId = getProject(state, t.projectId)?.clientId;
++          if (clientId !== clientFilter) return false;
++        }
++        if (personFilter && !assigneeIdsOfTask(state, t.id).includes(personFilter)) return false;
++        // Period-overlap on the task span: [startDate, endDate] vs [from, to].
++        if (from && t.endDate < from) return false;
++        if (to && t.startDate > to) return false;
++        return true;
++      }),
++    [allTasks, state, clientFilter, statusFilter, personFilter, from, to],
++  );
++
++  const criteria = {
++    ...DEFAULT_CRITERIA,
++    clientId: clientFilter,
++    statusId: statusFilter,
++    personId: personFilter,
++    from,
++    to,
++  };
++
++  const applyPreset = (c: typeof criteria) => {
++    setClientFilter(c.clientId);
++    setStatusFilter(c.statusId);
++    setPersonFilter(c.personId);
++    setFrom(c.from);
++    setTo(c.to);
++  };
++
++  const clearFilters = () => {
++    setClientFilter('');
++    setStatusFilter('');
++    setPersonFilter('');
++    setFrom('');
++    setTo('');
++  };
++
+   const handleDelete = (taskId: string, title: string) => {
+     if (window.confirm(`Usunąć „${title}”? To usunie przypisania i zaplanowane godziny.`)) {
+       dispatch({ type: 'DELETE_TASK', taskId });
+@@ -55,7 +116,7 @@ export function TasksPage() {
+         </button>
+       </div>
+ 
+-      {tasks.length === 0 ? (
++      {allTasks.length === 0 ? (
+         <div className="empty-state">
+           <p className="empty-title">Brak zadań</p>
+           <p className="empty-hint">
+@@ -66,7 +127,79 @@ export function TasksPage() {
+           </button>
+         </div>
+       ) : (
+-        <ul className="task-list">
++        <>
++          <div className="cal-toolbar">
++            <div className="filter-controls">
++              <select
++                value={clientFilter}
++                onChange={(e) => setClientFilter(e.target.value)}
++                aria-label="Filtruj po kliencie"
++              >
++                <option value="">Wszyscy klienci</option>
++                {state.clients.map((c) => (
++                  <option key={c.id} value={c.id}>
++                    {c.name}
++                  </option>
++                ))}
++              </select>
++              <select
++                value={statusFilter}
++                onChange={(e) => setStatusFilter(e.target.value)}
++                aria-label="Filtruj po statusie"
++              >
++                <option value="">Wszystkie statusy</option>
++                {statuses.map((s) => (
++                  <option key={s.id} value={s.id}>
++                    {s.name}
++                  </option>
++                ))}
++              </select>
++              <select
++                value={personFilter}
++                onChange={(e) => setPersonFilter(e.target.value)}
++                aria-label="Filtruj po osobie"
++              >
++                <option value="">Wszystkie osoby</option>
++                {state.people.map((p) => (
++                  <option key={p.id} value={p.id}>
++                    {p.name}
++                  </option>
++                ))}
++              </select>
++              <input
++                type="date"
++                value={from}
++                onChange={(e) => setFrom(e.target.value)}
++                aria-label="Filtruj od daty"
++                title="Od"
++              />
++              <input
++                type="date"
++                value={to}
++                onChange={(e) => setTo(e.target.value)}
++                aria-label="Filtruj do daty"
++                title="Do"
++              />
++              {anyFilter && (
++                <button type="button" className="btn ghost small" onClick={clearFilters}>
++                  Wyczyść filtry
++                </button>
++              )}
++            </div>
++            <span className="filter-count muted">
++              {tasks.length} z {allTasks.length} zadań
++            </span>
++          </div>
++
++          <FilterPresets page="tasks" criteria={criteria} onApply={applyPreset} />
++
++          {tasks.length === 0 ? (
++            <div className="empty-state">
++              <p className="empty-title">Brak pasujących zadań</p>
++              <p className="empty-hint">Zmień lub wyczyść filtry, aby zobaczyć zadania.</p>
++            </div>
++          ) : (
++            <ul className="task-list">
+           {tasks.map((task) => {
+             const assignees = assigneesOfTask(state, task.id);
+             const planned = taskPlannedTotal(state, task.id);
+@@ -104,19 +237,25 @@ export function TasksPage() {
+                       <span className="muted"> / szac. {fmtHours(task.estimatedHours)}h</span>
+                     )}
+                   </div>
++                  <ChevronRight className="card-chevron" size={16} aria-hidden />
+                 </button>
+-                <button
+-                  type="button"
+-                  className="btn danger-ghost task-delete"
+-                  onClick={() => handleDelete(task.id, task.title)}
+-                  aria-label={`Usuń ${task.title}`}
+-                >
+-                  Usuń
+-                </button>
++                <div className="card-actions">
++                  <button
++                    type="button"
++                    className="btn danger-ghost task-delete"
++                    onClick={() => handleDelete(task.id, task.title)}
++                    aria-label={`Usuń ${task.title}`}
++                    title="Usuń"
++                  >
++                    Usuń
++                  </button>
++                </div>
+               </li>
+             );
+           })}
+-        </ul>
++            </ul>
++          )}
++        </>
+       )}
+     </section>
+   );
+diff --git a/src/pages/TimelinePage.tsx b/src/pages/TimelinePage.tsx
+index 78562c6..fd452f2 100644
+--- a/src/pages/TimelinePage.tsx
++++ b/src/pages/TimelinePage.tsx
+@@ -6,9 +6,13 @@ import { useMemo, useRef, useState } from 'react';
+ import { useNavigate } from 'react-router-dom';
+ import { useStore } from '../store/AppStore';
+ import { useOpenTask } from '../components/TaskModal';
++import { PersonFilter } from '../components/PersonFilter';
++import { ZoomIn, ZoomOut } from '../components/icons';
+ import type { Milestone, Project, Task } from '../types';
+ import {
+   activeStatuses,
++  assigneeIdsOfTask,
++  conflictDatesForTask,
+   getStatus,
+   milestonesOfProject,
+   tasksOfProject,
+@@ -24,8 +28,14 @@ import {
+   weekStart,
+ } from '../utils/dates';
+ 
+-const DAY_W = 26; // px per day
+-const WEEKS = 10; // visible range
++const DEFAULT_DAY_W = 26; // px per day
++const ZOOM_LEVELS = [14, 26, 40] as const; // px per day
++const WEEK_PRESETS: Array<[number, string]> = [
++  [2, '2 tyg.'],
++  [6, '6 tyg.'],
++  [10, '10 tyg.'],
++  [26, '26 tyg.'],
++];
+ 
+ type DragMode = 'move' | 'start' | 'end';
+ 
+@@ -33,12 +43,14 @@ interface BarProps {
+   startIdx: number; // day index of bar start within the range
+   span: number; // days (>= 1)
+   totalDays: number;
++  dayW: number; // px per day (zoom level)
+   color: string;
+   className: string;
+   title: string;
+   resizable: boolean;
+   onCommit: (mode: DragMode, deltaDays: number) => void;
+   onOpen: () => void;
++  conflictOffsets?: number[]; // day offsets from bar start with an overload
+   children?: React.ReactNode;
+ }
+ 
+@@ -47,12 +59,14 @@ function Bar({
+   startIdx,
+   span,
+   totalDays,
++  dayW,
+   color,
+   className,
+   title,
+   resizable,
+   onCommit,
+   onOpen,
++  conflictOffsets,
+   children,
+ }: BarProps) {
+   const [drag, setDrag] = useState<{ mode: DragMode; originX: number; delta: number } | null>(
+@@ -73,7 +87,7 @@ function Bar({
+ 
+   const onPointerMove = (e: React.PointerEvent) => {
+     if (!drag) return;
+-    let delta = Math.round((e.clientX - drag.originX) / DAY_W);
++    let delta = Math.round((e.clientX - drag.originX) / dayW);
+     // Keep at least 1 day of bar while resizing.
+     if (drag.mode === 'start') delta = Math.min(delta, span - 1);
+     if (drag.mode === 'end') delta = Math.max(delta, 1 - span);
+@@ -88,18 +102,18 @@ function Bar({
+     if (delta !== 0) onCommit(mode, delta);
+   };
+ 
+-  let left = startIdx * DAY_W;
+-  let width = span * DAY_W;
++  let left = startIdx * dayW;
++  let width = span * dayW;
+   if (drag) {
+-    if (drag.mode === 'move') left += drag.delta * DAY_W;
++    if (drag.mode === 'move') left += drag.delta * dayW;
+     if (drag.mode === 'start') {
+-      left += drag.delta * DAY_W;
+-      width -= drag.delta * DAY_W;
++      left += drag.delta * dayW;
++      width -= drag.delta * dayW;
+     }
+-    if (drag.mode === 'end') width += drag.delta * DAY_W;
++    if (drag.mode === 'end') width += drag.delta * dayW;
+   }
+   // Cull bars fully outside the range.
+-  if (left + width < 0 || left > totalDays * DAY_W) return null;
++  if (left + width < 0 || left > totalDays * dayW) return null;
+ 
+   return (
+     <div
+@@ -126,6 +140,14 @@ function Bar({
+       {resizable && (
+         <span className="bar-handle right" onPointerDown={begin('end')} aria-hidden />
+       )}
++      {conflictOffsets?.map((off) => (
++        <span
++          key={off}
++          className="timeline-conflict"
++          style={{ left: off * dayW }}
++          aria-hidden
++        />
++      ))}
+     </div>
+   );
+ }
+@@ -134,17 +156,19 @@ function Bar({
+ function MilestoneMark({
+   milestone,
+   dayIdx,
++  dayW,
+   onCommit,
+ }: {
+   milestone: Milestone;
+   dayIdx: number;
++  dayW: number;
+   onCommit: (deltaDays: number) => void;
+ }) {
+   const [drag, setDrag] = useState<{ originX: number; delta: number } | null>(null);
+   return (
+     <span
+       className={drag ? 'timeline-milestone dragging' : 'timeline-milestone'}
+-      style={{ left: (dayIdx + (drag?.delta ?? 0)) * DAY_W + DAY_W / 2 }}
++      style={{ left: (dayIdx + (drag?.delta ?? 0)) * dayW + dayW / 2 }}
+       title={`◆ ${milestone.name} — ${formatShort(milestone.date)} (przeciągnij, aby przesunąć)`}
+       onPointerDown={(e) => {
+         e.stopPropagation();
+@@ -157,7 +181,7 @@ function MilestoneMark({
+       }}
+       onPointerMove={(e) => {
+         if (!drag) return;
+-        const delta = Math.round((e.clientX - drag.originX) / DAY_W);
++        const delta = Math.round((e.clientX - drag.originX) / dayW);
+         setDrag((d) => (d ? { ...d, delta } : d));
+       }}
+       onPointerUp={() => {
+@@ -177,10 +201,18 @@ export function TimelinePage() {
+   const navigate = useNavigate();
+   const { openTask } = useOpenTask();
+   const [anchor, setAnchor] = useState(() => todayStr());
++  const [dayW, setDayW] = useState<number>(DEFAULT_DAY_W);
++  const [weeks, setWeeks] = useState(10);
++  const [ownerFilter, setOwnerFilter] = useState<Set<string>>(new Set());
++  const [clientFilter, setClientFilter] = useState('');
++
++  const zoomIdx = ZOOM_LEVELS.indexOf(dayW as (typeof ZOOM_LEVELS)[number]);
++  const canZoomIn = zoomIdx < ZOOM_LEVELS.length - 1;
++  const canZoomOut = zoomIdx > 0;
+ 
+-  // Visible range: from one week before the anchor's Monday, WEEKS weeks long.
++  // Visible range: from one week before the anchor's Monday, `weeks` weeks long.
+   const rangeStart = shiftWeek(weekStart(anchor), -1);
+-  const totalDays = WEEKS * 7;
++  const totalDays = weeks * 7;
+   const days = useMemo(
+     () => Array.from({ length: totalDays }, (_, i) => addDaysStr(rangeStart, i)),
+     [rangeStart, totalDays],
+@@ -191,18 +223,64 @@ export function TimelinePage() {
+ 
+   const doneStatusId = activeStatuses(state).slice(-1)[0]?.id;
+ 
+-  // Group projects by client, in client-list order.
++  // Group projects by client, in client-list order, narrowed by the client filter.
+   const groups = useMemo(() => {
+     const out: Array<{ name: string; projects: Project[] }> = [];
+     for (const c of state.clients) {
++      if (clientFilter && c.id !== clientFilter) continue;
+       const own = state.projects.filter((p) => p.clientId === c.id);
+       if (own.length > 0) out.push({ name: c.name, projects: own });
+     }
+-    const known = new Set(state.clients.map((c) => c.id));
+-    const orphans = state.projects.filter((p) => !known.has(p.clientId));
+-    if (orphans.length > 0) out.push({ name: 'Bez klienta', projects: orphans });
++    if (!clientFilter) {
++      const known = new Set(state.clients.map((c) => c.id));
++      const orphans = state.projects.filter((p) => !known.has(p.clientId));
++      if (orphans.length > 0) out.push({ name: 'Bez klienta', projects: orphans });
++    }
+     return out;
+-  }, [state.clients, state.projects]);
++  }, [state.clients, state.projects, clientFilter]);
++
++  // Apply the owner filter and precompute per-task conflict day offsets. Offsets
++  // are relative to each task's start (range-independent) so this memo survives
++  // navigation and drag frames — it only recomputes on workload/people/task edits.
++  const ownerKey = [...ownerFilter].sort().join(',');
++  const view = useMemo(() => {
++    const result: Array<{
++      name: string;
++      projects: Array<{
++        project: Project;
++        tasks: Array<{ task: Task; conflictOffsets: number[] }>;
++      }>;
++    }> = [];
++    for (const g of groups) {
++      const projects: (typeof result)[number]['projects'] = [];
++      for (const p of g.projects) {
++        const all = tasksOfProject(state, p.id).sort((a, b) =>
++          a.startDate.localeCompare(b.startDate),
++        );
++        const tasks =
++          ownerFilter.size === 0
++            ? all
++            : all.filter((t) =>
++                assigneeIdsOfTask(state, t.id).some((id) => ownerFilter.has(id)),
++              );
++        // Project bars have no owner: hide a project only when the owner filter
++        // is active and none of its tasks match.
++        if (ownerFilter.size > 0 && tasks.length === 0) continue;
++        projects.push({
++          project: p,
++          tasks: tasks.map((t) => ({
++            task: t,
++            conflictOffsets: conflictDatesForTask(state, t.id).map((d) =>
++              diffDays(t.startDate, d),
++            ),
++          })),
++        });
++      }
++      if (projects.length > 0) result.push({ name: g.name, projects });
++    }
++    return result;
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [groups, ownerKey, state.tasks, state.assignments, state.workload, state.people]);
+ 
+   const commitProject = (p: Project) => (mode: DragMode, delta: number) => {
+     const startDate =
+@@ -248,6 +326,26 @@ export function TimelinePage() {
+           <span className="cal-range-label">
+             {formatShort(days[0])} – {formatShort(days[totalDays - 1])}
+           </span>
++          <div className="timeline-zoom" role="group" aria-label="Powiększenie">
++            <button
++              type="button"
++              className="nav-btn"
++              onClick={() => canZoomOut && setDayW(ZOOM_LEVELS[zoomIdx - 1])}
++              disabled={!canZoomOut}
++              aria-label="Pomniejsz"
++            >
++              <ZoomOut size={16} aria-hidden />
++            </button>
++            <button
++              type="button"
++              className="nav-btn"
++              onClick={() => canZoomIn && setDayW(ZOOM_LEVELS[zoomIdx + 1])}
++              disabled={!canZoomIn}
++              aria-label="Powiększ"
++            >
++              <ZoomIn size={16} aria-hidden />
++            </button>
++          </div>
+         </div>
+       </div>
+       <p className="field-hint">
+@@ -255,6 +353,46 @@ export function TimelinePage() {
+         Przesunięcie zadania przesuwa razem z nim zaplanowane godziny. ◆ kamienie milowe też można przeciągać.
+       </p>
+ 
++      <div className="cal-toolbar">
++        <div className="cal-view-toggle" role="group" aria-label="Zakres widoku">
++          {WEEK_PRESETS.map(([w, label]) => (
++            <button
++              key={w}
++              type="button"
++              className={weeks === w ? 'toggle-btn active' : 'toggle-btn'}
++              onClick={() => setWeeks(w)}
++            >
++              {label}
++            </button>
++          ))}
++        </div>
++        <PersonFilter
++          people={state.people}
++          selected={ownerFilter}
++          onToggle={(id) =>
++            setOwnerFilter((prev) => {
++              const next = new Set(prev);
++              if (next.has(id)) next.delete(id);
++              else next.add(id);
++              return next;
++            })
++          }
++          onAll={() => setOwnerFilter(new Set())}
++        />
++        <select
++          value={clientFilter}
++          onChange={(e) => setClientFilter(e.target.value)}
++          aria-label="Filtruj po kliencie"
++        >
++          <option value="">Wszyscy klienci</option>
++          {state.clients.map((c) => (
++            <option key={c.id} value={c.id}>
++              {c.name}
++            </option>
++          ))}
++        </select>
++      </div>
++
+       {state.projects.length === 0 ? (
+         <div className="empty-state">
+           <p className="empty-title">Brak elementów do zaplanowania</p>
+@@ -262,14 +400,14 @@ export function TimelinePage() {
+         </div>
+       ) : (
+         <div className="timeline-scroll">
+-          <div className="timeline" style={{ width: 240 + totalDays * DAY_W }}>
++          <div className="timeline" style={{ width: 240 + totalDays * dayW }}>
+             {/* Header: week labels + day stripes */}
+             <div className="timeline-row timeline-head">
+               <div className="timeline-label" />
+               <div className="timeline-track">
+                 {days.map((d, i) =>
+                   i % 7 === 0 ? (
+-                    <span key={d} className="timeline-week-label" style={{ left: i * DAY_W }}>
++                    <span key={d} className="timeline-week-label" style={{ left: i * dayW }}>
+                       {formatShort(d)}
+                     </span>
+                   ) : null,
+@@ -277,18 +415,15 @@ export function TimelinePage() {
+               </div>
+             </div>
+ 
+-            {groups.map((g) => (
++            {view.map((g) => (
+               <div key={g.name} className="timeline-group">
+                 <div className="timeline-row timeline-client-row">
+                   <div className="timeline-label timeline-client">{g.name}</div>
+                   <div className="timeline-track" />
+                 </div>
+-                {g.projects.map((p) => {
++                {g.projects.map(({ project: p, tasks }) => {
+                   const status = getStatus(state, p.statusId);
+                   const overdue = p.endDate < today && p.statusId !== doneStatusId;
+-                  const tasks = tasksOfProject(state, p.id).sort((a, b) =>
+-                    a.startDate.localeCompare(b.startDate),
+-                  );
+                   return (
+                     <div key={p.id} className="timeline-project">
+                       <div className="timeline-row">
+@@ -304,11 +439,12 @@ export function TimelinePage() {
+                           </button>
+                         </div>
+                         <div className="timeline-track">
+-                          <DayStripes days={days} todayIdx={todayIdx} />
++                          <DayStripes days={days} todayIdx={todayIdx} dayW={dayW} />
+                           <Bar
+                             startIdx={dayIdx(p.startDate)}
+                             span={diffDays(p.startDate, p.endDate) + 1}
+                             totalDays={totalDays}
++                            dayW={dayW}
+                             color={status?.color ?? '#64748b'}
+                             className={
+                               overdue ? 'timeline-bar project overdue' : 'timeline-bar project'
+@@ -325,6 +461,7 @@ export function TimelinePage() {
+                               key={m.id}
+                               milestone={m}
+                               dayIdx={dayIdx(m.date)}
++                              dayW={dayW}
+                               onCommit={(delta) =>
+                                 dispatch({
+                                   type: 'MOVE_MILESTONE',
+@@ -336,23 +473,25 @@ export function TimelinePage() {
+                           ))}
+                         </div>
+                       </div>
+-                      {tasks.map((t) => (
++                      {tasks.map(({ task: t, conflictOffsets }) => (
+                         <div key={t.id} className="timeline-row timeline-task-row">
+                           <div className="timeline-label timeline-task-label" title={t.title}>
+                             {t.title}
+                           </div>
+                           <div className="timeline-track">
+-                            <DayStripes days={days} todayIdx={todayIdx} />
++                            <DayStripes days={days} todayIdx={todayIdx} dayW={dayW} />
+                             <Bar
+                               startIdx={dayIdx(t.startDate)}
+                               span={diffDays(t.startDate, t.endDate) + 1}
+                               totalDays={totalDays}
++                              dayW={dayW}
+                               color={getStatus(state, t.statusId)?.color ?? '#94a3b8'}
+                               className="timeline-bar task"
+-                              title={`${t.title}: ${formatShort(t.startDate)} – ${formatShort(t.endDate)}`}
++                              title={`${t.title}: ${formatShort(t.startDate)} – ${formatShort(t.endDate)}${conflictOffsets.length > 0 ? ` — ⚠ konflikty: ${conflictOffsets.length} dni` : ''}`}
+                               resizable
+                               onCommit={commitTask(t)}
+                               onOpen={() => openTask(t.id)}
++                              conflictOffsets={conflictOffsets}
+                             >
+                               {t.title}
+                             </Bar>
+@@ -372,7 +511,15 @@ export function TimelinePage() {
+ }
+ 
+ /** Weekend shading + today line, shared by every track. */
+-function DayStripes({ days, todayIdx }: { days: string[]; todayIdx: number }) {
++function DayStripes({
++  days,
++  todayIdx,
++  dayW,
++}: {
++  days: string[];
++  todayIdx: number;
++  dayW: number;
++}) {
+   return (
+     <>
+       {days.map((d, i) =>
+@@ -380,7 +527,7 @@ function DayStripes({ days, todayIdx }: { days: string[]; todayIdx: number }) {
+           <span
+             key={d}
+             className="timeline-weekend"
+-            style={{ left: i * DAY_W, width: DAY_W }}
++            style={{ left: i * dayW, width: dayW }}
+             aria-hidden
+           />
+         ) : null,
+@@ -388,7 +535,7 @@ function DayStripes({ days, todayIdx }: { days: string[]; todayIdx: number }) {
+       {todayIdx >= 0 && todayIdx < days.length && (
+         <span
+           className="timeline-today"
+-          style={{ left: todayIdx * DAY_W + DAY_W / 2 }}
++          style={{ left: todayIdx * dayW + dayW / 2 }}
+           aria-hidden
+         />
+       )}
+diff --git a/src/pages/WorkloadPage.tsx b/src/pages/WorkloadPage.tsx
+index 1fcaf88..ef10373 100644
+--- a/src/pages/WorkloadPage.tsx
++++ b/src/pages/WorkloadPage.tsx
+@@ -1,15 +1,23 @@
+ // Workload dashboard: per-person assigned vs available hours for a week, with
+ // per-day breakdown, overload warnings, and filters by department / client /
+ // service type.
+-import { useMemo, useState } from 'react';
++import { Fragment, useEffect, useMemo, useState } from 'react';
+ import { Link } from 'react-router-dom';
+ import { useStore } from '../store/AppStore';
++import type { AppData } from '../types';
+ import type { WorkloadEntry } from '../types';
+ import {
++  blocksForPersonDate,
++  getClient,
+   getDepartment,
++  getProject,
++  getTask,
++  hoursForPersonOnDate,
+   personCapacity,
+ } from '../store/selectors';
+ import { Avatar } from '../components/Avatar';
++import { useOpenTask } from '../components/TaskModal';
++import { ArrowRightLeft, ChevronLeft, ChevronRight, X } from '../components/icons';
+ import {
+   formatRowLabel,
+   isWeekend,
+@@ -23,16 +31,126 @@ function fmtHours(n: number): string {
+   return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
+ }
+ 
++/** Actions for one block inside the resolution panel. */
++function BlockRow({
++  state,
++  entry,
++  personId,
++  date,
++  onReassign,
++  onOpenTask,
++  onMove,
++}: {
++  state: AppData;
++  entry: WorkloadEntry;
++  personId: string;
++  date: string;
++  onReassign: (entryId: string, toPersonId: string) => void;
++  onOpenTask: (taskId: string) => void;
++  onMove: (taskId: string, dayDelta: number) => void;
++}) {
++  const task = getTask(state, entry.taskId);
++  const project = task ? getProject(state, task.projectId) : undefined;
++  const client = project ? getClient(state, project.clientId) : undefined;
++  const others = state.people.filter((p) => p.id !== personId);
++  const [target, setTarget] = useState(() => others[0]?.id ?? '');
++
++  return (
++    <li className="wr-block">
++      <div className="wr-block-info">
++        <span className="wr-block-task">{task?.title ?? 'Zadanie'}</span>
++        <span className="wr-block-project muted">
++          {project?.name ?? '—'}
++          {client ? ` · ${client.name}` : ''}
++        </span>
++      </div>
++      <span className="wr-block-hours">{fmtHours(entry.plannedHours)}h</span>
++      <div className="wr-block-actions">
++        {others.length > 0 && (
++          <div className="wr-reassign">
++            <select
++              value={target}
++              onChange={(e) => setTarget(e.target.value)}
++              aria-label="Przypisz do osoby"
++            >
++              {others.map((p) => {
++                const cap = personCapacity(state, p.id);
++                const cur = hoursForPersonOnDate(state, p.id, date);
++                const over = cur + entry.plannedHours > cap;
++                return (
++                  <option key={p.id} value={p.id}>
++                    {p.name} — {fmtHours(cur)}h/{cap}h tego dnia{over ? ' ⚠' : ''}
++                  </option>
++                );
++              })}
++            </select>
++            <button
++              type="button"
++              className="btn ghost small"
++              onClick={() => target && onReassign(entry.id, target)}
++            >
++              <ArrowRightLeft size={14} /> Przenieś
++            </button>
++          </div>
++        )}
++        <button
++          type="button"
++          className="btn ghost small"
++          onClick={() => onOpenTask(entry.taskId)}
++        >
++          Otwórz zadanie
++        </button>
++        <div className="wr-move">
++          <span className="muted wr-move-label">Przesuń całe zadanie:</span>
++          <button
++            type="button"
++            className="btn ghost small"
++            onClick={() => onMove(entry.taskId, -1)}
++          >
++            <ChevronLeft size={14} /> −1 dzień
++          </button>
++          <button
++            type="button"
++            className="btn ghost small"
++            onClick={() => onMove(entry.taskId, 1)}
++          >
++            +1 dzień <ChevronRight size={14} />
++          </button>
++        </div>
++      </div>
++    </li>
++  );
++}
++
+ export function WorkloadPage() {
+-  const { state } = useStore();
++  const { state, dispatch } = useStore();
++  const { openTask } = useOpenTask();
+   const [anchor, setAnchor] = useState(() => todayStr());
+   const [departmentFilter, setDepartmentFilter] = useState('');
+   const [clientFilter, setClientFilter] = useState('');
+   const [serviceFilter, setServiceFilter] = useState('');
++  const [selected, setSelected] = useState<{ personId: string; date: string } | null>(
++    null,
++  );
+ 
+   const days = weekDays(anchor);
+   const daySet = new Set(days);
+ 
++  // Close the panel once the selected person/day has no blocks left (e.g. after
++  // reassigning the last one or shifting the task off this day).
++  const selectedBlocks = selected
++    ? blocksForPersonDate(state, selected.personId, selected.date)
++    : [];
++  useEffect(() => {
++    if (selected && selectedBlocks.length === 0) setSelected(null);
++  }, [selected, selectedBlocks.length]);
++
++  const toggleCell = (personId: string, date: string) => {
++    setSelected((cur) =>
++      cur && cur.personId === personId && cur.date === date ? null : { personId, date },
++    );
++  };
++
+   // Entry passes the client/service filters when its task's project matches.
+   const taskProject = useMemo(() => {
+     const m = new Map<string, string>();
+@@ -163,7 +281,8 @@ export function WorkloadPage() {
+                 const pct = available > 0 ? Math.round((assigned / available) * 100) : 0;
+                 const overloadedDays = days.filter((d) => hoursFor(p.id, d) > capacity);
+                 return (
+-                  <tr key={p.id}>
++                  <Fragment key={p.id}>
++                  <tr>
+                     <th scope="row" className="workload-person">
+                       <Link to={`/people/${p.id}`} className="workload-person-link">
+                         <Avatar person={p} size={26} />
+@@ -178,6 +297,9 @@ export function WorkloadPage() {
+                     {days.map((d) => {
+                       const h = hoursFor(p.id, d);
+                       const over = h > capacity;
++                      const clickable = h > 0;
++                      const isSel =
++                        selected?.personId === p.id && selected?.date === d;
+                       return (
+                         <td
+                           key={d}
+@@ -186,10 +308,26 @@ export function WorkloadPage() {
+                             isWeekend(d) ? 'weekend' : '',
+                             over ? 'overload' : '',
+                             h === 0 ? 'free' : '',
++                            clickable ? 'clickable' : '',
++                            isSel ? 'selected' : '',
+                           ]
+                             .filter(Boolean)
+                             .join(' ')}
+                           title={over ? `${p.name}: ${fmtHours(h)}h > ${capacity}h dostępności` : undefined}
++                          role={clickable ? 'button' : undefined}
++                          tabIndex={clickable ? 0 : undefined}
++                          aria-expanded={clickable ? isSel : undefined}
++                          onClick={clickable ? () => toggleCell(p.id, d) : undefined}
++                          onKeyDown={
++                            clickable
++                              ? (e) => {
++                                  if (e.key === 'Enter' || e.key === ' ') {
++                                    e.preventDefault();
++                                    toggleCell(p.id, d);
++                                  }
++                                }
++                              : undefined
++                          }
+                         >
+                           {h === 0 ? '—' : `${fmtHours(h)}h`}
+                           {over && ' ⚠'}
+@@ -222,6 +360,62 @@ export function WorkloadPage() {
+                       )}
+                     </td>
+                   </tr>
++                  {selected && selected.personId === p.id && (() => {
++                    const date = selected.date;
++                    const blocks = blocksForPersonDate(state, p.id, date);
++                    const dayTotal = hoursForPersonOnDate(state, p.id, date);
++                    const over = dayTotal > capacity;
++                    const filtersActive = Boolean(clientFilter || serviceFilter);
++                    return (
++                      <tr className="workload-detail-row">
++                        <td colSpan={days.length + 4}>
++                          <div className="wr-panel">
++                            <div className="wr-head">
++                              <span
++                                className={over ? 'wr-title over' : 'wr-title'}
++                              >
++                                „{p.name} — {formatRowLabel(date)}: {fmtHours(dayTotal)}h
++                                {' / '}
++                                {capacity}h”
++                              </span>
++                              <button
++                                type="button"
++                                className="wr-close"
++                                aria-label="Zamknij"
++                                onClick={() => setSelected(null)}
++                              >
++                                <X size={16} />
++                              </button>
++                            </div>
++                            {filtersActive && (
++                              <p className="wr-hint muted">
++                                Wszystkie bloki tego dnia, niezależnie od filtrów.
++                              </p>
++                            )}
++                            <ul className="wr-blocks">
++                              {blocks.map((entry) => (
++                                <BlockRow
++                                  key={entry.id}
++                                  state={state}
++                                  entry={entry}
++                                  personId={p.id}
++                                  date={date}
++                                  onReassign={(entryId, toPersonId) =>
++                                    dispatch({ type: 'REASSIGN_ENTRY', entryId, toPersonId })
++                                  }
++                                  onOpenTask={openTask}
++                                  onMove={(taskId, dayDelta) =>
++                                    dispatch({ type: 'MOVE_TASK', taskId, dayDelta })
++                                  }
++                                />
++                              ))}
++                            </ul>
++                          </div>
++                        </td>
++                      </tr>
++                    );
++                  })()}
++                  </Fragment>
+                 );
+               })}
+             </tbody>
+diff --git a/src/store/AppStore.tsx b/src/store/AppStore.tsx
+index 12cc140..8d5de6d 100644
+--- a/src/store/AppStore.tsx
++++ b/src/store/AppStore.tsx
+@@ -13,10 +13,12 @@ import type {
+   ActivityEvent,
+   AppData,
+   CommentEntityType,
++  FilterPage,
+   Milestone,
+   Person,
+   Project,
+   Status,
++  SavedFilterCriteria,
+   Task,
+   TaskAssignment,
+   WorkloadEntry,
+@@ -114,6 +116,9 @@ export type Action =
+   | { type: 'SET_STATUS_ARCHIVED'; statusId: string; archived: boolean }
+   | { type: 'DELETE_STATUS'; statusId: string }
+   | { type: 'INSERT_BLOCK'; payload: InsertBlockPayload }
++  | { type: 'REASSIGN_ENTRY'; entryId: string; toPersonId: string }
++  | { type: 'SAVE_FILTER_PRESET'; name: string; page: FilterPage; criteria: SavedFilterCriteria }
++  | { type: 'DELETE_FILTER_PRESET'; filterId: string }
+   | { type: 'LOAD_SAMPLE'; data: AppData }
+   | { type: 'DISMISS_SAMPLE_BANNER' }
+   | { type: 'RESET_ALL'; data: AppData };
+@@ -486,6 +491,55 @@ function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
+   };
+ }
+ 
++/** Move one time block to another person, keeping ordering invariants. */
++function reassignEntry(state: AppData, entryId: string, toPersonId: string): AppData {
++  const entry = state.workload.find((w) => w.id === entryId);
++  if (!entry) return state;
++  const target = state.people.find((p) => p.id === toPersonId);
++  if (!target || toPersonId === entry.personId) return state;
++
++  const fromPersonId = entry.personId;
++  const { date, plannedHours, taskId } = entry;
++
++  // Compute the target's next free sortIndex against the workload WITHOUT the
++  // moved entry, then append the moved entry to the end of the target's day.
++  const without = state.workload.filter((w) => w.id !== entryId);
++  const moved: WorkloadEntry = {
++    ...entry,
++    personId: toPersonId,
++    sortIndex: nextSortIndex(without, toPersonId, date),
++  };
++  const touched = new Set<string>([
++    dayKey(fromPersonId, date),
++    dayKey(toPersonId, date),
++  ]);
++  const workload = reindexDays([...without, moved], touched);
++
++  // Keep the invariant: the target person must be assigned to the task. Do NOT
++  // remove the source person's assignment (they may have other blocks, and the
++  // task editor owns assignment cleanup).
++  const alreadyAssigned = state.assignments.some(
++    (a) => a.taskId === taskId && a.personId === toPersonId,
++  );
++  const assignments = alreadyAssigned
++    ? state.assignments
++    : [...state.assignments, { id: uid(), taskId, personId: toPersonId }];
++
++  const fromName = state.people.find((p) => p.id === fromPersonId)?.name ?? 'kogoś';
++
++  return {
++    ...state,
++    assignments,
++    workload,
++    activity: withActivity(
++      state,
++      'task',
++      taskId,
++      `przeniósł/przeniosła blok ${plannedHours}h (${date}) z ${fromName} na ${target.name}`,
++    ),
++  };
++}
++
+ // ---- People ----
+ 
+ function personFromDraft(draft: PersonDraft): Omit<Person, 'id'> {
+@@ -827,6 +881,35 @@ export function reducer(state: AppData, action: Action): AppData {
+       return deleteStatus(state, action.statusId);
+     case 'INSERT_BLOCK':
+       return insertBlock(state, action.payload);
++    case 'REASSIGN_ENTRY':
++      return reassignEntry(state, action.entryId, action.toPersonId);
++    case 'SAVE_FILTER_PRESET': {
++      const name = action.name.trim();
++      if (!name) return state;
++      const existing = state.savedFilters.find(
++        (f) => f.page === action.page && f.name === name,
++      );
++      if (existing) {
++        return {
++          ...state,
++          savedFilters: state.savedFilters.map((f) =>
++            f.id === existing.id ? { ...f, criteria: action.criteria } : f,
++          ),
++        };
++      }
++      return {
++        ...state,
++        savedFilters: [
++          ...state.savedFilters,
++          { id: uid(), name, page: action.page, criteria: action.criteria },
++        ],
++      };
++    }
++    case 'DELETE_FILTER_PRESET':
++      return {
++        ...state,
++        savedFilters: state.savedFilters.filter((f) => f.id !== action.filterId),
++      };
+     case 'LOAD_SAMPLE':
+       return { ...action.data, sampleBannerDismissed: true };
+     case 'DISMISS_SAMPLE_BANNER':
+diff --git a/src/store/seed.ts b/src/store/seed.ts
+index 37261c0..f738ee6 100644
+--- a/src/store/seed.ts
++++ b/src/store/seed.ts
+@@ -299,5 +299,6 @@ export function buildSampleData(): AppData {
+     activity,
+     currentUserId: kasia.id,
+     sampleBannerDismissed: true,
++    savedFilters: [],
+   };
+ }
+diff --git a/src/store/selectors.ts b/src/store/selectors.ts
+index fc8fad4..6a7b442 100644
+--- a/src/store/selectors.ts
++++ b/src/store/selectors.ts
+@@ -265,6 +265,18 @@ export function overloadedPeopleOnDate(
+     .map((p) => p.id);
+ }
+ 
++/** Dates inside the task period where an assignee working on THIS task that day exceeds their capacity. */
++export function conflictDatesForTask(state: AppData, taskId: string): DateStr[] {
++  const out = new Set<DateStr>();
++  for (const w of state.workload) {
++    if (w.taskId !== taskId) continue;
++    if (hoursForPersonOnDate(state, w.personId, w.date) > personCapacity(state, w.personId)) {
++      out.add(w.date);
++    }
++  }
++  return [...out].sort();
++}
++
+ // ---- Comments & activity ----
+ 
+ export function commentsFor(
+@@ -287,6 +299,89 @@ export function activityFor(
+     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+ }
+ 
++// ---- Global search ----
++
++export interface SearchResults {
++  projects: Project[];
++  tasks: Task[];
++  clients: Client[];
++  people: Person[];
++}
++
++/** Lowercase + strip diacritics so `zolty` matches `Żółty` (ł/Ł are not decomposed by NFD). */
++function normalize(s: string): string {
++  return s
++    .normalize('NFD')
++    .replace(/[̀-ͯ]/g, '')
++    .replace(/ł/g, 'l')
++    .replace(/Ł/g, 'l')
++    .toLowerCase();
++}
++
++const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
++
++/**
++ * Search projects, tasks, clients and people by a free-text query. Matches
++ * normalized substrings across name/description/email/role, plus two extra
++ * dimensions: a matching status name pulls in entities in that status, and a
++ * `yyyy-MM-dd` query pulls in projects/tasks whose period contains that date.
++ * Pure and unit-testable — no Date.now, no locale APIs beyond string normalize.
++ */
++export function searchAll(
++  state: AppData,
++  query: string,
++  limitPerGroup = 8,
++): SearchResults {
++  const empty: SearchResults = { projects: [], tasks: [], clients: [], people: [] };
++  const raw = query.trim();
++  if (raw === '') return empty;
++
++  const q = normalize(raw);
++
++  // Statuses whose (normalized) name contains the query.
++  const matchedStatusIds = new Set(
++    state.statuses.filter((s) => normalize(s.name).includes(q)).map((s) => s.id),
++  );
++
++  // Date coverage: only when the raw query parses as a calendar date.
++  const dateQuery = DATE_RE.test(raw) ? raw : null;
++
++  const inPeriod = (start: DateStr, end: DateStr): boolean =>
++    dateQuery !== null && start <= dateQuery && dateQuery <= end;
++
++  const projects = state.projects.filter(
++    (p) =>
++      normalize(p.name).includes(q) ||
++      normalize(p.description).includes(q) ||
++      matchedStatusIds.has(p.statusId) ||
++      inPeriod(p.startDate, p.endDate),
++  );
++
++  const tasks = state.tasks.filter(
++    (t) =>
++      normalize(t.title).includes(q) ||
++      normalize(t.description).includes(q) ||
++      matchedStatusIds.has(t.statusId) ||
++      inPeriod(t.startDate, t.endDate),
++  );
++
++  const clients = state.clients.filter((c) => normalize(c.name).includes(q));
++
++  const people = state.people.filter(
++    (p) =>
++      normalize(p.name).includes(q) ||
++      normalize(p.email).includes(q) ||
++      normalize(p.role).includes(q),
++  );
++
++  return {
++    projects: projects.slice(0, limitPerGroup),
++    tasks: tasks.slice(0, limitPerGroup),
++    clients: clients.slice(0, limitPerGroup),
++    people: people.slice(0, limitPerGroup),
++  };
++}
++
+ // ---- Permissions ----
+ 
+ export function currentUser(state: AppData): Person | undefined {
+diff --git a/src/store/storage.ts b/src/store/storage.ts
+index fec42a9..50860f4 100644
+--- a/src/store/storage.ts
++++ b/src/store/storage.ts
+@@ -55,6 +55,7 @@ export function emptyData(): AppData {
+     activity: [],
+     currentUserId: '',
+     sampleBannerDismissed: false,
++    savedFilters: [],
+   };
+ }
+ 
+diff --git a/src/styles.css b/src/styles.css
+index 35fe227..6a1695f 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -2311,15 +2311,12 @@ option {
+   .app-shell {
+     padding: var(--n2-space-4);
+   }
++  /* Drawer nav is a vertical stack again (overrides the 1180px 4-col grid). */
+   .app-nav {
+-    display: flex;
+-    grid-template-columns: none;
+-    overflow-x: auto;
+-    padding-bottom: var(--n2-space-1);
++    grid-template-columns: 1fr;
+   }
+   .app-nav-link {
+-    white-space: nowrap;
+-    flex: 0 0 auto;
++    justify-content: flex-start;
+   }
+   .week-grid {
+     grid-template-columns: 1fr;
+@@ -2342,3 +2339,674 @@ option {
+     animation-iteration-count: 1 !important;
+   }
+ }
++
++/* ---------- Icons ---------- */
++.app-nav-link {
++  gap: var(--n2-space-3);
++}
++.nav-icon {
++  flex: 0 0 auto;
++}
++.app-nav-link .nav-icon {
++  transition: transform 180ms ease;
++}
++.app-nav-link:hover .nav-icon {
++  transform: translateX(2px) scale(1.08);
++}
++.app-nav-link.active .nav-icon {
++  transform: scale(1.08);
++}
++
++.icon-spin {
++  animation: icon-spin 900ms linear infinite;
++}
++@keyframes icon-spin {
++  from {
++    transform: rotate(0deg);
++  }
++  to {
++    transform: rotate(360deg);
++  }
++}
++
++.icon-pop {
++  animation: icon-pop 260ms ease;
++}
++@keyframes icon-pop {
++  0% {
++    transform: scale(0.6);
++  }
++  60% {
++    transform: scale(1.15);
++  }
++  100% {
++    transform: scale(1);
++  }
++}
++
++/* ---------- Timeline controls ---------- */
++.timeline-zoom {
++  display: inline-flex;
++  gap: var(--n2-space-1);
++  align-items: center;
++}
++.timeline-zoom .nav-btn {
++  display: inline-flex;
++  align-items: center;
++  justify-content: center;
++}
++.timeline-zoom .nav-btn:disabled {
++  opacity: 0.4;
++  cursor: not-allowed;
++}
++/* Per-day conflict (overload) tick inside a task bar. */
++.timeline-conflict {
++  position: absolute;
++  top: 0;
++  bottom: 0;
++  width: 4px;
++  background: var(--n2-danger);
++  opacity: 0.9;
++  pointer-events: none;
++  z-index: 3;
++}
++
++/* ---------- Save status ---------- */
++.save-status {
++  display: inline-flex;
++  align-items: center;
++  gap: var(--n2-space-2);
++  padding: 4px 10px;
++  border-radius: var(--n2-radius-pill);
++  font-family: var(--n2-font-mono, 'Fragment Mono', monospace);
++  font-size: var(--n2-type-xs);
++  letter-spacing: 0.02em;
++  white-space: nowrap;
++  border: 1px solid transparent;
++}
++.save-status svg {
++  flex: 0 0 auto;
++}
++.save-status--dirty {
++  color: var(--n2-warning);
++  background: var(--n2-warning-soft);
++  border-color: var(--n2-warning-soft);
++}
++.save-status--saving {
++  color: var(--n2-text-muted, var(--n2-lavender));
++  background: rgba(255, 255, 255, 0.06);
++}
++.save-status--saved {
++  color: var(--n2-success);
++  background: var(--n2-success-soft);
++  border-color: var(--n2-success-soft);
++}
++
++/* ---------- Workload resolution ---------- */
++.workload-cell.clickable {
++  cursor: pointer;
++}
++.workload-cell.clickable:hover,
++.workload-cell.clickable:focus-visible {
++  outline: none;
++  box-shadow: inset 0 0 0 1px var(--n2-border-strong);
++}
++.workload-cell.selected {
++  box-shadow: inset 0 0 0 1px var(--n2-lavender);
++}
++.workload-detail-row > td {
++  padding: 0;
++  background: var(--n2-surface-muted);
++}
++.wr-panel {
++  padding: var(--n2-space-3) 14px;
++  white-space: normal;
++}
++.wr-head {
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  gap: var(--n2-space-3);
++}
++.wr-title {
++  font-weight: 700;
++}
++.wr-title.over {
++  color: var(--n2-danger);
++}
++.wr-close {
++  display: inline-flex;
++  align-items: center;
++  justify-content: center;
++  width: 26px;
++  height: 26px;
++  border: 1px solid var(--n2-border-soft);
++  border-radius: var(--n2-radius-sm);
++  background: transparent;
++  color: var(--text-muted);
++  cursor: pointer;
++}
++.wr-close:hover {
++  color: var(--n2-danger);
++  border-color: var(--n2-danger-soft);
++  background: var(--n2-danger-soft);
++}
++.wr-hint {
++  margin: 6px 0 0;
++  font-size: var(--n2-type-xs);
++}
++.wr-blocks {
++  list-style: none;
++  margin: 10px 0 0;
++  padding: 0;
++  display: flex;
++  flex-direction: column;
++  gap: 8px;
++}
++.wr-block {
++  display: flex;
++  align-items: center;
++  flex-wrap: wrap;
++  gap: 10px;
++  padding: 10px 12px;
++  border: 1px solid var(--n2-border-soft);
++  border-radius: var(--n2-radius-sm);
++  background: rgba(255, 255, 255, 0.02);
++}
++.wr-block-info {
++  display: flex;
++  flex-direction: column;
++  min-width: 160px;
++  flex: 1 1 200px;
++}
++.wr-block-task {
++  font-weight: 600;
++}
++.wr-block-project {
++  font-size: var(--n2-type-xs);
++}
++.wr-block-hours {
++  font-family: var(--n2-font-data);
++  font-variant-numeric: tabular-nums;
++  font-weight: 700;
++}
++.wr-block-actions {
++  display: flex;
++  align-items: center;
++  flex-wrap: wrap;
++  gap: 8px;
++}
++.wr-reassign,
++.wr-move {
++  display: inline-flex;
++  align-items: center;
++  gap: 6px;
++}
++.wr-move-label {
++  font-size: var(--n2-type-xs);
++}
++.btn.ghost.small {
++  padding: 5px 10px;
++  font-size: var(--n2-type-xs);
++  display: inline-flex;
++  align-items: center;
++  gap: 5px;
++}
++
++/* ---------- Global search ---------- */
++
++.search-trigger {
++  display: flex;
++  align-items: center;
++  gap: var(--n2-space-2);
++  width: 100%;
++  margin-bottom: var(--n2-space-4);
++  padding: 9px 12px;
++  border: 1px solid var(--n2-border);
++  border-radius: var(--n2-radius-pill);
++  background: rgba(255, 255, 255, 0.05);
++  color: var(--n2-text-soft);
++  font: inherit;
++  font-size: var(--n2-type-sm);
++  cursor: pointer;
++  transition: background var(--n2-transition), border-color var(--n2-transition),
++    color var(--n2-transition);
++}
++.search-trigger:hover {
++  background: rgba(255, 255, 255, 0.08);
++  border-color: var(--n2-border-strong);
++  color: var(--n2-text);
++}
++.search-trigger-icon {
++  flex-shrink: 0;
++  color: var(--n2-lavender);
++}
++.search-trigger-label {
++  flex: 1;
++  text-align: left;
++}
++.search-trigger-kbd {
++  flex-shrink: 0;
++  padding: 2px 7px;
++  border: 1px solid var(--n2-border);
++  border-radius: var(--n2-radius-xs);
++  background: rgba(255, 255, 255, 0.05);
++  font-family: 'Fragment Mono', ui-monospace, monospace;
++  font-size: var(--n2-type-xs);
++  color: var(--n2-text-muted);
++  letter-spacing: 0.04em;
++}
++
++.gs-scrim {
++  position: fixed;
++  inset: 0;
++  z-index: 990;
++  background: rgba(4, 3, 8, 0.66);
++  backdrop-filter: blur(6px);
++  pointer-events: none;
++}
++.gs-viewport {
++  position: fixed;
++  inset: 0;
++  z-index: 991;
++  display: flex;
++  align-items: flex-start;
++  justify-content: center;
++  padding: clamp(48px, 12vh, 140px) var(--n2-space-4) var(--n2-space-6);
++  overflow-y: auto;
++}
++.gs-panel {
++  width: 94vw;
++  max-width: 620px;
++  display: flex;
++  flex-direction: column;
++  background: var(--n2-surface-strong);
++  border: 1px solid var(--n2-border);
++  border-radius: var(--n2-radius-md);
++  box-shadow: var(--n2-shadow-soft);
++  overflow: hidden;
++}
++.gs-input-row {
++  display: flex;
++  align-items: center;
++  gap: var(--n2-space-3);
++  padding: var(--n2-space-4) var(--n2-space-5);
++  border-bottom: 1px solid var(--n2-border);
++}
++.gs-input-icon {
++  flex-shrink: 0;
++  color: var(--n2-lavender);
++}
++.gs-input {
++  flex: 1;
++  border: none;
++  background: transparent;
++  color: var(--n2-text);
++  font: inherit;
++  font-size: var(--n2-type-md);
++  outline: none;
++}
++.gs-input::placeholder {
++  color: var(--n2-text-faint);
++}
++.gs-results {
++  max-height: min(60vh, 480px);
++  overflow-y: auto;
++  padding: var(--n2-space-2);
++}
++.gs-hint {
++  padding: var(--n2-space-5);
++  margin: 0;
++  text-align: center;
++  color: var(--n2-text-muted);
++  font-size: var(--n2-type-sm);
++}
++.gs-group {
++  margin-bottom: var(--n2-space-2);
++}
++.gs-group-head {
++  padding: var(--n2-space-2) var(--n2-space-3);
++  font-family: 'Fragment Mono', ui-monospace, monospace;
++  font-size: var(--n2-type-xs);
++  text-transform: uppercase;
++  letter-spacing: 0.08em;
++  color: var(--n2-text-faint);
++}
++.gs-row {
++  display: flex;
++  align-items: center;
++  gap: var(--n2-space-3);
++  width: 100%;
++  padding: 9px 12px;
++  border: 1px solid transparent;
++  border-radius: var(--n2-radius-sm);
++  background: transparent;
++  color: var(--n2-text);
++  text-align: left;
++  font: inherit;
++  cursor: pointer;
++  transition: background var(--n2-transition), border-color var(--n2-transition);
++}
++.gs-row.active {
++  background: var(--n2-glass-strong);
++  border-color: var(--n2-border-strong);
++}
++.gs-row-main {
++  display: flex;
++  align-items: center;
++  gap: var(--n2-space-2);
++  min-width: 0;
++  flex: 1;
++}
++.gs-row-person {
++  gap: var(--n2-space-3);
++}
++.gs-row-title {
++  font-size: var(--n2-type-sm);
++  font-weight: 600;
++  white-space: nowrap;
++  overflow: hidden;
++  text-overflow: ellipsis;
++}
++.gs-row-meta {
++  flex-shrink: 0;
++  max-width: 46%;
++  color: var(--n2-text-muted);
++  font-size: var(--n2-type-xs);
++  white-space: nowrap;
++  overflow: hidden;
++  text-overflow: ellipsis;
++}
++.gs-row-chevron {
++  flex-shrink: 0;
++  color: var(--n2-text-faint);
++}
++
++/* ---------- Filter presets ---------- */
++
++.filter-controls {
++  display: flex;
++  align-items: center;
++  gap: 8px;
++  flex-wrap: wrap;
++}
++.filter-count {
++  font-size: var(--n2-type-sm);
++  white-space: nowrap;
++}
++.btn.primary.small,
++.btn.small {
++  padding: 5px 10px;
++  font-size: var(--n2-type-xs);
++  display: inline-flex;
++  align-items: center;
++  gap: 5px;
++}
++.filter-presets {
++  display: flex;
++  align-items: center;
++  flex-wrap: wrap;
++  gap: 8px;
++  margin-bottom: var(--n2-space-4);
++}
++.preset-chip {
++  display: inline-flex;
++  align-items: center;
++  border: 1px solid var(--n2-border);
++  background: rgba(196, 150, 255, 0.1);
++  border-radius: var(--n2-radius-pill);
++  overflow: hidden;
++}
++.preset-chip-apply {
++  display: inline-flex;
++  align-items: center;
++  gap: 6px;
++  border: none;
++  background: transparent;
++  padding: 6px 6px 6px 13px;
++  cursor: pointer;
++  font-family: inherit;
++  font-size: var(--n2-type-sm);
++  font-weight: 500;
++  color: var(--n2-text);
++}
++.preset-chip-apply:hover {
++  color: var(--n2-lavender);
++}
++.preset-chip-del {
++  display: inline-flex;
++  align-items: center;
++  border: none;
++  background: transparent;
++  padding: 6px 10px 6px 6px;
++  cursor: pointer;
++  color: var(--text-muted);
++}
++.preset-chip-del:hover {
++  color: var(--n2-danger);
++}
++.preset-save-form {
++  display: inline-flex;
++  align-items: center;
++  gap: 6px;
++}
++.preset-save-form input {
++  width: 150px;
++}
++.preset-save-btn[disabled] {
++  opacity: 0.5;
++  cursor: not-allowed;
++}
++
++/* ---------- Mobile nav ---------- */
++
++/* The top bar (brand + hamburger) and the scrim only exist on small screens. */
++.app-topbar {
++  display: none;
++}
++.app-drawer-scrim {
++  display: none;
++}
++.app-hamburger {
++  display: inline-grid;
++  place-items: center;
++  width: 44px;
++  height: 44px;
++  flex: none;
++  border: 1px solid var(--n2-border);
++  border-radius: var(--n2-radius-md);
++  background: var(--n2-surface);
++  color: var(--n2-text);
++  cursor: pointer;
++  transition: background var(--n2-transition), border-color var(--n2-transition);
++}
++.app-hamburger:hover {
++  border-color: var(--n2-border-strong);
++  background: rgba(196, 150, 255, 0.1);
++}
++
++@media (max-width: 760px) {
++  /* Show the top bar; it stays above the drawer so the hamburger/X toggles. */
++  .app-topbar {
++    display: flex;
++    align-items: center;
++    justify-content: space-between;
++    gap: var(--n2-space-3);
++    position: sticky;
++    top: 0;
++    z-index: 903;
++    margin: calc(var(--n2-space-4) * -1) calc(var(--n2-space-4) * -1) 0;
++    padding: var(--n2-space-3) var(--n2-space-4);
++    background: var(--n2-surface);
++    border-bottom: 1px solid var(--n2-border);
++    backdrop-filter: var(--n2-blur-glass);
++  }
++  .app-topbar .app-brand {
++    min-height: 0;
++  }
++
++  /* The sidebar becomes an off-canvas slide-in drawer. */
++  .app-sidebar {
++    position: fixed;
++    inset: 0 auto 0 0;
++    z-index: 901;
++    width: min(300px, 84vw);
++    max-height: none;
++    border-radius: 0 var(--n2-radius-xl) var(--n2-radius-xl) 0;
++    padding-top: 76px; /* clear the fixed top bar */
++    transform: translateX(-102%);
++    transition: transform 220ms ease;
++    overflow-y: auto;
++  }
++  .app-sidebar.open {
++    transform: none;
++  }
++  /* The brand already lives in the top bar — hide the drawer's copy. */
++  .app-sidebar .app-brand {
++    display: none;
++  }
++  /* Restore the vertical acting-as layout inside the drawer. */
++  .acting-as {
++    flex-direction: column;
++    align-items: stretch;
++  }
++  .acting-as select {
++    width: 100%;
++    max-width: none;
++  }
++
++  .app-drawer-scrim {
++    display: block;
++    position: fixed;
++    inset: 0;
++    z-index: 900;
++    background: rgba(10, 6, 20, 0.6);
++    backdrop-filter: blur(2px);
++  }
++}
++
++/* ---------- Card affordances ---------- */
++
++/* Shared hover/focus recipe for every clickable card/row surface: project
++   cards + task cards (.task-card), project-detail task rows
++   (.project-task-row), dashboard rows (.dash-row), people rows (.person-row).
++   Extends each surface's existing hover rule rather than replacing it. */
++.task-card,
++.project-task-row,
++.person-row,
++.dash-row {
++  transition: var(--n2-transition);
++}
++.task-card:hover,
++.task-card:focus-within,
++.project-task-row:hover,
++.project-task-row:focus-within,
++.person-row:hover,
++.person-row:focus-within,
++.dash-row:hover,
++.dash-row:focus-visible {
++  border-color: var(--n2-border-strong);
++  background: var(--n2-glass-strong);
++  transform: translateY(-1px);
++}
++.task-card:focus-within,
++.project-task-row:focus-within,
++.person-row:focus-within,
++.dash-row:focus-visible {
++  box-shadow: var(--n2-shadow-focus);
++}
++/* .task-card and .dash-row need a container to hang the position on, and
++   .dash-row needs a (transparent-by-default) border to brighten. */
++.task-card {
++  position: relative;
++}
++.dash-row {
++  border: 1px solid transparent;
++}
++
++/* Chevron affordance: pinned to the right edge of the card's main clickable
++   element, slides toward the pointer on hover/keyboard focus. */
++.card-chevron {
++  flex: none;
++  color: var(--n2-text-faint);
++  transition: color var(--n2-transition), transform var(--n2-transition);
++}
++.task-card-main,
++.project-task-row .project-task-main,
++.dash-row {
++  position: relative;
++}
++.task-card-main {
++  padding-right: 40px;
++}
++.project-task-main {
++  padding-right: 32px;
++}
++.dash-row {
++  padding-right: 26px;
++}
++.task-card-main .card-chevron,
++.project-task-main .card-chevron,
++.dash-row .card-chevron {
++  position: absolute;
++  top: 50%;
++  right: 12px;
++  margin-top: -8px;
++}
++.task-card:hover .card-chevron,
++.task-card:focus-within .card-chevron,
++.project-task-row:hover .card-chevron,
++.project-task-row:focus-within .card-chevron,
++.person-row:hover .card-chevron,
++.person-row:focus-within .card-chevron,
++.dash-row:hover .card-chevron,
++.dash-row:focus-visible .card-chevron {
++  color: var(--n2-lavender);
++  transform: translateX(3px);
++}
++
++/* Quick actions: small buttons revealed on card hover / keyboard focus
++   (:focus-within so Tab-ing to a hidden action reveals it). Project cards
++   get "Oś czasu" + "+ Zadanie"; the TasksPage "Usuń" button moves into this
++   same reveal pattern so all quick actions behave consistently. */
++.card-actions {
++  position: absolute;
++  top: 10px;
++  right: 40px;
++  display: flex;
++  gap: 6px;
++  opacity: 0;
++  pointer-events: none;
++  transition: opacity var(--n2-transition);
++}
++.task-card:hover .card-actions,
++.task-card:focus-within .card-actions {
++  opacity: 1;
++  pointer-events: auto;
++}
++.card-action-btn {
++  display: inline-grid;
++  place-items: center;
++  width: 26px;
++  height: 26px;
++  border-radius: var(--n2-radius-pill);
++  border: 1px solid var(--n2-border-strong);
++  background: var(--n2-glass-strong);
++  color: var(--n2-text-soft);
++  cursor: pointer;
++  transition: color var(--n2-transition), background var(--n2-transition),
++    border-color var(--n2-transition);
++}
++.card-action-btn:hover,
++.card-action-btn:focus-visible {
++  color: var(--n2-lavender);
++  border-color: var(--n2-lavender);
++}
++
++@media (max-width: 760px) {
++  /* No hover on touch — quick actions stay visible so they're reachable. */
++  .card-actions {
++    opacity: 1;
++    pointer-events: auto;
++  }
++}
+diff --git a/src/types.ts b/src/types.ts
+index 691e42b..be5efd0 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -116,6 +116,24 @@ export interface ActivityEvent {
+   createdAt: string; // ISO timestamp
+ }
+ 
++export type FilterPage = 'projects' | 'tasks';
++
++export interface SavedFilterCriteria {
++  paid: 'all' | 'paid' | 'unpaid'; // meaningful on projects; keep 'all' for tasks
++  clientId: string; // '' = all
++  statusId: string; // '' = all
++  personId: string; // '' = all; assignee — meaningful on tasks
++  from: DateStr | ''; // period overlap lower bound
++  to: DateStr | ''; // period overlap upper bound
++}
++
++export interface SavedFilter {
++  id: string;
++  name: string;
++  page: FilterPage;
++  criteria: SavedFilterCriteria;
++}
++
+ export interface AppData {
+   version: number;
+   clients: Client[];
+@@ -132,4 +150,5 @@ export interface AppData {
+   activity: ActivityEvent[];
+   currentUserId: string; // "acting as" person; '' when unset
+   sampleBannerDismissed: boolean;
++  savedFilters: SavedFilter[]; // named filter presets for Projects/Tasks pages
+ }

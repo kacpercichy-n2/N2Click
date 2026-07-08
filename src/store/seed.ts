@@ -299,5 +299,6 @@ export function buildSampleData(): AppData {
     activity,
     currentUserId: kasia.id,
     sampleBannerDismissed: true,
+    savedFilters: [],
   };
 }

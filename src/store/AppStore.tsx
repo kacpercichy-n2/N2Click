@@ -13,10 +13,12 @@ import type {
   ActivityEvent,
   AppData,
   CommentEntityType,
+  FilterPage,
   Milestone,
   Person,
   Project,
   Status,
+  SavedFilterCriteria,
   Task,
   TaskAssignment,
   WorkloadEntry,
@@ -114,6 +116,9 @@ export type Action =
   | { type: 'SET_STATUS_ARCHIVED'; statusId: string; archived: boolean }
   | { type: 'DELETE_STATUS'; statusId: string }
   | { type: 'INSERT_BLOCK'; payload: InsertBlockPayload }
+  | { type: 'REASSIGN_ENTRY'; entryId: string; toPersonId: string }
+  | { type: 'SAVE_FILTER_PRESET'; name: string; page: FilterPage; criteria: SavedFilterCriteria }
+  | { type: 'DELETE_FILTER_PRESET'; filterId: string }
   | { type: 'LOAD_SAMPLE'; data: AppData }
   | { type: 'DISMISS_SAMPLE_BANNER' }
   | { type: 'RESET_ALL'; data: AppData };
@@ -486,6 +491,55 @@ function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
   };
 }
 
+/** Move one time block to another person, keeping ordering invariants. */
+function reassignEntry(state: AppData, entryId: string, toPersonId: string): AppData {
+  const entry = state.workload.find((w) => w.id === entryId);
+  if (!entry) return state;
+  const target = state.people.find((p) => p.id === toPersonId);
+  if (!target || toPersonId === entry.personId) return state;
+
+  const fromPersonId = entry.personId;
+  const { date, plannedHours, taskId } = entry;
+
+  // Compute the target's next free sortIndex against the workload WITHOUT the
+  // moved entry, then append the moved entry to the end of the target's day.
+  const without = state.workload.filter((w) => w.id !== entryId);
+  const moved: WorkloadEntry = {
+    ...entry,
+    personId: toPersonId,
+    sortIndex: nextSortIndex(without, toPersonId, date),
+  };
+  const touched = new Set<string>([
+    dayKey(fromPersonId, date),
+    dayKey(toPersonId, date),
+  ]);
+  const workload = reindexDays([...without, moved], touched);
+
+  // Keep the invariant: the target person must be assigned to the task. Do NOT
+  // remove the source person's assignment (they may have other blocks, and the
+  // task editor owns assignment cleanup).
+  const alreadyAssigned = state.assignments.some(
+    (a) => a.taskId === taskId && a.personId === toPersonId,
+  );
+  const assignments = alreadyAssigned
+    ? state.assignments
+    : [...state.assignments, { id: uid(), taskId, personId: toPersonId }];
+
+  const fromName = state.people.find((p) => p.id === fromPersonId)?.name ?? 'kogoś';
+
+  return {
+    ...state,
+    assignments,
+    workload,
+    activity: withActivity(
+      state,
+      'task',
+      taskId,
+      `przeniósł/przeniosła blok ${plannedHours}h (${date}) z ${fromName} na ${target.name}`,
+    ),
+  };
+}
+
 // ---- People ----
 
 function personFromDraft(draft: PersonDraft): Omit<Person, 'id'> {
@@ -827,6 +881,35 @@ export function reducer(state: AppData, action: Action): AppData {
       return deleteStatus(state, action.statusId);
     case 'INSERT_BLOCK':
       return insertBlock(state, action.payload);
+    case 'REASSIGN_ENTRY':
+      return reassignEntry(state, action.entryId, action.toPersonId);
+    case 'SAVE_FILTER_PRESET': {
+      const name = action.name.trim();
+      if (!name) return state;
+      const existing = state.savedFilters.find(
+        (f) => f.page === action.page && f.name === name,
+      );
+      if (existing) {
+        return {
+          ...state,
+          savedFilters: state.savedFilters.map((f) =>
+            f.id === existing.id ? { ...f, criteria: action.criteria } : f,
+          ),
+        };
+      }
+      return {
+        ...state,
+        savedFilters: [
+          ...state.savedFilters,
+          { id: uid(), name, page: action.page, criteria: action.criteria },
+        ],
+      };
+    }
+    case 'DELETE_FILTER_PRESET':
+      return {
+        ...state,
+        savedFilters: state.savedFilters.filter((f) => f.id !== action.filterId),
+      };
     case 'LOAD_SAMPLE':
       return { ...action.data, sampleBannerDismissed: true };
     case 'DISMISS_SAMPLE_BANNER':

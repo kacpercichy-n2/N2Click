@@ -13,6 +13,7 @@ import {
 } from '../store/selectors';
 import { Coin } from '../components/Coin';
 import { StatusBadge } from '../components/StatusBadge';
+import { ChevronRight } from '../components/icons';
 import {
   addDaysStr,
   formatRowLabel,
@@ -113,6 +114,7 @@ export function DashboardPage() {
                       <Coin paid={p.paid} size={14} />
                       <span className="dash-row-name">{p.name}</span>
                       <span className="dash-row-when">po terminie ({formatShort(p.endDate)})</span>
+                      <ChevronRight className="card-chevron" size={16} aria-hidden />
                     </button>
                   </li>
                 ))}
@@ -126,6 +128,7 @@ export function DashboardPage() {
                       <Coin paid={p.paid} size={14} />
                       <span className="dash-row-name">{p.name}</span>
                       <span className="dash-row-when">{formatShort(p.endDate)}</span>
+                      <ChevronRight className="card-chevron" size={16} aria-hidden />
                     </button>
                   </li>
                 ))}
@@ -145,6 +148,7 @@ export function DashboardPage() {
                         <span aria-hidden>◆</span>
                         <span className="dash-row-name">{m.name}</span>
                         <span className="dash-row-when">{formatShort(m.date)}</span>
+                        <ChevronRight className="card-chevron" size={16} aria-hidden />
                       </button>
                     </li>
                   ))}
@@ -174,6 +178,7 @@ export function DashboardPage() {
                       <span className="dash-row-when muted">
                         {getClient(state, p.clientId)?.name ?? ''}
                       </span>
+                      <ChevronRight className="card-chevron" size={16} aria-hidden />
                     </button>
                   </li>
                 ))}
@@ -206,6 +211,7 @@ export function DashboardPage() {
                           {hoursForPersonOnDate(state, personId, date)}h /{' '}
                           {personCapacity(state, personId)}h
                         </span>
+                        <ChevronRight className="card-chevron" size={16} aria-hidden />
                       </button>
                     </li>
                   );

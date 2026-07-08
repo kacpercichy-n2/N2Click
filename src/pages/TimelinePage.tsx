@@ -6,9 +6,13 @@ import { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
 import { useOpenTask } from '../components/TaskModal';
+import { PersonFilter } from '../components/PersonFilter';
+import { ZoomIn, ZoomOut } from '../components/icons';
 import type { Milestone, Project, Task } from '../types';
 import {
   activeStatuses,
+  assigneeIdsOfTask,
+  conflictDatesForTask,
   getStatus,
   milestonesOfProject,
   tasksOfProject,
@@ -24,8 +28,14 @@ import {
   weekStart,
 } from '../utils/dates';
 
-const DAY_W = 26; // px per day
-const WEEKS = 10; // visible range
+const DEFAULT_DAY_W = 26; // px per day
+const ZOOM_LEVELS = [14, 26, 40] as const; // px per day
+const WEEK_PRESETS: Array<[number, string]> = [
+  [2, '2 tyg.'],
+  [6, '6 tyg.'],
+  [10, '10 tyg.'],
+  [26, '26 tyg.'],
+];
 
 type DragMode = 'move' | 'start' | 'end';
 
@@ -33,12 +43,14 @@ interface BarProps {
   startIdx: number; // day index of bar start within the range
   span: number; // days (>= 1)
   totalDays: number;
+  dayW: number; // px per day (zoom level)
   color: string;
   className: string;
   title: string;
   resizable: boolean;
   onCommit: (mode: DragMode, deltaDays: number) => void;
   onOpen: () => void;
+  conflictOffsets?: number[]; // day offsets from bar start with an overload
   children?: React.ReactNode;
 }
 
@@ -47,12 +59,14 @@ function Bar({
   startIdx,
   span,
   totalDays,
+  dayW,
   color,
   className,
   title,
   resizable,
   onCommit,
   onOpen,
+  conflictOffsets,
   children,
 }: BarProps) {
   const [drag, setDrag] = useState<{ mode: DragMode; originX: number; delta: number } | null>(
@@ -73,7 +87,7 @@ function Bar({
 
   const onPointerMove = (e: React.PointerEvent) => {
     if (!drag) return;
-    let delta = Math.round((e.clientX - drag.originX) / DAY_W);
+    let delta = Math.round((e.clientX - drag.originX) / dayW);
     // Keep at least 1 day of bar while resizing.
     if (drag.mode === 'start') delta = Math.min(delta, span - 1);
     if (drag.mode === 'end') delta = Math.max(delta, 1 - span);
@@ -88,18 +102,18 @@ function Bar({
     if (delta !== 0) onCommit(mode, delta);
   };
 
-  let left = startIdx * DAY_W;
-  let width = span * DAY_W;
+  let left = startIdx * dayW;
+  let width = span * dayW;
   if (drag) {
-    if (drag.mode === 'move') left += drag.delta * DAY_W;
+    if (drag.mode === 'move') left += drag.delta * dayW;
     if (drag.mode === 'start') {
-      left += drag.delta * DAY_W;
-      width -= drag.delta * DAY_W;
+      left += drag.delta * dayW;
+      width -= drag.delta * dayW;
     }
-    if (drag.mode === 'end') width += drag.delta * DAY_W;
+    if (drag.mode === 'end') width += drag.delta * dayW;
   }
   // Cull bars fully outside the range.
-  if (left + width < 0 || left > totalDays * DAY_W) return null;
+  if (left + width < 0 || left > totalDays * dayW) return null;
 
   return (
     <div
@@ -126,6 +140,14 @@ function Bar({
       {resizable && (
         <span className="bar-handle right" onPointerDown={begin('end')} aria-hidden />
       )}
+      {conflictOffsets?.map((off) => (
+        <span
+          key={off}
+          className="timeline-conflict"
+          style={{ left: off * dayW }}
+          aria-hidden
+        />
+      ))}
     </div>
   );
 }
@@ -134,17 +156,19 @@ function Bar({
 function MilestoneMark({
   milestone,
   dayIdx,
+  dayW,
   onCommit,
 }: {
   milestone: Milestone;
   dayIdx: number;
+  dayW: number;
   onCommit: (deltaDays: number) => void;
 }) {
   const [drag, setDrag] = useState<{ originX: number; delta: number } | null>(null);
   return (
     <span
       className={drag ? 'timeline-milestone dragging' : 'timeline-milestone'}
-      style={{ left: (dayIdx + (drag?.delta ?? 0)) * DAY_W + DAY_W / 2 }}
+      style={{ left: (dayIdx + (drag?.delta ?? 0)) * dayW + dayW / 2 }}
       title={`◆ ${milestone.name} — ${formatShort(milestone.date)} (przeciągnij, aby przesunąć)`}
       onPointerDown={(e) => {
         e.stopPropagation();
@@ -157,7 +181,7 @@ function MilestoneMark({
       }}
       onPointerMove={(e) => {
         if (!drag) return;
-        const delta = Math.round((e.clientX - drag.originX) / DAY_W);
+        const delta = Math.round((e.clientX - drag.originX) / dayW);
         setDrag((d) => (d ? { ...d, delta } : d));
       }}
       onPointerUp={() => {
@@ -177,10 +201,18 @@ export function TimelinePage() {
   const navigate = useNavigate();
   const { openTask } = useOpenTask();
   const [anchor, setAnchor] = useState(() => todayStr());
+  const [dayW, setDayW] = useState<number>(DEFAULT_DAY_W);
+  const [weeks, setWeeks] = useState(10);
+  const [ownerFilter, setOwnerFilter] = useState<Set<string>>(new Set());
+  const [clientFilter, setClientFilter] = useState('');
 
-  // Visible range: from one week before the anchor's Monday, WEEKS weeks long.
+  const zoomIdx = ZOOM_LEVELS.indexOf(dayW as (typeof ZOOM_LEVELS)[number]);
+  const canZoomIn = zoomIdx < ZOOM_LEVELS.length - 1;
+  const canZoomOut = zoomIdx > 0;
+
+  // Visible range: from one week before the anchor's Monday, `weeks` weeks long.
   const rangeStart = shiftWeek(weekStart(anchor), -1);
-  const totalDays = WEEKS * 7;
+  const totalDays = weeks * 7;
   const days = useMemo(
     () => Array.from({ length: totalDays }, (_, i) => addDaysStr(rangeStart, i)),
     [rangeStart, totalDays],
@@ -191,18 +223,64 @@ export function TimelinePage() {
 
   const doneStatusId = activeStatuses(state).slice(-1)[0]?.id;
 
-  // Group projects by client, in client-list order.
+  // Group projects by client, in client-list order, narrowed by the client filter.
   const groups = useMemo(() => {
     const out: Array<{ name: string; projects: Project[] }> = [];
     for (const c of state.clients) {
+      if (clientFilter && c.id !== clientFilter) continue;
       const own = state.projects.filter((p) => p.clientId === c.id);
       if (own.length > 0) out.push({ name: c.name, projects: own });
     }
-    const known = new Set(state.clients.map((c) => c.id));
-    const orphans = state.projects.filter((p) => !known.has(p.clientId));
-    if (orphans.length > 0) out.push({ name: 'Bez klienta', projects: orphans });
+    if (!clientFilter) {
+      const known = new Set(state.clients.map((c) => c.id));
+      const orphans = state.projects.filter((p) => !known.has(p.clientId));
+      if (orphans.length > 0) out.push({ name: 'Bez klienta', projects: orphans });
+    }
     return out;
-  }, [state.clients, state.projects]);
+  }, [state.clients, state.projects, clientFilter]);
+
+  // Apply the owner filter and precompute per-task conflict day offsets. Offsets
+  // are relative to each task's start (range-independent) so this memo survives
+  // navigation and drag frames — it only recomputes on workload/people/task edits.
+  const ownerKey = [...ownerFilter].sort().join(',');
+  const view = useMemo(() => {
+    const result: Array<{
+      name: string;
+      projects: Array<{
+        project: Project;
+        tasks: Array<{ task: Task; conflictOffsets: number[] }>;
+      }>;
+    }> = [];
+    for (const g of groups) {
+      const projects: (typeof result)[number]['projects'] = [];
+      for (const p of g.projects) {
+        const all = tasksOfProject(state, p.id).sort((a, b) =>
+          a.startDate.localeCompare(b.startDate),
+        );
+        const tasks =
+          ownerFilter.size === 0
+            ? all
+            : all.filter((t) =>
+                assigneeIdsOfTask(state, t.id).some((id) => ownerFilter.has(id)),
+              );
+        // Project bars have no owner: hide a project only when the owner filter
+        // is active and none of its tasks match.
+        if (ownerFilter.size > 0 && tasks.length === 0) continue;
+        projects.push({
+          project: p,
+          tasks: tasks.map((t) => ({
+            task: t,
+            conflictOffsets: conflictDatesForTask(state, t.id).map((d) =>
+              diffDays(t.startDate, d),
+            ),
+          })),
+        });
+      }
+      if (projects.length > 0) result.push({ name: g.name, projects });
+    }
+    return result;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups, ownerKey, state.tasks, state.assignments, state.workload, state.people]);
 
   const commitProject = (p: Project) => (mode: DragMode, delta: number) => {
     const startDate =
@@ -248,12 +326,72 @@ export function TimelinePage() {
           <span className="cal-range-label">
             {formatShort(days[0])} – {formatShort(days[totalDays - 1])}
           </span>
+          <div className="timeline-zoom" role="group" aria-label="Powiększenie">
+            <button
+              type="button"
+              className="nav-btn"
+              onClick={() => canZoomOut && setDayW(ZOOM_LEVELS[zoomIdx - 1])}
+              disabled={!canZoomOut}
+              aria-label="Pomniejsz"
+            >
+              <ZoomOut size={16} aria-hidden />
+            </button>
+            <button
+              type="button"
+              className="nav-btn"
+              onClick={() => canZoomIn && setDayW(ZOOM_LEVELS[zoomIdx + 1])}
+              disabled={!canZoomIn}
+              aria-label="Powiększ"
+            >
+              <ZoomIn size={16} aria-hidden />
+            </button>
+          </div>
         </div>
       </div>
       <p className="field-hint">
         Przeciągnij pasek, aby zmienić termin; przeciągnij krawędzie, aby zmienić start lub koniec.
         Przesunięcie zadania przesuwa razem z nim zaplanowane godziny. ◆ kamienie milowe też można przeciągać.
       </p>
+
+      <div className="cal-toolbar">
+        <div className="cal-view-toggle" role="group" aria-label="Zakres widoku">
+          {WEEK_PRESETS.map(([w, label]) => (
+            <button
+              key={w}
+              type="button"
+              className={weeks === w ? 'toggle-btn active' : 'toggle-btn'}
+              onClick={() => setWeeks(w)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <PersonFilter
+          people={state.people}
+          selected={ownerFilter}
+          onToggle={(id) =>
+            setOwnerFilter((prev) => {
+              const next = new Set(prev);
+              if (next.has(id)) next.delete(id);
+              else next.add(id);
+              return next;
+            })
+          }
+          onAll={() => setOwnerFilter(new Set())}
+        />
+        <select
+          value={clientFilter}
+          onChange={(e) => setClientFilter(e.target.value)}
+          aria-label="Filtruj po kliencie"
+        >
+          <option value="">Wszyscy klienci</option>
+          {state.clients.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+      </div>
 
       {state.projects.length === 0 ? (
         <div className="empty-state">
@@ -262,14 +400,14 @@ export function TimelinePage() {
         </div>
       ) : (
         <div className="timeline-scroll">
-          <div className="timeline" style={{ width: 240 + totalDays * DAY_W }}>
+          <div className="timeline" style={{ width: 240 + totalDays * dayW }}>
             {/* Header: week labels + day stripes */}
             <div className="timeline-row timeline-head">
               <div className="timeline-label" />
               <div className="timeline-track">
                 {days.map((d, i) =>
                   i % 7 === 0 ? (
-                    <span key={d} className="timeline-week-label" style={{ left: i * DAY_W }}>
+                    <span key={d} className="timeline-week-label" style={{ left: i * dayW }}>
                       {formatShort(d)}
                     </span>
                   ) : null,
@@ -277,18 +415,15 @@ export function TimelinePage() {
               </div>
             </div>
 
-            {groups.map((g) => (
+            {view.map((g) => (
               <div key={g.name} className="timeline-group">
                 <div className="timeline-row timeline-client-row">
                   <div className="timeline-label timeline-client">{g.name}</div>
                   <div className="timeline-track" />
                 </div>
-                {g.projects.map((p) => {
+                {g.projects.map(({ project: p, tasks }) => {
                   const status = getStatus(state, p.statusId);
                   const overdue = p.endDate < today && p.statusId !== doneStatusId;
-                  const tasks = tasksOfProject(state, p.id).sort((a, b) =>
-                    a.startDate.localeCompare(b.startDate),
-                  );
                   return (
                     <div key={p.id} className="timeline-project">
                       <div className="timeline-row">
@@ -304,11 +439,12 @@ export function TimelinePage() {
                           </button>
                         </div>
                         <div className="timeline-track">
-                          <DayStripes days={days} todayIdx={todayIdx} />
+                          <DayStripes days={days} todayIdx={todayIdx} dayW={dayW} />
                           <Bar
                             startIdx={dayIdx(p.startDate)}
                             span={diffDays(p.startDate, p.endDate) + 1}
                             totalDays={totalDays}
+                            dayW={dayW}
                             color={status?.color ?? '#64748b'}
                             className={
                               overdue ? 'timeline-bar project overdue' : 'timeline-bar project'
@@ -325,6 +461,7 @@ export function TimelinePage() {
                               key={m.id}
                               milestone={m}
                               dayIdx={dayIdx(m.date)}
+                              dayW={dayW}
                               onCommit={(delta) =>
                                 dispatch({
                                   type: 'MOVE_MILESTONE',
@@ -336,23 +473,25 @@ export function TimelinePage() {
                           ))}
                         </div>
                       </div>
-                      {tasks.map((t) => (
+                      {tasks.map(({ task: t, conflictOffsets }) => (
                         <div key={t.id} className="timeline-row timeline-task-row">
                           <div className="timeline-label timeline-task-label" title={t.title}>
                             {t.title}
                           </div>
                           <div className="timeline-track">
-                            <DayStripes days={days} todayIdx={todayIdx} />
+                            <DayStripes days={days} todayIdx={todayIdx} dayW={dayW} />
                             <Bar
                               startIdx={dayIdx(t.startDate)}
                               span={diffDays(t.startDate, t.endDate) + 1}
                               totalDays={totalDays}
+                              dayW={dayW}
                               color={getStatus(state, t.statusId)?.color ?? '#94a3b8'}
                               className="timeline-bar task"
-                              title={`${t.title}: ${formatShort(t.startDate)} – ${formatShort(t.endDate)}`}
+                              title={`${t.title}: ${formatShort(t.startDate)} – ${formatShort(t.endDate)}${conflictOffsets.length > 0 ? ` — ⚠ konflikty: ${conflictOffsets.length === 1 ? '1 dzień' : `${conflictOffsets.length} dni`}` : ''}`}
                               resizable
                               onCommit={commitTask(t)}
                               onOpen={() => openTask(t.id)}
+                              conflictOffsets={conflictOffsets}
                             >
                               {t.title}
                             </Bar>
@@ -372,7 +511,15 @@ export function TimelinePage() {
 }
 
 /** Weekend shading + today line, shared by every track. */
-function DayStripes({ days, todayIdx }: { days: string[]; todayIdx: number }) {
+function DayStripes({
+  days,
+  todayIdx,
+  dayW,
+}: {
+  days: string[];
+  todayIdx: number;
+  dayW: number;
+}) {
   return (
     <>
       {days.map((d, i) =>
@@ -380,7 +527,7 @@ function DayStripes({ days, todayIdx }: { days: string[]; todayIdx: number }) {
           <span
             key={d}
             className="timeline-weekend"
-            style={{ left: i * DAY_W, width: DAY_W }}
+            style={{ left: i * dayW, width: dayW }}
             aria-hidden
           />
         ) : null,
@@ -388,7 +535,7 @@ function DayStripes({ days, todayIdx }: { days: string[]; todayIdx: number }) {
       {todayIdx >= 0 && todayIdx < days.length && (
         <span
           className="timeline-today"
-          style={{ left: todayIdx * DAY_W + DAY_W / 2 }}
+          style={{ left: todayIdx * dayW + dayW / 2 }}
           aria-hidden
         />
       )}

@@ -1,7 +1,7 @@
 // Project list grouped by client, with paid/unpaid coin markers, status badges,
 // filters (client, status, paid/unpaid), and a create form.
-import { useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
 import type { ProjectDraft } from '../store/AppStore';
 import {
@@ -14,6 +14,10 @@ import {
 } from '../store/selectors';
 import { Coin } from '../components/Coin';
 import { StatusBadge } from '../components/StatusBadge';
+import { FilterPresets, DEFAULT_CRITERIA } from '../components/FilterPresets';
+import { useOpenTask } from '../components/TaskModal';
+import { ChevronRight, GanttChart, Plus } from '../components/icons';
+import type { SavedFilterCriteria } from '../types';
 import { addDaysStr, todayStr } from '../utils/dates';
 import { parseDate } from '../utils/dates';
 import { format } from 'date-fns';
@@ -75,11 +79,24 @@ function polishCount(n: number, one: string, few: string, many: string): string 
 export function ProjectsPage() {
   const { state, dispatch } = useStore();
   const navigate = useNavigate();
+  const { openNewTask } = useOpenTask();
+  const [searchParams] = useSearchParams();
   const statuses = activeStatuses(state);
 
   const [paidFilter, setPaidFilter] = useState<PaidFilter>('all');
-  const [clientFilter, setClientFilter] = useState('');
+  // Deep-link: a `?client=` param (e.g. from global search) pre-filters the list.
+  const [clientFilter, setClientFilter] = useState(() => searchParams.get('client') ?? '');
+
+  // Keep the filter in sync when the param changes (e.g. picking a client in
+  // global search while already on /projects, or back/forward navigation).
+  // Only override when the param is present so normal in-page filtering stands.
+  const clientParam = searchParams.get('client');
+  useEffect(() => {
+    if (clientParam) setClientFilter(clientParam);
+  }, [clientParam]);
   const [statusFilter, setStatusFilter] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
   const [creating, setCreating] = useState(false);
 
   // ---- Create form state ----
@@ -96,10 +113,30 @@ export function ProjectsPage() {
         (p) =>
           (paidFilter === 'all' || p.paid === (paidFilter === 'paid')) &&
           (!clientFilter || p.clientId === clientFilter) &&
-          (!statusFilter || p.statusId === statusFilter),
+          (!statusFilter || p.statusId === statusFilter) &&
+          // Period overlap: [startDate, endDate] vs [from, to].
+          (!from || p.endDate >= from) &&
+          (!to || p.startDate <= to),
       ),
-    [state.projects, paidFilter, clientFilter, statusFilter],
+    [state.projects, paidFilter, clientFilter, statusFilter, from, to],
   );
+
+  const criteria: SavedFilterCriteria = {
+    ...DEFAULT_CRITERIA,
+    paid: paidFilter,
+    clientId: clientFilter,
+    statusId: statusFilter,
+    from,
+    to,
+  };
+
+  const applyPreset = (c: SavedFilterCriteria) => {
+    setPaidFilter(c.paid);
+    setClientFilter(c.clientId);
+    setStatusFilter(c.statusId);
+    setFrom(c.from);
+    setTo(c.to);
+  };
 
   // Group by client (clients in list order, then any orphaned projects).
   const groups = useMemo(() => {
@@ -262,7 +299,23 @@ export function ProjectsPage() {
             </option>
           ))}
         </select>
+        <input
+          type="date"
+          value={from}
+          onChange={(e) => setFrom(e.target.value)}
+          aria-label="Filtruj od daty"
+          title="Od"
+        />
+        <input
+          type="date"
+          value={to}
+          onChange={(e) => setTo(e.target.value)}
+          aria-label="Filtruj do daty"
+          title="Do"
+        />
       </div>
+
+      <FilterPresets page="projects" criteria={criteria} onApply={applyPreset} />
 
       {groups.length === 0 ? (
         <div className="empty-state">
@@ -308,7 +361,34 @@ export function ProjectsPage() {
                           · {teamSize} {polishCount(teamSize, 'osoba', 'osoby', 'osób')}
                         </span>
                       </div>
+                      <ChevronRight className="card-chevron" size={16} aria-hidden />
                     </button>
+                    <div className="card-actions">
+                      <button
+                        type="button"
+                        className="card-action-btn"
+                        title="Oś czasu"
+                        aria-label="Otwórz oś czasu"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate('/timeline');
+                        }}
+                      >
+                        <GanttChart size={14} aria-hidden />
+                      </button>
+                      <button
+                        type="button"
+                        className="card-action-btn"
+                        title="+ Zadanie"
+                        aria-label={`Dodaj zadanie do ${p.name}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openNewTask(p.id);
+                        }}
+                      >
+                        <Plus size={14} aria-hidden />
+                      </button>
+                    </div>
                   </li>
                 );
               })}

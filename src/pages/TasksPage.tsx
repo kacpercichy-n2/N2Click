@@ -1,12 +1,17 @@
+import { useMemo, useState } from 'react';
 import { useStore } from '../store/AppStore';
 import { useOpenTask } from '../components/TaskModal';
 import {
+  activeStatuses,
+  assigneeIdsOfTask,
   assigneesOfTask,
   getClient,
   getProject,
   getStatus,
   taskPlannedTotal,
 } from '../store/selectors';
+import { FilterPresets, DEFAULT_CRITERIA } from '../components/FilterPresets';
+import { ChevronRight } from '../components/icons';
 import { PersonChip } from '../components/PersonChip';
 import { StatusBadge } from '../components/StatusBadge';
 import { Coin } from '../components/Coin';
@@ -32,13 +37,74 @@ function rangeLabel(start: string, end: string): string {
 export function TasksPage() {
   const { state, dispatch } = useStore();
   const { openTask, openNewTask } = useOpenTask();
+  const statuses = activeStatuses(state);
+
+  const [clientFilter, setClientFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [personFilter, setPersonFilter] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
 
   // Sort by start date, then title, for a stable predictable list.
-  const tasks = [...state.tasks].sort((a, b) =>
-    a.startDate === b.startDate
-      ? a.title.localeCompare(b.title)
-      : a.startDate.localeCompare(b.startDate),
+  // Memoized so the filtering useMemo below has a stable array dependency.
+  const allTasks = useMemo(
+    () =>
+      [...state.tasks].sort((a, b) =>
+        a.startDate === b.startDate
+          ? a.title.localeCompare(b.title)
+          : a.startDate.localeCompare(b.startDate),
+      ),
+    [state.tasks],
   );
+
+  const anyFilter =
+    clientFilter !== '' ||
+    statusFilter !== '' ||
+    personFilter !== '' ||
+    from !== '' ||
+    to !== '';
+
+  const tasks = useMemo(
+    () =>
+      allTasks.filter((t) => {
+        if (statusFilter && t.statusId !== statusFilter) return false;
+        if (clientFilter) {
+          const clientId = getProject(state, t.projectId)?.clientId;
+          if (clientId !== clientFilter) return false;
+        }
+        if (personFilter && !assigneeIdsOfTask(state, t.id).includes(personFilter)) return false;
+        // Period-overlap on the task span: [startDate, endDate] vs [from, to].
+        if (from && t.endDate < from) return false;
+        if (to && t.startDate > to) return false;
+        return true;
+      }),
+    [allTasks, state, clientFilter, statusFilter, personFilter, from, to],
+  );
+
+  const criteria = {
+    ...DEFAULT_CRITERIA,
+    clientId: clientFilter,
+    statusId: statusFilter,
+    personId: personFilter,
+    from,
+    to,
+  };
+
+  const applyPreset = (c: typeof criteria) => {
+    setClientFilter(c.clientId);
+    setStatusFilter(c.statusId);
+    setPersonFilter(c.personId);
+    setFrom(c.from);
+    setTo(c.to);
+  };
+
+  const clearFilters = () => {
+    setClientFilter('');
+    setStatusFilter('');
+    setPersonFilter('');
+    setFrom('');
+    setTo('');
+  };
 
   const handleDelete = (taskId: string, title: string) => {
     if (window.confirm(`Usunąć „${title}”? To usunie przypisania i zaplanowane godziny.`)) {
@@ -55,7 +121,7 @@ export function TasksPage() {
         </button>
       </div>
 
-      {tasks.length === 0 ? (
+      {allTasks.length === 0 ? (
         <div className="empty-state">
           <p className="empty-title">Brak zadań</p>
           <p className="empty-hint">
@@ -66,7 +132,79 @@ export function TasksPage() {
           </button>
         </div>
       ) : (
-        <ul className="task-list">
+        <>
+          <div className="cal-toolbar">
+            <div className="filter-controls">
+              <select
+                value={clientFilter}
+                onChange={(e) => setClientFilter(e.target.value)}
+                aria-label="Filtruj po kliencie"
+              >
+                <option value="">Wszyscy klienci</option>
+                {state.clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                aria-label="Filtruj po statusie"
+              >
+                <option value="">Wszystkie statusy</option>
+                {statuses.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={personFilter}
+                onChange={(e) => setPersonFilter(e.target.value)}
+                aria-label="Filtruj po osobie"
+              >
+                <option value="">Wszystkie osoby</option>
+                {state.people.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="date"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+                aria-label="Filtruj od daty"
+                title="Od"
+              />
+              <input
+                type="date"
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+                aria-label="Filtruj do daty"
+                title="Do"
+              />
+              {anyFilter && (
+                <button type="button" className="btn ghost small" onClick={clearFilters}>
+                  Wyczyść filtry
+                </button>
+              )}
+            </div>
+            <span className="filter-count muted">
+              {tasks.length} z {allTasks.length} zadań
+            </span>
+          </div>
+
+          <FilterPresets page="tasks" criteria={criteria} onApply={applyPreset} />
+
+          {tasks.length === 0 ? (
+            <div className="empty-state">
+              <p className="empty-title">Brak pasujących zadań</p>
+              <p className="empty-hint">Zmień lub wyczyść filtry, aby zobaczyć zadania.</p>
+            </div>
+          ) : (
+            <ul className="task-list">
           {tasks.map((task) => {
             const assignees = assigneesOfTask(state, task.id);
             const planned = taskPlannedTotal(state, task.id);
@@ -104,19 +242,25 @@ export function TasksPage() {
                       <span className="muted"> / szac. {fmtHours(task.estimatedHours)}h</span>
                     )}
                   </div>
+                  <ChevronRight className="card-chevron" size={16} aria-hidden />
                 </button>
-                <button
-                  type="button"
-                  className="btn danger-ghost task-delete"
-                  onClick={() => handleDelete(task.id, task.title)}
-                  aria-label={`Usuń ${task.title}`}
-                >
-                  Usuń
-                </button>
+                <div className="card-actions">
+                  <button
+                    type="button"
+                    className="btn danger-ghost task-delete"
+                    onClick={() => handleDelete(task.id, task.title)}
+                    aria-label={`Usuń ${task.title}`}
+                    title="Usuń"
+                  >
+                    Usuń
+                  </button>
+                </div>
               </li>
             );
           })}
-        </ul>
+            </ul>
+          )}
+        </>
       )}
     </section>
   );
