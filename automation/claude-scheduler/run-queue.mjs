@@ -144,7 +144,8 @@ Before editing, read CLAUDE.md and follow its project rules.
 Automation constraints:
 - Work only in the current repository.
 - Do not merge, rebase, or switch to main.
-- Do not push to remote.
+- Do not push to remote unless this prompt explicitly asks for it.
+- If pushing is requested, push only the current review branch.
 - Keep the change scoped to the user prompt.
 - Commit your completed work to the current review branch if there are changes.
 - If you cannot finish safely, leave the repo in the clearest possible state and explain why.
