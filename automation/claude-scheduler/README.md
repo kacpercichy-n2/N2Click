@@ -31,7 +31,7 @@ caffeinate -dimsu node automation/claude-scheduler/run-queue.mjs
 Domyslny harmonogram:
 
 ```text
-10:00, 15:01, 21:00, 01:00, 06:00
+02:00, 05:00, 10:01, 15:01, 20:01
 ```
 
 Skrypt:
@@ -48,7 +48,7 @@ Logi i stan sa ignorowane przez Git.
 ## 3. Zmiana godzin
 
 ```bash
-CLAUDE_AUTO_TIMES="10:00,15:01,21:00,01:00,06:00" caffeinate -dimsu node automation/claude-scheduler/run-queue.mjs
+CLAUDE_AUTO_TIMES="02:00,05:00,10:01,15:01,20:01" caffeinate -dimsu node automation/claude-scheduler/run-queue.mjs
 ```
 
 ## 4. Tryb testowy bez odpalania Claude'a
