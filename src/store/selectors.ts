@@ -16,6 +16,7 @@ import type {
   WorkloadEntry,
 } from '../types';
 import { DEFAULT_CAPACITY } from './storage';
+import { blockEndMinutes, hasCollision, hoursToMinutes } from '../utils/time';
 
 // ---- Basic lookups ----
 
@@ -211,6 +212,29 @@ export function blocksForPersonDate(
   return state.workload
     .filter((w) => w.personId === personId && w.date === date)
     .sort((a, b) => a.sortIndex - b.sortIndex);
+}
+
+/** End minute (from midnight) of a block. */
+export function blockEnd(entry: WorkloadEntry): number {
+  return blockEndMinutes(entry.startMinutes, entry.plannedHours);
+}
+
+/**
+ * Would a block of `plannedHours` starting at `startMinutes` overlap any OTHER
+ * block of this person on this date? Touching edges do not collide.
+ */
+export function blockCollides(
+  state: AppData,
+  personId: string,
+  date: DateStr,
+  startMinutes: number,
+  plannedHours: number,
+  excludeEntryId?: string,
+): boolean {
+  const blocks = state.workload.filter(
+    (w) => w.personId === personId && w.date === date,
+  );
+  return hasCollision(blocks, startMinutes, hoursToMinutes(plannedHours), excludeEntryId);
 }
 
 /** All entries on a single date (optionally restricted to a set of people). */

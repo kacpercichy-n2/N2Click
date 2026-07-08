@@ -139,7 +139,7 @@ export function AllocationGrid({
                         type="number"
                         min={0}
                         max={24}
-                        step={0.5}
+                        step={0.25}
                         className="alloc-input"
                         value={value === 0 ? '' : value}
                         placeholder="0"

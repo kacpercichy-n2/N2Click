@@ -25,7 +25,21 @@ import type {
 } from '../types';
 import { DEFAULT_CAPACITY, loadData, saveData, slugify } from './storage';
 import { registerPersonOrder } from '../utils/colors';
-import { addDaysStr, eachDayInclusive } from '../utils/dates';
+import { addDaysStr, eachDayInclusive, inclusiveDayCount } from '../utils/dates';
+import {
+  DAY_MINUTES,
+  HOURS_STEP,
+  MINUTE_STEP,
+  blockEndMinutes,
+  clampBlockStart,
+  formatMinutes,
+  hasCollision,
+  hoursToMinutes,
+  nextFreeStart,
+  snapHours,
+} from '../utils/time';
+
+const MAX_PERIOD_DAYS = 92;
 
 // ---- Payload shapes ----
 
@@ -117,6 +131,7 @@ export type Action =
   | { type: 'DELETE_STATUS'; statusId: string }
   | { type: 'INSERT_BLOCK'; payload: InsertBlockPayload }
   | { type: 'REASSIGN_ENTRY'; entryId: string; toPersonId: string }
+  | { type: 'SET_BLOCK_TIME'; entryId: string; date: string; startMinutes: number; plannedHours: number }
   | { type: 'SAVE_FILTER_PRESET'; name: string; page: FilterPage; criteria: SavedFilterCriteria }
   | { type: 'DELETE_FILTER_PRESET'; filterId: string }
   | { type: 'LOAD_SAMPLE'; data: AppData }
@@ -186,7 +201,8 @@ function reindexDays(workload: WorkloadEntry[], keys: Set<string>): WorkloadEntr
   }
   const newIndex = new Map<string, number>(); // entryId -> sortIndex
   for (const list of byDay.values()) {
-    list.sort((a, b) => a.sortIndex - b.sortIndex);
+    // sortIndex is derived from time order: rank by startMinutes, ties by old index.
+    list.sort((a, b) => a.startMinutes - b.startMinutes || a.sortIndex - b.sortIndex);
     list.forEach((w, i) => newIndex.set(w.id, i));
   }
   return workload.map((w) => {
@@ -254,23 +270,46 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
   // hours>0 and only for people who are still assigned. Existing cells keep
   // their position in the person's day; new cells go to the end of the day.
   const assignedSet = new Set(assigneeIds);
-  const oldIndex = new Map<string, number>(); // person|date -> old sortIndex
+  // person|date -> the prior block's position, so kept cells keep their slot.
+  const oldPos = new Map<string, { sortIndex: number; startMinutes: number }>();
   for (const w of state.workload) {
-    if (w.taskId === realTaskId) oldIndex.set(dayKey(w.personId, w.date), w.sortIndex);
+    if (w.taskId === realTaskId) {
+      oldPos.set(dayKey(w.personId, w.date), { sortIndex: w.sortIndex, startMinutes: w.startMinutes });
+    }
   }
   const workloadOther = state.workload.filter((w) => w.taskId !== realTaskId);
   const workloadForTask: WorkloadEntry[] = [];
   for (const c of allocations) {
-    if (c.plannedHours <= 0 || !assignedSet.has(c.personId)) continue;
-    const kept = oldIndex.get(dayKey(c.personId, c.date));
+    if (!assignedSet.has(c.personId)) continue;
+    // Snap to the 0.25h grid on write so no off-grid block can be persisted
+    // (the input `step` is UI-only; SET_BLOCK_TIME would reject off-grid hours).
+    const plannedHours = snapHours(c.plannedHours);
+    if (plannedHours <= 0) continue;
+    const kept = oldPos.get(dayKey(c.personId, c.date));
+    let sortIndex: number;
+    let startMinutes: number;
+    if (kept) {
+      // Kept cell: hold its old slot even if hours changed (may now overlap a
+      // later block — allowed; the Week view renders overlaps side-by-side).
+      sortIndex = kept.sortIndex;
+      startMinutes = kept.startMinutes;
+    } else {
+      // New cell: append to the end of that person's day.
+      const around = [...workloadOther, ...workloadForTask];
+      sortIndex = nextSortIndex(around, c.personId, c.date);
+      startMinutes = nextFreeStart(
+        around.filter((w) => w.personId === c.personId && w.date === c.date),
+        hoursToMinutes(plannedHours),
+      );
+    }
     workloadForTask.push({
       id: uid(),
       taskId: realTaskId,
       personId: c.personId,
       date: c.date,
-      plannedHours: c.plannedHours,
-      sortIndex:
-        kept ?? nextSortIndex([...workloadOther, ...workloadForTask], c.personId, c.date),
+      plannedHours,
+      startMinutes,
+      sortIndex,
     });
   }
 
@@ -443,21 +482,54 @@ function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
   const task = state.tasks.find((t) => t.id === payload.taskId);
   if (!task) return state;
 
-  // The new block sits before/after the reference block in that person's day.
-  const targetIndex = payload.position === 'before' ? ref.sortIndex : ref.sortIndex + 1;
-  const shifted = state.workload.map((w) =>
-    w.personId === ref.personId && w.date === ref.date && w.sortIndex >= targetIndex
-      ? { ...w, sortIndex: w.sortIndex + 1 }
-      : w,
-  );
+  // Snap to the 0.25h grid on write (input `step` is UI-only).
+  const hours = snapHours(payload.hours);
+  if (hours <= 0) return state;
+
+  // Ripple insert. "Przed": take the ref's start; "Po": start at the ref's end.
+  const dur = hoursToMinutes(hours);
+  const rawStart =
+    payload.position === 'before'
+      ? ref.startMinutes
+      : blockEndMinutes(ref.startMinutes, ref.plannedHours);
   const entry: WorkloadEntry = {
     id: uid(),
     taskId: payload.taskId,
     personId: ref.personId,
     date: ref.date,
-    plannedHours: payload.hours,
-    sortIndex: targetIndex,
+    plannedHours: hours,
+    startMinutes: clampBlockStart(rawStart, dur),
+    sortIndex: 0, // fixed by reindexDays below
   };
+
+  // Sweep that person's day (new block ordered before ref on an equal start):
+  // push any later block that would overlap forward to the running cursor.
+  const dayBlocks = state.workload.filter(
+    (w) => w.personId === ref.personId && w.date === ref.date,
+  );
+  const ordered = [...dayBlocks, entry].sort((a, b) => {
+    if (a.startMinutes !== b.startMinutes) return a.startMinutes - b.startMinutes;
+    if (a.id === entry.id) return -1;
+    if (b.id === entry.id) return 1;
+    return a.sortIndex - b.sortIndex;
+  });
+  const startIdx = ordered.findIndex((b) => b.id === entry.id);
+  const moves = new Map<string, number>(); // entryId -> new startMinutes
+  let cursor = blockEndMinutes(entry.startMinutes, entry.plannedHours);
+  for (let i = startIdx + 1; i < ordered.length; i++) {
+    const b = ordered[i];
+    if (b.startMinutes < cursor) {
+      const pushed = clampBlockStart(cursor, hoursToMinutes(b.plannedHours));
+      if (pushed !== b.startMinutes) moves.set(b.id, pushed);
+      cursor = pushed + hoursToMinutes(b.plannedHours);
+    } else {
+      cursor = blockEndMinutes(b.startMinutes, b.plannedHours);
+    }
+  }
+  const shifted = state.workload.map((w) => {
+    const m = moves.get(w.id);
+    return m === undefined ? w : { ...w, startMinutes: m };
+  });
 
   // Keep invariants: the person must be assigned to the task, and the task
   // period must cover the block's date.
@@ -481,12 +553,12 @@ function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
     ...state,
     tasks,
     assignments,
-    workload: [...shifted, entry],
+    workload: reindexDays([...shifted, entry], new Set([dayKey(ref.personId, ref.date)])),
     activity: withActivity(
       state,
       'task',
       payload.taskId,
-      `wstawił(a) blok ${payload.hours}h ${payload.position === 'before' ? 'przed' : 'po'} „${state.tasks.find((t) => t.id === ref.taskId)?.title ?? 'blok'}” dla ${person?.name ?? 'kogoś'} w dniu ${ref.date}`,
+      `wstawił(a) blok ${hours}h ${payload.position === 'before' ? 'przed' : 'po'} „${state.tasks.find((t) => t.id === ref.taskId)?.title ?? 'blok'}” dla ${person?.name ?? 'kogoś'} w dniu ${ref.date}`,
     ),
   };
 }
@@ -507,6 +579,10 @@ function reassignEntry(state: AppData, entryId: string, toPersonId: string): App
   const moved: WorkloadEntry = {
     ...entry,
     personId: toPersonId,
+    startMinutes: nextFreeStart(
+      without.filter((w) => w.personId === toPersonId && w.date === date),
+      hoursToMinutes(plannedHours),
+    ),
     sortIndex: nextSortIndex(without, toPersonId, date),
   };
   const touched = new Set<string>([
@@ -537,6 +613,79 @@ function reassignEntry(state: AppData, entryId: string, toPersonId: string): App
       taskId,
       `przeniósł/przeniosła blok ${plannedHours}h (${date}) z ${fromName} na ${target.name}`,
     ),
+  };
+}
+
+/**
+ * Move/resize one block in time (the timed Week view). Rejects (returns state
+ * unchanged) on any invalid input or a same-person time overlap. Extends the
+ * task period to cover a new date unless that would exceed the 92-day cap.
+ */
+function setBlockTime(
+  state: AppData,
+  entryId: string,
+  date: string,
+  startMinutes: number,
+  plannedHours: number,
+): AppData {
+  const entry = state.workload.find((w) => w.id === entryId);
+  if (!entry) return state;
+
+  // Grid + range validation.
+  if (!Number.isFinite(startMinutes) || startMinutes < 0 || startMinutes % MINUTE_STEP !== 0) {
+    return state;
+  }
+  if (!Number.isFinite(plannedHours) || plannedHours < HOURS_STEP || plannedHours > 24) {
+    return state;
+  }
+  const hoursSteps = plannedHours / HOURS_STEP;
+  if (Math.abs(hoursSteps - Math.round(hoursSteps)) > 1e-9) return state;
+  const dur = hoursToMinutes(plannedHours);
+  if (startMinutes + dur > DAY_MINUTES) return state;
+
+  // No-op when nothing changed.
+  if (entry.date === date && entry.startMinutes === startMinutes && entry.plannedHours === plannedHours) {
+    return state;
+  }
+
+  // Collision: no overlap with any OTHER block of the same person on the date.
+  const sameDayOthers = state.workload.filter(
+    (w) => w.personId === entry.personId && w.date === date && w.id !== entryId,
+  );
+  if (hasCollision(sameDayOthers, startMinutes, dur)) return state;
+
+  const task = state.tasks.find((t) => t.id === entry.taskId);
+  if (!task) return state;
+
+  // Extend the task period to cover a new date (unless it would exceed the cap).
+  let tasks = state.tasks;
+  if (date !== entry.date) {
+    const startDate = date < task.startDate ? date : task.startDate;
+    const endDate = date > task.endDate ? date : task.endDate;
+    if (startDate !== task.startDate || endDate !== task.endDate) {
+      if (inclusiveDayCount(startDate, endDate) > MAX_PERIOD_DAYS) return state;
+      tasks = state.tasks.map((t) =>
+        t.id === task.id ? { ...t, startDate, endDate, updatedAt: nowIso() } : t,
+      );
+    }
+  }
+
+  const oldDate = entry.date;
+  const workload = reindexDays(
+    state.workload.map((w) => (w.id === entryId ? { ...w, date, startMinutes, plannedHours } : w)),
+    new Set([dayKey(entry.personId, oldDate), dayKey(entry.personId, date)]),
+  );
+
+  const message =
+    date !== oldDate
+      ? `przeniósł/przeniosła blok ${plannedHours}h na ${date} ${formatMinutes(startMinutes)}`
+      : `zmienił(a) blok na ${formatMinutes(startMinutes)}–${formatMinutes(startMinutes + dur)} (${plannedHours}h)`;
+
+  return {
+    ...state,
+    tasks,
+    workload,
+    activity: withActivity(state, 'task', entry.taskId, message),
   };
 }
 
@@ -883,6 +1032,14 @@ export function reducer(state: AppData, action: Action): AppData {
       return insertBlock(state, action.payload);
     case 'REASSIGN_ENTRY':
       return reassignEntry(state, action.entryId, action.toPersonId);
+    case 'SET_BLOCK_TIME':
+      return setBlockTime(
+        state,
+        action.entryId,
+        action.date,
+        action.startMinutes,
+        action.plannedHours,
+      );
     case 'SAVE_FILTER_PRESET': {
       const name = action.name.trim();
       if (!name) return state;

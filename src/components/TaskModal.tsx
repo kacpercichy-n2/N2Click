@@ -540,7 +540,7 @@ function TaskEditor({
               id="t-est"
               type="number"
               min={0}
-              step={0.5}
+              step={0.25}
               value={estimatedRaw}
               onChange={(e) => setEstimatedRaw(e.target.value)}
               placeholder="Opcjonalnie"

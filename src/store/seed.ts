@@ -12,6 +12,7 @@ import type {
 } from '../types';
 import { buildDefaultStatuses, DATA_VERSION, DEFAULT_CAPACITY } from './storage';
 import { addDaysStr, todayStr, weekDays } from '../utils/dates';
+import { hoursToMinutes, nextFreeStart } from '../utils/time';
 
 function uid(): string {
   return crypto.randomUUID();
@@ -151,7 +152,10 @@ export function buildSampleData(): AppData {
     const key = `${personId}|${date}`;
     const sortIndex = sortCounters.get(key) ?? 0;
     sortCounters.set(key, sortIndex + 1);
-    workload.push({ id: uid(), taskId, personId, date, plannedHours, sortIndex });
+    // Stack each person/day schedule from 08:00, appending to the last block.
+    const existing = workload.filter((w) => w.personId === personId && w.date === date);
+    const startMinutes = nextFreeStart(existing, hoursToMinutes(plannedHours));
+    workload.push({ id: uid(), taskId, personId, date, plannedHours, startMinutes, sortIndex });
   };
 
   // --- Task 1: multi-person design/dev task (Mon–Fri this week) ---

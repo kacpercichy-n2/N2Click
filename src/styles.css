@@ -1041,39 +1041,52 @@ option {
   background: rgba(196, 150, 255, 0.16);
 }
 
-/* ---------- Week view ---------- */
+/* ---------- Week view (timed day grid) ---------- */
 
-.week-grid {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 8px;
+.week-cal {
+  position: relative;
 }
-.week-col {
-  background: var(--card-bg);
+.week-cal-scroll {
+  max-height: 70vh;
+  overflow-y: auto;
+  overflow-x: hidden;
   border: 1px solid var(--n2-border);
   border-radius: var(--n2-radius-md);
-  min-height: 220px;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
+  background: var(--card-bg);
 }
-.week-col.weekend {
-  background: var(--card-bg-2);
+.week-cal-grid {
+  display: grid;
+  position: relative;
+  /* Drag gestures cross block text; text-selection would hijack the next drag
+     into a native text-drag. Nothing in the grid is useful to select anyway. */
+  -webkit-user-select: none;
+  user-select: none;
+  /* columns + rows set inline (52px axis + 7 day cols; auto header + 1152px body) */
 }
-.week-col.empty {
-  background: var(--card-bg-2);
-}
-.week-col.today {
-  border-color: var(--n2-border-strong);
-  box-shadow: 0 0 0 1px var(--n2-border-strong), 0 0 24px rgba(196, 150, 255, 0.15);
-}
-.week-col-head {
-  padding: 8px 10px;
+
+/* Sticky headers (corner + day headers) */
+.week-axis-head,
+.week-day-head {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  background: var(--card-bg);
   border-bottom: 1px solid var(--n2-border);
-  background: rgba(255, 255, 255, 0.03);
 }
-.week-col.today .week-col-head {
+.week-axis-head {
+  border-right: 1px solid var(--n2-border);
+  z-index: 7;
+}
+.week-day-head {
+  padding: 8px 10px;
+  border-left: 1px solid var(--n2-border);
+}
+.week-day-head.weekend {
+  background: var(--card-bg-2);
+}
+.week-day-head.today {
   background: rgba(196, 150, 255, 0.14);
+  box-shadow: inset 0 -2px 0 var(--n2-border-strong);
 }
 .week-col-weekday {
   font-size: var(--n2-type-xs);
@@ -1102,45 +1115,118 @@ option {
   color: var(--n2-danger);
   font-weight: 600;
 }
-.week-col-body {
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  flex: 1;
+
+/* Left hour axis */
+.week-axis {
+  position: relative;
+  border-right: 1px solid var(--n2-border);
 }
-.week-free {
+.week-axis-label {
+  position: absolute;
+  right: 6px;
+  transform: translateY(-50%);
+  font-size: var(--n2-type-xs);
   color: var(--text-faint);
-  text-align: center;
-  margin-top: 16px;
-  font-size: 18px;
+  font-family: var(--n2-font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
+
+/* Day columns: hour + half-hour lines drawn as a background */
+.week-day-col {
+  position: relative;
+  border-left: 1px solid var(--n2-border);
+  overflow: visible; /* let a dragged block extend into a neighbouring column */
+  background-image:
+    repeating-linear-gradient(
+      to bottom,
+      rgba(255, 255, 255, 0.075) 0,
+      rgba(255, 255, 255, 0.075) 1px,
+      transparent 1px,
+      transparent 48px
+    ),
+    repeating-linear-gradient(
+      to bottom,
+      rgba(255, 255, 255, 0.03) 0,
+      rgba(255, 255, 255, 0.03) 1px,
+      transparent 1px,
+      transparent 24px
+    );
+}
+.week-day-col.weekend {
+  background-color: var(--card-bg-2);
+}
+.week-day-col.today {
+  background-color: rgba(196, 150, 255, 0.06);
+}
+
+/* Absolutely-positioned timed blocks */
 .week-block {
+  position: absolute;
+  box-sizing: border-box;
   text-align: left;
   border: 1px solid var(--n2-border);
   border-left: 3px solid var(--n2-lavender);
   border-radius: var(--n2-radius-xs);
-  background: rgba(255, 255, 255, 0.05);
-  padding: 6px 8px;
-  cursor: pointer;
+  background: rgba(45, 30, 70, 0.92);
+  padding: 3px 7px;
+  cursor: grab;
   font-family: inherit;
   color: inherit;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 1px;
+  overflow: hidden;
+  touch-action: none; /* pointer drag instead of scroll */
   transition: background var(--n2-transition);
 }
 .week-block:hover {
-  background: rgba(255, 255, 255, 0.09);
+  background: rgba(60, 40, 92, 0.95);
+}
+.week-block.dragging {
+  cursor: grabbing;
+  z-index: 30;
+  box-shadow: var(--n2-shadow-violet, 0 8px 24px rgba(0, 0, 0, 0.4));
+  opacity: 0.96;
+}
+.week-block.colliding {
+  cursor: not-allowed;
+  border-color: var(--n2-danger);
+  border-left-color: var(--n2-danger) !important;
+  background: var(--n2-danger-soft, rgba(255, 79, 114, 0.25));
+}
+.week-block-handle {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: ns-resize;
+  z-index: 2;
+}
+.week-block-handle.top {
+  top: 0;
+}
+.week-block-handle.bottom {
+  bottom: 0;
 }
 .week-block-title {
-  font-size: var(--n2-type-sm);
+  font-size: var(--n2-type-xs);
   font-weight: 600;
   color: var(--text);
   line-height: 1.2;
   display: flex;
   align-items: center;
   gap: 5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.week-block-time {
+  font-size: var(--n2-type-xs);
+  color: var(--text-muted);
+  font-family: var(--n2-font-data);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
 }
 .week-block-meta {
   display: flex;
@@ -1148,6 +1234,8 @@ option {
   gap: 5px;
   font-size: var(--n2-type-xs);
   color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
 }
 .week-block-hours {
   margin-left: auto;
@@ -2318,8 +2406,12 @@ option {
   .app-nav-link {
     justify-content: flex-start;
   }
-  .week-grid {
-    grid-template-columns: 1fr;
+  /* Keep the 7 columns usable by allowing horizontal scroll of the grid. */
+  .week-cal-scroll {
+    overflow-x: auto;
+  }
+  .week-cal-grid {
+    min-width: 720px;
   }
   .cal-toolbar {
     justify-content: flex-start;

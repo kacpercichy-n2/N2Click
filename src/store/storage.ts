@@ -1,10 +1,18 @@
 // Single persistence module. Wraps localStorage so it can be swapped for an API later.
 // The stored JSON is versioned; loadData migrates older payloads forward.
-import type { AppData, Person, Status } from '../types';
+import type { AppData, Person, Status, WorkloadEntry } from '../types';
+import {
+  DAY_MINUTES,
+  MINUTE_STEP,
+  clampBlockStart,
+  hoursToMinutes,
+  snapToStep,
+  stackStartTimes,
+} from '../utils/time';
 
 const STORAGE_KEY = 'n2hub.data.v1';
 const LEGACY_STORAGE_KEYS = ['n2ub.data.v1', 'n2click.data.v1'];
-export const DATA_VERSION = 3;
+export const DATA_VERSION = 4;
 
 export const DEFAULT_CAPACITY = 8; // hours available per person per day
 
@@ -179,7 +187,8 @@ function migrateV1(raw: Record<string, unknown>): AppData {
     const key = `${w.personId}|${w.date}`;
     const idx = counters.get(key) ?? 0;
     counters.set(key, idx + 1);
-    return { ...w, sortIndex: idx };
+    // startMinutes intentionally invalid — ensureStartMinutes restacks it.
+    return { ...w, sortIndex: idx, startMinutes: -1 };
   });
 
   return {
@@ -314,6 +323,63 @@ function localizeLegacyData(data: AppData): AppData {
   };
 }
 
+/** True when the entry already carries a usable startMinutes (block fits the day). */
+function hasValidStart(w: WorkloadEntry): boolean {
+  const s = (w as Partial<WorkloadEntry>).startMinutes;
+  return (
+    typeof s === 'number' &&
+    Number.isFinite(s) &&
+    s >= 0 &&
+    s + hoursToMinutes(w.plannedHours) <= DAY_MINUTES
+  );
+}
+
+/**
+ * Idempotent normalize pass: guarantee every workload entry has a valid,
+ * on-grid `startMinutes`. Runs on EVERY load (covers v<4 payloads and any entry
+ * with a missing/invalid value). Deterministic rule: if a (person, date) group
+ * contains ANY invalid entry, restack the WHOLE group from 08:00 in sortIndex
+ * order; fully-valid groups are left alone except off-grid values are snapped.
+ */
+export function ensureStartMinutes(data: AppData): AppData {
+  const groups = new Map<string, WorkloadEntry[]>();
+  for (const w of data.workload) {
+    const key = `${w.personId}|${w.date}`;
+    const list = groups.get(key);
+    if (list) list.push(w);
+    else groups.set(key, [w]);
+  }
+
+  const patched = new Map<string, number>(); // entryId -> startMinutes
+  for (const list of groups.values()) {
+    const ordered = [...list].sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0));
+    if (ordered.some((w) => !hasValidStart(w))) {
+      const starts = stackStartTimes(ordered.map((w) => ({ plannedHours: w.plannedHours })));
+      ordered.forEach((w, i) => {
+        if (w.startMinutes !== starts[i]) patched.set(w.id, starts[i]);
+      });
+    } else {
+      for (const w of ordered) {
+        if (w.startMinutes % MINUTE_STEP !== 0) {
+          patched.set(
+            w.id,
+            clampBlockStart(snapToStep(w.startMinutes), hoursToMinutes(w.plannedHours)),
+          );
+        }
+      }
+    }
+  }
+
+  if (patched.size === 0) return data;
+  return {
+    ...data,
+    workload: data.workload.map((w) => {
+      const s = patched.get(w.id);
+      return s === undefined ? w : { ...w, startMinutes: s };
+    }),
+  };
+}
+
 export function loadData(): AppData {
   try {
     const raw =
@@ -323,14 +389,15 @@ export function loadData(): AppData {
     const parsed: unknown = JSON.parse(raw);
     if (!looksLikeData(parsed)) return emptyData();
     const version = typeof parsed.version === 'number' ? parsed.version : 1;
-    if (version < 2) return localizeLegacyData(migrateV1(parsed));
+    if (version < 2) return ensureStartMinutes(localizeLegacyData(migrateV1(parsed)));
     // Same-version load: fill any missing fields with defaults.
     const loaded = {
       ...emptyData(),
       ...(parsed as Partial<AppData>),
       version: DATA_VERSION,
     };
-    return version < DATA_VERSION ? localizeLegacyData(loaded) : loaded;
+    const localized = version < DATA_VERSION ? localizeLegacyData(loaded) : loaded;
+    return ensureStartMinutes(localized);
   } catch {
     return emptyData();
   }

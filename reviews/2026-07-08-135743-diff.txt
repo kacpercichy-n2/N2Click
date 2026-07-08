@@ -1,0 +1,3619 @@
+diff --git a/handoffs/RUN-STATE.md b/handoffs/RUN-STATE.md
+index 9c2638e..2d25c5a 100644
+--- a/handoffs/RUN-STATE.md
++++ b/handoffs/RUN-STATE.md
+@@ -7,42 +7,58 @@ boring and factual — it's a checklist, not prose.
+ 
+ ---
+ 
+-## Run: 2026-07-08 — UX audit improvements + icon library adoption (N2Hub)
++## Run: 2026-07-08 — Timed week-view scheduling (Google-Calendar-style)
+ 
+ ### Plan (architect)
+ 
+-- **Goal:** Six UX improvements (timeline zoom/filters/conflicts, actionable
+-  workload overload, explicit save states, global search + saved filters,
+-  mobile nav, card affordances) plus adoption of **lucide-react** (ISC, free,
+-  bundled, currentColor) with CSS micro-animations as the animated-icon
+-  approach. No theme changes; all invariants in CLAUDE.md hold.
+-- **Codebase note for reviewer:** CLAUDE.md is partially stale — the N2 dark
+-  restyle is ALREADY DONE (`--n2-*` tokens in styles.css), TaskEditorPage was
+-  replaced by `src/components/TaskModal.tsx`, the app shell already has a
+-  sidebar, `motion` is already a dependency, and the UI is in Polish. Packages
+-  reflect the real code, not the stale doc.
+-- **Icon decision:** lucide-react. lord-icon is freemium (disqualified);
+-  Lottie sets need a heavy runtime + murky per-asset licenses; useAnimations is
+-  MIT but ~60 icons (insufficient). Bootstrap Icons fallback unnecessary:
+-  Lucide's stroke SVGs + plain-CSS transitions deliver animated icons fully
+-  free, offline-bundled, color-agnostic via currentColor.
++- **Goal:** Add time-of-day scheduling to the calendar Week view: hour axis,
++  blocks positioned/sized by start time + duration on a 15-min grid,
++  pointer-drag to move (same day or cross-day) and edge-drag to resize, with
++  same-person collision rejection (visual danger feedback, invalid drops
++  revert). Capacity overload stays a warning, never a block.
++- **Codebase note for reviewer:** CLAUDE.md remains partially stale — dark
++  `--n2-*` restyle done, `TaskModal` replaced TaskEditorPage, UI is Polish,
++  icons via `src/components/icons.ts`, `motion` is a dependency,
++  `savedFilters`/`REASSIGN_ENTRY` exist. Packages reflect real code.
++- **Key decisions (pre-resolved, no open questions):**
++  - `WorkloadEntry.startMinutes: number` (minutes from midnight, multiple of
++    15, block fits 0–1440). `DATA_VERSION` 3 → 4; idempotent
++    `ensureStartMinutes` pass in `loadData` stacks legacy entries per
++    (person, day) from 08:00 in `sortIndex` order.
++  - `sortIndex` KEPT but derived from time order: `reindexDays` now sorts by
++    `(startMinutes, sortIndex)` and renumbers — invariant 7 (contiguous per
++    person/day) holds and equals time rank.
++  - Hours granularity: ONE rule — multiples of 0.25 h in [0.25, 24]
++    everywhere (AllocationGrid + insert form move from step 0.5 to 0.25).
++  - One new action `SET_BLOCK_TIME { entryId, date, startMinutes, plannedHours }`
++    handles move AND resize; reducer validates grid/range/collision/92-day
++    task cap and returns state unchanged on rejection; activity via
++    `withActivity`; UI also pre-checks via new `blockCollides` selector.
++  - New-entry start times: append-to-end-of-day (`nextFreeStart`); SAVE_TASK
++    keeps existing cells' startMinutes; INSERT_BLOCK becomes a ripple insert
++    at ref start/end pushing only that person's later overlapping blocks;
++    REASSIGN_ENTRY appends to the target's day end.
++  - Non-calendar mutations MAY create same-person overlaps (task editor hour
++    edits); the week grid renders overlaps side-by-side via a pure
++    `packDayBlocks` packing helper. Only calendar drag/resize enforces
++    no-overlap.
++  - New pure module `src/utils/time.ts` (constants, snapping, formatting,
++    collision, stacking, packing) — unit-testable; vitest introduced (node
++    env, `npm test`) as the repo's first test setup.
+ - **Packages** (execution order):
+-  1. `PKG-20260708-icons-foundation` — lucide-react + icons module + nav icons + CSS animations — tier: test-writer
+-  2. `PKG-20260708-timeline-zoom` — timeline zoom / range presets / owner+client filters / conflict ticks — tier: developer
+-  3. `PKG-20260708-save-states` — save status badge + dirty guards (TaskModal, ProjectDetailPage) — tier: developer
+-  4. `PKG-20260708-workload-resolution` — overload resolution panel + REASSIGN_ENTRY action — tier: developer
+-  5. `PKG-20260708-global-search` — Ctrl+K palette + searchAll selector + ?client= deep-link — tier: developer (depends: 1)
+-  6. `PKG-20260708-saved-filters` — TasksPage filters + saved presets in AppData — tier: developer (depends: 4, ordering only)
+-  7. `PKG-20260708-mobile-nav` — hamburger drawer ≤760px — tier: developer (depends: 1, 5)
+-  8. `PKG-20260708-card-affordances` — hover/chevron/quick actions on cards — tier: test-writer (depends: 1, 6)
+-- **Parallelism:** logically, 2 and 3 are parallel-safe with each other
+-  (disjoint files except styles.css appends). Everything else runs in the
+-  order above because of shared files (App.tsx: 1→5→7; AppStore.tsx: 4→6;
+-  ProjectsPage/TasksPage: 5→6→8). Recommended: run sequentially 1..8.
+-- **Open questions:** none — decisions pre-resolved in the packages (icon
+-  choice; "Zapisywanie…" rendered ≥350 ms over synchronous persistence; no
+-  DATA_VERSION bump for savedFilters; hamburger over bottom nav; in-app
+-  sidebar-nav away from a dirty ProjectDetailPage intentionally not blocked).
++  1. `PKG-20260708-timed-blocks-core` — types, v4 migration, utils/time.ts,
++     selectors, reducer (`SET_BLOCK_TIME`, ripple INSERT_BLOCK, SAVE_TASK
++     start rules, reindexDays), seed, step=0.25 inputs — tier: developer
++  2. `PKG-20260708-week-timed-ui` — WeekView timed grid + drag/resize +
++     collision feedback + context-menu preservation + CSS — tier: developer
++     (depends: 1)
++  3. `PKG-20260708-time-tests` — vitest setup + unit tests for utils/time.ts
++     and SET_BLOCK_TIME/INSERT_BLOCK reducer behavior — tier: test-writer
++     (depends: 1; parallel-safe with 2, owns package.json)
++- **Open questions:** none blocking. Post-merge doc note for the human:
++  CLAUDE.md invariant text ("0.5 steps", sortIndex wording, week-view
++  description) needs refreshing once this lands — intentionally NOT part of
++  any worker package.
+ 
+ ### Worker log
+ 
+@@ -56,174 +72,84 @@ boring and factual — it's a checklist, not prose.
+ - **Next:** <hand to which tier / ready for review / done>
+ -->
+ 
+-#### 2026-07-08 · test-writer · `PKG-20260708-icons-foundation`
++#### 2026-07-08 · developer · `PKG-20260708-timed-blocks-core`
+ 
+ - **Changed:**
+-  - `package.json` / `package-lock.json` — added `lucide-react ^1.23.0` to `dependencies` (npm install, no CDN).
+-  - `src/components/icons.ts` (new) — sole module importing from `lucide-react`; re-exports the 26 icons named in the package plus the `LucideIcon` type (all 26 names exist directly in v1.23.0, no aliasing needed — `Columns3` and `GanttChart` are both present as-is).
+-  - `src/App.tsx` — `NAV` extended to `Array<[string, string, LucideIcon]>` with one icon per route per the package's mapping; nav render loop renders `<Icon size={18} aria-hidden className="nav-icon" />` before each label.
+-  - `src/styles.css` — appended `/* ---------- Icons ---------- */` section: `.app-nav-link { gap: var(--n2-space-3); }`, `.nav-icon { flex: 0 0 auto; }`, hover/active transform transitions on `.nav-icon`, plus generic `.icon-spin` / `.icon-pop` helper classes + keyframes for later packages. Did not duplicate the existing `prefers-reduced-motion` block.
+-- **Tests:** `npx tsc --noEmit` → 0 errors. `npm run build` → succeeds (vite build, 2529 modules, no warnings). Both run standalone and together, clean.
+-- **Deviation:** package's `ComponentType<{...}>` sketch for the NAV tuple's icon slot didn't structurally typecheck against Lucide's `ForwardRefExoticComponent` (propTypes variance on `size`); used the real `LucideIcon` type instead, re-exported from `icons.ts` so `App.tsx` still never imports from `lucide-react` directly. No other deviation from scope.
+-- **Still broken:** nothing. Manual `npm run dev` visual check at 3 breakpoints not performed (no browser in this environment) — reviewer/human should eyeball desktop/≤1180px/≤760px per acceptance criteria.
+-- **Next:** ready for review; unblocks `PKG-20260708-global-search`, `PKG-20260708-mobile-nav`, `PKG-20260708-card-affordances` (all depend on 1).
+-
+-#### 2026-07-08 · developer · `PKG-20260708-timeline-zoom`
+-
+-- **Changed:**
+-  - `src/store/selectors.ts` — added pure selector `conflictDatesForTask(state, taskId): DateStr[]` (dates where an assignee on THIS task exceeds their capacity; sorted, deduped).
+-  - `src/pages/TimelinePage.tsx` — replaced module consts `DAY_W`/`WEEKS` with page state `dayW` (14/26/40) + `weeks` (2/6/10/26); threaded `dayW` into `Bar`, `MilestoneMark`, `DayStripes` and all left/width/drag-snap math. Added header zoom buttons (`ZoomOut`/`ZoomIn` from `icons.ts`, `aria-label` Pomniejsz/Powiększ, disabled at ends). Added `.cal-toolbar`: week-range preset toggle (`.cal-view-toggle`/`.toggle-btn`), `PersonFilter` owner chips, and a client `<select>` (`aria-label="Filtruj po kliencie"`). Owner+client filtering done in a memoized `view` (keyed on ownerKey + tasks/assignments/workload/people) that also precomputes per-task conflict day offsets (relative to task start → range/drag independent). Task bars render `.timeline-conflict` danger ticks; bar `title` gains `⚠ konflikty: N dni`.
+-  - `src/styles.css` — appended `/* ---------- Timeline controls ---------- */`: `.timeline-zoom` button group + disabled state, `.timeline-conflict` tick (4px, `var(--n2-danger)`, `pointer-events: none`, full bar height).
+-- **Tests:** `npx tsc --noEmit` → 0 errors; `npm run build` → success (2529 modules, no warnings).
+-- **Deviations:** none material. Notes: conflict offsets computed as `diffDays(task.start, d)` instead of `(dayIdx(d) - taskStartIdx)` — algebraically identical but range-independent so the memo survives navigation/drag. Ticks span full bar height (bar has `overflow:hidden`, so out-of-range ticks are clipped naturally). When active filters hide every group, the timeline shows just the header row (no dedicated "nothing matches" empty state — not in package scope).
+-- **Still broken:** nothing. Manual browser walkthrough (checklist item 7 + conflict tick on sample over-capacity day) not executed — no browser in this environment; reviewer/human should eyeball zoom alignment + drag-by-N-columns at each zoom, preset ranges, filter composition, and the conflict tick.
+-- **Next:** ready for review.
+-
+-#### 2026-07-08 · developer · `PKG-20260708-save-states`
++  - `src/utils/time.ts` (NEW) — pure time math: constants, snap/clamp/format,
++    `rangesOverlap`/`hasCollision`, `stackStartTimes`, `nextFreeStart`,
++    `packDayBlocks`; no React/date-fns/state imports.
++  - `src/types.ts` — `WorkloadEntry.startMinutes: number` (required) + invariant comment.
++  - `src/store/storage.ts` — `DATA_VERSION = 4`; `ensureStartMinutes(data)` normalize
++    pass wired into every `loadData` path (v1 + v<4 + valid); migrateV1 emits sentinel
++    `startMinutes: -1` for restacking.
++  - `src/store/seed.ts` — `addWork` stacks `startMinutes` from 08:00 per person/day
++    via `nextFreeStart` (Marek Wed = 8:00–14:00 then 14:00–18:00).
++  - `src/store/AppStore.tsx` — `reindexDays` sorts by `(startMinutes, sortIndex)`;
++    `saveTask` keeps kept cells' start/sortIndex + appends new cells; `insertBlock`
++    is now a ripple insert (ref start/end + forward sweep, reindex); `reassignEntry`
++    appends to target day end; new `SET_BLOCK_TIME` action + handler (validation,
++    collision reject, 92-day period extend, activity).
++  - `src/store/selectors.ts` — `blockEnd(entry)`, `blockCollides(...)`; `blocksForPersonDate`
++    still sorted by sortIndex (now == time order).
++  - Step attrs → 0.25: `AllocationGrid` cell input, `WeekView` insert-form (`min`+`step`),
++    `TaskModal` estimate input. (Capacity inputs in People pages left at 0.5 — not in
++    package's file list, capacity is a distinct concept.)
++- **Tests:** `npx tsc --noEmit` → No errors; `npm run build` → built OK, no new warnings.
++  (Unit tests are PKG-20260708-time-tests.)
++- **Still broken:** nothing.
++- **Next:** ready for `PKG-20260708-week-timed-ui` (developer) + `PKG-20260708-time-tests`
++  (test-writer); then reviewer.
++
++#### 2026-07-08 · test-writer · `PKG-20260708-time-tests`
+ 
+ - **Changed:**
+-  - `src/utils/useSaveStatus.ts` (new) — `useSaveStatus(dirty)` hook: returns `{ status, markSaved }`. Rest state is `dirty ? 'dirty' : 'clean'`; `markSaved()` overlays a transient `saving` (350 ms) → `saved` (2000 ms) → clear. Timers cleaned on unmount. Also registers a `beforeunload` prompt whenever `dirty`. Exports `SaveState` type.
+-  - `src/components/SaveStatus.tsx` (new) — presentational badge; renders nothing for `clean`; `dirty` → `Niezapisane zmiany` (`AlertTriangle`, warning tone), `saving` → `Zapisywanie…`, `saved` → `Zapisano` (`Check`, success tone). Icons from `src/components/icons.ts`. Classes `save-status save-status--{dirty,saving,saved}`.
+-  - `src/components/TaskModal.tsx` — `TaskModalShell` now owns dirty state (ref + state) reported up from `TaskEditor` via new `onDirtyChange` prop; `requestClose()` runs `window.confirm('Masz niezapisane zmiany. Zamknąć bez zapisywania?')` when dirty and is wired to all close paths (Escape, scrim/viewport click, ✕, and `TaskEditor`'s Anuluj via `onCancel`). Renders `<SaveStatus>` in the modal head (hidden on not-found). `useSaveStatus` lives in the shell (drives badge + beforeunload). `TaskEditor` computes `dirty` by comparing a stable `serializeDraft(...)` (assigneeIds sorted; allocations filtered `>0` then sorted) against a first-render snapshot ref; `handleSave` rebases the snapshot, clears dirty, calls `markSaved()` then `onSaved()` (no confirm on save).
+-  - `src/pages/ProjectDetailPage.tsx` — `dirty` computation hoisted above the mid-delete early return so `useSaveStatus(dirty)` can be called unconditionally; `save()` now calls `markSaved()`. `<SaveStatus>` shown in `page-head-actions`. "Wróć" converted from `<Link>` to a `<button>` that confirms (`'Masz niezapisane zmiany. Opuścić bez zapisywania?'`) when dirty then `navigate('/projects')`. Save-button row now renders when `dirty || status !== 'clean'` (button disabled when `!dirty`) so the transient badge has a home.
+-  - `src/styles.css` — appended `/* ---------- Save status ---------- */`: pill badge, mono font, per-tone colors from `--n2-warning(-soft)` / `--n2-success(-soft)` and a neutral saving tone.
+-- **Tests:** `npx tsc --noEmit` → 0 errors; `npm run build` → success (2531 modules, no warnings).
+-- **Deviations:** (1) Saved badge shows `Zapisano` + `Check` icon rather than the literal `Zapisano ✓` — the package's Depends note says to use the `Check`/`AlertTriangle` icons now that icons-foundation landed. (2) In TaskModal the modal closes on save, so `saving/saved` feedback is effectively instantaneous there (spec-acknowledged); `markSaved()` is still called per spec. `dirty` state remains only briefly and is torn down on unmount.
+-- **Still broken:** nothing. Accepted gap (per architect decision): sidebar/global nav away from a dirty ProjectDetailPage is NOT blocked — only "Wróć", modal close paths, and `beforeunload` are guarded. Manual browser walkthrough (checklist 3/4/12 + confirm dialogs + native reload prompt) not executed — no browser here; reviewer/human should eyeball.
+-- **Next:** ready for review.
+-
+-#### 2026-07-08 · developer · `PKG-20260708-workload-resolution`
++  - `package.json` — added devDependency `vitest@^4.1.10`; new script `"test": "vitest run"` (existing scripts untouched).
++  - `package-lock.json` — updated by `npm install --save-dev vitest`.
++  - `vitest.config.ts` (NEW) — `test: { environment: 'node', include: ['src/**/*.test.ts'] }`, no `globals`.
++  - `src/utils/time.test.ts` (NEW) — 17 tests covering `snapToStep`, `formatMinutes`, `rangesOverlap`, `hasCollision` (incl. `excludeId`), `stackStartTimes` (incl. 24:00-clamp quirk), `nextFreeStart` (empty day / snap-up / end-clamp), `packDayBlocks` (empty / non-overlap / overlap-cols / transitive chain).
++  - `src/store/blockActions.test.ts` (NEW) — 15 tests against `reducer` from `src/store/AppStore.tsx`: `SET_BLOCK_TIME` happy-path same-day move (sortIndex re-rank + 1 activity row), cross-day move (date update, contiguous sortIndex both days, task period extends), 5 rejection cases (same-person overlap, off-grid start, non-0.25 hours, past-24:00, unknown entryId — all assert `toBe(state)` reference equality), cross-person non-collision; `INSERT_BLOCK` przed/po placement + ref push, large-gap block untouched, other person's entry untouched (`toEqual` unchanged), auto-assign on insert.
++- **Tests:** `npm test` → 2 files, **32/32 passed**. `npx tsc --noEmit` → no errors. `npm run build` → succeeds (492KB bundle, unchanged shape).
++- **Core-package gaps found:** none — every exported name in `src/utils/time.ts` and both reducer actions matched the package's described signatures/behavior on first read; no app source files were touched.
++- **Deviations/notes:** none from spec. One authoring mistake caught by the test run itself (an initial "happy path" fixture used a non-15-min-grid `startMinutes`, which the reducer correctly rejected) — fixed the fixture, not the assertion.
++- **Still broken:** nothing.
++- **Next:** ready for Codex review / reviewer, once `PKG-20260708-week-timed-ui` also lands.
++
++#### 2026-07-08 · developer · `PKG-20260708-week-timed-ui`
+ 
+ - **Changed:**
+-  - `src/store/AppStore.tsx` — added action `{ type: 'REASSIGN_ENTRY'; entryId; toPersonId }` + handler `reassignEntry`. No-op when the entry/target is missing or `toPersonId === entry.personId`. Moves the single `WorkloadEntry` to the target (same `date`/`plannedHours`), computing its `sortIndex` = `nextSortIndex` against the workload WITHOUT the moved entry, then `reindexDays` over both affected day keys (source and target `person|date`). Ensures a `TaskAssignment` exists for (task, target) — creates if missing, never removes the source's. Activity on the task: `przeniósł/przeniosła blok {h}h ({date}) z {from} na {to}` via `withActivity`.
+-  - `src/pages/WorkloadPage.tsx` — added `selected: {personId,date}|null` page state. Non-empty day cells are now `role="button"`, focusable, `cursor:pointer`, `aria-expanded`, Enter/Space + click toggle selection (empty cells stay inert). Renders a `workload-detail-row` `<tr colSpan={days.length+4}>` under the selected person: danger-aware header `„{name} — {label}: {X}h / {cap}h”` (X = `hoursForPersonOnDate`, all blocks ignoring filters) + ✕ close, an optional hint `Wszystkie bloki tego dnia, niezależnie od filtrów.` when a client/service filter is active, then one `BlockRow` per block from `blocksForPersonDate` (sortIndex order): task title, project · client, `{h}h`, a person `<select>` (all people except the row's, label `{name} — {cur}h/{cap}h tego dnia` + `⚠` when the move would exceed target capacity) → `Przenieś` (dispatch `REASSIGN_ENTRY`), `Otwórz zadanie` (`openTask`), and `Przesuń całe zadanie: −1/+1 dzień` (dispatch `MOVE_TASK`). A `useEffect` closes the selection when the day becomes empty. Panel derives from store state so it reflects every dispatch immediately.
+-  - `src/styles.css` — appended `/* ---------- Workload resolution ---------- */`: clickable/selected cell affordances, detail-row surface (`--n2-surface-muted`), `.wr-panel/.wr-head/.wr-title(.over → --n2-danger)/.wr-close/.wr-hint/.wr-blocks/.wr-block/...`, plus a `.btn.ghost.small` helper.
+-- **Tests:** `npx tsc --noEmit && npm run build` → both green (2531 modules, no warnings).
+-- **Deviations:** none. Used icons `ArrowRightLeft`, `ChevronLeft`, `ChevronRight`, `X` from `src/components/icons.ts` (no direct lucide import). Reused existing `fmtHours`.
+-- **Still broken:** nothing. Manual browser walkthrough (seed's over-capacity day → reassign a block → ⚠ clears; checklist item 9; reload persistence; Aktywność tab entry) not executed — no browser here; reviewer/human should eyeball.
+-- **Next:** ready for review.
+-
+-#### 2026-07-08 · developer · `PKG-20260708-global-search`
+-
+-- **Changed:**
+-  - `src/store/selectors.ts` — added `SearchResults` interface + pure `searchAll(state, query, limitPerGroup = 8)`. Module-local `normalize()` (NFD strip combining marks U+0300–U+036F + explicit `ł/Ł → l` + lowercase). Substring match on project name/description, task title/description, client name, person name/email/role; plus status coverage (query matching a status name pulls in its projects/tasks) and date coverage (query matching `^\d{4}-\d{2}-\d{2}$` pulls in projects/tasks whose `startDate <= q <= endDate`). Empty/whitespace → empty groups; each group `slice(0, limit)`.
+-  - `src/components/GlobalSearch.tsx` (new) — single app-level component rendering (a) the sidebar `.search-trigger` button (Search icon + `Szukaj…` + `Ctrl K` kbd) and (b) an `AnimatePresence` overlay palette. Global keydown: Ctrl/Cmd+K toggles (preventDefault), `/` opens when not focused in input/textarea/select/contentEditable and not already open. Overlay = scrim + centered glass panel, autofocused input, body scroll lock, Escape/scrim-click close. Results flattened once into `FlatItem[]` (projects→tasks→clients→people) for ↑/↓ wraparound highlight; Enter activates, mouse hover sets highlight; `role=listbox/option` + `aria-activedescendant`. Groups headed `Projekty/Zadania/Klienci/Zespół`. Activation: project→`/projects/:id`, task→`openTask(id)` (TaskModal in place), person→`/people/:id`, client→`/projects?client=:id`; always closes.
+-  - `src/App.tsx` — imported `GlobalSearch`, mounted once in the sidebar directly under `.app-brand`.
+-  - `src/pages/ProjectsPage.tsx` — `clientFilter` now initialized from the `?client=` search param via `useSearchParams` (read once as a `useState` initializer).
+-  - `src/styles.css` — appended `/* ---------- Global search ---------- */`: `.search-trigger` pill, `.gs-scrim` (z-index 990) / `.gs-viewport` (991, just under TaskModal's 1000/1001), `.gs-panel` glass (`--n2-surface-strong`), input row, grouped `.gs-row` list with `.active` highlight (`--n2-border-strong`), meta + chevron.
+-- **Tests:** `npx tsc --noEmit` → 0 errors; `npm run build` → success (2532 modules, no warnings).
+-- **Deviations:** none material. Mounted `GlobalSearch` inside the sidebar (not literally adjacent to `<TaskModal />`) so the trigger button lands "under the brand" as specified — the overlay is `position: fixed` so DOM location is irrelevant, and it remains a single app-level instance with component-local state (no reducer/state changes). Client project count uses a simple 1-vs-many Polish form (`projekt`/`projektów`).
+-- **Still broken:** nothing. Manual browser walkthrough (Ctrl+K/Cmd+K + `/` open, toggle-close, `redesign`/`kasia`/`gotowe`/date/`zolty`-diacritic queries, Enter-opens-TaskModal, `?client=` pre-filter, no interference with `/` in form fields) not executed — no browser here; reviewer/human should eyeball per acceptance criteria.
+-- **Next:** ready for review; unblocks `PKG-20260708-mobile-nav` (depends 1, 5).
+-
+-#### 2026-07-08 · developer · `PKG-20260708-saved-filters`
+-
+-- **Changed:**
+-  - `src/types.ts` — added `FilterPage`, `SavedFilterCriteria`, `SavedFilter`; added `savedFilters: SavedFilter[]` to `AppData`.
+-  - `src/store/storage.ts` — `emptyData()` now seeds `savedFilters: []`. No `DATA_VERSION` bump (stays 3); `loadData`'s `{ ...emptyData(), ...parsed }` default-fills old payloads. `migrateV1` inherits it via `{ ...base }`.
+-  - `src/store/seed.ts` — sample data literal gets `savedFilters: []`.
+-  - `src/store/AppStore.tsx` — imported `FilterPage`/`SavedFilterCriteria`; added actions `SAVE_FILTER_PRESET` (trims name, no-op when empty; overwrites the preset with the same `(page, trimmed-name)` else appends) and `DELETE_FILTER_PRESET`. No activity logging (presets aren't entity events).
+-  - `src/components/FilterPresets.tsx` (new) — shared preset UI. Props `page`, current `criteria`, `onApply`. Renders `.preset-chip`s for `state.savedFilters` of that page (apply on click; ✕ = `DELETE_FILTER_PRESET` behind `window.confirm('Usunąć zapisany filtr „{name}”?')`); `Zapisz filtr` button (disabled unless a criterion is non-default via exported `isCriteriaActive`) → inline name input (Enter confirms, Esc cancels) → `SAVE_FILTER_PRESET`. Exports `DEFAULT_CRITERIA`, `isCriteriaActive`. Icons from `src/components/icons.ts` (`Bookmark`, `Check`, `X`).
+-  - `src/pages/TasksPage.tsx` — new `.cal-toolbar` filter row: client / status (active) / assignee selects + `Od`/`Do` date inputs (`aria-label` per spec). Client match via `getProject(...).clientId`; assignee via `assigneeIdsOfTask`; date = period-overlap (`endDate >= from && startDate <= to`, unbounded when empty). Filters compose (AND) in a `useMemo`. `Wyczyść filtry` ghost button shown when any filter active; count `{n} z {total} zadań`; `FilterPresets` mounted; separate "Brak pasujących zadań" empty state vs the original "no tasks at all" state.
+-  - `src/pages/ProjectsPage.tsx` — added `Od`/`Do` date inputs to the existing toolbar (overlap on project period) and `FilterPresets`; existing paid/client/status filters untouched. `applyPreset` maps criteria → all five setters (incl. `paid`).
+-  - `src/styles.css` — appended `/* ---------- Filter presets ---------- */`: `.filter-controls`, `.filter-count`, `.btn.small`/`.btn.primary.small`, `.filter-presets`, `.preset-chip`(+`-apply`/`-del`), `.preset-save-form`, disabled save-btn.
+-- **Tests:** `npx tsc --noEmit` → 0 errors; `npm run build` → success (2533 modules, no warnings).
+-- **Deviations:** (1) Added a "Brak pasujących zadań" empty state on TasksPage (not spelled out) so an all-filtered-out list isn't blank. (2) ProjectsPage has no `Wyczyść filtry` button — the package only specified it for TasksPage; paid toggle + selects + date inputs reset individually and presets/`applyPreset` cover restore. No other deviations; `paid` stays `'all'` on task presets and `personId` `''` on project presets, both ignored on apply.
+-- **Still broken:** nothing. Manual browser walkthrough (create/apply/delete presets on both pages, reload persistence = checklist 13, legacy-payload load with `savedFilters` deleted from stored JSON, cross-page isolation, AND-composition) not executed — no browser here; reviewer/human should eyeball per acceptance criteria.
+-- **Next:** ready for review.
+-
+-#### 2026-07-08 · developer · `PKG-20260708-mobile-nav`
+-
+-- **Changed:**
+-  - `src/App.tsx` — added `menuOpen` state + `hamburgerRef`/`drawerRef`. New `.app-topbar` (brand + `.app-hamburger` toggle button: `aria-label` Otwórz/Zamknij menu, `aria-expanded`, `aria-controls="app-drawer"`, `Menu`/`X` icon swap). Existing `<aside>` becomes `id="app-drawer"` with an `open` class from state; a conditionally-rendered `.app-drawer-scrim` (click closes) sits behind it. Effects: close drawer on `location.pathname` change; while open lock body scroll + focus first nav link + Escape-to-close (cleanup restores overflow, TaskModal pattern); return focus to the hamburger on close-from-open. Nav links also `setMenuOpen(false)` on click. Imports `Menu`/`X` from `./components/icons`.
+-  - `src/styles.css` — in the existing `@media (max-width: 760px)` block, replaced the horizontal-scroll `.app-nav` rules with a vertical stack (`grid-template-columns: 1fr`; nav-link `justify-content: flex-start`). Appended `/* ---------- Mobile nav ---------- */`: `.app-topbar`/`.app-drawer-scrim` hidden by default, `.app-hamburger` button style; inside a new `≤760px` block the top bar shows (sticky, z-index 903), the sidebar becomes `position: fixed; inset: 0 auto 0 0; width: min(300px, 84vw)` off-canvas (`translateX(-102%)` → `.open` `transform: none`, `transition: transform 220ms ease`, z 901), the drawer's duplicate `.app-brand` is hidden, `.acting-as` restored to a vertical column, and `.app-drawer-scrim` shown (fixed, z 900).
+-- **Tests:** `npx tsc --noEmit` → 0 errors; `npm run build` → success (2533 modules, no warnings).
+-- **Deviations:** (1) hamburger `aria-label` is dynamic (`Otwórz menu`/`Zamknij menu`) rather than the literal static `Otwórz menu` in the package — genuine a11y improvement, still paired with `aria-expanded`. (2) Made the hamburger a real toggle (tap X closes) and layered the top bar above the drawer/scrim (z 903) so the X stays tappable, in addition to the spec'd scrim/Escape/link close paths. Z-index chosen below GlobalSearch (990/991) and TaskModal (1000/1001) per the layering note; scrim 900 < drawer 901 < topbar 903.
+-- **Still broken:** nothing. Manual device-emulation walkthrough at 375/760/1180/1440 px (drawer slide, scrim/Escape/link close, focus order, `prefers-reduced-motion` = no slide via the global rule, 761–1180 & >1180 unchanged) not executed — no browser here; reviewer/human should eyeball per acceptance criteria.
+-- **Next:** ready for review; unblocks `PKG-20260708-card-affordances` (depends 1, 6).
+-
+-#### 2026-07-08 · test-writer · `PKG-20260708-card-affordances`
+-
+-- **Changed:**
+-  - `src/pages/ProjectsPage.tsx` — added `<ChevronRight className="card-chevron" .../>` inside `.task-card-main`; added a `.card-actions` sibling with two `.card-action-btn`s (`GanttChart` → `navigate('/timeline')`, `Plus` → `openNewTask(p.id)` via `useOpenTask`), both `e.stopPropagation()`.
+-  - `src/pages/TasksPage.tsx` — added the chevron inside `.task-card-main`; moved the existing `Usuń` button out of the flex row and into a new `.card-actions` sibling (same reveal-on-hover pattern as the project cards; no `stopPropagation` needed since it was already a sibling of the main button, not nested).
+-  - `src/pages/ProjectDetailPage.tsx` — added the chevron inside `.project-task-main` (task rows). No quick actions (out of scope for this surface).
+-  - `src/pages/DashboardPage.tsx` — added the chevron to all four `.dash-row` buttons (overdue/upcoming deadlines, milestones, unpaid, overloads). No JS a11y fix was needed — the actual code already renders `dash-row` as native `<button>` elements (not `<li onClick>` as the package's context section assumed), so Enter/Space already worked; noted as a discovered fact, not a deviation requiring a decision.
+-  - `src/pages/PeoplePage.tsx` — added the chevron as a plain sibling inside `.person-row` (between the `person-row-main` Link and `person-row-hours`), not absolutely pinned to the link's own box — `.person-row-main` has no `flex:1` and the row already has `person-row-hours` + a delete button after it, so pinning the chevron to the link's own right edge (or the row's true right edge, which the delete button occupies) would either sit awkwardly close to the name or collide with delete. In-flow placement was the lower-risk choice; noted below as a minor design adaptation.
+-  - `src/styles.css` — appended `/* ---------- Card affordances ---------- */` after the Mobile nav section: shared hover/focus recipe (border → `--n2-border-strong`, background → `--n2-glass-strong`, `translateY(-1px)`, `var(--n2-transition)`) on `.task-card` / `.project-task-row` / `.person-row` / `.dash-row` (extends, doesn't replace, each surface's pre-existing hover rule — same-specificity selectors placed later in the cascade win); `.card-chevron` (color `--n2-text-faint` → `--n2-lavender` + `translateX(3px)` on hover/`:focus-within` (or `:focus-visible` for the button-only `.dash-row`)), absolutely pinned for the three full-button surfaces (`.task-card-main`, `.project-task-main`, `.dash-row`, each given `position:relative` + extra `padding-right`) and in-flow for `.person-row`; `.card-actions`/`.card-action-btn` (opacity 0→1 on hover/`:focus-within`, `pointer-events` toggled to match) plus a `@media (max-width: 760px)` override forcing them always-visible for touch.
+-- **Tests:** `npx tsc --noEmit` → 0 errors. `npm run build` → success (2533 modules, no warnings, `dist/assets/index-*.css` 51.20 kB gz 9.47 kB). No automated browser check available in this environment (no Playwright/Puppeteer installed) — reviewer/human should eyeball hover + `:focus-within` reveal + chevron slide + ≤760px always-visible actions on all five surfaces per the manual test note.
+-- **Deviations:**
+-  1. Dashboard's keyboard-accessibility fix (role="button"/tabIndex/Enter-Space handling) was not needed — the rows are already native `<button>` elements in the current code, contrary to the package's `<li onClick>` assumption. No code change made for this beyond adding the chevron.
+-  2. People-page chevron placed in normal flex flow next to `person-row-hours` rather than absolutely pinned to `a.person-row-main`'s own right edge, because that Link has no `flex:1` (its box ends right after the name text) and the row's true right edge is owned by the delete button — pinning there would either crowd the name or overlap delete. Hover/`:focus-within` slide behavior is identical either way.
+-  3. TasksPage's `Usuń` button was moved from an always-visible flex sibling into the same `.card-actions` reveal container used for ProjectsPage's quick actions, per the package's explicit instruction ("moves into/aligns with the `.card-actions` reveal pattern") — this does change TasksPage's at-rest layout (task-card-main now spans the full row width instead of sharing it with a fixed-width delete button), which is the one exception to "layout at rest is unchanged" the package itself calls for.
+-- **Still broken:** nothing found. Not independently verified: exact pixel spacing of chevron/quick-action offsets (40px/32px/26px paddings, `card-actions` `right: 40px`) — chosen to avoid overlap by inspection of the CSS box model, not screenshot-verified.
+-- **Next:** ready for review.
++  - `src/components/WeekView.tsx` — full rewrite of the grid + interactions. New
++    `.week-cal` layout: sticky day headers (totals + ⚠ overload names kept), a
++    52px left hour axis (0:00–23:00 labels), 7 day columns (1152px = 24×48px)
++    inside a `max-height:70vh` scroll wrapper that auto-scrolls to 07:00 on mount.
++    New `TimedBlock` component (pointer-capture drag, TimelinePage `Bar` pattern):
++    move (vertical→time 15-min snap, horizontal→day column via grid rect),
++    top-edge resize (start moves, end fixed), bottom-edge resize (hours only);
++    live `blockCollides` check adds `.colliding` danger tint; drop dispatches ONE
++    `SET_BLOCK_TIME`, reverts on collision, treats no-move as a click (opens task).
++    Escape / `onPointerCancel` cancel the drag. Blocks pack side-by-side via
++    `packDayBlocks`; show coin + title + `H:mm–H:mm` range + person dot/name/hours.
++    Context menu (Dodaj przed/po, overload warning, INSERT_BLOCK) preserved
++    verbatim; drag guarded to primary button so right-click still opens the menu.
++  - `src/styles.css` — replaced the `.week-*` section (grid template
++    `52px repeat(7,1fr)`, sticky headers, hour+half-hour lines via
++    repeating-linear-gradient, absolute-positioned blocks, `.dragging`/`.colliding`,
++    6px `ns-resize` handle strips, `touch-action:none`). 760px media query now
++    horizontal-scrolls the grid (min-width 720px) instead of collapsing to 1 col.
++  - `src/pages/CalendarPage.tsx` — unchanged (confirmed: `Props { state, anchor,
++    filter }` kept identical).
++- **Tests:** `npx tsc --noEmit` → No errors; `npm run build` → built OK (492KB
++  JS / 52.6KB CSS, no new warnings). package.json NOT touched.
++- **Could not verify without a browser:** the interactive acceptance items
++  (drag/resize persistence + reload, side-by-side render on cross-person overlap,
++  collision revert, scroll-to-7 on mount, overload ⚠ on resize). Logic follows the
++  package decisions and the store/selectors are the source of truth for all drops.
++- **Deviations:** blocks are now `div[role=button]` (was `<button>`) because the
++  two resize handles are nested interactive elements — a button can't contain them.
++- **Known gap (per package):** no keyboard-drag a11y — blocks stay
++  click-to-open / Enter-to-open only.
++- **Still broken:** nothing.
++- **Next:** ready for Codex review / reviewer.
+ 
+ ### Reviewer verdict
+ 
+-- **Recorded:** 2026-07-08 · reviewer (Fable) — own structural read of the full uncommitted diff + adjudication of the Codex review (`reviews/2026-07-08-015628-codex-review.md`). Verified myself: `npx tsc --noEmit` → 0 errors; `npm run build` → success (2533 modules, no warnings).
+-- **Status:** changes-required (3 small, well-localized fixes; everything else is sound)
+-
+-#### Blockers (must fix before commit)
+-
+-1. **[save-states] Project save leaves the form permanently dirty** — `src/pages/ProjectDetailPage.tsx:99-123` (Codex P2 #2, confirmed). `save()` dispatches trimmed `name`/`description` but local state keeps the untrimmed values, so saving `"Foo "` leaves `dirty === true` forever: after the 2.35 s saving/saved transient the badge falls back to `Niezapisane zmiany`, `beforeunload` stays armed, and "Wróć" prompts after a successful save. Fix: `setName(trimmed); setDescription(description.trim());` inside `save()` (or compute `dirty` against trimmed values).
+-2. **[global-search] Ctrl+K / `/` hotkeys fire while TaskModal is open, opening an invisible palette below it** — `src/components/GlobalSearch.tsx:45-66` + z-index layering (`.gs-viewport` 991 < `.task-modal-viewport` 1001 in `src/styles.css:2603/2191`). The palette renders under the modal (invisible, unclickable) but its input autofocuses and receives keystrokes; **Enter then navigates and silently unmounts a dirty TaskModal, bypassing the dirty guard** (this is the one concrete TaskModal bypass from Codex P2 #1); Escape in the palette input `preventDefault()`s but does not `stopPropagation()`, so the same keypress also hits TaskModalShell's window keydown → double close/confirm. Fix: suppress both hotkeys (early-return in `onKey`) while `?task=` is present (`useSearchParams`), and add `e.stopPropagation()` to the palette's Escape branch (also stops the mobile drawer's window Escape listener from double-firing).
+-3. **[global-search] `?client=` deep link desyncs when already on /projects** — `src/pages/ProjectsPage.tsx:83` (Codex P2 #3, confirmed). The param is read only in the `useState` initializer, so picking a client from GlobalSearch while on `/projects` (or back/forward between filter URLs) updates the URL but not the visible filter. Fix: sync via `useEffect` keyed on `searchParams.get('client')`. Note: the worker followed the package's literal wording ("read once as useState initializer") — spec gap, not worker error.
+-
+-#### Codex findings — adjudication
+-
+-- **P2 #1 (dirty guards bypassed by SPA navigation): partially confirmed.** Sidebar-click bypass of a dirty **TaskModal does NOT exist** — `.task-modal-viewport` (z 1001, `inset: 0`) covers the sidebar, so those clicks hit the guarded `requestClose`. Real TaskModal vectors: (a) the GlobalSearch keyboard flow → **blocker 2**; (b) browser Back/Forward (popstate unmounts without confirm) — unfixable without a data-router migration, out of scope per the architect → **accepted gap**. ProjectDetailPage sidebar/global-search/Back navigation = the architect's pre-accepted gap → dismissed as designed; this note extends the accepted gap to name GlobalSearch navigation and browser Back explicitly.
+-- **P2 #2: confirmed** → blocker 1.
+-- **P2 #3: confirmed** → blocker 3.
+-- **P3 #4 (TasksPage memo never memoizes): confirmed as a nit** — `src/pages/TasksPage.tsx:46-52`, `allTasks` is re-sorted every render and is a dep of the filtering `useMemo` (and `state` is a dep anyway). Wrap the sort in `useMemo(..., [state.tasks])`. Non-blocking (dataset is small). Routed-to: saved-filters, fold in with the blockers pass.
+-
+-#### Nits (non-blocking)
+-
+-- Polish plurals: timeline bar tooltip `⚠ konflikty: 1 dni` (`src/pages/TimelinePage.tsx` task-bar `title`) should decline dzień/dni; GlobalSearch client meta uses 1-vs-many so `2 projektów` should be `2 projekty` — a `polishCount` helper already exists in ProjectsPage.
+-- TasksPage `Usuń` now sits in an absolutely-positioned `.card-actions` (top 10px / right 40px) — it can overlap card meta text on reveal and is always visible ≤760px; needs the human visual pass.
+-- GlobalSearch Escape only closes the palette when focus is in the input (result-row buttons don't handle it).
+-- `.dash-row` gains a 1px transparent border (2px at-rest box change) — negligible.
+-
+-#### Convention check: PASS
+-
+-Reads via pure selectors (`conflictDatesForTask`, `searchAll` in selectors.ts); mutations only via reducer actions with activity appended in-action (`withActivity` in `REASSIGN_ENTRY`); persistence only through storage.ts (`savedFilters` default-filled by `loadData`'s `{ ...emptyData(), ...parsed }`, no DATA_VERSION bump, `migrateV1` inherits — verified); dates stay `'yyyy-MM-dd'` string comparisons; `reassignEntry` preserves sortIndex invariants (`nextSortIndex` against workload-without-entry + `reindexDays` over both day keys) and the entry→assignment invariant (creates, never removes); `src/components/icons.ts` is the sole lucide-react importer (grep-verified); no stray localStorage (grep-verified); only dependency added is lucide-react; nothing out of scope.
+-
+-#### Test coverage: gaps (by design)
+-
+-No automated tests exist in the repo (CLAUDE.md: verification = typecheck + build + manual walkthrough). tsc + build re-run green by the reviewer. Must-do human browser walkthrough after fixes: breakpoints 375/760/1180/1440 (topbar/drawer/focus); timeline zoom drag-by-N-columns at 14/26/40 + conflict tick on the seed's over-capacity day; TaskModal dirty-confirm on all close paths + beforeunload + save badge; workload cell → reassign → ⚠ clears + activity entry + reload persistence; search hotkeys (incl. verifying blocker-2 fix with a modal open); preset create/apply/delete/reload + legacy payload without `savedFilters`; card hover/focus reveal on all five surfaces (esp. TasksPage `Usuń` overlap); checklist items 3, 4, 7, 9, 11, 12, 13.
+-
+-- **Routing:** blockers 1 → save-states worker; 2, 3 (+ nit fixes if cheap) → global-search worker; Codex #4 nit → saved-filters worker. Re-review not required if fixes are limited to the named files/lines — architect final eval + human walkthrough suffice.
+-- **Recorded by:** reviewer
+-
+-### Fix round (orchestrator-consolidated)
+-
+-Fixes routed back to the original workers per the verdict; ran in parallel on
+-disjoint files, RUN-STATE writes consolidated here by the orchestrator.
+-
+-- **Blocker 1** · save-states worker · `src/pages/ProjectDetailPage.tsx` —
+-  `save()` now normalizes local state to the persisted values
+-  (`setName(trimmed)`, `setDescription(trimmedDescription)`); form clears to
+-  clean after saving whitespace-padded input. ✅
+-- **Blocker 2 (R-1)** · global-search worker · `src/components/GlobalSearch.tsx` —
+-  hotkey effect early-returns while `?task=` is present (palette can't open
+-  under TaskModal; a new effect also closes it if a modal opens over it);
+-  palette Escape adds `stopPropagation()` so it no longer double-fires
+-  TaskModalShell's / mobile drawer's window listeners. Plural nit fixed with a
+-  local `polishCount` (1 / 2–4-except-12–14 / 5+). ✅
+-- **Blocker 3** · global-search worker · `src/pages/ProjectsPage.tsx` —
+-  `useEffect` keyed on `searchParams.get('client')` syncs `clientFilter`
+-  whenever the param is present (GlobalSearch pick while on /projects and
+-  back/forward now update the visible filter; in-page filter use unaffected). ✅
+-- **Codex #4 nit** · saved-filters worker · `src/pages/TasksPage.tsx:48-58` —
+-  sort wrapped in its own `useMemo([state.tasks])`; filtering memo now
+-  actually memoizes. ✅
+-- **Timeline plural nit** · timeline worker · `src/pages/TimelinePage.tsx` —
+-  bar tooltip declines `1 dzień` / `N dni`. ✅
+-
+-**Final verification (orchestrator):** `npx tsc --noEmit` → 0 errors;
+-`npm run build` → success (no warnings). Remaining before commit: human
+-browser walkthrough (list in the reviewer verdict above); TasksPage `Usuń`
+-reveal-overlap eyeball. Accepted gaps unchanged (browser Back/Forward past a
+-dirty form; sidebar nav away from dirty ProjectDetailPage).
+-
+-**Status:** fixes applied, build green — awaiting human go-ahead to commit.
++<!-- Reviewer appends here after workers finish. -->
+diff --git a/package-lock.json b/package-lock.json
+index e9cae4a..3ea4342 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -20,7 +20,8 @@
+         "@types/react-dom": "^18.3.0",
+         "@vitejs/plugin-react": "^4.3.1",
+         "typescript": "^5.5.4",
+-        "vite": "^5.4.6"
++        "vite": "^5.4.6",
++        "vitest": "^4.1.10"
+       }
+     },
+     "node_modules/@babel/code-frame": {
+@@ -305,6 +306,40 @@
+         "node": ">=6.9.0"
+       }
+     },
++    "node_modules/@emnapi/core": {
++      "version": "1.11.1",
++      "resolved": "https://registry.npmjs.org/@emnapi/core/-/core-1.11.1.tgz",
++      "integrity": "sha512-RSvbQmHzdKzNsLYa/wHrbc3KN4sYLKAdPZxqiM2HATqv/SBk2/ENSHpvXGaLOMcsAyz0poEGqkmmKYG3OWiJEQ==",
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "dependencies": {
++        "@emnapi/wasi-threads": "1.2.2",
++        "tslib": "^2.4.0"
++      }
++    },
++    "node_modules/@emnapi/runtime": {
++      "version": "1.11.1",
++      "resolved": "https://registry.npmjs.org/@emnapi/runtime/-/runtime-1.11.1.tgz",
++      "integrity": "sha512-vgj7R3y3Wgx24IQaGPA/R6YFXLHVMOZ0uVEyIQPaWs+rd1AzfEMXlAC22FYwO1XkKR6NPsq7mUandH8oIRdZFw==",
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "dependencies": {
++        "tslib": "^2.4.0"
++      }
++    },
++    "node_modules/@emnapi/wasi-threads": {
++      "version": "1.2.2",
++      "resolved": "https://registry.npmjs.org/@emnapi/wasi-threads/-/wasi-threads-1.2.2.tgz",
++      "integrity": "sha512-c95qOXkHdydNKhscBTebqEC1CVAZpyqOfVfBzQ1qgzyl3gfeldUjIggDbIZgDKsHLgnsM+igH7TJ/eAasaVuMA==",
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "dependencies": {
++        "tslib": "^2.4.0"
++      }
++    },
+     "node_modules/@esbuild/aix-ppc64": {
+       "version": "0.21.5",
+       "resolved": "https://registry.npmjs.org/@esbuild/aix-ppc64/-/aix-ppc64-0.21.5.tgz",
+@@ -594,6 +629,24 @@
+         "node": ">=12"
+       }
+     },
++    "node_modules/@esbuild/netbsd-arm64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/netbsd-arm64/-/netbsd-arm64-0.28.1.tgz",
++      "integrity": "sha512-oks0DYbLwWMmaakTsCb+zL4E+aHRVLom9IJZOAthMQEPiQmydXHkziYEsGYRx0uNV/IjEKGAV941JzH02pflqw==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "netbsd"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
+     "node_modules/@esbuild/netbsd-x64": {
+       "version": "0.21.5",
+       "resolved": "https://registry.npmjs.org/@esbuild/netbsd-x64/-/netbsd-x64-0.21.5.tgz",
+@@ -611,6 +664,24 @@
+         "node": ">=12"
+       }
+     },
++    "node_modules/@esbuild/openbsd-arm64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/openbsd-arm64/-/openbsd-arm64-0.28.1.tgz",
++      "integrity": "sha512-MEFJe5C3R8pwXdZ5Y21oo6m7ePiS0d9pWucn99O/wvyJZChoIQKrQDxKrGeW8F5+T0okTHesAmDeiHDTIq0V/Q==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "openbsd"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
+     "node_modules/@esbuild/openbsd-x64": {
+       "version": "0.21.5",
+       "resolved": "https://registry.npmjs.org/@esbuild/openbsd-x64/-/openbsd-x64-0.21.5.tgz",
+@@ -628,6 +699,24 @@
+         "node": ">=12"
+       }
+     },
++    "node_modules/@esbuild/openharmony-arm64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/openharmony-arm64/-/openharmony-arm64-0.28.1.tgz",
++      "integrity": "sha512-ge+Z7EXFNt2BO1oAMsVpiQ8EwndV9i1xXerAeTIK7AtPs3bKFXQM7nlRxDSIUIMeueR1CNXxqztLzdNeReKBJg==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "openharmony"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
+     "node_modules/@esbuild/sunos-x64": {
+       "version": "0.21.5",
+       "resolved": "https://registry.npmjs.org/@esbuild/sunos-x64/-/sunos-x64-0.21.5.tgz",
+@@ -746,6 +835,35 @@
+         "@jridgewell/sourcemap-codec": "^1.4.14"
+       }
+     },
++    "node_modules/@napi-rs/wasm-runtime": {
++      "version": "1.1.6",
++      "resolved": "https://registry.npmjs.org/@napi-rs/wasm-runtime/-/wasm-runtime-1.1.6.tgz",
++      "integrity": "sha512-ZLv/JdUfkvOy9eCnnBaGfiO+XimbjebAeO+MRQqD/B+FR1tnRN0tpKSJHRbE8sFfS6aqsXZ67TQjfwfsxULVbg==",
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "dependencies": {
++        "@tybys/wasm-util": "^0.10.3"
++      },
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/Brooooooklyn"
++      },
++      "peerDependencies": {
++        "@emnapi/core": "^1.7.1",
++        "@emnapi/runtime": "^1.7.1"
++      }
++    },
++    "node_modules/@oxc-project/types": {
++      "version": "0.138.0",
++      "resolved": "https://registry.npmjs.org/@oxc-project/types/-/types-0.138.0.tgz",
++      "integrity": "sha512-1a7ZKmrRTCoN1XMZ4L0PyyqrMnrNlLyPuOkdSX2MZg7IiIGRUyurNhAm73ptDOraoBcIordsIGKNPKUzy3ZmfA==",
++      "dev": true,
++      "license": "MIT",
++      "funding": {
++        "url": "https://github.com/sponsors/Boshen"
++      }
++    },
+     "node_modules/@remix-run/router": {
+       "version": "1.23.3",
+       "resolved": "https://registry.npmjs.org/@remix-run/router/-/router-1.23.3.tgz",
+@@ -755,6 +873,263 @@
+         "node": ">=14.0.0"
+       }
+     },
++    "node_modules/@rolldown/binding-android-arm64": {
++      "version": "1.1.4",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-android-arm64/-/binding-android-arm64-1.1.4.tgz",
++      "integrity": "sha512-EZLpf/8y7GXkkra90ML47kzik/GMP3EMcE9bPyHmRfxLC6z9+aW5A8poCsoxjrT5GfEcNAAvWwUHjvP1pUQkfw==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "android"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-darwin-arm64": {
++      "version": "1.1.4",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-darwin-arm64/-/binding-darwin-arm64-1.1.4.tgz",
++      "integrity": "sha512-aUi+HBvmYb7j8krl1+qJgkG8C17fO79gk3c+jPw4S8glRFc1DTija9S3EyaTSQUm5GJXYKDAsugBEhFHH2vYiQ==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-darwin-x64": {
++      "version": "1.1.4",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-darwin-x64/-/binding-darwin-x64-1.1.4.tgz",
++      "integrity": "sha512-F7hHC3gwY11+vByKPRWqwGbeXWVgKmL+pTGCinaEhdihzBV2aQ0fvZOch9cXYUOKuKKq429HeYXOqQLc7wFCEg==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-freebsd-x64": {
++      "version": "1.1.4",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-freebsd-x64/-/binding-freebsd-x64-1.1.4.tgz",
++      "integrity": "sha512-sI5yw+7s92SK6odiEhD5lKCBlWcpjHS5qyqpVQbZAJ0fIzEUXrmbl3DH2ybR3PZogulNJF+COLtmA8hUfvkCCQ==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "freebsd"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-linux-arm-gnueabihf": {
++      "version": "1.1.4",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-linux-arm-gnueabihf/-/binding-linux-arm-gnueabihf-1.1.4.tgz",
++      "integrity": "sha512-mCi0OKgEieFircrtVYmQAFGszRtMnZ6fpZAXrxanXAu7lqZcsK1E1RAaZNG0uKAnxox3B1f4EyQNnoyMfN1vAA==",
++      "cpu": [
++        "arm"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-linux-arm64-gnu": {
++      "version": "1.1.4",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-linux-arm64-gnu/-/binding-linux-arm64-gnu-1.1.4.tgz",
++      "integrity": "sha512-B9Ial3Kv5sh0SHnB1g/QWcUQCEvCF6QKGAl4zXypYj65mVI+B4AhFBwPtSN7pDrJeIx8Z7zdy4ntx+wQABom7w==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-linux-arm64-musl": {
++      "version": "1.1.4",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-linux-arm64-musl/-/binding-linux-arm64-musl-1.1.4.tgz",
++      "integrity": "sha512-lZVym0PuHE1KZ22gmFTC15lAkrg9iTszR617oYRB/iPY1A56ywoJzVKOJBKaot5RiikCObmur6pogpse3gRcng==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-linux-ppc64-gnu": {
++      "version": "1.1.4",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-linux-ppc64-gnu/-/binding-linux-ppc64-gnu-1.1.4.tgz",
++      "integrity": "sha512-t2DNiLJWNTbnEHyUzTumldML6ET4/g16467LZoDDJ3tSxGvguL5/NyC2lCsNKuyRycg9XeDQF5SSv+TNOhQEXg==",
++      "cpu": [
++        "ppc64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-linux-s390x-gnu": {
++      "version": "1.1.4",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-linux-s390x-gnu/-/binding-linux-s390x-gnu-1.1.4.tgz",
++      "integrity": "sha512-0WIRnL1Uw4BvTZRLQt+PVgo6ZKTJadlC2btP+/EOXv2f/DWbY0rEgl+y834mIVwP1FkTlWVTrGGJXf12lru7EQ==",
++      "cpu": [
++        "s390x"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-linux-x64-gnu": {
++      "version": "1.1.4",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-linux-x64-gnu/-/binding-linux-x64-gnu-1.1.4.tgz",
++      "integrity": "sha512-JWtGshGfX+oENAKonoNkqEJX+7hC8yfhi9GUyPX1VX4mdh1y5r+ZiJLR5XzAB0aoP6s/PcILsGjKq8O0mm24bw==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-linux-x64-musl": {
++      "version": "1.1.4",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-linux-x64-musl/-/binding-linux-x64-musl-1.1.4.tgz",
++      "integrity": "sha512-rT6yQcxUuXs4CnbofqwHRRV0iem349rLMYpTjkgQGLjrY4ado/eDzwPZPTCgTOlF6Nkp8NEv70yLMTn6qkWxsQ==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-openharmony-arm64": {
++      "version": "1.1.4",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-openharmony-arm64/-/binding-openharmony-arm64-1.1.4.tgz",
++      "integrity": "sha512-KXMGoboq5cyaCQjDA4GLuRiOwBQ0EyFnJoVViLeZ45/3rFItRODEr+NdsBcVpll40hhNArlm/speWGRvj08LzA==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "openharmony"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-wasm32-wasi": {
++      "version": "1.1.4",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-wasm32-wasi/-/binding-wasm32-wasi-1.1.4.tgz",
++      "integrity": "sha512-5K83rb36oJiY7BCyE9zLZtGcPV4g5wvq+xwdO0XPIwDVZI8cyB/AUjkNXGb92/rnmezEkjMOpgY61rtwjQtFwg==",
++      "cpu": [
++        "wasm32"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "dependencies": {
++        "@emnapi/core": "1.11.1",
++        "@emnapi/runtime": "1.11.1",
++        "@napi-rs/wasm-runtime": "^1.1.6"
++      },
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-win32-arm64-msvc": {
++      "version": "1.1.4",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-win32-arm64-msvc/-/binding-win32-arm64-msvc-1.1.4.tgz",
++      "integrity": "sha512-PnWBtw3TV5KOg69HQQDR0mnQuyCmSGR2pAB4DC1rPF808fgKeTUMj2EOEyKATpgiuxuR5APQmiDO7PDgEjTFSA==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-win32-x64-msvc": {
++      "version": "1.1.4",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-win32-x64-msvc/-/binding-win32-x64-msvc-1.1.4.tgz",
++      "integrity": "sha512-M1lpniBePobTfsa7Ks9a199e1akxsXn+GYBUKsEzv3YFzOm1HJAMNwKI3qr0Zq+mxwx9gOZoTdP1yXRYsZUocQ==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
+     "node_modules/@rolldown/pluginutils": {
+       "version": "1.0.0-beta.27",
+       "resolved": "https://registry.npmjs.org/@rolldown/pluginutils/-/pluginutils-1.0.0-beta.27.tgz",
+@@ -1112,8 +1487,26 @@
+         "win32"
+       ]
+     },
+-    "node_modules/@types/babel__core": {
+-      "version": "7.20.5",
++    "node_modules/@standard-schema/spec": {
++      "version": "1.1.0",
++      "resolved": "https://registry.npmjs.org/@standard-schema/spec/-/spec-1.1.0.tgz",
++      "integrity": "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/@tybys/wasm-util": {
++      "version": "0.10.3",
++      "resolved": "https://registry.npmjs.org/@tybys/wasm-util/-/wasm-util-0.10.3.tgz",
++      "integrity": "sha512-F3fo1MYrRJYL3zER0OUOmkutjr1Vp23m7OsSgp7nq4SP6OqX6C/56XFIPAl5bt3zaBRjmW7SGz3u/6LwFpYcOg==",
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "dependencies": {
++        "tslib": "^2.4.0"
++      }
++    },
++    "node_modules/@types/babel__core": {
++      "version": "7.20.5",
+       "resolved": "https://registry.npmjs.org/@types/babel__core/-/babel__core-7.20.5.tgz",
+       "integrity": "sha512-qoQprZvz5wQFJwMDqeseRXWv3rqMvhgpbXFfVyWhbx9X47POIA6i/+dXefEmZKoAgOaTdaIgNSMqMIU61yRyzA==",
+       "dev": true,
+@@ -1157,6 +1550,24 @@
+         "@babel/types": "^7.28.2"
+       }
+     },
++    "node_modules/@types/chai": {
++      "version": "5.2.3",
++      "resolved": "https://registry.npmjs.org/@types/chai/-/chai-5.2.3.tgz",
++      "integrity": "sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@types/deep-eql": "*",
++        "assertion-error": "^2.0.1"
++      }
++    },
++    "node_modules/@types/deep-eql": {
++      "version": "4.0.2",
++      "resolved": "https://registry.npmjs.org/@types/deep-eql/-/deep-eql-4.0.2.tgz",
++      "integrity": "sha512-c9h9dVVMigMPc4bwTvC5dxqtqJZwQPePsWjPlpSOnojbor6pGqdk541lfA7AqFQr5pB1BRdq0juY9db81BwyFw==",
++      "dev": true,
++      "license": "MIT"
++    },
+     "node_modules/@types/estree": {
+       "version": "1.0.9",
+       "resolved": "https://registry.npmjs.org/@types/estree/-/estree-1.0.9.tgz",
+@@ -1213,6 +1624,102 @@
+         "vite": "^4.2.0 || ^5.0.0 || ^6.0.0 || ^7.0.0"
+       }
+     },
++    "node_modules/@vitest/expect": {
++      "version": "4.1.10",
++      "resolved": "https://registry.npmjs.org/@vitest/expect/-/expect-4.1.10.tgz",
++      "integrity": "sha512-YsCn+qAk1GWjQOWFEsEcL2gNQ0zmVmQu3T03qP6UyjhtmdtwtbuI+DASn/7iQB3HGTXkdBwGddzxPlmiql5vlA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@standard-schema/spec": "^1.1.0",
++        "@types/chai": "^5.2.2",
++        "@vitest/spy": "4.1.10",
++        "@vitest/utils": "4.1.10",
++        "chai": "^6.2.2",
++        "tinyrainbow": "^3.1.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      }
++    },
++    "node_modules/@vitest/pretty-format": {
++      "version": "4.1.10",
++      "resolved": "https://registry.npmjs.org/@vitest/pretty-format/-/pretty-format-4.1.10.tgz",
++      "integrity": "sha512-W1HsjSH4MXQ9YfmmhLAoIYf1HRfekQCGngeIgcei6MP5QQGWUe0gkopdZQaVCFO+JDJMrAJGwa5pRpNpvy4P8Q==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "tinyrainbow": "^3.1.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      }
++    },
++    "node_modules/@vitest/runner": {
++      "version": "4.1.10",
++      "resolved": "https://registry.npmjs.org/@vitest/runner/-/runner-4.1.10.tgz",
++      "integrity": "sha512-IKI6kpIH+LmpROplyLwBBaCfMgOZOMsygVa6BARD6ahA04VRuJSa6OaVG7kRvSEMD870Vd91rSSw0eegtWyLGg==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@vitest/utils": "4.1.10",
++        "pathe": "^2.0.3"
++      },
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      }
++    },
++    "node_modules/@vitest/snapshot": {
++      "version": "4.1.10",
++      "resolved": "https://registry.npmjs.org/@vitest/snapshot/-/snapshot-4.1.10.tgz",
++      "integrity": "sha512-xRkfOT1qpTAi/Ti4Y1LtfRc3kEuqxGw59eN2jN9pRWMtS/XDevekhcFSqvQqjUNGksfjMJu3Y+oJ+4Ypn2OaJw==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@vitest/pretty-format": "4.1.10",
++        "@vitest/utils": "4.1.10",
++        "magic-string": "^0.30.21",
++        "pathe": "^2.0.3"
++      },
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      }
++    },
++    "node_modules/@vitest/spy": {
++      "version": "4.1.10",
++      "resolved": "https://registry.npmjs.org/@vitest/spy/-/spy-4.1.10.tgz",
++      "integrity": "sha512-PLf/Ugvoq5wO/b4rwYCR1h2PSIdXz7wnkQFMiUpLdtM7l6pqVFcQIBEHyT1+l+cj7mNwAfZHzqXqDyjvOuwbDw==",
++      "dev": true,
++      "license": "MIT",
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      }
++    },
++    "node_modules/@vitest/utils": {
++      "version": "4.1.10",
++      "resolved": "https://registry.npmjs.org/@vitest/utils/-/utils-4.1.10.tgz",
++      "integrity": "sha512-fy9am/HWxbaGt/Sawrp90vt6Y6jQwf1RX77cz3uwoJwJVMli/e1IEwRPnMNJ7vKfPTwo0diXifkpPvwH9v7nGA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@vitest/pretty-format": "4.1.10",
++        "convert-source-map": "^2.0.0",
++        "tinyrainbow": "^3.1.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      }
++    },
++    "node_modules/assertion-error": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/assertion-error/-/assertion-error-2.0.1.tgz",
++      "integrity": "sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=12"
++      }
++    },
+     "node_modules/baseline-browser-mapping": {
+       "version": "2.10.42",
+       "resolved": "https://registry.npmjs.org/baseline-browser-mapping/-/baseline-browser-mapping-2.10.42.tgz",
+@@ -1281,6 +1788,16 @@
+       ],
+       "license": "CC-BY-4.0"
+     },
++    "node_modules/chai": {
++      "version": "6.2.2",
++      "resolved": "https://registry.npmjs.org/chai/-/chai-6.2.2.tgz",
++      "integrity": "sha512-NUPRluOfOiTKBKvWPtSD4PhFvWCqOi0BGStNWs57X9js7XGTprSmFoz5F0tWhR4WPjNeR9jXqdC7/UpSJTnlRg==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=18"
++      }
++    },
+     "node_modules/convert-source-map": {
+       "version": "2.0.0",
+       "resolved": "https://registry.npmjs.org/convert-source-map/-/convert-source-map-2.0.0.tgz",
+@@ -1323,6 +1840,16 @@
+         }
+       }
+     },
++    "node_modules/detect-libc": {
++      "version": "2.1.2",
++      "resolved": "https://registry.npmjs.org/detect-libc/-/detect-libc-2.1.2.tgz",
++      "integrity": "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==",
++      "dev": true,
++      "license": "Apache-2.0",
++      "engines": {
++        "node": ">=8"
++      }
++    },
+     "node_modules/electron-to-chromium": {
+       "version": "1.5.387",
+       "resolved": "https://registry.npmjs.org/electron-to-chromium/-/electron-to-chromium-1.5.387.tgz",
+@@ -1330,6 +1857,13 @@
+       "dev": true,
+       "license": "ISC"
+     },
++    "node_modules/es-module-lexer": {
++      "version": "2.3.0",
++      "resolved": "https://registry.npmjs.org/es-module-lexer/-/es-module-lexer-2.3.0.tgz",
++      "integrity": "sha512-KLdwQm2NvGLDkQDCGvmiQrhkd0JbMzXthwQAUgWjQuQdBLFa3eiBP5arXZyA+f8x+x7OXgud6bq2rxjGtHV2tw==",
++      "dev": true,
++      "license": "MIT"
++    },
+     "node_modules/esbuild": {
+       "version": "0.21.5",
+       "resolved": "https://registry.npmjs.org/esbuild/-/esbuild-0.21.5.tgz",
+@@ -1379,6 +1913,44 @@
+         "node": ">=6"
+       }
+     },
++    "node_modules/estree-walker": {
++      "version": "3.0.3",
++      "resolved": "https://registry.npmjs.org/estree-walker/-/estree-walker-3.0.3.tgz",
++      "integrity": "sha512-7RUKfXgSMMkzt6ZuXmqapOurLGPPfgj6l9uRZ7lRGolvk0y2yocc35LdcxKC5PQZdn2DMqioAQ2NoWcrTKmm6g==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@types/estree": "^1.0.0"
++      }
++    },
++    "node_modules/expect-type": {
++      "version": "1.4.0",
++      "resolved": "https://registry.npmjs.org/expect-type/-/expect-type-1.4.0.tgz",
++      "integrity": "sha512-KfYbmpRm0VbLjEvVa9yGwCi9GI34xvi7A/HXYWQO65CSD2u3MczUJSuwXKFIxlGsgBQizV9q5J9NHj4VG0n+pA==",
++      "dev": true,
++      "license": "Apache-2.0",
++      "engines": {
++        "node": ">=12.0.0"
++      }
++    },
++    "node_modules/fdir": {
++      "version": "6.5.0",
++      "resolved": "https://registry.npmjs.org/fdir/-/fdir-6.5.0.tgz",
++      "integrity": "sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=12.0.0"
++      },
++      "peerDependencies": {
++        "picomatch": "^3 || ^4"
++      },
++      "peerDependenciesMeta": {
++        "picomatch": {
++          "optional": true
++        }
++      }
++    },
+     "node_modules/framer-motion": {
+       "version": "12.42.2",
+       "resolved": "https://registry.npmjs.org/framer-motion/-/framer-motion-12.42.2.tgz",
+@@ -1463,121 +2035,426 @@
+         "node": ">=6"
+       }
+     },
+-    "node_modules/loose-envify": {
+-      "version": "1.4.0",
+-      "resolved": "https://registry.npmjs.org/loose-envify/-/loose-envify-1.4.0.tgz",
+-      "integrity": "sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q==",
+-      "license": "MIT",
+-      "dependencies": {
+-        "js-tokens": "^3.0.0 || ^4.0.0"
+-      },
+-      "bin": {
+-        "loose-envify": "cli.js"
+-      }
+-    },
+-    "node_modules/lru-cache": {
+-      "version": "5.1.1",
+-      "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-5.1.1.tgz",
+-      "integrity": "sha512-KpNARQA3Iwv+jTA0utUVVbrh+Jlrr1Fv0e56GGzAFOXN7dk/FviaDW8LHmK52DlcH4WP2n6gI8vN1aesBFgo9w==",
++    "node_modules/lightningcss": {
++      "version": "1.32.0",
++      "resolved": "https://registry.npmjs.org/lightningcss/-/lightningcss-1.32.0.tgz",
++      "integrity": "sha512-NXYBzinNrblfraPGyrbPoD19C1h9lfI/1mzgWYvXUTe414Gz/X1FD2XBZSZM7rRTrMA8JL3OtAaGifrIKhQ5yQ==",
+       "dev": true,
+-      "license": "ISC",
+-      "dependencies": {
+-        "yallist": "^3.0.2"
+-      }
+-    },
+-    "node_modules/lucide-react": {
+-      "version": "1.23.0",
+-      "resolved": "https://registry.npmjs.org/lucide-react/-/lucide-react-1.23.0.tgz",
+-      "integrity": "sha512-38BpJcD0JhFosxHApP/BYsBetLpQFRoTRzEzstM/XCc3jsAG7wqaY1lgVwxiUe3xqYE+lNxo2PkCmYwXWrwwIw==",
+-      "license": "ISC",
+-      "peerDependencies": {
+-        "react": "^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0"
+-      }
+-    },
+-    "node_modules/motion": {
+-      "version": "12.42.2",
+-      "resolved": "https://registry.npmjs.org/motion/-/motion-12.42.2.tgz",
+-      "integrity": "sha512-Atvv11yUKIid41cVrRBDVX5m8tF8kNpExRSlbpt6APClhDjtwQssgFHhQzejxw7/7YYbjHSPKBVbHo05BuJT5Q==",
+-      "license": "MIT",
++      "license": "MPL-2.0",
+       "dependencies": {
+-        "framer-motion": "^12.42.2",
+-        "tslib": "^2.4.0"
++        "detect-libc": "^2.0.3"
+       },
+-      "peerDependencies": {
+-        "@emotion/is-prop-valid": "*",
+-        "react": "^18.0.0 || ^19.0.0",
+-        "react-dom": "^18.0.0 || ^19.0.0"
++      "engines": {
++        "node": ">= 12.0.0"
+       },
+-      "peerDependenciesMeta": {
+-        "@emotion/is-prop-valid": {
+-          "optional": true
+-        },
+-        "react": {
+-          "optional": true
+-        },
+-        "react-dom": {
+-          "optional": true
+-        }
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/parcel"
++      },
++      "optionalDependencies": {
++        "lightningcss-android-arm64": "1.32.0",
++        "lightningcss-darwin-arm64": "1.32.0",
++        "lightningcss-darwin-x64": "1.32.0",
++        "lightningcss-freebsd-x64": "1.32.0",
++        "lightningcss-linux-arm-gnueabihf": "1.32.0",
++        "lightningcss-linux-arm64-gnu": "1.32.0",
++        "lightningcss-linux-arm64-musl": "1.32.0",
++        "lightningcss-linux-x64-gnu": "1.32.0",
++        "lightningcss-linux-x64-musl": "1.32.0",
++        "lightningcss-win32-arm64-msvc": "1.32.0",
++        "lightningcss-win32-x64-msvc": "1.32.0"
++      }
++    },
++    "node_modules/lightningcss-android-arm64": {
++      "version": "1.32.0",
++      "resolved": "https://registry.npmjs.org/lightningcss-android-arm64/-/lightningcss-android-arm64-1.32.0.tgz",
++      "integrity": "sha512-YK7/ClTt4kAK0vo6w3X+Pnm0D2cf2vPHbhOXdoNti1Ga0al1P4TBZhwjATvjNwLEBCnKvjJc2jQgHXH0NEwlAg==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MPL-2.0",
++      "optional": true,
++      "os": [
++        "android"
++      ],
++      "engines": {
++        "node": ">= 12.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/parcel"
+       }
+     },
+-    "node_modules/motion-dom": {
+-      "version": "12.42.2",
+-      "resolved": "https://registry.npmjs.org/motion-dom/-/motion-dom-12.42.2.tgz",
+-      "integrity": "sha512-5gIMWLp/PycBtJRJWRgjxke5n8dlvkSn2DrYW+tr3XcqAZY1xZh6BJyooJXCM8wdfM7wfMjkBJNLge1CKPUIRA==",
+-      "license": "MIT",
+-      "dependencies": {
+-        "motion-utils": "^12.39.0"
++    "node_modules/lightningcss-darwin-arm64": {
++      "version": "1.32.0",
++      "resolved": "https://registry.npmjs.org/lightningcss-darwin-arm64/-/lightningcss-darwin-arm64-1.32.0.tgz",
++      "integrity": "sha512-RzeG9Ju5bag2Bv1/lwlVJvBE3q6TtXskdZLLCyfg5pt+HLz9BqlICO7LZM7VHNTTn/5PRhHFBSjk5lc4cmscPQ==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MPL-2.0",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "engines": {
++        "node": ">= 12.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/parcel"
+       }
+     },
+-    "node_modules/motion-utils": {
+-      "version": "12.39.0",
+-      "resolved": "https://registry.npmjs.org/motion-utils/-/motion-utils-12.39.0.tgz",
+-      "integrity": "sha512-8nadJAJjTtqRkmRF36FoJTrywK9nnFmnPwnSMyxaOCU7GDjN9RTMJIxx9De8ErM+vpPhMccr/6fo5WciyQLnMQ==",
+-      "license": "MIT"
+-    },
+-    "node_modules/ms": {
+-      "version": "2.1.3",
+-      "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+-      "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
++    "node_modules/lightningcss-darwin-x64": {
++      "version": "1.32.0",
++      "resolved": "https://registry.npmjs.org/lightningcss-darwin-x64/-/lightningcss-darwin-x64-1.32.0.tgz",
++      "integrity": "sha512-U+QsBp2m/s2wqpUYT/6wnlagdZbtZdndSmut/NJqlCcMLTWp5muCrID+K5UJ6jqD2BFshejCYXniPDbNh73V8w==",
++      "cpu": [
++        "x64"
++      ],
+       "dev": true,
+-      "license": "MIT"
++      "license": "MPL-2.0",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "engines": {
++        "node": ">= 12.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/parcel"
++      }
+     },
+-    "node_modules/nanoid": {
+-      "version": "3.3.15",
+-      "resolved": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.15.tgz",
+-      "integrity": "sha512-y7Wygv/7mEOvxTuEQDB8StXdMRBWf1kR/tlhAzBRUFkB2jfcLOAxO/SHmOO2zgz1pVgK29/kyupn059/bCHdjA==",
++    "node_modules/lightningcss-freebsd-x64": {
++      "version": "1.32.0",
++      "resolved": "https://registry.npmjs.org/lightningcss-freebsd-x64/-/lightningcss-freebsd-x64-1.32.0.tgz",
++      "integrity": "sha512-JCTigedEksZk3tHTTthnMdVfGf61Fky8Ji2E4YjUTEQX14xiy/lTzXnu1vwiZe3bYe0q+SpsSH/CTeDXK6WHig==",
++      "cpu": [
++        "x64"
++      ],
+       "dev": true,
+-      "funding": [
+-        {
+-          "type": "github",
+-          "url": "https://github.com/sponsors/ai"
+-        }
++      "license": "MPL-2.0",
++      "optional": true,
++      "os": [
++        "freebsd"
+       ],
+-      "license": "MIT",
+-      "bin": {
+-        "nanoid": "bin/nanoid.cjs"
+-      },
+       "engines": {
+-        "node": "^10 || ^12 || ^13.7 || ^14 || >=15.0.1"
++        "node": ">= 12.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/parcel"
+       }
+     },
+-    "node_modules/node-releases": {
+-      "version": "2.0.50",
+-      "resolved": "https://registry.npmjs.org/node-releases/-/node-releases-2.0.50.tgz",
+-      "integrity": "sha512-J6l92tKHX6w8Jy5nO1Vuc01NoIiRGi/d6qBKVxh+IQ8Cr3b6HbVNfKiF8ZpFKufTwpwxMmce2W3iQZ861ZRyTg==",
++    "node_modules/lightningcss-linux-arm-gnueabihf": {
++      "version": "1.32.0",
++      "resolved": "https://registry.npmjs.org/lightningcss-linux-arm-gnueabihf/-/lightningcss-linux-arm-gnueabihf-1.32.0.tgz",
++      "integrity": "sha512-x6rnnpRa2GL0zQOkt6rts3YDPzduLpWvwAF6EMhXFVZXD4tPrBkEFqzGowzCsIWsPjqSK+tyNEODUBXeeVHSkw==",
++      "cpu": [
++        "arm"
++      ],
+       "dev": true,
+-      "license": "MIT",
++      "license": "MPL-2.0",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
+       "engines": {
+-        "node": ">=18"
++        "node": ">= 12.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/parcel"
+       }
+     },
+-    "node_modules/picocolors": {
+-      "version": "1.1.1",
+-      "resolved": "https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz",
+-      "integrity": "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==",
++    "node_modules/lightningcss-linux-arm64-gnu": {
++      "version": "1.32.0",
++      "resolved": "https://registry.npmjs.org/lightningcss-linux-arm64-gnu/-/lightningcss-linux-arm64-gnu-1.32.0.tgz",
++      "integrity": "sha512-0nnMyoyOLRJXfbMOilaSRcLH3Jw5z9HDNGfT/gwCPgaDjnx0i8w7vBzFLFR1f6CMLKF8gVbebmkUN3fa/kQJpQ==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MPL-2.0",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">= 12.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/parcel"
++      }
++    },
++    "node_modules/lightningcss-linux-arm64-musl": {
++      "version": "1.32.0",
++      "resolved": "https://registry.npmjs.org/lightningcss-linux-arm64-musl/-/lightningcss-linux-arm64-musl-1.32.0.tgz",
++      "integrity": "sha512-UpQkoenr4UJEzgVIYpI80lDFvRmPVg6oqboNHfoH4CQIfNA+HOrZ7Mo7KZP02dC6LjghPQJeBsvXhJod/wnIBg==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MPL-2.0",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">= 12.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/parcel"
++      }
++    },
++    "node_modules/lightningcss-linux-x64-gnu": {
++      "version": "1.32.0",
++      "resolved": "https://registry.npmjs.org/lightningcss-linux-x64-gnu/-/lightningcss-linux-x64-gnu-1.32.0.tgz",
++      "integrity": "sha512-V7Qr52IhZmdKPVr+Vtw8o+WLsQJYCTd8loIfpDaMRWGUZfBOYEJeyJIkqGIDMZPwPx24pUMfwSxxI8phr/MbOA==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MPL-2.0",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">= 12.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/parcel"
++      }
++    },
++    "node_modules/lightningcss-linux-x64-musl": {
++      "version": "1.32.0",
++      "resolved": "https://registry.npmjs.org/lightningcss-linux-x64-musl/-/lightningcss-linux-x64-musl-1.32.0.tgz",
++      "integrity": "sha512-bYcLp+Vb0awsiXg/80uCRezCYHNg1/l3mt0gzHnWV9XP1W5sKa5/TCdGWaR/zBM2PeF/HbsQv/j2URNOiVuxWg==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MPL-2.0",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">= 12.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/parcel"
++      }
++    },
++    "node_modules/lightningcss-win32-arm64-msvc": {
++      "version": "1.32.0",
++      "resolved": "https://registry.npmjs.org/lightningcss-win32-arm64-msvc/-/lightningcss-win32-arm64-msvc-1.32.0.tgz",
++      "integrity": "sha512-8SbC8BR40pS6baCM8sbtYDSwEVQd4JlFTOlaD3gWGHfThTcABnNDBda6eTZeqbofalIJhFx0qKzgHJmcPTnGdw==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MPL-2.0",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "engines": {
++        "node": ">= 12.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/parcel"
++      }
++    },
++    "node_modules/lightningcss-win32-x64-msvc": {
++      "version": "1.32.0",
++      "resolved": "https://registry.npmjs.org/lightningcss-win32-x64-msvc/-/lightningcss-win32-x64-msvc-1.32.0.tgz",
++      "integrity": "sha512-Amq9B/SoZYdDi1kFrojnoqPLxYhQ4Wo5XiL8EVJrVsB8ARoC1PWW6VGtT0WKCemjy8aC+louJnjS7U18x3b06Q==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MPL-2.0",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "engines": {
++        "node": ">= 12.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/parcel"
++      }
++    },
++    "node_modules/loose-envify": {
++      "version": "1.4.0",
++      "resolved": "https://registry.npmjs.org/loose-envify/-/loose-envify-1.4.0.tgz",
++      "integrity": "sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q==",
++      "license": "MIT",
++      "dependencies": {
++        "js-tokens": "^3.0.0 || ^4.0.0"
++      },
++      "bin": {
++        "loose-envify": "cli.js"
++      }
++    },
++    "node_modules/lru-cache": {
++      "version": "5.1.1",
++      "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-5.1.1.tgz",
++      "integrity": "sha512-KpNARQA3Iwv+jTA0utUVVbrh+Jlrr1Fv0e56GGzAFOXN7dk/FviaDW8LHmK52DlcH4WP2n6gI8vN1aesBFgo9w==",
++      "dev": true,
++      "license": "ISC",
++      "dependencies": {
++        "yallist": "^3.0.2"
++      }
++    },
++    "node_modules/lucide-react": {
++      "version": "1.23.0",
++      "resolved": "https://registry.npmjs.org/lucide-react/-/lucide-react-1.23.0.tgz",
++      "integrity": "sha512-38BpJcD0JhFosxHApP/BYsBetLpQFRoTRzEzstM/XCc3jsAG7wqaY1lgVwxiUe3xqYE+lNxo2PkCmYwXWrwwIw==",
++      "license": "ISC",
++      "peerDependencies": {
++        "react": "^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0"
++      }
++    },
++    "node_modules/magic-string": {
++      "version": "0.30.21",
++      "resolved": "https://registry.npmjs.org/magic-string/-/magic-string-0.30.21.tgz",
++      "integrity": "sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@jridgewell/sourcemap-codec": "^1.5.5"
++      }
++    },
++    "node_modules/motion": {
++      "version": "12.42.2",
++      "resolved": "https://registry.npmjs.org/motion/-/motion-12.42.2.tgz",
++      "integrity": "sha512-Atvv11yUKIid41cVrRBDVX5m8tF8kNpExRSlbpt6APClhDjtwQssgFHhQzejxw7/7YYbjHSPKBVbHo05BuJT5Q==",
++      "license": "MIT",
++      "dependencies": {
++        "framer-motion": "^12.42.2",
++        "tslib": "^2.4.0"
++      },
++      "peerDependencies": {
++        "@emotion/is-prop-valid": "*",
++        "react": "^18.0.0 || ^19.0.0",
++        "react-dom": "^18.0.0 || ^19.0.0"
++      },
++      "peerDependenciesMeta": {
++        "@emotion/is-prop-valid": {
++          "optional": true
++        },
++        "react": {
++          "optional": true
++        },
++        "react-dom": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/motion-dom": {
++      "version": "12.42.2",
++      "resolved": "https://registry.npmjs.org/motion-dom/-/motion-dom-12.42.2.tgz",
++      "integrity": "sha512-5gIMWLp/PycBtJRJWRgjxke5n8dlvkSn2DrYW+tr3XcqAZY1xZh6BJyooJXCM8wdfM7wfMjkBJNLge1CKPUIRA==",
++      "license": "MIT",
++      "dependencies": {
++        "motion-utils": "^12.39.0"
++      }
++    },
++    "node_modules/motion-utils": {
++      "version": "12.39.0",
++      "resolved": "https://registry.npmjs.org/motion-utils/-/motion-utils-12.39.0.tgz",
++      "integrity": "sha512-8nadJAJjTtqRkmRF36FoJTrywK9nnFmnPwnSMyxaOCU7GDjN9RTMJIxx9De8ErM+vpPhMccr/6fo5WciyQLnMQ==",
++      "license": "MIT"
++    },
++    "node_modules/ms": {
++      "version": "2.1.3",
++      "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
++      "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/nanoid": {
++      "version": "3.3.15",
++      "resolved": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.15.tgz",
++      "integrity": "sha512-y7Wygv/7mEOvxTuEQDB8StXdMRBWf1kR/tlhAzBRUFkB2jfcLOAxO/SHmOO2zgz1pVgK29/kyupn059/bCHdjA==",
++      "dev": true,
++      "funding": [
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/ai"
++        }
++      ],
++      "license": "MIT",
++      "bin": {
++        "nanoid": "bin/nanoid.cjs"
++      },
++      "engines": {
++        "node": "^10 || ^12 || ^13.7 || ^14 || >=15.0.1"
++      }
++    },
++    "node_modules/node-releases": {
++      "version": "2.0.50",
++      "resolved": "https://registry.npmjs.org/node-releases/-/node-releases-2.0.50.tgz",
++      "integrity": "sha512-J6l92tKHX6w8Jy5nO1Vuc01NoIiRGi/d6qBKVxh+IQ8Cr3b6HbVNfKiF8ZpFKufTwpwxMmce2W3iQZ861ZRyTg==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/obug": {
++      "version": "2.1.3",
++      "resolved": "https://registry.npmjs.org/obug/-/obug-2.1.3.tgz",
++      "integrity": "sha512-9miFgM2OFba7hB+pRgvtV84pYTBaoTHohvmIgiRt6dRIzbwEOIaNaP+dIlGs2fNFoB0SeISs0Jz5WFVRid6Xyg==",
++      "dev": true,
++      "funding": [
++        "https://github.com/sponsors/sxzz",
++        "https://opencollective.com/debug"
++      ],
++      "license": "MIT",
++      "engines": {
++        "node": ">=12.20.0"
++      }
++    },
++    "node_modules/pathe": {
++      "version": "2.0.3",
++      "resolved": "https://registry.npmjs.org/pathe/-/pathe-2.0.3.tgz",
++      "integrity": "sha512-WUjGcAqP1gQacoQe+OBJsFA7Ld4DyXuUIjZ5cc75cLHvJ7dtNsTugphxIADwspS+AraAUePCKrSVtPLFj/F88w==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/picocolors": {
++      "version": "1.1.1",
++      "resolved": "https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz",
++      "integrity": "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==",
+       "dev": true,
+       "license": "ISC"
+     },
++    "node_modules/picomatch": {
++      "version": "4.0.5",
++      "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.5.tgz",
++      "integrity": "sha512-RvwwcruNjI1ncT5xRakeyS9Lf8lcItv34KD+aif+VH9kduAyfYBipGh12274xtenIPZ119/R9BdTBa8gAwSh0A==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=12"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/jonschlinkert"
++      }
++    },
+     "node_modules/postcss": {
+       "version": "8.5.16",
+       "resolved": "https://registry.npmjs.org/postcss/-/postcss-8.5.16.tgz",
+@@ -1674,6 +2551,47 @@
+         "react-dom": ">=16.8"
+       }
+     },
++    "node_modules/rolldown": {
++      "version": "1.1.4",
++      "resolved": "https://registry.npmjs.org/rolldown/-/rolldown-1.1.4.tgz",
++      "integrity": "sha512-IjZYiLxZwpnhwhdBH2ugdTGVSdhCQUmLxLoqyjiL0JxYjyRst+5a0P3xfrTxJ5F638j4Mvvw5FAX5XE6eHpXbA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@oxc-project/types": "=0.138.0",
++        "@rolldown/pluginutils": "^1.0.0"
++      },
++      "bin": {
++        "rolldown": "bin/cli.mjs"
++      },
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      },
++      "optionalDependencies": {
++        "@rolldown/binding-android-arm64": "1.1.4",
++        "@rolldown/binding-darwin-arm64": "1.1.4",
++        "@rolldown/binding-darwin-x64": "1.1.4",
++        "@rolldown/binding-freebsd-x64": "1.1.4",
++        "@rolldown/binding-linux-arm-gnueabihf": "1.1.4",
++        "@rolldown/binding-linux-arm64-gnu": "1.1.4",
++        "@rolldown/binding-linux-arm64-musl": "1.1.4",
++        "@rolldown/binding-linux-ppc64-gnu": "1.1.4",
++        "@rolldown/binding-linux-s390x-gnu": "1.1.4",
++        "@rolldown/binding-linux-x64-gnu": "1.1.4",
++        "@rolldown/binding-linux-x64-musl": "1.1.4",
++        "@rolldown/binding-openharmony-arm64": "1.1.4",
++        "@rolldown/binding-wasm32-wasi": "1.1.4",
++        "@rolldown/binding-win32-arm64-msvc": "1.1.4",
++        "@rolldown/binding-win32-x64-msvc": "1.1.4"
++      }
++    },
++    "node_modules/rolldown/node_modules/@rolldown/pluginutils": {
++      "version": "1.0.1",
++      "resolved": "https://registry.npmjs.org/@rolldown/pluginutils/-/pluginutils-1.0.1.tgz",
++      "integrity": "sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==",
++      "dev": true,
++      "license": "MIT"
++    },
+     "node_modules/rollup": {
+       "version": "4.62.2",
+       "resolved": "https://registry.npmjs.org/rollup/-/rollup-4.62.2.tgz",
+@@ -1738,6 +2656,13 @@
+         "semver": "bin/semver.js"
+       }
+     },
++    "node_modules/siginfo": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/siginfo/-/siginfo-2.0.0.tgz",
++      "integrity": "sha512-ybx0WO1/8bSBLEWXZvEd7gMW3Sn3JFlW3TvX1nREbDLRNQNaeNN8WK0meBwPdAaOI7TtRRRJn/Es1zhrrCHu7g==",
++      "dev": true,
++      "license": "ISC"
++    },
+     "node_modules/source-map-js": {
+       "version": "1.2.1",
+       "resolved": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.1.tgz",
+@@ -1748,25 +2673,83 @@
+         "node": ">=0.10.0"
+       }
+     },
+-    "node_modules/tslib": {
+-      "version": "2.8.1",
+-      "resolved": "https://registry.npmjs.org/tslib/-/tslib-2.8.1.tgz",
+-      "integrity": "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==",
+-      "license": "0BSD"
++    "node_modules/stackback": {
++      "version": "0.0.2",
++      "resolved": "https://registry.npmjs.org/stackback/-/stackback-0.0.2.tgz",
++      "integrity": "sha512-1XMJE5fQo1jGH6Y/7ebnwPOBEkIEnT4QF32d5R1+VXdXveM0IBMJt8zfaxX1P3QhVwrYe+576+jkANtSS2mBbw==",
++      "dev": true,
++      "license": "MIT"
+     },
+-    "node_modules/typescript": {
+-      "version": "5.9.3",
+-      "resolved": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+-      "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
++    "node_modules/std-env": {
++      "version": "4.2.0",
++      "resolved": "https://registry.npmjs.org/std-env/-/std-env-4.2.0.tgz",
++      "integrity": "sha512-oCUKSupKTHX53EyjDtuZQ64pjLJ6yYCtpmEw0goYxtjG9KpbRe8KAsl2tBUGU9DyMcJ0RwJ8GqJAFzMXcXW1Rw==",
+       "dev": true,
+-      "license": "Apache-2.0",
+-      "bin": {
+-        "tsc": "bin/tsc",
+-        "tsserver": "bin/tsserver"
+-      },
+-      "engines": {
+-        "node": ">=14.17"
+-      }
++      "license": "MIT"
++    },
++    "node_modules/tinybench": {
++      "version": "2.9.0",
++      "resolved": "https://registry.npmjs.org/tinybench/-/tinybench-2.9.0.tgz",
++      "integrity": "sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/tinyexec": {
++      "version": "1.2.4",
++      "resolved": "https://registry.npmjs.org/tinyexec/-/tinyexec-1.2.4.tgz",
++      "integrity": "sha512-SHf/r48b7vOrjve9PxJo3MN5v5yuyjHvdUcrQffT3WXMUfnGmHDVbC4k3sHJaJTgZCwpUplIaAo5ANtMyp3YHg==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/tinyglobby": {
++      "version": "0.2.17",
++      "resolved": "https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.17.tgz",
++      "integrity": "sha512-wXR/dYpcqKmfWpEdZjiKJOwCNFndD0DMnrW/cYjVGttEkBfVgcLFHoNrlj47mjOVic9yyNu65alsgF4NQyTa2g==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "fdir": "^6.5.0",
++        "picomatch": "^4.0.4"
++      },
++      "engines": {
++        "node": ">=12.0.0"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/SuperchupuDev"
++      }
++    },
++    "node_modules/tinyrainbow": {
++      "version": "3.1.0",
++      "resolved": "https://registry.npmjs.org/tinyrainbow/-/tinyrainbow-3.1.0.tgz",
++      "integrity": "sha512-Bf+ILmBgretUrdJxzXM0SgXLZ3XfiaUuOj/IKQHuTXip+05Xn+uyEYdVg0kYDipTBcLrCVyUzAPz7QmArb0mmw==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=14.0.0"
++      }
++    },
++    "node_modules/tslib": {
++      "version": "2.8.1",
++      "resolved": "https://registry.npmjs.org/tslib/-/tslib-2.8.1.tgz",
++      "integrity": "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==",
++      "license": "0BSD"
++    },
++    "node_modules/typescript": {
++      "version": "5.9.3",
++      "resolved": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
++      "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
++      "dev": true,
++      "license": "Apache-2.0",
++      "bin": {
++        "tsc": "bin/tsc",
++        "tsserver": "bin/tsserver"
++      },
++      "engines": {
++        "node": ">=14.17"
++      }
+     },
+     "node_modules/update-browserslist-db": {
+       "version": "1.2.3",
+@@ -1859,6 +2842,676 @@
+         }
+       }
+     },
++    "node_modules/vitest": {
++      "version": "4.1.10",
++      "resolved": "https://registry.npmjs.org/vitest/-/vitest-4.1.10.tgz",
++      "integrity": "sha512-R9jUTe5S4Qb0HCd4TNqpC7oGcrMssMRGXLW80ubjWsW9VH5GF8y1Y0SFLY9AbqSk6nt0PnOx4H4WNJYZ13GUPw==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@vitest/expect": "4.1.10",
++        "@vitest/mocker": "4.1.10",
++        "@vitest/pretty-format": "4.1.10",
++        "@vitest/runner": "4.1.10",
++        "@vitest/snapshot": "4.1.10",
++        "@vitest/spy": "4.1.10",
++        "@vitest/utils": "4.1.10",
++        "es-module-lexer": "^2.0.0",
++        "expect-type": "^1.3.0",
++        "magic-string": "^0.30.21",
++        "obug": "^2.1.1",
++        "pathe": "^2.0.3",
++        "picomatch": "^4.0.3",
++        "std-env": "^4.0.0-rc.1",
++        "tinybench": "^2.9.0",
++        "tinyexec": "^1.0.2",
++        "tinyglobby": "^0.2.15",
++        "tinyrainbow": "^3.1.0",
++        "vite": "^6.0.0 || ^7.0.0 || ^8.0.0",
++        "why-is-node-running": "^2.3.0"
++      },
++      "bin": {
++        "vitest": "vitest.mjs"
++      },
++      "engines": {
++        "node": "^20.0.0 || ^22.0.0 || >=24.0.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      },
++      "peerDependencies": {
++        "@edge-runtime/vm": "*",
++        "@opentelemetry/api": "^1.9.0",
++        "@types/node": "^20.0.0 || ^22.0.0 || >=24.0.0",
++        "@vitest/browser-playwright": "4.1.10",
++        "@vitest/browser-preview": "4.1.10",
++        "@vitest/browser-webdriverio": "4.1.10",
++        "@vitest/coverage-istanbul": "4.1.10",
++        "@vitest/coverage-v8": "4.1.10",
++        "@vitest/ui": "4.1.10",
++        "happy-dom": "*",
++        "jsdom": "*",
++        "vite": "^6.0.0 || ^7.0.0 || ^8.0.0"
++      },
++      "peerDependenciesMeta": {
++        "@edge-runtime/vm": {
++          "optional": true
++        },
++        "@opentelemetry/api": {
++          "optional": true
++        },
++        "@types/node": {
++          "optional": true
++        },
++        "@vitest/browser-playwright": {
++          "optional": true
++        },
++        "@vitest/browser-preview": {
++          "optional": true
++        },
++        "@vitest/browser-webdriverio": {
++          "optional": true
++        },
++        "@vitest/coverage-istanbul": {
++          "optional": true
++        },
++        "@vitest/coverage-v8": {
++          "optional": true
++        },
++        "@vitest/ui": {
++          "optional": true
++        },
++        "happy-dom": {
++          "optional": true
++        },
++        "jsdom": {
++          "optional": true
++        },
++        "vite": {
++          "optional": false
++        }
++      }
++    },
++    "node_modules/vitest/node_modules/@esbuild/aix-ppc64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/aix-ppc64/-/aix-ppc64-0.28.1.tgz",
++      "integrity": "sha512-Svl7tq8k/08+p6CXPpRjQ1fKX+1odH/BQbb48fV6fj3CWHhsoIOoY87w1oHXm0qEpkIK3ZfVgp0hed3XBXzXMQ==",
++      "cpu": [
++        "ppc64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "aix"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/vitest/node_modules/@esbuild/android-arm": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/android-arm/-/android-arm-0.28.1.tgz",
++      "integrity": "sha512-0k2F129Xdio1TdJfzJ8sy1Q47vUD2NnwdhiAf7drUN1EBTfPf4hsFCtmMgu/6m8JSzsBrlmVjudMBQqOfG8usQ==",
++      "cpu": [
++        "arm"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "android"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/vitest/node_modules/@esbuild/android-arm64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/android-arm64/-/android-arm64-0.28.1.tgz",
++      "integrity": "sha512-34EGEbCIAgosYz6goLcopX6Mo7NyGv9tfwEM2/7Ce2VcVRk568iSvniGWcUXIy7wEDR1wzolcxcriFVrWYcwBg==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "android"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/vitest/node_modules/@esbuild/android-x64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/android-x64/-/android-x64-0.28.1.tgz",
++      "integrity": "sha512-dbwY7ltSMDWsRatcRpCnES4F+im88OCUgGZjy52shC7GqHRE/cYlxNbB4Z4UpJswpcc4Qxd2oE/ufM0p61IKng==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "android"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/vitest/node_modules/@esbuild/darwin-arm64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/darwin-arm64/-/darwin-arm64-0.28.1.tgz",
++      "integrity": "sha512-TZbWkQY7kvTAXbXUT7uVACR5cMHsDiSz9z7ZKAX/RTq/WJEk3QyRr0wZpNhBDX+/0CtdqUIJlOiodQcta6tY3Q==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/vitest/node_modules/@esbuild/darwin-x64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/darwin-x64/-/darwin-x64-0.28.1.tgz",
++      "integrity": "sha512-zfdzgK9ACBNZLI/CyHTOx81SyNbM6YXn7rxSgX97VjyiPl9W1i4Ka4fgKECEoFCKGpvBj5qArWIGgQjOwkgskQ==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/vitest/node_modules/@esbuild/freebsd-arm64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/freebsd-arm64/-/freebsd-arm64-0.28.1.tgz",
++      "integrity": "sha512-wG2EA8ENdEI0qhkSZMjfqrdY+ziCYCPMmtZjjIwOmXFjmyzEHn+UUxk5of+SYsjtfs3VpnlC7QLzSI5hY/rOAw==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "freebsd"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/vitest/node_modules/@esbuild/freebsd-x64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/freebsd-x64/-/freebsd-x64-0.28.1.tgz",
++      "integrity": "sha512-i7dZ9vQgnvSCzi/rYCXNgtF/U+eKZNJBzu3eTQbRgHnM7tNSizLOkRFAl3qzVc/Op/u5YkHHa4pf/3DOYHthLQ==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "freebsd"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/vitest/node_modules/@esbuild/linux-arm": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-arm/-/linux-arm-0.28.1.tgz",
++      "integrity": "sha512-qVXBOHQS+d5Y722GwJzJUtOLlX7km3CraOaGormF1pDtPd2C/l1SHRPgjLunLGe51Sh5YYWKMFDyV4SxgMQYTQ==",
++      "cpu": [
++        "arm"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/vitest/node_modules/@esbuild/linux-arm64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-arm64/-/linux-arm64-0.28.1.tgz",
++      "integrity": "sha512-yHs+0uc8+nvEAfAfxrWQKK5peSNzBc4PegcMO0EJ2hT71uA7vB8Ihg2e77R2P7SG5uYjPbHlLLmve4LLLRCf0g==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/vitest/node_modules/@esbuild/linux-ia32": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-ia32/-/linux-ia32-0.28.1.tgz",
++      "integrity": "sha512-d1z4ZuP0ajrfz/FhGT4vv278rX8KnPPJx8i5+AtK7TYbx9Le9F1hyzurZpkEyjkGa9dUGhQow4C1NmeGvqxN2w==",
++      "cpu": [
++        "ia32"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/vitest/node_modules/@esbuild/linux-loong64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-loong64/-/linux-loong64-0.28.1.tgz",
++      "integrity": "sha512-M5sRjUVZrkm1OAPR3dlOYzNmN+loZKGVi1VUQGrwuqLcbR6qeAz+famMhjASeH3YVKvZz+zT1jlh/keC3Rj/lg==",
++      "cpu": [
++        "loong64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/vitest/node_modules/@esbuild/linux-mips64el": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-mips64el/-/linux-mips64el-0.28.1.tgz",
++      "integrity": "sha512-mRObBZeHh2OxcBFPWE/FjylkRgZdYuiTR3vaTozquCGOH14iP9oN4x4Ge81CoIDYQrXmIxpFumJBu5MtZpnQJQ==",
++      "cpu": [
++        "mips64el"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/vitest/node_modules/@esbuild/linux-ppc64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-ppc64/-/linux-ppc64-0.28.1.tgz",
++      "integrity": "sha512-slScBsMAb3GFDcdrCgLwZtPYRoH2H/youv10QiZyRjmsP48fznoveWytSgCI/R0ZcUgpc0ZhIUEx6LHts8yrfQ==",
++      "cpu": [
++        "ppc64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/vitest/node_modules/@esbuild/linux-riscv64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-riscv64/-/linux-riscv64-0.28.1.tgz",
++      "integrity": "sha512-kw0owk1o0GFETUJyW0jc0G4Yzs0BHZn0JDZ8JRT088vjJYX777BAs1fDGxAC+q831qOs2DTC96mNsG2opdfyyQ==",
++      "cpu": [
++        "riscv64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/vitest/node_modules/@esbuild/linux-s390x": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-s390x/-/linux-s390x-0.28.1.tgz",
++      "integrity": "sha512-/lAIjX8aYFRByhh6L5rYtPEDRqa9de/4V/juOXcta5frjvzXO4/sqEtyytse0g3zZFuWu5cDN0MkLz2qRDD2Ag==",
++      "cpu": [
++        "s390x"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/vitest/node_modules/@esbuild/linux-x64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-x64/-/linux-x64-0.28.1.tgz",
++      "integrity": "sha512-u/anNYF2mmVOEDwLtnQ1wOr3EZ9sTNGLWrsYGYwHWzGA3Si84IOkHXlbWTD1NB+9/1lcnweYKO54uhxZydNzfA==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/vitest/node_modules/@esbuild/netbsd-x64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/netbsd-x64/-/netbsd-x64-0.28.1.tgz",
++      "integrity": "sha512-aeL6lAnN89Hz43Mlh1G8ARasbuoYvSITDEx0tHh5b7jJnHcssqgjy9Yx430GDpmCa6OyrKoS0aNRjKundRizGg==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "netbsd"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/vitest/node_modules/@esbuild/openbsd-x64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/openbsd-x64/-/openbsd-x64-0.28.1.tgz",
++      "integrity": "sha512-i/ZLIOafE0Z8cI/XANJAixoJL/uRAoS2xOA3rb0xN+KK0K177cMAsQYkzHtBrtMXAKuAc7HGgcWiZ/sRC1Nxgw==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "openbsd"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/vitest/node_modules/@esbuild/sunos-x64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/sunos-x64/-/sunos-x64-0.28.1.tgz",
++      "integrity": "sha512-BEjgtECkL3vY+SaSQ6nzVfiALUeFxpawyp8Jmf5PtYhf1Ug40N1h/hxlhts+f1FvSvarEigdxS3BlSMI2PJLcQ==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "sunos"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/vitest/node_modules/@esbuild/win32-arm64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/win32-arm64/-/win32-arm64-0.28.1.tgz",
++      "integrity": "sha512-lCv9eK/H6ZJWbE7bh2nw54CZ9M2nupBxJcTsdk/QQnWkdSjKGuxmmH8/GWrlT1eMmZfn4dGcCjRte397WqfQXA==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/vitest/node_modules/@esbuild/win32-ia32": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/win32-ia32/-/win32-ia32-0.28.1.tgz",
++      "integrity": "sha512-zvb/mB2bSCoJOpoCBgYKKpX6YM6mJBlBUVUtVj41DlZJVEB6/0CKlRYxP5wWl1C1ILiCoAU5wZZ4q1P3qeS6Eg==",
++      "cpu": [
++        "ia32"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/vitest/node_modules/@esbuild/win32-x64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/win32-x64/-/win32-x64-0.28.1.tgz",
++      "integrity": "sha512-bm4Mowrv+GXMlpWX++EcXw/iLyd1o3+bJkC2DkWXYVvgZCqD/bSj9ctZeAMC3cIxgjRVR2Dufaiu4YPxr5gW1A==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/vitest/node_modules/@vitest/mocker": {
++      "version": "4.1.10",
++      "resolved": "https://registry.npmjs.org/@vitest/mocker/-/mocker-4.1.10.tgz",
++      "integrity": "sha512-v0xaezt+DKEmKfaxg133ldzADrwLGd7Ze1MfQQTYfvs8OqZIwbxyxaYURivwV7sWy5fqn3rH5uOrSp07bp44Ow==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@vitest/spy": "4.1.10",
++        "estree-walker": "^3.0.3",
++        "magic-string": "^0.30.21"
++      },
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      },
++      "peerDependencies": {
++        "msw": "^2.4.9",
++        "vite": "^6.0.0 || ^7.0.0 || ^8.0.0"
++      },
++      "peerDependenciesMeta": {
++        "msw": {
++          "optional": true
++        },
++        "vite": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/vitest/node_modules/esbuild": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/esbuild/-/esbuild-0.28.1.tgz",
++      "integrity": "sha512-HrJrvZv5ayxBzPfwphOoNzkzOIIlifzk0KJrGK2c8R4+LKpMtpYLQeUdjnwjWv/LZlkH2laZk+4w78pi99D4Vw==",
++      "dev": true,
++      "hasInstallScript": true,
++      "license": "MIT",
++      "optional": true,
++      "peer": true,
++      "bin": {
++        "esbuild": "bin/esbuild"
++      },
++      "engines": {
++        "node": ">=18"
++      },
++      "optionalDependencies": {
++        "@esbuild/aix-ppc64": "0.28.1",
++        "@esbuild/android-arm": "0.28.1",
++        "@esbuild/android-arm64": "0.28.1",
++        "@esbuild/android-x64": "0.28.1",
++        "@esbuild/darwin-arm64": "0.28.1",
++        "@esbuild/darwin-x64": "0.28.1",
++        "@esbuild/freebsd-arm64": "0.28.1",
++        "@esbuild/freebsd-x64": "0.28.1",
++        "@esbuild/linux-arm": "0.28.1",
++        "@esbuild/linux-arm64": "0.28.1",
++        "@esbuild/linux-ia32": "0.28.1",
++        "@esbuild/linux-loong64": "0.28.1",
++        "@esbuild/linux-mips64el": "0.28.1",
++        "@esbuild/linux-ppc64": "0.28.1",
++        "@esbuild/linux-riscv64": "0.28.1",
++        "@esbuild/linux-s390x": "0.28.1",
++        "@esbuild/linux-x64": "0.28.1",
++        "@esbuild/netbsd-arm64": "0.28.1",
++        "@esbuild/netbsd-x64": "0.28.1",
++        "@esbuild/openbsd-arm64": "0.28.1",
++        "@esbuild/openbsd-x64": "0.28.1",
++        "@esbuild/openharmony-arm64": "0.28.1",
++        "@esbuild/sunos-x64": "0.28.1",
++        "@esbuild/win32-arm64": "0.28.1",
++        "@esbuild/win32-ia32": "0.28.1",
++        "@esbuild/win32-x64": "0.28.1"
++      }
++    },
++    "node_modules/vitest/node_modules/vite": {
++      "version": "8.1.3",
++      "resolved": "https://registry.npmjs.org/vite/-/vite-8.1.3.tgz",
++      "integrity": "sha512-Ds+gBRbj0lwRO2Y5hwnUBdxSwlAve9LeRyU4sNnAr0ewW0gWF0n5bgXgUzbgZ49MV9BVUAQUFYVcDUcilUExMA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "lightningcss": "^1.32.0",
++        "picomatch": "^4.0.4",
++        "postcss": "^8.5.16",
++        "rolldown": "~1.1.3",
++        "tinyglobby": "^0.2.17"
++      },
++      "bin": {
++        "vite": "bin/vite.js"
++      },
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      },
++      "funding": {
++        "url": "https://github.com/vitejs/vite?sponsor=1"
++      },
++      "optionalDependencies": {
++        "fsevents": "~2.3.3"
++      },
++      "peerDependencies": {
++        "@types/node": "^20.19.0 || >=22.12.0",
++        "@vitejs/devtools": "^0.3.0",
++        "esbuild": "^0.27.0 || ^0.28.0",
++        "jiti": ">=1.21.0",
++        "less": "^4.0.0",
++        "sass": "^1.70.0",
++        "sass-embedded": "^1.70.0",
++        "stylus": ">=0.54.8",
++        "sugarss": "^5.0.0",
++        "terser": "^5.16.0",
++        "tsx": "^4.8.1",
++        "yaml": "^2.4.2"
++      },
++      "peerDependenciesMeta": {
++        "@types/node": {
++          "optional": true
++        },
++        "@vitejs/devtools": {
++          "optional": true
++        },
++        "esbuild": {
++          "optional": true
++        },
++        "jiti": {
++          "optional": true
++        },
++        "less": {
++          "optional": true
++        },
++        "sass": {
++          "optional": true
++        },
++        "sass-embedded": {
++          "optional": true
++        },
++        "stylus": {
++          "optional": true
++        },
++        "sugarss": {
++          "optional": true
++        },
++        "terser": {
++          "optional": true
++        },
++        "tsx": {
++          "optional": true
++        },
++        "yaml": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/why-is-node-running": {
++      "version": "2.3.0",
++      "resolved": "https://registry.npmjs.org/why-is-node-running/-/why-is-node-running-2.3.0.tgz",
++      "integrity": "sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "siginfo": "^2.0.0",
++        "stackback": "0.0.2"
++      },
++      "bin": {
++        "why-is-node-running": "cli.js"
++      },
++      "engines": {
++        "node": ">=8"
++      }
++    },
+     "node_modules/yallist": {
+       "version": "3.1.1",
+       "resolved": "https://registry.npmjs.org/yallist/-/yallist-3.1.1.tgz",
+diff --git a/package.json b/package.json
+index 22bbebf..11aa816 100644
+--- a/package.json
++++ b/package.json
+@@ -7,7 +7,8 @@
+     "dev": "vite",
+     "build": "tsc --noEmit && vite build",
+     "preview": "vite preview",
+-    "typecheck": "tsc --noEmit"
++    "typecheck": "tsc --noEmit",
++    "test": "vitest run"
+   },
+   "dependencies": {
+     "date-fns": "^3.6.0",
+@@ -22,6 +23,7 @@
+     "@types/react-dom": "^18.3.0",
+     "@vitejs/plugin-react": "^4.3.1",
+     "typescript": "^5.5.4",
+-    "vite": "^5.4.6"
++    "vite": "^5.4.6",
++    "vitest": "^4.1.10"
+   }
+ }
+diff --git a/src/components/AllocationGrid.tsx b/src/components/AllocationGrid.tsx
+index 6e0a804..581827f 100644
+--- a/src/components/AllocationGrid.tsx
++++ b/src/components/AllocationGrid.tsx
+@@ -139,7 +139,7 @@ export function AllocationGrid({
+                         type="number"
+                         min={0}
+                         max={24}
+-                        step={0.5}
++                        step={0.25}
+                         className="alloc-input"
+                         value={value === 0 ? '' : value}
+                         placeholder="0"
+diff --git a/src/components/TaskModal.tsx b/src/components/TaskModal.tsx
+index 0512013..4b212ac 100644
+--- a/src/components/TaskModal.tsx
++++ b/src/components/TaskModal.tsx
+@@ -540,7 +540,7 @@ function TaskEditor({
+               id="t-est"
+               type="number"
+               min={0}
+-              step={0.5}
++              step={0.25}
+               value={estimatedRaw}
+               onChange={(e) => setEstimatedRaw(e.target.value)}
+               placeholder="Opcjonalnie"
+diff --git a/src/components/WeekView.tsx b/src/components/WeekView.tsx
+index ca96fb0..9a3827b 100644
+--- a/src/components/WeekView.tsx
++++ b/src/components/WeekView.tsx
+@@ -1,12 +1,12 @@
+-// Week view: 7 columns Mon–Sun. Under each header, the filtered day total and
+-// an overload marker naming anyone over capacity. The day body shows each
+-// person's ordered time blocks; clicking a block opens its task editor.
+-// Right-clicking a block opens "Add before / Add after": a small form asking
+-// for hours (and task) inserts a new block into that person's day at that
+-// position, pushing their later blocks down — other people are unaffected.
++// Week view: a Google-Calendar-style timed day grid. A left hour axis (0:00–24:00)
++// and 7 day columns; each person's time blocks are absolutely positioned by
++// `startMinutes` with height proportional to `plannedHours`. Blocks drag to move
++// (same day or cross-day) and edge-drag to resize on a 15-min grid; a same-person
++// time overlap shows a danger tint and the drop reverts. Right-clicking a block
++// still opens "Dodaj przed / Dodaj po" to ripple-insert a new block.
+ import { useEffect, useRef, useState } from 'react';
+ import { AnimatePresence, motion } from 'motion/react';
+-import type { AppData, WorkloadEntry } from '../types';
++import type { AppData, Person, Project, Task, WorkloadEntry } from '../types';
+ import { useStore } from '../store/AppStore';
+ import { useOpenTask } from './TaskModal';
+ import { personColor } from '../utils/colors';
+@@ -14,7 +14,7 @@ import { isTodayStr, isWeekend, parseDate, weekDays } from '../utils/dates';
+ import { format } from 'date-fns';
+ import { pl } from 'date-fns/locale/pl';
+ import {
+-  blocksForPersonDate,
++  blockCollides,
+   dayTotal,
+   entriesForDate,
+   getClient,
+@@ -25,6 +25,16 @@ import {
+   overloadedPeopleOnDate,
+   personCapacity,
+ } from '../store/selectors';
++import {
++  DAY_MINUTES,
++  MINUTE_STEP,
++  blockEndMinutes,
++  clampBlockStart,
++  formatMinutes,
++  minutesToHours,
++  packDayBlocks,
++  snapToStep,
++} from '../utils/time';
+ import { Coin } from './Coin';
+ 
+ interface Props {
+@@ -33,6 +43,13 @@ interface Props {
+   filter: Set<string>;
+ }
+ 
++// ---- Grid geometry ----
++const HOUR_PX = 48; // 12px per 15 min
++const AXIS_W = 52; // left time-axis column width (px)
++const DAY_BODY_H = 24 * HOUR_PX; // 1152px full-day column height
++const MIN_BLOCK_H = 14; // keep 0.25h blocks clickable
++const SCROLL_TO_MIN = 7 * 60; // open scrolled to 07:00
++
+ function fmt(n: number): string {
+   return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
+ }
+@@ -45,16 +62,226 @@ interface MenuState {
+   position: 'before' | 'after';
+ }
+ 
++// ---- Draggable / resizable timed block ----
++
++type DragMode = 'move' | 'top' | 'bottom';
++
++interface DragState {
++  mode: DragMode;
++  originX: number;
++  originY: number;
++  colWidth: number;
++  projStart: number; // projected startMinutes
++  projHours: number; // projected plannedHours
++  projDayIndex: number; // projected day column (0–6)
++  colliding: boolean;
++}
++
++interface BlockProps {
++  state: AppData;
++  entry: WorkloadEntry;
++  task: Task;
++  person: Person;
++  project?: Project;
++  dayIndex: number;
++  days: string[];
++  col: number;
++  cols: number;
++  gridRef: React.RefObject<HTMLDivElement | null>;
++  onOpen: () => void;
++  onContextMenu: (e: React.MouseEvent) => void;
++}
++
++function TimedBlock({
++  state,
++  entry,
++  task,
++  person,
++  project,
++  dayIndex,
++  days,
++  col,
++  cols,
++  gridRef,
++  onOpen,
++  onContextMenu,
++}: BlockProps) {
++  const { dispatch } = useStore();
++  const [drag, setDrag] = useState<DragState | null>(null);
++  const moved = useRef(false);
++
++  const baseStart = entry.startMinutes;
++  const baseHours = entry.plannedHours;
++
++  // Cancel a drag on Escape (prevents a stuck pointer capture; no dispatch).
++  useEffect(() => {
++    if (!drag) return;
++    const onKey = (e: KeyboardEvent) => {
++      if (e.key === 'Escape') setDrag(null);
++    };
++    window.addEventListener('keydown', onKey);
++    return () => window.removeEventListener('keydown', onKey);
++  }, [drag]);
++
++  const begin = (mode: DragMode) => (e: React.PointerEvent) => {
++    if (e.button !== 0) return; // right/middle button → let the context menu open
++    e.stopPropagation();
++    try {
++      (e.target as HTMLElement).setPointerCapture(e.pointerId);
++    } catch {
++      // No active pointer (synthetic events) — dragging still works within the block.
++    }
++    moved.current = false;
++    const rect = gridRef.current?.getBoundingClientRect();
++    const colWidth = rect ? (rect.width - AXIS_W) / 7 : 0;
++    setDrag({
++      mode,
++      originX: e.clientX,
++      originY: e.clientY,
++      colWidth,
++      projStart: baseStart,
++      projHours: baseHours,
++      projDayIndex: dayIndex,
++      colliding: false,
++    });
++  };
++
++  const onPointerMove = (e: React.PointerEvent) => {
++    if (!drag) return;
++    const dy = e.clientY - drag.originY;
++    const deltaMin = snapToStep((dy / HOUR_PX) * 60);
++    const baseEnd = blockEndMinutes(baseStart, baseHours);
++
++    let projStart = baseStart;
++    let projHours = baseHours;
++    let projDayIndex = dayIndex;
++
++    if (drag.mode === 'move') {
++      const dur = baseHours * 60;
++      projStart = clampBlockStart(baseStart + deltaMin, dur);
++      const dx = e.clientX - drag.originX;
++      const dayDelta = drag.colWidth > 0 ? Math.round(dx / drag.colWidth) : 0;
++      projDayIndex = Math.max(0, Math.min(6, dayIndex + dayDelta));
++    } else if (drag.mode === 'top') {
++      // Move the start, keep the end fixed. Min duration one step (0.25h).
++      const newStart = Math.max(0, Math.min(baseStart + deltaMin, baseEnd - MINUTE_STEP));
++      projStart = newStart;
++      projHours = minutesToHours(baseEnd - newStart);
++    } else {
++      // bottom: change hours only, start fixed.
++      const newEnd = Math.max(baseStart + MINUTE_STEP, Math.min(baseEnd + deltaMin, DAY_MINUTES));
++      projHours = minutesToHours(newEnd - baseStart);
++    }
++
++    if (projStart !== baseStart || projHours !== baseHours || projDayIndex !== dayIndex) {
++      moved.current = true;
++    }
++
++    const projDate = days[projDayIndex];
++    const colliding = blockCollides(state, person.id, projDate, projStart, projHours, entry.id);
++
++    setDrag((d) => (d ? { ...d, projStart, projHours, projDayIndex, colliding } : d));
++  };
++
++  const finish = () => {
++    if (!drag) return;
++    const { projStart, projHours, projDayIndex, colliding } = drag;
++    setDrag(null);
++    if (!moved.current) return; // treated as a click by onClick
++    if (colliding) return; // invalid drop → snap back (re-render restores it)
++    dispatch({
++      type: 'SET_BLOCK_TIME',
++      entryId: entry.id,
++      date: days[projDayIndex],
++      startMinutes: projStart,
++      plannedHours: projHours,
++    });
++  };
++
++  const start = drag ? drag.projStart : baseStart;
++  const hours = drag ? drag.projHours : baseHours;
++  const end = blockEndMinutes(start, hours);
++  const dayShift = drag ? drag.projDayIndex - dayIndex : 0;
++  const tx = drag && dayShift !== 0 ? dayShift * drag.colWidth : 0;
++
++  const top = (start / 60) * HOUR_PX;
++  const height = Math.max(MIN_BLOCK_H, hours * HOUR_PX);
++
++  const className = [
++    'week-block',
++    drag ? 'dragging' : '',
++    drag?.colliding ? 'colliding' : '',
++  ]
++    .filter(Boolean)
++    .join(' ');
++
++  return (
++    <div
++      className={className}
++      style={{
++        top,
++        height,
++        left: `calc(${(col / cols) * 100}% + 1px)`,
++        width: `calc(${100 / cols}% - 3px)`,
++        transform: tx ? `translateX(${tx}px)` : undefined,
++        borderLeftColor: personColor(person.id),
++      }}
++      role="button"
++      tabIndex={0}
++      title={`${task.title} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${fmt(hours)}h). Przeciągnij, aby przenieść; przeciągnij krawędź, aby zmienić czas trwania; kliknij prawym przyciskiem, aby wstawić blok.`}
++      onPointerDown={begin('move')}
++      onPointerMove={onPointerMove}
++      onPointerUp={finish}
++      onPointerCancel={() => setDrag(null)}
++      onClick={(e) => {
++        e.stopPropagation();
++        if (!moved.current) onOpen();
++      }}
++      onKeyDown={(e) => {
++        if (e.key === 'Enter') onOpen();
++      }}
++      onContextMenu={onContextMenu}
++    >
++      <span className="week-block-handle top" onPointerDown={begin('top')} aria-hidden />
++      <span className="week-block-title">
++        {project && <Coin paid={project.paid} size={12} />}
++        {task.title}
++      </span>
++      <span className="week-block-time">
++        {formatMinutes(start)}–{formatMinutes(end)}
++      </span>
++      <span className="week-block-meta">
++        <span
++          className="person-dot"
++          style={{ background: personColor(person.id) }}
++          aria-hidden
++        />
++        {person.name}
++        <span className="week-block-hours">{fmt(hours)}h</span>
++      </span>
++      <span className="week-block-handle bottom" onPointerDown={begin('bottom')} aria-hidden />
++    </div>
++  );
++}
++
+ export function WeekView({ state, anchor, filter }: Props) {
+   const { openTask } = useOpenTask();
+   const { dispatch } = useStore();
+   const days = weekDays(anchor);
+ 
++  const gridRef = useRef<HTMLDivElement | null>(null);
++  const scrollRef = useRef<HTMLDivElement | null>(null);
++
+   const [menu, setMenu] = useState<MenuState | null>(null);
+   const [hoursRaw, setHoursRaw] = useState('1');
+   const [insertTaskId, setInsertTaskId] = useState('');
+   const menuRef = useRef<HTMLDivElement | null>(null);
+ 
++  // Open the grid scrolled to ~07:00 (once, on mount).
++  useEffect(() => {
++    if (scrollRef.current) scrollRef.current.scrollTop = (SCROLL_TO_MIN / 60) * HOUR_PX;
++  }, []);
++
+   // Close the context menu on Escape or on any click outside it.
+   useEffect(() => {
+     if (!menu) return;
+@@ -112,90 +339,104 @@ export function WeekView({ state, anchor, filter }: Props) {
+     menuDayHours + (Number.isNaN(parsedHours) ? 0 : Math.max(parsedHours, 0));
+   const wouldOverload = menu !== null && projectedTotal > menuCapacity;
+ 
++  const hours = Array.from({ length: 24 }, (_, h) => h);
++
+   return (
+-    <div className="week-grid">
+-      {days.map((d) => {
+-        const total = dayTotal(state, d, filter);
+-        const overloadedIds = overloadedPeopleOnDate(state, d, filter);
+-        const entries = entriesForDate(state, d, filter);
+-        const today = isTodayStr(d);
+-        const weekend = isWeekend(d);
+-        const empty = entries.length === 0;
+-
+-        const overloadNames = overloadedIds
+-          .map((id) => getPerson(state, id)?.name)
+-          .filter(Boolean)
+-          .join(', ');
+-
+-        // People with blocks that day (people-list order), each with their
+-        // ordered per-day schedule.
+-        const peopleIds = state.people
+-          .map((p) => p.id)
+-          .filter((pid) => entries.some((e) => e.personId === pid));
+-
+-        return (
+-          <div
+-            key={d}
+-            className={[
+-              'week-col',
+-              today ? 'today' : '',
+-              weekend ? 'weekend' : '',
+-              empty ? 'empty' : '',
+-            ]
++    <div className="week-cal">
++      <div className="week-cal-scroll" ref={scrollRef}>
++        <div
++          className="week-cal-grid"
++          ref={gridRef}
++          style={{
++            gridTemplateColumns: `${AXIS_W}px repeat(7, minmax(0, 1fr))`,
++            gridTemplateRows: `auto ${DAY_BODY_H}px`,
++          }}
++        >
++          {/* Header row: corner + 7 day headers (sticky). */}
++          <div className="week-axis-head" />
++          {days.map((d) => {
++            const total = dayTotal(state, d, filter);
++            const overloadedIds = overloadedPeopleOnDate(state, d, filter);
++            const empty = entriesForDate(state, d, filter).length === 0;
++            const overloadNames = overloadedIds
++              .map((id) => getPerson(state, id)?.name)
+               .filter(Boolean)
+-              .join(' ')}
+-          >
+-            <div className="week-col-head">
+-              <div className="week-col-weekday">{format(parseDate(d), 'EEE', { locale: pl })}</div>
+-              <div className="week-col-date">{format(parseDate(d), 'd MMM', { locale: pl })}</div>
+-              <div className="week-col-total">{empty ? '—' : `${fmt(total)}h`}</div>
+-              {overloadNames && (
+-                <div className="week-col-overload" title={`Powyżej dostępności: ${overloadNames}`}>
+-                  ⚠ {overloadNames}
++              .join(', ');
++            return (
++              <div
++                key={`head-${d}`}
++                className={[
++                  'week-day-head',
++                  isTodayStr(d) ? 'today' : '',
++                  isWeekend(d) ? 'weekend' : '',
++                ]
++                  .filter(Boolean)
++                  .join(' ')}
++              >
++                <div className="week-col-weekday">
++                  {format(parseDate(d), 'EEE', { locale: pl })}
+                 </div>
+-              )}
+-            </div>
+-            <div className="week-col-body">
+-              {empty && <div className="week-free">—</div>}
+-              {peopleIds.map((pid) =>
+-                blocksForPersonDate(state, pid, d)
+-                  .filter((e) => filter.size === 0 || filter.has(e.personId))
+-                  .map((e) => {
+-                    const task = getTask(state, e.taskId);
+-                    const person = getPerson(state, e.personId);
+-                    if (!task || !person) return null;
+-                    const project = getProject(state, task.projectId);
+-                    return (
+-                      <button
+-                        key={e.id}
+-                        type="button"
+-                        className="week-block"
+-                        style={{ borderLeftColor: personColor(person.id) }}
+-                        onClick={() => openTask(task.id)}
+-                        onContextMenu={(ev) => openMenu(e, ev)}
+-                        title={`${task.title} — ${person.name}: ${e.plannedHours}h. Kliknij prawym przyciskiem, aby wstawić blok przed lub po.`}
+-                      >
+-                        <span className="week-block-title">
+-                          {project && <Coin paid={project.paid} size={12} />}
+-                          {task.title}
+-                        </span>
+-                        <span className="week-block-meta">
+-                          <span
+-                            className="person-dot"
+-                            style={{ background: personColor(person.id) }}
+-                            aria-hidden
+-                          />
+-                          {person.name}
+-                          <span className="week-block-hours">{e.plannedHours}h</span>
+-                        </span>
+-                      </button>
+-                    );
+-                  }),
+-              )}
+-            </div>
++                <div className="week-col-date">{format(parseDate(d), 'd MMM', { locale: pl })}</div>
++                <div className="week-col-total">{empty ? '—' : `${fmt(total)}h`}</div>
++                {overloadNames && (
++                  <div className="week-col-overload" title={`Powyżej dostępności: ${overloadNames}`}>
++                    ⚠ {overloadNames}
++                  </div>
++                )}
++              </div>
++            );
++          })}
++
++          {/* Body row: hour axis + 7 day columns. */}
++          <div className="week-axis">
++            {hours.map((h) => (
++              <span key={h} className="week-axis-label" style={{ top: h * HOUR_PX }}>
++                {h}:00
++              </span>
++            ))}
+           </div>
+-        );
+-      })}
++          {days.map((d, dayIndex) => {
++            const entries = entriesForDate(state, d, filter);
++            const packed = packDayBlocks(entries);
++            return (
++              <div
++                key={`col-${d}`}
++                className={[
++                  'week-day-col',
++                  isTodayStr(d) ? 'today' : '',
++                  isWeekend(d) ? 'weekend' : '',
++                ]
++                  .filter(Boolean)
++                  .join(' ')}
++              >
++                {packed.map(({ block: e, col, cols }) => {
++                  const task = getTask(state, e.taskId);
++                  const person = getPerson(state, e.personId);
++                  if (!task || !person) return null;
++                  const project = getProject(state, task.projectId);
++                  return (
++                    <TimedBlock
++                      key={e.id}
++                      state={state}
++                      entry={e}
++                      task={task}
++                      person={person}
++                      project={project}
++                      dayIndex={dayIndex}
++                      days={days}
++                      col={col}
++                      cols={cols}
++                      gridRef={gridRef}
++                      onOpen={() => openTask(task.id)}
++                      onContextMenu={(ev) => openMenu(e, ev)}
++                    />
++                  );
++                })}
++              </div>
++            );
++          })}
++        </div>
++      </div>
+ 
+       <AnimatePresence>
+         {menu && (
+@@ -259,9 +500,9 @@ export function WeekView({ state, anchor, filter }: Props) {
+                 Godziny
+                 <input
+                   type="number"
+-                  min={0.5}
++                  min={0.25}
+                   max={24}
+-                  step={0.5}
++                  step={0.25}
+                   value={hoursRaw}
+                   onChange={(e) => setHoursRaw(e.target.value)}
+                   autoFocus
+diff --git a/src/store/AppStore.tsx b/src/store/AppStore.tsx
+index 8d5de6d..09ae631 100644
+--- a/src/store/AppStore.tsx
++++ b/src/store/AppStore.tsx
+@@ -25,7 +25,20 @@ import type {
+ } from '../types';
+ import { DEFAULT_CAPACITY, loadData, saveData, slugify } from './storage';
+ import { registerPersonOrder } from '../utils/colors';
+-import { addDaysStr, eachDayInclusive } from '../utils/dates';
++import { addDaysStr, eachDayInclusive, inclusiveDayCount } from '../utils/dates';
++import {
++  DAY_MINUTES,
++  HOURS_STEP,
++  MINUTE_STEP,
++  blockEndMinutes,
++  clampBlockStart,
++  formatMinutes,
++  hasCollision,
++  hoursToMinutes,
++  nextFreeStart,
++} from '../utils/time';
++
++const MAX_PERIOD_DAYS = 92;
+ 
+ // ---- Payload shapes ----
+ 
+@@ -117,6 +130,7 @@ export type Action =
+   | { type: 'DELETE_STATUS'; statusId: string }
+   | { type: 'INSERT_BLOCK'; payload: InsertBlockPayload }
+   | { type: 'REASSIGN_ENTRY'; entryId: string; toPersonId: string }
++  | { type: 'SET_BLOCK_TIME'; entryId: string; date: string; startMinutes: number; plannedHours: number }
+   | { type: 'SAVE_FILTER_PRESET'; name: string; page: FilterPage; criteria: SavedFilterCriteria }
+   | { type: 'DELETE_FILTER_PRESET'; filterId: string }
+   | { type: 'LOAD_SAMPLE'; data: AppData }
+@@ -186,7 +200,8 @@ function reindexDays(workload: WorkloadEntry[], keys: Set<string>): WorkloadEntr
+   }
+   const newIndex = new Map<string, number>(); // entryId -> sortIndex
+   for (const list of byDay.values()) {
+-    list.sort((a, b) => a.sortIndex - b.sortIndex);
++    // sortIndex is derived from time order: rank by startMinutes, ties by old index.
++    list.sort((a, b) => a.startMinutes - b.startMinutes || a.sortIndex - b.sortIndex);
+     list.forEach((w, i) => newIndex.set(w.id, i));
+   }
+   return workload.map((w) => {
+@@ -254,23 +269,42 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
+   // hours>0 and only for people who are still assigned. Existing cells keep
+   // their position in the person's day; new cells go to the end of the day.
+   const assignedSet = new Set(assigneeIds);
+-  const oldIndex = new Map<string, number>(); // person|date -> old sortIndex
++  // person|date -> the prior block's position, so kept cells keep their slot.
++  const oldPos = new Map<string, { sortIndex: number; startMinutes: number }>();
+   for (const w of state.workload) {
+-    if (w.taskId === realTaskId) oldIndex.set(dayKey(w.personId, w.date), w.sortIndex);
++    if (w.taskId === realTaskId) {
++      oldPos.set(dayKey(w.personId, w.date), { sortIndex: w.sortIndex, startMinutes: w.startMinutes });
++    }
+   }
+   const workloadOther = state.workload.filter((w) => w.taskId !== realTaskId);
+   const workloadForTask: WorkloadEntry[] = [];
+   for (const c of allocations) {
+     if (c.plannedHours <= 0 || !assignedSet.has(c.personId)) continue;
+-    const kept = oldIndex.get(dayKey(c.personId, c.date));
++    const kept = oldPos.get(dayKey(c.personId, c.date));
++    let sortIndex: number;
++    let startMinutes: number;
++    if (kept) {
++      // Kept cell: hold its old slot even if hours changed (may now overlap a
++      // later block — allowed; the Week view renders overlaps side-by-side).
++      sortIndex = kept.sortIndex;
++      startMinutes = kept.startMinutes;
++    } else {
++      // New cell: append to the end of that person's day.
++      const around = [...workloadOther, ...workloadForTask];
++      sortIndex = nextSortIndex(around, c.personId, c.date);
++      startMinutes = nextFreeStart(
++        around.filter((w) => w.personId === c.personId && w.date === c.date),
++        hoursToMinutes(c.plannedHours),
++      );
++    }
+     workloadForTask.push({
+       id: uid(),
+       taskId: realTaskId,
+       personId: c.personId,
+       date: c.date,
+       plannedHours: c.plannedHours,
+-      sortIndex:
+-        kept ?? nextSortIndex([...workloadOther, ...workloadForTask], c.personId, c.date),
++      startMinutes,
++      sortIndex,
+     });
+   }
+ 
+@@ -443,22 +477,51 @@ function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
+   const task = state.tasks.find((t) => t.id === payload.taskId);
+   if (!task) return state;
+ 
+-  // The new block sits before/after the reference block in that person's day.
+-  const targetIndex = payload.position === 'before' ? ref.sortIndex : ref.sortIndex + 1;
+-  const shifted = state.workload.map((w) =>
+-    w.personId === ref.personId && w.date === ref.date && w.sortIndex >= targetIndex
+-      ? { ...w, sortIndex: w.sortIndex + 1 }
+-      : w,
+-  );
++  // Ripple insert. "Przed": take the ref's start; "Po": start at the ref's end.
++  const dur = hoursToMinutes(payload.hours);
++  const rawStart =
++    payload.position === 'before'
++      ? ref.startMinutes
++      : blockEndMinutes(ref.startMinutes, ref.plannedHours);
+   const entry: WorkloadEntry = {
+     id: uid(),
+     taskId: payload.taskId,
+     personId: ref.personId,
+     date: ref.date,
+     plannedHours: payload.hours,
+-    sortIndex: targetIndex,
++    startMinutes: clampBlockStart(rawStart, dur),
++    sortIndex: 0, // fixed by reindexDays below
+   };
+ 
++  // Sweep that person's day (new block ordered before ref on an equal start):
++  // push any later block that would overlap forward to the running cursor.
++  const dayBlocks = state.workload.filter(
++    (w) => w.personId === ref.personId && w.date === ref.date,
++  );
++  const ordered = [...dayBlocks, entry].sort((a, b) => {
++    if (a.startMinutes !== b.startMinutes) return a.startMinutes - b.startMinutes;
++    if (a.id === entry.id) return -1;
++    if (b.id === entry.id) return 1;
++    return a.sortIndex - b.sortIndex;
++  });
++  const startIdx = ordered.findIndex((b) => b.id === entry.id);
++  const moves = new Map<string, number>(); // entryId -> new startMinutes
++  let cursor = blockEndMinutes(entry.startMinutes, entry.plannedHours);
++  for (let i = startIdx + 1; i < ordered.length; i++) {
++    const b = ordered[i];
++    if (b.startMinutes < cursor) {
++      const pushed = clampBlockStart(cursor, hoursToMinutes(b.plannedHours));
++      if (pushed !== b.startMinutes) moves.set(b.id, pushed);
++      cursor = pushed + hoursToMinutes(b.plannedHours);
++    } else {
++      cursor = blockEndMinutes(b.startMinutes, b.plannedHours);
++    }
++  }
++  const shifted = state.workload.map((w) => {
++    const m = moves.get(w.id);
++    return m === undefined ? w : { ...w, startMinutes: m };
++  });
++
+   // Keep invariants: the person must be assigned to the task, and the task
+   // period must cover the block's date.
+   const alreadyAssigned = state.assignments.some(
+@@ -481,7 +544,7 @@ function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
+     ...state,
+     tasks,
+     assignments,
+-    workload: [...shifted, entry],
++    workload: reindexDays([...shifted, entry], new Set([dayKey(ref.personId, ref.date)])),
+     activity: withActivity(
+       state,
+       'task',
+@@ -507,6 +570,10 @@ function reassignEntry(state: AppData, entryId: string, toPersonId: string): App
+   const moved: WorkloadEntry = {
+     ...entry,
+     personId: toPersonId,
++    startMinutes: nextFreeStart(
++      without.filter((w) => w.personId === toPersonId && w.date === date),
++      hoursToMinutes(plannedHours),
++    ),
+     sortIndex: nextSortIndex(without, toPersonId, date),
+   };
+   const touched = new Set<string>([
+@@ -540,6 +607,79 @@ function reassignEntry(state: AppData, entryId: string, toPersonId: string): App
+   };
+ }
+ 
++/**
++ * Move/resize one block in time (the timed Week view). Rejects (returns state
++ * unchanged) on any invalid input or a same-person time overlap. Extends the
++ * task period to cover a new date unless that would exceed the 92-day cap.
++ */
++function setBlockTime(
++  state: AppData,
++  entryId: string,
++  date: string,
++  startMinutes: number,
++  plannedHours: number,
++): AppData {
++  const entry = state.workload.find((w) => w.id === entryId);
++  if (!entry) return state;
++
++  // Grid + range validation.
++  if (!Number.isFinite(startMinutes) || startMinutes < 0 || startMinutes % MINUTE_STEP !== 0) {
++    return state;
++  }
++  if (!Number.isFinite(plannedHours) || plannedHours < HOURS_STEP || plannedHours > 24) {
++    return state;
++  }
++  const hoursSteps = plannedHours / HOURS_STEP;
++  if (Math.abs(hoursSteps - Math.round(hoursSteps)) > 1e-9) return state;
++  const dur = hoursToMinutes(plannedHours);
++  if (startMinutes + dur > DAY_MINUTES) return state;
++
++  // No-op when nothing changed.
++  if (entry.date === date && entry.startMinutes === startMinutes && entry.plannedHours === plannedHours) {
++    return state;
++  }
++
++  // Collision: no overlap with any OTHER block of the same person on the date.
++  const sameDayOthers = state.workload.filter(
++    (w) => w.personId === entry.personId && w.date === date && w.id !== entryId,
++  );
++  if (hasCollision(sameDayOthers, startMinutes, dur)) return state;
++
++  const task = state.tasks.find((t) => t.id === entry.taskId);
++  if (!task) return state;
++
++  // Extend the task period to cover a new date (unless it would exceed the cap).
++  let tasks = state.tasks;
++  if (date !== entry.date) {
++    const startDate = date < task.startDate ? date : task.startDate;
++    const endDate = date > task.endDate ? date : task.endDate;
++    if (startDate !== task.startDate || endDate !== task.endDate) {
++      if (inclusiveDayCount(startDate, endDate) > MAX_PERIOD_DAYS) return state;
++      tasks = state.tasks.map((t) =>
++        t.id === task.id ? { ...t, startDate, endDate, updatedAt: nowIso() } : t,
++      );
++    }
++  }
++
++  const oldDate = entry.date;
++  const workload = reindexDays(
++    state.workload.map((w) => (w.id === entryId ? { ...w, date, startMinutes, plannedHours } : w)),
++    new Set([dayKey(entry.personId, oldDate), dayKey(entry.personId, date)]),
++  );
++
++  const message =
++    date !== oldDate
++      ? `przeniósł/przeniosła blok ${plannedHours}h na ${date} ${formatMinutes(startMinutes)}`
++      : `zmienił(a) blok na ${formatMinutes(startMinutes)}–${formatMinutes(startMinutes + dur)} (${plannedHours}h)`;
++
++  return {
++    ...state,
++    tasks,
++    workload,
++    activity: withActivity(state, 'task', entry.taskId, message),
++  };
++}
++
+ // ---- People ----
+ 
+ function personFromDraft(draft: PersonDraft): Omit<Person, 'id'> {
+@@ -883,6 +1023,14 @@ export function reducer(state: AppData, action: Action): AppData {
+       return insertBlock(state, action.payload);
+     case 'REASSIGN_ENTRY':
+       return reassignEntry(state, action.entryId, action.toPersonId);
++    case 'SET_BLOCK_TIME':
++      return setBlockTime(
++        state,
++        action.entryId,
++        action.date,
++        action.startMinutes,
++        action.plannedHours,
++      );
+     case 'SAVE_FILTER_PRESET': {
+       const name = action.name.trim();
+       if (!name) return state;
+diff --git a/src/store/seed.ts b/src/store/seed.ts
+index f738ee6..03145fb 100644
+--- a/src/store/seed.ts
++++ b/src/store/seed.ts
+@@ -12,6 +12,7 @@ import type {
+ } from '../types';
+ import { buildDefaultStatuses, DATA_VERSION, DEFAULT_CAPACITY } from './storage';
+ import { addDaysStr, todayStr, weekDays } from '../utils/dates';
++import { hoursToMinutes, nextFreeStart } from '../utils/time';
+ 
+ function uid(): string {
+   return crypto.randomUUID();
+@@ -151,7 +152,10 @@ export function buildSampleData(): AppData {
+     const key = `${personId}|${date}`;
+     const sortIndex = sortCounters.get(key) ?? 0;
+     sortCounters.set(key, sortIndex + 1);
+-    workload.push({ id: uid(), taskId, personId, date, plannedHours, sortIndex });
++    // Stack each person/day schedule from 08:00, appending to the last block.
++    const existing = workload.filter((w) => w.personId === personId && w.date === date);
++    const startMinutes = nextFreeStart(existing, hoursToMinutes(plannedHours));
++    workload.push({ id: uid(), taskId, personId, date, plannedHours, startMinutes, sortIndex });
+   };
+ 
+   // --- Task 1: multi-person design/dev task (Mon–Fri this week) ---
+diff --git a/src/store/selectors.ts b/src/store/selectors.ts
+index 6a7b442..d5464c7 100644
+--- a/src/store/selectors.ts
++++ b/src/store/selectors.ts
+@@ -16,6 +16,7 @@ import type {
+   WorkloadEntry,
+ } from '../types';
+ import { DEFAULT_CAPACITY } from './storage';
++import { blockEndMinutes, hasCollision, hoursToMinutes } from '../utils/time';
+ 
+ // ---- Basic lookups ----
+ 
+@@ -213,6 +214,29 @@ export function blocksForPersonDate(
+     .sort((a, b) => a.sortIndex - b.sortIndex);
+ }
+ 
++/** End minute (from midnight) of a block. */
++export function blockEnd(entry: WorkloadEntry): number {
++  return blockEndMinutes(entry.startMinutes, entry.plannedHours);
++}
++
++/**
++ * Would a block of `plannedHours` starting at `startMinutes` overlap any OTHER
++ * block of this person on this date? Touching edges do not collide.
++ */
++export function blockCollides(
++  state: AppData,
++  personId: string,
++  date: DateStr,
++  startMinutes: number,
++  plannedHours: number,
++  excludeEntryId?: string,
++): boolean {
++  const blocks = state.workload.filter(
++    (w) => w.personId === personId && w.date === date,
++  );
++  return hasCollision(blocks, startMinutes, hoursToMinutes(plannedHours), excludeEntryId);
++}
++
+ /** All entries on a single date (optionally restricted to a set of people). */
+ export function entriesForDate(
+   state: AppData,
+diff --git a/src/store/storage.ts b/src/store/storage.ts
+index 50860f4..9008dbb 100644
+--- a/src/store/storage.ts
++++ b/src/store/storage.ts
+@@ -1,10 +1,18 @@
+ // Single persistence module. Wraps localStorage so it can be swapped for an API later.
+ // The stored JSON is versioned; loadData migrates older payloads forward.
+-import type { AppData, Person, Status } from '../types';
++import type { AppData, Person, Status, WorkloadEntry } from '../types';
++import {
++  DAY_MINUTES,
++  MINUTE_STEP,
++  clampBlockStart,
++  hoursToMinutes,
++  snapToStep,
++  stackStartTimes,
++} from '../utils/time';
+ 
+ const STORAGE_KEY = 'n2hub.data.v1';
+ const LEGACY_STORAGE_KEYS = ['n2ub.data.v1', 'n2click.data.v1'];
+-export const DATA_VERSION = 3;
++export const DATA_VERSION = 4;
+ 
+ export const DEFAULT_CAPACITY = 8; // hours available per person per day
+ 
+@@ -179,7 +187,8 @@ function migrateV1(raw: Record<string, unknown>): AppData {
+     const key = `${w.personId}|${w.date}`;
+     const idx = counters.get(key) ?? 0;
+     counters.set(key, idx + 1);
+-    return { ...w, sortIndex: idx };
++    // startMinutes intentionally invalid — ensureStartMinutes restacks it.
++    return { ...w, sortIndex: idx, startMinutes: -1 };
+   });
+ 
+   return {
+@@ -314,6 +323,63 @@ function localizeLegacyData(data: AppData): AppData {
+   };
+ }
+ 
++/** True when the entry already carries a usable startMinutes (block fits the day). */
++function hasValidStart(w: WorkloadEntry): boolean {
++  const s = (w as Partial<WorkloadEntry>).startMinutes;
++  return (
++    typeof s === 'number' &&
++    Number.isFinite(s) &&
++    s >= 0 &&
++    s + hoursToMinutes(w.plannedHours) <= DAY_MINUTES
++  );
++}
++
++/**
++ * Idempotent normalize pass: guarantee every workload entry has a valid,
++ * on-grid `startMinutes`. Runs on EVERY load (covers v<4 payloads and any entry
++ * with a missing/invalid value). Deterministic rule: if a (person, date) group
++ * contains ANY invalid entry, restack the WHOLE group from 08:00 in sortIndex
++ * order; fully-valid groups are left alone except off-grid values are snapped.
++ */
++export function ensureStartMinutes(data: AppData): AppData {
++  const groups = new Map<string, WorkloadEntry[]>();
++  for (const w of data.workload) {
++    const key = `${w.personId}|${w.date}`;
++    const list = groups.get(key);
++    if (list) list.push(w);
++    else groups.set(key, [w]);
++  }
++
++  const patched = new Map<string, number>(); // entryId -> startMinutes
++  for (const list of groups.values()) {
++    const ordered = [...list].sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0));
++    if (ordered.some((w) => !hasValidStart(w))) {
++      const starts = stackStartTimes(ordered.map((w) => ({ plannedHours: w.plannedHours })));
++      ordered.forEach((w, i) => {
++        if (w.startMinutes !== starts[i]) patched.set(w.id, starts[i]);
++      });
++    } else {
++      for (const w of ordered) {
++        if (w.startMinutes % MINUTE_STEP !== 0) {
++          patched.set(
++            w.id,
++            clampBlockStart(snapToStep(w.startMinutes), hoursToMinutes(w.plannedHours)),
++          );
++        }
++      }
++    }
++  }
++
++  if (patched.size === 0) return data;
++  return {
++    ...data,
++    workload: data.workload.map((w) => {
++      const s = patched.get(w.id);
++      return s === undefined ? w : { ...w, startMinutes: s };
++    }),
++  };
++}
++
+ export function loadData(): AppData {
+   try {
+     const raw =
+@@ -323,14 +389,15 @@ export function loadData(): AppData {
+     const parsed: unknown = JSON.parse(raw);
+     if (!looksLikeData(parsed)) return emptyData();
+     const version = typeof parsed.version === 'number' ? parsed.version : 1;
+-    if (version < 2) return localizeLegacyData(migrateV1(parsed));
++    if (version < 2) return ensureStartMinutes(localizeLegacyData(migrateV1(parsed)));
+     // Same-version load: fill any missing fields with defaults.
+     const loaded = {
+       ...emptyData(),
+       ...(parsed as Partial<AppData>),
+       version: DATA_VERSION,
+     };
+-    return version < DATA_VERSION ? localizeLegacyData(loaded) : loaded;
++    const localized = version < DATA_VERSION ? localizeLegacyData(loaded) : loaded;
++    return ensureStartMinutes(localized);
+   } catch {
+     return emptyData();
+   }
+diff --git a/src/styles.css b/src/styles.css
+index 6a1695f..4e2f171 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -1041,39 +1041,48 @@ option {
+   background: rgba(196, 150, 255, 0.16);
+ }
+ 
+-/* ---------- Week view ---------- */
++/* ---------- Week view (timed day grid) ---------- */
+ 
+-.week-grid {
+-  display: grid;
+-  grid-template-columns: repeat(7, 1fr);
+-  gap: 8px;
++.week-cal {
++  position: relative;
+ }
+-.week-col {
+-  background: var(--card-bg);
++.week-cal-scroll {
++  max-height: 70vh;
++  overflow-y: auto;
++  overflow-x: hidden;
+   border: 1px solid var(--n2-border);
+   border-radius: var(--n2-radius-md);
+-  min-height: 220px;
+-  display: flex;
+-  flex-direction: column;
+-  overflow: hidden;
++  background: var(--card-bg);
+ }
+-.week-col.weekend {
+-  background: var(--card-bg-2);
++.week-cal-grid {
++  display: grid;
++  position: relative;
++  /* columns + rows set inline (52px axis + 7 day cols; auto header + 1152px body) */
+ }
+-.week-col.empty {
+-  background: var(--card-bg-2);
++
++/* Sticky headers (corner + day headers) */
++.week-axis-head,
++.week-day-head {
++  position: sticky;
++  top: 0;
++  z-index: 6;
++  background: var(--card-bg);
++  border-bottom: 1px solid var(--n2-border);
+ }
+-.week-col.today {
+-  border-color: var(--n2-border-strong);
+-  box-shadow: 0 0 0 1px var(--n2-border-strong), 0 0 24px rgba(196, 150, 255, 0.15);
++.week-axis-head {
++  border-right: 1px solid var(--n2-border);
++  z-index: 7;
+ }
+-.week-col-head {
++.week-day-head {
+   padding: 8px 10px;
+-  border-bottom: 1px solid var(--n2-border);
+-  background: rgba(255, 255, 255, 0.03);
++  border-left: 1px solid var(--n2-border);
++}
++.week-day-head.weekend {
++  background: var(--card-bg-2);
+ }
+-.week-col.today .week-col-head {
++.week-day-head.today {
+   background: rgba(196, 150, 255, 0.14);
++  box-shadow: inset 0 -2px 0 var(--n2-border-strong);
+ }
+ .week-col-weekday {
+   font-size: var(--n2-type-xs);
+@@ -1102,45 +1111,118 @@ option {
+   color: var(--n2-danger);
+   font-weight: 600;
+ }
+-.week-col-body {
+-  padding: 8px;
+-  display: flex;
+-  flex-direction: column;
+-  gap: 6px;
+-  flex: 1;
++
++/* Left hour axis */
++.week-axis {
++  position: relative;
++  border-right: 1px solid var(--n2-border);
+ }
+-.week-free {
++.week-axis-label {
++  position: absolute;
++  right: 6px;
++  transform: translateY(-50%);
++  font-size: var(--n2-type-xs);
+   color: var(--text-faint);
+-  text-align: center;
+-  margin-top: 16px;
+-  font-size: 18px;
++  font-family: var(--n2-font-mono);
++  font-variant-numeric: tabular-nums;
++  white-space: nowrap;
+ }
++
++/* Day columns: hour + half-hour lines drawn as a background */
++.week-day-col {
++  position: relative;
++  border-left: 1px solid var(--n2-border);
++  overflow: visible; /* let a dragged block extend into a neighbouring column */
++  background-image:
++    repeating-linear-gradient(
++      to bottom,
++      rgba(255, 255, 255, 0.075) 0,
++      rgba(255, 255, 255, 0.075) 1px,
++      transparent 1px,
++      transparent 48px
++    ),
++    repeating-linear-gradient(
++      to bottom,
++      rgba(255, 255, 255, 0.03) 0,
++      rgba(255, 255, 255, 0.03) 1px,
++      transparent 1px,
++      transparent 24px
++    );
++}
++.week-day-col.weekend {
++  background-color: var(--card-bg-2);
++}
++.week-day-col.today {
++  background-color: rgba(196, 150, 255, 0.06);
++}
++
++/* Absolutely-positioned timed blocks */
+ .week-block {
++  position: absolute;
++  box-sizing: border-box;
+   text-align: left;
+   border: 1px solid var(--n2-border);
+   border-left: 3px solid var(--n2-lavender);
+   border-radius: var(--n2-radius-xs);
+-  background: rgba(255, 255, 255, 0.05);
+-  padding: 6px 8px;
+-  cursor: pointer;
++  background: rgba(45, 30, 70, 0.92);
++  padding: 3px 7px;
++  cursor: grab;
+   font-family: inherit;
+   color: inherit;
+   display: flex;
+   flex-direction: column;
+-  gap: 3px;
++  gap: 1px;
++  overflow: hidden;
++  touch-action: none; /* pointer drag instead of scroll */
+   transition: background var(--n2-transition);
+ }
+ .week-block:hover {
+-  background: rgba(255, 255, 255, 0.09);
++  background: rgba(60, 40, 92, 0.95);
++}
++.week-block.dragging {
++  cursor: grabbing;
++  z-index: 30;
++  box-shadow: var(--n2-shadow-violet, 0 8px 24px rgba(0, 0, 0, 0.4));
++  opacity: 0.96;
++}
++.week-block.colliding {
++  cursor: not-allowed;
++  border-color: var(--n2-danger);
++  border-left-color: var(--n2-danger) !important;
++  background: var(--n2-danger-soft, rgba(255, 79, 114, 0.25));
++}
++.week-block-handle {
++  position: absolute;
++  left: 0;
++  right: 0;
++  height: 6px;
++  cursor: ns-resize;
++  z-index: 2;
++}
++.week-block-handle.top {
++  top: 0;
++}
++.week-block-handle.bottom {
++  bottom: 0;
+ }
+ .week-block-title {
+-  font-size: var(--n2-type-sm);
++  font-size: var(--n2-type-xs);
+   font-weight: 600;
+   color: var(--text);
+   line-height: 1.2;
+   display: flex;
+   align-items: center;
+   gap: 5px;
++  white-space: nowrap;
++  overflow: hidden;
++  text-overflow: ellipsis;
++}
++.week-block-time {
++  font-size: var(--n2-type-xs);
++  color: var(--text-muted);
++  font-family: var(--n2-font-data);
++  font-variant-numeric: tabular-nums;
++  line-height: 1.1;
+ }
+ .week-block-meta {
+   display: flex;
+@@ -1148,6 +1230,8 @@ option {
+   gap: 5px;
+   font-size: var(--n2-type-xs);
+   color: var(--text-muted);
++  white-space: nowrap;
++  overflow: hidden;
+ }
+ .week-block-hours {
+   margin-left: auto;
+@@ -2318,8 +2402,12 @@ option {
+   .app-nav-link {
+     justify-content: flex-start;
+   }
+-  .week-grid {
+-    grid-template-columns: 1fr;
++  /* Keep the 7 columns usable by allowing horizontal scroll of the grid. */
++  .week-cal-scroll {
++    overflow-x: auto;
++  }
++  .week-cal-grid {
++    min-width: 720px;
+   }
+   .cal-toolbar {
+     justify-content: flex-start;
+diff --git a/src/types.ts b/src/types.ts
+index be5efd0..1f8f38a 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -92,7 +92,10 @@ export interface WorkloadEntry {
+   personId: string;
+   date: DateStr;
+   plannedHours: number;
+-  sortIndex: number; // order of this block within the person's day
++  // Time-of-day the block starts, in minutes from local midnight. Invariant:
++  // multiple of 15, 0 <= startMinutes and startMinutes + plannedHours*60 <= 1440.
++  startMinutes: number;
++  sortIndex: number; // order within the person's day == rank by startMinutes
+ }
+ 
+ export type CommentEntityType = 'project' | 'task';

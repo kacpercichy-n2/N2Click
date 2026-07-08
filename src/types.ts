@@ -92,7 +92,10 @@ export interface WorkloadEntry {
   personId: string;
   date: DateStr;
   plannedHours: number;
-  sortIndex: number; // order of this block within the person's day
+  // Time-of-day the block starts, in minutes from local midnight. Invariant:
+  // multiple of 15, 0 <= startMinutes and startMinutes + plannedHours*60 <= 1440.
+  startMinutes: number;
+  sortIndex: number; // order within the person's day == rank by startMinutes
 }
 
 export type CommentEntityType = 'project' | 'task';
