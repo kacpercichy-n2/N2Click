@@ -17,15 +17,11 @@ import { CommentsPanel } from './CommentsPanel';
 import { AllocationGrid, allocKey, isWeekdayDate, type AllocMap } from './AllocationGrid';
 import { SaveStatus } from './SaveStatus';
 import { personColor } from '../utils/colors';
-import { isBinEntry } from '../utils/time';
+import { formatDuration, isBinEntry } from '../utils/time';
 import { eachDayInclusive, inclusiveDayCount, todayStr } from '../utils/dates';
 import { useSaveStatus } from '../utils/useSaveStatus';
 
 const MAX_PERIOD_DAYS = 92;
-
-function fmtHours(n: number): string {
-  return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
-}
 
 /**
  * Shared opener hook. Merges the task/project search params onto the CURRENT
@@ -430,11 +426,11 @@ function TaskEditor({
       const binForPerson = existingBinForPerson + pendingBinForPerson;
       const droppedTotal = datedOnThisTask + binForPerson;
       if (droppedTotal > 0) {
-        const binSuffix = binForPerson > 0 ? ` (w tym ${fmtHours(binForPerson)}h w zasobniku)` : '';
+        const binSuffix = binForPerson > 0 ? ` (w tym ${formatDuration(binForPerson)} w zasobniku)` : '';
         const ok = window.confirm(
-          `Usunąć ${person?.name ?? 'tę osobę'} oraz ${fmtHours(
+          `Usunąć ${person?.name ?? 'tę osobę'} oraz ${formatDuration(
             droppedTotal,
-          )}h zaplanowanej pracy z tego zadania${binSuffix}?`,
+          )} zaplanowanej pracy z tego zadania${binSuffix}?`,
         );
         if (!ok) return;
       }
@@ -621,16 +617,16 @@ function TaskEditor({
         </div>
         <div className="estimate-compare">
           <span>
-            zaplanowano <strong>{fmtHours(plannedTotalAll)}h</strong>
+            zaplanowano <strong>{formatDuration(plannedTotalAll)}</strong>
             {binTotal > 0 && (
-              <span className="muted"> (+ {fmtHours(binTotal)}h w zasobniku)</span>
+              <span className="muted"> (+ {formatDuration(binTotal)} w zasobniku)</span>
             )}
           </span>
           <span className="muted">vs</span>
           <span>
             {estNum != null && !Number.isNaN(estNum) ? (
               <>
-                szacunek <strong>{fmtHours(estNum)}h</strong>
+                szacunek <strong>{formatDuration(estNum)}</strong>
               </>
             ) : (
               <span className="muted">brak szacunku</span>
@@ -727,7 +723,7 @@ function TaskEditor({
                 <span className="bin-chips">
                   {hours.map((h, i) => (
                     <span key={i} className="bin-chip readonly">
-                      {fmtHours(h)}h
+                      {formatDuration(h)}
                     </span>
                   ))}
                 </span>
@@ -780,7 +776,7 @@ function TaskEditor({
                         style={{ background: personColor(u.personId) }}
                         aria-hidden
                       />
-                      {person?.name ?? 'Osoba'}: {fmtHours(u.hours)}h
+                      {person?.name ?? 'Osoba'}: {formatDuration(u.hours)}
                       <button
                         type="button"
                         className="bin-chip-remove"

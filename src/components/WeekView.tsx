@@ -32,6 +32,7 @@ import {
   MINUTE_STEP,
   blockEndMinutes,
   clampBlockStart,
+  formatDuration,
   formatMinutes,
   isBinEntry,
   minutesToHours,
@@ -48,16 +49,10 @@ interface Props {
 
 // ---- Grid geometry ----
 const HOUR_PX = 48; // 12px per 15 min
-const AXIS_W = 52; // left time-axis column width (px)
 const DAY_BODY_H = 24 * HOUR_PX; // 1152px full-day column height
 const MIN_BLOCK_H = 14; // keep 0.25h blocks clickable
 const SCROLL_TO_MIN = 7 * 60; // open scrolled to 07:00
-const GRID_COLS = 8; // 7 day columns + 1 bin column
-const BIN_COL_INDEX = 7; // day projection index that lands a block in the bin
-
-function fmt(n: number): string {
-  return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
-}
+const DAY_COLS = 7; // the days grid holds 7 columns (no axis inside)
 
 interface MenuState {
   entry: WorkloadEntry;
@@ -78,7 +73,8 @@ interface DragState {
   colWidth: number;
   projStart: number; // projected startMinutes
   projHours: number; // projected plannedHours
-  projDayIndex: number; // projected column: 0–6 day cols, 7 = bin column
+  projDayIndex: number; // projected day column (0–6)
+  overBin: boolean; // pointer is over the bin panel → strip date/time on drop
   colliding: boolean;
 }
 
@@ -93,6 +89,7 @@ interface BlockProps {
   col: number;
   cols: number;
   gridRef: React.RefObject<HTMLDivElement | null>;
+  binRef: React.RefObject<HTMLDivElement | null>;
   onOpen: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
 }
@@ -108,6 +105,7 @@ function TimedBlock({
   col,
   cols,
   gridRef,
+  binRef,
   onOpen,
   onContextMenu,
 }: BlockProps) {
@@ -138,7 +136,7 @@ function TimedBlock({
     }
     moved.current = false;
     const rect = gridRef.current?.getBoundingClientRect();
-    const colWidth = rect ? (rect.width - AXIS_W) / GRID_COLS : 0;
+    const colWidth = rect ? rect.width / DAY_COLS : 0;
     setDrag({
       mode,
       originX: e.clientX,
@@ -147,6 +145,7 @@ function TimedBlock({
       projStart: baseStart,
       projHours: baseHours,
       projDayIndex: dayIndex,
+      overBin: false,
       colliding: false,
     });
   };
@@ -160,14 +159,23 @@ function TimedBlock({
     let projStart = baseStart;
     let projHours = baseHours;
     let projDayIndex = dayIndex;
+    let overBin = false;
 
     if (drag.mode === 'move') {
       const dur = baseHours * 60;
       projStart = clampBlockStart(baseStart + deltaMin, dur);
       const dx = e.clientX - drag.originX;
       const dayDelta = drag.colWidth > 0 ? Math.round(dx / drag.colWidth) : 0;
-      // Index 7 (the last column) targets the bin instead of a calendar day.
-      projDayIndex = Math.max(0, Math.min(BIN_COL_INDEX, dayIndex + dayDelta));
+      projDayIndex = Math.max(0, Math.min(DAY_COLS - 1, dayIndex + dayDelta));
+      // The bin panel sits outside the days grid; a pointer inside its rect
+      // targets the bin instead of a calendar day.
+      const binRect = binRef.current?.getBoundingClientRect();
+      overBin = binRect
+        ? e.clientX >= binRect.left &&
+          e.clientX <= binRect.right &&
+          e.clientY >= binRect.top &&
+          e.clientY <= binRect.bottom
+        : false;
     } else if (drag.mode === 'top') {
       // Move the start, keep the end fixed. Min duration one step (0.25h).
       const newStart = Math.max(0, Math.min(baseStart + deltaMin, baseEnd - MINUTE_STEP));
@@ -179,26 +187,30 @@ function TimedBlock({
       projHours = minutesToHours(newEnd - baseStart);
     }
 
-    if (projStart !== baseStart || projHours !== baseHours || projDayIndex !== dayIndex) {
+    if (
+      projStart !== baseStart ||
+      projHours !== baseHours ||
+      projDayIndex !== dayIndex ||
+      overBin
+    ) {
       moved.current = true;
     }
 
-    // The bin column (index 7) has no date and no collision — it's always a
-    // valid drop that just strips the block's date/time.
-    const toBin = projDayIndex === BIN_COL_INDEX;
-    const colliding = toBin
+    // Over the bin there is no date and no collision — dropping just strips the
+    // block's date/time.
+    const colliding = overBin
       ? false
       : blockCollides(state, person.id, days[projDayIndex], projStart, projHours, entry.id);
 
-    setDrag((d) => (d ? { ...d, projStart, projHours, projDayIndex, colliding } : d));
+    setDrag((d) => (d ? { ...d, projStart, projHours, projDayIndex, overBin, colliding } : d));
   };
 
   const finish = () => {
     if (!drag) return;
-    const { projStart, projHours, projDayIndex, colliding } = drag;
+    const { projStart, projHours, projDayIndex, overBin, colliding } = drag;
     setDrag(null);
     if (!moved.current) return; // treated as a click by onClick
-    if (projDayIndex === BIN_COL_INDEX) {
+    if (overBin) {
       dispatch({ type: 'MOVE_BLOCK_TO_BIN', entryId: entry.id });
       return;
     }
@@ -221,12 +233,11 @@ function TimedBlock({
   const top = (start / 60) * HOUR_PX;
   const height = Math.max(MIN_BLOCK_H, hours * HOUR_PX);
 
-  const overBin = drag?.projDayIndex === BIN_COL_INDEX;
   const className = [
     'week-block',
     drag ? 'dragging' : '',
     drag?.colliding ? 'colliding' : '',
-    overBin ? 'to-bin' : '',
+    drag?.overBin ? 'to-bin' : '',
   ]
     .filter(Boolean)
     .join(' ');
@@ -244,7 +255,7 @@ function TimedBlock({
       }}
       role="button"
       tabIndex={0}
-      title={`${task.title} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${fmt(hours)}h). Przeciągnij, aby przenieść; przeciągnij krawędź, aby zmienić czas trwania; kliknij prawym przyciskiem, aby wstawić blok.`}
+      title={`${task.title} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${formatDuration(hours)}). Przeciągnij, aby przenieść; przeciągnij krawędź, aby zmienić czas trwania; kliknij prawym przyciskiem, aby wstawić blok.`}
       onPointerDown={begin('move')}
       onPointerMove={onPointerMove}
       onPointerUp={finish}
@@ -273,7 +284,7 @@ function TimedBlock({
           aria-hidden
         />
         {person.name}
-        <span className="week-block-hours">{fmt(hours)}h</span>
+        <span className="week-block-hours">{formatDuration(hours)}</span>
       </span>
       <span className="week-block-handle bottom" onPointerDown={begin('bottom')} aria-hidden />
     </div>
@@ -301,7 +312,7 @@ interface BinCardProps {
   project?: Project;
   days: string[];
   gridRef: React.RefObject<HTMLDivElement | null>;
-  bodyRef: React.RefObject<HTMLDivElement | null>;
+  viewportRef: React.RefObject<HTMLDivElement | null>;
   onOpen: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
 }
@@ -314,7 +325,7 @@ function BinCard({
   project,
   days,
   gridRef,
-  bodyRef,
+  viewportRef,
   onOpen,
   onContextMenu,
 }: BinCardProps) {
@@ -356,31 +367,27 @@ function BinCard({
   const onPointerMove = (e: React.PointerEvent) => {
     if (!drag) return;
     const gridRect = gridRef.current?.getBoundingClientRect();
-    const bodyRect = bodyRef.current?.getBoundingClientRect();
-    if (!gridRect || !bodyRect) return;
+    const viewRect = viewportRef.current?.getBoundingClientRect();
+    if (!gridRect || !viewRect) return;
     const dx = e.clientX - drag.originX;
     const dy = e.clientY - drag.originY;
     if (dx !== 0 || dy !== 0) moved.current = true;
 
-    const colWidth = (gridRect.width - AXIS_W) / GRID_COLS;
-    const relX = e.clientX - gridRect.left - AXIS_W;
-    const colIndex = colWidth > 0 ? Math.floor(relX / colWidth) : -1;
-
-    // Hit-test the VISIBLE day-body: exclude the sticky header (top), the sticky
-    // left hour axis (under horizontal scroll) and anything past the body's
-    // 0:00–24:00 vertical span, so a drop over a header/axis reverts.
-    const scrollRect = gridRef.current?.parentElement?.getBoundingClientRect();
-    const headerH = bodyRect.top - gridRect.top; // stable under scroll
-    const yTop = scrollRect ? Math.max(bodyRect.top, scrollRect.top + headerH) : bodyRect.top;
-    const yBottom = scrollRect ? Math.min(bodyRect.bottom, scrollRect.bottom) : bodyRect.bottom;
-    const xLeft = scrollRect ? scrollRect.left + AXIS_W : gridRect.left + AXIS_W;
-    const xRight = scrollRect ? Math.min(gridRect.right, scrollRect.right) : gridRect.right;
-    const inBody =
-      e.clientY >= yTop && e.clientY <= yBottom && e.clientX >= xLeft && e.clientX <= xRight;
-    const valid = inBody && colIndex >= 0 && colIndex <= 6;
+    // The days grid starts at 0:00 (no header inside it), so x → column and
+    // y → minutes project directly off its rect.
+    const colWidth = gridRect.width / DAY_COLS;
+    const colIndex = colWidth > 0 ? Math.floor((e.clientX - gridRect.left) / colWidth) : -1;
+    // A single clamp — the pointer must be inside the visible days viewport —
+    // covers the header row, the axis pane, the bin and any outside-drop cases.
+    const inView =
+      e.clientX >= viewRect.left &&
+      e.clientX <= viewRect.right &&
+      e.clientY >= viewRect.top &&
+      e.clientY <= viewRect.bottom;
+    const valid = inView && colIndex >= 0 && colIndex <= DAY_COLS - 1;
 
     const dur = entry.plannedHours * 60;
-    const relY = e.clientY - bodyRect.top;
+    const relY = e.clientY - gridRect.top;
     const startMin = clampBlockStart(snapToStep((relY / HOUR_PX) * 60), dur);
     const colliding = valid
       ? blockCollides(state, person.id, days[colIndex], startMin, entry.plannedHours)
@@ -421,7 +428,7 @@ function BinCard({
       }}
       role="button"
       tabIndex={0}
-      title={`${task.title} — ${person.name}: ${fmt(entry.plannedHours)}h bez terminu. Przeciągnij na siatkę, aby nadać termin.`}
+      title={`${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu. Przeciągnij na siatkę, aby nadać termin.`}
       onPointerDown={begin}
       onPointerMove={onPointerMove}
       onPointerUp={finish}
@@ -439,7 +446,7 @@ function BinCard({
         {project && <Coin paid={project.paid} size={12} />}
         {task.title}
       </span>
-      <span className="week-bin-block-hours">{fmt(entry.plannedHours)}h</span>
+      <span className="week-bin-block-hours">{formatDuration(entry.plannedHours)}</span>
     </div>
   );
 }
@@ -449,9 +456,11 @@ export function WeekView({ state, anchor, filter }: Props) {
   const { dispatch } = useStore();
   const days = weekDays(anchor);
 
-  const gridRef = useRef<HTMLDivElement | null>(null);
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  const bodyRef = useRef<HTMLDivElement | null>(null); // a body-row cell → y-origin (0:00) for bin-card drops
+  const gridRef = useRef<HTMLDivElement | null>(null); // .week-days-grid (7 columns, 0:00 at top)
+  const viewportRef = useRef<HTMLDivElement | null>(null); // .week-days-viewport (both scrollbars)
+  const axisPaneRef = useRef<HTMLDivElement | null>(null); // .week-axis-pane (vertical scroll synced)
+  const headTrackRef = useRef<HTMLDivElement | null>(null); // .week-head-track (horizontal scroll synced)
+  const binRef = useRef<HTMLDivElement | null>(null); // .week-bin-pane (grid→bin drop target)
 
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [hoursRaw, setHoursRaw] = useState('1');
@@ -460,8 +469,17 @@ export function WeekView({ state, anchor, filter }: Props) {
 
   // Open the grid scrolled to ~07:00 (once, on mount).
   useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = (SCROLL_TO_MIN / 60) * HOUR_PX;
+    if (viewportRef.current) viewportRef.current.scrollTop = (SCROLL_TO_MIN / 60) * HOUR_PX;
   }, []);
+
+  // Keep the fixed axis pane (vertical) and header track (horizontal) in step
+  // with the days viewport — both are overflow:hidden, driven only from here.
+  const onViewportScroll = () => {
+    const v = viewportRef.current;
+    if (!v) return;
+    if (axisPaneRef.current) axisPaneRef.current.scrollTop = v.scrollTop;
+    if (headTrackRef.current) headTrackRef.current.scrollLeft = v.scrollLeft;
+  };
 
   // Close the context menu on Escape or on any click outside it.
   useEffect(() => {
@@ -517,7 +535,7 @@ export function WeekView({ state, anchor, filter }: Props) {
 
   const doDelete = () => {
     if (!menu) return;
-    if (window.confirm(`Usunąć blok ${fmt(menu.entry.plannedHours)}h z zasobnika?`)) {
+    if (window.confirm(`Usunąć blok ${formatDuration(menu.entry.plannedHours)} z zasobnika?`)) {
       dispatch({ type: 'DELETE_BLOCK', entryId: menu.entry.id });
     }
     setMenu(null);
@@ -545,109 +563,120 @@ export function WeekView({ state, anchor, filter }: Props) {
 
   return (
     <div className="week-cal">
-      <div className="week-cal-scroll" ref={scrollRef}>
-        <div
-          className="week-cal-grid"
-          ref={gridRef}
-          style={{
-            gridTemplateColumns: `${AXIS_W}px repeat(${GRID_COLS}, minmax(0, 1fr))`,
-            gridTemplateRows: `auto ${DAY_BODY_H}px`,
-          }}
-        >
-          {/* Header row: corner + 7 day headers + bin header (sticky). */}
-          <div className="week-axis-head" />
-          {days.map((d) => {
-            const total = dayTotal(state, d, filter);
-            const overloadedIds = overloadedPeopleOnDate(state, d, filter);
-            const empty = entriesForDate(state, d, filter).length === 0;
-            const overloadNames = overloadedIds
-              .map((id) => getPerson(state, id)?.name)
-              .filter(Boolean)
-              .join(', ');
-            return (
-              <div
-                key={`head-${d}`}
-                className={[
-                  'week-day-head',
-                  isTodayStr(d) ? 'today' : '',
-                  isWeekend(d) ? 'weekend' : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')}
-              >
-                <div className="week-col-weekday">
-                  {format(parseDate(d), 'EEE', { locale: pl })}
-                </div>
-                <div className="week-col-date">{format(parseDate(d), 'd MMM', { locale: pl })}</div>
-                <div className="week-col-total">{empty ? '—' : `${fmt(total)}h`}</div>
-                {overloadNames && (
-                  <div className="week-col-overload" title={`Powyżej dostępności: ${overloadNames}`}>
-                    ⚠ {overloadNames}
+      {/* Header row: corner + horizontally-synced day headers + bin header.
+          Not scrollable itself; its track mirrors the days viewport scrollLeft. */}
+      <div className="week-head-row">
+        <div className="week-corner" />
+        <div className="week-head-track" ref={headTrackRef}>
+          <div className="week-head-inner">
+            {days.map((d) => {
+              const total = dayTotal(state, d, filter);
+              const overloadedIds = overloadedPeopleOnDate(state, d, filter);
+              const empty = entriesForDate(state, d, filter).length === 0;
+              const overloadNames = overloadedIds
+                .map((id) => getPerson(state, id)?.name)
+                .filter(Boolean)
+                .join(', ');
+              return (
+                <div
+                  key={`head-${d}`}
+                  className={[
+                    'week-day-head',
+                    isTodayStr(d) ? 'today' : '',
+                    isWeekend(d) ? 'weekend' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                >
+                  <div className="week-col-weekday">
+                    {format(parseDate(d), 'EEE', { locale: pl })}
                   </div>
-                )}
-              </div>
-            );
-          })}
-          {/* Bin header (8th column). */}
-          <div className="week-bin-head">
-            <div className="week-bin-head-title">Zasobnik</div>
-            <div className="week-bin-head-sub">bez terminu</div>
-            <div className="week-col-total">
-              {binGrandTotal > 0 ? `${fmt(binGrandTotal)}h` : '—'}
-            </div>
+                  <div className="week-col-date">
+                    {format(parseDate(d), 'd MMM', { locale: pl })}
+                  </div>
+                  <div className="week-col-total">{empty ? '—' : formatDuration(total)}</div>
+                  {overloadNames && (
+                    <div
+                      className="week-col-overload"
+                      title={`Powyżej dostępności: ${overloadNames}`}
+                    >
+                      ⚠ {overloadNames}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
+        </div>
+        <div className="week-bin-head">
+          <div className="week-bin-head-title">Zasobnik</div>
+          <div className="week-bin-head-sub">bez terminu</div>
+          <div className="week-col-total">
+            {binGrandTotal > 0 ? formatDuration(binGrandTotal) : '—'}
+          </div>
+        </div>
+      </div>
 
-          {/* Body row: hour axis + 7 day columns + bin column. */}
-          <div className="week-axis">
+      {/* Body: fixed axis pane | scrollable days viewport | always-visible bin. */}
+      <div className="week-main">
+        <div className="week-axis-pane" ref={axisPaneRef}>
+          <div className="week-axis" style={{ height: DAY_BODY_H }}>
             {hours.map((h) => (
               <span key={h} className="week-axis-label" style={{ top: h * HOUR_PX }}>
                 {h}:00
               </span>
             ))}
           </div>
-          {days.map((d, dayIndex) => {
-            const entries = entriesForDate(state, d, filter);
-            const packed = packDayBlocks(entries);
-            return (
-              <div
-                key={`col-${d}`}
-                ref={dayIndex === 0 ? bodyRef : undefined}
-                className={[
-                  'week-day-col',
-                  isTodayStr(d) ? 'today' : '',
-                  isWeekend(d) ? 'weekend' : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')}
-              >
-                {packed.map(({ block: e, col, cols }) => {
-                  const task = getTask(state, e.taskId);
-                  const person = getPerson(state, e.personId);
-                  if (!task || !person) return null;
-                  const project = getProject(state, task.projectId);
-                  return (
-                    <TimedBlock
-                      key={e.id}
-                      state={state}
-                      entry={e}
-                      task={task}
-                      person={person}
-                      project={project}
-                      dayIndex={dayIndex}
-                      days={days}
-                      col={col}
-                      cols={cols}
-                      gridRef={gridRef}
-                      onOpen={() => openTask(task.id)}
-                      onContextMenu={(ev) => openMenu(e, ev)}
-                    />
-                  );
-                })}
-              </div>
-            );
-          })}
+        </div>
 
-          {/* Bin column (8th): stacked per-person cards, not time-positioned. */}
+        <div className="week-days-viewport" ref={viewportRef} onScroll={onViewportScroll}>
+          <div className="week-days-grid" ref={gridRef} style={{ height: DAY_BODY_H }}>
+            {days.map((d, dayIndex) => {
+              const entries = entriesForDate(state, d, filter);
+              const packed = packDayBlocks(entries);
+              return (
+                <div
+                  key={`col-${d}`}
+                  className={[
+                    'week-day-col',
+                    isTodayStr(d) ? 'today' : '',
+                    isWeekend(d) ? 'weekend' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                >
+                  {packed.map(({ block: e, col, cols }) => {
+                    const task = getTask(state, e.taskId);
+                    const person = getPerson(state, e.personId);
+                    if (!task || !person) return null;
+                    const project = getProject(state, task.projectId);
+                    return (
+                      <TimedBlock
+                        key={e.id}
+                        state={state}
+                        entry={e}
+                        task={task}
+                        person={person}
+                        project={project}
+                        dayIndex={dayIndex}
+                        days={days}
+                        col={col}
+                        cols={cols}
+                        gridRef={gridRef}
+                        binRef={binRef}
+                        onOpen={() => openTask(task.id)}
+                        onContextMenu={(ev) => openMenu(e, ev)}
+                      />
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Bin pane: always visible, own vertical scroll, outside the days scroller. */}
+        <div className="week-bin-pane" ref={binRef}>
           <div className="week-bin-col">
             {binPeople.length === 0 ? (
               <p className="week-bin-empty">Brak bloków bez terminu</p>
@@ -664,7 +693,7 @@ export function WeekView({ state, anchor, filter }: Props) {
                       />
                       {p.name}
                       <span className="week-bin-group-total">
-                        {fmt(binTotalForPerson(state, p.id))}h
+                        {formatDuration(binTotalForPerson(state, p.id))}
                       </span>
                     </div>
                     {entries.map((e) => {
@@ -681,7 +710,7 @@ export function WeekView({ state, anchor, filter }: Props) {
                           project={project}
                           days={days}
                           gridRef={gridRef}
-                          bodyRef={bodyRef}
+                          viewportRef={viewportRef}
                           onOpen={() => openTask(task.id)}
                           onContextMenu={(ev) => openMenu(e, ev)}
                         />
@@ -711,7 +740,7 @@ export function WeekView({ state, anchor, filter }: Props) {
             <>
               <div className="context-menu-title">
                 {getTask(state, menu.entry.taskId)?.title} — {menuPerson?.name},{' '}
-                {fmt(menu.entry.plannedHours)}h
+                {formatDuration(menu.entry.plannedHours)}
               </div>
               {!isBinEntry(menu.entry) && (
                 <>
@@ -813,8 +842,8 @@ export function WeekView({ state, anchor, filter }: Props) {
               </label>
               {wouldOverload && (
                 <p className="context-warning">
-                  ⚠ {menuPerson?.name} będzie mieć {fmt(projectedTotal)}h — powyżej dostępności{' '}
-                  {fmt(menuCapacity)}h/dzień.
+                  ⚠ {menuPerson?.name} będzie mieć {formatDuration(projectedTotal)} — powyżej dostępności{' '}
+                  {formatDuration(menuCapacity)}/dzień.
                 </p>
               )}
               <div className="context-actions">

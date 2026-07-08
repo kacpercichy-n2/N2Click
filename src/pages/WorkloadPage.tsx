@@ -26,10 +26,7 @@ import {
   weekDays,
   weekRangeLabel,
 } from '../utils/dates';
-
-function fmtHours(n: number): string {
-  return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
-}
+import { formatDuration } from '../utils/time';
 
 /** Actions for one block inside the resolution panel. */
 function BlockRow({
@@ -64,7 +61,7 @@ function BlockRow({
           {client ? ` · ${client.name}` : ''}
         </span>
       </div>
-      <span className="wr-block-hours">{fmtHours(entry.plannedHours)}h</span>
+      <span className="wr-block-hours">{formatDuration(entry.plannedHours)}</span>
       <div className="wr-block-actions">
         {others.length > 0 && (
           <div className="wr-reassign">
@@ -79,7 +76,7 @@ function BlockRow({
                 const over = cur + entry.plannedHours > cap;
                 return (
                   <option key={p.id} value={p.id}>
-                    {p.name} — {fmtHours(cur)}h/{cap}h tego dnia{over ? ' ⚠' : ''}
+                    {p.name} — {formatDuration(cur)}/{formatDuration(cap)} tego dnia{over ? ' ⚠' : ''}
                   </option>
                 );
               })}
@@ -313,7 +310,7 @@ export function WorkloadPage() {
                           ]
                             .filter(Boolean)
                             .join(' ')}
-                          title={over ? `${p.name}: ${fmtHours(h)}h > ${capacity}h dostępności` : undefined}
+                          title={over ? `${p.name}: ${formatDuration(h)} > ${formatDuration(capacity)} dostępności` : undefined}
                           role={clickable ? 'button' : undefined}
                           tabIndex={clickable ? 0 : undefined}
                           aria-expanded={clickable ? isSel : undefined}
@@ -329,13 +326,13 @@ export function WorkloadPage() {
                               : undefined
                           }
                         >
-                          {h === 0 ? '—' : `${fmtHours(h)}h`}
+                          {h === 0 ? '—' : formatDuration(h)}
                           {over && ' ⚠'}
                         </td>
                       );
                     })}
-                    <td className="workload-sum">{fmtHours(assigned)}h</td>
-                    <td className="workload-sum muted">{fmtHours(available)}h</td>
+                    <td className="workload-sum">{formatDuration(assigned)}</td>
+                    <td className="workload-sum muted">{formatDuration(available)}</td>
                     <td className="workload-load">
                       <div
                         className="load-bar"
@@ -374,9 +371,9 @@ export function WorkloadPage() {
                               <span
                                 className={over ? 'wr-title over' : 'wr-title'}
                               >
-                                „{p.name} — {formatRowLabel(date)}: {fmtHours(dayTotal)}h
+                                „{p.name} — {formatRowLabel(date)}: {formatDuration(dayTotal)}
                                 {' / '}
-                                {capacity}h”
+                                {formatDuration(capacity)}”
                               </span>
                               <button
                                 type="button"

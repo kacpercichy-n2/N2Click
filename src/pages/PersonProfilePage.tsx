@@ -20,10 +20,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { DEFAULT_CAPACITY } from '../store/storage';
 import { useOpenTask } from '../components/TaskModal';
 import { formatRowLabel, formatShort, isWeekend, todayStr, weekDays } from '../utils/dates';
-
-function fmtHours(n: number): string {
-  return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
-}
+import { formatDuration } from '../utils/time';
 
 export function PersonProfilePage() {
   const { id } = useParams();
@@ -206,9 +203,9 @@ function PersonProfile({ personId }: { personId: string }) {
       <div className="editor-section">
         <h2>Ten tydzień</h2>
         <p>
-          Przypisano <strong>{fmtHours(weekHours)}h</strong> z{' '}
-          <strong>{fmtHours(available)}h</strong> dostępnych ({capacity}h/dzień) ·{' '}
-          łącznie przypisano {fmtHours(personTotalHours(state, person.id))}h.
+          Przypisano <strong>{formatDuration(weekHours)}</strong> z{' '}
+          <strong>{formatDuration(available)}</strong> dostępnych ({formatDuration(capacity)}/dzień) ·{' '}
+          łącznie przypisano {formatDuration(personTotalHours(state, person.id))}.
         </p>
         <div className="profile-week">
           {week.map((d) => {
@@ -227,7 +224,7 @@ function PersonProfile({ personId }: { personId: string }) {
               >
                 <span className="profile-day-label">{formatRowLabel(d)}</span>
                 <span className="profile-day-hours">
-                  {h === 0 ? '—' : `${fmtHours(h)}h`}
+                  {h === 0 ? '—' : formatDuration(h)}
                   {over && ' ⚠'}
                 </span>
               </div>
@@ -279,7 +276,7 @@ function PersonProfile({ personId }: { personId: string }) {
                   <StatusBadge status={getStatus(state, t.statusId)} />
                   <span className="muted">
                     {formatShort(t.startDate)} – {formatShort(t.endDate)} ·{' '}
-                    {fmtHours(taskPlannedTotalForPerson(state, t.id, person.id))}h dla{' '}
+                    {formatDuration(taskPlannedTotalForPerson(state, t.id, person.id))} dla{' '}
                     {person.firstName}
                   </span>
                 </button>

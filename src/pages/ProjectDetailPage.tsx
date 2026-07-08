@@ -22,11 +22,8 @@ import { SaveStatus } from '../components/SaveStatus';
 import { useOpenTask } from '../components/TaskModal';
 import { ChevronRight } from '../components/icons';
 import { formatShort, todayStr } from '../utils/dates';
+import { formatDuration } from '../utils/time';
 import { useSaveStatus } from '../utils/useSaveStatus';
-
-function fmtHours(n: number): string {
-  return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
-}
 
 export function ProjectDetailPage() {
   const { id } = useParams();
@@ -363,7 +360,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
           </button>
         </div>
         <p className="field-hint">
-          Zaplanowano {fmtHours(projectPlannedTotal(state, project.id))}h w całym projekcie.
+          Zaplanowano {formatDuration(projectPlannedTotal(state, project.id))} w całym projekcie.
         </p>
         {tasks.length === 0 ? (
           <p className="field-hint">W tym projekcie nie ma jeszcze zadań.</p>
@@ -380,7 +377,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
                   <StatusBadge status={getStatus(state, t.statusId)} />
                   <span className="muted">
                     {formatShort(t.startDate)} – {formatShort(t.endDate)} ·{' '}
-                    {fmtHours(taskPlannedTotal(state, t.id))}h
+                    {formatDuration(taskPlannedTotal(state, t.id))}
                   </span>
                   <span className="task-card-assignees">
                     {assigneesOfTask(state, t.id).map((p) => (

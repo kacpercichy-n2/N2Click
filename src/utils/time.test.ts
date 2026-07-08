@@ -1,6 +1,7 @@
 // Unit tests for pure time-of-day math (src/utils/time.ts).
 import { describe, expect, it } from 'vitest';
 import {
+  formatDuration,
   formatMinutes,
   hasCollision,
   nextFreeStart,
@@ -28,6 +29,27 @@ describe('formatMinutes', () => {
     expect(formatMinutes(480)).toBe('8:00');
     expect(formatMinutes(825)).toBe('13:45');
     expect(formatMinutes(1439)).toBe('23:59');
+  });
+});
+
+describe('formatDuration', () => {
+  it('formats a whole-hour duration as Xh (including 0h)', () => {
+    expect(formatDuration(8)).toBe('8h');
+    expect(formatDuration(0)).toBe('0h');
+  });
+
+  it('formats hours + minutes as "Xh Ym"', () => {
+    expect(formatDuration(2.75)).toBe('2h 45m');
+    expect(formatDuration(10.25)).toBe('10h 15m');
+  });
+
+  it('formats a sub-hour duration as Ym', () => {
+    expect(formatDuration(0.25)).toBe('15m');
+    expect(formatDuration(0.5)).toBe('30m');
+  });
+
+  it('rounds to whole minutes', () => {
+    expect(formatDuration(1 / 60)).toBe('1m'); // ~0.0167h -> 1m
   });
 });
 

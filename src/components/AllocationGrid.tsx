@@ -11,6 +11,7 @@ import {
   parseDate,
 } from '../utils/dates';
 import { hoursForPersonOnDate, personCapacity } from '../store/selectors';
+import { formatDuration } from '../utils/time';
 
 /** allocations keyed as `${personId}|${date}` -> hours. */
 export type AllocMap = Record<string, number>;
@@ -131,7 +132,7 @@ export function AllocationGrid({
                       className={overloaded ? 'alloc-cell overload' : 'alloc-cell'}
                       title={
                         overloaded
-                          ? `${p.name}: ${dayTotalForPerson}h łącznie tego dnia`
+                          ? `${p.name}: ${formatDuration(dayTotalForPerson)} łącznie tego dnia`
                           : undefined
                       }
                     >
@@ -154,7 +155,7 @@ export function AllocationGrid({
                     </td>
                   );
                 })}
-                <td className="alloc-total-col">{fmt(dayTotalAcross(d))}</td>
+                <td className="alloc-total-col">{formatDuration(dayTotalAcross(d))}</td>
               </tr>
             );
           })}
@@ -166,20 +167,15 @@ export function AllocationGrid({
             </th>
             {people.map((p) => (
               <td key={p.id} className="alloc-person-total">
-                {fmt(personTotal(p.id))}h
+                {formatDuration(personTotal(p.id))}
               </td>
             ))}
-            <td className="alloc-grand-total">{fmt(grandTotal)}h</td>
+            <td className="alloc-grand-total">{formatDuration(grandTotal)}</td>
           </tr>
         </tfoot>
       </table>
     </div>
   );
-}
-
-function fmt(n: number): string {
-  // Trim trailing .0 for whole numbers.
-  return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
 }
 
 /** Weekday check reused by the "Fill weekdays" action in the editor page. */

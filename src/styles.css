@@ -1165,49 +1165,43 @@ option {
 
 .week-cal {
   position: relative;
-}
-.week-cal-scroll {
-  max-height: 70vh;
-  overflow-y: auto;
-  /* Mon–Fri fill the visible width; Sat, Sun and the bin scroll in from the right. */
-  overflow-x: auto;
   border: 1px solid var(--n2-border);
   border-radius: var(--n2-radius-md);
   background: var(--card-bg);
-}
-.week-cal-grid {
-  display: grid;
-  position: relative;
-  /* 52px axis + 8 equal columns, but sized so exactly the 5 weekday columns fill
-     the scroll container's visible width; the weekend + bin columns overflow to
-     the right behind horizontal scroll. */
-  width: calc((100% - 52px) / 5 * 8 + 52px);
-  /* Drag gestures cross block text; text-selection would hijack the next drag
-     into a native text-drag. Nothing in the grid is useful to select anyway. */
-  -webkit-user-select: none;
-  user-select: none;
-  /* columns + rows set inline (52px axis + 7 day cols + bin; auto header + 1152px body) */
+  overflow: hidden;
 }
 
-/* Sticky headers (corner + day headers) */
-.week-axis-head,
-.week-day-head {
-  position: sticky;
-  top: 0;
-  z-index: 6;
-  background: var(--card-bg);
+/* Header row: 52px corner spacer + horizontally-synced day-header track +
+   200px bin header. Not scrollable itself — the track mirrors the days
+   viewport's scrollLeft (both overflow:hidden with a stable gutter). */
+.week-head-row {
+  display: flex;
   border-bottom: 1px solid var(--n2-border);
+  background: var(--card-bg);
 }
-.week-axis-head {
+.week-corner {
+  flex: 0 0 52px;
+  width: 52px;
   border-right: 1px solid var(--n2-border);
-  /* Corner stays pinned to both edges while scrolling either axis. */
-  position: sticky;
-  left: 0;
-  z-index: 9;
+  background: var(--card-bg);
+}
+.week-head-track {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  scrollbar-gutter: stable;
+}
+.week-head-inner {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  /* Mon–Fri fill the track width; Sat/Sun sit behind horizontal scroll. Same
+     width formula as .week-days-grid so headers stay column-aligned. */
+  width: max(calc(100% / 5 * 7), 672px);
 }
 .week-day-head {
   padding: 8px 10px;
   border-left: 1px solid var(--n2-border);
+  background: var(--card-bg);
 }
 .week-day-head.weekend {
   background: var(--card-bg-2);
@@ -1244,13 +1238,51 @@ option {
   font-weight: 600;
 }
 
-/* Left hour axis — sticky so it stays visible during horizontal scroll. */
-.week-axis {
-  position: sticky;
-  left: 0;
-  z-index: 5;
-  background: var(--card-bg);
+/* Body row: fixed axis pane | scrollable days viewport | always-visible bin. */
+.week-main {
+  display: flex;
+  max-height: 70vh;
+}
+/* Fixed hour axis — outside the horizontal scroller, opaque, vertical-synced. */
+.week-axis-pane {
+  flex: 0 0 52px;
+  width: 52px;
+  overflow: hidden;
   border-right: 1px solid var(--n2-border);
+  background: var(--card-bg);
+  -webkit-user-select: none;
+  user-select: none;
+}
+.week-axis {
+  position: relative; /* height set inline (1152px), scrolled via JS sync */
+  background: var(--card-bg);
+}
+/* The only real scroller — both axes; Mon–Fri fill it, weekend behind scroll. */
+.week-days-viewport {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  /* Drag gestures cross block text; text-selection would hijack the next drag. */
+  -webkit-user-select: none;
+  user-select: none;
+}
+.week-days-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  width: max(calc(100% / 5 * 7), 672px);
+  position: relative;
+}
+/* Bin pane — always visible at the right edge, own vertical scroll. */
+.week-bin-pane {
+  flex: 0 0 200px;
+  width: 200px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border-left: 1px solid var(--n2-border-strong);
+  background: var(--card-bg-2);
+  -webkit-user-select: none;
+  user-select: none;
 }
 .week-axis-label {
   position: absolute;
@@ -1385,15 +1417,13 @@ option {
 
 /* ---------- Bin column (Zasobnik: dateless blocks) ---------- */
 
-/* Bin header cell (8th column header). */
+/* Bin header — right pane header, aligns with the 200px bin pane below. */
 .week-bin-head {
-  position: sticky;
-  top: 0;
-  z-index: 6;
+  flex: 0 0 200px;
+  width: 200px;
   padding: 8px 10px;
   background: var(--card-bg-2);
   border-left: 1px solid var(--n2-border-strong);
-  border-bottom: 1px solid var(--n2-border);
 }
 .week-bin-head-title {
   font-size: var(--n2-type-sm);
@@ -1408,12 +1438,9 @@ option {
   font-family: var(--n2-font-mono);
 }
 
-/* Bin body column: stacked from the top, not time-positioned. */
+/* Bin body content: stacked from the top, not time-positioned. Its pane owns
+   the border/background/scroll. */
 .week-bin-col {
-  position: relative;
-  border-left: 1px solid var(--n2-border-strong);
-  background: var(--card-bg-2);
-  overflow: visible; /* let a dragged bin card extend over the day columns */
   padding: 8px 8px 16px;
   display: flex;
   flex-direction: column;
@@ -2680,12 +2707,12 @@ option {
   .app-nav-link {
     justify-content: flex-start;
   }
-  /* Keep all 8 columns usable by allowing horizontal scroll of the grid. */
-  .week-cal-scroll {
-    overflow-x: auto;
-  }
-  .week-cal-grid {
-    min-width: 820px; /* 52 axis + 8 × 96 */
+  /* The days grid keeps its 672px floor (~96px/day) behind horizontal scroll
+     from the width rule; just narrow the bin so it still fits alongside. */
+  .week-bin-head,
+  .week-bin-pane {
+    flex-basis: 160px;
+    width: 160px;
   }
   .cal-toolbar {
     justify-content: flex-start;

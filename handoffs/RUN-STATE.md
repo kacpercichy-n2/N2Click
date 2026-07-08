@@ -474,3 +474,302 @@ boring and factual — it's a checklist, not prose.
   the four `handoffs/packages/PKG-20260708-*.md`, and the review artifacts.
   CLAUDE.md's in-tree diff is the PREVIOUS run's doc refresh; the bin/sidebar
   doc update remains a post-merge human task per the plan.
+
+---
+
+## Run: 2026-07-08 — Walkthrough fixes: fixed hour axis, bin beside grid, duration format
+
+### Plan (architect)
+
+- **Context:** the previous run was APPROVED, but the human browser
+  walkthrough surfaced three defects: (1) the sticky-left hour axis is
+  translucent and overlaps day headers/blocks during horizontal scroll;
+  (2) the Zasobnik is the 8th in-grid column and only visible after scrolling
+  past Sunday — it must sit BESIDE the calendar, always visible; (3) durations
+  render inconsistently (clock ranges + decimal `2.75h` in the calendar vs
+  `0.25h` elsewhere).
+- **Goal:** restructure the week view to
+  [fixed hour axis][h-scrollable 7-day grid, Mon–Fri primary][always-visible
+  Zasobnik panel], with no translucent overlap in any scroll position and both
+  drag directions intact; unify every read-only duration display behind one
+  `formatDuration(hours)` helper ("2h 45m" / "45m" / "8h").
+- **Key decisions (pre-resolved, no open questions):**
+  - **Week view structure (replaces ALL sticky positioning):** a non-scrolling
+    header row (`52px corner | overflow-hidden day-header track | 200px bin
+    header`) above a flex main row of three panes: `.week-axis-pane` (52px,
+    overflow hidden), `.week-days-viewport` (flex:1, overflow auto BOTH axes —
+    both scrollbars visible there; inner `.week-days-grid` 7 columns, width
+    `max(calc(100%/5*7), 672px)`, height 1152px), `.week-bin-pane` (200px,
+    own overflow-y). One viewport `onScroll` syncs `axisPane.scrollTop` and
+    `headTrack.scrollLeft` by direct ref assignment; `scrollbar-gutter:
+    stable` on viewport + head track prevents header/column misalignment with
+    classic scrollbars. Auto-scroll-to-7:00 moves to the viewport.
+  - **Drag geometry:** `gridRef` → `.week-days-grid` (colWidth = width/7, day
+    clamp 0..6; `GRID_COLS`/`BIN_COL_INDEX`/AXIS_W offsets deleted); grid→bin
+    detection becomes a `binRef` rect hit-test (replaces "column index 7");
+    BinCard drop validation simplifies to grid-rect projection ∩ viewport
+    client rect (supersedes the previous blocker-3 sticky-exclusion math —
+    same reverted-drop guarantees must hold). No drag edge auto-scroll: to
+    drop on Sat/Sun the user scrolls first (accepted gap, unchanged from the
+    approved run).
+  - ≤760px: grid min-width floor 672px (~96px/day), bin pane 160px.
+  - **Duration format:** new pure `formatDuration(hours)` in
+    `src/utils/time.ts` — round to whole minutes; `8h`, `2h 45m`, `45m`, `0h`;
+    applied at EVERY read-only hours display (audited exhaustive list in the
+    package: WeekView, AllocationGrid totals, TaskModal, MonthView,
+    PersonChip, Workload, Dashboard, PersonProfile, People, Projects,
+    ProjectDetail, Tasks, Kanban — TimelinePage/GlobalSearch show no duration
+    numbers), including capacity (`8h/dzień` renders identically), tooltips
+    and confirm texts. Numeric inputs stay decimal 0.25-step; clock ranges
+    (`8:00–10:45`, `formatMinutes`) stay. AppStore activity templates also
+    switch (future rows only; old persisted rows keep their wording —
+    accepted). Helper unit tests ride in the same developer package (6
+    assertions — a separate test-writer handoff would cost more than it
+    saves); message-assertion updates in existing tests limited to number
+    formatting and itemized.
+- **Packages** (STRICTLY SEQUENTIAL — both edit WeekView.tsx; layout first):
+  1. `handoffs/packages/PKG-20260708-week-layout-fix.md` — WeekView pane
+     restructure + scroll sync + drag-geometry rework + week-cal CSS rewrite —
+     tier: developer
+  2. `handoffs/packages/PKG-20260708-duration-format.md` — `formatDuration` +
+     repo-wide display sweep + activity templates + helper tests — tier:
+     developer (depends: 1)
+  - No test-writer package this run (per orchestrator; the only new unit
+    surface is the 6-line formatter, folded into package 2).
+- **Gates:** `npx tsc --noEmit` + `npm test` (64 + new formatter tests) +
+  `npm run build` green after EACH package; dev-server walkthrough by the
+  worker; final human browser pass focused on: axis overlap at every scroll
+  position, bin visible without scrolling, both drags incl. reverted drops,
+  header/column alignment, `2h 45m` formatting sweep, ≤760px.
+- **Risks:** (a) scroll-sync via refs must not jitter or drift — direct
+  property assignment in one handler, no state; (b) the drag rework
+  supersedes the reviewed blocker-3 hit-test — its reverted-drop cases are
+  explicit acceptance criteria again; (c) duration sweep may break
+  activity-message assertions in `blockActions.test.ts` — allowed only as
+  formatting-part edits, itemized; (d) both packages touch WeekView.tsx —
+  never parallelize.
+- **Open questions:** none. Post-merge doc note stands: CLAUDE.md week-view
+  description + duration-format convention need a human refresh after this
+  run.
+
+### Worker log
+
+<!-- Append one block per worker completion. Newest at the bottom. -->
+
+#### 2026-07-08 · developer · `PKG-20260708-week-layout-fix`
+
+- **Changed:**
+  - `src/components/WeekView.tsx` — restructured the week view into a header row
+    (`.week-head-row`: `.week-corner` 52px + `.week-head-track`→`.week-head-inner`
+    7-col grid + `.week-bin-head` 200px) over `.week-main` three panes
+    (`.week-axis-pane` 52px overflow-hidden with the 1152px `.week-axis` inside;
+    `.week-days-viewport` the sole scroller — both axes — wrapping
+    `.week-days-grid` 7-col; `.week-bin-pane` 200px, own vertical scroll). All
+    sticky positioning removed. New refs `viewportRef/axisPaneRef/headTrackRef/
+    binRef`; one `onViewportScroll` handler sets `axisPane.scrollTop` +
+    `headTrack.scrollLeft` (direct assignment, no state). Auto-scroll-to-7:00
+    effect repointed to `viewportRef`. Deleted `GRID_COLS`/`BIN_COL_INDEX`/
+    `AXIS_W`/`bodyRef`/`scrollRef`; added `DAY_COLS=7`.
+  - Drag geometry: `TimedBlock.colWidth = gridRect.width / 7`, day projection
+    clamps 0..6; grid→bin is now a rect hit-test of `binRef` (`overBin` boolean
+    in DragState, replaces `projDayIndex===7`) keeping the `to-bin` tint +
+    `MOVE_BLOCK_TO_BIN` drop. `BinCard` targeting simplified: column/time off
+    `.week-days-grid` rect (y-origin = `gridRect.top`, no header inside), valid
+    iff the pointer is inside `viewportRef`'s client rect — that single clamp
+    supersedes the old sticky-header/axis exclusion math (blocker-3 stays fixed:
+    header row / axis pane / bin / outside-viewport all fall outside the rect →
+    revert). Escape-cancel, pointer capture, `moved` click-guard, collision tint
+    unchanged.
+  - `src/styles.css` — week-cal section rewrite: `.week-cal` is now the bordered
+    opaque frame; new `.week-head-row/.week-corner/.week-head-track/
+    .week-head-inner`, `.week-main/.week-axis-pane/.week-days-viewport/
+    .week-days-grid/.week-bin-pane`; header-inner and days-grid share
+    `width: max(calc(100%/5*7), 672px)` so Mon–Fri fill and columns align;
+    `scrollbar-gutter: stable` on both `.week-days-viewport` and
+    `.week-head-track`. All surfaces opaque (`--card-bg`/`--card-bg-2`).
+    `user-select: none` moved onto the three panes (not `.week-cal` root, so the
+    context-menu select/input still work). ≤760px block: dropped the old
+    `.week-cal-scroll/.week-cal-grid` rules (the 672px floor lives in the width
+    rule) and narrowed `.week-bin-head/.week-bin-pane` to 160px. Kept
+    day-column gradient lines, weekend/today tints, block/handle/bin-card styles,
+    `.week-day-col { overflow: visible }`.
+- **Decisions within package bounds:**
+  - `.week-head-inner` uses the SAME `max(calc(100%/5*7), 672px)` as the days
+    grid (package decision 1 wrote head-inner as plain `calc(100%/5*7)`); the
+    identical form is required so headers stay column-aligned at the ≤760px
+    672px floor — matches acceptance criterion "day headers stay perfectly
+    column-aligned while scrolling". Minor, alignment-preserving.
+- **Duration strings:** untouched — all `fmt(...)h` / `formatMinutes` byte-
+  identical for the next package.
+- **Tests:** `npx tsc --noEmit` clean; `npm test` → 64/64; `npm run build`
+  success (pre-existing >500kB chunk warning only). No store/util/test files
+  touched. Verified no stale `AXIS_W/GRID_COLS/BIN_COL_INDEX/bodyRef/scrollRef`
+  or `.week-cal-scroll/.week-cal-grid/.week-axis-head` references remain.
+- **Needs human browser pass (not CLI-verifiable):**
+  - Axis opacity/overlap at every horizontal scroll position; Mon–Fri fill at
+    scrollLeft 0; Sat/Sun on scroll; header↔column alignment (incl. macOS
+    "always show scrollbars"); vertical axis/grid sync after fast scrolling +
+    open at ~7:00; Zasobnik visible with no scroll at 1920px and ~1000px.
+  - Both drag directions incl. the reverted-drop cases (drop over header row /
+    axis pane / bin / outside viewport must revert; same-person collision
+    danger+revert); grid→bin `to-bin` tint; Mon→Tue ±1h snap+persist; top/bottom
+    resize; two consecutive drags on one block; context menu on dated + bin.
+  - **Observation for the reviewer (not a spec deviation):** the mandated bin
+    pane is `overflow-y:auto` (no `overflow:visible` as the old in-grid bin had),
+    so while dragging a bin CARD out onto the grid its visual ghost is clipped at
+    the pane's left edge. The DROP is rect-based and correct (block lands at the
+    projected day/time); only the drag-ghost preview is clipped. If a floating
+    ghost is wanted that's a follow-up (would need a portal/fixed-position ghost)
+    — flagging so the human can judge during the walkthrough.
+  - No horizontal-edge drag auto-scroll (accepted gap per decision 4): to drop on
+    Sat/Sun the user scrolls first.
+- **Next:** ready for `PKG-20260708-duration-format` (package 2, same files —
+  strictly sequential) then review.
+
+#### 2026-07-08 · developer · `PKG-20260708-duration-format`
+
+- **Changed:**
+  - `src/utils/time.ts` — new pure `formatDuration(hours)` → `8h` / `2h 45m` /
+    `45m` / `0h` (rounds to whole minutes; no new imports).
+  - `src/utils/time.test.ts` — new `describe('formatDuration')`: the six spec
+    examples + a rounding case (7 assertions across 4 `it`s).
+  - `src/components/WeekView.tsx` — deleted local `fmt`; block hours label +
+    `title`, bin card hours + `title`, day-head totals, bin header/group totals,
+    context-menu title, overload warning, delete-confirm all via
+    `formatDuration`. Clock ranges (`formatMinutes`) untouched.
+  - `src/components/AllocationGrid.tsx` — deleted local `fmt`; `Suma dnia`
+    column, person totals, grand total, overload tooltip formatted. Cell inputs
+    untouched.
+  - `src/components/TaskModal.tsx` — deleted local `fmtHours`; estimate-compare
+    line, `(+ … w zasobniku)` suffix, existing-bin chips, pending chips, and the
+    unassign confirm (incl. `(w tym … w zasobniku)`) formatted. Inputs untouched.
+  - `src/components/MonthView.tsx` — cell hours + cell `title`.
+  - `src/components/PersonChip.tsx` — the `hours` suffix.
+  - `src/pages/WorkloadPage.tsx` — deleted local `fmtHours`; block hours,
+    reassign-option preview (`{name} — …/{cap} tego dnia`), table cells,
+    assigned/available sums, overload tooltip + panel title all formatted;
+    capacity now via `formatDuration`. `aria-label` percentages left as-is.
+  - `src/pages/DashboardPage.tsx` — `Xh / Yh` load line (value + capacity).
+  - `src/pages/PersonProfilePage.tsx` — deleted local `fmtHours`; week summary
+    (assigned / available / `/dzień` / total), day cells, per-task hours.
+  - `src/pages/PeoplePage.tsx` — deleted local `fmtHours`; `przypisano …`.
+  - `src/pages/ProjectsPage.tsx` — deleted local `fmtHours`; `zaplanowano …`.
+  - `src/pages/ProjectDetailPage.tsx` — deleted local `fmtHours`; project total +
+    per-task totals.
+  - `src/pages/TasksPage.tsx` — deleted local `fmtHours`; `zaplanowano … / szac.
+    …`.
+  - `src/pages/KanbanPage.tsx` — card `{planned}h` → `formatDuration(planned)`.
+  - `src/store/AppStore.tsx` — activity templates switched to `formatDuration`:
+    INSERT_BLOCK, REASSIGN_ENTRY, SET_BLOCK_TIME (all three variants + shrink
+    suffix), MOVE_BLOCK_TO_BIN, SPLIT_BLOCK, DELETE_BLOCK. Clock ranges in the
+    same-time-resize message stay `formatMinutes`.
+- **Self-audit:** repo-wide `}h` / `h/dzień` / `fmtHours` / `fmt(` sweep over
+  `src/**/*.{ts,tsx}` (excluding tests) leaves ONLY the two `${h}h` literals
+  inside `formatDuration` itself. All local `fmt`/`fmtHours` helpers removed (no
+  non-duration uses existed). Numeric `<input>`s (AllocationGrid cells, estimate,
+  insert-hours, bin add-row), clock times, and `%`/counts untouched.
+- **Assertion edits:** none. `blockActions.test.ts` only asserts non-numeric
+  substrings of activity messages (`'wróciło do zasobnika'`, `'z zasobnika'`),
+  so no formatting-part edits were required.
+- **Tests:** `npx tsc --noEmit` clean; `npm test` → 68/68 (64 prior + 4 new
+  formatDuration `it`s); `npm run build` success (pre-existing >500kB chunk
+  warning only).
+- **Deviations:** none. No layout/CSS/WeekView-structure changes; Polish strings
+  otherwise byte-identical.
+- **Next:** ready for review. Human browser pass should spot-check the sweep:
+  a 2h 45m block shows `2h 45m` with `8:00–10:45` clock range intact; day totals
+  like `12h 30m`; capacity renders `8h` / `8h/dzień` unchanged for whole hours;
+  new activity rows read e.g. `podzielił(a) blok 1h 15m na 2 części (do
+  zasobnika: 30m)`.
+
+### Reviewer verdict
+
+<!-- Reviewer appends here after workers finish. -->
+
+#### 2026-07-08 · reviewer · verdict (walkthrough-fixes run)
+
+- **Status:** APPROVE (with nits)
+- **Gates (re-run by reviewer):** `npx tsc --noEmit` clean; `npm test` 68/68
+  (4 files, incl. 4 new formatDuration tests); `npm run build` success
+  (500kB chunk warning pre-existing).
+- **PKG-20260708-week-layout-fix — verified against the package:**
+  - Structure matches decision 1 exactly: `.week-head-row` (52px corner +
+    overflow-hidden head track + 200px bin head) over `.week-main`
+    (52px axis pane / days viewport / 200px bin pane); grep confirms zero
+    sticky positioning left in the week-view CSS (remaining sticky rules are
+    sidebar/alloc-grid/timeline/drawer — untouched) and zero stale
+    `AXIS_W`/`GRID_COLS`/`BIN_COL_INDEX`/`bodyRef`/`scrollRef`/
+    `.week-cal-scroll`/`.week-cal-grid` references.
+  - Scroll sync is one `onScroll` handler with direct ref assignment
+    (WeekView.tsx:477-482), no state/rAF; auto-scroll-to-7:00 repointed to
+    the viewport; `scrollbar-gutter: stable` present on BOTH
+    `.week-days-viewport` and `.week-head-track`; head-inner and days-grid
+    share the identical `max(calc(100%/5*7), 672px)` width formula (the
+    worker's in-bounds deviation — correct, required for the 672px floor).
+  - **Blocker-3 regression stays fixed under the new geometry:** BinCard
+    validity = pointer inside the days-viewport client rect AND column 0..6
+    (WeekView.tsx:382-387), with `finish` gating on `!valid` — the viewport
+    contains only the grid, so header row, axis pane, bin pane and
+    outside-drops all fall outside the rect and revert. Grid→bin is a clean
+    `binRef` rect hit-test with collision skipped and `to-bin` tint kept.
+  - ≤760px: 672px grid floor lives in the width rule; bin head+pane both
+    narrowed to 160px together (alignment preserved).
+- **PKG-20260708-duration-format — verified:** `formatDuration` is pure,
+  correct, documented as duration-not-clock (time.ts:60-67), 4 meaningful
+  tests. Repo-wide audit re-run by me: the only `${…}h` literals left in
+  non-test src are inside `formatDuration` itself; all local `fmt`/`fmtHours`
+  helpers gone; all seven activity templates in AppStore.tsx use
+  `formatDuration` while clock ranges keep `formatMinutes`; numeric inputs
+  untouched; no store-logic change beyond message strings; existing
+  activity-message assertions unaffected (they assert non-numeric substrings).
+- **Codex finding (reviews/2026-07-08-161041-codex-review.md), adjudicated:**
+  - P2 `.week-bin-head` wider than `.week-bin-pane` (content-box premise) —
+    **REJECTED.** A universal `* { box-sizing: border-box; }` reset exists at
+    styles.css:156-158 (pre-dates this run), so the 200px flex basis of
+    `.week-bin-head` INCLUDES its 8px/10px padding and 1px border; head cell
+    and pane are both exactly 200px outer (160px at ≤760px, narrowed as a
+    pair). `.week-corner` (52px) matches `.week-axis-pane` (52px) the same
+    way, and `scrollbar-gutter: stable` on both scroll-synced tracks guards
+    the remaining misalignment vector Codex worried about. No fix needed;
+    header/column alignment stays on the human walkthrough list regardless.
+- **Worker-flagged gap, adjudicated:** bin-card drag ghost clipping at the
+  bin pane's edge (`overflow-y: auto` pane) — **acceptable-deferred.** Drop
+  targeting is pointer/rect-based and unaffected; only the preview visual
+  clips. A proper fix needs a portal/fixed-position ghost — out of scope,
+  fine as a follow-up if the human wants it.
+- **Reviewer nits (non-blocking):**
+  - BinCard's `inView` rect includes the viewport's scrollbar strips, so a
+    drop on the few-pixel scrollbar area still schedules at a clamped time —
+    same tolerance class as the previously approved geometry, negligible.
+  - Dated-block (TimedBlock) drags released over the axis/header still clamp
+    to a valid day/time — pre-existing behavior carried over unchanged from
+    the approved run, not a regression.
+  - `formatDuration` assumes non-negative input (no caller passes negative).
+- **Convention check:** PASS — no store/selector changes in the layout
+  package; Polish strings preserved; `user-select: none` correctly moved onto
+  the three panes (context-menu inputs excluded); opaque pane backgrounds;
+  reduced-motion untouched; no new localStorage.
+- **Human walkthrough (required before merge; code approved):**
+  1. Axis fully opaque + never overlaps at every horizontal/vertical scroll
+     position; opens at ~7:00; no axis/grid drift after fast wheel scrolling.
+  2. Mon–Fri fill at scrollLeft 0; Sat/Sun behind scroll; header↔column
+     alignment while scrolling — INCLUDING with macOS "always show scroll
+     bars" forced (the scrollbar-gutter path).
+  3. Zasobnik + seeded Ola 3h card visible with NO scrolling at 1920px and
+     ~1000px widths.
+  4. Bin→grid: free-slot drop schedules; same-person collision danger+revert;
+     drops over header row / axis pane / bin / outside viewport revert
+     (blocker-3 regression cases under the new geometry).
+  5. Grid→bin: `to-bin` tint over the pane, drop lands in the bin; Mon→Tue
+     ±1h snap+persist; top/bottom resize; two consecutive drags register;
+     context menu (przed/po, split, Usuń blok) on dated + bin.
+  6. Duration sweep spot-checks: a 2.75h block shows `2h 45m` with
+     `8:00–10:45` intact; day total like `12h 30m`; capacity `8h`/`8h/dzień`;
+     new activity row e.g. `podzielił(a) blok 1h 15m na 2 części (do
+     zasobnika: 30m)`; judge the clipped bin-card drag ghost (deferred item).
+  7. ≤760px: 96px/day columns behind scroll, 160px bin, no overlap; month
+     view untouched; console clean throughout.
+- **Post-merge doc note stands:** CLAUDE.md week-view description + the new
+  duration-format convention need the human refresh (per plan, not a worker
+  task). Commit hygiene from the previous verdict still applies (untracked
+  `src/utils/uiPrefs.ts`, `src/store/selectors.test.ts`, package/review files).

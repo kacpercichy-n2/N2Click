@@ -33,6 +33,7 @@ import {
   MINUTE_STEP,
   blockEndMinutes,
   clampBlockStart,
+  formatDuration,
   formatMinutes,
   hasCollision,
   hoursToMinutes,
@@ -592,7 +593,7 @@ function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
       state,
       'task',
       payload.taskId,
-      `wstawił(a) blok ${hours}h ${payload.position === 'before' ? 'przed' : 'po'} „${state.tasks.find((t) => t.id === ref.taskId)?.title ?? 'blok'}” dla ${person?.name ?? 'kogoś'} w dniu ${ref.date}`,
+      `wstawił(a) blok ${formatDuration(hours)} ${payload.position === 'before' ? 'przed' : 'po'} „${state.tasks.find((t) => t.id === ref.taskId)?.title ?? 'blok'}” dla ${person?.name ?? 'kogoś'} w dniu ${ref.date}`,
     ),
   };
 }
@@ -649,7 +650,7 @@ function reassignEntry(state: AppData, entryId: string, toPersonId: string): App
       state,
       'task',
       taskId,
-      `przeniósł/przeniosła blok ${plannedHours}h (${date}) z ${fromName} na ${target.name}`,
+      `przeniósł/przeniosła blok ${formatDuration(plannedHours)} (${date}) z ${fromName} na ${target.name}`,
     ),
   };
 }
@@ -743,13 +744,13 @@ function setBlockTime(
 
   let message: string;
   if (fromBin) {
-    message = `zaplanował(a) blok ${plannedHours}h z zasobnika na ${date} ${formatMinutes(startMinutes)}`;
+    message = `zaplanował(a) blok ${formatDuration(plannedHours)} z zasobnika na ${date} ${formatMinutes(startMinutes)}`;
   } else if (date !== oldDate) {
-    message = `przeniósł/przeniosła blok ${plannedHours}h na ${date} ${formatMinutes(startMinutes)}`;
+    message = `przeniósł/przeniosła blok ${formatDuration(plannedHours)} na ${date} ${formatMinutes(startMinutes)}`;
   } else {
-    message = `zmienił(a) blok na ${formatMinutes(startMinutes)}–${formatMinutes(startMinutes + dur)} (${plannedHours}h)`;
+    message = `zmienił(a) blok na ${formatMinutes(startMinutes)}–${formatMinutes(startMinutes + dur)} (${formatDuration(plannedHours)})`;
   }
-  if (shrink) message += `; ${delta}h wróciło do zasobnika`;
+  if (shrink) message += `; ${formatDuration(delta)} wróciło do zasobnika`;
 
   return {
     ...state,
@@ -784,7 +785,7 @@ function moveBlockToBin(state: AppData, entryId: string): AppData {
       state,
       'task',
       entry.taskId,
-      `przeniósł/przeniosła blok ${entry.plannedHours}h (${oldDate}) do zasobnika`,
+      `przeniósł/przeniosła blok ${formatDuration(entry.plannedHours)} (${oldDate}) do zasobnika`,
     ),
   };
 }
@@ -834,7 +835,7 @@ function splitBlock(state: AppData, entryId: string, parts: 2 | 4): AppData {
       state,
       'task',
       entry.taskId,
-      `podzielił(a) blok ${entry.plannedHours}h na ${parts} części (do zasobnika: ${binSum}h)`,
+      `podzielił(a) blok ${formatDuration(entry.plannedHours)} na ${parts} części (do zasobnika: ${formatDuration(binSum)})`,
     ),
   };
 }
@@ -853,7 +854,7 @@ function deleteBlock(state: AppData, entryId: string): AppData {
       state,
       'task',
       entry.taskId,
-      `usunął/usunęła blok ${entry.plannedHours}h z zasobnika`,
+      `usunął/usunęła blok ${formatDuration(entry.plannedHours)} z zasobnika`,
     ),
   };
 }

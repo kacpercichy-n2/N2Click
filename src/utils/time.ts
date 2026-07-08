@@ -52,6 +52,20 @@ export function formatMinutes(m: number): string {
   return `${h}:${String(min).padStart(2, '0')}`;
 }
 
+/**
+ * Human-readable DURATION from a decimal-hours quantity (>= 0):
+ * '8h', '2h 45m', '45m', '0h'. Rounds to whole minutes. Not for clock
+ * time-of-day (use formatMinutes) — this is a length, not a moment.
+ */
+export function formatDuration(hours: number): string {
+  const total = Math.round(hours * 60);
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  if (m === 0) return `${h}h`;
+  if (h === 0) return `${m}m`;
+  return `${h}h ${m}m`;
+}
+
 /** End minute of a block starting at `startMinutes` lasting `plannedHours`. */
 export function blockEndMinutes(startMinutes: number, plannedHours: number): number {
   return startMinutes + hoursToMinutes(plannedHours);

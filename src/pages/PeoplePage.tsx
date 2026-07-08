@@ -8,10 +8,7 @@ import { getDepartment, personTotalHours } from '../store/selectors';
 import { Avatar } from '../components/Avatar';
 import { ChevronRight } from '../components/icons';
 import { DEFAULT_CAPACITY } from '../store/storage';
-
-function fmtHours(n: number): string {
-  return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
-}
+import { formatDuration } from '../utils/time';
 
 const emptyDraft = (): PersonDraft => ({
   firstName: '',
@@ -178,7 +175,7 @@ export function PeoplePage() {
               </Link>
               <ChevronRight className="card-chevron" size={16} aria-hidden />
               <span className="person-row-hours">
-                przypisano {fmtHours(personTotalHours(state, p.id))}h
+                przypisano {formatDuration(personTotalHours(state, p.id))}
               </span>
               <button
                 type="button"

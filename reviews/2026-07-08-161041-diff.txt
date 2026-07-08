@@ -1,0 +1,1559 @@
+diff --git a/handoffs/RUN-STATE.md b/handoffs/RUN-STATE.md
+index fd3c522..bd9a196 100644
+--- a/handoffs/RUN-STATE.md
++++ b/handoffs/RUN-STATE.md
+@@ -474,3 +474,214 @@ boring and factual — it's a checklist, not prose.
+   the four `handoffs/packages/PKG-20260708-*.md`, and the review artifacts.
+   CLAUDE.md's in-tree diff is the PREVIOUS run's doc refresh; the bin/sidebar
+   doc update remains a post-merge human task per the plan.
++
++---
++
++## Run: 2026-07-08 — Walkthrough fixes: fixed hour axis, bin beside grid, duration format
++
++### Plan (architect)
++
++- **Context:** the previous run was APPROVED, but the human browser
++  walkthrough surfaced three defects: (1) the sticky-left hour axis is
++  translucent and overlaps day headers/blocks during horizontal scroll;
++  (2) the Zasobnik is the 8th in-grid column and only visible after scrolling
++  past Sunday — it must sit BESIDE the calendar, always visible; (3) durations
++  render inconsistently (clock ranges + decimal `2.75h` in the calendar vs
++  `0.25h` elsewhere).
++- **Goal:** restructure the week view to
++  [fixed hour axis][h-scrollable 7-day grid, Mon–Fri primary][always-visible
++  Zasobnik panel], with no translucent overlap in any scroll position and both
++  drag directions intact; unify every read-only duration display behind one
++  `formatDuration(hours)` helper ("2h 45m" / "45m" / "8h").
++- **Key decisions (pre-resolved, no open questions):**
++  - **Week view structure (replaces ALL sticky positioning):** a non-scrolling
++    header row (`52px corner | overflow-hidden day-header track | 200px bin
++    header`) above a flex main row of three panes: `.week-axis-pane` (52px,
++    overflow hidden), `.week-days-viewport` (flex:1, overflow auto BOTH axes —
++    both scrollbars visible there; inner `.week-days-grid` 7 columns, width
++    `max(calc(100%/5*7), 672px)`, height 1152px), `.week-bin-pane` (200px,
++    own overflow-y). One viewport `onScroll` syncs `axisPane.scrollTop` and
++    `headTrack.scrollLeft` by direct ref assignment; `scrollbar-gutter:
++    stable` on viewport + head track prevents header/column misalignment with
++    classic scrollbars. Auto-scroll-to-7:00 moves to the viewport.
++  - **Drag geometry:** `gridRef` → `.week-days-grid` (colWidth = width/7, day
++    clamp 0..6; `GRID_COLS`/`BIN_COL_INDEX`/AXIS_W offsets deleted); grid→bin
++    detection becomes a `binRef` rect hit-test (replaces "column index 7");
++    BinCard drop validation simplifies to grid-rect projection ∩ viewport
++    client rect (supersedes the previous blocker-3 sticky-exclusion math —
++    same reverted-drop guarantees must hold). No drag edge auto-scroll: to
++    drop on Sat/Sun the user scrolls first (accepted gap, unchanged from the
++    approved run).
++  - ≤760px: grid min-width floor 672px (~96px/day), bin pane 160px.
++  - **Duration format:** new pure `formatDuration(hours)` in
++    `src/utils/time.ts` — round to whole minutes; `8h`, `2h 45m`, `45m`, `0h`;
++    applied at EVERY read-only hours display (audited exhaustive list in the
++    package: WeekView, AllocationGrid totals, TaskModal, MonthView,
++    PersonChip, Workload, Dashboard, PersonProfile, People, Projects,
++    ProjectDetail, Tasks, Kanban — TimelinePage/GlobalSearch show no duration
++    numbers), including capacity (`8h/dzień` renders identically), tooltips
++    and confirm texts. Numeric inputs stay decimal 0.25-step; clock ranges
++    (`8:00–10:45`, `formatMinutes`) stay. AppStore activity templates also
++    switch (future rows only; old persisted rows keep their wording —
++    accepted). Helper unit tests ride in the same developer package (6
++    assertions — a separate test-writer handoff would cost more than it
++    saves); message-assertion updates in existing tests limited to number
++    formatting and itemized.
++- **Packages** (STRICTLY SEQUENTIAL — both edit WeekView.tsx; layout first):
++  1. `handoffs/packages/PKG-20260708-week-layout-fix.md` — WeekView pane
++     restructure + scroll sync + drag-geometry rework + week-cal CSS rewrite —
++     tier: developer
++  2. `handoffs/packages/PKG-20260708-duration-format.md` — `formatDuration` +
++     repo-wide display sweep + activity templates + helper tests — tier:
++     developer (depends: 1)
++  - No test-writer package this run (per orchestrator; the only new unit
++    surface is the 6-line formatter, folded into package 2).
++- **Gates:** `npx tsc --noEmit` + `npm test` (64 + new formatter tests) +
++  `npm run build` green after EACH package; dev-server walkthrough by the
++  worker; final human browser pass focused on: axis overlap at every scroll
++  position, bin visible without scrolling, both drags incl. reverted drops,
++  header/column alignment, `2h 45m` formatting sweep, ≤760px.
++- **Risks:** (a) scroll-sync via refs must not jitter or drift — direct
++  property assignment in one handler, no state; (b) the drag rework
++  supersedes the reviewed blocker-3 hit-test — its reverted-drop cases are
++  explicit acceptance criteria again; (c) duration sweep may break
++  activity-message assertions in `blockActions.test.ts` — allowed only as
++  formatting-part edits, itemized; (d) both packages touch WeekView.tsx —
++  never parallelize.
++- **Open questions:** none. Post-merge doc note stands: CLAUDE.md week-view
++  description + duration-format convention need a human refresh after this
++  run.
++
++### Worker log
++
++<!-- Append one block per worker completion. Newest at the bottom. -->
++
++#### 2026-07-08 · developer · `PKG-20260708-week-layout-fix`
++
++- **Changed:**
++  - `src/components/WeekView.tsx` — restructured the week view into a header row
++    (`.week-head-row`: `.week-corner` 52px + `.week-head-track`→`.week-head-inner`
++    7-col grid + `.week-bin-head` 200px) over `.week-main` three panes
++    (`.week-axis-pane` 52px overflow-hidden with the 1152px `.week-axis` inside;
++    `.week-days-viewport` the sole scroller — both axes — wrapping
++    `.week-days-grid` 7-col; `.week-bin-pane` 200px, own vertical scroll). All
++    sticky positioning removed. New refs `viewportRef/axisPaneRef/headTrackRef/
++    binRef`; one `onViewportScroll` handler sets `axisPane.scrollTop` +
++    `headTrack.scrollLeft` (direct assignment, no state). Auto-scroll-to-7:00
++    effect repointed to `viewportRef`. Deleted `GRID_COLS`/`BIN_COL_INDEX`/
++    `AXIS_W`/`bodyRef`/`scrollRef`; added `DAY_COLS=7`.
++  - Drag geometry: `TimedBlock.colWidth = gridRect.width / 7`, day projection
++    clamps 0..6; grid→bin is now a rect hit-test of `binRef` (`overBin` boolean
++    in DragState, replaces `projDayIndex===7`) keeping the `to-bin` tint +
++    `MOVE_BLOCK_TO_BIN` drop. `BinCard` targeting simplified: column/time off
++    `.week-days-grid` rect (y-origin = `gridRect.top`, no header inside), valid
++    iff the pointer is inside `viewportRef`'s client rect — that single clamp
++    supersedes the old sticky-header/axis exclusion math (blocker-3 stays fixed:
++    header row / axis pane / bin / outside-viewport all fall outside the rect →
++    revert). Escape-cancel, pointer capture, `moved` click-guard, collision tint
++    unchanged.
++  - `src/styles.css` — week-cal section rewrite: `.week-cal` is now the bordered
++    opaque frame; new `.week-head-row/.week-corner/.week-head-track/
++    .week-head-inner`, `.week-main/.week-axis-pane/.week-days-viewport/
++    .week-days-grid/.week-bin-pane`; header-inner and days-grid share
++    `width: max(calc(100%/5*7), 672px)` so Mon–Fri fill and columns align;
++    `scrollbar-gutter: stable` on both `.week-days-viewport` and
++    `.week-head-track`. All surfaces opaque (`--card-bg`/`--card-bg-2`).
++    `user-select: none` moved onto the three panes (not `.week-cal` root, so the
++    context-menu select/input still work). ≤760px block: dropped the old
++    `.week-cal-scroll/.week-cal-grid` rules (the 672px floor lives in the width
++    rule) and narrowed `.week-bin-head/.week-bin-pane` to 160px. Kept
++    day-column gradient lines, weekend/today tints, block/handle/bin-card styles,
++    `.week-day-col { overflow: visible }`.
++- **Decisions within package bounds:**
++  - `.week-head-inner` uses the SAME `max(calc(100%/5*7), 672px)` as the days
++    grid (package decision 1 wrote head-inner as plain `calc(100%/5*7)`); the
++    identical form is required so headers stay column-aligned at the ≤760px
++    672px floor — matches acceptance criterion "day headers stay perfectly
++    column-aligned while scrolling". Minor, alignment-preserving.
++- **Duration strings:** untouched — all `fmt(...)h` / `formatMinutes` byte-
++  identical for the next package.
++- **Tests:** `npx tsc --noEmit` clean; `npm test` → 64/64; `npm run build`
++  success (pre-existing >500kB chunk warning only). No store/util/test files
++  touched. Verified no stale `AXIS_W/GRID_COLS/BIN_COL_INDEX/bodyRef/scrollRef`
++  or `.week-cal-scroll/.week-cal-grid/.week-axis-head` references remain.
++- **Needs human browser pass (not CLI-verifiable):**
++  - Axis opacity/overlap at every horizontal scroll position; Mon–Fri fill at
++    scrollLeft 0; Sat/Sun on scroll; header↔column alignment (incl. macOS
++    "always show scrollbars"); vertical axis/grid sync after fast scrolling +
++    open at ~7:00; Zasobnik visible with no scroll at 1920px and ~1000px.
++  - Both drag directions incl. the reverted-drop cases (drop over header row /
++    axis pane / bin / outside viewport must revert; same-person collision
++    danger+revert); grid→bin `to-bin` tint; Mon→Tue ±1h snap+persist; top/bottom
++    resize; two consecutive drags on one block; context menu on dated + bin.
++  - **Observation for the reviewer (not a spec deviation):** the mandated bin
++    pane is `overflow-y:auto` (no `overflow:visible` as the old in-grid bin had),
++    so while dragging a bin CARD out onto the grid its visual ghost is clipped at
++    the pane's left edge. The DROP is rect-based and correct (block lands at the
++    projected day/time); only the drag-ghost preview is clipped. If a floating
++    ghost is wanted that's a follow-up (would need a portal/fixed-position ghost)
++    — flagging so the human can judge during the walkthrough.
++  - No horizontal-edge drag auto-scroll (accepted gap per decision 4): to drop on
++    Sat/Sun the user scrolls first.
++- **Next:** ready for `PKG-20260708-duration-format` (package 2, same files —
++  strictly sequential) then review.
++
++#### 2026-07-08 · developer · `PKG-20260708-duration-format`
++
++- **Changed:**
++  - `src/utils/time.ts` — new pure `formatDuration(hours)` → `8h` / `2h 45m` /
++    `45m` / `0h` (rounds to whole minutes; no new imports).
++  - `src/utils/time.test.ts` — new `describe('formatDuration')`: the six spec
++    examples + a rounding case (7 assertions across 4 `it`s).
++  - `src/components/WeekView.tsx` — deleted local `fmt`; block hours label +
++    `title`, bin card hours + `title`, day-head totals, bin header/group totals,
++    context-menu title, overload warning, delete-confirm all via
++    `formatDuration`. Clock ranges (`formatMinutes`) untouched.
++  - `src/components/AllocationGrid.tsx` — deleted local `fmt`; `Suma dnia`
++    column, person totals, grand total, overload tooltip formatted. Cell inputs
++    untouched.
++  - `src/components/TaskModal.tsx` — deleted local `fmtHours`; estimate-compare
++    line, `(+ … w zasobniku)` suffix, existing-bin chips, pending chips, and the
++    unassign confirm (incl. `(w tym … w zasobniku)`) formatted. Inputs untouched.
++  - `src/components/MonthView.tsx` — cell hours + cell `title`.
++  - `src/components/PersonChip.tsx` — the `hours` suffix.
++  - `src/pages/WorkloadPage.tsx` — deleted local `fmtHours`; block hours,
++    reassign-option preview (`{name} — …/{cap} tego dnia`), table cells,
++    assigned/available sums, overload tooltip + panel title all formatted;
++    capacity now via `formatDuration`. `aria-label` percentages left as-is.
++  - `src/pages/DashboardPage.tsx` — `Xh / Yh` load line (value + capacity).
++  - `src/pages/PersonProfilePage.tsx` — deleted local `fmtHours`; week summary
++    (assigned / available / `/dzień` / total), day cells, per-task hours.
++  - `src/pages/PeoplePage.tsx` — deleted local `fmtHours`; `przypisano …`.
++  - `src/pages/ProjectsPage.tsx` — deleted local `fmtHours`; `zaplanowano …`.
++  - `src/pages/ProjectDetailPage.tsx` — deleted local `fmtHours`; project total +
++    per-task totals.
++  - `src/pages/TasksPage.tsx` — deleted local `fmtHours`; `zaplanowano … / szac.
++    …`.
++  - `src/pages/KanbanPage.tsx` — card `{planned}h` → `formatDuration(planned)`.
++  - `src/store/AppStore.tsx` — activity templates switched to `formatDuration`:
++    INSERT_BLOCK, REASSIGN_ENTRY, SET_BLOCK_TIME (all three variants + shrink
++    suffix), MOVE_BLOCK_TO_BIN, SPLIT_BLOCK, DELETE_BLOCK. Clock ranges in the
++    same-time-resize message stay `formatMinutes`.
++- **Self-audit:** repo-wide `}h` / `h/dzień` / `fmtHours` / `fmt(` sweep over
++  `src/**/*.{ts,tsx}` (excluding tests) leaves ONLY the two `${h}h` literals
++  inside `formatDuration` itself. All local `fmt`/`fmtHours` helpers removed (no
++  non-duration uses existed). Numeric `<input>`s (AllocationGrid cells, estimate,
++  insert-hours, bin add-row), clock times, and `%`/counts untouched.
++- **Assertion edits:** none. `blockActions.test.ts` only asserts non-numeric
++  substrings of activity messages (`'wróciło do zasobnika'`, `'z zasobnika'`),
++  so no formatting-part edits were required.
++- **Tests:** `npx tsc --noEmit` clean; `npm test` → 68/68 (64 prior + 4 new
++  formatDuration `it`s); `npm run build` success (pre-existing >500kB chunk
++  warning only).
++- **Deviations:** none. No layout/CSS/WeekView-structure changes; Polish strings
++  otherwise byte-identical.
++- **Next:** ready for review. Human browser pass should spot-check the sweep:
++  a 2h 45m block shows `2h 45m` with `8:00–10:45` clock range intact; day totals
++  like `12h 30m`; capacity renders `8h` / `8h/dzień` unchanged for whole hours;
++  new activity rows read e.g. `podzielił(a) blok 1h 15m na 2 części (do
++  zasobnika: 30m)`.
++
++### Reviewer verdict
++
++<!-- Reviewer appends here after workers finish. -->
+diff --git a/src/components/AllocationGrid.tsx b/src/components/AllocationGrid.tsx
+index 581827f..7b0c516 100644
+--- a/src/components/AllocationGrid.tsx
++++ b/src/components/AllocationGrid.tsx
+@@ -11,6 +11,7 @@ import {
+   parseDate,
+ } from '../utils/dates';
+ import { hoursForPersonOnDate, personCapacity } from '../store/selectors';
++import { formatDuration } from '../utils/time';
+ 
+ /** allocations keyed as `${personId}|${date}` -> hours. */
+ export type AllocMap = Record<string, number>;
+@@ -131,7 +132,7 @@ export function AllocationGrid({
+                       className={overloaded ? 'alloc-cell overload' : 'alloc-cell'}
+                       title={
+                         overloaded
+-                          ? `${p.name}: ${dayTotalForPerson}h łącznie tego dnia`
++                          ? `${p.name}: ${formatDuration(dayTotalForPerson)} łącznie tego dnia`
+                           : undefined
+                       }
+                     >
+@@ -154,7 +155,7 @@ export function AllocationGrid({
+                     </td>
+                   );
+                 })}
+-                <td className="alloc-total-col">{fmt(dayTotalAcross(d))}</td>
++                <td className="alloc-total-col">{formatDuration(dayTotalAcross(d))}</td>
+               </tr>
+             );
+           })}
+@@ -166,10 +167,10 @@ export function AllocationGrid({
+             </th>
+             {people.map((p) => (
+               <td key={p.id} className="alloc-person-total">
+-                {fmt(personTotal(p.id))}h
++                {formatDuration(personTotal(p.id))}
+               </td>
+             ))}
+-            <td className="alloc-grand-total">{fmt(grandTotal)}h</td>
++            <td className="alloc-grand-total">{formatDuration(grandTotal)}</td>
+           </tr>
+         </tfoot>
+       </table>
+@@ -177,11 +178,6 @@ export function AllocationGrid({
+   );
+ }
+ 
+-function fmt(n: number): string {
+-  // Trim trailing .0 for whole numbers.
+-  return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
+-}
+-
+ /** Weekday check reused by the "Fill weekdays" action in the editor page. */
+ export function isWeekdayDate(date: string): boolean {
+   const day = parseDate(date).getDay();
+diff --git a/src/components/MonthView.tsx b/src/components/MonthView.tsx
+index 0533609..a07bf84 100644
+--- a/src/components/MonthView.tsx
++++ b/src/components/MonthView.tsx
+@@ -15,6 +15,7 @@ import {
+   overloadedPeopleOnDate,
+ } from '../store/selectors';
+ import { personColor } from '../utils/colors';
++import { formatDuration } from '../utils/time';
+ 
+ interface Props {
+   state: AppData;
+@@ -75,10 +76,10 @@ export function MonthView({ state, anchor, filter, onPickDay }: Props) {
+                 .filter(Boolean)
+                 .join(' ')}
+               onClick={() => onPickDay(d)}
+-              title={total > 0 ? `zaplanowano ${total}h` : 'Brak pracy'}
++              title={total > 0 ? `zaplanowano ${formatDuration(total)}` : 'Brak pracy'}
+             >
+               <span className="month-cell-num">{dayNumber(d)}</span>
+-              {total > 0 && <span className="month-cell-hours">{total}h</span>}
++              {total > 0 && <span className="month-cell-hours">{formatDuration(total)}</span>}
+               {peopleIds.length > 0 && (
+                 <span className="month-cell-dots">
+                   {shown.map((id) => (
+diff --git a/src/components/PersonChip.tsx b/src/components/PersonChip.tsx
+index c2acea6..466506d 100644
+--- a/src/components/PersonChip.tsx
++++ b/src/components/PersonChip.tsx
+@@ -1,5 +1,6 @@
+ import type { Person } from '../types';
+ import { personColor } from '../utils/colors';
++import { formatDuration } from '../utils/time';
+ 
+ interface Props {
+   person: Person;
+@@ -16,7 +17,7 @@ export function PersonChip({ person, hours }: Props) {
+         aria-hidden
+       />
+       <span className="person-chip-name">{person.name}</span>
+-      {hours != null && <span className="person-chip-hours">{hours}h</span>}
++      {hours != null && <span className="person-chip-hours">{formatDuration(hours)}</span>}
+     </span>
+   );
+ }
+diff --git a/src/components/TaskModal.tsx b/src/components/TaskModal.tsx
+index 0b879fe..7b0d534 100644
+--- a/src/components/TaskModal.tsx
++++ b/src/components/TaskModal.tsx
+@@ -17,16 +17,12 @@ import { CommentsPanel } from './CommentsPanel';
+ import { AllocationGrid, allocKey, isWeekdayDate, type AllocMap } from './AllocationGrid';
+ import { SaveStatus } from './SaveStatus';
+ import { personColor } from '../utils/colors';
+-import { isBinEntry } from '../utils/time';
++import { formatDuration, isBinEntry } from '../utils/time';
+ import { eachDayInclusive, inclusiveDayCount, todayStr } from '../utils/dates';
+ import { useSaveStatus } from '../utils/useSaveStatus';
+ 
+ const MAX_PERIOD_DAYS = 92;
+ 
+-function fmtHours(n: number): string {
+-  return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
+-}
+-
+ /**
+  * Shared opener hook. Merges the task/project search params onto the CURRENT
+  * location so the page underneath never changes.
+@@ -430,11 +426,11 @@ function TaskEditor({
+       const binForPerson = existingBinForPerson + pendingBinForPerson;
+       const droppedTotal = datedOnThisTask + binForPerson;
+       if (droppedTotal > 0) {
+-        const binSuffix = binForPerson > 0 ? ` (w tym ${fmtHours(binForPerson)}h w zasobniku)` : '';
++        const binSuffix = binForPerson > 0 ? ` (w tym ${formatDuration(binForPerson)} w zasobniku)` : '';
+         const ok = window.confirm(
+-          `Usunąć ${person?.name ?? 'tę osobę'} oraz ${fmtHours(
++          `Usunąć ${person?.name ?? 'tę osobę'} oraz ${formatDuration(
+             droppedTotal,
+-          )}h zaplanowanej pracy z tego zadania${binSuffix}?`,
++          )} zaplanowanej pracy z tego zadania${binSuffix}?`,
+         );
+         if (!ok) return;
+       }
+@@ -621,16 +617,16 @@ function TaskEditor({
+         </div>
+         <div className="estimate-compare">
+           <span>
+-            zaplanowano <strong>{fmtHours(plannedTotalAll)}h</strong>
++            zaplanowano <strong>{formatDuration(plannedTotalAll)}</strong>
+             {binTotal > 0 && (
+-              <span className="muted"> (+ {fmtHours(binTotal)}h w zasobniku)</span>
++              <span className="muted"> (+ {formatDuration(binTotal)} w zasobniku)</span>
+             )}
+           </span>
+           <span className="muted">vs</span>
+           <span>
+             {estNum != null && !Number.isNaN(estNum) ? (
+               <>
+-                szacunek <strong>{fmtHours(estNum)}h</strong>
++                szacunek <strong>{formatDuration(estNum)}</strong>
+               </>
+             ) : (
+               <span className="muted">brak szacunku</span>
+@@ -727,7 +723,7 @@ function TaskEditor({
+                 <span className="bin-chips">
+                   {hours.map((h, i) => (
+                     <span key={i} className="bin-chip readonly">
+-                      {fmtHours(h)}h
++                      {formatDuration(h)}
+                     </span>
+                   ))}
+                 </span>
+@@ -780,7 +776,7 @@ function TaskEditor({
+                         style={{ background: personColor(u.personId) }}
+                         aria-hidden
+                       />
+-                      {person?.name ?? 'Osoba'}: {fmtHours(u.hours)}h
++                      {person?.name ?? 'Osoba'}: {formatDuration(u.hours)}
+                       <button
+                         type="button"
+                         className="bin-chip-remove"
+diff --git a/src/components/WeekView.tsx b/src/components/WeekView.tsx
+index 78bbf66..1290d5e 100644
+--- a/src/components/WeekView.tsx
++++ b/src/components/WeekView.tsx
+@@ -32,6 +32,7 @@ import {
+   MINUTE_STEP,
+   blockEndMinutes,
+   clampBlockStart,
++  formatDuration,
+   formatMinutes,
+   isBinEntry,
+   minutesToHours,
+@@ -48,16 +49,10 @@ interface Props {
+ 
+ // ---- Grid geometry ----
+ const HOUR_PX = 48; // 12px per 15 min
+-const AXIS_W = 52; // left time-axis column width (px)
+ const DAY_BODY_H = 24 * HOUR_PX; // 1152px full-day column height
+ const MIN_BLOCK_H = 14; // keep 0.25h blocks clickable
+ const SCROLL_TO_MIN = 7 * 60; // open scrolled to 07:00
+-const GRID_COLS = 8; // 7 day columns + 1 bin column
+-const BIN_COL_INDEX = 7; // day projection index that lands a block in the bin
+-
+-function fmt(n: number): string {
+-  return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
+-}
++const DAY_COLS = 7; // the days grid holds 7 columns (no axis inside)
+ 
+ interface MenuState {
+   entry: WorkloadEntry;
+@@ -78,7 +73,8 @@ interface DragState {
+   colWidth: number;
+   projStart: number; // projected startMinutes
+   projHours: number; // projected plannedHours
+-  projDayIndex: number; // projected column: 0–6 day cols, 7 = bin column
++  projDayIndex: number; // projected day column (0–6)
++  overBin: boolean; // pointer is over the bin panel → strip date/time on drop
+   colliding: boolean;
+ }
+ 
+@@ -93,6 +89,7 @@ interface BlockProps {
+   col: number;
+   cols: number;
+   gridRef: React.RefObject<HTMLDivElement | null>;
++  binRef: React.RefObject<HTMLDivElement | null>;
+   onOpen: () => void;
+   onContextMenu: (e: React.MouseEvent) => void;
+ }
+@@ -108,6 +105,7 @@ function TimedBlock({
+   col,
+   cols,
+   gridRef,
++  binRef,
+   onOpen,
+   onContextMenu,
+ }: BlockProps) {
+@@ -138,7 +136,7 @@ function TimedBlock({
+     }
+     moved.current = false;
+     const rect = gridRef.current?.getBoundingClientRect();
+-    const colWidth = rect ? (rect.width - AXIS_W) / GRID_COLS : 0;
++    const colWidth = rect ? rect.width / DAY_COLS : 0;
+     setDrag({
+       mode,
+       originX: e.clientX,
+@@ -147,6 +145,7 @@ function TimedBlock({
+       projStart: baseStart,
+       projHours: baseHours,
+       projDayIndex: dayIndex,
++      overBin: false,
+       colliding: false,
+     });
+   };
+@@ -160,14 +159,23 @@ function TimedBlock({
+     let projStart = baseStart;
+     let projHours = baseHours;
+     let projDayIndex = dayIndex;
++    let overBin = false;
+ 
+     if (drag.mode === 'move') {
+       const dur = baseHours * 60;
+       projStart = clampBlockStart(baseStart + deltaMin, dur);
+       const dx = e.clientX - drag.originX;
+       const dayDelta = drag.colWidth > 0 ? Math.round(dx / drag.colWidth) : 0;
+-      // Index 7 (the last column) targets the bin instead of a calendar day.
+-      projDayIndex = Math.max(0, Math.min(BIN_COL_INDEX, dayIndex + dayDelta));
++      projDayIndex = Math.max(0, Math.min(DAY_COLS - 1, dayIndex + dayDelta));
++      // The bin panel sits outside the days grid; a pointer inside its rect
++      // targets the bin instead of a calendar day.
++      const binRect = binRef.current?.getBoundingClientRect();
++      overBin = binRect
++        ? e.clientX >= binRect.left &&
++          e.clientX <= binRect.right &&
++          e.clientY >= binRect.top &&
++          e.clientY <= binRect.bottom
++        : false;
+     } else if (drag.mode === 'top') {
+       // Move the start, keep the end fixed. Min duration one step (0.25h).
+       const newStart = Math.max(0, Math.min(baseStart + deltaMin, baseEnd - MINUTE_STEP));
+@@ -179,26 +187,30 @@ function TimedBlock({
+       projHours = minutesToHours(newEnd - baseStart);
+     }
+ 
+-    if (projStart !== baseStart || projHours !== baseHours || projDayIndex !== dayIndex) {
++    if (
++      projStart !== baseStart ||
++      projHours !== baseHours ||
++      projDayIndex !== dayIndex ||
++      overBin
++    ) {
+       moved.current = true;
+     }
+ 
+-    // The bin column (index 7) has no date and no collision — it's always a
+-    // valid drop that just strips the block's date/time.
+-    const toBin = projDayIndex === BIN_COL_INDEX;
+-    const colliding = toBin
++    // Over the bin there is no date and no collision — dropping just strips the
++    // block's date/time.
++    const colliding = overBin
+       ? false
+       : blockCollides(state, person.id, days[projDayIndex], projStart, projHours, entry.id);
+ 
+-    setDrag((d) => (d ? { ...d, projStart, projHours, projDayIndex, colliding } : d));
++    setDrag((d) => (d ? { ...d, projStart, projHours, projDayIndex, overBin, colliding } : d));
+   };
+ 
+   const finish = () => {
+     if (!drag) return;
+-    const { projStart, projHours, projDayIndex, colliding } = drag;
++    const { projStart, projHours, projDayIndex, overBin, colliding } = drag;
+     setDrag(null);
+     if (!moved.current) return; // treated as a click by onClick
+-    if (projDayIndex === BIN_COL_INDEX) {
++    if (overBin) {
+       dispatch({ type: 'MOVE_BLOCK_TO_BIN', entryId: entry.id });
+       return;
+     }
+@@ -221,12 +233,11 @@ function TimedBlock({
+   const top = (start / 60) * HOUR_PX;
+   const height = Math.max(MIN_BLOCK_H, hours * HOUR_PX);
+ 
+-  const overBin = drag?.projDayIndex === BIN_COL_INDEX;
+   const className = [
+     'week-block',
+     drag ? 'dragging' : '',
+     drag?.colliding ? 'colliding' : '',
+-    overBin ? 'to-bin' : '',
++    drag?.overBin ? 'to-bin' : '',
+   ]
+     .filter(Boolean)
+     .join(' ');
+@@ -244,7 +255,7 @@ function TimedBlock({
+       }}
+       role="button"
+       tabIndex={0}
+-      title={`${task.title} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${fmt(hours)}h). Przeciągnij, aby przenieść; przeciągnij krawędź, aby zmienić czas trwania; kliknij prawym przyciskiem, aby wstawić blok.`}
++      title={`${task.title} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${formatDuration(hours)}). Przeciągnij, aby przenieść; przeciągnij krawędź, aby zmienić czas trwania; kliknij prawym przyciskiem, aby wstawić blok.`}
+       onPointerDown={begin('move')}
+       onPointerMove={onPointerMove}
+       onPointerUp={finish}
+@@ -273,7 +284,7 @@ function TimedBlock({
+           aria-hidden
+         />
+         {person.name}
+-        <span className="week-block-hours">{fmt(hours)}h</span>
++        <span className="week-block-hours">{formatDuration(hours)}</span>
+       </span>
+       <span className="week-block-handle bottom" onPointerDown={begin('bottom')} aria-hidden />
+     </div>
+@@ -301,7 +312,7 @@ interface BinCardProps {
+   project?: Project;
+   days: string[];
+   gridRef: React.RefObject<HTMLDivElement | null>;
+-  bodyRef: React.RefObject<HTMLDivElement | null>;
++  viewportRef: React.RefObject<HTMLDivElement | null>;
+   onOpen: () => void;
+   onContextMenu: (e: React.MouseEvent) => void;
+ }
+@@ -314,7 +325,7 @@ function BinCard({
+   project,
+   days,
+   gridRef,
+-  bodyRef,
++  viewportRef,
+   onOpen,
+   onContextMenu,
+ }: BinCardProps) {
+@@ -356,31 +367,27 @@ function BinCard({
+   const onPointerMove = (e: React.PointerEvent) => {
+     if (!drag) return;
+     const gridRect = gridRef.current?.getBoundingClientRect();
+-    const bodyRect = bodyRef.current?.getBoundingClientRect();
+-    if (!gridRect || !bodyRect) return;
++    const viewRect = viewportRef.current?.getBoundingClientRect();
++    if (!gridRect || !viewRect) return;
+     const dx = e.clientX - drag.originX;
+     const dy = e.clientY - drag.originY;
+     if (dx !== 0 || dy !== 0) moved.current = true;
+ 
+-    const colWidth = (gridRect.width - AXIS_W) / GRID_COLS;
+-    const relX = e.clientX - gridRect.left - AXIS_W;
+-    const colIndex = colWidth > 0 ? Math.floor(relX / colWidth) : -1;
+-
+-    // Hit-test the VISIBLE day-body: exclude the sticky header (top), the sticky
+-    // left hour axis (under horizontal scroll) and anything past the body's
+-    // 0:00–24:00 vertical span, so a drop over a header/axis reverts.
+-    const scrollRect = gridRef.current?.parentElement?.getBoundingClientRect();
+-    const headerH = bodyRect.top - gridRect.top; // stable under scroll
+-    const yTop = scrollRect ? Math.max(bodyRect.top, scrollRect.top + headerH) : bodyRect.top;
+-    const yBottom = scrollRect ? Math.min(bodyRect.bottom, scrollRect.bottom) : bodyRect.bottom;
+-    const xLeft = scrollRect ? scrollRect.left + AXIS_W : gridRect.left + AXIS_W;
+-    const xRight = scrollRect ? Math.min(gridRect.right, scrollRect.right) : gridRect.right;
+-    const inBody =
+-      e.clientY >= yTop && e.clientY <= yBottom && e.clientX >= xLeft && e.clientX <= xRight;
+-    const valid = inBody && colIndex >= 0 && colIndex <= 6;
++    // The days grid starts at 0:00 (no header inside it), so x → column and
++    // y → minutes project directly off its rect.
++    const colWidth = gridRect.width / DAY_COLS;
++    const colIndex = colWidth > 0 ? Math.floor((e.clientX - gridRect.left) / colWidth) : -1;
++    // A single clamp — the pointer must be inside the visible days viewport —
++    // covers the header row, the axis pane, the bin and any outside-drop cases.
++    const inView =
++      e.clientX >= viewRect.left &&
++      e.clientX <= viewRect.right &&
++      e.clientY >= viewRect.top &&
++      e.clientY <= viewRect.bottom;
++    const valid = inView && colIndex >= 0 && colIndex <= DAY_COLS - 1;
+ 
+     const dur = entry.plannedHours * 60;
+-    const relY = e.clientY - bodyRect.top;
++    const relY = e.clientY - gridRect.top;
+     const startMin = clampBlockStart(snapToStep((relY / HOUR_PX) * 60), dur);
+     const colliding = valid
+       ? blockCollides(state, person.id, days[colIndex], startMin, entry.plannedHours)
+@@ -421,7 +428,7 @@ function BinCard({
+       }}
+       role="button"
+       tabIndex={0}
+-      title={`${task.title} — ${person.name}: ${fmt(entry.plannedHours)}h bez terminu. Przeciągnij na siatkę, aby nadać termin.`}
++      title={`${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu. Przeciągnij na siatkę, aby nadać termin.`}
+       onPointerDown={begin}
+       onPointerMove={onPointerMove}
+       onPointerUp={finish}
+@@ -439,7 +446,7 @@ function BinCard({
+         {project && <Coin paid={project.paid} size={12} />}
+         {task.title}
+       </span>
+-      <span className="week-bin-block-hours">{fmt(entry.plannedHours)}h</span>
++      <span className="week-bin-block-hours">{formatDuration(entry.plannedHours)}</span>
+     </div>
+   );
+ }
+@@ -449,9 +456,11 @@ export function WeekView({ state, anchor, filter }: Props) {
+   const { dispatch } = useStore();
+   const days = weekDays(anchor);
+ 
+-  const gridRef = useRef<HTMLDivElement | null>(null);
+-  const scrollRef = useRef<HTMLDivElement | null>(null);
+-  const bodyRef = useRef<HTMLDivElement | null>(null); // a body-row cell → y-origin (0:00) for bin-card drops
++  const gridRef = useRef<HTMLDivElement | null>(null); // .week-days-grid (7 columns, 0:00 at top)
++  const viewportRef = useRef<HTMLDivElement | null>(null); // .week-days-viewport (both scrollbars)
++  const axisPaneRef = useRef<HTMLDivElement | null>(null); // .week-axis-pane (vertical scroll synced)
++  const headTrackRef = useRef<HTMLDivElement | null>(null); // .week-head-track (horizontal scroll synced)
++  const binRef = useRef<HTMLDivElement | null>(null); // .week-bin-pane (grid→bin drop target)
+ 
+   const [menu, setMenu] = useState<MenuState | null>(null);
+   const [hoursRaw, setHoursRaw] = useState('1');
+@@ -460,9 +469,18 @@ export function WeekView({ state, anchor, filter }: Props) {
+ 
+   // Open the grid scrolled to ~07:00 (once, on mount).
+   useEffect(() => {
+-    if (scrollRef.current) scrollRef.current.scrollTop = (SCROLL_TO_MIN / 60) * HOUR_PX;
++    if (viewportRef.current) viewportRef.current.scrollTop = (SCROLL_TO_MIN / 60) * HOUR_PX;
+   }, []);
+ 
++  // Keep the fixed axis pane (vertical) and header track (horizontal) in step
++  // with the days viewport — both are overflow:hidden, driven only from here.
++  const onViewportScroll = () => {
++    const v = viewportRef.current;
++    if (!v) return;
++    if (axisPaneRef.current) axisPaneRef.current.scrollTop = v.scrollTop;
++    if (headTrackRef.current) headTrackRef.current.scrollLeft = v.scrollLeft;
++  };
++
+   // Close the context menu on Escape or on any click outside it.
+   useEffect(() => {
+     if (!menu) return;
+@@ -517,7 +535,7 @@ export function WeekView({ state, anchor, filter }: Props) {
+ 
+   const doDelete = () => {
+     if (!menu) return;
+-    if (window.confirm(`Usunąć blok ${fmt(menu.entry.plannedHours)}h z zasobnika?`)) {
++    if (window.confirm(`Usunąć blok ${formatDuration(menu.entry.plannedHours)} z zasobnika?`)) {
+       dispatch({ type: 'DELETE_BLOCK', entryId: menu.entry.id });
+     }
+     setMenu(null);
+@@ -545,109 +563,120 @@ export function WeekView({ state, anchor, filter }: Props) {
+ 
+   return (
+     <div className="week-cal">
+-      <div className="week-cal-scroll" ref={scrollRef}>
+-        <div
+-          className="week-cal-grid"
+-          ref={gridRef}
+-          style={{
+-            gridTemplateColumns: `${AXIS_W}px repeat(${GRID_COLS}, minmax(0, 1fr))`,
+-            gridTemplateRows: `auto ${DAY_BODY_H}px`,
+-          }}
+-        >
+-          {/* Header row: corner + 7 day headers + bin header (sticky). */}
+-          <div className="week-axis-head" />
+-          {days.map((d) => {
+-            const total = dayTotal(state, d, filter);
+-            const overloadedIds = overloadedPeopleOnDate(state, d, filter);
+-            const empty = entriesForDate(state, d, filter).length === 0;
+-            const overloadNames = overloadedIds
+-              .map((id) => getPerson(state, id)?.name)
+-              .filter(Boolean)
+-              .join(', ');
+-            return (
+-              <div
+-                key={`head-${d}`}
+-                className={[
+-                  'week-day-head',
+-                  isTodayStr(d) ? 'today' : '',
+-                  isWeekend(d) ? 'weekend' : '',
+-                ]
+-                  .filter(Boolean)
+-                  .join(' ')}
+-              >
+-                <div className="week-col-weekday">
+-                  {format(parseDate(d), 'EEE', { locale: pl })}
+-                </div>
+-                <div className="week-col-date">{format(parseDate(d), 'd MMM', { locale: pl })}</div>
+-                <div className="week-col-total">{empty ? '—' : `${fmt(total)}h`}</div>
+-                {overloadNames && (
+-                  <div className="week-col-overload" title={`Powyżej dostępności: ${overloadNames}`}>
+-                    ⚠ {overloadNames}
++      {/* Header row: corner + horizontally-synced day headers + bin header.
++          Not scrollable itself; its track mirrors the days viewport scrollLeft. */}
++      <div className="week-head-row">
++        <div className="week-corner" />
++        <div className="week-head-track" ref={headTrackRef}>
++          <div className="week-head-inner">
++            {days.map((d) => {
++              const total = dayTotal(state, d, filter);
++              const overloadedIds = overloadedPeopleOnDate(state, d, filter);
++              const empty = entriesForDate(state, d, filter).length === 0;
++              const overloadNames = overloadedIds
++                .map((id) => getPerson(state, id)?.name)
++                .filter(Boolean)
++                .join(', ');
++              return (
++                <div
++                  key={`head-${d}`}
++                  className={[
++                    'week-day-head',
++                    isTodayStr(d) ? 'today' : '',
++                    isWeekend(d) ? 'weekend' : '',
++                  ]
++                    .filter(Boolean)
++                    .join(' ')}
++                >
++                  <div className="week-col-weekday">
++                    {format(parseDate(d), 'EEE', { locale: pl })}
+                   </div>
+-                )}
+-              </div>
+-            );
+-          })}
+-          {/* Bin header (8th column). */}
+-          <div className="week-bin-head">
+-            <div className="week-bin-head-title">Zasobnik</div>
+-            <div className="week-bin-head-sub">bez terminu</div>
+-            <div className="week-col-total">
+-              {binGrandTotal > 0 ? `${fmt(binGrandTotal)}h` : '—'}
+-            </div>
++                  <div className="week-col-date">
++                    {format(parseDate(d), 'd MMM', { locale: pl })}
++                  </div>
++                  <div className="week-col-total">{empty ? '—' : formatDuration(total)}</div>
++                  {overloadNames && (
++                    <div
++                      className="week-col-overload"
++                      title={`Powyżej dostępności: ${overloadNames}`}
++                    >
++                      ⚠ {overloadNames}
++                    </div>
++                  )}
++                </div>
++              );
++            })}
++          </div>
++        </div>
++        <div className="week-bin-head">
++          <div className="week-bin-head-title">Zasobnik</div>
++          <div className="week-bin-head-sub">bez terminu</div>
++          <div className="week-col-total">
++            {binGrandTotal > 0 ? formatDuration(binGrandTotal) : '—'}
+           </div>
++        </div>
++      </div>
+ 
+-          {/* Body row: hour axis + 7 day columns + bin column. */}
+-          <div className="week-axis">
++      {/* Body: fixed axis pane | scrollable days viewport | always-visible bin. */}
++      <div className="week-main">
++        <div className="week-axis-pane" ref={axisPaneRef}>
++          <div className="week-axis" style={{ height: DAY_BODY_H }}>
+             {hours.map((h) => (
+               <span key={h} className="week-axis-label" style={{ top: h * HOUR_PX }}>
+                 {h}:00
+               </span>
+             ))}
+           </div>
+-          {days.map((d, dayIndex) => {
+-            const entries = entriesForDate(state, d, filter);
+-            const packed = packDayBlocks(entries);
+-            return (
+-              <div
+-                key={`col-${d}`}
+-                ref={dayIndex === 0 ? bodyRef : undefined}
+-                className={[
+-                  'week-day-col',
+-                  isTodayStr(d) ? 'today' : '',
+-                  isWeekend(d) ? 'weekend' : '',
+-                ]
+-                  .filter(Boolean)
+-                  .join(' ')}
+-              >
+-                {packed.map(({ block: e, col, cols }) => {
+-                  const task = getTask(state, e.taskId);
+-                  const person = getPerson(state, e.personId);
+-                  if (!task || !person) return null;
+-                  const project = getProject(state, task.projectId);
+-                  return (
+-                    <TimedBlock
+-                      key={e.id}
+-                      state={state}
+-                      entry={e}
+-                      task={task}
+-                      person={person}
+-                      project={project}
+-                      dayIndex={dayIndex}
+-                      days={days}
+-                      col={col}
+-                      cols={cols}
+-                      gridRef={gridRef}
+-                      onOpen={() => openTask(task.id)}
+-                      onContextMenu={(ev) => openMenu(e, ev)}
+-                    />
+-                  );
+-                })}
+-              </div>
+-            );
+-          })}
++        </div>
++
++        <div className="week-days-viewport" ref={viewportRef} onScroll={onViewportScroll}>
++          <div className="week-days-grid" ref={gridRef} style={{ height: DAY_BODY_H }}>
++            {days.map((d, dayIndex) => {
++              const entries = entriesForDate(state, d, filter);
++              const packed = packDayBlocks(entries);
++              return (
++                <div
++                  key={`col-${d}`}
++                  className={[
++                    'week-day-col',
++                    isTodayStr(d) ? 'today' : '',
++                    isWeekend(d) ? 'weekend' : '',
++                  ]
++                    .filter(Boolean)
++                    .join(' ')}
++                >
++                  {packed.map(({ block: e, col, cols }) => {
++                    const task = getTask(state, e.taskId);
++                    const person = getPerson(state, e.personId);
++                    if (!task || !person) return null;
++                    const project = getProject(state, task.projectId);
++                    return (
++                      <TimedBlock
++                        key={e.id}
++                        state={state}
++                        entry={e}
++                        task={task}
++                        person={person}
++                        project={project}
++                        dayIndex={dayIndex}
++                        days={days}
++                        col={col}
++                        cols={cols}
++                        gridRef={gridRef}
++                        binRef={binRef}
++                        onOpen={() => openTask(task.id)}
++                        onContextMenu={(ev) => openMenu(e, ev)}
++                      />
++                    );
++                  })}
++                </div>
++              );
++            })}
++          </div>
++        </div>
+ 
+-          {/* Bin column (8th): stacked per-person cards, not time-positioned. */}
++        {/* Bin pane: always visible, own vertical scroll, outside the days scroller. */}
++        <div className="week-bin-pane" ref={binRef}>
+           <div className="week-bin-col">
+             {binPeople.length === 0 ? (
+               <p className="week-bin-empty">Brak bloków bez terminu</p>
+@@ -664,7 +693,7 @@ export function WeekView({ state, anchor, filter }: Props) {
+                       />
+                       {p.name}
+                       <span className="week-bin-group-total">
+-                        {fmt(binTotalForPerson(state, p.id))}h
++                        {formatDuration(binTotalForPerson(state, p.id))}
+                       </span>
+                     </div>
+                     {entries.map((e) => {
+@@ -681,7 +710,7 @@ export function WeekView({ state, anchor, filter }: Props) {
+                           project={project}
+                           days={days}
+                           gridRef={gridRef}
+-                          bodyRef={bodyRef}
++                          viewportRef={viewportRef}
+                           onOpen={() => openTask(task.id)}
+                           onContextMenu={(ev) => openMenu(e, ev)}
+                         />
+@@ -711,7 +740,7 @@ export function WeekView({ state, anchor, filter }: Props) {
+             <>
+               <div className="context-menu-title">
+                 {getTask(state, menu.entry.taskId)?.title} — {menuPerson?.name},{' '}
+-                {fmt(menu.entry.plannedHours)}h
++                {formatDuration(menu.entry.plannedHours)}
+               </div>
+               {!isBinEntry(menu.entry) && (
+                 <>
+@@ -813,8 +842,8 @@ export function WeekView({ state, anchor, filter }: Props) {
+               </label>
+               {wouldOverload && (
+                 <p className="context-warning">
+-                  ⚠ {menuPerson?.name} będzie mieć {fmt(projectedTotal)}h — powyżej dostępności{' '}
+-                  {fmt(menuCapacity)}h/dzień.
++                  ⚠ {menuPerson?.name} będzie mieć {formatDuration(projectedTotal)} — powyżej dostępności{' '}
++                  {formatDuration(menuCapacity)}/dzień.
+                 </p>
+               )}
+               <div className="context-actions">
+diff --git a/src/pages/DashboardPage.tsx b/src/pages/DashboardPage.tsx
+index b394cdf..fa2c047 100644
+--- a/src/pages/DashboardPage.tsx
++++ b/src/pages/DashboardPage.tsx
+@@ -21,6 +21,7 @@ import {
+   todayStr,
+   weekDays,
+ } from '../utils/dates';
++import { formatDuration } from '../utils/time';
+ 
+ // Staggered entrance for the dashboard cards.
+ const dashGridVariants = {
+@@ -208,8 +209,8 @@ export function DashboardPage() {
+                         <span className="dash-row-name">⚠ {person.name}</span>
+                         <span className="dash-row-when">
+                           {formatRowLabel(date)} —{' '}
+-                          {hoursForPersonOnDate(state, personId, date)}h /{' '}
+-                          {personCapacity(state, personId)}h
++                          {formatDuration(hoursForPersonOnDate(state, personId, date))} /{' '}
++                          {formatDuration(personCapacity(state, personId))}
+                         </span>
+                         <ChevronRight className="card-chevron" size={16} aria-hidden />
+                       </button>
+diff --git a/src/pages/KanbanPage.tsx b/src/pages/KanbanPage.tsx
+index 3d4e6f4..2d4fc0b 100644
+--- a/src/pages/KanbanPage.tsx
++++ b/src/pages/KanbanPage.tsx
+@@ -16,6 +16,7 @@ import {
+ import { Coin } from '../components/Coin';
+ import { PaidFilterToggle, type PaidFilter } from './ProjectsPage';
+ import { formatShort } from '../utils/dates';
++import { formatDuration } from '../utils/time';
+ 
+ // Dark-legible, on-brand rotation for admin quick-created statuses.
+ const STATUS_COLORS = ['#9aa7c4', '#5bdcff', '#ffc857', '#b9ff4d', '#c496ff', '#ff9640'];
+@@ -157,7 +158,7 @@ export function KanbanPage() {
+                         </div>
+                         <div className="kanban-card-meta muted">
+                           {taskCount} {polishCount(taskCount, 'zadanie', 'zadania', 'zadań')} ·{' '}
+-                          {planned}h · {team} {polishCount(team, 'osoba', 'osoby', 'osób')}
++                          {formatDuration(planned)} · {team} {polishCount(team, 'osoba', 'osoby', 'osób')}
+                         </div>
+                       </motion.div>
+                     );
+diff --git a/src/pages/PeoplePage.tsx b/src/pages/PeoplePage.tsx
+index f41bf82..f875b1d 100644
+--- a/src/pages/PeoplePage.tsx
++++ b/src/pages/PeoplePage.tsx
+@@ -8,10 +8,7 @@ import { getDepartment, personTotalHours } from '../store/selectors';
+ import { Avatar } from '../components/Avatar';
+ import { ChevronRight } from '../components/icons';
+ import { DEFAULT_CAPACITY } from '../store/storage';
+-
+-function fmtHours(n: number): string {
+-  return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
+-}
++import { formatDuration } from '../utils/time';
+ 
+ const emptyDraft = (): PersonDraft => ({
+   firstName: '',
+@@ -178,7 +175,7 @@ export function PeoplePage() {
+               </Link>
+               <ChevronRight className="card-chevron" size={16} aria-hidden />
+               <span className="person-row-hours">
+-                przypisano {fmtHours(personTotalHours(state, p.id))}h
++                przypisano {formatDuration(personTotalHours(state, p.id))}
+               </span>
+               <button
+                 type="button"
+diff --git a/src/pages/PersonProfilePage.tsx b/src/pages/PersonProfilePage.tsx
+index 0ee2859..ae35e18 100644
+--- a/src/pages/PersonProfilePage.tsx
++++ b/src/pages/PersonProfilePage.tsx
+@@ -20,10 +20,7 @@ import { StatusBadge } from '../components/StatusBadge';
+ import { DEFAULT_CAPACITY } from '../store/storage';
+ import { useOpenTask } from '../components/TaskModal';
+ import { formatRowLabel, formatShort, isWeekend, todayStr, weekDays } from '../utils/dates';
+-
+-function fmtHours(n: number): string {
+-  return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
+-}
++import { formatDuration } from '../utils/time';
+ 
+ export function PersonProfilePage() {
+   const { id } = useParams();
+@@ -206,9 +203,9 @@ function PersonProfile({ personId }: { personId: string }) {
+       <div className="editor-section">
+         <h2>Ten tydzień</h2>
+         <p>
+-          Przypisano <strong>{fmtHours(weekHours)}h</strong> z{' '}
+-          <strong>{fmtHours(available)}h</strong> dostępnych ({capacity}h/dzień) ·{' '}
+-          łącznie przypisano {fmtHours(personTotalHours(state, person.id))}h.
++          Przypisano <strong>{formatDuration(weekHours)}</strong> z{' '}
++          <strong>{formatDuration(available)}</strong> dostępnych ({formatDuration(capacity)}/dzień) ·{' '}
++          łącznie przypisano {formatDuration(personTotalHours(state, person.id))}.
+         </p>
+         <div className="profile-week">
+           {week.map((d) => {
+@@ -227,7 +224,7 @@ function PersonProfile({ personId }: { personId: string }) {
+               >
+                 <span className="profile-day-label">{formatRowLabel(d)}</span>
+                 <span className="profile-day-hours">
+-                  {h === 0 ? '—' : `${fmtHours(h)}h`}
++                  {h === 0 ? '—' : formatDuration(h)}
+                   {over && ' ⚠'}
+                 </span>
+               </div>
+@@ -279,7 +276,7 @@ function PersonProfile({ personId }: { personId: string }) {
+                   <StatusBadge status={getStatus(state, t.statusId)} />
+                   <span className="muted">
+                     {formatShort(t.startDate)} – {formatShort(t.endDate)} ·{' '}
+-                    {fmtHours(taskPlannedTotalForPerson(state, t.id, person.id))}h dla{' '}
++                    {formatDuration(taskPlannedTotalForPerson(state, t.id, person.id))} dla{' '}
+                     {person.firstName}
+                   </span>
+                 </button>
+diff --git a/src/pages/ProjectDetailPage.tsx b/src/pages/ProjectDetailPage.tsx
+index b5b9204..31a421b 100644
+--- a/src/pages/ProjectDetailPage.tsx
++++ b/src/pages/ProjectDetailPage.tsx
+@@ -22,12 +22,9 @@ import { SaveStatus } from '../components/SaveStatus';
+ import { useOpenTask } from '../components/TaskModal';
+ import { ChevronRight } from '../components/icons';
+ import { formatShort, todayStr } from '../utils/dates';
++import { formatDuration } from '../utils/time';
+ import { useSaveStatus } from '../utils/useSaveStatus';
+ 
+-function fmtHours(n: number): string {
+-  return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
+-}
+-
+ export function ProjectDetailPage() {
+   const { id } = useParams();
+   const { state } = useStore();
+@@ -363,7 +360,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
+           </button>
+         </div>
+         <p className="field-hint">
+-          Zaplanowano {fmtHours(projectPlannedTotal(state, project.id))}h w całym projekcie.
++          Zaplanowano {formatDuration(projectPlannedTotal(state, project.id))} w całym projekcie.
+         </p>
+         {tasks.length === 0 ? (
+           <p className="field-hint">W tym projekcie nie ma jeszcze zadań.</p>
+@@ -380,7 +377,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
+                   <StatusBadge status={getStatus(state, t.statusId)} />
+                   <span className="muted">
+                     {formatShort(t.startDate)} – {formatShort(t.endDate)} ·{' '}
+-                    {fmtHours(taskPlannedTotal(state, t.id))}h
++                    {formatDuration(taskPlannedTotal(state, t.id))}
+                   </span>
+                   <span className="task-card-assignees">
+                     {assigneesOfTask(state, t.id).map((p) => (
+diff --git a/src/pages/ProjectsPage.tsx b/src/pages/ProjectsPage.tsx
+index 82a5ea0..39e1b5b 100644
+--- a/src/pages/ProjectsPage.tsx
++++ b/src/pages/ProjectsPage.tsx
+@@ -20,6 +20,7 @@ import { ChevronRight, GanttChart, Plus } from '../components/icons';
+ import type { SavedFilterCriteria } from '../types';
+ import { addDaysStr, todayStr } from '../utils/dates';
+ import { parseDate } from '../utils/dates';
++import { formatDuration } from '../utils/time';
+ import { format } from 'date-fns';
+ import { pl } from 'date-fns/locale/pl';
+ 
+@@ -64,10 +65,6 @@ function rangeLabel(start: string, end: string): string {
+   return `${format(s, 'd MMM yyyy', { locale: pl })} – ${format(e, 'd MMM yyyy', { locale: pl })}`;
+ }
+ 
+-function fmtHours(n: number): string {
+-  return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
+-}
+-
+ function polishCount(n: number, one: string, few: string, many: string): string {
+   const mod10 = n % 10;
+   const mod100 = n % 100;
+@@ -355,7 +352,7 @@ export function ProjectsPage() {
+                       <div className="task-card-hours">
+                         <strong>{tasks.length}</strong>{' '}
+                         {polishCount(tasks.length, 'zadanie', 'zadania', 'zadań')}
+-                        <span className="muted"> · zaplanowano {fmtHours(planned)}h</span>
++                        <span className="muted"> · zaplanowano {formatDuration(planned)}</span>
+                         <span className="muted">
+                           {' '}
+                           · {teamSize} {polishCount(teamSize, 'osoba', 'osoby', 'osób')}
+diff --git a/src/pages/TasksPage.tsx b/src/pages/TasksPage.tsx
+index 71d00da..79ba694 100644
+--- a/src/pages/TasksPage.tsx
++++ b/src/pages/TasksPage.tsx
+@@ -16,13 +16,10 @@ import { PersonChip } from '../components/PersonChip';
+ import { StatusBadge } from '../components/StatusBadge';
+ import { Coin } from '../components/Coin';
+ import { parseDate } from '../utils/dates';
++import { formatDuration } from '../utils/time';
+ import { format } from 'date-fns';
+ import { pl } from 'date-fns/locale/pl';
+ 
+-function fmtHours(n: number): string {
+-  return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
+-}
+-
+ function rangeLabel(start: string, end: string): string {
+   const s = parseDate(start);
+   const e = parseDate(end);
+@@ -237,9 +234,9 @@ export function TasksPage() {
+                     )}
+                   </div>
+                   <div className="task-card-hours">
+-                    <strong>zaplanowano {fmtHours(planned)}h</strong>
++                    <strong>zaplanowano {formatDuration(planned)}</strong>
+                     {task.estimatedHours != null && (
+-                      <span className="muted"> / szac. {fmtHours(task.estimatedHours)}h</span>
++                      <span className="muted"> / szac. {formatDuration(task.estimatedHours)}</span>
+                     )}
+                   </div>
+                   <ChevronRight className="card-chevron" size={16} aria-hidden />
+diff --git a/src/pages/WorkloadPage.tsx b/src/pages/WorkloadPage.tsx
+index ef10373..70e58e7 100644
+--- a/src/pages/WorkloadPage.tsx
++++ b/src/pages/WorkloadPage.tsx
+@@ -26,10 +26,7 @@ import {
+   weekDays,
+   weekRangeLabel,
+ } from '../utils/dates';
+-
+-function fmtHours(n: number): string {
+-  return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
+-}
++import { formatDuration } from '../utils/time';
+ 
+ /** Actions for one block inside the resolution panel. */
+ function BlockRow({
+@@ -64,7 +61,7 @@ function BlockRow({
+           {client ? ` · ${client.name}` : ''}
+         </span>
+       </div>
+-      <span className="wr-block-hours">{fmtHours(entry.plannedHours)}h</span>
++      <span className="wr-block-hours">{formatDuration(entry.plannedHours)}</span>
+       <div className="wr-block-actions">
+         {others.length > 0 && (
+           <div className="wr-reassign">
+@@ -79,7 +76,7 @@ function BlockRow({
+                 const over = cur + entry.plannedHours > cap;
+                 return (
+                   <option key={p.id} value={p.id}>
+-                    {p.name} — {fmtHours(cur)}h/{cap}h tego dnia{over ? ' ⚠' : ''}
++                    {p.name} — {formatDuration(cur)}/{formatDuration(cap)} tego dnia{over ? ' ⚠' : ''}
+                   </option>
+                 );
+               })}
+@@ -313,7 +310,7 @@ export function WorkloadPage() {
+                           ]
+                             .filter(Boolean)
+                             .join(' ')}
+-                          title={over ? `${p.name}: ${fmtHours(h)}h > ${capacity}h dostępności` : undefined}
++                          title={over ? `${p.name}: ${formatDuration(h)} > ${formatDuration(capacity)} dostępności` : undefined}
+                           role={clickable ? 'button' : undefined}
+                           tabIndex={clickable ? 0 : undefined}
+                           aria-expanded={clickable ? isSel : undefined}
+@@ -329,13 +326,13 @@ export function WorkloadPage() {
+                               : undefined
+                           }
+                         >
+-                          {h === 0 ? '—' : `${fmtHours(h)}h`}
++                          {h === 0 ? '—' : formatDuration(h)}
+                           {over && ' ⚠'}
+                         </td>
+                       );
+                     })}
+-                    <td className="workload-sum">{fmtHours(assigned)}h</td>
+-                    <td className="workload-sum muted">{fmtHours(available)}h</td>
++                    <td className="workload-sum">{formatDuration(assigned)}</td>
++                    <td className="workload-sum muted">{formatDuration(available)}</td>
+                     <td className="workload-load">
+                       <div
+                         className="load-bar"
+@@ -374,9 +371,9 @@ export function WorkloadPage() {
+                               <span
+                                 className={over ? 'wr-title over' : 'wr-title'}
+                               >
+-                                „{p.name} — {formatRowLabel(date)}: {fmtHours(dayTotal)}h
++                                „{p.name} — {formatRowLabel(date)}: {formatDuration(dayTotal)}
+                                 {' / '}
+-                                {capacity}h”
++                                {formatDuration(capacity)}”
+                               </span>
+                               <button
+                                 type="button"
+diff --git a/src/store/AppStore.tsx b/src/store/AppStore.tsx
+index 5f5ecc7..e553c91 100644
+--- a/src/store/AppStore.tsx
++++ b/src/store/AppStore.tsx
+@@ -33,6 +33,7 @@ import {
+   MINUTE_STEP,
+   blockEndMinutes,
+   clampBlockStart,
++  formatDuration,
+   formatMinutes,
+   hasCollision,
+   hoursToMinutes,
+@@ -592,7 +593,7 @@ function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
+       state,
+       'task',
+       payload.taskId,
+-      `wstawił(a) blok ${hours}h ${payload.position === 'before' ? 'przed' : 'po'} „${state.tasks.find((t) => t.id === ref.taskId)?.title ?? 'blok'}” dla ${person?.name ?? 'kogoś'} w dniu ${ref.date}`,
++      `wstawił(a) blok ${formatDuration(hours)} ${payload.position === 'before' ? 'przed' : 'po'} „${state.tasks.find((t) => t.id === ref.taskId)?.title ?? 'blok'}” dla ${person?.name ?? 'kogoś'} w dniu ${ref.date}`,
+     ),
+   };
+ }
+@@ -649,7 +650,7 @@ function reassignEntry(state: AppData, entryId: string, toPersonId: string): App
+       state,
+       'task',
+       taskId,
+-      `przeniósł/przeniosła blok ${plannedHours}h (${date}) z ${fromName} na ${target.name}`,
++      `przeniósł/przeniosła blok ${formatDuration(plannedHours)} (${date}) z ${fromName} na ${target.name}`,
+     ),
+   };
+ }
+@@ -743,13 +744,13 @@ function setBlockTime(
+ 
+   let message: string;
+   if (fromBin) {
+-    message = `zaplanował(a) blok ${plannedHours}h z zasobnika na ${date} ${formatMinutes(startMinutes)}`;
++    message = `zaplanował(a) blok ${formatDuration(plannedHours)} z zasobnika na ${date} ${formatMinutes(startMinutes)}`;
+   } else if (date !== oldDate) {
+-    message = `przeniósł/przeniosła blok ${plannedHours}h na ${date} ${formatMinutes(startMinutes)}`;
++    message = `przeniósł/przeniosła blok ${formatDuration(plannedHours)} na ${date} ${formatMinutes(startMinutes)}`;
+   } else {
+-    message = `zmienił(a) blok na ${formatMinutes(startMinutes)}–${formatMinutes(startMinutes + dur)} (${plannedHours}h)`;
++    message = `zmienił(a) blok na ${formatMinutes(startMinutes)}–${formatMinutes(startMinutes + dur)} (${formatDuration(plannedHours)})`;
+   }
+-  if (shrink) message += `; ${delta}h wróciło do zasobnika`;
++  if (shrink) message += `; ${formatDuration(delta)} wróciło do zasobnika`;
+ 
+   return {
+     ...state,
+@@ -784,7 +785,7 @@ function moveBlockToBin(state: AppData, entryId: string): AppData {
+       state,
+       'task',
+       entry.taskId,
+-      `przeniósł/przeniosła blok ${entry.plannedHours}h (${oldDate}) do zasobnika`,
++      `przeniósł/przeniosła blok ${formatDuration(entry.plannedHours)} (${oldDate}) do zasobnika`,
+     ),
+   };
+ }
+@@ -834,7 +835,7 @@ function splitBlock(state: AppData, entryId: string, parts: 2 | 4): AppData {
+       state,
+       'task',
+       entry.taskId,
+-      `podzielił(a) blok ${entry.plannedHours}h na ${parts} części (do zasobnika: ${binSum}h)`,
++      `podzielił(a) blok ${formatDuration(entry.plannedHours)} na ${parts} części (do zasobnika: ${formatDuration(binSum)})`,
+     ),
+   };
+ }
+@@ -853,7 +854,7 @@ function deleteBlock(state: AppData, entryId: string): AppData {
+       state,
+       'task',
+       entry.taskId,
+-      `usunął/usunęła blok ${entry.plannedHours}h z zasobnika`,
++      `usunął/usunęła blok ${formatDuration(entry.plannedHours)} z zasobnika`,
+     ),
+   };
+ }
+diff --git a/src/styles.css b/src/styles.css
+index c06358f..c44667b 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -1165,49 +1165,43 @@ option {
+ 
+ .week-cal {
+   position: relative;
+-}
+-.week-cal-scroll {
+-  max-height: 70vh;
+-  overflow-y: auto;
+-  /* Mon–Fri fill the visible width; Sat, Sun and the bin scroll in from the right. */
+-  overflow-x: auto;
+   border: 1px solid var(--n2-border);
+   border-radius: var(--n2-radius-md);
+   background: var(--card-bg);
+-}
+-.week-cal-grid {
+-  display: grid;
+-  position: relative;
+-  /* 52px axis + 8 equal columns, but sized so exactly the 5 weekday columns fill
+-     the scroll container's visible width; the weekend + bin columns overflow to
+-     the right behind horizontal scroll. */
+-  width: calc((100% - 52px) / 5 * 8 + 52px);
+-  /* Drag gestures cross block text; text-selection would hijack the next drag
+-     into a native text-drag. Nothing in the grid is useful to select anyway. */
+-  -webkit-user-select: none;
+-  user-select: none;
+-  /* columns + rows set inline (52px axis + 7 day cols + bin; auto header + 1152px body) */
++  overflow: hidden;
+ }
+ 
+-/* Sticky headers (corner + day headers) */
+-.week-axis-head,
+-.week-day-head {
+-  position: sticky;
+-  top: 0;
+-  z-index: 6;
+-  background: var(--card-bg);
++/* Header row: 52px corner spacer + horizontally-synced day-header track +
++   200px bin header. Not scrollable itself — the track mirrors the days
++   viewport's scrollLeft (both overflow:hidden with a stable gutter). */
++.week-head-row {
++  display: flex;
+   border-bottom: 1px solid var(--n2-border);
++  background: var(--card-bg);
+ }
+-.week-axis-head {
++.week-corner {
++  flex: 0 0 52px;
++  width: 52px;
+   border-right: 1px solid var(--n2-border);
+-  /* Corner stays pinned to both edges while scrolling either axis. */
+-  position: sticky;
+-  left: 0;
+-  z-index: 9;
++  background: var(--card-bg);
++}
++.week-head-track {
++  flex: 1 1 auto;
++  min-width: 0;
++  overflow: hidden;
++  scrollbar-gutter: stable;
++}
++.week-head-inner {
++  display: grid;
++  grid-template-columns: repeat(7, minmax(0, 1fr));
++  /* Mon–Fri fill the track width; Sat/Sun sit behind horizontal scroll. Same
++     width formula as .week-days-grid so headers stay column-aligned. */
++  width: max(calc(100% / 5 * 7), 672px);
+ }
+ .week-day-head {
+   padding: 8px 10px;
+   border-left: 1px solid var(--n2-border);
++  background: var(--card-bg);
+ }
+ .week-day-head.weekend {
+   background: var(--card-bg-2);
+@@ -1244,13 +1238,51 @@ option {
+   font-weight: 600;
+ }
+ 
+-/* Left hour axis — sticky so it stays visible during horizontal scroll. */
++/* Body row: fixed axis pane | scrollable days viewport | always-visible bin. */
++.week-main {
++  display: flex;
++  max-height: 70vh;
++}
++/* Fixed hour axis — outside the horizontal scroller, opaque, vertical-synced. */
++.week-axis-pane {
++  flex: 0 0 52px;
++  width: 52px;
++  overflow: hidden;
++  border-right: 1px solid var(--n2-border);
++  background: var(--card-bg);
++  -webkit-user-select: none;
++  user-select: none;
++}
+ .week-axis {
+-  position: sticky;
+-  left: 0;
+-  z-index: 5;
++  position: relative; /* height set inline (1152px), scrolled via JS sync */
+   background: var(--card-bg);
+-  border-right: 1px solid var(--n2-border);
++}
++/* The only real scroller — both axes; Mon–Fri fill it, weekend behind scroll. */
++.week-days-viewport {
++  flex: 1 1 auto;
++  min-width: 0;
++  overflow: auto;
++  scrollbar-gutter: stable;
++  /* Drag gestures cross block text; text-selection would hijack the next drag. */
++  -webkit-user-select: none;
++  user-select: none;
++}
++.week-days-grid {
++  display: grid;
++  grid-template-columns: repeat(7, minmax(0, 1fr));
++  width: max(calc(100% / 5 * 7), 672px);
++  position: relative;
++}
++/* Bin pane — always visible at the right edge, own vertical scroll. */
++.week-bin-pane {
++  flex: 0 0 200px;
++  width: 200px;
++  overflow-y: auto;
++  overflow-x: hidden;
++  border-left: 1px solid var(--n2-border-strong);
++  background: var(--card-bg-2);
++  -webkit-user-select: none;
++  user-select: none;
+ }
+ .week-axis-label {
+   position: absolute;
+@@ -1385,15 +1417,13 @@ option {
+ 
+ /* ---------- Bin column (Zasobnik: dateless blocks) ---------- */
+ 
+-/* Bin header cell (8th column header). */
++/* Bin header — right pane header, aligns with the 200px bin pane below. */
+ .week-bin-head {
+-  position: sticky;
+-  top: 0;
+-  z-index: 6;
++  flex: 0 0 200px;
++  width: 200px;
+   padding: 8px 10px;
+   background: var(--card-bg-2);
+   border-left: 1px solid var(--n2-border-strong);
+-  border-bottom: 1px solid var(--n2-border);
+ }
+ .week-bin-head-title {
+   font-size: var(--n2-type-sm);
+@@ -1408,12 +1438,9 @@ option {
+   font-family: var(--n2-font-mono);
+ }
+ 
+-/* Bin body column: stacked from the top, not time-positioned. */
++/* Bin body content: stacked from the top, not time-positioned. Its pane owns
++   the border/background/scroll. */
+ .week-bin-col {
+-  position: relative;
+-  border-left: 1px solid var(--n2-border-strong);
+-  background: var(--card-bg-2);
+-  overflow: visible; /* let a dragged bin card extend over the day columns */
+   padding: 8px 8px 16px;
+   display: flex;
+   flex-direction: column;
+@@ -2680,12 +2707,12 @@ option {
+   .app-nav-link {
+     justify-content: flex-start;
+   }
+-  /* Keep all 8 columns usable by allowing horizontal scroll of the grid. */
+-  .week-cal-scroll {
+-    overflow-x: auto;
+-  }
+-  .week-cal-grid {
+-    min-width: 820px; /* 52 axis + 8 × 96 */
++  /* The days grid keeps its 672px floor (~96px/day) behind horizontal scroll
++     from the width rule; just narrow the bin so it still fits alongside. */
++  .week-bin-head,
++  .week-bin-pane {
++    flex-basis: 160px;
++    width: 160px;
+   }
+   .cal-toolbar {
+     justify-content: flex-start;
+diff --git a/src/utils/time.test.ts b/src/utils/time.test.ts
+index 8d96cec..093d42d 100644
+--- a/src/utils/time.test.ts
++++ b/src/utils/time.test.ts
+@@ -1,6 +1,7 @@
+ // Unit tests for pure time-of-day math (src/utils/time.ts).
+ import { describe, expect, it } from 'vitest';
+ import {
++  formatDuration,
+   formatMinutes,
+   hasCollision,
+   nextFreeStart,
+@@ -31,6 +32,27 @@ describe('formatMinutes', () => {
+   });
+ });
+ 
++describe('formatDuration', () => {
++  it('formats a whole-hour duration as Xh (including 0h)', () => {
++    expect(formatDuration(8)).toBe('8h');
++    expect(formatDuration(0)).toBe('0h');
++  });
++
++  it('formats hours + minutes as "Xh Ym"', () => {
++    expect(formatDuration(2.75)).toBe('2h 45m');
++    expect(formatDuration(10.25)).toBe('10h 15m');
++  });
++
++  it('formats a sub-hour duration as Ym', () => {
++    expect(formatDuration(0.25)).toBe('15m');
++    expect(formatDuration(0.5)).toBe('30m');
++  });
++
++  it('rounds to whole minutes', () => {
++    expect(formatDuration(1 / 60)).toBe('1m'); // ~0.0167h -> 1m
++  });
++});
++
+ describe('rangesOverlap', () => {
+   it('detects a true overlap', () => {
+     expect(rangesOverlap(0, 60, 30, 90)).toBe(true);
+diff --git a/src/utils/time.ts b/src/utils/time.ts
+index f93cbb0..8f524b1 100644
+--- a/src/utils/time.ts
++++ b/src/utils/time.ts
+@@ -52,6 +52,20 @@ export function formatMinutes(m: number): string {
+   return `${h}:${String(min).padStart(2, '0')}`;
+ }
+ 
++/**
++ * Human-readable DURATION from a decimal-hours quantity (>= 0):
++ * '8h', '2h 45m', '45m', '0h'. Rounds to whole minutes. Not for clock
++ * time-of-day (use formatMinutes) — this is a length, not a moment.
++ */
++export function formatDuration(hours: number): string {
++  const total = Math.round(hours * 60);
++  const h = Math.floor(total / 60);
++  const m = total % 60;
++  if (m === 0) return `${h}h`;
++  if (h === 0) return `${m}m`;
++  return `${h}h ${m}m`;
++}
++
+ /** End minute of a block starting at `startMinutes` lasting `plannedHours`. */
+ export function blockEndMinutes(startMinutes: number, plannedHours: number): number {
+   return startMinutes + hoursToMinutes(plannedHours);

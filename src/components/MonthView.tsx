@@ -15,6 +15,7 @@ import {
   overloadedPeopleOnDate,
 } from '../store/selectors';
 import { personColor } from '../utils/colors';
+import { formatDuration } from '../utils/time';
 
 interface Props {
   state: AppData;
@@ -75,10 +76,10 @@ export function MonthView({ state, anchor, filter, onPickDay }: Props) {
                 .filter(Boolean)
                 .join(' ')}
               onClick={() => onPickDay(d)}
-              title={total > 0 ? `zaplanowano ${total}h` : 'Brak pracy'}
+              title={total > 0 ? `zaplanowano ${formatDuration(total)}` : 'Brak pracy'}
             >
               <span className="month-cell-num">{dayNumber(d)}</span>
-              {total > 0 && <span className="month-cell-hours">{total}h</span>}
+              {total > 0 && <span className="month-cell-hours">{formatDuration(total)}</span>}
               {peopleIds.length > 0 && (
                 <span className="month-cell-dots">
                   {shown.map((id) => (

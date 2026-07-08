@@ -16,6 +16,7 @@ import {
 import { Coin } from '../components/Coin';
 import { PaidFilterToggle, type PaidFilter } from './ProjectsPage';
 import { formatShort } from '../utils/dates';
+import { formatDuration } from '../utils/time';
 
 // Dark-legible, on-brand rotation for admin quick-created statuses.
 const STATUS_COLORS = ['#9aa7c4', '#5bdcff', '#ffc857', '#b9ff4d', '#c496ff', '#ff9640'];
@@ -157,7 +158,7 @@ export function KanbanPage() {
                         </div>
                         <div className="kanban-card-meta muted">
                           {taskCount} {polishCount(taskCount, 'zadanie', 'zadania', 'zadań')} ·{' '}
-                          {planned}h · {team} {polishCount(team, 'osoba', 'osoby', 'osób')}
+                          {formatDuration(planned)} · {team} {polishCount(team, 'osoba', 'osoby', 'osób')}
                         </div>
                       </motion.div>
                     );

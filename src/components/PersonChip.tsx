@@ -1,5 +1,6 @@
 import type { Person } from '../types';
 import { personColor } from '../utils/colors';
+import { formatDuration } from '../utils/time';
 
 interface Props {
   person: Person;
@@ -16,7 +17,7 @@ export function PersonChip({ person, hours }: Props) {
         aria-hidden
       />
       <span className="person-chip-name">{person.name}</span>
-      {hours != null && <span className="person-chip-hours">{hours}h</span>}
+      {hours != null && <span className="person-chip-hours">{formatDuration(hours)}</span>}
     </span>
   );
 }

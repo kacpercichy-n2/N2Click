@@ -21,6 +21,7 @@ import {
   todayStr,
   weekDays,
 } from '../utils/dates';
+import { formatDuration } from '../utils/time';
 
 // Staggered entrance for the dashboard cards.
 const dashGridVariants = {
@@ -208,8 +209,8 @@ export function DashboardPage() {
                         <span className="dash-row-name">⚠ {person.name}</span>
                         <span className="dash-row-when">
                           {formatRowLabel(date)} —{' '}
-                          {hoursForPersonOnDate(state, personId, date)}h /{' '}
-                          {personCapacity(state, personId)}h
+                          {formatDuration(hoursForPersonOnDate(state, personId, date))} /{' '}
+                          {formatDuration(personCapacity(state, personId))}
                         </span>
                         <ChevronRight className="card-chevron" size={16} aria-hidden />
                       </button>

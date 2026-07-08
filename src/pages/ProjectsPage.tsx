@@ -20,6 +20,7 @@ import { ChevronRight, GanttChart, Plus } from '../components/icons';
 import type { SavedFilterCriteria } from '../types';
 import { addDaysStr, todayStr } from '../utils/dates';
 import { parseDate } from '../utils/dates';
+import { formatDuration } from '../utils/time';
 import { format } from 'date-fns';
 import { pl } from 'date-fns/locale/pl';
 
@@ -62,10 +63,6 @@ function rangeLabel(start: string, end: string): string {
     return `${format(s, 'd')}–${format(e, 'd MMM yyyy', { locale: pl })}`;
   if (sameYear) return `${format(s, 'd MMM', { locale: pl })} – ${format(e, 'd MMM yyyy', { locale: pl })}`;
   return `${format(s, 'd MMM yyyy', { locale: pl })} – ${format(e, 'd MMM yyyy', { locale: pl })}`;
-}
-
-function fmtHours(n: number): string {
-  return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
 }
 
 function polishCount(n: number, one: string, few: string, many: string): string {
@@ -355,7 +352,7 @@ export function ProjectsPage() {
                       <div className="task-card-hours">
                         <strong>{tasks.length}</strong>{' '}
                         {polishCount(tasks.length, 'zadanie', 'zadania', 'zadań')}
-                        <span className="muted"> · zaplanowano {fmtHours(planned)}h</span>
+                        <span className="muted"> · zaplanowano {formatDuration(planned)}</span>
                         <span className="muted">
                           {' '}
                           · {teamSize} {polishCount(teamSize, 'osoba', 'osoby', 'osób')}

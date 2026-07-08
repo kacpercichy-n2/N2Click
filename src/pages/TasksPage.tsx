@@ -16,12 +16,9 @@ import { PersonChip } from '../components/PersonChip';
 import { StatusBadge } from '../components/StatusBadge';
 import { Coin } from '../components/Coin';
 import { parseDate } from '../utils/dates';
+import { formatDuration } from '../utils/time';
 import { format } from 'date-fns';
 import { pl } from 'date-fns/locale/pl';
-
-function fmtHours(n: number): string {
-  return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
-}
 
 function rangeLabel(start: string, end: string): string {
   const s = parseDate(start);
@@ -237,9 +234,9 @@ export function TasksPage() {
                     )}
                   </div>
                   <div className="task-card-hours">
-                    <strong>zaplanowano {fmtHours(planned)}h</strong>
+                    <strong>zaplanowano {formatDuration(planned)}</strong>
                     {task.estimatedHours != null && (
-                      <span className="muted"> / szac. {fmtHours(task.estimatedHours)}h</span>
+                      <span className="muted"> / szac. {formatDuration(task.estimatedHours)}</span>
                     )}
                   </div>
                   <ChevronRight className="card-chevron" size={16} aria-hidden />
