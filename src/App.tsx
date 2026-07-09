@@ -11,6 +11,7 @@ import {
 import { motion } from 'motion/react';
 import { useStore } from './store/AppStore';
 import { DashboardPage } from './pages/DashboardPage';
+import { MyWorkPage } from './pages/MyWorkPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { ProjectDetailPage } from './pages/ProjectDetailPage';
 import { KanbanPage } from './pages/KanbanPage';
@@ -23,13 +24,14 @@ import { WorkloadPage } from './pages/WorkloadPage';
 import { AdminPage } from './pages/AdminPage';
 import { LoginPage } from './pages/LoginPage';
 import { can } from './store/permissions';
-import { isImpersonating, realUser } from './store/selectors';
+import { currentUser as currentUserSel, isImpersonating, realUser } from './store/selectors';
 import { SampleBanner } from './components/SampleBanner';
 import { TaskModal } from './components/TaskModal';
 import { GlobalSearch } from './components/GlobalSearch';
 import { Avatar } from './components/Avatar';
 import {
   LayoutDashboard,
+  ClipboardList,
   FolderKanban,
   Columns3,
   GanttChart,
@@ -48,6 +50,7 @@ import { loadUiPrefs, saveUiPrefs } from './utils/uiPrefs';
 
 const NAV: Array<[string, string, LucideIcon]> = [
   ['/dashboard', 'Panel', LayoutDashboard],
+  ['/my-work', 'Moja praca', ClipboardList],
   ['/projects', 'Projekty', FolderKanban],
   ['/kanban', 'Kanban', Columns3],
   ['/timeline', 'Oś czasu', GanttChart],
@@ -278,8 +281,9 @@ export function App() {
           transition={{ duration: 0.18, ease: 'easeOut' }}
         >
           <Routes>
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/" element={<HomeRedirect />} />
             <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/my-work" element={<MyWorkPage />} />
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/projects/:id" element={<ProjectDetailPage />} />
             <Route path="/kanban" element={<KanbanPage />} />
@@ -296,7 +300,7 @@ export function App() {
               path="/admin"
               element={canAdmin ? <AdminPage /> : <Navigate to="/dashboard" replace />}
             />
-            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+            <Route path="*" element={<HomeRedirect />} />
           </Routes>
         </motion.div>
       </main>
@@ -305,6 +309,19 @@ export function App() {
       <TaskModal />
     </div>
   );
+}
+
+/**
+ * Landing redirect for `/` and unknown routes. `pracownik`-role users land on
+ * their work page (`/my-work`); everyone else — admin/pm/handlowiec, setup mode,
+ * or an unresolved user — keeps the dashboard. Keys off the acted-as
+ * `currentUser`, so impersonation previews the target role's landing (correct).
+ */
+function HomeRedirect() {
+  const { state } = useStore();
+  const dest =
+    currentUserSel(state)?.accessRole === 'pracownik' ? '/my-work' : '/dashboard';
+  return <Navigate to={dest} replace />;
 }
 
 /** `/tasks/new[?project=<id>]` → `/tasks?task=new[&project=<id>]`. */

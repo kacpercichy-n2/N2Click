@@ -9,19 +9,13 @@ import {
   availableHoursInRange,
   availableHoursOnDate,
   currentUser,
-  getClient,
-  getProject,
-  getStatus,
   hoursForPersonOnDate,
-  todayAgendaForPerson,
   weekBlocksForPerson,
 } from '../store/selectors';
-import { StatusBadge } from '../components/StatusBadge';
 import { ChatMock } from '../components/ChatMock';
-import { useOpenTask } from '../components/TaskModal';
+import { TodayAgendaList } from '../components/TodayAgenda';
 import {
   formatRowLabel,
-  formatShort,
   isTodayStr,
   isWeekend,
   todayStr,
@@ -100,7 +94,6 @@ function WorkloadDonut({
 
 export function DashboardPage() {
   const { state } = useStore();
-  const { openTask } = useOpenTask();
   const me = currentUser(state);
   const today = todayStr();
 
@@ -125,7 +118,6 @@ export function DashboardPage() {
     );
   }
 
-  const agenda = todayAgendaForPerson(state, me.id, today);
   const coworkers = state.people.filter((p) => p.id !== me.id);
 
   // Workload donuts (today + this week).
@@ -153,58 +145,7 @@ export function DashboardPage() {
         {/* (a) Today's tasks */}
         <motion.div className="dash-card" variants={dashCardVariants}>
           <h2>Zadania na dziś</h2>
-          {agenda.timed.length === 0 && agenda.dateless.length === 0 ? (
-            <p className="muted">
-              Brak zadań na dziś —{' '}
-              <Link to="/calendar" className="inline-link">
-                zajrzyj do kalendarza
-              </Link>
-              .
-            </p>
-          ) : (
-            <ul className="dash-list agenda-list">
-              {agenda.timed.map((w) => {
-                const task = state.tasks.find((t) => t.id === w.taskId);
-                if (!task) return null;
-                const project = getProject(state, task.projectId);
-                const client = project ? getClient(state, project.clientId) : undefined;
-                const startM = w.startMinutes;
-                const endM = startM + w.plannedHours * 60;
-                return (
-                  <li key={w.id}>
-                    <button
-                      type="button"
-                      className="dash-row"
-                      onClick={() => openTask(task.id)}
-                    >
-                      <span className="agenda-time">
-                        {formatMinutes(startM)}–{formatMinutes(endM)}
-                      </span>
-                      <span className="dash-row-name">{task.title}</span>
-                      <span className="agenda-meta">
-                        {project?.name ?? '—'}
-                        {client ? ` → ${client.name}` : ''}
-                      </span>
-                      <StatusBadge status={getStatus(state, task.statusId)} />
-                    </button>
-                  </li>
-                );
-              })}
-              {agenda.dateless.map((task) => (
-                <li key={task.id}>
-                  <button
-                    type="button"
-                    className="dash-row agenda-dateless"
-                    onClick={() => openTask(task.id)}
-                  >
-                    <span className="agenda-time muted">bez godziny</span>
-                    <span className="dash-row-name">{task.title}</span>
-                    <span className="agenda-meta muted">do {formatShort(task.endDate)}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+          <TodayAgendaList personId={me.id} date={today} />
         </motion.div>
 
         {/* (b) Team chat (mockup) */}

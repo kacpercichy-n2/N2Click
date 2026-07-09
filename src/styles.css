@@ -2677,6 +2677,67 @@ option {
   font-weight: 500;
 }
 
+/* ---------- Moja praca (/my-work) ---------- */
+
+/* Three cards side-by-side on wide screens; collapse to one column narrow. */
+.my-work-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+@media (max-width: 1180px) {
+  .my-work-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.my-work-hours {
+  font-family: var(--n2-font-data);
+  font-size: var(--n2-type-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+.dash-card-foot {
+  margin-top: 8px;
+}
+
+.my-work-alerts {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.my-work-alert-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.my-work-alert-title {
+  margin: 0;
+  font-size: var(--n2-type-xs);
+  font-family: var(--n2-font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--n2-danger);
+}
+/* Scoped as `.dash-row.my-work-alert-row` so it wins the cascade over the
+   later "Card affordances" `.dash-row` rules (same specificity, later source). */
+.dash-row.my-work-alert-row {
+  border: 1px solid var(--n2-danger);
+  background: var(--n2-danger-soft);
+}
+.dash-row.my-work-alert-row:hover {
+  background: var(--n2-danger-soft);
+}
+/* Overload rows are informational, not clickable. */
+.my-work-alert-row.is-static {
+  cursor: default;
+}
+.dash-row.my-work-alert-row.is-static:hover {
+  transform: none;
+  background: var(--n2-danger-soft);
+  border-color: var(--n2-danger);
+}
+
 /* (b) Team chat mock */
 .chat-people {
   list-style: none;

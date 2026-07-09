@@ -7,19 +7,24 @@ import { describe, expect, it } from 'vitest';
 import {
   availableHoursInRange,
   availableHoursOnDate,
+  binTaskRowsForPerson,
   conflictDatesForTask,
+  doneStatusId,
   growAllowanceHours,
   isPersonWorkday,
   isImpersonating,
+  overdueTasksForPerson,
+  overloadedDatesForPersonInRange,
   realUser,
   realUserId,
   taskGrowAllowance,
   todayAgendaForPerson,
+  unplannedTasksForPerson,
   weekBlocksForPerson,
 } from './selectors';
 import { emptyData } from './storage';
 import { BIN_DATE } from '../utils/time';
-import type { AppData, Person, Task, TaskAssignment, WorkloadEntry } from '../types';
+import type { AppData, Person, Status, Task, TaskAssignment, WorkloadEntry } from '../types';
 
 function makeState(overrides: Partial<AppData> = {}): AppData {
   return { ...emptyData(), ...overrides };
@@ -77,6 +82,17 @@ function makeAssignment(
   overrides: Partial<TaskAssignment> & { id: string; taskId: string; personId: string },
 ): TaskAssignment {
   return { ...overrides };
+}
+
+function makeStatus(overrides: Partial<Status> & { id: string }): Status {
+  return {
+    name: 'Status',
+    slug: 'status',
+    color: '#000000',
+    order: 0,
+    archived: false,
+    ...overrides,
+  };
 }
 
 describe('conflictDatesForTask — bin exclusion (regression)', () => {
@@ -519,5 +535,366 @@ describe('weekBlocksForPerson', () => {
       expect(map.get(d)?.some((w) => w.personId === 'p2')).toBe(false);
       expect(map.get(d)?.some((w) => w.date === BIN_DATE)).toBe(false);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// doneStatusId / overdueTasksForPerson / overloadedDatesForPersonInRange /
+// unplannedTasksForPerson / binTaskRowsForPerson (PKG-20260709c-my-work-page)
+// Coverage added by PKG-20260709c-my-work-selector-tests.
+// ---------------------------------------------------------------------------
+
+describe('doneStatusId', () => {
+  it('returns the id of the last active status in pipeline order', () => {
+    const s0 = makeStatus({ id: 's0', order: 0 });
+    const s1 = makeStatus({ id: 's1', order: 1 });
+    const state = makeState({ statuses: [s1, s0] }); // deliberately out of array order
+    expect(doneStatusId(state)).toBe('s1');
+  });
+
+  it('skips an archived last status — the previous active status wins', () => {
+    const s0 = makeStatus({ id: 's0', order: 0 });
+    const s1 = makeStatus({ id: 's1', order: 1 });
+    const s2 = makeStatus({ id: 's2', order: 2, archived: true }); // last by order, but archived
+    const state = makeState({ statuses: [s0, s1, s2] });
+    expect(doneStatusId(state)).toBe('s1');
+  });
+
+  it('returns undefined when there are no statuses', () => {
+    const state = makeState({ statuses: [] });
+    expect(doneStatusId(state)).toBeUndefined();
+  });
+});
+
+describe('overdueTasksForPerson', () => {
+  const TODAY = '2026-07-10';
+  const base = emptyData();
+  const activeStatusId = base.statuses[0].id;
+  const doneId = base.statuses[base.statuses.length - 1].id;
+
+  it('includes an assigned task with endDate < today and a non-done status; excludes done, not-yet-due, and unassigned tasks', () => {
+    const overdue = makeTask({
+      id: 't-overdue',
+      title: 'Overdue',
+      statusId: activeStatusId,
+      startDate: '2026-07-01',
+      endDate: '2026-07-05', // < TODAY
+    });
+    const overdueButDone = makeTask({
+      id: 't-done',
+      title: 'Overdue but done',
+      statusId: doneId,
+      startDate: '2026-07-01',
+      endDate: '2026-07-05',
+    });
+    const dueToday = makeTask({
+      id: 't-today',
+      title: 'Due today',
+      statusId: activeStatusId,
+      startDate: '2026-07-01',
+      endDate: TODAY, // ends today -> not overdue
+    });
+    const dueLater = makeTask({
+      id: 't-later',
+      title: 'Due later',
+      statusId: activeStatusId,
+      startDate: '2026-07-01',
+      endDate: '2026-07-15',
+    });
+    const notMine = makeTask({
+      id: 't-not-mine',
+      title: 'Not mine',
+      statusId: activeStatusId,
+      startDate: '2026-07-01',
+      endDate: '2026-07-05',
+    });
+
+    const state = makeState({
+      ...base,
+      tasks: [overdue, overdueButDone, dueToday, dueLater, notMine],
+      people: [makePerson({ id: 'p1' }), makePerson({ id: 'p2' })],
+      assignments: [
+        makeAssignment({ id: 'a1', taskId: 't-overdue', personId: 'p1' }),
+        makeAssignment({ id: 'a2', taskId: 't-done', personId: 'p1' }),
+        makeAssignment({ id: 'a3', taskId: 't-today', personId: 'p1' }),
+        makeAssignment({ id: 'a4', taskId: 't-later', personId: 'p1' }),
+        makeAssignment({ id: 'a5', taskId: 't-not-mine', personId: 'p2' }),
+      ],
+    });
+
+    const result = overdueTasksForPerson(state, 'p1', TODAY);
+    expect(result.map((t) => t.id)).toEqual(['t-overdue']);
+  });
+
+  it('sorts by endDate ascending, ties broken by title', () => {
+    const zebra = makeTask({
+      id: 't-zebra',
+      title: 'Zebra',
+      statusId: activeStatusId,
+      startDate: '2026-06-01',
+      endDate: '2026-07-01',
+    });
+    const banana = makeTask({
+      id: 't-banana',
+      title: 'Banana',
+      statusId: activeStatusId,
+      startDate: '2026-06-01',
+      endDate: '2026-07-01',
+    });
+    const apple = makeTask({
+      id: 't-apple',
+      title: 'Apple',
+      statusId: activeStatusId,
+      startDate: '2026-06-01',
+      endDate: '2026-06-20', // earliest
+    });
+
+    const state = makeState({
+      ...base,
+      tasks: [zebra, banana, apple],
+      people: [makePerson({ id: 'p1' })],
+      assignments: [
+        makeAssignment({ id: 'a1', taskId: 't-zebra', personId: 'p1' }),
+        makeAssignment({ id: 'a2', taskId: 't-banana', personId: 'p1' }),
+        makeAssignment({ id: 'a3', taskId: 't-apple', personId: 'p1' }),
+      ],
+    });
+
+    const result = overdueTasksForPerson(state, 'p1', TODAY);
+    expect(result.map((t) => t.id)).toEqual(['t-apple', 't-banana', 't-zebra']);
+  });
+});
+
+describe('overloadedDatesForPersonInRange', () => {
+  it('flags only dates where booked hours strictly exceed capacity; booked === capacity is not overloaded; other people are ignored', () => {
+    const d1 = '2026-07-06';
+    const d2 = '2026-07-07';
+    const d3 = '2026-07-08';
+    const entries = [
+      makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: d1, plannedHours: 5 }),
+      makeEntry({ id: 'e2', taskId: 't2', personId: 'p1', date: d1, plannedHours: 4 }), // sum 9 > 8 -> overloaded
+      makeEntry({ id: 'e3', taskId: 't1', personId: 'p1', date: d2, plannedHours: 8 }), // sum 8 === capacity -> not overloaded
+      makeEntry({ id: 'e4', taskId: 't1', personId: 'p2', date: d3, plannedHours: 100 }), // other person, ignored
+    ];
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2' })],
+      people: [makePerson({ id: 'p1', capacity: 8 }), makePerson({ id: 'p2', capacity: 8 })],
+      workload: entries,
+    });
+
+    expect(overloadedDatesForPersonInRange(state, 'p1', [d1, d2, d3])).toEqual([d1]);
+  });
+
+  it('respects a lower per-person capacity (capacity 6, booked 7 -> overloaded)', () => {
+    const d1 = '2026-07-06';
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      people: [makePerson({ id: 'p1', capacity: 6 })],
+      workload: [makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: d1, plannedHours: 7 })],
+    });
+
+    expect(overloadedDatesForPersonInRange(state, 'p1', [d1])).toEqual([d1]);
+  });
+
+  it('sums hours from multiple tasks on the same date to decide overload', () => {
+    const d1 = '2026-07-06';
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2' }), makeTask({ id: 't3' })],
+      people: [makePerson({ id: 'p1', capacity: 8 })],
+      workload: [
+        makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: d1, plannedHours: 3 }),
+        makeEntry({ id: 'e2', taskId: 't2', personId: 'p1', date: d1, plannedHours: 3 }),
+        makeEntry({ id: 'e3', taskId: 't3', personId: 'p1', date: d1, plannedHours: 3 }), // 3+3+3 = 9 > 8
+      ],
+    });
+
+    expect(overloadedDatesForPersonInRange(state, 'p1', [d1])).toEqual([d1]);
+  });
+
+  it('returns an empty array when no date in the range is overloaded', () => {
+    const dates = ['2026-07-06', '2026-07-07'];
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      people: [makePerson({ id: 'p1', capacity: 8 })],
+      workload: [makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-06', plannedHours: 2 })],
+    });
+
+    expect(overloadedDatesForPersonInRange(state, 'p1', dates)).toEqual([]);
+  });
+});
+
+describe('unplannedTasksForPerson', () => {
+  const base = emptyData();
+  const activeStatusId = base.statuses[0].id;
+  const doneId = base.statuses[base.statuses.length - 1].id;
+
+  it('includes an assigned, non-done task with zero workload rows for the person; excludes a bin-only task, a dated-row task, a done task, and an unassigned task', () => {
+    const zeroRows = makeTask({
+      id: 't-zero',
+      title: 'Zero rows',
+      statusId: activeStatusId,
+      endDate: '2026-07-20',
+    });
+    const binOnly = makeTask({
+      id: 't-bin-only',
+      title: 'Bin only',
+      statusId: activeStatusId,
+      endDate: '2026-07-20',
+    });
+    const datedRow = makeTask({
+      id: 't-dated',
+      title: 'Dated row',
+      statusId: activeStatusId,
+      endDate: '2026-07-20',
+    });
+    const doneTask = makeTask({
+      id: 't-done',
+      title: 'Done',
+      statusId: doneId,
+      endDate: '2026-07-20',
+    });
+    const unassigned = makeTask({
+      id: 't-unassigned',
+      title: 'Unassigned',
+      statusId: activeStatusId,
+      endDate: '2026-07-20',
+    });
+
+    const state = makeState({
+      ...base,
+      tasks: [zeroRows, binOnly, datedRow, doneTask, unassigned],
+      people: [makePerson({ id: 'p1' })],
+      assignments: [
+        makeAssignment({ id: 'a1', taskId: 't-zero', personId: 'p1' }),
+        makeAssignment({ id: 'a2', taskId: 't-bin-only', personId: 'p1' }),
+        makeAssignment({ id: 'a3', taskId: 't-dated', personId: 'p1' }),
+        makeAssignment({ id: 'a4', taskId: 't-done', personId: 'p1' }),
+      ],
+      workload: [
+        makeEntry({
+          id: 'bin1',
+          taskId: 't-bin-only',
+          personId: 'p1',
+          date: BIN_DATE,
+          startMinutes: 0,
+          sortIndex: 0,
+        }),
+        makeEntry({ id: 'e1', taskId: 't-dated', personId: 'p1', date: '2026-07-08' }),
+      ],
+    });
+
+    const result = unplannedTasksForPerson(state, 'p1');
+    expect(result.map((t) => t.id)).toEqual(['t-zero']);
+  });
+
+  it("another person's rows on the same task do NOT make it planned for this person", () => {
+    const shared = makeTask({ id: 't-shared', title: 'Shared', statusId: activeStatusId, endDate: '2026-07-20' });
+    const state = makeState({
+      ...base,
+      tasks: [shared],
+      people: [makePerson({ id: 'p1' }), makePerson({ id: 'p2' })],
+      assignments: [
+        makeAssignment({ id: 'a1', taskId: 't-shared', personId: 'p1' }),
+        makeAssignment({ id: 'a2', taskId: 't-shared', personId: 'p2' }),
+      ],
+      workload: [
+        makeEntry({ id: 'e1', taskId: 't-shared', personId: 'p2', date: '2026-07-08', plannedHours: 4 }),
+      ],
+    });
+
+    const result = unplannedTasksForPerson(state, 'p1');
+    expect(result.map((t) => t.id)).toEqual(['t-shared']);
+  });
+
+  it('sorts by endDate ascending, ties broken by title', () => {
+    const zebra = makeTask({ id: 't-zebra', title: 'Zebra', statusId: activeStatusId, endDate: '2026-07-10' });
+    const banana = makeTask({ id: 't-banana', title: 'Banana', statusId: activeStatusId, endDate: '2026-07-10' });
+    const apple = makeTask({ id: 't-apple', title: 'Apple', statusId: activeStatusId, endDate: '2026-07-05' });
+
+    const state = makeState({
+      ...base,
+      tasks: [zebra, banana, apple],
+      people: [makePerson({ id: 'p1' })],
+      assignments: [
+        makeAssignment({ id: 'a1', taskId: 't-zebra', personId: 'p1' }),
+        makeAssignment({ id: 'a2', taskId: 't-banana', personId: 'p1' }),
+        makeAssignment({ id: 'a3', taskId: 't-apple', personId: 'p1' }),
+      ],
+      workload: [],
+    });
+
+    const result = unplannedTasksForPerson(state, 'p1');
+    expect(result.map((t) => t.id)).toEqual(['t-apple', 't-banana', 't-zebra']);
+  });
+});
+
+describe('binTaskRowsForPerson', () => {
+  it('maps each bin entry to { task, hours } in bin sortIndex order', () => {
+    const taskA = makeTask({ id: 't-a', title: 'A' });
+    const taskB = makeTask({ id: 't-b', title: 'B' });
+    const entries = [
+      makeEntry({ id: 'bin-b', taskId: 't-b', personId: 'p1', date: BIN_DATE, startMinutes: 0, sortIndex: 0, plannedHours: 2 }),
+      makeEntry({ id: 'bin-a', taskId: 't-a', personId: 'p1', date: BIN_DATE, startMinutes: 0, sortIndex: 1, plannedHours: 3 }),
+    ];
+    const state = makeState({
+      tasks: [taskA, taskB],
+      people: [makePerson({ id: 'p1' })],
+      workload: entries,
+    });
+
+    const rows = binTaskRowsForPerson(state, 'p1');
+    expect(rows).toEqual([
+      { task: taskB, hours: 2 },
+      { task: taskA, hours: 3 },
+    ]);
+  });
+
+  it('sums two bin rows of the same task into one row (defensive path)', () => {
+    const taskA = makeTask({ id: 't-a', title: 'A' });
+    const entries = [
+      makeEntry({ id: 'bin1', taskId: 't-a', personId: 'p1', date: BIN_DATE, startMinutes: 0, sortIndex: 0, plannedHours: 2 }),
+      makeEntry({ id: 'bin2', taskId: 't-a', personId: 'p1', date: BIN_DATE, startMinutes: 0, sortIndex: 1, plannedHours: 5 }),
+    ];
+    const state = makeState({
+      tasks: [taskA],
+      people: [makePerson({ id: 'p1' })],
+      workload: entries,
+    });
+
+    const rows = binTaskRowsForPerson(state, 'p1');
+    expect(rows).toEqual([{ task: taskA, hours: 7 }]);
+  });
+
+  it('skips a bin entry whose taskId resolves to no task', () => {
+    const taskA = makeTask({ id: 't-a', title: 'A' });
+    const entries = [
+      makeEntry({ id: 'bin-stale', taskId: 't-missing', personId: 'p1', date: BIN_DATE, startMinutes: 0, sortIndex: 0, plannedHours: 4 }),
+      makeEntry({ id: 'bin-a', taskId: 't-a', personId: 'p1', date: BIN_DATE, startMinutes: 0, sortIndex: 1, plannedHours: 3 }),
+    ];
+    const state = makeState({
+      tasks: [taskA],
+      people: [makePerson({ id: 'p1' })],
+      workload: entries,
+    });
+
+    const rows = binTaskRowsForPerson(state, 'p1');
+    expect(rows).toEqual([{ task: taskA, hours: 3 }]);
+  });
+
+  it("excludes other people's bin rows and this person's dated rows", () => {
+    const taskA = makeTask({ id: 't-a', title: 'A' });
+    const entries = [
+      makeEntry({ id: 'bin-mine', taskId: 't-a', personId: 'p1', date: BIN_DATE, startMinutes: 0, sortIndex: 0, plannedHours: 2 }),
+      makeEntry({ id: 'bin-theirs', taskId: 't-a', personId: 'p2', date: BIN_DATE, startMinutes: 0, sortIndex: 1, plannedHours: 9 }),
+      makeEntry({ id: 'dated-mine', taskId: 't-a', personId: 'p1', date: '2026-07-08', plannedHours: 4 }),
+    ];
+    const state = makeState({
+      tasks: [taskA],
+      people: [makePerson({ id: 'p1' }), makePerson({ id: 'p2' })],
+      workload: entries,
+    });
+
+    const rows = binTaskRowsForPerson(state, 'p1');
+    expect(rows).toEqual([{ task: taskA, hours: 2 }]);
   });
 });

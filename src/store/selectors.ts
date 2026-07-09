@@ -69,6 +69,15 @@ export function allStatusesOrdered(state: AppData): Status[] {
   return [...state.statuses].sort((a, b) => a.order - b.order);
 }
 
+/**
+ * The id of the "done" status — the LAST active status in pipeline order.
+ * Undefined when there are no active statuses. This is the single source of the
+ * done-status rule reused by the agenda and the "Moja praca" selectors.
+ */
+export function doneStatusId(state: AppData): string | undefined {
+  return activeStatuses(state).slice(-1)[0]?.id;
+}
+
 // ---- Clients & projects ----
 
 export function activeClients(state: AppData): Client[] {
@@ -281,7 +290,7 @@ export function todayAgendaForPerson(
     .filter((w) => w.personId === personId && w.date === date)
     .sort((a, b) => a.startMinutes - b.startMinutes || a.sortIndex - b.sortIndex);
 
-  const doneStatusId = activeStatuses(state).slice(-1)[0]?.id;
+  const doneId = doneStatusId(state);
   const timedTaskIds = new Set(timed.map((w) => w.taskId));
   const assignedTaskIds = new Set(taskIdsOfPerson(state, personId));
 
@@ -291,7 +300,7 @@ export function todayAgendaForPerson(
         assignedTaskIds.has(t.id) &&
         t.startDate <= date &&
         date <= t.endDate &&
-        t.statusId !== doneStatusId &&
+        t.statusId !== doneId &&
         !timedTaskIds.has(t.id),
     )
     .sort((a, b) => a.endDate.localeCompare(b.endDate) || a.title.localeCompare(b.title));
@@ -416,6 +425,91 @@ export function growAllowanceHours(state: AppData, entryId: string): number {
   const entry = state.workload.find((w) => w.id === entryId);
   if (!entry) return 0;
   return taskGrowAllowance(state, entry.taskId, entry.personId);
+}
+
+// ---- Moja praca (my-work page) ----
+
+/**
+ * Tasks the person is assigned to that are past due: `endDate < today` and not
+ * in the done status. Sorted by `endDate` ascending, then title. Pure — pass
+ * `today` (no `Date.now`).
+ */
+export function overdueTasksForPerson(
+  state: AppData,
+  personId: string,
+  today: DateStr,
+): Task[] {
+  const doneId = doneStatusId(state);
+  const assignedTaskIds = new Set(taskIdsOfPerson(state, personId));
+  return state.tasks
+    .filter(
+      (t) =>
+        assignedTaskIds.has(t.id) &&
+        t.endDate < today &&
+        t.statusId !== doneId,
+    )
+    .sort((a, b) => a.endDate.localeCompare(b.endDate) || a.title.localeCompare(b.title));
+}
+
+/**
+ * The subset of `dates` where the person's total booked hours strictly exceed
+ * their daily capacity. Bin rows (date === '') can never match a real date, so
+ * they are naturally excluded. Pure.
+ */
+export function overloadedDatesForPersonInRange(
+  state: AppData,
+  personId: string,
+  dates: DateStr[],
+): DateStr[] {
+  const capacity = personCapacity(state, personId);
+  return dates.filter((d) => hoursForPersonOnDate(state, personId, d) > capacity);
+}
+
+/**
+ * Tasks the person is assigned to, not done, for which the person has ZERO
+ * workload rows (neither dated nor bin) — i.e. nothing planned yet. Sorted by
+ * `endDate` ascending, then title. Pure.
+ */
+export function unplannedTasksForPerson(state: AppData, personId: string): Task[] {
+  const doneId = doneStatusId(state);
+  const assignedTaskIds = new Set(taskIdsOfPerson(state, personId));
+  const plannedTaskIds = new Set(
+    state.workload.filter((w) => w.personId === personId).map((w) => w.taskId),
+  );
+  return state.tasks
+    .filter(
+      (t) =>
+        assignedTaskIds.has(t.id) &&
+        t.statusId !== doneId &&
+        !plannedTaskIds.has(t.id),
+    )
+    .sort((a, b) => a.endDate.localeCompare(b.endDate) || a.title.localeCompare(b.title));
+}
+
+/**
+ * A person's bin (zasobnik) contents grouped as task-level rows: one row per
+ * task with the summed bin hours (defensive sum even though the invariant is one
+ * bin row per task+person). Rows keep the bin `sortIndex` order of each task's
+ * first entry. Entries whose task no longer resolves are silently skipped. Pure.
+ */
+export function binTaskRowsForPerson(
+  state: AppData,
+  personId: string,
+): Array<{ task: Task; hours: number }> {
+  const rows: Array<{ task: Task; hours: number }> = [];
+  const indexByTask = new Map<string, number>();
+  for (const entry of binEntriesForPerson(state, personId)) {
+    const existing = indexByTask.get(entry.taskId);
+    if (existing !== undefined) {
+      rows[existing].hours += entry.plannedHours;
+      continue;
+    }
+    const task = getTask(state, entry.taskId);
+    if (!task) continue; // stale bin row — skip
+    indexByTask.set(entry.taskId, rows.length);
+    rows.push({ task, hours: entry.plannedHours });
+  }
+  return rows;
 }
 
 // ---- Capacity & overload ----

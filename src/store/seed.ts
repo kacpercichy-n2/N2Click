@@ -258,6 +258,9 @@ export function buildSampleData(): AppData {
   addWork(t3.id, marek.id, wed, 4); // -> Marek Wed total = 10h (overload)
   addWork(t3.id, marek.id, thu, 2);
   addWork(t3.id, marek.id, fri, 3);
+  // Marek keeps 2h of this sprint in his bin so his "Moja praca" zasobnik has
+  // content (9h dated + 2h bin = 11h ≤ 16h estimate — budget-safe).
+  addBinWork(t3.id, marek.id, 2);
 
   // --- Task 4: done QA pass last week (fills out the pipeline & timeline) ---
   const t4: Task = {

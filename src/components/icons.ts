@@ -33,4 +33,5 @@ export {
   Filter,
   Bookmark,
   Clock,
+  ClipboardList,
 } from 'lucide-react';
