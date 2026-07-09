@@ -109,9 +109,9 @@ async function runPrompt(promptFile) {
   console.log(`Running Claude for ${basename}. Log: ${logFile}`);
   if (!dryRun) {
     const claudeArgs = skipPermissions
-      ? ["--print", "--dangerously-skip-permissions", fullPrompt]
-      : ["--print", "--allowedTools", allowedTools, fullPrompt];
-    const claudeCode = await streamCommand("claude", claudeArgs, logFile);
+      ? ["--print", "--dangerously-skip-permissions"]
+      : ["--print", "--allowedTools", allowedTools];
+    const claudeCode = await streamCommand("claude", claudeArgs, logFile, fullPrompt);
     ok = ok && claudeCode === 0;
   } else {
     appendLog(logFile, "[dry run] Claude execution skipped.\n");
@@ -259,13 +259,19 @@ async function sleepUntil(date) {
   }
 }
 
-async function streamCommand(command, args, logFile) {
+async function streamCommand(command, args, logFile, input = null) {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       cwd: repoRoot,
       env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
     });
+
+    if (input) {
+      child.stdin.end(input);
+    } else {
+      child.stdin.end();
+    }
 
     child.stdout.on("data", (chunk) => {
       process.stdout.write(chunk);
