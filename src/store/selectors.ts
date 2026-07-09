@@ -13,6 +13,7 @@ import type {
   ServiceType,
   Status,
   Task,
+  WorkCategory,
   WorkloadEntry,
 } from '../types';
 import { DEFAULT_CAPACITY } from './storage';
@@ -53,6 +54,13 @@ export function getServiceType(
   serviceTypeId: string,
 ): ServiceType | undefined {
   return state.serviceTypes.find((s) => s.id === serviceTypeId);
+}
+
+export function getWorkCategory(
+  state: AppData,
+  workCategoryId: string,
+): WorkCategory | undefined {
+  return state.workCategories.find((c) => c.id === workCategoryId);
 }
 
 // ---- Statuses ----

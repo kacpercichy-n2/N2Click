@@ -9,6 +9,8 @@ import { useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import { NO_PERM_TITLE } from '../store/permissions';
 import type { AllocationCell, TaskDraft } from '../store/AppStore';
+import type { ChecklistItem, TaskPriority } from '../types';
+import { PRIORITY_LABELS, TASK_PRIORITIES } from '../utils/priority';
 import {
   activeStatuses,
   assigneeIdsOfTask,
@@ -240,6 +242,9 @@ function serializeDraft(v: {
   projectId: string;
   statusId: string;
   estimatedRaw: string;
+  priority: TaskPriority;
+  workCategoryId: string;
+  checklist: ChecklistItem[];
   startDate: string;
   endDate: string;
   assigneeIds: string[];
@@ -252,6 +257,10 @@ function serializeDraft(v: {
     projectId: v.projectId,
     statusId: v.statusId,
     estimatedRaw: v.estimatedRaw,
+    priority: v.priority,
+    workCategoryId: v.workCategoryId,
+    // Order-sensitive: item identity + text + done state all participate in dirty.
+    checklist: v.checklist.map((c) => [c.id, c.text, c.done]),
     startDate: v.startDate,
     endDate: v.endDate,
     assigneeIds: [...v.assigneeIds].sort(),
@@ -292,6 +301,10 @@ function TaskEditor({
   const [estimatedRaw, setEstimatedRaw] = useState(
     existing?.estimatedHours != null ? String(existing.estimatedHours) : '',
   );
+  const [priority, setPriority] = useState<TaskPriority>(existing?.priority ?? 'normal');
+  const [workCategoryId, setWorkCategoryId] = useState<string>(existing?.workCategoryId ?? '');
+  const [checklist, setChecklist] = useState<ChecklistItem[]>(existing?.checklist ?? []);
+  const [checklistInput, setChecklistInput] = useState('');
 
   // ---- Period ----
   const [startDate, setStartDate] = useState(existing?.startDate ?? todayStr());
@@ -368,6 +381,9 @@ function TaskEditor({
     projectId,
     statusId,
     estimatedRaw,
+    priority,
+    workCategoryId,
+    checklist,
     startDate,
     endDate,
     assigneeIds,
@@ -496,6 +512,9 @@ function TaskEditor({
       startDate,
       endDate,
       estimatedHours: normalizedEstimate,
+      priority,
+      workCategoryId,
+      checklist,
     };
 
     dispatch({
@@ -561,6 +580,21 @@ function TaskEditor({
     if (personId === '' || Number.isNaN(hours) || hours <= 0) return;
     setPendingUnassigned((prev) => [...prev, { personId, hours: Math.min(24, hours) }]);
   };
+
+  // ---- Checklist (draft-only; persisted wholesale by SAVE_TASK) ----
+  const addChecklistItem = () => {
+    const text = checklistInput.trim();
+    if (!text) return;
+    setChecklist((prev) => [...prev, { id: crypto.randomUUID(), text, done: false }]);
+    setChecklistInput('');
+  };
+  const toggleChecklistItem = (id: string) => {
+    setChecklist((prev) => prev.map((c) => (c.id === id ? { ...c, done: !c.done } : c)));
+  };
+  const removeChecklistItem = (id: string) => {
+    setChecklist((prev) => prev.filter((c) => c.id !== id));
+  };
+  const checklistDone = checklist.filter((c) => c.done).length;
 
   return (
     <div className="editor task-editor">
@@ -652,6 +686,41 @@ function TaskEditor({
             />
           </div>
         </div>
+        <div className="field-row">
+          <div className="field">
+            <label htmlFor="t-priority">Priorytet</label>
+            <select
+              id="t-priority"
+              value={priority}
+              onChange={(e) => setPriority(e.target.value as TaskPriority)}
+              disabled={readOnly}
+              title={roTitle}
+            >
+              {TASK_PRIORITIES.map((p) => (
+                <option key={p} value={p}>
+                  {PRIORITY_LABELS[p]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="t-category">Kategoria</label>
+            <select
+              id="t-category"
+              value={workCategoryId}
+              onChange={(e) => setWorkCategoryId(e.target.value)}
+              disabled={readOnly}
+              title={roTitle}
+            >
+              <option value="">Brak kategorii</option>
+              {state.workCategories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
         <div className="estimate-compare">
           <span>
             zaplanowano{' '}
@@ -682,6 +751,69 @@ function TaskEditor({
             szacunek lub ogranicz godziny.
           </p>
         )}
+      </div>
+
+      {/* a2) Checklist */}
+      <div className="editor-section">
+        <h2>Checklista</h2>
+        {checklist.length > 0 && (
+          <p className="checklist-count">
+            ukończono {checklistDone}/{checklist.length}
+          </p>
+        )}
+        {checklist.length > 0 && (
+          <ul className="checklist-list">
+            {checklist.map((item) => (
+              <li key={item.id} className={item.done ? 'checklist-row done' : 'checklist-row'}>
+                <input
+                  type="checkbox"
+                  checked={item.done}
+                  onChange={() => toggleChecklistItem(item.id)}
+                  disabled={readOnly}
+                  title={roTitle}
+                  aria-label={`Oznacz „${item.text}” jako ukończone`}
+                />
+                <span className="checklist-text">{item.text}</span>
+                {!readOnly && (
+                  <button
+                    type="button"
+                    className="btn danger-ghost"
+                    onClick={() => removeChecklistItem(item.id)}
+                    aria-label={`Usuń „${item.text}”`}
+                  >
+                    Usuń
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        {!readOnly && (
+          <div className="checklist-add-row">
+            <input
+              type="text"
+              value={checklistInput}
+              onChange={(e) => setChecklistInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  addChecklistItem();
+                }
+              }}
+              placeholder="Nowy element checklisty"
+              aria-label="Nowy element checklisty"
+            />
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={addChecklistItem}
+              disabled={checklistInput.trim() === ''}
+            >
+              Dodaj
+            </button>
+          </div>
+        )}
+        {readOnly && checklist.length === 0 && <p className="field-hint">Brak elementów.</p>}
       </div>
 
       {/* b) Period */}

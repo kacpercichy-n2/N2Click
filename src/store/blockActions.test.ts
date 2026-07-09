@@ -20,6 +20,9 @@ function makeTask(overrides: Partial<Task> & { id: string }): Task {
     startDate: '2026-07-06',
     endDate: '2026-07-08',
     estimatedHours: null,
+    priority: 'normal',
+    workCategoryId: '',
+    checklist: [],
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     ...overrides,
@@ -623,6 +626,9 @@ describe('SAVE_TASK bin behavior', () => {
       startDate: task.startDate,
       endDate: task.endDate,
       estimatedHours: task.estimatedHours,
+      priority: task.priority,
+      workCategoryId: task.workCategoryId,
+      checklist: task.checklist,
     };
   }
 

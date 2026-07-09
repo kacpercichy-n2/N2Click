@@ -4,16 +4,12 @@
 import { useState } from 'react';
 import { useStore } from '../store/AppStore';
 import type { FilterPage, SavedFilterCriteria } from '../types';
+import { DEFAULT_FILTER_CRITERIA } from '../store/storage';
 import { Bookmark, Check, X } from './icons';
 
-export const DEFAULT_CRITERIA: SavedFilterCriteria = {
-  paid: 'all',
-  clientId: '',
-  statusId: '',
-  personId: '',
-  from: '',
-  to: '',
-};
+// Single source of truth lives in storage.ts; re-exported under the name the
+// import sites (ProjectsPage/TasksPage) already use.
+export const DEFAULT_CRITERIA: SavedFilterCriteria = DEFAULT_FILTER_CRITERIA;
 
 /** True when any criterion differs from the neutral default. */
 export function isCriteriaActive(c: SavedFilterCriteria): boolean {
@@ -22,6 +18,8 @@ export function isCriteriaActive(c: SavedFilterCriteria): boolean {
     c.clientId !== '' ||
     c.statusId !== '' ||
     c.personId !== '' ||
+    c.priority !== '' ||
+    c.workCategoryId !== '' ||
     c.from !== '' ||
     c.to !== ''
   );

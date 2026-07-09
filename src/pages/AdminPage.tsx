@@ -1,7 +1,7 @@
 // Admin panel: pipeline statuses (create incl. "/name" quick command, rename,
 // recolor, reorder, archive/restore, delete-when-unused), clients, departments,
-// and service types. Only admins ("acting as" someone with the admin flag) may
-// change anything here.
+// service types, and work categories. Only admins ("acting as" someone with the
+// admin flag) may change anything here.
 import { useState } from 'react';
 import { useStore } from '../store/AppStore';
 import { allStatusesOrdered, isAdminUser } from '../store/selectors';
@@ -19,6 +19,7 @@ export function AdminPage() {
   const [clientInput, setClientInput] = useState('');
   const [depInput, setDepInput] = useState('');
   const [svcInput, setSvcInput] = useState('');
+  const [catInput, setCatInput] = useState('');
 
   if (!admin) {
     return (
@@ -245,6 +246,40 @@ export function AdminPage() {
           />
           <button type="submit" className="btn primary" disabled={!svcInput.trim()}>
             Dodaj typ usługi
+          </button>
+        </form>
+      </div>
+
+      <div className="editor-section">
+        <h2>Kategorie prac</h2>
+        <SimpleList
+          items={state.workCategories}
+          onRename={(id, name) =>
+            dispatch({ type: 'RENAME_WORK_CATEGORY', workCategoryId: id, name })
+          }
+          onDelete={(id, name) => {
+            if (window.confirm(`Usunąć kategorię „${name}”? Zadania stracą tę etykietę.`)) {
+              dispatch({ type: 'DELETE_WORK_CATEGORY', workCategoryId: id });
+            }
+          }}
+        />
+        <form
+          className="admin-add-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!catInput.trim()) return;
+            dispatch({ type: 'ADD_WORK_CATEGORY', name: catInput });
+            setCatInput('');
+          }}
+        >
+          <input
+            value={catInput}
+            onChange={(e) => setCatInput(e.target.value)}
+            placeholder="Nazwa nowej kategorii prac"
+            aria-label="Nazwa nowej kategorii prac"
+          />
+          <button type="submit" className="btn primary" disabled={!catInput.trim()}>
+            Dodaj kategorię
           </button>
         </form>
       </div>

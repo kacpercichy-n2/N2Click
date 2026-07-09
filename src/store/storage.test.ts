@@ -4,9 +4,16 @@
 // funnels through ensureStartMinutes, so it's worth covering in isolation
 // from localStorage/loadData.
 import { describe, expect, it } from 'vitest';
-import { DATA_VERSION, ensureStartMinutes, emptyData, loadData } from './storage';
+import {
+  DATA_VERSION,
+  DEFAULT_FILTER_CRITERIA,
+  ensureStartMinutes,
+  emptyData,
+  loadData,
+  normalizeTaskMeta,
+} from './storage';
 import { BIN_DATE } from '../utils/time';
-import type { AppData, WorkloadEntry } from '../types';
+import type { AppData, SavedFilter, Task, WorkCategory, WorkloadEntry } from '../types';
 
 // `loadData()` reads directly from `localStorage`, which the vitest `node`
 // environment does not provide. Stub a minimal in-memory implementation for
@@ -267,7 +274,7 @@ describe('loadData migration v4 -> v5', () => {
     const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
 
     expect(data.version).toBe(DATA_VERSION);
-    expect(DATA_VERSION).toBe(5);
+    expect(DATA_VERSION).toBe(6);
 
     const p1 = data.people.find((p) => p.id === 'p1')!;
     const p2 = data.people.find((p) => p.id === 'p2')!;
@@ -312,7 +319,7 @@ describe('loadData migration v4 -> v5', () => {
     const twice = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(once) }, () => loadData());
 
     expect(twice).toEqual(once);
-    expect(twice.version).toBe(5);
+    expect(twice.version).toBe(6);
     expect(twice.people[0].accessRole).toBe('administrator');
   });
 
@@ -453,5 +460,276 @@ describe('impersonatorId persistence (PKG-20260708-b2-tests)', () => {
     const twice = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(once) }, () => loadData());
     expect(twice).toEqual(once);
     expect(twice.impersonatorId).toBe('p1');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normalizeTaskMeta (PKG-20260710-task-meta-model): the v5->v6 pass adding
+// task priority/workCategoryId/checklist and filling saved-filter criteria.
+// Runs on EVERY load, same idempotent-by-value philosophy as ensureStartMinutes
+// / migratePerson — exercised directly here, and end-to-end through loadData()
+// below.
+// ---------------------------------------------------------------------------
+
+describe('normalizeTaskMeta', () => {
+  // Builds a deliberately v5-shaped task (no priority/workCategoryId/checklist
+  // unless overridden) by casting through unknown, mirroring how storage.ts's
+  // own migration code treats pre-v6 payloads as untyped records.
+  function v5Task(overrides: Record<string, unknown> & { id: string }): Task {
+    return {
+      projectId: 'proj1',
+      statusId: 'status1',
+      title: 'Task',
+      description: '',
+      startDate: '2026-07-06',
+      endDate: '2026-07-08',
+      estimatedHours: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      ...overrides,
+    } as unknown as Task;
+  }
+
+  it('a v5-shaped task (no priority/workCategoryId/checklist keys) gains priority "normal", workCategoryId "", and checklist []', () => {
+    const task = v5Task({ id: 't1' });
+    const next = normalizeTaskMeta({ ...emptyData(), tasks: [task] });
+    const normalized = next.tasks[0];
+    expect(normalized.priority).toBe('normal');
+    expect(normalized.workCategoryId).toBe('');
+    expect(normalized.checklist).toEqual([]);
+  });
+
+  it("resets an invalid priority (e.g. 'critical') to 'normal' and preserves a valid one ('urgent')", () => {
+    const bad = v5Task({ id: 't1', priority: 'critical' });
+    const good = v5Task({ id: 't2', priority: 'urgent' });
+    const next = normalizeTaskMeta({ ...emptyData(), tasks: [bad, good] });
+    expect(next.tasks.find((t) => t.id === 't1')!.priority).toBe('normal');
+    expect(next.tasks.find((t) => t.id === 't2')!.priority).toBe('urgent');
+  });
+
+  it("resets a dangling workCategoryId (no matching row) to '' and preserves a valid reference", () => {
+    const dangling = v5Task({ id: 't1', workCategoryId: 'ghost' });
+    const valid = v5Task({ id: 't2', workCategoryId: 'cat1' });
+    const next = normalizeTaskMeta({
+      ...emptyData(),
+      workCategories: [{ id: 'cat1', name: 'Kreacja' }],
+      tasks: [dangling, valid],
+    });
+    expect(next.tasks.find((t) => t.id === 't1')!.workCategoryId).toBe('');
+    expect(next.tasks.find((t) => t.id === 't2')!.workCategoryId).toBe('cat1');
+  });
+
+  it("sanitizes a malformed checklist: non-array -> []; an item missing id gets one generated; non-string text coerces to ''; done is exactly `item.done === true`; non-object entries are dropped", () => {
+    const nonArray = v5Task({ id: 't1', checklist: 'not-an-array' });
+    const messy = v5Task({
+      id: 't2',
+      checklist: [
+        { text: 'no id', done: true }, // missing id -> generated
+        { id: 'c2', text: 42, done: 'yes' }, // non-string text, non-boolean done
+        'garbage', // non-object entry, dropped
+        null, // non-object entry, dropped
+        { id: 'c3', text: 'fine', done: false },
+      ],
+    });
+    const next = normalizeTaskMeta({ ...emptyData(), tasks: [nonArray, messy] });
+
+    expect(next.tasks.find((t) => t.id === 't1')!.checklist).toEqual([]);
+
+    const messyChecklist = next.tasks.find((t) => t.id === 't2')!.checklist;
+    expect(messyChecklist).toHaveLength(3); // the 2 non-object entries dropped
+    expect(messyChecklist[0].id).toBeTruthy(); // generated id (was missing)
+    expect(messyChecklist[0].text).toBe('no id');
+    expect(messyChecklist[0].done).toBe(true);
+    expect(messyChecklist[1].id).toBe('c2');
+    expect(messyChecklist[1].text).toBe(''); // 42 -> '' (non-string coerces)
+    expect(messyChecklist[1].done).toBe(false); // 'yes' !== true
+    expect(messyChecklist[2]).toEqual({ id: 'c3', text: 'fine', done: false });
+  });
+
+  it("fills a v5 saved filter's criteria with DEFAULT_FILTER_CRITERIA's priority/workCategoryId ('') while other criteria fields survive unchanged", () => {
+    const filter = {
+      id: 'f1',
+      name: 'My filter',
+      page: 'tasks' as const,
+      criteria: {
+        paid: 'unpaid',
+        clientId: 'c1',
+        statusId: 's1',
+        personId: 'p1',
+        from: '2026-07-01',
+        to: '2026-07-31',
+      },
+    } as unknown as SavedFilter;
+    const next = normalizeTaskMeta({ ...emptyData(), savedFilters: [filter] });
+    const criteria = next.savedFilters[0].criteria;
+    expect(criteria.priority).toBe('');
+    expect(criteria.workCategoryId).toBe('');
+    expect(criteria.paid).toBe('unpaid');
+    expect(criteria.clientId).toBe('c1');
+    expect(criteria.statusId).toBe('s1');
+    expect(criteria.personId).toBe('p1');
+    expect(criteria.from).toBe('2026-07-01');
+    expect(criteria.to).toBe('2026-07-31');
+  });
+
+  it("resets an invalid criteria.priority to ''", () => {
+    const filter = {
+      id: 'f1',
+      name: 'x',
+      page: 'tasks' as const,
+      criteria: { ...DEFAULT_FILTER_CRITERIA, priority: 'critical' },
+    } as unknown as SavedFilter;
+    const next = normalizeTaskMeta({ ...emptyData(), savedFilters: [filter] });
+    expect(next.savedFilters[0].criteria.priority).toBe('');
+  });
+
+  it('coerces a missing/non-array workCategories to []', () => {
+    const data = { ...emptyData(), workCategories: undefined as unknown as WorkCategory[] };
+    const next = normalizeTaskMeta(data);
+    expect(next.workCategories).toEqual([]);
+  });
+
+  it('is idempotent: running normalizeTaskMeta twice on its own output is deep-equal to running it once (each pass rebuilds task/filter objects, so this is value equality, not reference equality)', () => {
+    const task = v5Task({
+      id: 't1',
+      priority: 'bogus',
+      workCategoryId: 'ghost',
+      checklist: [{ text: 'x' }],
+    });
+    const filter = {
+      id: 'f1',
+      name: 'x',
+      page: 'tasks' as const,
+      criteria: { paid: 'all', clientId: '', statusId: '', personId: '', from: '', to: '' },
+    } as unknown as SavedFilter;
+    const data = { ...emptyData(), tasks: [task], savedFilters: [filter] };
+    const once = normalizeTaskMeta(data);
+    const twice = normalizeTaskMeta(once);
+    expect(twice).toEqual(once);
+  });
+
+  it('leaves an already-normalized (v6-shaped) task and saved filter value-equal after a pass', () => {
+    const task = v5Task({
+      id: 't1',
+      priority: 'high',
+      workCategoryId: 'cat1',
+      checklist: [{ id: 'c1', text: 'Do it', done: true }],
+    });
+    const filter = {
+      id: 'f1',
+      name: 'x',
+      page: 'tasks' as const,
+      criteria: { ...DEFAULT_FILTER_CRITERIA, priority: 'high' },
+    } as unknown as SavedFilter;
+    const next = normalizeTaskMeta({
+      ...emptyData(),
+      workCategories: [{ id: 'cat1', name: 'Kreacja' }],
+      tasks: [task],
+      savedFilters: [filter],
+    });
+    expect(next.tasks[0]).toEqual(task);
+    expect(next.savedFilters[0].criteria).toEqual(filter.criteria);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// End-to-end v5 -> v6 migration through loadData() (task-metadata bundle).
+// ---------------------------------------------------------------------------
+
+describe('loadData migration v5 -> v6 (task metadata)', () => {
+  it('a stored v5 payload with a task missing the new fields and a v5 saved filter loads as version 6 with all defaults applied and NO data loss (task title/dates/estimate, workload untouched)', () => {
+    const payload = {
+      version: 5,
+      clients: [],
+      departments: [],
+      serviceTypes: [],
+      statuses: [],
+      projects: [],
+      milestones: [],
+      tasks: [
+        {
+          id: 't1',
+          projectId: 'proj1',
+          statusId: 'status1',
+          title: 'Legacy task',
+          description: 'desc',
+          startDate: '2026-07-06',
+          endDate: '2026-07-10',
+          estimatedHours: 8,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          // no priority / workCategoryId / checklist — v5 shape
+        },
+      ],
+      people: [
+        {
+          id: 'p1',
+          firstName: 'Ann',
+          lastName: 'Admin',
+          name: 'Ann Admin',
+          email: '',
+          role: '',
+          departmentId: '',
+          avatar: '',
+          capacity: 8,
+          accessRole: 'administrator',
+        },
+      ],
+      assignments: [],
+      workload: [
+        {
+          id: 'w1',
+          taskId: 't1',
+          personId: 'p1',
+          date: '2026-07-06',
+          plannedHours: 4,
+          startMinutes: 480,
+          sortIndex: 0,
+        },
+      ],
+      comments: [],
+      activity: [],
+      currentUserId: 'p1',
+      sampleBannerDismissed: false,
+      savedFilters: [
+        {
+          id: 'f1',
+          name: 'My tasks',
+          page: 'tasks',
+          criteria: { paid: 'all', clientId: '', statusId: '', personId: 'p1', from: '', to: '' },
+          // no priority / workCategoryId — v5 criteria shape
+        },
+      ],
+    };
+
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+
+    expect(data.version).toBe(DATA_VERSION);
+    expect(DATA_VERSION).toBe(6);
+
+    const task = data.tasks.find((t) => t.id === 't1')!;
+    expect(task.priority).toBe('normal');
+    expect(task.workCategoryId).toBe('');
+    expect(task.checklist).toEqual([]);
+    // No data loss on the pre-existing fields.
+    expect(task.title).toBe('Legacy task');
+    expect(task.startDate).toBe('2026-07-06');
+    expect(task.endDate).toBe('2026-07-10');
+    expect(task.estimatedHours).toBe(8);
+
+    // Workload untouched.
+    expect(data.workload).toHaveLength(1);
+    expect(data.workload[0]).toMatchObject({
+      taskId: 't1',
+      personId: 'p1',
+      date: '2026-07-06',
+      plannedHours: 4,
+    });
+
+    const filter = data.savedFilters.find((f) => f.id === 'f1')!;
+    expect(filter.criteria.priority).toBe('');
+    expect(filter.criteria.workCategoryId).toBe('');
+    expect(filter.criteria.personId).toBe('p1'); // unchanged
+    expect(filter.criteria.paid).toBe('all'); // unchanged
   });
 });

@@ -10,18 +10,22 @@ import {
   getPerson,
   getProject,
   getStatus,
+  getWorkCategory,
   taskPlannedTotal,
   taskPlanningStatus,
   PLANNING_STATUSES,
   type PlanningStatus,
 } from '../store/selectors';
+import type { TaskPriority } from '../types';
+import { PRIORITY_LABELS, TASK_PRIORITIES } from '../utils/priority';
 import { FilterPresets, DEFAULT_CRITERIA } from '../components/FilterPresets';
 import { FilterPanel, type FilterChip, type FilterGroup } from '../components/FilterPanel';
-import { ChevronRight } from '../components/icons';
+import { ChevronRight, Check } from '../components/icons';
 import { formatShort } from '../utils/dates';
 import { PersonChip } from '../components/PersonChip';
 import { StatusBadge } from '../components/StatusBadge';
 import { PlanningBadge } from '../components/PlanningBadge';
+import { PriorityBadge } from '../components/PriorityBadge';
 import { Coin } from '../components/Coin';
 import { parseDate } from '../utils/dates';
 import { formatDuration } from '../utils/time';
@@ -48,6 +52,8 @@ export function TasksPage() {
   const [clientFilter, setClientFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [personFilter, setPersonFilter] = useState('');
+  const [priorityFilter, setPriorityFilter] = useState<'' | TaskPriority>('');
+  const [categoryFilter, setCategoryFilter] = useState('');
   // Derived planning-status filter (single-select). Deliberately NOT part of
   // `criteria`/saved presets: presets are persisted (`SavedFilterCriteria`) and
   // this feature changes no stored shape. Consequence: presets ignore this
@@ -78,12 +84,25 @@ export function TasksPage() {
         }
         if (personFilter && !assigneeIdsOfTask(state, t.id).includes(personFilter)) return false;
         if (planningFilter && taskPlanningStatus(state, t.id) !== planningFilter) return false;
+        if (priorityFilter && t.priority !== priorityFilter) return false;
+        if (categoryFilter && t.workCategoryId !== categoryFilter) return false;
         // Period-overlap on the task span: [startDate, endDate] vs [from, to].
         if (from && t.endDate < from) return false;
         if (to && t.startDate > to) return false;
         return true;
       }),
-    [allTasks, state, clientFilter, statusFilter, personFilter, planningFilter, from, to],
+    [
+      allTasks,
+      state,
+      clientFilter,
+      statusFilter,
+      personFilter,
+      planningFilter,
+      priorityFilter,
+      categoryFilter,
+      from,
+      to,
+    ],
   );
 
   const criteria = {
@@ -91,6 +110,8 @@ export function TasksPage() {
     clientId: clientFilter,
     statusId: statusFilter,
     personId: personFilter,
+    priority: priorityFilter,
+    workCategoryId: categoryFilter,
     from,
     to,
   };
@@ -99,6 +120,8 @@ export function TasksPage() {
     setClientFilter(c.clientId);
     setStatusFilter(c.statusId);
     setPersonFilter(c.personId);
+    setPriorityFilter(c.priority);
+    setCategoryFilter(c.workCategoryId);
     setFrom(c.from);
     setTo(c.to);
   };
@@ -108,6 +131,8 @@ export function TasksPage() {
     setStatusFilter('');
     setPersonFilter('');
     setPlanningFilter('');
+    setPriorityFilter('');
+    setCategoryFilter('');
     setFrom('');
     setTo('');
   };
@@ -144,6 +169,26 @@ export function TasksPage() {
       ],
     },
     {
+      key: 'priority',
+      label: 'Priorytet',
+      value: priorityFilter,
+      onChange: (v) => setPriorityFilter(v as '' | TaskPriority),
+      options: [
+        { value: '', label: 'Wszystkie' },
+        ...TASK_PRIORITIES.map((p) => ({ value: p, label: PRIORITY_LABELS[p] })),
+      ],
+    },
+    {
+      key: 'category',
+      label: 'Kategoria',
+      value: categoryFilter,
+      onChange: setCategoryFilter,
+      options: [
+        { value: '', label: 'Wszystkie' },
+        ...state.workCategories.map((c) => ({ value: c.id, label: c.name })),
+      ],
+    },
+    {
       key: 'planning',
       label: 'Planowanie',
       value: planningFilter,
@@ -160,6 +205,8 @@ export function TasksPage() {
     (statusFilter ? 1 : 0) +
     (personFilter ? 1 : 0) +
     (planningFilter ? 1 : 0) +
+    (priorityFilter ? 1 : 0) +
+    (categoryFilter ? 1 : 0) +
     (from ? 1 : 0) +
     (to ? 1 : 0);
 
@@ -187,6 +234,18 @@ export function TasksPage() {
       key: 'planning',
       label: `Planowanie: ${planningFilter}`,
       onRemove: () => setPlanningFilter(''),
+    });
+  if (priorityFilter)
+    chips.push({
+      key: 'priority',
+      label: `Priorytet: ${PRIORITY_LABELS[priorityFilter]}`,
+      onRemove: () => setPriorityFilter(''),
+    });
+  if (categoryFilter)
+    chips.push({
+      key: 'category',
+      label: `Kategoria: ${getWorkCategory(state, categoryFilter)?.name ?? '—'}`,
+      onRemove: () => setCategoryFilter(''),
     });
   if (from) chips.push({ key: 'from', label: `Od: ${formatShort(from)}`, onRemove: () => setFrom('') });
   if (to) chips.push({ key: 'to', label: `Do: ${formatShort(to)}`, onRemove: () => setTo('') });
@@ -249,6 +308,8 @@ export function TasksPage() {
             const planned = taskPlannedTotal(state, task.id);
             const project = getProject(state, task.projectId);
             const client = project ? getClient(state, project.clientId) : undefined;
+            const category = getWorkCategory(state, task.workCategoryId);
+            const checklistDone = task.checklist.filter((c) => c.done).length;
             return (
               <li key={task.id} className="task-card">
                 <button
@@ -260,6 +321,8 @@ export function TasksPage() {
                     <span className="task-title">{task.title}</span>
                     <StatusBadge status={getStatus(state, task.statusId)} />
                     <PlanningBadge status={taskPlanningStatus(state, task.id)} />
+                    {task.priority !== 'normal' && <PriorityBadge priority={task.priority} />}
+                    {category && <span className="muted task-category">{category.name}</span>}
                     {project && (
                       <span className="project-badge">
                         <Coin paid={project.paid} size={13} />
@@ -280,6 +343,11 @@ export function TasksPage() {
                     <strong>zaplanowano {formatDuration(planned)}</strong>
                     {task.estimatedHours != null && (
                       <span className="muted"> / szac. {formatDuration(task.estimatedHours)}</span>
+                    )}
+                    {task.checklist.length > 0 && (
+                      <span className="muted task-checklist-progress">
+                        <Check size={13} aria-hidden /> {checklistDone}/{task.checklist.length}
+                      </span>
                     )}
                   </div>
                   <ChevronRight className="card-chevron" size={16} aria-hidden />

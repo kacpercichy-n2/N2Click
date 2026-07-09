@@ -13,6 +13,7 @@ import type {
   AccessRole,
   ActivityEvent,
   AppData,
+  ChecklistItem,
   CommentEntityType,
   FilterPage,
   Milestone,
@@ -22,6 +23,7 @@ import type {
   SavedFilterCriteria,
   Task,
   TaskAssignment,
+  TaskPriority,
   WorkloadEntry,
 } from '../types';
 import { DEFAULT_CAPACITY, loadData, sanitizeWorkDays, saveData, slugify } from './storage';
@@ -56,6 +58,9 @@ export interface TaskDraft {
   startDate: string;
   endDate: string;
   estimatedHours: number | null;
+  priority: TaskPriority;
+  workCategoryId: string;
+  checklist: ChecklistItem[];
 }
 
 export interface ProjectDraft {
@@ -144,6 +149,9 @@ export type Action =
   | { type: 'ADD_SERVICE_TYPE'; name: string }
   | { type: 'RENAME_SERVICE_TYPE'; serviceTypeId: string; name: string }
   | { type: 'DELETE_SERVICE_TYPE'; serviceTypeId: string }
+  | { type: 'ADD_WORK_CATEGORY'; name: string }
+  | { type: 'RENAME_WORK_CATEGORY'; workCategoryId: string; name: string }
+  | { type: 'DELETE_WORK_CATEGORY'; workCategoryId: string }
   | { type: 'SAVE_STATUS'; statusId: string | null; name: string; color: string }
   | { type: 'REORDER_STATUS'; statusId: string; direction: -1 | 1 }
   | { type: 'SET_STATUS_ARCHIVED'; statusId: string; archived: boolean }
@@ -235,9 +243,17 @@ function reindexDays(workload: WorkloadEntry[], keys: Set<string>): WorkloadEntr
 
 // ---- Task handlers ----
 
+/** Wholesale-replace the checklist from the draft: trim texts, drop empty ones. */
+function cleanChecklist(items: ChecklistItem[]): ChecklistItem[] {
+  return items
+    .map((item) => ({ ...item, text: item.text.trim() }))
+    .filter((item) => item.text !== '');
+}
+
 function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
   const { taskId, draft, assigneeIds, allocations } = payload;
   const ts = nowIso();
+  const checklist = cleanChecklist(draft.checklist);
 
   let tasks = state.tasks;
   let realTaskId: string;
@@ -253,6 +269,9 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
       startDate: draft.startDate,
       endDate: draft.endDate,
       estimatedHours: draft.estimatedHours,
+      priority: draft.priority,
+      workCategoryId: draft.workCategoryId,
+      checklist,
       createdAt: ts,
       updatedAt: ts,
     };
@@ -272,6 +291,9 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
             startDate: draft.startDate,
             endDate: draft.endDate,
             estimatedHours: draft.estimatedHours,
+            priority: draft.priority,
+            workCategoryId: draft.workCategoryId,
+            checklist,
             updatedAt: ts,
           }
         : t,
@@ -1517,6 +1539,29 @@ export function reducer(state: AppData, action: Action): AppData {
         serviceTypes: state.serviceTypes.filter((s) => s.id !== action.serviceTypeId),
         projects: state.projects.map((p) =>
           p.serviceTypeId === action.serviceTypeId ? { ...p, serviceTypeId: '' } : p,
+        ),
+      };
+    case 'ADD_WORK_CATEGORY': {
+      const name = action.name.trim();
+      if (!name) return state;
+      return {
+        ...state,
+        workCategories: [...state.workCategories, { id: uid(), name }],
+      };
+    }
+    case 'RENAME_WORK_CATEGORY':
+      return {
+        ...state,
+        workCategories: state.workCategories.map((c) =>
+          c.id === action.workCategoryId ? { ...c, name: action.name } : c,
+        ),
+      };
+    case 'DELETE_WORK_CATEGORY':
+      return {
+        ...state,
+        workCategories: state.workCategories.filter((c) => c.id !== action.workCategoryId),
+        tasks: state.tasks.map((t) =>
+          t.workCategoryId === action.workCategoryId ? { ...t, workCategoryId: '' } : t,
         ),
       };
     case 'SAVE_STATUS':

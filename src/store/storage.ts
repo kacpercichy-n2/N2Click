@@ -1,6 +1,17 @@
 // Single persistence module. Wraps localStorage so it can be swapped for an API later.
 // The stored JSON is versioned; loadData migrates older payloads forward.
-import type { AccessRole, AppData, Person, Status, WorkloadEntry } from '../types';
+import type {
+  AccessRole,
+  AppData,
+  ChecklistItem,
+  Person,
+  SavedFilterCriteria,
+  Status,
+  Task,
+  TaskPriority,
+  WorkloadEntry,
+} from '../types';
+import { TASK_PRIORITIES } from '../utils/priority';
 import {
   BIN_DATE,
   DAY_MINUTES,
@@ -14,11 +25,24 @@ import {
 
 const STORAGE_KEY = 'n2hub.data.v1';
 const LEGACY_STORAGE_KEYS = ['n2ub.data.v1', 'n2click.data.v1'];
-export const DATA_VERSION = 5;
+export const DATA_VERSION = 6;
 
 export const DEFAULT_CAPACITY = 8; // hours available per person per day
 export const WORKDAY_START_MIN = 480; // 8:00 — default person work-hours start
 export const DEFAULT_WORKDAYS: number[] = [1, 2, 3, 4, 5]; // Mon–Fri (ISO weekdays)
+
+/** Canonical "all" filter criteria. Storage owns this so it never imports from
+ *  components; the UI (FilterPresets) re-exports it as DEFAULT_CRITERIA. */
+export const DEFAULT_FILTER_CRITERIA: SavedFilterCriteria = {
+  paid: 'all',
+  clientId: '',
+  statusId: '',
+  personId: '',
+  priority: '',
+  workCategoryId: '',
+  from: '',
+  to: '',
+};
 
 /** Default informational work-end minute for a given daily capacity. */
 export function defaultWorkEndMinutes(capacity: number): number {
@@ -74,6 +98,7 @@ export function emptyData(): AppData {
     clients: [],
     departments: [],
     serviceTypes: [],
+    workCategories: [],
     statuses: buildDefaultStatuses(),
     projects: [],
     milestones: [],
@@ -248,6 +273,9 @@ function migrateV1(raw: Record<string, unknown>): AppData {
     startDate: t.startDate,
     endDate: t.endDate,
     estimatedHours: t.estimatedHours ?? null,
+    priority: 'normal',
+    workCategoryId: '',
+    checklist: [],
     createdAt: t.createdAt ?? now,
     updatedAt: t.updatedAt ?? now,
   }));
@@ -529,6 +557,62 @@ export function sanitizeImpersonator(data: AppData): AppData {
   return data;
 }
 
+/**
+ * Idempotent normalize pass for the task-metadata model (priority, work
+ * category, checklist) and saved-filter criteria. Runs on EVERY load — same
+ * philosophy as migratePerson / ensureStartMinutes — so a payload stamped v6
+ * whose tasks/presets were never actually migrated (e.g. persisted mid-dev via
+ * HMR) still self-heals instead of staying broken forever. Idempotent by value:
+ * a second pass changes nothing.
+ *
+ * Guarantees after the pass:
+ * - `workCategories` is an array (defensive; the emptyData spread covers the
+ *   plainly-missing case, this also catches a non-array value);
+ * - every task has a valid `priority` (unknown value → 'normal'), a string
+ *   `workCategoryId` that references an existing dictionary row (dangling
+ *   reference → '', same spirit as sanitizeImpersonator), and a well-shaped
+ *   `checklist` (non-array → []; each item coerced to { id, text, done },
+ *   non-object entries dropped);
+ * - every saved filter's criteria is filled from DEFAULT_FILTER_CRITERIA (old
+ *   v5 presets gain the new fields as '') with an invalid `priority` reset to ''.
+ */
+export function normalizeTaskMeta(data: AppData): AppData {
+  const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+  const workCategories = Array.isArray(data.workCategories) ? data.workCategories : [];
+  const categoryIds = new Set(workCategories.map((c) => c.id));
+
+  const tasks: Task[] = data.tasks.map((raw) => {
+    const t = raw as unknown as Record<string, unknown>;
+    const priority: TaskPriority = TASK_PRIORITIES.includes(t.priority as TaskPriority)
+      ? (t.priority as TaskPriority)
+      : 'normal';
+    const rawCategory = str(t.workCategoryId);
+    const workCategoryId = categoryIds.has(rawCategory) ? rawCategory : '';
+    const checklist: ChecklistItem[] = Array.isArray(t.checklist)
+      ? (t.checklist as unknown[])
+          .filter((item): item is Record<string, unknown> =>
+            typeof item === 'object' && item !== null,
+          )
+          .map((item) => ({
+            id: str(item.id) || uid(),
+            text: str(item.text),
+            done: item.done === true,
+          }))
+      : [];
+    return { ...(raw as Task), priority, workCategoryId, checklist };
+  });
+
+  const savedFilters = data.savedFilters.map((f) => {
+    const criteria: SavedFilterCriteria = { ...DEFAULT_FILTER_CRITERIA, ...f.criteria };
+    if (criteria.priority !== '' && !TASK_PRIORITIES.includes(criteria.priority as TaskPriority)) {
+      criteria.priority = '';
+    }
+    return { ...f, criteria };
+  });
+
+  return { ...data, workCategories, tasks, savedFilters };
+}
+
 export function loadData(): AppData {
   try {
     const raw =
@@ -540,7 +624,7 @@ export function loadData(): AppData {
     const version = typeof parsed.version === 'number' ? parsed.version : 1;
     if (version < 2) {
       return sanitizeImpersonator(
-        ensureStartMinutes(migrateV4toV5(localizeLegacyData(migrateV1(parsed)))),
+        normalizeTaskMeta(ensureStartMinutes(migrateV4toV5(localizeLegacyData(migrateV1(parsed))))),
       );
     }
     // Same-version load: fill any missing fields with defaults.
@@ -558,7 +642,7 @@ export function loadData(): AppData {
     // MATRIX[undefined] deny every action → permanent login-screen lockout.
     // migratePerson preserves valid existing values and fills only what's absent.
     const migrated = migrateV4toV5(localized);
-    return sanitizeImpersonator(ensureStartMinutes(migrated));
+    return sanitizeImpersonator(normalizeTaskMeta(ensureStartMinutes(migrated)));
   } catch {
     return emptyData();
   }

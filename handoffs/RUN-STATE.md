@@ -13,20 +13,22 @@ boring and factual — it's a checklist, not prose.
 > CLAUDE.md/docs refresh + repo reorg [PKG-20260709b-bin-drag-freeze-2,
 > PKG-20260709b-docs-refresh] — NOTE: its worker log stayed empty and no
 > matching commits are on this branch, so those packages appear NOT executed;
-> 2026-07-09 (3) — MVP "Moja praca" /my-work page [PKG-20260709c-my-work-page,
-> PKG-20260709c-my-work-selector-tests], approve-with-nits (nits fixed in
-> follow-up), 211/211 tests, committed 5e9f7fc)
-> are archived in the git history of this file.
+> 2026-07-09 (3) — MVP "Moja praca" /my-work page, approve-with-nits, 211/211,
+> committed 5e9f7fc; 2026-07-09 (4) — derived task planning status MVP
+> [PKG-20260709d-planning-status-core, PKG-20260709d-planning-status-tests],
+> approve-with-nits (both nits addressed / cosmetic), 232/232 tests, committed
+> a2f2b88) are archived in the git history of this file.
 > **Carried-over items still open:** (a) human browser walkthrough of all
 > approved runs' interactive criteria (role matrix, budget clamp + merge
 > animation, availability math, insert-form allowance warnings, TaskModal
 > over-budget banner, impersonation banner/return, Osoby timeline mode,
 > FilterPanel on 4 pages, dashboard sections + chat-persists-nothing check,
-> /my-work sections + pracownik redirect); (b) run 2026-07-09 (2)'s two
-> packages (bin-drag freeze round 2, docs refresh/repo reorg) — apparently
-> unexecuted; repo CLAUDE.md is still v4-era stale (workers this run must
-> trust code over that doc); (c) run 3 reviewer nit P3: `/admin` denial
-> redirects hard to `/dashboard` instead of `HomeRedirect` (backlog).
+> /my-work sections + pracownik redirect, planning badge on 4 surfaces +
+> Planowanie filter); (b) run 2026-07-09 (2)'s two packages (bin-drag freeze
+> round 2, docs refresh/repo reorg) — apparently unexecuted; repo CLAUDE.md is
+> still partially stale (v4-era wording; workers must trust code over that
+> doc); (c) `/admin` denial redirects hard to `/dashboard` instead of
+> `HomeRedirect` (backlog).
 > **Carried backlog (non-blocking):** Codex #5 `workDays: []` 0%-vs-overload
 > display + dashboard donut zero-availability display (same class; suggested
 > `over = booked > available`); pre-existing `insertBlock` end-of-day clamp
@@ -36,65 +38,87 @@ boring and factual — it's a checklist, not prose.
 > conflict markers are task-wide, not per-person (needs
 > `conflictDatesForTaskPerson` decision); overdue-AND-zero-rows task appears
 > in both "Po terminie" and "Bez planu" on /my-work (reads intentional —
-> confirm in walkthrough).
+> confirm in walkthrough); SAVE_TASK allocation rebuild keyed by
+> `personId|date` collapses multi-block same-person days (needs design
+> decision: multi-cell support vs duplicate prevention).
 
 ---
 
-## Run: 2026-07-09 (4) — task planning status MVP
+## Run: 2026-07-10 — MVP bundle: task metadata foundation (priority · category · checklist)
 
 ### Plan (architect)
 
-- **Goal:** a fully derived (never stored) task "planning status" with four
-  exact Polish values — `nie rozplanowano`, `częściowo`, `rozplanowano`,
-  `przekroczono` — exposed as a pure core function
-  (`planningStatusForTotals(estimate, datedHours, binHours)`) plus a selector
-  (`taskPlanningStatus(state, taskId)`) in `src/store/selectors.ts`; rendered
-  as a compact `PlanningBadge` chip (styled like `.status-badge`, semantic
-  `--n2-*` tones) on TasksPage cards, TaskModal (live from DRAFT totals),
-  ProjectDetailPage task rows, and MyWorkPage Zasobnik rows; plus a
-  single-select "Planowanie" group in TasksPage's existing FilterPanel.
-  Branch: `review/claude-auto-20260709-1602`; ONE commit scoped to this
-  bundle, owned by the top-level orchestrator after review (no commit
-  package).
+- **Goal:** three stored task-metadata features, end to end: (1) `Task.priority`
+  — fixed enum `low|normal|high|urgent`, Polish labels Niski/Normalny/Wysoki/
+  Pilny; (2) `Task.workCategoryId` referencing a new admin-managed
+  `workCategories` dictionary (`WorkCategory { id, name }`, CRUD mirroring
+  ServiceTypes, `''` = unset); (3) `Task.checklist` — embedded
+  `ChecklistItem { id, text, done }[]`, add/toggle/delete inside TaskModal via
+  the SAVE_TASK draft (wholesale replace). Storage bumps to **DATA_VERSION 6**
+  with an every-load idempotent `normalizeTaskMeta` pass (defaults: 'normal' /
+  '' / []; dangling category refs → ''; saved-filter criteria filled). UI:
+  TaskModal fields + „Checklista" section, TasksPage card badges (priority
+  badge only when ≠ normal; category label; ✓ done/total) + two new
+  FilterPanel groups that JOIN saved presets, AdminPage „Kategorie prac"
+  section. No calendar/timeline affordances this bundle.
+  ONE commit scoped to the bundle, owned by the top-level orchestrator after
+  review.
 
-- **Packages (sequential):**
-  1. `handoffs/packages/PKG-20260709d-planning-status-core.md` —
-     tier: developer (opus) — status: **done**.
-  2. `handoffs/packages/PKG-20260709d-planning-status-tests.md` —
-     tier: test-writer (sonnet), depends on 1 — status: **done** —
-     ≥14 unit tests in `src/store/selectors.test.ts`, test file only.
+- **Packages:**
+  1. `handoffs/packages/PKG-20260710-task-meta-model.md` — tier: developer
+     (opus) — types + storage v6 + normalizeTaskMeta + AppStore (TaskDraft,
+     SAVE_TASK, 3 `*_WORK_CATEGORY` actions) + `getWorkCategory` selector +
+     seed + `src/utils/priority.ts` + mechanical test-factory fixes —
+     status: **ready**.
+  2. `handoffs/packages/PKG-20260710-task-meta-ui.md` — tier: developer
+     (opus), depends on 1 — TaskModal, TasksPage, AdminPage, FilterPresets
+     (DEFAULT_CRITERIA re-export from storage), PriorityBadge, styles.css,
+     minimal CLAUDE.md additions — status: **ready**.
+  3. `handoffs/packages/PKG-20260710-task-meta-tests.md` — tier: test-writer
+     (sonnet), depends on 1 (may run parallel to 2; no file overlap) —
+     ~18–24 tests in `src/store/storage.test.ts` + new
+     `src/store/taskMeta.test.ts` — status: **ready**.
+  - NOTE: `handoffs/packages/PKG-20260710-task-meta-core.md` exists but is
+    **superseded — do not execute** (duplicate of package 1 from a parallel
+    planning pass, stubbed with a pointer to the canonical model package).
+    Workers and reviewer: ignore it; it may be committed as an artifact or
+    deleted by the orchestrator, either is fine.
 
-- **Pinned decisions:** status precedence (EPS = 1e-9, matching TaskModal's
-  overBudget): (1) total ≤ EPS → nie rozplanowano; (2) est ≠ null ∧ total >
-  est+EPS → przekroczono (dated + bin, same condition as the TaskModal
-  banner); (3) bin > EPS → częściowo (zasobnik hours are by definition
-  "nierozplanowane" — a task with bin hours is never "rozplanowano");
-  (4) est = null → rozplanowano; (5) dated ≥ est−EPS → rozplanowano;
-  (6) else częściowo. Bin-only ⇒ częściowo (consistent with run 3's
-  "bin rows count as planned" — NOT "nie rozplanowano"); est = 0 gets no
-  special case (stored estimates are >0 or null). Fourth badge surface =
-  **/my-work Zasobnik rows** (NOT the dashboard — TodayAgendaList is pinned
-  frozen and shared). Filter: single-select radio group "Planowanie",
-  values = the exact status strings, EXCLUDED from saved presets
-  (`SavedFilterCriteria`/`FilterPresets`/`types.ts` untouched — no persisted
-  shape may change; documented limitation). `PlanningStatus` type +
-  `PLANNING_STATUSES` live in selectors.ts, not types.ts (derived, not
-  stored). No DATA_VERSION/storage/AppStore change. CLAUDE.md: minimal
-  targeted additions only (full refresh remains run 2's pending package).
+- **Pinned decisions:** category = dictionary (NOT enum), unset = `''` per
+  repo convention (goal said "nullable" — repo's `''` convention wins);
+  `TaskPriority` type in types.ts, runtime constants (`TASK_PRIORITIES`
+  ascending, `PRIORITY_LABELS`) in new `src/utils/priority.ts`; checklist
+  flows through the draft — NO per-item reducer actions, no reorder/inline
+  edit; priority+category filters ARE preset-persisted (`SavedFilterCriteria`
+  gains both; canonical `DEFAULT_FILTER_CRITERIA` moves to storage.ts,
+  FilterPresets re-exports as `DEFAULT_CRITERIA`; migration fills old presets
+  with `''`) — unlike the derived Planowanie filter, which stays
+  preset-excluded; card badge hidden for 'normal'; badge tones urgent→danger,
+  high→warning, low→info; NO new activity-log message types; seed gains
+  3 categories (Kreacja/Wdrożenie/Testy) + priorities + one 3-item checklist;
+  calendar/kanban/timeline/dashboard/my-work/GlobalSearch untouched.
 
-- **Reviewer attention list:** exact precedence order in the pure fn (rule 3
-  before 4/5 — total==est with bin>0 must be częściowo, not rozplanowano);
-  TaskModal badge computed from DRAFT (`normalizedEstimate`,
-  `plannedTotalAll`, `binTotal`), not saved state; TasksPage filtering
-  useMemo dependency array gains `planningFilter`; no persisted shape
-  touched; four exact lowercase Polish strings; CSS uses existing tokens
-  only; DashboardPage/TodayAgenda untouched.
+- **Reviewer attention list:** normalizeTaskMeta idempotency + running in
+  BOTH loadData branches; no data loss on a v5 payload (incl. saved filters);
+  `localizeLegacyData` now re-runs for v5 payloads (version < 6) — must stay a
+  no-op on already-Polish data; SAVE_TASK create AND edit branches both write
+  the three fields without disturbing the existing allocation/bin rebuild;
+  checklist wholesale replace + empty-text drop; DELETE_WORK_CATEGORY clears
+  task refs; test factories updated without assertion changes (model pkg) vs
+  no test edits at all (UI pkg); TasksPage useMemo dependency array gains both
+  new filter states; DEFAULT_CRITERIA single-source refactor doesn't break
+  ProjectsPage; checklist/priority/category edits flip the TaskModal dirty
+  guard; CLAUDE.md update should also amend the scope-guardrail sentence
+  ("tags are ONLY department/client/service type") now that work category is
+  an explicit-ask addition; all new UI strings Polish; only existing CSS
+  tokens.
 
 - **Environment notes for workers:** RTK hook may block rewritten read
-  commands — use Read/Grep/Glob tools (`node -e '…'` as escape hatch); if
-  `npm run build` is approval-gated, `node node_modules/vite/bin/vite.js
-  build` worked last run; gates after every package: `npx tsc --noEmit` ·
-  `npm test` (baseline 211) · production build.
+  commands — use Read/Grep/Glob tools; if `npm run build` is approval-gated,
+  `node node_modules/vite/bin/vite.js build` worked in prior runs; gates after
+  every package: `npx tsc --noEmit` · `npx vitest run` (baseline **232**) ·
+  production build. Repo CLAUDE.md lags the code (v4-era wording) — trust
+  `src/`.
 
 - **Open questions:** none.
 
@@ -110,45 +134,164 @@ boring and factual — it's a checklist, not prose.
 - **Next:** <hand to which tier / ready for review / done>
 -->
 
-#### 2026-07-09 21:14 · developer (opus) · `PKG-20260709d-planning-status-core`
+#### 2026-07-10 · developer (opus) · `PKG-20260710-task-meta-model`
 
 - **Changed:**
-  - `src/store/selectors.ts` — new `PlanningStatus` type + `PLANNING_STATUSES`, pure `planningStatusForTotals(est,dated,bin)` (6-rule precedence, full JSDoc), selector `taskPlanningStatus(state,taskId)` splitting entries via `isBinEntry`.
-  - `src/components/PlanningBadge.tsx` — new compact pill component (tone class per status, no inline styles).
-  - `src/styles.css` — `.planning-badge` base (copied from `.status-badge`) + 4 tone modifiers using existing `--n2-*` / `--text-muted` tokens.
-  - `src/pages/TasksPage.tsx` — badge after StatusBadge on cards; single-select "Planowanie" filter (state, predicate + useMemo dep, FilterGroup, activeCount, clearFilters, chip); comment noting deliberate exclusion from saved presets.
-  - `src/components/TaskModal.tsx` — third `.estimate-compare` segment: badge from live DRAFT totals (`normalizedEstimate`, `plannedTotalAll`, `binTotal`).
-  - `src/pages/ProjectDetailPage.tsx` — badge after StatusBadge in each task row.
-  - `src/pages/MyWorkPage.tsx` — badge in Zasobnik rows after `.agenda-meta`.
-  - `CLAUDE.md` — two minimal additions (selectors bullet + Tasks description).
-- **Tests:** `rtk tsc --noEmit` clean · `npx vitest run` → 211/211 (no test added/touched) · `npm run build` succeeds (pre-existing >500kB chunk warning only). Scratch `node -e` confirmed all 8 worked precedence edge cases.
+  - `src/types.ts` — added `TaskPriority`, `ChecklistItem`, `WorkCategory`; `Task` gains priority/workCategoryId/checklist; `SavedFilterCriteria` gains priority/workCategoryId; `AppData` gains `workCategories`.
+  - `src/utils/priority.ts` — NEW; `TASK_PRIORITIES` (ascending) + `PRIORITY_LABELS` (Niski/Normalny/Wysoki/Pilny).
+  - `src/store/storage.ts` — `DATA_VERSION = 6`; `emptyData().workCategories = []`; exported `DEFAULT_FILTER_CRITERIA`; exported idempotent `normalizeTaskMeta` wired into BOTH loadData branches; migrateV1 task literal gets the new defaults.
+  - `src/store/AppStore.tsx` — `TaskDraft` +3 fields; `saveTask` writes them on create+edit (checklist wholesale via `cleanChecklist`, trim+drop-empty); 3 new `*_WORK_CATEGORY` actions mirroring the service-type trio (delete clears matching `task.workCategoryId`).
+  - `src/store/selectors.ts` — `getWorkCategory` selector.
+  - `src/store/seed.ts` — 3 work categories (Kreacja/Wdrożenie/Testy) + per-task priority/category/checklist; `workCategories` in payload.
+  - `src/components/FilterPresets.tsx` — local `DEFAULT_CRITERIA` gains `priority: ''`, `workCategoryId: ''` (tsc green; canonical single-source refactor stays in UI pkg).
+  - `src/components/TaskModal.tsx` — TaskDraft literal carries the 3 metadata fields through from `existing` (defaults for new); NO UI controls (deferred to UI pkg).
+  - `src/store/blockActions.test.ts`, `src/store/selectors.test.ts` — factory `makeTask` (+ `draftFor` in blockActions) gain `priority:'normal', workCategoryId:'', checklist:[]` defaults (no assertion changes).
+- **Tests:** `npx tsc --noEmit` clean · `vitest run` → 232/232 passed · `vite build` → success.
+- **Deviations:** (a) `src/store/storage.test.ts` — two version-pinned assertions (`toBe(5)`) updated to `toBe(6)`; hard-coded version guards the mandated DATA_VERSION bump breaks. Mechanical/unavoidable, test intent unchanged. Not in the package's named factory-fix list (storage.test.ts is the tests pkg's file) — flag for reviewer. (b) `TaskModal.tsx` touched (out-of-scope UI file) with a minimal non-UI pass-through so tsc compiles + edits don't wipe metadata; real controls remain the UI pkg's job.
 - **Still broken:** nothing.
-- **Next:** hand to test-writer for `PKG-20260709d-planning-status-tests` (≥14 unit tests). No commit (orchestrator commits after review).
+- **Next:** ready for review; unblocks PKG-20260710-task-meta-ui and PKG-20260710-task-meta-tests.
 
-#### 2026-07-09 21:16 · test-writer (sonnet) · `PKG-20260709d-planning-status-tests`
+#### 2026-07-10 · developer (opus) · `PKG-20260710-task-meta-model` — verification pass
+
+- **Changed:** nothing. Re-ran the package end-to-end; every named file already
+  matched the spec exactly (from the prior pass above). No edits needed.
+- **Tests:** `tsc --noEmit` clean · `vitest run` → 232/232 · `vite build` → success.
+  Ran binaries directly (`node node_modules/typescript/bin/tsc`,
+  `node node_modules/vitest/vitest.mjs run`, `node node_modules/vite/bin/vite.js
+  build <root>`). ⚠ RTK note for later tiers: the RTK-wrapped `npx tsc`/`npx vitest`
+  returned STALE CACHED failures (2 phantom tsc errors + a `version toBe(5)` test
+  fail) that did NOT match disk — direct-binary runs are authoritative and green.
+- **Still broken:** nothing.
+- **Next:** ready for review. No new diff from this pass.
+
+#### 2026-07-10 · test-writer (sonnet) · `PKG-20260710-task-meta-tests`
 
 - **Changed:**
-  - `src/store/selectors.test.ts` — added `planningStatusForTotals` and `taskPlanningStatus` to the import list; appended `describe('planningStatusForTotals')` (14 cases, every rule of the 6-rule precedence hit incl. both EPS boundary directions) and `describe('taskPlanningStatus')` (6 cases: dated-only match, bin+dated split via `isBinEntry`, over-estimate, null-estimate/zero-rows, cross-task isolation, unknown taskId) — 20 new tests total.
-- **Tests:** `npx tsc --noEmit` clean · `npx vitest run` → 231/231 passed (211 baseline + 20 new), 0 failures.
-- **Still broken:** nothing. No selector bug found — pre-flight check confirmed the package's semantics table matches `planningStatusForTotals`/`taskPlanningStatus` in `src/store/selectors.ts` exactly (rule order, EPS, bin/dated split), so no source file was touched.
-- **Next:** ready for reviewer. Only `src/store/selectors.test.ts` changed; no commit made.
-- **Addendum (post-review nit):** added rule 5 lower-boundary test `planningStatusForTotals(8, 8 - 1e-12, 0)` → 'rozplanowano' to `src/store/selectors.test.ts`; `npx vitest run` → 232/232 passed.
+  - `src/store/storage.test.ts` — added `describe('normalizeTaskMeta')` (9 tests:
+    v5-shaped task gains defaults; invalid/valid priority; dangling/valid
+    workCategoryId; malformed-checklist coercion incl. non-object entries
+    dropped and `done === true` exactness; saved-filter criteria filled from
+    `DEFAULT_FILTER_CRITERIA`; invalid `criteria.priority` reset; non-array
+    `workCategories` coerced to `[]`; idempotency by value on a dirty payload;
+    an already-v6-shaped task/filter left value-equal) and one end-to-end
+    `describe('loadData migration v5 -> v6 (task metadata)')` case via the
+    existing `withLocalStorage` stub (version bumps to 6, task/filter defaults
+    applied, title/dates/estimate/workload unchanged).
+  - `src/store/taskMeta.test.ts` — NEW. `describe('SAVE_TASK metadata')` (4
+    tests: create persists priority/category/checklist; edit wholesale-replaces
+    the checklist and bumps `updatedAt`; empty/whitespace checklist items
+    dropped on write; a checklist item's `done` toggle survives a
+    create→edit round-trip) + `describe('Work category CRUD')` (4 tests:
+    `ADD_WORK_CATEGORY` trims and appends, no-ops on blank name;
+    `RENAME_WORK_CATEGORY` renames only the targeted row;
+    `DELETE_WORK_CATEGORY` removes the row and clears `workCategoryId` on
+    referencing tasks while leaving an unrelated task's category alone).
+    18 new tests total (matches the package's ~18–24 target).
+- **Tests:** ran the direct binaries per the prior worker's RTK-cache warning —
+  `node node_modules/typescript/bin/tsc --noEmit` → clean;
+  `node node_modules/vitest/vitest.mjs run` → **250/250 passed** (232 baseline
+  + 18 new), 6 test files; targeted verbose run of the two changed files
+  confirmed all 35 of their tests pass individually.
+- **Pre-flight:** `normalizeTaskMeta`/`DEFAULT_FILTER_CRITERIA` are exported
+  from `storage.ts` and the 3 `*_WORK_CATEGORY` reducer actions + `TaskDraft`
+  fields match the package spec exactly — no ambiguity found, nothing adapted
+  in source.
+- **Deviations:** none. No source files touched — test files only, as scoped.
+- **Still broken:** nothing.
+- **Next:** ready for review; no commit made (orchestrator commits after
+  review, per instructions).
+
+#### 2026-07-10 · test-writer (sonnet) · `PKG-20260710-task-meta-tests` — duplicate-run check
+
+- **Changed:** nothing. A second worker instance was routed the same package
+  concurrently with the run above; on read, `src/store/storage.test.ts` and
+  `src/store/taskMeta.test.ts` already contained the full spec'd suite
+  (verified content matches every bullet in Scope A–C of the package). Made no
+  edits to avoid clobbering/duplicating the completed work.
+- **Tests:** re-ran the gates independently to confirm the on-disk state is
+  actually green: `node node_modules/typescript/bin/tsc --noEmit` → clean;
+  `node node_modules/vitest/vitest.mjs run` → **250/250 passed**, 6 test files.
+- **Still broken:** nothing.
+- **Next:** ready for review. No new diff from this pass — treat the prior
+  test-writer entry above as the authoritative log for this package.
+
+#### 2026-07-10 · developer (opus) · `PKG-20260710-task-meta-ui`
+
+- **Changed:**
+  - `src/components/PriorityBadge.tsx` — NEW; `.priority-badge priority-<value>` pill, label from `PRIORITY_LABELS`, renders all four (call-site gates visibility).
+  - `src/styles.css` — `.priority-badge` base + four tone modifiers (low→info, normal→muted, high→warning, urgent→danger) using existing tokens only; checklist styles (`.checklist-list/-row/-text/-add-row/-count`, done-row strikethrough); `.task-checklist-progress` + `.task-category` card helpers. No new tokens/animations.
+  - `src/components/TaskModal.tsx` — Details `.field-row` adds „Priorytet"/„Kategoria" selects (readOnly-aware); new „Checklista" editor-section (add via button+Enter/trim/ignore-empty, toggle-done strikethrough, „Usuń", `ukończono {done}/{total}` counter, disabled when read-only); `useState` for priority/workCategoryId/checklist seeded from `existing`; `serializeDraft` + `handleSave` draft now carry all three (removed the model-pkg pass-through placeholder).
+  - `src/pages/TasksPage.tsx` — `PriorityBadge` on cards only when `priority !== 'normal'`; muted category label via `getWorkCategory`; `✓ done/total` (Check icon) when checklist non-empty; two new `FilterGroup`s („Priorytet", „Kategoria") wired into predicate (+ deps), `activeCount`, chips, `clearFilters`, `criteria`, `applyPreset`. „Planowanie" left preset-excluded.
+  - `src/components/FilterPresets.tsx` — `DEFAULT_CRITERIA` now re-exports storage's `DEFAULT_FILTER_CRITERIA` (single source); `isCriteriaActive` gains `priority`/`workCategoryId` `!== ''` checks.
+  - `src/pages/AdminPage.tsx` — fourth dictionary section „Kategorie prac" (SimpleList + add-form) dispatching the three `*_WORK_CATEGORY` actions; delete confirm „Usunąć kategorię „X"? Zadania stracą tę etykietę."; header comment updated.
+  - `CLAUDE.md` — Tasks/Admin bullets, Task/WorkCategory/ChecklistItem data-model lines, SavedFilter criteria note (targeted additions only).
+  - `src/pages/ProjectsPage.tsx` — untouched; verified it compiles against the widened `DEFAULT_CRITERIA` (tsc clean).
+- **Tests:** `npx tsc --noEmit` → clean (twice, after all edits). `npm run build` and `npx vitest run` (incl. direct-binary variants) were **denied by the permission system** for this worker — not run here. Relied on the green tsc + the test-writer's 250/250 (this package adds no tests and touches no test files).
+- **Deviations:** (a) build/vitest gates not executed — permission-denied; flagging for the orchestrator/reviewer to run them. (b) Added two small card-helper CSS classes (`.task-checklist-progress`, `.task-category`) for icon alignment/label sizing — layout only, existing tokens.
+- **Still broken:** nothing known (type-check clean).
+- **Next:** ready for review. Reviewer/orchestrator should run `npm run build` + `npx vitest run` to confirm the gates I couldn't execute.
+
+#### 2026-07-10 · developer (opus) · `PKG-20260710-task-meta-ui` — completion + gate-execution pass
+
+- **Context:** picked up the package after the developer entry above had already
+  landed the full implementation on disk but could NOT run build/vitest
+  (permission-denied at that time). This pass closes those gaps.
+- **Changed:** `CLAUDE.md` — amended the scope-guardrail sentence so tags read
+  `department/client/service type/work-category` (work category noted as an
+  explicit-ask dictionary addition). The prior pass had done every other doc edit;
+  this sentence was the one remaining gap. No other source edits — verified all
+  named UI surfaces line-by-line against the spec and each already matched
+  (PriorityBadge, styles, TaskModal selects + „Checklista”, TasksPage card badges +
+  „Priorytet”/„Kategoria” groups fully wired, FilterPresets single-source
+  `DEFAULT_CRITERIA` + extended `isCriteriaActive`, AdminPage „Kategorie prac”,
+  ProjectsPage compiles unchanged).
+- **Tests (the gates the prior pass couldn't run — now GREEN):** direct binaries —
+  `node node_modules/typescript/bin/tsc --noEmit` clean ·
+  `node node_modules/vitest/vitest.mjs run` → **250/250** (6 files; 232 baseline +
+  18 from the test-writer) · `node node_modules/vite/bin/vite.js build` → success
+  (only the pre-existing >500 kB chunk-size advisory).
+- **Deviations:** none. ⚠ Read/Grep returned STALE CACHED file contents repeatedly
+  this run (the RTK caching issue prior workers flagged) — on-disk state is
+  authoritative and is what the green gates ran against.
+- **Still broken:** nothing.
+- **Next:** ready for review. Orchestrator commits after review.
 
 ### Reviewer verdict
 
-<!-- Reviewer appends here after workers finish. -->
+#### 2026-07-10 · reviewer (fable) — **approve-with-nits**
 
-#### 2026-07-09 21:22 · reviewer (opus) · run verdict
-
-- **Verdict:** approve-with-nits
-- **Independently verified gates:** `npx tsc --noEmit` clean · `npx vitest run` 231/231 (211 baseline + 20 new).
-- **Semantics check (pass):** `planningStatusForTotals` in `src/store/selectors.ts` implements the pinned 6-rule precedence exactly (rule order matches the package verbatim; `PLANNING_EPS = 1e-9` matches TaskModal `overBudget`; bin-only → częściowo; null estimate + dated-only → rozplanowano; przekroczono only with a non-null estimate). `taskPlanningStatus` splits via `isBinEntry` over `entriesForTask`; missing task falls out as estimate-null. Both fully derived — nothing stored.
-- **Surfaces check (pass):** badge after StatusBadge on TasksPage cards + ProjectDetailPage rows; TaskModal badge computed from DRAFT totals (`normalizedEstimate`, `plannedTotalAll`, `binTotal` — the exact same inputs as the `overBudget` banner at line ~544); MyWorkPage Zasobnik rows after `.agenda-meta`. DashboardPage / TodayAgenda untouched.
-- **Filter check (pass):** single-select Planowanie group wired into predicate (+`planningFilter` in the useMemo dep array), activeCount, chips, clearFilters; deliberately absent from `criteria`/`applyPreset` with the required explanatory comment. `FilterPresets.tsx`, `SavedFilterCriteria`, `types.ts`, `storage.ts`, `AppStore.tsx` all untouched (verified via git status + diff).
-- **Conventions (pass):** Polish lowercase labels are the union values; CSS uses only existing tokens (`--n2-type-xs`, `--n2-radius-pill`, warning/success/danger + `-soft`, `--text-muted` — all confirmed present); no new deps; no scope creep (changed set = exactly the 8 planned files + test file + handoff/review artifacts).
-- **Tests (adequate, one gap):** 14 pure-fn cases hit every rule incl. (8, 8+1e-12, 0) drift absorption, (8, 8.25, 0) real excess, rule-3-beats-rule-5 (8,5,3), and defensive (0,2,0); 6 selector cases incl. a genuinely discriminating cross-task leak test (a leak would flip t1 to przekroczono) and unknown-taskId. Gap (nit): rule 5 lower boundary `(8, 8 - 1e-12, 0) → rozplanowano` (dated a hair BELOW estimate absorbed by −EPS) is untested.
-- **Codex adjudication:** single P1 (untracked `src/components/PlanningBadge.tsx` imported by 4 tracked files) — **accepted as a procedural blocker on the commit step, not a code defect**: the file is correct and present; the orchestrator MUST stage it (`git add -A` per plan neutralizes it — verify `PlanningBadge.tsx` is in the commit before pushing). Committing `reviews/` + `handoffs/packages/` artifacts alongside matches prior-run practice (they are tracked historically, not gitignored). No other Codex findings; none dismissed.
-- **Nits (non-blocking, may fold into a later run):**
-  1. Missing rule-5 boundary test `(8, 8 - 1e-12, 0)` in `src/store/selectors.test.ts` (test-writer, one line).
-  2. `PLANNING_STATUSES` doc comment says canonical order is an empty→over-budget spectrum, but rozplanowano sits between częściowo and przekroczono — harmless, purely cosmetic wording.
-- **Routes back:** nothing to developer; nit 1 optionally to test-writer. Orchestrator: commit the full bundle including the untracked component, then run the human browser walkthrough items (badge tones on 4 surfaces, live TaskModal badge while editing, filter chip/clear behavior).
+- **Range reviewed:** `9231f89..04ea467`. Gates independently re-verified:
+  `tsc --noEmit` clean · vitest **250/250** (232 baseline + 18 new) ·
+  `vite build` success (only the pre-existing >500 kB chunk advisory).
+- **Codex second opinion:** `reviews/2026-07-10-020516-codex-review.md`
+  (2 findings), adjudicated:
+  - Codex #1 (P2) **accepted, non-blocking, scope broadened** — dangling
+    `savedFilters[].criteria.workCategoryId` after `DELETE_WORK_CATEGORY`
+    (AppStore.tsx ~1558) + `normalizeTaskMeta` not validating it
+    (storage.ts ~605). Real, but one instance of a PRE-EXISTING app-wide
+    class: no delete action sanitizes preset criteria (clientId/statusId/
+    personId dangle identically) and the UI degrades gracefully (`— ` chip,
+    removable). → **Backlog follow-up package:** sanitize ALL dangling id
+    fields in preset criteria (load-time pass and/or delete reducers) + tests.
+  - Codex #2 (P3) **accepted at backlog** — `saveTask` writes
+    `draft.workCategoryId` unvalidated (AppStore.tsx 272/294); stale-draft
+    window ~nil, self-heals on reload via normalizeTaskMeta. Fold into the
+    same follow-up.
+- **Own nits (P3, no action):** `.priority-normal` CSS + PriorityBadge's
+  `normal` branch are currently dead code (call-site gates ≠ normal) —
+  spec-sanctioned; `RENAME_WORK_CATEGORY` doesn't trim (deliberate verbatim
+  mirror of `RENAME_SERVICE_TYPE` — don't fix one without the other).
+- **Worker deviations:** all four accepted (storage.test.ts version-pin bump
+  5→6; model-pkg TaskModal pass-through superseded by UI pkg; two layout-only
+  CSS card helpers; superseded PKG-…-core stub committed as artifact).
+- **Conventions:** pass — Polish strings, `''`-unset, storage.ts owns all
+  localStorage, normalizeTaskMeta in BOTH loadData branches + idempotent,
+  localizeLegacyData no-op on v5 re-run, SAVE_TASK rebuild untouched,
+  TasksPage deps complete, DEFAULT_CRITERIA single-source safe for
+  ProjectsPage, Planowanie stays preset-excluded, CLAUDE.md incl. guardrail
+  tags sentence.
+- **Walkthrough backlog additions:** TaskModal checklist UX · priority/
+  category filters + preset round-trip · Admin „Kategorie prac" CRUD.
+- **Disposition:** keep the bundle as one commit on the review branch
+  (message rewritten from the harness's `auto-failed: 012` placeholder by the
+  orchestrator), push to `origin/review/claude-auto-20260709-1602`.

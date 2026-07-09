@@ -22,6 +22,22 @@ export interface ServiceType {
   name: string;
 }
 
+/** Admin-managed work-category dictionary (mirrors ServiceType). */
+export interface WorkCategory {
+  id: string;
+  name: string;
+}
+
+/** Task priority — fixed 4-value enum. Polish labels live in utils/priority.ts. */
+export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent';
+
+/** One embedded checklist item on a Task. */
+export interface ChecklistItem {
+  id: string;
+  text: string;
+  done: boolean;
+}
+
 /** Pipeline status, shared by projects and tasks. Admin-managed. */
 export interface Status {
   id: string;
@@ -63,6 +79,9 @@ export interface Task {
   startDate: DateStr;
   endDate: DateStr;
   estimatedHours: number | null; // optional up-front estimate
+  priority: TaskPriority; // fixed enum; defaults to 'normal'
+  workCategoryId: string; // reference into workCategories; '' when unset
+  checklist: ChecklistItem[]; // embedded, replaced wholesale on save
   createdAt: string; // ISO timestamp
   updatedAt: string; // ISO timestamp
 }
@@ -159,6 +178,8 @@ export interface SavedFilterCriteria {
   clientId: string; // '' = all
   statusId: string; // '' = all
   personId: string; // '' = all; assignee — meaningful on tasks
+  priority: '' | TaskPriority; // '' = all; meaningful on tasks
+  workCategoryId: string; // '' = all; meaningful on tasks
   from: DateStr | ''; // period overlap lower bound
   to: DateStr | ''; // period overlap upper bound
 }
@@ -175,6 +196,7 @@ export interface AppData {
   clients: Client[];
   departments: Department[];
   serviceTypes: ServiceType[];
+  workCategories: WorkCategory[];
   statuses: Status[];
   projects: Project[];
   milestones: Milestone[];

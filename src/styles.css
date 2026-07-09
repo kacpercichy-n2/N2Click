@@ -1904,6 +1904,89 @@ option {
   background: var(--n2-danger-soft);
 }
 
+/* Task-priority pill (see utils/priority.ts). Rendered only for non-normal on cards. */
+.priority-badge {
+  display: inline-block;
+  font-size: var(--n2-type-xs);
+  font-weight: 600;
+  border: 1px solid;
+  border-radius: var(--n2-radius-pill);
+  padding: 2px 10px;
+  white-space: nowrap;
+}
+.priority-low {
+  color: var(--n2-info);
+  border-color: var(--n2-info);
+  background: var(--n2-info-soft);
+}
+.priority-normal {
+  color: var(--text-muted);
+  border-color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.06);
+}
+.priority-high {
+  color: var(--n2-warning);
+  border-color: var(--n2-warning);
+  background: var(--n2-warning-soft);
+}
+.priority-urgent {
+  color: var(--n2-danger);
+  border-color: var(--n2-danger);
+  background: var(--n2-danger-soft);
+}
+
+/* Checklist editor (TaskModal). Reuses form/button classes; only layout here. */
+.checklist-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.checklist-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.checklist-row input[type='checkbox'] {
+  flex: none;
+}
+.checklist-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-word;
+}
+.checklist-row.done .checklist-text {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+.checklist-add-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.checklist-add-row input[type='text'] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.checklist-count {
+  font-size: var(--n2-type-xs);
+  color: var(--text-muted);
+  margin: 0 0 8px;
+}
+
+/* Task-card checklist progress + category label. */
+.task-checklist-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 8px;
+}
+.task-category {
+  font-size: var(--n2-type-xs);
+}
+
 .coin,
 .coin-btn {
   display: inline-flex;

@@ -1,0 +1,2278 @@
+diff --git a/CLAUDE.md b/CLAUDE.md
+index 1002768..a1f06a7 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -11,11 +11,11 @@ Core model: **Client → Project → Tasks → Time blocks**, with supporting mo
+ - **Projects** — list grouped by client with paid coin + status badge + filters (paid/unpaid, client, status; savable as named presets via `FilterPresets`); create form (can create a client inline); detail card edits all fields, toggles the coin, manages milestones, lists tasks, and hosts the comments/@mentions/activity panel.
+ - **Kanban** — PROJECT pipeline board. Columns = active statuses in pipeline order; dragging a card into a column dispatches `SET_PROJECT_STATUS`. Filters: paid + client. Admins get a quick-create box accepting the `/Status name` command form.
+ - **Timeline** — horizontal day axis (10 weeks, scrollable, zoomable px-per-day via `ZOOM_LEVELS`; sticky label column). Project bars (status-colored, coin, overdue = danger tint) grouped by client, task bars beneath. Bars drag to move and edge-drag to resize (pointer events, day snapping). ◆ milestones drag. **Moving a task shifts its time blocks with it; resizing drops blocks outside the new period.** Moving a project moves only the project dates (tasks are moved individually — intentional).
+-- **Tasks** — list with filters (+ presets, plus a single-select "Planowanie" filter that is deliberately excluded from saved presets); each card carries a `PlanningBadge` (also on ProjectDetailPage task rows, TaskModal's estimate row from live draft totals, and the /my-work Zasobnik rows). The editor is `TaskModal` (the old TaskEditorPage folded into a modal): required project select, status select, estimate, `AllocationGrid` for per-person per-day hours, per-task discussion panel.
++- **Tasks** — list with filters (+ presets, plus "Priorytet" and "Kategoria" single-selects that ARE saved into presets, plus a single-select "Planowanie" filter that is deliberately excluded from saved presets); each card carries a `PlanningBadge`, a `PriorityBadge` (only when `priority !== 'normal'`), a muted work-category label, and a `✓ done/total` checklist progress (PlanningBadge also on ProjectDetailPage task rows, TaskModal's estimate row from live draft totals, and the /my-work Zasobnik rows). The editor is `TaskModal` (the old TaskEditorPage folded into a modal): required project select, status select, estimate, priority + work-category selects, a draft-only checklist editor (add/toggle/delete), `AllocationGrid` for per-person per-day hours, per-task discussion panel.
+ - **Calendar** — week/month with person filter. **The week view is a Google-Calendar-style timed grid**: left hour axis, day columns, blocks absolutely positioned by `WorkloadEntry.startMinutes` with height ∝ `plannedHours`, auto-scrolls to 7:00. Pointer-drag moves a block to another time and/or day; top/bottom edge-drag resizes in 15-min steps; a **same-person time overlap blocks the drop** (live danger tint, invalid drops revert; touching edges are fine). Cross-person overlaps in one day column pack side-by-side (`packDayBlocks`). Cross-day drops extend the task period when needed. **Right-click a block → "Dodaj przed / Dodaj po"**: small form (task picker defaulting to the clicked block's task + hours) ripple-inserts a block at the reference block's start/end, pushing only that person's overlapping later blocks down; warns live when the day would exceed capacity; auto-assigns the person / extends the task period to keep invariants. Month view: occupancy shading, person dots, overload markers, day click drills into week.
+ - **People** — profiles: avatar (emoji, else initials on person color), first/last name, job title, department, daily capacity (per-person overload threshold), admin flag. Profile page (`/people/:id`) shows week load vs availability, projects, tasks, and edits the profile.
+ - **Workload** — weekly dashboard: per-person day cells, assigned vs available (capacity × workdays), load bar + %, overload day flags; filters by department (filters people) and client/service type (filters which hours are counted).
+-- **Admin** — statuses (create incl. `/name` quick command, rename, recolor, reorder ↑↓, archive/restore, delete only when unused), clients (delete cascades their projects behind confirm), departments, service types (deletes clear references).
++- **Admin** — statuses (create incl. `/name` quick command, rename, recolor, reorder ↑↓, archive/restore, delete only when unused), clients (delete cascades their projects behind confirm), departments, service types (deletes clear references), work categories ("Kategorie prac"; delete clears the label from tasks).
+ - **Global search** — `Ctrl/Cmd+K` (`GlobalSearch` in the sidebar) across projects/tasks/people/clients.
+ 
+ **Users/permissions**: no auth. The sidebar **"Występuj jako"** (acting as) select sets `currentUserId` — it signs comments/activity and gates the admin panel via `person.isAdmin` (`isAdminUser` selector). With zero people the admin gate stays open (prevents lockout). The v1→v2 migration makes the first person admin.
+@@ -40,11 +40,12 @@ Core model: **Client → Project → Tasks → Time blocks**, with supporting mo
+ - `Status { id, name*, slug, color, order, archived }` — shared pipeline for projects AND tasks; defaults seeded: To do → Work in progress → Accept → Done (Polish names in seed).
+ - `Project { id, clientId, name*, description, statusId, paid, startDate, endDate, departmentId, serviceTypeId, createdAt, updatedAt }` — `paid` drives the gold/bronze coin.
+ - `Milestone { id, projectId, name, date }`
+-- `Task { id, projectId*, statusId, title*, description, startDate, endDate, estimatedHours|null, createdAt, updatedAt }`
++- `Task { id, projectId*, statusId, title*, description, startDate, endDate, estimatedHours|null, priority ('low'|'normal'|'high'|'urgent'), workCategoryId ('' when unset), checklist (ChecklistItem[]), createdAt, updatedAt }` — priority labels + order live in `src/utils/priority.ts`; `checklist` is replaced wholesale on save.
++- `WorkCategory { id, name }` — admin-managed dictionary (mirrors ServiceType); referenced by `Task.workCategoryId`. `ChecklistItem { id, text, done }` — embedded on a Task.
+ - `Person { id, firstName*, lastName, name (derived display, kept in sync), email, role (job title), departmentId, avatar (emoji|''), capacity (h/day), isAdmin }`
+ - `TaskAssignment { id, taskId, personId }`
+ - `WorkloadEntry { id, taskId, personId, date, plannedHours, startMinutes, sortIndex }` — `startMinutes` = minutes from midnight (multiple of 15; block must fit inside 0–1440); `sortIndex` orders blocks WITHIN one person's day and **equals the rank by `startMinutes`**.
+-- `SavedFilter { id, name, page: 'projects'|'tasks', criteria }` — named filter presets.
++- `SavedFilter { id, name, page: 'projects'|'tasks', criteria }` — named filter presets; `criteria` (`SavedFilterCriteria`, default `DEFAULT_FILTER_CRITERIA` in storage.ts) now carries `priority` + `workCategoryId` (both `''` = all).
+ - `Comment { id, entityType: 'project'|'task', entityId, authorId, body, mentionIds, createdAt }` · `ActivityEvent { …, actorId, message, createdAt }`
+ 
+ Hard invariants:
+@@ -89,4 +90,4 @@ The workspace has a Figma MCP connection (`plugin:figma:figma`) to the N2 Media
+ 
+ ## Scope guardrails
+ 
+-Out of scope (intentionally, do not add without an explicit ask): backend/auth/multi-user sync, file attachments (comments mention "later" — still not built), notifications, billing/invoicing beyond the paid flag, timers/time tracking, task dependencies, automations, advanced reporting, deliverables layer, separate content calendar, free-form tag categories (tags are ONLY department/client/service type by design), keyboard-drag a11y for calendar blocks (known accepted gap). The most valuable next functional step is replacing `storage.ts` with a small API for shared team data.
++Out of scope (intentionally, do not add without an explicit ask): backend/auth/multi-user sync, file attachments (comments mention "later" — still not built), notifications, billing/invoicing beyond the paid flag, timers/time tracking, task dependencies, automations, advanced reporting, deliverables layer, separate content calendar, free-form tag categories (tags are ONLY department/client/service type/work-category by design — work category was an explicit-ask dictionary addition), keyboard-drag a11y for calendar blocks (known accepted gap). The most valuable next functional step is replacing `storage.ts` with a small API for shared team data.
+diff --git a/handoffs/RUN-STATE.md b/handoffs/RUN-STATE.md
+index 4815c4e..9e2a3e3 100644
+--- a/handoffs/RUN-STATE.md
++++ b/handoffs/RUN-STATE.md
+@@ -13,20 +13,22 @@ boring and factual — it's a checklist, not prose.
+ > CLAUDE.md/docs refresh + repo reorg [PKG-20260709b-bin-drag-freeze-2,
+ > PKG-20260709b-docs-refresh] — NOTE: its worker log stayed empty and no
+ > matching commits are on this branch, so those packages appear NOT executed;
+-> 2026-07-09 (3) — MVP "Moja praca" /my-work page [PKG-20260709c-my-work-page,
+-> PKG-20260709c-my-work-selector-tests], approve-with-nits (nits fixed in
+-> follow-up), 211/211 tests, committed 5e9f7fc)
+-> are archived in the git history of this file.
++> 2026-07-09 (3) — MVP "Moja praca" /my-work page, approve-with-nits, 211/211,
++> committed 5e9f7fc; 2026-07-09 (4) — derived task planning status MVP
++> [PKG-20260709d-planning-status-core, PKG-20260709d-planning-status-tests],
++> approve-with-nits (both nits addressed / cosmetic), 232/232 tests, committed
++> a2f2b88) are archived in the git history of this file.
+ > **Carried-over items still open:** (a) human browser walkthrough of all
+ > approved runs' interactive criteria (role matrix, budget clamp + merge
+ > animation, availability math, insert-form allowance warnings, TaskModal
+ > over-budget banner, impersonation banner/return, Osoby timeline mode,
+ > FilterPanel on 4 pages, dashboard sections + chat-persists-nothing check,
+-> /my-work sections + pracownik redirect); (b) run 2026-07-09 (2)'s two
+-> packages (bin-drag freeze round 2, docs refresh/repo reorg) — apparently
+-> unexecuted; repo CLAUDE.md is still v4-era stale (workers this run must
+-> trust code over that doc); (c) run 3 reviewer nit P3: `/admin` denial
+-> redirects hard to `/dashboard` instead of `HomeRedirect` (backlog).
++> /my-work sections + pracownik redirect, planning badge on 4 surfaces +
++> Planowanie filter); (b) run 2026-07-09 (2)'s two packages (bin-drag freeze
++> round 2, docs refresh/repo reorg) — apparently unexecuted; repo CLAUDE.md is
++> still partially stale (v4-era wording; workers must trust code over that
++> doc); (c) `/admin` denial redirects hard to `/dashboard` instead of
++> `HomeRedirect` (backlog).
+ > **Carried backlog (non-blocking):** Codex #5 `workDays: []` 0%-vs-overload
+ > display + dashboard donut zero-availability display (same class; suggested
+ > `over = booked > available`); pre-existing `insertBlock` end-of-day clamp
+@@ -36,65 +38,87 @@ boring and factual — it's a checklist, not prose.
+ > conflict markers are task-wide, not per-person (needs
+ > `conflictDatesForTaskPerson` decision); overdue-AND-zero-rows task appears
+ > in both "Po terminie" and "Bez planu" on /my-work (reads intentional —
+-> confirm in walkthrough).
++> confirm in walkthrough); SAVE_TASK allocation rebuild keyed by
++> `personId|date` collapses multi-block same-person days (needs design
++> decision: multi-cell support vs duplicate prevention).
+ 
+ ---
+ 
+-## Run: 2026-07-09 (4) — task planning status MVP
++## Run: 2026-07-10 — MVP bundle: task metadata foundation (priority · category · checklist)
+ 
+ ### Plan (architect)
+ 
+-- **Goal:** a fully derived (never stored) task "planning status" with four
+-  exact Polish values — `nie rozplanowano`, `częściowo`, `rozplanowano`,
+-  `przekroczono` — exposed as a pure core function
+-  (`planningStatusForTotals(estimate, datedHours, binHours)`) plus a selector
+-  (`taskPlanningStatus(state, taskId)`) in `src/store/selectors.ts`; rendered
+-  as a compact `PlanningBadge` chip (styled like `.status-badge`, semantic
+-  `--n2-*` tones) on TasksPage cards, TaskModal (live from DRAFT totals),
+-  ProjectDetailPage task rows, and MyWorkPage Zasobnik rows; plus a
+-  single-select "Planowanie" group in TasksPage's existing FilterPanel.
+-  Branch: `review/claude-auto-20260709-1602`; ONE commit scoped to this
+-  bundle, owned by the top-level orchestrator after review (no commit
+-  package).
+-
+-- **Packages (sequential):**
+-  1. `handoffs/packages/PKG-20260709d-planning-status-core.md` —
+-     tier: developer (opus) — status: **done**.
+-  2. `handoffs/packages/PKG-20260709d-planning-status-tests.md` —
+-     tier: test-writer (sonnet), depends on 1 — status: **done** —
+-     ≥14 unit tests in `src/store/selectors.test.ts`, test file only.
+-
+-- **Pinned decisions:** status precedence (EPS = 1e-9, matching TaskModal's
+-  overBudget): (1) total ≤ EPS → nie rozplanowano; (2) est ≠ null ∧ total >
+-  est+EPS → przekroczono (dated + bin, same condition as the TaskModal
+-  banner); (3) bin > EPS → częściowo (zasobnik hours are by definition
+-  "nierozplanowane" — a task with bin hours is never "rozplanowano");
+-  (4) est = null → rozplanowano; (5) dated ≥ est−EPS → rozplanowano;
+-  (6) else częściowo. Bin-only ⇒ częściowo (consistent with run 3's
+-  "bin rows count as planned" — NOT "nie rozplanowano"); est = 0 gets no
+-  special case (stored estimates are >0 or null). Fourth badge surface =
+-  **/my-work Zasobnik rows** (NOT the dashboard — TodayAgendaList is pinned
+-  frozen and shared). Filter: single-select radio group "Planowanie",
+-  values = the exact status strings, EXCLUDED from saved presets
+-  (`SavedFilterCriteria`/`FilterPresets`/`types.ts` untouched — no persisted
+-  shape may change; documented limitation). `PlanningStatus` type +
+-  `PLANNING_STATUSES` live in selectors.ts, not types.ts (derived, not
+-  stored). No DATA_VERSION/storage/AppStore change. CLAUDE.md: minimal
+-  targeted additions only (full refresh remains run 2's pending package).
+-
+-- **Reviewer attention list:** exact precedence order in the pure fn (rule 3
+-  before 4/5 — total==est with bin>0 must be częściowo, not rozplanowano);
+-  TaskModal badge computed from DRAFT (`normalizedEstimate`,
+-  `plannedTotalAll`, `binTotal`), not saved state; TasksPage filtering
+-  useMemo dependency array gains `planningFilter`; no persisted shape
+-  touched; four exact lowercase Polish strings; CSS uses existing tokens
+-  only; DashboardPage/TodayAgenda untouched.
++- **Goal:** three stored task-metadata features, end to end: (1) `Task.priority`
++  — fixed enum `low|normal|high|urgent`, Polish labels Niski/Normalny/Wysoki/
++  Pilny; (2) `Task.workCategoryId` referencing a new admin-managed
++  `workCategories` dictionary (`WorkCategory { id, name }`, CRUD mirroring
++  ServiceTypes, `''` = unset); (3) `Task.checklist` — embedded
++  `ChecklistItem { id, text, done }[]`, add/toggle/delete inside TaskModal via
++  the SAVE_TASK draft (wholesale replace). Storage bumps to **DATA_VERSION 6**
++  with an every-load idempotent `normalizeTaskMeta` pass (defaults: 'normal' /
++  '' / []; dangling category refs → ''; saved-filter criteria filled). UI:
++  TaskModal fields + „Checklista" section, TasksPage card badges (priority
++  badge only when ≠ normal; category label; ✓ done/total) + two new
++  FilterPanel groups that JOIN saved presets, AdminPage „Kategorie prac"
++  section. No calendar/timeline affordances this bundle.
++  ONE commit scoped to the bundle, owned by the top-level orchestrator after
++  review.
++
++- **Packages:**
++  1. `handoffs/packages/PKG-20260710-task-meta-model.md` — tier: developer
++     (opus) — types + storage v6 + normalizeTaskMeta + AppStore (TaskDraft,
++     SAVE_TASK, 3 `*_WORK_CATEGORY` actions) + `getWorkCategory` selector +
++     seed + `src/utils/priority.ts` + mechanical test-factory fixes —
++     status: **ready**.
++  2. `handoffs/packages/PKG-20260710-task-meta-ui.md` — tier: developer
++     (opus), depends on 1 — TaskModal, TasksPage, AdminPage, FilterPresets
++     (DEFAULT_CRITERIA re-export from storage), PriorityBadge, styles.css,
++     minimal CLAUDE.md additions — status: **ready**.
++  3. `handoffs/packages/PKG-20260710-task-meta-tests.md` — tier: test-writer
++     (sonnet), depends on 1 (may run parallel to 2; no file overlap) —
++     ~18–24 tests in `src/store/storage.test.ts` + new
++     `src/store/taskMeta.test.ts` — status: **ready**.
++  - NOTE: `handoffs/packages/PKG-20260710-task-meta-core.md` exists but is
++    **superseded — do not execute** (duplicate of package 1 from a parallel
++    planning pass, stubbed with a pointer to the canonical model package).
++    Workers and reviewer: ignore it; it may be committed as an artifact or
++    deleted by the orchestrator, either is fine.
++
++- **Pinned decisions:** category = dictionary (NOT enum), unset = `''` per
++  repo convention (goal said "nullable" — repo's `''` convention wins);
++  `TaskPriority` type in types.ts, runtime constants (`TASK_PRIORITIES`
++  ascending, `PRIORITY_LABELS`) in new `src/utils/priority.ts`; checklist
++  flows through the draft — NO per-item reducer actions, no reorder/inline
++  edit; priority+category filters ARE preset-persisted (`SavedFilterCriteria`
++  gains both; canonical `DEFAULT_FILTER_CRITERIA` moves to storage.ts,
++  FilterPresets re-exports as `DEFAULT_CRITERIA`; migration fills old presets
++  with `''`) — unlike the derived Planowanie filter, which stays
++  preset-excluded; card badge hidden for 'normal'; badge tones urgent→danger,
++  high→warning, low→info; NO new activity-log message types; seed gains
++  3 categories (Kreacja/Wdrożenie/Testy) + priorities + one 3-item checklist;
++  calendar/kanban/timeline/dashboard/my-work/GlobalSearch untouched.
++
++- **Reviewer attention list:** normalizeTaskMeta idempotency + running in
++  BOTH loadData branches; no data loss on a v5 payload (incl. saved filters);
++  `localizeLegacyData` now re-runs for v5 payloads (version < 6) — must stay a
++  no-op on already-Polish data; SAVE_TASK create AND edit branches both write
++  the three fields without disturbing the existing allocation/bin rebuild;
++  checklist wholesale replace + empty-text drop; DELETE_WORK_CATEGORY clears
++  task refs; test factories updated without assertion changes (model pkg) vs
++  no test edits at all (UI pkg); TasksPage useMemo dependency array gains both
++  new filter states; DEFAULT_CRITERIA single-source refactor doesn't break
++  ProjectsPage; checklist/priority/category edits flip the TaskModal dirty
++  guard; CLAUDE.md update should also amend the scope-guardrail sentence
++  ("tags are ONLY department/client/service type") now that work category is
++  an explicit-ask addition; all new UI strings Polish; only existing CSS
++  tokens.
+ 
+ - **Environment notes for workers:** RTK hook may block rewritten read
+-  commands — use Read/Grep/Glob tools (`node -e '…'` as escape hatch); if
+-  `npm run build` is approval-gated, `node node_modules/vite/bin/vite.js
+-  build` worked last run; gates after every package: `npx tsc --noEmit` ·
+-  `npm test` (baseline 211) · production build.
++  commands — use Read/Grep/Glob tools; if `npm run build` is approval-gated,
++  `node node_modules/vite/bin/vite.js build` worked in prior runs; gates after
++  every package: `npx tsc --noEmit` · `npx vitest run` (baseline **232**) ·
++  production build. Repo CLAUDE.md lags the code (v4-era wording) — trust
++  `src/`.
+ 
+ - **Open questions:** none.
+ 
+@@ -110,45 +134,128 @@ boring and factual — it's a checklist, not prose.
+ - **Next:** <hand to which tier / ready for review / done>
+ -->
+ 
+-#### 2026-07-09 21:14 · developer (opus) · `PKG-20260709d-planning-status-core`
++#### 2026-07-10 · developer (opus) · `PKG-20260710-task-meta-model`
+ 
+ - **Changed:**
+-  - `src/store/selectors.ts` — new `PlanningStatus` type + `PLANNING_STATUSES`, pure `planningStatusForTotals(est,dated,bin)` (6-rule precedence, full JSDoc), selector `taskPlanningStatus(state,taskId)` splitting entries via `isBinEntry`.
+-  - `src/components/PlanningBadge.tsx` — new compact pill component (tone class per status, no inline styles).
+-  - `src/styles.css` — `.planning-badge` base (copied from `.status-badge`) + 4 tone modifiers using existing `--n2-*` / `--text-muted` tokens.
+-  - `src/pages/TasksPage.tsx` — badge after StatusBadge on cards; single-select "Planowanie" filter (state, predicate + useMemo dep, FilterGroup, activeCount, clearFilters, chip); comment noting deliberate exclusion from saved presets.
+-  - `src/components/TaskModal.tsx` — third `.estimate-compare` segment: badge from live DRAFT totals (`normalizedEstimate`, `plannedTotalAll`, `binTotal`).
+-  - `src/pages/ProjectDetailPage.tsx` — badge after StatusBadge in each task row.
+-  - `src/pages/MyWorkPage.tsx` — badge in Zasobnik rows after `.agenda-meta`.
+-  - `CLAUDE.md` — two minimal additions (selectors bullet + Tasks description).
+-- **Tests:** `rtk tsc --noEmit` clean · `npx vitest run` → 211/211 (no test added/touched) · `npm run build` succeeds (pre-existing >500kB chunk warning only). Scratch `node -e` confirmed all 8 worked precedence edge cases.
++  - `src/types.ts` — added `TaskPriority`, `ChecklistItem`, `WorkCategory`; `Task` gains priority/workCategoryId/checklist; `SavedFilterCriteria` gains priority/workCategoryId; `AppData` gains `workCategories`.
++  - `src/utils/priority.ts` — NEW; `TASK_PRIORITIES` (ascending) + `PRIORITY_LABELS` (Niski/Normalny/Wysoki/Pilny).
++  - `src/store/storage.ts` — `DATA_VERSION = 6`; `emptyData().workCategories = []`; exported `DEFAULT_FILTER_CRITERIA`; exported idempotent `normalizeTaskMeta` wired into BOTH loadData branches; migrateV1 task literal gets the new defaults.
++  - `src/store/AppStore.tsx` — `TaskDraft` +3 fields; `saveTask` writes them on create+edit (checklist wholesale via `cleanChecklist`, trim+drop-empty); 3 new `*_WORK_CATEGORY` actions mirroring the service-type trio (delete clears matching `task.workCategoryId`).
++  - `src/store/selectors.ts` — `getWorkCategory` selector.
++  - `src/store/seed.ts` — 3 work categories (Kreacja/Wdrożenie/Testy) + per-task priority/category/checklist; `workCategories` in payload.
++  - `src/components/FilterPresets.tsx` — local `DEFAULT_CRITERIA` gains `priority: ''`, `workCategoryId: ''` (tsc green; canonical single-source refactor stays in UI pkg).
++  - `src/components/TaskModal.tsx` — TaskDraft literal carries the 3 metadata fields through from `existing` (defaults for new); NO UI controls (deferred to UI pkg).
++  - `src/store/blockActions.test.ts`, `src/store/selectors.test.ts` — factory `makeTask` (+ `draftFor` in blockActions) gain `priority:'normal', workCategoryId:'', checklist:[]` defaults (no assertion changes).
++- **Tests:** `npx tsc --noEmit` clean · `vitest run` → 232/232 passed · `vite build` → success.
++- **Deviations:** (a) `src/store/storage.test.ts` — two version-pinned assertions (`toBe(5)`) updated to `toBe(6)`; hard-coded version guards the mandated DATA_VERSION bump breaks. Mechanical/unavoidable, test intent unchanged. Not in the package's named factory-fix list (storage.test.ts is the tests pkg's file) — flag for reviewer. (b) `TaskModal.tsx` touched (out-of-scope UI file) with a minimal non-UI pass-through so tsc compiles + edits don't wipe metadata; real controls remain the UI pkg's job.
+ - **Still broken:** nothing.
+-- **Next:** hand to test-writer for `PKG-20260709d-planning-status-tests` (≥14 unit tests). No commit (orchestrator commits after review).
++- **Next:** ready for review; unblocks PKG-20260710-task-meta-ui and PKG-20260710-task-meta-tests.
+ 
+-#### 2026-07-09 21:16 · test-writer (sonnet) · `PKG-20260709d-planning-status-tests`
++#### 2026-07-10 · developer (opus) · `PKG-20260710-task-meta-model` — verification pass
++
++- **Changed:** nothing. Re-ran the package end-to-end; every named file already
++  matched the spec exactly (from the prior pass above). No edits needed.
++- **Tests:** `tsc --noEmit` clean · `vitest run` → 232/232 · `vite build` → success.
++  Ran binaries directly (`node node_modules/typescript/bin/tsc`,
++  `node node_modules/vitest/vitest.mjs run`, `node node_modules/vite/bin/vite.js
++  build <root>`). ⚠ RTK note for later tiers: the RTK-wrapped `npx tsc`/`npx vitest`
++  returned STALE CACHED failures (2 phantom tsc errors + a `version toBe(5)` test
++  fail) that did NOT match disk — direct-binary runs are authoritative and green.
++- **Still broken:** nothing.
++- **Next:** ready for review. No new diff from this pass.
++
++#### 2026-07-10 · test-writer (sonnet) · `PKG-20260710-task-meta-tests`
+ 
+ - **Changed:**
+-  - `src/store/selectors.test.ts` — added `planningStatusForTotals` and `taskPlanningStatus` to the import list; appended `describe('planningStatusForTotals')` (14 cases, every rule of the 6-rule precedence hit incl. both EPS boundary directions) and `describe('taskPlanningStatus')` (6 cases: dated-only match, bin+dated split via `isBinEntry`, over-estimate, null-estimate/zero-rows, cross-task isolation, unknown taskId) — 20 new tests total.
+-- **Tests:** `npx tsc --noEmit` clean · `npx vitest run` → 231/231 passed (211 baseline + 20 new), 0 failures.
+-- **Still broken:** nothing. No selector bug found — pre-flight check confirmed the package's semantics table matches `planningStatusForTotals`/`taskPlanningStatus` in `src/store/selectors.ts` exactly (rule order, EPS, bin/dated split), so no source file was touched.
+-- **Next:** ready for reviewer. Only `src/store/selectors.test.ts` changed; no commit made.
+-- **Addendum (post-review nit):** added rule 5 lower-boundary test `planningStatusForTotals(8, 8 - 1e-12, 0)` → 'rozplanowano' to `src/store/selectors.test.ts`; `npx vitest run` → 232/232 passed.
++  - `src/store/storage.test.ts` — added `describe('normalizeTaskMeta')` (9 tests:
++    v5-shaped task gains defaults; invalid/valid priority; dangling/valid
++    workCategoryId; malformed-checklist coercion incl. non-object entries
++    dropped and `done === true` exactness; saved-filter criteria filled from
++    `DEFAULT_FILTER_CRITERIA`; invalid `criteria.priority` reset; non-array
++    `workCategories` coerced to `[]`; idempotency by value on a dirty payload;
++    an already-v6-shaped task/filter left value-equal) and one end-to-end
++    `describe('loadData migration v5 -> v6 (task metadata)')` case via the
++    existing `withLocalStorage` stub (version bumps to 6, task/filter defaults
++    applied, title/dates/estimate/workload unchanged).
++  - `src/store/taskMeta.test.ts` — NEW. `describe('SAVE_TASK metadata')` (4
++    tests: create persists priority/category/checklist; edit wholesale-replaces
++    the checklist and bumps `updatedAt`; empty/whitespace checklist items
++    dropped on write; a checklist item's `done` toggle survives a
++    create→edit round-trip) + `describe('Work category CRUD')` (4 tests:
++    `ADD_WORK_CATEGORY` trims and appends, no-ops on blank name;
++    `RENAME_WORK_CATEGORY` renames only the targeted row;
++    `DELETE_WORK_CATEGORY` removes the row and clears `workCategoryId` on
++    referencing tasks while leaving an unrelated task's category alone).
++    18 new tests total (matches the package's ~18–24 target).
++- **Tests:** ran the direct binaries per the prior worker's RTK-cache warning —
++  `node node_modules/typescript/bin/tsc --noEmit` → clean;
++  `node node_modules/vitest/vitest.mjs run` → **250/250 passed** (232 baseline
++  + 18 new), 6 test files; targeted verbose run of the two changed files
++  confirmed all 35 of their tests pass individually.
++- **Pre-flight:** `normalizeTaskMeta`/`DEFAULT_FILTER_CRITERIA` are exported
++  from `storage.ts` and the 3 `*_WORK_CATEGORY` reducer actions + `TaskDraft`
++  fields match the package spec exactly — no ambiguity found, nothing adapted
++  in source.
++- **Deviations:** none. No source files touched — test files only, as scoped.
++- **Still broken:** nothing.
++- **Next:** ready for review; no commit made (orchestrator commits after
++  review, per instructions).
++
++#### 2026-07-10 · test-writer (sonnet) · `PKG-20260710-task-meta-tests` — duplicate-run check
++
++- **Changed:** nothing. A second worker instance was routed the same package
++  concurrently with the run above; on read, `src/store/storage.test.ts` and
++  `src/store/taskMeta.test.ts` already contained the full spec'd suite
++  (verified content matches every bullet in Scope A–C of the package). Made no
++  edits to avoid clobbering/duplicating the completed work.
++- **Tests:** re-ran the gates independently to confirm the on-disk state is
++  actually green: `node node_modules/typescript/bin/tsc --noEmit` → clean;
++  `node node_modules/vitest/vitest.mjs run` → **250/250 passed**, 6 test files.
++- **Still broken:** nothing.
++- **Next:** ready for review. No new diff from this pass — treat the prior
++  test-writer entry above as the authoritative log for this package.
++
++#### 2026-07-10 · developer (opus) · `PKG-20260710-task-meta-ui`
++
++- **Changed:**
++  - `src/components/PriorityBadge.tsx` — NEW; `.priority-badge priority-<value>` pill, label from `PRIORITY_LABELS`, renders all four (call-site gates visibility).
++  - `src/styles.css` — `.priority-badge` base + four tone modifiers (low→info, normal→muted, high→warning, urgent→danger) using existing tokens only; checklist styles (`.checklist-list/-row/-text/-add-row/-count`, done-row strikethrough); `.task-checklist-progress` + `.task-category` card helpers. No new tokens/animations.
++  - `src/components/TaskModal.tsx` — Details `.field-row` adds „Priorytet"/„Kategoria" selects (readOnly-aware); new „Checklista" editor-section (add via button+Enter/trim/ignore-empty, toggle-done strikethrough, „Usuń", `ukończono {done}/{total}` counter, disabled when read-only); `useState` for priority/workCategoryId/checklist seeded from `existing`; `serializeDraft` + `handleSave` draft now carry all three (removed the model-pkg pass-through placeholder).
++  - `src/pages/TasksPage.tsx` — `PriorityBadge` on cards only when `priority !== 'normal'`; muted category label via `getWorkCategory`; `✓ done/total` (Check icon) when checklist non-empty; two new `FilterGroup`s („Priorytet", „Kategoria") wired into predicate (+ deps), `activeCount`, chips, `clearFilters`, `criteria`, `applyPreset`. „Planowanie" left preset-excluded.
++  - `src/components/FilterPresets.tsx` — `DEFAULT_CRITERIA` now re-exports storage's `DEFAULT_FILTER_CRITERIA` (single source); `isCriteriaActive` gains `priority`/`workCategoryId` `!== ''` checks.
++  - `src/pages/AdminPage.tsx` — fourth dictionary section „Kategorie prac" (SimpleList + add-form) dispatching the three `*_WORK_CATEGORY` actions; delete confirm „Usunąć kategorię „X"? Zadania stracą tę etykietę."; header comment updated.
++  - `CLAUDE.md` — Tasks/Admin bullets, Task/WorkCategory/ChecklistItem data-model lines, SavedFilter criteria note (targeted additions only).
++  - `src/pages/ProjectsPage.tsx` — untouched; verified it compiles against the widened `DEFAULT_CRITERIA` (tsc clean).
++- **Tests:** `npx tsc --noEmit` → clean (twice, after all edits). `npm run build` and `npx vitest run` (incl. direct-binary variants) were **denied by the permission system** for this worker — not run here. Relied on the green tsc + the test-writer's 250/250 (this package adds no tests and touches no test files).
++- **Deviations:** (a) build/vitest gates not executed — permission-denied; flagging for the orchestrator/reviewer to run them. (b) Added two small card-helper CSS classes (`.task-checklist-progress`, `.task-category`) for icon alignment/label sizing — layout only, existing tokens.
++- **Still broken:** nothing known (type-check clean).
++- **Next:** ready for review. Reviewer/orchestrator should run `npm run build` + `npx vitest run` to confirm the gates I couldn't execute.
++
++#### 2026-07-10 · developer (opus) · `PKG-20260710-task-meta-ui` — completion + gate-execution pass
++
++- **Context:** picked up the package after the developer entry above had already
++  landed the full implementation on disk but could NOT run build/vitest
++  (permission-denied at that time). This pass closes those gaps.
++- **Changed:** `CLAUDE.md` — amended the scope-guardrail sentence so tags read
++  `department/client/service type/work-category` (work category noted as an
++  explicit-ask dictionary addition). The prior pass had done every other doc edit;
++  this sentence was the one remaining gap. No other source edits — verified all
++  named UI surfaces line-by-line against the spec and each already matched
++  (PriorityBadge, styles, TaskModal selects + „Checklista”, TasksPage card badges +
++  „Priorytet”/„Kategoria” groups fully wired, FilterPresets single-source
++  `DEFAULT_CRITERIA` + extended `isCriteriaActive`, AdminPage „Kategorie prac”,
++  ProjectsPage compiles unchanged).
++- **Tests (the gates the prior pass couldn't run — now GREEN):** direct binaries —
++  `node node_modules/typescript/bin/tsc --noEmit` clean ·
++  `node node_modules/vitest/vitest.mjs run` → **250/250** (6 files; 232 baseline +
++  18 from the test-writer) · `node node_modules/vite/bin/vite.js build` → success
++  (only the pre-existing >500 kB chunk-size advisory).
++- **Deviations:** none. ⚠ Read/Grep returned STALE CACHED file contents repeatedly
++  this run (the RTK caching issue prior workers flagged) — on-disk state is
++  authoritative and is what the green gates ran against.
++- **Still broken:** nothing.
++- **Next:** ready for review. Orchestrator commits after review.
+ 
+ ### Reviewer verdict
+ 
+ <!-- Reviewer appends here after workers finish. -->
+-
+-#### 2026-07-09 21:22 · reviewer (opus) · run verdict
+-
+-- **Verdict:** approve-with-nits
+-- **Independently verified gates:** `npx tsc --noEmit` clean · `npx vitest run` 231/231 (211 baseline + 20 new).
+-- **Semantics check (pass):** `planningStatusForTotals` in `src/store/selectors.ts` implements the pinned 6-rule precedence exactly (rule order matches the package verbatim; `PLANNING_EPS = 1e-9` matches TaskModal `overBudget`; bin-only → częściowo; null estimate + dated-only → rozplanowano; przekroczono only with a non-null estimate). `taskPlanningStatus` splits via `isBinEntry` over `entriesForTask`; missing task falls out as estimate-null. Both fully derived — nothing stored.
+-- **Surfaces check (pass):** badge after StatusBadge on TasksPage cards + ProjectDetailPage rows; TaskModal badge computed from DRAFT totals (`normalizedEstimate`, `plannedTotalAll`, `binTotal` — the exact same inputs as the `overBudget` banner at line ~544); MyWorkPage Zasobnik rows after `.agenda-meta`. DashboardPage / TodayAgenda untouched.
+-- **Filter check (pass):** single-select Planowanie group wired into predicate (+`planningFilter` in the useMemo dep array), activeCount, chips, clearFilters; deliberately absent from `criteria`/`applyPreset` with the required explanatory comment. `FilterPresets.tsx`, `SavedFilterCriteria`, `types.ts`, `storage.ts`, `AppStore.tsx` all untouched (verified via git status + diff).
+-- **Conventions (pass):** Polish lowercase labels are the union values; CSS uses only existing tokens (`--n2-type-xs`, `--n2-radius-pill`, warning/success/danger + `-soft`, `--text-muted` — all confirmed present); no new deps; no scope creep (changed set = exactly the 8 planned files + test file + handoff/review artifacts).
+-- **Tests (adequate, one gap):** 14 pure-fn cases hit every rule incl. (8, 8+1e-12, 0) drift absorption, (8, 8.25, 0) real excess, rule-3-beats-rule-5 (8,5,3), and defensive (0,2,0); 6 selector cases incl. a genuinely discriminating cross-task leak test (a leak would flip t1 to przekroczono) and unknown-taskId. Gap (nit): rule 5 lower boundary `(8, 8 - 1e-12, 0) → rozplanowano` (dated a hair BELOW estimate absorbed by −EPS) is untested.
+-- **Codex adjudication:** single P1 (untracked `src/components/PlanningBadge.tsx` imported by 4 tracked files) — **accepted as a procedural blocker on the commit step, not a code defect**: the file is correct and present; the orchestrator MUST stage it (`git add -A` per plan neutralizes it — verify `PlanningBadge.tsx` is in the commit before pushing). Committing `reviews/` + `handoffs/packages/` artifacts alongside matches prior-run practice (they are tracked historically, not gitignored). No other Codex findings; none dismissed.
+-- **Nits (non-blocking, may fold into a later run):**
+-  1. Missing rule-5 boundary test `(8, 8 - 1e-12, 0)` in `src/store/selectors.test.ts` (test-writer, one line).
+-  2. `PLANNING_STATUSES` doc comment says canonical order is an empty→over-budget spectrum, but rozplanowano sits between częściowo and przekroczono — harmless, purely cosmetic wording.
+-- **Routes back:** nothing to developer; nit 1 optionally to test-writer. Orchestrator: commit the full bundle including the untracked component, then run the human browser walkthrough items (badge tones on 4 surfaces, live TaskModal badge while editing, filter chip/clear behavior).
+diff --git a/handoffs/packages/PKG-20260710-task-meta-core.md b/handoffs/packages/PKG-20260710-task-meta-core.md
+new file mode 100644
+index 0000000..4309bba
+--- /dev/null
++++ b/handoffs/packages/PKG-20260710-task-meta-core.md
+@@ -0,0 +1,15 @@
++# Handoff: SUPERSEDED — do not execute
++
++- **Package ID:** PKG-20260710-task-meta-core
++- **Status:** superseded (never routed)
++- **Tier:** —
++- **Superseded by:** PKG-20260710-task-meta-model
++
++This file was written in parallel with `PKG-20260710-task-meta-model.md`, which
++covers the same data-layer scope (Task priority/workCategoryId/checklist,
++`workCategories` dictionary, storage v5→v6, SAVE_TASK + dictionary actions, seed)
++with slightly different pinned placements (priority constants in
++`src/utils/priority.ts`, `DEFAULT_FILTER_CRITERIA` in `storage.ts`,
++`normalizeTaskMeta` as the migration pass). The **model** package is canonical —
++`PKG-20260710-task-meta-ui.md` and `PKG-20260710-task-meta-tests.md` reference
++its decisions. Workers: skip this file entirely.
+diff --git a/handoffs/packages/PKG-20260710-task-meta-model.md b/handoffs/packages/PKG-20260710-task-meta-model.md
+new file mode 100644
+index 0000000..d34b1fa
+--- /dev/null
++++ b/handoffs/packages/PKG-20260710-task-meta-model.md
+@@ -0,0 +1,110 @@
++# Handoff: Task metadata model — priority, work category, checklist, storage v6
++
++- **Package ID:** PKG-20260710-task-meta-model
++- **Status:** ready
++- **Tier:** developer
++- **Model:** opus
++- **Depends on:** none
++- **Blast radius:** high — touches the persisted data shape (`Task`, `AppData`, `SavedFilterCriteria`), the storage migration, and `SAVE_TASK`. No auth/payments/external calls; everything is localStorage.
++
++## Goal
++
++Add three stored task-metadata features to the data layer: `priority` (fixed 4-value enum), `workCategoryId` (reference into a new admin-managed `workCategories` dictionary), and an embedded `checklist`. Bump the storage payload to version 6 with a loss-free, idempotent normalize pass. No UI in this package (that is PKG-20260710-task-meta-ui).
++
++## Context the worker needs
++
++- Relevant files: `src/types.ts`, `src/store/storage.ts`, `src/store/AppStore.tsx`, `src/store/selectors.ts`, `src/store/seed.ts`, new file `src/utils/priority.ts`; mechanical fixes to test factories in `src/store/blockActions.test.ts` and `src/store/selectors.test.ts`.
++- Relevant docs: repo `CLAUDE.md` (architecture + invariants — note it is partially stale: the code is at `DATA_VERSION = 5` with access roles, bin entries, budget rules; TRUST THE CODE over the doc), `docs/workflow/HANDOFF-TEMPLATE.md`.
++- Prior decisions (settled by the architect — do not reopen):
++  1. **Category is a dictionary**, not an enum: `WorkCategory { id, name }`, state array `workCategories`, CRUD mirroring ServiceTypes exactly (`ADD/RENAME/DELETE_SERVICE_TYPE` pattern in `src/store/AppStore.tsx` lines ~1499–1521).
++  2. **Unset category is `''`**, not `null` — matches the repo convention for `departmentId`/`serviceTypeId` (`'' when unset`).
++  3. **Priority type lives in `src/types.ts`** (it is a stored shape); its runtime constants (order + Polish labels) live in the new dependency-free `src/utils/priority.ts` (types.ts has no runtime exports today — keep it that way).
++  4. **Checklist is embedded on Task and flows through the SAVE_TASK draft** (wholesale replace on save). NO separate ADD/TOGGLE/DELETE checklist reducer actions — the TaskModal is a draft-based editor with snapshot dirty-tracking, and the checklist participates in the draft like every other field.
++  5. **New filter fields DO join saved presets**: `SavedFilterCriteria` gains `priority` and `workCategoryId`. The canonical default-criteria constant moves to `storage.ts` as `DEFAULT_FILTER_CRITERIA` (storage must not import from components); `FilterPresets.tsx` will re-export it as `DEFAULT_CRITERIA` in the UI package.
++  6. **New storage version is 6.** The migration is an every-load idempotent normalize pass (same philosophy as `migratePerson` — see the long comment in `loadData` about why normalization runs on EVERY load, not only when `version < N`).
++
++## Scope
++
++### In scope
++
++1. **`src/types.ts`**
++   - `export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent';`
++   - `export interface ChecklistItem { id: string; text: string; done: boolean; }` (ids are `crypto.randomUUID()` like everything else)
++   - `export interface WorkCategory { id: string; name: string; }` (mirror `ServiceType`)
++   - `Task` gains: `priority: TaskPriority;` · `workCategoryId: string; // '' when unset` · `checklist: ChecklistItem[];`
++   - `SavedFilterCriteria` gains: `priority: '' | TaskPriority; // '' = all` · `workCategoryId: string; // '' = all` (both meaningful on tasks; keep `''` for projects — same note style as the existing `paid` field)
++   - `AppData` gains: `workCategories: WorkCategory[];` (place near `serviceTypes`)
++   - Update the doc comments accordingly.
++
++2. **New `src/utils/priority.ts`** (dependency-free except `types.ts`):
++   - `export const TASK_PRIORITIES: readonly TaskPriority[] = ['low', 'normal', 'high', 'urgent'];` (ascending — this is the select/filter display order)
++   - `export const PRIORITY_LABELS: Record<TaskPriority, string> = { low: 'Niski', normal: 'Normalny', high: 'Wysoki', urgent: 'Pilny' };`
++
++3. **`src/store/storage.ts`**
++   - `DATA_VERSION = 6`.
++   - `emptyData()` gains `workCategories: []`.
++   - `export const DEFAULT_FILTER_CRITERIA: SavedFilterCriteria = { paid: 'all', clientId: '', statusId: '', personId: '', priority: '', workCategoryId: '', from: '', to: '' };` (near `DEFAULT_CAPACITY`).
++   - New exported, idempotent `normalizeTaskMeta(data: AppData): AppData` run on EVERY load (both the `version < 2` branch and the main branch, alongside `migrateV4toV5`/`ensureStartMinutes`). It must:
++     - default `workCategories` to `[]` when missing/non-array (defensive; the `{...emptyData(), ...parsed}` spread already covers the plain-missing case);
++     - give every task a valid `priority` (value not in `TASK_PRIORITIES` → `'normal'`);
++     - give every task a string `workCategoryId`, resetting to `''` any value that does not reference an existing `workCategories` id (dangling-reference sanitize, same spirit as `sanitizeImpersonator`);
++     - give every task a sane `checklist`: non-array → `[]`; each item coerced to `{ id: str(item.id) || uid(), text: str(item.text), done: item.done === true }`, dropping non-object entries;
++     - normalize every saved filter's criteria via `{ ...DEFAULT_FILTER_CRITERIA, ...f.criteria }` and reset an invalid `criteria.priority` (not `''` and not in `TASK_PRIORITIES`) to `''` — old v5 presets must apply cleanly with the new fields as `''`.
++     - Idempotent BY VALUE (second pass changes nothing); returning the same reference when nothing changed is nice-to-have, not required (match `migrateV4toV5`'s always-map style if simpler).
++   - Document the function with the same style/level as `ensureStartMinutes` / `migratePerson`.
++
++4. **`src/store/AppStore.tsx`**
++   - `TaskDraft` gains `priority: TaskPriority; workCategoryId: string; checklist: ChecklistItem[];`.
++   - `saveTask` writes all three on BOTH the create and edit branches (checklist replaced wholesale from the draft; snap/validate nothing — items are already shaped by the modal; do trim item texts and drop empty-text items defensively on write).
++   - Three new actions mirroring the service-type trio verbatim (naming, trim/ignore-empty on add, ref-clearing on delete):
++     - `{ type: 'ADD_WORK_CATEGORY'; name: string }`
++     - `{ type: 'RENAME_WORK_CATEGORY'; workCategoryId: string; name: string }`
++     - `{ type: 'DELETE_WORK_CATEGORY'; workCategoryId: string }` — also maps `tasks`, resetting `workCategoryId` to `''` where it matched (the task-side analogue of `DELETE_SERVICE_TYPE` clearing projects).
++   - NO new activity-log messages: the existing `SAVE_TASK` "utworzył(a)/zaktualizował(a) zadanie" events already cover metadata edits.
++
++5. **`src/store/selectors.ts`**
++   - `export function getWorkCategory(state, workCategoryId): WorkCategory | undefined` mirroring `getServiceType` exactly (including the `''` short-circuit if getServiceType has one — copy its shape).
++
++6. **`src/store/seed.ts`**
++   - Add 3 work categories: `Kreacja`, `Wdrożenie`, `Testy`.
++   - Task metadata: „Strona główna i cennik" → priority `high`, category Kreacja, checklist of 3 items (`Moodboard zaakceptowany` done:true, `Sekcja hero` done:false, `Tabela cen` done:false); „Koncepcja i plan kampanii" → `normal`, Kreacja, `[]`; „Sprint poprawek do wydania" → `urgent`, Wdrożenie, `[]`; „Regresja QA" → `normal`, Testy, `[]`.
++
++7. **Mechanical test-factory fixes only** (the new required `Task` fields break existing literals): update the task factory/helpers in `src/store/blockActions.test.ts` and `src/store/selectors.test.ts` to include `priority: 'normal', workCategoryId: '', checklist: []` defaults. Do NOT add new tests (that is PKG-20260710-task-meta-tests) and do NOT change any assertion.
++
++### Out of scope
++
++- ALL UI: TaskModal, TasksPage, AdminPage, FilterPresets/DEFAULT_CRITERIA re-export, badges, styles.css — PKG-20260710-task-meta-ui.
++- New tests — PKG-20260710-task-meta-tests.
++- Calendar/WeekView/Timeline — untouched.
++- Any change to `WorkloadEntry`, block actions, budget/bin logic, permissions matrix, `Person`, `Project`.
++- No new activity-event types, no notifications, no checklist reordering/inline-edit model.
++
++## Implementation notes
++
++- Follow the existing migration philosophy exactly: normalization runs on every load and is idempotent; a payload stamped v6 with malformed task metadata must still self-heal (see the `migratePerson` rationale comment at `loadData`).
++- `localizeLegacyData` runs when `version < DATA_VERSION` — bumping to 6 means v5 payloads pass through it again; it is a no-op on already-Polish data (name-map lookups miss). No change needed, just don't break it.
++- `LOAD_SAMPLE`/`RESET_ALL` carry full `AppData` — seed must produce a complete v6 payload (version field comes from `emptyData()`).
++- `ProjectsPage.tsx` spreads `DEFAULT_CRITERIA` into its criteria; it compiles unchanged once the constant carries the new `''` fields (the UI package rewires the constant; in THIS package `FilterPresets.tsx`'s local `DEFAULT_CRITERIA` object must gain `priority: ''`, `workCategoryId: ''` so `tsc` stays green — the re-export refactor itself stays in the UI package).
++- Gates after this package: `npx tsc --noEmit` · `npx vitest run` (baseline 232 green, only factory fixes in test files) · `npm run build` (if the command is approval-gated, `node node_modules/vite/bin/vite.js build` worked in prior runs). RTK hook note: prefer Read/Grep/Glob tools over shell reads.
++
++## Acceptance criteria
++
++- [ ] `Task`, `SavedFilterCriteria`, `AppData` extended exactly as specified; `TaskPriority`/`ChecklistItem`/`WorkCategory` exported from `src/types.ts`.
++- [ ] `src/utils/priority.ts` exports `TASK_PRIORITIES` (ascending order) and `PRIORITY_LABELS` with the exact Polish labels Niski/Normalny/Wysoki/Pilny.
++- [ ] `DATA_VERSION === 6`; `emptyData()` includes `workCategories: []` and version 6.
++- [ ] `normalizeTaskMeta` exported from `storage.ts`, wired into BOTH `loadData` branches, and idempotent: a v5 payload (tasks without the new fields, presets without the new criteria) loads with priority `'normal'`, `workCategoryId ''`, `checklist []`, criteria filled with `''` — and a second pass changes nothing.
++- [ ] Dangling `task.workCategoryId` (no matching dictionary row) resets to `''` on load.
++- [ ] `SAVE_TASK` round-trips priority/category/checklist on create AND edit; checklist is replaced wholesale from the draft.
++- [ ] `ADD/RENAME/DELETE_WORK_CATEGORY` behave like the service-type trio; delete clears matching `task.workCategoryId` to `''`.
++- [ ] `getWorkCategory` selector exists.
++- [ ] Seed contains the 3 categories + the specified task metadata and still loads/saves cleanly.
++- [ ] `npx tsc --noEmit` clean; `npx vitest run` fully green (232 baseline, factory-only test edits); production build succeeds.
++
++## Tests
++
++- Command: `npx tsc --noEmit && npx vitest run` (+ production build)
++- Expected: all existing tests green (232 at last run); NO new tests in this package — only the mechanical factory-default additions in the two named test files.
++
++## Report back
++
++Synthesized summary only (files changed one-line each, gate results, deviations/deferrals). Append a worker-log block to `handoffs/RUN-STATE.md`. No raw logs. No commit — the orchestrator commits after review.
+diff --git a/handoffs/packages/PKG-20260710-task-meta-tests.md b/handoffs/packages/PKG-20260710-task-meta-tests.md
+new file mode 100644
+index 0000000..82462dd
+--- /dev/null
++++ b/handoffs/packages/PKG-20260710-task-meta-tests.md
+@@ -0,0 +1,72 @@
++# Handoff: Task metadata tests — v6 migration + checklist/category persistence
++
++- **Package ID:** PKG-20260710-task-meta-tests
++- **Status:** ready
++- **Tier:** test-writer
++- **Model:** sonnet
++- **Depends on:** PKG-20260710-task-meta-model (test files only; may run in parallel with PKG-20260710-task-meta-ui — no file overlap)
++- **Blast radius:** none — test files only.
++
++## Goal
++
++Focused unit tests for the v5→v6 storage normalize pass (`normalizeTaskMeta`) and the new reducer behavior (SAVE_TASK metadata round-trip, work-category CRUD with reference clearing), following the existing test idioms.
++
++## Context the worker needs
++
++- Files to CHANGE: `src/store/storage.test.ts` (append a `describe('normalizeTaskMeta')` + a loadData case), new file `src/store/taskMeta.test.ts`.
++- Files to READ (never modify): `src/store/storage.ts` (`normalizeTaskMeta`, `DATA_VERSION`, `emptyData`, `DEFAULT_FILTER_CRITERIA`, `loadData`), `src/store/AppStore.tsx` (`reducer`, `SaveTaskPayload`, `TaskDraft`, `*_WORK_CATEGORY` actions), `src/types.ts`, `src/utils/priority.ts`.
++- Idioms to follow: `src/store/storage.test.ts` (the `withLocalStorage` stub, `makeEntry`/`makeState` factories, idempotency assertions) and `src/store/blockActions.test.ts` (building `AppData` via `{ ...emptyData(), ...overrides }`, `makeTask` factory — note it now includes `priority`/`workCategoryId`/`checklist` defaults, dispatching through the exported `reducer`).
++- Pre-flight: if `normalizeTaskMeta` is not exported from `src/store/storage.ts`, or the reducer actions differ from the spec below, STOP and report — do not adapt source code (test files are your only write surface).
++
++## Scope
++
++### In scope
++
++**A. `src/store/storage.test.ts` — append `describe('normalizeTaskMeta')` (~8–10 tests):**
++1. A v5-shaped task (no `priority`/`workCategoryId`/`checklist` keys) gains `priority: 'normal'`, `workCategoryId: ''`, `checklist: []`.
++2. An invalid priority value (e.g. `'critical'`) resets to `'normal'`; a valid one (`'urgent'`) is preserved.
++3. A dangling `workCategoryId` (no matching row in `workCategories`) resets to `''`; a valid reference is preserved.
++4. Malformed checklist sanitize: non-array → `[]`; an item missing `id` gets one generated; non-string `text` coerces to `''`... assert per the actual coercion rules in the implementation (`done: item.done === true`, non-object entries dropped).
++5. A saved filter with v5 criteria (missing `priority`/`workCategoryId`) is filled from `DEFAULT_FILTER_CRITERIA` (both become `''`); other criteria fields survive unchanged.
++6. An invalid `criteria.priority` resets to `''`.
++7. Missing/non-array `workCategories` becomes `[]`.
++8. Idempotency: running `normalizeTaskMeta` twice is value-equal to running it once (deep-equal; reference equality only if the implementation guarantees it — check first).
++
++**B. `src/store/storage.test.ts` — one end-to-end `loadData` case (using the existing `withLocalStorage` helper):** a stored `version: 5` payload containing at least one task without the new fields and one saved filter with old criteria loads as `version` = `DATA_VERSION` (6) with all defaults applied and NO data loss (task titles/dates/estimate, workload untouched).
++
++**C. New `src/store/taskMeta.test.ts` (~10–14 tests), building state like `blockActions.test.ts`:**
++1. `SAVE_TASK` create: draft with `priority: 'high'`, a real `workCategoryId`, and a 2-item checklist persists all three on the created task.
++2. `SAVE_TASK` edit: checklist is replaced WHOLESALE from the draft (removed/toggled items don't survive), priority/category update in place, `updatedAt` bumps.
++3. `SAVE_TASK` with empty-text checklist items in the draft: they are dropped on write (per the model package's defensive trim).
++4. `ADD_WORK_CATEGORY`: trims the name; empty/whitespace-only name is a no-op (state unchanged).
++5. `RENAME_WORK_CATEGORY` renames the right row only.
++6. `DELETE_WORK_CATEGORY`: removes the row AND resets `workCategoryId` to `''` on tasks that referenced it, while an unrelated task's category survives.
++7. Checklist item `done` toggling persists through a SAVE_TASK round-trip (create → edit toggling one item).
++
++### Out of scope
++
++- ANY non-test file. If something looks buggy, report it — don't fix it.
++- UI/component tests (no jsdom in this suite — vitest runs in node env).
++- Re-testing existing behavior (blocks, planning status, permissions) beyond what the new assertions need.
++
++## Implementation notes
++
++- Vitest, node environment, `src/**/*.test.ts` — mirror imports/setup of the neighboring test files exactly.
++- Build tasks through a local factory with the new defaults; don't hand-write full `AppData` literals.
++- `SAVE_TASK` needs a full `SaveTaskPayload` (`assigneeIds: []`, `allocations: []` are fine for metadata-focused cases).
++- Keep test names in the existing descriptive-English style of the suite.
++
++## Acceptance criteria
++
++- [ ] All the cases above exist and pass; ~18–24 new tests total.
++- [ ] Only `src/store/storage.test.ts` and `src/store/taskMeta.test.ts` changed/added.
++- [ ] `npx tsc --noEmit` clean; `npx vitest run` fully green (baseline after the model package + the new tests; report exact counts).
++
++## Tests
++
++- Command: `npx tsc --noEmit && npx vitest run`
++- Expected: entire suite green; new tests cover every bullet in Scope A–C.
++
++## Report back
++
++Synthesized summary only (files changed one-line each, test counts, any source bug found via pre-flight). Append a worker-log block to `handoffs/RUN-STATE.md`. No raw logs. No commit — the orchestrator commits after review.
+diff --git a/handoffs/packages/PKG-20260710-task-meta-ui.md b/handoffs/packages/PKG-20260710-task-meta-ui.md
+new file mode 100644
+index 0000000..5edeceb
+--- /dev/null
++++ b/handoffs/packages/PKG-20260710-task-meta-ui.md
+@@ -0,0 +1,81 @@
++# Handoff: Task metadata UI — TaskModal fields, checklist editor, TasksPage badges + filters, Admin categories
++
++- **Package ID:** PKG-20260710-task-meta-ui
++- **Status:** ready
++- **Tier:** developer
++- **Model:** opus
++- **Depends on:** PKG-20260710-task-meta-model
++- **Blast radius:** low–medium — UI layer only (TaskModal, TasksPage, AdminPage, FilterPresets, one new component, CSS). No store/schema changes beyond consuming what the model package shipped.
++
++## Goal
++
++Surface the new task metadata (priority, work category, checklist) in the Polish UI: edit all three in `TaskModal`, show priority/category/checklist-progress on `TasksPage` cards, filter by priority + category through the existing `FilterPanel` (joining saved presets), and manage the category dictionary in `AdminPage`.
++
++## Context the worker needs
++
++- Relevant files: `src/components/TaskModal.tsx`, `src/pages/TasksPage.tsx`, `src/pages/AdminPage.tsx`, `src/components/FilterPresets.tsx`, `src/pages/ProjectsPage.tsx` (verify-compiles only), new `src/components/PriorityBadge.tsx`, `src/styles.css`, `CLAUDE.md` (minimal additions), and read-only reference: `src/components/PlanningBadge.tsx`, `src/components/FilterPanel.tsx`, `src/utils/priority.ts`, `src/store/selectors.ts` (`getWorkCategory`), `src/store/AppStore.tsx` (`TaskDraft`, work-category actions).
++- Relevant docs: repo `CLAUDE.md` (Polish UI, dark N2 theme, no UI framework; note it is partially stale — trust code).
++- Prior decisions (settled — do not reopen):
++  1. Priority/category filters JOIN saved presets. `DEFAULT_CRITERIA` in `FilterPresets.tsx` becomes a re-export of `DEFAULT_FILTER_CRITERIA` from `src/store/storage.ts` (keep the exported name `DEFAULT_CRITERIA` so ProjectsPage/TasksPage import sites survive); `isCriteriaActive` gains the two new `!== ''` checks.
++  2. On task cards the priority badge renders ONLY when `priority !== 'normal'` (noise reduction); the TaskModal select always shows all four.
++  3. Checklist MVP = add / toggle done / delete. NO reorder, NO inline text edit.
++  4. Checklist edits flow through the draft and `SAVE_TASK` (never dispatch per-keystroke) — participate in `serializeDraft` dirty tracking like every other field.
++  5. NO calendar/timeline/kanban affordances this bundle — the WeekView pointer surface is deliberately untouched.
++  6. Polish labels come from `PRIORITY_LABELS` (`src/utils/priority.ts`): Niski / Normalny / Wysoki / Pilny. Badge tones: urgent→danger, high→warning, low→info, normal→neutral/muted.
++
++## Scope
++
++### In scope
++
++1. **`src/components/PriorityBadge.tsx`** (new) — mirror `PlanningBadge.tsx`: a pill span, `className="priority-badge priority-<value>"`, label from `PRIORITY_LABELS`. Renders all four values (call-site decides visibility).
++
++2. **`src/styles.css`** — `.priority-badge` base copied from `.planning-badge`/`.status-badge` (line ~1866) + four tone modifiers using ONLY existing tokens (`--n2-danger`/`-soft`, warning, info, `--text-muted`; see how `.planning-badge` tones are done). Plus minimal checklist styles (`.checklist-list`, `.checklist-row`, done-state strikethrough via `text-decoration`, add-form row) reusing existing form/button classes wherever possible. Respect `prefers-reduced-motion` conventions (no new animations needed).
++
++3. **`src/components/TaskModal.tsx`**
++   - Details section: a new `.field-row` (below the project/status/estimate row) with two fields: „Priorytet" select (`TASK_PRIORITIES` order, labels from `PRIORITY_LABELS`, default `'normal'` for new tasks / `existing.priority` for edits) and „Kategoria" select (`''` option labeled „Brak kategorii" + `state.workCategories`). Both honor `readOnly`/`roTitle` like neighboring fields.
++   - New editor-section „Checklista" placed directly after the Details section: list rows = checkbox (toggles `done`; done rows render struck-through), item text, „Usuń" (`btn danger-ghost`, or the `X` icon button pattern) — plus an add form (text input + „Dodaj" button; Enter submits; trim; ignore empty). New items: `{ id: crypto.randomUUID(), text, done: false }`. Show a muted „ukończono {done}/{total}" counter when total > 0. All controls disabled when `readOnly`.
++   - State: `useState<TaskPriority>`, `useState<string>` (categoryId), `useState<ChecklistItem[]>`, seeded from `existing` or defaults (`'normal'`, `''`, `[]`).
++   - Extend `serializeDraft` input and the `TaskDraft` built in `handleSave` with all three fields.
++4. **`src/pages/TasksPage.tsx`**
++   - Card (`task-card-top` area): `PriorityBadge` when `task.priority !== 'normal'` (place after `PlanningBadge`); category name as a muted chip/label when set (`getWorkCategory`); checklist progress `✓ {done}/{total}` (use the existing `Check` icon from `components/icons`) when `task.checklist.length > 0` — place in the card meta area, e.g. next to `task-card-hours`.
++   - Two new single-select `FilterGroup`s: „Priorytet" (`''` „Wszystkie" + 4 values labeled via `PRIORITY_LABELS`) and „Kategoria" (`''` „Wszystkie" + `state.workCategories`).
++   - Wire completely: predicate in the filtering `useMemo` (+ BOTH new states in its dependency array), `activeCount`, chips (labels „Priorytet: Wysoki", „Kategoria: Kreacja"), `clearFilters`, `criteria` object (now includes `priority` + `workCategoryId`), and `applyPreset` (sets both; note the planning filter stays preset-EXCLUDED — leave its existing comment and behavior alone).
++5. **`src/components/FilterPresets.tsx`** — `DEFAULT_CRITERIA` re-exported from storage's `DEFAULT_FILTER_CRITERIA` (single source); `isCriteriaActive` extended.
++6. **`src/pages/AdminPage.tsx`** — fourth dictionary section „Kategorie prac" after „Typy usług", using the existing `SimpleList` + add-form pattern verbatim; delete confirm: `Usunąć kategorię „X"? Zadania stracą tę etykietę.`; dispatches the three `*_WORK_CATEGORY` actions. Update the page's header comment.
++7. **`src/pages/ProjectsPage.tsx`** — no functional change; just verify it compiles with the widened criteria (it spreads `DEFAULT_CRITERIA`).
++8. **`CLAUDE.md`** — minimal targeted additions only (Task fields bullet, Tasks/Admin page descriptions, data-model lines). No full refresh (that remains a separately pending package).
++
++### Out of scope
++
++- Anything in `src/store/` (shipped by PKG-20260710-task-meta-model) — if the model layer looks wrong, STOP and report, don't patch it here.
++- Calendar (`WeekView`, `MonthView`, `CalendarPage`), `TimelinePage`, `KanbanPage`, `DashboardPage`, `MyWorkPage`, `GlobalSearch` — no metadata affordances there this bundle.
++- New tests (PKG-20260710-task-meta-tests); do not touch test files.
++- Checklist reorder / inline edit / per-item persistence actions.
++- No new dependencies, no Tailwind/UI libs, no new tokens in styles.css.
++
++## Implementation notes
++
++- Follow the exact existing idioms: field markup and `readOnly`/`NO_PERM_TITLE` handling from TaskModal's status select; filter wiring from the existing „Planowanie" group (TasksPage lines ~48–192); badge CSS from `.planning-badge`.
++- Dirty tracking: `serializeDraft` (in TaskModal) must include priority, workCategoryId, and the checklist array (order-sensitive serialization is fine) so Cancel/close confirm behaves.
++- Keep every new UI string Polish.
++- Gates: `npx tsc --noEmit` · `npx vitest run` (same count as after the model package — this package adds none) · production build · quick smoke via `npm run dev` if feasible.
++
++## Acceptance criteria
++
++- [ ] TaskModal: priority + category selects present, seeded correctly for new/existing tasks, disabled when read-only; saved values round-trip through reopen.
++- [ ] TaskModal checklist: add via button AND Enter (trimmed, empty ignored), toggle strikes through, delete removes; `{done}/{total}` counter; all draft-only until „Zapisz"; Cancel discards; dirty indicator reacts to checklist-only edits.
++- [ ] TasksPage cards: priority badge only for non-normal priorities with correct tone classes; category label only when set; `✓ done/total` only when checklist non-empty.
++- [ ] TasksPage filters: „Priorytet" and „Kategoria" groups filter correctly, show chips, count into `activeCount`, clear via „Wyczyść wszystko", and are SAVED into and APPLIED from presets (old presets apply as „all" for both). „Planowanie" remains preset-excluded.
++- [ ] AdminPage: „Kategorie prac" section adds/renames/deletes categories; deleting one clears it from tasks (verify via a task card) after confirm.
++- [ ] `DEFAULT_CRITERIA` has a single source of truth in `storage.ts`; ProjectsPage compiles and behaves unchanged.
++- [ ] No console errors/warnings; all UI strings Polish; only existing CSS tokens used.
++- [ ] `npx tsc --noEmit` clean; `npx vitest run` green (unchanged count); production build succeeds.
++
++## Tests
++
++- Command: `npx tsc --noEmit && npx vitest run` (+ production build)
++- Expected: suite green with the same test count as after PKG-20260710-task-meta-model (this package adds no tests). Manual smoke of the four acceptance surfaces if a dev server is available.
++
++## Report back
++
++Synthesized summary only (files changed one-line each, gate results, deviations/deferrals). Append a worker-log block to `handoffs/RUN-STATE.md`. No raw logs. No commit — the orchestrator commits after review.
+diff --git a/src/components/FilterPresets.tsx b/src/components/FilterPresets.tsx
+index 049ab01..1f90a92 100644
+--- a/src/components/FilterPresets.tsx
++++ b/src/components/FilterPresets.tsx
+@@ -4,16 +4,12 @@
+ import { useState } from 'react';
+ import { useStore } from '../store/AppStore';
+ import type { FilterPage, SavedFilterCriteria } from '../types';
++import { DEFAULT_FILTER_CRITERIA } from '../store/storage';
+ import { Bookmark, Check, X } from './icons';
+ 
+-export const DEFAULT_CRITERIA: SavedFilterCriteria = {
+-  paid: 'all',
+-  clientId: '',
+-  statusId: '',
+-  personId: '',
+-  from: '',
+-  to: '',
+-};
++// Single source of truth lives in storage.ts; re-exported under the name the
++// import sites (ProjectsPage/TasksPage) already use.
++export const DEFAULT_CRITERIA: SavedFilterCriteria = DEFAULT_FILTER_CRITERIA;
+ 
+ /** True when any criterion differs from the neutral default. */
+ export function isCriteriaActive(c: SavedFilterCriteria): boolean {
+@@ -22,6 +18,8 @@ export function isCriteriaActive(c: SavedFilterCriteria): boolean {
+     c.clientId !== '' ||
+     c.statusId !== '' ||
+     c.personId !== '' ||
++    c.priority !== '' ||
++    c.workCategoryId !== '' ||
+     c.from !== '' ||
+     c.to !== ''
+   );
+diff --git a/src/components/PriorityBadge.tsx b/src/components/PriorityBadge.tsx
+new file mode 100644
+index 0000000..e7ddda4
+--- /dev/null
++++ b/src/components/PriorityBadge.tsx
+@@ -0,0 +1,10 @@
++import type { TaskPriority } from '../types';
++import { PRIORITY_LABELS } from '../utils/priority';
++
++/** Compact task-priority pill (styled like `.status-badge`/`.planning-badge`).
++ * Renders all four values — the call site decides whether to show it. */
++export function PriorityBadge({ priority }: { priority: TaskPriority }) {
++  return (
++    <span className={`priority-badge priority-${priority}`}>{PRIORITY_LABELS[priority]}</span>
++  );
++}
+diff --git a/src/components/TaskModal.tsx b/src/components/TaskModal.tsx
+index b8b37e3..fc9bdeb 100644
+--- a/src/components/TaskModal.tsx
++++ b/src/components/TaskModal.tsx
+@@ -9,6 +9,8 @@ import { useStore } from '../store/AppStore';
+ import { useCan } from '../store/useCan';
+ import { NO_PERM_TITLE } from '../store/permissions';
+ import type { AllocationCell, TaskDraft } from '../store/AppStore';
++import type { ChecklistItem, TaskPriority } from '../types';
++import { PRIORITY_LABELS, TASK_PRIORITIES } from '../utils/priority';
+ import {
+   activeStatuses,
+   assigneeIdsOfTask,
+@@ -240,6 +242,9 @@ function serializeDraft(v: {
+   projectId: string;
+   statusId: string;
+   estimatedRaw: string;
++  priority: TaskPriority;
++  workCategoryId: string;
++  checklist: ChecklistItem[];
+   startDate: string;
+   endDate: string;
+   assigneeIds: string[];
+@@ -252,6 +257,10 @@ function serializeDraft(v: {
+     projectId: v.projectId,
+     statusId: v.statusId,
+     estimatedRaw: v.estimatedRaw,
++    priority: v.priority,
++    workCategoryId: v.workCategoryId,
++    // Order-sensitive: item identity + text + done state all participate in dirty.
++    checklist: v.checklist.map((c) => [c.id, c.text, c.done]),
+     startDate: v.startDate,
+     endDate: v.endDate,
+     assigneeIds: [...v.assigneeIds].sort(),
+@@ -292,6 +301,10 @@ function TaskEditor({
+   const [estimatedRaw, setEstimatedRaw] = useState(
+     existing?.estimatedHours != null ? String(existing.estimatedHours) : '',
+   );
++  const [priority, setPriority] = useState<TaskPriority>(existing?.priority ?? 'normal');
++  const [workCategoryId, setWorkCategoryId] = useState<string>(existing?.workCategoryId ?? '');
++  const [checklist, setChecklist] = useState<ChecklistItem[]>(existing?.checklist ?? []);
++  const [checklistInput, setChecklistInput] = useState('');
+ 
+   // ---- Period ----
+   const [startDate, setStartDate] = useState(existing?.startDate ?? todayStr());
+@@ -368,6 +381,9 @@ function TaskEditor({
+     projectId,
+     statusId,
+     estimatedRaw,
++    priority,
++    workCategoryId,
++    checklist,
+     startDate,
+     endDate,
+     assigneeIds,
+@@ -496,6 +512,9 @@ function TaskEditor({
+       startDate,
+       endDate,
+       estimatedHours: normalizedEstimate,
++      priority,
++      workCategoryId,
++      checklist,
+     };
+ 
+     dispatch({
+@@ -562,6 +581,21 @@ function TaskEditor({
+     setPendingUnassigned((prev) => [...prev, { personId, hours: Math.min(24, hours) }]);
+   };
+ 
++  // ---- Checklist (draft-only; persisted wholesale by SAVE_TASK) ----
++  const addChecklistItem = () => {
++    const text = checklistInput.trim();
++    if (!text) return;
++    setChecklist((prev) => [...prev, { id: crypto.randomUUID(), text, done: false }]);
++    setChecklistInput('');
++  };
++  const toggleChecklistItem = (id: string) => {
++    setChecklist((prev) => prev.map((c) => (c.id === id ? { ...c, done: !c.done } : c)));
++  };
++  const removeChecklistItem = (id: string) => {
++    setChecklist((prev) => prev.filter((c) => c.id !== id));
++  };
++  const checklistDone = checklist.filter((c) => c.done).length;
++
+   return (
+     <div className="editor task-editor">
+       {/* a) Details */}
+@@ -652,6 +686,41 @@ function TaskEditor({
+             />
+           </div>
+         </div>
++        <div className="field-row">
++          <div className="field">
++            <label htmlFor="t-priority">Priorytet</label>
++            <select
++              id="t-priority"
++              value={priority}
++              onChange={(e) => setPriority(e.target.value as TaskPriority)}
++              disabled={readOnly}
++              title={roTitle}
++            >
++              {TASK_PRIORITIES.map((p) => (
++                <option key={p} value={p}>
++                  {PRIORITY_LABELS[p]}
++                </option>
++              ))}
++            </select>
++          </div>
++          <div className="field">
++            <label htmlFor="t-category">Kategoria</label>
++            <select
++              id="t-category"
++              value={workCategoryId}
++              onChange={(e) => setWorkCategoryId(e.target.value)}
++              disabled={readOnly}
++              title={roTitle}
++            >
++              <option value="">Brak kategorii</option>
++              {state.workCategories.map((c) => (
++                <option key={c.id} value={c.id}>
++                  {c.name}
++                </option>
++              ))}
++            </select>
++          </div>
++        </div>
+         <div className="estimate-compare">
+           <span>
+             zaplanowano{' '}
+@@ -684,6 +753,69 @@ function TaskEditor({
+         )}
+       </div>
+ 
++      {/* a2) Checklist */}
++      <div className="editor-section">
++        <h2>Checklista</h2>
++        {checklist.length > 0 && (
++          <p className="checklist-count">
++            ukończono {checklistDone}/{checklist.length}
++          </p>
++        )}
++        {checklist.length > 0 && (
++          <ul className="checklist-list">
++            {checklist.map((item) => (
++              <li key={item.id} className={item.done ? 'checklist-row done' : 'checklist-row'}>
++                <input
++                  type="checkbox"
++                  checked={item.done}
++                  onChange={() => toggleChecklistItem(item.id)}
++                  disabled={readOnly}
++                  title={roTitle}
++                  aria-label={`Oznacz „${item.text}” jako ukończone`}
++                />
++                <span className="checklist-text">{item.text}</span>
++                {!readOnly && (
++                  <button
++                    type="button"
++                    className="btn danger-ghost"
++                    onClick={() => removeChecklistItem(item.id)}
++                    aria-label={`Usuń „${item.text}”`}
++                  >
++                    Usuń
++                  </button>
++                )}
++              </li>
++            ))}
++          </ul>
++        )}
++        {!readOnly && (
++          <div className="checklist-add-row">
++            <input
++              type="text"
++              value={checklistInput}
++              onChange={(e) => setChecklistInput(e.target.value)}
++              onKeyDown={(e) => {
++                if (e.key === 'Enter') {
++                  e.preventDefault();
++                  addChecklistItem();
++                }
++              }}
++              placeholder="Nowy element checklisty"
++              aria-label="Nowy element checklisty"
++            />
++            <button
++              type="button"
++              className="btn ghost"
++              onClick={addChecklistItem}
++              disabled={checklistInput.trim() === ''}
++            >
++              Dodaj
++            </button>
++          </div>
++        )}
++        {readOnly && checklist.length === 0 && <p className="field-hint">Brak elementów.</p>}
++      </div>
++
+       {/* b) Period */}
+       <div className="editor-section">
+         <h2>Okres</h2>
+diff --git a/src/pages/AdminPage.tsx b/src/pages/AdminPage.tsx
+index 975d78b..1101baf 100644
+--- a/src/pages/AdminPage.tsx
++++ b/src/pages/AdminPage.tsx
+@@ -1,7 +1,7 @@
+ // Admin panel: pipeline statuses (create incl. "/name" quick command, rename,
+ // recolor, reorder, archive/restore, delete-when-unused), clients, departments,
+-// and service types. Only admins ("acting as" someone with the admin flag) may
+-// change anything here.
++// service types, and work categories. Only admins ("acting as" someone with the
++// admin flag) may change anything here.
+ import { useState } from 'react';
+ import { useStore } from '../store/AppStore';
+ import { allStatusesOrdered, isAdminUser } from '../store/selectors';
+@@ -19,6 +19,7 @@ export function AdminPage() {
+   const [clientInput, setClientInput] = useState('');
+   const [depInput, setDepInput] = useState('');
+   const [svcInput, setSvcInput] = useState('');
++  const [catInput, setCatInput] = useState('');
+ 
+   if (!admin) {
+     return (
+@@ -248,6 +249,40 @@ export function AdminPage() {
+           </button>
+         </form>
+       </div>
++
++      <div className="editor-section">
++        <h2>Kategorie prac</h2>
++        <SimpleList
++          items={state.workCategories}
++          onRename={(id, name) =>
++            dispatch({ type: 'RENAME_WORK_CATEGORY', workCategoryId: id, name })
++          }
++          onDelete={(id, name) => {
++            if (window.confirm(`Usunąć kategorię „${name}”? Zadania stracą tę etykietę.`)) {
++              dispatch({ type: 'DELETE_WORK_CATEGORY', workCategoryId: id });
++            }
++          }}
++        />
++        <form
++          className="admin-add-form"
++          onSubmit={(e) => {
++            e.preventDefault();
++            if (!catInput.trim()) return;
++            dispatch({ type: 'ADD_WORK_CATEGORY', name: catInput });
++            setCatInput('');
++          }}
++        >
++          <input
++            value={catInput}
++            onChange={(e) => setCatInput(e.target.value)}
++            placeholder="Nazwa nowej kategorii prac"
++            aria-label="Nazwa nowej kategorii prac"
++          />
++          <button type="submit" className="btn primary" disabled={!catInput.trim()}>
++            Dodaj kategorię
++          </button>
++        </form>
++      </div>
+     </section>
+   );
+ }
+diff --git a/src/pages/TasksPage.tsx b/src/pages/TasksPage.tsx
+index b142db8..b3c012a 100644
+--- a/src/pages/TasksPage.tsx
++++ b/src/pages/TasksPage.tsx
+@@ -10,18 +10,22 @@ import {
+   getPerson,
+   getProject,
+   getStatus,
++  getWorkCategory,
+   taskPlannedTotal,
+   taskPlanningStatus,
+   PLANNING_STATUSES,
+   type PlanningStatus,
+ } from '../store/selectors';
++import type { TaskPriority } from '../types';
++import { PRIORITY_LABELS, TASK_PRIORITIES } from '../utils/priority';
+ import { FilterPresets, DEFAULT_CRITERIA } from '../components/FilterPresets';
+ import { FilterPanel, type FilterChip, type FilterGroup } from '../components/FilterPanel';
+-import { ChevronRight } from '../components/icons';
++import { ChevronRight, Check } from '../components/icons';
+ import { formatShort } from '../utils/dates';
+ import { PersonChip } from '../components/PersonChip';
+ import { StatusBadge } from '../components/StatusBadge';
+ import { PlanningBadge } from '../components/PlanningBadge';
++import { PriorityBadge } from '../components/PriorityBadge';
+ import { Coin } from '../components/Coin';
+ import { parseDate } from '../utils/dates';
+ import { formatDuration } from '../utils/time';
+@@ -48,6 +52,8 @@ export function TasksPage() {
+   const [clientFilter, setClientFilter] = useState('');
+   const [statusFilter, setStatusFilter] = useState('');
+   const [personFilter, setPersonFilter] = useState('');
++  const [priorityFilter, setPriorityFilter] = useState<'' | TaskPriority>('');
++  const [categoryFilter, setCategoryFilter] = useState('');
+   // Derived planning-status filter (single-select). Deliberately NOT part of
+   // `criteria`/saved presets: presets are persisted (`SavedFilterCriteria`) and
+   // this feature changes no stored shape. Consequence: presets ignore this
+@@ -78,12 +84,25 @@ export function TasksPage() {
+         }
+         if (personFilter && !assigneeIdsOfTask(state, t.id).includes(personFilter)) return false;
+         if (planningFilter && taskPlanningStatus(state, t.id) !== planningFilter) return false;
++        if (priorityFilter && t.priority !== priorityFilter) return false;
++        if (categoryFilter && t.workCategoryId !== categoryFilter) return false;
+         // Period-overlap on the task span: [startDate, endDate] vs [from, to].
+         if (from && t.endDate < from) return false;
+         if (to && t.startDate > to) return false;
+         return true;
+       }),
+-    [allTasks, state, clientFilter, statusFilter, personFilter, planningFilter, from, to],
++    [
++      allTasks,
++      state,
++      clientFilter,
++      statusFilter,
++      personFilter,
++      planningFilter,
++      priorityFilter,
++      categoryFilter,
++      from,
++      to,
++    ],
+   );
+ 
+   const criteria = {
+@@ -91,6 +110,8 @@ export function TasksPage() {
+     clientId: clientFilter,
+     statusId: statusFilter,
+     personId: personFilter,
++    priority: priorityFilter,
++    workCategoryId: categoryFilter,
+     from,
+     to,
+   };
+@@ -99,6 +120,8 @@ export function TasksPage() {
+     setClientFilter(c.clientId);
+     setStatusFilter(c.statusId);
+     setPersonFilter(c.personId);
++    setPriorityFilter(c.priority);
++    setCategoryFilter(c.workCategoryId);
+     setFrom(c.from);
+     setTo(c.to);
+   };
+@@ -108,6 +131,8 @@ export function TasksPage() {
+     setStatusFilter('');
+     setPersonFilter('');
+     setPlanningFilter('');
++    setPriorityFilter('');
++    setCategoryFilter('');
+     setFrom('');
+     setTo('');
+   };
+@@ -143,6 +168,26 @@ export function TasksPage() {
+         ...state.people.map((p) => ({ value: p.id, label: p.name })),
+       ],
+     },
++    {
++      key: 'priority',
++      label: 'Priorytet',
++      value: priorityFilter,
++      onChange: (v) => setPriorityFilter(v as '' | TaskPriority),
++      options: [
++        { value: '', label: 'Wszystkie' },
++        ...TASK_PRIORITIES.map((p) => ({ value: p, label: PRIORITY_LABELS[p] })),
++      ],
++    },
++    {
++      key: 'category',
++      label: 'Kategoria',
++      value: categoryFilter,
++      onChange: setCategoryFilter,
++      options: [
++        { value: '', label: 'Wszystkie' },
++        ...state.workCategories.map((c) => ({ value: c.id, label: c.name })),
++      ],
++    },
+     {
+       key: 'planning',
+       label: 'Planowanie',
+@@ -160,6 +205,8 @@ export function TasksPage() {
+     (statusFilter ? 1 : 0) +
+     (personFilter ? 1 : 0) +
+     (planningFilter ? 1 : 0) +
++    (priorityFilter ? 1 : 0) +
++    (categoryFilter ? 1 : 0) +
+     (from ? 1 : 0) +
+     (to ? 1 : 0);
+ 
+@@ -188,6 +235,18 @@ export function TasksPage() {
+       label: `Planowanie: ${planningFilter}`,
+       onRemove: () => setPlanningFilter(''),
+     });
++  if (priorityFilter)
++    chips.push({
++      key: 'priority',
++      label: `Priorytet: ${PRIORITY_LABELS[priorityFilter]}`,
++      onRemove: () => setPriorityFilter(''),
++    });
++  if (categoryFilter)
++    chips.push({
++      key: 'category',
++      label: `Kategoria: ${getWorkCategory(state, categoryFilter)?.name ?? '—'}`,
++      onRemove: () => setCategoryFilter(''),
++    });
+   if (from) chips.push({ key: 'from', label: `Od: ${formatShort(from)}`, onRemove: () => setFrom('') });
+   if (to) chips.push({ key: 'to', label: `Do: ${formatShort(to)}`, onRemove: () => setTo('') });
+ 
+@@ -249,6 +308,8 @@ export function TasksPage() {
+             const planned = taskPlannedTotal(state, task.id);
+             const project = getProject(state, task.projectId);
+             const client = project ? getClient(state, project.clientId) : undefined;
++            const category = getWorkCategory(state, task.workCategoryId);
++            const checklistDone = task.checklist.filter((c) => c.done).length;
+             return (
+               <li key={task.id} className="task-card">
+                 <button
+@@ -260,6 +321,8 @@ export function TasksPage() {
+                     <span className="task-title">{task.title}</span>
+                     <StatusBadge status={getStatus(state, task.statusId)} />
+                     <PlanningBadge status={taskPlanningStatus(state, task.id)} />
++                    {task.priority !== 'normal' && <PriorityBadge priority={task.priority} />}
++                    {category && <span className="muted task-category">{category.name}</span>}
+                     {project && (
+                       <span className="project-badge">
+                         <Coin paid={project.paid} size={13} />
+@@ -281,6 +344,11 @@ export function TasksPage() {
+                     {task.estimatedHours != null && (
+                       <span className="muted"> / szac. {formatDuration(task.estimatedHours)}</span>
+                     )}
++                    {task.checklist.length > 0 && (
++                      <span className="muted task-checklist-progress">
++                        <Check size={13} aria-hidden /> {checklistDone}/{task.checklist.length}
++                      </span>
++                    )}
+                   </div>
+                   <ChevronRight className="card-chevron" size={16} aria-hidden />
+                 </button>
+diff --git a/src/store/AppStore.tsx b/src/store/AppStore.tsx
+index 19abc19..7aaa2b1 100644
+--- a/src/store/AppStore.tsx
++++ b/src/store/AppStore.tsx
+@@ -13,6 +13,7 @@ import type {
+   AccessRole,
+   ActivityEvent,
+   AppData,
++  ChecklistItem,
+   CommentEntityType,
+   FilterPage,
+   Milestone,
+@@ -22,6 +23,7 @@ import type {
+   SavedFilterCriteria,
+   Task,
+   TaskAssignment,
++  TaskPriority,
+   WorkloadEntry,
+ } from '../types';
+ import { DEFAULT_CAPACITY, loadData, sanitizeWorkDays, saveData, slugify } from './storage';
+@@ -56,6 +58,9 @@ export interface TaskDraft {
+   startDate: string;
+   endDate: string;
+   estimatedHours: number | null;
++  priority: TaskPriority;
++  workCategoryId: string;
++  checklist: ChecklistItem[];
+ }
+ 
+ export interface ProjectDraft {
+@@ -144,6 +149,9 @@ export type Action =
+   | { type: 'ADD_SERVICE_TYPE'; name: string }
+   | { type: 'RENAME_SERVICE_TYPE'; serviceTypeId: string; name: string }
+   | { type: 'DELETE_SERVICE_TYPE'; serviceTypeId: string }
++  | { type: 'ADD_WORK_CATEGORY'; name: string }
++  | { type: 'RENAME_WORK_CATEGORY'; workCategoryId: string; name: string }
++  | { type: 'DELETE_WORK_CATEGORY'; workCategoryId: string }
+   | { type: 'SAVE_STATUS'; statusId: string | null; name: string; color: string }
+   | { type: 'REORDER_STATUS'; statusId: string; direction: -1 | 1 }
+   | { type: 'SET_STATUS_ARCHIVED'; statusId: string; archived: boolean }
+@@ -235,9 +243,17 @@ function reindexDays(workload: WorkloadEntry[], keys: Set<string>): WorkloadEntr
+ 
+ // ---- Task handlers ----
+ 
++/** Wholesale-replace the checklist from the draft: trim texts, drop empty ones. */
++function cleanChecklist(items: ChecklistItem[]): ChecklistItem[] {
++  return items
++    .map((item) => ({ ...item, text: item.text.trim() }))
++    .filter((item) => item.text !== '');
++}
++
+ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
+   const { taskId, draft, assigneeIds, allocations } = payload;
+   const ts = nowIso();
++  const checklist = cleanChecklist(draft.checklist);
+ 
+   let tasks = state.tasks;
+   let realTaskId: string;
+@@ -253,6 +269,9 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
+       startDate: draft.startDate,
+       endDate: draft.endDate,
+       estimatedHours: draft.estimatedHours,
++      priority: draft.priority,
++      workCategoryId: draft.workCategoryId,
++      checklist,
+       createdAt: ts,
+       updatedAt: ts,
+     };
+@@ -272,6 +291,9 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
+             startDate: draft.startDate,
+             endDate: draft.endDate,
+             estimatedHours: draft.estimatedHours,
++            priority: draft.priority,
++            workCategoryId: draft.workCategoryId,
++            checklist,
+             updatedAt: ts,
+           }
+         : t,
+@@ -1519,6 +1541,29 @@ export function reducer(state: AppData, action: Action): AppData {
+           p.serviceTypeId === action.serviceTypeId ? { ...p, serviceTypeId: '' } : p,
+         ),
+       };
++    case 'ADD_WORK_CATEGORY': {
++      const name = action.name.trim();
++      if (!name) return state;
++      return {
++        ...state,
++        workCategories: [...state.workCategories, { id: uid(), name }],
++      };
++    }
++    case 'RENAME_WORK_CATEGORY':
++      return {
++        ...state,
++        workCategories: state.workCategories.map((c) =>
++          c.id === action.workCategoryId ? { ...c, name: action.name } : c,
++        ),
++      };
++    case 'DELETE_WORK_CATEGORY':
++      return {
++        ...state,
++        workCategories: state.workCategories.filter((c) => c.id !== action.workCategoryId),
++        tasks: state.tasks.map((t) =>
++          t.workCategoryId === action.workCategoryId ? { ...t, workCategoryId: '' } : t,
++        ),
++      };
+     case 'SAVE_STATUS':
+       return saveStatus(state, action.statusId, action.name, action.color);
+     case 'REORDER_STATUS':
+diff --git a/src/store/blockActions.test.ts b/src/store/blockActions.test.ts
+index 672c9ed..fe61709 100644
+--- a/src/store/blockActions.test.ts
++++ b/src/store/blockActions.test.ts
+@@ -20,6 +20,9 @@ function makeTask(overrides: Partial<Task> & { id: string }): Task {
+     startDate: '2026-07-06',
+     endDate: '2026-07-08',
+     estimatedHours: null,
++    priority: 'normal',
++    workCategoryId: '',
++    checklist: [],
+     createdAt: '2026-01-01T00:00:00.000Z',
+     updatedAt: '2026-01-01T00:00:00.000Z',
+     ...overrides,
+@@ -623,6 +626,9 @@ describe('SAVE_TASK bin behavior', () => {
+       startDate: task.startDate,
+       endDate: task.endDate,
+       estimatedHours: task.estimatedHours,
++      priority: task.priority,
++      workCategoryId: task.workCategoryId,
++      checklist: task.checklist,
+     };
+   }
+ 
+diff --git a/src/store/seed.ts b/src/store/seed.ts
+index fe3811a..13b301c 100644
+--- a/src/store/seed.ts
++++ b/src/store/seed.ts
+@@ -40,6 +40,12 @@ export function buildSampleData(): AppData {
+   const svcSocial = { id: uid(), name: 'Media społecznościowe' };
+   const serviceTypes = [svcWeb, svcBrand, svcSocial];
+ 
++  // Work categories (admin-managed dictionary; referenced by task.workCategoryId)
++  const catKreacja = { id: uid(), name: 'Kreacja' };
++  const catWdrozenie = { id: uid(), name: 'Wdrożenie' };
++  const catTesty = { id: uid(), name: 'Testy' };
++  const workCategories = [catKreacja, catWdrozenie, catTesty];
++
+   // People. Work hours default to 8:00–16:00 (480 → min(1440, 480+capacity*60)).
+   // All passwordless (passwordHash: '') so the demo can log in without a password.
+   // Kasia is defined first so she can be the others' supervisor; the `people`
+@@ -197,6 +203,13 @@ export function buildSampleData(): AppData {
+     startDate: mon,
+     endDate: fri,
+     estimatedHours: 40,
++    priority: 'high',
++    workCategoryId: catKreacja.id,
++    checklist: [
++      { id: uid(), text: 'Moodboard zaakceptowany', done: true },
++      { id: uid(), text: 'Sekcja hero', done: false },
++      { id: uid(), text: 'Tabela cen', done: false },
++    ],
+     createdAt: now,
+     updatedAt: now,
+   };
+@@ -229,6 +242,9 @@ export function buildSampleData(): AppData {
+     startDate: mon,
+     endDate: fri,
+     estimatedHours: 12,
++    priority: 'normal',
++    workCategoryId: catKreacja.id,
++    checklist: [],
+     createdAt: now,
+     updatedAt: now,
+   };
+@@ -250,6 +266,9 @@ export function buildSampleData(): AppData {
+     startDate: wed,
+     endDate: fri,
+     estimatedHours: 16,
++    priority: 'urgent',
++    workCategoryId: catWdrozenie.id,
++    checklist: [],
+     createdAt: now,
+     updatedAt: now,
+   };
+@@ -272,6 +291,9 @@ export function buildSampleData(): AppData {
+     startDate: addDaysStr(mon, -7),
+     endDate: addDaysStr(fri, -7),
+     estimatedHours: 10,
++    priority: 'normal',
++    workCategoryId: catTesty.id,
++    checklist: [],
+     createdAt: now,
+     updatedAt: now,
+   };
+@@ -326,6 +348,7 @@ export function buildSampleData(): AppData {
+     clients,
+     departments,
+     serviceTypes,
++    workCategories,
+     statuses,
+     projects,
+     milestones,
+diff --git a/src/store/selectors.test.ts b/src/store/selectors.test.ts
+index e584e48..b77c2ec 100644
+--- a/src/store/selectors.test.ts
++++ b/src/store/selectors.test.ts
+@@ -41,6 +41,9 @@ function makeTask(overrides: Partial<Task> & { id: string }): Task {
+     startDate: '2026-07-06',
+     endDate: '2026-07-08',
+     estimatedHours: null,
++    priority: 'normal',
++    workCategoryId: '',
++    checklist: [],
+     createdAt: '2026-01-01T00:00:00.000Z',
+     updatedAt: '2026-01-01T00:00:00.000Z',
+     ...overrides,
+diff --git a/src/store/selectors.ts b/src/store/selectors.ts
+index 0a0200b..e222492 100644
+--- a/src/store/selectors.ts
++++ b/src/store/selectors.ts
+@@ -13,6 +13,7 @@ import type {
+   ServiceType,
+   Status,
+   Task,
++  WorkCategory,
+   WorkloadEntry,
+ } from '../types';
+ import { DEFAULT_CAPACITY } from './storage';
+@@ -55,6 +56,13 @@ export function getServiceType(
+   return state.serviceTypes.find((s) => s.id === serviceTypeId);
+ }
+ 
++export function getWorkCategory(
++  state: AppData,
++  workCategoryId: string,
++): WorkCategory | undefined {
++  return state.workCategories.find((c) => c.id === workCategoryId);
++}
++
+ // ---- Statuses ----
+ 
+ /** Active (non-archived) statuses in pipeline order. */
+diff --git a/src/store/storage.test.ts b/src/store/storage.test.ts
+index 7f1c179..5a98bd9 100644
+--- a/src/store/storage.test.ts
++++ b/src/store/storage.test.ts
+@@ -4,9 +4,16 @@
+ // funnels through ensureStartMinutes, so it's worth covering in isolation
+ // from localStorage/loadData.
+ import { describe, expect, it } from 'vitest';
+-import { DATA_VERSION, ensureStartMinutes, emptyData, loadData } from './storage';
++import {
++  DATA_VERSION,
++  DEFAULT_FILTER_CRITERIA,
++  ensureStartMinutes,
++  emptyData,
++  loadData,
++  normalizeTaskMeta,
++} from './storage';
+ import { BIN_DATE } from '../utils/time';
+-import type { AppData, WorkloadEntry } from '../types';
++import type { AppData, SavedFilter, Task, WorkCategory, WorkloadEntry } from '../types';
+ 
+ // `loadData()` reads directly from `localStorage`, which the vitest `node`
+ // environment does not provide. Stub a minimal in-memory implementation for
+@@ -267,7 +274,7 @@ describe('loadData migration v4 -> v5', () => {
+     const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+ 
+     expect(data.version).toBe(DATA_VERSION);
+-    expect(DATA_VERSION).toBe(5);
++    expect(DATA_VERSION).toBe(6);
+ 
+     const p1 = data.people.find((p) => p.id === 'p1')!;
+     const p2 = data.people.find((p) => p.id === 'p2')!;
+@@ -312,7 +319,7 @@ describe('loadData migration v4 -> v5', () => {
+     const twice = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(once) }, () => loadData());
+ 
+     expect(twice).toEqual(once);
+-    expect(twice.version).toBe(5);
++    expect(twice.version).toBe(6);
+     expect(twice.people[0].accessRole).toBe('administrator');
+   });
+ 
+@@ -455,3 +462,274 @@ describe('impersonatorId persistence (PKG-20260708-b2-tests)', () => {
+     expect(twice.impersonatorId).toBe('p1');
+   });
+ });
++
++// ---------------------------------------------------------------------------
++// normalizeTaskMeta (PKG-20260710-task-meta-model): the v5->v6 pass adding
++// task priority/workCategoryId/checklist and filling saved-filter criteria.
++// Runs on EVERY load, same idempotent-by-value philosophy as ensureStartMinutes
++// / migratePerson — exercised directly here, and end-to-end through loadData()
++// below.
++// ---------------------------------------------------------------------------
++
++describe('normalizeTaskMeta', () => {
++  // Builds a deliberately v5-shaped task (no priority/workCategoryId/checklist
++  // unless overridden) by casting through unknown, mirroring how storage.ts's
++  // own migration code treats pre-v6 payloads as untyped records.
++  function v5Task(overrides: Record<string, unknown> & { id: string }): Task {
++    return {
++      projectId: 'proj1',
++      statusId: 'status1',
++      title: 'Task',
++      description: '',
++      startDate: '2026-07-06',
++      endDate: '2026-07-08',
++      estimatedHours: null,
++      createdAt: '2026-01-01T00:00:00.000Z',
++      updatedAt: '2026-01-01T00:00:00.000Z',
++      ...overrides,
++    } as unknown as Task;
++  }
++
++  it('a v5-shaped task (no priority/workCategoryId/checklist keys) gains priority "normal", workCategoryId "", and checklist []', () => {
++    const task = v5Task({ id: 't1' });
++    const next = normalizeTaskMeta({ ...emptyData(), tasks: [task] });
++    const normalized = next.tasks[0];
++    expect(normalized.priority).toBe('normal');
++    expect(normalized.workCategoryId).toBe('');
++    expect(normalized.checklist).toEqual([]);
++  });
++
++  it("resets an invalid priority (e.g. 'critical') to 'normal' and preserves a valid one ('urgent')", () => {
++    const bad = v5Task({ id: 't1', priority: 'critical' });
++    const good = v5Task({ id: 't2', priority: 'urgent' });
++    const next = normalizeTaskMeta({ ...emptyData(), tasks: [bad, good] });
++    expect(next.tasks.find((t) => t.id === 't1')!.priority).toBe('normal');
++    expect(next.tasks.find((t) => t.id === 't2')!.priority).toBe('urgent');
++  });
++
++  it("resets a dangling workCategoryId (no matching row) to '' and preserves a valid reference", () => {
++    const dangling = v5Task({ id: 't1', workCategoryId: 'ghost' });
++    const valid = v5Task({ id: 't2', workCategoryId: 'cat1' });
++    const next = normalizeTaskMeta({
++      ...emptyData(),
++      workCategories: [{ id: 'cat1', name: 'Kreacja' }],
++      tasks: [dangling, valid],
++    });
++    expect(next.tasks.find((t) => t.id === 't1')!.workCategoryId).toBe('');
++    expect(next.tasks.find((t) => t.id === 't2')!.workCategoryId).toBe('cat1');
++  });
++
++  it("sanitizes a malformed checklist: non-array -> []; an item missing id gets one generated; non-string text coerces to ''; done is exactly `item.done === true`; non-object entries are dropped", () => {
++    const nonArray = v5Task({ id: 't1', checklist: 'not-an-array' });
++    const messy = v5Task({
++      id: 't2',
++      checklist: [
++        { text: 'no id', done: true }, // missing id -> generated
++        { id: 'c2', text: 42, done: 'yes' }, // non-string text, non-boolean done
++        'garbage', // non-object entry, dropped
++        null, // non-object entry, dropped
++        { id: 'c3', text: 'fine', done: false },
++      ],
++    });
++    const next = normalizeTaskMeta({ ...emptyData(), tasks: [nonArray, messy] });
++
++    expect(next.tasks.find((t) => t.id === 't1')!.checklist).toEqual([]);
++
++    const messyChecklist = next.tasks.find((t) => t.id === 't2')!.checklist;
++    expect(messyChecklist).toHaveLength(3); // the 2 non-object entries dropped
++    expect(messyChecklist[0].id).toBeTruthy(); // generated id (was missing)
++    expect(messyChecklist[0].text).toBe('no id');
++    expect(messyChecklist[0].done).toBe(true);
++    expect(messyChecklist[1].id).toBe('c2');
++    expect(messyChecklist[1].text).toBe(''); // 42 -> '' (non-string coerces)
++    expect(messyChecklist[1].done).toBe(false); // 'yes' !== true
++    expect(messyChecklist[2]).toEqual({ id: 'c3', text: 'fine', done: false });
++  });
++
++  it("fills a v5 saved filter's criteria with DEFAULT_FILTER_CRITERIA's priority/workCategoryId ('') while other criteria fields survive unchanged", () => {
++    const filter = {
++      id: 'f1',
++      name: 'My filter',
++      page: 'tasks' as const,
++      criteria: {
++        paid: 'unpaid',
++        clientId: 'c1',
++        statusId: 's1',
++        personId: 'p1',
++        from: '2026-07-01',
++        to: '2026-07-31',
++      },
++    } as unknown as SavedFilter;
++    const next = normalizeTaskMeta({ ...emptyData(), savedFilters: [filter] });
++    const criteria = next.savedFilters[0].criteria;
++    expect(criteria.priority).toBe('');
++    expect(criteria.workCategoryId).toBe('');
++    expect(criteria.paid).toBe('unpaid');
++    expect(criteria.clientId).toBe('c1');
++    expect(criteria.statusId).toBe('s1');
++    expect(criteria.personId).toBe('p1');
++    expect(criteria.from).toBe('2026-07-01');
++    expect(criteria.to).toBe('2026-07-31');
++  });
++
++  it("resets an invalid criteria.priority to ''", () => {
++    const filter = {
++      id: 'f1',
++      name: 'x',
++      page: 'tasks' as const,
++      criteria: { ...DEFAULT_FILTER_CRITERIA, priority: 'critical' },
++    } as unknown as SavedFilter;
++    const next = normalizeTaskMeta({ ...emptyData(), savedFilters: [filter] });
++    expect(next.savedFilters[0].criteria.priority).toBe('');
++  });
++
++  it('coerces a missing/non-array workCategories to []', () => {
++    const data = { ...emptyData(), workCategories: undefined as unknown as WorkCategory[] };
++    const next = normalizeTaskMeta(data);
++    expect(next.workCategories).toEqual([]);
++  });
++
++  it('is idempotent: running normalizeTaskMeta twice on its own output is deep-equal to running it once (each pass rebuilds task/filter objects, so this is value equality, not reference equality)', () => {
++    const task = v5Task({
++      id: 't1',
++      priority: 'bogus',
++      workCategoryId: 'ghost',
++      checklist: [{ text: 'x' }],
++    });
++    const filter = {
++      id: 'f1',
++      name: 'x',
++      page: 'tasks' as const,
++      criteria: { paid: 'all', clientId: '', statusId: '', personId: '', from: '', to: '' },
++    } as unknown as SavedFilter;
++    const data = { ...emptyData(), tasks: [task], savedFilters: [filter] };
++    const once = normalizeTaskMeta(data);
++    const twice = normalizeTaskMeta(once);
++    expect(twice).toEqual(once);
++  });
++
++  it('leaves an already-normalized (v6-shaped) task and saved filter value-equal after a pass', () => {
++    const task = v5Task({
++      id: 't1',
++      priority: 'high',
++      workCategoryId: 'cat1',
++      checklist: [{ id: 'c1', text: 'Do it', done: true }],
++    });
++    const filter = {
++      id: 'f1',
++      name: 'x',
++      page: 'tasks' as const,
++      criteria: { ...DEFAULT_FILTER_CRITERIA, priority: 'high' },
++    } as unknown as SavedFilter;
++    const next = normalizeTaskMeta({
++      ...emptyData(),
++      workCategories: [{ id: 'cat1', name: 'Kreacja' }],
++      tasks: [task],
++      savedFilters: [filter],
++    });
++    expect(next.tasks[0]).toEqual(task);
++    expect(next.savedFilters[0].criteria).toEqual(filter.criteria);
++  });
++});
++
++// ---------------------------------------------------------------------------
++// End-to-end v5 -> v6 migration through loadData() (task-metadata bundle).
++// ---------------------------------------------------------------------------
++
++describe('loadData migration v5 -> v6 (task metadata)', () => {
++  it('a stored v5 payload with a task missing the new fields and a v5 saved filter loads as version 6 with all defaults applied and NO data loss (task title/dates/estimate, workload untouched)', () => {
++    const payload = {
++      version: 5,
++      clients: [],
++      departments: [],
++      serviceTypes: [],
++      statuses: [],
++      projects: [],
++      milestones: [],
++      tasks: [
++        {
++          id: 't1',
++          projectId: 'proj1',
++          statusId: 'status1',
++          title: 'Legacy task',
++          description: 'desc',
++          startDate: '2026-07-06',
++          endDate: '2026-07-10',
++          estimatedHours: 8,
++          createdAt: '2026-01-01T00:00:00.000Z',
++          updatedAt: '2026-01-01T00:00:00.000Z',
++          // no priority / workCategoryId / checklist — v5 shape
++        },
++      ],
++      people: [
++        {
++          id: 'p1',
++          firstName: 'Ann',
++          lastName: 'Admin',
++          name: 'Ann Admin',
++          email: '',
++          role: '',
++          departmentId: '',
++          avatar: '',
++          capacity: 8,
++          accessRole: 'administrator',
++        },
++      ],
++      assignments: [],
++      workload: [
++        {
++          id: 'w1',
++          taskId: 't1',
++          personId: 'p1',
++          date: '2026-07-06',
++          plannedHours: 4,
++          startMinutes: 480,
++          sortIndex: 0,
++        },
++      ],
++      comments: [],
++      activity: [],
++      currentUserId: 'p1',
++      sampleBannerDismissed: false,
++      savedFilters: [
++        {
++          id: 'f1',
++          name: 'My tasks',
++          page: 'tasks',
++          criteria: { paid: 'all', clientId: '', statusId: '', personId: 'p1', from: '', to: '' },
++          // no priority / workCategoryId — v5 criteria shape
++        },
++      ],
++    };
++
++    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
++
++    expect(data.version).toBe(DATA_VERSION);
++    expect(DATA_VERSION).toBe(6);
++
++    const task = data.tasks.find((t) => t.id === 't1')!;
++    expect(task.priority).toBe('normal');
++    expect(task.workCategoryId).toBe('');
++    expect(task.checklist).toEqual([]);
++    // No data loss on the pre-existing fields.
++    expect(task.title).toBe('Legacy task');
++    expect(task.startDate).toBe('2026-07-06');
++    expect(task.endDate).toBe('2026-07-10');
++    expect(task.estimatedHours).toBe(8);
++
++    // Workload untouched.
++    expect(data.workload).toHaveLength(1);
++    expect(data.workload[0]).toMatchObject({
++      taskId: 't1',
++      personId: 'p1',
++      date: '2026-07-06',
++      plannedHours: 4,
++    });
++
++    const filter = data.savedFilters.find((f) => f.id === 'f1')!;
++    expect(filter.criteria.priority).toBe('');
++    expect(filter.criteria.workCategoryId).toBe('');
++    expect(filter.criteria.personId).toBe('p1'); // unchanged
++    expect(filter.criteria.paid).toBe('all'); // unchanged
++  });
++});
+diff --git a/src/store/storage.ts b/src/store/storage.ts
+index 07324a5..4751318 100644
+--- a/src/store/storage.ts
++++ b/src/store/storage.ts
+@@ -1,6 +1,17 @@
+ // Single persistence module. Wraps localStorage so it can be swapped for an API later.
+ // The stored JSON is versioned; loadData migrates older payloads forward.
+-import type { AccessRole, AppData, Person, Status, WorkloadEntry } from '../types';
++import type {
++  AccessRole,
++  AppData,
++  ChecklistItem,
++  Person,
++  SavedFilterCriteria,
++  Status,
++  Task,
++  TaskPriority,
++  WorkloadEntry,
++} from '../types';
++import { TASK_PRIORITIES } from '../utils/priority';
+ import {
+   BIN_DATE,
+   DAY_MINUTES,
+@@ -14,12 +25,25 @@ import {
+ 
+ const STORAGE_KEY = 'n2hub.data.v1';
+ const LEGACY_STORAGE_KEYS = ['n2ub.data.v1', 'n2click.data.v1'];
+-export const DATA_VERSION = 5;
++export const DATA_VERSION = 6;
+ 
+ export const DEFAULT_CAPACITY = 8; // hours available per person per day
+ export const WORKDAY_START_MIN = 480; // 8:00 — default person work-hours start
+ export const DEFAULT_WORKDAYS: number[] = [1, 2, 3, 4, 5]; // Mon–Fri (ISO weekdays)
+ 
++/** Canonical "all" filter criteria. Storage owns this so it never imports from
++ *  components; the UI (FilterPresets) re-exports it as DEFAULT_CRITERIA. */
++export const DEFAULT_FILTER_CRITERIA: SavedFilterCriteria = {
++  paid: 'all',
++  clientId: '',
++  statusId: '',
++  personId: '',
++  priority: '',
++  workCategoryId: '',
++  from: '',
++  to: '',
++};
++
+ /** Default informational work-end minute for a given daily capacity. */
+ export function defaultWorkEndMinutes(capacity: number): number {
+   return Math.min(DAY_MINUTES, WORKDAY_START_MIN + Math.round(capacity * 60));
+@@ -74,6 +98,7 @@ export function emptyData(): AppData {
+     clients: [],
+     departments: [],
+     serviceTypes: [],
++    workCategories: [],
+     statuses: buildDefaultStatuses(),
+     projects: [],
+     milestones: [],
+@@ -248,6 +273,9 @@ function migrateV1(raw: Record<string, unknown>): AppData {
+     startDate: t.startDate,
+     endDate: t.endDate,
+     estimatedHours: t.estimatedHours ?? null,
++    priority: 'normal',
++    workCategoryId: '',
++    checklist: [],
+     createdAt: t.createdAt ?? now,
+     updatedAt: t.updatedAt ?? now,
+   }));
+@@ -529,6 +557,62 @@ export function sanitizeImpersonator(data: AppData): AppData {
+   return data;
+ }
+ 
++/**
++ * Idempotent normalize pass for the task-metadata model (priority, work
++ * category, checklist) and saved-filter criteria. Runs on EVERY load — same
++ * philosophy as migratePerson / ensureStartMinutes — so a payload stamped v6
++ * whose tasks/presets were never actually migrated (e.g. persisted mid-dev via
++ * HMR) still self-heals instead of staying broken forever. Idempotent by value:
++ * a second pass changes nothing.
++ *
++ * Guarantees after the pass:
++ * - `workCategories` is an array (defensive; the emptyData spread covers the
++ *   plainly-missing case, this also catches a non-array value);
++ * - every task has a valid `priority` (unknown value → 'normal'), a string
++ *   `workCategoryId` that references an existing dictionary row (dangling
++ *   reference → '', same spirit as sanitizeImpersonator), and a well-shaped
++ *   `checklist` (non-array → []; each item coerced to { id, text, done },
++ *   non-object entries dropped);
++ * - every saved filter's criteria is filled from DEFAULT_FILTER_CRITERIA (old
++ *   v5 presets gain the new fields as '') with an invalid `priority` reset to ''.
++ */
++export function normalizeTaskMeta(data: AppData): AppData {
++  const str = (v: unknown): string => (typeof v === 'string' ? v : '');
++  const workCategories = Array.isArray(data.workCategories) ? data.workCategories : [];
++  const categoryIds = new Set(workCategories.map((c) => c.id));
++
++  const tasks: Task[] = data.tasks.map((raw) => {
++    const t = raw as unknown as Record<string, unknown>;
++    const priority: TaskPriority = TASK_PRIORITIES.includes(t.priority as TaskPriority)
++      ? (t.priority as TaskPriority)
++      : 'normal';
++    const rawCategory = str(t.workCategoryId);
++    const workCategoryId = categoryIds.has(rawCategory) ? rawCategory : '';
++    const checklist: ChecklistItem[] = Array.isArray(t.checklist)
++      ? (t.checklist as unknown[])
++          .filter((item): item is Record<string, unknown> =>
++            typeof item === 'object' && item !== null,
++          )
++          .map((item) => ({
++            id: str(item.id) || uid(),
++            text: str(item.text),
++            done: item.done === true,
++          }))
++      : [];
++    return { ...(raw as Task), priority, workCategoryId, checklist };
++  });
++
++  const savedFilters = data.savedFilters.map((f) => {
++    const criteria: SavedFilterCriteria = { ...DEFAULT_FILTER_CRITERIA, ...f.criteria };
++    if (criteria.priority !== '' && !TASK_PRIORITIES.includes(criteria.priority as TaskPriority)) {
++      criteria.priority = '';
++    }
++    return { ...f, criteria };
++  });
++
++  return { ...data, workCategories, tasks, savedFilters };
++}
++
+ export function loadData(): AppData {
+   try {
+     const raw =
+@@ -540,7 +624,7 @@ export function loadData(): AppData {
+     const version = typeof parsed.version === 'number' ? parsed.version : 1;
+     if (version < 2) {
+       return sanitizeImpersonator(
+-        ensureStartMinutes(migrateV4toV5(localizeLegacyData(migrateV1(parsed)))),
++        normalizeTaskMeta(ensureStartMinutes(migrateV4toV5(localizeLegacyData(migrateV1(parsed))))),
+       );
+     }
+     // Same-version load: fill any missing fields with defaults.
+@@ -558,7 +642,7 @@ export function loadData(): AppData {
+     // MATRIX[undefined] deny every action → permanent login-screen lockout.
+     // migratePerson preserves valid existing values and fills only what's absent.
+     const migrated = migrateV4toV5(localized);
+-    return sanitizeImpersonator(ensureStartMinutes(migrated));
++    return sanitizeImpersonator(normalizeTaskMeta(ensureStartMinutes(migrated)));
+   } catch {
+     return emptyData();
+   }
+diff --git a/src/store/taskMeta.test.ts b/src/store/taskMeta.test.ts
+new file mode 100644
+index 0000000..1d43ab7
+--- /dev/null
++++ b/src/store/taskMeta.test.ts
+@@ -0,0 +1,232 @@
++// Unit tests for the task-metadata reducer behavior (PKG-20260710-task-meta-model):
++// SAVE_TASK persisting priority/workCategoryId/checklist, and the three
++// ADD/RENAME/DELETE_WORK_CATEGORY actions. Pure reducer tests: no React
++// rendering, no localStorage — build AppData fixtures by hand from
++// emptyData() + literal tasks/categories, mirroring blockActions.test.ts.
++import { describe, expect, it } from 'vitest';
++import { reducer, type SaveTaskPayload, type TaskDraft } from './AppStore';
++import { emptyData } from './storage';
++import type { AppData, ChecklistItem, Task, WorkCategory } from '../types';
++
++function makeState(overrides: Partial<AppData> = {}): AppData {
++  return { ...emptyData(), ...overrides };
++}
++
++function makeTask(overrides: Partial<Task> & { id: string }): Task {
++  return {
++    projectId: 'proj1',
++    statusId: 'status1',
++    title: 'Task',
++    description: '',
++    startDate: '2026-07-06',
++    endDate: '2026-07-08',
++    estimatedHours: null,
++    priority: 'normal',
++    workCategoryId: '',
++    checklist: [],
++    createdAt: '2026-01-01T00:00:00.000Z',
++    updatedAt: '2026-01-01T00:00:00.000Z',
++    ...overrides,
++  };
++}
++
++function makeCategory(overrides: Partial<WorkCategory> & { id: string }): WorkCategory {
++  return { name: 'Category', ...overrides };
++}
++
++function draftFor(task: Task, overrides: Partial<TaskDraft> = {}): TaskDraft {
++  return {
++    projectId: task.projectId,
++    statusId: task.statusId,
++    title: task.title,
++    description: task.description,
++    startDate: task.startDate,
++    endDate: task.endDate,
++    estimatedHours: task.estimatedHours,
++    priority: task.priority,
++    workCategoryId: task.workCategoryId,
++    checklist: task.checklist,
++    ...overrides,
++  };
++}
++
++describe('SAVE_TASK metadata', () => {
++  it('create: a draft with priority "high", a real workCategoryId, and a 2-item checklist persists all three on the created task', () => {
++    const cat = makeCategory({ id: 'cat1', name: 'Kreacja' });
++    const state = makeState({ workCategories: [cat] });
++    const checklist: ChecklistItem[] = [
++      { id: 'c1', text: 'Step one', done: false },
++      { id: 'c2', text: 'Step two', done: true },
++    ];
++    const draft: TaskDraft = {
++      projectId: 'proj1',
++      statusId: 'status1',
++      title: 'New task',
++      description: '',
++      startDate: '2026-07-06',
++      endDate: '2026-07-08',
++      estimatedHours: null,
++      priority: 'high',
++      workCategoryId: 'cat1',
++      checklist,
++    };
++    const payload: SaveTaskPayload = { taskId: null, draft, assigneeIds: [], allocations: [] };
++
++    const next = reducer(state, { type: 'SAVE_TASK', payload });
++
++    expect(next.tasks).toHaveLength(1);
++    const created = next.tasks[0];
++    expect(created.priority).toBe('high');
++    expect(created.workCategoryId).toBe('cat1');
++    expect(created.checklist).toEqual(checklist);
++  });
++
++  it('edit: checklist is replaced WHOLESALE — old removed/toggled items do not survive; priority/category update in place; updatedAt bumps', () => {
++    const oldChecklist: ChecklistItem[] = [
++      { id: 'old1', text: 'Old item', done: false },
++      { id: 'old2', text: 'Old item 2', done: true },
++    ];
++    const task = makeTask({
++      id: 't1',
++      priority: 'low',
++      workCategoryId: 'cat1',
++      checklist: oldChecklist,
++      updatedAt: '2020-01-01T00:00:00.000Z',
++    });
++    const state = makeState({
++      tasks: [task],
++      workCategories: [makeCategory({ id: 'cat1' }), makeCategory({ id: 'cat2' })],
++    });
++    const newChecklist: ChecklistItem[] = [{ id: 'new1', text: 'New item', done: false }];
++
++    const next = reducer(state, {
++      type: 'SAVE_TASK',
++      payload: {
++        taskId: 't1',
++        draft: draftFor(task, {
++          priority: 'urgent',
++          workCategoryId: 'cat2',
++          checklist: newChecklist,
++        }),
++        assigneeIds: [],
++        allocations: [],
++      },
++    });
++
++    const edited = next.tasks.find((t) => t.id === 't1')!;
++    expect(edited.priority).toBe('urgent');
++    expect(edited.workCategoryId).toBe('cat2');
++    expect(edited.checklist).toEqual(newChecklist);
++    expect(edited.checklist.some((i) => i.id === 'old1' || i.id === 'old2')).toBe(false);
++    expect(edited.updatedAt).not.toBe('2020-01-01T00:00:00.000Z');
++  });
++
++  it('drops empty-text checklist items (including whitespace-only) on write, per the defensive trim', () => {
++    const task = makeTask({ id: 't1' });
++    const state = makeState({ tasks: [task] });
++    const checklist: ChecklistItem[] = [
++      { id: 'c1', text: '  Keep me  ', done: false },
++      { id: 'c2', text: '   ', done: false }, // whitespace-only -> dropped
++      { id: 'c3', text: '', done: true }, // empty -> dropped
++    ];
++
++    const next = reducer(state, {
++      type: 'SAVE_TASK',
++      payload: {
++        taskId: 't1',
++        draft: draftFor(task, { checklist }),
++        assigneeIds: [],
++        allocations: [],
++      },
++    });
++
++    const edited = next.tasks.find((t) => t.id === 't1')!;
++    expect(edited.checklist).toHaveLength(1);
++    expect(edited.checklist[0]).toEqual({ id: 'c1', text: 'Keep me', done: false });
++  });
++
++  it('checklist item "done" toggling persists through a create -> edit round-trip', () => {
++    const draft: TaskDraft = {
++      projectId: 'proj1',
++      statusId: 'status1',
++      title: 'Task',
++      description: '',
++      startDate: '2026-07-06',
++      endDate: '2026-07-08',
++      estimatedHours: null,
++      priority: 'normal',
++      workCategoryId: '',
++      checklist: [{ id: 'c1', text: 'Do it', done: false }],
++    };
++    const state = makeState();
++    const created = reducer(state, {
++      type: 'SAVE_TASK',
++      payload: { taskId: null, draft, assigneeIds: [], allocations: [] },
++    });
++    const createdTask = created.tasks[0];
++    expect(createdTask.checklist[0].done).toBe(false);
++
++    const toggled = reducer(created, {
++      type: 'SAVE_TASK',
++      payload: {
++        taskId: createdTask.id,
++        draft: draftFor(createdTask, {
++          checklist: [{ ...createdTask.checklist[0], done: true }],
++        }),
++        assigneeIds: [],
++        allocations: [],
++      },
++    });
++
++    const edited = toggled.tasks.find((t) => t.id === createdTask.id)!;
++    expect(edited.checklist[0].done).toBe(true);
++    expect(edited.checklist[0].id).toBe('c1'); // same item, not a fresh one
++  });
++});
++
++describe('Work category CRUD', () => {
++  it('ADD_WORK_CATEGORY trims the name and appends a new row', () => {
++    const state = makeState();
++    const next = reducer(state, { type: 'ADD_WORK_CATEGORY', name: '  Kreacja  ' });
++    expect(next.workCategories).toHaveLength(1);
++    expect(next.workCategories[0].name).toBe('Kreacja');
++  });
++
++  it('ADD_WORK_CATEGORY is a no-op (same state reference) for an empty/whitespace-only name', () => {
++    const state = makeState();
++    const next = reducer(state, { type: 'ADD_WORK_CATEGORY', name: '   ' });
++    expect(next).toBe(state);
++  });
++
++  it('RENAME_WORK_CATEGORY renames only the targeted row', () => {
++    const state = makeState({
++      workCategories: [
++        makeCategory({ id: 'cat1', name: 'Kreacja' }),
++        makeCategory({ id: 'cat2', name: 'Testy' }),
++      ],
++    });
++    const next = reducer(state, {
++      type: 'RENAME_WORK_CATEGORY',
++      workCategoryId: 'cat1',
++      name: 'Design',
++    });
++    expect(next.workCategories.find((c) => c.id === 'cat1')!.name).toBe('Design');
++    expect(next.workCategories.find((c) => c.id === 'cat2')!.name).toBe('Testy');
++  });
++
++  it('DELETE_WORK_CATEGORY removes the row AND resets workCategoryId to \'\' on referencing tasks, while an unrelated task\'s category survives', () => {
++    const referencing = makeTask({ id: 't1', workCategoryId: 'cat1' });
++    const other = makeTask({ id: 't2', workCategoryId: 'cat2' });
++    const state = makeState({
++      tasks: [referencing, other],
++      workCategories: [makeCategory({ id: 'cat1' }), makeCategory({ id: 'cat2' })],
++    });
++
++    const next = reducer(state, { type: 'DELETE_WORK_CATEGORY', workCategoryId: 'cat1' });
++
++    expect(next.workCategories.find((c) => c.id === 'cat1')).toBeUndefined();
++    expect(next.workCategories).toHaveLength(1);
++    expect(next.tasks.find((t) => t.id === 't1')!.workCategoryId).toBe('');
++    expect(next.tasks.find((t) => t.id === 't2')!.workCategoryId).toBe('cat2'); // untouched
++  });
++});
+diff --git a/src/styles.css b/src/styles.css
+index deb526c..76d10dd 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -1904,6 +1904,89 @@ option {
+   background: var(--n2-danger-soft);
+ }
+ 
++/* Task-priority pill (see utils/priority.ts). Rendered only for non-normal on cards. */
++.priority-badge {
++  display: inline-block;
++  font-size: var(--n2-type-xs);
++  font-weight: 600;
++  border: 1px solid;
++  border-radius: var(--n2-radius-pill);
++  padding: 2px 10px;
++  white-space: nowrap;
++}
++.priority-low {
++  color: var(--n2-info);
++  border-color: var(--n2-info);
++  background: var(--n2-info-soft);
++}
++.priority-normal {
++  color: var(--text-muted);
++  border-color: var(--text-muted);
++  background: rgba(255, 255, 255, 0.06);
++}
++.priority-high {
++  color: var(--n2-warning);
++  border-color: var(--n2-warning);
++  background: var(--n2-warning-soft);
++}
++.priority-urgent {
++  color: var(--n2-danger);
++  border-color: var(--n2-danger);
++  background: var(--n2-danger-soft);
++}
++
++/* Checklist editor (TaskModal). Reuses form/button classes; only layout here. */
++.checklist-list {
++  list-style: none;
++  margin: 0 0 10px;
++  padding: 0;
++  display: flex;
++  flex-direction: column;
++  gap: 6px;
++}
++.checklist-row {
++  display: flex;
++  align-items: center;
++  gap: 10px;
++}
++.checklist-row input[type='checkbox'] {
++  flex: none;
++}
++.checklist-text {
++  flex: 1 1 auto;
++  min-width: 0;
++  word-break: break-word;
++}
++.checklist-row.done .checklist-text {
++  text-decoration: line-through;
++  color: var(--text-muted);
++}
++.checklist-add-row {
++  display: flex;
++  gap: 8px;
++  align-items: center;
++}
++.checklist-add-row input[type='text'] {
++  flex: 1 1 auto;
++  min-width: 0;
++}
++.checklist-count {
++  font-size: var(--n2-type-xs);
++  color: var(--text-muted);
++  margin: 0 0 8px;
++}
++
++/* Task-card checklist progress + category label. */
++.task-checklist-progress {
++  display: inline-flex;
++  align-items: center;
++  gap: 3px;
++  margin-left: 8px;
++}
++.task-category {
++  font-size: var(--n2-type-xs);
++}
++
+ .coin,
+ .coin-btn {
+   display: inline-flex;
+diff --git a/src/types.ts b/src/types.ts
+index 0d71f4a..00521e8 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -22,6 +22,22 @@ export interface ServiceType {
+   name: string;
+ }
+ 
++/** Admin-managed work-category dictionary (mirrors ServiceType). */
++export interface WorkCategory {
++  id: string;
++  name: string;
++}
++
++/** Task priority — fixed 4-value enum. Polish labels live in utils/priority.ts. */
++export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent';
++
++/** One embedded checklist item on a Task. */
++export interface ChecklistItem {
++  id: string;
++  text: string;
++  done: boolean;
++}
++
+ /** Pipeline status, shared by projects and tasks. Admin-managed. */
+ export interface Status {
+   id: string;
+@@ -63,6 +79,9 @@ export interface Task {
+   startDate: DateStr;
+   endDate: DateStr;
+   estimatedHours: number | null; // optional up-front estimate
++  priority: TaskPriority; // fixed enum; defaults to 'normal'
++  workCategoryId: string; // reference into workCategories; '' when unset
++  checklist: ChecklistItem[]; // embedded, replaced wholesale on save
+   createdAt: string; // ISO timestamp
+   updatedAt: string; // ISO timestamp
+ }
+@@ -159,6 +178,8 @@ export interface SavedFilterCriteria {
+   clientId: string; // '' = all
+   statusId: string; // '' = all
+   personId: string; // '' = all; assignee — meaningful on tasks
++  priority: '' | TaskPriority; // '' = all; meaningful on tasks
++  workCategoryId: string; // '' = all; meaningful on tasks
+   from: DateStr | ''; // period overlap lower bound
+   to: DateStr | ''; // period overlap upper bound
+ }
+@@ -175,6 +196,7 @@ export interface AppData {
+   clients: Client[];
+   departments: Department[];
+   serviceTypes: ServiceType[];
++  workCategories: WorkCategory[];
+   statuses: Status[];
+   projects: Project[];
+   milestones: Milestone[];
+diff --git a/src/utils/priority.ts b/src/utils/priority.ts
+new file mode 100644
+index 0000000..332f184
+--- /dev/null
++++ b/src/utils/priority.ts
+@@ -0,0 +1,15 @@
++// Runtime constants for the fixed Task priority enum. The `TaskPriority` type
++// itself lives in types.ts (it is a stored shape); this dependency-free module
++// (except the type import) owns the display order and Polish labels.
++import type { TaskPriority } from '../types';
++
++/** Priority values in ascending order — the select/filter display order. */
++export const TASK_PRIORITIES: readonly TaskPriority[] = ['low', 'normal', 'high', 'urgent'];
++
++/** Polish display labels for each priority. */
++export const PRIORITY_LABELS: Record<TaskPriority, string> = {
++  low: 'Niski',
++  normal: 'Normalny',
++  high: 'Wysoki',
++  urgent: 'Pilny',
++};

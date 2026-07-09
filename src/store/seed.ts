@@ -40,6 +40,12 @@ export function buildSampleData(): AppData {
   const svcSocial = { id: uid(), name: 'Media społecznościowe' };
   const serviceTypes = [svcWeb, svcBrand, svcSocial];
 
+  // Work categories (admin-managed dictionary; referenced by task.workCategoryId)
+  const catKreacja = { id: uid(), name: 'Kreacja' };
+  const catWdrozenie = { id: uid(), name: 'Wdrożenie' };
+  const catTesty = { id: uid(), name: 'Testy' };
+  const workCategories = [catKreacja, catWdrozenie, catTesty];
+
   // People. Work hours default to 8:00–16:00 (480 → min(1440, 480+capacity*60)).
   // All passwordless (passwordHash: '') so the demo can log in without a password.
   // Kasia is defined first so she can be the others' supervisor; the `people`
@@ -197,6 +203,13 @@ export function buildSampleData(): AppData {
     startDate: mon,
     endDate: fri,
     estimatedHours: 40,
+    priority: 'high',
+    workCategoryId: catKreacja.id,
+    checklist: [
+      { id: uid(), text: 'Moodboard zaakceptowany', done: true },
+      { id: uid(), text: 'Sekcja hero', done: false },
+      { id: uid(), text: 'Tabela cen', done: false },
+    ],
     createdAt: now,
     updatedAt: now,
   };
@@ -229,6 +242,9 @@ export function buildSampleData(): AppData {
     startDate: mon,
     endDate: fri,
     estimatedHours: 12,
+    priority: 'normal',
+    workCategoryId: catKreacja.id,
+    checklist: [],
     createdAt: now,
     updatedAt: now,
   };
@@ -250,6 +266,9 @@ export function buildSampleData(): AppData {
     startDate: wed,
     endDate: fri,
     estimatedHours: 16,
+    priority: 'urgent',
+    workCategoryId: catWdrozenie.id,
+    checklist: [],
     createdAt: now,
     updatedAt: now,
   };
@@ -272,6 +291,9 @@ export function buildSampleData(): AppData {
     startDate: addDaysStr(mon, -7),
     endDate: addDaysStr(fri, -7),
     estimatedHours: 10,
+    priority: 'normal',
+    workCategoryId: catTesty.id,
+    checklist: [],
     createdAt: now,
     updatedAt: now,
   };
@@ -326,6 +348,7 @@ export function buildSampleData(): AppData {
     clients,
     departments,
     serviceTypes,
+    workCategories,
     statuses,
     projects,
     milestones,
