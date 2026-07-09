@@ -44,6 +44,7 @@ const dryRun = process.env.CLAUDE_AUTO_DRY_RUN === "1";
 const skipPermissions = process.env.CLAUDE_AUTO_SKIP_PERMISSIONS === "1";
 const allowedTools = process.env.CLAUDE_AUTO_ALLOWED_TOOLS || DEFAULT_ALLOWED_TOOLS.join(",");
 const verifyCommands = parseVerifyCommands(process.env.CLAUDE_AUTO_VERIFY || "npm test && npm run build");
+const earlyCheckMinutes = parseOptionalPositiveInt(process.env.CLAUDE_AUTO_EARLY_CHECK_MINUTES);
 
 const promptFiles = fs
   .readdirSync(promptDir)
@@ -70,18 +71,25 @@ ensureReviewBranch();
 console.log(`Repo: ${repoRoot}`);
 console.log(`Branch: ${gitOutput(["branch", "--show-current"]).trim()}`);
 console.log(`Schedule: ${scheduleTimes.join(", ")}`);
+if (earlyCheckMinutes) {
+  console.log(`Early check: next prompt may run ${earlyCheckMinutes} minutes after a successful prompt.`);
+}
 console.log(`Remaining prompts: ${remainingPrompts.map((file) => path.basename(file)).join(", ")}`);
 console.log("Keep the Mac awake with: caffeinate -dimsu node automation/claude-scheduler/run-queue.mjs");
 
+let earlyEligibleAt = null;
 for (const promptFile of remainingPrompts) {
-  const slot = nextSlotAfter(new Date(), scheduleTimes);
-  console.log(`\nNext prompt ${path.basename(promptFile)} scheduled for ${formatDateTime(slot)}.`);
+  const slot = nextRunSlot(new Date(), scheduleTimes, earlyEligibleAt);
+  console.log(`\nNext prompt ${path.basename(promptFile)} scheduled for ${formatDateTime(slot)}${slot.source ? ` (${slot.source})` : ""}.`);
 
   if (!dryRun) {
     await sleepUntil(slot);
   }
 
   const ok = await runPrompt(promptFile);
+  if (ok && earlyCheckMinutes) {
+    earlyEligibleAt = new Date(Date.now() + earlyCheckMinutes * 60_000);
+  }
   if (!ok && !continueOnError) {
     console.error("Stopping queue because Claude or verification failed.");
     process.exit(1);
@@ -233,6 +241,36 @@ function parseVerifyCommands(value) {
     .split("&&")
     .map((command) => command.trim())
     .filter(Boolean);
+}
+
+function parseOptionalPositiveInt(value) {
+  if (!value) return null;
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`Invalid positive integer "${value}".`);
+  }
+  const parsed = Number(value);
+  return parsed > 0 ? parsed : null;
+}
+
+function nextRunSlot(after, times, earlyAt) {
+  const fixedSlot = nextSlotAfter(after, times);
+  fixedSlot.source = "fixed slot";
+
+  if (!earlyAt) return fixedSlot;
+
+  const earliestUsefulTime = after.getTime() + 1000;
+  if (earlyAt.getTime() <= earliestUsefulTime) {
+    const immediate = new Date(earliestUsefulTime);
+    immediate.source = "early check";
+    return immediate;
+  }
+
+  if (earlyAt.getTime() < fixedSlot.getTime()) {
+    earlyAt.source = "early check";
+    return earlyAt;
+  }
+
+  return fixedSlot;
 }
 
 function nextSlotAfter(after, times) {

@@ -57,7 +57,19 @@ CLAUDE_AUTO_TIMES="16:00,21:01,02:02,07:03,12:04" caffeinate -dimsu node automat
 CLAUDE_AUTO_DRY_RUN=1 node automation/claude-scheduler/run-queue.mjs
 ```
 
-## 5. Po powrocie
+## 5. Przyspieszanie kolejki
+
+Domyslnie scheduler czeka na kolejne stale sloty. Jesli prompt skonczy sie
+wczesniej i chcesz sprawdzac kolejke np. co godzine, ustaw:
+
+```bash
+CLAUDE_AUTO_EARLY_CHECK_MINUTES=60 caffeinate -dimsu node automation/claude-scheduler/run-queue.mjs
+```
+
+Po udanym prompcie nastepny prompt wystartuje wczesniej z dwoch terminow:
+`zakonczenie + 60 minut` albo kolejny staly slot z harmonogramu.
+
+## 6. Po powrocie
 
 Sprawdz, co powstalo:
 
@@ -75,7 +87,7 @@ Jesli chcesz wyslac galaz do remote:
 git push -u origin review/claude-auto-YYYYMMDD-HHMM
 ```
 
-## 6. Gdy Claude blokuje sie na uprawnieniach
+## 7. Gdy Claude blokuje sie na uprawnieniach
 
 Domyslnie skrypt przekazuje Claude'owi szeroki zestaw dozwolonych narzedzi. Jesli lokalna konfiguracja mimo tego wymaga potwierdzen, najpierw zrob krotki test na jednym prostym prompcie. Awaryjnie mozna wlaczyc:
 
