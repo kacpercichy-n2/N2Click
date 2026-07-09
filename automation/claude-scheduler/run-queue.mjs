@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 
-const DEFAULT_TIMES = ["02:00", "05:00", "10:01", "15:01", "20:01"];
+const DEFAULT_TIMES = ["16:00", "21:01", "02:02", "07:03", "12:04"];
 const DEFAULT_ALLOWED_TOOLS = [
   "Read",
   "Write",
