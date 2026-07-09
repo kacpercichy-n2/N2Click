@@ -14,8 +14,10 @@ import {
   overloadedDatesForPersonInRange,
   personCapacity,
   hoursForPersonOnDate,
+  taskPlanningStatus,
   unplannedTasksForPerson,
 } from '../store/selectors';
+import { PlanningBadge } from '../components/PlanningBadge';
 import { TodayAgendaList } from '../components/TodayAgenda';
 import { useOpenTask } from '../components/TaskModal';
 import { formatRowLabel, formatShort, shiftWeek, todayStr, weekDays } from '../utils/dates';
@@ -94,6 +96,7 @@ export function MyWorkPage() {
                   >
                     <span className="dash-row-name">{task.title}</span>
                     <span className="agenda-meta">{taskMeta(task)}</span>
+                    <PlanningBadge status={taskPlanningStatus(state, task.id)} />
                     <span className="my-work-hours">{formatDuration(hours)}</span>
                   </button>
                 </li>

@@ -427,6 +427,101 @@ export function growAllowanceHours(state: AppData, entryId: string): number {
   return taskGrowAllowance(state, entry.taskId, entry.personId);
 }
 
+// ---- Planning status (derived, never stored) ----
+
+/**
+ * A task's derived "planning status" — is its work scheduled onto calendar days?
+ * The four values ARE the exact Polish display labels (lowercase, by design).
+ * This is a derived concept and deliberately lives here, not in `types.ts`
+ * (which holds only stored shapes) — nothing here is ever persisted.
+ */
+export type PlanningStatus =
+  | 'nie rozplanowano'
+  | 'częściowo'
+  | 'rozplanowano'
+  | 'przekroczono';
+
+/** The planning statuses in canonical order (empty → over-budget spectrum). */
+export const PLANNING_STATUSES: PlanningStatus[] = [
+  'nie rozplanowano',
+  'częściowo',
+  'rozplanowano',
+  'przekroczono',
+];
+
+/** Float-drift epsilon — matches TaskModal's `overBudget` guard. Hours already
+ * snap to 0.25 on write paths, so this only absorbs binary rounding noise. */
+const PLANNING_EPS = 1e-9;
+
+/**
+ * Pure core of the planning-status rule: plain numbers in, label out. This is
+ * what TaskModal calls with DRAFT totals and what unit tests hammer directly.
+ *
+ * Inputs (over ALL people for a task):
+ * - `estimate` — the task's `estimatedHours` (`null` ⇒ no target to hit).
+ * - `datedHours` — Σ planned hours of entries with a real date (`!isBinEntry`).
+ * - `binHours` — Σ planned hours of the task's zasobnik (bin) entries.
+ *
+ * With `total = datedHours + binHours` and `EPS = 1e-9`, the rules are
+ * evaluated in this precedence order (first match wins):
+ *
+ * 1. `total <= EPS` → **nie rozplanowano** — nothing planned at all (regardless
+ *    of estimate). Matches the "Bez planu" alert rule where bin rows count as
+ *    planned.
+ * 2. `estimate != null && total > estimate + EPS` → **przekroczono** — the plan
+ *    (dated + bin) exceeds the estimate. Same condition as TaskModal's
+ *    over-budget banner, whether the excess sits in the grid or the bin.
+ * 3. `binHours > EPS` → **częściowo** — hours are allocated but some still sit
+ *    in the zasobnik ("nierozplanowane"); a task with bin hours is never
+ *    "rozplanowano".
+ * 4. `estimate == null` → **rozplanowano** — no target to fall short of, and
+ *    everything that exists is on calendar days.
+ * 5. `datedHours >= estimate - EPS` → **rozplanowano** — the estimate is fully
+ *    placed on calendar days (bin is 0 here by rule 3; dated can't exceed
+ *    estimate + EPS by rule 2).
+ * 6. otherwise → **częściowo** — some dated hours, under the estimate, empty bin.
+ *
+ * Worked edge cases:
+ * - null estimate + 0 hours → nie rozplanowano; null estimate + bin-only →
+ *   częściowo; null estimate + dated-only → rozplanowano.
+ * - est 8, dated 0, bin 3 → częściowo. est 8, dated 5, bin 3 (total == est) →
+ *   częściowo (bin still unscheduled). est 8, dated 8, bin 0 → rozplanowano.
+ *   est 8, dated 8, bin 1 → przekroczono. est 8, dated 9, bin 0 → przekroczono.
+ */
+export function planningStatusForTotals(
+  estimate: number | null,
+  datedHours: number,
+  binHours: number,
+): PlanningStatus {
+  const dated = Math.max(0, datedHours);
+  const bin = Math.max(0, binHours);
+  const total = dated + bin;
+
+  if (total <= PLANNING_EPS) return 'nie rozplanowano';
+  if (estimate != null && total > estimate + PLANNING_EPS) return 'przekroczono';
+  if (bin > PLANNING_EPS) return 'częściowo';
+  if (estimate == null) return 'rozplanowano';
+  if (dated >= estimate - PLANNING_EPS) return 'rozplanowano';
+  return 'częściowo';
+}
+
+/**
+ * A task's planning status derived from its stored workload entries. Splits the
+ * task's entries into dated vs bin (`isBinEntry`) and delegates to
+ * {@link planningStatusForTotals}. A missing task ⇒ estimate treated as null.
+ * Pure — no `Date` usage.
+ */
+export function taskPlanningStatus(state: AppData, taskId: string): PlanningStatus {
+  const estimate = getTask(state, taskId)?.estimatedHours ?? null;
+  let dated = 0;
+  let bin = 0;
+  for (const w of entriesForTask(state, taskId)) {
+    if (isBinEntry(w)) bin += w.plannedHours;
+    else dated += w.plannedHours;
+  }
+  return planningStatusForTotals(estimate, dated, bin);
+}
+
 // ---- Moja praca (my-work page) ----
 
 /**

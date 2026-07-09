@@ -11,6 +11,9 @@ import {
   getProject,
   getStatus,
   taskPlannedTotal,
+  taskPlanningStatus,
+  PLANNING_STATUSES,
+  type PlanningStatus,
 } from '../store/selectors';
 import { FilterPresets, DEFAULT_CRITERIA } from '../components/FilterPresets';
 import { FilterPanel, type FilterChip, type FilterGroup } from '../components/FilterPanel';
@@ -18,6 +21,7 @@ import { ChevronRight } from '../components/icons';
 import { formatShort } from '../utils/dates';
 import { PersonChip } from '../components/PersonChip';
 import { StatusBadge } from '../components/StatusBadge';
+import { PlanningBadge } from '../components/PlanningBadge';
 import { Coin } from '../components/Coin';
 import { parseDate } from '../utils/dates';
 import { formatDuration } from '../utils/time';
@@ -44,6 +48,11 @@ export function TasksPage() {
   const [clientFilter, setClientFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [personFilter, setPersonFilter] = useState('');
+  // Derived planning-status filter (single-select). Deliberately NOT part of
+  // `criteria`/saved presets: presets are persisted (`SavedFilterCriteria`) and
+  // this feature changes no stored shape. Consequence: presets ignore this
+  // filter, and a planning-only selection does not enable "Zapisz filtr".
+  const [planningFilter, setPlanningFilter] = useState<'' | PlanningStatus>('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
 
@@ -68,12 +77,13 @@ export function TasksPage() {
           if (clientId !== clientFilter) return false;
         }
         if (personFilter && !assigneeIdsOfTask(state, t.id).includes(personFilter)) return false;
+        if (planningFilter && taskPlanningStatus(state, t.id) !== planningFilter) return false;
         // Period-overlap on the task span: [startDate, endDate] vs [from, to].
         if (from && t.endDate < from) return false;
         if (to && t.startDate > to) return false;
         return true;
       }),
-    [allTasks, state, clientFilter, statusFilter, personFilter, from, to],
+    [allTasks, state, clientFilter, statusFilter, personFilter, planningFilter, from, to],
   );
 
   const criteria = {
@@ -97,6 +107,7 @@ export function TasksPage() {
     setClientFilter('');
     setStatusFilter('');
     setPersonFilter('');
+    setPlanningFilter('');
     setFrom('');
     setTo('');
   };
@@ -132,12 +143,23 @@ export function TasksPage() {
         ...state.people.map((p) => ({ value: p.id, label: p.name })),
       ],
     },
+    {
+      key: 'planning',
+      label: 'Planowanie',
+      value: planningFilter,
+      onChange: (v) => setPlanningFilter(v as '' | PlanningStatus),
+      options: [
+        { value: '', label: 'Wszystkie' },
+        ...PLANNING_STATUSES.map((s) => ({ value: s, label: s })),
+      ],
+    },
   ];
 
   const activeCount =
     (clientFilter ? 1 : 0) +
     (statusFilter ? 1 : 0) +
     (personFilter ? 1 : 0) +
+    (planningFilter ? 1 : 0) +
     (from ? 1 : 0) +
     (to ? 1 : 0);
 
@@ -159,6 +181,12 @@ export function TasksPage() {
       key: 'person',
       label: `Osoba: ${getPerson(state, personFilter)?.name ?? '—'}`,
       onRemove: () => setPersonFilter(''),
+    });
+  if (planningFilter)
+    chips.push({
+      key: 'planning',
+      label: `Planowanie: ${planningFilter}`,
+      onRemove: () => setPlanningFilter(''),
     });
   if (from) chips.push({ key: 'from', label: `Od: ${formatShort(from)}`, onRemove: () => setFrom('') });
   if (to) chips.push({ key: 'to', label: `Do: ${formatShort(to)}`, onRemove: () => setTo('') });
@@ -231,6 +259,7 @@ export function TasksPage() {
                   <div className="task-card-top">
                     <span className="task-title">{task.title}</span>
                     <StatusBadge status={getStatus(state, task.statusId)} />
+                    <PlanningBadge status={taskPlanningStatus(state, task.id)} />
                     {project && (
                       <span className="project-badge">
                         <Coin paid={project.paid} size={13} />

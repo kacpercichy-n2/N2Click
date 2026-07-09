@@ -15,9 +15,11 @@ import {
   isImpersonating,
   overdueTasksForPerson,
   overloadedDatesForPersonInRange,
+  planningStatusForTotals,
   realUser,
   realUserId,
   taskGrowAllowance,
+  taskPlanningStatus,
   todayAgendaForPerson,
   unplannedTasksForPerson,
   weekBlocksForPerson,
@@ -896,5 +898,144 @@ describe('binTaskRowsForPerson', () => {
 
     const rows = binTaskRowsForPerson(state, 'p1');
     expect(rows).toEqual([{ task: taskA, hours: 2 }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// planningStatusForTotals / taskPlanningStatus (PKG-20260709d-planning-status-tests)
+// Implementation shipped by PKG-20260709d-planning-status-core.
+// ---------------------------------------------------------------------------
+
+describe('planningStatusForTotals', () => {
+  it('(null, 0, 0) -> nie rozplanowano: nothing planned at all, no estimate', () => {
+    expect(planningStatusForTotals(null, 0, 0)).toBe('nie rozplanowano');
+  });
+
+  it('(8, 0, 0) -> nie rozplanowano: an estimate alone plans nothing', () => {
+    expect(planningStatusForTotals(8, 0, 0)).toBe('nie rozplanowano');
+  });
+
+  it('(null, 0, 3) -> częściowo: bin-only hours with no estimate', () => {
+    expect(planningStatusForTotals(null, 0, 3)).toBe('częściowo');
+  });
+
+  it('(8, 0, 3) -> częściowo: bin-only hours under the estimate', () => {
+    expect(planningStatusForTotals(8, 0, 3)).toBe('częściowo');
+  });
+
+  it('(null, 5, 0) -> rozplanowano: no target and all hours are dated', () => {
+    expect(planningStatusForTotals(null, 5, 0)).toBe('rozplanowano');
+  });
+
+  it('(8, 8, 0) -> rozplanowano: exactly on target', () => {
+    expect(planningStatusForTotals(8, 8, 0)).toBe('rozplanowano');
+  });
+
+  it('(8, 8 + 1e-12, 0) -> rozplanowano: EPS absorbs float drift at the boundary', () => {
+    expect(planningStatusForTotals(8, 8 + 1e-12, 0)).toBe('rozplanowano');
+  });
+
+  it('(8, 8 - 1e-12, 0) -> rozplanowano: dated within EPS of the estimate (rule 5 lower boundary) still counts as fully planned', () => {
+    expect(planningStatusForTotals(8, 8 - 1e-12, 0)).toBe('rozplanowano');
+  });
+
+  it('(8, 8.25, 0) -> przekroczono: one 0.25h step over the boundary is a real excess', () => {
+    expect(planningStatusForTotals(8, 8.25, 0)).toBe('przekroczono');
+  });
+
+  it('(8, 5, 0) -> częściowo: under target with an empty bin', () => {
+    expect(planningStatusForTotals(8, 5, 0)).toBe('częściowo');
+  });
+
+  it('(8, 5, 3) -> częściowo: total == estimate but bin pending — rule 3 beats rule 5', () => {
+    expect(planningStatusForTotals(8, 5, 3)).toBe('częściowo');
+  });
+
+  it('(8, 8, 1) -> przekroczono: excess sits in the bin', () => {
+    expect(planningStatusForTotals(8, 8, 1)).toBe('przekroczono');
+  });
+
+  it('(8, 9, 0) -> przekroczono: excess is dated', () => {
+    expect(planningStatusForTotals(8, 9, 0)).toBe('przekroczono');
+  });
+
+  it('(null, 9, 4) -> częściowo: no estimate makes przekroczono impossible, bin forces częściowo', () => {
+    expect(planningStatusForTotals(null, 9, 4)).toBe('częściowo');
+  });
+
+  it('(0, 2, 0) -> przekroczono: defensive zero-budget behavior, no special case', () => {
+    expect(planningStatusForTotals(0, 2, 0)).toBe('przekroczono');
+  });
+});
+
+describe('taskPlanningStatus', () => {
+  it('dated entries exactly matching the estimate -> rozplanowano', () => {
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', estimatedHours: 8 })],
+      workload: [
+        makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-06', plannedHours: 5 }),
+        makeEntry({ id: 'e2', taskId: 't1', personId: 'p1', date: '2026-07-07', plannedHours: 3 }),
+      ],
+    });
+
+    expect(taskPlanningStatus(state, 't1')).toBe('rozplanowano');
+  });
+
+  it('a bin entry plus dated entries within estimate -> częściowo (proves the bin/dated split uses isBinEntry)', () => {
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', estimatedHours: 8 })],
+      workload: [
+        makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-06', plannedHours: 5 }),
+        makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, sortIndex: 0, plannedHours: 3 }),
+      ],
+    });
+
+    expect(taskPlanningStatus(state, 't1')).toBe('częściowo');
+  });
+
+  it('dated + bin sum exceeding the estimate -> przekroczono', () => {
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', estimatedHours: 8 })],
+      workload: [
+        makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-06', plannedHours: 6 }),
+        makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, sortIndex: 0, plannedHours: 4 }),
+      ],
+    });
+
+    expect(taskPlanningStatus(state, 't1')).toBe('przekroczono');
+  });
+
+  it('estimatedHours: null and zero workload rows -> nie rozplanowano', () => {
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', estimatedHours: null })],
+      workload: [],
+    });
+
+    expect(taskPlanningStatus(state, 't1')).toBe('nie rozplanowano');
+  });
+
+  it("entries of OTHER tasks never leak into the computation — each task reports its own status", () => {
+    const state = makeState({
+      tasks: [
+        makeTask({ id: 't1', estimatedHours: 8 }),
+        makeTask({ id: 't2', estimatedHours: null }),
+      ],
+      workload: [
+        makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-06', plannedHours: 8 }),
+        makeEntry({ id: 'e2', taskId: 't2', personId: 'p1', date: '2026-07-06', plannedHours: 2 }),
+      ],
+    });
+
+    expect(taskPlanningStatus(state, 't1')).toBe('rozplanowano');
+    expect(taskPlanningStatus(state, 't2')).toBe('rozplanowano');
+  });
+
+  it('an unknown taskId behaves as estimate-null with no entries -> nie rozplanowano', () => {
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', estimatedHours: 8 })],
+      workload: [],
+    });
+
+    expect(taskPlanningStatus(state, 'does-not-exist')).toBe('nie rozplanowano');
   });
 });

@@ -1873,6 +1873,37 @@ option {
   white-space: nowrap;
 }
 
+/* Derived task planning-status pill (see taskPlanningStatus selector). */
+.planning-badge {
+  display: inline-block;
+  font-size: var(--n2-type-xs);
+  font-weight: 600;
+  border: 1px solid;
+  border-radius: var(--n2-radius-pill);
+  padding: 2px 10px;
+  white-space: nowrap;
+}
+.planning-none {
+  color: var(--text-muted);
+  border-color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.06);
+}
+.planning-partial {
+  color: var(--n2-warning);
+  border-color: var(--n2-warning);
+  background: var(--n2-warning-soft);
+}
+.planning-full {
+  color: var(--n2-success);
+  border-color: var(--n2-success);
+  background: var(--n2-success-soft);
+}
+.planning-over {
+  color: var(--n2-danger);
+  border-color: var(--n2-danger);
+  background: var(--n2-danger-soft);
+}
+
 .coin,
 .coin-btn {
   display: inline-flex;

@@ -14,10 +14,12 @@ import {
   milestonesOfProject,
   projectPlannedTotal,
   taskPlannedTotal,
+  taskPlanningStatus,
   tasksOfProject,
 } from '../store/selectors';
 import { Coin } from '../components/Coin';
 import { StatusBadge } from '../components/StatusBadge';
+import { PlanningBadge } from '../components/PlanningBadge';
 import { PersonChip } from '../components/PersonChip';
 import { CommentsPanel } from '../components/CommentsPanel';
 import { SaveStatus } from '../components/SaveStatus';
@@ -413,6 +415,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
                 >
                   <span className="task-title">{t.title}</span>
                   <StatusBadge status={getStatus(state, t.statusId)} />
+                  <PlanningBadge status={taskPlanningStatus(state, t.id)} />
                   <span className="muted">
                     {formatShort(t.startDate)} – {formatShort(t.endDate)} ·{' '}
                     {formatDuration(taskPlannedTotal(state, t.id))}

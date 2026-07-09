@@ -15,7 +15,9 @@ import {
   availableHoursOnDate,
   binEntriesForTask,
   getClient,
+  planningStatusForTotals,
 } from '../store/selectors';
+import { PlanningBadge } from './PlanningBadge';
 import { CommentsPanel } from './CommentsPanel';
 import { AllocationGrid, allocKey, type AllocMap } from './AllocationGrid';
 import { SaveStatus } from './SaveStatus';
@@ -670,6 +672,9 @@ function TaskEditor({
               <span className="muted">brak szacunku</span>
             )}
           </span>
+          <PlanningBadge
+            status={planningStatusForTotals(normalizedEstimate, plannedTotalAll, binTotal)}
+          />
         </div>
         {overBudget && (
           <p className="estimate-over">
