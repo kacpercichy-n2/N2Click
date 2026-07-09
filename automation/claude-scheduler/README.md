@@ -36,7 +36,7 @@ Domyslny harmonogram:
 
 Skrypt:
 
-- przelacza sie na galaz `review/claude-auto-YYYYMMDD`,
+- przelacza sie na galaz `review/claude-auto-YYYYMMDD-HHMM`,
 - odpala kolejny prompt w najblizszym slocie czasowym,
 - po kazdym przebiegu uruchamia `npm test` i `npm run build`,
 - commituje zmiany na galezi review,
@@ -62,9 +62,9 @@ CLAUDE_AUTO_DRY_RUN=1 node automation/claude-scheduler/run-queue.mjs
 Sprawdz, co powstalo:
 
 ```bash
-git log --oneline main..review/claude-auto-YYYYMMDD
-git diff --stat main...review/claude-auto-YYYYMMDD
-git diff main...review/claude-auto-YYYYMMDD
+git log --oneline main..review/claude-auto-YYYYMMDD-HHMM
+git diff --stat main...review/claude-auto-YYYYMMDD-HHMM
+git diff main...review/claude-auto-YYYYMMDD-HHMM
 npm test
 npm run build
 ```
@@ -72,7 +72,7 @@ npm run build
 Jesli chcesz wyslac galaz do remote:
 
 ```bash
-git push -u origin review/claude-auto-YYYYMMDD
+git push -u origin review/claude-auto-YYYYMMDD-HHMM
 ```
 
 ## 6. Gdy Claude blokuje sie na uprawnieniach

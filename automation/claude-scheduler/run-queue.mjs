@@ -38,7 +38,7 @@ fs.mkdirSync(logDir, { recursive: true });
 fs.mkdirSync(stateDir, { recursive: true });
 
 const scheduleTimes = parseTimes(process.env.CLAUDE_AUTO_TIMES || DEFAULT_TIMES.join(","));
-const branchName = process.env.CLAUDE_AUTO_BRANCH || `review/claude-auto-${formatDate(new Date())}`;
+const branchName = process.env.CLAUDE_AUTO_BRANCH || `review/claude-auto-${formatDateTimeForFile(new Date())}`;
 const continueOnError = process.env.CLAUDE_AUTO_CONTINUE_ON_ERROR === "1";
 const dryRun = process.env.CLAUDE_AUTO_DRY_RUN === "1";
 const skipPermissions = process.env.CLAUDE_AUTO_SKIP_PERMISSIONS === "1";
