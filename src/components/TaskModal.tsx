@@ -25,10 +25,15 @@ import { AllocationGrid, allocKey, type AllocMap } from './AllocationGrid';
 import { SaveStatus } from './SaveStatus';
 import { personColor } from '../utils/colors';
 import { formatDuration, isBinEntry, snapHours } from '../utils/time';
-import { eachDayInclusive, inclusiveDayCount, todayStr } from '../utils/dates';
+import {
+  eachDayInclusive,
+  inclusiveDayCount,
+  todayStr,
+  periodError,
+  PERIOD_ERROR_LABELS,
+  MAX_TASK_PERIOD_DAYS,
+} from '../utils/dates';
 import { useSaveStatus } from '../utils/useSaveStatus';
-
-const MAX_PERIOD_DAYS = 92;
 
 /**
  * Shared opener hook. Merges the task/project search params onto the CURRENT
@@ -346,10 +351,11 @@ function TaskEditor({
   }, []);
 
   const titleError = title.trim() === '';
-  const periodDays = inclusiveDayCount(startDate, endDate);
-  const endBeforeStart = endDate < startDate;
-  const periodTooLong = !endBeforeStart && periodDays > MAX_PERIOD_DAYS;
-  const periodValid = !endBeforeStart && !periodTooLong;
+  const perErr = periodError(startDate, endDate, { maxDays: MAX_TASK_PERIOD_DAYS });
+  const periodValid = perErr === null;
+  // Only computed for display below, and only rendered when periodValid — so a
+  // NaN from an empty/invalid endpoint can never reach the DOM.
+  const periodDays = periodValid ? inclusiveDayCount(startDate, endDate) : 0;
 
   const assignedPeople = useMemo(
     () => state.people.filter((p) => assigneeIds.includes(p.id)),
@@ -843,14 +849,7 @@ function TaskEditor({
             />
           </div>
         </div>
-        {endBeforeStart && (
-          <p className="field-error">Data końca musi być taka sama jak data startu albo późniejsza.</p>
-        )}
-        {periodTooLong && (
-          <p className="field-error">
-            Okres ma {periodDays} dni — maksimum to {MAX_PERIOD_DAYS} dni. Skróć zakres.
-          </p>
-        )}
+        {perErr && <p className="field-error">{PERIOD_ERROR_LABELS[perErr]}</p>}
         {periodValid && (
           <p className="field-hint">
             Liczba dni w okresie: {periodDays}.

@@ -11,6 +11,7 @@ import type {
   TaskPriority,
   WorkloadEntry,
 } from '../types';
+import { isValidDateStr, todayStr } from '../utils/dates';
 import { TASK_PRIORITIES } from '../utils/priority';
 import {
   BIN_DATE,
@@ -541,6 +542,107 @@ export function ensureStartMinutes(data: AppData): AppData {
   };
 }
 
+/** Fixed epoch sentinel for un-parseable comment/activity timestamps. Keeps
+ *  the repair idempotent — `Date.parse` of this value is 0, not NaN. */
+const EPOCH_ISO = '1970-01-01T00:00:00.000Z';
+
+/** Repair one date period per the deterministic rules: both invalid → today;
+ *  exactly one invalid → copy the valid one; both valid but reversed → swap. */
+function repairPeriod(
+  startDate: string,
+  endDate: string,
+): { startDate: string; endDate: string; changed: boolean } {
+  const startOk = isValidDateStr(startDate);
+  const endOk = isValidDateStr(endDate);
+  if (!startOk && !endOk) {
+    const t = todayStr();
+    return { startDate: t, endDate: t, changed: true };
+  }
+  if (startOk && !endOk) return { startDate, endDate: startDate, changed: true };
+  if (!startOk && endOk) return { startDate: endDate, endDate, changed: true };
+  if (endDate < startDate) return { startDate: endDate, endDate: startDate, changed: true };
+  return { startDate, endDate, changed: false };
+}
+
+/**
+ * Idempotent every-load pass that guarantees no invalid calendar date can reach
+ * render (where `parseDate('')` → date-fns `format(Invalid Date)` throws a
+ * blank-screen RangeError). Runs BEFORE ensureStartMinutes so any workload entry
+ * it moves to the bin gets merged/renumbered by the existing bin machinery.
+ *
+ * Repair rules (deterministic, value-idempotent — a second pass changes
+ * nothing, and a fully-valid payload comes back as the SAME object):
+ * - Project / Task `startDate`+`endDate`: both invalid → today; exactly one
+ *   invalid → copy the valid one; both valid but reversed → swap. (Task periods
+ *   are NOT retro-clamped to the 92-day cap — that's write-path only.)
+ * - Milestone `date` invalid → its project's post-repair `startDate`, or today
+ *   when the project no longer exists.
+ * - WorkloadEntry `date`: `BIN_DATE` (`''`) stays valid; any other invalid date
+ *   converts the entry into a bin entry (`date: ''`, `startMinutes: 0`), hours
+ *   preserved — the downstream ensureStartMinutes bin merge enforces one row.
+ * - SavedFilter `criteria.from` / `.to`: non-empty and invalid → `''`.
+ * - Comment / ActivityEvent `createdAt`: un-parseable (`Date.parse` NaN) →
+ *   EPOCH_ISO (also render-safe through formatTimestamp).
+ */
+export function normalizeDates(data: AppData): AppData {
+  let changed = false;
+
+  const projects = data.projects.map((p) => {
+    const r = repairPeriod(p.startDate, p.endDate);
+    if (!r.changed) return p;
+    changed = true;
+    return { ...p, startDate: r.startDate, endDate: r.endDate };
+  });
+
+  const tasks = data.tasks.map((t) => {
+    const r = repairPeriod(t.startDate, t.endDate);
+    if (!r.changed) return t;
+    changed = true;
+    return { ...t, startDate: r.startDate, endDate: r.endDate };
+  });
+
+  // Milestones reference the POST-repair project startDate.
+  const projectStart = new Map(projects.map((p) => [p.id, p.startDate]));
+  const milestones = data.milestones.map((m) => {
+    if (isValidDateStr(m.date)) return m;
+    changed = true;
+    return { ...m, date: projectStart.get(m.projectId) ?? todayStr() };
+  });
+
+  const workload = data.workload.map((w) => {
+    if (w.date === BIN_DATE || isValidDateStr(w.date)) return w;
+    changed = true;
+    return { ...w, date: BIN_DATE, startMinutes: 0 };
+  });
+
+  const savedFilters = data.savedFilters.map((f) => {
+    const { from, to } = f.criteria;
+    const fromBad = from !== '' && !isValidDateStr(from);
+    const toBad = to !== '' && !isValidDateStr(to);
+    if (!fromBad && !toBad) return f;
+    changed = true;
+    return {
+      ...f,
+      criteria: { ...f.criteria, from: fromBad ? '' : from, to: toBad ? '' : to },
+    };
+  });
+
+  const comments = data.comments.map((c) => {
+    if (!Number.isNaN(Date.parse(c.createdAt))) return c;
+    changed = true;
+    return { ...c, createdAt: EPOCH_ISO };
+  });
+
+  const activity = data.activity.map((a) => {
+    if (!Number.isNaN(Date.parse(a.createdAt))) return a;
+    changed = true;
+    return { ...a, createdAt: EPOCH_ISO };
+  });
+
+  if (!changed) return data;
+  return { ...data, projects, tasks, milestones, workload, savedFilters, comments, activity };
+}
+
 /**
  * Clears a stale `impersonatorId` on every load (idempotent, like
  * ensureStartMinutes). Impersonation bookkeeping must reference a real person
@@ -628,7 +730,11 @@ export function loadData(): AppData {
     const version = typeof parsed.version === 'number' ? parsed.version : 1;
     if (version < 2) {
       return sanitizeImpersonator(
-        normalizeTaskMeta(ensureStartMinutes(migrateV4toV5(localizeLegacyData(migrateV1(parsed))))),
+        normalizeTaskMeta(
+          ensureStartMinutes(
+            normalizeDates(migrateV4toV5(localizeLegacyData(migrateV1(parsed)))),
+          ),
+        ),
       );
     }
     // Same-version load: fill any missing fields with defaults.
@@ -646,9 +752,28 @@ export function loadData(): AppData {
     // MATRIX[undefined] deny every action → permanent login-screen lockout.
     // migratePerson preserves valid existing values and fills only what's absent.
     const migrated = migrateV4toV5(localized);
-    return sanitizeImpersonator(normalizeTaskMeta(ensureStartMinutes(migrated)));
+    return sanitizeImpersonator(
+      normalizeTaskMeta(ensureStartMinutes(normalizeDates(migrated))),
+    );
   } catch {
     return emptyData();
+  }
+}
+
+/**
+ * The raw persisted JSON string (pre-normalization), for the error boundary's
+ * "export my data" recovery button. Reads STORAGE_KEY, falling back to the
+ * legacy keys; returns null when nothing is stored or storage throws.
+ */
+export function exportRawData(): string | null {
+  try {
+    return (
+      localStorage.getItem(STORAGE_KEY) ??
+      LEGACY_STORAGE_KEYS.map((key) => localStorage.getItem(key)).find(Boolean) ??
+      null
+    );
+  } catch {
+    return null;
   }
 }
 

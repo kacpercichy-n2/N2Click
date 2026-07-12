@@ -23,6 +23,7 @@ import { ChevronRight, GanttChart, Plus } from '../components/icons';
 import type { SavedFilterCriteria } from '../types';
 import { addDaysStr, formatShort, todayStr } from '../utils/dates';
 import { parseDate } from '../utils/dates';
+import { periodError, PERIOD_ERROR_LABELS } from '../utils/dates';
 import { formatDuration } from '../utils/time';
 import { format } from 'date-fns';
 import { pl } from 'date-fns/locale/pl';
@@ -196,8 +197,9 @@ export function ProjectsPage() {
       setError('Nazwa projektu jest wymagana');
       return;
     }
-    if (endDate < startDate) {
-      setError('Data końca musi być taka sama jak data startu albo późniejsza');
+    const perErr = periodError(startDate, endDate);
+    if (perErr) {
+      setError(PERIOD_ERROR_LABELS[perErr]);
       return;
     }
     if (!clientId && !newClientName.trim()) {

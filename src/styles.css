@@ -4499,3 +4499,63 @@ option {
     pointer-events: auto;
   }
 }
+
+/* Root error-boundary fallback: centered recovery card on the dark background. */
+.crash-screen {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: var(--n2-space-6);
+  background: var(--n2-bg);
+}
+.crash-card {
+  width: 100%;
+  max-width: 520px;
+  padding: var(--n2-space-8) var(--n2-space-6);
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-xl);
+  background: var(--n2-surface);
+  box-shadow: var(--n2-shadow-soft);
+  backdrop-filter: var(--n2-blur-glass);
+  text-align: center;
+}
+.crash-title {
+  margin: 0 0 var(--n2-space-3);
+  font-size: var(--n2-type-lg);
+  font-weight: 700;
+  color: var(--n2-text);
+}
+.crash-body {
+  margin: 0 0 var(--n2-space-5);
+  color: var(--n2-text-soft);
+}
+.crash-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-3);
+  align-items: stretch;
+}
+.crash-details {
+  margin-top: var(--n2-space-5);
+  text-align: left;
+  color: var(--n2-text-muted);
+  font-size: var(--n2-type-xs);
+}
+.crash-details summary {
+  cursor: pointer;
+}
+.crash-details pre {
+  margin: var(--n2-space-2) 0 0;
+  padding: var(--n2-space-3);
+  border-radius: var(--n2-radius-lg);
+  background: var(--n2-surface-muted);
+  color: var(--n2-text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 760px) {
+  .crash-card {
+    padding: var(--n2-space-6) var(--n2-space-5);
+  }
+}

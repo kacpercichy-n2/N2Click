@@ -29,7 +29,14 @@ import type {
 import { DEFAULT_CAPACITY, loadData, sanitizeWorkDays, saveData, slugify } from './storage';
 import { wouldCreateSupervisorCycle } from './selectors';
 import { registerPersonOrder } from '../utils/colors';
-import { addDaysStr, eachDayInclusive, inclusiveDayCount } from '../utils/dates';
+import {
+  MAX_TASK_PERIOD_DAYS,
+  addDaysStr,
+  eachDayInclusive,
+  inclusiveDayCount,
+  isValidDateStr,
+  periodError,
+} from '../utils/dates';
 import {
   BIN_DATE,
   DAY_MINUTES,
@@ -45,8 +52,6 @@ import {
   nextFreeStart,
   snapHours,
 } from '../utils/time';
-
-const MAX_PERIOD_DAYS = 92;
 
 // ---- Payload shapes ----
 
@@ -252,6 +257,11 @@ function cleanChecklist(items: ChecklistItem[]): ChecklistItem[] {
 
 function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
   const { taskId, draft, assigneeIds, allocations } = payload;
+  // Reject an invalid/empty/reversed/over-cap period so no bad date is ever
+  // persisted (render-side format() would throw a blank-screen RangeError).
+  if (periodError(draft.startDate, draft.endDate, { maxDays: MAX_TASK_PERIOD_DAYS }) !== null) {
+    return state;
+  }
   const ts = nowIso();
   const checklist = cleanChecklist(draft.checklist);
   // A category can disappear while an edit modal is still open. Persist only a
@@ -473,6 +483,7 @@ function setTaskDates(
   startDate: string,
   endDate: string,
 ): AppData {
+  if (periodError(startDate, endDate, { maxDays: MAX_TASK_PERIOD_DAYS }) !== null) return state;
   const task = state.tasks.find((t) => t.id === taskId);
   if (!task || (task.startDate === startDate && task.endDate === endDate)) return state;
   const inPeriod = new Set(eachDayInclusive(startDate, endDate));
@@ -501,6 +512,8 @@ function saveProject(
   draft: ProjectDraft,
   newClientName?: string,
 ): AppData {
+  // Reject an invalid/empty/reversed period (no max-days cap for projects).
+  if (periodError(draft.startDate, draft.endDate) !== null) return state;
   const ts = nowIso();
 
   // Optionally create (or reuse) a client in the same atomic action, so a
@@ -841,7 +854,7 @@ function setBlockTime(
     const startDate = date < task.startDate ? date : task.startDate;
     const endDate = date > task.endDate ? date : task.endDate;
     if (startDate !== task.startDate || endDate !== task.endDate) {
-      if (inclusiveDayCount(startDate, endDate) > MAX_PERIOD_DAYS) return state;
+      if (inclusiveDayCount(startDate, endDate) > MAX_TASK_PERIOD_DAYS) return state;
       tasks = state.tasks.map((t) =>
         t.id === task.id ? { ...t, startDate, endDate, updatedAt: nowIso() } : t,
       );
@@ -1238,6 +1251,7 @@ function saveMilestone(
   name: string,
   date: string,
 ): AppData {
+  if (!isValidDateStr(date)) return state;
   if (milestoneId === null) {
     const m: Milestone = { id: uid(), projectId, name: name.trim(), date };
     return {
@@ -1323,6 +1337,7 @@ export function reducer(state: AppData, action: Action): AppData {
         ),
       };
     case 'SET_PROJECT_DATES':
+      if (periodError(action.startDate, action.endDate) !== null) return state;
       return {
         ...state,
         projects: state.projects.map((p) =>
@@ -1340,6 +1355,7 @@ export function reducer(state: AppData, action: Action): AppData {
     case 'SAVE_MILESTONE':
       return saveMilestone(state, action.milestoneId, action.projectId, action.name, action.date);
     case 'MOVE_MILESTONE': {
+      if (!isValidDateStr(action.date)) return state;
       const m = state.milestones.find((x) => x.id === action.milestoneId);
       if (!m || m.date === action.date) return state;
       return {

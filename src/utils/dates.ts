@@ -21,6 +21,67 @@ import type { DateStr } from '../types';
 export const DATE_FMT = 'yyyy-MM-dd';
 const WEEK_OPTS = { weekStartsOn: 1 as const }; // Monday
 
+/** Canonical cap on a task's inclusive period length (days). The block-time and
+ *  task-editor write paths reject anything longer; this is the single home. */
+export const MAX_TASK_PERIOD_DAYS = 92;
+
+/**
+ * Strict validity for a calendar-date string. True ONLY for a real
+ * 'yyyy-MM-dd' date that round-trips through date-fns unchanged — so
+ * `'2026-02-31'`, `'2026-13-01'`, `'2026-2-3'`, `''`, and any garbage are
+ * rejected. Never throws on any string input (guards `format` behind the
+ * validity check, since `format(Invalid Date)` throws a RangeError).
+ */
+export function isValidDateStr(d: string): boolean {
+  if (typeof d !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+  const parsed = parse(d, DATE_FMT, new Date());
+  if (Number.isNaN(parsed.getTime())) return false;
+  return format(parsed, DATE_FMT) === d;
+}
+
+/** Distinct ways a [start, end] period can be invalid (null = valid). */
+export type PeriodError =
+  | 'missing-start'
+  | 'invalid-start'
+  | 'missing-end'
+  | 'invalid-end'
+  | 'reversed'
+  | 'too-long';
+
+/**
+ * Validate a date period. Checked in order: empty start → `missing-start`;
+ * non-empty invalid start → `invalid-start`; same for end; both valid and
+ * `end < start` (plain string compare is safe once both are valid) →
+ * `reversed`; `opts.maxDays` given and the inclusive day count exceeds it →
+ * `too-long`; else `null`. Never throws — `inclusiveDayCount` is only reached
+ * once both endpoints are known-valid.
+ */
+export function periodError(
+  start: string,
+  end: string,
+  opts?: { maxDays?: number },
+): PeriodError | null {
+  if (start === '') return 'missing-start';
+  if (!isValidDateStr(start)) return 'invalid-start';
+  if (end === '') return 'missing-end';
+  if (!isValidDateStr(end)) return 'invalid-end';
+  if (end < start) return 'reversed';
+  if (opts?.maxDays !== undefined && inclusiveDayCount(start, end) > opts.maxDays) {
+    return 'too-long';
+  }
+  return null;
+}
+
+/** Polish inline-error copy for each PeriodError (UI forms consume this). */
+export const PERIOD_ERROR_LABELS: Record<PeriodError, string> = {
+  'missing-start': 'Podaj datę startu.',
+  'invalid-start': 'Data startu jest nieprawidłowa.',
+  'missing-end': 'Podaj datę końca.',
+  'invalid-end': 'Data końca jest nieprawidłowa.',
+  reversed: 'Data końca musi być taka sama jak data startu albo późniejsza.',
+  'too-long': `Okres zadania nie może przekraczać ${MAX_TASK_PERIOD_DAYS} dni.`,
+};
+
 /** Parse a 'yyyy-MM-dd' string into a local Date (at noon to dodge DST). */
 export function parseDate(d: DateStr): Date {
   const parsed = parse(d, DATE_FMT, new Date());

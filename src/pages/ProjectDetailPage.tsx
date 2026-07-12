@@ -25,7 +25,7 @@ import { CommentsPanel } from '../components/CommentsPanel';
 import { SaveStatus } from '../components/SaveStatus';
 import { useOpenTask } from '../components/TaskModal';
 import { ChevronRight } from '../components/icons';
-import { formatShort, todayStr } from '../utils/dates';
+import { formatShort, todayStr, isValidDateStr, periodError, PERIOD_ERROR_LABELS } from '../utils/dates';
 import { formatDuration } from '../utils/time';
 import { useSaveStatus } from '../utils/useSaveStatus';
 
@@ -75,6 +75,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   // ---- Milestone form ----
   const [msName, setMsName] = useState('');
   const [msDate, setMsDate] = useState(todayStr());
+  const [msError, setMsError] = useState('');
 
   const dirty = project
     ? name !== project.name ||
@@ -108,8 +109,9 @@ function ProjectDetail({ projectId }: { projectId: string }) {
       setError('Nazwa projektu jest wymagana');
       return;
     }
-    if (endDate < startDate) {
-      setError('Data końca musi być taka sama jak data startu albo późniejsza');
+    const perErr = periodError(startDate, endDate);
+    if (perErr) {
+      setError(PERIOD_ERROR_LABELS[perErr]);
       return;
     }
     const trimmedDescription = description.trim();
@@ -150,6 +152,10 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   const addMilestone = (e: React.FormEvent) => {
     e.preventDefault();
     if (!msName.trim()) return;
+    if (!isValidDateStr(msDate)) {
+      setMsError('Podaj prawidłową datę kamienia milowego.');
+      return;
+    }
     dispatch({
       type: 'SAVE_MILESTONE',
       milestoneId: null,
@@ -158,6 +164,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
       date: msDate,
     });
     setMsName('');
+    setMsError('');
   };
 
   return (
@@ -341,13 +348,16 @@ function ProjectDetail({ projectId }: { projectId: string }) {
                 <input
                   type="date"
                   value={m.date}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    // Ignore invalid/cleared dates — the controlled input snaps
+                    // back to the stored value, so the milestone keeps its date.
+                    if (!isValidDateStr(e.target.value)) return;
                     dispatch({
                       type: 'MOVE_MILESTONE',
                       milestoneId: m.id,
                       date: e.target.value,
-                    })
-                  }
+                    });
+                  }}
                   aria-label={`Data dla ${m.name}`}
                   disabled={!canManage}
                   title={disabledTitle}
@@ -382,6 +392,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
             <button type="submit" className="btn soft" disabled={!msName.trim()}>
               Dodaj kamień milowy
             </button>
+            {msError && <p className="field-error">{msError}</p>}
           </form>
         )}
       </div>

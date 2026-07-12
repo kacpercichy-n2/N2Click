@@ -10,10 +10,22 @@ import {
   ensureStartMinutes,
   emptyData,
   loadData,
+  normalizeDates,
   normalizeTaskMeta,
 } from './storage';
+import { todayStr } from '../utils/dates';
 import { BIN_DATE } from '../utils/time';
-import type { AppData, SavedFilter, Task, WorkCategory, WorkloadEntry } from '../types';
+import type {
+  ActivityEvent,
+  AppData,
+  Comment,
+  Milestone,
+  Project,
+  SavedFilter,
+  Task,
+  WorkCategory,
+  WorkloadEntry,
+} from '../types';
 
 // `loadData()` reads directly from `localStorage`, which the vitest `node`
 // environment does not provide. Stub a minimal in-memory implementation for
@@ -755,5 +767,243 @@ describe('loadData migration v5 -> v6 (task metadata)', () => {
     expect(filter.criteria.workCategoryId).toBe('');
     expect(filter.criteria.personId).toBe('p1'); // unchanged
     expect(filter.criteria.paid).toBe('all'); // unchanged
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normalizeDates (PKG-20260712-date-validation-core): the every-load repair
+// pass that guarantees no invalid calendar-date string reaches render (where
+// parseDate('') throws a blank-screen RangeError). Runs BEFORE
+// ensureStartMinutes in loadData, so a workload entry it converts to a bin row
+// is picked up by the existing bin one-row-per-(task,person) merge.
+// ---------------------------------------------------------------------------
+
+function makeProject(overrides: Partial<Project> & { id: string }): Project {
+  return {
+    clientId: 'c1',
+    name: 'Project',
+    description: '',
+    statusId: 's1',
+    paid: false,
+    startDate: '2026-07-06',
+    endDate: '2026-07-12',
+    departmentId: '',
+    serviceTypeId: '',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function makeFullTask(overrides: Partial<Task> & { id: string }): Task {
+  return {
+    projectId: 'proj1',
+    statusId: 's1',
+    title: 'Task',
+    description: '',
+    startDate: '2026-07-06',
+    endDate: '2026-07-08',
+    estimatedHours: null,
+    priority: 'normal',
+    workCategoryId: '',
+    checklist: [],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function makeMilestone(overrides: Partial<Milestone> & { id: string }): Milestone {
+  return { projectId: 'proj1', name: 'Milestone', date: '2026-07-07', ...overrides };
+}
+
+function makeComment(overrides: Partial<Comment> & { id: string }): Comment {
+  return {
+    entityType: 'task',
+    entityId: 't1',
+    authorId: 'p1',
+    body: 'Hello',
+    mentionIds: [],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function makeActivityEvent(overrides: Partial<ActivityEvent> & { id: string }): ActivityEvent {
+  return {
+    entityType: 'task',
+    entityId: 't1',
+    actorId: 'p1',
+    message: 'did something',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function makeSavedFilter(overrides: Partial<SavedFilter> & { id: string }): SavedFilter {
+  return {
+    name: 'Filter',
+    page: 'tasks',
+    criteria: { ...DEFAULT_FILTER_CRITERIA },
+    ...overrides,
+  };
+}
+
+describe('normalizeDates', () => {
+  it("the blank-screen repro loads repaired via loadData: a project with startDate '' and a valid endDate gets its start set to the end date", () => {
+    const payload = {
+      ...emptyData(),
+      projects: [makeProject({ id: 'proj1', startDate: '', endDate: '2026-07-12' })],
+    };
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+    const project = data.projects.find((p) => p.id === 'proj1')!;
+    expect(project.startDate).toBe('2026-07-12');
+    expect(project.endDate).toBe('2026-07-12');
+  });
+
+  it('a task with both dates garbage gets both set to today; a valid-but-reversed pair gets swapped', () => {
+    const garbageTask = makeFullTask({ id: 't1', startDate: 'garbage', endDate: 'also-garbage' });
+    const reversedTask = makeFullTask({ id: 't2', startDate: '2026-07-10', endDate: '2026-07-05' });
+    const data = { ...emptyData(), tasks: [garbageTask, reversedTask] };
+    const next = normalizeDates(data);
+
+    const repairedGarbage = next.tasks.find((t) => t.id === 't1')!;
+    expect(repairedGarbage.startDate).toBe(todayStr());
+    expect(repairedGarbage.endDate).toBe(todayStr());
+
+    const repairedReversed = next.tasks.find((t) => t.id === 't2')!;
+    expect(repairedReversed.startDate).toBe('2026-07-05');
+    expect(repairedReversed.endDate).toBe('2026-07-10');
+  });
+
+  it("a milestone with a garbage date is repaired to its project's POST-repair startDate", () => {
+    // Project's own startDate is invalid too, so it first repairs to its endDate
+    // ('2026-07-15') — the milestone must pick up that repaired value, not the
+    // original invalid ''.
+    const project = makeProject({ id: 'proj1', startDate: '', endDate: '2026-07-15' });
+    const milestone = makeMilestone({ id: 'm1', projectId: 'proj1', date: 'garbage' });
+    const data = { ...emptyData(), projects: [project], milestones: [milestone] };
+    const next = normalizeDates(data);
+
+    const repairedProject = next.projects.find((p) => p.id === 'proj1')!;
+    expect(repairedProject.startDate).toBe('2026-07-15');
+
+    const repairedMilestone = next.milestones.find((m) => m.id === 'm1')!;
+    expect(repairedMilestone.date).toBe('2026-07-15');
+  });
+
+  it('a milestone with a garbage date falls back to today when its project no longer exists', () => {
+    const milestone = makeMilestone({ id: 'm1', projectId: 'ghost-project', date: 'garbage' });
+    const data = { ...emptyData(), milestones: [milestone] };
+    const next = normalizeDates(data);
+    expect(next.milestones[0].date).toBe(todayStr());
+  });
+
+  it('a workload entry with an invalid date lands in the bin after loadData and its hours merge into a single (task, person) bin row; a pre-existing bin entry for a DIFFERENT (task, person) pair is untouched', () => {
+    const invalidDateEntry = makeEntry({
+      id: 'e1',
+      taskId: 't1',
+      personId: 'p1',
+      date: 'not-a-date',
+      plannedHours: 2,
+      startMinutes: 480,
+      sortIndex: 0,
+    });
+    const existingSameBin = makeEntry({
+      id: 'binSame',
+      taskId: 't1',
+      personId: 'p1',
+      date: BIN_DATE,
+      startMinutes: 0,
+      plannedHours: 3,
+      sortIndex: 0,
+    });
+    const untouchedOtherBin = makeEntry({
+      id: 'binOther',
+      taskId: 't2',
+      personId: 'p2',
+      date: BIN_DATE,
+      startMinutes: 0,
+      plannedHours: 1,
+      sortIndex: 1,
+    });
+    const payload = {
+      ...emptyData(),
+      workload: [invalidDateEntry, existingSameBin, untouchedOtherBin],
+    };
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+
+    const mergedBin = data.workload.filter((w) => w.taskId === 't1' && w.personId === 'p1');
+    expect(mergedBin).toHaveLength(1); // one-bin-row invariant merged the repaired entry in
+    expect(mergedBin[0].date).toBe(BIN_DATE);
+    expect(mergedBin[0].startMinutes).toBe(0);
+    expect(mergedBin[0].plannedHours).toBe(5); // 3h existing + 2h repaired-to-bin
+
+    const otherBin = data.workload.find((w) => w.id === 'binOther')!;
+    expect(otherBin.date).toBe(BIN_DATE);
+    expect(otherBin.startMinutes).toBe(0);
+    expect(otherBin.plannedHours).toBe(1); // untouched — different (task, person) pair
+  });
+
+  it("a saved filter's invalid criteria.from becomes ''; a valid from/to is kept unchanged", () => {
+    const badFrom = makeSavedFilter({
+      id: 'f1',
+      criteria: { ...DEFAULT_FILTER_CRITERIA, from: 'garbage', to: '2026-07-20' },
+    });
+    const goodFrom = makeSavedFilter({
+      id: 'f2',
+      criteria: { ...DEFAULT_FILTER_CRITERIA, from: '2026-07-01', to: '' },
+    });
+    const data = { ...emptyData(), savedFilters: [badFrom, goodFrom] };
+    const next = normalizeDates(data);
+
+    const repaired = next.savedFilters.find((f) => f.id === 'f1')!;
+    expect(repaired.criteria.from).toBe('');
+    expect(repaired.criteria.to).toBe('2026-07-20'); // valid, untouched
+
+    const kept = next.savedFilters.find((f) => f.id === 'f2')!;
+    expect(kept.criteria.from).toBe('2026-07-01');
+    expect(kept.criteria.to).toBe('');
+  });
+
+  it('a comment/activity event with a garbage createdAt is repaired to the epoch sentinel', () => {
+    const comment = makeComment({ id: 'cm1', createdAt: 'garbage' });
+    const event = makeActivityEvent({ id: 'ev1', createdAt: 'garbage' });
+    const data = { ...emptyData(), comments: [comment], activity: [event] };
+    const next = normalizeDates(data);
+    expect(next.comments[0].createdAt).toBe('1970-01-01T00:00:00.000Z');
+    expect(next.activity[0].createdAt).toBe('1970-01-01T00:00:00.000Z');
+  });
+
+  it('normalizeDates(normalizeDates(x)) deep-equals normalizeDates(x) (idempotent)', () => {
+    const messyData: AppData = {
+      ...emptyData(),
+      projects: [makeProject({ id: 'proj1', startDate: '', endDate: '2026-07-12' })],
+      tasks: [makeFullTask({ id: 't1', startDate: 'garbage', endDate: 'garbage' })],
+      milestones: [makeMilestone({ id: 'm1', projectId: 'proj1', date: 'garbage' })],
+      workload: [makeEntry({ id: 'e1', date: 'not-a-date' })],
+      savedFilters: [makeSavedFilter({ id: 'f1', criteria: { ...DEFAULT_FILTER_CRITERIA, from: 'garbage' } })],
+      comments: [makeComment({ id: 'cm1', createdAt: 'garbage' })],
+      activity: [makeActivityEvent({ id: 'ev1', createdAt: 'garbage' })],
+    };
+    const once = normalizeDates(messyData);
+    const twice = normalizeDates(once);
+    expect(twice).toEqual(once);
+  });
+
+  it('a fully-valid payload passes through normalizeDates unchanged (same reference — the pass short-circuits)', () => {
+    const validData: AppData = {
+      ...emptyData(),
+      projects: [makeProject({ id: 'proj1' })],
+      tasks: [makeFullTask({ id: 't1' })],
+      milestones: [makeMilestone({ id: 'm1' })],
+      workload: [makeEntry({ id: 'e1', date: '2026-07-08' })],
+      savedFilters: [makeSavedFilter({ id: 'f1' })],
+      comments: [makeComment({ id: 'cm1' })],
+      activity: [makeActivityEvent({ id: 'ev1' })],
+    };
+    const next = normalizeDates(validData);
+    expect(next).toEqual(validData);
+    expect(next).toBe(validData); // no repair needed -> same reference
   });
 });
