@@ -1039,8 +1039,9 @@ describe('loadData round-trip — multi-block day (PKG-20260712b-savetask-tests)
 // Implementation shipped by PKG-20260712c-status-done-core: every status gains
 // a stored `isDone` boolean; when none is set, the LAST ACTIVE status by
 // `order` defaults to done (the value the removed `doneStatusId` selector used
-// to compute), falling back to the last status overall when every status is
-// archived. Runs on EVERY load, same idempotent-by-value philosophy as
+// to compute). When every status is archived, the deterministic done status is
+// also restored so Kanban has a usable column. Runs on EVERY load, same
+// idempotent-by-value philosophy as
 // ensureStartMinutes / normalizeTaskMeta.
 // ---------------------------------------------------------------------------
 
@@ -1137,8 +1138,21 @@ describe('normalizeStatusFlags / v6→v7 done semantics', () => {
 
     const byId = new Map(data.statuses.map((s) => [s.id, s]));
     expect(byId.get('s2')!.isDone).toBe(true);
+    expect(byId.get('s2')!.archived).toBe(false);
     expect(byId.get('s0')!.isDone).toBe(false);
     expect(byId.get('s1')!.isDone).toBe(false);
+  });
+
+  it('v6 to v7 does not translate a user-created English status name that matches an old seed label', () => {
+    const payload = v6Payload({
+      statuses: [makeRawStatus({ id: 'custom', order: 0, name: 'Done' })],
+    });
+
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+
+    expect(data.statuses[0].name).toBe('Done');
+    expect(data.statuses[0].slug).toBe('status-0');
+    expect(data.statuses[0].isDone).toBe(true);
   });
 
   it('a payload with zero statuses loads without crashing and marks nothing done', () => {

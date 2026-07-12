@@ -191,7 +191,7 @@ export function KanbanPage() {
         </div>
       </div>
 
-      {statuses.length === 0 ? (
+      {statuses.length === 0 && archivedProjects.length === 0 ? (
         <div className="empty-state">
           <p className="empty-title">Brak statusów</p>
           <p className="empty-hint">Administrator może utworzyć statusy lejka w panelu Administracja.</p>

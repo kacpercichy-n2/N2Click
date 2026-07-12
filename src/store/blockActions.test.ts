@@ -63,6 +63,23 @@ function makePerson(overrides: Partial<Person> & { id: string }): Person {
 }
 
 describe('SET_BLOCK_TIME', () => {
+  it.each(['', 'not-a-date', '2026-02-30'])('rejects an invalid target date: %s', (date) => {
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      workload: [makeEntry({ id: 'e1' })],
+    });
+
+    const next = reducer(state, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'e1',
+      date,
+      startMinutes: 480,
+      plannedHours: 2,
+    });
+
+    expect(next).toBe(state);
+  });
+
   it('happy path same-day move: updates startMinutes, re-ranks sortIndex by time, appends one activity row', () => {
     const e1 = makeEntry({ id: 'e1', startMinutes: 480, sortIndex: 0 }); // 480-600
     const e2 = makeEntry({ id: 'e2', startMinutes: 600, sortIndex: 1 }); // 600-720

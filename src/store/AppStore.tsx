@@ -269,6 +269,25 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
   if (periodError(draft.startDate, draft.endDate, { maxDays: MAX_TASK_PERIOD_DAYS }) !== null) {
     return state;
   }
+  // Treat the command payload as untrusted. The editor normally emits valid
+  // cells, but reducers are also reached by imports, stale tabs, and tests.
+  // Reject atomically so malformed input cannot create invalid workload rows.
+  if (
+    allocations.some(
+      (cell) =>
+        !isValidDateStr(cell.date) ||
+        cell.date < draft.startDate ||
+        cell.date > draft.endDate ||
+        !Number.isFinite(cell.plannedHours) ||
+        cell.plannedHours < 0 ||
+        cell.plannedHours > 24,
+    ) ||
+    (payload.newUnassigned ?? []).some(
+      (item) => !Number.isFinite(item.hours) || item.hours < 0,
+    )
+  ) {
+    return state;
+  }
   const ts = nowIso();
   const checklist = cleanChecklist(draft.checklist);
   // A category can disappear while an edit modal is still open. Persist only a
@@ -910,7 +929,7 @@ function setBlockTime(
 
   // A grid drop always targets a real calendar day. Use MOVE_BLOCK_TO_BIN to
   // send a block back to the bin — never the empty-date sentinel here.
-  if (date === BIN_DATE) return state;
+  if (date === BIN_DATE || !isValidDateStr(date)) return state;
 
   // Grid + range validation.
   if (!Number.isFinite(startMinutes) || startMinutes < 0 || startMinutes % MINUTE_STEP !== 0) {

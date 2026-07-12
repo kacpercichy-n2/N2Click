@@ -120,6 +120,32 @@ function payloadFor(
 }
 
 describe('SAVE_TASK identity-preserving workload reconciliation (PKG-20260712b-savetask-tests)', () => {
+  it('rejects malformed allocation or bin-hour input atomically', () => {
+    const invalidPayloads: SaveTaskPayload[] = [
+      payloadFor({
+        allocations: [{ personId: 'p1', date: 'not-a-date', plannedHours: 2 }],
+      }),
+      payloadFor({
+        allocations: [{ personId: 'p1', date: '2026-07-11', plannedHours: 2 }],
+      }),
+      payloadFor({
+        allocations: [{ personId: 'p1', date: D, plannedHours: Number.POSITIVE_INFINITY }],
+      }),
+      payloadFor({
+        allocations: [{ personId: 'p1', date: D, plannedHours: 24.25 }],
+      }),
+      payloadFor({
+        allocations: [],
+        newUnassigned: [{ personId: 'p1', hours: Number.POSITIVE_INFINITY }],
+      }),
+    ];
+
+    for (const payload of invalidPayloads) {
+      const { state } = baselineState();
+      expect(reducer(state, { type: 'SAVE_TASK', payload })).toBe(state);
+    }
+  });
+
   it('1. unchanged save is lossless: entire workload set deep-equals the pre-save set including ids; exactly one activity row appended', () => {
     const { state, e1, e2, bin1, e3 } = baselineState();
 

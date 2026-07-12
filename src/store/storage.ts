@@ -27,6 +27,7 @@ import {
 const STORAGE_KEY = 'n2hub.data.v1';
 const LEGACY_STORAGE_KEYS = ['n2ub.data.v1', 'n2click.data.v1'];
 export const DATA_VERSION = 7;
+const LOCALIZATION_MIGRATION_VERSION = 6;
 
 export const DEFAULT_CAPACITY = 8; // hours available per person per day
 export const WORKDAY_START_MIN = 480; // 8:00 — default person work-hours start
@@ -321,11 +322,9 @@ function translateKnownName(name: string, map: Record<string, string>): string {
 }
 
 /**
- * Maps the English seed's default dictionary names to Polish. Runs once per
- * legacy load (version < DATA_VERSION). Idempotent on already-Polish data:
- * translateKnownName returns the name unchanged when it isn't an English key,
- * so a v6 Polish payload (now < DATA_VERSION after the v7 bump) passes through
- * untouched.
+ * Maps the English seed's default dictionary names to Polish. This completed
+ * with v6, so only payloads older than that version may be transformed. A
+ * later schema bump must never reinterpret a user's valid English labels.
  */
 function localizeLegacyData(data: AppData): AppData {
   const statusNames: Record<string, string> = {
@@ -754,6 +753,20 @@ export function normalizeStatusFlags(data: AppData): AppData {
     return { ...s, isDone };
   });
 
+  // Older admin actions could archive every status. Keep one deterministic
+  // column visible instead of leaving existing projects unreachable in Kanban.
+  if (statuses.length > 0 && !statuses.some((s) => !s.archived)) {
+    const done = statuses.filter((s) => s.isDone);
+    const pool = done.length > 0 ? done : statuses;
+    const target = pool.reduce((last, s) => (s.order >= last.order ? s : last), pool[0]);
+    return {
+      ...data,
+      statuses: statuses.map((s) =>
+        s.id === target.id ? { ...s, archived: false, isDone: true } : s,
+      ),
+    };
+  }
+
   if (statuses.length > 0 && !statuses.some((s) => s.isDone)) {
     const active = statuses.filter((s) => !s.archived);
     const pool = active.length > 0 ? active : statuses;
@@ -792,7 +805,8 @@ export function loadData(): AppData {
       ...(parsed as Partial<AppData>),
       version: DATA_VERSION,
     };
-    const localized = version < DATA_VERSION ? localizeLegacyData(loaded) : loaded;
+    const localized =
+      version < LOCALIZATION_MIGRATION_VERSION ? localizeLegacyData(loaded) : loaded;
     // Person normalization runs on EVERY load (defensive + idempotent), exactly
     // like ensureStartMinutes below — NOT only when `version < 5`. A payload
     // stamped v5 whose people were never actually migrated (e.g. persisted
