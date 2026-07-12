@@ -127,11 +127,44 @@ function resolveRoute(route: string, role: Person['accessRole'] | undefined, cur
   return route;
 }
 
-function popupPosition(rect: Rect): CSSProperties {
+function popupPosition(rect: Rect, keepTargetClear = false): CSSProperties {
   if (!rect) return {};
   const width = Math.min(372, window.innerWidth - 24);
+  const gap = 16;
+  const right = rect.left + rect.width;
+  // Practice coachmarks carry an extra instruction panel. This conservative
+  // estimate is only used to choose a side of the target; the card itself
+  // still grows naturally with translated or wrapped copy.
+  const estimatedHeight = keepTargetClear ? 350 : 300;
   const below = rect.top + rect.height + 16;
-  const top = below + 300 < window.innerHeight ? below : Math.max(12, rect.top - 310);
+  if (below + estimatedHeight <= window.innerHeight - 12) {
+    const left = Math.min(Math.max(12, rect.left + rect.width / 2 - width / 2), window.innerWidth - width - 12);
+    return { top: below, left, width };
+  }
+  const above = rect.top - gap - estimatedHeight;
+  if (above >= 12) {
+    const left = Math.min(Math.max(12, rect.left + rect.width / 2 - width / 2), window.innerWidth - width - 12);
+    return { top: above, left, width };
+  }
+  // On a tight vertical viewport, a practice card must move alongside the
+  // block. Otherwise it would cover the very handle/card the user needs to
+  // touch. Prefer the right side, then the left; the mobile CSS fallback keeps
+  // the card pinned below when neither side is usable.
+  if (keepTargetClear && right + gap + width <= window.innerWidth - 12) {
+    return {
+      top: Math.min(Math.max(12, rect.top + rect.height / 2 - estimatedHeight / 2), window.innerHeight - estimatedHeight - 12),
+      left: right + gap,
+      width,
+    };
+  }
+  if (keepTargetClear && rect.left - gap - width >= 12) {
+    return {
+      top: Math.min(Math.max(12, rect.top + rect.height / 2 - estimatedHeight / 2), window.innerHeight - estimatedHeight - 12),
+      left: rect.left - gap - width,
+      width,
+    };
+  }
+  const top = Math.max(12, above);
   const left = Math.min(Math.max(12, rect.left + rect.width / 2 - width / 2), window.innerWidth - width - 12);
   return { top, left, width };
 }
@@ -152,6 +185,7 @@ export function OnboardingRoot({
   const [panel, setPanel] = useState<Panel>('none');
   const [introIndex, setIntroIndex] = useState(0);
   const [tour, setTour] = useState<TourState>(null);
+  const [practiceDone, setPracticeDone] = useState(false);
   const [hintDismissed, setHintDismissed] = useState(false);
   const [notice, setNotice] = useState('');
   const autoStarted = useRef<string | null>(null);
@@ -201,6 +235,21 @@ export function OnboardingRoot({
     const route = resolveRoute(activeStep.route, role, location.pathname);
     if (route !== location.pathname) navigate(route);
   }, [activeStep, location.pathname, navigate, role, tour]);
+
+  useEffect(() => {
+    setPracticeDone(false);
+  }, [activeStep?.practice?.kind, tour?.stepIndex]);
+
+  useEffect(() => {
+    const kind = activeStep?.practice?.kind;
+    if (!kind) return;
+    const onPractice = (event: Event) => {
+      const detail = (event as CustomEvent<{ kind?: string }>).detail;
+      if (detail?.kind === kind) setPracticeDone(true);
+    };
+    window.addEventListener('n2hub:calendar-practice', onPractice);
+    return () => window.removeEventListener('n2hub:calendar-practice', onPractice);
+  }, [activeStep?.practice?.kind]);
 
   useEffect(() => {
     if (!notice) return;
@@ -393,6 +442,7 @@ export function OnboardingRoot({
             step={activeStep}
             index={tour.stepIndex}
             rect={targetRect}
+            practiceDone={practiceDone}
             onBack={previousStep}
             onNext={nextStep}
             onSkip={() => {
@@ -409,6 +459,7 @@ export function OnboardingRoot({
               }));
               setTour(null);
             }}
+            onSkipPractice={() => setPracticeDone(true)}
           />
         )}
       </AnimatePresence>
@@ -559,25 +610,29 @@ function Coachmark({
   step,
   index,
   rect,
+  practiceDone,
   onBack,
   onNext,
   onSkip,
+  onSkipPractice,
 }: {
   module: TutorialModule;
   step: TourStep;
   index: number;
   rect: Rect;
+  practiceDone: boolean;
   onBack: () => void;
   onNext: () => void;
   onSkip: () => void;
+  onSkipPractice: () => void;
 }) {
   const titleRef = useRef<HTMLHeadingElement>(null);
   useEffect(() => titleRef.current?.focus(), [index]);
   const last = index === module.steps.length - 1;
-  const popupStyle = popupPosition(rect);
+  const popupStyle = popupPosition(rect, Boolean(step.practice));
   return (
-    <motion.div className="onboarding-layer onboarding-tour-layer" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-      <div className={rect ? 'onboarding-scrim onboarding-tour-scrim' : 'onboarding-scrim'} />
+    <motion.div className={step.practice ? 'onboarding-layer onboarding-tour-layer is-practice' : 'onboarding-layer onboarding-tour-layer'} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      {!step.practice && <div className={rect ? 'onboarding-scrim onboarding-tour-scrim' : 'onboarding-scrim'} />}
       {rect && (
         <div
           className="onboarding-spotlight"
@@ -589,7 +644,9 @@ function Coachmark({
         className={rect ? 'onboarding-coachmark' : 'onboarding-coachmark centered'}
         style={popupStyle}
         role="dialog"
-        aria-modal="true"
+        // A practice step deliberately leaves the real calendar operable, so
+        // it must not claim to be a modal dialog to assistive technology.
+        aria-modal={step.practice ? undefined : 'true'}
         aria-labelledby="onboarding-coachmark-title"
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
@@ -600,12 +657,19 @@ function Coachmark({
         <h2 id="onboarding-coachmark-title" ref={titleRef} tabIndex={-1}>{step.title}</h2>
         <p>{step.body}</p>
         {step.note && <p className="onboarding-note">{step.note}</p>}
+        {step.practice && (
+          <div className={practiceDone ? 'onboarding-practice done' : 'onboarding-practice'} role="status">
+            <strong>{practiceDone ? 'Ćwiczenie wykonane' : 'Ćwiczenie na żywo'}</strong>
+            <span>{practiceDone ? 'Świetnie — wykonałeś działanie na prawdziwym elemencie.' : step.practice.instruction}</span>
+            {!practiceDone && <button type="button" className="onboarding-never" onClick={onSkipPractice}>Pomiń ćwiczenie</button>}
+          </div>
+        )}
         {!rect && <p className="onboarding-note">Ten element nie jest teraz widoczny, ale możesz kontynuować bez zmiany danych.</p>}
         <div className="onboarding-actions">
           <button type="button" className="btn ghost" onClick={onSkip}>Pomiń</button>
           <span className="onboarding-actions-spacer" />
           {index > 0 && <button type="button" className="btn ghost" onClick={onBack}><ArrowLeft size={16} aria-hidden /> Wstecz</button>}
-          <button type="button" className="btn primary" onClick={onNext} data-onboarding-primary>{last ? 'Zakończ' : 'Dalej'}</button>
+          <button type="button" className="btn primary" onClick={onNext} disabled={Boolean(step.practice) && !practiceDone} data-onboarding-primary>{last ? 'Zakończ' : 'Dalej'}</button>
         </div>
       </motion.section>
     </motion.div>

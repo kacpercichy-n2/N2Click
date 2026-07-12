@@ -7,6 +7,10 @@ export type TourStep = {
   body: string;
   route: string;
   note?: string;
+  practice?: {
+    kind: 'move' | 'resize' | 'bin-drop';
+    instruction: string;
+  };
 };
 
 export type TutorialModule = {
@@ -206,10 +210,34 @@ export const TUTORIAL_MODULES: TutorialModule[] = [
     roles: EVERYONE,
     steps: [
       {
-        target: 'calendar.week',
-        title: 'Przesuwanie i zmiana czasu',
-        body: 'Środek bloku go przesuwa, a jego krawędzie zmieniają czas w krokach 15 minut. Kliknięcie zawsze otwiera zadanie jako alternatywę dla gestu.',
+        target: 'calendar.block',
+        title: 'Przećwicz przesunięcie prawdziwego bloku',
+        body: 'Podświetlony blok jest realnym zadaniem z Twojego kalendarza. Przeciągnij jego środek na wolną godzinę lub inny dzień.',
         route: '/calendar',
+        practice: {
+          kind: 'move',
+          instruction: 'Twoja kolej: przeciągnij podświetlony blok za jego środek. Zmiana zostanie zapisana jak przy normalnej pracy.',
+        },
+      },
+      {
+        target: 'calendar.block',
+        title: 'Zmień długość bloku',
+        body: 'Uchwyty na górnej i dolnej krawędzi bloku zmieniają czas co 15 minut. Nie nakładaj go na inną pracę tej samej osoby.',
+        route: '/calendar',
+        practice: {
+          kind: 'resize',
+          instruction: 'Twoja kolej: złap górną albo dolną krawędź podświetlonego bloku i zmień jego długość.',
+        },
+      },
+      {
+        target: 'calendar.bin-card',
+        title: 'Nadaj termin pracy z Zasobnika',
+        body: 'Ta karta ma przypisaną osobę i liczbę godzin, ale nie ma jeszcze daty. Przeciągnij ją na wolne miejsce w siatce.',
+        route: '/calendar',
+        practice: {
+          kind: 'bin-drop',
+          instruction: 'Twoja kolej: przeciągnij podświetloną kartę z Zasobnika na godzinę w wybranym dniu.',
+        },
       },
       {
         target: 'calendar.overload',

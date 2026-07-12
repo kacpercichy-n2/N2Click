@@ -61,6 +61,11 @@ const MIN_BLOCK_H = 14; // keep 0.25h blocks clickable
 const SCROLL_TO_MIN = 7 * 60; // open scrolled to 07:00
 const DAY_COLS = 7; // the days grid holds 7 columns (no axis inside)
 
+/** Announces a successful real calendar action to the optional guided practice. */
+function announceCalendarPractice(kind: 'move' | 'resize' | 'bin-drop'): void {
+  window.dispatchEvent(new CustomEvent('n2hub:calendar-practice', { detail: { kind } }));
+}
+
 interface MenuState {
   entry: WorkloadEntry;
   x: number;
@@ -330,6 +335,7 @@ function TimedBlock({
     if (!moved.current) return; // treated as a click by onClick
     if (overBin) {
       dispatch({ type: 'MOVE_BLOCK_TO_BIN', entryId: entry.id });
+      announceCalendarPractice('move');
       return;
     }
     if (colliding) return; // invalid drop → snap back (re-render restores it)
@@ -348,6 +354,7 @@ function TimedBlock({
       startMinutes: projStart,
       plannedHours: projHours,
     });
+    announceCalendarPractice(finalDrag.mode === 'move' ? 'move' : 'resize');
   };
 
   const start = drag ? drag.projStart : baseStart;
@@ -379,6 +386,7 @@ function TimedBlock({
   return (
     <div
       className={className}
+      data-tour="calendar.block"
       style={{
         top,
         height,
@@ -660,6 +668,7 @@ function BinCard({
       startMinutes: finalDrag.startMin,
       plannedHours: entry.plannedHours,
     });
+    announceCalendarPractice('bin-drop');
   };
 
   const begin = (e: React.PointerEvent) => {
@@ -757,6 +766,7 @@ function BinCard({
       <div
         ref={cardRef}
         className={className}
+        data-tour="calendar.bin-card"
         style={{ borderLeftColor: personColor(person.id) }}
         role="button"
         tabIndex={0}

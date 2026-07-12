@@ -109,7 +109,11 @@ export function buildSampleData(): AppData {
   // Clients & projects
   const acme = { id: uid(), name: 'Acme Foods', archived: false };
   const nordic = { id: uid(), name: 'Nordic Fitness', archived: false };
-  const clients = [acme, nordic];
+  const vela = { id: uid(), name: 'Vela Living', archived: false };
+  const greenVolt = { id: uid(), name: 'GreenVolt Energy', archived: false };
+  const mizu = { id: uid(), name: 'Mizu Skincare', archived: false };
+  const kite = { id: uid(), name: 'Kite & Co.', archived: false };
+  const clients = [acme, nordic, vela, greenVolt, mizu, kite];
 
   const projRedesign = {
     id: uid(),
@@ -153,13 +157,82 @@ export function buildSampleData(): AppData {
     createdAt: now,
     updatedAt: now,
   };
-  const projects = [projRedesign, projCampaign, projRelease];
+  const projBrand = {
+    id: uid(),
+    clientId: vela.id,
+    name: 'Nowa identyfikacja Vela Living',
+    description: 'System wizualny dla kolekcji jesiennej: kierunek artystyczny, key visual, katalog i pakiet materiałów dla salonów.',
+    statusId: wip.id,
+    paid: true,
+    startDate: addDaysStr(mon, -4),
+    endDate: addDaysStr(fri, 10),
+    departmentId: depDesign.id,
+    serviceTypeId: svcBrand.id,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const projPlatform = {
+    id: uid(),
+    clientId: greenVolt.id,
+    name: 'Platforma partnerów instalacyjnych',
+    description: 'MVP portalu dla partnerów GreenVolt: generator leadów, strefa materiałów sprzedażowych i formularz rejestracji instalacji.',
+    statusId: todo.id,
+    paid: false,
+    startDate: addDaysStr(mon, 7),
+    endDate: addDaysStr(fri, 28),
+    departmentId: depDev.id,
+    serviceTypeId: svcWeb.id,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const projLaunch = {
+    id: uid(),
+    clientId: mizu.id,
+    name: 'Premiera serum Hikari',
+    description: 'Finalna faza kampanii premierowej: landing page, kreacje reklamowe, mailing i pakiet publikacji dla social media.',
+    statusId: accept.id,
+    paid: true,
+    startDate: addDaysStr(mon, -10),
+    endDate: addDaysStr(fri, 7),
+    departmentId: depMgmt.id,
+    serviceTypeId: svcSocial.id,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const projAudit = {
+    id: uid(),
+    clientId: kite.id,
+    name: 'Audyt konwersji e-commerce',
+    description: 'Zakończony audyt ścieżki zakupu z listą priorytetów CRO, rekomendacjami UX i planem eksperymentów A/B.',
+    statusId: done.id,
+    paid: true,
+    startDate: addDaysStr(mon, -24),
+    endDate: addDaysStr(fri, -5),
+    departmentId: depDesign.id,
+    serviceTypeId: svcWeb.id,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const projects = [
+    projRedesign,
+    projCampaign,
+    projRelease,
+    projBrand,
+    projPlatform,
+    projLaunch,
+    projAudit,
+  ];
 
   const milestones = [
     { id: uid(), projectId: projRedesign.id, name: 'Projekt zaakceptowany', date: thu },
     { id: uid(), projectId: projRedesign.id, name: 'Publikacja', date: addDaysStr(fri, 14) },
     { id: uid(), projectId: projCampaign.id, name: 'Przegląd koncepcji', date: addDaysStr(fri, 7) },
     { id: uid(), projectId: projRelease.id, name: 'Zamknięcie wydania', date: fri },
+    { id: uid(), projectId: projBrand.id, name: 'Warsztat z klientem', date: addDaysStr(wed, 2) },
+    { id: uid(), projectId: projBrand.id, name: 'Oddanie katalogu', date: addDaysStr(fri, 10) },
+    { id: uid(), projectId: projPlatform.id, name: 'Demo MVP', date: addDaysStr(fri, 21) },
+    { id: uid(), projectId: projLaunch.id, name: 'Start kampanii płatnej', date: addDaysStr(thu, 1) },
+    { id: uid(), projectId: projAudit.id, name: 'Prezentacja wniosków', date: addDaysStr(fri, -5) },
   ];
 
   const tasks: Task[] = [];
@@ -303,6 +376,160 @@ export function buildSampleData(): AppData {
   addWork(t4.id, kasia.id, addDaysStr(tue, -7), 4);
   addWork(t4.id, kasia.id, addDaysStr(wed, -7), 2);
 
+  // --- Task 5: client-facing brand workshop with a present-week deadline ---
+  const t5: Task = {
+    id: uid(),
+    projectId: projBrand.id,
+    statusId: wip.id,
+    title: 'Key visual i makieta katalogu',
+    description: 'Dopracowanie kluczowego motywu kampanii oraz pierwszych 12 stron katalogu kolekcji jesiennej.',
+    startDate: mon,
+    endDate: addDaysStr(fri, 10),
+    estimatedHours: 26,
+    priority: 'high',
+    workCategoryId: catKreacja.id,
+    checklist: [
+      { id: uid(), text: 'Kierunek wizualny potwierdzony', done: true },
+      { id: uid(), text: 'Makiety kategorii', done: false },
+      { id: uid(), text: 'Komentarze klienta', done: false },
+    ],
+    createdAt: now,
+    updatedAt: now,
+  };
+  tasks.push(t5);
+  addAssign(t5.id, ola.id);
+  addAssign(t5.id, kasia.id);
+  addWork(t5.id, ola.id, tue, 2);
+  addWork(t5.id, ola.id, wed, 2);
+  addWork(t5.id, kasia.id, tue, 3);
+  addWork(t5.id, kasia.id, thu, 2);
+  addBinWork(t5.id, ola.id, 2);
+
+  // --- Task 6: a future platform feature makes Timeline and workload useful ---
+  const t6: Task = {
+    id: uid(),
+    projectId: projPlatform.id,
+    statusId: todo.id,
+    title: 'Strefa partnera — zakres MVP',
+    description: 'Rozpisanie ekranów, uprawnień i kryteriów odbioru dla pierwszej wersji panelu partnerów instalacyjnych.',
+    startDate: addDaysStr(mon, 7),
+    endDate: addDaysStr(fri, 14),
+    estimatedHours: 30,
+    priority: 'high',
+    workCategoryId: catWdrozenie.id,
+    checklist: [
+      { id: uid(), text: 'Mapa ekranów', done: false },
+      { id: uid(), text: 'Kryteria odbioru', done: false },
+    ],
+    createdAt: now,
+    updatedAt: now,
+  };
+  tasks.push(t6);
+  addAssign(t6.id, marek.id);
+  addAssign(t6.id, kasia.id);
+  addWork(t6.id, marek.id, addDaysStr(mon, 7), 5);
+  addWork(t6.id, marek.id, addDaysStr(tue, 7), 5);
+  addWork(t6.id, kasia.id, addDaysStr(mon, 7), 3);
+  addWork(t6.id, kasia.id, addDaysStr(wed, 7), 3);
+
+  // --- Task 7: launch assets — deadline within the demo horizon ---
+  const t7: Task = {
+    id: uid(),
+    projectId: projLaunch.id,
+    statusId: accept.id,
+    title: 'Pakiet kreacji do premiery',
+    description: 'Formaty do Meta i Google, mailing premierowy oraz zestaw materiałów dla influencerów.',
+    startDate: addDaysStr(mon, -2),
+    endDate: addDaysStr(fri, 7),
+    estimatedHours: 22,
+    priority: 'urgent',
+    workCategoryId: catKreacja.id,
+    checklist: [
+      { id: uid(), text: 'Formaty reklamowe', done: true },
+      { id: uid(), text: 'Mailing', done: true },
+      { id: uid(), text: 'Pakiet influencer', done: false },
+    ],
+    createdAt: now,
+    updatedAt: now,
+  };
+  tasks.push(t7);
+  addAssign(t7.id, ola.id);
+  addAssign(t7.id, kasia.id);
+  addWork(t7.id, ola.id, mon, 2);
+  addWork(t7.id, kasia.id, wed, 3);
+  addWork(t7.id, kasia.id, fri, 2);
+
+  // --- Task 8: an intentionally unscheduled discovery item for the bin tour ---
+  const t8: Task = {
+    id: uid(),
+    projectId: projPlatform.id,
+    statusId: todo.id,
+    title: 'Wywiady z partnerami instalacyjnymi',
+    description: 'Przygotowanie scenariusza rozmów i synteza najważniejszych potrzeb partnerów przed startem MVP.',
+    startDate: addDaysStr(mon, 7),
+    endDate: addDaysStr(fri, 21),
+    estimatedHours: 12,
+    priority: 'normal',
+    workCategoryId: catTesty.id,
+    checklist: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+  tasks.push(t8);
+  addAssign(t8.id, marek.id);
+  addAssign(t8.id, kasia.id);
+  addBinWork(t8.id, marek.id, 2.5);
+  addBinWork(t8.id, kasia.id, 2);
+
+  // --- Task 9: completed historical work completes the project/kanban story ---
+  const t9: Task = {
+    id: uid(),
+    projectId: projAudit.id,
+    statusId: done.id,
+    title: 'Raport CRO i backlog eksperymentów',
+    description: 'Raport z audytu, priorytety hipotez oraz plan testów A/B na kolejny kwartał.',
+    startDate: addDaysStr(mon, -20),
+    endDate: addDaysStr(fri, -5),
+    estimatedHours: 18,
+    priority: 'normal',
+    workCategoryId: catTesty.id,
+    checklist: [
+      { id: uid(), text: 'Raport wysłany', done: true },
+      { id: uid(), text: 'Prezentacja dla klienta', done: true },
+    ],
+    createdAt: now,
+    updatedAt: now,
+  };
+  tasks.push(t9);
+  addAssign(t9.id, ola.id);
+  addAssign(t9.id, kasia.id);
+  addWork(t9.id, ola.id, addDaysStr(mon, -14), 4);
+  addWork(t9.id, kasia.id, addDaysStr(tue, -14), 3);
+
+  // --- Task 10: a small client follow-up keeps the current project list dense ---
+  const t10: Task = {
+    id: uid(),
+    projectId: projCampaign.id,
+    statusId: todo.id,
+    title: 'Plan publikacji i raportowania',
+    description: 'Kalendarz treści, odpowiedzialności, budżet testowy oraz układ cotygodniowego raportu dla Nordic Fitness.',
+    startDate: addDaysStr(mon, 1),
+    endDate: addDaysStr(fri, 14),
+    estimatedHours: 14,
+    priority: 'normal',
+    workCategoryId: catKreacja.id,
+    checklist: [
+      { id: uid(), text: 'Tematy tygodniowe', done: false },
+      { id: uid(), text: 'Szablon raportu', done: false },
+    ],
+    createdAt: now,
+    updatedAt: now,
+  };
+  tasks.push(t10);
+  addAssign(t10.id, kasia.id);
+  addWork(t10.id, kasia.id, thu, 2);
+  addWork(t10.id, kasia.id, addDaysStr(mon, 7), 2);
+
   // Comments with an @mention, plus a seeded activity trail.
   const comments = [
     {
@@ -312,6 +539,24 @@ export function buildSampleData(): AppData {
       authorId: kasia.id,
       body: `@${ola.firstName} klient zaakceptował moodboard — można ruszać z projektami sekcji hero.`,
       mentionIds: [ola.id],
+      createdAt: now,
+    },
+    {
+      id: uid(),
+      entityType: 'project' as const,
+      entityId: projBrand.id,
+      authorId: kasia.id,
+      body: `@${ola.firstName} po warsztacie dopisz proszę trzy warianty okładki katalogu do środy.`,
+      mentionIds: [ola.id],
+      createdAt: now,
+    },
+    {
+      id: uid(),
+      entityType: 'task' as const,
+      entityId: t6.id,
+      authorId: kasia.id,
+      body: `@${marek.firstName} klient potwierdził, że pierwszy priorytet to generator leadów i materiały do pobrania.`,
+      mentionIds: [marek.id],
       createdAt: now,
     },
     {

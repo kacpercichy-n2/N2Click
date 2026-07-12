@@ -4647,6 +4647,12 @@ option {
 .onboarding-tour-scrim {
   background: transparent;
 }
+.onboarding-tour-layer.is-practice {
+  pointer-events: none;
+}
+.onboarding-tour-layer.is-practice .onboarding-coachmark {
+  pointer-events: auto;
+}
 .onboarding-intro,
 .tutorial-center,
 .onboarding-coachmark {
@@ -4805,6 +4811,23 @@ option {
   color: var(--n2-text) !important;
   font-size: var(--n2-type-sm);
 }
+.onboarding-practice {
+  display: grid;
+  gap: 4px;
+  margin-top: var(--n2-space-4);
+  padding: var(--n2-space-3);
+  border: 1px solid var(--n2-info);
+  border-radius: var(--n2-radius-sm);
+  background: var(--n2-info-soft);
+  color: var(--n2-text);
+  font-size: var(--n2-type-sm);
+}
+.onboarding-practice strong { color: var(--n2-info); }
+.onboarding-practice.done {
+  border-color: var(--n2-success);
+  background: var(--n2-success-soft);
+}
+.onboarding-practice.done strong { color: var(--n2-success); }
 .onboarding-coachmark .onboarding-actions { margin-top: var(--n2-space-5); }
 .onboarding-context-hint {
   position: fixed;
