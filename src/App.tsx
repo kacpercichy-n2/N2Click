@@ -44,9 +44,11 @@ import {
   X,
   ChevronsLeft,
   ChevronsRight,
+  CircleHelp,
 } from './components/icons';
 import type { LucideIcon } from './components/icons';
-import { loadUiPrefs, saveUiPrefs } from './utils/uiPrefs';
+import { loadUiPrefs, updateUiPrefs } from './utils/uiPrefs';
+import { OnboardingRoot } from './onboarding/OnboardingRoot';
 
 const NAV: Array<[string, string, LucideIcon]> = [
   ['/dashboard', 'Panel', LayoutDashboard],
@@ -72,14 +74,14 @@ export function App() {
   const toggleCollapsed = () => {
     setCollapsed((v) => {
       const next = !v;
-      saveUiPrefs({ sidebarCollapsed: next });
+      updateUiPrefs({ sidebarCollapsed: next });
       return next;
     });
   };
   const expandSidebar = () => {
     if (!collapsed) return;
     setCollapsed(false);
-    saveUiPrefs({ sidebarCollapsed: false });
+    updateUiPrefs({ sidebarCollapsed: false });
   };
 
   const currentUser = state.people.find((p) => p.id === state.currentUserId);
@@ -149,6 +151,7 @@ export function App() {
           ref={hamburgerRef}
           type="button"
           className="app-hamburger"
+          data-tour="shell.nav"
           aria-label={menuOpen ? 'Zamknij menu' : 'Otwórz menu'}
           aria-expanded={menuOpen}
           aria-controls="app-drawer"
@@ -191,7 +194,7 @@ export function App() {
           </button>
         </div>
         <GlobalSearch />
-        <nav className="app-nav">
+        <nav className="app-nav" data-tour="shell.nav">
           {NAV.filter(([to]) => to !== '/admin' || canAdmin).map(([to, label, Icon]) => (
             <NavLink
               key={to}
@@ -205,6 +208,15 @@ export function App() {
             </NavLink>
           ))}
         </nav>
+        <button
+          type="button"
+          className="sidebar-help"
+          data-tour="shell.help"
+          onClick={() => window.dispatchEvent(new Event('n2hub:open-tutorials'))}
+        >
+          <CircleHelp size={18} aria-hidden />
+          <span className="nav-label">Pomoc i samouczki</span>
+        </button>
         {state.people.length > 0 && (
           <div className="acting-as-wrap">
             {/* Collapsed avatar shortcut (CSS-shown only >1180px + collapsed). */}
@@ -258,7 +270,7 @@ export function App() {
         )}
       </aside>
 
-      <main className="app-main">
+      <main className="app-main" data-tour="shell.main">
         {impersonating && currentUser && actualUser && (
           <div className="impersonation-banner" role="status">
             <span className="impersonation-banner-text">
@@ -307,6 +319,11 @@ export function App() {
 
       {/* The task popout modal lives once, above every page. */}
       <TaskModal />
+      <OnboardingRoot
+        owner={actualUser}
+        viewer={currentUser}
+        impersonating={impersonating}
+      />
     </div>
   );
 }

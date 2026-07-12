@@ -48,7 +48,7 @@ export function CalendarPage() {
         <h1>Kalendarz</h1>
       </div>
 
-      <div className="cal-toolbar">
+      <div className="cal-toolbar" data-tour="calendar.toolbar">
         <div className="cal-view-toggle" role="group" aria-label="Widok kalendarza">
           <button
             type="button"

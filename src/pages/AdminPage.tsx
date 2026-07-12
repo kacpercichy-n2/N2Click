@@ -71,7 +71,7 @@ export function AdminPage() {
         <h1>Administracja</h1>
       </div>
 
-      <div className="editor-section">
+      <div className="editor-section" data-tour="admin.statuses">
         <h2>Statusy lejka</h2>
         <p className="field-hint">
           Statusy sterują kolumnami kanbana oraz statusem każdego projektu i zadania.
@@ -120,6 +120,7 @@ export function AdminPage() {
               <StatusBadge status={s} />
               <label
                 className="admin-status-done"
+                data-tour="admin.done"
                 title={
                   onlyDone
                     ? 'To jedyny status oznaczający ukończenie — najpierw oznacz inny status.'

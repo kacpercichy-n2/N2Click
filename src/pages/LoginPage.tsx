@@ -9,6 +9,7 @@ import { useStore } from '../store/AppStore';
 import { ROLE_LABELS } from '../store/permissions';
 import { verifyPassword } from '../utils/password';
 import { Avatar } from '../components/Avatar';
+import { markOnboardingLogin } from '../utils/uiPrefs';
 
 export function LoginPage() {
   const { state, dispatch } = useStore();
@@ -19,6 +20,7 @@ export function LoginPage() {
   const [busy, setBusy] = useState(false);
 
   const login = (personId: string) => {
+    markOnboardingLogin(personId);
     dispatch({ type: 'SET_CURRENT_USER', personId });
     navigate('/dashboard');
   };

@@ -397,7 +397,7 @@ export function TimelinePage() {
     <section className="page page-wide">
       <div className="page-head">
         <h1>Oś czasu</h1>
-        <div className="cal-nav">
+        <div className="cal-nav" data-tour="timeline.toolbar">
           <button
             type="button"
             className="nav-btn"
@@ -519,7 +519,7 @@ export function TimelinePage() {
           )}
         </div>
       ) : (
-        <div className="timeline-scroll">
+        <div className="timeline-scroll" data-tour="timeline.chart">
           <div className="timeline" style={{ width: 240 + totalDays * dayW }}>
             {/* Header: week labels + day stripes */}
             <div className="timeline-row timeline-head">

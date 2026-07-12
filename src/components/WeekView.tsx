@@ -966,7 +966,7 @@ export function WeekView({ state, anchor, filter }: Props) {
   const hours = Array.from({ length: 24 }, (_, h) => h);
 
   return (
-    <div className="week-cal">
+    <div className="week-cal" data-tour="calendar.week">
       {/* Header row: corner + horizontally-synced day headers + bin header.
           Not scrollable itself; its track mirrors the days viewport scrollLeft. */}
       <div className="week-head-row">
@@ -1002,6 +1002,7 @@ export function WeekView({ state, anchor, filter }: Props) {
                   {overloadNames && (
                     <div
                       className="week-col-overload"
+                      data-tour="calendar.overload"
                       title={`Powyżej dostępności: ${overloadNames}`}
                     >
                       ⚠ {overloadNames}
@@ -1086,7 +1087,7 @@ export function WeekView({ state, anchor, filter }: Props) {
         </div>
 
         {/* Bin pane: always visible, own vertical scroll, outside the days scroller. */}
-        <div className="week-bin-pane" ref={binRef}>
+        <div className="week-bin-pane" ref={binRef} data-tour="calendar.bin">
           <div className="week-bin-col">
             {binPeople.length === 0 ? (
               <p className="week-bin-empty">Brak bloków bez terminu</p>

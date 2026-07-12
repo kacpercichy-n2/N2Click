@@ -296,7 +296,7 @@ export function WorkloadPage() {
           </p>
         </div>
       ) : (
-        <div className="alloc-wrap">
+        <div className="alloc-wrap" data-tour="workload.table">
           <table className="alloc-grid workload-table">
             <thead>
               <tr>
@@ -382,6 +382,7 @@ export function WorkloadPage() {
                     <td className="workload-load">
                       <div
                         className="load-bar"
+                        data-tour="workload.load"
                         role="img"
                         aria-label={`${pct}% dostępnych godzin`}
                       >

@@ -197,12 +197,13 @@ export function KanbanPage() {
           <p className="empty-hint">Administrator może utworzyć statusy lejka w panelu Administracja.</p>
         </div>
       ) : (
-        <div className="kanban-board">
+        <div className="kanban-board" data-tour="kanban.board">
           {statuses.map((s) => {
             const cards = projects.filter((p) => p.statusId === s.id);
             return (
               <div
                 key={s.id}
+                data-tour="kanban.column"
                 className={
                   dragOver === s.id ? 'kanban-col drag-over' : 'kanban-col'
                 }

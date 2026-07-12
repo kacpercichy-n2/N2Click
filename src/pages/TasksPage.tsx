@@ -281,7 +281,7 @@ export function TasksPage() {
         </div>
       ) : (
         <>
-          <div className="cal-toolbar">
+          <div className="cal-toolbar" data-tour="tasks.filters">
             <FilterPanel
               groups={filterGroups}
               dates={{ from, to, onFrom: setFrom, onTo: setTo }}
@@ -302,7 +302,7 @@ export function TasksPage() {
               <p className="empty-hint">Zmień lub wyczyść filtry, aby zobaczyć zadania.</p>
             </div>
           ) : (
-            <ul className="task-list">
+            <ul className="task-list" data-tour="tasks.list">
           {tasks.map((task) => {
             const assignees = assigneesOfTask(state, task.id);
             const planned = taskPlannedTotal(state, task.id);

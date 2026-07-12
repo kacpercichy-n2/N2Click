@@ -314,7 +314,7 @@ export function ProjectsPage() {
         </form>
       )}
 
-      <div className="cal-toolbar">
+      <div className="cal-toolbar" data-tour="projects.filters">
         <FilterPanel
           groups={filterGroups}
           dates={{ from, to, onFrom: setFrom, onTo: setTo }}
@@ -341,7 +341,7 @@ export function ProjectsPage() {
         groups.map((g) => (
           <div key={g.clientId || 'none'} className="client-group">
             <h2 className="client-group-name">{g.clientName}</h2>
-            <ul className="task-list">
+            <ul className="task-list" data-tour="projects.list">
               {g.projects.map((p) => {
                 const tasks = tasksOfProject(state, p.id);
                 const planned = projectPlannedTotal(state, p.id);
@@ -357,7 +357,7 @@ export function ProjectsPage() {
                       <div className="task-card-top">
                         <span className="task-title">{p.name}</span>
                         <StatusBadge status={getStatus(state, p.statusId)} />
-                        <span className="project-card-coin">
+                        <span className="project-card-coin" data-tour="projects.coin">
                           <Coin paid={p.paid} />
                         </span>
                       </div>

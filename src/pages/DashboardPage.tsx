@@ -143,13 +143,13 @@ export function DashboardPage() {
         animate="show"
       >
         {/* (a) Today's tasks */}
-        <motion.div className="dash-card" variants={dashCardVariants}>
+        <motion.div className="dash-card" variants={dashCardVariants} data-tour="home.today">
           <h2>Zadania na dziś</h2>
           <TodayAgendaList personId={me.id} date={today} />
         </motion.div>
 
         {/* (b) Team chat (mockup) */}
-        <motion.div className="dash-card" variants={dashCardVariants}>
+        <motion.div className="dash-card" variants={dashCardVariants} data-tour="home.workload">
           <div className="dash-card-head">
             <h2>Zespół</h2>
             <span className="demo-badge">Wersja demonstracyjna</span>

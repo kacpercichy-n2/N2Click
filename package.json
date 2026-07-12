@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "check:onboarding": "node scripts/browser-check-onboarding.mjs chromium && node scripts/browser-check-onboarding.mjs webkit"
   },
   "dependencies": {
     "date-fns": "^3.6.0",

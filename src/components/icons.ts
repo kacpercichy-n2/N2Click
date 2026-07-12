@@ -34,4 +34,8 @@ export {
   Bookmark,
   Clock,
   ClipboardList,
+  CircleHelp,
+  Compass,
+  Sparkles,
+  ArrowLeft,
 } from 'lucide-react';

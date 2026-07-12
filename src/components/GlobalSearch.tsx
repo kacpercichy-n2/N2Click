@@ -90,6 +90,7 @@ export function GlobalSearch() {
       <button
         type="button"
         className="search-trigger"
+        data-tour="shell.search"
         onClick={() => setOpen(true)}
         aria-label="Szukaj"
       >

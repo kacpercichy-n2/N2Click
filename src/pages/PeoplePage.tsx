@@ -76,7 +76,7 @@ export function PeoplePage() {
       </div>
 
       {canManage && (
-      <form className="person-form" onSubmit={submit}>
+      <form className="person-form" onSubmit={submit} data-tour="people.capacity">
         <div className="field">
           <label htmlFor="p-first">Imię *</label>
           <input
@@ -260,7 +260,7 @@ export function PeoplePage() {
           <p className="empty-hint">Dodaj członków zespołu, żeby zacząć przypisywać pracę.</p>
         </div>
       ) : (
-        <ul className="people-list">
+        <ul className="people-list" data-tour="people.list">
           {state.people.map((p) => (
             <li key={p.id} className="person-row">
               <Avatar person={p} size={36} />

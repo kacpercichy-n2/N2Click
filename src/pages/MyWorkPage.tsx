@@ -75,13 +75,13 @@ export function MyWorkPage() {
 
       <div className="dash-grid my-work-grid">
         {/* Dzisiaj */}
-        <div className="dash-card">
+        <div className="dash-card" data-tour="home.today">
           <h2>Dzisiaj</h2>
           <TodayAgendaList personId={me.id} date={today} />
         </div>
 
         {/* Zasobnik (nierozplanowane) */}
-        <div className="dash-card">
+        <div className="dash-card" data-tour="home.bin">
           <h2>Zasobnik (nierozplanowane)</h2>
           {binRows.length === 0 ? (
             <p className="muted">Zasobnik jest pusty.</p>
@@ -111,7 +111,7 @@ export function MyWorkPage() {
         </div>
 
         {/* Alerty */}
-        <div className="dash-card">
+        <div className="dash-card" data-tour="home.alerts">
           <h2>Alerty</h2>
           {noAlerts ? (
             <p className="muted">Brak alertów.</p>
