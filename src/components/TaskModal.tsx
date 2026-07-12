@@ -322,18 +322,37 @@ function TaskEditor({
 
   // ---- Allocation map (personId|date -> hours), seeded from existing DATED
   // entries only. Bin entries (date === '') are shown in a separate section and
-  // never enter the allocation grid. ----
+  // never enter the allocation grid. A cell is the person's DAY TOTAL, so when a
+  // day has several blocks their hours SUM into one cell (0.25-multiples add
+  // exactly in floats). saveTask reconciles that total back onto the blocks. ----
   const [allocations, setAllocations] = useState<AllocMap>(() => {
     const map: AllocMap = {};
     if (existing) {
       for (const w of state.workload.filter(
         (w) => w.taskId === existing.id && !isBinEntry(w),
       )) {
-        map[allocKey(w.personId, w.date)] = w.plannedHours;
+        const key = allocKey(w.personId, w.date);
+        map[key] = (map[key] ?? 0) + w.plannedHours;
       }
     }
     return map;
   });
+
+  // How many dated blocks back each cell (allocKey -> count). Cells with ≥2
+  // blocks get a ×N badge + explanatory tooltip in the grid, since editing the
+  // total there reshapes several calendar blocks.
+  const multiBlockCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    if (existing) {
+      for (const w of state.workload) {
+        if (w.taskId === existing.id && !isBinEntry(w)) {
+          const key = allocKey(w.personId, w.date);
+          counts[key] = (counts[key] ?? 0) + 1;
+        }
+      }
+    }
+    return counts;
+  }, [state.workload, existing]);
 
   // ---- Bin (zasobnik): hours queued to be appended as dateless blocks ----
   const [pendingUnassigned, setPendingUnassigned] = useState<
@@ -1003,6 +1022,7 @@ function TaskEditor({
               endDate={endDate}
               people={assignedPeople}
               allocations={allocations}
+              blockCounts={multiBlockCounts}
               onChange={setCell}
               onFillWeekdays={fillWeekdays}
               onClearPerson={clearPerson}

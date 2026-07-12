@@ -26,6 +26,7 @@ interface Props {
   endDate: string;
   people: Person[]; // assigned people (columns)
   allocations: AllocMap; // current in-editor values
+  blockCounts?: Record<string, number>; // allocKey -> # of dated blocks behind the cell
   onChange: (personId: string, date: string, hours: number) => void;
   onFillWeekdays: (personId: string) => void;
   onClearPerson: (personId: string) => void;
@@ -39,6 +40,7 @@ export function AllocationGrid({
   endDate,
   people,
   allocations,
+  blockCounts,
   onChange,
   onFillWeekdays,
   onClearPerson,
@@ -129,15 +131,21 @@ export function AllocationGrid({
                   const value = cellValue(p.id, d);
                   const dayTotalForPerson = baseHoursFor(p.id, d) + value;
                   const overloaded = dayTotalForPerson > personCapacity(state, p.id);
+                  const count = blockCounts?.[allocKey(p.id, d)] ?? 0;
+                  const multi = count >= 2;
+                  const overloadTitle = overloaded
+                    ? `${p.name}: ${formatDuration(dayTotalForPerson)} łącznie tego dnia`
+                    : undefined;
+                  const multiTitle = multi
+                    ? `Bloki w kalendarzu: ${count}. Edycja sumy wydłuży ostatni blok lub skróci bloki od końca; 0 usunie wszystkie.`
+                    : undefined;
+                  const cellTitle =
+                    [overloadTitle, multiTitle].filter(Boolean).join('\n') || undefined;
                   return (
                     <td
                       key={p.id}
                       className={overloaded ? 'alloc-cell overload' : 'alloc-cell'}
-                      title={
-                        overloaded
-                          ? `${p.name}: ${formatDuration(dayTotalForPerson)} łącznie tego dnia`
-                          : undefined
-                      }
+                      title={cellTitle}
                     >
                       <input
                         type="number"
@@ -157,6 +165,7 @@ export function AllocationGrid({
                           onChange(p.id, d, clamped);
                         }}
                       />
+                      {multi && <span className="alloc-multi">×{count}</span>}
                     </td>
                   );
                 })}

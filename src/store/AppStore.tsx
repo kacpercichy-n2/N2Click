@@ -98,7 +98,13 @@ export interface PersonDraft {
   // via SET_PASSWORD so a profile save can never clobber a stored hash.
 }
 
-/** One planned-hours cell to persist: hours>0 keeps/creates, hours<=0 deletes. */
+/**
+ * One allocation cell to persist. `plannedHours` is the DESIRED DAY TOTAL for
+ * that person on that date across ALL of the task's blocks on that day — not a
+ * single block. `saveTask` reconciles this target against the pair's existing
+ * blocks by delta (grow the last block / trim from the end / create / delete),
+ * so multi-block days survive with byte-identical identity when unchanged.
+ */
 export interface AllocationCell {
   personId: string;
   date: string;
@@ -325,57 +331,135 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
     personId,
   }));
 
-  // Rebuild workload for this task from the desired allocation, keeping only
-  // hours>0 and only for people who are still assigned. Existing cells keep
-  // their position in the person's day; new cells go to the end of the day.
+  // Reconcile this task's DATED workload against the desired per-(person,date)
+  // day totals by DELTA — never a drop-and-recreate — so existing blocks keep
+  // their identity (id, startMinutes, sortIndex) and multi-block days survive.
+  // A cell's `plannedHours` is the person's desired total for that day.
   const assignedSet = new Set(assigneeIds);
   // Existing BIN entries of this task pass through untouched: kept when the
   // person is still assigned, dropped when they are unassigned. Only DATED
-  // entries go through the rebuild below.
+  // entries go through the reconciliation below.
   const taskBinKept = state.workload.filter(
     (w) => w.taskId === realTaskId && isBinEntry(w) && assignedSet.has(w.personId),
   );
-  // person|date -> the prior block's position, so kept cells keep their slot.
-  const oldPos = new Map<string, { sortIndex: number; startMinutes: number }>();
-  for (const w of state.workload) {
-    if (w.taskId === realTaskId && !isBinEntry(w)) {
-      oldPos.set(dayKey(w.personId, w.date), { sortIndex: w.sortIndex, startMinutes: w.startMinutes });
-    }
-  }
   const workloadOther = state.workload.filter((w) => w.taskId !== realTaskId);
-  const workloadForTask: WorkloadEntry[] = [];
+
+  // Group this task's existing dated entries by (person, date) pair.
+  const datedByPair = new Map<string, WorkloadEntry[]>();
+  for (const w of state.workload) {
+    if (w.taskId !== realTaskId || isBinEntry(w)) continue;
+    const key = dayKey(w.personId, w.date);
+    const list = datedByPair.get(key);
+    if (list) list.push(w);
+    else datedByPair.set(key, [w]);
+  }
+
+  // Desired day total per pair (assigned people only; unassigned cells skipped).
+  const cellByPair = new Map<string, { personId: string; date: string; totalQ: number }>();
   for (const c of allocations) {
     if (!assignedSet.has(c.personId)) continue;
-    // Snap to the 0.25h grid on write so no off-grid block can be persisted
-    // (the input `step` is UI-only; SET_BLOCK_TIME would reject off-grid hours).
-    const plannedHours = snapHours(c.plannedHours);
-    if (plannedHours <= 0) continue;
-    const kept = oldPos.get(dayKey(c.personId, c.date));
-    let sortIndex: number;
-    let startMinutes: number;
-    if (kept) {
-      // Kept cell: hold its old slot even if hours changed (may now overlap a
-      // later block — allowed; the Week view renders overlaps side-by-side).
-      sortIndex = kept.sortIndex;
-      startMinutes = kept.startMinutes;
-    } else {
-      // New cell: append to the end of that person's day.
-      const around = [...workloadOther, ...taskBinKept, ...workloadForTask];
-      sortIndex = nextSortIndex(around, c.personId, c.date);
-      startMinutes = nextFreeStart(
-        around.filter((w) => w.personId === c.personId && w.date === c.date),
-        hoursToMinutes(plannedHours),
-      );
-    }
-    workloadForTask.push({
-      id: uid(),
-      taskId: realTaskId,
+    // Snap to the 0.25h grid before quarter conversion (input step is UI-only).
+    cellByPair.set(dayKey(c.personId, c.date), {
       personId: c.personId,
       date: c.date,
-      plannedHours,
-      startMinutes,
-      sortIndex,
+      totalQ: toQuarters(snapHours(c.plannedHours)),
     });
+  }
+
+  // Union of pairs to process: existing dated pairs of STILL-ASSIGNED people
+  // (unassigned people's dated entries are dropped, as before) + cell pairs.
+  const pairKeys = new Set<string>();
+  for (const [key, list] of datedByPair) {
+    if (assignedSet.has(list[0].personId)) pairKeys.add(key);
+  }
+  for (const key of cellByPair.keys()) pairKeys.add(key);
+
+  const touched = new Set<string>();
+  const workloadForTask: WorkloadEntry[] = [];
+  for (const key of pairKeys) {
+    const blocks = (datedByPair.get(key) ?? [])
+      .slice()
+      .sort((a, b) => a.startMinutes - b.startMinutes || a.sortIndex - b.sortIndex);
+    const cell = cellByPair.get(key);
+    const personId = cell ? cell.personId : blocks[0].personId;
+    const date = cell ? cell.date : blocks[0].date;
+    const tNew = cell ? cell.totalQ : 0;
+    const tOld = blocks.reduce((s, b) => s + toQuarters(b.plannedHours), 0);
+
+    if (tNew === tOld) {
+      // No change: keep every block byte-identical; pair NOT touched.
+      for (const b of blocks) workloadForTask.push(b);
+      continue;
+    }
+    if (tNew > 0 && tOld === 0) {
+      // New pair: append exactly one entry to the end of that person's day
+      // (across all tasks), matching the legacy new-cell behavior.
+      const hours = tNew * HOURS_STEP;
+      const around = [...workloadOther, ...taskBinKept, ...workloadForTask];
+      workloadForTask.push({
+        id: uid(),
+        taskId: realTaskId,
+        personId,
+        date,
+        plannedHours: hours,
+        startMinutes: nextFreeStart(
+          around.filter((w) => w.personId === personId && w.date === date),
+          hoursToMinutes(hours),
+        ),
+        sortIndex: nextSortIndex(around, personId, date),
+      });
+      touched.add(key);
+      continue;
+    }
+    if (tNew === 0) {
+      // Cell zeroed or absent (dropped by the period filter): user-explicit
+      // deletion of all the pair's blocks.
+      touched.add(key);
+      continue;
+    }
+    if (tNew > tOld) {
+      // Grow: add the whole delta to the LAST block (keep its id/sortIndex),
+      // clamping so it still ends by 24:00.
+      const deltaQ = tNew - tOld;
+      const last = blocks[blocks.length - 1];
+      for (const b of blocks) {
+        if (b.id !== last.id) {
+          workloadForTask.push(b);
+          continue;
+        }
+        const newHours = (toQuarters(b.plannedHours) + deltaQ) * HOURS_STEP;
+        const startMinutes = clampBlockStart(b.startMinutes, hoursToMinutes(newHours));
+        if (startMinutes !== b.startMinutes) touched.add(key);
+        workloadForTask.push({ ...b, plannedHours: newHours, startMinutes });
+      }
+      continue;
+    }
+    // 0 < tNew < tOld: trim from the end. Walk blocks descending, reducing each
+    // by min(block, deficit); a block reaching 0 is deleted; survivors keep id
+    // and startMinutes. Any deletion touches the pair (re-index for order).
+    let deficit = tOld - tNew;
+    const survivorById = new Map<string, WorkloadEntry>();
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      const b = blocks[i];
+      if (deficit <= 0) {
+        survivorById.set(b.id, b);
+        continue;
+      }
+      const q = toQuarters(b.plannedHours);
+      const cut = Math.min(q, deficit);
+      deficit -= cut;
+      const remainingQ = q - cut;
+      if (remainingQ <= 0) {
+        touched.add(key); // deletion changes the pair's row set
+      } else {
+        survivorById.set(b.id, { ...b, plannedHours: remainingQ * HOURS_STEP });
+      }
+    }
+    // Emit survivors in original ascending order.
+    for (const b of blocks) {
+      const s = survivorById.get(b.id);
+      if (s) workloadForTask.push(s);
+    }
   }
 
   // Explicitly-requested bin hours (person must be assigned; snap hours, skip
@@ -416,7 +500,12 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
     ...state,
     tasks,
     assignments: [...assignmentsOther, ...assignmentsForTask],
-    workload: [...workloadOther, ...mergedTaskBinKept, ...workloadForTask, ...newBinEntries],
+    // Reindex only the touched dated pairs; untouched pairs' rows (and all bin
+    // rows) come out byte-identical.
+    workload: reindexDays(
+      [...workloadOther, ...mergedTaskBinKept, ...workloadForTask, ...newBinEntries],
+      touched,
+    ),
     activity: withActivity(
       state,
       'task',

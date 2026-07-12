@@ -1113,6 +1113,22 @@ option {
 }
 .alloc-cell {
   padding: 2px;
+  position: relative;
+}
+/* Muted marker on cells backed by ≥2 calendar blocks (editing the sum reshapes
+   several blocks — see the cell title). Non-interactive; sits over the input. */
+.alloc-multi {
+  position: absolute;
+  top: 1px;
+  right: 2px;
+  font-size: 0.62rem;
+  line-height: 1;
+  padding: 1px 3px;
+  border-radius: 5px;
+  color: var(--text-muted);
+  background: var(--n2-surface-muted);
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
 }
 .alloc-input {
   width: 60px;

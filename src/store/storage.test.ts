@@ -1007,3 +1007,27 @@ describe('normalizeDates', () => {
     expect(next).toBe(validData); // no repair needed -> same reference
   });
 });
+
+// ---------------------------------------------------------------------------
+// SAVE_TASK identity-preserving workload round-trip (PKG-20260712b-savetask-tests):
+// a multi-block day is a normal, valid payload shape now — loadData()'s
+// per-load repair passes (ensureStartMinutes, normalizeDates) must leave it
+// untouched.
+// ---------------------------------------------------------------------------
+
+describe('loadData round-trip — multi-block day (PKG-20260712b-savetask-tests)', () => {
+  it('a valid two-block day (same task+person, distinct startMinutes) survives loadData() exactly: ids, hours, startMinutes and sortIndex all unchanged', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', plannedHours: 2, startMinutes: 480, sortIndex: 0 });
+    const e2 = makeEntry({ id: 'e2', taskId: 't1', personId: 'p1', date: '2026-07-08', plannedHours: 3, startMinutes: 840, sortIndex: 1 });
+    const payload = {
+      ...emptyData(),
+      tasks: [makeFullTask({ id: 't1' })],
+      workload: [e1, e2],
+    };
+
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+
+    const loaded = data.workload.slice().sort((a, b) => a.id.localeCompare(b.id));
+    expect(loaded).toEqual([e1, e2]);
+  });
+});
