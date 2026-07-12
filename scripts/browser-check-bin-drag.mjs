@@ -10,8 +10,13 @@
 //       "Maximum update depth exceeded".
 //
 // Usage: node scripts/browser-check-bin-drag.mjs [chromium|webkit]
-//        [free|merge|window-fallback|collision|separator|invalid] [--narrow]
+//        [free|merge|window-fallback|collision|separator|invalid|oversized] [--narrow]
 // Exits non-zero if any probe fails (freeze reproduced or drop broken).
+//
+// `oversized` injects a 30h bin row (via the PATHO localStorage pattern) for
+// Ola's first task, then drags it at the `free` slot. It must NOT land (the
+// reducer rejects >24h bin rows) — this is the regression for the
+// `SCHEDULE_BIN_PART` / "Zaplanuj część" recovery path (PKG-20260713-bin-split).
 //
 // Screenshots: reviews/screenshots-20260709-codex/<engine>-{01,02,03,03-freeze}.png
 // (Committed as the rerunnable regression artifact; dev server must be on :5173.)
@@ -35,9 +40,11 @@ const TARGETS = {
   collision: { col: 0, startMin: 600 }, // Mon 10:00 — overlaps Ola's t1 block
   separator: { col: 1, startMin: 900 }, // exact Mon/Tue separator at a free 15:00 slot
   invalid: { col: 2, startMin: 0 }, // day header, outside the timed viewport
+  oversized: { col: 4, startMin: 660 }, // Fri 11:00 — same free slot as `free`, but the row is >24h
 };
 const TARGET = TARGETS[SCENARIO] || TARGETS.free;
-const EXPECT_LAND = SCENARIO !== 'collision' && SCENARIO !== 'invalid';
+const EXPECT_LAND =
+  SCENARIO !== 'collision' && SCENARIO !== 'invalid' && SCENARIO !== 'oversized';
 const LAUNCHER = ENGINE === 'webkit' ? webkit : chromium;
 const BASE = 'http://localhost:5173';
 const SHOTS = 'reviews/screenshots-20260709-codex';
@@ -90,6 +97,8 @@ async function run() {
     evalResponsive: null,
     modalOpensAfterDrop: null,
     maxUpdateDepth: false,
+    oversizedCardStillShows30h: null, // set only for scenario=oversized
+    oversizedHintContainsSchedule: null, // set only for scenario=oversized
     consoleErrors: [],
     pageErrors: [],
     notes: [],
@@ -135,6 +144,47 @@ async function run() {
       await page.reload({ waitUntil: 'networkidle' });
     }
 
+    // `oversized` scenario: inject a single 30h bin row for Ola (same
+    // PATHO-style localStorage-injection pattern as above), then reload so the
+    // v5 loader processes it before the calendar mounts. `ensureStartMinutes`
+    // merges duplicate bin rows for the same (personId, taskId) pair on every
+    // load (storage.ts:462-501) — Ola's seeded data already has a 3h bin row
+    // on `tasks[0]`, so injecting onto that same task would land as 33h, not
+    // 30h. Pick a task Ola has no existing bin row for instead, so the
+    // injected row stays a clean, isolated 30h card.
+    if (SCENARIO === 'oversized') {
+      const injected = await page.evaluate(() => {
+        const KEY = 'n2hub.data.v1';
+        const raw = localStorage.getItem(KEY);
+        if (!raw) return 'no-store';
+        const data = JSON.parse(raw);
+        const ola = data.people.find((p) => p.name && p.name.includes('Ola'));
+        if (!ola) return 'no-person';
+        const olaBinTaskIds = new Set(
+          data.workload.filter((w) => w.personId === ola.id && w.date === '').map((w) => w.taskId),
+        );
+        const task = data.tasks.find((t) => !olaBinTaskIds.has(t.id)) ?? data.tasks[0];
+        if (!task) return 'no-task';
+        const maxSort = data.workload.reduce(
+          (m, w) => (w.personId === ola.id && w.date === '' ? Math.max(m, w.sortIndex) : m),
+          -1,
+        );
+        data.workload.push({
+          id: 'oversized-30h',
+          taskId: task.id,
+          personId: ola.id,
+          date: '',
+          plannedHours: 30,
+          startMinutes: 0,
+          sortIndex: maxSort + 1,
+        });
+        localStorage.setItem(KEY, JSON.stringify(data));
+        return 'injected';
+      });
+      result.notes.push(`oversized inject: ${injected}`);
+      await page.reload({ waitUntil: 'networkidle' });
+    }
+
     // Navigate to the calendar week view (sidebar nav link specifically).
     await page.locator('a.app-nav-link[href="/calendar"]').click();
     await page.locator('.week-bin-block').first().waitFor({ timeout: 10000 });
@@ -176,7 +226,17 @@ async function run() {
     result.baselineModalOpens = await clickBlockOpensModal('baseline (no drag)');
 
     // --- Perform the drag: bin card center → scenario target slot ---
-    const card = page.locator('.week-bin-block').first();
+    // `oversized` targets the specific injected 30h row by its hours text
+    // (several bin cards are present); every other scenario keeps dragging
+    // whichever card renders first, unchanged.
+    const card =
+      SCENARIO === 'oversized'
+        ? page
+            .locator('.week-bin-block')
+            .filter({ has: page.locator('.week-bin-block-hours', { hasText: /^30h$/ }) })
+            .first()
+        : page.locator('.week-bin-block').first();
+    await card.waitFor({ timeout: 10000 });
     const cardBox = await card.boundingBox();
     // Map the desired (col, startMinutes) to viewport coords off the LIVE grid
     // rect (which carries the scroll offset), exactly like the component's math.
@@ -312,6 +372,25 @@ async function run() {
       `expected land=${EXPECT_LAND} outcome correct=${result.dropOutcomeCorrect} ghost gone=${result.ghostGone}`,
     );
 
+    // `oversized`-only assertions: the 30h row must still be exactly itself
+    // (unplaceable, never landed) and its refusal hint must point at the
+    // „Zaplanuj część” recovery path (PKG-20260713-bin-split alignment).
+    if (SCENARIO === 'oversized') {
+      const oversizedCard = page
+        .locator('.week-bin-block')
+        .filter({ has: page.locator('.week-bin-block-hours', { hasText: /^30h$/ }) })
+        .first();
+      const stillPresent = (await oversizedCard.count()) > 0;
+      result.oversizedCardStillShows30h = stillPresent;
+      result.oversizedHintContainsSchedule = stillPresent
+        ? ((await oversizedCard.getAttribute('title')) || '').includes('Zaplanuj część')
+        : false;
+      result.notes.push(
+        `oversized card still shows 30h=${stillPresent} ` +
+          `hint contains "Zaplanuj część"=${result.oversizedHintContainsSchedule}`,
+      );
+    }
+
     // --- Probe (b): pointer delivery still works after the drop ---
     if (result.evalResponsive) {
       // Instrument: does a raw click even reach the document? (capture phase)
@@ -377,7 +456,9 @@ async function run() {
       result.maxUpdateDepth ||
       result.modalOpensAfterDrop === false ||
       result.dropOutcomeCorrect === false ||
-      result.ghostGone === false;
+      result.ghostGone === false ||
+      result.oversizedCardStillShows30h === false ||
+      result.oversizedHintContainsSchedule === false;
     if (froze) await shot(page, '03-freeze');
   } catch (err) {
     result.notes.push(`HARNESS ERROR: ${err.message}`);
@@ -394,7 +475,9 @@ async function run() {
     result.maxUpdateDepth === true ||
     result.modalOpensAfterDrop === false ||
     result.dropOutcomeCorrect === false ||
-    result.ghostGone === false;
+    result.ghostGone === false ||
+    result.oversizedCardStillShows30h === false ||
+    result.oversizedHintContainsSchedule === false;
 
   console.log(JSON.stringify(result, null, 2));
   console.log(`\n[${ENGINE}] VERDICT: ${probeFail ? 'FAIL (freeze/broken drop)' : 'PASS'}`);

@@ -12,13 +12,23 @@ import { useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import { useOpenTask } from './TaskModal';
 import { personColor } from '../utils/colors';
-import { isTodayStr, isWeekend, parseDate, weekDays } from '../utils/dates';
+import {
+  MAX_TASK_PERIOD_DAYS,
+  inclusiveDayCount,
+  isTodayStr,
+  isValidDateStr,
+  isWeekend,
+  parseDate,
+  todayStr,
+  weekDays,
+} from '../utils/dates';
 import { format } from 'date-fns';
 import { pl } from 'date-fns/locale/pl';
 import {
   binEntriesForPerson,
   binTotalForPerson,
   blockCollides,
+  blocksForPersonDate,
   dayTotal,
   entriesForDate,
   getClient,
@@ -34,6 +44,7 @@ import {
 } from '../store/selectors';
 import {
   DAY_MINUTES,
+  HOURS_STEP,
   MINUTE_STEP,
   blockEndMinutes,
   clampBlockStart,
@@ -42,6 +53,7 @@ import {
   hoursToMinutes,
   isBinEntry,
   minutesToHours,
+  nextFreeStart,
   packDayBlocks,
   snapHours,
   snapToStep,
@@ -65,8 +77,19 @@ interface MenuState {
   entry: WorkloadEntry;
   x: number;
   y: number;
-  step: 'menu' | 'form';
+  step: 'menu' | 'form' | 'schedule';
   position: 'before' | 'after';
+}
+
+// "HH:MM" ↔ minutes-from-midnight, zero-padded for the native <input type="time">.
+function timeToMinutes(value: string): number {
+  const [h, m] = value.split(':');
+  return Number(h) * 60 + Number(m);
+}
+function minutesToTimeStr(min: number): string {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
 // ---- Draggable / resizable timed block ----
@@ -487,6 +510,7 @@ interface BinCardProps {
   editable: boolean;
   onOpen: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
+  onSchedule: (anchor: HTMLElement) => void;
 }
 
 function BinCard({
@@ -501,6 +525,7 @@ function BinCard({
   editable,
   onOpen,
   onContextMenu,
+  onSchedule,
 }: BinCardProps) {
   const { dispatch } = useStore();
   const [drag, setDrag] = useState<BinDragState | null>(null);
@@ -536,10 +561,16 @@ function BinCard({
     entry.plannedHours < 0.25 ||
     entry.plannedHours > 24 ||
     Math.abs(quarters - Math.round(quarters)) > 1e-9;
+  // The row can produce a valid part (≥ one quarter, finite) → the schedule
+  // button/menu item is offered and the hints point at „Zaplanuj część”.
+  const canSchedule =
+    Number.isFinite(entry.plannedHours) && Math.round(entry.plannedHours / HOURS_STEP) >= 1;
   const unplaceableHint =
     entry.plannedHours > 24
-      ? 'Blok jest dłuższy niż doba — podziel go, aby nadać termin.'
-      : 'Nieprawidłowy czas trwania — podziel blok, aby nadać termin.';
+      ? 'Blok jest dłuższy niż doba — użyj „Zaplanuj część”, aby zaplanować fragment.'
+      : canSchedule
+        ? 'Nieprawidłowy czas trwania — użyj „Zaplanuj część”, aby zaplanować poprawny fragment.'
+        : 'Nieprawidłowy czas trwania — usuń blok albo popraw godziny w edytorze zadania.';
 
   // Unmount/navigation during a drag must never leave document-wide listeners.
   useEffect(() => {
@@ -764,7 +795,7 @@ function BinCard({
           editable
             ? unplaceable
               ? `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu. ${unplaceableHint}`
-              : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu. Przeciągnij na siatkę, aby nadać termin.`
+              : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu. Przeciągnij na siatkę albo użyj „Zaplanuj część”.`
             : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.`
         }
         onPointerDown={editable ? begin : undefined}
@@ -778,6 +809,24 @@ function BinCard({
         onContextMenu={editable ? onContextMenu : undefined}
       >
         {content}
+        {editable && canSchedule && (
+          <div className="week-bin-block-actions">
+            <button
+              type="button"
+              className="week-bin-schedule-btn"
+              title={`Zaplanuj część: ${task.title} — ${person.name}, ${formatDuration(entry.plannedHours)} w zasobniku`}
+              aria-label={`Zaplanuj część: ${task.title} — ${person.name}, ${formatDuration(entry.plannedHours)} w zasobniku`}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                onSchedule(e.currentTarget);
+              }}
+              onKeyDown={(e) => e.stopPropagation()}
+            >
+              Zaplanuj część
+            </button>
+          </div>
+        )}
       </div>
       {drag &&
         createPortal(
@@ -828,6 +877,10 @@ export function WeekView({ state, anchor, filter }: Props) {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [hoursRaw, setHoursRaw] = useState('1');
   const [insertTaskId, setInsertTaskId] = useState('');
+  // "Zaplanuj część" form fields (shared by the card button and the menu item).
+  const [schedDate, setSchedDate] = useState(todayStr());
+  const [schedStart, setSchedStart] = useState('08:00');
+  const [schedHoursRaw, setSchedHoursRaw] = useState('1');
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   // Transient cross-block drag state (a dragged block and its merge neighbor live
@@ -921,6 +974,61 @@ export function WeekView({ state, anchor, filter }: Props) {
     setMenu(null);
   };
 
+  // ---- "Zaplanuj część" (partial bin scheduling) ----
+  // Seed the form's three fields: today, capacity-/remainder-bounded hours, and a
+  // nextFreeStart-derived start for that person on that day.
+  const initScheduleForm = (entry: WorkloadEntry) => {
+    const date = todayStr();
+    const maxHours = Math.round(entry.plannedHours / HOURS_STEP) * HOURS_STEP;
+    const defHours = Math.max(
+      0.25,
+      Math.min(maxHours, personCapacity(state, entry.personId), 24),
+    );
+    const blocks = blocksForPersonDate(state, entry.personId, date);
+    setSchedDate(date);
+    setSchedHoursRaw(String(defHours));
+    setSchedStart(minutesToTimeStr(nextFreeStart(blocks, hoursToMinutes(defHours))));
+  };
+
+  // Entry point A: the card button. Anchor the menu to the button rect.
+  const openSchedule = (entry: WorkloadEntry, btn: HTMLElement) => {
+    const rect = btn.getBoundingClientRect();
+    initScheduleForm(entry);
+    setMenu({
+      entry,
+      x: Math.min(rect.left, window.innerWidth - 280),
+      y: Math.min(rect.bottom + 4, window.innerHeight - 240),
+      step: 'schedule',
+      position: 'after',
+    });
+  };
+
+  // Re-derive the start whenever the selected DATE changes; manual edits to the
+  // start otherwise persist (they don't call this).
+  const onSchedDateChange = (value: string) => {
+    setSchedDate(value);
+    if (!menu) return;
+    const raw = Number(schedHoursRaw);
+    const dur = hoursToMinutes(Number.isNaN(raw) ? 0.25 : snapHours(Math.min(24, raw)));
+    const blocks = blocksForPersonDate(state, menu.entry.personId, value);
+    setSchedStart(minutesToTimeStr(nextFreeStart(blocks, dur)));
+  };
+
+  const confirmSchedule = () => {
+    if (!menu || menu.step !== 'schedule') return;
+    // schedDisabled (below) is the single source of truth — the same value that
+    // disables the button — so Enter can never dispatch what the button refuses.
+    if (schedDisabled) return;
+    dispatch({
+      type: 'SCHEDULE_BIN_PART',
+      entryId: menu.entry.id,
+      date: schedDate,
+      startMinutes: timeToMinutes(schedStart),
+      hours: schedHours,
+    });
+    setMenu(null);
+  };
+
   // Bin (zasobnik) content — week-independent, per-person, filtered.
   const inFilter = (id: string) => filter.size === 0 || filter.has(id);
   const binPeople = state.people.filter(
@@ -962,6 +1070,55 @@ export function WeekView({ state, anchor, filter }: Props) {
     : 0;
   const overAllowance =
     menu !== null && !Number.isNaN(parsedHours) && parsedHours > insertAllowance + 1e-9;
+
+  // ---- "Zaplanuj część" derived values (snap once, share the predicate) ----
+  const isSchedule = menu !== null && menu.step === 'schedule';
+  const schedRawHours = Number(schedHoursRaw);
+  const schedHours = Number.isNaN(schedRawHours) ? NaN : snapHours(Math.min(24, schedRawHours));
+  const schedStartMin = timeToMinutes(schedStart);
+  const schedDurMin = Number.isNaN(schedHours) ? 0 : hoursToMinutes(schedHours);
+  const schedRemaining = menu ? menu.entry.plannedHours : 0;
+  const schedTask = menu ? getTask(state, menu.entry.taskId) : undefined;
+  const toQuartersLocal = (h: number) => Math.round(h / HOURS_STEP);
+  // First-failing BLOCKING validation, in the reducer's own order. Each disables
+  // `Zaplanuj`; NaN/≤0 hours disable silently (no warning line, like the insert form).
+  let schedWarning: string | null = null;
+  let schedDisabled = false;
+  if (isSchedule && menu) {
+    if (!isValidDateStr(schedDate)) {
+      schedWarning = '⚠ Podaj prawidłową datę.';
+      schedDisabled = true;
+    } else if (Number.isNaN(schedHours) || schedHours <= 0) {
+      schedDisabled = true; // silent, like the insert form
+    } else if (toQuartersLocal(schedHours) > toQuartersLocal(schedRemaining)) {
+      schedWarning = `⚠ W zasobniku pozostało tylko ${formatDuration(schedRemaining)}.`;
+      schedDisabled = true;
+    } else if (schedStartMin % MINUTE_STEP !== 0) {
+      schedWarning = '⚠ Start musi być w krokach co 15 minut.';
+      schedDisabled = true;
+    } else if (schedStartMin + schedDurMin > DAY_MINUTES) {
+      schedWarning =
+        '⚠ Blok nie mieści się w dobie — wybierz wcześniejszy start albo mniej godzin.';
+      schedDisabled = true;
+    } else if (blockCollides(state, menu.entry.personId, schedDate, schedStartMin, schedHours)) {
+      schedWarning = '⚠ Koliduje z innym blokiem tej osoby w tym dniu.';
+      schedDisabled = true;
+    } else if (schedTask) {
+      const startDate = schedDate < schedTask.startDate ? schedDate : schedTask.startDate;
+      const endDate = schedDate > schedTask.endDate ? schedDate : schedTask.endDate;
+      if (inclusiveDayCount(startDate, endDate) > MAX_TASK_PERIOD_DAYS) {
+        schedWarning = '⚠ Termin zadania przekroczyłby limit 92 dni.';
+        schedDisabled = true;
+      }
+    }
+  }
+  // Non-blocking overload preview (invariant 3 — warns, never blocks).
+  const schedCapacity = menu ? personCapacity(state, menu.entry.personId) : 0;
+  const schedProjected =
+    isSchedule && menu && !Number.isNaN(schedHours) && schedHours > 0 && isValidDateStr(schedDate)
+      ? hoursForPersonOnDate(state, menu.entry.personId, schedDate) + schedHours
+      : 0;
+  const schedOverload = isSchedule && schedProjected > schedCapacity;
 
   const hours = Array.from({ length: 24 }, (_, h) => h);
 
@@ -1125,6 +1282,7 @@ export function WeekView({ state, anchor, filter }: Props) {
                           editable={canEditEntry(p.id)}
                           onOpen={() => openTask(task.id)}
                           onContextMenu={(ev) => openMenu(e, ev)}
+                          onSchedule={(btn) => openSchedule(e, btn)}
                         />
                       );
                     })}
@@ -1206,16 +1364,96 @@ export function WeekView({ state, anchor, filter }: Props) {
                 </>
               )}
               {isBinEntry(menu.entry) && (
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="context-menu-item danger"
-                  onClick={doDelete}
-                >
-                  Usuń blok
-                </button>
+                <>
+                  {Number.isFinite(menu.entry.plannedHours) &&
+                    Math.round(menu.entry.plannedHours / HOURS_STEP) >= 1 && (
+                      <>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="context-menu-item"
+                          onClick={() => {
+                            initScheduleForm(menu.entry);
+                            setMenu({ ...menu, step: 'schedule' });
+                          }}
+                        >
+                          Zaplanuj część…
+                        </button>
+                        <div className="context-menu-sep" role="separator" />
+                      </>
+                    )}
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="context-menu-item danger"
+                    onClick={doDelete}
+                  >
+                    Usuń blok
+                  </button>
+                </>
               )}
             </>
+          ) : menu.step === 'schedule' ? (
+            <div className="context-insert-form context-schedule-form">
+              <div className="context-menu-title">
+                Zaplanuj część — {schedTask?.title} ({menuPerson?.name})
+              </div>
+              <p className="context-menu-sub">
+                W zasobniku: {formatDuration(menu.entry.plannedHours)}
+              </p>
+              <label className="context-field">
+                Dzień
+                <input
+                  type="date"
+                  value={schedDate}
+                  onChange={(e) => onSchedDateChange(e.target.value)}
+                />
+              </label>
+              <label className="context-field">
+                Start
+                <input
+                  type="time"
+                  step={900}
+                  value={schedStart}
+                  onChange={(e) => setSchedStart(e.target.value)}
+                />
+              </label>
+              <label className="context-field">
+                Godziny
+                <input
+                  type="number"
+                  min={0.25}
+                  max={Math.round(menu.entry.plannedHours / HOURS_STEP) * HOURS_STEP}
+                  step={0.25}
+                  value={schedHoursRaw}
+                  onChange={(e) => setSchedHoursRaw(e.target.value)}
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') confirmSchedule();
+                  }}
+                />
+              </label>
+              {schedWarning && <p className="context-warning">{schedWarning}</p>}
+              {schedOverload && (
+                <p className="context-warning">
+                  ⚠ {menuPerson?.name} będzie mieć {formatDuration(schedProjected)} — powyżej
+                  dostępności {formatDuration(schedCapacity)}/dzień.
+                </p>
+              )}
+              <div className="context-actions">
+                <button
+                  type="button"
+                  className="btn primary"
+                  onClick={confirmSchedule}
+                  disabled={schedDisabled}
+                >
+                  Zaplanuj
+                </button>
+                <button type="button" className="btn ghost" onClick={() => setMenu(null)}>
+                  Anuluj
+                </button>
+              </div>
+            </div>
           ) : (
             <div className="context-insert-form">
               <div className="context-menu-title">

@@ -173,6 +173,7 @@ export type Action =
   | { type: 'SET_BLOCK_TIME'; entryId: string; date: string; startMinutes: number; plannedHours: number }
   | { type: 'MOVE_BLOCK_TO_BIN'; entryId: string }
   | { type: 'SPLIT_BLOCK'; entryId: string; parts: 2 | 4 }
+  | { type: 'SCHEDULE_BIN_PART'; entryId: string; date: string; startMinutes: number; hours: number }
   | { type: 'DELETE_BLOCK'; entryId: string }
   | { type: 'SAVE_FILTER_PRESET'; name: string; page: FilterPage; criteria: SavedFilterCriteria }
   | { type: 'DELETE_FILTER_PRESET'; filterId: string }
@@ -1163,7 +1164,9 @@ function moveBlockToBin(state: AppData, entryId: string): AppData {
  * SINGLE bin row (summed), merged into the (task, person) bin row when one
  * already exists. Rejects when the block is too small to divide, and no-ops on
  * a bin entry — splitting a bin block would create a second same-pair bin row,
- * violating the one-bin-row invariant.
+ * violating the one-bin-row invariant. To schedule PART of a bin row onto the
+ * calendar (the bin-row path this deliberately omits), use `scheduleBinPart`
+ * (`SCHEDULE_BIN_PART`), which conserves the one-bin-row invariant.
  */
 function splitBlock(state: AppData, entryId: string, parts: 2 | 4): AppData {
   const entry = state.workload.find((w) => w.id === entryId);
@@ -1219,6 +1222,99 @@ function splitBlock(state: AppData, entryId: string, parts: 2 | 4): AppData {
       `podzielił(a) blok ${formatDuration(entry.plannedHours)} na ${parts} części (do zasobnika: ${formatDuration(binSum)})`,
     ),
   };
+}
+
+/**
+ * Schedule a user-chosen 0.25h-aligned PART of a bin (zasobnik) row onto a
+ * calendar day. Atomically decrements the source bin row (SAME id, in quarter
+ * units — deleted exactly when it reaches zero) and creates exactly ONE new
+ * dated block, conserving total planned hours. This is the bin-row scheduling
+ * path `splitBlock`/`SPLIT_BLOCK` deliberately omits; it is what makes an
+ * oversized (>24h) bin row recoverable.
+ *
+ * Guard reuse by COMPOSITION, not duplication (decision 3): build an
+ * intermediate workload (source row decremented, or filtered out at zero, plus
+ * a TEMPORARY same-pair bin sibling carrying the part with a fresh uid) and
+ * delegate to the existing `setBlockTime` for that temp entry — inheriting date
+ * validity, 15-min grid, day fit, same-person collision, and the 92-day period
+ * cap. `setBlockTime` returns its input unchanged on any violation, so
+ * `next === intermediate` detects a rejection and we return the ORIGINAL
+ * `state` (house convention: state unchanged, no activity row). The transient
+ * second same-pair bin row exists ONLY inside this pure function on the success
+ * path — by the time state escapes, `setBlockTime` has already dated it — so
+ * nothing observable ever holds two bin rows for one (task, person) pair; on
+ * rejection the intermediate is discarded entirely.
+ *
+ * Hour math is in quarter units (decision 4): a legacy off-grid row (e.g. 5.1h)
+ * is thereby SNAPPED to the quarter grid on its first partial schedule.
+ * Full-amount requests go through this SAME uniform path (decision 5): the
+ * source row is filtered out because `remainingQ === 0`, and one new dated row
+ * is created — never the source row itself. Budget is untouched (decision 7):
+ * the delegated entry's hours equal `hours`, so `setBlockTime` sees neither
+ * grow nor shrink; total planned hours and `estimatedHours` are conserved by
+ * construction. Adjacency merge (decision 6) and the `fromBin` activity message
+ * (decision 8) are inherited from `setBlockTime`; on success we append
+ * `; w zasobniku pozostało {X}` (or `; zasobnik opróżniony`) to that last row.
+ */
+function scheduleBinPart(
+  state: AppData,
+  entryId: string,
+  date: string,
+  startMinutes: number,
+  hours: number,
+): AppData {
+  const entry = state.workload.find((w) => w.id === entryId);
+  if (!entry || !isBinEntry(entry)) return state;
+
+  // Same hours grid/range validation shape as setBlockTime (:938–942).
+  if (!Number.isFinite(hours) || hours < HOURS_STEP || hours > 24) return state;
+  const hoursSteps = hours / HOURS_STEP;
+  if (Math.abs(hoursSteps - Math.round(hoursSteps)) > 1e-9) return state;
+
+  // Conservation in quarter units; reject asking for more than the row holds.
+  const hoursQ = toQuarters(hours);
+  const remainingQ = toQuarters(entry.plannedHours) - hoursQ;
+  if (remainingQ < 0) return state;
+
+  const partId = uid();
+  const partHours = hoursQ * HOURS_STEP; // pass the snapped value, not raw `hours`
+
+  // Intermediate: decrement (or drop at zero) the source row, then append the
+  // TEMPORARY part row that setBlockTime will date onto the grid.
+  const decremented =
+    remainingQ === 0
+      ? state.workload.filter((w) => w.id !== entryId)
+      : state.workload.map((w) =>
+          w.id === entryId ? { ...w, plannedHours: remainingQ * HOURS_STEP } : w,
+        );
+  const intermediate: AppData = {
+    ...state,
+    workload: [
+      ...decremented,
+      {
+        id: partId,
+        taskId: entry.taskId,
+        personId: entry.personId,
+        date: BIN_DATE,
+        plannedHours: partHours,
+        startMinutes: 0,
+        sortIndex: nextSortIndex(decremented, entry.personId, BIN_DATE),
+      },
+    ],
+  };
+
+  const next = setBlockTime(intermediate, partId, date, startMinutes, partHours);
+  if (next === intermediate) return state; // any guard violation → original state
+
+  // Append the remainder suffix to setBlockTime's fromBin activity row.
+  const suffix =
+    remainingQ > 0
+      ? `; w zasobniku pozostało ${formatDuration(remainingQ * HOURS_STEP)}`
+      : '; zasobnik opróżniony';
+  const activity = next.activity.map((ev, i) =>
+    i === next.activity.length - 1 ? { ...ev, message: ev.message + suffix } : ev,
+  );
+  return { ...next, activity };
 }
 
 /** Delete a single bin entry (dated entries are never deleted here). */
@@ -1769,6 +1865,14 @@ export function reducer(state: AppData, action: Action): AppData {
       return moveBlockToBin(state, action.entryId);
     case 'SPLIT_BLOCK':
       return splitBlock(state, action.entryId, action.parts);
+    case 'SCHEDULE_BIN_PART':
+      return scheduleBinPart(
+        state,
+        action.entryId,
+        action.date,
+        action.startMinutes,
+        action.hours,
+      );
     case 'DELETE_BLOCK':
       return deleteBlock(state, action.entryId);
     case 'SAVE_FILTER_PRESET': {

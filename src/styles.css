@@ -1776,6 +1776,29 @@ option {
   font-family: var(--n2-font-data);
   font-variant-numeric: tabular-nums;
 }
+/* "Zaplanuj część" actions row — a compact ghost button below the bin card body. */
+.week-bin-block-actions {
+  margin-top: 4px;
+}
+.week-bin-schedule-btn {
+  font: inherit;
+  font-size: var(--n2-type-xs);
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--n2-lavender);
+  background: rgba(196, 150, 255, 0.12);
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-xs);
+  padding: 3px 8px;
+}
+.week-bin-schedule-btn:hover {
+  background: rgba(196, 150, 255, 0.22);
+  color: var(--n2-text);
+}
+.week-bin-schedule-btn:focus-visible {
+  outline: 2px solid var(--n2-lavender);
+  outline-offset: 1px;
+}
 
 /* ---------- Month view ---------- */
 
@@ -3473,6 +3496,12 @@ option {
 }
 .context-insert-form {
   padding: 2px;
+}
+/* Muted sub-line under the "Zaplanuj część" form title (remaining bin hours). */
+.context-menu-sub {
+  font-size: var(--n2-type-xs);
+  color: var(--text-muted);
+  margin: 0 4px 4px;
 }
 .context-field {
   display: flex;
