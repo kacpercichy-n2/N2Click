@@ -9,7 +9,8 @@
 //   (c) console/pageerror capture — any error/warning, esp. React's
 //       "Maximum update depth exceeded".
 //
-// Usage:  node scripts/browser-check-bin-drag.mjs [chromium|webkit]
+// Usage: node scripts/browser-check-bin-drag.mjs [chromium|webkit]
+//        [free|merge|window-fallback|collision|separator|invalid] [--narrow]
 // Exits non-zero if any probe fails (freeze reproduced or drop broken).
 //
 // Screenshots: reviews/screenshots-20260709-codex/<engine>-{01,02,03,03-freeze}.png
@@ -19,9 +20,10 @@ import { chromium, webkit } from 'playwright';
 import { mkdirSync } from 'node:fs';
 
 const ENGINE = (process.argv[2] || 'chromium').toLowerCase();
-// Scenario drives WHERE the bin card is dropped (see the stress matrix in the
-// PKG-20260709b package). free = empty Friday slot; merge = adjacent to Ola's
-// Monday same-task block (triggers the adjacency merge + fuse animation).
+// Scenario drives WHERE/HOW the bin card is dropped (see the stress matrix in
+// PKG-20260709b). `window-fallback` deliberately delivers pointerup to the day
+// column instead of the source card; it is the regression for a missing/lost
+// element capture. `collision` must revert cleanly with no ghost left behind.
 const SCENARIO = (process.argv[3] || 'free').toLowerCase();
 const NARROW = process.argv.includes('--narrow');
 const PATHO = process.argv.includes('--pathological');
@@ -29,8 +31,13 @@ const PATHO = process.argv.includes('--pathological');
 const TARGETS = {
   free: { col: 4, startMin: 660 }, // Fri 11:00 — Ola has nothing Friday
   merge: { col: 0, startMin: 840 }, // Mon 14:00 — touches Ola's 8:00-14:00 t1 block
+  'window-fallback': { col: 4, startMin: 660 }, // synthetic source move + grid pointerup
+  collision: { col: 0, startMin: 600 }, // Mon 10:00 — overlaps Ola's t1 block
+  separator: { col: 1, startMin: 900 }, // exact Mon/Tue separator at a free 15:00 slot
+  invalid: { col: 2, startMin: 0 }, // day header, outside the timed viewport
 };
 const TARGET = TARGETS[SCENARIO] || TARGETS.free;
+const EXPECT_LAND = SCENARIO !== 'collision' && SCENARIO !== 'invalid';
 const LAUNCHER = ENGINE === 'webkit' ? webkit : chromium;
 const BASE = 'http://localhost:5173';
 const SHOTS = 'reviews/screenshots-20260709-codex';
@@ -76,7 +83,9 @@ async function run() {
     scenario: SCENARIO + (NARROW ? '+narrow' : '') + (PATHO ? '+pathological' : ''),
     seeded: false,
     droppedLanded: false,
+    dropOutcomeCorrect: false,
     binRowGone: false,
+    ghostGone: false,
     heartbeatAlive: null,
     evalResponsive: null,
     modalOpensAfterDrop: null,
@@ -173,30 +182,113 @@ async function run() {
     // rect (which carries the scroll offset), exactly like the component's math.
     const gr = await page.evaluate(() => {
       const g = document.querySelector('.week-days-grid').getBoundingClientRect();
-      return { top: g.top, left: g.left, width: g.width };
+      const secondDay = document
+        .querySelector('.week-day-col[data-day-index="1"]')
+        .getBoundingClientRect();
+      const viewport = document.querySelector('.week-days-viewport').getBoundingClientRect();
+      return {
+        top: g.top,
+        left: g.left,
+        width: g.width,
+        separatorX: secondDay.left,
+        viewportTop: viewport.top,
+      };
     });
     const HOUR_PX = 48;
     const colW = gr.width / 7;
-    const targetX = gr.left + colW * TARGET.col + colW / 2;
-    const targetY = gr.top + (TARGET.startMin / 60) * HOUR_PX;
+    const targetX =
+      SCENARIO === 'separator'
+        ? gr.separatorX
+        : gr.left + colW * TARGET.col + colW / 2;
+    const targetY =
+      SCENARIO === 'invalid'
+        ? gr.viewportTop - 8
+        : gr.top + (TARGET.startMin / 60) * HOUR_PX;
     result.notes.push(
       `drop target: col=${TARGET.col} startMin=${TARGET.startMin} → x=${Math.round(targetX)} y=${Math.round(targetY)}`,
     );
 
-    await page.mouse.move(cardBox.x + cardBox.width / 2, cardBox.y + cardBox.height / 2);
-    await page.mouse.down();
-    // >=5 intermediate steps so pointermove fires and moved.current latches.
     const startX = cardBox.x + cardBox.width / 2;
     const startY = cardBox.y + cardBox.height / 2;
-    const STEPS = 8;
-    for (let i = 1; i <= STEPS; i++) {
-      const x = startX + ((targetX - startX) * i) / STEPS;
-      const y = startY + ((targetY - startY) * i) / STEPS;
-      await page.mouse.move(x, y);
-      if (i === Math.floor(STEPS / 2)) await shot(page, '02-during-drag');
-      await sleep(15);
+    if (SCENARIO === 'window-fallback') {
+      // Pointer capture cannot be established for synthetic events. Move is
+      // delivered to the source so the old implementation visibly created its
+      // ghost; pointerup is then delivered to the grid. Only a window-owned
+      // lifecycle can finish this drag and remove/schedule the source.
+      await page.evaluate(
+        ({ x, y }) => {
+          const source = document.querySelector('.week-bin-block:not(.week-bin-ghost)');
+          source.dispatchEvent(
+            new PointerEvent('pointerdown', {
+              bubbles: true,
+              cancelable: true,
+              pointerId: 77,
+              pointerType: 'mouse',
+              isPrimary: true,
+              button: 0,
+              buttons: 1,
+              clientX: x,
+              clientY: y,
+            }),
+          );
+        },
+        { x: startX, y: startY },
+      );
+      await sleep(40);
+      await page.evaluate(
+        ({ x, y }) => {
+          const source = document.querySelector('.week-bin-block:not(.week-bin-ghost)');
+          source.dispatchEvent(
+            new PointerEvent('pointermove', {
+              bubbles: true,
+              cancelable: true,
+              pointerId: 77,
+              pointerType: 'mouse',
+              isPrimary: true,
+              button: -1,
+              buttons: 1,
+              clientX: x,
+              clientY: y,
+            }),
+          );
+        },
+        { x: targetX, y: targetY },
+      );
+      await shot(page, '02-during-drag');
+      await sleep(40);
+      await page.evaluate(
+        ({ x, y }) => {
+          const target = document.elementFromPoint(x, y);
+          target.dispatchEvent(
+            new PointerEvent('pointerup', {
+              bubbles: true,
+              cancelable: true,
+              pointerId: 77,
+              pointerType: 'mouse',
+              isPrimary: true,
+              button: -1,
+              buttons: 0,
+              clientX: x,
+              clientY: y,
+            }),
+          );
+        },
+        { x: targetX, y: targetY },
+      );
+    } else {
+      await page.mouse.move(startX, startY);
+      await page.mouse.down();
+      // >=5 intermediate steps so pointermove fires and moved.current latches.
+      const STEPS = 8;
+      for (let i = 1; i <= STEPS; i++) {
+        const x = startX + ((targetX - startX) * i) / STEPS;
+        const y = startY + ((targetY - startY) * i) / STEPS;
+        await page.mouse.move(x, y);
+        if (i === Math.floor(STEPS / 2)) await shot(page, '02-during-drag');
+        await sleep(15);
+      }
+      await page.mouse.up();
     }
-    await page.mouse.up();
     await sleep(300);
     await shot(page, '03-after-drop');
 
@@ -212,7 +304,13 @@ async function run() {
     // --- Check the drop landed: bin row gone, block on the grid ---
     const binAfter = await page.locator('.week-bin-block').count();
     result.binRowGone = binAfter < binBefore;
+    result.droppedLanded = result.binRowGone;
+    result.dropOutcomeCorrect = EXPECT_LAND ? result.binRowGone : binAfter === binBefore;
+    result.ghostGone = (await page.locator('.week-bin-ghost').count()) === 0;
     result.notes.push(`bin cards after drop: ${binAfter}`);
+    result.notes.push(
+      `expected land=${EXPECT_LAND} outcome correct=${result.dropOutcomeCorrect} ghost gone=${result.ghostGone}`,
+    );
 
     // --- Probe (b): pointer delivery still works after the drop ---
     if (result.evalResponsive) {
@@ -269,8 +367,6 @@ async function run() {
       result.modalOpensAfterDrop = false;
     }
 
-    result.droppedLanded = result.binRowGone;
-
     result.maxUpdateDepth = maxDepth.length > 0;
     result.consoleErrors = consoleErrors.slice(0, 20);
     result.pageErrors = pageErrors.slice(0, 20);
@@ -279,7 +375,9 @@ async function run() {
       result.evalResponsive === false ||
       result.heartbeatAlive === false ||
       result.maxUpdateDepth ||
-      result.modalOpensAfterDrop === false;
+      result.modalOpensAfterDrop === false ||
+      result.dropOutcomeCorrect === false ||
+      result.ghostGone === false;
     if (froze) await shot(page, '03-freeze');
   } catch (err) {
     result.notes.push(`HARNESS ERROR: ${err.message}`);
@@ -295,7 +393,8 @@ async function run() {
     result.heartbeatAlive === false ||
     result.maxUpdateDepth === true ||
     result.modalOpensAfterDrop === false ||
-    result.droppedLanded === false;
+    result.dropOutcomeCorrect === false ||
+    result.ghostGone === false;
 
   console.log(JSON.stringify(result, null, 2));
   console.log(`\n[${ENGINE}] VERDICT: ${probeFail ? 'FAIL (freeze/broken drop)' : 'PASS'}`);

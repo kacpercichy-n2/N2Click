@@ -461,6 +461,18 @@ interface BinDragState {
   startMin: number; // projected startMinutes
   valid: boolean; // over a real day column
   colliding: boolean;
+  hasMoved: boolean;
+}
+
+interface BinDragListeners {
+  pointerId: number;
+  move: (e: PointerEvent) => void;
+  up: (e: PointerEvent) => void;
+  mouseUp: (e: MouseEvent) => void;
+  cancel: (e: PointerEvent) => void;
+  blur: () => void;
+  keydown: (e: KeyboardEvent) => void;
+  visibilityChange: () => void;
 }
 
 interface BinCardProps {
@@ -497,21 +509,22 @@ function BinCard({
   const dragRef = useRef<BinDragState | null>(null);
   const moved = useRef(false);
   const cardRef = useRef<HTMLDivElement | null>(null);
-  // The element + pointer that hold the drag's pointer capture. A successful
-  // drop UNMOUNTS this card (the entry leaves the bin); the capture MUST be
-  // released before that unmount, or the browser leaves pointer-capture cleanup
-  // wedged and the whole page stops receiving pointer events (site "freeze").
-  const captureRef = useRef<{ el: HTMLElement; pointerId: number } | null>(null);
-  const releaseCapture = () => {
-    const c = captureRef.current;
-    if (c) {
-      try {
-        c.el.releasePointerCapture(c.pointerId);
-      } catch {
-        // Already released (implicit release on pointerup/cancel) — ignore.
-      }
-      captureRef.current = null;
-    }
+  // Bin drags intentionally do not depend on element pointer capture. A valid
+  // drop unmounts the source card, and browsers may also lose/reject capture at
+  // viewport boundaries. Window listeners keep ownership of the gesture until
+  // one idempotent finish/cancel path removes every listener and the ghost.
+  const listenersRef = useRef<BinDragListeners | null>(null);
+  const removeWindowListeners = () => {
+    const listeners = listenersRef.current;
+    if (!listeners) return;
+    window.removeEventListener('pointermove', listeners.move, true);
+    window.removeEventListener('pointerup', listeners.up, true);
+    window.removeEventListener('mouseup', listeners.mouseUp, true);
+    window.removeEventListener('pointercancel', listeners.cancel, true);
+    window.removeEventListener('blur', listeners.blur);
+    window.removeEventListener('keydown', listeners.keydown);
+    document.removeEventListener('visibilitychange', listeners.visibilityChange);
+    listenersRef.current = null;
   };
 
   // A bin row wider than a day (or off the 15-min/0.25h grid) can NEVER be
@@ -528,33 +541,131 @@ function BinCard({
       ? 'Blok jest dłuższy niż doba — podziel go, aby nadać termin.'
       : 'Nieprawidłowy czas trwania — podziel blok, aby nadać termin.';
 
-  // Cancel the drag on Escape (no dispatch → the card snaps home).
+  // Unmount/navigation during a drag must never leave document-wide listeners.
   useEffect(() => {
-    if (!drag) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        releaseCapture();
-        dragRef.current = null;
-        setDrag(null);
-      }
+    return () => {
+      removeWindowListeners();
+      dragRef.current = null;
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [drag]);
+  }, []);
+
+  const projectPointer = (clientX: number, clientY: number): BinDragState | null => {
+    const activeDrag = dragRef.current;
+    if (!activeDrag) return null;
+    const grid = gridRef.current;
+    const viewport = viewportRef.current;
+    const gridRect = grid?.getBoundingClientRect();
+    const viewRect = viewport?.getBoundingClientRect();
+    const dx = clientX - activeDrag.originX;
+    const dy = clientY - activeDrag.originY;
+    const hasMoved = activeDrag.hasMoved || dx !== 0 || dy !== 0;
+    if (hasMoved) moved.current = true;
+
+    let colIndex = -1;
+    let valid = false;
+    let startMin = activeDrag.startMin;
+    let colliding = false;
+
+    if (grid && viewport && gridRect && viewRect) {
+      // Hit-test the actual rendered column. Width division + Math.floor was
+      // ambiguous on fractional-pixel separators and could pick the other day.
+      const hit = document.elementFromPoint(clientX, clientY);
+      let dayColumn = hit instanceof Element
+        ? hit.closest<HTMLElement>('.week-day-col[data-day-index]')
+        : null;
+      // A one-device-pixel separator may hit the grid background rather than a
+      // child. Fall back to the real column rectangles (not an averaged width),
+      // using half-open ranges so the boundary belongs to the column on the right.
+      if (!dayColumn) {
+        const columns = Array.from(
+          grid.querySelectorAll<HTMLElement>('.week-day-col[data-day-index]'),
+        );
+        dayColumn =
+          columns.find((column, index) => {
+            const rect = column.getBoundingClientRect();
+            const withinX =
+              clientX >= rect.left &&
+              (clientX < rect.right || (index === columns.length - 1 && clientX <= rect.right));
+            return withinX && clientY >= rect.top && clientY < rect.bottom;
+          }) ?? null;
+      }
+      const hitIndex = Number(dayColumn?.dataset.dayIndex ?? NaN);
+      // clientWidth/clientHeight exclude classic scrollbars; the outer rect
+      // does not. A release on a scrollbar must cancel, never schedule work.
+      const contentRight = viewRect.left + viewport.clientWidth;
+      const contentBottom = viewRect.top + viewport.clientHeight;
+      const inVisibleViewport =
+        clientX >= viewRect.left &&
+        clientX < contentRight &&
+        clientY >= viewRect.top &&
+        clientY < contentBottom;
+      valid =
+        inVisibleViewport &&
+        dayColumn !== null &&
+        grid.contains(dayColumn) &&
+        Number.isInteger(hitIndex) &&
+        hitIndex >= 0 &&
+        hitIndex < DAY_COLS;
+      colIndex = valid ? hitIndex : -1;
+
+      const dur = entry.plannedHours * 60;
+      const relY = clientY - gridRect.top;
+      startMin = clampBlockStart(snapToStep((relY / HOUR_PX) * 60), dur);
+      colliding = unplaceable
+        ? true
+        : valid
+          ? blockCollides(state, person.id, days[colIndex], startMin, entry.plannedHours)
+          : false;
+    }
+
+    const nextDrag: BinDragState = {
+      ...activeDrag,
+      clientX,
+      clientY,
+      colIndex,
+      startMin,
+      valid,
+      colliding,
+      hasMoved,
+    };
+    dragRef.current = nextDrag;
+    setDrag(nextDrag);
+    return nextDrag;
+  };
+
+  const cancelDrag = () => {
+    if (!dragRef.current && !listenersRef.current) return;
+    removeWindowListeners();
+    dragRef.current = null;
+    setDrag(null);
+  };
+
+  const finishDrag = (clientX: number, clientY: number) => {
+    const finalDrag = projectPointer(clientX, clientY);
+    if (!finalDrag) {
+      removeWindowListeners();
+      return;
+    }
+    // Cleanup happens before dispatch because a successful drop unmounts this
+    // component. Invalid/colliding drops take the exact same guaranteed path.
+    removeWindowListeners();
+    dragRef.current = null;
+    setDrag(null);
+    if (!moved.current) return; // plain click → onClick opens the task
+    if (!finalDrag.valid || finalDrag.colliding) return; // snap back to bin
+    dispatch({
+      type: 'SET_BLOCK_TIME',
+      entryId: entry.id,
+      date: days[finalDrag.colIndex],
+      startMinutes: finalDrag.startMin,
+      plannedHours: entry.plannedHours,
+    });
+  };
 
   const begin = (e: React.PointerEvent) => {
     if (e.button !== 0) return; // right button → context menu
     e.stopPropagation();
-    // Capture on the stable card root (currentTarget), not e.target — a child
-    // <span> would be detached first on drop, worsening the capture leak.
-    const el = e.currentTarget as HTMLElement;
-    try {
-      el.setPointerCapture(e.pointerId);
-      captureRef.current = { el, pointerId: e.pointerId };
-    } catch {
-      // No active pointer (synthetic events) — drag still works.
-      captureRef.current = null;
-    }
+    removeWindowListeners();
     moved.current = false;
     // Capture the card geometry once so the fixed ghost keeps its size and stays
     // aligned under the cursor (the in-pane original stays put and dims).
@@ -571,84 +682,58 @@ function BinCard({
       startMin: 0,
       valid: false,
       colliding: false,
+      hasMoved: false,
     };
     dragRef.current = nextDrag;
     setDrag(nextDrag);
-  };
 
-  const onPointerMove = (e: React.PointerEvent) => {
-    const activeDrag = dragRef.current;
-    if (!activeDrag) return;
-    const gridRect = gridRef.current?.getBoundingClientRect();
-    const viewRect = viewportRef.current?.getBoundingClientRect();
-    if (!gridRect || !viewRect) return;
-    const dx = e.clientX - activeDrag.originX;
-    const dy = e.clientY - activeDrag.originY;
-    if (dx !== 0 || dy !== 0) moved.current = true;
-
-    // The days grid starts at 0:00 (no header inside it), so x → column and
-    // y → minutes project directly off its rect.
-    const colWidth = gridRect.width / DAY_COLS;
-    const colIndex = colWidth > 0 ? Math.floor((e.clientX - gridRect.left) / colWidth) : -1;
-    // A single clamp — the pointer must be inside the visible days viewport —
-    // covers the header row, the axis pane, the bin and any outside-drop cases.
-    const inView =
-      e.clientX >= viewRect.left &&
-      e.clientX <= viewRect.right &&
-      e.clientY >= viewRect.top &&
-      e.clientY <= viewRect.bottom;
-    const valid = inView && colIndex >= 0 && colIndex <= DAY_COLS - 1;
-
-    const dur = entry.plannedHours * 60;
-    const relY = e.clientY - gridRect.top;
-    const startMin = clampBlockStart(snapToStep((relY / HOUR_PX) * 60), dur);
-    // An unplaceable row (> 24h / off-grid) always reads as colliding so the
-    // ghost stays danger-tinted and the drop reverts instead of firing a
-    // doomed dispatch the reducer would reject anyway.
-    const colliding = unplaceable
-      ? true
-      : valid
-        ? blockCollides(state, person.id, days[colIndex], startMin, entry.plannedHours)
-        : false;
-
-    const nextDrag: BinDragState = {
-      ...activeDrag,
-      clientX: e.clientX,
-      clientY: e.clientY,
-      colIndex,
-      startMin,
-      valid,
-      colliding,
+    const pointerId = e.pointerId;
+    const pointerType = e.pointerType;
+    const listeners: BinDragListeners = {
+      pointerId,
+      move: (event) => {
+        if (event.pointerId !== pointerId) return;
+        // Recovery for a mouse released outside the browser: the next move has
+        // no pressed buttons even when pointerup never reached this window.
+        if (pointerType === 'mouse' && event.buttons === 0) {
+          cancelDrag();
+          return;
+        }
+        event.preventDefault();
+        projectPointer(event.clientX, event.clientY);
+      },
+      up: (event) => {
+        if (event.pointerId !== pointerId) return;
+        finishDrag(event.clientX, event.clientY);
+      },
+      mouseUp: (event) => {
+        if (pointerType !== 'mouse') return;
+        finishDrag(event.clientX, event.clientY);
+      },
+      cancel: (event) => {
+        if (event.pointerId === pointerId) cancelDrag();
+      },
+      blur: cancelDrag,
+      keydown: (event) => {
+        if (event.key === 'Escape') cancelDrag();
+      },
+      visibilityChange: () => {
+        if (document.visibilityState === 'hidden') cancelDrag();
+      },
     };
-    dragRef.current = nextDrag;
-    setDrag(nextDrag);
+    listenersRef.current = listeners;
+    window.addEventListener('pointermove', listeners.move, { capture: true, passive: false });
+    window.addEventListener('pointerup', listeners.up, true);
+    window.addEventListener('mouseup', listeners.mouseUp, true);
+    window.addEventListener('pointercancel', listeners.cancel, true);
+    window.addEventListener('blur', listeners.blur);
+    window.addEventListener('keydown', listeners.keydown);
+    document.addEventListener('visibilitychange', listeners.visibilityChange);
   };
 
-  const finish = (e: React.PointerEvent) => {
-    // Include the pointer-up coordinates even when no distinct final move fired.
-    onPointerMove(e);
-    const finalDrag = dragRef.current;
-    if (!finalDrag) return;
-    const { colIndex, startMin, valid, colliding } = finalDrag;
-    // Release BEFORE any dispatch: a valid drop unmounts this card, and an
-    // unreleased capture on a node being removed mid-pointerup wedges the page.
-    releaseCapture();
-    dragRef.current = null;
-    setDrag(null);
-    if (!moved.current) return; // plain click → open
-    if (!valid || colliding) return; // invalid target / collision → snap home
-    dispatch({
-      type: 'SET_BLOCK_TIME',
-      entryId: entry.id,
-      date: days[colIndex],
-      startMinutes: startMin,
-      plannedHours: entry.plannedHours,
-    });
-  };
-
-  // In-pane original: stays mounted (keeps pointer capture + all handlers) and
-  // just dims while dragging. The visible card that follows the pointer is a
-  // fixed-position portal ghost, so the bin pane's overflow can't clip it.
+  // In-pane original stays mounted for click/context-menu semantics and dims
+  // while window listeners own the drag. The visible card following the
+  // pointer is a fixed portal ghost, so the bin pane cannot clip it.
   const className = [
     'week-bin-block',
     editable ? '' : 'readonly',
@@ -683,17 +768,6 @@ function BinCard({
             : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.`
         }
         onPointerDown={editable ? begin : undefined}
-        onPointerMove={editable ? onPointerMove : undefined}
-        onPointerUp={editable ? finish : undefined}
-        onPointerCancel={
-          editable
-            ? () => {
-                releaseCapture();
-                dragRef.current = null;
-                setDrag(null);
-              }
-            : undefined
-        }
         onClick={(e) => {
           e.stopPropagation();
           if (!moved.current) onOpen();
@@ -708,7 +782,11 @@ function BinCard({
       {drag &&
         createPortal(
           <div
-            className={['week-bin-block', 'week-bin-ghost', drag.colliding ? 'colliding' : '']
+            className={[
+              'week-bin-block',
+              'week-bin-ghost',
+              drag.colliding || (drag.hasMoved && !drag.valid) ? 'colliding' : '',
+            ]
               .filter(Boolean)
               .join(' ')}
             style={{
@@ -963,6 +1041,7 @@ export function WeekView({ state, anchor, filter }: Props) {
               return (
                 <div
                   key={`col-${d}`}
+                  data-day-index={dayIndex}
                   className={[
                     'week-day-col',
                     isTodayStr(d) ? 'today' : '',
