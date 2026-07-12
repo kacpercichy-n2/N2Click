@@ -44,6 +44,18 @@ export function AdminPage() {
     state.projects.some((p) => p.statusId === statusId) ||
     state.tasks.some((t) => t.statusId === statusId);
 
+  // Mirror the reducer guards so the UI can pre-validate (the reducer silently
+  // rejects violations). "Only active": archiving/deleting it leaves zero active
+  // statuses. "Only done": no other status (active or archived) is `isDone`.
+  const isOnlyActiveStatus = (statusId: string) => {
+    const active = state.statuses.filter((s) => !s.archived);
+    return active.length === 1 && active[0].id === statusId;
+  };
+  const isOnlyDoneStatus = (statusId: string) => {
+    const done = state.statuses.filter((s) => s.isDone);
+    return done.length === 1 && done[0].id === statusId;
+  };
+
   const addStatus = (e: React.FormEvent) => {
     e.preventDefault();
     // Supports the "/status name" quick-create command form.
@@ -65,9 +77,28 @@ export function AdminPage() {
           Statusy sterują kolumnami kanbana oraz statusem każdego projektu i zadania.
           Kolejność tutaj jest kolejnością w lejku. Zarchiwizowane statusy znikają
           z list wyboru, ale zachowują historię; usunięcie jest możliwe tylko, gdy status nie jest używany.
+          Znacznik „Ukończenie” decyduje, które statusy oznaczają zakończoną pracę — kolejność w lejku nie ma na to wpływu.
         </p>
         <ul className="admin-status-list">
-          {statuses.map((s, i) => (
+          {statuses.map((s, i) => {
+            const onlyActive = isOnlyActiveStatus(s.id);
+            const onlyDone = isOnlyDoneStatus(s.id);
+            const inUse = statusInUse(s.id);
+            const archiveDisabled = !s.archived && (onlyActive || onlyDone);
+            const archiveTitle = archiveDisabled
+              ? onlyActive
+                ? 'Nie można zarchiwizować ostatniego aktywnego statusu.'
+                : 'Nie można zarchiwizować jedynego statusu ukończenia — najpierw oznacz inny status.'
+              : undefined;
+            const deleteDisabled = inUse || onlyActive || onlyDone;
+            const deleteTitle = inUse
+              ? 'Używany przez projekty lub zadania — zamiast tego zarchiwizuj'
+              : onlyActive
+                ? 'Nie można usunąć ostatniego aktywnego statusu.'
+                : onlyDone
+                  ? 'Nie można usunąć jedynego statusu ukończenia.'
+                  : undefined;
+            return (
             <li key={s.id} className={s.archived ? 'admin-status archived' : 'admin-status'}>
               <input
                 type="color"
@@ -87,6 +118,25 @@ export function AdminPage() {
               />
               <code className="muted admin-status-slug">/{s.slug}</code>
               <StatusBadge status={s} />
+              <label
+                className="admin-status-done"
+                title={
+                  onlyDone
+                    ? 'To jedyny status oznaczający ukończenie — najpierw oznacz inny status.'
+                    : 'Projekty i zadania w tym statusie liczą się jako ukończone — niezależnie od kolejności w lejku.'
+                }
+              >
+                <input
+                  type="checkbox"
+                  checked={s.isDone}
+                  disabled={onlyDone}
+                  onChange={() =>
+                    dispatch({ type: 'SET_STATUS_DONE', statusId: s.id, isDone: !s.isDone })
+                  }
+                  aria-label={`Status „${s.name}” oznacza ukończenie`}
+                />
+                Ukończenie
+              </label>
               <span className="admin-status-actions">
                 <button
                   type="button"
@@ -109,6 +159,8 @@ export function AdminPage() {
                 <button
                   type="button"
                   className="btn ghost"
+                  disabled={archiveDisabled}
+                  title={archiveTitle}
                   onClick={() =>
                     dispatch({ type: 'SET_STATUS_ARCHIVED', statusId: s.id, archived: !s.archived })
                   }
@@ -118,15 +170,16 @@ export function AdminPage() {
                 <button
                   type="button"
                   className="btn danger-ghost"
-                  disabled={statusInUse(s.id)}
-                  title={statusInUse(s.id) ? 'Używany przez projekty lub zadania — zamiast tego zarchiwizuj' : undefined}
+                  disabled={deleteDisabled}
+                  title={deleteTitle}
                   onClick={() => dispatch({ type: 'DELETE_STATUS', statusId: s.id })}
                 >
                   Usuń
                 </button>
               </span>
             </li>
-          ))}
+            );
+          })}
         </ul>
         <form className="admin-add-form" onSubmit={addStatus}>
           <input

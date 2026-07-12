@@ -11,9 +11,9 @@ import { PersonFilter } from '../components/PersonFilter';
 import { ZoomIn, ZoomOut } from '../components/icons';
 import type { Milestone, Person, Project, Task } from '../types';
 import {
-  activeStatuses,
   assigneeIdsOfTask,
   conflictDatesForTask,
+  doneStatusIds,
   entriesForTaskPerson,
   getProject,
   getStatus,
@@ -258,7 +258,7 @@ export function TimelinePage() {
   const todayIdx = diffDays(rangeStart, today);
   const dayIdx = (d: string) => diffDays(rangeStart, d);
 
-  const doneStatusId = activeStatuses(state).slice(-1)[0]?.id;
+  const doneIds = doneStatusIds(state);
 
   // Group projects by client, in client-list order, narrowed by the client filter.
   const groups = useMemo(() => {
@@ -544,7 +544,7 @@ export function TimelinePage() {
                 </div>
                 {g.projects.map(({ project: p, tasks }) => {
                   const status = getStatus(state, p.statusId);
-                  const overdue = p.endDate < today && p.statusId !== doneStatusId;
+                  const overdue = p.endDate < today && !doneIds.has(p.statusId);
                   return (
                     <div key={p.id} className="timeline-project">
                       <div className="timeline-row">

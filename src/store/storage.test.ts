@@ -11,6 +11,7 @@ import {
   emptyData,
   loadData,
   normalizeDates,
+  normalizeStatusFlags,
   normalizeTaskMeta,
 } from './storage';
 import { todayStr } from '../utils/dates';
@@ -22,6 +23,7 @@ import type {
   Milestone,
   Project,
   SavedFilter,
+  Status,
   Task,
   WorkCategory,
   WorkloadEntry,
@@ -286,7 +288,7 @@ describe('loadData migration v4 -> v5', () => {
     const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
 
     expect(data.version).toBe(DATA_VERSION);
-    expect(DATA_VERSION).toBe(6);
+    expect(DATA_VERSION).toBe(7);
 
     const p1 = data.people.find((p) => p.id === 'p1')!;
     const p2 = data.people.find((p) => p.id === 'p2')!;
@@ -331,7 +333,7 @@ describe('loadData migration v4 -> v5', () => {
     const twice = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(once) }, () => loadData());
 
     expect(twice).toEqual(once);
-    expect(twice.version).toBe(6);
+    expect(twice.version).toBe(7);
     expect(twice.people[0].accessRole).toBe('administrator');
   });
 
@@ -741,7 +743,7 @@ describe('loadData migration v5 -> v6 (task metadata)', () => {
     const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
 
     expect(data.version).toBe(DATA_VERSION);
-    expect(DATA_VERSION).toBe(6);
+    expect(DATA_VERSION).toBe(7);
 
     const task = data.tasks.find((t) => t.id === 't1')!;
     expect(task.priority).toBe('normal');
@@ -1029,5 +1031,183 @@ describe('loadData round-trip — multi-block day (PKG-20260712b-savetask-tests)
 
     const loaded = data.workload.slice().sort((a, b) => a.id.localeCompare(b.id));
     expect(loaded).toEqual([e1, e2]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normalizeStatusFlags / v6->v7 done semantics (PKG-20260712c-status-tests).
+// Implementation shipped by PKG-20260712c-status-done-core: every status gains
+// a stored `isDone` boolean; when none is set, the LAST ACTIVE status by
+// `order` defaults to done (the value the removed `doneStatusId` selector used
+// to compute), falling back to the last status overall when every status is
+// archived. Runs on EVERY load, same idempotent-by-value philosophy as
+// ensureStartMinutes / normalizeTaskMeta.
+// ---------------------------------------------------------------------------
+
+function makeRawStatus(overrides: Partial<Status> & { id: string; order: number }): Record<string, unknown> {
+  return {
+    name: `Status ${overrides.order}`,
+    slug: `status-${overrides.order}`,
+    color: '#123456',
+    archived: false,
+    // isDone deliberately omitted by default -> exercises the v6 (pre-flag) shape.
+    ...overrides,
+  };
+}
+
+function v6Payload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    version: 6,
+    clients: [],
+    departments: [],
+    serviceTypes: [],
+    workCategories: [],
+    statuses: [],
+    projects: [],
+    milestones: [],
+    tasks: [],
+    people: [],
+    assignments: [],
+    workload: [],
+    comments: [],
+    activity: [],
+    currentUserId: '',
+    impersonatorId: '',
+    sampleBannerDismissed: false,
+    savedFilters: [],
+    ...overrides,
+  };
+}
+
+function makeStatus(overrides: Partial<Status> & { id: string }): Status {
+  return {
+    name: 'Status',
+    slug: 'status',
+    color: '#000000',
+    order: 0,
+    archived: false,
+    isDone: false,
+    ...overrides,
+  };
+}
+
+describe('normalizeStatusFlags / v6→v7 done semantics', () => {
+  it('v6 payload, 4 statuses none archived, no isDone fields -> loadData marks exactly the LAST status by order isDone, all others false, and bumps the version to 7', () => {
+    const statuses = [
+      makeRawStatus({ id: 's0', order: 0 }),
+      makeRawStatus({ id: 's1', order: 1 }),
+      makeRawStatus({ id: 's2', order: 2 }),
+      makeRawStatus({ id: 's3', order: 3 }),
+    ];
+    const payload = v6Payload({ statuses });
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+
+    expect(data.version).toBe(7);
+    expect(DATA_VERSION).toBe(7);
+    const byId = new Map(data.statuses.map((s) => [s.id, s]));
+    expect(byId.get('s0')!.isDone).toBe(false);
+    expect(byId.get('s1')!.isDone).toBe(false);
+    expect(byId.get('s2')!.isDone).toBe(false);
+    expect(byId.get('s3')!.isDone).toBe(true);
+  });
+
+  it('when the last-by-order status is ARCHIVED, the last ACTIVE status becomes done instead (preserves the old doneStatusId value)', () => {
+    const statuses = [
+      makeRawStatus({ id: 's0', order: 0 }),
+      makeRawStatus({ id: 's1', order: 1 }), // last ACTIVE
+      makeRawStatus({ id: 's2', order: 2, archived: true }), // last by order, but archived
+    ];
+    const payload = v6Payload({ statuses });
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+
+    const byId = new Map(data.statuses.map((s) => [s.id, s]));
+    expect(byId.get('s1')!.isDone).toBe(true);
+    expect(byId.get('s0')!.isDone).toBe(false);
+    expect(byId.get('s2')!.isDone).toBe(false);
+  });
+
+  it('when ALL statuses are archived, the last status by order becomes done (deliberate repair of a pathological all-archived pipeline)', () => {
+    const statuses = [
+      makeRawStatus({ id: 's0', order: 0, archived: true }),
+      makeRawStatus({ id: 's1', order: 1, archived: true }),
+      makeRawStatus({ id: 's2', order: 2, archived: true }),
+    ];
+    const payload = v6Payload({ statuses });
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+
+    const byId = new Map(data.statuses.map((s) => [s.id, s]));
+    expect(byId.get('s2')!.isDone).toBe(true);
+    expect(byId.get('s0')!.isDone).toBe(false);
+    expect(byId.get('s1')!.isDone).toBe(false);
+  });
+
+  it('a payload with zero statuses loads without crashing and marks nothing done', () => {
+    const payload = v6Payload({ statuses: [] });
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+
+    expect(data.version).toBe(7);
+    expect(data.statuses).toEqual([]);
+  });
+
+  it('a status that ALREADY has isDone: true on a NON-last status is preserved untouched (no re-defaulting)', () => {
+    const s0 = makeStatus({ id: 's0', order: 0, isDone: true });
+    const s1 = makeStatus({ id: 's1', order: 1, isDone: false });
+    const s2 = makeStatus({ id: 's2', order: 2, isDone: false }); // last by order, stays false
+    const data = { ...emptyData(), statuses: [s0, s1, s2] };
+
+    const next = normalizeStatusFlags(data);
+    const byId = new Map(next.statuses.map((s) => [s.id, s]));
+    expect(byId.get('s0')!.isDone).toBe(true);
+    expect(byId.get('s1')!.isDone).toBe(false);
+    expect(byId.get('s2')!.isDone).toBe(false); // no re-defaulting even though it's last
+  });
+
+  it('a pre-set isDone: true on a non-last status is preserved even when that status is ARCHIVED', () => {
+    const s0 = makeStatus({ id: 's0', order: 0, isDone: true, archived: true });
+    const s1 = makeStatus({ id: 's1', order: 1, isDone: false }); // last by order
+    const data = { ...emptyData(), statuses: [s0, s1] };
+
+    const next = normalizeStatusFlags(data);
+    const byId = new Map(next.statuses.map((s) => [s.id, s]));
+    expect(byId.get('s0')!.isDone).toBe(true);
+    expect(byId.get('s0')!.archived).toBe(true);
+    expect(byId.get('s1')!.isDone).toBe(false);
+  });
+
+  it('normalizeStatusFlags(normalizeStatusFlags(x)) deep-equals normalizeStatusFlags(x) (idempotent), and a full save->load->load round-trip changes nothing', () => {
+    const statuses = [
+      makeStatus({ id: 's0', order: 0 }),
+      makeStatus({ id: 's1', order: 1 }),
+      makeStatus({ id: 's2', order: 2 }),
+    ];
+    const data = { ...emptyData(), statuses };
+
+    const once = normalizeStatusFlags(data);
+    const twice = normalizeStatusFlags(once);
+    expect(twice).toEqual(once);
+
+    // Full save -> load -> load round-trip through loadData().
+    const payload = v6Payload({ statuses });
+    const loadedOnce = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+    const loadedTwice = withLocalStorage(
+      { [STORAGE_KEY]: JSON.stringify(loadedOnce) },
+      () => loadData(),
+    );
+    expect(loadedTwice).toEqual(loadedOnce);
+  });
+
+  it("non-boolean isDone garbage ('yes', 1, null) coerces to false, and the no-done default then applies since none remain true", () => {
+    const s0 = makeRawStatus({ id: 's0', order: 0, isDone: 'yes' as unknown as boolean });
+    const s1 = makeRawStatus({ id: 's1', order: 1, isDone: 1 as unknown as boolean });
+    const s2 = makeRawStatus({ id: 's2', order: 2, isDone: null as unknown as boolean }); // last by order
+    const data = { ...emptyData(), statuses: [s0, s1, s2] } as unknown as AppData;
+
+    const next = normalizeStatusFlags(data);
+    const byId = new Map(next.statuses.map((s) => [s.id, s]));
+    // Garbage values coerce to false first...
+    expect(byId.get('s0')!.isDone).toBe(false);
+    expect(byId.get('s1')!.isDone).toBe(false);
+    // ...then, since none remained true, the last-by-order default kicks in.
+    expect(byId.get('s2')!.isDone).toBe(true);
   });
 });

@@ -9,8 +9,9 @@ import {
   availableHoursOnDate,
   binTaskRowsForPerson,
   conflictDatesForTask,
-  doneStatusId,
+  doneStatusIds,
   growAllowanceHours,
+  isDoneStatus,
   isPersonWorkday,
   isImpersonating,
   overdueTasksForPerson,
@@ -24,6 +25,7 @@ import {
   unplannedTasksForPerson,
   weekBlocksForPerson,
 } from './selectors';
+import { reducer } from './AppStore';
 import { emptyData } from './storage';
 import { BIN_DATE } from '../utils/time';
 import type { AppData, Person, Status, Task, TaskAssignment, WorkloadEntry } from '../types';
@@ -96,6 +98,7 @@ function makeStatus(overrides: Partial<Status> & { id: string }): Status {
     color: '#000000',
     order: 0,
     archived: false,
+    isDone: false,
     ...overrides,
   };
 }
@@ -409,7 +412,7 @@ describe('todayAgendaForPerson', () => {
 
   it('dateless excludes: task period before/after the date, task assigned to someone else, and a done-status task', () => {
     const base = emptyData();
-    const doneStatusId = base.statuses[base.statuses.length - 1].id; // last active status = "done"
+    const doneId = base.statuses[base.statuses.length - 1].id; // 'Gotowe' — the isDone status in seed data
     const activeStatusId = base.statuses[0].id;
 
     const before = makeTask({
@@ -432,7 +435,7 @@ describe('todayAgendaForPerson', () => {
     });
     const done = makeTask({
       id: 't-done',
-      statusId: doneStatusId,
+      statusId: doneId,
       startDate: '2026-07-06',
       endDate: '2026-07-10',
     });
@@ -544,30 +547,135 @@ describe('weekBlocksForPerson', () => {
 });
 
 // ---------------------------------------------------------------------------
-// doneStatusId / overdueTasksForPerson / overloadedDatesForPersonInRange /
+// doneStatusIds / overdueTasksForPerson / overloadedDatesForPersonInRange /
 // unplannedTasksForPerson / binTaskRowsForPerson (PKG-20260709c-my-work-page)
 // Coverage added by PKG-20260709c-my-work-selector-tests.
 // ---------------------------------------------------------------------------
 
-describe('doneStatusId', () => {
-  it('returns the id of the last active status in pipeline order', () => {
+describe('doneStatusIds', () => {
+  it('returns the ids of the isDone-flagged statuses', () => {
     const s0 = makeStatus({ id: 's0', order: 0 });
-    const s1 = makeStatus({ id: 's1', order: 1 });
+    const s1 = makeStatus({ id: 's1', order: 1, isDone: true });
     const state = makeState({ statuses: [s1, s0] }); // deliberately out of array order
-    expect(doneStatusId(state)).toBe('s1');
+    expect(doneStatusIds(state)).toEqual(new Set(['s1']));
   });
 
-  it('skips an archived last status — the previous active status wins', () => {
+  it('includes an archived done status', () => {
     const s0 = makeStatus({ id: 's0', order: 0 });
     const s1 = makeStatus({ id: 's1', order: 1 });
-    const s2 = makeStatus({ id: 's2', order: 2, archived: true }); // last by order, but archived
+    const s2 = makeStatus({ id: 's2', order: 2, archived: true, isDone: true });
     const state = makeState({ statuses: [s0, s1, s2] });
-    expect(doneStatusId(state)).toBe('s1');
+    expect(doneStatusIds(state)).toEqual(new Set(['s2']));
   });
 
-  it('returns undefined when there are no statuses', () => {
+  it('returns an empty set when there are no statuses', () => {
     const state = makeState({ statuses: [] });
-    expect(doneStatusId(state)).toBeUndefined();
+    expect(doneStatusIds(state)).toEqual(new Set());
+  });
+
+  it('doneStatusIds returns ALL isDone statuses (archived included) and isDoneStatus agrees for both done and non-done ids', () => {
+    const s0 = makeStatus({ id: 's0', order: 0, isDone: false });
+    const s1 = makeStatus({ id: 's1', order: 1, isDone: true });
+    const s2 = makeStatus({ id: 's2', order: 2, isDone: true, archived: true });
+    const state = makeState({ statuses: [s0, s1, s2] });
+
+    expect(doneStatusIds(state)).toEqual(new Set(['s1', 's2']));
+    expect(isDoneStatus(state, 's1')).toBe(true);
+    expect(isDoneStatus(state, 's2')).toBe(true);
+    expect(isDoneStatus(state, 's0')).toBe(false);
+    expect(isDoneStatus(state, 'does-not-exist')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// doneStatusIds / my-work selectors — reordering and archived-done coverage
+// (PKG-20260712c-status-tests).
+// ---------------------------------------------------------------------------
+
+describe('doneStatusIds — reordering never changes doneness (PKG-20260712c-status-tests)', () => {
+  it('REORDER_STATUS moving the done status to the FIRST pipeline position leaves doneStatusIds unchanged, and a task in that status stays excluded from overdueTasksForPerson / unplannedTasksForPerson / todayAgendaForPerson\'s dateless', () => {
+    const s0 = makeStatus({ id: 's0', order: 0, isDone: false });
+    const s1 = makeStatus({ id: 's1', order: 1, isDone: false });
+    const sDone = makeStatus({ id: 's-done', order: 2, isDone: true });
+    const task = makeTask({
+      id: 't1',
+      statusId: 's-done',
+      startDate: '2026-07-01',
+      endDate: '2026-07-05', // past due relative to TODAY below
+    });
+    let state = makeState({
+      statuses: [s0, s1, sDone],
+      tasks: [task],
+      people: [makePerson({ id: 'p1' })],
+      assignments: [makeAssignment({ id: 'a1', taskId: 't1', personId: 'p1' })],
+    });
+
+    expect(doneStatusIds(state)).toEqual(new Set(['s-done']));
+
+    // Adjacent swaps: order 2 -> 1 -> 0 (moves sDone to the FIRST pipeline slot).
+    state = reducer(state, { type: 'REORDER_STATUS', statusId: 's-done', direction: -1 });
+    state = reducer(state, { type: 'REORDER_STATUS', statusId: 's-done', direction: -1 });
+
+    const reordered = state.statuses.find((s) => s.id === 's-done')!;
+    expect(reordered.order).toBe(0);
+
+    // Reordering never changes which statuses are done.
+    expect(doneStatusIds(state)).toEqual(new Set(['s-done']));
+    expect(isDoneStatus(state, 's-done')).toBe(true);
+
+    const TODAY = '2026-07-10';
+    expect(overdueTasksForPerson(state, 'p1', TODAY).map((t) => t.id)).not.toContain('t1');
+    expect(unplannedTasksForPerson(state, 'p1').map((t) => t.id)).not.toContain('t1');
+    const { dateless } = todayAgendaForPerson(state, 'p1', '2026-07-03');
+    expect(dateless.map((t) => t.id)).not.toContain('t1');
+  });
+});
+
+describe('a done-AND-archived status excludes a task from every my-work selector (PKG-20260712c-status-tests)', () => {
+  it('not overdue, not unplanned, not in the dateless agenda', () => {
+    const doneArchived = makeStatus({ id: 's-done-archived', order: 0, isDone: true, archived: true });
+    const task = makeTask({
+      id: 't1',
+      statusId: 's-done-archived',
+      startDate: '2026-07-01',
+      endDate: '2026-07-05', // past due relative to '2026-07-10' below
+    });
+    const state = makeState({
+      statuses: [doneArchived],
+      tasks: [task],
+      people: [makePerson({ id: 'p1' })],
+      assignments: [makeAssignment({ id: 'a1', taskId: 't1', personId: 'p1' })],
+    });
+
+    expect(overdueTasksForPerson(state, 'p1', '2026-07-10').map((t) => t.id)).not.toContain('t1');
+    expect(unplannedTasksForPerson(state, 'p1').map((t) => t.id)).not.toContain('t1');
+    const { dateless } = todayAgendaForPerson(state, 'p1', '2026-07-03');
+    expect(dateless.map((t) => t.id)).not.toContain('t1');
+  });
+});
+
+describe('overdueTasksForPerson — the old last-active-status rule is gone (PKG-20260712c-status-tests)', () => {
+  it('a task in a non-done LAST-position status with a past endDate IS overdue, even though it occupies the pipeline\'s last slot', () => {
+    // The done status sits at order 0 (NOT last); the last-position status
+    // (order 1) is explicitly not done. Under the old "last active status is
+    // done" rule this task would have been silently treated as complete.
+    const doneStatus = makeStatus({ id: 's-done', order: 0, isDone: true });
+    const lastStatus = makeStatus({ id: 's-last', order: 1, isDone: false });
+    const task = makeTask({
+      id: 't1',
+      statusId: 's-last',
+      startDate: '2026-07-01',
+      endDate: '2026-07-05',
+    });
+    const state = makeState({
+      statuses: [doneStatus, lastStatus],
+      tasks: [task],
+      people: [makePerson({ id: 'p1' })],
+      assignments: [makeAssignment({ id: 'a1', taskId: 't1', personId: 'p1' })],
+    });
+
+    const result = overdueTasksForPerson(state, 'p1', '2026-07-10');
+    expect(result.map((t) => t.id)).toEqual(['t1']);
   });
 });
 

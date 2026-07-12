@@ -17,6 +17,7 @@ import {
   availableHoursOnDate,
   binEntriesForTask,
   getClient,
+  getStatus,
   planningStatusForTotals,
 } from '../store/selectors';
 import { PlanningBadge } from './PlanningBadge';
@@ -293,6 +294,11 @@ function TaskEditor({
   const isEdit = Boolean(existing);
 
   const statuses = activeStatuses(state);
+  // Keep the edited task's own archived status pickable so the select isn't
+  // lying (only that one status, appended at the end).
+  const currentStatus = existing ? getStatus(state, existing.statusId) : undefined;
+  const pickableStatuses =
+    currentStatus && currentStatus.archived ? [...statuses, currentStatus] : statuses;
 
   // ---- Details ----
   const [title, setTitle] = useState(existing?.title ?? '');
@@ -689,9 +695,10 @@ function TaskEditor({
               disabled={readOnly}
               title={roTitle}
             >
-              {statuses.map((s) => (
+              {pickableStatuses.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
+                  {s.archived ? ' (zarchiwizowany)' : ''}
                 </option>
               ))}
             </select>

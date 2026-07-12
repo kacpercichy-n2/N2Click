@@ -46,6 +46,11 @@ export interface Status {
   color: string; // hex
   order: number; // position in the pipeline, 0-based
   archived: boolean; // archived statuses are hidden from pickers/kanban
+  // Stable completion semantics: whether entities in this status count as
+  // "done". Independent of pipeline `order` and `archived` (archived done
+  // statuses still count as done) — reordering/archiving never rewrites which
+  // work is complete. Multiple statuses may be done. See doneStatusIds.
+  isDone: boolean;
 }
 
 export interface Project {

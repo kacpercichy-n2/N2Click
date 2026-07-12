@@ -166,6 +166,7 @@ export type Action =
   | { type: 'SAVE_STATUS'; statusId: string | null; name: string; color: string }
   | { type: 'REORDER_STATUS'; statusId: string; direction: -1 | 1 }
   | { type: 'SET_STATUS_ARCHIVED'; statusId: string; archived: boolean }
+  | { type: 'SET_STATUS_DONE'; statusId: string; isDone: boolean }
   | { type: 'DELETE_STATUS'; statusId: string }
   | { type: 'INSERT_BLOCK'; payload: InsertBlockPayload }
   | { type: 'REASSIGN_ENTRY'; entryId: string; toPersonId: string }
@@ -1280,6 +1281,19 @@ function deletePerson(state: AppData, personId: string): AppData {
 
 // ---- Statuses ----
 
+/** True when archiving/deleting `statusId` would leave ZERO active statuses. */
+function isOnlyActiveStatus(state: AppData, statusId: string): boolean {
+  const active = state.statuses.filter((s) => !s.archived);
+  return active.length === 1 && active[0].id === statusId;
+}
+
+/** True when no OTHER status (active or archived) is done — i.e. `statusId` is
+ *  the only `isDone` status among all statuses. */
+function isOnlyDoneStatus(state: AppData, statusId: string): boolean {
+  const done = state.statuses.filter((s) => s.isDone);
+  return done.length === 1 && done[0].id === statusId;
+}
+
 function saveStatus(
   state: AppData,
   statusId: string | null,
@@ -1296,15 +1310,44 @@ function saveStatus(
       color,
       order: state.statuses.reduce((m, s) => Math.max(m, s.order), -1) + 1,
       archived: false,
+      isDone: false,
     };
     return { ...state, statuses: [...state.statuses, status] };
   }
   // Rename keeps the raw value so inline editing isn't fighting the reducer
   // (trailing spaces while typing); the slug derives from the trimmed name.
+  // `isDone` is untouched — the spread preserves the existing flag.
   return {
     ...state,
     statuses: state.statuses.map((s) =>
       s.id === statusId ? { ...s, name, slug: slugify(trimmed), color } : s,
+    ),
+  };
+}
+
+/** Toggle a status's done flag. Turning ON is always allowed; turning OFF is
+ *  refused (state unchanged) when it is the only `isDone` status. */
+function setStatusDone(state: AppData, statusId: string, isDone: boolean): AppData {
+  if (!state.statuses.some((s) => s.id === statusId)) return state;
+  if (!isDone && isOnlyDoneStatus(state, statusId)) return state;
+  return {
+    ...state,
+    statuses: state.statuses.map((s) => (s.id === statusId ? { ...s, isDone } : s)),
+  };
+}
+
+/** Archive/restore a status. Restore (archived=false) is always allowed;
+ *  archiving is refused when the status is the only ACTIVE status or the only
+ *  `isDone` status. Returns state unchanged on refusal. */
+function setStatusArchived(state: AppData, statusId: string, archived: boolean): AppData {
+  if (!state.statuses.some((s) => s.id === statusId)) return state;
+  if (archived && (isOnlyActiveStatus(state, statusId) || isOnlyDoneStatus(state, statusId))) {
+    return state;
+  }
+  return {
+    ...state,
+    statuses: state.statuses.map((s) =>
+      s.id === statusId ? { ...s, archived } : s,
     ),
   };
 }
@@ -1322,12 +1365,14 @@ function reorderStatus(state: AppData, statusId: string, direction: -1 | 1): App
   };
 }
 
-/** Delete is only allowed when nothing references the status (else archive). */
+/** Delete is refused (state unchanged) when the status is referenced (else
+ *  archive), OR it is the only active status, OR the only `isDone` status. */
 function deleteStatus(state: AppData, statusId: string): AppData {
   const used =
     state.projects.some((p) => p.statusId === statusId) ||
     state.tasks.some((t) => t.statusId === statusId);
   if (used) return state;
+  if (isOnlyActiveStatus(state, statusId) || isOnlyDoneStatus(state, statusId)) return state;
   return { ...state, statuses: state.statuses.filter((s) => s.id !== statusId) };
 }
 
@@ -1684,12 +1729,9 @@ export function reducer(state: AppData, action: Action): AppData {
     case 'REORDER_STATUS':
       return reorderStatus(state, action.statusId, action.direction);
     case 'SET_STATUS_ARCHIVED':
-      return {
-        ...state,
-        statuses: state.statuses.map((s) =>
-          s.id === action.statusId ? { ...s, archived: action.archived } : s,
-        ),
-      };
+      return setStatusArchived(state, action.statusId, action.archived);
+    case 'SET_STATUS_DONE':
+      return setStatusDone(state, action.statusId, action.isDone);
     case 'DELETE_STATUS':
       return deleteStatus(state, action.statusId);
     case 'INSERT_BLOCK':

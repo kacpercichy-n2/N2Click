@@ -9,7 +9,7 @@ import { addDaysStr, MAX_TASK_PERIOD_DAYS } from '../utils/dates';
 import type { Client, Milestone, Person, Project, Status, Task } from '../types';
 
 const CLIENT: Client = { id: 'c1', name: 'Client', archived: false };
-const STATUS: Status = { id: 's1', name: 'Do zrobienia', slug: 'do-zrobienia', color: '#9aa7c4', order: 0, archived: false };
+const STATUS: Status = { id: 's1', name: 'Do zrobienia', slug: 'do-zrobienia', color: '#9aa7c4', order: 0, archived: false, isDone: false };
 const PROJECT: Project = {
   id: 'proj1',
   clientId: 'c1',

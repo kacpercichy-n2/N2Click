@@ -2283,6 +2283,20 @@ option {
   border-color: var(--n2-border-strong);
   background: rgba(196, 150, 255, 0.12);
 }
+/* Read-only holding column for projects in archived statuses. Not a drop
+   target (muted, dashed top border), cards remain draggable OUT of it. */
+.kanban-col.archived-col {
+  background: var(--n2-surface-muted, var(--card-bg-2));
+  border-style: dashed;
+  opacity: 0.9;
+}
+.kanban-col.archived-col .kanban-col-head {
+  border-top: 3px dashed var(--n2-border-strong);
+  color: var(--text-muted);
+}
+.kanban-col.archived-col .kanban-col-name {
+  color: var(--text-muted);
+}
 .kanban-col-head {
   display: flex;
   align-items: center;
@@ -3208,6 +3222,21 @@ option {
   font-size: var(--n2-type-xs);
   font-family: var(--n2-font-mono);
   color: var(--text-muted);
+}
+.admin-status-done {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--n2-type-xs);
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+.admin-status-done input[type='checkbox'] {
+  cursor: pointer;
+}
+.admin-status-done input[type='checkbox']:disabled {
+  cursor: not-allowed;
 }
 .admin-status-actions {
   display: flex;

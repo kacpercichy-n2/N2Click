@@ -26,7 +26,7 @@ import {
 
 const STORAGE_KEY = 'n2hub.data.v1';
 const LEGACY_STORAGE_KEYS = ['n2ub.data.v1', 'n2click.data.v1'];
-export const DATA_VERSION = 6;
+export const DATA_VERSION = 7;
 
 export const DEFAULT_CAPACITY = 8; // hours available per person per day
 export const WORKDAY_START_MIN = 480; // 8:00 — default person work-hours start
@@ -90,6 +90,8 @@ export function buildDefaultStatuses(): Status[] {
     color,
     order,
     archived: false,
+    // Only the last default ('Gotowe') is a done status.
+    isDone: name === 'Gotowe',
   }));
 }
 
@@ -318,6 +320,13 @@ function translateKnownName(name: string, map: Record<string, string>): string {
   return map[name] ?? name;
 }
 
+/**
+ * Maps the English seed's default dictionary names to Polish. Runs once per
+ * legacy load (version < DATA_VERSION). Idempotent on already-Polish data:
+ * translateKnownName returns the name unchanged when it isn't an English key,
+ * so a v6 Polish payload (now < DATA_VERSION after the v7 bump) passes through
+ * untouched.
+ */
 function localizeLegacyData(data: AppData): AppData {
   const statusNames: Record<string, string> = {
     'To do': 'Do zrobienia',
@@ -719,6 +728,44 @@ export function normalizeTaskMeta(data: AppData): AppData {
   return { ...data, workCategories, tasks, savedFilters };
 }
 
+/**
+ * Idempotent normalize pass for stable completion semantics. Runs on EVERY load
+ * — same philosophy as normalizeTaskMeta / normalizeDates — so a payload with a
+ * missing or malformed `isDone` (e.g. a v6 payload predating the flag, or one
+ * persisted mid-dev via HMR) self-heals instead of staying broken.
+ *
+ * Two steps:
+ * 1. Coerce each status's `isDone` to a strict boolean (`s.isDone === true`).
+ * 2. If any statuses exist and NONE is done, mark a default: the LAST ACTIVE
+ *    status by `order` (exactly what the removed `doneStatusId` selector used to
+ *    return, so migrated data keeps its current done semantics). If every status
+ *    is archived, mark the last status overall by `order` (a deliberate repair
+ *    of a pathological all-archived pipeline). Zero statuses → mark nothing.
+ *
+ * Idempotent by value: once ≥1 status is done it never rewrites flags, so a
+ * second pass on its own output changes nothing.
+ */
+export function normalizeStatusFlags(data: AppData): AppData {
+  let changed = false;
+  const statuses = data.statuses.map((s) => {
+    const isDone = s.isDone === true;
+    if (s.isDone === isDone) return s;
+    changed = true;
+    return { ...s, isDone };
+  });
+
+  if (statuses.length > 0 && !statuses.some((s) => s.isDone)) {
+    const active = statuses.filter((s) => !s.archived);
+    const pool = active.length > 0 ? active : statuses;
+    const target = pool.reduce((last, s) => (s.order >= last.order ? s : last), pool[0]);
+    const marked = statuses.map((s) => (s.id === target.id ? { ...s, isDone: true } : s));
+    return { ...data, statuses: marked };
+  }
+
+  if (!changed) return data;
+  return { ...data, statuses };
+}
+
 export function loadData(): AppData {
   try {
     const raw =
@@ -730,9 +777,11 @@ export function loadData(): AppData {
     const version = typeof parsed.version === 'number' ? parsed.version : 1;
     if (version < 2) {
       return sanitizeImpersonator(
-        normalizeTaskMeta(
-          ensureStartMinutes(
-            normalizeDates(migrateV4toV5(localizeLegacyData(migrateV1(parsed)))),
+        normalizeStatusFlags(
+          normalizeTaskMeta(
+            ensureStartMinutes(
+              normalizeDates(migrateV4toV5(localizeLegacyData(migrateV1(parsed)))),
+            ),
           ),
         ),
       );
@@ -753,7 +802,7 @@ export function loadData(): AppData {
     // migratePerson preserves valid existing values and fills only what's absent.
     const migrated = migrateV4toV5(localized);
     return sanitizeImpersonator(
-      normalizeTaskMeta(ensureStartMinutes(normalizeDates(migrated))),
+      normalizeStatusFlags(normalizeTaskMeta(ensureStartMinutes(normalizeDates(migrated)))),
     );
   } catch {
     return emptyData();

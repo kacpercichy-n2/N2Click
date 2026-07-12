@@ -1,6 +1,7 @@
 // Kanban: the PROJECT pipeline board. Columns = active statuses in pipeline
-// order; dragging a project card into a column changes its status. Admins can
-// quick-create a status by typing "/Status name" in the quick-add box.
+// order, plus a trailing "Zarchiwizowane" column for projects sitting in an
+// archived status; dragging a project card into a column changes its status.
+// Admins can quick-create a status by typing "/Status name" in the quick-add box.
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
@@ -105,6 +106,63 @@ export function KanbanPage() {
     if (projectId) dispatch({ type: 'SET_PROJECT_STATUS', projectId, statusId });
   };
 
+  // Projects whose current status is archived — they'd otherwise vanish from the
+  // board (no active-status column matches). Respects the paid/client filters.
+  const archivedIds = useMemo(
+    () => new Set(state.statuses.filter((s) => s.archived).map((s) => s.id)),
+    [state.statuses],
+  );
+  const archivedProjects = useMemo(
+    () => projects.filter((p) => archivedIds.has(p.statusId)),
+    [projects, archivedIds],
+  );
+
+  const renderCard = (p: (typeof projects)[number]) => {
+    const client = getClient(state, p.clientId);
+    const taskCount = tasksOfProject(state, p.id).length;
+    const planned = projectPlannedTotal(state, p.id);
+    const team = peopleIdsOfProject(state, p.id).length;
+    return (
+      <motion.div
+        key={p.id}
+        layout
+        whileHover={{ y: -2 }}
+        transition={{ duration: 0.18, ease: 'easeOut' }}
+        className="kanban-card"
+        draggable={canManage}
+        // onDragStartCapture (not motion's gesture onDragStart) keeps
+        // native HTML5 drag-and-drop working on the animated card.
+        onDragStartCapture={
+          canManage
+            ? (e) => {
+                e.dataTransfer.setData('text/n2hub-project', p.id);
+                e.dataTransfer.effectAllowed = 'move';
+              }
+            : undefined
+        }
+        onClick={() => navigate(`/projects/${p.id}`)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') navigate(`/projects/${p.id}`);
+        }}
+      >
+        <div className="kanban-card-top">
+          <span className="kanban-card-title">{p.name}</span>
+          <Coin paid={p.paid} size={16} />
+        </div>
+        {client && <div className="kanban-card-client">{client.name}</div>}
+        <div className="kanban-card-meta">
+          {formatShort(p.startDate)} – {formatShort(p.endDate)}
+        </div>
+        <div className="kanban-card-meta muted">
+          {taskCount} {polishCount(taskCount, 'zadanie', 'zadania', 'zadań')} ·{' '}
+          {formatDuration(planned)} · {team} {polishCount(team, 'osoba', 'osoby', 'osób')}
+        </div>
+      </motion.div>
+    );
+  };
+
   const quickCreate = (e: React.FormEvent) => {
     e.preventDefault();
     // "/Name here" quick-create command; a bare name works too.
@@ -163,55 +221,26 @@ export function KanbanPage() {
                 </div>
                 <div className="kanban-col-body">
                   {cards.length === 0 && <div className="kanban-empty">Upuść tutaj</div>}
-                  {cards.map((p) => {
-                    const client = getClient(state, p.clientId);
-                    const taskCount = tasksOfProject(state, p.id).length;
-                    const planned = projectPlannedTotal(state, p.id);
-                    const team = peopleIdsOfProject(state, p.id).length;
-                    return (
-                      <motion.div
-                        key={p.id}
-                        layout
-                        whileHover={{ y: -2 }}
-                        transition={{ duration: 0.18, ease: 'easeOut' }}
-                        className="kanban-card"
-                        draggable={canManage}
-                        // onDragStartCapture (not motion's gesture onDragStart) keeps
-                        // native HTML5 drag-and-drop working on the animated card.
-                        onDragStartCapture={
-                          canManage
-                            ? (e) => {
-                                e.dataTransfer.setData('text/n2hub-project', p.id);
-                                e.dataTransfer.effectAllowed = 'move';
-                              }
-                            : undefined
-                        }
-                        onClick={() => navigate(`/projects/${p.id}`)}
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') navigate(`/projects/${p.id}`);
-                        }}
-                      >
-                        <div className="kanban-card-top">
-                          <span className="kanban-card-title">{p.name}</span>
-                          <Coin paid={p.paid} size={16} />
-                        </div>
-                        {client && <div className="kanban-card-client">{client.name}</div>}
-                        <div className="kanban-card-meta">
-                          {formatShort(p.startDate)} – {formatShort(p.endDate)}
-                        </div>
-                        <div className="kanban-card-meta muted">
-                          {taskCount} {polishCount(taskCount, 'zadanie', 'zadania', 'zadań')} ·{' '}
-                          {formatDuration(planned)} · {team} {polishCount(team, 'osoba', 'osoby', 'osób')}
-                        </div>
-                      </motion.div>
-                    );
-                  })}
+                  {cards.map((p) => renderCard(p))}
                 </div>
               </div>
             );
           })}
+
+          {archivedProjects.length > 0 && (
+            <div
+              className="kanban-col archived-col"
+              title="Projekty w zarchiwizowanych statusach — przeciągnij kartę do aktywnej kolumny, aby przywrócić."
+            >
+              <div className="kanban-col-head">
+                <span className="kanban-col-name">Zarchiwizowane</span>
+                <span className="kanban-col-count">{archivedProjects.length}</span>
+              </div>
+              <div className="kanban-col-body">
+                {archivedProjects.map((p) => renderCard(p))}
+              </div>
+            </div>
+          )}
 
           {admin && (
             <form className="kanban-add-col" onSubmit={quickCreate}>

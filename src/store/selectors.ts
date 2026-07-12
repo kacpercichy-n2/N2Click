@@ -78,12 +78,19 @@ export function allStatusesOrdered(state: AppData): Status[] {
 }
 
 /**
- * The id of the "done" status — the LAST active status in pipeline order.
- * Undefined when there are no active statuses. This is the single source of the
- * done-status rule reused by the agenda and the "Moja praca" selectors.
+ * The set of ids of all "done" statuses — every status with `isDone === true`,
+ * ARCHIVED INCLUDED. Completion is an explicit, stored flag, not a pipeline
+ * position, so reordering or archiving statuses never changes which work counts
+ * as done. Single source of the done-status rule reused by the agenda, the
+ * "Moja praca" selectors, and the timeline overdue tint.
  */
-export function doneStatusId(state: AppData): string | undefined {
-  return activeStatuses(state).slice(-1)[0]?.id;
+export function doneStatusIds(state: AppData): Set<string> {
+  return new Set(state.statuses.filter((s) => s.isDone).map((s) => s.id));
+}
+
+/** Whether a given status id is a done status (archived done statuses count). */
+export function isDoneStatus(state: AppData, statusId: string): boolean {
+  return state.statuses.some((s) => s.id === statusId && s.isDone);
 }
 
 // ---- Clients & projects ----
@@ -286,7 +293,7 @@ export function dayTotal(
  *   `startMinutes` (ties by `sortIndex`) — the calendar order IS the priority.
  * - `dateless`: tasks the person is assigned to whose period covers `date` but
  *   which have NO entry for that person that day, excluding done-status tasks
- *   (the last active status), sorted by nearest `endDate` then title.
+ *   (any status with `isDone`, via `doneStatusIds`), sorted by nearest `endDate` then title.
  * There is intentionally no priority field — ordering is derived here only.
  */
 export function todayAgendaForPerson(
@@ -298,7 +305,7 @@ export function todayAgendaForPerson(
     .filter((w) => w.personId === personId && w.date === date)
     .sort((a, b) => a.startMinutes - b.startMinutes || a.sortIndex - b.sortIndex);
 
-  const doneId = doneStatusId(state);
+  const doneIds = doneStatusIds(state);
   const timedTaskIds = new Set(timed.map((w) => w.taskId));
   const assignedTaskIds = new Set(taskIdsOfPerson(state, personId));
 
@@ -308,7 +315,7 @@ export function todayAgendaForPerson(
         assignedTaskIds.has(t.id) &&
         t.startDate <= date &&
         date <= t.endDate &&
-        t.statusId !== doneId &&
+        !doneIds.has(t.statusId) &&
         !timedTaskIds.has(t.id),
     )
     .sort((a, b) => a.endDate.localeCompare(b.endDate) || a.title.localeCompare(b.title));
@@ -534,7 +541,7 @@ export function taskPlanningStatus(state: AppData, taskId: string): PlanningStat
 
 /**
  * Tasks the person is assigned to that are past due: `endDate < today` and not
- * in the done status. Sorted by `endDate` ascending, then title. Pure — pass
+ * in a done status. Sorted by `endDate` ascending, then title. Pure — pass
  * `today` (no `Date.now`).
  */
 export function overdueTasksForPerson(
@@ -542,14 +549,14 @@ export function overdueTasksForPerson(
   personId: string,
   today: DateStr,
 ): Task[] {
-  const doneId = doneStatusId(state);
+  const doneIds = doneStatusIds(state);
   const assignedTaskIds = new Set(taskIdsOfPerson(state, personId));
   return state.tasks
     .filter(
       (t) =>
         assignedTaskIds.has(t.id) &&
         t.endDate < today &&
-        t.statusId !== doneId,
+        !doneIds.has(t.statusId),
     )
     .sort((a, b) => a.endDate.localeCompare(b.endDate) || a.title.localeCompare(b.title));
 }
@@ -574,7 +581,7 @@ export function overloadedDatesForPersonInRange(
  * `endDate` ascending, then title. Pure.
  */
 export function unplannedTasksForPerson(state: AppData, personId: string): Task[] {
-  const doneId = doneStatusId(state);
+  const doneIds = doneStatusIds(state);
   const assignedTaskIds = new Set(taskIdsOfPerson(state, personId));
   const plannedTaskIds = new Set(
     state.workload.filter((w) => w.personId === personId).map((w) => w.taskId),
@@ -583,7 +590,7 @@ export function unplannedTasksForPerson(state: AppData, personId: string): Task[
     .filter(
       (t) =>
         assignedTaskIds.has(t.id) &&
-        t.statusId !== doneId &&
+        !doneIds.has(t.statusId) &&
         !plannedTaskIds.has(t.id),
     )
     .sort((a, b) => a.endDate.localeCompare(b.endDate) || a.title.localeCompare(b.title));
