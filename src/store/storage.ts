@@ -574,7 +574,8 @@ export function sanitizeImpersonator(data: AppData): AppData {
  *   `checklist` (non-array → []; each item coerced to { id, text, done },
  *   non-object entries dropped);
  * - every saved filter's criteria is filled from DEFAULT_FILTER_CRITERIA (old
- *   v5 presets gain the new fields as '') with an invalid `priority` reset to ''.
+ *   v5 presets gain the new fields as '') with invalid `priority` and dangling
+ *   `workCategoryId` values reset to ''.
  */
 export function normalizeTaskMeta(data: AppData): AppData {
   const str = (v: unknown): string => (typeof v === 'string' ? v : '');
@@ -606,6 +607,9 @@ export function normalizeTaskMeta(data: AppData): AppData {
     const criteria: SavedFilterCriteria = { ...DEFAULT_FILTER_CRITERIA, ...f.criteria };
     if (criteria.priority !== '' && !TASK_PRIORITIES.includes(criteria.priority as TaskPriority)) {
       criteria.priority = '';
+    }
+    if (criteria.workCategoryId !== '' && !categoryIds.has(criteria.workCategoryId)) {
+      criteria.workCategoryId = '';
     }
     return { ...f, criteria };
   });

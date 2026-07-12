@@ -10,10 +10,11 @@ agent pins its own model and tool set.
 | Tier | Agent | Model | Role |
 |------|-------|-------|------|
 | Plan / Evaluate | `architect` | **Fable** | Ingest goal, explore read-only, decompose into handoff packages, route work, do the high-level final eval. Never writes code. |
-| Review | `reviewer` | **Fable** | Read diffs + worker reports against the plan and conventions. Read-only verdict. |
+| Review verdict | `reviewer` | **Fable** | Adjudicates the independent Codex review against the plan and conventions. Read-only verdict. |
 | Implement | `developer` | **Opus** | The heavy lifting: real implementation code, owns the build/fix/retry loop. |
 | Assist | `test-writer` | **Sonnet** | Boilerplate unit tests, mocks, fixtures, smoke checks — repetitive, well-specified work. |
-| 2nd opinion / troubleshoot | Codex | **OpenAI Codex** (CLI) | Independent review of the diff (feeds the reviewer's verdict) and on-demand troubleshooting when a worker is stuck. An external CLI, not a Claude subagent — optional but recommended. |
+| Independent review | Codex | **GPT-5.6 Sol, high reasoning** (CLI) | Independent review of the diff; feeds the reviewer's verdict. Read-only and optional but recommended. |
+| Optional implementation | Codex | **GPT-5.6 Terra, high reasoning** (CLI) | Implements a bounded, ready handoff package only when the architect explicitly assigns `tier: codex-implementer`. |
 
 Why it works: the architect/reviewer (Fable) never ingest massive log output or
 raw code churn, so their context stays compact. The trial-and-error loop — where
@@ -107,10 +108,12 @@ context window.
 1. **Architect** → produces the plan + `handoffs/packages/*.md`, one per unit,
    each tagged with a tier.
 2. **Developer** → implements the packages, owns the build/test loop. If stuck,
-   consults **Codex** (`codex exec`) for troubleshooting.
+   consults **Codex** for troubleshooting. For a package explicitly tagged
+   `tier: codex-implementer`, run `bash scripts/codex-implement.sh <package>`;
+   it uses GPT-5.6 Terra with high reasoning.
 3. **Test-writer** → scaffolds/fills the test coverage the packages call for.
-4. **Codex review** → `bash scripts/codex-review.sh` for an independent second
-   opinion (P1/P2/P3 findings).
+4. **Codex review** → `bash scripts/codex-review.sh` for an independent GPT-5.6
+   Sol high-reasoning second opinion (P1/P2/P3 findings).
 5. **Reviewer** (Fable) → reads `handoffs/RUN-STATE.md` + the diff + Codex's
    findings, adjudicates, returns a structured verdict (recorded back to RUN-STATE).
 6. **Architect** → final eval; anything failing routes back to the right worker.
@@ -139,12 +142,14 @@ context window.
 - **Cost intuition.** Keep Fable at the two ends (plan + evaluate) and route the
   voluminous middle to Opus/Sonnet. If a task is small, skip the ceremony and
   just ask the developer directly — the tiering pays off on multi-step work.
-- **Codex is optional but recommended.** The review gate and troubleshooting use
-  the OpenAI Codex CLI (`codex exec`). Install it
+- **Codex is optional but recommended.** The review gate uses the OpenAI Codex
+  CLI as GPT-5.6 Sol at high reasoning; an explicitly routed implementation
+  package uses GPT-5.6 Terra at high reasoning. Install it
   (https://github.com/openai/codex) and run `codex login` once. Without it,
   `scripts/codex-review.sh` exits cleanly and the Fable reviewer proceeds on its
   own — you just lose the cross-model second opinion. Codex reviews are saved to
-  `reviews/` for traceability.
+  `reviews/` for traceability. The CLI invocation is external because Claude
+  Code subagent frontmatter can select Claude models only.
 - **Adapt to your repo.** The agents reference generic "project conventions /
   invariants docs." Point them at your actual files (e.g. `CONTRIBUTING.md`, a
   `CLAUDE.md`, an architecture doc) for best results.

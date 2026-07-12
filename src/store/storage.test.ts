@@ -583,6 +583,30 @@ describe('normalizeTaskMeta', () => {
     expect(next.savedFilters[0].criteria.priority).toBe('');
   });
 
+  it("resets a saved filter's dangling workCategoryId while preserving a valid category reference", () => {
+    const dangling = {
+      id: 'f1',
+      name: 'Deleted category',
+      page: 'tasks' as const,
+      criteria: { ...DEFAULT_FILTER_CRITERIA, workCategoryId: 'ghost' },
+    } as SavedFilter;
+    const valid = {
+      id: 'f2',
+      name: 'Current category',
+      page: 'tasks' as const,
+      criteria: { ...DEFAULT_FILTER_CRITERIA, workCategoryId: 'cat1' },
+    } as SavedFilter;
+
+    const next = normalizeTaskMeta({
+      ...emptyData(),
+      workCategories: [{ id: 'cat1', name: 'Kreacja' }],
+      savedFilters: [dangling, valid],
+    });
+
+    expect(next.savedFilters.find((filter) => filter.id === 'f1')!.criteria.workCategoryId).toBe('');
+    expect(next.savedFilters.find((filter) => filter.id === 'f2')!.criteria.workCategoryId).toBe('cat1');
+  });
+
   it('coerces a missing/non-array workCategories to []', () => {
     const data = { ...emptyData(), workCategories: undefined as unknown as WorkCategory[] };
     const next = normalizeTaskMeta(data);

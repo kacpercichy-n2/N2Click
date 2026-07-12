@@ -145,6 +145,26 @@ describe('SAVE_TASK metadata', () => {
     expect(edited.checklist[0]).toEqual({ id: 'c1', text: 'Keep me', done: false });
   });
 
+  it('clears a stale workCategoryId rather than persisting a reference no longer in the dictionary', () => {
+    const task = makeTask({ id: 't1', workCategoryId: 'cat1' });
+    const state = makeState({
+      tasks: [task],
+      workCategories: [makeCategory({ id: 'cat1' })],
+    });
+
+    const next = reducer(state, {
+      type: 'SAVE_TASK',
+      payload: {
+        taskId: 't1',
+        draft: draftFor(task, { workCategoryId: 'deleted-category' }),
+        assigneeIds: [],
+        allocations: [],
+      },
+    });
+
+    expect(next.tasks.find((t) => t.id === 't1')!.workCategoryId).toBe('');
+  });
+
   it('checklist item "done" toggling persists through a create -> edit round-trip', () => {
     const draft: TaskDraft = {
       projectId: 'proj1',
@@ -214,12 +234,29 @@ describe('Work category CRUD', () => {
     expect(next.workCategories.find((c) => c.id === 'cat2')!.name).toBe('Testy');
   });
 
-  it('DELETE_WORK_CATEGORY removes the row AND resets workCategoryId to \'\' on referencing tasks, while an unrelated task\'s category survives', () => {
+  it('DELETE_WORK_CATEGORY removes the row, resets task references, and clears saved filter presets that reference it', () => {
     const referencing = makeTask({ id: 't1', workCategoryId: 'cat1' });
     const other = makeTask({ id: 't2', workCategoryId: 'cat2' });
     const state = makeState({
       tasks: [referencing, other],
       workCategories: [makeCategory({ id: 'cat1' }), makeCategory({ id: 'cat2' })],
+      savedFilters: [
+        {
+          id: 'filter1',
+          name: 'Kreacja',
+          page: 'tasks',
+          criteria: {
+            paid: 'all',
+            clientId: '',
+            statusId: '',
+            personId: '',
+            priority: '',
+            workCategoryId: 'cat1',
+            from: '',
+            to: '',
+          },
+        },
+      ],
     });
 
     const next = reducer(state, { type: 'DELETE_WORK_CATEGORY', workCategoryId: 'cat1' });
@@ -228,5 +265,6 @@ describe('Work category CRUD', () => {
     expect(next.workCategories).toHaveLength(1);
     expect(next.tasks.find((t) => t.id === 't1')!.workCategoryId).toBe('');
     expect(next.tasks.find((t) => t.id === 't2')!.workCategoryId).toBe('cat2'); // untouched
+    expect(next.savedFilters[0].criteria.workCategoryId).toBe('');
   });
 });

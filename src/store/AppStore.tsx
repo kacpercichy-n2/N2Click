@@ -254,6 +254,11 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
   const { taskId, draft, assigneeIds, allocations } = payload;
   const ts = nowIso();
   const checklist = cleanChecklist(draft.checklist);
+  // A category can disappear while an edit modal is still open. Persist only a
+  // live dictionary reference so state never needs a later reload to self-heal.
+  const workCategoryId = state.workCategories.some((c) => c.id === draft.workCategoryId)
+    ? draft.workCategoryId
+    : '';
 
   let tasks = state.tasks;
   let realTaskId: string;
@@ -270,7 +275,7 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
       endDate: draft.endDate,
       estimatedHours: draft.estimatedHours,
       priority: draft.priority,
-      workCategoryId: draft.workCategoryId,
+      workCategoryId,
       checklist,
       createdAt: ts,
       updatedAt: ts,
@@ -292,7 +297,7 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
             endDate: draft.endDate,
             estimatedHours: draft.estimatedHours,
             priority: draft.priority,
-            workCategoryId: draft.workCategoryId,
+            workCategoryId,
             checklist,
             updatedAt: ts,
           }
@@ -1562,6 +1567,11 @@ export function reducer(state: AppData, action: Action): AppData {
         workCategories: state.workCategories.filter((c) => c.id !== action.workCategoryId),
         tasks: state.tasks.map((t) =>
           t.workCategoryId === action.workCategoryId ? { ...t, workCategoryId: '' } : t,
+        ),
+        savedFilters: state.savedFilters.map((filter) =>
+          filter.criteria.workCategoryId === action.workCategoryId
+            ? { ...filter, criteria: { ...filter.criteria, workCategoryId: '' } }
+            : filter,
         ),
       };
     case 'SAVE_STATUS':

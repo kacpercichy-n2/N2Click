@@ -20,6 +20,8 @@ REVIEWS_DIR="reviews"
 TIMESTAMP="$(date +%Y-%m-%d-%H%M%S)"
 MODE="uncommitted"
 BASE_COMMIT=""
+CODEX_REVIEW_MODEL="${CODEX_REVIEW_MODEL:-gpt-5.6-sol}"
+CODEX_REVIEW_REASONING_EFFORT="${CODEX_REVIEW_REASONING_EFFORT:-high}"
 
 # --- args ---
 if [ "${1:-}" != "" ]; then
@@ -96,8 +98,8 @@ TMPFILE="$(mktemp /tmp/codex-review-prompt.XXXXXX)"
 echo "$PROMPT" > "$TMPFILE"
 
 # --- call Codex (read-only sandbox: Codex advises, it does not edit files) ---
-echo "Sending to Codex for review..." >&2
-if REVIEW="$(codex exec --sandbox read-only --ephemeral "$(cat "$TMPFILE")" 2>/dev/null)"; then
+echo "Sending to Codex for review (${CODEX_REVIEW_MODEL}, reasoning ${CODEX_REVIEW_REASONING_EFFORT})..." >&2
+if REVIEW="$(codex exec --model "$CODEX_REVIEW_MODEL" -c "model_reasoning_effort=\"${CODEX_REVIEW_REASONING_EFFORT}\"" --sandbox read-only --ephemeral "$(cat "$TMPFILE")" 2>/dev/null)"; then
   rm -f "$TMPFILE"
 else
   CODE=$?
