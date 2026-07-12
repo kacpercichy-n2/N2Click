@@ -66,7 +66,10 @@ if (remainingPrompts.length === 0) {
   process.exit(0);
 }
 
-ensureReviewBranch();
+if (!dryRun) {
+  ensureReviewBranch();
+  assertSafeReviewBranch();
+}
 
 console.log(`Repo: ${repoRoot}`);
 console.log(`Branch: ${gitOutput(["branch", "--show-current"]).trim()}`);
@@ -108,7 +111,14 @@ async function runPrompt(promptFile) {
 
   appendLog(logFile, `# ${basename}\nStarted: ${startedAt.toISOString()}\nBranch: ${gitOutput(["branch", "--show-current"]).trim()}\n\n`);
 
-  if (dirtyStatus()) {
+  const branchError = dryRun ? null : reviewBranchSafetyError();
+  if (branchError !== null) {
+    appendLog(logFile, `Scheduler branch preflight failed: ${branchError}\n`);
+    console.error(`Cannot run ${basename}: ${branchError}`);
+    return false;
+  }
+
+  if (!dryRun && dirtyStatus()) {
     appendLog(logFile, "Working tree was dirty before Claude started. Aborting this prompt.\n");
     console.error(`Working tree is dirty before ${basename}; resolve it before continuing.`);
     return false;
@@ -134,11 +144,15 @@ async function runPrompt(promptFile) {
     }
   }
 
-  commitIfNeeded(promptFile, ok, logFile);
-  if (ok) {
-    markCompleted(basename);
+  if (dryRun) {
+    appendLog(logFile, "\nDry run: no commit and no completed-state update.\n");
   } else {
-    appendLog(logFile, "\nPrompt was not marked as completed because Claude or verification failed.\n");
+    commitIfNeeded(promptFile, ok, logFile);
+    if (ok) {
+      markCompleted(basename);
+    } else {
+      appendLog(logFile, "\nPrompt was not marked as completed because Claude or verification failed.\n");
+    }
   }
   appendLog(logFile, `\nFinished: ${new Date().toISOString()}\nStatus: ${ok ? "ok" : "failed"}\n`);
   return ok;
@@ -155,6 +169,8 @@ Automation constraints:
 - Do not push to remote unless this prompt explicitly asks for it.
 - If pushing is requested, push only the current review branch.
 - Keep the change scoped to the user prompt.
+- Treat current main code, tests, and CLAUDE.md as authoritative. If part of the prompt is already implemented, verify it and do not reimplement, revert, or weaken it.
+- Before changing calendar/bin behavior, preserve the window-owned bin drag lifecycle, synchronous drag refs, rendered-column hit testing, guaranteed ghost cleanup, and the existing Chromium/WebKit regression scenarios.
 - Commit your completed work to the current review branch if there are changes.
 - If you cannot finish safely, leave the repo in the clearest possible state and explain why.
 
@@ -182,6 +198,31 @@ function ensureReviewBranch() {
   } else {
     gitChecked(["switch", "-c", branchName]);
   }
+}
+
+function reviewBranchSafetyError() {
+  const currentBranch = gitOutput(["branch", "--show-current"]).trim();
+  if (currentBranch !== branchName) {
+    return `expected scheduler branch ${branchName}, but the working tree is on ${currentBranch || "detached HEAD"}. The branch may have been switched while the scheduler was sleeping.`;
+  }
+
+  const mainExists = spawnSync("git", ["show-ref", "--verify", "--quiet", "refs/heads/main"], {
+    cwd: repoRoot,
+  }).status === 0;
+  if (!mainExists) return "local main branch is missing; cannot prove the review branch baseline is current.";
+
+  const containsMain = spawnSync("git", ["merge-base", "--is-ancestor", "main", "HEAD"], {
+    cwd: repoRoot,
+  }).status === 0;
+  if (!containsMain) {
+    return "the scheduler review branch does not contain current main. Start a fresh queue branch from main; do not implement prompts on the stale branch.";
+  }
+  return null;
+}
+
+function assertSafeReviewBranch() {
+  const error = reviewBranchSafetyError();
+  if (error) throw new Error(error);
 }
 
 function commitIfNeeded(promptFile, ok, logFile) {

@@ -20,6 +20,16 @@ Nazwij je w kolejnosci wykonania:
 
 Kazdy plik to jeden prompt dla Claude'a.
 
+Wykonane prompty przenos do:
+
+```text
+automation/claude-scheduler/archive/completed/
+```
+
+Scheduler czyta tylko pliki `.md` bezposrednio z `prompts/`. Lokalny
+`state/completed.json` jest dodatkowym checkpointem, ale jest ignorowany przez
+Git i nie moze byc jedynym zabezpieczeniem przed ponownym wykonaniem promptu.
+
 ## 2. Uruchom kolejke
 
 Z katalogu repo:
@@ -43,6 +53,11 @@ Skrypt:
 - zapisuje lokalne logi w `automation/claude-scheduler/logs/`,
 - zapisuje stan wykonanych promptow w `automation/claude-scheduler/state/`.
 
+Przed startem i ponownie tuz przed kazdym promptem scheduler sprawdza, czy nadal
+jest na swojej galezi review oraz czy ta galaz zawiera aktualny lokalny `main`.
+Jesli ktos przelaczy galaz podczas oczekiwania albo `main` pojdzie do przodu,
+kolejka zatrzyma sie zamiast uruchomic prompt na starej bazie lub na `main`.
+
 Logi i stan sa ignorowane przez Git.
 
 ## 3. Zmiana godzin
@@ -56,6 +71,9 @@ CLAUDE_AUTO_TIMES="16:00,21:01,02:02,07:03,12:04" caffeinate -dimsu node automat
 ```bash
 CLAUDE_AUTO_DRY_RUN=1 node automation/claude-scheduler/run-queue.mjs
 ```
+
+Dry run nie przelacza galezi, nie commituje zmian i nie oznacza promptow jako
+wykonane. Wyswietla aktywna kolejke i przechodzi przez harmonogram bez czekania.
 
 ## 5. Przyspieszanie kolejki
 
