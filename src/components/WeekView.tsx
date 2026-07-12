@@ -132,6 +132,11 @@ function TimedBlock({
 }: BlockProps) {
   const { dispatch } = useStore();
   const [drag, setDrag] = useState<DragState | null>(null);
+  // React state drives the preview, while this ref is the synchronous source of
+  // truth for pointer handlers. A final pointermove and pointerup can arrive in
+  // one render frame; reading only `drag` in finish() would then commit the
+  // previous projection (or no-op), even though the preview already moved.
+  const dragRef = useRef<DragState | null>(null);
   const moved = useRef(false);
   // Pointer-capture bookkeeping — released before any dispatch (a drop-to-bin
   // unmounts this block; releasing after would wedge document-wide pointer
@@ -158,6 +163,7 @@ function TimedBlock({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         releaseCapture();
+        dragRef.current = null;
         setDrag(null);
         setMergeTargetId(null);
       }
@@ -183,7 +189,7 @@ function TimedBlock({
     // Capture the grow allowance ONCE at drag start (state won't change mid-drag).
     // Always a number now: bin hours + headroom (0 for null-estimate tasks).
     const maxHours = baseHours + growAllowanceHours(state, entry.id);
-    setDrag({
+    const nextDrag: DragState = {
       mode,
       originX: e.clientX,
       originY: e.clientY,
@@ -197,12 +203,15 @@ function TimedBlock({
       atCap: false,
       willMergeWithId: null,
       willMergeEdge: null,
-    });
+    };
+    dragRef.current = nextDrag;
+    setDrag(nextDrag);
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
-    if (!drag) return;
-    const dy = e.clientY - drag.originY;
+    const activeDrag = dragRef.current;
+    if (!activeDrag) return;
+    const dy = e.clientY - activeDrag.originY;
     const deltaMin = snapToStep((dy / HOUR_PX) * 60);
     const baseEnd = blockEndMinutes(baseStart, baseHours);
 
@@ -211,11 +220,11 @@ function TimedBlock({
     let projDayIndex = dayIndex;
     let overBin = false;
 
-    if (drag.mode === 'move') {
+    if (activeDrag.mode === 'move') {
       const dur = baseHours * 60;
       projStart = clampBlockStart(baseStart + deltaMin, dur);
-      const dx = e.clientX - drag.originX;
-      const dayDelta = drag.colWidth > 0 ? Math.round(dx / drag.colWidth) : 0;
+      const dx = e.clientX - activeDrag.originX;
+      const dayDelta = activeDrag.colWidth > 0 ? Math.round(dx / activeDrag.colWidth) : 0;
       projDayIndex = Math.max(0, Math.min(DAY_COLS - 1, dayIndex + dayDelta));
       // The bin panel sits outside the days grid; a pointer inside its rect
       // targets the bin instead of a calendar day.
@@ -226,7 +235,7 @@ function TimedBlock({
           e.clientY >= binRect.top &&
           e.clientY <= binRect.bottom
         : false;
-    } else if (drag.mode === 'top') {
+    } else if (activeDrag.mode === 'top') {
       // Move the start, keep the end fixed. Min duration one step (0.25h).
       const newStart = Math.max(0, Math.min(baseStart + deltaMin, baseEnd - MINUTE_STEP));
       projStart = newStart;
@@ -241,10 +250,10 @@ function TimedBlock({
     // never changes hours, so it is never capped. For a top resize the end stays
     // fixed, so re-derive the start from the clamped hours.
     let atCap = false;
-    if (drag.mode !== 'move' && projHours > drag.maxHours + 1e-9) {
+    if (activeDrag.mode !== 'move' && projHours > activeDrag.maxHours + 1e-9) {
       atCap = true;
-      projHours = drag.maxHours;
-      if (drag.mode === 'top') {
+      projHours = activeDrag.maxHours;
+      if (activeDrag.mode === 'top') {
         projStart = baseEnd - hoursToMinutes(projHours);
       }
     }
@@ -291,28 +300,31 @@ function TimedBlock({
     }
     setMergeTargetId(willMergeWithId);
 
-    setDrag((d) =>
-      d
-        ? {
-            ...d,
-            projStart,
-            projHours,
-            projDayIndex,
-            overBin,
-            colliding,
-            atCap,
-            willMergeWithId,
-            willMergeEdge,
-          }
-        : d,
-    );
+    const nextDrag: DragState = {
+      ...activeDrag,
+      projStart,
+      projHours,
+      projDayIndex,
+      overBin,
+      colliding,
+      atCap,
+      willMergeWithId,
+      willMergeEdge,
+    };
+    dragRef.current = nextDrag;
+    setDrag(nextDrag);
   };
 
-  const finish = () => {
-    if (!drag) return;
-    const { projStart, projHours, projDayIndex, overBin, colliding, willMergeWithId } = drag;
+  const finish = (e: React.PointerEvent) => {
+    // Project the pointer-up coordinates synchronously. Browsers do not promise
+    // a separate final pointermove, and React may batch that move with pointerup.
+    onPointerMove(e);
+    const finalDrag = dragRef.current;
+    if (!finalDrag) return;
+    const { projStart, projHours, projDayIndex, overBin, colliding, willMergeWithId } = finalDrag;
     // Release capture before dispatch — a drop-to-bin unmounts this block.
     releaseCapture();
+    dragRef.current = null;
     setDrag(null);
     setMergeTargetId(null);
     if (!moved.current) return; // treated as a click by onClick
@@ -391,6 +403,7 @@ function TimedBlock({
         editable
           ? () => {
               releaseCapture();
+              dragRef.current = null;
               setDrag(null);
               setMergeTargetId(null);
             }
@@ -479,6 +492,9 @@ function BinCard({
 }: BinCardProps) {
   const { dispatch } = useStore();
   const [drag, setDrag] = useState<BinDragState | null>(null);
+  // See TimedBlock.dragRef: the drop must commit the newest pointer projection,
+  // even when pointermove and pointerup are delivered before React re-renders.
+  const dragRef = useRef<BinDragState | null>(null);
   const moved = useRef(false);
   const cardRef = useRef<HTMLDivElement | null>(null);
   // The element + pointer that hold the drag's pointer capture. A successful
@@ -518,6 +534,7 @@ function BinCard({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         releaseCapture();
+        dragRef.current = null;
         setDrag(null);
       }
     };
@@ -542,7 +559,7 @@ function BinCard({
     // Capture the card geometry once so the fixed ghost keeps its size and stays
     // aligned under the cursor (the in-pane original stays put and dims).
     const rect = cardRef.current?.getBoundingClientRect();
-    setDrag({
+    const nextDrag: BinDragState = {
       originX: e.clientX,
       originY: e.clientY,
       clientX: e.clientX,
@@ -554,16 +571,19 @@ function BinCard({
       startMin: 0,
       valid: false,
       colliding: false,
-    });
+    };
+    dragRef.current = nextDrag;
+    setDrag(nextDrag);
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
-    if (!drag) return;
+    const activeDrag = dragRef.current;
+    if (!activeDrag) return;
     const gridRect = gridRef.current?.getBoundingClientRect();
     const viewRect = viewportRef.current?.getBoundingClientRect();
     if (!gridRect || !viewRect) return;
-    const dx = e.clientX - drag.originX;
-    const dy = e.clientY - drag.originY;
+    const dx = e.clientX - activeDrag.originX;
+    const dy = e.clientY - activeDrag.originY;
     if (dx !== 0 || dy !== 0) moved.current = true;
 
     // The days grid starts at 0:00 (no header inside it), so x → column and
@@ -591,17 +611,29 @@ function BinCard({
         ? blockCollides(state, person.id, days[colIndex], startMin, entry.plannedHours)
         : false;
 
-    setDrag((d) =>
-      d ? { ...d, clientX: e.clientX, clientY: e.clientY, colIndex, startMin, valid, colliding } : d,
-    );
+    const nextDrag: BinDragState = {
+      ...activeDrag,
+      clientX: e.clientX,
+      clientY: e.clientY,
+      colIndex,
+      startMin,
+      valid,
+      colliding,
+    };
+    dragRef.current = nextDrag;
+    setDrag(nextDrag);
   };
 
-  const finish = () => {
-    if (!drag) return;
-    const { colIndex, startMin, valid, colliding } = drag;
+  const finish = (e: React.PointerEvent) => {
+    // Include the pointer-up coordinates even when no distinct final move fired.
+    onPointerMove(e);
+    const finalDrag = dragRef.current;
+    if (!finalDrag) return;
+    const { colIndex, startMin, valid, colliding } = finalDrag;
     // Release BEFORE any dispatch: a valid drop unmounts this card, and an
     // unreleased capture on a node being removed mid-pointerup wedges the page.
     releaseCapture();
+    dragRef.current = null;
     setDrag(null);
     if (!moved.current) return; // plain click → open
     if (!valid || colliding) return; // invalid target / collision → snap home
@@ -657,6 +689,7 @@ function BinCard({
           editable
             ? () => {
                 releaseCapture();
+                dragRef.current = null;
                 setDrag(null);
               }
             : undefined
