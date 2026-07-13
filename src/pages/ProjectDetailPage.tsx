@@ -3,7 +3,7 @@
 // the chat/comments + activity section.
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { useStore } from '../store/AppStore';
+import { useStore, usePersistence } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import { NO_PERM_TITLE } from '../store/permissions';
 import type { ProjectDraft } from '../store/AppStore';
@@ -87,7 +87,8 @@ function ProjectDetail({ projectId }: { projectId: string }) {
       departmentId !== project.departmentId ||
       serviceTypeId !== project.serviceTypeId
     : false;
-  const { status, markSaved } = useSaveStatus(dirty);
+  const { saveError } = usePersistence();
+  const { status, markSaved } = useSaveStatus(dirty, saveError !== null);
 
   // Deleted mid-render (e.g. right after the delete dispatch, before the route
   // change lands): render nothing for that frame.

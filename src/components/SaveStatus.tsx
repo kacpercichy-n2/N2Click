@@ -19,6 +19,14 @@ export function SaveStatus({ status }: { status: SaveState }) {
       </span>
     );
   }
+  if (status === 'error') {
+    return (
+      <span className="save-status save-status--error" role="status">
+        <AlertTriangle size={14} aria-hidden />
+        Nie zapisano
+      </span>
+    );
+  }
   return (
     <span className="save-status save-status--saved" role="status">
       <Check size={14} aria-hidden />

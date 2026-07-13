@@ -26,6 +26,7 @@ import { LoginPage } from './pages/LoginPage';
 import { can } from './store/permissions';
 import { currentUser as currentUserSel, isImpersonating, realUser } from './store/selectors';
 import { SampleBanner } from './components/SampleBanner';
+import { PersistenceBanner } from './components/PersistenceBanner';
 import { TaskModal } from './components/TaskModal';
 import { GlobalSearch } from './components/GlobalSearch';
 import { Avatar } from './components/Avatar';
@@ -285,6 +286,9 @@ export function App() {
             </button>
           </div>
         )}
+        {/* Persistence banner shows on every routed page (not the login screen —
+            no edits happen there and a clean tab auto-refreshes silently). */}
+        <PersistenceBanner />
         <SampleBanner />
         <motion.div
           key={location.pathname}

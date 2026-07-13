@@ -3,10 +3,13 @@
 // the same action so the log can never drift from the data.
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
   useReducer,
+  useRef,
+  useState,
   type ReactNode,
 } from 'react';
 import type {
@@ -26,7 +29,16 @@ import type {
   TaskPriority,
   WorkloadEntry,
 } from '../types';
-import { DEFAULT_CAPACITY, loadData, sanitizeWorkDays, saveData, slugify } from './storage';
+import {
+  DEFAULT_CAPACITY,
+  loadData,
+  sanitizeWorkDays,
+  saveData,
+  slugify,
+  subscribeExternalChanges,
+  type SaveFailureReason,
+} from './storage';
+import { anyDirty } from '../utils/dirtyRegistry';
 import { wouldCreateSupervisorCycle } from './selectors';
 import { registerPersonOrder } from '../utils/colors';
 import {
@@ -181,7 +193,11 @@ export type Action =
   | { type: 'DELETE_FILTER_PRESET'; filterId: string }
   | { type: 'LOAD_SAMPLE'; data: AppData }
   | { type: 'DISMISS_SAMPLE_BANNER' }
-  | { type: 'RESET_ALL'; data: AppData };
+  | { type: 'RESET_ALL'; data: AppData }
+  // In-place replacement of the whole store with a fresh loadData() result,
+  // triggered when another same-browser tab wrote and this tab is clean. Not a
+  // user mutation — no activity row (mirrors RESET_ALL).
+  | { type: 'REPLACE_FROM_STORAGE'; data: AppData };
 
 function uid(): string {
   return crypto.randomUUID();
@@ -1912,6 +1928,8 @@ export function reducer(state: AppData, action: Action): AppData {
       return { ...state, sampleBannerDismissed: true };
     case 'RESET_ALL':
       return action.data;
+    case 'REPLACE_FROM_STORAGE':
+      return action.data;
     default:
       return state;
   }
@@ -1924,25 +1942,141 @@ interface StoreValue {
 
 const StoreContext = createContext<StoreValue | null>(null);
 
+// ---- Persistence meta-state (honest save outcome + same-browser tab safety) --
+// This lives OUTSIDE the reducer: it is meta-state about the persist layer, and
+// dispatching from the persist effect would risk loops. A separate context
+// keeps useStore's signature and every existing consumer untouched.
+
+export type ExternalDataStatus = 'none' | 'refreshed' | 'conflict';
+
+export interface PersistenceValue {
+  saveError: SaveFailureReason | null;
+  external: ExternalDataStatus;
+  /** Re-attempt saveData(current state). */
+  retryPersist: () => void;
+  /** Replace local state with loadData() (UI confirms first). */
+  acceptExternal: () => void;
+  /** Write current state NOW, overwriting the external version. */
+  keepLocal: () => void;
+  /** 'refreshed' -> 'none'. */
+  dismissExternalNotice: () => void;
+}
+
+const PersistenceContext = createContext<PersistenceValue | null>(null);
+
 export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, undefined, loadData);
+
+  const [saveError, setSaveError] = useState<SaveFailureReason | null>(null);
+  const [external, setExternal] = useState<ExternalDataStatus>('none');
+
+  // Live refs synced each render so the mount-once storage listener and the
+  // stable callbacks read current values without stale closures.
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const saveErrorRef = useRef(saveError);
+  saveErrorRef.current = saveError;
+  const externalRef = useRef(external);
+  externalRef.current = external;
+
+  // Skip the pointless first persist of freshly-loaded state (a mount echo that
+  // would bump the revision and spam other tabs), and skip the write-back right
+  // after any REPLACE_FROM_STORAGE (that state was just loaded from storage).
+  const skipPersistRef = useRef(true);
 
   // Assign person colours by stable list order. Done during render (idempotent)
   // so colours are correct on the first paint of any consumer.
   registerPersonOrder(state.people.map((p) => p.id));
 
-  // Persist on every state change.
+  // Persist on every state change and RECORD the real outcome. A failed write
+  // surfaces via `saveError` (usePersistence); a subsequent successful write
+  // clears it and — per the conflict lifecycle — collapses an outstanding
+  // external conflict to resolved (continuing to work here is an implicit
+  // keep-mine). The first run (and the run right after an in-place
+  // REPLACE_FROM_STORAGE) is skipped: that state already matches storage.
   useEffect(() => {
-    saveData(state);
+    if (skipPersistRef.current) {
+      skipPersistRef.current = false;
+      return;
+    }
+    const result = saveData(state);
+    setSaveError(result.ok ? null : result.reason);
+    if (result.ok) setExternal((prev) => (prev === 'conflict' ? 'none' : prev));
   }, [state]);
+
+  // Mount-once: subscribe to same-browser external tab writes. A clean tab
+  // refreshes in place; a dirty tab (unsaved form edits, a failed local write,
+  // or an already-open conflict) raises an explicit conflict choice instead of
+  // being silently overwritten.
+  useEffect(() => {
+    return subscribeExternalChanges(() => {
+      const incoming = loadData();
+      // Silent short-circuit when storage already matches our state (our own
+      // echo bounced back, or an identical write): no dispatch, no banner.
+      if (JSON.stringify(incoming) === JSON.stringify(stateRef.current)) return;
+      const dirty =
+        anyDirty() || saveErrorRef.current !== null || externalRef.current === 'conflict';
+      if (dirty) {
+        setExternal('conflict');
+        return;
+      }
+      skipPersistRef.current = true;
+      dispatch({ type: 'REPLACE_FROM_STORAGE', data: incoming });
+      setExternal('refreshed');
+    });
+  }, []);
+
+  const retryPersist = useCallback(() => {
+    const result = saveData(stateRef.current);
+    setSaveError(result.ok ? null : result.reason);
+    if (result.ok) setExternal((prev) => (prev === 'conflict' ? 'none' : prev));
+  }, []);
+
+  const acceptExternal = useCallback(() => {
+    skipPersistRef.current = true;
+    dispatch({ type: 'REPLACE_FROM_STORAGE', data: loadData() });
+    setExternal('none');
+  }, []);
+
+  const keepLocal = useCallback(() => {
+    const result = saveData(stateRef.current);
+    setSaveError(result.ok ? null : result.reason);
+    if (result.ok) setExternal('none');
+  }, []);
+
+  const dismissExternalNotice = useCallback(() => {
+    setExternal((prev) => (prev === 'refreshed' ? 'none' : prev));
+  }, []);
 
   const value = useMemo(() => ({ state, dispatch }), [state]);
 
-  return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
+  const persistence = useMemo<PersistenceValue>(
+    () => ({
+      saveError,
+      external,
+      retryPersist,
+      acceptExternal,
+      keepLocal,
+      dismissExternalNotice,
+    }),
+    [saveError, external, retryPersist, acceptExternal, keepLocal, dismissExternalNotice],
+  );
+
+  return (
+    <StoreContext.Provider value={value}>
+      <PersistenceContext.Provider value={persistence}>{children}</PersistenceContext.Provider>
+    </StoreContext.Provider>
+  );
 }
 
 export function useStore(): StoreValue {
   const ctx = useContext(StoreContext);
   if (!ctx) throw new Error('useStore must be used within AppStoreProvider');
+  return ctx;
+}
+
+export function usePersistence(): PersistenceValue {
+  const ctx = useContext(PersistenceContext);
+  if (!ctx) throw new Error('usePersistence must be used within AppStoreProvider');
   return ctx;
 }
