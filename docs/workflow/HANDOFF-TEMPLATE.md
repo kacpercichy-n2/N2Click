@@ -17,6 +17,8 @@ fuzzy spec and it will confidently head down the wrong path and burn more than y
 saved. So a package may not go to a worker until ALL of these are true:
 
 - [ ] Every file the worker will touch is named (or a clear search path is given).
+- [ ] The minimum required wiki pages are named; unrelated wiki/history reading
+      is explicitly out of scope.
 - [ ] Acceptance criteria are concrete and testable (not "works").
 - [ ] The out-of-scope list is filled in.
 - [ ] The test command + expected result are specified.
@@ -46,6 +48,7 @@ or escalate the question first.
 
 ## Context the worker needs
 <Only what's required to do THIS task. Link files/symbols, don't paste them.>
+- Wiki context: `openwiki/n2hub/<area>.md`
 - Relevant files: `path/one.py`, `path/two.tsx`
 - Relevant docs/conventions: <e.g. CONTRIBUTING.md, an architecture note>
 - Prior decisions: <anything the architect already settled>
@@ -70,7 +73,7 @@ or escalate the question first.
 
 ## Report back
 Synthesized summary only (files changed one-line each, test pass/fail, deviations,
-deferrals). No raw logs.
+deferrals, and `wiki updated` / `wiki unchanged` with a reason). No raw logs.
 ```
 
 ---
@@ -90,6 +93,7 @@ fields mirror the Markdown template.
   "blast_radius": "high",
   "goal": "Reject malformed payloads before they reach the data layer.",
   "context": {
+    "wiki": ["openwiki/n2hub/<area>.md"],
     "files": ["api/intake.py", "schemas/record.py"],
     "docs": ["CONTRIBUTING.md", "docs/architecture.md"],
     "prior_decisions": ["Use the framework's validators, not manual checks."]

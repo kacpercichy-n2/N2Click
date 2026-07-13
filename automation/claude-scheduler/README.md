@@ -20,6 +20,20 @@ Nazwij je w kolejnosci wykonania:
 
 Kazdy plik to jeden prompt dla Claude'a.
 
+Kazdy aktywny prompt musi zawierac oba naglowki:
+
+```markdown
+## Wiki context
+- `openwiki/n2hub/<relevant-area>.md`
+
+## Expected touchpoints
+- `src/...`
+```
+
+Scheduler odrzuca prompt bez tego kontraktu. Jeden prompt obejmuje tylko jeden
+spojny wycinek techniczny; niezalezne zmiany reducera, nawigacji i audytu rozbij
+na kolejne pliki (np. `019a.md`, `019b.md`, `019c.md`).
+
 Wykonane prompty przenos do:
 
 ```text

@@ -116,6 +116,7 @@ async function runPrompt(promptFile) {
   const startedAt = new Date();
   const logFile = path.join(logDir, `${formatDateTimeForFile(startedAt)}-${basename.replace(/\.md$/, "")}.log`);
   const promptBody = fs.readFileSync(promptFile, "utf8");
+  const promptContractError = promptContractErrorFor(promptBody);
   const fullPrompt = buildPrompt(promptBody, basename);
   let ok = true;
   const metrics = {
@@ -131,6 +132,11 @@ async function runPrompt(promptFile) {
   appendLog(logFile, `# ${basename}\nStarted: ${startedAt.toISOString()}\nBranch: ${gitOutput(["branch", "--show-current"]).trim()}\n\n`);
   if (metrics.usageBefore) {
     appendLog(logFile, `Usage before run: ${formatUsage(metrics.usageBefore)}\n`);
+  }
+  if (promptContractError) {
+    appendLog(logFile, `Prompt contract failed: ${promptContractError}\n`);
+    console.error(`Cannot run ${basename}: ${promptContractError}`);
+    return false;
   }
 
   const branchError = dryRun ? null : reviewBranchSafetyError();
@@ -191,7 +197,10 @@ async function runPrompt(promptFile) {
 function buildPrompt(promptBody, basename) {
   return `You are working unattended in this repository.
 
-Before editing, read CLAUDE.md and follow its project rules.
+Before editing, read CLAUDE.md, then read only the wiki pages and source
+touchpoints declared in the prompt. Do not expand context to unrelated pages,
+historic handoffs, or a full repository scan unless a direct dependency makes
+it necessary; record that exception in the final report.
 
 Automation constraints:
 - Work only in the current repository.
@@ -200,8 +209,9 @@ Automation constraints:
 - If pushing is requested, push only the current review branch.
 - Keep the change scoped to the user prompt.
 - Treat current main code, tests, and CLAUDE.md as authoritative. If part of the prompt is already implemented, verify it and do not reimplement, revert, or weaken it.
-- Before changing calendar/bin behavior, preserve the window-owned bin drag lifecycle, synchronous drag refs, rendered-column hit testing, guaranteed ghost cleanup, and the existing Chromium/WebKit regression scenarios.
 - Commit your completed work to the current review branch if there are changes.
+- Before declaring success, check whether the declared wiki page needs a focused
+  update. State either what changed there or "wiki unchanged" with a reason.
 - If you cannot finish safely, leave the repo in the clearest possible state and explain why.
 
 Prompt file: ${basename}
@@ -344,6 +354,19 @@ function formatUsage(snapshot) {
 
 function countWords(value) {
   return value.trim() ? value.trim().split(/\s+/).length : 0;
+}
+
+function promptContractErrorFor(promptBody) {
+  if (!/^## Wiki context\s*$/m.test(promptBody)) {
+    return "missing a ## Wiki context section";
+  }
+  if (!/openwiki\/n2hub\/[\w-]+\.md/.test(promptBody)) {
+    return "Wiki context must name at least one openwiki/n2hub page";
+  }
+  if (!/^## Expected touchpoints\s*$/m.test(promptBody)) {
+    return "missing a ## Expected touchpoints section";
+  }
+  return null;
 }
 
 function parseTimes(value) {

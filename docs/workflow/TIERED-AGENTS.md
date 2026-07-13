@@ -36,14 +36,11 @@ the agents and templates, but they're worth understanding:
    `HANDOFF-TEMPLATE.md`), and every worker **pre-flights the package and STOPS on
    ambiguity** instead of guessing. Unresolved decisions become
    `Status: blocked-needs-decision` and go back to the human, not to a worker.
-2. **A boring shared state file, or the reviewer reconstructs everything.**
-   Without durable run state, the reviewer has to rebuild the whole run from chat
-   history and worker narratives — which burns the savings you just made. So every
-   tier updates `handoffs/RUN-STATE.md`: what changed, what tests ran and their
-   result, what's still broken, what's next. The reviewer (and the architect's
-   final eval) reads that file instead of reconstructing. Subagents run in
-   isolated context and can't see each other's chat, so a file on disk is the
-   right shared-memory mechanism.
+2. **A compact shared state file, not an ever-growing transcript.** Every tier
+   updates `handoffs/RUN-STATE.md` with only the current run's goal, package
+   links, changed boundaries, verification and blockers (300 words maximum).
+   Detailed evidence belongs in a named handoff or check artifact. This lets the
+   reviewer understand the current run without re-reading history.
 
 ## The loop
 
@@ -112,8 +109,9 @@ context window.
    `tier: codex-implementer`, run `bash scripts/codex-implement.sh <package>`;
    it uses GPT-5.6 Terra with high reasoning.
 3. **Test-writer** → scaffolds/fills the test coverage the packages call for.
-4. **Codex review** → `bash scripts/codex-review.sh` for an independent GPT-5.6
-   Sol high-reasoning second opinion (P1/P2/P3 findings).
+4. **Codex review when risk warrants it** → `bash scripts/codex-review.sh` for
+   trust/persistence, calendar-pointer, cross-boundary or uncertain changes;
+   record a short skip rationale for focused low-risk diffs.
 5. **Reviewer** (Fable) → reads `handoffs/RUN-STATE.md` + the diff + Codex's
    findings, adjudicates, returns a structured verdict (recorded back to RUN-STATE).
 6. **Architect** → final eval; anything failing routes back to the right worker.
@@ -142,6 +140,10 @@ context window.
 - **Cost intuition.** Keep Fable at the two ends (plan + evaluate) and route the
   voluminous middle to Opus/Sonnet. If a task is small, skip the ceremony and
   just ask the developer directly — the tiering pays off on multi-step work.
+- **Context discipline.** Every scheduler prompt names one or more pages in
+  `openwiki/n2hub/` plus expected source touchpoints. Agents read that bounded
+  context first and record any exception. A prompt covers one cohesive technical
+  slice; split unrelated reducer, navigation and audit work into ordered prompts.
 - **Codex is optional but recommended.** The review gate uses the OpenAI Codex
   CLI as GPT-5.6 Sol at high reasoning; an explicitly routed implementation
   package uses GPT-5.6 Terra at high reasoning. Install it

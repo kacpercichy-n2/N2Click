@@ -18,16 +18,13 @@ orchestrator (or a human) acts on.
 
 ## Review procedure
 
-1. **Load the intent and the run log.** Read the relevant handoff package(s),
-   the architect's plan, and `handoffs/RUN-STATE.md`. The run log is your summary
-   of what the workers actually did (changed / tested / still broken / next) — so
-   you review against facts, not a narrative reconstructed from chat.
-2. **Get Codex's second opinion.** Run `bash scripts/codex-review.sh` (or
-   `bash scripts/codex-review.sh <base-commit>` for a committed range). The
-   script pins Codex to **GPT-5.6 Sol** with reasoning effort **high**. Codex is
-   a different model family and reliably catches bugs, edge cases, and
-   regressions a single reviewer misses. If the codex CLI isn't installed the
-   script says so and exits cleanly — note that and continue with your own review.
+1. **Load the scoped intent.** Read the relevant handoff package(s), declared
+   wiki context and compact `handoffs/RUN-STATE.md`. Do not reconstruct history
+   from old packages or logs.
+2. **Get Codex's second opinion proportionally.** Run
+   `bash scripts/codex-review.sh` only for trust/persistence, calendar-pointer,
+   cross-boundary or uncertain changes. For a focused low-risk diff, record why
+   the second pass was skipped and continue with your own review.
 3. **Read the diff structurally.** Use `git diff` / `git log` (read-only Bash)
    and Read/Grep to inspect what changed. Focus on correctness, edge cases, and
    fit with the existing architecture — not style nits a linter already catches.

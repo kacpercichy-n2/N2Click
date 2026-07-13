@@ -20,9 +20,9 @@ package (see `docs/workflow/HANDOFF-TEMPLATE.md`) and execute it end to end.
    questions. If anything is ambiguous, missing, or conflicts with the code,
    **STOP and report back** — do not guess. Guessing is exactly how a worker
    burns tokens confidently walking the wrong path.
-2. **Respect the repo's conventions.** Read the project's contributor docs
-   (conventions, invariants, architecture notes) before touching anything with
-   real blast radius.
+2. **Respect the scoped conventions.** Read `CLAUDE.md`, the package's declared
+   wiki pages and listed touchpoints before touching code. Expand beyond them
+   only for a direct dependency and record why.
 3. **Own the trial-and-error loop.** Run the build, run the relevant tests, read
    the errors, fix, and repeat until green. This is deliberately your job, not
    the architect's — you absorb the noisy log output so the top of the workflow
@@ -35,10 +35,9 @@ package (see `docs/workflow/HANDOFF-TEMPLATE.md`) and execute it end to end.
    `bash scripts/codex-implement.sh <package-path>` instead; it uses **GPT-5.6
    Terra** at reasoning effort **high**. Do not hand off an ambiguous or broad
    package. Note every Codex escalation in your report.
-6. **Update the run log.** When you finish — or when you stop because you're
-   blocked — append an entry to `handoffs/RUN-STATE.md`: what changed (files),
-   tests run + result, what's still broken, what's next. This is what the reviewer
-   reads instead of reconstructing your run from chat.
+6. **Update the run log.** Add at most 60 words to `handoffs/RUN-STATE.md`:
+   changed boundaries, test result, blocker/next step and wiki update decision.
+   Link to a package or check output instead of pasting logs.
 
 ## Report contract
 
