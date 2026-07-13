@@ -7,12 +7,17 @@ import { describe, expect, it } from 'vitest';
 import {
   DATA_VERSION,
   DEFAULT_FILTER_CRITERIA,
+  classifyStorageError,
+  clearData,
   ensureStartMinutes,
   emptyData,
+  getLatestKnownRevision,
   loadData,
   normalizeDates,
   normalizeStatusFlags,
   normalizeTaskMeta,
+  readEnvelopeRevision,
+  saveData,
 } from './storage';
 import { todayStr } from '../utils/dates';
 import { BIN_DATE } from '../utils/time';
@@ -36,13 +41,23 @@ import type {
 // not exported, so the key is duplicated here deliberately.
 const STORAGE_KEY = 'n2hub.data.v1';
 
-function withLocalStorage<T>(initial: Record<string, string>, fn: () => T): T {
+// `overrides.setItem`, when supplied, replaces the default "store it" behavior
+// entirely (e.g. to throw an error-like object simulating quota/security
+// failures — see PKG-20260713c-persist-tests). The default keeps every
+// existing call site (which passes no third argument) unchanged.
+function withLocalStorage<T>(
+  initial: Record<string, string>,
+  fn: () => T,
+  overrides?: { setItem?: (k: string, v: string) => void },
+): T {
   const store = new Map<string, string>(Object.entries(initial));
   const stub = {
     getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
-    setItem: (k: string, v: string) => {
-      store.set(k, v);
-    },
+    setItem:
+      overrides?.setItem ??
+      ((k: string, v: string) => {
+        store.set(k, v);
+      }),
     removeItem: (k: string) => {
       store.delete(k);
     },
@@ -1223,5 +1238,244 @@ describe('normalizeStatusFlags / v6→v7 done semantics', () => {
     expect(byId.get('s1')!.isDone).toBe(false);
     // ...then, since none remained true, the last-by-order default kicks in.
     expect(byId.get('s2')!.isDone).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PKG-20260713c-persist-tests: honest persistence — SaveResult, the revision
+// envelope (`saveData`/`loadData`/`clearData`), failure classification, and
+// `readEnvelopeRevision`. `latestKnownRevision` is module-level mutable state
+// (frozen API: `getLatestKnownRevision`), so every revision-sensitive test
+// below starts with `clearData()` — which resets it to 0 unconditionally
+// (the reset line runs OUTSIDE the try/catch around the localStorage calls,
+// so it works even with no stub installed) — to anchor deterministically
+// instead of relying on ordering against other tests in this file.
+// ---------------------------------------------------------------------------
+
+describe('saveData / envelope revision (PKG-20260713c-persist-tests)', () => {
+  it('first save after reset returns revision 1 (stored raw JSON carries it too); a second save returns revision 2 (monotonic)', () => {
+    clearData();
+    withLocalStorage({}, () => {
+      const r1 = saveData(emptyData());
+      expect(r1).toEqual({ ok: true, revision: 1 });
+      const stored1 = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
+      expect(stored1.revision).toBe(1);
+
+      const r2 = saveData(emptyData());
+      expect(r2).toEqual({ ok: true, revision: 2 });
+      const stored2 = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
+      expect(stored2.revision).toBe(2);
+    });
+  });
+
+  it('loadData() after a save strips the envelope revision — the result has no own "revision" property', () => {
+    clearData();
+    withLocalStorage({}, () => {
+      saveData(emptyData());
+      const loaded = loadData();
+      expect(Object.prototype.hasOwnProperty.call(loaded, 'revision')).toBe(false);
+    });
+  });
+
+  it('re-anchor: loading a stored payload with revision 41 makes the next save write AND return revision 42', () => {
+    clearData();
+    const payload = { ...emptyData(), revision: 41 };
+    withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => {
+      loadData();
+      expect(getLatestKnownRevision()).toBe(41);
+      const r = saveData(emptyData());
+      expect(r).toEqual({ ok: true, revision: 42 });
+      const stored = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
+      expect(stored.revision).toBe(42);
+    });
+  });
+
+  it("a garbage or absent envelope revision ('abc', -5, NaN, absent) loads fine and is treated as 0 — the next save writes revision 1", () => {
+    const variants: unknown[] = ['abc', -5, NaN, undefined];
+    for (const variant of variants) {
+      clearData();
+      const payload: Record<string, unknown> = { ...emptyData() };
+      if (variant !== undefined) payload.revision = variant;
+      withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => {
+        loadData();
+        expect(getLatestKnownRevision()).toBe(0);
+        const r = saveData(emptyData());
+        expect(r).toEqual({ ok: true, revision: 1 });
+      });
+    }
+  });
+
+  it('a failed (quota) write does not advance the revision; the next successful save is exactly previous+1 with no gap', () => {
+    clearData();
+    withLocalStorage({}, () => {
+      const r1 = saveData(emptyData());
+      expect(r1).toEqual({ ok: true, revision: 1 });
+    });
+    withLocalStorage(
+      {},
+      () => {
+        const rFail = saveData(emptyData());
+        expect(rFail).toEqual({ ok: false, reason: 'quota' });
+      },
+      { setItem: () => { throw { name: 'QuotaExceededError' }; } },
+    );
+    expect(getLatestKnownRevision()).toBe(1); // unchanged by the failed write
+    withLocalStorage({}, () => {
+      const r2 = saveData(emptyData());
+      expect(r2).toEqual({ ok: true, revision: 2 }); // no gap from the failure
+    });
+  });
+});
+
+describe('classifyStorageError (PKG-20260713c-persist-tests)', () => {
+  it("classifies all four quota-error shapes (Chromium / Firefox / legacy Safari code 22 / Safari private-mode code 1014) as 'quota'", () => {
+    expect(classifyStorageError({ name: 'QuotaExceededError' })).toBe('quota');
+    expect(classifyStorageError({ name: 'NS_ERROR_DOM_QUOTA_REACHED' })).toBe('quota');
+    expect(classifyStorageError({ code: 22 })).toBe('quota');
+    expect(classifyStorageError({ code: 1014 })).toBe('quota');
+  });
+
+  it("classifies SecurityError as 'unavailable'", () => {
+    expect(classifyStorageError({ name: 'SecurityError' })).toBe('unavailable');
+  });
+
+  it("classifies a plain Error and a bare string throw as 'unknown'", () => {
+    expect(classifyStorageError(new Error('boom'))).toBe('unknown');
+    expect(classifyStorageError('boom')).toBe('unknown');
+  });
+});
+
+describe('saveData failure paths (PKG-20260713c-persist-tests)', () => {
+  it('a setItem throwing the quota shape returns reason "quota" and writes nothing to the store', () => {
+    clearData();
+    withLocalStorage(
+      {},
+      () => {
+        const r = saveData(emptyData());
+        expect(r).toEqual({ ok: false, reason: 'quota' });
+        expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+      },
+      { setItem: () => { throw { name: 'QuotaExceededError' }; } },
+    );
+  });
+
+  it('a circular data reference triggers a serialization failure without ever calling setItem or advancing the revision', () => {
+    clearData();
+    const before = getLatestKnownRevision();
+    let setItemCalls = 0;
+    // Build a cycle that survives the type cast: emptyData()'s `clients` array
+    // ends up containing the whole data object itself.
+    const d = emptyData() as unknown as { clients: unknown[] };
+    d.clients.push(d);
+
+    const result = withLocalStorage(
+      {},
+      () => saveData(d as unknown as AppData),
+      { setItem: () => { setItemCalls += 1; } },
+    );
+
+    expect(result).toEqual({ ok: false, reason: 'serialization' });
+    expect(setItemCalls).toBe(0);
+    expect(getLatestKnownRevision()).toBe(before);
+  });
+});
+
+describe('readEnvelopeRevision (PKG-20260713c-persist-tests)', () => {
+  it('returns the revision number for a valid payload', () => {
+    expect(readEnvelopeRevision(JSON.stringify({ revision: 7 }))).toBe(7);
+  });
+
+  it('returns null for a null raw value', () => {
+    expect(readEnvelopeRevision(null)).toBeNull();
+  });
+
+  it('returns null for non-JSON garbage', () => {
+    expect(readEnvelopeRevision('not-json{')).toBeNull();
+  });
+
+  it('returns null when the JSON payload has no "revision" field', () => {
+    expect(readEnvelopeRevision(JSON.stringify({ foo: 'bar' }))).toBeNull();
+  });
+
+  it('returns null for a negative, non-integer, or non-number revision', () => {
+    expect(readEnvelopeRevision(JSON.stringify({ revision: -5 }))).toBeNull();
+    expect(readEnvelopeRevision(JSON.stringify({ revision: 3.5 }))).toBeNull();
+    expect(readEnvelopeRevision(JSON.stringify({ revision: '5' }))).toBeNull();
+  });
+});
+
+describe('migration compatibility with the revision envelope (PKG-20260713c-persist-tests)', () => {
+  it('a version:1 payload carrying a stray "revision" field migrates exactly as one without it (same task/project/client field values), and the result never carries a "revision" own-property', () => {
+    // migrateV1 mints fresh random ids (client/project/status) on every call,
+    // so two independent loads can never be toEqual — assert on the
+    // deterministic, id-agnostic fields instead (same convention the file's
+    // other v1/v5/v6 migration tests already use).
+    const v1Payload = (extra: Record<string, unknown> = {}) => ({
+      version: 1,
+      tasks: [
+        {
+          id: 't1',
+          title: 'Legacy task',
+          description: '',
+          project: 'Client A',
+          startDate: '2026-07-06',
+          endDate: '2026-07-08',
+          estimatedHours: 4,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      people: [{ id: 'p1', name: 'Ann Admin', email: '', role: '' }],
+      workload: [
+        { id: 'w1', taskId: 't1', personId: 'p1', date: '2026-07-06', plannedHours: 2 },
+      ],
+      assignments: [],
+      ...extra,
+    });
+
+    const withRevision = withLocalStorage(
+      { [STORAGE_KEY]: JSON.stringify(v1Payload({ revision: 99 })) },
+      () => loadData(),
+    );
+    expect(withRevision.version).toBe(DATA_VERSION);
+    expect(Object.prototype.hasOwnProperty.call(withRevision, 'revision')).toBe(false);
+
+    const taskWithRev = withRevision.tasks.find((t) => t.id === 't1')!;
+    expect(taskWithRev.title).toBe('Legacy task');
+    expect(taskWithRev.startDate).toBe('2026-07-06');
+    expect(taskWithRev.endDate).toBe('2026-07-08');
+    expect(taskWithRev.estimatedHours).toBe(4);
+    const projectWithRev = withRevision.projects.find((p) => p.id === taskWithRev.projectId)!;
+    expect(projectWithRev.name).toBe('Client A');
+    expect(withRevision.workload).toHaveLength(1);
+    expect(withRevision.workload[0]).toMatchObject({ taskId: 't1', personId: 'p1', plannedHours: 2 });
+
+    const withoutRevision = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(v1Payload()) }, () =>
+      loadData(),
+    );
+    expect(Object.prototype.hasOwnProperty.call(withoutRevision, 'revision')).toBe(false);
+    const taskNoRev = withoutRevision.tasks.find((t) => t.id === 't1')!;
+    // Same field values as the with-revision load — the stray envelope key
+    // (present or absent on the v1 input) has no effect on migration output.
+    expect(taskNoRev.title).toBe(taskWithRev.title);
+    expect(taskNoRev.startDate).toBe(taskWithRev.startDate);
+    expect(taskNoRev.endDate).toBe(taskWithRev.endDate);
+    expect(taskNoRev.estimatedHours).toBe(taskWithRev.estimatedHours);
+  });
+
+  it('a current version:7 payload without a revision loads unchanged (normalization passes still apply) and a same-stub reload is idempotent', () => {
+    const payload = { ...emptyData(), version: 7 };
+    // No `revision` key present at all on this payload.
+    expect(Object.prototype.hasOwnProperty.call(payload, 'revision')).toBe(false);
+
+    const { first, second } = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => {
+      const loadedFirst = loadData();
+      const loadedSecond = loadData(); // same stub, no intervening write
+      return { first: loadedFirst, second: loadedSecond };
+    });
+
+    expect(first.version).toBe(DATA_VERSION);
+    expect(Object.prototype.hasOwnProperty.call(first, 'revision')).toBe(false);
+    expect(second).toEqual(first);
   });
 });

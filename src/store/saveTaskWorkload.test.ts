@@ -381,3 +381,67 @@ describe('SAVE_TASK identity-preserving workload reconciliation (PKG-20260712b-s
     dayD3Entries.forEach((w, i) => expect(w.sortIndex).toBe(i));
   });
 });
+
+// ---------------------------------------------------------------------------
+// New-pair collision-aware placement — coverage added by
+// PKG-20260713b-placement-tests (implementation shipped by
+// PKG-20260713b-placement-core): a brand-new (person, date) cell now prefers
+// findFreeStart's collision-free slot over nextFreeStart's clamp, falling
+// back to the clamp only when no slot fits (SAVE_TASK must never reject on
+// placement — invariant 3, editor edits may create overlaps).
+// ---------------------------------------------------------------------------
+
+describe('SAVE_TASK new-pair placement (PKG-20260713b-placement-tests)', () => {
+  it("12. new pair collision-aware placement: lands at 08:00 when another task's 20:00-24:00 block already occupies the day, no overlap", () => {
+    const otherTaskBlock = makeEntry({ id: 'other1', taskId: 'tOther', personId: 'p1', date: D3, startMinutes: 1200, plannedHours: 4, sortIndex: 0 }); // 20:00-24:00
+    const state = makeState({
+      tasks: [TASK, makeTask({ id: 'tOther' })],
+      assignments: [{ id: 'a1', taskId: 't1', personId: 'p1' }],
+      workload: [otherTaskBlock],
+    });
+
+    const next = reducer(state, {
+      type: 'SAVE_TASK',
+      payload: payloadFor({
+        allocations: [{ personId: 'p1', date: D3, plannedHours: 2 }],
+      }),
+    });
+
+    const newRow = next.workload.find((w) => w.taskId === 't1' && w.date === D3)!;
+    expect(newRow.startMinutes).toBe(480); // findFreeStart picks the free 08:00 slot ahead of the 20:00 block
+    expect(newRow.plannedHours).toBe(2);
+    // The other task's block itself is untouched in time/hours; only its
+    // sortIndex shifts (0 -> 1) since reindexDays ranks the whole (person, date)
+    // group by startMinutes and the new 08:00 row now sorts first.
+    const otherAfter = next.workload.find((w) => w.id === 'other1')!;
+    expect(otherAfter.startMinutes).toBe(otherTaskBlock.startMinutes);
+    expect(otherAfter.plannedHours).toBe(otherTaskBlock.plannedHours);
+    expect(otherAfter.sortIndex).toBe(1);
+  });
+
+  it('13. new pair fallback when no free slot exists: SAVE_TASK never rejects (invariant 3) — falls back to the clamped nextFreeStart placement', () => {
+    const fullDayOtherTask = makeEntry({ id: 'full1', taskId: 'tOther', personId: 'p1', date: D3, startMinutes: 0, plannedHours: 24, sortIndex: 0 }); // entire day occupied
+    const state = makeState({
+      tasks: [TASK, makeTask({ id: 'tOther' })],
+      assignments: [{ id: 'a1', taskId: 't1', personId: 'p1' }],
+      workload: [fullDayOtherTask],
+    });
+
+    const next = reducer(state, {
+      type: 'SAVE_TASK',
+      payload: payloadFor({
+        allocations: [{ personId: 'p1', date: D3, plannedHours: 2 }],
+      }),
+    });
+
+    // findFreeStart returns null (no gap fits anywhere in the day) so saveTask
+    // falls back to nextFreeStart's clamp instead of rejecting the save; the
+    // resulting block overlaps the other task's block by design (editor edits
+    // are allowed to create overlaps — invariant 3, week view renders them
+    // side-by-side).
+    const newRow = next.workload.find((w) => w.taskId === 't1' && w.date === D3);
+    expect(newRow).toBeDefined();
+    expect(newRow!.plannedHours).toBe(2);
+    expect(newRow!.startMinutes).toBe(1320); // clampBlockStart(1440, 120) = 1440 - 120
+  });
+});

@@ -4,7 +4,8 @@
 import { describe, expect, it } from 'vitest';
 import { reducer, type PersonDraft, type TaskDraft } from './AppStore';
 import { emptyData } from './storage';
-import { BIN_DATE } from '../utils/time';
+import { BIN_DATE, hasCollision, hoursToMinutes } from '../utils/time';
+import { addDaysStr, MAX_TASK_PERIOD_DAYS } from '../utils/dates';
 import type { AppData, Person, Task, WorkloadEntry } from '../types';
 
 function makeState(overrides: Partial<AppData> = {}): AppData {
@@ -1142,6 +1143,342 @@ describe('SET_BLOCK_TIME adjacent-block merge', () => {
 });
 
 // ---------------------------------------------------------------------------
+// SCHEDULE_BIN_PART added by PKG-20260713-bin-split-core: schedules a
+// user-chosen 0.25h-aligned PART of a bin (zasobnik) row onto a calendar day,
+// decrementing the source row (same id, quarter-unit math) and creating one
+// new dated block. Guard reuse by composition over setBlockTime (rejection
+// detected by `next === intermediate` -> returns the ORIGINAL state).
+// ---------------------------------------------------------------------------
+
+describe('SCHEDULE_BIN_PART', () => {
+  it('30h acceptance case: schedules 8h, source row keeps its id/date/sortIndex at 22h, one new dated row is created, total conserved', () => {
+    const bin1 = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 30, sortIndex: 0 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', startDate: '2026-07-06', endDate: '2026-07-08' })],
+      workload: [bin1],
+    });
+
+    const next = reducer(state, {
+      type: 'SCHEDULE_BIN_PART',
+      entryId: 'bin1',
+      date: '2026-07-08',
+      startMinutes: 480,
+      hours: 8,
+    });
+
+    expect(next).not.toBe(state);
+    const remainder = next.workload.find((w) => w.id === 'bin1')!;
+    expect(remainder.date).toBe(BIN_DATE);
+    expect(remainder.plannedHours).toBe(22);
+    expect(remainder.sortIndex).toBe(0);
+
+    const datedRows = next.workload.filter((w) => w.id !== 'bin1');
+    expect(datedRows).toHaveLength(1);
+    expect(datedRows[0].date).toBe('2026-07-08');
+    expect(datedRows[0].startMinutes).toBe(480);
+    expect(datedRows[0].plannedHours).toBe(8);
+
+    const total = next.workload
+      .filter((w) => w.taskId === 't1' && w.personId === 'p1')
+      .reduce((s, w) => s + w.plannedHours, 0);
+    expect(total).toBe(30);
+
+    const task = next.tasks.find((t) => t.id === 't1')!;
+    expect(task.estimatedHours).toBeNull();
+
+    const activityMsg = next.activity[next.activity.length - 1].message;
+    expect(activityMsg).toContain('w zasobniku pozostało 22h');
+  });
+
+  it('repeated partials over four days drain a 30h row to zero: same id throughout, remainder 22 -> 14 -> 6 -> gone, final row opróżniony, total conserved', () => {
+    const bin1 = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 30, sortIndex: 0 });
+    let state = makeState({
+      tasks: [makeTask({ id: 't1', startDate: '2026-07-06', endDate: '2026-07-08' })],
+      workload: [bin1],
+    });
+
+    state = reducer(state, { type: 'SCHEDULE_BIN_PART', entryId: 'bin1', date: '2026-07-08', startMinutes: 480, hours: 8 });
+    expect(state.workload.find((w) => w.id === 'bin1')!.plannedHours).toBe(22);
+
+    state = reducer(state, { type: 'SCHEDULE_BIN_PART', entryId: 'bin1', date: '2026-07-09', startMinutes: 480, hours: 8 });
+    expect(state.workload.find((w) => w.id === 'bin1')!.plannedHours).toBe(14);
+
+    state = reducer(state, { type: 'SCHEDULE_BIN_PART', entryId: 'bin1', date: '2026-07-10', startMinutes: 480, hours: 8 });
+    expect(state.workload.find((w) => w.id === 'bin1')!.plannedHours).toBe(6);
+
+    state = reducer(state, { type: 'SCHEDULE_BIN_PART', entryId: 'bin1', date: '2026-07-11', startMinutes: 480, hours: 6 });
+    expect(state.workload.find((w) => w.id === 'bin1')).toBeUndefined();
+
+    const datedRows = state.workload.filter((w) => w.date !== BIN_DATE);
+    expect(datedRows).toHaveLength(4);
+    const total = datedRows.reduce((s, w) => s + w.plannedHours, 0);
+    expect(total).toBe(30);
+
+    const activityMsg = state.activity[state.activity.length - 1].message;
+    expect(activityMsg).toContain('zasobnik opróżniony');
+  });
+
+  it('full-amount single call empties the bin row in one step: gone, one dated row, conservation holds', () => {
+    const bin1 = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 5, sortIndex: 0 });
+    const state = makeState({ tasks: [makeTask({ id: 't1' })], workload: [bin1] });
+
+    const next = reducer(state, {
+      type: 'SCHEDULE_BIN_PART',
+      entryId: 'bin1',
+      date: '2026-07-08',
+      startMinutes: 480,
+      hours: 5,
+    });
+
+    expect(next.workload.find((w) => w.id === 'bin1')).toBeUndefined();
+    const datedRows = next.workload.filter((w) => w.date !== BIN_DATE);
+    expect(datedRows).toHaveLength(1);
+    expect(datedRows[0].plannedHours).toBe(5);
+
+    const activityMsg = next.activity[next.activity.length - 1].message;
+    expect(activityMsg).toContain('zasobnik opróżniony');
+  });
+
+  it('scheduling a part exactly touching an existing same-task same-person block merges (earlier id survives, hours summed), bin remainder still decremented', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 }); // 480-600
+    const bin1 = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 10, sortIndex: 0 });
+    const state = makeState({ tasks: [makeTask({ id: 't1' })], workload: [e1, bin1] });
+
+    const next = reducer(state, {
+      type: 'SCHEDULE_BIN_PART',
+      entryId: 'bin1',
+      date: '2026-07-08',
+      startMinutes: 600, // exactly touches e1's end
+      hours: 2,
+    });
+
+    const merged = next.workload.filter((w) => w.taskId === 't1' && w.personId === 'p1' && w.date === '2026-07-08');
+    expect(merged).toHaveLength(1);
+    expect(merged[0].id).toBe('e1'); // earlier block's id survives
+    expect(merged[0].plannedHours).toBe(4); // 2h existing + 2h scheduled part
+
+    const remainder = next.workload.find((w) => w.id === 'bin1')!;
+    expect(remainder.plannedHours).toBe(8); // 10h - 2h taken
+
+    const activityMsg = next.activity[next.activity.length - 1].message;
+    expect(activityMsg).toContain('połączono sąsiednie bloki');
+    expect(activityMsg).toContain('w zasobniku pozostało 8h');
+  });
+
+  it("target date outside the task period extends it (within the 92-day cap)", () => {
+    const bin1 = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 10, sortIndex: 0 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', startDate: '2026-07-06', endDate: '2026-07-08' })],
+      workload: [bin1],
+    });
+
+    const next = reducer(state, {
+      type: 'SCHEDULE_BIN_PART',
+      entryId: 'bin1',
+      date: '2026-08-01',
+      startMinutes: 480,
+      hours: 4,
+    });
+
+    const task = next.tasks.find((t) => t.id === 't1')!;
+    expect(task.startDate).toBe('2026-07-06');
+    expect(task.endDate).toBe('2026-08-01');
+  });
+
+  it('works when estimatedHours === null (no budget interaction — never consults headroom)', () => {
+    const bin1 = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 6, sortIndex: 0 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', estimatedHours: null })],
+      workload: [bin1],
+    });
+
+    const next = reducer(state, {
+      type: 'SCHEDULE_BIN_PART',
+      entryId: 'bin1',
+      date: '2026-07-08',
+      startMinutes: 480,
+      hours: 6,
+    });
+
+    expect(next).not.toBe(state);
+    expect(next.tasks.find((t) => t.id === 't1')!.estimatedHours).toBeNull();
+    const total = next.workload
+      .filter((w) => w.taskId === 't1' && w.personId === 'p1')
+      .reduce((s, w) => s + w.plannedHours, 0);
+    expect(total).toBe(6);
+  });
+
+  it("bin sortIndex reindex: scheduling one task's row to zero leaves the OTHER task's bin row with a contiguous sortIndex", () => {
+    const binA = makeEntry({ id: 'binA', taskId: 'tA', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 5, sortIndex: 0 });
+    const binB = makeEntry({ id: 'binB', taskId: 'tB', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 3, sortIndex: 1 });
+    const state = makeState({
+      tasks: [makeTask({ id: 'tA' }), makeTask({ id: 'tB' })],
+      workload: [binA, binB],
+    });
+
+    const next = reducer(state, {
+      type: 'SCHEDULE_BIN_PART',
+      entryId: 'binA',
+      date: '2026-07-08',
+      startMinutes: 480,
+      hours: 5, // full amount -> binA deleted
+    });
+
+    expect(next.workload.find((w) => w.id === 'binA')).toBeUndefined();
+    const remainingBinB = next.workload.find((w) => w.id === 'binB')!;
+    expect(remainingBinB.date).toBe(BIN_DATE);
+    expect(remainingBinB.plannedHours).toBe(3); // untouched hours
+    expect(remainingBinB.sortIndex).toBe(0); // reindexed contiguous after binA left
+  });
+
+  it('rejects a missing entryId and a dated (non-bin) entry', () => {
+    const state1 = makeState({ tasks: [makeTask({ id: 't1' })], workload: [] });
+    expect(
+      reducer(state1, { type: 'SCHEDULE_BIN_PART', entryId: 'nope', date: '2026-07-08', startMinutes: 480, hours: 2 }),
+    ).toBe(state1);
+
+    const dated = makeEntry({ id: 'e1', taskId: 't1', date: '2026-07-08', startMinutes: 480, plannedHours: 4, sortIndex: 0 });
+    const state2 = makeState({ tasks: [makeTask({ id: 't1' })], workload: [dated] });
+    expect(
+      reducer(state2, { type: 'SCHEDULE_BIN_PART', entryId: 'e1', date: '2026-07-09', startMinutes: 480, hours: 2 }),
+    ).toBe(state2);
+  });
+
+  it('rejects invalid hours values: 0, negative, NaN, off-grid (1.1), and > 24', () => {
+    for (const hours of [0, -1, NaN, 1.1, 25]) {
+      const bin1 = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 10, sortIndex: 0 });
+      const state = makeState({ tasks: [makeTask({ id: 't1' })], workload: [bin1] });
+
+      const next = reducer(state, {
+        type: 'SCHEDULE_BIN_PART',
+        entryId: 'bin1',
+        date: '2026-07-08',
+        startMinutes: 480,
+        hours,
+      });
+
+      expect(next).toBe(state);
+    }
+  });
+
+  it("rejects hours exceeding the row's remaining quarters (3.25h from a 3h row)", () => {
+    const bin1 = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 3, sortIndex: 0 });
+    const state = makeState({ tasks: [makeTask({ id: 't1' })], workload: [bin1] });
+
+    const next = reducer(state, {
+      type: 'SCHEDULE_BIN_PART',
+      entryId: 'bin1',
+      date: '2026-07-08',
+      startMinutes: 480,
+      hours: 3.25,
+    });
+
+    expect(next).toBe(state);
+  });
+
+  it('rejects invalid target dates: the bin sentinel, a non-date string, and an invalid calendar date', () => {
+    for (const date of [BIN_DATE, 'not-a-date', '2026-02-30']) {
+      const bin1 = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 5, sortIndex: 0 });
+      const state = makeState({ tasks: [makeTask({ id: 't1' })], workload: [bin1] });
+
+      const next = reducer(state, {
+        type: 'SCHEDULE_BIN_PART',
+        entryId: 'bin1',
+        date,
+        startMinutes: 480,
+        hours: 2,
+      });
+
+      expect(next).toBe(state);
+    }
+  });
+
+  it('rejects an off-grid startMinutes and a block that would not fit the day', () => {
+    const bin1 = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 5, sortIndex: 0 });
+    const state1 = makeState({ tasks: [makeTask({ id: 't1' })], workload: [bin1] });
+    expect(
+      reducer(state1, { type: 'SCHEDULE_BIN_PART', entryId: 'bin1', date: '2026-07-08', startMinutes: 490, hours: 2 }),
+    ).toBe(state1);
+
+    const bin2 = makeEntry({ id: 'bin2', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 5, sortIndex: 0 });
+    const state2 = makeState({ tasks: [makeTask({ id: 't1' })], workload: [bin2] });
+    expect(
+      reducer(state2, { type: 'SCHEDULE_BIN_PART', entryId: 'bin2', date: '2026-07-08', startMinutes: 1380, hours: 2 }), // 23:00 + 2h runs past 24:00
+    ).toBe(state2);
+  });
+
+  it("rejects a same-person time collision on the target slot (touching edges are covered separately by the adjacency-merge case)", () => {
+    const existing = makeEntry({ id: 'other', taskId: 't2', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 }); // 480-600
+    const bin1 = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 5, sortIndex: 0 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2' })],
+      workload: [existing, bin1],
+    });
+
+    const next = reducer(state, {
+      type: 'SCHEDULE_BIN_PART',
+      entryId: 'bin1',
+      date: '2026-07-08',
+      startMinutes: 500, // 500-620 overlaps existing's 480-600
+      hours: 2,
+    });
+
+    expect(next).toBe(state);
+  });
+
+  it(`rejects a period extension that would exceed the ${MAX_TASK_PERIOD_DAYS}-day cap`, () => {
+    const bin1 = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 5, sortIndex: 0 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', startDate: '2026-07-06', endDate: '2026-07-06' })],
+      workload: [bin1],
+    });
+
+    const next = reducer(state, {
+      type: 'SCHEDULE_BIN_PART',
+      entryId: 'bin1',
+      date: '2027-06-01', // far more than 92 days past startDate
+      startMinutes: 480,
+      hours: 2,
+    });
+
+    expect(next).toBe(state);
+  });
+
+  it('rejects when the task referenced by the bin row does not exist', () => {
+    const bin1 = makeEntry({ id: 'bin1', taskId: 'ghost-task', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 5, sortIndex: 0 });
+    const state = makeState({ tasks: [], workload: [bin1] });
+
+    const next = reducer(state, {
+      type: 'SCHEDULE_BIN_PART',
+      entryId: 'bin1',
+      date: '2026-07-08',
+      startMinutes: 480,
+      hours: 2,
+    });
+
+    expect(next).toBe(state);
+  });
+
+  it('off-grid legacy row (5.1h): scheduling 5h (the rounded-quarters total) deletes the row — the 0.1h is snapped away by design', () => {
+    const bin1 = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 5.1, sortIndex: 0 });
+    const state = makeState({ tasks: [makeTask({ id: 't1' })], workload: [bin1] });
+
+    const next = reducer(state, {
+      type: 'SCHEDULE_BIN_PART',
+      entryId: 'bin1',
+      date: '2026-07-08',
+      startMinutes: 480,
+      hours: 5,
+    });
+
+    expect(next.workload.find((w) => w.id === 'bin1')).toBeUndefined();
+    const datedRows = next.workload.filter((w) => w.date !== BIN_DATE);
+    expect(datedRows).toHaveLength(1);
+    expect(datedRows[0].plannedHours).toBe(5);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Supervisor cycle guard + password/logout actions added by PKG-20260708-auth-data.
 // ---------------------------------------------------------------------------
 
@@ -1612,6 +1949,189 @@ describe('INSERT_BLOCK budget enforcement (PKG-20260708-b2-tests)', () => {
     expect(next).not.toBe(state);
     const inserted = next.workload.find((w) => w.taskId === 't2')!;
     expect(inserted.plannedHours).toBe(5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Collision-safe free-slot placement — coverage added by
+// PKG-20260713b-placement-tests (implementation shipped by
+// PKG-20260713b-placement-core: findFreeStart / planRippleInsert).
+// ---------------------------------------------------------------------------
+
+describe('INSERT_BLOCK end-of-day fit (PKG-20260713b-placement-tests)', () => {
+  it('rejects an insert whose own duration would run past 24:00', () => {
+    const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 1400, plannedHours: 0.5, sortIndex: 0 }); // 1400-1430
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: 10 })],
+      workload: [ref],
+    });
+
+    const next = reducer(state, {
+      type: 'INSERT_BLOCK',
+      payload: { refEntryId: 'ref1', position: 'after', taskId: 't2', hours: 1 }, // 1430 + 60 = 1490 > 1440
+    });
+
+    expect(next).toBe(state);
+  });
+
+  it('rejects an insert whose RIPPLE push of a later block would run past 24:00', () => {
+    const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 1350, plannedHours: 0.5, sortIndex: 0 }); // 1350-1380
+    const later = makeEntry({ id: 'later1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 1380, plannedHours: 0.5, sortIndex: 1 }); // 1380-1410
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: 10 })],
+      workload: [ref, later],
+    });
+
+    const next = reducer(state, {
+      // Inserted block lands 1380-1440 and pushes `later` to 1440, which then overflows.
+      type: 'INSERT_BLOCK',
+      payload: { refEntryId: 'ref1', position: 'after', taskId: 't2', hours: 1 },
+    });
+
+    expect(next).toBe(state);
+  });
+
+  it('an insert that fits EXACTLY to 24:00 succeeds with zero same-person overlap', () => {
+    const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 1380, plannedHours: 0.5, sortIndex: 0 }); // 1380-1410
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: 10 })],
+      workload: [ref],
+    });
+
+    const next = reducer(state, {
+      type: 'INSERT_BLOCK',
+      payload: { refEntryId: 'ref1', position: 'after', taskId: 't2', hours: 0.5 }, // 1410 + 30 = 1440, exact fit
+    });
+
+    expect(next).not.toBe(state);
+    const inserted = next.workload.find((w) => w.taskId === 't2')!;
+    expect(inserted.startMinutes).toBe(1410);
+    const dayBlocks = next.workload.filter((w) => w.personId === 'p1' && w.date === '2026-07-08');
+    for (const block of dayBlocks) {
+      const others = dayBlocks.filter((b) => b.id !== block.id);
+      expect(hasCollision(others, block.startMinutes, hoursToMinutes(block.plannedHours))).toBe(false);
+    }
+  });
+
+  it('near-midnight variant: a far block separated by a gap is still not pushed by a late-day insert', () => {
+    const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 1200, plannedHours: 1, sortIndex: 0 }); // 1200-1260
+    const far = makeEntry({ id: 'far1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 1400, plannedHours: 0.5, sortIndex: 1 }); // 1400-1430
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: 10 })],
+      workload: [ref, far],
+    });
+
+    const next = reducer(state, {
+      type: 'INSERT_BLOCK',
+      payload: { refEntryId: 'ref1', position: 'after', taskId: 't2', hours: 0.5 }, // inserted 1260-1290, nowhere near `far`
+    });
+
+    const farAfter = next.workload.find((w) => w.id === 'far1')!;
+    expect(farAfter.startMinutes).toBe(1400); // untouched — the gap absorbs the insert
+  });
+});
+
+describe('INSERT_BLOCK 92-day cap (PKG-20260713b-placement-tests)', () => {
+  it(`rejects a period widen past the ${MAX_TASK_PERIOD_DAYS}-day cap: task dates AND workload stay byte-identical`, () => {
+    const startDate = '2026-07-06';
+    const farDate = addDaysStr(startDate, MAX_TASK_PERIOD_DAYS); // 93 days out — exceeds the cap
+    const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: farDate, startMinutes: 480, plannedHours: 2, sortIndex: 0 });
+    const state = makeState({
+      // t2 (the PICKED task, not the ref's task) has plenty of estimate headroom
+      // so the budget guard doesn't mask the cap rejection under test.
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', startDate, endDate: startDate, estimatedHours: 100 })],
+      workload: [ref],
+    });
+
+    const next = reducer(state, {
+      type: 'INSERT_BLOCK',
+      payload: { refEntryId: 'ref1', position: 'after', taskId: 't2', hours: 1 },
+    });
+
+    expect(next).toBe(state);
+  });
+
+  it('a period widen exactly AT the cap succeeds: the period extends and the entry lands (regression that extension itself still works)', () => {
+    const startDate = '2026-07-06';
+    const farDate = addDaysStr(startDate, MAX_TASK_PERIOD_DAYS - 1); // 92 days inclusive — exactly at the cap
+    const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: farDate, startMinutes: 480, plannedHours: 2, sortIndex: 0 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', startDate, endDate: startDate, estimatedHours: 100 })],
+      workload: [ref],
+    });
+
+    const next = reducer(state, {
+      type: 'INSERT_BLOCK',
+      payload: { refEntryId: 'ref1', position: 'after', taskId: 't2', hours: 1 },
+    });
+
+    expect(next).not.toBe(state);
+    const task2 = next.tasks.find((t) => t.id === 't2')!;
+    expect(task2.startDate).toBe(startDate);
+    expect(task2.endDate).toBe(farDate);
+    const inserted = next.workload.find((w) => w.taskId === 't2')!;
+    expect(inserted.date).toBe(farDate);
+    expect(inserted.plannedHours).toBe(1);
+  });
+});
+
+describe('REASSIGN_ENTRY dated free-slot placement (PKG-20260713b-placement-tests)', () => {
+  it("normal target day: appends to the end of the target person's existing blocks (matches prior nextFreeStart placement)", () => {
+    const moving = makeEntry({ id: 'moving', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
+    const targetExisting = makeEntry({ id: 'existing', taskId: 't1', personId: 'p2', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 }); // 480-600
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      people: [makePerson({ id: 'p1' }), makePerson({ id: 'p2' })],
+      assignments: [
+        { id: 'a1', taskId: 't1', personId: 'p1' },
+        { id: 'a2', taskId: 't1', personId: 'p2' },
+      ],
+      workload: [moving, targetExisting],
+    });
+
+    const next = reducer(state, { type: 'REASSIGN_ENTRY', entryId: 'moving', toPersonId: 'p2' });
+
+    const moved = next.workload.find((w) => w.id === 'moving')!;
+    expect(moved.personId).toBe('p2');
+    expect(moved.startMinutes).toBe(600); // appended after existing's 480-600
+  });
+
+  it('target day where append would clamp but an earlier slot fits: a person with 22:00-24:00 occupied lands the moved 2h block at 08:00, zero overlap', () => {
+    const moving = makeEntry({ id: 'moving', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
+    const targetLate = makeEntry({ id: 'late', taskId: 't1', personId: 'p2', date: '2026-07-08', startMinutes: 1320, plannedHours: 2, sortIndex: 0 }); // 22:00-24:00
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      people: [makePerson({ id: 'p1' }), makePerson({ id: 'p2' })],
+      assignments: [
+        { id: 'a1', taskId: 't1', personId: 'p1' },
+        { id: 'a2', taskId: 't1', personId: 'p2' },
+      ],
+      workload: [moving, targetLate],
+    });
+
+    const next = reducer(state, { type: 'REASSIGN_ENTRY', entryId: 'moving', toPersonId: 'p2' });
+
+    const moved = next.workload.find((w) => w.id === 'moving')!;
+    expect(moved.startMinutes).toBe(480); // earliest real gap, not a clamped placement adjacent to 22:00-24:00
+    expect(hasCollision([targetLate], moved.startMinutes, hoursToMinutes(moved.plannedHours))).toBe(false);
+  });
+
+  it('target day with no fitting slot rejects atomically (assignments unchanged too)', () => {
+    const moving = makeEntry({ id: 'moving', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
+    const full = makeEntry({ id: 'full', taskId: 't1', personId: 'p2', date: '2026-07-08', startMinutes: 0, plannedHours: 24, sortIndex: 0 }); // entire day occupied
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      people: [makePerson({ id: 'p1' }), makePerson({ id: 'p2' })],
+      assignments: [
+        { id: 'a1', taskId: 't1', personId: 'p1' },
+        { id: 'a2', taskId: 't1', personId: 'p2' },
+      ],
+      workload: [moving, full],
+    });
+
+    const next = reducer(state, { type: 'REASSIGN_ENTRY', entryId: 'moving', toPersonId: 'p2' });
+
+    expect(next).toBe(state);
   });
 });
 

@@ -1,11 +1,13 @@
 // Unit tests for pure time-of-day math (src/utils/time.ts).
 import { describe, expect, it } from 'vitest';
 import {
+  findFreeStart,
   formatDuration,
   formatMinutes,
   hasCollision,
   nextFreeStart,
   packDayBlocks,
+  planRippleInsert,
   rangesOverlap,
   snapToStep,
   stackStartTimes,
@@ -117,7 +119,100 @@ describe('nextFreeStart', () => {
   it('clamps so the new block still ends by 24:00', () => {
     // Existing block ends at 1380 (on-grid); a 2h (120min) block starting
     // there would end at 1500, so the start is clamped to 1440 - 120 = 1320.
+    // NOTE (PKG-20260713b-placement): this raw helper deliberately keeps its
+    // clamp-into-occupied-time semantics (a hidden same-person overlap is
+    // possible here) — collision-safe automatic placement lives in
+    // `findFreeStart`, covered in its own describe below.
     expect(nextFreeStart([{ startMinutes: 1200, plannedHours: 3 }], 120)).toBe(1320);
+  });
+});
+
+describe('findFreeStart', () => {
+  it('returns WORKDAY_START_MIN for an empty day, clamped when the duration itself would run past 24:00', () => {
+    expect(findFreeStart([], 60)).toBe(480);
+    // A duration longer than the day itself clamps to 0, same rule clampBlockStart applies elsewhere.
+    expect(findFreeStart([], 2000)).toBe(0);
+  });
+
+  it('prefers appending after the last block, matching nextFreeStart, when no clamp is needed', () => {
+    const blocks = [{ startMinutes: 480, plannedHours: 2 }]; // 480-600
+    expect(findFreeStart(blocks, 60)).toBe(nextFreeStart(blocks, 60));
+    expect(findFreeStart(blocks, 60)).toBe(600);
+  });
+
+  it('when append would clamp, scans for the earliest real gap instead of the clamped tail', () => {
+    const blocks = [
+      { startMinutes: 480, plannedHours: 2 }, // 480-600
+      { startMinutes: 1350, plannedHours: 1.25 }, // 1350-1425, forces the append to clamp
+    ];
+    const start = findFreeStart(blocks, 60);
+    expect(start).toBe(600); // the 600-1350 gap, not a clamped placement near the end
+    expect(hasCollision(blocks.map((b, i) => ({ id: String(i), ...b })), start!, 60)).toBe(false);
+  });
+
+  it('falls back to a pre-08:00 gap when the whole working day is solid', () => {
+    const blocks = [{ startMinutes: 480, plannedHours: 16 }]; // 08:00-24:00, solid
+    expect(findFreeStart(blocks, 120)).toBe(0); // only the 00:00-08:00 gap is free
+  });
+
+  it('returns null when the day truly cannot fit the duration anywhere', () => {
+    const blocks = [
+      { startMinutes: 0, plannedHours: 12 },
+      { startMinutes: 720, plannedHours: 12 },
+    ]; // fully solid 0-1440
+    expect(findFreeStart(blocks, 15)).toBeNull();
+  });
+
+  it('snaps an off-grid block end UP to the 15-minute grid before treating it as a gap candidate, and never returns a colliding start', () => {
+    const blocks = [
+      { startMinutes: 480, plannedHours: 2.1 }, // 480-606, off-grid end
+      { startMinutes: 1400, plannedHours: 0.5 }, // 1400-1430, forces the append to clamp
+    ];
+    const start = findFreeStart(blocks, 60);
+    expect(start).toBe(615); // 606 snapped UP to 615 (not 600 or 605)
+    expect(hasCollision(blocks.map((b, i) => ({ id: String(i), ...b })), start!, 60)).toBe(false);
+  });
+});
+
+describe('planRippleInsert', () => {
+  it('inserting into a gap produces no moves — a block further away stays put', () => {
+    const dayBlocks = [
+      { id: 'a', startMinutes: 480, plannedHours: 2, sortIndex: 0 }, // 480-600
+      { id: 'far', startMinutes: 900, plannedHours: 1, sortIndex: 1 }, // 900-960
+    ];
+    const moves = planRippleInsert(dayBlocks, 600, 60); // insert 600-660, gap absorbs it
+    expect(moves).toEqual(new Map());
+  });
+
+  it('pushes an overlapping chain forward by exactly the insert duration, un-clamped', () => {
+    const dayBlocks = [
+      { id: 'a', startMinutes: 600, plannedHours: 1, sortIndex: 0 }, // 600-660
+      { id: 'b', startMinutes: 660, plannedHours: 1, sortIndex: 1 }, // 660-720, touches a
+    ];
+    const moves = planRippleInsert(dayBlocks, 600, 30); // insert 600-630 at a's own start
+    expect(moves?.get('a')).toBe(630); // pushed to the inserted block's end
+    expect(moves?.get('b')).toBe(690); // pushed by the same 30 minutes, chained
+  });
+
+  it("an equal-start tie sorts the inserted block first, pushing the existing block that shared the start", () => {
+    const dayBlocks = [{ id: 'a', startMinutes: 480, plannedHours: 2, sortIndex: 0 }]; // 480-600
+    const moves = planRippleInsert(dayBlocks, 480, 30); // insert at a's exact start
+    expect(moves?.get('a')).toBe(510); // pushed past the inserted 480-510 block
+  });
+
+  it('returns null when the inserted block itself, or any pushed block in the chain, would cross 24:00', () => {
+    const soloTooLate = [{ id: 'a', startMinutes: 1410, plannedHours: 0.5, sortIndex: 0 }];
+    expect(planRippleInsert(soloTooLate, 1410, 60)).toBeNull(); // insert itself: 1410+60 > 1440
+
+    const chain = [{ id: 'a', startMinutes: 1380, plannedHours: 0.5, sortIndex: 0 }]; // 1380-1410
+    // insert 1380-1440 pushes 'a' to 1440, where it can no longer fit.
+    expect(planRippleInsert(chain, 1380, 60)).toBeNull();
+  });
+
+  it('a day that fits EXACTLY to 24:00 (touching, no overflow) succeeds', () => {
+    const dayBlocks = [{ id: 'a', startMinutes: 1380, plannedHours: 0.5, sortIndex: 0 }]; // 1380-1410
+    const moves = planRippleInsert(dayBlocks, 1410, 30); // insert 1410-1440, exact fit
+    expect(moves).toEqual(new Map()); // nothing to push — 'a' stays entirely before the insert
   });
 });
 

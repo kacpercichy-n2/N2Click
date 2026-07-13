@@ -3,10 +3,13 @@
 // the same action so the log can never drift from the data.
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
   useReducer,
+  useRef,
+  useState,
   type ReactNode,
 } from 'react';
 import type {
@@ -26,7 +29,16 @@ import type {
   TaskPriority,
   WorkloadEntry,
 } from '../types';
-import { DEFAULT_CAPACITY, loadData, sanitizeWorkDays, saveData, slugify } from './storage';
+import {
+  DEFAULT_CAPACITY,
+  loadData,
+  sanitizeWorkDays,
+  saveData,
+  slugify,
+  subscribeExternalChanges,
+  type SaveFailureReason,
+} from './storage';
+import { anyDirty } from '../utils/dirtyRegistry';
 import { wouldCreateSupervisorCycle } from './selectors';
 import { registerPersonOrder } from '../utils/colors';
 import {
@@ -44,12 +56,14 @@ import {
   MINUTE_STEP,
   blockEndMinutes,
   clampBlockStart,
+  findFreeStart,
   formatDuration,
   formatMinutes,
   hasCollision,
   hoursToMinutes,
   isBinEntry,
   nextFreeStart,
+  planRippleInsert,
   snapHours,
 } from '../utils/time';
 
@@ -173,12 +187,17 @@ export type Action =
   | { type: 'SET_BLOCK_TIME'; entryId: string; date: string; startMinutes: number; plannedHours: number }
   | { type: 'MOVE_BLOCK_TO_BIN'; entryId: string }
   | { type: 'SPLIT_BLOCK'; entryId: string; parts: 2 | 4 }
+  | { type: 'SCHEDULE_BIN_PART'; entryId: string; date: string; startMinutes: number; hours: number }
   | { type: 'DELETE_BLOCK'; entryId: string }
   | { type: 'SAVE_FILTER_PRESET'; name: string; page: FilterPage; criteria: SavedFilterCriteria }
   | { type: 'DELETE_FILTER_PRESET'; filterId: string }
   | { type: 'LOAD_SAMPLE'; data: AppData }
   | { type: 'DISMISS_SAMPLE_BANNER' }
-  | { type: 'RESET_ALL'; data: AppData };
+  | { type: 'RESET_ALL'; data: AppData }
+  // In-place replacement of the whole store with a fresh loadData() result,
+  // triggered when another same-browser tab wrote and this tab is clean. Not a
+  // user mutation — no activity row (mirrors RESET_ALL).
+  | { type: 'REPLACE_FROM_STORAGE'; data: AppData };
 
 function uid(): string {
   return crypto.randomUUID();
@@ -416,16 +435,18 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
       // (across all tasks), matching the legacy new-cell behavior.
       const hours = tNew * HOURS_STEP;
       const around = [...workloadOther, ...taskBinKept, ...workloadForTask];
+      const dayList = around.filter((w) => w.personId === personId && w.date === date);
+      const durMin = hoursToMinutes(hours);
       workloadForTask.push({
         id: uid(),
         taskId: realTaskId,
         personId,
         date,
         plannedHours: hours,
-        startMinutes: nextFreeStart(
-          around.filter((w) => w.personId === personId && w.date === date),
-          hoursToMinutes(hours),
-        ),
+        // Prefer a collision-free slot; fall back to nextFreeStart's clamp so
+        // SAVE_TASK never rejects on placement (invariant 3 — editor edits may
+        // create overlaps, which the week view renders side-by-side).
+        startMinutes: findFreeStart(dayList, durMin) ?? nextFreeStart(dayList, durMin),
         sortIndex: nextSortIndex(around, personId, date),
       });
       touched.add(key);
@@ -721,40 +742,34 @@ function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
     payload.position === 'before'
       ? ref.startMinutes
       : blockEndMinutes(ref.startMinutes, ref.plannedHours);
+
+  // Plan the sweep without clamping: reject atomically (state unchanged) if the
+  // inserted block or any pushed block would cross 24:00. No hidden overlaps.
+  const dayBlocks = state.workload.filter(
+    (w) => w.personId === ref.personId && w.date === ref.date,
+  );
+  const moves = planRippleInsert(dayBlocks, rawStart, dur);
+  if (moves === null) return state;
+
+  // Task period must cover ref.date; reject if the widening exceeds the 92-day
+  // cap (mirrors setBlockTime). Validated BEFORE any mutation so the action is
+  // atomic — the task picker can pick ANY task, so this cannot be skipped.
+  const newStartDate = ref.date < task.startDate ? ref.date : task.startDate;
+  const newEndDate = ref.date > task.endDate ? ref.date : task.endDate;
+  const periodWidens = newStartDate !== task.startDate || newEndDate !== task.endDate;
+  if (periodWidens && inclusiveDayCount(newStartDate, newEndDate) > MAX_TASK_PERIOD_DAYS) {
+    return state;
+  }
+
   const entry: WorkloadEntry = {
     id: uid(),
     taskId: payload.taskId,
     personId: ref.personId,
     date: ref.date,
     plannedHours: hours,
-    startMinutes: clampBlockStart(rawStart, dur),
+    startMinutes: rawStart, // un-clamped; planRippleInsert guaranteed it fits
     sortIndex: 0, // fixed by reindexDays below
   };
-
-  // Sweep that person's day (new block ordered before ref on an equal start):
-  // push any later block that would overlap forward to the running cursor.
-  const dayBlocks = state.workload.filter(
-    (w) => w.personId === ref.personId && w.date === ref.date,
-  );
-  const ordered = [...dayBlocks, entry].sort((a, b) => {
-    if (a.startMinutes !== b.startMinutes) return a.startMinutes - b.startMinutes;
-    if (a.id === entry.id) return -1;
-    if (b.id === entry.id) return 1;
-    return a.sortIndex - b.sortIndex;
-  });
-  const startIdx = ordered.findIndex((b) => b.id === entry.id);
-  const moves = new Map<string, number>(); // entryId -> new startMinutes
-  let cursor = blockEndMinutes(entry.startMinutes, entry.plannedHours);
-  for (let i = startIdx + 1; i < ordered.length; i++) {
-    const b = ordered[i];
-    if (b.startMinutes < cursor) {
-      const pushed = clampBlockStart(cursor, hoursToMinutes(b.plannedHours));
-      if (pushed !== b.startMinutes) moves.set(b.id, pushed);
-      cursor = pushed + hoursToMinutes(b.plannedHours);
-    } else {
-      cursor = blockEndMinutes(b.startMinutes, b.plannedHours);
-    }
-  }
   let shifted = state.workload.map((w) => {
     const m = moves.get(w.id);
     return m === undefined ? w : { ...w, startMinutes: m };
@@ -782,14 +797,13 @@ function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
   const assignments = alreadyAssigned
     ? state.assignments
     : [...state.assignments, { id: uid(), taskId: payload.taskId, personId: ref.personId }];
-  const tasks = state.tasks.map((t) => {
-    if (t.id !== payload.taskId) return t;
-    const startDate = ref.date < t.startDate ? ref.date : t.startDate;
-    const endDate = ref.date > t.endDate ? ref.date : t.endDate;
-    return startDate === t.startDate && endDate === t.endDate
-      ? t
-      : { ...t, startDate, endDate, updatedAt: nowIso() };
-  });
+  const tasks = periodWidens
+    ? state.tasks.map((t) =>
+        t.id === payload.taskId
+          ? { ...t, startDate: newStartDate, endDate: newEndDate, updatedAt: nowIso() }
+          : t,
+      )
+    : state.tasks;
 
   const person = state.people.find((p) => p.id === ref.personId);
   let message = `wstawił(a) blok ${formatDuration(hours)} ${payload.position === 'before' ? 'przed' : 'po'} „${state.tasks.find((t) => t.id === ref.taskId)?.title ?? 'blok'}” dla ${person?.name ?? 'kogoś'} w dniu ${ref.date}`;
@@ -856,17 +870,24 @@ function reassignEntry(state: AppData, entryId: string, toPersonId: string): App
   // Compute the target's next free sortIndex against the workload WITHOUT the
   // moved entry, then append the moved entry to the end of the target's day.
   const without = state.workload.filter((w) => w.id !== entryId);
+  // Bin entries stay in the bin (date '', startMinutes 0) and append to the
+  // target person's bin; dated entries land in a collision-free slot on the
+  // target's day — reject atomically (state unchanged) if none fits.
+  let startMinutes: number;
+  if (isBinEntry(entry)) {
+    startMinutes = 0;
+  } else {
+    const free = findFreeStart(
+      without.filter((w) => w.personId === toPersonId && w.date === date),
+      hoursToMinutes(plannedHours),
+    );
+    if (free === null) return state;
+    startMinutes = free;
+  }
   const moved: WorkloadEntry = {
     ...entry,
     personId: toPersonId,
-    // Bin entries stay in the bin (date '', startMinutes 0) and append to the
-    // target person's bin; dated entries append to the target's day schedule.
-    startMinutes: isBinEntry(entry)
-      ? 0
-      : nextFreeStart(
-          without.filter((w) => w.personId === toPersonId && w.date === date),
-          hoursToMinutes(plannedHours),
-        ),
+    startMinutes,
     sortIndex: nextSortIndex(without, toPersonId, date),
   };
   const touched = new Set<string>([
@@ -1163,7 +1184,9 @@ function moveBlockToBin(state: AppData, entryId: string): AppData {
  * SINGLE bin row (summed), merged into the (task, person) bin row when one
  * already exists. Rejects when the block is too small to divide, and no-ops on
  * a bin entry — splitting a bin block would create a second same-pair bin row,
- * violating the one-bin-row invariant.
+ * violating the one-bin-row invariant. To schedule PART of a bin row onto the
+ * calendar (the bin-row path this deliberately omits), use `scheduleBinPart`
+ * (`SCHEDULE_BIN_PART`), which conserves the one-bin-row invariant.
  */
 function splitBlock(state: AppData, entryId: string, parts: 2 | 4): AppData {
   const entry = state.workload.find((w) => w.id === entryId);
@@ -1219,6 +1242,99 @@ function splitBlock(state: AppData, entryId: string, parts: 2 | 4): AppData {
       `podzielił(a) blok ${formatDuration(entry.plannedHours)} na ${parts} części (do zasobnika: ${formatDuration(binSum)})`,
     ),
   };
+}
+
+/**
+ * Schedule a user-chosen 0.25h-aligned PART of a bin (zasobnik) row onto a
+ * calendar day. Atomically decrements the source bin row (SAME id, in quarter
+ * units — deleted exactly when it reaches zero) and creates exactly ONE new
+ * dated block, conserving total planned hours. This is the bin-row scheduling
+ * path `splitBlock`/`SPLIT_BLOCK` deliberately omits; it is what makes an
+ * oversized (>24h) bin row recoverable.
+ *
+ * Guard reuse by COMPOSITION, not duplication (decision 3): build an
+ * intermediate workload (source row decremented, or filtered out at zero, plus
+ * a TEMPORARY same-pair bin sibling carrying the part with a fresh uid) and
+ * delegate to the existing `setBlockTime` for that temp entry — inheriting date
+ * validity, 15-min grid, day fit, same-person collision, and the 92-day period
+ * cap. `setBlockTime` returns its input unchanged on any violation, so
+ * `next === intermediate` detects a rejection and we return the ORIGINAL
+ * `state` (house convention: state unchanged, no activity row). The transient
+ * second same-pair bin row exists ONLY inside this pure function on the success
+ * path — by the time state escapes, `setBlockTime` has already dated it — so
+ * nothing observable ever holds two bin rows for one (task, person) pair; on
+ * rejection the intermediate is discarded entirely.
+ *
+ * Hour math is in quarter units (decision 4): a legacy off-grid row (e.g. 5.1h)
+ * is thereby SNAPPED to the quarter grid on its first partial schedule.
+ * Full-amount requests go through this SAME uniform path (decision 5): the
+ * source row is filtered out because `remainingQ === 0`, and one new dated row
+ * is created — never the source row itself. Budget is untouched (decision 7):
+ * the delegated entry's hours equal `hours`, so `setBlockTime` sees neither
+ * grow nor shrink; total planned hours and `estimatedHours` are conserved by
+ * construction. Adjacency merge (decision 6) and the `fromBin` activity message
+ * (decision 8) are inherited from `setBlockTime`; on success we append
+ * `; w zasobniku pozostało {X}` (or `; zasobnik opróżniony`) to that last row.
+ */
+function scheduleBinPart(
+  state: AppData,
+  entryId: string,
+  date: string,
+  startMinutes: number,
+  hours: number,
+): AppData {
+  const entry = state.workload.find((w) => w.id === entryId);
+  if (!entry || !isBinEntry(entry)) return state;
+
+  // Same hours grid/range validation shape as setBlockTime (:938–942).
+  if (!Number.isFinite(hours) || hours < HOURS_STEP || hours > 24) return state;
+  const hoursSteps = hours / HOURS_STEP;
+  if (Math.abs(hoursSteps - Math.round(hoursSteps)) > 1e-9) return state;
+
+  // Conservation in quarter units; reject asking for more than the row holds.
+  const hoursQ = toQuarters(hours);
+  const remainingQ = toQuarters(entry.plannedHours) - hoursQ;
+  if (remainingQ < 0) return state;
+
+  const partId = uid();
+  const partHours = hoursQ * HOURS_STEP; // pass the snapped value, not raw `hours`
+
+  // Intermediate: decrement (or drop at zero) the source row, then append the
+  // TEMPORARY part row that setBlockTime will date onto the grid.
+  const decremented =
+    remainingQ === 0
+      ? state.workload.filter((w) => w.id !== entryId)
+      : state.workload.map((w) =>
+          w.id === entryId ? { ...w, plannedHours: remainingQ * HOURS_STEP } : w,
+        );
+  const intermediate: AppData = {
+    ...state,
+    workload: [
+      ...decremented,
+      {
+        id: partId,
+        taskId: entry.taskId,
+        personId: entry.personId,
+        date: BIN_DATE,
+        plannedHours: partHours,
+        startMinutes: 0,
+        sortIndex: nextSortIndex(decremented, entry.personId, BIN_DATE),
+      },
+    ],
+  };
+
+  const next = setBlockTime(intermediate, partId, date, startMinutes, partHours);
+  if (next === intermediate) return state; // any guard violation → original state
+
+  // Append the remainder suffix to setBlockTime's fromBin activity row.
+  const suffix =
+    remainingQ > 0
+      ? `; w zasobniku pozostało ${formatDuration(remainingQ * HOURS_STEP)}`
+      : '; zasobnik opróżniony';
+  const activity = next.activity.map((ev, i) =>
+    i === next.activity.length - 1 ? { ...ev, message: ev.message + suffix } : ev,
+  );
+  return { ...next, activity };
 }
 
 /** Delete a single bin entry (dated entries are never deleted here). */
@@ -1769,6 +1885,14 @@ export function reducer(state: AppData, action: Action): AppData {
       return moveBlockToBin(state, action.entryId);
     case 'SPLIT_BLOCK':
       return splitBlock(state, action.entryId, action.parts);
+    case 'SCHEDULE_BIN_PART':
+      return scheduleBinPart(
+        state,
+        action.entryId,
+        action.date,
+        action.startMinutes,
+        action.hours,
+      );
     case 'DELETE_BLOCK':
       return deleteBlock(state, action.entryId);
     case 'SAVE_FILTER_PRESET': {
@@ -1804,6 +1928,8 @@ export function reducer(state: AppData, action: Action): AppData {
       return { ...state, sampleBannerDismissed: true };
     case 'RESET_ALL':
       return action.data;
+    case 'REPLACE_FROM_STORAGE':
+      return action.data;
     default:
       return state;
   }
@@ -1816,25 +1942,141 @@ interface StoreValue {
 
 const StoreContext = createContext<StoreValue | null>(null);
 
+// ---- Persistence meta-state (honest save outcome + same-browser tab safety) --
+// This lives OUTSIDE the reducer: it is meta-state about the persist layer, and
+// dispatching from the persist effect would risk loops. A separate context
+// keeps useStore's signature and every existing consumer untouched.
+
+export type ExternalDataStatus = 'none' | 'refreshed' | 'conflict';
+
+export interface PersistenceValue {
+  saveError: SaveFailureReason | null;
+  external: ExternalDataStatus;
+  /** Re-attempt saveData(current state). */
+  retryPersist: () => void;
+  /** Replace local state with loadData() (UI confirms first). */
+  acceptExternal: () => void;
+  /** Write current state NOW, overwriting the external version. */
+  keepLocal: () => void;
+  /** 'refreshed' -> 'none'. */
+  dismissExternalNotice: () => void;
+}
+
+const PersistenceContext = createContext<PersistenceValue | null>(null);
+
 export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, undefined, loadData);
+
+  const [saveError, setSaveError] = useState<SaveFailureReason | null>(null);
+  const [external, setExternal] = useState<ExternalDataStatus>('none');
+
+  // Live refs synced each render so the mount-once storage listener and the
+  // stable callbacks read current values without stale closures.
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const saveErrorRef = useRef(saveError);
+  saveErrorRef.current = saveError;
+  const externalRef = useRef(external);
+  externalRef.current = external;
+
+  // Skip the pointless first persist of freshly-loaded state (a mount echo that
+  // would bump the revision and spam other tabs), and skip the write-back right
+  // after any REPLACE_FROM_STORAGE (that state was just loaded from storage).
+  const skipPersistRef = useRef(true);
 
   // Assign person colours by stable list order. Done during render (idempotent)
   // so colours are correct on the first paint of any consumer.
   registerPersonOrder(state.people.map((p) => p.id));
 
-  // Persist on every state change.
+  // Persist on every state change and RECORD the real outcome. A failed write
+  // surfaces via `saveError` (usePersistence); a subsequent successful write
+  // clears it and — per the conflict lifecycle — collapses an outstanding
+  // external conflict to resolved (continuing to work here is an implicit
+  // keep-mine). The first run (and the run right after an in-place
+  // REPLACE_FROM_STORAGE) is skipped: that state already matches storage.
   useEffect(() => {
-    saveData(state);
+    if (skipPersistRef.current) {
+      skipPersistRef.current = false;
+      return;
+    }
+    const result = saveData(state);
+    setSaveError(result.ok ? null : result.reason);
+    if (result.ok) setExternal((prev) => (prev === 'conflict' ? 'none' : prev));
   }, [state]);
+
+  // Mount-once: subscribe to same-browser external tab writes. A clean tab
+  // refreshes in place; a dirty tab (unsaved form edits, a failed local write,
+  // or an already-open conflict) raises an explicit conflict choice instead of
+  // being silently overwritten.
+  useEffect(() => {
+    return subscribeExternalChanges(() => {
+      const incoming = loadData();
+      // Silent short-circuit when storage already matches our state (our own
+      // echo bounced back, or an identical write): no dispatch, no banner.
+      if (JSON.stringify(incoming) === JSON.stringify(stateRef.current)) return;
+      const dirty =
+        anyDirty() || saveErrorRef.current !== null || externalRef.current === 'conflict';
+      if (dirty) {
+        setExternal('conflict');
+        return;
+      }
+      skipPersistRef.current = true;
+      dispatch({ type: 'REPLACE_FROM_STORAGE', data: incoming });
+      setExternal('refreshed');
+    });
+  }, []);
+
+  const retryPersist = useCallback(() => {
+    const result = saveData(stateRef.current);
+    setSaveError(result.ok ? null : result.reason);
+    if (result.ok) setExternal((prev) => (prev === 'conflict' ? 'none' : prev));
+  }, []);
+
+  const acceptExternal = useCallback(() => {
+    skipPersistRef.current = true;
+    dispatch({ type: 'REPLACE_FROM_STORAGE', data: loadData() });
+    setExternal('none');
+  }, []);
+
+  const keepLocal = useCallback(() => {
+    const result = saveData(stateRef.current);
+    setSaveError(result.ok ? null : result.reason);
+    if (result.ok) setExternal('none');
+  }, []);
+
+  const dismissExternalNotice = useCallback(() => {
+    setExternal((prev) => (prev === 'refreshed' ? 'none' : prev));
+  }, []);
 
   const value = useMemo(() => ({ state, dispatch }), [state]);
 
-  return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
+  const persistence = useMemo<PersistenceValue>(
+    () => ({
+      saveError,
+      external,
+      retryPersist,
+      acceptExternal,
+      keepLocal,
+      dismissExternalNotice,
+    }),
+    [saveError, external, retryPersist, acceptExternal, keepLocal, dismissExternalNotice],
+  );
+
+  return (
+    <StoreContext.Provider value={value}>
+      <PersistenceContext.Provider value={persistence}>{children}</PersistenceContext.Provider>
+    </StoreContext.Provider>
+  );
 }
 
 export function useStore(): StoreValue {
   const ctx = useContext(StoreContext);
   if (!ctx) throw new Error('useStore must be used within AppStoreProvider');
+  return ctx;
+}
+
+export function usePersistence(): PersistenceValue {
+  const ctx = useContext(PersistenceContext);
+  if (!ctx) throw new Error('usePersistence must be used within AppStoreProvider');
   return ctx;
 }

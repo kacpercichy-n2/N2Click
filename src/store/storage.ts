@@ -779,6 +779,97 @@ export function normalizeStatusFlags(data: AppData): AppData {
   return { ...data, statuses };
 }
 
+// ---- Persistence outcome + same-browser tab-safety revision protocol ----
+// NOTE: everything below is SAME-BROWSER tab safety — NOT multi-user sync,
+// collaboration, backups, or a backend. All data stays in this browser's
+// localStorage. `revision` is an envelope field written alongside the AppData
+// payload; it lets a second tab of the SAME browser notice that another tab
+// wrote after it loaded, and keeps writes monotonic across ping-ponging tabs.
+
+export type SaveFailureReason = 'quota' | 'unavailable' | 'serialization' | 'unknown';
+export type SaveResult = { ok: true; revision: number } | { ok: false; reason: SaveFailureReason };
+/** Payload of an external same-browser tab write. `null` = key cleared / unparsable. */
+export type ExternalChangeInfo = { revision: number | null };
+
+// Monotonic revision counter, owned entirely by this module. Bumped on every
+// successful save; recorded (not bumped) on load and max-merged on external
+// storage events, so a later local write always lands ABOVE any observed
+// external revision. NEVER stored in React state — a stale in-state copy would
+// lie about which write is newest.
+let latestKnownRevision = 0;
+
+/** The highest revision this module has written or observed. Exposed for tests. */
+export function getLatestKnownRevision(): number {
+  return latestKnownRevision;
+}
+
+/** Coerce an unknown envelope revision to a finite integer ≥ 0, else null. */
+function coerceRevision(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+/**
+ * Parse a raw stored JSON string and return its envelope `revision` (finite
+ * integer ≥ 0), or null on null / parse failure / absent / invalid. Pure — used
+ * by the storage-event listener and by unit tests.
+ */
+export function readEnvelopeRevision(raw: string | null): number | null {
+  if (raw == null) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null) return null;
+    return coerceRevision((parsed as Record<string, unknown>).revision);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Classify a thrown storage error into a SaveFailureReason. Reads `name`/`code`
+ * defensively off an unknown (no `instanceof DOMException`) so it also works in
+ * the node test env with error-LIKE plain objects.
+ * - QuotaExceededError / NS_ERROR_DOM_QUOTA_REACHED / code 22 / code 1014 →
+ *   `quota` (Chromium / Firefox / Safari incl. legacy Safari private mode).
+ * - SecurityError → `unavailable`.
+ * - anything else → `unknown`.
+ */
+export function classifyStorageError(err: unknown): SaveFailureReason {
+  const e = (err ?? {}) as { name?: unknown; code?: unknown };
+  const name = typeof e.name === 'string' ? e.name : '';
+  const code = typeof e.code === 'number' ? e.code : undefined;
+  if (
+    name === 'QuotaExceededError' ||
+    name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+    code === 22 ||
+    code === 1014
+  ) {
+    return 'quota';
+  }
+  if (name === 'SecurityError') return 'unavailable';
+  return 'unknown';
+}
+
+/**
+ * Subscribe to same-browser external tab writes. Adds a `window` `storage`
+ * listener — which never fires in the originating tab, so every relevant event
+ * is external by definition (no writer-id needed). Ignores events whose `key`
+ * is neither STORAGE_KEY nor `null` (`null` = another tab called
+ * `localStorage.clear()`). For a relevant event it max-merges
+ * latestKnownRevision with the incoming revision BEFORE invoking the callback,
+ * so a later local write always lands above the observed external revision.
+ * Returns an unsubscribe. Same-browser tab safety only — NOT multi-user sync.
+ */
+export function subscribeExternalChanges(cb: (info: ExternalChangeInfo) => void): () => void {
+  const handler = (e: StorageEvent): void => {
+    if (e.key !== STORAGE_KEY && e.key !== null) return;
+    const incoming = readEnvelopeRevision(e.newValue);
+    latestKnownRevision = Math.max(latestKnownRevision, incoming ?? 0);
+    cb({ revision: incoming });
+  };
+  window.addEventListener('storage', handler);
+  return () => window.removeEventListener('storage', handler);
+}
+
 export function loadData(): AppData {
   try {
     const raw =
@@ -787,6 +878,10 @@ export function loadData(): AppData {
     if (!raw) return emptyData();
     const parsed: unknown = JSON.parse(raw);
     if (!looksLikeData(parsed)) return emptyData();
+    // Record the stored envelope revision so the next local save lands above it.
+    // Stripped from the returned AppData below (both branches) — React state
+    // never carries a revision.
+    latestKnownRevision = coerceRevision(parsed.revision) ?? 0;
     const version = typeof parsed.version === 'number' ? parsed.version : 1;
     if (version < 2) {
       return sanitizeImpersonator(
@@ -799,10 +894,14 @@ export function loadData(): AppData {
         ),
       );
     }
-    // Same-version load: fill any missing fields with defaults.
+    // Same-version load: fill any missing fields with defaults. Strip the
+    // envelope `revision` so the returned AppData has no such own-property
+    // (recorded into latestKnownRevision above). The `_revision` binding exists
+    // only to omit that key via the rest spread — noUnusedLocals exempts it.
+    const { revision: _revision, ...parsedRest } = parsed;
     const loaded = {
       ...emptyData(),
-      ...(parsed as Partial<AppData>),
+      ...(parsedRest as Partial<AppData>),
       version: DATA_VERSION,
     };
     const localized =
@@ -840,12 +939,30 @@ export function exportRawData(): string | null {
   }
 }
 
-export function saveData(data: AppData): void {
+/**
+ * Persist the whole AppData, reporting the real outcome (never swallowed).
+ * Writes `{ ...data, revision }` with `revision = latestKnownRevision + 1`; on
+ * success records the new revision and returns it. Serialization is detected
+ * positionally (its own try around JSON.stringify → `serialization`, without
+ * touching localStorage or latestKnownRevision); storage-layer throws are
+ * classified by classifyStorageError. Same-browser tab safety only — the
+ * revision envelope is not a sync/backup protocol. Does not mutate `data`.
+ */
+export function saveData(data: AppData): SaveResult {
+  const revision = latestKnownRevision + 1;
+  let raw: string;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    raw = JSON.stringify({ ...data, revision });
   } catch {
-    // Ignore write failures (e.g. private mode / quota). Non-fatal for an alpha.
+    return { ok: false, reason: 'serialization' };
   }
+  try {
+    localStorage.setItem(STORAGE_KEY, raw);
+  } catch (err) {
+    return { ok: false, reason: classifyStorageError(err) };
+  }
+  latestKnownRevision = revision;
+  return { ok: true, revision };
 }
 
 export function clearData(): void {
@@ -855,4 +972,5 @@ export function clearData(): void {
   } catch {
     // ignore
   }
+  latestKnownRevision = 0;
 }

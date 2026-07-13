@@ -683,6 +683,70 @@ textarea {
   }
 }
 
+/* Global persistence banner (honest local write outcomes / two-tab safety).
+   Mirrors the impersonation banner's layout; semantic tones by variant. No
+   animation by design. */
+.persistence-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--n2-space-4);
+  border: 1px solid transparent;
+  border-radius: var(--n2-radius-md);
+  padding: var(--n2-space-3) var(--n2-space-5);
+  margin-bottom: var(--n2-space-6);
+}
+.persistence-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-1);
+  font-weight: 600;
+}
+.persistence-banner-text p {
+  margin: 0;
+}
+.persistence-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+  flex-shrink: 0;
+}
+.persistence-banner--error {
+  border-color: var(--n2-danger);
+  background: var(--n2-danger-soft);
+}
+.persistence-banner--error .persistence-banner-text {
+  color: var(--n2-danger);
+}
+.persistence-banner--conflict {
+  border-color: var(--n2-warning);
+  background: var(--n2-warning-soft);
+}
+.persistence-banner--conflict .persistence-banner-text {
+  color: var(--n2-warning);
+}
+.persistence-banner--info {
+  border-color: var(--n2-info);
+  background: var(--n2-info-soft);
+}
+.persistence-banner--info .persistence-banner-text {
+  color: var(--n2-info);
+}
+@media (max-width: 760px) {
+  .persistence-banner {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--n2-space-2);
+  }
+  .persistence-banner-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .persistence-banner-actions .btn {
+    flex: 1 1 auto;
+  }
+}
+
 /* ---------- Person chips / dots ---------- */
 
 .person-dot {
@@ -1775,6 +1839,29 @@ option {
   color: var(--text);
   font-family: var(--n2-font-data);
   font-variant-numeric: tabular-nums;
+}
+/* "Zaplanuj część" actions row — a compact ghost button below the bin card body. */
+.week-bin-block-actions {
+  margin-top: 4px;
+}
+.week-bin-schedule-btn {
+  font: inherit;
+  font-size: var(--n2-type-xs);
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--n2-lavender);
+  background: rgba(196, 150, 255, 0.12);
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-xs);
+  padding: 3px 8px;
+}
+.week-bin-schedule-btn:hover {
+  background: rgba(196, 150, 255, 0.22);
+  color: var(--n2-text);
+}
+.week-bin-schedule-btn:focus-visible {
+  outline: 2px solid var(--n2-lavender);
+  outline-offset: 1px;
 }
 
 /* ---------- Month view ---------- */
@@ -3474,6 +3561,12 @@ option {
 .context-insert-form {
   padding: 2px;
 }
+/* Muted sub-line under the "Zaplanuj część" form title (remaining bin hours). */
+.context-menu-sub {
+  font-size: var(--n2-type-xs);
+  color: var(--text-muted);
+  margin: 0 4px 4px;
+}
 .context-field {
   display: flex;
   flex-direction: column;
@@ -3830,6 +3923,11 @@ option {
   color: var(--n2-success);
   background: var(--n2-success-soft);
   border-color: var(--n2-success-soft);
+}
+.save-status--error {
+  color: var(--n2-danger);
+  background: var(--n2-danger-soft);
+  border-color: var(--n2-danger);
 }
 
 /* ---------- Workload resolution ---------- */

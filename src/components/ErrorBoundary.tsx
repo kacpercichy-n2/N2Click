@@ -72,9 +72,9 @@ export class ErrorBoundary extends Component<Props, State> {
         <div className="crash-card">
           <h1 className="crash-title">Coś poszło nie tak</h1>
           <p className="crash-body">
-            Aplikacja napotkała nieoczekiwany błąd. Twoje dane pozostały zapisane
-            lokalnie w przeglądarce — możesz pobrać ich kopię, odświeżyć aplikację
-            albo wyzerować dane, jeśli błąd się powtarza.
+            Aplikacja napotkała nieoczekiwany błąd. Możesz pobrać kopię danych
+            zapisanych w przeglądarce, odświeżyć aplikację albo wyzerować dane,
+            jeśli błąd się powtarza.
           </p>
           <div className="crash-actions">
             {canExport && (

@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'motion/react';
-import { useStore } from '../store/AppStore';
+import { useStore, usePersistence } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import { NO_PERM_TITLE } from '../store/permissions';
 import type { AllocationCell, TaskDraft } from '../store/AppStore';
@@ -122,7 +122,8 @@ function TaskModalShell({ taskParam, projectParam, onClose }: ShellProps) {
     dirtyRef.current = d;
     setDirty(d);
   }, []);
-  const { status, markSaved } = useSaveStatus(dirty);
+  const { saveError } = usePersistence();
+  const { status, markSaved } = useSaveStatus(dirty, saveError !== null);
 
   // Any close path prompts when there are unsaved changes.
   const requestClose = useCallback(() => {

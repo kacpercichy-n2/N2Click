@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   availableHoursInRange,
   availableHoursOnDate,
+  binHoursForTaskPerson,
   binTaskRowsForPerson,
   conflictDatesForTask,
   doneStatusIds,
@@ -1148,5 +1149,77 @@ describe('taskPlanningStatus', () => {
     });
 
     expect(taskPlanningStatus(state, 'does-not-exist')).toBe('nie rozplanowano');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Partial scheduling (SCHEDULE_BIN_PART, PKG-20260713-bin-split-core) moving a
+// task's derived planning status and bin-row selectors, one 8h step at a time.
+// ---------------------------------------------------------------------------
+
+describe('partial scheduling → planning status', () => {
+  it('a 30h bin row starts częściowo, stays częściowo after one 8h partial schedule, and reaches rozplanowano once fully scheduled', () => {
+    const bin1 = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 30, sortIndex: 0 });
+    let state = makeState({
+      tasks: [makeTask({ id: 't1', estimatedHours: 30 })],
+      workload: [bin1],
+    });
+
+    expect(taskPlanningStatus(state, 't1')).toBe('częściowo');
+
+    state = reducer(state, {
+      type: 'SCHEDULE_BIN_PART',
+      entryId: 'bin1',
+      date: '2026-07-08',
+      startMinutes: 480,
+      hours: 8,
+    });
+    // 22h still sits in the bin -> still częściowo, not rozplanowano yet.
+    expect(taskPlanningStatus(state, 't1')).toBe('częściowo');
+
+    state = reducer(state, {
+      type: 'SCHEDULE_BIN_PART',
+      entryId: 'bin1',
+      date: '2026-07-09',
+      startMinutes: 0, // a 22h block must start near midnight to fit within the day
+      hours: 22,
+    });
+    // Bin emptied, all 30h now on calendar days, matching the 30h estimate.
+    expect(taskPlanningStatus(state, 't1')).toBe('rozplanowano');
+  });
+});
+
+describe('binTaskRowsForPerson / binHoursForTaskPerson after a partial schedule', () => {
+  it('reflects the remainder after a partial schedule and drops the task once the row reaches zero', () => {
+    const bin1 = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 30, sortIndex: 0 });
+    let state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      workload: [bin1],
+    });
+
+    state = reducer(state, {
+      type: 'SCHEDULE_BIN_PART',
+      entryId: 'bin1',
+      date: '2026-07-08',
+      startMinutes: 480,
+      hours: 8,
+    });
+
+    expect(binHoursForTaskPerson(state, 't1', 'p1')).toBe(22);
+    const rowsAfterPartial = binTaskRowsForPerson(state, 'p1');
+    expect(rowsAfterPartial).toHaveLength(1);
+    expect(rowsAfterPartial[0].task.id).toBe('t1');
+    expect(rowsAfterPartial[0].hours).toBe(22);
+
+    state = reducer(state, {
+      type: 'SCHEDULE_BIN_PART',
+      entryId: 'bin1',
+      date: '2026-07-09',
+      startMinutes: 0, // a 22h block must start near midnight to fit within the day
+      hours: 22,
+    });
+
+    expect(binHoursForTaskPerson(state, 't1', 'p1')).toBe(0);
+    expect(binTaskRowsForPerson(state, 'p1')).toEqual([]);
   });
 });
