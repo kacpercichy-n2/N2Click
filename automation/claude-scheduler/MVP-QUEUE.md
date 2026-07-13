@@ -20,10 +20,12 @@ nie polega wylacznie na lokalnym, ignorowanym przez Git stanie `completed.json`.
 | `archive/completed/013.md` | Done | Date safety | shared validation, corrupt-data recovery, root error boundary |
 | `archive/completed/014.md` | Done | Workload integrity | preserve multi-block task schedules on save |
 | `archive/completed/015.md` | Done | Status semantics | stable completion meaning and safe status archive behavior |
-| `016.md` | Active | Bin recovery | partial scheduling from oversized bin work without weakening drag/drop |
-| `017.md` | Active | Scheduling invariants | audit remaining placement gaps without redoing date guards |
-| `018.md` | Active | Honest persistence | write failures and same-browser cross-tab conflict handling |
-| `019.md` | Active | Command/audit hardening | reducer validation, navigation dirty guards, impersonation attribution |
+| `archive/completed/016.md` | Done | Bin recovery | partial scheduling from oversized bin work without weakening drag/drop |
+| `archive/completed/017.md` | Done | Scheduling invariants | audit remaining placement gaps without redoing date guards |
+| `archive/completed/018.md` | Done | Honest persistence | write failures and same-browser cross-tab conflict handling |
+| `019a.md` | Active | Command validation | reducer validation for persistent command payloads |
+| `019b.md` | Active | Dirty-navigation safety | protect unsaved task/project edits on browser and route navigation |
+| `019c.md` | Active | Local audit attribution | impersonation-aware activity and sensitive local events |
 | `020.md` | Active | Availability correctness | zero/non-working availability and person-specific timeline conflicts |
 | `021.md` | Active | Release verification | browser coverage, accessibility checks, authoritative documentation |
 | `022.md` | Active | Backend migration plan | provider-neutral production architecture and safe adapter groundwork |
@@ -31,3 +33,11 @@ nie polega wylacznie na lokalnym, ignorowanym przez Git stanie `completed.json`.
 The former feature-expansion queue (actual time, documents, client card, sales,
 absences, PM dashboard, monitor timeline, mini profile, templates/reports) is
 deferred until the release blockers above are closed and re-reviewed.
+
+## Prompt sizing rule
+
+Keep the tier workflow, but one prompt must cover one cohesive technical slice.
+If a request independently changes reducer semantics, navigation behavior, and
+audit/activity data, create one ordered prompt for each slice rather than asking
+one run to implement and review all of them. A later prompt may rely on a green,
+committed predecessor; it must not silently fold in the other slices.

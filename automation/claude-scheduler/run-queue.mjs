@@ -45,6 +45,10 @@ const skipPermissions = process.env.CLAUDE_AUTO_SKIP_PERMISSIONS === "1";
 const allowedTools = process.env.CLAUDE_AUTO_ALLOWED_TOOLS || DEFAULT_ALLOWED_TOOLS.join(",");
 const verifyCommands = parseVerifyCommands(process.env.CLAUDE_AUTO_VERIFY || "npm test && npm run build");
 const earlyCheckMinutes = parseOptionalPositiveInt(process.env.CLAUDE_AUTO_EARLY_CHECK_MINUTES);
+const usageHelper = process.env.CLAUDE_AUTO_USAGE_HELPER || path.join(process.env.HOME || "", ".claude", "fetch-claude-usage.swift");
+const usageTelemetryEnabled = fs.existsSync(usageHelper);
+const usageGateEnabled = process.env.CLAUDE_AUTO_USAGE_GATE === "1" && usageTelemetryEnabled;
+const metricsFile = path.join(stateDir, "run-metrics.jsonl");
 
 const promptFiles = fs
   .readdirSync(promptDir)
@@ -77,6 +81,9 @@ console.log(`Schedule: ${scheduleTimes.join(", ")}`);
 if (earlyCheckMinutes) {
   console.log(`Early check: next prompt may run ${earlyCheckMinutes} minutes after a successful prompt.`);
 }
+if (usageTelemetryEnabled) {
+  console.log(`Usage telemetry: enabled${usageGateEnabled ? " (gating at explicit request)" : " (observational; it will not delay the queue)"}.`);
+}
 console.log(`Remaining prompts: ${remainingPrompts.map((file) => path.basename(file)).join(", ")}`);
 console.log("Keep the Mac awake with: caffeinate -dimsu node automation/claude-scheduler/run-queue.mjs");
 
@@ -87,6 +94,9 @@ for (const promptFile of remainingPrompts) {
 
   if (!dryRun) {
     await sleepUntil(slot);
+  }
+  if (usageGateEnabled && !dryRun) {
+    await waitForUsageBudget();
   }
 
   const ok = await runPrompt(promptFile);
@@ -108,8 +118,20 @@ async function runPrompt(promptFile) {
   const promptBody = fs.readFileSync(promptFile, "utf8");
   const fullPrompt = buildPrompt(promptBody, basename);
   let ok = true;
+  const metrics = {
+    prompt: basename,
+    startedAt: startedAt.toISOString(),
+    promptBytes: Buffer.byteLength(promptBody),
+    promptWords: countWords(promptBody),
+    usageBefore: usageTelemetryEnabled && !dryRun ? await readUsageSnapshot() : null,
+    claudeExitCode: null,
+    verification: [],
+  };
 
   appendLog(logFile, `# ${basename}\nStarted: ${startedAt.toISOString()}\nBranch: ${gitOutput(["branch", "--show-current"]).trim()}\n\n`);
+  if (metrics.usageBefore) {
+    appendLog(logFile, `Usage before run: ${formatUsage(metrics.usageBefore)}\n`);
+  }
 
   const branchError = dryRun ? null : reviewBranchSafetyError();
   if (branchError !== null) {
@@ -130,6 +152,7 @@ async function runPrompt(promptFile) {
       ? ["--print", "--dangerously-skip-permissions"]
       : ["--print", "--allowedTools", allowedTools];
     const claudeCode = await streamCommand("claude", claudeArgs, logFile, fullPrompt);
+    metrics.claudeExitCode = claudeCode;
     ok = ok && claudeCode === 0;
   } else {
     appendLog(logFile, "[dry run] Claude execution skipped.\n");
@@ -140,19 +163,26 @@ async function runPrompt(promptFile) {
     if (!dryRun) {
       const [cmd, ...args] = command.split(/\s+/);
       const code = await streamCommand(cmd, args, logFile);
+      metrics.verification.push({ command, exitCode: code });
       ok = ok && code === 0;
     }
   }
 
   if (dryRun) {
     appendLog(logFile, "\nDry run: no commit and no completed-state update.\n");
+  } else if (ok) {
+    commitIfNeeded(promptFile, logFile);
+    markCompleted(basename);
   } else {
-    commitIfNeeded(promptFile, ok, logFile);
-    if (ok) {
-      markCompleted(basename);
-    } else {
-      appendLog(logFile, "\nPrompt was not marked as completed because Claude or verification failed.\n");
-    }
+    appendLog(logFile, "\nVerification failed: changes were intentionally left uncommitted for human recovery.\nPrompt was not marked as completed.\n");
+  }
+  metrics.finishedAt = new Date().toISOString();
+  metrics.durationSeconds = Math.round((new Date(metrics.finishedAt).getTime() - startedAt.getTime()) / 1000);
+  metrics.status = ok ? "ok" : "failed";
+  metrics.usageAfter = usageTelemetryEnabled && !dryRun ? await readUsageSnapshot() : null;
+  if (!dryRun) appendRunMetrics(metrics);
+  if (metrics.usageAfter) {
+    appendLog(logFile, `Usage after run: ${formatUsage(metrics.usageAfter)}\n`);
   }
   appendLog(logFile, `\nFinished: ${new Date().toISOString()}\nStatus: ${ok ? "ok" : "failed"}\n`);
   return ok;
@@ -225,7 +255,7 @@ function assertSafeReviewBranch() {
   if (error) throw new Error(error);
 }
 
-function commitIfNeeded(promptFile, ok, logFile) {
+function commitIfNeeded(promptFile, logFile) {
   const status = dirtyStatus();
   if (!status) {
     appendLog(logFile, "\nNo uncommitted changes after Claude run.\n");
@@ -235,8 +265,7 @@ function commitIfNeeded(promptFile, ok, logFile) {
 
   gitChecked(["add", "-A"]);
   const title = firstPromptLine(promptFile);
-  const prefix = ok ? "auto" : "auto-failed";
-  const message = `${prefix}: ${path.basename(promptFile, ".md")}${title ? ` - ${title}` : ""}`.slice(0, 120);
+  const message = `auto: ${path.basename(promptFile, ".md")}${title ? ` - ${title}` : ""}`.slice(0, 120);
   gitChecked(["commit", "-m", message]);
   appendLog(logFile, `\nCommitted changes with message: ${message}\n`);
   console.log(`Committed changes: ${message}`);
@@ -256,6 +285,65 @@ function markCompleted(basename) {
   const current = new Set(readCompleted());
   current.add(basename);
   fs.writeFileSync(stateFile, `${JSON.stringify({ completed: [...current].sort() }, null, 2)}\n`);
+}
+
+async function waitForUsageBudget() {
+  while (true) {
+    const snapshot = await readUsageSnapshot();
+    if (!snapshot) {
+      console.warn("Usage helper returned no valid data; continuing with the scheduled slot.");
+      return;
+    }
+    if (snapshot.percent <= 50) return;
+    if (!snapshot.resetsAt) {
+      console.warn(`Usage is ${snapshot.percent}%, but no reset time was returned. Continuing because the gate cannot schedule a safe retry.`);
+      return;
+    }
+    const resumeAt = new Date(snapshot.resetsAt.getTime() + 60_000);
+    console.log(`Usage gate is explicitly enabled and usage is ${snapshot.percent}% > 50%; waiting until ${formatDateTime(resumeAt)}.`);
+    await sleepUntil(resumeAt);
+  }
+}
+
+async function readUsageSnapshot() {
+  return new Promise((resolve) => {
+    const child = spawn(usageHelper, [], {
+      cwd: repoRoot,
+      env: process.env,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    let output = "";
+    const timeout = setTimeout(() => child.kill("SIGTERM"), 30_000);
+    child.stdout.on("data", (chunk) => {
+      output += chunk;
+    });
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      if (code !== 0) return resolve(null);
+      const [percentRaw, resetRaw = ""] = output.trim().split("|");
+      const percent = Number(percentRaw);
+      if (!Number.isFinite(percent) || percent < 0 || percent > 100) return resolve(null);
+      const reset = resetRaw ? new Date(resetRaw) : null;
+      const resetsAt = reset && !Number.isNaN(reset.getTime()) ? reset : null;
+      resolve({ percent, resetsAt });
+    });
+    child.on("error", () => {
+      clearTimeout(timeout);
+      resolve(null);
+    });
+  });
+}
+
+function appendRunMetrics(metrics) {
+  fs.appendFileSync(metricsFile, `${JSON.stringify(metrics)}\n`);
+}
+
+function formatUsage(snapshot) {
+  return `${snapshot.percent}%${snapshot.resetsAt ? ` (resets ${snapshot.resetsAt.toISOString()})` : ""}`;
+}
+
+function countWords(value) {
+  return value.trim() ? value.trim().split(/\s+/).length : 0;
 }
 
 function parseTimes(value) {
