@@ -6,7 +6,25 @@ import { reducer, type PersonDraft, type TaskDraft } from './AppStore';
 import { emptyData } from './storage';
 import { BIN_DATE, hasCollision, hoursToMinutes } from '../utils/time';
 import { addDaysStr, MAX_TASK_PERIOD_DAYS } from '../utils/dates';
-import type { AppData, Person, Task, WorkloadEntry } from '../types';
+import type { AppData, Person, Project, Status, Task, WorkloadEntry } from '../types';
+
+// Reference entities the SAVE_TASK drafts point at (projectId 'proj1' /
+// statusId 'status1'), so the reducer's reference-existence guard accepts them.
+const PROJECT: Project = {
+  id: 'proj1',
+  clientId: '',
+  name: 'Project',
+  description: '',
+  statusId: 'status1',
+  paid: false,
+  startDate: '2026-07-06',
+  endDate: '2026-07-08',
+  departmentId: '',
+  serviceTypeId: '',
+  createdAt: '2026-01-01T00:00:00.000Z',
+  updatedAt: '2026-01-01T00:00:00.000Z',
+};
+const STATUS: Status = { id: 'status1', name: 'Do zrobienia', slug: 'do-zrobienia', color: '#9aa7c4', order: 0, archived: false, isDone: false };
 
 function makeState(overrides: Partial<AppData> = {}): AppData {
   return { ...emptyData(), ...overrides };
@@ -656,6 +674,9 @@ describe('SAVE_TASK bin behavior', () => {
     const binP2 = makeEntry({ id: 'binP2', taskId: 't1', personId: 'p2', date: BIN_DATE, startMinutes: 0, plannedHours: 4, sortIndex: 0 });
     const state = makeState({
       tasks: [task],
+      projects: [PROJECT],
+      statuses: [STATUS],
+      people: [makePerson({ id: 'p1' }), makePerson({ id: 'p2' })],
       assignments: [
         { id: 'a1', taskId: 't1', personId: 'p1' },
         { id: 'a2', taskId: 't1', personId: 'p2' },
@@ -683,6 +704,9 @@ describe('SAVE_TASK bin behavior', () => {
     const task = makeTask({ id: 't1' });
     const state = makeState({
       tasks: [task],
+      projects: [PROJECT],
+      statuses: [STATUS],
+      people: [makePerson({ id: 'p1' })],
       assignments: [{ id: 'a1', taskId: 't1', personId: 'p1' }],
       workload: [],
     });

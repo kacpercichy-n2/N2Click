@@ -6,10 +6,29 @@
 import { describe, expect, it } from 'vitest';
 import { reducer, type SaveTaskPayload, type TaskDraft } from './AppStore';
 import { emptyData } from './storage';
-import type { AppData, ChecklistItem, Task, WorkCategory } from '../types';
+import type { AppData, ChecklistItem, Project, Status, Task, WorkCategory } from '../types';
+
+// Reference entities the SAVE_TASK drafts point at (projectId 'proj1' /
+// statusId 'status1'), so the reducer's reference-existence guard accepts them.
+const PROJECT: Project = {
+  id: 'proj1',
+  clientId: '',
+  name: 'Project',
+  description: '',
+  statusId: 'status1',
+  paid: false,
+  startDate: '2026-07-06',
+  endDate: '2026-07-08',
+  departmentId: '',
+  serviceTypeId: '',
+  createdAt: '2026-01-01T00:00:00.000Z',
+  updatedAt: '2026-01-01T00:00:00.000Z',
+};
+const STATUS: Status = { id: 'status1', name: 'Do zrobienia', slug: 'do-zrobienia', color: '#9aa7c4', order: 0, archived: false, isDone: false };
 
 function makeState(overrides: Partial<AppData> = {}): AppData {
-  return { ...emptyData(), ...overrides };
+  const base = emptyData();
+  return { ...base, projects: [PROJECT], statuses: [...base.statuses, STATUS], ...overrides };
 }
 
 function makeTask(overrides: Partial<Task> & { id: string }): Task {

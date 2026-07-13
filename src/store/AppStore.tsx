@@ -39,6 +39,13 @@ import {
   type SaveFailureReason,
 } from './storage';
 import { anyDirty } from '../utils/dirtyRegistry';
+import {
+  hasEntity,
+  isRequiredName,
+  isValidPersonDraft,
+  isValidProjectDraft,
+  isValidTaskDraft,
+} from './commandValidation';
 import { wouldCreateSupervisorCycle } from './selectors';
 import { registerPersonOrder } from '../utils/colors';
 import {
@@ -307,6 +314,15 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
   ) {
     return state;
   }
+  // Reject a stale edit id: without this the task map skips the ghost id but
+  // assignments/workload are STILL rebuilt for it and an activity row appended —
+  // the worst live corruption path. Reject before any of that runs.
+  if (taskId !== null && !hasEntity(state, 'task', taskId)) return state;
+  // Title required; projectId/statusId must exist; estimate null or finite >= 0.
+  if (!isValidTaskDraft(state, draft)) return state;
+  // A dangling person reference covers every persistable person id: allocations
+  // and newUnassigned are filtered by the assignee set below. Reject atomically.
+  if (assigneeIds.some((id) => !hasEntity(state, 'person', id))) return state;
   const ts = nowIso();
   const checklist = cleanChecklist(draft.checklist);
   // A category can disappear while an edit modal is still open. Persist only a
@@ -644,6 +660,12 @@ function saveProject(
 ): AppData {
   // Reject an invalid/empty/reversed period (no max-days cap for projects).
   if (periodError(draft.startDate, draft.endDate) !== null) return state;
+  // Reject a stale edit id (a ghost id would append a garbage activity row).
+  if (projectId !== null && !hasEntity(state, 'project', projectId)) return state;
+  const existing = projectId === null ? null : state.projects.find((p) => p.id === projectId) ?? null;
+  // Name required; statusId must exist; client rule (strict on create, an
+  // UNCHANGED dangling clientId stays editable on a legacy orphan project).
+  if (!isValidProjectDraft(state, draft, existing, newClientName)) return state;
   const ts = nowIso();
 
   // Optionally create (or reuse) a client in the same atomic action, so a
@@ -1449,6 +1471,8 @@ function saveStatus(
     };
     return { ...state, statuses: [...state.statuses, status] };
   }
+  // Reject a stale rename id (previously returned a new identical state ref).
+  if (!hasEntity(state, 'status', statusId)) return state;
   // Rename keeps the raw value so inline editing isn't fighting the reducer
   // (trailing spaces while typing); the slug derives from the trimmed name.
   // `isDone` is untouched — the spread preserves the existing flag.
@@ -1503,6 +1527,7 @@ function reorderStatus(state: AppData, statusId: string, direction: -1 | 1): App
 /** Delete is refused (state unchanged) when the status is referenced (else
  *  archive), OR it is the only active status, OR the only `isDone` status. */
 function deleteStatus(state: AppData, statusId: string): AppData {
+  if (!hasEntity(state, 'status', statusId)) return state;
   const used =
     state.projects.some((p) => p.statusId === statusId) ||
     state.tasks.some((t) => t.statusId === statusId);
@@ -1521,6 +1546,15 @@ function saveMilestone(
   date: string,
 ): AppData {
   if (!isValidDateStr(date)) return state;
+  // Project must exist; name required; on edit the milestone must exist and
+  // belong to that project. Otherwise the activity row could be attributed to
+  // a different project than the milestone being changed.
+  if (!hasEntity(state, 'project', projectId)) return state;
+  if (!isRequiredName(name)) return state;
+  const existingMilestone = milestoneId === null
+    ? null
+    : state.milestones.find((milestone) => milestone.id === milestoneId) ?? null;
+  if (milestoneId !== null && existingMilestone?.projectId !== projectId) return state;
   if (milestoneId === null) {
     const m: Milestone = { id: uid(), projectId, name: name.trim(), date };
     return {
@@ -1551,6 +1585,11 @@ export function reducer(state: AppData, action: Action): AppData {
     case 'SET_TASK_DATES':
       return setTaskDates(state, action.taskId, action.startDate, action.endDate);
     case 'SET_TASK_STATUS': {
+      // Reject a stale taskId (would append activity) or a dangling statusId
+      // (would persist onto the task) before any write.
+      if (!hasEntity(state, 'task', action.taskId) || !hasEntity(state, 'status', action.statusId)) {
+        return state;
+      }
       const status = state.statuses.find((s) => s.id === action.statusId);
       return {
         ...state,
@@ -1572,6 +1611,8 @@ export function reducer(state: AppData, action: Action): AppData {
     case 'DELETE_PROJECT':
       return deleteProject(state, action.projectId);
     case 'SET_PROJECT_STATUS': {
+      // Existing stale-project guard, plus a dangling-statusId reject.
+      if (!hasEntity(state, 'status', action.statusId)) return state;
       const status = state.statuses.find((s) => s.id === action.statusId);
       const project = state.projects.find((p) => p.id === action.projectId);
       if (!project || project.statusId === action.statusId) return state;
@@ -1591,6 +1632,7 @@ export function reducer(state: AppData, action: Action): AppData {
       };
     }
     case 'SET_PROJECT_PAID':
+      if (!hasEntity(state, 'project', action.projectId)) return state;
       return {
         ...state,
         projects: state.projects.map((p) =>
@@ -1607,6 +1649,8 @@ export function reducer(state: AppData, action: Action): AppData {
       };
     case 'SET_PROJECT_DATES':
       if (periodError(action.startDate, action.endDate) !== null) return state;
+      // A stale id would otherwise append a garbage activity row.
+      if (!hasEntity(state, 'project', action.projectId)) return state;
       return {
         ...state,
         projects: state.projects.map((p) =>
@@ -1641,13 +1685,13 @@ export function reducer(state: AppData, action: Action): AppData {
       };
     }
     case 'DELETE_MILESTONE': {
+      // Reject a stale id by same-reference (previously returned a new copy).
       const m = state.milestones.find((x) => x.id === action.milestoneId);
+      if (!m) return state;
       return {
         ...state,
         milestones: state.milestones.filter((x) => x.id !== action.milestoneId),
-        activity: m
-          ? withActivity(state, 'project', m.projectId, `usunął/usunęła kamień milowy „${m.name}”`)
-          : state.activity,
+        activity: withActivity(state, 'project', m.projectId, `usunął/usunęła kamień milowy „${m.name}”`),
       };
     }
     case 'ADD_COMMENT': {
@@ -1671,6 +1715,7 @@ export function reducer(state: AppData, action: Action): AppData {
       };
     }
     case 'ADD_PERSON': {
+      if (!isValidPersonDraft(action.person)) return state;
       const id = uid();
       const base = personFromDraft(action.person);
       // Defensive cycle guard (a fresh id is unreferenced, so this only trips on
@@ -1692,6 +1737,8 @@ export function reducer(state: AppData, action: Action): AppData {
       // Guard the last administrator: refuse a save that would demote the only
       // remaining admin (returns state unchanged — reject-by-same-ref).
       const target = state.people.find((p) => p.id === action.personId);
+      if (!target) return state;
+      if (!isValidPersonDraft(action.person)) return state;
       const adminCount = state.people.filter((p) => p.accessRole === 'administrator').length;
       if (
         target?.accessRole === 'administrator' &&
@@ -1716,6 +1763,8 @@ export function reducer(state: AppData, action: Action): AppData {
       };
     }
     case 'DELETE_PERSON': {
+      // Reject a stale id first (no cascade, no state churn on a missing person).
+      if (!hasEntity(state, 'person', action.personId)) return state;
       // Guard the last administrator: refuse to delete the only remaining admin
       // (returns state unchanged). Applied BEFORE the deletePerson cascade so the
       // supervisorId cleanup only runs on an allowed delete.
@@ -1727,6 +1776,9 @@ export function reducer(state: AppData, action: Action): AppData {
       return deletePerson(state, action.personId);
     }
     case 'SET_CURRENT_USER':
+      // '' is logout (clears identity); any other id must exist so a dangling
+      // personId can never be persisted as the acting user.
+      if (action.personId !== '' && !hasEntity(state, 'person', action.personId)) return state;
       // Login / direct identity set: always ends any impersonation.
       return { ...state, currentUserId: action.personId, impersonatorId: '' };
     case 'IMPERSONATE': {
