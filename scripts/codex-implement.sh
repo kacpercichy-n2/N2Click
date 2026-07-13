@@ -31,8 +31,8 @@ Pre-flight the package against docs/workflow/HANDOFF-TEMPLATE.md. If it is
 ambiguous, out of scope, or fails Definition of Ready, stop without editing and
 report the precise blocker. Otherwise implement only this package, run its
 required verification, and append a concise synthesized result to
-handoffs/RUN-STATE.md. Do not merge, rebase, switch branches, or push. Do not
-commit unless the package explicitly requires it."
+handoffs/RUN-STATE.md. Do not commit, push, merge, rebase or switch branches;
+the scheduler owns final verification, archive and Git operations."
 
 echo "Starting Codex implementation (${CODEX_IMPLEMENT_MODEL}, reasoning ${CODEX_IMPLEMENT_REASONING_EFFORT})..." >&2
 exec codex exec \

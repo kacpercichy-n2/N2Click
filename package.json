@@ -3,12 +3,17 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:scheduler": "node --test automation/claude-scheduler/*.test.mjs",
+    "check:openwiki": "node scripts/check-openwiki-links.mjs",
     "check:onboarding": "node scripts/browser-check-onboarding.mjs chromium && node scripts/browser-check-onboarding.mjs webkit"
   },
   "dependencies": {

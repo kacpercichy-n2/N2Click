@@ -27,8 +27,10 @@ nie polega wylacznie na lokalnym, ignorowanym przez Git stanie `completed.json`.
 | `019b.md` | Active | Dirty-navigation safety | protect unsaved task/project edits on browser and route navigation |
 | `019c.md` | Active | Local audit attribution | impersonation-aware activity and sensitive local events |
 | `020.md` | Active | Availability correctness | zero/non-working availability and person-specific timeline conflicts |
-| `021.md` | Active | Release verification | browser coverage, accessibility checks, authoritative documentation |
-| `022.md` | Active | Backend migration plan | provider-neutral production architecture and safe adapter groundwork |
+| `021a.md` | Active | Release runner | deterministic existing browser matrix command |
+| `021b.md` | Active | Regression coverage | missing browser and accessibility assertions only |
+| `021c.md` | Active | Documentation | synchronize authoritative release docs after green checks |
+| `022.md` | Active | Backend migration plan | provider-neutral decision documents; no preparatory code |
 
 The former feature-expansion queue (actual time, documents, client card, sales,
 absences, PM dashboard, monitor timeline, mini profile, templates/reports) is
@@ -37,7 +39,6 @@ deferred until the release blockers above are closed and re-reviewed.
 ## Prompt sizing rule
 
 Keep the tier workflow, but one prompt must cover one cohesive technical slice.
-If a request independently changes reducer semantics, navigation behavior, and
-audit/activity data, create one ordered prompt for each slice rather than asking
-one run to implement and review all of them. A later prompt may rely on a green,
-committed predecessor; it must not silently fold in the other slices.
+If a request independently changes runtime behavior, browser infrastructure and
+documentation, create one ordered prompt for each slice. A later prompt may rely
+on a green, committed predecessor; it must not silently fold in the other slices.

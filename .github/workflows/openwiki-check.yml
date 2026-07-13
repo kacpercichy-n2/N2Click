@@ -1,0 +1,28 @@
+name: OpenWiki and scheduler contract check
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Validate wiki links and active prompt contracts
+        run: node scripts/check-openwiki-links.mjs
+
+      - name: Test scheduler gates and recovery
+        run: node --test automation/claude-scheduler/*.test.mjs

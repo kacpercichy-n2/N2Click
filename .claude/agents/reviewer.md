@@ -21,10 +21,9 @@ orchestrator (or a human) acts on.
 1. **Load the scoped intent.** Read the relevant handoff package(s), declared
    wiki context and compact `handoffs/RUN-STATE.md`. Do not reconstruct history
    from old packages or logs.
-2. **Get Codex's second opinion proportionally.** Run
-   `bash scripts/codex-review.sh` only for trust/persistence, calendar-pointer,
-   cross-boundary or uncertain changes. For a focused low-risk diff, record why
-   the second pass was skipped and continue with your own review.
+2. **Apply the declared Codex policy.** `required` must complete successfully or
+   the review is blocked. For `conditional`, run it only after context expansion
+   or unresolved uncertainty. For `skip`, reuse the prompt's rationale.
 3. **Read the diff structurally.** Use `git diff` / `git log` (read-only Bash)
    and Read/Grep to inspect what changed. Focus on correctness, edge cases, and
    fit with the existing architecture — not style nits a linter already catches.
@@ -36,13 +35,16 @@ orchestrator (or a human) acts on.
    blindly accept or reject Codex.
 6. **Verify the tests exist and are meaningful.** Confirm the change is covered
    and that tests assert real behavior, not tautologies. You may run the tests
-   read-only to confirm green, but you don't fix failures — you report them.
+   read-only to confirm a focused result, but do not repeat the scheduler-owned
+   full suite. You don't fix failures — you report them.
+7. **Own the wiki decision.** After reading the final diff, record exactly one
+   `wiki updated` or `wiki unchanged` conclusion with a specific reason.
 
 ## Verdict contract
 
 Return a compact structured verdict:
 
-- **Status:** approve / approve-with-nits / changes-required
+- **Status:** approve / changes-required
 - **Blockers:** numbered, each with file:line and the specific fix needed
 - **Nits:** optional, non-blocking
 - **Codex findings:** adjudicated — accepted (→ blockers/nits) or dismissed (with reason)

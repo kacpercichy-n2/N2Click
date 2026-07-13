@@ -1,0 +1,1 @@
+Generate optional human-facing documentation from the minimum relevant source and tracked `openwiki/n2hub/` context. Do not inspect broad Git history, historic handoffs or unrelated source by default. Do not modify `AGENTS.md`, `CLAUDE.md` or the scoped `openwiki/n2hub/` pages. Avoid embedding current queue state, test counts, timestamps or uncommitted-worktree claims.

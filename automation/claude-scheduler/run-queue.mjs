@@ -2,6 +2,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { promptContractErrorFor, promptMetadata } from "./prompt-contract.mjs";
+import { runResultErrorFor } from "./run-result.mjs";
+import { finalizePrompt } from "./scheduler-files.mjs";
+import { buildReviewDiff } from "./review-diff.mjs";
+import { finalGateError } from "./final-gate.mjs";
 
 const DEFAULT_TIMES = ["16:00", "21:01", "02:02", "07:03", "12:04"];
 const DEFAULT_ALLOWED_TOOLS = [
@@ -13,10 +19,20 @@ const DEFAULT_ALLOWED_TOOLS = [
   "Grep",
   "LS",
   "TodoWrite",
-  "Bash(git *)",
+  "Agent",
+  "Bash(git status *)",
+  "Bash(git diff *)",
+  "Bash(git log *)",
+  "Bash(git show *)",
+  "Bash(git rev-parse *)",
+  "Bash(git branch --show-current)",
+  "Bash(git merge-base *)",
   "Bash(npm *)",
   "Bash(npx *)",
   "Bash(node *)",
+  "Bash(bash scripts/codex-review.sh *)",
+  "Bash(CODEX_REVIEW_RUN_ID=* bash scripts/codex-review.sh *)",
+  "Bash(codex exec *)",
   "Bash(rg *)",
   "Bash(sed *)",
   "Bash(cat *)",
@@ -49,6 +65,7 @@ const usageHelper = process.env.CLAUDE_AUTO_USAGE_HELPER || path.join(process.en
 const usageTelemetryEnabled = fs.existsSync(usageHelper);
 const usageGateEnabled = process.env.CLAUDE_AUTO_USAGE_GATE === "1" && usageTelemetryEnabled;
 const metricsFile = path.join(stateDir, "run-metrics.jsonl");
+const runResultFile = path.join(repoRoot, "handoffs", "RUN-RESULT.json");
 
 const promptFiles = fs
   .readdirSync(promptDir)
@@ -63,12 +80,11 @@ if (promptFiles.length === 0) {
 }
 
 const completed = readCompleted();
-const remainingPrompts = promptFiles.filter((file) => !completed.includes(path.basename(file)));
-
-if (remainingPrompts.length === 0) {
-  console.log("All prompt files are already marked as completed.");
-  process.exit(0);
+const staleCheckpoints = promptFiles.filter((file) => completed.includes(path.basename(file)));
+if (staleCheckpoints.length > 0) {
+  console.warn(`Ignoring stale completed checkpoint(s) for active prompt files: ${staleCheckpoints.map((file) => path.basename(file)).join(", ")}`);
 }
+const remainingPrompts = promptFiles;
 
 if (!dryRun) {
   ensureReviewBranch();
@@ -88,12 +104,16 @@ console.log(`Remaining prompts: ${remainingPrompts.map((file) => path.basename(f
 console.log("Keep the Mac awake with: caffeinate -dimsu node automation/claude-scheduler/run-queue.mjs");
 
 let earlyEligibleAt = null;
+let schedulingCursor = new Date();
 for (const promptFile of remainingPrompts) {
-  const slot = nextRunSlot(new Date(), scheduleTimes, earlyEligibleAt);
+  const slot = nextRunSlot(schedulingCursor, scheduleTimes, earlyEligibleAt);
   console.log(`\nNext prompt ${path.basename(promptFile)} scheduled for ${formatDateTime(slot)}${slot.source ? ` (${slot.source})` : ""}.`);
 
   if (!dryRun) {
     await sleepUntil(slot);
+    schedulingCursor = new Date();
+  } else {
+    schedulingCursor = new Date(slot.getTime() + 2_000);
   }
   if (usageGateEnabled && !dryRun) {
     await waitForUsageBudget();
@@ -114,16 +134,23 @@ console.log("\nPrompt queue finished.");
 async function runPrompt(promptFile) {
   const basename = path.basename(promptFile);
   const startedAt = new Date();
+  const runId = randomUUID();
   const logFile = path.join(logDir, `${formatDateTimeForFile(startedAt)}-${basename.replace(/\.md$/, "")}.log`);
   const promptBody = fs.readFileSync(promptFile, "utf8");
-  const promptContractError = promptContractErrorFor(promptBody);
-  const fullPrompt = buildPrompt(promptBody, basename);
+  const promptContractError = promptContractErrorFor(promptBody, repoRoot);
+  const metadata = promptMetadata(promptBody);
+  const fullPrompt = buildPrompt(promptBody, basename, runId);
   let ok = true;
+  let reviewedDiffHash = null;
   const metrics = {
     prompt: basename,
+    runId,
     startedAt: startedAt.toISOString(),
     promptBytes: Buffer.byteLength(promptBody),
     promptWords: countWords(promptBody),
+    risk: metadata.risk,
+    route: metadata.route,
+    codexReview: metadata.codexReview,
     usageBefore: usageTelemetryEnabled && !dryRun ? await readUsageSnapshot() : null,
     claudeExitCode: null,
     verification: [],
@@ -136,6 +163,12 @@ async function runPrompt(promptFile) {
   if (promptContractError) {
     appendLog(logFile, `Prompt contract failed: ${promptContractError}\n`);
     console.error(`Cannot run ${basename}: ${promptContractError}`);
+    return false;
+  }
+  if (metadata.codexReview === "required" && !commandAvailable("codex")) {
+    const message = "Codex review is required for this high-risk prompt, but the codex CLI is unavailable.";
+    appendLog(logFile, `${message}\n`);
+    console.error(`Cannot run ${basename}: ${message}`);
     return false;
   }
 
@@ -152,7 +185,7 @@ async function runPrompt(promptFile) {
     return false;
   }
 
-  console.log(`Running Claude for ${basename}. Log: ${logFile}`);
+  console.log(`${dryRun ? "Dry-run validating" : "Running Claude for"} ${basename}. Log: ${logFile}`);
   if (!dryRun) {
     const claudeArgs = skipPermissions
       ? ["--print", "--dangerously-skip-permissions"]
@@ -164,23 +197,61 @@ async function runPrompt(promptFile) {
     appendLog(logFile, "[dry run] Claude execution skipped.\n");
   }
 
-  for (const command of verifyCommands) {
+  if (ok && !dryRun) {
+    reviewedDiffHash = buildReviewDiff(repoRoot).hash;
+    const resultError = runResultErrorFor({
+      resultFile: runResultFile,
+      repoRoot,
+      prompt: basename,
+      runId,
+      codexPolicy: metadata.codexReview,
+      startedAt,
+      currentDiffHash: reviewedDiffHash,
+    });
+    if (resultError) {
+      appendLog(logFile, `Run result gate failed: ${resultError}\n`);
+      console.error(`Cannot approve ${basename}: ${resultError}`);
+      ok = false;
+    }
+  }
+
+  for (const command of ok ? verifyCommands : []) {
     appendLog(logFile, `\n$ ${command}\n`);
     if (!dryRun) {
       const [cmd, ...args] = command.split(/\s+/);
       const code = await streamCommand(cmd, args, logFile);
       metrics.verification.push({ command, exitCode: code });
       ok = ok && code === 0;
+      if (!ok) break;
+    }
+  }
+
+  if (ok && !dryRun) {
+    const gateError = finalGateError({
+      reviewedDiffHash,
+      currentDiffHash: buildReviewDiff(repoRoot).hash,
+      branchError: reviewBranchSafetyError(),
+    });
+    if (gateError) {
+      appendLog(logFile, `Final gate failed: ${gateError}\n`);
+      console.error(`Cannot commit ${basename}: ${gateError}`);
+      ok = false;
     }
   }
 
   if (dryRun) {
     appendLog(logFile, "\nDry run: no commit and no completed-state update.\n");
   } else if (ok) {
-    commitIfNeeded(promptFile, logFile);
+    const promptTitle = firstPromptLine(promptFile);
+    finalizePrompt({
+      promptFile,
+      archiveDir: path.join(schedulerDir, "archive", "completed"),
+      commit: () => commitIfNeeded(basename, promptTitle, logFile),
+      unstage: unstageAll,
+    });
     markCompleted(basename);
   } else {
-    appendLog(logFile, "\nVerification failed: changes were intentionally left uncommitted for human recovery.\nPrompt was not marked as completed.\n");
+    appendLog(logFile, "\nRun or verification failed: changes were intentionally left uncommitted for human recovery.\nPrompt was not marked as completed.\n");
   }
   metrics.finishedAt = new Date().toISOString();
   metrics.durationSeconds = Math.round((new Date(metrics.finishedAt).getTime() - startedAt.getTime()) / 1000);
@@ -194,7 +265,7 @@ async function runPrompt(promptFile) {
   return ok;
 }
 
-function buildPrompt(promptBody, basename) {
+function buildPrompt(promptBody, basename, runId) {
   return `You are working unattended in this repository.
 
 Before editing, read CLAUDE.md, then read only the wiki pages and source
@@ -202,16 +273,35 @@ touchpoints declared in the prompt. Do not expand context to unrelated pages,
 historic handoffs, or a full repository scan unless a direct dependency makes
 it necessary; record that exception in the final report.
 
+Use the tier routing contract in .claude/commands/tier.md and delegate each
+declared role to the matching project agent. Use no additional agent passes.
+
 Automation constraints:
 - Work only in the current repository.
 - Do not merge, rebase, or switch to main.
-- Do not push to remote unless this prompt explicitly asks for it.
-- If pushing is requested, push only the current review branch.
+- Do not commit or push. The scheduler owns the final verification, archive move,
+  commit and any later operator-approved push.
 - Keep the change scoped to the user prompt.
 - Treat current main code, tests, and CLAUDE.md as authoritative. If part of the prompt is already implemented, verify it and do not reimplement, revert, or weaken it.
-- Commit your completed work to the current review branch if there are changes.
-- Before declaring success, check whether the declared wiki page needs a focused
-  update. State either what changed there or "wiki unchanged" with a reason.
+- Follow the route and review policy in ## Risk and routing. High-risk work must
+  complete the required Codex review; do not silently downgrade it.
+- Workers run focused verification while iterating. The scheduler owns the one
+  final full npm test + npm run build gate.
+- The final reviewer/orchestrator records exactly one focused wiki decision:
+  what changed, or "wiki unchanged" with a reason.
+- Report synthesized results only. Include context expansions, exact focused
+  checks, Codex used/skipped, deviations and blockers; do not paste raw logs.
+- After the final reviewer verdict, write handoffs/RUN-RESULT.json with exactly:
+  {"prompt":"${basename}","runId":"${runId}","status":"approved|blocked",
+  "reviewerVerdict":"approve|changes-required","codexReview":{"policy":"required|conditional|skip",
+  "status":"passed|skipped","artifact":"reviews/<fresh>-codex-review.md",
+  "metadata":"reviews/<same>-codex-review.json","diffHash":"<metadata hash>",
+  "reason":"<required when skipped>"},
+  "contextExpansions":[],"wiki":{"status":"updated|unchanged","reason":"<specific>"}}.
+  Use the current prompt's Codex policy. Never claim approval or passed review
+  without the matching reviewer verdict and fresh artifact.
+- When Codex runs, invoke it as CODEX_REVIEW_RUN_ID="${runId}" bash
+  scripts/codex-review.sh so its metadata is bound to this run and diff.
 - If you cannot finish safely, leave the repo in the clearest possible state and explain why.
 
 Prompt file: ${basename}
@@ -265,7 +355,7 @@ function assertSafeReviewBranch() {
   if (error) throw new Error(error);
 }
 
-function commitIfNeeded(promptFile, logFile) {
+function commitIfNeeded(basename, title, logFile) {
   const status = dirtyStatus();
   if (!status) {
     appendLog(logFile, "\nNo uncommitted changes after Claude run.\n");
@@ -274,8 +364,7 @@ function commitIfNeeded(promptFile, logFile) {
   }
 
   gitChecked(["add", "-A"]);
-  const title = firstPromptLine(promptFile);
-  const message = `auto: ${path.basename(promptFile, ".md")}${title ? ` - ${title}` : ""}`.slice(0, 120);
+  const message = `auto: ${path.basename(basename, ".md")}${title ? ` - ${title}` : ""}`.slice(0, 120);
   gitChecked(["commit", "-m", message]);
   appendLog(logFile, `\nCommitted changes with message: ${message}\n`);
   console.log(`Committed changes: ${message}`);
@@ -354,19 +443,6 @@ function formatUsage(snapshot) {
 
 function countWords(value) {
   return value.trim() ? value.trim().split(/\s+/).length : 0;
-}
-
-function promptContractErrorFor(promptBody) {
-  if (!/^## Wiki context\s*$/m.test(promptBody)) {
-    return "missing a ## Wiki context section";
-  }
-  if (!/openwiki\/n2hub\/[\w-]+\.md/.test(promptBody)) {
-    return "Wiki context must name at least one openwiki/n2hub page";
-  }
-  if (!/^## Expected touchpoints\s*$/m.test(promptBody)) {
-    return "missing a ## Expected touchpoints section";
-  }
-  return null;
 }
 
 function parseTimes(value) {
@@ -498,6 +574,10 @@ function gitChecked(args) {
   return result.stdout;
 }
 
+function unstageAll() {
+  gitChecked(["restore", "--staged", "--", "."]);
+}
+
 function appendLog(logFile, value) {
   fs.appendFileSync(logFile, value);
 }
@@ -508,6 +588,14 @@ function firstPromptLine(promptFile) {
     .split(/\r?\n/)
     .map((line) => line.replace(/^#+\s*/, "").trim())
     .find(Boolean);
+}
+
+function commandAvailable(command) {
+  const pathValue = process.env.PATH || "";
+  return pathValue
+    .split(path.delimiter)
+    .filter(Boolean)
+    .some((directory) => fs.existsSync(path.join(directory, command)));
 }
 
 function formatDate(date) {

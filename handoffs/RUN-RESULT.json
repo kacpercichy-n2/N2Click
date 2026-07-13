@@ -1,0 +1,19 @@
+{
+  "prompt": "pending",
+  "runId": "set-by-scheduler",
+  "status": "blocked",
+  "reviewerVerdict": "changes-required",
+  "codexReview": {
+    "policy": "conditional",
+    "status": "skipped",
+    "artifact": null,
+    "metadata": null,
+    "diffHash": null,
+    "reason": "No run has started."
+  },
+  "contextExpansions": [],
+  "wiki": {
+    "status": "unchanged",
+    "reason": "No run has started."
+  }
+}

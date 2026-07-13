@@ -2,8 +2,14 @@ node_modules
 dist
 *.local
 .DS_Store
-.claude/
+.claude/*
+!.claude/agents/
+!.claude/agents/*.md
+!.claude/commands/
+!.claude/commands/*.md
 .vercel
 fabletieredworkflow/
 automation/claude-scheduler/logs/
 automation/claude-scheduler/state/
+openwiki/.last-update.json
+reviews/

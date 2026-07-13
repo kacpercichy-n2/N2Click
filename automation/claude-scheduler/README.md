@@ -1,150 +1,121 @@
 # Claude scheduler
 
-Prosty lokalny scheduler do odpalania kolejki promptow przez Claude Code CLI na osobnej galezi review.
+Lokalna, unattended kolejka Claude Code uruchamiana na osobnej gałęzi review.
 
-## 1. Dodaj prompty
+## Prompt contract
 
-Utworz pliki w:
-
-```bash
-automation/claude-scheduler/prompts/
-```
-
-Nazwij je w kolejnosci wykonania:
-
-```text
-001.md
-002.md
-003.md
-```
-
-Kazdy plik to jeden prompt dla Claude'a.
-
-Kazdy aktywny prompt musi zawierac oba naglowki:
+Aktywne pliki `.md` leżą bezpośrednio w `prompts/` i są wykonywane
+leksykograficznie. Każdy prompt musi zawierać niepuste sekcje:
 
 ```markdown
+## Risk and routing
+- Risk: low | medium | high
+- Route: developer → reviewer
+- Codex review: required | conditional | skip — <reason>
+
 ## Wiki context
-- `openwiki/n2hub/<relevant-area>.md`
+- `openwiki/n2hub/<area>.md`
 
 ## Expected touchpoints
-- `src/...`
+- `src/existing-file.ts`
+
+## Invariants
+## Scope
+## Out of scope
+## Acceptance
+## Verification
 ```
 
-Scheduler odrzuca prompt bez tego kontraktu. Jeden prompt obejmuje tylko jeden
-spojny wycinek techniczny; niezalezne zmiany reducera, nawigacji i audytu rozbij
-na kolejne pliki (np. `019a.md`, `019b.md`, `019c.md`).
+Scheduler sprawdza istnienie stron wiki i touchpointów. `high` wymaga Codex
+review; brak CLI blokuje run zamiast obniżać review. Jeden prompt obejmuje jeden
+spójny rezultat techniczny. Gotowy pojedynczy boundary nie potrzebuje
+dodatkowego handoffu architekta.
 
-Wykonane prompty przenos do:
+Touchpoint wskazuje plik lub kontrolowany glob plików, nie cały katalog. Nowy
+plik deklaruj jako `` `new: path/to/file` ``; jego katalog nadrzędny musi istnieć.
 
-```text
-automation/claude-scheduler/archive/completed/
-```
-
-Scheduler czyta tylko pliki `.md` bezposrednio z `prompts/`. Lokalny
-`state/completed.json` jest dodatkowym checkpointem, ale jest ignorowany przez
-Git i nie moze byc jedynym zabezpieczeniem przed ponownym wykonaniem promptu.
-
-## 2. Uruchom kolejke
-
-Z katalogu repo:
+## Uruchomienie
 
 ```bash
 caffeinate -dimsu node automation/claude-scheduler/run-queue.mjs
 ```
 
-Domyslny harmonogram:
-
-```text
-16:00, 21:01, 02:02, 07:03, 12:04
-```
-
-Skrypt:
-
-- przelacza sie na galaz `review/claude-auto-YYYYMMDD-HHMM`,
-- odpala kolejny prompt w najblizszym slocie czasowym,
-- po kazdym przebiegu uruchamia `npm test` i `npm run build`,
-- commituje zmiany na galezi review,
-- zapisuje lokalne logi w `automation/claude-scheduler/logs/`,
-- zapisuje stan wykonanych promptow w `automation/claude-scheduler/state/`.
-
-Prompt jest oznaczany jako wykonany i commitowany dopiero po zielonym przebiegu
-Claude'a oraz wszystkich komend weryfikacyjnych. Gdy run zawiedzie, scheduler
-zatrzymuje kolejke i pozostawia niecommitowane zmiany do odzyskania — nie tworzy
-commita `auto-failed`, ktory moglby zanieczyscic kolejna probe.
-
-Przed startem i ponownie tuz przed kazdym promptem scheduler sprawdza, czy nadal
-jest na swojej galezi review oraz czy ta galaz zawiera aktualny lokalny `main`.
-Jesli ktos przelaczy galaz podczas oczekiwania albo `main` pojdzie do przodu,
-kolejka zatrzyma sie zamiast uruchomic prompt na starej bazie lub na `main`.
-
-Logi i stan sa ignorowane przez Git.
-
-## 3. Zmiana godzin
+Domyślne sloty: `16:00, 21:01, 02:02, 07:03, 12:04`. Jednorazowy zestaw:
 
 ```bash
-CLAUDE_AUTO_TIMES="16:00,21:01,02:02,07:03,12:04" caffeinate -dimsu node automation/claude-scheduler/run-queue.mjs
+CLAUDE_AUTO_TIMES="20:39" caffeinate -dimsu node automation/claude-scheduler/run-queue.mjs
 ```
 
-## 4. Tryb testowy bez odpalania Claude'a
+Po zielonym przebiegu scheduler:
+
+1. uruchamia raz `npm test`, potem `npm run build`, zatrzymując się na pierwszym błędzie;
+2. przenosi prompt do `archive/completed/`;
+3. commituje kod, handoff i ruch promptu na gałęzi review;
+4. zapisuje lokalny checkpoint i metryki.
+
+Agent nie commituje ani nie pushuje. Push jest osobną decyzją operatora po
+obejrzeniu wyniku. Błąd Claude, wymaganego review lub weryfikacji pozostawia
+zmiany niecommitowane i zatrzymuje kolejkę.
+
+Przed finalnymi testami scheduler wymaga świeżego `handoffs/RUN-RESULT.json`
+z bieżącym `runId`, werdyktem `approve` i — gdy policy to `required` — świeżym
+artefaktem oraz metadanymi Codex review. Hash kanonicznego diffu musi nadal się
+zgadzać; każda późniejsza zmiana kodu zamyka gate. Tekstowa deklaracja sukcesu
+nie otwiera gate.
+
+## Verification ownership
+
+- Worker: focused tests/checks podczas iteracji.
+- Reviewer: sprawdzenie sensu testów i focused evidence, bez ponownego full suite.
+- Scheduler: jeden finalny `npm test && npm run build`.
+- Browser: tylko skrypt i silniki zadeklarowane w prompcie; pełna macierz wyłącznie w release bundle.
+
+`npm run build` już zawiera `tsc --noEmit`, więc prompt nie powinien żądać
+osobnego pełnego typechecku.
+
+## Dry run i test kontraktu
 
 ```bash
-CLAUDE_AUTO_DRY_RUN=1 node automation/claude-scheduler/run-queue.mjs
+npm run test:scheduler
+CLAUDE_AUTO_DRY_RUN=1 CLAUDE_AUTO_CONTINUE_ON_ERROR=1 \
+  node automation/claude-scheduler/run-queue.mjs
 ```
 
-Dry run nie przelacza galezi, nie commituje zmian i nie oznacza promptow jako
-wykonane. Wyswietla aktywna kolejke i przechodzi przez harmonogram bez czekania.
+Dry run waliduje aktywną kolejkę i harmonogram, ale nie uruchamia Claude, testów,
+commita ani archiwizacji.
 
-## 5. Przyspieszanie kolejki
+## Branch safety
 
-Domyslnie scheduler czeka na kolejne stale sloty. Jesli prompt skonczy sie
-wczesniej i chcesz sprawdzac kolejke np. co godzine, ustaw:
+Przed startem worktree musi być czysty. Scheduler tworzy
+`review/claude-auto-YYYYMMDD-HHMM`, a przed każdym promptem sprawdza aktualną
+gałąź i to, czy zawiera lokalny `main`. Nie merguje, nie rebase'uje i nie pushuje.
+
+## Completion and recovery
+
+Źródłem prawdy są wyłącznie pliki: aktywne w `prompts/`, wykonane w
+`archive/completed/`. Ignorowany `state/completed.json` jest tylko lokalną
+telemetrią i nigdy nie pomija aktywnego pliku; niespójność generuje ostrzeżenie.
+Nieudany prompt nie jest przenoszony ani oznaczany jako ukończony.
+
+Logi i metryki znajdują się w ignorowanych `logs/` i `state/`. Metryki obejmują
+rozmiar promptu, czas, risk/route/Codex policy, kody weryfikacji i opcjonalny
+snapshot wykorzystania. Nie są dokładnym licznikiem tokenów.
+
+## Opcje
 
 ```bash
-CLAUDE_AUTO_EARLY_CHECK_MINUTES=60 caffeinate -dimsu node automation/claude-scheduler/run-queue.mjs
+CLAUDE_AUTO_EARLY_CHECK_MINUTES=60 ...
+CLAUDE_AUTO_USAGE_GATE=1 ...
+CLAUDE_AUTO_VERIFY="npm test && npm run build" ...
 ```
 
-Po udanym prompcie nastepny prompt wystartuje wczesniej z dwoch terminow:
-`zakonczenie + 60 minut` albo kolejny staly slot z harmonogramu.
+`CLAUDE_AUTO_SKIP_PERMISSIONS=1` włącza niebezpieczne pomijanie pytań o zgody;
+używaj wyłącznie jako świadomej decyzji operatora.
 
-## 6. Limity uzycia i metryki
-
-Jesli lokalny helper `~/.claude/fetch-claude-usage.swift` jest dostepny,
-scheduler zapisuje przed/po kazdym runie obserwacyjny procent wykorzystania,
-czas, rozmiar promptu i kody wyjscia do
-`automation/claude-scheduler/state/run-metrics.jsonl`. To nie sa dokladne
-tokeny modelu, ale pozwala porownywac runy bez blokowania kolejki.
-
-Domyslnie pozostaly procent wykorzystania **nie opoznia** kolejnego slotu.
-Jesli swiadomie chcesz czekac na reset, wlacz bramke:
-
-```bash
-CLAUDE_AUTO_USAGE_GATE=1 caffeinate -dimsu node automation/claude-scheduler/run-queue.mjs
-```
-
-## 7. Po powrocie
-
-Sprawdz, co powstalo:
+Po runie sprawdź lokalnie:
 
 ```bash
 git log --oneline main..review/claude-auto-YYYYMMDD-HHMM
 git diff --stat main...review/claude-auto-YYYYMMDD-HHMM
 git diff main...review/claude-auto-YYYYMMDD-HHMM
-npm test
-npm run build
 ```
-
-Jesli chcesz wyslac galaz do remote:
-
-```bash
-git push -u origin review/claude-auto-YYYYMMDD-HHMM
-```
-
-## 8. Gdy Claude blokuje sie na uprawnieniach
-
-Domyslnie skrypt przekazuje Claude'owi szeroki zestaw dozwolonych narzedzi. Jesli lokalna konfiguracja mimo tego wymaga potwierdzen, najpierw zrob krotki test na jednym prostym prompcie. Awaryjnie mozna wlaczyc:
-
-```bash
-CLAUDE_AUTO_SKIP_PERMISSIONS=1 caffeinate -dimsu node automation/claude-scheduler/run-queue.mjs
-```
-
-To uzywa `--dangerously-skip-permissions`, wiec stosuj tylko wtedy, gdy akceptujesz ryzyko pracy bez pytan o zgody.

@@ -22,6 +22,7 @@ MODE="uncommitted"
 BASE_COMMIT=""
 CODEX_REVIEW_MODEL="${CODEX_REVIEW_MODEL:-gpt-5.6-sol}"
 CODEX_REVIEW_REASONING_EFFORT="${CODEX_REVIEW_REASONING_EFFORT:-high}"
+CODEX_REVIEW_RUN_ID="${CODEX_REVIEW_RUN_ID:-manual}"
 
 # --- args ---
 if [ "${1:-}" != "" ]; then
@@ -48,32 +49,28 @@ fi
 
 mkdir -p "$REVIEWS_DIR"
 
-# --- capture diff ---
+# --- capture canonical diff ---
+DIFF_FILE="$REVIEWS_DIR/${TIMESTAMP}-diff.txt"
+FILES_FILE="$(mktemp /tmp/codex-review-files.XXXXXX)"
 if [ "$MODE" = "range" ]; then
-  DIFF="$(git diff "$BASE_COMMIT"..HEAD)"
-  FILES="$(git diff --name-only "$BASE_COMMIT"..HEAD)"
+  DIFF_HASH="$(node scripts/write-review-diff.mjs "$DIFF_FILE" "$FILES_FILE" "$BASE_COMMIT")"
   SCOPE="Range review: $(git rev-parse --short "$BASE_COMMIT")..$(git rev-parse --short HEAD)."
 else
   if [ -z "$(git status --porcelain)" ]; then
+    rm -f "$FILES_FILE"
     echo "No uncommitted changes to review. (Pass a base commit to review a range.)"
     exit 0
   fi
-  if git rev-parse HEAD &>/dev/null; then
-    DIFF="$(git diff HEAD)"
-    FILES="$(git diff --name-only HEAD)"
-  else
-    DIFF="$(git diff)"
-    FILES="$(git diff --name-only)"
-  fi
+  DIFF_HASH="$(node scripts/write-review-diff.mjs "$DIFF_FILE" "$FILES_FILE")"
   SCOPE="Review of uncommitted changes."
 fi
+FILES="$(<"$FILES_FILE")"
+rm -f "$FILES_FILE"
 
-if [ -z "$DIFF" ]; then
+if [ ! -s "$DIFF_FILE" ]; then
   echo "Empty diff — nothing to review."
   exit 0
 fi
-
-echo "$DIFF" > "$REVIEWS_DIR/${TIMESTAMP}-diff.txt"
 
 # --- build prompt ---
 PROMPT="Review this code change made by another AI coding agent.
@@ -91,8 +88,14 @@ issue description, suggested fix. If nothing is wrong, say \"LGTM — no issues 
 Changed files:
 ${FILES}
 
-Git diff:
-${DIFF}"
+The complete diff, including untracked files, is available locally at:
+${DIFF_FILE}
+
+Review run ID: ${CODEX_REVIEW_RUN_ID}
+Canonical diff SHA-256: ${DIFF_HASH}
+
+Read that artifact first. Inspect only direct dependencies when a finding needs
+confirmation; do not scan unrelated repository areas."
 
 TMPFILE="$(mktemp /tmp/codex-review-prompt.XXXXXX)"
 echo "$PROMPT" > "$TMPFILE"
@@ -107,10 +110,21 @@ else
   echo "ERROR: codex exec failed (exit $CODE). If this is an auth issue, run: codex login" >&2
   exit 4
 fi
+if [ -z "${REVIEW//[[:space:]]/}" ]; then
+  echo "ERROR: codex exec returned an empty review." >&2
+  exit 5
+fi
 
 # --- save + emit ---
 REVIEW_FILE="$REVIEWS_DIR/${TIMESTAMP}-codex-review.md"
 echo "$REVIEW" > "$REVIEW_FILE"
+METADATA_FILE="$REVIEWS_DIR/${TIMESTAMP}-codex-review.json"
+node -e '
+  const fs = require("node:fs");
+  const [file, runId, diffHash, reviewArtifact] = process.argv.slice(1);
+  fs.writeFileSync(file, JSON.stringify({ runId, diffHash, reviewArtifact }, null, 2) + "\n");
+' "$METADATA_FILE" "$CODEX_REVIEW_RUN_ID" "$DIFF_HASH" "$REVIEW_FILE"
 echo "Review saved to: $REVIEW_FILE" >&2
+echo "Review metadata: $METADATA_FILE" >&2
 echo ""
 echo "$REVIEW"
