@@ -114,6 +114,12 @@ export function stackStartTimes(blocksInOrder: Array<{ plannedHours: number }>):
  * Append-to-end rule for a new block: start at the max end across existing
  * blocks (snapped UP to the grid), or WORKDAY_START_MIN for an empty day,
  * clamped so the new block ends by 24:00.
+ *
+ * NOTE: this CLAMPS back over occupied time when the day can't fit an append,
+ * which hides a same-person overlap. For collision-safe automatic placement
+ * (reducer write paths) use `findFreeStart`, which returns an earlier real gap
+ * or `null` instead of clamping. `nextFreeStart` remains for seed/migration and
+ * as a never-reject fallback where overlaps are allowed to render side-by-side.
  */
 export function nextFreeStart(
   blocks: Array<{ startMinutes: number; plannedHours: number }>,
@@ -128,6 +134,101 @@ export function nextFreeStart(
     start = Math.ceil(maxEnd / MINUTE_STEP) * MINUTE_STEP;
   }
   return clampBlockStart(start, durationMin);
+}
+
+/**
+ * Collision-safe automatic placement for a new block of `durationMin` in a
+ * person's day. Prefers appending after the last block (identical to
+ * `nextFreeStart` whenever that would not clamp), otherwise scans for the
+ * earliest real free gap. Never clamps into occupied time.
+ *
+ * - Empty day → `clampBlockStart(WORKDAY_START_MIN, durationMin)` (== nextFreeStart).
+ * - Append preferred: max end snapped UP to the grid; used when it still fits.
+ * - Else earliest-fit gap: candidate starts are 0, WORKDAY_START_MIN and each
+ *   block's snapped-up end; working-hours candidates (>= WORKDAY_START_MIN) are
+ *   tried ascending first, then night candidates (< WORKDAY_START_MIN) ascending.
+ * - No candidate fits → `null`.
+ */
+export function findFreeStart(
+  blocks: Array<{ startMinutes: number; plannedHours: number }>,
+  durationMin: number,
+): number | null {
+  if (blocks.length === 0) return clampBlockStart(WORKDAY_START_MIN, durationMin);
+
+  // Prefer appending after the last block (identical to nextFreeStart's answer
+  // whenever no clamp would be needed — preserves every current placement).
+  const maxEnd = blocks.reduce(
+    (m, b) => Math.max(m, blockEndMinutes(b.startMinutes, b.plannedHours)),
+    0,
+  );
+  const snapped = Math.ceil(maxEnd / MINUTE_STEP) * MINUTE_STEP;
+  if (snapped + durationMin <= DAY_MINUTES) return snapped;
+
+  // Append would clamp — scan for the earliest real gap instead.
+  const candidateSet = new Set<number>([0, WORKDAY_START_MIN]);
+  for (const b of blocks) {
+    const end = blockEndMinutes(b.startMinutes, b.plannedHours);
+    candidateSet.add(Math.ceil(end / MINUTE_STEP) * MINUTE_STEP);
+  }
+  const candidates = [...candidateSet];
+  const working = candidates.filter((c) => c >= WORKDAY_START_MIN).sort((a, b) => a - b);
+  const night = candidates.filter((c) => c < WORKDAY_START_MIN).sort((a, b) => a - b);
+  for (const candidate of [...working, ...night]) {
+    if (candidate + durationMin > DAY_MINUTES) continue;
+    const end = candidate + durationMin;
+    const collides = blocks.some((b) =>
+      rangesOverlap(candidate, end, b.startMinutes, blockEndMinutes(b.startMinutes, b.plannedHours)),
+    );
+    if (!collides) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Plan a ripple insert of a virtual block at `insertStart` for `durationMin`
+ * into a person's already-scheduled day, WITHOUT clamping. Reproduces the
+ * calendar right-click sweep: blocks are ordered by ascending startMinutes with
+ * the inserted block sorting BEFORE existing blocks that share its start and
+ * existing ties broken by sortIndex; each later block whose start falls before
+ * the running cursor is pushed forward to the cursor.
+ *
+ * Returns a `Map<entryId, newStartMinutes>` of only the blocks that move, or
+ * `null` when the inserted block or ANY pushed block would end past 24:00
+ * (the whole insert is impossible and the caller must reject atomically).
+ */
+export function planRippleInsert(
+  dayBlocks: Array<{ id: string; startMinutes: number; plannedHours: number; sortIndex: number }>,
+  insertStart: number,
+  durationMin: number,
+): Map<string, number> | null {
+  if (insertStart + durationMin > DAY_MINUTES) return null;
+
+  const ordered = [
+    ...dayBlocks.map((b) => ({ ...b, inserted: false })),
+    { id: '', startMinutes: insertStart, plannedHours: minutesToHours(durationMin), sortIndex: 0, inserted: true },
+  ].sort((a, b) => {
+    if (a.startMinutes !== b.startMinutes) return a.startMinutes - b.startMinutes;
+    if (a.inserted) return -1;
+    if (b.inserted) return 1;
+    return a.sortIndex - b.sortIndex;
+  });
+
+  const startIdx = ordered.findIndex((b) => b.inserted);
+  const moves = new Map<string, number>();
+  let cursor = insertStart + durationMin;
+  for (let i = startIdx + 1; i < ordered.length; i++) {
+    const b = ordered[i];
+    const durB = hoursToMinutes(b.plannedHours);
+    if (b.startMinutes < cursor) {
+      const pushed = cursor; // un-clamped
+      if (pushed + durB > DAY_MINUTES) return null;
+      if (pushed !== b.startMinutes) moves.set(b.id, pushed);
+      cursor = pushed + durB;
+    } else {
+      cursor = blockEndMinutes(b.startMinutes, b.plannedHours);
+    }
+  }
+  return moves;
 }
 
 /**

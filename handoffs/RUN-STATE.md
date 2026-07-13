@@ -936,3 +936,517 @@ cleanups for a future maintenance run.
 **Run complete.** New backlog carried (P3): bin-split browser-script week-
 render assumption + dead local (nits 1–2); bin-drag center-drag fragility
 (nit 3); Infinity-hours hint edge (nit 4).
+
+---
+
+## Run 2026-07-13 — release-hardening-5 (scheduling/date invariant centralization)
+
+### Plan (architect)
+
+- **Goal:** re-verify the old audit's 92-day/date-guard reproductions against
+  current code (do NOT reimplement fixed validation), close the remaining
+  end-of-day clamp-back overlaps in AUTOMATIC placement writers, surface
+  rejections with persistent Polish reasons in the existing interaction
+  surfaces, and deliver a parent/task date-containment DECISION NOTE (no
+  enforcement — human approval required per the task constraints).
+- **Verified baseline:** branch `review/claude-auto-20260713-0040` (clean);
+  commits 4bb7f69, 86aa3e6, 11f1dea verified by the orchestrator as ancestors
+  of main and of this branch via object-graph walk (git commands are DENIED in
+  this unattended session — stale-gate already PASSED, workers must not run
+  git). Suite baseline 11 files / 369 tests; tsc clean; build green.
+- **Audit re-run results (file:line, verified in code):**
+  - ALREADY FIXED — no duplicate layer to add: `saveTask` rejects
+    invalid/reversed/>92d periods + malformed allocation cells
+    (`AppStore.tsx:270-291`); `setTaskDates` same guard (:596); `setBlockTime`
+    full chain — date validity, 15-min grid, 0.25h bounds, day fit, collision,
+    cross-day 92-day cap (:933-967); `SCHEDULE_BIN_PART` inherits all of it by
+    composition; the „Zaplanuj część” form already shows the first-failing
+    Polish warning chain (`WeekView.tsx:1085-1114`). `MOVE_TASK` shifts a
+    constant-length period — no new violation possible.
+  - REMAINING BYPASS 1: `insertBlock` extends the picked task's period to the
+    ref date with NO `MAX_TASK_PERIOD_DAYS` check (`AppStore.tsx:786-793`;
+    compare `setBlockTime:967`); the insert form has no matching warning.
+  - REMAINING BYPASS 2 (clamp-back family): `insertBlock` clamps the inserted
+    block back over the REFERENCE block near midnight (:731 — the ripple only
+    pushes blocks ordered after the insert) and clamps rippled blocks at 24:00
+    into cascading overlap (:752); `reassignEntry` places on the target's day
+    via `nextFreeStart` whose trailing clamp (`time.ts:130`) pulls the block
+    back into existing work even when a free slot exists earlier (:867);
+    `saveTask` NEW-pair placement shares the same `nextFreeStart` clamp (:426).
+  - POLICY KEPT (explicitly not changed): SAVE_TASK grow-path clamp (:452,
+    protected identity-preserving reconciliation and its tests
+    `saveTaskWorkload.test.ts:207/:287`); TaskModal deliberate-edit overlap
+    policy (invariant 3 — never block); `ensureStartMinutes`/`storage.ts:519`
+    migration clamp; `seed.ts:184` (sample data exempt);
+    `time.test.ts:117-121` keeps documenting the raw `nextFreeStart` clamp.
+- **Design decisions (final — no open questions in packages):**
+  1. New pure helpers in `src/utils/time.ts`: `findFreeStart` (append-to-end
+     preferred = identical to `nextFreeStart` in every non-clamp case; else
+     earliest free gap, working hours before night slots; else `null`) and
+     `planRippleInsert` (exact current ripple semantics, un-clamped; `null`
+     when insert or pushed chain would cross 24:00). `nextFreeStart` stays.
+  2. INSERT_BLOCK: reject atomically (state unchanged) on ripple no-fit AND on
+     a >92-day period extension. REASSIGN_ENTRY (dated): free slot or atomic
+     reject. SAVE_TASK new pair: free slot preferred, clamp FALLBACK kept —
+     saving never rejects on placement (invariant 3).
+  3. UI parity, house pattern only (no toasts): insert form gains two blocking
+     Polish warnings (fit + 92-day, reducer order, shared disabled flag);
+     WorkloadPage reassign pre-validates targets (` — brak miejsca` option
+     suffix + disabled `Przenieś` with a fixed Polish title); „Zaplanuj część”
+     default start prefers `findFreeStart` (suggestion only).
+  4. Containment: decision note + test matrix in
+     `docs/decisions/2026-07-13-parent-task-date-containment.md` — options
+     documented for human approval, nothing enforced.
+  5. Bin drag lifecycle, browser-check-bin-drag/-bin-split scripts, TaskModal,
+     migrations: UNTOUCHABLE (listed out-of-scope in every package).
+
+### Packages
+
+| Package | Tier / model | Depends on | Status |
+|---|---|---|---|
+| PKG-20260713b-placement-core | developer / opus | none | ready |
+| PKG-20260713b-placement-ui | developer / opus | core | ready |
+| PKG-20260713b-placement-tests | test-writer / sonnet | core | ready |
+| PKG-20260713b-placement-browser-docs | test-writer / sonnet | core + ui | ready |
+
+Execution order: core first; ui and tests may run in PARALLEL after core;
+browser-docs last.
+
+### Open questions
+
+- None blocking. The parent/task containment question is deliberately NOT a
+  blocker: the deliverable is the decision note itself (browser-docs package);
+  enforcement waits for the human.
+
+### End-of-run gate (orchestrator)
+
+- Fresh `npx tsc --noEmit` && `npm test` && production build via
+  `node -e "import('vite').then(v => v.build())"` — all green.
+- Browser gate, Chromium + WebKit each: `browser-check-placement.mjs` all-PASS
+  (near-midnight insert refusal with exact Polish warning then successful
+  reduced insert with a no-overlap localStorage scan; 92-day insert warning;
+  reassign `— brak miejsca` disable + successful fitting reassign; schedule
+  form non-colliding default). Existing `browser-check-bin-drag.mjs` and
+  `browser-check-bin-split.mjs` MUST remain green (spot-run at least
+  `free`, `collision`, and the bin-split flow on one engine if time-boxed;
+  full sweep preferred). Screenshots in
+  `reviews/screenshots-20260713b-placement/`.
+- Acceptance restated: automatically placed new/inserted/reassigned blocks
+  never gain a hidden overlap from end-of-day clamp-back; impossible automatic
+  placement is rejected with a persistent Polish reason where the interaction
+  can show one; INSERT_BLOCK respects the 92-day cap; calendar move/resize/bin
+  drag and TaskModal overlap policy unchanged; containment = decision note
+  only; CLAUDE.md updated only where behavior changed.
+- Codex review — attempt; if denied (as in release-hardening-1..4), note the
+  skip. Commit/push expected BLOCKED (git denied) — leave for a git-enabled
+  session.
+
+### Worker log (append below)
+
+_(workers: one entry per package — files changed, tests run + result, deviations)_
+
+#### PKG-20260713b-placement-core — developer/opus — DONE
+
+- **Files changed (two, as scoped):**
+  - `src/utils/time.ts` — two new PURE exported helpers (no store/React/date-fns
+    imports): `findFreeStart(blocks, durationMin): number | null` (empty day →
+    `clampBlockStart(WORKDAY_START_MIN, dur)`; else append-after-`maxEnd`-snapped-UP
+    when it fits ≤ `DAY_MINUTES` — identical to `nextFreeStart` in every non-clamp
+    case; else earliest-fit gap scan over candidates {0, `WORKDAY_START_MIN`, each
+    block's snapped-up end}, working-hours candidates ascending before night
+    candidates ascending, collision-checked via `rangesOverlap`; no fit → `null`,
+    never clamps into occupied time) and `planRippleInsert(dayBlocks, insertStart,
+    durationMin): Map<string, number> | null` (un-clamped reproduction of
+    `insertBlock`'s sweep: virtual inserted block sorts before existing equal-start
+    blocks, existing ties by `sortIndex`; pushes later blocks whose start < cursor;
+    returns `null` if the inserted or any pushed block would cross `DAY_MINUTES`,
+    else a `Map<entryId, newStartMinutes>` of only moved blocks). Also added a
+    sentence to `nextFreeStart`'s doc comment pointing writers at `findFreeStart`
+    for collision-safe automatic placement.
+  - `src/store/AppStore.tsx` — (1) imports: added `findFreeStart`, `planRippleInsert`;
+    (2) `insertBlock` — replaced the `clampBlockStart(rawStart, dur)` on the entry
+    and the manual `ordered`/`moves` sweep with `planRippleInsert(dayBlocks, rawStart,
+    dur)` (`null` → `return state`); the inserted entry's `startMinutes` is now the
+    un-clamped `rawStart`; added the 92-day cap (compute widened
+    `newStartDate`/`newEndDate`, reject when `periodWidens && inclusiveDayCount(...) >
+    MAX_TASK_PERIOD_DAYS`); the task-extension block now reuses those pre-validated
+    dates; (3) `reassignEntry` dated branch — replaced `nextFreeStart(...)` with
+    `findFreeStart(...)` over the same target-person/date filtered list, `null` →
+    `return state` (bin branch untouched); (4) `saveTask` new-pair branch —
+    `startMinutes: findFreeStart(dayList, durMin) ?? nextFreeStart(dayList, durMin)`
+    (free slot preferred, clamp fallback kept so SAVE_TASK never rejects on placement;
+    `dayList`/`durMin` computed once).
+- **Helper signatures shipped (frozen for the tests/UI packages):**
+  - `findFreeStart(blocks: Array<{ startMinutes: number; plannedHours: number }>, durationMin: number): number | null`
+  - `planRippleInsert(dayBlocks: Array<{ id: string; startMinutes: number; plannedHours: number; sortIndex: number }>, insertStart: number, durationMin: number): Map<string, number> | null`
+- **Validation order inside `insertBlock` after the change:** (1) `ref` exists /
+  `hours > 0` / not bin; (2) `task` exists; (3) `snapHours` > 0; (4) budget
+  (`hoursQ > binQ + headroomQ` → return); (5) `planRippleInsert` `null` → return;
+  (6) 92-day cap → return. All rejections precede any object construction — no
+  partial-mutation path; every rejection returns the ORIGINAL `state` reference.
+- **Tests run:** `node ./node_modules/typescript/bin/tsc --noEmit` → 0 errors
+  (`npx` needed approval in this session; ran the local binary through `node`).
+  `npm test` → 11 files / 369 tests, all green; zero test files modified.
+- **Deviations:** none from the package. Kept `nextFreeStart`, `seed.ts`, the
+  SAVE_TASK grow/trim/unchanged reconciliation, and `saveTaskWorkload.test.ts`
+  untouched. `findFreeStart` inlines `rangesOverlap` for its collision check
+  rather than calling `hasCollision` (its blocks are id-less per the frozen
+  signature; behavior is identical) — `hasCollision` left unchanged.
+- **For the sibling packages:** exported names `findFreeStart` / `planRippleInsert`
+  are live in `src/utils/time.ts`; the UI package mirrors the same reject predicates
+  (ripple no-fit + 92-day cap for the insert form; `findFreeStart === null` for the
+  reassign target) to surface the Polish reasons.
+- **Still open / next:** unblocks PKG-20260713b-placement-ui and
+  PKG-20260713b-placement-tests. No new backlog.
+- **Codex escalation:** none needed (build/tests green first pass). Note: Codex
+  scripts are denied in this unattended session regardless.
+
+#### PKG-20260713b-placement-ui — developer/opus — DONE
+
+- **Files changed (two, as scoped):**
+  - `src/components/WeekView.tsx` — (1) imports: added `findFreeStart` and
+    `planRippleInsert` from `../utils/time` (`blockEndMinutes`/`inclusiveDayCount`/
+    `MAX_TASK_PERIOD_DAYS`/`getTask`/`blocksForPersonDate`/`hoursToMinutes` already
+    imported). (2) Insert form — after the existing `overAllowance` gate, added two
+    first-failing BLOCKING checks in the reducer's own order: ripple fit
+    (`planRippleInsert(blocksForPersonDate(state, personId, date), rawStart, dur)
+    === null`, `rawStart` computed exactly as INSERT_BLOCK: `before` →
+    `menu.entry.startMinutes`, `after` → `blockEndMinutes(...)`) → warning
+    `⚠ Wstawka nie mieści się w dobie — bloki za nią musiałyby wyjść poza 24:00.`;
+    92-day cap on the PICKED task (`insertTaskId || menu.entry.taskId`, widened with
+    `menu.entry.date`, `inclusiveDayCount(...) > MAX_TASK_PERIOD_DAYS`) → warning
+    `⚠ Termin zadania przekroczyłby limit 92 dni.` (verbatim match to the schedule
+    form). Consolidated into one `insertDisabled` flag (`NaN/≤0 hours || overAllowance
+    || insertWarning !== null`); the `Wstaw` button `disabled` and `confirmInsert`
+    both now consult only `insertDisabled` so Enter can't dispatch what the button
+    refuses. `insertWarning` renders via a `.context-warning` `<p>` after the
+    `overAllowance` warning; the `wouldOverload` warning stays independent and
+    NON-blocking (invariant 3). (3) Schedule-form default start — `initScheduleForm`
+    and `onSchedDateChange` now use `findFreeStart(blocks, dur) ?? nextFreeStart(blocks,
+    dur)` so the pre-filled start avoids a collision whenever a real slot exists.
+  - `src/pages/WorkloadPage.tsx` — imports: added `findFreeStart`, `hoursToMinutes`
+    (`blocksForPersonDate` already imported). In `BlockRow`: precompute `durMin =
+    hoursToMinutes(entry.plannedHours)` and `targetFits` for the selected target;
+    each reassign `<option>` appends ` — brak miejsca` when
+    `findFreeStart(blocksForPersonDate(state, p.id, date), durMin) === null` (after the
+    existing `⚠` overload marker, kept separate); the `Przenieś` button is `disabled`
+    with `title="Brak wolnego przedziału czasu w tym dniu u wybranej osoby."` when the
+    selected target has no slot, and its `onClick` guards on `targetFits` too. Predicate
+    mirrors REASSIGN_ENTRY's dated branch one-for-one.
+- **Out-of-scope regions untouched:** bin drag lifecycle, `TimedBlock` drag/resize,
+  the `unplaceable` predicate/hints, `user-select: none`, the schedule form's
+  validation chain (:1085-1114) beyond the two default-start lines, all
+  reducer/selector/store/test files, TaskModal/AllocationGrid, onboarding, `styles.css`
+  (no new class needed — reused `.context-warning` and native `title`).
+- **DOM hooks / exact Polish strings for PKG-20260713b-placement-browser-docs:**
+  - Insert form ripple no-fit: `.context-insert-form` shows
+    `<p class="context-warning">⚠ Wstawka nie mieści się w dobie — bloki za nią
+    musiałyby wyjść poza 24:00.</p>` and `button.btn.primary` text `Wstaw` is `disabled`.
+  - Insert form 92-day: `<p class="context-warning">⚠ Termin zadania przekroczyłby
+    limit 92 dni.</p>`, `Wstaw` disabled (pick a far-dated task in the `Zadanie` select).
+  - Workload reassign: no-fit target `<option>` text ends ` — brak miejsca`; when
+    selected, `Przenieś` (`button.btn.ghost.small` with `ArrowRightLeft` icon) is
+    `disabled` with `title="Brak wolnego przedziału czasu w tym dniu u wybranej
+    osoby."`. Reassign controls live under `.wr-reassign`.
+  - Overload markers (` ⚠` suffix in insert-form overload line and reassign options)
+    remain non-blocking.
+- **Tests run:** `node ./node_modules/typescript/bin/tsc --noEmit` → 0 errors;
+  `npm test` → 11 files / 369 tests, all green (no test file touched; count matches
+  the core+tests baseline).
+- **Deviations:** none. New strings are exactly the three specified plus the
+  ` — brak miejsca` suffix; every other Polish string left verbatim.
+- **Codex escalation:** none needed (tsc + tests green first pass).
+- **Still open / next:** unblocks PKG-20260713b-placement-browser-docs (DOM hooks
+  above). No new backlog.
+
+#### PKG-20260713b-placement-tests — test-writer/sonnet — DONE
+
+- **Files changed (test files only, as scoped):**
+  - `src/utils/time.test.ts` — new describes `findFreeStart` (6 tests: empty day
+    incl. huge-duration clamp to 0; append matches `nextFreeStart` when no clamp
+    needed; append-would-clamp scans back to the earlier real gap instead of the
+    clamped tail; pre-08:00 night fallback when the working day is solid 08:00-24:00;
+    `null` when the day truly cannot fit anywhere; off-grid block end snapped UP to
+    the 15-min grid before being used as a gap candidate, with a `hasCollision`
+    assertion folded in) and `planRippleInsert` (5 tests: gap-absorb → empty move
+    map; overlapping chain pushed forward un-clamped; equal-start tie sorts the
+    inserted block first; `null` on both the insert-itself-overflows and
+    pushed-chain-overflows cases, looped in one test; exact fit to 24:00 succeeds
+    with an empty move map). Added one comment-only line to the existing
+    `nextFreeStart` "clamps so the new block still ends by 24:00" test
+    (unchanged assertion) pointing at `findFreeStart` for collision-safe
+    placement. Added `findFreeStart`/`planRippleInsert` to the import list.
+  - `src/store/blockActions.test.ts` — new describes `INSERT_BLOCK end-of-day fit`
+    (4 tests: insert's own duration overflowing 24:00 rejects; a ripple PUSH
+    overflowing 24:00 rejects; an insert landing exactly at 24:00 succeeds with a
+    pairwise `hasCollision` scan over the day; a near-midnight variant of the
+    existing gap-absorb behavior, which itself was left untouched), `INSERT_BLOCK
+    92-day cap` (2 tests: widening the PICKED task's period past
+    `MAX_TASK_PERIOD_DAYS` when extended to the ref's date rejects atomically,
+    task/workload unchanged via `toBe(state)`; widening to exactly the cap
+    succeeds — period extends and the entry lands, confirming the extension path
+    itself still works), and `REASSIGN_ENTRY dated free-slot placement` (3 tests:
+    a normal target day still appends to the end, matching prior `nextFreeStart`
+    placement; a target with 22:00-24:00 occupied lands the moved 2h block at
+    08:00 via the earlier real gap, zero overlap; a target day with no fitting
+    slot rejects atomically, assignments unchanged too). Added
+    `hasCollision`/`hoursToMinutes` to the `../utils/time` import and
+    `addDaysStr` to the `../utils/dates` import.
+  - `src/store/saveTaskWorkload.test.ts` — new describe `SAVE_TASK new-pair
+    placement` (2 tests, numbered 12-13 continuing the file's existing scheme):
+    a new (person, day) cell lands at 08:00 (via `findFreeStart`) when another
+    task's 20:00-24:00 block already occupies that day, with the other block's
+    own time/hours untouched (only its `sortIndex` shifts 0→1, since
+    `reindexDays` re-ranks the whole touched (person, date) group by
+    `startMinutes` — the new 08:00 row now sorts first); and a day with NO
+    fitting gap anywhere still succeeds (SAVE_TASK never rejects on placement —
+    invariant 3) by falling back to `nextFreeStart`'s clamp (asserted at the
+    exact clamped `startMinutes: 1320`). Existing tests, including the numbered
+    "2. grow with clamp" (:188-208, contains the line the package called out at
+    :207) and "8. new day" (:287-312) cases, were not touched and remain
+    byte-identical/green.
+- **Implementation-vs-package check:** none found — `findFreeStart`,
+  `planRippleInsert` (`src/utils/time.ts`), `insertBlock`'s validation order
+  (ref/hours/not-bin → task exists → `snapHours`>0 → budget → `planRippleInsert`
+  null → 92-day cap, `src/store/AppStore.tsx:695-746`), `reassignEntry`'s dated
+  branch (`findFreeStart` → `null` rejects, :860-870), and `saveTask`'s new-pair
+  branch (`findFreeStart(...) ?? nextFreeStart(...)`, :430-433) all matched the
+  package's paraphrase exactly on read. No production file touched.
+- **Regression re-verification (scope item 4, no code):** `dateGuards.test.ts`
+  still covers `SAVE_TASK date guard` (describe at :153) and `SET_TASK_DATES
+  date guard` (describe at :236), both green and untouched. `setBlockTime`'s
+  own cross-day 92-day cap guard (`AppStore.tsx:971`) has no DIRECT rejection
+  test of its own in the existing suite — it is exercised only indirectly
+  through `SCHEDULE_BIN_PART`'s delegation to `setBlockTime` (describe
+  `SCHEDULE_BIN_PART`, test "rejects a period extension that would exceed the
+  92-day cap" at `blockActions.test.ts:1429`, plus the happy-path `SET_BLOCK_TIME`
+  describe's "cross-day move ... extends the task period" test at :110
+  confirming extension-within-cap still works). Flagging this as a pre-existing
+  gap (not introduced by this package, and explicitly out of scope to fill per
+  the package's item 4 wording) rather than silently treating it as covered.
+- **Tests run:** `node ./node_modules/typescript/bin/tsc --noEmit` → 0 errors.
+  `npm test` → 11 files / **391 tests**, all green (+22 over the 369 baseline:
+  11 in `time.test.ts` [34 total], 9 in `blockActions.test.ts` [106 total], 2 in
+  `saveTaskWorkload.test.ts` [14 total] — inside the package's "roughly 20-27"
+  target). Zero regressions in the pre-existing 369. No `.skip`/`.todo`
+  anywhere in the new code.
+- **Deviations:** none from scope. Only the three named test files were edited
+  (plus this RUN-STATE.md entry); no production `src/` file touched.
+- **Still open / next:** unblocks nothing further by itself; browser-docs
+  (`PKG-20260713b-placement-browser-docs`) depends on core + ui, not on this
+  package. No new backlog items.
+
+#### PKG-20260713b-placement-browser-docs — test-writer/sonnet — DONE
+
+- **Files changed:**
+  - `scripts/browser-check-placement.mjs` (new) — one continuous Playwright
+    flow (mirrors `browser-check-bin-split.mjs`'s ok()/failures/notes,
+    PASS/FAIL, `[chromium|webkit]` CLI arg, screenshot pattern): seeds sample
+    data, then injects FOUR isolated fixture tasks + their workload rows in
+    one `page.evaluate` at three well-separated dates (today+10/+20/+30 — each
+    >7 days apart from `today` and from each other, so nothing collides with
+    the seed's own this-week/last-week blocks; a `mondayOf`/`weeksBetween`
+    script-local helper converts each fixture date into a deterministic
+    "click Następny N times" week-navigation count, since the app has no
+    date-jump input for the week view):
+    (a) Marek/DA: one 08:00–23:00 (15h) block on a task with generous
+    estimate headroom — right-click → „Dodaj po” → 2h trips the exact
+    near-midnight fit warning + disabled `Wstaw`; reducing to 1h (lands
+    exactly at 24:00) clears it and the insert succeeds — verified via a
+    localStorage pairwise-overlap scan (script-local `hasOverlap`, mirrors
+    `rangesOverlap`'s strict/touching-allowed semantics) plus a block-count/
+    total-hours check.
+    (b) Marek/DB: a short 2h ref block plus a separate far task dated ~95
+    days past DB with its own generous headroom — right-click → „Dodaj po” →
+    picking the far task in `Zadanie` trips the exact 92-day cap warning +
+    disabled `Wstaw`; switching back to the ref task clears it and
+    re-enables `Wstaw` (not submitted, per the package's literal wording).
+    (c) `/workload`, Ola/DC (1h block) vs. an injected 24h-packed Kasia/DC
+    and a deliberately untouched (free) Marek/DC: Kasia's reassign `<option>`
+    ends ` — brak miejsca` and `Przenieś` is disabled with the exact title;
+    Marek's option has no suffix and reassigning to him succeeds — verified
+    via localStorage (entry now under Marek, no overlap).
+    (d) Ola's existing seeded 3h bin row, opened on a TODAY seeded with an
+    injected 08:00–11:00 + 15:00–24:00 occupancy pair (an 11:00–14:00 gap):
+    the form's default Start reads exactly "11:00" (the real gap), not the
+    naive append-clamp 21:00 that would collide with the evening block; no
+    `.context-warning` containing "Koliduje" is present on open (a
+    NON-blocking overload preview line is expected and tolerated — Ola's
+    injected day already exceeds her capacity, invariant 3); submitting
+    schedules cleanly. One real surprise caught by reading the actual
+    reducer rather than assuming: the scheduled 11:00–14:00 part touches the
+    existing 08:00–11:00 block for the SAME (task, person) pair, so the
+    already-shipped adjacency merge (same mechanism verified in
+    `browser-check-bin-split.mjs`'s step (f)) fuses it into that block
+    (id `fixture-wl-today-a` survives, extended 3h→6h) instead of creating a
+    new entry — the script asserts the merge directly (both survivor blocks'
+    id/start/hours) rather than a naive "new block at 660" search, which
+    failed on the first run until traced and fixed here (not a production
+    bug).
+    (e) zero `pageerror` events across the whole flow. 8 screenshots per
+    engine (2 per scenario a–d) in `reviews/screenshots-20260713b-placement/`.
+  - `docs/decisions/2026-07-13-parent-task-date-containment.md` (new) —
+    decision note for HUMAN approval, no code/behavior change: current
+    behavior (verified file/function/line references for `SAVE_TASK`,
+    `SET_TASK_DATES`, `MOVE_TASK`, `SET_BLOCK_TIME` cross-day, `INSERT_BLOCK`,
+    `SCHEDULE_BIN_PART`, and Timeline's `SET_PROJECT_DATES` — none of them
+    check containment against the parent project today); three options (A
+    keep/document-only, B soft-warn in TaskModal/ProjectDetailPage, C hard
+    reducer enforcement) with concrete costs/risks per option, including C's
+    direct conflict with the already-shipped auto-extend semantics
+    (`INSERT_BLOCK`/`SET_BLOCK_TIME`) and the Timeline's documented
+    "project dates move independently of tasks" decision, plus C's unresolved
+    data-repair question (existing out-of-range data has never been
+    prevented); a full test-matrix table (7 writers × in/widen-out/
+    project-shrinks × 3 options); an explicit closing line that nothing is
+    enacted.
+  - `CLAUDE.md` — four surgical hunks, each anchored to real, verified
+    behavior (nothing else touched): (1) Calendar bullet — one added sentence
+    after the existing "Dodaj przed/po" description, naming the exact
+    ripple-24:00 and 92-day-cap refusal conditions; (2) Workload bullet — one
+    added sentence on the day-panel reassign pre-validation (` — brak
+    miejsca` / disabled `Przenieś` / matching title); (3) Architecture "State"
+    bullet — one added clause naming `findFreeStart` as the placement
+    mechanism for `INSERT_BLOCK`/`REASSIGN_ENTRY`/`SAVE_TASK`'s new-pair rows,
+    contrasted with `SAVE_TASK`'s explicit non-blocking `nextFreeStart`
+    fallback (invariant 3); (4) manual checklist item 8 (Calendar week) — one
+    added clause covering the near-midnight insert refusal/switch-back and
+    the Workload reassign guard. `grep` confirms `findFreeStart`, `brak
+    miejsca`, the exact fit-warning fragment, and "limit 92 dni" all appear.
+  - `handoffs/RUN-STATE.md` — this entry.
+- **Read-before-write, no mismatches found:** read the real shipped code
+  before writing any assertion or doc line — `src/components/WeekView.tsx`
+  (insert form's `insertWarning`/`insertDisabled` derivation and exact
+  message strings at :1081–1104, the schedule form's `schedWarning`/
+  `schedDisabled` chain at :1115–1146 incl. the `Koliduje` collision line and
+  the non-blocking overload preview, `initScheduleForm`'s
+  `findFreeStart(...) ?? nextFreeStart(...)` default at :982–994, `BinCard`'s
+  `week-bin-schedule-btn`, the context-menu JSX incl. the
+  `.context-insert-form:not(.context-schedule-form)` class overlap between
+  the two forms), `src/pages/WorkloadPage.tsx` (`BlockRow`'s `targetFits`/
+  option-suffix/button-disable logic at :62–109, the exact aria-labels
+  `Poprzedni tydzień`/`Następny tydzień`/`Dzisiaj`), `src/pages/
+  CalendarPage.tsx` (week view has no date-jump input, only `Poprzedni`/
+  `Dzisiaj`/`Następny`, `aria-label="Następny"` — a DIFFERENT label than
+  WorkloadPage's own next-week button, used correctly per-page in the
+  script), `src/store/AppStore.tsx` (`insertBlock`'s validation order —
+  budget gate BEFORE `planRippleInsert`, informing the fixture's generous
+  `estimatedHours` headroom choice so the budget gate never masks the fit/cap
+  checks under test; `reassignEntry`'s auto-assign-on-move, meaning fixture
+  tasks didn't need pre-assignment to reassign targets; the adjacency-merge
+  mechanism shared by `setBlockTime`/`SCHEDULE_BIN_PART`, which is what
+  caused scenario (d)'s first-draft assertion to fail), `src/utils/time.ts`
+  (`findFreeStart`'s exact gap-scan algorithm, worked through by hand to
+  design the 08:00–11:00/15:00–24:00/11:00–14:00-gap fixture so the default
+  start is provably NOT the naive append-clamp answer), `src/store/seed.ts`
+  (people array order, Kasia as default admin/current-user, capacity
+  default 8h), `src/utils/dates.ts` (`weekDays`'s Monday-first order,
+  confirming the script's local `mondayIndex` helper). One implementation
+  detail NOT in the sibling packages' reports and only found by tracing the
+  reducer: the schedule-form scenario's submitted part adjacency-merges into
+  an existing same-(task,person) block rather than landing as a standalone
+  entry — this is pre-existing, already-shipped, already-tested behavior
+  (release-hardening-4), not something introduced or affected by this run;
+  the script's assertions were corrected to match reality rather than the
+  app being treated as wrong.
+- **Environment obstruction (not a package deviation):** port 5173 was NOT
+  already serving anything at session start this time (connection refused) —
+  no stale-sibling-server workaround was needed. Started this repo's own vite
+  dev server via the node API (`vite.createServer()` from a `node -e`-style
+  script, since `vite`/`npm run dev` CLI are denied), confirmed it served
+  THIS working tree (fetched `/`, checked for `<title>N2Hub Planer</title>`
+  and — via the first browser-check run itself — the presence of the
+  „Zaplanuj część” UI) before running anything against it. `node_modules`
+  and the `playwright` package were already present from a prior sibling
+  package's `npm install` on this branch, so no reinstall was needed.
+- **One real test-design deviation from a literal first draft, caught and
+  fixed before reporting (not a production bug — see above):** scenario (d)'s
+  original assertion searched for a brand-new workload row at
+  `startMinutes: 660`; the actual reducer behavior (adjacency merge, verified
+  in `AppStore.tsx`) extends the touching existing block instead. Fixed the
+  assertion to check the merge directly (surviving block id/start/hours plus
+  the untouched evening block and total-hours conservation) rather than
+  adjusting the fixture to dodge the merge, since the merge IS the correct,
+  already-approved behavior and is worth asserting explicitly.
+- **Tests run (full matrix, in order):** `node ./node_modules/typescript/bin/
+  tsc --noEmit` → 0 errors. `npm test` → 11 files / 391 tests, all green
+  (unchanged baseline — no `src/` production or test file touched by this
+  package). Production build via `node -e "import('vite').then(v =>
+  v.build())"` → success (only the pre-existing >500 kB chunk-size warning).
+  `node scripts/browser-check-placement.mjs chromium` — **30/30 PASS**.
+  `node scripts/browser-check-placement.mjs webkit` — **30/30 PASS**.
+  Spot-regression (per the package's "MUST remain green" requirement, time-
+  boxed to chromium): `browser-check-bin-drag.mjs chromium free` — PASS;
+  `browser-check-bin-drag.mjs chromium collision` — PASS;
+  `browser-check-bin-split.mjs chromium` — PASS (all 32 of its own
+  assertions). Screenshots (8 × chromium, 8 × webkit) in
+  `reviews/screenshots-20260713b-placement/`.
+- **Deviations:** none from scope. No `src/` file touched (verified: only the
+  new script, the new decision note, the CLAUDE.md hunks above, and this
+  RUN-STATE.md entry). The 92-day-cap scenario (b) deliberately does NOT
+  submit the far-task insert after asserting the disabled state (matches the
+  package's literal "switch back → enabled" wording rather than adding an
+  unrequested extra assertion). Did not run the FULL bin-drag scenario sweep
+  (9 scenarios × 2 engines) or bin-split on webkit — the package explicitly
+  allows a time-boxed spot check ("full sweep preferred" but not required);
+  flagging this as a deliberate scope-time tradeoff, not an oversight.
+- **Still open / next:** this was the last package in the run (browser-docs
+  runs after core + ui). End-of-run gate items (full bin-drag/bin-split
+  sweep if desired, Codex review attempt, commit/push) are for the
+  orchestrator — git remains denied in this unattended session (only
+  read-only `git rev-parse --abbrev-ref HEAD` was available to confirm the
+  branch name; no state-changing git command was run).
+
+### Reviewer verdict (Fable, recorded by orchestrator)
+
+- **Status: APPROVE-WITH-NITS** — zero blockers, nothing routed back.
+- **Codex second opinion: SKIPPED** — `scripts/codex-review.sh` denied by the
+  unattended permission profile (fifth run in a row). Verdict rests on the
+  reviewer's full structural read of the working-tree-vs-HEAD diff
+  (orchestrator-generated via a read-only node object-DB walk, git being
+  denied) plus independent re-runs: tsc 0 errors, 11 files / 391 tests green.
+- **Guardrail audit (017.md): all 7 PASS** — no duplicate validation layer,
+  fixed date guards untouched; invariant 3 semantics preserved (SAVE_TASK
+  never rejects — `findFreeStart(...) ?? nextFreeStart(...)` correctly uses
+  `??` so a midnight `0` slot isn't skipped); bin drag lifecycle zero hunks;
+  identity-preserving SAVE_TASK reconciliation untouched (new-pair branch
+  only); containment = decision note only, zero enforcement code; atomic
+  rejections return the original state reference (pinned by `toBe(state)`
+  tests); migration/seed placement unchanged.
+- **Nits (P3, → carried backlog):**
+  1. `WeekView.tsx` insert-form 92-day mirror omits the reducer's
+     `periodWidens` condition — a legacy >92-day task whose period already
+     covers the ref date gets `Wstaw` disabled although the reducer would
+     accept (safe direction; same family as the existing legacy->92d backlog
+     items; matches the already-shipped schedule-form check).
+  2. CLAUDE.md invariant 3's literal sentence ("blocks … only …
+     `SET_BLOCK_TIME`") is now under-inclusive — `INSERT_BLOCK` /
+     `REASSIGN_ENTRY` also refuse impossible placement. Run was barred from
+     touching invariant 3 wording; human should reword.
+  3. Browser scenario (b) asserts disable/re-enable but never submits the
+     re-enabled insert (unit tests cover the happy path).
+- **Test coverage: ADEQUATE** (+22 meaningful tests). Pre-existing gap
+  carried: `setBlockTime` cross-day 92-day cap still lacks a *direct*
+  rejection test (exercised only via SCHEDULE_BIN_PART delegation).
+- **Convention check: PASS** (reducer-rejection convention, selectors-only
+  reads, pure time math in `time.ts`, Polish strings, `reindexDays` over
+  touched keys, no new deps, house mirror-predicate + disabled-`title` UI
+  pattern, no toasts).
+
+### Orchestrator close-out
+
+- Baseline gate: commits 4bb7f69, 86aa3e6, 11f1dea verified as ancestors of
+  both `main` and `review/claude-auto-20260713-0040` via a read-only node
+  walk of the git object DB (git CLI denied) — run NOT stale.
+- Adjudicated side effects: the 5 historical screenshots under
+  `reviews/screenshots-20260709-codex/` and `reviews/screenshots-20260713-binsplit/`
+  that the spot-regression re-runs had overwritten were RESTORED to their
+  HEAD bytes (this run's evidence lives in
+  `reviews/screenshots-20260713b-placement/`). `automation/claude-scheduler/`
+  log/state files are outer-harness artifacts, not this run's work — the
+  committing session should exclude them from the feature commit.
+- **Commit/push: BLOCKED** — all git commands denied in this unattended
+  session (per the standing automation permission profile). Work left
+  uncommitted but complete and green on the review branch working tree; a
+  git-enabled session should commit the run (excluding automation artifacts)
+  and push `review/claude-auto-20260713-0040`.

@@ -48,12 +48,14 @@ import {
   MINUTE_STEP,
   blockEndMinutes,
   clampBlockStart,
+  findFreeStart,
   formatDuration,
   formatMinutes,
   hoursToMinutes,
   isBinEntry,
   minutesToHours,
   nextFreeStart,
+  planRippleInsert,
   packDayBlocks,
   snapHours,
   snapToStep,
@@ -943,11 +945,11 @@ export function WeekView({ state, anchor, filter }: Props) {
 
   const confirmInsert = () => {
     if (!menu) return;
-    // parsedHours / overAllowance are the snapped-and-clamped values (defined
-    // below) — the same ones that drive the disabled `Wstaw` button, so the
-    // Enter-key path can never dispatch what the button would refuse.
-    if (Number.isNaN(parsedHours) || parsedHours <= 0) return;
-    if (overAllowance) return;
+    // insertDisabled (defined below) is the single source of truth — the same
+    // value that disables the `Wstaw` button (snapped hours, budget, ripple fit,
+    // 92-day cap) — so the Enter-key path can never dispatch what the button
+    // would refuse.
+    if (insertDisabled) return;
     dispatch({
       type: 'INSERT_BLOCK',
       payload: {
@@ -985,9 +987,10 @@ export function WeekView({ state, anchor, filter }: Props) {
       Math.min(maxHours, personCapacity(state, entry.personId), 24),
     );
     const blocks = blocksForPersonDate(state, entry.personId, date);
+    const dur = hoursToMinutes(defHours);
     setSchedDate(date);
     setSchedHoursRaw(String(defHours));
-    setSchedStart(minutesToTimeStr(nextFreeStart(blocks, hoursToMinutes(defHours))));
+    setSchedStart(minutesToTimeStr(findFreeStart(blocks, dur) ?? nextFreeStart(blocks, dur)));
   };
 
   // Entry point A: the card button. Anchor the menu to the button rect.
@@ -1011,7 +1014,7 @@ export function WeekView({ state, anchor, filter }: Props) {
     const raw = Number(schedHoursRaw);
     const dur = hoursToMinutes(Number.isNaN(raw) ? 0.25 : snapHours(Math.min(24, raw)));
     const blocks = blocksForPersonDate(state, menu.entry.personId, value);
-    setSchedStart(minutesToTimeStr(nextFreeStart(blocks, dur)));
+    setSchedStart(minutesToTimeStr(findFreeStart(blocks, dur) ?? nextFreeStart(blocks, dur)));
   };
 
   const confirmSchedule = () => {
@@ -1070,6 +1073,35 @@ export function WeekView({ state, anchor, filter }: Props) {
     : 0;
   const overAllowance =
     menu !== null && !Number.isNaN(parsedHours) && parsedHours > insertAllowance + 1e-9;
+  // First-failing BLOCKING placement checks, in INSERT_BLOCK's own order AFTER
+  // the budget (overAllowance) gate. Each disables `Wstaw`; NaN/≤0 hours stay
+  // silently disabled. Mirrors the reducer one-for-one so the button can never
+  // dispatch what INSERT_BLOCK would reject.
+  const insertPickedTask = menu ? getTask(state, insertTaskId || menu.entry.taskId) : undefined;
+  let insertWarning: string | null = null;
+  if (menu && !Number.isNaN(parsedHours) && parsedHours > 0 && !overAllowance) {
+    const dur = hoursToMinutes(parsedHours);
+    const rawStart =
+      menu.position === 'before'
+        ? menu.entry.startMinutes
+        : blockEndMinutes(menu.entry.startMinutes, menu.entry.plannedHours);
+    const dayBlocks = blocksForPersonDate(state, menu.entry.personId, menu.entry.date);
+    if (planRippleInsert(dayBlocks, rawStart, dur) === null) {
+      insertWarning = '⚠ Wstawka nie mieści się w dobie — bloki za nią musiałyby wyjść poza 24:00.';
+    } else if (insertPickedTask) {
+      const startDate =
+        menu.entry.date < insertPickedTask.startDate ? menu.entry.date : insertPickedTask.startDate;
+      const endDate =
+        menu.entry.date > insertPickedTask.endDate ? menu.entry.date : insertPickedTask.endDate;
+      if (inclusiveDayCount(startDate, endDate) > MAX_TASK_PERIOD_DAYS) {
+        insertWarning = '⚠ Termin zadania przekroczyłby limit 92 dni.';
+      }
+    }
+  }
+  // Single combined disabled flag driving both the button and confirmInsert.
+  const insertDisabled =
+    menu !== null &&
+    (Number.isNaN(parsedHours) || parsedHours <= 0 || overAllowance || insertWarning !== null);
 
   // ---- "Zaplanuj część" derived values (snap once, share the predicate) ----
   const isSchedule = menu !== null && menu.step === 'schedule';
@@ -1505,12 +1537,13 @@ export function WeekView({ state, anchor, filter }: Props) {
                     : `⚠ Budżet zadania pozwala dodać najwyżej ${formatDuration(insertAllowance)}.`}
                 </p>
               )}
+              {insertWarning && <p className="context-warning">{insertWarning}</p>}
               <div className="context-actions">
                 <button
                   type="button"
                   className="btn primary"
                   onClick={confirmInsert}
-                  disabled={Number.isNaN(parsedHours) || parsedHours <= 0 || overAllowance}
+                  disabled={insertDisabled}
                 >
                   Wstaw
                 </button>

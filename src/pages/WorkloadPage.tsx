@@ -31,7 +31,7 @@ import {
   weekDays,
   weekRangeLabel,
 } from '../utils/dates';
-import { formatDuration } from '../utils/time';
+import { findFreeStart, formatDuration, hoursToMinutes } from '../utils/time';
 
 /** Actions for one block inside the resolution panel. */
 function BlockRow({
@@ -60,6 +60,13 @@ function BlockRow({
   const client = project ? getClient(state, project.clientId) : undefined;
   const others = state.people.filter((p) => p.id !== personId);
   const [target, setTarget] = useState(() => others[0]?.id ?? '');
+  // Mirror REASSIGN_ENTRY's dated predicate: the target day must have a
+  // collision-free slot for this block. Disable the move the reducer would
+  // silently reject and flag each no-fit option.
+  const durMin = hoursToMinutes(entry.plannedHours);
+  const targetFits = target
+    ? findFreeStart(blocksForPersonDate(state, target, date), durMin) !== null
+    : true;
 
   return (
     <li className="wr-block">
@@ -83,9 +90,11 @@ function BlockRow({
                 const cap = personCapacity(state, p.id);
                 const cur = hoursForPersonOnDate(state, p.id, date);
                 const over = cur + entry.plannedHours > cap;
+                const fits = findFreeStart(blocksForPersonDate(state, p.id, date), durMin) !== null;
                 return (
                   <option key={p.id} value={p.id}>
                     {p.name} — {formatDuration(cur)}/{formatDuration(cap)} tego dnia{over ? ' ⚠' : ''}
+                    {fits ? '' : ' — brak miejsca'}
                   </option>
                 );
               })}
@@ -93,7 +102,9 @@ function BlockRow({
             <button
               type="button"
               className="btn ghost small"
-              onClick={() => target && onReassign(entry.id, target)}
+              onClick={() => target && targetFits && onReassign(entry.id, target)}
+              disabled={!targetFits}
+              title={targetFits ? undefined : 'Brak wolnego przedziału czasu w tym dniu u wybranej osoby.'}
             >
               <ArrowRightLeft size={14} /> Przenieś
             </button>

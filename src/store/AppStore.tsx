@@ -44,12 +44,14 @@ import {
   MINUTE_STEP,
   blockEndMinutes,
   clampBlockStart,
+  findFreeStart,
   formatDuration,
   formatMinutes,
   hasCollision,
   hoursToMinutes,
   isBinEntry,
   nextFreeStart,
+  planRippleInsert,
   snapHours,
 } from '../utils/time';
 
@@ -417,16 +419,18 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
       // (across all tasks), matching the legacy new-cell behavior.
       const hours = tNew * HOURS_STEP;
       const around = [...workloadOther, ...taskBinKept, ...workloadForTask];
+      const dayList = around.filter((w) => w.personId === personId && w.date === date);
+      const durMin = hoursToMinutes(hours);
       workloadForTask.push({
         id: uid(),
         taskId: realTaskId,
         personId,
         date,
         plannedHours: hours,
-        startMinutes: nextFreeStart(
-          around.filter((w) => w.personId === personId && w.date === date),
-          hoursToMinutes(hours),
-        ),
+        // Prefer a collision-free slot; fall back to nextFreeStart's clamp so
+        // SAVE_TASK never rejects on placement (invariant 3 — editor edits may
+        // create overlaps, which the week view renders side-by-side).
+        startMinutes: findFreeStart(dayList, durMin) ?? nextFreeStart(dayList, durMin),
         sortIndex: nextSortIndex(around, personId, date),
       });
       touched.add(key);
@@ -722,40 +726,34 @@ function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
     payload.position === 'before'
       ? ref.startMinutes
       : blockEndMinutes(ref.startMinutes, ref.plannedHours);
+
+  // Plan the sweep without clamping: reject atomically (state unchanged) if the
+  // inserted block or any pushed block would cross 24:00. No hidden overlaps.
+  const dayBlocks = state.workload.filter(
+    (w) => w.personId === ref.personId && w.date === ref.date,
+  );
+  const moves = planRippleInsert(dayBlocks, rawStart, dur);
+  if (moves === null) return state;
+
+  // Task period must cover ref.date; reject if the widening exceeds the 92-day
+  // cap (mirrors setBlockTime). Validated BEFORE any mutation so the action is
+  // atomic — the task picker can pick ANY task, so this cannot be skipped.
+  const newStartDate = ref.date < task.startDate ? ref.date : task.startDate;
+  const newEndDate = ref.date > task.endDate ? ref.date : task.endDate;
+  const periodWidens = newStartDate !== task.startDate || newEndDate !== task.endDate;
+  if (periodWidens && inclusiveDayCount(newStartDate, newEndDate) > MAX_TASK_PERIOD_DAYS) {
+    return state;
+  }
+
   const entry: WorkloadEntry = {
     id: uid(),
     taskId: payload.taskId,
     personId: ref.personId,
     date: ref.date,
     plannedHours: hours,
-    startMinutes: clampBlockStart(rawStart, dur),
+    startMinutes: rawStart, // un-clamped; planRippleInsert guaranteed it fits
     sortIndex: 0, // fixed by reindexDays below
   };
-
-  // Sweep that person's day (new block ordered before ref on an equal start):
-  // push any later block that would overlap forward to the running cursor.
-  const dayBlocks = state.workload.filter(
-    (w) => w.personId === ref.personId && w.date === ref.date,
-  );
-  const ordered = [...dayBlocks, entry].sort((a, b) => {
-    if (a.startMinutes !== b.startMinutes) return a.startMinutes - b.startMinutes;
-    if (a.id === entry.id) return -1;
-    if (b.id === entry.id) return 1;
-    return a.sortIndex - b.sortIndex;
-  });
-  const startIdx = ordered.findIndex((b) => b.id === entry.id);
-  const moves = new Map<string, number>(); // entryId -> new startMinutes
-  let cursor = blockEndMinutes(entry.startMinutes, entry.plannedHours);
-  for (let i = startIdx + 1; i < ordered.length; i++) {
-    const b = ordered[i];
-    if (b.startMinutes < cursor) {
-      const pushed = clampBlockStart(cursor, hoursToMinutes(b.plannedHours));
-      if (pushed !== b.startMinutes) moves.set(b.id, pushed);
-      cursor = pushed + hoursToMinutes(b.plannedHours);
-    } else {
-      cursor = blockEndMinutes(b.startMinutes, b.plannedHours);
-    }
-  }
   let shifted = state.workload.map((w) => {
     const m = moves.get(w.id);
     return m === undefined ? w : { ...w, startMinutes: m };
@@ -783,14 +781,13 @@ function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
   const assignments = alreadyAssigned
     ? state.assignments
     : [...state.assignments, { id: uid(), taskId: payload.taskId, personId: ref.personId }];
-  const tasks = state.tasks.map((t) => {
-    if (t.id !== payload.taskId) return t;
-    const startDate = ref.date < t.startDate ? ref.date : t.startDate;
-    const endDate = ref.date > t.endDate ? ref.date : t.endDate;
-    return startDate === t.startDate && endDate === t.endDate
-      ? t
-      : { ...t, startDate, endDate, updatedAt: nowIso() };
-  });
+  const tasks = periodWidens
+    ? state.tasks.map((t) =>
+        t.id === payload.taskId
+          ? { ...t, startDate: newStartDate, endDate: newEndDate, updatedAt: nowIso() }
+          : t,
+      )
+    : state.tasks;
 
   const person = state.people.find((p) => p.id === ref.personId);
   let message = `wstawił(a) blok ${formatDuration(hours)} ${payload.position === 'before' ? 'przed' : 'po'} „${state.tasks.find((t) => t.id === ref.taskId)?.title ?? 'blok'}” dla ${person?.name ?? 'kogoś'} w dniu ${ref.date}`;
@@ -857,17 +854,24 @@ function reassignEntry(state: AppData, entryId: string, toPersonId: string): App
   // Compute the target's next free sortIndex against the workload WITHOUT the
   // moved entry, then append the moved entry to the end of the target's day.
   const without = state.workload.filter((w) => w.id !== entryId);
+  // Bin entries stay in the bin (date '', startMinutes 0) and append to the
+  // target person's bin; dated entries land in a collision-free slot on the
+  // target's day — reject atomically (state unchanged) if none fits.
+  let startMinutes: number;
+  if (isBinEntry(entry)) {
+    startMinutes = 0;
+  } else {
+    const free = findFreeStart(
+      without.filter((w) => w.personId === toPersonId && w.date === date),
+      hoursToMinutes(plannedHours),
+    );
+    if (free === null) return state;
+    startMinutes = free;
+  }
   const moved: WorkloadEntry = {
     ...entry,
     personId: toPersonId,
-    // Bin entries stay in the bin (date '', startMinutes 0) and append to the
-    // target person's bin; dated entries append to the target's day schedule.
-    startMinutes: isBinEntry(entry)
-      ? 0
-      : nextFreeStart(
-          without.filter((w) => w.personId === toPersonId && w.date === date),
-          hoursToMinutes(plannedHours),
-        ),
+    startMinutes,
     sortIndex: nextSortIndex(without, toPersonId, date),
   };
   const touched = new Set<string>([
