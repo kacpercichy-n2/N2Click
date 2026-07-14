@@ -177,14 +177,14 @@ po minucie (`CLAUDE_AUTO_RETRY_DELAY_MINUTES`), zawsze po ponownym sprawdzeniu
 progu użycia. Błędy techniczne bez poprawnego werdyktu review nadal zatrzymują
 run, bo scheduler nie ma wtedy wiarygodnych instrukcji naprawy.
 
-Worker może uruchomić wymagany przez prompt, skupiony test browserowy: allowlista
-obejmuje `npm run dev` oraz zatwierdzone skrypty `node scripts/browser-check-*.mjs`.
-Skrypty zakładają Vite na `:5173`; worker uruchamia go tylko na czas własnego
-scenariusza i musi go po nim zakończyć. Konfiguracja MCP Playwright pozostaje
-zewnętrzna wobec tego repo — jeśli jest dostępna dla sesji Claude, może służyć do
-diagnostyki, ale nie zastępuje deterministycznego skryptu regresyjnego w CI.
-Projektowa konfiguracja `.mcp.json` udostępnia workerom serwer `playwright`;
-allowlista obejmuje jego narzędzia jako `mcp__playwright__*`.
+Gdy prompt wymaga scenariusza browserowego, worker wykonuje go przez Playwright
+MCP — nie przez skrypty `node scripts/browser-check-*.mjs`. `npm run dev` jest
+dozwolony wyłącznie jako proces pomocniczy, gdy aplikacja nie działa jeszcze na
+`:5173`; sam MCP prowadzi nawigację, interakcje i asercje. Wynik scenariusza MCP
+worker zapisuje w `focusedChecks`. Projektowa konfiguracja `.mcp.json` udostępnia
+serwer `playwright`, a allowlista obejmuje jego narzędzia jako
+`mcp__playwright__*`. Skrypty browserowe pozostają deterministyczną regresją
+release/CI, lecz scheduler nie uruchamia ich w fazie workera.
 
 `CLAUDE_AUTO_SKIP_PERMISSIONS=1` włącza niebezpieczne pomijanie pytań o zgody;
 używaj wyłącznie jako świadomej decyzji operatora.

@@ -566,6 +566,11 @@ Automation constraints:
   the scheduler owns independent review outside this Claude process.
 - Workers run focused verification while iterating. The scheduler owns the one
   final npm run test:scheduler + npm test + npm run build gate.
+- When the prompt requires a browser scenario, use the configured Playwright
+  MCP tools for navigation, interaction and assertions. Start Vite with the
+  allowed `npm run dev` command only as supporting infrastructure when needed;
+  do not execute `scripts/browser-check-*.mjs` from the worker. Record the MCP
+  scenario and outcome in focusedChecks.
 - Report synthesized results only. Include context expansions, exact focused
   checks, deviations and blockers; do not paste raw logs.
 - Before exiting, write automation/claude-scheduler/state/current-work.json with

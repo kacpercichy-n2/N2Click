@@ -25,7 +25,6 @@ export const DEFAULT_ALLOWED_TOOLS = [
   "Bash(node scripts/browser-check-bin-drag.mjs:*)",
   "Bash(node scripts/browser-check-bin-split.mjs:*)",
   "Bash(node scripts/browser-check-date-hardening.mjs:*)",
-  "Bash(node scripts/browser-check-dirty-navigation.mjs:*)",
   "Bash(node scripts/browser-check-onboarding.mjs:*)",
   "Bash(node scripts/browser-check-placement.mjs:*)",
   "Bash(node scripts/browser-check-savetask-multiblock.mjs:*)",
