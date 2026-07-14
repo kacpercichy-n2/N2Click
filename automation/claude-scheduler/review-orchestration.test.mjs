@@ -92,5 +92,9 @@ test("parses a Claude JSON envelope containing a reviewer verdict", () => {
     type: "result",
     result: '```json\n{"status":"approve","blockers":[]}\n```',
   })), { status: "approve", blockers: [] });
+  assert.deepEqual(parseReviewerEnvelope(JSON.stringify({
+    type: "result",
+    result: 'Review notes.\n\n```json\n{"status":"changes-required","blockers":["Fix the route guard."]}\n```',
+  })), { status: "changes-required", blockers: ["Fix the route guard."] });
   assert.equal(parseReviewerEnvelope('{"result":"not json"}'), null);
 });

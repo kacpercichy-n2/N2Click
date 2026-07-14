@@ -77,6 +77,7 @@ const verifyCommands = parseVerifyCommands(
   process.env.CLAUDE_AUTO_VERIFY || "npm run test:scheduler && npm test && npm run build",
 );
 const earlyCheckMinutes = parseOptionalPositiveInt(process.env.CLAUDE_AUTO_EARLY_CHECK_MINUTES);
+const retryDelayMinutes = parseOptionalPositiveInt(process.env.CLAUDE_AUTO_RETRY_DELAY_MINUTES) ?? 1;
 const usageHelper = process.env.CLAUDE_AUTO_USAGE_HELPER || path.join(process.env.HOME || "", ".claude", "fetch-claude-usage.swift");
 const usageTelemetryEnabled = fs.existsSync(usageHelper);
 // Protect the account budget by default. Operators may explicitly opt out for
@@ -130,45 +131,56 @@ if (usageTelemetryEnabled) {
 console.log(`Remaining prompts: ${remainingPrompts.map((file) => path.basename(file)).join(", ")}`);
 console.log("Keep the Mac awake with: caffeinate -dimsu node automation/claude-scheduler/run-queue.mjs");
 
-let earlyEligibleAt = null;
 let schedulingCursor = new Date();
 for (const promptFile of remainingPrompts) {
-  const slot = nextRunSlot(schedulingCursor, scheduleTimes, earlyEligibleAt);
-  console.log(`\nNext prompt ${path.basename(promptFile)} scheduled for ${formatDateTime(slot)}${slot.source ? ` (${slot.source})` : ""}.`);
+  let retryFeedback = null;
+  let retryEligibleAt = null;
+  while (true) {
+    const slot = nextRunSlot(schedulingCursor, scheduleTimes, retryEligibleAt);
+    console.log(`\n${retryFeedback ? "Retry" : "Next prompt"} ${path.basename(promptFile)} scheduled for ${formatDateTime(slot)}${slot.source ? ` (${slot.source})` : ""}.`);
 
-  if (!dryRun) {
-    await sleepUntil(slot);
-    schedulingCursor = new Date();
-  } else {
-    schedulingCursor = new Date(slot.getTime() + 2_000);
-  }
-  if (usageGateEnabled && !dryRun) {
-    await waitForUsageBudget();
-  }
+    if (!dryRun) {
+      await sleepUntil(slot);
+      schedulingCursor = new Date();
+    } else {
+      schedulingCursor = new Date(slot.getTime() + 2_000);
+    }
+    if (usageGateEnabled && !dryRun) {
+      await waitForUsageBudget();
+    }
 
-  const ok = await runPrompt(promptFile);
-  const stopReason = queueStopReason({
-    ok,
-    activeProcess: activeProcessGuard.active,
-    continueOnError,
-  });
-  if (stopReason === "active-process") {
-    console.error("Stopping queue because a timed-out process group could not be confirmed stopped; retaining scheduler lock.");
-    process.exit(1);
-  }
-  if (ok && earlyCheckMinutes) {
-    earlyEligibleAt = new Date(Date.now() + earlyCheckMinutes * 60_000);
-  }
-  if (stopReason === "failed-run") {
-    console.error("Stopping queue because Claude or verification failed.");
-    process.exit(1);
+    const outcome = await runPrompt(promptFile, retryFeedback);
+    if (outcome.retryFeedback) {
+      retryFeedback = outcome.retryFeedback;
+      retryEligibleAt = new Date(Date.now() + retryDelayMinutes * 60_000);
+      console.log(`Review requested fixes for ${path.basename(promptFile)}; retrying after ${retryDelayMinutes} minute(s), subject to the usage gate.`);
+      continue;
+    }
+
+    const stopReason = queueStopReason({
+      ok: outcome.ok,
+      activeProcess: activeProcessGuard.active,
+      continueOnError,
+    });
+    if (stopReason === "active-process") {
+      console.error("Stopping queue because a timed-out process group could not be confirmed stopped; retaining scheduler lock.");
+      process.exit(1);
+    }
+    if (outcome.ok && earlyCheckMinutes) {
+      schedulingCursor = new Date(Date.now() + earlyCheckMinutes * 60_000);
+    }
+    if (stopReason === "failed-run") {
+      console.error("Stopping queue because Claude or verification failed.");
+      process.exit(1);
+    }
+    break;
   }
 }
 
 console.log("\nPrompt queue finished.");
 releaseSchedulerLock();
 
-async function runPrompt(promptFile) {
+async function runPrompt(promptFile, retryFeedback = null) {
   const basename = path.basename(promptFile);
   const startedAt = new Date();
   const runId = randomUUID();
@@ -177,7 +189,7 @@ async function runPrompt(promptFile) {
   const trustedClaudeContext = fs.readFileSync(path.join(repoRoot, "CLAUDE.md"), "utf8");
   const promptContractError = promptContractErrorFor(promptBody, repoRoot);
   const metadata = promptMetadata(promptBody);
-  const fullPrompt = buildPrompt(promptBody, basename, runId);
+  const fullPrompt = buildPrompt(promptBody, basename, runId, retryFeedback);
   let ok = true;
   let reviewedDiffHash = null;
   let approvedRunResult = null;
@@ -212,7 +224,7 @@ async function runPrompt(promptFile) {
       writeRunLifecycleResult(basename, runId, "blocked", message);
       activeRunState = null;
     }
-    return false;
+    return { ok: false, retryFeedback: null };
   };
 
   appendLog(logFile, `# ${basename}\nStarted: ${startedAt.toISOString()}\nBranch: ${gitOutput(["branch", "--show-current"]).trim()}\n\n`);
@@ -244,10 +256,12 @@ async function runPrompt(promptFile) {
     return failPreflight(`Scheduler branch preflight failed: ${branchError}`);
   }
 
-  if (!dryRun && dirtyStatusExcludingRunResult()) {
+  if (!dryRun && dirtyStatusExcludingRunResult() && !retryFeedback) {
     appendLog(logFile, "Working tree was dirty before Claude started. Aborting this prompt.\n");
     console.error(`Working tree is dirty before ${basename}; resolve it before continuing.`);
     return failPreflight("Working tree became dirty before implementation started.");
+  } else if (!dryRun && retryFeedback) {
+    appendLog(logFile, "Retrying the previous implementation diff with reviewer feedback.\n");
   }
   if (!dryRun) fs.rmSync(workResultFile, { force: true });
   const trustedGateSnapshot = dryRun ? null : captureTrustedGate(repoRoot);
@@ -286,6 +300,7 @@ async function runPrompt(promptFile) {
   let workResult = null;
   let codexEvidence = null;
   let reviewerVerdict = null;
+  let nextRetryFeedback = null;
   const reviewerContextExpansions = [];
   if (ok && !dryRun) {
     workResult = readJsonFile(workResultFile);
@@ -363,7 +378,12 @@ async function runPrompt(promptFile) {
 
   if (ok && !dryRun && reviewerVerdict.status !== "approve") {
     appendLog(logFile, `Final reviewer returned ${reviewerVerdict.status}: ${JSON.stringify(reviewerVerdict.blockers)}\n`);
-    console.error(`Cannot approve ${basename}: reviewer returned ${reviewerVerdict.status}.`);
+    if (reviewerVerdict.status === "changes-required") {
+      nextRetryFeedback = reviewerVerdict.blockers;
+      console.log(`Reviewer requested fixes for ${basename}; preserving the diff for an automatic retry.`);
+    } else {
+      console.error(`Cannot approve ${basename}: reviewer returned ${reviewerVerdict.status}.`);
+    }
     ok = false;
   }
 
@@ -497,6 +517,9 @@ async function runPrompt(promptFile) {
         (error) => safeTelemetryWarning("completed-state update", error),
       );
     }
+  } else if (nextRetryFeedback) {
+    writeRunLifecycleResult(basename, runId, "running", "Reviewer requested fixes; scheduler will retry this prompt automatically.");
+    appendLog(logFile, "\nReview requested fixes; preserving changes for automatic retry.\n");
   } else {
     writeRunLifecycleResult(basename, runId, "blocked", "Run, review or verification failed; inspect the current scheduler log.");
     appendLog(logFile, "\nRun or verification failed: changes were intentionally left uncommitted for human recovery.\nPrompt was not marked as completed.\n");
@@ -505,21 +528,21 @@ async function runPrompt(promptFile) {
     async () => {
       metrics.finishedAt = new Date().toISOString();
       metrics.durationSeconds = Math.round((new Date(metrics.finishedAt).getTime() - startedAt.getTime()) / 1000);
-      metrics.status = ok ? "ok" : "failed";
+      metrics.status = nextRetryFeedback ? "retrying" : ok ? "ok" : "failed";
       metrics.usageAfter = usageTelemetryEnabled && !dryRun ? await readUsageSnapshot() : null;
       if (!dryRun) appendRunMetrics(metrics);
       if (metrics.usageAfter) {
         appendLog(logFile, `Usage after run: ${formatUsage(metrics.usageAfter)}\n`);
       }
-      appendLog(logFile, `\nFinished: ${new Date().toISOString()}\nStatus: ${ok ? "ok" : "failed"}\n`);
+      appendLog(logFile, `\nFinished: ${new Date().toISOString()}\nStatus: ${nextRetryFeedback ? "retrying" : ok ? "ok" : "failed"}\n`);
     },
     (error) => safeTelemetryWarning("run metrics", error),
   );
   activeRunState = null;
-  return ok;
+  return { ok, retryFeedback: nextRetryFeedback };
 }
 
-function buildPrompt(promptBody, basename, runId) {
+function buildPrompt(promptBody, basename, runId, retryFeedback = null) {
   return `You are working unattended in this repository.
 
 Before editing, read CLAUDE.md, then read only the wiki pages and source
@@ -558,6 +581,7 @@ Prompt file: ${basename}
 
 User prompt:
 ${promptBody}
+${retryFeedback ? `\nPrevious reviewer findings — address every item below in this retry. Keep and improve the existing uncommitted diff; do not discard it.\n${retryFeedback.map((item) => `- ${item}`).join("\n")}` : ""}
 `;
 }
 

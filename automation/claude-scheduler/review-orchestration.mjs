@@ -75,7 +75,8 @@ export function parseReviewerEnvelope(output) {
     return null;
   }
   const raw = typeof envelope.result === "string" ? envelope.result.trim() : "";
-  const json = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  const fenced = raw.match(/```json\s*([\s\S]*?)\s*```/i);
+  const json = fenced ? fenced[1] : raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   try {
     return JSON.parse(json);
   } catch {

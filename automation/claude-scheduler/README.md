@@ -171,6 +171,12 @@ do świadomego wyłączenia tej ochrony. Standardowe sloty pozostają jedynym
 harmonogramem; `CLAUDE_AUTO_EARLY_CHECK_MINUTES` jest opcjonalnym trybem
 przyspieszenia między udanymi promptami.
 
+Werdykt review `changes-required` nie kończy kolejki: scheduler zachowuje diff,
+przekazuje konkretne blokery do następnej próby tego samego promptu i ponawia ją
+po minucie (`CLAUDE_AUTO_RETRY_DELAY_MINUTES`), zawsze po ponownym sprawdzeniu
+progu użycia. Błędy techniczne bez poprawnego werdyktu review nadal zatrzymują
+run, bo scheduler nie ma wtedy wiarygodnych instrukcji naprawy.
+
 `CLAUDE_AUTO_SKIP_PERMISSIONS=1` włącza niebezpieczne pomijanie pytań o zgody;
 używaj wyłącznie jako świadomej decyzji operatora.
 
