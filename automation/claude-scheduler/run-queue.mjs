@@ -568,10 +568,10 @@ Automation constraints:
   final npm run test:scheduler + npm test + npm run build gate.
 - When the prompt requires a browser scenario, use the configured Playwright
   MCP tools for navigation, interaction and assertions. Start Vite with the
-  allowed `npm run dev -- --host 127.0.0.1 --port 5174` command as supporting
+  allowed npm run dev -- --host 127.0.0.1 --port 5174 command as supporting
   infrastructure when needed; verify the loaded page is the current N2Hub app
-  (title `N2Hub Planer`) before testing, then stop that Vite process afterwards.
-  do not execute `scripts/browser-check-*.mjs` from the worker. Record the MCP
+  (title N2Hub Planer) before testing, then stop that Vite process afterwards.
+  do not execute scripts/browser-check-*.mjs from the worker. Record the MCP
   scenario and outcome in focusedChecks.
 - Report synthesized results only. Include context expansions, exact focused
   checks, deviations and blockers; do not paste raw logs.
