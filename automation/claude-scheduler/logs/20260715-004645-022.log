@@ -1,0 +1,60 @@
+# 022.md
+Run: 20260715-004645-022
+Started: 2026-07-14T22:46:45.730Z
+
+**Approved.** The tier workflow (architect → reviewer, one remediation round) is complete. The deliverables are the two new documents, with zero code, config, or wiki changes:
+
+- `docs/decisions/backend-migration-boundary.md` — the provider-neutral boundary decision record
+- `docs/plans/backend-migration-plan.md` — the staged migration plan with a production security checklist
+
+**What happened**
+
+1. **Architect** cross-checked the four named seams read-only and wrote both docs, anchoring them to real symbols: the six-function storage surface in `src/store/storage.ts` (`loadData`, `saveData`, `subscribeExternalChanges`, `exportRawData`, `clearData`, `emptyData`, plus `DATA_VERSION 7` and the revision envelope), the `Action` union and reducer in `src/store/AppStore.tsx`, the `can()`/`MATRIX` permission seam, and the `Person.passwordHash`/`hashPassword` credential seam. It enumerated twelve human decisions (D1–D12: concurrency, collaboration model, identity, password recovery, legacy-hash reset UX, tenancy, offline posture, cut-over seed, operations/RPO-RTO, authorization semantics, audit retention, GDPR/RODO) that must be made before any implementation.
+2. **Reviewer** verified 20+ line anchors against source and confirmed full scope coverage and all invariants, but **blocked** on one factual error the architect had itself flagged: `src/components/PersistenceBanner.tsx` imports and calls `exportRawData` (the failed-save fallback download) yet was missing from the storage-surface consumer list in both docs.
+3. **Architect** verified the finding against source and corrected both docs — consumer list is now four (AppStoreProvider, PersistenceBanner, error boundary, test utilities), Stage 1 validation pins the fallback export to the repository interface, and `src/utils/uiPrefs.ts` is documented as the sole deliberate localStorage allowlist exception.
+4. **Reviewer** re-verified everything read-only and returned **approved** with no blockers, plus **`wiki unchanged`** — the two declared wiki pages describe current boundaries these docs don't alter.
+
+**Invariants held:** no provider selected, no service/credential created, working tree contains only the two docs, and frontend checks/localStorage are consistently framed as UX/data-integrity only — server-side authorization is mandatory in every stage.
+
+**Remaining, scheduler-owned per the routing:** the Codex review (`scripts/codex-review.sh`), the final `npm run test:scheduler && npm test && npm run build` gate, `handoffs/RUN-RESULT.json`, and the commit. I have not committed anything.
+
+claude exit code: 0
+
+$ npm test
+
+> n2hub@0.1.0 test
+> vitest run
+
+
+ RUN  v4.1.10 /Users/kacpercichyn2/Documents/N2click
+
+
+ Test Files  14 passed (14)
+      Tests  509 passed (509)
+   Start at  01:03:10
+   Duration  662ms (transform 1.05s, setup 0ms, import 2.39s, tests 210ms, environment 1ms)
+
+
+exit 0
+
+$ npm run build
+
+> n2hub@0.1.0 build
+> tsc --noEmit && vite build
+
+[36mvite v5.4.21 [32mbuilding for production...[36m[39m
+transforming...
+[32m✓[39m 2553 modules transformed.
+rendering chunks...
+computing gzip size...
+[2mdist/[22m[32mindex.html                 [39m[1m[2m  0.50 kB[22m[1m[22m[2m │ gzip:   0.30 kB[22m
+[2mdist/[22m[2massets/[22m[35mindex-BUH7f0Oe.css  [39m[1m[2m 85.79 kB[22m[1m[22m[2m │ gzip:  14.66 kB[22m
+[2mdist/[22m[2massets/[22m[36mindex-CPuIVz6s.js   [39m[1m[33m653.68 kB[39m[22m[2m │ gzip: 197.14 kB[22m
+[33m
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.[39m
+[32m✓ built in 1.35s[39m
+
+exit 0
