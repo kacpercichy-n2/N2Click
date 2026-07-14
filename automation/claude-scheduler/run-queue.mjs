@@ -116,7 +116,7 @@ function runSync(command, args) {
 }
 
 function captureSync(command, args) {
-  const result = spawnSync(command, args, { cwd: repoRoot, encoding: "utf8" });
+  const result = spawnSync(command, args, { cwd: process.cwd(), encoding: "utf8" });
   return { code: result.status ?? 1, stdout: result.stdout || "", stderr: result.stderr || "" };
 }
 
