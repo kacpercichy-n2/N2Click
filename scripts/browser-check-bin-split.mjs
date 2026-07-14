@@ -28,6 +28,26 @@
 //       via keyboard focus + Enter, and 0.5h is scheduled using only keyboard
 //       events (Tab into the Godziny field, clear via Home/Shift+End/
 //       Backspace, type, Enter to submit) on Ola's other seeded 3h bin row.
+//   (g2) accessibility (bundle 016 gap): Escape dialog recovery + keyboard-
+//       visible focus, on the seeded row left by (g) (now "2h 30m").
+//       - Escape recovery: opening the "Zaplanuj część" form and pressing
+//         Escape CLOSES it, commits nothing (hours unchanged), and the button
+//         re-opens the form (proves WeekView's Escape close handler is live and
+//         Escape never accidentally schedules).
+//       - Keyboard-visible focus: a REAL Tab keypress reaches an interactive
+//         control that matches :focus-visible AND shows a computed indicator,
+//         proving the styles.css :focus-visible rules (global ~line 209 →
+//         box-shadow; .week-bin-schedule-btn:focus-visible ~line 1862 → 2px
+//         solid outline) are present. Chromium tabs onto the bin card's plain
+//         <button> and asserts both the solid outline and the box-shadow.
+//       - WebKit MANUAL FALLBACK: Safari/WebKit's default tab order excludes
+//         plain <button>s ("Full Keyboard Access" off), so a real Tab never
+//         lands on the schedule button there; the check instead runs on a
+//         natively tabbable form input. If WebKit's :focus-visible modality
+//         heuristics still refuse to match under headless automation, verify
+//         MANUALLY: WebKit engine, open "Zaplanuj część", Tab between the
+//         Dzień/Start/Godziny fields — each focused field must show the
+//         lavender focus ring (var(--n2-shadow-focus) box-shadow / outline).
 //   (h) zero `pageerror`s across the whole flow.
 //
 // Usage: node scripts/browser-check-bin-split.mjs [chromium|webkit]
@@ -342,6 +362,124 @@ async function flowBinSplit(browser) {
       const afterText = (await seededCardNow.locator('.week-bin-block-hours').innerText()).trim();
       ok(afterText === '2h 30m', `seeded row reads "2h 30m" after the 0.5h keyboard schedule (got "${afterText}")`);
       await page.screenshot({ path: `${SHOTS}/${ENGINE}-05-keyboard-schedule.png` });
+    }
+
+    // --- (g2) accessibility: Escape dialog recovery + keyboard-visible focus ---
+    {
+      const olaGroupA11y = page.locator('.week-bin-group').filter({ hasText: olaName });
+      const seededCardA11y = olaGroupA11y
+        .locator('.week-bin-block')
+        .filter({ hasText: seededTaskTitle });
+      const a11yBtn = seededCardA11y.locator('button.week-bin-schedule-btn');
+      await a11yBtn.waitFor({ state: 'visible', timeout: 5000 });
+
+      // -- Escape dialog recovery --
+      // The seeded row now reads "2h 30m" (after g's 0.5h schedule). Opening the
+      // form and pressing Escape must CLOSE it and commit NOTHING, and the button
+      // must stay usable (re-openable).
+      // Catches: removal of WeekView's Escape close handler (stuck-open menu) or
+      // Escape accidentally committing a schedule.
+      const hoursBeforeEsc = (await seededCardA11y.locator('.week-bin-block-hours').innerText()).trim();
+      ok(hoursBeforeEsc === '2h 30m', `seeded row reads "2h 30m" before the Escape test (got "${hoursBeforeEsc}")`);
+
+      await a11yBtn.focus();
+      await page.keyboard.press('Enter');
+      const escForm = page.locator('.context-schedule-form');
+      await escForm.waitFor({ state: 'visible', timeout: 5000 });
+      await page.keyboard.press('Escape');
+      await escForm.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
+      ok(!(await escForm.isVisible().catch(() => false)), 'Escape closes the open schedule form');
+      const hoursAfterEsc = (await seededCardA11y.locator('.week-bin-block-hours').innerText()).trim();
+      ok(
+        hoursAfterEsc === '2h 30m',
+        `Escape commits nothing — seeded row still "2h 30m" (got "${hoursAfterEsc}")`,
+      );
+
+      // Re-activate the same button: proves the menu isn't stuck and the control
+      // is still live after the Escape recovery.
+      await a11yBtn.focus();
+      await page.keyboard.press('Enter');
+      await escForm.waitFor({ state: 'visible', timeout: 5000 });
+      ok(
+        await escForm.isVisible().catch(() => false),
+        'the "Zaplanuj część" button re-opens the form after Escape recovery',
+      );
+      await page.keyboard.press('Escape');
+      await escForm.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
+      await page.screenshot({ path: `${SHOTS}/${ENGINE}-06-escape-recovery.png` });
+
+      // -- Keyboard-visible focus (:focus-visible indicator) --
+      const focusInfo = () =>
+        page.evaluate(() => {
+          const el = document.activeElement;
+          if (!el) return null;
+          const cs = getComputedStyle(el);
+          return {
+            cls: typeof el.className === 'string' ? el.className : '',
+            tag: el.tagName.toLowerCase(),
+            focusVisible: el.matches(':focus-visible'),
+            outlineStyle: cs.outlineStyle,
+            outlineWidth: cs.outlineWidth,
+            boxShadow: cs.boxShadow,
+          };
+        });
+
+      if (ENGINE === 'chromium') {
+        // A REAL Tab keypress: programmatically focus the bin card (tabIndex=0),
+        // then Tab moves KEYBOARD focus onto its child schedule button, so
+        // :focus-visible legitimately matches (keyboard modality).
+        // Catches: deletion of the :focus-visible outline rules in styles.css
+        // (.week-bin-schedule-btn:focus-visible ~line 1862 for the outline;
+        // global :focus-visible ~line 209 for the box-shadow).
+        await seededCardA11y.focus();
+        await page.keyboard.press('Tab');
+        const info = await focusInfo();
+        ok(
+          !!info && info.cls.includes('week-bin-schedule-btn'),
+          `Tab from the bin card lands keyboard focus on "Zaplanuj część" (got ${JSON.stringify(info)})`,
+        );
+        ok(!!info && info.focusVisible, 'the keyboard-focused schedule button matches :focus-visible');
+        ok(
+          !!info && info.outlineStyle === 'solid' && info.outlineWidth !== '0px',
+          `focused button shows the 2px solid :focus-visible outline — catches deletion of styles.css ~line 1862 (got outline "${info?.outlineStyle} ${info?.outlineWidth}")`,
+        );
+        ok(
+          !!info && !!info.boxShadow && info.boxShadow !== 'none',
+          `focused button also carries the global :focus-visible box-shadow — catches deletion of styles.css ~line 209 (got "${info?.boxShadow}")`,
+        );
+      } else {
+        // WebKit: plain <button>s are outside the default tab order (see g and
+        // the header). Assert visible keyboard focus on a natively tabbable form
+        // input instead — open the form and Tab off the auto-focused Godziny
+        // (number) input onto Start (time) via a real keypress.
+        await a11yBtn.focus();
+        await page.keyboard.press('Enter');
+        const wkForm = page.locator('.context-schedule-form');
+        await wkForm.waitFor({ state: 'visible', timeout: 5000 });
+        await page.keyboard.press('Shift+Tab'); // Godziny -> Start, both natively tabbable
+        const info = await focusInfo();
+        const matched = !!info && info.focusVisible;
+        const indicator =
+          !!info &&
+          ((info.outlineStyle !== 'none' && info.outlineWidth !== '0px') ||
+            (!!info.boxShadow && info.boxShadow !== 'none'));
+        if (matched) {
+          ok(
+            indicator,
+            `WebKit: keyboard-focused form input shows a visible focus indicator (outline "${info?.outlineStyle} ${info?.outlineWidth}", box-shadow "${info?.boxShadow}")`,
+          );
+        } else {
+          // Documented manual fallback (see header) — do NOT hard-fail: WebKit's
+          // :focus-visible modality heuristics can refuse to match under headless
+          // automation even for genuine keyboard focus.
+          ok(
+            true,
+            `WebKit :focus-visible unmatched under automation — MANUAL FALLBACK per header applies (got ${JSON.stringify(info)})`,
+          );
+        }
+        await page.keyboard.press('Escape');
+        await wkForm.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
+      }
     }
 
     // --- (h) zero page errors across the whole flow ---

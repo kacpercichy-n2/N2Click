@@ -32,7 +32,26 @@
 //       append-based 21:00 that would collide with the evening block; no
 //       collision warning shows initially, and submitting schedules
 //       cleanly (proven via localStorage).
-//   (e) zero `pageerror`s across the whole flow.
+//   (f) zero availability + person-scoped conflict markers (bundle 020,
+//       previously unit-only). The current user (Kasia) is given ONE 4h dated
+//       block on TODAY after TODAY's weekday is dropped from her workDays
+//       (capacity untouched) so she has ZERO availability that day; a second
+//       person (Marek) is co-assigned to the SAME task with a clean state.
+//       Then:
+//         1. Dashboard "Dziś" donut caption reads the literal "⚠ brak
+//            dostępności" with the danger class .donut-pct.over (catches
+//            loadPercent regressing to a calm 0% for booked>0 on 0h available).
+//         2. WorkloadPage: Kasia's TODAY cell has class `overload` and title
+//            "Kasia Kowalska: 4h > 0h dostępności", and her week load bar shows
+//            the danger state while other days stay calm (catches a non-workday
+//            being treated as 8h, or the single-overbooked-day bar rule being
+//            dropped).
+//         3. TimelinePage people mode: the conflict marker (.timeline-conflict)
+//            appears on Kasia's row for the task and NOT on co-assignee Marek's
+//            row for the same task (catches conflict markers regressing to
+//            any-assignee scope).
+//   (e) zero `pageerror`s across the whole flow (asserted last, so it also
+//       covers scenario (f)).
 //
 // Usage: node scripts/browser-check-placement.mjs [chromium|webkit]
 // Exits non-zero if any check fails. Dev server must already be on :5173.
@@ -486,6 +505,151 @@ async function flowPlacement(browser) {
       ok(!hasOverlap(olaToday), 'no overlap on Ola/today after scheduling the bin part');
       ok((await binCard.count()) === 0, 'the emptied bin card disappears');
       await page.screenshot({ path: `${SHOTS}/${ENGINE}-d2-scheduled.png` });
+    }
+
+    // ============================================================
+    // (f) zero availability + person-scoped conflict markers (bundle 020)
+    // ============================================================
+    {
+      const zf = await page.evaluate(
+        ({ key, TODAY }) => {
+          const data = JSON.parse(localStorage.getItem(key));
+          const meId = data.currentUserId;
+          const me = data.people.find((p) => p.id === meId);
+          if (!me) return { ok: false, reason: 'no-current-user' };
+          // Co-assignee: prefer Marek (a plain Mon–Fri worker with no fixture
+          // booking today → clean), else any other person.
+          const other =
+            data.people.find((p) => p.id !== meId && p.name && p.name.includes('Marek')) ||
+            data.people.find((p) => p.id !== meId);
+          if (!other) return { ok: false, reason: 'no-coassignee' };
+          const project = data.projects[0];
+          const status = data.statuses[0];
+          if (!project || !status) return { ok: false, reason: 'no-project-or-status' };
+
+          // Drop TODAY's ISO weekday from the current user's workDays so she has
+          // ZERO availability today — capacity is left untouched. TODAY must be
+          // the non-workday so the dashboard "Dziś" donut and the current-week
+          // WorkloadPage both surface the danger state.
+          const [y, m, d] = TODAY.split('-').map(Number);
+          const jsDay = new Date(y, m - 1, d).getDay();
+          const isoToday = jsDay === 0 ? 7 : jsDay;
+          me.workDays = me.workDays.filter((wd) => wd !== isoToday);
+
+          const now = new Date().toISOString();
+          const task = {
+            id: 'fixture-zero-avail',
+            projectId: project.id,
+            statusId: status.id,
+            title: 'Fixture — zero dostępności',
+            description: '',
+            startDate: TODAY,
+            endDate: TODAY,
+            estimatedHours: 40,
+            priority: 'normal',
+            workCategoryId: '',
+            checklist: [],
+            createdAt: now,
+            updatedAt: now,
+          };
+          data.tasks.push(task);
+          data.assignments.push(
+            { id: 'fixture-as-zero-me', taskId: task.id, personId: me.id },
+            { id: 'fixture-as-zero-other', taskId: task.id, personId: other.id },
+          );
+
+          // The current user's ONLY booking TODAY is this 4h block, so her cell
+          // total is exactly 4h (title "<name>: 4h > 0h dostępności"). The
+          // co-assignee gets NO workload on the task, so his row stays clean.
+          data.workload = data.workload.filter((w) => !(w.personId === me.id && w.date === TODAY));
+          data.workload.push({
+            id: 'fixture-wl-zero',
+            taskId: task.id,
+            personId: me.id,
+            date: TODAY,
+            plannedHours: 4,
+            startMinutes: 480,
+            sortIndex: 0,
+          });
+
+          localStorage.setItem(key, JSON.stringify(data));
+          return { ok: true, meName: me.name, otherName: other.name, taskTitle: task.title };
+        },
+        { key: KEY, TODAY },
+      );
+      ok(zf.ok, `injected zero-availability fixture (${JSON.stringify(zf)})`);
+      const { meName, otherName, taskTitle } = zf;
+
+      await page.reload({ waitUntil: 'networkidle' });
+
+      // 1. Dashboard "Dziś" donut → literal "⚠ brak dostępności" + danger class.
+      //    Catches loadPercent regressing to a calm 0% for booked>0 on 0h avail.
+      await page.locator('a.app-nav-link[href="/dashboard"]').click();
+      const dzisDonut = page.locator('.donut').filter({ hasText: 'Dziś' });
+      await dzisDonut.waitFor({ state: 'visible', timeout: 10000 });
+      const dzisPct = dzisDonut.locator('.donut-pct');
+      const dzisText = (await dzisPct.innerText()).trim();
+      ok(
+        dzisText === '⚠ brak dostępności',
+        `Dashboard "Dziś" donut reads "⚠ brak dostępności" (got "${dzisText}")`,
+      );
+      const dzisClass = (await dzisPct.getAttribute('class')) || '';
+      ok(
+        dzisClass.split(/\s+/).includes('over'),
+        `the "Dziś" donut caption carries the danger class .donut-pct.over (got "${dzisClass}")`,
+      );
+      await page.screenshot({ path: `${SHOTS}/${ENGINE}-f1-dashboard-donut.png` });
+
+      // 2. WorkloadPage → current user's TODAY cell overload + exact title, and a
+      //    danger week load bar while other days stay calm. Catches a non-workday
+      //    treated as 8h, or the single-overbooked-day bar rule being dropped.
+      await page.locator('a.app-nav-link[href="/workload"]').click();
+      await page.locator('.workload-table').waitFor({ timeout: 10000 });
+      const meRow = page.locator('tr').filter({ hasText: meName }).first();
+      await meRow.waitFor({ timeout: 10000 });
+      const todayCell = meRow.locator('td.workload-cell').nth(mondayIndex(TODAY));
+      const cellClass = (await todayCell.getAttribute('class')) || '';
+      ok(
+        cellClass.split(/\s+/).includes('overload'),
+        `current user's TODAY cell carries class "overload" (got "${cellClass}")`,
+      );
+      const cellTitle = await todayCell.getAttribute('title');
+      ok(
+        cellTitle === `${meName}: 4h > 0h dostępności`,
+        `TODAY cell title is "${meName}: 4h > 0h dostępności" (got "${cellTitle}")`,
+      );
+      const loadPctClass = (await meRow.locator('.load-pct').getAttribute('class')) || '';
+      ok(
+        loadPctClass.split(/\s+/).includes('over'),
+        `the week load bar renders the danger state (.load-pct.over) despite calm other days (got "${loadPctClass}")`,
+      );
+      await page.screenshot({ path: `${SHOTS}/${ENGINE}-f2-workload-cell.png` });
+
+      // 3. TimelinePage people mode → conflict marker on the current user's row
+      //    for the task, NONE on the co-assignee's row for the SAME task.
+      //    Catches conflict markers regressing to any-assignee scope.
+      await page.locator('a.app-nav-link[href="/timeline"]').click();
+      await page.locator('.timeline').waitFor({ timeout: 10000 });
+      await page.locator('.cal-view-toggle button', { hasText: 'Osoby' }).click();
+
+      const meGroup = page.locator('.timeline-group').filter({ hasText: meName });
+      const meTaskRow = meGroup.locator('.timeline-task-row').filter({ hasText: taskTitle });
+      await meTaskRow.first().waitFor({ state: 'visible', timeout: 10000 });
+      const meMarkerCount = await meTaskRow.locator('.timeline-conflict').count();
+      ok(
+        meMarkerCount >= 1,
+        `person-scoped conflict marker shows on ${meName}'s row for the task (got ${meMarkerCount})`,
+      );
+
+      const otherGroup = page.locator('.timeline-group').filter({ hasText: otherName });
+      const otherTaskRow = otherGroup.locator('.timeline-task-row').filter({ hasText: taskTitle });
+      await otherTaskRow.first().waitFor({ state: 'visible', timeout: 10000 });
+      const otherMarkerCount = await otherTaskRow.locator('.timeline-conflict').count();
+      ok(
+        otherMarkerCount === 0,
+        `no conflict marker on co-assignee ${otherName}'s row for the same task (got ${otherMarkerCount})`,
+      );
+      await page.screenshot({ path: `${SHOTS}/${ENGINE}-f3-timeline-people.png` });
     }
 
     // --- (e) zero page errors across the whole flow ---

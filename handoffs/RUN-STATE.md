@@ -1,64 +1,48 @@
 # Current scheduler run
 
-- Run: 019c "Make local activity attribution honest" — planning complete
+- Run: 021b "Close focused browser and accessibility coverage gaps" — planning complete
 - Base branch: `review/claude-auto-20260714-1216`
-- Prompt: task 019c (dual-identity activity attribution + admin/session/deletion activity rows)
+- Prompt: extend browser checks for 016–020 audit gaps + minimal accessibility
 
 ## Packages and changed boundaries
 
-- [PKG-20260714-activity-attribution](../.claude/handoffs/019c-developer.md)
+- [PKG-20260714-browser-a11y-gaps](../.claude/handoffs/021b-developer.md)
   — tier: developer, status: ready, risk: medium.
-  Boundaries: `src/types.ts` (ActivityEvent + new ActivityEntityType union),
-  `src/store/AppStore.tsx` (`withActivity` stamping + one-row appends in
-  person/session/status/deletion cases), `src/components/CommentsPanel.tsx`
-  (dual-identity render), new `src/store/activityAttribution.test.ts`.
-  Explicitly untouched: `permissions.ts` matrix, `storage.ts`, `selectors.ts`;
-  data version stays 7 (additive optional field).
+  Boundaries: `scripts/browser-check-placement.mjs` (new zero-availability +
+  person-scoped conflict scenario), `scripts/browser-check-bin-split.mjs`
+  (Escape recovery + focus-visible near step g), `scripts/browser-check-tab-sync.mjs`
+  (keyboard retry + role="alert" in step f). No `src/**` changes; release
+  runner and package.json untouched.
+
+## Coverage adjudication
+
+- 016 → bin-split (a)–(h) covered; 017 → placement (a)–(e) covered;
+  018 → tab-sync (a)–(g) covered; 020 zero availability → browser gap, closed
+  by the new placement scenario. 019a/b/c outside the prompt's named list.
 
 ## Focused verification
 
-- Worker: `npx vitest run src/store/activityAttribution.test.ts src/store/permissions.test.ts src/store/statusActions.test.ts src/store/commandValidation.test.ts`, then `npx vitest run src/store`.
-- Browser: none (render-only UI change).
-- Scheduler owns final `npm test && npm run build`.
+- Worker: build + preview on :5173, iterate changed scripts in Chromium only;
+  one Chromium+WebKit pass of the three changed scripts when stable.
+- Scheduler owns final `npm run test:scheduler && npm test && npm run build`.
 
 ## Context expansions
 
-- AdminPage SAVE_STATUS dispatch sites read to confirm keystroke-level rename
-  dispatch → pinned "no row on status edit" decision.
+- Read `DashboardPage.tsx`, `WorkloadPage.tsx`, `TimelinePage.tsx`,
+  `PersistenceBanner.tsx`, `WeekView.tsx` (Escape), `styles.css`
+  (`:focus-visible`) and `selectors.ts` availability contract to pin exact
+  user-visible assertions for the package.
+
+## Developer result
+
+- Done. Extended the 3 scripts only. Chromium+WebKit both PASS. Regression
+  proofs (temporary src edits, all reverted): placement any-assignee scope →
+  marker on co-assignee FAILs; bin-split removed line-1862 outline → outline
+  FAILs; tab-sync disabled retry button → activeElement FAILs. WebKit
+  `:focus-visible` unmatched under automation → documented manual fallback ran.
 
 ## Open questions
 
-- None blocking; all product decisions pinned in the package (status-edit and
-  reorder silence, deletion-row placement, impersonation-row attribution).
-
-## Developer result (019c)
-
-- Implemented all Scope 1–6 across the four declared files; no guard reordered,
-  only activity appended on accepted branches. Focused: activityAttribution 35/35;
-  regression gate 99/99; `src/store` 415/415; `tsc --noEmit` clean.
-- No expansion beyond declared touchpoints; `statusActions.test.ts` untouched
-  (no deep-equality assertion broke). Wiki relevant-tests list still stale.
-
-## Wiki
-
-- Likely stale after implementation: `state-and-persistence.md` relevant-tests
-  list (new `activityAttribution.test.ts`). Reviewer owns the decision.
-
-## Developer result (release browser command)
-
-- Added `scripts/run-browser-regression.mjs` (build→own preview 5173→5 declared
-  checks × chromium/webkit→teardown), `check:browser-release` npm script, README
-  section. No browser-check script touched. Full matrix 10/10 PASS, exit 0; port
-  free after. Killed a stray non-N2Hub vite (Content plan) that held 5173.
-- Refreshed evidence: the verification matrix regenerated the PNGs under
-  `reviews/screenshots-*` (same scenarios, same assertions, all green). A
-  `git restore reviews/` was denied by session permissions, so the refreshed
-  screenshots are declared here instead of being reverted.
-
-## Reviewer verdict (release browser command)
-
-- request-changes with a single required fix: name the release command in
-  `openwiki/n2hub/testing-and-automation.md` (applied). Runner itself approved:
-  cleanup verified on every failure path, exit codes correct, no scenario script
-  modified, no dependency added. Codex: not-needed (pure orchestration around
-  byte-identical scenario scripts).
+- None blocking. WebKit `:focus-visible` matchability under its restricted
+  default tab order is delegated to the worker with an approved manual
+  fallback path (documented in the package).

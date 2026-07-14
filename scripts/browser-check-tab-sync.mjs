@@ -57,8 +57,12 @@
 //       worker report for this premise-vs-code correction) and saves. The
 //       failure banner + "Nie zapisano" show, "Zapisano" never appears
 //       (polled ~3s), and storage keeps the pre-save name.
-//   (f) retry recovery: unblock writes, click "Spróbuj ponownie" — banner
-//       clears, storage gets the edited name, and it survives a reload.
+//   (f) retry recovery: unblock writes, then activate "Spróbuj ponownie" by
+//       KEYBOARD (focus the button — assert it is document.activeElement, a
+//       real focusable button — then press Enter). Banner clears, storage gets
+//       the edited name, and it survives a reload. Additionally asserts the
+//       failure banner exposes role="alert" so the failure is announced to
+//       non-pointer / assistive-tech users (bundle 018 a11y gap).
 //   (g) zero `pageerror`s on BOTH pages across the whole flow.
 //
 // Usage: node scripts/browser-check-tab-sync.mjs [chromium|webkit]
@@ -412,8 +416,25 @@ async function flowTabSync(browser) {
     await pageA.evaluate(() => {
       window.__blockWrites = false;
     });
+
+    // The failure must reach non-pointer / assistive-tech users: the banner is
+    // an ARIA alert, and its remediation control is a REAL focusable button
+    // that Enter activates — not a pointer-only click target. Assert the role
+    // on a class-only locator so a dropped role="alert" surfaces here directly.
+    // Catches: the alert role being dropped (failure invisible to AT), or
+    // "Spróbuj ponownie" regressing to a non-focusable click target.
+    const failureRole = await pageA
+      .locator('.persistence-banner.persistence-banner--error')
+      .getAttribute('role');
+    ok(failureRole === 'alert', `failure banner exposes role="alert" for AT users (got "${failureRole}")`);
+
     const retryBtn = failureBanner.getByRole('button', { name: 'Spróbuj ponownie' });
-    await retryBtn.click();
+    await retryBtn.focus();
+    ok(
+      await retryBtn.evaluate((el) => el === document.activeElement).catch(() => false),
+      '"Spróbuj ponownie" is a real focusable button (document.activeElement)',
+    );
+    await pageA.keyboard.press('Enter');
     const failureGone = await waitForTrue(() => failureBanner.isHidden());
     ok(failureGone, 'failure banner clears after a successful retry');
 
