@@ -13,6 +13,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "check:openwiki": "node scripts/check-openwiki-links.mjs",
+    "test:scheduler": "node --test automation/claude-scheduler/test/*.test.mjs",
+    "scheduler:monitor": "node automation/claude-scheduler/monitor.mjs",
     "check:onboarding": "node scripts/browser-check-onboarding.mjs chromium && node scripts/browser-check-onboarding.mjs webkit",
     "check:browser-release": "node scripts/run-browser-regression.mjs"
   },

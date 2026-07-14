@@ -9,7 +9,5 @@ dist
 !.claude/commands/*.md
 .vercel
 fabletieredworkflow/
-automation/claude-scheduler/logs/
-automation/claude-scheduler/state/
 openwiki/.last-update.json
 reviews/

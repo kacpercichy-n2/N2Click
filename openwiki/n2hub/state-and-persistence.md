@@ -33,4 +33,4 @@
 `commandValidation.test.ts`,
 `saveTaskWorkload.test.ts`,
 `selectors.test.ts`, `statusActions.test.ts`, `storage.test.ts`,
-`dateGuards.test.ts`, `taskMeta.test.ts`.
+`dateGuards.test.ts`, `taskMeta.test.ts`, `permissions.test.ts`.

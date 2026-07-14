@@ -1,0 +1,61 @@
+# 021c.md
+Run: 20260715-003619-021c
+Started: 2026-07-14T22:36:19.640Z
+
+**Approved.** The tier workflow (test-writer → reviewer, Codex skipped) is complete, with one review round-trip in between.
+
+**What changed** (documentation only, nothing committed — the scheduler owns the final `npm test && npm run build` gate and commit):
+
+- `docs/workflow/TIERED-AGENTS.md` — removed two sets of stale claims: the "scheduler runs a final gated `test:scheduler && test && build` and commits only green results" language, and the paragraph describing the RUN-RESULT.json / runId / SHA-256 approval machinery deleted in commit dbaa72c. The file now says the queue runner records per-prompt `npm test`/`npm run build` results informationally and snapshot-commits every run, while the operator owns the interactive final gate and push.
+- `docs/workflow/HANDOFF-TEMPLATE.md` — same scheduler-gate wording fixed in the verification section and Definition of Ready.
+- `openwiki/n2hub/state-and-persistence.md` — added the missing `src/store/permissions.test.ts` to the relevant-tests list.
+- `handoffs/RUN-STATE.md` — run-log entry appended, including the reviewer's blocker and its resolution.
+
+**Verified correct, untouched:** `CLAUDE.md` (`DATA_VERSION = 7` matches `src/store/storage.ts:29`, commands match `package.json`), `automation/claude-scheduler/README.md`, and the pre-existing working-tree edits to `testing-and-automation.md`.
+
+**Reviewer's first pass returned changes-required:** the worker had deferred the stale RUN-RESULT.json paragraph in TIERED-AGENTS.md for a "coordinated fix"; the reviewer rejected that deferral since the file was a declared touchpoint with conclusive evidence. The fix was applied and verified on the second pass — grep confirms zero remaining RUN-RESULT/runId/SHA-256 references in `docs/workflow/`.
+
+**Verdict details:** Codex skip recorded with the package's rationale (documentation-only sync after green browser gates). Wiki decision: **wiki updated** — the state-and-persistence page was inaccurate before and accurate after. Link check passes ("Validated 6 wiki files").
+
+**One follow-up for a future package:** `.claude/commands/tier.md:22-40` still describes the removed `scripts/codex-review.sh` / RUN-RESULT.json machinery as live. It was outside this package's touchpoints, so the reviewer recorded it as a context expansion rather than fixing it — worth routing a small process-doc sync package to close it, since the tier command itself currently instructs a gate that no longer exists.
+
+claude exit code: 0
+
+$ npm test
+
+> n2hub@0.1.0 test
+> vitest run
+
+
+ RUN  v4.1.10 /Users/kacpercichyn2/Documents/N2click
+
+
+ Test Files  14 passed (14)
+      Tests  509 passed (509)
+   Start at  00:46:38
+   Duration  630ms (transform 1.06s, setup 0ms, import 2.37s, tests 269ms, environment 1ms)
+
+
+exit 0
+
+$ npm run build
+
+> n2hub@0.1.0 build
+> tsc --noEmit && vite build
+
+[36mvite v5.4.21 [32mbuilding for production...[36m[39m
+transforming...
+[32m✓[39m 2553 modules transformed.
+rendering chunks...
+computing gzip size...
+[2mdist/[22m[32mindex.html                 [39m[1m[2m  0.50 kB[22m[1m[22m[2m │ gzip:   0.30 kB[22m
+[2mdist/[22m[2massets/[22m[35mindex-BUH7f0Oe.css  [39m[1m[2m 85.79 kB[22m[1m[22m[2m │ gzip:  14.66 kB[22m
+[2mdist/[22m[2massets/[22m[36mindex-CPuIVz6s.js   [39m[1m[33m653.68 kB[39m[22m[2m │ gzip: 197.14 kB[22m
+[33m
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.[39m
+[32m✓ built in 1.69s[39m
+
+exit 0

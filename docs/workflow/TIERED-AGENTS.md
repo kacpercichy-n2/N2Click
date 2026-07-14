@@ -42,21 +42,20 @@ See `docs/workflow/HANDOFF-TEMPLATE.md`.
 - `low`: focused docs, fixtures or routine local changes. Codex may be skipped
   with the rationale declared in the prompt.
 
-The reviewer adjudicates Codex findings; it does not accept them blindly.
-The orchestrator writes the machine-readable `handoffs/RUN-RESULT.json` only
-after that verdict. The scheduler validates its current `runId`, approval and
-fresh required-review artifact before running final checks.
-Required review metadata binds the current `runId` to a SHA-256 of the canonical
-diff; changes after review require a new review pass.
+The reviewer adjudicates Codex findings; it does not accept them blindly and
+records the verdict in its report rather than a machine-readable gate file.
 
 ## Context and verification
 
 Read `CLAUDE.md`, only the prompt's `openwiki/n2hub/` pages and named
 touchpoints, then direct dependencies. Record every expansion. Workers run
-focused checks during iteration; the scheduler runs one final
-`npm run test:scheduler`, `npm test` and `npm run build`, stopping at the first
-failure. Browser checks run only when the
-prompt names the changed interaction or the release bundle owns the matrix.
+focused checks during iteration; the operator runs the final `npm test` and
+`npm run build` once, interactively, stopping at the first failure, adding
+`npm run test:scheduler` only when `automation/claude-scheduler/` changed.
+Browser checks run only when the prompt names the changed interaction or the
+release bundle owns the matrix. The unattended queue runner at
+`automation/claude-scheduler/` (see its README) is a separate tool: it records
+`npm test` / `npm run build` results per prompt as informational, not a gate.
 
 `handoffs/RUN-STATE.md` is a compact current-run index, not history. Packages and
 named check artifacts retain detailed evidence. The final reviewer/orchestrator
@@ -64,6 +63,7 @@ records one wiki decision after seeing the final diff.
 
 ## Git ownership
 
-Agents never commit or push. The unattended scheduler verifies, moves the
-completed prompt to `archive/completed/`, commits the green result and leaves
-push as an explicit operator action.
+Agents never commit or push. The unattended queue runner at
+`automation/claude-scheduler/` snapshot-commits every run (success or crash,
+labeled with the recorded verify outcome), moves succeeded prompts to
+`archive/completed/`, and leaves push as an explicit operator action.

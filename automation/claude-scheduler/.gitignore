@@ -1,0 +1,4 @@
+# Runtime-only heartbeat and lock. runs.jsonl, logs/ and archive/ stay tracked.
+state/status.json
+state/status.json.tmp
+state/scheduler.lock

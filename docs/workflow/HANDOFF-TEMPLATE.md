@@ -9,7 +9,8 @@ handoff.
 - Minimum wiki pages and concrete source touchpoints are named.
 - Invariants and out-of-scope boundaries are explicit.
 - Acceptance criteria are observable and testable.
-- Focused verification is named; scheduler-owned full checks are not repeated.
+- Focused verification is named; the operator-owned final `npm test && npm run
+  build` gate is not repeated.
 - No product or architecture decision is unresolved.
 
 If any item fails, use `Status: blocked-needs-decision` and stop.
@@ -49,7 +50,9 @@ If any item fails, use `Status: blocked-needs-decision` and stop.
 ## Verification
 - Worker: `<focused command>`
 - Browser: `<script + engines>` | none — <reason>
-- Scheduler owns final `npm run test:scheduler && npm test && npm run build`.
+- Operator owns final `npm test && npm run build` interactively before commit;
+  add `npm run test:scheduler` only when `automation/claude-scheduler/` changed.
+  The unattended queue runner records verification per prompt but does not gate.
 
 ## Prior decisions
 - <settled decisions only>

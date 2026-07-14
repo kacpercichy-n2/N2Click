@@ -10,11 +10,17 @@
 
 ## Automation status
 
-The unattended prompt scheduler (`automation/claude-scheduler/`) was removed in
-July 2026; a replacement will be built later. The tiered agent workflow
+The unattended prompt scheduler lives at `automation/claude-scheduler/`. It runs
+the `prompts/*.md` queue in lexical order, reset-anchored and usage-chained
+(`< 50%` chains, `>= 50%` waits for the reset `+ 1 min`), records each run in
+`state/runs.jsonl`, and takes a per-run snapshot commit on a `review/claude-auto-*`
+branch — it never pushes. Recorded `npm test` / `npm run build` results are
+informational, not a gate. Start it with `node automation/claude-scheduler/run-queue.mjs`,
+watch it via `npm run scheduler:monitor` (read-only page on `127.0.0.1:4599`,
+Europe/Warsaw times), and test its pure modules with `npm run test:scheduler`
+(`node --test`, kept out of the vitest `src/**` scope). The tiered agent workflow
 (architect → developer → reviewer, `docs/workflow/`) remains and is run
-interactively. Agents still do not commit or push; the operator owns the final
-gate, commit and push.
+interactively. The operator still owns the final gate, commit and push.
 
 ## Browser checks
 
