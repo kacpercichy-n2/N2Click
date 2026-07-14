@@ -159,9 +159,17 @@ Timeout kończy całą grupę procesu i blokuje run; nie przechodzi do kolejnej 
 
 ```bash
 CLAUDE_AUTO_EARLY_CHECK_MINUTES=60 ...
-CLAUDE_AUTO_USAGE_GATE=1 ...
+CLAUDE_AUTO_USAGE_GATE=0 ...
 CLAUDE_AUTO_VERIFY="npm run test:scheduler && npm test && npm run build" ...
 ```
+
+Kontrola użycia jest domyślnie włączona: przed każdym promptem scheduler odczytuje
+limit i uruchamia go tylko przy wykorzystaniu `≤ 50%`. Powyżej tego progu czeka
+60 sekund po czasie resetu. Brak poprawnego odczytu albo czasu resetu zatrzymuje
+kolejkę zamiast ryzykować kolejny run. `CLAUDE_AUTO_USAGE_GATE=0` służy wyłącznie
+do świadomego wyłączenia tej ochrony. Standardowe sloty pozostają jedynym
+harmonogramem; `CLAUDE_AUTO_EARLY_CHECK_MINUTES` jest opcjonalnym trybem
+przyspieszenia między udanymi promptami.
 
 `CLAUDE_AUTO_SKIP_PERMISSIONS=1` włącza niebezpieczne pomijanie pytań o zgody;
 używaj wyłącznie jako świadomej decyzji operatora.

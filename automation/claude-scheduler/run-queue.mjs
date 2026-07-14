@@ -79,7 +79,9 @@ const verifyCommands = parseVerifyCommands(
 const earlyCheckMinutes = parseOptionalPositiveInt(process.env.CLAUDE_AUTO_EARLY_CHECK_MINUTES);
 const usageHelper = process.env.CLAUDE_AUTO_USAGE_HELPER || path.join(process.env.HOME || "", ".claude", "fetch-claude-usage.swift");
 const usageTelemetryEnabled = fs.existsSync(usageHelper);
-const usageGateEnabled = process.env.CLAUDE_AUTO_USAGE_GATE === "1" && usageTelemetryEnabled;
+// Protect the account budget by default. Operators may explicitly opt out for
+// diagnostic runs, but a normal queue never starts another prompt above 50%.
+const usageGateEnabled = process.env.CLAUDE_AUTO_USAGE_GATE !== "0" && usageTelemetryEnabled;
 const workerTimeoutMs = timeoutMsFromEnv("CLAUDE_AUTO_WORKER_TIMEOUT_MINUTES", 120);
 const codexTimeoutMs = timeoutMsFromEnv("CLAUDE_AUTO_CODEX_TIMEOUT_MINUTES", 45);
 const reviewerTimeoutMs = timeoutMsFromEnv("CLAUDE_AUTO_REVIEWER_TIMEOUT_MINUTES", 30);
@@ -123,7 +125,7 @@ if (earlyCheckMinutes) {
   console.log(`Early check: next prompt may run ${earlyCheckMinutes} minutes after a successful prompt.`);
 }
 if (usageTelemetryEnabled) {
-  console.log(`Usage telemetry: enabled${usageGateEnabled ? " (gating at explicit request)" : " (observational; it will not delay the queue)"}.`);
+  console.log(`Usage telemetry: enabled${usageGateEnabled ? " (gating runs at 50%)" : " (observational; it will not delay the queue)"}.`);
 }
 console.log(`Remaining prompts: ${remainingPrompts.map((file) => path.basename(file)).join(", ")}`);
 console.log("Keep the Mac awake with: caffeinate -dimsu node automation/claude-scheduler/run-queue.mjs");
@@ -764,16 +766,14 @@ async function waitForUsageBudget() {
   while (true) {
     const snapshot = await readUsageSnapshot();
     if (!snapshot) {
-      console.warn("Usage helper returned no valid data; continuing with the scheduled slot.");
-      return;
+      throw new Error("Usage gate could not read a valid usage snapshot; refusing to start the next prompt.");
     }
     if (snapshot.percent <= 50) return;
     if (!snapshot.resetsAt) {
-      console.warn(`Usage is ${snapshot.percent}%, but no reset time was returned. Continuing because the gate cannot schedule a safe retry.`);
-      return;
+      throw new Error(`Usage is ${snapshot.percent}%, but no reset time was returned; refusing to start the next prompt.`);
     }
     const resumeAt = new Date(snapshot.resetsAt.getTime() + 60_000);
-    console.log(`Usage gate is explicitly enabled and usage is ${snapshot.percent}% > 50%; waiting until ${formatDateTime(resumeAt)}.`);
+    console.log(`Usage gate is enabled and usage is ${snapshot.percent}% > 50%; waiting until ${formatDateTime(resumeAt)}.`);
     await sleepUntil(resumeAt);
   }
 }
