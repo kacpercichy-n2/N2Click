@@ -12,8 +12,6 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:scheduler": "node --test automation/claude-scheduler/*.test.mjs",
-    "check:scheduler-permissions": "node automation/claude-scheduler/check-claude-permissions.mjs",
     "check:openwiki": "node scripts/check-openwiki-links.mjs",
     "check:onboarding": "node scripts/browser-check-onboarding.mjs chromium && node scripts/browser-check-onboarding.mjs webkit",
     "check:browser-release": "node scripts/run-browser-regression.mjs"

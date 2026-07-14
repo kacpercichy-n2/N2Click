@@ -2,7 +2,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { promptContractErrorFor } from "../automation/claude-scheduler/prompt-contract.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const requiredWikiFiles = [
@@ -24,24 +23,12 @@ for (const relativeFile of requiredWikiFiles) {
   validateMarkdownLinks(relativeFile, absoluteFile);
 }
 
-const promptDir = path.join(repoRoot, "automation/claude-scheduler/prompts");
-const promptFiles = fs
-  .readdirSync(promptDir)
-  .filter((file) => file.endsWith(".md"))
-  .sort();
-for (const promptFile of promptFiles) {
-  const relativeFile = path.join("automation/claude-scheduler/prompts", promptFile);
-  const body = fs.readFileSync(path.join(repoRoot, relativeFile), "utf8");
-  const error = promptContractErrorFor(body, repoRoot);
-  if (error) errors.push(`${relativeFile}: ${error}`);
-}
-
 if (errors.length > 0) {
   console.error(errors.map((error) => `- ${error}`).join("\n"));
   process.exit(1);
 }
 
-console.log(`Validated ${requiredWikiFiles.length} wiki files and ${promptFiles.length} active prompt contracts.`);
+console.log(`Validated ${requiredWikiFiles.length} wiki files.`);
 
 function validateMarkdownLinks(relativeFile, absoluteFile) {
   const body = fs.readFileSync(absoluteFile, "utf8");
