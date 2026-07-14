@@ -36,9 +36,10 @@ for (let index = 0; index < prompts.length; index += 1) {
   const basename = prompts[index];
   const promptFile = path.join(promptDir, basename);
   await waitForUsageBudget();
+  const runStartedAt = Date.now();
   await runPrompt(promptFile, basename);
   if (index < prompts.length - 1) {
-    const nextAt = new Date(Date.now() + INTERVAL_MS);
+    const nextAt = new Date(runStartedAt + INTERVAL_MS);
     console.log(`Next prompt waits until ${formatDateTime(nextAt)}.`);
     await sleepUntil(nextAt);
   }
