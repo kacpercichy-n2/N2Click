@@ -562,17 +562,17 @@ export function overdueTasksForPerson(
 }
 
 /**
- * The subset of `dates` where the person's total booked hours strictly exceed
- * their daily capacity. Bin rows (date === '') can never match a real date, so
- * they are naturally excluded. Pure.
+ * The subset of `dates` where the person is overbooked — booked hours strictly
+ * exceed that day's AVAILABILITY (capacity on a workday, 0 otherwise), per
+ * {@link dayAvailabilityForPerson}. Bin rows (date === '') can never match a
+ * real date, so they are naturally excluded. Pure.
  */
 export function overloadedDatesForPersonInRange(
   state: AppData,
   personId: string,
   dates: DateStr[],
 ): DateStr[] {
-  const capacity = personCapacity(state, personId);
-  return dates.filter((d) => hoursForPersonOnDate(state, personId, d) > capacity);
+  return dates.filter((d) => dayAvailabilityForPerson(state, personId, d).overbooked);
 }
 
 /**
@@ -632,7 +632,7 @@ export function personCapacity(state: AppData, personId: string): number {
   return p && p.capacity > 0 ? p.capacity : DEFAULT_CAPACITY;
 }
 
-/** People (ids) whose TOTAL for the date exceeds their capacity, within the filter. */
+/** People (ids) overbooked on the date (booked > that day's availability), within the filter. */
 export function overloadedPeopleOnDate(
   state: AppData,
   date: DateStr,
@@ -643,18 +643,44 @@ export function overloadedPeopleOnDate(
       ? state.people.filter((p) => personFilter.has(p.id))
       : state.people;
   return relevant
-    .filter(
-      (p) => hoursForPersonOnDate(state, p.id, date) > personCapacity(state, p.id),
-    )
+    .filter((p) => dayAvailabilityForPerson(state, p.id, date).overbooked)
     .map((p) => p.id);
 }
 
-/** Dates inside the task period where an assignee working on THIS task that day exceeds their capacity. */
+/**
+ * Dates where someone working on THIS task that day is overbooked (booked >
+ * that day's availability per {@link dayAvailabilityForPerson}). Any-assignee
+ * view — use {@link conflictDatesForTaskPerson} for a single person's row.
+ */
 export function conflictDatesForTask(state: AppData, taskId: string): DateStr[] {
   const out = new Set<DateStr>();
   for (const w of state.workload) {
     if (w.taskId !== taskId || isBinEntry(w)) continue; // bin entries have no date -> never an overload date
-    if (hoursForPersonOnDate(state, w.personId, w.date) > personCapacity(state, w.personId)) {
+    if (out.has(w.date)) continue;
+    if (dayAvailabilityForPerson(state, w.personId, w.date).overbooked) {
+      out.add(w.date);
+    }
+  }
+  return [...out].sort();
+}
+
+/**
+ * Person-scoped conflict dates for a task: dates where THIS person works on the
+ * task and is overbooked that day (their whole-day total, all tasks, against
+ * their availability). Another assignee's overload never appears here — the
+ * timeline people-mode rows use this so one person's conflict does not bleed
+ * onto a co-assignee's row.
+ */
+export function conflictDatesForTaskPerson(
+  state: AppData,
+  taskId: string,
+  personId: string,
+): DateStr[] {
+  const out = new Set<DateStr>();
+  for (const w of state.workload) {
+    if (w.taskId !== taskId || w.personId !== personId || isBinEntry(w)) continue;
+    if (out.has(w.date)) continue;
+    if (dayAvailabilityForPerson(state, personId, w.date).overbooked) {
       out.add(w.date);
     }
   }
@@ -840,7 +866,12 @@ export function isPersonWorkday(state: AppData, personId: string, date: DateStr)
   return person.workDays.includes(isoDay);
 }
 
-/** Available hours on a date: the person's daily capacity on a workday, else 0. */
+/**
+ * Available hours on a date: the person's daily capacity on a workday, else 0.
+ * THE availability quantum — every availability/overbooking read derives from
+ * this one rule (via {@link dayAvailabilityForPerson}); future absence data
+ * plugs in here and every consumer follows.
+ */
 export function availableHoursOnDate(state: AppData, personId: string, date: DateStr): number {
   return isPersonWorkday(state, personId, date) ? personCapacity(state, personId) : 0;
 }
@@ -852,4 +883,75 @@ export function availableHoursInRange(
   dates: DateStr[],
 ): number {
   return dates.reduce((sum, d) => sum + availableHoursOnDate(state, personId, d), 0);
+}
+
+/**
+ * The authoritative per-day availability record for a person. A person with no
+ * availability on a date (non-workday, or no workdays at all) who still has
+ * booked hours is OVERBOOKED — a dangerous state, never a safe "0%" one.
+ */
+export interface PersonDayAvailability {
+  date: DateStr;
+  /** Workday per the person's `workDays`; future absence data will turn this off. */
+  isWorkday: boolean;
+  /** Hours the person can take on this date (0 on non-workdays). */
+  availableHours: number;
+  /** Σ dated planned hours across ALL tasks (bin rows never match a real date). */
+  bookedHours: number;
+  /** Booked strictly beyond availability — including ANY booking on a 0h day. */
+  overbooked: boolean;
+}
+
+/** Build the {@link PersonDayAvailability} record for one person and date. Pure. */
+export function dayAvailabilityForPerson(
+  state: AppData,
+  personId: string,
+  date: DateStr,
+): PersonDayAvailability {
+  const availableHours = availableHoursOnDate(state, personId, date);
+  const bookedHours = hoursForPersonOnDate(state, personId, date);
+  return {
+    date,
+    isWorkday: isPersonWorkday(state, personId, date),
+    availableHours,
+    bookedHours,
+    overbooked: bookedHours > availableHours,
+  };
+}
+
+/** Aggregate of {@link dayAvailabilityForPerson} across a list of dates. */
+export interface PersonRangeAvailability {
+  availableHours: number;
+  bookedHours: number;
+  /** The dates whose day record is overbooked, in the order given. */
+  overbookedDates: DateStr[];
+}
+
+/** Sum availability and booked hours over `dates`, collecting overbooked days. Pure. */
+export function rangeAvailabilityForPerson(
+  state: AppData,
+  personId: string,
+  dates: DateStr[],
+): PersonRangeAvailability {
+  let availableHours = 0;
+  let bookedHours = 0;
+  const overbookedDates: DateStr[] = [];
+  for (const d of dates) {
+    const day = dayAvailabilityForPerson(state, personId, d);
+    availableHours += day.availableHours;
+    bookedHours += day.bookedHours;
+    if (day.overbooked) overbookedDates.push(d);
+  }
+  return { availableHours, bookedHours, overbookedDates };
+}
+
+/**
+ * Percentage of available hours already booked, for load bars and donuts.
+ * Returns `null` when hours are booked against ZERO availability — the UI must
+ * render that as a danger state, never as a calm 0%. `0` booked on `0`
+ * available is a genuine, safe 0.
+ */
+export function loadPercent(bookedHours: number, availableHours: number): number | null {
+  if (availableHours > 0) return Math.round((bookedHours / availableHours) * 100);
+  return bookedHours > 0 ? null : 0;
 }

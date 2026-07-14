@@ -25,6 +25,7 @@ import {
 import { format } from 'date-fns';
 import { pl } from 'date-fns/locale/pl';
 import {
+  availableHoursOnDate,
   binEntriesForPerson,
   binTotalForPerson,
   blockCollides,
@@ -1066,7 +1067,11 @@ export function WeekView({ state, anchor, filter }: Props) {
   const menuDayHours = menu
     ? hoursForPersonOnDate(state, menu.entry.personId, menu.entry.date)
     : 0;
-  const menuCapacity = menu ? personCapacity(state, menu.entry.personId) : 0;
+  // Day availability, not raw capacity: an insert on a zero-availability day
+  // (e.g. outside the person's workdays) must warn, never look like free room.
+  const menuAvailable = menu
+    ? availableHoursOnDate(state, menu.entry.personId, menu.entry.date)
+    : 0;
   // Snap/clamp the insert hours ONCE to exactly what INSERT_BLOCK will store
   // (Math.min(24, …) then 0.25-step snap). Reused for the overload preview, the
   // allowance check, the disabled state, and confirmInsert so the form can never
@@ -1075,7 +1080,7 @@ export function WeekView({ state, anchor, filter }: Props) {
   const parsedHours = Number.isNaN(rawHours) ? NaN : snapHours(Math.min(24, rawHours));
   const projectedTotal =
     menuDayHours + (Number.isNaN(parsedHours) ? 0 : Math.max(parsedHours, 0));
-  const wouldOverload = menu !== null && projectedTotal > menuCapacity;
+  const wouldOverload = menu !== null && projectedTotal > menuAvailable;
   // Budget allowance for the picked task + this block's person (recomputed when
   // the task select changes). The reducer enforces the same cap on INSERT_BLOCK.
   const insertAllowance = menu
@@ -1154,13 +1159,17 @@ export function WeekView({ state, anchor, filter }: Props) {
       }
     }
   }
-  // Non-blocking overload preview (invariant 3 — warns, never blocks).
-  const schedCapacity = menu ? personCapacity(state, menu.entry.personId) : 0;
+  // Non-blocking overload preview (invariant 3 — warns, never blocks). Uses the
+  // target DAY's availability so scheduling onto a non-workday warns too.
+  const schedAvailable =
+    isSchedule && menu && isValidDateStr(schedDate)
+      ? availableHoursOnDate(state, menu.entry.personId, schedDate)
+      : 0;
   const schedProjected =
     isSchedule && menu && !Number.isNaN(schedHours) && schedHours > 0 && isValidDateStr(schedDate)
       ? hoursForPersonOnDate(state, menu.entry.personId, schedDate) + schedHours
       : 0;
-  const schedOverload = isSchedule && schedProjected > schedCapacity;
+  const schedOverload = isSchedule && schedProjected > schedAvailable;
 
   const hours = Array.from({ length: 24 }, (_, h) => h);
 
@@ -1479,7 +1488,7 @@ export function WeekView({ state, anchor, filter }: Props) {
               {schedOverload && (
                 <p className="context-warning">
                   ⚠ {menuPerson?.name} będzie mieć {formatDuration(schedProjected)} — powyżej
-                  dostępności {formatDuration(schedCapacity)}/dzień.
+                  dostępności {formatDuration(schedAvailable)} w tym dniu.
                 </p>
               )}
               <div className="context-actions">
@@ -1537,7 +1546,7 @@ export function WeekView({ state, anchor, filter }: Props) {
               {wouldOverload && (
                 <p className="context-warning">
                   ⚠ {menuPerson?.name} będzie mieć {formatDuration(projectedTotal)} — powyżej dostępności{' '}
-                  {formatDuration(menuCapacity)}/dzień.
+                  {formatDuration(menuAvailable)} w tym dniu.
                 </p>
               )}
               {overAllowance && (

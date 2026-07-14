@@ -9,6 +9,7 @@ import type { AppData } from '../types';
 import type { WorkloadEntry } from '../types';
 import {
   availableHoursInRange,
+  availableHoursOnDate,
   blocksForPersonDate,
   getClient,
   getDepartment,
@@ -17,7 +18,7 @@ import {
   getTask,
   hoursForPersonOnDate,
   isPersonWorkday,
-  personCapacity,
+  loadPercent,
 } from '../store/selectors';
 import { Avatar } from '../components/Avatar';
 import { useOpenTask } from '../components/TaskModal';
@@ -87,13 +88,13 @@ function BlockRow({
               aria-label="Przypisz do osoby"
             >
               {others.map((p) => {
-                const cap = personCapacity(state, p.id);
+                const avail = availableHoursOnDate(state, p.id, date);
                 const cur = hoursForPersonOnDate(state, p.id, date);
-                const over = cur + entry.plannedHours > cap;
+                const over = cur + entry.plannedHours > avail;
                 const fits = findFreeStart(blocksForPersonDate(state, p.id, date), durMin) !== null;
                 return (
                   <option key={p.id} value={p.id}>
-                    {p.name} — {formatDuration(cur)}/{formatDuration(cap)} tego dnia{over ? ' ⚠' : ''}
+                    {p.name} — {formatDuration(cur)}/{formatDuration(avail)} tego dnia{over ? ' ⚠' : ''}
                     {fits ? '' : ' — brak miejsca'}
                   </option>
                 );
@@ -327,11 +328,18 @@ export function WorkloadPage() {
             </thead>
             <tbody>
               {people.map((p) => {
-                const capacity = personCapacity(state, p.id);
                 const assigned = days.reduce((s, d) => s + hoursFor(p.id, d), 0);
                 const available = availableHoursInRange(state, p.id, days);
-                const pct = available > 0 ? Math.round((assigned / available) * 100) : 0;
-                const overloadedDays = days.filter((d) => hoursFor(p.id, d) > capacity);
+                // null ⇒ hours booked against zero availability — a danger
+                // state, rendered as a full red bar, never as a calm 0%. Any
+                // single overbooked day also keeps the week's bar dangerous,
+                // so a booked day off can't average away (same rule as the
+                // dashboard donut).
+                const pct = loadPercent(assigned, available);
+                const overloadedDays = days.filter(
+                  (d) => hoursFor(p.id, d) > availableHoursOnDate(state, p.id, d),
+                );
+                const danger = pct === null || pct > 100 || overloadedDays.length > 0;
                 return (
                   <Fragment key={p.id}>
                   <tr>
@@ -348,7 +356,8 @@ export function WorkloadPage() {
                     </th>
                     {days.map((d) => {
                       const h = hoursFor(p.id, d);
-                      const over = h > capacity;
+                      const avail = availableHoursOnDate(state, p.id, d);
+                      const over = h > avail;
                       const clickable = h > 0;
                       const isSel =
                         selected?.personId === p.id && selected?.date === d;
@@ -367,7 +376,7 @@ export function WorkloadPage() {
                           ]
                             .filter(Boolean)
                             .join(' ')}
-                          title={over ? `${p.name}: ${formatDuration(h)} > ${formatDuration(capacity)} dostępności` : undefined}
+                          title={over ? `${p.name}: ${formatDuration(h)} > ${formatDuration(avail)} dostępności` : undefined}
                           role={clickable ? 'button' : undefined}
                           tabIndex={clickable ? 0 : undefined}
                           aria-expanded={clickable ? isSel : undefined}
@@ -395,15 +404,23 @@ export function WorkloadPage() {
                         className="load-bar"
                         data-tour="workload.load"
                         role="img"
-                        aria-label={`${pct}% dostępnych godzin`}
+                        aria-label={
+                          pct === null
+                            ? 'Godziny zaplanowane przy zerowej dostępności'
+                            : `${pct}% dostępnych godzin${
+                                overloadedDays.length > 0
+                                  ? ', przekroczona dostępność w niektóre dni'
+                                  : ''
+                              }`
+                        }
                       >
                         <div
-                          className={pct > 100 ? 'load-bar-fill over' : 'load-bar-fill'}
-                          style={{ width: `${Math.min(pct, 100)}%` }}
+                          className={danger ? 'load-bar-fill over' : 'load-bar-fill'}
+                          style={{ width: `${pct === null ? 100 : Math.min(pct, 100)}%` }}
                         />
                       </div>
-                      <span className={pct > 100 ? 'load-pct over' : 'load-pct'}>
-                        {pct}%
+                      <span className={danger ? 'load-pct over' : 'load-pct'}>
+                        {pct === null ? '⚠ brak dostępności' : danger ? `⚠ ${pct}%` : `${pct}%`}
                       </span>
                       {overloadedDays.length > 0 && (
                         <span
@@ -419,7 +436,8 @@ export function WorkloadPage() {
                     const date = selected.date;
                     const blocks = blocksForPersonDate(state, p.id, date);
                     const dayTotal = hoursForPersonOnDate(state, p.id, date);
-                    const over = dayTotal > capacity;
+                    const dayAvailable = availableHoursOnDate(state, p.id, date);
+                    const over = dayTotal > dayAvailable;
                     const filtersActive = Boolean(clientFilter || serviceFilter);
                     return (
                       <tr className="workload-detail-row">
@@ -431,7 +449,7 @@ export function WorkloadPage() {
                               >
                                 „{p.name} — {formatRowLabel(date)}: {formatDuration(dayTotal)}
                                 {' / '}
-                                {formatDuration(capacity)}”
+                                {formatDuration(dayAvailable)}”
                               </span>
                               <button
                                 type="button"

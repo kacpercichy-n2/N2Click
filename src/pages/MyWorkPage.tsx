@@ -8,12 +8,11 @@ import { useStore } from '../store/AppStore';
 import {
   binTaskRowsForPerson,
   currentUser,
+  dayAvailabilityForPerson,
   getClient,
   getProject,
   overdueTasksForPerson,
   overloadedDatesForPersonInRange,
-  personCapacity,
-  hoursForPersonOnDate,
   taskPlanningStatus,
   unplannedTasksForPerson,
 } from '../store/selectors';
@@ -55,7 +54,6 @@ export function MyWorkPage() {
   const overdue = overdueTasksForPerson(state, me.id, today);
   const horizon = [...weekDays(today), ...weekDays(shiftWeek(today, 1))];
   const overloadedDates = overloadedDatesForPersonInRange(state, me.id, horizon);
-  const capacity = personCapacity(state, me.id);
   const unplanned = unplannedTasksForPerson(state, me.id);
   const noAlerts =
     overdue.length === 0 && overloadedDates.length === 0 && unplanned.length === 0;
@@ -142,13 +140,16 @@ export function MyWorkPage() {
                   <h3 className="my-work-alert-title">Przeciążone dni</h3>
                   <ul className="dash-list agenda-list">
                     {overloadedDates.map((date) => {
-                      const booked = hoursForPersonOnDate(state, me.id, date);
+                      // That DAY's availability (0 on a day off), not raw
+                      // capacity — a booked day off must read "4h / 0h".
+                      const day = dayAvailabilityForPerson(state, me.id, date);
                       return (
                         <li key={date}>
                           <div className="dash-row my-work-alert-row is-static">
                             <span className="dash-row-name">{formatRowLabel(date)}</span>
                             <span className="agenda-meta">
-                              zaplanowano {formatDuration(booked)} / {formatDuration(capacity)}
+                              zaplanowano {formatDuration(day.bookedHours)} /{' '}
+                              {formatDuration(day.availableHours)}
                             </span>
                           </div>
                         </li>

@@ -13,6 +13,7 @@ import type { Milestone, Person, Project, Task } from '../types';
 import {
   assigneeIdsOfTask,
   conflictDatesForTask,
+  conflictDatesForTaskPerson,
   doneStatusIds,
   entriesForTaskPerson,
   getProject,
@@ -323,7 +324,9 @@ export function TimelinePage() {
   // owner filter (empty = everyone). Each group lists the tasks the person is
   // involved in — an assignment OR at least one workload entry (dated or bin) —
   // narrowed by the client filter, sorted by startDate then title. A person
-  // with no matching tasks is omitted entirely.
+  // with no matching tasks is omitted entirely. Conflict markers here are
+  // PERSON-SCOPED: a row shows only days where THIS person is overbooked, so a
+  // co-assignee's overload never bleeds onto it.
   const peopleView = useMemo(() => {
     const out: Array<{
       person: Person;
@@ -358,7 +361,7 @@ export function TimelinePage() {
             (sum, w) => sum + w.plannedHours,
             0,
           ),
-          conflictOffsets: conflictDatesForTask(state, t.id).map((d) =>
+          conflictOffsets: conflictDatesForTaskPerson(state, t.id, person.id).map((d) =>
             diffDays(t.startDate, d),
           ),
         })),

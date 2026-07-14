@@ -6,10 +6,10 @@ import { Link } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { useStore } from '../store/AppStore';
 import {
-  availableHoursInRange,
-  availableHoursOnDate,
   currentUser,
-  hoursForPersonOnDate,
+  dayAvailabilityForPerson,
+  loadPercent,
+  rangeAvailabilityForPerson,
   weekBlocksForPerson,
 } from '../store/selectors';
 import { ChatMock } from '../components/ChatMock';
@@ -37,24 +37,36 @@ const dashCardVariants = {
 
 const MAX_DAY_BLOCKS = 4;
 
-/** An SVG ring showing booked vs available hours. Never divides by zero. */
+/** An SVG ring showing booked vs available hours. Never divides by zero.
+ * Hours booked against ZERO availability (`loadPercent` → null) render as a
+ * full danger ring — dangerous, never a calm 0%. Any overbooked day inside the
+ * range keeps the danger state even when the range TOTALS look fine, so a
+ * booked day off can't average away into a calm percentage. */
 function WorkloadDonut({
   label,
   booked,
   available,
+  overbookedDates = [],
 }: {
   label: string;
   booked: number;
   available: number;
+  overbookedDates?: string[];
 }) {
   const size = 120;
   const stroke = 12;
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
-  const ratio = available > 0 ? Math.min(booked / available, 1) : 0;
-  const over = available > 0 && booked > available;
-  const pct = available > 0 ? Math.round((booked / available) * 100) : 0;
+  const over = booked > available || overbookedDates.length > 0;
+  const ratio = available > 0 ? Math.min(booked / available, 1) : over ? 1 : 0;
+  const pct = loadPercent(booked, available);
   const fill = over ? 'var(--n2-danger)' : 'var(--n2-lavender)';
+  const overTitle =
+    overbookedDates.length > 0
+      ? `Powyżej dostępności: ${overbookedDates.map(formatRowLabel).join(', ')}`
+      : pct === null
+        ? 'Godziny zaplanowane przy zerowej dostępności'
+        : undefined;
 
   return (
     <div className="donut">
@@ -86,7 +98,9 @@ function WorkloadDonut({
       </div>
       <div className="donut-caption">
         <span className="donut-label">{label}</span>
-        <span className={`donut-pct${over ? ' over' : ''}`}>{pct}%</span>
+        <span className={`donut-pct${over ? ' over' : ''}`} title={overTitle}>
+          {pct === null ? '⚠ brak dostępności' : over ? `⚠ ${pct}%` : `${pct}%`}
+        </span>
       </div>
     </div>
   );
@@ -120,12 +134,11 @@ export function DashboardPage() {
 
   const coworkers = state.people.filter((p) => p.id !== me.id);
 
-  // Workload donuts (today + this week).
+  // Workload donuts (today + this week) — both read the authoritative
+  // availability selectors so a booked zero-availability day stays dangerous.
   const week = weekDays(today);
-  const bookedToday = hoursForPersonOnDate(state, me.id, today);
-  const availableToday = availableHoursOnDate(state, me.id, today);
-  const bookedWeek = week.reduce((sum, d) => sum + hoursForPersonOnDate(state, me.id, d), 0);
-  const availableWeek = availableHoursInRange(state, me.id, week);
+  const todayAvail = dayAvailabilityForPerson(state, me.id, today);
+  const weekAvail = rangeAvailabilityForPerson(state, me.id, week);
 
   const weekMap = weekBlocksForPerson(state, me.id, week);
 
@@ -161,8 +174,18 @@ export function DashboardPage() {
         <motion.div className="dash-card" variants={dashCardVariants}>
           <h2>Obciążenie</h2>
           <div className="donut-row">
-            <WorkloadDonut label="Dziś" booked={bookedToday} available={availableToday} />
-            <WorkloadDonut label="Ten tydzień" booked={bookedWeek} available={availableWeek} />
+            <WorkloadDonut
+              label="Dziś"
+              booked={todayAvail.bookedHours}
+              available={todayAvail.availableHours}
+              overbookedDates={todayAvail.overbooked ? [today] : []}
+            />
+            <WorkloadDonut
+              label="Ten tydzień"
+              booked={weekAvail.bookedHours}
+              available={weekAvail.availableHours}
+              overbookedDates={weekAvail.overbookedDates}
+            />
           </div>
         </motion.div>
 

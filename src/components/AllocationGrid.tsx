@@ -9,7 +9,7 @@ import {
   formatRowLabel,
   isWeekend,
 } from '../utils/dates';
-import { hoursForPersonOnDate, personCapacity } from '../store/selectors';
+import { availableHoursOnDate, hoursForPersonOnDate } from '../store/selectors';
 import { formatDuration } from '../utils/time';
 
 /** allocations keyed as `${personId}|${date}` -> hours. */
@@ -130,11 +130,15 @@ export function AllocationGrid({
                 {people.map((p) => {
                   const value = cellValue(p.id, d);
                   const dayTotalForPerson = baseHoursFor(p.id, d) + value;
-                  const overloaded = dayTotalForPerson > personCapacity(state, p.id);
+                  // Warn against the DAY's availability (0 on the person's day
+                  // off), matching every other surface. Warn-only — deliberate
+                  // TaskModal allocations may exceed it (invariant 3).
+                  const dayAvailable = availableHoursOnDate(state, p.id, d);
+                  const overloaded = dayTotalForPerson > dayAvailable;
                   const count = blockCounts?.[allocKey(p.id, d)] ?? 0;
                   const multi = count >= 2;
                   const overloadTitle = overloaded
-                    ? `${p.name}: ${formatDuration(dayTotalForPerson)} łącznie tego dnia`
+                    ? `${p.name}: ${formatDuration(dayTotalForPerson)} łącznie tego dnia przy ${formatDuration(dayAvailable)} dostępności`
                     : undefined;
                   const multiTitle = multi
                     ? `Bloki w kalendarzu: ${count}. Edycja sumy wydłuży ostatni blok lub skróci bloki od końca; 0 usunie wszystkie.`

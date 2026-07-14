@@ -10,7 +10,11 @@ import {
   binHoursForTaskPerson,
   binTaskRowsForPerson,
   conflictDatesForTask,
+  conflictDatesForTaskPerson,
+  dayAvailabilityForPerson,
   doneStatusIds,
+  loadPercent,
+  rangeAvailabilityForPerson,
   growAllowanceHours,
   isDoneStatus,
   isPersonWorkday,
@@ -342,6 +346,238 @@ describe('availability selectors', () => {
     ];
 
     expect(availableHoursInRange(state, 'p1', week)).toBe(24); // 4 workdays * 6h
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dayAvailabilityForPerson / rangeAvailabilityForPerson / loadPercent —
+// the authoritative availability record (020-availability-risk). A booked day
+// with zero availability is DANGEROUS (overbooked), never a safe 0% state.
+// ---------------------------------------------------------------------------
+
+describe('dayAvailabilityForPerson', () => {
+  const MON = '2026-07-06';
+  const SAT = '2026-07-11';
+
+  it('normal workday: available = capacity, booked within it -> not overbooked', () => {
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      people: [makePerson({ id: 'p1', capacity: 8 })],
+      workload: [makeEntry({ id: 'e1', personId: 'p1', date: MON, plannedHours: 4 })],
+    });
+
+    expect(dayAvailabilityForPerson(state, 'p1', MON)).toEqual({
+      date: MON,
+      isWorkday: true,
+      availableHours: 8,
+      bookedHours: 4,
+      overbooked: false,
+    });
+  });
+
+  it('workday boundary: booked === available is NOT overbooked; one 0.25h more is', () => {
+    const exact = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      people: [makePerson({ id: 'p1', capacity: 8 })],
+      workload: [makeEntry({ id: 'e1', personId: 'p1', date: MON, plannedHours: 8 })],
+    });
+    expect(dayAvailabilityForPerson(exact, 'p1', MON).overbooked).toBe(false);
+
+    const over = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      people: [makePerson({ id: 'p1', capacity: 8 })],
+      workload: [makeEntry({ id: 'e1', personId: 'p1', date: MON, plannedHours: 8.25 })],
+    });
+    expect(dayAvailabilityForPerson(over, 'p1', MON).overbooked).toBe(true);
+  });
+
+  it('4h booked on a non-workday (0h available) is overbooked — dangerous, never a safe 0%', () => {
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      people: [makePerson({ id: 'p1', capacity: 8 })], // Mon–Fri worker
+      workload: [makeEntry({ id: 'e1', personId: 'p1', date: SAT, plannedHours: 4 })],
+    });
+
+    expect(dayAvailabilityForPerson(state, 'p1', SAT)).toEqual({
+      date: SAT,
+      isWorkday: false,
+      availableHours: 0,
+      bookedHours: 4,
+      overbooked: true,
+    });
+  });
+
+  it('a free non-workday (0h available, 0h booked) is NOT overbooked', () => {
+    const state = makeState({ people: [makePerson({ id: 'p1' })], workload: [] });
+    const day = dayAvailabilityForPerson(state, 'p1', SAT);
+    expect(day.availableHours).toBe(0);
+    expect(day.overbooked).toBe(false);
+  });
+
+  it('a person with NO workdays at all is overbooked by any booking, on any day', () => {
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      people: [makePerson({ id: 'p1', workDays: [] })],
+      workload: [makeEntry({ id: 'e1', personId: 'p1', date: MON, plannedHours: 1 })],
+    });
+    const day = dayAvailabilityForPerson(state, 'p1', MON);
+    expect(day.availableHours).toBe(0);
+    expect(day.overbooked).toBe(true);
+  });
+
+  it('bin rows never count as booked hours on a real date', () => {
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      people: [makePerson({ id: 'p1' })],
+      workload: [
+        makeEntry({ id: 'bin1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 20, sortIndex: 0 }),
+      ],
+    });
+    expect(dayAvailabilityForPerson(state, 'p1', MON).bookedHours).toBe(0);
+  });
+});
+
+describe('rangeAvailabilityForPerson', () => {
+  const WEEK = [
+    '2026-07-06', // Mon
+    '2026-07-07', // Tue
+    '2026-07-08', // Wed
+    '2026-07-09', // Thu
+    '2026-07-10', // Fri
+    '2026-07-11', // Sat
+    '2026-07-12', // Sun
+  ];
+
+  it('sums availability and booked hours over the range and collects overbooked dates', () => {
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      people: [makePerson({ id: 'p1', capacity: 6, workDays: [1, 2, 3, 4] })],
+      workload: [
+        makeEntry({ id: 'e1', personId: 'p1', date: '2026-07-06', plannedHours: 4 }), // Mon, fine
+        makeEntry({ id: 'e2', personId: 'p1', date: '2026-07-07', plannedHours: 7 }), // Tue, 7 > 6
+        makeEntry({ id: 'e3', personId: 'p1', date: '2026-07-11', plannedHours: 4 }), // Sat, 0h available
+      ],
+    });
+
+    expect(rangeAvailabilityForPerson(state, 'p1', WEEK)).toEqual({
+      availableHours: 24, // 4 workdays × 6h
+      bookedHours: 15,
+      overbookedDates: ['2026-07-07', '2026-07-11'],
+    });
+  });
+
+  it('agrees with availableHoursOnDate/availableHoursInRange on the availability sum', () => {
+    const state = makeState({
+      people: [makePerson({ id: 'p1', capacity: 6, workDays: [1, 2, 3, 4] })],
+    });
+    expect(rangeAvailabilityForPerson(state, 'p1', WEEK).availableHours).toBe(
+      availableHoursInRange(state, 'p1', WEEK),
+    );
+  });
+});
+
+describe('loadPercent', () => {
+  it('normal percentage against positive availability', () => {
+    expect(loadPercent(4, 8)).toBe(50);
+    expect(loadPercent(9, 8)).toBe(113);
+  });
+
+  it('0 booked / 0 available is a genuine, safe 0', () => {
+    expect(loadPercent(0, 0)).toBe(0);
+  });
+
+  it('hours booked against ZERO availability return null (danger), never 0%', () => {
+    expect(loadPercent(4, 0)).toBeNull();
+    expect(loadPercent(0.25, 0)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Availability-aware + person-scoped conflict markers (020-availability-risk).
+// ---------------------------------------------------------------------------
+
+describe('conflict markers — availability-aware and person-scoped', () => {
+  const MON = '2026-07-06';
+  const SAT = '2026-07-11';
+
+  it('conflictDatesForTask flags a booking on a 0h-availability day (non-workday)', () => {
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', endDate: '2026-07-12' })],
+      people: [makePerson({ id: 'p1', capacity: 8 })],
+      workload: [
+        makeEntry({ id: 'e1', personId: 'p1', date: MON, plannedHours: 4 }), // fine
+        makeEntry({ id: 'e2', personId: 'p1', date: SAT, plannedHours: 4 }), // 4h vs 0h
+      ],
+    });
+
+    expect(conflictDatesForTask(state, 't1')).toEqual([SAT]);
+  });
+
+  it("Ola's overload is NOT shown on Marek's people-mode row (person-scoped conflicts)", () => {
+    // Both work on t1 the same Monday. Ola is overbooked (her total 10h > 8h,
+    // via a second task); Marek's 4h day is fine.
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2' })],
+      people: [
+        makePerson({ id: 'ola', name: 'Ola', capacity: 8 }),
+        makePerson({ id: 'marek', name: 'Marek', capacity: 8 }),
+      ],
+      workload: [
+        makeEntry({ id: 'e1', taskId: 't1', personId: 'ola', date: MON, plannedHours: 6 }),
+        makeEntry({ id: 'e2', taskId: 't2', personId: 'ola', date: MON, plannedHours: 4 }), // Ola: 10h > 8h
+        makeEntry({ id: 'e3', taskId: 't1', personId: 'marek', date: MON, plannedHours: 4 }),
+      ],
+    });
+
+    // The any-assignee view still reports the day…
+    expect(conflictDatesForTask(state, 't1')).toEqual([MON]);
+    // …but only Ola's row carries the marker.
+    expect(conflictDatesForTaskPerson(state, 't1', 'ola')).toEqual([MON]);
+    expect(conflictDatesForTaskPerson(state, 't1', 'marek')).toEqual([]);
+  });
+
+  it('conflictDatesForTaskPerson only reports days where the person works on THIS task', () => {
+    // p1 is overbooked on Tuesday, but only via t2 — t1 has no Tuesday entry
+    // for them, so t1's row stays clean.
+    const TUE = '2026-07-07';
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2' })],
+      people: [makePerson({ id: 'p1', capacity: 8 })],
+      workload: [
+        makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: MON, plannedHours: 4 }),
+        makeEntry({ id: 'e2', taskId: 't2', personId: 'p1', date: TUE, plannedHours: 10 }),
+      ],
+    });
+
+    expect(conflictDatesForTaskPerson(state, 't1', 'p1')).toEqual([]);
+    expect(conflictDatesForTaskPerson(state, 't2', 'p1')).toEqual([TUE]);
+  });
+
+  it('conflictDatesForTaskPerson ignores bin rows and stays sorted', () => {
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', endDate: '2026-07-12' })],
+      people: [makePerson({ id: 'p1', capacity: 8 })],
+      workload: [
+        makeEntry({ id: 'bin1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 30, sortIndex: 0 }),
+        makeEntry({ id: 'e1', personId: 'p1', date: SAT, plannedHours: 2 }), // 0h available
+        makeEntry({ id: 'e2', personId: 'p1', date: MON, plannedHours: 9 }), // 9h > 8h
+      ],
+    });
+
+    expect(conflictDatesForTaskPerson(state, 't1', 'p1')).toEqual([MON, SAT]);
+  });
+
+  it('overloadedDatesForPersonInRange flags a booked non-workday alongside a genuine workday overload', () => {
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      people: [makePerson({ id: 'p1', capacity: 8 })],
+      workload: [
+        makeEntry({ id: 'e1', personId: 'p1', date: MON, plannedHours: 8 }), // exactly full — fine
+        makeEntry({ id: 'e2', personId: 'p1', date: SAT, plannedHours: 4 }), // booked day off
+      ],
+    });
+
+    expect(overloadedDatesForPersonInRange(state, 'p1', [MON, SAT])).toEqual([SAT]);
   });
 });
 
