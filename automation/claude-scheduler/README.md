@@ -24,3 +24,22 @@ caffeinate -dimsu node automation/claude-scheduler/run-queue.mjs
 The branch is pushed for human audit and later merge into `main`. There are no
 scheduler-owned Codex reviews, browser checks, final gates, retry loops or
 prompt-contract blockers.
+
+## Release browser verification
+
+Release browser verification is a separate, manual step the scheduler never
+runs. From the repository root:
+
+```bash
+npm run check:browser-release
+```
+
+It builds the app, serves the production preview on port 5173, and runs the five
+declared release-critical checks (bin drag, bin split, placement, tab sync,
+onboarding) in Chromium and WebKit, then tears the server down. Playwright is
+kept out of `package.json` to keep scheduler installs light, so on a clean
+install run the prerequisite first:
+
+```bash
+npm install --no-save playwright@1.61.1 && npx playwright install chromium webkit
+```

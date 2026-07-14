@@ -43,3 +43,22 @@
 
 - Likely stale after implementation: `state-and-persistence.md` relevant-tests
   list (new `activityAttribution.test.ts`). Reviewer owns the decision.
+
+## Developer result (release browser command)
+
+- Added `scripts/run-browser-regression.mjs` (build→own preview 5173→5 declared
+  checks × chromium/webkit→teardown), `check:browser-release` npm script, README
+  section. No browser-check script touched. Full matrix 10/10 PASS, exit 0; port
+  free after. Killed a stray non-N2Hub vite (Content plan) that held 5173.
+- Refreshed evidence: the verification matrix regenerated the PNGs under
+  `reviews/screenshots-*` (same scenarios, same assertions, all green). A
+  `git restore reviews/` was denied by session permissions, so the refreshed
+  screenshots are declared here instead of being reverted.
+
+## Reviewer verdict (release browser command)
+
+- request-changes with a single required fix: name the release command in
+  `openwiki/n2hub/testing-and-automation.md` (applied). Runner itself approved:
+  cleanup verified on every failure path, exit codes correct, no scenario script
+  modified, no dependency added. Codex: not-needed (pure orchestration around
+  byte-identical scenario scripts).

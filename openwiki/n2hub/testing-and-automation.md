@@ -55,3 +55,7 @@
 
 Run a check in Chromium and WebKit only when its covered behavior changes or a
 release verification prompt explicitly requests the full matrix.
+
+The release bundle is `npm run check:browser-release`
+(`scripts/run-browser-regression.mjs`): it builds once, owns its own preview
+server on port 5173, and runs all five checks in Chromium and WebKit.
