@@ -1,43 +1,45 @@
 # Current scheduler run
 
-- Run: pending
-- Base branch/SHA: `main` / set at run start
-- Prompt: next active prompt from `automation/claude-scheduler/prompts/`
-- Risk/route: set from `## Risk and routing`
+- Run: 019c "Make local activity attribution honest" — planning complete
+- Base branch: `review/claude-auto-20260714-1216`
+- Prompt: task 019c (dual-identity activity attribution + admin/session/deletion activity rows)
 
 ## Packages and changed boundaries
 
-- [PKG-20260713-reducer-validation](PKG-20260713-reducer-validation.md): new
-  `commandValidation.ts` predicates + 14 reference/name/estimate checks wired into
-  AppStore reducer switch; new `commandValidation.test.ts`.
+- [PKG-20260714-activity-attribution](../.claude/handoffs/019c-developer.md)
+  — tier: developer, status: ready, risk: medium.
+  Boundaries: `src/types.ts` (ActivityEvent + new ActivityEntityType union),
+  `src/store/AppStore.tsx` (`withActivity` stamping + one-row appends in
+  person/session/status/deletion cases), `src/components/CommentsPanel.tsx`
+  (dual-identity render), new `src/store/activityAttribution.test.ts`.
+  Explicitly untouched: `permissions.ts` matrix, `storage.ts`, `selectors.ts`;
+  data version stays 7 (additive optional field).
 
 ## Focused verification
 
-- Original worker suite: 325 passed.
-- After Codex fixes: `vitest run commandValidation dateGuards saveTaskWorkload
-  blockActions`: 176 passed; `npm run typecheck`: passed.
-- Final scheduler gate: `npm test` 448/448; `npm run build` passed. Post-check
-  canonical diff hash matched the approved review.
+- Worker: `npx vitest run src/store/activityAttribution.test.ts src/store/permissions.test.ts src/store/statusActions.test.ts src/store/commandValidation.test.ts`, then `npx vitest run src/store`.
+- Browser: none (render-only UI change).
+- Scheduler owns final `npm test && npm run build`.
 
 ## Context expansions
 
-- None beyond declared touchpoints.
+- AdminPage SAVE_STATUS dispatch sites read to confirm keystroke-level rename
+  dispatch → pinned "no row on status edit" decision.
 
-## Review
+## Open questions
 
-- Codex: required, passed. First pass found two P2 regressions (project edit
-  atomic-client path and milestone/project ownership); both fixed with tests.
-  Hash-bound second pass: LGTM (`reviews/2026-07-14-002919-*`).
-- Reviewer verdict: approve after adjudicating and fixing both findings.
+- None blocking; all product decisions pinned in the package (status-edit and
+  reorder silence, deletion-row placement, impersonation-row attribution).
 
-## Blockers and deferred work
+## Developer result (019c)
 
-- No blockers.
-- Resolved (architect Amendment 2026-07-13, option A): full SAVE_TASK reference
-  enforcement now wired; headless fixtures in taskMeta/saveTaskWorkload/
-  blockActions got fixtures-only additions (proj1/status1/p1). None deferred.
+- Implemented all Scope 1–6 across the four declared files; no guard reordered,
+  only activity appended on accepted branches. Focused: activityAttribution 35/35;
+  regression gate 99/99; `src/store` 415/415; `tsc --noEmit` clean.
+- No expansion beyond declared touchpoints; `statusActions.test.ts` untouched
+  (no deep-equality assertion broke). Wiki relevant-tests list still stale.
 
 ## Wiki
 
-- Updated: `state-and-persistence.md` relevant-tests list now includes
-  `commandValidation.test.ts` (reviewer decision; boundary otherwise unchanged).
+- Likely stale after implementation: `state-and-persistence.md` relevant-tests
+  list (new `activityAttribution.test.ts`). Reviewer owns the decision.

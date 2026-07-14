@@ -157,6 +157,14 @@ export interface WorkloadEntry {
 
 export type CommentEntityType = 'project' | 'task';
 
+// Entity buckets for the LOCAL activity log. Comments stay project/task-only.
+export type ActivityEntityType =
+  | CommentEntityType
+  | 'person' // entityId = person id
+  | 'status' // entityId = status id
+  | 'client' // entityId = client id
+  | 'system'; // session events (login/logout/impersonation), entityId = ''
+
 export interface Comment {
   id: string;
   entityType: CommentEntityType;
@@ -167,11 +175,17 @@ export interface Comment {
   createdAt: string; // ISO timestamp
 }
 
+// Local, user-editable activity log for attribution/UX. localStorage is
+// client-mutable, so this is NOT a security audit trail.
 export interface ActivityEvent {
   id: string;
-  entityType: CommentEntityType;
+  entityType: ActivityEntityType;
   entityId: string;
-  actorId: string; // '' when no acting user was selected
+  actorId: string; // acting identity ('' when no acting user); the IMPERSONATED person while impersonating
+  // Real logged-in administrator when the row was written under impersonation;
+  // '' when not impersonating. Optional: rows persisted before this field exist
+  // without it and load fine (additive, no version bump).
+  impersonatorId?: string;
   message: string;
   createdAt: string; // ISO timestamp
 }

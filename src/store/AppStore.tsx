@@ -14,6 +14,7 @@ import {
 } from 'react';
 import type {
   AccessRole,
+  ActivityEntityType,
   ActivityEvent,
   AppData,
   ChecklistItem,
@@ -47,6 +48,7 @@ import {
   isValidTaskDraft,
 } from './commandValidation';
 import { wouldCreateSupervisorCycle } from './selectors';
+import { ROLE_LABELS } from './permissions';
 import { registerPersonOrder } from '../utils/colors';
 import {
   MAX_TASK_PERIOD_DAYS,
@@ -216,11 +218,17 @@ function nowIso(): string {
 
 // ---- Activity log helper ----
 
+// Local, user-editable activity log for attribution/UX. localStorage is
+// client-mutable, so this is NOT a security audit trail. Every row carries the
+// acting identity plus (when impersonating) the real administrator, so the log
+// stays honest about who did what. `as` overrides the stamp for session events
+// where the pre-transition `currentUserId` is not the honest author.
 function withActivity(
   state: AppData,
-  entityType: CommentEntityType,
+  entityType: ActivityEntityType,
   entityId: string,
   message: string,
+  as?: { actorId: string; impersonatorId: string },
 ): ActivityEvent[] {
   return [
     ...state.activity,
@@ -228,7 +236,8 @@ function withActivity(
       id: uid(),
       entityType,
       entityId,
-      actorId: state.currentUserId,
+      actorId: as ? as.actorId : state.currentUserId,
+      impersonatorId: as ? as.impersonatorId : state.impersonatorId,
       message,
       createdAt: nowIso(),
     },
@@ -1469,13 +1478,19 @@ function saveStatus(
       archived: false,
       isDone: false,
     };
-    return { ...state, statuses: [...state.statuses, status] };
+    return {
+      ...state,
+      statuses: [...state.statuses, status],
+      activity: withActivity(state, 'status', status.id, `utworzył(a) status „${trimmed}”`),
+    };
   }
   // Reject a stale rename id (previously returned a new identical state ref).
   if (!hasEntity(state, 'status', statusId)) return state;
   // Rename keeps the raw value so inline editing isn't fighting the reducer
   // (trailing spaces while typing); the slug derives from the trimmed name.
   // `isDone` is untouched — the spread preserves the existing flag.
+  // The rename/recolor branch logs NOTHING: AdminPage dispatches SAVE_STATUS per
+  // keystroke / per color-drag tick, so an edit row would flood the log.
   return {
     ...state,
     statuses: state.statuses.map((s) =>
@@ -1489,9 +1504,18 @@ function saveStatus(
 function setStatusDone(state: AppData, statusId: string, isDone: boolean): AppData {
   if (!state.statuses.some((s) => s.id === statusId)) return state;
   if (!isDone && isOnlyDoneStatus(state, statusId)) return state;
+  const status = state.statuses.find((s) => s.id === statusId)!;
   return {
     ...state,
     statuses: state.statuses.map((s) => (s.id === statusId ? { ...s, isDone } : s)),
+    activity: withActivity(
+      state,
+      'status',
+      statusId,
+      isDone
+        ? `oznaczył(a) status „${status.name}” jako ukończony`
+        : `cofnął(a) oznaczenie ukończenia statusu „${status.name}”`,
+    ),
   };
 }
 
@@ -1503,14 +1527,23 @@ function setStatusArchived(state: AppData, statusId: string, archived: boolean):
   if (archived && (isOnlyActiveStatus(state, statusId) || isOnlyDoneStatus(state, statusId))) {
     return state;
   }
+  const status = state.statuses.find((s) => s.id === statusId)!;
   return {
     ...state,
     statuses: state.statuses.map((s) =>
       s.id === statusId ? { ...s, archived } : s,
     ),
+    activity: withActivity(
+      state,
+      'status',
+      statusId,
+      archived ? `zarchiwizował(a) status „${status.name}”` : `przywrócił(a) status „${status.name}”`,
+    ),
   };
 }
 
+// Cosmetic ordering only (invariant: completion never comes from order), and
+// repeat-click reorders would spam — so NO activity row is logged here.
 function reorderStatus(state: AppData, statusId: string, direction: -1 | 1): AppData {
   const ordered = [...state.statuses].sort((a, b) => a.order - b.order);
   const idx = ordered.findIndex((s) => s.id === statusId);
@@ -1533,7 +1566,12 @@ function deleteStatus(state: AppData, statusId: string): AppData {
     state.tasks.some((t) => t.statusId === statusId);
   if (used) return state;
   if (isOnlyActiveStatus(state, statusId) || isOnlyDoneStatus(state, statusId)) return state;
-  return { ...state, statuses: state.statuses.filter((s) => s.id !== statusId) };
+  const status = state.statuses.find((s) => s.id === statusId)!;
+  return {
+    ...state,
+    statuses: state.statuses.filter((s) => s.id !== statusId),
+    activity: withActivity(state, 'status', statusId, `usunął(a) status „${status.name}”`),
+  };
 }
 
 // ---- Milestones ----
@@ -1578,8 +1616,18 @@ export function reducer(state: AppData, action: Action): AppData {
   switch (action.type) {
     case 'SAVE_TASK':
       return saveTask(state, action.payload);
-    case 'DELETE_TASK':
-      return deleteTask(state, action.taskId);
+    case 'DELETE_TASK': {
+      // Only log when the task exists. The row lives on the PARENT PROJECT
+      // (entityType 'project') so it stays visible in the project's activity
+      // panel and survives deleteTask's own 'task'-row pruning.
+      const task = state.tasks.find((t) => t.id === action.taskId);
+      const next = deleteTask(state, action.taskId);
+      if (!task) return next;
+      return {
+        ...next,
+        activity: withActivity(next, 'project', task.projectId, `usunął(a) zadanie „${task.title}”`),
+      };
+    }
     case 'MOVE_TASK':
       return moveTask(state, action.taskId, action.dayDelta);
     case 'SET_TASK_DATES':
@@ -1608,8 +1656,18 @@ export function reducer(state: AppData, action: Action): AppData {
     }
     case 'SAVE_PROJECT':
       return saveProject(state, action.projectId, action.draft, action.newClientName);
-    case 'DELETE_PROJECT':
-      return deleteProject(state, action.projectId);
+    case 'DELETE_PROJECT': {
+      // Only log when the project exists. A 'project'-typed row would be pruned
+      // by deleteProject itself, so the deletion record lives on 'system' with
+      // no entityId. Append onto the post-cascade state (identities unchanged).
+      const project = state.projects.find((p) => p.id === action.projectId);
+      const next = deleteProject(state, action.projectId);
+      if (!project) return next;
+      return {
+        ...next,
+        activity: withActivity(next, 'system', '', `usunął(a) projekt „${project.name}”`),
+      };
+    }
     case 'SET_PROJECT_STATUS': {
       // Existing stale-project guard, plus a dangling-statusId reject.
       if (!hasEntity(state, 'status', action.statusId)) return state;
@@ -1730,6 +1788,9 @@ export function reducer(state: AppData, action: Action): AppData {
       return {
         ...state,
         people: [...state.people, { id, ...base, accessRole, supervisorId, passwordHash: '' }],
+        // Fresh-setup case (empty people, currentUserId === '') still logs; the
+        // actor renders via the UI fallback.
+        activity: withActivity(state, 'person', id, `dodał(a) osobę „${base.name}”`),
       };
     }
     case 'UPDATE_PERSON': {
@@ -1755,11 +1816,18 @@ export function reducer(state: AppData, action: Action): AppData {
       )
         ? ''
         : base.supervisorId;
+      // Note a role change in the message; otherwise a plain update row. One row
+      // either way, stamped from the pre-update state.
+      const message =
+        target.accessRole !== base.accessRole
+          ? `zaktualizował(a) dane osoby „${base.name}” (rola: ${ROLE_LABELS[target.accessRole]} → ${ROLE_LABELS[base.accessRole]})`
+          : `zaktualizował(a) dane osoby „${base.name}”`;
       return {
         ...state,
         people: state.people.map((p) =>
           p.id === action.personId ? { ...p, ...base, supervisorId } : p,
         ),
+        activity: withActivity(state, 'person', action.personId, message),
       };
     }
     case 'DELETE_PERSON': {
@@ -1773,43 +1841,122 @@ export function reducer(state: AppData, action: Action): AppData {
       if (target?.accessRole === 'administrator' && adminCount === 1) {
         return state;
       }
-      return deletePerson(state, action.personId);
+      const next = deletePerson(state, action.personId);
+      // Stamp from the PRE-delete state deliberately: deletePerson may rewrite
+      // currentUserId/impersonatorId (impersonation interplay) and the row must
+      // reflect who acted. The 'person' row survives — it is never pruned.
+      return {
+        ...next,
+        activity: withActivity(state, 'person', action.personId, `usunął(a) osobę „${target!.name}”`),
+      };
     }
-    case 'SET_CURRENT_USER':
-      // '' is logout (clears identity); any other id must exist so a dangling
-      // personId can never be persisted as the acting user.
+    case 'SET_CURRENT_USER': {
+      // '' is a programmatic identity clear; any other id must exist so a
+      // dangling personId can never be persisted as the acting user.
       if (action.personId !== '' && !hasEntity(state, 'person', action.personId)) return state;
       // Login / direct identity set: always ends any impersonation.
-      return { ...state, currentUserId: action.personId, impersonatorId: '' };
+      const nextUser = { ...state, currentUserId: action.personId, impersonatorId: '' };
+      // '' clears identity programmatically — only LOGOUT records a logout, so no
+      // row here. A same-id re-select (not impersonating) is a no-op — no row.
+      if (
+        action.personId === '' ||
+        (action.personId === state.currentUserId && state.impersonatorId === '')
+      ) {
+        return nextUser;
+      }
+      // Login row: the pre-state currentUserId may be '', so attribute to the id
+      // that just logged in via the `as` override.
+      return {
+        ...nextUser,
+        activity: withActivity(state, 'system', '', 'zalogował(a) się', {
+          actorId: action.personId,
+          impersonatorId: '',
+        }),
+      };
+    }
     case 'IMPERSONATE': {
       // No-op when the target doesn't exist or is already the acted-as identity.
       const exists = state.people.some((p) => p.id === action.personId);
       if (!exists || action.personId === state.currentUserId) return state;
-      // Picking the current impersonator's own row means "return".
+      // Picking the current impersonator's own row means "return" — an END event.
       if (action.personId === state.impersonatorId) {
-        return { ...state, currentUserId: state.impersonatorId, impersonatorId: '' };
+        const acted = state.people.find((p) => p.id === state.currentUserId);
+        return {
+          ...state,
+          currentUserId: state.impersonatorId,
+          impersonatorId: '',
+          activity: withActivity(
+            state,
+            'system',
+            '',
+            `zakończył(a) podgląd jako „${acted?.name ?? '?'}”`,
+            { actorId: state.impersonatorId, impersonatorId: '' },
+          ),
+        };
       }
-      // Chained switches keep the ORIGINAL real user as the impersonator.
+      // Chained switches keep the ORIGINAL real user as the impersonator. The
+      // impersonation act itself is the real administrator's own action.
+      const target = state.people.find((p) => p.id === action.personId);
       return {
         ...state,
         currentUserId: action.personId,
         impersonatorId: state.impersonatorId || state.currentUserId,
+        activity: withActivity(
+          state,
+          'system',
+          '',
+          `rozpoczął(a) podgląd jako „${target?.name ?? '?'}”`,
+          { actorId: state.impersonatorId || state.currentUserId, impersonatorId: '' },
+        ),
       };
     }
-    case 'STOP_IMPERSONATION':
+    case 'STOP_IMPERSONATION': {
       if (state.impersonatorId === '') return state;
-      return { ...state, currentUserId: state.impersonatorId, impersonatorId: '' };
-    case 'SET_PASSWORD':
-      // Stores the given hash verbatim ('' clears the password). No activity row.
+      const acted = state.people.find((p) => p.id === state.currentUserId);
       return {
+        ...state,
+        currentUserId: state.impersonatorId,
+        impersonatorId: '',
+        activity: withActivity(
+          state,
+          'system',
+          '',
+          `zakończył(a) podgląd jako „${acted?.name ?? '?'}”`,
+          { actorId: state.impersonatorId, impersonatorId: '' },
+        ),
+      };
+    }
+    case 'SET_PASSWORD': {
+      // Stores the given hash verbatim ('' clears the password). Log only when
+      // the person exists. The message must never leak set-vs-clear nor the hash.
+      const person = state.people.find((p) => p.id === action.personId);
+      const nextPw = {
         ...state,
         people: state.people.map((p) =>
           p.id === action.personId ? { ...p, passwordHash: action.passwordHash } : p,
         ),
       };
-    case 'LOGOUT':
+      if (!person) return nextPw;
+      return {
+        ...nextPw,
+        activity: withActivity(state, 'person', action.personId, `zmienił(a) ustawienia hasła osoby „${person.name}”`),
+      };
+    }
+    case 'LOGOUT': {
       // Full logout (not "return"): clears both the acted-as and real identity.
-      return { ...state, currentUserId: '', impersonatorId: '' };
+      // Nobody to log out -> no row, state result unchanged from before.
+      if (state.currentUserId === '' && state.impersonatorId === '') {
+        return { ...state, currentUserId: '', impersonatorId: '' };
+      }
+      // Default pre-transition stamping records dual identity when logging out
+      // mid-impersonation.
+      return {
+        ...state,
+        currentUserId: '',
+        impersonatorId: '',
+        activity: withActivity(state, 'system', '', 'wylogował(a) się'),
+      };
+    }
     case 'ADD_CLIENT': {
       const name = action.name.trim();
       if (!name) return state;
@@ -1827,11 +1974,19 @@ export function reducer(state: AppData, action: Action): AppData {
       };
     case 'DELETE_CLIENT': {
       // Cascade: client -> its projects -> their tasks/blocks.
+      const client = state.clients.find((c) => c.id === action.clientId);
       let next: AppData = state;
       for (const p of state.projects.filter((p) => p.clientId === action.clientId)) {
         next = deleteProject(next, p.id);
       }
-      return { ...next, clients: next.clients.filter((c) => c.id !== action.clientId) };
+      const cleaned = { ...next, clients: next.clients.filter((c) => c.id !== action.clientId) };
+      if (!client) return cleaned;
+      // One 'client' row built on the post-cascade state so the cascade's pruning
+      // is not resurrected (identities are unchanged, so stamping stays honest).
+      return {
+        ...cleaned,
+        activity: withActivity(cleaned, 'client', action.clientId, `usunął(a) klienta „${client.name}”`),
+      };
     }
     case 'ADD_DEPARTMENT': {
       const name = action.name.trim();

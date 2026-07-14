@@ -184,10 +184,23 @@ export function CommentsPanel({ entityType, entityId }: Props) {
         <ul className="activity-list">
           {activity.map((e) => {
             const actor = getPerson(state, e.actorId);
+            // Impersonated row: show the REAL administrator as the primary name
+            // and the acted-as identity in a suffix. This is a local attribution
+            // aid, not a security audit trail.
+            const real = e.impersonatorId ? getPerson(state, e.impersonatorId) : undefined;
             return (
               <li key={e.id} className="activity-item">
                 <span className="activity-msg">
-                  <strong>{actor?.name ?? 'Ktoś'}</strong> {e.message}
+                  {e.impersonatorId ? (
+                    <>
+                      <strong>{real?.name ?? 'Ktoś'}</strong>{' '}
+                      <span className="muted">(jako {actor?.name ?? 'Ktoś'})</span> {e.message}
+                    </>
+                  ) : (
+                    <>
+                      <strong>{actor?.name ?? 'Ktoś'}</strong> {e.message}
+                    </>
+                  )}
                 </span>
                 <span className="muted activity-time">{formatTimestamp(e.createdAt)}</span>
               </li>

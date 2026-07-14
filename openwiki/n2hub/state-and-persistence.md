@@ -29,7 +29,8 @@
 
 ## Relevant tests
 
-`src/store/blockActions.test.ts`, `commandValidation.test.ts`,
+`src/store/activityAttribution.test.ts`, `blockActions.test.ts`,
+`commandValidation.test.ts`,
 `saveTaskWorkload.test.ts`,
 `selectors.test.ts`, `statusActions.test.ts`, `storage.test.ts`,
 `dateGuards.test.ts`, `taskMeta.test.ts`.
