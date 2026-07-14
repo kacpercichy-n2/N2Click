@@ -178,11 +178,11 @@ progu użycia. Błędy techniczne bez poprawnego werdyktu review nadal zatrzymuj
 run, bo scheduler nie ma wtedy wiarygodnych instrukcji naprawy.
 
 Gdy prompt wymaga scenariusza browserowego, worker wykonuje go przez Playwright
-MCP — nie przez skrypty `node scripts/browser-check-*.mjs`. `npm run dev` jest
-dozwolony wyłącznie jako proces pomocniczy, gdy aplikacja nie działa jeszcze na
-`:5173`; sam MCP prowadzi nawigację, interakcje i asercje. Wynik scenariusza MCP
-worker zapisuje w `focusedChecks`. Projektowa konfiguracja `.mcp.json` udostępnia
-serwer `playwright`, a allowlista obejmuje jego narzędzia jako
+MCP — nie przez skrypty `node scripts/browser-check-*.mjs`. Worker uruchamia
+własny Vite dla bieżącego drzewa na `127.0.0.1:5174`, najpierw potwierdza tytuł
+`N2Hub Planer`, a po scenariuszu go kończy; sam MCP prowadzi nawigację,
+interakcje i asercje. Wynik scenariusza MCP worker zapisuje w `focusedChecks`.
+Projektowa konfiguracja `.mcp.json` udostępnia serwer `playwright`, a allowlista obejmuje jego narzędzia jako
 `mcp__playwright__*`. Skrypty browserowe pozostają deterministyczną regresją
 release/CI, lecz scheduler nie uruchamia ich w fazie workera.
 
