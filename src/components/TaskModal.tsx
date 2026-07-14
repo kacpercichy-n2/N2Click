@@ -35,6 +35,11 @@ import {
   MAX_TASK_PERIOD_DAYS,
 } from '../utils/dates';
 import { useSaveStatus } from '../utils/useSaveStatus';
+import {
+  bypassNavGuardOnce,
+  clearNavGuard,
+  setNavGuard,
+} from '../utils/dirtyRegistry';
 
 /**
  * Shared opener hook. Merges the task/project search params onto the CURRENT
@@ -118,12 +123,28 @@ function TaskModalShell({ taskParam, projectParam, onClose }: ShellProps) {
   // state drives the save-status badge + beforeunload prompt.
   const dirtyRef = useRef(false);
   const [dirty, setDirty] = useState(false);
+  // Router navigation-guard registration is SYNCHRONOUS (not an effect):
+  // the save path clears dirty and closes in one handler, and the guard reads
+  // the registry during that very navigation.
+  const navGuardKey = useRef<object>({});
   const handleDirtyChange = useCallback((d: boolean) => {
     dirtyRef.current = d;
     setDirty(d);
+    setNavGuard(navGuardKey.current, 'task-modal', d);
+  }, []);
+  useEffect(() => {
+    const key = navGuardKey.current;
+    return () => clearNavGuard(key);
   }, []);
   const { saveError } = usePersistence();
   const { status, markSaved } = useSaveStatus(dirty, saveError !== null);
+
+  // Deliberate close: the user already confirmed (or nothing needs asking), so
+  // the closing navigation must not raise the router guard a second time.
+  const closeDeliberately = useCallback(() => {
+    bypassNavGuardOnce();
+    onClose();
+  }, [onClose]);
 
   // Any close path prompts when there are unsaved changes.
   const requestClose = useCallback(() => {
@@ -133,8 +154,8 @@ function TaskModalShell({ taskParam, projectParam, onClose }: ShellProps) {
     ) {
       return;
     }
-    onClose();
-  }, [onClose]);
+    closeDeliberately();
+  }, [closeDeliberately]);
 
   // Escape closes (with guard); body scroll locked while the modal is open.
   useEffect(() => {
@@ -158,7 +179,7 @@ function TaskModalShell({ taskParam, projectParam, onClose }: ShellProps) {
       )
     ) {
       dispatch({ type: 'DELETE_TASK', taskId: existing.id });
-      onClose();
+      closeDeliberately();
     }
   };
 

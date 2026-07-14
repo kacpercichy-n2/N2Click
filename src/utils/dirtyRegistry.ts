@@ -24,3 +24,70 @@ export function anyDirty(): boolean {
   }
   return false;
 }
+
+// ---- Router navigation guard ----------------------------------------------
+//
+// Separate, OPT-IN scope on top of the tab-conflict flags above: only the task
+// modal and the project detail editor register here, so unrelated routes and
+// forms never gain a global navigation blocker. The scope names WHICH edit
+// surface is dirty, because each one is discarded by a different kind of
+// navigation: the task modal lives on the `?task=` search param, while the
+// project editor lives on the pathname.
+
+export type NavGuardScope = 'task-modal' | 'project-detail';
+
+const navGuards = new Map<object, NavGuardScope>();
+
+/** Mark the form at `key` as a dirty navigation-guarded surface (or not). */
+export function setNavGuard(key: object, scope: NavGuardScope, dirty: boolean): void {
+  if (dirty) navGuards.set(key, scope);
+  else navGuards.delete(key);
+}
+
+/** Forget a guarded form entirely (e.g. on unmount). */
+export function clearNavGuard(key: object): void {
+  navGuards.delete(key);
+}
+
+/** Scopes that currently hold unsaved edits. */
+export function dirtyNavScopes(): ReadonlySet<NavGuardScope> {
+  return new Set(navGuards.values());
+}
+
+/**
+ * Pure decision: would navigating `current` → `next` discard the edits held by
+ * `scopes`? A dirty task modal dies when the `task` search param changes; a
+ * dirty project editor dies when the pathname changes (same-path search-param
+ * changes, e.g. opening the task modal over it, keep it mounted).
+ */
+export function navGuardBlocks(
+  scopes: ReadonlySet<NavGuardScope>,
+  current: { pathname: string; search: string },
+  next: { pathname: string; search: string },
+): boolean {
+  if (scopes.size === 0) return false;
+  const pathChanged = current.pathname !== next.pathname;
+  const taskChanged =
+    new URLSearchParams(current.search).get('task') !==
+    new URLSearchParams(next.search).get('task');
+  return (
+    (scopes.has('task-modal') && taskChanged) ||
+    (scopes.has('project-detail') && pathChanged)
+  );
+}
+
+// A form that already confirmed the discard with its own dialog (modal close,
+// project "Wróć"/delete) arms this one-shot bypass right before it navigates,
+// so the router guard does not prompt a second time. Consumed (and therefore
+// cleared) by the very next navigation attempt.
+let navGuardBypass = false;
+
+export function bypassNavGuardOnce(): void {
+  navGuardBypass = true;
+}
+
+export function consumeNavGuardBypass(): boolean {
+  const bypass = navGuardBypass;
+  navGuardBypass = false;
+  return bypass;
+}

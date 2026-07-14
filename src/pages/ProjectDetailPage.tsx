@@ -1,7 +1,7 @@
 // Project detail card: editable fields (client, status, paid coin, dates,
 // department, service type, description), milestones, the project's tasks, and
 // the chat/comments + activity section.
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useStore, usePersistence } from '../store/AppStore';
 import { useCan } from '../store/useCan';
@@ -28,6 +28,11 @@ import { ChevronRight } from '../components/icons';
 import { formatShort, todayStr, isValidDateStr, periodError, PERIOD_ERROR_LABELS } from '../utils/dates';
 import { formatDuration } from '../utils/time';
 import { useSaveStatus } from '../utils/useSaveStatus';
+import {
+  bypassNavGuardOnce,
+  clearNavGuard,
+  setNavGuard,
+} from '../utils/dirtyRegistry';
 
 export function ProjectDetailPage() {
   const { id } = useParams();
@@ -90,6 +95,16 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   const { saveError } = usePersistence();
   const { status, markSaved } = useSaveStatus(dirty, saveError !== null);
 
+  // Register the dirty draft with the router navigation guard so leaving the
+  // page (sidebar links, Back/Forward, any route change) asks first. Explicit
+  // in-page navigations that already confirmed arm a one-shot bypass below.
+  const navGuardKey = useRef<object>({});
+  useEffect(() => {
+    const key = navGuardKey.current;
+    setNavGuard(key, 'project-detail', dirty);
+    return () => clearNavGuard(key);
+  }, [dirty]);
+
   // Deleted mid-render (e.g. right after the delete dispatch, before the route
   // change lands): render nothing for that frame.
   if (!project) return null;
@@ -146,6 +161,9 @@ function ProjectDetail({ projectId }: { projectId: string }) {
       )
     ) {
       dispatch({ type: 'DELETE_PROJECT', projectId: project.id });
+      // The guard registry still holds the (now moot) dirty draft until the
+      // next effect pass — this navigation was deliberately confirmed.
+      bypassNavGuardOnce();
       navigate('/projects');
     }
   };
@@ -188,6 +206,8 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               ) {
                 return;
               }
+              // Already confirmed (or clean) — don't let the router guard ask again.
+              bypassNavGuardOnce();
               navigate('/projects');
             }}
           >

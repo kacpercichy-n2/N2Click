@@ -3,12 +3,17 @@
 ## Boundaries
 
 - `src/App.tsx` owns routing, shell-level overlays and current-user navigation.
+  `src/main.tsx` hosts the data router (`createBrowserRouter`) that App's
+  `useBlocker` dirty-navigation guard requires.
 - `src/pages/` owns route-specific screens; `src/components/TaskModal.tsx` owns
   task editing and its allocation grid.
 - `src/onboarding/catalog.ts` owns copy, roles and route mapping; components
   expose stable `data-tour` anchors only.
 - `src/utils/dirtyRegistry.ts` and `src/utils/useSaveStatus.ts` support shared
-  unsaved-edit and save-state behavior.
+  unsaved-edit and save-state behavior. The registry also holds the opt-in
+  router navigation guard (scopes `task-modal`/`project-detail` plus a one-shot
+  bypass) that App's `DirtyNavigationGuard` consults; only those two surfaces
+  register, so other routes and forms never gain a global blocker.
 
 ## Rules that change work
 

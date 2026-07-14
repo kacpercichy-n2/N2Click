@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   NavLink,
   Navigate,
   Route,
   Routes,
+  useBlocker,
   useLocation,
   useParams,
   useSearchParams,
@@ -49,6 +50,11 @@ import {
 } from './components/icons';
 import type { LucideIcon } from './components/icons';
 import { loadUiPrefs, updateUiPrefs } from './utils/uiPrefs';
+import {
+  consumeNavGuardBypass,
+  dirtyNavScopes,
+  navGuardBlocks,
+} from './utils/dirtyRegistry';
 import { OnboardingRoot } from './onboarding/OnboardingRoot';
 
 const NAV: Array<[string, string, LucideIcon]> = [
@@ -323,6 +329,7 @@ export function App() {
 
       {/* The task popout modal lives once, above every page. */}
       <TaskModal />
+      <DirtyNavigationGuard />
       <OnboardingRoot
         owner={actualUser}
         viewer={currentUser}
@@ -330,6 +337,48 @@ export function App() {
       />
     </div>
   );
+}
+
+/**
+ * Router-level guard for dirty task/project edits. Blocks any navigation that
+ * would discard an unsaved edit — sidebar links, in-app links, programmatic
+ * `navigate()` and browser Back/Forward (the data router reverts the URL on a
+ * cancelled pop) — and asks in Polish before proceeding. Forms that already
+ * confirmed the discard with their own dialog arm a one-shot bypass, so the
+ * existing close-button confirmations fire exactly once. Only the task modal
+ * and the project editor register in the guard registry; every other route and
+ * form navigates untouched.
+ */
+function DirtyNavigationGuard() {
+  const blocker = useBlocker(
+    useCallback(
+      ({ currentLocation, nextLocation }: {
+        currentLocation: { pathname: string; search: string };
+        nextLocation: { pathname: string; search: string };
+      }) => {
+        // Consume the bypass unconditionally so a stale one never outlives
+        // the navigation it was armed for.
+        const bypass = consumeNavGuardBypass();
+        if (bypass) return false;
+        return navGuardBlocks(dirtyNavScopes(), currentLocation, nextLocation);
+      },
+      [],
+    ),
+  );
+
+  // Same pattern as react-router's usePrompt: resolve the blocked state with a
+  // native confirm. Cancel keeps the URL and the edit; confirm proceeds. The
+  // setTimeout avoids racing the history revert on Back/Forward pops.
+  useEffect(() => {
+    if (blocker.state !== 'blocked') return;
+    if (window.confirm('Masz niezapisane zmiany. Opuścić bez zapisywania?')) {
+      setTimeout(blocker.proceed, 0);
+    } else {
+      blocker.reset();
+    }
+  }, [blocker]);
+
+  return null;
 }
 
 /**
