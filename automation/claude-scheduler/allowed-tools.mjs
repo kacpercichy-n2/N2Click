@@ -8,6 +8,7 @@ export const DEFAULT_ALLOWED_TOOLS = [
   "LS",
   "TodoWrite",
   "Agent",
+  "mcp__playwright__*",
   "Bash(git status:*)",
   "Bash(git diff:*)",
   "Bash(git log:*)",

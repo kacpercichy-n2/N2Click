@@ -183,6 +183,8 @@ Skrypty zakładają Vite na `:5173`; worker uruchamia go tylko na czas własnego
 scenariusza i musi go po nim zakończyć. Konfiguracja MCP Playwright pozostaje
 zewnętrzna wobec tego repo — jeśli jest dostępna dla sesji Claude, może służyć do
 diagnostyki, ale nie zastępuje deterministycznego skryptu regresyjnego w CI.
+Projektowa konfiguracja `.mcp.json` udostępnia workerom serwer `playwright`;
+allowlista obejmuje jego narzędzia jako `mcp__playwright__*`.
 
 `CLAUDE_AUTO_SKIP_PERMISSIONS=1` włącza niebezpieczne pomijanie pytań o zgody;
 używaj wyłącznie jako świadomej decyzji operatora.
