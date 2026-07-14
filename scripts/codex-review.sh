@@ -8,6 +8,7 @@
 #
 # Usage:
 #   bash scripts/codex-review.sh                 # review uncommitted changes
+#   bash scripts/codex-review.sh --run-id <id>   # bind metadata to scheduler run
 #   bash scripts/codex-review.sh <base-commit>   # review <base-commit>..HEAD
 #
 # Requires the Codex CLI (https://github.com/openai/codex) and a one-time
@@ -23,16 +24,68 @@ BASE_COMMIT=""
 CODEX_REVIEW_MODEL="${CODEX_REVIEW_MODEL:-gpt-5.6-sol}"
 CODEX_REVIEW_REASONING_EFFORT="${CODEX_REVIEW_REASONING_EFFORT:-high}"
 CODEX_REVIEW_RUN_ID="${CODEX_REVIEW_RUN_ID:-manual}"
+CODEX_REVIEW_FOCUS=""
+CHECK_ONLY=0
+
+usage() {
+  echo "Usage: bash scripts/codex-review.sh [--run-id <id>] [--focus <reason>] [--check] [<base-commit>]"
+}
 
 # --- args ---
-if [ "${1:-}" != "" ]; then
-  if ! git rev-parse --verify "$1" &>/dev/null; then
-    echo "ERROR: '$1' is not a valid git commit reference." >&2
-    echo "Usage: bash scripts/codex-review.sh [<base-commit>]" >&2
-    exit 1
-  fi
-  BASE_COMMIT="$1"
-  MODE="range"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --run-id)
+      if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+        echo "ERROR: --run-id requires a value." >&2
+        usage >&2
+        exit 1
+      fi
+      CODEX_REVIEW_RUN_ID="$2"
+      shift 2
+      ;;
+    --check)
+      CHECK_ONLY=1
+      shift
+      ;;
+    --focus)
+      if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+        echo "ERROR: --focus requires a value." >&2
+        usage >&2
+        exit 1
+      fi
+      CODEX_REVIEW_FOCUS="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --*)
+      echo "ERROR: unknown option '$1'." >&2
+      usage >&2
+      exit 1
+      ;;
+    *)
+      if [ -n "$BASE_COMMIT" ]; then
+        echo "ERROR: only one base commit may be supplied." >&2
+        usage >&2
+        exit 1
+      fi
+      BASE_COMMIT="$1"
+      MODE="range"
+      shift
+      ;;
+  esac
+done
+
+if ! [[ "$CODEX_REVIEW_RUN_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+  echo "ERROR: run ID must start with a letter or digit and may then contain '.', '_' and '-'." >&2
+  exit 1
+fi
+if [ "$CHECK_ONLY" -eq 1 ] && [ "$MODE" = "range" ]; then
+  echo "ERROR: --check cannot be combined with a base commit." >&2
+  usage >&2
+  exit 1
 fi
 
 # --- pre-flight ---
@@ -45,6 +98,15 @@ if ! command -v codex &>/dev/null; then
   echo "      Install it (https://github.com/openai/codex) and run 'codex login'" >&2
   echo "      to enable the review gate. The rest of the workflow is unaffected." >&2
   exit 2
+fi
+if [ "$MODE" = "range" ] && ! git rev-parse --verify "$BASE_COMMIT" &>/dev/null; then
+  echo "ERROR: '$BASE_COMMIT' is not a valid git commit reference." >&2
+  usage >&2
+  exit 1
+fi
+if [ "$CHECK_ONLY" -eq 1 ]; then
+  echo "Codex review preflight OK."
+  exit 0
 fi
 
 mkdir -p "$REVIEWS_DIR"
@@ -93,6 +155,8 @@ ${DIFF_FILE}
 
 Review run ID: ${CODEX_REVIEW_RUN_ID}
 Canonical diff SHA-256: ${DIFF_HASH}
+
+${CODEX_REVIEW_FOCUS:+Conditional reviewer focus: ${CODEX_REVIEW_FOCUS}}
 
 Read that artifact first. Inspect only direct dependencies when a finding needs
 confirmation; do not scan unrelated repository areas."

@@ -19,22 +19,25 @@ test-writer only for a separate, mechanical package. The architect follows
 
 ## Review
 
-- `Codex review: required`: run `bash scripts/codex-review.sh`. If it cannot run
-  successfully, stop the high-risk run; do not downgrade it.
-- `conditional`: reviewer runs it only for an undeclared boundary expansion or
-  unresolved uncertainty and records the decision.
+- `Codex review: required`: after the implementation Claude process exits, the
+  scheduler runs `bash scripts/codex-review.sh --run-id <scheduler-run-id>` and
+  only then starts a separate read-only reviewer process. Failure stops the run.
+- `conditional`: the separate reviewer may return one machine-captured
+  `codex-requested` verdict for an undeclared boundary expansion or unresolved
+  uncertainty; the scheduler then runs Codex and invokes reviewer once more.
 - `skip`: record the prompt's supplied rationale without another ceremony pass.
 
-The reviewer reads the package or prompt, declared wiki context, compact
-`handoffs/RUN-STATE.md` and structural diff. It owns the final verdict and the
+The scheduler-owned reviewer reads the package or prompt, declared wiki context,
+local `automation/claude-scheduler/state/current-work.json` and structural diff.
+It owns the final verdict and the
 single `wiki updated` / `wiki unchanged` decision. An architect performs another
 final evaluation only when multiple dependent packages need integration review.
-The orchestrator then writes the exact `handoffs/RUN-RESULT.json` requested by
-the scheduler wrapper; blocked or changes-required work must never be marked approved.
+The scheduler, not an agent, writes `handoffs/RUN-RESULT.json` from the captured
+reviewer verdict and Codex metadata; blocked work is never marked approved.
 
 Workers run focused checks while iterating. The scheduler owns the one final
-`npm test && npm run build` gate, prompt archive and commit. Agents never commit,
-push, merge, rebase or switch branches.
+`npm run test:scheduler && npm test && npm run build` gate, prompt archive and
+commit. Agents never commit, push, merge, rebase or switch branches.
 
 ## Task
 

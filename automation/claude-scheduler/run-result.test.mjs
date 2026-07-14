@@ -24,7 +24,7 @@ function fixture() {
     status: "approved",
     reviewerVerdict: "approve",
     codexReview: {
-      policy: "required", status: "passed", artifact, metadata, diffHash: "hash-123",
+      policy: "required", requested: true, status: "passed", artifact, metadata, diffHash: "hash-123",
     },
     contextExpansions: [],
     wiki: { status: "unchanged", reason: "No boundary changed." },
@@ -83,4 +83,47 @@ test("rejects an empty Codex review artifact", () => {
     codexPolicy: "required", startedAt: new Date(Date.now() - 1_000),
     currentDiffHash: "hash-123",
   }), "Codex review artifact is empty");
+});
+
+test("rejects a requested conditional review that was skipped", () => {
+  const { repoRoot, resultFile, result } = fixture();
+  result.codexReview = {
+    policy: "conditional",
+    requested: true,
+    status: "skipped",
+    reason: "Codex invocation failed.",
+  };
+  fs.writeFileSync(resultFile, JSON.stringify(result));
+  assert.equal(runResultErrorFor({
+    resultFile, repoRoot, prompt: "019a.md", runId: "run-123",
+    codexPolicy: "conditional", startedAt: new Date(Date.now() - 1_000),
+    currentDiffHash: "hash-123",
+  }), "requested conditional Codex review did not pass");
+});
+
+test("accepts a reasoned conditional skip when review was not requested", () => {
+  const { repoRoot, resultFile, result } = fixture();
+  result.codexReview = {
+    policy: "conditional",
+    requested: false,
+    status: "skipped",
+    reason: "No boundary expansion or reviewer uncertainty.",
+  };
+  fs.writeFileSync(resultFile, JSON.stringify(result));
+  assert.equal(runResultErrorFor({
+    resultFile, repoRoot, prompt: "019a.md", runId: "run-123",
+    codexPolicy: "conditional", startedAt: new Date(Date.now() - 1_000),
+    currentDiffHash: "hash-123",
+  }), null);
+});
+
+test("rejects a required review that is marked not requested", () => {
+  const { repoRoot, resultFile, result } = fixture();
+  result.codexReview.requested = false;
+  fs.writeFileSync(resultFile, JSON.stringify(result));
+  assert.equal(runResultErrorFor({
+    resultFile, repoRoot, prompt: "019a.md", runId: "run-123",
+    codexPolicy: "required", startedAt: new Date(Date.now() - 1_000),
+    currentDiffHash: "hash-123",
+  }), "required Codex review must be requested");
 });

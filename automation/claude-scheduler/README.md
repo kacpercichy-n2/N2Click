@@ -31,6 +31,19 @@ review; brak CLI blokuje run zamiast obniżać review. Jeden prompt obejmuje jed
 spójny rezultat techniczny. Gotowy pojedynczy boundary nie potrzebuje
 dodatkowego handoffu architekta.
 
+Przy `required` proces implementacyjny Claude kończy pracę przed review.
+Scheduler sam uruchamia `bash scripts/codex-review.sh --run-id <runId>`, a potem
+startuje osobny proces Fable w `safe-mode` z reviewer promptem załadowanym do
+pamięci przed workerem. Przed użyciem wrappera sprawdza hash jego i bezpośrednich
+zależności; ich zmiana w aktywnym runie blokuje gate. Codex nie jest dostępny w
+uprawnieniach workerów. Scheduler sprawdza run ID oraz hash diffu i nie dopuści
+zmian w kodzie po review.
+
+Przy `conditional` reviewer może raz zwrócić maszynowo przechwycony
+`codex-requested`. Scheduler uruchamia wtedy wrapper i wywołuje reviewer drugi
+raz z artefaktem oraz zapisanym powodem eskalacji. Żaden agent nie może zmienić
+tego stanu na skip.
+
 Touchpoint wskazuje plik lub kontrolowany glob plików, nie cały katalog. Nowy
 plik deklaruj jako `` `new: path/to/file` ``; jego katalog nadrzędny musi istnieć.
 
@@ -48,18 +61,23 @@ CLAUDE_AUTO_TIMES="20:39" caffeinate -dimsu node automation/claude-scheduler/run
 
 Po zielonym przebiegu scheduler:
 
-1. uruchamia raz `npm test`, potem `npm run build`, zatrzymując się na pierwszym błędzie;
+1. uruchamia raz `npm run test:scheduler`, `npm test` i `npm run build`,
+   zatrzymując się na pierwszym błędzie;
 2. przenosi prompt do `archive/completed/`;
 3. commituje kod, handoff i ruch promptu na gałęzi review;
 4. zapisuje lokalny checkpoint i metryki.
 
 Agent nie commituje ani nie pushuje. Push jest osobną decyzją operatora po
 obejrzeniu wyniku. Błąd Claude, wymaganego review lub weryfikacji pozostawia
-zmiany niecommitowane i zatrzymuje kolejkę.
+zmiany niecommitowane, zapisuje bieżący `RUN-RESULT.json` jako `blocked` i
+zatrzymuje kolejkę; poprzednie approval jest unieważniane na starcie runu.
 
 Przed finalnymi testami scheduler wymaga świeżego `handoffs/RUN-RESULT.json`
-z bieżącym `runId`, werdyktem `approve` i — gdy policy to `required` — świeżym
-artefaktem oraz metadanymi Codex review. Hash kanonicznego diffu musi nadal się
+z bieżącym `runId`, werdyktem `approve` i polem `codexReview.requested`. Gdy
+conditional reviewer zażąda Codex, `requested: true` wymaga świeżego
+hash-bound artefaktu i nie może zostać zapisane jako skip. Przy `required` świeży
+artefakt i odpowiadające mu metadane Codex review są obowiązkowe. Hash
+kanonicznego diffu musi nadal się
 zgadzać; każda późniejsza zmiana kodu zamyka gate. Tekstowa deklaracja sukcesu
 nie otwiera gate.
 
@@ -67,7 +85,7 @@ nie otwiera gate.
 
 - Worker: focused tests/checks podczas iteracji.
 - Reviewer: sprawdzenie sensu testów i focused evidence, bez ponownego full suite.
-- Scheduler: jeden finalny `npm test && npm run build`.
+- Scheduler: jeden finalny `npm run test:scheduler && npm test && npm run build`.
 - Browser: tylko skrypt i silniki zadeklarowane w prompcie; pełna macierz wyłącznie w release bundle.
 
 `npm run build` już zawiera `tsc --noEmit`, więc prompt nie powinien żądać
@@ -83,6 +101,27 @@ CLAUDE_AUTO_DRY_RUN=1 CLAUDE_AUTO_CONTINUE_ON_ERROR=1 \
 
 Dry run waliduje aktywną kolejkę i harmonogram, ale nie uruchamia Claude, testów,
 commita ani archiwizacji.
+
+Po aktualizacji Claude Code można tanio sprawdzić matcher uprawnień bez
+wykonywania właściwego review:
+
+```bash
+npm run check:scheduler-permissions
+```
+
+Checker używa `project`-only settings i `dontAsk`, potwierdza jedno dozwolone
+`pwd`, a następnie celowo jednocześnie allow+deny dla `codex exec --help` i
+sprawdza skorelowane odrzucenie. Ogólne `npm`, `npx`, `node`, `find` i shellowe
+`rg` nie są dozwolone; lista obejmuje tylko focused Vitest, typecheck i nazwane
+lokalne skrypty weryfikacyjne. Właściwy Codex działa poza procesem Claude.
+Proces implementacyjny dostaje shimy blokujące przypadkowe `codex`/`claude`,
+pusty `CODEX_HOME`, pusty klucz OpenAI i offline npx, bez usuwania współdzielonego
+katalogu narzędzi z `PATH`. Jest to ochrona operacyjna przed niezamierzonym
+zużyciem, nie sandbox bezpieczeństwa dla złośliwego kodu testowego. Reviewer nie ma Bash; czyta
+kanoniczny diff zapisany przez scheduler, a hash jest sprawdzany po jego wyjściu.
+Reviewer dostaje również jawne `--tools Read,Glob,Grep,LS` i deny Bash/Write/Edit.
+Ten smoke test jest lokalny i nie należy do CI, aby CI nie wymagało Claude,
+Codex ani płatnego API.
 
 ## Branch safety
 
@@ -101,12 +140,27 @@ Logi i metryki znajdują się w ignorowanych `logs/` i `state/`. Metryki obejmuj
 rozmiar promptu, czas, risk/route/Codex policy, kody weryfikacji i opcjonalny
 snapshot wykorzystania. Nie są dokładnym licznikiem tokenów.
 
+Scheduler trzyma atomowy `state/scheduler.lock` przez cały harmonogram. Drugi
+proces kończy się przed uruchomieniem modelu. Martwy lock nie jest odzyskiwany
+automatycznie, bo wynik ostatniego model call może być nieznany; operator najpierw
+sprawdza procesy/log, a dopiero potem usuwa plik locka.
+Claude, Codex, reviewer i komendy weryfikacji działają w śledzonych process
+groups. SIGINT/SIGTERM najpierw kończy i potwierdza grupę; bez potwierdzenia lock
+pozostaje. Approval jest zapisywane dopiero po final gate, a błąd archiwizacji
+lub commita nadpisuje wynik na `blocked`.
+
+Każda długa faza ma też fail-closed timeout: worker 120 min, Codex 45 min,
+reviewer 30 min, pojedyncza komenda weryfikacji 60 min. Można je zmienić przez
+`CLAUDE_AUTO_WORKER_TIMEOUT_MINUTES`, `CLAUDE_AUTO_CODEX_TIMEOUT_MINUTES`,
+`CLAUDE_AUTO_REVIEWER_TIMEOUT_MINUTES` i `CLAUDE_AUTO_VERIFY_TIMEOUT_MINUTES`.
+Timeout kończy całą grupę procesu i blokuje run; nie przechodzi do kolejnej fazy.
+
 ## Opcje
 
 ```bash
 CLAUDE_AUTO_EARLY_CHECK_MINUTES=60 ...
 CLAUDE_AUTO_USAGE_GATE=1 ...
-CLAUDE_AUTO_VERIFY="npm test && npm run build" ...
+CLAUDE_AUTO_VERIFY="npm run test:scheduler && npm test && npm run build" ...
 ```
 
 `CLAUDE_AUTO_SKIP_PERMISSIONS=1` włącza niebezpieczne pomijanie pytań o zgody;

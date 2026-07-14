@@ -32,12 +32,11 @@ end. Both inputs use the same readiness fields documented in
    stays clean.
 4. **Keep changes modular.** Implement only what the package covers. If you spot
    adjacent problems, note them in your report instead of expanding scope.
-5. **Use Codex deliberately.** If the build won't go green after a couple of
-   focused attempts, get a read-only second opinion from Codex. For an explicitly
-   assigned `tier: codex-implementer` package, run
-   `bash scripts/codex-implement.sh <package-path>` instead; it uses **GPT-5.6
-   Terra** at reasoning effort **high**. Do not hand off an ambiguous or broad
-   package. Note every Codex escalation in your report.
+5. **Escalate deliberately.** If focused attempts do not resolve a build failure
+   or uncertainty, stop and report the blocker to the scheduler-owned phase.
+   Do not invoke Codex or an implementation wrapper yourself. Under a
+   `conditional` policy, the separate read-only reviewer may request the
+   scheduler-owned Codex pass; workers never launch it themselves.
 6. **Update the run log.** Add at most 60 words to `handoffs/RUN-STATE.md`:
    changed boundaries, exact focused result, context expansion and blocker/next step.
    Link to a package or check output instead of pasting logs.
@@ -48,4 +47,4 @@ When done, report back a **synthesized** result (not raw logs): what you changed
 (files + one-line each), the test command you ran and its pass/fail summary, any
 deviations from the package, and anything you deferred. The architect/reviewer
 reads this — keep it tight and skimmable. Do not commit or push; the scheduler
-owns the final full verification and Git operations.
+owns the final verification and Git operations.

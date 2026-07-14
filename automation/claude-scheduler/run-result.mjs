@@ -23,6 +23,13 @@ export function runResultErrorFor({ resultFile, repoRoot, prompt, runId, codexPo
 
   const codex = result.codexReview;
   if (!codex || codex.policy !== codexPolicy) return "run result Codex policy mismatch";
+  if (typeof codex.requested !== "boolean") return "run result must record whether Codex review was requested";
+  if (codexPolicy === "required" && !codex.requested) return "required Codex review must be requested";
+  if (codexPolicy === "skip" && codex.requested) return "skip policy cannot request Codex review";
+  if (codex.status === "passed" && !codex.requested) return "passed Codex review must be marked requested";
+  if (codexPolicy === "conditional" && codex.requested && codex.status !== "passed") {
+    return "requested conditional Codex review did not pass";
+  }
   if (codexPolicy === "required" && codex.status !== "passed") {
     return "required Codex review did not pass";
   }

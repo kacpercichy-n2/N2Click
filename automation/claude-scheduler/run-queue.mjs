@@ -1,46 +1,40 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promptContractErrorFor, promptMetadata } from "./prompt-contract.mjs";
 import { runResultErrorFor } from "./run-result.mjs";
 import { finalizePrompt } from "./scheduler-files.mjs";
 import { buildReviewDiff } from "./review-diff.mjs";
 import { finalGateError } from "./final-gate.mjs";
+import {
+  DEFAULT_ALLOWED_TOOLS,
+  DEFAULT_DISALLOWED_TOOLS,
+  REVIEWER_ALLOWED_TOOLS,
+} from "./allowed-tools.mjs";
+import { buildClaudeArgs } from "./claude-args.mjs";
+import {
+  parseReviewerEnvelope,
+  readJsonFile,
+  reviewerVerdictErrorFor,
+  workResultErrorFor,
+} from "./review-orchestration.mjs";
+import { captureTrustedGate, trustedGateErrorFor } from "./trusted-gate.mjs";
+import { REVIEWER_SYSTEM_PROMPT } from "./reviewer-system-prompt.mjs";
+import { buildWorkerEnvironment } from "./worker-environment.mjs";
+import { acquireSchedulerLock } from "./scheduler-lock.mjs";
+import { ActiveProcessGuard } from "./active-process.mjs";
+import {
+  finalizeWithFailureGuard,
+  runNonFatalTelemetry,
+  runNonFatalTelemetryAsync,
+} from "./finalization-guard.mjs";
+import { queueStopReason } from "./queue-control.mjs";
+import { runTrackedCommand } from "./tracked-command.mjs";
+import { initializeRunLifecycle, shouldBlockRunOnShutdown } from "./run-lifecycle.mjs";
 
 const DEFAULT_TIMES = ["16:00", "21:01", "02:02", "07:03", "12:04"];
-const DEFAULT_ALLOWED_TOOLS = [
-  "Read",
-  "Write",
-  "Edit",
-  "MultiEdit",
-  "Glob",
-  "Grep",
-  "LS",
-  "TodoWrite",
-  "Agent",
-  "Bash(git status *)",
-  "Bash(git diff *)",
-  "Bash(git log *)",
-  "Bash(git show *)",
-  "Bash(git rev-parse *)",
-  "Bash(git branch --show-current)",
-  "Bash(git merge-base *)",
-  "Bash(npm *)",
-  "Bash(npx *)",
-  "Bash(node *)",
-  "Bash(bash scripts/codex-review.sh *)",
-  "Bash(CODEX_REVIEW_RUN_ID=* bash scripts/codex-review.sh *)",
-  "Bash(codex exec *)",
-  "Bash(rg *)",
-  "Bash(sed *)",
-  "Bash(cat *)",
-  "Bash(ls *)",
-  "Bash(pwd)",
-  "Bash(mkdir *)",
-  "Bash(find *)",
-];
 
 const repoRoot = gitOutput(["rev-parse", "--show-toplevel"]).trim();
 const schedulerDir = path.join(repoRoot, "automation", "claude-scheduler");
@@ -53,19 +47,50 @@ fs.mkdirSync(promptDir, { recursive: true });
 fs.mkdirSync(logDir, { recursive: true });
 fs.mkdirSync(stateDir, { recursive: true });
 
+const releaseSchedulerLock = acquireSchedulerLock(path.join(stateDir, "scheduler.lock"));
+const activeProcessGuard = new ActiveProcessGuard();
+let shutdownInProgress = false;
+let activeRunState = null;
+process.on("exit", () => {
+  if (!activeProcessGuard.active) releaseSchedulerLock();
+});
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.on(signal, () => void shutdown(signal === "SIGINT" ? 130 : 143));
+}
+process.on("uncaughtException", (error) => {
+  console.error(error);
+  void shutdown(1);
+});
+process.on("unhandledRejection", (error) => {
+  console.error(error);
+  void shutdown(1);
+});
+
 const scheduleTimes = parseTimes(process.env.CLAUDE_AUTO_TIMES || DEFAULT_TIMES.join(","));
 const branchName = process.env.CLAUDE_AUTO_BRANCH || `review/claude-auto-${formatDateTimeForFile(new Date())}`;
 const continueOnError = process.env.CLAUDE_AUTO_CONTINUE_ON_ERROR === "1";
 const dryRun = process.env.CLAUDE_AUTO_DRY_RUN === "1";
 const skipPermissions = process.env.CLAUDE_AUTO_SKIP_PERMISSIONS === "1";
 const allowedTools = process.env.CLAUDE_AUTO_ALLOWED_TOOLS || DEFAULT_ALLOWED_TOOLS.join(",");
-const verifyCommands = parseVerifyCommands(process.env.CLAUDE_AUTO_VERIFY || "npm test && npm run build");
+const disallowedTools = DEFAULT_DISALLOWED_TOOLS.join(",");
+const verifyCommands = parseVerifyCommands(
+  process.env.CLAUDE_AUTO_VERIFY || "npm run test:scheduler && npm test && npm run build",
+);
 const earlyCheckMinutes = parseOptionalPositiveInt(process.env.CLAUDE_AUTO_EARLY_CHECK_MINUTES);
 const usageHelper = process.env.CLAUDE_AUTO_USAGE_HELPER || path.join(process.env.HOME || "", ".claude", "fetch-claude-usage.swift");
 const usageTelemetryEnabled = fs.existsSync(usageHelper);
 const usageGateEnabled = process.env.CLAUDE_AUTO_USAGE_GATE === "1" && usageTelemetryEnabled;
+const workerTimeoutMs = timeoutMsFromEnv("CLAUDE_AUTO_WORKER_TIMEOUT_MINUTES", 120);
+const codexTimeoutMs = timeoutMsFromEnv("CLAUDE_AUTO_CODEX_TIMEOUT_MINUTES", 45);
+const reviewerTimeoutMs = timeoutMsFromEnv("CLAUDE_AUTO_REVIEWER_TIMEOUT_MINUTES", 30);
+const verificationTimeoutMs = timeoutMsFromEnv("CLAUDE_AUTO_VERIFY_TIMEOUT_MINUTES", 60);
 const metricsFile = path.join(stateDir, "run-metrics.jsonl");
 const runResultFile = path.join(repoRoot, "handoffs", "RUN-RESULT.json");
+const workResultFile = path.join(stateDir, "current-work.json");
+const reviewDiffFile = path.join(stateDir, "current-review.diff");
+const candidateResultFile = path.join(stateDir, "candidate-run-result.json");
+const claudeExecutable = commandPath("claude");
+const codexExecutable = commandPath("codex");
 
 const promptFiles = fs
   .readdirSync(promptDir)
@@ -120,16 +145,26 @@ for (const promptFile of remainingPrompts) {
   }
 
   const ok = await runPrompt(promptFile);
+  const stopReason = queueStopReason({
+    ok,
+    activeProcess: activeProcessGuard.active,
+    continueOnError,
+  });
+  if (stopReason === "active-process") {
+    console.error("Stopping queue because a timed-out process group could not be confirmed stopped; retaining scheduler lock.");
+    process.exit(1);
+  }
   if (ok && earlyCheckMinutes) {
     earlyEligibleAt = new Date(Date.now() + earlyCheckMinutes * 60_000);
   }
-  if (!ok && !continueOnError) {
+  if (stopReason === "failed-run") {
     console.error("Stopping queue because Claude or verification failed.");
     process.exit(1);
   }
 }
 
 console.log("\nPrompt queue finished.");
+releaseSchedulerLock();
 
 async function runPrompt(promptFile) {
   const basename = path.basename(promptFile);
@@ -137,11 +172,26 @@ async function runPrompt(promptFile) {
   const runId = randomUUID();
   const logFile = path.join(logDir, `${formatDateTimeForFile(startedAt)}-${basename.replace(/\.md$/, "")}.log`);
   const promptBody = fs.readFileSync(promptFile, "utf8");
+  const trustedClaudeContext = fs.readFileSync(path.join(repoRoot, "CLAUDE.md"), "utf8");
   const promptContractError = promptContractErrorFor(promptBody, repoRoot);
   const metadata = promptMetadata(promptBody);
   const fullPrompt = buildPrompt(promptBody, basename, runId);
   let ok = true;
   let reviewedDiffHash = null;
+  let approvedRunResult = null;
+  if (!dryRun) {
+    activeRunState = {
+      prompt: basename,
+      runId,
+      approvalPublished: false,
+      commitSucceeded: false,
+    };
+  }
+  const usageBefore = await initializeRunLifecycle({
+    dryRun,
+    writeRunning: () => writeRunLifecycleResult(basename, runId, "running", "Scheduler preflight started."),
+    readUsage: usageTelemetryEnabled && !dryRun ? readUsageSnapshot : null,
+  });
   const metrics = {
     prompt: basename,
     runId,
@@ -151,9 +201,16 @@ async function runPrompt(promptFile) {
     risk: metadata.risk,
     route: metadata.route,
     codexReview: metadata.codexReview,
-    usageBefore: usageTelemetryEnabled && !dryRun ? await readUsageSnapshot() : null,
+    usageBefore,
     claudeExitCode: null,
     verification: [],
+  };
+  const failPreflight = (message) => {
+    if (!dryRun) {
+      writeRunLifecycleResult(basename, runId, "blocked", message);
+      activeRunState = null;
+    }
+    return false;
   };
 
   appendLog(logFile, `# ${basename}\nStarted: ${startedAt.toISOString()}\nBranch: ${gitOutput(["branch", "--show-current"]).trim()}\n\n`);
@@ -163,44 +220,185 @@ async function runPrompt(promptFile) {
   if (promptContractError) {
     appendLog(logFile, `Prompt contract failed: ${promptContractError}\n`);
     console.error(`Cannot run ${basename}: ${promptContractError}`);
-    return false;
+    return failPreflight(`Prompt contract failed: ${promptContractError}`);
   }
-  if (metadata.codexReview === "required" && !commandAvailable("codex")) {
+  if (!claudeExecutable) {
+    const message = "Claude CLI is unavailable or not executable.";
+    appendLog(logFile, `${message}\n`);
+    console.error(`Cannot run ${basename}: ${message}`);
+    return failPreflight(message);
+  }
+  if (metadata.codexReview === "required" && !codexExecutable) {
     const message = "Codex review is required for this high-risk prompt, but the codex CLI is unavailable.";
     appendLog(logFile, `${message}\n`);
     console.error(`Cannot run ${basename}: ${message}`);
-    return false;
+    return failPreflight(message);
   }
 
   const branchError = dryRun ? null : reviewBranchSafetyError();
   if (branchError !== null) {
     appendLog(logFile, `Scheduler branch preflight failed: ${branchError}\n`);
     console.error(`Cannot run ${basename}: ${branchError}`);
-    return false;
+    return failPreflight(`Scheduler branch preflight failed: ${branchError}`);
   }
 
-  if (!dryRun && dirtyStatus()) {
+  if (!dryRun && dirtyStatusExcludingRunResult()) {
     appendLog(logFile, "Working tree was dirty before Claude started. Aborting this prompt.\n");
     console.error(`Working tree is dirty before ${basename}; resolve it before continuing.`);
-    return false;
+    return failPreflight("Working tree became dirty before implementation started.");
   }
+  if (!dryRun) fs.rmSync(workResultFile, { force: true });
+  const trustedGateSnapshot = dryRun ? null : captureTrustedGate(repoRoot);
+  if (!dryRun) writeRunLifecycleResult(basename, runId, "running", "Implementation phase started.");
 
   console.log(`${dryRun ? "Dry-run validating" : "Running Claude for"} ${basename}. Log: ${logFile}`);
   if (!dryRun) {
-    const claudeArgs = skipPermissions
-      ? ["--print", "--dangerously-skip-permissions"]
-      : ["--print", "--allowedTools", allowedTools];
-    const claudeCode = await streamCommand("claude", claudeArgs, logFile, fullPrompt);
+    const claudeArgs = buildClaudeArgs({ allowedTools, disallowedTools, skipPermissions });
+    const workerCodexHome = path.join(stateDir, "worker-no-codex");
+    const isolatedBin = path.join(stateDir, "worker-bin");
+    fs.mkdirSync(workerCodexHome, { recursive: true });
+    fs.mkdirSync(isolatedBin, { recursive: true });
+    for (const command of ["codex", "claude"]) {
+      const shim = path.join(isolatedBin, command);
+      fs.writeFileSync(shim, "#!/bin/sh\necho 'disabled in implementation worker' >&2\nexit 126\n");
+      fs.chmodSync(shim, 0o755);
+    }
+    const workerEnv = buildWorkerEnvironment(process.env, {
+      isolatedBin,
+      isolatedCodexHome: workerCodexHome,
+    });
+    const claudeCode = await streamCommand(
+      claudeExecutable,
+      claudeArgs,
+      logFile,
+      fullPrompt,
+      workerEnv,
+      workerTimeoutMs,
+    );
     metrics.claudeExitCode = claudeCode;
     ok = ok && claudeCode === 0;
   } else {
     appendLog(logFile, "[dry run] Claude execution skipped.\n");
   }
 
+  let workResult = null;
+  let codexEvidence = null;
+  let reviewerVerdict = null;
+  const reviewerContextExpansions = [];
+  if (ok && !dryRun) {
+    workResult = readJsonFile(workResultFile);
+    const workError = workResultErrorFor(workResult, { prompt: basename, runId });
+    if (workError) {
+      appendLog(logFile, `Implementation phase gate failed: ${workError}\n`);
+      console.error(`Cannot review ${basename}: ${workError}`);
+      ok = false;
+    }
+    const trustedError = trustedGateErrorFor(repoRoot, trustedGateSnapshot);
+    if (trustedError) {
+      appendLog(logFile, `Trusted gate failed: ${trustedError}\n`);
+      console.error(`Cannot review ${basename}: ${trustedError}`);
+      ok = false;
+    }
+  }
+
+  if (ok && !dryRun && metadata.codexReview === "required") {
+    codexEvidence = await runExternalCodexReview(runId, startedAt, logFile, null);
+    ok = codexEvidence !== null;
+  }
+
+  if (ok && !dryRun) {
+    reviewerVerdict = await runFinalReviewer({
+      promptBody,
+      basename,
+      runId,
+      codexPolicy: metadata.codexReview,
+      codexEvidence,
+      trustedClaudeContext,
+      logFile,
+    });
+    let verdictError = reviewerVerdictErrorFor(reviewerVerdict, {
+      codexPolicy: metadata.codexReview,
+      codexAvailable: codexEvidence !== null,
+    });
+    if (verdictError) {
+      appendLog(logFile, `Reviewer verdict gate failed: ${verdictError}\n`);
+      console.error(`Cannot approve ${basename}: ${verdictError}`);
+      ok = false;
+    } else {
+      reviewerContextExpansions.push(...reviewerVerdict.contextExpansions);
+    }
+
+    if (ok && reviewerVerdict.status === "codex-requested") {
+      appendLog(logFile, "Conditional reviewer requested Codex; scheduler is running it externally.\n");
+      const codexRequest = reviewerVerdict.codexRequest;
+      codexEvidence = await runExternalCodexReview(runId, startedAt, logFile, codexRequest);
+      ok = codexEvidence !== null;
+      if (ok) {
+        reviewerVerdict = await runFinalReviewer({
+          promptBody,
+          basename,
+          runId,
+          codexPolicy: metadata.codexReview,
+          codexEvidence,
+          priorCodexRequest: codexRequest,
+          trustedClaudeContext,
+          logFile,
+        });
+        verdictError = reviewerVerdictErrorFor(reviewerVerdict, {
+          codexPolicy: metadata.codexReview,
+          codexAvailable: true,
+        });
+        if (verdictError) {
+          appendLog(logFile, `Resumed reviewer verdict gate failed: ${verdictError}\n`);
+          console.error(`Cannot approve ${basename}: ${verdictError}`);
+          ok = false;
+        } else {
+          reviewerContextExpansions.push(...reviewerVerdict.contextExpansions);
+        }
+      }
+    }
+  }
+
+  if (ok && !dryRun && reviewerVerdict.status !== "approve") {
+    appendLog(logFile, `Final reviewer returned ${reviewerVerdict.status}: ${JSON.stringify(reviewerVerdict.blockers)}\n`);
+    console.error(`Cannot approve ${basename}: reviewer returned ${reviewerVerdict.status}.`);
+    ok = false;
+  }
+
   if (ok && !dryRun) {
     reviewedDiffHash = buildReviewDiff(repoRoot).hash;
+    const requested = codexEvidence !== null;
+    approvedRunResult = {
+      prompt: basename,
+      runId,
+      status: "approved",
+      reviewerVerdict: "approve",
+      codexReview: requested
+        ? {
+            policy: metadata.codexReview,
+            requested: true,
+            status: "passed",
+            artifact: codexEvidence.artifact,
+            metadata: codexEvidence.metadata,
+            diffHash: codexEvidence.diffHash,
+          }
+        : {
+            policy: metadata.codexReview,
+            requested: false,
+            status: "skipped",
+            reason: metadata.codexReview === "skip"
+              ? "Prompt policy explicitly skips independent Codex review."
+              : "Conditional reviewer approved without boundary expansion or unresolved uncertainty.",
+          },
+      contextExpansions: [...new Set([
+        ...workResult.contextExpansions,
+        ...reviewerContextExpansions,
+      ])],
+      wiki: reviewerVerdict.wiki,
+    };
+    fs.writeFileSync(candidateResultFile, `${JSON.stringify(approvedRunResult, null, 2)}\n`);
     const resultError = runResultErrorFor({
-      resultFile: runResultFile,
+      resultFile: candidateResultFile,
       repoRoot,
       prompt: basename,
       runId,
@@ -212,6 +410,8 @@ async function runPrompt(promptFile) {
       appendLog(logFile, `Run result gate failed: ${resultError}\n`);
       console.error(`Cannot approve ${basename}: ${resultError}`);
       ok = false;
+    } else {
+      writeRunLifecycleResult(basename, runId, "verification-pending", "Review approved; final verification is pending.");
     }
   }
 
@@ -219,7 +419,7 @@ async function runPrompt(promptFile) {
     appendLog(logFile, `\n$ ${command}\n`);
     if (!dryRun) {
       const [cmd, ...args] = command.split(/\s+/);
-      const code = await streamCommand(cmd, args, logFile);
+      const code = await streamCommand(cmd, args, logFile, null, process.env, verificationTimeoutMs);
       metrics.verification.push({ command, exitCode: code });
       ok = ok && code === 0;
       if (!ok) break;
@@ -239,29 +439,81 @@ async function runPrompt(promptFile) {
     }
   }
 
+  if (ok && !dryRun) {
+    fs.writeFileSync(runResultFile, `${JSON.stringify(approvedRunResult, null, 2)}\n`);
+    activeRunState.approvalPublished = true;
+    const finalResultError = runResultErrorFor({
+      resultFile: runResultFile,
+      repoRoot,
+      prompt: basename,
+      runId,
+      codexPolicy: metadata.codexReview,
+      startedAt,
+      currentDiffHash: buildReviewDiff(repoRoot).hash,
+    });
+    if (finalResultError) {
+      appendLog(logFile, `Final run result gate failed: ${finalResultError}\n`);
+      console.error(`Cannot commit ${basename}: ${finalResultError}`);
+      ok = false;
+    }
+  }
+
   if (dryRun) {
     appendLog(logFile, "\nDry run: no commit and no completed-state update.\n");
   } else if (ok) {
     const promptTitle = firstPromptLine(promptFile);
-    finalizePrompt({
-      promptFile,
-      archiveDir: path.join(schedulerDir, "archive", "completed"),
-      commit: () => commitIfNeeded(basename, promptTitle, logFile),
-      unstage: unstageAll,
-    });
-    markCompleted(basename);
+    let commitMessage = null;
+    const finalizationError = finalizeWithFailureGuard(
+      () => {
+        finalizePrompt({
+          promptFile,
+          archiveDir: path.join(schedulerDir, "archive", "completed"),
+          commit: () => {
+            commitMessage = commitIfNeeded(basename, promptTitle);
+            activeRunState.commitSucceeded = true;
+          },
+          unstage: unstageAll,
+        });
+      },
+      (error) => {
+        writeRunLifecycleResult(basename, runId, "blocked", `Finalization failed: ${error.message}`);
+        appendLog(logFile, `Finalization failed: ${error.stack || error.message}\n`);
+      },
+    );
+    if (finalizationError) {
+      ok = false;
+    } else {
+      runNonFatalTelemetry(
+        () => {
+          appendLog(logFile, `\nCommitted changes with message: ${commitMessage}\n`);
+          console.log(`Committed changes: ${commitMessage}`);
+        },
+        (error) => safeTelemetryWarning("post-commit logging", error),
+      );
+      runNonFatalTelemetry(
+        () => markCompleted(basename),
+        (error) => safeTelemetryWarning("completed-state update", error),
+      );
+    }
   } else {
+    writeRunLifecycleResult(basename, runId, "blocked", "Run, review or verification failed; inspect the current scheduler log.");
     appendLog(logFile, "\nRun or verification failed: changes were intentionally left uncommitted for human recovery.\nPrompt was not marked as completed.\n");
   }
-  metrics.finishedAt = new Date().toISOString();
-  metrics.durationSeconds = Math.round((new Date(metrics.finishedAt).getTime() - startedAt.getTime()) / 1000);
-  metrics.status = ok ? "ok" : "failed";
-  metrics.usageAfter = usageTelemetryEnabled && !dryRun ? await readUsageSnapshot() : null;
-  if (!dryRun) appendRunMetrics(metrics);
-  if (metrics.usageAfter) {
-    appendLog(logFile, `Usage after run: ${formatUsage(metrics.usageAfter)}\n`);
-  }
-  appendLog(logFile, `\nFinished: ${new Date().toISOString()}\nStatus: ${ok ? "ok" : "failed"}\n`);
+  await runNonFatalTelemetryAsync(
+    async () => {
+      metrics.finishedAt = new Date().toISOString();
+      metrics.durationSeconds = Math.round((new Date(metrics.finishedAt).getTime() - startedAt.getTime()) / 1000);
+      metrics.status = ok ? "ok" : "failed";
+      metrics.usageAfter = usageTelemetryEnabled && !dryRun ? await readUsageSnapshot() : null;
+      if (!dryRun) appendRunMetrics(metrics);
+      if (metrics.usageAfter) {
+        appendLog(logFile, `Usage after run: ${formatUsage(metrics.usageAfter)}\n`);
+      }
+      appendLog(logFile, `\nFinished: ${new Date().toISOString()}\nStatus: ${ok ? "ok" : "failed"}\n`);
+    },
+    (error) => safeTelemetryWarning("run metrics", error),
+  );
+  activeRunState = null;
   return ok;
 }
 
@@ -273,8 +525,10 @@ touchpoints declared in the prompt. Do not expand context to unrelated pages,
 historic handoffs, or a full repository scan unless a direct dependency makes
 it necessary; record that exception in the final report.
 
-Use the tier routing contract in .claude/commands/tier.md and delegate each
-declared role to the matching project agent. Use no additional agent passes.
+Use the implementation roles from the tier routing contract in
+.claude/commands/tier.md and delegate architect/developer/test-writer roles as
+declared. Do not delegate the final reviewer: the scheduler runs that role in a
+separate read-only phase after implementation.
 
 Automation constraints:
 - Work only in the current repository.
@@ -283,25 +537,19 @@ Automation constraints:
   commit and any later operator-approved push.
 - Keep the change scoped to the user prompt.
 - Treat current main code, tests, and CLAUDE.md as authoritative. If part of the prompt is already implemented, verify it and do not reimplement, revert, or weaken it.
-- Follow the route and review policy in ## Risk and routing. High-risk work must
-  complete the required Codex review; do not silently downgrade it.
+- Follow the implementation part of ## Risk and routing. Do not invoke Codex;
+  the scheduler owns independent review outside this Claude process.
 - Workers run focused verification while iterating. The scheduler owns the one
-  final full npm test + npm run build gate.
-- The final reviewer/orchestrator records exactly one focused wiki decision:
-  what changed, or "wiki unchanged" with a reason.
+  final npm run test:scheduler + npm test + npm run build gate.
 - Report synthesized results only. Include context expansions, exact focused
-  checks, Codex used/skipped, deviations and blockers; do not paste raw logs.
-- After the final reviewer verdict, write handoffs/RUN-RESULT.json with exactly:
-  {"prompt":"${basename}","runId":"${runId}","status":"approved|blocked",
-  "reviewerVerdict":"approve|changes-required","codexReview":{"policy":"required|conditional|skip",
-  "status":"passed|skipped","artifact":"reviews/<fresh>-codex-review.md",
-  "metadata":"reviews/<same>-codex-review.json","diffHash":"<metadata hash>",
-  "reason":"<required when skipped>"},
-  "contextExpansions":[],"wiki":{"status":"updated|unchanged","reason":"<specific>"}}.
-  Use the current prompt's Codex policy. Never claim approval or passed review
-  without the matching reviewer verdict and fresh artifact.
-- When Codex runs, invoke it as CODEX_REVIEW_RUN_ID="${runId}" bash
-  scripts/codex-review.sh so its metadata is bound to this run and diff.
+  checks, deviations and blockers; do not paste raw logs.
+- Before exiting, write automation/claude-scheduler/state/current-work.json with
+  exactly {"prompt":"${basename}","runId":"${runId}","status":"ready|blocked",
+  "contextExpansions":[],"focusedChecks":[]} using synthesized strings only.
+  Use ready only when implementation and focused checks are complete. Include
+  at least one nonblank result; for a docs-only task use a reasoned
+  "not applicable: ..." entry. This is
+  a local phase result; do not write handoffs/RUN-RESULT.json.
 - If you cannot finish safely, leave the repo in the clearest possible state and explain why.
 
 Prompt file: ${basename}
@@ -309,6 +557,129 @@ Prompt file: ${basename}
 User prompt:
 ${promptBody}
 `;
+}
+
+async function runExternalCodexReview(runId, startedAt, logFile, focus) {
+  appendLog(logFile, "\nScheduler-owned Codex review:\n");
+  const args = ["scripts/codex-review.sh", "--run-id", runId];
+  if (focus) args.push("--focus", focus);
+  const code = await streamCommand("bash", args, logFile, null, process.env, codexTimeoutMs);
+  if (code !== 0) {
+    console.error(`Codex review failed with exit ${code}.`);
+    return null;
+  }
+
+  const evidence = findCodexEvidence(runId, startedAt);
+  if (!evidence) {
+    appendLog(logFile, "Codex review finished but no fresh matching metadata was found.\n");
+    console.error("Codex review produced no fresh matching evidence.");
+    return null;
+  }
+  return evidence;
+}
+
+function findCodexEvidence(runId, startedAt) {
+  const reviewsDir = path.join(repoRoot, "reviews");
+  if (!fs.existsSync(reviewsDir)) return null;
+  const candidates = fs.readdirSync(reviewsDir)
+    .filter((file) => file.endsWith("-codex-review.json"))
+    .map((file) => ({ file, fullPath: path.join(reviewsDir, file) }))
+    .filter(({ fullPath }) => fs.statSync(fullPath).mtimeMs + 2_000 >= startedAt.getTime())
+    .sort((a, b) => fs.statSync(b.fullPath).mtimeMs - fs.statSync(a.fullPath).mtimeMs);
+
+  for (const candidate of candidates) {
+    const metadata = readJsonFile(candidate.fullPath);
+    if (metadata?.runId !== runId || metadata.diffHash !== buildReviewDiff(repoRoot).hash) continue;
+    if (typeof metadata.reviewArtifact !== "string") continue;
+    const artifactPath = path.resolve(repoRoot, metadata.reviewArtifact);
+    if (!fs.existsSync(artifactPath) || !fs.readFileSync(artifactPath, "utf8").trim()) continue;
+    return {
+      artifact: metadata.reviewArtifact,
+      metadata: path.relative(repoRoot, candidate.fullPath),
+      diffHash: metadata.diffHash,
+    };
+  }
+  return null;
+}
+
+async function runFinalReviewer({
+  promptBody,
+  basename,
+  runId,
+  codexPolicy,
+  codexEvidence,
+  priorCodexRequest = null,
+  trustedClaudeContext,
+  logFile,
+}) {
+  const reviewDiff = buildReviewDiff(repoRoot);
+  fs.writeFileSync(reviewDiffFile, reviewDiff.diff);
+  const reviewerArgs = [
+    ...buildClaudeArgs({
+      allowedTools: REVIEWER_ALLOWED_TOOLS.join(","),
+      disallowedTools: [...DEFAULT_DISALLOWED_TOOLS, "Bash", "Write", "Edit", "MultiEdit"].join(","),
+      settingSources: "",
+    }),
+    "--tools",
+    REVIEWER_ALLOWED_TOOLS.join(","),
+    "--safe-mode",
+    "--model",
+    "fable",
+    "--system-prompt",
+    REVIEWER_SYSTEM_PROMPT,
+    "--no-session-persistence",
+    "--output-format",
+    "json",
+  ];
+  const evidenceText = codexEvidence
+    ? `Read and adjudicate ${codexEvidence.artifact}; its verified diff hash is ${codexEvidence.diffHash}.${priorCodexRequest ? ` The first reviewer requested Codex because: ${priorCodexRequest}` : ""}`
+    : codexPolicy === "conditional"
+      ? "No Codex artifact exists yet. Return codex-requested only if the prompt's conditional trigger is now met."
+      : "The prompt policy skips Codex review.";
+  const reviewerPrompt = `Perform the scheduler-owned final read-only review for ${basename}.
+
+Use the authoritative pre-worker CLAUDE.md content supplied below. Read the
+prompt's declared wiki pages and touchpoints,
+automation/claude-scheduler/state/current-work.json, the structural uncommitted
+diff at automation/claude-scheduler/state/current-review.diff (SHA-256
+${reviewDiff.hash}) and only direct dependencies needed to validate a finding. Do not delegate,
+edit files or repeat the full test/build suite.
+
+Codex policy: ${codexPolicy}.
+${evidenceText}
+
+Return only JSON with exactly:
+{"status":"approve|changes-required|codex-requested","blockers":[],
+"contextExpansions":[],
+"codexRequest":"<required only when requesting>",
+"codexFindings":"<required when evidence is supplied>",
+"wiki":{"status":"updated|unchanged","reason":"<specific>"}}
+
+codex-requested is valid only for a first conditional review without evidence.
+Approve only when the diff, tests and conventions are adequate.
+
+Authoritative pre-worker CLAUDE.md:
+${trustedClaudeContext}
+
+Prompt:
+${promptBody}
+`;
+  appendLog(logFile, "\nScheduler-owned read-only reviewer phase:\n");
+  const result = await captureCommand(
+    claudeExecutable,
+    reviewerArgs,
+    logFile,
+    reviewerPrompt,
+    reviewerTimeoutMs,
+  );
+  if (result.code !== 0) return null;
+  if (buildReviewDiff(repoRoot).hash !== reviewDiff.hash) {
+    appendLog(logFile, "Reviewer phase changed the canonical diff; rejecting verdict.\n");
+    return null;
+  }
+  const verdict = parseReviewerEnvelope(result.stdout);
+  appendLog(logFile, `Reviewer machine verdict: ${JSON.stringify(verdict)}\n`);
+  return verdict;
 }
 
 function ensureReviewBranch() {
@@ -355,19 +726,22 @@ function assertSafeReviewBranch() {
   if (error) throw new Error(error);
 }
 
-function commitIfNeeded(basename, title, logFile) {
+function commitIfNeeded(basename, title) {
   const status = dirtyStatus();
-  if (!status) {
-    appendLog(logFile, "\nNo uncommitted changes after Claude run.\n");
-    console.log("No uncommitted changes to commit.");
-    return;
-  }
+  if (!status) return null;
 
   gitChecked(["add", "-A"]);
   const message = `auto: ${path.basename(basename, ".md")}${title ? ` - ${title}` : ""}`.slice(0, 120);
   gitChecked(["commit", "-m", message]);
-  appendLog(logFile, `\nCommitted changes with message: ${message}\n`);
-  console.log(`Committed changes: ${message}`);
+  return message;
+}
+
+function safeTelemetryWarning(label, error) {
+  try {
+    console.warn(`Optional ${label} failed: ${error.message}`);
+  } catch {
+    // Telemetry must never change the durable result after finalization.
+  }
 }
 
 function readCompleted() {
@@ -405,32 +779,23 @@ async function waitForUsageBudget() {
 }
 
 async function readUsageSnapshot() {
-  return new Promise((resolve) => {
-    const child = spawn(usageHelper, [], {
-      cwd: repoRoot,
-      env: process.env,
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    let output = "";
-    const timeout = setTimeout(() => child.kill("SIGTERM"), 30_000);
-    child.stdout.on("data", (chunk) => {
-      output += chunk;
-    });
-    child.on("close", (code) => {
-      clearTimeout(timeout);
-      if (code !== 0) return resolve(null);
-      const [percentRaw, resetRaw = ""] = output.trim().split("|");
-      const percent = Number(percentRaw);
-      if (!Number.isFinite(percent) || percent < 0 || percent > 100) return resolve(null);
-      const reset = resetRaw ? new Date(resetRaw) : null;
-      const resetsAt = reset && !Number.isNaN(reset.getTime()) ? reset : null;
-      resolve({ percent, resetsAt });
-    });
-    child.on("error", () => {
-      clearTimeout(timeout);
-      resolve(null);
-    });
+  const result = await runTrackedCommand({
+    command: usageHelper,
+    args: [],
+    cwd: repoRoot,
+    env: process.env,
+    timeoutMs: 30_000,
+    timeoutGraceMs: 1_000,
+    guard: activeProcessGuard,
+    capture: true,
   });
+  if (result.code !== 0) return null;
+  const [percentRaw, resetRaw = ""] = result.stdout.trim().split("|");
+  const percent = Number(percentRaw);
+  if (!Number.isFinite(percent) || percent < 0 || percent > 100) return null;
+  const reset = resetRaw ? new Date(resetRaw) : null;
+  const resetsAt = reset && !Number.isNaN(reset.getTime()) ? reset : null;
+  return { percent, resetsAt };
 }
 
 function appendRunMetrics(metrics) {
@@ -480,6 +845,11 @@ function parseOptionalPositiveInt(value) {
   return parsed > 0 ? parsed : null;
 }
 
+function timeoutMsFromEnv(name, defaultMinutes) {
+  const minutes = parseOptionalPositiveInt(process.env[name]) ?? defaultMinutes;
+  return minutes * 60_000;
+}
+
 function nextRunSlot(after, times, earlyAt) {
   const fixedSlot = nextSlotAfter(after, times);
   fixedSlot.source = "fixed slot";
@@ -525,37 +895,77 @@ async function sleepUntil(date) {
   }
 }
 
-async function streamCommand(command, args, logFile, input = null) {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, {
-      cwd: repoRoot,
-      env: process.env,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-
-    if (input) {
-      child.stdin.end(input);
-    } else {
-      child.stdin.end();
+async function shutdown(exitCode) {
+  if (shutdownInProgress) return;
+  shutdownInProgress = true;
+  if (shouldBlockRunOnShutdown(activeRunState)) {
+    try {
+      writeRunLifecycleResult(
+        activeRunState.prompt,
+        activeRunState.runId,
+        "blocked",
+        "Scheduler stopped before the active run was durably committed.",
+      );
+    } catch (error) {
+      console.error(`Could not record blocked shutdown state: ${error.message}`);
     }
+  }
+  const terminated = await activeProcessGuard.terminate();
+  if (terminated) releaseSchedulerLock();
+  else console.error("Active model process could not be confirmed stopped; retaining stale scheduler lock.");
+  process.exit(exitCode);
+}
 
-    child.stdout.on("data", (chunk) => {
+async function streamCommand(command, args, logFile, input = null, env = process.env, timeoutMs = null) {
+  return runTrackedCommand({
+    command,
+    args,
+    cwd: repoRoot,
+    env,
+    input,
+    timeoutMs,
+    guard: activeProcessGuard,
+    onStdout: (chunk) => {
       process.stdout.write(chunk);
       appendLog(logFile, chunk);
-    });
-    child.stderr.on("data", (chunk) => {
+    },
+    onStderr: (chunk) => {
       process.stderr.write(chunk);
       appendLog(logFile, chunk);
-    });
-    child.on("close", (code) => {
-      appendLog(logFile, `\n[${command} exited with code ${code}]\n`);
-      resolve(code ?? 1);
-    });
+    },
+    onLog: (value) => appendLog(logFile, value),
+  });
+}
+
+async function captureCommand(command, args, logFile, input = null, timeoutMs = null) {
+  return runTrackedCommand({
+    command,
+    args,
+    cwd: repoRoot,
+    env: process.env,
+    input,
+    timeoutMs,
+    guard: activeProcessGuard,
+    capture: true,
+    onLog: (value) => appendLog(logFile, value),
+    onStdout: (chunk) => appendLog(logFile, chunk),
+    onStderr: (chunk) => {
+      process.stderr.write(chunk);
+      appendLog(logFile, chunk);
+    },
   });
 }
 
 function dirtyStatus() {
   return gitOutput(["status", "--porcelain"]).trim();
+}
+
+function dirtyStatusExcludingRunResult() {
+  return gitOutput(["status", "--porcelain"])
+    .split(/\r?\n/)
+    .filter((line) => line && !line.endsWith(" handoffs/RUN-RESULT.json"))
+    .join("\n")
+    .trim();
 }
 
 function gitOutput(args) {
@@ -590,12 +1000,28 @@ function firstPromptLine(promptFile) {
     .find(Boolean);
 }
 
-function commandAvailable(command) {
+function commandPath(command) {
   const pathValue = process.env.PATH || "";
-  return pathValue
-    .split(path.delimiter)
-    .filter(Boolean)
-    .some((directory) => fs.existsSync(path.join(directory, command)));
+  for (const directory of pathValue.split(path.delimiter).filter(Boolean)) {
+    const candidate = path.join(directory, command);
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {
+      // Try the next PATH entry.
+    }
+  }
+  return null;
+}
+
+function writeRunLifecycleResult(prompt, runId, status, reason) {
+  fs.writeFileSync(runResultFile, `${JSON.stringify({
+    prompt,
+    runId,
+    status,
+    reviewerVerdict: status === "blocked" ? "changes-required" : "pending",
+    reason,
+  }, null, 2)}\n`);
 }
 
 function formatDate(date) {

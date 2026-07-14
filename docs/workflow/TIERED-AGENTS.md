@@ -53,8 +53,9 @@ diff; changes after review require a new review pass.
 
 Read `CLAUDE.md`, only the prompt's `openwiki/n2hub/` pages and named
 touchpoints, then direct dependencies. Record every expansion. Workers run
-focused checks during iteration; the scheduler runs one final `npm test` then
-`npm run build`, stopping at the first failure. Browser checks run only when the
+focused checks during iteration; the scheduler runs one final
+`npm run test:scheduler`, `npm test` and `npm run build`, stopping at the first
+failure. Browser checks run only when the
 prompt names the changed interaction or the release bundle owns the matrix.
 
 `handoffs/RUN-STATE.md` is a compact current-run index, not history. Packages and

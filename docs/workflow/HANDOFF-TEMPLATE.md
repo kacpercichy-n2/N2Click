@@ -49,7 +49,7 @@ If any item fails, use `Status: blocked-needs-decision` and stop.
 ## Verification
 - Worker: `<focused command>`
 - Browser: `<script + engines>` | none — <reason>
-- Scheduler owns final `npm test && npm run build`.
+- Scheduler owns final `npm run test:scheduler && npm test && npm run build`.
 
 ## Prior decisions
 - <settled decisions only>
