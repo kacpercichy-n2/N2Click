@@ -158,3 +158,13 @@ task-relocation triggers, private `avatars` bucket with owner_id-type DO-block
 validation before storage policies. Static SQL-convention vitest (17 tests).
 Nothing applied to hosted project; localStorage flow untouched. npm test 652
 pass, build green. wiki unchanged.
+
+## Supabase Auth session gate (real login) (2026-07-15)
+
+New boundary: src/auth/{session.ts (pure state machine + error mapping),
+profile.ts (email-only association), mode.ts, SessionProvider.tsx, AuthScreens.tsx,
+session.test.ts}. main.tsx wraps router in SessionProvider; App.tsx adds Supabase
+gate (loading/login/blocked/shell) + handleLogout (auth.signOut + LOGOUT). Local
+mode unchanged (person-picker fallback, no client created). Role/dept from local
+Person only — never JWT/metadata. npm test 678 pass (+26), build green. wiki:
+ui-navigation Boundaries note added.

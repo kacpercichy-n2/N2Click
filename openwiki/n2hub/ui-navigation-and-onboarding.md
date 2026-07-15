@@ -5,6 +5,14 @@
 - `src/App.tsx` owns routing, shell-level overlays and current-user navigation.
   `src/main.tsx` hosts the data router (`createBrowserRouter`) that App's
   `useBlocker` dirty-navigation guard requires.
+- `src/auth/` owns the login gate. Mode is decided once at startup (local vs
+  Supabase). Local mode (no/invalid Supabase config) keeps the demo person-picker
+  `src/pages/LoginPage.tsx` and the `currentUserId` gate. Supabase mode gates the
+  whole shell behind a real `supabase.auth` session (`SessionProvider` + pure
+  `session.ts` state machine): loading → email/password login → blocked (no local
+  profile) → shell. Identity association is by email only — role/department always
+  come from the local `Person`, never from JWT/metadata. Client-side only; UX gate,
+  not a security boundary. `SessionProvider` wraps the router in `main.tsx`.
 - `src/pages/` owns route-specific screens; `src/components/TaskModal.tsx` owns
   task editing and its allocation grid.
 - `src/onboarding/catalog.ts` owns copy, roles and route mapping; components

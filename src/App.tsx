@@ -24,8 +24,16 @@ import { PersonProfilePage } from './pages/PersonProfilePage';
 import { WorkloadPage } from './pages/WorkloadPage';
 import { AdminPage } from './pages/AdminPage';
 import { landingPathForRole, LoginPage } from './pages/LoginPage';
+import { useAuth } from './auth/SessionProvider';
+import { AuthBlocked, AuthLoading, SupabaseLoginPage } from './auth/AuthScreens';
+import { findPersonByEmail } from './auth/profile';
 import { can } from './store/permissions';
-import { currentUser as currentUserSel, isImpersonating, realUser } from './store/selectors';
+import {
+  currentUser as currentUserSel,
+  isImpersonating,
+  realUser,
+  realUserId,
+} from './store/selectors';
 import { SampleBanner } from './components/SampleBanner';
 import { PersistenceBanner } from './components/PersistenceBanner';
 import { TaskModal } from './components/TaskModal';
@@ -92,6 +100,7 @@ function visibleDrawerControls(drawer: HTMLElement | null): HTMLElement[] {
 
 export function App() {
   const { state, dispatch } = useStore();
+  const auth = useAuth();
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => loadUiPrefs().sidebarCollapsed);
@@ -126,6 +135,18 @@ export function App() {
   // logged-in session survives reload BY DESIGN; real sessions/tokens land with
   // the API. A deleted current user falls back here (DELETE_PERSON clears it).
   const needsLogin = state.people.length > 0 && !currentUser;
+
+  // Logout: in Supabase mode end the real Auth session first (its SIGNED_OUT
+  // event returns us to the login screen), then clear the local acting identity.
+  // In local mode this is just the existing LOGOUT dispatch. These are the same
+  // client-side gates as before — UX/data-integrity only, never a security
+  // boundary (localStorage is client-mutable; authorization lives server-side).
+  const handleLogout = useCallback(async () => {
+    if (auth.mode === 'supabase') {
+      await auth.signOut();
+    }
+    dispatch({ type: 'LOGOUT' });
+  }, [auth, dispatch]);
 
   useEffect(() => {
     const media = window.matchMedia(MOBILE_NAV_QUERY);
@@ -192,6 +213,24 @@ export function App() {
 
   const closedMobileDrawerProps = mobileNav && !menuOpen ? { inert: '' } : {};
   const openMobileMainProps = mobileNav && menuOpen ? { inert: '' } : {};
+
+  // Supabase mode: a real Supabase Auth session gates the ENTIRE shell. Nothing
+  // below renders without a valid session AND a matched local profile. This is a
+  // UX/data-integrity gate only — never a security boundary.
+  if (auth.mode === 'supabase') {
+    if (auth.state.status === 'restoring') return <AuthLoading />;
+    if (auth.state.status === 'signedOut') return <SupabaseLoginPage />;
+    // Signed in: associate by identity (email) only. Role/department always come
+    // from the local Person record — never from user_metadata/JWT claims.
+    const email = auth.state.session?.user?.email ?? '';
+    const person = findPersonByEmail(state.people, email);
+    if (!person) {
+      return <AuthBlocked email={email.trim()} onSignOut={() => void handleLogout()} />;
+    }
+    // Matched, but SET_CURRENT_USER may not have synced yet — never flash the
+    // shell before the real identity resolves to the matched person.
+    if (realUserId(state) !== person.id) return <AuthLoading />;
+  }
 
   if (needsLogin) {
     return <LoginPage />;
@@ -321,7 +360,7 @@ export function App() {
             <button
               type="button"
               className="btn ghost logout-btn"
-              onClick={() => dispatch({ type: 'LOGOUT' })}
+              onClick={() => void handleLogout()}
             >
               Wyloguj
             </button>
