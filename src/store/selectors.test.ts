@@ -16,6 +16,7 @@ import {
   loadPercent,
   rangeAvailabilityForPerson,
   growAllowanceHours,
+  hoursForTaskPersonOnDate,
   isDoneStatus,
   isPersonWorkday,
   isImpersonating,
@@ -24,6 +25,7 @@ import {
   planningStatusForTotals,
   realUser,
   realUserId,
+  searchAll,
   taskGrowAllowance,
   taskPlanningStatus,
   todayAgendaForPerson,
@@ -165,6 +167,61 @@ describe('conflictDatesForTask — bin exclusion (regression)', () => {
 
     const conflicts = conflictDatesForTask(state, 't1');
     expect(conflicts).toEqual(['2026-07-07']);
+  });
+});
+
+describe('hoursForTaskPersonOnDate — valid multi-block totals', () => {
+  it('sums every matching block and excludes other task/person/date rows', () => {
+    const date = '2026-07-08';
+    const state = makeState({
+      workload: [
+        makeEntry({ id: 'a', taskId: 't1', personId: 'p1', date, plannedHours: 2 }),
+        makeEntry({ id: 'b', taskId: 't1', personId: 'p1', date, plannedHours: 3 }),
+        makeEntry({ id: 'other-task', taskId: 't2', personId: 'p1', date, plannedHours: 7 }),
+        makeEntry({ id: 'other-person', taskId: 't1', personId: 'p2', date, plannedHours: 7 }),
+        makeEntry({ id: 'other-date', taskId: 't1', personId: 'p1', date: '2026-07-09', plannedHours: 7 }),
+      ],
+    });
+    expect(hoursForTaskPersonOnDate(state, 't1', 'p1', date)).toBe(5);
+  });
+
+  it('sums two non-adjacent blocks on the same task/person/date (only exactly-adjacent blocks fuse)', () => {
+    const date = '2026-07-08';
+    const state = makeState({
+      workload: [
+        makeEntry({ id: 'morning', taskId: 't1', personId: 'p1', date, startMinutes: 480, plannedHours: 2 }),
+        makeEntry({ id: 'afternoon', taskId: 't1', personId: 'p1', date, startMinutes: 780, plannedHours: 2 }),
+      ],
+    });
+    expect(hoursForTaskPersonOnDate(state, 't1', 'p1', date)).toBe(4);
+  });
+
+  it('returns a single matching entry\'s hours unchanged', () => {
+    const date = '2026-07-08';
+    const state = makeState({
+      workload: [makeEntry({ id: 'only', taskId: 't1', personId: 'p1', date, startMinutes: 480, plannedHours: 2 })],
+    });
+    expect(hoursForTaskPersonOnDate(state, 't1', 'p1', date)).toBe(2);
+  });
+
+  it('returns 0 when there is no entry for that task/person/date', () => {
+    const state = makeState({ workload: [] });
+    expect(hoursForTaskPersonOnDate(state, 't1', 'p1', '2026-07-08')).toBe(0);
+  });
+});
+
+describe('searchAll strict date query', () => {
+  it('does not use an impossible calendar date for period coverage', () => {
+    const state = makeState({
+      projects: [{
+        id: 'proj1', clientId: '', name: 'Projekt', description: '', statusId: 'status1',
+        paid: false, startDate: '2026-02-01', endDate: '2026-03-05', departmentId: '',
+        serviceTypeId: '', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+      }],
+      tasks: [makeTask({ id: 't1', startDate: '2026-02-01', endDate: '2026-03-05' })],
+    });
+    expect(searchAll(state, '2026-02-31').projects).toEqual([]);
+    expect(searchAll(state, '2026-02-31').tasks).toEqual([]);
   });
 });
 

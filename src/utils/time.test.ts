@@ -93,6 +93,19 @@ describe('hasCollision', () => {
   });
 });
 
+describe('findFreeStart input guards', () => {
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, -15, 0, 1441, 30.5])(
+    'returns null for invalid duration %s',
+    (durationMin) => {
+      expect(findFreeStart([], durationMin)).toBeNull();
+    },
+  );
+
+  it('still returns the normal workday start for a valid full-day-grid duration', () => {
+    expect(findFreeStart([], 60)).toBe(480);
+  });
+});
+
 describe('stackStartTimes', () => {
   it('stacks sequential blocks from the workday start', () => {
     expect(stackStartTimes([{ plannedHours: 6 }, { plannedHours: 4 }])).toEqual([480, 840]);
@@ -128,10 +141,9 @@ describe('nextFreeStart', () => {
 });
 
 describe('findFreeStart', () => {
-  it('returns WORKDAY_START_MIN for an empty day, clamped when the duration itself would run past 24:00', () => {
+  it('returns WORKDAY_START_MIN for an empty day and rejects a duration longer than one day', () => {
     expect(findFreeStart([], 60)).toBe(480);
-    // A duration longer than the day itself clamps to 0, same rule clampBlockStart applies elsewhere.
-    expect(findFreeStart([], 2000)).toBe(0);
+    expect(findFreeStart([], 2000)).toBeNull();
   });
 
   it('prefers appending after the last block, matching nextFreeStart, when no clamp is needed', () => {

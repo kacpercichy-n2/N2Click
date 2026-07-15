@@ -32,7 +32,7 @@ import type {
 } from '../types';
 import {
   DEFAULT_CAPACITY,
-  loadData,
+  loadDataResult,
   sanitizeWorkDays,
   saveData,
   slugify,
@@ -598,7 +598,7 @@ function deleteTask(state: AppData, taskId: string): AppData {
 
 /** Shift a task and ALL its time blocks by whole days (timeline drag). */
 function moveTask(state: AppData, taskId: string, dayDelta: number): AppData {
-  if (dayDelta === 0) return state;
+  if (!Number.isFinite(dayDelta) || !Number.isInteger(dayDelta) || dayDelta === 0) return state;
   const task = state.tasks.find((t) => t.id === taskId);
   if (!task) return state;
   const touched = new Set<string>();
@@ -741,13 +741,15 @@ function deleteProject(state: AppData, projectId: string): AppData {
 
 function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
   const ref = state.workload.find((w) => w.id === payload.refEntryId);
-  if (!ref || payload.hours <= 0 || isBinEntry(ref)) return state; // no ripple insert around a bin block
+  if (!ref || !Number.isFinite(payload.hours) || payload.hours <= 0 || isBinEntry(ref)) {
+    return state; // no ripple insert around a bin block
+  }
   const task = state.tasks.find((t) => t.id === payload.taskId);
   if (!task) return state;
 
   // Snap to the 0.25h grid on write (input `step` is UI-only).
   const hours = snapHours(payload.hours);
-  if (hours <= 0) return state;
+  if (!Number.isFinite(hours) || hours <= 0) return state;
 
   // Budget enforcement (PKG-20260708-b2): a right-click insert may never mint
   // hours past the task's plan. Draw from the inserted task's same-person bin
@@ -781,6 +783,17 @@ function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
   );
   const moves = planRippleInsert(dayBlocks, rawStart, dur);
   if (moves === null) return state;
+
+  // planRippleInsert only pushes blocks AT/AFTER the insert point. A same-person
+  // block that STARTS BEFORE `rawStart` but ENDS AFTER it (reachable after a
+  // SAVE_TASK grow-clamp overlap) is never inspected, so the inserted block would
+  // land inside its span — a NEW collision the calendar must never create. Reject
+  // atomically. Touching edges do not overlap, so the "po" ref (end === rawStart)
+  // and any block ending exactly at rawStart are not flagged.
+  const spansInsertPoint = dayBlocks.some(
+    (w) => w.startMinutes < rawStart && blockEndMinutes(w.startMinutes, w.plannedHours) > rawStart,
+  );
+  if (spansInsertPoint) return state;
 
   // Task period must cover ref.date; reject if the widening exceeds the 92-day
   // cap (mirrors setBlockTime). Validated BEFORE any mutation so the action is
@@ -1395,7 +1408,12 @@ function deleteBlock(state: AppData, entryId: string): AppData {
 function personFromDraft(draft: PersonDraft): Omit<Person, 'id' | 'passwordHash'> {
   const firstName = draft.firstName.trim();
   const lastName = draft.lastName.trim();
-  const capacity = draft.capacity > 0 ? draft.capacity : DEFAULT_CAPACITY;
+  // Clamp into the UI's declared [1, 24] hours/day range (defense-in-depth: the
+  // number input declares min=1/max=24 but does not enforce the max on typed
+  // input). A non-finite value falls back to the default BEFORE clamping so a
+  // garbage payload can never persist NaN.
+  const rawCapacity = Number.isFinite(draft.capacity) ? draft.capacity : DEFAULT_CAPACITY;
+  const capacity = Math.min(24, Math.max(1, rawCapacity));
   return {
     firstName,
     lastName,
@@ -1638,6 +1656,10 @@ export function reducer(state: AppData, action: Action): AppData {
       if (!hasEntity(state, 'task', action.taskId) || !hasEntity(state, 'status', action.statusId)) {
         return state;
       }
+      // Re-applying the current status is a no-op (mirrors SET_PROJECT_STATUS):
+      // no activity row, no updatedAt churn, same state reference.
+      const current = state.tasks.find((t) => t.id === action.taskId);
+      if (current && current.statusId === action.statusId) return state;
       const status = state.statuses.find((s) => s.id === action.statusId);
       return {
         ...state,
@@ -1965,13 +1987,18 @@ export function reducer(state: AppData, action: Action): AppData {
         clients: [...state.clients, { id: uid(), name, archived: false }],
       };
     }
-    case 'RENAME_CLIENT':
+    case 'RENAME_CLIENT': {
+      // Mirror ADD_CLIENT: trim and reject an empty name. Reject an unknown id
+      // too, so a stale rename returns the SAME state reference (invariant 6).
+      const name = action.name.trim();
+      if (!name || !state.clients.some((c) => c.id === action.clientId)) return state;
       return {
         ...state,
         clients: state.clients.map((c) =>
-          c.id === action.clientId ? { ...c, name: action.name } : c,
+          c.id === action.clientId ? { ...c, name } : c,
         ),
       };
+    }
     case 'DELETE_CLIENT': {
       // Cascade: client -> its projects -> their tasks/blocks.
       const client = state.clients.find((c) => c.id === action.clientId);
@@ -1996,13 +2023,16 @@ export function reducer(state: AppData, action: Action): AppData {
         departments: [...state.departments, { id: uid(), name }],
       };
     }
-    case 'RENAME_DEPARTMENT':
+    case 'RENAME_DEPARTMENT': {
+      const name = action.name.trim();
+      if (!name || !state.departments.some((d) => d.id === action.departmentId)) return state;
       return {
         ...state,
         departments: state.departments.map((d) =>
-          d.id === action.departmentId ? { ...d, name: action.name } : d,
+          d.id === action.departmentId ? { ...d, name } : d,
         ),
       };
+    }
     case 'DELETE_DEPARTMENT':
       // Clear references; nothing else cascades from a department.
       return {
@@ -2023,13 +2053,16 @@ export function reducer(state: AppData, action: Action): AppData {
         serviceTypes: [...state.serviceTypes, { id: uid(), name }],
       };
     }
-    case 'RENAME_SERVICE_TYPE':
+    case 'RENAME_SERVICE_TYPE': {
+      const name = action.name.trim();
+      if (!name || !state.serviceTypes.some((s) => s.id === action.serviceTypeId)) return state;
       return {
         ...state,
         serviceTypes: state.serviceTypes.map((s) =>
-          s.id === action.serviceTypeId ? { ...s, name: action.name } : s,
+          s.id === action.serviceTypeId ? { ...s, name } : s,
         ),
       };
+    }
     case 'DELETE_SERVICE_TYPE':
       return {
         ...state,
@@ -2046,13 +2079,16 @@ export function reducer(state: AppData, action: Action): AppData {
         workCategories: [...state.workCategories, { id: uid(), name }],
       };
     }
-    case 'RENAME_WORK_CATEGORY':
+    case 'RENAME_WORK_CATEGORY': {
+      const name = action.name.trim();
+      if (!name || !state.workCategories.some((c) => c.id === action.workCategoryId)) return state;
       return {
         ...state,
         workCategories: state.workCategories.map((c) =>
-          c.id === action.workCategoryId ? { ...c, name: action.name } : c,
+          c.id === action.workCategoryId ? { ...c, name } : c,
         ),
       };
+    }
     case 'DELETE_WORK_CATEGORY':
       return {
         ...state,
@@ -2172,10 +2208,20 @@ export interface PersistenceValue {
 const PersistenceContext = createContext<PersistenceValue | null>(null);
 
 export function AppStoreProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, undefined, loadData);
+  const initialLoadRef = useRef<Extract<ReturnType<typeof loadDataResult>, { ok: true }> | null>(
+    null,
+  );
+  if (initialLoadRef.current === null) {
+    const result = loadDataResult();
+    if (!result.ok) throw result.error;
+    initialLoadRef.current = result;
+  }
+  const initialLoad = initialLoadRef.current;
+  const [state, dispatch] = useReducer(reducer, initialLoad.data);
 
   const [saveError, setSaveError] = useState<SaveFailureReason | null>(null);
   const [external, setExternal] = useState<ExternalDataStatus>('none');
+  const [loadError, setLoadError] = useState<Error | null>(null);
 
   // Live refs synced each render so the mount-once storage listener and the
   // stable callbacks read current values without stale closures.
@@ -2189,7 +2235,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   // Skip the pointless first persist of freshly-loaded state (a mount echo that
   // would bump the revision and spam other tabs), and skip the write-back right
   // after any REPLACE_FROM_STORAGE (that state was just loaded from storage).
-  const skipPersistRef = useRef(true);
+  const skipPersistRef = useRef(!initialLoad.needsWriteback);
+  // React StrictMode replays mount effects in development. Remember the state
+  // object whose persistence was already attempted so an initial repair is
+  // written exactly once (and a clean load is never echo-written on replay).
+  const lastPersistAttemptRef = useRef<AppData | null>(null);
 
   // Assign person colours by stable list order. Done during render (idempotent)
   // so colours are correct on the first paint of any consumer.
@@ -2204,8 +2254,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (skipPersistRef.current) {
       skipPersistRef.current = false;
+      lastPersistAttemptRef.current = state;
       return;
     }
+    if (lastPersistAttemptRef.current === state) return;
+    lastPersistAttemptRef.current = state;
     const result = saveData(state);
     setSaveError(result.ok ? null : result.reason);
     if (result.ok) setExternal((prev) => (prev === 'conflict' ? 'none' : prev));
@@ -2217,7 +2270,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   // being silently overwritten.
   useEffect(() => {
     return subscribeExternalChanges(() => {
-      const incoming = loadData();
+      const loaded = loadDataResult();
+      if (!loaded.ok) {
+        setLoadError(loaded.error);
+        return;
+      }
+      const incoming = loaded.data;
       // Silent short-circuit when storage already matches our state (our own
       // echo bounced back, or an identical write): no dispatch, no banner.
       if (JSON.stringify(incoming) === JSON.stringify(stateRef.current)) return;
@@ -2227,7 +2285,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         setExternal('conflict');
         return;
       }
-      skipPersistRef.current = true;
+      skipPersistRef.current = !loaded.needsWriteback;
       dispatch({ type: 'REPLACE_FROM_STORAGE', data: incoming });
       setExternal('refreshed');
     });
@@ -2240,8 +2298,13 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const acceptExternal = useCallback(() => {
-    skipPersistRef.current = true;
-    dispatch({ type: 'REPLACE_FROM_STORAGE', data: loadData() });
+    const loaded = loadDataResult();
+    if (!loaded.ok) {
+      setLoadError(loaded.error);
+      return;
+    }
+    skipPersistRef.current = !loaded.needsWriteback;
+    dispatch({ type: 'REPLACE_FROM_STORAGE', data: loaded.data });
     setExternal('none');
   }, []);
 
@@ -2268,6 +2331,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     }),
     [saveError, external, retryPersist, acceptExternal, keepLocal, dismissExternalNotice],
   );
+
+  // Storage-event callbacks and explicit conflict acceptance run outside
+  // render, so route their load failures back through the root ErrorBoundary on
+  // the next render. The raw storage key remains untouched for export/reset.
+  if (loadError) throw loadError;
 
   return (
     <StoreContext.Provider value={value}>

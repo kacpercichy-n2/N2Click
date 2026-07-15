@@ -18,7 +18,7 @@ import type {
 } from '../types';
 import { DEFAULT_CAPACITY } from './storage';
 import { blockEndMinutes, hasCollision, hoursToMinutes, isBinEntry } from '../utils/time';
-import { parseDate } from '../utils/dates';
+import { isValidDateStr, parseDate } from '../utils/dates';
 
 // ---- Basic lookups ----
 
@@ -204,10 +204,9 @@ export function hoursForTaskPersonOnDate(
   personId: string,
   date: DateStr,
 ): number {
-  const entry = state.workload.find(
-    (w) => w.taskId === taskId && w.personId === personId && w.date === date,
-  );
-  return entry ? entry.plannedHours : 0;
+  return state.workload
+    .filter((w) => w.taskId === taskId && w.personId === personId && w.date === date)
+    .reduce((sum, w) => sum + w.plannedHours, 0);
 }
 
 /** A person's TOTAL planned hours across ALL tasks on a date. */
@@ -754,7 +753,7 @@ export function searchAll(
   );
 
   // Date coverage: only when the raw query parses as a calendar date.
-  const dateQuery = DATE_RE.test(raw) ? raw : null;
+  const dateQuery = DATE_RE.test(raw) && isValidDateStr(raw) ? raw : null;
 
   const inPeriod = (start: DateStr, end: DateStr): boolean =>
     dateQuery !== null && start <= dateQuery && dateQuery <= end;

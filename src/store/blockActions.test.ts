@@ -286,6 +286,20 @@ describe('SET_BLOCK_TIME', () => {
 });
 
 describe('INSERT_BLOCK', () => {
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    'rejects non-finite hours %s by same reference',
+    (hours) => {
+      const state = makeState({
+        tasks: [makeTask({ id: 't1', estimatedHours: 8 })],
+        workload: [makeEntry({ id: 'e1' })],
+      });
+      expect(reducer(state, {
+        type: 'INSERT_BLOCK',
+        payload: { refEntryId: 'e1', position: 'after', taskId: 't1', hours },
+      })).toBe(state);
+    },
+  );
+
   it('"przed" (before): places the new block at the ref start and pushes the ref later', () => {
     const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
     const state = makeState({
@@ -382,6 +396,19 @@ describe('INSERT_BLOCK', () => {
       next.assignments.some((a) => a.taskId === 't2' && a.personId === 'p1'),
     ).toBe(true);
   });
+});
+
+describe('MOVE_TASK command numeric guards', () => {
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, 1.5, 0])(
+    'rejects invalid dayDelta %s by same reference',
+    (dayDelta) => {
+      const state = makeState({
+        tasks: [makeTask({ id: 't1' })],
+        workload: [makeEntry({ id: 'e1' })],
+      });
+      expect(reducer(state, { type: 'MOVE_TASK', taskId: 't1', dayDelta })).toBe(state);
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -2247,5 +2274,97 @@ describe('Impersonation reducer (PKG-20260708-b2-tests)', () => {
     expect(afterDeleteImpersonator.impersonatorId).toBe('');
     expect(afterDeleteImpersonator.currentUserId).toBe('p2'); // acted-as identity kept
     expect(afterDeleteImpersonator.people.some((p) => p.id === 'p1')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// INSERT_BLOCK collision guard (ripple-01 / insert-01). planRippleInsert only
+// pushes blocks AT/AFTER the insert point, so a same-person block that starts
+// BEFORE the insert point but ends AFTER it (reachable after a SAVE_TASK
+// grow-clamp overlap) was never inspected — the inserted block used to land
+// inside that block's span. The reducer now rejects such an insert atomically.
+// ---------------------------------------------------------------------------
+
+describe('INSERT_BLOCK collision guard (block spanning the insert point)', () => {
+  it("rejects (same state ref) an insert whose start falls inside a same-person block that started earlier and was grown past it via SAVE_TASK", () => {
+    // Seed p1's day: filler 480-1290, taskA 1290-1350, taskB 1350-1410.
+    const filler = makeEntry({ id: 'filler', taskId: 'taskF', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 13.5, sortIndex: 0 }); // 480-1290
+    const aBlock = makeEntry({ id: 'aBlock', taskId: 'taskA', personId: 'p1', date: '2026-07-08', startMinutes: 1290, plannedHours: 1, sortIndex: 1 }); // 1290-1350
+    const bBlock = makeEntry({ id: 'bBlock', taskId: 'taskB', personId: 'p1', date: '2026-07-08', startMinutes: 1350, plannedHours: 1, sortIndex: 2 }); // 1350-1410
+    const state = makeState({
+      tasks: [
+        makeTask({ id: 'taskF' }),
+        makeTask({ id: 'taskA' }),
+        // taskB carries headroom so the insert clears the no-mint budget guard —
+        // the rejection under test must come from the overlap guard, not budget.
+        makeTask({ id: 'taskB', estimatedHours: 10 }),
+      ],
+      projects: [PROJECT],
+      statuses: [STATUS],
+      people: [makePerson({ id: 'p1' })],
+      assignments: [
+        { id: 'aF', taskId: 'taskF', personId: 'p1' },
+        { id: 'aA', taskId: 'taskA', personId: 'p1' },
+        { id: 'aB', taskId: 'taskB', personId: 'p1' },
+      ],
+      workload: [filler, aBlock, bBlock],
+    });
+
+    // SAVE_TASK grows taskA to 4h: its block clamps to 1200-1440, now spanning
+    // taskB (a legal TaskModal allocation overlap that renders side-by-side).
+    const grown = reducer(state, {
+      type: 'SAVE_TASK',
+      payload: {
+        taskId: 'taskA',
+        draft: {
+          projectId: 'proj1',
+          statusId: 'status1',
+          title: 'Task',
+          description: '',
+          startDate: '2026-07-06',
+          endDate: '2026-07-08',
+          estimatedHours: null,
+          priority: 'normal',
+          workCategoryId: '',
+          checklist: [],
+        },
+        assigneeIds: ['p1'],
+        allocations: [{ personId: 'p1', date: '2026-07-08', plannedHours: 4 }],
+      },
+    });
+    const grownA = grown.workload.find((w) => w.id === 'aBlock')!;
+    expect(grownA.startMinutes).toBe(1200); // clamped back over occupied time
+    expect(grownA.plannedHours).toBe(4); // 1200-1440 now spans taskB's 1350-1410
+
+    // Insert "before" taskB starts the new block at 1350 — inside taskA's grown
+    // 1200-1440 span. Must reject atomically (was silently inserting an overlap).
+    const afterInsert = reducer(grown, {
+      type: 'INSERT_BLOCK',
+      payload: { refEntryId: 'bBlock', position: 'before', taskId: 'taskB', hours: 0.25 },
+    });
+    expect(afterInsert).toBe(grown);
+  });
+
+  it('still performs a normal ripple insert when no earlier block spans the insert point', () => {
+    // p1's day: taskA 480-540, taskB 600-660. Inserting before taskB starts at
+    // 600 — taskA ends at 540, so nothing spans the insert point.
+    const aBlk = makeEntry({ id: 'aBlk', taskId: 'taskA', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 1, sortIndex: 0 }); // 480-540
+    const bBlk = makeEntry({ id: 'bBlk', taskId: 'taskB', personId: 'p1', date: '2026-07-08', startMinutes: 600, plannedHours: 1, sortIndex: 1 }); // 600-660
+    const state = makeState({
+      tasks: [makeTask({ id: 'taskA' }), makeTask({ id: 'taskB', estimatedHours: 10 })],
+      workload: [aBlk, bBlk],
+    });
+
+    const next = reducer(state, {
+      type: 'INSERT_BLOCK',
+      payload: { refEntryId: 'bBlk', position: 'before', taskId: 'taskB', hours: 1 },
+    });
+
+    expect(next).not.toBe(state);
+    const insertedEntry = next.workload.find((w) => w.id !== 'aBlk' && w.id !== 'bBlk')!;
+    expect(insertedEntry.startMinutes).toBe(600); // took taskB's old start
+    expect(insertedEntry.date).toBe('2026-07-08');
+    expect(next.workload.find((w) => w.id === 'bBlk')!.startMinutes).toBe(660); // pushed later
+    expect(next.workload.find((w) => w.id === 'aBlk')!.startMinutes).toBe(480); // untouched
   });
 });

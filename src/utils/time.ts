@@ -153,6 +153,15 @@ export function findFreeStart(
   blocks: Array<{ startMinutes: number; plannedHours: number }>,
   durationMin: number,
 ): number | null {
+  if (
+    !Number.isFinite(durationMin) ||
+    durationMin <= 0 ||
+    durationMin > DAY_MINUTES ||
+    !Number.isInteger(durationMin) ||
+    durationMin % MINUTE_STEP !== 0
+  ) {
+    return null;
+  }
   if (blocks.length === 0) return clampBlockStart(WORKDAY_START_MIN, durationMin);
 
   // Prefer appending after the last block (identical to nextFreeStart's answer
