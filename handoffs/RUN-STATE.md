@@ -138,3 +138,11 @@ on Klienci section). Reflected: role landing + other-tab banner (shell.main),
 new tasks step (0.25h snap, Zasobnik→assigned, period-shrink), bin "Zaplanuj część",
 24h/day cap (people.capacity), new admin dictionaries step. No new module ids.
 build green; npm test 619 pass. wiki unchanged.
+
+## Supabase client foundation (dormant, unwired) (2026-07-15)
+
+New boundary: src/supabase/{config.ts,client.ts} + config.test.ts, src/vite-env.d.ts,
+.env.example, .gitignore (+.env). Pure resolveSupabaseConfig validates VITE_SUPABASE_*,
+rejects secret/service_role keys; getSupabaseClient lazy singleton (no import-time
+validation). Nothing imports it; storage/AppStore untouched. npm test 635 pass, build green.
+wiki unchanged (localStorage still sole active boundary).
