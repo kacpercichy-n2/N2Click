@@ -51,6 +51,10 @@ async function run() {
     await center.waitFor({ state: 'visible', timeout: 3000 }).catch(() => {});
     check(await center.isVisible().catch(() => false), 'help centre reopens tutorials on demand');
     check((await center.textContent())?.includes('Kalendarz i Zasobnik') ?? false, 'role-appropriate modules are listed');
+    check(
+      (await center.textContent())?.includes('zapisują prawdziwe zmiany w planie') ?? false,
+      'help centre discloses that advanced live exercises change the real plan',
+    );
 
     await center.getByRole('button', { name: 'Uruchom' }).first().click();
     const coachmark = page.locator('.onboarding-coachmark');
@@ -69,7 +73,23 @@ async function run() {
     const advanced = center.locator('.tutorial-module-row').filter({
       hasText: 'Kalendarz: planowanie zaawansowane',
     });
-    await advanced.getByRole('button', { name: 'Uruchom' }).click();
+    const advancedStart = advanced.getByRole('button', { name: 'Uruchom' });
+    let confirmationPromise = page.waitForEvent('dialog');
+    let startClick = advancedStart.click();
+    let confirmation = await confirmationPromise;
+    check(
+      confirmation.type() === 'confirm' && confirmation.message().includes('Zmiany zostaną zapisane w planie'),
+      'advanced live practice requires an explicit real-plan confirmation',
+    );
+    await confirmation.dismiss();
+    await startClick;
+    check(await center.isVisible().catch(() => false), 'cancelling the confirmation keeps the tutorial centre open');
+
+    confirmationPromise = page.waitForEvent('dialog');
+    startClick = advancedStart.click();
+    confirmation = await confirmationPromise;
+    await confirmation.accept();
+    await startClick;
     await page.locator('.week-block[data-tour="calendar.block"]').first().waitFor({ timeout: 5000 });
     await coachmark.waitFor({ state: 'visible', timeout: 3000 }).catch(() => {});
     const practice = coachmark.locator('.onboarding-practice');

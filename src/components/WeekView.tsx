@@ -185,23 +185,45 @@ function TimedBlock({
     }
   };
 
+  // Revert an in-flight drag with no dispatch — the shared cancel path for
+  // Escape, pointercancel, window blur, tab hide and a mouse released outside the
+  // window. Releases pointer capture defensively, drops the synchronous ref and
+  // the React preview, and clears the cross-column merge affordance.
+  const cancelDrag = () => {
+    releaseCapture();
+    dragRef.current = null;
+    setDrag(null);
+    setMergeTargetId(null);
+  };
+
   const baseStart = entry.startMinutes;
   const baseHours = entry.plannedHours;
 
-  // Cancel a drag on Escape (prevents a stuck pointer capture; no dispatch).
+  // While a drag is live, cancel it (revert, no dispatch) on Escape, on window
+  // blur, or when the tab is hidden — mirroring BinCard's interruption guards so
+  // a drop after focus loss cannot commit and a swallowed pointerup cannot leave
+  // the block re-projecting under the cursor. Gate on the drag's truthiness, not
+  // the per-frame `drag` object, so these listeners subscribe once at drag start
+  // and unsubscribe once at drag end; each handler reverts via cancelDrag, which
+  // reads the live drag through dragRef.
+  const dragging = drag !== null;
   useEffect(() => {
-    if (!drag) return;
+    if (!dragging) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        releaseCapture();
-        dragRef.current = null;
-        setDrag(null);
-        setMergeTargetId(null);
-      }
+      if (e.key === 'Escape') cancelDrag();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') cancelDrag();
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [drag, setMergeTargetId]);
+    window.addEventListener('blur', cancelDrag);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('blur', cancelDrag);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [dragging, setMergeTargetId]);
 
   const begin = (mode: DragMode) => (e: React.PointerEvent) => {
     if (e.button !== 0) return; // right/middle button → let the context menu open
@@ -242,6 +264,17 @@ function TimedBlock({
   const onPointerMove = (e: React.PointerEvent) => {
     const activeDrag = dragRef.current;
     if (!activeDrag) return;
+    // Interruption recovery, mirroring BinCard.move: a mouse released OUTSIDE the
+    // window delivers its next real pointermove with no buttons pressed even
+    // though this element never received a pointerup — treat that as a cancel
+    // (revert). The `type === 'pointermove'` gate is load-bearing: finish()
+    // re-invokes this handler with the pointerup event to project the final drop
+    // synchronously, and that event's buttons are legitimately 0 — it must still
+    // commit, so only a genuine pointermove may trigger the cancel.
+    if (e.type === 'pointermove' && e.pointerType === 'mouse' && e.buttons === 0) {
+      cancelDrag();
+      return;
+    }
     const dy = e.clientY - activeDrag.originY;
     const deltaMin = snapToStep((dy / HOUR_PX) * 60);
     const baseEnd = blockEndMinutes(baseStart, baseHours);
@@ -433,16 +466,7 @@ function TimedBlock({
       onPointerDown={editable ? begin('move') : undefined}
       onPointerMove={editable ? onPointerMove : undefined}
       onPointerUp={editable ? finish : undefined}
-      onPointerCancel={
-        editable
-          ? () => {
-              releaseCapture();
-              dragRef.current = null;
-              setDrag(null);
-              setMergeTargetId(null);
-            }
-          : undefined
-      }
+      onPointerCancel={editable ? cancelDrag : undefined}
       onAnimationEnd={() => {
         if (fusedId === entry.id) setFusedId(null);
       }}
@@ -451,7 +475,10 @@ function TimedBlock({
         if (!moved.current) onOpen();
       }}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') onOpen();
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen();
+        }
       }}
       onContextMenu={editable ? onContextMenu : undefined}
     >
@@ -817,7 +844,10 @@ function BinCard({
           if (!moved.current) onOpen();
         }}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') onOpen();
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onOpen();
+          }
         }}
         onContextMenu={editable ? onContextMenu : undefined}
       >
@@ -1348,7 +1378,6 @@ export function WeekView({ state, anchor, filter }: Props) {
       <AnimatePresence>
         {menu && (
           <motion.div
-            ref={menuRef}
             className="context-menu"
             style={{ left: menu.x, top: menu.y, transformOrigin: 'top left' }}
             role="menu"
@@ -1357,6 +1386,13 @@ export function WeekView({ state, anchor, filter }: Props) {
             exit={{ opacity: 0, scale: 0.95 }}
             transition={{ duration: 0.12, ease: 'easeOut' }}
           >
+            {/* menuRef wraps the ENTIRE popover (every step branch) so the
+                outside-click check still covers all buttons/fields. It lives on a
+                plain inner div, NOT on the AnimatePresence child (motion.div),
+                because motion's PopChild reads children.props.ref and React 18.3
+                warns on that. .context-menu is block flow, so this wrapper is
+                layout-neutral. */}
+            <div ref={menuRef}>
             {menu.step === 'menu' ? (
             <>
               <div className="context-menu-title">
@@ -1572,6 +1608,7 @@ export function WeekView({ state, anchor, filter }: Props) {
               </div>
             </div>
           )}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

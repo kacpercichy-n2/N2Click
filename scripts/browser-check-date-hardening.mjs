@@ -1,7 +1,7 @@
 // Browser gate for run 2026-07-12 (release-hardening-1: invalid-date crashes).
 //
 // Drives a REAL browser (Chromium or WebKit) against the dev server on :5173
-// and verifies the four end-of-run flows from handoffs/RUN-STATE.md:
+// and verifies five recovery flows:
 //   1. Original repro — clear BOTH project dates, save → Polish inline error,
 //      NO blank screen, NO uncaught RangeError, nothing persisted.
 //   2. TaskModal — empty / reversed period → Polish error, no "NaN" in the DOM.
@@ -11,6 +11,8 @@
 //   4. Forced render throw (Date.prototype.getMonth poisoned behind a flag) →
 //      Polish recovery screen with export/reload/reset; confirmed reset returns
 //      the app to a clean, usable state.
+//   5. Malformed persisted JSON fails closed into the same recovery screen;
+//      the raw source survives for export until the user explicitly resets it.
 //
 // Usage:  node scripts/browser-check-date-hardening.mjs [chromium|webkit]
 // Exits non-zero if any flow fails. Dev server must already be on :5173.
@@ -233,6 +235,48 @@ async function flowErrorBoundary(browser) {
   }
 }
 
+// ---- Flow 5: malformed raw JSON → fail-closed recovery without overwrite ----
+async function flowMalformedStorage(browser) {
+  const { context, page } = await newPage(browser);
+  const malformed = '{"version":7';
+  try {
+    await page.goto(BASE, { waitUntil: 'networkidle' });
+    await page.evaluate(
+      ({ key, raw }) => localStorage.setItem(key, raw),
+      { key: KEY, raw: malformed },
+    );
+    await page.reload({ waitUntil: 'networkidle' });
+
+    const crashCard = page.locator('.crash-card');
+    await crashCard.waitFor({ timeout: 10000 });
+    const title = (await crashCard.locator('.crash-title').textContent()) || '';
+    ok(
+      title.includes('Coś poszło nie tak'),
+      `flow5: malformed JSON shows Polish recovery screen (got "${title}")`,
+    );
+    const rawAfterLoad = await page.evaluate((key) => localStorage.getItem(key), KEY);
+    ok(rawAfterLoad === malformed, 'flow5: malformed source remains byte-identical before recovery');
+    const exportVisible = await crashCard
+      .getByRole('button', { name: 'Pobierz kopię danych (JSON)' })
+      .isVisible()
+      .catch(() => false);
+    ok(exportVisible, 'flow5: malformed source is still exportable');
+
+    page.on('dialog', (dialog) => dialog.accept());
+    await crashCard.getByRole('button', { name: 'Wyzeruj dane i zacznij od nowa' }).click();
+    const recovered = await page
+      .getByRole('button', { name: 'Wczytaj przykładowe dane' })
+      .waitFor({ timeout: 10000 })
+      .then(() => true)
+      .catch(() => false);
+    ok(recovered, 'flow5: explicit reset recovers from malformed storage');
+  } catch (e) {
+    ok(false, `flow5: harness error — ${e.message}`);
+  } finally {
+    await context.close();
+  }
+}
+
 async function run() {
   const browser = await LAUNCHER.launch({ headless: true });
   try {
@@ -240,6 +284,7 @@ async function run() {
     await flowTaskModal(browser);
     await flowCorruptPayload(browser);
     await flowErrorBoundary(browser);
+    await flowMalformedStorage(browser);
   } finally {
     await browser.close();
   }

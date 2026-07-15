@@ -23,7 +23,7 @@ import { PeoplePage } from './pages/PeoplePage';
 import { PersonProfilePage } from './pages/PersonProfilePage';
 import { WorkloadPage } from './pages/WorkloadPage';
 import { AdminPage } from './pages/AdminPage';
-import { LoginPage } from './pages/LoginPage';
+import { landingPathForRole, LoginPage } from './pages/LoginPage';
 import { can } from './store/permissions';
 import { currentUser as currentUserSel, isImpersonating, realUser } from './store/selectors';
 import { SampleBanner } from './components/SampleBanner';
@@ -70,11 +70,32 @@ const NAV: Array<[string, string, LucideIcon]> = [
   ['/admin', 'Administracja', Settings],
 ];
 
+const MOBILE_NAV_QUERY = '(max-width: 760px)';
+const DRAWER_FOCUSABLE = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+function visibleDrawerControls(drawer: HTMLElement | null): HTMLElement[] {
+  if (!drawer) return [];
+  return Array.from(drawer.querySelectorAll<HTMLElement>(DRAWER_FOCUSABLE)).filter(
+    (element) =>
+      element.getAttribute('aria-hidden') !== 'true' &&
+      element.getClientRects().length > 0 &&
+      window.getComputedStyle(element).visibility !== 'hidden',
+  );
+}
+
 export function App() {
   const { state, dispatch } = useStore();
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => loadUiPrefs().sidebarCollapsed);
+  const [mobileNav, setMobileNav] = useState(() => window.matchMedia(MOBILE_NAV_QUERY).matches);
   const hamburgerRef = useRef<HTMLButtonElement>(null);
   const drawerRef = useRef<HTMLElement>(null);
 
@@ -106,6 +127,14 @@ export function App() {
   // the API. A deleted current user falls back here (DELETE_PERSON clears it).
   const needsLogin = state.people.length > 0 && !currentUser;
 
+  useEffect(() => {
+    const media = window.matchMedia(MOBILE_NAV_QUERY);
+    const sync = () => setMobileNav(media.matches);
+    sync();
+    media.addEventListener('change', sync);
+    return () => media.removeEventListener('change', sync);
+  }, []);
+
   // Close the mobile drawer whenever the route changes.
   useEffect(() => {
     setMenuOpen(false);
@@ -115,7 +144,8 @@ export function App() {
   // close on Escape. Cleanup restores everything (same pattern as TaskModal).
   useEffect(() => {
     if (!menuOpen) return;
-    const firstLink = drawerRef.current?.querySelector<HTMLElement>('.app-nav-link');
+    const drawer = drawerRef.current;
+    const firstLink = drawer?.querySelector<HTMLElement>('.app-nav-link');
     firstLink?.focus();
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -123,6 +153,23 @@ export function App() {
       if (e.key === 'Escape') {
         e.preventDefault();
         setMenuOpen(false);
+        return;
+      }
+      if (e.key !== 'Tab' || !mobileNav) return;
+      const controls = visibleDrawerControls(drawer);
+      if (controls.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey && (active === first || !drawer?.contains(active))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || !drawer?.contains(active))) {
+        e.preventDefault();
+        first.focus();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -130,7 +177,7 @@ export function App() {
       document.body.style.overflow = prevOverflow;
       window.removeEventListener('keydown', onKey);
     };
-  }, [menuOpen]);
+  }, [menuOpen, mobileNav]);
 
   // Return focus to the hamburger after closing (only when it was open).
   const wasOpen = useRef(false);
@@ -142,6 +189,9 @@ export function App() {
       hamburgerRef.current?.focus();
     }
   }, [menuOpen]);
+
+  const closedMobileDrawerProps = mobileNav && !menuOpen ? { inert: '' } : {};
+  const openMobileMainProps = mobileNav && menuOpen ? { inert: '' } : {};
 
   if (needsLogin) {
     return <LoginPage />;
@@ -180,6 +230,8 @@ export function App() {
         id="app-drawer"
         ref={drawerRef}
         className={menuOpen ? 'app-sidebar open' : 'app-sidebar'}
+        aria-hidden={mobileNav && !menuOpen ? true : undefined}
+        {...closedMobileDrawerProps}
       >
         <div className="app-brand-row">
           <div className="app-brand">
@@ -277,7 +329,12 @@ export function App() {
         )}
       </aside>
 
-      <main className="app-main" data-tour="shell.main">
+      <main
+        className="app-main"
+        data-tour="shell.main"
+        aria-hidden={mobileNav && menuOpen ? true : undefined}
+        {...openMobileMainProps}
+      >
         {impersonating && currentUser && actualUser && (
           <div className="impersonation-banner" role="status">
             <span className="impersonation-banner-text">
@@ -389,8 +446,7 @@ function DirtyNavigationGuard() {
  */
 function HomeRedirect() {
   const { state } = useStore();
-  const dest =
-    currentUserSel(state)?.accessRole === 'pracownik' ? '/my-work' : '/dashboard';
+  const dest = landingPathForRole(currentUserSel(state)?.accessRole);
   return <Navigate to={dest} replace />;
 }
 

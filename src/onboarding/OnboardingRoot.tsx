@@ -391,6 +391,7 @@ export function OnboardingRoot({
     ? availableModules.find((module) => module.id === hintedModuleId)
     : undefined;
   const shouldShowHint =
+    !impersonating &&
     Boolean(hintedModule) &&
     panel === 'none' &&
     !tour &&
@@ -566,7 +567,11 @@ function TutorialCenter({
           </div>
           <button type="button" className="task-modal-close" onClick={onClose} aria-label="Zamknij">×</button>
         </div>
-        <p className="onboarding-copy">Wybierz temat, który chcesz poznać. Samouczki niczego nie zmieniają w danych.</p>
+        <p className="onboarding-copy">
+          Wybierz temat, który chcesz poznać. Większość kroków tylko objaśnia
+          interfejs. Ćwiczenia na żywo w samouczku zaawansowanego kalendarza
+          zapisują prawdziwe zmiany w planie.
+        </p>
         <div className="tutorial-center-actions">
           <button type="button" className="btn primary" onClick={onIntro}><Sparkles size={16} aria-hidden /> Krótkie wprowadzenie</button>
           <button
@@ -593,7 +598,21 @@ function TutorialCenter({
                   <p>{module.summary}</p>
                   <span>{module.minutes}{progress.status === 'in-progress' ? ' · rozpoczęty' : ''}</span>
                 </div>
-                <button type="button" className="btn soft" onClick={() => onStart(module.id)}>
+                <button
+                  type="button"
+                  className="btn soft"
+                  onClick={() => {
+                    if (
+                      module.id === 'calendar-advanced' &&
+                      !window.confirm(
+                        'Ćwiczenia na żywo przesuwają, wydłużają i planują prawdziwe bloki czasu. Zmiany zostaną zapisane w planie. Uruchomić samouczek?',
+                      )
+                    ) {
+                      return;
+                    }
+                    onStart(module.id);
+                  }}
+                >
                   {complete ? 'Powtórz' : progress.status === 'in-progress' ? 'Kontynuuj' : 'Uruchom'}
                 </button>
               </li>

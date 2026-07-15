@@ -10,6 +10,11 @@ import { ROLE_LABELS } from '../store/permissions';
 import { verifyPassword } from '../utils/password';
 import { Avatar } from '../components/Avatar';
 import { markOnboardingLogin } from '../utils/uiPrefs';
+import type { AccessRole } from '../types';
+
+export function landingPathForRole(role: AccessRole | undefined): '/my-work' | '/dashboard' {
+  return role === 'pracownik' ? '/my-work' : '/dashboard';
+}
 
 export function LoginPage() {
   const { state, dispatch } = useStore();
@@ -20,9 +25,10 @@ export function LoginPage() {
   const [busy, setBusy] = useState(false);
 
   const login = (personId: string) => {
+    const person = state.people.find((candidate) => candidate.id === personId);
     markOnboardingLogin(personId);
     dispatch({ type: 'SET_CURRENT_USER', personId });
-    navigate('/dashboard');
+    navigate(landingPathForRole(person?.accessRole));
   };
 
   // Row click: passwordless people log straight in; protected people open the

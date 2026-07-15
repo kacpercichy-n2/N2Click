@@ -205,7 +205,7 @@ export const TUTORIAL_MODULES: TutorialModule[] = [
   {
     id: 'calendar-advanced',
     title: 'Kalendarz: planowanie zaawansowane',
-    summary: 'Przesuwanie, długość bloku, kolizje i przeciążenie.',
+    summary: 'Ćwiczenia na żywym planie: przesuwanie, długość bloku, kolizje i przeciążenie.',
     minutes: '3 min',
     roles: EVERYONE,
     steps: [

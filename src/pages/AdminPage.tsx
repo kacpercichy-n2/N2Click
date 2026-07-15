@@ -341,6 +341,58 @@ export function AdminPage() {
   );
 }
 
+// One editable dictionary row. Holds a LOCAL draft so the user can freely clear
+// and retype the name; the store is only written on commit (blur / Enter), never
+// per keystroke. Committing an empty/whitespace value reverts the field to the
+// current store name (the reducer would reject it anyway). The row is keyed by
+// `${item.id}:${item.name}` in SimpleList, so any external store rename remounts
+// it and reseeds the draft from the fresh name.
+function SimpleListRow({
+  item,
+  onRename,
+  onDelete,
+}: {
+  item: { id: string; name: string };
+  onRename: (id: string, name: string) => void;
+  onDelete: (id: string, name: string) => void;
+}) {
+  const [draft, setDraft] = useState(item.name);
+
+  const commit = () => {
+    const trimmed = draft.trim();
+    if (!trimmed) {
+      setDraft(item.name); // empty/whitespace rejected by the reducer — revert
+      return;
+    }
+    if (trimmed !== item.name) onRename(item.id, trimmed);
+    setDraft(trimmed); // normalize the visible value (drop stray whitespace)
+  };
+
+  return (
+    <li className="admin-simple-row">
+      <input
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            e.currentTarget.blur(); // Enter commits via the blur handler
+          }
+        }}
+        aria-label={`Zmień nazwę ${item.name}`}
+      />
+      <button
+        type="button"
+        className="btn danger-ghost"
+        onClick={() => onDelete(item.id, item.name)}
+      >
+        Usuń
+      </button>
+    </li>
+  );
+}
+
 function SimpleList({
   items,
   onRename,
@@ -354,20 +406,14 @@ function SimpleList({
   return (
     <ul className="admin-simple-list">
       {items.map((item) => (
-        <li key={item.id} className="admin-simple-row">
-          <input
-            value={item.name}
-            onChange={(e) => onRename(item.id, e.target.value)}
-            aria-label={`Zmień nazwę ${item.name}`}
-          />
-          <button
-            type="button"
-            className="btn danger-ghost"
-            onClick={() => onDelete(item.id, item.name)}
-          >
-            Usuń
-          </button>
-        </li>
+        // Key includes the store name so an external rename remounts the row and
+        // reseeds its local draft from the fresh value.
+        <SimpleListRow
+          key={`${item.id}:${item.name}`}
+          item={item}
+          onRename={onRename}
+          onDelete={onDelete}
+        />
       ))}
     </ul>
   );

@@ -274,6 +274,27 @@ textarea {
 .app-nav {
   display: grid;
   gap: var(--n2-space-2);
+  /* Only the nav list absorbs sidebar overflow: it shrinks and scrolls on
+     short viewports (min-height:0 lets it drop below content height in the
+     flex column) so the pinned identity/logout block below stays on-screen.
+     Default flex (0 1 auto) means no growth — at exact fit or on tall
+     viewports the layout is unchanged. */
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--n2-border-strong) transparent;
+}
+/* Subtle scroll affordance: appears only when the nav overflows (macOS overlay
+   scrollbars otherwise hide it, leaving no cue there is more below). */
+.app-nav::-webkit-scrollbar {
+  width: 6px;
+}
+.app-nav::-webkit-scrollbar-thumb {
+  background: var(--n2-border-strong);
+  border-radius: var(--n2-radius-pill);
+}
+.app-nav::-webkit-scrollbar-track {
+  background: transparent;
 }
 .app-nav-link {
   display: flex;
@@ -695,6 +716,14 @@ textarea {
   border-radius: var(--n2-radius-md);
   padding: var(--n2-space-3) var(--n2-space-5);
   margin-bottom: var(--n2-space-6);
+  /* Stays in normal flow (relative, no layout shift), but must out-stack the
+     task modal so conflict/failure actions remain clickable while the modal is
+     open beneath it. Overlay ladder: context-menu 100 < gs 990/991 <
+     modal 1000/1001 < persistence-banner 1050 < onboarding-toast 1090 <
+     onboarding-layer 1100. Ancestors (#root, .app-shell, .app-main) create no
+     stacking context, so this resolves at the root context above the modal. */
+  position: relative;
+  z-index: 1050;
 }
 .persistence-banner-text {
   display: flex;
