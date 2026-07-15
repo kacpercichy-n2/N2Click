@@ -146,3 +146,15 @@ New boundary: src/supabase/{config.ts,client.ts} + config.test.ts, src/vite-env.
 rejects secret/service_role keys; getSupabaseClient lazy singleton (no import-time
 validation). Nothing imports it; storage/AppStore untouched. npm test 635 pass, build green.
 wiki unchanged (localStorage still sole active boundary).
+
+## Supabase RLS migrations (dormant, not applied) (2026-07-15)
+
+New boundary: supabase/migrations/{20260715210000_core_schema,20260715210500_rls_policies}.sql
++ supabase/README.md + src/supabase/migrations.test.ts + .gitignore (supabase/.temp).
+Core tables (profiles/departments/projects/project_members/tasks/task_assignments,
+RLS enabled at creation, anon revoked), non-recursive security-definer helpers in
+schema `app`, role model administrator/manager/worker, privilege-escalation +
+task-relocation triggers, private `avatars` bucket with owner_id-type DO-block
+validation before storage policies. Static SQL-convention vitest (17 tests).
+Nothing applied to hosted project; localStorage flow untouched. npm test 652
+pass, build green. wiki unchanged.
