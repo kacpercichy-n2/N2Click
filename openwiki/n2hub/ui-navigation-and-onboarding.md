@@ -9,8 +9,11 @@
   Supabase). Local mode (no/invalid Supabase config) keeps the demo person-picker
   `src/pages/LoginPage.tsx` and the `currentUserId` gate. Supabase mode gates the
   whole shell behind a real `supabase.auth` session (`SessionProvider` + pure
-  `session.ts` state machine): loading → email/password login → blocked (no local
-  profile) → shell. Identity association is by email only — role/department always
+  `session.ts` state machine): loading → email/password login → forced first-
+  password change (`profiles.must_change_password`, pure `passwordChange.ts`,
+  fail-open) → blocked (no local profile) → shell. A `/account` panel + nav link
+  (Supabase mode only; local redirects to `/`) offers self-service password
+  change. Identity association is by email only — role/department always
   come from the local `Person`, never from JWT/metadata. Client-side only; UX gate,
   not a security boundary. `SessionProvider` wraps the router in `main.tsx`.
 - `src/pages/` owns route-specific screens; `src/components/TaskModal.tsx` owns

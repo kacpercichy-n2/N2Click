@@ -6,8 +6,13 @@
 // błędów jest w pełni testowalna w środowisku node (vitest), bez jsdom i bez
 // prawdziwego SDK. Integracja z Reactem (SessionProvider) pozostaje cienka.
 
-/** Minimalny kształt użytkownika sesji — potrzebujemy tylko adresu e-mail. */
+/**
+ * Minimalny kształt użytkownika sesji — potrzebujemy adresu e-mail (skojarzenie
+ * profilu) i opcjonalnie `id` (klucz profilu przy fladze zmiany hasła). SDK
+ * strukturalnie dostarcza oba pola.
+ */
 export interface AuthUser {
+  id?: string;
   email?: string | null;
 }
 

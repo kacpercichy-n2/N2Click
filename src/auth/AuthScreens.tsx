@@ -3,6 +3,7 @@
 // field, field-error, btn primary) — bez nowego frameworka stylów.
 import { useState, type FormEvent } from 'react';
 import { useAuth } from './SessionProvider';
+import { validateNewPassword } from './passwordChange';
 
 function AuthShell({ children }: { children: React.ReactNode }) {
   return (
@@ -76,6 +77,81 @@ export function SupabaseLoginPage() {
         {error && <p className="field-error">{error}</p>}
         <button type="submit" className="btn primary" disabled={busy}>
           {busy ? 'Logowanie…' : 'Zaloguj się'}
+        </button>
+      </form>
+    </AuthShell>
+  );
+}
+
+/**
+ * Wymuszona zmiana pierwszego hasła. Konto założone przez administratora z
+ * hasłem tymczasowym musi ustawić własne hasło, zanim wejdzie do aplikacji —
+ * ekran blokuje całą powłokę (bramka UX). Nigdy nie wyświetlamy haseł.
+ */
+export function ForcedPasswordChange({ onSignOut }: { onSignOut: () => void }) {
+  const { changePassword } = useAuth();
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const onSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (busy) return;
+    const localError = validateNewPassword(password, confirm);
+    if (localError) {
+      setError(localError);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    const result = await changePassword(password, confirm);
+    if (!result.ok) {
+      setError(result.error);
+      setBusy(false);
+      return;
+    }
+    // Po sukcesie prowajder zdejmuje flagę i App wpuszcza do aplikacji.
+  };
+
+  return (
+    <AuthShell>
+      <p className="login-lead">Ustaw nowe hasło</p>
+      <p className="login-lead">
+        To konto wymaga ustawienia własnego hasła przed rozpoczęciem pracy.
+      </p>
+      <form className="login-password" onSubmit={(e) => void onSubmit(e)}>
+        <label className="field">
+          <span>Nowe hasło</span>
+          <input
+            type="password"
+            value={password}
+            autoFocus
+            autoComplete="new-password"
+            disabled={busy}
+            onChange={(e) => setPassword(e.target.value)}
+            className={error ? 'invalid' : undefined}
+            aria-invalid={error ? true : undefined}
+          />
+        </label>
+        <label className="field">
+          <span>Powtórz nowe hasło</span>
+          <input
+            type="password"
+            value={confirm}
+            autoComplete="new-password"
+            disabled={busy}
+            onChange={(e) => setConfirm(e.target.value)}
+            className={error ? 'invalid' : undefined}
+            aria-invalid={error ? true : undefined}
+          />
+        </label>
+        {error && <p className="field-error">{error}</p>}
+        <button type="submit" className="btn primary" disabled={busy}>
+          {busy ? 'Zapisywanie…' : 'Zapisz nowe hasło'}
+        </button>
+        <button type="button" className="btn" onClick={onSignOut} disabled={busy}>
+          Wyloguj
         </button>
       </form>
     </AuthShell>

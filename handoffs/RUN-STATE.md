@@ -168,3 +168,12 @@ gate (loading/login/blocked/shell) + handleLogout (auth.signOut + LOGOUT). Local
 mode unchanged (person-picker fallback, no client created). Role/dept from local
 Person only — never JWT/metadata. npm test 678 pass (+26), build green. wiki:
 ui-navigation Boundaries note added.
+
+## Forced first-password change + account panel (2026-07-15)
+
+New boundary: src/auth/passwordChange.ts (pure: validate/map/loadFlag/perform,
+fail-open) + test (18), src/pages/AccountPage.tsx (/account). SessionProvider adds
+mustChangePassword + changePassword (PostgREST adapters); App.tsx gates
+ForcedPasswordChange before profile match, adds /account route + Supabase-only nav.
+New ALTER migration + README; migrations.test adjusted for forward-only files
+(list + rls-by-name). Local mode unchanged. npm test 696 pass, build green.

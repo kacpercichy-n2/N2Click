@@ -23,9 +23,15 @@ import { PeoplePage } from './pages/PeoplePage';
 import { PersonProfilePage } from './pages/PersonProfilePage';
 import { WorkloadPage } from './pages/WorkloadPage';
 import { AdminPage } from './pages/AdminPage';
+import { AccountPage } from './pages/AccountPage';
 import { landingPathForRole, LoginPage } from './pages/LoginPage';
 import { useAuth } from './auth/SessionProvider';
-import { AuthBlocked, AuthLoading, SupabaseLoginPage } from './auth/AuthScreens';
+import {
+  AuthBlocked,
+  AuthLoading,
+  ForcedPasswordChange,
+  SupabaseLoginPage,
+} from './auth/AuthScreens';
 import { findPersonByEmail } from './auth/profile';
 import { can } from './store/permissions';
 import {
@@ -55,6 +61,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   CircleHelp,
+  KeyRound,
 } from './components/icons';
 import type { LucideIcon } from './components/icons';
 import { loadUiPrefs, updateUiPrefs } from './utils/uiPrefs';
@@ -220,6 +227,15 @@ export function App() {
   if (auth.mode === 'supabase') {
     if (auth.state.status === 'restoring') return <AuthLoading />;
     if (auth.state.status === 'signedOut') return <SupabaseLoginPage />;
+    // Forced first-password change gates the whole shell BEFORE profile matching,
+    // so even an account without a local profile must set its password first.
+    // `null` = flag still loading; `true` = must change. This is a UX/data-
+    // integrity gate (owner can clear their own server flag via API), not a
+    // security boundary. Loading fail-opens to `false` in the provider.
+    if (auth.mustChangePassword === null) return <AuthLoading />;
+    if (auth.mustChangePassword === true) {
+      return <ForcedPasswordChange onSignOut={() => void handleLogout()} />;
+    }
     // Signed in: associate by identity (email) only. Role/department always come
     // from the local Person record — never from user_metadata/JWT claims.
     const email = auth.state.session?.user?.email ?? '';
@@ -305,6 +321,19 @@ export function App() {
               <span className="nav-label">{label}</span>
             </NavLink>
           ))}
+          {/* Account panel (self-service password change) exists only for a real
+              Supabase account; local mode has no such concept. */}
+          {auth.mode === 'supabase' && (
+            <NavLink
+              to="/account"
+              className={navClass}
+              title="Konto"
+              onClick={() => setMenuOpen(false)}
+            >
+              <KeyRound size={18} aria-hidden className="nav-icon" />
+              <span className="nav-label">Konto</span>
+            </NavLink>
+          )}
         </nav>
         <button
           type="button"
@@ -417,6 +446,11 @@ export function App() {
             <Route
               path="/admin"
               element={canAdmin ? <AdminPage /> : <Navigate to="/dashboard" replace />}
+            />
+            {/* Account panel: real Supabase account only. Local mode redirects. */}
+            <Route
+              path="/account"
+              element={auth.mode === 'supabase' ? <AccountPage /> : <Navigate to="/" replace />}
             />
             <Route path="*" element={<HomeRedirect />} />
           </Routes>

@@ -16,6 +16,7 @@ supabase/
   migrations/
     20260715210000_core_schema.sql    # tabele rdzenia + enable RLS (deny-by-default)
     20260715210500_rls_policies.sql   # funkcje pomocnicze, polityki, Storage avatars
+    20260715220000_profiles_must_change_password.sql  # flaga wymuszonej zmiany pierwszego hasła
   README.md
 ```
 
@@ -103,6 +104,11 @@ tutaj:
   konto w `auth.users`, potem wiersz w `public.profiles` z
   `access_role = 'administrator'`. Polityka `profiles_insert_admin` świadomie
   nie ma ścieżki samodzielnej rejestracji.
+- Kolumna `profiles.must_change_password` (domyślnie `true`) wymusza w kliencie
+  ustawienie własnego hasła przy pierwszym logowaniu konta założonego przez
+  administratora. Flagę czyści właściciel po udanej zmianie hasła — bramka UX,
+  nie granica bezpieczeństwa (patrz migracja
+  `20260715220000_profiles_must_change_password.sql`).
 - Stosowanie na hostowanym projekcie (świadoma decyzja operatora, poza tym
   repo): `supabase link --project-ref <ref>` + `supabase db push`, albo CI.
   Wymaga to uprawnień do tworzenia polityk na `storage.objects` (rola

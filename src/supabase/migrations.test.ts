@@ -68,10 +68,11 @@ for (const statement of policyStatements) {
 }
 
 describe('konwencja plików migracji', () => {
-  it('zawiera obie migracje rdzenia', () => {
+  it('zawiera migracje rdzenia oraz kolejne migracje tylko-do-przodu', () => {
     expect(files.map((f) => f.name)).toEqual([
       '20260715210000_core_schema.sql',
       '20260715210500_rls_policies.sql',
+      '20260715220000_profiles_must_change_password.sql',
     ]);
   });
 
@@ -181,7 +182,11 @@ describe('polityki RLS', () => {
 });
 
 describe('storage: prywatne awatary', () => {
-  const rlsFile = normalize(files[files.length - 1]?.sql ?? '');
+  // Polityki Storage żyją w pliku RLS rdzenia — wskazujemy go po nazwie, bo
+  // kolejne migracje tylko-do-przodu (np. ALTER kolumny) sortują się później.
+  const rlsFile = normalize(
+    files.find((f) => f.name === '20260715210500_rls_policies.sql')?.sql ?? '',
+  );
 
   it('bucket avatars powstaje jako prywatny i jest wymuszany na prywatny', () => {
     expect(rlsFile).toContain("values ('avatars', 'avatars', false)");
