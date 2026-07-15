@@ -15,7 +15,20 @@ if (!rootEl) throw new Error('Root element #root not found');
 // `useBlocker` can cancel Back/Forward pops, which plain <BrowserRouter>
 // cannot do.
 const router = createBrowserRouter(
-  [{ path: '*', element: <App /> }],
+  [
+    {
+      path: '*',
+      // Data routers catch route-render errors before they can reach a boundary
+      // wrapped around <RouterProvider>. Keep a boundary inside the route as
+      // well so page crashes use N2Hub's export/reset recovery screen instead
+      // of React Router's generic "Unexpected Application Error" page.
+      element: (
+        <ErrorBoundary>
+          <App />
+        </ErrorBoundary>
+      ),
+    },
+  ],
   { future: { v7_relativeSplatPath: true } },
 );
 

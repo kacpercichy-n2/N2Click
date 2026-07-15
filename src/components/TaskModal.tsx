@@ -454,10 +454,17 @@ function TaskEditor({
   // ---- Handlers ----
 
   const setCell = (personId: string, date: string, hours: number) => {
+    // Snap to the 0.25 grid the store persists on. The grid cell input is
+    // controlled directly by this numeric map (no separate raw-string field to
+    // hold in-flight keystrokes), so snapping here — the setter that writes the
+    // value the grid footer, header total AND SAVE_TASK all read — is the only
+    // point that keeps every total on-grid. Off-grid entries like 0.1 (rendered
+    // "6m") can no longer be counted and then silently change on save.
+    const snapped = snapHours(hours);
     setAllocations((prev) => {
       const next = { ...prev };
       const key = allocKey(personId, date);
-      if (hours > 0) next[key] = hours;
+      if (snapped > 0) next[key] = snapped;
       else delete next[key];
       return next;
     });
@@ -525,6 +532,11 @@ function TaskEditor({
       });
       // Drop this person's queued bin chips too (saveTask would ignore them).
       setPendingUnassigned((prev) => prev.filter((u) => u.personId !== personId));
+      // Reset the bin person selector if it still points at the removed person —
+      // otherwise its state keeps a stale id (the select renders the first
+      // option while its value diverges) and addBinHours would queue hours for
+      // an unassigned person that saveTask then silently drops.
+      setBinPersonId((prev) => (prev === personId ? '' : prev));
     } else {
       setAssigneeIds((prev) => [...prev, personId]);
     }
@@ -542,12 +554,13 @@ function TaskEditor({
   const estSnapped = Number.isNaN(estParsed) ? NaN : snapHours(estParsed);
   const normalizedEstimate = Number.isNaN(estSnapped) || estSnapped <= 0 ? null : estSnapped;
 
-  const handleSave = () => {
-    setTitleTouched(true);
-    if (titleError) return;
-    if (!periodValid) return;
-    if (projectError) return;
-
+  // Grid cells SAVE_TASK will actually persist: in-period days for currently
+  // assigned people only. The header total, over-budget banner and planning
+  // badge all read from THIS single source (not the raw allocations map) so the
+  // displayed numbers can never diverge from what save writes — e.g. after
+  // shrinking the period, out-of-range cells stop counting immediately instead
+  // of only at save (previously header 10h vs grid 4h until save).
+  const plannedCells = useMemo<AllocationCell[]>(() => {
     const cells: AllocationCell[] = [];
     for (const [key, hours] of Object.entries(allocations)) {
       if (hours <= 0) continue;
@@ -556,6 +569,16 @@ function TaskEditor({
       if (!assigneeIds.includes(personId)) continue;
       cells.push({ personId, date, plannedHours: hours });
     }
+    return cells;
+  }, [allocations, periodDaysSet, assigneeIds]);
+
+  const plannedTotalAll = plannedCells.reduce((s, c) => s + c.plannedHours, 0);
+
+  const handleSave = () => {
+    setTitleTouched(true);
+    if (titleError) return;
+    if (!periodValid) return;
+    if (projectError) return;
 
     const draft: TaskDraft = {
       projectId,
@@ -576,7 +599,7 @@ function TaskEditor({
         taskId: existing ? existing.id : null,
         draft,
         assigneeIds,
-        allocations: cells,
+        allocations: plannedCells,
         newUnassigned: pendingUnassigned.filter((u) => u.hours > 0),
       },
     });
@@ -587,11 +610,6 @@ function TaskEditor({
     markSaved();
     onSaved();
   };
-
-  const plannedTotalAll = Object.values(allocations).reduce(
-    (s, h) => s + (h > 0 ? h : 0),
-    0,
-  );
 
   // Existing bin blocks of this task belonging to still-assigned people.
   const existingBin = useMemo(
@@ -629,9 +647,18 @@ function TaskEditor({
 
   const addBinHours = () => {
     const personId = binPersonId || assignedPeople[0]?.id || '';
-    const hours = Number(binHoursRaw);
-    if (personId === '' || Number.isNaN(hours) || hours <= 0) return;
-    setPendingUnassigned((prev) => [...prev, { personId, hours: Math.min(24, hours) }]);
+    // Membership guard: binPersonId can hold a stale id (e.g. the person was
+    // unticked after being selected). Never queue hours for someone who is not
+    // currently assigned — saveTask drops them while the chip still shows a name.
+    if (personId === '' || !assigneeIds.includes(personId)) return;
+    const parsed = Number(binHoursRaw);
+    if (Number.isNaN(parsed) || parsed <= 0) return;
+    // Snap to the 0.25 grid (and clamp to a single day) at this commit point —
+    // the raw field stays free-typed, but the queued chip + bin total match what
+    // SAVE_TASK persists, so the number can't silently change after save.
+    const hours = snapHours(Math.min(24, parsed));
+    if (hours <= 0) return;
+    setPendingUnassigned((prev) => [...prev, { personId, hours }]);
   };
 
   // ---- Checklist (draft-only; persisted wholesale by SAVE_TASK) ----
