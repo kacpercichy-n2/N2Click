@@ -177,3 +177,11 @@ mustChangePassword + changePassword (PostgREST adapters); App.tsx gates
 ForcedPasswordChange before profile match, adds /account route + Supabase-only nav.
 New ALTER migration + README; migrations.test adjusted for forward-only files
 (list + rls-by-name). Local mode unchanged. npm test 696 pass, build green.
+
+## Secure account provisioning boundary (2026-07-16)
+
+New: supabase/functions/provision-account/{contract.ts (pure, zero-dep),
+index.ts (Deno Edge, service-role, admin-only)} + functions/README.md;
+src/supabase/provisioning.test.ts (31). Edited supabase/README.md structure.
+No migration, no src app imports. Contract compiles clean under strict tsc.
+npx vitest provisioning 31 pass, npm test 727 pass, build green.

@@ -17,8 +17,15 @@ supabase/
     20260715210000_core_schema.sql    # tabele rdzenia + enable RLS (deny-by-default)
     20260715210500_rls_policies.sql   # funkcje pomocnicze, polityki, Storage avatars
     20260715220000_profiles_must_change_password.sql  # flaga wymuszonej zmiany pierwszego hasła
+  functions/
+    provision-account/                # Edge Function: serwerowe zakładanie kont (tylko administrator)
+    README.md
   README.md
 ```
+
+Serwerową granicę zakładania kont (Auth user + wiersz `profiles`, dostępną
+wyłącznie dla administratora) opisuje [functions/README.md](functions/README.md).
+Ta funkcja nie wymaga żadnej migracji i nie jest jeszcze wywoływana z aplikacji.
 
 - Nazwa pliku: `YYYYMMDDHHMMSS_opis.sql` (konwencja Supabase CLI); wersje muszą
   rosnąć, a zastosowanego pliku nie wolno edytować — poprawki tylko nową
