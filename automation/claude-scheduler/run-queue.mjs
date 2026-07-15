@@ -40,6 +40,26 @@ const FIVE_MIN_MS = 5 * 60_000;
 const HEARTBEAT_MS = 30_000;            // keep updatedAt well under the 90s alive window
 const SAFETY_VALVE_MS = (5 * 60 + 5) * 60_000; // 5h05m without a usable reset -> run anyway
 
+/**
+ * Keep the Mac awake for the scheduler's complete lifetime. `-w` ties the
+ * caffeinate helper to this Node PID, so it exits automatically when the
+ * scheduler exits (including SIGINT/SIGTERM shutdown). This prevents ordinary
+ * idle sleep; closing a laptop lid or a forced system shutdown can still stop
+ * the process, as macOS intends.
+ */
+function startCaffeinate() {
+  if (process.platform !== "darwin") return;
+  const helper = spawn("/usr/bin/caffeinate", ["-dimsu", "-w", String(process.pid)], {
+    stdio: "ignore",
+  });
+  helper.once("spawn", () => {
+    console.log(`caffeinate started for scheduler pid ${process.pid}`);
+  });
+  helper.once("error", (error) => {
+    console.error(`Could not start caffeinate; scheduler will not prevent idle sleep: ${error.message}`);
+  });
+}
+
 const status = {
   pid: process.pid,
   phase: "idle",
@@ -63,6 +83,7 @@ main().catch((error) => {
 });
 
 async function main() {
+  startCaffeinate();
   acquireLock();
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
