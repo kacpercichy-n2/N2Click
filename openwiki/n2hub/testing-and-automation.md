@@ -21,7 +21,8 @@ gate, commit and push.
 - Calendar/bin: `browser-check-bin-drag.mjs`, `browser-check-bin-split.mjs`,
   `browser-check-placement.mjs`.
 - Persistence: `browser-check-tab-sync.mjs`.
-- Onboarding: `browser-check-onboarding.mjs`.
+- Onboarding: `browser-check-onboarding.mjs` (including the live-plan disclosure
+  and confirmation).
 
 Run a check in Chromium and WebKit only when its covered behavior changes or a
 release verification prompt explicitly requests the full matrix.
@@ -29,3 +30,22 @@ release verification prompt explicitly requests the full matrix.
 The release bundle is `npm run check:browser-release`
 (`scripts/run-browser-regression.mjs`): it builds once, owns its own preview
 server on port 5173, and runs all five checks in Chromium and WebKit.
+
+### Targeted checks outside the release bundle
+
+Four more real browser checks exist but are intentionally excluded from the
+release matrix (`run-browser-regression.mjs`). Run each on demand (Chromium and
+WebKit) only when its covered behavior changes:
+
+- `browser-check-date-hardening.mjs`: invalid/corrupt-date handling — inline
+  Polish errors, no blank screen or uncaught `RangeError`, malformed JSON stays
+  byte-identical and exportable until reset, repairable payloads load repaired,
+  and the render-throw recovery screen resets cleanly.
+- `browser-check-ui-keyboard.mjs`: worker role landing, mobile drawer
+  inertness/focus containment and Space activation for week blocks and bin cards.
+- `browser-check-savetask-multiblock.mjs`: `SAVE_TASK` reconciles per-person/day
+  allocation-grid cells by delta — an unchanged save leaves multi-block days
+  byte-identical, and cell edits touch only the blocks their new total implies.
+- `browser-check-status-semantics.mjs`: completion is the stored `Status.isDone`
+  flag (not pipeline order or archival), and the admin UI pre-validates the
+  only-active/only-done reducer guards.
