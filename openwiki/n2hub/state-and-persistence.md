@@ -20,6 +20,16 @@
   all workload rows when editing a task.
 - `saveData` reports success or a classified failure. Failed persistence must
   never surface as `Zapisano` and same-browser conflicts must remain explicit.
+- Storage loading is fail-closed. A missing key starts with empty data, but
+  unavailable, malformed or structurally invalid stored data must reach the
+  recovery screen without replacing the raw payload. The user can export that
+  payload before resetting it.
+- Successful migrations and deterministic repairs are written back once so
+  repaired IDs remain stable. A clean current-version load must not echo-write.
+- Workload repaired on load still obeys the day boundary and 0.25-hour grid.
+  Positive off-grid hours are snapped to the grid; dated rows above 24 hours
+  move to the bin instead of being silently truncated. Non-finite, null or
+  non-positive stored hours fail closed.
 
 ## Start here for
 

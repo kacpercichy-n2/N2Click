@@ -20,6 +20,9 @@
   cleanup, synchronous refs and rendered-column hit-testing.
 - Automatic placement uses a real free-slot search and rejects when no slot fits;
   it must not clamp into an overlap near midnight.
+- Free-slot search rejects non-finite, non-positive, off-grid and over-day
+  durations. Keyboard-activatable week blocks and bin cards respond to both
+  Enter and Space without changing their pointer lifecycle.
 
 ## Start here for
 
