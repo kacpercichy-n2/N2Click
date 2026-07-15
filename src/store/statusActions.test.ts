@@ -229,3 +229,41 @@ describe('SAVE_STATUS', () => {
     expect(renamed.isDone).toBe(true);
   });
 });
+
+describe('SET_TASK_STATUS', () => {
+  it('re-applying the CURRENT status is a no-op: same state reference, no activity row, no updatedAt churn (mirrors SET_PROJECT_STATUS)', () => {
+    const s0 = makeStatus({ id: 's0', order: 0 });
+    const task = makeTask({ id: 't1', statusId: 's0', updatedAt: '2020-01-01T00:00:00.000Z' });
+    const state = makeState({ statuses: [s0], tasks: [task] });
+
+    const next = reducer(state, { type: 'SET_TASK_STATUS', taskId: 't1', statusId: 's0' });
+
+    expect(next).toBe(state);
+    expect(next.tasks.find((t) => t.id === 't1')!.updatedAt).toBe('2020-01-01T00:00:00.000Z');
+    expect(next.activity.length).toBe(state.activity.length);
+  });
+
+  it('moving to a DIFFERENT status applies, bumps updatedAt, and appends exactly one activity row', () => {
+    const s0 = makeStatus({ id: 's0', order: 0 });
+    const s1 = makeStatus({ id: 's1', order: 1 });
+    const task = makeTask({ id: 't1', statusId: 's0', updatedAt: '2020-01-01T00:00:00.000Z' });
+    const state = makeState({ statuses: [s0, s1], tasks: [task] });
+
+    const next = reducer(state, { type: 'SET_TASK_STATUS', taskId: 't1', statusId: 's1' });
+
+    expect(next).not.toBe(state);
+    const moved = next.tasks.find((t) => t.id === 't1')!;
+    expect(moved.statusId).toBe('s1');
+    expect(moved.updatedAt).not.toBe('2020-01-01T00:00:00.000Z');
+    expect(next.activity.length).toBe(state.activity.length + 1);
+  });
+
+  it('rejects a stale taskId and a dangling statusId by same reference', () => {
+    const s0 = makeStatus({ id: 's0', order: 0 });
+    const task = makeTask({ id: 't1', statusId: 's0' });
+    const state = makeState({ statuses: [s0], tasks: [task] });
+
+    expect(reducer(state, { type: 'SET_TASK_STATUS', taskId: 'ghost', statusId: 's0' })).toBe(state);
+    expect(reducer(state, { type: 'SET_TASK_STATUS', taskId: 't1', statusId: 'ghost' })).toBe(state);
+  });
+});

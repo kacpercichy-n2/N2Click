@@ -13,10 +13,13 @@ import {
   emptyData,
   getLatestKnownRevision,
   loadData,
+  loadDataResult,
   normalizeDates,
   normalizeStatusFlags,
   normalizeTaskMeta,
+  normalizeWorkloadHours,
   readEnvelopeRevision,
+  repairStatusReferences,
   saveData,
 } from './storage';
 import { todayStr } from '../utils/dates';
@@ -48,11 +51,14 @@ const STORAGE_KEY = 'n2hub.data.v1';
 function withLocalStorage<T>(
   initial: Record<string, string>,
   fn: () => T,
-  overrides?: { setItem?: (k: string, v: string) => void },
+  overrides?: {
+    getItem?: (k: string) => string | null;
+    setItem?: (k: string, v: string) => void;
+  },
 ): T {
   const store = new Map<string, string>(Object.entries(initial));
   const stub = {
-    getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
+    getItem: overrides?.getItem ?? ((k: string) => (store.has(k) ? store.get(k)! : null)),
     setItem:
       overrides?.setItem ??
       ((k: string, v: string) => {
@@ -75,6 +81,142 @@ function withLocalStorage<T>(
     (globalThis as { localStorage?: Storage }).localStorage = prev;
   }
 }
+
+describe('loadData fail-closed result + initial write-back metadata', () => {
+  it('treats truly missing storage as a clean empty load', () => {
+    const result = withLocalStorage({}, () => loadDataResult());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.needsWriteback).toBe(false);
+    expect(result.data.version).toBe(DATA_VERSION);
+    expect(result.data.tasks).toEqual([]);
+  });
+
+  it('fails closed on non-empty malformed JSON and preserves the raw export source', () => {
+    const raw = '{"version":7';
+    withLocalStorage({ [STORAGE_KEY]: raw }, () => {
+      const result = loadDataResult();
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toBe('malformed');
+      expect(() => loadData()).toThrow(/odczytać zapisanych danych/i);
+      expect(localStorage.getItem(STORAGE_KEY)).toBe(raw);
+    });
+  });
+
+  it('fails closed when localStorage cannot be read', () => {
+    const result = withLocalStorage(
+      {},
+      () => loadDataResult(),
+      { getItem: () => { throw { name: 'SecurityError' }; } },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe('unavailable');
+  });
+
+  it('marks a clean v7 payload as no-writeback but a repaired date payload as writeback', () => {
+    const clean = emptyData();
+    const cleanResult = withLocalStorage(
+      { [STORAGE_KEY]: JSON.stringify(clean) },
+      () => loadDataResult(),
+    );
+    expect(cleanResult.ok && cleanResult.needsWriteback).toBe(false);
+
+    const broken = {
+      ...clean,
+      projects: [{
+        id: 'proj1', clientId: '', name: 'P', description: '', statusId: clean.statuses[0].id,
+        paid: false, startDate: '', endDate: '2026-07-08', departmentId: '', serviceTypeId: '',
+        createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+      }],
+    };
+    const repairedResult = withLocalStorage(
+      { [STORAGE_KEY]: JSON.stringify(broken) },
+      () => loadDataResult(),
+    );
+    expect(repairedResult.ok && repairedResult.needsWriteback).toBe(true);
+    if (repairedResult.ok) {
+      expect(repairedResult.data.projects[0].startDate).toBe('2026-07-08');
+    }
+  });
+
+  it('stabilizes generated v1 migration ids after the one requested writeback', () => {
+    const legacy = {
+      version: 1,
+      tasks: [{
+        id: 't1', title: 'Legacy', description: '', project: 'Legacy project',
+        startDate: '2026-07-06', endDate: '2026-07-08', estimatedHours: 2,
+        createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+      }],
+      people: [],
+      workload: [],
+      assignments: [],
+    };
+    withLocalStorage({ [STORAGE_KEY]: JSON.stringify(legacy) }, () => {
+      const first = loadDataResult();
+      expect(first.ok && first.needsWriteback).toBe(true);
+      if (!first.ok) return;
+      const projectId = first.data.projects[0].id;
+      const statusIds = first.data.statuses.map((status) => status.id);
+      expect(saveData(first.data)).toEqual({ ok: true, revision: 1 });
+
+      const second = loadDataResult();
+      expect(second.ok && second.needsWriteback).toBe(false);
+      if (!second.ok) return;
+      expect(second.data.projects[0].id).toBe(projectId);
+      expect(second.data.statuses.map((status) => status.id)).toEqual(statusIds);
+      expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).revision).toBe(1);
+    });
+  });
+
+  it('fails the whole load closed when persisted plannedHours is null', () => {
+    const state = makeState([
+      makeEntry({ id: 'bad', plannedHours: null as unknown as number }),
+    ]);
+    const raw = JSON.stringify(state);
+    withLocalStorage({ [STORAGE_KEY]: raw }, () => {
+      const result = loadDataResult();
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toBe('invalid');
+      expect(localStorage.getItem(STORAGE_KEY)).toBe(raw);
+    });
+  });
+});
+
+describe('normalizeWorkloadHours', () => {
+  it('snaps finite positive off-grid hours to quarters', () => {
+    const state = makeState([makeEntry({ id: 'e1', plannedHours: 5.1 })]);
+    expect(normalizeWorkloadHours(state).workload[0].plannedHours).toBe(5);
+  });
+
+  it('moves a dated >24h row into the bin and preserves an existing bin row identity when merged', () => {
+    const existing = makeEntry({
+      id: 'bin', taskId: 't1', personId: 'p1', date: BIN_DATE,
+      plannedHours: 2, startMinutes: 0, sortIndex: 0,
+    });
+    const oversized = makeEntry({
+      id: 'oversized', taskId: 't1', personId: 'p1', date: '2026-07-08',
+      plannedHours: 30, startMinutes: 480, sortIndex: 0,
+    });
+    const next = ensureStartMinutes(normalizeWorkloadHours(makeState([oversized, existing])));
+    expect(next.workload).toHaveLength(1);
+    expect(next.workload[0]).toMatchObject({
+      id: 'bin', date: BIN_DATE, plannedHours: 32, startMinutes: 0, sortIndex: 0,
+    });
+  });
+
+  it.each([null, 0, -0.25, Number.NaN, Number.POSITIVE_INFINITY])(
+    'fails closed for invalid plannedHours %s',
+    (plannedHours) => {
+      const state = makeState([
+        makeEntry({ id: 'bad', plannedHours: plannedHours as number }),
+      ]);
+      expect(() => normalizeWorkloadHours(state)).toThrow(/plannedHours/i);
+    },
+  );
+});
 
 function makeEntry(overrides: Partial<WorkloadEntry> & { id: string }): WorkloadEntry {
   return {
@@ -1477,5 +1619,337 @@ describe('migration compatibility with the revision envelope (PKG-20260713c-pers
     expect(first.version).toBe(DATA_VERSION);
     expect(Object.prototype.hasOwnProperty.call(first, 'revision')).toBe(false);
     expect(second).toEqual(first);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// storage-01 (HIGH, live-confirmed data loss): looksLikeData only guards
+// tasks/people/workload as arrays, so a same-version payload with any OTHER
+// collection present-but-non-array (e.g. `"statuses": null`) used to spread
+// over its emptyData default and throw inside a later `.map` repair pass —
+// the catch then discarded EVERYTHING (clients/tasks/people reset to 0, no
+// notification). Expected: repair the one corrupt collection to a sane default
+// and preserve every other valid collection. tasks/people/workload stay guarded
+// by looksLikeData (a non-array there fails closed to recovery, raw preserved).
+// ---------------------------------------------------------------------------
+
+describe('loadData collection coercion (storage-01: one corrupt collection must not discard all data)', () => {
+  function validPerson(): Record<string, unknown> {
+    return {
+      id: 'p1',
+      firstName: 'Ann',
+      lastName: 'Admin',
+      name: 'Ann Admin',
+      email: '',
+      phone: '',
+      role: '',
+      departmentId: '',
+      avatar: '',
+      capacity: 8,
+      accessRole: 'administrator',
+      passwordHash: '',
+      workDays: [1, 2, 3, 4, 5],
+      workStartMinutes: 480,
+      workEndMinutes: 960,
+      supervisorId: '',
+    };
+  }
+
+  // A structurally valid v7 payload with three valid anchors (a client, a task,
+  // a person) so each per-collection test can prove the OTHER collections
+  // survive an isolated corruption.
+  function validV7Payload(): Record<string, unknown> {
+    return {
+      ...emptyData(),
+      version: 7,
+      clients: [{ id: 'c1', name: 'N2 Media', archived: false }],
+      tasks: [makeFullTask({ id: 't1' })],
+      people: [validPerson()],
+    };
+  }
+
+  const badValues: Array<[string, unknown]> = [
+    ['null', null],
+    ['a number', 42],
+    ['an object', { nope: true }],
+    ['a string', 'oops'],
+  ];
+
+  // The 11 auxiliary collections guarded ONLY by the emptyData spread (the ones
+  // that used to blow up the whole load). Each must repair in isolation.
+  const AUX_COLLECTION_KEYS = [
+    'clients',
+    'departments',
+    'serviceTypes',
+    'workCategories',
+    'statuses',
+    'projects',
+    'milestones',
+    'assignments',
+    'comments',
+    'activity',
+    'savedFilters',
+  ] as const;
+
+  // The 3 core collections looksLikeData already gates. A non-array here is NOT
+  // silently coerced — it fails closed to the recovery boundary (raw preserved),
+  // per the "structurally invalid stored data must reach recovery" rule.
+  const CORE_COLLECTION_KEYS = ['tasks', 'people', 'workload'] as const;
+
+  for (const key of AUX_COLLECTION_KEYS) {
+    for (const [label, bad] of badValues) {
+      it(`repairs a v7 payload whose "${key}" is ${label} to a sane default while preserving valid clients/tasks/people`, () => {
+        const payload = { ...validV7Payload(), [key]: bad };
+        const raw = JSON.stringify(payload);
+        const result = withLocalStorage({ [STORAGE_KEY]: raw }, () => loadDataResult());
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        const data = result.data;
+        expect(data.version).toBe(DATA_VERSION);
+
+        // The corrupt collection is coerced to a sane default...
+        if (key === 'statuses') {
+          // ...the default pipeline, NOT [] — invariant 5 needs at least one
+          // active and one done status to survive.
+          expect(data.statuses.length).toBeGreaterThan(0);
+          expect(data.statuses.some((s) => s.isDone)).toBe(true);
+          expect(data.statuses.some((s) => !s.archived)).toBe(true);
+        } else {
+          expect(data[key]).toEqual([]);
+        }
+
+        // ...while every OTHER valid collection survives.
+        expect(data.tasks.map((t) => t.id)).toContain('t1');
+        expect(data.people.map((p) => p.id)).toContain('p1');
+        if (key !== 'clients') {
+          expect(data.clients.map((c) => c.id)).toContain('c1');
+        }
+
+        // A repaired collection must ask for the one-time write-back so the fix
+        // persists.
+        expect(result.needsWriteback).toBe(true);
+      });
+    }
+  }
+
+  it('runs coercion BEFORE localizeLegacyData: a v5 payload with "statuses" null repairs to the default pipeline instead of throwing', () => {
+    const payload = { ...validV7Payload(), version: 5, statuses: null };
+    const result = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () =>
+      loadDataResult(),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.statuses.length).toBeGreaterThan(0);
+    expect(result.data.statuses.some((s) => s.isDone)).toBe(true);
+    expect(result.data.tasks.map((t) => t.id)).toContain('t1');
+  });
+
+  for (const key of CORE_COLLECTION_KEYS) {
+    for (const [label, bad] of badValues) {
+      it(`fails closed to recovery (raw preserved) when core collection "${key}" is ${label}`, () => {
+        const payload = { ...validV7Payload(), [key]: bad };
+        const raw = JSON.stringify(payload);
+        withLocalStorage({ [STORAGE_KEY]: raw }, () => {
+          const result = loadDataResult();
+          expect(result.ok).toBe(false);
+          if (result.ok) return;
+          expect(result.reason).toBe('invalid');
+          // The raw payload is preserved so the recovery screen can export it.
+          expect(localStorage.getItem(STORAGE_KEY)).toBe(raw);
+        });
+      });
+    }
+  }
+
+  it('still fails closed when a VALID workload array contains an invalid entry (coercion only guards the collection type, not entries)', () => {
+    // Regression guard: the fix must not swallow a bad entry inside an
+    // otherwise-array collection — that path stays fail-closed as before.
+    const payload = {
+      ...validV7Payload(),
+      workload: [
+        { id: 'bad', taskId: 't1', personId: 'p1', date: '2026-07-08', plannedHours: null, startMinutes: 480, sortIndex: 0 },
+      ],
+    };
+    const raw = JSON.stringify(payload);
+    withLocalStorage({ [STORAGE_KEY]: raw }, () => {
+      const result = loadDataResult();
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toBe('invalid');
+      expect(localStorage.getItem(STORAGE_KEY)).toBe(raw);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// storage-01 follow-up: referential-integrity repair for task/project statusId.
+// When the coercion pass regenerates the default statuses (fresh UUIDs) but
+// existing tasks/projects keep their old statusId — OR a stored payload was
+// hand-edited to a garbage/deleted status id — every reference dangles.
+// isValidTaskDraft/isValidProjectDraft (commandValidation.ts) would then reject
+// EVERY subsequent save (silent false-success: modal closes, markSaved() fires,
+// nothing persists). repairStatusReferences remaps any dangling statusId to the
+// default status (first non-done active by order) after statuses are finalized.
+// ---------------------------------------------------------------------------
+
+describe('repairStatusReferences (storage-01 follow-up: no dangling task/project statusId)', () => {
+  it('regenerated statuses (statuses:null) + tasks/projects: every loaded statusId resolves to a regenerated default (first non-done active)', () => {
+    const payload = {
+      ...emptyData(),
+      version: 7,
+      statuses: null, // triggers regeneration to the default pipeline (new ids)
+      tasks: [makeFullTask({ id: 't1', statusId: 'old-status' })],
+      projects: [makeProject({ id: 'proj1', statusId: 'old-status' })],
+    } as unknown as Record<string, unknown>;
+
+    const result = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () =>
+      loadDataResult(),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const data = result.data;
+
+    const statusById = new Map(data.statuses.map((s) => [s.id, s]));
+    expect(statusById.size).toBeGreaterThan(0);
+
+    const task = data.tasks.find((t) => t.id === 't1')!;
+    const project = data.projects.find((p) => p.id === 'proj1')!;
+    // Both now resolve to an existing status...
+    expect(statusById.has(task.statusId)).toBe(true);
+    expect(statusById.has(project.statusId)).toBe(true);
+    // ...specifically a non-done, active (unarchived) one — the create-a-task default.
+    expect(statusById.get(task.statusId)!.isDone).toBe(false);
+    expect(statusById.get(task.statusId)!.archived).toBe(false);
+    expect(statusById.get(project.statusId)!.isDone).toBe(false);
+    expect(result.needsWriteback).toBe(true);
+  });
+
+  it('valid statuses array + a task with a garbage statusId: remapped to the default active status; a sibling task with a valid statusId is untouched', () => {
+    const payload = {
+      ...emptyData(),
+      version: 7,
+      statuses: [
+        makeStatus({ id: 'todo', order: 0, isDone: false }),
+        makeStatus({ id: 'done', order: 1, isDone: true }),
+      ],
+      tasks: [
+        makeFullTask({ id: 't1', statusId: 'ghost' }), // dangling -> remap
+        makeFullTask({ id: 't2', statusId: 'done' }), // valid -> kept
+      ],
+    };
+
+    const result = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () =>
+      loadDataResult(),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const data = result.data;
+
+    expect(data.tasks.find((t) => t.id === 't1')!.statusId).toBe('todo');
+    expect(data.tasks.find((t) => t.id === 't2')!.statusId).toBe('done');
+    expect(result.needsWriteback).toBe(true);
+  });
+
+  it('valid statuses array + a project with a garbage statusId: remapped to the default active status; a valid-ref project is untouched', () => {
+    const payload = {
+      ...emptyData(),
+      version: 7,
+      statuses: [
+        makeStatus({ id: 'todo', order: 0, isDone: false }),
+        makeStatus({ id: 'done', order: 1, isDone: true }),
+      ],
+      projects: [
+        makeProject({ id: 'p1', statusId: 'ghost' }), // dangling -> remap
+        makeProject({ id: 'p2', statusId: 'done' }), // valid -> kept
+      ],
+    };
+
+    const result = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () =>
+      loadDataResult(),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const data = result.data;
+
+    expect(data.projects.find((p) => p.id === 'p1')!.statusId).toBe('todo');
+    expect(data.projects.find((p) => p.id === 'p2')!.statusId).toBe('done');
+    expect(result.needsWriteback).toBe(true);
+  });
+
+  it('no dangling refs: loaded task/project statusIds are byte-identical (no gratuitous rewrites)', () => {
+    const payload = {
+      ...emptyData(),
+      version: 7,
+      statuses: [
+        makeStatus({ id: 'todo', order: 0, isDone: false }),
+        makeStatus({ id: 'done', order: 1, isDone: true }),
+      ],
+      tasks: [makeFullTask({ id: 't1', statusId: 'todo' })],
+      projects: [makeProject({ id: 'proj1', statusId: 'done' })],
+    };
+
+    const result = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () =>
+      loadDataResult(),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.tasks.find((t) => t.id === 't1')!.statusId).toBe('todo');
+    expect(result.data.projects.find((p) => p.id === 'proj1')!.statusId).toBe('done');
+  });
+
+  it('is a no-op (same reference) when every task/project statusId already resolves — idempotent', () => {
+    const data: AppData = {
+      ...emptyData(),
+      statuses: [
+        makeStatus({ id: 'todo', order: 0, isDone: false }),
+        makeStatus({ id: 'done', order: 1, isDone: true }),
+      ],
+      tasks: [makeFullTask({ id: 't1', statusId: 'todo' })],
+      projects: [makeProject({ id: 'proj1', statusId: 'done' })],
+    };
+    const once = repairStatusReferences(data);
+    expect(once).toBe(data); // nothing dangling -> same object back
+    const twice = repairStatusReferences(once);
+    expect(twice).toBe(once);
+  });
+
+  it('leaves statusIds untouched when the pipeline is empty (no status to point at)', () => {
+    const data: AppData = {
+      ...emptyData(),
+      statuses: [],
+      tasks: [makeFullTask({ id: 't1', statusId: 'ghost' })],
+      projects: [makeProject({ id: 'proj1', statusId: 'ghost' })],
+    };
+    const next = repairStatusReferences(data);
+    expect(next).toBe(data); // empty pipeline -> cannot remap, return as-is
+    expect(next.tasks[0].statusId).toBe('ghost');
+  });
+
+  it('falls back to the first ACTIVE status when every active status is done', () => {
+    const data: AppData = {
+      ...emptyData(),
+      statuses: [
+        makeStatus({ id: 'archivedTodo', order: 0, isDone: false, archived: true }),
+        makeStatus({ id: 'doneActive', order: 1, isDone: true }),
+      ],
+      tasks: [makeFullTask({ id: 't1', statusId: 'ghost' })],
+    };
+    const next = repairStatusReferences(data);
+    // No active non-done status exists, so the first active status (done) wins.
+    expect(next.tasks.find((t) => t.id === 't1')!.statusId).toBe('doneActive');
+  });
+
+  it('falls back to the first status overall when every status is archived (direct call, pre-normalizeStatusFlags shape)', () => {
+    const data: AppData = {
+      ...emptyData(),
+      statuses: [
+        makeStatus({ id: 's0', order: 0, archived: true }),
+        makeStatus({ id: 's1', order: 1, archived: true }),
+      ],
+      tasks: [makeFullTask({ id: 't1', statusId: 'ghost' })],
+    };
+    const next = repairStatusReferences(data);
+    expect(next.tasks.find((t) => t.id === 't1')!.statusId).toBe('s0'); // lowest order
   });
 });

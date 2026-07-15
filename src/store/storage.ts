@@ -20,6 +20,8 @@ import {
   MINUTE_STEP,
   clampBlockStart,
   hoursToMinutes,
+  isBinEntry,
+  snapHours,
   snapToStep,
   stackStartTimes,
 } from '../utils/time';
@@ -123,6 +125,18 @@ function looksLikeData(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null) return false;
   const v = value as Record<string, unknown>;
   return Array.isArray(v.tasks) && Array.isArray(v.people) && Array.isArray(v.workload);
+}
+
+/**
+ * Keep a stored array collection as-is, else fall back to its emptyData default
+ * ([] for most collections; the default pipeline for statuses). Mirrors how
+ * normalizeTaskMeta already guards `workCategories`, applied uniformly to every
+ * collection so a single present-but-non-array collection (e.g. a stored
+ * `"statuses": null`) is repaired in isolation instead of throwing inside a
+ * later `.map` repair pass and taking the whole payload down with it.
+ */
+function coerceArray<T>(value: unknown, fallback: T[]): T[] {
+  return Array.isArray(value) ? (value as T[]) : fallback;
 }
 
 const ACCESS_ROLES: AccessRole[] = ['administrator', 'pm', 'handlowiec', 'pracownik'];
@@ -453,6 +467,64 @@ function hasValidStart(w: WorkloadEntry): boolean {
 }
 
 /**
+ * Normalize the persisted hour quantity before any placement repair runs.
+ * Invalid/non-positive quantities fail closed: silently treating them as zero
+ * would discard the only stored representation of planned work. Finite
+ * positive values are snapped to the quarter-hour grid (with a 0.25h floor so
+ * a tiny positive legacy value never disappears). A dated block whose ORIGINAL
+ * duration exceeds one day is moved to the bin, preserving its hours and id;
+ * ensureStartMinutes subsequently merges it into an existing same-task/person
+ * bin row, whose lower sortIndex is deliberately preserved.
+ */
+export function normalizeWorkloadHours(data: AppData): AppData {
+  for (const raw of data.workload as unknown[]) {
+    if (typeof raw !== 'object' || raw === null) {
+      throw new Error('Nieprawidłowy wpis workload: brak obiektu plannedHours.');
+    }
+    const hours = (raw as { plannedHours?: unknown }).plannedHours;
+    if (typeof hours !== 'number' || !Number.isFinite(hours) || hours <= 0) {
+      throw new Error('Nieprawidłowy plannedHours w zapisanych danych.');
+    }
+  }
+
+  const nextBinSort = new Map<string, number>();
+  for (const w of data.workload) {
+    if (!isBinEntry(w)) continue;
+    const key = `${w.personId}|${BIN_DATE}`;
+    const sort = Number.isFinite(w.sortIndex) ? w.sortIndex : -1;
+    nextBinSort.set(key, Math.max(nextBinSort.get(key) ?? -1, sort));
+  }
+
+  let changed = false;
+  const workload = data.workload.map((w) => {
+    const snapped = Math.max(HOURS_STEP, snapHours(w.plannedHours));
+    if (!Number.isFinite(snapped)) {
+      throw new Error('Nieprawidłowy plannedHours po normalizacji zapisanych danych.');
+    }
+
+    if (!isBinEntry(w) && w.plannedHours > DAY_MINUTES / 60) {
+      const key = `${w.personId}|${BIN_DATE}`;
+      const sortIndex = (nextBinSort.get(key) ?? -1) + 1;
+      nextBinSort.set(key, sortIndex);
+      changed = true;
+      return {
+        ...w,
+        date: BIN_DATE,
+        plannedHours: snapped,
+        startMinutes: 0,
+        sortIndex,
+      };
+    }
+
+    if (snapped === w.plannedHours) return w;
+    changed = true;
+    return { ...w, plannedHours: snapped };
+  });
+
+  return changed ? { ...data, workload } : data;
+}
+
+/**
  * Idempotent normalize pass: guarantee every workload entry has a valid,
  * on-grid `startMinutes`. Runs on EVERY load (covers v<4 payloads and any entry
  * with a missing/invalid value). Deterministic rule: if a (person, date) group
@@ -498,7 +570,13 @@ export function ensureStartMinutes(data: AppData): AppData {
           survivorByTask.set(w.taskId, w);
         }
       }
-      for (const [id, q] of mergedQ) patchedHours.set(id, q * HOURS_STEP);
+      for (const [id, q] of mergedQ) {
+        const hours = q * HOURS_STEP;
+        if (!Number.isFinite(hours)) {
+          throw new Error('Nieprawidłowy plannedHours po scaleniu zasobnika.');
+        }
+        patchedHours.set(id, hours);
+      }
       const survivors = ordered.filter((w) => !removed.has(w.id));
       survivors.forEach((w, i) => {
         if (w.startMinutes !== 0) patched.set(w.id, 0);
@@ -779,6 +857,64 @@ export function normalizeStatusFlags(data: AppData): AppData {
   return { ...data, statuses };
 }
 
+/**
+ * The status a task/project should fall back to when its stored one is missing.
+ * Mirrors the "create a task/project" idiom used across the UI
+ * (`activeStatuses(state)[0]` in TaskModal / ProjectsPage): the first ACTIVE
+ * (unarchived) status by `order`, but preferring a non-done column so repaired
+ * work does not silently land in "done". Falls back to the first active status
+ * (when every active status is done), then the first status overall (all
+ * archived). Empty pipeline → '' (caller skips the remap).
+ */
+function defaultStatusId(statuses: Status[]): string {
+  if (statuses.length === 0) return '';
+  const ordered = [...statuses].sort((a, b) => a.order - b.order);
+  const active = ordered.filter((s) => !s.archived);
+  const target = active.find((s) => !s.isDone) ?? active[0] ?? ordered[0];
+  return target.id;
+}
+
+/**
+ * Idempotent every-load pass guaranteeing every task/project `statusId` resolves
+ * to an EXISTING status. Runs AFTER normalizeStatusFlags has finalized the
+ * pipeline (archived/isDone repairs included) so `defaultStatusId` sees the real
+ * final statuses.
+ *
+ * A dangling `statusId` reaches this pass two ways: a stored payload
+ * hand-edited to a garbage/deleted status id, OR the collection-coercion pass
+ * regenerating the default statuses with fresh ids while tasks/projects keep
+ * their old ids. Either way isValidTaskDraft / isValidProjectDraft
+ * (commandValidation.ts) would then reject EVERY subsequent save — the modal
+ * closes and markSaved() fires as if persisted while nothing is written (silent
+ * false-success). Remapping the reference to the default status keeps saves
+ * working.
+ *
+ * Idempotent by value: once every reference resolves, a second pass changes
+ * nothing and a fully-valid payload returns the SAME object reference. When
+ * there are no statuses at all (a legitimately empty pipeline) nothing is
+ * remapped — there is no status to point at.
+ */
+export function repairStatusReferences(data: AppData): AppData {
+  if (data.statuses.length === 0) return data;
+  const ids = new Set(data.statuses.map((s) => s.id));
+  const fallback = defaultStatusId(data.statuses);
+  let changed = false;
+
+  const tasks = data.tasks.map((t) => {
+    if (ids.has(t.statusId)) return t;
+    changed = true;
+    return { ...t, statusId: fallback };
+  });
+  const projects = data.projects.map((p) => {
+    if (ids.has(p.statusId)) return p;
+    changed = true;
+    return { ...p, statusId: fallback };
+  });
+
+  if (!changed) return data;
+  return { ...data, tasks, projects };
+}
+
 // ---- Persistence outcome + same-browser tab-safety revision protocol ----
 // NOTE: everything below is SAME-BROWSER tab safety — NOT multi-user sync,
 // collaboration, backups, or a backend. All data stays in this browser's
@@ -870,56 +1006,167 @@ export function subscribeExternalChanges(cb: (info: ExternalChangeInfo) => void)
   return () => window.removeEventListener('storage', handler);
 }
 
-export function loadData(): AppData {
+export type LoadFailureReason = 'unavailable' | 'malformed' | 'invalid';
+export type LoadDataResult =
+  | { ok: true; data: AppData; needsWriteback: boolean }
+  | { ok: false; reason: LoadFailureReason; error: Error };
+
+function loadFailure(reason: LoadFailureReason): LoadDataResult {
+  const detail =
+    reason === 'unavailable'
+      ? 'Pamięć przeglądarki jest niedostępna.'
+      : reason === 'malformed'
+        ? 'Zapisany JSON jest uszkodzony.'
+        : 'Zapisane dane mają nieprawidłową strukturę.';
+  return {
+    ok: false,
+    reason,
+    error: new Error(`Nie udało się odczytać zapisanych danych. ${detail}`),
+  };
+}
+
+/** Deep equality for JSON-compatible stored values, independent of object key order. */
+function storedValueEqual(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== typeof b || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((value, i) => storedValueEqual(value, b[i]));
+  }
+  if (typeof a !== 'object') return false;
+  const aRecord = a as Record<string, unknown>;
+  const bRecord = b as Record<string, unknown>;
+  const aKeys = Object.keys(aRecord).sort();
+  const bKeys = Object.keys(bRecord).sort();
+  if (aKeys.length !== bKeys.length || aKeys.some((key, i) => key !== bKeys[i])) return false;
+  return aKeys.every((key) => storedValueEqual(aRecord[key], bRecord[key]));
+}
+
+/**
+ * Load persisted data together with explicit initial-writeback metadata.
+ * Missing storage is a successful empty load. Any non-empty unreadable,
+ * malformed or structurally invalid payload fails closed so the provider can
+ * route it through the recovery boundary without replacing the raw source.
+ */
+export function loadDataResult(): LoadDataResult {
+  let raw: string | null = null;
+  let sourceKey: string | null = null;
   try {
-    const raw =
-      localStorage.getItem(STORAGE_KEY) ??
-      LEGACY_STORAGE_KEYS.map((key) => localStorage.getItem(key)).find(Boolean);
-    if (!raw) return emptyData();
-    const parsed: unknown = JSON.parse(raw);
-    if (!looksLikeData(parsed)) return emptyData();
+    raw = localStorage.getItem(STORAGE_KEY);
+    if (raw !== null) {
+      sourceKey = STORAGE_KEY;
+    } else {
+      for (const key of LEGACY_STORAGE_KEYS) {
+        const candidate = localStorage.getItem(key);
+        if (candidate) {
+          raw = candidate;
+          sourceKey = key;
+          break;
+        }
+      }
+    }
+  } catch {
+    return loadFailure('unavailable');
+  }
+
+  if (!raw) {
+    latestKnownRevision = 0;
+    return { ok: true, data: emptyData(), needsWriteback: false };
+  }
+
+  let parsed: Record<string, unknown>;
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (!looksLikeData(value)) return loadFailure('invalid');
+    parsed = value;
+  } catch {
+    return loadFailure('malformed');
+  }
+
+  try {
     // Record the stored envelope revision so the next local save lands above it.
     // Stripped from the returned AppData below (both branches) — React state
     // never carries a revision.
     latestKnownRevision = coerceRevision(parsed.revision) ?? 0;
     const version = typeof parsed.version === 'number' ? parsed.version : 1;
+    let data: AppData;
     if (version < 2) {
-      return sanitizeImpersonator(
-        normalizeStatusFlags(
-          normalizeTaskMeta(
-            ensureStartMinutes(
-              normalizeDates(migrateV4toV5(localizeLegacyData(migrateV1(parsed)))),
+      data = repairStatusReferences(
+        sanitizeImpersonator(
+          normalizeStatusFlags(
+            normalizeTaskMeta(
+              ensureStartMinutes(
+                normalizeDates(
+                  normalizeWorkloadHours(migrateV4toV5(localizeLegacyData(migrateV1(parsed)))),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    } else {
+      // Same-version load: fill any missing fields with defaults. Strip the
+      // envelope `revision` so React state never carries persistence metadata.
+      const { revision: _revision, ...parsedRest } = parsed;
+      // `looksLikeData` only guarantees tasks/people/workload are arrays. Any
+      // OTHER collection present-but-non-array (e.g. a stored `"statuses":
+      // null`) would spread over its emptyData default and then throw inside a
+      // downstream `.map` repair pass, and the catch below would discard the
+      // WHOLE payload. Coerce every collection to its emptyData default so one
+      // corrupt collection is repaired in isolation while every valid
+      // collection survives. tasks/people/workload are already array-guaranteed
+      // here by looksLikeData (a non-array there fails closed to recovery
+      // upstream) — coercing them too is harmless defense in depth.
+      const defaults = emptyData();
+      const loaded: AppData = {
+        ...defaults,
+        ...(parsedRest as Partial<AppData>),
+        version: DATA_VERSION,
+        clients: coerceArray(parsedRest.clients, defaults.clients),
+        departments: coerceArray(parsedRest.departments, defaults.departments),
+        serviceTypes: coerceArray(parsedRest.serviceTypes, defaults.serviceTypes),
+        workCategories: coerceArray(parsedRest.workCategories, defaults.workCategories),
+        statuses: coerceArray(parsedRest.statuses, defaults.statuses),
+        projects: coerceArray(parsedRest.projects, defaults.projects),
+        milestones: coerceArray(parsedRest.milestones, defaults.milestones),
+        tasks: coerceArray(parsedRest.tasks, defaults.tasks),
+        people: coerceArray(parsedRest.people, defaults.people),
+        assignments: coerceArray(parsedRest.assignments, defaults.assignments),
+        workload: coerceArray(parsedRest.workload, defaults.workload),
+        comments: coerceArray(parsedRest.comments, defaults.comments),
+        activity: coerceArray(parsedRest.activity, defaults.activity),
+        savedFilters: coerceArray(parsedRest.savedFilters, defaults.savedFilters),
+      };
+      const localized =
+        version < LOCALIZATION_MIGRATION_VERSION ? localizeLegacyData(loaded) : loaded;
+      const migrated = migrateV4toV5(localized);
+      data = repairStatusReferences(
+        sanitizeImpersonator(
+          normalizeStatusFlags(
+            normalizeTaskMeta(
+              ensureStartMinutes(normalizeDates(normalizeWorkloadHours(migrated))),
             ),
           ),
         ),
       );
     }
-    // Same-version load: fill any missing fields with defaults. Strip the
-    // envelope `revision` so the returned AppData has no such own-property
-    // (recorded into latestKnownRevision above). The `_revision` binding exists
-    // only to omit that key via the rest spread — noUnusedLocals exempts it.
-    const { revision: _revision, ...parsedRest } = parsed;
-    const loaded = {
-      ...emptyData(),
-      ...(parsedRest as Partial<AppData>),
-      version: DATA_VERSION,
+
+    const { revision: _revision, ...storedData } = parsed;
+    return {
+      ok: true,
+      data,
+      needsWriteback: sourceKey !== STORAGE_KEY || !storedValueEqual(storedData, data),
     };
-    const localized =
-      version < LOCALIZATION_MIGRATION_VERSION ? localizeLegacyData(loaded) : loaded;
-    // Person normalization runs on EVERY load (defensive + idempotent), exactly
-    // like ensureStartMinutes below — NOT only when `version < 5`. A payload
-    // stamped v5 whose people were never actually migrated (e.g. persisted
-    // mid-dev via HMR, still carrying `isAdmin` and no `accessRole`) would
-    // otherwise stay broken forever: a missing `accessRole` makes
-    // MATRIX[undefined] deny every action → permanent login-screen lockout.
-    // migratePerson preserves valid existing values and fills only what's absent.
-    const migrated = migrateV4toV5(localized);
-    return sanitizeImpersonator(
-      normalizeStatusFlags(normalizeTaskMeta(ensureStartMinutes(normalizeDates(migrated)))),
-    );
   } catch {
-    return emptyData();
+    return loadFailure('invalid');
   }
+}
+
+/** Compatibility entry point for non-provider callers; failures intentionally throw. */
+export function loadData(): AppData {
+  const result = loadDataResult();
+  if (!result.ok) throw result.error;
+  return result.data;
 }
 
 /**

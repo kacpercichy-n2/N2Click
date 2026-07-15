@@ -4,9 +4,9 @@
 // rendering, no localStorage — build AppData fixtures by hand from
 // emptyData() + literal tasks/categories, mirroring blockActions.test.ts.
 import { describe, expect, it } from 'vitest';
-import { reducer, type SaveTaskPayload, type TaskDraft } from './AppStore';
+import { reducer, type PersonDraft, type SaveTaskPayload, type TaskDraft } from './AppStore';
 import { emptyData } from './storage';
-import type { AppData, ChecklistItem, Project, Status, Task, WorkCategory } from '../types';
+import type { AppData, ChecklistItem, Person, Project, Status, Task, WorkCategory } from '../types';
 
 // Reference entities the SAVE_TASK drafts point at (projectId 'proj1' /
 // statusId 'status1'), so the reducer's reference-existence guard accepts them.
@@ -285,5 +285,127 @@ describe('Work category CRUD', () => {
     expect(next.tasks.find((t) => t.id === 't1')!.workCategoryId).toBe('');
     expect(next.tasks.find((t) => t.id === 't2')!.workCategoryId).toBe('cat2'); // untouched
     expect(next.savedFilters[0].criteria.workCategoryId).toBe('');
+  });
+});
+
+// The four dictionary RENAME handlers must mirror their ADD_ siblings: trim the
+// name and reject an empty/whitespace-only name, plus reject an unknown id — both
+// by returning the SAME state reference (invariant 6). Without these guards an
+// empty rename persisted a blank row and a stale id was a silent no-op that still
+// allocated a new array.
+describe('Dictionary rename guards (trim + existence, same-ref reject)', () => {
+  it('RENAME_CLIENT: trims a valid name; rejects empty/whitespace and unknown id by same ref', () => {
+    const state = makeState({ clients: [{ id: 'c1', name: 'Klient', archived: false }] });
+
+    const renamed = reducer(state, { type: 'RENAME_CLIENT', clientId: 'c1', name: '  Nowa nazwa  ' });
+    expect(renamed).not.toBe(state);
+    expect(renamed.clients.find((c) => c.id === 'c1')!.name).toBe('Nowa nazwa');
+
+    expect(reducer(state, { type: 'RENAME_CLIENT', clientId: 'c1', name: '   ' })).toBe(state);
+    expect(reducer(state, { type: 'RENAME_CLIENT', clientId: 'c1', name: '' })).toBe(state);
+    expect(reducer(state, { type: 'RENAME_CLIENT', clientId: 'ghost', name: 'X' })).toBe(state);
+  });
+
+  it('RENAME_DEPARTMENT: trims a valid name; rejects empty/whitespace and unknown id by same ref', () => {
+    const state = makeState({ departments: [{ id: 'd1', name: 'Dział' }] });
+
+    const renamed = reducer(state, { type: 'RENAME_DEPARTMENT', departmentId: 'd1', name: '  Kreacja  ' });
+    expect(renamed).not.toBe(state);
+    expect(renamed.departments.find((d) => d.id === 'd1')!.name).toBe('Kreacja');
+
+    expect(reducer(state, { type: 'RENAME_DEPARTMENT', departmentId: 'd1', name: '   ' })).toBe(state);
+    expect(reducer(state, { type: 'RENAME_DEPARTMENT', departmentId: 'ghost', name: 'X' })).toBe(state);
+  });
+
+  it('RENAME_SERVICE_TYPE: trims a valid name; rejects empty/whitespace and unknown id by same ref', () => {
+    const state = makeState({ serviceTypes: [{ id: 's1', name: 'Usługa' }] });
+
+    const renamed = reducer(state, { type: 'RENAME_SERVICE_TYPE', serviceTypeId: 's1', name: '  Montaż  ' });
+    expect(renamed).not.toBe(state);
+    expect(renamed.serviceTypes.find((s) => s.id === 's1')!.name).toBe('Montaż');
+
+    expect(reducer(state, { type: 'RENAME_SERVICE_TYPE', serviceTypeId: 's1', name: '   ' })).toBe(state);
+    expect(reducer(state, { type: 'RENAME_SERVICE_TYPE', serviceTypeId: 'ghost', name: 'X' })).toBe(state);
+  });
+
+  it('RENAME_WORK_CATEGORY: trims a valid name; rejects empty/whitespace and unknown id by same ref', () => {
+    const state = makeState({ workCategories: [makeCategory({ id: 'cat1', name: 'Kreacja' })] });
+
+    const renamed = reducer(state, { type: 'RENAME_WORK_CATEGORY', workCategoryId: 'cat1', name: '  Design  ' });
+    expect(renamed).not.toBe(state);
+    expect(renamed.workCategories.find((c) => c.id === 'cat1')!.name).toBe('Design');
+
+    expect(reducer(state, { type: 'RENAME_WORK_CATEGORY', workCategoryId: 'cat1', name: '   ' })).toBe(state);
+    expect(reducer(state, { type: 'RENAME_WORK_CATEGORY', workCategoryId: 'ghost', name: 'X' })).toBe(state);
+  });
+});
+
+// ADD_PERSON / UPDATE_PERSON clamp capacity into the UI's [1, 24] hours/day band
+// at the reducer boundary. The number input declares min=1/max=24 but does not
+// enforce the max on typed input, so 999 could otherwise persist. Clamp (never
+// reject) mirrors the UI's silent min-correction.
+function personDraft(overrides: Partial<PersonDraft> = {}): PersonDraft {
+  return {
+    firstName: 'Nowy',
+    lastName: '',
+    email: '',
+    phone: '',
+    role: '',
+    departmentId: '',
+    avatar: '',
+    capacity: 8,
+    accessRole: 'pracownik',
+    workDays: [1, 2, 3, 4, 5],
+    workStartMinutes: 480,
+    workEndMinutes: 960,
+    supervisorId: '',
+    ...overrides,
+  };
+}
+
+function makePerson(overrides: Partial<Person> & { id: string }): Person {
+  return {
+    firstName: 'Test',
+    lastName: '',
+    name: 'Test',
+    email: '',
+    phone: '',
+    role: '',
+    departmentId: '',
+    avatar: '',
+    capacity: 8,
+    accessRole: 'administrator',
+    passwordHash: '',
+    workDays: [1, 2, 3, 4, 5],
+    workStartMinutes: 480,
+    workEndMinutes: 960,
+    supervisorId: '',
+    ...overrides,
+  };
+}
+
+describe('Person capacity clamp (defense-in-depth [1, 24])', () => {
+  it('ADD_PERSON clamps an over-max capacity (999) down to 24', () => {
+    const next = reducer(makeState(), { type: 'ADD_PERSON', person: personDraft({ capacity: 999 }) });
+    expect(next.people).toHaveLength(1);
+    expect(next.people[0].capacity).toBe(24);
+  });
+
+  it('ADD_PERSON clamps a zero capacity up to 1 (reducer floor; the UI rewrites 0→8 before dispatch)', () => {
+    const next = reducer(makeState(), { type: 'ADD_PERSON', person: personDraft({ capacity: 0 }) });
+    expect(next.people).toHaveLength(1);
+    expect(next.people[0].capacity).toBe(1);
+  });
+
+  it('UPDATE_PERSON clamps an over-max capacity (999) down to 24', () => {
+    // Keep the administrator role: p1 is the only admin, so a demotion would be
+    // refused by the last-admin guard and never reach the capacity clamp.
+    const state = makeState({ people: [makePerson({ id: 'p1', capacity: 8 })] });
+    const next = reducer(state, {
+      type: 'UPDATE_PERSON',
+      personId: 'p1',
+      person: personDraft({ firstName: 'Ala', accessRole: 'administrator', capacity: 999 }),
+    });
+    expect(next.people.find((p) => p.id === 'p1')!.capacity).toBe(24);
   });
 });
