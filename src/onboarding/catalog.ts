@@ -47,8 +47,9 @@ export const TUTORIAL_MODULES: TutorialModule[] = [
       {
         target: 'shell.main',
         title: 'Twój punkt startowy',
-        body: 'Tu widzisz bieżący kontekst: swoją pracę albo podsumowanie zespołu. Szczegóły zawsze otworzysz bez utraty miejsca na stronie.',
+        body: 'Po zalogowaniu trafiasz na widok dopasowany do Twojej roli — pracownik zaczyna od widoku Moja praca, a pozostałe role od podsumowania zespołu. Szczegóły zawsze otworzysz bez utraty miejsca na stronie.',
         route: '@current',
+        note: 'Gdy dane zmienią się w innej karcie przeglądarki, aplikacja nigdy nie nadpisze Twojej pracy po cichu — zapyta, którą wersję zostawić.',
       },
       {
         target: 'shell.help',
@@ -158,7 +159,7 @@ export const TUTORIAL_MODULES: TutorialModule[] = [
     id: 'tasks',
     title: 'Zadania',
     summary: 'Status planowania, szacunki, osoby i godziny.',
-    minutes: '3 min',
+    minutes: '4 min',
     roles: EVERYONE,
     steps: [
       {
@@ -172,6 +173,13 @@ export const TUTORIAL_MODULES: TutorialModule[] = [
         title: 'Status realizacji i planowanie',
         body: 'Status zadania mówi o etapie pracy. Znacznik planowania mówi, czy godziny są rozpisane, częściowo w Zasobniku albo przekraczają szacunek.',
         route: '/tasks',
+      },
+      {
+        target: 'tasks.list',
+        title: 'Planowanie w oknie zadania',
+        body: 'Godziny w dniu i w Zasobniku przyjmują kroki co 0,25 h (15 minut), a godziny w Zasobniku dodasz tylko osobom przypisanym do zadania. Skrócenie okresu od razu przelicza „zaplanowano”, a wpisy poza nowym okresem są usuwane przy zapisie.',
+        route: '/tasks',
+        note: 'Wpisane wartości są zaokrąglane do najbliższych 15 minut (0,25 h); wartości bliskie zeru są usuwane.',
       },
     ],
   },
@@ -232,7 +240,7 @@ export const TUTORIAL_MODULES: TutorialModule[] = [
       {
         target: 'calendar.bin-card',
         title: 'Nadaj termin pracy z Zasobnika',
-        body: 'Ta karta ma przypisaną osobę i liczbę godzin, ale nie ma jeszcze daty. Przeciągnij ją na wolne miejsce w siatce.',
+        body: 'Ta karta ma przypisaną osobę i liczbę godzin, ale nie ma jeszcze daty. Przeciągnij ją na wolne miejsce w siatce albo w widoku tygodnia użyj na karcie przycisku „Zaplanuj część” i podaj dzień, start oraz liczbę godzin.',
         route: '/calendar',
         practice: {
           kind: 'bin-drop',
@@ -285,7 +293,7 @@ export const TUTORIAL_MODULES: TutorialModule[] = [
       {
         target: 'people.capacity',
         title: 'Dostępność jest progiem pracy',
-        body: 'Godziny na dzień i dni robocze decydują o tym, kiedy widok Obciążenie pokaże ostrzeżenie.',
+        body: 'Godziny na dzień i dni robocze decydują o tym, kiedy widok Obciążenie pokaże ostrzeżenie. Godziny na dzień mają górny limit 24 h — wyższe wartości są przycinane przy zapisie.',
         route: '/people',
       },
     ],
@@ -307,6 +315,12 @@ export const TUTORIAL_MODULES: TutorialModule[] = [
         target: 'admin.done',
         title: 'Ukończenie jest niezależne',
         body: 'Znacznik Ukończenie decyduje, które statusy oznaczają zakończoną pracę — niezależnie od ich kolejności.',
+        route: '/admin',
+      },
+      {
+        target: 'admin.dictionaries',
+        title: 'Wspólne słowniki',
+        body: 'Nazwy klientów, działów, typów usług i kategorii prac zmieniasz w miejscu — Enter zatwierdza zmianę. Pustej nazwy nie da się zapisać: pole wraca wtedy do poprzedniej wartości.',
         route: '/admin',
       },
     ],

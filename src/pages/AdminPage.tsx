@@ -201,7 +201,7 @@ export function AdminPage() {
         </form>
       </div>
 
-      <div className="editor-section">
+      <div className="editor-section" data-tour="admin.dictionaries">
         <h2>Klienci</h2>
         <SimpleList
           items={state.clients.map((c) => ({ id: c.id, name: c.name }))}
