@@ -4,6 +4,7 @@ import { RouterProvider, createBrowserRouter } from 'react-router-dom';
 import { MotionConfig } from 'motion/react';
 import { AppStoreProvider } from './store/AppStore';
 import { SessionProvider } from './auth/SessionProvider';
+import { OrgDataProvider } from './supabase/OrgDataProvider';
 import { App } from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import './styles.css';
@@ -42,10 +43,15 @@ createRoot(rootEl).render(
             It sits inside the store (needs people/dispatch) and outside the
             router (needs no router hooks). */}
         <SessionProvider>
-          {/* Respect OS "reduce motion" for every animation in the app. */}
-          <MotionConfig reducedMotion="user">
-            <RouterProvider router={router} future={{ v7_startTransition: true }} />
-          </MotionConfig>
+          {/* Reads the RLS-scoped org snapshot in Supabase mode (idle in local
+              mode — no client is created). Sits inside SessionProvider (needs the
+              auth mode + session) and outside the router (needs no router hooks). */}
+          <OrgDataProvider>
+            {/* Respect OS "reduce motion" for every animation in the app. */}
+            <MotionConfig reducedMotion="user">
+              <RouterProvider router={router} future={{ v7_startTransition: true }} />
+            </MotionConfig>
+          </OrgDataProvider>
         </SessionProvider>
       </AppStoreProvider>
     </ErrorBoundary>

@@ -283,6 +283,31 @@ describe('buildDryRunReport — mapping diagnostics', () => {
     expect(entities).toEqual(['Projekt', 'Zadanie', 'Osoba']);
   });
 
+  it('counts reference dictionaries as target tables and no longer as unsupported collections', () => {
+    const data: AppData = {
+      ...emptyData(),
+      statuses: [
+        { id: 's1', name: 'Do zrobienia', slug: 'todo', color: '#fff', order: 0, archived: false, isDone: false },
+        { id: 's2', name: 'Zrobione', slug: 'done', color: '#0f0', order: 1, archived: false, isDone: true },
+      ],
+      serviceTypes: [{ id: 'sv1', name: 'Wideo' }],
+      workCategories: [{ id: 'wc1', name: 'Design' }, { id: 'wc2', name: 'Copy' }],
+      clients: [{ id: 'c1', name: 'Klient', archived: false }],
+    };
+    const report = buildDryRunReport(data);
+
+    expect(report.counts.target.statuses).toBe(2);
+    expect(report.counts.target.service_types).toBe(1);
+    expect(report.counts.target.work_categories).toBe(2);
+
+    const names = report.unsupported.collections.map((c) => c.name);
+    expect(names).not.toContain('Statusy');
+    expect(names).not.toContain('Typy usług');
+    expect(names).not.toContain('Kategorie prac');
+    // Clients still have no target table.
+    expect(names).toContain('Klienci');
+  });
+
   it('reports no blockers for a clean fixture and warns on a dangling department reference', () => {
     const data: AppData = {
       ...emptyData(),

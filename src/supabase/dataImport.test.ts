@@ -7,7 +7,16 @@
 import { describe, expect, it } from 'vitest';
 import { emptyData } from '../store/storage';
 import { buildDryRunReport } from '../store/exportDryRun';
-import type { AppData, Person, Project, Task, TaskAssignment } from '../types';
+import type {
+  AppData,
+  Person,
+  Project,
+  ServiceType,
+  Status,
+  Task,
+  TaskAssignment,
+  WorkCategory,
+} from '../types';
 import {
   createSupabaseImportDb,
   evaluateImportGate,
@@ -440,6 +449,113 @@ describe('runSupabaseImport — non-UUID id', () => {
     const alpha = db.insertCalls('projects').find((r) => r.id === PR1);
     expect(alpha?.department_id).toBeNull();
     expect(result.diagnostics.some((d) => d.collection === 'projects' && d.entityId === PR1 && d.message.startsWith('Dział projektu'))).toBe(true);
+  });
+});
+
+// ---- 9. Reference dictionaries (statuses / service_types / work_categories) --
+
+const makeStatus = (o: Partial<Status> & { id: string }): Status => ({
+  name: 'Status', slug: 'status', color: '#c496ff', order: 0, archived: false, isDone: false, ...o,
+});
+const makeService = (o: Partial<ServiceType> & { id: string }): ServiceType => ({ name: 'Usługa', ...o });
+const makeCategory = (o: Partial<WorkCategory> & { id: string }): WorkCategory => ({ name: 'Kategoria', ...o });
+
+const ST1 = uuid('status-todo');
+const ST2 = uuid('status-done');
+const SV1 = uuid('service-video');
+const WC1 = uuid('category-design');
+
+function refFixture(): AppData {
+  return {
+    ...emptyData(),
+    statuses: [
+      makeStatus({ id: ST1, name: 'Do zrobienia', slug: 'todo', order: 1, isDone: false }),
+      makeStatus({ id: ST2, name: 'Zrobione', slug: 'done', order: 2, isDone: true, archived: true }),
+    ],
+    serviceTypes: [makeService({ id: SV1, name: 'Wideo' })],
+    workCategories: [makeCategory({ id: WC1, name: 'Design' })],
+    // No people/projects/tasks needed for dictionary-only assertions.
+    people: [],
+    projects: [],
+    tasks: [],
+    assignments: [],
+  };
+}
+
+describe('runSupabaseImport — słowniki referencyjne', () => {
+  it('wstawia statusy/typy usług/kategorie z mapowaniem kolumn i przed działami', async () => {
+    const data = refFixture();
+    const db = new FakeDb();
+    const result = await runSupabaseImport(data, buildDryRunReport(data), db);
+
+    expect(sumFor(result, 'statuses')).toMatchObject({ imported: 2, skipped: 0, failed: 0 });
+    expect(sumFor(result, 'service_types')).toMatchObject({ imported: 1, skipped: 0, failed: 0 });
+    expect(sumFor(result, 'work_categories')).toMatchObject({ imported: 1, skipped: 0, failed: 0 });
+
+    // order → sort_order, isDone → is_done, archived carried.
+    const done = db.insertCalls('statuses').find((r) => r.id === ST2);
+    expect(done).toMatchObject({ name: 'Zrobione', slug: 'done', sort_order: 2, is_done: true, archived: true });
+    // Reference inserts precede departments (dependency-free step 0).
+    expect(db.insertTables.indexOf('statuses')).toBeLessThan(
+      db.insertTables.indexOf('service_types'),
+    );
+  });
+
+  it('pomija po id oraz po kluczu semantycznym (slug / nazwa); rerun nic nie wstawia', async () => {
+    const data = refFixture();
+    const db = new FakeDb()
+      // Same id as ST1 -> skip by id.
+      .seed('statuses', [{ id: ST1, slug: 'inny-slug' }])
+      // Different id, same trimmed name -> skip by name.
+      .seed('service_types', [{ id: uuid('server-video'), name: 'Wideo' }]);
+    const result = await runSupabaseImport(data, buildDryRunReport(data), db);
+
+    expect(sumFor(result, 'statuses')).toMatchObject({ imported: 1, skipped: 1, failed: 0 });
+    expect(db.insertCalls('statuses').some((r) => r.id === ST1)).toBe(false);
+    expect(sumFor(result, 'service_types')).toMatchObject({ imported: 0, skipped: 1, failed: 0 });
+    expect(db.insertCalls('service_types')).toHaveLength(0);
+
+    // Idempotent rerun: nothing new imported.
+    const second = await runSupabaseImport(data, buildDryRunReport(data), db);
+    expect(sumFor(second, 'statuses').imported).toBe(0);
+    expect(sumFor(second, 'work_categories').imported).toBe(0);
+  });
+
+  it('skip po slug dla statusów (różne id, ten sam slug)', async () => {
+    const data = refFixture();
+    const db = new FakeDb().seed('statuses', [{ id: uuid('server-todo'), slug: 'todo' }]);
+    const result = await runSupabaseImport(data, buildDryRunReport(data), db);
+    expect(db.insertCalls('statuses').some((r) => r.slug === 'todo')).toBe(false);
+    expect(sumFor(result, 'statuses')).toMatchObject({ imported: 1, skipped: 1 });
+  });
+
+  it('nie-UUID id => diagnostyka, bez insertu, kontynuacja', async () => {
+    const data: AppData = {
+      ...refFixture(),
+      statuses: [makeStatus({ id: 'legacy-1', slug: 'legacy' }), makeStatus({ id: ST2, slug: 'done' })],
+    };
+    const db = new FakeDb();
+    const result = await runSupabaseImport(data, buildDryRunReport(data), db);
+
+    expect(db.insertCalls('statuses').some((r) => r.id === 'legacy-1')).toBe(false);
+    const diag = result.diagnostics.find((d) => d.collection === 'statuses' && d.entityId === 'legacy-1');
+    expect(diag?.message).toBe('Identyfikator nie jest w formacie UUID — rekord wymaga ręcznej migracji.');
+    expect(sumFor(result, 'statuses')).toMatchObject({ imported: 1, failed: 1 });
+  });
+
+  it('błąd selectu => wszystkie wiersze kolekcji policzone jako błąd, bez insertów', async () => {
+    const data = refFixture();
+    const db = new FakeDb();
+    db.failSelect = (table) => (table === 'work_categories' ? 'select-boom' : null);
+    const result = await runSupabaseImport(data, buildDryRunReport(data), db);
+
+    expect(sumFor(result, 'work_categories')).toMatchObject({ imported: 0, failed: 1 });
+    expect(db.insertCalls('work_categories')).toHaveLength(0);
+    expect(
+      result.diagnostics.some((d) => d.collection === 'work_categories' && d.message.startsWith('Zapis nie powiódł się')),
+    ).toBe(true);
+    // Other dictionaries still import.
+    expect(sumFor(result, 'statuses').imported).toBe(2);
   });
 });
 

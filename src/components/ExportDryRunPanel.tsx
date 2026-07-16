@@ -52,6 +52,9 @@ const COUNT_LABELS: Array<[string, keyof DryRunReport['counts']['source']]> = [
 ];
 
 const TARGET_LABELS: Array<[string, keyof DryRunReport['counts']['target']]> = [
+  ['statuses', 'statuses'],
+  ['service_types', 'service_types'],
+  ['work_categories', 'work_categories'],
   ['departments', 'departments'],
   ['profiles', 'profiles'],
   ['projects', 'projects'],

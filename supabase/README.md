@@ -1,10 +1,23 @@
 # Supabase — migracje i model dostępu (RLS)
 
-Ten katalog to **uśpiona infrastruktura**: aplikacja nadal działa wyłącznie na
-localStorage (`src/store/storage.ts`), a klient z `src/supabase/` nie jest
-jeszcze nigdzie importowany. Migracje definiują docelowy, produkcyjny model
-dostępu po stronie bazy — **cała logika uprawnień żyje w SQL**, kontrole po
-stronie klienta pozostają wyłącznie UX-em.
+Migracje definiują docelowy, produkcyjny model dostępu po stronie bazy —
+**cała logika uprawnień żyje w SQL**, kontrole po stronie klienta pozostają
+wyłącznie UX-em.
+
+## Granica przejściowa (tryb supabase)
+
+W trybie supabase uwierzytelniony profil, dział, rola dostępu oraz widoczność
+zespołu są odczytywane z Supabase i **wyjście RLS jest autorytatywne**; kontrole
+po stronie klienta to wyłącznie UX. Cloudowe statusy / typy usług / kategorie
+prac są wczytywane i wyświetlane, ale **planer nadal renderuje i mutuje LOKALNE
+słowniki z localStorage**, bo lokalne zadania/projekty/godziny wskazują na
+lokalne id (tożsamość id z wierszami chmury nie jest gwarantowana) — utrzymuje
+się to do kroku migracji zapisu danych. Tryb lokalny korzysta wyłącznie z
+localStorage (`src/store/storage.ts`; żaden klient Supabase nie powstaje).
+Ładowanie/błąd w trybie supabase spada z powrotem na lokalną rolę na potrzeby
+bramek UX. Odczyty żyją w `src/supabase/referenceData.ts` (czyste,
+`loadOrgSnapshot` + `effectiveAccessRole`) i `OrgDataProvider.tsx`; import z
+`src/supabase/dataImport.ts` migruje te słowniki idempotentnie.
 
 Żadna migracja nie została zastosowana na hostowanym projekcie w ramach tego
 zadania.
@@ -17,6 +30,7 @@ supabase/
     20260715210000_core_schema.sql    # tabele rdzenia + enable RLS (deny-by-default)
     20260715210500_rls_policies.sql   # funkcje pomocnicze, polityki, Storage avatars
     20260715220000_profiles_must_change_password.sql  # flaga wymuszonej zmiany pierwszego hasła
+    20260716150000_reference_tables.sql               # słowniki: statuses, service_types, work_categories
   functions/
     provision-account/                # Edge Function: serwerowe zakładanie kont (tylko administrator)
     README.md
@@ -59,6 +73,15 @@ worker` — do potwierdzenia przy zadaniu integracyjnym.
 | `project_members` | CRUD | zarządza członkostwem projektów swojego działu, dodaje wyłącznie osoby z tego działu | odczyt własnych członkostw |
 | `tasks` | CRUD | CRUD zadań w projektach swojego działu | odczyt + aktualizacja zadań, do których jest przypisany |
 | `task_assignments` | CRUD | zarządza przypisaniami zadań swojego działu, przypisuje wyłącznie osoby z tego działu | odczyt własnych przypisań |
+| `statuses` | CRUD | odczyt | odczyt |
+| `service_types` | CRUD | odczyt | odczyt |
+| `work_categories` | CRUD | odczyt | odczyt |
+
+Słowniki referencyjne (`statuses`, `service_types`, `work_categories`) to dane
+całej organizacji: SELECT dla każdego `authenticated` (`using (true)`), a
+INSERT/UPDATE/DELETE wyłącznie dla administratora (`app.is_administrator()`).
+Kolumna `statuses.sort_order` (nie `order` — słowo zarezerwowane) mapuje
+`Status.order` z `src/types.ts`.
 
 Reguły niewyrażalne w `WITH CHECK` (porównanie starych i nowych wartości)
 egzekwują triggery:

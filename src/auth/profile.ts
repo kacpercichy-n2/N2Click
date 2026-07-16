@@ -1,9 +1,14 @@
 // Skojarzenie uwierzytelnionego użytkownika z lokalnym profilem `Person`.
 //
-// WYŁĄCZNIE PO TOŻSAMOŚCI (adres e-mail). Rola dostępu i dział ZAWSZE pochodzą
-// z lokalnego rekordu `Person` (tak jak dotąd) — nigdy nie czytamy roli, działu
-// ani żadnych uprawnień z `user_metadata`, `app_metadata` czy z tokenu JWT.
-// Ten moduł jest czysty i testowalny w node.
+// WYŁĄCZNIE PO TOŻSAMOŚCI (adres e-mail): ten moduł kojarzy sesję z lokalnym
+// rekordem `Person`, bo dane planera (zadania/projekty/godziny) wskazują na
+// lokalne id osób — i to pozostaje wymagane. NIGDY nie czytamy tu roli, działu
+// ani uprawnień z `user_metadata`, `app_metadata` czy tokenu JWT.
+//
+// UWAGA: w trybie supabase rola dostępu i dział na potrzeby bramek UX pochodzą
+// z Supabase (RLS jest autorytatywne) — patrz src/supabase/referenceData.ts
+// (effectiveAccessRole) i OrgDataProvider. Samo skojarzenie po e-mailu poniżej
+// jest niezależne od tego i się nie zmienia. Moduł jest czysty i testowalny w node.
 
 import type { Person } from '../types';
 

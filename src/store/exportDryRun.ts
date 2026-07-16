@@ -63,8 +63,11 @@ export interface DryRunCounts {
     activity: number;
     savedFilters: number;
   };
-  // Target = Supabase core-schema row counts that WOULD be produced.
+  // Target = Supabase row counts that WOULD be produced.
   target: {
+    statuses: number;
+    service_types: number;
+    work_categories: number;
     departments: number;
     profiles: number;
     projects: number;
@@ -198,6 +201,9 @@ export function buildDryRunReport(data: AppData): DryRunReport {
       savedFilters: data.savedFilters.length,
     },
     target: {
+      statuses: data.statuses.length,
+      service_types: data.serviceTypes.length,
+      work_categories: data.workCategories.length,
       departments: data.departments.length,
       profiles: data.people.length,
       projects: data.projects.length,
@@ -234,13 +240,11 @@ export function buildDryRunReport(data: AppData): DryRunReport {
     count: roleCounts.get(role) ?? 0,
   }));
 
-  // Whole collections with no target table in the core schema. Listed only when
-  // non-empty (nothing to drop = nothing to report).
+  // Whole collections with no target table. Listed only when non-empty (nothing
+  // to drop = nothing to report). Statuses/service types/work categories now HAVE
+  // target tables (statuses/service_types/work_categories) and are omitted here.
   const collectionCandidates: Array<[string, number]> = [
     ['Klienci', data.clients.length],
-    ['Typy usług', data.serviceTypes.length],
-    ['Kategorie prac', data.workCategories.length],
-    ['Statusy', data.statuses.length],
     ['Kamienie milowe', data.milestones.length],
     ['Zaplanowane godziny', data.workload.length],
     ['Komentarze', data.comments.length],

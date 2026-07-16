@@ -6,6 +6,7 @@
 // kontraktu Edge Function. Dzięki temu jest testowalny w środowisku node bez
 // jsdom (patrz vitest.config.ts, environment: 'node').
 import type { Department, Person } from '../types';
+import type { CloudProfile } from '../supabase/referenceData';
 import { ROLE_LABELS } from '../store/permissions';
 import {
   parseProvisionRequest,
@@ -115,6 +116,60 @@ export function buildTeamHierarchy(
         people: orphans.map((p) => toPersonView(p, nameById)),
       });
     }
+  }
+
+  return groups;
+}
+
+// --- Hierarchia z chmury (tryb supabase) -------------------------------------
+
+/**
+ * Polskie etykiety ról CHMURY (public.access_role: administrator/manager/worker).
+ * `manager` to „Menedżer", `worker` to „Pracownik" — mapowanie RLS, nie lokalne
+ * cztery role planera.
+ */
+const CLOUD_ROLE_LABELS: Record<CloudProfile['cloudRole'], string> = {
+  administrator: 'Administrator',
+  manager: 'Menedżer',
+  worker: 'Pracownik',
+};
+
+function cloudPersonView(p: CloudProfile): TeamPersonView {
+  const name = `${p.firstName} ${p.lastName}`.trim() || p.email || '(bez nazwy)';
+  return {
+    id: p.id,
+    name,
+    roleTitle: p.roleTitle,
+    accessRoleLabel: CLOUD_ROLE_LABELS[p.cloudRole],
+    // Chmura nie ma pola przełożonego — pomijamy wiersz przełożonego.
+    supervisorName: '',
+  };
+}
+
+/**
+ * Buduje hierarchię działów → osób z surowych, już zscope'owanych przez RLS
+ * wierszy chmury (administrator: wszystko, menedżer: własny dział, pracownik:
+ * tylko siebie). NIE filtruje ponownie — wyłącznie grupuje. Grupa „Bez działu"
+ * pojawia się tylko, gdy istnieją profile spoza znanych działów. Puste wejście
+ * (brak działów i profili) → pusta lista.
+ */
+export function buildCloudTeamHierarchy(
+  profiles: CloudProfile[],
+  departments: Department[],
+): TeamDepartmentView[] {
+  const knownDeptIds = new Set(departments.map((d) => d.id));
+  const groups: TeamDepartmentView[] = [];
+
+  for (const dept of departments) {
+    const members = profiles.filter((p) => p.departmentId === dept.id);
+    groups.push({ id: dept.id, name: dept.name, people: members.map(cloudPersonView) });
+  }
+
+  const orphans = profiles.filter(
+    (p) => p.departmentId === null || !knownDeptIds.has(p.departmentId),
+  );
+  if (orphans.length > 0) {
+    groups.push({ id: '', name: NO_DEPARTMENT_LABEL, people: orphans.map(cloudPersonView) });
   }
 
   return groups;

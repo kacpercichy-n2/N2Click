@@ -28,6 +28,8 @@ import { TeamPage } from './pages/TeamPage';
 import { canViewTeam } from './pages/teamScope';
 import { landingPathForRole, LoginPage } from './pages/LoginPage';
 import { useAuth } from './auth/SessionProvider';
+import { useOrgData } from './supabase/OrgDataProvider';
+import { effectiveAccessRole } from './supabase/referenceData';
 import {
   AuthBlocked,
   AuthLoading,
@@ -112,6 +114,7 @@ function visibleDrawerControls(drawer: HTMLElement | null): HTMLElement[] {
 export function App() {
   const { state, dispatch } = useStore();
   const auth = useAuth();
+  const org = useOrgData();
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => loadUiPrefs().sidebarCollapsed);
@@ -142,7 +145,14 @@ export function App() {
   const canAdmin = can(currentUser, 'admin.panel', { peopleCount });
   // `/team` visibility mirrors the server role model (worker hidden, manager =
   // own department, administrator = all). UX gate only — see pages/teamScope.ts.
-  const canTeam = canViewTeam(currentUser);
+  // In Supabase mode (self-acting, snapshot ready) the effective cloud role
+  // drives it; otherwise the local role (loading/error/local mode/impersonating).
+  const teamRole = effectiveAccessRole(currentUser, org.state, {
+    mode: auth.mode,
+    impersonating,
+  });
+  const teamUser = currentUser && teamRole ? { ...currentUser, accessRole: teamRole } : currentUser;
+  const canTeam = canViewTeam(teamUser);
   // Session gate: with people present and nobody resolving to a current user,
   // only the login screen renders (no sidebar, no routes). Zero people = setup
   // mode (no lockout — mirrors the admin gate). `currentUserId` persists, so a

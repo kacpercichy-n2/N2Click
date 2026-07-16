@@ -1,0 +1,195 @@
+// Odczyty referencyjne i organizacyjne z Supabase (RLS-scoped selects).
+//
+// GRANICA PRZEJŚCIOWA: w trybie supabase uwierzytelniony profil, dział, rola
+// dostępu oraz widoczność zespołu są CZYTANE z Supabase, a wyjście RLS jest
+// autorytatywne; kontrole po stronie klienta pozostają wyłącznie UX-em. Cloudowe
+// statusy / typy usług / kategorie prac są wczytywane i wyświetlane, ale planer
+// nadal renderuje i mutuje LOKALNE słowniki z localStorage — lokalne
+// zadania/projekty/godziny wskazują na lokalne id, a tożsamość id z wierszami
+// chmury nie jest gwarantowana. Utrzymuje się to do kroku migracji zapisu
+// danych. Tryb lokalny korzysta wyłącznie z localStorage. Ładowanie/błąd w
+// trybie supabase spada z powrotem na lokalną rolę na potrzeby bramek UX.
+//
+// Moduł jest CZYSTY i testowalny w node: cały dostęp do bazy idzie przez
+// wstrzyknięty interfejs `ReferenceDb` (współdzielony z dataImport.ts). Bez
+// mockowania SDK, bez żywego Supabase w vitest, bez jsdom.
+import type {
+  AccessRole,
+  Department,
+  Person,
+  ServiceType,
+  Status,
+  WorkCategory,
+} from '../types';
+import type { AuthMode } from '../auth/mode';
+import type { ImportDb } from './dataImport';
+
+/** Read-only granica bazy: reużywamy `select` z ImportDb (jeden adapter). */
+export type ReferenceDb = Pick<ImportDb, 'select'>;
+
+/** Rola dostępu po stronie serwera (enum public.access_role). */
+export type CloudRole = 'administrator' | 'manager' | 'worker';
+
+export interface CloudProfile {
+  id: string; // auth.users id (NIE e-mail)
+  firstName: string;
+  lastName: string;
+  email: string;
+  roleTitle: string;
+  cloudRole: CloudRole;
+  departmentId: string | null;
+}
+
+export interface OrgSnapshot {
+  /** Wiersz profilu bieżącego użytkownika (id === userId) albo null (brak). */
+  profile: CloudProfile | null;
+  profiles: CloudProfile[];
+  departments: Department[];
+  statuses: Status[];
+  serviceTypes: ServiceType[];
+  workCategories: WorkCategory[];
+}
+
+export type LoadOrgResult =
+  | { ok: true; snapshot: OrgSnapshot }
+  | { ok: false; error: string };
+
+/** Jeden, stały polski komunikat błędu — nigdy nie pokazujemy surowego SDK. */
+export const ORG_SNAPSHOT_ERROR = 'Nie udało się wczytać danych organizacji z serwera.';
+
+/**
+ * Odwrotność udokumentowanego mapowania frontend→cloud
+ * (`administrator→administrator`, `pm→manager`, `handlowiec/pracownik→worker`).
+ * `handlowiec` nie jest reprezentowalny po stronie serwera i celowo ląduje na
+ * `pracownik` w UX trybu supabase — to jest prawda RLS (worker), a nie utrata
+ * uprawnień handlowca planera lokalnego.
+ */
+export function cloudRoleToAccessRole(role: CloudRole): AccessRole {
+  switch (role) {
+    case 'administrator':
+      return 'administrator';
+    case 'manager':
+      return 'pm';
+    case 'worker':
+      return 'pracownik';
+  }
+}
+
+// ---- Mapowanie wierszy -------------------------------------------------------
+
+const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+const bool = (v: unknown): boolean => v === true;
+const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+
+function toCloudRole(v: unknown): CloudRole {
+  return v === 'administrator' || v === 'manager' ? v : 'worker';
+}
+
+function toCloudProfile(row: Record<string, unknown>): CloudProfile {
+  const departmentId = row.department_id;
+  return {
+    id: str(row.id),
+    firstName: str(row.first_name),
+    lastName: str(row.last_name),
+    email: str(row.email),
+    roleTitle: str(row.role_title),
+    cloudRole: toCloudRole(row.access_role),
+    departmentId: typeof departmentId === 'string' && departmentId !== '' ? departmentId : null,
+  };
+}
+
+function toDepartment(row: Record<string, unknown>): Department {
+  return { id: str(row.id), name: str(row.name) };
+}
+
+function toStatus(row: Record<string, unknown>): Status {
+  return {
+    id: str(row.id),
+    name: str(row.name),
+    slug: str(row.slug),
+    color: str(row.color),
+    order: num(row.sort_order),
+    archived: bool(row.archived),
+    isDone: bool(row.is_done),
+  };
+}
+
+function toNamed(row: Record<string, unknown>): ServiceType {
+  return { id: str(row.id), name: str(row.name) };
+}
+
+const byName = (a: { name: string }, b: { name: string }): number => a.name.localeCompare(b.name);
+
+/**
+ * Wczytuje atomowo snapshot organizacji dla zalogowanego użytkownika. Wszystkie
+ * selecty biegną równolegle; RLS zwraca ograniczony zestaw wierszy (to poprawne
+ * scope'owanie, NIE błąd). JAKIKOLWIEK błąd selectu psuje cały snapshot (atomowo)
+ * z jednym polskim komunikatem. Puste kolekcje są POPRAWNE (`ok: true`). Brak
+ * własnego profilu (RLS nie zwrócił wiersza o id === userId) to stan
+ * `profile: null`, a nie błąd.
+ */
+export async function loadOrgSnapshot(db: ReferenceDb, userId: string): Promise<LoadOrgResult> {
+  const [profilesRes, departmentsRes, statusesRes, serviceTypesRes, workCategoriesRes] =
+    await Promise.all([
+      db.select('profiles', 'id, first_name, last_name, email, role_title, access_role, department_id'),
+      db.select('departments', 'id, name'),
+      db.select('statuses', 'id, name, slug, color, sort_order, archived, is_done'),
+      db.select('service_types', 'id, name'),
+      db.select('work_categories', 'id, name'),
+    ]);
+
+  if (
+    profilesRes.error ||
+    departmentsRes.error ||
+    statusesRes.error ||
+    serviceTypesRes.error ||
+    workCategoriesRes.error
+  ) {
+    return { ok: false, error: ORG_SNAPSHOT_ERROR };
+  }
+
+  const profiles = profilesRes.rows.map(toCloudProfile);
+  const departments = departmentsRes.rows.map(toDepartment).sort(byName);
+  const statuses = statusesRes.rows
+    .map(toStatus)
+    .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+  const serviceTypes = serviceTypesRes.rows.map(toNamed).sort(byName);
+  const workCategories = workCategoriesRes.rows.map((r) => toNamed(r) as WorkCategory).sort(byName);
+
+  const profile = profiles.find((p) => p.id === userId) ?? null;
+
+  return {
+    ok: true,
+    snapshot: { profile, profiles, departments, statuses, serviceTypes, workCategories },
+  };
+}
+
+// ---- Efektywna rola dostępu (bramka UX) -------------------------------------
+
+/** Stan maszyny dostawcy danych organizacji (patrz OrgDataProvider). */
+export type OrgState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ready'; snapshot: OrgSnapshot };
+
+/**
+ * Efektywna rola dostępu dla bramek UX. Zwraca zmapowaną rolę CHMURY tylko gdy:
+ * tryb === 'supabase', snapshot jest `ready`, ma własny `profile` i NIE trwa
+ * personifikacja. W każdym innym przypadku (tryb lokalny, ładowanie, błąd,
+ * brak profilu w chmurze, personifikacja) obowiązuje lokalna `accessRole`
+ * (albo `undefined`, gdy nie ma użytkownika). Autoryzacja i tak żyje po stronie
+ * serwera (RLS) — to wyłącznie spójność widoku.
+ */
+export function effectiveAccessRole(
+  localUser: Person | undefined,
+  org: OrgState,
+  opts: { mode: AuthMode; impersonating: boolean },
+): AccessRole | undefined {
+  const localRole = localUser?.accessRole;
+  // Bez lokalnej tożsamości nie ma kogo bramkować — undefined w każdym trybie.
+  if (!localUser) return localRole;
+  if (opts.mode !== 'supabase' || opts.impersonating) return localRole;
+  if (org.status !== 'ready' || !org.snapshot.profile) return localRole;
+  return cloudRoleToAccessRole(org.snapshot.profile.cloudRole);
+}

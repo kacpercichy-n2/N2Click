@@ -161,13 +161,11 @@ function emptySummary(collection: string, label: string): ImportCollectionSummar
   return { collection, label, imported: 0, skipped: 0, failed: 0 };
 }
 
-// Collections with no target table in the current core schema: reported as
-// skipped, never silently dropped.
+// Collections with no target table in the current schema: reported as skipped,
+// never silently dropped. Reference dictionaries (statuses/service_types/
+// work_categories) now HAVE target tables and are imported below.
 const UNSUPPORTED: Array<[keyof AppData, string, string]> = [
   ['clients', 'clients', 'Klienci'],
-  ['serviceTypes', 'serviceTypes', 'Typy usług'],
-  ['workCategories', 'workCategories', 'Kategorie prac'],
-  ['statuses', 'statuses', 'Statusy'],
   ['milestones', 'milestones', 'Kamienie milowe'],
   ['workload', 'workload', 'Zaplanowane godziny'],
   ['comments', 'comments', 'Komentarze'],
@@ -195,6 +193,58 @@ export async function runSupabaseImport(
   const summary: ImportCollectionSummary[] = [];
   const diagnostics: ImportDiagnostic[] = [];
   const personById = new Map<string, Person>(data.people.map((p) => [p.id, p]));
+
+  // 0) REFERENCE DICTIONARIES (dependency-free — imported before departments) ---
+  // Insert-only, select-before-insert; mirrors the departments strategy: skip by
+  // id, skip by a semantic key (statuses: trimmed slug; the rest: trimmed name),
+  // non-UUID local id => diagnostic, otherwise insert with the explicit local id.
+  summary.push(
+    await importReferenceCollection(db, {
+      collection: 'statuses',
+      label: 'Statusy',
+      table: 'statuses',
+      items: data.statuses,
+      columns: 'id, slug',
+      semanticKeyColumn: 'slug',
+      semanticKeyOf: (s) => s.slug.trim(),
+      rowOf: (s) => ({
+        id: s.id,
+        name: s.name,
+        slug: s.slug,
+        color: s.color,
+        sort_order: s.order,
+        archived: s.archived,
+        is_done: s.isDone,
+      }),
+      diagnostics,
+    }),
+  );
+  summary.push(
+    await importReferenceCollection(db, {
+      collection: 'service_types',
+      label: 'Typy usług',
+      table: 'service_types',
+      items: data.serviceTypes,
+      columns: 'id, name',
+      semanticKeyColumn: 'name',
+      semanticKeyOf: (s) => s.name.trim(),
+      rowOf: (s) => ({ id: s.id, name: s.name }),
+      diagnostics,
+    }),
+  );
+  summary.push(
+    await importReferenceCollection(db, {
+      collection: 'work_categories',
+      label: 'Kategorie prac',
+      table: 'work_categories',
+      items: data.workCategories,
+      columns: 'id, name',
+      semanticKeyColumn: 'name',
+      semanticKeyOf: (c) => c.name.trim(),
+      rowOf: (c) => ({ id: c.id, name: c.name }),
+      diagnostics,
+    }),
+  );
 
   // Message for a person who could not be mapped to a Supabase profile.
   const personMessage = (personId: string): string => {
@@ -440,6 +490,84 @@ export async function runSupabaseImport(
   }
 
   return { completed: true, summary, diagnostics };
+}
+
+/**
+ * Insert-only import of a dependency-free reference dictionary, mirroring the
+ * departments strategy: select existing (id + a semantic key column), skip when
+ * the id is already present OR a trimmed semantic key matches, fail a non-UUID
+ * local id with a diagnostic (never insert it), otherwise insert with the
+ * explicit local id. Never throws — every db error becomes a failed count plus a
+ * diagnostic. Idempotent: a rerun skips everything already present.
+ */
+async function importReferenceCollection<T extends { id: string }>(
+  db: ImportDb,
+  opts: {
+    collection: string;
+    label: string;
+    table: string;
+    items: T[];
+    columns: string; // e.g. 'id, slug' or 'id, name'
+    semanticKeyColumn: string; // column read back for skip-by-key (slug / name)
+    semanticKeyOf: (item: T) => string; // trimmed semantic key of a local item
+    rowOf: (item: T) => Record<string, unknown>; // insert payload
+    diagnostics: ImportDiagnostic[];
+  },
+): Promise<ImportCollectionSummary> {
+  const summary = emptySummary(opts.collection, opts.label);
+  const existing = await db.select(opts.table, opts.columns);
+  if (existing.error) {
+    for (const item of opts.items) {
+      summary.failed++;
+      opts.diagnostics.push({
+        collection: opts.collection,
+        entityId: item.id,
+        message: insertFailure(existing.error),
+      });
+    }
+    return summary;
+  }
+
+  const knownIds = new Set<string>();
+  const byKey = new Map<string, string>();
+  for (const row of existing.rows) {
+    knownIds.add(String(row.id));
+    const key = typeof row[opts.semanticKeyColumn] === 'string'
+      ? (row[opts.semanticKeyColumn] as string).trim()
+      : '';
+    if (key && !byKey.has(key)) byKey.set(key, String(row.id));
+  }
+
+  for (const item of opts.items) {
+    if (knownIds.has(item.id)) {
+      summary.skipped++;
+      continue;
+    }
+    const key = opts.semanticKeyOf(item);
+    if (key && byKey.has(key)) {
+      summary.skipped++;
+      continue;
+    }
+    if (!isUuid(item.id)) {
+      summary.failed++;
+      opts.diagnostics.push({ collection: opts.collection, entityId: item.id, message: DIAG.nonUuid });
+      continue;
+    }
+    const ins = await db.insert(opts.table, opts.rowOf(item));
+    if (ins.error) {
+      summary.failed++;
+      opts.diagnostics.push({
+        collection: opts.collection,
+        entityId: item.id,
+        message: insertFailure(ins.error),
+      });
+      continue;
+    }
+    knownIds.add(item.id);
+    if (key) byKey.set(key, item.id);
+    summary.imported++;
+  }
+  return summary;
 }
 
 interface JunctionPair {

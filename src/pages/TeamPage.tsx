@@ -8,18 +8,22 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
-import { currentUser as currentUserSel } from '../store/selectors';
+import { currentUser as currentUserSel, isImpersonating } from '../store/selectors';
 import { useAuth } from '../auth/SessionProvider';
 import { getSupabaseClient } from '../supabase/client';
 import { provisionAccount } from '../supabase/provisioning';
+import { useOrgData } from '../supabase/OrgDataProvider';
+import { effectiveAccessRole } from '../supabase/referenceData';
 import {
   PROVISION_ROLE_LABELS,
+  buildCloudTeamHierarchy,
   buildProvisionRequest,
   buildTeamHierarchy,
   canViewTeam,
   emptyProvisionForm,
   teamAccessForUser,
   type ProvisionFormState,
+  type TeamDepartmentView,
 } from './teamScope';
 import type { AccessRole as ProvisionAccessRole } from '../../supabase/functions/provision-account/contract';
 
@@ -44,20 +48,28 @@ type ServerListsState =
 export function TeamPage() {
   const { state } = useStore();
   const auth = useAuth();
+  const org = useOrgData();
   const me = currentUserSel(state);
 
+  // Efektywna rola: w trybie supabase (samodzielnie, snapshot gotowy) rola z
+  // chmury; w przeciwnym razie rola lokalna. Bramka nawigacji/trasy jest UX-owa.
+  const effectiveRole = effectiveAccessRole(me, org.state, {
+    mode: auth.mode,
+    impersonating: isImpersonating(state),
+  });
+  const effectiveMe = me && effectiveRole ? { ...me, accessRole: effectiveRole } : me;
+
   // Gate UX: obszar niewidoczny dla worker (pracownik/handlowiec) → redirect.
-  if (!canViewTeam(me)) {
+  if (!canViewTeam(effectiveMe)) {
     return <Navigate to="/dashboard" replace />;
   }
 
-  const access = teamAccessForUser(me);
-  const groups = buildTeamHierarchy(state.people, state.departments, access);
+  const isSupabase = auth.mode === 'supabase';
 
   // Zakładanie konta jest za jawną akcją i tylko dla lokalnego administratora w
   // trybie supabase. W trybie lokalnym pokazujemy krótką informację zamiast akcji.
   const isAdmin = me?.accessRole === 'administrator';
-  const canProvision = isAdmin && auth.mode === 'supabase';
+  const canProvision = isAdmin && isSupabase;
 
   return (
     <section className="page">
@@ -65,41 +77,12 @@ export function TeamPage() {
         <h1>Zespół</h1>
       </div>
 
-      {groups.length === 0 ? (
-        <div className="empty-state">
-          <p className="empty-title">Brak osób do wyświetlenia</p>
-          <p className="empty-hint">
-            Twoja rola nie obejmuje żadnego działu z przypisanymi osobami.
-          </p>
-        </div>
+      {isSupabase ? (
+        <CloudTeamHierarchy />
       ) : (
-        <div className="team-hierarchy">
-          {groups.map((dept) => (
-            <div key={dept.id || '__none'} className="team-dept">
-              <h2 className="team-dept-name">{dept.name}</h2>
-              {dept.people.length === 0 ? (
-                <p className="field-hint">Brak osób w tym dziale.</p>
-              ) : (
-                <ul className="team-person-list">
-                  {dept.people.map((p) => (
-                    <li key={p.id} className="team-person">
-                      <span className="team-person-name">{p.name}</span>
-                      <span className="team-person-meta">
-                        {p.roleTitle && <span className="team-person-role">{p.roleTitle}</span>}
-                        <span className="team-person-access">{p.accessRoleLabel}</span>
-                        {p.supervisorName && (
-                          <span className="team-person-sup">
-                            Przełożony: {p.supervisorName}
-                          </span>
-                        )}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          ))}
-        </div>
+        <LocalTeamHierarchy
+          groups={buildTeamHierarchy(state.people, state.departments, teamAccessForUser(me))}
+        />
       )}
 
       {isAdmin && auth.mode !== 'supabase' && (
@@ -111,6 +94,80 @@ export function TeamPage() {
 
       {canProvision && <ProvisionSection />}
     </section>
+  );
+}
+
+/** Wspólna prezentacja pogrupowanej hierarchii (lokalna i chmurowa). */
+function HierarchyGroups({ groups }: { groups: TeamDepartmentView[] }) {
+  if (groups.length === 0) {
+    return (
+      <div className="empty-state">
+        <p className="empty-title">Brak osób do wyświetlenia</p>
+        <p className="empty-hint">
+          Twoja rola nie obejmuje żadnego działu z przypisanymi osobami.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="team-hierarchy">
+      {groups.map((dept) => (
+        <div key={dept.id || '__none'} className="team-dept">
+          <h2 className="team-dept-name">{dept.name}</h2>
+          {dept.people.length === 0 ? (
+            <p className="field-hint">Brak osób w tym dziale.</p>
+          ) : (
+            <ul className="team-person-list">
+              {dept.people.map((p) => (
+                <li key={p.id} className="team-person">
+                  <span className="team-person-name">{p.name}</span>
+                  <span className="team-person-meta">
+                    {p.roleTitle && <span className="team-person-role">{p.roleTitle}</span>}
+                    <span className="team-person-access">{p.accessRoleLabel}</span>
+                    {p.supervisorName && (
+                      <span className="team-person-sup">Przełożony: {p.supervisorName}</span>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Hierarchia z lokalnego store'u (tryb lokalny — bez zmian względem dotąd). */
+function LocalTeamHierarchy({ groups }: { groups: TeamDepartmentView[] }) {
+  return <HierarchyGroups groups={groups} />;
+}
+
+/**
+ * Hierarchia zbudowana z RLS-owego snapshotu chmury (tryb supabase). RLS już
+ * scope'uje wiersze (admin: wszystko, menedżer: własny dział, pracownik: siebie)
+ * — tu wyłącznie grupujemy. Polskie stany ładowania/błędu/pustki.
+ */
+function CloudTeamHierarchy() {
+  const { state, reload } = useOrgData();
+
+  if (state.status === 'idle' || state.status === 'loading') {
+    return <p className="field-hint">Wczytywanie zespołu…</p>;
+  }
+  if (state.status === 'error') {
+    return (
+      <div className="empty-state">
+        <p className="field-error">{state.message}</p>
+        <button type="button" className="btn ghost" onClick={reload}>
+          Spróbuj ponownie
+        </button>
+      </div>
+    );
+  }
+  return (
+    <HierarchyGroups
+      groups={buildCloudTeamHierarchy(state.snapshot.profiles, state.snapshot.departments)}
+    />
   );
 }
 

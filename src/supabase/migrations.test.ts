@@ -42,6 +42,11 @@ const EXPECTED_POLICIES: Record<string, string[]> = {
   'public.tasks': ['select', 'insert', 'update', 'delete'],
   'public.task_assignments': ['select', 'insert', 'delete'],
   'storage.objects': ['select', 'insert', 'update', 'delete'],
+  // Słownikowe tabele referencyjne (20260716150000_reference_tables): odczyt dla
+  // wszystkich zalogowanych, zapis wyłącznie admin — pełne CRUD w politykach.
+  'public.statuses': ['select', 'insert', 'update', 'delete'],
+  'public.service_types': ['select', 'insert', 'update', 'delete'],
+  'public.work_categories': ['select', 'insert', 'update', 'delete'],
 };
 
 interface ParsedPolicy {
@@ -73,6 +78,7 @@ describe('konwencja plików migracji', () => {
       '20260715210000_core_schema.sql',
       '20260715210500_rls_policies.sql',
       '20260715220000_profiles_must_change_password.sql',
+      '20260716150000_reference_tables.sql',
     ]);
   });
 
@@ -104,12 +110,16 @@ describe('deny-by-default: RLS na każdej tabeli', () => {
     expect(allSql).not.toContain('force row level security');
   });
 
-  it('rola anon traci domyślne uprawnienia do tabel rdzenia', () => {
-    const revoke = allSql.match(/revoke all on ([a-z_.,\s]+) from anon/);
-    expect(revoke).not.toBeNull();
+  it('rola anon traci domyślne uprawnienia do każdej tabeli w public', () => {
+    // Kolejne migracje tylko-do-przodu odbierają anon dostęp we WŁASNYCH plikach,
+    // więc sumujemy wszystkie klauzule `revoke ... from anon` (rdzeń + słowniki).
+    const revoked = [...allSql.matchAll(/revoke all on ([a-z_.,\s]+) from anon/g)]
+      .map((m) => m[1])
+      .join(' ');
+    expect(revoked.length).toBeGreaterThan(0);
     for (const table of Object.keys(EXPECTED_POLICIES)) {
       if (table.startsWith('public.')) {
-        expect(revoke![1]).toContain(table);
+        expect(revoked).toContain(table);
       }
     }
   });

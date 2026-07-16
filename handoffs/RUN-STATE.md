@@ -54,3 +54,12 @@ people mapped never created) + `dataImport.test.ts` (17 cases). Extended
 `ExportDryRunPanel.tsx` with the gated import section (Polish). No localStorage
 touch; no upsert/update/delete. Focused set 168 pass, full `npm test` 804 pass,
 `npm run build` green. No deviations.
+
+## Developer result — 209 (PKG-20260716-cloud-reference-reads)
+
+New migration `20260716150000_reference_tables.sql` (statuses/service_types/
+work_categories, RLS: select all-authenticated, writes admin). New
+`referenceData.ts`/`OrgDataProvider.tsx`/tests. Import + dry-run now migrate the
+3 dictionaries. Cloud role/team reads via `effectiveAccessRole` (local fallback);
+no AppStore dispatch. Updated migrations.test (new file+tables). Focused 684,
+`npm test` 828, `npm run build` green. Deviation: migrations.test.ts edited (see report).

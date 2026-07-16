@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   NO_DEPARTMENT_LABEL,
   PROVISION_ROLE_LABELS,
+  buildCloudTeamHierarchy,
   buildProvisionRequest,
   buildTeamHierarchy,
   canViewTeam,
@@ -11,6 +12,7 @@ import {
   teamAccessForUser,
   type ProvisionFormState,
 } from './teamScope';
+import type { CloudProfile } from '../supabase/referenceData';
 import type { AccessRole, Department, Person } from '../types';
 import { PROVISIONING_MESSAGES } from '../../supabase/functions/provision-account/contract';
 
@@ -129,6 +131,58 @@ describe('buildTeamHierarchy', () => {
     const boss = mkt.people.find((p) => p.id === 'boss')!;
     expect(boss.accessRoleLabel).toBe('PM');
     expect(boss.supervisorName).toBe('');
+  });
+});
+
+describe('buildCloudTeamHierarchy', () => {
+  const cloud = (o: Partial<CloudProfile> & { id: string }): CloudProfile => ({
+    firstName: 'Jan', lastName: 'Kowalski', email: 'jan@x.pl', roleTitle: '', cloudRole: 'worker',
+    departmentId: null, ...o,
+  });
+  const departments: Department[] = [
+    { id: 'd-kre', name: 'Kreacja' },
+    { id: 'd-str', name: 'Strategia' },
+  ];
+
+  it('grupuje profile po dziale bez ponownego filtrowania i pomija wiersz przełożonego', () => {
+    const profiles: CloudProfile[] = [
+      cloud({ id: 'a', firstName: 'Ada', lastName: 'Admin', cloudRole: 'administrator', departmentId: 'd-kre', roleTitle: 'Szef' }),
+      cloud({ id: 'm', firstName: 'Marek', cloudRole: 'manager', departmentId: 'd-str' }),
+    ];
+    const groups = buildCloudTeamHierarchy(profiles, departments);
+    expect(groups.map((g) => g.name)).toEqual(['Kreacja', 'Strategia']);
+    const ada = groups[0].people[0];
+    expect(ada).toMatchObject({ name: 'Ada Admin', roleTitle: 'Szef', accessRoleLabel: 'Administrator', supervisorName: '' });
+    expect(groups[1].people[0].accessRoleLabel).toBe('Menedżer');
+  });
+
+  it('dodaje grupę „Bez działu" tylko gdy istnieją profile spoza znanych działów', () => {
+    const profiles: CloudProfile[] = [
+      cloud({ id: 'orphan', departmentId: null }),
+      cloud({ id: 'ghost', departmentId: 'd-usuniety' }),
+      cloud({ id: 'in', departmentId: 'd-kre' }),
+    ];
+    const groups = buildCloudTeamHierarchy(profiles, departments);
+    const orphan = groups.find((g) => g.id === '');
+    expect(orphan?.name).toBe(NO_DEPARTMENT_LABEL);
+    expect(orphan?.people.map((p) => p.id).sort()).toEqual(['ghost', 'orphan']);
+  });
+
+  it('brak grupy „Bez działu" gdy wszyscy mają znany dział', () => {
+    const groups = buildCloudTeamHierarchy([cloud({ id: 'in', departmentId: 'd-kre' })], departments);
+    expect(groups.some((g) => g.id === '')).toBe(false);
+  });
+
+  it('puste wejście => pusta lista', () => {
+    expect(buildCloudTeamHierarchy([], [])).toEqual([]);
+  });
+
+  it('używa e-maila gdy brak imienia i nazwiska', () => {
+    const groups = buildCloudTeamHierarchy(
+      [cloud({ id: 'x', firstName: '', lastName: '', email: 'only@x.pl', departmentId: 'd-kre' })],
+      departments,
+    );
+    expect(groups[0].people[0].name).toBe('only@x.pl');
   });
 });
 
