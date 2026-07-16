@@ -167,8 +167,6 @@ function emptySummary(collection: string, label: string): ImportCollectionSummar
 // never silently dropped. Reference dictionaries (statuses/service_types/
 // work_categories) now HAVE target tables and are imported below.
 const UNSUPPORTED: Array<[keyof AppData, string, string]> = [
-  ['milestones', 'milestones', 'Kamienie milowe'],
-  ['workload', 'workload', 'Zaplanowane godziny'],
   ['savedFilters', 'savedFilters', 'Zapisane filtry'],
 ];
 
@@ -536,6 +534,19 @@ export async function runSupabaseImport(
     }),
   );
 
+  // 8) MILESTONES (after projects) + WORKLOAD (after tasks) -------------------
+  summary.push(
+    await importMilestones(db, data, { availableProjectIds, diagnostics }),
+  );
+  summary.push(
+    await importWorkload(db, data, {
+      availableTaskIds,
+      personIdMap,
+      personMessage,
+      diagnostics,
+    }),
+  );
+
   // Unsupported collections — reported, never dropped silently.
   for (const [key, collection, label] of UNSUPPORTED) {
     const count = (data[key] as unknown[]).length;
@@ -763,6 +774,120 @@ async function importActivity(
     if (ins.error) {
       summary.failed++;
       opts.diagnostics.push({ collection: 'activity', entityId: e.id, message: insertFailure(ins.error) });
+      continue;
+    }
+    summary.imported++;
+  }
+  return summary;
+}
+
+/**
+ * Insert-only import of milestones (after projects). Skip-by-id; non-UUID id =>
+ * diagnostic; a milestone whose parent project was not imported fails with a
+ * diagnostic. `date` maps to `milestone_date`.
+ */
+async function importMilestones(
+  db: ImportDb,
+  data: AppData,
+  opts: { availableProjectIds: Set<string>; diagnostics: ImportDiagnostic[] },
+): Promise<ImportCollectionSummary> {
+  const summary = emptySummary('milestones', 'Kamienie milowe');
+  const existing = await selectExistingIds(db, 'milestones', data.milestones.map((m) => m.id));
+  if (existing.error) {
+    for (const m of data.milestones) {
+      summary.failed++;
+      opts.diagnostics.push({ collection: 'milestones', entityId: m.id, message: insertFailure(existing.error) });
+    }
+    return summary;
+  }
+  for (const m of data.milestones) {
+    if (existing.present.has(m.id)) {
+      summary.skipped++;
+      continue;
+    }
+    if (!opts.availableProjectIds.has(m.projectId)) {
+      summary.failed++;
+      opts.diagnostics.push({ collection: 'milestones', entityId: m.id, message: DIAG.parentNotImported });
+      continue;
+    }
+    if (!isUuid(m.id)) {
+      summary.failed++;
+      opts.diagnostics.push({ collection: 'milestones', entityId: m.id, message: DIAG.nonUuid });
+      continue;
+    }
+    const ins = await db.insert('milestones', {
+      id: m.id,
+      project_id: m.projectId,
+      name: m.name,
+      milestone_date: m.date,
+    });
+    if (ins.error) {
+      summary.failed++;
+      opts.diagnostics.push({ collection: 'milestones', entityId: m.id, message: insertFailure(ins.error) });
+      continue;
+    }
+    summary.imported++;
+  }
+  return summary;
+}
+
+/**
+ * Insert-only import of workload (after tasks). Skip-by-id; non-UUID id =>
+ * diagnostic; task not imported => diagnostic; profile unmappable => failed +
+ * diagnostic (personMessage). Bin sentinel `date === ''` maps to `work_date null`.
+ */
+async function importWorkload(
+  db: ImportDb,
+  data: AppData,
+  opts: {
+    availableTaskIds: Set<string>;
+    personIdMap: Map<string, string>;
+    personMessage: (personId: string) => string;
+    diagnostics: ImportDiagnostic[];
+  },
+): Promise<ImportCollectionSummary> {
+  const summary = emptySummary('workload', 'Zaplanowane godziny');
+  const existing = await selectExistingIds(db, 'workload_entries', data.workload.map((w) => w.id));
+  if (existing.error) {
+    for (const w of data.workload) {
+      summary.failed++;
+      opts.diagnostics.push({ collection: 'workload', entityId: w.id, message: insertFailure(existing.error) });
+    }
+    return summary;
+  }
+  for (const w of data.workload) {
+    if (existing.present.has(w.id)) {
+      summary.skipped++;
+      continue;
+    }
+    if (!opts.availableTaskIds.has(w.taskId)) {
+      summary.failed++;
+      opts.diagnostics.push({ collection: 'workload', entityId: w.id, message: DIAG.parentNotImported });
+      continue;
+    }
+    if (!isUuid(w.id)) {
+      summary.failed++;
+      opts.diagnostics.push({ collection: 'workload', entityId: w.id, message: DIAG.nonUuid });
+      continue;
+    }
+    const profileId = opts.personIdMap.get(w.personId);
+    if (!profileId) {
+      summary.failed++;
+      opts.diagnostics.push({ collection: 'workload', entityId: w.id, message: opts.personMessage(w.personId) });
+      continue;
+    }
+    const ins = await db.insert('workload_entries', {
+      id: w.id,
+      task_id: w.taskId,
+      profile_id: profileId,
+      work_date: w.date === '' ? null : w.date,
+      planned_hours: w.plannedHours,
+      start_minutes: w.startMinutes,
+      sort_index: w.sortIndex,
+    });
+    if (ins.error) {
+      summary.failed++;
+      opts.diagnostics.push({ collection: 'workload', entityId: w.id, message: insertFailure(ins.error) });
       continue;
     }
     summary.imported++;

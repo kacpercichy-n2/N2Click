@@ -58,9 +58,13 @@ const TARGET_LABELS: Array<[string, keyof DryRunReport['counts']['target']]> = [
   ['departments', 'departments'],
   ['profiles', 'profiles'],
   ['projects', 'projects'],
+  ['milestones', 'milestones'],
   ['project_members', 'project_members'],
   ['tasks', 'tasks'],
   ['task_assignments', 'task_assignments'],
+  ['workload_entries', 'workload_entries'],
+  ['comments', 'comments'],
+  ['activity_events', 'activity_events'],
 ];
 
 export function ExportDryRunPanel() {

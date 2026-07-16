@@ -9,11 +9,32 @@
   load, save outcomes and the same-browser revision envelope.
 - In supabase mode a diff-based cloud mirror (`src/supabase/cloudMirror.ts` +
   `src/supabase/plannerData.ts`, driven by `src/supabase/CloudSyncProvider.tsx`)
-  sits BEHIND the reducer: it mirrors the six planner families
-  (clients/projects/tasks/assignments/comments/activity) to Supabase from state
-  diffs AFTER each action, and hydrates them on sign-in via the single
-  `MERGE_CLOUD_ENTITIES` reducer action. localStorage stays the render source and
-  recovery copy; workload never leaves the browser. Local mode: zero diff.
+  sits BEHIND the reducer: it mirrors EIGHT planner families
+  (clients/projects/milestones/tasks/assignments/workload/comments/activity) to
+  Supabase from state diffs AFTER each action, and hydrates them on sign-in via
+  the single `MERGE_CLOUD_ENTITIES` reducer action. Workload entries (planned
+  hours + calendar/bin) and milestones now go cloud too — the "workload never
+  leaves the browser" rule is retired. Only per-user saved filters, people
+  administration, dictionary/status mutations and sample/reset stay local.
+  Constraint-violation write errors (23502/23503/23505/23514) drop the op with
+  the Polish permission notice rather than stalling the retry queue. Local mode:
+  zero diff.
+- Retirement gate (supabase mode only). After an admin runs the reversible
+  handshake in `MigrationStatusPanel` (coverage clean → snapshot read → probe
+  write/read/remove → backup downloaded), the org flag `local_writes_retired`
+  lands in `public.app_settings` and a per-browser cache marker on the dedicated
+  key `n2hub.cloudMigration.v1` (via `storage.ts` helpers, OUTSIDE the planner
+  key; `clearData()` never touches it). `src/store/persistGate.ts`
+  (`shouldSkipLocalPersist`) then lets a mirrored-only state transition skip the
+  per-action `saveData` ONLY while the cache marker is enabled, Supabase env is
+  configured and the mirror is verified-healthy right now
+  (`setCloudMirrorHealthy`). Any change to a non-mirrored collection, any mirror
+  degradation (transient error, hydration failure, sign-out, idle) or local mode
+  resumes per-action local writes automatically. While retired, localStorage is
+  still refreshed as a passive, never-deleted recovery copy on hydration, queue
+  drain, transient error and `pagehide` with pending ops; the same-browser
+  storage/conflict protocol keeps firing on every real divergence. A failed save
+  never reports `Zapisano`; skipping leaves `saveError` unchanged.
 
 ## Rules that change work
 
@@ -23,9 +44,12 @@
   active and one done status must survive all status mutations.
 - Task/project writes preserve existing valid behavior. Reducer commands that
   reject input must return the original state reference. This includes
-  `MERGE_CLOUD_ENTITIES`: an invalid cloud payload returns the prior state
-  reference; a valid merge replaces same-id rows, keeps local-only rows and
-  never touches workload/people/statuses/milestones/savedFilters (by reference).
+  `MERGE_CLOUD_ENTITIES`: an invalid cloud payload (including an off-grid or
+  dangling workload row, or a milestone with a bad date/missing project) returns
+  the prior state reference; a valid merge replaces same-id rows, keeps local-only
+  rows and reconciles a duplicate bin pair to the cloud-id row with grid-snapped
+  summed hours. It never touches people/statuses/savedFilters/dictionaries (by
+  reference); workload and milestones ARE now merged.
 - `SAVE_TASK` reconciles workload by identity-preserving deltas. Do not replace
   all workload rows when editing a task.
 - `saveData` reports success or a classified failure. Failed persistence must
@@ -53,5 +77,6 @@
 `commandValidation.test.ts`, `cloudMerge.test.ts`,
 `saveTaskWorkload.test.ts`,
 `selectors.test.ts`, `statusActions.test.ts`, `storage.test.ts`,
-`dateGuards.test.ts`, `taskMeta.test.ts`. Cloud mirror: `src/supabase/
-cloudMirror.test.ts`, `plannerData.test.ts`, `migrations.test.ts`.
+`dateGuards.test.ts`, `taskMeta.test.ts`, `persistGate.test.ts` (retirement
+gate). Cloud mirror: `src/supabase/cloudMirror.test.ts`, `plannerData.test.ts`,
+`migrationStatus.test.ts` (coverage + handshake), `migrations.test.ts`.

@@ -72,9 +72,11 @@ export interface DryRunCounts {
     departments: number;
     profiles: number;
     projects: number;
+    milestones: number;
     project_members: number;
     tasks: number;
     task_assignments: number;
+    workload_entries: number;
     comments: number;
     activity_events: number;
   };
@@ -197,9 +199,11 @@ export function buildDryRunReport(data: AppData): DryRunReport {
       departments: data.departments.length,
       profiles: data.people.length,
       projects: data.projects.length,
+      milestones: data.milestones.length,
       project_members: memberPairs.size,
       tasks: data.tasks.length,
       task_assignments: data.assignments.length,
+      workload_entries: data.workload.length,
       comments: data.comments.length,
       activity_events: data.activity.length,
     },
@@ -233,13 +237,11 @@ export function buildDryRunReport(data: AppData): DryRunReport {
   }));
 
   // Whole collections with no target table. Listed only when non-empty (nothing
-  // to drop = nothing to report). Statuses/service types/work categories AND now
-  // clients/comments/activity have target tables (20260716190000_planner_entities)
-  // and are omitted here — only milestones, workload and saved filters remain
+  // to drop = nothing to report). After the workload retirement migration
+  // (20260717000000) milestones and workload gain target tables too, so only
+  // SAVED FILTERS (per-user UI preference, never org planner data) remain
   // local-only.
   const collectionCandidates: Array<[string, number]> = [
-    ['Kamienie milowe', data.milestones.length],
-    ['Zaplanowane godziny', data.workload.length],
     ['Zapisane filtry', data.savedFilters.length],
   ];
   const unsupportedCollections: UnsupportedCollection[] = collectionCandidates
@@ -335,6 +337,37 @@ export function buildDryRunReport(data: AppData): DryRunReport {
       });
     } else {
       seenAssignmentPairs.add(pairKey);
+    }
+  }
+
+  // Workload blockers mirroring the SQL CHECKs / partial unique index of
+  // 20260717000000_workload_planner_retirement: hours on the 0.25h grid and one
+  // bin row per (task, person) pair.
+  const seenBinPairs = new Set<string>();
+  for (const w of data.workload) {
+    const q = w.plannedHours * 4;
+    if (
+      !Number.isFinite(w.plannedHours) ||
+      w.plannedHours <= 0 ||
+      Math.abs(q - Math.round(q)) > 1e-9
+    ) {
+      blockers.push({
+        table: 'workload_entries',
+        entityId: w.id,
+        message: `Zaplanowane godziny muszą być dodatnią wielokrotnością 0,25h (obecnie ${w.plannedHours}).`,
+      });
+    }
+    if (w.date === '') {
+      const key = `${w.taskId}|${w.personId}`;
+      if (seenBinPairs.has(key)) {
+        blockers.push({
+          table: 'workload_entries',
+          entityId: w.id,
+          message: 'Zduplikowany wiersz zasobnika (task_id, profile_id) — narusza jeden wiersz na parę.',
+        });
+      } else {
+        seenBinPairs.add(key);
+      }
     }
   }
 

@@ -1,67 +1,100 @@
-# Run state — 20260716-185100-210 cloud projects and tasks
+# Run state — 20260716-235101-211 cloud workload/calendar + localStorage retirement
 
 ## Goal
 
-Move clients, projects, tasks, assignments, task status changes, comments and
-activity events to Supabase with role-scoped RLS (admin global / manager
-own-department / worker own-assignment), behind AppStore via a pure repository
-+ diff-based cloud mirror. Workload stays local; localStorage recovery stays;
-local mode byte-identical. Polish UX for loading/error/retry/stale.
+Mirror workload entries (planned hours, calendar drag/resize, bin) and
+milestones to Supabase through the 210 plannerData/cloudMirror architecture,
+hydrate them via `MERGE_CLOUD_ENTITIES`, add an admin-only Polish
+migration-status view, and — only after an explicit admin handshake (coverage
+clean, snapshot read, probe write round-trip, backup downloaded) — suspend
+per-action localStorage planner writes, keeping localStorage as a passive,
+never-deleted recovery copy. Local mode stays byte-identical.
 
 ## Packages
 
-- `handoffs/scheduler-reviews/210-architect-package.md`
-  (PKG-20260716-cloud-planner-data) — Tier: developer, Risk: high,
+- `handoffs/scheduler-reviews/211-architect-package.md`
+  (PKG-20260717-cloud-workload-retirement) — Tier: developer, Risk: high,
   Codex: required. Status: ready.
 
 ## Changed boundaries (planned)
 
-- New migration `supabase/migrations/20260716190000_planner_entities.sql`:
-  `clients`, `comments`, `activity_events` tables + planner columns on
-  `projects`/`tasks`; RLS in-file; `migrations.test.ts` extended.
-- New pure modules `src/supabase/plannerData.ts` (PlannerDb adapter, snapshot
-  load, mappers) and `src/supabase/cloudMirror.ts` (id maps, state-diff → ops,
-  apply with permission/transient classification), plus tests.
-- `src/store/AppStore.tsx`: single new reducer action `MERGE_CLOUD_ENTITIES`
-  (merge by id, local-only rows kept, workload untouched, invalid payload
-  preserves prior reference) + `lastActionRef`; reducer otherwise untouched.
-- New `src/supabase/CloudSyncProvider.tsx` + `src/components/CloudSyncBanner.tsx`
-  (hydration, serialized mirror queue, suppression of REPLACE_FROM_STORAGE /
-  LOAD_SAMPLE / RESET_ALL / merge transitions, refresh gated on empty queue).
-- `dataImport.ts`/`exportDryRun.ts` extended for the new tables/columns.
-- Docs: `supabase/README.md` + `openwiki/n2hub/state-and-persistence.md`.
+- New migration `20260717000000_workload_planner_retirement.sql`:
+  `workload_entries` (grid CHECKs, one-bin-row partial unique index, RLS
+  admin/manager-dept/worker-own-rows), `milestones`, `app_settings`
+  (org retirement flag); `migrations.test.ts` extended.
+- `plannerData.ts`/`cloudMirror.ts`: workload+milestone mapping and diff
+  families; constraint-violation codes (23xxx) reclassified drop-not-retry.
+- `AppStore.tsx`: `MERGE_CLOUD_ENTITIES` payload gains workload/milestones
+  (bin pair reconciled, invalid payload keeps prior reference); persist effect
+  consults new pure `persistGate.ts` (marker + mirror-health + mirrored-only
+  collection check; non-mirrored collections always persist locally).
+- `storage.ts`: marker helpers only, new key `n2hub.cloudMigration.v1`.
+- New `migrationStatus.ts` + `MigrationStatusPanel.tsx` in AdminPage;
+  `CloudSyncProvider` safety-net/recovery writes; dataImport/exportDryRun
+  extended; README + state-and-persistence wiki. `DATA_VERSION` stays 7.
+- Calendar/bin interaction code untouched (verified reducer-only mutations).
 
 ## Verification
 
-- Worker: `npx vitest run src/supabase src/store/cloudMerge.test.ts
-  src/store/commandValidation.test.ts src/store/exportDryRun.test.ts`, then one
-  full `npm test` + `npm run build`.
-- Browser: none (local mode unchanged; calendar/bin untouched).
+- Worker focused: `npx vitest run src/supabase src/store/persistGate.test.ts
+  src/store/cloudMerge.test.ts src/store/storage.test.ts
+  src/store/blockActions.test.ts src/store/commandValidation.test.ts
+  src/store/exportDryRun.test.ts`, then one full `npm test` + `npm run build`.
+- Browser: none (interaction code untouched; local mode identical).
 - Scheduler owns final `npm run test:scheduler && npm test && npm run build`.
 
 ## Open questions
 
-None — adapter mechanism (post-reducer diff mirror), new-migration decision,
-ID strategy (local UUIDs as cloud PKs; email/slug/name fallback maps), merge
-semantics (never delete local rows) and stale handling (LWW + gated manual
-refresh) are settled in the package.
+None — collection scope (milestones in, savedFilters out), retirement handshake,
+marker placement, gate semantics, RLS scoping and version decision are settled
+in the package.
 
-## Developer result — 210 (PKG-20260716-cloud-planner-data)
+## Developer result — 211 (PKG-20260717-cloud-workload-retirement)
 
-Built the full scope: migration `20260716190000_planner_entities.sql`
-(clients/comments/activity_events + planner columns; RLS in-file; migrations.test
-extended). New pure `plannerData.ts` (PlannerDb, classifyWriteError, snapshot
-load/mappers) + `cloudMirror.ts` (buildCloudIdMaps, diffToCloudOps, applyCloudOps)
-with tests. AppStore: `MERGE_CLOUD_ENTITIES` (fail-closed, workload untouched) +
-`lastActionRef` dispatch wrapper; reducer otherwise untouched. `CloudSyncProvider`
-+ `CloudSyncBanner` mounted (main.tsx/App.tsx). dataImport (clients/comments/
-activity + full project/task columns) and exportDryRun updated. Docs updated.
-Focused `npx vitest run src/supabase src/store/cloudMerge.test.ts
-commandValidation.test.ts exportDryRun.test.ts`: 198 pass. Full `npm test`: 863
-pass (29 files). `npm run build`: pass. Deviations: (1) `CloudOp` carries an
-optional `onConflict` field (needed for composite assignment upsert; keeps
-applyCloudOps generic). (2) Diff resolves department refs leniently (unmappable
-non-'' → null, like import's deptFallback) while status/service/work-category
-refs block+diagnose per package. Reviewer: verify RLS policy text (new tables)
-and that the ready+empty banner surfacing STALE_HINT_MSG persistently is
-acceptable UX.
+Built end to end. Files (one-liners):
+- `supabase/migrations/20260717000000_workload_planner_retirement.sql`: NEW —
+  `workload_entries` (grid CHECKs + partial unique bin index), `milestones`,
+  `app_settings`; RLS + anon revoke + policies (workload role-scoped, milestones
+  by project, app_settings read-all/admin-write), reuses `app.*` helpers.
+- `migrations.test.ts`: +filename, +3 policy sets.
+- `plannerData.ts`: constraint-code fix (23502/03/05/14→permission);
+  `CloudMergePayload` +workload/+milestones; snapshot selects+maps (bin null↔'',
+  grid revalidation, dup-bin/unmappable exclusion); `readRetirementSetting`/
+  `writeRetirementSetting`/`RETIREMENT_SETTING_KEY`.
+- `cloudMirror.ts`: milestones+workload diff families; dep order clients→…→
+  workload→comments→activity; Polish labels.
+- `AppStore.tsx`: `MERGE_CLOUD_ENTITIES` +milestones/+workload merge with bin-pair
+  reconcile (cloud id, grid-snapped sum) + fail-closed guards; `mergeById` empty
+  short-circuit; persist effect consults `shouldSkipLocalPersist`.
+- NEW `persistGate.ts` (health flag + collection scope + marker/env), `storage.ts`
+  marker helpers on `n2hub.cloudMigration.v1` (clearData untouched), `config.ts`
+  `isSupabaseConfigured()`.
+- NEW `migrationStatus.ts` (coverage report + handshake), `MigrationStatusPanel.tsx`
+  mounted after `ExportDryRunPanel`; `CloudSyncProvider` health/recovery writes/
+  pagehide/app_settings sync + `retired`/`applyRetirement`.
+- `dataImport.ts`/`exportDryRun.ts` (+workload/milestone steps/targets/blockers,
+  unsupported = only saved filters); README + state-and-persistence wiki.
+
+Tests: focused `npx vitest run src/supabase src/store/persistGate.test.ts
+cloudMerge/storage/blockActions/commandValidation/exportDryRun` → 494 pass, 0
+fail. Full `npm test` → 31 files, 901 pass. `npm run build` → green.
+
+Deviations (minimal, justified):
+1. `runRetirementHandshake` probe takes a `taskId` (not only rowId+profileId) —
+   `workload_entries.task_id` is NOT NULL/FK, so a bin probe needs a real cloud
+   task; panel supplies the first UUID task; missing/invalid → step fails with a
+   Polish message. Faithful to "probe workload_entries bin row".
+2. `isSupabaseConfigured()` reads `import.meta.env` merged with `globalThis.process
+   .env` (via globalThis, no @types/node) so vitest `vi.stubEnv` can drive it;
+   `import.meta.env` stays authoritative in the browser.
+3. `MigrationStatusPanel`/handshake build their own `PlannerDb` via
+   `getSupabaseClient()` (singleton, same as `ExportDryRunPanel`) rather than
+   routing every dep through `CloudSyncProvider` — keeps the provider lean.
+
+Reviewer scrutiny: (a) SQL policy/CHECK/index wording + migrations.test parser
+match; (b) bin-pair merge summing + fail-closed guard completeness in
+`mergeCloudEntities`; (c) gate health/marker/env interplay and that skipping never
+yields a false `Zapisano`; (d) recovery-write timing in `CloudSyncProvider`
+(status→ready effect, queue-drain, transient error, pagehide). `scheduling-and-
+calendar.md` left unchanged — interaction code (WeekView/WorkloadPage/time/
+selectors) is untouched; workload still flows through reducer actions only.

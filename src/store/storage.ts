@@ -1257,6 +1257,37 @@ export function saveData(data: AppData): SaveResult {
   return { ok: true, revision };
 }
 
+// ---- Znacznik wycofania zapisów lokalnych (per-przeglądarka) ----------------
+// DEDYKOWANY klucz POZA kluczem danych planera. Cache decyzji organizacji
+// (app_settings.local_writes_retired) aktualizowany po każdej udanej hydracji.
+// `clearData()` NIGDY go nie dotyka — reset/sample nie zmieniają decyzji migracji.
+
+const CLOUD_MIGRATION_KEY = 'n2hub.cloudMigration.v1';
+
+/** Odczyt zbuforowanego znacznika wycofania. Brak / błąd => `{ enabled: false }`. */
+export function readCloudRetirementMarker(): { enabled: boolean } {
+  try {
+    const raw = localStorage.getItem(CLOUD_MIGRATION_KEY);
+    if (!raw) return { enabled: false };
+    const parsed: unknown = JSON.parse(raw);
+    return { enabled: (parsed as { enabled?: unknown })?.enabled === true };
+  } catch {
+    return { enabled: false };
+  }
+}
+
+/** Zapis zbuforowanego znacznika wycofania (na dedykowanym kluczu). Nie rzuca. */
+export function writeCloudRetirementMarker(marker: { enabled: boolean }): void {
+  try {
+    localStorage.setItem(
+      CLOUD_MIGRATION_KEY,
+      JSON.stringify({ enabled: marker.enabled === true }),
+    );
+  } catch {
+    // ignore — brak trwałego cache degraduje bramkę do „zapisuj lokalnie”.
+  }
+}
+
 export function clearData(): void {
   try {
     localStorage.removeItem(STORAGE_KEY);

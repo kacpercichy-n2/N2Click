@@ -18,9 +18,11 @@ import {
   normalizeStatusFlags,
   normalizeTaskMeta,
   normalizeWorkloadHours,
+  readCloudRetirementMarker,
   readEnvelopeRevision,
   repairStatusReferences,
   saveData,
+  writeCloudRetirementMarker,
 } from './storage';
 import { todayStr } from '../utils/dates';
 import { BIN_DATE } from '../utils/time';
@@ -1951,5 +1953,37 @@ describe('repairStatusReferences (storage-01 follow-up: no dangling task/project
     };
     const next = repairStatusReferences(data);
     expect(next.tasks.find((t) => t.id === 't1')!.statusId).toBe('s0'); // lowest order
+  });
+});
+
+// ---- Cloud retirement marker (dedicated key, outside the planner data key) ----
+
+const CLOUD_MIGRATION_KEY = 'n2hub.cloudMigration.v1';
+
+describe('cloud retirement marker helpers', () => {
+  it('reads false when absent and round-trips a written enabled marker', () => {
+    withLocalStorage({}, () => {
+      expect(readCloudRetirementMarker()).toEqual({ enabled: false });
+      writeCloudRetirementMarker({ enabled: true });
+      expect(readCloudRetirementMarker()).toEqual({ enabled: true });
+      expect(localStorage.getItem(CLOUD_MIGRATION_KEY)).toBe('{"enabled":true}');
+      writeCloudRetirementMarker({ enabled: false });
+      expect(readCloudRetirementMarker()).toEqual({ enabled: false });
+    });
+  });
+
+  it('clearData never touches the marker key (retirement decision survives reset)', () => {
+    withLocalStorage({ [STORAGE_KEY]: JSON.stringify(emptyData()) }, () => {
+      writeCloudRetirementMarker({ enabled: true });
+      clearData();
+      expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+      expect(readCloudRetirementMarker()).toEqual({ enabled: true });
+    });
+  });
+
+  it('reads false on malformed marker JSON', () => {
+    withLocalStorage({ [CLOUD_MIGRATION_KEY]: '{bad' }, () => {
+      expect(readCloudRetirementMarker()).toEqual({ enabled: false });
+    });
   });
 });

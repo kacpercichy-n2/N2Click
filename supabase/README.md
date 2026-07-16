@@ -8,28 +8,53 @@ wyłącznie UX-em.
 
 W trybie supabase uwierzytelniony profil, dział, rola dostępu oraz widoczność
 zespołu są odczytywane z Supabase i **wyjście RLS jest autorytatywne**; kontrole
-po stronie klienta to wyłącznie UX. Siedem grup encji planera — **klienci,
-projekty, zadania, przypisania, komentarze i dziennik aktywności** — jest
+po stronie klienta to wyłącznie UX. Osiem grup encji planera — **klienci,
+projekty, kamienie milowe, zadania, przypisania, zaplanowane godziny (workload:
+bloki kalendarza + zasobnik), komentarze i dziennik aktywności** — jest
 LUSTRZANE do Supabase (zapisy liczone z diff-a stanu PO reduktorze, przez czyste
 `src/supabase/cloudMirror.ts` + `src/supabase/plannerData.ts` za `PlannerDb`) i
 HYDRATOWANE przy logowaniu jedną akcją reduktora `MERGE_CLOUD_ENTITIES` (scalenie
-po id: wiersz chmury wygrywa, wiersze tylko-lokalne pozostają — propagacja kasacji
-między klientami jest udokumentowanym ograniczeniem tego etapu). **localStorage
-pozostaje źródłem renderowania i kopią do odzysku** — każdy błąd chmury zostawia
-zmianę lokalnie (błąd przejściowy: `SYNC_ERROR_MSG` + ponów; odrzucenie uprawnień:
-`SYNC_PERMISSION_MSG`, op porzucony). LOKALNE pozostają: **godziny (workload) i
-kalendarz** (nigdy nie opuszczają przeglądarki — nie ma tabeli `workload`),
-administracja osób (profile: zakładanie konta + samodzielna edycja, kroki 205–206),
-kamienie milowe, zapisane filtry oraz **MUTACJE słowników** (statusy / typy usług /
-kategorie prac / działy — granica tylko-do-odczytu z kroku 209 obowiązuje). Dane
-przykładowe i pełny reset są WYŁĄCZNIE lokalne (nigdy nie dotykają chmury).
-Tryb lokalny korzysta wyłącznie z localStorage (`src/store/storage.ts`; żaden
-klient Supabase nie powstaje, brak baneru, brak dispatchy). Ładowanie/błąd w
-trybie supabase spada z powrotem na lokalną rolę na potrzeby bramek UX. Odczyty
-referencyjne żyją w `src/supabase/referenceData.ts` (czyste, `loadOrgSnapshot` +
-`effectiveAccessRole`) i `OrgDataProvider.tsx`; import z `src/supabase/dataImport.ts`
-migruje słowniki, klientów, projekty/zadania (pełen zestaw kolumn), komentarze i
-aktywność idempotentnie.
+po id: wiersz chmury wygrywa, wiersze tylko-lokalne pozostają, para zasobnika
+scala się do wiersza z id chmury z sumą godzin na siatce — propagacja kasacji
+między klientami jest udokumentowanym ograniczeniem tego etapu). Naruszenia
+ograniczeń (`23502/23503/23505/23514`) są klasyfikowane jak odmowa uprawnień
+(op porzucony, praca zostaje lokalnie) — nie zatykają kolejki ponawiania.
+**localStorage pozostaje kopią do odzysku** — każdy błąd chmury zostawia zmianę
+lokalnie (błąd przejściowy: `SYNC_ERROR_MSG` + ponów; odrzucenie uprawnień:
+`SYNC_PERMISSION_MSG`, op porzucony).
+
+**Wycofanie aktywnych zapisów localStorage (po weryfikacji migracji).** Panel
+`MigrationStatusPanel` (tylko administrator, tryb supabase) uruchamia odwracalny
+handshake: pokrycie danych czyste → udany odczyt snapshotu → próbny zapis/odczyt/
+usunięcie wiersza → pobrana kopia zapasowa. Dopiero wtedy flaga organizacji
+`local_writes_retired` trafia do `public.app_settings`, a per-przeglądarkowy
+znacznik na dedykowanym kluczu `n2hub.cloudMigration.v1` (poza kluczem danych
+planera; `clearData()` go nie dotyka). Bramka `src/store/persistGate.ts` pozwala
+wtedy pominąć per-akcyjny `saveData` TYLKO gdy zmiana dotyka wyłącznie kolekcji
+lustrzanych, znacznik jest włączony, środowisko Supabase skonfigurowane, a lustro
+zweryfikowane-zdrowe. localStorage NIGDY nie jest usuwane — pozostaje pasywną
+kopią do odzysku odświeżaną po hydracji, drenażu kolejki, błędzie przejściowym i
+`pagehide` z oczekującymi zapisami. Każda degradacja lustra oraz zmiana kolekcji
+bez domu w chmurze wznawiają per-akcyjne zapisy lokalne. Protokół
+odświeżenia/konfliktu między kartami tej samej przeglądarki działa jak dotąd;
+współbieżność między przeglądarkami to LWW + ręczne odświeżenie. Przywrócenie
+(`Przywróć zapisy lokalne`) czyści flagę i znacznik oraz natychmiast zapisuje
+raz lokalnie.
+
+LOKALNE NA STAŁE pozostają: **zapisane filtry** (preferencja UI per-użytkownik —
+utrzymywane przez regułę „kolekcje bez domu w chmurze zawsze zapisują lokalnie”),
+administracja osób (profile: zakładanie konta + samodzielna edycja, kroki 205–206)
+oraz **MUTACJE słowników** (statusy / typy usług / kategorie prac / działy —
+granica tylko-do-odczytu z kroku 209 obowiązuje). Dane przykładowe i pełny reset
+są WYŁĄCZNIE lokalne (nigdy nie dotykają chmury). Tryb lokalny korzysta wyłącznie
+z localStorage (`src/store/storage.ts`; żaden klient Supabase nie powstaje, brak
+baneru, brak dispatchy; stary zbuforowany znacznik wycofania jest ignorowany).
+Ładowanie/błąd w trybie supabase spada z powrotem na lokalną rolę na potrzeby
+bramek UX. Odczyty referencyjne żyją w `src/supabase/referenceData.ts` (czyste,
+`loadOrgSnapshot` + `effectiveAccessRole`) i `OrgDataProvider.tsx`; import z
+`src/supabase/dataImport.ts` migruje słowniki, klientów, projekty/zadania (pełen
+zestaw kolumn), kamienie milowe, zaplanowane godziny, komentarze i aktywność
+idempotentnie.
 
 Żadna migracja nie została zastosowana na hostowanym projekcie w ramach tego
 zadania.
@@ -44,6 +69,7 @@ supabase/
     20260715220000_profiles_must_change_password.sql  # flaga wymuszonej zmiany pierwszego hasła
     20260716150000_reference_tables.sql               # słowniki: statuses, service_types, work_categories
     20260716190000_planner_entities.sql               # klienci, komentarze, dziennik + kolumny planera na projects/tasks
+    20260717000000_workload_planner_retirement.sql    # zaplanowane godziny, kamienie milowe, app_settings (flaga wycofania)
   functions/
     provision-account/                # Edge Function: serwerowe zakładanie kont (tylko administrator)
     README.md
@@ -92,6 +118,9 @@ worker` — do potwierdzenia przy zadaniu integracyjnym.
 | `clients` | CRUD | odczyt wszystkich; tworzenie (SAVE_PROJECT) | odczyt wszystkich |
 | `comments` | odczyt/dopisywanie (bez UPDATE/DELETE) | komentarze projektów/zadań swojego działu | komentarze widocznych encji; dopisywanie własnych |
 | `activity_events` | odczyt/dopisywanie (bez UPDATE/DELETE) | wpisy encji swojego działu + własne | własne wpisy + wpisy widocznych encji |
+| `workload_entries` | CRUD | wiersze zadań swojego działu (zapis wyłącznie dla osób z tego działu) | własne wiersze (przypisane godziny) |
+| `milestones` | CRUD | CRUD kamieni milowych projektów swojego działu | odczyt kamieni widocznych projektów |
+| `app_settings` | odczyt/zapis (flagi runtime) | odczyt | odczyt |
 
 Słowniki referencyjne (`statuses`, `service_types`, `work_categories`) to dane
 całej organizacji: SELECT dla każdego `authenticated` (`using (true)`), a

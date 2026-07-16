@@ -54,6 +54,12 @@ const EXPECTED_POLICIES: Record<string, string[]> = {
   'public.clients': ['select', 'insert', 'update', 'delete'],
   'public.comments': ['select', 'insert'],
   'public.activity_events': ['select', 'insert'],
+  // Wycofanie planera (20260717000000_workload_planner_retirement): zaplanowane
+  // godziny i kamienie milowe to pełne CRUD (zakres ról jak dla zadań/projektów);
+  // `app_settings` czyta każdy zalogowany (flaga wycofania), pisze tylko admin.
+  'public.workload_entries': ['select', 'insert', 'update', 'delete'],
+  'public.milestones': ['select', 'insert', 'update', 'delete'],
+  'public.app_settings': ['select', 'insert', 'update', 'delete'],
 };
 
 interface ParsedPolicy {
@@ -87,6 +93,7 @@ describe('konwencja plików migracji', () => {
       '20260715220000_profiles_must_change_password.sql',
       '20260716150000_reference_tables.sql',
       '20260716190000_planner_entities.sql',
+      '20260717000000_workload_planner_retirement.sql',
     ]);
   });
 

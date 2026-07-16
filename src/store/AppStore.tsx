@@ -41,6 +41,7 @@ import {
   type SaveFailureReason,
 } from './storage';
 import { anyDirty } from '../utils/dirtyRegistry';
+import { shouldSkipLocalPersist } from './persistGate';
 import {
   hasEntity,
   isRequiredName,
@@ -1647,8 +1648,10 @@ function isObjWithId(v: unknown): v is { id: string } {
 }
 
 /** Replace same-id local rows with incoming, append cloud-only, keep local-only.
- *  Preserves local ordering; appended cloud-only rows follow in payload order. */
+ *  Preserves local ordering; appended cloud-only rows follow in payload order.
+ *  Empty incoming => nothing to merge, return the SAME local reference. */
 function mergeById<T extends { id: string }>(local: T[], incoming: T[]): T[] {
+  if (incoming.length === 0) return local;
   const incomingById = new Map(incoming.map((r) => [r.id, r]));
   const seen = new Set<string>();
   const result: T[] = local.map((l) => {
@@ -1661,21 +1664,31 @@ function mergeById<T extends { id: string }>(local: T[], incoming: T[]): T[] {
   return result;
 }
 
+/** A payload workload row is on the 0.25h grid (finite, positive, quarter). */
+function isQuarterHours(v: unknown): v is number {
+  if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) return false;
+  const q = v / HOURS_STEP;
+  return Math.abs(q - Math.round(q)) < 1e-9;
+}
+
 /**
- * Merge the six mirrored cloud collections into local state without destroying
+ * Merge the eight mirrored cloud collections into local state without destroying
  * local work. Fail-closed (invariant 6): a structurally invalid payload — a
  * non-array collection, a row with no string id, a project/task with an invalid
- * period, a task referencing a missing project, or an assignment referencing a
- * missing task/person — returns the ORIGINAL state reference. Non-mirrored
- * collections (workload, people, statuses, milestones, savedFilters, …) pass
- * through by reference untouched.
+ * period, a task referencing a missing project, an assignment referencing a
+ * missing task/person, a milestone with an invalid date / missing project, or a
+ * workload row with off-grid/day-overflowing values or a missing task/person —
+ * returns the ORIGINAL state reference. Non-mirrored collections (people,
+ * statuses, savedFilters, dictionaries, …) pass through by reference untouched.
  */
 function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData {
   const collections = [
     payload.clients,
     payload.projects,
+    payload.milestones,
     payload.tasks,
     payload.assignments,
+    payload.workload,
     payload.comments,
     payload.activity,
   ];
@@ -1685,7 +1698,9 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
   if (
     !payload.clients.every(isObjWithId) ||
     !payload.projects.every(isObjWithId) ||
+    !payload.milestones.every(isObjWithId) ||
     !payload.tasks.every(isObjWithId) ||
+    !payload.workload.every(isObjWithId) ||
     !payload.comments.every(isObjWithId) ||
     !payload.activity.every(isObjWithId)
   ) {
@@ -1712,6 +1727,9 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
     }
     if (!projectIds.has(t.projectId)) return state;
   }
+  for (const m of payload.milestones) {
+    if (!isValidDateStr(m.date) || !projectIds.has(m.projectId)) return state;
+  }
   for (const a of payload.assignments) {
     if (
       typeof a?.taskId !== 'string' ||
@@ -1720,6 +1738,23 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
       !personIds.has(a.personId)
     ) {
       return state;
+    }
+  }
+  // Workload rows: grid + reference validation (belt-and-braces with Scope 2).
+  for (const w of payload.workload) {
+    if (!taskIds.has(w.taskId) || !personIds.has(w.personId)) return state;
+    if (!isQuarterHours(w.plannedHours)) return state;
+    if (
+      !Number.isFinite(w.startMinutes) ||
+      w.startMinutes < 0 ||
+      w.startMinutes % MINUTE_STEP !== 0
+    ) {
+      return state;
+    }
+    const isBin = w.date === BIN_DATE;
+    if (!isBin) {
+      if (!isValidDateStr(w.date)) return state;
+      if (w.startMinutes + hoursToMinutes(w.plannedHours) > DAY_MINUTES) return state;
     }
   }
 
@@ -1738,12 +1773,60 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
     ...state,
     clients: mergeById(state.clients, payload.clients),
     projects: mergeById(state.projects, payload.projects),
+    milestones: mergeById(state.milestones, payload.milestones),
     tasks: mergeById(state.tasks, payload.tasks),
     comments: mergeById(state.comments, payload.comments),
     activity: mergeById(state.activity, payload.activity),
+    workload: mergeWorkload(state.workload, payload.workload),
     assignments:
       newAssignments.length === 0 ? state.assignments : [...state.assignments, ...newAssignments],
   };
+}
+
+/**
+ * Merge cloud workload rows: replace same-id, keep local-only, append cloud-only
+ * (dated rows merge strictly by id). Then reconcile the ONE-BIN-ROW invariant: a
+ * cloud bin row and a local bin row sharing `(taskId, personId)` under DIFFERENT
+ * ids collapse to the CLOUD-id row (it exists server-side; avoids future
+ * unique-index rejections) whose `plannedHours` becomes the grid-snapped SUM of
+ * both (work-preserving, same philosophy as ensureStartMinutes' bin merge).
+ */
+function mergeWorkload(local: WorkloadEntry[], incoming: WorkloadEntry[]): WorkloadEntry[] {
+  const merged = mergeById(local, incoming);
+  const cloudIds = new Set(incoming.map((w) => w.id));
+
+  // Group bin entries by (taskId, personId) pair; only groups with >1 row need
+  // the one-bin-row reconciliation.
+  const binByPair = new Map<string, WorkloadEntry[]>();
+  for (const w of merged) {
+    if (!isBinEntry(w)) continue;
+    const key = `${w.taskId}|${w.personId}`;
+    const list = binByPair.get(key);
+    if (list) list.push(w);
+    else binByPair.set(key, [w]);
+  }
+
+  const removed = new Set<string>();
+  const summedById = new Map<string, number>(); // survivorId -> summed plannedHours
+  for (const list of binByPair.values()) {
+    if (list.length < 2) continue;
+    // Prefer the cloud-id row as survivor (server-side row); fall back to first.
+    const survivor = list.find((w) => cloudIds.has(w.id)) ?? list[0];
+    let sumQ = 0;
+    for (const w of list) {
+      sumQ += Math.round(w.plannedHours / HOURS_STEP);
+      if (w.id !== survivor.id) removed.add(w.id);
+    }
+    summedById.set(survivor.id, sumQ * HOURS_STEP);
+  }
+
+  if (removed.size === 0 && summedById.size === 0) return merged;
+  return merged
+    .filter((w) => !removed.has(w.id))
+    .map((w) => {
+      const h = summedById.get(w.id);
+      return h === undefined ? w : { ...w, plannedHours: h };
+    });
 }
 
 // ---- Reducer ----
@@ -2392,7 +2475,16 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       return;
     }
     if (lastPersistAttemptRef.current === state) return;
+    const prevAttempted = lastPersistAttemptRef.current;
     lastPersistAttemptRef.current = state;
+    // Retirement gate (supabase mode only): while retired + mirror-healthy and the
+    // transition touched ONLY cloud-mirrored collections, skip the per-action
+    // localStorage write — the recovery copy is refreshed by CloudSyncProvider on
+    // hydration/queue-drain/error/pagehide instead. Leave `saveError` unchanged
+    // (no false `Zapisano`, no false error). Any degradation resumes local writes.
+    if (prevAttempted !== null && shouldSkipLocalPersist(prevAttempted, state)) {
+      return;
+    }
     const result = saveData(state);
     setSaveError(result.ok ? null : result.reason);
     if (result.ok) setExternal((prev) => (prev === 'conflict' ? 'none' : prev));

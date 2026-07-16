@@ -79,3 +79,27 @@ export function resolveSupabaseConfig(env: Record<string, string | undefined>): 
 
   return { url: url!, publishableKey: publishableKey! };
 }
+
+/**
+ * Czysty sprawdzian środowiska (bez tworzenia klienta): czy konfiguracja Supabase
+ * jest obecna i poprawna. Czyta `import.meta.env` (jedyne miejsce poza warstwą
+ * React) i nigdy nie rzuca. Używa go bramka zapisu lokalnego (persistGate) do
+ * decyzji o wycofaniu — w trybie lokalnym zwraca `false`, więc stary zbuforowany
+ * znacznik wycofania jest ignorowany.
+ */
+export function isSupabaseConfigured(): boolean {
+  const metaEnv = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
+  // `import.meta.env` jest autorytatywne w przeglądarce (Vite). `process.env`
+  // (przez globalThis, bez zależności od @types/node) służy jako zapas dla
+  // środowiska node w testach (vi.stubEnv trafia tam).
+  const processEnv = (
+    globalThis as { process?: { env?: Record<string, string | undefined> } }
+  ).process?.env;
+  const env: Record<string, string | undefined> = { ...processEnv, ...metaEnv };
+  try {
+    resolveSupabaseConfig(env);
+    return true;
+  } catch {
+    return false;
+  }
+}

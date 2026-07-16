@@ -658,3 +658,48 @@ describe('createSupabaseImportDb', () => {
     await expect(db.insert('projects', { id: 'x' })).resolves.toEqual({ error: 'offline' });
   });
 });
+
+// ---- Milestones + workload (retirement migration) ---------------------------
+
+describe('runSupabaseImport — milestones + workload', () => {
+  it('imports milestones and workload after their parents, idempotently', async () => {
+    const data: AppData = {
+      ...fixture(),
+      milestones: [{ id: uuid('ms1'), projectId: PR1, name: 'Publikacja', date: '2026-07-10' }],
+      workload: [
+        { id: uuid('wl1'), taskId: T1, personId: 'localA', date: '2026-07-06', plannedHours: 2, startMinutes: 480, sortIndex: 0 },
+        { id: uuid('wl-bin'), taskId: T1, personId: 'localA', date: '', plannedHours: 1, startMinutes: 0, sortIndex: 1 },
+      ],
+    };
+    const report = buildDryRunReport(data);
+    expect(report.blockers).toHaveLength(0);
+    const db = seedProfiles(new FakeDb());
+    const result = await runSupabaseImport(data, report, db);
+    expect(result.completed).toBe(true);
+    expect(sumFor(result, 'milestones').imported).toBe(1);
+    expect(sumFor(result, 'workload').imported).toBe(2);
+    expect(db.insertCalls('milestones')[0]).toMatchObject({ project_id: PR1, milestone_date: '2026-07-10' });
+    const wlRows = db.insertCalls('workload_entries');
+    expect(wlRows).toHaveLength(2);
+    expect(wlRows.find((r) => r.work_date === null)).toBeDefined(); // bin -> null
+    expect(wlRows.find((r) => r.profile_id === PROFILE_A)).toBeDefined();
+
+    // Idempotent rerun: everything present -> skipped, nothing re-imported.
+    const rerun = await runSupabaseImport(data, report, db);
+    expect(sumFor(rerun, 'milestones').imported).toBe(0);
+    expect(sumFor(rerun, 'workload').imported).toBe(0);
+    expect(sumFor(rerun, 'workload').skipped).toBe(2);
+  });
+
+  it('fails a workload row whose person cannot be mapped to a profile', async () => {
+    const data: AppData = {
+      ...fixture(),
+      workload: [{ id: uuid('wl-x'), taskId: T1, personId: 'ghost', date: '', plannedHours: 1, startMinutes: 0, sortIndex: 0 }],
+    };
+    const report = buildDryRunReport(data);
+    const db = seedProfiles(new FakeDb());
+    const result = await runSupabaseImport(data, report, db);
+    expect(sumFor(result, 'workload').failed).toBe(1);
+    expect(sumFor(result, 'workload').imported).toBe(0);
+  });
+});

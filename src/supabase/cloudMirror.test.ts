@@ -221,6 +221,97 @@ describe('diffToCloudOps — families', () => {
   });
 });
 
+const MS = uuid('milestone-one');
+const WB = uuid('wl-bin');
+const WD = uuid('wl-dated');
+
+describe('diffToCloudOps — milestones + workload families', () => {
+  it('upserts and removes a milestone (by-id LWW)', () => {
+    const m = maps();
+    const milestone = { id: MS, projectId: PR, name: 'Publikacja', date: '2026-07-10' };
+    const withM: AppData = { ...localFixture(), milestones: [milestone] };
+    const add = diffToCloudOps(localFixture(), withM, m);
+    expect(add.ops).toEqual([
+      expect.objectContaining({ kind: 'upsert', table: 'milestones', row: expect.objectContaining({ id: MS, project_id: PR, milestone_date: '2026-07-10' }) }),
+    ]);
+    const del = diffToCloudOps(withM, localFixture(), m);
+    expect(del.ops).toEqual([
+      expect.objectContaining({ kind: 'remove', table: 'milestones', match: { id: MS } }),
+    ]);
+  });
+
+  it('upserts added/changed workload and removes deleted (full row, person mapped)', () => {
+    const m = maps();
+    const dated = { id: WD, taskId: TK, personId: PA, date: '2026-07-06', plannedHours: 2, startMinutes: 480, sortIndex: 0 };
+    const withW: AppData = { ...localFixture(), tasks: [makeTask({ id: TK })], workload: [dated] };
+    const add = diffToCloudOps({ ...localFixture(), tasks: [makeTask({ id: TK })] }, withW, m);
+    const up = add.ops.find((o) => o.table === 'workload_entries');
+    expect(up!.row).toMatchObject({ id: WD, task_id: TK, profile_id: CLOUD_PA, work_date: '2026-07-06', planned_hours: 2, start_minutes: 480 });
+    const del = diffToCloudOps(withW, { ...localFixture(), tasks: [makeTask({ id: TK })] }, m);
+    expect(del.ops).toEqual([
+      expect.objectContaining({ kind: 'remove', table: 'workload_entries', match: { id: WD } }),
+    ]);
+  });
+
+  it('maps a bin workload row work_date to null', () => {
+    const m = maps();
+    const bin = { id: WB, taskId: TK, personId: PA, date: '', plannedHours: 4, startMinutes: 0, sortIndex: 0 };
+    const prev: AppData = { ...localFixture(), tasks: [makeTask({ id: TK })] };
+    const next: AppData = { ...prev, workload: [bin] };
+    const { ops } = diffToCloudOps(prev, next, m);
+    expect(ops[0].row).toMatchObject({ id: WB, work_date: null, planned_hours: 4, start_minutes: 0 });
+  });
+
+  it('emits the atomic pair for a bin-part schedule (decremented bin + new dated)', () => {
+    const m = maps();
+    const prev: AppData = {
+      ...localFixture(),
+      tasks: [makeTask({ id: TK })],
+      workload: [{ id: WB, taskId: TK, personId: PA, date: '', plannedHours: 4, startMinutes: 0, sortIndex: 0 }],
+    };
+    const next: AppData = {
+      ...prev,
+      workload: [
+        { id: WB, taskId: TK, personId: PA, date: '', plannedHours: 3, startMinutes: 0, sortIndex: 0 },
+        { id: WD, taskId: TK, personId: PA, date: '2026-07-06', plannedHours: 1, startMinutes: 480, sortIndex: 0 },
+      ],
+    };
+    const wlOps = diffToCloudOps(prev, next, m).ops.filter((o) => o.table === 'workload_entries');
+    expect(wlOps).toHaveLength(2);
+    expect(wlOps.map((o) => o.row!.id).sort()).toEqual([WB, WD].sort());
+  });
+
+  it('emits zero workload ops for an unchanged SAVE_TASK (same workload reference)', () => {
+    const m = maps();
+    const workload = [{ id: WD, taskId: TK, personId: PA, date: '2026-07-06', plannedHours: 2, startMinutes: 480, sortIndex: 0 }];
+    const prev: AppData = { ...localFixture(), tasks: [makeTask({ id: TK, title: 'Stary' })], workload };
+    const next: AppData = { ...prev, tasks: [makeTask({ id: TK, title: 'Nowy' })], workload };
+    const { ops } = diffToCloudOps(prev, next, m);
+    expect(ops.filter((o) => o.table === 'workload_entries')).toHaveLength(0);
+    expect(ops.filter((o) => o.table === 'tasks')).toHaveLength(1);
+  });
+
+  it('diagnoses an unmappable person / non-UUID workload row, no op', () => {
+    const m = maps();
+    const prev: AppData = { ...localFixture(), tasks: [makeTask({ id: TK })] };
+    const badPerson: AppData = {
+      ...prev,
+      workload: [{ id: WD, taskId: TK, personId: uuid('ghost'), date: '', plannedHours: 1, startMinutes: 0, sortIndex: 0 }],
+    };
+    const r1 = diffToCloudOps(prev, badPerson, m);
+    expect(r1.ops.filter((o) => o.table === 'workload_entries')).toHaveLength(0);
+    expect(r1.diagnostics.length).toBeGreaterThan(0);
+
+    const badId: AppData = {
+      ...prev,
+      workload: [{ id: 'legacy-1', taskId: TK, personId: PA, date: '', plannedHours: 1, startMinutes: 0, sortIndex: 0 }],
+    };
+    const r2 = diffToCloudOps(prev, badId, m);
+    expect(r2.ops.filter((o) => o.table === 'workload_entries')).toHaveLength(0);
+    expect(r2.diagnostics.length).toBeGreaterThan(0);
+  });
+});
+
 // ---- applyCloudOps -----------------------------------------------------------
 
 class FakePlannerDb implements PlannerDb {

@@ -12,7 +12,16 @@
 //   * Wiersz wskazujący na niemapowalną osobę/status/słownik lub o nie-UUID id
 //     => brak operacji + polska diagnostyka (praca zostaje lokalnie, nic nie
 //     rzuca). Nadmiarowy upsert (dwie karty) jest idempotentny.
-import type { AppData, Client, Comment, Project, Task, ActivityEvent } from '../types';
+import type {
+  ActivityEvent,
+  AppData,
+  Client,
+  Comment,
+  Milestone,
+  Project,
+  Task,
+  WorkloadEntry,
+} from '../types';
 import { normalizeEmail } from '../auth/profile';
 import type { OrgSnapshot } from './referenceData';
 import type { PlannerDb } from './plannerData';
@@ -226,6 +235,44 @@ function taskRow(
   };
 }
 
+function milestoneRow(m: Milestone, diagnostics: string[]): Record<string, unknown> | null {
+  if (!isUuid(m.id) || !isUuid(m.projectId)) {
+    diagnostics.push(DIAG.nonUuid);
+    return null;
+  }
+  return {
+    id: m.id,
+    project_id: m.projectId,
+    name: m.name,
+    milestone_date: m.date,
+  };
+}
+
+function workloadRow(
+  w: WorkloadEntry,
+  maps: CloudIdMaps,
+  diagnostics: string[],
+): Record<string, unknown> | null {
+  if (!isUuid(w.id) || !isUuid(w.taskId)) {
+    diagnostics.push(DIAG.nonUuid);
+    return null;
+  }
+  const profileId = maps.people.get(w.personId);
+  if (!profileId) {
+    diagnostics.push(DIAG.unmappablePerson);
+    return null;
+  }
+  return {
+    id: w.id,
+    task_id: w.taskId,
+    profile_id: profileId,
+    work_date: dateOrNull(w.date),
+    planned_hours: w.plannedHours,
+    start_minutes: w.startMinutes,
+    sort_index: w.sortIndex,
+  };
+}
+
 function commentRow(
   c: Comment,
   maps: CloudIdMaps,
@@ -304,12 +351,14 @@ const byId = <T extends { id: string }>(items: T[]): Map<string, T> =>
 
 /**
  * Diff dwóch stanów na operacje zapisu chmury w kolejności zależności:
- * klienci -> projekty -> zadania -> przypisania -> komentarze -> aktywność.
- * Klienci/projekty/zadania: upsert dodanych i zmienionych (last-write-wins),
- * remove usuniętych (kaskada FK sprząta zależne). Zmiany statusu zadania/
- * projektu to zwykłe upserty (ta sama ścieżka). Przypisania: złożony upsert /
- * remove po parze (task_id, profile_id). Komentarze i aktywność: DOPISYWALNE —
- * tylko nowe wiersze.
+ * klienci -> projekty -> kamienie milowe -> zadania -> przypisania ->
+ * zaplanowane godziny -> komentarze -> aktywność. Klienci/projekty/kamienie/
+ * zadania/godziny: upsert dodanych i zmienionych (last-write-wins), remove
+ * usuniętych (kaskada FK sprząta zależne). Zmiany statusu zadania/projektu to
+ * zwykłe upserty (ta sama ścieżka). Przypisania: złożony upsert / remove po parze
+ * (task_id, profile_id). SCHEDULE_BIN_PART emituje naturalnie swoją atomową parę
+ * (upsert zdekrementowanego wiersza zasobnika lub remove przy zerze + upsert
+ * wiersza datowanego). Komentarze i aktywność: DOPISYWALNE — tylko nowe wiersze.
  */
 export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps): DiffResult {
   const ops: CloudOp[] = [];
@@ -355,7 +404,24 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
     }
   }
 
-  // 3) Zadania ----
+  // 3) Kamienie milowe ---- (diff po id: upsert dodanych/zmienionych, remove usuniętych)
+  {
+    const prevMap = byId(prev.milestones);
+    const nextMap = byId(next.milestones);
+    for (const id of prevMap.keys()) {
+      if (!nextMap.has(id) && isUuid(id)) {
+        ops.push({ kind: 'remove', table: 'milestones', match: { id }, sourceId: id, label: 'Kamień milowy (usunięcie)' });
+      }
+    }
+    for (const m of next.milestones) {
+      const before = prevMap.get(m.id);
+      if (before && JSON.stringify(before) === JSON.stringify(m)) continue;
+      const row = milestoneRow(m, diagnostics);
+      if (row) ops.push({ kind: 'upsert', table: 'milestones', row, sourceId: m.id, label: `Kamień milowy „${m.name}”` });
+    }
+  }
+
+  // 4) Zadania ----
   {
     const prevMap = byId(prev.tasks);
     const nextMap = byId(next.tasks);
@@ -372,7 +438,7 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
     }
   }
 
-  // 4) Przypisania ---- (po parze task_id|personId)
+  // 5) Przypisania ---- (po parze task_id|personId)
   {
     const prevPairs = new Map(prev.assignments.map((a) => [`${a.taskId}|${a.personId}`, a]));
     const nextPairs = new Map(next.assignments.map((a) => [`${a.taskId}|${a.personId}`, a]));
@@ -410,7 +476,24 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
     }
   }
 
-  // 5) Komentarze ---- (append-only: tylko nowe id)
+  // 6) Zaplanowane godziny ---- (diff po id: upsert dodanych/zmienionych, remove usuniętych)
+  {
+    const prevMap = byId(prev.workload);
+    const nextMap = byId(next.workload);
+    for (const [id, w] of prevMap) {
+      if (nextMap.has(id)) continue;
+      if (!isUuid(id) || !isUuid(w.taskId) || !maps.people.get(w.personId)) continue; // nigdy nie zsynchronizowane
+      ops.push({ kind: 'remove', table: 'workload_entries', match: { id }, sourceId: id, label: 'Blok godzin (usunięcie)' });
+    }
+    for (const w of next.workload) {
+      const before = prevMap.get(w.id);
+      if (before && JSON.stringify(before) === JSON.stringify(w)) continue;
+      const row = workloadRow(w, maps, diagnostics);
+      if (row) ops.push({ kind: 'upsert', table: 'workload_entries', row, sourceId: w.id, label: 'Blok godzin' });
+    }
+  }
+
+  // 7) Komentarze ---- (append-only: tylko nowe id)
   {
     const prevIds = new Set(prev.comments.map((c) => c.id));
     for (const c of next.comments) {
@@ -420,7 +503,7 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
     }
   }
 
-  // 6) Dziennik aktywności ---- (append-only: tylko nowe id)
+  // 8) Dziennik aktywności ---- (append-only: tylko nowe id)
   {
     const prevIds = new Set(prev.activity.map((e) => e.id));
     for (const e of next.activity) {

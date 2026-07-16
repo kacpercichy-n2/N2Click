@@ -12,6 +12,7 @@ import type {
   AppData,
   Client,
   Comment,
+  Milestone,
   Project,
   Task,
   TaskAssignment,
@@ -116,7 +117,16 @@ function person(id: string) {
 }
 
 function emptyPayload(): CloudMergePayload {
-  return { clients: [], projects: [], tasks: [], assignments: [], comments: [], activity: [] };
+  return {
+    clients: [],
+    projects: [],
+    milestones: [],
+    tasks: [],
+    assignments: [],
+    workload: [],
+    comments: [],
+    activity: [],
+  };
 }
 
 const merge = (state: AppData, payload: CloudMergePayload): AppData =>
@@ -224,7 +234,88 @@ describe('MERGE_CLOUD_ENTITIES — merge semantics', () => {
   });
 });
 
+describe('MERGE_CLOUD_ENTITIES — milestones + workload merge', () => {
+  it('merges milestones by id (replace, append, keep local-only)', () => {
+    const state: AppData = {
+      ...baseState(),
+      milestones: [
+        { id: 'ms-1', projectId: 'proj-1', name: 'Lokalny', date: '2026-07-08' },
+        { id: 'ms-local', projectId: 'proj-1', name: 'Tylko lokalny', date: '2026-07-09' },
+      ],
+    };
+    const payload: CloudMergePayload = {
+      ...emptyPayload(),
+      milestones: [
+        { id: 'ms-1', projectId: 'proj-1', name: 'Z chmury', date: '2026-07-08' },
+        { id: 'ms-cloud', projectId: 'proj-1', name: 'Nowy', date: '2026-07-10' },
+      ],
+    };
+    const next = merge(state, payload);
+    expect(next.milestones.find((m) => m.id === 'ms-1')!.name).toBe('Z chmury');
+    expect(next.milestones.find((m) => m.id === 'ms-cloud')).toBeDefined();
+    expect(next.milestones.find((m) => m.id === 'ms-local')).toBeDefined();
+    expect(next.milestones).toHaveLength(3);
+  });
+
+  it('merges workload dated rows strictly by id (replace + append + keep local)', () => {
+    const state = baseState(); // workload: [w1] dated
+    const payload: CloudMergePayload = {
+      ...emptyPayload(),
+      workload: [
+        wl({ id: 'w1', plannedHours: 4 }), // replace same id
+        wl({ id: 'w-cloud', plannedHours: 1 }), // cloud-only append
+      ],
+    };
+    const next = merge(state, payload);
+    expect(next.workload.find((w) => w.id === 'w1')!.plannedHours).toBe(4);
+    expect(next.workload.find((w) => w.id === 'w-cloud')).toBeDefined();
+    expect(next.workload).toHaveLength(2);
+  });
+
+  it('reconciles a bin pair to the cloud-id row with grid-snapped summed hours', () => {
+    const state: AppData = {
+      ...baseState(),
+      workload: [
+        wl({ id: 'w1' }),
+        { id: 'bin-local', taskId: T1, personId: P1, date: '', plannedHours: 2, startMinutes: 0, sortIndex: 0 },
+      ],
+    };
+    const payload: CloudMergePayload = {
+      ...emptyPayload(),
+      workload: [{ id: 'bin-cloud', taskId: T1, personId: P1, date: '', plannedHours: 3, startMinutes: 0, sortIndex: 0 }],
+    };
+    const next = merge(state, payload);
+    // Cloud id survives; local bin dropped; hours summed (2 + 3 = 5).
+    expect(next.workload.find((w) => w.id === 'bin-local')).toBeUndefined();
+    const survivor = next.workload.find((w) => w.id === 'bin-cloud')!;
+    expect(survivor.plannedHours).toBe(5);
+    // Dated row untouched.
+    expect(next.workload.find((w) => w.id === 'w1')).toBeDefined();
+  });
+});
+
 describe('MERGE_CLOUD_ENTITIES — fail-closed (invariant 6)', () => {
+  it('rejects an off-grid or day-overflowing workload row', () => {
+    const state = baseState();
+    expect(merge(state, { ...emptyPayload(), workload: [wl({ id: 'w2', plannedHours: 0.3 })] })).toBe(state);
+    expect(
+      merge(state, { ...emptyPayload(), workload: [wl({ id: 'w2', startMinutes: 1425, plannedHours: 2 })] }),
+    ).toBe(state);
+  });
+
+  it('rejects a workload row referencing a missing task or person', () => {
+    const state = baseState();
+    expect(merge(state, { ...emptyPayload(), workload: [wl({ id: 'w2', taskId: 'ghost' })] })).toBe(state);
+    expect(merge(state, { ...emptyPayload(), workload: [wl({ id: 'w2', personId: 'ghost' })] })).toBe(state);
+  });
+
+  it('rejects a milestone with an invalid date or missing project', () => {
+    const state = baseState();
+    const bad = (o: Partial<Milestone>): Milestone => ({ id: 'm', projectId: 'proj-1', name: 'M', date: '2026-07-08', ...o });
+    expect(merge(state, { ...emptyPayload(), milestones: [bad({ date: 'nie-data' })] })).toBe(state);
+    expect(merge(state, { ...emptyPayload(), milestones: [bad({ projectId: 'ghost' })] })).toBe(state);
+  });
+
   it('returns the ORIGINAL state reference for a non-array collection', () => {
     const state = baseState();
     const bad = { ...emptyPayload(), projects: null as unknown as Project[] };

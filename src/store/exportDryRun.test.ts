@@ -14,7 +14,7 @@ import {
   peekDataResult,
 } from './storage';
 import { buildDryRunReport, buildExportPayload } from './exportDryRun';
-import type { AppData, Person, Project, Task, TaskAssignment } from '../types';
+import type { AppData, Person, Project, Task, TaskAssignment, WorkloadEntry } from '../types';
 
 // Mirrors storage.ts's private STORAGE_KEY (not exported) and storage.test.ts.
 const STORAGE_KEY = 'n2hub.data.v1';
@@ -369,5 +369,45 @@ describe('buildDryRunReport — mapping diagnostics', () => {
     expect(report.warnings).toHaveLength(1);
     expect(report.warnings[0]).toMatchObject({ table: 'profiles', entityId: 'p2' });
     expect(report.unsupported.collections).toHaveLength(0);
+  });
+});
+
+describe('buildDryRunReport — workload + milestones (retirement migration)', () => {
+  const wl = (o: Partial<WorkloadEntry> & { id: string }): WorkloadEntry => ({
+    taskId: 't1', personId: 'p1', date: '2026-07-06', plannedHours: 2, startMinutes: 480, sortIndex: 0, ...o,
+  });
+
+  it('counts workload and milestones as target tables; only saved filters stay unsupported', () => {
+    const data: AppData = {
+      ...emptyData(),
+      projects: [makeProject({ id: 'proj1', name: 'P' })],
+      tasks: [makeTask({ id: 't1', projectId: 'proj1' })],
+      milestones: [{ id: 'm1', projectId: 'proj1', name: 'Kamień', date: '2026-07-08' }],
+      workload: [wl({ id: 'w1' })],
+      savedFilters: [{ id: 'f1', name: 'Moje', page: 'tasks', criteria: { paid: 'all', clientId: '', statusId: '', personId: '', priority: '', workCategoryId: '', from: '', to: '' } }],
+    };
+    const report = buildDryRunReport(data);
+    expect(report.counts.target.workload_entries).toBe(1);
+    expect(report.counts.target.milestones).toBe(1);
+    const names = report.unsupported.collections.map((c) => c.name);
+    expect(names).toEqual(['Zapisane filtry']);
+    expect(names).not.toContain('Zaplanowane godziny');
+    expect(names).not.toContain('Kamienie milowe');
+  });
+
+  it('blocks off-grid hours and a duplicate bin pair (mirroring the SQL checks)', () => {
+    const data: AppData = {
+      ...emptyData(),
+      projects: [makeProject({ id: 'proj1', name: 'P' })],
+      tasks: [makeTask({ id: 't1', projectId: 'proj1' })],
+      workload: [
+        wl({ id: 'w-offgrid', plannedHours: 0.3 }),
+        wl({ id: 'w-bin1', date: '', startMinutes: 0 }),
+        wl({ id: 'w-bin2', date: '', startMinutes: 0 }), // same (task,person) bin pair -> blocker
+      ],
+    };
+    const report = buildDryRunReport(data);
+    const wlBlockers = report.blockers.filter((b) => b.table === 'workload_entries');
+    expect(wlBlockers.map((b) => b.entityId).sort()).toEqual(['w-bin2', 'w-offgrid'].sort());
   });
 });

@@ -19,11 +19,14 @@ import type {
   Client,
   Comment,
   CommentEntityType,
+  Milestone,
   Project,
   Task,
   TaskPriority,
+  WorkloadEntry,
 } from '../types';
-import { periodError, MAX_TASK_PERIOD_DAYS } from '../utils/dates';
+import { isValidDateStr, periodError, MAX_TASK_PERIOD_DAYS } from '../utils/dates';
+import { BIN_DATE, DAY_MINUTES, HOURS_STEP, MINUTE_STEP } from '../utils/time';
 import { createSupabaseImportDb, type ImportDb } from './dataImport';
 import type { CloudIdMaps } from './cloudMirror';
 
@@ -36,13 +39,22 @@ export interface CloudWriteError {
 
 const PERMISSION_RE = /row-level security|permission denied|violates row-level/i;
 
+// Kody naruszeń ograniczeń Postgresa. Op sklasyfikowany jako `'permission'`
+// (porzucany z notatką, praca zostaje lokalnie) — NIGDY `'transient'`: ponawianie
+// naruszenia unikalności/klucza/CHECK-a w nieskończoność zatkałoby kolejkę (np.
+// dwie karty tworzące różne id wiersza zasobnika dla tej samej pary trafiające w
+// indeks częściowy `workload_entries_bin_pair`). 23502 not-null, 23503 FK,
+// 23505 unique, 23514 check.
+const CONSTRAINT_CODES = new Set(['23502', '23503', '23505', '23514']);
+
 /**
- * Klasyfikuje błąd zapisu z PostgREST: kod `42501` lub komunikat pasujący do
- * wzorca RLS => `'permission'` (odrzucenie uprawnień — op zostaje porzucony);
- * wszystko inne => `'transient'` (można ponowić).
+ * Klasyfikuje błąd zapisu z PostgREST: kod `42501`, komunikat pasujący do wzorca
+ * RLS lub kod naruszenia ograniczenia (23502/23503/23505/23514) => `'permission'`
+ * (odrzucenie — op zostaje porzucony, dane zostają lokalnie); wszystko inne =>
+ * `'transient'` (można ponowić).
  */
 export function classifyWriteError(code: string | null, message: string): CloudWriteError {
-  if (code === '42501' || PERMISSION_RE.test(message)) {
+  if (code === '42501' || (code !== null && CONSTRAINT_CODES.has(code)) || PERMISSION_RE.test(message)) {
     return { kind: 'permission', message };
   }
   return { kind: 'transient', message };
@@ -112,8 +124,10 @@ export const PLANNER_SNAPSHOT_ERROR = 'Nie udało się wczytać danych planera z
 export interface CloudMergePayload {
   clients: Client[];
   projects: Project[];
+  milestones: Milestone[];
   tasks: Task[];
   assignments: Array<{ taskId: string; personId: string }>;
+  workload: WorkloadEntry[];
   comments: Comment[];
   activity: ActivityEvent[];
 }
@@ -135,6 +149,23 @@ function invert(map: Map<string, string>): Map<string, string> {
   const out = new Map<string, string>();
   for (const [local, cloud] of map) if (!out.has(cloud)) out.set(cloud, local);
   return out;
+}
+
+/** Liczba jest na siatce 0.25h (dodatnia, skończona, wielokrotność ćwiartki). */
+function isQuarterHours(v: unknown): v is number {
+  if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) return false;
+  const q = v / HOURS_STEP;
+  return Math.abs(q - Math.round(q)) < 1e-9;
+}
+
+/** Minuty startu na siatce 15-min (całkowite, >= 0, wielokrotność 15). */
+function isValidStartMinutes(v: unknown): v is number {
+  return (
+    typeof v === 'number' &&
+    Number.isInteger(v) &&
+    v >= 0 &&
+    v % MINUTE_STEP === 0
+  );
 }
 
 const PRIORITIES: TaskPriority[] = ['low', 'normal', 'high', 'urgent'];
@@ -187,30 +218,45 @@ export async function loadPlannerSnapshot(
   maps: CloudIdMaps,
   local: AppData,
 ): Promise<LoadPlannerResult> {
-  const [clientsRes, projectsRes, tasksRes, assignmentsRes, commentsRes, activityRes] =
-    await Promise.all([
-      db.select('clients', 'id, name, archived'),
-      db.select(
-        'projects',
-        'id, client_id, name, description, status_id, paid, start_date, end_date, department_id, service_type_id, created_at, updated_at',
-      ),
-      db.select(
-        'tasks',
-        'id, project_id, status_id, title, description, start_date, end_date, estimated_hours, priority, work_category_id, checklist, created_at, updated_at',
-      ),
-      db.select('task_assignments', 'task_id, profile_id'),
-      db.select('comments', 'id, project_id, task_id, author_id, body, mention_ids, created_at'),
-      db.select(
-        'activity_events',
-        'id, entity_type, entity_id, actor_id, impersonator_id, message, created_at',
-      ),
-    ]);
+  const [
+    clientsRes,
+    projectsRes,
+    milestonesRes,
+    tasksRes,
+    assignmentsRes,
+    workloadRes,
+    commentsRes,
+    activityRes,
+  ] = await Promise.all([
+    db.select('clients', 'id, name, archived'),
+    db.select(
+      'projects',
+      'id, client_id, name, description, status_id, paid, start_date, end_date, department_id, service_type_id, created_at, updated_at',
+    ),
+    db.select('milestones', 'id, project_id, name, milestone_date'),
+    db.select(
+      'tasks',
+      'id, project_id, status_id, title, description, start_date, end_date, estimated_hours, priority, work_category_id, checklist, created_at, updated_at',
+    ),
+    db.select('task_assignments', 'task_id, profile_id'),
+    db.select(
+      'workload_entries',
+      'id, task_id, profile_id, work_date, planned_hours, start_minutes, sort_index',
+    ),
+    db.select('comments', 'id, project_id, task_id, author_id, body, mention_ids, created_at'),
+    db.select(
+      'activity_events',
+      'id, entity_type, entity_id, actor_id, impersonator_id, message, created_at',
+    ),
+  ]);
 
   if (
     clientsRes.error ||
     projectsRes.error ||
+    milestonesRes.error ||
     tasksRes.error ||
     assignmentsRes.error ||
+    workloadRes.error ||
     commentsRes.error ||
     activityRes.error
   ) {
@@ -263,6 +309,22 @@ export async function loadPlannerSnapshot(
     });
   }
 
+  // Kamienie milowe ---- (`milestone_date` -> lokalne `date`; zła data => wyklucz).
+  const milestones: Milestone[] = [];
+  for (const row of milestonesRes.rows) {
+    const date = sqlDateToLocal(row.milestone_date);
+    if (!isValidDateStr(date)) {
+      diagnostics.push(`Kamień milowy „${str(row.name)}” pominięto — nieprawidłowa data.`);
+      continue;
+    }
+    milestones.push({
+      id: str(row.id),
+      projectId: str(row.project_id),
+      name: str(row.name),
+      date,
+    });
+  }
+
   // Zadania ----
   const tasks: Task[] = [];
   for (const row of tasksRes.rows) {
@@ -308,6 +370,59 @@ export async function loadPlannerSnapshot(
     assignments.push({ taskId, personId });
   }
 
+  // Zaplanowane godziny ---- (work_date null <-> ''; profil przez reverse;
+  // rewalidacja siatki; para zasobnika trzymana raz — pierwszy wiersz wygrywa).
+  const workload: WorkloadEntry[] = [];
+  const seenBinPairs = new Set<string>();
+  for (const row of workloadRes.rows) {
+    const personId = personOf(row.profile_id);
+    if (personId === '') {
+      diagnostics.push('Blok godzin pominięto — brak lokalnej osoby dla profilu.');
+      continue;
+    }
+    const taskId = str(row.task_id);
+    const isBin = row.work_date === null || row.work_date === undefined || row.work_date === '';
+    const date = isBin ? BIN_DATE : sqlDateToLocal(row.work_date);
+    if (!isBin && !isValidDateStr(date)) {
+      diagnostics.push('Blok godzin pominięto — nieprawidłowa data.');
+      continue;
+    }
+    const plannedHours = row.planned_hours;
+    if (!isQuarterHours(plannedHours)) {
+      diagnostics.push('Blok godzin pominięto — godziny poza siatką 0,25h.');
+      continue;
+    }
+    const startMinutes = isBin ? 0 : row.start_minutes;
+    if (!isBin) {
+      if (!isValidStartMinutes(startMinutes)) {
+        diagnostics.push('Blok godzin pominięto — start poza siatką 15 minut.');
+        continue;
+      }
+      if ((startMinutes as number) + plannedHours * 60 > DAY_MINUTES) {
+        diagnostics.push('Blok godzin pominięto — blok nie mieści się w dobie.');
+        continue;
+      }
+    } else {
+      const pairKey = `${taskId}|${personId}`;
+      if (seenBinPairs.has(pairKey)) {
+        diagnostics.push('Zduplikowany wiersz zasobnika pominięto — jeden na parę (zadanie, osoba).');
+        continue;
+      }
+      seenBinPairs.add(pairKey);
+    }
+    const sortIndex =
+      typeof row.sort_index === 'number' && Number.isFinite(row.sort_index) ? row.sort_index : 0;
+    workload.push({
+      id: str(row.id),
+      taskId,
+      personId,
+      date,
+      plannedHours,
+      startMinutes: startMinutes as number,
+      sortIndex,
+    });
+  }
+
   // Komentarze ----
   const comments: Comment[] = commentsRes.rows.map((row) => {
     const projectId = str(row.project_id);
@@ -339,7 +454,47 @@ export async function loadPlannerSnapshot(
 
   return {
     ok: true,
-    payload: { clients, projects, tasks, assignments, comments, activity },
+    payload: { clients, projects, milestones, tasks, assignments, workload, comments, activity },
     diagnostics,
   };
+}
+
+// ---- Flaga wycofania zapisów lokalnych (app_settings) ------------------------
+
+export const RETIREMENT_SETTING_KEY = 'local_writes_retired';
+
+/**
+ * Odczytuje flagę wycofania z `app_settings`. Brak wiersza => `enabled: false`.
+ * Błąd selectu => `ok: false` (wołający zachowuje poprzednią zbuforowaną wartość,
+ * nie zmienia stanu bramki na podstawie nieudanego odczytu).
+ */
+export async function readRetirementSetting(
+  db: Pick<PlannerDb, 'select'>,
+): Promise<{ ok: boolean; enabled: boolean }> {
+  const res = await db.select('app_settings', 'key, value');
+  if (res.error) return { ok: false, enabled: false };
+  const row = res.rows.find((r) => r.key === RETIREMENT_SETTING_KEY);
+  if (!row) return { ok: true, enabled: false };
+  const value = row.value as { enabled?: unknown } | null;
+  return { ok: true, enabled: value?.enabled === true };
+}
+
+/**
+ * Ustawia flagę wycofania (upsert wiersza `local_writes_retired`). Wartość niesie
+ * stan handshake'u: `{ enabled, completed_at, by_profile }`. Zwraca sklasyfikowany
+ * błąd zapisu (lub null). Tylko administrator ma prawo INSERT/UPDATE (RLS).
+ */
+export async function writeRetirementSetting(
+  db: PlannerDb,
+  enabled: boolean,
+  profileId: string,
+): Promise<{ error: CloudWriteError | null }> {
+  return db.upsert(
+    'app_settings',
+    {
+      key: RETIREMENT_SETTING_KEY,
+      value: { enabled, completed_at: new Date().toISOString(), by_profile: profileId },
+    },
+    'key',
+  );
 }

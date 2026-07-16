@@ -12,6 +12,10 @@ import {
   createSupabasePlannerDb,
   loadPlannerSnapshot,
   PLANNER_SNAPSHOT_ERROR,
+  readRetirementSetting,
+  RETIREMENT_SETTING_KEY,
+  writeRetirementSetting,
+  type PlannerDb,
 } from './plannerData';
 
 const uuid = (seed: string): string => {
@@ -89,8 +93,16 @@ describe('classifyWriteError', () => {
     expect(classifyWriteError(null, 'new row violates row-level security policy').kind).toBe('permission');
     expect(classifyWriteError(null, 'permission denied for table').kind).toBe('permission');
   });
+  it('classifies constraint-violation codes as permission (drop, not retry)', () => {
+    // Naruszenia ograniczeń nie mogą zatkać kolejki ponawiania — porzucane jak
+    // odmowa uprawnień: 23502 not-null, 23503 FK, 23505 unique, 23514 check.
+    expect(classifyWriteError('23502', 'null value').kind).toBe('permission');
+    expect(classifyWriteError('23503', 'foreign key').kind).toBe('permission');
+    expect(classifyWriteError('23505', 'duplicate key').kind).toBe('permission');
+    expect(classifyWriteError('23514', 'check constraint').kind).toBe('permission');
+  });
   it('classifies everything else as transient', () => {
-    expect(classifyWriteError('23505', 'duplicate key').kind).toBe('transient');
+    expect(classifyWriteError('08006', 'connection failure').kind).toBe('transient');
     expect(classifyWriteError(null, 'fetch failed').kind).toBe('transient');
   });
 });
@@ -197,14 +209,94 @@ describe('loadPlannerSnapshot', () => {
     expect(result).toEqual({ ok: false, error: PLANNER_SNAPSHOT_ERROR });
   });
 
+  it('maps workload (bin null<->"" + dated) and milestones, excluding invalid rows', async () => {
+    const db = new FakeSelectDb()
+      .seed('milestones', [
+        { id: uuid('ms1'), project_id: PR, name: 'Publikacja', milestone_date: '2026-07-10' },
+        { id: uuid('ms-bad'), project_id: PR, name: 'Zła', milestone_date: '' }, // invalid -> excluded
+      ])
+      .seed('workload_entries', [
+        { id: uuid('wl-bin'), task_id: TK, profile_id: CLOUD_PA, work_date: null, planned_hours: 4, start_minutes: 0, sort_index: 0 },
+        { id: uuid('wl-dated'), task_id: TK, profile_id: CLOUD_PA, work_date: '2026-07-06', planned_hours: 2, start_minutes: 480, sort_index: 1 },
+        { id: uuid('wl-offgrid'), task_id: TK, profile_id: CLOUD_PA, work_date: '2026-07-06', planned_hours: 0.3, start_minutes: 0, sort_index: 2 }, // off-grid -> excluded
+        { id: uuid('wl-ghost'), task_id: TK, profile_id: uuid('ghost-profile'), work_date: null, planned_hours: 1, start_minutes: 0, sort_index: 3 }, // unmappable -> excluded
+        { id: uuid('wl-bin2'), task_id: TK, profile_id: CLOUD_PA, work_date: null, planned_hours: 1, start_minutes: 0, sort_index: 4 }, // dup bin pair -> excluded
+      ]);
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const p = result.payload;
+    expect(p.milestones).toEqual([
+      expect.objectContaining({ projectId: PR, name: 'Publikacja', date: '2026-07-10' }),
+    ]);
+    // Only the first bin row + the valid dated row survive; person reversed to PA.
+    expect(p.workload).toHaveLength(2);
+    expect(p.workload.find((w) => w.date === '')).toMatchObject({ personId: PA, plannedHours: 4, startMinutes: 0 });
+    expect(p.workload.find((w) => w.date === '2026-07-06')).toMatchObject({ personId: PA, plannedHours: 2, startMinutes: 480 });
+    expect(result.diagnostics.length).toBeGreaterThanOrEqual(3);
+  });
+
   it('treats empty collections as a valid empty payload', async () => {
     const db = new FakeSelectDb();
     const result = await loadPlannerSnapshot(db, maps(), localFixture());
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.payload).toEqual({
-      clients: [], projects: [], tasks: [], assignments: [], comments: [], activity: [],
+      clients: [], projects: [], milestones: [], tasks: [], assignments: [], workload: [], comments: [], activity: [],
     });
     expect(result.diagnostics).toEqual([]);
+  });
+});
+
+// ---- Retirement flag accessors ----------------------------------------------
+
+class FakeWriteDb implements PlannerDb {
+  settings = new Map<string, Record<string, unknown>>();
+  failUpsert = false;
+  failSelect = false;
+  async select(table: string) {
+    if (this.failSelect) return { rows: [] as Row[], error: 'boom' };
+    if (table === 'app_settings') {
+      return { rows: [...this.settings.values()], error: null };
+    }
+    return { rows: [] as Row[], error: null };
+  }
+  async upsert(_table: string, row: Row) {
+    if (this.failUpsert) return { error: { kind: 'transient' as const, message: 'net' } };
+    this.settings.set(String(row.key), row);
+    return { error: null };
+  }
+  async remove() {
+    return { error: null };
+  }
+}
+
+describe('retirement flag accessors', () => {
+  it('reads false when the row is missing and true when enabled', async () => {
+    const db = new FakeWriteDb();
+    expect(await readRetirementSetting(db)).toEqual({ ok: true, enabled: false });
+    db.settings.set(RETIREMENT_SETTING_KEY, { key: RETIREMENT_SETTING_KEY, value: { enabled: true } });
+    expect(await readRetirementSetting(db)).toEqual({ ok: true, enabled: true });
+  });
+
+  it('reports ok:false on a select error (caller keeps cached value)', async () => {
+    const db = new FakeWriteDb();
+    db.failSelect = true;
+    expect(await readRetirementSetting(db)).toEqual({ ok: false, enabled: false });
+  });
+
+  it('upserts the flag row on write, round-tripping through read', async () => {
+    const db = new FakeWriteDb();
+    const res = await writeRetirementSetting(db, true, 'admin-profile');
+    expect(res.error).toBeNull();
+    expect(await readRetirementSetting(db)).toEqual({ ok: true, enabled: true });
+    expect(db.settings.get(RETIREMENT_SETTING_KEY)!.value).toMatchObject({ enabled: true, by_profile: 'admin-profile' });
+  });
+
+  it('surfaces a write error without throwing', async () => {
+    const db = new FakeWriteDb();
+    db.failUpsert = true;
+    const res = await writeRetirementSetting(db, false, 'x');
+    expect(res.error).toEqual({ kind: 'transient', message: 'net' });
   });
 });

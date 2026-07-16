@@ -7,6 +7,7 @@ import { useStore } from '../store/AppStore';
 import { allStatusesOrdered, isAdminUser } from '../store/selectors';
 import { StatusBadge } from '../components/StatusBadge';
 import { ExportDryRunPanel } from '../components/ExportDryRunPanel';
+import { MigrationStatusPanel } from '../components/MigrationStatusPanel';
 import { useAuth } from '../auth/SessionProvider';
 import { useOrgData } from '../supabase/OrgDataProvider';
 
@@ -345,6 +346,8 @@ export function AdminPage() {
       {mode === 'supabase' && <CloudDictionaries />}
 
       <ExportDryRunPanel />
+
+      <MigrationStatusPanel />
     </section>
   );
 }
