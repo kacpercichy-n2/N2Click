@@ -1,9 +1,22 @@
 // Employee profile: avatar, name, job title, department, editable details,
 // assigned projects/tasks, and this week's workload/availability.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
 import type { PersonDraft } from '../store/AppStore';
+import { useAuth } from '../auth/SessionProvider';
+import {
+  canUploadAvatarPhoto,
+  editableProfileFields,
+  type ProfileField,
+} from './profileEditPolicy';
+import {
+  fetchAvatarProfile,
+  removeAvatar,
+  resolveAvatarUrl,
+  uploadAvatar,
+} from '../supabase/avatarStorage';
+import { validateAvatarFile } from '../supabase/avatarFile';
 import {
   availableHoursInRange,
   getDepartment,
@@ -57,17 +70,21 @@ function PersonProfile({ personId }: { personId: string }) {
   const navigate = useNavigate();
   const { openTask } = useOpenTask();
   const { state, dispatch } = useStore();
+  const auth = useAuth();
   const person = state.people.find((p) => p.id === personId);
-  const canManage = can(
-    state.people.find((p) => p.id === state.currentUserId),
-    'people.manage',
-    { peopleCount: state.people.length },
-  );
+  const actor = state.people.find((p) => p.id === state.currentUserId);
+  const peopleCount = state.people.length;
   const isOwn = personId === state.currentUserId;
-  const canEdit = canManage || isOwn;
-  // Self-editing without people.manage: profile is editable, but role + capacity
-  // (org-level fields) stay locked.
-  const restrictedSelf = isOwn && !canManage;
+  // Pure role/department policy drives which fields are editable. `save()` takes
+  // locked fields from the current `person`, never from the (disabled) draft.
+  const fields: ReadonlySet<ProfileField> = person
+    ? editableProfileFields(actor, person, { peopleCount })
+    : new Set<ProfileField>();
+  const allow = (f: ProfileField) => fields.has(f);
+  const canEdit = fields.size > 0;
+  const canUploadPhoto = person
+    ? canUploadAvatarPhoto(actor, person, auth.mode, { peopleCount })
+    : false;
 
   const [draft, setDraft] = useState<PersonDraft>(() => ({
     firstName: person?.firstName ?? '',
@@ -95,13 +112,30 @@ function PersonProfile({ personId }: { personId: string }) {
   const hoursInvalid = draft.workEndMinutes <= draft.workStartMinutes;
 
   const save = () => {
-    if (!draft.firstName.trim()) return;
-    if (hoursInvalid) {
+    // Merge the draft over the current person, taking ONLY permitted fields;
+    // locked fields keep the person's current value (never the disabled input).
+    const merged: PersonDraft = {
+      firstName: allow('firstName') ? draft.firstName : person.firstName,
+      lastName: allow('lastName') ? draft.lastName : person.lastName,
+      email: allow('email') ? draft.email : person.email,
+      phone: allow('phone') ? draft.phone : person.phone,
+      role: allow('roleTitle') ? draft.role : person.role,
+      departmentId: allow('departmentId') ? draft.departmentId : person.departmentId,
+      avatar: allow('avatarEmoji') ? draft.avatar : person.avatar,
+      capacity: allow('capacity') ? draft.capacity : person.capacity,
+      accessRole: allow('accessRole') ? draft.accessRole : person.accessRole,
+      workDays: allow('workDays') ? draft.workDays : person.workDays,
+      workStartMinutes: allow('workHours') ? draft.workStartMinutes : person.workStartMinutes,
+      workEndMinutes: allow('workHours') ? draft.workEndMinutes : person.workEndMinutes,
+      supervisorId: allow('supervisorId') ? draft.supervisorId : person.supervisorId,
+    };
+    if (!merged.firstName.trim()) return;
+    if (allow('workHours') && hoursInvalid) {
       setError('Koniec pracy musi być po początku');
       return;
     }
     setError('');
-    dispatch({ type: 'UPDATE_PERSON', personId: person.id, person: draft });
+    dispatch({ type: 'UPDATE_PERSON', personId: person.id, person: merged });
     setEditing(false);
   };
 
@@ -163,6 +197,8 @@ function PersonProfile({ personId }: { personId: string }) {
                 id="pp-first"
                 value={draft.firstName}
                 onChange={(e) => set('firstName', e.target.value)}
+                disabled={!allow('firstName')}
+                title={allow('firstName') ? undefined : NO_PERM_TITLE}
               />
             </div>
             <div className="field">
@@ -171,11 +207,19 @@ function PersonProfile({ personId }: { personId: string }) {
                 id="pp-last"
                 value={draft.lastName}
                 onChange={(e) => set('lastName', e.target.value)}
+                disabled={!allow('lastName')}
+                title={allow('lastName') ? undefined : NO_PERM_TITLE}
               />
             </div>
             <div className="field">
               <label htmlFor="pp-role">Stanowisko</label>
-              <input id="pp-role" value={draft.role} onChange={(e) => set('role', e.target.value)} />
+              <input
+                id="pp-role"
+                value={draft.role}
+                onChange={(e) => set('role', e.target.value)}
+                disabled={!allow('roleTitle')}
+                title={allow('roleTitle') ? undefined : NO_PERM_TITLE}
+              />
             </div>
             <div className="field">
               <label htmlFor="pp-dep">Dział</label>
@@ -183,6 +227,8 @@ function PersonProfile({ personId }: { personId: string }) {
                 id="pp-dep"
                 value={draft.departmentId}
                 onChange={(e) => set('departmentId', e.target.value)}
+                disabled={!allow('departmentId')}
+                title={allow('departmentId') ? undefined : NO_PERM_TITLE}
               >
                 <option value="">—</option>
                 {state.departments.map((d) => (
@@ -201,6 +247,8 @@ function PersonProfile({ personId }: { personId: string }) {
                 type="email"
                 value={draft.email}
                 onChange={(e) => set('email', e.target.value)}
+                disabled={!allow('email')}
+                title={allow('email') ? undefined : NO_PERM_TITLE}
               />
             </div>
             <div className="field">
@@ -210,6 +258,8 @@ function PersonProfile({ personId }: { personId: string }) {
                 value={draft.phone}
                 onChange={(e) => set('phone', e.target.value)}
                 placeholder="opcjonalnie"
+                disabled={!allow('phone')}
+                title={allow('phone') ? undefined : NO_PERM_TITLE}
               />
             </div>
             <div className="field field-narrow">
@@ -220,6 +270,8 @@ function PersonProfile({ personId }: { personId: string }) {
                 onChange={(e) => set('avatar', e.target.value)}
                 maxLength={4}
                 placeholder="🙂"
+                disabled={!allow('avatarEmoji')}
+                title={allow('avatarEmoji') ? undefined : NO_PERM_TITLE}
               />
             </div>
             <div className="field field-narrow">
@@ -232,8 +284,8 @@ function PersonProfile({ personId }: { personId: string }) {
                 step={0.5}
                 value={draft.capacity}
                 onChange={(e) => set('capacity', Number(e.target.value) || DEFAULT_CAPACITY)}
-                disabled={restrictedSelf}
-                title={restrictedSelf ? NO_PERM_TITLE : undefined}
+                disabled={!allow('capacity')}
+                title={allow('capacity') ? undefined : NO_PERM_TITLE}
               />
             </div>
             <div className="field field-narrow">
@@ -242,8 +294,8 @@ function PersonProfile({ personId }: { personId: string }) {
                 id="pp-role-access"
                 value={draft.accessRole}
                 onChange={(e) => set('accessRole', e.target.value as AccessRole)}
-                disabled={restrictedSelf}
-                title={restrictedSelf ? NO_PERM_TITLE : undefined}
+                disabled={!allow('accessRole')}
+                title={allow('accessRole') ? undefined : NO_PERM_TITLE}
               >
                 {(Object.keys(ROLE_LABELS) as AccessRole[]).map((r) => (
                   <option key={r} value={r}>
@@ -261,12 +313,12 @@ function PersonProfile({ personId }: { personId: string }) {
                   <label
                     key={c.iso}
                     className={`weekday-chip${draft.workDays.includes(c.iso) ? ' on' : ''}`}
-                    title={restrictedSelf ? NO_PERM_TITLE : undefined}
+                    title={allow('workDays') ? undefined : NO_PERM_TITLE}
                   >
                     <input
                       type="checkbox"
                       checked={draft.workDays.includes(c.iso)}
-                      disabled={restrictedSelf}
+                      disabled={!allow('workDays')}
                       onChange={() => set('workDays', toggleWorkDay(draft.workDays, c.iso))}
                     />
                     <span>{c.label}</span>
@@ -283,8 +335,8 @@ function PersonProfile({ personId }: { personId: string }) {
                   set('workStartMinutes', Number(e.target.value));
                   if (error) setError('');
                 }}
-                disabled={restrictedSelf}
-                title={restrictedSelf ? NO_PERM_TITLE : undefined}
+                disabled={!allow('workHours')}
+                title={allow('workHours') ? undefined : NO_PERM_TITLE}
               >
                 {START_MINUTE_OPTIONS.map((m) => (
                   <option key={m} value={m}>
@@ -302,8 +354,8 @@ function PersonProfile({ personId }: { personId: string }) {
                   set('workEndMinutes', Number(e.target.value));
                   if (error) setError('');
                 }}
-                disabled={restrictedSelf}
-                title={restrictedSelf ? NO_PERM_TITLE : undefined}
+                disabled={!allow('workHours')}
+                title={allow('workHours') ? undefined : NO_PERM_TITLE}
               >
                 {END_MINUTE_OPTIONS.map((m) => (
                   <option key={m} value={m}>
@@ -318,8 +370,8 @@ function PersonProfile({ personId }: { personId: string }) {
                 id="pp-supervisor"
                 value={draft.supervisorId}
                 onChange={(e) => set('supervisorId', e.target.value)}
-                disabled={restrictedSelf}
-                title={restrictedSelf ? NO_PERM_TITLE : undefined}
+                disabled={!allow('supervisorId')}
+                title={allow('supervisorId') ? undefined : NO_PERM_TITLE}
               >
                 <option value="">—</option>
                 {supervisorOptions.map((p) => (
@@ -343,6 +395,14 @@ function PersonProfile({ personId }: { personId: string }) {
             </button>
           </div>
         </div>
+      )}
+
+      {canUploadPhoto && (
+        <AvatarPhotoSection
+          person={person}
+          isSelf={isOwn}
+          sessionUserId={auth.state.session?.user?.id ?? null}
+        />
       )}
 
       <ProfileFacts person={person} />
@@ -435,6 +495,178 @@ function PersonProfile({ personId }: { personId: string }) {
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * "Zdjęcie profilowe" — private-bucket avatar photo (Supabase mode only). The
+ * parent renders this ONLY when `canUploadAvatarPhoto` is true, so it never
+ * mounts (and never touches the Supabase client) in local mode. Retrieval is
+ * always via a signed URL; failures fall back to initials/emoji, never block.
+ */
+function AvatarPhotoSection({
+  person,
+  isSelf,
+  sessionUserId,
+}: {
+  person: Person;
+  isSelf: boolean;
+  sessionUserId: string | null;
+}) {
+  type Phase = 'loading' | 'ready' | 'no-account' | 'error';
+  const [phase, setPhase] = useState<Phase>('loading');
+  const [profileId, setProfileId] = useState<string | null>(null);
+  const [avatarPath, setAvatarPath] = useState<string | null>(null);
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const email = person.email;
+
+  useEffect(() => {
+    let cancelled = false;
+    setPhase('loading');
+    setError('');
+    setNotice('');
+    setPhotoUrl(null);
+    void (async () => {
+      const res = await fetchAvatarProfile(email);
+      if (cancelled) return;
+      if (!res.ok) {
+        setPhase('error');
+        setError(res.error);
+        return;
+      }
+      // Self: prefer the authoritative session id; the email row (if any) only
+      // supplies the current avatar_path.
+      if (isSelf && sessionUserId) {
+        const path = res.profile?.avatarPath ?? null;
+        setProfileId(sessionUserId);
+        setAvatarPath(path);
+        setPhase('ready');
+        if (path) {
+          const url = await resolveAvatarUrl(path);
+          if (!cancelled) setPhotoUrl(url);
+        }
+        return;
+      }
+      if (!res.profile) {
+        setPhase('no-account');
+        return;
+      }
+      setProfileId(res.profile.profileId);
+      setAvatarPath(res.profile.avatarPath);
+      setPhase('ready');
+      if (res.profile.avatarPath) {
+        const url = await resolveAvatarUrl(res.profile.avatarPath);
+        if (!cancelled) setPhotoUrl(url);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [email, isSelf, sessionUserId]);
+
+  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !profileId || busy) return;
+    setError('');
+    setNotice('');
+    const check = validateAvatarFile({ name: file.name, type: file.type, size: file.size });
+    if (!check.ok) {
+      setError(check.error);
+      return;
+    }
+    setBusy(true);
+    const res = await uploadAvatar({ profileId, file, ext: check.ext, previousPath: avatarPath });
+    if (!res.ok) {
+      setBusy(false);
+      setError(res.error);
+      return;
+    }
+    setAvatarPath(res.path);
+    setNotice('Zapisano awatar.');
+    const url = await resolveAvatarUrl(res.path);
+    setPhotoUrl(url);
+    setBusy(false);
+  };
+
+  const onRemove = async () => {
+    if (!profileId || !avatarPath || busy) return;
+    setError('');
+    setNotice('');
+    setBusy(true);
+    const res = await removeAvatar({ profileId, avatarPath });
+    if (!res.ok) {
+      setBusy(false);
+      setError(res.error);
+      return;
+    }
+    setAvatarPath(null);
+    setPhotoUrl(null);
+    setNotice('Usunięto zdjęcie.');
+    setBusy(false);
+  };
+
+  return (
+    <div className="editor-section">
+      <h2>Zdjęcie profilowe</h2>
+      {phase === 'loading' && (
+        <p className="field-hint" role="status">
+          Ładowanie zdjęcia…
+        </p>
+      )}
+      {phase === 'error' && (
+        <p className="field-error" role="alert">
+          {error || 'Nie udało się wczytać zdjęcia.'}
+        </p>
+      )}
+      {phase === 'no-account' && (
+        <p className="field-hint">
+          Ta osoba nie ma jeszcze konta — zdjęcie profilowe będzie dostępne po jego utworzeniu.
+        </p>
+      )}
+      {phase === 'ready' && (
+        <div className="avatar-photo-section">
+          <Avatar person={person} size={72} photoUrl={photoUrl ?? undefined} />
+          <div className="avatar-photo-controls">
+            <label className="btn soft" htmlFor="pp-photo">
+              {busy ? 'Wysyłanie…' : photoUrl ? 'Zmień zdjęcie' : 'Wgraj zdjęcie'}
+            </label>
+            <input
+              id="pp-photo"
+              type="file"
+              accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+              disabled={busy}
+              onChange={(e) => void onFile(e)}
+              style={{ display: 'none' }}
+            />
+            {avatarPath && (
+              <button
+                type="button"
+                className="btn danger-ghost"
+                disabled={busy}
+                onClick={() => void onRemove()}
+              >
+                Usuń zdjęcie
+              </button>
+            )}
+            {error && (
+              <p className="field-error" role="alert">
+                {error}
+              </p>
+            )}
+            {notice && (
+              <p className="field-hint" role="status">
+                {notice}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

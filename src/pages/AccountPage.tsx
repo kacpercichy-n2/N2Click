@@ -3,11 +3,15 @@
 // sesji. Dostępny wyłącznie dla realnego konta Supabase — w trybie lokalnym
 // trasa przekierowuje na `/` (patrz App.tsx). Nigdy nie wyświetlamy haseł.
 import { useState, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../auth/SessionProvider';
 import { validateNewPassword } from '../auth/passwordChange';
+import { useStore } from '../store/AppStore';
 
 export function AccountPage() {
   const { changePassword } = useAuth();
+  const { state } = useStore();
+  const currentUserId = state.currentUserId;
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -41,6 +45,17 @@ export function AccountPage() {
       <div className="page-head">
         <h1>Konto</h1>
       </div>
+
+      {currentUserId && (
+        <div className="editor-section">
+          <h2>Profil</h2>
+          <p className="field-hint">
+            <Link to={`/people/${currentUserId}`} className="profile-link">
+              Mój profil
+            </Link>
+          </p>
+        </div>
+      )}
 
       <div className="editor-section">
         <h2>Zmiana hasła</h2>
