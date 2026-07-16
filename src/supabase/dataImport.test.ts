@@ -8,7 +8,9 @@ import { describe, expect, it } from 'vitest';
 import { emptyData } from '../store/storage';
 import { buildDryRunReport } from '../store/exportDryRun';
 import type {
+  ActivityEvent,
   AppData,
+  Comment,
   Person,
   Project,
   ServiceType,
@@ -556,6 +558,89 @@ describe('runSupabaseImport — słowniki referencyjne', () => {
     ).toBe(true);
     // Other dictionaries still import.
     expect(sumFor(result, 'statuses').imported).toBe(2);
+  });
+});
+
+// ---- 10. Clients + comments + activity (planer migration) -------------------
+
+const CLIENT1 = uuid('client-alpha');
+const CM1 = uuid('comment-one');
+const CM_ORPHAN = uuid('comment-orphan');
+const AC1 = uuid('activity-one');
+
+describe('runSupabaseImport — klienci / komentarze / dziennik', () => {
+  function plannerFixture(): AppData {
+    const base = fixture();
+    return {
+      ...base,
+      clients: [{ id: CLIENT1, name: 'Alfa', archived: false }],
+      projects: [
+        makeProject({ id: PR1, name: 'Alpha', departmentId: D1, clientId: CLIENT1 }),
+        makeProject({ id: PR2, name: 'Beta', departmentId: D2 }),
+      ],
+      comments: [
+        {
+          id: CM1, entityType: 'task', entityId: T1, authorId: 'localA',
+          body: 'Komentarz', mentionIds: ['localB', 'ghost'], createdAt: '2026-07-16T00:00:00.000Z',
+        } as Comment,
+        {
+          id: CM_ORPHAN, entityType: 'task', entityId: 'ghost-task', authorId: 'localA',
+          body: 'Sierota', mentionIds: [], createdAt: '2026-07-16T00:00:00.000Z',
+        } as Comment,
+      ],
+      activity: [
+        {
+          id: AC1, entityType: 'task', entityId: T1, actorId: 'localA',
+          message: 'utworzył(a) zadanie', createdAt: '2026-07-16T00:00:00.000Z',
+        } as ActivityEvent,
+      ],
+    };
+  }
+
+  it('imports clients before projects and wires project client_id', async () => {
+    const data = plannerFixture();
+    const db = seedProfiles(new FakeDb());
+    const result = await runSupabaseImport(data, buildDryRunReport(data), db);
+
+    expect(sumFor(result, 'clients')).toMatchObject({ imported: 1, failed: 0 });
+    expect(db.insertTables.indexOf('clients')).toBeLessThan(db.insertTables.indexOf('projects'));
+    // Alpha carries the client_id; Beta has none.
+    const alpha = db.insertCalls('projects').find((r) => r.id === PR1);
+    expect(alpha?.client_id).toBe(CLIENT1);
+    const beta = db.insertCalls('projects').find((r) => r.id === PR2);
+    expect(beta?.client_id).toBeNull();
+  });
+
+  it('imports comments (mapping author + mentions) and skips orphan parents', async () => {
+    const data = plannerFixture();
+    const db = seedProfiles(new FakeDb());
+    const result = await runSupabaseImport(data, buildDryRunReport(data), db);
+
+    expect(sumFor(result, 'comments')).toMatchObject({ imported: 1, failed: 1 });
+    const inserted = db.insertCalls('comments').find((r) => r.id === CM1);
+    expect(inserted).toMatchObject({ task_id: T1, author_id: PROFILE_A });
+    // Unmappable mention 'ghost' dropped; localB mapped.
+    expect(inserted?.mention_ids).toEqual([PROFILE_B]);
+    // Orphan comment failed with a diagnostic, never inserted.
+    expect(db.insertCalls('comments').some((r) => r.id === CM_ORPHAN)).toBe(false);
+    expect(result.diagnostics.some((d) => d.collection === 'comments' && d.entityId === CM_ORPHAN)).toBe(true);
+  });
+
+  it('imports activity with actor mapping and a typed task FK; rerun is idempotent', async () => {
+    const data = plannerFixture();
+    const db = seedProfiles(new FakeDb());
+    const first = await runSupabaseImport(data, buildDryRunReport(data), db);
+    expect(sumFor(first, 'activity')).toMatchObject({ imported: 1, failed: 0 });
+    const row = db.insertCalls('activity_events').find((r) => r.id === AC1);
+    expect(row).toMatchObject({ entity_type: 'task', entity_id: T1, task_id: T1, actor_id: PROFILE_A });
+    // created_by is left to the server default (auth.uid()).
+    expect('created_by' in (row ?? {})).toBe(false);
+
+    const second = await runSupabaseImport(data, buildDryRunReport(data), db);
+    expect(sumFor(second, 'clients').imported).toBe(0);
+    expect(sumFor(second, 'comments').imported).toBe(0);
+    expect(sumFor(second, 'activity').imported).toBe(0);
+    expect(db.rows('activity_events')).toHaveLength(1);
   });
 });
 

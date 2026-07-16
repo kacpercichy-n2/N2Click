@@ -1,65 +1,67 @@
-# Run state — 20260716-094327-207 localStorage export + migration dry run
+# Run state — 20260716-185100-210 cloud projects and tasks
 
 ## Goal
 
-Admin-only, read-only tool: sanitized localStorage JSON backup download plus a
-Supabase migration dry-run report (counts, ID/role mappings, unsupported
-fields, blockers). No writes to Supabase or localStorage. Polish UI.
+Move clients, projects, tasks, assignments, task status changes, comments and
+activity events to Supabase with role-scoped RLS (admin global / manager
+own-department / worker own-assignment), behind AppStore via a pure repository
++ diff-based cloud mirror. Workload stays local; localStorage recovery stays;
+local mode byte-identical. Polish UX for loading/error/retry/stale.
 
 ## Packages
 
-- `handoffs/scheduler-reviews/207-architect-package.md`
-  (PKG-20260716-export-dry-run) — Tier: developer, Risk: medium,
-  Codex: conditional. Status: ready.
+- `handoffs/scheduler-reviews/210-architect-package.md`
+  (PKG-20260716-cloud-planner-data) — Tier: developer, Risk: high,
+  Codex: required. Status: ready.
 
 ## Changed boundaries (planned)
 
-- `src/store/storage.ts`: additive `peekDataResult()` — side-effect-free read
-  (no `latestKnownRevision` mutation, no writes); load/save/revision behavior
-  unchanged, data version stays 7.
-- New pure module `src/store/exportDryRun.ts` (+ `exportDryRun.test.ts`), new
-  `src/components/ExportDryRunPanel.tsx`, section appended to the admin branch
-  of `src/pages/AdminPage.tsx` (existing gating reused; no new route).
-- No `src/supabase/*` imports in new files; no reducer actions; no import path.
+- New migration `supabase/migrations/20260716190000_planner_entities.sql`:
+  `clients`, `comments`, `activity_events` tables + planner columns on
+  `projects`/`tasks`; RLS in-file; `migrations.test.ts` extended.
+- New pure modules `src/supabase/plannerData.ts` (PlannerDb adapter, snapshot
+  load, mappers) and `src/supabase/cloudMirror.ts` (id maps, state-diff → ops,
+  apply with permission/transient classification), plus tests.
+- `src/store/AppStore.tsx`: single new reducer action `MERGE_CLOUD_ENTITIES`
+  (merge by id, local-only rows kept, workload untouched, invalid payload
+  preserves prior reference) + `lastActionRef`; reducer otherwise untouched.
+- New `src/supabase/CloudSyncProvider.tsx` + `src/components/CloudSyncBanner.tsx`
+  (hydration, serialized mirror queue, suppression of REPLACE_FROM_STORAGE /
+  LOAD_SAMPLE / RESET_ALL / merge transitions, refresh gated on empty queue).
+- `dataImport.ts`/`exportDryRun.ts` extended for the new tables/columns.
+- Docs: `supabase/README.md` + `openwiki/n2hub/state-and-persistence.md`.
 
 ## Verification
 
-- Worker: `npx vitest run src/store/exportDryRun.test.ts
-  src/store/storage.test.ts`, then `npm run build`.
-- Browser: none — isolated read-only panel, no calendar/persistence
-  interaction changed.
+- Worker: `npx vitest run src/supabase src/store/cloudMerge.test.ts
+  src/store/commandValidation.test.ts src/store/exportDryRun.test.ts`, then one
+  full `npm test` + `npm run build`.
+- Browser: none (local mode unchanged; calendar/bin untouched).
 - Scheduler owns final `npm run test:scheduler && npm test && npm run build`.
 
 ## Open questions
 
-None — role mapping (pm→manager, handlowiec/pracownik→worker), sanitization
-scope and UI placement decided in the package. Note for the final reviewer:
-`openwiki/n2hub/state-and-persistence.md` may need one line for the new
-`peekDataResult` read export after a green run.
+None — adapter mechanism (post-reducer diff mirror), new-migration decision,
+ID strategy (local UUIDs as cloud PKs; email/slug/name fallback maps), merge
+semantics (never delete local rows) and stale handling (LWW + gated manual
+refresh) are settled in the package.
 
-## Developer result
+## Developer result — 210 (PKG-20260716-cloud-planner-data)
 
-Implemented as scoped. storage.ts: extracted `readData(recordRevision)` helper;
-`loadDataResult` behavior byte-identical, added `peekDataResult`/`PeekDataResult`.
-New exportDryRun.ts + test, ExportDryRunPanel.tsx, wired into AdminPage.
-Focused: `vitest exportDryRun+storage` 151 pass/0 fail. Full `vitest` 787 pass/0
-fail. `npm run build` green (tsc strict + vite). No deviations. Wiki unchanged
-(boundary note still accurate; peek is additive). Reviewer may add the peek line.
-
-## Developer result — 208 (PKG-20260716-supabase-import)
-
-New `src/supabase/dataImport.ts` (ImportDb + adapter, `evaluateImportGate`,
-`runSupabaseImport`: insert-only, select-before-insert, dep-safe order,
-people mapped never created) + `dataImport.test.ts` (17 cases). Extended
-`ExportDryRunPanel.tsx` with the gated import section (Polish). No localStorage
-touch; no upsert/update/delete. Focused set 168 pass, full `npm test` 804 pass,
-`npm run build` green. No deviations.
-
-## Developer result — 209 (PKG-20260716-cloud-reference-reads)
-
-New migration `20260716150000_reference_tables.sql` (statuses/service_types/
-work_categories, RLS: select all-authenticated, writes admin). New
-`referenceData.ts`/`OrgDataProvider.tsx`/tests. Import + dry-run now migrate the
-3 dictionaries. Cloud role/team reads via `effectiveAccessRole` (local fallback);
-no AppStore dispatch. Updated migrations.test (new file+tables). Focused 684,
-`npm test` 828, `npm run build` green. Deviation: migrations.test.ts edited (see report).
+Built the full scope: migration `20260716190000_planner_entities.sql`
+(clients/comments/activity_events + planner columns; RLS in-file; migrations.test
+extended). New pure `plannerData.ts` (PlannerDb, classifyWriteError, snapshot
+load/mappers) + `cloudMirror.ts` (buildCloudIdMaps, diffToCloudOps, applyCloudOps)
+with tests. AppStore: `MERGE_CLOUD_ENTITIES` (fail-closed, workload untouched) +
+`lastActionRef` dispatch wrapper; reducer otherwise untouched. `CloudSyncProvider`
++ `CloudSyncBanner` mounted (main.tsx/App.tsx). dataImport (clients/comments/
+activity + full project/task columns) and exportDryRun updated. Docs updated.
+Focused `npx vitest run src/supabase src/store/cloudMerge.test.ts
+commandValidation.test.ts exportDryRun.test.ts`: 198 pass. Full `npm test`: 863
+pass (29 files). `npm run build`: pass. Deviations: (1) `CloudOp` carries an
+optional `onConflict` field (needed for composite assignment upsert; keeps
+applyCloudOps generic). (2) Diff resolves department refs leniently (unmappable
+non-'' → null, like import's deptFallback) while status/service/work-category
+refs block+diagnose per package. Reviewer: verify RLS policy text (new tables)
+and that the ready+empty banner surfacing STALE_HINT_MSG persistently is
+acceptable UX.

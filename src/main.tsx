@@ -5,6 +5,7 @@ import { MotionConfig } from 'motion/react';
 import { AppStoreProvider } from './store/AppStore';
 import { SessionProvider } from './auth/SessionProvider';
 import { OrgDataProvider } from './supabase/OrgDataProvider';
+import { CloudSyncProvider } from './supabase/CloudSyncProvider';
 import { App } from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import './styles.css';
@@ -47,10 +48,16 @@ createRoot(rootEl).render(
               mode — no client is created). Sits inside SessionProvider (needs the
               auth mode + session) and outside the router (needs no router hooks). */}
           <OrgDataProvider>
-            {/* Respect OS "reduce motion" for every animation in the app. */}
-            <MotionConfig reducedMotion="user">
-              <RouterProvider router={router} future={{ v7_startTransition: true }} />
-            </MotionConfig>
+            {/* Mirrors the seven planner groups to Supabase (writes) and
+                hydrates them on sign-in (one MERGE_CLOUD_ENTITIES). Sits inside
+                OrgDataProvider (needs the org snapshot) and outside the router
+                (needs no router hooks). Idle in local mode — no client created. */}
+            <CloudSyncProvider>
+              {/* Respect OS "reduce motion" for every animation in the app. */}
+              <MotionConfig reducedMotion="user">
+                <RouterProvider router={router} future={{ v7_startTransition: true }} />
+              </MotionConfig>
+            </CloudSyncProvider>
           </OrgDataProvider>
         </SessionProvider>
       </AppStoreProvider>

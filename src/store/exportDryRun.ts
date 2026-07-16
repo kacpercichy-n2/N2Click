@@ -68,12 +68,15 @@ export interface DryRunCounts {
     statuses: number;
     service_types: number;
     work_categories: number;
+    clients: number;
     departments: number;
     profiles: number;
     projects: number;
     project_members: number;
     tasks: number;
     task_assignments: number;
+    comments: number;
+    activity_events: number;
   };
 }
 
@@ -127,26 +130,12 @@ const ROLE_TARGET: Record<AccessRole, 'administrator' | 'manager' | 'worker'> = 
 };
 const ROLE_ORDER: AccessRole[] = ['administrator', 'pm', 'handlowiec', 'pracownik'];
 
-// Fields present in the localStorage model but with NO column in the current
-// Supabase core schema — they would be dropped by a migration. Static per the
-// architect's decision (kept aligned with the tests).
+// Fields present in the localStorage model but with NO column in the Supabase
+// schema — they would be dropped by a migration. Static per the architect's
+// decision (kept aligned with the tests). Project/task planner columns now EXIST
+// (20260716190000_planner_entities), so only the profile-only fields remain
+// unmapped.
 const DROPPED_FIELDS: UnsupportedFields[] = [
-  {
-    entity: 'Projekt',
-    fields: ['clientId', 'statusId', 'paid', 'startDate', 'endDate', 'serviceTypeId'],
-  },
-  {
-    entity: 'Zadanie',
-    fields: [
-      'statusId',
-      'startDate',
-      'endDate',
-      'estimatedHours',
-      'priority',
-      'workCategoryId',
-      'checklist',
-    ],
-  },
   {
     entity: 'Osoba',
     fields: [
@@ -204,12 +193,15 @@ export function buildDryRunReport(data: AppData): DryRunReport {
       statuses: data.statuses.length,
       service_types: data.serviceTypes.length,
       work_categories: data.workCategories.length,
+      clients: data.clients.length,
       departments: data.departments.length,
       profiles: data.people.length,
       projects: data.projects.length,
       project_members: memberPairs.size,
       tasks: data.tasks.length,
       task_assignments: data.assignments.length,
+      comments: data.comments.length,
+      activity_events: data.activity.length,
     },
   };
 
@@ -241,14 +233,13 @@ export function buildDryRunReport(data: AppData): DryRunReport {
   }));
 
   // Whole collections with no target table. Listed only when non-empty (nothing
-  // to drop = nothing to report). Statuses/service types/work categories now HAVE
-  // target tables (statuses/service_types/work_categories) and are omitted here.
+  // to drop = nothing to report). Statuses/service types/work categories AND now
+  // clients/comments/activity have target tables (20260716190000_planner_entities)
+  // and are omitted here — only milestones, workload and saved filters remain
+  // local-only.
   const collectionCandidates: Array<[string, number]> = [
-    ['Klienci', data.clients.length],
     ['Kamienie milowe', data.milestones.length],
     ['Zaplanowane godziny', data.workload.length],
-    ['Komentarze', data.comments.length],
-    ['Dziennik aktywności', data.activity.length],
     ['Zapisane filtry', data.savedFilters.length],
   ];
   const unsupportedCollections: UnsupportedCollection[] = collectionCandidates

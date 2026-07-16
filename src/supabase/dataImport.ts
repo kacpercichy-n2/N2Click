@@ -139,6 +139,8 @@ const DIAG = {
     'Projekt zadania nie został zaimportowany — popraw błąd projektu i uruchom import ponownie.',
   nonUuid: 'Identyfikator nie jest w formacie UUID — rekord wymaga ręcznej migracji.',
   deptFallback: 'Dział projektu nie został zaimportowany — projekt zapisano bez działu.',
+  parentNotImported:
+    'Projekt/zadanie komentarza nie zostało zaimportowane — popraw błąd encji i uruchom import ponownie.',
   noTargetTable: 'Brak tabeli docelowej w Supabase — dane pozostają tylko w tej przeglądarce.',
 } as const;
 
@@ -165,11 +167,8 @@ function emptySummary(collection: string, label: string): ImportCollectionSummar
 // never silently dropped. Reference dictionaries (statuses/service_types/
 // work_categories) now HAVE target tables and are imported below.
 const UNSUPPORTED: Array<[keyof AppData, string, string]> = [
-  ['clients', 'clients', 'Klienci'],
   ['milestones', 'milestones', 'Kamienie milowe'],
   ['workload', 'workload', 'Zaplanowane godziny'],
-  ['comments', 'comments', 'Komentarze'],
-  ['activity', 'activity', 'Dziennik aktywności'],
   ['savedFilters', 'savedFilters', 'Zapisane filtry'],
 ];
 
@@ -198,53 +197,77 @@ export async function runSupabaseImport(
   // Insert-only, select-before-insert; mirrors the departments strategy: skip by
   // id, skip by a semantic key (statuses: trimmed slug; the rest: trimmed name),
   // non-UUID local id => diagnostic, otherwise insert with the explicit local id.
-  summary.push(
-    await importReferenceCollection(db, {
-      collection: 'statuses',
-      label: 'Statusy',
-      table: 'statuses',
-      items: data.statuses,
-      columns: 'id, slug',
-      semanticKeyColumn: 'slug',
-      semanticKeyOf: (s) => s.slug.trim(),
-      rowOf: (s) => ({
-        id: s.id,
-        name: s.name,
-        slug: s.slug,
-        color: s.color,
-        sort_order: s.order,
-        archived: s.archived,
-        is_done: s.isDone,
-      }),
-      diagnostics,
+  // Each returns a local-id -> cloud-id map so projects/tasks can resolve their
+  // dictionary references (id-or-key), even when a name/slug match reused an
+  // EXISTING cloud row with a different id.
+  const statusesImport = await importReferenceCollection(db, {
+    collection: 'statuses',
+    label: 'Statusy',
+    table: 'statuses',
+    items: data.statuses,
+    columns: 'id, slug',
+    semanticKeyColumn: 'slug',
+    semanticKeyOf: (s) => s.slug.trim(),
+    rowOf: (s) => ({
+      id: s.id,
+      name: s.name,
+      slug: s.slug,
+      color: s.color,
+      sort_order: s.order,
+      archived: s.archived,
+      is_done: s.isDone,
     }),
-  );
-  summary.push(
-    await importReferenceCollection(db, {
-      collection: 'service_types',
-      label: 'Typy usług',
-      table: 'service_types',
-      items: data.serviceTypes,
-      columns: 'id, name',
-      semanticKeyColumn: 'name',
-      semanticKeyOf: (s) => s.name.trim(),
-      rowOf: (s) => ({ id: s.id, name: s.name }),
-      diagnostics,
-    }),
-  );
-  summary.push(
-    await importReferenceCollection(db, {
-      collection: 'work_categories',
-      label: 'Kategorie prac',
-      table: 'work_categories',
-      items: data.workCategories,
-      columns: 'id, name',
-      semanticKeyColumn: 'name',
-      semanticKeyOf: (c) => c.name.trim(),
-      rowOf: (c) => ({ id: c.id, name: c.name }),
-      diagnostics,
-    }),
-  );
+    diagnostics,
+  });
+  summary.push(statusesImport.summary);
+  const statusMap = statusesImport.idMap;
+
+  const serviceTypesImport = await importReferenceCollection(db, {
+    collection: 'service_types',
+    label: 'Typy usług',
+    table: 'service_types',
+    items: data.serviceTypes,
+    columns: 'id, name',
+    semanticKeyColumn: 'name',
+    semanticKeyOf: (s) => s.name.trim(),
+    rowOf: (s) => ({ id: s.id, name: s.name }),
+    diagnostics,
+  });
+  summary.push(serviceTypesImport.summary);
+  const serviceTypeMap = serviceTypesImport.idMap;
+
+  const workCategoriesImport = await importReferenceCollection(db, {
+    collection: 'work_categories',
+    label: 'Kategorie prac',
+    table: 'work_categories',
+    items: data.workCategories,
+    columns: 'id, name',
+    semanticKeyColumn: 'name',
+    semanticKeyOf: (c) => c.name.trim(),
+    rowOf: (c) => ({ id: c.id, name: c.name }),
+    diagnostics,
+  });
+  summary.push(workCategoriesImport.summary);
+  const workCategoryMap = workCategoriesImport.idMap;
+
+  // Clients (dependency for projects; skip-by-id only — a local client name is
+  // not unique, so we never fold two distinct clients by name).
+  const clientsImport = await importReferenceCollection(db, {
+    collection: 'clients',
+    label: 'Klienci',
+    table: 'clients',
+    items: data.clients,
+    columns: 'id',
+    semanticKeyColumn: 'id',
+    semanticKeyOf: () => '',
+    rowOf: (c) => ({ id: c.id, name: c.name, archived: c.archived }),
+    diagnostics,
+  });
+  summary.push(clientsImport.summary);
+  const clientMap = clientsImport.idMap;
+
+  const dictRef = (map: Map<string, string>, localId: string): string | null =>
+    localId === '' ? null : map.get(localId) ?? null;
 
   // Message for a person who could not be mapped to a Supabase profile.
   const personMessage = (personId: string): string => {
@@ -388,6 +411,12 @@ export async function runSupabaseImport(
         name: p.name,
         description: p.description,
         department_id: departmentId,
+        client_id: dictRef(clientMap, p.clientId),
+        status_id: dictRef(statusMap, p.statusId),
+        paid: p.paid,
+        start_date: p.startDate === '' ? null : p.startDate,
+        end_date: p.endDate === '' ? null : p.endDate,
+        service_type_id: dictRef(serviceTypeMap, p.serviceTypeId),
       });
       if (ins.error) {
         projectSummary.failed++;
@@ -440,6 +469,13 @@ export async function runSupabaseImport(
         project_id: t.projectId,
         title: t.title,
         description: t.description,
+        status_id: dictRef(statusMap, t.statusId),
+        start_date: t.startDate === '' ? null : t.startDate,
+        end_date: t.endDate === '' ? null : t.endDate,
+        estimated_hours: t.estimatedHours,
+        priority: t.priority,
+        work_category_id: dictRef(workCategoryMap, t.workCategoryId),
+        checklist: t.checklist,
       });
       if (ins.error) {
         taskSummary.failed++;
@@ -482,6 +518,24 @@ export async function runSupabaseImport(
   });
   summary.push(assignmentsSummary);
 
+  // 7) COMMENTS + ACTIVITY (append-only planer data; after tasks) -------------
+  summary.push(
+    await importComments(db, data, {
+      personIdMap,
+      availableProjectIds,
+      availableTaskIds,
+      diagnostics,
+    }),
+  );
+  summary.push(
+    await importActivity(db, data, {
+      personIdMap,
+      availableProjectIds,
+      availableTaskIds,
+      diagnostics,
+    }),
+  );
+
   // Unsupported collections — reported, never dropped silently.
   for (const [key, collection, label] of UNSUPPORTED) {
     const count = (data[key] as unknown[]).length;
@@ -513,8 +567,11 @@ async function importReferenceCollection<T extends { id: string }>(
     rowOf: (item: T) => Record<string, unknown>; // insert payload
     diagnostics: ImportDiagnostic[];
   },
-): Promise<ImportCollectionSummary> {
+): Promise<{ summary: ImportCollectionSummary; idMap: Map<string, string> }> {
   const summary = emptySummary(opts.collection, opts.label);
+  // local id -> resolved cloud id (== local id when inserted/id-present, or the
+  // existing cloud id when a semantic key matched a differently-id'd cloud row).
+  const idMap = new Map<string, string>();
   const existing = await db.select(opts.table, opts.columns);
   if (existing.error) {
     for (const item of opts.items) {
@@ -525,7 +582,7 @@ async function importReferenceCollection<T extends { id: string }>(
         message: insertFailure(existing.error),
       });
     }
-    return summary;
+    return { summary, idMap };
   }
 
   const knownIds = new Set<string>();
@@ -540,11 +597,13 @@ async function importReferenceCollection<T extends { id: string }>(
 
   for (const item of opts.items) {
     if (knownIds.has(item.id)) {
+      idMap.set(item.id, item.id);
       summary.skipped++;
       continue;
     }
     const key = opts.semanticKeyOf(item);
     if (key && byKey.has(key)) {
+      idMap.set(item.id, byKey.get(key)!);
       summary.skipped++;
       continue;
     }
@@ -565,6 +624,147 @@ async function importReferenceCollection<T extends { id: string }>(
     }
     knownIds.add(item.id);
     if (key) byKey.set(key, item.id);
+    idMap.set(item.id, item.id);
+    summary.imported++;
+  }
+  return { summary, idMap };
+}
+
+interface AppendOnlyOpts {
+  personIdMap: Map<string, string>;
+  availableProjectIds: Set<string>;
+  availableTaskIds: Set<string>;
+  diagnostics: ImportDiagnostic[];
+}
+
+/** Existing ids of `table` (chunked select on id). Never throws. */
+async function selectExistingIds(
+  db: ImportDb,
+  table: string,
+  ids: string[],
+): Promise<{ present: Set<string>; error: string | null }> {
+  const present = new Set<string>();
+  for (const c of chunk(ids)) {
+    const res = await db.select(table, 'id', { column: 'id', values: c });
+    if (res.error) return { present, error: res.error };
+    for (const row of res.rows) present.add(String(row.id));
+  }
+  return { present, error: null };
+}
+
+/**
+ * Insert-only import of comments (append-only). Maps author + mentions through
+ * personIdMap (unmappable author => null; unmappable mentions dropped). A comment
+ * whose parent project/task was not imported fails with a diagnostic. Non-UUID
+ * comment id => diagnostic. Idempotent: skip-by-id.
+ */
+async function importComments(
+  db: ImportDb,
+  data: AppData,
+  opts: AppendOnlyOpts,
+): Promise<ImportCollectionSummary> {
+  const summary = emptySummary('comments', 'Komentarze');
+  const existing = await selectExistingIds(db, 'comments', data.comments.map((c) => c.id));
+  if (existing.error) {
+    for (const c of data.comments) {
+      summary.failed++;
+      opts.diagnostics.push({ collection: 'comments', entityId: c.id, message: insertFailure(existing.error) });
+    }
+    return summary;
+  }
+  for (const c of data.comments) {
+    if (existing.present.has(c.id)) {
+      summary.skipped++;
+      continue;
+    }
+    const parentOk =
+      c.entityType === 'project'
+        ? opts.availableProjectIds.has(c.entityId)
+        : opts.availableTaskIds.has(c.entityId);
+    if (!parentOk) {
+      summary.failed++;
+      opts.diagnostics.push({ collection: 'comments', entityId: c.id, message: DIAG.parentNotImported });
+      continue;
+    }
+    if (!isUuid(c.id)) {
+      summary.failed++;
+      opts.diagnostics.push({ collection: 'comments', entityId: c.id, message: DIAG.nonUuid });
+      continue;
+    }
+    const mentionIds = c.mentionIds
+      .map((id) => opts.personIdMap.get(id))
+      .filter((id): id is string => id !== undefined);
+    const ins = await db.insert('comments', {
+      id: c.id,
+      project_id: c.entityType === 'project' ? c.entityId : null,
+      task_id: c.entityType === 'task' ? c.entityId : null,
+      author_id: c.authorId === '' ? null : opts.personIdMap.get(c.authorId) ?? null,
+      body: c.body,
+      mention_ids: mentionIds,
+      created_at: c.createdAt,
+    });
+    if (ins.error) {
+      summary.failed++;
+      opts.diagnostics.push({ collection: 'comments', entityId: c.id, message: insertFailure(ins.error) });
+      continue;
+    }
+    summary.imported++;
+  }
+  return summary;
+}
+
+/**
+ * Insert-only import of the activity log (append-only). Maps actor/impersonator
+ * through personIdMap (unmappable => null). Typed project_id/task_id FKs are set
+ * only for project/task rows whose entity was imported; entity_id keeps the
+ * verbatim local id regardless. `created_by` is left to the server default
+ * (auth.uid() — the importing administrator). Non-UUID id => diagnostic.
+ */
+async function importActivity(
+  db: ImportDb,
+  data: AppData,
+  opts: AppendOnlyOpts,
+): Promise<ImportCollectionSummary> {
+  const summary = emptySummary('activity', 'Dziennik aktywności');
+  const existing = await selectExistingIds(db, 'activity_events', data.activity.map((e) => e.id));
+  if (existing.error) {
+    for (const e of data.activity) {
+      summary.failed++;
+      opts.diagnostics.push({ collection: 'activity', entityId: e.id, message: insertFailure(existing.error) });
+    }
+    return summary;
+  }
+  for (const e of data.activity) {
+    if (existing.present.has(e.id)) {
+      summary.skipped++;
+      continue;
+    }
+    if (!isUuid(e.id)) {
+      summary.failed++;
+      opts.diagnostics.push({ collection: 'activity', entityId: e.id, message: DIAG.nonUuid });
+      continue;
+    }
+    const isProject = e.entityType === 'project' && opts.availableProjectIds.has(e.entityId);
+    const isTask = e.entityType === 'task' && opts.availableTaskIds.has(e.entityId);
+    const impersonatorId = e.impersonatorId && e.impersonatorId !== ''
+      ? opts.personIdMap.get(e.impersonatorId) ?? null
+      : null;
+    const ins = await db.insert('activity_events', {
+      id: e.id,
+      entity_type: e.entityType,
+      entity_id: e.entityId,
+      project_id: isProject ? e.entityId : null,
+      task_id: isTask ? e.entityId : null,
+      actor_id: e.actorId === '' ? null : opts.personIdMap.get(e.actorId) ?? null,
+      impersonator_id: impersonatorId,
+      message: e.message,
+      created_at: e.createdAt,
+    });
+    if (ins.error) {
+      summary.failed++;
+      opts.diagnostics.push({ collection: 'activity', entityId: e.id, message: insertFailure(ins.error) });
+      continue;
+    }
     summary.imported++;
   }
   return summary;

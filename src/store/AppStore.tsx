@@ -30,6 +30,7 @@ import type {
   TaskPriority,
   WorkloadEntry,
 } from '../types';
+import type { CloudMergePayload } from '../supabase/plannerData';
 import {
   DEFAULT_CAPACITY,
   loadDataResult,
@@ -206,7 +207,13 @@ export type Action =
   // In-place replacement of the whole store with a fresh loadData() result,
   // triggered when another same-browser tab wrote and this tab is clean. Not a
   // user mutation — no activity row (mirrors RESET_ALL).
-  | { type: 'REPLACE_FROM_STORAGE'; data: AppData };
+  | { type: 'REPLACE_FROM_STORAGE'; data: AppData }
+  // Cloud hydration (supabase mode only): merge the seven mirrored planner
+  // groups read from Supabase into local state. NEVER destroys local work —
+  // same-id rows are replaced, cloud-only rows appended, local-only rows kept.
+  // workload and every non-mirrored collection pass through untouched. An
+  // invalid payload returns the ORIGINAL state reference (invariant 6).
+  | { type: 'MERGE_CLOUD_ENTITIES'; payload: CloudMergePayload };
 
 function uid(): string {
   return crypto.randomUUID();
@@ -1628,6 +1635,117 @@ function saveMilestone(
   };
 }
 
+// ---- Cloud hydration merge ----
+
+function isObjWithId(v: unknown): v is { id: string } {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    typeof (v as { id?: unknown }).id === 'string' &&
+    (v as { id: string }).id !== ''
+  );
+}
+
+/** Replace same-id local rows with incoming, append cloud-only, keep local-only.
+ *  Preserves local ordering; appended cloud-only rows follow in payload order. */
+function mergeById<T extends { id: string }>(local: T[], incoming: T[]): T[] {
+  const incomingById = new Map(incoming.map((r) => [r.id, r]));
+  const seen = new Set<string>();
+  const result: T[] = local.map((l) => {
+    seen.add(l.id);
+    return incomingById.get(l.id) ?? l;
+  });
+  for (const inc of incoming) {
+    if (!seen.has(inc.id)) result.push(inc);
+  }
+  return result;
+}
+
+/**
+ * Merge the six mirrored cloud collections into local state without destroying
+ * local work. Fail-closed (invariant 6): a structurally invalid payload — a
+ * non-array collection, a row with no string id, a project/task with an invalid
+ * period, a task referencing a missing project, or an assignment referencing a
+ * missing task/person — returns the ORIGINAL state reference. Non-mirrored
+ * collections (workload, people, statuses, milestones, savedFilters, …) pass
+ * through by reference untouched.
+ */
+function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData {
+  const collections = [
+    payload.clients,
+    payload.projects,
+    payload.tasks,
+    payload.assignments,
+    payload.comments,
+    payload.activity,
+  ];
+  if (collections.some((c) => !Array.isArray(c))) return state;
+
+  // Every mirrored entity row (except assignment pairs) needs a string id.
+  if (
+    !payload.clients.every(isObjWithId) ||
+    !payload.projects.every(isObjWithId) ||
+    !payload.tasks.every(isObjWithId) ||
+    !payload.comments.every(isObjWithId) ||
+    !payload.activity.every(isObjWithId)
+  ) {
+    return state;
+  }
+
+  const projectIds = new Set<string>([
+    ...state.projects.map((p) => p.id),
+    ...payload.projects.map((p) => p.id),
+  ]);
+  const taskIds = new Set<string>([
+    ...state.tasks.map((t) => t.id),
+    ...payload.tasks.map((t) => t.id),
+  ]);
+  const personIds = new Set(state.people.map((p) => p.id));
+
+  // Project/task periods must satisfy the same guards the reducer applies.
+  for (const p of payload.projects) {
+    if (periodError(p.startDate, p.endDate) !== null) return state;
+  }
+  for (const t of payload.tasks) {
+    if (periodError(t.startDate, t.endDate, { maxDays: MAX_TASK_PERIOD_DAYS }) !== null) {
+      return state;
+    }
+    if (!projectIds.has(t.projectId)) return state;
+  }
+  for (const a of payload.assignments) {
+    if (
+      typeof a?.taskId !== 'string' ||
+      typeof a?.personId !== 'string' ||
+      !taskIds.has(a.taskId) ||
+      !personIds.has(a.personId)
+    ) {
+      return state;
+    }
+  }
+
+  // Assignments reconciled by (taskId, personId): existing local pairs keep
+  // their id; genuinely new cloud pairs get a fresh uid. Local-only pairs stay.
+  const existingPairs = new Set(state.assignments.map((a) => `${a.taskId}|${a.personId}`));
+  const newAssignments: TaskAssignment[] = [];
+  for (const a of payload.assignments) {
+    const key = `${a.taskId}|${a.personId}`;
+    if (existingPairs.has(key)) continue;
+    existingPairs.add(key);
+    newAssignments.push({ id: uid(), taskId: a.taskId, personId: a.personId });
+  }
+
+  return {
+    ...state,
+    clients: mergeById(state.clients, payload.clients),
+    projects: mergeById(state.projects, payload.projects),
+    tasks: mergeById(state.tasks, payload.tasks),
+    comments: mergeById(state.comments, payload.comments),
+    activity: mergeById(state.activity, payload.activity),
+    assignments:
+      newAssignments.length === 0 ? state.assignments : [...state.assignments, ...newAssignments],
+  };
+}
+
 // ---- Reducer ----
 
 export function reducer(state: AppData, action: Action): AppData {
@@ -2173,6 +2291,8 @@ export function reducer(state: AppData, action: Action): AppData {
       return action.data;
     case 'REPLACE_FROM_STORAGE':
       return action.data;
+    case 'MERGE_CLOUD_ENTITIES':
+      return mergeCloudEntities(state, action.payload);
     default:
       return state;
   }
@@ -2181,6 +2301,11 @@ export function reducer(state: AppData, action: Action): AppData {
 interface StoreValue {
   state: AppData;
   dispatch: React.Dispatch<Action>;
+  // Type of the LAST dispatched action. The cloud mirror (CloudSyncProvider)
+  // reads it to suppress its own hydration and local-only transitions
+  // (MERGE_CLOUD_ENTITIES / REPLACE_FROM_STORAGE / LOAD_SAMPLE / RESET_ALL).
+  // No consumer signature changes — existing useStore() callers ignore it.
+  lastActionRef: React.MutableRefObject<Action['type'] | null>;
 }
 
 const StoreContext = createContext<StoreValue | null>(null);
@@ -2217,7 +2342,16 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     initialLoadRef.current = result;
   }
   const initialLoad = initialLoadRef.current;
-  const [state, dispatch] = useReducer(reducer, initialLoad.data);
+  const [state, rawDispatch] = useReducer(reducer, initialLoad.data);
+
+  // Track the last dispatched action type so the cloud mirror can suppress its
+  // own hydration and local-only transitions. A thin wrapper keeps useStore()'s
+  // signature and every existing consumer untouched.
+  const lastActionRef = useRef<Action['type'] | null>(null);
+  const dispatch = useCallback<React.Dispatch<Action>>((action) => {
+    lastActionRef.current = action.type;
+    rawDispatch(action);
+  }, []);
 
   const [saveError, setSaveError] = useState<SaveFailureReason | null>(null);
   const [external, setExternal] = useState<ExternalDataStatus>('none');
@@ -2318,7 +2452,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     setExternal((prev) => (prev === 'refreshed' ? 'none' : prev));
   }, []);
 
-  const value = useMemo(() => ({ state, dispatch }), [state]);
+  const value = useMemo(() => ({ state, dispatch, lastActionRef }), [state, dispatch]);
 
   const persistence = useMemo<PersistenceValue>(
     () => ({

@@ -271,16 +271,18 @@ describe('buildDryRunReport — mapping diagnostics', () => {
     // Person-id remap entry present with the people count.
     expect(report.idMappings[0].count).toBe(4);
 
-    // Unsupported collections: only the non-empty ones (here: clients).
+    // Clients now have a target table (20260716190000_planner_entities): they
+    // migrate and are no longer listed as an unsupported collection.
     const names = report.unsupported.collections.map((c) => c.name);
-    expect(names).toContain('Klienci');
-    expect(report.unsupported.collections.find((c) => c.name === 'Klienci')!.count).toBe(1);
+    expect(names).not.toContain('Klienci');
+    expect(report.counts.target.clients).toBe(1);
     // Empty collections are not listed.
     expect(names).not.toContain('Statusy');
 
-    // Dropped-field lists are always reported per entity.
+    // Dropped-field lists: project/task planner columns now exist, so only the
+    // profile-only fields remain unmapped.
     const entities = report.unsupported.fields.map((f) => f.entity);
-    expect(entities).toEqual(['Projekt', 'Zadanie', 'Osoba']);
+    expect(entities).toEqual(['Osoba']);
   });
 
   it('counts reference dictionaries as target tables and no longer as unsupported collections', () => {
@@ -304,8 +306,49 @@ describe('buildDryRunReport — mapping diagnostics', () => {
     expect(names).not.toContain('Statusy');
     expect(names).not.toContain('Typy usług');
     expect(names).not.toContain('Kategorie prac');
-    // Clients still have no target table.
-    expect(names).toContain('Klienci');
+    // Clients / comments / activity now have target tables too.
+    expect(names).not.toContain('Klienci');
+    expect(names).not.toContain('Komentarze');
+    expect(names).not.toContain('Dziennik aktywności');
+    expect(report.counts.target.clients).toBe(1);
+  });
+
+  it('counts clients, comments and activity as target tables (planer migration)', () => {
+    const data: AppData = {
+      ...emptyData(),
+      clients: [{ id: 'c1', name: 'Klient', archived: false }],
+      projects: [makeProject({ id: 'proj1', name: 'P' })],
+      tasks: [makeTask({ id: 't1', projectId: 'proj1' })],
+      comments: [
+        {
+          id: 'cm1',
+          entityType: 'task',
+          entityId: 't1',
+          authorId: '',
+          body: 'Cześć',
+          mentionIds: [],
+          createdAt: '2026-07-16T00:00:00.000Z',
+        },
+      ],
+      activity: [
+        {
+          id: 'ac1',
+          entityType: 'task',
+          entityId: 't1',
+          actorId: '',
+          message: 'utworzył(a) zadanie',
+          createdAt: '2026-07-16T00:00:00.000Z',
+        },
+      ],
+    };
+    const report = buildDryRunReport(data);
+    expect(report.counts.target.clients).toBe(1);
+    expect(report.counts.target.comments).toBe(1);
+    expect(report.counts.target.activity_events).toBe(1);
+    const names = report.unsupported.collections.map((c) => c.name);
+    expect(names).not.toContain('Klienci');
+    expect(names).not.toContain('Komentarze');
+    expect(names).not.toContain('Dziennik aktywności');
   });
 
   it('reports no blockers for a clean fixture and warns on a dangling department reference', () => {

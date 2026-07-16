@@ -1,0 +1,345 @@
+// Czysta warstwa repozytorium dla danych planera w chmurze (DB boundary +
+// snapshot + mappery). Cały dostęp do bazy idzie przez wstrzyknięty interfejs
+// `PlannerDb` (rozszerza wzorzec `ImportDb`) — bez mockowania SDK, bez żywego
+// Supabase w vitest, bez jsdom. Testowalne w node.
+//
+// GRANICE / INVARIANTS:
+//   * Ten moduł NIGDY nie dotyka localStorage (src/store/storage.ts pozostaje
+//     jedyną granicą localStorage) ani stanu aplikacji. Zapisy do chmury składa
+//     lustro diff-owe (cloudMirror.ts) PO reduktorze; hydracja mapuje wiersze
+//     chmury na LOKALNE kształty i zwraca ładunek MERGE_CLOUD_ENTITIES.
+//   * `dataImport.ts` pozostaje insert-only; upsert/delete żyją wyłącznie tutaj.
+//   * Godziny (workload) nigdy nie są czytane ani zapisywane — nie ma tabeli.
+//   * Nigdy nie pokazujemy surowego komunikatu SDK poza diagnostyką techniczną.
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type {
+  ActivityEntityType,
+  ActivityEvent,
+  AppData,
+  Client,
+  Comment,
+  CommentEntityType,
+  Project,
+  Task,
+  TaskPriority,
+} from '../types';
+import { periodError, MAX_TASK_PERIOD_DAYS } from '../utils/dates';
+import { createSupabaseImportDb, type ImportDb } from './dataImport';
+import type { CloudIdMaps } from './cloudMirror';
+
+// ---- Klasyfikacja błędów zapisu ---------------------------------------------
+
+export interface CloudWriteError {
+  kind: 'permission' | 'transient';
+  message: string; // techniczny szczegół (diagnostyka), nigdy nie do UI wprost
+}
+
+const PERMISSION_RE = /row-level security|permission denied|violates row-level/i;
+
+/**
+ * Klasyfikuje błąd zapisu z PostgREST: kod `42501` lub komunikat pasujący do
+ * wzorca RLS => `'permission'` (odrzucenie uprawnień — op zostaje porzucony);
+ * wszystko inne => `'transient'` (można ponowić).
+ */
+export function classifyWriteError(code: string | null, message: string): CloudWriteError {
+  if (code === '42501' || PERMISSION_RE.test(message)) {
+    return { kind: 'permission', message };
+  }
+  return { kind: 'transient', message };
+}
+
+// ---- Granica bazy (wstrzykiwana) --------------------------------------------
+
+export interface PlannerDb extends Pick<ImportDb, 'select'> {
+  /** UPSERT jednego wiersza (idempotentny przy dublowaniu z dwóch kart). */
+  upsert(
+    table: string,
+    row: Record<string, unknown>,
+    onConflict?: string,
+  ): Promise<{ error: CloudWriteError | null }>;
+  /** DELETE wierszy pasujących do `match` (używamy `remove`, nie `delete`). */
+  remove(
+    table: string,
+    match: Record<string, string>,
+  ): Promise<{ error: CloudWriteError | null }>;
+}
+
+/**
+ * Cienki adapter nad klientem Supabase. `select` reużywa adaptera importu
+ * (jeden kod), a upsert/delete mapują błąd SDK na sklasyfikowany CloudWriteError.
+ */
+export function createSupabasePlannerDb(client: SupabaseClient): PlannerDb {
+  const importDb = createSupabaseImportDb(client);
+  return {
+    select: importDb.select,
+    async upsert(table, row, onConflict) {
+      try {
+        const query = client.from(table).upsert(row, onConflict ? { onConflict } : undefined);
+        const { error } = await query;
+        if (error) {
+          const code = (error as { code?: string }).code ?? null;
+          return { error: classifyWriteError(code, error.message ?? 'Błąd zapisu.') };
+        }
+        return { error: null };
+      } catch (e) {
+        return { error: classifyWriteError(null, e instanceof Error ? e.message : String(e)) };
+      }
+    },
+    async remove(table, match) {
+      try {
+        let query = client.from(table).delete();
+        for (const [column, value] of Object.entries(match)) {
+          query = query.eq(column, value);
+        }
+        const { error } = await query;
+        if (error) {
+          const code = (error as { code?: string }).code ?? null;
+          return { error: classifyWriteError(code, error.message ?? 'Błąd usuwania.') };
+        }
+        return { error: null };
+      } catch (e) {
+        return { error: classifyWriteError(null, e instanceof Error ? e.message : String(e)) };
+      }
+    },
+  };
+}
+
+// ---- Snapshot planera (hydracja) --------------------------------------------
+
+export const PLANNER_SNAPSHOT_ERROR = 'Nie udało się wczytać danych planera z serwera.';
+
+/** Ładunek scalający dla reduktora (MERGE_CLOUD_ENTITIES). */
+export interface CloudMergePayload {
+  clients: Client[];
+  projects: Project[];
+  tasks: Task[];
+  assignments: Array<{ taskId: string; personId: string }>;
+  comments: Comment[];
+  activity: ActivityEvent[];
+}
+
+export type LoadPlannerResult =
+  | { ok: true; payload: CloudMergePayload; diagnostics: string[] }
+  | { ok: false; error: string };
+
+const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+const boolVal = (v: unknown): boolean => v === true;
+
+/** SQL `date`/null -> lokalny 'yyyy-MM-dd' albo ''. */
+function sqlDateToLocal(v: unknown): string {
+  return typeof v === 'string' && v !== '' ? v : '';
+}
+
+/** Odwraca mapę forward (local -> cloud) na reverse (cloud -> local). */
+function invert(map: Map<string, string>): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const [local, cloud] of map) if (!out.has(cloud)) out.set(cloud, local);
+  return out;
+}
+
+const PRIORITIES: TaskPriority[] = ['low', 'normal', 'high', 'urgent'];
+function toPriority(v: unknown): TaskPriority {
+  return PRIORITIES.includes(v as TaskPriority) ? (v as TaskPriority) : 'normal';
+}
+
+const ACTIVITY_TYPES: ActivityEntityType[] = [
+  'project',
+  'task',
+  'person',
+  'status',
+  'client',
+  'system',
+];
+function toActivityType(v: unknown): ActivityEntityType {
+  return ACTIVITY_TYPES.includes(v as ActivityEntityType)
+    ? (v as ActivityEntityType)
+    : 'system';
+}
+
+/**
+ * Reverse-resolver dla identyfikatorów słownikowych: najpierw odwrócona mapa
+ * forward (cloud -> local, obejmuje dopasowanie po id i po kluczu semantycznym),
+ * potem lokalny fallback po dosłownie równym id (encja obecna lokalnie, ale
+ * nieobecna w snapshocie organizacji). Zwraca '' gdy nie da się zmapować.
+ */
+function makeReverse(forward: Map<string, string>, localIds: Set<string>) {
+  const reverse = invert(forward);
+  return (cloudId: unknown): string => {
+    const id = str(cloudId);
+    if (id === '') return '';
+    return reverse.get(id) ?? (localIds.has(id) ? id : '');
+  };
+}
+
+/**
+ * Wczytuje atomowo snapshot planera dla zalogowanego użytkownika i mapuje wiersze
+ * chmury na LOKALNE kształty przez odwrócone mapy id. Wszystkie selecty biegną
+ * równolegle; JAKIKOLWIEK błąd selectu psuje cały snapshot z jednym polskim
+ * komunikatem (PLANNER_SNAPSHOT_ERROR). Puste kolekcje są POPRAWNE.
+ *
+ * Wiersz projektu/zadania niepoprawny lokalnie (złe daty, odwrócony okres,
+ * okres zadania > 92 dni) jest WYKLUCZANY z ładunku z diagnostyką — nigdy nie
+ * scalany. Przypisanie z niemapowalnym profilem jest pomijane i liczone w
+ * diagnostyce. Nieodwzorowany autor/aktor => '' (bez blokowania wiersza).
+ */
+export async function loadPlannerSnapshot(
+  db: Pick<PlannerDb, 'select'>,
+  maps: CloudIdMaps,
+  local: AppData,
+): Promise<LoadPlannerResult> {
+  const [clientsRes, projectsRes, tasksRes, assignmentsRes, commentsRes, activityRes] =
+    await Promise.all([
+      db.select('clients', 'id, name, archived'),
+      db.select(
+        'projects',
+        'id, client_id, name, description, status_id, paid, start_date, end_date, department_id, service_type_id, created_at, updated_at',
+      ),
+      db.select(
+        'tasks',
+        'id, project_id, status_id, title, description, start_date, end_date, estimated_hours, priority, work_category_id, checklist, created_at, updated_at',
+      ),
+      db.select('task_assignments', 'task_id, profile_id'),
+      db.select('comments', 'id, project_id, task_id, author_id, body, mention_ids, created_at'),
+      db.select(
+        'activity_events',
+        'id, entity_type, entity_id, actor_id, impersonator_id, message, created_at',
+      ),
+    ]);
+
+  if (
+    clientsRes.error ||
+    projectsRes.error ||
+    tasksRes.error ||
+    assignmentsRes.error ||
+    commentsRes.error ||
+    activityRes.error
+  ) {
+    return { ok: false, error: PLANNER_SNAPSHOT_ERROR };
+  }
+
+  const diagnostics: string[] = [];
+
+  // Odwrotne resolvery (cloud -> local) z lokalnym fallbackiem po dosłownym id.
+  const statusOf = makeReverse(maps.statuses, new Set(local.statuses.map((s) => s.id)));
+  const serviceTypeOf = makeReverse(
+    maps.serviceTypes,
+    new Set(local.serviceTypes.map((s) => s.id)),
+  );
+  const workCategoryOf = makeReverse(
+    maps.workCategories,
+    new Set(local.workCategories.map((c) => c.id)),
+  );
+  const personOf = makeReverse(maps.people, new Set(local.people.map((p) => p.id)));
+
+  // Klienci ----
+  const clients: Client[] = clientsRes.rows.map((row) => ({
+    id: str(row.id),
+    name: str(row.name),
+    archived: boolVal(row.archived),
+  }));
+
+  // Projekty ---- (id/departmentId/clientId dosłownie; słowniki przez reverse).
+  const projects: Project[] = [];
+  for (const row of projectsRes.rows) {
+    const startDate = sqlDateToLocal(row.start_date);
+    const endDate = sqlDateToLocal(row.end_date);
+    if (periodError(startDate, endDate) !== null) {
+      diagnostics.push(`Projekt „${str(row.name)}” pominięto — nieprawidłowy okres.`);
+      continue;
+    }
+    projects.push({
+      id: str(row.id),
+      clientId: str(row.client_id),
+      name: str(row.name),
+      description: str(row.description),
+      statusId: statusOf(row.status_id),
+      paid: boolVal(row.paid),
+      startDate,
+      endDate,
+      departmentId: str(row.department_id),
+      serviceTypeId: serviceTypeOf(row.service_type_id),
+      createdAt: str(row.created_at),
+      updatedAt: str(row.updated_at) || str(row.created_at),
+    });
+  }
+
+  // Zadania ----
+  const tasks: Task[] = [];
+  for (const row of tasksRes.rows) {
+    const startDate = sqlDateToLocal(row.start_date);
+    const endDate = sqlDateToLocal(row.end_date);
+    if (periodError(startDate, endDate, { maxDays: MAX_TASK_PERIOD_DAYS }) !== null) {
+      diagnostics.push(`Zadanie „${str(row.title)}” pominięto — nieprawidłowy okres.`);
+      continue;
+    }
+    const estimated = row.estimated_hours;
+    const checklist = Array.isArray(row.checklist)
+      ? (row.checklist as Task['checklist'])
+      : [];
+    tasks.push({
+      id: str(row.id),
+      projectId: str(row.project_id),
+      statusId: statusOf(row.status_id),
+      title: str(row.title),
+      description: str(row.description),
+      startDate,
+      endDate,
+      estimatedHours:
+        typeof estimated === 'number' && Number.isFinite(estimated) ? estimated : null,
+      priority: toPriority(row.priority),
+      workCategoryId: workCategoryOf(row.work_category_id),
+      checklist,
+      createdAt: str(row.created_at),
+      updatedAt: str(row.updated_at) || str(row.created_at),
+    });
+  }
+
+  // Przypisania ---- (para {taskId, personId}; niemapowalny profil => pomiń).
+  const assignments: Array<{ taskId: string; personId: string }> = [];
+  for (const row of assignmentsRes.rows) {
+    const taskId = str(row.task_id);
+    const personId = personOf(row.profile_id);
+    if (personId === '') {
+      diagnostics.push(
+        `Przypisanie zadania ${taskId} pominięto — brak lokalnej osoby dla profilu.`,
+      );
+      continue;
+    }
+    assignments.push({ taskId, personId });
+  }
+
+  // Komentarze ----
+  const comments: Comment[] = commentsRes.rows.map((row) => {
+    const projectId = str(row.project_id);
+    const entityType: CommentEntityType = projectId !== '' ? 'project' : 'task';
+    const entityId = projectId !== '' ? projectId : str(row.task_id);
+    const rawMentions = Array.isArray(row.mention_ids) ? row.mention_ids : [];
+    const mentionIds = rawMentions.map((m) => personOf(m)).filter((id) => id !== '');
+    return {
+      id: str(row.id),
+      entityType,
+      entityId,
+      authorId: personOf(row.author_id),
+      body: str(row.body),
+      mentionIds,
+      createdAt: str(row.created_at),
+    };
+  });
+
+  // Dziennik aktywności ----
+  const activity: ActivityEvent[] = activityRes.rows.map((row) => ({
+    id: str(row.id),
+    entityType: toActivityType(row.entity_type),
+    entityId: str(row.entity_id),
+    actorId: personOf(row.actor_id),
+    impersonatorId: personOf(row.impersonator_id),
+    message: str(row.message),
+    createdAt: str(row.created_at),
+  }));
+
+  return {
+    ok: true,
+    payload: { clients, projects, tasks, assignments, comments, activity },
+    diagnostics,
+  };
+}

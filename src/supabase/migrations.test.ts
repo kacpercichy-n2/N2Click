@@ -47,6 +47,13 @@ const EXPECTED_POLICIES: Record<string, string[]> = {
   'public.statuses': ['select', 'insert', 'update', 'delete'],
   'public.service_types': ['select', 'insert', 'update', 'delete'],
   'public.work_categories': ['select', 'insert', 'update', 'delete'],
+  // Planer (20260716190000_planner_entities): klienci to referencyjne dane
+  // biznesu — pełne CRUD w politykach (SELECT otwarty, zapis admin/menedżer);
+  // komentarze i dziennik aktywności są DOPISYWALNE (append-only) — wyłącznie
+  // SELECT + INSERT, bez UPDATE/DELETE (usunięcie encji sprząta je kaskadą FK).
+  'public.clients': ['select', 'insert', 'update', 'delete'],
+  'public.comments': ['select', 'insert'],
+  'public.activity_events': ['select', 'insert'],
 };
 
 interface ParsedPolicy {
@@ -79,6 +86,7 @@ describe('konwencja plików migracji', () => {
       '20260715210500_rls_policies.sql',
       '20260715220000_profiles_must_change_password.sql',
       '20260716150000_reference_tables.sql',
+      '20260716190000_planner_entities.sql',
     ]);
   });
 

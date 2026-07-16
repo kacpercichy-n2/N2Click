@@ -46,6 +46,7 @@ import {
 } from './store/selectors';
 import { SampleBanner } from './components/SampleBanner';
 import { PersistenceBanner } from './components/PersistenceBanner';
+import { CloudSyncBanner } from './components/CloudSyncBanner';
 import { TaskModal } from './components/TaskModal';
 import { GlobalSearch } from './components/GlobalSearch';
 import { Avatar } from './components/Avatar';
@@ -437,6 +438,8 @@ export function App() {
         {/* Persistence banner shows on every routed page (not the login screen —
             no edits happen there and a clean tab auto-refreshes silently). */}
         <PersistenceBanner />
+        {/* Cloud sync status (supabase mode only; renders null in local mode). */}
+        <CloudSyncBanner />
         <SampleBanner />
         <motion.div
           key={location.pathname}

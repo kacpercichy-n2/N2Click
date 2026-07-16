@@ -8,16 +8,28 @@ wyłącznie UX-em.
 
 W trybie supabase uwierzytelniony profil, dział, rola dostępu oraz widoczność
 zespołu są odczytywane z Supabase i **wyjście RLS jest autorytatywne**; kontrole
-po stronie klienta to wyłącznie UX. Cloudowe statusy / typy usług / kategorie
-prac są wczytywane i wyświetlane, ale **planer nadal renderuje i mutuje LOKALNE
-słowniki z localStorage**, bo lokalne zadania/projekty/godziny wskazują na
-lokalne id (tożsamość id z wierszami chmury nie jest gwarantowana) — utrzymuje
-się to do kroku migracji zapisu danych. Tryb lokalny korzysta wyłącznie z
-localStorage (`src/store/storage.ts`; żaden klient Supabase nie powstaje).
-Ładowanie/błąd w trybie supabase spada z powrotem na lokalną rolę na potrzeby
-bramek UX. Odczyty żyją w `src/supabase/referenceData.ts` (czyste,
-`loadOrgSnapshot` + `effectiveAccessRole`) i `OrgDataProvider.tsx`; import z
-`src/supabase/dataImport.ts` migruje te słowniki idempotentnie.
+po stronie klienta to wyłącznie UX. Siedem grup encji planera — **klienci,
+projekty, zadania, przypisania, komentarze i dziennik aktywności** — jest
+LUSTRZANE do Supabase (zapisy liczone z diff-a stanu PO reduktorze, przez czyste
+`src/supabase/cloudMirror.ts` + `src/supabase/plannerData.ts` za `PlannerDb`) i
+HYDRATOWANE przy logowaniu jedną akcją reduktora `MERGE_CLOUD_ENTITIES` (scalenie
+po id: wiersz chmury wygrywa, wiersze tylko-lokalne pozostają — propagacja kasacji
+między klientami jest udokumentowanym ograniczeniem tego etapu). **localStorage
+pozostaje źródłem renderowania i kopią do odzysku** — każdy błąd chmury zostawia
+zmianę lokalnie (błąd przejściowy: `SYNC_ERROR_MSG` + ponów; odrzucenie uprawnień:
+`SYNC_PERMISSION_MSG`, op porzucony). LOKALNE pozostają: **godziny (workload) i
+kalendarz** (nigdy nie opuszczają przeglądarki — nie ma tabeli `workload`),
+administracja osób (profile: zakładanie konta + samodzielna edycja, kroki 205–206),
+kamienie milowe, zapisane filtry oraz **MUTACJE słowników** (statusy / typy usług /
+kategorie prac / działy — granica tylko-do-odczytu z kroku 209 obowiązuje). Dane
+przykładowe i pełny reset są WYŁĄCZNIE lokalne (nigdy nie dotykają chmury).
+Tryb lokalny korzysta wyłącznie z localStorage (`src/store/storage.ts`; żaden
+klient Supabase nie powstaje, brak baneru, brak dispatchy). Ładowanie/błąd w
+trybie supabase spada z powrotem na lokalną rolę na potrzeby bramek UX. Odczyty
+referencyjne żyją w `src/supabase/referenceData.ts` (czyste, `loadOrgSnapshot` +
+`effectiveAccessRole`) i `OrgDataProvider.tsx`; import z `src/supabase/dataImport.ts`
+migruje słowniki, klientów, projekty/zadania (pełen zestaw kolumn), komentarze i
+aktywność idempotentnie.
 
 Żadna migracja nie została zastosowana na hostowanym projekcie w ramach tego
 zadania.
@@ -31,6 +43,7 @@ supabase/
     20260715210500_rls_policies.sql   # funkcje pomocnicze, polityki, Storage avatars
     20260715220000_profiles_must_change_password.sql  # flaga wymuszonej zmiany pierwszego hasła
     20260716150000_reference_tables.sql               # słowniki: statuses, service_types, work_categories
+    20260716190000_planner_entities.sql               # klienci, komentarze, dziennik + kolumny planera na projects/tasks
   functions/
     provision-account/                # Edge Function: serwerowe zakładanie kont (tylko administrator)
     README.md
@@ -76,12 +89,30 @@ worker` — do potwierdzenia przy zadaniu integracyjnym.
 | `statuses` | CRUD | odczyt | odczyt |
 | `service_types` | CRUD | odczyt | odczyt |
 | `work_categories` | CRUD | odczyt | odczyt |
+| `clients` | CRUD | odczyt wszystkich; tworzenie (SAVE_PROJECT) | odczyt wszystkich |
+| `comments` | odczyt/dopisywanie (bez UPDATE/DELETE) | komentarze projektów/zadań swojego działu | komentarze widocznych encji; dopisywanie własnych |
+| `activity_events` | odczyt/dopisywanie (bez UPDATE/DELETE) | wpisy encji swojego działu + własne | własne wpisy + wpisy widocznych encji |
 
 Słowniki referencyjne (`statuses`, `service_types`, `work_categories`) to dane
 całej organizacji: SELECT dla każdego `authenticated` (`using (true)`), a
 INSERT/UPDATE/DELETE wyłącznie dla administratora (`app.is_administrator()`).
 Kolumna `statuses.sort_order` (nie `order` — słowo zarezerwowane) mapuje
 `Status.order` z `src/types.ts`.
+
+Encje planera (`20260716190000_planner_entities`): `clients` to dane referencyjne
+biznesu — SELECT dla każdego zalogowanego (`using (true)`, nazwy klientów muszą
+renderować się na widocznych projektach), INSERT dla administratora **lub**
+menedżera (SAVE_PROJECT menedżera może utworzyć klienta atomowo przez
+`newClientName`), UPDATE/DELETE tylko administrator. `comments` i `activity_events`
+są **dopisywalne** (append-only): tylko SELECT + INSERT, bez UPDATE/DELETE
+(usunięcie encji sprząta je kaskadą FK). Widoczność komentarza/wpisu odpowiada
+widoczności jego projektu/zadania (`app.manages_project` / `app.is_project_member`
+/ `app.manages_task` / `app.is_assigned_to_task`); autor komentarza musi być
+zalogowanym użytkownikiem (albo administrator), a `activity_events.created_by`
+(domyślnie `auth.uid()`) jest autorytatywnym autorem wiersza po stronie serwera.
+Kolumny planera na `projects`/`tasks` są NULLABLE/z domyślną wartością, więc
+wiersze zaimportowane przed tą migracją pozostają poprawne, a istniejące polityki
+`projects_*`/`tasks_*` obejmują je automatycznie.
 
 Reguły niewyrażalne w `WITH CHECK` (porównanie starych i nowych wartości)
 egzekwują triggery:

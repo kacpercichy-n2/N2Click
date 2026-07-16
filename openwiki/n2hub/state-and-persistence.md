@@ -7,6 +7,13 @@
 - `src/store/selectors.ts` owns derived reads; pages must not duplicate them.
 - `src/store/storage.ts` owns localStorage, migrations, validation/repair on
   load, save outcomes and the same-browser revision envelope.
+- In supabase mode a diff-based cloud mirror (`src/supabase/cloudMirror.ts` +
+  `src/supabase/plannerData.ts`, driven by `src/supabase/CloudSyncProvider.tsx`)
+  sits BEHIND the reducer: it mirrors the six planner families
+  (clients/projects/tasks/assignments/comments/activity) to Supabase from state
+  diffs AFTER each action, and hydrates them on sign-in via the single
+  `MERGE_CLOUD_ENTITIES` reducer action. localStorage stays the render source and
+  recovery copy; workload never leaves the browser. Local mode: zero diff.
 
 ## Rules that change work
 
@@ -15,7 +22,10 @@
 - Status completion comes from `Status.isDone`, never status order. At least one
   active and one done status must survive all status mutations.
 - Task/project writes preserve existing valid behavior. Reducer commands that
-  reject input must return the original state reference.
+  reject input must return the original state reference. This includes
+  `MERGE_CLOUD_ENTITIES`: an invalid cloud payload returns the prior state
+  reference; a valid merge replaces same-id rows, keeps local-only rows and
+  never touches workload/people/statuses/milestones/savedFilters (by reference).
 - `SAVE_TASK` reconciles workload by identity-preserving deltas. Do not replace
   all workload rows when editing a task.
 - `saveData` reports success or a classified failure. Failed persistence must
@@ -40,7 +50,8 @@
 ## Relevant tests
 
 `src/store/activityAttribution.test.ts`, `blockActions.test.ts`,
-`commandValidation.test.ts`,
+`commandValidation.test.ts`, `cloudMerge.test.ts`,
 `saveTaskWorkload.test.ts`,
 `selectors.test.ts`, `statusActions.test.ts`, `storage.test.ts`,
-`dateGuards.test.ts`, `taskMeta.test.ts`.
+`dateGuards.test.ts`, `taskMeta.test.ts`. Cloud mirror: `src/supabase/
+cloudMirror.test.ts`, `plannerData.test.ts`, `migrations.test.ts`.
