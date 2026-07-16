@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { useStore } from '../store/AppStore';
 import { allStatusesOrdered, isAdminUser } from '../store/selectors';
 import { StatusBadge } from '../components/StatusBadge';
+import { ExportDryRunPanel } from '../components/ExportDryRunPanel';
 
 // Lavender brand default for a freshly created status (dark-legible).
 const NEW_STATUS_COLOR = '#c496ff';
@@ -337,6 +338,8 @@ export function AdminPage() {
           </button>
         </form>
       </div>
+
+      <ExportDryRunPanel />
     </section>
   );
 }

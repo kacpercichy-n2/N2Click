@@ -1,49 +1,47 @@
-# Run state — 20260716-092511-206 avatar and profile editing
+# Run state — 20260716-094327-207 localStorage export + migration dry run
 
 ## Goal
 
-Secure profile photo (private Supabase `avatars` bucket, JPG/PNG/WebP ≤ 2 MB,
-signed URLs) plus policy-gated profile field editing (self / manager own
-department / administrator), degrading to today's emoji/initials behavior in
-local mode. Polish UI, focused node tests.
+Admin-only, read-only tool: sanitized localStorage JSON backup download plus a
+Supabase migration dry-run report (counts, ID/role mappings, unsupported
+fields, blockers). No writes to Supabase or localStorage. Polish UI.
 
 ## Packages
 
-- [PKG-20260716-avatar-profile-editing](PKG-20260716-avatar-profile-editing.md)
-  — Tier: developer (Opus), Risk: high, Codex: required. Status: ready.
+- `handoffs/scheduler-reviews/207-architect-package.md`
+  (PKG-20260716-export-dry-run) — Tier: developer, Risk: medium,
+  Codex: conditional. Status: ready.
 
 ## Changed boundaries (planned)
 
-- New pure modules: `src/supabase/avatarFile.ts`, `src/pages/profileEditPolicy.ts`
-  (+ tests); new impure boundary `src/supabase/avatarStorage.ts`
-  (createSignedUrl only, never getPublicUrl).
-- Edited: `src/pages/PersonProfilePage.tsx` (policy-driven field gating + photo
-  section), `src/components/Avatar.tsx` (optional `photoUrl`),
-  `src/pages/AccountPage.tsx` (link to own profile), styles.
-- NO SQL migration — bucket, storage RLS and `profiles.avatar_path` already
-  exist from stages 200–201; `src/supabase/migrations.test.ts` must pass
-  unchanged. `storage.ts`/AppStore/data v7 untouched; no image data in
-  localStorage.
+- `src/store/storage.ts`: additive `peekDataResult()` — side-effect-free read
+  (no `latestKnownRevision` mutation, no writes); load/save/revision behavior
+  unchanged, data version stays 7.
+- New pure module `src/store/exportDryRun.ts` (+ `exportDryRun.test.ts`), new
+  `src/components/ExportDryRunPanel.tsx`, section appended to the admin branch
+  of `src/pages/AdminPage.tsx` (existing gating reused; no new route).
+- No `src/supabase/*` imports in new files; no reducer actions; no import path.
 
 ## Verification
 
-- Worker: `npx vitest run src/supabase/avatarFile.test.ts
-  src/pages/profileEditPolicy.test.ts`, then `npx vitest run src/supabase
-  src/pages src/auth` + one `npm run build`.
-- Browser: none — no calendar/persistence interaction changed.
-- Scheduler owns final `npm test && npm run build`.
+- Worker: `npx vitest run src/store/exportDryRun.test.ts
+  src/store/storage.test.ts`, then `npm run build`.
+- Browser: none — isolated read-only panel, no calendar/persistence
+  interaction changed.
+- Scheduler owns final `npm run test:scheduler && npm test && npm run build`.
 
 ## Open questions
 
-None blocking. Note for reviewer: the package deliberately tightens self-edit
-(email/roleTitle/departmentId become admin-only; email is the Supabase identity
-link). `openwiki/n2hub/ui-navigation-and-onboarding.md` may need one line about
-the avatar/profile-policy boundary after a green run — final reviewer owns that
-decision.
+None — role mapping (pm→manager, handlowiec/pracownik→worker), sanitization
+scope and UI placement decided in the package. Note for the final reviewer:
+`openwiki/n2hub/state-and-persistence.md` may need one line for the new
+`peekDataResult` read export after a green run.
 
-## Developer result (20260716-0940)
+## Developer result
 
-Implemented all 7 touchpoints as specified. Focused: avatarFile+policy tests
-27/27 pass; `src/supabase src/pages src/auth` 160/160. Full gate green: `npm
-test` 779/779, `npm run build` (tsc+vite) clean. No `getPublicUrl` in src; no
-`supabase/` file touched. No deviations. Next: reviewer/Codex pass.
+Implemented as scoped. storage.ts: extracted `readData(recordRevision)` helper;
+`loadDataResult` behavior byte-identical, added `peekDataResult`/`PeekDataResult`.
+New exportDryRun.ts + test, ExportDryRunPanel.tsx, wired into AdminPage.
+Focused: `vitest exportDryRun+storage` 151 pass/0 fail. Full `vitest` 787 pass/0
+fail. `npm run build` green (tsc strict + vite). No deviations. Wiki unchanged
+(boundary note still accurate; peek is additive). Reviewer may add the peek line.
