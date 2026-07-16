@@ -5028,3 +5028,62 @@ option {
     padding: var(--n2-space-6) var(--n2-space-5);
   }
 }
+
+/* Team area (obszar „Zespół"): hierarchia działów/osób + provisioning. */
+.team-hierarchy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-5);
+  margin-bottom: var(--n2-space-5);
+}
+.team-dept {
+  background: var(--card-bg);
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-lg);
+  padding: var(--n2-space-5);
+  box-shadow: var(--shadow-sm);
+}
+.team-dept-name {
+  margin: 0 0 var(--n2-space-3);
+  font-size: 1.05rem;
+}
+.team-person-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-2);
+}
+.team-person {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--n2-space-2) var(--n2-space-4);
+  padding: var(--n2-space-2) 0;
+  border-top: 1px solid var(--n2-border);
+}
+.team-person:first-child {
+  border-top: none;
+}
+.team-person-name {
+  font-weight: 600;
+}
+.team-person-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--n2-space-2) var(--n2-space-4);
+  color: var(--n2-text-muted, #6b7280);
+  font-size: 0.9rem;
+}
+.team-person-access {
+  font-weight: 500;
+}
+.team-provision-note {
+  margin-top: var(--n2-space-4);
+}
+.team-provision-actions {
+  display: flex;
+  gap: var(--n2-space-3);
+  flex-basis: 100%;
+}

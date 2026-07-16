@@ -24,6 +24,8 @@ import { PersonProfilePage } from './pages/PersonProfilePage';
 import { WorkloadPage } from './pages/WorkloadPage';
 import { AdminPage } from './pages/AdminPage';
 import { AccountPage } from './pages/AccountPage';
+import { TeamPage } from './pages/TeamPage';
+import { canViewTeam } from './pages/teamScope';
 import { landingPathForRole, LoginPage } from './pages/LoginPage';
 import { useAuth } from './auth/SessionProvider';
 import {
@@ -62,6 +64,7 @@ import {
   ChevronsRight,
   CircleHelp,
   KeyRound,
+  Network,
 } from './components/icons';
 import type { LucideIcon } from './components/icons';
 import { loadUiPrefs, updateUiPrefs } from './utils/uiPrefs';
@@ -81,6 +84,7 @@ const NAV: Array<[string, string, LucideIcon]> = [
   ['/tasks', 'Zadania', ListChecks],
   ['/calendar', 'Kalendarz', CalendarDays],
   ['/people', 'Zespół', Users],
+  ['/team', 'Struktura zespołu', Network],
   ['/workload', 'Obciążenie', Gauge],
   ['/admin', 'Administracja', Settings],
 ];
@@ -136,6 +140,9 @@ export function App() {
   const impersonating = isImpersonating(state);
   const peopleCount = state.people.length;
   const canAdmin = can(currentUser, 'admin.panel', { peopleCount });
+  // `/team` visibility mirrors the server role model (worker hidden, manager =
+  // own department, administrator = all). UX gate only — see pages/teamScope.ts.
+  const canTeam = canViewTeam(currentUser);
   // Session gate: with people present and nobody resolving to a current user,
   // only the login screen renders (no sidebar, no routes). Zero people = setup
   // mode (no lockout — mirrors the admin gate). `currentUserId` persists, so a
@@ -309,7 +316,7 @@ export function App() {
         </div>
         <GlobalSearch />
         <nav className="app-nav" data-tour="shell.nav">
-          {NAV.filter(([to]) => to !== '/admin' || canAdmin).map(([to, label, Icon]) => (
+          {NAV.filter(([to]) => (to !== '/admin' || canAdmin) && (to !== '/team' || canTeam)).map(([to, label, Icon]) => (
             <NavLink
               key={to}
               to={to}
@@ -446,6 +453,11 @@ export function App() {
             <Route
               path="/admin"
               element={canAdmin ? <AdminPage /> : <Navigate to="/dashboard" replace />}
+            />
+            {/* Team area: role-gated (worker redirected). TeamPage also guards. */}
+            <Route
+              path="/team"
+              element={canTeam ? <TeamPage /> : <Navigate to="/dashboard" replace />}
             />
             {/* Account panel: real Supabase account only. Local mode redirects. */}
             <Route

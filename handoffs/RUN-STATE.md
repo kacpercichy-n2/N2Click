@@ -185,3 +185,13 @@ index.ts (Deno Edge, service-role, admin-only)} + functions/README.md;
 src/supabase/provisioning.test.ts (31). Edited supabase/README.md structure.
 No migration, no src app imports. Contract compiles clean under strict tsc.
 npx vitest provisioning 31 pass, npm test 727 pass, build green.
+
+## Team area + account provisioning UI (2026-07-16)
+
+New: src/pages/teamScope.ts (pure visibility/hierarchy/form-validation, reuses
+contract) + test (25 across two files), src/supabase/provisioning.ts (injected
+fetch client, invite mode, Polish-only messages) + provisioningClient.test.ts,
+src/pages/TeamPage.tsx. App.tsx adds /team nav+route gated by canViewTeam
+(worker hidden, pm=own dept, admin=all); icons.ts adds Network; styles.css team
+classes. Nav label "Struktura zespołu" (avoids clash with /people "Zespół").
+permissions.ts untouched. npm test 752 pass, build green.

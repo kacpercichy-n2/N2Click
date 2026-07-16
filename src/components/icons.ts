@@ -39,4 +39,5 @@ export {
   Sparkles,
   ArrowLeft,
   KeyRound,
+  Network,
 } from 'lucide-react';
