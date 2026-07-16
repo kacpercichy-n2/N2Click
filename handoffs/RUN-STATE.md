@@ -45,3 +45,12 @@ New exportDryRun.ts + test, ExportDryRunPanel.tsx, wired into AdminPage.
 Focused: `vitest exportDryRun+storage` 151 pass/0 fail. Full `vitest` 787 pass/0
 fail. `npm run build` green (tsc strict + vite). No deviations. Wiki unchanged
 (boundary note still accurate; peek is additive). Reviewer may add the peek line.
+
+## Developer result — 208 (PKG-20260716-supabase-import)
+
+New `src/supabase/dataImport.ts` (ImportDb + adapter, `evaluateImportGate`,
+`runSupabaseImport`: insert-only, select-before-insert, dep-safe order,
+people mapped never created) + `dataImport.test.ts` (17 cases). Extended
+`ExportDryRunPanel.tsx` with the gated import section (Polish). No localStorage
+touch; no upsert/update/delete. Focused set 168 pass, full `npm test` 804 pass,
+`npm run build` green. No deviations.

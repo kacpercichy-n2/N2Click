@@ -1,0 +1,547 @@
+// Guarded, idempotent, admin-only IMPORT of the peeked localStorage snapshot
+// into Supabase. This is the first write path from the app into Supabase.
+//
+// GRANICE / INVARIANTS:
+//   * This module NEVER touches localStorage (src/store/storage.ts stays the only
+//     localStorage boundary): planner data arrives exclusively via the already
+//     peeked AppData passed by the caller. Nothing local is ever written/deleted.
+//   * Insert-only, select-before-insert. No upsert/update/delete exists here, so
+//     an already-present row can never be overwritten — a rerun (after success or
+//     partial failure) simply skips everything present and finishes the rest.
+//   * People are MAPPED, never created: profiles.id FKs auth.users and the browser
+//     client cannot create auth users (only the provision-account Edge Function
+//     can). Unmatched people and their dependents become actionable diagnostics.
+//   * Client-side gating (evaluateImportGate) is UX only; RLS is the real boundary.
+// All DB access hides behind the injected ImportDb (fake in tests, thin Supabase
+// adapter in the app) — no SDK mocking, no live Supabase in vitest.
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type { AppData, Person } from '../types';
+import type { DryRunReport } from '../store/exportDryRun';
+import { normalizeEmail } from '../auth/profile';
+
+// ---- Injected DB boundary ---------------------------------------------------
+
+export interface ImportDb {
+  /** SELECT columns FROM table [WHERE inFilter.column IN (inFilter.values)]. */
+  select(
+    table: string,
+    columns: string,
+    inFilter?: { column: string; values: string[] },
+  ): Promise<{ rows: Array<Record<string, unknown>>; error: string | null }>;
+  /** INSERT one row; resolves { error: null } on success. Never throws. */
+  insert(
+    table: string,
+    row: Record<string, unknown>,
+  ): Promise<{ error: string | null }>;
+}
+
+/**
+ * Trivially thin adapter over the Supabase client. Maps any thrown or returned
+ * SDK error to `error: string`. Raw SDK messages may pass through to diagnostics
+ * (technical, not secrets) — but tokens are never logged here.
+ */
+export function createSupabaseImportDb(client: SupabaseClient): ImportDb {
+  return {
+    async select(table, columns, inFilter) {
+      try {
+        const base = client.from(table).select(columns);
+        const query = inFilter ? base.in(inFilter.column, inFilter.values) : base;
+        const { data, error } = await query;
+        if (error) return { rows: [], error: error.message ?? 'Błąd zapytania.' };
+        return { rows: (data ?? []) as unknown as Array<Record<string, unknown>>, error: null };
+      } catch (e) {
+        return { rows: [], error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+    async insert(table, row) {
+      try {
+        const { error } = await client.from(table).insert(row);
+        if (error) return { error: error.message ?? 'Błąd zapisu.' };
+        return { error: null };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+  };
+}
+
+// ---- Gate -------------------------------------------------------------------
+
+export const IMPORT_CONFIRMATION_WORD = 'IMPORTUJ';
+
+export interface ImportGateInput {
+  isAdmin: boolean; // isAdminUser(state) from the page
+  authMode: 'local' | 'supabase'; // useAuth().mode
+  signedIn: boolean; // useAuth().state.status === 'signedIn'
+  report: DryRunReport | null; // last dry-run rendered in the panel
+  confirmationText: string; // raw input value
+}
+
+export type ImportGateResult =
+  | { allowed: true }
+  | { allowed: false; reason: string }; // Polish, user-visible
+
+const GATE_REASONS = {
+  admin: 'Import może uruchomić wyłącznie administrator.',
+  mode: 'Import wymaga trybu Supabase.',
+  session: 'Zaloguj się do Supabase, aby importować dane.',
+  report: 'Najpierw uruchom symulację migracji.',
+  blockers: 'Symulacja wykryła blokery — usuń je i uruchom symulację ponownie.',
+  confirmation: 'Przepisz słowo IMPORTUJ, aby potwierdzić.',
+} as const;
+
+/**
+ * Pure administrator gate — first failing check wins, in order:
+ * admin → supabase mode → signed in → report exists → zero blockers →
+ * confirmation equals IMPORTUJ (trimmed, case-sensitive).
+ */
+export function evaluateImportGate(input: ImportGateInput): ImportGateResult {
+  if (!input.isAdmin) return { allowed: false, reason: GATE_REASONS.admin };
+  if (input.authMode !== 'supabase') return { allowed: false, reason: GATE_REASONS.mode };
+  if (!input.signedIn) return { allowed: false, reason: GATE_REASONS.session };
+  if (!input.report) return { allowed: false, reason: GATE_REASONS.report };
+  if (input.report.blockers.length > 0) return { allowed: false, reason: GATE_REASONS.blockers };
+  if (input.confirmationText.trim() !== IMPORT_CONFIRMATION_WORD) {
+    return { allowed: false, reason: GATE_REASONS.confirmation };
+  }
+  return { allowed: true };
+}
+
+// ---- Runner -----------------------------------------------------------------
+
+export interface ImportCollectionSummary {
+  collection: string; // target table or 'people' / unsupported collection key
+  label: string; // Polish label
+  imported: number;
+  skipped: number; // already present / mapped / no target table
+  failed: number;
+}
+
+export interface ImportDiagnostic {
+  collection: string;
+  entityId: string; // offending source id or pair key `${a}|${b}`
+  message: string; // Polish, actionable
+}
+
+export interface ImportRunResult {
+  completed: boolean; // false = refused before any write
+  refusedReason?: string; // Polish, set only when completed === false
+  summary: ImportCollectionSummary[];
+  diagnostics: ImportDiagnostic[];
+}
+
+const REFUSAL_BLOCKERS = 'Import przerwany: raport symulacji zawiera blokery.';
+
+const DIAG = {
+  emptyEmail: 'Osoba nie ma adresu e-mail — uzupełnij go i załóż konto, aby powiązać dane.',
+  duplicateEmail: 'Zduplikowany adres e-mail — dane tej osoby pomiń lub popraw adres.',
+  projectNotImported:
+    'Projekt zadania nie został zaimportowany — popraw błąd projektu i uruchom import ponownie.',
+  nonUuid: 'Identyfikator nie jest w formacie UUID — rekord wymaga ręcznej migracji.',
+  deptFallback: 'Dział projektu nie został zaimportowany — projekt zapisano bez działu.',
+  noTargetTable: 'Brak tabeli docelowej w Supabase — dane pozostają tylko w tej przeglądarce.',
+} as const;
+
+const missingAccount = (email: string): string =>
+  `Brak konta Supabase dla adresu e-mail „${email}” — załóż konto w zakładce Zespół ` +
+  '(Zakładanie konta) i uruchom import ponownie.';
+
+const insertFailure = (error: string): string => `Zapis nie powiódł się: ${error}`;
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isUuid = (id: string): boolean => UUID_RE.test(id);
+
+function chunk<T>(items: T[], size = 100): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+function emptySummary(collection: string, label: string): ImportCollectionSummary {
+  return { collection, label, imported: 0, skipped: 0, failed: 0 };
+}
+
+// Collections with no target table in the current core schema: reported as
+// skipped, never silently dropped.
+const UNSUPPORTED: Array<[keyof AppData, string, string]> = [
+  ['clients', 'clients', 'Klienci'],
+  ['serviceTypes', 'serviceTypes', 'Typy usług'],
+  ['workCategories', 'workCategories', 'Kategorie prac'],
+  ['statuses', 'statuses', 'Statusy'],
+  ['milestones', 'milestones', 'Kamienie milowe'],
+  ['workload', 'workload', 'Zaplanowane godziny'],
+  ['comments', 'comments', 'Komentarze'],
+  ['activity', 'activity', 'Dziennik aktywności'],
+  ['savedFilters', 'savedFilters', 'Zapisane filtry'],
+];
+
+/**
+ * Insert the peeked AppData into Supabase in dependency-safe order
+ * (departments → profiles-mapping → projects → tasks → project_members →
+ * task_assignments). Never throws — every db error becomes a failed count plus a
+ * diagnostic. Defense in depth: refuses immediately (no db call) if the report
+ * still carries blockers. Performs NO role gating (that is evaluateImportGate +
+ * RLS) and never creates/updates profiles or any existing row.
+ */
+export async function runSupabaseImport(
+  data: AppData,
+  report: DryRunReport,
+  db: ImportDb,
+): Promise<ImportRunResult> {
+  if (report.blockers.length > 0) {
+    return { completed: false, refusedReason: REFUSAL_BLOCKERS, summary: [], diagnostics: [] };
+  }
+
+  const summary: ImportCollectionSummary[] = [];
+  const diagnostics: ImportDiagnostic[] = [];
+  const personById = new Map<string, Person>(data.people.map((p) => [p.id, p]));
+
+  // Message for a person who could not be mapped to a Supabase profile.
+  const personMessage = (personId: string): string => {
+    const p = personById.get(personId);
+    if (!p) return missingAccount('');
+    return normalizeEmail(p.email) === '' ? DIAG.emptyEmail : missingAccount(p.email);
+  };
+
+  // 1) DEPARTMENTS ------------------------------------------------------------
+  const deptSummary = emptySummary('departments', 'Działy');
+  const deptIdMap = new Map<string, string>();
+  const existingDepts = await db.select('departments', 'id, name');
+  if (existingDepts.error) {
+    for (const d of data.departments) {
+      deptSummary.failed++;
+      diagnostics.push({ collection: 'departments', entityId: d.id, message: insertFailure(existingDepts.error) });
+    }
+  } else {
+    const byName = new Map<string, string>();
+    const knownIds = new Set<string>();
+    for (const row of existingDepts.rows) {
+      const id = String(row.id);
+      knownIds.add(id);
+      const name = typeof row.name === 'string' ? row.name.trim() : '';
+      if (name && !byName.has(name)) byName.set(name, id);
+    }
+    for (const d of data.departments) {
+      if (knownIds.has(d.id)) {
+        deptIdMap.set(d.id, d.id);
+        deptSummary.skipped++;
+        continue;
+      }
+      const trimmed = d.name.trim();
+      const nameMatch = byName.get(trimmed);
+      if (nameMatch) {
+        deptIdMap.set(d.id, nameMatch);
+        deptSummary.skipped++;
+        continue;
+      }
+      if (!isUuid(d.id)) {
+        deptSummary.failed++;
+        diagnostics.push({ collection: 'departments', entityId: d.id, message: DIAG.nonUuid });
+        continue;
+      }
+      const ins = await db.insert('departments', { id: d.id, name: d.name });
+      if (ins.error) {
+        deptSummary.failed++;
+        diagnostics.push({ collection: 'departments', entityId: d.id, message: insertFailure(ins.error) });
+        continue;
+      }
+      deptIdMap.set(d.id, d.id);
+      knownIds.add(d.id);
+      if (trimmed) byName.set(trimmed, d.id);
+      deptSummary.imported++;
+    }
+  }
+  summary.push(deptSummary);
+
+  // 2) PEOPLE (mapping only — never insert) -----------------------------------
+  const peopleSummary = emptySummary('people', 'Osoby');
+  const personIdMap = new Map<string, string>();
+  const existingProfiles = await db.select('profiles', 'id, email');
+  if (existingProfiles.error) {
+    for (const p of data.people) {
+      peopleSummary.failed++;
+      diagnostics.push({ collection: 'people', entityId: p.id, message: insertFailure(existingProfiles.error) });
+    }
+  } else {
+    const profileByEmail = new Map<string, string>();
+    for (const row of existingProfiles.rows) {
+      const email = normalizeEmail(typeof row.email === 'string' ? row.email : '');
+      if (email && !profileByEmail.has(email)) profileByEmail.set(email, String(row.id));
+    }
+    const seenLocalEmails = new Set<string>();
+    for (const p of data.people) {
+      const email = normalizeEmail(p.email);
+      if (!email) {
+        peopleSummary.failed++;
+        diagnostics.push({ collection: 'people', entityId: p.id, message: DIAG.emptyEmail });
+        continue;
+      }
+      if (seenLocalEmails.has(email)) {
+        peopleSummary.failed++;
+        diagnostics.push({ collection: 'people', entityId: p.id, message: DIAG.duplicateEmail });
+        continue;
+      }
+      seenLocalEmails.add(email);
+      const profileId = profileByEmail.get(email);
+      if (!profileId) {
+        peopleSummary.failed++;
+        diagnostics.push({ collection: 'people', entityId: p.id, message: missingAccount(p.email) });
+        continue;
+      }
+      personIdMap.set(p.id, profileId);
+      peopleSummary.skipped++;
+    }
+  }
+  summary.push(peopleSummary);
+
+  // 3) PROJECTS ---------------------------------------------------------------
+  const projectSummary = emptySummary('projects', 'Projekty');
+  const availableProjectIds = new Set<string>();
+  const existingProjectIds = new Set<string>();
+  let projectSelectError: string | null = null;
+  for (const c of chunk(data.projects.map((p) => p.id))) {
+    const res = await db.select('projects', 'id', { column: 'id', values: c });
+    if (res.error) {
+      projectSelectError = res.error;
+      break;
+    }
+    for (const row of res.rows) existingProjectIds.add(String(row.id));
+  }
+  if (projectSelectError) {
+    for (const p of data.projects) {
+      projectSummary.failed++;
+      diagnostics.push({ collection: 'projects', entityId: p.id, message: insertFailure(projectSelectError) });
+    }
+  } else {
+    for (const p of data.projects) {
+      if (existingProjectIds.has(p.id)) {
+        projectSummary.skipped++;
+        availableProjectIds.add(p.id);
+        continue;
+      }
+      if (!isUuid(p.id)) {
+        projectSummary.failed++;
+        diagnostics.push({ collection: 'projects', entityId: p.id, message: DIAG.nonUuid });
+        continue;
+      }
+      let departmentId: string | null = null;
+      if (p.departmentId !== '') {
+        const mapped = deptIdMap.get(p.departmentId);
+        if (mapped) {
+          departmentId = mapped;
+        } else {
+          diagnostics.push({ collection: 'projects', entityId: p.id, message: DIAG.deptFallback });
+        }
+      }
+      const ins = await db.insert('projects', {
+        id: p.id,
+        name: p.name,
+        description: p.description,
+        department_id: departmentId,
+      });
+      if (ins.error) {
+        projectSummary.failed++;
+        diagnostics.push({ collection: 'projects', entityId: p.id, message: insertFailure(ins.error) });
+        continue;
+      }
+      availableProjectIds.add(p.id);
+      projectSummary.imported++;
+    }
+  }
+  summary.push(projectSummary);
+
+  // 4) TASKS ------------------------------------------------------------------
+  const taskSummary = emptySummary('tasks', 'Zadania');
+  const availableTaskIds = new Set<string>();
+  const existingTaskIds = new Set<string>();
+  let taskSelectError: string | null = null;
+  for (const c of chunk(data.tasks.map((t) => t.id))) {
+    const res = await db.select('tasks', 'id', { column: 'id', values: c });
+    if (res.error) {
+      taskSelectError = res.error;
+      break;
+    }
+    for (const row of res.rows) existingTaskIds.add(String(row.id));
+  }
+  if (taskSelectError) {
+    for (const t of data.tasks) {
+      taskSummary.failed++;
+      diagnostics.push({ collection: 'tasks', entityId: t.id, message: insertFailure(taskSelectError) });
+    }
+  } else {
+    for (const t of data.tasks) {
+      if (existingTaskIds.has(t.id)) {
+        taskSummary.skipped++;
+        availableTaskIds.add(t.id);
+        continue;
+      }
+      if (!availableProjectIds.has(t.projectId)) {
+        taskSummary.failed++;
+        diagnostics.push({ collection: 'tasks', entityId: t.id, message: DIAG.projectNotImported });
+        continue;
+      }
+      if (!isUuid(t.id)) {
+        taskSummary.failed++;
+        diagnostics.push({ collection: 'tasks', entityId: t.id, message: DIAG.nonUuid });
+        continue;
+      }
+      const ins = await db.insert('tasks', {
+        id: t.id,
+        project_id: t.projectId,
+        title: t.title,
+        description: t.description,
+      });
+      if (ins.error) {
+        taskSummary.failed++;
+        diagnostics.push({ collection: 'tasks', entityId: t.id, message: insertFailure(ins.error) });
+        continue;
+      }
+      availableTaskIds.add(t.id);
+      taskSummary.imported++;
+    }
+  }
+  summary.push(taskSummary);
+
+  // 5) PROJECT_MEMBERS --------------------------------------------------------
+  const memberPairs = distinctPairs(data, (task) => task.projectId);
+  const membersSummary = await importJunction(db, {
+    collection: 'project_members',
+    label: 'Członkostwo w projektach',
+    table: 'project_members',
+    parentColumn: 'project_id',
+    pairs: memberPairs,
+    availableParentIds: availableProjectIds,
+    personIdMap,
+    personMessage,
+    diagnostics,
+  });
+  summary.push(membersSummary);
+
+  // 6) TASK_ASSIGNMENTS -------------------------------------------------------
+  const assignmentPairs = distinctPairs(data, (task) => task.id);
+  const assignmentsSummary = await importJunction(db, {
+    collection: 'task_assignments',
+    label: 'Przypisania',
+    table: 'task_assignments',
+    parentColumn: 'task_id',
+    pairs: assignmentPairs,
+    availableParentIds: availableTaskIds,
+    personIdMap,
+    personMessage,
+    diagnostics,
+  });
+  summary.push(assignmentsSummary);
+
+  // Unsupported collections — reported, never dropped silently.
+  for (const [key, collection, label] of UNSUPPORTED) {
+    const count = (data[key] as unknown[]).length;
+    summary.push({ collection, label, imported: 0, skipped: count, failed: 0 });
+    if (count > 0) diagnostics.push({ collection, entityId: '', message: DIAG.noTargetTable });
+  }
+
+  return { completed: true, summary, diagnostics };
+}
+
+interface JunctionPair {
+  parentId: string; // local project id or task id (carried over as Supabase PK)
+  personId: string; // local person id
+}
+
+/**
+ * Distinct (parentId, personId) pairs derived from assignments joined through
+ * tasks — exactly mirroring buildDryRunReport's membership derivation. `parentOf`
+ * picks projectId (memberships) or task id (assignments).
+ */
+function distinctPairs(data: AppData, parentOf: (task: AppData['tasks'][number]) => string): JunctionPair[] {
+  const taskById = new Map(data.tasks.map((t) => [t.id, t]));
+  const personIds = new Set(data.people.map((p) => p.id));
+  const seen = new Set<string>();
+  const pairs: JunctionPair[] = [];
+  for (const a of data.assignments) {
+    const task = taskById.get(a.taskId);
+    if (!task || !personIds.has(a.personId)) continue;
+    const parentId = parentOf(task);
+    const key = `${parentId}|${a.personId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    pairs.push({ parentId, personId: a.personId });
+  }
+  return pairs;
+}
+
+async function importJunction(
+  db: ImportDb,
+  opts: {
+    collection: string;
+    label: string;
+    table: string;
+    parentColumn: string;
+    pairs: JunctionPair[];
+    availableParentIds: Set<string>;
+    personIdMap: Map<string, string>;
+    personMessage: (personId: string) => string;
+    diagnostics: ImportDiagnostic[];
+  },
+): Promise<ImportCollectionSummary> {
+  const summary = emptySummary(opts.collection, opts.label);
+
+  // Resolve local pairs to Supabase (parentId, profileId), failing dangling ones.
+  const resolved: Array<{ key: string; parentId: string; profileId: string }> = [];
+  for (const pair of opts.pairs) {
+    const key = `${pair.parentId}|${pair.personId}`;
+    if (!opts.availableParentIds.has(pair.parentId)) {
+      summary.failed++;
+      opts.diagnostics.push({ collection: opts.collection, entityId: key, message: DIAG.projectNotImported });
+      continue;
+    }
+    const profileId = opts.personIdMap.get(pair.personId);
+    if (!profileId) {
+      summary.failed++;
+      opts.diagnostics.push({ collection: opts.collection, entityId: key, message: opts.personMessage(pair.personId) });
+      continue;
+    }
+    resolved.push({ key, parentId: pair.parentId, profileId });
+  }
+
+  // Existing composite pairs via chunked select on the parent column.
+  const parentIds = [...new Set(resolved.map((r) => r.parentId))];
+  const existingPairs = new Set<string>();
+  let selectError: string | null = null;
+  for (const c of chunk(parentIds)) {
+    const res = await db.select(opts.table, `${opts.parentColumn}, profile_id`, {
+      column: opts.parentColumn,
+      values: c,
+    });
+    if (res.error) {
+      selectError = res.error;
+      break;
+    }
+    for (const row of res.rows) {
+      existingPairs.add(`${String(row[opts.parentColumn])}|${String(row.profile_id)}`);
+    }
+  }
+  if (selectError) {
+    for (const r of resolved) {
+      summary.failed++;
+      opts.diagnostics.push({ collection: opts.collection, entityId: r.key, message: insertFailure(selectError) });
+    }
+    return summary;
+  }
+
+  for (const r of resolved) {
+    const supKey = `${r.parentId}|${r.profileId}`;
+    if (existingPairs.has(supKey)) {
+      summary.skipped++;
+      continue;
+    }
+    const ins = await db.insert(opts.table, { [opts.parentColumn]: r.parentId, profile_id: r.profileId });
+    if (ins.error) {
+      summary.failed++;
+      opts.diagnostics.push({ collection: opts.collection, entityId: r.key, message: insertFailure(ins.error) });
+      continue;
+    }
+    existingPairs.add(supKey);
+    summary.imported++;
+  }
+  return summary;
+}

@@ -1,15 +1,31 @@
-// Admin-only, READ-ONLY tool: download a sanitized JSON backup of the persisted
-// planner data and render a Supabase migration DRY-RUN report. It never writes
-// to Supabase and never mutates localStorage or app state — it only calls the
-// side-effect-free peekDataResult() plus the pure builders in exportDryRun.ts.
+// Admin-only tool with two capabilities:
+//  1) READ-ONLY export + Supabase migration DRY-RUN — download a sanitized JSON
+//     backup and render a dry-run report. This half never writes anywhere; it
+//     only calls the side-effect-free peekDataResult() plus the pure builders in
+//     exportDryRun.ts.
+//  2) WRITE: a guarded, idempotent import of the peeked snapshot into Supabase
+//     (runSupabaseImport). This is the only part of the panel that writes to a
+//     remote — it still NEVER touches localStorage or app state, and is gated by
+//     evaluateImportGate (admin + supabase mode + signed in + blocker-free
+//     dry-run + typed IMPORTUJ). RLS remains the real authorization boundary.
 // Gating is inherited from AdminPage (isAdminUser) and the App route (admin.panel);
-// this component adds no gating of its own.
+// the import section additionally re-derives isAdmin and reads useAuth().
 import { useState } from 'react';
 import { todayStr } from '../utils/dates';
 import type { LoadFailureReason } from '../store/storage';
 import { peekDataResult } from '../store/storage';
 import type { DryRunReport } from '../store/exportDryRun';
 import { buildDryRunReport, buildExportPayload } from '../store/exportDryRun';
+import { useStore } from '../store/AppStore';
+import { isAdminUser } from '../store/selectors';
+import { useAuth } from '../auth/SessionProvider';
+import { getSupabaseClient } from '../supabase/client';
+import {
+  createSupabaseImportDb,
+  evaluateImportGate,
+  runSupabaseImport,
+  type ImportRunResult,
+} from '../supabase/dataImport';
 
 // Reason-appropriate follow-up hint shown under the error message.
 const REASON_HINT: Record<LoadFailureReason, string> = {
@@ -45,8 +61,26 @@ const TARGET_LABELS: Array<[string, keyof DryRunReport['counts']['target']]> = [
 ];
 
 export function ExportDryRunPanel() {
+  const { state } = useStore();
+  const { mode, state: sessionState } = useAuth();
+  const isAdmin = isAdminUser(state);
+
   const [error, setError] = useState<{ message: string; hint: string } | null>(null);
   const [report, setReport] = useState<DryRunReport | null>(null);
+
+  // Import section state (write path).
+  const [confirmationText, setConfirmationText] = useState('');
+  const [importBusy, setImportBusy] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importResult, setImportResult] = useState<ImportRunResult | null>(null);
+
+  const gate = evaluateImportGate({
+    isAdmin,
+    authMode: mode,
+    signedIn: sessionState.status === 'signedIn',
+    report,
+    confirmationText,
+  });
 
   const handleDownload = () => {
     const result = peekDataResult();
@@ -77,6 +111,39 @@ export function ExportDryRunPanel() {
     }
     setError(null);
     setReport(buildDryRunReport(result.data));
+  };
+
+  const handleImport = async () => {
+    setImportError(null);
+    setImportResult(null);
+
+    // Re-verify freshness at click time: re-peek + re-run the dry-run. Never
+    // write if the data disappeared, is unreadable, or now carries blockers.
+    const peek = peekDataResult();
+    if (!peek.ok) {
+      setImportError(peek.error.message);
+      return;
+    }
+    const freshReport = buildDryRunReport(peek.data);
+    setReport(freshReport);
+    if (freshReport.blockers.length > 0) {
+      setImportError(
+        'Dane zmieniły się od ostatniej symulacji i zawierają blokery — import przerwany bez zapisu.',
+      );
+      return;
+    }
+
+    setImportBusy(true);
+    try {
+      const db = createSupabaseImportDb(getSupabaseClient());
+      const runResult = await runSupabaseImport(peek.data, freshReport, db);
+      setImportResult(runResult);
+      setConfirmationText('');
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : 'Nie udało się połączyć z Supabase.');
+    } finally {
+      setImportBusy(false);
+    }
   };
 
   return (
@@ -211,6 +278,98 @@ export function ExportDryRunPanel() {
           )}
         </div>
       )}
+
+      <div className="import-section">
+        <h3>Import do Supabase</h3>
+        <p className="field-hint">
+          Import zapisuje dane w Supabase. Dane w tej przeglądarce pozostają nienaruszone — nic
+          nie jest usuwane, a lokalna kopia zapasowa nadal działa.
+        </p>
+        <p className="field-hint">
+          Import można bezpiecznie uruchomić ponownie: istniejące rekordy zostaną pominięte, nic
+          nie jest nadpisywane.
+        </p>
+
+        {mode !== 'supabase' ? (
+          <p className="field-hint">
+            Import wymaga trybu Supabase. Skonfiguruj zmienne VITE_SUPABASE_* i zaloguj się, aby
+            importować dane.
+          </p>
+        ) : (
+          <>
+            <div className="admin-add-form">
+              <label>
+                Aby odblokować import, przepisz słowo IMPORTUJ:
+                <input
+                  value={confirmationText}
+                  onChange={(e) => setConfirmationText(e.target.value)}
+                  aria-label="Potwierdzenie importu"
+                  disabled={importBusy}
+                />
+              </label>
+              <button
+                type="button"
+                className="btn primary"
+                onClick={handleImport}
+                disabled={!gate.allowed || importBusy}
+              >
+                {importBusy ? 'Importowanie…' : 'Importuj dane do Supabase'}
+              </button>
+            </div>
+
+            {!gate.allowed && <p className="field-hint">{gate.reason}</p>}
+
+            {importError && (
+              <div className="field-error" role="alert">
+                <p>{importError}</p>
+              </div>
+            )}
+
+            {importResult && (
+              <div className="import-result">
+                <h4>Wynik importu</h4>
+                {!importResult.completed && importResult.refusedReason && (
+                  <div className="field-error" role="alert">
+                    <p>{importResult.refusedReason}</p>
+                  </div>
+                )}
+                {importResult.completed && (
+                  <table className="dry-run-table">
+                    <thead>
+                      <tr>
+                        <th>Kolekcja</th>
+                        <th>Zaimportowane</th>
+                        <th>Pominięte</th>
+                        <th>Błędy</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {importResult.summary.map((s) => (
+                        <tr key={s.collection}>
+                          <td>{s.label}</td>
+                          <td>{s.imported}</td>
+                          <td>{s.skipped}</td>
+                          <td>{s.failed}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+                {importResult.diagnostics.length > 0 && (
+                  <ul className="dry-run-blockers">
+                    {importResult.diagnostics.map((d, i) => (
+                      <li key={`${d.collection}-${d.entityId}-${i}`} className="field-error">
+                        <code>{d.collection}</code>
+                        {d.entityId ? ` (${d.entityId})` : ''}: {d.message}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
