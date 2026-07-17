@@ -169,6 +169,10 @@ export type Action =
   | { type: 'DELETE_MILESTONE'; milestoneId: string }
   | { type: 'ADD_COMMENT'; entityType: CommentEntityType; entityId: string; body: string; mentionIds: string[] }
   | { type: 'ADD_PERSON'; person: PersonDraft }
+  // Auto-provisioning tożsamości z profilu chmury (App, tryb supabase). Jak
+  // ADD_PERSON, ale BEZ reguły „pierwsza osoba zostaje administratorem" —
+  // rola przychodzi z serwera (RLS), a logowanie nie zależy od lokalnej listy.
+  | { type: 'PROVISION_PERSON'; person: PersonDraft }
   | { type: 'UPDATE_PERSON'; personId: string; person: PersonDraft }
   | { type: 'DELETE_PERSON'; personId: string }
   | { type: 'SET_CURRENT_USER'; personId: string }
@@ -1993,6 +1997,25 @@ export function reducer(state: AppData, action: Action): AppData {
           },
         ],
         activity: withActivity(state, action.entityType, action.entityId, 'dodał(a) komentarz'),
+      };
+    }
+    case 'PROVISION_PERSON': {
+      if (!isValidPersonDraft(action.person)) return state;
+      const id = uid();
+      const base = personFromDraft(action.person);
+      // Świeży id jest nigdzie niewskazywany; guard łapie tylko self-reference.
+      const supervisorId = wouldCreateSupervisorCycle(state.people, id, base.supervisorId)
+        ? ''
+        : base.supervisorId;
+      return {
+        ...state,
+        people: [...state.people, { id, ...base, supervisorId, passwordHash: '' }],
+        activity: withActivity(
+          state,
+          'person',
+          id,
+          `utworzył(a) profil planera dla konta „${base.name}”`,
+        ),
       };
     }
     case 'ADD_PERSON': {

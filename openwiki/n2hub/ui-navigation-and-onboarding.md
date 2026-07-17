@@ -14,8 +14,9 @@
   fail-open) → local-profile association → shell. A signed-in account with no
   matching local `Person` is auto-provisioned ONCE from its own RLS cloud
   profile (`personDraftFromCloudProfile` in `auth/profile.ts`, dispatched as
-  `ADD_PERSON` from App; local department/supervisor stay empty — the org
-  snapshot renders those). The blocked screen remains only for the edge case of
+  `PROVISION_PERSON` from App — no first-person forced-admin rule; local
+  department/supervisor stay empty — the org snapshot renders those). The
+  blocked screen remains only for the edge case of
   a session without a cloud profile row. A `/account` panel + nav link
   (Supabase mode only; local redirects to `/`) offers self-service password
   change. Identity association is by email only (planner data references local

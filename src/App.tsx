@@ -158,7 +158,7 @@ export function App() {
     if (provisionedEmailRef.current === key) return;
     provisionedEmailRef.current = key;
     dispatch({
-      type: 'ADD_PERSON',
+      type: 'PROVISION_PERSON',
       person: personDraftFromCloudProfile(profile, authedEmail, cloudRoleToAccessRole),
     });
   }, [authedEmail, auth.mustChangePassword, state.people, orgState, dispatch]);
