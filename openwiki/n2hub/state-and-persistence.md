@@ -34,6 +34,24 @@
   Constraint-violation write errors (23502/23503/23505/23514) drop the op with
   the Polish permission notice rather than stalling the retry queue. Local mode:
   zero diff.
+- LIVE SYNC (2026-07-17): CloudSyncProvider subscribes one Realtime channel to
+  `postgres_changes` on the published tables (migration
+  20260718091000_realtime_publication). Any DB change schedules a debounced
+  (~1.2 s) full sync: a SILENT org refetch (`OrgDataProvider.refreshSilently` —
+  stale-while-revalidate, state never drops to `loading`, so the mirror queue
+  and `active` survive) followed by planner rehydration. While the channel is
+  SUBSCRIBED (`live` in `useCloudSync()`), CloudSyncBanner renders nothing; the
+  manual-refresh hint banner is the fallback when live is down. Guards that
+  keep this safe: `loadPlannerSnapshot` filters dependents of skipped
+  projects/tasks (one orphan must not no-op the whole fail-closed merge), an
+  EMPTY cloud people payload fail-closes when local people exist (RLS anomaly
+  must not wipe the team), the queue is cleared only on sign-out, and edits
+  made during a ready-state rehydration keep queueing (maps exist) and are
+  pushed right after the merge.
+- `Client` carries optional contact fields (contactName/contactEmail/
+  contactPhone/notes; columns from 20260718090000_clients_contact_fields, '' =
+  none, repaired by `normalizeClientContacts`), edited on the `/clients` page
+  via `SAVE_CLIENT`/`SET_CLIENT_ARCHIVED`.
 - Retirement gate (supabase mode only). After an admin runs the reversible
   handshake in `MigrationStatusPanel` (coverage clean → snapshot read → probe
   write/read/remove → backup downloaded), the org flag `local_writes_retired`

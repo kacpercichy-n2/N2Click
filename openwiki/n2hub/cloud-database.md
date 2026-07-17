@@ -34,6 +34,10 @@
   `app.protect_profile_privileges` trigger, same as `access_role` and
   `department_id`). There is NO auto-provisioning trigger on `auth.users`:
   profiles are created by the provisioning Edge Function or operator SQL.
+- `clients` also carries contact columns (`contact_name`, `contact_email`,
+  `contact_phone`, `notes`; 20260718090000) and the published tables are in the
+  `supabase_realtime` publication (20260718091000) — RLS applies to Realtime
+  (WALRUS), clients treat events only as a "something changed" signal.
 - `clients`, `statuses`, `service_types`, `work_categories` — org-wide
   dictionaries; read by every authenticated user, mutations admin-only
   (clients: insert also manager).
