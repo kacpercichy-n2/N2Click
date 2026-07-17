@@ -61,7 +61,7 @@ function seedAdminDb(): FakeReferenceDb {
   return new FakeReferenceDb()
     .seed('profiles', [
       profileRow({ id: U_ADMIN, first_name: 'Ada', last_name: 'Admin', email: 'ada@x.pl', access_role: 'administrator', role_title: 'Szef', department_id: D_KRE }),
-      profileRow({ id: U_MGR, first_name: 'Marek', last_name: 'Menedżer', email: 'm@x.pl', access_role: 'manager', department_id: D_KRE }),
+      profileRow({ id: U_MGR, first_name: 'Marek', last_name: 'Menedżer', email: 'm@x.pl', access_role: 'manager', department_id: D_KRE, supervisor_id: U_ADMIN }),
       profileRow({ id: U_WORKER, first_name: 'Wera', last_name: 'Worker', email: 'w@x.pl', access_role: 'worker', department_id: D_STR }),
     ])
     .seed('departments', [
@@ -92,6 +92,9 @@ describe('loadOrgSnapshot — mapping i sortowanie (admin)', () => {
     expect(snap.profile?.id).toBe(U_ADMIN);
     expect(snap.profile?.cloudRole).toBe('administrator');
     expect(snap.profile?.departmentId).toBe(D_KRE);
+    // Przełożony: brak kolumny/wartości → null, uuid przechodzi dosłownie.
+    expect(snap.profile?.supervisorId).toBeNull();
+    expect(snap.profiles.find((p) => p.id === U_MGR)?.supervisorId).toBe(U_ADMIN);
 
     expect(snap.profiles).toHaveLength(3);
 
@@ -202,7 +205,7 @@ describe('effectiveAccessRole — macierz fallbacków', () => {
   const ready: OrgState = {
     status: 'ready',
     snapshot: {
-      profile: { id: 'cloud', firstName: 'C', lastName: '', email: '', roleTitle: '', cloudRole: 'manager', departmentId: null },
+      profile: { id: 'cloud', firstName: 'C', lastName: '', email: '', roleTitle: '', cloudRole: 'manager', departmentId: null, supervisorId: null },
       profiles: [], departments: [], statuses: [], serviceTypes: [], workCategories: [],
     },
   };

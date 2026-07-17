@@ -20,7 +20,9 @@
   (`loadOrgSnapshot`, `effectiveAccessRole`); never from JWT/metadata. While that
   snapshot loads, on error, in local mode, or while impersonating, the local
   `Person` role is the fallback. Cloud statuses/service types/work categories are
-  loaded and displayed (AccountPage `Profil w chmurze`, TeamPage cloud hierarchy,
+  loaded and displayed (AccountPage `Profil w chmurze`, TeamPage cloud hierarchy
+  — incl. `profiles.supervisor_id` shown as `Przełożony:` and editable inline by
+  a cloud administrator (server truth: RLS + profile-privileges trigger) —,
   AdminPage `Słowniki w chmurze`), but the planner still renders/mutates the LOCAL
   localStorage dictionaries until the data-write migration. Local mode is
   byte-for-byte unchanged (no client created). Client-side only; UX gate, not a

@@ -20,6 +20,7 @@ import {
   buildProvisionRequest,
   buildTeamHierarchy,
   canViewTeam,
+  cloudProfileName,
   emptyProvisionForm,
   teamAccessForUser,
   type ProvisionFormState,
@@ -97,8 +98,26 @@ export function TeamPage() {
   );
 }
 
+/**
+ * Edycja przełożonego (tylko administrator, tryb supabase). Prawdę wymusza
+ * serwer: polityka `profiles_update_self_or_admin` + trigger
+ * `app.protect_profile_privileges` (kolumna admin-only) — select jest UX-em.
+ */
+interface SupervisorEdit {
+  options: Array<{ id: string; name: string }>;
+  valueById: Map<string, string>;
+  busyId: string | null;
+  onChange: (personId: string, supervisorId: string) => void;
+}
+
 /** Wspólna prezentacja pogrupowanej hierarchii (lokalna i chmurowa). */
-function HierarchyGroups({ groups }: { groups: TeamDepartmentView[] }) {
+function HierarchyGroups({
+  groups,
+  supervisorEdit,
+}: {
+  groups: TeamDepartmentView[];
+  supervisorEdit?: SupervisorEdit;
+}) {
   if (groups.length === 0) {
     return (
       <div className="empty-state">
@@ -124,8 +143,27 @@ function HierarchyGroups({ groups }: { groups: TeamDepartmentView[] }) {
                   <span className="team-person-meta">
                     {p.roleTitle && <span className="team-person-role">{p.roleTitle}</span>}
                     <span className="team-person-access">{p.accessRoleLabel}</span>
-                    {p.supervisorName && (
+                    {!supervisorEdit && p.supervisorName && (
                       <span className="team-person-sup">Przełożony: {p.supervisorName}</span>
+                    )}
+                    {supervisorEdit && (
+                      <label className="team-person-sup">
+                        Przełożony:{' '}
+                        <select
+                          value={supervisorEdit.valueById.get(p.id) ?? ''}
+                          disabled={supervisorEdit.busyId !== null}
+                          onChange={(e) => supervisorEdit.onChange(p.id, e.target.value)}
+                        >
+                          <option value="">—</option>
+                          {supervisorEdit.options
+                            .filter((o) => o.id !== p.id)
+                            .map((o) => (
+                              <option key={o.id} value={o.id}>
+                                {o.name}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
                     )}
                   </span>
                 </li>
@@ -150,6 +188,8 @@ function LocalTeamHierarchy({ groups }: { groups: TeamDepartmentView[] }) {
  */
 function CloudTeamHierarchy() {
   const { state, reload } = useOrgData();
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [supError, setSupError] = useState<string | null>(null);
 
   if (state.status === 'idle' || state.status === 'loading') {
     return <p className="field-hint">Wczytywanie zespołu…</p>;
@@ -164,10 +204,56 @@ function CloudTeamHierarchy() {
       </div>
     );
   }
+
+  const { profiles, departments, profile } = state.snapshot;
+  const isCloudAdmin = profile?.cloudRole === 'administrator';
+
+  // Edycja przełożonego tylko dla administratora chmury; RLS + trigger
+  // `app.protect_profile_privileges` egzekwują to samo po stronie serwera.
+  const supervisorEdit: SupervisorEdit | undefined = isCloudAdmin
+    ? {
+        options: profiles
+          .map((p) => ({ id: p.id, name: cloudProfileName(p) }))
+          .sort((a, b) => a.name.localeCompare(b.name)),
+        valueById: new Map(profiles.map((p) => [p.id, p.supervisorId ?? ''])),
+        busyId,
+        onChange: (personId, supervisorId) => {
+          if (busyId) return;
+          setBusyId(personId);
+          setSupError(null);
+          void (async () => {
+            try {
+              const { error } = await getSupabaseClient()
+                .from('profiles')
+                .update({ supervisor_id: supervisorId || null })
+                .eq('id', personId);
+              if (error) {
+                setSupError('Nie udało się zapisać przełożonego. Spróbuj ponownie.');
+              } else {
+                reload();
+              }
+            } catch {
+              setSupError('Nie udało się zapisać przełożonego. Spróbuj ponownie.');
+            } finally {
+              setBusyId(null);
+            }
+          })();
+        },
+      }
+    : undefined;
+
   return (
-    <HierarchyGroups
-      groups={buildCloudTeamHierarchy(state.snapshot.profiles, state.snapshot.departments)}
-    />
+    <>
+      {supError && (
+        <p className="field-error" role="alert">
+          {supError}
+        </p>
+      )}
+      <HierarchyGroups
+        groups={buildCloudTeamHierarchy(profiles, departments)}
+        supervisorEdit={supervisorEdit}
+      />
+    </>
   );
 }
 

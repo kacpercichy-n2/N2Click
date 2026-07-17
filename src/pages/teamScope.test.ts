@@ -137,23 +137,32 @@ describe('buildTeamHierarchy', () => {
 describe('buildCloudTeamHierarchy', () => {
   const cloud = (o: Partial<CloudProfile> & { id: string }): CloudProfile => ({
     firstName: 'Jan', lastName: 'Kowalski', email: 'jan@x.pl', roleTitle: '', cloudRole: 'worker',
-    departmentId: null, ...o,
+    departmentId: null, supervisorId: null, ...o,
   });
   const departments: Department[] = [
     { id: 'd-kre', name: 'Kreacja' },
     { id: 'd-str', name: 'Strategia' },
   ];
 
-  it('grupuje profile po dziale bez ponownego filtrowania i pomija wiersz przełożonego', () => {
+  it('grupuje profile po dziale bez ponownego filtrowania i rozwiązuje przełożonego', () => {
     const profiles: CloudProfile[] = [
       cloud({ id: 'a', firstName: 'Ada', lastName: 'Admin', cloudRole: 'administrator', departmentId: 'd-kre', roleTitle: 'Szef' }),
-      cloud({ id: 'm', firstName: 'Marek', cloudRole: 'manager', departmentId: 'd-str' }),
+      cloud({ id: 'm', firstName: 'Marek', cloudRole: 'manager', departmentId: 'd-str', supervisorId: 'a' }),
     ];
     const groups = buildCloudTeamHierarchy(profiles, departments);
     expect(groups.map((g) => g.name)).toEqual(['Kreacja', 'Strategia']);
     const ada = groups[0].people[0];
     expect(ada).toMatchObject({ name: 'Ada Admin', roleTitle: 'Szef', accessRoleLabel: 'Administrator', supervisorName: '' });
     expect(groups[1].people[0].accessRoleLabel).toBe('Menedżer');
+    expect(groups[1].people[0].supervisorName).toBe('Ada Admin');
+  });
+
+  it('przełożony spoza widocznego (RLS) zbioru profili => supervisorName pusty', () => {
+    const groups = buildCloudTeamHierarchy(
+      [cloud({ id: 'm', firstName: 'Marek', departmentId: 'd-kre', supervisorId: 'niewidoczny' })],
+      departments,
+    );
+    expect(groups[0].people[0].supervisorName).toBe('');
   });
 
   it('dodaje grupę „Bez działu" tylko gdy istnieją profile spoza znanych działów', () => {

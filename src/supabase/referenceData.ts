@@ -38,6 +38,8 @@ export interface CloudProfile {
   roleTitle: string;
   cloudRole: CloudRole;
   departmentId: string | null;
+  /** Przełożony (profiles.supervisor_id); null gdy brak. */
+  supervisorId: string | null;
 }
 
 export interface OrgSnapshot {
@@ -87,6 +89,7 @@ function toCloudRole(v: unknown): CloudRole {
 
 function toCloudProfile(row: Record<string, unknown>): CloudProfile {
   const departmentId = row.department_id;
+  const supervisorId = row.supervisor_id;
   return {
     id: str(row.id),
     firstName: str(row.first_name),
@@ -95,6 +98,7 @@ function toCloudProfile(row: Record<string, unknown>): CloudProfile {
     roleTitle: str(row.role_title),
     cloudRole: toCloudRole(row.access_role),
     departmentId: typeof departmentId === 'string' && departmentId !== '' ? departmentId : null,
+    supervisorId: typeof supervisorId === 'string' && supervisorId !== '' ? supervisorId : null,
   };
 }
 
@@ -131,7 +135,10 @@ const byName = (a: { name: string }, b: { name: string }): number => a.name.loca
 export async function loadOrgSnapshot(db: ReferenceDb, userId: string): Promise<LoadOrgResult> {
   const [profilesRes, departmentsRes, statusesRes, serviceTypesRes, workCategoriesRes] =
     await Promise.all([
-      db.select('profiles', 'id, first_name, last_name, email, role_title, access_role, department_id'),
+      db.select(
+        'profiles',
+        'id, first_name, last_name, email, role_title, access_role, department_id, supervisor_id',
+      ),
       db.select('departments', 'id, name'),
       db.select('statuses', 'id, name, slug, color, sort_order, archived, is_done'),
       db.select('service_types', 'id, name'),

@@ -56,7 +56,7 @@ function makeTask(o: Partial<Task> & { id: string }): Task {
   };
 }
 const cloudProfile = (o: Partial<CloudProfile> & { id: string }): CloudProfile => ({
-  firstName: '', lastName: '', email: '', roleTitle: '', cloudRole: 'worker', departmentId: null, ...o,
+  firstName: '', lastName: '', email: '', roleTitle: '', cloudRole: 'worker', departmentId: null, supervisorId: null, ...o,
 });
 
 // A local AppData + a cloud org snapshot whose ids/keys line up so the maps

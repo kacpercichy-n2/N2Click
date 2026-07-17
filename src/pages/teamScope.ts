@@ -134,15 +134,19 @@ const CLOUD_ROLE_LABELS: Record<CloudProfile['cloudRole'], string> = {
   worker: 'Pracownik',
 };
 
-function cloudPersonView(p: CloudProfile): TeamPersonView {
-  const name = `${p.firstName} ${p.lastName}`.trim() || p.email || '(bez nazwy)';
+/** Nazwa wyświetlana profilu chmury (imię+nazwisko → e-mail → placeholder). */
+export function cloudProfileName(p: CloudProfile): string {
+  return `${p.firstName} ${p.lastName}`.trim() || p.email || '(bez nazwy)';
+}
+
+function cloudPersonView(p: CloudProfile, nameById: Map<string, string>): TeamPersonView {
   return {
     id: p.id,
-    name,
+    name: cloudProfileName(p),
     roleTitle: p.roleTitle,
     accessRoleLabel: CLOUD_ROLE_LABELS[p.cloudRole],
-    // Chmura nie ma pola przełożonego — pomijamy wiersz przełożonego.
-    supervisorName: '',
+    // Przełożony spoza widocznego (RLS) zbioru profili → '' (bez wiersza).
+    supervisorName: p.supervisorId ? nameById.get(p.supervisorId) ?? '' : '',
   };
 }
 
@@ -158,18 +162,20 @@ export function buildCloudTeamHierarchy(
   departments: Department[],
 ): TeamDepartmentView[] {
   const knownDeptIds = new Set(departments.map((d) => d.id));
+  const nameById = new Map(profiles.map((p) => [p.id, cloudProfileName(p)]));
+  const view = (p: CloudProfile): TeamPersonView => cloudPersonView(p, nameById);
   const groups: TeamDepartmentView[] = [];
 
   for (const dept of departments) {
     const members = profiles.filter((p) => p.departmentId === dept.id);
-    groups.push({ id: dept.id, name: dept.name, people: members.map(cloudPersonView) });
+    groups.push({ id: dept.id, name: dept.name, people: members.map(view) });
   }
 
   const orphans = profiles.filter(
     (p) => p.departmentId === null || !knownDeptIds.has(p.departmentId),
   );
   if (orphans.length > 0) {
-    groups.push({ id: '', name: NO_DEPARTMENT_LABEL, people: orphans.map(cloudPersonView) });
+    groups.push({ id: '', name: NO_DEPARTMENT_LABEL, people: orphans.map(view) });
   }
 
   return groups;

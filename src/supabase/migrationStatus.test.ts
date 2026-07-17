@@ -32,7 +32,7 @@ function makePerson(o: Partial<Person> & { id: string }): Person {
   };
 }
 const cloudProfile = (o: Partial<CloudProfile> & { id: string }): CloudProfile => ({
-  firstName: '', lastName: '', email: '', roleTitle: '', cloudRole: 'administrator', departmentId: null, ...o,
+  firstName: '', lastName: '', email: '', roleTitle: '', cloudRole: 'administrator', departmentId: null, supervisorId: null, ...o,
 });
 
 function localFixture(): AppData {
