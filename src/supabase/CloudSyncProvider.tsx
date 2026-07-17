@@ -71,6 +71,8 @@ export function useCloudSync(): CloudSyncValue {
 // another tab's already-mirrored write, and the local-only sample/reset ops.
 const SUPPRESSED = new Set([
   'MERGE_CLOUD_ENTITIES',
+  'MERGE_CLOUD_PEOPLE',
+  'MERGE_CLOUD_DICTIONARIES',
   'REPLACE_FROM_STORAGE',
   'LOAD_SAMPLE',
   'RESET_ALL',

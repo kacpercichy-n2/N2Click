@@ -12,7 +12,7 @@ import {
   rangeAvailabilityForPerson,
   weekBlocksForPerson,
 } from '../store/selectors';
-import { ChatMock } from '../components/ChatMock';
+import { Avatar } from '../components/Avatar';
 import { TodayAgendaList } from '../components/TodayAgenda';
 import {
   formatRowLabel,
@@ -161,13 +161,26 @@ export function DashboardPage() {
           <TodayAgendaList personId={me.id} date={today} />
         </motion.div>
 
-        {/* (b) Team chat (mockup) */}
+        {/* (b) Team overview — realne dane zespołu, bez atrap czatu/obecności. */}
         <motion.div className="dash-card" variants={dashCardVariants} data-tour="home.workload">
           <div className="dash-card-head">
             <h2>Zespół</h2>
-            <span className="demo-badge">Wersja demonstracyjna</span>
           </div>
-          <ChatMock coworkers={coworkers} />
+          {coworkers.length === 0 ? (
+            <p className="field-hint">Brak innych osób w zespole.</p>
+          ) : (
+            <ul className="chat-people">
+              {coworkers.map((p) => (
+                <li key={p.id} className="chat-person">
+                  <Avatar person={p} size={32} />
+                  <span className="chat-person-text">
+                    <span className="chat-person-name">{p.name}</span>
+                    {p.role && <span className="chat-person-role">{p.role}</span>}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
         </motion.div>
 
         {/* (c) Workload summary */}

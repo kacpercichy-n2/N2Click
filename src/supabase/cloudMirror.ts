@@ -13,12 +13,14 @@
 //     => brak operacji + polska diagnostyka (praca zostaje lokalnie, nic nie
 //     rzuca). Nadmiarowy upsert (dwie karty) jest idempotentny.
 import type {
+  AccessRole,
   ActivityEvent,
   AppData,
   Client,
   Comment,
   Milestone,
   Project,
+  Status,
   Task,
   WorkloadEntry,
 } from '../types';
@@ -36,6 +38,14 @@ export const SYNC_ERROR_MSG =
 export const SYNC_PERMISSION_MSG =
   'Serwer odrzucił zmianę (brak uprawnień) — pozostała tylko w tej przeglądarce.';
 export const STALE_HINT_MSG = 'Dane mogą być nieaktualne — odśwież dane z serwera.';
+
+/** Udokumentowane mapowanie ról frontend→cloud (patrz referenceData.ts). */
+const ACCESS_ROLE_TO_CLOUD: Record<AccessRole, 'administrator' | 'manager' | 'worker'> = {
+  administrator: 'administrator',
+  pm: 'manager',
+  handlowiec: 'worker',
+  pracownik: 'worker',
+};
 
 const DIAG = {
   nonUuid: 'Identyfikator nie jest w formacie UUID — rekord pozostaje tylko lokalnie.',
@@ -516,6 +526,139 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
       if (prevIds.has(e.id)) continue;
       const row = activityRow(e, maps, diagnostics);
       if (row) ops.push({ kind: 'upsert', table: 'activity_events', row, sourceId: e.id, label: 'Wpis dziennika' });
+    }
+  }
+
+  // 9) Słowniki organizacji ---- (statusy + działy + typy usług + kategorie
+  // prac). Po autorytatywnej hydracji lokalne wiersze noszą id chmury, a nowe
+  // dostają crypto.randomUUID — mutacje paneli admina płyną wprost do tabel
+  // (RLS: zapis wyłącznie administrator; odrzut ląduje w `dropped` z polską
+  // etykietą). Usunięcie propagujemy tylko dla id w formacie UUID.
+  {
+    const dicts: Array<{
+      table: string;
+      label: string;
+      prevRows: Array<{ id: string; name: string }>;
+      nextRows: Array<{ id: string; name: string }>;
+      toRow: (r: never) => Record<string, unknown>;
+    }> = [
+      {
+        table: 'statuses',
+        label: 'Status',
+        prevRows: prev.statuses,
+        nextRows: next.statuses,
+        toRow: ((s: Status) => ({
+          id: s.id,
+          name: s.name,
+          slug: s.slug,
+          color: s.color,
+          sort_order: s.order,
+          archived: s.archived,
+          is_done: s.isDone,
+        })) as (r: never) => Record<string, unknown>,
+      },
+      {
+        table: 'departments',
+        label: 'Dział',
+        prevRows: prev.departments,
+        nextRows: next.departments,
+        toRow: ((d: { id: string; name: string }) => ({ id: d.id, name: d.name })) as (
+          r: never,
+        ) => Record<string, unknown>,
+      },
+      {
+        table: 'service_types',
+        label: 'Typ usługi',
+        prevRows: prev.serviceTypes,
+        nextRows: next.serviceTypes,
+        toRow: ((d: { id: string; name: string }) => ({ id: d.id, name: d.name })) as (
+          r: never,
+        ) => Record<string, unknown>,
+      },
+      {
+        table: 'work_categories',
+        label: 'Kategoria prac',
+        prevRows: prev.workCategories,
+        nextRows: next.workCategories,
+        toRow: ((d: { id: string; name: string }) => ({ id: d.id, name: d.name })) as (
+          r: never,
+        ) => Record<string, unknown>,
+      },
+    ];
+    for (const dict of dicts) {
+      const prevMap = byId(dict.prevRows);
+      const nextMap = byId(dict.nextRows);
+      for (const id of prevMap.keys()) {
+        if (!nextMap.has(id) && isUuid(id)) {
+          ops.push({
+            kind: 'remove',
+            table: dict.table,
+            match: { id },
+            sourceId: id,
+            label: `${dict.label} (usunięcie)`,
+          });
+        }
+      }
+      for (const r of dict.nextRows) {
+        const before = prevMap.get(r.id);
+        if (before && JSON.stringify(before) === JSON.stringify(r)) continue;
+        if (!isUuid(r.id)) {
+          diagnostics.push(DIAG.nonUuid);
+          continue;
+        }
+        ops.push({
+          kind: 'upsert',
+          table: dict.table,
+          row: dict.toRow(r as never),
+          sourceId: r.id,
+          label: `${dict.label} „${r.name}”`,
+        });
+      }
+    }
+  }
+
+  // 10) Osoby ---- (WYŁĄCZNIE aktualizacje istniejących profili chmury).
+  // Konta tworzy provisioning (Zespół → Utwórz konto), a usuwa operator w
+  // panelu Supabase — mirror nigdy nie robi insert/delete na profiles (FK do
+  // auth.users). Edycja osoby bez konta chmury zostaje lokalna z diagnostyką;
+  // RLS przepuszcza zapis własnego profilu i zapisy administratora.
+  {
+    const prevMap = byId(prev.people);
+    for (const p of next.people) {
+      const before = prevMap.get(p.id);
+      if (before && JSON.stringify(before) === JSON.stringify(p)) continue;
+      const profileId = maps.people.get(p.id) ?? (maps.cloudProfileIds.has(p.id) ? p.id : null);
+      if (profileId === null) {
+        // Osoba bez konta chmury (w tym świeżo dodana lokalnie): mirror nie
+        // tworzy kont — provisioning jest jedyną drogą. Diagnoza, nie zapis.
+        diagnostics.push(DIAG.unmappablePerson);
+        continue;
+      }
+      const supervisorProfileId = p.supervisorId
+        ? maps.people.get(p.supervisorId) ??
+          (maps.cloudProfileIds.has(p.supervisorId) ? p.supervisorId : null)
+        : null;
+      ops.push({
+        kind: 'upsert',
+        table: 'profiles',
+        row: {
+          id: profileId,
+          first_name: p.firstName,
+          last_name: p.lastName,
+          role_title: p.role,
+          phone: p.phone,
+          avatar: p.avatar,
+          capacity: p.capacity,
+          work_days: p.workDays,
+          work_start_minutes: p.workStartMinutes,
+          work_end_minutes: p.workEndMinutes,
+          department_id: p.departmentId === '' ? null : p.departmentId,
+          supervisor_id: supervisorProfileId,
+          access_role: ACCESS_ROLE_TO_CLOUD[p.accessRole],
+        },
+        sourceId: p.id,
+        label: `Profil „${p.name}”`,
+      });
     }
   }
 

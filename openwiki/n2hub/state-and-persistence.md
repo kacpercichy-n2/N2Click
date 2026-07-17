@@ -24,10 +24,13 @@
   violate the ≥1-active + ≥1-done invariant) and `MERGE_CLOUD_PEOPLE`
   (authoritative team: upsert by email keeps local id/password, new people get
   the cloud profile UUID, people without a cloud account are removed, session
-  identity pointing at a removed person is cleared). Only per-user saved
-  filters and sample/reset remain local-only concepts; dictionary/people EDITS
-  made locally in supabase mode are overwritten by the next snapshot merge
-  (the write path for those is the cloud UIs — TeamPage/provisioning — or SQL).
+  identity pointing at a removed person is cleared). The mirror also carries
+  the WRITE path for dictionaries (statuses/departments/service types/work
+  categories → their tables; RLS: admin-only) and for PERSON PROFILE UPDATES
+  (profiles UPDATE only — account creation stays with provisioning and
+  deletion with the Supabase operator; PeoplePage hides add/delete in supabase
+  mode). Only per-user saved filters and sample/reset remain local-only
+  concepts (SampleBanner never renders in supabase mode).
   Constraint-violation write errors (23502/23503/23505/23514) drop the op with
   the Polish permission notice rather than stalling the retry queue. Local mode:
   zero diff.

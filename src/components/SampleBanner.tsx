@@ -1,10 +1,17 @@
 // Dismissible first-run banner. Only shown when the store is empty and the
 // banner hasn't been dismissed. "Load sample data" seeds; "Dismiss" just hides.
+// W trybie supabase NIGDY: chmura jest źródłem prawdy, dane przykładowe
+// zostałyby i tak wymiecione przy najbliższej hydracji (i nigdy nie są
+// mirrorowane), więc oferowanie ich byłoby myleniem użytkownika.
 import { useStore } from '../store/AppStore';
 import { buildSampleData } from '../store/seed';
+import { useAuth } from '../auth/SessionProvider';
 
 export function SampleBanner() {
   const { state, dispatch } = useStore();
+  const auth = useAuth();
+
+  if (auth.mode === 'supabase') return null;
 
   const isEmpty =
     state.tasks.length === 0 &&

@@ -368,3 +368,56 @@ describe('applyCloudOps', () => {
     expect(db.calls).toHaveLength(3);
   });
 });
+
+describe('diffToCloudOps — słowniki i profile (przewód zapisu paneli admina)', () => {
+  it('mutacje słowników emitują upsert/remove do właściwych tabel', () => {
+    const prev = localFixture();
+    const newStatus = uuid('status-new');
+    const next: AppData = {
+      ...prev,
+      statuses: [
+        { ...prev.statuses[0], name: 'Do zrobienia (edytowany)' },
+        { id: newStatus, name: 'Nowy', slug: 'nowy', color: '#abc', order: 1, archived: false, isDone: true },
+      ],
+      serviceTypes: [], // usunięcie SV
+    };
+    const { ops } = diffToCloudOps(prev, next, maps());
+    const byTable = (t: string) => ops.filter((o) => o.table === t);
+    expect(byTable('statuses').map((o) => o.kind).sort()).toEqual(['upsert', 'upsert']);
+    const inserted = byTable('statuses').find((o) => o.sourceId === newStatus)!;
+    expect(inserted.kind).toBe('upsert');
+    expect(inserted.row).toMatchObject({
+      slug: 'nowy',
+      sort_order: 1,
+      is_done: true,
+    });
+    expect(byTable('service_types')).toEqual([
+      expect.objectContaining({ kind: 'remove', sourceId: SV }),
+    ]);
+  });
+
+  it('edycja osoby emituje WYŁĄCZNIE update istniejącego profilu chmury', () => {
+    const prev = localFixture();
+    const next: AppData = {
+      ...prev,
+      people: [
+        { ...prev.people[0], role: 'Projektant', capacity: 6, accessRole: 'pm' },
+        prev.people[1],
+        // Nowa osoba lokalna bez konta chmury — NIE wolno robić insertu.
+        makePerson({ id: uuid('local-only'), email: 'nowa@x.com' }),
+      ],
+    };
+    const { ops, diagnostics } = diffToCloudOps(prev, next, maps());
+    const profileOps = ops.filter((o) => o.table === 'profiles');
+    expect(profileOps).toHaveLength(1);
+    const up = profileOps[0];
+    expect(up.row).toMatchObject({
+      id: CLOUD_PA, // zmapowane po e-mailu na profil chmury
+      role_title: 'Projektant',
+      capacity: 6,
+      access_role: 'manager',
+    });
+    // Nowa osoba nie generuje op-a (konto tworzy provisioning) — jest diagnostyka.
+    expect(diagnostics.length).toBeGreaterThan(0);
+  });
+});

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
+import { useAuth } from '../auth/SessionProvider';
 import { useCan } from '../store/useCan';
 import type { PersonDraft } from '../store/AppStore';
 import { getDepartment, personTotalHours } from '../store/selectors';
@@ -37,7 +38,14 @@ const emptyDraft = (): PersonDraft => ({
 
 export function PeoplePage() {
   const { state, dispatch } = useStore();
-  const canManage = useCan()('people.manage');
+  const auth = useAuth();
+  // W trybie supabase konta żyją w chmurze: tworzenie idzie przez provisioning
+  // (Zespół → Utwórz konto na /team), a usuwanie przez operatora w panelu
+  // Supabase. Lokalny formularz dodawania i przycisk Usuń tworzyłyby wiersze,
+  // które najbliższa autorytatywna hydracja i tak by wymiotła — ukrywamy je.
+  const cloudAccounts = auth.mode === 'supabase';
+  const canManageRaw = useCan()('people.manage');
+  const canManage = canManageRaw && !cloudAccounts;
   const [draft, setDraft] = useState<PersonDraft>(emptyDraft);
   const [error, setError] = useState('');
 
@@ -74,6 +82,14 @@ export function PeoplePage() {
       <div className="page-head">
         <h1>Zespół</h1>
       </div>
+
+      {cloudAccounts && canManageRaw && (
+        <p className="field-hint people-form-hint">
+          Konta zespołu żyją na serwerze. Nowe konto założysz w{' '}
+          <Link to="/team">Zespół → Utwórz konto</Link>; edycja profilu działa na
+          stronie osoby, a usuwanie kont wykonuje administrator w panelu Supabase.
+        </p>
+      )}
 
       {canManage && (
       <form className="person-form" onSubmit={submit} data-tour="people.capacity">
