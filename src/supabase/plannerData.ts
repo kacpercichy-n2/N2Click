@@ -130,6 +130,12 @@ export interface CloudMergePayload {
   workload: WorkloadEntry[];
   comments: Comment[];
   activity: ActivityEvent[];
+  /**
+   * Profile chmury scalane PRZED walidacją encji (CloudSyncProvider dokleja je
+   * ze snapshotu organizacji), żeby wiersze osób bez lokalnej pary e-mailowej
+   * miały już swój lokalny odpowiednik. Brak pola => osoby bez zmian.
+   */
+  people?: import('./referenceData').CloudPersonMergeRow[];
 }
 
 export type LoadPlannerResult =
@@ -188,17 +194,27 @@ function toActivityType(v: unknown): ActivityEntityType {
 }
 
 /**
- * Reverse-resolver dla identyfikatorów słownikowych: najpierw odwrócona mapa
- * forward (cloud -> local, obejmuje dopasowanie po id i po kluczu semantycznym),
- * potem lokalny fallback po dosłownie równym id (encja obecna lokalnie, ale
- * nieobecna w snapshocie organizacji). Zwraca '' gdy nie da się zmapować.
+ * Reverse-resolver dla identyfikatorów słownikowych i osobowych: najpierw
+ * odwrócona mapa forward (cloud -> local, obejmuje dopasowanie po id i po
+ * kluczu semantycznym), a bez pary — SAM id chmury. W architekturze
+ * cloud-authoritative lokalne wiersze słowników/osób istnieją (lub zaraz
+ * powstaną przez MERGE_CLOUD_DICTIONARIES / MERGE_CLOUD_PEOPLE) pod id chmury,
+ * więc identyfikator chmury JEST poprawnym lokalnym odniesieniem.
+ *
+ * `restrictTo` (osoby): fallback dozwolony wyłącznie dla id ze snapshotu
+ * organizacji — profil niewidoczny przez RLS nie dostanie lokalnego wiersza,
+ * więc jego odniesienia muszą wrócić jako '' (wiersz jest pomijany), a nie
+ * wywracać całej hydracji na walidacji reduktora.
  */
-function makeReverse(forward: Map<string, string>, localIds: Set<string>) {
+function makeReverse(forward: Map<string, string>, restrictTo?: Set<string>) {
   const reverse = invert(forward);
   return (cloudId: unknown): string => {
     const id = str(cloudId);
     if (id === '') return '';
-    return reverse.get(id) ?? (localIds.has(id) ? id : '');
+    const mapped = reverse.get(id);
+    if (mapped !== undefined) return mapped;
+    if (restrictTo !== undefined && !restrictTo.has(id)) return '';
+    return id;
   };
 }
 
@@ -216,7 +232,9 @@ function makeReverse(forward: Map<string, string>, localIds: Set<string>) {
 export async function loadPlannerSnapshot(
   db: Pick<PlannerDb, 'select'>,
   maps: CloudIdMaps,
-  local: AppData,
+  // Zachowany w sygnaturze dla zgodności wołających; reverse-resolvery nie
+  // potrzebują już lokalnych id (fallback = id chmury, świat autorytatywny).
+  _local: AppData,
 ): Promise<LoadPlannerResult> {
   const [
     clientsRes,
@@ -265,17 +283,11 @@ export async function loadPlannerSnapshot(
 
   const diagnostics: string[] = [];
 
-  // Odwrotne resolvery (cloud -> local) z lokalnym fallbackiem po dosłownym id.
-  const statusOf = makeReverse(maps.statuses, new Set(local.statuses.map((s) => s.id)));
-  const serviceTypeOf = makeReverse(
-    maps.serviceTypes,
-    new Set(local.serviceTypes.map((s) => s.id)),
-  );
-  const workCategoryOf = makeReverse(
-    maps.workCategories,
-    new Set(local.workCategories.map((c) => c.id)),
-  );
-  const personOf = makeReverse(maps.people, new Set(local.people.map((p) => p.id)));
+  // Odwrotne resolvery (cloud -> local); bez pary zwracają id chmury wprost.
+  const statusOf = makeReverse(maps.statuses);
+  const serviceTypeOf = makeReverse(maps.serviceTypes);
+  const workCategoryOf = makeReverse(maps.workCategories);
+  const personOf = makeReverse(maps.people, maps.cloudProfileIds);
 
   // Klienci ----
   const clients: Client[] = clientsRes.rows.map((row) => ({

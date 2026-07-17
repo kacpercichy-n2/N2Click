@@ -1,14 +1,12 @@
 // Odczyty referencyjne i organizacyjne z Supabase (RLS-scoped selects).
 //
-// GRANICA PRZEJŚCIOWA: w trybie supabase uwierzytelniony profil, dział, rola
-// dostępu oraz widoczność zespołu są CZYTANE z Supabase, a wyjście RLS jest
-// autorytatywne; kontrole po stronie klienta pozostają wyłącznie UX-em. Cloudowe
-// statusy / typy usług / kategorie prac są wczytywane i wyświetlane, ale planer
-// nadal renderuje i mutuje LOKALNE słowniki z localStorage — lokalne
-// zadania/projekty/godziny wskazują na lokalne id, a tożsamość id z wierszami
-// chmury nie jest gwarantowana. Utrzymuje się to do kroku migracji zapisu
-// danych. Tryb lokalny korzysta wyłącznie z localStorage. Ładowanie/błąd w
-// trybie supabase spada z powrotem na lokalną rolę na potrzeby bramek UX.
+// W trybie supabase snapshot organizacji jest AUTORYTATYWNY: profil, rola
+// dostępu i widoczność zespołu sterują bramkami UX, a gotowy snapshot jest
+// scalany w stan lokalny (App: MERGE_CLOUD_DICTIONARIES dla słowników,
+// MERGE_CLOUD_PEOPLE dla zespołu — lokalne kopie są zastępowane, osoby bez
+// konta chmury usuwane). Tryb lokalny korzysta wyłącznie z localStorage.
+// Ładowanie/błąd w trybie supabase spada z powrotem na lokalną rolę na
+// potrzeby bramek UX; autoryzacja i tak żyje po stronie serwera (RLS).
 //
 // Moduł jest CZYSTY i testowalny w node: cały dostęp do bazy idzie przez
 // wstrzyknięty interfejs `ReferenceDb` (współdzielony z dataImport.ts). Bez
@@ -249,6 +247,9 @@ export interface CloudPersonMergeRow {
   firstName: string;
   lastName: string;
   role: string; // stanowisko (role_title)
+  /** Id działu chmury ('' gdy brak) — po MERGE_CLOUD_DICTIONARIES lokalne
+   *  działy noszą te same id, więc odniesienie jest bezpośrednie. */
+  departmentId: string;
   phone: string;
   avatar: string;
   capacity: number;
@@ -278,6 +279,7 @@ export function buildCloudPeoplePayload(profiles: CloudProfile[]): CloudPersonMe
       firstName: p.firstName.trim() || email.split('@')[0] || 'Użytkownik',
       lastName: p.lastName,
       role: p.roleTitle,
+      departmentId: p.departmentId ?? '',
       phone: p.phone,
       avatar: p.avatar,
       capacity: p.capacity,

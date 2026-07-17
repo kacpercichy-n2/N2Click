@@ -52,6 +52,11 @@ export interface CloudIdMaps {
   serviceTypes: Map<string, string>; // po id, fallback nazwa
   workCategories: Map<string, string>; // po id, fallback nazwa
   departments: Map<string, string>; // po id, fallback nazwa
+  /** Id WSZYSTKICH profili widocznych w snapshocie organizacji (RLS). Wiersz
+   *  planera wskazujący profil spoza tego zbioru nie ma i nie będzie miał
+   *  lokalnego odpowiednika (MERGE_CLOUD_PEOPLE tworzy osoby wyłącznie ze
+   *  snapshotu), więc hydracja musi go pominąć zamiast wywrócić scalenie. */
+  cloudProfileIds: Set<string>;
 }
 
 function forwardMap<L extends { id: string }, C extends { id: string }>(
@@ -87,6 +92,7 @@ function forwardMap<L extends { id: string }, C extends { id: string }>(
  */
 export function buildCloudIdMaps(local: AppData, org: OrgSnapshot): CloudIdMaps {
   return {
+    cloudProfileIds: new Set(org.profiles.map((p) => p.id)),
     people: forwardMap(
       local.people,
       org.profiles,

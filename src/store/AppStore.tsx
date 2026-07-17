@@ -19,15 +19,18 @@ import type {
   AppData,
   ChecklistItem,
   CommentEntityType,
+  Department,
   FilterPage,
   Milestone,
   Person,
   Project,
+  ServiceType,
   Status,
   SavedFilterCriteria,
   Task,
   TaskAssignment,
   TaskPriority,
+  WorkCategory,
   WorkloadEntry,
 } from '../types';
 import type { CloudMergePayload } from '../supabase/plannerData';
@@ -217,10 +220,13 @@ export type Action =
   // workload and every non-mirrored collection pass through untouched. An
   // invalid payload returns the ORIGINAL state reference (invariant 6).
   | { type: 'MERGE_CLOUD_ENTITIES'; payload: CloudMergePayload }
-  // Pełna synchronizacja osób: hydracja lokalnej listy z RLS-owych profili
-  // chmury (upsert po e-mailu, nowe wiersze z id profilu chmury, przełożony po
-  // e-mailu). Nigdy nie usuwa osób lokalnych; brak zmian => ta sama referencja.
-  | { type: 'MERGE_CLOUD_PEOPLE'; payload: CloudPersonMergeRow[] };
+  // Pełna synchronizacja osób: AUTORYTATYWNA hydracja lokalnej listy z
+  // RLS-owych profili chmury (upsert po e-mailu, nowe wiersze z id profilu
+  // chmury, osoby bez konta chmury usuwane). Brak zmian => ta sama referencja.
+  | { type: 'MERGE_CLOUD_PEOPLE'; payload: CloudPersonMergeRow[] }
+  // AUTORYTATYWNA hydracja słowników organizacji (działy, statusy, typy usług,
+  // kategorie prac) z chmury. Fail-closed na invariancie statusów.
+  | { type: 'MERGE_CLOUD_DICTIONARIES'; payload: CloudDictionariesPayload };
 
 function uid(): string {
   return crypto.randomUUID();
@@ -1653,6 +1659,7 @@ function isValidCloudPersonRow(r: CloudPersonMergeRow): boolean {
   if (typeof r.email !== 'string' || normalizeEmail(r.email) === '') return false;
   if (typeof r.firstName !== 'string' || r.firstName.trim() === '') return false;
   if (typeof r.lastName !== 'string' || typeof r.role !== 'string') return false;
+  if (typeof r.departmentId !== 'string') return false;
   if (typeof r.phone !== 'string' || typeof r.avatar !== 'string') return false;
   if (typeof r.supervisorEmail !== 'string') return false;
   if (!Number.isFinite(r.capacity) || r.capacity < 0 || r.capacity > 24) return false;
@@ -1666,10 +1673,10 @@ function isValidCloudPersonRow(r: CloudPersonMergeRow): boolean {
   return true;
 }
 
-/** Pola osoby synchronizowane z profilu chmury (bez id/hasła/działu/przełożonego). */
+/** Pola osoby synchronizowane z profilu chmury (bez id/hasła/przełożonego). */
 function cloudPersonFields(row: CloudPersonMergeRow): Omit<
   Person,
-  'id' | 'passwordHash' | 'departmentId' | 'supervisorId'
+  'id' | 'passwordHash' | 'supervisorId'
 > {
   const firstName = row.firstName.trim();
   const lastName = row.lastName.trim();
@@ -1681,6 +1688,7 @@ function cloudPersonFields(row: CloudPersonMergeRow): Omit<
     email: row.email.trim(),
     phone: row.phone.trim(),
     role: row.role.trim(),
+    departmentId: row.departmentId,
     avatar: row.avatar.trim(),
     // Spójnie z personFromDraft: UI deklaruje zakres [1, 24].
     capacity: Math.min(24, Math.max(1, row.capacity)),
@@ -1695,21 +1703,24 @@ const sameWorkDays = (a: number[], b: number[]): boolean =>
   a.length === b.length && a.every((v, i) => v === b[i]);
 
 /**
- * Scala RLS-owe profile chmury w lokalną listę osób. Chmura jest źródłem
- * prawdy dla pól profilowych zsynchronizowanych osób:
- *   * dopasowanie po znormalizowanym e-mailu — aktualizacja pól, lokalne id,
- *     hasło i dział pozostają;
+ * AUTORYTATYWNE zastosowanie RLS-owych profili chmury do listy osób — chmura
+ * jest jedynym źródłem prawdy o zespole:
+ *   * dopasowanie po znormalizowanym e-mailu — aktualizacja pól (w tym działu
+ *     chmury), lokalne id i hasło pozostają (referencje planera są stabilne);
  *   * profil bez lokalnego odpowiednika — nowa osoba z id profilu chmury
  *     (dzięki temu hydracja planera mapuje profile bez pary e-mailowej);
+ *   * osoba lokalna BEZ konta chmury (np. dane demonstracyjne) jest USUWANA;
  *   * przełożony rozwiązywany po e-mailu PO upsercie (cykl => '');
- *   * osoby lokalne bez konta chmury pozostają nietknięte; nic nie jest
- *     usuwane; brak faktycznych zmian => TA SAMA referencja stanu;
- *   * payload niepoprawny strukturalnie => TA SAMA referencja (invariant 6).
- * Bez wpisów aktywności — to cicha hydracja, jak MERGE_CLOUD_ENTITIES.
+ *   * brak faktycznych zmian => `changed: false` (wołający zwraca ten sam stan);
+ *   * payload niepoprawny strukturalnie => `ok: false` (invariant 6).
  */
-function mergeCloudPeople(state: AppData, payload: CloudPersonMergeRow[]): AppData {
-  if (!Array.isArray(payload)) return state;
-  if (!payload.every(isValidCloudPersonRow)) return state;
+function applyCloudPeople(
+  localPeople: Person[],
+  payload: CloudPersonMergeRow[],
+): { ok: boolean; people: Person[]; changed: boolean } {
+  if (!Array.isArray(payload) || !payload.every(isValidCloudPersonRow)) {
+    return { ok: false, people: localPeople, changed: false };
+  }
 
   // Duplikaty e-maili w payloadzie: ostatni wygrywa (deterministycznie).
   const rowByEmail = new Map<string, CloudPersonMergeRow>();
@@ -1718,11 +1729,15 @@ function mergeCloudPeople(state: AppData, payload: CloudPersonMergeRow[]): AppDa
   let changed = false;
   const matched = new Set<string>();
 
-  // 1) Aktualizacja istniejących osób po e-mailu.
-  const updatedPeople = state.people.map((person) => {
+  // 1) Aktualizacja istniejących osób po e-mailu; osoby bez konta chmury odpadają.
+  const updatedPeople: Person[] = [];
+  for (const person of localPeople) {
     const key = normalizeEmail(person.email);
     const row = key === '' ? undefined : rowByEmail.get(key);
-    if (!row) return person;
+    if (!row) {
+      changed = true; // osoba lokalna bez konta chmury — usunięta
+      continue;
+    }
     matched.add(key);
     const fields = cloudPersonFields(row);
     const same =
@@ -1732,16 +1747,20 @@ function mergeCloudPeople(state: AppData, payload: CloudPersonMergeRow[]): AppDa
       person.email === fields.email &&
       person.phone === fields.phone &&
       person.role === fields.role &&
+      person.departmentId === fields.departmentId &&
       person.avatar === fields.avatar &&
       person.capacity === fields.capacity &&
       person.accessRole === fields.accessRole &&
       person.workStartMinutes === fields.workStartMinutes &&
       person.workEndMinutes === fields.workEndMinutes &&
       sameWorkDays(person.workDays, fields.workDays);
-    if (same) return person;
-    changed = true;
-    return { ...person, ...fields };
-  });
+    if (same) {
+      updatedPeople.push(person);
+    } else {
+      changed = true;
+      updatedPeople.push({ ...person, ...fields });
+    }
+  }
 
   // 2) Nowe osoby (profil bez lokalnego odpowiednika) — id profilu chmury.
   const existingIds = new Set(updatedPeople.map((p) => p.id));
@@ -1752,7 +1771,6 @@ function mergeCloudPeople(state: AppData, payload: CloudPersonMergeRow[]): AppDa
     appended.push({
       id: row.id,
       ...cloudPersonFields(row),
-      departmentId: '',
       passwordHash: '',
       supervisorId: '',
     });
@@ -1777,8 +1795,118 @@ function mergeCloudPeople(state: AppData, payload: CloudPersonMergeRow[]): AppDa
     }
   }
 
-  if (!changed) return state;
-  return { ...state, people };
+  return { ok: true, people, changed };
+}
+
+/** Czyści tożsamości sesji wskazujące osoby usunięte przez scalenie. */
+function reconcileIdentityAfterPeopleMerge(
+  state: AppData,
+  people: Person[],
+): Pick<AppData, 'currentUserId' | 'impersonatorId'> {
+  const ids = new Set(people.map((p) => p.id));
+  return {
+    currentUserId: ids.has(state.currentUserId) ? state.currentUserId : '',
+    impersonatorId: ids.has(state.impersonatorId) ? state.impersonatorId : '',
+  };
+}
+
+/** Akcja MERGE_CLOUD_PEOPLE — cicha, idempotentna hydracja zespołu z chmury. */
+function mergeCloudPeople(state: AppData, payload: CloudPersonMergeRow[]): AppData {
+  const result = applyCloudPeople(state.people, payload);
+  if (!result.ok || !result.changed) return state;
+  return { ...state, people: result.people, ...reconcileIdentityAfterPeopleMerge(state, result.people) };
+}
+
+// ---- Cloud dictionaries merge (statusy + słowniki, autorytatywnie) -----------
+
+/** Wiersz słownikowy: niepusty string id + name. */
+function isValidNamedRow(v: unknown): v is { id: string; name: string } {
+  if (!isObjWithId(v)) return false;
+  const name = (v as { name?: unknown }).name;
+  return typeof name === 'string' && name.trim() !== '';
+}
+
+function isValidStatusRow(v: unknown): v is Status {
+  if (!isValidNamedRow(v)) return false;
+  const s = v as unknown as Status;
+  return (
+    typeof s.slug === 'string' &&
+    typeof s.color === 'string' &&
+    typeof s.order === 'number' &&
+    Number.isFinite(s.order) &&
+    typeof s.archived === 'boolean' &&
+    typeof s.isDone === 'boolean'
+  );
+}
+
+const sameNamedRows = (a: Array<{ id: string; name: string }>, b: Array<{ id: string; name: string }>): boolean =>
+  a.length === b.length && a.every((r, i) => r.id === b[i].id && r.name === b[i].name);
+
+const sameStatusRows = (a: Status[], b: Status[]): boolean =>
+  a.length === b.length &&
+  a.every(
+    (s, i) =>
+      s.id === b[i].id &&
+      s.name === b[i].name &&
+      s.slug === b[i].slug &&
+      s.color === b[i].color &&
+      s.order === b[i].order &&
+      s.archived === b[i].archived &&
+      s.isDone === b[i].isDone,
+  );
+
+export interface CloudDictionariesPayload {
+  departments: Department[];
+  statuses: Status[];
+  serviceTypes: ServiceType[];
+  workCategories: WorkCategory[];
+}
+
+/**
+ * AUTORYTATYWNE scalenie słowników organizacji z chmury (działy, statusy, typy
+ * usług, kategorie prac) — lokalne kopie są zastępowane w całości. Fail-closed
+ * (invariant 6): niepoprawna struktura ALBO zestaw statusów łamiący twardy
+ * invariant planera (co najmniej jeden aktywny nie-ukończony i jeden aktywny
+ * ukończony status) zwraca ORYGINALNĄ referencję stanu — w szczególności pusta
+ * chmura statusów (przed seedem) nie może zdemolować lokalnego lejka. Brak
+ * faktycznych zmian => ta sama referencja (dispatch jest idempotentny).
+ */
+function mergeCloudDictionaries(state: AppData, payload: CloudDictionariesPayload): AppData {
+  if (typeof payload !== 'object' || payload === null) return state;
+  const { departments, statuses, serviceTypes, workCategories } = payload;
+  if (
+    !Array.isArray(departments) ||
+    !Array.isArray(statuses) ||
+    !Array.isArray(serviceTypes) ||
+    !Array.isArray(workCategories)
+  ) {
+    return state;
+  }
+  if (!departments.every(isValidNamedRow)) return state;
+  if (!serviceTypes.every(isValidNamedRow)) return state;
+  if (!workCategories.every(isValidNamedRow)) return state;
+  if (!statuses.every(isValidStatusRow)) return state;
+  // Twardy invariant 5: przynajmniej jeden aktywny status w toku i jeden done.
+  const hasActive = statuses.some((s) => !s.archived && !s.isDone);
+  const hasDone = statuses.some((s) => !s.archived && s.isDone);
+  if (!hasActive || !hasDone) return state;
+
+  const sorted = [...statuses].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+  if (
+    sameNamedRows(state.departments, departments) &&
+    sameNamedRows(state.serviceTypes, serviceTypes) &&
+    sameNamedRows(state.workCategories, workCategories) &&
+    sameStatusRows(state.statuses, sorted)
+  ) {
+    return state;
+  }
+  return {
+    ...state,
+    departments: [...departments],
+    serviceTypes: [...serviceTypes],
+    workCategories: [...workCategories],
+    statuses: sorted,
+  };
 }
 
 // ---- Cloud hydration merge ----
@@ -1792,23 +1920,6 @@ function isObjWithId(v: unknown): v is { id: string } {
   );
 }
 
-/** Replace same-id local rows with incoming, append cloud-only, keep local-only.
- *  Preserves local ordering; appended cloud-only rows follow in payload order.
- *  Empty incoming => nothing to merge, return the SAME local reference. */
-function mergeById<T extends { id: string }>(local: T[], incoming: T[]): T[] {
-  if (incoming.length === 0) return local;
-  const incomingById = new Map(incoming.map((r) => [r.id, r]));
-  const seen = new Set<string>();
-  const result: T[] = local.map((l) => {
-    seen.add(l.id);
-    return incomingById.get(l.id) ?? l;
-  });
-  for (const inc of incoming) {
-    if (!seen.has(inc.id)) result.push(inc);
-  }
-  return result;
-}
-
 /** A payload workload row is on the 0.25h grid (finite, positive, quarter). */
 function isQuarterHours(v: unknown): v is number {
   if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) return false;
@@ -1817,14 +1928,20 @@ function isQuarterHours(v: unknown): v is number {
 }
 
 /**
- * Merge the eight mirrored cloud collections into local state without destroying
- * local work. Fail-closed (invariant 6): a structurally invalid payload — a
- * non-array collection, a row with no string id, a project/task with an invalid
- * period, a task referencing a missing project, an assignment referencing a
- * missing task/person, a milestone with an invalid date / missing project, or a
+ * AUTHORITATIVE hydration of the eight mirrored cloud collections: the cloud is
+ * the single source of truth, so the payload REPLACES each collection (local
+ * rows the cloud does not know are dropped — this is what retires demo/sample
+ * planner data on every browser). Runs once per sign-in with an empty push
+ * queue, so no unsynced local edit can be lost here. When `payload.people` is
+ * present, the RLS profile set is applied FIRST (same semantics as
+ * MERGE_CLOUD_PEOPLE), so entity validation sees the final team.
+ * Fail-closed (invariant 6): a structurally invalid payload — a non-array
+ * collection, a row with no string id, a project/task with an invalid period, a
+ * task referencing a missing project, an assignment referencing a missing
+ * task/person, a milestone with an invalid date / missing project, or a
  * workload row with off-grid/day-overflowing values or a missing task/person —
- * returns the ORIGINAL state reference. Non-mirrored collections (people,
- * statuses, savedFilters, dictionaries, …) pass through by reference untouched.
+ * returns the ORIGINAL state reference. Statuses/dictionaries/savedFilters pass
+ * through by reference untouched (MERGE_CLOUD_DICTIONARIES owns dictionaries).
  */
 function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData {
   const collections = [
@@ -1839,6 +1956,15 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
   ];
   if (collections.some((c) => !Array.isArray(c))) return state;
 
+  // Osoby najpierw (autorytatywnie), żeby walidacja encji widziała finalny
+  // zespół. Niepoprawny blok osób psuje całą hydrację (atomowość).
+  let mergedPeople = state.people;
+  if (payload.people !== undefined) {
+    const peopleResult = applyCloudPeople(state.people, payload.people);
+    if (!peopleResult.ok) return state;
+    mergedPeople = peopleResult.people;
+  }
+
   // Every mirrored entity row (except assignment pairs) needs a string id.
   if (
     !payload.clients.every(isObjWithId) ||
@@ -1852,15 +1978,11 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
     return state;
   }
 
-  const projectIds = new Set<string>([
-    ...state.projects.map((p) => p.id),
-    ...payload.projects.map((p) => p.id),
-  ]);
-  const taskIds = new Set<string>([
-    ...state.tasks.map((t) => t.id),
-    ...payload.tasks.map((t) => t.id),
-  ]);
-  const personIds = new Set(state.people.map((p) => p.id));
+  // Autorytatywnie: referencje walidujemy wobec ZBIORU DOCELOWEGO (payload),
+  // nie sumy z lokalnym — wiersz wskazujący encję spoza chmury jest błędem.
+  const projectIds = new Set<string>(payload.projects.map((p) => p.id));
+  const taskIds = new Set<string>(payload.tasks.map((t) => t.id));
+  const personIds = new Set(mergedPeople.map((p) => p.id));
 
   // Project/task periods must satisfy the same guards the reducer applies.
   for (const p of payload.projects) {
@@ -1903,75 +2025,33 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
     }
   }
 
-  // Assignments reconciled by (taskId, personId): existing local pairs keep
-  // their id; genuinely new cloud pairs get a fresh uid. Local-only pairs stay.
-  const existingPairs = new Set(state.assignments.map((a) => `${a.taskId}|${a.personId}`));
-  const newAssignments: TaskAssignment[] = [];
+  // Assignments reconciled by (taskId, personId): a pair the local state
+  // already knows keeps its local row id (stable references); a genuinely new
+  // cloud pair gets a fresh uid. Pairs the cloud does not know are DROPPED.
+  const localByPair = new Map(state.assignments.map((a) => [`${a.taskId}|${a.personId}`, a]));
+  const seenPairs = new Set<string>();
+  const assignments: TaskAssignment[] = [];
   for (const a of payload.assignments) {
     const key = `${a.taskId}|${a.personId}`;
-    if (existingPairs.has(key)) continue;
-    existingPairs.add(key);
-    newAssignments.push({ id: uid(), taskId: a.taskId, personId: a.personId });
+    if (seenPairs.has(key)) continue;
+    seenPairs.add(key);
+    const existing = localByPair.get(key);
+    assignments.push(existing ?? { id: uid(), taskId: a.taskId, personId: a.personId });
   }
 
   return {
     ...state,
-    clients: mergeById(state.clients, payload.clients),
-    projects: mergeById(state.projects, payload.projects),
-    milestones: mergeById(state.milestones, payload.milestones),
-    tasks: mergeById(state.tasks, payload.tasks),
-    comments: mergeById(state.comments, payload.comments),
-    activity: mergeById(state.activity, payload.activity),
-    workload: mergeWorkload(state.workload, payload.workload),
-    assignments:
-      newAssignments.length === 0 ? state.assignments : [...state.assignments, ...newAssignments],
+    people: mergedPeople,
+    ...reconcileIdentityAfterPeopleMerge(state, mergedPeople),
+    clients: [...payload.clients],
+    projects: [...payload.projects],
+    milestones: [...payload.milestones],
+    tasks: [...payload.tasks],
+    comments: [...payload.comments],
+    activity: [...payload.activity],
+    workload: [...payload.workload],
+    assignments,
   };
-}
-
-/**
- * Merge cloud workload rows: replace same-id, keep local-only, append cloud-only
- * (dated rows merge strictly by id). Then reconcile the ONE-BIN-ROW invariant: a
- * cloud bin row and a local bin row sharing `(taskId, personId)` under DIFFERENT
- * ids collapse to the CLOUD-id row (it exists server-side; avoids future
- * unique-index rejections) whose `plannedHours` becomes the grid-snapped SUM of
- * both (work-preserving, same philosophy as ensureStartMinutes' bin merge).
- */
-function mergeWorkload(local: WorkloadEntry[], incoming: WorkloadEntry[]): WorkloadEntry[] {
-  const merged = mergeById(local, incoming);
-  const cloudIds = new Set(incoming.map((w) => w.id));
-
-  // Group bin entries by (taskId, personId) pair; only groups with >1 row need
-  // the one-bin-row reconciliation.
-  const binByPair = new Map<string, WorkloadEntry[]>();
-  for (const w of merged) {
-    if (!isBinEntry(w)) continue;
-    const key = `${w.taskId}|${w.personId}`;
-    const list = binByPair.get(key);
-    if (list) list.push(w);
-    else binByPair.set(key, [w]);
-  }
-
-  const removed = new Set<string>();
-  const summedById = new Map<string, number>(); // survivorId -> summed plannedHours
-  for (const list of binByPair.values()) {
-    if (list.length < 2) continue;
-    // Prefer the cloud-id row as survivor (server-side row); fall back to first.
-    const survivor = list.find((w) => cloudIds.has(w.id)) ?? list[0];
-    let sumQ = 0;
-    for (const w of list) {
-      sumQ += Math.round(w.plannedHours / HOURS_STEP);
-      if (w.id !== survivor.id) removed.add(w.id);
-    }
-    summedById.set(survivor.id, sumQ * HOURS_STEP);
-  }
-
-  if (removed.size === 0 && summedById.size === 0) return merged;
-  return merged
-    .filter((w) => !removed.has(w.id))
-    .map((w) => {
-      const h = summedById.get(w.id);
-      return h === undefined ? w : { ...w, plannedHours: h };
-    });
 }
 
 // ---- Reducer ----
@@ -2523,6 +2603,8 @@ export function reducer(state: AppData, action: Action): AppData {
       return mergeCloudEntities(state, action.payload);
     case 'MERGE_CLOUD_PEOPLE':
       return mergeCloudPeople(state, action.payload);
+    case 'MERGE_CLOUD_DICTIONARIES':
+      return mergeCloudDictionaries(state, action.payload);
     default:
       return state;
   }

@@ -147,10 +147,20 @@ export function App() {
   useEffect(() => {
     if (!authedSignedIn || auth.mustChangePassword !== false) return;
     if (orgState.status !== 'ready') return;
+    const snap = orgState.snapshot;
+    // Słowniki najpierw (statusy/działy/typy usług/kategorie prac), potem
+    // zespół — dział osoby wskazuje wtedy istniejący wiersz. Obie akcje są
+    // autorytatywne i idempotentne (brak zmian => ta sama referencja stanu).
     dispatch({
-      type: 'MERGE_CLOUD_PEOPLE',
-      payload: buildCloudPeoplePayload(orgState.snapshot.profiles),
+      type: 'MERGE_CLOUD_DICTIONARIES',
+      payload: {
+        departments: snap.departments,
+        statuses: snap.statuses,
+        serviceTypes: snap.serviceTypes,
+        workCategories: snap.workCategories,
+      },
     });
+    dispatch({ type: 'MERGE_CLOUD_PEOPLE', payload: buildCloudPeoplePayload(snap.profiles) });
   }, [authedSignedIn, auth.mustChangePassword, orgState, dispatch]);
 
   const currentUser = state.people.find((p) => p.id === state.currentUserId);

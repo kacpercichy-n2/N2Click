@@ -1,8 +1,10 @@
 // Focused tests for the MERGE_CLOUD_ENTITIES reducer action (cloud hydration).
-// Merge never destroys local work: same-id replace, local-only kept, cloud-only
-// appended, assignment ids preserved by (taskId, personId) pair, non-mirrored
-// collections reference-identical. An invalid payload returns the ORIGINAL state
-// reference (invariant 6). Pure — no React, no Supabase.
+// AUTHORITATIVE: the cloud payload replaces the mirrored collections (local-only
+// rows drop — hydration runs once per sign-in with an empty push queue), while
+// assignment ids stay stable by (taskId, personId) pair and people/statuses/
+// savedFilters pass through untouched unless payload.people is present. An
+// invalid payload returns the ORIGINAL state reference (invariant 6).
+// Pure — no React, no Supabase.
 import { describe, expect, it } from 'vitest';
 import { reducer } from './AppStore';
 import { emptyData } from './storage';
@@ -133,7 +135,7 @@ const merge = (state: AppData, payload: CloudMergePayload): AppData =>
   reducer(state, { type: 'MERGE_CLOUD_ENTITIES', payload });
 
 describe('MERGE_CLOUD_ENTITIES — merge semantics', () => {
-  it('replaces same-id rows, appends cloud-only, keeps local-only', () => {
+  it('replaces same-id rows and appends cloud-only rows (payload = truth)', () => {
     const state = baseState();
     const payload: CloudMergePayload = {
       ...emptyPayload(),
@@ -156,7 +158,7 @@ describe('MERGE_CLOUD_ENTITIES — merge semantics', () => {
     expect(next.projects).toHaveLength(1);
   });
 
-  it('keeps a local-only project absent from the cloud payload', () => {
+  it('drops a local-only project absent from the cloud payload (authoritative)', () => {
     const state: AppData = {
       ...baseState(),
       projects: [
@@ -168,14 +170,16 @@ describe('MERGE_CLOUD_ENTITIES — merge semantics', () => {
       ...emptyPayload(),
       projects: [makeProject({ id: 'proj-1', name: 'Z chmury' })],
     });
-    expect(next.projects.find((p) => p.id === 'proj-local')).toBeDefined();
-    expect(next.projects).toHaveLength(2);
+    expect(next.projects.find((p) => p.id === 'proj-local')).toBeUndefined();
+    expect(next.projects).toHaveLength(1);
   });
 
-  it('preserves assignment ids by (taskId, personId) pair and appends new pairs', () => {
+  it('preserves assignment ids by (taskId, personId) pair; pairs unknown to the cloud are dropped', () => {
     const state = baseState();
     const payload: CloudMergePayload = {
       ...emptyPayload(),
+      projects: [makeProject({ id: 'proj-1' })],
+      tasks: [makeTask({ id: T1, projectId: 'proj-1' })],
       assignments: [
         { taskId: T1, personId: P1 }, // existing pair
         { taskId: T1, personId: P2 }, // new pair
@@ -183,26 +187,30 @@ describe('MERGE_CLOUD_ENTITIES — merge semantics', () => {
     };
     const next = merge(state, payload);
 
-    // Existing pair keeps its id; local-only pair kept; new pair added w/ fresh id.
+    // Existing pair keeps its id; new pair gets a fresh id; local-only dropped.
     const byPair = new Map(next.assignments.map((a) => [`${a.taskId}|${a.personId}`, a]));
     expect(byPair.get(`${T1}|${P1}`)!.id).toBe('asg-existing');
-    expect(byPair.get(`${T1}|${P3}`)!.id).toBe('asg-local-only');
+    expect(byPair.get(`${T1}|${P3}`)).toBeUndefined();
     const fresh = byPair.get(`${T1}|${P2}`)!;
     expect(fresh.id).not.toBe('');
-    expect(next.assignments).toHaveLength(3);
+    expect(next.assignments).toHaveLength(2);
   });
 
-  it('leaves workload/people/statuses/milestones/savedFilters reference-identical', () => {
+  it('leaves people/statuses/savedFilters reference-identical; planner collections follow the payload', () => {
     const state = baseState();
     const next = merge(state, {
       ...emptyPayload(),
       clients: [client({ id: 'c-cloud', name: 'X' })],
     });
-    expect(next.workload).toBe(state.workload);
+    // Bez payload.people zespół pozostaje nietknięty; słowniki ma
+    // MERGE_CLOUD_DICTIONARIES; filtry są lokalne per-użytkownik.
     expect(next.people).toBe(state.people);
     expect(next.statuses).toBe(state.statuses);
-    expect(next.milestones).toBe(state.milestones);
     expect(next.savedFilters).toBe(state.savedFilters);
+    // Autorytatywnie: kolekcje planera odpowiadają dokładnie ładunkowi.
+    expect(next.workload).toEqual([]);
+    expect(next.milestones).toEqual([]);
+    expect(next.clients.map((c) => c.id)).toEqual(['c-cloud']);
   });
 
   it('merges cloud comments and activity, appending by id (append semantics)', () => {
@@ -235,7 +243,7 @@ describe('MERGE_CLOUD_ENTITIES — merge semantics', () => {
 });
 
 describe('MERGE_CLOUD_ENTITIES — milestones + workload merge', () => {
-  it('merges milestones by id (replace, append, keep local-only)', () => {
+  it('replaces milestones with the cloud payload (local-only dropped)', () => {
     const state: AppData = {
       ...baseState(),
       milestones: [
@@ -245,6 +253,7 @@ describe('MERGE_CLOUD_ENTITIES — milestones + workload merge', () => {
     };
     const payload: CloudMergePayload = {
       ...emptyPayload(),
+      projects: [makeProject({ id: 'proj-1' })],
       milestones: [
         { id: 'ms-1', projectId: 'proj-1', name: 'Z chmury', date: '2026-07-08' },
         { id: 'ms-cloud', projectId: 'proj-1', name: 'Nowy', date: '2026-07-10' },
@@ -253,14 +262,16 @@ describe('MERGE_CLOUD_ENTITIES — milestones + workload merge', () => {
     const next = merge(state, payload);
     expect(next.milestones.find((m) => m.id === 'ms-1')!.name).toBe('Z chmury');
     expect(next.milestones.find((m) => m.id === 'ms-cloud')).toBeDefined();
-    expect(next.milestones.find((m) => m.id === 'ms-local')).toBeDefined();
-    expect(next.milestones).toHaveLength(3);
+    expect(next.milestones.find((m) => m.id === 'ms-local')).toBeUndefined();
+    expect(next.milestones).toHaveLength(2);
   });
 
-  it('merges workload dated rows strictly by id (replace + append + keep local)', () => {
+  it('replaces workload with the cloud payload (dated rows by id)', () => {
     const state = baseState(); // workload: [w1] dated
     const payload: CloudMergePayload = {
       ...emptyPayload(),
+      projects: [makeProject({ id: 'proj-1' })],
+      tasks: [makeTask({ id: T1, projectId: 'proj-1' })],
       workload: [
         wl({ id: 'w1', plannedHours: 4 }), // replace same id
         wl({ id: 'w-cloud', plannedHours: 1 }), // cloud-only append
@@ -272,7 +283,7 @@ describe('MERGE_CLOUD_ENTITIES — milestones + workload merge', () => {
     expect(next.workload).toHaveLength(2);
   });
 
-  it('reconciles a bin pair to the cloud-id row with grid-snapped summed hours', () => {
+  it('bin pair: wiersz chmury wygrywa autorytatywnie (lokalny duplikat pary znika)', () => {
     const state: AppData = {
       ...baseState(),
       workload: [
@@ -282,15 +293,17 @@ describe('MERGE_CLOUD_ENTITIES — milestones + workload merge', () => {
     };
     const payload: CloudMergePayload = {
       ...emptyPayload(),
+      projects: [makeProject({ id: 'proj-1' })],
+      tasks: [makeTask({ id: T1, projectId: 'proj-1' })],
       workload: [{ id: 'bin-cloud', taskId: T1, personId: P1, date: '', plannedHours: 3, startMinutes: 0, sortIndex: 0 }],
     };
     const next = merge(state, payload);
-    // Cloud id survives; local bin dropped; hours summed (2 + 3 = 5).
-    expect(next.workload.find((w) => w.id === 'bin-local')).toBeUndefined();
-    const survivor = next.workload.find((w) => w.id === 'bin-cloud')!;
-    expect(survivor.plannedHours).toBe(5);
-    // Dated row untouched.
-    expect(next.workload.find((w) => w.id === 'w1')).toBeDefined();
+    // Chmura jest prawdą: zostaje wyłącznie wiersz chmury z jej godzinami;
+    // jeden wiersz zasobnika na parę (invariant 4) zachowany konstrukcyjnie.
+    expect(next.workload).toHaveLength(1);
+    const survivor = next.workload[0];
+    expect(survivor.id).toBe('bin-cloud');
+    expect(survivor.plannedHours).toBe(3);
   });
 });
 
@@ -305,15 +318,28 @@ describe('MERGE_CLOUD_ENTITIES — fail-closed (invariant 6)', () => {
 
   it('rejects a workload row referencing a missing task or person', () => {
     const state = baseState();
-    expect(merge(state, { ...emptyPayload(), workload: [wl({ id: 'w2', taskId: 'ghost' })] })).toBe(state);
-    expect(merge(state, { ...emptyPayload(), workload: [wl({ id: 'w2', personId: 'ghost' })] })).toBe(state);
+    const withTask = {
+      projects: [makeProject({ id: 'proj-1' })],
+      tasks: [makeTask({ id: T1, projectId: 'proj-1' })],
+    };
+    expect(
+      merge(state, { ...emptyPayload(), ...withTask, workload: [wl({ id: 'w2', taskId: 'ghost' })] }),
+    ).toBe(state);
+    expect(
+      merge(state, { ...emptyPayload(), ...withTask, workload: [wl({ id: 'w2', personId: 'ghost' })] }),
+    ).toBe(state);
   });
 
   it('rejects a milestone with an invalid date or missing project', () => {
     const state = baseState();
     const bad = (o: Partial<Milestone>): Milestone => ({ id: 'm', projectId: 'proj-1', name: 'M', date: '2026-07-08', ...o });
-    expect(merge(state, { ...emptyPayload(), milestones: [bad({ date: 'nie-data' })] })).toBe(state);
-    expect(merge(state, { ...emptyPayload(), milestones: [bad({ projectId: 'ghost' })] })).toBe(state);
+    const withProject = { projects: [makeProject({ id: 'proj-1' })] };
+    expect(
+      merge(state, { ...emptyPayload(), ...withProject, milestones: [bad({ date: 'nie-data' })] }),
+    ).toBe(state);
+    expect(
+      merge(state, { ...emptyPayload(), ...withProject, milestones: [bad({ projectId: 'ghost' })] }),
+    ).toBe(state);
   });
 
   it('returns the ORIGINAL state reference for a non-array collection', () => {
@@ -342,11 +368,15 @@ describe('MERGE_CLOUD_ENTITIES — fail-closed (invariant 6)', () => {
 
   it('rejects an assignment referencing a missing task or person', () => {
     const state = baseState();
+    const withTask = {
+      projects: [makeProject({ id: 'proj-1' })],
+      tasks: [makeTask({ id: T1, projectId: 'proj-1' })],
+    };
     expect(
-      merge(state, { ...emptyPayload(), assignments: [{ taskId: 'ghost', personId: P1 }] }),
+      merge(state, { ...emptyPayload(), ...withTask, assignments: [{ taskId: 'ghost', personId: P1 }] }),
     ).toBe(state);
     expect(
-      merge(state, { ...emptyPayload(), assignments: [{ taskId: T1, personId: 'ghost' }] }),
+      merge(state, { ...emptyPayload(), ...withTask, assignments: [{ taskId: T1, personId: 'ghost' }] }),
     ).toBe(state);
   });
 
@@ -373,7 +403,12 @@ describe('MERGE_CLOUD_ENTITIES — fail-closed (invariant 6)', () => {
 
   it('handles cloud-provided TaskAssignment-shaped objects without extra fields', () => {
     const state = baseState();
-    const payload = { ...emptyPayload(), assignments: [{ taskId: T1, personId: P2 }] };
+    const payload = {
+      ...emptyPayload(),
+      projects: [makeProject({ id: 'proj-1' })],
+      tasks: [makeTask({ id: T1, projectId: 'proj-1' })],
+      assignments: [{ taskId: T1, personId: P2 }],
+    };
     const next = merge(state, payload);
     const added = next.assignments.find((a: TaskAssignment) => a.taskId === T1 && a.personId === P2);
     expect(added).toBeDefined();
@@ -390,6 +425,7 @@ function cloudRow(o: Partial<CloudPersonMergeRow> & { id: string; email: string 
     firstName: 'Chmura',
     lastName: 'Osoba',
     role: '',
+    departmentId: '',
     phone: '',
     avatar: '',
     capacity: 8,
@@ -406,7 +442,7 @@ describe('MERGE_CLOUD_PEOPLE', () => {
   const UUID_K = 'a1a1a1a1-0000-0000-0000-000000000001';
   const UUID_Z = 'a1a1a1a1-0000-0000-0000-000000000002';
 
-  it('aktualizuje istniejącą osobę po e-mailu (lokalne id, hasło i dział zostają)', () => {
+  it('aktualizuje istniejącą osobę po e-mailu (lokalne id i hasło zostają, dział z chmury)', () => {
     const state: AppData = {
       ...baseState(),
       people: [
@@ -416,7 +452,7 @@ describe('MERGE_CLOUD_PEOPLE', () => {
     const next = reducer(state, {
       type: 'MERGE_CLOUD_PEOPLE',
       payload: [
-        cloudRow({ id: UUID_K, email: 'Kacper@X.PL', firstName: 'Kacper', lastName: 'Cichy', role: 'Menadżer', accessRole: 'administrator', capacity: 6 }),
+        cloudRow({ id: UUID_K, email: 'Kacper@X.PL', firstName: 'Kacper', lastName: 'Cichy', role: 'Menadżer', departmentId: 'd-cloud', accessRole: 'administrator', capacity: 6 }),
       ],
     });
     expect(next).not.toBe(state);
@@ -424,7 +460,7 @@ describe('MERGE_CLOUD_PEOPLE', () => {
     const p = next.people[0];
     expect(p.id).toBe(P1); // lokalne id zachowane
     expect(p.passwordHash).toBe('h');
-    expect(p.departmentId).toBe('d-local');
+    expect(p.departmentId).toBe('d-cloud'); // dział jest prawdą chmury
     expect(p).toMatchObject({ firstName: 'Kacper', lastName: 'Cichy', name: 'Kacper Cichy', role: 'Menadżer', accessRole: 'administrator', capacity: 6 });
   });
 
@@ -443,12 +479,12 @@ describe('MERGE_CLOUD_PEOPLE', () => {
     expect(next.people.find((p) => p.id === UUID_K)!.passwordHash).toBe('');
   });
 
-  it('nie usuwa osób lokalnych bez konta chmury; brak zmian => ta sama referencja', () => {
+  it('usuwa osoby lokalne bez konta chmury (dane demo); scalenie jest idempotentne', () => {
     const state: AppData = { ...baseState(), people: [{ ...person(P1) }] };
     const payload = [cloudRow({ id: UUID_K, email: 'kacper@x.pl', firstName: 'Kacper' })];
     const next = reducer(state, { type: 'MERGE_CLOUD_PEOPLE', payload });
-    expect(next.people.some((p) => p.id === P1)).toBe(true); // lokalna zostaje
-    expect(next.people).toHaveLength(2);
+    // Chmura jest prawdą o zespole: osoba bez konta chmury znika.
+    expect(next.people.map((p) => p.id)).toEqual([UUID_K]);
     // Idempotencja: ten sam payload na już scalonym stanie => ta sama referencja.
     const again = reducer(next, { type: 'MERGE_CLOUD_PEOPLE', payload });
     expect(again).toBe(next);

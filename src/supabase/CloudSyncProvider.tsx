@@ -36,6 +36,7 @@ import {
   type CloudIdMaps,
   type CloudOp,
 } from './cloudMirror';
+import { buildCloudPeoplePayload } from './referenceData';
 
 export type CloudSyncStatus = 'idle' | 'hydrating' | 'ready' | 'error';
 
@@ -174,7 +175,13 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       setError(result.error);
       return;
     }
-    dispatch({ type: 'MERGE_CLOUD_ENTITIES', payload: result.payload });
+    // Autorytatywna hydracja: profile chmury jadą w TYM SAMYM ładunku, żeby
+    // reduktor scalił zespół PRZED walidacją encji (osoby bez lokalnej pary
+    // e-mailowej dostają wiersz o id profilu chmury w jednej atomowej akcji).
+    dispatch({
+      type: 'MERGE_CLOUD_ENTITIES',
+      payload: { ...result.payload, people: buildCloudPeoplePayload(snap.profiles) },
+    });
     setStatus('ready');
   }, [auth.mode, userId, org.state, dispatch, getDb]);
 

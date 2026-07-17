@@ -7,15 +7,27 @@
 - `src/store/selectors.ts` owns derived reads; pages must not duplicate them.
 - `src/store/storage.ts` owns localStorage, migrations, validation/repair on
   load, save outcomes and the same-browser revision envelope.
-- In supabase mode a diff-based cloud mirror (`src/supabase/cloudMirror.ts` +
-  `src/supabase/plannerData.ts`, driven by `src/supabase/CloudSyncProvider.tsx`)
-  sits BEHIND the reducer: it mirrors EIGHT planner families
+- In supabase mode the CLOUD IS AUTHORITATIVE. A diff-based cloud mirror
+  (`src/supabase/cloudMirror.ts` + `src/supabase/plannerData.ts`, driven by
+  `src/supabase/CloudSyncProvider.tsx`) sits BEHIND the reducer: it mirrors
+  EIGHT planner families
   (clients/projects/milestones/tasks/assignments/workload/comments/activity) to
   Supabase from state diffs AFTER each action, and hydrates them on sign-in via
-  the single `MERGE_CLOUD_ENTITIES` reducer action. Workload entries (planned
-  hours + calendar/bin) and milestones now go cloud too — the "workload never
-  leaves the browser" rule is retired. Only per-user saved filters, people
-  administration, dictionary/status mutations and sample/reset stay local.
+  the single `MERGE_CLOUD_ENTITIES` reducer action, which REPLACES those
+  collections with the payload (local-only rows — e.g. demo/sample planner data
+  — are dropped; hydration runs once per sign-in with an empty push queue, so
+  no unsynced edit is lost; assignment row ids stay stable by
+  (taskId, personId) pair). The same payload carries the RLS profile set
+  (`people`), merged FIRST. Independently, every ready org snapshot is merged
+  from App via `MERGE_CLOUD_DICTIONARIES` (departments/statuses/service
+  types/work categories replaced; fail-closed if the cloud status set would
+  violate the ≥1-active + ≥1-done invariant) and `MERGE_CLOUD_PEOPLE`
+  (authoritative team: upsert by email keeps local id/password, new people get
+  the cloud profile UUID, people without a cloud account are removed, session
+  identity pointing at a removed person is cleared). Only per-user saved
+  filters and sample/reset remain local-only concepts; dictionary/people EDITS
+  made locally in supabase mode are overwritten by the next snapshot merge
+  (the write path for those is the cloud UIs — TeamPage/provisioning — or SQL).
   Constraint-violation write errors (23502/23503/23505/23514) drop the op with
   the Polish permission notice rather than stalling the retry queue. Local mode:
   zero diff.
