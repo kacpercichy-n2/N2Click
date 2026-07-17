@@ -4,6 +4,15 @@
 // scope). No React. localStorage + import.meta.env are stubbed for the duration.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { emptyData, writeCloudRetirementMarker } from './storage';
+
+// `import.meta.env` jest per-moduł i vitest wczytuje .env.local, więc na
+// maszynie z prawdziwymi kluczami nie da się zasymulować trybu lokalnego przez
+// stubowanie środowiska. Bramkę testujemy z jawnie sterowaną flagą konfiguracji;
+// samo parsowanie env pokrywa src/supabase/config.test.ts.
+const supabaseConfigured = vi.hoisted(() => ({ value: true }));
+vi.mock('../supabase/config', () => ({
+  isSupabaseConfigured: () => supabaseConfigured.value,
+}));
 import {
   setCloudMirrorHealthy,
   shouldSkipLocalPersist,
@@ -33,12 +42,11 @@ function withLocalStorage<T>(fn: () => T): T {
 }
 
 function configureSupabaseEnv(): void {
-  vi.stubEnv('VITE_SUPABASE_URL', 'https://example.supabase.co');
-  vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', 'sb_publishable_test_key');
+  supabaseConfigured.value = true;
 }
 
 afterEach(() => {
-  vi.unstubAllEnvs();
+  supabaseConfigured.value = true;
   setCloudMirrorHealthy(false);
 });
 
@@ -95,7 +103,7 @@ describe('shouldSkipLocalPersist', () => {
 
   it('never skips in local mode (env not configured) — stale marker ignored', () => {
     withLocalStorage(() => {
-      // No env stubbed => isSupabaseConfigured() is false.
+      supabaseConfigured.value = false;
       writeCloudRetirementMarker({ enabled: true });
       setCloudMirrorHealthy(true);
       const prev = base();
