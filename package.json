@@ -17,6 +17,7 @@
     "check:browser-release": "node scripts/run-browser-regression.mjs"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.110.6",
     "date-fns": "^3.6.0",
     "lucide-react": "^1.23.0",
     "motion": "^12.42.2",

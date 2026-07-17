@@ -1,140 +1,100 @@
-# Run state — 2026-07-15 prompt scheduler rebuild
+# Run state — 20260716-235101-211 cloud workload/calendar + localStorage retirement
 
 ## Goal
 
-Replace the scheduler removed in dbaa72c with a simple reset-anchored,
-usage-chained unattended prompt scheduler plus a zero-dependency local
-monitoring app, fully under `automation/claude-scheduler/`.
+Mirror workload entries (planned hours, calendar drag/resize, bin) and
+milestones to Supabase through the 210 plannerData/cloudMirror architecture,
+hydrate them via `MERGE_CLOUD_ENTITIES`, add an admin-only Polish
+migration-status view, and — only after an explicit admin handshake (coverage
+clean, snapshot read, probe write round-trip, backup downloaded) — suspend
+per-action localStorage planner writes, keeping localStorage as a passive,
+never-deleted recovery copy. Local mode stays byte-identical.
 
 ## Packages
 
-- [PKG-20260715-prompt-scheduler](packages/PKG-20260715-prompt-scheduler.md)
-  — Tier: developer (Opus), Risk: medium, Codex: conditional. Status: ready.
+- `handoffs/scheduler-reviews/211-architect-package.md`
+  (PKG-20260717-cloud-workload-retirement) — Tier: developer, Risk: high,
+  Codex: required. Status: ready.
 
 ## Changed boundaries (planned)
 
-- New `automation/claude-scheduler/` tree (run-queue.mjs, monitor.mjs, lib/,
-  test/, prompts/, archive/, state/, logs/).
-- `package.json`: new scripts `test:scheduler` (node --test) and
-  `scheduler:monitor`. Zero new dependencies.
-- `openwiki/n2hub/testing-and-automation.md` `## Automation status` section
-  becomes stale on completion; package includes the sync.
-- No product code (`src/`) changes.
+- New migration `20260717000000_workload_planner_retirement.sql`:
+  `workload_entries` (grid CHECKs, one-bin-row partial unique index, RLS
+  admin/manager-dept/worker-own-rows), `milestones`, `app_settings`
+  (org retirement flag); `migrations.test.ts` extended.
+- `plannerData.ts`/`cloudMirror.ts`: workload+milestone mapping and diff
+  families; constraint-violation codes (23xxx) reclassified drop-not-retry.
+- `AppStore.tsx`: `MERGE_CLOUD_ENTITIES` payload gains workload/milestones
+  (bin pair reconciled, invalid payload keeps prior reference); persist effect
+  consults new pure `persistGate.ts` (marker + mirror-health + mirrored-only
+  collection check; non-mirrored collections always persist locally).
+- `storage.ts`: marker helpers only, new key `n2hub.cloudMigration.v1`.
+- New `migrationStatus.ts` + `MigrationStatusPanel.tsx` in AdminPage;
+  `CloudSyncProvider` safety-net/recovery writes; dataImport/exportDryRun
+  extended; README + state-and-persistence wiki. `DATA_VERSION` stays 7.
+- Calendar/bin interaction code untouched (verified reducer-only mutations).
 
 ## Verification
 
-- Focused: `npm run test:scheduler` (pure modules: schedule, usage parsing,
-  runlog). Isolation check: `npm test && npm run build` unaffected.
-- Browser: none — no product UI change.
-- Final gate is interactive/operator-owned (old scheduler gate removed).
-
-## Settled decisions
-
-Snapshot commit per run (incl. crashes) on `review/claude-auto-*`, never push;
-crash retries wait for the next reset window, park after 3 consecutive crashes;
-empty queue idles with 5-min re-scan; cache fallback fresh <= 10 min; monitor
-is a localhost-only Node HTTP page with Polish labels.
-
-## Developer result (2026-07-15)
-
-Built full `automation/claude-scheduler/` tree + scripts + wiki. `test:scheduler`
-18/18 pass; `npm test` 509 pass (no scheduler files); `npm run build` green;
-monitor smoke degrades gracefully. Deviations: script uses `test/*.test.mjs`
-glob (Node 22.18 rejects bare dir arg); trimmed root `.gitignore` so tracked
-runs.jsonl/logs match package intent.
-
-## Reviewer fixes (2026-07-15)
-
-run-queue.mjs: added 30s running-phase heartbeat + async runVerify (was
-spawnSync); stdin EPIPE handler; commit SHA only on successful commit else
-null; non-parked crash now waits for next reset via waitForNextReset even when
-usage unknown. Re-ran: test:scheduler 18/18, npm test 509, build green.
+- Worker focused: `npx vitest run src/supabase src/store/persistGate.test.ts
+  src/store/cloudMerge.test.ts src/store/storage.test.ts
+  src/store/blockActions.test.ts src/store/commandValidation.test.ts
+  src/store/exportDryRun.test.ts`, then one full `npm test` + `npm run build`.
+- Browser: none (interaction code untouched; local mode identical).
+- Scheduler owns final `npm run test:scheduler && npm test && npm run build`.
 
 ## Open questions
 
-- `docs/workflow/TIERED-AGENTS.md` and `HANDOFF-TEMPLATE.md` still describe
-  the removed scheduler as owning the final `npm test` gate; the new scheduler
-  records verification without gating. Reviewer/operator to decide whether to
-  refresh those two workflow docs (not in package scope).
+None — collection scope (milestones in, savedFilters out), retirement handshake,
+marker placement, gate semantics, RLS scoping and version decision are settled
+in the package.
 
-## Test-writer doc sync (2026-07-15)
+## Developer result — 211 (PKG-20260717-cloud-workload-retirement)
 
-Fixed stale "scheduler owns final gate" wording in `TIERED-AGENTS.md` and
-`HANDOFF-TEMPLATE.md` (now operator-owned `npm test && npm run build`, per
-source `run-queue.mjs`); added missing `permissions.test.ts` to
-`state-and-persistence.md`. Reviewer blocker: removed the stale
-`RUN-RESULT.json`/`runId`/SHA-256 gate paragraph from `TIERED-AGENTS.md`
-(dbaa72c deleted that machinery; `.claude/commands/tier.md` left untouched,
-routed to a follow-up package). `check-openwiki-links.mjs` passes.
+Built end to end. Files (one-liners):
+- `supabase/migrations/20260717000000_workload_planner_retirement.sql`: NEW —
+  `workload_entries` (grid CHECKs + partial unique bin index), `milestones`,
+  `app_settings`; RLS + anon revoke + policies (workload role-scoped, milestones
+  by project, app_settings read-all/admin-write), reuses `app.*` helpers.
+- `migrations.test.ts`: +filename, +3 policy sets.
+- `plannerData.ts`: constraint-code fix (23502/03/05/14→permission);
+  `CloudMergePayload` +workload/+milestones; snapshot selects+maps (bin null↔'',
+  grid revalidation, dup-bin/unmappable exclusion); `readRetirementSetting`/
+  `writeRetirementSetting`/`RETIREMENT_SETTING_KEY`.
+- `cloudMirror.ts`: milestones+workload diff families; dep order clients→…→
+  workload→comments→activity; Polish labels.
+- `AppStore.tsx`: `MERGE_CLOUD_ENTITIES` +milestones/+workload merge with bin-pair
+  reconcile (cloud id, grid-snapped sum) + fail-closed guards; `mergeById` empty
+  short-circuit; persist effect consults `shouldSkipLocalPersist`.
+- NEW `persistGate.ts` (health flag + collection scope + marker/env), `storage.ts`
+  marker helpers on `n2hub.cloudMigration.v1` (clearData untouched), `config.ts`
+  `isSupabaseConfigured()`.
+- NEW `migrationStatus.ts` (coverage report + handshake), `MigrationStatusPanel.tsx`
+  mounted after `ExportDryRunPanel`; `CloudSyncProvider` health/recovery writes/
+  pagehide/app_settings sync + `retired`/`applyRetirement`.
+- `dataImport.ts`/`exportDryRun.ts` (+workload/milestone steps/targets/blockers,
+  unsupported = only saved filters); README + state-and-persistence wiki.
 
-## Three-defect fix (2026-07-15)
+Tests: focused `npx vitest run src/supabase src/store/persistGate.test.ts
+cloudMerge/storage/blockActions/commandValidation/exportDryRun` → 494 pass, 0
+fail. Full `npm test` → 31 files, 901 pass. `npm run build` → green.
 
-Boundaries: selectors.test.ts (+3 sel-01 cases: 480/780→4, single, zero),
-OnboardingRoot.tsx (shouldShowHint gains `!impersonating` guard). selectors.ts
-sel-01 filter+reduce and LoginPage `landingPathForRole` already in tree; verified
-single-source-of-truth with HomeRedirect. sel-01 has no production callers.
-vitest 106 pass; tsc clean.
+Deviations (minimal, justified):
+1. `runRetirementHandshake` probe takes a `taskId` (not only rowId+profileId) —
+   `workload_entries.task_id` is NOT NULL/FK, so a bin probe needs a real cloud
+   task; panel supplies the first UUID task; missing/invalid → step fails with a
+   Polish message. Faithful to "probe workload_entries bin row".
+2. `isSupabaseConfigured()` reads `import.meta.env` merged with `globalThis.process
+   .env` (via globalThis, no @types/node) so vitest `vi.stubEnv` can drive it;
+   `import.meta.env` stays authoritative in the browser.
+3. `MigrationStatusPanel`/handshake build their own `PlannerDb` via
+   `getSupabaseClient()` (singleton, same as `ExportDryRunPanel`) rather than
+   routing every dep through `CloudSyncProvider` — keeps the provider lean.
 
-## TaskModal three-defect fix (2026-07-15)
-
-Boundary: only `src/components/TaskModal.tsx`. taskmodal-01: `toggleAssignee`
-resets stale `binPersonId`, `addBinHours` guards assignee membership. taskmodal-02:
-new `plannedCells` memo (in-period + assigned) feeds header total + save, killing
-divergence. taskmodal-03: `snapHours` in `setCell` and `addBinHours`. tsc clean,
-saveTaskWorkload 14 pass. No new tests (no component harness).
-
-## storage-01 collection coercion (2026-07-15)
-
-Boundary: storage.ts + storage.test.ts only. Same-version load now coerces
-each collection via `coerceArray(x, default)` before repair passes, so a
-non-array aux collection (e.g. `statuses:null`) repairs in isolation instead
-of the catch discarding everything. statuses→default pipeline, others→[].
-tasks/people/workload stay fail-closed via looksLikeData. vitest full 599 pass.
-
-## UI layering + sidebar fold (styles.css only)
-
-Fix1: `.persistence-banner` gets `position:relative; z-index:1050` so
-conflict/failure actions clear the task modal (viewport z-index 1001) yet stay
-below onboarding (1090/1100). Fix2: `.app-nav` `min-height:0; overflow-y:auto`
-+ thin scrollbar pins the identity/logout block, unchanged at exact-fit/tall.
-tsc clean. Browser pass pending (orchestrator).
-
-## WeekView drag lifecycle (WeekView.tsx only)
-
-F1: TimedBlock gains BinCard-style interruption recovery — `buttons===0`
-pointermove guard (type-gated so finish's pointerup still commits) + window
-blur/visibilitychange cancel via shared cancelDrag (revert, no dispatch).
-F3: Escape effect now gated on `dragging` boolean, not per-frame drag.
-Framer: menuRef moved to inner div; motion.div ref removed.
-tsc clean; time+blockActions 154 pass. Browser pending (orchestrator).
-
-## Reducer-boundary defects (AppStore.tsx + 3 store tests)
-
-RENAME_{CLIENT,DEPARTMENT,SERVICE_TYPE,WORK_CATEGORY}: trim+reject empty/unknown
-id (same ref). SET_TASK_STATUS: same-status no-op. insertBlock: reject insert
-whose start lies inside an earlier same-person block spanning the point.
-personFromDraft: clamp capacity to [1,24]. npx vitest run src/store/ 526 pass.
-AdminPage per-keystroke rename now sticky-on-empty — follow-up (out of scope).
-
-## AdminPage rename follow-up (AdminPage.tsx only)
-
-Sticky-on-empty fixed: SimpleList now renders SimpleListRow with a local draft,
-committing trimmed name to the store on blur/Enter only (no per-keystroke
-dispatch); empty commit reverts to store name. Rows keyed `id:name` so external
-renames remount and reseed. tsc: no AdminPage errors; src/store vitest 526 pass.
-
-## storage-01 follow-up: dangling statusId (2026-07-15)
-
-Coercion regenerating statuses gave new UUIDs so task/project statusIds dangled,
-silently failing every SAVE_TASK. Added `repairStatusReferences` (runs after
-normalizeStatusFlags, both load branches): remaps any dangling task/project
-statusId to first non-done active status (mirrors TaskModal `activeStatuses[0]`).
-Sets needsWriteback; no-op when refs resolve or pipeline empty. vitest 619 pass.
-
-## Samouczek content refresh (catalog.ts + AdminPage anchor)
-
-Boundary: catalog.ts (edits) + AdminPage.tsx (one `data-tour="admin.dictionaries"`
-on Klienci section). Reflected: role landing + other-tab banner (shell.main),
-new tasks step (0.25h snap, Zasobnik→assigned, period-shrink), bin "Zaplanuj część",
-24h/day cap (people.capacity), new admin dictionaries step. No new module ids.
-build green; npm test 619 pass. wiki unchanged.
+Reviewer scrutiny: (a) SQL policy/CHECK/index wording + migrations.test parser
+match; (b) bin-pair merge summing + fail-closed guard completeness in
+`mergeCloudEntities`; (c) gate health/marker/env interplay and that skipping never
+yields a false `Zapisano`; (d) recovery-write timing in `CloudSyncProvider`
+(status→ready effect, queue-drain, transient error, pagehide). `scheduling-and-
+calendar.md` left unchanged — interaction code (WeekView/WorkloadPage/time/
+selectors) is untouched; workload still flows through reducer actions only.

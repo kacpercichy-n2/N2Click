@@ -5,6 +5,27 @@
 - `src/App.tsx` owns routing, shell-level overlays and current-user navigation.
   `src/main.tsx` hosts the data router (`createBrowserRouter`) that App's
   `useBlocker` dirty-navigation guard requires.
+- `src/auth/` owns the login gate. Mode is decided once at startup (local vs
+  Supabase). Local mode (no/invalid Supabase config) keeps the demo person-picker
+  `src/pages/LoginPage.tsx` and the `currentUserId` gate. Supabase mode gates the
+  whole shell behind a real `supabase.auth` session (`SessionProvider` + pure
+  `session.ts` state machine): loading → email/password login → forced first-
+  password change (`profiles.must_change_password`, pure `passwordChange.ts`,
+  fail-open) → blocked (no local profile) → shell. A `/account` panel + nav link
+  (Supabase mode only; local redirects to `/`) offers self-service password
+  change. Identity association is by email only (planner data references local
+  person ids). In Supabase mode the authenticated profile, department, access role
+  and team visibility are READ from Supabase (RLS output is authoritative) via
+  `src/supabase/OrgDataProvider.tsx` + pure `src/supabase/referenceData.ts`
+  (`loadOrgSnapshot`, `effectiveAccessRole`); never from JWT/metadata. While that
+  snapshot loads, on error, in local mode, or while impersonating, the local
+  `Person` role is the fallback. Cloud statuses/service types/work categories are
+  loaded and displayed (AccountPage `Profil w chmurze`, TeamPage cloud hierarchy,
+  AdminPage `Słowniki w chmurze`), but the planner still renders/mutates the LOCAL
+  localStorage dictionaries until the data-write migration. Local mode is
+  byte-for-byte unchanged (no client created). Client-side only; UX gate, not a
+  security boundary. `SessionProvider` then `OrgDataProvider` wrap the router in
+  `main.tsx`.
 - `src/pages/` owns route-specific screens; `src/components/TaskModal.tsx` owns
   task editing and its allocation grid.
 - `src/onboarding/catalog.ts` owns copy, roles and route mapping; components

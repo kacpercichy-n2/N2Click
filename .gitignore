@@ -1,6 +1,7 @@
 node_modules
 dist
 *.local
+.env
 .DS_Store
 .claude/*
 !.claude/agents/
@@ -8,6 +9,9 @@ dist
 !.claude/commands/
 !.claude/commands/*.md
 .vercel
+# Lokalne artefakty Supabase CLI (same migracje są śledzone).
+supabase/.temp/
+supabase/.branches/
 fabletieredworkflow/
 automation/claude-scheduler/logs/
 automation/claude-scheduler/state/

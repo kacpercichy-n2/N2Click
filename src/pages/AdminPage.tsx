@@ -6,12 +6,17 @@ import { useState } from 'react';
 import { useStore } from '../store/AppStore';
 import { allStatusesOrdered, isAdminUser } from '../store/selectors';
 import { StatusBadge } from '../components/StatusBadge';
+import { ExportDryRunPanel } from '../components/ExportDryRunPanel';
+import { MigrationStatusPanel } from '../components/MigrationStatusPanel';
+import { useAuth } from '../auth/SessionProvider';
+import { useOrgData } from '../supabase/OrgDataProvider';
 
 // Lavender brand default for a freshly created status (dark-legible).
 const NEW_STATUS_COLOR = '#c496ff';
 
 export function AdminPage() {
   const { state, dispatch } = useStore();
+  const { mode } = useAuth();
   const admin = isAdminUser(state);
 
   const [statusInput, setStatusInput] = useState('');
@@ -337,7 +342,89 @@ export function AdminPage() {
           </button>
         </form>
       </div>
+
+      {mode === 'supabase' && <CloudDictionaries />}
+
+      <ExportDryRunPanel />
+
+      <MigrationStatusPanel />
     </section>
+  );
+}
+
+/**
+ * Read-only podgląd słowników w chmurze (tryb supabase): statusy, typy usług i
+ * kategorie prac wczytane RLS-owo przez OrgDataProvider. Planer NADAL korzysta z
+ * lokalnych słowników powyżej — te dane są tylko do wglądu do czasu migracji
+ * danych. Stany ładowania/błędu/pustki po polsku.
+ */
+function CloudDictionaries() {
+  const { state, reload } = useOrgData();
+
+  return (
+    <div className="editor-section">
+      <h2>Słowniki w chmurze</h2>
+      <p className="field-hint">
+        Podgląd tylko do odczytu. Planer nadal używa lokalnych słowników powyżej —
+        dane z chmury służą do porównania do czasu migracji danych.
+      </p>
+
+      {state.status === 'idle' || state.status === 'loading' ? (
+        <p className="field-hint">Wczytywanie słowników…</p>
+      ) : state.status === 'error' ? (
+        <>
+          <p className="field-error">{state.message}</p>
+          <button type="button" className="btn ghost" onClick={reload}>
+            Spróbuj ponownie
+          </button>
+        </>
+      ) : (
+        <div className="cloud-dictionaries">
+          <h3>Statusy</h3>
+          {state.snapshot.statuses.length === 0 ? (
+            <p className="field-hint">Brak statusów w chmurze.</p>
+          ) : (
+            <ul className="admin-simple-list">
+              {state.snapshot.statuses.map((s) => (
+                <li key={s.id} className="admin-simple-row">
+                  <span>{s.name}</span>
+                  <span className="muted">
+                    {s.isDone ? 'ukończenie' : 'aktywny'}
+                    {s.archived ? ', zarchiwizowany' : ''}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <h3>Typy usług</h3>
+          {state.snapshot.serviceTypes.length === 0 ? (
+            <p className="field-hint">Brak typów usług w chmurze.</p>
+          ) : (
+            <ul className="admin-simple-list">
+              {state.snapshot.serviceTypes.map((s) => (
+                <li key={s.id} className="admin-simple-row">
+                  <span>{s.name}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <h3>Kategorie prac</h3>
+          {state.snapshot.workCategories.length === 0 ? (
+            <p className="field-hint">Brak kategorii prac w chmurze.</p>
+          ) : (
+            <ul className="admin-simple-list">
+              {state.snapshot.workCategories.map((c) => (
+                <li key={c.id} className="admin-simple-row">
+                  <span>{c.name}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

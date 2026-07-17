@@ -23,11 +23,30 @@ import { PeoplePage } from './pages/PeoplePage';
 import { PersonProfilePage } from './pages/PersonProfilePage';
 import { WorkloadPage } from './pages/WorkloadPage';
 import { AdminPage } from './pages/AdminPage';
+import { AccountPage } from './pages/AccountPage';
+import { TeamPage } from './pages/TeamPage';
+import { canViewTeam } from './pages/teamScope';
 import { landingPathForRole, LoginPage } from './pages/LoginPage';
+import { useAuth } from './auth/SessionProvider';
+import { useOrgData } from './supabase/OrgDataProvider';
+import { effectiveAccessRole } from './supabase/referenceData';
+import {
+  AuthBlocked,
+  AuthLoading,
+  ForcedPasswordChange,
+  SupabaseLoginPage,
+} from './auth/AuthScreens';
+import { findPersonByEmail } from './auth/profile';
 import { can } from './store/permissions';
-import { currentUser as currentUserSel, isImpersonating, realUser } from './store/selectors';
+import {
+  currentUser as currentUserSel,
+  isImpersonating,
+  realUser,
+  realUserId,
+} from './store/selectors';
 import { SampleBanner } from './components/SampleBanner';
 import { PersistenceBanner } from './components/PersistenceBanner';
+import { CloudSyncBanner } from './components/CloudSyncBanner';
 import { TaskModal } from './components/TaskModal';
 import { GlobalSearch } from './components/GlobalSearch';
 import { Avatar } from './components/Avatar';
@@ -47,6 +66,8 @@ import {
   ChevronsLeft,
   ChevronsRight,
   CircleHelp,
+  KeyRound,
+  Network,
 } from './components/icons';
 import type { LucideIcon } from './components/icons';
 import { loadUiPrefs, updateUiPrefs } from './utils/uiPrefs';
@@ -66,6 +87,7 @@ const NAV: Array<[string, string, LucideIcon]> = [
   ['/tasks', 'Zadania', ListChecks],
   ['/calendar', 'Kalendarz', CalendarDays],
   ['/people', 'Zespół', Users],
+  ['/team', 'Struktura zespołu', Network],
   ['/workload', 'Obciążenie', Gauge],
   ['/admin', 'Administracja', Settings],
 ];
@@ -92,6 +114,8 @@ function visibleDrawerControls(drawer: HTMLElement | null): HTMLElement[] {
 
 export function App() {
   const { state, dispatch } = useStore();
+  const auth = useAuth();
+  const org = useOrgData();
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => loadUiPrefs().sidebarCollapsed);
@@ -120,12 +144,34 @@ export function App() {
   const impersonating = isImpersonating(state);
   const peopleCount = state.people.length;
   const canAdmin = can(currentUser, 'admin.panel', { peopleCount });
+  // `/team` visibility mirrors the server role model (worker hidden, manager =
+  // own department, administrator = all). UX gate only — see pages/teamScope.ts.
+  // In Supabase mode (self-acting, snapshot ready) the effective cloud role
+  // drives it; otherwise the local role (loading/error/local mode/impersonating).
+  const teamRole = effectiveAccessRole(currentUser, org.state, {
+    mode: auth.mode,
+    impersonating,
+  });
+  const teamUser = currentUser && teamRole ? { ...currentUser, accessRole: teamRole } : currentUser;
+  const canTeam = canViewTeam(teamUser);
   // Session gate: with people present and nobody resolving to a current user,
   // only the login screen renders (no sidebar, no routes). Zero people = setup
   // mode (no lockout — mirrors the admin gate). `currentUserId` persists, so a
   // logged-in session survives reload BY DESIGN; real sessions/tokens land with
   // the API. A deleted current user falls back here (DELETE_PERSON clears it).
   const needsLogin = state.people.length > 0 && !currentUser;
+
+  // Logout: in Supabase mode end the real Auth session first (its SIGNED_OUT
+  // event returns us to the login screen), then clear the local acting identity.
+  // In local mode this is just the existing LOGOUT dispatch. These are the same
+  // client-side gates as before — UX/data-integrity only, never a security
+  // boundary (localStorage is client-mutable; authorization lives server-side).
+  const handleLogout = useCallback(async () => {
+    if (auth.mode === 'supabase') {
+      await auth.signOut();
+    }
+    dispatch({ type: 'LOGOUT' });
+  }, [auth, dispatch]);
 
   useEffect(() => {
     const media = window.matchMedia(MOBILE_NAV_QUERY);
@@ -193,6 +239,33 @@ export function App() {
   const closedMobileDrawerProps = mobileNav && !menuOpen ? { inert: '' } : {};
   const openMobileMainProps = mobileNav && menuOpen ? { inert: '' } : {};
 
+  // Supabase mode: a real Supabase Auth session gates the ENTIRE shell. Nothing
+  // below renders without a valid session AND a matched local profile. This is a
+  // UX/data-integrity gate only — never a security boundary.
+  if (auth.mode === 'supabase') {
+    if (auth.state.status === 'restoring') return <AuthLoading />;
+    if (auth.state.status === 'signedOut') return <SupabaseLoginPage />;
+    // Forced first-password change gates the whole shell BEFORE profile matching,
+    // so even an account without a local profile must set its password first.
+    // `null` = flag still loading; `true` = must change. This is a UX/data-
+    // integrity gate (owner can clear their own server flag via API), not a
+    // security boundary. Loading fail-opens to `false` in the provider.
+    if (auth.mustChangePassword === null) return <AuthLoading />;
+    if (auth.mustChangePassword === true) {
+      return <ForcedPasswordChange onSignOut={() => void handleLogout()} />;
+    }
+    // Signed in: associate by identity (email) only. Role/department always come
+    // from the local Person record — never from user_metadata/JWT claims.
+    const email = auth.state.session?.user?.email ?? '';
+    const person = findPersonByEmail(state.people, email);
+    if (!person) {
+      return <AuthBlocked email={email.trim()} onSignOut={() => void handleLogout()} />;
+    }
+    // Matched, but SET_CURRENT_USER may not have synced yet — never flash the
+    // shell before the real identity resolves to the matched person.
+    if (realUserId(state) !== person.id) return <AuthLoading />;
+  }
+
   if (needsLogin) {
     return <LoginPage />;
   }
@@ -254,7 +327,7 @@ export function App() {
         </div>
         <GlobalSearch />
         <nav className="app-nav" data-tour="shell.nav">
-          {NAV.filter(([to]) => to !== '/admin' || canAdmin).map(([to, label, Icon]) => (
+          {NAV.filter(([to]) => (to !== '/admin' || canAdmin) && (to !== '/team' || canTeam)).map(([to, label, Icon]) => (
             <NavLink
               key={to}
               to={to}
@@ -266,6 +339,19 @@ export function App() {
               <span className="nav-label">{label}</span>
             </NavLink>
           ))}
+          {/* Account panel (self-service password change) exists only for a real
+              Supabase account; local mode has no such concept. */}
+          {auth.mode === 'supabase' && (
+            <NavLink
+              to="/account"
+              className={navClass}
+              title="Konto"
+              onClick={() => setMenuOpen(false)}
+            >
+              <KeyRound size={18} aria-hidden className="nav-icon" />
+              <span className="nav-label">Konto</span>
+            </NavLink>
+          )}
         </nav>
         <button
           type="button"
@@ -321,7 +407,7 @@ export function App() {
             <button
               type="button"
               className="btn ghost logout-btn"
-              onClick={() => dispatch({ type: 'LOGOUT' })}
+              onClick={() => void handleLogout()}
             >
               Wyloguj
             </button>
@@ -352,6 +438,8 @@ export function App() {
         {/* Persistence banner shows on every routed page (not the login screen —
             no edits happen there and a clean tab auto-refreshes silently). */}
         <PersistenceBanner />
+        {/* Cloud sync status (supabase mode only; renders null in local mode). */}
+        <CloudSyncBanner />
         <SampleBanner />
         <motion.div
           key={location.pathname}
@@ -378,6 +466,16 @@ export function App() {
             <Route
               path="/admin"
               element={canAdmin ? <AdminPage /> : <Navigate to="/dashboard" replace />}
+            />
+            {/* Team area: role-gated (worker redirected). TeamPage also guards. */}
+            <Route
+              path="/team"
+              element={canTeam ? <TeamPage /> : <Navigate to="/dashboard" replace />}
+            />
+            {/* Account panel: real Supabase account only. Local mode redirects. */}
+            <Route
+              path="/account"
+              element={auth.mode === 'supabase' ? <AccountPage /> : <Navigate to="/" replace />}
             />
             <Route path="*" element={<HomeRedirect />} />
           </Routes>

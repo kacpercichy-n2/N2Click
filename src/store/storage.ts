@@ -1011,7 +1011,19 @@ export type LoadDataResult =
   | { ok: true; data: AppData; needsWriteback: boolean }
   | { ok: false; reason: LoadFailureReason; error: Error };
 
-function loadFailure(reason: LoadFailureReason): LoadDataResult {
+/**
+ * Side-effect-free read result (see peekDataResult). Same parse/migration/repair
+ * pipeline as loadDataResult, but never records a revision and never writes.
+ * `storedVersion` is the raw `version` field of the stored JSON (1 when absent,
+ * DATA_VERSION when nothing is stored), for diagnostics/export metadata.
+ */
+export type PeekDataResult =
+  | { ok: true; data: AppData; storedVersion: number }
+  | { ok: false; reason: LoadFailureReason; error: Error };
+
+function loadFailure(
+  reason: LoadFailureReason,
+): { ok: false; reason: LoadFailureReason; error: Error } {
   const detail =
     reason === 'unavailable'
       ? 'Pamięć przeglądarki jest niedostępna.'
@@ -1042,13 +1054,19 @@ function storedValueEqual(a: unknown, b: unknown): boolean {
   return aKeys.every((key) => storedValueEqual(aRecord[key], bRecord[key]));
 }
 
+type InternalLoadResult =
+  | { ok: true; data: AppData; needsWriteback: boolean; storedVersion: number }
+  | { ok: false; reason: LoadFailureReason; error: Error };
+
 /**
- * Load persisted data together with explicit initial-writeback metadata.
- * Missing storage is a successful empty load. Any non-empty unreadable,
- * malformed or structurally invalid payload fails closed so the provider can
- * route it through the recovery boundary without replacing the raw source.
+ * The shared load pipeline behind both loadDataResult (recordRevision = true,
+ * the app load path) and peekDataResult (recordRevision = false, the read-only
+ * export/dry-run tool). It NEVER writes to localStorage; the only side effect is
+ * the `latestKnownRevision` bookkeeping, gated entirely by `recordRevision` so a
+ * peek is provably free of side effects. Keeping one body guarantees the peek
+ * runs the exact same migration/repair passes the real load does.
  */
-export function loadDataResult(): LoadDataResult {
+function readData(recordRevision: boolean): InternalLoadResult {
   let raw: string | null = null;
   let sourceKey: string | null = null;
   try {
@@ -1070,8 +1088,8 @@ export function loadDataResult(): LoadDataResult {
   }
 
   if (!raw) {
-    latestKnownRevision = 0;
-    return { ok: true, data: emptyData(), needsWriteback: false };
+    if (recordRevision) latestKnownRevision = 0;
+    return { ok: true, data: emptyData(), needsWriteback: false, storedVersion: DATA_VERSION };
   }
 
   let parsed: Record<string, unknown>;
@@ -1086,8 +1104,8 @@ export function loadDataResult(): LoadDataResult {
   try {
     // Record the stored envelope revision so the next local save lands above it.
     // Stripped from the returned AppData below (both branches) — React state
-    // never carries a revision.
-    latestKnownRevision = coerceRevision(parsed.revision) ?? 0;
+    // never carries a revision. Skipped entirely for a side-effect-free peek.
+    if (recordRevision) latestKnownRevision = coerceRevision(parsed.revision) ?? 0;
     const version = typeof parsed.version === 'number' ? parsed.version : 1;
     let data: AppData;
     if (version < 2) {
@@ -1156,10 +1174,37 @@ export function loadDataResult(): LoadDataResult {
       ok: true,
       data,
       needsWriteback: sourceKey !== STORAGE_KEY || !storedValueEqual(storedData, data),
+      storedVersion: version,
     };
   } catch {
     return loadFailure('invalid');
   }
+}
+
+/**
+ * Load persisted data together with explicit initial-writeback metadata.
+ * Missing storage is a successful empty load. Any non-empty unreadable,
+ * malformed or structurally invalid payload fails closed so the provider can
+ * route it through the recovery boundary without replacing the raw source.
+ */
+export function loadDataResult(): LoadDataResult {
+  const result = readData(true);
+  if (!result.ok) return result;
+  return { ok: true, data: result.data, needsWriteback: result.needsWriteback };
+}
+
+/**
+ * Read the persisted data WITHOUT any side effect: no localStorage write and no
+ * `latestKnownRevision` mutation (unlike loadDataResult). Runs the identical
+ * parse/migration/repair pipeline and returns the normalized AppData plus the
+ * raw `storedVersion`. Backs the admin-only export + migration dry-run tool,
+ * which must never disturb the app's load/save bookkeeping. A missing key is a
+ * clean empty load stamped at DATA_VERSION.
+ */
+export function peekDataResult(): PeekDataResult {
+  const result = readData(false);
+  if (!result.ok) return result;
+  return { ok: true, data: result.data, storedVersion: result.storedVersion };
 }
 
 /** Compatibility entry point for non-provider callers; failures intentionally throw. */
@@ -1210,6 +1255,37 @@ export function saveData(data: AppData): SaveResult {
   }
   latestKnownRevision = revision;
   return { ok: true, revision };
+}
+
+// ---- Znacznik wycofania zapisów lokalnych (per-przeglądarka) ----------------
+// DEDYKOWANY klucz POZA kluczem danych planera. Cache decyzji organizacji
+// (app_settings.local_writes_retired) aktualizowany po każdej udanej hydracji.
+// `clearData()` NIGDY go nie dotyka — reset/sample nie zmieniają decyzji migracji.
+
+const CLOUD_MIGRATION_KEY = 'n2hub.cloudMigration.v1';
+
+/** Odczyt zbuforowanego znacznika wycofania. Brak / błąd => `{ enabled: false }`. */
+export function readCloudRetirementMarker(): { enabled: boolean } {
+  try {
+    const raw = localStorage.getItem(CLOUD_MIGRATION_KEY);
+    if (!raw) return { enabled: false };
+    const parsed: unknown = JSON.parse(raw);
+    return { enabled: (parsed as { enabled?: unknown })?.enabled === true };
+  } catch {
+    return { enabled: false };
+  }
+}
+
+/** Zapis zbuforowanego znacznika wycofania (na dedykowanym kluczu). Nie rzuca. */
+export function writeCloudRetirementMarker(marker: { enabled: boolean }): void {
+  try {
+    localStorage.setItem(
+      CLOUD_MIGRATION_KEY,
+      JSON.stringify({ enabled: marker.enabled === true }),
+    );
+  } catch {
+    // ignore — brak trwałego cache degraduje bramkę do „zapisuj lokalnie”.
+  }
 }
 
 export function clearData(): void {

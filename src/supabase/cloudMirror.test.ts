@@ -1,0 +1,370 @@
+// Focused tests for the pure cloud mirror (cloudMirror.ts): buildCloudIdMaps
+// (email/slug/name fallbacks), diffToCloudOps per entity family, and
+// applyCloudOps (transient stops + preserves the queue; permission drops and
+// continues). No SDK, no live Supabase — an injected fake PlannerDb.
+import { describe, expect, it } from 'vitest';
+import { emptyData } from '../store/storage';
+import type { AppData, Person, Project, Task } from '../types';
+import type { CloudProfile, OrgSnapshot } from './referenceData';
+import type { CloudWriteError, PlannerDb } from './plannerData';
+import {
+  applyCloudOps,
+  buildCloudIdMaps,
+  diffToCloudOps,
+  type CloudIdMaps,
+  type CloudOp,
+} from './cloudMirror';
+
+const uuid = (seed: string): string => {
+  const hex = Array.from(seed)
+    .reduce((acc, ch) => acc + ch.charCodeAt(0).toString(16), '')
+    .padEnd(32, '0')
+    .slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+};
+
+const PA = uuid('person-a');
+const PB = uuid('person-b');
+const CLOUD_PA = uuid('cloud-a');
+const CLOUD_PB = uuid('cloud-b');
+const S1 = uuid('status-todo');
+const SV = uuid('service-video');
+const WC = uuid('cat-design');
+const CLI = uuid('client-one');
+const PR = uuid('project-one');
+const TK = uuid('task-one');
+
+function makePerson(o: Partial<Person> & { id: string }): Person {
+  return {
+    firstName: 'A', lastName: 'B', name: 'A B', email: '', phone: '', role: '',
+    departmentId: '', avatar: '', capacity: 8, accessRole: 'pracownik', passwordHash: '',
+    workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, supervisorId: '', ...o,
+  };
+}
+function makeProject(o: Partial<Project> & { id: string }): Project {
+  return {
+    clientId: '', name: 'Projekt', description: '', statusId: '', paid: false,
+    startDate: '2026-07-06', endDate: '2026-07-12', departmentId: '', serviceTypeId: '',
+    createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', ...o,
+  };
+}
+function makeTask(o: Partial<Task> & { id: string }): Task {
+  return {
+    projectId: PR, statusId: '', title: 'Zadanie', description: '', startDate: '2026-07-06',
+    endDate: '2026-07-08', estimatedHours: null, priority: 'normal', workCategoryId: '',
+    checklist: [], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', ...o,
+  };
+}
+const cloudProfile = (o: Partial<CloudProfile> & { id: string }): CloudProfile => ({
+  firstName: '', lastName: '', email: '', roleTitle: '', cloudRole: 'worker', departmentId: null, ...o,
+});
+
+// A local AppData + a cloud org snapshot whose ids/keys line up so the maps
+// resolve every reference the diff tests use.
+function localFixture(): AppData {
+  return {
+    ...emptyData(),
+    people: [makePerson({ id: PA, email: 'a@x.com' }), makePerson({ id: PB, email: 'b@x.com' })],
+    statuses: [{ id: S1, name: 'Do zrobienia', slug: 'todo', color: '#fff', order: 0, archived: false, isDone: false }],
+    serviceTypes: [{ id: SV, name: 'Wideo' }],
+    workCategories: [{ id: WC, name: 'Design' }],
+  };
+}
+function orgFixture(): OrgSnapshot {
+  return {
+    profile: null,
+    profiles: [
+      cloudProfile({ id: CLOUD_PA, email: 'a@x.com' }),
+      cloudProfile({ id: CLOUD_PB, email: 'b@x.com' }),
+    ],
+    departments: [],
+    statuses: [{ id: S1, name: 'Do zrobienia', slug: 'todo', color: '#fff', order: 0, archived: false, isDone: false }],
+    serviceTypes: [{ id: SV, name: 'Wideo' }],
+    workCategories: [{ id: WC, name: 'Design' }],
+  };
+}
+const maps = (): CloudIdMaps => buildCloudIdMaps(localFixture(), orgFixture());
+
+describe('buildCloudIdMaps', () => {
+  it('maps people by email, statuses by id or slug, dictionaries by id or name', () => {
+    const local: AppData = {
+      ...emptyData(),
+      people: [makePerson({ id: PA, email: '  A@X.com ' })],
+      statuses: [
+        { id: S1, name: 'Do zrobienia', slug: 'todo', color: '', order: 0, archived: false, isDone: false },
+        { id: uuid('local-done'), name: 'Zrobione', slug: 'done', color: '', order: 1, archived: false, isDone: true },
+      ],
+      serviceTypes: [{ id: uuid('local-sv'), name: '  Wideo ' }],
+      workCategories: [{ id: uuid('local-wc'), name: 'Design' }],
+      departments: [{ id: uuid('local-dept'), name: 'Kreacja' }],
+    };
+    const cloudDone = uuid('cloud-done');
+    const org: OrgSnapshot = {
+      profile: null,
+      profiles: [cloudProfile({ id: CLOUD_PA, email: 'a@x.com' })],
+      statuses: [
+        { id: S1, name: 'Do zrobienia', slug: 'todo', color: '', order: 0, archived: false, isDone: false },
+        { id: cloudDone, name: 'Zrobione', slug: 'done', color: '', order: 1, archived: false, isDone: true },
+      ],
+      serviceTypes: [{ id: SV, name: 'Wideo' }],
+      workCategories: [{ id: WC, name: 'Design' }],
+      departments: [{ id: uuid('cloud-dept'), name: 'Kreacja' }],
+    };
+    const m = buildCloudIdMaps(local, org);
+    expect(m.people.get(PA)).toBe(CLOUD_PA); // by normalized email
+    expect(m.statuses.get(S1)).toBe(S1); // by id
+    expect(m.statuses.get(local.statuses[1].id)).toBe(cloudDone); // by slug fallback
+    expect(m.serviceTypes.get(local.serviceTypes[0].id)).toBe(SV); // by name
+    expect(m.workCategories.get(local.workCategories[0].id)).toBe(WC);
+    expect(m.departments.get(local.departments[0].id)).toBe(org.departments[0].id);
+  });
+});
+
+describe('diffToCloudOps — families', () => {
+  it('emits zero ops for identical states (same reference)', () => {
+    const s = localFixture();
+    expect(diffToCloudOps(s, s, maps()).ops).toHaveLength(0);
+  });
+
+  it('adds, renames and deletes a client', () => {
+    const m = maps();
+    const withClient: AppData = { ...localFixture(), clients: [{ id: CLI, name: 'Klient', archived: false }] };
+    const add = diffToCloudOps(localFixture(), withClient, m);
+    expect(add.ops).toEqual([
+      expect.objectContaining({ kind: 'upsert', table: 'clients', row: expect.objectContaining({ id: CLI, name: 'Klient' }) }),
+    ]);
+
+    const renamed: AppData = { ...localFixture(), clients: [{ id: CLI, name: 'Nowa', archived: false }] };
+    expect(diffToCloudOps(withClient, renamed, m).ops[0]).toMatchObject({ kind: 'upsert', table: 'clients' });
+
+    const del = diffToCloudOps(withClient, localFixture(), m);
+    expect(del.ops).toEqual([
+      expect.objectContaining({ kind: 'remove', table: 'clients', match: { id: CLI } }),
+    ]);
+  });
+
+  it('save project with a new client emits client upsert THEN project upsert', () => {
+    const m = maps();
+    const prev = localFixture();
+    const next: AppData = {
+      ...prev,
+      clients: [{ id: CLI, name: 'Klient', archived: false }],
+      projects: [makeProject({ id: PR, clientId: CLI, statusId: S1, name: 'P' })],
+    };
+    const { ops } = diffToCloudOps(prev, next, m);
+    expect(ops.map((o) => o.table)).toEqual(['clients', 'projects']);
+    const projectRow = ops[1].row!;
+    expect(projectRow).toMatchObject({ id: PR, client_id: CLI, status_id: S1 });
+  });
+
+  it('treats a task status change as a plain upsert', () => {
+    const m = maps();
+    const prev: AppData = { ...localFixture(), tasks: [makeTask({ id: TK, statusId: '' })] };
+    const next: AppData = { ...localFixture(), tasks: [makeTask({ id: TK, statusId: S1 })] };
+    const { ops } = diffToCloudOps(prev, next, m);
+    expect(ops).toEqual([
+      expect.objectContaining({ kind: 'upsert', table: 'tasks', row: expect.objectContaining({ id: TK, status_id: S1 }) }),
+    ]);
+  });
+
+  it('deletes a task by id', () => {
+    const m = maps();
+    const prev: AppData = { ...localFixture(), tasks: [makeTask({ id: TK })] };
+    const { ops } = diffToCloudOps(prev, localFixture(), m);
+    expect(ops).toEqual([expect.objectContaining({ kind: 'remove', table: 'tasks', match: { id: TK } })]);
+  });
+
+  it('emits composite upsert/remove for assignment set deltas', () => {
+    const m = maps();
+    const prev: AppData = { ...localFixture(), assignments: [{ id: 'a1', taskId: TK, personId: PA }] };
+    const next: AppData = { ...localFixture(), assignments: [{ id: 'a2', taskId: TK, personId: PB }] };
+    const { ops } = diffToCloudOps(prev, next, m);
+    const remove = ops.find((o) => o.kind === 'remove' && o.table === 'task_assignments');
+    const upsert = ops.find((o) => o.kind === 'upsert' && o.table === 'task_assignments');
+    expect(remove!.match).toEqual({ task_id: TK, profile_id: CLOUD_PA });
+    expect(upsert!.row).toEqual({ task_id: TK, profile_id: CLOUD_PB });
+    expect(upsert!.onConflict).toBe('task_id,profile_id');
+  });
+
+  it('appends new comments/activity and mirrors NOTHING for local prunes', () => {
+    const m = maps();
+    const comment = { id: uuid('cm1'), entityType: 'task' as const, entityId: TK, authorId: PA, body: 'Hej', mentionIds: [], createdAt: '2026-07-16T00:00:00.000Z' };
+    const activity = { id: uuid('ac1'), entityType: 'task' as const, entityId: TK, actorId: PA, message: 'x', createdAt: '2026-07-16T00:00:00.000Z' };
+    const withRows: AppData = { ...localFixture(), comments: [comment], activity: [activity] };
+
+    // Append: new rows -> insert-upsert.
+    const add = diffToCloudOps(localFixture(), withRows, m);
+    expect(add.ops.filter((o) => o.table === 'comments')).toHaveLength(1);
+    expect(add.ops.filter((o) => o.table === 'activity_events')).toHaveLength(1);
+
+    // Local prune (row removed) -> nothing mirrored (cloud cascade owns deletes).
+    const prune = diffToCloudOps(withRows, localFixture(), m);
+    expect(prune.ops).toHaveLength(0);
+  });
+
+  it('diagnoses non-UUID and unmappable rows, emitting no op', () => {
+    const m = maps();
+    // Non-UUID client id.
+    const badClient: AppData = { ...localFixture(), clients: [{ id: 'legacy-1', name: 'X', archived: false }] };
+    const c = diffToCloudOps(localFixture(), badClient, m);
+    expect(c.ops).toHaveLength(0);
+    expect(c.diagnostics.length).toBeGreaterThan(0);
+
+    // Project referencing a status absent from the maps.
+    const badProject: AppData = {
+      ...localFixture(),
+      projects: [makeProject({ id: PR, statusId: uuid('ghost-status') })],
+    };
+    const p = diffToCloudOps(localFixture(), badProject, m);
+    expect(p.ops).toHaveLength(0);
+    expect(p.diagnostics.length).toBeGreaterThan(0);
+  });
+});
+
+const MS = uuid('milestone-one');
+const WB = uuid('wl-bin');
+const WD = uuid('wl-dated');
+
+describe('diffToCloudOps — milestones + workload families', () => {
+  it('upserts and removes a milestone (by-id LWW)', () => {
+    const m = maps();
+    const milestone = { id: MS, projectId: PR, name: 'Publikacja', date: '2026-07-10' };
+    const withM: AppData = { ...localFixture(), milestones: [milestone] };
+    const add = diffToCloudOps(localFixture(), withM, m);
+    expect(add.ops).toEqual([
+      expect.objectContaining({ kind: 'upsert', table: 'milestones', row: expect.objectContaining({ id: MS, project_id: PR, milestone_date: '2026-07-10' }) }),
+    ]);
+    const del = diffToCloudOps(withM, localFixture(), m);
+    expect(del.ops).toEqual([
+      expect.objectContaining({ kind: 'remove', table: 'milestones', match: { id: MS } }),
+    ]);
+  });
+
+  it('upserts added/changed workload and removes deleted (full row, person mapped)', () => {
+    const m = maps();
+    const dated = { id: WD, taskId: TK, personId: PA, date: '2026-07-06', plannedHours: 2, startMinutes: 480, sortIndex: 0 };
+    const withW: AppData = { ...localFixture(), tasks: [makeTask({ id: TK })], workload: [dated] };
+    const add = diffToCloudOps({ ...localFixture(), tasks: [makeTask({ id: TK })] }, withW, m);
+    const up = add.ops.find((o) => o.table === 'workload_entries');
+    expect(up!.row).toMatchObject({ id: WD, task_id: TK, profile_id: CLOUD_PA, work_date: '2026-07-06', planned_hours: 2, start_minutes: 480 });
+    const del = diffToCloudOps(withW, { ...localFixture(), tasks: [makeTask({ id: TK })] }, m);
+    expect(del.ops).toEqual([
+      expect.objectContaining({ kind: 'remove', table: 'workload_entries', match: { id: WD } }),
+    ]);
+  });
+
+  it('maps a bin workload row work_date to null', () => {
+    const m = maps();
+    const bin = { id: WB, taskId: TK, personId: PA, date: '', plannedHours: 4, startMinutes: 0, sortIndex: 0 };
+    const prev: AppData = { ...localFixture(), tasks: [makeTask({ id: TK })] };
+    const next: AppData = { ...prev, workload: [bin] };
+    const { ops } = diffToCloudOps(prev, next, m);
+    expect(ops[0].row).toMatchObject({ id: WB, work_date: null, planned_hours: 4, start_minutes: 0 });
+  });
+
+  it('emits the atomic pair for a bin-part schedule (decremented bin + new dated)', () => {
+    const m = maps();
+    const prev: AppData = {
+      ...localFixture(),
+      tasks: [makeTask({ id: TK })],
+      workload: [{ id: WB, taskId: TK, personId: PA, date: '', plannedHours: 4, startMinutes: 0, sortIndex: 0 }],
+    };
+    const next: AppData = {
+      ...prev,
+      workload: [
+        { id: WB, taskId: TK, personId: PA, date: '', plannedHours: 3, startMinutes: 0, sortIndex: 0 },
+        { id: WD, taskId: TK, personId: PA, date: '2026-07-06', plannedHours: 1, startMinutes: 480, sortIndex: 0 },
+      ],
+    };
+    const wlOps = diffToCloudOps(prev, next, m).ops.filter((o) => o.table === 'workload_entries');
+    expect(wlOps).toHaveLength(2);
+    expect(wlOps.map((o) => o.row!.id).sort()).toEqual([WB, WD].sort());
+  });
+
+  it('emits zero workload ops for an unchanged SAVE_TASK (same workload reference)', () => {
+    const m = maps();
+    const workload = [{ id: WD, taskId: TK, personId: PA, date: '2026-07-06', plannedHours: 2, startMinutes: 480, sortIndex: 0 }];
+    const prev: AppData = { ...localFixture(), tasks: [makeTask({ id: TK, title: 'Stary' })], workload };
+    const next: AppData = { ...prev, tasks: [makeTask({ id: TK, title: 'Nowy' })], workload };
+    const { ops } = diffToCloudOps(prev, next, m);
+    expect(ops.filter((o) => o.table === 'workload_entries')).toHaveLength(0);
+    expect(ops.filter((o) => o.table === 'tasks')).toHaveLength(1);
+  });
+
+  it('diagnoses an unmappable person / non-UUID workload row, no op', () => {
+    const m = maps();
+    const prev: AppData = { ...localFixture(), tasks: [makeTask({ id: TK })] };
+    const badPerson: AppData = {
+      ...prev,
+      workload: [{ id: WD, taskId: TK, personId: uuid('ghost'), date: '', plannedHours: 1, startMinutes: 0, sortIndex: 0 }],
+    };
+    const r1 = diffToCloudOps(prev, badPerson, m);
+    expect(r1.ops.filter((o) => o.table === 'workload_entries')).toHaveLength(0);
+    expect(r1.diagnostics.length).toBeGreaterThan(0);
+
+    const badId: AppData = {
+      ...prev,
+      workload: [{ id: 'legacy-1', taskId: TK, personId: PA, date: '', plannedHours: 1, startMinutes: 0, sortIndex: 0 }],
+    };
+    const r2 = diffToCloudOps(prev, badId, m);
+    expect(r2.ops.filter((o) => o.table === 'workload_entries')).toHaveLength(0);
+    expect(r2.diagnostics.length).toBeGreaterThan(0);
+  });
+});
+
+// ---- applyCloudOps -----------------------------------------------------------
+
+class FakePlannerDb implements PlannerDb {
+  calls: Array<{ op: 'upsert' | 'remove'; table: string }> = [];
+  upsertErr: (table: string, row: Record<string, unknown>) => CloudWriteError | null = () => null;
+  removeErr: (table: string) => CloudWriteError | null = () => null;
+  async select() {
+    return { rows: [] as Array<Record<string, unknown>>, error: null };
+  }
+  async upsert(table: string, row: Record<string, unknown>) {
+    this.calls.push({ op: 'upsert', table });
+    return { error: this.upsertErr(table, row) };
+  }
+  async remove(table: string) {
+    this.calls.push({ op: 'remove', table });
+    return { error: this.removeErr(table) };
+  }
+}
+
+const op = (id: string, table = 'clients'): CloudOp => ({
+  kind: 'upsert',
+  table,
+  row: { id },
+  sourceId: id,
+  label: `Op ${id}`,
+});
+
+describe('applyCloudOps', () => {
+  it('stops on a transient error and preserves the remaining queue', async () => {
+    const db = new FakePlannerDb();
+    db.upsertErr = (_t, row) =>
+      row.id === 'two' ? { kind: 'transient', message: 'network' } : null;
+    const ops = [op('one'), op('two'), op('three')];
+    const result = await applyCloudOps(db, ops);
+    expect(result.done).toBe(1);
+    expect(result.error).toBe(
+      'Nie udało się zapisać zmian na serwerze. Dane pozostały w tej przeglądarce.',
+    );
+    expect(result.remaining.map((o) => o.sourceId)).toEqual(['two', 'three']);
+    // op 'three' was never attempted.
+    expect(db.calls).toHaveLength(2);
+  });
+
+  it('drops a permission-denied op with a Polish notice and continues', async () => {
+    const db = new FakePlannerDb();
+    db.upsertErr = (_t, row) =>
+      row.id === 'two' ? { kind: 'permission', message: 'row-level security' } : null;
+    const ops = [op('one'), op('two'), op('three')];
+    const result = await applyCloudOps(db, ops);
+    expect(result.done).toBe(2);
+    expect(result.error).toBeNull();
+    expect(result.remaining).toHaveLength(0);
+    expect(result.dropped).toEqual([{ label: 'Op two', message: 'row-level security' }]);
+    expect(db.calls).toHaveLength(3);
+  });
+});

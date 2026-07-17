@@ -38,4 +38,6 @@ export {
   Compass,
   Sparkles,
   ArrowLeft,
+  KeyRound,
+  Network,
 } from 'lucide-react';
