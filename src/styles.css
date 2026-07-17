@@ -5106,3 +5106,68 @@ option {
   gap: var(--n2-space-3);
   flex-basis: 100%;
 }
+
+/* ---- Klienci ---------------------------------------------------------- */
+.client-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.client-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--n2-space-4);
+  flex-wrap: wrap;
+  background: var(--card-bg);
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-lg);
+  padding: var(--n2-space-4) var(--n2-space-5);
+  box-shadow: var(--shadow-sm);
+}
+.client-card.archived {
+  opacity: 0.6;
+}
+.client-card-main {
+  min-width: 0;
+  flex: 1 1 320px;
+}
+.client-card-meta {
+  display: flex;
+  gap: var(--n2-space-4);
+  flex-wrap: wrap;
+  margin-top: 2px;
+  font-size: 0.9em;
+}
+.client-card-notes {
+  margin: 6px 0 0;
+  font-size: 0.9em;
+  white-space: pre-wrap;
+}
+.client-card-actions {
+  display: flex;
+  gap: var(--n2-space-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.client-card .client-edit {
+  flex: 1 1 100%;
+  margin-bottom: 0;
+  border: none;
+  padding: 0;
+  box-shadow: none;
+}
+.form-actions {
+  display: flex;
+  gap: var(--n2-space-2);
+  margin-top: var(--n2-space-3);
+}
+.field-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.field.field-wide {
+  flex: 1 1 100%;
+}

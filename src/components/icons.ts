@@ -7,6 +7,7 @@ export type { LucideIcon } from 'lucide-react';
 export {
   LayoutDashboard,
   FolderKanban,
+  Building2,
   Columns3,
   GanttChart,
   ListChecks,

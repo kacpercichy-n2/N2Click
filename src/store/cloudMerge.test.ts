@@ -490,6 +490,14 @@ describe('MERGE_CLOUD_PEOPLE', () => {
     expect(again).toBe(next);
   });
 
+  it('FAIL-CLOSED: pusty payload przy niepustym zespole => ta sama referencja (anomalia RLS nie kasuje zespołu)', () => {
+    const state: AppData = { ...baseState(), people: [{ ...person(P1) }] };
+    expect(reducer(state, { type: 'MERGE_CLOUD_PEOPLE', payload: [] })).toBe(state);
+    // Pusty payload przy pustym zespole to legalny no-op (świeża organizacja).
+    const emptyState: AppData = { ...baseState(), people: [] };
+    expect(reducer(emptyState, { type: 'MERGE_CLOUD_PEOPLE', payload: [] })).toBe(emptyState);
+  });
+
   it('przełożony spoza widocznego zbioru lub cykl => supervisorId pusty', () => {
     const state: AppData = { ...baseState(), people: [] };
     const next = reducer(state, {

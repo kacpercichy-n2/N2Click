@@ -11,18 +11,26 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
 import { useAuth } from '../auth/SessionProvider';
 import { getSupabaseClient } from './client';
 import { createSupabaseImportDb } from './dataImport';
-import { loadOrgSnapshot, type OrgState } from './referenceData';
+import { loadOrgSnapshot, type OrgSnapshot, type OrgState } from './referenceData';
 
 interface OrgDataContextValue {
   state: OrgState;
   /** Ponawia wczytanie snapshotu bieżącego użytkownika (przycisk „Spróbuj ponownie”). */
   reload: () => void;
+  /**
+   * Cichy refetch (stale-while-revalidate): stan `ready` NIE spada do
+   * `loading`, więc konsumenci (CloudSyncProvider) nie tracą aktywności ani
+   * kolejki zapisów. Sukces => podmiana snapshotu i zwrot świeżego obiektu;
+   * błąd / brak sesji => stan bez zmian i `null` (wołający zachowuje stary).
+   */
+  refreshSilently: () => Promise<OrgSnapshot | null>;
 }
 
 const OrgDataContext = createContext<OrgDataContextValue | null>(null);
@@ -45,6 +53,10 @@ export function OrgDataProvider({ children }: { children: ReactNode }) {
       ? auth.state.session?.user?.id ?? null
       : null;
 
+  // Żywy identyfikator użytkownika dla cichego refetchu (bez zależności efektu).
+  const userIdRef = useRef<string | null>(userId);
+  userIdRef.current = userId;
+
   useEffect(() => {
     if (auth.mode !== 'supabase' || !userId) {
       setState({ status: 'idle' });
@@ -65,7 +77,20 @@ export function OrgDataProvider({ children }: { children: ReactNode }) {
 
   const reload = useCallback(() => setReloadToken((t) => t + 1), []);
 
+  const refreshSilently = useCallback(async (): Promise<OrgSnapshot | null> => {
+    const uid = userIdRef.current;
+    if (!uid) return null;
+    const db = createSupabaseImportDb(getSupabaseClient());
+    const result = await loadOrgSnapshot(db, uid);
+    // Użytkownik zmienił się / wylogował w trakcie fetchu => wynik do kosza.
+    if (!result.ok || userIdRef.current !== uid) return null;
+    setState({ status: 'ready', snapshot: result.snapshot });
+    return result.snapshot;
+  }, []);
+
   return (
-    <OrgDataContext.Provider value={{ state, reload }}>{children}</OrgDataContext.Provider>
+    <OrgDataContext.Provider value={{ state, reload, refreshSilently }}>
+      {children}
+    </OrgDataContext.Provider>
   );
 }

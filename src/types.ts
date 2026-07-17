@@ -10,6 +10,11 @@ export interface Client {
   id: string;
   name: string; // required
   archived: boolean;
+  /** Dane kontaktowe (zakładka „Klienci”); brak pola / '' = brak danych. */
+  contactName?: string;
+  contactEmail?: string;
+  contactPhone?: string;
+  notes?: string;
 }
 
 export interface Department {

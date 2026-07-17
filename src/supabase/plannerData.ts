@@ -246,7 +246,7 @@ export async function loadPlannerSnapshot(
     commentsRes,
     activityRes,
   ] = await Promise.all([
-    db.select('clients', 'id, name, archived'),
+    db.select('clients', 'id, name, archived, contact_name, contact_email, contact_phone, notes'),
     db.select(
       'projects',
       'id, client_id, name, description, status_id, paid, start_date, end_date, department_id, service_type_id, created_at, updated_at',
@@ -294,6 +294,10 @@ export async function loadPlannerSnapshot(
     id: str(row.id),
     name: str(row.name),
     archived: boolVal(row.archived),
+    contactName: str(row.contact_name),
+    contactEmail: str(row.contact_email),
+    contactPhone: str(row.contact_phone),
+    notes: str(row.notes),
   }));
 
   // Projekty ---- (id/departmentId/clientId dosłownie; słowniki przez reverse).
@@ -321,12 +325,21 @@ export async function loadPlannerSnapshot(
     });
   }
 
+  // Zbiór projektów, które PRZETRWAŁY walidację — wiersze zależne (kamienie,
+  // zadania) wskazujące pominięty projekt też muszą odpaść, inaczej fail-closed
+  // MERGE_CLOUD_ENTITIES odrzuci CAŁĄ hydrację przez jedną sierotę.
+  const survivingProjectIds = new Set(projects.map((p) => p.id));
+
   // Kamienie milowe ---- (`milestone_date` -> lokalne `date`; zła data => wyklucz).
   const milestones: Milestone[] = [];
   for (const row of milestonesRes.rows) {
     const date = sqlDateToLocal(row.milestone_date);
     if (!isValidDateStr(date)) {
       diagnostics.push(`Kamień milowy „${str(row.name)}” pominięto — nieprawidłowa data.`);
+      continue;
+    }
+    if (!survivingProjectIds.has(str(row.project_id))) {
+      diagnostics.push(`Kamień milowy „${str(row.name)}” pominięto — projekt niedostępny.`);
       continue;
     }
     milestones.push({
@@ -344,6 +357,10 @@ export async function loadPlannerSnapshot(
     const endDate = sqlDateToLocal(row.end_date);
     if (periodError(startDate, endDate, { maxDays: MAX_TASK_PERIOD_DAYS }) !== null) {
       diagnostics.push(`Zadanie „${str(row.title)}” pominięto — nieprawidłowy okres.`);
+      continue;
+    }
+    if (!survivingProjectIds.has(str(row.project_id))) {
+      diagnostics.push(`Zadanie „${str(row.title)}” pominięto — projekt niedostępny.`);
       continue;
     }
     const estimated = row.estimated_hours;
@@ -368,7 +385,9 @@ export async function loadPlannerSnapshot(
     });
   }
 
-  // Przypisania ---- (para {taskId, personId}; niemapowalny profil => pomiń).
+  // Przypisania ---- (para {taskId, personId}; niemapowalny profil lub
+  // pominięte zadanie => pomiń wiersz, nie całą hydrację).
+  const survivingTaskIds = new Set(tasks.map((t) => t.id));
   const assignments: Array<{ taskId: string; personId: string }> = [];
   for (const row of assignmentsRes.rows) {
     const taskId = str(row.task_id);
@@ -377,6 +396,10 @@ export async function loadPlannerSnapshot(
       diagnostics.push(
         `Przypisanie zadania ${taskId} pominięto — brak lokalnej osoby dla profilu.`,
       );
+      continue;
+    }
+    if (!survivingTaskIds.has(taskId)) {
+      diagnostics.push(`Przypisanie pominięto — zadanie ${taskId} niedostępne.`);
       continue;
     }
     assignments.push({ taskId, personId });
@@ -393,6 +416,10 @@ export async function loadPlannerSnapshot(
       continue;
     }
     const taskId = str(row.task_id);
+    if (!survivingTaskIds.has(taskId)) {
+      diagnostics.push(`Blok godzin pominięto — zadanie ${taskId} niedostępne.`);
+      continue;
+    }
     const isBin = row.work_date === null || row.work_date === undefined || row.work_date === '';
     const date = isBin ? BIN_DATE : sqlDateToLocal(row.work_date);
     if (!isBin && !isValidDateStr(date)) {

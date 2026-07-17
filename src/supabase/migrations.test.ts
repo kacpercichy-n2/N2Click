@@ -96,6 +96,8 @@ describe('konwencja plików migracji', () => {
       '20260717000000_workload_planner_retirement.sql',
       '20260717110000_profiles_supervisor.sql',
       '20260717130000_profiles_planner_fields.sql',
+      '20260718090000_clients_contact_fields.sql',
+      '20260718091000_realtime_publication.sql',
     ]);
   });
 

@@ -306,6 +306,63 @@ describe('Dictionary rename guards (trim + existence, same-ref reject)', () => {
     expect(reducer(state, { type: 'RENAME_CLIENT', clientId: 'ghost', name: 'X' })).toBe(state);
   });
 
+  it('SAVE_CLIENT: trims name + contact fields; rejects empty name and unknown id by same ref', () => {
+    const state = makeState({ clients: [{ id: 'c1', name: 'Klient', archived: false }] });
+
+    const saved = reducer(state, {
+      type: 'SAVE_CLIENT',
+      clientId: 'c1',
+      name: '  Acme  ',
+      contactName: ' Anna Nowak ',
+      contactEmail: ' anna@acme.pl ',
+      contactPhone: ' +48 600 100 200 ',
+      notes: ' VIP ',
+    });
+    expect(saved).not.toBe(state);
+    expect(saved.clients.find((c) => c.id === 'c1')).toMatchObject({
+      name: 'Acme',
+      contactName: 'Anna Nowak',
+      contactEmail: 'anna@acme.pl',
+      contactPhone: '+48 600 100 200',
+      notes: 'VIP',
+    });
+
+    const rejectBase = { contactName: '', contactEmail: '', contactPhone: '', notes: '' };
+    expect(reducer(state, { type: 'SAVE_CLIENT', clientId: 'c1', name: '   ', ...rejectBase })).toBe(state);
+    expect(reducer(state, { type: 'SAVE_CLIENT', clientId: 'ghost', name: 'X', ...rejectBase })).toBe(state);
+  });
+
+  it('SET_CLIENT_ARCHIVED: toggles; no-op value and unknown id keep the same ref', () => {
+    const state = makeState({ clients: [{ id: 'c1', name: 'Klient', archived: false }] });
+
+    const archived = reducer(state, { type: 'SET_CLIENT_ARCHIVED', clientId: 'c1', archived: true });
+    expect(archived).not.toBe(state);
+    expect(archived.clients[0].archived).toBe(true);
+
+    expect(reducer(state, { type: 'SET_CLIENT_ARCHIVED', clientId: 'c1', archived: false })).toBe(state);
+    expect(reducer(state, { type: 'SET_CLIENT_ARCHIVED', clientId: 'ghost', archived: true })).toBe(state);
+  });
+
+  it('ADD_CLIENT: przycina i zapisuje dane kontaktowe', () => {
+    const state = makeState({ clients: [] });
+    const next = reducer(state, {
+      type: 'ADD_CLIENT',
+      name: ' Acme ',
+      contactName: ' Jan ',
+      contactEmail: ' jan@acme.pl ',
+      contactPhone: ' 600 ',
+      notes: ' n ',
+    });
+    expect(next.clients[0]).toMatchObject({
+      name: 'Acme',
+      contactName: 'Jan',
+      contactEmail: 'jan@acme.pl',
+      contactPhone: '600',
+      notes: 'n',
+      archived: false,
+    });
+  });
+
   it('RENAME_DEPARTMENT: trims a valid name; rejects empty/whitespace and unknown id by same ref', () => {
     const state = makeState({ departments: [{ id: 'd1', name: 'Dział' }] });
 

@@ -8,7 +8,8 @@ import { useCloudSync } from '../supabase/CloudSyncProvider';
 import { STALE_HINT_MSG, SYNC_ERROR_MSG, SYNC_PERMISSION_MSG } from '../supabase/cloudMirror';
 
 export function CloudSyncBanner() {
-  const { status, pendingCount, error, dropped, retry, refresh, dismissDropped } = useCloudSync();
+  const { status, pendingCount, error, live, dropped, retry, refresh, dismissDropped } =
+    useCloudSync();
 
   // Błąd hydracji: dane lokalne pozostają w pełni używalne.
   if (status === 'error') {
@@ -71,7 +72,14 @@ export function CloudSyncBanner() {
     );
   }
 
-  // Gotowe i kolejka pusta: oferuj ręczne odświeżenie (last-write-wins).
+  // Żywa synchronizacja aktywna: zmiany w bazie same trafiają do GUI — stały
+  // baner „dane mogą być nieaktualne” byłby fałszywy, więc nic nie pokazujemy.
+  if (status === 'ready' && live) {
+    return null;
+  }
+
+  // Gotowe, ale bez kanału Realtime (offline / stara publikacja): oferuj
+  // ręczne odświeżenie (last-write-wins).
   if (status === 'ready' && pendingCount === 0) {
     return (
       <div className="persistence-banner persistence-banner--info" role="status">

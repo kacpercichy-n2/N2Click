@@ -6,6 +6,7 @@ import { AppStoreProvider } from './store/AppStore';
 import { SessionProvider } from './auth/SessionProvider';
 import { OrgDataProvider } from './supabase/OrgDataProvider';
 import { CloudSyncProvider } from './supabase/CloudSyncProvider';
+import { AvatarUrlsProvider } from './supabase/AvatarUrlsProvider';
 import { App } from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import './styles.css';
@@ -53,10 +54,15 @@ createRoot(rootEl).render(
                 OrgDataProvider (needs the org snapshot) and outside the router
                 (needs no router hooks). Idle in local mode — no client created. */}
             <CloudSyncProvider>
-              {/* Respect OS "reduce motion" for every animation in the app. */}
-              <MotionConfig reducedMotion="user">
-                <RouterProvider router={router} future={{ v7_startTransition: true }} />
-              </MotionConfig>
+              {/* Podpisane URL-e zdjęć profilowych dla całego UI (tryb
+                  supabase); w trybie lokalnym mapy są puste i nic się nie
+                  zmienia. Wewnątrz OrgDataProvider (czyta snapshot). */}
+              <AvatarUrlsProvider>
+                {/* Respect OS "reduce motion" for every animation in the app. */}
+                <MotionConfig reducedMotion="user">
+                  <RouterProvider router={router} future={{ v7_startTransition: true }} />
+                </MotionConfig>
+              </AvatarUrlsProvider>
             </CloudSyncProvider>
           </OrgDataProvider>
         </SessionProvider>

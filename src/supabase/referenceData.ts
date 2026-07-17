@@ -41,6 +41,8 @@ export interface CloudProfile {
   /** Pola planera (migracja 20260717130000_profiles_planner_fields). */
   phone: string;
   avatar: string;
+  /** Ścieżka zdjęcia w buckecie `avatars` (profiles.avatar_path); brak/null = brak. */
+  avatarPath?: string | null;
   capacity: number;
   workDays: number[];
   workStartMinutes: number;
@@ -126,6 +128,7 @@ function toCloudProfile(row: Record<string, unknown>): CloudProfile {
     supervisorId: typeof supervisorId === 'string' && supervisorId !== '' ? supervisorId : null,
     phone: str(row.phone),
     avatar: str(row.avatar),
+    avatarPath: typeof row.avatar_path === 'string' && row.avatar_path !== '' ? row.avatar_path : null,
     capacity: toCapacity(row.capacity),
     workDays: toWorkDays(row.work_days),
     workStartMinutes: toMinutes(row.work_start_minutes, 480),
@@ -168,7 +171,7 @@ export async function loadOrgSnapshot(db: ReferenceDb, userId: string): Promise<
     await Promise.all([
       db.select(
         'profiles',
-        'id, first_name, last_name, email, role_title, access_role, department_id, supervisor_id, phone, avatar, capacity, work_days, work_start_minutes, work_end_minutes',
+        'id, first_name, last_name, email, role_title, access_role, department_id, supervisor_id, phone, avatar, avatar_path, capacity, work_days, work_start_minutes, work_end_minutes',
       ),
       db.select('departments', 'id, name'),
       db.select('statuses', 'id, name, slug, color, sort_order, archived, is_done'),

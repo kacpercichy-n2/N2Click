@@ -663,6 +663,10 @@ function AvatarPhotoSection({
                 {notice}
               </p>
             )}
+            <p className="field-hint">
+              Zdjęcie zapisuje się automatycznie po wybraniu pliku — bez
+              osobnego przycisku „Zapisz”. Będzie widoczne w całej aplikacji.
+            </p>
           </div>
         </div>
       )}

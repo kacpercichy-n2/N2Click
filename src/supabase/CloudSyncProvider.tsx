@@ -36,7 +36,7 @@ import {
   type CloudIdMaps,
   type CloudOp,
 } from './cloudMirror';
-import { buildCloudPeoplePayload } from './referenceData';
+import { buildCloudPeoplePayload, type OrgSnapshot } from './referenceData';
 
 export type CloudSyncStatus = 'idle' | 'hydrating' | 'ready' | 'error';
 
@@ -44,6 +44,8 @@ export interface CloudSyncValue {
   status: CloudSyncStatus;
   pendingCount: number;
   error: string | null;
+  /** Czy kanał Realtime jest zasubskrybowany — zmiany w bazie same odświeżają GUI. */
+  live: boolean;
   dropped: Array<{ label: string; message: string }>;
   /** Ponawia: hydrację (gdy błąd hydracji) albo kolejkę zapisów (błąd przejściowy). */
   retry: () => void;
@@ -108,7 +110,26 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   const statusRef = useRef<CloudSyncStatus>('idle');
   statusRef.current = status;
   const mountedRef = useRef(true);
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  // StrictMode symuluje odmontowanie i ponowny montaż: ciało efektu MUSI
+  // przywrócić `true`, inaczej po remoncie każda hydracja przerywa się na
+  // strażniku `!mountedRef.current` i synchronizacja nigdy nie startuje w dev.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // Żywa synchronizacja (Realtime): stan subskrypcji + debounce pełnej
+  // hydracji. Zdarzenie postgres_changes to wyłącznie sygnał „coś się
+  // zmieniło” — prawdą pozostaje autorytatywny snapshot (org + planer).
+  const [live, setLive] = useState(false);
+  const refreshingFromReadyRef = useRef(false);
+  const pendingLiveSyncRef = useRef(false);
+  const liveSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const liveSyncRef = useRef<() => void>(() => {});
+  const orgRefreshRef = useRef(org.refreshSilently);
+  orgRefreshRef.current = org.refreshSilently;
 
   const userId =
     auth.mode === 'supabase' && auth.state.status === 'signedIn'
@@ -158,34 +179,119 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       }
       // Kolejka opróżniona bez błędu: kopia do odzysku = stan potwierdzony chmurą.
       if (retiredRef.current) retryPersistRef.current();
+      // Zdarzenie Realtime odłożone na czas drenażu kolejki => dosynchronizuj.
+      if (pendingLiveSyncRef.current) {
+        pendingLiveSyncRef.current = false;
+        liveSyncRef.current();
+      }
     } finally {
       processingRef.current = false;
     }
   }, [getDb, setPending]);
 
-  const runHydration = useCallback(async () => {
-    if (auth.mode !== 'supabase' || !userId || org.state.status !== 'ready') return;
-    const snap = org.state.snapshot;
-    setStatus('hydrating');
-    setError(null);
-    const maps = buildCloudIdMaps(stateRef.current, snap);
-    mapsRef.current = maps;
-    const result = await loadPlannerSnapshot(getDb(), maps, stateRef.current);
-    if (!mountedRef.current) return;
-    if (!result.ok) {
-      setStatus('error');
-      setError(result.error);
+  const runHydration = useCallback(
+    async (overrideSnap?: OrgSnapshot) => {
+      const snap =
+        overrideSnap ?? (org.state.status === 'ready' ? org.state.snapshot : null);
+      if (auth.mode !== 'supabase' || !userId || !snap) return;
+      // Odświeżenie ze stanu 'ready' (ręczne lub Realtime): lustro ma już mapy,
+      // więc edycje wykonane w oknie hydracji dalej trafiają do kolejki zamiast
+      // być pochłaniane i nadpisywane autorytatywnym scaleniem.
+      refreshingFromReadyRef.current = statusRef.current === 'ready';
+      setStatus('hydrating');
+      setError(null);
+      const maps = buildCloudIdMaps(stateRef.current, snap);
+      mapsRef.current = maps;
+      try {
+        const result = await loadPlannerSnapshot(getDb(), maps, stateRef.current);
+        if (!mountedRef.current) return;
+        if (!result.ok) {
+          setStatus('error');
+          setError(result.error);
+          return;
+        }
+        if (import.meta.env.DEV && result.diagnostics.length > 0) {
+          console.warn('[cloud] Hydracja pominęła wiersze:', result.diagnostics);
+        }
+        // Autorytatywna hydracja: profile chmury jadą w TYM SAMYM ładunku, żeby
+        // reduktor scalił zespół PRZED walidacją encji (osoby bez lokalnej pary
+        // e-mailowej dostają wiersz o id profilu chmury w jednej atomowej akcji).
+        dispatch({
+          type: 'MERGE_CLOUD_ENTITIES',
+          payload: { ...result.payload, people: buildCloudPeoplePayload(snap.profiles) },
+        });
+        setStatus('ready');
+        // Edycje zakolejkowane w oknie hydracji: wypchnij od razu — pętla
+        // Realtime (nasz własny zapis => zdarzenie => hydracja) je uzgodni.
+        if (queueRef.current.length > 0) {
+          void processQueue();
+        } else if (pendingLiveSyncRef.current) {
+          // Zdarzenie Realtime nadeszło w trakcie tej hydracji => po commitcie
+          // (statusRef juz 'ready') dosynchronizuj z debounce.
+          pendingLiveSyncRef.current = false;
+          liveSyncRef.current();
+        }
+      } finally {
+        refreshingFromReadyRef.current = false;
+      }
+    },
+    [auth.mode, userId, org.state, dispatch, getDb, processQueue],
+  );
+
+  // Pełna żywa synchronizacja: cichy refetch snapshotu organizacji (zespół,
+  // słowniki, avatary) + autorytatywna hydracja planera. Odraczana, gdy trwa
+  // drenaż kolejki / hydracja — dokańczana z ogonów processQueue/runHydration.
+  const performLiveSync = useCallback(async () => {
+    if (!mountedRef.current || !active) return;
+    if (
+      processingRef.current ||
+      queueRef.current.length > 0 ||
+      statusRef.current !== 'ready'
+    ) {
+      pendingLiveSyncRef.current = true;
       return;
     }
-    // Autorytatywna hydracja: profile chmury jadą w TYM SAMYM ładunku, żeby
-    // reduktor scalił zespół PRZED walidacją encji (osoby bez lokalnej pary
-    // e-mailowej dostają wiersz o id profilu chmury w jednej atomowej akcji).
-    dispatch({
-      type: 'MERGE_CLOUD_ENTITIES',
-      payload: { ...result.payload, people: buildCloudPeoplePayload(snap.profiles) },
-    });
-    setStatus('ready');
-  }, [auth.mode, userId, org.state, dispatch, getDb]);
+    const snap = await orgRefreshRef.current();
+    if (!mountedRef.current) return;
+    await runHydration(snap ?? undefined);
+  }, [active, runHydration]);
+
+  const scheduleLiveSync = useCallback(() => {
+    if (liveSyncTimerRef.current !== null) clearTimeout(liveSyncTimerRef.current);
+    liveSyncTimerRef.current = setTimeout(() => {
+      liveSyncTimerRef.current = null;
+      void performLiveSync();
+    }, 1200);
+  }, [performLiveSync]);
+  liveSyncRef.current = scheduleLiveSync;
+
+  // Subskrypcja Realtime: jedno źródło zdarzeń postgres_changes dla wszystkich
+  // opublikowanych tabel (publikacja supabase_realtime; RLS obowiązuje).
+  // Zdarzenie => zaplanuj pełną synchronizację (debounce zlewa serie zmian).
+  useEffect(() => {
+    if (!active || !userId) {
+      setLive(false);
+      return;
+    }
+    const client = getSupabaseClient();
+    const channel = client
+      .channel(`planner-live-${userId}`)
+      .on('postgres_changes', { event: '*', schema: 'public' }, () => {
+        liveSyncRef.current();
+      })
+      .subscribe((subscribeStatus: string) => {
+        if (!mountedRef.current) return;
+        setLive(subscribeStatus === 'SUBSCRIBED');
+      });
+    return () => {
+      setLive(false);
+      if (liveSyncTimerRef.current !== null) {
+        clearTimeout(liveSyncTimerRef.current);
+        liveSyncTimerRef.current = null;
+      }
+      void client.removeChannel(channel);
+    };
+  }, [active, userId]);
 
   // Zbieżność zbuforowanego znacznika wycofania z decyzją organizacji
   // (app_settings). Błąd odczytu => zachowaj poprzednią zbuforowaną wartość.
@@ -201,13 +307,19 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!active) {
       hydratedUserRef.current = null;
-      queueRef.current = [];
       prevRef.current = stateRef.current;
+      // Kolejkę kasujemy TYLKO przy braku sesji (wylogowanie / zmiana konta).
+      // Chwilowy brak snapshotu przy tym samym użytkowniku (reload organizacji)
+      // nie może wyrzucić niezlustrzanych zapisów — zostają i wypchną się po
+      // ponownej aktywacji.
+      if (userId === null && queueRef.current.length > 0) {
+        queueRef.current = [];
+      }
       if (statusRef.current !== 'idle') {
         setStatus('idle');
         setError(null);
         setDropped([]);
-        setPending(0);
+        setPending(userId === null ? 0 : queueRef.current.length);
       }
       return;
     }
@@ -250,7 +362,12 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   // Lustro: diff prevRef -> state, kolejkowanie i wykonanie. Suppresja własnej
   // hydracji i operacji lokalnych (sample/reset/replace).
   useEffect(() => {
-    if (!active || hydratedUserRef.current !== userId || statusRef.current !== 'ready') {
+    const mirroring =
+      statusRef.current === 'ready' ||
+      // Okno odświeżania ze stanu 'ready': mapy istnieją, edycje użytkownika
+      // muszą trafić do kolejki, inaczej scalenie autorytatywne je nadpisze.
+      (statusRef.current === 'hydrating' && refreshingFromReadyRef.current);
+    if (!active || hydratedUserRef.current !== userId || !mirroring) {
       prevRef.current = state;
       return;
     }
@@ -284,7 +401,14 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(() => {
     if (queueRef.current.length > 0 || error !== null) return;
-    void runHydration();
+    // Ręczne odświeżenie = pełna żywa synchronizacja: najpierw cichy refetch
+    // organizacji (zespół/słowniki/avatary), potem hydracja planera na świeżym
+    // snapshocie — bez zrzucania org do 'loading' (kolejka i aktywność zostają).
+    void (async () => {
+      const snap = await orgRefreshRef.current();
+      if (!mountedRef.current) return;
+      await runHydration(snap ?? undefined);
+    })();
   }, [runHydration, error]);
 
   const dismissDropped = useCallback(() => setDropped([]), []);
@@ -299,6 +423,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       status,
       pendingCount,
       error,
+      live,
       dropped,
       retry,
       refresh,
@@ -306,7 +431,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       retired,
       applyRetirement,
     }),
-    [status, pendingCount, error, dropped, retry, refresh, dismissDropped, retired, applyRetirement],
+    [status, pendingCount, error, live, dropped, retry, refresh, dismissDropped, retired, applyRetirement],
   );
 
   return <CloudSyncContext.Provider value={value}>{children}</CloudSyncContext.Provider>;

@@ -15,6 +15,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { MyWorkPage } from './pages/MyWorkPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { ProjectDetailPage } from './pages/ProjectDetailPage';
+import { ClientsPage } from './pages/ClientsPage';
 import { KanbanPage } from './pages/KanbanPage';
 import { TimelinePage } from './pages/TimelinePage';
 import { TasksPage } from './pages/TasksPage';
@@ -54,6 +55,7 @@ import {
   LayoutDashboard,
   ClipboardList,
   FolderKanban,
+  Building2,
   Columns3,
   GanttChart,
   ListChecks,
@@ -82,6 +84,7 @@ const NAV: Array<[string, string, LucideIcon]> = [
   ['/dashboard', 'Panel', LayoutDashboard],
   ['/my-work', 'Moja praca', ClipboardList],
   ['/projects', 'Projekty', FolderKanban],
+  ['/clients', 'Klienci', Building2],
   ['/kanban', 'Kanban', Columns3],
   ['/timeline', 'Oś czasu', GanttChart],
   ['/tasks', 'Zadania', ListChecks],
@@ -485,6 +488,7 @@ export function App() {
             <Route path="/my-work" element={<MyWorkPage />} />
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/projects/:id" element={<ProjectDetailPage />} />
+            <Route path="/clients" element={<ClientsPage />} />
             <Route path="/kanban" element={<KanbanPage />} />
             <Route path="/timeline" element={<TimelinePage />} />
             <Route path="/tasks" element={<TasksPage />} />

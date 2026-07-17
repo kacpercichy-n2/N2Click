@@ -271,13 +271,17 @@ export function ProjectsPage() {
             </div>
             {clientId === '' && (
               <div className="field">
-                <label htmlFor="pr-new-client">Nazwa nowego klienta</label>
+                <label htmlFor="pr-new-client">Nazwa nowego klienta *</label>
                 <input
                   id="pr-new-client"
                   value={newClientName}
                   onChange={(e) => setNewClientName(e.target.value)}
                   placeholder="np. Acme Foods"
                 />
+                <p className="field-hint">
+                  Dane kontaktowe uzupełnisz w zakładce{' '}
+                  <Link to="/clients">Klienci</Link>.
+                </p>
               </div>
             )}
           </div>

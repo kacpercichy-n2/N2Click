@@ -203,6 +203,37 @@ describe('loadPlannerSnapshot', () => {
     expect(result.diagnostics.length).toBe(2);
   });
 
+  it('filtruje wiersze zależne od pominiętych encji — jedna sierota nie może zatruć całej hydracji', async () => {
+    // Zadanie ponad limitem 92 dni odpada; jego przypisanie, godziny i kamień
+    // pominiętego projektu też muszą odpaść, inaczej fail-closed
+    // MERGE_CLOUD_ENTITIES odrzuciłby CAŁY payload (trwały, cichy no-op).
+    const db = new FakeSelectDb()
+      .seed('projects', [
+        { id: PR, client_id: CLI, name: 'P', description: '', status_id: S1, paid: false, start_date: '2026-07-06', end_date: '2026-07-12', department_id: null, service_type_id: null, created_at: '', updated_at: '' },
+        { id: uuid('pr-bad'), client_id: null, name: 'Bez dat', description: '', status_id: null, paid: false, start_date: null, end_date: null, department_id: null, service_type_id: null, created_at: '', updated_at: '' },
+      ])
+      .seed('milestones', [
+        { id: uuid('ms-orphan'), project_id: uuid('pr-bad'), name: 'Sierota', milestone_date: '2026-07-10' },
+      ])
+      .seed('tasks', [
+        { id: TK, project_id: PR, status_id: S1, title: 'Za długie', description: '', start_date: '2026-01-01', end_date: '2026-12-31', estimated_hours: null, priority: 'normal', work_category_id: null, checklist: [], created_at: '', updated_at: '' },
+      ])
+      .seed('task_assignments', [{ task_id: TK, profile_id: CLOUD_PA }])
+      .seed('workload_entries', [
+        { id: uuid('wl-orphan'), task_id: TK, profile_id: CLOUD_PA, work_date: '2026-07-06', planned_hours: 2, start_minutes: 480, sort_index: 0 },
+      ]);
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const p = result.payload;
+    expect(p.projects).toHaveLength(1);
+    expect(p.tasks).toHaveLength(0);
+    expect(p.milestones).toHaveLength(0);
+    expect(p.assignments).toHaveLength(0);
+    expect(p.workload).toHaveLength(0);
+    expect(result.diagnostics.length).toBeGreaterThanOrEqual(4);
+  });
+
   it('fails atomically with the Polish error when any select errors', async () => {
     const db = new FakeSelectDb().fail('tasks');
     const result = await loadPlannerSnapshot(db, maps(), localFixture());
@@ -210,7 +241,16 @@ describe('loadPlannerSnapshot', () => {
   });
 
   it('maps workload (bin null<->"" + dated) and milestones, excluding invalid rows', async () => {
+    // Rodzice (projekt + zadanie) muszą przetrwać walidację — wiersze zależne
+    // wskazujące pominiętą encję są teraz filtrowane (patrz survivingProjectIds
+    // / survivingTaskIds w loadPlannerSnapshot).
     const db = new FakeSelectDb()
+      .seed('projects', [
+        { id: PR, client_id: CLI, name: 'P', description: '', status_id: S1, paid: false, start_date: '2026-07-06', end_date: '2026-07-12', department_id: null, service_type_id: null, created_at: '', updated_at: '' },
+      ])
+      .seed('tasks', [
+        { id: TK, project_id: PR, status_id: S1, title: 'T', description: '', start_date: '2026-07-06', end_date: '2026-07-08', estimated_hours: null, priority: 'normal', work_category_id: null, checklist: [], created_at: '', updated_at: '' },
+      ])
       .seed('milestones', [
         { id: uuid('ms1'), project_id: PR, name: 'Publikacja', milestone_date: '2026-07-10' },
         { id: uuid('ms-bad'), project_id: PR, name: 'Zła', milestone_date: '' }, // invalid -> excluded

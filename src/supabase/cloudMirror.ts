@@ -173,7 +173,15 @@ function resolveDept(value: string, map: Map<string, string>): string | null {
 }
 
 function clientRow(c: Client): Record<string, unknown> {
-  return { id: c.id, name: c.name, archived: c.archived };
+  return {
+    id: c.id,
+    name: c.name,
+    archived: c.archived,
+    contact_name: c.contactName ?? '',
+    contact_email: c.contactEmail ?? '',
+    contact_phone: c.contactPhone ?? '',
+    notes: c.notes ?? '',
+  };
 }
 
 function projectRow(

@@ -181,8 +181,10 @@ export type Action =
   | { type: 'STOP_IMPERSONATION' }
   | { type: 'SET_PASSWORD'; personId: string; passwordHash: string }
   | { type: 'LOGOUT' }
-  | { type: 'ADD_CLIENT'; name: string }
+  | { type: 'ADD_CLIENT'; name: string; contactName?: string; contactEmail?: string; contactPhone?: string; notes?: string }
   | { type: 'RENAME_CLIENT'; clientId: string; name: string }
+  | { type: 'SAVE_CLIENT'; clientId: string; name: string; contactName: string; contactEmail: string; contactPhone: string; notes: string }
+  | { type: 'SET_CLIENT_ARCHIVED'; clientId: string; archived: boolean }
   | { type: 'DELETE_CLIENT'; clientId: string }
   | { type: 'ADD_DEPARTMENT'; name: string }
   | { type: 'RENAME_DEPARTMENT'; departmentId: string; name: string }
@@ -1721,6 +1723,14 @@ function applyCloudPeople(
   if (!Array.isArray(payload) || !payload.every(isValidCloudPersonRow)) {
     return { ok: false, people: localPeople, changed: false };
   }
+  // FAIL-CLOSED na pusty zbiór: zalogowany użytkownik zawsze widzi (RLS) co
+  // najmniej własny profil, więc pusta chmura to anomalia (regresja RLS, błąd
+  // provisioning), nie prawda o zespole — bez tej bramki [] usuwałoby cały
+  // lokalny zespół i (przez people.length === 0) otwierało bramkę admina.
+  // Lustrzane z fail-close pustych słowników w mergeCloudDictionaries.
+  if (payload.length === 0 && localPeople.length > 0) {
+    return { ok: false, people: localPeople, changed: false };
+  }
 
   // Duplikaty e-maili w payloadzie: ostatni wygrywa (deterministycznie).
   const rowByEmail = new Map<string, CloudPersonMergeRow>();
@@ -2410,7 +2420,48 @@ export function reducer(state: AppData, action: Action): AppData {
       if (!name) return state;
       return {
         ...state,
-        clients: [...state.clients, { id: uid(), name, archived: false }],
+        clients: [
+          ...state.clients,
+          {
+            id: uid(),
+            name,
+            archived: false,
+            contactName: action.contactName?.trim() ?? '',
+            contactEmail: action.contactEmail?.trim() ?? '',
+            contactPhone: action.contactPhone?.trim() ?? '',
+            notes: action.notes?.trim() ?? '',
+          },
+        ],
+      };
+    }
+    case 'SAVE_CLIENT': {
+      // Jak RENAME_CLIENT: pusta nazwa i nieznane id odrzucone (invariant 6).
+      const name = action.name.trim();
+      if (!name || !state.clients.some((c) => c.id === action.clientId)) return state;
+      return {
+        ...state,
+        clients: state.clients.map((c) =>
+          c.id === action.clientId
+            ? {
+                ...c,
+                name,
+                contactName: action.contactName.trim(),
+                contactEmail: action.contactEmail.trim(),
+                contactPhone: action.contactPhone.trim(),
+                notes: action.notes.trim(),
+              }
+            : c,
+        ),
+      };
+    }
+    case 'SET_CLIENT_ARCHIVED': {
+      const client = state.clients.find((c) => c.id === action.clientId);
+      if (!client || client.archived === action.archived) return state;
+      return {
+        ...state,
+        clients: state.clients.map((c) =>
+          c.id === action.clientId ? { ...c, archived: action.archived } : c,
+        ),
       };
     }
     case 'RENAME_CLIENT': {
