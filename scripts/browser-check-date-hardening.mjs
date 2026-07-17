@@ -81,7 +81,7 @@ async function flowEmptyProjectDates(browser) {
     await page.locator('#pd-start').waitFor({ timeout: 10000 });
     await page.fill('#pd-start', '');
     await page.fill('#pd-end', '');
-    await page.getByRole('button', { name: 'Zapisz zmiany' }).click();
+    await page.getByRole('button', { name: 'Zapisz teraz' }).click();
     const err = page.locator('.field-error');
     await err.first().waitFor({ timeout: 5000 }).catch(() => {});
     const errText = (await err.first().textContent().catch(() => '')) || '';

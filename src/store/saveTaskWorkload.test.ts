@@ -483,3 +483,106 @@ describe('SAVE_TASK new-pair placement (PKG-20260713b-placement-tests)', () => {
     expect(newRow!.startMinutes).toBe(1320); // clampBlockStart(1440, 120) = 1440 - 120
   });
 });
+
+// ---- binTotals: absolutny cel zasobnika per osoba (przepływ „godziny
+// sprzedane”: suma osoby = szacunek; cel = sprzedane − kalendarz) -----------
+describe('SAVE_TASK binTotals — absolutny cel zasobnika', () => {
+  const keepAlloc = [
+    { personId: 'p1', date: D, plannedHours: 5 },
+    { personId: 'p1', date: D2, plannedHours: 2 },
+  ];
+
+  it('podnosi wiersz zasobnika do celu, zachowując jego id (invariant 4)', () => {
+    const { state, bin1 } = baselineState();
+    const next = reducer(state, {
+      type: 'SAVE_TASK',
+      payload: payloadFor({ allocations: keepAlloc, binTotals: [{ personId: 'p1', hours: 6.5 }] }),
+    });
+    const bins = next.workload.filter((w) => w.taskId === 't1' && w.date === BIN_DATE);
+    expect(bins).toHaveLength(1);
+    expect(bins[0].id).toBe(bin1.id);
+    expect(bins[0].plannedHours).toBe(6.5);
+  });
+
+  it('cel 0 usuwa wiersz zasobnika; dated bloki zostają', () => {
+    const { state } = baselineState();
+    const next = reducer(state, {
+      type: 'SAVE_TASK',
+      payload: payloadFor({ allocations: keepAlloc, binTotals: [{ personId: 'p1', hours: 0 }] }),
+    });
+    expect(next.workload.some((w) => w.taskId === 't1' && w.date === BIN_DATE)).toBe(false);
+    expect(next.workload.filter((w) => w.taskId === 't1' && w.date !== BIN_DATE)).toHaveLength(3);
+  });
+
+  it('cel > 0 bez istniejącego wiersza tworzy dokładnie jeden świeży wiersz', () => {
+    const { state, bin1 } = baselineState();
+    const noBin = { ...state, workload: state.workload.filter((w) => w.id !== bin1.id) };
+    const next = reducer(noBin, {
+      type: 'SAVE_TASK',
+      payload: payloadFor({ allocations: keepAlloc, binTotals: [{ personId: 'p1', hours: 3 }] }),
+    });
+    const bins = next.workload.filter((w) => w.taskId === 't1' && w.date === BIN_DATE);
+    expect(bins).toHaveLength(1);
+    expect(bins[0].plannedHours).toBe(3);
+    expect(bins[0].startMinutes).toBe(0);
+  });
+
+  it('duplikaty pary w stanie zwijają się do jednego wiersza z celem (obrona invariantu 4)', () => {
+    const { state } = baselineState();
+    const dup = makeEntry({ id: 'bin-dup', taskId: 't1', personId: 'p1', date: BIN_DATE, plannedHours: 1, startMinutes: 0, sortIndex: 1 });
+    const withDup = { ...state, workload: [...state.workload, dup] };
+    const next = reducer(withDup, {
+      type: 'SAVE_TASK',
+      payload: payloadFor({ allocations: keepAlloc, binTotals: [{ personId: 'p1', hours: 2 }] }),
+    });
+    const bins = next.workload.filter((w) => w.taskId === 't1' && w.date === BIN_DATE);
+    expect(bins).toHaveLength(1);
+    expect(bins[0].plannedHours).toBe(2);
+  });
+
+  it('ujemne/nieskończone godziny w binTotals odrzucają cały zapis (ta sama referencja)', () => {
+    const { state } = baselineState();
+    for (const hours of [-1, Number.POSITIVE_INFINITY, Number.NaN]) {
+      expect(
+        reducer(state, {
+          type: 'SAVE_TASK',
+          payload: payloadFor({ allocations: keepAlloc, binTotals: [{ personId: 'p1', hours }] }),
+        }),
+      ).toBe(state);
+    }
+  });
+
+  it('kolejne zapisy edycji SCALAJĄ wpis aktywności (auto-zapis nie spamuje dziennika)', () => {
+    const { state } = baselineState();
+    const save = (s: AppData) =>
+      reducer(s, { type: 'SAVE_TASK', payload: payloadFor({ allocations: keepAlloc }) });
+    const once = save(state);
+    const twice = save(once);
+    const updates = twice.activity.filter(
+      (a) => a.entityType === 'task' && a.entityId === 't1' && a.message === 'zaktualizował(a) zadanie',
+    );
+    expect(updates).toHaveLength(1);
+  });
+});
+
+describe('SAVE_TASK binTotals przy tworzeniu zadania', () => {
+  it('nowe zadanie: cel > 0 tworzy wiersz zasobnika, szacunek niesie draft', () => {
+    const state = makeState();
+    const next = reducer(state, {
+      type: 'SAVE_TASK',
+      payload: {
+        taskId: null,
+        draft: { ...draftFor(TASK), estimatedHours: 5 },
+        assigneeIds: ['p1'],
+        allocations: [],
+        binTotals: [{ personId: 'p1', hours: 5 }],
+      },
+    });
+    expect(next.tasks).toHaveLength(1);
+    expect(next.tasks[0].estimatedHours).toBe(5);
+    const bins = next.workload.filter((w) => w.taskId === next.tasks[0].id && w.date === BIN_DATE);
+    expect(bins).toHaveLength(1);
+    expect(bins[0].plannedHours).toBe(5);
+    expect(bins[0].personId).toBe('p1');
+  });
+});

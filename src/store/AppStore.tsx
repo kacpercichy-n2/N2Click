@@ -149,6 +149,11 @@ export interface SaveTaskPayload {
   // Extra dateless hours to append to the bin (per person). Existing bin
   // entries pass through untouched; these are added on top.
   newUnassigned?: Array<{ personId: string; hours: number }>;
+  // ABSOLUTNY cel zasobnika per osoba (godziny bez terminu po zapisie).
+  // Wiersz zasobnika zachowuje tożsamość (invariant 4); cel 0 usuwa wiersz,
+  // brak wiersza przy celu > 0 tworzy dokładnie jeden. Osoby spoza listy
+  // przechodzą bez zmian. Stosowane PO newUnassigned (nadpisuje jego wynik).
+  binTotals?: Array<{ personId: string; hours: number }>;
 }
 
 export interface InsertBlockPayload {
@@ -251,15 +256,34 @@ function withActivity(
   entityId: string,
   message: string,
   as?: { actorId: string; impersonatorId: string },
+  options?: { collapse?: boolean },
 ): ActivityEvent[] {
+  const actorId = as ? as.actorId : state.currentUserId;
+  const impersonatorId = as ? as.impersonatorId : state.impersonatorId;
+  // collapse: identyczny wpis (encja+treść+aktor) bezpośrednio na końcu listy
+  // dostaje świeży znacznik czasu zamiast duplikatu — auto-zapis nie zaśmieca
+  // dziennika serią „zaktualizował(a)”.
+  if (options?.collapse) {
+    const last = state.activity[state.activity.length - 1];
+    if (
+      last &&
+      last.entityType === entityType &&
+      last.entityId === entityId &&
+      last.message === message &&
+      last.actorId === actorId &&
+      last.impersonatorId === impersonatorId
+    ) {
+      return [...state.activity.slice(0, -1), { ...last, createdAt: nowIso() }];
+    }
+  }
   return [
     ...state.activity,
     {
       id: uid(),
       entityType,
       entityId,
-      actorId: as ? as.actorId : state.currentUserId,
-      impersonatorId: as ? as.impersonatorId : state.impersonatorId,
+      actorId,
+      impersonatorId,
       message,
       createdAt: nowIso(),
     },
@@ -340,6 +364,9 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
         cell.plannedHours > 24,
     ) ||
     (payload.newUnassigned ?? []).some(
+      (item) => !Number.isFinite(item.hours) || item.hours < 0,
+    ) ||
+    (payload.binTotals ?? []).some(
       (item) => !Number.isFinite(item.hours) || item.hours < 0,
     )
   ) {
@@ -584,6 +611,47 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
     });
   }
 
+  // Absolutne cele zasobnika (przepływ „godziny sprzedane per osoba”):
+  // rekoncyliacja DO celu po ścieżce addytywnej. Pierwszy wiersz osoby
+  // zachowuje tożsamość i przyjmuje cel; duplikaty pary (obrona invariantu 4)
+  // i wiersze wyzerowanego celu odpadają; cel > 0 bez wiersza => jeden świeży.
+  const targetByPersonQ = new Map<string, number>();
+  for (const item of payload.binTotals ?? []) {
+    if (!assignedSet.has(item.personId)) continue;
+    targetByPersonQ.set(item.personId, Math.round(snapHours(item.hours) / HOURS_STEP));
+  }
+  let binAfterTargets = [...mergedTaskBinKept, ...newBinEntries];
+  if (targetByPersonQ.size > 0) {
+    const seenBinPerson = new Set<string>();
+    const reconciled: WorkloadEntry[] = [];
+    for (const w of binAfterTargets) {
+      const targetQ = targetByPersonQ.get(w.personId);
+      if (targetQ === undefined) {
+        reconciled.push(w);
+        continue;
+      }
+      if (seenBinPerson.has(w.personId)) continue; // duplikat pary — odpada
+      seenBinPerson.add(w.personId);
+      if (targetQ <= 0) continue; // cel 0 => wiersz usunięty
+      const hours = targetQ * HOURS_STEP;
+      reconciled.push(w.plannedHours === hours ? w : { ...w, plannedHours: hours });
+    }
+    for (const [personId, targetQ] of targetByPersonQ) {
+      if (seenBinPerson.has(personId) || targetQ <= 0) continue;
+      const accumulated = [...workloadOther, ...reconciled, ...workloadForTask];
+      reconciled.push({
+        id: uid(),
+        taskId: realTaskId,
+        personId,
+        date: BIN_DATE,
+        plannedHours: targetQ * HOURS_STEP,
+        startMinutes: 0,
+        sortIndex: nextSortIndex(accumulated, personId, BIN_DATE),
+      });
+    }
+    binAfterTargets = reconciled;
+  }
+
   return {
     ...state,
     tasks,
@@ -591,7 +659,7 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
     // Reindex only the touched dated pairs; untouched pairs' rows (and all bin
     // rows) come out byte-identical.
     workload: reindexDays(
-      [...workloadOther, ...mergedTaskBinKept, ...workloadForTask, ...newBinEntries],
+      [...workloadOther, ...binAfterTargets, ...workloadForTask],
       touched,
     ),
     activity: withActivity(
@@ -599,6 +667,10 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
       'task',
       realTaskId,
       created ? 'utworzył(a) zadanie' : 'zaktualizował(a) zadanie',
+      undefined,
+      // Auto-zapis zapisuje często: kolejne identyczne „zaktualizował(a)” tego
+      // samego aktora scala się w jeden wpis (świeży znacznik czasu).
+      { collapse: !created },
     ),
   };
 }
@@ -731,7 +803,9 @@ function saveProject(
     projects: state.projects.map((p) =>
       p.id === projectId ? { ...p, ...resolved, updatedAt: ts } : p,
     ),
-    activity: withActivity(state, 'project', projectId, 'zaktualizował(a) projekt'),
+    activity: withActivity(state, 'project', projectId, 'zaktualizował(a) projekt', undefined, {
+      collapse: true, // auto-zapis: seria edycji = jeden wpis
+    }),
   };
 }
 

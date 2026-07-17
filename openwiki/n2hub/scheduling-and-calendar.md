@@ -16,6 +16,14 @@
   Intentional TaskModal allocation edits may overlap and render side-by-side.
 - Bin work uses exactly one row per `(taskId, personId)`. `SCHEDULE_BIN_PART`
   keeps that row identity, decrements it atomically and removes it only at zero.
+- Sold-hours model (2026-07-17): TaskModal edits per-person TOTAL hours
+  (`binTotals` in SAVE_TASK — absolute bin target per person, row identity
+  kept, 0 removes the row); `task.estimatedHours` is the SUM of per-person
+  hours, and the bin is derived (sold − calendar). Zeroing/shrinking a grid
+  cell RETURNS hours to the person's bin (the sold total is the contract);
+  growing a cell consumes the bin. TaskModal auto-saves valid edited drafts
+  (debounced ~0.9 s; paused during an explicit tab conflict; creation stays
+  manual).
 - Bin drag is window-owned: preserve its pointer-up/cancel/blur/Escape/visibility
   cleanup, synchronous refs and rendered-column hit-testing.
 - Automatic placement uses a real free-slot search and rejects when no slot fits;

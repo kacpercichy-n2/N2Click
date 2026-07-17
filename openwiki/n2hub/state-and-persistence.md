@@ -49,9 +49,17 @@
   made during a ready-state rehydration keep queueing (maps exist) and are
   pushed right after the merge.
 - `Client` carries optional contact fields (contactName/contactEmail/
-  contactPhone/notes; columns from 20260718090000_clients_contact_fields, '' =
-  none, repaired by `normalizeClientContacts`), edited on the `/clients` page
-  via `SAVE_CLIENT`/`SET_CLIENT_ARCHIVED`.
+  contactPhone/notes; columns from 20260718090000_clients_contact_fields, '' or
+  missing = none — no repair pass, use-sites coalesce), edited on the
+  `/clients` page via `SAVE_CLIENT`/`SET_CLIENT_ARCHIVED`.
+- AUTO-SAVE (2026-07-17): clients (edit form), ProjectDetailPage and TaskModal
+  (existing tasks) auto-commit VALID dirty drafts after ~0.9 s idle
+  (`src/utils/useAutoSave.ts`); invalid drafts wait for the inline fix and an
+  explicit tab conflict pauses auto-save (resolution stays the banner's
+  decision). `withActivity` collapses consecutive identical update entries
+  (same entity+message+actor) so auto-save cannot spam the activity log.
+  SAVE_TASK accepts `binTotals` — see the scheduling page for the sold-hours
+  model.
 - Retirement gate (supabase mode only). After an admin runs the reversible
   handshake in `MigrationStatusPanel` (coverage clean → snapshot read → probe
   write/read/remove → backup downloaded), the org flag `local_writes_retired`

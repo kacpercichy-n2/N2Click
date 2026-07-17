@@ -28,6 +28,8 @@ import { ChevronRight } from '../components/icons';
 import { formatShort, todayStr, isValidDateStr, periodError, PERIOD_ERROR_LABELS } from '../utils/dates';
 import { formatDuration } from '../utils/time';
 import { useSaveStatus } from '../utils/useSaveStatus';
+import { useAutoSave } from '../utils/useAutoSave';
+import { isValidProjectDraft } from '../store/commandValidation';
 import {
   bypassNavGuardOnce,
   clearNavGuard,
@@ -92,7 +94,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
       departmentId !== project.departmentId ||
       serviceTypeId !== project.serviceTypeId
     : false;
-  const { saveError } = usePersistence();
+  const { saveError, external } = usePersistence();
   const { status, markSaved } = useSaveStatus(dirty, saveError !== null);
 
   // Register the dirty draft with the router navigation guard so leaving the
@@ -105,21 +107,10 @@ function ProjectDetail({ projectId }: { projectId: string }) {
     return () => clearNavGuard(key);
   }, [dirty]);
 
-  // Deleted mid-render (e.g. right after the delete dispatch, before the route
-  // change lands): render nothing for that frame.
-  if (!project) return null;
-
-  const tasks = tasksOfProject(state, project.id).sort((a, b) =>
-    a.startDate.localeCompare(b.startDate),
-  );
-  const milestones = milestonesOfProject(state, project.id);
-  const statuses = activeStatuses(state);
-  const currentStatus = getStatus(state, project.statusId);
-  // Archived current status must remain pickable so the select isn't lying.
-  const pickableStatuses =
-    currentStatus && currentStatus.archived ? [...statuses, currentStatus] : statuses;
-
+  // Zapis (przycisk + auto-zapis). Zdefiniowany PRZED wczesnym returnem, żeby
+  // hook auto-zapisu miał stałą kolejność hooków.
   const save = () => {
+    if (!project) return;
     const trimmed = name.trim();
     if (!trimmed) {
       setError('Nazwa projektu jest wymagana');
@@ -150,6 +141,59 @@ function ProjectDetail({ projectId }: { projectId: string }) {
     setError('');
     markSaved();
   };
+
+  // Ten sam zestaw bramek co reduktor SAVE_PROJECT — niepoprawny draft czeka
+  // na poprawkę (walidacja inline), nigdy nie zapisuje się w tle.
+  const autoSaveValid = project
+    ? periodError(startDate, endDate) === null &&
+      isValidProjectDraft(
+        state,
+        {
+          clientId,
+          name,
+          description,
+          statusId,
+          paid: project.paid,
+          startDate,
+          endDate,
+          departmentId,
+          serviceTypeId,
+        },
+        project,
+      )
+    : false;
+  useAutoSave({
+    // Jawny konflikt kart wstrzymuje auto-zapis: cichy zapis w tle byłby
+    // niejawnym „zostaw moją wersję” — o tym decyduje użytkownik w banerze.
+    enabled: canManage && Boolean(project) && external !== 'conflict',
+    dirty,
+    valid: autoSaveValid,
+    signature: JSON.stringify([
+      name,
+      description,
+      clientId,
+      statusId,
+      startDate,
+      endDate,
+      departmentId,
+      serviceTypeId,
+    ]),
+    save,
+  });
+
+  // Deleted mid-render (e.g. right after the delete dispatch, before the route
+  // change lands): render nothing for that frame.
+  if (!project) return null;
+
+  const tasks = tasksOfProject(state, project.id).sort((a, b) =>
+    a.startDate.localeCompare(b.startDate),
+  );
+  const milestones = milestonesOfProject(state, project.id);
+  const statuses = activeStatuses(state);
+  const currentStatus = getStatus(state, project.statusId);
+  // Archived current status must remain pickable so the select isn't lying.
+  const pickableStatuses =
+    currentStatus && currentStatus.archived ? [...statuses, currentStatus] : statuses;
 
   const togglePaid = () =>
     dispatch({ type: 'SET_PROJECT_PAID', projectId: project.id, paid: !project.paid });
@@ -346,9 +390,12 @@ function ProjectDetail({ projectId }: { projectId: string }) {
         </div>
         {error && <p className="field-error">{error}</p>}
         {(dirty || status !== 'clean') && (
-          <div className="editor-actions">
+          <div className="editor-actions editor-actions-sticky">
+            <span className="field-hint autosave-hint" role="status">
+              Zmiany zapisują się automatycznie.
+            </span>
             <button type="button" className="btn primary" onClick={save} disabled={!dirty}>
-              Zapisz zmiany
+              Zapisz teraz
             </button>
           </div>
         )}

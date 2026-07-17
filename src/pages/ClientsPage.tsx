@@ -4,10 +4,11 @@
 // nawigację (jak Projekty).
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useStore } from '../store/AppStore';
+import { usePersistence, useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import type { Client } from '../types';
 import { ChevronRight, Plus } from '../components/icons';
+import { useAutoSave } from '../utils/useAutoSave';
 
 function polishCount(n: number, one: string, few: string, many: string): string {
   const mod10 = n % 10;
@@ -102,6 +103,7 @@ function ContactFields({
 
 export function ClientsPage() {
   const { state, dispatch } = useStore();
+  const { external } = usePersistence();
   const canManage = useCan()('clients.manage');
 
   const [creating, setCreating] = useState(false);
@@ -154,12 +156,8 @@ export function ClientsPage() {
     setEditError('');
   };
 
-  const submitEdit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editDraft.name.trim()) {
-      setEditError('Nazwa klienta jest wymagana');
-      return;
-    }
+  const commitEdit = () => {
+    if (editingId === '' || !editDraft.name.trim()) return;
     dispatch({
       type: 'SAVE_CLIENT',
       clientId: editingId,
@@ -169,6 +167,38 @@ export function ClientsPage() {
       contactPhone: editDraft.contactPhone,
       notes: editDraft.notes,
     });
+  };
+
+  // Auto-zapis edycji: ważny draft (niepusta nazwa) zapisuje się w tle po
+  // pauzie w pisaniu; przycisk „Zamknij” tylko zwija formularz.
+  const editedClient = state.clients.find((c) => c.id === editingId);
+  const editDirty =
+    editedClient !== undefined &&
+    JSON.stringify(draftOf(editedClient)) !==
+      JSON.stringify({
+        ...editDraft,
+        name: editDraft.name.trim(),
+        contactName: editDraft.contactName.trim(),
+        contactEmail: editDraft.contactEmail.trim(),
+        contactPhone: editDraft.contactPhone.trim(),
+        notes: editDraft.notes.trim(),
+      });
+  useAutoSave({
+    // Jawny konflikt kart wstrzymuje auto-zapis (decyzja należy do banera).
+    enabled: canManage && editingId !== '' && external !== 'conflict',
+    dirty: editDirty,
+    valid: editDraft.name.trim() !== '',
+    signature: JSON.stringify(editDraft),
+    save: commitEdit,
+  });
+
+  const submitEdit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editDraft.name.trim()) {
+      setEditError('Nazwa klienta jest wymagana');
+      return;
+    }
+    commitEdit();
     setEditingId('');
   };
 
@@ -287,11 +317,11 @@ export function ClientsPage() {
                       </p>
                     )}
                     <div className="form-actions">
+                      <span className="field-hint autosave-hint" role="status">
+                        Zmiany zapisują się automatycznie.
+                      </span>
                       <button type="submit" className="btn primary">
-                        Zapisz
-                      </button>
-                      <button type="button" className="btn ghost" onClick={() => setEditingId('')}>
-                        Anuluj
+                        Zamknij
                       </button>
                     </div>
                   </form>

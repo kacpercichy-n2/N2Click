@@ -290,6 +290,10 @@ async function flowTabSync(browser) {
     );
     lastKnownRevision = revAfterAccept;
     await pageB.screenshot({ path: `${SHOTS}/${ENGINE}-c2-accepted.png` });
+    // Auto-zapis: po rozwiązaniu konfliktu brudny szkic dosave'owałby się w tle
+    // (zamierzone zachowanie produktu). Przywróć czysty szkic, żeby kolejne
+    // kroki testu startowały bez tykającego timera.
+    await nameInputB.fill(projectName);
 
     // ============================================================
     // (d) conflict -> keep local
@@ -343,9 +347,11 @@ async function flowTabSync(browser) {
     await pageA.screenshot({ path: `${SHOTS}/${ENGINE}-d3-pageA-reverted.png` });
     await infoBannerA.locator('button', { hasText: 'OK' }).click();
 
-    // pageB's own leftover dirty name draft plays no further part in the
-    // flow — pageB isn't touched again below, so it's left as-is rather than
-    // navigated away (which would just discard it via the same-page confirm).
+    // Auto-zapis: brudny szkic na B dosave'owałby się w tle po konflikcie —
+    // przywróć czysty szkic (nazwa ze store po keep-local = projectName),
+    // żeby flow (e) startował z przewidywalnym stanem magazynu.
+    await nameInputB.fill(projectName);
+    await pageB.waitForTimeout(150);
 
     // ============================================================
     // (e) failed write — no false "Zapisano"
@@ -360,7 +366,7 @@ async function flowTabSync(browser) {
 
     const editedName = `${originalName} (edytowano)`;
     await nameInput.fill(editedName);
-    const saveBtn = pageA.locator('.editor-actions .btn.primary', { hasText: 'Zapisz zmiany' });
+    const saveBtn = pageA.locator('.editor-actions .btn.primary', { hasText: 'Zapisz teraz' });
     await saveBtn.waitFor({ state: 'visible', timeout: 5000 });
     await saveBtn.click();
 

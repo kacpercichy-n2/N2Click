@@ -35,6 +35,8 @@ import {
   MAX_TASK_PERIOD_DAYS,
 } from '../utils/dates';
 import { useSaveStatus } from '../utils/useSaveStatus';
+import { useAutoSave } from '../utils/useAutoSave';
+import { hasEntity, isValidTaskDraft } from '../store/commandValidation';
 import {
   bypassNavGuardOnce,
   clearNavGuard,
@@ -269,7 +271,6 @@ function serializeDraft(v: {
   description: string;
   projectId: string;
   statusId: string;
-  estimatedRaw: string;
   priority: TaskPriority;
   workCategoryId: string;
   checklist: ChecklistItem[];
@@ -277,14 +278,13 @@ function serializeDraft(v: {
   endDate: string;
   assigneeIds: string[];
   allocations: AllocMap;
-  pendingUnassigned: Array<{ personId: string; hours: number }>;
+  soldRawByPerson: Record<string, string>;
 }): string {
   return JSON.stringify({
     title: v.title,
     description: v.description,
     projectId: v.projectId,
     statusId: v.statusId,
-    estimatedRaw: v.estimatedRaw,
     priority: v.priority,
     workCategoryId: v.workCategoryId,
     // Order-sensitive: item identity + text + done state all participate in dirty.
@@ -295,7 +295,11 @@ function serializeDraft(v: {
     allocations: Object.entries(v.allocations)
       .filter(([, h]) => h > 0)
       .sort(([a], [b]) => a.localeCompare(b)),
-    pendingUnassigned: v.pendingUnassigned.map((u) => [u.personId, u.hours]),
+    // Godziny sprzedane per osoba — tylko aktualnie przypisani (odpięcie osoby
+    // nie zostawia widma w dirty-detekcji).
+    sold: v.assigneeIds
+      .map((pid) => [pid, (v.soldRawByPerson[pid] ?? '').trim()] as const)
+      .sort(([a], [b]) => a.localeCompare(b)),
   });
 }
 
@@ -309,6 +313,7 @@ function TaskEditor({
   markSaved,
 }: EditorProps) {
   const { state, dispatch } = useStore();
+  const { external } = usePersistence();
   const canManage = useCan()('tasks.manage');
   const readOnly = !canManage;
   const roTitle = readOnly ? NO_PERM_TITLE : undefined;
@@ -330,9 +335,6 @@ function TaskEditor({
   );
   const [statusId, setStatusId] = useState(
     existing?.statusId ?? statuses[0]?.id ?? state.statuses[0]?.id ?? '',
-  );
-  const [estimatedRaw, setEstimatedRaw] = useState(
-    existing?.estimatedHours != null ? String(existing.estimatedHours) : '',
   );
   const [priority, setPriority] = useState<TaskPriority>(existing?.priority ?? 'normal');
   const [workCategoryId, setWorkCategoryId] = useState<string>(existing?.workCategoryId ?? '');
@@ -382,12 +384,25 @@ function TaskEditor({
     return counts;
   }, [state.workload, existing]);
 
-  // ---- Bin (zasobnik): hours queued to be appended as dateless blocks ----
-  const [pendingUnassigned, setPendingUnassigned] = useState<
-    Array<{ personId: string; hours: number }>
-  >([]);
-  const [binPersonId, setBinPersonId] = useState('');
-  const [binHoursRaw, setBinHoursRaw] = useState('1');
+  // ---- Godziny sprzedane per osoba (personId -> surowy tekst pola) ----
+  // Suma tych godzin JEST szacunkiem zadania; różnica ponad zaplanowane w
+  // kalendarzu ląduje automatycznie w zasobniku osoby (binTotals w SAVE_TASK).
+  // Seed: łączne godziny osoby na zadaniu (kalendarz + zasobnik).
+  const [soldRawByPerson, setSoldRawByPerson] = useState<Record<string, string>>(() => {
+    const map: Record<string, string> = {};
+    if (existing) {
+      const totals = new Map<string, number>();
+      for (const w of state.workload) {
+        if (w.taskId !== existing.id) continue;
+        totals.set(w.personId, (totals.get(w.personId) ?? 0) + w.plannedHours);
+      }
+      for (const pid of assigneeIdsOfTask(state, existing.id)) {
+        const t = totals.get(pid) ?? 0;
+        map[pid] = t > 0 ? String(t) : '';
+      }
+    }
+    return map;
+  });
 
   const [titleTouched, setTitleTouched] = useState(false);
 
@@ -433,7 +448,6 @@ function TaskEditor({
     description,
     projectId,
     statusId,
-    estimatedRaw,
     priority,
     workCategoryId,
     checklist,
@@ -441,7 +455,7 @@ function TaskEditor({
     endDate,
     assigneeIds,
     allocations,
-    pendingUnassigned,
+    soldRawByPerson,
   });
   const snapshotRef = useRef<string | null>(null);
   if (snapshotRef.current === null) snapshotRef.current = currentSerialized;
@@ -501,20 +515,18 @@ function TaskEditor({
       const datedOnThisTask = Object.entries(allocations)
         .filter(([key, h]) => h > 0 && key.startsWith(`${personId}|`))
         .reduce((s, [, h]) => s + h, 0);
-      // Bin hours saveTask would silently drop when the person is unassigned:
-      // existing dateless entries + any pending (unsaved) additions.
+      // Bin hours saveTask drops when the person is unassigned.
       const existingBinForPerson = existing
         ? binEntriesForTask(state, existing.id)
             .filter((w) => w.personId === personId)
             .reduce((s, w) => s + w.plannedHours, 0)
         : 0;
-      const pendingBinForPerson = pendingUnassigned
-        .filter((u) => u.personId === personId && u.hours > 0)
-        .reduce((s, u) => s + u.hours, 0);
-      const binForPerson = existingBinForPerson + pendingBinForPerson;
-      const droppedTotal = datedOnThisTask + binForPerson;
+      const droppedTotal = datedOnThisTask + existingBinForPerson;
       if (droppedTotal > 0) {
-        const binSuffix = binForPerson > 0 ? ` (w tym ${formatDuration(binForPerson)} w zasobniku)` : '';
+        const binSuffix =
+          existingBinForPerson > 0
+            ? ` (w tym ${formatDuration(existingBinForPerson)} w zasobniku)`
+            : '';
         const ok = window.confirm(
           `Usunąć ${person?.name ?? 'tę osobę'} oraz ${formatDuration(
             droppedTotal,
@@ -530,29 +542,17 @@ function TaskEditor({
         }
         return next;
       });
-      // Drop this person's queued bin chips too (saveTask would ignore them).
-      setPendingUnassigned((prev) => prev.filter((u) => u.personId !== personId));
-      // Reset the bin person selector if it still points at the removed person —
-      // otherwise its state keeps a stale id (the select renders the first
-      // option while its value diverges) and addBinHours would queue hours for
-      // an unassigned person that saveTask then silently drops.
-      setBinPersonId((prev) => (prev === personId ? '' : prev));
+      setSoldRawByPerson((prev) => {
+        const next = { ...prev };
+        delete next[personId];
+        return next;
+      });
     } else {
       setAssigneeIds((prev) => [...prev, personId]);
     }
   };
 
   const projectError = projectId === '' || !state.projects.some((p) => p.id === projectId);
-
-  // Normalize the estimate ONCE and reuse it for save, the over-budget banner,
-  // and the display so they can never disagree. Snap to a 0.25 step first (no
-  // clamp — a 40h estimate stays 40h), then clear to null when the input is
-  // empty, invalid, or non-positive AFTER snapping (so e.g. 0.1 snaps to 0 and
-  // clears, instead of persisting a 0-budget task that blocks all calendar
-  // inserts/grows).
-  const estParsed = estimatedRaw.trim() === '' ? NaN : Number(estimatedRaw);
-  const estSnapped = Number.isNaN(estParsed) ? NaN : snapHours(estParsed);
-  const normalizedEstimate = Number.isNaN(estSnapped) || estSnapped <= 0 ? null : estSnapped;
 
   // Grid cells SAVE_TASK will actually persist: in-period days for currently
   // assigned people only. The header total, over-budget banner and planning
@@ -574,92 +574,113 @@ function TaskEditor({
 
   const plannedTotalAll = plannedCells.reduce((s, c) => s + c.plannedHours, 0);
 
-  const handleSave = () => {
-    setTitleTouched(true);
-    if (titleError) return;
-    if (!periodValid) return;
-    if (projectError) return;
+  // ---- Godziny sprzedane => szacunek + cele zasobnika --------------------
+  // Wartość pola osoby (snap 0,25h; puste/niepoprawne => 0). SUMA tych godzin
+  // jest szacunkiem zadania (null przy 0 — brak szacunku). Cel zasobnika osoby
+  // = sprzedane − zaplanowane w kalendarzu (nigdy poniżej zera): planowanie w
+  // kalendarzu automatycznie "zjada" zasobnik, suma osoby zostaje stała.
+  const soldByPerson = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const pid of assigneeIds) {
+      const raw = (soldRawByPerson[pid] ?? '').trim();
+      const parsed = raw === '' ? 0 : Number(raw);
+      map.set(pid, Number.isFinite(parsed) && parsed > 0 ? snapHours(parsed) : 0);
+    }
+    return map;
+  }, [assigneeIds, soldRawByPerson]);
+  const soldTotal = [...soldByPerson.values()].reduce((s, h) => s + h, 0);
+  const normalizedEstimate = soldTotal > 0 ? soldTotal : null;
 
-    const draft: TaskDraft = {
-      projectId,
-      statusId,
-      title: title.trim(),
-      description: description.trim(),
-      startDate,
-      endDate,
-      estimatedHours: normalizedEstimate,
-      priority,
-      workCategoryId,
-      checklist,
-    };
+  const datedByPerson = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const c of plannedCells) {
+      map.set(c.personId, (map.get(c.personId) ?? 0) + c.plannedHours);
+    }
+    return map;
+  }, [plannedCells]);
+
+  const binTargets = useMemo(
+    () =>
+      assigneeIds.map((personId) => ({
+        personId,
+        hours: Math.max(
+          0,
+          snapHours((soldByPerson.get(personId) ?? 0) - (datedByPerson.get(personId) ?? 0)),
+        ),
+      })),
+    [assigneeIds, soldByPerson, datedByPerson],
+  );
+  const binTotal = binTargets.reduce((s, b) => s + b.hours, 0);
+
+  // Kalendarz ponad sprzedane: zasobnik jest już pusty, a suma osoby rośnie
+  // ponad wpisaną — ostrzeżenie zamiast dawnego "przekroczono szacunek".
+  const overBudget = soldTotal > 0 && plannedTotalAll > soldTotal + 1e-9;
+
+  // Poprzedni ręczny szacunek (sprzed przejścia na sumę godzin osób) — pokazany
+  // raz jako kontekst, gdy różni się od wyliczonej sumy przy otwarciu.
+  const legacyEstimateRef = useRef<number | null>(existing?.estimatedHours ?? null);
+  const legacyEstimate = legacyEstimateRef.current;
+
+  // ---- Ważność draftu (te same bramki co reduktor — fałszywe „Zapisano” jest
+  // niemożliwe: zapis pada tylko, gdy SAVE_TASK go przyjmie) ----
+  const draftForSave: TaskDraft = {
+    projectId,
+    statusId,
+    title: title.trim(),
+    description: description.trim(),
+    startDate,
+    endDate,
+    estimatedHours: normalizedEstimate,
+    priority,
+    workCategoryId,
+    checklist,
+  };
+  const assigneesValid = assigneeIds.every((id) => hasEntity(state, 'person', id));
+  const formValid =
+    !titleError &&
+    periodValid &&
+    !projectError &&
+    assigneesValid &&
+    isValidTaskDraft(state, draftForSave);
+
+  const doSave = (): boolean => {
+    setTitleTouched(true);
+    if (!formValid) return false;
 
     dispatch({
       type: 'SAVE_TASK',
       payload: {
         taskId: existing ? existing.id : null,
-        draft,
+        draft: draftForSave,
         assigneeIds,
         allocations: plannedCells,
-        newUnassigned: pendingUnassigned.filter((u) => u.hours > 0),
+        binTotals: binTargets,
       },
     });
     // Rebase the snapshot so the close path fires no confirm, and show the
-    // save feedback before the modal dismisses.
+    // save feedback.
     snapshotRef.current = currentSerialized;
     onDirtyChange(false);
     markSaved();
-    onSaved();
+    return true;
   };
 
-  // Existing bin blocks of this task belonging to still-assigned people.
-  const existingBin = useMemo(
-    () =>
-      existing
-        ? binEntriesForTask(state, existing.id).filter((w) =>
-            assigneeIds.includes(w.personId),
-          )
-        : [],
-    [state, existing, assigneeIds],
-  );
-  const existingBinTotal = existingBin.reduce((s, w) => s + w.plannedHours, 0);
-  const pendingBinTotal = pendingUnassigned
-    .filter((u) => assigneeIds.includes(u.personId))
-    .reduce((s, u) => s + (u.hours > 0 ? u.hours : 0), 0);
-  const binTotal = existingBinTotal + pendingBinTotal;
-
-  // Draft total = post-save task total (grid cells + bin). When the estimate
-  // parses to a number and the draft exceeds it, show a live, non-blocking
-  // over-budget banner — TaskModal is the deliberate re-planning surface.
-  const draftTotal = plannedTotalAll + binTotal;
-  const overBudget = normalizedEstimate != null && draftTotal > normalizedEstimate + 1e-9;
-
-  // Existing bin blocks grouped per still-assigned person (read-only chips).
-  const existingBinByPerson = useMemo(() => {
-    const groups: Array<{ person: (typeof state.people)[number]; hours: number[] }> = [];
-    for (const p of assignedPeople) {
-      const hours = existingBin
-        .filter((w) => w.personId === p.id)
-        .map((w) => w.plannedHours);
-      if (hours.length > 0) groups.push({ person: p, hours });
-    }
-    return groups;
-  }, [assignedPeople, existingBin, state.people]);
-
-  const addBinHours = () => {
-    const personId = binPersonId || assignedPeople[0]?.id || '';
-    // Membership guard: binPersonId can hold a stale id (e.g. the person was
-    // unticked after being selected). Never queue hours for someone who is not
-    // currently assigned — saveTask drops them while the chip still shows a name.
-    if (personId === '' || !assigneeIds.includes(personId)) return;
-    const parsed = Number(binHoursRaw);
-    if (Number.isNaN(parsed) || parsed <= 0) return;
-    // Snap to the 0.25 grid (and clamp to a single day) at this commit point —
-    // the raw field stays free-typed, but the queued chip + bin total match what
-    // SAVE_TASK persists, so the number can't silently change after save.
-    const hours = snapHours(Math.min(24, parsed));
-    if (hours <= 0) return;
-    setPendingUnassigned((prev) => [...prev, { personId, hours }]);
+  const handleSave = () => {
+    if (doSave()) onSaved();
   };
+
+  // Auto-zapis (tylko edycja istniejącego zadania — tworzenie zostaje jawne,
+  // żeby pół-tytułu nie stawało się zadaniem). Ważny draft po 900 ms ciszy
+  // zapisuje się w tle; modal zostaje otwarty, status w nagłówku pokazuje
+  // „Zapisano”.
+  useAutoSave({
+    // Jawny konflikt kart wstrzymuje auto-zapis (decyzja należy do banera).
+    enabled: isEdit && !readOnly && external !== 'conflict',
+    dirty,
+    valid: formValid,
+    signature: currentSerialized,
+    save: doSave,
+  });
 
   // ---- Checklist (draft-only; persisted wholesale by SAVE_TASK) ----
   const addChecklistItem = () => {
@@ -753,18 +774,21 @@ function TaskEditor({
             </select>
           </div>
           <div className="field">
-            <label htmlFor="t-est">Szacowane godziny</label>
+            <label htmlFor="t-est">Szacowane godziny (suma osób)</label>
             <input
               id="t-est"
-              type="number"
-              min={0}
-              step={0.25}
-              value={estimatedRaw}
-              onChange={(e) => setEstimatedRaw(e.target.value)}
-              placeholder="Opcjonalnie"
-              disabled={readOnly}
-              title={roTitle}
+              type="text"
+              value={soldTotal > 0 ? formatDuration(soldTotal) : '—'}
+              readOnly
+              disabled
+              title="Suma godzin przypisanych osobom w sekcji „Przypisane osoby”"
             />
+            {legacyEstimate != null && Math.abs(legacyEstimate - soldTotal) > 1e-9 && (
+              <p className="field-hint">
+                Poprzedni ręczny szacunek: {formatDuration(legacyEstimate)} — po zapisie
+                szacunkiem stanie się suma godzin osób.
+              </p>
+            )}
           </div>
         </div>
         <div className="field-row">
@@ -828,8 +852,8 @@ function TaskEditor({
         </div>
         {overBudget && (
           <p className="estimate-over">
-            ⚠ Przekroczono szacunek o {formatDuration(draftTotal - (normalizedEstimate ?? 0))}. Zwiększ
-            szacunek lub ogranicz godziny.
+            ⚠ W kalendarzu zaplanowano {formatDuration(plannedTotalAll - soldTotal)} ponad godziny
+            przypisane osobom. Zwiększ godziny osób lub ogranicz siatkę.
           </p>
         )}
       </div>
@@ -966,93 +990,99 @@ function TaskEditor({
             })}
           </div>
         )}
-      </div>
-
-      {/* c2) Bin (zasobnik) — dateless hours */}
-      <div className="editor-section">
-        <h2>Zasobnik (bez terminu)</h2>
-        {existingBinByPerson.length > 0 && (
-          <div className="bin-existing">
-            {existingBinByPerson.map(({ person, hours }) => (
-              <div key={person.id} className="bin-existing-row">
-                <span
-                  className="person-dot"
-                  style={{ background: personColor(person.id) }}
-                  aria-hidden
-                />
-                <span className="bin-existing-name">{person.name}</span>
-                <span className="bin-chips">
-                  {hours.map((h, i) => (
-                    <span key={i} className="bin-chip readonly">
-                      {formatDuration(h)}
+        {assignedPeople.length > 0 && (
+          <div className="sold-hours">
+            <p className="field-hint">
+              Godziny osoby na tym zadaniu (sprzedane). Suma = szacunek zadania;
+              część niezaplanowana w kalendarzu trafia automatycznie do zasobnika
+              osoby.
+            </p>
+            {assignedPeople.map((p) => {
+              const sold = soldByPerson.get(p.id) ?? 0;
+              const dated = datedByPerson.get(p.id) ?? 0;
+              const bin = Math.max(0, snapHours(sold - dated));
+              const clamped = dated > sold + 1e-9;
+              return (
+                <div key={p.id} className="sold-hours-row">
+                  <span
+                    className="person-dot"
+                    style={{ background: personColor(p.id) }}
+                    aria-hidden
+                  />
+                  <span className="sold-hours-name">{p.name}</span>
+                  <input
+                    type="number"
+                    className="sold-hours-input"
+                    min={0}
+                    step={0.25}
+                    value={soldRawByPerson[p.id] ?? ''}
+                    onChange={(e) =>
+                      setSoldRawByPerson((prev) => ({ ...prev, [p.id]: e.target.value }))
+                    }
+                    placeholder="0"
+                    aria-label={`Godziny dla ${p.name}`}
+                    disabled={readOnly}
+                    title={roTitle}
+                  />
+                  <span className="sold-hours-meta muted">
+                    w kalendarzu {formatDuration(dated)} • zasobnik {formatDuration(bin)}
+                  </span>
+                  {clamped && (
+                    <span className="field-error sold-hours-warn">
+                      w kalendarzu więcej niż godziny osoby
                     </span>
-                  ))}
-                </span>
-              </div>
-            ))}
+                  )}
+                </div>
+              );
+            })}
+            <div className="sold-hours-total">
+              Razem: <strong>{formatDuration(soldTotal)}</strong>
+            </div>
           </div>
         )}
-        <p className="field-hint">
-          Bloki bez terminu przeciągniesz na siatkę w widoku tygodnia kalendarza.
-        </p>
-        {readOnly ? null : assignedPeople.length === 0 ? (
+      </div>
+
+      {/* c2) Bin (zasobnik) — wyliczany z godzin osób, nie edytowany osobno */}
+      <div className="editor-section">
+        <h2>Zasobnik (bez terminu)</h2>
+        {assignedPeople.length === 0 ? (
           <p className="field-hint">
-            Przypisz co najmniej jedną osobę, aby dodać godziny do zasobnika.
+            Przypisz osoby i nadaj im godziny — niezaplanowana część trafi tu
+            automatycznie.
           </p>
         ) : (
           <>
-            <div className="bin-add-row">
-              <select
-                aria-label="Osoba"
-                value={binPersonId || assignedPeople[0]?.id || ''}
-                onChange={(e) => setBinPersonId(e.target.value)}
-              >
-                {assignedPeople.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="number"
-                aria-label="Godziny"
-                min={0.25}
-                step={0.25}
-                max={24}
-                value={binHoursRaw}
-                onChange={(e) => setBinHoursRaw(e.target.value)}
-              />
-              <button type="button" className="btn ghost" onClick={addBinHours}>
-                Dodaj do zasobnika
-              </button>
-            </div>
-            {pendingUnassigned.length > 0 && (
-              <div className="bin-pending">
-                {pendingUnassigned.map((u, i) => {
-                  const person = state.people.find((p) => p.id === u.personId);
-                  return (
-                    <span key={i} className="bin-chip">
-                      <span
-                        className="person-dot"
-                        style={{ background: personColor(u.personId) }}
-                        aria-hidden
-                      />
-                      {person?.name ?? 'Osoba'}: {formatDuration(u.hours)}
-                      <button
-                        type="button"
-                        className="bin-chip-remove"
-                        aria-label="Usuń"
-                        onClick={() =>
-                          setPendingUnassigned((prev) => prev.filter((_, j) => j !== i))
-                        }
-                      >
-                        ×
-                      </button>
-                    </span>
-                  );
-                })}
+            {binTotal > 0 ? (
+              <div className="bin-existing">
+                {binTargets
+                  .filter((b) => b.hours > 0)
+                  .map((b) => {
+                    const person = state.people.find((p) => p.id === b.personId);
+                    return (
+                      <div key={b.personId} className="bin-existing-row">
+                        <span
+                          className="person-dot"
+                          style={{ background: personColor(b.personId) }}
+                          aria-hidden
+                        />
+                        <span className="bin-existing-name">{person?.name ?? 'Osoba'}</span>
+                        <span className="bin-chips">
+                          <span className="bin-chip readonly">{formatDuration(b.hours)}</span>
+                        </span>
+                      </div>
+                    );
+                  })}
               </div>
+            ) : (
+              <p className="field-hint">
+                Wszystkie godziny osób są rozplanowane w kalendarzu — zasobnik jest
+                pusty.
+              </p>
             )}
+            <p className="field-hint">
+              Zasobnik = godziny osoby minus godziny w kalendarzu. Bloki bez
+              terminu przeciągniesz na siatkę w widoku tygodnia kalendarza.
+            </p>
           </>
         )}
       </div>
@@ -1096,11 +1126,16 @@ function TaskEditor({
         </div>
       )}
 
-      {/* f) Save / Cancel */}
+      {/* f) Save / Cancel — sticky: zawsze widoczne bez przewijania */}
       {projectError && state.projects.length > 0 && (
         <p className="field-error">Wybierz projekt dla tego zadania.</p>
       )}
-      <div className="editor-actions">
+      <div className="editor-actions editor-actions-sticky">
+        {!readOnly && isEdit && (
+          <span className="field-hint autosave-hint" role="status">
+            Zmiany zapisują się automatycznie.
+          </span>
+        )}
         {!readOnly && (
           <button
             type="button"
@@ -1109,11 +1144,11 @@ function TaskEditor({
             disabled={state.projects.length === 0}
             title={state.projects.length === 0 ? 'Najpierw utwórz projekt' : undefined}
           >
-            {isEdit ? 'Zapisz zmiany' : 'Utwórz zadanie'}
+            {isEdit ? 'Zapisz i zamknij' : 'Utwórz zadanie'}
           </button>
         )}
         <button type="button" className="btn ghost" onClick={onCancel}>
-          {readOnly ? 'Zamknij' : 'Anuluj'}
+          {readOnly || !dirty ? 'Zamknij' : 'Anuluj'}
         </button>
       </div>
     </div>

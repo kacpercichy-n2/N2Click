@@ -148,7 +148,7 @@ async function flowMultiBlockSave(browser) {
     await page.screenshot({ path: `${SHOTS}/${ENGINE}-c-multiblock-cell.png` });
 
     // --- (d) unchanged save leaves both rows byte-identical (id included) ---
-    await page.getByRole('button', { name: 'Zapisz zmiany' }).click();
+    await page.getByRole('button', { name: 'Zapisz i zamknij' }).click();
     await page.waitForTimeout(300);
     let store = await readStore(page);
     let pairRows = store.workload.filter(
@@ -184,7 +184,7 @@ async function flowMultiBlockSave(browser) {
     await openModal();
     const target = totalAfterDup + 1;
     await cell().locator('input.alloc-input').fill(String(target));
-    await page.getByRole('button', { name: 'Zapisz zmiany' }).click();
+    await page.getByRole('button', { name: 'Zapisz i zamknij' }).click();
     await page.waitForTimeout(300);
     store = await readStore(page);
     pairRows = store.workload.filter(
@@ -220,7 +220,7 @@ async function flowMultiBlockSave(browser) {
     );
     await openModal();
     await cell().locator('input.alloc-input').fill('');
-    await page.getByRole('button', { name: 'Zapisz zmiany' }).click();
+    await page.getByRole('button', { name: 'Zapisz i zamknij' }).click();
     await page.waitForTimeout(300);
     store = await readStore(page);
     pairRows = store.workload.filter(
@@ -233,15 +233,25 @@ async function flowMultiBlockSave(browser) {
       pairRows.length === 0,
       `f: both blocks of the zeroed pair are deleted (got ${pairRows.length} remaining)`,
     );
+    // Nowa semantyka (godziny sprzedane per osoba): suma osoby jest stała, więc
+    // wyzerowanie komórki siatki PRZENOSI te godziny do zasobnika osoby zamiast
+    // je kasować. Pozostałe wiersze datowane muszą przetrwać bajt-w-bajt, a
+    // wiersz zasobnika osoby ma urosnąć dokładnie o wyzerowane godziny.
+    const zeroedHours = seedInfo.original.plannedHours + seedInfo.dup.plannedHours + 1; // +1h z flow (e)
     const otherRowsAfter = store.workload.filter(
       (w) =>
         w.taskId === seedInfo.taskId &&
         !(w.personId === seedInfo.personId && w.date === seedInfo.date),
     );
+    const isBinRow = (w) => w.personId === seedInfo.personId && w.date === '';
+    const datedBefore = otherRowsBefore.filter((w) => !isBinRow(w));
+    const datedAfter = otherRowsAfter.filter((w) => !isBinRow(w));
+    const binBefore = otherRowsBefore.filter(isBinRow).reduce((s, w) => s + w.plannedHours, 0);
+    const binAfter = otherRowsAfter.filter(isBinRow).reduce((s, w) => s + w.plannedHours, 0);
     ok(
-      otherRowsAfter.length === otherRowsBefore.length &&
-        otherRowsBefore.every((b) =>
-          otherRowsAfter.some(
+      datedAfter.length === datedBefore.length &&
+        datedBefore.every((b) =>
+          datedAfter.some(
             (a) =>
               a.id === b.id &&
               a.plannedHours === b.plannedHours &&
@@ -249,7 +259,11 @@ async function flowMultiBlockSave(browser) {
               a.sortIndex === b.sortIndex,
           ),
         ),
-      'f: every other workload row of the task is untouched',
+      'f: every other DATED workload row of the task is untouched',
+    );
+    ok(
+      Math.abs(binAfter - binBefore - zeroedHours) < 1e-9,
+      `f: zeroed hours moved to the person's bin (before ${binBefore}, after ${binAfter}, zeroed ${zeroedHours})`,
     );
 
     ok(pageErrors.length === 0, `no page errors across the flow (${pageErrors.join('; ')})`);

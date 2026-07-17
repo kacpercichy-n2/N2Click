@@ -4,7 +4,6 @@ import type {
   AccessRole,
   AppData,
   ChecklistItem,
-  Client,
   Person,
   SavedFilterCriteria,
   Status,
@@ -671,35 +670,6 @@ function repairPeriod(
  * - Comment / ActivityEvent `createdAt`: un-parseable (`Date.parse` NaN) →
  *   EPOCH_ISO (also render-safe through formatTimestamp).
  */
-/**
- * Uzupełnia pola kontaktowe klienta ('' domyślnie) — wiersze zapisane przed
- * rozszerzeniem `Client` o kontakt (2026-07) nie mają tych kluczy. W pełni
- * poprawna kolekcja wraca jako TEN SAM obiekt (bez zmiany referencji).
- */
-export function normalizeClientContacts(data: AppData): AppData {
-  let changed = false;
-  const clients = data.clients.map((c) => {
-    const partial = c as Partial<Client> & Pick<Client, 'id' | 'name' | 'archived'>;
-    if (
-      typeof partial.contactName === 'string' &&
-      typeof partial.contactEmail === 'string' &&
-      typeof partial.contactPhone === 'string' &&
-      typeof partial.notes === 'string'
-    ) {
-      return c;
-    }
-    changed = true;
-    return {
-      ...c,
-      contactName: typeof partial.contactName === 'string' ? partial.contactName : '',
-      contactEmail: typeof partial.contactEmail === 'string' ? partial.contactEmail : '',
-      contactPhone: typeof partial.contactPhone === 'string' ? partial.contactPhone : '',
-      notes: typeof partial.notes === 'string' ? partial.notes : '',
-    };
-  });
-  return changed ? { ...data, clients } : data;
-}
-
 export function normalizeDates(data: AppData): AppData {
   let changed = false;
 
@@ -1139,15 +1109,13 @@ function readData(recordRevision: boolean): InternalLoadResult {
     const version = typeof parsed.version === 'number' ? parsed.version : 1;
     let data: AppData;
     if (version < 2) {
-      data = normalizeClientContacts(
-        repairStatusReferences(
-          sanitizeImpersonator(
-            normalizeStatusFlags(
-              normalizeTaskMeta(
-                ensureStartMinutes(
-                  normalizeDates(
-                    normalizeWorkloadHours(migrateV4toV5(localizeLegacyData(migrateV1(parsed)))),
-                  ),
+      data = repairStatusReferences(
+        sanitizeImpersonator(
+          normalizeStatusFlags(
+            normalizeTaskMeta(
+              ensureStartMinutes(
+                normalizeDates(
+                  normalizeWorkloadHours(migrateV4toV5(localizeLegacyData(migrateV1(parsed)))),
                 ),
               ),
             ),
@@ -1190,13 +1158,11 @@ function readData(recordRevision: boolean): InternalLoadResult {
       const localized =
         version < LOCALIZATION_MIGRATION_VERSION ? localizeLegacyData(loaded) : loaded;
       const migrated = migrateV4toV5(localized);
-      data = normalizeClientContacts(
-        repairStatusReferences(
-          sanitizeImpersonator(
-            normalizeStatusFlags(
-              normalizeTaskMeta(
-                ensureStartMinutes(normalizeDates(normalizeWorkloadHours(migrated))),
-              ),
+      data = repairStatusReferences(
+        sanitizeImpersonator(
+          normalizeStatusFlags(
+            normalizeTaskMeta(
+              ensureStartMinutes(normalizeDates(normalizeWorkloadHours(migrated))),
             ),
           ),
         ),
