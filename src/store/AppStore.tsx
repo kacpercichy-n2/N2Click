@@ -31,6 +31,8 @@ import type {
   WorkloadEntry,
 } from '../types';
 import type { CloudMergePayload } from '../supabase/plannerData';
+import type { CloudPersonMergeRow } from '../supabase/referenceData';
+import { normalizeEmail } from '../auth/profile';
 import {
   DEFAULT_CAPACITY,
   loadDataResult,
@@ -169,10 +171,6 @@ export type Action =
   | { type: 'DELETE_MILESTONE'; milestoneId: string }
   | { type: 'ADD_COMMENT'; entityType: CommentEntityType; entityId: string; body: string; mentionIds: string[] }
   | { type: 'ADD_PERSON'; person: PersonDraft }
-  // Auto-provisioning tożsamości z profilu chmury (App, tryb supabase). Jak
-  // ADD_PERSON, ale BEZ reguły „pierwsza osoba zostaje administratorem" —
-  // rola przychodzi z serwera (RLS), a logowanie nie zależy od lokalnej listy.
-  | { type: 'PROVISION_PERSON'; person: PersonDraft }
   | { type: 'UPDATE_PERSON'; personId: string; person: PersonDraft }
   | { type: 'DELETE_PERSON'; personId: string }
   | { type: 'SET_CURRENT_USER'; personId: string }
@@ -218,7 +216,11 @@ export type Action =
   // same-id rows are replaced, cloud-only rows appended, local-only rows kept.
   // workload and every non-mirrored collection pass through untouched. An
   // invalid payload returns the ORIGINAL state reference (invariant 6).
-  | { type: 'MERGE_CLOUD_ENTITIES'; payload: CloudMergePayload };
+  | { type: 'MERGE_CLOUD_ENTITIES'; payload: CloudMergePayload }
+  // Pełna synchronizacja osób: hydracja lokalnej listy z RLS-owych profili
+  // chmury (upsert po e-mailu, nowe wiersze z id profilu chmury, przełożony po
+  // e-mailu). Nigdy nie usuwa osób lokalnych; brak zmian => ta sama referencja.
+  | { type: 'MERGE_CLOUD_PEOPLE'; payload: CloudPersonMergeRow[] };
 
 function uid(): string {
   return crypto.randomUUID();
@@ -1640,6 +1642,145 @@ function saveMilestone(
   };
 }
 
+// ---- Cloud people merge (pełna synchronizacja zespołu) ----
+
+const MERGE_ACCESS_ROLES = new Set<AccessRole>(['administrator', 'pm', 'handlowiec', 'pracownik']);
+
+/** Walidacja jednego wiersza payloadu osób — fail-closed dla całego scalenia. */
+function isValidCloudPersonRow(r: CloudPersonMergeRow): boolean {
+  if (typeof r !== 'object' || r === null) return false;
+  if (typeof r.id !== 'string' || r.id === '') return false;
+  if (typeof r.email !== 'string' || normalizeEmail(r.email) === '') return false;
+  if (typeof r.firstName !== 'string' || r.firstName.trim() === '') return false;
+  if (typeof r.lastName !== 'string' || typeof r.role !== 'string') return false;
+  if (typeof r.phone !== 'string' || typeof r.avatar !== 'string') return false;
+  if (typeof r.supervisorEmail !== 'string') return false;
+  if (!Number.isFinite(r.capacity) || r.capacity < 0 || r.capacity > 24) return false;
+  if (!Array.isArray(r.workDays)) return false;
+  if (r.workDays.some((d) => !Number.isInteger(d) || d < 1 || d > 7)) return false;
+  if (!Number.isInteger(r.workStartMinutes) || r.workStartMinutes < 0 || r.workStartMinutes > 1440)
+    return false;
+  if (!Number.isInteger(r.workEndMinutes) || r.workEndMinutes < 0 || r.workEndMinutes > 1440)
+    return false;
+  if (!MERGE_ACCESS_ROLES.has(r.accessRole)) return false;
+  return true;
+}
+
+/** Pola osoby synchronizowane z profilu chmury (bez id/hasła/działu/przełożonego). */
+function cloudPersonFields(row: CloudPersonMergeRow): Omit<
+  Person,
+  'id' | 'passwordHash' | 'departmentId' | 'supervisorId'
+> {
+  const firstName = row.firstName.trim();
+  const lastName = row.lastName.trim();
+  const workDays = Array.from(new Set(row.workDays)).sort((a, b) => a - b);
+  return {
+    firstName,
+    lastName,
+    name: [firstName, lastName].filter(Boolean).join(' '),
+    email: row.email.trim(),
+    phone: row.phone.trim(),
+    role: row.role.trim(),
+    avatar: row.avatar.trim(),
+    // Spójnie z personFromDraft: UI deklaruje zakres [1, 24].
+    capacity: Math.min(24, Math.max(1, row.capacity)),
+    accessRole: row.accessRole,
+    workDays,
+    workStartMinutes: row.workStartMinutes,
+    workEndMinutes: row.workEndMinutes,
+  };
+}
+
+const sameWorkDays = (a: number[], b: number[]): boolean =>
+  a.length === b.length && a.every((v, i) => v === b[i]);
+
+/**
+ * Scala RLS-owe profile chmury w lokalną listę osób. Chmura jest źródłem
+ * prawdy dla pól profilowych zsynchronizowanych osób:
+ *   * dopasowanie po znormalizowanym e-mailu — aktualizacja pól, lokalne id,
+ *     hasło i dział pozostają;
+ *   * profil bez lokalnego odpowiednika — nowa osoba z id profilu chmury
+ *     (dzięki temu hydracja planera mapuje profile bez pary e-mailowej);
+ *   * przełożony rozwiązywany po e-mailu PO upsercie (cykl => '');
+ *   * osoby lokalne bez konta chmury pozostają nietknięte; nic nie jest
+ *     usuwane; brak faktycznych zmian => TA SAMA referencja stanu;
+ *   * payload niepoprawny strukturalnie => TA SAMA referencja (invariant 6).
+ * Bez wpisów aktywności — to cicha hydracja, jak MERGE_CLOUD_ENTITIES.
+ */
+function mergeCloudPeople(state: AppData, payload: CloudPersonMergeRow[]): AppData {
+  if (!Array.isArray(payload)) return state;
+  if (!payload.every(isValidCloudPersonRow)) return state;
+
+  // Duplikaty e-maili w payloadzie: ostatni wygrywa (deterministycznie).
+  const rowByEmail = new Map<string, CloudPersonMergeRow>();
+  for (const row of payload) rowByEmail.set(normalizeEmail(row.email), row);
+
+  let changed = false;
+  const matched = new Set<string>();
+
+  // 1) Aktualizacja istniejących osób po e-mailu.
+  const updatedPeople = state.people.map((person) => {
+    const key = normalizeEmail(person.email);
+    const row = key === '' ? undefined : rowByEmail.get(key);
+    if (!row) return person;
+    matched.add(key);
+    const fields = cloudPersonFields(row);
+    const same =
+      person.firstName === fields.firstName &&
+      person.lastName === fields.lastName &&
+      person.name === fields.name &&
+      person.email === fields.email &&
+      person.phone === fields.phone &&
+      person.role === fields.role &&
+      person.avatar === fields.avatar &&
+      person.capacity === fields.capacity &&
+      person.accessRole === fields.accessRole &&
+      person.workStartMinutes === fields.workStartMinutes &&
+      person.workEndMinutes === fields.workEndMinutes &&
+      sameWorkDays(person.workDays, fields.workDays);
+    if (same) return person;
+    changed = true;
+    return { ...person, ...fields };
+  });
+
+  // 2) Nowe osoby (profil bez lokalnego odpowiednika) — id profilu chmury.
+  const existingIds = new Set(updatedPeople.map((p) => p.id));
+  const appended: Person[] = [];
+  for (const [key, row] of rowByEmail) {
+    if (matched.has(key)) continue;
+    if (existingIds.has(row.id)) continue; // kolizja id — fail-safe, pomiń
+    appended.push({
+      id: row.id,
+      ...cloudPersonFields(row),
+      departmentId: '',
+      passwordHash: '',
+      supervisorId: '',
+    });
+    existingIds.add(row.id);
+  }
+  if (appended.length > 0) changed = true;
+
+  // 3) Przełożeni po e-mailu (na finalnej liście; cykl lub brak => '').
+  let people = appended.length > 0 ? [...updatedPeople, ...appended] : updatedPeople;
+  const idByEmail = new Map(
+    people.filter((p) => normalizeEmail(p.email) !== '').map((p) => [normalizeEmail(p.email), p.id]),
+  );
+  for (const [key, row] of rowByEmail) {
+    const personId = idByEmail.get(key);
+    if (!personId) continue;
+    const target = row.supervisorEmail === '' ? '' : idByEmail.get(normalizeEmail(row.supervisorEmail)) ?? '';
+    const supervisorId = wouldCreateSupervisorCycle(people, personId, target) ? '' : target;
+    const person = people.find((p) => p.id === personId);
+    if (person && person.supervisorId !== supervisorId) {
+      changed = true;
+      people = people.map((p) => (p.id === personId ? { ...p, supervisorId } : p));
+    }
+  }
+
+  if (!changed) return state;
+  return { ...state, people };
+}
+
 // ---- Cloud hydration merge ----
 
 function isObjWithId(v: unknown): v is { id: string } {
@@ -1997,25 +2138,6 @@ export function reducer(state: AppData, action: Action): AppData {
           },
         ],
         activity: withActivity(state, action.entityType, action.entityId, 'dodał(a) komentarz'),
-      };
-    }
-    case 'PROVISION_PERSON': {
-      if (!isValidPersonDraft(action.person)) return state;
-      const id = uid();
-      const base = personFromDraft(action.person);
-      // Świeży id jest nigdzie niewskazywany; guard łapie tylko self-reference.
-      const supervisorId = wouldCreateSupervisorCycle(state.people, id, base.supervisorId)
-        ? ''
-        : base.supervisorId;
-      return {
-        ...state,
-        people: [...state.people, { id, ...base, supervisorId, passwordHash: '' }],
-        activity: withActivity(
-          state,
-          'person',
-          id,
-          `utworzył(a) profil planera dla konta „${base.name}”`,
-        ),
       };
     }
     case 'ADD_PERSON': {
@@ -2399,6 +2521,8 @@ export function reducer(state: AppData, action: Action): AppData {
       return action.data;
     case 'MERGE_CLOUD_ENTITIES':
       return mergeCloudEntities(state, action.payload);
+    case 'MERGE_CLOUD_PEOPLE':
+      return mergeCloudPeople(state, action.payload);
     default:
       return state;
   }

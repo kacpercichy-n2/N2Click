@@ -380,3 +380,122 @@ describe('MERGE_CLOUD_ENTITIES — fail-closed (invariant 6)', () => {
     expect(typeof added!.id).toBe('string');
   });
 });
+
+// ---- MERGE_CLOUD_PEOPLE (pełna synchronizacja osób) --------------------------
+
+import type { CloudPersonMergeRow } from '../supabase/referenceData';
+
+function cloudRow(o: Partial<CloudPersonMergeRow> & { id: string; email: string }): CloudPersonMergeRow {
+  return {
+    firstName: 'Chmura',
+    lastName: 'Osoba',
+    role: '',
+    phone: '',
+    avatar: '',
+    capacity: 8,
+    workDays: [1, 2, 3, 4, 5],
+    workStartMinutes: 480,
+    workEndMinutes: 960,
+    accessRole: 'pracownik',
+    supervisorEmail: '',
+    ...o,
+  };
+}
+
+describe('MERGE_CLOUD_PEOPLE', () => {
+  const UUID_K = 'a1a1a1a1-0000-0000-0000-000000000001';
+  const UUID_Z = 'a1a1a1a1-0000-0000-0000-000000000002';
+
+  it('aktualizuje istniejącą osobę po e-mailu (lokalne id, hasło i dział zostają)', () => {
+    const state: AppData = {
+      ...baseState(),
+      people: [
+        { ...person(P1), email: 'kacper@x.pl', passwordHash: 'h', departmentId: 'd-local', accessRole: 'pracownik' },
+      ],
+    };
+    const next = reducer(state, {
+      type: 'MERGE_CLOUD_PEOPLE',
+      payload: [
+        cloudRow({ id: UUID_K, email: 'Kacper@X.PL', firstName: 'Kacper', lastName: 'Cichy', role: 'Menadżer', accessRole: 'administrator', capacity: 6 }),
+      ],
+    });
+    expect(next).not.toBe(state);
+    expect(next.people).toHaveLength(1);
+    const p = next.people[0];
+    expect(p.id).toBe(P1); // lokalne id zachowane
+    expect(p.passwordHash).toBe('h');
+    expect(p.departmentId).toBe('d-local');
+    expect(p).toMatchObject({ firstName: 'Kacper', lastName: 'Cichy', name: 'Kacper Cichy', role: 'Menadżer', accessRole: 'administrator', capacity: 6 });
+  });
+
+  it('tworzy brakującą osobę z id profilu chmury i rozwiązuje przełożonego po e-mailu', () => {
+    const state: AppData = { ...baseState(), people: [] };
+    const next = reducer(state, {
+      type: 'MERGE_CLOUD_PEOPLE',
+      payload: [
+        cloudRow({ id: UUID_K, email: 'kacper@x.pl', firstName: 'Kacper' }),
+        cloudRow({ id: UUID_Z, email: 'zuza@x.pl', firstName: 'Zuzanna', supervisorEmail: 'kacper@x.pl' }),
+      ],
+    });
+    expect(next.people).toHaveLength(2);
+    const zuza = next.people.find((p) => p.id === UUID_Z)!;
+    expect(zuza.supervisorId).toBe(UUID_K);
+    expect(next.people.find((p) => p.id === UUID_K)!.passwordHash).toBe('');
+  });
+
+  it('nie usuwa osób lokalnych bez konta chmury; brak zmian => ta sama referencja', () => {
+    const state: AppData = { ...baseState(), people: [{ ...person(P1) }] };
+    const payload = [cloudRow({ id: UUID_K, email: 'kacper@x.pl', firstName: 'Kacper' })];
+    const next = reducer(state, { type: 'MERGE_CLOUD_PEOPLE', payload });
+    expect(next.people.some((p) => p.id === P1)).toBe(true); // lokalna zostaje
+    expect(next.people).toHaveLength(2);
+    // Idempotencja: ten sam payload na już scalonym stanie => ta sama referencja.
+    const again = reducer(next, { type: 'MERGE_CLOUD_PEOPLE', payload });
+    expect(again).toBe(next);
+  });
+
+  it('przełożony spoza widocznego zbioru lub cykl => supervisorId pusty', () => {
+    const state: AppData = { ...baseState(), people: [] };
+    const next = reducer(state, {
+      type: 'MERGE_CLOUD_PEOPLE',
+      payload: [cloudRow({ id: UUID_K, email: 'kacper@x.pl', supervisorEmail: 'niewidoczny@x.pl' })],
+    });
+    expect(next.people[0].supervisorId).toBe('');
+    // Samowskazanie (jedyny możliwy cykl w pojedynczym wierszu).
+    const self = reducer(state, {
+      type: 'MERGE_CLOUD_PEOPLE',
+      payload: [cloudRow({ id: UUID_K, email: 'kacper@x.pl', supervisorEmail: 'kacper@x.pl' })],
+    });
+    expect(self.people[0].supervisorId).toBe('');
+  });
+
+  it('niepoprawny payload => oryginalna referencja stanu (invariant 6)', () => {
+    const state = baseState();
+    const bad = [
+      cloudRow({ id: '', email: 'a@x.pl' }),
+      cloudRow({ id: UUID_K, email: '' }),
+      cloudRow({ id: UUID_K, email: 'a@x.pl', firstName: '   ' }),
+      cloudRow({ id: UUID_K, email: 'a@x.pl', capacity: 99 }),
+      cloudRow({ id: UUID_K, email: 'a@x.pl', workDays: [0, 9] }),
+      cloudRow({ id: UUID_K, email: 'a@x.pl', workStartMinutes: -1 }),
+    ];
+    for (const row of bad) {
+      expect(reducer(state, { type: 'MERGE_CLOUD_PEOPLE', payload: [row] })).toBe(state);
+    }
+    expect(
+      reducer(state, { type: 'MERGE_CLOUD_PEOPLE', payload: 'zle' as unknown as CloudPersonMergeRow[] }),
+    ).toBe(state);
+  });
+
+  it('nie dotyka innych kolekcji (referencje) i nie dopisuje aktywności', () => {
+    const state: AppData = { ...baseState(), people: [] };
+    const next = reducer(state, {
+      type: 'MERGE_CLOUD_PEOPLE',
+      payload: [cloudRow({ id: UUID_K, email: 'kacper@x.pl' })],
+    });
+    expect(next.tasks).toBe(state.tasks);
+    expect(next.statuses).toBe(state.statuses);
+    expect(next.workload).toBe(state.workload);
+    expect(next.activity).toBe(state.activity);
+  });
+});

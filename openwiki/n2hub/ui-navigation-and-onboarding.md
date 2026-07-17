@@ -11,12 +11,14 @@
   whole shell behind a real `supabase.auth` session (`SessionProvider` + pure
   `session.ts` state machine): loading → email/password login → forced first-
   password change (`profiles.must_change_password`, pure `passwordChange.ts`,
-  fail-open) → local-profile association → shell. A signed-in account with no
-  matching local `Person` is auto-provisioned ONCE from its own RLS cloud
-  profile (`personDraftFromCloudProfile` in `auth/profile.ts`, dispatched as
-  `PROVISION_PERSON` from App — no first-person forced-admin rule; local
-  department/supervisor stay empty — the org snapshot renders those). The
-  blocked screen remains only for the edge case of
+  fail-open) → local-profile association → shell. Every ready org snapshot is
+  merged into the local people list (`buildCloudPeoplePayload` in
+  `supabase/referenceData.ts` → `MERGE_CLOUD_PEOPLE` dispatched from App):
+  RLS-visible cloud profiles upsert local `Person` rows by email (new rows get
+  the cloud profile UUID as id, so planner hydration maps them), cloud is the
+  truth for profile fields incl. access role/capacity/work days/supervisor;
+  local-only people are never deleted and local departmentId/passwordHash are
+  kept. The blocked screen remains only for the edge case of
   a session without a cloud profile row. A `/account` panel + nav link
   (Supabase mode only; local redirects to `/`) offers self-service password
   change. Identity association is by email only (planner data references local

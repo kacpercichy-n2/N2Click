@@ -40,6 +40,13 @@ export interface CloudProfile {
   departmentId: string | null;
   /** Przełożony (profiles.supervisor_id); null gdy brak. */
   supervisorId: string | null;
+  /** Pola planera (migracja 20260717130000_profiles_planner_fields). */
+  phone: string;
+  avatar: string;
+  capacity: number;
+  workDays: number[];
+  workStartMinutes: number;
+  workEndMinutes: number;
 }
 
 export interface OrgSnapshot {
@@ -87,6 +94,26 @@ function toCloudRole(v: unknown): CloudRole {
   return v === 'administrator' || v === 'manager' ? v : 'worker';
 }
 
+/** Dni robocze: liczby całkowite 1..7, bez duplikatów, rosnąco; śmieci odpadają. */
+function toWorkDays(v: unknown): number[] {
+  if (!Array.isArray(v)) return [1, 2, 3, 4, 5];
+  const days = Array.from(
+    new Set(v.filter((d): d is number => typeof d === 'number' && Number.isInteger(d) && d >= 1 && d <= 7)),
+  );
+  return days.sort((a, b) => a - b);
+}
+
+/** Minuty doby z bezpiecznym domyślnym (numeric z PostgREST może być stringiem). */
+function toMinutes(v: unknown, fallback: number): number {
+  const n = typeof v === 'string' ? Number(v) : v;
+  return typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= 1440 ? n : fallback;
+}
+
+function toCapacity(v: unknown): number {
+  const n = typeof v === 'string' ? Number(v) : v;
+  return typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 24 ? n : 8;
+}
+
 function toCloudProfile(row: Record<string, unknown>): CloudProfile {
   const departmentId = row.department_id;
   const supervisorId = row.supervisor_id;
@@ -99,6 +126,12 @@ function toCloudProfile(row: Record<string, unknown>): CloudProfile {
     cloudRole: toCloudRole(row.access_role),
     departmentId: typeof departmentId === 'string' && departmentId !== '' ? departmentId : null,
     supervisorId: typeof supervisorId === 'string' && supervisorId !== '' ? supervisorId : null,
+    phone: str(row.phone),
+    avatar: str(row.avatar),
+    capacity: toCapacity(row.capacity),
+    workDays: toWorkDays(row.work_days),
+    workStartMinutes: toMinutes(row.work_start_minutes, 480),
+    workEndMinutes: toMinutes(row.work_end_minutes, 960),
   };
 }
 
@@ -137,7 +170,7 @@ export async function loadOrgSnapshot(db: ReferenceDb, userId: string): Promise<
     await Promise.all([
       db.select(
         'profiles',
-        'id, first_name, last_name, email, role_title, access_role, department_id, supervisor_id',
+        'id, first_name, last_name, email, role_title, access_role, department_id, supervisor_id, phone, avatar, capacity, work_days, work_start_minutes, work_end_minutes',
       ),
       db.select('departments', 'id, name'),
       db.select('statuses', 'id, name, slug, color, sort_order, archived, is_done'),
@@ -199,4 +232,61 @@ export function effectiveAccessRole(
   if (opts.mode !== 'supabase' || opts.impersonating) return localRole;
   if (org.status !== 'ready' || !org.snapshot.profile) return localRole;
   return cloudRoleToAccessRole(org.snapshot.profile.cloudRole);
+}
+
+// ---- Pełna synchronizacja osób (hydracja lokalnej listy z profili chmury) ----
+
+/**
+ * Jeden wiersz scalenia osób: profil chmury przełożony na semantykę lokalnego
+ * `Person` (rola dostępu już zmapowana, przełożony po e-mailu — lokalne id
+ * rozwiązuje reduktor). Dział celowo pominięty: lokalny słownik działów ma
+ * własne id, a widok działu zapewnia snapshot organizacji.
+ */
+export interface CloudPersonMergeRow {
+  /** Id profilu chmury (auth.users id) — id nowo tworzonej osoby lokalnej. */
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  role: string; // stanowisko (role_title)
+  phone: string;
+  avatar: string;
+  capacity: number;
+  workDays: number[];
+  workStartMinutes: number;
+  workEndMinutes: number;
+  accessRole: AccessRole;
+  /** E-mail przełożonego ('' gdy brak lub przełożony poza widocznym zbiorem). */
+  supervisorEmail: string;
+}
+
+/**
+ * Buduje payload MERGE_CLOUD_PEOPLE ze zscope'owanych przez RLS profili.
+ * Profile bez e-maila są pomijane (e-mail to klucz tożsamości — bez niego nie
+ * ma jak dopasować ani zalogować). Puste imię spada na część lokalną e-maila,
+ * ostatecznie na 'Użytkownik' (walidacja wymaga imienia).
+ */
+export function buildCloudPeoplePayload(profiles: CloudProfile[]): CloudPersonMergeRow[] {
+  const emailById = new Map(profiles.map((p) => [p.id, p.email.trim().toLowerCase()]));
+  const rows: CloudPersonMergeRow[] = [];
+  for (const p of profiles) {
+    const email = p.email.trim();
+    if (p.id === '' || email === '') continue;
+    rows.push({
+      id: p.id,
+      email,
+      firstName: p.firstName.trim() || email.split('@')[0] || 'Użytkownik',
+      lastName: p.lastName,
+      role: p.roleTitle,
+      phone: p.phone,
+      avatar: p.avatar,
+      capacity: p.capacity,
+      workDays: p.workDays,
+      workStartMinutes: p.workStartMinutes,
+      workEndMinutes: p.workEndMinutes,
+      accessRole: cloudRoleToAccessRole(p.cloudRole),
+      supervisorEmail: (p.supervisorId ? emailById.get(p.supervisorId) : '') ?? '',
+    });
+  }
+  return rows;
 }

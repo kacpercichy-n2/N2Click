@@ -390,27 +390,6 @@ describe('Person command validation', () => {
     expectRejected(state, next);
   });
 
-  it('PROVISION_PERSON rejects a whitespace-only firstName', () => {
-    const state = makeState();
-    const next = reducer(state, {
-      type: 'PROVISION_PERSON',
-      person: personDraft({ firstName: '   ' }),
-    });
-    expectRejected(state, next);
-  });
-
-  it('PROVISION_PERSON keeps the drafted role even for the first person (no forced admin)', () => {
-    const state = { ...makeState(), people: [], currentUserId: '' };
-    const draft = personDraft({ firstName: 'Dominik', accessRole: 'pm', email: 'd@x.pl' });
-    const next = reducer(state, { type: 'PROVISION_PERSON', person: draft });
-    expect(next.people).toHaveLength(1);
-    expect(next.people[0].accessRole).toBe('pm');
-    expect(next.people[0].passwordHash).toBe('');
-    // Dla porównania: ADD_PERSON na pustej liście wymusza administratora.
-    const added = reducer(state, { type: 'ADD_PERSON', person: draft });
-    expect(added.people[0].accessRole).toBe('administrator');
-  });
-
   it('UPDATE_PERSON rejects a stale personId', () => {
     const state = makeState();
     const next = reducer(state, { type: 'UPDATE_PERSON', personId: 'ghost', person: personDraft() });

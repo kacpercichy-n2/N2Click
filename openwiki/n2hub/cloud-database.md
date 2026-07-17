@@ -24,7 +24,11 @@
   (stanowisko), `access_role` (enum `administrator|manager|worker`),
   `department_id`, `avatar_path` (private `avatars` bucket,
   `<profile id>/<file>`), `must_change_password` (UX gate: forced first-login
-  password change, self-cleared after a successful change),
+  password change, self-cleared after a successful change), planner fields
+  `phone`, `avatar` (emoji), `capacity` (0–24), `work_days` (smallint[] ⊂ 1–7),
+  `work_start_minutes`/`work_end_minutes` (migration
+  20260717130000_profiles_planner_fields; hydrated into local people via
+  `MERGE_CLOUD_PEOPLE`),
   `supervisor_id` → `profiles.id` (przełożony; nullable, `on delete set null`,
   no self-reference; only administrators may change it — enforced by the
   `app.protect_profile_privileges` trigger, same as `access_role` and

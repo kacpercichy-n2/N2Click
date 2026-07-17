@@ -29,14 +29,14 @@ import { canViewTeam } from './pages/teamScope';
 import { landingPathForRole, LoginPage } from './pages/LoginPage';
 import { useAuth } from './auth/SessionProvider';
 import { useOrgData } from './supabase/OrgDataProvider';
-import { cloudRoleToAccessRole, effectiveAccessRole } from './supabase/referenceData';
+import { buildCloudPeoplePayload, effectiveAccessRole } from './supabase/referenceData';
 import {
   AuthBlocked,
   AuthLoading,
   ForcedPasswordChange,
   SupabaseLoginPage,
 } from './auth/AuthScreens';
-import { findPersonByEmail, normalizeEmail, personDraftFromCloudProfile } from './auth/profile';
+import { findPersonByEmail } from './auth/profile';
 import { can } from './store/permissions';
 import {
   currentUser as currentUserSel,
@@ -136,32 +136,22 @@ export function App() {
     updateUiPrefs({ sidebarCollapsed: false });
   };
 
-  // Auto-provisioning lokalnego profilu (tryb supabase): uwierzytelnione konto
-  // bez osoby w planerze dostaje JEDNORAZOWO lokalny wiersz Person zbudowany z
-  // własnego, RLS-owego profilu chmury (imię/nazwisko/stanowisko/rola). Bez
-  // tego świeża przeglądarka kończy na ekranie „Brak profilu w planerze”, mimo
-  // że konto istnieje. Dane planera nadal wskazują lokalne id — to tylko
-  // brakujący wiersz tożsamości; dział/przełożony pozostają po stronie chmury.
-  const authedEmail =
-    auth.mode === 'supabase' && auth.state.status === 'signedIn'
-      ? (auth.state.session?.user?.email ?? '')
-      : '';
-  const provisionedEmailRef = useRef('');
+  // Pełna synchronizacja zespołu (tryb supabase): każdy gotowy snapshot
+  // organizacji scala WSZYSTKIE widoczne (RLS) profile chmury w lokalną listę
+  // osób — w tym własny profil zalogowanego konta, więc świeża przeglądarka
+  // nigdy nie kończy na ekranie „Brak profilu w planerze”. Reduktor jest
+  // idempotentny (brak zmian => ta sama referencja stanu), więc ponowne
+  // dispatchowanie tego samego snapshotu jest darmowe i bez pętli.
+  const authedSignedIn = auth.mode === 'supabase' && auth.state.status === 'signedIn';
   const orgState = org.state;
   useEffect(() => {
-    if (!authedEmail || auth.mustChangePassword !== false) return;
-    if (findPersonByEmail(state.people, authedEmail)) return;
+    if (!authedSignedIn || auth.mustChangePassword !== false) return;
     if (orgState.status !== 'ready') return;
-    const profile = orgState.snapshot.profile;
-    if (!profile) return;
-    const key = normalizeEmail(authedEmail);
-    if (provisionedEmailRef.current === key) return;
-    provisionedEmailRef.current = key;
     dispatch({
-      type: 'PROVISION_PERSON',
-      person: personDraftFromCloudProfile(profile, authedEmail, cloudRoleToAccessRole),
+      type: 'MERGE_CLOUD_PEOPLE',
+      payload: buildCloudPeoplePayload(orgState.snapshot.profiles),
     });
-  }, [authedEmail, auth.mustChangePassword, state.people, orgState, dispatch]);
+  }, [authedSignedIn, auth.mustChangePassword, orgState, dispatch]);
 
   const currentUser = state.people.find((p) => p.id === state.currentUserId);
   // Real logged-in identity (the impersonator while impersonating). Only the

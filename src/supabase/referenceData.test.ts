@@ -8,9 +8,11 @@ import { describe, expect, it } from 'vitest';
 import type { Person } from '../types';
 import {
   ORG_SNAPSHOT_ERROR,
+  buildCloudPeoplePayload,
   cloudRoleToAccessRole,
   effectiveAccessRole,
   loadOrgSnapshot,
+  type CloudProfile,
   type OrgSnapshot,
   type OrgState,
   type ReferenceDb,
@@ -205,7 +207,7 @@ describe('effectiveAccessRole — macierz fallbacków', () => {
   const ready: OrgState = {
     status: 'ready',
     snapshot: {
-      profile: { id: 'cloud', firstName: 'C', lastName: '', email: '', roleTitle: '', cloudRole: 'manager', departmentId: null, supervisorId: null },
+      profile: { id: 'cloud', firstName: 'C', lastName: '', email: '', roleTitle: '', cloudRole: 'manager', departmentId: null, supervisorId: null, phone: '', avatar: '', capacity: 8, workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960 },
       profiles: [], departments: [], statuses: [], serviceTypes: [], workCategories: [],
     },
   };
@@ -236,5 +238,29 @@ describe('effectiveAccessRole — macierz fallbacków', () => {
   it('brak użytkownika => undefined', () => {
     expect(effectiveAccessRole(undefined, ready, { mode: 'supabase', impersonating: false })).toBeUndefined();
     expect(effectiveAccessRole(undefined, ready, { mode: 'local', impersonating: false })).toBeUndefined();
+  });
+});
+
+describe('buildCloudPeoplePayload', () => {
+  const profile = (o: Partial<CloudProfile> & { id: string; email: string }): CloudProfile => ({
+    firstName: 'Jan', lastName: 'Kowalski', roleTitle: '', cloudRole: 'worker',
+    departmentId: null, supervisorId: null, phone: '', avatar: '', capacity: 8,
+    workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, ...o,
+  });
+
+  it('mapuje rolę chmury, rozwiązuje e-mail przełożonego i pomija profile bez e-maila', () => {
+    const rows = buildCloudPeoplePayload([
+      profile({ id: 'u-k', email: 'kacper@x.pl', cloudRole: 'administrator' }),
+      profile({ id: 'u-z', email: 'zuza@x.pl', cloudRole: 'manager', supervisorId: 'u-k' }),
+      profile({ id: 'u-x', email: '' }),
+    ]);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ id: 'u-k', accessRole: 'administrator', supervisorEmail: '' });
+    expect(rows[1]).toMatchObject({ id: 'u-z', accessRole: 'pm', supervisorEmail: 'kacper@x.pl' });
+  });
+
+  it('puste imię spada na część lokalną e-maila (walidacja wymaga imienia)', () => {
+    const rows = buildCloudPeoplePayload([profile({ id: 'u', email: 'dominik.n@x.pl', firstName: ' ' })]);
+    expect(rows[0].firstName).toBe('dominik.n');
   });
 });
