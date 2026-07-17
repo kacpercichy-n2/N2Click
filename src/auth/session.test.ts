@@ -8,8 +8,14 @@ import {
   type AuthSession,
   type MinimalAuthClient,
 } from './session';
-import { associateProfile, findPersonByEmail, normalizeEmail } from './profile';
+import {
+  associateProfile,
+  findPersonByEmail,
+  normalizeEmail,
+  personDraftFromCloudProfile,
+} from './profile';
 import { detectAuthMode } from './mode';
+import { isValidPersonDraft } from '../store/commandValidation';
 import type { Person } from '../types';
 
 // ---- Fake auth client -------------------------------------------------------
@@ -327,5 +333,48 @@ describe('detectAuthMode', () => {
         VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_secret_danger',
       }),
     ).toBe('local');
+  });
+});
+
+describe('personDraftFromCloudProfile', () => {
+  const toAccessRole = (role: 'administrator' | 'manager' | 'worker') =>
+    role === 'administrator' ? ('administrator' as const) : role === 'manager' ? ('pm' as const) : ('pracownik' as const);
+
+  it('mapuje tożsamość profilu chmury na poprawny draft (imię, rola, stanowisko)', () => {
+    const draft = personDraftFromCloudProfile(
+      { firstName: 'Kacper', lastName: 'Cichy', roleTitle: 'Menadżer Design i IT', cloudRole: 'administrator' },
+      'kacper.cichy@n2media.agency',
+      toAccessRole,
+    );
+    expect(draft).toMatchObject({
+      firstName: 'Kacper',
+      lastName: 'Cichy',
+      email: 'kacper.cichy@n2media.agency',
+      role: 'Menadżer Design i IT',
+      accessRole: 'administrator',
+      departmentId: '',
+      supervisorId: '',
+    });
+    expect(isValidPersonDraft(draft)).toBe(true);
+  });
+
+  it('puste imię spada na część lokalną e-maila, a potem na „Użytkownik" — draft zawsze ważny', () => {
+    const fromEmail = personDraftFromCloudProfile(
+      { firstName: '  ', lastName: '', roleTitle: '', cloudRole: 'worker' },
+      'zuzanna.maruda@n2media.agency',
+      toAccessRole,
+    );
+    expect(fromEmail.firstName).toBe('zuzanna.maruda');
+    expect(fromEmail.accessRole).toBe('pracownik');
+    expect(isValidPersonDraft(fromEmail)).toBe(true);
+
+    const fallback = personDraftFromCloudProfile(
+      { firstName: '', lastName: '', roleTitle: '', cloudRole: 'manager' },
+      '',
+      toAccessRole,
+    );
+    expect(fallback.firstName).toBe('Użytkownik');
+    expect(fallback.accessRole).toBe('pm');
+    expect(isValidPersonDraft(fallback)).toBe(true);
   });
 });

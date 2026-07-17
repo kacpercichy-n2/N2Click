@@ -29,14 +29,14 @@ import { canViewTeam } from './pages/teamScope';
 import { landingPathForRole, LoginPage } from './pages/LoginPage';
 import { useAuth } from './auth/SessionProvider';
 import { useOrgData } from './supabase/OrgDataProvider';
-import { effectiveAccessRole } from './supabase/referenceData';
+import { cloudRoleToAccessRole, effectiveAccessRole } from './supabase/referenceData';
 import {
   AuthBlocked,
   AuthLoading,
   ForcedPasswordChange,
   SupabaseLoginPage,
 } from './auth/AuthScreens';
-import { findPersonByEmail } from './auth/profile';
+import { findPersonByEmail, normalizeEmail, personDraftFromCloudProfile } from './auth/profile';
 import { can } from './store/permissions';
 import {
   currentUser as currentUserSel,
@@ -135,6 +135,33 @@ export function App() {
     setCollapsed(false);
     updateUiPrefs({ sidebarCollapsed: false });
   };
+
+  // Auto-provisioning lokalnego profilu (tryb supabase): uwierzytelnione konto
+  // bez osoby w planerze dostaje JEDNORAZOWO lokalny wiersz Person zbudowany z
+  // własnego, RLS-owego profilu chmury (imię/nazwisko/stanowisko/rola). Bez
+  // tego świeża przeglądarka kończy na ekranie „Brak profilu w planerze”, mimo
+  // że konto istnieje. Dane planera nadal wskazują lokalne id — to tylko
+  // brakujący wiersz tożsamości; dział/przełożony pozostają po stronie chmury.
+  const authedEmail =
+    auth.mode === 'supabase' && auth.state.status === 'signedIn'
+      ? (auth.state.session?.user?.email ?? '')
+      : '';
+  const provisionedEmailRef = useRef('');
+  const orgState = org.state;
+  useEffect(() => {
+    if (!authedEmail || auth.mustChangePassword !== false) return;
+    if (findPersonByEmail(state.people, authedEmail)) return;
+    if (orgState.status !== 'ready') return;
+    const profile = orgState.snapshot.profile;
+    if (!profile) return;
+    const key = normalizeEmail(authedEmail);
+    if (provisionedEmailRef.current === key) return;
+    provisionedEmailRef.current = key;
+    dispatch({
+      type: 'ADD_PERSON',
+      person: personDraftFromCloudProfile(profile, authedEmail, cloudRoleToAccessRole),
+    });
+  }, [authedEmail, auth.mustChangePassword, state.people, orgState, dispatch]);
 
   const currentUser = state.people.find((p) => p.id === state.currentUserId);
   // Real logged-in identity (the impersonator while impersonating). Only the
@@ -259,6 +286,11 @@ export function App() {
     const email = auth.state.session?.user?.email ?? '';
     const person = findPersonByEmail(state.people, email);
     if (!person) {
+      // Snapshot w drodze albo własny profil chmury istnieje → auto-provisioning
+      // (efekt wyżej) zaraz utworzy lokalny wiersz; nie migamy ekranem blokady.
+      const orgLoading = orgState.status === 'idle' || orgState.status === 'loading';
+      const willProvision = orgState.status === 'ready' && orgState.snapshot.profile !== null;
+      if (orgLoading || willProvision) return <AuthLoading />;
       return <AuthBlocked email={email.trim()} onSignOut={() => void handleLogout()} />;
     }
     // Matched, but SET_CURRENT_USER may not have synced yet — never flash the

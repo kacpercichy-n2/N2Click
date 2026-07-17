@@ -49,3 +49,41 @@ export function associateProfile(
   if (person) return { kind: 'matched', person };
   return { kind: 'blocked', email: (email ?? '').trim() };
 }
+
+/**
+ * Buduje draft lokalnego `Person` z własnego, RLS-owego profilu chmury —
+ * auto-provisioning tożsamości dla uwierzytelnionego konta bez osoby w
+ * planerze (App, tryb supabase). Pusty `firstName` w chmurze spada na część
+ * lokalną adresu e-mail, a ostatecznie na 'Użytkownik', żeby draft zawsze
+ * przechodził walidację `isValidPersonDraft` (wymagane imię). Dział i
+ * przełożony celowo pozostają puste: lokalne słowniki mają własne id, a widok
+ * działu/przełożonego zapewnia snapshot organizacji.
+ */
+export interface CloudProfileIdentity {
+  firstName: string;
+  lastName: string;
+  roleTitle: string;
+  cloudRole: 'administrator' | 'manager' | 'worker';
+}
+
+export function personDraftFromCloudProfile(
+  profile: CloudProfileIdentity,
+  email: string,
+  toAccessRole: (role: CloudProfileIdentity['cloudRole']) => Person['accessRole'],
+) {
+  return {
+    firstName: profile.firstName.trim() || email.split('@')[0]?.trim() || 'Użytkownik',
+    lastName: profile.lastName,
+    email,
+    phone: '',
+    role: profile.roleTitle,
+    departmentId: '',
+    avatar: '',
+    capacity: 8,
+    accessRole: toAccessRole(profile.cloudRole),
+    workDays: [1, 2, 3, 4, 5],
+    workStartMinutes: 480,
+    workEndMinutes: 960,
+    supervisorId: '',
+  };
+}

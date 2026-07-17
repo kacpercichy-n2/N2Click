@@ -11,7 +11,12 @@
   whole shell behind a real `supabase.auth` session (`SessionProvider` + pure
   `session.ts` state machine): loading → email/password login → forced first-
   password change (`profiles.must_change_password`, pure `passwordChange.ts`,
-  fail-open) → blocked (no local profile) → shell. A `/account` panel + nav link
+  fail-open) → local-profile association → shell. A signed-in account with no
+  matching local `Person` is auto-provisioned ONCE from its own RLS cloud
+  profile (`personDraftFromCloudProfile` in `auth/profile.ts`, dispatched as
+  `ADD_PERSON` from App; local department/supervisor stay empty — the org
+  snapshot renders those). The blocked screen remains only for the edge case of
+  a session without a cloud profile row. A `/account` panel + nav link
   (Supabase mode only; local redirects to `/`) offers self-service password
   change. Identity association is by email only (planner data references local
   person ids). In Supabase mode the authenticated profile, department, access role
