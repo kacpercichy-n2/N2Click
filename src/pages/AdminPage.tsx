@@ -10,6 +10,8 @@ import { ExportDryRunPanel } from '../components/ExportDryRunPanel';
 import { MigrationStatusPanel } from '../components/MigrationStatusPanel';
 import { useAuth } from '../auth/SessionProvider';
 import { useOrgData } from '../supabase/OrgDataProvider';
+import { commitStatusName } from './statusNameDraft';
+import type { Status } from '../types';
 
 // Lavender brand default for a freshly created status (dark-legible).
 const NEW_STATUS_COLOR = '#c496ff';
@@ -60,6 +62,13 @@ export function AdminPage() {
     const done = state.statuses.filter((s) => s.isDone);
     return done.length === 1 && done[0].id === statusId;
   };
+  // Archive-guard mirror: only ACTIVE done statuses keep the "done" column
+  // alive, so archiving is blocked for the last active one even when another
+  // archived status is still `isDone`.
+  const isLastActiveDoneStatus = (statusId: string) => {
+    const activeDone = state.statuses.filter((s) => !s.archived && s.isDone);
+    return activeDone.length === 1 && activeDone[0].id === statusId;
+  };
 
   const addStatus = (e: React.FormEvent) => {
     e.preventDefault();
@@ -88,12 +97,13 @@ export function AdminPage() {
           {statuses.map((s, i) => {
             const onlyActive = isOnlyActiveStatus(s.id);
             const onlyDone = isOnlyDoneStatus(s.id);
+            const lastActiveDone = isLastActiveDoneStatus(s.id);
             const inUse = statusInUse(s.id);
-            const archiveDisabled = !s.archived && (onlyActive || onlyDone);
+            const archiveDisabled = !s.archived && (onlyActive || lastActiveDone);
             const archiveTitle = archiveDisabled
               ? onlyActive
                 ? 'Nie można zarchiwizować ostatniego aktywnego statusu.'
-                : 'Nie można zarchiwizować jedynego statusu ukończenia — najpierw oznacz inny status.'
+                : 'Nie można zarchiwizować ostatniego aktywnego statusu ukończenia — najpierw oznacz inny status.'
               : undefined;
             const deleteDisabled = inUse || onlyActive || onlyDone;
             const deleteTitle = inUse
@@ -113,13 +123,12 @@ export function AdminPage() {
                 }
                 aria-label={`Kolor statusu ${s.name}`}
               />
-              <input
-                className="admin-status-name"
-                value={s.name}
-                onChange={(e) =>
-                  dispatch({ type: 'SAVE_STATUS', statusId: s.id, name: e.target.value, color: s.color })
+              <StatusNameInput
+                key={`${s.id}:${s.name}`}
+                status={s}
+                onSave={(name) =>
+                  dispatch({ type: 'SAVE_STATUS', statusId: s.id, name, color: s.color })
                 }
-                aria-label={`Nazwa statusu ${s.name}`}
               />
               <code className="muted admin-status-slug">/{s.slug}</code>
               <StatusBadge status={s} />
@@ -434,6 +443,46 @@ function CloudDictionaries() {
 // current store name (the reducer would reject it anyway). The row is keyed by
 // `${item.id}:${item.name}` in SimpleList, so any external store rename remounts
 // it and reseeds the draft from the fresh name.
+// Status name gets the same local-draft treatment as SimpleListRow: free typing
+// (incl. clearing to retype), store hit only on blur/Enter commit. Keyed by
+// `${status.id}:${status.name}` at the call site so an external rename remounts
+// the input and reseeds the draft.
+function StatusNameInput({
+  status,
+  onSave,
+}: {
+  status: Status;
+  onSave: (name: string) => void;
+}) {
+  const [draft, setDraft] = useState(status.name);
+
+  const commit = () => {
+    const result = commitStatusName(draft, status.name);
+    if (result.kind === 'revert') {
+      setDraft(status.name);
+      return;
+    }
+    setDraft(result.name); // normalize the visible value (drop stray whitespace)
+    if (result.kind === 'save') onSave(result.name);
+  };
+
+  return (
+    <input
+      className="admin-status-name"
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          e.currentTarget.blur(); // Enter commits via the blur handler
+        }
+      }}
+      aria-label={`Nazwa statusu ${status.name}`}
+    />
+  );
+}
+
 function SimpleListRow({
   item,
   onRename,

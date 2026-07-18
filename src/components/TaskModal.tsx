@@ -5,10 +5,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'motion/react';
-import { useStore, usePersistence } from '../store/AppStore';
+import { useStore, usePersistence, wouldRejectSaveTask } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import { NO_PERM_TITLE } from '../store/permissions';
-import type { AllocationCell, TaskDraft } from '../store/AppStore';
+import type { AllocationCell, SaveTaskPayload, TaskDraft } from '../store/AppStore';
 import type { ChecklistItem, TaskPriority } from '../types';
 import { PRIORITY_LABELS, TASK_PRIORITIES } from '../utils/priority';
 import {
@@ -574,6 +574,13 @@ function TaskEditor({
 
   const plannedTotalAll = plannedCells.reduce((s, c) => s + c.plannedHours, 0);
 
+  // Explicit rejected-save feedback: the reducer refuses stale commands (e.g.
+  // the status or an assignee was deleted by a cloud merge or another tab) by
+  // returning the SAME state reference — without this flag the modal would
+  // still rebase, clear dirty, flash "Zapisano" and close over a save that
+  // never happened.
+  const [saveRejected, setSaveRejected] = useState(false);
+
   const handleSave = () => {
     setTitleTouched(true);
     if (titleError) return;
@@ -593,16 +600,21 @@ function TaskEditor({
       checklist,
     };
 
-    dispatch({
-      type: 'SAVE_TASK',
-      payload: {
-        taskId: existing ? existing.id : null,
-        draft,
-        assigneeIds,
-        allocations: plannedCells,
-        newUnassigned: pendingUnassigned.filter((u) => u.hours > 0),
-      },
-    });
+    const payload: SaveTaskPayload = {
+      taskId: existing ? existing.id : null,
+      draft,
+      assigneeIds,
+      allocations: plannedCells,
+      newUnassigned: pendingUnassigned.filter((u) => u.hours > 0),
+    };
+    if (wouldRejectSaveTask(state, payload)) {
+      // Keep the modal open with the dirty draft intact — no false "Zapisano".
+      setSaveRejected(true);
+      return;
+    }
+    setSaveRejected(false);
+
+    dispatch({ type: 'SAVE_TASK', payload });
     // Rebase the snapshot so the close path fires no confirm, and show the
     // save feedback before the modal dismisses.
     snapshotRef.current = currentSerialized;
@@ -1099,6 +1111,13 @@ function TaskEditor({
       {/* f) Save / Cancel */}
       {projectError && state.projects.length > 0 && (
         <p className="field-error">Wybierz projekt dla tego zadania.</p>
+      )}
+      {saveRejected && (
+        <p className="field-error">
+          Nie udało się zapisać zadania — dane zmieniły się w tle (np. status,
+          projekt lub przypisana osoba zostały usunięte). Sprawdź pola i spróbuj
+          ponownie; zmiany nie zostały zapisane.
+        </p>
       )}
       <div className="editor-actions">
         {!readOnly && (

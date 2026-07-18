@@ -104,3 +104,11 @@ export function canUploadAvatarPhoto(
   if (!actor) return false;
   return actor.accessRole === 'administrator' || actor.id === target.id;
 }
+
+/** The local password editor (PersonProfilePage) exists only in local mode. In
+ *  supabase mode the account password is owned by Supabase Auth — writing the
+ *  local hash changes nothing about the real login and would falsely report a
+ *  password change. */
+export function canEditLocalPassword(mode: AuthMode): boolean {
+  return mode !== 'supabase';
+}

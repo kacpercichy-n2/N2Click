@@ -227,6 +227,89 @@ const MS = uuid('milestone-one');
 const WB = uuid('wl-bin');
 const WD = uuid('wl-dated');
 
+// Prompt 215: lustro profili. Wiersz `profiles` niesie CLOUD id profilu (mapa
+// po e-mailu), a dział przechodzi przez maps.departments jak w projektach —
+// lokalny id działu wysłany dosłownie kończyłby się odrzuconym naruszeniem FK,
+// gdy dział o tej samej nazwie ma w chmurze inne id.
+describe('diffToCloudOps — profile osób', () => {
+  const D_LOCAL = 'dep-local';
+  const D_CLOUD = uuid('dep-cloud');
+
+  const localWithDept = (): AppData => ({
+    ...localFixture(),
+    departments: [{ id: D_LOCAL, name: 'Kreacja' }],
+  });
+  const orgWithDept = (): OrgSnapshot => ({
+    ...orgFixture(),
+    departments: [{ id: D_CLOUD, name: 'Kreacja' }],
+  });
+  const deptMaps = (): CloudIdMaps => buildCloudIdMaps(localWithDept(), orgWithDept());
+
+  it('maps the department to the CLOUD id (name-matched) in the profile row', () => {
+    const prev = localWithDept();
+    const next: AppData = {
+      ...prev,
+      people: prev.people.map((p) =>
+        p.id === PA ? { ...p, departmentId: D_LOCAL, role: 'Grafik' } : p,
+      ),
+    };
+    const { ops, diagnostics } = diffToCloudOps(prev, next, deptMaps());
+    expect(diagnostics).toHaveLength(0);
+    expect(ops).toEqual([
+      expect.objectContaining({
+        kind: 'upsert',
+        table: 'profiles',
+        row: expect.objectContaining({
+          id: CLOUD_PA, // cloud profile id, NOT the local person id
+          role_title: 'Grafik',
+          department_id: D_CLOUD, // NOT D_LOCAL — the FK-violation regression
+        }),
+      }),
+    ]);
+  });
+
+  it('resolves an unmatched department to null (import fallback), not the local id', () => {
+    const prev = localFixture();
+    const next: AppData = {
+      ...prev,
+      people: prev.people.map((p) => (p.id === PA ? { ...p, departmentId: 'ghost-dept' } : p)),
+    };
+    const { ops } = diffToCloudOps(prev, next, maps());
+    expect(ops).toHaveLength(1);
+    expect(ops[0].row).toMatchObject({ department_id: null });
+  });
+
+  it('an edit of a person without a server account yields a diagnostic and no op', () => {
+    const noAccount = makePerson({ id: uuid('person-c'), email: 'nikt@x.com' });
+    const prev: AppData = { ...localFixture(), people: [...localFixture().people, noAccount] };
+    const next: AppData = {
+      ...prev,
+      people: prev.people.map((p) => (p.id === noAccount.id ? { ...p, firstName: 'Zmiana' } : p)),
+    };
+    const { ops, diagnostics } = diffToCloudOps(prev, next, maps());
+    expect(ops).toHaveLength(0);
+    expect(diagnostics.length).toBeGreaterThan(0);
+  });
+
+  it('local-only field changes (password hash, capacity) emit no profile op', () => {
+    const prev = localFixture();
+    const next: AppData = {
+      ...prev,
+      people: prev.people.map((p) =>
+        p.id === PA ? { ...p, passwordHash: 'abc', capacity: 6 } : p,
+      ),
+    };
+    expect(diffToCloudOps(prev, next, maps()).ops).toHaveLength(0);
+  });
+
+  it('deleting a local person NEVER removes the cloud profile (accounts are server-owned)', () => {
+    const prev = localFixture();
+    const next: AppData = { ...prev, people: prev.people.filter((p) => p.id !== PA) };
+    const { ops } = diffToCloudOps(prev, next, maps());
+    expect(ops.filter((o) => o.table === 'profiles')).toHaveLength(0);
+  });
+});
+
 describe('diffToCloudOps — milestones + workload families', () => {
   it('upserts and removes a milestone (by-id LWW)', () => {
     const m = maps();

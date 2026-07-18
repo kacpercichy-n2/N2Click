@@ -97,6 +97,33 @@ describe('SET_STATUS_ARCHIVED', () => {
     expect(next.projects.find((p) => p.id === 'proj1')!.statusId).toBe('s0');
     expect(next.tasks.find((t) => t.id === 't1')!.statusId).toBe('s0');
   });
+
+  // Regression (prompt 215): the guard previously counted ARCHIVED done
+  // statuses, so the last ACTIVE done status could be archived — leaving the
+  // kanban with no done column, a state the cloud validator rejects.
+  it('archiving the last ACTIVE done status is refused even when an archived done status exists', () => {
+    const s0 = makeStatus({ id: 's0', order: 0, isDone: true }); // the only ACTIVE done status
+    const s1 = makeStatus({ id: 's1', order: 1, isDone: true, archived: true }); // archived done — must not satisfy the guard
+    const s2 = makeStatus({ id: 's2', order: 2, isDone: false }); // active, keeps s0 from being "only active"
+    const state = makeState({ statuses: [s0, s1, s2] });
+
+    const next = reducer(state, { type: 'SET_STATUS_ARCHIVED', statusId: 's0', archived: true });
+
+    expect(next).toBe(state);
+    expect(next.statuses.find((s) => s.id === 's0')!.archived).toBe(false);
+  });
+
+  it('archiving a done status succeeds while another ACTIVE done status remains', () => {
+    const s0 = makeStatus({ id: 's0', order: 0, isDone: true });
+    const s1 = makeStatus({ id: 's1', order: 1, isDone: true }); // second ACTIVE done status
+    const s2 = makeStatus({ id: 's2', order: 2, isDone: false });
+    const state = makeState({ statuses: [s0, s1, s2] });
+
+    const next = reducer(state, { type: 'SET_STATUS_ARCHIVED', statusId: 's0', archived: true });
+
+    expect(next).not.toBe(state);
+    expect(next.statuses.find((s) => s.id === 's0')!.archived).toBe(true);
+  });
 });
 
 describe('DELETE_STATUS', () => {

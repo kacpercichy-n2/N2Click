@@ -14,8 +14,14 @@
   Supabase from state diffs AFTER each action, and hydrates them on sign-in via
   the single `MERGE_CLOUD_ENTITIES` reducer action. Workload entries (planned
   hours + calendar/bin) and milestones now go cloud too — the "workload never
-  leaves the browser" rule is retired. Only per-user saved filters, people
-  administration, dictionary/status mutations and sample/reset stay local.
+  leaves the browser" rule is retired. Person edits mirror a NARROW `profiles`
+  projection (first/last name, role title, department — the department id is
+  resolved through `maps.departments` like projects, never sent literally):
+  update-only for accounts mapped by e-mail, never creating or removing cloud
+  profiles; e-mail, access role and avatar stay server-owned, and `people`
+  deliberately stays in `persistGate`'s non-mirrored set because its local-only
+  fields (capacity, work days, password hash) have no cloud home. Only per-user
+  saved filters, dictionary/status mutations and sample/reset stay fully local.
   Constraint-violation write errors (23502/23503/23505/23514) drop the op with
   the Polish permission notice rather than stalling the retry queue. Pending
   mirror ops are durable: the queue is persisted on the dedicated key

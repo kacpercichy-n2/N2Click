@@ -6,6 +6,7 @@ import { useStore } from '../store/AppStore';
 import type { PersonDraft } from '../store/AppStore';
 import { useAuth } from '../auth/SessionProvider';
 import {
+  canEditLocalPassword,
   canUploadAvatarPhoto,
   editableProfileFields,
   type ProfileField,
@@ -407,7 +408,7 @@ function PersonProfile({ personId }: { personId: string }) {
 
       <ProfileFacts person={person} />
 
-      <PasswordSection person={person} />
+      {canEditLocalPassword(auth.mode) && <PasswordSection person={person} />}
 
       <div className="editor-section">
         <h2>Ten tydzień</h2>

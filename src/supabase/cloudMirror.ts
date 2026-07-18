@@ -18,6 +18,7 @@ import type {
   Client,
   Comment,
   Milestone,
+  Person,
   Project,
   Task,
   WorkloadEntry,
@@ -178,6 +179,35 @@ function resolveDept(value: string, map: Map<string, string>): string | null {
 
 function clientRow(c: Client): Record<string, unknown> {
   return { id: c.id, name: c.name, archived: c.archived };
+}
+
+/** Pola osoby lustrzane do `profiles`. Celowo wąski zakres: imię, nazwisko,
+ *  stanowisko i dział. E-mail (klucz mapowania osób), rola dostępu (źródło
+ *  autoryzacji RLS) i awatar pozostają własnością serwera. */
+const profileProjection = (p: Person): string =>
+  JSON.stringify([p.firstName, p.lastName, p.role, p.departmentId]);
+
+/** Wiersz profilu dla edycji osoby. Id wiersza to CLOUD id profilu (mapa po
+ *  e-mailu), a dział przechodzi przez maps.departments jak w projektach —
+ *  lokalne id działu wysłane dosłownie kończy się naruszeniem FK (i odrzuconym
+ *  zapisem), gdy dział o tej samej nazwie ma w chmurze inne id. */
+function profileRow(
+  p: Person,
+  maps: CloudIdMaps,
+  diagnostics: string[],
+): Record<string, unknown> | null {
+  const profileId = maps.people.get(p.id);
+  if (!profileId) {
+    diagnostics.push(DIAG.unmappablePerson);
+    return null;
+  }
+  return {
+    id: profileId,
+    first_name: p.firstName,
+    last_name: p.lastName,
+    role_title: p.role,
+    department_id: resolveDept(p.departmentId, maps.departments),
+  };
 }
 
 function projectRow(
@@ -373,8 +403,10 @@ const byId = <T extends { id: string }>(items: T[]): Map<string, T> =>
 
 /**
  * Diff dwóch stanów na operacje zapisu chmury w kolejności zależności:
- * klienci -> projekty -> kamienie milowe -> zadania -> przypisania ->
- * zaplanowane godziny -> komentarze -> aktywność. Klienci/projekty/kamienie/
+ * klienci -> profile osób -> projekty -> kamienie milowe -> zadania ->
+ * przypisania -> zaplanowane godziny -> komentarze -> aktywność. Profile:
+ * update-only istniejących kont (mapa po e-mailu), wąska projekcja pól, dział
+ * mapowany przez maps.departments. Klienci/projekty/kamienie/
  * zadania/godziny: upsert dodanych i zmienionych (last-write-wins), remove
  * usuniętych (kaskada FK sprząta zależne). Zmiany statusu zadania/projektu to
  * zwykłe upserty (ta sama ścieżka). Przypisania: złożony upsert / remove po parze
@@ -406,6 +438,18 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
         continue;
       }
       ops.push({ kind: 'upsert', table: 'clients', row: clientRow(c), sourceId: c.id, label: `Klient „${c.name}”` });
+    }
+  }
+
+  // 1b) Profile osób ---- (upsert WYŁĄCZNIE zmienionych, zmapowanych osób;
+  // profiles to konta serwera — lustro nigdy ich nie tworzy ani nie usuwa)
+  {
+    const prevMap = byId(prev.people);
+    for (const p of next.people) {
+      const before = prevMap.get(p.id);
+      if (!before || profileProjection(before) === profileProjection(p)) continue;
+      const row = profileRow(p, maps, diagnostics);
+      if (row) ops.push({ kind: 'upsert', table: 'profiles', row, sourceId: p.id, label: `Profil „${p.name}”` });
     }
   }
 

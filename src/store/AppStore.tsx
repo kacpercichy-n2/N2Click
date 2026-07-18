@@ -1491,6 +1491,15 @@ function isOnlyDoneStatus(state: AppData, statusId: string): boolean {
   return done.length === 1 && done[0].id === statusId;
 }
 
+/** True when `statusId` is the last ACTIVE `isDone` status. Archived done
+ *  statuses do not count: they render no kanban column, so archiving the last
+ *  active done status would leave the board without a "done" column — a state
+ *  the cloud validator rejects. */
+function isLastActiveDoneStatus(state: AppData, statusId: string): boolean {
+  const activeDone = state.statuses.filter((s) => !s.archived && s.isDone);
+  return activeDone.length === 1 && activeDone[0].id === statusId;
+}
+
 function saveStatus(
   state: AppData,
   statusId: string | null,
@@ -1551,11 +1560,13 @@ function setStatusDone(state: AppData, statusId: string, isDone: boolean): AppDa
 }
 
 /** Archive/restore a status. Restore (archived=false) is always allowed;
- *  archiving is refused when the status is the only ACTIVE status or the only
- *  `isDone` status. Returns state unchanged on refusal. */
+ *  archiving is refused when the status is the only ACTIVE status or the last
+ *  ACTIVE `isDone` status (an archived done status keeps no done column
+ *  alive, so it must not satisfy the guard). Returns state unchanged on
+ *  refusal. */
 function setStatusArchived(state: AppData, statusId: string, archived: boolean): AppData {
   if (!state.statuses.some((s) => s.id === statusId)) return state;
-  if (archived && (isOnlyActiveStatus(state, statusId) || isOnlyDoneStatus(state, statusId))) {
+  if (archived && (isOnlyActiveStatus(state, statusId) || isLastActiveDoneStatus(state, statusId))) {
     return state;
   }
   const status = state.statuses.find((s) => s.id === statusId)!;
@@ -1835,6 +1846,15 @@ function mergeWorkload(local: WorkloadEntry[], incoming: WorkloadEntry[]): Workl
 }
 
 // ---- Reducer ----
+
+/** Precheck for a SAVE_TASK command: true when the reducer would reject it and
+ *  preserve the prior state reference (e.g. the assignee or status was deleted
+ *  by a cloud merge or another tab while the editor was open). Pure read —
+ *  dispatches nothing; lets the editor keep its dirty draft and show an
+ *  explicit error instead of a false "Zapisano". */
+export function wouldRejectSaveTask(state: AppData, payload: SaveTaskPayload): boolean {
+  return reducer(state, { type: 'SAVE_TASK', payload }) === state;
+}
 
 export function reducer(state: AppData, action: Action): AppData {
   switch (action.type) {

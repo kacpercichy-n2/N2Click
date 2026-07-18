@@ -30,6 +30,9 @@ const MIRRORED_KEYS = [
 
 // Kolekcje/pola BEZ domu w chmurze — zmiana którejkolwiek MUSI trafić lokalnie
 // (wycofanie nie może ich osierocić). Reszta kluczy AppData to właśnie te.
+// `people` zostaje tu CELOWO mimo lustrzanych profili: lustro niesie tylko wąską
+// projekcję (imię/nazwisko/stanowisko/dział), a pola lokalne (pojemność, dni
+// pracy, hasło) nie mają domu w chmurze i muszą zawsze trafiać do localStorage.
 const NON_MIRRORED_KEYS: Array<keyof AppData> = [
   'version',
   'departments',

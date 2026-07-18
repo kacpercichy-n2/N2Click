@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import type { AccessRole, Person } from '../types';
 import {
   canEditAnyProfileField,
+  canEditLocalPassword,
   canUploadAvatarPhoto,
   editableProfileFields,
   type ProfileField,
@@ -154,5 +155,18 @@ describe('canUploadAvatarPhoto', () => {
 
   it('supabase + undefined aktor (poza setup) → nie', () => {
     expect(canUploadAvatarPhoto(undefined, worker, 'supabase', opts)).toBe(false);
+  });
+});
+
+// Regresja (prompt 215): edytor lokalnego hasła pisał martwy lokalny hash w
+// trybie supabase — hasło konta Supabase pozostawało nietknięte, a UI zgłaszał
+// fałszywą zmianę. Sekcja jest bramkowana trybem jak zdjęcie profilowe.
+describe('canEditLocalPassword', () => {
+  it('tryb lokalny → tak', () => {
+    expect(canEditLocalPassword('local')).toBe(true);
+  });
+
+  it('tryb supabase → nie (hasłem konta zarządza Supabase Auth)', () => {
+    expect(canEditLocalPassword('supabase')).toBe(false);
   });
 });
