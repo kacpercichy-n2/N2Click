@@ -24,6 +24,7 @@ import type {
   Person,
   Project,
   Status,
+  SavedFilter,
   SavedFilterCriteria,
   Task,
   TaskAssignment,
@@ -1471,9 +1472,25 @@ function deletePerson(state: AppData, personId: string): AppData {
       .map((p) => (p.supervisorId === personId ? { ...p, supervisorId: '' } : p)),
     assignments: state.assignments.filter((a) => a.personId !== personId),
     workload: state.workload.filter((w) => w.personId !== personId),
+    savedFilters: clearSavedFilterRef(state.savedFilters, 'personId', personId),
     currentUserId,
     impersonatorId,
   };
+}
+
+// ---- Saved filters ----
+
+/** Clear a deleted entity's id from saved-filter criteria so presets never keep
+ *  dangling references. Returns the SAME array reference when nothing matches. */
+function clearSavedFilterRef(
+  filters: SavedFilter[],
+  field: 'clientId' | 'statusId' | 'personId' | 'workCategoryId',
+  id: string,
+): SavedFilter[] {
+  if (id === '' || !filters.some((f) => f.criteria[field] === id)) return filters;
+  return filters.map((f) =>
+    f.criteria[field] === id ? { ...f, criteria: { ...f.criteria, [field]: '' } } : f,
+  );
 }
 
 // ---- Statuses ----
@@ -1612,6 +1629,7 @@ function deleteStatus(state: AppData, statusId: string): AppData {
   return {
     ...state,
     statuses: state.statuses.filter((s) => s.id !== statusId),
+    savedFilters: clearSavedFilterRef(state.savedFilters, 'statusId', statusId),
     activity: withActivity(state, 'status', statusId, `usunął(a) status „${status.name}”`),
   };
 }
@@ -2238,7 +2256,11 @@ export function reducer(state: AppData, action: Action): AppData {
       for (const p of state.projects.filter((p) => p.clientId === action.clientId)) {
         next = deleteProject(next, p.id);
       }
-      const cleaned = { ...next, clients: next.clients.filter((c) => c.id !== action.clientId) };
+      const cleaned = {
+        ...next,
+        clients: next.clients.filter((c) => c.id !== action.clientId),
+        savedFilters: clearSavedFilterRef(next.savedFilters, 'clientId', action.clientId),
+      };
       // One 'client' row built on the post-cascade state so the cascade's pruning
       // is not resurrected (identities are unchanged, so stamping stays honest).
       return {
@@ -2335,11 +2357,7 @@ export function reducer(state: AppData, action: Action): AppData {
         tasks: state.tasks.map((t) =>
           t.workCategoryId === action.workCategoryId ? { ...t, workCategoryId: '' } : t,
         ),
-        savedFilters: state.savedFilters.map((filter) =>
-          filter.criteria.workCategoryId === action.workCategoryId
-            ? { ...filter, criteria: { ...filter.criteria, workCategoryId: '' } }
-            : filter,
-        ),
+        savedFilters: clearSavedFilterRef(state.savedFilters, 'workCategoryId', action.workCategoryId),
       };
     }
     case 'SAVE_STATUS':

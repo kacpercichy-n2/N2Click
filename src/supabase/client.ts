@@ -1,10 +1,10 @@
 // Leniwie inicjowany singleton klienta Supabase.
 //
-// UWAGA: to jest uśpiona infrastruktura. Aplikacja nadal działa wyłącznie na
-// localStorage (src/store/storage.ts) i nic jej jeszcze nie importuje. Walidacja
+// To jest jedyny punkt tworzenia klienta Supabase — korzystają z niego sesja,
+// hydracja i lustro zapisów chmury (CloudSyncProvider). Walidacja
 // `import.meta.env` celowo NIE wykonuje się przy imporcie modułu — dopiero przy
 // pierwszym wywołaniu getSupabaseClient(), więc brak zmiennych VITE_SUPABASE_*
-// nie psuje działania aplikacji.
+// nie psuje trybu lokalnego.
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { resolveSupabaseConfig } from './config';

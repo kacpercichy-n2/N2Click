@@ -97,7 +97,7 @@
 
 `src/store/activityAttribution.test.ts`, `blockActions.test.ts`,
 `commandValidation.test.ts`, `cloudMerge.test.ts`,
-`saveTaskWorkload.test.ts`,
+`savedFilterCleanup.test.ts`, `saveTaskWorkload.test.ts`,
 `selectors.test.ts`, `statusActions.test.ts`, `storage.test.ts`,
 `dateGuards.test.ts`, `taskMeta.test.ts`, `persistGate.test.ts` (retirement
 gate). Cloud mirror: `src/supabase/cloudMirror.test.ts`, `plannerData.test.ts`,

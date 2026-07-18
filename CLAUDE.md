@@ -28,8 +28,11 @@ covered interaction changes; release verification owns the full browser matrix.
   No UI framework, Tailwind or drag library.
 - `src/store/AppStore.tsx` is the only mutation boundary; every change is a
   reducer action. `src/store/selectors.ts` owns derived reads.
-- `src/store/storage.ts` is the only localStorage boundary. There is no backend,
-  real authentication, authorization or multi-user synchronization.
+- `src/store/storage.ts` is the only localStorage boundary. `src/supabase/` is
+  the only cloud boundary: in supabase mode the app authenticates through
+  Supabase (`src/auth/`), mirrors planner entities to Postgres behind RLS and
+  hydrates them on login. Missing `VITE_SUPABASE_*` config falls back to local
+  mode, which runs entirely on localStorage with no backend.
 - Persisted dates are `yyyy-MM-dd`; time-of-day is `WorkloadEntry.startMinutes`.
   Use `src/utils/dates.ts` and `src/utils/time.ts`, never duplicate their logic.
 - Current data version is 7. Storage repairs legacy data on load. A failed save
@@ -53,10 +56,12 @@ covered interaction changes; release verification owns the full browser matrix.
 
 ## Scope guardrails
 
-Do not add a backend, cloud sync, real auth, file attachments, notifications,
-billing, timers, task dependencies, advanced reporting or a separate content
-calendar without an explicit request. Client-side checks are UX/data-integrity
-only, never a security boundary.
+Supabase (auth, RLS, cloud mirror) is the only backend; do not add another
+backend or sync channel outside `src/supabase/`. Do not add file attachments,
+notifications, billing, timers, task dependencies, advanced reporting or a
+separate content calendar without an explicit request. Client-side checks are
+UX/data-integrity only; the security boundary is Supabase RLS, never the
+client.
 
 ## Wiki maintenance
 

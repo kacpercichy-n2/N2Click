@@ -27,21 +27,8 @@ import { StatusBadge } from '../components/StatusBadge';
 import { PlanningBadge } from '../components/PlanningBadge';
 import { PriorityBadge } from '../components/PriorityBadge';
 import { Coin } from '../components/Coin';
-import { parseDate } from '../utils/dates';
+import { rangeLabel } from '../utils/dates';
 import { formatDuration } from '../utils/time';
-import { format } from 'date-fns';
-import { pl } from 'date-fns/locale/pl';
-
-function rangeLabel(start: string, end: string): string {
-  const s = parseDate(start);
-  const e = parseDate(end);
-  if (start === end) return format(s, 'd MMM yyyy', { locale: pl });
-  const sameYear = s.getFullYear() === e.getFullYear();
-  const sameMonth = sameYear && s.getMonth() === e.getMonth();
-  if (sameMonth) return `${format(s, 'd')}–${format(e, 'd MMM yyyy', { locale: pl })}`;
-  if (sameYear) return `${format(s, 'd MMM', { locale: pl })} – ${format(e, 'd MMM yyyy', { locale: pl })}`;
-  return `${format(s, 'd MMM yyyy', { locale: pl })} – ${format(e, 'd MMM yyyy', { locale: pl })}`;
-}
 
 export function TasksPage() {
   const { state, dispatch } = useStore();

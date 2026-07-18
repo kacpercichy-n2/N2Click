@@ -6,6 +6,7 @@ only the linked area pages that the task explicitly names.
 | Area | Read first | Primary source files |
 | --- | --- | --- |
 | App model, reducer, selectors, persistence | [state-and-persistence.md](state-and-persistence.md) | `src/types.ts`, `src/store/AppStore.tsx`, `src/store/selectors.ts`, `src/store/storage.ts` |
+| Supabase schema, auth, cloud mirror | [cloud-database.md](cloud-database.md) | `src/supabase/`, `src/auth/`, `supabase/migrations/` |
 | Calendar, bin and workload placement | [scheduling-and-calendar.md](scheduling-and-calendar.md) | `src/components/WeekView.tsx`, `src/pages/WorkloadPage.tsx`, `src/utils/time.ts`, `src/store/AppStore.tsx` |
 | Pages, modals, navigation and onboarding | [ui-navigation-and-onboarding.md](ui-navigation-and-onboarding.md) | `src/App.tsx`, `src/pages/`, `src/components/TaskModal.tsx`, `src/onboarding/` |
 | Tests and browser checks | [testing-and-automation.md](testing-and-automation.md) | `src/**/*.test.ts`, `scripts/` |

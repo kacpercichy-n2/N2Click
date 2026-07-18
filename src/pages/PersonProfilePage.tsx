@@ -21,6 +21,7 @@ import { validateAvatarFile } from '../supabase/avatarFile';
 import {
   availableHoursInRange,
   getDepartment,
+  currentUser,
   getStatus,
   hoursForPersonOnDate,
   personCapacity,
@@ -73,7 +74,7 @@ function PersonProfile({ personId }: { personId: string }) {
   const { state, dispatch } = useStore();
   const auth = useAuth();
   const person = state.people.find((p) => p.id === personId);
-  const actor = state.people.find((p) => p.id === state.currentUserId);
+  const actor = currentUser(state);
   const peopleCount = state.people.length;
   const isOwn = personId === state.currentUserId;
   // Pure role/department policy drives which fields are editable. `save()` takes

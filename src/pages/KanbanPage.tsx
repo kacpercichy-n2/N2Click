@@ -19,17 +19,10 @@ import { FilterPanel, type FilterChip, type FilterGroup } from '../components/Fi
 import { type PaidFilter } from './ProjectsPage';
 import { formatShort } from '../utils/dates';
 import { formatDuration } from '../utils/time';
+import { polishCount } from '../utils/polish';
 
 // Dark-legible, on-brand rotation for admin quick-created statuses.
 const STATUS_COLORS = ['#9aa7c4', '#5bdcff', '#ffc857', '#b9ff4d', '#c496ff', '#ff9640'];
-
-function polishCount(n: number, one: string, few: string, many: string): string {
-  const mod10 = n % 10;
-  const mod100 = n % 100;
-  if (n === 1) return one;
-  if (mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14)) return few;
-  return many;
-}
 
 export function KanbanPage() {
   const { state, dispatch } = useStore();

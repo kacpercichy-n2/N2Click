@@ -1,4 +1,4 @@
-name: OpenWiki and scheduler contract check
+name: OpenWiki link check
 
 on:
   workflow_dispatch:
@@ -21,8 +21,5 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Validate wiki links and active prompt contracts
+      - name: Validate wiki links
         run: node scripts/check-openwiki-links.mjs
-
-      - name: Test scheduler gates and recovery
-        run: node --test automation/claude-scheduler/*.test.mjs

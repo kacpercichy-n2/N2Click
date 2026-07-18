@@ -10,9 +10,9 @@ import type {
   TaskAssignment,
   WorkloadEntry,
 } from '../types';
-import { buildDefaultStatuses, DATA_VERSION, DEFAULT_CAPACITY } from './storage';
+import { buildDefaultStatuses, DATA_VERSION, DEFAULT_CAPACITY, defaultWorkEndMinutes } from './storage';
 import { addDaysStr, todayStr, weekDays } from '../utils/dates';
-import { BIN_DATE, hoursToMinutes, nextFreeStart } from '../utils/time';
+import { BIN_DATE, hoursToMinutes, nextFreeStart, WORKDAY_START_MIN } from '../utils/time';
 
 function uid(): string {
   return crypto.randomUUID();
@@ -46,7 +46,7 @@ export function buildSampleData(): AppData {
   const catTesty = { id: uid(), name: 'Testy' };
   const workCategories = [catKreacja, catWdrozenie, catTesty];
 
-  // People. Work hours default to 8:00–16:00 (480 → min(1440, 480+capacity*60)).
+  // People. Work hours default to 8:00–16:00 (WORKDAY_START_MIN → defaultWorkEndMinutes).
   // All passwordless (passwordHash: '') so the demo can log in without a password.
   // Kasia is defined first so she can be the others' supervisor; the `people`
   // array order [ola, marek, kasia] is preserved for stable person colours.
@@ -64,8 +64,8 @@ export function buildSampleData(): AppData {
     accessRole: 'administrator', // Kasia manages statuses & admin settings
     passwordHash: '',
     workDays: [1, 2, 3, 4, 5],
-    workStartMinutes: 480,
-    workEndMinutes: Math.min(1440, 480 + DEFAULT_CAPACITY * 60),
+    workStartMinutes: WORKDAY_START_MIN,
+    workEndMinutes: defaultWorkEndMinutes(DEFAULT_CAPACITY),
     supervisorId: '',
   };
   const ola: Person = {
@@ -82,8 +82,8 @@ export function buildSampleData(): AppData {
     accessRole: 'pm',
     passwordHash: '',
     workDays: [1, 2, 3, 4], // Mon–Thu — availability math is visibly non-uniform
-    workStartMinutes: 480,
-    workEndMinutes: Math.min(1440, 480 + DEFAULT_CAPACITY * 60),
+    workStartMinutes: WORKDAY_START_MIN,
+    workEndMinutes: defaultWorkEndMinutes(DEFAULT_CAPACITY),
     supervisorId: kasia.id,
   };
   const marek: Person = {
@@ -100,8 +100,8 @@ export function buildSampleData(): AppData {
     accessRole: 'pracownik',
     passwordHash: '',
     workDays: [1, 2, 3, 4, 5],
-    workStartMinutes: 480,
-    workEndMinutes: Math.min(1440, 480 + DEFAULT_CAPACITY * 60),
+    workStartMinutes: WORKDAY_START_MIN,
+    workEndMinutes: defaultWorkEndMinutes(DEFAULT_CAPACITY),
     supervisorId: kasia.id,
   };
   const people: Person[] = [ola, marek, kasia];

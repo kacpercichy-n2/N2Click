@@ -113,6 +113,18 @@ export function formatShort(d: DateStr): string {
   return format(parseDate(d), 'd MMM', { locale: pl });
 }
 
+/** Polish range label like "3–7 sie 2026", "3 sie – 7 wrz 2026" or a single date. */
+export function rangeLabel(start: DateStr, end: DateStr): string {
+  const s = parseDate(start);
+  const e = parseDate(end);
+  if (start === end) return format(s, 'd MMM yyyy', { locale: pl });
+  const sameYear = s.getFullYear() === e.getFullYear();
+  if (sameYear && s.getMonth() === e.getMonth())
+    return `${format(s, 'd')}–${format(e, 'd MMM yyyy', { locale: pl })}`;
+  if (sameYear) return `${format(s, 'd MMM', { locale: pl })} – ${format(e, 'd MMM yyyy', { locale: pl })}`;
+  return `${format(s, 'd MMM yyyy', { locale: pl })} – ${format(e, 'd MMM yyyy', { locale: pl })}`;
+}
+
 /** Timestamp label like "3 Aug 2026, 14:05" from an ISO string. */
 export function formatTimestamp(iso: string): string {
   return format(new Date(iso), 'd MMM yyyy, HH:mm', { locale: pl });

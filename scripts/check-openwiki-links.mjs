@@ -8,6 +8,7 @@ const requiredWikiFiles = [
   "openwiki/quickstart.md",
   "openwiki/n2hub/INDEX.md",
   "openwiki/n2hub/state-and-persistence.md",
+  "openwiki/n2hub/cloud-database.md",
   "openwiki/n2hub/scheduling-and-calendar.md",
   "openwiki/n2hub/ui-navigation-and-onboarding.md",
   "openwiki/n2hub/testing-and-automation.md",

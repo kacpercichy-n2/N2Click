@@ -136,7 +136,7 @@ export function App() {
     updateUiPrefs({ sidebarCollapsed: false });
   };
 
-  const currentUser = state.people.find((p) => p.id === state.currentUserId);
+  const currentUser = currentUserSel(state);
   // Real logged-in identity (the impersonator while impersonating). Only the
   // "Występuj jako" switcher visibility and the return banner key off this;
   // everything else is a true preview of the acted-as `currentUser`.

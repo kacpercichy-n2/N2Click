@@ -8,7 +8,8 @@
 //     referencja stanu) nie daje różnicy, więc zero operacji (inwariant 6).
 //   * Komentarze i dziennik aktywności są DOPISYWALNE: lustrujemy tylko NOWE
 //     wiersze; lokalne przycięcia (kasacja encji) sprząta kaskada FK w chmurze.
-//   * Godziny (workload) nigdy nie są lustrzane — nie ma tabeli.
+//   * Godziny (workload) są lustrzane do tabeli `workload_entries` jak inne
+//     encje planera (upsert/remove z diff-a).
 //   * Wiersz wskazujący na niemapowalną osobę/status/słownik lub o nie-UUID id
 //     => brak operacji + polska diagnostyka (praca zostaje lokalnie, nic nie
 //     rzuca). Nadmiarowy upsert (dwie karty) jest idempotentny.

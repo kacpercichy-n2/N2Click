@@ -21,11 +21,14 @@
   snapshot loads, on error, in local mode, or while impersonating, the local
   `Person` role is the fallback. Cloud statuses/service types/work categories are
   loaded and displayed (AccountPage `Profil w chmurze`, TeamPage cloud hierarchy,
-  AdminPage `Słowniki w chmurze`), but the planner still renders/mutates the LOCAL
-  localStorage dictionaries until the data-write migration. Local mode is
-  byte-for-byte unchanged (no client created). Client-side only; UX gate, not a
-  security boundary. `SessionProvider` then `OrgDataProvider` wrap the router in
-  `main.tsx`.
+  AdminPage `Słowniki w chmurze`), but the planner renders/mutates the LOCAL
+  dictionaries: dictionary/status/people/savedFilter mutations deliberately stay
+  local even though the eight planner entity families are mirrored to Supabase
+  (see [state-and-persistence.md](state-and-persistence.md)); local `people` rows
+  are never created or deleted by any cloud path. Local mode is byte-for-byte
+  unchanged (no client created). Client-side permission checks remain UX gates;
+  in supabase mode the security boundary is Supabase RLS. `SessionProvider` then
+  `OrgDataProvider` wrap the router in `main.tsx`.
 - `src/pages/` owns route-specific screens; `src/components/TaskModal.tsx` owns
   task editing and its allocation grid.
 - `src/onboarding/catalog.ts` owns copy, roles and route mapping; components

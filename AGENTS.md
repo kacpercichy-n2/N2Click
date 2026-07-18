@@ -9,4 +9,4 @@ Do not scan historic handoffs, generated wiki narratives or the whole repository
 without a concrete dependency. Record every necessary context expansion.
 
 OpenWiki generation is optional and local. The deterministic CI check validates
-links and scheduler prompt contracts without calling an LLM or external API.
+wiki links without calling an LLM or external API.

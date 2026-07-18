@@ -14,7 +14,7 @@ import {
 import { StatusBadge } from './StatusBadge';
 import { useOpenTask } from './TaskModal';
 import { formatShort } from '../utils/dates';
-import { formatMinutes } from '../utils/time';
+import { blockEndMinutes, formatMinutes } from '../utils/time';
 import type { DateStr } from '../types';
 
 export function TodayAgendaList({ personId, date }: { personId: string; date: DateStr }) {
@@ -42,7 +42,7 @@ export function TodayAgendaList({ personId, date }: { personId: string; date: Da
         const project = getProject(state, task.projectId);
         const client = project ? getClient(state, project.clientId) : undefined;
         const startM = w.startMinutes;
-        const endM = startM + w.plannedHours * 60;
+        const endM = blockEndMinutes(startM, w.plannedHours);
         return (
           <li key={w.id}>
             <button type="button" className="dash-row" onClick={() => openTask(task.id)}>

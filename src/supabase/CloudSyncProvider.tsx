@@ -1,12 +1,15 @@
 // Most Reactowy dla lustra danych planera w chmurze (cała logika i mapowanie
 // żyją w cloudMirror.ts / plannerData.ts — czyste, testowalne w node).
 //
-// GRANICA PRZEJŚCIOWA: w trybie supabase siedem grup encji planera (klienci,
-// projekty, zadania, przypisania, komentarze, aktywność) jest lustrzane do
-// Supabase (zapisy liczone z diff-a stanu PO reduktorze) i hydratowane przy
-// logowaniu jedną akcją MERGE_CLOUD_ENTITIES. localStorage pozostaje źródłem
-// renderowania i kopią do odzysku — żaden błąd chmury nie gubi pracy. Tryb
-// lokalny: zero różnicy (żaden klient Supabase nie powstaje, brak dispatchy).
+// GRANICA: w trybie supabase osiem grup encji planera (klienci, projekty,
+// kamienie milowe, zadania, przypisania, godziny, komentarze, aktywność) jest
+// lustrzanych do Supabase (zapisy liczone z diff-a stanu PO reduktorze) i
+// hydratowanych przy logowaniu jedną akcją MERGE_CLOUD_ENTITIES. Edycje osób
+// lustrzą dodatkowo wąską projekcję `profiles` (update-only, bez hydracji).
+// Chmura jest autorytatywna; renderowanie idzie ze stanu AppStore w pamięci,
+// a localStorage jest kopią odzyskową, którą tryb wycofany (retirement) może
+// pomijać — żaden błąd chmury nie gubi pracy. Tryb lokalny: zero różnicy
+// (żaden klient Supabase nie powstaje, brak dispatchy).
 import {
   createContext,
   useCallback,

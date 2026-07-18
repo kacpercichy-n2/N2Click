@@ -26,7 +26,7 @@ import type {
   WorkloadEntry,
 } from '../types';
 import { isValidDateStr, periodError, MAX_TASK_PERIOD_DAYS } from '../utils/dates';
-import { BIN_DATE, DAY_MINUTES, HOURS_STEP, MINUTE_STEP } from '../utils/time';
+import { BIN_DATE, blockEndMinutes, DAY_MINUTES, HOURS_STEP, MINUTE_STEP } from '../utils/time';
 import { createSupabaseImportDb, type ImportDb } from './dataImport';
 import type { CloudIdMaps } from './cloudMirror';
 
@@ -435,7 +435,7 @@ export async function loadPlannerSnapshot(
         diagnostics.push('Blok godzin pominięto — start poza siatką 15 minut.');
         continue;
       }
-      if ((startMinutes as number) + plannedHours * 60 > DAY_MINUTES) {
+      if (blockEndMinutes(startMinutes as number, plannedHours) > DAY_MINUTES) {
         diagnostics.push('Blok godzin pominięto — blok nie mieści się w dobie.');
         continue;
       }

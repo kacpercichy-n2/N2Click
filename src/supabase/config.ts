@@ -2,8 +2,8 @@
 // i bez odczytu `import.meta.env`. Funkcja przyjmuje wstrzyknięty rekord zmiennych
 // środowiskowych, dzięki czemu jest w pełni testowalna w środowisku node.
 //
-// Moduł jest uśpioną infrastrukturą: aplikacja korzysta wyłącznie z localStorage
-// (patrz src/store/storage.ts) i nie importuje jeszcze klienta Supabase.
+// Z tej walidacji korzysta klient Supabase (client.ts) oraz bramka zapisu
+// lokalnego (persistGate) — patrz isSupabaseConfigured() poniżej.
 
 export interface SupabaseConfig {
   url: string;
