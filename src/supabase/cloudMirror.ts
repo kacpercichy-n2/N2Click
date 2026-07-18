@@ -420,7 +420,9 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
   const nextClientIds = new Set(next.clients.map((c) => c.id));
 
   // 1) Klienci ----
-  {
+  // Szybka ścieżka referencji: reduktor zachowuje tożsamość nietkniętych kolekcji
+  // (inwariant 6), więc nierówna referencja tablicy => zero serializacji tego bloku.
+  if (prev.clients !== next.clients) {
     const prevMap = byId(prev.clients);
     const nextMap = byId(next.clients);
     for (const id of prevMap.keys()) {
@@ -432,6 +434,8 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
     }
     for (const c of next.clients) {
       const before = prevMap.get(c.id);
+      // Ten sam wiersz (tożsamość obiektu) => brak zmiany, bez stringify.
+      if (before === c) continue;
       if (before && JSON.stringify(before) === JSON.stringify(c)) continue;
       if (!isUuid(c.id)) {
         diagnostics.push(DIAG.nonUuid);
@@ -443,18 +447,19 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
 
   // 1b) Profile osób ---- (upsert WYŁĄCZNIE zmienionych, zmapowanych osób;
   // profiles to konta serwera — lustro nigdy ich nie tworzy ani nie usuwa)
-  {
+  if (prev.people !== next.people) {
     const prevMap = byId(prev.people);
     for (const p of next.people) {
       const before = prevMap.get(p.id);
-      if (!before || profileProjection(before) === profileProjection(p)) continue;
+      // Tożsamość obiektu (before === p) => brak zmiany, bez liczenia projekcji.
+      if (!before || before === p || profileProjection(before) === profileProjection(p)) continue;
       const row = profileRow(p, maps, diagnostics);
       if (row) ops.push({ kind: 'upsert', table: 'profiles', row, sourceId: p.id, label: `Profil „${p.name}”` });
     }
   }
 
   // 2) Projekty ----
-  {
+  if (prev.projects !== next.projects) {
     const prevMap = byId(prev.projects);
     const nextMap = byId(next.projects);
     for (const id of prevMap.keys()) {
@@ -464,6 +469,7 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
     }
     for (const p of next.projects) {
       const before = prevMap.get(p.id);
+      if (before === p) continue;
       if (before && JSON.stringify(before) === JSON.stringify(p)) continue;
       const row = projectRow(p, maps, nextClientIds, diagnostics);
       if (row) ops.push({ kind: 'upsert', table: 'projects', row, sourceId: p.id, label: `Projekt „${p.name}”` });
@@ -471,7 +477,7 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
   }
 
   // 3) Kamienie milowe ---- (diff po id: upsert dodanych/zmienionych, remove usuniętych)
-  {
+  if (prev.milestones !== next.milestones) {
     const prevMap = byId(prev.milestones);
     const nextMap = byId(next.milestones);
     for (const id of prevMap.keys()) {
@@ -481,6 +487,7 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
     }
     for (const m of next.milestones) {
       const before = prevMap.get(m.id);
+      if (before === m) continue;
       if (before && JSON.stringify(before) === JSON.stringify(m)) continue;
       const row = milestoneRow(m, diagnostics);
       if (row) ops.push({ kind: 'upsert', table: 'milestones', row, sourceId: m.id, label: `Kamień milowy „${m.name}”` });
@@ -488,7 +495,7 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
   }
 
   // 4) Zadania ----
-  {
+  if (prev.tasks !== next.tasks) {
     const prevMap = byId(prev.tasks);
     const nextMap = byId(next.tasks);
     for (const id of prevMap.keys()) {
@@ -498,6 +505,7 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
     }
     for (const t of next.tasks) {
       const before = prevMap.get(t.id);
+      if (before === t) continue;
       if (before && JSON.stringify(before) === JSON.stringify(t)) continue;
       const row = taskRow(t, maps, diagnostics);
       if (row) ops.push({ kind: 'upsert', table: 'tasks', row, sourceId: t.id, label: `Zadanie „${t.title}”` });
@@ -505,7 +513,7 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
   }
 
   // 5) Przypisania ---- (po parze task_id|personId)
-  {
+  if (prev.assignments !== next.assignments) {
     const prevPairs = new Map(prev.assignments.map((a) => [`${a.taskId}|${a.personId}`, a]));
     const nextPairs = new Map(next.assignments.map((a) => [`${a.taskId}|${a.personId}`, a]));
     for (const [key, a] of prevPairs) {
@@ -543,7 +551,7 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
   }
 
   // 6) Zaplanowane godziny ---- (diff po id: upsert dodanych/zmienionych, remove usuniętych)
-  {
+  if (prev.workload !== next.workload) {
     const prevMap = byId(prev.workload);
     const nextMap = byId(next.workload);
     for (const [id, w] of prevMap) {
@@ -553,6 +561,7 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
     }
     for (const w of next.workload) {
       const before = prevMap.get(w.id);
+      if (before === w) continue;
       if (before && JSON.stringify(before) === JSON.stringify(w)) continue;
       const row = workloadRow(w, maps, diagnostics);
       if (row) ops.push({ kind: 'upsert', table: 'workload_entries', row, sourceId: w.id, label: 'Blok godzin' });
@@ -560,7 +569,7 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
   }
 
   // 7) Komentarze ---- (append-only: tylko nowe id)
-  {
+  if (prev.comments !== next.comments) {
     const prevIds = new Set(prev.comments.map((c) => c.id));
     for (const c of next.comments) {
       if (prevIds.has(c.id)) continue;
@@ -570,7 +579,7 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
   }
 
   // 8) Dziennik aktywności ---- (append-only: tylko nowe id)
-  {
+  if (prev.activity !== next.activity) {
     const prevIds = new Set(prev.activity.map((e) => e.id));
     for (const e of next.activity) {
       if (prevIds.has(e.id)) continue;

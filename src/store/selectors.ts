@@ -20,6 +20,33 @@ import { DEFAULT_CAPACITY } from './storage';
 import { blockEndMinutes, hasCollision, hoursToMinutes, isBinEntry } from '../utils/time';
 import { isValidDateStr, parseDate } from '../utils/dates';
 
+// ---- Booked-hours aggregation (overload/conflict hot-path cache) ----
+
+/**
+ * Σ planned hours per `${personId}|${date}` in ONE pass over `state.workload`.
+ * Bin rows (`isBinEntry`, date === '') are skipped deliberately: date '' can
+ * never match a queried real date, so a bin row could never contribute to an
+ * availability lookup — the same reason `hoursForPersonOnDate` never counts it.
+ * Cached on the `state.workload` array reference via a module-level WeakMap: the
+ * reducer swaps that array on every workload change (identity preserved when
+ * untouched — invariant 6), so the cache can never go stale, and the WeakMap
+ * lets superseded arrays be garbage-collected instead of leaking.
+ */
+const bookedHoursCache = new WeakMap<WorkloadEntry[], Map<string, number>>();
+
+function bookedHoursByPersonDate(state: AppData): Map<string, number> {
+  const cached = bookedHoursCache.get(state.workload);
+  if (cached) return cached;
+  const map = new Map<string, number>();
+  for (const w of state.workload) {
+    if (isBinEntry(w)) continue;
+    const key = `${w.personId}|${w.date}`;
+    map.set(key, (map.get(key) ?? 0) + w.plannedHours);
+  }
+  bookedHoursCache.set(state.workload, map);
+  return map;
+}
+
 // ---- Basic lookups ----
 
 export function getTask(state: AppData, taskId: string): Task | undefined {
@@ -571,7 +598,10 @@ export function overloadedDatesForPersonInRange(
   personId: string,
   dates: DateStr[],
 ): DateStr[] {
-  return dates.filter((d) => dayAvailabilityForPerson(state, personId, d).overbooked);
+  const booked = bookedHoursByPersonDate(state);
+  return dates.filter(
+    (d) => (booked.get(`${personId}|${d}`) ?? 0) > availableHoursOnDate(state, personId, d),
+  );
 }
 
 /**
@@ -641,8 +671,9 @@ export function overloadedPeopleOnDate(
     personFilter && personFilter.size > 0
       ? state.people.filter((p) => personFilter.has(p.id))
       : state.people;
+  const booked = bookedHoursByPersonDate(state);
   return relevant
-    .filter((p) => dayAvailabilityForPerson(state, p.id, date).overbooked)
+    .filter((p) => (booked.get(`${p.id}|${date}`) ?? 0) > availableHoursOnDate(state, p.id, date))
     .map((p) => p.id);
 }
 
@@ -652,11 +683,12 @@ export function overloadedPeopleOnDate(
  * view — use {@link conflictDatesForTaskPerson} for a single person's row.
  */
 export function conflictDatesForTask(state: AppData, taskId: string): DateStr[] {
+  const booked = bookedHoursByPersonDate(state);
   const out = new Set<DateStr>();
   for (const w of state.workload) {
     if (w.taskId !== taskId || isBinEntry(w)) continue; // bin entries have no date -> never an overload date
     if (out.has(w.date)) continue;
-    if (dayAvailabilityForPerson(state, w.personId, w.date).overbooked) {
+    if ((booked.get(`${w.personId}|${w.date}`) ?? 0) > availableHoursOnDate(state, w.personId, w.date)) {
       out.add(w.date);
     }
   }
@@ -675,11 +707,12 @@ export function conflictDatesForTaskPerson(
   taskId: string,
   personId: string,
 ): DateStr[] {
+  const booked = bookedHoursByPersonDate(state);
   const out = new Set<DateStr>();
   for (const w of state.workload) {
     if (w.taskId !== taskId || w.personId !== personId || isBinEntry(w)) continue;
     if (out.has(w.date)) continue;
-    if (dayAvailabilityForPerson(state, personId, w.date).overbooked) {
+    if ((booked.get(`${personId}|${w.date}`) ?? 0) > availableHoursOnDate(state, personId, w.date)) {
       out.add(w.date);
     }
   }

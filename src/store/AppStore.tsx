@@ -1865,8 +1865,10 @@ export function reducer(state: AppData, action: Action): AppData {
       // (entityType 'project') so it stays visible in the project's activity
       // panel and survives deleteTask's own 'task'-row pruning.
       const task = state.tasks.find((t) => t.id === action.taskId);
+      // Unknown id: reject before the cascade so a stale double-click returns the
+      // PRIOR state reference (invariant 6) instead of a churned no-op copy.
+      if (!task) return state;
       const next = deleteTask(state, action.taskId);
-      if (!task) return next;
       return {
         ...next,
         activity: withActivity(next, 'project', task.projectId, `usunął(a) zadanie „${task.title}”`),
@@ -1909,8 +1911,9 @@ export function reducer(state: AppData, action: Action): AppData {
       // by deleteProject itself, so the deletion record lives on 'system' with
       // no entityId. Append onto the post-cascade state (identities unchanged).
       const project = state.projects.find((p) => p.id === action.projectId);
+      // Unknown id: reject before the cascade -> prior state reference (invariant 6).
+      if (!project) return state;
       const next = deleteProject(state, action.projectId);
-      if (!project) return next;
       return {
         ...next,
         activity: withActivity(next, 'system', '', `usunął(a) projekt „${project.name}”`),
@@ -2178,13 +2181,14 @@ export function reducer(state: AppData, action: Action): AppData {
       // Stores the given hash verbatim ('' clears the password). Log only when
       // the person exists. The message must never leak set-vs-clear nor the hash.
       const person = state.people.find((p) => p.id === action.personId);
+      // Unknown id: reject before rebuilding people -> prior state reference (invariant 6).
+      if (!person) return state;
       const nextPw = {
         ...state,
         people: state.people.map((p) =>
           p.id === action.personId ? { ...p, passwordHash: action.passwordHash } : p,
         ),
       };
-      if (!person) return nextPw;
       return {
         ...nextPw,
         activity: withActivity(state, 'person', action.personId, `zmienił(a) ustawienia hasła osoby „${person.name}”`),
@@ -2192,9 +2196,9 @@ export function reducer(state: AppData, action: Action): AppData {
     }
     case 'LOGOUT': {
       // Full logout (not "return"): clears both the acted-as and real identity.
-      // Nobody to log out -> no row, state result unchanged from before.
+      // Nobody to log out -> no row, PRIOR state reference (invariant 6).
       if (state.currentUserId === '' && state.impersonatorId === '') {
-        return { ...state, currentUserId: '', impersonatorId: '' };
+        return state;
       }
       // Default pre-transition stamping records dual identity when logging out
       // mid-impersonation.
@@ -2228,12 +2232,13 @@ export function reducer(state: AppData, action: Action): AppData {
     case 'DELETE_CLIENT': {
       // Cascade: client -> its projects -> their tasks/blocks.
       const client = state.clients.find((c) => c.id === action.clientId);
+      // Unknown id: reject before the cascade -> prior state reference (invariant 6).
+      if (!client) return state;
       let next: AppData = state;
       for (const p of state.projects.filter((p) => p.clientId === action.clientId)) {
         next = deleteProject(next, p.id);
       }
       const cleaned = { ...next, clients: next.clients.filter((c) => c.id !== action.clientId) };
-      if (!client) return cleaned;
       // One 'client' row built on the post-cascade state so the cascade's pruning
       // is not resurrected (identities are unchanged, so stamping stays honest).
       return {
@@ -2259,7 +2264,9 @@ export function reducer(state: AppData, action: Action): AppData {
         ),
       };
     }
-    case 'DELETE_DEPARTMENT':
+    case 'DELETE_DEPARTMENT': {
+      // Unknown id: reject -> prior state reference (invariant 6).
+      if (!state.departments.some((d) => d.id === action.departmentId)) return state;
       // Clear references; nothing else cascades from a department.
       return {
         ...state,
@@ -2271,6 +2278,7 @@ export function reducer(state: AppData, action: Action): AppData {
           p.departmentId === action.departmentId ? { ...p, departmentId: '' } : p,
         ),
       };
+    }
     case 'ADD_SERVICE_TYPE': {
       const name = action.name.trim();
       if (!name) return state;
@@ -2289,7 +2297,9 @@ export function reducer(state: AppData, action: Action): AppData {
         ),
       };
     }
-    case 'DELETE_SERVICE_TYPE':
+    case 'DELETE_SERVICE_TYPE': {
+      // Unknown id: reject -> prior state reference (invariant 6).
+      if (!state.serviceTypes.some((s) => s.id === action.serviceTypeId)) return state;
       return {
         ...state,
         serviceTypes: state.serviceTypes.filter((s) => s.id !== action.serviceTypeId),
@@ -2297,6 +2307,7 @@ export function reducer(state: AppData, action: Action): AppData {
           p.serviceTypeId === action.serviceTypeId ? { ...p, serviceTypeId: '' } : p,
         ),
       };
+    }
     case 'ADD_WORK_CATEGORY': {
       const name = action.name.trim();
       if (!name) return state;
@@ -2315,7 +2326,9 @@ export function reducer(state: AppData, action: Action): AppData {
         ),
       };
     }
-    case 'DELETE_WORK_CATEGORY':
+    case 'DELETE_WORK_CATEGORY': {
+      // Unknown id: reject -> prior state reference (invariant 6).
+      if (!state.workCategories.some((c) => c.id === action.workCategoryId)) return state;
       return {
         ...state,
         workCategories: state.workCategories.filter((c) => c.id !== action.workCategoryId),
@@ -2328,6 +2341,7 @@ export function reducer(state: AppData, action: Action): AppData {
             : filter,
         ),
       };
+    }
     case 'SAVE_STATUS':
       return saveStatus(state, action.statusId, action.name, action.color);
     case 'REORDER_STATUS':

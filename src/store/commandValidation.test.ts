@@ -417,6 +417,57 @@ describe('SET_CURRENT_USER command validation', () => {
   });
 });
 
+// Prompt 216: invariant-6 churn on rejected commands. A stale/no-op command must
+// return the PRIOR state reference so it never reaches persist / tab-broadcast /
+// cloud-diff. Each case here would previously return a fresh (churned) object.
+describe('invariant-6: rejected commands return the prior state reference (216)', () => {
+  it('DELETE_TASK with an unknown id returns the prior state reference', () => {
+    const state = makeState();
+    expectRejected(state, reducer(state, { type: 'DELETE_TASK', taskId: 'ghost' }));
+  });
+
+  it('DELETE_PROJECT with an unknown id returns the prior state reference', () => {
+    const state = makeState();
+    expectRejected(state, reducer(state, { type: 'DELETE_PROJECT', projectId: 'ghost' }));
+  });
+
+  it('DELETE_CLIENT with an unknown id returns the prior state reference', () => {
+    const state = makeState();
+    expectRejected(state, reducer(state, { type: 'DELETE_CLIENT', clientId: 'ghost' }));
+  });
+
+  it('DELETE_DEPARTMENT with an unknown id returns the prior state reference', () => {
+    const state = makeState();
+    expectRejected(state, reducer(state, { type: 'DELETE_DEPARTMENT', departmentId: 'ghost' }));
+  });
+
+  it('DELETE_SERVICE_TYPE with an unknown id returns the prior state reference', () => {
+    const state = makeState();
+    expectRejected(state, reducer(state, { type: 'DELETE_SERVICE_TYPE', serviceTypeId: 'ghost' }));
+  });
+
+  it('DELETE_WORK_CATEGORY with an unknown id returns the prior state reference', () => {
+    const state = makeState();
+    expectRejected(state, reducer(state, { type: 'DELETE_WORK_CATEGORY', workCategoryId: 'ghost' }));
+  });
+
+  it('SET_PASSWORD with an unknown person returns the prior state reference', () => {
+    const state = makeState();
+    expectRejected(state, reducer(state, { type: 'SET_PASSWORD', personId: 'ghost', passwordHash: 'x' }));
+  });
+
+  it('LOGOUT while nobody is logged in returns the prior state reference', () => {
+    const state = makeState(); // currentUserId '' and impersonatorId ''
+    expectRejected(state, reducer(state, { type: 'LOGOUT' }));
+  });
+
+  it('DELETE_STATUS blocked (last remaining done status) returns the prior state reference', () => {
+    // s2 (Zrobione) is the only done status and is unused -> deletion is blocked.
+    const state = makeState();
+    expectRejected(state, reducer(state, { type: 'DELETE_STATUS', statusId: 's2' }));
+  });
+});
+
 describe('valid / valid-legacy payloads still apply', () => {
   it('SAVE_TASK valid title edit persists', () => {
     const state = makeState();

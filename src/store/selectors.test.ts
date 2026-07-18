@@ -22,6 +22,7 @@ import {
   isImpersonating,
   overdueTasksForPerson,
   overloadedDatesForPersonInRange,
+  overloadedPeopleOnDate,
   planningStatusForTotals,
   realUser,
   realUserId,
@@ -1514,5 +1515,109 @@ describe('binTaskRowsForPerson / binHoursForTaskPerson after a partial schedule'
 
     expect(binHoursForTaskPerson(state, 't1', 'p1')).toBe(0);
     expect(binTaskRowsForPerson(state, 'p1')).toEqual([]);
+  });
+});
+
+// Prompt 216: the four overload/conflict selectors were rewritten to read from a
+// single-pass `bookedHoursByPersonDate` aggregation cached on the workload array.
+// This parity fixture pins them to a naive reference implementation (the OLD
+// per-row logic, routed through the UNTOUCHED `dayAvailabilityForPerson`, which
+// still does a full workload scan) so the rewrite stays behavior-identical:
+// ordering, bin exclusion, absent-person availability and empty-filter semantics.
+describe('overload/conflict selectors — parity with naive reference (216)', () => {
+  // Fixture: p1 cap 8 Mon–Fri, p2 cap 4 Mon–Wed, p3 cap 6 every day; a ghost
+  // person referenced only by workload (absent from state.people -> available 0).
+  // 2026-07-06 = Mon … 2026-07-11 = Sat, 2026-07-12 = Sun.
+  const DATES = ['2026-07-06', '2026-07-07', '2026-07-08', '2026-07-11', '2026-07-12'];
+  function parityState(): AppData {
+    return makeState({
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2' })],
+      people: [
+        makePerson({ id: 'p1', capacity: 8, workDays: [1, 2, 3, 4, 5] }),
+        makePerson({ id: 'p2', capacity: 4, workDays: [1, 2, 3] }),
+        makePerson({ id: 'p3', capacity: 6, workDays: [1, 2, 3, 4, 5, 6, 7] }),
+      ],
+      workload: [
+        makeEntry({ id: 'w1', taskId: 't1', personId: 'p1', date: '2026-07-06', plannedHours: 10 }), // over 8
+        makeEntry({ id: 'w2', taskId: 't1', personId: 'p1', date: '2026-07-07', plannedHours: 3 }),
+        makeEntry({ id: 'w3', taskId: 't1', personId: 'p1', date: '2026-07-07', plannedHours: 3 }), // total 6, ok
+        makeEntry({ id: 'w4', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 20 }), // bin, ignored
+        makeEntry({ id: 'w5', taskId: 't1', personId: 'ghost', date: '2026-07-06', plannedHours: 5 }), // absent -> avail 0
+        makeEntry({ id: 'w6', taskId: 't1', personId: 'p2', date: '2026-07-08', plannedHours: 5 }), // Wed cap 4 -> over
+        makeEntry({ id: 'w7', taskId: 't2', personId: 'p2', date: '2026-07-11', plannedHours: 1 }), // Sat non-workday -> over
+        makeEntry({ id: 'w8', taskId: 't2', personId: 'p3', date: '2026-07-11', plannedHours: 2 }), // Sat cap 6 -> ok
+      ],
+    });
+  }
+
+  // Naive reference = the OLD logic, per selector, via dayAvailabilityForPerson.
+  const refConflictDatesForTask = (state: AppData, taskId: string): string[] => {
+    const out = new Set<string>();
+    for (const w of state.workload) {
+      if (w.taskId !== taskId || w.date === BIN_DATE) continue;
+      if (dayAvailabilityForPerson(state, w.personId, w.date).overbooked) out.add(w.date);
+    }
+    return [...out].sort();
+  };
+  const refConflictDatesForTaskPerson = (state: AppData, taskId: string, personId: string): string[] => {
+    const out = new Set<string>();
+    for (const w of state.workload) {
+      if (w.taskId !== taskId || w.personId !== personId || w.date === BIN_DATE) continue;
+      if (dayAvailabilityForPerson(state, personId, w.date).overbooked) out.add(w.date);
+    }
+    return [...out].sort();
+  };
+  const refOverloadedDatesForPersonInRange = (state: AppData, personId: string, dates: string[]): string[] =>
+    dates.filter((d) => dayAvailabilityForPerson(state, personId, d).overbooked);
+  const refOverloadedPeopleOnDate = (state: AppData, date: string, filter?: Set<string>): string[] => {
+    const relevant =
+      filter && filter.size > 0 ? state.people.filter((p) => filter.has(p.id)) : state.people;
+    return relevant.filter((p) => dayAvailabilityForPerson(state, p.id, date).overbooked).map((p) => p.id);
+  };
+
+  it('conflictDatesForTask matches the naive reference (dedup + sort + bin exclusion)', () => {
+    const state = parityState();
+    expect(conflictDatesForTask(state, 't1')).toEqual(refConflictDatesForTask(state, 't1'));
+    expect(conflictDatesForTask(state, 't2')).toEqual(refConflictDatesForTask(state, 't2'));
+    // Explicit ordering/value pin: sorted, no BIN_DATE, dedup of 07-06 (p1 + ghost).
+    expect(conflictDatesForTask(state, 't1')).toEqual(['2026-07-06', '2026-07-08']);
+  });
+
+  it('conflictDatesForTaskPerson matches the naive reference (single person only)', () => {
+    const state = parityState();
+    for (const personId of ['p1', 'p2', 'p3', 'ghost']) {
+      expect(conflictDatesForTaskPerson(state, 't1', personId)).toEqual(
+        refConflictDatesForTaskPerson(state, 't1', personId),
+      );
+    }
+    expect(conflictDatesForTaskPerson(state, 't1', 'p1')).toEqual(['2026-07-06']);
+  });
+
+  it('overloadedDatesForPersonInRange matches the naive reference (input order preserved)', () => {
+    const state = parityState();
+    for (const personId of ['p1', 'p2', 'p3', 'ghost']) {
+      expect(overloadedDatesForPersonInRange(state, personId, DATES)).toEqual(
+        refOverloadedDatesForPersonInRange(state, personId, DATES),
+      );
+    }
+    expect(overloadedDatesForPersonInRange(state, 'p2', DATES)).toEqual(['2026-07-08', '2026-07-11']);
+  });
+
+  it('overloadedPeopleOnDate matches the naive reference, incl. empty-filter (no filter) semantics', () => {
+    const state = parityState();
+    for (const date of DATES) {
+      // Empty set === no filter (all people), same as today.
+      expect(overloadedPeopleOnDate(state, date, new Set())).toEqual(
+        refOverloadedPeopleOnDate(state, date, new Set()),
+      );
+      expect(overloadedPeopleOnDate(state, date)).toEqual(refOverloadedPeopleOnDate(state, date));
+      // A concrete non-empty filter.
+      const filter = new Set(['p1', 'p3']);
+      expect(overloadedPeopleOnDate(state, date, filter)).toEqual(
+        refOverloadedPeopleOnDate(state, date, filter),
+      );
+    }
+    expect(overloadedPeopleOnDate(state, '2026-07-11', new Set())).toEqual(['p2']);
+    expect(overloadedPeopleOnDate(state, '2026-07-11', new Set(['p1', 'p3']))).toEqual([]);
   });
 });

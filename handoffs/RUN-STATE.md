@@ -110,3 +110,7 @@ Paginated `createSupabaseImportDb.select` (src/supabase/dataImport.ts:38-73): lo
 ## 20260718-022729-214 durable cloud queue (dev)
 
 New src/supabase/opQueue.ts (pure: encode/decode fail-closed, planQueueRestore/Deactivation/HydrationStep, Polish notices) + opQueue.test.ts. storage.ts: n2hub.cloudQueue.v1 helpers (untouched by clearData). CloudSyncProvider drains durable queue before snapshot merge, enqueues hydrating-window edits, keeps durable copy on deactivation; new notice+dismissNotice in banner. vitest 195/195, build pass. dataImport.ts untouched.
+
+## 20260718-030057-216 performance hot paths (dev)
+
+Behavior-identical perf fixes: cloudMirror.ts diffToCloudOps skips unchanged collections by array-ref + adds `before===row` fast-path before stringify. selectors.ts: WeakMap-cached one-pass `bookedHoursByPersonDate` powers the 4 overload/conflict selectors (O(W) not O(W²)). WorkloadPage.tsx: one-pass hours map. AppStore.tsx: 9 rejected commands now return prior state ref (invariant 6); deleteStatus already did. Tests added in 3 files. npm test 976/976, build pass.

@@ -256,12 +256,17 @@ export function WorkloadPage() {
     setServiceFilter('');
   };
 
-  // hours[personId][date] for this week, under the current filters.
+  // hours[personId][date] for this week, under the current filters. Aggregate in
+  // ONE pass (keyed `${personId}|${date}`) so per-cell `hoursFor` — called ~3×
+  // per table cell — is a Map lookup instead of a full re-filter of weekEntries.
   const weekEntries = state.workload.filter((w) => daySet.has(w.date) && entryPasses(w));
+  const hoursByPersonDate = new Map<string, number>();
+  for (const w of weekEntries) {
+    const key = `${w.personId}|${w.date}`;
+    hoursByPersonDate.set(key, (hoursByPersonDate.get(key) ?? 0) + w.plannedHours);
+  }
   const hoursFor = (personId: string, date: string) =>
-    weekEntries
-      .filter((w) => w.personId === personId && w.date === date)
-      .reduce((s, w) => s + w.plannedHours, 0);
+    hoursByPersonDate.get(`${personId}|${date}`) ?? 0;
 
   return (
     <section className="page page-wide">

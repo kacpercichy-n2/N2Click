@@ -4,7 +4,7 @@
 // continues). No SDK, no live Supabase — an injected fake PlannerDb.
 import { describe, expect, it } from 'vitest';
 import { emptyData } from '../store/storage';
-import type { AppData, Person, Project, Task } from '../types';
+import type { AppData, Client, Person, Project, Task } from '../types';
 import type { CloudProfile, OrgSnapshot } from './referenceData';
 import type { CloudWriteError, PlannerDb } from './plannerData';
 import {
@@ -220,6 +220,55 @@ describe('diffToCloudOps — families', () => {
     const p = diffToCloudOps(localFixture(), badProject, m);
     expect(p.ops).toHaveLength(0);
     expect(p.diagnostics.length).toBeGreaterThan(0);
+  });
+});
+
+// Prompt 216: szybka ścieżka referencji. Reduktor zachowuje tożsamość
+// nietkniętych kolekcji (inwariant 6), więc diff nie serializuje ani jednego
+// wiersza kolekcji o tej samej referencji tablicy.
+describe('diffToCloudOps — szybka ścieżka referencji (216)', () => {
+  it('(a) ta sama referencja stanu => zero ops i zero diagnostyk', () => {
+    const s = localFixture();
+    const r = diffToCloudOps(s, s, maps());
+    expect(r.ops).toHaveLength(0);
+    expect(r.diagnostics).toHaveLength(0);
+  });
+
+  it('(b) nietknięta kolekcja (ta sama tablica) nie jest serializowana', () => {
+    const m = maps();
+    // Wiersz z cyklem: JSON.stringify by rzucił. Kolekcja clients ma tę samą
+    // referencję tablicy w prev i next, więc szybka ścieżka pomija jej serializację.
+    const cyclic: Record<string, unknown> = { id: CLI, name: 'Klient', archived: false };
+    cyclic.self = cyclic;
+    const clients = [cyclic as unknown as Client];
+    const base: AppData = { ...localFixture(), clients };
+    // Zmienia się TYLKO tasks; clients zostaje tą samą referencją tablicy.
+    const next: AppData = { ...base, tasks: [makeTask({ id: TK, statusId: S1 })] };
+    const { ops, diagnostics } = diffToCloudOps(base, next, m);
+    expect(ops).toEqual([
+      expect.objectContaining({ kind: 'upsert', table: 'tasks', row: expect.objectContaining({ id: TK }) }),
+    ]);
+    expect(diagnostics).toHaveLength(0);
+    // Dowód, że wiersz naprawdę rzuciłby przy serializacji — a mimo to brak wyjątku.
+    expect(() => JSON.stringify(cyclic)).toThrow();
+  });
+
+  it('(c) zmieniona kolekcja z reużytym wierszem => op tylko dla zmienionego', () => {
+    const m = maps();
+    const CLI_B = uuid('client-two');
+    const rowA: Client = { id: CLI, name: 'A', archived: false };
+    const rowB: Client = { id: CLI_B, name: 'B', archived: false };
+    const prev: AppData = { ...localFixture(), clients: [rowA, rowB] };
+    // Nowa tablica (recreated), ale rowA reużyty przez referencję; zmienia się rowB.
+    const next: AppData = { ...localFixture(), clients: [rowA, { ...rowB, name: 'B2' }] };
+    const { ops } = diffToCloudOps(prev, next, m);
+    expect(ops).toEqual([
+      expect.objectContaining({
+        kind: 'upsert',
+        table: 'clients',
+        row: expect.objectContaining({ id: CLI_B, name: 'B2' }),
+      }),
+    ]);
   });
 });
 
