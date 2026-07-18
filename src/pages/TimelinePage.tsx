@@ -2,7 +2,7 @@
 // horizontal day axis. Bars drag to reschedule (move) and resize from either
 // edge. Moving a TASK also shifts its planned time blocks; resizing drops
 // blocks that fall outside the new period (same rule as the editor).
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
@@ -110,6 +110,25 @@ function Bar({
     if (delta !== 0) onCommit(mode, delta);
   };
 
+  // Revert an in-flight drag with no commit — the shared cleanup path for an
+  // interrupted touch (pointercancel) or a drag orphaned by a tab switch /
+  // window blur. Without it the bar stays frozen at its drag offset, mirroring
+  // WeekView's calendar-drag cancel guards (minus the block-specific refs).
+  const cancelDrag = () => setDrag(null);
+  const dragging = drag !== null;
+  useEffect(() => {
+    if (!dragging) return;
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') cancelDrag();
+    };
+    window.addEventListener('blur', cancelDrag);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('blur', cancelDrag);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [dragging]);
+
   let left = startIdx * dayW;
   let width = span * dayW;
   if (drag) {
@@ -133,6 +152,7 @@ function Bar({
       onPointerDown={editable ? begin('move') : undefined}
       onPointerMove={editable ? onPointerMove : undefined}
       onPointerUp={editable ? onPointerUp : undefined}
+      onPointerCancel={editable ? cancelDrag : undefined}
       onClick={(e) => {
         e.stopPropagation();
         if (!moved.current) onOpen();
@@ -224,6 +244,8 @@ function MilestoneMark({
             }
           : undefined
       }
+      // An interrupted touch drag must revert, not stay stuck at its offset.
+      onPointerCancel={editable ? () => setDrag(null) : undefined}
     >
       ◆
     </span>

@@ -15,12 +15,14 @@ import { personColor } from '../utils/colors';
 import {
   MAX_TASK_PERIOD_DAYS,
   inclusiveDayCount,
+  isDayGridDate,
   isTodayStr,
   isValidDateStr,
   isWeekend,
   parseDate,
   todayStr,
   weekDays,
+  widenExceedsCap,
 } from '../utils/dates';
 import { format } from 'date-fns';
 import { pl } from 'date-fns/locale/pl';
@@ -49,11 +51,14 @@ import {
   MINUTE_STEP,
   blockEndMinutes,
   clampBlockStart,
+  exceedsDragThreshold,
   findFreeStart,
   formatDuration,
   formatMinutes,
   hoursToMinutes,
+  insertPointInsideBlock,
   isBinEntry,
+  isPrimaryPointerButton,
   minutesToHours,
   nextFreeStart,
   planRippleInsert,
@@ -114,6 +119,7 @@ interface DragState {
   projDayIndex: number; // projected day column (0–6)
   overBin: boolean; // pointer is over the bin panel → strip date/time on drop
   colliding: boolean;
+  overCap: boolean; // the projected day would widen the task period past 92 days
   maxHours: number; // resize cap = baseHours + growAllowance (Infinity when unbudgeted)
   atCap: boolean; // the raw resize projection exceeded maxHours (clamped)
   willMergeWithId: string | null; // neighbor id the drop would fuse into (exact adjacency)
@@ -252,6 +258,7 @@ function TimedBlock({
       projDayIndex: dayIndex,
       overBin: false,
       colliding: false,
+      overCap: false,
       maxHours,
       atCap: false,
       willMergeWithId: null,
@@ -337,6 +344,15 @@ function TimedBlock({
       ? false
       : blockCollides(state, person.id, days[projDayIndex], projStart, projHours, entry.id);
 
+    // 92-day cap: a cross-day move onto a date that would widen the task period
+    // past the cap is rejected by SET_BLOCK_TIME (state reference preserved). It
+    // used to snap back silently; flag it so the block shows the danger tint and
+    // a Polish tooltip, mirroring the collision rejection feedback. Resizing keeps
+    // the same date, so it never trips this.
+    const overCap = overBin
+      ? false
+      : widenExceedsCap(task.startDate, task.endDate, days[projDayIndex]);
+
     // Will-merge affordance: mirror the reducer's merge predicate exactly — same
     // task, same person, same date, exact adjacency (touching edge), no collision,
     // not over the bin. The drop would fuse into that neighbor.
@@ -371,6 +387,7 @@ function TimedBlock({
       projDayIndex,
       overBin,
       colliding,
+      overCap,
       atCap,
       willMergeWithId,
       willMergeEdge,
@@ -385,7 +402,8 @@ function TimedBlock({
     onPointerMove(e);
     const finalDrag = dragRef.current;
     if (!finalDrag) return;
-    const { projStart, projHours, projDayIndex, overBin, colliding, willMergeWithId } = finalDrag;
+    const { projStart, projHours, projDayIndex, overBin, colliding, overCap, willMergeWithId } =
+      finalDrag;
     // Release capture before dispatch — a drop-to-bin unmounts this block.
     releaseCapture();
     dragRef.current = null;
@@ -397,7 +415,7 @@ function TimedBlock({
       announceCalendarPractice('move');
       return;
     }
-    if (colliding) return; // invalid drop → snap back (re-render restores it)
+    if (colliding || overCap) return; // invalid drop → snap back (re-render restores it)
     // Merge drop: the reducer keeps the EARLIER-starting block's id. Remember it
     // so the surviving block plays the fuse animation after it re-renders.
     if (willMergeWithId) {
@@ -430,7 +448,7 @@ function TimedBlock({
     'week-block',
     editable ? '' : 'readonly',
     drag ? 'dragging' : '',
-    drag?.colliding ? 'colliding' : '',
+    drag?.colliding || drag?.overCap ? 'colliding' : '',
     drag?.overBin ? 'to-bin' : '',
     drag?.atCap ? 'at-cap' : '',
     drag?.willMergeWithId ? 'will-merge' : '',
@@ -459,9 +477,11 @@ function TimedBlock({
       title={
         !editable
           ? `${task.title} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${formatDuration(hours)}).`
-          : drag?.atCap
-            ? 'Limit czasu zadania — brak godzin w zasobniku'
-            : `${task.title} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${formatDuration(hours)}). Przeciągnij, aby przenieść; przeciągnij krawędź, aby zmienić czas trwania; kliknij prawym przyciskiem, aby wstawić blok.`
+          : drag?.overCap
+            ? `Poza terminem — przeniesienie tutaj przekroczyłoby limit ${MAX_TASK_PERIOD_DAYS} dni okresu zadania.`
+            : drag?.atCap
+              ? 'Limit czasu zadania — brak godzin w zasobniku'
+              : `${task.title} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${formatDuration(hours)}). Przeciągnij, aby przenieść; przeciągnij krawędź, aby zmienić czas trwania; kliknij prawym przyciskiem, aby wstawić blok.`
       }
       onPointerDown={editable ? begin('move') : undefined}
       onPointerMove={editable ? onPointerMove : undefined}
@@ -627,7 +647,10 @@ function BinCard({
     const viewRect = viewport?.getBoundingClientRect();
     const dx = clientX - activeDrag.originX;
     const dy = clientY - activeDrag.originY;
-    const hasMoved = activeDrag.hasMoved || dx !== 0 || dy !== 0;
+    // A sub-threshold jitter during a click must not register as a drag and
+    // swallow the click. Mirrors the timed block, whose 15-min snap already
+    // ignores movement smaller than a step. Sticky once exceeded.
+    const hasMoved = activeDrag.hasMoved || exceedsDragThreshold(dx, dy);
     if (hasMoved) moved.current = true;
 
     let colIndex = -1;
@@ -774,10 +797,20 @@ function BinCard({
       },
       up: (event) => {
         if (event.pointerId !== pointerId) return;
+        // Only the primary button commits a bin drop. A chorded right/middle
+        // release delivered mid-drag must cancel and clean up, never schedule.
+        if (!isPrimaryPointerButton(event.button)) {
+          cancelDrag();
+          return;
+        }
         finishDrag(event.clientX, event.clientY);
       },
       mouseUp: (event) => {
         if (pointerType !== 'mouse') return;
+        if (!isPrimaryPointerButton(event.button)) {
+          cancelDrag();
+          return;
+        }
         finishDrag(event.clientX, event.clientY);
       },
       cancel: (event) => {
@@ -1052,6 +1085,10 @@ export function WeekView({ state, anchor, filter }: Props) {
   const onSchedDateChange = (value: string) => {
     setSchedDate(value);
     if (!menu) return;
+    // A cleared date input yields '' — the BIN sentinel. Never treat it as a
+    // real day: it would pull the person's bin rows as if they were a schedule
+    // (and schedDisabled below still blocks the confirm on any invalid date).
+    if (!isDayGridDate(value)) return;
     const raw = Number(schedHoursRaw);
     const dur = hoursToMinutes(Number.isNaN(raw) ? 0.25 : snapHours(Math.min(24, raw)));
     const blocks = blocksForPersonDate(state, menu.entry.personId, value);
@@ -1133,6 +1170,11 @@ export function WeekView({ state, anchor, filter }: Props) {
     const dayBlocks = blocksForPersonDate(state, menu.entry.personId, menu.entry.date);
     if (planRippleInsert(dayBlocks, rawStart, dur) === null) {
       insertWarning = '⚠ Wstawka nie mieści się w dobie — bloki za nią musiałyby wyjść poza 24:00.';
+    } else if (insertPointInsideBlock(dayBlocks, rawStart)) {
+      // INSERT_BLOCK rejects an insert point that lands inside another block's
+      // span (spansInsertPoint). Surface it instead of a silent no-op.
+      insertWarning =
+        '⚠ Punkt wstawienia wypada wewnątrz innego bloku — wybierz „przed” lub „po” tak, aby nie wchodził w jego czas.';
     } else if (insertPickedTask) {
       const startDate =
         menu.entry.date < insertPickedTask.startDate ? menu.entry.date : insertPickedTask.startDate;

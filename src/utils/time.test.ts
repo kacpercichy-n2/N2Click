@@ -1,10 +1,13 @@
 // Unit tests for pure time-of-day math (src/utils/time.ts).
 import { describe, expect, it } from 'vitest';
 import {
+  exceedsDragThreshold,
   findFreeStart,
   formatDuration,
   formatMinutes,
   hasCollision,
+  insertPointInsideBlock,
+  isPrimaryPointerButton,
   nextFreeStart,
   packDayBlocks,
   planRippleInsert,
@@ -262,5 +265,41 @@ describe('packDayBlocks', () => {
     const byId = new Map(packed.map((p) => [p.block.id, p]));
     expect(byId.get('a')!.cols).toBe(byId.get('b')!.cols);
     expect(byId.get('b')!.cols).toBe(byId.get('c')!.cols);
+  });
+});
+
+// A1 — bin-drop commit gating: only the primary (left) button may commit.
+describe('isPrimaryPointerButton', () => {
+  it('accepts only button 0', () => {
+    expect(isPrimaryPointerButton(0)).toBe(true);
+    expect(isPrimaryPointerButton(1)).toBe(false); // middle
+    expect(isPrimaryPointerButton(2)).toBe(false); // right
+  });
+});
+
+// A3 — bin-card click must survive sub-threshold jitter.
+describe('exceedsDragThreshold', () => {
+  it('ignores a 1px jitter but registers a real drag', () => {
+    expect(exceedsDragThreshold(0, 0)).toBe(false);
+    expect(exceedsDragThreshold(1, -1)).toBe(false);
+    expect(exceedsDragThreshold(3, 0)).toBe(false); // at the dead-zone edge
+    expect(exceedsDragThreshold(4, 0)).toBe(true);
+    expect(exceedsDragThreshold(0, -10)).toBe(true);
+  });
+});
+
+// A2 — insert point that lands inside an existing block's span (spansInsertPoint).
+describe('insertPointInsideBlock', () => {
+  const blocks = [
+    { startMinutes: 480, plannedHours: 2 }, // 08:00–10:00
+    { startMinutes: 660, plannedHours: 1 }, // 11:00–12:00
+  ];
+  it('flags a point strictly inside a block', () => {
+    expect(insertPointInsideBlock(blocks, 540)).toBe(true); // 09:00, inside 08–10
+  });
+  it('does not flag touching edges (start or end)', () => {
+    expect(insertPointInsideBlock(blocks, 480)).toBe(false); // exact start
+    expect(insertPointInsideBlock(blocks, 600)).toBe(false); // exact end 10:00
+    expect(insertPointInsideBlock(blocks, 720)).toBe(false); // after everything
   });
 });

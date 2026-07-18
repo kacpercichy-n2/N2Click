@@ -17,6 +17,7 @@ import {
 } from '../utils/uiPrefs';
 import { ArrowLeft, Check, CircleHelp, Compass, Sparkles } from '../components/icons';
 import { moduleById, modulesForRole, type TourStep, type TutorialModule } from './catalog';
+import { dismissHintFor, isHintDismissed } from './hintState';
 
 type TourState = { moduleId: TutorialModuleId; stepIndex: number } | null;
 type Panel = 'none' | 'intro' | 'center';
@@ -186,7 +187,10 @@ export function OnboardingRoot({
   const [introIndex, setIntroIndex] = useState(0);
   const [tour, setTour] = useState<TourState>(null);
   const [practiceDone, setPracticeDone] = useState(false);
-  const [hintDismissed, setHintDismissed] = useState(false);
+  // Per-page (per tutorial-module) in-memory hint dismissal: dismissing on one
+  // page must not silence every other page's first-time hint. Keyed by the
+  // module id a route maps to (routeModule below), matching the catalog.
+  const [dismissedHints, setDismissedHints] = useState<ReadonlySet<string>>(() => new Set());
   const [notice, setNotice] = useState('');
   const autoStarted = useRef<string | null>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
@@ -300,7 +304,7 @@ export function OnboardingRoot({
     const module = moduleById(moduleId);
     if (!availableModules.some((candidate) => candidate.id === moduleId) || module.steps.length === 0) return;
     setPanel('none');
-    setHintDismissed(true);
+    setDismissedHints((prev) => dismissHintFor(prev, moduleId));
     persist((current) => ({
       ...current,
       modules: {
@@ -373,7 +377,7 @@ export function OnboardingRoot({
         },
       }));
     }
-    setHintDismissed(true);
+    if (hintedModule) setDismissedHints((prev) => dismissHintFor(prev, hintedModule.id));
   };
 
   const routeModule: Record<string, TutorialModuleId> = {
@@ -395,7 +399,7 @@ export function OnboardingRoot({
     Boolean(hintedModule) &&
     panel === 'none' &&
     !tour &&
-    !hintDismissed &&
+    !isHintDismissed(dismissedHints, hintedModule?.id) &&
     !isModuleComplete(prefs, ownerKey, hintedModule!.id) &&
     moduleProgress(prefs, ownerKey, hintedModule!.id).status !== 'dismissed' &&
     ownerProgress.autoTourHandled;

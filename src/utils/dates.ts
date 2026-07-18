@@ -143,6 +143,32 @@ export function inclusiveDayCount(start: DateStr, end: DateStr): number {
   return differenceInCalendarDays(parseDate(end), parseDate(start)) + 1;
 }
 
+/**
+ * Would placing work on `date` widen a task's [start, end] period beyond the
+ * cap? Mirrors the SET_BLOCK_TIME / INSERT_BLOCK widening guard so the UI can
+ * reject (and warn) BEFORE dispatching a command the reducer would silently
+ * refuse. A date already inside the period never widens it → never over cap.
+ */
+export function widenExceedsCap(
+  taskStart: DateStr,
+  taskEnd: DateStr,
+  date: DateStr,
+  maxDays: number = MAX_TASK_PERIOD_DAYS,
+): boolean {
+  const start = date < taskStart ? date : taskStart;
+  const end = date > taskEnd ? date : taskEnd;
+  return inclusiveDayCount(start, end) > maxDays;
+}
+
+/**
+ * A real calendar-day drop target — never the bin sentinel ''. A cleared native
+ * date input yields '' (the same value the bin uses), so it must be rejected as
+ * invalid input rather than treated as "move to bin".
+ */
+export function isDayGridDate(date: string): boolean {
+  return date !== '' && isValidDateStr(date);
+}
+
 export function isWeekend(d: DateStr): boolean {
   const day = parseDate(d).getDay(); // 0 = Sun, 6 = Sat
   return day === 0 || day === 6;

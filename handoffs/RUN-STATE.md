@@ -114,3 +114,7 @@ New src/supabase/opQueue.ts (pure: encode/decode fail-closed, planQueueRestore/D
 ## 20260718-030057-216 performance hot paths (dev)
 
 Behavior-identical perf fixes: cloudMirror.ts diffToCloudOps skips unchanged collections by array-ref + adds `before===row` fast-path before stringify. selectors.ts: WeakMap-cached one-pass `bookedHoursByPersonDate` powers the 4 overload/conflict selectors (O(W) not O(W²)). WorkloadPage.tsx: one-pass hours map. AppStore.tsx: 9 rejected commands now return prior state ref (invariant 6); deleteStatus already did. Tests added in 3 files. npm test 976/976, build pass.
+
+## 20260718-070337-218 pointer and ux paper cuts (dev)
+
+Seven surgical fixes. WeekView.tsx: bin-drop commits only on primary button (A1); insert form surfaces spansInsertPoint (A2); bin-card uses drag threshold (A3); 92-day drag rejection now tinted+tooltip (A4); cleared date no longer bin-targets (A5). TimelinePage.tsx: pointercancel+blur/visibility cleanup (B). OnboardingRoot.tsx: per-page hint dismissal (C). Pure helpers in time.ts/dates.ts/new hintState.ts, tested. npm test 996/996, build pass.

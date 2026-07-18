@@ -71,6 +71,48 @@ export function blockEndMinutes(startMinutes: number, plannedHours: number): num
   return startMinutes + hoursToMinutes(plannedHours);
 }
 
+/**
+ * Only the primary (left) button may COMMIT a pointer gesture. A chorded
+ * right/middle release delivered mid-drag (its `button` is not 0) must cancel
+ * and clean up, never commit a drop.
+ */
+export function isPrimaryPointerButton(button: number): boolean {
+  return button === 0;
+}
+
+/** Pixel dead-zone before a press is treated as a drag rather than a click. */
+export const DRAG_THRESHOLD_PX = 3;
+
+/**
+ * True once a pointer has moved beyond the click dead-zone. A 1px jitter during
+ * a click must not count as a drag start (mirrors the timed block, whose 15-min
+ * snap already ignores sub-step movement).
+ */
+export function exceedsDragThreshold(
+  dx: number,
+  dy: number,
+  threshold: number = DRAG_THRESHOLD_PX,
+): boolean {
+  return Math.abs(dx) > threshold || Math.abs(dy) > threshold;
+}
+
+/**
+ * True when `insertStart` falls STRICTLY inside an existing block on the day —
+ * a ripple insert there would land inside that block's span, a new overlap.
+ * Mirrors the INSERT_BLOCK `spansInsertPoint` reducer guard (touching edges,
+ * where a block ends exactly at `insertStart`, do NOT count).
+ */
+export function insertPointInsideBlock(
+  dayBlocks: Array<{ startMinutes: number; plannedHours: number }>,
+  insertStart: number,
+): boolean {
+  return dayBlocks.some(
+    (b) =>
+      b.startMinutes < insertStart &&
+      blockEndMinutes(b.startMinutes, b.plannedHours) > insertStart,
+  );
+}
+
 /** Strict overlap test — touching edges (aEnd === bStart) do NOT overlap. */
 export function rangesOverlap(
   aStart: number,
