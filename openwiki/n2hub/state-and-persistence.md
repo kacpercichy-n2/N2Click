@@ -21,7 +21,10 @@
   zero diff.
 - Retirement gate (supabase mode only). After an admin runs the reversible
   handshake in `MigrationStatusPanel` (coverage clean → snapshot read → probe
-  write/read/remove → backup downloaded), the org flag `local_writes_retired`
+  write/read/remove → backup downloaded; the probe is a far-past DATED row
+  `PROBE_WORK_DATE` to dodge the `workload_entries_bin_pair` NULL-only partial
+  unique index, with a pre-probe cleanup remove clearing any orphan), the org
+  flag `local_writes_retired`
   lands in `public.app_settings` and a per-browser cache marker on the dedicated
   key `n2hub.cloudMigration.v1` (via `storage.ts` helpers, OUTSIDE the planner
   key; `clearData()` never touches it). `src/store/persistGate.ts`
@@ -32,9 +35,13 @@
   degradation (transient error, hydration failure, sign-out, idle) or local mode
   resumes per-action local writes automatically. While retired, localStorage is
   still refreshed as a passive, never-deleted recovery copy on hydration, queue
-  drain, transient error and `pagehide` with pending ops; the same-browser
-  storage/conflict protocol keeps firing on every real divergence. A failed save
-  never reports `Zapisano`; skipping leaves `saveError` unchanged.
+  drain, transient error, `pagehide` with pending ops, and whenever a diff yields
+  unmappable-row diagnostics (those rows never reach the cloud, so they are forced
+  to localStorage); the same-browser storage/conflict protocol keeps firing on
+  every real divergence — a skipped per-action write marks memory dirty
+  (`wasLocalPersistSkipped`) so an external tab write raises an explicit conflict
+  rather than silently replacing state. A failed save never reports `Zapisano`;
+  skipping leaves `saveError` unchanged.
 
 ## Rules that change work
 

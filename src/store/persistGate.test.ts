@@ -5,9 +5,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { emptyData, writeCloudRetirementMarker } from './storage';
 import {
+  clearLocalPersistSkipped,
+  markLocalPersistSkipped,
   setCloudMirrorHealthy,
   shouldSkipLocalPersist,
   touchesOnlyMirrored,
+  wasLocalPersistSkipped,
 } from './persistGate';
 import type { AppData } from '../types';
 
@@ -40,6 +43,7 @@ function configureSupabaseEnv(): void {
 afterEach(() => {
   vi.unstubAllEnvs();
   setCloudMirrorHealthy(false);
+  clearLocalPersistSkipped();
 });
 
 const base = (): AppData => emptyData();
@@ -58,6 +62,18 @@ describe('touchesOnlyMirrored', () => {
     expect(touchesOnlyMirrored(prev, { ...prev, savedFilters: [...prev.savedFilters] })).toBe(false);
     expect(touchesOnlyMirrored(prev, { ...prev, currentUserId: 'x' })).toBe(false);
     expect(touchesOnlyMirrored(prev, { ...prev, impersonatorId: 'y' })).toBe(false);
+  });
+});
+
+describe('localPersistSkipped flag', () => {
+  it('is false initially and idempotent on mark/clear', () => {
+    expect(wasLocalPersistSkipped()).toBe(false);
+    markLocalPersistSkipped();
+    markLocalPersistSkipped();
+    expect(wasLocalPersistSkipped()).toBe(true);
+    clearLocalPersistSkipped();
+    clearLocalPersistSkipped();
+    expect(wasLocalPersistSkipped()).toBe(false);
   });
 });
 

@@ -169,6 +169,13 @@ const STEP = {
   arm: 'Włączenie wycofania',
 } as const;
 
+// Data wiersza próbnego: skrajnie zaprzeszła, więc NIE może kolidować z realnym
+// planowaniem. Wiersz DATOWANY (nie-null work_date) omija częściowy indeks
+// unikalny `workload_entries_bin_pair (task_id, profile_id) WHERE work_date IS
+// NULL`, który przy `work_date: null` rzucałby 23505 na parze z wpisem
+// zasobnika i trwale blokował handshake.
+export const PROBE_WORK_DATE = '1970-01-01';
+
 /**
  * Wykonuje i raportuje kroki handshake'u wycofania (po polsku). Pierwszy nieudany
  * krok kończy sekwencję. Kroki:
@@ -229,11 +236,27 @@ export async function runRetirementHandshake(
     });
     return { ok: false, steps };
   }
+  // Sprzątanie osieroconego wiersza próbnego z poprzedniej nieudanej próby
+  // (dopasowanie po pełnej trójce, by nie tknąć realnych wpisów). Błąd tego
+  // usunięcia traktujemy jak nieudany krok zapisu (przejściowy problem serwera).
+  const cleanupRes = await db.remove('workload_entries', {
+    task_id: probe.taskId,
+    profile_id: probe.profileId,
+    work_date: PROBE_WORK_DATE,
+  });
+  if (cleanupRes.error) {
+    steps.push({
+      label: STEP.write,
+      ok: false,
+      detail: 'Nie udało się usunąć wcześniejszego wiersza próbnego: ' + cleanupRes.error.message,
+    });
+    return { ok: false, steps };
+  }
   const probeRow = {
     id: probe.rowId,
     task_id: probe.taskId,
     profile_id: probe.profileId,
-    work_date: null,
+    work_date: PROBE_WORK_DATE,
     planned_hours: 0.25,
     start_minutes: 0,
     sort_index: 0,

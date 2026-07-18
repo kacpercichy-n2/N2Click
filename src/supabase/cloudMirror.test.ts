@@ -10,10 +10,12 @@ import type { CloudWriteError, PlannerDb } from './plannerData';
 import {
   applyCloudOps,
   buildCloudIdMaps,
+  diagnosticsToDropped,
   diffToCloudOps,
   type CloudIdMaps,
   type CloudOp,
 } from './cloudMirror';
+import { buildCoverageReport } from './migrationStatus';
 
 const uuid = (seed: string): string => {
   const hex = Array.from(seed)
@@ -309,6 +311,80 @@ describe('diffToCloudOps — milestones + workload families', () => {
     const r2 = diffToCloudOps(prev, badId, m);
     expect(r2.ops.filter((o) => o.table === 'workload_entries')).toHaveLength(0);
     expect(r2.diagnostics.length).toBeGreaterThan(0);
+  });
+});
+
+describe('diagnostics — retirement write safety', () => {
+  it('a diff whose only changes are unmappable rows yields zero ops but diagnostics', () => {
+    const m = maps();
+    const prev = localFixture();
+    // Only change is a non-UUID client — unmappable, no op emitted.
+    const next: AppData = { ...prev, clients: [{ id: 'legacy-1', name: 'X', archived: false }] };
+    const { ops, diagnostics } = diffToCloudOps(prev, next, m);
+    expect(ops).toHaveLength(0);
+    expect(diagnostics.length).toBeGreaterThan(0);
+  });
+
+  it('diagnosticsToDropped maps messages to deduped Polish {label, message}', () => {
+    const dropped = diagnosticsToDropped(['Powód A', 'Powód A', 'Powód B']);
+    expect(dropped).toEqual([
+      { label: 'Wiersz pominięty w lustrze', message: 'Powód A' },
+      { label: 'Wiersz pominięty w lustrze', message: 'Powód B' },
+    ]);
+    expect(diagnosticsToDropped([])).toEqual([]);
+  });
+
+  it('activity: unmappable impersonator becomes impersonator_id null with NO diagnostic', () => {
+    const m = maps();
+    const activity = {
+      id: uuid('ac-imp'),
+      entityType: 'task' as const,
+      entityId: TK,
+      actorId: PA,
+      impersonatorId: uuid('ghost-imp'),
+      message: 'x',
+      createdAt: '2026-07-16T00:00:00.000Z',
+    };
+    const next: AppData = { ...localFixture(), activity: [activity] };
+    const { ops, diagnostics } = diffToCloudOps(localFixture(), next, m);
+    const up = ops.find((o) => o.table === 'activity_events');
+    expect(up).toBeDefined();
+    expect(up!.row).toMatchObject({ actor_id: CLOUD_PA, impersonator_id: null });
+    expect(diagnostics).toHaveLength(0);
+  });
+
+  it('activity: unmappable actor still drops the row with a diagnostic', () => {
+    const m = maps();
+    const activity = {
+      id: uuid('ac-actor'),
+      entityType: 'task' as const,
+      entityId: TK,
+      actorId: uuid('ghost-actor'),
+      message: 'x',
+      createdAt: '2026-07-16T00:00:00.000Z',
+    };
+    const next: AppData = { ...localFixture(), activity: [activity] };
+    const { ops, diagnostics } = diffToCloudOps(localFixture(), next, m);
+    expect(ops.filter((o) => o.table === 'activity_events')).toHaveLength(0);
+    expect(diagnostics.length).toBeGreaterThan(0);
+  });
+
+  it('coverage/mirror agree: clean coverage implies zero mirror diagnostics', () => {
+    const m = maps();
+    const activity = {
+      id: uuid('ac-agree'),
+      entityType: 'task' as const,
+      entityId: TK,
+      actorId: PA,
+      impersonatorId: uuid('ghost-imp'),
+      message: 'x',
+      createdAt: '2026-07-16T00:00:00.000Z',
+    };
+    const state: AppData = { ...localFixture(), activity: [activity] };
+    // Coverage checks the actor only — an unmappable impersonator stays clean.
+    expect(buildCoverageReport(state, m).clean).toBe(true);
+    // And the mirror drops nothing for that same state.
+    expect(diffToCloudOps(localFixture(), state, m).diagnostics).toHaveLength(0);
   });
 });
 

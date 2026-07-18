@@ -32,6 +32,7 @@ import {
 import {
   applyCloudOps,
   buildCloudIdMaps,
+  diagnosticsToDropped,
   diffToCloudOps,
   type CloudIdMaps,
   type CloudOp,
@@ -105,7 +106,12 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   const statusRef = useRef<CloudSyncStatus>('idle');
   statusRef.current = status;
   const mountedRef = useRef(true);
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  // StrictMode wywołuje efekty mount->unmount->mount; ciało MUSI przywrócić
+  // `true`, inaczej po replayu hydracja utknęłaby na 'hydrating' na zawsze.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   const userId =
     auth.mode === 'supabase' && auth.state.status === 'signedIn'
@@ -256,8 +262,16 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       prevRef.current = state;
       return;
     }
-    const { ops } = diffToCloudOps(prevRef.current, state, maps);
+    const { ops, diagnostics } = diffToCloudOps(prevRef.current, state, maps);
     prevRef.current = state;
+    // Wiersze niemapowalne do chmury: pokaż w bannerze i ZAWSZE wymuś świeży
+    // zapis lokalny (retryPersist woła saveData bezwarunkowo), nawet gdy
+    // ops.length === 0 — inaczej w trybie wycofanym praca dotykająca tylko
+    // takich wierszy nie trafiłaby ani do chmury, ani do localStorage.
+    if (diagnostics.length > 0) {
+      setDropped((prev) => [...prev, ...diagnosticsToDropped(diagnostics)]);
+      retryPersistRef.current();
+    }
     if (ops.length === 0) return;
     queueRef.current.push(...ops);
     setPending(queueRef.current.length);

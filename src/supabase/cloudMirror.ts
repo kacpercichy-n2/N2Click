@@ -44,6 +44,26 @@ const DIAG = {
   unmappablePerson: 'Osoba wiersza nie ma konta serwera — rekord pozostaje lokalnie.',
 } as const;
 
+const DROPPED_DIAG_LABEL = 'Wiersz pominięty w lustrze';
+
+/**
+ * Mapuje diagnostyki diff-a na wpisy bannera `dropped` ({label, message}).
+ * Duplikaty tego samego komunikatu są scalane (jeden wpis na treść), by baner
+ * nie puchł przy wielu wierszach z tym samym powodem.
+ */
+export function diagnosticsToDropped(
+  diagnostics: string[],
+): Array<{ label: string; message: string }> {
+  const seen = new Set<string>();
+  const out: Array<{ label: string; message: string }> = [];
+  for (const message of diagnostics) {
+    if (seen.has(message)) continue;
+    seen.add(message);
+    out.push({ label: DROPPED_DIAG_LABEL, message });
+  }
+  return out;
+}
+
 // ---- Mapy identyfikatorów (forward: local -> cloud) --------------------------
 
 export interface CloudIdMaps {
@@ -324,11 +344,13 @@ function activityRow(
     diagnostics.push(DIAG.unmappablePerson);
     return null;
   }
-  const impersonatorId = mapPerson(e.impersonatorId ?? '');
-  if (impersonatorId === undefined) {
-    diagnostics.push(DIAG.unmappablePerson);
-    return null;
-  }
+  // Polityka atrybucji: dziennik aktywności jest DOPISYWALNYM audytem, a
+  // impersonator to atrybucja DRUGORZĘDNA. Niemapowalny impersonator => null
+  // (dokładnie jak import w dataImport.ts), NIGDY porzucenie wiersza ani
+  // diagnostyka — inaczej pokrycie (sprawdza tylko aktora) i lustro rozjeżdżają
+  // się. Aktor zachowuje ścisłe zachowanie (porzucenie + diagnostyka).
+  const mappedImpersonator = mapPerson(e.impersonatorId ?? '');
+  const impersonatorId = mappedImpersonator === undefined ? null : mappedImpersonator;
   const isProject = e.entityType === 'project' && isUuid(e.entityId);
   const isTask = e.entityType === 'task' && isUuid(e.entityId);
   // created_by celowo pominięty — domyślne auth.uid() po stronie serwera spełnia

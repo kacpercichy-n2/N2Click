@@ -41,7 +41,12 @@ import {
   type SaveFailureReason,
 } from './storage';
 import { anyDirty } from '../utils/dirtyRegistry';
-import { shouldSkipLocalPersist } from './persistGate';
+import {
+  clearLocalPersistSkipped,
+  markLocalPersistSkipped,
+  shouldSkipLocalPersist,
+  wasLocalPersistSkipped,
+} from './persistGate';
 import {
   hasEntity,
   isRequiredName,
@@ -2483,11 +2488,17 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     // hydration/queue-drain/error/pagehide instead. Leave `saveError` unchanged
     // (no false `Zapisano`, no false error). Any degradation resumes local writes.
     if (prevAttempted !== null && shouldSkipLocalPersist(prevAttempted, state)) {
+      // Pamięć jest teraz nowsza niż localStorage — oznacz, by zewnętrzny zapis
+      // z innej karty wywołał jawny konflikt zamiast cichej podmiany.
+      markLocalPersistSkipped();
       return;
     }
     const result = saveData(state);
     setSaveError(result.ok ? null : result.reason);
-    if (result.ok) setExternal((prev) => (prev === 'conflict' ? 'none' : prev));
+    if (result.ok) {
+      clearLocalPersistSkipped();
+      setExternal((prev) => (prev === 'conflict' ? 'none' : prev));
+    }
   }, [state]);
 
   // Mount-once: subscribe to same-browser external tab writes. A clean tab
@@ -2506,12 +2517,17 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       // echo bounced back, or an identical write): no dispatch, no banner.
       if (JSON.stringify(incoming) === JSON.stringify(stateRef.current)) return;
       const dirty =
-        anyDirty() || saveErrorRef.current !== null || externalRef.current === 'conflict';
+        anyDirty() ||
+        saveErrorRef.current !== null ||
+        externalRef.current === 'conflict' ||
+        wasLocalPersistSkipped();
       if (dirty) {
         setExternal('conflict');
         return;
       }
       skipPersistRef.current = !loaded.needsWriteback;
+      // Pamięć zostaje zastąpiona stanem ze storage — znów są zsynchronizowane.
+      clearLocalPersistSkipped();
       dispatch({ type: 'REPLACE_FROM_STORAGE', data: incoming });
       setExternal('refreshed');
     });
@@ -2520,7 +2536,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const retryPersist = useCallback(() => {
     const result = saveData(stateRef.current);
     setSaveError(result.ok ? null : result.reason);
-    if (result.ok) setExternal((prev) => (prev === 'conflict' ? 'none' : prev));
+    if (result.ok) {
+      clearLocalPersistSkipped();
+      setExternal((prev) => (prev === 'conflict' ? 'none' : prev));
+    }
   }, []);
 
   const acceptExternal = useCallback(() => {
@@ -2530,6 +2549,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       return;
     }
     skipPersistRef.current = !loaded.needsWriteback;
+    // Pamięć zastąpiona stanem ze storage — znów zsynchronizowane.
+    clearLocalPersistSkipped();
     dispatch({ type: 'REPLACE_FROM_STORAGE', data: loaded.data });
     setExternal('none');
   }, []);
@@ -2537,7 +2558,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const keepLocal = useCallback(() => {
     const result = saveData(stateRef.current);
     setSaveError(result.ok ? null : result.reason);
-    if (result.ok) setExternal('none');
+    if (result.ok) {
+      clearLocalPersistSkipped();
+      setExternal('none');
+    }
   }, []);
 
   const dismissExternalNotice = useCallback(() => {

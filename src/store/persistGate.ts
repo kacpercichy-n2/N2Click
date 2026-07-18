@@ -55,6 +55,25 @@ export function isCloudMirrorHealthy(): boolean {
   return cloudMirrorHealthy;
 }
 
+// Runtime flaga: pamięć jest NOWSZA niż localStorage, bo bramka pominęła
+// per-akcyjny zapis (tryb wycofany). Traktowana jako „brudna” w strażniku
+// zdarzeń storage, żeby zewnętrzny zapis z innej karty wywołał jawny konflikt
+// zamiast po cichu podmienić potwierdzone zmiany w pamięci. Ustawienia i
+// czyszczenie są idempotentne (bezpieczne przy podwójnym mount StrictMode).
+let localPersistSkipped = false;
+
+export function markLocalPersistSkipped(): void {
+  localPersistSkipped = true;
+}
+
+export function clearLocalPersistSkipped(): void {
+  localPersistSkipped = false;
+}
+
+export function wasLocalPersistSkipped(): boolean {
+  return localPersistSkipped;
+}
+
 /**
  * Czy przejście stanu dotyka WYŁĄCZNIE kolekcji lustrzanych (porównanie po
  * referencji na kolekcję). Zmiana jakiejkolwiek kolekcji/pola bez domu w chmurze

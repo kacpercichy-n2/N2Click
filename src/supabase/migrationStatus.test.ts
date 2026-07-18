@@ -9,7 +9,7 @@ import type { CloudProfile, OrgSnapshot } from './referenceData';
 import type { CloudWriteError, PlannerDb } from './plannerData';
 import { RETIREMENT_SETTING_KEY } from './plannerData';
 import { buildCloudIdMaps, type CloudIdMaps } from './cloudMirror';
-import { buildCoverageReport, runRetirementHandshake } from './migrationStatus';
+import { buildCoverageReport, runRetirementHandshake, PROBE_WORK_DATE } from './migrationStatus';
 
 const uuid = (seed: string): string => {
   const hex = Array.from(seed)
@@ -66,9 +66,14 @@ function orgFixture(): OrgSnapshot {
 const maps = (): CloudIdMaps => buildCloudIdMaps(localFixture(), orgFixture());
 
 type Row = Record<string, unknown>;
+type Call =
+  | { op: 'upsert'; table: string; row: Row; onConflict?: string }
+  | { op: 'remove'; table: string; match: Record<string, string> };
 class FakePlannerDb implements PlannerDb {
   data = new Map<string, Row[]>();
-  failUpsert: (table: string) => CloudWriteError | null = () => null;
+  calls: Call[] = [];
+  failUpsert: (table: string, row: Row) => CloudWriteError | null = () => null;
+  failRemove: (table: string, match: Record<string, string>) => CloudWriteError | null = () => null;
   failSelect = new Set<string>();
   async select(table: string, _cols: string, inFilter?: { column: string; values: string[] }) {
     if (this.failSelect.has(table)) return { rows: [] as Row[], error: 'boom' };
@@ -77,7 +82,8 @@ class FakePlannerDb implements PlannerDb {
     return { rows: rows.map((r) => ({ ...r })), error: null };
   }
   async upsert(table: string, row: Row, onConflict?: string) {
-    const err = this.failUpsert(table);
+    this.calls.push({ op: 'upsert', table, row, onConflict });
+    const err = this.failUpsert(table, row);
     if (err) return { error: err };
     const key = onConflict ?? 'id';
     const list = this.data.get(table) ?? [];
@@ -88,6 +94,9 @@ class FakePlannerDb implements PlannerDb {
     return { error: null };
   }
   async remove(table: string, match: Record<string, string>) {
+    this.calls.push({ op: 'remove', table, match });
+    const err = this.failRemove(table, match);
+    if (err) return { error: err };
     const list = this.data.get(table) ?? [];
     this.data.set(
       table,
@@ -160,5 +169,67 @@ describe('runRetirementHandshake', () => {
     expect(result.ok).toBe(false);
     expect(result.steps[result.steps.length - 1].label).toBe('Zapis próbny do chmury');
     expect(db.data.get('app_settings')).toBeUndefined();
+  });
+
+  it('probes with a dated row (PROBE_WORK_DATE, onConflict id), cleanup remove first', async () => {
+    const db = new FakePlannerDb();
+    const result = await runRetirementHandshake(db, localFixture(), maps(), probe());
+    expect(result.ok).toBe(true);
+    const wlUpsert = db.calls.find((c) => c.op === 'upsert' && c.table === 'workload_entries');
+    expect(wlUpsert).toBeDefined();
+    if (wlUpsert && wlUpsert.op === 'upsert') {
+      expect(wlUpsert.row.work_date).toBe(PROBE_WORK_DATE);
+      expect(wlUpsert.row.work_date).not.toBeNull();
+      expect(wlUpsert.onConflict).toBe('id');
+    }
+    // The pre-probe cleanup remove (task_id/profile_id/work_date) precedes the upsert.
+    const upsertIdx = db.calls.findIndex((c) => c.op === 'upsert' && c.table === 'workload_entries');
+    const cleanupIdx = db.calls.findIndex(
+      (c) =>
+        c.op === 'remove' &&
+        c.table === 'workload_entries' &&
+        c.match.work_date === PROBE_WORK_DATE &&
+        c.match.task_id === TK &&
+        c.match.profile_id === CLOUD_PA,
+    );
+    expect(cleanupIdx).toBeGreaterThanOrEqual(0);
+    expect(cleanupIdx).toBeLessThan(upsertIdx);
+  });
+
+  it('does not trip a partial unique index that fires on NULL-work_date bin pairs', async () => {
+    const db = new FakePlannerDb();
+    // Emulates workload_entries_bin_pair: 23505 only when work_date IS NULL.
+    db.failUpsert = (t, row) =>
+      t === 'workload_entries' && row.work_date === null
+        ? { kind: 'permission', message: '23505 duplicate key' }
+        : null;
+    const result = await runRetirementHandshake(db, localFixture(), maps(), probe());
+    expect(result.ok).toBe(true);
+    expect(result.steps.map((s) => s.ok)).toEqual([true, true, true, true]);
+  });
+
+  it('failed final remove fails the step; a later run cleans up the orphan', async () => {
+    const db = new FakePlannerDb();
+    // Fail only the id-only remove (the post-select cleanup), not the pre-probe
+    // multi-column cleanup — leaves the probe row orphaned.
+    db.failRemove = (t, match) =>
+      t === 'workload_entries' && 'id' in match && Object.keys(match).length === 1
+        ? { kind: 'transient', message: 'boom' }
+        : null;
+    const run1 = await runRetirementHandshake(db, localFixture(), maps(), probe());
+    expect(run1.ok).toBe(false);
+    expect(run1.steps[run1.steps.length - 1].label).toBe('Zapis próbny do chmury');
+    // Orphan probe row remains, carrying PROBE_WORK_DATE.
+    const orphans = db.data.get('workload_entries') ?? [];
+    expect(orphans).toHaveLength(1);
+    expect(orphans[0].work_date).toBe(PROBE_WORK_DATE);
+
+    // A subsequent successful run's pre-probe cleanup removes the orphan (a
+    // different rowId, so only the multi-column cleanup can clear the old one).
+    db.failRemove = () => null;
+    const probe2 = { rowId: uuid('probe-row-2'), taskId: TK, profileId: CLOUD_PA };
+    const run2 = await runRetirementHandshake(db, localFixture(), maps(), probe2);
+    expect(run2.ok).toBe(true);
+    expect(db.data.get('workload_entries') ?? []).toHaveLength(0);
   });
 });
