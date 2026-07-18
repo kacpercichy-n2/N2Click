@@ -23,6 +23,7 @@ import {
   createSupabaseImportDb,
   evaluateImportGate,
   runSupabaseImport,
+  SELECT_PAGE_SIZE,
   type ImportDb,
   type ImportGateInput,
 } from './dataImport';
@@ -656,6 +657,113 @@ describe('createSupabaseImportDb', () => {
     const db = createSupabaseImportDb(throwingClient);
     await expect(db.select('projects', 'id')).resolves.toEqual({ rows: [], error: 'offline' });
     await expect(db.insert('projects', { id: 'x' })).resolves.toEqual({ error: 'offline' });
+  });
+
+  // ---- Pagination -----------------------------------------------------------
+  // Structural client stub: from(table).select(columns) returns a chainable,
+  // thenable query builder that records in/order/range and resolves a slice.
+  type RangeCall = [number, number];
+  function makeSelectClient(opts: {
+    rows: Array<Record<string, unknown>>;
+    errorOnRangeFrom?: number; // resolve { data:null, error } once range.from >= this
+  }) {
+    const calls = {
+      in: [] as Array<{ column: string; values: unknown[] }>,
+      order: [] as string[],
+      range: [] as RangeCall[],
+    };
+    const client = {
+      from() {
+        return {
+          select() {
+            let currentRange: RangeCall = [0, opts.rows.length];
+            const builder: Record<string, unknown> = {
+              in(column: string, values: unknown[]) {
+                calls.in.push({ column, values });
+                return builder;
+              },
+              order(col: string) {
+                calls.order.push(col);
+                return builder;
+              },
+              range(from: number, to: number) {
+                calls.range.push([from, to]);
+                currentRange = [from, to];
+                return builder;
+              },
+              then(resolve: (v: unknown) => void) {
+                const [from, to] = currentRange;
+                if (opts.errorOnRangeFrom !== undefined && from >= opts.errorOnRangeFrom) {
+                  resolve({ data: null, error: { message: 'boom' } });
+                  return;
+                }
+                resolve({ data: opts.rows.slice(from, to + 1), error: null });
+              },
+            };
+            return builder;
+          },
+        };
+      },
+    };
+    return { client: client as unknown as Parameters<typeof createSupabaseImportDb>[0], calls };
+  }
+
+  const seedRows = (n: number) => Array.from({ length: n }, (_, i) => ({ id: String(i) }));
+
+  it('pages past the 1000-row cap and returns every row (2500)', async () => {
+    const { client, calls } = makeSelectClient({ rows: seedRows(2500) });
+    const db = createSupabaseImportDb(client);
+    const res = await db.select('projects', 'id');
+    expect(res.error).toBeNull();
+    expect(res.rows).toHaveLength(2500);
+    expect(calls.range).toEqual([
+      [0, 999],
+      [1000, 1999],
+      [2000, 2999],
+    ]);
+  });
+
+  it('terminates on a count exactly divisible by the page size (1000)', async () => {
+    const { client, calls } = makeSelectClient({ rows: seedRows(SELECT_PAGE_SIZE) });
+    const db = createSupabaseImportDb(client);
+    const res = await db.select('projects', 'id');
+    expect(res.error).toBeNull();
+    expect(res.rows).toHaveLength(1000);
+    // First full page, then an empty page proves exhaustion.
+    expect(calls.range).toEqual([
+      [0, 999],
+      [1000, 1999],
+    ]);
+  });
+
+  it('returns an empty result for an empty table (single page)', async () => {
+    const { client, calls } = makeSelectClient({ rows: [] });
+    const db = createSupabaseImportDb(client);
+    const res = await db.select('projects', 'id');
+    expect(res).toEqual({ rows: [], error: null });
+    expect(calls.range).toEqual([[0, 999]]);
+  });
+
+  it('discards accumulated rows when an error hits on page >= 2', async () => {
+    const { client } = makeSelectClient({ rows: seedRows(1500), errorOnRangeFrom: SELECT_PAGE_SIZE });
+    const db = createSupabaseImportDb(client);
+    const res = await db.select('projects', 'id');
+    expect(res).toEqual({ rows: [], error: 'boom' });
+  });
+
+  it('orders by every selected column and applies inFilter on every page', async () => {
+    const { client, calls } = makeSelectClient({ rows: seedRows(2500) });
+    const db = createSupabaseImportDb(client);
+    const res = await db.select('projects', 'id, name', { column: 'id', values: ['a', 'b'] });
+    expect(res.rows).toHaveLength(2500);
+    // .order once per column per page (3 pages * 2 columns).
+    expect(calls.order).toEqual(['id', 'name', 'id', 'name', 'id', 'name']);
+    // .in re-applied on the fresh query built for each page.
+    expect(calls.in).toEqual([
+      { column: 'id', values: ['a', 'b'] },
+      { column: 'id', values: ['a', 'b'] },
+      { column: 'id', values: ['a', 'b'] },
+    ]);
   });
 });
 

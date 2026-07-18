@@ -1288,6 +1288,41 @@ export function writeCloudRetirementMarker(marker: { enabled: boolean }): void {
   }
 }
 
+// ---- Trwała kolejka operacji chmury (per-przeglądarka) ----------------------
+// DEDYKOWANY klucz POZA kluczem danych planera. Przechowuje niewysłane operacje
+// chmury (serializacja/walidacja żyje w opQueue.ts — storage.ts pozostaje
+// agnostyczny wobec modelu). `clearData()` NIGDY go nie dotyka: reset/sample
+// nie kasują niewysłanej pracy. Try/catch połyka błędy jak znacznik migracji.
+
+const CLOUD_QUEUE_KEY = 'n2hub.cloudQueue.v1';
+
+/** Surowy odczyt koperty kolejki. Brak / błąd => null. */
+export function readCloudQueueRaw(): string | null {
+  try {
+    return localStorage.getItem(CLOUD_QUEUE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** Surowy zapis koperty kolejki (na dedykowanym kluczu). Nie rzuca. */
+export function writeCloudQueueRaw(raw: string): void {
+  try {
+    localStorage.setItem(CLOUD_QUEUE_KEY, raw);
+  } catch {
+    // ignore — brak trwałej kolejki degraduje do „tylko w pamięci”.
+  }
+}
+
+/** Czyści trwałą kolejkę (po drenażu do zera). Nie rzuca. */
+export function clearCloudQueue(): void {
+  try {
+    localStorage.removeItem(CLOUD_QUEUE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 export function clearData(): void {
   try {
     localStorage.removeItem(STORAGE_KEY);

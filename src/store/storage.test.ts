@@ -8,6 +8,7 @@ import {
   DATA_VERSION,
   DEFAULT_FILTER_CRITERIA,
   classifyStorageError,
+  clearCloudQueue,
   clearData,
   ensureStartMinutes,
   emptyData,
@@ -18,10 +19,12 @@ import {
   normalizeStatusFlags,
   normalizeTaskMeta,
   normalizeWorkloadHours,
+  readCloudQueueRaw,
   readCloudRetirementMarker,
   readEnvelopeRevision,
   repairStatusReferences,
   saveData,
+  writeCloudQueueRaw,
   writeCloudRetirementMarker,
 } from './storage';
 import { todayStr } from '../utils/dates';
@@ -1984,6 +1987,38 @@ describe('cloud retirement marker helpers', () => {
   it('reads false on malformed marker JSON', () => {
     withLocalStorage({ [CLOUD_MIGRATION_KEY]: '{bad' }, () => {
       expect(readCloudRetirementMarker()).toEqual({ enabled: false });
+    });
+  });
+});
+
+// ---- Durable cloud op queue (dedicated key, outside the planner data key) ----
+
+const CLOUD_QUEUE_KEY = 'n2hub.cloudQueue.v1';
+
+describe('cloud queue raw helpers', () => {
+  it('reads null when absent and round-trips a written raw payload', () => {
+    withLocalStorage({}, () => {
+      expect(readCloudQueueRaw()).toBeNull();
+      writeCloudQueueRaw('{"version":1,"userId":"u","ops":[]}');
+      expect(readCloudQueueRaw()).toBe('{"version":1,"userId":"u","ops":[]}');
+      expect(localStorage.getItem(CLOUD_QUEUE_KEY)).toBe('{"version":1,"userId":"u","ops":[]}');
+    });
+  });
+
+  it('clears the queue key on clearCloudQueue', () => {
+    withLocalStorage({ [CLOUD_QUEUE_KEY]: '{"version":1,"userId":"u","ops":[]}' }, () => {
+      clearCloudQueue();
+      expect(readCloudQueueRaw()).toBeNull();
+      expect(localStorage.getItem(CLOUD_QUEUE_KEY)).toBeNull();
+    });
+  });
+
+  it('clearData never touches the queue key (unflushed work survives reset)', () => {
+    withLocalStorage({ [STORAGE_KEY]: JSON.stringify(emptyData()) }, () => {
+      writeCloudQueueRaw('{"version":1,"userId":"u","ops":[]}');
+      clearData();
+      expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+      expect(readCloudQueueRaw()).toBe('{"version":1,"userId":"u","ops":[]}');
     });
   });
 });

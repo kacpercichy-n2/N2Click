@@ -36,6 +36,13 @@ export interface ImportDb {
 }
 
 /**
+ * PostgREST caps a single response at 1000 rows (with `error: null`), so an
+ * unpaginated select silently truncates any larger table. We page through with
+ * `.range()` until a short page proves exhaustion.
+ */
+export const SELECT_PAGE_SIZE = 1000;
+
+/**
  * Trivially thin adapter over the Supabase client. Maps any thrown or returned
  * SDK error to `error: string`. Raw SDK messages may pass through to diagnostics
  * (technical, not secrets) — but tokens are never logged here.
@@ -43,12 +50,25 @@ export interface ImportDb {
 export function createSupabaseImportDb(client: SupabaseClient): ImportDb {
   return {
     async select(table, columns, inFilter) {
+      // `columns` MUST remain a flat comma-separated column list: we order by
+      // every selected column so pagination is stable across pages (PostgREST
+      // page order without ORDER BY is undefined). Each call site's select list
+      // contains a unique key (`id`, `key` or a composite), giving a total order.
+      const orderCols = columns.split(',').map((c) => c.trim()).filter(Boolean);
       try {
-        const base = client.from(table).select(columns);
-        const query = inFilter ? base.in(inFilter.column, inFilter.values) : base;
-        const { data, error } = await query;
-        if (error) return { rows: [], error: error.message ?? 'Błąd zapytania.' };
-        return { rows: (data ?? []) as unknown as Array<Record<string, unknown>>, error: null };
+        const rows: Array<Record<string, unknown>> = [];
+        for (let offset = 0; ; offset += SELECT_PAGE_SIZE) {
+          let query = client.from(table).select(columns);
+          if (inFilter) query = query.in(inFilter.column, inFilter.values);
+          for (const col of orderCols) query = query.order(col);
+          query = query.range(offset, offset + SELECT_PAGE_SIZE - 1);
+          const { data, error } = await query;
+          if (error) return { rows: [], error: error.message ?? 'Błąd zapytania.' };
+          const page = (data ?? []) as unknown as Array<Record<string, unknown>>;
+          rows.push(...page);
+          if (page.length < SELECT_PAGE_SIZE) break;
+        }
+        return { rows, error: null };
       } catch (e) {
         return { rows: [], error: e instanceof Error ? e.message : String(e) };
       }

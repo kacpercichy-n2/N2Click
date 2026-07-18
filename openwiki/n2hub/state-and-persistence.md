@@ -17,8 +17,17 @@
   leaves the browser" rule is retired. Only per-user saved filters, people
   administration, dictionary/status mutations and sample/reset stay local.
   Constraint-violation write errors (23502/23503/23505/23514) drop the op with
-  the Polish permission notice rather than stalling the retry queue. Local mode:
-  zero diff.
+  the Polish permission notice rather than stalling the retry queue. Pending
+  mirror ops are durable: the queue is persisted on the dedicated key
+  `n2hub.cloudQueue.v1` (via `storage.ts` helpers, OUTSIDE the planner key;
+  `clearData()` never touches it), survives reload and sign-out, is restored and
+  drained BEFORE the hydration snapshot merge, and edits made while hydration
+  runs are diffed and enqueued instead of absorbed (`src/supabase/opQueue.ts`
+  owns the pure lifecycle decisions and Polish notices). Cloud reads paginate
+  past the PostgREST 1000-row cap: the shared select adapter in
+  `src/supabase/dataImport.ts` loops `.range()` pages (`SELECT_PAGE_SIZE`) until
+  exhaustion, so hydration/import callers never see a truncated snapshot. Local
+  mode: zero diff.
 - Retirement gate (supabase mode only). After an admin runs the reversible
   handshake in `MigrationStatusPanel` (coverage clean → snapshot read → probe
   write/read/remove → backup downloaded; the probe is a far-past DATED row
@@ -86,4 +95,6 @@
 `selectors.test.ts`, `statusActions.test.ts`, `storage.test.ts`,
 `dateGuards.test.ts`, `taskMeta.test.ts`, `persistGate.test.ts` (retirement
 gate). Cloud mirror: `src/supabase/cloudMirror.test.ts`, `plannerData.test.ts`,
-`migrationStatus.test.ts` (coverage + handshake), `migrations.test.ts`.
+`opQueue.test.ts` (durable queue + hydration drain), `dataImport.test.ts`
+(select pagination), `migrationStatus.test.ts` (coverage + handshake),
+`migrations.test.ts`.

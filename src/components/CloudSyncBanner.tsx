@@ -8,7 +8,26 @@ import { useCloudSync } from '../supabase/CloudSyncProvider';
 import { STALE_HINT_MSG, SYNC_ERROR_MSG, SYNC_PERMISSION_MSG } from '../supabase/cloudMirror';
 
 export function CloudSyncBanner() {
-  const { status, pendingCount, error, dropped, retry, refresh, dismissDropped } = useCloudSync();
+  const { status, pendingCount, error, dropped, retry, refresh, dismissDropped, notice, dismissNotice } =
+    useCloudSync();
+
+  // Powiadomienie o trwałej kolejce (przywrócono / zachowano niewysłane zmiany).
+  // Najwyższy priorytet, bo dotyczy pracy zagrożonej utratą i musi być widoczne
+  // także gdy status to 'idle' (po wylogowaniu) — jest neutralne i zamykalne.
+  if (notice !== null) {
+    return (
+      <div className="persistence-banner persistence-banner--info" role="status">
+        <div className="persistence-banner-text">
+          <p>{notice}</p>
+        </div>
+        <div className="persistence-banner-actions">
+          <button type="button" className="btn ghost small" onClick={dismissNotice}>
+            OK
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // Błąd hydracji: dane lokalne pozostają w pełni używalne.
   if (status === 'error') {

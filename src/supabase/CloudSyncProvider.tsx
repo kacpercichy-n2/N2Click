@@ -19,7 +19,12 @@ import {
 } from 'react';
 import { usePersistence, useStore } from '../store/AppStore';
 import { setCloudMirrorHealthy } from '../store/persistGate';
-import { writeCloudRetirementMarker } from '../store/storage';
+import {
+  clearCloudQueue,
+  readCloudQueueRaw,
+  writeCloudQueueRaw,
+  writeCloudRetirementMarker,
+} from '../store/storage';
 import { useAuth } from '../auth/SessionProvider';
 import { useOrgData } from './OrgDataProvider';
 import { getSupabaseClient } from './client';
@@ -38,6 +43,17 @@ import {
   type CloudOp,
 } from './cloudMirror';
 import { planHydrationOutcome } from './hydrationOutcome';
+import {
+  MAX_HYDRATION_RESTARTS,
+  QUEUE_FOREIGN_DROPPED,
+  QUEUE_RESTORED_NOTICE,
+  HYDRATION_RESTART_ERROR,
+  decodeQueue,
+  encodeQueue,
+  planDeactivation,
+  planHydrationStep,
+  planQueueRestore,
+} from './opQueue';
 
 export type CloudSyncStatus = 'idle' | 'hydrating' | 'ready' | 'error';
 
@@ -51,6 +67,10 @@ export interface CloudSyncValue {
   /** Odśwież dane z serwera — dostępne tylko przy pustej kolejce i bez błędu. */
   refresh: () => void;
   dismissDropped: () => void;
+  /** Neutralne powiadomienie o trwałej kolejce (przywrócono / zachowano). Polski. */
+  notice: string | null;
+  /** Zamyka bieżące powiadomienie o kolejce. */
+  dismissNotice: () => void;
   /** Czy per-akcyjne zapisy lokalne są wycofane (zbuforowana decyzja organizacji). */
   retired: boolean;
   /**
@@ -87,6 +107,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [dropped, setDropped] = useState<Array<{ label: string; message: string }>>([]);
   const [pendingCount, setPendingCount] = useState(0);
+  const [notice, setNotice] = useState<string | null>(null);
   const [retired, setRetired] = useState(false);
 
   // Live refs for the mount-once listeners / queue callbacks.
@@ -101,6 +122,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   const prevRef = useRef(state); // ostatni zlustrzany stan
   const queueRef = useRef<CloudOp[]>([]);
   const processingRef = useRef(false);
+  const drainErrorRef = useRef<string | null>(null);
   const hydratedUserRef = useRef<string | null>(null);
   const dbRef = useRef<PlannerDb | null>(null);
   const mapsRef = useRef<CloudIdMaps | null>(null);
@@ -121,6 +143,10 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   const snapshot = org.state.status === 'ready' ? org.state.snapshot : null;
   const active = auth.mode === 'supabase' && userId !== null && snapshot !== null;
 
+  // Żywy ref na userId — trwały zapis kolejki koduje kopertę pod tym kontem.
+  const userIdRef = useRef<string | null>(userId);
+  userIdRef.current = userId;
+
   const getDb = useCallback((): PlannerDb => {
     if (!dbRef.current) dbRef.current = createSupabasePlannerDb(getSupabaseClient());
     return dbRef.current;
@@ -131,6 +157,22 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     setPendingCount(n);
   }, []);
 
+  // Trwała kolejka: koduje bieżący queueRef pod aktywnym userId i zapisuje na
+  // dedykowanym kluczu. Pusta kolejka => czyścimy klucz (drenaż do zera). Bez
+  // aktywnego userId nie utrwalamy (nie ma pod co podpiąć operacji).
+  // Wielozakładkowość (ustalone): last-writer-wins na kluczu jest akceptowalny —
+  // operacje to idempotentne upserty/remove kluczowane tożsamością wiersza, więc
+  // powtórna replikacja zbiega się; brak blokad międzyzakładkowych.
+  const persistQueue = useCallback(() => {
+    const uid = userIdRef.current;
+    if (!uid) return;
+    if (queueRef.current.length === 0) {
+      clearCloudQueue();
+    } else {
+      writeCloudQueueRaw(encodeQueue(uid, queueRef.current));
+    }
+  }, []);
+
   // Wykonuje kolejkę operacji sekwencyjnie (serializacja jedną pętlą). Na błędzie
   // przejściowym zatrzymuje się i zostawia resztę w kolejce (retry wznawia).
   // W trybie wycofanym: świeży zapis lokalny (kopia do odzysku) przy DRENAŻU
@@ -139,6 +181,10 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   const processQueue = useCallback(async () => {
     if (processingRef.current) return;
     processingRef.current = true;
+    // Synchroniczny sygnał wyniku drenażu dla runHydration: odróżnia błąd
+    // przejściowy (kolejka niepusta z powodu awarii) od edycji w locie
+    // dokolejkowanej TUŻ po opróżnieniu (kolejka niepusta, ale bez błędu).
+    drainErrorRef.current = null;
     try {
       while (queueRef.current.length > 0) {
         const ops = queueRef.current;
@@ -149,8 +195,10 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
           setDropped((prev) => [...prev, ...result.dropped]);
         }
         if (result.error) {
+          drainErrorRef.current = result.error;
           queueRef.current = [...result.remaining, ...queueRef.current];
           setPending(queueRef.current.length);
+          persistQueue(); // utrwal resztę: niewysłane operacje przeżyją przeładowanie
           setError(result.error);
           // Błąd przejściowy: flaga zdrowia opadnie (efekt), zapisy per-akcyjne
           // wznawiają się; zagrożoną pracę zapisujemy TERAZ lokalnie.
@@ -159,34 +207,92 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
         }
         setError(null);
         setPending(queueRef.current.length);
+        persistQueue(); // po każdej iteracji: utrwal resztę / wyczyść przy zerze
       }
       // Kolejka opróżniona bez błędu: kopia do odzysku = stan potwierdzony chmurą.
       if (retiredRef.current) retryPersistRef.current();
     } finally {
       processingRef.current = false;
     }
-  }, [getDb, setPending]);
+  }, [getDb, setPending, persistQueue]);
 
   const runHydration = useCallback(async () => {
     if (auth.mode !== 'supabase' || !userId || org.state.status !== 'ready') return;
     const snap = org.state.snapshot;
     setStatus('hydrating');
     setError(null);
-    const maps = buildCloudIdMaps(stateRef.current, snap);
-    mapsRef.current = maps;
-    const result = await loadPlannerSnapshot(getDb(), maps, stateRef.current);
-    if (!mountedRef.current) return;
-    // Wynik świadomy odrzucenia scalenia: gdy reduktor odrzuci ładunek
-    // (fail-closed), NIE zgłaszamy cichego 'ready' — pokazujemy jawny błąd.
-    const outcome = planHydrationOutcome(stateRef.current, result);
-    if (outcome.status === 'error') {
-      setStatus('error');
-      setError(outcome.error);
+    // Mapy budujemy od razu, aby edycje w locie (okno 'hydrating') mogły być
+    // zdiffowane i skolejkowane przez efekt lustra, a nie cicho pochłonięte.
+    mapsRef.current = buildCloudIdMaps(stateRef.current, snap);
+
+    // FAZA 1 — przywrócenie trwałej kolejki PRZED odczytem snapshotu, aby
+    // hydracja nigdy nie nadpisała niewysłanej lokalnej edycji.
+    const restore = planQueueRestore(decodeQueue(readCloudQueueRaw()), userId);
+    if (restore.kind === 'discard-foreign-user') {
+      clearCloudQueue();
+      setDropped((prev) => [...prev, { label: 'Kolejka', message: QUEUE_FOREIGN_DROPPED }]);
+    } else if (restore.kind === 'restore') {
+      queueRef.current.push(...restore.ops);
+      setPending(queueRef.current.length);
+      persistQueue();
+      setNotice(QUEUE_RESTORED_NOTICE);
+      await processQueue();
+      if (!mountedRef.current) return;
+      // Błąd przejściowy drenażu => zatrzymaj z jawnym błędem (komunikat już
+      // ustawiony przez processQueue). retry() (status 'error') ponowi
+      // drenaż-i-hydrację. Sam niepusty queueRef (edycja w locie) nie jest błędem.
+      if (drainErrorRef.current !== null) {
+        setStatus('error');
+        return;
+      }
+    }
+
+    // FAZA 2 — odczyt snapshotu z pętlą kroków hydracji: edycje w locie są
+    // wypłukiwane (drain) lub wymuszają ponowny odczyt (restart) na świeżym
+    // stanie; wyczerpanie budżetu restartów => jawny błąd.
+    let restarts = 0;
+    for (;;) {
+      const before = stateRef.current;
+      mapsRef.current = buildCloudIdMaps(before, snap);
+      const result = await loadPlannerSnapshot(getDb(), mapsRef.current, before);
+      if (!mountedRef.current) return;
+      const step = planHydrationStep({
+        pendingOps: queueRef.current.length,
+        stateChanged: stateRef.current !== before,
+        restarts,
+        maxRestarts: MAX_HYDRATION_RESTARTS,
+      });
+      if (step === 'drain') {
+        await processQueue();
+        if (!mountedRef.current) return;
+        if (drainErrorRef.current !== null) {
+          setStatus('error');
+          return;
+        }
+        continue;
+      }
+      if (step === 'restart') {
+        restarts += 1;
+        continue;
+      }
+      if (step === 'give-up') {
+        setStatus('error');
+        setError(HYDRATION_RESTART_ERROR);
+        return;
+      }
+      // 'merge' — obie flagi czyste: scal jak dotąd. Wynik świadomy odrzucenia:
+      // gdy reduktor odrzuci ładunek (fail-closed), pokazujemy jawny błąd.
+      const outcome = planHydrationOutcome(before, result);
+      if (outcome.status === 'error') {
+        setStatus('error');
+        setError(outcome.error);
+        return;
+      }
+      dispatch({ type: 'MERGE_CLOUD_ENTITIES', payload: outcome.payload });
+      setStatus('ready');
       return;
     }
-    dispatch({ type: 'MERGE_CLOUD_ENTITIES', payload: outcome.payload });
-    setStatus('ready');
-  }, [auth.mode, userId, org.state, dispatch, getDb]);
+  }, [auth.mode, userId, org.state, dispatch, getDb, processQueue, persistQueue, setPending]);
 
   // Zbieżność zbuforowanego znacznika wycofania z decyzją organizacji
   // (app_settings). Błąd odczytu => zachowaj poprzednią zbuforowaną wartość.
@@ -201,9 +307,15 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   // gotowy. Reset przy wylogowaniu / trybie lokalnym (żaden klient nie powstaje).
   useEffect(() => {
     if (!active) {
+      // Dezaktywacja (wylogowanie / utrata snapshotu): czyścimy kolejkę w
+      // pamięci, ale trwała kopia ZOSTAJE — niewysłane operacje przetrwają
+      // przełącznik `active` i wrócą po ponownym zalogowaniu. Gdy coś czekało,
+      // informujemy użytkownika neutralnym komunikatem.
+      const plan = planDeactivation(pendingRef.current);
       hydratedUserRef.current = null;
-      queueRef.current = [];
+      queueRef.current = []; // tylko pamięć — NIE clearCloudQueue()
       prevRef.current = stateRef.current;
+      if (plan.notice) setNotice(plan.notice);
       if (statusRef.current !== 'idle') {
         setStatus('idle');
         setError(null);
@@ -251,12 +363,22 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   // Lustro: diff prevRef -> state, kolejkowanie i wykonanie. Suppresja własnej
   // hydracji i operacji lokalnych (sample/reset/replace).
   useEffect(() => {
-    if (!active || hydratedUserRef.current !== userId || statusRef.current !== 'ready') {
+    // Lustrujemy w oknie 'ready' ORAZ 'hydrating': w 'hydrating' edycje są
+    // kolejkowane i utrwalane, ale NIE przetwarzane (drenaż zostaje pod kontrolą
+    // runHydration) — nigdy nie pochłaniamy edycji bez zdiffowania.
+    const phase = statusRef.current;
+    const canMirror =
+      active &&
+      hydratedUserRef.current === userId &&
+      (phase === 'ready' || phase === 'hydrating');
+    if (!canMirror) {
       prevRef.current = state;
       return;
     }
     const last = lastActionRef.current;
     if (last !== null && SUPPRESSED.has(last)) {
+      // Suppresja (własna hydracja / sample / reset) — także w 'hydrating'
+      // zachowuje dzisiejsze pochłanianie: przesuń prevRef bez kolejkowania.
       prevRef.current = state;
       return;
     }
@@ -279,8 +401,11 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     if (ops.length === 0) return;
     queueRef.current.push(...ops);
     setPending(queueRef.current.length);
-    void processQueue();
-  }, [state, active, userId, lastActionRef, processQueue, setPending]);
+    persistQueue(); // utrwal po każdej mutacji — przetrwa przeładowanie karty
+    // Przetwarzaj tylko w 'ready'. W 'hydrating' drenaż jest bramkowany przez
+    // pętlę runHydration (krok 'drain'), która wypłucze te operacje.
+    if (phase === 'ready') void processQueue();
+  }, [state, active, userId, lastActionRef, processQueue, persistQueue, setPending]);
 
   const retry = useCallback(() => {
     if (statusRef.current === 'error') {
@@ -298,6 +423,8 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
 
   const dismissDropped = useCallback(() => setDropped([]), []);
 
+  const dismissNotice = useCallback(() => setNotice(null), []);
+
   const applyRetirement = useCallback((enabled: boolean) => {
     writeCloudRetirementMarker({ enabled });
     setRetired(enabled);
@@ -312,10 +439,24 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       retry,
       refresh,
       dismissDropped,
+      notice,
+      dismissNotice,
       retired,
       applyRetirement,
     }),
-    [status, pendingCount, error, dropped, retry, refresh, dismissDropped, retired, applyRetirement],
+    [
+      status,
+      pendingCount,
+      error,
+      dropped,
+      retry,
+      refresh,
+      dismissDropped,
+      notice,
+      dismissNotice,
+      retired,
+      applyRetirement,
+    ],
   );
 
   return <CloudSyncContext.Provider value={value}>{children}</CloudSyncContext.Provider>;

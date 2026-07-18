@@ -102,3 +102,11 @@ selectors) is untouched; workload still flows through reducer actions only.
 ## 20260718-021229-213 hydration safety (dev)
 
 Fixed: plannerData cascade-excludes descendants of excluded projects/tasks; null/unresolvable status_id falls back to first active status (projects+tasks); new hydrationOutcome.ts makes CloudSyncProvider surface a Polish error when MERGE rejects (was silent 'ready'). Fixes 3+4 (people cloud-merge) BLOCKED — applyCloudPeople/mergeCloudPeople don't exist; people stay local. npm test 915/915, build pass.
+
+## 20260718-022729-214 select pagination (dev)
+
+Paginated `createSupabaseImportDb.select` (src/supabase/dataImport.ts:38-73): loops `.range()` per fresh query, ordering by every selected column, stopping on a short page; exported `SELECT_PAGE_SIZE = 1000`. Any-page error returns `{ rows: [], error }`. All callers inherit fix, no signature change. Added 5 pagination tests. vitest 61/61, build pass. Parallel dev's opQueue files untouched.
+
+## 20260718-022729-214 durable cloud queue (dev)
+
+New src/supabase/opQueue.ts (pure: encode/decode fail-closed, planQueueRestore/Deactivation/HydrationStep, Polish notices) + opQueue.test.ts. storage.ts: n2hub.cloudQueue.v1 helpers (untouched by clearData). CloudSyncProvider drains durable queue before snapshot merge, enqueues hydrating-window edits, keeps durable copy on deactivation; new notice+dismissNotice in banner. vitest 195/195, build pass. dataImport.ts untouched.
