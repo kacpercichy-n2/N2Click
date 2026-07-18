@@ -203,6 +203,63 @@ describe('loadPlannerSnapshot', () => {
     expect(result.diagnostics.length).toBe(2);
   });
 
+  it('cascade-excludes descendants of an excluded project so the rest still merges', async () => {
+    const PR_BAD = uuid('project-bad');
+    const TK_BAD = uuid('task-bad');
+    const db = new FakeSelectDb()
+      .seed('projects', [
+        // Valid project — survives with all its descendants.
+        { id: PR, client_id: CLI, name: 'Dobry', description: '', status_id: S1, paid: false, start_date: '2026-07-06', end_date: '2026-07-12', department_id: null, service_type_id: SV, created_at: '', updated_at: '' },
+        // Invalid period — excluded; ALL its descendants must cascade out too.
+        { id: PR_BAD, client_id: CLI, name: 'Zły', description: '', status_id: S1, paid: false, start_date: '2026-07-12', end_date: '2026-07-06', department_id: null, service_type_id: SV, created_at: '', updated_at: '' },
+      ])
+      .seed('milestones', [
+        { id: uuid('ms-ok'), project_id: PR, name: 'Zostaje', milestone_date: '2026-07-10' },
+        { id: uuid('ms-bad'), project_id: PR_BAD, name: 'Kaskada', milestone_date: '2026-07-10' },
+      ])
+      .seed('tasks', [
+        { id: TK, project_id: PR, status_id: S1, title: 'Zadanie OK', description: '', start_date: '2026-07-06', end_date: '2026-07-08', estimated_hours: null, priority: 'normal', work_category_id: WC, checklist: [], created_at: '', updated_at: '' },
+        { id: TK_BAD, project_id: PR_BAD, status_id: S1, title: 'Zadanie kaskada', description: '', start_date: '2026-07-06', end_date: '2026-07-08', estimated_hours: null, priority: 'normal', work_category_id: WC, checklist: [], created_at: '', updated_at: '' },
+      ])
+      .seed('task_assignments', [
+        { task_id: TK, profile_id: CLOUD_PA },
+        { task_id: TK_BAD, profile_id: CLOUD_PA },
+      ])
+      .seed('workload_entries', [
+        { id: uuid('wl-ok'), task_id: TK, profile_id: CLOUD_PA, work_date: '2026-07-06', planned_hours: 2, start_minutes: 480, sort_index: 0 },
+        { id: uuid('wl-bad'), task_id: TK_BAD, profile_id: CLOUD_PA, work_date: '2026-07-06', planned_hours: 2, start_minutes: 480, sort_index: 0 },
+      ]);
+
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const p = result.payload;
+    // Only the valid branch survives; the excluded project's whole subtree is gone.
+    expect(p.projects.map((x) => x.id)).toEqual([PR]);
+    expect(p.tasks.map((x) => x.id)).toEqual([TK]);
+    expect(p.milestones.map((x) => x.name)).toEqual(['Zostaje']);
+    expect(p.assignments).toEqual([{ taskId: TK, personId: PA }]);
+    expect(p.workload.map((x) => x.taskId)).toEqual([TK]);
+  });
+
+  it('falls back to the first active status when status_id is null or unresolvable', async () => {
+    const UNKNOWN = uuid('status-unknown');
+    const db = new FakeSelectDb()
+      .seed('projects', [
+        { id: PR, client_id: CLI, name: 'P', description: '', status_id: null, paid: false, start_date: '2026-07-06', end_date: '2026-07-12', department_id: null, service_type_id: null, created_at: '', updated_at: '' },
+      ])
+      .seed('tasks', [
+        { id: TK, project_id: PR, status_id: UNKNOWN, title: 'T', description: '', start_date: '2026-07-06', end_date: '2026-07-08', estimated_hours: null, priority: 'normal', work_category_id: null, checklist: [], created_at: '', updated_at: '' },
+      ]);
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Both project (null) and task (unresolvable) get the first active local status,
+    // never '' — so completion (Status.isDone) stays meaningful post-merge.
+    expect(result.payload.projects[0].statusId).toBe(S1);
+    expect(result.payload.tasks[0].statusId).toBe(S1);
+  });
+
   it('fails atomically with the Polish error when any select errors', async () => {
     const db = new FakeSelectDb().fail('tasks');
     const result = await loadPlannerSnapshot(db, maps(), localFixture());

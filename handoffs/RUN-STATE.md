@@ -98,3 +98,7 @@ yields a false `Zapisano`; (d) recovery-write timing in `CloudSyncProvider`
 (status→ready effect, queue-drain, transient error, pagehide). `scheduling-and-
 calendar.md` left unchanged — interaction code (WeekView/WorkloadPage/time/
 selectors) is untouched; workload still flows through reducer actions only.
+
+## 20260718-021229-213 hydration safety (dev)
+
+Fixed: plannerData cascade-excludes descendants of excluded projects/tasks; null/unresolvable status_id falls back to first active status (projects+tasks); new hydrationOutcome.ts makes CloudSyncProvider surface a Polish error when MERGE rejects (was silent 'ready'). Fixes 3+4 (people cloud-merge) BLOCKED — applyCloudPeople/mergeCloudPeople don't exist; people stay local. npm test 915/915, build pass.

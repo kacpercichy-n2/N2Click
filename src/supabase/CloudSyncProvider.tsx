@@ -37,6 +37,7 @@ import {
   type CloudIdMaps,
   type CloudOp,
 } from './cloudMirror';
+import { planHydrationOutcome } from './hydrationOutcome';
 
 export type CloudSyncStatus = 'idle' | 'hydrating' | 'ready' | 'error';
 
@@ -175,12 +176,15 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     mapsRef.current = maps;
     const result = await loadPlannerSnapshot(getDb(), maps, stateRef.current);
     if (!mountedRef.current) return;
-    if (!result.ok) {
+    // Wynik świadomy odrzucenia scalenia: gdy reduktor odrzuci ładunek
+    // (fail-closed), NIE zgłaszamy cichego 'ready' — pokazujemy jawny błąd.
+    const outcome = planHydrationOutcome(stateRef.current, result);
+    if (outcome.status === 'error') {
       setStatus('error');
-      setError(result.error);
+      setError(outcome.error);
       return;
     }
-    dispatch({ type: 'MERGE_CLOUD_ENTITIES', payload: result.payload });
+    dispatch({ type: 'MERGE_CLOUD_ENTITIES', payload: outcome.payload });
     setStatus('ready');
   }, [auth.mode, userId, org.state, dispatch, getDb]);
 

@@ -277,6 +277,24 @@ export async function loadPlannerSnapshot(
   );
   const personOf = makeReverse(maps.people, new Set(local.people.map((p) => p.id)));
 
+  // Fallback statusu: gdy status_id jest null/niemapowalny (statusOf => ''),
+  // przypisujemy pierwszy AKTYWNY status lokalny (po kolejności). Bez tego wiersz
+  // trafiłby do stanu z statusId '' (isDone=false), łamiąc „ukończenie z
+  // Status.isDone”. Jedna spójna strategia dla projektów I zadań. Inwariant
+  // gwarantuje co najmniej jeden aktywny status; degeneracja => '' (pusto).
+  const activeStatuses = local.statuses
+    .filter((s) => !s.archived)
+    .sort((a, b) => a.order - b.order);
+  const fallbackStatusId = activeStatuses[0]?.id ?? local.statuses[0]?.id ?? '';
+  const resolveStatus = (v: unknown): string => statusOf(v) || fallbackStatusId;
+
+  // Zbiory wykluczonych rodziców — kaskadowe wykluczanie potomków (patrz niżej):
+  // wiersz z niepoprawnym okresem/datą jest wykluczany, a jego potomkowie muszą
+  // zniknąć RAZEM z nim, inaczej reduktor (MERGE_CLOUD_ENTITIES) odrzuci CAŁY
+  // ładunek przez wiszący FK i organizacja nie zhydratuje niczego.
+  const excludedProjectIds = new Set<string>();
+  const excludedTaskIds = new Set<string>();
+
   // Klienci ----
   const clients: Client[] = clientsRes.rows.map((row) => ({
     id: str(row.id),
@@ -290,6 +308,7 @@ export async function loadPlannerSnapshot(
     const startDate = sqlDateToLocal(row.start_date);
     const endDate = sqlDateToLocal(row.end_date);
     if (periodError(startDate, endDate) !== null) {
+      excludedProjectIds.add(str(row.id));
       diagnostics.push(`Projekt „${str(row.name)}” pominięto — nieprawidłowy okres.`);
       continue;
     }
@@ -298,7 +317,7 @@ export async function loadPlannerSnapshot(
       clientId: str(row.client_id),
       name: str(row.name),
       description: str(row.description),
-      statusId: statusOf(row.status_id),
+      statusId: resolveStatus(row.status_id),
       paid: boolVal(row.paid),
       startDate,
       endDate,
@@ -317,6 +336,10 @@ export async function loadPlannerSnapshot(
       diagnostics.push(`Kamień milowy „${str(row.name)}” pominięto — nieprawidłowa data.`);
       continue;
     }
+    if (excludedProjectIds.has(str(row.project_id))) {
+      diagnostics.push(`Kamień milowy „${str(row.name)}” pominięto — projekt wykluczony.`);
+      continue;
+    }
     milestones.push({
       id: str(row.id),
       projectId: str(row.project_id),
@@ -331,7 +354,13 @@ export async function loadPlannerSnapshot(
     const startDate = sqlDateToLocal(row.start_date);
     const endDate = sqlDateToLocal(row.end_date);
     if (periodError(startDate, endDate, { maxDays: MAX_TASK_PERIOD_DAYS }) !== null) {
+      excludedTaskIds.add(str(row.id));
       diagnostics.push(`Zadanie „${str(row.title)}” pominięto — nieprawidłowy okres.`);
+      continue;
+    }
+    if (excludedProjectIds.has(str(row.project_id))) {
+      excludedTaskIds.add(str(row.id));
+      diagnostics.push(`Zadanie „${str(row.title)}” pominięto — projekt wykluczony.`);
       continue;
     }
     const estimated = row.estimated_hours;
@@ -341,7 +370,7 @@ export async function loadPlannerSnapshot(
     tasks.push({
       id: str(row.id),
       projectId: str(row.project_id),
-      statusId: statusOf(row.status_id),
+      statusId: resolveStatus(row.status_id),
       title: str(row.title),
       description: str(row.description),
       startDate,
@@ -360,6 +389,10 @@ export async function loadPlannerSnapshot(
   const assignments: Array<{ taskId: string; personId: string }> = [];
   for (const row of assignmentsRes.rows) {
     const taskId = str(row.task_id);
+    if (excludedTaskIds.has(taskId)) {
+      diagnostics.push(`Przypisanie zadania ${taskId} pominięto — zadanie wykluczone.`);
+      continue;
+    }
     const personId = personOf(row.profile_id);
     if (personId === '') {
       diagnostics.push(
@@ -375,12 +408,16 @@ export async function loadPlannerSnapshot(
   const workload: WorkloadEntry[] = [];
   const seenBinPairs = new Set<string>();
   for (const row of workloadRes.rows) {
+    const taskId = str(row.task_id);
+    if (excludedTaskIds.has(taskId)) {
+      diagnostics.push('Blok godzin pominięto — zadanie wykluczone.');
+      continue;
+    }
     const personId = personOf(row.profile_id);
     if (personId === '') {
       diagnostics.push('Blok godzin pominięto — brak lokalnej osoby dla profilu.');
       continue;
     }
-    const taskId = str(row.task_id);
     const isBin = row.work_date === null || row.work_date === undefined || row.work_date === '';
     const date = isBin ? BIN_DATE : sqlDateToLocal(row.work_date);
     if (!isBin && !isValidDateStr(date)) {
