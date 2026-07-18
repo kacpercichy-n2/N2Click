@@ -22,7 +22,7 @@ export function SampleBanner() {
         <button
           type="button"
           className="btn primary"
-          onClick={() => dispatch({ type: 'LOAD_SAMPLE', data: buildSampleData() })}
+          onClick={() => dispatch({ type: 'LOAD_SAMPLE', data: buildSampleData(), origin: 'cloud' })}
         >
           Wczytaj przykładowe dane
         </button>

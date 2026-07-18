@@ -2438,14 +2438,28 @@ export function reducer(state: AppData, action: Action): AppData {
   }
 }
 
+/**
+ * Marks how a transition originated, so the cloud mirror can decide propagation
+ * by metadata carried ON the action — never by an action-name denylist.
+ * `'cloud'` marks transitions the mirror must NOT propagate: cloud hydration
+ * (`MERGE_CLOUD_ENTITIES`), storage replaces already mirrored elsewhere
+ * (`REPLACE_FROM_STORAGE`), and local-only sample/reset loads
+ * (`LOAD_SAMPLE` / `RESET_ALL`). Absence means `'local'` — a user mutation the
+ * mirror should propagate. The reducer ignores `origin` entirely.
+ */
+export type ActionOrigin = 'cloud' | 'local';
+
+/** Dispatch that also accepts optional origin metadata riding on the action. */
+export type Dispatch = (action: Action & { origin?: ActionOrigin }) => void;
+
 interface StoreValue {
   state: AppData;
-  dispatch: React.Dispatch<Action>;
-  // Type of the LAST dispatched action. The cloud mirror (CloudSyncProvider)
-  // reads it to suppress its own hydration and local-only transitions
-  // (MERGE_CLOUD_ENTITIES / REPLACE_FROM_STORAGE / LOAD_SAMPLE / RESET_ALL).
-  // No consumer signature changes — existing useStore() callers ignore it.
-  lastActionRef: React.MutableRefObject<Action['type'] | null>;
+  dispatch: Dispatch;
+  // The LAST dispatched action's type + resolved origin. The cloud mirror
+  // (CloudSyncProvider) reads `origin` to suppress non-mirrorable transitions
+  // (see ActionOrigin). No consumer signature changes — existing useStore()
+  // callers ignore it; passing a plain Action still type-checks.
+  lastActionRef: React.MutableRefObject<{ type: Action['type']; origin: ActionOrigin } | null>;
 }
 
 const StoreContext = createContext<StoreValue | null>(null);
@@ -2487,9 +2501,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   // Track the last dispatched action type so the cloud mirror can suppress its
   // own hydration and local-only transitions. A thin wrapper keeps useStore()'s
   // signature and every existing consumer untouched.
-  const lastActionRef = useRef<Action['type'] | null>(null);
-  const dispatch = useCallback<React.Dispatch<Action>>((action) => {
-    lastActionRef.current = action.type;
+  const lastActionRef = useRef<{ type: Action['type']; origin: ActionOrigin } | null>(null);
+  const dispatch = useCallback<Dispatch>((action) => {
+    lastActionRef.current = { type: action.type, origin: action.origin ?? 'local' };
     rawDispatch(action);
   }, []);
 
@@ -2580,7 +2594,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       skipPersistRef.current = !loaded.needsWriteback;
       // Pamięć zostaje zastąpiona stanem ze storage — znów są zsynchronizowane.
       clearLocalPersistSkipped();
-      dispatch({ type: 'REPLACE_FROM_STORAGE', data: incoming });
+      dispatch({ type: 'REPLACE_FROM_STORAGE', data: incoming, origin: 'cloud' });
       setExternal('refreshed');
     });
   }, []);
@@ -2603,7 +2617,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     skipPersistRef.current = !loaded.needsWriteback;
     // Pamięć zastąpiona stanem ze storage — znów zsynchronizowane.
     clearLocalPersistSkipped();
-    dispatch({ type: 'REPLACE_FROM_STORAGE', data: loaded.data });
+    dispatch({ type: 'REPLACE_FROM_STORAGE', data: loaded.data, origin: 'cloud' });
     setExternal('none');
   }, []);
 

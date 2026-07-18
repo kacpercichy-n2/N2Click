@@ -31,14 +31,19 @@ import {
 // ---- Fake ImportDb ----------------------------------------------------------
 
 interface Call {
-  op: 'select' | 'insert';
+  op: 'select' | 'insert' | 'insertMany';
   table: string;
   row?: Record<string, unknown>;
+  count?: number; // batch size for insertMany
 }
 
 class FakeDb implements ImportDb {
   tables = new Map<string, Array<Record<string, unknown>>>();
   calls: Call[] = [];
+  // Every landed row (via insert OR insertMany), in order, for row-shape and
+  // ordering assertions — the batch pipeline no longer routes happy-path rows
+  // through per-row `insert`.
+  inserted: Array<{ table: string; row: Record<string, unknown> }> = [];
   insertTables: string[] = [];
   failInsert: (table: string, row: Record<string, unknown>) => string | null = () => null;
   failSelect: (table: string) => string | null = () => null;
@@ -53,7 +58,13 @@ class FakeDb implements ImportDb {
   }
 
   insertCalls(table: string): Array<Record<string, unknown>> {
-    return this.calls.filter((c) => c.op === 'insert' && c.table === table).map((c) => c.row!);
+    return this.inserted.filter((i) => i.table === table).map((i) => i.row);
+  }
+
+  private land(table: string, row: Record<string, unknown>) {
+    this.tables.set(table, [...this.rows(table), { ...row }]);
+    this.inserted.push({ table, row: { ...row } });
+    this.insertTables.push(table);
   }
 
   async select(table: string, _columns: string, inFilter?: { column: string; values: string[] }) {
@@ -69,8 +80,19 @@ class FakeDb implements ImportDb {
     this.calls.push({ op: 'insert', table, row: { ...row } });
     const err = this.failInsert(table, row);
     if (err) return { error: err };
-    this.tables.set(table, [...this.rows(table), { ...row }]);
-    this.insertTables.push(table);
+    this.land(table, row);
+    return { error: null };
+  }
+
+  async insertMany(table: string, rows: Array<Record<string, unknown>>) {
+    this.calls.push({ op: 'insertMany', table, count: rows.length });
+    // PostgREST is all-or-nothing: if any row would fail, the whole batch is
+    // rejected and NOTHING lands.
+    for (const row of rows) {
+      const err = this.failInsert(table, row);
+      if (err) return { error: err };
+    }
+    for (const row of rows) this.land(table, row);
     return { error: null };
   }
 }
@@ -809,5 +831,97 @@ describe('runSupabaseImport — milestones + workload', () => {
     const result = await runSupabaseImport(data, report, db);
     expect(sumFor(result, 'workload').failed).toBe(1);
     expect(sumFor(result, 'workload').imported).toBe(0);
+  });
+});
+
+// ---- Batching + per-row fallback -------------------------------------------
+
+describe('runSupabaseImport — batching + per-row fallback', () => {
+  it('happy path flushes via insertMany with zero per-row insert calls', async () => {
+    const data = fixture();
+    const db = seedProfiles(new FakeDb());
+    await runSupabaseImport(data, buildDryRunReport(data), db);
+
+    // No per-row `insert` anywhere on the happy path — batch-only economy.
+    expect(db.calls.filter((c) => c.op === 'insert')).toHaveLength(0);
+    // One batch per non-empty collection (≤100-row chunk).
+    for (const table of ['departments', 'projects', 'tasks', 'project_members', 'task_assignments']) {
+      expect(db.calls.some((c) => c.op === 'insertMany' && c.table === table)).toBe(true);
+    }
+  });
+
+  it('a mid-batch failing row falls back per-row, attributing only that row', async () => {
+    const P1 = uuid('proj-1');
+    const P2 = uuid('proj-2');
+    const P3 = uuid('proj-3');
+    const data: AppData = {
+      ...fixture(),
+      projects: [
+        makeProject({ id: P1, name: 'P1', departmentId: D1 }),
+        makeProject({ id: P2, name: 'P2', departmentId: D1 }),
+        makeProject({ id: P3, name: 'P3', departmentId: D1 }),
+      ],
+      tasks: [],
+      assignments: [],
+    };
+    const db = seedProfiles(new FakeDb());
+    db.failInsert = (table, row) => (table === 'projects' && row.id === P2 ? 'boom' : null);
+    const result = await runSupabaseImport(data, buildDryRunReport(data), db);
+
+    // The batch is tried first, then per-row fallback engages for that chunk.
+    const projectCalls = db.calls.filter((c) => c.table === 'projects' && c.op !== 'select');
+    expect(projectCalls[0].op).toBe('insertMany');
+    expect(projectCalls.some((c) => c.op === 'insert')).toBe(true);
+
+    // Only P2 is attributed as failed; P1 and P3 land; siblings still imported.
+    expect(sumFor(result, 'projects')).toMatchObject({ imported: 2, failed: 1 });
+    const diags = result.diagnostics.filter((d) => d.collection === 'projects');
+    expect(diags).toHaveLength(1);
+    expect(diags[0].entityId).toBe(P2);
+    expect(diags[0].message.startsWith('Zapis nie powiódł się')).toBe(true);
+    expect(db.insertCalls('projects').map((r) => r.id as string).sort()).toEqual([P1, P3].sort());
+  });
+});
+
+// ---- Flush-on-dependency (dictionaries + departments) -----------------------
+
+describe('runSupabaseImport — flush-on-dependency', () => {
+  const A = uuid('st-a');
+  const B = uuid('st-b');
+
+  function twoSharedSlug(): AppData {
+    return {
+      ...refFixture(),
+      statuses: [
+        makeStatus({ id: A, slug: 'todo', isDone: false }),
+        makeStatus({ id: B, slug: 'todo', isDone: true }), // same trimmed slug
+      ],
+      serviceTypes: [],
+      workCategories: [],
+    };
+  }
+
+  it('second item maps to the first (skip-by-key) when the first insert succeeds', async () => {
+    const data = twoSharedSlug();
+    const db = new FakeDb();
+    const result = await runSupabaseImport(data, buildDryRunReport(data), db);
+
+    expect(sumFor(result, 'statuses')).toMatchObject({ imported: 1, skipped: 1, failed: 0 });
+    // Exactly one row with that slug landed (no duplicate insert of B).
+    expect(db.rows('statuses').filter((r) => r.slug === 'todo')).toHaveLength(1);
+    expect(db.insertCalls('statuses').map((r) => r.id)).toEqual([A]);
+  });
+
+  it('second item inserts itself when the first (shared-key) insert fails', async () => {
+    const data = twoSharedSlug();
+    const db = new FakeDb();
+    db.failInsert = (table, row) => (table === 'statuses' && row.id === A ? 'boom' : null);
+    const result = await runSupabaseImport(data, buildDryRunReport(data), db);
+
+    // A fails; B becomes the key owner and lands — exactly the sequential outcome.
+    expect(sumFor(result, 'statuses')).toMatchObject({ imported: 1, skipped: 0, failed: 1 });
+    expect(db.rows('statuses').map((r) => r.id)).toEqual([B]);
+    const diag = result.diagnostics.find((d) => d.collection === 'statuses' && d.entityId === A);
+    expect(diag?.message.startsWith('Zapis nie powiódł się')).toBe(true);
   });
 });

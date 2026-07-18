@@ -16,7 +16,6 @@
 import type {
   ActivityEvent,
   AppData,
-  Client,
   Comment,
   Milestone,
   Person,
@@ -27,6 +26,15 @@ import type {
 import { normalizeEmail } from '../auth/profile';
 import type { OrgSnapshot } from './referenceData';
 import type { PlannerDb } from './plannerData';
+import {
+  buildActivityRow,
+  buildClientRow,
+  buildCommentRow,
+  buildMilestoneRow,
+  buildProjectRow,
+  buildTaskRow,
+  buildWorkloadRow,
+} from './rowMappers';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (id: string): boolean => UUID_RE.test(id);
@@ -159,8 +167,6 @@ export interface DiffResult {
   diagnostics: string[];
 }
 
-const dateOrNull = (d: string): string | null => (d === '' ? null : d);
-
 /** Rozwiązuje referencję słownikową (status/typ usługi/kategoria): '' -> null,
  *  trafienie w mapie -> cloud id, brak -> nierozwiązywalne (ok:false). */
 function resolveDict(
@@ -176,10 +182,6 @@ function resolveDict(
 function resolveDept(value: string, map: Map<string, string>): string | null {
   if (value === '') return null;
   return map.get(value) ?? null;
-}
-
-function clientRow(c: Client): Record<string, unknown> {
-  return { id: c.id, name: c.name, archived: c.archived };
 }
 
 /** Pola osoby lustrzane do `profiles`. Celowo wąski zakres: imię, nazwisko,
@@ -235,16 +237,12 @@ function projectRow(
     ? p.clientId
     : null;
   return {
-    id: p.id,
-    client_id: clientId,
-    name: p.name,
-    description: p.description,
-    status_id: status.cloud,
-    paid: p.paid,
-    start_date: dateOrNull(p.startDate),
-    end_date: dateOrNull(p.endDate),
-    department_id: resolveDept(p.departmentId, maps.departments),
-    service_type_id: service.cloud,
+    ...buildProjectRow(p, {
+      clientId,
+      statusId: status.cloud,
+      serviceTypeId: service.cloud,
+      departmentId: resolveDept(p.departmentId, maps.departments),
+    }),
     created_at: p.createdAt,
     updated_at: p.updatedAt,
   };
@@ -270,17 +268,7 @@ function taskRow(
     return null;
   }
   return {
-    id: t.id,
-    project_id: t.projectId,
-    status_id: status.cloud,
-    title: t.title,
-    description: t.description,
-    start_date: dateOrNull(t.startDate),
-    end_date: dateOrNull(t.endDate),
-    estimated_hours: t.estimatedHours,
-    priority: t.priority,
-    work_category_id: category.cloud,
-    checklist: t.checklist,
+    ...buildTaskRow(t, { statusId: status.cloud, workCategoryId: category.cloud }),
     created_at: t.createdAt,
     updated_at: t.updatedAt,
   };
@@ -291,12 +279,7 @@ function milestoneRow(m: Milestone, diagnostics: string[]): Record<string, unkno
     diagnostics.push(DIAG.nonUuid);
     return null;
   }
-  return {
-    id: m.id,
-    project_id: m.projectId,
-    name: m.name,
-    milestone_date: m.date,
-  };
+  return buildMilestoneRow(m);
 }
 
 function workloadRow(
@@ -313,15 +296,7 @@ function workloadRow(
     diagnostics.push(DIAG.unmappablePerson);
     return null;
   }
-  return {
-    id: w.id,
-    task_id: w.taskId,
-    profile_id: profileId,
-    work_date: dateOrNull(w.date),
-    planned_hours: w.plannedHours,
-    start_minutes: w.startMinutes,
-    sort_index: w.sortIndex,
-  };
+  return buildWorkloadRow(w, profileId);
 }
 
 function commentRow(
@@ -342,18 +317,7 @@ function commentRow(
     }
     authorId = mapped;
   }
-  const mentionIds = c.mentionIds
-    .map((id) => maps.people.get(id))
-    .filter((id): id is string => id !== undefined);
-  return {
-    id: c.id,
-    project_id: c.entityType === 'project' ? c.entityId : null,
-    task_id: c.entityType === 'task' ? c.entityId : null,
-    author_id: authorId,
-    body: c.body,
-    mention_ids: mentionIds,
-    created_at: c.createdAt,
-  };
+  return buildCommentRow(c, maps.people, authorId);
 }
 
 function activityRow(
@@ -386,17 +350,7 @@ function activityRow(
   const isTask = e.entityType === 'task' && isUuid(e.entityId);
   // created_by celowo pominięty — domyślne auth.uid() po stronie serwera spełnia
   // politykę INSERT (created_by = auth.uid()).
-  return {
-    id: e.id,
-    entity_type: e.entityType,
-    entity_id: e.entityId,
-    project_id: isProject ? e.entityId : null,
-    task_id: isTask ? e.entityId : null,
-    actor_id: actorId,
-    impersonator_id: impersonatorId,
-    message: e.message,
-    created_at: e.createdAt,
-  };
+  return buildActivityRow(e, { actorId, impersonatorId, isProject, isTask });
 }
 
 const byId = <T extends { id: string }>(items: T[]): Map<string, T> =>
@@ -442,7 +396,7 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
         diagnostics.push(DIAG.nonUuid);
         continue;
       }
-      ops.push({ kind: 'upsert', table: 'clients', row: clientRow(c), sourceId: c.id, label: `Klient „${c.name}”` });
+      ops.push({ kind: 'upsert', table: 'clients', row: buildClientRow(c), sourceId: c.id, label: `Klient „${c.name}”` });
     }
   }
 

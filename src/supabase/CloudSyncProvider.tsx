@@ -46,6 +46,7 @@ import {
   type CloudOp,
 } from './cloudMirror';
 import { planHydrationOutcome } from './hydrationOutcome';
+import { shouldMirrorTransition } from './mirrorGate';
 import {
   MAX_HYDRATION_RESTARTS,
   QUEUE_FOREIGN_DROPPED,
@@ -90,15 +91,6 @@ export function useCloudSync(): CloudSyncValue {
   if (!ctx) throw new Error('useCloudSync must be used within CloudSyncProvider');
   return ctx;
 }
-
-// Transitions the mirror must NEVER propagate to the cloud: our own hydration,
-// another tab's already-mirrored write, and the local-only sample/reset ops.
-const SUPPRESSED = new Set([
-  'MERGE_CLOUD_ENTITIES',
-  'REPLACE_FROM_STORAGE',
-  'LOAD_SAMPLE',
-  'RESET_ALL',
-]);
 
 export function CloudSyncProvider({ children }: { children: ReactNode }) {
   const { state, dispatch, lastActionRef } = useStore();
@@ -291,7 +283,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
         setError(outcome.error);
         return;
       }
-      dispatch({ type: 'MERGE_CLOUD_ENTITIES', payload: outcome.payload });
+      dispatch({ type: 'MERGE_CLOUD_ENTITIES', payload: outcome.payload, origin: 'cloud' });
       setStatus('ready');
       return;
     }
@@ -378,10 +370,10 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       prevRef.current = state;
       return;
     }
-    const last = lastActionRef.current;
-    if (last !== null && SUPPRESSED.has(last)) {
-      // Suppresja (własna hydracja / sample / reset) — także w 'hydrating'
-      // zachowuje dzisiejsze pochłanianie: przesuń prevRef bez kolejkowania.
+    if (!shouldMirrorTransition(lastActionRef.current)) {
+      // Suppresja przejść oznaczonych origin:'cloud' (własna hydracja / replace
+      // ze storage / sample / reset) — także w 'hydrating' zachowuje dzisiejsze
+      // pochłanianie: przesuń prevRef bez kolejkowania.
       prevRef.current = state;
       return;
     }

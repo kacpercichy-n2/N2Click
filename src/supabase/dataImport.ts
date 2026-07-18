@@ -18,6 +18,15 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { AppData, Person } from '../types';
 import type { DryRunReport } from '../store/exportDryRun';
 import { normalizeEmail } from '../auth/profile';
+import {
+  buildActivityRow,
+  buildClientRow,
+  buildCommentRow,
+  buildMilestoneRow,
+  buildProjectRow,
+  buildTaskRow,
+  buildWorkloadRow,
+} from './rowMappers';
 
 // ---- Injected DB boundary ---------------------------------------------------
 
@@ -28,10 +37,20 @@ export interface ImportDb {
     columns: string,
     inFilter?: { column: string; values: string[] },
   ): Promise<{ rows: Array<Record<string, unknown>>; error: string | null }>;
-  /** INSERT one row; resolves { error: null } on success. Never throws. */
+  /** INSERT one row; resolves { error: null } on success. Never throws. Kept for
+   *  the per-row fallback path when a batch insert fails all-or-nothing. */
   insert(
     table: string,
     row: Record<string, unknown>,
+  ): Promise<{ error: string | null }>;
+  /**
+   * INSERT many rows in one PostgREST call (all-or-nothing: a single failing row
+   * rejects the whole batch, inserting nothing). Never throws. Callers must fall
+   * back to per-row `insert` on error to recover per-row diagnostics.
+   */
+  insertMany(
+    table: string,
+    rows: Array<Record<string, unknown>>,
   ): Promise<{ error: string | null }>;
 }
 
@@ -76,6 +95,17 @@ export function createSupabaseImportDb(client: SupabaseClient): ImportDb {
     async insert(table, row) {
       try {
         const { error } = await client.from(table).insert(row);
+        if (error) return { error: error.message ?? 'Błąd zapisu.' };
+        return { error: null };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+    async insertMany(table, rows) {
+      // PostgREST multi-row insert is all-or-nothing: one constraint violation
+      // rejects the whole array. Same error mapping as `insert`.
+      try {
+        const { error } = await client.from(table).insert(rows);
         if (error) return { error: error.message ?? 'Błąd zapisu.' };
         return { error: null };
       } catch (e) {
@@ -179,6 +209,51 @@ function chunk<T>(items: T[], size = 100): T[][] {
   return out;
 }
 
+/** An insert-ready row plus its source id (for diagnostics) and the state to
+ *  register ONLY when its insert is confirmed (idMap / availableIds / pairs). */
+interface PendingInsert {
+  entityId: string; // offending source id or pair key `${a}|${b}`
+  row: Record<string, unknown>;
+  onSuccess: () => void; // registers idMap / availableIds / existingPairs
+}
+
+/**
+ * Flush queued rows for one table in ≤100-row chunks via `insertMany`. On a chunk
+ * error (PostgREST is all-or-nothing) fall back to per-row `insert` in original
+ * order, so each failing row gets its own diagnostic keyed by its entityId while
+ * its successful siblings still count as imported. State side effects and the
+ * imported count register ONLY on confirmed success — never optimistically.
+ */
+async function flushInserts(
+  db: ImportDb,
+  table: string,
+  collection: string,
+  pending: PendingInsert[],
+  summary: ImportCollectionSummary,
+  diagnostics: ImportDiagnostic[],
+): Promise<void> {
+  for (const group of chunk(pending)) {
+    const batch = await db.insertMany(table, group.map((p) => p.row));
+    if (!batch.error) {
+      for (const p of group) {
+        p.onSuccess();
+        summary.imported++;
+      }
+      continue;
+    }
+    for (const p of group) {
+      const ins = await db.insert(table, p.row);
+      if (ins.error) {
+        summary.failed++;
+        diagnostics.push({ collection, entityId: p.entityId, message: insertFailure(ins.error) });
+        continue;
+      }
+      p.onSuccess();
+      summary.imported++;
+    }
+  }
+}
+
 function emptySummary(collection: string, label: string): ImportCollectionSummary {
   return { collection, label, imported: 0, skipped: 0, failed: 0 };
 }
@@ -278,7 +353,7 @@ export async function runSupabaseImport(
     columns: 'id',
     semanticKeyColumn: 'id',
     semanticKeyOf: () => '',
-    rowOf: (c) => ({ id: c.id, name: c.name, archived: c.archived }),
+    rowOf: (c) => buildClientRow(c),
     diagnostics,
   });
   summary.push(clientsImport.summary);
@@ -312,35 +387,66 @@ export async function runSupabaseImport(
       const name = typeof row.name === 'string' ? row.name.trim() : '';
       if (name && !byName.has(name)) byName.set(name, id);
     }
+    // Batched insert with per-row fallback; the name-key skip can fold onto a row
+    // inserted earlier in THIS run, so a pending row sharing a trimmed name is
+    // flushed before we decide (never registering a key/id optimistically).
+    let pending: Array<{ id: string; name: string; key: string }> = [];
+    const pendingKeys = new Set<string>();
+    const flushDepts = async () => {
+      const staged = pending;
+      pending = [];
+      pendingKeys.clear();
+      await flushInserts(
+        db,
+        'departments',
+        'departments',
+        staged.map((d) => ({
+          entityId: d.id,
+          row: { id: d.id, name: d.name },
+          onSuccess: () => {
+            deptIdMap.set(d.id, d.id);
+            knownIds.add(d.id);
+            if (d.key) byName.set(d.key, d.id);
+          },
+        })),
+        deptSummary,
+        diagnostics,
+      );
+    };
     for (const d of data.departments) {
+      const trimmed = d.name.trim();
       if (knownIds.has(d.id)) {
         deptIdMap.set(d.id, d.id);
         deptSummary.skipped++;
         continue;
       }
-      const trimmed = d.name.trim();
-      const nameMatch = byName.get(trimmed);
-      if (nameMatch) {
-        deptIdMap.set(d.id, nameMatch);
+      if (trimmed && byName.has(trimmed)) {
+        deptIdMap.set(d.id, byName.get(trimmed)!);
         deptSummary.skipped++;
         continue;
+      }
+      if (trimmed && pendingKeys.has(trimmed)) {
+        await flushDepts();
+        if (knownIds.has(d.id)) {
+          deptIdMap.set(d.id, d.id);
+          deptSummary.skipped++;
+          continue;
+        }
+        if (byName.has(trimmed)) {
+          deptIdMap.set(d.id, byName.get(trimmed)!);
+          deptSummary.skipped++;
+          continue;
+        }
       }
       if (!isUuid(d.id)) {
         deptSummary.failed++;
         diagnostics.push({ collection: 'departments', entityId: d.id, message: DIAG.nonUuid });
         continue;
       }
-      const ins = await db.insert('departments', { id: d.id, name: d.name });
-      if (ins.error) {
-        deptSummary.failed++;
-        diagnostics.push({ collection: 'departments', entityId: d.id, message: insertFailure(ins.error) });
-        continue;
-      }
-      deptIdMap.set(d.id, d.id);
-      knownIds.add(d.id);
-      if (trimmed) byName.set(trimmed, d.id);
-      deptSummary.imported++;
+      pending.push({ id: d.id, name: d.name, key: trimmed });
+      if (trimmed) pendingKeys.add(trimmed);
     }
+    await flushDepts();
   }
   summary.push(deptSummary);
 
@@ -404,6 +510,7 @@ export async function runSupabaseImport(
       diagnostics.push({ collection: 'projects', entityId: p.id, message: insertFailure(projectSelectError) });
     }
   } else {
+    const pending: PendingInsert[] = [];
     for (const p of data.projects) {
       if (existingProjectIds.has(p.id)) {
         projectSummary.skipped++;
@@ -424,26 +531,18 @@ export async function runSupabaseImport(
           diagnostics.push({ collection: 'projects', entityId: p.id, message: DIAG.deptFallback });
         }
       }
-      const ins = await db.insert('projects', {
-        id: p.id,
-        name: p.name,
-        description: p.description,
-        department_id: departmentId,
-        client_id: dictRef(clientMap, p.clientId),
-        status_id: dictRef(statusMap, p.statusId),
-        paid: p.paid,
-        start_date: p.startDate === '' ? null : p.startDate,
-        end_date: p.endDate === '' ? null : p.endDate,
-        service_type_id: dictRef(serviceTypeMap, p.serviceTypeId),
+      pending.push({
+        entityId: p.id,
+        row: buildProjectRow(p, {
+          clientId: dictRef(clientMap, p.clientId),
+          statusId: dictRef(statusMap, p.statusId),
+          serviceTypeId: dictRef(serviceTypeMap, p.serviceTypeId),
+          departmentId,
+        }),
+        onSuccess: () => availableProjectIds.add(p.id),
       });
-      if (ins.error) {
-        projectSummary.failed++;
-        diagnostics.push({ collection: 'projects', entityId: p.id, message: insertFailure(ins.error) });
-        continue;
-      }
-      availableProjectIds.add(p.id);
-      projectSummary.imported++;
     }
+    await flushInserts(db, 'projects', 'projects', pending, projectSummary, diagnostics);
   }
   summary.push(projectSummary);
 
@@ -466,6 +565,7 @@ export async function runSupabaseImport(
       diagnostics.push({ collection: 'tasks', entityId: t.id, message: insertFailure(taskSelectError) });
     }
   } else {
+    const pending: PendingInsert[] = [];
     for (const t of data.tasks) {
       if (existingTaskIds.has(t.id)) {
         taskSummary.skipped++;
@@ -482,27 +582,16 @@ export async function runSupabaseImport(
         diagnostics.push({ collection: 'tasks', entityId: t.id, message: DIAG.nonUuid });
         continue;
       }
-      const ins = await db.insert('tasks', {
-        id: t.id,
-        project_id: t.projectId,
-        title: t.title,
-        description: t.description,
-        status_id: dictRef(statusMap, t.statusId),
-        start_date: t.startDate === '' ? null : t.startDate,
-        end_date: t.endDate === '' ? null : t.endDate,
-        estimated_hours: t.estimatedHours,
-        priority: t.priority,
-        work_category_id: dictRef(workCategoryMap, t.workCategoryId),
-        checklist: t.checklist,
+      pending.push({
+        entityId: t.id,
+        row: buildTaskRow(t, {
+          statusId: dictRef(statusMap, t.statusId),
+          workCategoryId: dictRef(workCategoryMap, t.workCategoryId),
+        }),
+        onSuccess: () => availableTaskIds.add(t.id),
       });
-      if (ins.error) {
-        taskSummary.failed++;
-        diagnostics.push({ collection: 'tasks', entityId: t.id, message: insertFailure(ins.error) });
-        continue;
-      }
-      availableTaskIds.add(t.id);
-      taskSummary.imported++;
     }
+    await flushInserts(db, 'tasks', 'tasks', pending, taskSummary, diagnostics);
   }
   summary.push(taskSummary);
 
@@ -626,6 +715,34 @@ async function importReferenceCollection<T extends { id: string }>(
     if (key && !byKey.has(key)) byKey.set(key, String(row.id));
   }
 
+  // Batched insert with per-row fallback. Intra-collection dependency: a later
+  // item can skip-by-key onto an id inserted earlier in THIS run, so when an
+  // item's semantic key matches a queued-but-unflushed row we flush first, then
+  // decide — never registering a key/id before its insert outcome is known.
+  let pending: Array<{ item: T; key: string }> = [];
+  const pendingKeys = new Set<string>();
+  const flush = async () => {
+    const staged = pending;
+    pending = [];
+    pendingKeys.clear();
+    await flushInserts(
+      db,
+      opts.table,
+      opts.collection,
+      staged.map(({ item, key }) => ({
+        entityId: item.id,
+        row: opts.rowOf(item),
+        onSuccess: () => {
+          knownIds.add(item.id);
+          if (key) byKey.set(key, item.id);
+          idMap.set(item.id, item.id);
+        },
+      })),
+      summary,
+      opts.diagnostics,
+    );
+  };
+
   for (const item of opts.items) {
     if (knownIds.has(item.id)) {
       idMap.set(item.id, item.id);
@@ -638,26 +755,28 @@ async function importReferenceCollection<T extends { id: string }>(
       summary.skipped++;
       continue;
     }
+    if (key && pendingKeys.has(key)) {
+      await flush();
+      if (knownIds.has(item.id)) {
+        idMap.set(item.id, item.id);
+        summary.skipped++;
+        continue;
+      }
+      if (byKey.has(key)) {
+        idMap.set(item.id, byKey.get(key)!);
+        summary.skipped++;
+        continue;
+      }
+    }
     if (!isUuid(item.id)) {
       summary.failed++;
       opts.diagnostics.push({ collection: opts.collection, entityId: item.id, message: DIAG.nonUuid });
       continue;
     }
-    const ins = await db.insert(opts.table, opts.rowOf(item));
-    if (ins.error) {
-      summary.failed++;
-      opts.diagnostics.push({
-        collection: opts.collection,
-        entityId: item.id,
-        message: insertFailure(ins.error),
-      });
-      continue;
-    }
-    knownIds.add(item.id);
-    if (key) byKey.set(key, item.id);
-    idMap.set(item.id, item.id);
-    summary.imported++;
+    pending.push({ item, key });
+    if (key) pendingKeys.add(key);
   }
+  await flush();
   return { summary, idMap };
 }
 
@@ -703,6 +822,7 @@ async function importComments(
     }
     return summary;
   }
+  const pending: PendingInsert[] = [];
   for (const c of data.comments) {
     if (existing.present.has(c.id)) {
       summary.skipped++;
@@ -722,25 +842,14 @@ async function importComments(
       opts.diagnostics.push({ collection: 'comments', entityId: c.id, message: DIAG.nonUuid });
       continue;
     }
-    const mentionIds = c.mentionIds
-      .map((id) => opts.personIdMap.get(id))
-      .filter((id): id is string => id !== undefined);
-    const ins = await db.insert('comments', {
-      id: c.id,
-      project_id: c.entityType === 'project' ? c.entityId : null,
-      task_id: c.entityType === 'task' ? c.entityId : null,
-      author_id: c.authorId === '' ? null : opts.personIdMap.get(c.authorId) ?? null,
-      body: c.body,
-      mention_ids: mentionIds,
-      created_at: c.createdAt,
+    const authorId = c.authorId === '' ? null : opts.personIdMap.get(c.authorId) ?? null;
+    pending.push({
+      entityId: c.id,
+      row: buildCommentRow(c, opts.personIdMap, authorId),
+      onSuccess: () => {},
     });
-    if (ins.error) {
-      summary.failed++;
-      opts.diagnostics.push({ collection: 'comments', entityId: c.id, message: insertFailure(ins.error) });
-      continue;
-    }
-    summary.imported++;
   }
+  await flushInserts(db, 'comments', 'comments', pending, summary, opts.diagnostics);
   return summary;
 }
 
@@ -765,6 +874,7 @@ async function importActivity(
     }
     return summary;
   }
+  const pending: PendingInsert[] = [];
   for (const e of data.activity) {
     if (existing.present.has(e.id)) {
       summary.skipped++;
@@ -780,24 +890,14 @@ async function importActivity(
     const impersonatorId = e.impersonatorId && e.impersonatorId !== ''
       ? opts.personIdMap.get(e.impersonatorId) ?? null
       : null;
-    const ins = await db.insert('activity_events', {
-      id: e.id,
-      entity_type: e.entityType,
-      entity_id: e.entityId,
-      project_id: isProject ? e.entityId : null,
-      task_id: isTask ? e.entityId : null,
-      actor_id: e.actorId === '' ? null : opts.personIdMap.get(e.actorId) ?? null,
-      impersonator_id: impersonatorId,
-      message: e.message,
-      created_at: e.createdAt,
+    const actorId = e.actorId === '' ? null : opts.personIdMap.get(e.actorId) ?? null;
+    pending.push({
+      entityId: e.id,
+      row: buildActivityRow(e, { actorId, impersonatorId, isProject, isTask }),
+      onSuccess: () => {},
     });
-    if (ins.error) {
-      summary.failed++;
-      opts.diagnostics.push({ collection: 'activity', entityId: e.id, message: insertFailure(ins.error) });
-      continue;
-    }
-    summary.imported++;
   }
+  await flushInserts(db, 'activity_events', 'activity', pending, summary, opts.diagnostics);
   return summary;
 }
 
@@ -820,6 +920,7 @@ async function importMilestones(
     }
     return summary;
   }
+  const pending: PendingInsert[] = [];
   for (const m of data.milestones) {
     if (existing.present.has(m.id)) {
       summary.skipped++;
@@ -835,19 +936,9 @@ async function importMilestones(
       opts.diagnostics.push({ collection: 'milestones', entityId: m.id, message: DIAG.nonUuid });
       continue;
     }
-    const ins = await db.insert('milestones', {
-      id: m.id,
-      project_id: m.projectId,
-      name: m.name,
-      milestone_date: m.date,
-    });
-    if (ins.error) {
-      summary.failed++;
-      opts.diagnostics.push({ collection: 'milestones', entityId: m.id, message: insertFailure(ins.error) });
-      continue;
-    }
-    summary.imported++;
+    pending.push({ entityId: m.id, row: buildMilestoneRow(m), onSuccess: () => {} });
   }
+  await flushInserts(db, 'milestones', 'milestones', pending, summary, opts.diagnostics);
   return summary;
 }
 
@@ -875,6 +966,7 @@ async function importWorkload(
     }
     return summary;
   }
+  const pending: PendingInsert[] = [];
   for (const w of data.workload) {
     if (existing.present.has(w.id)) {
       summary.skipped++;
@@ -896,22 +988,9 @@ async function importWorkload(
       opts.diagnostics.push({ collection: 'workload', entityId: w.id, message: opts.personMessage(w.personId) });
       continue;
     }
-    const ins = await db.insert('workload_entries', {
-      id: w.id,
-      task_id: w.taskId,
-      profile_id: profileId,
-      work_date: w.date === '' ? null : w.date,
-      planned_hours: w.plannedHours,
-      start_minutes: w.startMinutes,
-      sort_index: w.sortIndex,
-    });
-    if (ins.error) {
-      summary.failed++;
-      opts.diagnostics.push({ collection: 'workload', entityId: w.id, message: insertFailure(ins.error) });
-      continue;
-    }
-    summary.imported++;
+    pending.push({ entityId: w.id, row: buildWorkloadRow(w, profileId), onSuccess: () => {} });
   }
+  await flushInserts(db, 'workload_entries', 'workload', pending, summary, opts.diagnostics);
   return summary;
 }
 
@@ -1001,20 +1080,19 @@ async function importJunction(
     return summary;
   }
 
+  const pending: PendingInsert[] = [];
   for (const r of resolved) {
     const supKey = `${r.parentId}|${r.profileId}`;
     if (existingPairs.has(supKey)) {
       summary.skipped++;
       continue;
     }
-    const ins = await db.insert(opts.table, { [opts.parentColumn]: r.parentId, profile_id: r.profileId });
-    if (ins.error) {
-      summary.failed++;
-      opts.diagnostics.push({ collection: opts.collection, entityId: r.key, message: insertFailure(ins.error) });
-      continue;
-    }
-    existingPairs.add(supKey);
-    summary.imported++;
+    pending.push({
+      entityId: r.key,
+      row: { [opts.parentColumn]: r.parentId, profile_id: r.profileId },
+      onSuccess: () => existingPairs.add(supKey),
+    });
   }
+  await flushInserts(db, opts.table, opts.collection, pending, summary, opts.diagnostics);
   return summary;
 }
