@@ -20,6 +20,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 import { usePersistence, useStore } from '../store/AppStore';
 import { setCloudMirrorHealthy } from '../store/persistGate';
 import {
@@ -58,6 +59,16 @@ import {
   planHydrationStep,
   planQueueRestore,
 } from './opQueue';
+import {
+  afterFlush,
+  emptyRefreshScheduler,
+  isLiveChannelStatus,
+  planRefresh,
+  recordRealtimeEvent,
+  shouldMirrorProcessQueue,
+  subscribePlannerChannel,
+  type RealtimeSubscription,
+} from './realtimeSync';
 
 export type CloudSyncStatus = 'idle' | 'hydrating' | 'ready' | 'error';
 
@@ -70,6 +81,8 @@ export interface CloudSyncValue {
   retry: () => void;
   /** Odśwież dane z serwera — dostępne tylko przy pustej kolejce i bez błędu. */
   refresh: () => void;
+  /** Czy kanał Realtime jest na żywo (SUBSCRIBED) — bramkuje baner „nieaktualne”. */
+  live: boolean;
   dismissDropped: () => void;
   /** Neutralne powiadomienie o trwałej kolejce (przywrócono / zachowano). Polski. */
   notice: string | null;
@@ -104,6 +117,8 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   const [pendingCount, setPendingCount] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [retired, setRetired] = useState(false);
+  // Kanał Realtime na żywo (SUBSCRIBED). Steruje bramkowaniem baneru „nieaktualne”.
+  const [live, setLive] = useState(false);
 
   // Live refs for the mount-once listeners / queue callbacks.
   const retiredRef = useRef(retired);
@@ -123,6 +138,25 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   const mapsRef = useRef<CloudIdMaps | null>(null);
   const statusRef = useRef<CloudSyncStatus>('idle');
   statusRef.current = status;
+  // Strażnik reentrancji hydracji: hydracja startowa, ręczne refresh() i
+  // odświeżenie w tle NIGDY się nie nakładają (zamyka też lukę refresh()-w-trakcie
+  // 'hydrating'). Osobno od statusu, bo tryb cichy nie ustawia 'hydrating'.
+  const hydratingRef = useRef(false);
+  // Harmonogram odświeżeń realtime (czysty stan w realtimeSync.ts) + timer.
+  const schedulerRef = useRef(emptyRefreshScheduler());
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Żywe refy dla nasłuchów kanału (montowane raz na aktywnego użytkownika).
+  const liveRef = useRef(false);
+  // Czy kanał był już SUBSCRIBED — kolejne SUBSCRIBED po przerwie => nadrobienie.
+  const hadSubscribedRef = useRef(false);
+  // Ref na najświeższy armRefreshTimer (przerywa cykl zależności: runHydration i
+  // processQueue re-arują harmonogram po zakończeniu, bez twardej zależności).
+  const armRefreshRef = useRef<(() => void) | null>(null);
+  // Żywy ref na org.backgroundReload: zdarzenia tabel słownikowych przeładowują
+  // snapshot W TLE (bez migotania 'loading' -> null -> ready, które zrywałoby
+  // `active`, kolejkę i kanał, i ubijało zaplanowaną cichą rehydrację).
+  const orgReloadRef = useRef(org.backgroundReload);
+  orgReloadRef.current = org.backgroundReload;
   const mountedRef = useRef(true);
   // StrictMode wywołuje efekty mount->unmount->mount; ciało MUSI przywrócić
   // `true`, inaczej po replayu hydracja utknęłaby na 'hydrating' na zawsze.
@@ -208,13 +242,18 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       if (retiredRef.current) retryPersistRef.current();
     } finally {
       processingRef.current = false;
+      // Kolejka opróżniona: odroczone odświeżenie realtime może teraz ruszyć.
+      armRefreshRef.current?.();
     }
   }, [getDb, setPending, persistQueue]);
 
-  const runHydration = useCallback(async () => {
+  const runHydrationCore = useCallback(async (opts?: { quiet?: boolean }) => {
     if (auth.mode !== 'supabase' || !userId || org.state.status !== 'ready') return;
     const snap = org.state.snapshot;
-    setStatus('hydrating');
+    // Tryb cichy (odświeżenie w tle wyzwolone zdarzeniem realtime): gdy status
+    // to już 'ready', NIE ustawiaj 'hydrating' — zdalne edycje nie mają migać
+    // banerem ładowania. Błąd nadal ustawia 'error' jak dotąd.
+    if (!(opts?.quiet === true && statusRef.current === 'ready')) setStatus('hydrating');
     setError(null);
     // Mapy budujemy od razu, aby edycje w locie (okno 'hydrating') mogły być
     // zdiffowane i skolejkowane przez efekt lustra, a nie cicho pochłonięte.
@@ -288,6 +327,23 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       return;
     }
   }, [auth.mode, userId, org.state, dispatch, getDb, processQueue, persistQueue, setPending]);
+
+  // Strażnik reentrancji wokół hydracji: startowa, ręczna i tłowa nigdy się nie
+  // nakładają. Po zakończeniu ponawiamy harmonogram (zdarzenia z okna hydracji /
+  // odroczone czekają na drenaż) — bez twardej zależności, przez ref.
+  const runHydration = useCallback(
+    async (opts?: { quiet?: boolean }): Promise<void> => {
+      if (hydratingRef.current) return;
+      hydratingRef.current = true;
+      try {
+        await runHydrationCore(opts);
+      } finally {
+        hydratingRef.current = false;
+        armRefreshRef.current?.();
+      }
+    },
+    [runHydrationCore],
+  );
 
   // Zbieżność zbuforowanego znacznika wycofania z decyzją organizacji
   // (app_settings). Błąd odczytu => zachowaj poprzednią zbuforowaną wartość.
@@ -397,9 +453,15 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     queueRef.current.push(...ops);
     setPending(queueRef.current.length);
     persistQueue(); // utrwal po każdej mutacji — przetrwa przeładowanie karty
-    // Przetwarzaj tylko w 'ready'. W 'hydrating' drenaż jest bramkowany przez
-    // pętlę runHydration (krok 'drain'), która wypłucze te operacje.
-    if (phase === 'ready') void processQueue();
+    // Przetwarzaj TYLKO w 'ready' i gdy NIE trwa hydracja. Odświeżenie w tle
+    // (tryb cichy) zostawia status 'ready', więc bez tej bramki mirror drenowałby
+    // kolejkę RÓWNOLEGLE z pętlą runHydration — a processQueue opróżnia queueRef
+    // na starcie drenażu, więc po restarcie pętla mogłaby scalić snapshot sprzed
+    // trwającego zapisu (cofnięcie edycji / wskrzeszenie usuniętego wiersza).
+    // Gdy hydracja trwa, drenaż jest bramkowany przez jej krok 'drain'.
+    if (shouldMirrorProcessQueue({ phase, hydrationInFlight: hydratingRef.current })) {
+      void processQueue();
+    }
   }, [state, active, userId, lastActionRef, processQueue, persistQueue, setPending]);
 
   const retry = useCallback(() => {
@@ -415,6 +477,142 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     if (queueRef.current.length > 0 || error !== null) return;
     void runHydration();
   }, [runHydration, error]);
+
+  // ---- Realtime: kanał + odświeżenie w tle sterowane harmonogramem ----------
+
+  const setLiveState = useCallback((next: boolean) => {
+    liveRef.current = next;
+    setLive(next);
+  }, []);
+
+  // Odświeżenie w tle = cichy tryb istniejącej hydracji (bez migania 'hydrating',
+  // gdy status to 'ready'). Błędy zachowują się jak dziś (status 'error' + retry).
+  const runBackgroundRefresh = useCallback(() => {
+    void runHydration({ quiet: true });
+  }, [runHydration]);
+
+  // Ustawia/re-ustawia timer wg czystej decyzji planRefresh. `busy` = własne
+  // operacje w kolejce/drenażu albo hydracja w toku — wtedy odraczamy (tłumienie
+  // echa własnych zapisów, brak wyścigu z drenażem/hydracją). Ponowne wywołanie
+  // po drenażu/zakończeniu hydracji spłucze odroczone zdarzenia.
+  const armRefreshTimer = useCallback(() => {
+    if (timerRef.current !== null) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    const busy = pendingRef.current > 0 || processingRef.current || hydratingRef.current;
+    const decision = planRefresh(schedulerRef.current, Date.now(), { busy });
+    if (decision.kind === 'flush') {
+      schedulerRef.current = afterFlush();
+      runBackgroundRefresh();
+    } else if (decision.kind === 'wait') {
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null;
+        armRefreshRef.current?.();
+      }, decision.delayMs);
+    }
+    // 'defer' / 'idle' => nic; re-arm nastąpi po drenażu / zakończeniu hydracji.
+  }, [runBackgroundRefresh]);
+  armRefreshRef.current = armRefreshTimer;
+
+  const scheduleRealtimeRefresh = useCallback(() => {
+    schedulerRef.current = recordRealtimeEvent(schedulerRef.current, Date.now());
+    armRefreshTimer();
+  }, [armRefreshTimer]);
+
+  const handleChannelStatus = useCallback(
+    (chStatus: string) => {
+      if (isLiveChannelStatus(chStatus)) {
+        // Ponowna subskrypcja po przerwie => jedno nadrobienie pominiętych zdarzeń.
+        if (hadSubscribedRef.current) scheduleRealtimeRefresh();
+        hadSubscribedRef.current = true;
+        setLiveState(true);
+      } else {
+        setLiveState(false);
+      }
+    },
+    [scheduleRealtimeRefresh, setLiveState],
+  );
+
+  // Żywe refy na najświeższe handlery — kanał subskrybuje przez nie, więc jego
+  // efekt zależy TYLKO od [active, userId]. Bez tego handlery zmieniają
+  // tożsamość przy każdym org.state (runHydrationCore ma je w domknięciu), co
+  // odtwarzałoby kanał przy każdym przeładowaniu snapshotu (miganie live=false).
+  const scheduleRealtimeRefreshRef = useRef(scheduleRealtimeRefresh);
+  scheduleRealtimeRefreshRef.current = scheduleRealtimeRefresh;
+  const handleChannelStatusRef = useRef(handleChannelStatus);
+  handleChannelStatusRef.current = handleChannelStatus;
+
+  // Cykl życia jednego kanału Realtime na aktywnego użytkownika. Tworzony gdy
+  // aktywne i hydracja tego konta ruszyła; usuwany TYLKO przy dezaktywacji,
+  // zmianie użytkownika i odmontowaniu (nie przy przeładowaniu snapshotu).
+  // Błąd subskrypcji nie wywraca aplikacji.
+  useEffect(() => {
+    if (!active || hydratedUserRef.current !== userId) return;
+    hadSubscribedRef.current = false;
+    let cancelled = false;
+    let subscription: RealtimeSubscription | null = null;
+    try {
+      subscription = subscribePlannerChannel<RealtimeChannel>(
+        () => getSupabaseClient().channel(`n2hub-planner:${userId}`),
+        (channel) => {
+          void getSupabaseClient().removeChannel(channel);
+        },
+        {
+          onPlannerChange: () => {
+            if (!cancelled) scheduleRealtimeRefreshRef.current();
+          },
+          onDictionaryChange: () => {
+            if (!cancelled) orgReloadRef.current();
+          },
+          onStatus: (chStatus) => {
+            if (!cancelled) handleChannelStatusRef.current(chStatus);
+          },
+        },
+      );
+    } catch {
+      // Brak publikacji supabase_realtime / błąd inicjalizacji: nie wywracaj —
+      // live=false, baner „nieaktualne” i ręczne odświeżenie wracają.
+      setLiveState(false);
+    }
+    return () => {
+      cancelled = true;
+      if (timerRef.current !== null) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      schedulerRef.current = emptyRefreshScheduler();
+      hadSubscribedRef.current = false;
+      setLiveState(false);
+      try {
+        subscription?.teardown();
+      } catch {
+        /* teardown best-effort — nie wywracamy aplikacji */
+      }
+    };
+    // Zależności celowo TYLKO [active, userId, setLiveState] (setLiveState jest
+    // stabilny) — handlery czytamy przez refy, więc kanał NIE odtwarza się przy
+    // przeładowaniu snapshotu organizacji.
+  }, [active, userId, setLiveState]);
+
+  // Zmiana referencji snapshotu organizacji (po zdarzeniu tabeli słownikowej ->
+  // org.reload()) przy aktywnej, gotowej hydracji => jedno odświeżenie w tle,
+  // aby świeże mapy id zostały uwzględnione.
+  const prevSnapshotRef = useRef(snapshot);
+  useEffect(() => {
+    const prev = prevSnapshotRef.current;
+    prevSnapshotRef.current = snapshot;
+    if (
+      prev !== null &&
+      snapshot !== null &&
+      prev !== snapshot &&
+      active &&
+      hydratedUserRef.current === userId &&
+      statusRef.current === 'ready'
+    ) {
+      scheduleRealtimeRefresh();
+    }
+  }, [snapshot, active, userId, scheduleRealtimeRefresh]);
 
   const dismissDropped = useCallback(() => setDropped([]), []);
 
@@ -433,6 +631,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       dropped,
       retry,
       refresh,
+      live,
       dismissDropped,
       notice,
       dismissNotice,
@@ -446,6 +645,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       dropped,
       retry,
       refresh,
+      live,
       dismissDropped,
       notice,
       dismissNotice,

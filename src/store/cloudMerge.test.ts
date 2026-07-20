@@ -380,3 +380,50 @@ describe('MERGE_CLOUD_ENTITIES — fail-closed (invariant 6)', () => {
     expect(typeof added!.id).toBe('string');
   });
 });
+
+// Realtime re-hydration re-fetches the FULL snapshot and re-merges it on every
+// burst of DB events. A postgres_changes event cannot identify the originating
+// client, so a client's own echo re-merges its just-saved rows. These pin that
+// re-applying the same cloud payload is idempotent (no duplicate rows, bin-pair
+// identity preserved) — the safety net behind the debounce/defer echo handling.
+describe('MERGE_CLOUD_ENTITIES — realtime echo idempotence', () => {
+  it('re-merging the same cloud payload twice adds no duplicate rows', () => {
+    const state = baseState();
+    const payload: CloudMergePayload = {
+      ...emptyPayload(),
+      clients: [client({ id: 'c-cloud', name: 'Z chmury' })],
+      projects: [makeProject({ id: 'proj-1', name: 'Z chmury' })],
+      tasks: [makeTask({ id: T1, projectId: 'proj-1', title: 'Z chmury' })],
+      assignments: [{ taskId: T1, personId: P1 }, { taskId: T1, personId: P2 }],
+      workload: [wl({ id: 'w1', plannedHours: 3 })],
+    };
+    const once = merge(state, payload);
+    const twice = merge(once, payload);
+
+    // Same counts across every merged family after the echo re-merge.
+    expect(twice.clients).toHaveLength(once.clients.length);
+    expect(twice.projects).toHaveLength(once.projects.length);
+    expect(twice.tasks).toHaveLength(once.tasks.length);
+    expect(twice.assignments).toHaveLength(once.assignments.length);
+    expect(twice.workload).toHaveLength(once.workload.length);
+    // Same-id rows carry the cloud values, not duplicated or reverted.
+    expect(twice.workload.find((w) => w.id === 'w1')!.plannedHours).toBe(3);
+    expect(twice.tasks.find((t) => t.id === T1)!.title).toBe('Z chmury');
+  });
+
+  it('preserves (taskId, personId) bin-pair identity across a repeated echo merge', () => {
+    const state = baseState();
+    const payload: CloudMergePayload = {
+      ...emptyPayload(),
+      assignments: [{ taskId: T1, personId: P1 }],
+    };
+    const once = merge(state, payload);
+    const twice = merge(once, payload);
+    const pair = (s: AppData) =>
+      s.assignments.filter((a) => a.taskId === T1 && a.personId === P1);
+    // Exactly one row for the pair, keeping its original local id, both times.
+    expect(pair(once)).toHaveLength(1);
+    expect(pair(twice)).toHaveLength(1);
+    expect(pair(twice)[0].id).toBe('asg-existing');
+  });
+});

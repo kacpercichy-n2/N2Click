@@ -6,9 +6,10 @@
 // nigdy nie pokazujemy surowego komunikatu SDK.
 import { useCloudSync } from '../supabase/CloudSyncProvider';
 import { STALE_HINT_MSG, SYNC_ERROR_MSG, SYNC_PERMISSION_MSG } from '../supabase/cloudMirror';
+import { showStaleHint } from '../supabase/realtimeSync';
 
 export function CloudSyncBanner() {
-  const { status, pendingCount, error, dropped, retry, refresh, dismissDropped, notice, dismissNotice } =
+  const { status, pendingCount, error, dropped, retry, refresh, live, dismissDropped, notice, dismissNotice } =
     useCloudSync();
 
   // Powiadomienie o trwałej kolejce (przywrócono / zachowano niewysłane zmiany).
@@ -90,8 +91,9 @@ export function CloudSyncBanner() {
     );
   }
 
-  // Gotowe i kolejka pusta: oferuj ręczne odświeżenie (last-write-wins).
-  if (status === 'ready' && pendingCount === 0) {
+  // Gotowe, kolejka pusta i kanał NIE na żywo: oferuj ręczne odświeżenie
+  // (last-write-wins). Gdy kanał żyje (`live`), zmiany dopływają same — nic tu.
+  if (showStaleHint({ status, pendingCount, live })) {
     return (
       <div className="persistence-banner persistence-banner--info" role="status">
         <div className="persistence-banner-text">

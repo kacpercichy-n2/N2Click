@@ -17,8 +17,17 @@
   action into upsert/remove ops executed via `plannerData.ts`
   (`CloudSyncProvider.tsx` is the React bridge). Read path: hydration on sign-in
   merges the eight planner families through the single `MERGE_CLOUD_ENTITIES`
-  action. People are update-only profile projections — no cloud path creates or
-  deletes local `people` rows. Details, queue durability and the retirement gate:
+  action. A Supabase Realtime channel (`postgres_changes` on the 8 planner + 5
+  dictionary tables; enabled by the `supabase_realtime` publication migration)
+  re-runs the SAME merge path debounced/coalesced in the background when the DB
+  changes — no row-level patching. Pure decisions (watched tables, channel-status
+  → `live`, debounce/coalesce/defer scheduler, `subscribePlannerChannel` adapter,
+  stale-hint predicate) live in `src/supabase/realtimeSync.ts`; the stale-data
+  banner is hidden while the channel is SUBSCRIBED and manual refresh is the
+  fallback. If the publication is never applied the channel errors and the client
+  degrades to the banner + manual refresh. People are update-only profile
+  projections — no cloud path creates or deletes local `people` rows. Details,
+  queue durability and the retirement gate:
   [state-and-persistence.md](state-and-persistence.md).
 - `src/supabase/provisioning.ts` + `supabase/functions/provision-account/` own
   admin account provisioning; `dataImport.ts` owns the one-time localStorage

@@ -1,53 +1,67 @@
-# Run 20260718-072307-219-import-batching-and-mapper-unification
+# Run 20260720-092445-221-realtime-live-data-sync
 
-Goal: (1) hybrid batch inserts with per-row fallback in `src/supabase/dataImport.ts`,
-(2) shared domain→column row-mapper module consumed by both `cloudMirror.ts` and
-`dataImport.ts`, (3) action-origin metadata replacing the `SUPPRESSED` denylist in
-`CloudSyncProvider.tsx`. Fallback rule: 1+2 must land complete before 3 starts;
-3 is all-or-nothing.
+Goal: live bidirectional sync in supabase mode — Supabase Realtime
+(`postgres_changes`) on the 8 planner + 5 dictionary tables triggers a
+debounced re-hydration through the existing `MERGE_CLOUD_ENTITIES` path; the
+stale-data banner is hidden while the channel is SUBSCRIBED, manual refresh
+stays as fallback; publication enablement ships as an idempotent migration +
+documented operator steps.
 
 ## Packages
 
-- PKG-20260718-import-batching-and-shared-row-mappers — developer, medium risk,
-  ready. Scratchpad: `PKG-import-batching-and-shared-row-mappers.md`.
-- PKG-20260718-action-origin-metadata — developer, medium risk, ready; ordered
-  after PKG-1 (fallback rule only, no code dependency). Scratchpad:
-  `PKG-action-origin-metadata.md`.
+- PKG-20260720-realtime-live-sync — developer, high risk, ready, Codex review
+  required. `handoffs/packages/PKG-20260720-realtime-live-sync.md`.
 
 ## Changed boundaries (planned)
 
-- `src/supabase/dataImport.ts` (+`insertMany` on `ImportDb`), `cloudMirror.ts`,
-  new `src/supabase/rowMappers.ts`, new `src/supabase/mirrorGate.ts`,
-  `CloudSyncProvider.tsx`, `AppStore.tsx` dispatch wrapper + `lastActionRef`
-  typing, `SampleBanner.tsx`.
+- new `src/supabase/realtimeSync.ts` (+test): pure table lists, live-status
+  mapping, debounce/coalesce refresh scheduler, stale-banner predicate.
+- `src/supabase/CloudSyncProvider.tsx`: channel lifecycle, quiet background
+  hydration mode + reentrancy guard, `live` on `CloudSyncValue`.
+- `src/components/CloudSyncBanner.tsx`: stale-hint block gated on `live` only.
+- new `supabase/migrations/20260720120000_realtime_publication.sql`.
 
 ## Key findings
 
-- Impersonator dictionary-miss policy already aligned (both null):
-  `cloudMirror.ts:378-384` ↔ `dataImport.ts:780-782`. All other miss policies
-  intentionally diverge (mirror drop+diagnostic vs import null) and stay as-is.
-- `RESET_ALL` has no live dispatch site; migration is helper-test-only.
+- Prompt-220 refresh fixes confirmed present: mountedRef reset
+  (CloudSyncProvider:126-132), cascade orphan filtering (plannerData:291-296),
+  merge-result-aware status (hydrationOutcome.ts), durable drained queue
+  (opQueue + persistQueue). No pre-fix package needed.
+- One residual gap folded into the package: `refresh()` is not guarded against
+  running during 'hydrating' — closed by the new reentrancy guard.
+- Echo suppression: postgres_changes has no origin id — settled on
+  defer-while-pending + debounce + idempotent origin:'cloud' merge.
 
 ## Verification
 
-Workers: focused `npx vitest run src/supabase` (+ `src/store` for PKG-2) and
-`npm run build`. Scheduler owns full `npm run test:scheduler && npm test &&
-npm run build`.
+Worker: `npx vitest run src/supabase src/store` + `npm run build`. Browser:
+none (mocked channel; realtime needs live backend). Scheduler owns final
+`npm run test:scheduler && npm test && npm run build`.
 
 ## Open questions
 
-None blocking; both packages ready.
+None blocking. Operator must apply the realtime publication migration (steps
+documented in the developer's run report); until then the client degrades to
+today's banner + manual refresh.
 
-## Developer log — PKG-1 (import batching + shared row mappers)
+## Developer result (PKG-20260720-realtime-live-sync)
 
-Done: new `rowMappers.ts` (7 families); `cloudMirror.ts` + `dataImport.ts`
-consume it; `insertMany` added to `ImportDb`; runner batches every collection
-(chunk 100) with per-row fallback + flush-on-dependency for dictionaries/depts.
-Focused: `src/supabase/dataImport.test.ts src/supabase/cloudMirror.test.ts`
-66 pass; `src/supabase` 212 pass; `npm run build` pass. No scope expansion.
+Implemented: pure `realtimeSync.ts` (tables, live-mapping, debounce/coalesce/max-wait
+scheduler, `subscribePlannerChannel` adapter, `showStaleHint`) + test; provider channel
+lifecycle, quiet background hydration + reentrancy guard + catch-up + dict→org.reload,
+`live` on value; banner gated; idempotent publication migration + migrations.test list;
+cloudMerge echo-idempotence tests. Focused `vitest run src/supabase src/store` 847 pass.
+`npm test` 1033 pass / 0 fail. `npm run build` clean. Operator must apply the publication
+migration (report has steps); degrades to banner+manual refresh until then.
 
-PKG-2 action-origin: replaced mirror's `SUPPRESSED` denylist with `origin`
-metadata on the action. New `src/supabase/mirrorGate.ts` (`shouldMirrorTransition`)
-+ test. `ActionOrigin`/widened `Dispatch` in AppStore; tagged the 4 cloud
-transitions. Focused: `src/supabase`+`src/store` 820 pass; `npm run build` pass.
-RESET_ALL has no live dispatch — reducer untouched.
+## Reviewer fixes (changes-required round)
+
+Context expansion APPROVED: `src/supabase/OrgDataProvider.tsx` (B2).
+- B1 race: mirror effect now gated by `shouldMirrorProcessQueue({phase,hydrationInFlight})`
+  — quiet hydration drains via its own loop; pure predicate tested.
+- B2: dictionary events → new non-destructive `org.backgroundReload()`; pure
+  `orgReload.ts` keeps old 'ready' snapshot until swap (+test). `active`/channel no
+  longer flicker.
+- Hardening: channel handlers read via refs; effect deps `[active,userId,setLiveState]`
+  so org reload never recreates the channel.
+Verify: focused 858 pass, `npm test` 1044 pass/0 fail, build clean.
