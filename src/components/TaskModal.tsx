@@ -780,23 +780,6 @@ function TaskEditor({
               ))}
             </select>
           </div>
-          <div className="field">
-            <label htmlFor="t-est">Szacowane godziny (suma osób)</label>
-            <input
-              id="t-est"
-              type="text"
-              value={soldTotal > 0 ? formatDuration(soldTotal) : '—'}
-              readOnly
-              disabled
-              title="Suma godzin przypisanych osobom w sekcji „Przypisane osoby”"
-            />
-            {legacyEstimate != null && Math.abs(legacyEstimate - soldTotal) > 1e-9 && (
-              <p className="field-hint">
-                Poprzedni ręczny szacunek: {formatDuration(legacyEstimate)} — po zapisie
-                szacunkiem stanie się suma godzin osób.
-              </p>
-            )}
-          </div>
         </div>
         <div className="field-row">
           <div className="field">
@@ -850,36 +833,6 @@ function TaskEditor({
             </select>
           </div>
         </div>
-        <div className="estimate-compare">
-          <span>
-            zaplanowano{' '}
-            <strong className={overBudget ? 'over-budget' : undefined}>
-              {formatDuration(plannedTotalAll)}
-            </strong>
-            {binTotal > 0 && (
-              <span className="muted"> (+ {formatDuration(binTotal)} w zasobniku)</span>
-            )}
-          </span>
-          <span className="muted">vs</span>
-          <span>
-            {normalizedEstimate != null ? (
-              <>
-                szacunek <strong>{formatDuration(normalizedEstimate)}</strong>
-              </>
-            ) : (
-              <span className="muted">brak szacunku</span>
-            )}
-          </span>
-          <PlanningBadge
-            status={planningStatusForTotals(normalizedEstimate, plannedTotalAll, binTotal)}
-          />
-        </div>
-        {overBudget && (
-          <p className="estimate-over">
-            ⚠ W kalendarzu zaplanowano {formatDuration(plannedTotalAll - soldTotal)} ponad godziny
-            przypisane osobom. Zwiększ godziny osób lub ogranicz siatkę.
-          </p>
-        )}
       </div>
 
       {/* a2) Checklist */}
@@ -1023,9 +976,9 @@ function TaskEditor({
         {assignedPeople.length > 0 && (
           <div className="sold-hours">
             <p className="field-hint">
-              Godziny osoby na tym zadaniu (sprzedane). Suma = szacunek zadania;
-              część niezaplanowana w kalendarzu trafia automatycznie do zasobnika
-              osoby.
+              Edytujesz godziny każdej osoby na tym zadaniu (sprzedane). Szacunek
+              zadania to ich suma — wylicza się sam, nie ma osobnego pola. Część
+              niezaplanowana w kalendarzu trafia automatycznie do zasobnika osoby.
             </p>
             {assignedPeople.map((p) => {
               const sold = soldByPerson.get(p.id) ?? 0;
@@ -1066,9 +1019,49 @@ function TaskEditor({
               );
             })}
             <div className="sold-hours-total">
-              Razem: <strong>{formatDuration(soldTotal)}</strong>
+              Szacunek zadania (suma godzin osób):{' '}
+              <strong>{formatDuration(soldTotal)}</strong>{' '}
+              <span className="muted">— wyliczany</span>
             </div>
           </div>
+        )}
+        {/* Podsumowanie planowania stoi tuż pod godzinami osób, bo porównuje
+            dokładnie te liczby: co jest sprzedane vs co leży w kalendarzu. */}
+        <div className="estimate-compare">
+          <span>
+            w kalendarzu{' '}
+            <strong className={overBudget ? 'over-budget' : undefined}>
+              {formatDuration(plannedTotalAll)}
+            </strong>
+            {binTotal > 0 && (
+              <span className="muted"> (+ {formatDuration(binTotal)} w zasobniku)</span>
+            )}
+          </span>
+          <span className="muted">vs</span>
+          <span>
+            {normalizedEstimate != null ? (
+              <>
+                szacunek <strong>{formatDuration(normalizedEstimate)}</strong>
+              </>
+            ) : (
+              <span className="muted">brak szacunku</span>
+            )}
+          </span>
+          <PlanningBadge
+            status={planningStatusForTotals(normalizedEstimate, plannedTotalAll, binTotal)}
+          />
+        </div>
+        {legacyEstimate != null && Math.abs(legacyEstimate - soldTotal) > 1e-9 && (
+          <p className="field-hint">
+            Poprzedni ręczny szacunek: {formatDuration(legacyEstimate)} — po zapisie
+            szacunkiem stanie się suma godzin osób.
+          </p>
+        )}
+        {overBudget && (
+          <p className="estimate-over">
+            ⚠ W kalendarzu zaplanowano {formatDuration(plannedTotalAll - soldTotal)} ponad godziny
+            przypisane osobom. Zwiększ godziny osób lub ogranicz siatkę.
+          </p>
         )}
       </div>
 
