@@ -107,6 +107,29 @@ export function tasksOfProject(state: AppData, projectId: string): Task[] {
   return state.tasks.filter((t) => t.projectId === projectId);
 }
 
+/**
+ * Działy PROJEKTU są POCHODNE: unikalny zbiór działów przypisanych do jego
+ * zadań (dział wybiera się na zadaniu), w kolejności słownika działów. Projekt
+ * może więc obejmować kilka działów naraz. Gdy żadne zadanie nie ma działu,
+ * fallbackiem jest zaszłościowe `project.departmentId`.
+ */
+export function departmentsOfProject(state: AppData, projectId: string): Department[] {
+  const fromTasks = new Set(
+    state.tasks
+      .filter((t) => t.projectId === projectId && t.departmentId !== '')
+      .map((t) => t.departmentId),
+  );
+  if (fromTasks.size === 0) {
+    const legacy = getProject(state, projectId)?.departmentId ?? '';
+    if (legacy !== '') {
+      const dept = state.departments.find((d) => d.id === legacy);
+      return dept ? [dept] : [];
+    }
+    return [];
+  }
+  return state.departments.filter((d) => fromTasks.has(d.id));
+}
+
 export function milestonesOfProject(state: AppData, projectId: string): Milestone[] {
   return state.milestones
     .filter((m) => m.projectId === projectId)

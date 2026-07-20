@@ -286,7 +286,7 @@ export async function loadPlannerSnapshot(
     db.select('milestones', 'id, project_id, name, milestone_date'),
     db.select(
       'tasks',
-      'id, project_id, status_id, title, description, start_date, end_date, estimated_hours, priority, work_category_id, checklist, created_at, updated_at',
+      'id, project_id, status_id, title, description, start_date, end_date, estimated_hours, priority, work_category_id, department_id, checklist, created_at, updated_at',
     ),
     db.select('task_assignments', 'task_id, profile_id'),
     db.select(
@@ -411,6 +411,8 @@ export async function loadPlannerSnapshot(
         typeof estimated === 'number' && Number.isFinite(estimated) ? estimated : null,
       priority: toPriority(row.priority),
       workCategoryId: workCategoryOf(row.work_category_id),
+      // Dosłownie jak w projektach — działy niosą id chmury (patrz wyżej).
+      departmentId: str(row.department_id),
       checklist,
       createdAt: str(row.created_at),
       updatedAt: str(row.updated_at) || str(row.created_at),

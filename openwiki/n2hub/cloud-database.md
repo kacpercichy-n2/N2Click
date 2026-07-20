@@ -41,10 +41,16 @@
 - `clients`, `statuses`, `service_types`, `work_categories` — org-wide
   dictionaries; read by every authenticated user, mutations admin-only
   (clients: insert also manager).
-- `projects` → `client_id`, `status_id`, `service_type_id`, `department_id`;
-  `project_members (project_id, profile_id)` is the explicit worker access
-  list. `tasks` → `project_id` (cascade), `status_id`, `work_category_id`,
-  `created_by`; `task_assignments (task_id, profile_id)` is task ownership.
+- `projects` → `client_id`, `status_id`, `service_type_id`, `department_id`
+  (LEGACY — see below); `project_members (project_id, profile_id)` is the
+  explicit worker access list. `tasks` → `project_id` (cascade), `status_id`,
+  `work_category_id`, `department_id` (20260720170000 — the department is
+  assigned ON THE TASK), `created_by`; `task_assignments (task_id, profile_id)`
+  is task ownership.
+- Project departments are DERIVED: the unique set of its tasks' departments
+  (client: `selectors.departmentsOfProject`, fallback to the legacy
+  `projects.department_id` when no task has one). A project may span several
+  departments; the project form no longer edits a department.
 - `workload_entries` — planned hours; `task_id` + `profile_id` cascade,
   `work_date NULL` = bin sentinel (unique partial index per
   `(task_id, profile_id)`), grid CHECKs (0.25h, 15-minute starts, day
@@ -52,12 +58,17 @@
   are append-only (no UPDATE/DELETE policies). `app_settings` — org runtime
   flags (`local_writes_retired`).
 - Access model: administrator = everything; manager = own department
-  (profiles incl. UPDATE of non-admin members, projects,
-  memberships/assignments restricted to own-department people); worker = own
-  profile (read + self-UPDATE), member projects (read), projects of tasks
-  assigned to them (read, `app.has_assignment_in_project` —
-  20260720150000; without it client hydration cascade-dropped the task and
-  its workload rows), assigned tasks (read/update), own workload rows.
+  (profiles incl. UPDATE of non-admin members, memberships/assignments
+  restricted to own-department people) — and since 20260720170000 the manager
+  scope FOLLOWS TASK DEPARTMENTS: `app.manages_task` also matches the task's
+  own `department_id`, tasks_* policies admit the task-department manager,
+  projects select/update admit a manager with a task of their department in
+  the project (`app.manages_any_task_in_project`), and projects_insert admits
+  any manager (projects are no longer department-owned); worker = own profile
+  (read + self-UPDATE), member projects (read), projects of tasks assigned to
+  them (read, `app.has_assignment_in_project` — 20260720150000; without it
+  client hydration cascade-dropped the task and its workload rows), assigned
+  tasks (read/update), own workload rows.
 - Profile edits mirror as UPDATE, never upsert: `INSERT ... ON CONFLICT`
   must pass the admin-only INSERT policy even when it resolves to an update,
   which rejected every non-admin self-edit. `PlannerDb.update` classifies an

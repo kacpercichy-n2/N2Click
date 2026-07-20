@@ -41,6 +41,7 @@ const TASK: Task = {
   estimatedHours: null,
   priority: 'normal',
   workCategoryId: '',
+  departmentId: '',
   checklist: [],
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
@@ -91,6 +92,7 @@ function draftFromTask(overrides: Partial<TaskDraft> = {}): TaskDraft {
     estimatedHours: TASK.estimatedHours,
     priority: TASK.priority,
     workCategoryId: TASK.workCategoryId,
+    departmentId: TASK.departmentId,
     checklist: TASK.checklist,
     ...overrides,
   };

@@ -41,6 +41,7 @@ function makeTask(overrides: Partial<Task> & { id: string }): Task {
     estimatedHours: null,
     priority: 'normal',
     workCategoryId: '',
+    departmentId: '',
     checklist: [],
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
@@ -691,6 +692,7 @@ describe('SAVE_TASK bin behavior', () => {
       estimatedHours: task.estimatedHours,
       priority: task.priority,
       workCategoryId: task.workCategoryId,
+      departmentId: task.departmentId,
       checklist: task.checklist,
     };
   }
@@ -2326,6 +2328,7 @@ describe('INSERT_BLOCK collision guard (block spanning the insert point)', () =>
           estimatedHours: null,
           priority: 'normal',
           workCategoryId: '',
+          departmentId: '',
           checklist: [],
         },
         assigneeIds: ['p1'],

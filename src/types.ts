@@ -91,6 +91,11 @@ export interface Task {
   estimatedHours: number | null; // optional up-front estimate
   priority: TaskPriority; // fixed enum; defaults to 'normal'
   workCategoryId: string; // reference into workCategories; '' when unset
+  // Dział wykonujący zadanie ('' = brak). Działy PROJEKTU są POCHODNE: unikalny
+  // zbiór działów jego zadań (patrz selectors.departmentIdsOfProject) — projekt
+  // może więc obejmować kilka działów naraz. `Project.departmentId` pozostaje
+  // wyłącznie jako zaszłość (fallback, gdy żadne zadanie nie ma działu).
+  departmentId: string;
   checklist: ChecklistItem[]; // embedded, replaced wholesale on save
   createdAt: string; // ISO timestamp
   updatedAt: string; // ISO timestamp

@@ -10,6 +10,7 @@ import type { ProjectDraft } from '../store/AppStore';
 import {
   activeStatuses,
   assigneesOfTask,
+  departmentsOfProject,
   getStatus,
   milestonesOfProject,
   projectPlannedTotal,
@@ -75,7 +76,9 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   const [statusId, setStatusId] = useState(project?.statusId ?? '');
   const [startDate, setStartDate] = useState(project?.startDate ?? todayStr());
   const [endDate, setEndDate] = useState(project?.endDate ?? todayStr());
-  const [departmentId, setDepartmentId] = useState(project?.departmentId ?? '');
+  // Zaszłość: wartość tylko przenoszona przez zapis (działy projektu są teraz
+  // pochodne z zadań — patrz selectors.departmentsOfProject), bez edycji w UI.
+  const [departmentId] = useState(project?.departmentId ?? '');
   const [serviceTypeId, setServiceTypeId] = useState(project?.serviceTypeId ?? '');
   const [error, setError] = useState('');
 
@@ -188,6 +191,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   const tasks = tasksOfProject(state, project.id).sort((a, b) =>
     a.startDate.localeCompare(b.startDate),
   );
+  const derivedDepartments = departmentsOfProject(state, project.id);
   const milestones = milestonesOfProject(state, project.id);
   const statuses = activeStatuses(state);
   const currentStatus = getStatus(state, project.statusId);
@@ -336,21 +340,20 @@ function ProjectDetail({ projectId }: { projectId: string }) {
             />
           </div>
           <div className="field">
-            <label htmlFor="pd-dep">Dział</label>
-            <select
-              id="pd-dep"
-              value={departmentId}
-              onChange={(e) => setDepartmentId(e.target.value)}
-              disabled={!canManage}
-              title={disabledTitle}
-            >
-              <option value="">—</option>
-              {state.departments.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
+            {/* Działy projektu są POCHODNE z działów jego zadań (dział wybiera
+                się w edytorze zadania) — projekt może obejmować kilka działów. */}
+            <label>Działy (z zadań)</label>
+            <div className="project-derived-departments">
+              {derivedDepartments.length === 0 ? (
+                <span className="muted">— przypisz dział w zadaniu</span>
+              ) : (
+                derivedDepartments.map((d) => (
+                  <span key={d.id} className="project-badge project-badge-department">
+                    {d.name}
+                  </span>
+                ))
+              )}
+            </div>
           </div>
           <div className="field">
             <label htmlFor="pd-svc">Typ usługi</label>

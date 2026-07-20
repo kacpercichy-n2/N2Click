@@ -824,8 +824,21 @@ describe('normalizeTaskMeta', () => {
       tasks: [task],
       savedFilters: [filter],
     });
-    expect(next.tasks[0]).toEqual(task);
+    // Zadanie sprzed pola `departmentId` zyskuje je jako '' — poza tym bez zmian.
+    expect(next.tasks[0]).toEqual({ ...task, departmentId: '' });
     expect(next.savedFilters[0].criteria).toEqual(filter.criteria);
+  });
+
+  it("resets a dangling task departmentId to '' and preserves a valid reference", () => {
+    const dangling = { ...v5Task({ id: 't1' }), departmentId: 'ghost' };
+    const valid = { ...v5Task({ id: 't2' }), departmentId: 'dep1' };
+    const next = normalizeTaskMeta({
+      ...emptyData(),
+      departments: [{ id: 'dep1', name: 'Produkcja' }],
+      tasks: [dangling as unknown as Task, valid as unknown as Task],
+    });
+    expect(next.tasks.find((t) => t.id === 't1')!.departmentId).toBe('');
+    expect(next.tasks.find((t) => t.id === 't2')!.departmentId).toBe('dep1');
   });
 });
 
@@ -967,6 +980,7 @@ function makeFullTask(overrides: Partial<Task> & { id: string }): Task {
     estimatedHours: null,
     priority: 'normal',
     workCategoryId: '',
+    departmentId: '',
     checklist: [],
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',

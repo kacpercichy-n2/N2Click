@@ -278,6 +278,7 @@ export function buildSampleData(): AppData {
     estimatedHours: 40,
     priority: 'high',
     workCategoryId: catKreacja.id,
+    departmentId: depDesign.id,
     checklist: [
       { id: uid(), text: 'Moodboard zaakceptowany', done: true },
       { id: uid(), text: 'Sekcja hero', done: false },
@@ -317,6 +318,7 @@ export function buildSampleData(): AppData {
     estimatedHours: 12,
     priority: 'normal',
     workCategoryId: catKreacja.id,
+    departmentId: depDesign.id,
     checklist: [],
     createdAt: now,
     updatedAt: now,
@@ -341,6 +343,7 @@ export function buildSampleData(): AppData {
     estimatedHours: 16,
     priority: 'urgent',
     workCategoryId: catWdrozenie.id,
+    departmentId: depDev.id,
     checklist: [],
     createdAt: now,
     updatedAt: now,
@@ -366,6 +369,7 @@ export function buildSampleData(): AppData {
     estimatedHours: 10,
     priority: 'normal',
     workCategoryId: catTesty.id,
+    departmentId: depDev.id,
     checklist: [],
     createdAt: now,
     updatedAt: now,
@@ -388,6 +392,7 @@ export function buildSampleData(): AppData {
     estimatedHours: 26,
     priority: 'high',
     workCategoryId: catKreacja.id,
+    departmentId: depDesign.id,
     checklist: [
       { id: uid(), text: 'Kierunek wizualny potwierdzony', done: true },
       { id: uid(), text: 'Makiety kategorii', done: false },
@@ -417,6 +422,7 @@ export function buildSampleData(): AppData {
     estimatedHours: 30,
     priority: 'high',
     workCategoryId: catWdrozenie.id,
+    departmentId: depDev.id,
     checklist: [
       { id: uid(), text: 'Mapa ekranów', done: false },
       { id: uid(), text: 'Kryteria odbioru', done: false },
@@ -444,6 +450,7 @@ export function buildSampleData(): AppData {
     estimatedHours: 22,
     priority: 'urgent',
     workCategoryId: catKreacja.id,
+    departmentId: depDesign.id,
     checklist: [
       { id: uid(), text: 'Formaty reklamowe', done: true },
       { id: uid(), text: 'Mailing', done: true },
@@ -471,6 +478,7 @@ export function buildSampleData(): AppData {
     estimatedHours: 12,
     priority: 'normal',
     workCategoryId: catTesty.id,
+    departmentId: depDev.id,
     checklist: [],
     createdAt: now,
     updatedAt: now,
@@ -493,6 +501,7 @@ export function buildSampleData(): AppData {
     estimatedHours: 18,
     priority: 'normal',
     workCategoryId: catTesty.id,
+    departmentId: depDev.id,
     checklist: [
       { id: uid(), text: 'Raport wysłany', done: true },
       { id: uid(), text: 'Prezentacja dla klienta', done: true },
@@ -518,6 +527,7 @@ export function buildSampleData(): AppData {
     estimatedHours: 14,
     priority: 'normal',
     workCategoryId: catKreacja.id,
+    departmentId: depDesign.id,
     checklist: [
       { id: uid(), text: 'Tematy tygodniowe', done: false },
       { id: uid(), text: 'Szablon raportu', done: false },

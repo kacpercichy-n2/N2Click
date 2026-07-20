@@ -473,6 +473,8 @@ export async function runSupabaseImport(
         estimated_hours: t.estimatedHours,
         priority: t.priority,
         work_category_id: dictRef(workCategoryMap, t.workCategoryId),
+        // Dział zadania — mapowanie jak dział projektu (brak w mapie → null).
+        department_id: t.departmentId !== '' ? deptIdMap.get(t.departmentId) ?? null : null,
         checklist: t.checklist,
       });
       if (ins.error) {

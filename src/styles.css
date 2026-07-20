@@ -867,6 +867,18 @@ textarea {
   border-radius: var(--n2-radius-pill);
   padding: 2px 9px;
 }
+/* Pochodne działy projektu (z działów jego zadań) — odcień odróżniający od typu usługi. */
+.project-badge-department {
+  color: var(--n2-mint, #7ee0c3);
+  background: rgba(126, 224, 195, 0.12);
+}
+.project-derived-departments {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px; /* wyrównanie z sąsiednimi kontrolkami pól */
+}
 .task-card-range {
   color: var(--text-muted);
   font-size: var(--n2-type-sm);

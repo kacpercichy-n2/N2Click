@@ -273,6 +273,7 @@ function serializeDraft(v: {
   statusId: string;
   priority: TaskPriority;
   workCategoryId: string;
+  departmentId: string;
   checklist: ChecklistItem[];
   startDate: string;
   endDate: string;
@@ -287,6 +288,7 @@ function serializeDraft(v: {
     statusId: v.statusId,
     priority: v.priority,
     workCategoryId: v.workCategoryId,
+    departmentId: v.departmentId,
     // Order-sensitive: item identity + text + done state all participate in dirty.
     checklist: v.checklist.map((c) => [c.id, c.text, c.done]),
     startDate: v.startDate,
@@ -338,6 +340,7 @@ function TaskEditor({
   );
   const [priority, setPriority] = useState<TaskPriority>(existing?.priority ?? 'normal');
   const [workCategoryId, setWorkCategoryId] = useState<string>(existing?.workCategoryId ?? '');
+  const [departmentId, setDepartmentId] = useState<string>(existing?.departmentId ?? '');
   const [checklist, setChecklist] = useState<ChecklistItem[]>(existing?.checklist ?? []);
   const [checklistInput, setChecklistInput] = useState('');
 
@@ -450,6 +453,7 @@ function TaskEditor({
     statusId,
     priority,
     workCategoryId,
+    departmentId,
     checklist,
     startDate,
     endDate,
@@ -633,6 +637,7 @@ function TaskEditor({
     estimatedHours: normalizedEstimate,
     priority,
     workCategoryId,
+    departmentId,
     checklist,
   };
   const assigneesValid = assigneeIds.every((id) => hasEntity(state, 'person', id));
@@ -821,6 +826,23 @@ function TaskEditor({
               {state.workCategories.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="t-department">Dział</label>
+            <select
+              id="t-department"
+              value={departmentId}
+              onChange={(e) => setDepartmentId(e.target.value)}
+              disabled={readOnly}
+              title={roTitle}
+            >
+              <option value="">Bez działu</option>
+              {state.departments.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
                 </option>
               ))}
             </select>

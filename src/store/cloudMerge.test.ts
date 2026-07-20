@@ -55,6 +55,7 @@ function makeTask(o: Partial<Task> & { id: string }): Task {
     estimatedHours: null,
     priority: 'normal',
     workCategoryId: '',
+    departmentId: '',
     checklist: [],
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',

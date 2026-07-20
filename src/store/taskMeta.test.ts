@@ -42,6 +42,7 @@ function makeTask(overrides: Partial<Task> & { id: string }): Task {
     estimatedHours: null,
     priority: 'normal',
     workCategoryId: '',
+    departmentId: '',
     checklist: [],
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
@@ -64,6 +65,7 @@ function draftFor(task: Task, overrides: Partial<TaskDraft> = {}): TaskDraft {
     estimatedHours: task.estimatedHours,
     priority: task.priority,
     workCategoryId: task.workCategoryId,
+    departmentId: task.departmentId,
     checklist: task.checklist,
     ...overrides,
   };
@@ -87,6 +89,7 @@ describe('SAVE_TASK metadata', () => {
       estimatedHours: null,
       priority: 'high',
       workCategoryId: 'cat1',
+      departmentId: '',
       checklist,
     };
     const payload: SaveTaskPayload = { taskId: null, draft, assigneeIds: [], allocations: [] };
@@ -195,6 +198,7 @@ describe('SAVE_TASK metadata', () => {
       estimatedHours: null,
       priority: 'normal',
       workCategoryId: '',
+      departmentId: '',
       checklist: [{ id: 'c1', text: 'Do it', done: false }],
     };
     const state = makeState();

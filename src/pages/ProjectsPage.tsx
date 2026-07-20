@@ -7,6 +7,7 @@ import { useCan } from '../store/useCan';
 import type { ProjectDraft } from '../store/AppStore';
 import {
   activeStatuses,
+  departmentsOfProject,
   getClient,
   getServiceType,
   getStatus,
@@ -351,6 +352,7 @@ export function ProjectsPage() {
                 const planned = projectPlannedTotal(state, p.id);
                 const teamSize = peopleIdsOfProject(state, p.id).length;
                 const svc = getServiceType(state, p.serviceTypeId);
+                const departments = departmentsOfProject(state, p.id);
                 return (
                   <li key={p.id} className="task-card project-card">
                     <button
@@ -368,6 +370,11 @@ export function ProjectsPage() {
                       <div className="task-card-range">
                         {rangeLabel(p.startDate, p.endDate)}
                         {svc && <span className="project-badge">{svc.name}</span>}
+                        {departments.map((d) => (
+                          <span key={d.id} className="project-badge project-badge-department">
+                            {d.name}
+                          </span>
+                        ))}
                       </div>
                       <div className="task-card-hours">
                         <strong>{tasks.length}</strong>{' '}

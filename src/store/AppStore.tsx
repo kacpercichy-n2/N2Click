@@ -95,6 +95,7 @@ export interface TaskDraft {
   estimatedHours: number | null;
   priority: TaskPriority;
   workCategoryId: string;
+  departmentId: string; // dział zadania; '' = brak (miękki fallback jak kategoria)
   checklist: ChecklistItem[];
 }
 
@@ -388,6 +389,9 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
   const workCategoryId = state.workCategories.some((c) => c.id === draft.workCategoryId)
     ? draft.workCategoryId
     : '';
+  const departmentId = state.departments.some((d) => d.id === draft.departmentId)
+    ? draft.departmentId
+    : '';
 
   let tasks = state.tasks;
   let realTaskId: string;
@@ -405,6 +409,7 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
       estimatedHours: draft.estimatedHours,
       priority: draft.priority,
       workCategoryId,
+      departmentId,
       checklist,
       createdAt: ts,
       updatedAt: ts,
@@ -427,6 +432,7 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
             estimatedHours: draft.estimatedHours,
             priority: draft.priority,
             workCategoryId,
+            departmentId,
             checklist,
             updatedAt: ts,
           }
@@ -2594,6 +2600,9 @@ export function reducer(state: AppData, action: Action): AppData {
         ),
         projects: state.projects.map((p) =>
           p.departmentId === action.departmentId ? { ...p, departmentId: '' } : p,
+        ),
+        tasks: state.tasks.map((t) =>
+          t.departmentId === action.departmentId ? { ...t, departmentId: '' } : t,
         ),
       };
     case 'ADD_SERVICE_TYPE': {

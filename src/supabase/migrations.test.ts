@@ -99,6 +99,7 @@ describe('konwencja plików migracji', () => {
       '20260718090000_clients_contact_fields.sql',
       '20260718091000_realtime_publication.sql',
       '20260720150000_assignee_visibility_and_profile_rls.sql',
+      '20260720170000_task_departments.sql',
     ]);
   });
 

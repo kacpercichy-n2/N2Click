@@ -293,6 +293,7 @@ function migrateV1(raw: Record<string, unknown>): AppData {
     estimatedHours: t.estimatedHours ?? null,
     priority: 'normal',
     workCategoryId: '',
+    departmentId: '',
     checklist: [],
     createdAt: t.createdAt ?? now,
     updatedAt: t.updatedAt ?? now,
@@ -769,6 +770,7 @@ export function normalizeTaskMeta(data: AppData): AppData {
   const str = (v: unknown): string => (typeof v === 'string' ? v : '');
   const workCategories = Array.isArray(data.workCategories) ? data.workCategories : [];
   const categoryIds = new Set(workCategories.map((c) => c.id));
+  const departmentIds = new Set(data.departments.map((d) => d.id));
 
   const tasks: Task[] = data.tasks.map((raw) => {
     const t = raw as unknown as Record<string, unknown>;
@@ -777,6 +779,9 @@ export function normalizeTaskMeta(data: AppData): AppData {
       : 'normal';
     const rawCategory = str(t.workCategoryId);
     const workCategoryId = categoryIds.has(rawCategory) ? rawCategory : '';
+    // Dział zadania (nowe pole, legacy = brak): dangling → '' jak kategoria.
+    const rawDepartment = str(t.departmentId);
+    const departmentId = departmentIds.has(rawDepartment) ? rawDepartment : '';
     const checklist: ChecklistItem[] = Array.isArray(t.checklist)
       ? (t.checklist as unknown[])
           .filter((item): item is Record<string, unknown> =>
@@ -788,7 +793,7 @@ export function normalizeTaskMeta(data: AppData): AppData {
             done: item.done === true,
           }))
       : [];
-    return { ...(raw as Task), priority, workCategoryId, checklist };
+    return { ...(raw as Task), priority, workCategoryId, departmentId, checklist };
   });
 
   const savedFilters = data.savedFilters.map((f) => {
