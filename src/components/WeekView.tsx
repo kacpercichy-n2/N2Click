@@ -76,7 +76,10 @@ interface Props {
 // lines in styles.css (.week-day-col) and scripts/browser-check-bin-drag.mjs.
 const HOUR_PX = 84;
 const DAY_BODY_H = 24 * HOUR_PX; // 2016px full-day column height
-const MIN_BLOCK_H = 14; // keep 0.25h blocks clickable
+// Krótkie bloki dostają minimalną CZYTELNĄ wysokość (15 min ≥ dawne 30 min
+// + 8px), nawet jeśli wizualnie zachodzą na kolejny kwadrans siatki —
+// geometria dragu/resize liczy się z pozycji kursora, nie z wysokości bloku.
+const MIN_BLOCK_H = 50;
 const SCROLL_TO_MIN = 8 * 60; // open scrolled to 08:00
 const DAY_COLS = 7; // the days grid holds 7 columns (no axis inside)
 

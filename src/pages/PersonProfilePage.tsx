@@ -31,6 +31,7 @@ import {
 } from '../store/selectors';
 import { ROLE_LABELS, can, NO_PERM_TITLE } from '../store/permissions';
 import { hashPassword } from '../utils/password';
+import { roleTitleOptions } from '../utils/roleTitles';
 import type { AccessRole, Person } from '../types';
 import { Avatar } from '../components/Avatar';
 import { Coin } from '../components/Coin';
@@ -213,13 +214,20 @@ function PersonProfile({ personId }: { personId: string }) {
             </div>
             <div className="field">
               <label htmlFor="pp-role">Stanowisko</label>
-              <input
+              <select
                 id="pp-role"
                 value={draft.role}
                 onChange={(e) => set('role', e.target.value)}
                 disabled={!allow('roleTitle')}
                 title={allow('roleTitle') ? undefined : NO_PERM_TITLE}
-              />
+              >
+                <option value="">—</option>
+                {roleTitleOptions(state.departments, draft.role).map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="field">
               <label htmlFor="pp-dep">Dział</label>

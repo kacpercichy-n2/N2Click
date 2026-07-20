@@ -59,10 +59,13 @@ const MATRIX: Record<AccessRole, ReadonlySet<PermAction>> = {
     'workload.reassign',
     'comments.add',
   ]),
+  // Zadania dodaje każda rola poza specjalistą (pracownik): menedżer działu
+  // (pm), handlowiec i administrator — decyzja 2026-07-20.
   handlowiec: new Set<PermAction>([
     'projects.manage',
     'projects.paid',
     'clients.manage',
+    'tasks.manage',
     'blocks.editOwn',
     'profile.editOwn',
     'comments.add',

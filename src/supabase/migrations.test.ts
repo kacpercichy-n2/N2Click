@@ -100,6 +100,7 @@ describe('konwencja plików migracji', () => {
       '20260718091000_realtime_publication.sql',
       '20260720150000_assignee_visibility_and_profile_rls.sql',
       '20260720170000_task_departments.sql',
+      '20260720190000_manager_task_management.sql',
     ]);
   });
 

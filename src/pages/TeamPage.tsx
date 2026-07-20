@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
+import { roleTitleOptions } from '../utils/roleTitles';
 import { currentUser as currentUserSel, isImpersonating } from '../store/selectors';
 import { useAuth } from '../auth/SessionProvider';
 import { getSupabaseClient } from '../supabase/client';
@@ -259,6 +260,7 @@ function CloudTeamHierarchy() {
 
 /** Sekcja zakładania konta — formularz rozwijany jawną akcją administratora. */
 function ProvisionSection() {
+  const { state } = useStore();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<ProvisionFormState>(emptyProvisionForm);
   const [lists, setLists] = useState<ServerListsState>({ status: 'idle' });
@@ -414,12 +416,18 @@ function ProvisionSection() {
           </div>
           <div className="field">
             <label htmlFor="t-role-title">Stanowisko</label>
-            <input
+            <select
               id="t-role-title"
               value={form.roleTitle}
               onChange={(e) => set('roleTitle', e.target.value)}
-              placeholder="np. Projektantka"
-            />
+            >
+              <option value="">—</option>
+              {roleTitleOptions(state.departments, form.roleTitle).map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="field">
             <label htmlFor="t-access">Rola dostępu *</label>
