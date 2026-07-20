@@ -2083,6 +2083,54 @@ function isQuarterHours(v: unknown): v is number {
 }
 
 /**
+ * Głęboka równość WARTOŚCI dla płaskich danych wiersza (prymitywy, tablice,
+ * zwykłe obiekty). Wiersze planera są czystym JSON-em — mają zagnieżdżone
+ * tablice (`Task.checklist`, `Comment.mentionIds`), więc porównanie płytkie
+ * fałszywie raportowałoby zmianę przy każdym odświeżeniu.
+ */
+function sameRowValue(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((v, i) => sameRowValue(v, b[i]));
+  }
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  const ao = a as Record<string, unknown>;
+  const bo = b as Record<string, unknown>;
+  const keys = Object.keys(ao);
+  if (keys.length !== Object.keys(bo).length) return false;
+  return keys.every(
+    (k) => Object.prototype.hasOwnProperty.call(bo, k) && sameRowValue(ao[k], bo[k]),
+  );
+}
+
+/**
+ * BEZSZWOWE scalenie kolekcji: chmura pozostaje autorytatywna (zbiór i kolejność
+ * wierszy pochodzą z `next`), ale wiersz identyczny wartościowo zachowuje SWOJĄ
+ * DOTYCHCZASOWĄ REFERENCJĘ, a kolekcja bez żadnej zmiany zwraca dotychczasową
+ * TABLICĘ. Bez tego każde odświeżenie z Realtime tworzyło komplet nowych
+ * obiektów, unieważniało wszystkie `useMemo`/selektory i przerysowywało
+ * kalendarz oraz mapę — źródło migotania.
+ */
+function reconcileRows<T extends { id: string }>(prev: T[], next: T[]): T[] {
+  const byId = new Map(prev.map((row) => [row.id, row]));
+  let identical = prev.length === next.length;
+  const out = next.map((row, i) => {
+    const local = byId.get(row.id);
+    const kept = local !== undefined && sameRowValue(local, row) ? local : row;
+    if (identical && prev[i] !== kept) identical = false;
+    return kept;
+  });
+  return identical ? prev : out;
+}
+
+/** Ta sama tablica, gdy scalenie nie zmieniło żadnej pozycji ani długości. */
+function keepArrayIfSame<T>(prev: T[], next: T[]): T[] {
+  if (prev.length !== next.length) return next;
+  return next.every((row, i) => prev[i] === row) ? prev : next;
+}
+
+/**
  * AUTHORITATIVE hydration of the eight mirrored cloud collections: the cloud is
  * the single source of truth, so the payload REPLACES each collection (local
  * rows the cloud does not know are dropped — this is what retires demo/sample
@@ -2210,20 +2258,29 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
     assignments.push(existing ?? { id: uid(), taskId: a.taskId, personId: a.personId });
   }
 
-  return {
+  // Scalenie zachowujące referencje: wiersz bajtowo identyczny zostaje TYM
+  // SAMYM obiektem, kolekcja bez zmian zostaje TĄ SAMĄ tablicą, a hydracja,
+  // która niczego nie zmieniła, zwraca ORYGINALNĄ referencję stanu. Dzięki temu
+  // odświeżenie w tle nie unieważnia memoizacji widoków (brak migotania) i jest
+  // idempotentne — spójne z fail-closed z invariantu 6 wyżej.
+  const merged: AppData = {
     ...state,
     people: mergedPeople,
     ...reconcileIdentityAfterPeopleMerge(state, mergedPeople),
-    clients: [...payload.clients],
-    projects: [...payload.projects],
-    milestones: [...payload.milestones],
-    tasks: [...payload.tasks],
-    comments: [...payload.comments],
-    activity: [...payload.activity],
-    workload: [...payload.workload],
-    assignments,
-    ...(payload.tickets !== undefined ? { tickets: [...payload.tickets] } : {}),
+    clients: reconcileRows(state.clients, payload.clients),
+    projects: reconcileRows(state.projects, payload.projects),
+    milestones: reconcileRows(state.milestones, payload.milestones),
+    tasks: reconcileRows(state.tasks, payload.tasks),
+    comments: reconcileRows(state.comments, payload.comments),
+    activity: reconcileRows(state.activity, payload.activity),
+    workload: reconcileRows(state.workload, payload.workload),
+    assignments: keepArrayIfSame(state.assignments, assignments),
+    ...(payload.tickets !== undefined
+      ? { tickets: reconcileRows(state.tickets, payload.tickets) }
+      : {}),
   };
+  const keys = Object.keys(merged) as Array<keyof AppData>;
+  return keys.every((k) => Object.is(merged[k], state[k])) ? state : merged;
 }
 
 // ---- Reducer ----

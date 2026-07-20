@@ -104,6 +104,19 @@
   rows and reconciles a duplicate bin pair to the cloud-id row with grid-snapped
   summed hours. It never touches people/statuses/savedFilters/dictionaries (by
   reference); workload and milestones ARE now merged.
+- SEAMLESS BACKGROUND REFRESH (Realtime). A `postgres_changes` event is only a
+  "something changed" signal: `CloudSyncProvider` debounces bursts (1200 ms) into
+  ONE full snapshot + `MERGE_CLOUD_ENTITIES`. Three rules keep it invisible:
+  (a) the merge is REFERENCE-PRESERVING — a value-identical row keeps its object,
+  an unchanged collection keeps its array, and a no-op merge returns the ORIGINAL
+  state reference, so view memoization is not invalidated and nothing remounts;
+  (b) a BACKGROUND refresh never sets status `hydrating`, so the
+  "Wczytywanie danych z serwera…" banner is reserved for initial hydration,
+  manual refresh and retry (error/conflict banners are unaffected);
+  (c) `src/utils/liveSyncGate.ts` lets a stability-sensitive interaction
+  (calendar/bin drag) HOLD the background refresh — it is deferred by
+  rescheduling, never dropped, so a merge can never yank the dragged row or
+  unmount a component holding pointer capture (invariant 7).
 - `SAVE_TASK` reconciles workload by identity-preserving deltas. Do not replace
   all workload rows when editing a task.
 - `saveData` reports success or a classified failure. Failed persistence must
@@ -135,3 +148,5 @@
 gate), `ticketActions.test.ts` + `ticketsStorage.test.ts` (zgłoszenia: reduktor,
 repair, uprawnienia). Cloud mirror: `src/supabase/cloudMirror.test.ts`, `plannerData.test.ts`,
 `migrationStatus.test.ts` (coverage + handshake), `migrations.test.ts`.
+Bezszwowe odświeżanie w tle: `cloudMerge.test.ts` (blok „referencje”) +
+`src/utils/liveSyncGate.test.ts`.

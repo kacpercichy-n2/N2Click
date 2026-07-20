@@ -545,3 +545,158 @@ describe('MERGE_CLOUD_PEOPLE', () => {
     expect(next.activity).toBe(state.activity);
   });
 });
+
+// ---------------------------------------------------------------------------
+// BEZSZWOWE odświeżanie w tle (Realtime → pełna hydracja).
+//
+// Zdarzenie postgres_changes wywołuje pełny snapshot i MERGE_CLOUD_ENTITIES
+// nawet wtedy, gdy zmienił się JEDEN wiersz. Gdy scalenie tworzy komplet nowych
+// obiektów, każdy `useMemo`/selektor widoku unieważnia się i kalendarz oraz mapa
+// przerysowują się w całości — to jest źródło migotania. Kontrakt: wiersz
+// identyczny wartościowo zachowuje SWOJĄ referencję, kolekcja bez zmian
+// zachowuje SWOJĄ tablicę, a scalenie bez żadnej zmiany zwraca ORYGINALNY stan.
+// ---------------------------------------------------------------------------
+
+/** Stan, którego kolekcje są dokładnym lustrem `mirrorPayload()`. */
+function mirroredState(): AppData {
+  return {
+    ...emptyData(),
+    people: [{ ...person(P1) }, { ...person(P2) }],
+    clients: [client({ id: 'c-1' })],
+    projects: [makeProject({ id: 'proj-1' })],
+    milestones: [{ id: 'm-1', projectId: 'proj-1', name: 'Kamień', date: '2026-07-08' }],
+    tasks: [
+      makeTask({ id: T1, projectId: 'proj-1', checklist: [{ id: 'ch-1', text: 'a', done: false }] }),
+      makeTask({ id: T2, projectId: 'proj-1' }),
+    ],
+    assignments: [{ id: 'asg-1', taskId: T1, personId: P1 }],
+    workload: [wl({ id: 'w1' }), wl({ id: 'w2', taskId: T2, startMinutes: 660 })],
+    comments: [
+      {
+        id: 'cm-1',
+        entityType: 'task',
+        entityId: T1,
+        authorId: P1,
+        body: 'treść',
+        mentionIds: [P2],
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+    ],
+    activity: [
+      {
+        id: 'ac-1',
+        entityType: 'task',
+        entityId: T1,
+        actorId: P1,
+        message: 'zrobił(a) coś',
+        createdAt: '2026-01-01T00:00:00.000Z',
+      } satisfies ActivityEvent,
+    ],
+  };
+}
+
+/** Ładunek o TYCH SAMYCH wartościach co `mirroredState()`, ale świeżych obiektach. */
+function mirrorPayload(state: AppData): CloudMergePayload {
+  const clone = <T,>(rows: T[]): T[] => JSON.parse(JSON.stringify(rows)) as T[];
+  return {
+    clients: clone(state.clients),
+    projects: clone(state.projects),
+    milestones: clone(state.milestones),
+    tasks: clone(state.tasks),
+    assignments: state.assignments.map((a) => ({ taskId: a.taskId, personId: a.personId })),
+    workload: clone(state.workload),
+    comments: clone(state.comments),
+    activity: clone(state.activity),
+  };
+}
+
+describe('MERGE_CLOUD_ENTITIES — bezszwowe odświeżanie (referencje)', () => {
+  it('ładunek bez zmian => TA SAMA referencja stanu (dispatch idempotentny)', () => {
+    const state = mirroredState();
+    expect(merge(state, mirrorPayload(state))).toBe(state);
+  });
+
+  it('ładunek bez zmian => każda kolekcja zachowuje swoją tablicę', () => {
+    const state = mirroredState();
+    const next = merge(state, mirrorPayload(state));
+    expect(next.clients).toBe(state.clients);
+    expect(next.projects).toBe(state.projects);
+    expect(next.milestones).toBe(state.milestones);
+    expect(next.tasks).toBe(state.tasks);
+    expect(next.workload).toBe(state.workload);
+    expect(next.comments).toBe(state.comments);
+    expect(next.activity).toBe(state.activity);
+    expect(next.assignments).toBe(state.assignments);
+  });
+
+  it('zmiana JEDNEGO wiersza: pozostałe wiersze i kolekcje zachowują referencje', () => {
+    const state = mirroredState();
+    const payload = mirrorPayload(state);
+    payload.tasks[0] = { ...payload.tasks[0], title: 'Zmienione w chmurze' };
+
+    const next = merge(state, payload);
+    expect(next).not.toBe(state);
+
+    // Zmieniony wiersz to nowy obiekt o nowej wartości...
+    expect(next.tasks[0]).not.toBe(state.tasks[0]);
+    expect(next.tasks[0].title).toBe('Zmienione w chmurze');
+    // ...a sąsiad w TEJ SAMEJ kolekcji zachowuje referencję.
+    expect(next.tasks[1]).toBe(state.tasks[1]);
+    // Nietknięte kolekcje zachowują całe tablice — brak przerysowania widoków.
+    expect(next.workload).toBe(state.workload);
+    expect(next.projects).toBe(state.projects);
+    expect(next.clients).toBe(state.clients);
+    expect(next.comments).toBe(state.comments);
+    expect(next.activity).toBe(state.activity);
+    expect(next.milestones).toBe(state.milestones);
+    expect(next.assignments).toBe(state.assignments);
+  });
+
+  it('zagnieżdżone tablice (checklist, mentionIds) porównywane wartościowo, nie referencyjnie', () => {
+    const state = mirroredState();
+    // Identyczna wartościowo checklist w świeżej tablicy => wiersz bez zmian.
+    expect(merge(state, mirrorPayload(state)).tasks[0]).toBe(state.tasks[0]);
+
+    // Realna zmiana w zagnieżdżonej tablicy MUSI dać nowy obiekt.
+    const changed = mirrorPayload(state);
+    changed.tasks[0] = {
+      ...changed.tasks[0],
+      checklist: [{ id: 'ch-1', text: 'a', done: true }],
+    };
+    const next = merge(state, changed);
+    expect(next.tasks[0]).not.toBe(state.tasks[0]);
+    expect(next.tasks[0].checklist[0].done).toBe(true);
+  });
+
+  it('kolejność z chmury jest autorytatywna, ale wiersze zachowują referencje', () => {
+    const state = mirroredState();
+    const payload = mirrorPayload(state);
+    payload.tasks = [payload.tasks[1], payload.tasks[0]];
+
+    const next = merge(state, payload);
+    expect(next.tasks.map((t) => t.id)).toEqual([T2, T1]);
+    expect(next.tasks[0]).toBe(state.tasks[1]);
+    expect(next.tasks[1]).toBe(state.tasks[0]);
+    expect(next.workload).toBe(state.workload);
+  });
+
+  it('wiersz usunięty w chmurze zmienia tylko swoją kolekcję', () => {
+    const state = mirroredState();
+    const payload = mirrorPayload(state);
+    payload.workload = [payload.workload[0]];
+
+    const next = merge(state, payload);
+    expect(next.workload).toHaveLength(1);
+    expect(next.workload[0]).toBe(state.workload[0]);
+    expect(next.tasks).toBe(state.tasks);
+    expect(next.assignments).toBe(state.assignments);
+  });
+
+  it('invariant 6: niepoprawny ładunek nadal zwraca ORYGINALNĄ referencję stanu', () => {
+    const state = mirroredState();
+    const payload = mirrorPayload(state);
+    // Zadanie wskazujące nieistniejący projekt — fail-closed dla całej hydracji.
+    payload.tasks[0] = { ...payload.tasks[0], projectId: 'brak-takiego' };
+    expect(merge(state, payload)).toBe(state);
+  });
+});

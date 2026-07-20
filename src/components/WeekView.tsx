@@ -12,6 +12,7 @@ import { useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import { useOpenTask } from './TaskModal';
 import { personColor } from '../utils/colors';
+import { clearLiveSyncHold, setLiveSyncHold } from '../utils/liveSyncGate';
 import {
   MAX_TASK_PERIOD_DAYS,
   inclusiveDayCount,
@@ -245,6 +246,16 @@ function TimedBlock({
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [dragging, setMergeTargetId]);
+
+  // Odświeżenie w tle (Realtime) czeka na koniec przeciągania: autorytatywne
+  // scalenie w locie podmieniłoby `entry` pod kursorem albo odmontowało ten
+  // blok razem z przechwyceniem wskaźnika. Sprzątanie zdejmuje blokadę także
+  // przy odmontowaniu w trakcie przeciągania.
+  const holdKey = useRef({}).current;
+  useEffect(() => {
+    setLiveSyncHold(holdKey, dragging);
+    return () => clearLiveSyncHold(holdKey);
+  }, [dragging, holdKey]);
 
   const begin = (mode: DragMode) => (e: React.PointerEvent) => {
     if (e.button !== 0) return; // right/middle button → let the context menu open
@@ -645,6 +656,14 @@ function BinCard({
       dragRef.current = null;
     };
   }, []);
+
+  // Jak w TimedBlock: odświeżenie w tle czeka na koniec przeciągania z zasobnika.
+  const holdKey = useRef({}).current;
+  const dragging = drag !== null;
+  useEffect(() => {
+    setLiveSyncHold(holdKey, dragging);
+    return () => clearLiveSyncHold(holdKey);
+  }, [dragging, holdKey]);
 
   const projectPointer = (clientX: number, clientY: number): BinDragState | null => {
     const activeDrag = dragRef.current;

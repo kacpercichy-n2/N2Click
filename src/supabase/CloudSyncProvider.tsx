@@ -19,6 +19,7 @@ import {
 } from 'react';
 import { usePersistence, useStore } from '../store/AppStore';
 import { setCloudMirrorHealthy } from '../store/persistGate';
+import { anyLiveSyncHold } from '../utils/liveSyncGate';
 import { writeCloudRetirementMarker } from '../store/storage';
 import { useAuth } from '../auth/SessionProvider';
 import { useOrgData } from './OrgDataProvider';
@@ -128,6 +129,9 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   const pendingLiveSyncRef = useRef(false);
   const liveSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const liveSyncRef = useRef<() => void>(() => {});
+  // Odświeżenie w tle omija krawędź statusu, więc dosynchronizowanie znacznika
+  // wycofania wołamy przez ref (wzorzec jak liveSyncRef — definicja niżej).
+  const syncRetirementRef = useRef<() => void>(() => {});
   const orgRefreshRef = useRef(org.refreshSilently);
   orgRefreshRef.current = org.refreshSilently;
 
@@ -190,15 +194,23 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   }, [getDb, setPending]);
 
   const runHydration = useCallback(
-    async (overrideSnap?: OrgSnapshot) => {
+    async (overrideSnap?: OrgSnapshot, opts?: { background?: boolean }) => {
       const snap =
         overrideSnap ?? (org.state.status === 'ready' ? org.state.snapshot : null);
       if (auth.mode !== 'supabase' || !userId || !snap) return;
       // Odświeżenie ze stanu 'ready' (ręczne lub Realtime): lustro ma już mapy,
       // więc edycje wykonane w oknie hydracji dalej trafiają do kolejki zamiast
       // być pochłaniane i nadpisywane autorytatywnym scaleniem.
-      refreshingFromReadyRef.current = statusRef.current === 'ready';
-      setStatus('hydrating');
+      const fromReady = statusRef.current === 'ready';
+      refreshingFromReadyRef.current = fromReady;
+      // BEZSZWOWO: odświeżenie w tle (Realtime) NIE zrzuca statusu do
+      // 'hydrating' — inaczej baner „Wczytywanie danych z serwera…” pojawiał
+      // się i znikał przy każdym zdarzeniu, przesuwając układ nad kalendarzem/
+      // mapą. Wskaźnik ładowania zostaje wyłącznie dla hydracji startowej,
+      // ręcznego odświeżenia i ponowienia po błędzie. Błąd i tak jest widoczny
+      // (setStatus('error') niżej) — jawny baner konfliktu nie regresuje.
+      const background = opts?.background === true && fromReady;
+      if (!background) setStatus('hydrating');
       setError(null);
       const maps = buildCloudIdMaps(stateRef.current, snap);
       mapsRef.current = maps;
@@ -221,6 +233,13 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
           payload: { ...result.payload, people: buildCloudPeoplePayload(snap.profiles) },
         });
         setStatus('ready');
+        // Odświeżenie w tle nie przechodzi przez krawędź 'hydrating'→'ready',
+        // więc efekt na krawędzi statusu nie odpali: świeżą kopię do odzysku
+        // odświeżamy tu wprost (parytet z poprzednim zachowaniem).
+        if (background) {
+          retryPersistRef.current();
+          syncRetirementRef.current();
+        }
         // Edycje zakolejkowane w oknie hydracji: wypchnij od razu — pętla
         // Realtime (nasz własny zapis => zdarzenie => hydracja) je uzgodni.
         if (queueRef.current.length > 0) {
@@ -251,9 +270,17 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       pendingLiveSyncRef.current = true;
       return;
     }
+    // Trwa interakcja wrażliwa na stabilność (przeciąganie bloku kalendarza lub
+    // zasobnika): scalenie podmieniłoby wiersz pod kursorem albo odmontowało
+    // komponent trzymający pointer capture. Odraczamy przez PRZEPLANOWANIE tym
+    // samym debounce'em — nic nie ginie, dosynchronizuje się po puszczeniu.
+    if (anyLiveSyncHold()) {
+      liveSyncRef.current();
+      return;
+    }
     const snap = await orgRefreshRef.current();
     if (!mountedRef.current) return;
-    await runHydration(snap ?? undefined);
+    await runHydration(snap ?? undefined, { background: true });
   }, [active, runHydration]);
 
   const scheduleLiveSync = useCallback(() => {
@@ -301,6 +328,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     writeCloudRetirementMarker({ enabled: res.enabled });
     setRetired(res.enabled);
   }, [getDb]);
+  syncRetirementRef.current = () => void syncRetirementMarker();
 
   // Hydracja: raz na zalogowany identyfikator, gdy snapshot organizacji jest
   // gotowy. Reset przy wylogowaniu / trybie lokalnym (żaden klient nie powstaje).
