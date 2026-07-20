@@ -1533,7 +1533,7 @@ option {
   user-select: none;
 }
 .week-axis {
-  position: relative; /* height set inline (1152px), scrolled via JS sync */
+  position: relative; /* height set inline (24 * HOUR_PX), scrolled via JS sync */
   background: var(--card-bg);
 }
 /* The only real scroller — both axes; Mon–Fri fill it, weekend behind scroll. */
@@ -1579,20 +1579,22 @@ option {
   position: relative;
   border-left: 1px solid var(--n2-border);
   overflow: visible; /* let a dragged block extend into a neighbouring column */
+  /* Podziałka musi odpowiadać HOUR_PX w WeekView.tsx: 84px = godzina,
+     21px = kwadrans (drobne linie co 15 minut przy większych wierszach). */
   background-image:
     repeating-linear-gradient(
       to bottom,
       rgba(255, 255, 255, 0.075) 0,
       rgba(255, 255, 255, 0.075) 1px,
       transparent 1px,
-      transparent 48px
+      transparent 84px
     ),
     repeating-linear-gradient(
       to bottom,
       rgba(255, 255, 255, 0.03) 0,
       rgba(255, 255, 255, 0.03) 1px,
       transparent 1px,
-      transparent 24px
+      transparent 21px
     );
 }
 .week-day-col.weekend {

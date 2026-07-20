@@ -70,10 +70,14 @@ interface Props {
 }
 
 // ---- Grid geometry ----
-const HOUR_PX = 48; // 12px per 15 min
-const DAY_BODY_H = 24 * HOUR_PX; // 1152px full-day column height
+// 21px per 15 min: ~8 hours fit one viewport (e.g. 08:00–16:00), the rest
+// scrolls; 15/30-minute blocks render at 21/42px so their labels stay legible
+// instead of being clamped by MIN_BLOCK_H. Mirrored by the hour/quarter grid
+// lines in styles.css (.week-day-col) and scripts/browser-check-bin-drag.mjs.
+const HOUR_PX = 84;
+const DAY_BODY_H = 24 * HOUR_PX; // 2016px full-day column height
 const MIN_BLOCK_H = 14; // keep 0.25h blocks clickable
-const SCROLL_TO_MIN = 7 * 60; // open scrolled to 07:00
+const SCROLL_TO_MIN = 8 * 60; // open scrolled to 08:00
 const DAY_COLS = 7; // the days grid holds 7 columns (no axis inside)
 
 /** Announces a successful real calendar action to the optional guided practice. */

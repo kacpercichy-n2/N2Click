@@ -254,7 +254,7 @@ async function run() {
         viewportTop: viewport.top,
       };
     });
-    const HOUR_PX = 48;
+    const HOUR_PX = 84; // musi odpowiadać HOUR_PX w src/components/WeekView.tsx
     const colW = gr.width / 7;
     const targetX =
       SCENARIO === 'separator'
