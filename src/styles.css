@@ -1604,6 +1604,58 @@ option {
   background-color: rgba(196, 150, 255, 0.06);
 }
 
+/* Linia „teraz” w dzisiejszej kolumnie: nad statycznymi blokami (z-index 10),
+   pod przeciąganym blokiem (.dragging ma 30). pointer-events: none — czysto
+   prezentacyjna, nie może przechwycić dragu ani hit-testingu siatki. */
+.week-now-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 2px solid var(--n2-danger);
+  pointer-events: none;
+  z-index: 10;
+}
+.week-now-line::before {
+  content: '';
+  position: absolute;
+  left: -3px;
+  top: -5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--n2-danger);
+}
+
+/* Narożna plakietka daty/zegara: przyklejona do lewego dolnego rogu widoku
+   kalendarza (.week-cal jest position: relative, overflow: hidden). */
+.week-now-badge {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 10px;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-xs);
+  background: rgba(20, 18, 26, 0.92);
+  pointer-events: none;
+  z-index: 40;
+}
+.week-now-badge-date {
+  font-size: var(--n2-type-xs);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.week-now-badge-time {
+  font-family: var(--n2-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--n2-type-md);
+  color: var(--text);
+  line-height: 1.1;
+}
+
 /* Absolutely-positioned timed blocks */
 .week-block {
   position: absolute;

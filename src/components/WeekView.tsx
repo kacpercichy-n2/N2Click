@@ -952,6 +952,16 @@ export function WeekView({ state, anchor, filter }: Props) {
     if (viewportRef.current) viewportRef.current.scrollTop = (SCROLL_TO_MIN / 60) * HOUR_PX;
   }, []);
 
+  // Zegar „teraz”: napędza linię bieżącej godziny w dzisiejszej kolumnie oraz
+  // narożną etykietę daty/zegara. Odświeżany co 30 s, żeby wskazanie nigdy nie
+  // odstawało o więcej niż pół minuty; czysto prezentacyjny (invariant 7).
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
   // Keep the fixed axis pane (vertical) and header track (horizontal) in step
   // with the days viewport — both are overflow:hidden, driven only from here.
   const onViewportScroll = () => {
@@ -1296,6 +1306,13 @@ export function WeekView({ state, anchor, filter }: Props) {
                     .filter(Boolean)
                     .join(' ')}
                 >
+                  {isTodayStr(d) && (
+                    <div
+                      className="week-now-line"
+                      style={{ top: (nowMinutes / 60) * HOUR_PX }}
+                      aria-hidden
+                    />
+                  )}
                   {packed.map(({ block: e, col, cols }) => {
                     const task = getTask(state, e.taskId);
                     const person = getPerson(state, e.personId);
@@ -1380,6 +1397,15 @@ export function WeekView({ state, anchor, filter }: Props) {
             )}
           </div>
         </div>
+      </div>
+
+      {/* Narożna plakietka: dzisiejsza data (z dniem tygodnia) + zegar HH:mm.
+          pointer-events: none w CSS — nie może przechwycić dragu bloków. */}
+      <div className="week-now-badge">
+        <span className="week-now-badge-date">
+          {format(now, 'EEEE, d MMMM', { locale: pl })}
+        </span>
+        <span className="week-now-badge-time">{format(now, 'HH:mm')}</span>
       </div>
 
       <AnimatePresence>
