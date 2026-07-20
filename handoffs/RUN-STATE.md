@@ -65,3 +65,12 @@ Context expansion APPROVED: `src/supabase/OrgDataProvider.tsx` (B2).
 - Hardening: channel handlers read via refs; effect deps `[active,userId,setLiveState]`
   so org reload never recreates the channel.
 Verify: focused 858 pass, `npm test` 1044 pass/0 fail, build clean.
+
+## PKG-20260720-clients-management (developer)
+
+Klienci CRUD tab: `Client` +contact fields / `ClientDraft` (canonical key-absent),
+`SAVE_CLIENT`/`SET_CLIENT_ARCHIVED` reducer cases, `SAVE_PROJECT.newClient`,
+new `ClientsPage`+nav/route/icon, ProjectsPage inline contact fields,
+`buildClientRow`+plannerData round-trip, migration
+`20260720130000_client_contact_fields.sql` (3 nullable columns). Full `npm test`
+1059 pass/0 fail; `npm run build` clean. No cloud/localStorage boundary added.

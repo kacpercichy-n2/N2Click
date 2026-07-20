@@ -23,8 +23,22 @@ import type {
 /** '' -> null; każda inna data przechodzi bez zmian. */
 export const dateOrNull = (d: string): string | null => (d === '' ? null : d);
 
+/** Nieobecne/puste pole tekstowe -> null (kanoniczna postać klienta pomija
+ *  puste klucze); wartość przycięta przechodzi dalej. */
+const textOrNull = (v: string | undefined): string | null => {
+  const t = v?.trim();
+  return t ? t : null;
+};
+
 export function buildClientRow(c: Client): Record<string, unknown> {
-  return { id: c.id, name: c.name, archived: c.archived };
+  return {
+    id: c.id,
+    name: c.name,
+    archived: c.archived,
+    contact_person: textOrNull(c.contactPerson),
+    email: textOrNull(c.email),
+    phone: textOrNull(c.phone),
+  };
 }
 
 /** Referencje projektu rozwiązane po stronie wywołującego (miss policy własna). */

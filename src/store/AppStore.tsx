@@ -18,6 +18,8 @@ import type {
   ActivityEvent,
   AppData,
   ChecklistItem,
+  Client,
+  ClientDraft,
   CommentEntityType,
   FilterPage,
   Milestone,
@@ -165,7 +167,7 @@ export type Action =
   | { type: 'MOVE_TASK'; taskId: string; dayDelta: number }
   | { type: 'SET_TASK_DATES'; taskId: string; startDate: string; endDate: string }
   | { type: 'SET_TASK_STATUS'; taskId: string; statusId: string }
-  | { type: 'SAVE_PROJECT'; projectId: string | null; draft: ProjectDraft; newClientName?: string }
+  | { type: 'SAVE_PROJECT'; projectId: string | null; draft: ProjectDraft; newClient?: ClientDraft }
   | { type: 'DELETE_PROJECT'; projectId: string }
   | { type: 'SET_PROJECT_STATUS'; projectId: string; statusId: string }
   | { type: 'SET_PROJECT_PAID'; projectId: string; paid: boolean }
@@ -184,6 +186,9 @@ export type Action =
   | { type: 'LOGOUT' }
   | { type: 'ADD_CLIENT'; name: string }
   | { type: 'RENAME_CLIENT'; clientId: string; name: string }
+  // Create (clientId null) or edit (clientId string) a client with contact data.
+  | { type: 'SAVE_CLIENT'; clientId: string | null; draft: ClientDraft }
+  | { type: 'SET_CLIENT_ARCHIVED'; clientId: string; archived: boolean }
   | { type: 'DELETE_CLIENT'; clientId: string }
   | { type: 'ADD_DEPARTMENT'; name: string }
   | { type: 'RENAME_DEPARTMENT'; departmentId: string; name: string }
@@ -673,13 +678,29 @@ function setTaskDates(
   };
 }
 
+// ---- Client helpers ----
+
+/** Build a canonical Client: trim every field and OMIT any key whose trimmed
+ *  value is empty (never '' nor an undefined-valued key), so mirror diffs and
+ *  storage writeback stay churn-free. */
+function buildClient(id: string, draft: ClientDraft, archived: boolean): Client {
+  const client: Client = { id, name: draft.name.trim(), archived };
+  const contactPerson = draft.contactPerson?.trim();
+  const email = draft.email?.trim();
+  const phone = draft.phone?.trim();
+  if (contactPerson) client.contactPerson = contactPerson;
+  if (email) client.email = email;
+  if (phone) client.phone = phone;
+  return client;
+}
+
 // ---- Project handlers ----
 
 function saveProject(
   state: AppData,
   projectId: string | null,
   draft: ProjectDraft,
-  newClientName?: string,
+  newClient?: ClientDraft,
 ): AppData {
   // Reject an invalid/empty/reversed period (no max-days cap for projects).
   if (periodError(draft.startDate, draft.endDate) !== null) return state;
@@ -688,20 +709,21 @@ function saveProject(
   const existing = projectId === null ? null : state.projects.find((p) => p.id === projectId) ?? null;
   // Name required; statusId must exist; client rule (strict on create, an
   // UNCHANGED dangling clientId stays editable on a legacy orphan project).
-  if (!isValidProjectDraft(state, draft, existing, newClientName)) return state;
+  if (!isValidProjectDraft(state, draft, existing, newClient?.name)) return state;
   const ts = nowIso();
 
   // Optionally create (or reuse) a client in the same atomic action, so a
   // project can never point at a client id that doesn't exist.
   let clients = state.clients;
   let clientId = draft.clientId;
-  if (!clientId && newClientName?.trim()) {
-    const name = newClientName.trim();
+  if (!clientId && newClient?.name.trim()) {
+    const name = newClient.name.trim();
     const existing = clients.find((c) => c.name.toLowerCase() === name.toLowerCase());
     if (existing) {
+      // Reuse-by-name NEVER overwrites an existing client's contact fields.
       clientId = existing.id;
     } else {
-      const client = { id: uid(), name, archived: false };
+      const client = buildClient(uid(), newClient, false);
       clients = [...clients, client];
       clientId = client.id;
     }
@@ -1923,7 +1945,7 @@ export function reducer(state: AppData, action: Action): AppData {
       };
     }
     case 'SAVE_PROJECT':
-      return saveProject(state, action.projectId, action.draft, action.newClientName);
+      return saveProject(state, action.projectId, action.draft, action.newClient);
     case 'DELETE_PROJECT': {
       // Only log when the project exists. A 'project'-typed row would be pruned
       // by deleteProject itself, so the deletion record lives on 'system' with
@@ -2244,6 +2266,50 @@ export function reducer(state: AppData, action: Action): AppData {
         ...state,
         clients: state.clients.map((c) =>
           c.id === action.clientId ? { ...c, name } : c,
+        ),
+      };
+    }
+    case 'SAVE_CLIENT': {
+      // Create (clientId null) or edit (clientId string) a client with contact
+      // data. Reject an empty trimmed name or an unknown edit id -> prior state
+      // reference (invariant 6). No name-uniqueness rule (matches ADD_CLIENT).
+      const name = action.draft.name.trim();
+      if (!name) return state;
+      if (action.clientId === null) {
+        const client = buildClient(uid(), action.draft, false);
+        return {
+          ...state,
+          clients: [...state.clients, client],
+          activity: withActivity(state, 'client', client.id, `utworzył(a) klienta „${name}”`),
+        };
+      }
+      const existing = state.clients.find((c) => c.id === action.clientId);
+      if (!existing) return state;
+      // Preserve archived; rebuild the canonical object from the draft.
+      const client = buildClient(existing.id, action.draft, existing.archived);
+      return {
+        ...state,
+        clients: state.clients.map((c) => (c.id === existing.id ? client : c)),
+        activity: withActivity(state, 'client', existing.id, `zaktualizował(a) klienta „${name}”`),
+      };
+    }
+    case 'SET_CLIENT_ARCHIVED': {
+      // Mirror SET_STATUS_ARCHIVED: unknown id => prior state reference. No
+      // cascade to projects (only DELETE_CLIENT cascades / clears saved filters).
+      const client = state.clients.find((c) => c.id === action.clientId);
+      if (!client) return state;
+      return {
+        ...state,
+        clients: state.clients.map((c) =>
+          c.id === action.clientId ? { ...c, archived: action.archived } : c,
+        ),
+        activity: withActivity(
+          state,
+          'client',
+          action.clientId,
+          action.archived
+            ? `zarchiwizował(a) klienta „${client.name}”`
+            : `przywrócił(a) klienta „${client.name}”`,
         ),
       };
     }

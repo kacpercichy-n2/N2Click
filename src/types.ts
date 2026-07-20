@@ -10,6 +10,21 @@ export interface Client {
   id: string;
   name: string; // required
   archived: boolean;
+  // Optional contact data (UX-only; no format validation). Canonical shape:
+  // the key is ABSENT when the trimmed value is empty (never '' or an
+  // undefined-valued key), so mirror diffs and storage writeback stay
+  // churn-free. Additive — no data-version bump, no repair pass.
+  contactPerson?: string;
+  email?: string;
+  phone?: string;
+}
+
+/** Draft for creating/editing a client (name required; contact fields optional). */
+export interface ClientDraft {
+  name: string;
+  contactPerson?: string;
+  email?: string;
+  phone?: string;
 }
 
 export interface Department {

@@ -3406,6 +3406,56 @@ option {
   width: 260px;
 }
 
+/* ---------- Clients (Kartoteka klientów) ---------- */
+
+.clients-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.clients-list.archived {
+  margin-top: 12px;
+}
+.client-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-sm);
+  background: var(--field-bg);
+}
+.client-row.archived {
+  opacity: 0.65;
+}
+.client-row.editing {
+  display: block;
+}
+.client-row-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 220px;
+  flex: 1;
+}
+.client-row-name {
+  font-weight: 600;
+}
+.client-row-meta,
+.client-row-contact {
+  font-size: var(--n2-type-xs);
+}
+.client-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
 /* ---------- People / profile ---------- */
 
 .field-narrow {

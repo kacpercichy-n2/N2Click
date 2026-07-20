@@ -187,6 +187,24 @@ describe('loadPlannerSnapshot', () => {
     expect(p.activity[0]).toMatchObject({ entityType: 'task', entityId: TK, actorId: PA });
   });
 
+  it('maps client contact columns, dropping null/empty to absent keys (canonical shape)', async () => {
+    const CLI_B = uuid('client-two');
+    const db = new FakeSelectDb().seed('clients', [
+      { id: CLI, name: 'Alfa', archived: false, contact_person: 'Anna', email: 'a@b.pl', phone: null },
+      { id: CLI_B, name: 'Beta', archived: false, contact_person: null, email: '   ', phone: '  600 100 200 ' },
+    ]);
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const alfa = result.payload.clients.find((c) => c.id === CLI)!;
+    const beta = result.payload.clients.find((c) => c.id === CLI_B)!;
+    expect(alfa).toMatchObject({ name: 'Alfa', contactPerson: 'Anna', email: 'a@b.pl' });
+    expect('phone' in alfa).toBe(false); // null -> absent
+    expect('contactPerson' in beta).toBe(false); // null -> absent
+    expect('email' in beta).toBe(false); // whitespace -> absent
+    expect(beta.phone).toBe('600 100 200'); // trimmed
+  });
+
   it('excludes a project with null dates and a task over the 92-day cap', async () => {
     const db = new FakeSelectDb()
       .seed('projects', [

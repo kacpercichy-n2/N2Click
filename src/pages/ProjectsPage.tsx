@@ -58,6 +58,9 @@ export function ProjectsPage() {
   const [name, setName] = useState('');
   const [clientId, setClientId] = useState('');
   const [newClientName, setNewClientName] = useState('');
+  const [newClientContact, setNewClientContact] = useState('');
+  const [newClientEmail, setNewClientEmail] = useState('');
+  const [newClientPhone, setNewClientPhone] = useState('');
   const [startDate, setStartDate] = useState(todayStr());
   const [endDate, setEndDate] = useState(addDaysStr(todayStr(), 13));
   const [error, setError] = useState('');
@@ -200,10 +203,20 @@ export function ProjectsPage() {
       type: 'SAVE_PROJECT',
       projectId: null,
       draft,
-      newClientName: clientId ? undefined : newClientName,
+      newClient: clientId
+        ? undefined
+        : {
+            name: newClientName,
+            contactPerson: newClientContact,
+            email: newClientEmail,
+            phone: newClientPhone,
+          },
     });
     setName('');
     setNewClientName('');
+    setNewClientContact('');
+    setNewClientEmail('');
+    setNewClientPhone('');
     setError('');
     setCreating(false);
   };
@@ -260,6 +273,38 @@ export function ProjectsPage() {
               </div>
             )}
           </div>
+          {clientId === '' && (
+            <div className="field-row">
+              <div className="field">
+                <label htmlFor="pr-new-client-contact">Osoba kontaktowa</label>
+                <input
+                  id="pr-new-client-contact"
+                  value={newClientContact}
+                  onChange={(e) => setNewClientContact(e.target.value)}
+                  placeholder="np. Anna Kowalska"
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="pr-new-client-email">E-mail</label>
+                <input
+                  id="pr-new-client-email"
+                  type="email"
+                  value={newClientEmail}
+                  onChange={(e) => setNewClientEmail(e.target.value)}
+                  placeholder="np. kontakt@acme.pl"
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="pr-new-client-phone">Telefon</label>
+                <input
+                  id="pr-new-client-phone"
+                  value={newClientPhone}
+                  onChange={(e) => setNewClientPhone(e.target.value)}
+                  placeholder="np. +48 600 100 200"
+                />
+              </div>
+            </div>
+          )}
           <div className="field-row">
             <div className="field">
               <label htmlFor="pr-start">Data startu</label>

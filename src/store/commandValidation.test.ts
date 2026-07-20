@@ -257,24 +257,24 @@ describe('SAVE_PROJECT command validation', () => {
     expectRejected(state, next);
   });
 
-  it("rejects create with '' clientId and blank newClientName", () => {
+  it("rejects create with '' clientId and blank newClient name", () => {
     const state = makeState();
     const next = reducer(state, {
       type: 'SAVE_PROJECT',
       projectId: null,
       draft: draftFromProject({ clientId: '' }),
-      newClientName: '   ',
+      newClient: { name: '   ' },
     });
     expectRejected(state, next);
   });
 
-  it("allows edit with '' clientId and newClientName through the atomic client path", () => {
+  it("allows edit with '' clientId and newClient through the atomic client path", () => {
     const state = makeState();
     const next = reducer(state, {
       type: 'SAVE_PROJECT',
       projectId: 'proj1',
       draft: draftFromProject({ clientId: '' }),
-      newClientName: 'Nowy klient',
+      newClient: { name: 'Nowy klient' },
     });
 
     expect(next).not.toBe(state);
@@ -502,17 +502,53 @@ describe('valid / valid-legacy payloads still apply', () => {
     expect(saved.clientId).toBe('ghost-client');
   });
 
-  it("SAVE_PROJECT create with '' clientId + newClientName creates client + project atomically", () => {
+  it("SAVE_PROJECT create with '' clientId + newClient creates client + project atomically", () => {
     const state = makeState();
     const next = reducer(state, {
       type: 'SAVE_PROJECT',
       projectId: null,
       draft: draftFromProject({ name: 'Fresh', clientId: '' }),
-      newClientName: 'Nowy',
+      newClient: { name: 'Nowy' },
     });
     expect(next).not.toBe(state);
     expect(next.clients.length).toBe(state.clients.length + 1);
     expect(next.projects.length).toBe(state.projects.length + 1);
+  });
+
+  it('SAVE_PROJECT create with newClient contact fields creates a client carrying canonical contact data', () => {
+    const state = makeState();
+    const next = reducer(state, {
+      type: 'SAVE_PROJECT',
+      projectId: null,
+      draft: draftFromProject({ name: 'Fresh', clientId: '' }),
+      newClient: { name: '  Kontaktowy  ', contactPerson: ' Anna ', email: '  a@b.pl ', phone: '   ' },
+    });
+    expect(next).not.toBe(state);
+    const created = next.clients.find((c) => c.name === 'Kontaktowy')!;
+    expect(created.contactPerson).toBe('Anna');
+    expect(created.email).toBe('a@b.pl');
+    // Empty/whitespace phone -> key OMITTED (canonical shape).
+    expect('phone' in created).toBe(false);
+    expect(next.projects.find((p) => p.name === 'Fresh')!.clientId).toBe(created.id);
+  });
+
+  it('SAVE_PROJECT reuse-by-name ignores provided contact fields (never overwrites)', () => {
+    // Existing client c1 has no contact fields; reusing it by name must leave it
+    // untouched even when the draft carries fresh contact data.
+    const state = makeState();
+    const next = reducer(state, {
+      type: 'SAVE_PROJECT',
+      projectId: null,
+      draft: draftFromProject({ name: 'Reuse', clientId: '' }),
+      newClient: { name: 'client', contactPerson: 'Ignored', email: 'ignored@x.pl' },
+    });
+    expect(next).not.toBe(state);
+    // No new client created; the existing one is reused and unchanged.
+    expect(next.clients.length).toBe(state.clients.length);
+    const reused = next.clients.find((c) => c.id === 'c1')!;
+    expect(reused).toBe(CLIENT); // same reference — never mutated
+    expect('contactPerson' in reused).toBe(false);
+    expect(next.projects.find((p) => p.name === 'Reuse')!.clientId).toBe('c1');
   });
 
   it('SET_CURRENT_USER sets an existing person, and \'\' clears both identity fields', () => {

@@ -103,6 +103,18 @@ describe('saved-filter cleanup on deletion', () => {
     expect(next.savedFilters[0].criteria.workCategoryId).toBe('');
   });
 
+  it('SET_CLIENT_ARCHIVED leaves saved-filter clientId refs intact (only DELETE clears them)', () => {
+    const state = makeState({
+      clients: [{ id: 'c1', name: 'Klient', archived: false }],
+      savedFilters: [makeFilter('f1', { clientId: 'c1' })],
+    });
+    const next = reducer(state, { type: 'SET_CLIENT_ARCHIVED', clientId: 'c1', archived: true });
+    expect(next.clients.find((c) => c.id === 'c1')!.archived).toBe(true);
+    // Archiving must NOT scrub the preset reference (that is DELETE-only behavior).
+    expect(next.savedFilters).toBe(state.savedFilters);
+    expect(next.savedFilters.find((f) => f.id === 'f1')!.criteria.clientId).toBe('c1');
+  });
+
   it('keeps the savedFilters array reference when no preset references the id', () => {
     const state = makeState({
       clients: [{ id: 'c1', name: 'Klient', archived: false }],

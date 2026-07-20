@@ -138,6 +138,12 @@ export type LoadPlannerResult =
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 const boolVal = (v: unknown): boolean => v === true;
+/** Non-null non-empty string -> trimmed value; otherwise undefined (canonical
+ *  key-absent-when-empty shape), so post-merge diffs stay stable. */
+const strOrUndef = (v: unknown): string | undefined => {
+  const t = typeof v === 'string' ? v.trim() : '';
+  return t ? t : undefined;
+};
 
 /** SQL `date`/null -> lokalny 'yyyy-MM-dd' albo ''. */
 function sqlDateToLocal(v: unknown): string {
@@ -228,7 +234,7 @@ export async function loadPlannerSnapshot(
     commentsRes,
     activityRes,
   ] = await Promise.all([
-    db.select('clients', 'id, name, archived'),
+    db.select('clients', 'id, name, archived, contact_person, email, phone'),
     db.select(
       'projects',
       'id, client_id, name, description, status_id, paid, start_date, end_date, department_id, service_type_id, created_at, updated_at',
@@ -295,12 +301,22 @@ export async function loadPlannerSnapshot(
   const excludedProjectIds = new Set<string>();
   const excludedTaskIds = new Set<string>();
 
-  // Klienci ----
-  const clients: Client[] = clientsRes.rows.map((row) => ({
-    id: str(row.id),
-    name: str(row.name),
-    archived: boolVal(row.archived),
-  }));
+  // Klienci ---- (pola kontaktowe ustawiane TYLKO gdy niepuste; null/'' => klucz
+  // nieobecny, aby zachować kanoniczny kształt i stabilne diffy po scaleniu).
+  const clients: Client[] = clientsRes.rows.map((row) => {
+    const client: Client = {
+      id: str(row.id),
+      name: str(row.name),
+      archived: boolVal(row.archived),
+    };
+    const contactPerson = strOrUndef(row.contact_person);
+    const email = strOrUndef(row.email);
+    const phone = strOrUndef(row.phone);
+    if (contactPerson) client.contactPerson = contactPerson;
+    if (email) client.email = email;
+    if (phone) client.phone = phone;
+    return client;
+  });
 
   // Projekty ---- (id/departmentId/clientId dosłownie; słowniki przez reverse).
   const projects: Project[] = [];

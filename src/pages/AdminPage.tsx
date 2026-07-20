@@ -3,6 +3,7 @@
 // service types, and work categories. Only admins ("acting as" someone with the
 // admin flag) may change anything here.
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
 import { allStatusesOrdered, isAdminUser } from '../store/selectors';
 import { StatusBadge } from '../components/StatusBadge';
@@ -217,6 +218,10 @@ export function AdminPage() {
 
       <div className="editor-section" data-tour="admin.dictionaries">
         <h2>Klienci</h2>
+        <p className="field-hint">
+          Pełną kartotekę klientów z danymi kontaktowymi prowadzisz na stronie{' '}
+          <Link to="/clients">Klienci</Link>.
+        </p>
         <SimpleList
           items={state.clients.map((c) => ({ id: c.id, name: c.name }))}
           onRename={(id, name) => dispatch({ type: 'RENAME_CLIENT', clientId: id, name })}

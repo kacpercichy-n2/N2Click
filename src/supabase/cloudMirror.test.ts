@@ -145,6 +145,29 @@ describe('diffToCloudOps — families', () => {
     ]);
   });
 
+  it('client upsert carries contact columns (null for empty) and a contact-only edit emits exactly one upsert', () => {
+    const m = maps();
+    // Create: empty contact fields serialize to explicit nulls.
+    const created = diffToCloudOps(localFixture(), {
+      ...localFixture(),
+      clients: [{ id: CLI, name: 'Klient', archived: false }],
+    }, m);
+    expect(created.ops[0].row).toMatchObject({
+      id: CLI, name: 'Klient', contact_person: null, email: null, phone: null,
+    });
+
+    // Contact-only edit (name unchanged): still exactly one upsert with the new columns.
+    const prev: AppData = { ...localFixture(), clients: [{ id: CLI, name: 'Klient', archived: false }] };
+    const next: AppData = {
+      ...localFixture(),
+      clients: [{ id: CLI, name: 'Klient', archived: false, contactPerson: 'Anna', email: 'a@b.pl' }],
+    };
+    const { ops } = diffToCloudOps(prev, next, m);
+    expect(ops).toHaveLength(1);
+    expect(ops[0]).toMatchObject({ kind: 'upsert', table: 'clients' });
+    expect(ops[0].row).toMatchObject({ contact_person: 'Anna', email: 'a@b.pl', phone: null });
+  });
+
   it('save project with a new client emits client upsert THEN project upsert', () => {
     const m = maps();
     const prev = localFixture();
