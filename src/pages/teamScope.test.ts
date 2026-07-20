@@ -137,7 +137,7 @@ describe('buildTeamHierarchy', () => {
 describe('buildCloudTeamHierarchy', () => {
   const cloud = (o: Partial<CloudProfile> & { id: string }): CloudProfile => ({
     firstName: 'Jan', lastName: 'Kowalski', email: 'jan@x.pl', roleTitle: '', cloudRole: 'worker',
-    departmentId: null, ...o,
+    departmentId: null, avatarPath: null, ...o,
   });
   const departments: Department[] = [
     { id: 'd-kre', name: 'Kreacja' },

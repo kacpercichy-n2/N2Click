@@ -34,6 +34,7 @@ import {
   PERIOD_ERROR_LABELS,
   MAX_TASK_PERIOD_DAYS,
 } from '../utils/dates';
+import { Avatar } from './Avatar';
 import { useSaveStatus } from '../utils/useSaveStatus';
 import {
   bypassNavGuardOnce,
@@ -967,11 +968,10 @@ function TaskEditor({
                     disabled={readOnly}
                     title={roTitle}
                   />
-                  <span
-                    className="person-dot"
-                    style={{ background: personColor(p.id) }}
-                    aria-hidden
-                  />
+                  {/* Awatar zamiast samej kropki: zdjęcie osoby, gdy jest, w
+                      przeciwnym razie emoji/inicjały na jej kolorze — kodowanie
+                      kolorem zachowane. */}
+                  <Avatar person={p} size={20} />
                   {p.name}
                 </label>
               );

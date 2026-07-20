@@ -38,6 +38,8 @@ export interface CloudProfile {
   roleTitle: string;
   cloudRole: CloudRole;
   departmentId: string | null;
+  /** Ścieżka obiektu awatara w prywatnym buckecie albo null (brak zdjęcia). */
+  avatarPath: string | null;
 }
 
 export interface OrgSnapshot {
@@ -87,7 +89,9 @@ function toCloudRole(v: unknown): CloudRole {
 
 function toCloudProfile(row: Record<string, unknown>): CloudProfile {
   const departmentId = row.department_id;
+  const avatarPath = row.avatar_path;
   return {
+    avatarPath: typeof avatarPath === 'string' && avatarPath !== '' ? avatarPath : null,
     id: str(row.id),
     firstName: str(row.first_name),
     lastName: str(row.last_name),
@@ -131,7 +135,10 @@ const byName = (a: { name: string }, b: { name: string }): number => a.name.loca
 export async function loadOrgSnapshot(db: ReferenceDb, userId: string): Promise<LoadOrgResult> {
   const [profilesRes, departmentsRes, statusesRes, serviceTypesRes, workCategoriesRes] =
     await Promise.all([
-      db.select('profiles', 'id, first_name, last_name, email, role_title, access_role, department_id'),
+      db.select(
+        'profiles',
+        'id, first_name, last_name, email, role_title, access_role, department_id, avatar_path',
+      ),
       db.select('departments', 'id, name'),
       db.select('statuses', 'id, name, slug, color, sort_order, archived, is_done'),
       db.select('service_types', 'id, name'),

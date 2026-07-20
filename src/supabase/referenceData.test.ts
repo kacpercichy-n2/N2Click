@@ -107,6 +107,27 @@ describe('loadOrgSnapshot — mapping i sortowanie (admin)', () => {
     expect(snap.serviceTypes.map((s) => s.name)).toEqual(['Grafika', 'Wideo']);
     expect(snap.workCategories.map((c) => c.name)).toEqual(['Projekt']);
   });
+
+  it('mapuje avatar_path każdego profilu (pusty/brak => null)', async () => {
+    const db = new FakeReferenceDb()
+      .seed('profiles', [
+        profileRow({ id: U_ADMIN, email: 'ada@x.pl', avatar_path: `${U_ADMIN}/avatar.jpg` }),
+        profileRow({ id: U_MGR, email: 'm@x.pl', avatar_path: '' }),
+        profileRow({ id: U_WORKER, email: 'w@x.pl' }),
+      ])
+      .seed('departments', [])
+      .seed('statuses', [])
+      .seed('service_types', [])
+      .seed('work_categories', []);
+    const res = await loadOrgSnapshot(db, U_ADMIN);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.snapshot.profiles.map((p) => p.avatarPath)).toEqual([
+      `${U_ADMIN}/avatar.jpg`,
+      null,
+      null,
+    ]);
+  });
 });
 
 // ---- 2. Role-scoped rows (manager / worker) ---------------------------------
@@ -202,7 +223,7 @@ describe('effectiveAccessRole — macierz fallbacków', () => {
   const ready: OrgState = {
     status: 'ready',
     snapshot: {
-      profile: { id: 'cloud', firstName: 'C', lastName: '', email: '', roleTitle: '', cloudRole: 'manager', departmentId: null },
+      profile: { id: 'cloud', firstName: 'C', lastName: '', email: '', roleTitle: '', cloudRole: 'manager', departmentId: null, avatarPath: null },
       profiles: [], departments: [], statuses: [], serviceTypes: [], workCategories: [],
     },
   };

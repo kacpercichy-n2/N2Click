@@ -18,6 +18,7 @@ import {
   uploadAvatar,
 } from '../supabase/avatarStorage';
 import { validateAvatarFile } from '../supabase/avatarFile';
+import { useSetPersonAvatar } from '../supabase/AvatarProvider';
 import {
   availableHoursInRange,
   getDepartment,
@@ -501,6 +502,15 @@ function PersonProfile({ personId }: { personId: string }) {
 }
 
 /**
+ * Zmiana zdjęcia wybrana w UI, ale jeszcze NIEZAPISANA: nowy plik (z podglądem)
+ * albo usunięcie bieżącego. Do chmury trafia dopiero po „Zapisz zmiany”.
+ */
+type PendingAvatarChange =
+  | { kind: 'file'; file: File; ext: string; previewUrl: string }
+  | { kind: 'remove' }
+  | null;
+
+/**
  * "Zdjęcie profilowe" — private-bucket avatar photo (Supabase mode only). The
  * parent renders this ONLY when `canUploadAvatarPhoto` is true, so it never
  * mounts (and never touches the Supabase client) in local mode. Retrieval is
@@ -523,8 +533,20 @@ function AvatarPhotoSection({
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
+  // Zmiana WYBRANA, ale jeszcze niezapisana. Zapis następuje wyłącznie po
+  // kliknięciu „Zapisz zmiany” — samo wskazanie pliku niczego nie wysyła.
+  const [pending, setPending] = useState<PendingAvatarChange>(null);
+  const setPersonAvatar = useSetPersonAvatar();
 
   const email = person.email;
+
+  // Podgląd wybranego pliku (obiektowy URL utworzony w `onFile`) żyje tylko do
+  // czasu zmiany/porzucenia wyboru albo odmontowania sekcji.
+  useEffect(() => {
+    const preview = pending?.kind === 'file' ? pending.previewUrl : null;
+    if (!preview) return;
+    return () => URL.revokeObjectURL(preview);
+  }, [pending]);
 
   useEffect(() => {
     let cancelled = false;
@@ -532,6 +554,7 @@ function AvatarPhotoSection({
     setError('');
     setNotice('');
     setPhotoUrl(null);
+    setPending(null);
     void (async () => {
       const res = await fetchAvatarProfile(email);
       if (cancelled) return;
@@ -570,7 +593,8 @@ function AvatarPhotoSection({
     };
   }, [email, isSelf, sessionUserId]);
 
-  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Wybór pliku tylko WALIDUJE i przygotowuje podgląd — nic nie wysyła.
+  const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file || !profileId || busy) return;
@@ -581,36 +605,82 @@ function AvatarPhotoSection({
       setError(check.error);
       return;
     }
+    setPending({
+      kind: 'file',
+      file,
+      ext: check.ext,
+      previewUrl: URL.createObjectURL(file),
+    });
+  };
+
+  const stageRemoval = () => {
+    if (!avatarPath || busy) return;
+    setError('');
+    setNotice('');
+    setPending({ kind: 'remove' });
+  };
+
+  const cancelPending = () => {
+    if (busy) return;
+    setError('');
+    setNotice('');
+    setPending(null);
+  };
+
+  // Jedyne miejsce zapisu do chmury. Dopiero tu zdjęcie trafia do bucketu i do
+  // `profiles.avatar_path`; nieudany zapis NIGDY nie melduje sukcesu i zachowuje
+  // wybór, żeby dało się spróbować ponownie.
+  const onSave = async () => {
+    if (!profileId || !pending || busy) return;
+    setError('');
+    setNotice('');
     setBusy(true);
-    const res = await uploadAvatar({ profileId, file, ext: check.ext, previousPath: avatarPath });
+
+    if (pending.kind === 'remove') {
+      if (!avatarPath) {
+        setBusy(false);
+        setPending(null);
+        return;
+      }
+      const res = await removeAvatar({ profileId, avatarPath });
+      if (!res.ok) {
+        setBusy(false);
+        setError(res.error);
+        return;
+      }
+      setAvatarPath(null);
+      setPhotoUrl(null);
+      setPersonAvatar(email, null);
+      setPending(null);
+      setNotice('Usunięto zdjęcie.');
+      setBusy(false);
+      return;
+    }
+
+    const res = await uploadAvatar({
+      profileId,
+      file: pending.file,
+      ext: pending.ext,
+      previousPath: avatarPath,
+    });
     if (!res.ok) {
       setBusy(false);
       setError(res.error);
       return;
     }
     setAvatarPath(res.path);
-    setNotice('Zapisano awatar.');
     const url = await resolveAvatarUrl(res.path);
     setPhotoUrl(url);
+    if (url) setPersonAvatar(email, { path: res.path, url });
+    setPending(null);
+    setNotice('Zapisano zmiany.');
     setBusy(false);
   };
 
-  const onRemove = async () => {
-    if (!profileId || !avatarPath || busy) return;
-    setError('');
-    setNotice('');
-    setBusy(true);
-    const res = await removeAvatar({ profileId, avatarPath });
-    if (!res.ok) {
-      setBusy(false);
-      setError(res.error);
-      return;
-    }
-    setAvatarPath(null);
-    setPhotoUrl(null);
-    setNotice('Usunięto zdjęcie.');
-    setBusy(false);
-  };
+  // Podgląd: wybrany plik, jawny brak zdjęcia przy zaplanowanym usunięciu, w
+  // przeciwnym razie zapisany stan (`null` = brak zdjęcia, nie „użyj katalogu”).
+  const shownPhotoUrl =
+    pending?.kind === 'file' ? pending.previewUrl : pending?.kind === 'remove' ? null : photoUrl;
 
   return (
     <div className="editor-section">
@@ -632,29 +702,51 @@ function AvatarPhotoSection({
       )}
       {phase === 'ready' && (
         <div className="avatar-photo-section">
-          <Avatar person={person} size={72} photoUrl={photoUrl ?? undefined} />
+          <Avatar person={person} size={72} photoUrl={shownPhotoUrl} />
           <div className="avatar-photo-controls">
-            <label className="btn soft" htmlFor="pp-photo">
-              {busy ? 'Wysyłanie…' : photoUrl ? 'Zmień zdjęcie' : 'Wgraj zdjęcie'}
+            <label className={`btn soft${busy ? ' disabled' : ''}`} htmlFor="pp-photo">
+              {photoUrl || pending?.kind === 'file' ? 'Zmień zdjęcie' : 'Wgraj zdjęcie'}
             </label>
             <input
               id="pp-photo"
               type="file"
               accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
               disabled={busy}
-              onChange={(e) => void onFile(e)}
+              onChange={onFile}
               style={{ display: 'none' }}
             />
-            {avatarPath && (
+            {avatarPath && pending?.kind !== 'remove' && (
               <button
                 type="button"
                 className="btn danger-ghost"
                 disabled={busy}
-                onClick={() => void onRemove()}
+                onClick={stageRemoval}
               >
                 Usuń zdjęcie
               </button>
             )}
+            {pending && (
+              <p className="field-hint" role="status">
+                {pending.kind === 'remove'
+                  ? 'Zdjęcie zostanie usunięte po zapisaniu zmian.'
+                  : 'Wybrano nowe zdjęcie — kliknij „Zapisz zmiany”.'}
+              </p>
+            )}
+            <div className="editor-actions">
+              <button
+                type="button"
+                className="btn primary"
+                disabled={!pending || busy}
+                onClick={() => void onSave()}
+              >
+                {busy ? 'Zapisywanie…' : 'Zapisz zmiany'}
+              </button>
+              {pending && (
+                <button type="button" className="btn soft" disabled={busy} onClick={cancelPending}>
+                  Anuluj
+                </button>
+              )}
+            </div>
             {error && (
               <p className="field-error" role="alert">
                 {error}

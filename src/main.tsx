@@ -6,6 +6,7 @@ import { AppStoreProvider } from './store/AppStore';
 import { SessionProvider } from './auth/SessionProvider';
 import { OrgDataProvider } from './supabase/OrgDataProvider';
 import { CloudSyncProvider } from './supabase/CloudSyncProvider';
+import { AvatarProvider } from './supabase/AvatarProvider';
 import { App } from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import './styles.css';
@@ -53,10 +54,16 @@ createRoot(rootEl).render(
                 OrgDataProvider (needs the org snapshot) and outside the router
                 (needs no router hooks). Idle in local mode — no client created. */}
             <CloudSyncProvider>
-              {/* Respect OS "reduce motion" for every animation in the app. */}
-              <MotionConfig reducedMotion="user">
-                <RouterProvider router={router} future={{ v7_startTransition: true }} />
-              </MotionConfig>
+              {/* Wspólne źródło zdjęć profilowych dla każdego <Avatar> w
+                  aplikacji. Siedzi wewnątrz OrgDataProvider (bierze profile ze
+                  snapshotu organizacji) i poza routerem (nie potrzebuje jego
+                  hooków). W trybie lokalnym bezczynny — katalog pusty. */}
+              <AvatarProvider>
+                {/* Respect OS "reduce motion" for every animation in the app. */}
+                <MotionConfig reducedMotion="user">
+                  <RouterProvider router={router} future={{ v7_startTransition: true }} />
+                </MotionConfig>
+              </AvatarProvider>
             </CloudSyncProvider>
           </OrgDataProvider>
         </SessionProvider>

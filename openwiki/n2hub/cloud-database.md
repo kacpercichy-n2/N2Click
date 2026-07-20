@@ -29,6 +29,15 @@
   projections — no cloud path creates or deletes local `people` rows. Details,
   queue durability and the retirement gate:
   [state-and-persistence.md](state-and-persistence.md).
+- Avatars: `avatarFile.ts` (pure validation / path / signed-URL cache decisions)
+  + `avatarStorage.ts` (private `avatars` bucket, `profiles.avatar_path`, reads
+  only via `createSignedUrl`). `avatarDirectory.ts` + `AvatarProvider.tsx` are
+  the ONE source of photos for the whole UI: the provider signs URLs for every
+  profile in the org snapshot (`OrgSnapshot.profiles[].avatarPath`) keyed by
+  normalized e-mail, and `components/Avatar.tsx` reads it, so every call site
+  shows other people's photos too. Upload/removal is committed only by the
+  explicit "Zapisz zmiany" action on the profile page; a failed write never
+  reports success. Local mode: directory empty, no client created.
 - `src/supabase/provisioning.ts` + `supabase/functions/provision-account/` own
   admin account provisioning; `dataImport.ts` owns the one-time localStorage
   import; `migrationStatus.ts` owns the reversible retirement handshake.

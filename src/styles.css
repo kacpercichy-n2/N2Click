@@ -629,7 +629,9 @@ textarea {
 .btn.danger-ghost:hover {
   background: var(--n2-danger-soft);
 }
-.btn:disabled {
+.btn:disabled,
+/* `<label class="btn">` nie może być `:disabled` (np. wybór pliku awatara). */
+.btn.disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }

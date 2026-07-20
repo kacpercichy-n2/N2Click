@@ -1,10 +1,19 @@
 import type { Person } from '../types';
 import { personColor } from '../utils/colors';
+import { usePersonPhotoUrl } from '../supabase/AvatarProvider';
 
 /**
- * Person avatar: uploaded photo when `photoUrl` is set (Supabase-mode profile
- * page only), otherwise emoji when set, otherwise initials on the person's
- * color. Without `photoUrl` the render is byte-identical to before.
+ * Person avatar: uploaded photo, otherwise emoji when set, otherwise initials
+ * on the person's color.
+ *
+ * The photo comes from the shared avatar directory (AvatarProvider) keyed by
+ * e-mail, so EVERY call site — header, people lists, assignees, workload rows,
+ * timeline, search, comments — shows photos for every visible person, not just
+ * the signed-in one. `photoUrl` overrides the directory and exists for the
+ * profile page, which previews a staged (not yet saved) file. Passing `null`
+ * suppresses the directory photo explicitly (the profile page uses it while a
+ * removal is staged). In local mode and without the provider the directory is
+ * empty and the render is unchanged.
  */
 export function Avatar({
   person,
@@ -13,10 +22,12 @@ export function Avatar({
 }: {
   person: Person;
   size?: number;
-  photoUrl?: string;
+  photoUrl?: string | null;
 }) {
+  const directoryUrl = usePersonPhotoUrl(person);
+  const shownUrl = photoUrl === undefined ? directoryUrl : photoUrl ?? undefined;
   const initials = (person.firstName[0] ?? '') + (person.lastName[0] ?? '');
-  if (photoUrl) {
+  if (shownUrl) {
     const style: React.CSSProperties = {
       width: size,
       height: size,
@@ -27,7 +38,7 @@ export function Avatar({
     };
     return (
       <span className="avatar avatar-photo" style={style} title={person.name} aria-hidden>
-        <img src={photoUrl} alt="" />
+        <img src={shownUrl} alt="" />
       </span>
     );
   }
