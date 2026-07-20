@@ -2604,6 +2604,36 @@ option {
   color: var(--text-muted);
   margin-top: 4px;
 }
+/* Priority pill + due date on one line under the project/client label. */
+.kanban-card-badges {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+.kanban-card-badges .kanban-card-meta {
+  margin-top: 0;
+  font-family: var(--n2-font-data);
+  white-space: nowrap;
+}
+/* Assignee avatars; overflow collapses into a "+N" pill. */
+.kanban-card-people {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+}
+.kanban-card-more {
+  font-size: var(--n2-type-xs);
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-pill);
+  padding: 1px 7px;
+  font-family: var(--n2-font-data);
+  font-variant-numeric: tabular-nums;
+}
 .kanban-add-col {
   flex: 0 0 220px;
   display: flex;

@@ -116,20 +116,20 @@ export const TUTORIAL_MODULES: TutorialModule[] = [
   {
     id: 'kanban',
     title: 'Kanban',
-    summary: 'Lejek statusów projektów.',
+    summary: 'Lejek statusów zadań.',
     minutes: '2 min',
     roles: EVERYONE,
     steps: [
       {
         target: 'kanban.board',
         title: 'Kolumny opisują etap',
-        body: 'Każda kolumna to status, a każda karta to projekt. Kliknięcie karty otwiera szczegóły.',
+        body: 'Każda kolumna to status, a każda karta to zadanie. Kliknięcie karty otwiera edycję zadania.',
         route: '/kanban',
       },
       {
         target: 'kanban.column',
         title: 'Zmiana statusu',
-        body: 'Uprawnione osoby mogą przeciągnąć kartę do innej kolumny. Jeśli nie używasz przeciągania, otwórz projekt i zmień status w szczegółach.',
+        body: 'Uprawnione osoby mogą przeciągnąć kartę do innej kolumny. Jeśli nie używasz przeciągania, otwórz zadanie i zmień status w szczegółach.',
         route: '/kanban',
       },
     ],

@@ -51,3 +51,18 @@ repair. Ordering must not touch completion semantics or calendar placement.
   arrows, mirror/hydration/dataImport, migration `20260720200000` + test list.
 - Focused command: PASS (381). Full suite PASS (960); `tsc` + `npm run build`
   clean. Wiki: `cloud-database.md` updated; `state-and-persistence.md` unchanged.
+
+## Developer result (2026-07-21) — kanban-on-tasks
+
+- KanbanPage now boards TASKS by task status: new pure `src/pages/kanbanBoard.ts`
+  (grouping, archived bucket, client/paid via project + person filter, ordering),
+  page rewrite (SET_TASK_STATUS drag gated on `tasks.manage`, card opens
+  TaskModal), new card CSS in `styles.css`, new `kanbanBoard.test.ts`.
+- Focused PASS (19); full `npx vitest run` PASS 1024/1024; `npm run build` clean.
+  Package's 933 baseline was stale — real baseline 1005. Wiki unchanged.
+
+## Test-writer result (2026-07-21) — kanban onboarding copy
+
+- `src/onboarding/catalog.ts`: fixed `id: 'kanban'` summary + two step bodies
+  to describe tasks, not projects (board/column steps, click opens task edit).
+- `npx vitest run` PASS 1024/1024; `npm run build` clean. No skips.
