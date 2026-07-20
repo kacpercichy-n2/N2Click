@@ -132,6 +132,38 @@ describe('createSupabasePlannerDb', () => {
     await expect(db.remove('clients', { id: 'x' })).resolves.toEqual({
       error: { kind: 'transient', message: 'offline' },
     });
+    await expect(db.update('profiles', { phone: '1' }, { id: 'x' })).resolves.toEqual({
+      error: { kind: 'transient', message: 'offline' },
+    });
+  });
+
+  it('update: 0 trafionych wierszy (RLS wycisza) => permission, trafienie => ok', async () => {
+    const makeClient = (rows: Array<Record<string, unknown>>) =>
+      ({
+        from: () => ({
+          update: () => {
+            const builder = {
+              eq: () => builder,
+              select: async () => ({ data: rows, error: null }),
+            };
+            return builder;
+          },
+        }),
+      }) as unknown as Parameters<typeof createSupabasePlannerDb>[0];
+
+    const missed = await createSupabasePlannerDb(makeClient([])).update(
+      'profiles',
+      { phone: '123' },
+      { id: 'x' },
+    );
+    expect(missed.error?.kind).toBe('permission');
+
+    const hit = await createSupabasePlannerDb(makeClient([{ id: 'x' }])).update(
+      'profiles',
+      { phone: '123' },
+      { id: 'x' },
+    );
+    expect(hit.error).toBeNull();
   });
 });
 
@@ -304,6 +336,9 @@ class FakeWriteDb implements PlannerDb {
   async upsert(_table: string, row: Row) {
     if (this.failUpsert) return { error: { kind: 'transient' as const, message: 'net' } };
     this.settings.set(String(row.key), row);
+    return { error: null };
+  }
+  async update() {
     return { error: null };
   }
   async remove() {

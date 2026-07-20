@@ -52,9 +52,16 @@
   are append-only (no UPDATE/DELETE policies). `app_settings` — org runtime
   flags (`local_writes_retired`).
 - Access model: administrator = everything; manager = own department
-  (profiles, projects, memberships/assignments restricted to own-department
-  people); worker = own profile, member projects (read), assigned tasks
-  (read/update), own workload rows.
+  (profiles incl. UPDATE of non-admin members, projects,
+  memberships/assignments restricted to own-department people); worker = own
+  profile (read + self-UPDATE), member projects (read), projects of tasks
+  assigned to them (read, `app.has_assignment_in_project` —
+  20260720150000; without it client hydration cascade-dropped the task and
+  its workload rows), assigned tasks (read/update), own workload rows.
+- Profile edits mirror as UPDATE, never upsert: `INSERT ... ON CONFLICT`
+  must pass the admin-only INSERT policy even when it resolves to an update,
+  which rejected every non-admin self-edit. `PlannerDb.update` classifies an
+  RLS-silenced 0-row UPDATE as `permission` (no false „Zapisano”).
 
 ## Rules that change work
 

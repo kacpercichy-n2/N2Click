@@ -69,6 +69,14 @@ export interface PlannerDb extends Pick<ImportDb, 'select'> {
     row: Record<string, unknown>,
     onConflict?: string,
   ): Promise<{ error: CloudWriteError | null }>;
+  /** UPDATE istniejącego wiersza pasującego do `match`. RLS wycisza UPDATE do
+   *  0 wierszy zamiast rzucić błędem — 0 trafień klasyfikujemy jako
+   *  'permission', żeby pominięty zapis nigdy nie raportował „Zapisano”. */
+  update(
+    table: string,
+    row: Record<string, unknown>,
+    match: Record<string, string>,
+  ): Promise<{ error: CloudWriteError | null }>;
   /** DELETE wierszy pasujących do `match` (używamy `remove`, nie `delete`). */
   remove(
     table: string,
@@ -91,6 +99,30 @@ export function createSupabasePlannerDb(client: SupabaseClient): PlannerDb {
         if (error) {
           const code = (error as { code?: string }).code ?? null;
           return { error: classifyWriteError(code, error.message ?? 'Błąd zapisu.') };
+        }
+        return { error: null };
+      } catch (e) {
+        return { error: classifyWriteError(null, e instanceof Error ? e.message : String(e)) };
+      }
+    },
+    async update(table, row, match) {
+      try {
+        let query = client.from(table).update(row);
+        for (const [column, value] of Object.entries(match)) {
+          query = query.eq(column, value);
+        }
+        const { data, error } = await query.select('id');
+        if (error) {
+          const code = (error as { code?: string }).code ?? null;
+          return { error: classifyWriteError(code, error.message ?? 'Błąd zapisu.') };
+        }
+        if (!Array.isArray(data) || data.length === 0) {
+          return {
+            error: {
+              kind: 'permission',
+              message: 'UPDATE nie objął żadnego wiersza (RLS odfiltrował cel).',
+            },
+          };
         }
         return { error: null };
       } catch (e) {

@@ -87,6 +87,20 @@ class FakePlannerDb implements PlannerDb {
     this.data.set(table, list);
     return { error: null };
   }
+  async update(table: string, row: Row, match: Record<string, string>) {
+    const list = this.data.get(table) ?? [];
+    const idx = list.findIndex((r) =>
+      Object.entries(match).every(([k, v]) => String(r[k]) === v),
+    );
+    if (idx < 0) {
+      return {
+        error: { kind: 'permission', message: 'UPDATE nie objął żadnego wiersza.' } as CloudWriteError,
+      };
+    }
+    list[idx] = { ...list[idx], ...row };
+    this.data.set(table, list);
+    return { error: null };
+  }
   async remove(table: string, match: Record<string, string>) {
     const list = this.data.get(table) ?? [];
     this.data.set(

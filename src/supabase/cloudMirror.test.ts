@@ -315,8 +315,9 @@ describe('diffToCloudOps — milestones + workload families', () => {
 // ---- applyCloudOps -----------------------------------------------------------
 
 class FakePlannerDb implements PlannerDb {
-  calls: Array<{ op: 'upsert' | 'remove'; table: string }> = [];
+  calls: Array<{ op: 'upsert' | 'update' | 'remove'; table: string }> = [];
   upsertErr: (table: string, row: Record<string, unknown>) => CloudWriteError | null = () => null;
+  updateErr: (table: string, row: Record<string, unknown>) => CloudWriteError | null = () => null;
   removeErr: (table: string) => CloudWriteError | null = () => null;
   async select() {
     return { rows: [] as Array<Record<string, unknown>>, error: null };
@@ -324,6 +325,10 @@ class FakePlannerDb implements PlannerDb {
   async upsert(table: string, row: Record<string, unknown>) {
     this.calls.push({ op: 'upsert', table });
     return { error: this.upsertErr(table, row) };
+  }
+  async update(table: string, row: Record<string, unknown>) {
+    this.calls.push({ op: 'update', table });
+    return { error: this.updateErr(table, row) };
   }
   async remove(table: string) {
     this.calls.push({ op: 'remove', table });
@@ -353,6 +358,26 @@ describe('applyCloudOps', () => {
     expect(result.remaining.map((o) => o.sourceId)).toEqual(['two', 'three']);
     // op 'three' was never attempted.
     expect(db.calls).toHaveLength(2);
+  });
+
+  it('routes an update op to db.update and drops it on permission', async () => {
+    const db = new FakePlannerDb();
+    db.updateErr = () => ({ kind: 'permission', message: 'row-level security' });
+    const updateOp: CloudOp = {
+      kind: 'update',
+      table: 'profiles',
+      row: { phone: '123' },
+      match: { id: 'p1' },
+      sourceId: 'p1',
+      label: 'Profil „Test”',
+    };
+    const result = await applyCloudOps(db, [op('one'), updateOp]);
+    expect(db.calls).toEqual([
+      { op: 'upsert', table: 'clients' },
+      { op: 'update', table: 'profiles' },
+    ]);
+    expect(result.done).toBe(1);
+    expect(result.dropped).toEqual([{ label: 'Profil „Test”', message: 'row-level security' }]);
   });
 
   it('drops a permission-denied op with a Polish notice and continues', async () => {
@@ -411,8 +436,12 @@ describe('diffToCloudOps — słowniki i profile (przewód zapisu paneli admina)
     const profileOps = ops.filter((o) => o.table === 'profiles');
     expect(profileOps).toHaveLength(1);
     const up = profileOps[0];
+    // UPDATE (nie upsert): polityka INSERT na profiles jest admin-only, a
+    // `INSERT ... ON CONFLICT` sprawdza ją nawet przy samej aktualizacji.
+    expect(up.kind).toBe('update');
+    expect(up.match).toEqual({ id: CLOUD_PA }); // zmapowane po e-mailu na profil chmury
+    expect(up.row).not.toHaveProperty('id');
     expect(up.row).toMatchObject({
-      id: CLOUD_PA, // zmapowane po e-mailu na profil chmury
       role_title: 'Projektant',
       capacity: 6,
       access_role: 'manager',

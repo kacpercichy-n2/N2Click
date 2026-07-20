@@ -1,6 +1,6 @@
 // Czyste lustro diff-owe (id maps + diff + apply) dla danych planera. Mapuje
-// mutacje AppStore na operacje zapisu do Supabase (upsert/remove) i wykonuje je
-// przez wstrzyknięty `PlannerDb`. Testowalne w node — bez SDK, bez jsdom.
+// mutacje AppStore na operacje zapisu do Supabase (upsert/update/remove)
+// i wykonuje je przez wstrzyknięty `PlannerDb`. Testowalne w node — bez SDK, bez jsdom.
 //
 // GRANICE / INVARIANTS:
 //   * Zapisy chmury liczone są ze STANU (diff prev -> next) PO reduktorze, nie
@@ -139,10 +139,10 @@ export function buildCloudIdMaps(local: AppData, org: OrgSnapshot): CloudIdMaps 
 // ---- Operacje ----------------------------------------------------------------
 
 export type CloudOp = {
-  kind: 'upsert' | 'remove';
+  kind: 'upsert' | 'update' | 'remove';
   table: string;
   row?: Record<string, unknown>;
-  match?: Record<string, string>;
+  match?: Record<string, string>; // cel dla 'update' i 'remove'
   onConflict?: string; // dla złożonego upsertu przypisań (task_id,profile_id)
   sourceId: string; // lokalny id / klucz pary — do debugowania i suppresji
   label: string; // polska etykieta do bannera
@@ -646,11 +646,14 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
         ? maps.people.get(p.supervisorId) ??
           (maps.cloudProfileIds.has(p.supervisorId) ? p.supervisorId : null)
         : null;
+      // UPDATE, nie upsert: `INSERT ... ON CONFLICT` wymaga przejścia polityki
+      // INSERT (profiles_insert_admin) nawet gdy kończy się aktualizacją, więc
+      // upsert odrzucał każdą edycję własnego profilu przez nie-administratora.
       ops.push({
-        kind: 'upsert',
+        kind: 'update',
         table: 'profiles',
+        match: { id: profileId },
         row: {
-          id: profileId,
           first_name: p.firstName,
           last_name: p.lastName,
           role_title: p.role,
@@ -695,7 +698,9 @@ export async function applyCloudOps(db: PlannerDb, ops: CloudOp[]): Promise<Appl
     const res =
       op.kind === 'upsert'
         ? await db.upsert(op.table, op.row ?? {}, op.onConflict)
-        : await db.remove(op.table, op.match ?? {});
+        : op.kind === 'update'
+          ? await db.update(op.table, op.row ?? {}, op.match ?? {})
+          : await db.remove(op.table, op.match ?? {});
     if (res.error) {
       if (res.error.kind === 'transient') {
         return { done, dropped, remaining: ops.slice(i), error: SYNC_ERROR_MSG };
