@@ -9,7 +9,10 @@
 //
 // `fetch` i `env` są wstrzykiwane, dzięki czemu moduł jest testowalny w node.
 import { resolveSupabaseConfig } from './config';
-import type { ProvisionAccountRequest } from '../../supabase/functions/provision-account/contract';
+import {
+  DEFAULT_INITIAL_PASSWORD,
+  type ProvisionAccountRequest,
+} from '../../supabase/functions/provision-account/contract';
 
 export type ProvisionResult = { ok: true; message: string } | { ok: false; message: string };
 
@@ -24,7 +27,7 @@ export interface ProvisionDeps {
 
 /** Polskie komunikaty klienta — nigdy surowy tekst SDK ani wartości sekretów. */
 export const PROVISION_CLIENT_MESSAGES = {
-  success: 'Konto zostało utworzone. Zaproszenie zostało wysłane na podany adres e-mail.',
+  success: `Konto zostało utworzone. Hasło startowe: ${DEFAULT_INITIAL_PASSWORD} — użytkownik musi je zmienić przy pierwszym logowaniu.`,
   network: 'Nie udało się połączyć z serwerem. Sprawdź połączenie i spróbuj ponownie.',
   generic: 'Nie udało się utworzyć konta. Spróbuj ponownie później.',
 } as const;

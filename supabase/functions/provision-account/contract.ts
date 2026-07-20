@@ -67,6 +67,13 @@ export type InitialPassword =
   | { mode: 'invite' }
   | { mode: 'temporary-password'; password: string };
 
+/**
+ * Bazowe hasło startowe nadawane każdemu nowo zakładanemu kontu z UI. Serwer
+ * zawsze ustawia `must_change_password: true`, więc użytkownik musi je zmienić
+ * przy pierwszym logowaniu — to hasło jednorazowe, nie sekret długoterminowy.
+ */
+export const DEFAULT_INITIAL_PASSWORD = 'N2Media2026!';
+
 /** Znormalizowany, zwalidowany kontrakt żądania provisioningu. */
 export interface ProvisionAccountRequest {
   firstName: string;

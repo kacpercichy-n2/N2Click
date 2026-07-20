@@ -14,7 +14,10 @@ import {
 } from './teamScope';
 import type { CloudProfile } from '../supabase/referenceData';
 import type { AccessRole, Department, Person } from '../types';
-import { PROVISIONING_MESSAGES } from '../../supabase/functions/provision-account/contract';
+import {
+  DEFAULT_INITIAL_PASSWORD,
+  PROVISIONING_MESSAGES,
+} from '../../supabase/functions/provision-account/contract';
 
 const UUID_DEP = '123e4567-e89b-12d3-a456-426614174000';
 const UUID_MGR = '223e4567-e89b-12d3-a456-426614174999';
@@ -216,7 +219,7 @@ describe('buildProvisionRequest — walidacja (reużycie kontraktu)', () => {
     accessRole: 'worker',
   };
 
-  it('normalizuje i buduje żądanie w trybie invite', () => {
+  it('normalizuje i buduje żądanie z bazowym hasłem startowym', () => {
     const result = buildProvisionRequest(valid);
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -228,7 +231,7 @@ describe('buildProvisionRequest — walidacja (reużycie kontraktu)', () => {
         departmentId: UUID_DEP,
         managerProfileId: UUID_MGR,
         accessRole: 'worker',
-        initialPassword: { mode: 'invite' },
+        initialPassword: { mode: 'temporary-password', password: DEFAULT_INITIAL_PASSWORD },
       });
     }
   });
