@@ -4,6 +4,7 @@
 // continues). No SDK, no live Supabase — an injected fake PlannerDb.
 import { describe, expect, it } from 'vitest';
 import { emptyData } from '../store/storage';
+import { reducer } from '../store/AppStore';
 import type { AppData, Person, Project, Task } from '../types';
 import type { CloudProfile, OrgSnapshot } from './referenceData';
 import type { CloudWriteError, PlannerDb } from './plannerData';
@@ -52,7 +53,7 @@ function makeTask(o: Partial<Task> & { id: string }): Task {
   return {
     projectId: PR, statusId: '', title: 'Zadanie', description: '', startDate: '2026-07-06',
     endDate: '2026-07-08', estimatedHours: null, priority: 'normal', workCategoryId: '', departmentId: '',
-    checklist: [], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', ...o,
+    checklist: [], orderIndex: 0, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', ...o,
   };
 }
 const cloudProfile = (o: Partial<CloudProfile> & { id: string }): CloudProfile => ({
@@ -172,6 +173,31 @@ describe('diffToCloudOps — families', () => {
     const prev: AppData = { ...localFixture(), tasks: [makeTask({ id: TK })] };
     const { ops } = diffToCloudOps(prev, localFixture(), m);
     expect(ops).toEqual([expect.objectContaining({ kind: 'remove', table: 'tasks', match: { id: TK } })]);
+  });
+
+  it('an adjacent reorder swap emits EXACTLY two task upserts carrying order_index', () => {
+    const m = maps();
+    const TK2 = uuid('task-two');
+    const prev: AppData = {
+      ...localFixture(),
+      tasks: [makeTask({ id: TK, orderIndex: 0 }), makeTask({ id: TK2, orderIndex: 1 })],
+    };
+    const next = reducer(prev, { type: 'REORDER_PROJECT_TASK', taskId: TK, direction: 1 });
+    const taskUpserts = diffToCloudOps(prev, next, m).ops.filter(
+      (o) => o.table === 'tasks' && o.kind === 'upsert',
+    );
+    expect(taskUpserts).toHaveLength(2);
+    const rowOf = (id: string) => taskUpserts.find((o) => o.row!.id === id)!.row!;
+    expect(rowOf(TK).order_index).toBe(1);
+    expect(rowOf(TK2).order_index).toBe(0);
+  });
+
+  it('a rejected reorder (unknown task) keeps the state reference so the diff emits zero ops', () => {
+    const m = maps();
+    const prev: AppData = { ...localFixture(), tasks: [makeTask({ id: TK, orderIndex: 0 })] };
+    const next = reducer(prev, { type: 'REORDER_PROJECT_TASK', taskId: uuid('ghost'), direction: 1 });
+    expect(next).toBe(prev);
+    expect(diffToCloudOps(prev, next, m).ops).toHaveLength(0);
   });
 
   it('emits composite upsert/remove for assignment set deltas', () => {

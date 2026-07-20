@@ -16,7 +16,7 @@ import {
   projectPlannedTotal,
   taskPlannedTotal,
   taskPlanningStatus,
-  tasksOfProject,
+  orderedTasksOfProject,
 } from '../store/selectors';
 import { Coin } from '../components/Coin';
 import { StatusBadge } from '../components/StatusBadge';
@@ -188,9 +188,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   // change lands): render nothing for that frame.
   if (!project) return null;
 
-  const tasks = tasksOfProject(state, project.id).sort((a, b) =>
-    a.startDate.localeCompare(b.startDate),
-  );
+  const tasks = orderedTasksOfProject(state, project.id);
   const derivedDepartments = departmentsOfProject(state, project.id);
   const milestones = milestonesOfProject(state, project.id);
   const statuses = activeStatuses(state);
@@ -488,7 +486,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
           <p className="field-hint">W tym projekcie nie ma jeszcze zadań.</p>
         ) : (
           <ul className="project-task-list">
-            {tasks.map((t) => (
+            {tasks.map((t, i) => (
               <li key={t.id} className="project-task-row">
                 <button
                   type="button"
@@ -509,6 +507,32 @@ function ProjectDetail({ projectId }: { projectId: string }) {
                   </span>
                   <ChevronRight className="card-chevron" size={16} aria-hidden />
                 </button>
+                {canManageTasks && (
+                  <span className="project-task-reorder">
+                    <button
+                      type="button"
+                      className="nav-btn"
+                      disabled={i === 0}
+                      onClick={() =>
+                        dispatch({ type: 'REORDER_PROJECT_TASK', taskId: t.id, direction: -1 })
+                      }
+                      aria-label={`Przesuń zadanie „${t.title}” wyżej`}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      className="nav-btn"
+                      disabled={i === tasks.length - 1}
+                      onClick={() =>
+                        dispatch({ type: 'REORDER_PROJECT_TASK', taskId: t.id, direction: 1 })
+                      }
+                      aria-label={`Przesuń zadanie „${t.title}” niżej`}
+                    >
+                      ↓
+                    </button>
+                  </span>
+                )}
               </li>
             ))}
           </ul>

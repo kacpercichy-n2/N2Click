@@ -97,6 +97,13 @@ export interface Task {
   // wyłącznie jako zaszłość (fallback, gdy żadne zadanie nie ma działu).
   departmentId: string;
   checklist: ChecklistItem[]; // embedded, replaced wholesale on save
+  // Ręczna, per-PROJEKT ranga wyświetlania na liście zadań w szczegółach
+  // projektu (0-based). NIE mylić z `WorkloadEntry.sortIndex`, które porządkuje
+  // bloki w obrębie doby/zasobnika danej osoby (patrz niżej). `orderIndex`
+  // dotyczy wyłącznie kolejności zadań w projekcie; ukończenie/kalendarz/godziny
+  // są od niej niezależne. Legacy repair nadaje deterministyczny domyślny ciąg
+  // 0..n-1 per projekt w kolejności (startDate, createdAt, id).
+  orderIndex: number;
   createdAt: string; // ISO timestamp
   updatedAt: string; // ISO timestamp
 }

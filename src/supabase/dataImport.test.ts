@@ -102,7 +102,7 @@ function makeTask(o: Partial<Task> & { id: string }): Task {
     projectId: '', statusId: '', title: 'Zadanie', description: '', startDate: '2026-07-06',
     endDate: '2026-07-08', estimatedHours: null, priority: 'normal', workCategoryId: '',
     departmentId: '',
-    checklist: [], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', ...o,
+    checklist: [], orderIndex: 0, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', ...o,
   };
 }
 

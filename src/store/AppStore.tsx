@@ -170,6 +170,7 @@ export type Action =
   | { type: 'MOVE_TASK'; taskId: string; dayDelta: number }
   | { type: 'SET_TASK_DATES'; taskId: string; startDate: string; endDate: string }
   | { type: 'SET_TASK_STATUS'; taskId: string; statusId: string }
+  | { type: 'REORDER_PROJECT_TASK'; taskId: string; direction: -1 | 1 }
   | { type: 'SAVE_PROJECT'; projectId: string | null; draft: ProjectDraft }
   | { type: 'DELETE_PROJECT'; projectId: string }
   | { type: 'SET_PROJECT_STATUS'; projectId: string; statusId: string }
@@ -411,6 +412,8 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
       workCategoryId,
       departmentId,
       checklist,
+      // Nowe zadanie ląduje NA KOŃCU swojego projektu.
+      orderIndex: maxOrderIndexOfProject(state, draft.projectId) + 1,
       createdAt: ts,
       updatedAt: ts,
     };
@@ -419,6 +422,13 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
     created = true;
   } else {
     realTaskId = taskId;
+    const prev = state.tasks.find((t) => t.id === taskId)!;
+    // Zmiana projektu (edycja) => dopisz na końcu projektu docelowego; ten sam
+    // projekt => zachowaj dotychczasową rangę (kolejność jest kosmetyczna).
+    const orderIndex =
+      prev.projectId === draft.projectId
+        ? prev.orderIndex
+        : maxOrderIndexOfProject(state, draft.projectId) + 1;
     tasks = tasks.map((t) =>
       t.id === taskId
         ? {
@@ -434,6 +444,7 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
             workCategoryId,
             departmentId,
             checklist,
+            orderIndex,
             updatedAt: ts,
           }
         : t,
@@ -1642,6 +1653,53 @@ function setStatusArchived(state: AppData, statusId: string, archived: boolean):
   };
 }
 
+/** Najwyższa `orderIndex` w danym projekcie, albo -1 gdy projekt jest pusty. */
+function maxOrderIndexOfProject(state: AppData, projectId: string): number {
+  let max = -1;
+  for (const t of state.tasks) {
+    if (t.projectId === projectId && Number.isFinite(t.orderIndex) && t.orderIndex > max) {
+      max = t.orderIndex;
+    }
+  }
+  return max;
+}
+
+// Ręczna zmiana kolejności zadań w projekcie. Kosmetyka (jak reorderStatus):
+// ukończenie/kalendarz/godziny są od kolejności NIEZALEŻNE, a powtarzane
+// kliknięcia zaśmiecałyby log — więc BEZ wiersza aktywności i BEZ zmiany
+// `updatedAt`. Nieprawidłowe wejście (nieznane id, ruch poza krawędź) zwraca tę
+// SAMĄ referencję stanu (invariant 6). Kanoniczny klucz kolejności:
+// (orderIndex asc, startDate asc, id asc) — identyczny jak w selektorze, więc
+// wiersze chmury same-0 zachowują się jak dzisiejszy sort po startDate.
+function reorderProjectTask(state: AppData, taskId: string, direction: -1 | 1): AppData {
+  // Wrong payload shape (kierunek spoza {-1, 1}) => ta sama referencja stanu.
+  if (direction !== -1 && direction !== 1) return state;
+  const target = state.tasks.find((t) => t.id === taskId);
+  if (!target) return state;
+  const ordered = state.tasks
+    .filter((t) => t.projectId === target.projectId)
+    .sort(
+      (a, b) =>
+        a.orderIndex - b.orderIndex ||
+        a.startDate.localeCompare(b.startDate) ||
+        a.id.localeCompare(b.id),
+    );
+  const idx = ordered.findIndex((t) => t.id === taskId);
+  const swapWith = idx + direction;
+  if (idx === -1 || swapWith < 0 || swapWith >= ordered.length) return state;
+  [ordered[idx], ordered[swapWith]] = [ordered[swapWith], ordered[idx]];
+  // Renumeruj 0..n-1 tylko w tym projekcie; zadania, których ranga się nie
+  // zmieniła, zachowują tożsamość obiektu (minimalizuje upserty mirrora).
+  const orderOf = new Map(ordered.map((t, i) => [t.id, i]));
+  return {
+    ...state,
+    tasks: state.tasks.map((t) => {
+      const next = orderOf.get(t.id);
+      return next === undefined || next === t.orderIndex ? t : { ...t, orderIndex: next };
+    }),
+  };
+}
+
 // Cosmetic ordering only (invariant: completion never comes from order), and
 // repeat-click reorders would spam — so NO activity row is logged here.
 function reorderStatus(state: AppData, statusId: string, direction: -1 | 1): AppData {
@@ -2644,6 +2702,8 @@ export function reducer(state: AppData, action: Action): AppData {
       };
     case 'SAVE_STATUS':
       return saveStatus(state, action.statusId, action.name, action.color);
+    case 'REORDER_PROJECT_TASK':
+      return reorderProjectTask(state, action.taskId, action.direction);
     case 'REORDER_STATUS':
       return reorderStatus(state, action.statusId, action.direction);
     case 'SET_STATUS_ARCHIVED':

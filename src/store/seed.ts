@@ -284,6 +284,8 @@ export function buildSampleData(): AppData {
       { id: uid(), text: 'Sekcja hero', done: false },
       { id: uid(), text: 'Tabela cen', done: false },
     ],
+    // Kolejność wyświetlania w projekcie (dopisywane na końcu przy tworzeniu).
+    orderIndex: 0,
     createdAt: now,
     updatedAt: now,
   };
@@ -320,6 +322,8 @@ export function buildSampleData(): AppData {
     workCategoryId: catKreacja.id,
     departmentId: depDesign.id,
     checklist: [],
+    // Kolejność wyświetlania w projekcie (dopisywane na końcu przy tworzeniu).
+    orderIndex: 0,
     createdAt: now,
     updatedAt: now,
   };
@@ -345,6 +349,8 @@ export function buildSampleData(): AppData {
     workCategoryId: catWdrozenie.id,
     departmentId: depDev.id,
     checklist: [],
+    // Kolejność wyświetlania w projekcie (dopisywane na końcu przy tworzeniu).
+    orderIndex: 0,
     createdAt: now,
     updatedAt: now,
   };
@@ -371,6 +377,8 @@ export function buildSampleData(): AppData {
     workCategoryId: catTesty.id,
     departmentId: depDev.id,
     checklist: [],
+    // Kolejność wyświetlania w projekcie (dopisywane na końcu przy tworzeniu).
+    orderIndex: 1,
     createdAt: now,
     updatedAt: now,
   };
@@ -398,6 +406,8 @@ export function buildSampleData(): AppData {
       { id: uid(), text: 'Makiety kategorii', done: false },
       { id: uid(), text: 'Komentarze klienta', done: false },
     ],
+    // Kolejność wyświetlania w projekcie (dopisywane na końcu przy tworzeniu).
+    orderIndex: 0,
     createdAt: now,
     updatedAt: now,
   };
@@ -427,6 +437,8 @@ export function buildSampleData(): AppData {
       { id: uid(), text: 'Mapa ekranów', done: false },
       { id: uid(), text: 'Kryteria odbioru', done: false },
     ],
+    // Kolejność wyświetlania w projekcie (dopisywane na końcu przy tworzeniu).
+    orderIndex: 0,
     createdAt: now,
     updatedAt: now,
   };
@@ -456,6 +468,8 @@ export function buildSampleData(): AppData {
       { id: uid(), text: 'Mailing', done: true },
       { id: uid(), text: 'Pakiet influencer', done: false },
     ],
+    // Kolejność wyświetlania w projekcie (dopisywane na końcu przy tworzeniu).
+    orderIndex: 0,
     createdAt: now,
     updatedAt: now,
   };
@@ -480,6 +494,8 @@ export function buildSampleData(): AppData {
     workCategoryId: catTesty.id,
     departmentId: depDev.id,
     checklist: [],
+    // Kolejność wyświetlania w projekcie (dopisywane na końcu przy tworzeniu).
+    orderIndex: 1,
     createdAt: now,
     updatedAt: now,
   };
@@ -506,6 +522,8 @@ export function buildSampleData(): AppData {
       { id: uid(), text: 'Raport wysłany', done: true },
       { id: uid(), text: 'Prezentacja dla klienta', done: true },
     ],
+    // Kolejność wyświetlania w projekcie (dopisywane na końcu przy tworzeniu).
+    orderIndex: 0,
     createdAt: now,
     updatedAt: now,
   };
@@ -532,6 +550,8 @@ export function buildSampleData(): AppData {
       { id: uid(), text: 'Tematy tygodniowe', done: false },
       { id: uid(), text: 'Szablon raportu', done: false },
     ],
+    // Kolejność wyświetlania w projekcie (dopisywane na końcu przy tworzeniu).
+    orderIndex: 1,
     createdAt: now,
     updatedAt: now,
   };

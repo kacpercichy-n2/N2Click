@@ -286,7 +286,7 @@ export async function loadPlannerSnapshot(
     db.select('milestones', 'id, project_id, name, milestone_date'),
     db.select(
       'tasks',
-      'id, project_id, status_id, title, description, start_date, end_date, estimated_hours, priority, work_category_id, department_id, checklist, created_at, updated_at',
+      'id, project_id, status_id, title, description, start_date, end_date, estimated_hours, priority, work_category_id, department_id, checklist, order_index, created_at, updated_at',
     ),
     db.select('task_assignments', 'task_id, profile_id'),
     db.select(
@@ -399,6 +399,12 @@ export async function loadPlannerSnapshot(
     const checklist = Array.isArray(row.checklist)
       ? (row.checklist as Task['checklist'])
       : [];
+    // Ranga wyświetlania: skończona liczba → wartość, w innym wypadku 0 (jak
+    // estimated_hours). Wiersze same-0 (przed pierwszą zmianą kolejności) i tak
+    // wyglądają jak sort po startDate dzięki tie-breakowi w selektorze.
+    const orderIndexRaw = row.order_index;
+    const orderIndex =
+      typeof orderIndexRaw === 'number' && Number.isFinite(orderIndexRaw) ? orderIndexRaw : 0;
     tasks.push({
       id: str(row.id),
       projectId: str(row.project_id),
@@ -414,6 +420,7 @@ export async function loadPlannerSnapshot(
       // Dosłownie jak w projektach — działy niosą id chmury (patrz wyżej).
       departmentId: str(row.department_id),
       checklist,
+      orderIndex,
       createdAt: str(row.created_at),
       updatedAt: str(row.updated_at) || str(row.created_at),
     });

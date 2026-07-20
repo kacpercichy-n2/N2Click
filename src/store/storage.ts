@@ -295,6 +295,9 @@ function migrateV1(raw: Record<string, unknown>): AppData {
     workCategoryId: '',
     departmentId: '',
     checklist: [],
+    // NaN => normalizeTaskMeta (biegnie po migrateV1) nada deterministyczny
+    // domyślny ciąg 0..n-1 per projekt w kolejności (startDate, createdAt, id).
+    orderIndex: Number.NaN,
     createdAt: t.createdAt ?? now,
     updatedAt: t.updatedAt ?? now,
   }));
@@ -766,6 +769,49 @@ export function sanitizeImpersonator(data: AppData): AppData {
  *   v5 presets gain the new fields as '') with invalid `priority` and dangling
  *   `workCategoryId` values reset to ''.
  */
+/**
+ * Deterministyczny domyślny `Task.orderIndex` per projekt. Zadania z poprawną
+ * (skończoną) wartością zachowują ją; pozostałe (legacy bez pola → tu oznaczone
+ * `NaN`) są dopisywane PO aktualnym maksimum projektu w kolejności
+ * (startDate, createdAt, id). Czysty legacy payload (żadne zadanie nie ma pola)
+ * dostaje więc 0..n-1 na projekt w dzisiejszej kolejności wyświetlania.
+ * Idempotentny WZGLĘDEM WARTOŚCI: drugie przejście na własnym wyniku (wszystkie
+ * skończone) nic nie zmienia. Nie dotyka chmury — to wyłącznie repair na load.
+ */
+export function assignDefaultOrderIndex(tasks: Task[]): Task[] {
+  const maxByProject = new Map<string, number>();
+  for (const t of tasks) {
+    if (Number.isFinite(t.orderIndex)) {
+      const cur = maxByProject.get(t.projectId);
+      maxByProject.set(t.projectId, cur === undefined ? t.orderIndex : Math.max(cur, t.orderIndex));
+    }
+  }
+  const pending = tasks
+    .filter((t) => !Number.isFinite(t.orderIndex))
+    .sort(
+      (a, b) =>
+        a.projectId.localeCompare(b.projectId) ||
+        a.startDate.localeCompare(b.startDate) ||
+        a.createdAt.localeCompare(b.createdAt) ||
+        a.id.localeCompare(b.id),
+    );
+  const resolved = new Map<string, number>();
+  const nextByProject = new Map<string, number>();
+  for (const t of pending) {
+    let next = nextByProject.get(t.projectId);
+    if (next === undefined) {
+      const max = maxByProject.get(t.projectId);
+      next = max === undefined ? 0 : max + 1;
+    }
+    resolved.set(t.id, next);
+    nextByProject.set(t.projectId, next + 1);
+  }
+  if (resolved.size === 0) return tasks;
+  return tasks.map((t) =>
+    resolved.has(t.id) ? { ...t, orderIndex: resolved.get(t.id)! } : t,
+  );
+}
+
 export function normalizeTaskMeta(data: AppData): AppData {
   const str = (v: unknown): string => (typeof v === 'string' ? v : '');
   const workCategories = Array.isArray(data.workCategories) ? data.workCategories : [];
@@ -793,7 +839,12 @@ export function normalizeTaskMeta(data: AppData): AppData {
             done: item.done === true,
           }))
       : [];
-    return { ...(raw as Task), priority, workCategoryId, departmentId, checklist };
+    // Ranga wyświetlania: wartości niebędące skończoną liczbą (legacy = brak
+    // pola) trafiają do repairu poniżej jako `NaN` i dostają domyślny ciąg.
+    const rawOrder = t.orderIndex;
+    const orderIndex =
+      typeof rawOrder === 'number' && Number.isFinite(rawOrder) ? rawOrder : Number.NaN;
+    return { ...(raw as Task), priority, workCategoryId, departmentId, checklist, orderIndex };
   });
 
   const savedFilters = data.savedFilters.map((f) => {
@@ -807,7 +858,7 @@ export function normalizeTaskMeta(data: AppData): AppData {
     return { ...f, criteria };
   });
 
-  return { ...data, workCategories, tasks, savedFilters };
+  return { ...data, workCategories, tasks: assignDefaultOrderIndex(tasks), savedFilters };
 }
 
 /**

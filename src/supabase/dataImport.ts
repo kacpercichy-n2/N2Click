@@ -476,6 +476,7 @@ export async function runSupabaseImport(
         // Dział zadania — mapowanie jak dział projektu (brak w mapie → null).
         department_id: t.departmentId !== '' ? deptIdMap.get(t.departmentId) ?? null : null,
         checklist: t.checklist,
+        order_index: t.orderIndex,
       });
       if (ins.error) {
         taskSummary.failed++;

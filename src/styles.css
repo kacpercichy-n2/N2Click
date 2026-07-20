@@ -2266,16 +2266,26 @@ option {
   gap: 8px;
 }
 .project-task-row {
+  display: flex;
+  align-items: center;
   background: var(--card-bg);
   border: 1px solid var(--n2-border);
   border-radius: var(--n2-radius-sm);
+}
+.project-task-reorder {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  flex-shrink: 0;
 }
 .project-task-main {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   background: none;
   border: none;
   font: inherit;

@@ -824,8 +824,9 @@ describe('normalizeTaskMeta', () => {
       tasks: [task],
       savedFilters: [filter],
     });
-    // Zadanie sprzed pola `departmentId` zyskuje je jako '' — poza tym bez zmian.
-    expect(next.tasks[0]).toEqual({ ...task, departmentId: '' });
+    // Zadanie sprzed pól `departmentId`/`orderIndex` zyskuje je (0 = jedyne
+    // zadanie projektu) — poza tym bez zmian.
+    expect(next.tasks[0]).toEqual({ ...task, departmentId: '', orderIndex: 0 });
     expect(next.savedFilters[0].criteria).toEqual(filter.criteria);
   });
 
@@ -839,6 +840,39 @@ describe('normalizeTaskMeta', () => {
     });
     expect(next.tasks.find((t) => t.id === 't1')!.departmentId).toBe('');
     expect(next.tasks.find((t) => t.id === 't2')!.departmentId).toBe('dep1');
+  });
+
+  // orderIndex repair (PKG-20260720-manual-task-order): legacy payloads with no
+  // orderIndex field get a deterministic per-project default equal to the old
+  // startDate display order, per-project 0..n-1; the pass is idempotent by value.
+  it('a pure-legacy payload (no orderIndex) gets deterministic per-project 0..n-1 in (startDate, createdAt, id) order', () => {
+    const a2 = v5Task({ id: 'a2', startDate: '2026-07-08', createdAt: '2026-01-02T00:00:00.000Z' });
+    const a1 = v5Task({ id: 'a1', startDate: '2026-07-06', createdAt: '2026-01-01T00:00:00.000Z' });
+    const b1 = { ...v5Task({ id: 'b1', startDate: '2026-07-05' }), projectId: 'proj2' } as unknown as Task;
+    const next = normalizeTaskMeta({ ...emptyData(), tasks: [a2, a1, b1] });
+    const orderOf = (id: string) => next.tasks.find((t) => t.id === id)!.orderIndex;
+    // proj1: a1 (earlier startDate) -> 0, a2 -> 1. proj2: b1 -> 0 (own project).
+    expect(orderOf('a1')).toBe(0);
+    expect(orderOf('a2')).toBe(1);
+    expect(orderOf('b1')).toBe(0);
+  });
+
+  it('keeps a task with a valid orderIndex and appends only the missing ones after the project max', () => {
+    const withOrder = { ...v5Task({ id: 't1' }), orderIndex: 5 } as unknown as Task;
+    const missing = v5Task({ id: 't2', startDate: '2026-07-06' });
+    const next = normalizeTaskMeta({ ...emptyData(), tasks: [withOrder, missing] });
+    expect(next.tasks.find((t) => t.id === 't1')!.orderIndex).toBe(5);
+    // Appended AFTER the current max (5), not renumbered to 0/1.
+    expect(next.tasks.find((t) => t.id === 't2')!.orderIndex).toBe(6);
+  });
+
+  it('is idempotent by value: a second pass on legacy data leaves orderIndex unchanged', () => {
+    const a = v5Task({ id: 'a1', startDate: '2026-07-06' });
+    const b = v5Task({ id: 'a2', startDate: '2026-07-08' });
+    const once = normalizeTaskMeta({ ...emptyData(), tasks: [a, b] });
+    const twice = normalizeTaskMeta(once);
+    expect(twice.tasks.map((t) => t.orderIndex)).toEqual(once.tasks.map((t) => t.orderIndex));
+    expect(twice.tasks.map((t) => t.orderIndex)).toEqual([0, 1]);
   });
 });
 
@@ -982,6 +1016,7 @@ function makeFullTask(overrides: Partial<Task> & { id: string }): Task {
     workCategoryId: '',
     departmentId: '',
     checklist: [],
+    orderIndex: 0,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     ...overrides,

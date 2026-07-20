@@ -51,7 +51,7 @@ function localFixture(): AppData {
       {
         id: TK, projectId: PR, statusId: '', title: 'T', description: '', startDate: '2026-07-06',
         endDate: '2026-07-08', estimatedHours: null, priority: 'normal', workCategoryId: '', departmentId: '',
-        checklist: [], createdAt: '', updatedAt: '',
+        checklist: [], orderIndex: 0, createdAt: '', updatedAt: '',
       },
     ],
   };

@@ -45,7 +45,11 @@
   (LEGACY — see below); `project_members (project_id, profile_id)` is the
   explicit worker access list. `tasks` → `project_id` (cascade), `status_id`,
   `work_category_id`, `department_id` (20260720170000 — the department is
-  assigned ON THE TASK), `created_by`; `task_assignments (task_id, profile_id)`
+  assigned ON THE TASK), `created_by`, `order_index` (20260720200000 — integer
+  not null default 0; per-PROJECT manual display rank for the project-detail
+  task list, cosmetic — completion/calendar/hours are independent; migration
+  backfills 0..n-1 only for projects still all-default, so a re-run never
+  clobbers manual order); `task_assignments (task_id, profile_id)`
   is task ownership.
 - Project departments are DERIVED: the unique set of its tasks' departments
   (client: `selectors.departmentsOfProject`, fallback to the legacy

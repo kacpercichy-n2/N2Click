@@ -108,6 +108,24 @@ export function tasksOfProject(state: AppData, projectId: string): Task[] {
 }
 
 /**
+ * Zadania projektu w RĘCZNEJ kolejności wyświetlania. Kanoniczny, całkowity i
+ * deterministyczny klucz `(orderIndex asc, startDate asc, id asc)` — ten sam,
+ * którego używa reducer `REORDER_PROJECT_TASK`. Rozstrzygnięcie po startDate/id
+ * sprawia, że wiersze chmury z samymi zerami (przed pierwszą zmianą kolejności)
+ * wyglądają dokładnie jak dotychczasowy sort po startDate.
+ */
+export function orderedTasksOfProject(state: AppData, projectId: string): Task[] {
+  return state.tasks
+    .filter((t) => t.projectId === projectId)
+    .sort(
+      (a, b) =>
+        a.orderIndex - b.orderIndex ||
+        a.startDate.localeCompare(b.startDate) ||
+        a.id.localeCompare(b.id),
+    );
+}
+
+/**
  * Działy PROJEKTU są POCHODNE: unikalny zbiór działów przypisanych do jego
  * zadań (dział wybiera się na zadaniu), w kolejności słownika działów. Projekt
  * może więc obejmować kilka działów naraz. Gdy żadne zadanie nie ma działu,

@@ -255,6 +255,7 @@ function taskRow(
     work_category_id: category.cloud,
     department_id: resolveDept(t.departmentId, maps.departments),
     checklist: t.checklist,
+    order_index: t.orderIndex,
     created_at: t.createdAt,
     updated_at: t.updatedAt,
   };

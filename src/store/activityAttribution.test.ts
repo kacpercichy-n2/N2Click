@@ -51,6 +51,7 @@ const TASK: Task = {
   workCategoryId: '',
   departmentId: '',
   checklist: [],
+  orderIndex: 0,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
 };
@@ -426,6 +427,15 @@ describe('12. statuses', () => {
   it('REORDER_STATUS logs no row', () => {
     const state = makeState();
     const next = reducer(state, { type: 'REORDER_STATUS', statusId: 's2', direction: -1 });
+    expect(next.activity.length).toBe(state.activity.length);
+  });
+
+  it('REORDER_PROJECT_TASK logs no row (cosmetic ordering)', () => {
+    const second: Task = { ...TASK, id: 't2', title: 'Drugie', orderIndex: 1 };
+    const state = makeState({ tasks: [{ ...TASK, orderIndex: 0 }, second] });
+    const next = reducer(state, { type: 'REORDER_PROJECT_TASK', taskId: 't1', direction: 1 });
+    // The move actually happened (ranks swapped) but no activity row was written.
+    expect(next.tasks.find((t) => t.id === 't1')!.orderIndex).toBe(1);
     expect(next.activity.length).toBe(state.activity.length);
   });
 });
