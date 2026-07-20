@@ -1679,6 +1679,31 @@ option {
 .week-block:hover {
   background: rgba(60, 40, 92, 0.95);
 }
+/* ---------- Status zadania na blokach kalendarza i kartach zasobnika ----------
+   Zielony odcień = zadanie w statusie „zrobione” (wyłącznie `Status.isDone`),
+   czerwony = zadanie po terminie (endDate < dziś, status nie-zrobiony). Tło
+   zostaje nieprzezroczyste, więc etykiety zachowują kontrast; kolor osoby żyje
+   w stylu inline na lewej krawędzi i nie jest tu nadpisywany. Reguły dragu,
+   kolizji i zasobnika stoją w pliku NIŻEJ, więc nadal wygrywają, a warianty
+   :hover wykluczają te stany przez :not(), żeby nie przebić ich specyficznością. */
+.week-block.done,
+.week-bin-block.done {
+  background: rgba(38, 66, 40, 0.94);
+  border-color: rgba(185, 255, 77, 0.4);
+}
+.week-block.done:not(.colliding):not(.to-bin):hover,
+.week-bin-block.done:not(.colliding):hover {
+  background: rgba(50, 84, 52, 0.96);
+}
+.week-block.overdue,
+.week-bin-block.overdue {
+  background: rgba(74, 30, 48, 0.94);
+  border-color: var(--n2-danger);
+}
+.week-block.overdue:not(.colliding):not(.to-bin):hover,
+.week-bin-block.overdue:not(.colliding):hover {
+  background: rgba(92, 38, 60, 0.96);
+}
 .week-block.dragging {
   cursor: grabbing;
   z-index: 30;

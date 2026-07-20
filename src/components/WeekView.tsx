@@ -40,6 +40,7 @@ import {
   hoursForPersonOnDate,
   overloadedPeopleOnDate,
   personCapacity,
+  taskDisplayStatus,
   taskGrowAllowance,
   taskIdsOfPerson,
 } from '../store/selectors';
@@ -105,6 +106,19 @@ function minutesToTimeStr(min: number): string {
   const h = Math.floor(min / 60);
   const m = min % 60;
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+/**
+ * Polski dopisek do tooltipa bloku/karty opisujący status zadania. Pusty dla
+ * zadania w toku — tooltip zostaje wtedy dokładnie taki jak wcześniej.
+ */
+function statusNoteFor(status: 'done' | 'overdue' | 'open', endDate: string): string {
+  if (status === 'done') return ' Zadanie zakończone.';
+  if (status !== 'overdue') return '';
+  const termin = isValidDateStr(endDate)
+    ? ` (termin: ${format(parseDate(endDate), 'd MMM yyyy', { locale: pl })})`
+    : '';
+  return ` Zadanie po terminie${termin}.`;
 }
 
 // ---- Draggable / resizable timed block ----
@@ -433,8 +447,15 @@ function TimedBlock({
   const height = Math.max(MIN_BLOCK_H, hours * HOUR_PX);
 
   const isMergeTarget = !drag && mergeTargetId === entry.id;
+  // Status zadania jest czysto prezentacyjny: zielony odcień dla zakończonych,
+  // czerwony akcent po terminie. Kolor osoby zostaje na lewej krawędzi (styl
+  // inline), a klasy dragu/kolizji są w CSS PÓŹNIEJ, więc nadal wygrywają.
+  const status = taskDisplayStatus(state, task, todayStr());
+  const statusNote = statusNoteFor(status, task.endDate);
   const className = [
     'week-block',
+    status === 'done' ? 'done' : '',
+    status === 'overdue' ? 'overdue' : '',
     editable ? '' : 'readonly',
     drag ? 'dragging' : '',
     drag?.colliding ? 'colliding' : '',
@@ -465,10 +486,10 @@ function TimedBlock({
       tabIndex={0}
       title={
         !editable
-          ? `${task.title} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${formatDuration(hours)}).`
+          ? `${task.title} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${formatDuration(hours)}).${statusNote}`
           : drag?.atCap
             ? 'Limit czasu zadania — brak godzin w zasobniku'
-            : `${task.title} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${formatDuration(hours)}). Przeciągnij, aby przenieść; przeciągnij krawędź, aby zmienić czas trwania; kliknij prawym przyciskiem, aby wstawić blok.`
+            : `${task.title} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${formatDuration(hours)}).${statusNote} Przeciągnij, aby przenieść; przeciągnij krawędź, aby zmienić czas trwania; kliknij prawym przyciskiem, aby wstawić blok.`
       }
       onPointerDown={editable ? begin('move') : undefined}
       onPointerMove={editable ? onPointerMove : undefined}
@@ -811,8 +832,12 @@ function BinCard({
   // In-pane original stays mounted for click/context-menu semantics and dims
   // while window listeners own the drag. The visible card following the
   // pointer is a fixed portal ghost, so the bin pane cannot clip it.
+  const status = taskDisplayStatus(state, task, todayStr());
+  const statusNote = statusNoteFor(status, task.endDate);
   const className = [
     'week-bin-block',
+    status === 'done' ? 'done' : '',
+    status === 'overdue' ? 'overdue' : '',
     editable ? '' : 'readonly',
     drag ? 'drag-source' : '',
   ]
@@ -841,9 +866,9 @@ function BinCard({
         title={
           editable
             ? unplaceable
-              ? `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu. ${unplaceableHint}`
-              : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu. Przeciągnij na siatkę albo użyj „Zaplanuj część”.`
-            : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.`
+              ? `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.${statusNote} ${unplaceableHint}`
+              : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.${statusNote} Przeciągnij na siatkę albo użyj „Zaplanuj część”.`
+            : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.${statusNote}`
         }
         onPointerDown={editable ? begin : undefined}
         onClick={(e) => {
@@ -884,6 +909,8 @@ function BinCard({
             className={[
               'week-bin-block',
               'week-bin-ghost',
+              status === 'done' ? 'done' : '',
+              status === 'overdue' ? 'overdue' : '',
               drag.colliding || (drag.hasMoved && !drag.valid) ? 'colliding' : '',
             ]
               .filter(Boolean)

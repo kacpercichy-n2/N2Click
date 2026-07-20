@@ -26,6 +26,7 @@ import {
   realUser,
   realUserId,
   searchAll,
+  taskDisplayStatus,
   taskGrowAllowance,
   taskPlanningStatus,
   todayAgendaForPerson,
@@ -880,6 +881,64 @@ describe('doneStatusIds', () => {
     expect(isDoneStatus(state, 's2')).toBe(true);
     expect(isDoneStatus(state, 's0')).toBe(false);
     expect(isDoneStatus(state, 'does-not-exist')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// taskDisplayStatus — status zadania widoczny na blokach kalendarza i kartach
+// zasobnika (229-task-status-on-calendar-blocks).
+// ---------------------------------------------------------------------------
+
+describe('taskDisplayStatus', () => {
+  const sOpen = makeStatus({ id: 's-open', order: 0, isDone: false });
+  const sDone = makeStatus({ id: 's-done', order: 1, isDone: true });
+  const sDoneArchived = makeStatus({ id: 's-done-arch', order: 2, isDone: true, archived: true });
+  const statuses = [sOpen, sDone, sDoneArchived];
+
+  it('zwraca "done" dla zadania w statusie isDone, także gdy termin już minął', () => {
+    const task = makeTask({ id: 't1', statusId: 's-done', endDate: '2026-07-01' });
+    const state = makeState({ statuses, tasks: [task] });
+    expect(taskDisplayStatus(state, task, '2026-07-20')).toBe('done');
+  });
+
+  it('archiwalny status isDone nadal daje "done" (kompletność to wyłącznie flaga)', () => {
+    const task = makeTask({ id: 't1', statusId: 's-done-arch', endDate: '2026-07-01' });
+    const state = makeState({ statuses, tasks: [task] });
+    expect(taskDisplayStatus(state, task, '2026-07-20')).toBe('done');
+  });
+
+  it('zwraca "overdue" dla nie-zrobionego zadania z endDate ściśle przed dziś', () => {
+    const task = makeTask({ id: 't1', statusId: 's-open', endDate: '2026-07-19' });
+    const state = makeState({ statuses, tasks: [task] });
+    expect(taskDisplayStatus(state, task, '2026-07-20')).toBe('overdue');
+  });
+
+  it('endDate == dziś to jeszcze nie po terminie', () => {
+    const task = makeTask({ id: 't1', statusId: 's-open', endDate: '2026-07-20' });
+    const state = makeState({ statuses, tasks: [task] });
+    expect(taskDisplayStatus(state, task, '2026-07-20')).toBe('open');
+  });
+
+  it('przyszły termin i status w toku dają "open"', () => {
+    const task = makeTask({ id: 't1', statusId: 's-open', endDate: '2026-07-30' });
+    const state = makeState({ statuses, tasks: [task] });
+    expect(taskDisplayStatus(state, task, '2026-07-20')).toBe('open');
+  });
+
+  it('nieznany statusId nie liczy się jako zrobiony — przeterminowane zadanie zostaje "overdue"', () => {
+    const task = makeTask({ id: 't1', statusId: 'brak', endDate: '2026-07-01' });
+    const state = makeState({ statuses, tasks: [task] });
+    expect(taskDisplayStatus(state, task, '2026-07-20')).toBe('overdue');
+  });
+
+  it('kolejność statusów w pipeline nie zmienia wyniku (niezmiennik 5)', () => {
+    const doneFirst = makeStatus({ id: 's-done', order: 0, isDone: true });
+    const openLast = makeStatus({ id: 's-open', order: 9, isDone: false });
+    const done = makeTask({ id: 't1', statusId: 's-done', endDate: '2026-07-01' });
+    const open = makeTask({ id: 't2', statusId: 's-open', endDate: '2026-07-01' });
+    const state = makeState({ statuses: [doneFirst, openLast], tasks: [done, open] });
+    expect(taskDisplayStatus(state, done, '2026-07-20')).toBe('done');
+    expect(taskDisplayStatus(state, open, '2026-07-20')).toBe('overdue');
   });
 });
 

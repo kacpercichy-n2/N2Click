@@ -577,6 +577,22 @@ export function taskPlanningStatus(state: AppData, taskId: string): PlanningStat
   return planningStatusForTotals(estimate, dated, bin);
 }
 
+/**
+ * Presentational status of a single task, shared by the calendar blocks and bin
+ * cards: `done` when its status carries `isDone` (invariant 5 — completion is
+ * NEVER derived from pipeline order), `overdue` when `endDate` is strictly
+ * before `today` and the status is not done, otherwise `open`. Pure — pass
+ * `today` (no `Date.now`).
+ */
+export function taskDisplayStatus(
+  state: AppData,
+  task: Task,
+  today: DateStr,
+): 'done' | 'overdue' | 'open' {
+  if (isDoneStatus(state, task.statusId)) return 'done';
+  return task.endDate < today ? 'overdue' : 'open';
+}
+
 // ---- Moja praca (my-work page) ----
 
 /**
