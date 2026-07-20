@@ -9,10 +9,16 @@ import { CloudSyncProvider } from './supabase/CloudSyncProvider';
 import { AvatarUrlsProvider } from './supabase/AvatarUrlsProvider';
 import { App } from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { installNumberInputWheelGuard } from './utils/numberInputWheel';
 import './styles.css';
 
 const rootEl = document.getElementById('root');
 if (!rootEl) throw new Error('Root element #root not found');
+
+// Scroll nad polem liczbowym nie może zmieniać jego wartości (zgłoszenie:
+// przypadkowe zmiany planowanych godzin). Jedna globalna blokada dla całej
+// aplikacji.
+installNumberInputWheelGuard();
 
 // Data router (a single splat route hosting the whole shell; App keeps its
 // descendant <Routes>). Required by the dirty-navigation guard in App —
