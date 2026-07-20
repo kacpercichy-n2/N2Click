@@ -58,6 +58,22 @@ export interface Status {
   isDone: boolean;
 }
 
+/** Rodzaj dokumentu handlowego projektu — stały zbiór wartości. Wartości są
+ *  polskimi slugami (persystencja + jsonb chmury), etykiety UI żyją w
+ *  `src/utils/projectDocuments.ts`. */
+export type ProjectDocumentKind = 'oferta' | 'wycena' | 'brief' | 'link';
+
+/**
+ * Jeden ODNOŚNIK do dokumentu handlowego projektu (oferta, wycena, brief lub
+ * zwykły link). To WYŁĄCZNIE adres — pliki nie są przechowywane w aplikacji.
+ */
+export interface ProjectDocument {
+  id: string;
+  kind: ProjectDocumentKind;
+  label: string; // nazwa wyświetlana; '' => pokazujemy sam adres
+  url: string; // wymagany (niepusty po trim)
+}
+
 export interface Project {
   id: string;
   clientId: string;
@@ -69,6 +85,10 @@ export interface Project {
   endDate: DateStr;
   departmentId: string; // '' when unset
   serviceTypeId: string; // '' when unset
+  // Odnośniki do dokumentów handlowych; osadzone, wymieniane w całości przy
+  // zapisie (jak `Task.checklist`). Legacy payload bez pola dostaje [] w
+  // repairze wczytania (storage.repairProjectDocuments).
+  documents: ProjectDocument[];
   createdAt: string; // ISO timestamp
   updatedAt: string; // ISO timestamp
 }

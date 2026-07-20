@@ -24,6 +24,7 @@ const STATUS_DONE: Status = { id: 's2', name: 'Zrobione', slug: 'zrobione', colo
 const PROJECT_A: Project = {
   id: 'projA', clientId: '', name: 'Projekt A', description: '', statusId: 's1', paid: false,
   startDate: '2026-07-06', endDate: '2026-07-12', departmentId: '', serviceTypeId: '',
+  documents: [],
   createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
 };
 const PROJECT_B: Project = { ...PROJECT_A, id: 'projB', name: 'Projekt B' };

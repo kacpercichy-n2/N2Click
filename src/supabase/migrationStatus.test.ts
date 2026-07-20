@@ -44,6 +44,7 @@ function localFixture(): AppData {
       {
         id: PR, clientId: '', name: 'P', description: '', statusId: '', paid: false,
         startDate: '2026-07-06', endDate: '2026-07-12', departmentId: '', serviceTypeId: '',
+        documents: [],
         createdAt: '', updatedAt: '',
       },
     ],

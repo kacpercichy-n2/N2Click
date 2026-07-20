@@ -415,6 +415,7 @@ export async function runSupabaseImport(
         start_date: p.startDate === '' ? null : p.startDate,
         end_date: p.endDate === '' ? null : p.endDate,
         service_type_id: dictRef(serviceTypeMap, p.serviceTypeId),
+        documents: p.documents,
       });
       if (ins.error) {
         projectSummary.failed++;

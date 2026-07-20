@@ -24,6 +24,8 @@ import type {
   Milestone,
   Person,
   Project,
+  ProjectDocument,
+  ProjectDocumentKind,
   ServiceType,
   Status,
   SavedFilterCriteria,
@@ -59,6 +61,7 @@ import {
   isValidTaskDraft,
   isValidTicketDraft,
   isValidTicketStatus,
+  normalizeProjectDocumentDraft,
 } from './commandValidation';
 import {
   DEFAULT_TICKET_STATUS,
@@ -121,6 +124,15 @@ export interface ProjectDraft {
   endDate: string;
   departmentId: string;
   serviceTypeId: string;
+}
+
+/** Draft odnośnika do dokumentu projektu (karta „Dokumenty”). `id` NIE jest
+ *  częścią draftu — nadaje go reduktor przy dodaniu, edycja adresuje wiersz
+ *  osobnym `documentId`. */
+export interface ProjectDocumentDraft {
+  kind: ProjectDocumentKind;
+  label: string;
+  url: string;
 }
 
 /** Draft zgłoszenia (modal „Zgłoszenia”). `status` NIE jest częścią draftu:
@@ -199,6 +211,10 @@ export type Action =
   | { type: 'SET_PROJECT_STATUS'; projectId: string; statusId: string }
   | { type: 'SET_PROJECT_PAID'; projectId: string; paid: boolean }
   | { type: 'SET_PROJECT_DATES'; projectId: string; startDate: string; endDate: string }
+  // Dokumenty handlowe projektu (karta „Dokumenty”) — same odnośniki, bez plików.
+  | { type: 'ADD_PROJECT_DOCUMENT'; projectId: string; draft: ProjectDocumentDraft }
+  | { type: 'SAVE_PROJECT_DOCUMENT'; projectId: string; documentId: string; draft: ProjectDocumentDraft }
+  | { type: 'DELETE_PROJECT_DOCUMENT'; projectId: string; documentId: string }
   | { type: 'SAVE_MILESTONE'; milestoneId: string | null; projectId: string; name: string; date: string }
   | { type: 'MOVE_MILESTONE'; milestoneId: string; date: string }
   | { type: 'DELETE_MILESTONE'; milestoneId: string }
@@ -816,7 +832,9 @@ function saveProject(
   const ts = nowIso();
 
   if (projectId === null) {
-    const project: Project = { id: uid(), ...draft, createdAt: ts, updatedAt: ts };
+    // `documents` nie jest częścią draftu — nowy projekt startuje bez odnośników,
+    // a edycja projektu (niżej) przenosi istniejącą listę bez zmian.
+    const project: Project = { id: uid(), ...draft, documents: [], createdAt: ts, updatedAt: ts };
     return {
       ...state,
       projects: [...state.projects, project],
@@ -832,6 +850,11 @@ function saveProject(
       collapse: true, // auto-zapis: seria edycji = jeden wpis
     }),
   };
+}
+
+/** Etykieta dokumentu w dzienniku aktywności: nazwa, a gdy jej brak — adres. */
+function documentTitle(doc: Pick<ProjectDocument, 'label' | 'url'>): string {
+  return doc.label.trim() || doc.url.trim();
 }
 
 function deleteProject(state: AppData, projectId: string): AppData {
@@ -2401,6 +2424,92 @@ export function reducer(state: AppData, action: Action): AppData {
           `zmienił(a) termin projektu na ${action.startDate} – ${action.endDate}`,
         ),
       };
+    // ---- Dokumenty projektu ----
+    // Wyłącznie ODNOŚNIKI (żadnych plików). Walidacja i normalizacja żyją w
+    // commandValidation (normalizeProjectDocumentDraft): pusty adres, adres o
+    // schemacie innym niż http(s), nieznany rodzaj albo nieistniejący
+    // projekt/dokument => TA SAMA referencja stanu (inwariant 6). Zapisujemy
+    // ZNORMALIZOWANY adres, więc w stanie nie ląduje nic, czego nie wolno potem
+    // wstawić w `href`. Lista jest osadzona w projekcie, więc DELETE_PROJECT
+    // sprząta ją bez osobnej kaskady.
+    case 'ADD_PROJECT_DOCUMENT': {
+      if (!hasEntity(state, 'project', action.projectId)) return state;
+      const normalized = normalizeProjectDocumentDraft(action.draft);
+      if (!normalized) return state;
+      const doc: ProjectDocument = { id: uid(), ...normalized };
+      return {
+        ...state,
+        projects: state.projects.map((p) =>
+          p.id === action.projectId
+            ? { ...p, documents: [...p.documents, doc], updatedAt: nowIso() }
+            : p,
+        ),
+        activity: withActivity(
+          state,
+          'project',
+          action.projectId,
+          `dodał(a) dokument „${documentTitle(doc)}”`,
+        ),
+      };
+    }
+    case 'SAVE_PROJECT_DOCUMENT': {
+      const project = state.projects.find((p) => p.id === action.projectId);
+      const current = project?.documents.find((d) => d.id === action.documentId);
+      if (!project || !current) return state;
+      const normalized = normalizeProjectDocumentDraft(action.draft);
+      if (!normalized) return state;
+      const next: ProjectDocument = { ...current, ...normalized };
+      // Zapis bez żadnej zmiany to no-op (jak SET_TICKET_STATUS): bez wpisu do
+      // dziennika i bez ruszania `updatedAt`.
+      if (
+        next.kind === current.kind &&
+        next.label === current.label &&
+        next.url === current.url
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        projects: state.projects.map((p) =>
+          p.id === action.projectId
+            ? {
+                ...p,
+                documents: p.documents.map((d) => (d.id === action.documentId ? next : d)),
+                updatedAt: nowIso(),
+              }
+            : p,
+        ),
+        activity: withActivity(
+          state,
+          'project',
+          action.projectId,
+          `zaktualizował(a) dokument „${documentTitle(next)}”`,
+        ),
+      };
+    }
+    case 'DELETE_PROJECT_DOCUMENT': {
+      const project = state.projects.find((p) => p.id === action.projectId);
+      const doc = project?.documents.find((d) => d.id === action.documentId);
+      if (!project || !doc) return state;
+      return {
+        ...state,
+        projects: state.projects.map((p) =>
+          p.id === action.projectId
+            ? {
+                ...p,
+                documents: p.documents.filter((d) => d.id !== action.documentId),
+                updatedAt: nowIso(),
+              }
+            : p,
+        ),
+        activity: withActivity(
+          state,
+          'project',
+          action.projectId,
+          `usunął/usunęła dokument „${documentTitle(doc)}”`,
+        ),
+      };
+    }
     case 'SAVE_MILESTONE':
       return saveMilestone(state, action.milestoneId, action.projectId, action.name, action.date);
     case 'MOVE_MILESTONE': {

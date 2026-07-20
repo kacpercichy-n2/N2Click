@@ -1,12 +1,19 @@
 // Project detail card: editable fields (client, status, paid coin, dates,
-// department, service type, description), milestones, the project's tasks, and
-// the chat/comments + activity section.
+// department, service type, description), milestones, dokumenty handlowe
+// (odnośniki), the project's tasks, and the chat/comments + activity section.
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useStore, usePersistence } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import { NO_PERM_TITLE } from '../store/permissions';
 import type { ProjectDraft } from '../store/AppStore';
+import type { ProjectDocument, ProjectDocumentKind } from '../types';
+import {
+  DEFAULT_PROJECT_DOCUMENT_KIND,
+  PROJECT_DOCUMENT_KINDS,
+  PROJECT_DOCUMENT_KIND_LABELS,
+  normalizeProjectDocumentUrl,
+} from '../utils/projectDocuments';
 import {
   activeStatuses,
   assigneesOfTask,
@@ -30,7 +37,10 @@ import { formatShortWithWeekday, todayStr, isValidDateStr, periodError, PERIOD_E
 import { formatDuration } from '../utils/time';
 import { useSaveStatus } from '../utils/useSaveStatus';
 import { useAutoSave } from '../utils/useAutoSave';
-import { isValidProjectDraft } from '../store/commandValidation';
+import {
+  isValidProjectDocumentDraft,
+  isValidProjectDraft,
+} from '../store/commandValidation';
 import {
   bypassNavGuardOnce,
   clearNavGuard,
@@ -86,6 +96,14 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   const [msName, setMsName] = useState('');
   const [msDate, setMsDate] = useState(todayStr());
   const [msError, setMsError] = useState('');
+
+  // ---- Formularz dokumentów (jeden formularz obsługuje dodawanie i edycję) ----
+  // `docEditId === null` => dodawanie nowego odnośnika.
+  const [docEditId, setDocEditId] = useState<string | null>(null);
+  const [docKind, setDocKind] = useState<ProjectDocumentKind>(DEFAULT_PROJECT_DOCUMENT_KIND);
+  const [docLabel, setDocLabel] = useState('');
+  const [docUrl, setDocUrl] = useState('');
+  const [docError, setDocError] = useState('');
 
   const dirty = project
     ? name !== project.name ||
@@ -230,6 +248,54 @@ function ProjectDetail({ projectId }: { projectId: string }) {
     });
     setMsName('');
     setMsError('');
+  };
+
+  const resetDocForm = () => {
+    setDocEditId(null);
+    setDocKind(DEFAULT_PROJECT_DOCUMENT_KIND);
+    setDocLabel('');
+    setDocUrl('');
+    setDocError('');
+  };
+
+  const startDocEdit = (doc: ProjectDocument) => {
+    setDocEditId(doc.id);
+    setDocKind(doc.kind);
+    setDocLabel(doc.label);
+    setDocUrl(doc.url);
+    setDocError('');
+  };
+
+  // Ta sama bramka co reduktor (isValidProjectDocumentDraft): pusty adres nie
+  // dociera do dispatchu, tylko zapala komunikat inline.
+  const submitDocument = (e: React.FormEvent) => {
+    e.preventDefault();
+    const draft = { kind: docKind, label: docLabel, url: docUrl };
+    if (!isValidProjectDocumentDraft(draft)) {
+      setDocError('Podaj poprawny adres dokumentu (http:// lub https://).');
+      return;
+    }
+    if (docEditId === null) {
+      dispatch({ type: 'ADD_PROJECT_DOCUMENT', projectId: project.id, draft });
+    } else {
+      dispatch({
+        type: 'SAVE_PROJECT_DOCUMENT',
+        projectId: project.id,
+        documentId: docEditId,
+        draft,
+      });
+    }
+    resetDocForm();
+  };
+
+  const removeDocument = (doc: ProjectDocument) => {
+    if (!window.confirm(`Usunąć dokument „${doc.label || doc.url}”?`)) return;
+    if (docEditId === doc.id) resetDocForm();
+    dispatch({
+      type: 'DELETE_PROJECT_DOCUMENT',
+      projectId: project.id,
+      documentId: doc.id,
+    });
   };
 
   return (
@@ -462,6 +528,97 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               Dodaj kamień milowy
             </button>
             {msError && <p className="field-error">{msError}</p>}
+          </form>
+        )}
+      </div>
+
+      <div className="editor-section">
+        <h2>Dokumenty</h2>
+        {/* Wyłącznie ODNOŚNIKI (oferta, wycena, brief, link) — aplikacja nie
+            przechowuje plików. Odnośnik otwiera się w nowej karcie. */}
+        {project.documents.length === 0 ? (
+          <p className="field-hint">Brak dokumentów.</p>
+        ) : (
+          <ul className="document-list">
+            {project.documents.map((d) => {
+              // Obrona przy RENDEROWANIU, nie tylko na wejściu: projekty są
+              // danymi współdzielonymi, więc wiersz mógł przyjść z chmury albo
+              // ze starszego zapisu. Adres o niedozwolonym schemacie nie trafia
+              // do `href` — pokazujemy sam tekst.
+              const href = normalizeProjectDocumentUrl(d.url);
+              return (
+                <li key={d.id} className="document-row">
+                  <span className="project-badge project-badge-document">
+                    {PROJECT_DOCUMENT_KIND_LABELS[d.kind]}
+                  </span>
+                  {href === null ? (
+                    <span className="document-link document-link-blocked" title={d.url}>
+                      {d.label || d.url} (niedozwolony adres)
+                    </span>
+                  ) : (
+                    <a
+                      className="document-link"
+                      href={href}
+                      target="_blank"
+                      rel="noopener"
+                      title={href}
+                    >
+                      {d.label || d.url}
+                    </a>
+                  )}
+                  {canManage && (
+                    <span className="document-row-actions">
+                      <button type="button" className="btn ghost" onClick={() => startDocEdit(d)}>
+                        Edytuj
+                      </button>
+                      <button
+                        type="button"
+                        className="btn danger-ghost"
+                        onClick={() => removeDocument(d)}
+                      >
+                        Usuń
+                      </button>
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {canManage && (
+          <form className="document-form" onSubmit={submitDocument}>
+            <select
+              value={docKind}
+              onChange={(e) => setDocKind(e.target.value as ProjectDocumentKind)}
+              aria-label="Rodzaj dokumentu"
+            >
+              {PROJECT_DOCUMENT_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {PROJECT_DOCUMENT_KIND_LABELS[k]}
+                </option>
+              ))}
+            </select>
+            <input
+              value={docLabel}
+              onChange={(e) => setDocLabel(e.target.value)}
+              placeholder="Nazwa (opcjonalnie)"
+              aria-label="Nazwa dokumentu"
+            />
+            <input
+              value={docUrl}
+              onChange={(e) => setDocUrl(e.target.value)}
+              placeholder="Adres (URL) *"
+              aria-label="Adres dokumentu"
+            />
+            <button type="submit" className="btn soft" disabled={!docUrl.trim()}>
+              {docEditId === null ? 'Dodaj dokument' : 'Zapisz dokument'}
+            </button>
+            {docEditId !== null && (
+              <button type="button" className="btn ghost" onClick={resetDocForm}>
+                Anuluj
+              </button>
+            )}
+            {docError && <p className="field-error">{docError}</p>}
           </form>
         )}
       </div>

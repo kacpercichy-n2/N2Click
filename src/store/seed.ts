@@ -170,6 +170,7 @@ export function buildSampleData(): AppData {
     endDate: addDaysStr(fri, 14),
     departmentId: depDesign.id,
     serviceTypeId: svcWeb.id,
+    documents: [],
     createdAt: now,
     updatedAt: now,
   };
@@ -184,6 +185,7 @@ export function buildSampleData(): AppData {
     endDate: addDaysStr(fri, 21),
     departmentId: depMgmt.id,
     serviceTypeId: svcSocial.id,
+    documents: [],
     createdAt: now,
     updatedAt: now,
   };
@@ -198,6 +200,7 @@ export function buildSampleData(): AppData {
     endDate: fri,
     departmentId: depDev.id,
     serviceTypeId: svcWeb.id,
+    documents: [],
     createdAt: now,
     updatedAt: now,
   };
@@ -212,6 +215,7 @@ export function buildSampleData(): AppData {
     endDate: addDaysStr(fri, 10),
     departmentId: depDesign.id,
     serviceTypeId: svcBrand.id,
+    documents: [],
     createdAt: now,
     updatedAt: now,
   };
@@ -226,6 +230,7 @@ export function buildSampleData(): AppData {
     endDate: addDaysStr(fri, 28),
     departmentId: depDev.id,
     serviceTypeId: svcWeb.id,
+    documents: [],
     createdAt: now,
     updatedAt: now,
   };
@@ -240,6 +245,7 @@ export function buildSampleData(): AppData {
     endDate: addDaysStr(fri, 7),
     departmentId: depMgmt.id,
     serviceTypeId: svcSocial.id,
+    documents: [],
     createdAt: now,
     updatedAt: now,
   };
@@ -254,6 +260,7 @@ export function buildSampleData(): AppData {
     endDate: addDaysStr(fri, -5),
     departmentId: depDesign.id,
     serviceTypeId: svcWeb.id,
+    documents: [],
     createdAt: now,
     updatedAt: now,
   };

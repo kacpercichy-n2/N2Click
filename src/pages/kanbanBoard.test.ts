@@ -27,6 +27,7 @@ const CLIENT_B: Client = { id: 'c2', name: 'Klient B', archived: false };
 const PROJECT_A: Project = {
   id: 'projA', clientId: 'c1', name: 'Projekt A', description: '', statusId: 's1', paid: true,
   startDate: '2026-07-06', endDate: '2026-07-12', departmentId: '', serviceTypeId: '',
+  documents: [],
   createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
 };
 // Different client AND different paid flag, so one project isolates each filter.

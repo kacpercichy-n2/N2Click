@@ -76,3 +76,16 @@ repair. Ordering must not touch completion semantics or calendar placement.
   Status/Klient asterisks in TaskModal + ProjectDetailPage.
 - Focused PASS (62); full suite PASS 1044 (baseline 1036, prompt's 933 stale);
   `npm run build` clean. Wiki `state-and-persistence.md` updated.
+
+## Developer result (2026-07-21) — 234-project-documents-and-links
+
+- `Project.documents` (jsonb `projects.documents`, migracja
+  20260721010000_project_documents; RLS dziedziczona z projektu). Reduktor
+  ADD/SAVE/DELETE_PROJECT_DOCUMENT + `isValidProjectDocumentDraft`,
+  `repairProjectDocuments`, karta „Dokumenty” w ProjectDetailPage
+  (`projects.manage`), mirror/snapshot/import.
+- Schemat `url` wymuszany na 3 granicach (reduktor/repair/render) przez
+  `normalizeProjectDocumentUrl` — tylko http(s), brak schematu → `https://`;
+  `javascript:`/`data:` odrzucane (przechowywany XSS, projekty są współdzielone).
+- Focused PASS (24); full suite PASS 1068 (baseline 1044, prompt's 933 stale);
+  `npm run build` clean. Wiki: `cloud-database.md` + `state-and-persistence.md`.

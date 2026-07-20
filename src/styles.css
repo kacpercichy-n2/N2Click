@@ -872,6 +872,11 @@ textarea {
   color: var(--n2-mint, #7ee0c3);
   background: rgba(126, 224, 195, 0.12);
 }
+/* Rodzaj dokumentu handlowego projektu — odcień odróżniający od działu/usługi. */
+.project-badge-document {
+  color: var(--n2-sky, #7cc6ff);
+  background: rgba(124, 198, 255, 0.12);
+}
 .project-derived-departments {
   display: flex;
   flex-wrap: wrap;
@@ -2403,6 +2408,45 @@ option {
   gap: 8px;
   flex-wrap: wrap;
   align-items: center;
+}
+
+/* ---------- Dokumenty projektu (odnośniki) ---------- */
+
+.document-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.document-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.document-link {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+/* Adres o niedozwolonym schemacie: renderowany jako TEKST, nigdy jako href. */
+.document-link-blocked {
+  color: var(--n2-text-muted);
+  text-decoration: line-through;
+}
+.document-row-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.document-form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.document-form input {
+  min-width: 180px;
 }
 
 /* ---------- Comments & activity ---------- */

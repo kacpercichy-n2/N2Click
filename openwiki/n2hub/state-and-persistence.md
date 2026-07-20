@@ -61,6 +61,26 @@
   W chmurze mirroruje się jako dziewiąta rodzina (`ticketRow` + diff po id →
   `public.tickets`), a hydracja podmienia kolekcję autorytatywnie — `tickets` w
   `CloudMergePayload` jest OPCJONALNE (brak pola => reduktor nie rusza kolekcji).
+- DOKUMENTY PROJEKTU (2026-07-21): `Project.documents` — osadzona lista
+  odnośników (`ProjectDocument` w `src/types.ts`; slug `kind` + polskie etykiety
+  w `src/utils/projectDocuments.ts`). Tylko ADRESY, żadnych plików. Mutacje:
+  `ADD_PROJECT_DOCUMENT` / `SAVE_PROJECT_DOCUMENT` / `DELETE_PROJECT_DOCUMENT`,
+  walidacja w `commandValidation.ts` (`normalizeProjectDocumentDraft` +
+  `isValidProjectDocumentDraft`) — pusty `url`, nieznany `kind` albo
+  nieistniejący projekt/dokument zwracają TĘ SAMĄ referencję stanu; zapis bez
+  zmiany wartości to no-op. SCHEMAT ADRESU jest regułą bezpieczeństwa, nie UX:
+  projekty są współdzielone w organizacji, więc adres jednej osoby renderuje się
+  jako `href` u innych. `normalizeProjectDocumentUrl` (parsowanie przez
+  `new URL`, bez regexów) przepuszcza wyłącznie `http:`/`https:`, adres bez
+  schematu normalizuje do `https://`, a resztę (`javascript:`, `data:`, `file:`,
+  `mailto:`) odrzuca — na TRZECH granicach: reduktor (zapisuje wartość
+  znormalizowaną), `repairProjectDocuments` i RENDER w ProjectDetailPage (zły
+  adres z chmury/starszego zapisu ląduje jako tekst, nigdy w `href`).
+  Pole jest ADDYTYWNE: `DATA_VERSION` zostaje na 7, a `repairProjectDocuments`
+  (biegnie na wyniku OBU ścieżek wczytania) daje `[]` zapisom sprzed pola,
+  odrzuca wiersze o niedozwolonym adresie i normalizuje nieznany `kind` do
+  'link'. Usunięcie projektu zabiera
+  listę bez osobnej kaskady; w chmurze to kolumna jsonb `projects.documents`.
 - `Client` carries contact fields (contactName/contactEmail/contactPhone/notes;
   columns from 20260718090000_clients_contact_fields, '' or missing = none — no
   repair pass, use-sites coalesce), edited on the `/clients` page via

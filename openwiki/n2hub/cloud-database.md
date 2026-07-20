@@ -51,6 +51,17 @@
   backfills 0..n-1 only for projects still all-default, so a re-run never
   clobbers manual order); `task_assignments (task_id, profile_id)`
   is task ownership.
+- `projects.documents` (20260721010000) — jsonb not null default `'[]'`, CHECK
+  `jsonb_typeof(documents) = 'array'`: odnośniki do dokumentów handlowych
+  (`{id, kind: oferta|wycena|brief|link, label, url}`). Kolumna osadzona jak
+  `tasks.checklist` — świadomie BEZ tabeli `project_documents`: widoczność ma
+  być identyczna z widocznością projektu, więc RLS dziedziczy się z wiersza
+  `public.projects` i migracja nie dodaje ani jednej polityki. To WYŁĄCZNIE
+  adresy — Supabase Storage nie jest tu używany (żadnych plików). Wiersze są
+  współdzielone, więc `url` musi mieć schemat `http:`/`https:` — klient wymusza
+  to przy zapisie, przy wczytaniu i przy renderowaniu `href`
+  (`src/utils/projectDocuments.ts` → `normalizeProjectDocumentUrl`); kolumna nie
+  waliduje treści wpisów poza kształtem tablicy.
 - Project departments are DERIVED: the unique set of its tasks' departments
   (client: `selectors.departmentsOfProject`, fallback to the legacy
   `projects.department_id` when no task has one). A project may span several
@@ -113,3 +124,5 @@
 `passwordChange.test.ts` (forced-change flow), `src/store/persistGate.test.ts`.
 Zgłoszenia: `src/pages/ticketsExport.test.ts` (format CSV) oraz wpis
 `public.tickets` w `EXPECTED_POLICIES` w `migrations.test.ts`.
+Dokumenty projektu: `src/store/projectDocuments.test.ts` (reduktor, repair
+wczytania i round-trip mirror → snapshot kolumny `projects.documents`).

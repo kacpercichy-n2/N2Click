@@ -219,7 +219,8 @@ describe('searchAll strict date query', () => {
       projects: [{
         id: 'proj1', clientId: '', name: 'Projekt', description: '', statusId: 'status1',
         paid: false, startDate: '2026-02-01', endDate: '2026-03-05', departmentId: '',
-        serviceTypeId: '', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+        serviceTypeId: '', documents: [],
+        createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
       }],
       tasks: [makeTask({ id: 't1', startDate: '2026-02-01', endDate: '2026-03-05' })],
     });

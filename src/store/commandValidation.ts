@@ -5,8 +5,18 @@
 // appended. Draft types come via a TYPE-ONLY import from AppStore so there is no
 // runtime import cycle (AppStore imports these functions at runtime).
 import type { AppData, Project } from '../types';
+import {
+  isProjectDocumentKind,
+  normalizeProjectDocumentUrl,
+} from '../utils/projectDocuments';
 import { isTicketKind, isTicketPriority, isTicketStatus } from '../utils/tickets';
-import type { TaskDraft, ProjectDraft, PersonDraft, TicketDraft } from './AppStore';
+import type {
+  TaskDraft,
+  ProjectDraft,
+  ProjectDocumentDraft,
+  PersonDraft,
+  TicketDraft,
+} from './AppStore';
 
 export type RefEntityKind = 'task' | 'project' | 'milestone' | 'status' | 'person' | 'client';
 
@@ -91,6 +101,34 @@ export function isValidClientDraft(draft: ClientContactDraft): boolean {
     isRequiredName(draft.contactName ?? '') &&
     (isRequiredName(draft.contactEmail ?? '') || isRequiredName(draft.contactPhone ?? ''))
   );
+}
+
+/**
+ * Dokument projektu: `kind` ze stałego zbioru i `url`, który przechodzi
+ * normalizację schematu (`normalizeProjectDocumentUrl`: wymagany niepusty adres
+ * o schemacie `http:`/`https:`, adres bez schematu dostaje `https://`).
+ * `label` jest opcjonalna — UI pokazuje wtedy sam adres.
+ *
+ * Schemat jest walidowany CELOWO: projekty są danymi współdzielonymi w
+ * organizacji, więc adres jednej osoby renderuje się jako klikalny `href` u
+ * innych — dopuszczenie `javascript:`/`data:` byłoby przechowywanym XSS-em.
+ *
+ * Zwraca ZNORMALIZOWANY draft (przycięta etykieta, adres ze schematem) albo
+ * `null`, gdy komenda ma zostać odrzucona => reduktor oddaje TĘ SAMĄ referencję
+ * stanu (inwariant 6). Jedno źródło prawdy: reduktor bierze stąd wartość do
+ * zapisu, UI tę samą regułę w postaci `isValidProjectDocumentDraft`.
+ */
+export function normalizeProjectDocumentDraft(
+  draft: ProjectDocumentDraft,
+): { kind: ProjectDocumentDraft['kind']; label: string; url: string } | null {
+  if (!isProjectDocumentKind(draft.kind)) return null;
+  const url = normalizeProjectDocumentUrl(draft.url);
+  if (url === null) return null;
+  return { kind: draft.kind, label: draft.label.trim(), url };
+}
+
+export function isValidProjectDocumentDraft(draft: ProjectDocumentDraft): boolean {
+  return normalizeProjectDocumentDraft(draft) !== null;
 }
 
 /** firstName required (non-empty after trim). Nothing else: capacity already

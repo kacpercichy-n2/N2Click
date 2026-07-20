@@ -5,6 +5,8 @@ import type {
   AppData,
   ChecklistItem,
   Person,
+  Project,
+  ProjectDocument,
   SavedFilterCriteria,
   Status,
   Task,
@@ -14,6 +16,11 @@ import type {
 } from '../types';
 import { isValidDateStr, todayStr } from '../utils/dates';
 import { TASK_PRIORITIES } from '../utils/priority';
+import {
+  DEFAULT_PROJECT_DOCUMENT_KIND,
+  isProjectDocumentKind,
+  normalizeProjectDocumentUrl,
+} from '../utils/projectDocuments';
 import {
   DEFAULT_TICKET_KIND,
   DEFAULT_TICKET_PRIORITY,
@@ -286,6 +293,7 @@ function migrateV1(raw: Record<string, unknown>): AppData {
       endDate: '',
       departmentId: '',
       serviceTypeId: '',
+      documents: [],
       createdAt: now,
       updatedAt: now,
     });
@@ -872,6 +880,47 @@ export function normalizeTaskMeta(data: AppData): AppData {
 }
 
 /**
+ * Idempotentny repair listy dokumentów projektu. Pole jest ADDYTYWNE (bez
+ * podbicia DATA_VERSION), więc KAŻDY starszy zapis wchodzi tu bez `documents`
+ * i wychodzi z pustą listą — to jest domyślna wartość dla danych zastanych.
+ *
+ * Zasady:
+ * 1. Brak pola albo wartość niebędąca tablicą => `[]`.
+ * 2. Wiersz, którego `url` nie przechodzi `normalizeProjectDocumentUrl`, jest
+ *    ODRZUCANY: pusty adres nie ma czego pokazać, a adres o schemacie innym niż
+ *    http(s) (`javascript:`, `data:`) to przechowywany XSS — projekty są danymi
+ *    współdzielonymi, więc zły adres może pochodzić z chmury albo ze starszego
+ *    zapisu i sama walidacja na wejściu nie wystarcza. Adres bez schematu jest
+ *    normalizowany do `https://`.
+ * 3. Nieznany `kind` wraca do wartości domyślnej ('link') zamiast wywracać
+ *    wczytanie; brakujące `id` dostaje nowe (stabilne po zapisie zwrotnym).
+ *
+ * Idempotentny po wartości: drugi przebieg na własnym wyniku nic nie zmienia.
+ */
+export function repairProjectDocuments(data: AppData): AppData {
+  const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+  const projects: Project[] = data.projects.map((raw) => {
+    const p = raw as unknown as Record<string, unknown>;
+    const source = Array.isArray(p.documents) ? (p.documents as unknown[]) : [];
+    const documents: ProjectDocument[] = [];
+    for (const entry of source) {
+      if (typeof entry !== 'object' || entry === null) continue;
+      const d = entry as Record<string, unknown>;
+      const url = normalizeProjectDocumentUrl(str(d.url));
+      if (url === null) continue;
+      documents.push({
+        id: str(d.id) || uid(),
+        kind: isProjectDocumentKind(d.kind) ? d.kind : DEFAULT_PROJECT_DOCUMENT_KIND,
+        label: str(d.label).trim(),
+        url,
+      });
+    }
+    return { ...(raw as Project), documents };
+  });
+  return { ...data, projects };
+}
+
+/**
  * Idempotentny repair kolekcji zgłoszeń. Kolekcja jest ADDYTYWNA (bez podbicia
  * DATA_VERSION), więc każdy starszy zapis wchodzi tu jako `[]` z emptyData i
  * przechodzi bez zmian.
@@ -1282,6 +1331,11 @@ function readData(recordRevision: boolean): InternalLoadResult {
         ),
       );
     }
+
+    // Odnośniki do dokumentów projektu: pole ADDYTYWNE, więc repair biegnie na
+    // WYNIKU obu ścieżek (migracja i wczytanie w tej samej wersji) — zapis bez
+    // `documents` wychodzi stąd z pustą listą.
+    data = repairProjectDocuments(data);
 
     const { revision: _revision, ...storedData } = parsed;
     return {

@@ -219,6 +219,7 @@ function projectRow(
     end_date: dateOrNull(p.endDate),
     department_id: resolveDept(p.departmentId, maps.departments),
     service_type_id: service.cloud,
+    documents: p.documents,
     created_at: p.createdAt,
     updated_at: p.updatedAt,
   };
