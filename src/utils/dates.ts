@@ -113,6 +113,13 @@ export function formatShort(d: DateStr): string {
   return format(parseDate(d), 'd MMM', { locale: pl });
 }
 
+/** Short label with the Polish weekday suffix, like "26 paź (pon)". Used on
+ *  every task/project planning surface so a date always carries its weekday. */
+export function formatShortWithWeekday(d: DateStr): string {
+  const parsed = parseDate(d);
+  return `${format(parsed, 'd MMM', { locale: pl })} (${format(parsed, 'EEEEEE', { locale: pl })})`;
+}
+
 /** Timestamp label like "3 Aug 2026, 14:05" from an ISO string. */
 export function formatTimestamp(iso: string): string {
   return format(new Date(iso), 'd MMM yyyy, HH:mm', { locale: pl });

@@ -33,6 +33,8 @@ import {
   periodError,
   PERIOD_ERROR_LABELS,
   MAX_TASK_PERIOD_DAYS,
+  isValidDateStr,
+  formatShortWithWeekday,
 } from '../utils/dates';
 import { useSaveStatus } from '../utils/useSaveStatus';
 import { useAutoSave } from '../utils/useAutoSave';
@@ -957,6 +959,9 @@ function TaskEditor({
               disabled={readOnly}
               title={roTitle}
             />
+            {isValidDateStr(startDate) && (
+              <p className="field-hint">{formatShortWithWeekday(startDate)}</p>
+            )}
           </div>
           <div className="field">
             <label htmlFor="t-end">Data końca</label>
@@ -968,6 +973,9 @@ function TaskEditor({
               disabled={readOnly}
               title={roTitle}
             />
+            {isValidDateStr(endDate) && (
+              <p className="field-hint">{formatShortWithWeekday(endDate)}</p>
+            )}
           </div>
         </div>
         {perErr && <p className="field-error">{PERIOD_ERROR_LABELS[perErr]}</p>}

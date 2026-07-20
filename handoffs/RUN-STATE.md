@@ -98,3 +98,11 @@ yields a false `Zapisano`; (d) recovery-write timing in `CloudSyncProvider`
 (status→ready effect, queue-drain, transient error, pagehide). `scheduling-and-
 calendar.md` left unchanged — interaction code (WeekView/WorkloadPage/time/
 selectors) is untouched; workload still flows through reducer actions only.
+
+## 225 weekday-next-to-dates (dev)
+
+Added `formatShortWithWeekday` to `dates.ts` (`"26 paź (pon)"`, EEEEEE) + 2 unit
+tests (Mon/Sun). Applied on planning surfaces: Projects/Tasks rangeLabel,
+ProjectDetail, PersonProfile, GlobalSearch, TodayAgenda, MyWork, Kanban; TaskModal
+period inputs gained muted weekday hints. AllocationGrid already had weekday
+(formatRowLabel) — left. `vitest dates.test.ts` 28 pass; `npm run build` green.

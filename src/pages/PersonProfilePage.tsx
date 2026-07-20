@@ -38,7 +38,7 @@ import { Coin } from '../components/Coin';
 import { StatusBadge } from '../components/StatusBadge';
 import { DEFAULT_CAPACITY, defaultWorkEndMinutes } from '../store/storage';
 import { useOpenTask } from '../components/TaskModal';
-import { formatRowLabel, formatShort, isWeekend, todayStr, weekDays } from '../utils/dates';
+import { formatRowLabel, formatShortWithWeekday, isWeekend, todayStr, weekDays } from '../utils/dates';
 import { formatDuration, formatMinutes } from '../utils/time';
 import {
   END_MINUTE_OPTIONS,
@@ -481,7 +481,7 @@ function PersonProfile({ personId }: { personId: string }) {
                   <span className="task-title">{p.name}</span>
                   <StatusBadge status={getStatus(state, p.statusId)} />
                   <span className="muted">
-                    {formatShort(p.startDate)} – {formatShort(p.endDate)}
+                    {formatShortWithWeekday(p.startDate)} – {formatShortWithWeekday(p.endDate)}
                   </span>
                 </button>
               </li>
@@ -506,7 +506,7 @@ function PersonProfile({ personId }: { personId: string }) {
                   <span className="task-title">{t.title}</span>
                   <StatusBadge status={getStatus(state, t.statusId)} />
                   <span className="muted">
-                    {formatShort(t.startDate)} – {formatShort(t.endDate)} ·{' '}
+                    {formatShortWithWeekday(t.startDate)} – {formatShortWithWeekday(t.endDate)} ·{' '}
                     {formatDuration(taskPlannedTotalForPerson(state, t.id, person.id))} dla{' '}
                     {person.firstName}
                   </span>

@@ -13,7 +13,7 @@ import {
 } from '../store/selectors';
 import { StatusBadge } from './StatusBadge';
 import { useOpenTask } from './TaskModal';
-import { formatShort } from '../utils/dates';
+import { formatShortWithWeekday } from '../utils/dates';
 import { formatMinutes } from '../utils/time';
 import type { DateStr } from '../types';
 
@@ -68,7 +68,7 @@ export function TodayAgendaList({ personId, date }: { personId: string; date: Da
           >
             <span className="agenda-time muted">bez godziny</span>
             <span className="dash-row-name">{task.title}</span>
-            <span className="agenda-meta muted">do {formatShort(task.endDate)}</span>
+            <span className="agenda-meta muted">do {formatShortWithWeekday(task.endDate)}</span>
           </button>
         </li>
       ))}

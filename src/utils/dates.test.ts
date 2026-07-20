@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   addDaysStr,
+  formatShortWithWeekday,
   isValidDateStr,
   MAX_TASK_PERIOD_DAYS,
   PERIOD_ERROR_LABELS,
@@ -69,6 +70,18 @@ describe('periodError', () => {
 
   it('returns null when start === end (a single-day period)', () => {
     expect(periodError('2026-07-12', '2026-07-12')).toBeNull();
+  });
+});
+
+describe('formatShortWithWeekday', () => {
+  it('appends the abbreviated Polish weekday for a Monday', () => {
+    // 2026-10-26 is a Monday.
+    expect(formatShortWithWeekday('2026-10-26')).toBe('26 paź (pon)');
+  });
+
+  it('appends the abbreviated Polish weekday for a Sunday', () => {
+    // 2026-11-01 is a Sunday.
+    expect(formatShortWithWeekday('2026-11-01')).toBe('1 lis (nie)');
   });
 });
 

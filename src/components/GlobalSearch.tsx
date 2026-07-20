@@ -17,7 +17,7 @@ import {
 import { StatusBadge } from './StatusBadge';
 import { Avatar } from './Avatar';
 import { Search, ChevronRight } from './icons';
-import { formatShort } from '../utils/dates';
+import { formatShortWithWeekday } from '../utils/dates';
 import { useOpenTask } from './TaskModal';
 
 type FlatItem =
@@ -277,7 +277,7 @@ function SearchOverlay({ onClose }: { onClose: () => void }) {
                             </span>
                             <span className="gs-row-meta">
                               {client ? client.name : 'Bez klienta'} ·{' '}
-                              {formatShort(p.startDate)} – {formatShort(p.endDate)}
+                              {formatShortWithWeekday(p.startDate)} – {formatShortWithWeekday(p.endDate)}
                             </span>
                             <ChevronRight size={16} aria-hidden className="gs-row-chevron" />
                           </button>
@@ -312,7 +312,7 @@ function SearchOverlay({ onClose }: { onClose: () => void }) {
                             </span>
                             <span className="gs-row-meta">
                               {project ? project.name : 'Bez projektu'} ·{' '}
-                              {formatShort(t.startDate)} – {formatShort(t.endDate)}
+                              {formatShortWithWeekday(t.startDate)} – {formatShortWithWeekday(t.endDate)}
                             </span>
                             <ChevronRight size={16} aria-hidden className="gs-row-chevron" />
                           </button>

@@ -22,24 +22,15 @@ import { FilterPanel, type FilterChip, type FilterGroup } from '../components/Fi
 import { useOpenTask } from '../components/TaskModal';
 import { ChevronRight, GanttChart, Plus } from '../components/icons';
 import type { SavedFilterCriteria } from '../types';
-import { addDaysStr, formatShort, todayStr } from '../utils/dates';
-import { parseDate } from '../utils/dates';
+import { addDaysStr, formatShort, formatShortWithWeekday, todayStr } from '../utils/dates';
 import { periodError, PERIOD_ERROR_LABELS } from '../utils/dates';
 import { formatDuration } from '../utils/time';
-import { format } from 'date-fns';
-import { pl } from 'date-fns/locale/pl';
 
 export type PaidFilter = 'all' | 'paid' | 'unpaid';
 
 function rangeLabel(start: string, end: string): string {
-  const s = parseDate(start);
-  const e = parseDate(end);
-  if (start === end) return format(s, 'd MMM yyyy', { locale: pl });
-  const sameYear = s.getFullYear() === e.getFullYear();
-  if (sameYear && s.getMonth() === e.getMonth())
-    return `${format(s, 'd')}–${format(e, 'd MMM yyyy', { locale: pl })}`;
-  if (sameYear) return `${format(s, 'd MMM', { locale: pl })} – ${format(e, 'd MMM yyyy', { locale: pl })}`;
-  return `${format(s, 'd MMM yyyy', { locale: pl })} – ${format(e, 'd MMM yyyy', { locale: pl })}`;
+  if (start === end) return formatShortWithWeekday(start);
+  return `${formatShortWithWeekday(start)} – ${formatShortWithWeekday(end)}`;
 }
 
 function polishCount(n: number, one: string, few: string, many: string): string {

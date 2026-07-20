@@ -17,7 +17,7 @@ import {
 import { Coin } from '../components/Coin';
 import { FilterPanel, type FilterChip, type FilterGroup } from '../components/FilterPanel';
 import { type PaidFilter } from './ProjectsPage';
-import { formatShort } from '../utils/dates';
+import { formatShortWithWeekday } from '../utils/dates';
 import { formatDuration } from '../utils/time';
 
 // Dark-legible, on-brand rotation for admin quick-created statuses.
@@ -153,7 +153,7 @@ export function KanbanPage() {
         </div>
         {client && <div className="kanban-card-client">{client.name}</div>}
         <div className="kanban-card-meta">
-          {formatShort(p.startDate)} – {formatShort(p.endDate)}
+          {formatShortWithWeekday(p.startDate)} – {formatShortWithWeekday(p.endDate)}
         </div>
         <div className="kanban-card-meta muted">
           {taskCount} {polishCount(taskCount, 'zadanie', 'zadania', 'zadań')} ·{' '}

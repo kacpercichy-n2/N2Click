@@ -19,7 +19,7 @@ import {
 import { PlanningBadge } from '../components/PlanningBadge';
 import { TodayAgendaList } from '../components/TodayAgenda';
 import { useOpenTask } from '../components/TaskModal';
-import { formatRowLabel, formatShort, shiftWeek, todayStr, weekDays } from '../utils/dates';
+import { formatRowLabel, formatShortWithWeekday, shiftWeek, todayStr, weekDays } from '../utils/dates';
 import { formatDuration } from '../utils/time';
 import type { Task } from '../types';
 
@@ -127,7 +127,7 @@ export function MyWorkPage() {
                           onClick={() => openTask(task.id)}
                         >
                           <span className="dash-row-name">{task.title}</span>
-                          <span className="agenda-meta">do {formatShort(task.endDate)}</span>
+                          <span className="agenda-meta">do {formatShortWithWeekday(task.endDate)}</span>
                         </button>
                       </li>
                     ))}

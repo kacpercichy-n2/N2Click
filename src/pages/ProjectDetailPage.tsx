@@ -26,7 +26,7 @@ import { CommentsPanel } from '../components/CommentsPanel';
 import { SaveStatus } from '../components/SaveStatus';
 import { useOpenTask } from '../components/TaskModal';
 import { ChevronRight } from '../components/icons';
-import { formatShort, todayStr, isValidDateStr, periodError, PERIOD_ERROR_LABELS } from '../utils/dates';
+import { formatShortWithWeekday, todayStr, isValidDateStr, periodError, PERIOD_ERROR_LABELS } from '../utils/dates';
 import { formatDuration } from '../utils/time';
 import { useSaveStatus } from '../utils/useSaveStatus';
 import { useAutoSave } from '../utils/useAutoSave';
@@ -499,7 +499,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
                   <StatusBadge status={getStatus(state, t.statusId)} />
                   <PlanningBadge status={taskPlanningStatus(state, t.id)} />
                   <span className="muted">
-                    {formatShort(t.startDate)} – {formatShort(t.endDate)} ·{' '}
+                    {formatShortWithWeekday(t.startDate)} – {formatShortWithWeekday(t.endDate)} ·{' '}
                     {formatDuration(taskPlannedTotal(state, t.id))}
                   </span>
                   <span className="task-card-assignees">
