@@ -31,7 +31,7 @@ import {
 } from '../store/selectors';
 import { ROLE_LABELS, can, NO_PERM_TITLE } from '../store/permissions';
 import { hashPassword } from '../utils/password';
-import { roleTitleOptions } from '../utils/roleTitles';
+import { accessRoleForTitle, roleTitleOptions } from '../utils/roleTitles';
 import type { AccessRole, Person } from '../types';
 import { Avatar } from '../components/Avatar';
 import { Coin } from '../components/Coin';
@@ -217,7 +217,21 @@ function PersonProfile({ personId }: { personId: string }) {
               <select
                 id="pp-role"
                 value={draft.role}
-                onChange={(e) => set('role', e.target.value)}
+                onChange={(e) => {
+                  const title = e.target.value;
+                  // Sprzężenie stanowisko → rola dostępu: Menadżer → pm,
+                  // Specjalista → pracownik. Nigdy nie degraduje administratora
+                  // i działa tylko, gdy aktor może zmieniać rolę dostępu
+                  // (ręczne nadpisanie selektem roli pozostaje możliwe).
+                  const derived = accessRoleForTitle(title);
+                  setDraft((d) => ({
+                    ...d,
+                    role: title,
+                    ...(derived && allow('accessRole') && d.accessRole !== 'administrator'
+                      ? { accessRole: derived }
+                      : {}),
+                  }));
+                }}
                 disabled={!allow('roleTitle')}
                 title={allow('roleTitle') ? undefined : NO_PERM_TITLE}
               >

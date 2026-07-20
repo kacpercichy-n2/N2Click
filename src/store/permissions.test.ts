@@ -63,7 +63,8 @@ const MATRIX: Record<AccessRole, Record<PermAction, boolean>> = {
     'projects.manage': true,
     'projects.paid': true,
     'clients.manage': true,
-    'tasks.manage': false,
+    // Zadań nie dodaje wyłącznie specjalista (pracownik) — decyzja 2026-07-20.
+    'tasks.manage': true,
     'blocks.editAny': false,
     'blocks.editOwn': true,
     'people.manage': false,

@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
-import { roleTitleOptions } from '../utils/roleTitles';
+import { accessRoleForTitle, roleTitleOptions } from '../utils/roleTitles';
 import { currentUser as currentUserSel, isImpersonating } from '../store/selectors';
 import { useAuth } from '../auth/SessionProvider';
 import { getSupabaseClient } from '../supabase/client';
@@ -419,7 +419,20 @@ function ProvisionSection() {
             <select
               id="t-role-title"
               value={form.roleTitle}
-              onChange={(e) => set('roleTitle', e.target.value)}
+              onChange={(e) => {
+                const title = e.target.value;
+                // Sprzężenie stanowisko → rola dostępu (chmurowe nazwy:
+                // Menadżer → manager, Specjalista → worker); wybranego
+                // ręcznie administratora nigdy nie degradujemy.
+                const derived = accessRoleForTitle(title);
+                setForm((f) => ({
+                  ...f,
+                  roleTitle: title,
+                  ...(derived && f.accessRole !== 'administrator'
+                    ? { accessRole: (derived === 'pm' ? 'manager' : 'worker') as ProvisionAccessRole }
+                    : {}),
+                }));
+              }}
             >
               <option value="">—</option>
               {roleTitleOptions(state.departments, form.roleTitle).map((t) => (

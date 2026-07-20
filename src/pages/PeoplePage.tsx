@@ -13,6 +13,7 @@ import { Avatar } from '../components/Avatar';
 import { ChevronRight } from '../components/icons';
 import { DEFAULT_CAPACITY, defaultWorkEndMinutes } from '../store/storage';
 import { formatDuration, formatMinutes } from '../utils/time';
+import { accessRoleForTitle, roleTitleOptions } from '../utils/roleTitles';
 import {
   END_MINUTE_OPTIONS,
   START_MINUTE_OPTIONS,
@@ -116,12 +117,29 @@ export function PeoplePage() {
         </div>
         <div className="field">
           <label htmlFor="p-role">Stanowisko</label>
-          <input
+          <select
             id="p-role"
             value={draft.role}
-            onChange={(e) => set('role', e.target.value)}
-            placeholder="np. Projektantka"
-          />
+            onChange={(e) => {
+              const title = e.target.value;
+              // Sprzężenie stanowisko → rola dostępu (bez degradacji admina).
+              const derived = accessRoleForTitle(title);
+              setDraft((d) => ({
+                ...d,
+                role: title,
+                ...(derived && d.accessRole !== 'administrator'
+                  ? { accessRole: derived }
+                  : {}),
+              }));
+            }}
+          >
+            <option value="">—</option>
+            {roleTitleOptions(state.departments, draft.role).map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
         </div>
         <div className="field">
           <label htmlFor="p-dep">Dział</label>
