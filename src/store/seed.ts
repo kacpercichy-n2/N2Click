@@ -633,6 +633,8 @@ export function buildSampleData(): AppData {
     workload,
     comments,
     activity,
+    // Dane demonstracyjne nie zawierają zgłoszeń — zakładka „Zgłoszenia” startuje pusta.
+    tickets: [],
     currentUserId: kasia.id,
     impersonatorId: '',
     sampleBannerDismissed: true,

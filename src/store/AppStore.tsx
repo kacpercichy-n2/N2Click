@@ -30,6 +30,9 @@ import type {
   Task,
   TaskAssignment,
   TaskPriority,
+  TicketKind,
+  TicketPriority,
+  TicketStatus,
   WorkCategory,
   WorkloadEntry,
 } from '../types';
@@ -53,7 +56,15 @@ import {
   isValidPersonDraft,
   isValidProjectDraft,
   isValidTaskDraft,
+  isValidTicketDraft,
+  isValidTicketStatus,
 } from './commandValidation';
+import {
+  DEFAULT_TICKET_STATUS,
+  isTicketKind,
+  isTicketPriority,
+  isTicketStatus,
+} from '../utils/tickets';
 import { wouldCreateSupervisorCycle } from './selectors';
 import { ROLE_LABELS } from './permissions';
 import { registerPersonOrder } from '../utils/colors';
@@ -109,6 +120,17 @@ export interface ProjectDraft {
   endDate: string;
   departmentId: string;
   serviceTypeId: string;
+}
+
+/** Draft zgłoszenia (modal „Zgłoszenia”). `status` NIE jest częścią draftu:
+ *  nowe zgłoszenie startuje jako 'nowe', zmianę robi SET_TICKET_STATUS. */
+export interface TicketDraft {
+  title: string;
+  area: string;
+  description: string;
+  kind: TicketKind;
+  priority: TicketPriority;
+  reporterId: string;
 }
 
 export interface PersonDraft {
@@ -180,6 +202,11 @@ export type Action =
   | { type: 'MOVE_MILESTONE'; milestoneId: string; date: string }
   | { type: 'DELETE_MILESTONE'; milestoneId: string }
   | { type: 'ADD_COMMENT'; entityType: CommentEntityType; entityId: string; body: string; mentionIds: string[] }
+  // Zgłoszenia zespołu („Zgłoszenia”). Kolekcja addytywna, bez powiązań kaskadowych.
+  | { type: 'ADD_TICKET'; draft: TicketDraft }
+  | { type: 'SAVE_TICKET'; ticketId: string; draft: TicketDraft }
+  | { type: 'SET_TICKET_STATUS'; ticketId: string; status: TicketStatus }
+  | { type: 'DELETE_TICKET'; ticketId: string }
   | { type: 'ADD_PERSON'; person: PersonDraft }
   | { type: 'UPDATE_PERSON'; personId: string; person: PersonDraft }
   | { type: 'DELETE_PERSON'; personId: string }
@@ -2083,6 +2110,9 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
     payload.activity,
   ];
   if (collections.some((c) => !Array.isArray(c))) return state;
+  // Zgłoszenia są OPCJONALNE w ładunku (dopisane addytywnie): brak pola => bez
+  // zmian w kolekcji, obecne => walidacja i autorytatywna podmiana niżej.
+  if (payload.tickets !== undefined && !Array.isArray(payload.tickets)) return state;
 
   // Osoby najpierw (autorytatywnie), żeby walidacja encji widziała finalny
   // zespół. Niepoprawny blok osób psuje całą hydrację (atomowość).
@@ -2101,7 +2131,8 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
     !payload.tasks.every(isObjWithId) ||
     !payload.workload.every(isObjWithId) ||
     !payload.comments.every(isObjWithId) ||
-    !payload.activity.every(isObjWithId)
+    !payload.activity.every(isObjWithId) ||
+    (payload.tickets !== undefined && !payload.tickets.every(isObjWithId))
   ) {
     return state;
   }
@@ -2153,6 +2184,18 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
     }
   }
 
+  // Zgłoszenia: zgłaszający MUSI istnieć w finalnym zespole, a rodzaj/priorytet/
+  // status muszą należeć do swoich zbiorów — inaczej cała hydracja jest
+  // odrzucana (fail-closed, jak pozostałe rodziny).
+  if (payload.tickets !== undefined) {
+    for (const t of payload.tickets) {
+      if (!personIds.has(t.reporterId)) return state;
+      if (!isTicketKind(t.kind) || !isTicketPriority(t.priority) || !isTicketStatus(t.status)) {
+        return state;
+      }
+    }
+  }
+
   // Assignments reconciled by (taskId, personId): a pair the local state
   // already knows keeps its local row id (stable references); a genuinely new
   // cloud pair gets a fresh uid. Pairs the cloud does not know are DROPPED.
@@ -2179,6 +2222,7 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
     activity: [...payload.activity],
     workload: [...payload.workload],
     assignments,
+    ...(payload.tickets !== undefined ? { tickets: [...payload.tickets] } : {}),
   };
 }
 
@@ -2765,6 +2809,69 @@ export function reducer(state: AppData, action: Action): AppData {
         ...state,
         savedFilters: state.savedFilters.filter((f) => f.id !== action.filterId),
       };
+    // ---- Zgłoszenia ----
+    // Walidacja żyje w commandValidation (isValidTicketDraft): pusty tytuł/opis,
+    // nieznany reporterId albo wartość spoza enuma => TA SAMA referencja stanu
+    // (inwariant 6). Kolekcja jest samodzielna — brak kaskad i wpisów dziennika.
+    case 'ADD_TICKET': {
+      if (!isValidTicketDraft(state, action.draft)) return state;
+      const stamp = nowIso();
+      return {
+        ...state,
+        tickets: [
+          ...state.tickets,
+          {
+            id: uid(),
+            title: action.draft.title.trim(),
+            area: action.draft.area.trim(),
+            description: action.draft.description.trim(),
+            kind: action.draft.kind,
+            priority: action.draft.priority,
+            status: DEFAULT_TICKET_STATUS,
+            reporterId: action.draft.reporterId,
+            createdAt: stamp,
+            updatedAt: stamp,
+          },
+        ],
+      };
+    }
+    case 'SAVE_TICKET': {
+      if (!state.tickets.some((t) => t.id === action.ticketId)) return state;
+      if (!isValidTicketDraft(state, action.draft)) return state;
+      return {
+        ...state,
+        tickets: state.tickets.map((t) =>
+          t.id === action.ticketId
+            ? {
+                ...t,
+                title: action.draft.title.trim(),
+                area: action.draft.area.trim(),
+                description: action.draft.description.trim(),
+                kind: action.draft.kind,
+                priority: action.draft.priority,
+                reporterId: action.draft.reporterId,
+                updatedAt: nowIso(),
+              }
+            : t,
+        ),
+      };
+    }
+    case 'SET_TICKET_STATUS': {
+      const ticket = state.tickets.find((t) => t.id === action.ticketId);
+      if (!ticket || !isValidTicketStatus(action.status)) return state;
+      // Ponowne ustawienie tego samego statusu to no-op (jak SET_TASK_STATUS).
+      if (ticket.status === action.status) return state;
+      return {
+        ...state,
+        tickets: state.tickets.map((t) =>
+          t.id === action.ticketId ? { ...t, status: action.status, updatedAt: nowIso() } : t,
+        ),
+      };
+    }
+    case 'DELETE_TICKET': {
+      if (!state.tickets.some((t) => t.id === action.ticketId)) return state;
+      return { ...state, tickets: state.tickets.filter((t) => t.id !== action.ticketId) };
+    }
     case 'LOAD_SAMPLE':
       return { ...action.data, sampleBannerDismissed: true };
     case 'DISMISS_SAMPLE_BANNER':

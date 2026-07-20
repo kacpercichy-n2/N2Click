@@ -24,6 +24,7 @@ import { PeoplePage } from './pages/PeoplePage';
 import { PersonProfilePage } from './pages/PersonProfilePage';
 import { WorkloadPage } from './pages/WorkloadPage';
 import { AdminPage } from './pages/AdminPage';
+import { TicketsPage } from './pages/TicketsPage';
 import { AccountPage } from './pages/AccountPage';
 import { TeamPage } from './pages/TeamPage';
 import { canViewTeam } from './pages/teamScope';
@@ -49,6 +50,7 @@ import { SampleBanner } from './components/SampleBanner';
 import { PersistenceBanner } from './components/PersistenceBanner';
 import { CloudSyncBanner } from './components/CloudSyncBanner';
 import { TaskModal } from './components/TaskModal';
+import { TicketModal } from './components/TicketModal';
 import { GlobalSearch } from './components/GlobalSearch';
 import { Avatar } from './components/Avatar';
 import {
@@ -70,6 +72,7 @@ import {
   CircleHelp,
   KeyRound,
   Network,
+  Inbox,
 } from './components/icons';
 import type { LucideIcon } from './components/icons';
 import { loadUiPrefs, updateUiPrefs } from './utils/uiPrefs';
@@ -92,6 +95,8 @@ const NAV: Array<[string, string, LucideIcon]> = [
   ['/people', 'Zespół', Users],
   ['/team', 'Struktura zespołu', Network],
   ['/workload', 'Obciążenie', Gauge],
+  // Zgłoszenia widzi KAŻDY (każda rola może zgłosić) — bez bramki jak /admin.
+  ['/zgloszenia', 'Zgłoszenia', Inbox],
   ['/admin', 'Administracja', Settings],
 ];
 
@@ -499,6 +504,8 @@ export function App() {
             <Route path="/people" element={<PeoplePage />} />
             <Route path="/people/:id" element={<PersonProfilePage />} />
             <Route path="/workload" element={<WorkloadPage />} />
+            {/* Zgłoszenia: widoczne dla każdej roli (zakres wierszy filtruje strona). */}
+            <Route path="/zgloszenia" element={<TicketsPage />} />
             <Route
               path="/admin"
               element={canAdmin ? <AdminPage /> : <Navigate to="/dashboard" replace />}
@@ -520,6 +527,8 @@ export function App() {
 
       {/* The task popout modal lives once, above every page. */}
       <TaskModal />
+      {/* Ten sam wzorzec dla zgłoszeń (?zgloszenie=new | <id>). */}
+      <TicketModal />
       <DirtyNavigationGuard />
       <OnboardingRoot
         owner={actualUser}

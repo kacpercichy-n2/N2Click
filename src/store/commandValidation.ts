@@ -5,7 +5,8 @@
 // appended. Draft types come via a TYPE-ONLY import from AppStore so there is no
 // runtime import cycle (AppStore imports these functions at runtime).
 import type { AppData, Project } from '../types';
-import type { TaskDraft, ProjectDraft, PersonDraft } from './AppStore';
+import { isTicketKind, isTicketPriority, isTicketStatus } from '../utils/tickets';
+import type { TaskDraft, ProjectDraft, PersonDraft, TicketDraft } from './AppStore';
 
 export type RefEntityKind = 'task' | 'project' | 'milestone' | 'status' | 'person' | 'client';
 
@@ -73,4 +74,26 @@ export function isValidProjectDraft(
  *  self-heals to DEFAULT_CAPACITY, supervisor cycles are guarded elsewhere. */
 export function isValidPersonDraft(draft: PersonDraft): boolean {
   return isRequiredName(draft.firstName);
+}
+
+/**
+ * Zgłoszenie: wymagane `title` i `description` (po trim), `reporterId` musi
+ * wskazywać istniejącą osobę, a `kind`/`priority` muszą należeć do swoich
+ * zbiorów. `area` jest opcjonalne. Niespełnienie => reduktor zwraca TĘ SAMĄ
+ * referencję stanu (inwariant 6). `status` nie jest częścią draftu: nowe
+ * zgłoszenie startuje jako 'nowe', a zmianę statusu robi SET_TICKET_STATUS.
+ */
+export function isValidTicketDraft(state: AppData, draft: TicketDraft): boolean {
+  return (
+    isRequiredName(draft.title) &&
+    isRequiredName(draft.description) &&
+    hasEntity(state, 'person', draft.reporterId) &&
+    isTicketKind(draft.kind) &&
+    isTicketPriority(draft.priority)
+  );
+}
+
+/** Status zgłoszenia należy do stałego zbioru wartości. */
+export function isValidTicketStatus(value: unknown): boolean {
+  return isTicketStatus(value);
 }

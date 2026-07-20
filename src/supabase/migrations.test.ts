@@ -60,6 +60,11 @@ const EXPECTED_POLICIES: Record<string, string[]> = {
   'public.workload_entries': ['select', 'insert', 'update', 'delete'],
   'public.milestones': ['select', 'insert', 'update', 'delete'],
   'public.app_settings': ['select', 'insert', 'update', 'delete'],
+  // Zgłoszenia zespołu (20260720230000_tickets): pełne CRUD w politykach —
+  // insert dla każdego zalogowanego (tylko „na siebie”), select własne wiersze
+  // lub administrator, update administrator / zgłaszający dopóki 'nowe',
+  // delete wyłącznie administrator.
+  'public.tickets': ['select', 'insert', 'update', 'delete'],
 };
 
 interface ParsedPolicy {
@@ -102,6 +107,7 @@ describe('konwencja plików migracji', () => {
       '20260720170000_task_departments.sql',
       '20260720190000_manager_task_management.sql',
       '20260720200000_task_order_index.sql',
+      '20260720230000_tickets.sql',
     ]);
   });
 

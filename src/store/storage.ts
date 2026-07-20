@@ -9,10 +9,19 @@ import type {
   Status,
   Task,
   TaskPriority,
+  Ticket,
   WorkloadEntry,
 } from '../types';
 import { isValidDateStr, todayStr } from '../utils/dates';
 import { TASK_PRIORITIES } from '../utils/priority';
+import {
+  DEFAULT_TICKET_KIND,
+  DEFAULT_TICKET_PRIORITY,
+  DEFAULT_TICKET_STATUS,
+  isTicketKind,
+  isTicketPriority,
+  isTicketStatus,
+} from '../utils/tickets';
 import {
   BIN_DATE,
   DAY_MINUTES,
@@ -114,6 +123,7 @@ export function emptyData(): AppData {
     workload: [],
     comments: [],
     activity: [],
+    tickets: [],
     currentUserId: '',
     impersonatorId: '',
     sampleBannerDismissed: false,
@@ -862,6 +872,49 @@ export function normalizeTaskMeta(data: AppData): AppData {
 }
 
 /**
+ * Idempotentny repair kolekcji zgłoszeń. Kolekcja jest ADDYTYWNA (bez podbicia
+ * DATA_VERSION), więc każdy starszy zapis wchodzi tu jako `[]` z emptyData i
+ * przechodzi bez zmian.
+ *
+ * Zasady:
+ * 1. Wiersz bez `id` albo bez niepustego `title` jest ODRZUCANY (nie da się go
+ *    ani pokazać, ani zaadresować).
+ * 2. Nieznane `kind`/`priority`/`status` wracają do wartości domyślnych
+ *    ('inne' / 'sredni' / 'nowe') zamiast wywracać wczytanie.
+ * 3. Pola tekstowe i znaczniki czasu są koercjonowane do stringów; `reporterId`
+ *    wskazujący nieistniejącą osobę zostaje ZACHOWANY (historyczne zgłoszenie
+ *    osoby usuniętej z zespołu ma nadal wartość dla managera — UI pokazuje
+ *    wtedy „nieznany”).
+ *
+ * Idempotentny po wartości: drugi przebieg na własnym wyniku nic nie zmienia.
+ */
+export function repairTickets(data: AppData): AppData {
+  const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+  const source = Array.isArray(data.tickets) ? data.tickets : [];
+  const tickets: Ticket[] = [];
+  for (const raw of source) {
+    if (typeof raw !== 'object' || raw === null) continue;
+    const t = raw as unknown as Record<string, unknown>;
+    const id = str(t.id);
+    const title = str(t.title).trim();
+    if (id === '' || title === '') continue;
+    tickets.push({
+      id,
+      title,
+      area: str(t.area),
+      description: str(t.description),
+      kind: isTicketKind(t.kind) ? t.kind : DEFAULT_TICKET_KIND,
+      priority: isTicketPriority(t.priority) ? t.priority : DEFAULT_TICKET_PRIORITY,
+      status: isTicketStatus(t.status) ? t.status : DEFAULT_TICKET_STATUS,
+      reporterId: str(t.reporterId),
+      createdAt: str(t.createdAt),
+      updatedAt: str(t.updatedAt),
+    });
+  }
+  return { ...data, tickets };
+}
+
+/**
  * Idempotent normalize pass for stable completion semantics. Runs on EVERY load
  * — same philosophy as normalizeTaskMeta / normalizeDates — so a payload with a
  * missing or malformed `isDone` (e.g. a v6 payload predating the flag, or one
@@ -1165,13 +1218,15 @@ function readData(recordRevision: boolean): InternalLoadResult {
     const version = typeof parsed.version === 'number' ? parsed.version : 1;
     let data: AppData;
     if (version < 2) {
-      data = repairStatusReferences(
-        sanitizeImpersonator(
-          normalizeStatusFlags(
-            normalizeTaskMeta(
-              ensureStartMinutes(
-                normalizeDates(
-                  normalizeWorkloadHours(migrateV4toV5(localizeLegacyData(migrateV1(parsed)))),
+      data = repairTickets(
+        repairStatusReferences(
+          sanitizeImpersonator(
+            normalizeStatusFlags(
+              normalizeTaskMeta(
+                ensureStartMinutes(
+                  normalizeDates(
+                    normalizeWorkloadHours(migrateV4toV5(localizeLegacyData(migrateV1(parsed)))),
+                  ),
                 ),
               ),
             ),
@@ -1209,16 +1264,19 @@ function readData(recordRevision: boolean): InternalLoadResult {
         workload: coerceArray(parsedRest.workload, defaults.workload),
         comments: coerceArray(parsedRest.comments, defaults.comments),
         activity: coerceArray(parsedRest.activity, defaults.activity),
+        tickets: coerceArray(parsedRest.tickets, defaults.tickets),
         savedFilters: coerceArray(parsedRest.savedFilters, defaults.savedFilters),
       };
       const localized =
         version < LOCALIZATION_MIGRATION_VERSION ? localizeLegacyData(loaded) : loaded;
       const migrated = migrateV4toV5(localized);
-      data = repairStatusReferences(
-        sanitizeImpersonator(
-          normalizeStatusFlags(
-            normalizeTaskMeta(
-              ensureStartMinutes(normalizeDates(normalizeWorkloadHours(migrated))),
+      data = repairTickets(
+        repairStatusReferences(
+          sanitizeImpersonator(
+            normalizeStatusFlags(
+              normalizeTaskMeta(
+                ensureStartMinutes(normalizeDates(normalizeWorkloadHours(migrated))),
+              ),
             ),
           ),
         ),

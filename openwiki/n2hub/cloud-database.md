@@ -61,6 +61,17 @@
   boundary). `milestones` → `project_id`. `comments` and `activity_events`
   are append-only (no UPDATE/DELETE policies). `app_settings` — org runtime
   flags (`local_writes_retired`).
+- `tickets` (20260720230000) — zgłoszenia zespołu („Zgłoszenia”), SAMODZIELNA
+  tabela bez powiązań z projektami/zadaniami: `title`, `area`, `description`,
+  `kind` (blad|usprawnienie|nowa-funkcja|inne), `priority` (niski|sredni|wysoki),
+  `status` (nowe|w-trakcie|zrobione|odrzucone) — wszystkie trzy jako CHECK-i, nie
+  typy enum — oraz `reporter_id` → `profiles.id` (`on delete cascade`) i
+  `created_at`/`updated_at` (trigger `app.set_updated_at`). RLS: INSERT dla
+  KAŻDEGO zalogowanego, ale wyłącznie `reporter_id = auth.uid()`; SELECT własne
+  wiersze lub `app.is_administrator()`; UPDATE administrator albo zgłaszający
+  dopóki status = 'nowe' (using + with check); DELETE wyłącznie administrator.
+  Tabela NIE jest w publikacji realtime — zmiany zgłoszeń nie wyzwalają
+  live-syncu, lista odświeża się przy hydracji.
 - Access model: administrator = everything; manager = own department
   (profiles incl. UPDATE of non-admin members, memberships/assignments
   restricted to own-department people) — and since 20260720170000 the manager
@@ -100,3 +111,5 @@
 `plannerData.test.ts`, `cloudMirror.test.ts`, `dataImport.test.ts`,
 `migrationStatus.test.ts`, `src/auth/session.test.ts`,
 `passwordChange.test.ts` (forced-change flow), `src/store/persistGate.test.ts`.
+Zgłoszenia: `src/pages/ticketsExport.test.ts` (format CSV) oraz wpis
+`public.tickets` w `EXPECTED_POLICIES` w `migrations.test.ts`.

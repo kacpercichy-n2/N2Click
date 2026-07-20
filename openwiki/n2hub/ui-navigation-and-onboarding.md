@@ -38,6 +38,15 @@
   `main.tsx`.
 - `src/pages/` owns route-specific screens; `src/components/TaskModal.tsx` owns
   task editing and its allocation grid.
+- `/zgloszenia` („Zgłoszenia”, `src/pages/TicketsPage.tsx`) jest widoczne dla
+  KAŻDEJ roli — nie jest bramkowane jak `/admin`. Dwa tryby w segmentowanym
+  przełączniku: „Zgłoś” (otwiera modal) i „Zgłoszone” (tabela z filtrami status +
+  rodzaj, sort od najnowszych, rozwijany opis). Bez `tickets.manage` widać
+  wyłącznie własne wiersze; z nim dochodzi inline status, usuwanie i eksport CSV
+  (serializer: `src/pages/ticketsExport.ts`). `src/components/TicketModal.tsx`
+  powiela wzorzec TaskModal: `?zgloszenie=new|<id>`, `useOpenTicket()`, montaż raz
+  w App, klasy `.task-modal-*` i własny zakres strażnika nawigacji
+  (`'ticket-modal'` w `dirtyRegistry.ts`).
 - `src/onboarding/catalog.ts` owns copy, roles and route mapping; components
   expose stable `data-tour` anchors only.
 - `src/utils/dirtyRegistry.ts` and `src/utils/useSaveStatus.ts` support shared

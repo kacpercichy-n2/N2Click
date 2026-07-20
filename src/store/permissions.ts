@@ -32,7 +32,9 @@ export type PermAction =
   | 'workload.reassign' // WorkloadPage reassign control
   | 'admin.panel' // admin page: statuses, clients, departments, service types
   | 'users.impersonate' // "Występuj jako" quick switch
-  | 'comments.add'; // post comments
+  | 'comments.add' // post comments
+  | 'tickets.create' // złożenie zgłoszenia („Zgłoszenia” → „Zgłoś”) — KAŻDA rola
+  | 'tickets.manage'; // wgląd we wszystkie zgłoszenia, zmiana statusu, usuwanie, eksport
 
 /** Per-role allow-set. Absence ⇒ denied. Everyone may VIEW every page but /admin. */
 const MATRIX: Record<AccessRole, ReadonlySet<PermAction>> = {
@@ -49,6 +51,8 @@ const MATRIX: Record<AccessRole, ReadonlySet<PermAction>> = {
     'admin.panel',
     'users.impersonate',
     'comments.add',
+    'tickets.create',
+    'tickets.manage',
   ]),
   pm: new Set<PermAction>([
     'projects.manage',
@@ -58,6 +62,7 @@ const MATRIX: Record<AccessRole, ReadonlySet<PermAction>> = {
     'profile.editOwn',
     'workload.reassign',
     'comments.add',
+    'tickets.create',
   ]),
   // Zadania dodaje każda rola poza specjalistą (pracownik): menedżer działu
   // (pm), handlowiec i administrator — decyzja 2026-07-20.
@@ -69,8 +74,14 @@ const MATRIX: Record<AccessRole, ReadonlySet<PermAction>> = {
     'blocks.editOwn',
     'profile.editOwn',
     'comments.add',
+    'tickets.create',
   ]),
-  pracownik: new Set<PermAction>(['blocks.editOwn', 'profile.editOwn', 'comments.add']),
+  pracownik: new Set<PermAction>([
+    'blocks.editOwn',
+    'profile.editOwn',
+    'comments.add',
+    'tickets.create',
+  ]),
 };
 
 /**

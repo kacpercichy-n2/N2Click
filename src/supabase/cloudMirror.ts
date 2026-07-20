@@ -22,6 +22,7 @@ import type {
   Project,
   Status,
   Task,
+  Ticket,
   WorkloadEntry,
 } from '../types';
 import { normalizeEmail } from '../auth/profile';
@@ -271,6 +272,34 @@ function milestoneRow(m: Milestone, diagnostics: string[]): Record<string, unkno
     project_id: m.projectId,
     name: m.name,
     milestone_date: m.date,
+  };
+}
+
+function ticketRow(
+  t: Ticket,
+  maps: CloudIdMaps,
+  diagnostics: string[],
+): Record<string, unknown> | null {
+  if (!isUuid(t.id)) {
+    diagnostics.push(DIAG.nonUuid);
+    return null;
+  }
+  const reporterId = maps.people.get(t.reporterId) ?? (maps.cloudProfileIds.has(t.reporterId) ? t.reporterId : null);
+  if (reporterId === null) {
+    diagnostics.push(DIAG.unmappablePerson);
+    return null;
+  }
+  return {
+    id: t.id,
+    title: t.title,
+    area: t.area,
+    description: t.description,
+    kind: t.kind,
+    priority: t.priority,
+    status: t.status,
+    reporter_id: reporterId,
+    created_at: t.createdAt,
+    updated_at: t.updatedAt,
   };
 }
 
@@ -536,6 +565,25 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
       if (prevIds.has(e.id)) continue;
       const row = activityRow(e, maps, diagnostics);
       if (row) ops.push({ kind: 'upsert', table: 'activity_events', row, sourceId: e.id, label: 'Wpis dziennika' });
+    }
+  }
+
+  // 8b) Zgłoszenia ---- (diff po id: upsert dodanych/zmienionych, remove usuniętych).
+  // Kolekcja addytywna i niezależna od reszty planera; RLS przepuszcza wstawienie
+  // wyłącznie z własnym `reporter_id`, a zmianę statusu/usunięcie — administratora.
+  {
+    const prevMap = byId(prev.tickets);
+    const nextMap = byId(next.tickets);
+    for (const id of prevMap.keys()) {
+      if (!nextMap.has(id) && isUuid(id)) {
+        ops.push({ kind: 'remove', table: 'tickets', match: { id }, sourceId: id, label: 'Zgłoszenie (usunięcie)' });
+      }
+    }
+    for (const t of next.tickets) {
+      const before = prevMap.get(t.id);
+      if (before && JSON.stringify(before) === JSON.stringify(t)) continue;
+      const row = ticketRow(t, maps, diagnostics);
+      if (row) ops.push({ kind: 'upsert', table: 'tickets', row, sourceId: t.id, label: `Zgłoszenie „${t.title}”` });
     }
   }
 

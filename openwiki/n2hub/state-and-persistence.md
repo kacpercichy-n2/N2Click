@@ -48,6 +48,19 @@
   must not wipe the team), the queue is cleared only on sign-out, and edits
   made during a ready-state rehydration keep queueing (maps exist) and are
   pushed right after the merge.
+- ZGŁOSZENIA (2026-07-20): kolekcja `tickets` w `AppData` (`Ticket` w
+  `src/types.ts`; slugi `kind`/`priority`/`status` + polskie etykiety w
+  `src/utils/tickets.ts`). Mutacje: `ADD_TICKET` / `SAVE_TICKET` /
+  `SET_TICKET_STATUS` / `DELETE_TICKET`, walidacja w `commandValidation.ts`
+  (`isValidTicketDraft`, `isValidTicketStatus`) — pusty tytuł/opis, nieznany
+  `reporterId` lub wartość spoza enuma zwracają TĘ SAMĄ referencję stanu.
+  Kolekcja jest ADDYTYWNA: `DATA_VERSION` zostaje na 7, `emptyData()` daje `[]`,
+  a ścieżka wczytania ma `coerceArray(parsedRest.tickets, …)` i pass `repairTickets`
+  (odrzuca wiersze bez `id`/`title`, normalizuje nieznane `kind`/`priority`/
+  `status` do 'inne'/'sredni'/'nowe', zachowuje osieroconego zgłaszającego).
+  W chmurze mirroruje się jako dziewiąta rodzina (`ticketRow` + diff po id →
+  `public.tickets`), a hydracja podmienia kolekcję autorytatywnie — `tickets` w
+  `CloudMergePayload` jest OPCJONALNE (brak pola => reduktor nie rusza kolekcji).
 - `Client` carries optional contact fields (contactName/contactEmail/
   contactPhone/notes; columns from 20260718090000_clients_contact_fields, '' or
   missing = none — no repair pass, use-sites coalesce), edited on the
@@ -119,5 +132,6 @@
 `saveTaskWorkload.test.ts`,
 `selectors.test.ts`, `statusActions.test.ts`, `storage.test.ts`,
 `dateGuards.test.ts`, `taskMeta.test.ts`, `persistGate.test.ts` (retirement
-gate). Cloud mirror: `src/supabase/cloudMirror.test.ts`, `plannerData.test.ts`,
+gate), `ticketActions.test.ts` + `ticketsStorage.test.ts` (zgłoszenia: reduktor,
+repair, uprawnienia). Cloud mirror: `src/supabase/cloudMirror.test.ts`, `plannerData.test.ts`,
 `migrationStatus.test.ts` (coverage + handshake), `migrations.test.ts`.

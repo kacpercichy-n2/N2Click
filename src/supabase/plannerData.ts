@@ -23,9 +23,18 @@ import type {
   Project,
   Task,
   TaskPriority,
+  Ticket,
   WorkloadEntry,
 } from '../types';
 import { isValidDateStr, periodError, MAX_TASK_PERIOD_DAYS } from '../utils/dates';
+import {
+  DEFAULT_TICKET_KIND,
+  DEFAULT_TICKET_PRIORITY,
+  DEFAULT_TICKET_STATUS,
+  isTicketKind,
+  isTicketPriority,
+  isTicketStatus,
+} from '../utils/tickets';
 import { BIN_DATE, DAY_MINUTES, HOURS_STEP, MINUTE_STEP } from '../utils/time';
 import { createSupabaseImportDb, type ImportDb } from './dataImport';
 import type { CloudIdMaps } from './cloudMirror';
@@ -163,6 +172,12 @@ export interface CloudMergePayload {
   comments: Comment[];
   activity: ActivityEvent[];
   /**
+   * Zgłoszenia zespołu. OPCJONALNE (kolekcja dopisana addytywnie): brak pola =>
+   * reduktor nie rusza kolekcji, obecne => podmienia ją autorytatywnie.
+   * `loadPlannerSnapshot` zawsze je podaje.
+   */
+  tickets?: Ticket[];
+  /**
    * Profile chmury scalane PRZED walidacją encji (CloudSyncProvider dokleja je
    * ze snapshotu organizacji), żeby wiersze osób bez lokalnej pary e-mailowej
    * miały już swój lokalny odpowiednik. Brak pola => osoby bez zmian.
@@ -277,6 +292,7 @@ export async function loadPlannerSnapshot(
     workloadRes,
     commentsRes,
     activityRes,
+    ticketsRes,
   ] = await Promise.all([
     db.select('clients', 'id, name, archived, contact_name, contact_email, contact_phone, notes'),
     db.select(
@@ -298,6 +314,10 @@ export async function loadPlannerSnapshot(
       'activity_events',
       'id, entity_type, entity_id, actor_id, impersonator_id, message, created_at',
     ),
+    db.select(
+      'tickets',
+      'id, title, area, description, kind, priority, status, reporter_id, created_at, updated_at',
+    ),
   ]);
 
   if (
@@ -308,7 +328,8 @@ export async function loadPlannerSnapshot(
     assignmentsRes.error ||
     workloadRes.error ||
     commentsRes.error ||
-    activityRes.error
+    activityRes.error ||
+    ticketsRes.error
   ) {
     return { ok: false, error: PLANNER_SNAPSHOT_ERROR };
   }
@@ -532,9 +553,49 @@ export async function loadPlannerSnapshot(
     createdAt: str(row.created_at),
   }));
 
+  // Zgłoszenia ---- (`reporter_id` przez reverse osób; brak tytułu albo
+  // niemapowalny zgłaszający => wiersz WYKLUCZONY z diagnostyką, bo reduktor
+  // waliduje zgłaszającego fail-closed. Nieznane enumy normalizujemy do
+  // wartości domyślnych, tak samo jak repair lokalny.)
+  const tickets: Ticket[] = [];
+  for (const row of ticketsRes.rows) {
+    const title = str(row.title);
+    if (title === '') {
+      diagnostics.push('Zgłoszenie pominięto — brak nazwy.');
+      continue;
+    }
+    const reporterId = personOf(row.reporter_id);
+    if (reporterId === '') {
+      diagnostics.push(`Zgłoszenie „${title}” pominięto — zgłaszający niedostępny.`);
+      continue;
+    }
+    tickets.push({
+      id: str(row.id),
+      title,
+      area: str(row.area),
+      description: str(row.description),
+      kind: isTicketKind(row.kind) ? row.kind : DEFAULT_TICKET_KIND,
+      priority: isTicketPriority(row.priority) ? row.priority : DEFAULT_TICKET_PRIORITY,
+      status: isTicketStatus(row.status) ? row.status : DEFAULT_TICKET_STATUS,
+      reporterId,
+      createdAt: str(row.created_at),
+      updatedAt: str(row.updated_at),
+    });
+  }
+
   return {
     ok: true,
-    payload: { clients, projects, milestones, tasks, assignments, workload, comments, activity },
+    payload: {
+      clients,
+      projects,
+      milestones,
+      tasks,
+      assignments,
+      workload,
+      comments,
+      activity,
+      tickets,
+    },
     diagnostics,
   };
 }

@@ -41,4 +41,5 @@ export {
   ArrowLeft,
   KeyRound,
   Network,
+  Inbox,
 } from 'lucide-react';

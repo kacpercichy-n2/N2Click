@@ -335,7 +335,7 @@ describe('loadPlannerSnapshot', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.payload).toEqual({
-      clients: [], projects: [], milestones: [], tasks: [], assignments: [], workload: [], comments: [], activity: [],
+      clients: [], projects: [], milestones: [], tasks: [], assignments: [], workload: [], comments: [], activity: [], tickets: [],
     });
     expect(result.diagnostics).toEqual([]);
   });

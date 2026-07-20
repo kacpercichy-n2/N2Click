@@ -44,6 +44,8 @@ const MATRIX: Record<AccessRole, Record<PermAction, boolean>> = {
     'admin.panel': true,
     'users.impersonate': true,
     'comments.add': true,
+    'tickets.create': true,
+    'tickets.manage': true,
   },
   pm: {
     'projects.manage': true,
@@ -58,6 +60,8 @@ const MATRIX: Record<AccessRole, Record<PermAction, boolean>> = {
     'admin.panel': false,
     'users.impersonate': false,
     'comments.add': true,
+    'tickets.create': true,
+    'tickets.manage': false,
   },
   handlowiec: {
     'projects.manage': true,
@@ -73,6 +77,8 @@ const MATRIX: Record<AccessRole, Record<PermAction, boolean>> = {
     'admin.panel': false,
     'users.impersonate': false,
     'comments.add': true,
+    'tickets.create': true,
+    'tickets.manage': false,
   },
   pracownik: {
     'projects.manage': false,
@@ -87,6 +93,8 @@ const MATRIX: Record<AccessRole, Record<PermAction, boolean>> = {
     'admin.panel': false,
     'users.impersonate': false,
     'comments.add': true,
+    'tickets.create': true,
+    'tickets.manage': false,
   },
 };
 

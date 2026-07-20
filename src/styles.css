@@ -5296,3 +5296,77 @@ option {
   padding-top: 8px;
   margin-top: 4px;
 }
+
+/* ---------- Zgłoszenia (zakładka „Zgłoszenia”) ---------- */
+/* Przełącznik trybów reużywa `.toggle-btn` z paska kalendarza; poniżej tylko
+   układ listy, tabeli i rozwijanego opisu. Modal korzysta z rodziny
+   `.task-modal-*` — `.ticket-modal-card` to jedyny modyfikator (węższa karta,
+   formularz nie potrzebuje siatki alokacji). */
+.ticket-mode-toggle {
+  display: flex;
+  margin-bottom: var(--n2-space-4);
+}
+.ticket-modal-card {
+  max-width: 720px;
+}
+.ticket-filters {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-4);
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.ticket-count {
+  color: var(--text-muted);
+  font-size: var(--n2-type-sm);
+}
+.ticket-table-wrap {
+  overflow-x: auto;
+}
+.ticket-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--n2-type-sm);
+}
+.ticket-table th,
+.ticket-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--n2-border);
+  vertical-align: middle;
+}
+.ticket-table th {
+  color: var(--text-muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.ticket-title-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--n2-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--n2-border-strong);
+}
+.ticket-title-btn:hover,
+.ticket-title-btn:focus-visible {
+  text-decoration-color: currentColor;
+}
+.ticket-chevron {
+  transition: transform 0.15s ease;
+}
+.ticket-chevron.open {
+  transform: rotate(90deg);
+}
+.ticket-desc-row td {
+  padding-top: 0;
+}
+.ticket-desc {
+  margin: 0;
+  padding: 8px 10px 12px;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+}

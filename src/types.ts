@@ -207,6 +207,32 @@ export interface ActivityEvent {
   createdAt: string; // ISO timestamp
 }
 
+/** Zgłoszenie zespołu: rodzaj / priorytet / status — stałe zbiory wartości.
+ *  Wartości są polskimi slugami (persystencja + kolumny chmury), etykiety UI
+ *  żyją w `src/utils/tickets.ts`. */
+export type TicketKind = 'blad' | 'usprawnienie' | 'nowa-funkcja' | 'inne';
+export type TicketPriority = 'niski' | 'sredni' | 'wysoki';
+export type TicketStatus = 'nowe' | 'w-trakcie' | 'zrobione' | 'odrzucone';
+
+/**
+ * Zgłoszenie od zespołu (błąd / usprawnienie / nowa funkcja). Zakładka
+ * „Zgłoszenia”: składa każdy, pełen wgląd i triage ma administrator
+ * (`tickets.manage`). Kolekcja jest ADDYTYWNA — nie dotyka żadnej istniejącej
+ * encji planera.
+ */
+export interface Ticket {
+  id: string;
+  title: string; // „Nazwa zgłoszenia” — wymagane
+  area: string; // „Funkcja / czego dotyczy”; '' gdy nie podano
+  description: string; // „Opis” — wymagane
+  kind: TicketKind;
+  priority: TicketPriority;
+  status: TicketStatus; // nowe zgłoszenie zawsze startuje jako 'nowe'
+  reporterId: string; // id osoby zgłaszającej (musi istnieć w `people`)
+  createdAt: string; // ISO timestamp
+  updatedAt: string; // ISO timestamp; odświeżany przy każdym zapisie
+}
+
 export type FilterPage = 'projects' | 'tasks';
 
 export interface SavedFilterCriteria {
@@ -242,6 +268,7 @@ export interface AppData {
   workload: WorkloadEntry[];
   comments: Comment[];
   activity: ActivityEvent[];
+  tickets: Ticket[];
   currentUserId: string; // "acting as" person; '' when unset
   // Safe impersonation: '' when not impersonating; otherwise the REAL logged-in
   // person's id while `currentUserId` holds the impersonated identity. Additive
