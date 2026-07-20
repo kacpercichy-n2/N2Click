@@ -70,10 +70,12 @@ export function ProjectsPage() {
   // ---- Create form state ----
   const [name, setName] = useState('');
   const [clientId, setClientId] = useState('');
-  const [newClientName, setNewClientName] = useState('');
   const [startDate, setStartDate] = useState(todayStr());
   const [endDate, setEndDate] = useState(addDaysStr(todayStr(), 13));
   const [error, setError] = useState('');
+
+  // Client creation lives ONLY in the Klienci module — the form just picks one.
+  const activeClients = state.clients.filter((c) => !c.archived);
 
   const filtered = useMemo(
     () =>
@@ -194,8 +196,8 @@ export function ProjectsPage() {
       setError(PERIOD_ERROR_LABELS[perErr]);
       return;
     }
-    if (!clientId && !newClientName.trim()) {
-      setError('Wybierz klienta albo wpisz nazwę nowego klienta');
+    if (!clientId) {
+      setError('Wybierz klienta');
       return;
     }
     const draft: ProjectDraft = {
@@ -209,14 +211,8 @@ export function ProjectsPage() {
       departmentId: '',
       serviceTypeId: '',
     };
-    dispatch({
-      type: 'SAVE_PROJECT',
-      projectId: null,
-      draft,
-      newClientName: clientId ? undefined : newClientName,
-    });
+    dispatch({ type: 'SAVE_PROJECT', projectId: null, draft });
     setName('');
-    setNewClientName('');
     setError('');
     setCreating(false);
   };
@@ -251,31 +247,19 @@ export function ProjectsPage() {
                 value={clientId}
                 onChange={(e) => setClientId(e.target.value)}
               >
-                <option value="">— nowy klient —</option>
-                {state.clients
-                  .filter((c) => !c.archived)
-                  .map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
+                <option value="">— wybierz klienta —</option>
+                {activeClients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
               </select>
-            </div>
-            {clientId === '' && (
-              <div className="field">
-                <label htmlFor="pr-new-client">Nazwa nowego klienta *</label>
-                <input
-                  id="pr-new-client"
-                  value={newClientName}
-                  onChange={(e) => setNewClientName(e.target.value)}
-                  placeholder="np. Acme Foods"
-                />
+              {activeClients.length === 0 && (
                 <p className="field-hint">
-                  Dane kontaktowe uzupełnisz w zakładce{' '}
-                  <Link to="/clients">Klienci</Link>.
+                  Najpierw dodaj klienta w zakładce <Link to="/clients">Klienci</Link>.
                 </p>
-              </div>
-            )}
+              )}
+            </div>
           </div>
           <div className="field-row">
             <div className="field">

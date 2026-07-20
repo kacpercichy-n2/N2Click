@@ -53,8 +53,8 @@ export function isValidTaskDraft(state: AppData, draft: TaskDraft): boolean {
 }
 
 /** Name required; draft.statusId must exist. Client rule:
- *  - create or edit: draft.clientId may exist, OR be '' with a non-empty
- *    trimmed newClientName (the atomic create/reuse-client path);
+ *  - create: draft.clientId must reference an existing client (client creation
+ *    lives ONLY in the Klienci module);
  *  - edit: draft.clientId must exist OR be strictly EQUAL to existing.clientId
  *    (a legacy orphan project must remain editable, but a SWITCH to a dangling
  *    client is rejected). */
@@ -62,12 +62,10 @@ export function isValidProjectDraft(
   state: AppData,
   draft: ProjectDraft,
   existing: Project | null,
-  newClientName?: string,
 ): boolean {
   if (!isRequiredName(draft.name)) return false;
   if (!hasEntity(state, 'status', draft.statusId)) return false;
   if (hasEntity(state, 'client', draft.clientId)) return true;
-  if (draft.clientId === '' && isRequiredName(newClientName ?? '')) return true;
   return existing !== null && draft.clientId === existing.clientId;
 }
 

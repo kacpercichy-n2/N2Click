@@ -170,7 +170,7 @@ export type Action =
   | { type: 'MOVE_TASK'; taskId: string; dayDelta: number }
   | { type: 'SET_TASK_DATES'; taskId: string; startDate: string; endDate: string }
   | { type: 'SET_TASK_STATUS'; taskId: string; statusId: string }
-  | { type: 'SAVE_PROJECT'; projectId: string | null; draft: ProjectDraft; newClientName?: string }
+  | { type: 'SAVE_PROJECT'; projectId: string | null; draft: ProjectDraft }
   | { type: 'DELETE_PROJECT'; projectId: string }
   | { type: 'SET_PROJECT_STATUS'; projectId: string; statusId: string }
   | { type: 'SET_PROJECT_PAID'; projectId: string; paid: boolean }
@@ -765,7 +765,6 @@ function saveProject(
   state: AppData,
   projectId: string | null,
   draft: ProjectDraft,
-  newClientName?: string,
 ): AppData {
   // Reject an invalid/empty/reversed period (no max-days cap for projects).
   if (periodError(draft.startDate, draft.endDate) !== null) return state;
@@ -774,40 +773,21 @@ function saveProject(
   const existing = projectId === null ? null : state.projects.find((p) => p.id === projectId) ?? null;
   // Name required; statusId must exist; client rule (strict on create, an
   // UNCHANGED dangling clientId stays editable on a legacy orphan project).
-  if (!isValidProjectDraft(state, draft, existing, newClientName)) return state;
+  if (!isValidProjectDraft(state, draft, existing)) return state;
   const ts = nowIso();
 
-  // Optionally create (or reuse) a client in the same atomic action, so a
-  // project can never point at a client id that doesn't exist.
-  let clients = state.clients;
-  let clientId = draft.clientId;
-  if (!clientId && newClientName?.trim()) {
-    const name = newClientName.trim();
-    const existing = clients.find((c) => c.name.toLowerCase() === name.toLowerCase());
-    if (existing) {
-      clientId = existing.id;
-    } else {
-      const client = { id: uid(), name, archived: false };
-      clients = [...clients, client];
-      clientId = client.id;
-    }
-  }
-  const resolved = { ...draft, clientId };
-
   if (projectId === null) {
-    const project: Project = { id: uid(), ...resolved, createdAt: ts, updatedAt: ts };
+    const project: Project = { id: uid(), ...draft, createdAt: ts, updatedAt: ts };
     return {
       ...state,
-      clients,
       projects: [...state.projects, project],
       activity: withActivity(state, 'project', project.id, 'utworzył(a) projekt'),
     };
   }
   return {
     ...state,
-    clients,
     projects: state.projects.map((p) =>
-      p.id === projectId ? { ...p, ...resolved, updatedAt: ts } : p,
+      p.id === projectId ? { ...p, ...draft, updatedAt: ts } : p,
     ),
     activity: withActivity(state, 'project', projectId, 'zaktualizował(a) projekt', undefined, {
       collapse: true, // auto-zapis: seria edycji = jeden wpis
@@ -2193,7 +2173,7 @@ export function reducer(state: AppData, action: Action): AppData {
       };
     }
     case 'SAVE_PROJECT':
-      return saveProject(state, action.projectId, action.draft, action.newClientName);
+      return saveProject(state, action.projectId, action.draft);
     case 'DELETE_PROJECT': {
       // Only log when the project exists. A 'project'-typed row would be pruned
       // by deleteProject itself, so the deletion record lives on 'system' with

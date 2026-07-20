@@ -259,30 +259,24 @@ describe('SAVE_PROJECT command validation', () => {
     expectRejected(state, next);
   });
 
-  it("rejects create with '' clientId and blank newClientName", () => {
+  it("rejects create with '' clientId (client creation lives only in Klienci)", () => {
     const state = makeState();
     const next = reducer(state, {
       type: 'SAVE_PROJECT',
       projectId: null,
       draft: draftFromProject({ clientId: '' }),
-      newClientName: '   ',
     });
     expectRejected(state, next);
   });
 
-  it("allows edit with '' clientId and newClientName through the atomic client path", () => {
+  it("rejects edit switching to '' clientId when the project has a real client", () => {
     const state = makeState();
     const next = reducer(state, {
       type: 'SAVE_PROJECT',
       projectId: 'proj1',
       draft: draftFromProject({ clientId: '' }),
-      newClientName: 'Nowy klient',
     });
-
-    expect(next).not.toBe(state);
-    const client = next.clients.find((candidate) => candidate.name === 'Nowy klient');
-    expect(client).toBeDefined();
-    expect(next.projects.find((project) => project.id === 'proj1')?.clientId).toBe(client?.id);
+    expectRejected(state, next);
   });
 });
 
@@ -453,16 +447,15 @@ describe('valid / valid-legacy payloads still apply', () => {
     expect(saved.clientId).toBe('ghost-client');
   });
 
-  it("SAVE_PROJECT create with '' clientId + newClientName creates client + project atomically", () => {
+  it('SAVE_PROJECT create with an existing clientId succeeds and never adds a client', () => {
     const state = makeState();
     const next = reducer(state, {
       type: 'SAVE_PROJECT',
       projectId: null,
-      draft: draftFromProject({ name: 'Fresh', clientId: '' }),
-      newClientName: 'Nowy',
+      draft: draftFromProject({ name: 'Fresh', clientId: 'c1' }),
     });
     expect(next).not.toBe(state);
-    expect(next.clients.length).toBe(state.clients.length + 1);
+    expect(next.clients).toBe(state.clients);
     expect(next.projects.length).toBe(state.projects.length + 1);
   });
 
