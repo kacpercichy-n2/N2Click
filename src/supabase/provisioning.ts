@@ -43,8 +43,10 @@ function extractServerMessage(body: unknown): string | null {
 }
 
 /**
- * Wysyła żądanie provisioningu do Edge Function. Tryb hasła: `invite` (żadnych
- * haseł w UI). Sukces (2xx) → polski komunikat sukcesu; błąd → polski komunikat
+ * Wysyła żądanie provisioningu do Edge Function. Tryb hasła: bazowe hasło
+ * startowe (`DEFAULT_INITIAL_PASSWORD`), które serwer oznacza jako wymagające
+ * zmiany przy pierwszym logowaniu — administrator przekazuje je nowej osobie
+ * poza aplikacją. Sukces (2xx) → polski komunikat sukcesu; błąd → polski komunikat
  * serwera (serwer zwraca polskie komunikaty dla 400/401/403/409/5xx) lub ogólny;
  * błąd sieci → osobny komunikat. Nigdy nie zwraca surowej odpowiedzi SDK.
  */

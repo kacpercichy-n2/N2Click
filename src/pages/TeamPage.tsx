@@ -368,8 +368,8 @@ function ProvisionSection() {
             </p>
           )}
           <p className="field-hint">
-            Utwórz konto nowego członka zespołu. Zaproszenie zostanie wysłane na
-            podany adres e-mail.
+            Utwórz konto nowego członka zespołu. Konto otrzyma bazowe hasło
+            startowe, które użytkownik musi zmienić przy pierwszym logowaniu.
           </p>
           <button
             type="button"
