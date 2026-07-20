@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { reducer, type PersonDraft, type ProjectDraft, type TaskDraft } from './AppStore';
 import { emptyData } from './storage';
-import { hasEntity, isValidTaskDraft } from './commandValidation';
+import { hasEntity, isValidClientDraft, isValidTaskDraft } from './commandValidation';
 import type { Client, Milestone, Person, Project, Status, Task } from '../types';
 
 const CLIENT: Client = { id: 'c1', name: 'Client', archived: false };
@@ -487,5 +487,122 @@ describe('valid / valid-legacy payloads still apply', () => {
       person: personDraft({ firstName: 'Ala', accessRole: 'pracownik' }),
     });
     expectRejected(state, demoted);
+  });
+});
+
+// Wymagane pola klienta: nazwa + osoba kontaktowa + (e-mail LUB telefon).
+// Świadomie BEZ walidacji formatu e-maila — to reguła kompletności danych.
+describe('isValidClientDraft (client required fields)', () => {
+  const full = {
+    name: 'Acme',
+    contactName: 'Anna Nowak',
+    contactEmail: 'anna@acme.pl',
+    contactPhone: '+48 600 100 200',
+  };
+
+  it('accepts a full draft, and e-mail-only / phone-only variants', () => {
+    expect(isValidClientDraft(full)).toBe(true);
+    expect(isValidClientDraft({ ...full, contactPhone: '' })).toBe(true);
+    expect(isValidClientDraft({ ...full, contactEmail: '' })).toBe(true);
+    // Missing (undefined) contact channel behaves exactly like ''.
+    expect(isValidClientDraft({ name: 'Acme', contactName: 'Anna', contactEmail: 'a@b.pl' })).toBe(true);
+  });
+
+  it('rejects a missing name, a missing contact person and a missing e-mail+phone pair', () => {
+    expect(isValidClientDraft({ ...full, name: '' })).toBe(false);
+    expect(isValidClientDraft({ ...full, contactName: '' })).toBe(false);
+    expect(isValidClientDraft({ ...full, contactEmail: '', contactPhone: '' })).toBe(false);
+    expect(isValidClientDraft({ name: 'Acme' })).toBe(false);
+  });
+
+  it('treats whitespace-only values as empty', () => {
+    expect(isValidClientDraft({ ...full, name: '   ' })).toBe(false);
+    expect(isValidClientDraft({ ...full, contactName: '  \t ' })).toBe(false);
+    expect(isValidClientDraft({ ...full, contactEmail: '  ', contactPhone: ' ' })).toBe(false);
+    // A whitespace e-mail still passes when the phone carries the contact.
+    expect(isValidClientDraft({ ...full, contactEmail: '  ' })).toBe(true);
+  });
+
+  it('does NOT check the e-mail format (data completeness, not a format boundary)', () => {
+    expect(isValidClientDraft({ ...full, contactEmail: 'nie-jest-mailem', contactPhone: '' })).toBe(true);
+  });
+});
+
+describe('ADD_CLIENT / SAVE_CLIENT required-field validation', () => {
+  const contact = { contactName: 'Anna Nowak', contactEmail: 'anna@acme.pl', contactPhone: '' };
+
+  it('ADD_CLIENT rejects an incomplete draft by the SAME state reference', () => {
+    const state = makeState();
+    expectRejected(state, reducer(state, { type: 'ADD_CLIENT', name: 'Acme' }));
+    expectRejected(state, reducer(state, { type: 'ADD_CLIENT', name: 'Acme', contactName: 'Anna' }));
+    expectRejected(
+      state,
+      reducer(state, { type: 'ADD_CLIENT', name: '  ', ...contact }),
+    );
+    expectRejected(
+      state,
+      reducer(state, { type: 'ADD_CLIENT', name: 'Acme', contactName: ' ', contactEmail: 'a@b.pl' }),
+    );
+  });
+
+  it('ADD_CLIENT accepts a complete draft (contact person + one channel)', () => {
+    const state = makeState();
+    const next = reducer(state, { type: 'ADD_CLIENT', name: ' Acme ', ...contact });
+    expect(next).not.toBe(state);
+    expect(next.clients.length).toBe(state.clients.length + 1);
+    expect(next.clients[next.clients.length - 1]).toMatchObject({
+      name: 'Acme',
+      contactName: 'Anna Nowak',
+      contactEmail: 'anna@acme.pl',
+      contactPhone: '',
+    });
+  });
+
+  it('SAVE_CLIENT rejects an incomplete draft by the SAME state reference', () => {
+    const state = makeState();
+    const base = { type: 'SAVE_CLIENT' as const, clientId: 'c1', notes: '' };
+    expectRejected(
+      state,
+      reducer(state, { ...base, name: 'Acme', contactName: '', contactEmail: 'a@b.pl', contactPhone: '' }),
+    );
+    expectRejected(
+      state,
+      reducer(state, { ...base, name: 'Acme', contactName: 'Anna', contactEmail: '', contactPhone: '' }),
+    );
+    expectRejected(
+      state,
+      reducer(state, { ...base, name: '', contactName: 'Anna', contactEmail: 'a@b.pl', contactPhone: '' }),
+    );
+  });
+
+  it('SAVE_CLIENT applies a complete draft and still rejects an unknown id', () => {
+    const state = makeState();
+    const saved = reducer(state, {
+      type: 'SAVE_CLIENT',
+      clientId: 'c1',
+      name: 'Acme',
+      contactName: 'Anna Nowak',
+      contactEmail: '',
+      contactPhone: '+48 600 100 200',
+      notes: '',
+    });
+    expect(saved).not.toBe(state);
+    expect(saved.clients.find((c) => c.id === 'c1')).toMatchObject({
+      name: 'Acme',
+      contactName: 'Anna Nowak',
+      contactPhone: '+48 600 100 200',
+    });
+    expectRejected(
+      state,
+      reducer(state, {
+        type: 'SAVE_CLIENT',
+        clientId: 'ghost',
+        name: 'Acme',
+        contactName: 'Anna Nowak',
+        contactEmail: 'anna@acme.pl',
+        contactPhone: '',
+        notes: '',
+      }),
+    );
   });
 });

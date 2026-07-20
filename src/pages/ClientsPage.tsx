@@ -8,6 +8,7 @@ import { usePersistence, useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import type { Client } from '../types';
 import { ChevronRight, Plus } from '../components/icons';
+import { isValidClientDraft } from '../store/commandValidation';
 import { useAutoSave } from '../utils/useAutoSave';
 
 function polishCount(n: number, one: string, few: string, many: string): string {
@@ -42,6 +43,18 @@ const draftOf = (c: Client): ClientDraft => ({
   notes: c.notes ?? '',
 });
 
+/** Komunikat walidacji wymaganych pól klienta ('' = draft poprawny). Reguła jest
+ *  ta sama, którą egzekwuje reduktor (`isValidClientDraft`); tutaj tylko
+ *  rozróżniamy, KTÓREGO pola brakuje. */
+function clientDraftError(d: ClientDraft): string {
+  if (!d.name.trim()) return 'Nazwa klienta jest wymagana';
+  if (!d.contactName.trim()) return 'Osoba kontaktowa jest wymagana';
+  if (!d.contactEmail.trim() && !d.contactPhone.trim()) {
+    return 'Podaj co najmniej jeden kontakt: e-mail lub telefon';
+  }
+  return '';
+}
+
 /** Pola kontaktowe draftu (bez nazwy) — wspólne dla formularza i edycji. */
 function ContactFields({
   idPrefix,
@@ -55,7 +68,7 @@ function ContactFields({
   return (
     <>
       <div className="field">
-        <label htmlFor={`${idPrefix}-contact`}>Osoba kontaktowa</label>
+        <label htmlFor={`${idPrefix}-contact`}>Osoba kontaktowa *</label>
         <input
           id={`${idPrefix}-contact`}
           value={draft.contactName}
@@ -65,7 +78,7 @@ function ContactFields({
         />
       </div>
       <div className="field">
-        <label htmlFor={`${idPrefix}-email`}>E-mail</label>
+        <label htmlFor={`${idPrefix}-email`}>E-mail *</label>
         <input
           id={`${idPrefix}-email`}
           type="email"
@@ -73,10 +86,14 @@ function ContactFields({
           onChange={(e) => onChange({ contactEmail: e.target.value })}
           placeholder="np. anna@firma.pl"
           maxLength={320}
+          aria-describedby={`${idPrefix}-contact-hint`}
         />
+        <p className="field-hint" id={`${idPrefix}-contact-hint`}>
+          Wystarczy jedno z pól: e-mail lub telefon.
+        </p>
       </div>
       <div className="field">
-        <label htmlFor={`${idPrefix}-phone`}>Telefon</label>
+        <label htmlFor={`${idPrefix}-phone`}>Telefon *</label>
         <input
           id={`${idPrefix}-phone`}
           type="tel"
@@ -84,6 +101,7 @@ function ContactFields({
           onChange={(e) => onChange({ contactPhone: e.target.value })}
           placeholder="np. +48 600 100 200"
           maxLength={40}
+          aria-describedby={`${idPrefix}-contact-hint`}
         />
       </div>
       <div className="field field-wide">
@@ -112,7 +130,6 @@ export function ClientsPage() {
   const [showArchived, setShowArchived] = useState(false);
   const [editingId, setEditingId] = useState('');
   const [editDraft, setEditDraft] = useState<ClientDraft>(emptyDraft);
-  const [editError, setEditError] = useState('');
 
   const projectCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -133,8 +150,9 @@ export function ClientsPage() {
 
   const submitCreate = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!draft.name.trim()) {
-      setCreateError('Nazwa klienta jest wymagana');
+    const error = clientDraftError(draft);
+    if (error) {
+      setCreateError(error);
       return;
     }
     dispatch({
@@ -153,11 +171,10 @@ export function ClientsPage() {
   const startEdit = (c: Client) => {
     setEditingId(c.id);
     setEditDraft(draftOf(c));
-    setEditError('');
   };
 
   const commitEdit = () => {
-    if (editingId === '' || !editDraft.name.trim()) return;
+    if (editingId === '' || !isValidClientDraft(editDraft)) return;
     dispatch({
       type: 'SAVE_CLIENT',
       clientId: editingId,
@@ -169,8 +186,11 @@ export function ClientsPage() {
     });
   };
 
-  // Auto-zapis edycji: ważny draft (niepusta nazwa) zapisuje się w tle po
-  // pauzie w pisaniu; przycisk „Zamknij” tylko zwija formularz.
+  // Auto-zapis edycji: TYLKO draft spełniający regułę wymaganych pól (nazwa +
+  // osoba kontaktowa + e-mail lub telefon) zapisuje się w tle po pauzie w
+  // pisaniu. Niepełny draft WSTRZYMUJE auto-zapis (useAutoSave nie odpala
+  // `save`), więc nigdy nie pojawi się fałszywe „Zapisano”; przycisk „Zamknij”
+  // tylko zwija formularz.
   const editedClient = state.clients.find((c) => c.id === editingId);
   const editDirty =
     editedClient !== undefined &&
@@ -187,17 +207,19 @@ export function ClientsPage() {
     // Jawny konflikt kart wstrzymuje auto-zapis (decyzja należy do banera).
     enabled: canManage && editingId !== '' && external !== 'conflict',
     dirty: editDirty,
-    valid: editDraft.name.trim() !== '',
+    valid: isValidClientDraft(editDraft),
     signature: JSON.stringify(editDraft),
     save: commitEdit,
   });
 
+  // Komunikat edycji jest LIVE (nie tylko po „Zamknij”): auto-zapis milknie przy
+  // niepoprawnym drafcie, więc powód musi być widoczny od razu. Znika sam, gdy
+  // użytkownik uzupełni brakujące pole.
+  const editError = editingId === '' ? '' : clientDraftError(editDraft);
+
   const submitEdit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editDraft.name.trim()) {
-      setEditError('Nazwa klienta jest wymagana');
-      return;
-    }
+    if (editError) return;
     commitEdit();
     setEditingId('');
   };
@@ -259,7 +281,10 @@ export function ClientsPage() {
             <ContactFields
               idPrefix="cl"
               draft={draft}
-              onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
+              onChange={(patch) => {
+                setDraft((d) => ({ ...d, ...patch }));
+                if (createError) setCreateError('');
+              }}
             />
           </div>
           {createError && (
@@ -298,10 +323,9 @@ export function ClientsPage() {
                         <input
                           id="cle-name"
                           value={editDraft.name}
-                          onChange={(e) => {
-                            setEditDraft((d) => ({ ...d, name: e.target.value }));
-                            if (editError) setEditError('');
-                          }}
+                          onChange={(e) =>
+                            setEditDraft((d) => ({ ...d, name: e.target.value }))
+                          }
                           maxLength={200}
                         />
                       </div>
@@ -318,7 +342,9 @@ export function ClientsPage() {
                     )}
                     <div className="form-actions">
                       <span className="field-hint autosave-hint" role="status">
-                        Zmiany zapisują się automatycznie.
+                        {editError
+                          ? 'Auto-zapis wstrzymany do czasu uzupełnienia wymaganych pól.'
+                          : 'Zmiany zapisują się automatycznie.'}
                       </span>
                       <button type="submit" className="btn primary">
                         Zamknij

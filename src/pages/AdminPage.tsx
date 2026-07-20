@@ -3,6 +3,7 @@
 // service types, and work categories. Only admins ("acting as" someone with the
 // admin flag) may change anything here.
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
 import { allStatusesOrdered, isAdminUser } from '../store/selectors';
 import { StatusBadge } from '../components/StatusBadge';
@@ -21,7 +22,6 @@ export function AdminPage() {
 
   const [statusInput, setStatusInput] = useState('');
   const [statusColor, setStatusColor] = useState(NEW_STATUS_COLOR);
-  const [clientInput, setClientInput] = useState('');
   const [depInput, setDepInput] = useState('');
   const [svcInput, setSvcInput] = useState('');
   const [catInput, setCatInput] = useState('');
@@ -222,25 +222,13 @@ export function AdminPage() {
             }
           }}
         />
-        <form
-          className="admin-add-form"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!clientInput.trim()) return;
-            dispatch({ type: 'ADD_CLIENT', name: clientInput });
-            setClientInput('');
-          }}
-        >
-          <input
-            value={clientInput}
-            onChange={(e) => setClientInput(e.target.value)}
-            placeholder="Nazwa nowego klienta"
-            aria-label="Nazwa nowego klienta"
-          />
-          <button type="submit" className="btn primary" disabled={!clientInput.trim()}>
-            Dodaj klienta
-          </button>
-        </form>
+        {/* Nowy klient wymaga danych kontaktowych (osoba + e-mail lub telefon),
+            więc szybkie dodawanie „po samej nazwie” zostało tu wyłączone —
+            reduktor i tak by je odrzucił. Pełny formularz jest w module Klienci. */}
+        <p className="field-hint">
+          Nowego klienta dodasz w zakładce <Link to="/clients">Klienci</Link> — wymaga
+          osoby kontaktowej oraz e-maila lub telefonu.
+        </p>
       </div>
 
       <div className="editor-section">

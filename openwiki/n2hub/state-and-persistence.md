@@ -61,10 +61,18 @@
   W chmurze mirroruje się jako dziewiąta rodzina (`ticketRow` + diff po id →
   `public.tickets`), a hydracja podmienia kolekcję autorytatywnie — `tickets` w
   `CloudMergePayload` jest OPCJONALNE (brak pola => reduktor nie rusza kolekcji).
-- `Client` carries optional contact fields (contactName/contactEmail/
-  contactPhone/notes; columns from 20260718090000_clients_contact_fields, '' or
-  missing = none — no repair pass, use-sites coalesce), edited on the
-  `/clients` page via `SAVE_CLIENT`/`SET_CLIENT_ARCHIVED`.
+- `Client` carries contact fields (contactName/contactEmail/contactPhone/notes;
+  columns from 20260718090000_clients_contact_fields, '' or missing = none — no
+  repair pass, use-sites coalesce), edited on the `/clients` page via
+  `SAVE_CLIENT`/`SET_CLIENT_ARCHIVED`. WYMAGANE POLA (2026-07-21): every NEW
+  write via `ADD_CLIENT`/`SAVE_CLIENT` must carry name + contactName + (email OR
+  phone) — `isValidClientDraft` in `commandValidation.ts`; a shortfall returns
+  the SAME state reference (invariant 6). Presence only, NO e-mail regex. The
+  rule gates the reducer only: load/repair/migration never routes through it, so
+  legacy clients without contact data stay readable and are asked for the
+  missing fields on their next edit (ClientsPage shows a live Polish message and
+  auto-save stays paused). The AdminPage name-only client quick-add is gone
+  (link to `/clients`); `seed.ts` demo clients satisfy the rule.
 - AUTO-SAVE (2026-07-17): clients (edit form), ProjectDetailPage and TaskModal
   (existing tasks) auto-commit VALID dirty drafts after ~0.9 s idle
   (`src/utils/useAutoSave.ts`); invalid drafts wait for the inline fix and an

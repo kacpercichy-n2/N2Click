@@ -764,7 +764,7 @@ function TaskEditor({
             )}
           </div>
           <div className="field">
-            <label htmlFor="t-status">Status</label>
+            <label htmlFor="t-status">Status *</label>
             <select
               id="t-status"
               value={statusId}

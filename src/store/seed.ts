@@ -107,12 +107,56 @@ export function buildSampleData(): AppData {
   const people: Person[] = [ola, marek, kasia];
 
   // Clients & projects
-  const acme = { id: uid(), name: 'Acme Foods', archived: false };
-  const nordic = { id: uid(), name: 'Nordic Fitness', archived: false };
-  const vela = { id: uid(), name: 'Vela Living', archived: false };
-  const greenVolt = { id: uid(), name: 'GreenVolt Energy', archived: false };
-  const mizu = { id: uid(), name: 'Mizu Skincare', archived: false };
-  const kite = { id: uid(), name: 'Kite & Co.', archived: false };
+  // Każdy klient demo spełnia regułę wymaganych pól (nazwa + osoba kontaktowa
+  // + e-mail lub telefon), więc próbka jest edytowalna od razu, bez uzupełniania.
+  const acme = {
+    id: uid(),
+    name: 'Acme Foods',
+    archived: false,
+    contactName: 'Anna Kowalska',
+    contactEmail: 'anna.kowalska@acmefoods.pl',
+    contactPhone: '+48 600 100 200',
+  };
+  const nordic = {
+    id: uid(),
+    name: 'Nordic Fitness',
+    archived: false,
+    contactName: 'Piotr Zieliński',
+    contactEmail: 'piotr.zielinski@nordicfitness.pl',
+    contactPhone: '+48 600 100 201',
+  };
+  const vela = {
+    id: uid(),
+    name: 'Vela Living',
+    archived: false,
+    contactName: 'Magda Lewandowska',
+    contactEmail: 'magda@velaliving.pl',
+    contactPhone: '',
+  };
+  const greenVolt = {
+    id: uid(),
+    name: 'GreenVolt Energy',
+    archived: false,
+    contactName: 'Tomasz Wójcik',
+    contactEmail: '',
+    contactPhone: '+48 600 100 203',
+  };
+  const mizu = {
+    id: uid(),
+    name: 'Mizu Skincare',
+    archived: false,
+    contactName: 'Julia Adamczyk',
+    contactEmail: 'julia.adamczyk@mizu.pl',
+    contactPhone: '+48 600 100 204',
+  };
+  const kite = {
+    id: uid(),
+    name: 'Kite & Co.',
+    archived: false,
+    contactName: 'Rafał Krupa',
+    contactEmail: 'rafal@kiteandco.pl',
+    contactPhone: '+48 600 100 205',
+  };
   const clients = [acme, nordic, vela, greenVolt, mizu, kite];
 
   const projRedesign = {

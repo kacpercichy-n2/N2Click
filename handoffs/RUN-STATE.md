@@ -66,3 +66,13 @@ repair. Ordering must not touch completion semantics or calendar placement.
 - `src/onboarding/catalog.ts`: fixed `id: 'kanban'` summary + two step bodies
   to describe tasks, not projects (board/column steps, click opens task edit).
 - `npx vitest run` PASS 1024/1024; `npm run build` clean. No skips.
+
+## Developer result (2026-07-21) — 233-required-fields
+
+- New `isValidClientDraft` (name + contact person + e-mail OR phone, presence
+  only) wired into `ADD_CLIENT`/`SAVE_CLIENT` (same-ref reject); ClientsPage
+  asterisks + live Polish error + auto-save gate; AdminPage name-only client
+  quick-add replaced by a `/clients` link; seed clients given contacts;
+  Status/Klient asterisks in TaskModal + ProjectDetailPage.
+- Focused PASS (62); full suite PASS 1044 (baseline 1036, prompt's 933 stale);
+  `npm run build` clean. Wiki `state-and-persistence.md` updated.

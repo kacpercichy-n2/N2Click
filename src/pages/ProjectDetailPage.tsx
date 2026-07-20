@@ -281,7 +281,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
             />
           </div>
           <div className="field">
-            <label htmlFor="pd-client">Klient</label>
+            <label htmlFor="pd-client">Klient *</label>
             <select
               id="pd-client"
               value={clientId}
@@ -297,7 +297,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
             </select>
           </div>
           <div className="field">
-            <label htmlFor="pd-status">Status</label>
+            <label htmlFor="pd-status">Status *</label>
             <select
               id="pd-status"
               value={statusId}

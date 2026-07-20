@@ -70,6 +70,29 @@ export function isValidProjectDraft(
   return existing !== null && draft.clientId === existing.clientId;
 }
 
+/** Contact-carrying client payload shared by ADD_CLIENT (optional fields) and
+ *  SAVE_CLIENT (always present). Missing === empty. */
+export interface ClientContactDraft {
+  name: string;
+  contactName?: string;
+  contactEmail?: string;
+  contactPhone?: string;
+}
+
+/** Client: name required, contact person required, and AT LEAST ONE contact
+ *  channel (e-mail OR phone). Deliberately NO e-mail format/regex check —
+ *  this is a data-completeness rule, not a format or security boundary, so a
+ *  legacy value must never be rejected for its shape (valid-legacy rule).
+ *  Only NEW writes are gated: load/repair never routes through the reducer, so
+ *  clients persisted before this rule stay readable and untouched. */
+export function isValidClientDraft(draft: ClientContactDraft): boolean {
+  return (
+    isRequiredName(draft.name) &&
+    isRequiredName(draft.contactName ?? '') &&
+    (isRequiredName(draft.contactEmail ?? '') || isRequiredName(draft.contactPhone ?? ''))
+  );
+}
+
 /** firstName required (non-empty after trim). Nothing else: capacity already
  *  self-heals to DEFAULT_CAPACITY, supervisor cycles are guarded elsewhere. */
 export function isValidPersonDraft(draft: PersonDraft): boolean {

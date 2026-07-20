@@ -53,6 +53,7 @@ import { shouldSkipLocalPersist } from './persistGate';
 import {
   hasEntity,
   isRequiredName,
+  isValidClientDraft,
   isValidPersonDraft,
   isValidProjectDraft,
   isValidTaskDraft,
@@ -2635,8 +2636,10 @@ export function reducer(state: AppData, action: Action): AppData {
       };
     }
     case 'ADD_CLIENT': {
+      // Wymagane: nazwa, osoba kontaktowa i e-mail LUB telefon
+      // (isValidClientDraft). Niepełny draft => TA SAMA referencja stanu.
+      if (!isValidClientDraft(action)) return state;
       const name = action.name.trim();
-      if (!name) return state;
       return {
         ...state,
         clients: [
@@ -2654,9 +2657,12 @@ export function reducer(state: AppData, action: Action): AppData {
       };
     }
     case 'SAVE_CLIENT': {
-      // Jak RENAME_CLIENT: pusta nazwa i nieznane id odrzucone (invariant 6).
+      // Jak RENAME_CLIENT: nieznane id odrzucone; do tego pełen komplet pól
+      // wymaganych (isValidClientDraft) — brak nazwy, osoby kontaktowej albo
+      // obu kanałów kontaktu zwraca TĘ SAMĄ referencję stanu (invariant 6).
+      if (!isValidClientDraft(action)) return state;
       const name = action.name.trim();
-      if (!name || !state.clients.some((c) => c.id === action.clientId)) return state;
+      if (!state.clients.some((c) => c.id === action.clientId)) return state;
       return {
         ...state,
         clients: state.clients.map((c) =>
