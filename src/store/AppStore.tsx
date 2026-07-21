@@ -392,6 +392,76 @@ function reindexDays(workload: WorkloadEntry[], keys: Set<string>): WorkloadEntr
   });
 }
 
+/**
+ * Kanoniczne `Task.draftHours` z celów zasobnika szkicu (`binTotals`): tylko
+ * osoby przypisane, `snapHours` na wpis, wpisy `<= 0` odpadają, jeden wpis na
+ * osobę (pierwszy wygrywa). Pusty wynik => `undefined` (klucz NIEOBECNY, forma
+ * kanoniczna — patrz `Task.draftHours`).
+ */
+function draftHoursFromBinTotals(
+  binTotals: Array<{ personId: string; hours: number }> | undefined,
+  assigneeIds: string[],
+): Array<{ personId: string; hours: number }> | undefined {
+  const assigned = new Set(assigneeIds);
+  const byPerson = new Map<string, number>();
+  for (const item of binTotals ?? []) {
+    if (!assigned.has(item.personId)) continue;
+    if (byPerson.has(item.personId)) continue; // pierwszy wpis osoby wygrywa
+    const hours = snapHours(item.hours);
+    if (hours <= 0) continue;
+    byPerson.set(item.personId, hours);
+  }
+  if (byPerson.size === 0) return undefined;
+  return [...byPerson].map(([personId, hours]) => ({ personId, hours }));
+}
+
+/**
+ * Materializacja `draftHours` szkicu w wiersze ZASOBNIKA przy publikacji
+ * (mirror ścieżki „świeży wiersz” z binTotals). Dla każdego wpisu, którego
+ * osoba istnieje, jest przypisana do zadania i ma `snapHours(hours) > 0`,
+ * powstaje DOKŁADNIE jeden wiersz `{ date: BIN_DATE, startMinutes: 0 }`. Obrona
+ * inwariantu 4: pomijamy osobę już wyemitowaną dla zadania oraz parę mającą już
+ * wiersz zasobnika w stanie. `accumulated` niesie stan + dotychczas dopisane
+ * wiersze (świeży `sortIndex`). Wpisy niepoprawne/osierocone są cicho pomijane
+ * — publikacja nie może paść przez nieaktualny wiersz z chmury.
+ */
+function materializeDraftBin(
+  state: AppData,
+  accumulated: WorkloadEntry[],
+  task: Task,
+): WorkloadEntry[] {
+  const assignedToTask = new Set(
+    state.assignments.filter((a) => a.taskId === task.id).map((a) => a.personId),
+  );
+  const emitted = new Set<string>();
+  const existingBinPair = new Set(
+    accumulated
+      .filter((w) => w.taskId === task.id && isBinEntry(w))
+      .map((w) => w.personId),
+  );
+  const rows: WorkloadEntry[] = [];
+  for (const entry of task.draftHours ?? []) {
+    const personId = entry.personId;
+    if (emitted.has(personId) || existingBinPair.has(personId)) continue;
+    if (!hasEntity(state, 'person', personId)) continue;
+    if (!assignedToTask.has(personId)) continue;
+    const hours = snapHours(entry.hours);
+    if (hours <= 0) continue;
+    emitted.add(personId);
+    const around = [...accumulated, ...rows];
+    rows.push({
+      id: uid(),
+      taskId: task.id,
+      personId,
+      date: BIN_DATE,
+      plannedHours: hours,
+      startMinutes: 0,
+      sortIndex: nextSortIndex(around, personId, BIN_DATE),
+    });
+  }
+  return rows;
+}
+
 // ---- Task handlers ----
 
 /** Wholesale-replace the checklist from the draft: trim texts, drop empty ones. */
@@ -533,14 +603,24 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
   }));
 
   if (resultIsDraft) {
-    // Szkic: godziny NIE materializują się (inwariant 1 + 4). Workload zostaje
-    // nietknięty — dla świeżego szkicu jest pusty, a przy edycji szkicu nadal
-    // pusty. allocations / binTotals / newUnassigned z modalu są celowo
-    // pomijane; plan powstaje dopiero po publikacji. Zadanie i przypisania
-    // zapisują się normalnie, więc osoby można wybrać już na etapie szkicu.
+    // Szkic: godziny NIE materializują się w workload (inwariant 1 + 4).
+    // Workload zostaje nietknięty — dla świeżego szkicu jest pusty, a przy
+    // edycji szkicu nadal pusty. allocations / newUnassigned z modalu są celowo
+    // pomijane; plan powstaje dopiero po publikacji. Zapisujemy natomiast
+    // INTENCJĘ godzin sprzedanych per osoba (`draftHours`) wyprowadzoną z
+    // `binTotals` — w formie kanonicznej (klucz obecny tylko przy ≥1 wpisie).
+    // Pusty wynik usuwa klucz (wyczyszczenie godzin przy edycji szkicu).
+    const draftHours = draftHoursFromBinTotals(payload.binTotals, assigneeIds);
+    const draftTasks = tasks.map((t) => {
+      if (t.id !== realTaskId) return t;
+      if (draftHours) return { ...t, draftHours };
+      if (t.draftHours === undefined) return t;
+      const { draftHours: _drop, ...rest } = t;
+      return rest;
+    });
     return {
       ...state,
-      tasks,
+      tasks: draftTasks,
       assignments: [...assignmentsOther, ...assignmentsForTask],
       workload: state.workload,
       activity: withActivity(
@@ -785,25 +865,35 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
   };
 }
 
+/** Zadanie opublikowane ze szkicu: `isDraft: false`, świeży `updatedAt`, a klucz
+ *  `draftHours` USUNIĘTY (rest-destrukturyzacja — sam spread z `isDraft: false`
+ *  zostawiłby klucz; forma kanoniczna zabrania go na zadaniu opublikowanym). */
+function publishedTask(task: Task, ts: string): Task {
+  const { draftHours: _drop, ...rest } = task;
+  return { ...rest, isDraft: false, updatedAt: ts };
+}
+
 /**
  * Publikacja WSZYSTKICH szkiców projektu jedną atomową akcją („Zapisz i
- * opublikuj”). Przełącza `isDraft` na `false` dla każdego szkicu tego projektu;
- * nic więcej się nie zmienia (przypisania już istnieją, godzin szkic nie miał).
- * Nieistniejący projekt albo brak szkiców => TA SAMA referencja stanu
- * (inwariant 6) — akcja bez efektu nie tworzy wpisu ani nowej referencji.
+ * opublikuj”). Dla każdego szkicu: przełącza `isDraft` na `false`, USUWA
+ * `draftHours` i MATERIALIZUJE jego godziny w wiersze zasobnika (jeden na
+ * osobę, inwariant 4) — wszystko w JEDNEJ transakcji stanu. Nieistniejący
+ * projekt albo brak szkiców => TA SAMA referencja stanu (inwariant 6).
  */
 function publishProjectDrafts(state: AppData, projectId: string): AppData {
   if (!hasEntity(state, 'project', projectId)) return state;
-  const draftIds = new Set(
-    state.tasks.filter((t) => t.projectId === projectId && t.isDraft === true).map((t) => t.id),
-  );
-  if (draftIds.size === 0) return state;
+  const drafts = state.tasks.filter((t) => t.projectId === projectId && t.isDraft === true);
+  if (drafts.length === 0) return state;
+  const draftIds = new Set(drafts.map((t) => t.id));
   const ts = nowIso();
+  const newRows: WorkloadEntry[] = [];
+  for (const task of drafts) {
+    newRows.push(...materializeDraftBin(state, [...state.workload, ...newRows], task));
+  }
   return {
     ...state,
-    tasks: state.tasks.map((t) =>
-      draftIds.has(t.id) ? { ...t, isDraft: false, updatedAt: ts } : t,
-    ),
+    tasks: state.tasks.map((t) => (draftIds.has(t.id) ? publishedTask(t, ts) : t)),
+    workload: newRows.length > 0 ? [...state.workload, ...newRows] : state.workload,
     activity: withActivity(
       state,
       'project',
@@ -816,16 +906,17 @@ function publishProjectDrafts(state: AppData, projectId: string): AppData {
 /**
  * Publikacja pojedynczego szkicu (bonus: „opublikuj” per zadanie). Zadanie musi
  * istnieć i być szkicem — inaczej TA SAMA referencja stanu (inwariant 6).
+ * Materializuje `draftHours` w wiersze zasobnika i usuwa klucz.
  */
 function publishTask(state: AppData, taskId: string): AppData {
   const task = state.tasks.find((t) => t.id === taskId);
   if (!task || task.isDraft !== true) return state;
   const ts = nowIso();
+  const newRows = materializeDraftBin(state, state.workload, task);
   return {
     ...state,
-    tasks: state.tasks.map((t) =>
-      t.id === taskId ? { ...t, isDraft: false, updatedAt: ts } : t,
-    ),
+    tasks: state.tasks.map((t) => (t.id === taskId ? publishedTask(t, ts) : t)),
+    workload: newRows.length > 0 ? [...state.workload, ...newRows] : state.workload,
     activity: withActivity(state, 'task', taskId, 'opublikował(a) zadanie'),
   };
 }

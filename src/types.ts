@@ -134,6 +134,17 @@ export interface Task {
   // opublikowane, więc legacy (localStorage), chmura bez kolumny i wszystkie
   // dotychczasowe fixture'y czytają się jako opublikowane bez migracji danych.
   isDraft?: boolean;
+  // Godziny sprzedane per osoba wpisane na etapie SZKICU (intencja sprzed
+  // publikacji, NIE planowane godziny — inwariant 1). Materializują się w jeden
+  // wiersz zasobnika `WorkloadEntry` na osobę przy publikacji, po czym pole jest
+  // USUWANE (jedno źródło prawdy w workload). Żaden selektor / suma / kalendarz /
+  // zasobnik / przeciążenie NIGDY go nie czyta. FORMA KANONICZNA (nośna dla
+  // reference-preserving merge `sameRowValue`): klucz JEST obecny WYŁĄCZNIE gdy
+  // zadanie jest szkicem i tablica ma ≥1 wpis z `hours > 0` na siatce 0,25h i
+  // unikalnym `personId` — inaczej klucz jest NIEOBECNY (nigdy `[]`, nigdy na
+  // zadaniu opublikowanym). Egzekwowane w reduktorze, `normalizeTaskMeta` i
+  // hydracji chmury. OPCJONALNE i ADDYTYWNE (`DATA_VERSION` zostaje na 7).
+  draftHours?: { personId: string; hours: number }[];
   createdAt: string; // ISO timestamp
   updatedAt: string; // ISO timestamp
 }

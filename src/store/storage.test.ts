@@ -757,6 +757,44 @@ describe('normalizeTaskMeta', () => {
     expect(messyChecklist[2]).toEqual({ id: 'c3', text: 'fine', done: false });
   });
 
+  it('drops draftHours on a published task (isDraft false/absent)', () => {
+    const published = v5Task({ id: 't1', draftHours: [{ personId: 'p1', hours: 4 }] });
+    const next = normalizeTaskMeta({ ...emptyData(), tasks: [published] });
+    expect('draftHours' in next.tasks[0]).toBe(false);
+  });
+
+  it('normalizes draftHours on a draft: non-empty personId + finite hours>0 snapped, dedupe by personId (first wins)', () => {
+    const draft = v5Task({
+      id: 't1',
+      isDraft: true,
+      draftHours: [
+        { personId: 'p1', hours: 4.3 }, // snap -> 4.25
+        { personId: '', hours: 5 }, // empty personId -> dropped
+        { personId: 'p2', hours: 0 }, // hours 0 -> dropped
+        { personId: 'p3', hours: -2 }, // negative -> dropped
+        { personId: 'p1', hours: 9 }, // duplicate p1 -> dropped (first wins)
+        'garbage',
+      ],
+    });
+    const next = normalizeTaskMeta({ ...emptyData(), tasks: [draft] });
+    expect(next.tasks[0].draftHours).toEqual([{ personId: 'p1', hours: 4.25 }]);
+  });
+
+  it('drops the draftHours key when a draft normalizes to an empty list or a non-array value', () => {
+    const empty = v5Task({ id: 't1', isDraft: true, draftHours: [{ personId: '', hours: 3 }] });
+    const nonArray = v5Task({ id: 't2', isDraft: true, draftHours: 'nope' });
+    const next = normalizeTaskMeta({ ...emptyData(), tasks: [empty, nonArray] });
+    expect('draftHours' in next.tasks.find((t) => t.id === 't1')!).toBe(false);
+    expect('draftHours' in next.tasks.find((t) => t.id === 't2')!).toBe(false);
+  });
+
+  it('draftHours normalization is idempotent', () => {
+    const draft = v5Task({ id: 't1', isDraft: true, draftHours: [{ personId: 'p1', hours: 4.3 }] });
+    const once = normalizeTaskMeta({ ...emptyData(), tasks: [draft] });
+    const twice = normalizeTaskMeta(once);
+    expect(twice.tasks[0].draftHours).toEqual(once.tasks[0].draftHours);
+  });
+
   it("fills a v5 saved filter's criteria with DEFAULT_FILTER_CRITERIA's priority/workCategoryId ('') while other criteria fields survive unchanged", () => {
     const filter = {
       id: 'f1',

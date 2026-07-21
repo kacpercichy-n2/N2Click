@@ -19,6 +19,7 @@ import {
   getClient,
   getStatus,
   planningStatusForTotals,
+  rangeAvailabilityForPerson,
 } from '../store/selectors';
 import { PlanningBadge } from './PlanningBadge';
 import { CommentsPanel } from './CommentsPanel';
@@ -435,7 +436,12 @@ function TaskEditor({
   // Seed: łączne godziny osoby na zadaniu (kalendarz + zasobnik).
   const [soldRawByPerson, setSoldRawByPerson] = useState<Record<string, string>>(() => {
     const map: Record<string, string> = {};
-    if (existing) {
+    if (existing && existing.isDraft === true) {
+      // Szkic: godziny żyją w `draftHours` (workload jest pusty do publikacji).
+      for (const entry of existing.draftHours ?? []) {
+        map[entry.personId] = entry.hours > 0 ? String(entry.hours) : '';
+      }
+    } else if (existing) {
       const totals = new Map<string, number>();
       for (const w of state.workload) {
         if (w.taskId !== existing.id) continue;
@@ -473,6 +479,19 @@ function TaskEditor({
     () => new Set(periodValid ? eachDayInclusive(startDate, endDate) : []),
     [periodValid, startDate, endDate],
   );
+
+  // Dostępność każdej przypisanej osoby w okresie zadania — CZYSTO INFORMACYJNA
+  // (nigdy nie blokuje zapisu). `bookedHours` liczy istniejący workload INNYCH
+  // zadań (szkic nie ma własnego), więc panel pokazuje realne obłożenie.
+  const availabilityByPerson = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof rangeAvailabilityForPerson>>();
+    if (!periodValid) return map;
+    const days = eachDayInclusive(startDate, endDate);
+    for (const id of assigneeIds) {
+      map.set(id, rangeAvailabilityForPerson(state, id, days));
+    }
+    return map;
+  }, [state, assigneeIds, startDate, endDate, periodValid]);
 
   const outOfRangeCount = useMemo(() => {
     let n = 0;
@@ -693,15 +712,19 @@ function TaskEditor({
     assigneesValid &&
     isValidTaskDraft(state, draftForSave);
 
-  const doSave = (): boolean => {
+  const doSave = ({ publishNew = false }: { publishNew?: boolean } = {}): boolean => {
     setTitleTouched(true);
     if (!formValid) return false;
 
+    // NOWY szkic „Utwórz i opublikuj”: jeden SAVE_TASK z `isDraft: false` —
+    // standardowa ścieżka opublikowana materializuje binTotals sama, bez rundy
+    // po id (edycja istniejącego szkicu idzie osobno przez PUBLISH_TASK).
+    const draftToSave = publishNew ? { ...draftForSave, isDraft: false } : draftForSave;
     dispatch({
       type: 'SAVE_TASK',
       payload: {
         taskId: existing ? existing.id : null,
-        draft: draftForSave,
+        draft: draftToSave,
         assigneeIds,
         allocations: plannedCells,
         binTotals: binTargets,
@@ -717,6 +740,22 @@ function TaskEditor({
 
   const handleSave = () => {
     if (doSave()) onSaved();
+  };
+
+  // Publikacja ISTNIEJĄCEGO szkicu z karty zadania: najpierw zapis (żeby
+  // PUBLISH_TASK zobaczył świeże `draftHours`), potem publikacja i zamknięcie.
+  // Dwa kolejne dispatche są bezpieczne — React stosuje je po kolei.
+  const handlePublishExisting = () => {
+    if (!existing) return;
+    if (doSave()) {
+      dispatch({ type: 'PUBLISH_TASK', taskId: existing.id });
+      onSaved();
+    }
+  };
+
+  // Nowy szkic od razu opublikowany (jeden SAVE_TASK z isDraft:false).
+  const handleCreateAndPublish = () => {
+    if (doSave({ publishNew: true })) onSaved();
   };
 
   // Auto-zapis (tylko edycja istniejącego zadania — tworzenie zostaje jawne,
@@ -1016,12 +1055,12 @@ function TaskEditor({
             })}
           </div>
         )}
-        {!isDraft && assignedPeople.length > 0 && (
+        {assignedPeople.length > 0 && (
           <div className="sold-hours">
             <p className="field-hint">
-              Edytujesz godziny każdej osoby na tym zadaniu (sprzedane). Szacunek
-              zadania to ich suma — wylicza się sam, nie ma osobnego pola. Część
-              niezaplanowana w kalendarzu trafia automatycznie do zasobnika osoby.
+              {isDraft
+                ? 'Edytujesz godziny każdej osoby na tym szkicu (sprzedane). Zapisują się ze szkicem, a po publikacji trafią do zasobnika osoby. Szacunek zadania to ich suma — wylicza się sam.'
+                : 'Edytujesz godziny każdej osoby na tym zadaniu (sprzedane). Szacunek zadania to ich suma — wylicza się sam, nie ma osobnego pola. Część niezaplanowana w kalendarzu trafia automatycznie do zasobnika osoby.'}
             </p>
             {assignedPeople.map((p) => {
               const sold = soldByPerson.get(p.id) ?? 0;
@@ -1050,9 +1089,15 @@ function TaskEditor({
                     disabled={readOnly}
                     title={roTitle}
                   />
-                  <span className="sold-hours-meta muted">
-                    w kalendarzu {formatDuration(dated)} • zasobnik {formatDuration(bin)}
-                  </span>
+                  {isDraft ? (
+                    <span className="sold-hours-meta muted">
+                      po publikacji do zasobnika: {formatDuration(sold)}
+                    </span>
+                  ) : (
+                    <span className="sold-hours-meta muted">
+                      w kalendarzu {formatDuration(dated)} • zasobnik {formatDuration(bin)}
+                    </span>
+                  )}
                   {clamped && (
                     <span className="field-error sold-hours-warn">
                       w kalendarzu więcej niż godziny osoby
@@ -1066,13 +1111,43 @@ function TaskEditor({
               <strong>{formatDuration(soldTotal)}</strong>{' '}
               <span className="muted">— wyliczany</span>
             </div>
+            {/* Panel dostępności (informacyjny) — dostępne vs zajęte w okresie
+                zadania, z podświetleniem przeciążonych dni. Nie blokuje zapisu. */}
+            {periodValid && (
+              <div className="availability-panel">
+                {assignedPeople.map((p) => {
+                  const avail = availabilityByPerson.get(p.id);
+                  if (!avail) return null;
+                  const overbooked = avail.overbookedDates.length > 0;
+                  return (
+                    <div key={p.id} className="availability-row">
+                      <span
+                        className="person-dot"
+                        style={{ background: personColor(p.id) }}
+                        aria-hidden
+                      />
+                      <span className="availability-name">{p.name}</span>
+                      <span className="availability-meta muted">
+                        Dostępność w okresie: dostępne {formatDuration(avail.availableHours)} /
+                        zajęte {formatDuration(avail.bookedHours)}
+                      </span>
+                      {overbooked && (
+                        <span className="field-error sold-hours-warn">
+                          przeciążenie: {avail.overbookedDates.length} dn.
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
         {isDraft ? (
           <p className="field-hint task-draft-hint">
-            <strong>Szkic.</strong> Po zapisaniu zadanie pozostaje szkicem, dopóki
-            nie klikniesz „Zapisz i opublikuj” w projekcie. Osoby możesz przypisać
-            już teraz; godziny (kalendarz i zasobnik) zaplanujesz po opublikowaniu.
+            <strong>Szkic.</strong> Godziny osób zapisują się ze szkicem i po
+            publikacji trafią do zasobnika. Zadanie pozostaje szkicem, dopóki go
+            nie opublikujesz.
           </p>
         ) : (
           <>
@@ -1218,17 +1293,40 @@ function TaskEditor({
             Zmiany zapisują się automatycznie.
           </span>
         )}
-        {!readOnly && (
-          <button
-            type="button"
-            className="btn primary"
-            onClick={handleSave}
-            disabled={state.projects.length === 0}
-            title={state.projects.length === 0 ? 'Najpierw utwórz projekt' : undefined}
-          >
-            {isEdit ? 'Zapisz i zamknij' : isDraft ? 'Utwórz szkic' : 'Utwórz zadanie'}
-          </button>
-        )}
+        {!readOnly &&
+          (isDraft ? (
+            <>
+              {/* Szkic: rozdzielone akcje — zapis szkicu vs publikacja. */}
+              <button
+                type="button"
+                className="btn"
+                onClick={handleSave}
+                disabled={state.projects.length === 0}
+                title={state.projects.length === 0 ? 'Najpierw utwórz projekt' : undefined}
+              >
+                {isEdit ? 'Zapisz szkic' : 'Utwórz szkic'}
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                onClick={isEdit ? handlePublishExisting : handleCreateAndPublish}
+                disabled={state.projects.length === 0}
+                title={state.projects.length === 0 ? 'Najpierw utwórz projekt' : undefined}
+              >
+                {isEdit ? 'Opublikuj' : 'Utwórz i opublikuj'}
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="btn primary"
+              onClick={handleSave}
+              disabled={state.projects.length === 0}
+              title={state.projects.length === 0 ? 'Najpierw utwórz projekt' : undefined}
+            >
+              {isEdit ? 'Zapisz i zamknij' : 'Utwórz zadanie'}
+            </button>
+          ))}
         <button type="button" className="btn ghost" onClick={onCancel}>
           {readOnly || !dirty ? 'Zamknij' : 'Anuluj'}
         </button>

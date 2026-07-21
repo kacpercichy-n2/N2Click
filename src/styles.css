@@ -5528,6 +5528,30 @@ option {
   margin-top: 4px;
 }
 
+/* Panel dostępności (informacyjny) w karcie zadania — reużywa układu
+   `.sold-hours-row`; tylko lekkie odseparowanie od bloku godzin osób. */
+.availability-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px dashed var(--n2-border);
+  padding-top: 8px;
+  margin-top: 4px;
+}
+.availability-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.availability-name {
+  min-width: 140px;
+  font-weight: 600;
+}
+.availability-meta {
+  font-size: 0.85em;
+}
+
 /* ---------- Zgłoszenia (zakładka „Zgłoszenia”) ---------- */
 /* Przełącznik trybów reużywa `.toggle-btn` z paska kalendarza; poniżej tylko
    układ listy, tabeli i rozwijanego opisu. Modal korzysta z rodziny

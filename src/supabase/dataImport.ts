@@ -153,6 +153,23 @@ const insertFailure = (error: string): string => `Zapis nie powiódł się: ${er
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (id: string): boolean => UUID_RE.test(id);
 
+/** Godziny szkicu na jsonb importu chmury `[{ profile_id, hours }]`: personId
+ *  przez `personIdMap` (local -> cloud profile), wpis niemapowalny odpada,
+ *  brak godzin => null. */
+function draftHoursImport(
+  task: AppData['tasks'][number],
+  personIdMap: Map<string, string>,
+): Array<{ profile_id: string; hours: number }> | null {
+  if (!task.draftHours || task.draftHours.length === 0) return null;
+  const rows: Array<{ profile_id: string; hours: number }> = [];
+  for (const entry of task.draftHours) {
+    const profileId = personIdMap.get(entry.personId);
+    if (profileId === undefined) continue;
+    rows.push({ profile_id: profileId, hours: entry.hours });
+  }
+  return rows.length > 0 ? rows : null;
+}
+
 function chunk<T>(items: T[], size = 100): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
@@ -480,6 +497,10 @@ export async function runSupabaseImport(
         order_index: t.orderIndex,
         // Szkic (20260721020000_task_is_draft): brak pola => opublikowane.
         is_draft: t.isDraft === true,
+        // Godziny szkicu (20260721130000_task_draft_hours, jsonb
+        // `[{ profile_id, hours }]`): personId przez personIdMap, wpis
+        // niemapowalny odpada, brak godzin => null.
+        draft_hours: draftHoursImport(t, personIdMap),
       });
       if (ins.error) {
         taskSummary.failed++;

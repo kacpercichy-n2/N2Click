@@ -212,6 +212,29 @@ describe('diffToCloudOps — families', () => {
     expect(rowOf(TK2).is_draft).toBe(false);
   });
 
+  it('task upsert mapuje draftHours na draft_hours (profil per wpis; niemapowalny odpada; brak => null)', () => {
+    const m = maps();
+    const TK2 = uuid('task-two');
+    const TK3 = uuid('task-three');
+    const prev: AppData = { ...localFixture(), tasks: [] };
+    const next: AppData = {
+      ...localFixture(),
+      tasks: [
+        makeTask({ id: TK, isDraft: true, draftHours: [{ personId: PA, hours: 4 }, { personId: uuid('ghost'), hours: 9 }] }),
+        makeTask({ id: TK2, isDraft: true }), // szkic bez godzin => null
+        makeTask({ id: TK3 }), // opublikowane => null
+      ],
+    };
+    const upserts = diffToCloudOps(prev, next, m).ops.filter(
+      (o) => o.table === 'tasks' && o.kind === 'upsert',
+    );
+    const rowOf = (id: string) => upserts.find((o) => o.row!.id === id)!.row!;
+    // Niemapowalny wpis odpada; mapowalny niesie cloud profile id.
+    expect(rowOf(TK).draft_hours).toEqual([{ profile_id: CLOUD_PA, hours: 4 }]);
+    expect(rowOf(TK2).draft_hours).toBeNull();
+    expect(rowOf(TK3).draft_hours).toBeNull();
+  });
+
   it('a rejected reorder (unknown task) keeps the state reference so the diff emits zero ops', () => {
     const m = maps();
     const prev: AppData = { ...localFixture(), tasks: [makeTask({ id: TK, orderIndex: 0 })] };

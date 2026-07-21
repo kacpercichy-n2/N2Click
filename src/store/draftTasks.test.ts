@@ -19,6 +19,7 @@ import {
   entriesForTask,
 } from './selectors';
 import { buildKanbanColumns } from '../pages/kanbanBoard';
+import { BIN_DATE, isBinEntry } from '../utils/time';
 import type { AppData, Person, Project, Status, Task } from '../types';
 
 const PROJECT: Project = {
@@ -252,6 +253,134 @@ describe('PUBLISH_TASK (pojedynczy szkic)', () => {
     expect(reducer(next, { type: 'PUBLISH_TASK', taskId: id })).toBe(next);
     // Nieistniejące => ta sama referencja.
     expect(reducer(s, { type: 'PUBLISH_TASK', taskId: 'ghost' })).toBe(s);
+  });
+});
+
+const BOLEK: Person = { ...ANNA, id: 'p2', firstName: 'Bolek', lastName: 'Nowak', name: 'Bolek Nowak' };
+
+describe('SAVE_TASK — godziny szkicu (draftHours)', () => {
+  it('zapisuje draftHours przefiltrowane po przypisaniach i snapowane; ZERO wierszy workload', () => {
+    const state = makeState({ people: [ANNA, BOLEK] });
+    const next = reducer(state, {
+      type: 'SAVE_TASK',
+      payload: {
+        taskId: null,
+        draft: draft({ isDraft: true }),
+        assigneeIds: ['p1'],
+        allocations: [],
+        // p2 nieprzypisany => odpada; 4,3h snapuje się do 4,25h.
+        binTotals: [
+          { personId: 'p1', hours: 4.3 },
+          { personId: 'p2', hours: 6 },
+        ],
+      },
+    });
+    const task = next.tasks[0];
+    expect(task.draftHours).toEqual([{ personId: 'p1', hours: 4.25 }]);
+    expect(next.workload).toEqual([]);
+  });
+
+  it('wyczyszczenie godzin przy edycji szkicu USUWA klucz draftHours', () => {
+    const created = reducer(makeState(), {
+      type: 'SAVE_TASK',
+      payload: { taskId: null, draft: draft({ isDraft: true }), assigneeIds: ['p1'], allocations: [], binTotals: [{ personId: 'p1', hours: 5 }] },
+    });
+    const id = created.tasks[0].id;
+    expect(created.tasks[0].draftHours).toEqual([{ personId: 'p1', hours: 5 }]);
+
+    const cleared = reducer(created, {
+      type: 'SAVE_TASK',
+      payload: { taskId: id, draft: draft({ isDraft: true }), assigneeIds: ['p1'], allocations: [], binTotals: [{ personId: 'p1', hours: 0 }] },
+    });
+    expect('draftHours' in cleared.tasks[0]).toBe(false);
+  });
+
+  it('niepoprawne binTotals (NaN/ujemne) na zapisie szkicu => TA SAMA referencja (inwariant 6)', () => {
+    const state = makeState();
+    const nan = reducer(state, {
+      type: 'SAVE_TASK',
+      payload: { taskId: null, draft: draft({ isDraft: true }), assigneeIds: ['p1'], allocations: [], binTotals: [{ personId: 'p1', hours: Number.NaN }] },
+    });
+    expect(nan).toBe(state);
+    const neg = reducer(state, {
+      type: 'SAVE_TASK',
+      payload: { taskId: null, draft: draft({ isDraft: true }), assigneeIds: ['p1'], allocations: [], binTotals: [{ personId: 'p1', hours: -2 }] },
+    });
+    expect(neg).toBe(state);
+  });
+});
+
+describe('PUBLISH_TASK — materializacja godzin szkicu', () => {
+  it('tworzy dokładnie jeden wiersz zasobnika na osobę, usuwa draftHours', () => {
+    const created = reducer(makeState({ people: [ANNA, BOLEK] }), {
+      type: 'SAVE_TASK',
+      payload: {
+        taskId: null,
+        draft: draft({ isDraft: true }),
+        assigneeIds: ['p1', 'p2'],
+        allocations: [],
+        binTotals: [{ personId: 'p1', hours: 4 }, { personId: 'p2', hours: 2.5 }],
+      },
+    });
+    const id = created.tasks[0].id;
+
+    const published = reducer(created, { type: 'PUBLISH_TASK', taskId: id });
+    const task = published.tasks[0];
+    expect(task.isDraft).toBe(false);
+    expect('draftHours' in task).toBe(false);
+
+    const rows = published.workload.filter((w) => w.taskId === id);
+    expect(rows).toHaveLength(2);
+    for (const w of rows) {
+      expect(isBinEntry(w)).toBe(true);
+      expect(w.date).toBe(BIN_DATE);
+      expect(w.startMinutes).toBe(0);
+    }
+    expect(rows.find((w) => w.personId === 'p1')!.plannedHours).toBe(4);
+    expect(rows.find((w) => w.personId === 'p2')!.plannedHours).toBe(2.5);
+    // Jeden wiersz na parę (inwariant 4).
+    expect(new Set(rows.map((w) => w.personId)).size).toBe(2);
+  });
+
+  it('pomija wpis osoby, która nie jest już przypisana do zadania', () => {
+    // Szkic z godzinami dla p1; ręcznie osieroćmy draftHours dodatkowym p2.
+    const created = reducer(makeState({ people: [ANNA, BOLEK] }), {
+      type: 'SAVE_TASK',
+      payload: { taskId: null, draft: draft({ isDraft: true }), assigneeIds: ['p1'], allocations: [], binTotals: [{ personId: 'p1', hours: 3 }] },
+    });
+    const id = created.tasks[0].id;
+    // Wstrzyknij nieprzypisany wpis (symulacja nieaktualnego wiersza z chmury).
+    const tampered: AppData = {
+      ...created,
+      tasks: created.tasks.map((t) =>
+        t.id === id ? { ...t, draftHours: [{ personId: 'p1', hours: 3 }, { personId: 'p2', hours: 9 }] } : t,
+      ),
+    };
+
+    const published = reducer(tampered, { type: 'PUBLISH_TASK', taskId: id });
+    const rows = published.workload.filter((w) => w.taskId === id);
+    expect(rows.map((w) => w.personId)).toEqual(['p1']);
+  });
+});
+
+describe('PUBLISH_PROJECT_DRAFTS — materializacja atomowa', () => {
+  it('materializuje wszystkie szkice projektu w jednej transakcji', () => {
+    let s = reducer(makeState({ people: [ANNA, BOLEK] }), {
+      type: 'SAVE_TASK',
+      payload: { taskId: null, draft: draft({ title: 'A', isDraft: true }), assigneeIds: ['p1'], allocations: [], binTotals: [{ personId: 'p1', hours: 4 }] },
+    });
+    s = reducer(s, {
+      type: 'SAVE_TASK',
+      payload: { taskId: null, draft: draft({ title: 'B', isDraft: true }), assigneeIds: ['p2'], allocations: [], binTotals: [{ personId: 'p2', hours: 6 }] },
+    });
+
+    const next = reducer(s, { type: 'PUBLISH_PROJECT_DRAFTS', projectId: 'proj1' });
+    expect(next.tasks.every((t) => t.isDraft === false)).toBe(true);
+    expect(next.tasks.every((t) => !('draftHours' in t))).toBe(true);
+    // Dwa wiersze zasobnika — po jednym na zadanie/osobę.
+    expect(next.workload).toHaveLength(2);
+    expect(next.workload.every((w) => isBinEntry(w))).toBe(true);
+    expect(next.workload.reduce((sum, w) => sum + w.plannedHours, 0)).toBe(10);
   });
 });
 

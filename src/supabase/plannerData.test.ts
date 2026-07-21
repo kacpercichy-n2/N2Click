@@ -4,9 +4,9 @@
 // atomic failure and empty-collection validity. No SDK, no live Supabase.
 import { describe, expect, it } from 'vitest';
 import { emptyData } from '../store/storage';
-import type { AppData, Person } from '../types';
+import type { AppData, Person, Task } from '../types';
 import type { CloudProfile, OrgSnapshot } from './referenceData';
-import { buildCloudIdMaps, type CloudIdMaps } from './cloudMirror';
+import { buildCloudIdMaps, diffToCloudOps, type CloudIdMaps } from './cloudMirror';
 import {
   classifyWriteError,
   createSupabasePlannerDb,
@@ -259,6 +259,64 @@ describe('loadPlannerSnapshot', () => {
     if (!result.ok) return;
     expect(result.payload.tasks.find((t) => t.id === TK)!.isDraft).toBe(true);
     expect(result.payload.tasks.find((t) => t.id === TK2)!.isDraft).toBe(false);
+  });
+
+  it('hydrates draft_hours only for is_draft rows: profil odwrócony, snap, dedup; publikowany wiersz z draft_hours ignoruje pole', async () => {
+    const TK2 = uuid('task-two');
+    const db = new FakeSelectDb()
+      .seed('projects', [
+        { id: PR, client_id: null, name: 'P', description: '', status_id: S1, paid: false, start_date: '2026-07-06', end_date: '2026-07-12', department_id: null, service_type_id: null, created_at: '', updated_at: '' },
+      ])
+      .seed('tasks', [
+        {
+          id: TK, project_id: PR, status_id: S1, title: 'Szkic', description: '', start_date: '2026-07-06', end_date: '2026-07-08',
+          estimated_hours: null, priority: 'normal', work_category_id: null, checklist: [], order_index: 0, is_draft: true,
+          // 4,3h snapuje do 4,25; profil-widmo odpada; hours<=0 odpada.
+          draft_hours: [
+            { profile_id: CLOUD_PA, hours: 4.3 },
+            { profile_id: uuid('ghost-profile'), hours: 9 },
+            { profile_id: CLOUD_PA, hours: 1 }, // duplikat -> pierwszy wygrywa
+          ],
+          created_at: '', updated_at: '',
+        },
+        {
+          id: TK2, project_id: PR, status_id: S1, title: 'Opublikowane', description: '', start_date: '2026-07-06', end_date: '2026-07-08',
+          estimated_hours: null, priority: 'normal', work_category_id: null, checklist: [], order_index: 0, is_draft: false,
+          draft_hours: [{ profile_id: CLOUD_PA, hours: 5 }],
+          created_at: '', updated_at: '',
+        },
+      ]);
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.payload.tasks.find((t) => t.id === TK)!.draftHours).toEqual([{ personId: PA, hours: 4.25 }]);
+    // Wiersz opublikowany nie dostaje klucza mimo obecnego draft_hours.
+    expect('draftHours' in result.payload.tasks.find((t) => t.id === TK2)!).toBe(false);
+  });
+
+  it('round-trip nieruszonego szkicu zachowuje formę kanoniczną draftHours (mirror -> hydracja)', async () => {
+    const localTask: Task = {
+      id: TK, projectId: PR, statusId: S1, title: 'Szkic', description: '',
+      startDate: '2026-07-06', endDate: '2026-07-08', estimatedHours: null, priority: 'normal',
+      workCategoryId: '', departmentId: '', checklist: [], orderIndex: 0, isDraft: true,
+      draftHours: [{ personId: PA, hours: 4.25 }],
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    // Mirror lokalnego szkicu na wiersz chmury (draft_hours jsonb).
+    const ops = diffToCloudOps({ ...localFixture(), tasks: [] }, { ...localFixture(), tasks: [localTask] }, maps()).ops;
+    const taskRow = ops.find((o) => o.table === 'tasks' && o.kind === 'upsert')!.row!;
+    expect(taskRow.draft_hours).toEqual([{ profile_id: CLOUD_PA, hours: 4.25 }]);
+
+    const db = new FakeSelectDb()
+      .seed('projects', [
+        { id: PR, client_id: null, name: 'P', description: '', status_id: S1, paid: false, start_date: '2026-07-06', end_date: '2026-07-12', department_id: null, service_type_id: null, created_at: '', updated_at: '' },
+      ])
+      .seed('tasks', [taskRow]);
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Klucz obecny i wartość identyczna => sameRowValue zostaje no-opem.
+    expect(result.payload.tasks[0].draftHours).toEqual(localTask.draftHours);
   });
 
   it('excludes a project with null dates and a task over the 92-day cap', async () => {

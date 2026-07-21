@@ -834,6 +834,34 @@ export function assignDefaultOrderIndex(tasks: Task[]): Task[] {
   );
 }
 
+/**
+ * Repair `Task.draftHours` na wczytaniu (forma kanoniczna — patrz `Task`).
+ * Opublikowane zadanie => `undefined`. Szkic: wartość niebędąca tablicą =>
+ * `undefined`; inaczej wpisy z niepustym `personId` i skończonym `hours > 0`
+ * snapowane do siatki, dedup po personId (pierwszy wygrywa); pusto => `undefined`.
+ * Idempotentne po wartości.
+ */
+function normalizeDraftHours(
+  isDraft: boolean,
+  raw: unknown,
+): Array<{ personId: string; hours: number }> | undefined {
+  if (!isDraft || !Array.isArray(raw)) return undefined;
+  const byPerson = new Map<string, number>();
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) continue;
+    const rec = item as Record<string, unknown>;
+    const personId = typeof rec.personId === 'string' ? rec.personId : '';
+    if (personId === '' || byPerson.has(personId)) continue;
+    const hoursRaw = rec.hours;
+    if (typeof hoursRaw !== 'number' || !Number.isFinite(hoursRaw)) continue;
+    const hours = snapHours(hoursRaw);
+    if (hours <= 0) continue;
+    byPerson.set(personId, hours);
+  }
+  if (byPerson.size === 0) return undefined;
+  return [...byPerson].map(([personId, hours]) => ({ personId, hours }));
+}
+
 export function normalizeTaskMeta(data: AppData): AppData {
   const str = (v: unknown): string => (typeof v === 'string' ? v : '');
   const workCategories = Array.isArray(data.workCategories) ? data.workCategories : [];
@@ -869,7 +897,13 @@ export function normalizeTaskMeta(data: AppData): AppData {
     // Szkic (pole opcjonalne, ADDYTYWNE): każdy starszy zapis i chmura bez
     // kolumny czytają się jako OPUBLIKOWANE. Tylko jawne `true` zostaje szkicem.
     const isDraft = t.isDraft === true;
-    return {
+    // Godziny szkicu (`draftHours`, forma kanoniczna): opublikowane zadanie
+    // NIGDY nie ma klucza; szkic zachowuje wpisy z niepustym `personId` (osierocony
+    // personId zostaje — istnienie sprawdza publikacja) i skończonym `hours > 0`
+    // snapowanym do siatki, dedup po personId (pierwszy wygrywa); pusty wynik =>
+    // brak klucza. Idempotentne po wartości.
+    const draftHours = normalizeDraftHours(isDraft, t.draftHours);
+    const base: Task = {
       ...(raw as Task),
       priority,
       workCategoryId,
@@ -878,6 +912,9 @@ export function normalizeTaskMeta(data: AppData): AppData {
       orderIndex,
       isDraft,
     };
+    if (draftHours) base.draftHours = draftHours;
+    else delete base.draftHours;
+    return base;
   });
 
   const savedFilters = data.savedFilters.map((f) => {

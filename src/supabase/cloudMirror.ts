@@ -260,9 +260,31 @@ function taskRow(
     order_index: t.orderIndex,
     // Szkic (kolumna 20260721020000_task_is_draft): brak pola => opublikowane.
     is_draft: t.isDraft === true,
+    // Godziny szkicu (kolumna 20260721130000_task_draft_hours, jsonb): kształt
+    // `[{ profile_id, hours }]`. personId mapowany jak w `ticketRow`; wpis
+    // niemapowalny ODPADA (nie zerujemy całego wiersza). Brak `draftHours` => null.
+    draft_hours: draftHoursRow(t, maps),
     created_at: t.createdAt,
     updated_at: t.updatedAt,
   };
+}
+
+/** Mapuje `Task.draftHours` na jsonb chmury `[{ profile_id, hours }]`; wpis o
+ *  niemapowalnym personId odpada, brak godzin => null. */
+function draftHoursRow(
+  t: Task,
+  maps: CloudIdMaps,
+): Array<{ profile_id: string; hours: number }> | null {
+  if (!t.draftHours || t.draftHours.length === 0) return null;
+  const rows: Array<{ profile_id: string; hours: number }> = [];
+  for (const entry of t.draftHours) {
+    const profileId =
+      maps.people.get(entry.personId) ??
+      (maps.cloudProfileIds.has(entry.personId) ? entry.personId : undefined);
+    if (profileId === undefined) continue;
+    rows.push({ profile_id: profileId, hours: entry.hours });
+  }
+  return rows.length > 0 ? rows : null;
 }
 
 function milestoneRow(m: Milestone, diagnostics: string[]): Record<string, unknown> | null {

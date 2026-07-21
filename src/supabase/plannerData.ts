@@ -35,7 +35,7 @@ import {
   isTicketPriority,
   isTicketStatus,
 } from '../utils/tickets';
-import { BIN_DATE, DAY_MINUTES, HOURS_STEP, MINUTE_STEP } from '../utils/time';
+import { BIN_DATE, DAY_MINUTES, HOURS_STEP, MINUTE_STEP, snapHours } from '../utils/time';
 import { createSupabaseImportDb, type ImportDb } from './dataImport';
 import type { CloudIdMaps } from './cloudMirror';
 
@@ -197,6 +197,31 @@ function sqlDateToLocal(v: unknown): string {
   return typeof v === 'string' && v !== '' ? v : '';
 }
 
+/**
+ * Hydracja `draft_hours` (jsonb chmury `[{ profile_id, hours }]`) na kanoniczne
+ * `Task.draftHours`: profil przez `personOf`, `''` odpada, `hours > 0` snapowane,
+ * dedup po osobie (pierwszy wygrywa); pusto => `undefined` (klucz nieobecny).
+ */
+function hydrateDraftHours(
+  raw: unknown[],
+  personOf: (v: unknown) => string,
+): Array<{ personId: string; hours: number }> | undefined {
+  const byPerson = new Map<string, number>();
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) continue;
+    const rec = item as Record<string, unknown>;
+    const personId = personOf(rec.profile_id);
+    if (personId === '' || byPerson.has(personId)) continue;
+    const hoursRaw = rec.hours;
+    if (typeof hoursRaw !== 'number' || !Number.isFinite(hoursRaw) || hoursRaw <= 0) continue;
+    const hours = snapHours(hoursRaw);
+    if (hours <= 0) continue;
+    byPerson.set(personId, hours);
+  }
+  if (byPerson.size === 0) return undefined;
+  return [...byPerson].map(([personId, hours]) => ({ personId, hours }));
+}
+
 /** Odwraca mapę forward (local -> cloud) na reverse (cloud -> local). */
 function invert(map: Map<string, string>): Map<string, string> {
   const out = new Map<string, string>();
@@ -302,7 +327,7 @@ export async function loadPlannerSnapshot(
     db.select('milestones', 'id, project_id, name, milestone_date'),
     db.select(
       'tasks',
-      'id, project_id, status_id, title, description, start_date, end_date, estimated_hours, priority, work_category_id, department_id, checklist, order_index, is_draft, created_at, updated_at',
+      'id, project_id, status_id, title, description, start_date, end_date, estimated_hours, priority, work_category_id, department_id, checklist, order_index, is_draft, draft_hours, created_at, updated_at',
     ),
     db.select('task_assignments', 'task_id, profile_id'),
     db.select(
@@ -429,6 +454,14 @@ export async function loadPlannerSnapshot(
     const orderIndexRaw = row.order_index;
     const orderIndex =
       typeof orderIndexRaw === 'number' && Number.isFinite(orderIndexRaw) ? orderIndexRaw : 0;
+    // Godziny szkicu (forma kanoniczna — utrzymuje no-op merge `sameRowValue`
+    // no-opem): budujemy klucz WYŁĄCZNIE dla `is_draft` i tablicy; per wpis
+    // profil przez `personOf`, `''` odpada, `hours > 0` snapowane, dedup po
+    // osobie; klucz obecny tylko gdy przetrwa ≥1 wpis.
+    const draftHours =
+      row.is_draft === true && Array.isArray(row.draft_hours)
+        ? hydrateDraftHours(row.draft_hours as unknown[], personOf)
+        : undefined;
     tasks.push({
       id: str(row.id),
       projectId: str(row.project_id),
@@ -448,6 +481,7 @@ export async function loadPlannerSnapshot(
       // Szkic (20260721020000_task_is_draft): kolumna spoza `true` (starszy
       // wiersz, brak kolumny, null) czytamy jako opublikowane.
       isDraft: row.is_draft === true,
+      ...(draftHours ? { draftHours } : {}),
       createdAt: str(row.created_at),
       updatedAt: str(row.updated_at) || str(row.created_at),
     });
