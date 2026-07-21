@@ -9,6 +9,7 @@ import { allStatusesOrdered, isAdminUser } from '../store/selectors';
 import { StatusBadge } from '../components/StatusBadge';
 import { ExportDryRunPanel } from '../components/ExportDryRunPanel';
 import { MigrationStatusPanel } from '../components/MigrationStatusPanel';
+import { NavOrderEditor } from '../components/NavOrderEditor';
 import { useAuth } from '../auth/SessionProvider';
 import { useOrgData } from '../supabase/OrgDataProvider';
 
@@ -30,7 +31,7 @@ export function AdminPage() {
     return (
       <section className="page">
         <div className="page-head">
-          <h1>Administracja</h1>
+          <h1>Ustawienia</h1>
         </div>
         <div className="empty-state">
           <p className="empty-title">Tylko dla adminów</p>
@@ -73,7 +74,7 @@ export function AdminPage() {
   return (
     <section className="page">
       <div className="page-head">
-        <h1>Administracja</h1>
+        <h1>Ustawienia</h1>
       </div>
 
       <div className="editor-section" data-tour="admin.statuses">
@@ -332,6 +333,8 @@ export function AdminPage() {
       </div>
 
       {mode === 'supabase' && <CloudDictionaries />}
+
+      <NavOrderEditor />
 
       <ExportDryRunPanel />
 

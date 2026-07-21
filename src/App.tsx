@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   NavLink,
   Navigate,
@@ -54,51 +54,23 @@ import { TicketModal } from './components/TicketModal';
 import { GlobalSearch } from './components/GlobalSearch';
 import { Avatar } from './components/Avatar';
 import {
-  LayoutDashboard,
-  ClipboardList,
-  FolderKanban,
-  Building2,
-  Columns3,
-  GanttChart,
-  ListChecks,
-  CalendarDays,
   Users,
-  Gauge,
-  Settings,
   Menu,
   X,
   ChevronsLeft,
   ChevronsRight,
   CircleHelp,
-  KeyRound,
-  Network,
   Inbox,
 } from './components/icons';
-import type { LucideIcon } from './components/icons';
-import { loadUiPrefs, updateUiPrefs } from './utils/uiPrefs';
+import { NAV } from './components/navItems';
+import { applyNavOrder } from './utils/navOrder';
+import { loadUiPrefs, navOrderForUser, updateUiPrefs } from './utils/uiPrefs';
 import {
   consumeNavGuardBypass,
   dirtyNavScopes,
   navGuardBlocks,
 } from './utils/dirtyRegistry';
 import { OnboardingRoot } from './onboarding/OnboardingRoot';
-
-const NAV: Array<[string, string, LucideIcon]> = [
-  ['/dashboard', 'Panel', LayoutDashboard],
-  ['/my-work', 'Moja praca', ClipboardList],
-  ['/projects', 'Projekty', FolderKanban],
-  ['/clients', 'Klienci', Building2],
-  ['/kanban', 'Kanban', Columns3],
-  ['/timeline', 'Oś czasu', GanttChart],
-  ['/tasks', 'Zadania', ListChecks],
-  ['/calendar', 'Kalendarz', CalendarDays],
-  ['/people', 'Zespół', Users],
-  ['/team', 'Struktura zespołu', Network],
-  ['/workload', 'Obciążenie', Gauge],
-  // Zgłoszenia widzi KAŻDY (każda rola może zgłosić) — bez bramki jak /admin.
-  ['/zgloszenia', 'Zgłoszenia', Inbox],
-  ['/admin', 'Administracja', Settings],
-];
 
 const MOBILE_NAV_QUERY = '(max-width: 760px)';
 const DRAWER_FOCUSABLE = [
@@ -128,6 +100,10 @@ export function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => loadUiPrefs().sidebarCollapsed);
   const [mobileNav, setMobileNav] = useState(() => window.matchMedia(MOBILE_NAV_QUERY).matches);
+  // Bumped by the NavOrderEditor's `n2hub:nav-order-changed` event (same live-
+  // update pattern as `n2hub:open-tutorials`) so the sidebar re-orders while the
+  // editor page is open.
+  const [navOrderVersion, setNavOrderVersion] = useState(0);
   const hamburgerRef = useRef<HTMLButtonElement>(null);
   const drawerRef = useRef<HTMLElement>(null);
 
@@ -196,6 +172,22 @@ export function App() {
   // the API. A deleted current user falls back here (DELETE_PERSON clears it).
   const needsLogin = state.people.length > 0 && !currentUser;
 
+  // Per-user (per-browser) sidebar order: a permutation of NAV keyed by the REAL
+  // logged-in id (impersonation must not switch it). '' → defaults. Gates below
+  // still run AFTER ordering, so a stored order can never reveal a gated item.
+  const orderUserId = realUserId(state);
+  const orderedNav = useMemo(() => {
+    const stored = orderUserId ? navOrderForUser(loadUiPrefs(), orderUserId) : [];
+    const orderedPaths = applyNavOrder(
+      NAV.map(([to]) => to),
+      stored,
+    );
+    return orderedPaths.flatMap((path) => {
+      const item = NAV.find(([to]) => to === path);
+      return item ? [item] : [];
+    });
+  }, [orderUserId, navOrderVersion]);
+
   // Logout: in Supabase mode end the real Auth session first (its SIGNED_OUT
   // event returns us to the login screen), then clear the local acting identity.
   // In local mode this is just the existing LOGOUT dispatch. These are the same
@@ -214,6 +206,14 @@ export function App() {
     sync();
     media.addEventListener('change', sync);
     return () => media.removeEventListener('change', sync);
+  }, []);
+
+  // Live sidebar re-order: the NavOrderEditor persists the new order and fires
+  // this event; we re-read prefs by bumping a counter.
+  useEffect(() => {
+    const onNavOrderChanged = () => setNavOrderVersion((v) => v + 1);
+    window.addEventListener('n2hub:nav-order-changed', onNavOrderChanged);
+    return () => window.removeEventListener('n2hub:nav-order-changed', onNavOrderChanged);
   }, []);
 
   // Close the mobile drawer whenever the route changes.
@@ -367,11 +367,24 @@ export function App() {
         </div>
         <GlobalSearch />
         <nav className="app-nav" data-tour="shell.nav">
-          {NAV.filter(([to]) => (to !== '/admin' || canAdmin) && (to !== '/team' || canTeam)).map(([to, label, Icon]) => (
+          {orderedNav
+            .filter(
+              ([to]) =>
+                (to !== '/admin' || canAdmin) &&
+                (to !== '/account' || auth.mode === 'supabase'),
+            )
+            .map(([to, label, Icon]) => (
             <NavLink
               key={to}
               to={to}
-              className={navClass}
+              // „Zespół" pozostaje aktywny także na obszarze Struktura zespołu
+              // (/team i /people/:id), do którego prowadzą zakładki TeamTabs.
+              className={
+                to === '/people'
+                  ? ({ isActive }) =>
+                      navClass({ isActive: isActive || location.pathname.startsWith('/team') })
+                  : navClass
+              }
               title={label}
               onClick={() => setMenuOpen(false)}
             >
@@ -379,29 +392,30 @@ export function App() {
               <span className="nav-label">{label}</span>
             </NavLink>
           ))}
-          {/* Account panel (self-service password change) exists only for a real
-              Supabase account; local mode has no such concept. */}
-          {auth.mode === 'supabase' && (
-            <NavLink
-              to="/account"
-              className={navClass}
-              title="Konto"
-              onClick={() => setMenuOpen(false)}
-            >
-              <KeyRound size={18} aria-hidden className="nav-icon" />
-              <span className="nav-label">Konto</span>
-            </NavLink>
-          )}
         </nav>
-        <button
-          type="button"
-          className="sidebar-help"
-          data-tour="shell.help"
-          onClick={() => window.dispatchEvent(new Event('n2hub:open-tutorials'))}
-        >
-          <CircleHelp size={18} aria-hidden />
-          <span className="nav-label">Pomoc i samouczki</span>
-        </button>
+        {/* Stopka paska: przypięte Zgłoszenia (widoczne dla każdej roli, poza
+            przewijaną listą nawigacji) obok okrągłego przycisku pomocy. */}
+        <div className="sidebar-footer">
+          <NavLink
+            to="/zgloszenia"
+            className={({ isActive }) => (isActive ? 'sidebar-tickets active' : 'sidebar-tickets')}
+            title="Zgłoszenia"
+            onClick={() => setMenuOpen(false)}
+          >
+            <Inbox size={18} aria-hidden className="nav-icon" />
+            <span className="nav-label">Zgłoszenia</span>
+          </NavLink>
+          <button
+            type="button"
+            className="sidebar-help"
+            data-tour="shell.help"
+            aria-label="Pomoc i samouczki"
+            title="Pomoc i samouczki"
+            onClick={() => window.dispatchEvent(new Event('n2hub:open-tutorials'))}
+          >
+            <CircleHelp size={18} aria-hidden />
+          </button>
+        </div>
         {state.people.length > 0 && (
           <div className="acting-as-wrap">
             {/* Collapsed avatar shortcut (CSS-shown only >1180px + collapsed). */}

@@ -10,6 +10,7 @@ import { useStore } from '../store/AppStore';
 import { useOrgData } from '../supabase/OrgDataProvider';
 import type { CloudProfile } from '../supabase/referenceData';
 import { PROVISION_ROLE_LABELS } from './teamScope';
+import { NavOrderEditor } from '../components/NavOrderEditor';
 
 export function AccountPage() {
   const { changePassword, mode } = useAuth();
@@ -109,6 +110,8 @@ export function AccountPage() {
           </button>
         </form>
       </div>
+
+      <NavOrderEditor />
     </section>
   );
 }

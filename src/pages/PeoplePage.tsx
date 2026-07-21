@@ -20,6 +20,7 @@ import {
   WEEKDAY_CHIPS,
   toggleWorkDay,
 } from '../components/personFields';
+import { TeamTabs } from './TeamTabs';
 
 const emptyDraft = (): PersonDraft => ({
   firstName: '',
@@ -83,6 +84,7 @@ export function PeoplePage() {
     <section className="page">
       <div className="page-head">
         <h1>Zespół</h1>
+        <TeamTabs active="people" />
       </div>
 
       {cloudAccounts && canManageRaw && (

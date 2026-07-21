@@ -5,6 +5,23 @@
 - `src/App.tsx` owns routing, shell-level overlays and current-user navigation.
   `src/main.tsx` hosts the data router (`createBrowserRouter`) that App's
   `useBlocker` dirty-navigation guard requires.
+- The sidebar nav (`NAV` in `App.tsx`) is a fixed ordered list — Panel, Moja
+  praca, Klienci, Projekty, Zadania, Kanban, Kalendarz, Oś czasu, Obciążenie,
+  Zespół — ending with two gated entries: Konto (supabase mode only) and
+  Ustawienia (renamed from „Administracja”; route stays `/admin`, permission
+  `admin.panel`). `/zgloszenia` and `/team` are NOT in this list. Below the nav
+  a pinned `.sidebar-footer` row holds the „Zgłoszenia” NavLink (visible to
+  every role) next to the round icon-only „Pomoc i samouczki” button, which
+  keeps the `.sidebar-help` class and `shell.help` tour anchor (dispatches
+  `n2hub:open-tutorials`); the footer lives inside `#app-drawer`, so the mobile
+  focus trap covers it. Collapsed rail stacks the footer to two 44px circles.
+- `/team` (Struktura zespołu) is reached via the shared `src/pages/TeamTabs.tsx`
+  tab bar (Pracownicy → `/people`, Struktura zespołu → `/team`) rendered on both
+  the Zespół (`/people`) and `/team` pages, not from its own nav item. The
+  Struktura tab and the whole tab bar render only when `canViewTeam` passes over
+  the effective role (same recipe TeamPage uses); the „Zespół” nav link stays
+  highlighted on `/people`, `/people/:id` and `/team`. Both routes keep their
+  existing guards (`canTeam`, page-level `canViewTeam` redirect).
 - `src/auth/` owns the login gate. Mode is decided once at startup (local vs
   Supabase). Local mode (no/invalid Supabase config) keeps the demo person-picker
   `src/pages/LoginPage.tsx` and the `currentUserId` gate. Supabase mode gates the
@@ -36,6 +53,22 @@
   byte-for-byte unchanged (no client created). Client-side only; UX gate, not a
   security boundary. `SessionProvider` then `OrgDataProvider` wrap the router in
   `main.tsx`.
+- The nav config (routes, labels, icons, shipped default order) lives in
+  `src/components/navItems.ts` (`NAV`), imported by both `App.tsx` and the
+  reorder editor. Each user can reorder the sidebar (↑/↓) per user PER BROWSER:
+  the order is stored in `uiPrefs` as `navOrderByUser` (device-local
+  `n2hub.ui.v1`, keyed by `realUserId`, so impersonation never overwrites it),
+  parsed defensively (arrays of strings only). `src/utils/navOrder.ts`
+  (`applyNavOrder`/`moveNavPath`, pure + unit-tested) is self-repairing: unknown
+  or duplicate stored paths are dropped and missing defaults appended in default
+  order, so no migration is ever needed. App applies the order BEFORE the gate
+  filter (`canAdmin`, supabase-only Konto), so a stored order can never reveal a
+  gated item. `src/components/NavOrderEditor.tsx` (section „Kolejność menu")
+  mounts on both the Konto page (`/account`, every cloud user) and Ustawienia
+  (`/admin`); it lists the user's VISIBLE items, moves a visible item by swapping
+  with its nearest visible neighbour in the FULL stored order (hidden gated items
+  keep their positions), persists via `updateNavOrderForUser` and fires a
+  `n2hub:nav-order-changed` window event so App re-orders the live sidebar.
 - `src/pages/` owns route-specific screens; `src/components/TaskModal.tsx` owns
   task editing and its allocation grid.
 - `/zgloszenia` („Zgłoszenia”, `src/pages/TicketsPage.tsx`) jest widoczne dla

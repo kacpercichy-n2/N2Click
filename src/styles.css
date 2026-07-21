@@ -1385,6 +1385,10 @@ option {
   font-weight: 500;
   color: var(--text-muted);
 }
+/* Wariant linkowy (TeamTabs): bez podkreślenia globalnego a:hover w każdym stanie. */
+a.toggle-btn {
+  text-decoration: none;
+}
 .toggle-btn:first-child {
   border-radius: var(--n2-radius-pill) 0 0 var(--n2-radius-pill);
 }
@@ -2395,6 +2399,40 @@ option {
   align-items: center;
   gap: 4px;
   padding: 0 10px;
+  flex-shrink: 0;
+}
+.nav-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.nav-order-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.nav-order-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-md);
+  background: rgba(255, 255, 255, 0.02);
+}
+.nav-order-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.nav-order-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   flex-shrink: 0;
 }
 .project-task-main {
@@ -4069,6 +4107,26 @@ option {
   .sidebar-collapsed .acting-as-collapsed {
     display: grid;
   }
+  /* Stopka w trybie zwiniętym: pionowy stos dwóch wyśrodkowanych kółek 44px
+     (ten sam wzorzec co zwinięty .app-nav-link); etykieta Zgłoszenia ukryta. */
+  .sidebar-collapsed .sidebar-footer {
+    flex-direction: column;
+    gap: var(--n2-space-2);
+  }
+  .sidebar-collapsed .sidebar-tickets {
+    flex: none;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+    padding: 0;
+    gap: 0;
+    border-radius: 999px;
+    margin-inline: auto;
+  }
+  .sidebar-collapsed .sidebar-tickets .nav-label {
+    display: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -4957,11 +5015,19 @@ option {
 }
 
 /* Onboarding — device-local help, intro, coachmarks and contextual hints. */
-.sidebar-help {
+/* Stopka paska: jeden wiersz z przypiętym Zgłoszenia + okrągłym przyciskiem pomocy. */
+.sidebar-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+}
+/* Przypięte Zgłoszenia: recepta jak dawne .sidebar-help (płaski przycisk z
+   ikoną i etykietą), rozciągnięte na wolną szerokość + stan aktywny. */
+.sidebar-tickets {
   display: flex;
   align-items: center;
   gap: var(--n2-space-3);
-  width: 100%;
+  flex: 1;
   min-height: 44px;
   padding: 0 var(--n2-space-4);
   border: 1px solid var(--n2-border);
@@ -4973,6 +5039,36 @@ option {
   text-align: left;
   transition: background var(--n2-transition), border-color var(--n2-transition), color var(--n2-transition);
 }
+.sidebar-tickets:hover,
+.sidebar-tickets:focus-visible {
+  border-color: var(--n2-border-strong);
+  background: var(--n2-surface-muted);
+  color: var(--n2-text);
+  text-decoration: none;
+}
+.sidebar-tickets.active {
+  border-color: var(--n2-border-strong);
+  background: rgba(196, 150, 255, 0.16);
+  color: var(--n2-text);
+}
+/* Pomoc i samouczki: okrągły przycisk tylko z ikoną. Klasa .sidebar-help oraz
+   kotwica shell.help pozostają (chronią browser check i krok samouczka). */
+.sidebar-help {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 1px solid var(--n2-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--n2-text-soft);
+  cursor: pointer;
+  font: inherit;
+  transition: background var(--n2-transition), border-color var(--n2-transition), color var(--n2-transition);
+}
 .sidebar-help:hover,
 .sidebar-help:focus-visible {
   border-color: var(--n2-border-strong);
@@ -4982,9 +5078,6 @@ option {
 .sidebar-collapsed .sidebar-help {
   justify-content: center;
   padding: 0;
-}
-.sidebar-collapsed .sidebar-help .nav-label {
-  display: none;
 }
 
 .onboarding-layer {

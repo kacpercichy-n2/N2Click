@@ -28,6 +28,7 @@ import {
   type TeamDepartmentView,
 } from './teamScope';
 import { TeamStructureTree, personForTreeNode } from './TeamStructureTree';
+import { TeamTabs } from './TeamTabs';
 import type { Person } from '../types';
 import type { AccessRole as ProvisionAccessRole } from '../../supabase/functions/provision-account/contract';
 
@@ -83,6 +84,7 @@ export function TeamPage() {
     <section className="page">
       <div className="page-head">
         <h1>Zespół</h1>
+        <TeamTabs active="structure" />
         <div className="cal-view-toggle" role="group" aria-label="Widok zespołu">
           <button
             type="button"
