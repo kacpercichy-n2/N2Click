@@ -6,10 +6,11 @@ import { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
+import { DEFAULT_FILTER_CRITERIA } from '../store/storage';
 import { useOpenTask } from '../components/TaskModal';
 import { PersonFilter } from '../components/PersonFilter';
 import { ZoomIn, ZoomOut } from '../components/icons';
-import type { Milestone, Person, Project, Task } from '../types';
+import type { Milestone, Person, Project, SavedFilterCriteria, Task } from '../types';
 import {
   assigneeIdsOfTask,
   conflictDatesForTask,
@@ -33,6 +34,9 @@ import {
   todayStr,
   weekStart,
 } from '../utils/dates';
+
+// Stabilna pusta lista chipów osób (referencja) na czas braku zapamiętanego filtra.
+const EMPTY_PERSON_IDS: string[] = [];
 
 const DEFAULT_DAY_W = 26; // px per day
 const ZOOM_LEVELS = [14, 26, 40] as const; // px per day
@@ -241,8 +245,31 @@ export function TimelinePage() {
   const [anchor, setAnchor] = useState(() => todayStr());
   const [dayW, setDayW] = useState<number>(DEFAULT_DAY_W);
   const [weeks, setWeeks] = useState(10);
-  const [ownerFilter, setOwnerFilter] = useState<Set<string>>(new Set());
-  const [clientFilter, setClientFilter] = useState('');
+
+  // Stan filtrów ZAPAMIĘTANY w store (`lastFilters.timeline`): chipy osób w
+  // `personIds`, klient w `criteria.clientId`. Setter wysyła pełny snapshot
+  // (no-op zapisu identycznego). Set osób jest wyłącznie POCHODNY (inwariant 7).
+  const rememberedTimeline = state.lastFilters.timeline;
+  const timelineCriteria: SavedFilterCriteria = rememberedTimeline?.criteria ?? DEFAULT_FILTER_CRITERIA;
+  const clientFilter = timelineCriteria.clientId;
+  const ownerIds = rememberedTimeline?.personIds ?? EMPTY_PERSON_IDS;
+  const ownerFilter = useMemo(() => new Set(ownerIds), [ownerIds]);
+
+  const commitTimeline = (patch: { clientId?: string; personIds?: string[] }) =>
+    dispatch({
+      type: 'SET_LAST_FILTER',
+      view: 'timeline',
+      filter: {
+        criteria: { ...timelineCriteria, clientId: patch.clientId ?? clientFilter },
+        personIds: patch.personIds ?? ownerIds,
+        departmentId: '',
+        serviceTypeId: '',
+        planning: '',
+      },
+    });
+
+  const setOwnerIds = (ids: string[]) => commitTimeline({ personIds: ids });
+  const setClientFilter = (v: string) => commitTimeline({ clientId: v });
 
   const zoomIdx = ZOOM_LEVELS.indexOf(dayW as (typeof ZOOM_LEVELS)[number]);
   const canZoomIn = zoomIdx < ZOOM_LEVELS.length - 1;
@@ -486,15 +513,13 @@ export function TimelinePage() {
         <PersonFilter
           people={state.people}
           selected={ownerFilter}
-          onToggle={(id) =>
-            setOwnerFilter((prev) => {
-              const next = new Set(prev);
-              if (next.has(id)) next.delete(id);
-              else next.add(id);
-              return next;
-            })
-          }
-          onAll={() => setOwnerFilter(new Set())}
+          onToggle={(id) => {
+            const next = new Set(ownerFilter);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            setOwnerIds([...next]);
+          }}
+          onAll={() => setOwnerIds([])}
         />
         <select
           value={clientFilter}

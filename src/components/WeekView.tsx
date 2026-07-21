@@ -11,6 +11,7 @@ import type { AppData, Person, Project, Task, WorkloadEntry } from '../types';
 import { useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import { useOpenTask } from './TaskModal';
+import { useOpenEvent } from './EventModal';
 import { personColor } from '../utils/colors';
 import { clearLiveSyncHold, setLiveSyncHold } from '../utils/liveSyncGate';
 import {
@@ -26,11 +27,15 @@ import {
 import { format } from 'date-fns';
 import { pl } from 'date-fns/locale/pl';
 import {
+  assigneeIdsOfTask,
   availableHoursOnDate,
   binEntriesForPerson,
   binTotalForPerson,
   blockCollides,
   blocksForPersonDate,
+  blockIsDone,
+  calendarEventsForDate,
+  type CalendarEventOccurrence,
   dayTotal,
   entriesForDate,
   getClient,
@@ -42,6 +47,7 @@ import {
   overloadedPeopleOnDate,
   peopleWithBirthdayOnDate,
   personCapacity,
+  recurrenceOccurrencesForDate,
   taskDisplayStatus,
   taskGrowAllowance,
   taskIdsOfPerson,
@@ -65,6 +71,7 @@ import {
   snapHours,
   snapToStep,
 } from '../utils/time';
+import type { RecurrenceOccurrence } from '../utils/recurrence';
 import { Coin } from './Coin';
 
 interface Props {
@@ -86,6 +93,9 @@ const DAY_BODY_H = 24 * HOUR_PX; // 2016px full-day column height
 const MIN_BLOCK_H = 50;
 const SCROLL_TO_MIN = 8 * 60; // open scrolled to 08:00
 const DAY_COLS = 7; // the days grid holds 7 columns (no axis inside)
+// Duration choices for a recurrence occurrence override: 0:15…8:00 on the
+// 15-minute grid (minutes). Labeled via formatDuration in the menu.
+const RECUR_DURATION_OPTIONS = Array.from({ length: 32 }, (_, i) => (i + 1) * MINUTE_STEP);
 
 /** Announces a successful real calendar action to the optional guided practice. */
 function announceCalendarPractice(kind: 'move' | 'resize' | 'bin-drop'): void {
@@ -464,11 +474,15 @@ function TimedBlock({
   // czerwony akcent po terminie. Kolor osoby zostaje na lewej krawędzi (styl
   // inline), a klasy dragu/kolizji są w CSS PÓŹNIEJ, więc nadal wygrywają.
   const status = taskDisplayStatus(state, task, todayStr());
+  // Per-block completion is INDEPENDENT of the task status: a block is done when
+  // it carries its own flag OR the task status is done. Two blocks on the same
+  // day render independent done state.
+  const done = blockIsDone(state, task, entry);
   const statusNote = statusNoteFor(status, task.endDate);
   const className = [
     'week-block',
-    status === 'done' ? 'done' : '',
-    status === 'overdue' ? 'overdue' : '',
+    done ? 'done' : '',
+    status === 'overdue' && !done ? 'overdue' : '',
     editable ? '' : 'readonly',
     drag ? 'dragging' : '',
     drag?.colliding ? 'colliding' : '',
@@ -529,6 +543,11 @@ function TimedBlock({
       <span className="week-block-title">
         {project && <Coin paid={project.paid} size={12} />}
         {task.title}
+        {entry.done === true && (
+          <span className="block-done-mark" title="Wykonane" aria-label="Wykonane">
+            ✓
+          </span>
+        )}
       </span>
       <span className="week-block-time">
         {formatMinutes(start)}–{formatMinutes(end)}
@@ -854,11 +873,12 @@ function BinCard({
   // while window listeners own the drag. The visible card following the
   // pointer is a fixed portal ghost, so the bin pane cannot clip it.
   const status = taskDisplayStatus(state, task, todayStr());
+  const done = blockIsDone(state, task, entry);
   const statusNote = statusNoteFor(status, task.endDate);
   const className = [
     'week-bin-block',
-    status === 'done' ? 'done' : '',
-    status === 'overdue' ? 'overdue' : '',
+    done ? 'done' : '',
+    status === 'overdue' && !done ? 'overdue' : '',
     editable ? '' : 'readonly',
     drag ? 'drag-source' : '',
   ]
@@ -870,6 +890,11 @@ function BinCard({
       <span className="week-bin-block-title">
         {project && <Coin paid={project.paid} size={12} />}
         {task.title}
+        {entry.done === true && (
+          <span className="block-done-mark" title="Wykonane" aria-label="Wykonane">
+            ✓
+          </span>
+        )}
       </span>
       <span className="week-bin-block-hours">{formatDuration(entry.plannedHours)}</span>
     </>
@@ -930,8 +955,8 @@ function BinCard({
             className={[
               'week-bin-block',
               'week-bin-ghost',
-              status === 'done' ? 'done' : '',
-              status === 'overdue' ? 'overdue' : '',
+              done ? 'done' : '',
+              status === 'overdue' && !done ? 'overdue' : '',
               drag.colliding || (drag.hasMoved && !drag.valid) ? 'colliding' : '',
             ]
               .filter(Boolean)
@@ -952,8 +977,104 @@ function BinCard({
   );
 }
 
+// ---- Recurring-task occurrence overlay (presentational only) ----
+// A recurring task's occurrence rendered as a visually distinct, purely
+// presentational block. NO pointer/drag/resize handlers (invariant 1 + 7): it
+// never enters packDayBlocks/collision/totals and never sits on top of a real
+// block. Only click/keyboard opens the task and right-click opens the recurrence
+// menu — no pointer lifecycle whatsoever.
+interface RecurBlockProps {
+  title: string;
+  hue: string;
+  occurrence: RecurrenceOccurrence;
+  onOpen: () => void;
+  onContextMenu: (e: React.MouseEvent) => void;
+}
+
+function RecurBlock({ title, hue, occurrence, onOpen, onContextMenu }: RecurBlockProps) {
+  const top = (occurrence.startMinutes / 60) * HOUR_PX;
+  const height = Math.max((occurrence.durationMinutes / 60) * HOUR_PX, MIN_BLOCK_H);
+  const end = occurrence.startMinutes + occurrence.durationMinutes;
+  const className = ['week-recur-block', occurrence.overridden ? 'overridden' : '']
+    .filter(Boolean)
+    .join(' ');
+  return (
+    <div
+      className={className}
+      style={{ top, height, borderColor: hue }}
+      role="button"
+      tabIndex={0}
+      title={`⟳ ${title} — cykliczne: ${formatMinutes(occurrence.startMinutes)}–${formatMinutes(
+        end,
+      )} (${formatDuration(
+        occurrence.durationMinutes / 60,
+      )}). Kliknij, aby otworzyć zadanie; kliknij prawym przyciskiem, aby edytować wystąpienie.`}
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpen();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      onContextMenu={onContextMenu}
+    >
+      <span className="week-recur-title">⟳ {title}</span>
+      <span className="week-recur-time">
+        {formatMinutes(occurrence.startMinutes)}–{formatMinutes(end)}
+      </span>
+    </div>
+  );
+}
+
+// ---- Calendar-event block (presentational only) ----
+// A calendar event / meeting rendered as a visually distinct, purely
+// presentational block (inwariant 1 + 7): it never enters
+// packDayBlocks/collision/totals and has NO pointer/drag handlers. Only
+// click/keyboard opens the event modal; right-click is guarded upstream so it
+// never opens the slot menu on top of it.
+interface EventBlockProps {
+  occ: CalendarEventOccurrence;
+  onOpen: () => void;
+}
+
+function EventBlock({ occ, onOpen }: EventBlockProps) {
+  const top = (occ.startMinutes / 60) * HOUR_PX;
+  const height = Math.max((occ.durationMinutes / 60) * HOUR_PX, MIN_BLOCK_H);
+  const end = occ.startMinutes + occ.durationMinutes;
+  return (
+    <div
+      className="week-event-block"
+      style={{ top, height }}
+      role="button"
+      tabIndex={0}
+      title={`📅 ${occ.event.title} — ${formatMinutes(occ.startMinutes)}–${formatMinutes(
+        end,
+      )}. Kliknij, aby otworzyć wydarzenie.`}
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpen();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+    >
+      <span className="week-event-title">📅 {occ.event.title}</span>
+      <span className="week-event-time">
+        {formatMinutes(occ.startMinutes)}–{formatMinutes(end)}
+      </span>
+    </div>
+  );
+}
+
 export function WeekView({ state, anchor, filter }: Props) {
   const { openTask, openNewTask } = useOpenTask();
+  const { openEvent, openNewEvent } = useOpenEvent();
   const { dispatch } = useStore();
   const can = useCan();
   const canEditAny = can('blocks.editAny');
@@ -962,6 +1083,9 @@ export function WeekView({ state, anchor, filter }: Props) {
   // same permission the read-only TaskModal enforces, so we don't surface it to
   // users who can't create tasks.
   const canManageTasks = can('tasks.manage');
+  // Wydarzenia (spotkania) dodaje rola z `events.manage`; menu slotu i blok są
+  // czysto prezentacyjne (inwariant 7 — zero ścieżek pointer/drag).
+  const canManageEvents = can('events.manage');
   // A block is editable when the role edits anyone's blocks, or edits its own and
   // this block belongs to the logged-in user. The right-click insert flow lives
   // on the block itself, so it inherits the same rule.
@@ -995,6 +1119,25 @@ export function WeekView({ state, anchor, filter }: Props) {
     startMinutes: number;
   } | null>(null);
   const slotMenuRef = useRef<HTMLDivElement | null>(null);
+
+  // Recurrence occurrence context menu — its own portal-free `.context-menu`
+  // popover, keyed on a (taskId, date) occurrence rather than a WorkloadEntry.
+  // Kept fully separate from `menu`/`slotMenu` so no pointer/drag path is touched.
+  // Actions map only to SET_RECURRENCE_OVERRIDE / opening the task.
+  const [recurMenu, setRecurMenu] = useState<{
+    taskId: string;
+    title: string;
+    date: string;
+    startMinutes: number;
+    durationMinutes: number;
+    overridden: boolean;
+    x: number;
+    y: number;
+    step: 'menu' | 'edit';
+  } | null>(null);
+  const recurMenuRef = useRef<HTMLDivElement | null>(null);
+  const [recurEditStart, setRecurEditStart] = useState('09:00');
+  const [recurEditDurMin, setRecurEditDurMin] = useState(60);
 
   // Transient cross-block drag state (a dragged block and its merge neighbor live
   // in different day-column component instances). mergeTargetId = the neighbor a
@@ -1076,11 +1219,39 @@ export function WeekView({ state, anchor, filter }: Props) {
     };
   }, [slotMenu]);
 
+  // Same close discipline (Escape / outside-click / scroll) for the recurrence
+  // occurrence menu, which is anchored to viewport coordinates like slotMenu.
+  useEffect(() => {
+    if (!recurMenu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setRecurMenu(null);
+    };
+    const onDown = (e: MouseEvent) => {
+      if (recurMenuRef.current && !recurMenuRef.current.contains(e.target as Node)) {
+        setRecurMenu(null);
+      }
+    };
+    const onScroll = () => setRecurMenu(null);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('scroll', onScroll, true);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('scroll', onScroll, true);
+    };
+  }, [recurMenu]);
+
   // Right-click on bare grid (not a block — those own their own menu and stop the
   // event) → offer "Dodaj zadanie" at the snapped start under the cursor.
   const openSlotMenu = (date: string, e: React.MouseEvent<HTMLDivElement>) => {
-    if (!canManageTasks) return;
+    if (!canManageTasks && !canManageEvents) return;
     if ((e.target as HTMLElement).closest('.week-block')) return; // block's own menu
+    // Defense-in-depth: an occurrence overlay already stops its own contextmenu,
+    // but never let a right-click on it fall through to the slot menu.
+    if ((e.target as HTMLElement).closest('.week-recur-block')) return;
+    // Same guard for the presentational event block (no pointer path of its own).
+    if ((e.target as HTMLElement).closest('.week-event-block')) return;
     e.preventDefault();
     const rect = e.currentTarget.getBoundingClientRect();
     const startMinutes = slotStartFromOffset(e.clientY - rect.top, HOUR_PX);
@@ -1100,6 +1271,85 @@ export function WeekView({ state, anchor, filter }: Props) {
     const personId = filter.size === 1 ? [...filter][0] : undefined;
     openNewTask(undefined, { date: slotMenu.date, personId });
     setSlotMenu(null);
+  };
+
+  // Open event creation prefilled with the clicked day + snapped start; when the
+  // week is filtered to exactly one person, preselect them as sole attendee.
+  const addEventInSlot = () => {
+    if (!slotMenu) return;
+    const personId = filter.size === 1 ? [...filter][0] : undefined;
+    openNewEvent({ date: slotMenu.date, startMinutes: slotMenu.startMinutes, personId });
+    setSlotMenu(null);
+  };
+
+  // Right-click an occurrence overlay → recurrence menu. Gate on permission
+  // FIRST (mirrors openSlotMenu): non-managers return early WITHOUT
+  // preventDefault/stopPropagation so their native browser menu still opens.
+  // Managers suppress the native menu and stop propagation so the slot menu
+  // never also opens (occurrence edits mirror TaskModal's tasks.manage gate).
+  const openRecurMenu = (task: Task, occ: RecurrenceOccurrence, e: React.MouseEvent) => {
+    if (!canManageTasks) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setMenu(null);
+    setSlotMenu(null);
+    setRecurEditStart(minutesToTimeStr(occ.startMinutes));
+    setRecurEditDurMin(occ.durationMinutes);
+    setRecurMenu({
+      taskId: task.id,
+      title: task.title,
+      date: occ.date,
+      startMinutes: occ.startMinutes,
+      durationMinutes: occ.durationMinutes,
+      overridden: occ.overridden,
+      x: Math.min(e.clientX, window.innerWidth - 280),
+      y: Math.min(e.clientY, window.innerHeight - 260),
+      step: 'menu',
+    });
+  };
+
+  const recurSkipDay = () => {
+    if (!recurMenu) return;
+    dispatch({
+      type: 'SET_RECURRENCE_OVERRIDE',
+      taskId: recurMenu.taskId,
+      date: recurMenu.date,
+      override: { skip: true },
+    });
+    setRecurMenu(null);
+  };
+
+  const recurRestore = () => {
+    if (!recurMenu) return;
+    dispatch({
+      type: 'SET_RECURRENCE_OVERRIDE',
+      taskId: recurMenu.taskId,
+      date: recurMenu.date,
+      override: null,
+    });
+    setRecurMenu(null);
+  };
+
+  // Inline client-side guard for the occurrence time-shift, mirroring the reducer
+  // (on-grid start, end ≤ 24:00). NaN/off-grid values disable „Zapisz”.
+  const recurEditStartMin = timeToMinutes(recurEditStart);
+  const recurEditEnd = recurEditStartMin + recurEditDurMin;
+  const recurEditError =
+    !Number.isFinite(recurEditStartMin) || recurEditStartMin % MINUTE_STEP !== 0
+      ? 'Start musi być w krokach co 15 minut.'
+      : recurEditEnd > DAY_MINUTES
+        ? 'Wystąpienie nie mieści się w dobie — koniec po 24:00.'
+        : null;
+
+  const confirmRecurEdit = () => {
+    if (!recurMenu || recurMenu.step !== 'edit' || recurEditError) return;
+    dispatch({
+      type: 'SET_RECURRENCE_OVERRIDE',
+      taskId: recurMenu.taskId,
+      date: recurMenu.date,
+      override: { startMinutes: recurEditStartMin, durationMinutes: recurEditDurMin },
+    });
+    setRecurMenu(null);
   };
 
   const openMenu = (entry: WorkloadEntry, e: React.MouseEvent) => {
@@ -1436,7 +1686,9 @@ export function WeekView({ state, anchor, filter }: Props) {
                   ]
                     .filter(Boolean)
                     .join(' ')}
-                  onContextMenu={canManageTasks ? (ev) => openSlotMenu(d, ev) : undefined}
+                  onContextMenu={
+                    canManageTasks || canManageEvents ? (ev) => openSlotMenu(d, ev) : undefined
+                  }
                 >
                   {isTodayStr(d) && (
                     <div
@@ -1445,6 +1697,32 @@ export function WeekView({ state, anchor, filter }: Props) {
                       aria-hidden
                     />
                   )}
+                  {/* Calendar events (spotkania): additive presentational overlay
+                      rendered BEFORE the real blocks (and before recurrences) so
+                      they always paint behind real task blocks — same paint step,
+                      tree order — without touching the `.week-block` stacking
+                      context or any pointer path (inwariant 1 + 7). */}
+                  {calendarEventsForDate(state, d, filter).map((occ) => (
+                    <EventBlock
+                      key={`event-${occ.event.id}-${d}`}
+                      occ={occ}
+                      onOpen={() => openEvent(occ.event.id)}
+                    />
+                  ))}
+                  {/* Recurring-task occurrences: additive presentational overlay
+                      rendered BEFORE the real blocks so they always paint behind
+                      them (same paint step, tree order) without touching the
+                      `.week-block` stacking context or any pointer path. */}
+                  {recurrenceOccurrencesForDate(state, d, filter).map(({ task, occurrence }) => (
+                    <RecurBlock
+                      key={`recur-${task.id}-${occurrence.date}`}
+                      title={task.title}
+                      hue={personColor(assigneeIdsOfTask(state, task.id)[0] ?? '')}
+                      occurrence={occurrence}
+                      onOpen={() => openTask(task.id)}
+                      onContextMenu={(ev) => openRecurMenu(task, occurrence, ev)}
+                    />
+                  ))}
                   {packed.map(({ block: e, col, cols }) => {
                     const task = getTask(state, e.taskId);
                     const person = getPerson(state, e.personId);
@@ -1469,7 +1747,7 @@ export function WeekView({ state, anchor, filter }: Props) {
                         fusedId={fusedId}
                         setFusedId={setFusedId}
                         editable={canEditEntry(e.personId)}
-                        onOpen={() => openTask(task.id)}
+                        onOpen={() => openTask(task.id, e.id)}
                         onContextMenu={(ev) => openMenu(e, ev)}
                       />
                     );
@@ -1517,7 +1795,7 @@ export function WeekView({ state, anchor, filter }: Props) {
                           gridRef={gridRef}
                           viewportRef={viewportRef}
                           editable={canEditEntry(p.id)}
-                          onOpen={() => openTask(task.id)}
+                          onOpen={() => openTask(task.id, e.id)}
                           onContextMenu={(ev) => openMenu(e, ev)}
                           onSchedule={(btn) => openSchedule(e, btn)}
                         />
@@ -1790,14 +2068,138 @@ export function WeekView({ state, anchor, filter }: Props) {
             transition={{ duration: 0.12, ease: 'easeOut' }}
           >
             <div ref={slotMenuRef}>
-              <button
-                type="button"
-                role="menuitem"
-                className="context-menu-item"
-                onClick={addTaskInSlot}
-              >
-                + Dodaj zadanie ({formatMinutes(slotMenu.startMinutes)})
-              </button>
+              {canManageTasks && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="context-menu-item"
+                  onClick={addTaskInSlot}
+                >
+                  + Dodaj zadanie ({formatMinutes(slotMenu.startMinutes)})
+                </button>
+              )}
+              {canManageEvents && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="context-menu-item"
+                  onClick={addEventInSlot}
+                >
+                  + Dodaj spotkanie ({formatMinutes(slotMenu.startMinutes)})
+                </button>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {recurMenu && (
+          <motion.div
+            className="context-menu"
+            style={{ left: recurMenu.x, top: recurMenu.y, transformOrigin: 'top left' }}
+            role="menu"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            transition={{ duration: 0.12, ease: 'easeOut' }}
+          >
+            <div ref={recurMenuRef}>
+              {recurMenu.step === 'menu' ? (
+                <>
+                  <div className="context-menu-title">
+                    ⟳ {recurMenu.title} —{' '}
+                    {format(parseDate(recurMenu.date), 'd MMM yyyy', { locale: pl })}
+                  </div>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="context-menu-item"
+                    onClick={() => setRecurMenu({ ...recurMenu, step: 'edit' })}
+                  >
+                    Edytuj to wystąpienie
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="context-menu-item"
+                    onClick={() => {
+                      openTask(recurMenu.taskId);
+                      setRecurMenu(null);
+                    }}
+                  >
+                    Edytuj wszystkie
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="context-menu-item"
+                    onClick={recurSkipDay}
+                  >
+                    Pomiń ten dzień
+                  </button>
+                  {recurMenu.overridden && (
+                    <>
+                      <div className="context-menu-sep" role="separator" />
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="context-menu-item"
+                        onClick={recurRestore}
+                      >
+                        Przywróć zgodnie z regułą
+                      </button>
+                    </>
+                  )}
+                </>
+              ) : (
+                <div className="context-insert-form">
+                  <div className="context-menu-title">
+                    Edytuj wystąpienie —{' '}
+                    {format(parseDate(recurMenu.date), 'd MMM yyyy', { locale: pl })}
+                  </div>
+                  <label className="context-field">
+                    Początek
+                    <input
+                      type="time"
+                      step={900}
+                      value={recurEditStart}
+                      onChange={(e) => setRecurEditStart(e.target.value)}
+                    />
+                  </label>
+                  <label className="context-field">
+                    Czas trwania
+                    <select
+                      value={recurEditDurMin}
+                      onChange={(e) => setRecurEditDurMin(Number(e.target.value))}
+                    >
+                      {RECUR_DURATION_OPTIONS.map((min) => (
+                        <option key={min} value={min}>
+                          {formatDuration(min / 60)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {recurEditError && <p className="context-warning">⚠ {recurEditError}</p>}
+                  <div className="context-actions">
+                    <button
+                      type="button"
+                      className="btn primary"
+                      onClick={confirmRecurEdit}
+                      disabled={recurEditError !== null}
+                    >
+                      Zapisz
+                    </button>
+                    <button
+                      type="button"
+                      className="btn ghost"
+                      onClick={() => setRecurMenu(null)}
+                    >
+                      Anuluj
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </motion.div>
         )}

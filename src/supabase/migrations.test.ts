@@ -65,6 +65,17 @@ const EXPECTED_POLICIES: Record<string, string[]> = {
   // lub administrator, update administrator / zgłaszający dopóki 'nowe',
   // delete wyłącznie administrator.
   'public.tickets': ['select', 'insert', 'update', 'delete'],
+  // Słownik stanowisk (20260721150000_job_titles): odczyt dla każdego
+  // zalogowanego, zapis wyłącznie administrator — pełne CRUD w politykach.
+  'public.job_titles': ['select', 'insert', 'update', 'delete'],
+  // Słownik spółek (20260721160000_companies): odczyt dla każdego zalogowanego,
+  // zapis wyłącznie administrator — pełne CRUD w politykach.
+  'public.companies': ['select', 'insert', 'update', 'delete'],
+  // Wydarzenia kalendarza (20260721210000_events): kalendarz OGÓLNOFIRMOWY —
+  // pełne CRUD dla każdego zalogowanego (`using (true)` / `with check (true)`),
+  // bo lokalna rola handlowiec mapuje się w chmurze na worker; bramka
+  // `events.manage` pozostaje UX-em po stronie klienta.
+  'public.events': ['select', 'insert', 'update', 'delete'],
 };
 
 interface ParsedPolicy {
@@ -111,6 +122,12 @@ describe('konwencja plików migracji', () => {
       '20260721010000_project_documents.sql',
       '20260721020000_task_is_draft.sql',
       '20260721030000_profiles_birth_date.sql',
+      '20260721130000_task_draft_hours.sql',
+      '20260721150000_job_titles.sql',
+      '20260721160000_companies.sql',
+      '20260721170000_task_recurrence.sql',
+      '20260721210000_events.sql',
+      '20260721220000_workload_entry_done.sql',
     ]);
   });
 

@@ -5,7 +5,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { Megaphone } from 'lucide-react';
+import { Megaphone } from '../components/icons';
 import { useStore } from '../store/AppStore';
 import { CHANGELOG, changelogRangeLabel, isSameDayRange } from '../data/changelog';
 import { ChangelogModal } from '../components/ChangelogModal';
@@ -169,13 +169,18 @@ export function DashboardPage() {
             <strong>{changelogRangeLabel(latestChange.dateFrom, latestChange.dateTo)}</strong>
             <span className="changelog-bar-summary">{latestChange.summary}</span>
           </span>
-          <button
-            type="button"
-            className="btn ghost changelog-bar-btn"
-            onClick={() => setChangelogOpen(true)}
-          >
-            Czytaj całość
-          </button>
+          <span className="changelog-bar-actions">
+            <button
+              type="button"
+              className="btn ghost changelog-bar-btn"
+              onClick={() => setChangelogOpen(true)}
+            >
+              Czytaj całość
+            </button>
+            <Link to="/changelog" className="btn ghost changelog-bar-btn">
+              Zobacz pełną historię
+            </Link>
+          </span>
         </motion.div>
       )}
 

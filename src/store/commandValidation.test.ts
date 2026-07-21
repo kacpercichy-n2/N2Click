@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { reducer, type PersonDraft, type ProjectDraft, type TaskDraft } from './AppStore';
 import { emptyData } from './storage';
 import { hasEntity, isValidClientDraft, isValidTaskDraft } from './commandValidation';
-import type { Client, Milestone, Person, Project, Status, Task } from '../types';
+import type { Client, Milestone, Person, Project, Status, Task, WorkloadEntry } from '../types';
 
 const CLIENT: Client = { id: 'c1', name: 'Client', archived: false };
 const STATUS: Status = { id: 's1', name: 'Do zrobienia', slug: 'do-zrobienia', color: '#9aa7c4', order: 0, archived: false, isDone: false };
@@ -57,6 +57,7 @@ const PERSON: Person = {
   email: '',
   role: '',
   departmentId: '',
+  companyId: '',
   avatar: '',
   capacity: 8,
   phone: '',
@@ -124,6 +125,7 @@ function personDraft(overrides: Partial<PersonDraft> = {}): PersonDraft {
     phone: '',
     role: '',
     departmentId: '',
+    companyId: '',
     avatar: '',
     capacity: 8,
     accessRole: 'pracownik',
@@ -235,6 +237,54 @@ describe('SET_TASK_STATUS command validation', () => {
     const state = makeState();
     const next = reducer(state, { type: 'SET_TASK_STATUS', taskId: 't1', statusId: 'ghost' });
     expectRejected(state, next);
+  });
+});
+
+describe('SET_BLOCK_DONE command validation (PKG-per-block-done)', () => {
+  const ENTRY: WorkloadEntry = {
+    id: 'w1',
+    taskId: 't1',
+    personId: 'p1',
+    date: '2026-07-08',
+    plannedHours: 2,
+    startMinutes: 480,
+    sortIndex: 0,
+  };
+
+  function stateWithBlock(overrides: Partial<WorkloadEntry> = {}) {
+    return { ...makeState(), workload: [{ ...ENTRY, ...overrides }] };
+  }
+
+  it('marks only the targeted entry done without touching the task status', () => {
+    const state = stateWithBlock();
+    const next = reducer(state, { type: 'SET_BLOCK_DONE', entryId: 'w1', done: true });
+    expect(next).not.toBe(state);
+    expect(next.workload[0].done).toBe(true);
+    expect(next.tasks.find((t) => t.id === 't1')!.statusId).toBe('s1'); // status unchanged
+    expect(next.activity.length).toBe(state.activity.length + 1);
+  });
+
+  it('invariant 6: an unknown entryId returns the SAME state reference', () => {
+    const state = stateWithBlock();
+    const next = reducer(state, { type: 'SET_BLOCK_DONE', entryId: 'ghost', done: true });
+    expectRejected(state, next);
+  });
+
+  it('invariant 6: a no-op (value already equal) returns the SAME state reference', () => {
+    const already = stateWithBlock({ done: true });
+    const noop = reducer(already, { type: 'SET_BLOCK_DONE', entryId: 'w1', done: true });
+    expectRejected(already, noop);
+
+    const fresh = stateWithBlock(); // done === undefined
+    const noopFalse = reducer(fresh, { type: 'SET_BLOCK_DONE', entryId: 'w1', done: false });
+    expectRejected(fresh, noopFalse);
+  });
+
+  it('can clear a previously-done block back to not done', () => {
+    const state = stateWithBlock({ done: true });
+    const next = reducer(state, { type: 'SET_BLOCK_DONE', entryId: 'w1', done: false });
+    expect(next).not.toBe(state);
+    expect(next.workload[0].done).toBe(false);
   });
 });
 

@@ -16,6 +16,7 @@ function makePerson(accessRole: AccessRole, overrides: Partial<Person> = {}): Pe
     phone: '',
     role: '',
     departmentId: '',
+    companyId: '',
     avatar: '',
     capacity: 8,
     accessRole,
@@ -47,6 +48,7 @@ const MATRIX: Record<AccessRole, Record<PermAction, boolean>> = {
     'comments.add': true,
     'tickets.create': true,
     'tickets.manage': true,
+    'events.manage': true,
   },
   pm: {
     'projects.manage': true,
@@ -63,6 +65,7 @@ const MATRIX: Record<AccessRole, Record<PermAction, boolean>> = {
     'comments.add': true,
     'tickets.create': true,
     'tickets.manage': false,
+    'events.manage': true,
   },
   handlowiec: {
     'projects.manage': true,
@@ -80,6 +83,7 @@ const MATRIX: Record<AccessRole, Record<PermAction, boolean>> = {
     'comments.add': true,
     'tickets.create': true,
     'tickets.manage': false,
+    'events.manage': true,
   },
   pracownik: {
     'projects.manage': false,
@@ -96,6 +100,7 @@ const MATRIX: Record<AccessRole, Record<PermAction, boolean>> = {
     'comments.add': true,
     'tickets.create': true,
     'tickets.manage': false,
+    'events.manage': false,
   },
 };
 

@@ -9,10 +9,12 @@ import {
   activeStatuses,
   departmentsOfProject,
   getClient,
+  getPerson,
   getServiceType,
   getStatus,
   peopleIdsOfProject,
   projectPlannedTotal,
+  projectsOfPerson,
   tasksOfProject,
 } from '../store/selectors';
 import { Coin } from '../components/Coin';
@@ -51,20 +53,47 @@ export function ProjectsPage() {
   const [searchParams] = useSearchParams();
   const statuses = activeStatuses(state);
 
-  const [paidFilter, setPaidFilter] = useState<PaidFilter>('all');
-  // Deep-link: a `?client=` param (e.g. from global search) pre-filters the list.
-  const [clientFilter, setClientFilter] = useState(() => searchParams.get('client') ?? '');
+  // Stan filtrów jest ZAPAMIĘTANY w store (`lastFilters.projects`) — przetrwa
+  // nawigację i przeładowanie. Każdy setter wysyła pełny snapshot przez
+  // `SET_LAST_FILTER` (reduktor no-opuje zapis wartościowo identyczny).
+  const rememberedProjects = state.lastFilters.projects;
+  const projectsCriteria: SavedFilterCriteria = rememberedProjects?.criteria ?? DEFAULT_CRITERIA;
+  const paidFilter = projectsCriteria.paid;
+  const clientFilter = projectsCriteria.clientId;
+  const personFilter = projectsCriteria.personId;
+  const statusFilter = projectsCriteria.statusId;
+  const from = projectsCriteria.from;
+  const to = projectsCriteria.to;
 
-  // Keep the filter in sync when the param changes (e.g. picking a client in
-  // global search while already on /projects, or back/forward navigation).
-  // Only override when the param is present so normal in-page filtering stands.
+  const commit = (nextCriteria: SavedFilterCriteria) =>
+    dispatch({
+      type: 'SET_LAST_FILTER',
+      view: 'projects',
+      filter: {
+        criteria: nextCriteria,
+        personIds: [],
+        departmentId: '',
+        serviceTypeId: '',
+        planning: '',
+      },
+    });
+
+  const setPaidFilter = (v: PaidFilter) => commit({ ...projectsCriteria, paid: v });
+  const setClientFilter = (v: string) => commit({ ...projectsCriteria, clientId: v });
+  const setPersonFilter = (v: string) => commit({ ...projectsCriteria, personId: v });
+  const setStatusFilter = (v: string) => commit({ ...projectsCriteria, statusId: v });
+  const setFrom = (v: string) => commit({ ...projectsCriteria, from: v });
+  const setTo = (v: string) => commit({ ...projectsCriteria, to: v });
+
+  // Deep-link: `?client=` (np. z globalnego wyszukiwania) WYGRYWA jako wartość
+  // INICJALNA nad zapamiętanym filtrem — nadpisuje klienta, gdy param jest obecny
+  // (mount i późniejsza nawigacja). Pozostałe filtry pozostają nietknięte.
   const clientParam = searchParams.get('client');
   useEffect(() => {
-    if (clientParam) setClientFilter(clientParam);
+    if (clientParam && clientParam !== clientFilter) setClientFilter(clientParam);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientParam]);
-  const [statusFilter, setStatusFilter] = useState('');
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
+
   const [creating, setCreating] = useState(false);
 
   // ---- Create form state ----
@@ -77,36 +106,31 @@ export function ProjectsPage() {
   // Client creation lives ONLY in the Klienci module — the form just picks one.
   const activeClients = state.clients.filter((c) => !c.archived);
 
+  // Projekt pasuje do filtra „Osoba”, gdy osoba jest przypisana do KTÓREGOKOLWIEK
+  // z jego zadań — reużywamy selektora `projectsOfPerson` (bez duplikowania logiki).
+  const personProjectIds = useMemo(
+    () => (personFilter ? new Set(projectsOfPerson(state, personFilter).map((p) => p.id)) : null),
+    [state, personFilter],
+  );
+
   const filtered = useMemo(
     () =>
       state.projects.filter(
         (p) =>
           (paidFilter === 'all' || p.paid === (paidFilter === 'paid')) &&
           (!clientFilter || p.clientId === clientFilter) &&
+          (!personProjectIds || personProjectIds.has(p.id)) &&
           (!statusFilter || p.statusId === statusFilter) &&
           // Period overlap: [startDate, endDate] vs [from, to].
           (!from || p.endDate >= from) &&
           (!to || p.startDate <= to),
       ),
-    [state.projects, paidFilter, clientFilter, statusFilter, from, to],
+    [state.projects, paidFilter, clientFilter, personProjectIds, statusFilter, from, to],
   );
 
-  const criteria: SavedFilterCriteria = {
-    ...DEFAULT_CRITERIA,
-    paid: paidFilter,
-    clientId: clientFilter,
-    statusId: statusFilter,
-    from,
-    to,
-  };
+  const criteria: SavedFilterCriteria = projectsCriteria;
 
-  const applyPreset = (c: SavedFilterCriteria) => {
-    setPaidFilter(c.paid);
-    setClientFilter(c.clientId);
-    setStatusFilter(c.statusId);
-    setFrom(c.from);
-    setTo(c.to);
-  };
+  const applyPreset = (c: SavedFilterCriteria) => commit(c);
 
   const paidLabel = (v: PaidFilter) =>
     v === 'paid' ? 'Opłacone' : v === 'unpaid' ? 'Nieopłacone' : 'Wszystkie';
@@ -134,6 +158,16 @@ export function ProjectsPage() {
       ],
     },
     {
+      key: 'person',
+      label: 'Osoba',
+      value: personFilter,
+      onChange: setPersonFilter,
+      options: [
+        { value: '', label: 'Wszyscy' },
+        ...state.people.map((p) => ({ value: p.id, label: p.name })),
+      ],
+    },
+    {
       key: 'status',
       label: 'Status',
       value: statusFilter,
@@ -148,6 +182,7 @@ export function ProjectsPage() {
   const activeCount =
     (paidFilter !== 'all' ? 1 : 0) +
     (clientFilter ? 1 : 0) +
+    (personFilter ? 1 : 0) +
     (statusFilter ? 1 : 0) +
     (from ? 1 : 0) +
     (to ? 1 : 0);
@@ -160,6 +195,12 @@ export function ProjectsPage() {
       key: 'client',
       label: `Klient: ${getClient(state, clientFilter)?.name ?? '—'}`,
       onRemove: () => setClientFilter(''),
+    });
+  if (personFilter)
+    chips.push({
+      key: 'person',
+      label: `Osoba: ${getPerson(state, personFilter)?.name ?? '—'}`,
+      onRemove: () => setPersonFilter(''),
     });
   if (statusFilter)
     chips.push({

@@ -2,6 +2,7 @@
 import type {
   ActivityEvent,
   AppData,
+  CalendarEvent,
   Client,
   Comment,
   CommentEntityType,
@@ -19,6 +20,7 @@ import type {
 import { DEFAULT_CAPACITY } from './storage';
 import { blockEndMinutes, hasCollision, hoursToMinutes, isBinEntry } from '../utils/time';
 import { isBirthdayOn, isValidDateStr, parseDate } from '../utils/dates';
+import { expandOccurrences, type RecurrenceOccurrence } from '../utils/recurrence';
 
 // ---- Basic lookups ----
 
@@ -346,12 +348,86 @@ export function dayTotal(
 }
 
 /**
+ * Wystąpienia cyklicznych OPUBLIKOWANYCH zadań na dany dzień — WYŁĄCZNIE
+ * prezentacyjne (inwariant 1: nigdy nie zasilają sum/przeciążenia/kolizji ani
+ * `dayTotal`). Semantyka filtra jak w {@link entriesForDate}: pusty/brak zbioru =
+ * wszyscy; inaczej zadanie pokazane, gdy KTÓRYKOLWIEK z przypisanych jest w
+ * filtrze. Szkice wykluczone (kanonicznie nigdy nie mają reguły, plus jawny
+ * strażnik `isPublishedTask`).
+ */
+export function recurrenceOccurrencesForDate(
+  state: AppData,
+  date: DateStr,
+  personFilter?: Set<string>,
+): Array<{ task: Task; occurrence: RecurrenceOccurrence }> {
+  const out: Array<{ task: Task; occurrence: RecurrenceOccurrence }> = [];
+  const filterActive = personFilter !== undefined && personFilter.size > 0;
+  for (const task of state.tasks) {
+    if (task.recurrence === undefined || !isPublishedTask(task)) continue;
+    if (filterActive) {
+      const assignees = assigneeIdsOfTask(state, task.id);
+      if (!assignees.some((id) => personFilter!.has(id))) continue;
+    }
+    const occurrences = expandOccurrences(task.recurrence, task.startDate, date, date);
+    for (const occurrence of occurrences) out.push({ task, occurrence });
+  }
+  return out;
+}
+
+/** Jedno wystąpienie wydarzenia na konkretny dzień (czysto prezentacyjne). */
+export interface CalendarEventOccurrence {
+  event: CalendarEvent;
+  startMinutes: number;
+  durationMinutes: number;
+}
+
+/**
+ * Wydarzenia kalendarza na dany dzień — WYŁĄCZNIE prezentacyjne (inwariant 1:
+ * nigdy nie zasilają sum/przeciążenia/kolizji ani `dayTotal`). Jednorazowe gdy
+ * `event.date === date`; cykliczne rozwijane przez `expandOccurrences` (honoruje
+ * overrides). Semantyka filtra osób: pusty/brak = wszystko; niepusty = przecięcie
+ * z `attendeeIds` LUB wydarzenie ogólnofirmowe (`attendeeIds.length === 0` widać
+ * zawsze).
+ */
+export function calendarEventsForDate(
+  state: AppData,
+  date: DateStr,
+  personFilter?: Set<string>,
+): CalendarEventOccurrence[] {
+  const out: CalendarEventOccurrence[] = [];
+  const filterActive = personFilter !== undefined && personFilter.size > 0;
+  for (const event of state.events) {
+    if (filterActive) {
+      const companyWide = event.attendeeIds.length === 0;
+      if (!companyWide && !event.attendeeIds.some((id) => personFilter!.has(id))) continue;
+    }
+    if (event.recurrence === undefined) {
+      if (event.date === date) {
+        out.push({
+          event,
+          startMinutes: event.startMinutes,
+          durationMinutes: event.durationMinutes,
+        });
+      }
+      continue;
+    }
+    const occurrences = expandOccurrences(event.recurrence, event.date, date, date);
+    for (const occ of occurrences) {
+      out.push({ event, startMinutes: occ.startMinutes, durationMinutes: occ.durationMinutes });
+    }
+  }
+  return out;
+}
+
+/**
  * A person's day agenda for the dashboard "Zadania na dziś" section. Pure.
  * - `timed`: that person's dated (non-bin) workload entries on `date`, ascending
  *   `startMinutes` (ties by `sortIndex`) — the calendar order IS the priority.
- * - `dateless`: tasks the person is assigned to whose period covers `date` but
- *   which have NO entry for that person that day, excluding done-status tasks
- *   (any status with `isDone`, via `doneStatusIds`), sorted by nearest `endDate` then title.
+ * - `dateless`: tasks the person is assigned to whose deadline (`endDate`) IS
+ *   `date` but which have NO entry for that person that day, excluding
+ *   done-status tasks (any status with `isDone`, via `doneStatusIds`), sorted
+ *   by title. Tasks merely *spanning* `date` stay out — otherwise a multi-day
+ *   task without calendar blocks would show up in the agenda every single day.
  * There is intentionally no priority field — ordering is derived here only.
  */
 export function todayAgendaForPerson(
@@ -372,12 +448,11 @@ export function todayAgendaForPerson(
       (t) =>
         assignedTaskIds.has(t.id) &&
         isPublishedTask(t) && // szkic nie trafia do agendy „na dziś”
-        t.startDate <= date &&
-        date <= t.endDate &&
+        t.endDate === date &&
         !doneIds.has(t.statusId) &&
         !timedTaskIds.has(t.id),
     )
-    .sort((a, b) => a.endDate.localeCompare(b.endDate) || a.title.localeCompare(b.title));
+    .sort((a, b) => a.title.localeCompare(b.title)); // endDate === date dla wszystkich
 
   return { timed, dateless };
 }
@@ -610,6 +685,18 @@ export function taskDisplayStatus(
 ): 'done' | 'overdue' | 'open' {
   if (isDoneStatus(state, task.statusId)) return 'done';
   return task.endDate < today ? 'overdue' : 'open';
+}
+
+/**
+ * Whether a SINGLE calendar/bin block is done (PKG-20260721-per-block-done).
+ * A block is done when it carries its OWN `done` flag OR when the parent task's
+ * status is a done status (a done task lights ALL its blocks — invariant 5 stays
+ * status-driven at the task level). The per-block flag is INDEPENDENT: two blocks
+ * on the same day render independent done state, and marking one done never
+ * changes `task.statusId`. Pure — no `Date.now`, no task-status mutation.
+ */
+export function blockIsDone(state: AppData, task: Task, entry: WorkloadEntry): boolean {
+  return entry.done === true || isDoneStatus(state, task.statusId);
 }
 
 // ---- Moja praca (my-work page) ----

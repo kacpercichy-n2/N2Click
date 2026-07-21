@@ -3,6 +3,7 @@
 import type {
   AccessRole,
   AppData,
+  CalendarEvent,
   ChecklistItem,
   Person,
   Project,
@@ -15,6 +16,7 @@ import type {
   WorkloadEntry,
 } from '../types';
 import { isValidDateStr, todayStr } from '../utils/dates';
+import { normalizeRecurrence } from '../utils/recurrence';
 import { TASK_PRIORITIES } from '../utils/priority';
 import {
   DEFAULT_PROJECT_DOCUMENT_KIND,
@@ -41,6 +43,11 @@ import {
   snapToStep,
   stackStartTimes,
 } from '../utils/time';
+import {
+  canonicalEventRecurrence,
+  isFilterViewKey,
+  sanitizeLastViewFilter,
+} from './commandValidation';
 
 const STORAGE_KEY = 'n2hub.data.v1';
 const LEGACY_STORAGE_KEYS = ['n2ub.data.v1', 'n2click.data.v1'];
@@ -56,6 +63,7 @@ export const DEFAULT_WORKDAYS: number[] = [1, 2, 3, 4, 5]; // Mon–Fri (ISO wee
 export const DEFAULT_FILTER_CRITERIA: SavedFilterCriteria = {
   paid: 'all',
   clientId: '',
+  projectId: '',
   statusId: '',
   personId: '',
   priority: '',
@@ -121,6 +129,8 @@ export function emptyData(): AppData {
     departments: [],
     serviceTypes: [],
     workCategories: [],
+    jobTitles: [],
+    companies: [],
     statuses: buildDefaultStatuses(),
     projects: [],
     milestones: [],
@@ -131,10 +141,12 @@ export function emptyData(): AppData {
     comments: [],
     activity: [],
     tickets: [],
+    events: [],
     currentUserId: '',
     impersonatorId: '',
     sampleBannerDismissed: false,
     savedFilters: [],
+    lastFilters: {},
   };
 }
 
@@ -188,6 +200,9 @@ function migratePerson(raw: Record<string, unknown>): Person {
     phone: str(raw.phone),
     role: str(raw.role),
     departmentId: str(raw.departmentId),
+    // Spółka (pole ADDYTYWNE, opcjonalne): brak / nie-string => '' na każdym
+    // wczytaniu (jak departmentId). Repair dławi śmieci przed hydracją.
+    companyId: str(raw.companyId),
     avatar: str(raw.avatar),
     capacity,
     accessRole,
@@ -739,6 +754,36 @@ export function normalizeDates(data: AppData): AppData {
     };
   });
 
+  // `lastFilters` criteria from/to — ta sama reguła co dla savedFilters. Bronimy
+  // się przed jeszcze-niesanityzowanym wpisem (criteria niebędące obiektem);
+  // pełną sanityzację robi normalizeTaskMeta później na tej samej ścieżce.
+  let lastFiltersChanged = false;
+  const lastFilters: AppData['lastFilters'] = {};
+  for (const key of Object.keys(data.lastFilters ?? {}) as Array<keyof AppData['lastFilters']>) {
+    const entry = data.lastFilters[key];
+    if (entry === undefined) continue;
+    const criteria = entry.criteria as unknown;
+    if (typeof criteria !== 'object' || criteria === null) {
+      lastFilters[key] = entry;
+      continue;
+    }
+    const c = criteria as Record<string, unknown>;
+    const from = typeof c.from === 'string' ? c.from : '';
+    const to = typeof c.to === 'string' ? c.to : '';
+    const fromBad = from !== '' && !isValidDateStr(from);
+    const toBad = to !== '' && !isValidDateStr(to);
+    if (!fromBad && !toBad) {
+      lastFilters[key] = entry;
+      continue;
+    }
+    lastFiltersChanged = true;
+    lastFilters[key] = {
+      ...entry,
+      criteria: { ...entry.criteria, from: fromBad ? '' : from, to: toBad ? '' : to },
+    };
+  }
+  if (lastFiltersChanged) changed = true;
+
   const comments = data.comments.map((c) => {
     if (!Number.isNaN(Date.parse(c.createdAt))) return c;
     changed = true;
@@ -752,7 +797,17 @@ export function normalizeDates(data: AppData): AppData {
   });
 
   if (!changed) return data;
-  return { ...data, projects, tasks, milestones, workload, savedFilters, comments, activity };
+  return {
+    ...data,
+    projects,
+    tasks,
+    milestones,
+    workload,
+    savedFilters,
+    lastFilters,
+    comments,
+    activity,
+  };
 }
 
 /**
@@ -834,11 +889,40 @@ export function assignDefaultOrderIndex(tasks: Task[]): Task[] {
   );
 }
 
+/**
+ * Repair `Task.draftHours` na wczytaniu (forma kanoniczna — patrz `Task`).
+ * Opublikowane zadanie => `undefined`. Szkic: wartość niebędąca tablicą =>
+ * `undefined`; inaczej wpisy z niepustym `personId` i skończonym `hours > 0`
+ * snapowane do siatki, dedup po personId (pierwszy wygrywa); pusto => `undefined`.
+ * Idempotentne po wartości.
+ */
+function normalizeDraftHours(
+  isDraft: boolean,
+  raw: unknown,
+): Array<{ personId: string; hours: number }> | undefined {
+  if (!isDraft || !Array.isArray(raw)) return undefined;
+  const byPerson = new Map<string, number>();
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) continue;
+    const rec = item as Record<string, unknown>;
+    const personId = typeof rec.personId === 'string' ? rec.personId : '';
+    if (personId === '' || byPerson.has(personId)) continue;
+    const hoursRaw = rec.hours;
+    if (typeof hoursRaw !== 'number' || !Number.isFinite(hoursRaw)) continue;
+    const hours = snapHours(hoursRaw);
+    if (hours <= 0) continue;
+    byPerson.set(personId, hours);
+  }
+  if (byPerson.size === 0) return undefined;
+  return [...byPerson].map(([personId, hours]) => ({ personId, hours }));
+}
+
 export function normalizeTaskMeta(data: AppData): AppData {
   const str = (v: unknown): string => (typeof v === 'string' ? v : '');
   const workCategories = Array.isArray(data.workCategories) ? data.workCategories : [];
   const categoryIds = new Set(workCategories.map((c) => c.id));
   const departmentIds = new Set(data.departments.map((d) => d.id));
+  const projectIds = new Set(data.projects.map((p) => p.id));
 
   const tasks: Task[] = data.tasks.map((raw) => {
     const t = raw as unknown as Record<string, unknown>;
@@ -869,7 +953,19 @@ export function normalizeTaskMeta(data: AppData): AppData {
     // Szkic (pole opcjonalne, ADDYTYWNE): każdy starszy zapis i chmura bez
     // kolumny czytają się jako OPUBLIKOWANE. Tylko jawne `true` zostaje szkicem.
     const isDraft = t.isDraft === true;
-    return {
+    // Godziny szkicu (`draftHours`, forma kanoniczna): opublikowane zadanie
+    // NIGDY nie ma klucza; szkic zachowuje wpisy z niepustym `personId` (osierocony
+    // personId zostaje — istnienie sprawdza publikacja) i skończonym `hours > 0`
+    // snapowanym do siatki, dedup po personId (pierwszy wygrywa); pusty wynik =>
+    // brak klucza. Idempotentne po wartości.
+    const draftHours = normalizeDraftHours(isDraft, t.draftHours);
+    // Cykliczność (`recurrence`, forma kanoniczna — patrz `TaskRecurrence`):
+    // szkic NIGDY nie niesie reguły; opublikowane zadanie kanonikalizuje wartość
+    // względem swojej daty startu przez `normalizeRecurrence` (niepoprawny
+    // startDate / śmieci => brak klucza). Legacy zapis bez pola wychodzi bez
+    // klucza (brak echo-write). Idempotentne po wartości.
+    const recurrence = isDraft ? undefined : normalizeRecurrence(t.recurrence, str(t.startDate));
+    const base: Task = {
       ...(raw as Task),
       priority,
       workCategoryId,
@@ -878,6 +974,11 @@ export function normalizeTaskMeta(data: AppData): AppData {
       orderIndex,
       isDraft,
     };
+    if (draftHours) base.draftHours = draftHours;
+    else delete base.draftHours;
+    if (recurrence) base.recurrence = recurrence;
+    else delete base.recurrence;
+    return base;
   });
 
   const savedFilters = data.savedFilters.map((f) => {
@@ -888,10 +989,30 @@ export function normalizeTaskMeta(data: AppData): AppData {
     if (criteria.workCategoryId !== '' && !categoryIds.has(criteria.workCategoryId)) {
       criteria.workCategoryId = '';
     }
+    // `projectId` jest ADDYTYWNE (v7): stary preset dostaje '' ze spreadu, a
+    // dangling (brak wiersza w `projects`) resetuje się do '' — jak workCategoryId.
+    if (criteria.projectId !== '' && !projectIds.has(criteria.projectId)) {
+      criteria.projectId = '';
+    }
     return { ...f, criteria };
   });
 
-  return { ...data, workCategories, tasks: assignDefaultOrderIndex(tasks), savedFilters };
+  // `lastFilters` (ADDYTYWNE, v7): odrzuć nieznane klucze widoków i sanityzuj
+  // każdy wpis przez współdzielony `sanitizeLastViewFilter` (kryteria wypełnione,
+  // dangling projectId/workCategoryId → '', priority/planning spoza enuma → '',
+  // personIds zdeduplikowane). Idempotentne po wartości: czysty drugi przebieg
+  // daje wartościowo tę samą mapę.
+  const rawLastFilters =
+    typeof data.lastFilters === 'object' && data.lastFilters !== null && !Array.isArray(data.lastFilters)
+      ? (data.lastFilters as Record<string, unknown>)
+      : {};
+  const lastFilters: AppData['lastFilters'] = {};
+  for (const view of Object.keys(rawLastFilters)) {
+    if (!isFilterViewKey(view)) continue;
+    lastFilters[view] = sanitizeLastViewFilter(data, rawLastFilters[view]);
+  }
+
+  return { ...data, workCategories, tasks: assignDefaultOrderIndex(tasks), savedFilters, lastFilters };
 }
 
 /**
@@ -976,6 +1097,82 @@ export function repairTickets(data: AppData): AppData {
     });
   }
   return { ...data, tickets };
+}
+
+/**
+ * Idempotentny repair kolekcji wydarzeń kalendarza. Kolekcja jest ADDYTYWNA (bez
+ * podbicia DATA_VERSION), więc każdy starszy zapis wchodzi tu jako `[]` z
+ * emptyData i przechodzi bez zmian.
+ *
+ * Zasady (idempotentne po wartości):
+ * 1. Wiersz bez stringowego `id`, z pustym `title` po trim albo z niepoprawną
+ *    `date` jest ODRZUCANY (nie da się go pokazać ani zakotwiczyć reguły).
+ * 2. Pola tekstowe koercjonowane; `meetingUrl` przez `normalizeProjectDocumentUrl`
+ *    (pusty albo zły schemat => '').
+ * 3. `startMinutes` nie-finite => wiersz ODPADA; poza siatką => snap w dół do
+ *    wielokrotności 15 i clamp do [0, 1425]. `durationMinutes` analogicznie z
+ *    clampem do [15, 1440 − startMinutes].
+ * 4. `attendeeIds` => tylko stringi, dedupe (dangling id ZOSTAJE — czyści go
+ *    dopiero hydracja chmury / filtr renderu).
+ * 5. `recurrence` przez formę kanoniczną wydarzenia (czasy reguły = czasy
+ *    wydarzenia, dzień kotwicy w `daysOfWeek`); rozjazd/brak dnia kotwicy =>
+ *    USUNIĘCIE klucza (wydarzenie jednorazowe).
+ */
+export function repairEvents(data: AppData): AppData {
+  const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+  const source = Array.isArray(data.events) ? data.events : [];
+  const events: CalendarEvent[] = [];
+  for (const raw of source) {
+    if (typeof raw !== 'object' || raw === null) continue;
+    const e = raw as unknown as Record<string, unknown>;
+    const id = str(e.id);
+    const title = str(e.title).trim();
+    const date = str(e.date);
+    if (id === '' || title === '' || !isValidDateStr(date)) continue;
+
+    // Czasy: nie-finite start => odrzuć; inaczej snap-w-dół + clamp.
+    const rawStart = e.startMinutes;
+    if (typeof rawStart !== 'number' || !Number.isFinite(rawStart)) continue;
+    let startMinutes = Math.floor(rawStart / MINUTE_STEP) * MINUTE_STEP;
+    if (startMinutes < 0) startMinutes = 0;
+    if (startMinutes > DAY_MINUTES - MINUTE_STEP) startMinutes = DAY_MINUTES - MINUTE_STEP;
+
+    const rawDur = e.durationMinutes;
+    if (typeof rawDur !== 'number' || !Number.isFinite(rawDur)) continue;
+    let durationMinutes = Math.floor(rawDur / MINUTE_STEP) * MINUTE_STEP;
+    if (durationMinutes < MINUTE_STEP) durationMinutes = MINUTE_STEP;
+    const maxDur = DAY_MINUTES - startMinutes;
+    if (durationMinutes > maxDur) durationMinutes = maxDur;
+
+    const meetingUrl = normalizeProjectDocumentUrl(str(e.meetingUrl)) ?? '';
+
+    const attendeeSource = Array.isArray(e.attendeeIds) ? (e.attendeeIds as unknown[]) : [];
+    const attendeeIds: string[] = [];
+    const seen = new Set<string>();
+    for (const a of attendeeSource) {
+      if (typeof a !== 'string' || seen.has(a)) continue;
+      seen.add(a);
+      attendeeIds.push(a);
+    }
+
+    const recurrence = canonicalEventRecurrence(e.recurrence, date, startMinutes, durationMinutes);
+
+    events.push({
+      id,
+      title,
+      description: str(e.description),
+      location: str(e.location),
+      meetingUrl,
+      date,
+      startMinutes,
+      durationMinutes,
+      attendeeIds,
+      ...(recurrence ? { recurrence } : {}),
+      createdAt: str(e.createdAt),
+      updatedAt: str(e.updatedAt),
+    });
+  }
+  return { ...data, events };
 }
 
 /**
@@ -1319,6 +1516,8 @@ function readData(recordRevision: boolean): InternalLoadResult {
         departments: coerceArray(parsedRest.departments, defaults.departments),
         serviceTypes: coerceArray(parsedRest.serviceTypes, defaults.serviceTypes),
         workCategories: coerceArray(parsedRest.workCategories, defaults.workCategories),
+        jobTitles: coerceArray(parsedRest.jobTitles, defaults.jobTitles),
+        companies: coerceArray(parsedRest.companies, defaults.companies),
         statuses: coerceArray(parsedRest.statuses, defaults.statuses),
         projects: coerceArray(parsedRest.projects, defaults.projects),
         milestones: coerceArray(parsedRest.milestones, defaults.milestones),
@@ -1329,7 +1528,17 @@ function readData(recordRevision: boolean): InternalLoadResult {
         comments: coerceArray(parsedRest.comments, defaults.comments),
         activity: coerceArray(parsedRest.activity, defaults.activity),
         tickets: coerceArray(parsedRest.tickets, defaults.tickets),
+        events: coerceArray(parsedRest.events, defaults.events),
         savedFilters: coerceArray(parsedRest.savedFilters, defaults.savedFilters),
+        // `lastFilters` to obiekt (mapa widok→filtr), nie tablica: obecną-ale-
+        // niebędącą-obiektem wartość (np. tablica/`null`) koerujemy do `{}` tutaj,
+        // resztę sanityzuje `normalizeTaskMeta` (nieznane widoki, kryteria).
+        lastFilters:
+          typeof parsedRest.lastFilters === 'object' &&
+          parsedRest.lastFilters !== null &&
+          !Array.isArray(parsedRest.lastFilters)
+            ? (parsedRest.lastFilters as AppData['lastFilters'])
+            : defaults.lastFilters,
       };
       const localized =
         version < LOCALIZATION_MIGRATION_VERSION ? localizeLegacyData(loaded) : loaded;
@@ -1351,6 +1560,10 @@ function readData(recordRevision: boolean): InternalLoadResult {
     // WYNIKU obu ścieżek (migracja i wczytanie w tej samej wersji) — zapis bez
     // `documents` wychodzi stąd z pustą listą.
     data = repairProjectDocuments(data);
+    // Wydarzenia kalendarza: pole ADDYTYWNE, więc repair biegnie na WYNIKU obu
+    // ścieżek (migracja i wczytanie w tej samej wersji) — zapis bez `events`
+    // wychodzi stąd z pustą listą.
+    data = repairEvents(data);
 
     const { revision: _revision, ...storedData } = parsed;
     return {

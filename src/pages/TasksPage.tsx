@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import { useOpenTask } from '../components/TaskModal';
@@ -16,7 +16,7 @@ import {
   PLANNING_STATUSES,
   type PlanningStatus,
 } from '../store/selectors';
-import type { TaskPriority } from '../types';
+import type { SavedFilterCriteria, TaskPriority } from '../types';
 import { PRIORITY_LABELS, TASK_PRIORITIES } from '../utils/priority';
 import { FilterPresets, DEFAULT_CRITERIA } from '../components/FilterPresets';
 import { FilterPanel, type FilterChip, type FilterGroup } from '../components/FilterPanel';
@@ -40,18 +40,46 @@ export function TasksPage() {
   const canManageTasks = useCan()('tasks.manage');
   const statuses = activeStatuses(state);
 
-  const [clientFilter, setClientFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [personFilter, setPersonFilter] = useState('');
-  const [priorityFilter, setPriorityFilter] = useState<'' | TaskPriority>('');
-  const [categoryFilter, setCategoryFilter] = useState('');
-  // Derived planning-status filter (single-select). Deliberately NOT part of
-  // `criteria`/saved presets: presets are persisted (`SavedFilterCriteria`) and
-  // this feature changes no stored shape. Consequence: presets ignore this
-  // filter, and a planning-only selection does not enable "Zapisz filtr".
-  const [planningFilter, setPlanningFilter] = useState<'' | PlanningStatus>('');
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
+  // Stan filtrów jest ZAPAMIĘTANY w store (`lastFilters.tasks`) — przetrwa
+  // nawigację i przeładowanie. Każdy setter wysyła pełny, znormalizowany snapshot
+  // przez `SET_LAST_FILTER` (reduktor no-opuje zapis wartościowo identyczny).
+  const remembered = state.lastFilters.tasks;
+  const criteria: SavedFilterCriteria = remembered?.criteria ?? DEFAULT_CRITERIA;
+  const clientFilter = criteria.clientId;
+  const projectFilter = criteria.projectId;
+  const statusFilter = criteria.statusId;
+  const personFilter = criteria.personId;
+  const priorityFilter = criteria.priority;
+  const categoryFilter = criteria.workCategoryId;
+  const from = criteria.from;
+  const to = criteria.to;
+  // Filtr planowania (single-select). NIE jest częścią `criteria`/presetów, ale
+  // JEST zapamiętywany obok nich w `lastFilters.tasks.planning`.
+  const planningFilter = (remembered?.planning ?? '') as '' | PlanningStatus;
+
+  const commit = (nextCriteria: SavedFilterCriteria, nextPlanning: '' | PlanningStatus) =>
+    dispatch({
+      type: 'SET_LAST_FILTER',
+      view: 'tasks',
+      filter: {
+        criteria: nextCriteria,
+        personIds: [],
+        departmentId: '',
+        serviceTypeId: '',
+        planning: nextPlanning,
+      },
+    });
+
+  const setClientFilter = (v: string) => commit({ ...criteria, clientId: v }, planningFilter);
+  const setProjectFilter = (v: string) => commit({ ...criteria, projectId: v }, planningFilter);
+  const setStatusFilter = (v: string) => commit({ ...criteria, statusId: v }, planningFilter);
+  const setPersonFilter = (v: string) => commit({ ...criteria, personId: v }, planningFilter);
+  const setPriorityFilter = (v: '' | TaskPriority) =>
+    commit({ ...criteria, priority: v }, planningFilter);
+  const setCategoryFilter = (v: string) => commit({ ...criteria, workCategoryId: v }, planningFilter);
+  const setFrom = (v: string) => commit({ ...criteria, from: v }, planningFilter);
+  const setTo = (v: string) => commit({ ...criteria, to: v }, planningFilter);
+  const setPlanningFilter = (v: '' | PlanningStatus) => commit(criteria, v);
 
   // Sort by start date, then title, for a stable predictable list.
   // Memoized so the filtering useMemo below has a stable array dependency.
@@ -77,6 +105,7 @@ export function TasksPage() {
           const clientId = getProject(state, t.projectId)?.clientId;
           if (clientId !== clientFilter) return false;
         }
+        if (projectFilter && t.projectId !== projectFilter) return false;
         if (personFilter && !assigneeIdsOfTask(state, t.id).includes(personFilter)) return false;
         if (planningFilter && taskPlanningStatus(state, t.id) !== planningFilter) return false;
         if (priorityFilter && t.priority !== priorityFilter) return false;
@@ -90,6 +119,7 @@ export function TasksPage() {
       allTasks,
       state,
       clientFilter,
+      projectFilter,
       statusFilter,
       personFilter,
       planningFilter,
@@ -100,37 +130,15 @@ export function TasksPage() {
     ],
   );
 
-  const criteria = {
-    ...DEFAULT_CRITERIA,
-    clientId: clientFilter,
-    statusId: statusFilter,
-    personId: personFilter,
-    priority: priorityFilter,
-    workCategoryId: categoryFilter,
-    from,
-    to,
-  };
+  // Projekty do wyboru w filtrze „Projekt”, posortowane po nazwie.
+  const sortedProjects = useMemo(
+    () => [...state.projects].sort((a, b) => a.name.localeCompare(b.name)),
+    [state.projects],
+  );
 
-  const applyPreset = (c: typeof criteria) => {
-    setClientFilter(c.clientId);
-    setStatusFilter(c.statusId);
-    setPersonFilter(c.personId);
-    setPriorityFilter(c.priority);
-    setCategoryFilter(c.workCategoryId);
-    setFrom(c.from);
-    setTo(c.to);
-  };
+  const applyPreset = (c: SavedFilterCriteria) => commit(c, planningFilter);
 
-  const clearFilters = () => {
-    setClientFilter('');
-    setStatusFilter('');
-    setPersonFilter('');
-    setPlanningFilter('');
-    setPriorityFilter('');
-    setCategoryFilter('');
-    setFrom('');
-    setTo('');
-  };
+  const clearFilters = () => commit(DEFAULT_CRITERIA, '');
 
   const filterGroups: FilterGroup[] = [
     {
@@ -141,6 +149,16 @@ export function TasksPage() {
       options: [
         { value: '', label: 'Wszyscy klienci' },
         ...state.clients.map((c) => ({ value: c.id, label: c.name })),
+      ],
+    },
+    {
+      key: 'project',
+      label: 'Projekt',
+      value: projectFilter,
+      onChange: setProjectFilter,
+      options: [
+        { value: '', label: 'Wszystkie' },
+        ...sortedProjects.map((p) => ({ value: p.id, label: p.name })),
       ],
     },
     {
@@ -197,6 +215,7 @@ export function TasksPage() {
 
   const activeCount =
     (clientFilter ? 1 : 0) +
+    (projectFilter ? 1 : 0) +
     (statusFilter ? 1 : 0) +
     (personFilter ? 1 : 0) +
     (planningFilter ? 1 : 0) +
@@ -211,6 +230,12 @@ export function TasksPage() {
       key: 'client',
       label: `Klient: ${getClient(state, clientFilter)?.name ?? '—'}`,
       onRemove: () => setClientFilter(''),
+    });
+  if (projectFilter)
+    chips.push({
+      key: 'project',
+      label: `Projekt: ${getProject(state, projectFilter)?.name ?? '—'}`,
+      onRemove: () => setProjectFilter(''),
     });
   if (statusFilter)
     chips.push({

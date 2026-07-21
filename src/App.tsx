@@ -12,6 +12,7 @@ import {
 import { motion } from 'motion/react';
 import { useStore } from './store/AppStore';
 import { DashboardPage } from './pages/DashboardPage';
+import { ChangelogPage } from './pages/ChangelogPage';
 import { MyWorkPage } from './pages/MyWorkPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { ProjectDetailPage } from './pages/ProjectDetailPage';
@@ -25,6 +26,7 @@ import { PersonProfilePage } from './pages/PersonProfilePage';
 import { WorkloadPage } from './pages/WorkloadPage';
 import { AdminPage } from './pages/AdminPage';
 import { TicketsPage } from './pages/TicketsPage';
+import { EventsPage } from './pages/EventsPage';
 import { AccountPage } from './pages/AccountPage';
 import { TeamPage } from './pages/TeamPage';
 import { canViewTeam } from './pages/teamScope';
@@ -51,6 +53,7 @@ import { PersistenceBanner } from './components/PersistenceBanner';
 import { CloudSyncBanner } from './components/CloudSyncBanner';
 import { TaskModal } from './components/TaskModal';
 import { TicketModal } from './components/TicketModal';
+import { EventModal } from './components/EventModal';
 import { GlobalSearch } from './components/GlobalSearch';
 import { Avatar } from './components/Avatar';
 import {
@@ -142,6 +145,8 @@ export function App() {
         statuses: snap.statuses,
         serviceTypes: snap.serviceTypes,
         workCategories: snap.workCategories,
+        jobTitles: snap.jobTitles,
+        companies: snap.companies,
       },
     });
     dispatch({ type: 'MERGE_CLOUD_PEOPLE', payload: buildCloudPeoplePayload(snap.profiles) });
@@ -504,6 +509,8 @@ export function App() {
           <Routes>
             <Route path="/" element={<HomeRedirect />} />
             <Route path="/dashboard" element={<DashboardPage />} />
+            {/* Changelog: pełna historia wpisów z src/data/changelog.ts, dostępna dla każdej roli. */}
+            <Route path="/changelog" element={<ChangelogPage />} />
             <Route path="/my-work" element={<MyWorkPage />} />
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/projects/:id" element={<ProjectDetailPage />} />
@@ -515,6 +522,8 @@ export function App() {
             <Route path="/tasks/new" element={<NewTaskRedirect />} />
             <Route path="/tasks/:id" element={<TaskRedirect />} />
             <Route path="/calendar" element={<CalendarPage />} />
+            {/* Wydarzenia: widoczne dla każdej roli (zarządzanie gated przez events.manage). */}
+            <Route path="/wydarzenia" element={<EventsPage />} />
             <Route path="/people" element={<PeoplePage />} />
             <Route path="/people/:id" element={<PersonProfilePage />} />
             <Route path="/workload" element={<WorkloadPage />} />
@@ -543,6 +552,8 @@ export function App() {
       <TaskModal />
       {/* Ten sam wzorzec dla zgłoszeń (?zgloszenie=new | <id>). */}
       <TicketModal />
+      {/* Ten sam wzorzec dla wydarzeń (?wydarzenie=new | <id>). */}
+      <EventModal />
       <DirtyNavigationGuard />
       <OnboardingRoot
         owner={actualUser}

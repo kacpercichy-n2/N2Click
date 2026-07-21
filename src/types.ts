@@ -33,6 +33,18 @@ export interface WorkCategory {
   name: string;
 }
 
+/** Admin-managed stanowiska (job titles) dictionary; mirrors Department. */
+export interface JobTitle {
+  id: string;
+  name: string;
+}
+
+/** Admin-managed spółki (companies) dictionary; mirrors Department. */
+export interface Company {
+  id: string;
+  name: string;
+}
+
 /** Task priority — fixed 4-value enum. Polish labels live in utils/priority.ts. */
 export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 
@@ -134,8 +146,64 @@ export interface Task {
   // opublikowane, więc legacy (localStorage), chmura bez kolumny i wszystkie
   // dotychczasowe fixture'y czytają się jako opublikowane bez migracji danych.
   isDraft?: boolean;
+  // Godziny sprzedane per osoba wpisane na etapie SZKICU (intencja sprzed
+  // publikacji, NIE planowane godziny — inwariant 1). Materializują się w jeden
+  // wiersz zasobnika `WorkloadEntry` na osobę przy publikacji, po czym pole jest
+  // USUWANE (jedno źródło prawdy w workload). Żaden selektor / suma / kalendarz /
+  // zasobnik / przeciążenie NIGDY go nie czyta. FORMA KANONICZNA (nośna dla
+  // reference-preserving merge `sameRowValue`): klucz JEST obecny WYŁĄCZNIE gdy
+  // zadanie jest szkicem i tablica ma ≥1 wpis z `hours > 0` na siatce 0,25h i
+  // unikalnym `personId` — inaczej klucz jest NIEOBECNY (nigdy `[]`, nigdy na
+  // zadaniu opublikowanym). Egzekwowane w reduktorze, `normalizeTaskMeta` i
+  // hydracji chmury. OPCJONALNE i ADDYTYWNE (`DATA_VERSION` zostaje na 7).
+  draftHours?: { personId: string; hours: number }[];
+  // Reguła cykliczności (RRULE-lite) + per-datowe wyjątki. Wystąpienia są
+  // WYŁĄCZNIE prezentacyjne — nigdy nie tworzą wierszy `WorkloadEntry` ani nie
+  // zasilają sum/przeciążenia/kolizji (inwariant 1); mają własną granicę `until`
+  // i nie przechodzą przez limit 92 dni okresu bazowego (inwariant 2). FORMA
+  // KANONICZNA (patrz `TaskRecurrence` i `src/utils/recurrence.ts`): klucz
+  // obecny WYŁĄCZNIE gdy istnieje poprawna reguła; NIGDY na szkicu
+  // (`isDraft === true`) i NIGDY gdy `startDate` nie jest poprawną datą.
+  // Egzekwowane w reduktorze, `normalizeTaskMeta` i hydracji chmury. OPCJONALNE
+  // i ADDYTYWNE (`DATA_VERSION` zostaje na 7).
+  recurrence?: TaskRecurrence;
   createdAt: string; // ISO timestamp
   updatedAt: string; // ISO timestamp
+}
+
+/**
+ * Jeden per-datowy WYJĄTEK reguły cykliczności. `date` to ZAWSZE oryginalna data
+ * wystąpienia ('yyyy-MM-dd'), unikalna w obrębie `overrides` — wyjątek nigdy nie
+ * przenosi wystąpienia na inny dzień, tylko przesuwa jego godzinę albo pomija
+ * ten dzień. FORMA KANONICZNA (egzekwowana w reduktorze, repairze wczytania i
+ * hydracji chmury): albo `{ date, skip: true }` (bez pól czasu), albo
+ * `{ date, startMinutes, durationMinutes }` (przesunięcie czasu, oba pola
+ * obecne). Klucz `skip` występuje wyłącznie jako literalne `true`.
+ */
+export interface RecurrenceOverride {
+  date: DateStr; // oryginalna data wystąpienia (yyyy-MM-dd)
+  skip?: true; // pominięcie tego dnia; kanonicznie tylko literalne `true`
+  startMinutes?: number; // przesunięcie czasu — OBA pola obecne razem
+  durationMinutes?: number;
+}
+
+/**
+ * Reguła cykliczności zadania (RRULE-lite): powtarzanie w wybrane dni tygodnia o
+ * stałej porze, od kotwicy (`task.startDate`) do opcjonalnej włącznej granicy
+ * `until`. Wystąpienia są WYŁĄCZNIE prezentacyjne — NIGDY nie materializują się
+ * jako wiersze `WorkloadEntry` ani nie zasilają sum/przeciążenia/kolizji
+ * (inwariant 1). FORMA KANONICZNA (patrz `src/utils/recurrence.ts`): klucz
+ * `recurrence` istnieje TYLKO gdy reguła jest poprawna i zadanie jest
+ * opublikowane z poprawną datą startu; `until` obecny tylko gdy poprawny i
+ * `>= task.startDate`; `overrides` obecne tylko gdy niepuste, posortowane po
+ * dacie rosnąco. OPCJONALNE i ADDYTYWNE (`DATA_VERSION` zostaje na 7).
+ */
+export interface TaskRecurrence {
+  daysOfWeek: number[]; // ISO 1 (pon) … 7 (nd); zdeduplikowane, rosnąco, niepuste
+  startMinutes: number; // 0..1425, wielokrotność 15
+  durationMinutes: number; // 15..1440, wielokrotność 15; start + duration <= 1440
+  until?: DateStr; // włączna granica; brak klucza = otwarta
+  overrides?: RecurrenceOverride[]; // brak klucza gdy pusto; sort po dacie rosnąco
 }
 
 /** Access role — the app-permission tier (distinct from `role`, the job title). */
@@ -150,6 +218,11 @@ export interface Person {
   phone: string; // '' when unset
   role: string; // job title; '' when unset
   departmentId: string; // '' when unset
+  // Spółka przypisana przez administratora ('' = brak). Zawęża widoczność
+  // projektów w chmurze (RLS) — patrz openwiki/n2hub/cloud-database.md.
+  // OPCJONALNE i ADDYTYWNE: legacy payload / chmura bez kolumny czytają '' na
+  // repairze (migratePerson). DATA_VERSION zostaje 7.
+  companyId?: string;
   avatar: string; // emoji; '' -> initials fallback
   capacity: number; // available hours per day (overload threshold + availability quantum)
   // App-permission tier (replaced the old `isAdmin` flag in migration v4→v5).
@@ -204,6 +277,14 @@ export interface WorkloadEntry {
   //    (one's end == the other's start, no gap) survive a SET_BLOCK_TIME — the
   //    calendar drag/resize path fuses them into one block (earlier id survives).
 
+  // Per-block completion (PKG-20260721-per-block-done). OPTIONAL + ADDITIVE:
+  // undefined/false = not done, true = this specific block's portion of hours is
+  // done. INDEPENDENT of Task.statusId — marking a block done never changes the
+  // task status, and a done task status still lights ALL its blocks
+  // (`blockIsDone`). Granularity is per WorkloadEntry.id, NOT per day: two blocks
+  // on the same date carry independent `done`. DATA_VERSION stays 7 (additive,
+  // like recurrence/isDraft); load repair passes it through untouched.
+  done?: boolean;
 }
 
 export type CommentEntityType = 'project' | 'task';
@@ -267,11 +348,41 @@ export interface Ticket {
   updatedAt: string; // ISO timestamp; odświeżany przy każdym zapisie
 }
 
-export type FilterPage = 'projects' | 'tasks';
+/**
+ * Wydarzenie / spotkanie kalendarza. Kolekcja jest ADDYTYWNA i CZYSTO
+ * PREZENTACYJNA — wydarzenia NIGDY nie tworzą wierszy `WorkloadEntry` ani nie
+ * zasilają sum/przeciążenia/kolizji/`packDayBlocks` (inwariant 1). Renderowane w
+ * WeekView/MonthView innym kolorem niż zadania, zarządzane w panelu
+ * „Wydarzenia”. Cykliczność REUŻYWA `TaskRecurrence` + `src/utils/recurrence.ts`
+ * (żadnej drugiej implementacji).
+ *
+ * FORMA KANONICZNA `recurrence` (egzekwowana w reduktorze, `repairEvents` i
+ * hydracji chmury): gdy klucz istnieje, `rule.startMinutes === startMinutes` i
+ * `rule.durationMinutes === durationMinutes` (czas wydarzenia JEST czasem
+ * reguły), a `daysOfWeek` ZAWSZE zawiera `isoWeekday(date)` (baza widoczna).
+ * OPCJONALNE i ADDYTYWNE (`DATA_VERSION` zostaje 7).
+ */
+export interface CalendarEvent {
+  id: string;
+  title: string; // wymagane (trim niepusty)
+  description: string; // '' gdy brak
+  location: string; // biuro/lokalizacja; '' gdy brak
+  meetingUrl: string; // '' albo znormalizowany http(s) URL
+  date: DateStr; // kotwica; dla cyklicznych = anchor reguły
+  startMinutes: number; // 0..1425, wielokrotność 15
+  durationMinutes: number; // 15..1440, wielokrotność 15; start+dur <= 1440
+  attendeeIds: string[]; // ids z people, zdeduplikowane; [] = ogólnofirmowe
+  recurrence?: TaskRecurrence; // REUŻYTY typ; brak klucza = jednorazowe
+  createdAt: string; // ISO timestamp
+  updatedAt: string; // ISO timestamp; odświeżany przy każdym zapisie
+}
+
+export type FilterPage = 'projects' | 'tasks' | 'kanban';
 
 export interface SavedFilterCriteria {
   paid: 'all' | 'paid' | 'unpaid'; // meaningful on projects; keep 'all' for tasks
   clientId: string; // '' = all
+  projectId: string; // '' = all; meaningful on tasks/kanban — additive at v7
   statusId: string; // '' = all
   personId: string; // '' = all; assignee — meaningful on tasks
   priority: '' | TaskPriority; // '' = all; meaningful on tasks
@@ -287,12 +398,36 @@ export interface SavedFilter {
   criteria: SavedFilterCriteria;
 }
 
+/** Widoki, których ostatnio używany filtr zapamiętujemy (lokalnie, NIE w chmurze).
+ *  Filtry są per-użytkownik — jak `savedFilters` nie mają domu w chmurze. */
+export type FilterViewKey =
+  | 'projects'
+  | 'tasks'
+  | 'kanban'
+  | 'workload'
+  | 'calendar'
+  | 'timeline';
+
+/** Ostatnio używany (nienazwany) filtr dla jednego widoku. Trzymamy OBOK
+ *  `savedFilters` w `AppData`, wyłącznie lokalnie — przetrwanie nawigacji i
+ *  przeładowania. Sanityzowany i defaultowany na każdym wczytaniu (storage.ts)
+ *  oraz przy zapisie przez reduktor (`SET_LAST_FILTER`). */
+export interface LastViewFilter {
+  criteria: SavedFilterCriteria; // single-select dims + from/to dates
+  personIds: string[]; // PersonFilter multi-chips; [] = all
+  departmentId: string; // workload-only dim; '' = all
+  serviceTypeId: string; // workload-only dim; '' = all
+  planning: string; // tasks-only planning filter; '' = all
+}
+
 export interface AppData {
   version: number;
   clients: Client[];
   departments: Department[];
   serviceTypes: ServiceType[];
   workCategories: WorkCategory[];
+  jobTitles: JobTitle[];
+  companies: Company[];
   statuses: Status[];
   projects: Project[];
   milestones: Milestone[];
@@ -303,11 +438,17 @@ export interface AppData {
   comments: Comment[];
   activity: ActivityEvent[];
   tickets: Ticket[];
+  events: CalendarEvent[];
   currentUserId: string; // "acting as" person; '' when unset
   // Safe impersonation: '' when not impersonating; otherwise the REAL logged-in
   // person's id while `currentUserId` holds the impersonated identity. Additive
   // (no version bump) — defaulted + sanitized on every load in storage.ts.
   impersonatorId: string;
   sampleBannerDismissed: boolean;
-  savedFilters: SavedFilter[]; // named filter presets for Projects/Tasks pages
+  savedFilters: SavedFilter[]; // named filter presets for Projects/Tasks/Kanban pages
+  // Ostatnio używany filtr per widok (nienazwany). LOKALNIE ONLY — jak
+  // `savedFilters` nie ma domu w chmurze (per-użytkownik). Addytywne przy v7:
+  // defaultowane do `{}` i sanityzowane na każdym wczytaniu. Nieznane klucze
+  // widoków są odrzucane na wczytaniu.
+  lastFilters: Partial<Record<FilterViewKey, LastViewFilter>>;
 }

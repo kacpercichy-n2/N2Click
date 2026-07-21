@@ -13,7 +13,9 @@
 // mockowania SDK, bez żywego Supabase w vitest, bez jsdom.
 import type {
   AccessRole,
+  Company,
   Department,
+  JobTitle,
   Person,
   ServiceType,
   Status,
@@ -37,6 +39,9 @@ export interface CloudProfile {
   roleTitle: string;
   cloudRole: CloudRole;
   departmentId: string | null;
+  /** Spółka (profiles.company_id); null gdy brak. Przypisanie admina, zawęża
+   *  widoczność projektów w chmurze (RLS). */
+  companyId: string | null;
   /** Przełożony (profiles.supervisor_id); null gdy brak. */
   supervisorId: string | null;
   /** Pola planera (migracja 20260717130000_profiles_planner_fields). */
@@ -60,6 +65,8 @@ export interface OrgSnapshot {
   statuses: Status[];
   serviceTypes: ServiceType[];
   workCategories: WorkCategory[];
+  jobTitles: JobTitle[];
+  companies: Company[];
 }
 
 export type LoadOrgResult =
@@ -119,6 +126,7 @@ function toCapacity(v: unknown): number {
 
 function toCloudProfile(row: Record<string, unknown>): CloudProfile {
   const departmentId = row.department_id;
+  const companyId = row.company_id;
   const supervisorId = row.supervisor_id;
   return {
     id: str(row.id),
@@ -128,6 +136,7 @@ function toCloudProfile(row: Record<string, unknown>): CloudProfile {
     roleTitle: str(row.role_title),
     cloudRole: toCloudRole(row.access_role),
     departmentId: typeof departmentId === 'string' && departmentId !== '' ? departmentId : null,
+    companyId: typeof companyId === 'string' && companyId !== '' ? companyId : null,
     supervisorId: typeof supervisorId === 'string' && supervisorId !== '' ? supervisorId : null,
     phone: str(row.phone),
     avatar: str(row.avatar),
@@ -173,24 +182,35 @@ const byName = (a: { name: string }, b: { name: string }): number => a.name.loca
  * `profile: null`, a nie błąd.
  */
 export async function loadOrgSnapshot(db: ReferenceDb, userId: string): Promise<LoadOrgResult> {
-  const [profilesRes, departmentsRes, statusesRes, serviceTypesRes, workCategoriesRes] =
-    await Promise.all([
-      db.select(
-        'profiles',
-        'id, first_name, last_name, email, role_title, access_role, department_id, supervisor_id, phone, avatar, avatar_path, capacity, work_days, work_start_minutes, work_end_minutes, birth_date',
-      ),
-      db.select('departments', 'id, name'),
-      db.select('statuses', 'id, name, slug, color, sort_order, archived, is_done'),
-      db.select('service_types', 'id, name'),
-      db.select('work_categories', 'id, name'),
-    ]);
+  const [
+    profilesRes,
+    departmentsRes,
+    statusesRes,
+    serviceTypesRes,
+    workCategoriesRes,
+    jobTitlesRes,
+    companiesRes,
+  ] = await Promise.all([
+    db.select(
+      'profiles',
+      'id, first_name, last_name, email, role_title, access_role, department_id, company_id, supervisor_id, phone, avatar, avatar_path, capacity, work_days, work_start_minutes, work_end_minutes, birth_date',
+    ),
+    db.select('departments', 'id, name'),
+    db.select('statuses', 'id, name, slug, color, sort_order, archived, is_done'),
+    db.select('service_types', 'id, name'),
+    db.select('work_categories', 'id, name'),
+    db.select('job_titles', 'id, name'),
+    db.select('companies', 'id, name'),
+  ]);
 
   if (
     profilesRes.error ||
     departmentsRes.error ||
     statusesRes.error ||
     serviceTypesRes.error ||
-    workCategoriesRes.error
+    workCategoriesRes.error ||
+    jobTitlesRes.error ||
+    companiesRes.error
   ) {
     return { ok: false, error: ORG_SNAPSHOT_ERROR };
   }
@@ -202,12 +222,23 @@ export async function loadOrgSnapshot(db: ReferenceDb, userId: string): Promise<
     .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
   const serviceTypes = serviceTypesRes.rows.map(toNamed).sort(byName);
   const workCategories = workCategoriesRes.rows.map((r) => toNamed(r) as WorkCategory).sort(byName);
+  const jobTitles = jobTitlesRes.rows.map((r) => toNamed(r) as JobTitle).sort(byName);
+  const companies = companiesRes.rows.map((r) => toNamed(r) as Company).sort(byName);
 
   const profile = profiles.find((p) => p.id === userId) ?? null;
 
   return {
     ok: true,
-    snapshot: { profile, profiles, departments, statuses, serviceTypes, workCategories },
+    snapshot: {
+      profile,
+      profiles,
+      departments,
+      statuses,
+      serviceTypes,
+      workCategories,
+      jobTitles,
+      companies,
+    },
   };
 }
 
@@ -259,6 +290,9 @@ export interface CloudPersonMergeRow {
   /** Id działu chmury ('' gdy brak) — po MERGE_CLOUD_DICTIONARIES lokalne
    *  działy noszą te same id, więc odniesienie jest bezpośrednie. */
   departmentId: string;
+  /** Id spółki chmury ('' gdy brak) — po MERGE_CLOUD_DICTIONARIES lokalne
+   *  spółki noszą te same id, więc odniesienie jest bezpośrednie. */
+  companyId: string;
   phone: string;
   avatar: string;
   capacity: number;
@@ -291,6 +325,7 @@ export function buildCloudPeoplePayload(profiles: CloudProfile[]): CloudPersonMe
       lastName: p.lastName,
       role: p.roleTitle,
       departmentId: p.departmentId ?? '',
+      companyId: p.companyId ?? '',
       phone: p.phone,
       avatar: p.avatar,
       capacity: p.capacity,

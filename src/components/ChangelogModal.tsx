@@ -102,7 +102,8 @@ function ChangelogModalShell({ onClose }: { onClose: () => void }) {
   );
 }
 
-function ChangelogEntryBlock({ entry }: { entry: ChangelogEntry }) {
+/** Blok jednego wpisu — współdzielony między popoutem a stroną `/changelog`. */
+export function ChangelogEntryBlock({ entry }: { entry: ChangelogEntry }) {
   const range = changelogRangeLabel(entry.dateFrom, entry.dateTo);
   const groups = groupByArea(entry.items);
   return (

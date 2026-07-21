@@ -34,6 +34,10 @@
   --n2-success-soft: rgba(185, 255, 77, 0.16);
   --n2-info: #5bdcff;
   --n2-info-soft: rgba(91, 220, 255, 0.14);
+  /* Wydarzenia kalendarza (spotkania): cyjan — wyraźnie inny niż fioletowo-
+     lawendowa paleta zadań/cykliczności. */
+  --event-accent: var(--n2-info);
+  --event-accent-soft: var(--n2-info-soft);
   --n2-warning: #ffc857;
   --n2-warning-soft: rgba(255, 200, 87, 0.16);
   --n2-danger: #ff4f72;
@@ -1838,6 +1842,14 @@ a.toggle-btn {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Per-block completion tick on a calendar/bin block (PKG-per-block-done). */
+.block-done-mark {
+  flex: none;
+  margin-left: auto;
+  color: var(--n2-success, #b9ff4d);
+  font-weight: 700;
+  line-height: 1;
+}
 .week-block-time {
   font-size: var(--n2-type-xs);
   color: var(--text-muted);
@@ -1860,6 +1872,99 @@ a.toggle-btn {
   color: var(--text);
   font-family: var(--n2-font-data);
   font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Recurring-task occurrence overlay (presentational only) ----------
+   Visually distinct from real `.week-block`s: a dashed, translucent, striped
+   block that reads as a "ghost" of a repeating task. It carries NO drag/resize
+   affordance and is rendered BEFORE the real blocks in the column, so in the
+   same paint step (tree order) real blocks always paint on top of it — without
+   changing the `.week-block` stacking context (invariant 7). */
+.week-recur-block {
+  position: absolute;
+  left: 1px;
+  right: 2px;
+  z-index: 0;
+  box-sizing: border-box;
+  text-align: left;
+  border: 2px dashed var(--n2-lavender);
+  border-radius: var(--n2-radius-xs);
+  /* Faint diagonal stripes so it never looks like a solid, schedulable block. */
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(196, 150, 255, 0.16) 0,
+    rgba(196, 150, 255, 0.16) 6px,
+    rgba(196, 150, 255, 0.05) 6px,
+    rgba(196, 150, 255, 0.05) 12px
+  );
+  padding: 3px 7px;
+  cursor: pointer;
+  color: var(--text-muted);
+  opacity: 0.85;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+}
+.week-recur-block:hover {
+  opacity: 1;
+}
+.week-recur-block.overridden {
+  border-style: dotted;
+}
+.week-recur-title {
+  font-size: var(--n2-type-xs);
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.week-recur-time {
+  font-size: var(--n2-type-xs);
+  font-family: var(--n2-font-data);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Wydarzenia kalendarza (spotkania) — czysto prezentacyjne ---------- */
+/* Blok wydarzenia: SOLIDNA ramka + lewy pasek (to NIE ghost cykliczności), tło
+   cyjanowe, z-index: 0 — zawsze POD realnymi blokami zadań. Zero handlerów
+   pointer/drag (inwariant 7); tylko click/keyboard otwiera modal. */
+.week-event-block {
+  position: absolute;
+  left: 1px;
+  right: 2px;
+  z-index: 0;
+  box-sizing: border-box;
+  text-align: left;
+  border: 1px solid var(--event-accent);
+  border-left: 3px solid var(--event-accent);
+  border-radius: var(--n2-radius-xs);
+  background: var(--event-accent-soft);
+  padding: 3px 7px;
+  cursor: pointer;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+}
+.week-event-block:hover {
+  filter: brightness(1.08);
+}
+.week-event-title {
+  font-size: var(--n2-type-xs);
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.week-event-time {
+  font-size: var(--n2-type-xs);
+  font-family: var(--n2-font-data);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
 }
 
 /* ---------- Bin column (Zasobnik: dateless blocks) ---------- */
@@ -2088,6 +2193,123 @@ a.toggle-btn {
   line-height: 1;
   pointer-events: none;
 }
+/* Znacznik cyklicznych zadań w komórce miesiąca — mały ⟳ w rogu (tooltip z
+   tytułami). Czysto prezentacyjny; sumy/kropki bez zmian. */
+.month-cell-recur {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--n2-lavender);
+  pointer-events: none;
+}
+/* Znacznik wydarzeń w komórce miesiąca — mały 📅 w rogu (tooltip z tytułami).
+   Czysto prezentacyjny; sumy/kropki bez zmian. */
+.month-cell-event {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  font-size: 11px;
+  line-height: 1;
+  pointer-events: none;
+}
+
+/* ---------- Panel „Wydarzenia” ---------- */
+.event-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.event-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-sm);
+  background: var(--surface);
+  overflow: hidden;
+}
+.event-row-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+.event-row-main:hover {
+  background: var(--surface-hover, rgba(0, 0, 0, 0.03));
+}
+.event-row-when {
+  display: flex;
+  flex-direction: column;
+  min-width: 96px;
+  border-left: 3px solid var(--event-accent);
+  padding-left: 10px;
+}
+.event-row-date {
+  font-family: var(--n2-font-data);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.event-row-time {
+  font-family: var(--n2-font-data);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  font-size: var(--n2-type-xs);
+}
+.event-row-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.event-row-title {
+  font-weight: 600;
+}
+.event-row-meta {
+  color: var(--text-muted);
+  font-size: var(--n2-type-xs);
+}
+.event-row-badge {
+  align-self: flex-start;
+  margin-top: 2px;
+  font-size: var(--n2-type-xs);
+  color: var(--event-accent);
+  border: 1px solid var(--event-accent);
+  border-radius: var(--n2-radius-xs);
+  padding: 1px 6px;
+}
+.event-row-join {
+  align-self: center;
+  margin-right: 12px;
+}
+
+/* Modal wydarzenia: lista osób + wybór trybu cykliczności. */
+.event-attendees {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+.event-attendee-chip,
+.event-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.event-recur-mode {
+  display: flex;
+  gap: 18px;
+  margin-bottom: 6px;
+}
 .month-cell-dots {
   display: flex;
   align-items: center;
@@ -2218,6 +2440,14 @@ a.toggle-btn {
   text-decoration: line-through;
   color: var(--text-muted);
 }
+/* Per-block „Wykonane bloki”: highlight the row opened from a specific calendar
+   block so the user immediately sees which block they clicked. */
+.block-done-list .checklist-row.focused {
+  background: rgba(185, 255, 77, 0.12);
+  border-radius: 6px;
+  padding: 4px 6px;
+  margin: -4px -6px;
+}
 .checklist-add-row {
   display: flex;
   gap: 8px;
@@ -2231,6 +2461,66 @@ a.toggle-btn {
   font-size: var(--n2-type-xs);
   color: var(--text-muted);
   margin: 0 0 8px;
+}
+
+/* ---------- TaskModal „Cykliczność" (recurrence rule editor) ---------- */
+.recur-weekday-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.recur-day-chip {
+  min-width: 40px;
+  padding: 5px 10px;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-xs);
+  background: var(--card-bg-2);
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: var(--n2-type-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--n2-transition);
+}
+.recur-day-chip:hover:not(:disabled) {
+  border-color: var(--n2-border-strong);
+}
+.recur-day-chip.active {
+  background: var(--n2-lavender);
+  border-color: var(--n2-lavender);
+  color: #1a1030;
+}
+.recur-day-chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.recur-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 4px;
+}
+.recur-overrides {
+  margin-top: 10px;
+}
+.recur-override-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.recur-override-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.recur-override-text {
+  font-size: var(--n2-type-xs);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Task-card checklist progress + category label. */
@@ -5577,7 +5867,10 @@ a.toggle-btn {
   position: sticky;
   bottom: 0;
   z-index: 5;
-  background: var(--card-bg);
+  /* Treść przewija się POD paskiem — tło musi być w pełni kryjące
+     (--card-bg to półprzezroczysty rgba i prześwitywał). */
+  background: var(--n2-panel);
+  box-shadow: 0 -10px 18px -14px rgba(0, 0, 0, 0.7);
   border-top: 1px solid var(--n2-border);
   padding: var(--n2-space-3) 0;
   margin-top: var(--n2-space-4);
@@ -5619,6 +5912,30 @@ a.toggle-btn {
   border-top: 1px solid var(--n2-border);
   padding-top: 8px;
   margin-top: 4px;
+}
+
+/* Panel dostępności (informacyjny) w karcie zadania — reużywa układu
+   `.sold-hours-row`; tylko lekkie odseparowanie od bloku godzin osób. */
+.availability-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px dashed var(--n2-border);
+  padding-top: 8px;
+  margin-top: 4px;
+}
+.availability-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.availability-name {
+  min-width: 140px;
+  font-weight: 600;
+}
+.availability-meta {
+  font-size: 0.85em;
 }
 
 /* ---------- Zgłoszenia (zakładka „Zgłoszenia”) ---------- */
@@ -5731,6 +6048,12 @@ a.toggle-btn {
   margin-left: var(--n2-space-2);
   color: var(--n2-text-muted);
 }
+.changelog-bar-actions {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+}
 .changelog-bar-btn {
   flex: none;
 }
@@ -5738,6 +6061,19 @@ a.toggle-btn {
   .changelog-bar-summary {
     display: none;
   }
+}
+
+/* Strona /changelog — pełna historia; wpisy reużywają stylów .changelog-* z popoutu. */
+.changelog-page {
+  max-width: 760px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-5);
+}
+.changelog-page-intro {
+  margin: 0;
+  color: var(--n2-text-muted);
+  font-size: var(--n2-type-sm);
 }
 
 .changelog-modal-card {

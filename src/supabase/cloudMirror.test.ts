@@ -58,7 +58,7 @@ function makeTask(o: Partial<Task> & { id: string }): Task {
   };
 }
 const cloudProfile = (o: Partial<CloudProfile> & { id: string }): CloudProfile => ({
-  firstName: '', lastName: '', email: '', roleTitle: '', cloudRole: 'worker', departmentId: null, supervisorId: null, phone: '', avatar: '', capacity: 8, workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, birthDate: '', ...o,
+  firstName: '', lastName: '', email: '', roleTitle: '', cloudRole: 'worker', departmentId: null, companyId: null, supervisorId: null, phone: '', avatar: '', capacity: 8, workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, birthDate: '', ...o,
 });
 
 // A local AppData + a cloud org snapshot whose ids/keys line up so the maps
@@ -83,6 +83,8 @@ function orgFixture(): OrgSnapshot {
     statuses: [{ id: S1, name: 'Do zrobienia', slug: 'todo', color: '#fff', order: 0, archived: false, isDone: false }],
     serviceTypes: [{ id: SV, name: 'Wideo' }],
     workCategories: [{ id: WC, name: 'Design' }],
+    jobTitles: [],
+    companies: [],
   };
 }
 const maps = (): CloudIdMaps => buildCloudIdMaps(localFixture(), orgFixture());
@@ -111,6 +113,8 @@ describe('buildCloudIdMaps', () => {
       serviceTypes: [{ id: SV, name: 'Wideo' }],
       workCategories: [{ id: WC, name: 'Design' }],
       departments: [{ id: uuid('cloud-dept'), name: 'Kreacja' }],
+      jobTitles: [],
+      companies: [],
     };
     const m = buildCloudIdMaps(local, org);
     expect(m.people.get(PA)).toBe(CLOUD_PA); // by normalized email
@@ -212,6 +216,54 @@ describe('diffToCloudOps — families', () => {
     expect(rowOf(TK2).is_draft).toBe(false);
   });
 
+  it('task upsert mapuje draftHours na draft_hours (profil per wpis; niemapowalny odpada; brak => null)', () => {
+    const m = maps();
+    const TK2 = uuid('task-two');
+    const TK3 = uuid('task-three');
+    const prev: AppData = { ...localFixture(), tasks: [] };
+    const next: AppData = {
+      ...localFixture(),
+      tasks: [
+        makeTask({ id: TK, isDraft: true, draftHours: [{ personId: PA, hours: 4 }, { personId: uuid('ghost'), hours: 9 }] }),
+        makeTask({ id: TK2, isDraft: true }), // szkic bez godzin => null
+        makeTask({ id: TK3 }), // opublikowane => null
+      ],
+    };
+    const upserts = diffToCloudOps(prev, next, m).ops.filter(
+      (o) => o.table === 'tasks' && o.kind === 'upsert',
+    );
+    const rowOf = (id: string) => upserts.find((o) => o.row!.id === id)!.row!;
+    // Niemapowalny wpis odpada; mapowalny niesie cloud profile id.
+    expect(rowOf(TK).draft_hours).toEqual([{ profile_id: CLOUD_PA, hours: 4 }]);
+    expect(rowOf(TK2).draft_hours).toBeNull();
+    expect(rowOf(TK3).draft_hours).toBeNull();
+  });
+
+  it('task upsert niesie recurrence dosłownie (obiekt kanoniczny; brak => null)', () => {
+    const m = maps();
+    const TK2 = uuid('task-two');
+    const rec = {
+      daysOfWeek: [1],
+      startMinutes: 540,
+      durationMinutes: 60,
+      overrides: [{ date: '2026-07-13', startMinutes: 600, durationMinutes: 30 }],
+    };
+    const prev: AppData = { ...localFixture(), tasks: [] };
+    const next: AppData = {
+      ...localFixture(),
+      tasks: [
+        makeTask({ id: TK, recurrence: rec }),
+        makeTask({ id: TK2 }), // brak reguły => null
+      ],
+    };
+    const upserts = diffToCloudOps(prev, next, m).ops.filter(
+      (o) => o.table === 'tasks' && o.kind === 'upsert',
+    );
+    const rowOf = (id: string) => upserts.find((o) => o.row!.id === id)!.row!;
+    expect(rowOf(TK).recurrence).toEqual(rec);
+    expect(rowOf(TK2).recurrence).toBeNull();
+  });
+
   it('a rejected reorder (unknown task) keeps the state reference so the diff emits zero ops', () => {
     const m = maps();
     const prev: AppData = { ...localFixture(), tasks: [makeTask({ id: TK, orderIndex: 0 })] };
@@ -299,6 +351,21 @@ describe('diffToCloudOps — milestones + workload families', () => {
     ]);
   });
 
+  it('serializes the per-block done flag (PKG-per-block-done): true when set, false otherwise', () => {
+    const m = maps();
+    const base = { ...localFixture(), tasks: [makeTask({ id: TK })] };
+    const doneRow = { id: WD, taskId: TK, personId: PA, date: '2026-07-06', plannedHours: 2, startMinutes: 480, sortIndex: 0, done: true };
+    const withDone: AppData = { ...base, workload: [doneRow] };
+    const up = diffToCloudOps(base, withDone, m).ops.find((o) => o.table === 'workload_entries');
+    expect(up!.row).toMatchObject({ id: WD, done: true });
+
+    // A row without the flag serializes done: false (default, not undefined).
+    const plain = { ...doneRow, done: undefined };
+    const withPlain: AppData = { ...base, workload: [plain] };
+    const upPlain = diffToCloudOps(base, withPlain, m).ops.find((o) => o.table === 'workload_entries');
+    expect(upPlain!.row).toMatchObject({ id: WD, done: false });
+  });
+
   it('maps a bin workload row work_date to null', () => {
     const m = maps();
     const bin = { id: WB, taskId: TK, personId: PA, date: '', plannedHours: 4, startMinutes: 0, sortIndex: 0 };
@@ -355,6 +422,54 @@ describe('diffToCloudOps — milestones + workload families', () => {
     const r2 = diffToCloudOps(prev, badId, m);
     expect(r2.ops.filter((o) => o.table === 'workload_entries')).toHaveLength(0);
     expect(r2.diagnostics.length).toBeGreaterThan(0);
+  });
+});
+
+describe('diffToCloudOps — wydarzenia kalendarza', () => {
+  const EV = uuid('event-1');
+  const makeEvent = (o: Record<string, unknown> = {}) => ({
+    id: EV,
+    title: 'Spotkanie',
+    description: '',
+    location: '',
+    meetingUrl: '',
+    date: '2026-07-06',
+    startMinutes: 540,
+    durationMinutes: 60,
+    attendeeIds: [] as string[],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    ...o,
+  });
+
+  it('event upsert mapuje attendees na profile chmury (niemapowalny odpada)', () => {
+    const m = maps();
+    const prev: AppData = { ...localFixture(), events: [] };
+    const next: AppData = {
+      ...localFixture(),
+      events: [makeEvent({ attendeeIds: [PA, uuid('ghost'), PB] })],
+    };
+    const { ops, diagnostics } = diffToCloudOps(prev, next, m);
+    const up = ops.find((o) => o.table === 'events' && o.kind === 'upsert');
+    expect(up).toBeDefined();
+    expect(up!.row).toMatchObject({
+      id: EV,
+      event_date: '2026-07-06',
+      start_minutes: 540,
+      duration_minutes: 60,
+      attendee_ids: [CLOUD_PA, CLOUD_PB],
+    });
+    expect(diagnostics.length).toBeGreaterThan(0); // niemapowalny uczestnik
+  });
+
+  it('emituje remove dla usuniętego wydarzenia (id UUID)', () => {
+    const m = maps();
+    const prev: AppData = { ...localFixture(), events: [makeEvent()] };
+    const next: AppData = { ...localFixture(), events: [] };
+    const rm = diffToCloudOps(prev, next, m).ops.find(
+      (o) => o.table === 'events' && o.kind === 'remove',
+    );
+    expect(rm!.match).toEqual({ id: EV });
   });
 });
 
@@ -467,12 +582,50 @@ describe('diffToCloudOps — słowniki i profile (przewód zapisu paneli admina)
     ]);
   });
 
+  it('stanowiska: dodanie/zmiana emituje upsert, usunięcie emituje remove do job_titles (UUID)', () => {
+    const jt = uuid('jt-1');
+    const prev: AppData = { ...localFixture(), jobTitles: [{ id: jt, name: 'Grafik' }] };
+    // Dodanie nowego + zmiana nazwy istniejącego.
+    const jt2 = uuid('jt-2');
+    const added: AppData = {
+      ...prev,
+      jobTitles: [{ id: jt, name: 'Senior Grafik' }, { id: jt2, name: 'Programista' }],
+    };
+    const addOps = diffToCloudOps(prev, added, maps()).ops.filter((o) => o.table === 'job_titles');
+    expect(addOps.map((o) => o.kind).sort()).toEqual(['upsert', 'upsert']);
+    expect(addOps.find((o) => o.sourceId === jt2)!.row).toMatchObject({ id: jt2, name: 'Programista' });
+    // Usunięcie wiersza o UUID emituje remove.
+    const removeOps = diffToCloudOps(prev, { ...prev, jobTitles: [] }, maps()).ops.filter(
+      (o) => o.table === 'job_titles',
+    );
+    expect(removeOps).toEqual([expect.objectContaining({ kind: 'remove', sourceId: jt })]);
+  });
+
+  it('spółki: dodanie/zmiana emituje upsert, usunięcie emituje remove do companies (UUID)', () => {
+    const co = uuid('co-1');
+    const prev: AppData = { ...localFixture(), companies: [{ id: co, name: 'Acme' }] };
+    // Dodanie nowego + zmiana nazwy istniejącego.
+    const co2 = uuid('co-2');
+    const added: AppData = {
+      ...prev,
+      companies: [{ id: co, name: 'Acme Studio' }, { id: co2, name: 'Globex' }],
+    };
+    const addOps = diffToCloudOps(prev, added, maps()).ops.filter((o) => o.table === 'companies');
+    expect(addOps.map((o) => o.kind).sort()).toEqual(['upsert', 'upsert']);
+    expect(addOps.find((o) => o.sourceId === co2)!.row).toMatchObject({ id: co2, name: 'Globex' });
+    // Usunięcie wiersza o UUID emituje remove.
+    const removeOps = diffToCloudOps(prev, { ...prev, companies: [] }, maps()).ops.filter(
+      (o) => o.table === 'companies',
+    );
+    expect(removeOps).toEqual([expect.objectContaining({ kind: 'remove', sourceId: co })]);
+  });
+
   it('edycja osoby emituje WYŁĄCZNIE update istniejącego profilu chmury', () => {
     const prev = localFixture();
     const next: AppData = {
       ...prev,
       people: [
-        { ...prev.people[0], role: 'Projektant', capacity: 6, accessRole: 'pm', birthDate: '1990-06-01' },
+        { ...prev.people[0], role: 'Projektant', capacity: 6, accessRole: 'pm', birthDate: '1990-06-01', companyId: 'company-uuid' },
         prev.people[1],
         // Nowa osoba lokalna bez konta chmury — NIE wolno robić insertu.
         makePerson({ id: uuid('local-only'), email: 'nowa@x.com' }),
@@ -492,6 +645,7 @@ describe('diffToCloudOps — słowniki i profile (przewód zapisu paneli admina)
       capacity: 6,
       access_role: 'manager',
       birth_date: '1990-06-01', // '' mapuje się na null; poprawna data przechodzi
+      company_id: 'company-uuid', // '' mapuje się na null; ustawiona spółka przechodzi
     });
     // Nowa osoba nie generuje op-a (konto tworzy provisioning) — jest diagnostyka.
     expect(diagnostics.length).toBeGreaterThan(0);

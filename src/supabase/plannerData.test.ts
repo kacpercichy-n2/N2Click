@@ -4,9 +4,9 @@
 // atomic failure and empty-collection validity. No SDK, no live Supabase.
 import { describe, expect, it } from 'vitest';
 import { emptyData } from '../store/storage';
-import type { AppData, Person } from '../types';
+import type { AppData, Person, Task } from '../types';
 import type { CloudProfile, OrgSnapshot } from './referenceData';
-import { buildCloudIdMaps, type CloudIdMaps } from './cloudMirror';
+import { buildCloudIdMaps, diffToCloudOps, type CloudIdMaps } from './cloudMirror';
 import {
   classifyWriteError,
   createSupabasePlannerDb,
@@ -43,7 +43,7 @@ function makePerson(o: Partial<Person> & { id: string }): Person {
   };
 }
 const cloudProfile = (o: Partial<CloudProfile> & { id: string }): CloudProfile => ({
-  firstName: '', lastName: '', email: '', roleTitle: '', cloudRole: 'worker', departmentId: null, supervisorId: null, phone: '', avatar: '', capacity: 8, workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, birthDate: '', ...o,
+  firstName: '', lastName: '', email: '', roleTitle: '', cloudRole: 'worker', departmentId: null, companyId: null, supervisorId: null, phone: '', avatar: '', capacity: 8, workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, birthDate: '', ...o,
 });
 
 function localFixture(): AppData {
@@ -63,6 +63,8 @@ function orgFixture(): OrgSnapshot {
     statuses: [{ id: S1, name: 'Do zrobienia', slug: 'todo', color: '', order: 0, archived: false, isDone: false }],
     serviceTypes: [{ id: SV, name: 'Wideo' }],
     workCategories: [{ id: WC, name: 'Design' }],
+    jobTitles: [],
+    companies: [],
   };
 }
 const maps = (): CloudIdMaps => buildCloudIdMaps(localFixture(), orgFixture());
@@ -300,6 +302,93 @@ describe('loadPlannerSnapshot', () => {
     expect(result.payload.tasks.find((t) => t.id === TK2)!.isDraft).toBe(false);
   });
 
+  it('hydrates draft_hours only for is_draft rows: profil odwrócony, snap, dedup; publikowany wiersz z draft_hours ignoruje pole', async () => {
+    const TK2 = uuid('task-two');
+    const db = new FakeSelectDb()
+      .seed('projects', [
+        { id: PR, client_id: null, name: 'P', description: '', status_id: S1, paid: false, start_date: '2026-07-06', end_date: '2026-07-12', department_id: null, service_type_id: null, created_at: '', updated_at: '' },
+      ])
+      .seed('tasks', [
+        {
+          id: TK, project_id: PR, status_id: S1, title: 'Szkic', description: '', start_date: '2026-07-06', end_date: '2026-07-08',
+          estimated_hours: null, priority: 'normal', work_category_id: null, checklist: [], order_index: 0, is_draft: true,
+          // 4,3h snapuje do 4,25; profil-widmo odpada; hours<=0 odpada.
+          draft_hours: [
+            { profile_id: CLOUD_PA, hours: 4.3 },
+            { profile_id: uuid('ghost-profile'), hours: 9 },
+            { profile_id: CLOUD_PA, hours: 1 }, // duplikat -> pierwszy wygrywa
+          ],
+          created_at: '', updated_at: '',
+        },
+        {
+          id: TK2, project_id: PR, status_id: S1, title: 'Opublikowane', description: '', start_date: '2026-07-06', end_date: '2026-07-08',
+          estimated_hours: null, priority: 'normal', work_category_id: null, checklist: [], order_index: 0, is_draft: false,
+          draft_hours: [{ profile_id: CLOUD_PA, hours: 5 }],
+          created_at: '', updated_at: '',
+        },
+      ]);
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.payload.tasks.find((t) => t.id === TK)!.draftHours).toEqual([{ personId: PA, hours: 4.25 }]);
+    // Wiersz opublikowany nie dostaje klucza mimo obecnego draft_hours.
+    expect('draftHours' in result.payload.tasks.find((t) => t.id === TK2)!).toBe(false);
+  });
+
+  it('hydrates recurrence only for published rows: canonical, NULL/draft => key absent', async () => {
+    const TK2 = uuid('task-two');
+    const TK3 = uuid('task-three');
+    const rec = {
+      daysOfWeek: [1],
+      startMinutes: 540,
+      durationMinutes: 60,
+      overrides: [{ date: '2026-07-13', skip: true }],
+    };
+    const db = new FakeSelectDb()
+      .seed('projects', [
+        { id: PR, client_id: null, name: 'P', description: '', status_id: S1, paid: false, start_date: '2026-07-06', end_date: '2026-07-20', department_id: null, service_type_id: null, created_at: '', updated_at: '' },
+      ])
+      .seed('tasks', [
+        // Published with a rule + override — hydrated canonically.
+        { id: TK, project_id: PR, status_id: S1, title: 'Cykliczne', description: '', start_date: '2026-07-06', end_date: '2026-07-20', estimated_hours: null, priority: 'normal', work_category_id: null, checklist: [], order_index: 0, is_draft: false, recurrence: rec, created_at: '', updated_at: '' },
+        // NULL column => key absent.
+        { id: TK2, project_id: PR, status_id: S1, title: 'Bez reguły', description: '', start_date: '2026-07-06', end_date: '2026-07-20', estimated_hours: null, priority: 'normal', work_category_id: null, checklist: [], order_index: 0, is_draft: false, recurrence: null, created_at: '', updated_at: '' },
+        // Draft row carrying a rule => never hydrated.
+        { id: TK3, project_id: PR, status_id: S1, title: 'Szkic z regułą', description: '', start_date: '2026-07-06', end_date: '2026-07-20', estimated_hours: null, priority: 'normal', work_category_id: null, checklist: [], order_index: 0, is_draft: true, recurrence: rec, created_at: '', updated_at: '' },
+      ]);
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.payload.tasks.find((t) => t.id === TK)!.recurrence).toEqual(rec);
+    expect('recurrence' in result.payload.tasks.find((t) => t.id === TK2)!).toBe(false);
+    expect('recurrence' in result.payload.tasks.find((t) => t.id === TK3)!).toBe(false);
+  });
+
+  it('round-trip nieruszonego szkicu zachowuje formę kanoniczną draftHours (mirror -> hydracja)', async () => {
+    const localTask: Task = {
+      id: TK, projectId: PR, statusId: S1, title: 'Szkic', description: '',
+      startDate: '2026-07-06', endDate: '2026-07-08', estimatedHours: null, priority: 'normal',
+      workCategoryId: '', departmentId: '', checklist: [], orderIndex: 0, isDraft: true,
+      draftHours: [{ personId: PA, hours: 4.25 }],
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    // Mirror lokalnego szkicu na wiersz chmury (draft_hours jsonb).
+    const ops = diffToCloudOps({ ...localFixture(), tasks: [] }, { ...localFixture(), tasks: [localTask] }, maps()).ops;
+    const taskRow = ops.find((o) => o.table === 'tasks' && o.kind === 'upsert')!.row!;
+    expect(taskRow.draft_hours).toEqual([{ profile_id: CLOUD_PA, hours: 4.25 }]);
+
+    const db = new FakeSelectDb()
+      .seed('projects', [
+        { id: PR, client_id: null, name: 'P', description: '', status_id: S1, paid: false, start_date: '2026-07-06', end_date: '2026-07-12', department_id: null, service_type_id: null, created_at: '', updated_at: '' },
+      ])
+      .seed('tasks', [taskRow]);
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Klucz obecny i wartość identyczna => sameRowValue zostaje no-opem.
+    expect(result.payload.tasks[0].draftHours).toEqual(localTask.draftHours);
+  });
+
   it('excludes a project with null dates and a task over the 92-day cap', async () => {
     const db = new FakeSelectDb()
       .seed('projects', [
@@ -370,7 +459,7 @@ describe('loadPlannerSnapshot', () => {
       ])
       .seed('workload_entries', [
         { id: uuid('wl-bin'), task_id: TK, profile_id: CLOUD_PA, work_date: null, planned_hours: 4, start_minutes: 0, sort_index: 0 },
-        { id: uuid('wl-dated'), task_id: TK, profile_id: CLOUD_PA, work_date: '2026-07-06', planned_hours: 2, start_minutes: 480, sort_index: 1 },
+        { id: uuid('wl-dated'), task_id: TK, profile_id: CLOUD_PA, work_date: '2026-07-06', planned_hours: 2, start_minutes: 480, sort_index: 1, done: true },
         { id: uuid('wl-offgrid'), task_id: TK, profile_id: CLOUD_PA, work_date: '2026-07-06', planned_hours: 0.3, start_minutes: 0, sort_index: 2 }, // off-grid -> excluded
         { id: uuid('wl-ghost'), task_id: TK, profile_id: uuid('ghost-profile'), work_date: null, planned_hours: 1, start_minutes: 0, sort_index: 3 }, // unmappable -> excluded
         { id: uuid('wl-bin2'), task_id: TK, profile_id: CLOUD_PA, work_date: null, planned_hours: 1, start_minutes: 0, sort_index: 4 }, // dup bin pair -> excluded
@@ -384,8 +473,10 @@ describe('loadPlannerSnapshot', () => {
     ]);
     // Only the first bin row + the valid dated row survive; person reversed to PA.
     expect(p.workload).toHaveLength(2);
-    expect(p.workload.find((w) => w.date === '')).toMatchObject({ personId: PA, plannedHours: 4, startMinutes: 0 });
-    expect(p.workload.find((w) => w.date === '2026-07-06')).toMatchObject({ personId: PA, plannedHours: 2, startMinutes: 480 });
+    // Per-block done (PKG-per-block-done): bin row has no flag -> false; the
+    // dated row carried done:true in the cloud -> hydrates as done.
+    expect(p.workload.find((w) => w.date === '')).toMatchObject({ personId: PA, plannedHours: 4, startMinutes: 0, done: false });
+    expect(p.workload.find((w) => w.date === '2026-07-06')).toMatchObject({ personId: PA, plannedHours: 2, startMinutes: 480, done: true });
     expect(result.diagnostics.length).toBeGreaterThanOrEqual(3);
   });
 
@@ -395,9 +486,52 @@ describe('loadPlannerSnapshot', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.payload).toEqual({
-      clients: [], projects: [], milestones: [], tasks: [], assignments: [], workload: [], comments: [], activity: [], tickets: [],
+      clients: [], projects: [], milestones: [], tasks: [], assignments: [], workload: [], comments: [], activity: [], tickets: [], events: [],
     });
     expect(result.diagnostics).toEqual([]);
+  });
+
+  it('mapuje wiersz wydarzenia: data/minuty/attendees/recurrence/meeting_url', async () => {
+    const EV = uuid('ev1');
+    const db = new FakeSelectDb().seed('events', [
+      {
+        id: EV,
+        title: 'Spotkanie',
+        description: 'opis',
+        location: 'Sala A',
+        meeting_url: 'meet.example.test/x', // bez schematu -> https://
+        event_date: '2026-07-06', // poniedziałek (ISO 1)
+        start_minutes: 540,
+        duration_minutes: 60,
+        attendee_ids: [CLOUD_PA, uuid('ghost-profile')], // ghost odpada
+        recurrence: { daysOfWeek: [1, 3], startMinutes: 0, durationMinutes: 15 }, // czasy zostaną wymuszone
+        created_at: '2026-01-01T00:00:00.000Z',
+        updated_at: '2026-02-01T00:00:00.000Z',
+      },
+    ]);
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.payload.events).toHaveLength(1);
+    const e = result.payload.events![0];
+    expect(e).toMatchObject({
+      id: EV,
+      title: 'Spotkanie',
+      location: 'Sala A',
+      meetingUrl: 'https://meet.example.test/x',
+      date: '2026-07-06',
+      startMinutes: 540,
+      durationMinutes: 60,
+      attendeeIds: [PA], // profil chmury zmapowany do lokalnego, ghost odpada
+    });
+    // Forma kanoniczna: czasy reguły = czasy wydarzenia; dzień kotwicy obecny.
+    expect(e.recurrence).toEqual({ daysOfWeek: [1, 3], startMinutes: 540, durationMinutes: 60 });
+  });
+
+  it('błąd selecta events => fail-closed z polskim komunikatem', async () => {
+    const db = new FakeSelectDb().fail('events');
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result).toEqual({ ok: false, error: PLANNER_SNAPSHOT_ERROR });
   });
 });
 

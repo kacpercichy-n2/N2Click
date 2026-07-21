@@ -17,10 +17,15 @@ import type {
   ActivityEntityType,
   ActivityEvent,
   AppData,
+  CalendarEvent,
   ChecklistItem,
   CommentEntityType,
+  Company,
   Department,
   FilterPage,
+  FilterViewKey,
+  JobTitle,
+  LastViewFilter,
   Milestone,
   Person,
   Project,
@@ -54,14 +59,22 @@ import { anyDirty } from '../utils/dirtyRegistry';
 import { shouldSkipLocalPersist } from './persistGate';
 import {
   hasEntity,
+  hasWorkloadEntry,
+  isFilterPage,
+  isFilterViewKey,
   isRequiredName,
+  isStructuralLastViewFilter,
   isValidClientDraft,
   isValidPersonDraft,
   isValidProjectDraft,
   isValidTaskDraft,
   isValidTicketDraft,
   isValidTicketStatus,
+  normalizeEventDraft,
+  lastViewFilterEqual,
   normalizeProjectDocumentDraft,
+  sanitizeFilterCriteria,
+  sanitizeLastViewFilter,
 } from './commandValidation';
 import {
   DEFAULT_TICKET_STATUS,
@@ -70,6 +83,7 @@ import {
   isTicketStatus,
 } from '../utils/tickets';
 import { wouldCreateSupervisorCycle } from './selectors';
+import { isOccurrenceDate, normalizeRecurrence } from '../utils/recurrence';
 import { ROLE_LABELS } from './permissions';
 import { registerPersonOrder } from '../utils/colors';
 import {
@@ -152,6 +166,21 @@ export interface TicketDraft {
   reporterId: string;
 }
 
+/** Draft wydarzenia kalendarza (modal „Wydarzenia”). Pola modelu bez
+ *  id/createdAt/updatedAt. `recurrence` niesie surową regułę z UI albo `null`
+ *  (jednorazowe) — reduktor kanonikalizuje ją przez `normalizeEventDraft`. */
+export interface EventDraft {
+  title: string;
+  description: string;
+  location: string;
+  meetingUrl: string;
+  date: string;
+  startMinutes: number;
+  durationMinutes: number;
+  attendeeIds: string[];
+  recurrence: unknown | null;
+}
+
 export interface PersonDraft {
   firstName: string;
   lastName: string;
@@ -159,6 +188,9 @@ export interface PersonDraft {
   phone: string;
   role: string;
   departmentId: string;
+  // Spółka (przypisanie administratora). Wymagana w draftcie jak supervisorId;
+  // '' = brak. `Person.companyId` pozostaje opcjonalne (zaszłości).
+  companyId: string;
   avatar: string;
   capacity: number;
   accessRole: AccessRole;
@@ -214,7 +246,25 @@ export type Action =
   | { type: 'MOVE_TASK'; taskId: string; dayDelta: number }
   | { type: 'SET_TASK_DATES'; taskId: string; startDate: string; endDate: string }
   | { type: 'SET_TASK_STATUS'; taskId: string; statusId: string }
+  | { type: 'SET_BLOCK_DONE'; entryId: string; done: boolean }
   | { type: 'REORDER_PROJECT_TASK'; taskId: string; direction: -1 | 1 }
+  // Cykliczność zadania: reguła (create / „edytuj wszystkie” / clear) i per-datowy
+  // wyjątek („edytuj to wystąpienie”). Wystąpienia są WYŁĄCZNIE prezentacyjne —
+  // nie tworzą wierszy workload (inwariant 1). Niepoprawne wejście => TA SAMA
+  // referencja stanu (inwariant 6).
+  | {
+      type: 'SET_TASK_RECURRENCE';
+      taskId: string;
+      recurrence:
+        | { daysOfWeek: number[]; startMinutes: number; durationMinutes: number; until?: string }
+        | null;
+    }
+  | {
+      type: 'SET_RECURRENCE_OVERRIDE';
+      taskId: string;
+      date: string;
+      override: { skip: true } | { startMinutes: number; durationMinutes: number } | null;
+    }
   // Publikacja szkiców: całego projektu (atomowo) lub pojedynczego zadania.
   | { type: 'PUBLISH_PROJECT_DRAFTS'; projectId: string }
   | { type: 'PUBLISH_TASK'; taskId: string }
@@ -236,6 +286,9 @@ export type Action =
   | { type: 'SAVE_TICKET'; ticketId: string; draft: TicketDraft }
   | { type: 'SET_TICKET_STATUS'; ticketId: string; status: TicketStatus }
   | { type: 'DELETE_TICKET'; ticketId: string }
+  | { type: 'ADD_EVENT'; draft: EventDraft }
+  | { type: 'SAVE_EVENT'; eventId: string; draft: EventDraft }
+  | { type: 'DELETE_EVENT'; eventId: string }
   | { type: 'ADD_PERSON'; person: PersonDraft }
   | { type: 'UPDATE_PERSON'; personId: string; person: PersonDraft }
   | { type: 'DELETE_PERSON'; personId: string }
@@ -252,6 +305,12 @@ export type Action =
   | { type: 'ADD_DEPARTMENT'; name: string }
   | { type: 'RENAME_DEPARTMENT'; departmentId: string; name: string }
   | { type: 'DELETE_DEPARTMENT'; departmentId: string }
+  | { type: 'ADD_JOB_TITLE'; name: string }
+  | { type: 'RENAME_JOB_TITLE'; jobTitleId: string; name: string }
+  | { type: 'DELETE_JOB_TITLE'; jobTitleId: string }
+  | { type: 'ADD_COMPANY'; name: string }
+  | { type: 'RENAME_COMPANY'; companyId: string; name: string }
+  | { type: 'DELETE_COMPANY'; companyId: string }
   | { type: 'ADD_SERVICE_TYPE'; name: string }
   | { type: 'RENAME_SERVICE_TYPE'; serviceTypeId: string; name: string }
   | { type: 'DELETE_SERVICE_TYPE'; serviceTypeId: string }
@@ -272,6 +331,10 @@ export type Action =
   | { type: 'DELETE_BLOCK'; entryId: string }
   | { type: 'SAVE_FILTER_PRESET'; name: string; page: FilterPage; criteria: SavedFilterCriteria }
   | { type: 'DELETE_FILTER_PRESET'; filterId: string }
+  // Zapamiętanie ostatnio użytego (nienazwanego) filtra dla widoku. LOKALNE ONLY.
+  // Sanityzowany → porównany po wartości → no-op zwraca TĘ SAMĄ referencję; nieznany
+  // widok lub strukturalnie zniekształcony ładunek też => ta sama referencja.
+  | { type: 'SET_LAST_FILTER'; view: FilterViewKey; filter: LastViewFilter }
   | { type: 'LOAD_SAMPLE'; data: AppData }
   | { type: 'DISMISS_SAMPLE_BANNER' }
   | { type: 'RESET_ALL'; data: AppData }
@@ -392,6 +455,76 @@ function reindexDays(workload: WorkloadEntry[], keys: Set<string>): WorkloadEntr
   });
 }
 
+/**
+ * Kanoniczne `Task.draftHours` z celów zasobnika szkicu (`binTotals`): tylko
+ * osoby przypisane, `snapHours` na wpis, wpisy `<= 0` odpadają, jeden wpis na
+ * osobę (pierwszy wygrywa). Pusty wynik => `undefined` (klucz NIEOBECNY, forma
+ * kanoniczna — patrz `Task.draftHours`).
+ */
+function draftHoursFromBinTotals(
+  binTotals: Array<{ personId: string; hours: number }> | undefined,
+  assigneeIds: string[],
+): Array<{ personId: string; hours: number }> | undefined {
+  const assigned = new Set(assigneeIds);
+  const byPerson = new Map<string, number>();
+  for (const item of binTotals ?? []) {
+    if (!assigned.has(item.personId)) continue;
+    if (byPerson.has(item.personId)) continue; // pierwszy wpis osoby wygrywa
+    const hours = snapHours(item.hours);
+    if (hours <= 0) continue;
+    byPerson.set(item.personId, hours);
+  }
+  if (byPerson.size === 0) return undefined;
+  return [...byPerson].map(([personId, hours]) => ({ personId, hours }));
+}
+
+/**
+ * Materializacja `draftHours` szkicu w wiersze ZASOBNIKA przy publikacji
+ * (mirror ścieżki „świeży wiersz” z binTotals). Dla każdego wpisu, którego
+ * osoba istnieje, jest przypisana do zadania i ma `snapHours(hours) > 0`,
+ * powstaje DOKŁADNIE jeden wiersz `{ date: BIN_DATE, startMinutes: 0 }`. Obrona
+ * inwariantu 4: pomijamy osobę już wyemitowaną dla zadania oraz parę mającą już
+ * wiersz zasobnika w stanie. `accumulated` niesie stan + dotychczas dopisane
+ * wiersze (świeży `sortIndex`). Wpisy niepoprawne/osierocone są cicho pomijane
+ * — publikacja nie może paść przez nieaktualny wiersz z chmury.
+ */
+function materializeDraftBin(
+  state: AppData,
+  accumulated: WorkloadEntry[],
+  task: Task,
+): WorkloadEntry[] {
+  const assignedToTask = new Set(
+    state.assignments.filter((a) => a.taskId === task.id).map((a) => a.personId),
+  );
+  const emitted = new Set<string>();
+  const existingBinPair = new Set(
+    accumulated
+      .filter((w) => w.taskId === task.id && isBinEntry(w))
+      .map((w) => w.personId),
+  );
+  const rows: WorkloadEntry[] = [];
+  for (const entry of task.draftHours ?? []) {
+    const personId = entry.personId;
+    if (emitted.has(personId) || existingBinPair.has(personId)) continue;
+    if (!hasEntity(state, 'person', personId)) continue;
+    if (!assignedToTask.has(personId)) continue;
+    const hours = snapHours(entry.hours);
+    if (hours <= 0) continue;
+    emitted.add(personId);
+    const around = [...accumulated, ...rows];
+    rows.push({
+      id: uid(),
+      taskId: task.id,
+      personId,
+      date: BIN_DATE,
+      plannedHours: hours,
+      startMinutes: 0,
+      sortIndex: nextSortIndex(around, personId, BIN_DATE),
+    });
+  }
+  return rows;
+}
+
 // ---- Task handlers ----
 
 /** Wholesale-replace the checklist from the draft: trim texts, drop empty ones. */
@@ -488,29 +621,39 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
       prev.projectId === draft.projectId
         ? prev.orderIndex
         : maxOrderIndexOfProject(state, draft.projectId) + 1;
-    tasks = tasks.map((t) =>
-      t.id === taskId
-        ? {
-            ...t,
-            projectId: draft.projectId,
-            statusId: draft.statusId,
-            title: draft.title,
-            description: draft.description,
-            startDate: draft.startDate,
-            endDate: draft.endDate,
-            estimatedHours: draft.estimatedHours,
-            priority: draft.priority,
-            workCategoryId,
-            departmentId,
-            checklist,
-            orderIndex,
-            // Edycja NIGDY nie zmienia stanu publikacji: zachowaj `isDraft`
-            // istniejącego zadania (publikację robią wyłącznie akcje PUBLISH_*).
-            isDraft: t.isDraft,
-            updatedAt: ts,
-          }
-        : t,
-    );
+    // Cykliczność jest zachowywana jak `isDraft` (edycja jej nie tyka), Z JEDNYM
+    // WYJĄTKIEM: zmiana `startDate` przesuwa kotwicę reguły, więc re-kanonikalizuj
+    // wartość względem nowej daty (reguła przeżywa; wyjątki sprzed nowego startu i
+    // niepoprawny `until` odpadają). Bez zmiany daty referencja zostaje nietknięta.
+    const recurrence =
+      prev.recurrence !== undefined && draft.startDate !== prev.startDate
+        ? normalizeRecurrence(prev.recurrence, draft.startDate)
+        : prev.recurrence;
+    tasks = tasks.map((t) => {
+      if (t.id !== taskId) return t;
+      const next: Task = {
+        ...t,
+        projectId: draft.projectId,
+        statusId: draft.statusId,
+        title: draft.title,
+        description: draft.description,
+        startDate: draft.startDate,
+        endDate: draft.endDate,
+        estimatedHours: draft.estimatedHours,
+        priority: draft.priority,
+        workCategoryId,
+        departmentId,
+        checklist,
+        orderIndex,
+        // Edycja NIGDY nie zmienia stanu publikacji: zachowaj `isDraft`
+        // istniejącego zadania (publikację robią wyłącznie akcje PUBLISH_*).
+        isDraft: t.isDraft,
+        updatedAt: ts,
+      };
+      if (recurrence) next.recurrence = recurrence;
+      else delete next.recurrence;
+      return next;
+    });
   }
 
   // Czy WYNIK zapisu jest szkicem? Tworzenie bierze sygnał z draftu, edycja
@@ -533,14 +676,24 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
   }));
 
   if (resultIsDraft) {
-    // Szkic: godziny NIE materializują się (inwariant 1 + 4). Workload zostaje
-    // nietknięty — dla świeżego szkicu jest pusty, a przy edycji szkicu nadal
-    // pusty. allocations / binTotals / newUnassigned z modalu są celowo
-    // pomijane; plan powstaje dopiero po publikacji. Zadanie i przypisania
-    // zapisują się normalnie, więc osoby można wybrać już na etapie szkicu.
+    // Szkic: godziny NIE materializują się w workload (inwariant 1 + 4).
+    // Workload zostaje nietknięty — dla świeżego szkicu jest pusty, a przy
+    // edycji szkicu nadal pusty. allocations / newUnassigned z modalu są celowo
+    // pomijane; plan powstaje dopiero po publikacji. Zapisujemy natomiast
+    // INTENCJĘ godzin sprzedanych per osoba (`draftHours`) wyprowadzoną z
+    // `binTotals` — w formie kanonicznej (klucz obecny tylko przy ≥1 wpisie).
+    // Pusty wynik usuwa klucz (wyczyszczenie godzin przy edycji szkicu).
+    const draftHours = draftHoursFromBinTotals(payload.binTotals, assigneeIds);
+    const draftTasks = tasks.map((t) => {
+      if (t.id !== realTaskId) return t;
+      if (draftHours) return { ...t, draftHours };
+      if (t.draftHours === undefined) return t;
+      const { draftHours: _drop, ...rest } = t;
+      return rest;
+    });
     return {
       ...state,
-      tasks,
+      tasks: draftTasks,
       assignments: [...assignmentsOther, ...assignmentsForTask],
       workload: state.workload,
       activity: withActivity(
@@ -786,24 +939,147 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
 }
 
 /**
+ * „Edytuj wszystkie" / utworzenie reguły / wyczyszczenie cykliczności zadania.
+ * Odrzuca (TA SAMA referencja, inwariant 6): nieznane `taskId`; zadanie-szkic
+ * (szkic nie może nieść reguły); niepoprawna `task.startDate`;
+ * `normalizeRecurrenceRule` zwraca null (pusty/poza zakresem `daysOfWeek`, czasy
+ * poza siatką/nieskończone, duration <= 0, start+duration > 1440, `until`
+ * niepoprawny lub < startu). `recurrence: null` czyści regułę I jej wyjątki.
+ * Zmiana reguły ZACHOWUJE dotychczasowe wyjątki i re-kanonikalizuje je względem
+ * nowej reguły (nieaktualne daty i teraz-równe przesunięcia odpadają). Zapis
+ * wartościowo identyczny to no-op (ta sama referencja).
+ */
+function setTaskRecurrence(
+  state: AppData,
+  taskId: string,
+  recurrence:
+    | { daysOfWeek: number[]; startMinutes: number; durationMinutes: number; until?: string }
+    | null,
+): AppData {
+  const task = state.tasks.find((t) => t.id === taskId);
+  if (!task) return state;
+  // Szkic nie może nieść reguły (forma kanoniczna); niepoprawny start = brak kotwicy.
+  if (task.isDraft === true) return state;
+  if (!isValidDateStr(task.startDate)) return state;
+
+  if (recurrence === null) {
+    if (task.recurrence === undefined) return state; // brak reguły => no-op
+    const tasks = state.tasks.map((t) => {
+      if (t.id !== taskId) return t;
+      const { recurrence: _drop, ...rest } = t;
+      return { ...rest, updatedAt: nowIso() };
+    });
+    return {
+      ...state,
+      tasks,
+      activity: withActivity(state, 'task', taskId, 'wyłączył(a) cykliczność zadania'),
+    };
+  }
+
+  // Zachowaj istniejące wyjątki i re-kanonikalizuj je względem nowej reguły.
+  const next = normalizeRecurrence(
+    { ...recurrence, overrides: task.recurrence?.overrides },
+    task.startDate,
+  );
+  if (!next) return state; // reguła niepoprawna => ta sama referencja
+  if (task.recurrence !== undefined && sameRowValue(task.recurrence, next)) return state;
+  const tasks = state.tasks.map((t) =>
+    t.id === taskId ? { ...t, recurrence: next, updatedAt: nowIso() } : t,
+  );
+  return {
+    ...state,
+    tasks,
+    activity: withActivity(state, 'task', taskId, 'zmienił(a) cykliczność zadania'),
+  };
+}
+
+/**
+ * „Edytuj to wystąpienie": per-datowy wyjątek reguły cykliczności. Odrzuca (TA
+ * SAMA referencja, inwariant 6): nieznane `taskId`; zadanie bez `recurrence`;
+ * `date` niebędące datą wystąpienia (`isOccurrenceDate`); przesunięcie czasu
+ * poza siatką / duration < 15 / start+duration > 1440; strukturalnie zły ładunek.
+ * `override: null` usuwa wyjątek dla `date` (brak => no-op). Przesunięcie równe
+ * regule = usunięcie wyjątku (forma kanoniczna). Upsert po dacie; wynik posortowany.
+ */
+function setRecurrenceOverride(
+  state: AppData,
+  taskId: string,
+  date: string,
+  override: { skip: true } | { startMinutes: number; durationMinutes: number } | null,
+): AppData {
+  const task = state.tasks.find((t) => t.id === taskId);
+  if (!task) return state;
+  const rule = task.recurrence;
+  if (rule === undefined) return state;
+  if (!isOccurrenceDate(rule, task.startDate, date)) return state;
+
+  const existing = rule.overrides ?? [];
+  const others = existing.filter((o) => o.date !== date);
+  let nextOverrides: unknown[];
+  if (override === null) {
+    if (existing.length === others.length) return state; // brak wyjątku => no-op
+    nextOverrides = others;
+  } else if ('skip' in override && override.skip === true) {
+    nextOverrides = [...others, { date, skip: true }];
+  } else {
+    const rec = override as { startMinutes?: unknown; durationMinutes?: unknown };
+    const { startMinutes, durationMinutes } = rec;
+    const isGrid = (m: unknown): m is number =>
+      typeof m === 'number' && Number.isInteger(m) && m >= 0 && m <= DAY_MINUTES && m % MINUTE_STEP === 0;
+    if (
+      !isGrid(startMinutes) ||
+      !isGrid(durationMinutes) ||
+      durationMinutes < MINUTE_STEP ||
+      startMinutes + durationMinutes > DAY_MINUTES
+    ) {
+      return state; // poza siatką / za krótki / strukturalnie zły
+    }
+    nextOverrides = [...others, { date, startMinutes, durationMinutes }];
+  }
+
+  // Re-kanonikalizacja: przesunięcie równe regule odpada, wynik sortowany.
+  const next = normalizeRecurrence({ ...rule, overrides: nextOverrides }, task.startDate);
+  if (!next) return state; // reguła jest już kanoniczna — guard dla TS
+  if (sameRowValue(rule, next)) return state; // np. przesunięcie równe regule => no-op
+  const tasks = state.tasks.map((t) =>
+    t.id === taskId ? { ...t, recurrence: next, updatedAt: nowIso() } : t,
+  );
+  return {
+    ...state,
+    tasks,
+    activity: withActivity(state, 'task', taskId, 'zmienił(a) wystąpienie cyklicznego zadania'),
+  };
+}
+
+/** Zadanie opublikowane ze szkicu: `isDraft: false`, świeży `updatedAt`, a klucz
+ *  `draftHours` USUNIĘTY (rest-destrukturyzacja — sam spread z `isDraft: false`
+ *  zostawiłby klucz; forma kanoniczna zabrania go na zadaniu opublikowanym). */
+function publishedTask(task: Task, ts: string): Task {
+  const { draftHours: _drop, ...rest } = task;
+  return { ...rest, isDraft: false, updatedAt: ts };
+}
+
+/**
  * Publikacja WSZYSTKICH szkiców projektu jedną atomową akcją („Zapisz i
- * opublikuj”). Przełącza `isDraft` na `false` dla każdego szkicu tego projektu;
- * nic więcej się nie zmienia (przypisania już istnieją, godzin szkic nie miał).
- * Nieistniejący projekt albo brak szkiców => TA SAMA referencja stanu
- * (inwariant 6) — akcja bez efektu nie tworzy wpisu ani nowej referencji.
+ * opublikuj”). Dla każdego szkicu: przełącza `isDraft` na `false`, USUWA
+ * `draftHours` i MATERIALIZUJE jego godziny w wiersze zasobnika (jeden na
+ * osobę, inwariant 4) — wszystko w JEDNEJ transakcji stanu. Nieistniejący
+ * projekt albo brak szkiców => TA SAMA referencja stanu (inwariant 6).
  */
 function publishProjectDrafts(state: AppData, projectId: string): AppData {
   if (!hasEntity(state, 'project', projectId)) return state;
-  const draftIds = new Set(
-    state.tasks.filter((t) => t.projectId === projectId && t.isDraft === true).map((t) => t.id),
-  );
-  if (draftIds.size === 0) return state;
+  const drafts = state.tasks.filter((t) => t.projectId === projectId && t.isDraft === true);
+  if (drafts.length === 0) return state;
+  const draftIds = new Set(drafts.map((t) => t.id));
   const ts = nowIso();
+  const newRows: WorkloadEntry[] = [];
+  for (const task of drafts) {
+    newRows.push(...materializeDraftBin(state, [...state.workload, ...newRows], task));
+  }
   return {
     ...state,
-    tasks: state.tasks.map((t) =>
-      draftIds.has(t.id) ? { ...t, isDraft: false, updatedAt: ts } : t,
-    ),
+    tasks: state.tasks.map((t) => (draftIds.has(t.id) ? publishedTask(t, ts) : t)),
+    workload: newRows.length > 0 ? [...state.workload, ...newRows] : state.workload,
     activity: withActivity(
       state,
       'project',
@@ -816,16 +1092,17 @@ function publishProjectDrafts(state: AppData, projectId: string): AppData {
 /**
  * Publikacja pojedynczego szkicu (bonus: „opublikuj” per zadanie). Zadanie musi
  * istnieć i być szkicem — inaczej TA SAMA referencja stanu (inwariant 6).
+ * Materializuje `draftHours` w wiersze zasobnika i usuwa klucz.
  */
 function publishTask(state: AppData, taskId: string): AppData {
   const task = state.tasks.find((t) => t.id === taskId);
   if (!task || task.isDraft !== true) return state;
   const ts = nowIso();
+  const newRows = materializeDraftBin(state, state.workload, task);
   return {
     ...state,
-    tasks: state.tasks.map((t) =>
-      t.id === taskId ? { ...t, isDraft: false, updatedAt: ts } : t,
-    ),
+    tasks: state.tasks.map((t) => (t.id === taskId ? publishedTask(t, ts) : t)),
+    workload: newRows.length > 0 ? [...state.workload, ...newRows] : state.workload,
     activity: withActivity(state, 'task', taskId, 'opublikował(a) zadanie'),
   };
 }
@@ -972,7 +1249,50 @@ function deleteProject(state: AppData, projectId: string): AppData {
         ? e.entityId !== projectId
         : !taskIds.has(e.entityId),
     ),
+    // Kaskada filtrów: preset/ostatni filtr wskazujący usuwany projekt traci
+    // `criteria.projectId` (→ ''), jak kaskada DELETE_WORK_CATEGORY dla kategorii.
+    // Niepowiązane filtry zachowują SWOJĄ referencję (brak migotania widoków).
+    savedFilters: state.savedFilters.map((f) =>
+      f.criteria.projectId === projectId
+        ? { ...f, criteria: { ...f.criteria, projectId: '' } }
+        : f,
+    ),
+    lastFilters: clearProjectIdInLastFilters(state.lastFilters, projectId),
   };
+}
+
+/** Czyści jedno pole `criteria` (→ '') w każdym zapamiętanym filtrze wskazującym
+ *  usuwaną encję; niepowiązane wpisy zachowują SWOJĄ referencję. Wspólne dla
+ *  kaskady projektu i kategorii pracy. */
+function clearCriteriaFieldInLastFilters(
+  lastFilters: AppData['lastFilters'],
+  field: 'projectId' | 'workCategoryId',
+  value: string,
+): AppData['lastFilters'] {
+  const next: AppData['lastFilters'] = {};
+  for (const key of Object.keys(lastFilters) as Array<keyof AppData['lastFilters']>) {
+    const entry = lastFilters[key];
+    if (entry === undefined) continue;
+    next[key] =
+      entry.criteria[field] === value
+        ? { ...entry, criteria: { ...entry.criteria, [field]: '' } }
+        : entry;
+  }
+  return next;
+}
+
+function clearProjectIdInLastFilters(
+  lastFilters: AppData['lastFilters'],
+  projectId: string,
+): AppData['lastFilters'] {
+  return clearCriteriaFieldInLastFilters(lastFilters, 'projectId', projectId);
+}
+
+function clearWorkCategoryIdInLastFilters(
+  lastFilters: AppData['lastFilters'],
+  workCategoryId: string,
+): AppData['lastFilters'] {
+  return clearCriteriaFieldInLastFilters(lastFilters, 'workCategoryId', workCategoryId);
 }
 
 // ---- Insert block (calendar right-click) ----
@@ -1663,6 +1983,7 @@ function personFromDraft(draft: PersonDraft): Omit<Person, 'id' | 'passwordHash'
     phone: draft.phone.trim(),
     role: draft.role.trim(),
     departmentId: draft.departmentId,
+    companyId: draft.companyId,
     avatar: draft.avatar.trim(),
     capacity,
     accessRole: draft.accessRole,
@@ -1930,6 +2251,7 @@ function isValidCloudPersonRow(r: CloudPersonMergeRow): boolean {
   if (typeof r.firstName !== 'string' || r.firstName.trim() === '') return false;
   if (typeof r.lastName !== 'string' || typeof r.role !== 'string') return false;
   if (typeof r.departmentId !== 'string') return false;
+  if (typeof r.companyId !== 'string') return false;
   if (typeof r.phone !== 'string' || typeof r.avatar !== 'string') return false;
   if (typeof r.supervisorEmail !== 'string') return false;
   if (typeof r.birthDate !== 'string') return false;
@@ -1960,6 +2282,7 @@ function cloudPersonFields(row: CloudPersonMergeRow): Omit<
     phone: row.phone.trim(),
     role: row.role.trim(),
     departmentId: row.departmentId,
+    companyId: row.companyId,
     avatar: row.avatar.trim(),
     // Spójnie z personFromDraft: UI deklaruje zakres [1, 24].
     capacity: Math.min(24, Math.max(1, row.capacity)),
@@ -2029,6 +2352,7 @@ function applyCloudPeople(
       person.phone === fields.phone &&
       person.role === fields.role &&
       person.departmentId === fields.departmentId &&
+      (person.companyId ?? '') === fields.companyId &&
       person.avatar === fields.avatar &&
       person.capacity === fields.capacity &&
       person.accessRole === fields.accessRole &&
@@ -2142,11 +2466,13 @@ export interface CloudDictionariesPayload {
   statuses: Status[];
   serviceTypes: ServiceType[];
   workCategories: WorkCategory[];
+  jobTitles: JobTitle[];
+  companies: Company[];
 }
 
 /**
  * AUTORYTATYWNE scalenie słowników organizacji z chmury (działy, statusy, typy
- * usług, kategorie prac) — lokalne kopie są zastępowane w całości. Fail-closed
+ * usług, kategorie prac, stanowiska, spółki) — lokalne kopie są zastępowane w całości. Fail-closed
  * (invariant 6): niepoprawna struktura ALBO zestaw statusów łamiący twardy
  * invariant planera (co najmniej jeden aktywny nie-ukończony i jeden aktywny
  * ukończony status) zwraca ORYGINALNĄ referencję stanu — w szczególności pusta
@@ -2155,18 +2481,22 @@ export interface CloudDictionariesPayload {
  */
 function mergeCloudDictionaries(state: AppData, payload: CloudDictionariesPayload): AppData {
   if (typeof payload !== 'object' || payload === null) return state;
-  const { departments, statuses, serviceTypes, workCategories } = payload;
+  const { departments, statuses, serviceTypes, workCategories, jobTitles, companies } = payload;
   if (
     !Array.isArray(departments) ||
     !Array.isArray(statuses) ||
     !Array.isArray(serviceTypes) ||
-    !Array.isArray(workCategories)
+    !Array.isArray(workCategories) ||
+    !Array.isArray(jobTitles) ||
+    !Array.isArray(companies)
   ) {
     return state;
   }
   if (!departments.every(isValidNamedRow)) return state;
   if (!serviceTypes.every(isValidNamedRow)) return state;
   if (!workCategories.every(isValidNamedRow)) return state;
+  if (!jobTitles.every(isValidNamedRow)) return state;
+  if (!companies.every(isValidNamedRow)) return state;
   if (!statuses.every(isValidStatusRow)) return state;
   // Twardy invariant 5: przynajmniej jeden aktywny status w toku i jeden done.
   const hasActive = statuses.some((s) => !s.archived && !s.isDone);
@@ -2178,6 +2508,8 @@ function mergeCloudDictionaries(state: AppData, payload: CloudDictionariesPayloa
     sameNamedRows(state.departments, departments) &&
     sameNamedRows(state.serviceTypes, serviceTypes) &&
     sameNamedRows(state.workCategories, workCategories) &&
+    sameNamedRows(state.jobTitles, jobTitles) &&
+    sameNamedRows(state.companies, companies) &&
     sameStatusRows(state.statuses, sorted)
   ) {
     return state;
@@ -2187,6 +2519,8 @@ function mergeCloudDictionaries(state: AppData, payload: CloudDictionariesPayloa
     departments: [...departments],
     serviceTypes: [...serviceTypes],
     workCategories: [...workCategories],
+    jobTitles: [...jobTitles],
+    companies: [...companies],
     statuses: sorted,
   };
 }
@@ -2300,6 +2634,8 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
   // Zgłoszenia są OPCJONALNE w ładunku (dopisane addytywnie): brak pola => bez
   // zmian w kolekcji, obecne => walidacja i autorytatywna podmiana niżej.
   if (payload.tickets !== undefined && !Array.isArray(payload.tickets)) return state;
+  // Wydarzenia (dziesiąta rodzina) są OPCJONALNE i ADDYTYWNE — jak zgłoszenia.
+  if (payload.events !== undefined && !Array.isArray(payload.events)) return state;
 
   // Osoby najpierw (autorytatywnie), żeby walidacja encji widziała finalny
   // zespół. Niepoprawny blok osób psuje całą hydrację (atomowość).
@@ -2319,7 +2655,8 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
     !payload.workload.every(isObjWithId) ||
     !payload.comments.every(isObjWithId) ||
     !payload.activity.every(isObjWithId) ||
-    (payload.tickets !== undefined && !payload.tickets.every(isObjWithId))
+    (payload.tickets !== undefined && !payload.tickets.every(isObjWithId)) ||
+    (payload.events !== undefined && !payload.events.every(isObjWithId))
   ) {
     return state;
   }
@@ -2383,6 +2720,40 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
     }
   }
 
+  // Wydarzenia: fail-closed STRUKTURALNIE (data + czasy na siatce jak workload),
+  // ale dangling uczestnik jest FILTROWANY per-wiersz (kolumna-tablica nie ma FK,
+  // stary id nie może blokować całej hydracji). Filtr jest deterministyczny =>
+  // merge zostaje idempotentny i reference-preserving.
+  let mergedEvents = state.events;
+  if (payload.events !== undefined) {
+    for (const e of payload.events) {
+      if (!isValidDateStr(e.date)) return state;
+      if (
+        !Number.isInteger(e.startMinutes) ||
+        e.startMinutes < 0 ||
+        e.startMinutes % MINUTE_STEP !== 0
+      ) {
+        return state;
+      }
+      if (
+        !Number.isInteger(e.durationMinutes) ||
+        e.durationMinutes < MINUTE_STEP ||
+        e.durationMinutes % MINUTE_STEP !== 0
+      ) {
+        return state;
+      }
+      if (e.startMinutes + e.durationMinutes > DAY_MINUTES) return state;
+      if (!Array.isArray(e.attendeeIds)) return state;
+    }
+    const filtered = payload.events.map((e) => {
+      const attendeeIds = e.attendeeIds.filter(
+        (id, i, arr) => personIds.has(id) && arr.indexOf(id) === i,
+      );
+      return attendeeIds.length === e.attendeeIds.length ? e : { ...e, attendeeIds };
+    });
+    mergedEvents = reconcileRows(state.events, filtered);
+  }
+
   // Assignments reconciled by (taskId, personId): a pair the local state
   // already knows keeps its local row (id AND position — background hydration
   // must not reorder the UI); a genuinely new cloud pair gets a fresh uid
@@ -2423,6 +2794,7 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
     ...(payload.tickets !== undefined
       ? { tickets: reconcileRows(state.tickets, payload.tickets) }
       : {}),
+    ...(payload.events !== undefined ? { events: mergedEvents } : {}),
   };
   const keys = Object.keys(merged) as Array<keyof AppData>;
   return keys.every((k) => Object.is(merged[k], state[k])) ? state : merged;
@@ -2446,6 +2818,10 @@ export function reducer(state: AppData, action: Action): AppData {
         activity: withActivity(next, 'project', task.projectId, `usunął(a) zadanie „${task.title}”`),
       };
     }
+    case 'SET_TASK_RECURRENCE':
+      return setTaskRecurrence(state, action.taskId, action.recurrence);
+    case 'SET_RECURRENCE_OVERRIDE':
+      return setRecurrenceOverride(state, action.taskId, action.date, action.override);
     case 'PUBLISH_PROJECT_DRAFTS':
       return publishProjectDrafts(state, action.projectId);
     case 'PUBLISH_TASK':
@@ -2477,6 +2853,30 @@ export function reducer(state: AppData, action: Action): AppData {
           'task',
           action.taskId,
           `przeniósł/przeniosła zadanie do statusu „${status?.name ?? '?'}”`,
+        ),
+      };
+    }
+    case 'SET_BLOCK_DONE': {
+      // Per-block completion (PKG-20260721-per-block-done). Maps ONLY the entry
+      // with entryId; the task status stays untouched. Invariant 6: an unknown
+      // entryId, or a value already equal to the requested one (no-op), returns
+      // the SAME state reference (no churn, no activity row).
+      if (!hasWorkloadEntry(state, action.entryId)) return state;
+      const entry = state.workload.find((w) => w.id === action.entryId);
+      if (!entry) return state;
+      if ((entry.done === true) === action.done) return state;
+      return {
+        ...state,
+        workload: state.workload.map((w) =>
+          w.id === action.entryId ? { ...w, done: action.done } : w,
+        ),
+        activity: withActivity(
+          state,
+          'task',
+          entry.taskId,
+          action.done
+            ? `oznaczył/oznaczyła blok ${formatDuration(entry.plannedHours)} jako wykonany`
+            : `odznaczył/odznaczyła blok ${formatDuration(entry.plannedHours)} jako wykonany`,
         ),
       };
     }
@@ -2984,6 +3384,96 @@ export function reducer(state: AppData, action: Action): AppData {
           t.departmentId === action.departmentId ? { ...t, departmentId: '' } : t,
         ),
       };
+    case 'ADD_JOB_TITLE': {
+      // Nazwy stanowisk są unikalne bez rozróżniania wielkości liter (pl-PL).
+      const name = action.name.trim();
+      if (!name) return state;
+      const key = name.toLocaleLowerCase('pl-PL');
+      if (state.jobTitles.some((j) => j.name.trim().toLocaleLowerCase('pl-PL') === key)) return state;
+      return {
+        ...state,
+        jobTitles: [...state.jobTitles, { id: uid(), name }],
+      };
+    }
+    case 'RENAME_JOB_TITLE': {
+      const name = action.name.trim();
+      if (!name) return state;
+      const target = state.jobTitles.find((j) => j.id === action.jobTitleId);
+      if (!target) return state;
+      // Zmiana na aktualną nazwę (dosłownie) to no-op — ta sama referencja.
+      if (target.name === name) return state;
+      // Duplikat INNEGO wiersza (bez rozróżniania wielkości liter) odrzucamy.
+      const key = name.toLocaleLowerCase('pl-PL');
+      if (
+        state.jobTitles.some(
+          (j) => j.id !== action.jobTitleId && j.name.trim().toLocaleLowerCase('pl-PL') === key,
+        )
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        jobTitles: state.jobTitles.map((j) =>
+          j.id === action.jobTitleId ? { ...j, name } : j,
+        ),
+      };
+    }
+    case 'DELETE_JOB_TITLE': {
+      // Bez kaskady: `Person.role` to wolny tekst i zachowuje swoją wartość
+      // (select w profilu scala zaszłościowe wpisy). Nieznane id => ta sama referencja.
+      if (!state.jobTitles.some((j) => j.id === action.jobTitleId)) return state;
+      return {
+        ...state,
+        jobTitles: state.jobTitles.filter((j) => j.id !== action.jobTitleId),
+      };
+    }
+    case 'ADD_COMPANY': {
+      // Nazwy spółek są unikalne bez rozróżniania wielkości liter (pl-PL).
+      const name = action.name.trim();
+      if (!name) return state;
+      const key = name.toLocaleLowerCase('pl-PL');
+      if (state.companies.some((c) => c.name.trim().toLocaleLowerCase('pl-PL') === key)) return state;
+      return {
+        ...state,
+        companies: [...state.companies, { id: uid(), name }],
+      };
+    }
+    case 'RENAME_COMPANY': {
+      const name = action.name.trim();
+      if (!name) return state;
+      const target = state.companies.find((c) => c.id === action.companyId);
+      if (!target) return state;
+      // Zmiana na aktualną nazwę (dosłownie) to no-op — ta sama referencja.
+      if (target.name === name) return state;
+      // Duplikat INNEGO wiersza (bez rozróżniania wielkości liter) odrzucamy.
+      const key = name.toLocaleLowerCase('pl-PL');
+      if (
+        state.companies.some(
+          (c) => c.id !== action.companyId && c.name.trim().toLocaleLowerCase('pl-PL') === key,
+        )
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        companies: state.companies.map((c) =>
+          c.id === action.companyId ? { ...c, name } : c,
+        ),
+      };
+    }
+    case 'DELETE_COMPANY': {
+      // Kaskada etykiety (jak DELETE_DEPARTMENT): usunięcie spółki czyści
+      // `Person.companyId` na osobach; chmurowy FK `on delete set null` to lustruje.
+      // Nieznane id => ta sama referencja.
+      if (!state.companies.some((c) => c.id === action.companyId)) return state;
+      return {
+        ...state,
+        companies: state.companies.filter((c) => c.id !== action.companyId),
+        people: state.people.map((p) =>
+          p.companyId === action.companyId ? { ...p, companyId: '' } : p,
+        ),
+      };
+    }
     case 'ADD_SERVICE_TYPE': {
       const name = action.name.trim();
       if (!name) return state;
@@ -3040,6 +3530,7 @@ export function reducer(state: AppData, action: Action): AppData {
             ? { ...filter, criteria: { ...filter.criteria, workCategoryId: '' } }
             : filter,
         ),
+        lastFilters: clearWorkCategoryIdInLastFilters(state.lastFilters, action.workCategoryId),
       };
     case 'SAVE_STATUS':
       return saveStatus(state, action.statusId, action.name, action.color);
@@ -3082,6 +3573,18 @@ export function reducer(state: AppData, action: Action): AppData {
     case 'SAVE_FILTER_PRESET': {
       const name = action.name.trim();
       if (!name) return state;
+      // Nieznana strona lub strukturalnie zniekształcone kryteria => TA SAMA
+      // referencja (inwariant 6). Dangling projectId/workCategoryId i wartości
+      // spoza enuma są sanityzowane do '' przez wspólny `sanitizeFilterCriteria`.
+      if (!isFilterPage(action.page)) return state;
+      if (
+        typeof action.criteria !== 'object' ||
+        action.criteria === null ||
+        Array.isArray(action.criteria)
+      ) {
+        return state;
+      }
+      const criteria = sanitizeFilterCriteria(state, action.criteria);
       const existing = state.savedFilters.find(
         (f) => f.page === action.page && f.name === name,
       );
@@ -3089,7 +3592,7 @@ export function reducer(state: AppData, action: Action): AppData {
         return {
           ...state,
           savedFilters: state.savedFilters.map((f) =>
-            f.id === existing.id ? { ...f, criteria: action.criteria } : f,
+            f.id === existing.id ? { ...f, criteria } : f,
           ),
         };
       }
@@ -3097,7 +3600,7 @@ export function reducer(state: AppData, action: Action): AppData {
         ...state,
         savedFilters: [
           ...state.savedFilters,
-          { id: uid(), name, page: action.page, criteria: action.criteria },
+          { id: uid(), name, page: action.page, criteria },
         ],
       };
     }
@@ -3106,6 +3609,20 @@ export function reducer(state: AppData, action: Action): AppData {
         ...state,
         savedFilters: state.savedFilters.filter((f) => f.id !== action.filterId),
       };
+    case 'SET_LAST_FILTER': {
+      // Nieznany widok lub strukturalnie zniekształcony ładunek => ta sama
+      // referencja (inwariant 6). Inaczej: sanityzuj, porównaj po wartości do
+      // bieżącego wpisu — no-op zwraca tę samą referencję.
+      if (!isFilterViewKey(action.view)) return state;
+      if (!isStructuralLastViewFilter(action.filter)) return state;
+      const sanitized = sanitizeLastViewFilter(state, action.filter);
+      const current = state.lastFilters[action.view];
+      if (current && lastViewFilterEqual(current, sanitized)) return state;
+      return {
+        ...state,
+        lastFilters: { ...state.lastFilters, [action.view]: sanitized },
+      };
+    }
     // ---- Zgłoszenia ----
     // Walidacja żyje w commandValidation (isValidTicketDraft): pusty tytuł/opis,
     // nieznany reporterId albo wartość spoza enuma => TA SAMA referencja stanu
@@ -3168,6 +3685,66 @@ export function reducer(state: AppData, action: Action): AppData {
     case 'DELETE_TICKET': {
       if (!state.tickets.some((t) => t.id === action.ticketId)) return state;
       return { ...state, tickets: state.tickets.filter((t) => t.id !== action.ticketId) };
+    }
+    // ---- Wydarzenia kalendarza (spotkania) ----
+    // Walidacja i normalizacja żyją w commandValidation (normalizeEventDraft):
+    // pusty tytuł, zła data/czasy, dangling uczestnik, zły adres albo cykliczność
+    // bez dnia kotwicy => TA SAMA referencja stanu (inwariant 6). Kolekcja jest
+    // czysto prezentacyjna — brak kaskad, sum ani wpisów dziennika (inwariant 1).
+    case 'ADD_EVENT': {
+      const normalized = normalizeEventDraft(state, action.draft);
+      if (normalized === null) return state;
+      const stamp = nowIso();
+      return {
+        ...state,
+        events: [
+          ...state.events,
+          {
+            id: uid(),
+            title: normalized.title,
+            description: normalized.description,
+            location: normalized.location,
+            meetingUrl: normalized.meetingUrl,
+            date: normalized.date,
+            startMinutes: normalized.startMinutes,
+            durationMinutes: normalized.durationMinutes,
+            attendeeIds: normalized.attendeeIds,
+            ...(normalized.recurrence ? { recurrence: normalized.recurrence } : {}),
+            createdAt: stamp,
+            updatedAt: stamp,
+          },
+        ],
+      };
+    }
+    case 'SAVE_EVENT': {
+      if (!state.events.some((e) => e.id === action.eventId)) return state;
+      const normalized = normalizeEventDraft(state, action.draft);
+      if (normalized === null) return state;
+      return {
+        ...state,
+        events: state.events.map((e) => {
+          if (e.id !== action.eventId) return e;
+          const next: CalendarEvent = {
+            id: e.id,
+            title: normalized.title,
+            description: normalized.description,
+            location: normalized.location,
+            meetingUrl: normalized.meetingUrl,
+            date: normalized.date,
+            startMinutes: normalized.startMinutes,
+            durationMinutes: normalized.durationMinutes,
+            attendeeIds: normalized.attendeeIds,
+            ...(normalized.recurrence ? { recurrence: normalized.recurrence } : {}),
+            createdAt: e.createdAt,
+            updatedAt: nowIso(),
+          };
+          return next;
+        }),
+      };
+    }
+    case 'DELETE_EVENT': {
+      if (!state.events.some((e) => e.id === action.eventId)) return state;
+      return { ...state, events: state.events.filter((e) => e.id !== action.eventId) };
     }
     case 'LOAD_SAMPLE':
       return { ...action.data, sampleBannerDismissed: true };

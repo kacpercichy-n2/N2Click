@@ -32,7 +32,7 @@ function makePerson(o: Partial<Person> & { id: string }): Person {
   };
 }
 const cloudProfile = (o: Partial<CloudProfile> & { id: string }): CloudProfile => ({
-  firstName: '', lastName: '', email: '', roleTitle: '', cloudRole: 'administrator', departmentId: null, supervisorId: null, phone: '', avatar: '', capacity: 8, workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, birthDate: '', ...o,
+  firstName: '', lastName: '', email: '', roleTitle: '', cloudRole: 'administrator', departmentId: null, companyId: null, supervisorId: null, phone: '', avatar: '', capacity: 8, workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, birthDate: '', ...o,
 });
 
 function localFixture(): AppData {
@@ -61,7 +61,7 @@ function orgFixture(): OrgSnapshot {
   return {
     profile: cloudProfile({ id: CLOUD_PA, email: 'a@x.com' }),
     profiles: [cloudProfile({ id: CLOUD_PA, email: 'a@x.com' })],
-    departments: [], statuses: [], serviceTypes: [], workCategories: [],
+    departments: [], statuses: [], serviceTypes: [], workCategories: [], jobTitles: [], companies: [],
   };
 }
 const maps = (): CloudIdMaps => buildCloudIdMaps(localFixture(), orgFixture());

@@ -678,6 +678,11 @@ export function buildSampleData(): AppData {
     departments,
     serviceTypes,
     workCategories,
+    events: [],
+    // Dane demonstracyjne nie definiują stanowisk — słownik startuje pusty.
+    jobTitles: [],
+    // Dane demonstracyjne nie definiują spółek — słownik startuje pusty.
+    companies: [],
     statuses,
     projects,
     milestones,
@@ -693,5 +698,6 @@ export function buildSampleData(): AppData {
     impersonatorId: '',
     sampleBannerDismissed: true,
     savedFilters: [],
+    lastFilters: {},
   };
 }

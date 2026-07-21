@@ -22,7 +22,9 @@
 - `profiles` — 1:1 with `auth.users` (same id, `on delete cascade`). Fields:
   `first_name` (required 1–100), `last_name`, `email`, `role_title`
   (stanowisko), `access_role` (enum `administrator|manager|worker`),
-  `department_id`, `avatar_path` (private `avatars` bucket,
+  `department_id`, `company_id` (20260721160000 → `companies.id`,
+  `on delete set null`; admin-only via `app.protect_profile_privileges`),
+  `avatar_path` (private `avatars` bucket,
   `<profile id>/<file>`), `must_change_password` (UX gate: forced first-login
   password change, self-cleared after a successful change), planner fields
   `phone`, `avatar` (emoji), `capacity` (0–24), `work_days` (smallint[] ⊂ 1–7),
@@ -31,16 +33,42 @@
   `MERGE_CLOUD_PEOPLE`),
   `supervisor_id` → `profiles.id` (przełożony; nullable, `on delete set null`,
   no self-reference; only administrators may change it — enforced by the
-  `app.protect_profile_privileges` trigger, same as `access_role` and
-  `department_id`). There is NO auto-provisioning trigger on `auth.users`:
+  `app.protect_profile_privileges` trigger, same as `access_role`,
+  `department_id` and `company_id`). There is NO auto-provisioning trigger on `auth.users`:
   profiles are created by the provisioning Edge Function or operator SQL.
 - `clients` also carries contact columns (`contact_name`, `contact_email`,
   `contact_phone`, `notes`; 20260718090000) and the published tables are in the
   `supabase_realtime` publication (20260718091000) — RLS applies to Realtime
   (WALRUS), clients treat events only as a "something changed" signal.
-- `clients`, `statuses`, `service_types`, `work_categories` — org-wide
-  dictionaries; read by every authenticated user, mutations admin-only
-  (clients: insert also manager).
+- `clients`, `statuses`, `service_types`, `work_categories`, `job_titles`
+  (20260721150000, słownik „Stanowiska”) — org-wide dictionaries; read by every
+  authenticated user, mutations admin-only (clients: insert also manager).
+  `job_titles` jest w publikacji `supabase_realtime` (parytet z `departments`),
+  mirrorowany jak zwykły słownik (`cloudMirror` piąty wpis `dicts`) i hydrowany
+  przez `referenceData.loadOrgSnapshot` → `OrgSnapshot.jobTitles` → App.tsx
+  `MERGE_CLOUD_DICTIONARIES`. Rejestr: `migrations.test.ts` (lista +
+  `public.job_titles` w `EXPECTED_POLICIES`).
+- `companies` (20260721160000, słownik „Spółki”) — org-wide dictionary, ten sam
+  wzorzec co `job_titles`: odczyt dla każdego zalogowanego, zapis admin-only,
+  w publikacji `supabase_realtime`, mirrorowany jako SZÓSTY wpis `dicts`
+  (`cloudMirror`) i hydrowany `loadOrgSnapshot` → `OrgSnapshot.companies` →
+  App.tsx `MERGE_CLOUD_DICTIONARIES`. Rejestr: `migrations.test.ts` (lista +
+  `public.companies` w `EXPECTED_POLICIES`). Osoba dostaje spółkę przez
+  `profiles.company_id` (admin-only), a ta ZAWĘŻA widoczność projektów:
+  - `app.current_company_id()` (definer, stable) — spółka zalogowanego (null =
+    bez spółki => brak zawężenia);
+  - `app.project_in_company_scope(project)` (definer, stable) — true gdy
+    użytkownik bez spółki, LUB projekt „neutralny” (żaden członek/przypisany nie
+    ma spółki — świeży/nieobsadzony projekt nie znika twórcy), LUB jakiś
+    członek/przypisany ma spółkę użytkownika;
+  - `projects_select` (przepisana z 20260720190000) = `admin OR
+    (project_in_company_scope(id) AND <dotychczasowe warunki nie-admina>)`.
+    Predykat jest starym predykatem AND-owanym z zakresem spółki, a zakres ≡
+    true przy null — użytkownik bez spółki widzi bajt-w-bajt to co dziś, nikt nie
+    zyskuje wiersza. Zawężenie realnie dotyka wyłącznie gałęzi `is_manager()`:
+    członek/przypisany ze spółką X sam spełnia zakres X, więc nie traci dostępu.
+    ŻADNA inna polityka (tasks/workload) się nie zmienia — zależne wiersze
+    ukrytego projektu odpada kaskada hydracji `loadPlannerSnapshot`.
 - `projects` → `client_id`, `status_id`, `service_type_id`, `department_id`
   (LEGACY — see below); `project_members (project_id, profile_id)` is the
   explicit worker access list. `tasks` → `project_id` (cascade), `status_id`,
@@ -58,6 +86,18 @@
   RLS/polityk ani publikacji realtime; klient mirroruje ją jak zwykłe pole
   zadania (`cloudMirror.taskRow.is_draft = t.isDraft === true`; hydracja
   `plannerData` czyta `row.is_draft === true`, spoza `true` => opublikowane).
+- `tasks.recurrence` (20260721170000_task_recurrence) — jsonb nullable
+  (NULL/legacy = brak reguły): cykliczność zadania (RRULE-lite) + per-datowe
+  wyjątki, osadzona jak `tasks.checklist`/`tasks.draft_hours`. Kształt kanoniczny:
+  `{ daysOfWeek:[1..7], startMinutes, durationMinutes, until?, overrides? }`;
+  wyjątki niosą TYLKO daty/minuty — żadnych id profili, więc bez mapowania id.
+  Świadomie BEZ osobnej tabeli: widoczność ma być identyczna z widocznością
+  zadania, więc RLS dziedziczy się z wiersza `public.tasks` — ZERO nowych polityk,
+  bez zmian w publikacji realtime. Klient mirroruje ją jak zwykłe pole
+  (`cloudMirror.taskRow.recurrence = t.recurrence ?? null`), a hydracja
+  `plannerData` kanonikalizuje przez `normalizeRecurrence` WYŁĄCZNIE dla wierszy
+  opublikowanych (`is_draft !== true`). Rejestr: `migrations.test.ts` (lista;
+  `EXPECTED_POLICIES` bez zmian).
 - `projects.documents` (20260721010000) — jsonb not null default `'[]'`, CHECK
   `jsonb_typeof(documents) = 'array'`: odnośniki do dokumentów handlowych
   (`{id, kind: oferta|wycena|brief|link, label, url}`). Kolumna osadzona jak
@@ -76,7 +116,14 @@
 - `workload_entries` — planned hours; `task_id` + `profile_id` cascade,
   `work_date NULL` = bin sentinel (unique partial index per
   `(task_id, profile_id)`), grid CHECKs (0.25h, 15-minute starts, day
-  boundary). `milestones` → `project_id`. `comments` and `activity_events`
+  boundary). `workload_entries.done` (20260721220000_workload_entry_done) —
+  boolean not null default `false`: per-BLOK znacznik „wykonane” (niezależny od
+  `tasks.status_id`). DEFAULT FALSE, więc każdy istniejący/legacy wiersz jest
+  niewykonany — bez backfillu. Nie tworzy tabeli: RLS dziedziczy z istniejących
+  polityk `workload_entries_*` (ZERO nowych polityk), tabela już w publikacji
+  realtime. Mirror `workloadRow.done = w.done === true`; hydracja `plannerData`
+  czyta `row.done === true`. Rejestr: `migrations.test.ts` (lista;
+  `EXPECTED_POLICIES` bez zmian). `milestones` → `project_id`. `comments` and `activity_events`
   are append-only (no UPDATE/DELETE policies). `app_settings` — org runtime
   flags (`local_writes_retired`).
 - `tickets` (20260720230000) — zgłoszenia zespołu („Zgłoszenia”), SAMODZIELNA
@@ -90,6 +137,25 @@
   dopóki status = 'nowe' (using + with check); DELETE wyłącznie administrator.
   Tabela NIE jest w publikacji realtime — zmiany zgłoszeń nie wyzwalają
   live-syncu, lista odświeża się przy hydracji.
+- `events` (20260721210000) — wydarzenia / spotkania kalendarza („Wydarzenia”),
+  SAMODZIELNA tabela bez powiązań z projektami/zadaniami: `title` (CHECK 1..300),
+  `description`, `location`, `meeting_url` (CHECK ≤2048), `event_date`,
+  `start_minutes` (CHECK 0..1425, %15), `duration_minutes` (CHECK 15..1440, %15),
+  CHECK `start_minutes + duration_minutes <= 1440`, `attendee_ids uuid[]`
+  (BEZ FK — czyszczenie danglingów po stronie klienta), `recurrence jsonb`
+  (nullable, forma kanoniczna wydarzenia), `created_at`/`updated_at` (trigger
+  `app.set_updated_at`), index na `event_date`. RLS: kalendarz spotkań jest
+  OGÓLNOFIRMOWY, więc WSZYSTKIE polityki (`events_select/insert/update/delete`)
+  są `to authenticated` z `using (true)` / `with check (true)`. UZASADNIENIE:
+  lokalna rola `handlowiec` mapuje się w chmurze na `worker`, więc bramka po
+  `app.is_manager()` odcięłaby handlowca, który umawia spotkania — bramka
+  `events.manage` pozostaje UX-em po stronie klienta (jak cały system uprawnień).
+  Tabela JEST w publikacji `supabase_realtime` (idempotentny blok `do $$ …
+  exception when duplicate_object`) — kalendarze odświeżają się live. Mirror:
+  dziesiąta rodzina (`eventRow` + diff po id → `public.events`, attendee mapowany
+  per-id, niemapowalny odpada); hydracja filtruje dangling uczestnika per-wiersz.
+  Rejestr: plik w liście migracji + `public.events` w `EXPECTED_POLICIES`
+  (`migrations.test.ts`).
 - Access model: administrator = everything; manager = own department
   (profiles incl. UPDATE of non-admin members, memberships/assignments
   restricted to own-department people) — and since 20260720170000 the manager

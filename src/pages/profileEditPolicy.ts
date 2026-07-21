@@ -16,6 +16,7 @@ export type ProfileField =
   | 'phone'
   | 'roleTitle'
   | 'departmentId'
+  | 'companyId'
   | 'avatarEmoji'
   | 'capacity'
   | 'accessRole'
@@ -31,6 +32,9 @@ const ALL_FIELDS: readonly ProfileField[] = [
   'phone',
   'roleTitle',
   'departmentId',
+  // Spółka: wyłącznie administrator (i tryb setup) — parytet z serwerowym
+  // triggerem app.protect_profile_privileges. NIE w SELF/MANAGER_FIELDS.
+  'companyId',
   'avatarEmoji',
   'capacity',
   'accessRole',

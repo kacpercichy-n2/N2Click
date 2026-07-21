@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   availableHoursInRange,
   availableHoursOnDate,
+  blockIsDone,
   binHoursForTaskPerson,
   binTaskRowsForPerson,
   conflictDatesForTask,
@@ -71,6 +72,7 @@ function makePerson(overrides: Partial<Person> & { id: string }): Person {
     email: '',
     role: '',
     departmentId: '',
+    companyId: '',
     avatar: '',
     capacity: 8,
     phone: '',
@@ -135,6 +137,44 @@ describe('peopleWithBirthdayOnDate', () => {
       workload: [],
     });
     expect(peopleWithBirthdayOnDate(state, '2026-03-14')).toEqual([]);
+  });
+});
+
+describe('blockIsDone (PKG-per-block-done)', () => {
+  const ACTIVE = makeStatus({ id: 'active', isDone: false });
+  const DONE = makeStatus({ id: 'done', isDone: true });
+
+  it('two blocks on the same day carry INDEPENDENT done state', () => {
+    const a = makeEntry({ id: 'a', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480 });
+    const b = makeEntry({ id: 'b', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 840 });
+    const task = makeTask({ id: 't1', statusId: 'active' });
+    const state = makeState({
+      statuses: [ACTIVE, DONE],
+      tasks: [task],
+      people: [makePerson({ id: 'p1' })],
+      workload: [{ ...a, done: true }, b],
+    });
+    // Marking block a done must NOT light block b (same date, different id).
+    expect(blockIsDone(state, task, { ...a, done: true })).toBe(true);
+    expect(blockIsDone(state, task, b)).toBe(false);
+  });
+
+  it('a done task STATUS still lights ALL blocks regardless of the per-block flag', () => {
+    const a = makeEntry({ id: 'a', taskId: 't1', personId: 'p1', date: '2026-07-08' });
+    const b = makeEntry({ id: 'b', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 840 });
+    const task = makeTask({ id: 't1', statusId: 'done' });
+    const state = makeState({ statuses: [ACTIVE, DONE], tasks: [task] });
+    expect(blockIsDone(state, task, a)).toBe(true);
+    expect(blockIsDone(state, task, b)).toBe(true);
+  });
+
+  it('undefined/false done on an active task = not done', () => {
+    const a = makeEntry({ id: 'a', taskId: 't1', personId: 'p1' });
+    const task = makeTask({ id: 't1', statusId: 'active' });
+    const state = makeState({ statuses: [ACTIVE, DONE], tasks: [task] });
+    expect(blockIsDone(state, task, a)).toBe(false);
+    expect(blockIsDone(state, task, { ...a, done: false })).toBe(false);
+    expect(blockIsDone(state, task, { ...a, done: true })).toBe(true);
   });
 });
 
@@ -717,18 +757,18 @@ describe('todayAgendaForPerson', () => {
     expect(timed.some((w) => w.date === BIN_DATE)).toBe(false);
   });
 
-  it('dateless: an assigned task covering the date with NO entry that day appears; the same task WITH an entry that day does not', () => {
+  it('dateless: an assigned task with deadline on the date and NO entry that day appears; the same task WITH an entry that day does not', () => {
     const withoutEntry = makeTask({
       id: 't-no-entry',
       title: 'No entry today',
       startDate: '2026-07-06',
-      endDate: '2026-07-10',
+      endDate: DATE,
     });
     const withEntry = makeTask({
       id: 't-with-entry',
       title: 'Has entry today',
       startDate: '2026-07-06',
-      endDate: '2026-07-10',
+      endDate: DATE,
     });
     const entryToday = makeEntry({ id: 'e1', taskId: 't-with-entry', personId: 'p1', date: DATE });
     const state = makeState({
@@ -767,13 +807,13 @@ describe('todayAgendaForPerson', () => {
       id: 't-someone-else',
       statusId: activeStatusId,
       startDate: '2026-07-06',
-      endDate: '2026-07-10',
+      endDate: DATE, // deadline dziś, ale przypisane do p2
     });
     const done = makeTask({
       id: 't-done',
       statusId: doneId,
       startDate: '2026-07-06',
-      endDate: '2026-07-10',
+      endDate: DATE, // deadline dziś, ale status done
     });
 
     const state = makeState({
@@ -793,10 +833,10 @@ describe('todayAgendaForPerson', () => {
     expect(dateless).toEqual([]);
   });
 
-  it('dateless ordering: ascending endDate, ties broken by title', () => {
-    const zebra = makeTask({ id: 't-zebra', title: 'Zebra', startDate: '2026-07-01', endDate: '2026-07-10' });
-    const banana = makeTask({ id: 't-banana', title: 'Banana', startDate: '2026-07-01', endDate: '2026-07-10' });
-    const apple = makeTask({ id: 't-apple', title: 'Apple', startDate: '2026-07-01', endDate: '2026-07-09' });
+  it('dateless ordering: alphabetical by title (every shown task has endDate === date)', () => {
+    const zebra = makeTask({ id: 't-zebra', title: 'Zebra', startDate: '2026-07-01', endDate: DATE });
+    const banana = makeTask({ id: 't-banana', title: 'Banana', startDate: '2026-07-01', endDate: DATE });
+    const apple = makeTask({ id: 't-apple', title: 'Apple', startDate: '2026-07-01', endDate: DATE });
     const state = makeState({
       tasks: [zebra, banana, apple],
       people: [makePerson({ id: 'p1' })],
@@ -810,6 +850,30 @@ describe('todayAgendaForPerson', () => {
 
     const { dateless } = todayAgendaForPerson(state, 'p1', DATE);
     expect(dateless.map((t) => t.id)).toEqual(['t-apple', 't-banana', 't-zebra']);
+  });
+
+  it('dateless: a multi-day task without calendar blocks appears ONLY on its deadline day, never on covered/adjacent days (241-today-agenda)', () => {
+    const multiDay = makeTask({
+      id: 't-multi',
+      title: 'Wielodniowe bez bloków',
+      startDate: '2026-07-06',
+      endDate: '2026-07-10',
+    });
+    const state = makeState({
+      tasks: [multiDay],
+      people: [makePerson({ id: 'p1' })],
+      assignments: [makeAssignment({ id: 'a1', taskId: 't-multi', personId: 'p1' })],
+      workload: [],
+    });
+
+    // Covered interior days (including "yesterday"/"tomorrow" around DATE) — empty.
+    for (const day of ['2026-07-06', '2026-07-07', DATE, '2026-07-09']) {
+      expect(todayAgendaForPerson(state, 'p1', day).dateless).toEqual([]);
+    }
+    // The deadline day itself — shown.
+    expect(todayAgendaForPerson(state, 'p1', '2026-07-10').dateless.map((t) => t.id)).toEqual(['t-multi']);
+    // Right after the deadline — gone again.
+    expect(todayAgendaForPerson(state, 'p1', '2026-07-11').dateless).toEqual([]);
   });
 
   it('empty results: a person with no assignments and no entries gets both arrays empty', () => {

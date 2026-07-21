@@ -71,6 +71,11 @@
   `n2hub:nav-order-changed` window event so App re-orders the live sidebar.
 - `src/pages/` owns route-specific screens; `src/components/TaskModal.tsx` owns
   task editing and its allocation grid.
+- Profile edit matrix (`src/pages/profileEditPolicy.ts`) gains an ADMIN-ONLY
+  „Spółka” field (`companyId` in `ALL_FIELDS` only — nie self, nie manager),
+  rendered as a select in PersonProfilePage next to „Dział”; parity with the
+  server `app.protect_profile_privileges` trigger (spółka zawęża widoczność
+  projektów w chmurze). AdminPage adds a „Spółki” CRUD section after „Działy”.
 - `/zgloszenia` („Zgłoszenia”, `src/pages/TicketsPage.tsx`) jest widoczne dla
   KAŻDEJ roli — nie jest bramkowane jak `/admin`. Bez `tickets.manage` strona to
   wyłącznie skrzynka nadawcza (przycisk otwierający modal, ŻADNEJ listy — decyzja
@@ -81,6 +86,20 @@
   powiela wzorzec TaskModal: `?zgloszenie=new|<id>`, `useOpenTicket()`, montaż raz
   w App, klasy `.task-modal-*` i własny zakres strażnika nawigacji
   (`'ticket-modal'` w `dirtyRegistry.ts`).
+- `/wydarzenia` („Wydarzenia”, ikona `CalendarClock`, w NAV po `/calendar`,
+  `src/pages/EventsPage.tsx`) jest widoczne dla KAŻDEJ roli. Segmentowany
+  przełącznik „Nadchodzące” (domyślny; `date >= dziś`) / „Minione”, sort po
+  `(date, startMinutes)`; wiersz pokazuje datę, zakres godzin, tytuł, uczestników
+  (albo „Ogólnofirmowe”), lokalizację, badge „Cykliczne: …" oraz link „Dołącz"
+  renderowany jako `href` WYŁĄCZNIE gdy `normalizeProjectDocumentUrl` przepuści.
+  Klik wiersza otwiera modal; „+ Dodaj wydarzenie" przy `events.manage`.
+  `src/components/EventModal.tsx` powiela wzorzec TaskModal: `?wydarzenie=new|<id>`,
+  `useOpenEvent()`, montaż raz w App, prefill rozłącznymi parametrami
+  (`wydarzenieData`/`wydarzenieStart`/`wydarzenieOsoba` — celowo różne od
+  `date`/`assignee` TaskModala), własny zakres strażnika nawigacji
+  (`'event-modal'`, warunek `wydarzenieChanged` w `navGuardBlocks`). Zapis ręczny
+  przyciskiem (bez auto-save). Prawy klik w pustą kolumnę WeekView oferuje
+  „+ Dodaj spotkanie (HH:mm)" przy `events.manage` (obok „+ Dodaj zadanie").
 - `src/onboarding/catalog.ts` owns copy, roles and route mapping; components
   expose stable `data-tour` anchors only.
 - `src/utils/dirtyRegistry.ts` and `src/utils/useSaveStatus.ts` support shared

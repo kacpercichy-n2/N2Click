@@ -10,10 +10,12 @@ import {
   WEEKDAY_LABELS,
 } from '../utils/dates';
 import {
+  calendarEventsForDate,
   dayTotal,
   entriesForDate,
   overloadedPeopleOnDate,
   peopleWithBirthdayOnDate,
+  recurrenceOccurrencesForDate,
 } from '../store/selectors';
 import { personColor } from '../utils/colors';
 import { formatDuration } from '../utils/time';
@@ -66,6 +68,20 @@ export function MonthView({ state, anchor, filter, onPickDay }: Props) {
           // Urodziny (miesiąc+dzień) — cały zespół, niezależnie od filtra pracy.
           const birthdayNames = peopleWithBirthdayOnDate(state, d).map((p) => p.name);
 
+          // Cykliczne zadania na dany dzień — TYLKO prezentacyjny znacznik ⟳
+          // (MonthView nie renderuje pojedynczych bloków); sumy/kropki bez zmian.
+          const recurTitles = Array.from(
+            new Set(recurrenceOccurrencesForDate(state, d, filter).map((r) => r.task.title)),
+          );
+
+          // Wydarzenia na dany dzień — TYLKO prezentacyjny znacznik 📅
+          // (MonthView nie renderuje pojedynczych bloków); sumy/kropki bez zmian.
+          const eventTitles = Array.from(
+            new Set(calendarEventsForDate(state, d, filter).map((oc) => oc.event.title)),
+          );
+          // Przesuwaj kolejne znaczniki inline o 18 px, żeby się nie nakładały.
+          const eventMarkerRight = 3 + 18 * ((birthdayNames.length > 0 ? 1 : 0) + (recurTitles.length > 0 ? 1 : 0));
+
           return (
             <button
               type="button"
@@ -90,6 +106,26 @@ export function MonthView({ state, anchor, filter, onPickDay }: Props) {
                   aria-label={`Urodziny: ${birthdayNames.join(', ')}`}
                 >
                   🎂
+                </span>
+              )}
+              {recurTitles.length > 0 && (
+                <span
+                  className="month-cell-recur"
+                  style={birthdayNames.length > 0 ? { right: 18 } : undefined}
+                  title={`Cykliczne: ${recurTitles.join(', ')}`}
+                  aria-label={`Cykliczne: ${recurTitles.join(', ')}`}
+                >
+                  ⟳
+                </span>
+              )}
+              {eventTitles.length > 0 && (
+                <span
+                  className="month-cell-event"
+                  style={eventMarkerRight > 3 ? { right: eventMarkerRight } : undefined}
+                  title={`Wydarzenia: ${eventTitles.join(', ')}`}
+                  aria-label={`Wydarzenia: ${eventTitles.join(', ')}`}
+                >
+                  📅
                 </span>
               )}
               {total > 0 && <span className="month-cell-hours">{formatDuration(total)}</span>}

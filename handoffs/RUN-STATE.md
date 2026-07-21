@@ -1,117 +1,61 @@
-# Run state — 20260720-193430-227 manual task order in project
+# Run state — 20260721-194939-n2hub-245 events and meetings panel
 
 ## Goal
 
-Manual per-project task ordering on ProjectDetailPage (up/down arrows, gated by
-`tasks.manage`), stored as new `Task.orderIndex`, mirrored to a new
-`tasks.order_index` Supabase column, hydrated back, with deterministic legacy
-repair. Ordering must not touch completion semantics or calendar placement.
+New additive `CalendarEvent` entity: create meetings from the calendar
+right-click slot menu, render them in WeekView/MonthView in a distinct color
+(purely presentational, invariant 7 untouched), manage them in a new
+`/wydarzenia` panel with a URL-driven modal, persist as `AppData.events`
+(DATA_VERSION stays 7), mirror to `public.events` (RLS, realtime publication)
+and hydrate via optional `MERGE_CLOUD_ENTITIES.events`.
 
 ## Packages
 
-- `handoffs/scheduler-reviews/227-architect-package.md`
-  (PKG-20260720-manual-task-order) — Tier: developer, Risk: high,
-  Codex: required. Status: ready.
+- `handoffs/scheduler-reviews/20260721-194939-n2hub-245-architect-package.md` —
+  PKG-20260721-events-panel, tier: developer, ready, Codex review required.
+  Tests are inseparable from the implementation (no test-writer split).
 
 ## Changed boundaries (planned)
 
-- `Task` gains `orderIndex` (distinct from `WorkloadEntry.sortIndex`); new
-  reducer action `REORDER_PROJECT_TASK` modeled on `REORDER_STATUS`
-  (invariant 6: invalid command keeps prior state reference); `saveTask`
-  appends new/moved-project tasks at end.
-- `normalizeTaskMeta` every-load repair assigns deterministic per-project
-  defaults (startDate/createdAt/id order); `DATA_VERSION` stays 7.
-- New selector `orderedTasksOfProject` with `(orderIndex, startDate, id)`
-  tie-break; ProjectDetailPage arrows with Polish aria-labels.
-- New migration `20260720200000_task_order_index.sql` (idempotent column +
-  guarded backfill); `migrations.test.ts` list extended; plannerData select +
-  mapping, cloudMirror `taskRow`, dataImport row gain `order_index`.
+- `src/types.ts`, `AppStore.tsx` (ADD/SAVE/DELETE_EVENT + optional `events` in
+  mergeCloudEntities), `commandValidation.ts`, `selectors.ts`
+  (calendarEventsForDate), `storage.ts` (repairEvents, coerceArray, no version
+  bump), `permissions.ts` (`events.manage`: administrator/pm/handlowiec).
+- UI: WeekView slot menu + EventBlock, MonthView marker, styles.css
+  (`--event-accent` = n2-info cyan), new EventsPage + EventModal
+  (`?wydarzenie=`), App NAV/route, icons, dirtyRegistry scope `event-modal`.
+- Cloud: new migration `20260721210000_events.sql` (org-open authenticated
+  policies — handlowiec maps to cloud `worker`, so no is_manager gate;
+  `attendee_ids uuid[]`, `recurrence` jsonb reusing `utils/recurrence.ts`),
+  `migrations.test.ts`, `cloudMirror.ts` (tenth family), `plannerData.ts`.
+  Migration file only — NOT applied to the hosted database.
 
 ## Verification
 
-- Focused: new `src/store/taskOrder.test.ts` plus commandValidation,
-  saveTaskWorkload, taskMeta, storage, cloudMerge, activityAttribution,
-  plannerData, cloudMirror, migrations, dataImport suites (exact command in
-  the package).
-- Browser: none — no existing scenario covers task-list ordering; release
-  matrix owns it.
-- Scheduler owns final `npm test && npm run build`.
+Focused vitest list in the package, then full `npm test` + `npm run build`.
+Browser checks: none (no pointer-path changes allowed).
+
+## Worker result (developer)
+
+Implemented full package across all declared touchpoints. `npm test` PASS
+(1295, +39 new); `npm run build` PASS. Browser check: playwright not installed
+and package declared Browser=none (WeekView changes additive/presentational,
+pointer/drag/hit-test untouched). 4 wiki pages updated. No deviations.
+
+Reviewer blocker fixed: `EventModal.handleSubmit` now snaps times to the 15-min
+grid and gates submit through authoritative `isValidEventDraft` — a rejected
+draft shows an inline Polish error and keeps the modal open (no silent loss).
+Added gate unit tests. `npm test` PASS (1299); `npm run build` PASS.
+
+## PKG-per-block-done (247)
+
+Additive `WorkloadEntry.done?` + `SET_BLOCK_DONE` reducer/validation (invariant 6:
+unknown id & no-op keep same ref), `blockIsDone` selector, WeekView per-block tick,
+TaskModal „Wykonane bloki” list (open-from-block highlight via `?block=`), cloud
+round-trip (plannerData/cloudMirror) + migration `20260721220000_workload_entry_done`
+(done boolean default false, no RLS change). DATA_VERSION stays 7. `npm test` PASS
+(1308); `npm run build` PASS.
 
 ## Open questions
 
-- None blocking. Note: `cloud-database.md` wiki will need the `order_index`
-  column documented if the run goes green (final reviewer owns the wiki
-  verdict).
-
-## Developer result (2026-07-20)
-
-- Implemented full package: `Task.orderIndex`, `REORDER_PROJECT_TASK` (+direction
-  guard for invariant 6), append-at-end saveTask, `orderedTasksOfProject`,
-  `normalizeTaskMeta` repair + migrateV1 NaN, seed literals, ProjectDetailPage
-  arrows, mirror/hydration/dataImport, migration `20260720200000` + test list.
-- Focused command: PASS (381). Full suite PASS (960); `tsc` + `npm run build`
-  clean. Wiki: `cloud-database.md` updated; `state-and-persistence.md` unchanged.
-
-## Developer result (2026-07-21) — kanban-on-tasks
-
-- KanbanPage now boards TASKS by task status: new pure `src/pages/kanbanBoard.ts`
-  (grouping, archived bucket, client/paid via project + person filter, ordering),
-  page rewrite (SET_TASK_STATUS drag gated on `tasks.manage`, card opens
-  TaskModal), new card CSS in `styles.css`, new `kanbanBoard.test.ts`.
-- Focused PASS (19); full `npx vitest run` PASS 1024/1024; `npm run build` clean.
-  Package's 933 baseline was stale — real baseline 1005. Wiki unchanged.
-
-## Test-writer result (2026-07-21) — kanban onboarding copy
-
-- `src/onboarding/catalog.ts`: fixed `id: 'kanban'` summary + two step bodies
-  to describe tasks, not projects (board/column steps, click opens task edit).
-- `npx vitest run` PASS 1024/1024; `npm run build` clean. No skips.
-
-## Developer result (2026-07-21) — 233-required-fields
-
-- New `isValidClientDraft` (name + contact person + e-mail OR phone, presence
-  only) wired into `ADD_CLIENT`/`SAVE_CLIENT` (same-ref reject); ClientsPage
-  asterisks + live Polish error + auto-save gate; AdminPage name-only client
-  quick-add replaced by a `/clients` link; seed clients given contacts;
-  Status/Klient asterisks in TaskModal + ProjectDetailPage.
-- Focused PASS (62); full suite PASS 1044 (baseline 1036, prompt's 933 stale);
-  `npm run build` clean. Wiki `state-and-persistence.md` updated.
-
-## Developer result (2026-07-21) — 234-project-documents-and-links
-
-- `Project.documents` (jsonb `projects.documents`, migracja
-  20260721010000_project_documents; RLS dziedziczona z projektu). Reduktor
-  ADD/SAVE/DELETE_PROJECT_DOCUMENT + `isValidProjectDocumentDraft`,
-  `repairProjectDocuments`, karta „Dokumenty” w ProjectDetailPage
-  (`projects.manage`), mirror/snapshot/import.
-- Schemat `url` wymuszany na 3 granicach (reduktor/repair/render) przez
-  `normalizeProjectDocumentUrl` — tylko http(s), brak schematu → `https://`;
-  `javascript:`/`data:` odrzucane (przechowywany XSS, projekty są współdzielone).
-- Focused PASS (24); full suite PASS 1068 (baseline 1044, prompt's 933 stale);
-  `npm run build` clean. Wiki: `cloud-database.md` + `state-and-persistence.md`.
-
-## birthDate test fixtures
-- Added `birthDate: ''` to Person/PersonDraft/CloudProfile/CloudPersonMergeRow
-  factories+literals across 23 test files. Also updated profileEditPolicy.test.ts
-  editable-field assertions (birthDate is self/manager/all-editable per prod).
-- tsc clean; full suite PASS 1086/1086. No production files touched.
-
-## PKG-20260721-nav-reorder
-- Reordered NAV, inlined Konto (supabase-only), renamed Administracja→Ustawienia
-  (route /admin), moved /zgloszenia + help into a `.sidebar-footer` row; new
-  shared `TeamTabs` folds Struktura under Zespół (/team gates intact).
-- Files: App.tsx, TeamTabs.tsx (new), People/Team/Admin/Projects/Kanban pages,
-  catalog.ts, styles.css, wiki. tsc clean; full suite PASS 1104; build clean.
-- Browser checks (ui-keyboard, onboarding) deferred — playwright not installed.
-
-## PKG-20260721-nav-user-order
-- Per-user (per-browser) sidebar order: new pure `navOrder.ts`(+test), uiPrefs
-  `navOrderByUser`+helpers, shared `navItems.ts`, `NavOrderEditor` on Konto +
-  Ustawienia; App orders before gate filter, live via `n2hub:nav-order-changed`.
-- tsc clean; full suite PASS 1118; build clean. Wiki updated.
-
-## PKG-changelog-panel
-- Panel „Co nowego": new `src/data/changelog.ts` (types + CHANGELOG + range
-  helper +test), `ChangelogModal.tsx` (TicketModal pattern), slim bar in
-  DashboardPage, styles in styles.css. First entry = fixy 224–238 + domknięcie.
-- npm test PASS 1123; build clean. No store touch. Wiki unchanged.
+None blocking.

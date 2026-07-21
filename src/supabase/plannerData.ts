@@ -16,6 +16,7 @@ import type {
   ActivityEntityType,
   ActivityEvent,
   AppData,
+  CalendarEvent,
   Client,
   Comment,
   CommentEntityType,
@@ -27,6 +28,9 @@ import type {
   WorkloadEntry,
 } from '../types';
 import { isValidDateStr, periodError, MAX_TASK_PERIOD_DAYS } from '../utils/dates';
+import { normalizeRecurrence } from '../utils/recurrence';
+import { normalizeProjectDocumentUrl } from '../utils/projectDocuments';
+import { canonicalEventRecurrence } from '../store/commandValidation';
 import {
   DEFAULT_TICKET_KIND,
   DEFAULT_TICKET_PRIORITY,
@@ -35,7 +39,7 @@ import {
   isTicketPriority,
   isTicketStatus,
 } from '../utils/tickets';
-import { BIN_DATE, DAY_MINUTES, HOURS_STEP, MINUTE_STEP } from '../utils/time';
+import { BIN_DATE, DAY_MINUTES, HOURS_STEP, MINUTE_STEP, snapHours } from '../utils/time';
 import { createSupabaseImportDb, type ImportDb } from './dataImport';
 import type { CloudIdMaps } from './cloudMirror';
 
@@ -178,6 +182,12 @@ export interface CloudMergePayload {
    */
   tickets?: Ticket[];
   /**
+   * Wydarzenia kalendarza. OPCJONALNE (kolekcja dopisana addytywnie): brak pola
+   * => reduktor nie rusza kolekcji, obecne => podmienia ją autorytatywnie.
+   * `loadPlannerSnapshot` zawsze je podaje.
+   */
+  events?: CalendarEvent[];
+  /**
    * Profile chmury scalane PRZED walidacją encji (CloudSyncProvider dokleja je
    * ze snapshotu organizacji), żeby wiersze osób bez lokalnej pary e-mailowej
    * miały już swój lokalny odpowiednik. Brak pola => osoby bez zmian.
@@ -195,6 +205,31 @@ const boolVal = (v: unknown): boolean => v === true;
 /** SQL `date`/null -> lokalny 'yyyy-MM-dd' albo ''. */
 function sqlDateToLocal(v: unknown): string {
   return typeof v === 'string' && v !== '' ? v : '';
+}
+
+/**
+ * Hydracja `draft_hours` (jsonb chmury `[{ profile_id, hours }]`) na kanoniczne
+ * `Task.draftHours`: profil przez `personOf`, `''` odpada, `hours > 0` snapowane,
+ * dedup po osobie (pierwszy wygrywa); pusto => `undefined` (klucz nieobecny).
+ */
+function hydrateDraftHours(
+  raw: unknown[],
+  personOf: (v: unknown) => string,
+): Array<{ personId: string; hours: number }> | undefined {
+  const byPerson = new Map<string, number>();
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) continue;
+    const rec = item as Record<string, unknown>;
+    const personId = personOf(rec.profile_id);
+    if (personId === '' || byPerson.has(personId)) continue;
+    const hoursRaw = rec.hours;
+    if (typeof hoursRaw !== 'number' || !Number.isFinite(hoursRaw) || hoursRaw <= 0) continue;
+    const hours = snapHours(hoursRaw);
+    if (hours <= 0) continue;
+    byPerson.set(personId, hours);
+  }
+  if (byPerson.size === 0) return undefined;
+  return [...byPerson].map(([personId, hours]) => ({ personId, hours }));
 }
 
 /** Odwraca mapę forward (local -> cloud) na reverse (cloud -> local). */
@@ -293,6 +328,7 @@ export async function loadPlannerSnapshot(
     commentsRes,
     activityRes,
     ticketsRes,
+    eventsRes,
   ] = await Promise.all([
     db.select('clients', 'id, name, archived, contact_name, contact_email, contact_phone, notes'),
     db.select(
@@ -302,12 +338,12 @@ export async function loadPlannerSnapshot(
     db.select('milestones', 'id, project_id, name, milestone_date'),
     db.select(
       'tasks',
-      'id, project_id, status_id, title, description, start_date, end_date, estimated_hours, priority, work_category_id, department_id, checklist, order_index, is_draft, created_at, updated_at',
+      'id, project_id, status_id, title, description, start_date, end_date, estimated_hours, priority, work_category_id, department_id, checklist, order_index, is_draft, draft_hours, recurrence, created_at, updated_at',
     ),
     db.select('task_assignments', 'task_id, profile_id'),
     db.select(
       'workload_entries',
-      'id, task_id, profile_id, work_date, planned_hours, start_minutes, sort_index',
+      'id, task_id, profile_id, work_date, planned_hours, start_minutes, sort_index, done',
     ),
     db.select('comments', 'id, project_id, task_id, author_id, body, mention_ids, created_at'),
     db.select(
@@ -317,6 +353,10 @@ export async function loadPlannerSnapshot(
     db.select(
       'tickets',
       'id, title, area, description, kind, priority, status, reporter_id, created_at, updated_at',
+    ),
+    db.select(
+      'events',
+      'id, title, description, location, meeting_url, event_date, start_minutes, duration_minutes, attendee_ids, recurrence, created_at, updated_at',
     ),
   ]);
 
@@ -329,7 +369,8 @@ export async function loadPlannerSnapshot(
     workloadRes.error ||
     commentsRes.error ||
     activityRes.error ||
-    ticketsRes.error
+    ticketsRes.error ||
+    eventsRes.error
   ) {
     return { ok: false, error: PLANNER_SNAPSHOT_ERROR };
   }
@@ -429,6 +470,21 @@ export async function loadPlannerSnapshot(
     const orderIndexRaw = row.order_index;
     const orderIndex =
       typeof orderIndexRaw === 'number' && Number.isFinite(orderIndexRaw) ? orderIndexRaw : 0;
+    // Godziny szkicu (forma kanoniczna — utrzymuje no-op merge `sameRowValue`
+    // no-opem): budujemy klucz WYŁĄCZNIE dla `is_draft` i tablicy; per wpis
+    // profil przez `personOf`, `''` odpada, `hours > 0` snapowane, dedup po
+    // osobie; klucz obecny tylko gdy przetrwa ≥1 wpis.
+    const draftHours =
+      row.is_draft === true && Array.isArray(row.draft_hours)
+        ? hydrateDraftHours(row.draft_hours as unknown[], personOf)
+        : undefined;
+    // Cykliczność (kolumna 20260721170000_task_recurrence): tylko wiersze
+    // OPUBLIKOWANE (`is_draft !== true`) mogą nieść regułę (forma kanoniczna —
+    // szkic nigdy). `normalizeRecurrence` kanonikalizuje względem daty startu;
+    // NULL/legacy/śmieci => brak klucza. Autorytatywne: podmienia wartość lokalną
+    // przez ścieżkę `MERGE_CLOUD_ENTITIES` (bez zmian w reduktorze scalania).
+    const recurrence =
+      row.is_draft === true ? undefined : normalizeRecurrence(row.recurrence, startDate);
     tasks.push({
       id: str(row.id),
       projectId: str(row.project_id),
@@ -448,6 +504,8 @@ export async function loadPlannerSnapshot(
       // Szkic (20260721020000_task_is_draft): kolumna spoza `true` (starszy
       // wiersz, brak kolumny, null) czytamy jako opublikowane.
       isDraft: row.is_draft === true,
+      ...(draftHours ? { draftHours } : {}),
+      ...(recurrence ? { recurrence } : {}),
       createdAt: str(row.created_at),
       updatedAt: str(row.updated_at) || str(row.created_at),
     });
@@ -527,6 +585,9 @@ export async function loadPlannerSnapshot(
       plannedHours,
       startMinutes: startMinutes as number,
       sortIndex,
+      // Per-block completion (PKG-per-block-done): cloud-authoritative, anything
+      // other than the literal true (NULL/legacy/false) hydrates as not done.
+      done: row.done === true,
     });
   }
 
@@ -589,6 +650,60 @@ export async function loadPlannerSnapshot(
     });
   }
 
+  // Wydarzenia kalendarza ---- (`attendee_ids` przez reverse osób, '' odpada,
+  // dedupe; `meeting_url` przez schemat http(s); `recurrence` w formie
+  // kanonicznej wydarzenia — czasy reguły = czasy wydarzenia, dzień kotwicy w
+  // `daysOfWeek`; brak/śmieci => brak klucza. Wiersz bez tytułu albo z niepoprawną
+  // datą jest WYKLUCZANY — mergeCloudEntities i tak fail-closuje na złej dacie.)
+  const events: CalendarEvent[] = [];
+  for (const row of eventsRes.rows) {
+    const title = str(row.title);
+    const date = sqlDateToLocal(row.event_date);
+    if (title === '') {
+      diagnostics.push('Wydarzenie pominięto — brak nazwy.');
+      continue;
+    }
+    if (!isValidDateStr(date)) {
+      diagnostics.push(`Wydarzenie „${title}” pominięto — nieprawidłowa data.`);
+      continue;
+    }
+    const startRaw = row.start_minutes;
+    const durRaw = row.duration_minutes;
+    const startMinutes =
+      typeof startRaw === 'number' && Number.isFinite(startRaw) ? startRaw : 0;
+    const durationMinutes =
+      typeof durRaw === 'number' && Number.isFinite(durRaw) ? durRaw : MINUTE_STEP;
+    const attendeeSource = Array.isArray(row.attendee_ids) ? (row.attendee_ids as unknown[]) : [];
+    const attendeeIds: string[] = [];
+    const seenAttendees = new Set<string>();
+    for (const raw of attendeeSource) {
+      const personId = personOf(raw);
+      if (personId === '' || seenAttendees.has(personId)) continue;
+      seenAttendees.add(personId);
+      attendeeIds.push(personId);
+    }
+    const recurrence = canonicalEventRecurrence(
+      row.recurrence,
+      date,
+      startMinutes,
+      durationMinutes,
+    );
+    events.push({
+      id: str(row.id),
+      title,
+      description: str(row.description),
+      location: str(row.location),
+      meetingUrl: normalizeProjectDocumentUrl(str(row.meeting_url)) ?? '',
+      date,
+      startMinutes,
+      durationMinutes,
+      attendeeIds,
+      ...(recurrence ? { recurrence } : {}),
+      createdAt: str(row.created_at),
+      updatedAt: str(row.updated_at) || str(row.created_at),
+    });
+  }
+
   // DETERMINISTYCZNA kolejność ładunku: selecty nie mają ORDER BY, więc
   // Postgres zwraca wiersze w kolejności sterty (każdy UPDATE przenosi wiersz
   // fizycznie na koniec) — dwa kolejne snapshoty tego samego zbioru potrafiły
@@ -609,6 +724,7 @@ export async function loadPlannerSnapshot(
       comments: sortStable(comments, (c) => c.createdAt),
       activity: sortStable(activity, (e) => e.createdAt),
       tickets: sortStable(tickets, (t) => t.createdAt),
+      events: sortStable(events, (e) => e.createdAt),
     },
     diagnostics,
   };

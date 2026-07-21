@@ -273,6 +273,7 @@ describe('Work category CRUD', () => {
           criteria: {
             paid: 'all',
             clientId: '',
+            projectId: '',
             statusId: '',
             personId: '',
             priority: '',
@@ -415,6 +416,7 @@ function personDraft(overrides: Partial<PersonDraft> = {}): PersonDraft {
     phone: '',
     role: '',
     departmentId: '',
+    companyId: '',
     avatar: '',
     capacity: 8,
     accessRole: 'pracownik',
@@ -436,6 +438,7 @@ function makePerson(overrides: Partial<Person> & { id: string }): Person {
     phone: '',
     role: '',
     departmentId: '',
+    companyId: '',
     avatar: '',
     capacity: 8,
     accessRole: 'administrator',

@@ -12,6 +12,7 @@ import type { CloudMergePayload } from '../supabase/plannerData';
 import type {
   ActivityEvent,
   AppData,
+  CalendarEvent,
   Client,
   Comment,
   Milestone,
@@ -20,6 +21,20 @@ import type {
   TaskAssignment,
   WorkloadEntry,
 } from '../types';
+
+const makeEvent = (o: Partial<CalendarEvent> & { id: string }): CalendarEvent => ({
+  title: 'Spotkanie',
+  description: '',
+  location: '',
+  meetingUrl: '',
+  date: '2026-07-06',
+  startMinutes: 540,
+  durationMinutes: 60,
+  attendeeIds: [],
+  createdAt: '2026-01-01T00:00:00.000Z',
+  updatedAt: '2026-01-01T00:00:00.000Z',
+  ...o,
+});
 
 const P1 = 'person-1';
 const P2 = 'person-2';
@@ -110,6 +125,7 @@ function person(id: string) {
     phone: '',
     role: '',
     departmentId: '',
+    companyId: '',
     avatar: '',
     capacity: 8,
     accessRole: 'pracownik' as const,
@@ -217,6 +233,53 @@ describe('MERGE_CLOUD_ENTITIES — merge semantics', () => {
     expect(next.clients.map((c) => c.id)).toEqual(['c-cloud']);
   });
 
+  it('leaves populated savedFilters AND lastFilters by reference on a full valid merge', () => {
+    const savedFilters = [
+      {
+        id: 'f1',
+        name: 'A',
+        page: 'tasks' as const,
+        criteria: {
+          paid: 'all' as const,
+          clientId: '',
+          projectId: '',
+          statusId: '',
+          personId: '',
+          priority: '' as const,
+          workCategoryId: '',
+          from: '',
+          to: '',
+        },
+      },
+    ];
+    const lastFilters = {
+      tasks: {
+        criteria: {
+          paid: 'all' as const,
+          clientId: '',
+          projectId: '',
+          statusId: '',
+          personId: '',
+          priority: '' as const,
+          workCategoryId: '',
+          from: '',
+          to: '',
+        },
+        personIds: ['x'],
+        departmentId: '',
+        serviceTypeId: '',
+        planning: '',
+      },
+    };
+    const state: AppData = { ...baseState(), savedFilters, lastFilters };
+    const next = merge(state, {
+      ...emptyPayload(),
+      clients: [client({ id: 'c-cloud', name: 'X' })],
+    });
+    expect(next.savedFilters).toBe(state.savedFilters);
+    expect(next.lastFilters).toBe(state.lastFilters);
+  });
+
   it('merges cloud comments and activity, appending by id (append semantics)', () => {
     const state = baseState();
     const cloudComment: Comment = {
@@ -285,6 +348,22 @@ describe('MERGE_CLOUD_ENTITIES — milestones + workload merge', () => {
     expect(next.workload.find((w) => w.id === 'w1')!.plannedHours).toBe(4);
     expect(next.workload.find((w) => w.id === 'w-cloud')).toBeDefined();
     expect(next.workload).toHaveLength(2);
+  });
+
+  it('per-block done (PKG-per-block-done) survives the cloud merge on the payload row', () => {
+    const state = baseState(); // workload: [w1] dated, no done flag
+    const payload: CloudMergePayload = {
+      ...emptyPayload(),
+      projects: [makeProject({ id: 'proj-1' })],
+      tasks: [makeTask({ id: T1, projectId: 'proj-1' })],
+      workload: [
+        wl({ id: 'w1', done: true }), // cloud marks the existing block done
+        wl({ id: 'w-cloud', plannedHours: 1 }), // no flag -> undefined preserved
+      ],
+    };
+    const next = merge(state, payload);
+    expect(next.workload.find((w) => w.id === 'w1')!.done).toBe(true);
+    expect(next.workload.find((w) => w.id === 'w-cloud')!.done).toBeUndefined();
   });
 
   it('bin pair: wiersz chmury wygrywa autorytatywnie (lokalny duplikat pary znika)', () => {
@@ -420,6 +499,47 @@ describe('MERGE_CLOUD_ENTITIES — fail-closed (invariant 6)', () => {
   });
 });
 
+describe('MERGE_CLOUD_ENTITIES — wydarzenia kalendarza', () => {
+  it('brak pola events => kolekcja nietknięta po referencji', () => {
+    const state: AppData = { ...baseState(), events: [makeEvent({ id: 'e1' })] };
+    const next = merge(state, { ...emptyPayload(), clients: [client({ id: 'c-cloud', name: 'X' })] });
+    expect(next.events).toBe(state.events);
+  });
+
+  it('no-op merge zwraca oryginalną referencję stanu', () => {
+    const E = makeEvent({ id: 'e1' });
+    const state: AppData = { ...emptyData(), events: [E] };
+    const next = merge(state, { ...emptyPayload(), events: [{ ...E }] });
+    expect(next).toBe(state);
+  });
+
+  it('fail-closed na złej dacie/czasach => ta sama referencja', () => {
+    const state: AppData = { ...emptyData(), events: [] };
+    expect(merge(state, { ...emptyPayload(), events: [makeEvent({ id: 'e1', date: 'zła' })] })).toBe(
+      state,
+    );
+    expect(
+      merge(state, { ...emptyPayload(), events: [makeEvent({ id: 'e2', startMinutes: 547 })] }),
+    ).toBe(state);
+    expect(
+      merge(state, {
+        ...emptyPayload(),
+        events: [makeEvent({ id: 'e3', startMinutes: 1425, durationMinutes: 30 })],
+      }),
+    ).toBe(state);
+  });
+
+  it('filtruje dangling uczestnika per-wiersz (bez fail-close)', () => {
+    const state = baseState(); // ma P1, P2, P3
+    const next = merge(state, {
+      ...emptyPayload(),
+      events: [makeEvent({ id: 'e1', attendeeIds: [P1, 'ghost', P2] })],
+    });
+    expect(next.events).toHaveLength(1);
+    expect(next.events[0].attendeeIds).toEqual([P1, P2]);
+  });
+});
+
 // ---- MERGE_CLOUD_PEOPLE (pełna synchronizacja osób) --------------------------
 
 import type { CloudPersonMergeRow } from '../supabase/referenceData';
@@ -430,6 +550,7 @@ function cloudRow(o: Partial<CloudPersonMergeRow> & { id: string; email: string 
     lastName: 'Osoba',
     role: '',
     departmentId: '',
+    companyId: '',
     phone: '',
     avatar: '',
     capacity: 8,
@@ -518,6 +639,24 @@ describe('MERGE_CLOUD_PEOPLE', () => {
     expect(self.people[0].supervisorId).toBe('');
   });
 
+  it('przenosi spółkę z chmury na osobę (autorytatywnie)', () => {
+    const state: AppData = {
+      ...baseState(),
+      people: [{ ...person(P1), email: 'kacper@x.pl', companyId: 'stara' }],
+    };
+    const next = reducer(state, {
+      type: 'MERGE_CLOUD_PEOPLE',
+      payload: [cloudRow({ id: UUID_K, email: 'kacper@x.pl', firstName: 'Kacper', companyId: 'cloud-company' })],
+    });
+    expect(next).not.toBe(state);
+    expect(next.people[0].companyId).toBe('cloud-company');
+    // Idempotencja: ten sam payload => ta sama referencja (spółka już zgodna).
+    expect(reducer(next, {
+      type: 'MERGE_CLOUD_PEOPLE',
+      payload: [cloudRow({ id: UUID_K, email: 'kacper@x.pl', firstName: 'Kacper', companyId: 'cloud-company' })],
+    })).toBe(next);
+  });
+
   it('niepoprawny payload => oryginalna referencja stanu (invariant 6)', () => {
     const state = baseState();
     const bad = [
@@ -527,6 +666,8 @@ describe('MERGE_CLOUD_PEOPLE', () => {
       cloudRow({ id: UUID_K, email: 'a@x.pl', capacity: 99 }),
       cloudRow({ id: UUID_K, email: 'a@x.pl', workDays: [0, 9] }),
       cloudRow({ id: UUID_K, email: 'a@x.pl', workStartMinutes: -1 }),
+      // Nie-string companyId => wiersz odrzucony, cały payload fail-closed.
+      cloudRow({ id: UUID_K, email: 'a@x.pl', companyId: 42 as unknown as string }),
     ];
     for (const row of bad) {
       expect(reducer(state, { type: 'MERGE_CLOUD_PEOPLE', payload: [row] })).toBe(state);
@@ -653,6 +794,37 @@ describe('MERGE_CLOUD_ENTITIES — bezszwowe odświeżanie (referencje)', () => 
     expect(next.activity).toBe(state.activity);
     expect(next.milestones).toBe(state.milestones);
     expect(next.assignments).toBe(state.assignments);
+  });
+
+  it('wiersz z cyklicznością identyczny wartościowo zachowuje SWOJĄ referencję (forma kanoniczna nośna)', () => {
+    const rec = {
+      daysOfWeek: [1],
+      startMinutes: 540,
+      durationMinutes: 60,
+      overrides: [{ date: '2026-07-13', skip: true as const }],
+    };
+    const state: AppData = {
+      ...mirroredState(),
+      tasks: [
+        makeTask({ id: T1, projectId: 'proj-1', recurrence: rec }),
+        makeTask({ id: T2, projectId: 'proj-1' }),
+      ],
+    };
+    const payload = mirrorPayload(state); // świeże obiekty, te same wartości
+    const next = merge(state, payload);
+    // Wartościowo identyczna cykliczność => wiersz zachowuje referencję.
+    expect(next.tasks[0]).toBe(state.tasks[0]);
+    expect(next.tasks).toBe(state.tasks);
+
+    // Realna zmiana w regule MUSI dać nowy obiekt.
+    const changed = mirrorPayload(state);
+    changed.tasks[0] = {
+      ...changed.tasks[0],
+      recurrence: { ...rec, overrides: [{ date: '2026-07-20', skip: true as const }] },
+    };
+    const nextChanged = merge(state, changed);
+    expect(nextChanged.tasks[0]).not.toBe(state.tasks[0]);
+    expect(nextChanged.tasks[0].recurrence!.overrides).toEqual([{ date: '2026-07-20', skip: true }]);
   });
 
   it('zagnieżdżone tablice (checklist, mentionIds) porównywane wartościowo, nie referencyjnie', () => {

@@ -12,6 +12,7 @@ export {
   GanttChart,
   ListChecks,
   CalendarDays,
+  CalendarClock,
   Users,
   Gauge,
   Settings,
@@ -42,4 +43,5 @@ export {
   KeyRound,
   Network,
   Inbox,
+  Megaphone,
 } from 'lucide-react';

@@ -46,6 +46,8 @@ const U_MGR = '22222222-2222-4222-8222-222222222222';
 const U_WORKER = '33333333-3333-4333-8333-333333333333';
 const D_KRE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const D_STR = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const C_A = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const C_B = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 
 const profileRow = (o: Record<string, unknown>) => ({
   id: '',
@@ -62,7 +64,7 @@ const profileRow = (o: Record<string, unknown>) => ({
 function seedAdminDb(): FakeReferenceDb {
   return new FakeReferenceDb()
     .seed('profiles', [
-      profileRow({ id: U_ADMIN, first_name: 'Ada', last_name: 'Admin', email: 'ada@x.pl', access_role: 'administrator', role_title: 'Szef', department_id: D_KRE, birth_date: '1985-02-17' }),
+      profileRow({ id: U_ADMIN, first_name: 'Ada', last_name: 'Admin', email: 'ada@x.pl', access_role: 'administrator', role_title: 'Szef', department_id: D_KRE, company_id: C_A, birth_date: '1985-02-17' }),
       profileRow({ id: U_MGR, first_name: 'Marek', last_name: 'Menedżer', email: 'm@x.pl', access_role: 'manager', department_id: D_KRE, supervisor_id: U_ADMIN }),
       profileRow({ id: U_WORKER, first_name: 'Wera', last_name: 'Worker', email: 'w@x.pl', access_role: 'worker', department_id: D_STR }),
     ])
@@ -78,7 +80,15 @@ function seedAdminDb(): FakeReferenceDb {
       { id: 'st2', name: 'Wideo' },
       { id: 'st1', name: 'Grafika' },
     ])
-    .seed('work_categories', [{ id: 'wc1', name: 'Projekt' }]);
+    .seed('work_categories', [{ id: 'wc1', name: 'Projekt' }])
+    .seed('job_titles', [
+      { id: 'jt2', name: 'Programista' },
+      { id: 'jt1', name: 'Grafik' },
+    ])
+    .seed('companies', [
+      { id: C_B, name: 'Spółka B' },
+      { id: C_A, name: 'Spółka A' },
+    ]);
 }
 
 // ---- 1. Snapshot mapping + sorting ------------------------------------------
@@ -94,6 +104,9 @@ describe('loadOrgSnapshot — mapping i sortowanie (admin)', () => {
     expect(snap.profile?.id).toBe(U_ADMIN);
     expect(snap.profile?.cloudRole).toBe('administrator');
     expect(snap.profile?.departmentId).toBe(D_KRE);
+    // Spółka: uuid przechodzi dosłownie; brak kolumny/wartości → null.
+    expect(snap.profile?.companyId).toBe(C_A);
+    expect(snap.profiles.find((p) => p.id === U_MGR)?.companyId).toBeNull();
     // Przełożony: brak kolumny/wartości → null, uuid przechodzi dosłownie.
     expect(snap.profile?.supervisorId).toBeNull();
     // Data urodzenia: poprawna 'yyyy-MM-dd' przechodzi; brak kolumny → ''.
@@ -114,6 +127,10 @@ describe('loadOrgSnapshot — mapping i sortowanie (admin)', () => {
     // Słowniki posortowane po nazwie.
     expect(snap.serviceTypes.map((s) => s.name)).toEqual(['Grafika', 'Wideo']);
     expect(snap.workCategories.map((c) => c.name)).toEqual(['Projekt']);
+    // Stanowiska: mapowane i posortowane po nazwie.
+    expect(snap.jobTitles.map((j) => j.name)).toEqual(['Grafik', 'Programista']);
+    // Spółki: mapowane i posortowane po nazwie.
+    expect(snap.companies.map((c) => c.name)).toEqual(['Spółka A', 'Spółka B']);
   });
 });
 
@@ -152,7 +169,7 @@ describe('loadOrgSnapshot — wiersze zscope\'owane przez RLS', () => {
 
 describe('loadOrgSnapshot — atomowość i puste kolekcje', () => {
   it('dowolny błąd selectu psuje cały snapshot z jednym polskim komunikatem', async () => {
-    for (const table of ['profiles', 'departments', 'statuses', 'service_types', 'work_categories']) {
+    for (const table of ['profiles', 'departments', 'statuses', 'service_types', 'work_categories', 'job_titles', 'companies']) {
       const db = seedAdminDb().failOn(table, 'boom-sdk-detail');
       const res = await loadOrgSnapshot(db, U_ADMIN);
       expect(res.ok).toBe(false);
@@ -174,6 +191,8 @@ describe('loadOrgSnapshot — atomowość i puste kolekcje', () => {
       statuses: [],
       serviceTypes: [],
       workCategories: [],
+      jobTitles: [],
+      companies: [],
     });
   });
 
@@ -211,8 +230,8 @@ describe('effectiveAccessRole — macierz fallbacków', () => {
   const ready: OrgState = {
     status: 'ready',
     snapshot: {
-      profile: { id: 'cloud', firstName: 'C', lastName: '', email: '', roleTitle: '', cloudRole: 'manager', departmentId: null, supervisorId: null, phone: '', avatar: '', capacity: 8, workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, birthDate: '' },
-      profiles: [], departments: [], statuses: [], serviceTypes: [], workCategories: [],
+      profile: { id: 'cloud', firstName: 'C', lastName: '', email: '', roleTitle: '', cloudRole: 'manager', departmentId: null, companyId: null, supervisorId: null, phone: '', avatar: '', capacity: 8, workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, birthDate: '' },
+      profiles: [], departments: [], statuses: [], serviceTypes: [], workCategories: [], jobTitles: [], companies: [],
     },
   };
   const readyNoProfile: OrgState = { status: 'ready', snapshot: { ...ready.snapshot, profile: null } as OrgSnapshot };
@@ -248,7 +267,7 @@ describe('effectiveAccessRole — macierz fallbacków', () => {
 describe('buildCloudPeoplePayload', () => {
   const profile = (o: Partial<CloudProfile> & { id: string; email: string }): CloudProfile => ({
     firstName: 'Jan', lastName: 'Kowalski', roleTitle: '', cloudRole: 'worker',
-    departmentId: null, supervisorId: null, phone: '', avatar: '', capacity: 8,
+    departmentId: null, companyId: null, supervisorId: null, phone: '', avatar: '', capacity: 8,
     workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, birthDate: '', ...o,
   });
 
@@ -273,5 +292,14 @@ describe('buildCloudPeoplePayload', () => {
       profile({ id: 'u', email: 'a@x.pl', birthDate: '1990-05-09' }),
     ]);
     expect(rows[0].birthDate).toBe('1990-05-09');
+  });
+
+  it('przenosi spółkę do wiersza scalenia (null => "")', () => {
+    const rows = buildCloudPeoplePayload([
+      profile({ id: 'u1', email: 'a@x.pl', companyId: 'company-uuid' }),
+      profile({ id: 'u2', email: 'b@x.pl', companyId: null }),
+    ]);
+    expect(rows.find((r) => r.id === 'u1')?.companyId).toBe('company-uuid');
+    expect(rows.find((r) => r.id === 'u2')?.companyId).toBe('');
   });
 });

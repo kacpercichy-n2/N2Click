@@ -34,7 +34,8 @@ export type PermAction =
   | 'users.impersonate' // "Występuj jako" quick switch
   | 'comments.add' // post comments
   | 'tickets.create' // złożenie zgłoszenia („Zgłoszenia” → „Zgłoś”) — KAŻDA rola
-  | 'tickets.manage'; // wgląd we wszystkie zgłoszenia, zmiana statusu, usuwanie, eksport
+  | 'tickets.manage' // wgląd we wszystkie zgłoszenia, zmiana statusu, usuwanie, eksport
+  | 'events.manage'; // tworzenie/edycja/usuwanie wydarzeń kalendarza (spotkań)
 
 /** Per-role allow-set. Absence ⇒ denied. Everyone may VIEW every page but /admin. */
 const MATRIX: Record<AccessRole, ReadonlySet<PermAction>> = {
@@ -53,6 +54,7 @@ const MATRIX: Record<AccessRole, ReadonlySet<PermAction>> = {
     'comments.add',
     'tickets.create',
     'tickets.manage',
+    'events.manage',
   ]),
   pm: new Set<PermAction>([
     'projects.manage',
@@ -63,6 +65,7 @@ const MATRIX: Record<AccessRole, ReadonlySet<PermAction>> = {
     'workload.reassign',
     'comments.add',
     'tickets.create',
+    'events.manage',
   ]),
   // Zadania dodaje każda rola poza specjalistą (pracownik): menedżer działu
   // (pm), handlowiec i administrator — decyzja 2026-07-20.
@@ -75,6 +78,8 @@ const MATRIX: Record<AccessRole, ReadonlySet<PermAction>> = {
     'profile.editOwn',
     'comments.add',
     'tickets.create',
+    // Handlowiec umawia spotkania z klientami — decyzja 2026-07-21.
+    'events.manage',
   ]),
   pracownik: new Set<PermAction>([
     'blocks.editOwn',

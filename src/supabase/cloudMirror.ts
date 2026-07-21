@@ -16,6 +16,7 @@ import type {
   AccessRole,
   ActivityEvent,
   AppData,
+  CalendarEvent,
   Client,
   Comment,
   Milestone,
@@ -260,9 +261,35 @@ function taskRow(
     order_index: t.orderIndex,
     // Szkic (kolumna 20260721020000_task_is_draft): brak pola => opublikowane.
     is_draft: t.isDraft === true,
+    // Godziny szkicu (kolumna 20260721130000_task_draft_hours, jsonb): kształt
+    // `[{ profile_id, hours }]`. personId mapowany jak w `ticketRow`; wpis
+    // niemapowalny ODPADA (nie zerujemy całego wiersza). Brak `draftHours` => null.
+    draft_hours: draftHoursRow(t, maps),
+    // Cykliczność (kolumna 20260721170000_task_recurrence, jsonb): obiekt
+    // kanoniczny zapisywany dosłownie. Wyjątki niosą tylko daty/minuty — bez
+    // profili, więc bez mapowania id. Brak `recurrence` => null.
+    recurrence: t.recurrence ?? null,
     created_at: t.createdAt,
     updated_at: t.updatedAt,
   };
+}
+
+/** Mapuje `Task.draftHours` na jsonb chmury `[{ profile_id, hours }]`; wpis o
+ *  niemapowalnym personId odpada, brak godzin => null. */
+function draftHoursRow(
+  t: Task,
+  maps: CloudIdMaps,
+): Array<{ profile_id: string; hours: number }> | null {
+  if (!t.draftHours || t.draftHours.length === 0) return null;
+  const rows: Array<{ profile_id: string; hours: number }> = [];
+  for (const entry of t.draftHours) {
+    const profileId =
+      maps.people.get(entry.personId) ??
+      (maps.cloudProfileIds.has(entry.personId) ? entry.personId : undefined);
+    if (profileId === undefined) continue;
+    rows.push({ profile_id: profileId, hours: entry.hours });
+  }
+  return rows.length > 0 ? rows : null;
 }
 
 function milestoneRow(m: Milestone, diagnostics: string[]): Record<string, unknown> | null {
@@ -306,6 +333,47 @@ function ticketRow(
   };
 }
 
+/**
+ * Mapuje wydarzenie kalendarza na wiersz tabeli `events`. `id` musi być UUID;
+ * `attendee_ids` mapowane per-id jak w `draftHoursRow` — wpis o niemapowalnym
+ * personId ODPADA (bez zerowania całego wiersza). Kolumny snake_case; recurrence
+ * zapisywane dosłownie (obiekt kanoniczny) albo null.
+ */
+function eventRow(
+  e: CalendarEvent,
+  maps: CloudIdMaps,
+  diagnostics: string[],
+): Record<string, unknown> | null {
+  if (!isUuid(e.id)) {
+    diagnostics.push(DIAG.nonUuid);
+    return null;
+  }
+  const attendeeIds: string[] = [];
+  for (const personId of e.attendeeIds) {
+    const profileId =
+      maps.people.get(personId) ?? (maps.cloudProfileIds.has(personId) ? personId : undefined);
+    if (profileId === undefined) {
+      diagnostics.push(DIAG.unmappablePerson);
+      continue;
+    }
+    attendeeIds.push(profileId);
+  }
+  return {
+    id: e.id,
+    title: e.title,
+    description: e.description,
+    location: e.location,
+    meeting_url: e.meetingUrl,
+    event_date: e.date,
+    start_minutes: e.startMinutes,
+    duration_minutes: e.durationMinutes,
+    attendee_ids: attendeeIds,
+    recurrence: e.recurrence ?? null,
+    created_at: e.createdAt,
+    updated_at: e.updatedAt,
+  };
+}
+
 function workloadRow(
   w: WorkloadEntry,
   maps: CloudIdMaps,
@@ -328,6 +396,8 @@ function workloadRow(
     planned_hours: w.plannedHours,
     start_minutes: w.startMinutes,
     sort_index: w.sortIndex,
+    // Per-block completion (PKG-per-block-done): additive column, default false.
+    done: w.done === true,
   };
 }
 
@@ -590,8 +660,27 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
     }
   }
 
+  // 8c) Wydarzenia kalendarza ---- (diff po id: upsert dodanych/zmienionych,
+  // remove usuniętych). Kolekcja addytywna i czysto prezentacyjna; kalendarz
+  // spotkań jest ogólnofirmowy (RLS `to authenticated`, using true).
+  {
+    const prevMap = byId(prev.events);
+    const nextMap = byId(next.events);
+    for (const id of prevMap.keys()) {
+      if (!nextMap.has(id) && isUuid(id)) {
+        ops.push({ kind: 'remove', table: 'events', match: { id }, sourceId: id, label: 'Wydarzenie (usunięcie)' });
+      }
+    }
+    for (const e of next.events) {
+      const before = prevMap.get(e.id);
+      if (before && JSON.stringify(before) === JSON.stringify(e)) continue;
+      const row = eventRow(e, maps, diagnostics);
+      if (row) ops.push({ kind: 'upsert', table: 'events', row, sourceId: e.id, label: `Wydarzenie „${e.title}”` });
+    }
+  }
+
   // 9) Słowniki organizacji ---- (statusy + działy + typy usług + kategorie
-  // prac). Po autorytatywnej hydracji lokalne wiersze noszą id chmury, a nowe
+  // prac + stanowiska + spółki). Po autorytatywnej hydracji lokalne wiersze noszą id chmury, a nowe
   // dostają crypto.randomUUID — mutacje paneli admina płyną wprost do tabel
   // (RLS: zapis wyłącznie administrator; odrzut ląduje w `dropped` z polską
   // etykietą). Usunięcie propagujemy tylko dla id w formacie UUID.
@@ -641,6 +730,24 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
         label: 'Kategoria prac',
         prevRows: prev.workCategories,
         nextRows: next.workCategories,
+        toRow: ((d: { id: string; name: string }) => ({ id: d.id, name: d.name })) as (
+          r: never,
+        ) => Record<string, unknown>,
+      },
+      {
+        table: 'job_titles',
+        label: 'Stanowisko',
+        prevRows: prev.jobTitles,
+        nextRows: next.jobTitles,
+        toRow: ((d: { id: string; name: string }) => ({ id: d.id, name: d.name })) as (
+          r: never,
+        ) => Record<string, unknown>,
+      },
+      {
+        table: 'companies',
+        label: 'Spółka',
+        prevRows: prev.companies,
+        nextRows: next.companies,
         toRow: ((d: { id: string; name: string }) => ({ id: d.id, name: d.name })) as (
           r: never,
         ) => Record<string, unknown>,
@@ -717,6 +824,7 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
           work_start_minutes: p.workStartMinutes,
           work_end_minutes: p.workEndMinutes,
           department_id: p.departmentId === '' ? null : p.departmentId,
+          company_id: (p.companyId ?? '') === '' ? null : p.companyId,
           supervisor_id: supervisorProfileId,
           access_role: ACCESS_ROLE_TO_CLOUD[p.accessRole],
           birth_date: p.birthDate === '' ? null : p.birthDate,

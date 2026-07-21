@@ -18,6 +18,7 @@ import {
   normalizeStatusFlags,
   normalizeTaskMeta,
   normalizeWorkloadHours,
+  repairEvents,
   readCloudRetirementMarker,
   readEnvelopeRevision,
   repairStatusReferences,
@@ -414,6 +415,7 @@ describe('loadData migration v4 -> v5', () => {
         email: '',
         role: '',
         departmentId: '',
+        companyId: '',
         avatar: '',
         capacity: 6,
         isAdmin: true,
@@ -426,6 +428,7 @@ describe('loadData migration v4 -> v5', () => {
         email: '',
         role: '',
         departmentId: '',
+        companyId: '',
         avatar: '',
         capacity: 8,
         isAdmin: false,
@@ -438,6 +441,7 @@ describe('loadData migration v4 -> v5', () => {
         email: '',
         role: '',
         departmentId: '',
+        companyId: '',
         avatar: '',
         capacity: 20, // work-end minute must clamp to 24:00, not overflow
         isAdmin: false,
@@ -482,6 +486,7 @@ describe('loadData migration v4 -> v5', () => {
         email: '',
         role: '',
         departmentId: '',
+        companyId: '',
         avatar: '',
         capacity: 6,
         isAdmin: true,
@@ -506,6 +511,7 @@ describe('loadData migration v4 -> v5', () => {
       phone: '',
       role: '',
       departmentId: '',
+      companyId: '',
       avatar: '',
       capacity: 8,
       accessRole: 'administrator',
@@ -534,6 +540,42 @@ describe('loadData migration v4 -> v5', () => {
     expect(byId('garbage').birthDate).toBe('');
   });
 
+  it('companyId: brakujące => "", string przechodzi, nie-string => "" (repair migratePerson na każdym wczytaniu)', () => {
+    const person = (extra: Record<string, unknown>): Record<string, unknown> => ({
+      id: 'p1',
+      firstName: 'Ala',
+      lastName: '',
+      name: 'Ala',
+      email: '',
+      phone: '',
+      role: '',
+      departmentId: '',
+      avatar: '',
+      capacity: 8,
+      accessRole: 'administrator',
+      passwordHash: '',
+      workDays: [1, 2, 3, 4, 5],
+      workStartMinutes: 480,
+      workEndMinutes: 960,
+      supervisorId: '',
+      ...extra,
+    });
+    const payload = {
+      ...emptyData(),
+      version: 7,
+      people: [
+        person({ id: 'miss' }), // brak pola => ''
+        person({ id: 'ok', companyId: 'company-uuid' }), // string przechodzi
+        person({ id: 'garbage', companyId: 42 }), // nie-string => ''
+      ],
+    };
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+    const byId = (id: string) => data.people.find((p) => p.id === id)!;
+    expect(byId('miss').companyId).toBe('');
+    expect(byId('ok').companyId).toBe('company-uuid');
+    expect(byId('garbage').companyId).toBe('');
+  });
+
   it('defensively normalizes a v5-STAMPED payload whose people were never migrated (isAdmin still present, no accessRole) — normalization runs on every load, not only version < 5', () => {
     // A payload stamped version 5 but carrying pre-v5 people (the mid-dev/HMR
     // hazard the reviewer flagged): migrateV4toV5 only fired for version < 5, so
@@ -549,6 +591,7 @@ describe('loadData migration v4 -> v5', () => {
           email: '',
           role: '',
           departmentId: '',
+          companyId: '',
           avatar: '',
           capacity: 8,
           isAdmin: true, // legacy flag, no accessRole
@@ -561,6 +604,7 @@ describe('loadData migration v4 -> v5', () => {
           email: '',
           role: '',
           departmentId: '',
+          companyId: '',
           avatar: '',
           capacity: 8,
           isAdmin: false,
@@ -612,6 +656,7 @@ describe('impersonatorId persistence (PKG-20260708-b2-tests)', () => {
           email: '',
           role: '',
           departmentId: '',
+          companyId: '',
           avatar: '',
           capacity: 8,
           accessRole: 'administrator',
@@ -624,6 +669,7 @@ describe('impersonatorId persistence (PKG-20260708-b2-tests)', () => {
           email: '',
           role: '',
           departmentId: '',
+          companyId: '',
           avatar: '',
           capacity: 8,
           accessRole: 'pracownik',
@@ -755,6 +801,98 @@ describe('normalizeTaskMeta', () => {
     expect(messyChecklist[1].text).toBe(''); // 42 -> '' (non-string coerces)
     expect(messyChecklist[1].done).toBe(false); // 'yes' !== true
     expect(messyChecklist[2]).toEqual({ id: 'c3', text: 'fine', done: false });
+  });
+
+  it('drops draftHours on a published task (isDraft false/absent)', () => {
+    const published = v5Task({ id: 't1', draftHours: [{ personId: 'p1', hours: 4 }] });
+    const next = normalizeTaskMeta({ ...emptyData(), tasks: [published] });
+    expect('draftHours' in next.tasks[0]).toBe(false);
+  });
+
+  it('normalizes draftHours on a draft: non-empty personId + finite hours>0 snapped, dedupe by personId (first wins)', () => {
+    const draft = v5Task({
+      id: 't1',
+      isDraft: true,
+      draftHours: [
+        { personId: 'p1', hours: 4.3 }, // snap -> 4.25
+        { personId: '', hours: 5 }, // empty personId -> dropped
+        { personId: 'p2', hours: 0 }, // hours 0 -> dropped
+        { personId: 'p3', hours: -2 }, // negative -> dropped
+        { personId: 'p1', hours: 9 }, // duplicate p1 -> dropped (first wins)
+        'garbage',
+      ],
+    });
+    const next = normalizeTaskMeta({ ...emptyData(), tasks: [draft] });
+    expect(next.tasks[0].draftHours).toEqual([{ personId: 'p1', hours: 4.25 }]);
+  });
+
+  it('drops the draftHours key when a draft normalizes to an empty list or a non-array value', () => {
+    const empty = v5Task({ id: 't1', isDraft: true, draftHours: [{ personId: '', hours: 3 }] });
+    const nonArray = v5Task({ id: 't2', isDraft: true, draftHours: 'nope' });
+    const next = normalizeTaskMeta({ ...emptyData(), tasks: [empty, nonArray] });
+    expect('draftHours' in next.tasks.find((t) => t.id === 't1')!).toBe(false);
+    expect('draftHours' in next.tasks.find((t) => t.id === 't2')!).toBe(false);
+  });
+
+  it('draftHours normalization is idempotent', () => {
+    const draft = v5Task({ id: 't1', isDraft: true, draftHours: [{ personId: 'p1', hours: 4.3 }] });
+    const once = normalizeTaskMeta({ ...emptyData(), tasks: [draft] });
+    const twice = normalizeTaskMeta(once);
+    expect(twice.tasks[0].draftHours).toEqual(once.tasks[0].draftHours);
+  });
+
+  // Cykliczność (PKG-20260721-recurrence-core) — repair na wczytaniu.
+  it('a legacy task without a recurrence key round-trips unchanged (no echo-write)', () => {
+    const task = v5Task({ id: 't1' });
+    const next = normalizeTaskMeta({ ...emptyData(), tasks: [task] });
+    expect('recurrence' in next.tasks[0]).toBe(false);
+  });
+
+  it('preserves a canonical recurrence value on a published task', () => {
+    const rec = {
+      daysOfWeek: [1],
+      startMinutes: 540,
+      durationMinutes: 60,
+      overrides: [{ date: '2026-07-13', skip: true }],
+    };
+    // startDate 2026-07-06 is a Monday, so 07-13 is a real occurrence.
+    const task = v5Task({ id: 't1', recurrence: rec });
+    const next = normalizeTaskMeta({ ...emptyData(), tasks: [task] });
+    expect(next.tasks[0].recurrence).toEqual(rec);
+  });
+
+  it('drops a garbage recurrence value', () => {
+    const task = v5Task({ id: 't1', recurrence: { daysOfWeek: [], startMinutes: 5, durationMinutes: 3 } });
+    const next = normalizeTaskMeta({ ...emptyData(), tasks: [task] });
+    expect('recurrence' in next.tasks[0]).toBe(false);
+  });
+
+  it("drops a draft task's recurrence (a draft can never carry a rule)", () => {
+    const task = v5Task({
+      id: 't1',
+      isDraft: true,
+      recurrence: { daysOfWeek: [1], startMinutes: 540, durationMinutes: 60 },
+    });
+    const next = normalizeTaskMeta({ ...emptyData(), tasks: [task] });
+    expect('recurrence' in next.tasks[0]).toBe(false);
+  });
+
+  it('recurrence normalization is idempotent by value', () => {
+    const task = v5Task({
+      id: 't1',
+      recurrence: {
+        daysOfWeek: [3, 1, 1],
+        startMinutes: 540,
+        durationMinutes: 60,
+        overrides: [
+          { date: '2026-07-13', startMinutes: 600, durationMinutes: 30 },
+          { date: '2026-07-07', skip: true }, // Tue — not a Mon/Wed occurrence, dropped
+        ],
+      },
+    });
+    const once = normalizeTaskMeta({ ...emptyData(), tasks: [task] });
+    const twice = normalizeTaskMeta(once);
+    expect(twice.tasks[0].recurrence).toEqual(once.tasks[0].recurrence);
   });
 
   it("fills a v5 saved filter's criteria with DEFAULT_FILTER_CRITERIA's priority/workCategoryId ('') while other criteria fields survive unchanged", () => {
@@ -965,6 +1103,7 @@ describe('loadData migration v5 -> v6 (task metadata)', () => {
           email: '',
           role: '',
           departmentId: '',
+          companyId: '',
           avatar: '',
           capacity: 8,
           accessRole: 'administrator',
@@ -1747,6 +1886,7 @@ describe('loadData collection coercion (storage-01: one corrupt collection must 
       phone: '',
       role: '',
       departmentId: '',
+      companyId: '',
       avatar: '',
       capacity: 8,
       accessRole: 'administrator',
@@ -1778,13 +1918,15 @@ describe('loadData collection coercion (storage-01: one corrupt collection must 
     ['a string', 'oops'],
   ];
 
-  // The 11 auxiliary collections guarded ONLY by the emptyData spread (the ones
+  // The auxiliary collections guarded ONLY by the emptyData spread (the ones
   // that used to blow up the whole load). Each must repair in isolation.
   const AUX_COLLECTION_KEYS = [
     'clients',
     'departments',
     'serviceTypes',
     'workCategories',
+    'jobTitles',
+    'companies',
     'statuses',
     'projects',
     'milestones',
@@ -1835,6 +1977,31 @@ describe('loadData collection coercion (storage-01: one corrupt collection must 
       });
     }
   }
+
+  it('a legacy payload WITHOUT jobTitles loads with [] (additive collection, v7 stays)', () => {
+    const payload = { ...validV7Payload() };
+    delete (payload as Record<string, unknown>).jobTitles;
+    const result = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () =>
+      loadDataResult(),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.jobTitles).toEqual([]);
+    expect(result.data.tasks.map((t) => t.id)).toContain('t1');
+  });
+
+  it('a legacy payload WITHOUT companies loads with [] (additive collection, v7 stays)', () => {
+    const payload = { ...validV7Payload() };
+    delete (payload as Record<string, unknown>).companies;
+    const result = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () =>
+      loadDataResult(),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.companies).toEqual([]);
+    expect(result.data.version).toBe(DATA_VERSION);
+    expect(result.data.tasks.map((t) => t.id)).toContain('t1');
+  });
 
   it('runs coercion BEFORE localizeLegacyData: a v5 payload with "statuses" null repairs to the default pipeline instead of throwing', () => {
     const payload = { ...validV7Payload(), version: 5, statuses: null };
@@ -2086,5 +2253,244 @@ describe('cloud retirement marker helpers', () => {
     withLocalStorage({ [CLOUD_MIGRATION_KEY]: '{bad' }, () => {
       expect(readCloudRetirementMarker()).toEqual({ enabled: false });
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PKG-20260721-filters-store: SavedFilterCriteria.projectId + AppData.lastFilters
+// additive at DATA_VERSION 7. Load defaults + sanitizes both on every load.
+// ---------------------------------------------------------------------------
+
+describe('savedFilter projectId (additive at v7)', () => {
+  it("legacy savedFilter without projectId loads with projectId '' and untouched criteria", () => {
+    const filter = {
+      id: 'f1',
+      name: 'A',
+      page: 'tasks',
+      criteria: { paid: 'unpaid', clientId: 'c1', statusId: 's1', personId: 'p1', from: '', to: '' },
+    };
+    const payload = { ...emptyData(), savedFilters: [filter] };
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+    expect(data.savedFilters[0].criteria.projectId).toBe('');
+    expect(data.savedFilters[0].criteria.clientId).toBe('c1');
+    expect(data.savedFilters[0].criteria.paid).toBe('unpaid');
+  });
+
+  it("resets a dangling savedFilter projectId to '' while preserving a valid reference", () => {
+    const project: Project = {
+      id: 'p1',
+      clientId: '',
+      name: 'P',
+      description: '',
+      statusId: '',
+      paid: false,
+      startDate: '2026-07-06',
+      endDate: '2026-07-12',
+      departmentId: '',
+      serviceTypeId: '',
+      documents: [],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    const dangling = {
+      id: 'f1',
+      name: 'A',
+      page: 'tasks',
+      criteria: { ...DEFAULT_FILTER_CRITERIA, projectId: 'ghost' },
+    } as unknown as SavedFilter;
+    const valid = {
+      id: 'f2',
+      name: 'B',
+      page: 'tasks',
+      criteria: { ...DEFAULT_FILTER_CRITERIA, projectId: 'p1' },
+    } as unknown as SavedFilter;
+    const next = normalizeTaskMeta({ ...emptyData(), projects: [project], savedFilters: [dangling, valid] });
+    expect(next.savedFilters.find((f) => f.id === 'f1')!.criteria.projectId).toBe('');
+    expect(next.savedFilters.find((f) => f.id === 'f2')!.criteria.projectId).toBe('p1');
+  });
+});
+
+describe('AppData.lastFilters (additive at v7)', () => {
+  it('a payload WITHOUT lastFilters loads as {}', () => {
+    const { lastFilters: _drop, ...payload } = emptyData();
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+    expect(data.lastFilters).toEqual({});
+  });
+
+  it('coerces a present-but-non-object lastFilters (array) to {}', () => {
+    const payload = { ...emptyData(), lastFilters: ['nope'] as unknown };
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+    expect(data.lastFilters).toEqual({});
+  });
+
+  it('drops unknown view keys and sanitizes entries deterministically', () => {
+    const payload = {
+      ...emptyData(),
+      lastFilters: {
+        bogus: { criteria: {}, personIds: [] }, // unknown view -> dropped
+        tasks: {
+          criteria: { ...DEFAULT_FILTER_CRITERIA, priority: 'critical', projectId: 'ghost', from: 'garbage' },
+          personIds: ['a', 'a', 3, 'b'],
+          departmentId: 42,
+          serviceTypeId: 'srv',
+          planning: 'nieznane',
+        },
+      } as unknown,
+    };
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+    expect('bogus' in data.lastFilters).toBe(false);
+    const tasks = data.lastFilters.tasks!;
+    expect(tasks.criteria.priority).toBe('');
+    expect(tasks.criteria.projectId).toBe('');
+    expect(tasks.criteria.from).toBe('');
+    expect(tasks.personIds).toEqual(['a', 'b']);
+    expect(tasks.departmentId).toBe('');
+    expect(tasks.serviceTypeId).toBe('srv');
+    expect(tasks.planning).toBe('');
+  });
+
+  it('lastFilters repair is value-idempotent (load -> save-shape -> load)', () => {
+    const payload = {
+      ...emptyData(),
+      lastFilters: {
+        calendar: { criteria: { ...DEFAULT_FILTER_CRITERIA }, personIds: ['x'], departmentId: '', serviceTypeId: '', planning: '' },
+      },
+    };
+    const once = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+    const twice = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(once) }, () => loadData());
+    expect(twice.lastFilters).toEqual(once.lastFilters);
+  });
+
+  it('normalizeDates repairs invalid from/to inside a lastFilters entry', () => {
+    const data: AppData = {
+      ...emptyData(),
+      lastFilters: {
+        tasks: {
+          criteria: { ...DEFAULT_FILTER_CRITERIA, from: 'garbage', to: '2026-07-20' },
+          personIds: [],
+          departmentId: '',
+          serviceTypeId: '',
+          planning: '',
+        },
+      },
+    };
+    const next = normalizeDates(data);
+    expect(next.lastFilters.tasks!.criteria.from).toBe('');
+    expect(next.lastFilters.tasks!.criteria.to).toBe('2026-07-20');
+  });
+});
+
+// ---- repairEvents (wydarzenia kalendarza) -----------------------------------
+describe('repairEvents', () => {
+  const MON = '2026-07-06'; // poniedziałek (ISO 1)
+  const withEvents = (events: unknown[]): AppData =>
+    ({ ...emptyData(), events } as unknown as AppData);
+
+  it('odrzuca wiersz bez id / bez tytułu / ze złą datą', () => {
+    const data = withEvents([
+      { title: 'Brak id', date: MON, startMinutes: 540, durationMinutes: 60 },
+      { id: 'e1', title: '   ', date: MON, startMinutes: 540, durationMinutes: 60 },
+      { id: 'e2', title: 'Zła data', date: 'nope', startMinutes: 540, durationMinutes: 60 },
+    ]);
+    expect(repairEvents(data).events).toEqual([]);
+  });
+
+  it('snapuje czasy poza siatką w dół i clampuje do doby', () => {
+    const data = withEvents([
+      { id: 'e1', title: 'X', date: MON, startMinutes: 547, durationMinutes: 1000 },
+    ]);
+    const e = repairEvents(data).events[0];
+    expect(e.startMinutes).toBe(540); // 547 -> 540
+    expect(e.durationMinutes).toBe(900); // snap 990, potem clamp do 1440-540
+    expect(e.startMinutes + e.durationMinutes).toBe(1440);
+  });
+
+  it('odrzuca wiersz z nie-finite startMinutes', () => {
+    const data = withEvents([
+      { id: 'e1', title: 'X', date: MON, startMinutes: 'abc', durationMinutes: 60 },
+    ]);
+    expect(repairEvents(data).events).toEqual([]);
+  });
+
+  it('deduplikuje uczestników i zachowuje dangling id', () => {
+    const data = withEvents([
+      {
+        id: 'e1',
+        title: 'X',
+        date: MON,
+        startMinutes: 540,
+        durationMinutes: 60,
+        attendeeIds: ['a', 'a', 'ghost'],
+      },
+    ]);
+    expect(repairEvents(data).events[0].attendeeIds).toEqual(['a', 'ghost']);
+  });
+
+  it('normalizuje zły adres spotkania do ""', () => {
+    const data = withEvents([
+      { id: 'e1', title: 'X', date: MON, startMinutes: 540, durationMinutes: 60, meetingUrl: 'javascript:1' },
+    ]);
+    expect(repairEvents(data).events[0].meetingUrl).toBe('');
+  });
+
+  it('usuwa regułę bez dnia kotwicy, zachowuje kanoniczną', () => {
+    const withoutAnchor = withEvents([
+      {
+        id: 'e1',
+        title: 'X',
+        date: MON,
+        startMinutes: 540,
+        durationMinutes: 60,
+        attendeeIds: [],
+        recurrence: { daysOfWeek: [3], startMinutes: 540, durationMinutes: 60 },
+      },
+    ]);
+    expect('recurrence' in repairEvents(withoutAnchor).events[0]).toBe(false);
+
+    const canonical = withEvents([
+      {
+        id: 'e2',
+        title: 'Y',
+        date: MON,
+        startMinutes: 540,
+        durationMinutes: 60,
+        attendeeIds: [],
+        recurrence: { daysOfWeek: [1, 3], startMinutes: 540, durationMinutes: 60 },
+      },
+    ]);
+    expect(repairEvents(canonical).events[0].recurrence).toEqual({
+      daysOfWeek: [1, 3],
+      startMinutes: 540,
+      durationMinutes: 60,
+    });
+  });
+
+  it('jest idempotentny po wartości', () => {
+    const data = withEvents([
+      {
+        id: 'e1',
+        title: 'X',
+        date: MON,
+        startMinutes: 547,
+        durationMinutes: 1000,
+        attendeeIds: ['a', 'a'],
+        meetingUrl: 'example.test/x',
+        recurrence: { daysOfWeek: [1, 3], startMinutes: 0, durationMinutes: 15 },
+      },
+    ]);
+    const once = repairEvents(data);
+    const twice = repairEvents(once);
+    expect(twice.events).toEqual(once.events);
+  });
+
+  it('legacy payload bez pola events ładuje się z [] przez pełną ścieżkę wczytania', () => {
+    const legacy: Record<string, unknown> = { ...emptyData() };
+    delete legacy.events;
+    const result = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(legacy) }, () =>
+      loadDataResult(),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.events).toEqual([]);
   });
 });

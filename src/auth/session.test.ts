@@ -237,6 +237,7 @@ function person(overrides: Partial<Person>): Person {
     phone: '',
     role: '',
     departmentId: '',
+    companyId: '',
     avatar: '',
     capacity: 8,
     accessRole: 'pracownik',

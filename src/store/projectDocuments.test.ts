@@ -388,6 +388,8 @@ describe('mirror + snapshot: round-trip dokumentów', () => {
     statuses: [],
     serviceTypes: [],
     workCategories: [],
+    jobTitles: [],
+    companies: [],
     profiles: [],
   });
 

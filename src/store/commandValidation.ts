@@ -4,18 +4,32 @@
 // dangling-reference and malformed-estimate commands before any activity row is
 // appended. Draft types come via a TYPE-ONLY import from AppStore so there is no
 // runtime import cycle (AppStore imports these functions at runtime).
-import type { AppData, Project } from '../types';
+import type {
+  AppData,
+  FilterPage,
+  FilterViewKey,
+  LastViewFilter,
+  Project,
+  SavedFilterCriteria,
+  TaskPriority,
+  TaskRecurrence,
+} from '../types';
 import {
   isProjectDocumentKind,
   normalizeProjectDocumentUrl,
 } from '../utils/projectDocuments';
 import { isTicketKind, isTicketPriority, isTicketStatus } from '../utils/tickets';
+import { TASK_PRIORITIES } from '../utils/priority';
+import { isValidDateStr } from '../utils/dates';
+import { DAY_MINUTES, MINUTE_STEP } from '../utils/time';
+import { isoWeekday, normalizeRecurrence } from '../utils/recurrence';
 import type {
   TaskDraft,
   ProjectDraft,
   ProjectDocumentDraft,
   PersonDraft,
   TicketDraft,
+  EventDraft,
 } from './AppStore';
 
 export type RefEntityKind = 'task' | 'project' | 'milestone' | 'status' | 'person' | 'client';
@@ -36,6 +50,14 @@ export function hasEntity(state: AppData, kind: RefEntityKind, id: string): bool
     case 'client':
       return state.clients.some((c) => c.id === id);
   }
+}
+
+/** True when a workload entry (day block or bin row) with this id exists. Guards
+ *  SET_BLOCK_DONE next to SET_TASK_STATUS: an unknown entryId returns the same
+ *  state reference (invariant 6). Separate from `hasEntity` because workload is
+ *  not a RefEntityKind (a block has no display name and never gets referenced). */
+export function hasWorkloadEntry(state: AppData, entryId: string): boolean {
+  return state.workload.some((w) => w.id === entryId);
 }
 
 /** Required display name/title: non-empty after trim. */
@@ -157,4 +179,285 @@ export function isValidTicketDraft(state: AppData, draft: TicketDraft): boolean 
 /** Status zgłoszenia należy do stałego zbioru wartości. */
 export function isValidTicketStatus(value: unknown): boolean {
   return isTicketStatus(value);
+}
+
+// ---- Wydarzenia kalendarza (spotkania) --------------------------------------
+
+/** Minuta startu na siatce 15 min, w dobie z miejscem na min. 15-minutowy czas
+ *  (0..1425). */
+function isValidStartMinutes(m: unknown): m is number {
+  return (
+    typeof m === 'number' &&
+    Number.isInteger(m) &&
+    m >= 0 &&
+    m <= DAY_MINUTES - MINUTE_STEP &&
+    m % MINUTE_STEP === 0
+  );
+}
+
+/** Czas trwania na siatce 15 min (15..1440). */
+function isValidDurationMinutes(m: unknown): m is number {
+  return (
+    typeof m === 'number' &&
+    Number.isInteger(m) &&
+    m >= MINUTE_STEP &&
+    m <= DAY_MINUTES &&
+    m % MINUTE_STEP === 0
+  );
+}
+
+/**
+ * FORMA KANONICZNA cykliczności wydarzenia (decyzja 2). Czas wydarzenia JEST
+ * czasem reguły — nadpisujemy `startMinutes`/`durationMinutes` reguły wartościami
+ * wydarzenia PRZED normalizacją. Zwraca kanoniczną regułę TYLKO gdy jest poprawna
+ * strukturalnie i `daysOfWeek` zawiera dzień tygodnia kotwicy (baza zawsze
+ * widoczna); inaczej `undefined` (repair/hydracja USUWAJĄ klucz, reduktor
+ * odrzuca draft). REUŻYWA `normalizeRecurrence` — bez drugiej implementacji.
+ */
+export function canonicalEventRecurrence(
+  raw: unknown,
+  date: string,
+  startMinutes: number,
+  durationMinutes: number,
+): TaskRecurrence | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  if (!isValidDateStr(date)) return undefined;
+  const forced = { ...(raw as Record<string, unknown>), startMinutes, durationMinutes };
+  const rule = normalizeRecurrence(forced, date);
+  if (rule === undefined) return undefined;
+  // Baza (dzień tygodnia kotwicy) musi być wśród dni reguły, inaczej wydarzenie
+  // bazowe nie byłoby wystąpieniem własnej reguły.
+  if (!rule.daysOfWeek.includes(isoWeekday(date))) return undefined;
+  return rule;
+}
+
+/** Znormalizowany draft wydarzenia gotowy do zapisania przez reduktor. */
+export interface NormalizedEventDraft {
+  title: string;
+  description: string;
+  location: string;
+  meetingUrl: string;
+  date: string;
+  startMinutes: number;
+  durationMinutes: number;
+  attendeeIds: string[];
+  recurrence?: TaskRecurrence;
+}
+
+/**
+ * Waliduje i normalizuje draft wydarzenia. Zwraca ZNORMALIZOWANY ładunek (trim
+ * tytułu/opisu/lokalizacji, dedupe uczestników, adres znormalizowany, reguła
+ * kanoniczna) albo `null`, gdy komenda ma zostać ODRZUCONA => reduktor oddaje TĘ
+ * SAMĄ referencję stanu (inwariant 6). Odrzucenia: pusty tytuł, zła data, czas
+ * poza siatką 15 min / poza dobą, `attendeeIds` niebędące tablicą stringów
+ * istniejących w `people`, `meetingUrl` niepusty odrzucony przez schemat,
+ * cykliczność zażądana lecz niekanoniczna (brak dnia kotwicy albo strukturalnie
+ * zła).
+ */
+export function normalizeEventDraft(
+  state: AppData,
+  draft: EventDraft,
+): NormalizedEventDraft | null {
+  const title = draft.title.trim();
+  if (title === '') return null;
+  if (!isValidDateStr(draft.date)) return null;
+  if (!isValidStartMinutes(draft.startMinutes)) return null;
+  if (!isValidDurationMinutes(draft.durationMinutes)) return null;
+  if (draft.startMinutes + draft.durationMinutes > DAY_MINUTES) return null;
+
+  if (!Array.isArray(draft.attendeeIds)) return null;
+  const attendeeIds: string[] = [];
+  const seen = new Set<string>();
+  for (const id of draft.attendeeIds) {
+    if (typeof id !== 'string') return null;
+    if (!hasEntity(state, 'person', id)) return null; // dangling => odrzuć (reduktor)
+    if (seen.has(id)) continue;
+    seen.add(id);
+    attendeeIds.push(id);
+  }
+
+  let meetingUrl = '';
+  if (draft.meetingUrl.trim() !== '') {
+    const normalized = normalizeProjectDocumentUrl(draft.meetingUrl);
+    if (normalized === null) return null;
+    meetingUrl = normalized;
+  }
+
+  let recurrence: TaskRecurrence | undefined;
+  if (draft.recurrence !== null && draft.recurrence !== undefined) {
+    recurrence = canonicalEventRecurrence(
+      draft.recurrence,
+      draft.date,
+      draft.startMinutes,
+      draft.durationMinutes,
+    );
+    if (recurrence === undefined) return null; // zażądano cykliczności, ale zła
+  }
+
+  return {
+    title,
+    description: draft.description.trim(),
+    location: draft.location.trim(),
+    meetingUrl,
+    date: draft.date,
+    startMinutes: draft.startMinutes,
+    durationMinutes: draft.durationMinutes,
+    attendeeIds,
+    ...(recurrence ? { recurrence } : {}),
+  };
+}
+
+/** UI-owa forma reguły dla bramki „Zapisz” (jedno źródło prawdy z reduktorem). */
+export function isValidEventDraft(state: AppData, draft: EventDraft): boolean {
+  return normalizeEventDraft(state, draft) !== null;
+}
+
+// ---- Filtry: sanityzacja kryteriów i „ostatnio użytego” filtra ---------------
+// Czyste helpery współdzielone przez reduktor (`SET_LAST_FILTER`,
+// `SAVE_FILTER_PRESET`) i repair wczytania (storage.ts). Trzymane TU (a nie w
+// selectors/storage), bo storage może je reużyć bez cyklu importów: ten moduł
+// zależy tylko od `types` (type-only), `utils/*` — nigdy od `storage`/`selectors`.
+
+/** Widoki zapamiętywanych filtrów — stały zbiór (patrz `FilterViewKey`). */
+export const FILTER_VIEW_KEYS: readonly FilterViewKey[] = [
+  'projects',
+  'tasks',
+  'kanban',
+  'workload',
+  'calendar',
+  'timeline',
+];
+
+export function isFilterViewKey(value: unknown): value is FilterViewKey {
+  return typeof value === 'string' && (FILTER_VIEW_KEYS as readonly string[]).includes(value);
+}
+
+/** Strony obsługujące nazwane presety filtrów (`SavedFilter.page`). */
+const FILTER_PAGES: readonly FilterPage[] = ['projects', 'tasks', 'kanban'];
+
+export function isFilterPage(value: unknown): value is FilterPage {
+  return typeof value === 'string' && (FILTER_PAGES as readonly string[]).includes(value);
+}
+
+// Dozwolone wartości filtra planowania. Kopia `PLANNING_STATUSES` z selectors.ts —
+// tu jako stały zbiór, bo import selectors dałby cykl (selectors → storage →
+// commandValidation). Jeśli etykiety planowania kiedyś się zmienią, zaktualizuj
+// oba miejsca.
+const PLANNING_FILTER_VALUES: readonly string[] = [
+  'nie rozplanowano',
+  'częściowo',
+  'rozplanowano',
+  'przekroczono',
+];
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function asString(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function dedupeStrings(values: unknown[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of values) {
+    if (typeof v !== 'string' || seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+  }
+  return out;
+}
+
+/**
+ * Buduje poprawne `SavedFilterCriteria` z surowej wartości (nieznane pola pomijane,
+ * brakujące dostają wartość „wszystko”). Sanityzacja referencji jak w
+ * `normalizeTaskMeta`: dangling `projectId`/`workCategoryId` → '', `priority` spoza
+ * enuma → '', niepoprawne `from`/`to` → ''. Deterministyczne i idempotentne po
+ * wartości. Nie importuje `DEFAULT_FILTER_CRITERIA` (unika cyklu ze storage) —
+ * pola są wypisane jawnie.
+ */
+export function sanitizeFilterCriteria(state: AppData, raw: unknown): SavedFilterCriteria {
+  const obj = isPlainObject(raw) ? raw : {};
+  const paid: SavedFilterCriteria['paid'] =
+    obj.paid === 'paid' || obj.paid === 'unpaid' ? obj.paid : 'all';
+  const priorityRaw = obj.priority;
+  const priority: '' | TaskPriority =
+    typeof priorityRaw === 'string' && (TASK_PRIORITIES as readonly string[]).includes(priorityRaw)
+      ? (priorityRaw as TaskPriority)
+      : '';
+  const rawProjectId = asString(obj.projectId);
+  const projectId =
+    rawProjectId !== '' && hasEntity(state, 'project', rawProjectId) ? rawProjectId : '';
+  const rawCategory = asString(obj.workCategoryId);
+  const workCategoryId =
+    rawCategory !== '' && state.workCategories.some((c) => c.id === rawCategory) ? rawCategory : '';
+  const from = isValidDateStr(asString(obj.from)) ? asString(obj.from) : '';
+  const to = isValidDateStr(asString(obj.to)) ? asString(obj.to) : '';
+  return {
+    paid,
+    clientId: asString(obj.clientId),
+    projectId,
+    statusId: asString(obj.statusId),
+    personId: asString(obj.personId),
+    priority,
+    workCategoryId,
+    from,
+    to,
+  };
+}
+
+/**
+ * Sanityzuje jeden `LastViewFilter`: kryteria przez `sanitizeFilterCriteria`,
+ * `personIds` do zdeduplikowanej tablicy stringów, `departmentId`/`serviceTypeId`
+ * do stringów, `planning` do wartości z enuma (nieznane → ''). Zawsze zwraca
+ * poprawny obiekt (leniwie koeruje) — struktury pilnuje `isStructuralLastViewFilter`.
+ */
+export function sanitizeLastViewFilter(state: AppData, raw: unknown): LastViewFilter {
+  const obj = isPlainObject(raw) ? raw : {};
+  const personIds = Array.isArray(obj.personIds) ? dedupeStrings(obj.personIds) : [];
+  const planning = PLANNING_FILTER_VALUES.includes(asString(obj.planning))
+    ? asString(obj.planning)
+    : '';
+  return {
+    criteria: sanitizeFilterCriteria(state, obj.criteria),
+    personIds,
+    departmentId: asString(obj.departmentId),
+    serviceTypeId: asString(obj.serviceTypeId),
+    planning,
+  };
+}
+
+/**
+ * Strażnik STRUKTURY dla ładunku reduktora `SET_LAST_FILTER`: obiekt z obiektowym
+ * `criteria` i tablicowym `personIds`. Strukturalnie zniekształcony ładunek =>
+ * reduktor zwraca TĘ SAMĄ referencję stanu (inwariant 6). (Repair wczytania jest
+ * leniwy i nie używa tego strażnika.)
+ */
+export function isStructuralLastViewFilter(raw: unknown): boolean {
+  return isPlainObject(raw) && isPlainObject(raw.criteria) && Array.isArray(raw.personIds);
+}
+
+/** Równość PO WARTOŚCI dwóch `LastViewFilter` — do wykrywania no-op zapisu. */
+export function lastViewFilterEqual(a: LastViewFilter, b: LastViewFilter): boolean {
+  if (a.departmentId !== b.departmentId) return false;
+  if (a.serviceTypeId !== b.serviceTypeId) return false;
+  if (a.planning !== b.planning) return false;
+  if (a.personIds.length !== b.personIds.length) return false;
+  for (let i = 0; i < a.personIds.length; i++) {
+    if (a.personIds[i] !== b.personIds[i]) return false;
+  }
+  const ca = a.criteria;
+  const cb = b.criteria;
+  return (
+    ca.paid === cb.paid &&
+    ca.clientId === cb.clientId &&
+    ca.projectId === cb.projectId &&
+    ca.statusId === cb.statusId &&
+    ca.personId === cb.personId &&
+    ca.priority === cb.priority &&
+    ca.workCategoryId === cb.workCategoryId &&
+    ca.from === cb.from &&
+    ca.to === cb.to
+  );
 }

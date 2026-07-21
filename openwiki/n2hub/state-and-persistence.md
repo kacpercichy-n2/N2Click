@@ -29,8 +29,9 @@
   categories → their tables; RLS: admin-only) and for PERSON PROFILE UPDATES
   (profiles UPDATE only — account creation stays with provisioning and
   deletion with the Supabase operator; PeoplePage hides add/delete in supabase
-  mode). Only per-user saved filters and sample/reset remain local-only
-  concepts (SampleBanner never renders in supabase mode).
+  mode). Only per-user saved filters, per-view last-used filters
+  (`AppData.lastFilters`) and sample/reset remain local-only concepts
+  (SampleBanner never renders in supabase mode).
   Constraint-violation write errors (23502/23503/23505/23514) drop the op with
   the Polish permission notice rather than stalling the retry queue. Local mode:
   zero diff.
@@ -125,6 +126,149 @@
   triggerem `protect_profile_privileges`); mapowana przez
   referenceData/cloudMirror i hydrowana przez MERGE_CLOUD_PEOPLE (patrz
   cloud-database).
+- FILTRY UJEDNOLICONE I TRWAŁE (2026-07-21): `SavedFilterCriteria.projectId`
+  (''=wszystkie) i `AppData.lastFilters` (`Partial<Record<FilterViewKey,
+  LastViewFilter>>` — ostatnio użyty filtr per widok: projects/tasks/kanban/
+  workload/calendar/timeline). Oba ADDYTYWNE (`DATA_VERSION` zostaje na 7) i
+  LOKALNE ONLY (jak `savedFilters` — brak domu w chmurze; per-użytkownik).
+  `FilterPage` zyskuje `'kanban'`. Repair na KAŻDYM wczytaniu: `normalizeTaskMeta`
+  daje presetom brakujący `projectId` (dangling → ''), a `lastFilters` odrzuca
+  nieznane klucze widoków i sanityzuje wpisy współdzielonym
+  `sanitizeLastViewFilter` (commandValidation: kryteria wypełnione, dangling
+  projectId/workCategoryId → '', priority/planning spoza enuma → '', personIds
+  zdeduplikowane); `normalizeDates` czyści from/to także w `lastFilters`. Zapis:
+  reduktor `SET_LAST_FILTER` (sanityzuj → porównaj po wartości → no-op zwraca tę
+  samą referencję; nieznany widok / strukturalnie zły ładunek → ta sama
+  referencja, inwariant 6). `SAVE_FILTER_PRESET` waliduje `page` i kryteria;
+  kaskady `deleteProject`/`DELETE_WORK_CATEGORY` czyszczą pole w savedFilters
+  ORAZ lastFilters. `MERGE_CLOUD_*` zostawiają `lastFilters` i `savedFilters` po
+  referencji; `persistGate.NON_MIRRORED_KEYS` zawiera `lastFilters` (zmiana
+  samych filtrów NIGDY nie pomija zapisu lokalnego). Testy: `filterState.test.ts`,
+  rozszerzenia w `storage.test.ts`/`cloudMerge.test.ts`/`persistGate.test.ts`.
+- STANOWISKA (2026-07-21): kolekcja `jobTitles` w `AppData` (`JobTitle` w
+  `src/types.ts`, tuż po `workCategories`) — słownik stanowisk zarządzany w
+  Administracji („Stanowiska”). Mutacje: `ADD_JOB_TITLE` / `RENAME_JOB_TITLE` /
+  `DELETE_JOB_TITLE` w reduktorze — trim; pusta nazwa, nieznane id oraz DUPLIKAT
+  bez rozróżniania wielkości liter (`toLocaleLowerCase('pl-PL')`, reguła TYLKO dla
+  stanowisk; działy zachowują historyczne zachowanie) zwracają TĘ SAMĄ referencję
+  (inwariant 6); rename na własną dokładną nazwę to no-op; DELETE bez kaskady —
+  `Person.role` (wolny tekst) zachowuje wartość. Kolekcja ADDYTYWNA: `DATA_VERSION`
+  zostaje na 7, `emptyData()`/seed dają `[]`, a wczytanie ma
+  `coerceArray(parsedRest.jobTitles, …)` (bez osobnego repair per-wiersz, parytet z
+  `departments`). `MERGE_CLOUD_DICTIONARIES` teraz zastępuje też `jobTitles`
+  (Array.isArray + isValidNamedRow, pusta chmura POPRAWNA, zniekształcony wiersz →
+  ta sama referencja); `MERGE_CLOUD_ENTITIES` nadal ich nie rusza (po referencji).
+  `persistGate.NON_MIRRORED_KEYS` zawiera `jobTitles`. Select „Stanowisko” w
+  profilu scala je przez `jobTitleSelectOptions` (słownik → opcje działowe →
+  bieżąca zaszłościowa wartość na końcu). W chmurze to tabela `public.job_titles`
+  (patrz cloud-database). Testy: `jobTitles.test.ts`, rozszerzenia w
+  `storage.test.ts`/`roleTitles.test.ts`/`referenceData.test.ts`/`cloudMirror.test.ts`.
+- SPÓŁKI (2026-07-21): kolekcja `companies` w `AppData` (`Company` w
+  `src/types.ts`, tuż po `jobTitles`) — słownik spółek zarządzany w Administracji
+  („Spółki”, sekcja tuż po „Działy”). Mutacje: `ADD_COMPANY` / `RENAME_COMPANY` /
+  `DELETE_COMPANY` w reduktorze — kopia wzorca `jobTitles` (trim; pusta nazwa,
+  nieznane id, DUPLIKAT case-insensitive `toLocaleLowerCase('pl-PL')`, rename na
+  własną nazwę → TA SAMA referencja, inwariant 6). RÓŻNICA: `DELETE_COMPANY`
+  kaskadowo czyści `Person.companyId` (`=== '' ` na dopasowanych — styl
+  `DELETE_DEPARTMENT`; chmurowy FK `on delete set null` to lustruje). Nowe pole
+  `Person.companyId?` (opcjonalne, `'' = brak`; repair `migratePerson`:
+  brak/nie-string → `''`) — przypisanie administratora zawężające widoczność
+  projektów w chmurze (RLS). Kolekcja ADDYTYWNA: `DATA_VERSION` zostaje 7,
+  `emptyData()`/seed dają `[]`, wczytanie ma `coerceArray(parsedRest.companies, …)`.
+  `MERGE_CLOUD_DICTIONARIES` zastępuje też `companies` (Array.isArray +
+  isValidNamedRow, pusta chmura POPRAWNA, zniekształcony wiersz → ta sama
+  referencja); `MERGE_CLOUD_PEOPLE` niesie `companyId` (walidacja wymaga stringa —
+  nie-string ⇒ fail-closed, ta sama referencja). `persistGate.NON_MIRRORED_KEYS`
+  zawiera `companies`. Select „Spółka” w profilu jest ADMIN-ONLY
+  (`profileEditPolicy` ALL_FIELDS, parytet z serwerowym triggerem). W chmurze to
+  tabela `public.companies` (patrz cloud-database). Testy: `companies.test.ts`,
+  rozszerzenia w `storage.test.ts`/`cloudMerge.test.ts`/`referenceData.test.ts`/
+  `cloudMirror.test.ts`/`profileEditPolicy.test.ts`.
+- CYKLICZNOŚĆ ZADAŃ (2026-07-21): `Task.recurrence?: TaskRecurrence` (reguła
+  RRULE-lite + per-datowe wyjątki; `RecurrenceOverride` w `src/types.ts`). Czysta
+  matematyka w `src/utils/recurrence.ts` (bez importów store/komponentów — tylko
+  `utils/dates`+`utils/time`): `isoWeekday`, `normalizeRecurrenceRule`,
+  `normalizeRecurrence`, `isOccurrenceDate`, `expandOccurrences` (rozwijanie
+  WYŁĄCZNIE w oknie [from..to], defensywny cap 400 dni). Wystąpienia są
+  WYŁĄCZNIE prezentacyjne: NIGDY nie tworzą wierszy `WorkloadEntry` ani nie
+  zasilają sum/`dayTotal`/przeciążenia/kolizji (inwariant 1); mają własną granicę
+  `until` i nie przechodzą przez limit 92 dni okresu bazowego (inwariant 2).
+  FORMA KANONICZNA (nośna dla `sameRowValue`/reference-preserving merge,
+  egzekwowana na TRZECH granicach — reduktor, `normalizeTaskMeta`, hydracja
+  chmury): klucz `recurrence` obecny tylko przy poprawnej regule, NIGDY na szkicu
+  (`isDraft === true`) i NIGDY przy niepoprawnym `startDate`; `until` tylko gdy
+  poprawny i `>= startDate`; wyjątek albo `{date, skip:true}` albo
+  `{date, startMinutes, durationMinutes}` na siatce 15 min, RÓŻNY od reguły,
+  którego `date` jest realną datą wystąpienia; `overrides` posortowane po dacie,
+  brak klucza gdy pusto. Mutacje: `SET_TASK_RECURRENCE` („edytuj wszystkie" /
+  utworzenie / `null` = wyczyszczenie reguły I wyjątków; zmiana reguły ZACHOWUJE
+  wyjątki i re-kanonikalizuje je) oraz `SET_RECURRENCE_OVERRIDE` („edytuj to
+  wystąpienie"; upsert/usuń po dacie, przesunięcie równe regule = usunięcie).
+  Każde niepoprawne wejście (nieznane id, szkic, niepoprawny start, reguła/until
+  poza zakresem, `date` niebędące wystąpieniem, przesunięcie poza siatką,
+  strukturalnie zły ładunek) zwraca TĘ SAMĄ referencję (inwariant 6). `SAVE_TASK`
+  zostawia `recurrence` nietknięte jak `isDraft`, Z WYJĄTKIEM zmiany `startDate` —
+  wtedy re-kotwiczy przez `normalizeRecurrence` (reguła przeżywa, wyjątki sprzed
+  nowego startu odpadają). `DELETE_TASK` zabiera je z zadaniem; `PUBLISH_*` nie
+  tyka (szkic nie może nieść reguły). Selektor prezentacyjny
+  `recurrenceOccurrencesForDate` (filtr jak `entriesForDate`). Pole ADDYTYWNE:
+  `DATA_VERSION` zostaje na 7, legacy bez pola = brak echo-write; w chmurze to
+  kolumna jsonb `tasks.recurrence` (patrz cloud-database). Testy:
+  `recurrence.test.ts`, `recurrenceActions.test.ts`, rozszerzenia w
+  `storage.test.ts`/`cloudMerge.test.ts`/`cloudMirror.test.ts`/`plannerData.test.ts`.
+- WYDARZENIA / SPOTKANIA (2026-07-21): kolekcja `events` w `AppData`
+  (`CalendarEvent` w `src/types.ts`). Encja ADDYTYWNA i CZYSTO PREZENTACYJNA —
+  NIGDY nie tworzy wierszy `WorkloadEntry` ani nie zasila sum/`dayTotal`/
+  przeciążenia/kolizji/`packDayBlocks` (inwariant 1). Cykliczność REUŻYWA
+  `TaskRecurrence` + `src/utils/recurrence.ts` (żadnej drugiej implementacji);
+  FORMA KANONICZNA `recurrence` (egzekwowana na TRZECH granicach — reduktor,
+  `repairEvents`, hydracja chmury przez `canonicalEventRecurrence` w
+  `commandValidation.ts`): czasy reguły = czasy wydarzenia (reduktor NADPISUJE
+  pola reguły przed normalizacją) i `daysOfWeek` zawiera `isoWeekday(date)`
+  (baza zawsze widoczna). Brak dnia kotwicy: reduktor ODRZUCA draft, a repair/
+  hydracja USUWAJĄ klucz. Mutacje: `ADD_EVENT` / `SAVE_EVENT` / `DELETE_EVENT`,
+  walidacja+normalizacja w `commandValidation.ts` (`normalizeEventDraft` —
+  pusty tytuł, zła data/czasy poza siatką 15 min, uczestnik spoza `people`, zły
+  `meetingUrl` (nie-http(s)) albo niekanoniczna cykliczność zwracają TĘ SAMĄ
+  referencję stanu; inwariant 6). Bez wpisów dziennika (parytet z ticketami).
+  Kolekcja ADDYTYWNA: `DATA_VERSION` zostaje na 7, `emptyData()` daje `[]`,
+  ścieżka wczytania ma `coerceArray(parsedRest.events, …)` + pass `repairEvents`
+  (odrzuca wiersze bez `id`/`title`/poprawnej daty; snapuje czasy w dół +
+  clamp; dedupe uczestników z ZACHOWANIEM danglingów — czyści je dopiero
+  hydracja chmury / filtr renderu; `meetingUrl` przez schemat). Uprawnienie
+  `events.manage` (administrator/pm/handlowiec; pracownik ogląda) — UX-owa
+  bramka, reduktor uprawnień NIE sprawdza. W chmurze mirroruje się jako
+  dziesiąta rodzina (`eventRow` + diff po id → `public.events`); attendee
+  wskazujący osobę spoza finalnego zespołu jest FILTROWANY per-wiersz w hydracji
+  (nie fail-close — kolumna-tablica bez FK). `events` w `CloudMergePayload` jest
+  OPCJONALNE (brak pola => reduktor nie rusza kolekcji). Selektor prezentacyjny
+  `calendarEventsForDate` (filtr jak `entriesForDate`; wydarzenie bez
+  uczestników = ogólnofirmowe, widoczne zawsze). Testy: `eventActions.test.ts`,
+  rozszerzenia w `storage.test.ts`/`cloudMerge.test.ts`/`cloudMirror.test.ts`/
+  `plannerData.test.ts`/`migrations.test.ts`.
+- WYKONANE BLOKI (2026-07-21): `WorkloadEntry.done?: boolean` (OPCJONALNE,
+  ADDYTYWNE — brak/`false` = niewykonany; `DATA_VERSION` zostaje na 7). Per-BLOK
+  (WorkloadEntry.id), NIE per-dzień: dwa bloki tego samego dnia (ta sama data,
+  różny `startMinutes`/`id`) mają niezależny stan. Status zadania
+  (`Task.statusId`) jest ROZŁĄCZNY — per-blokowe „wykonane” NIGDY go nie zmienia.
+  Mutacja `SET_BLOCK_DONE { entryId, done }` mapuje TYLKO wiersz o `entryId`
+  (wzorzec `SET_TASK_STATUS`); nieznane `entryId` albo wartość równa bieżącej
+  (no-op) zwracają TĘ SAMĄ referencję (inwariant 6, walidacja
+  `hasWorkloadEntry` w `commandValidation.ts`). Selektor prezentacyjny
+  `blockIsDone(state, task, entry)` = `entry.done === true ||
+  isDoneStatus(state, task.statusId)` — done-status zadania nadal podświetla
+  WSZYSTKIE bloki; `taskDisplayStatus` bez zmian sygnatury. WeekView używa
+  `blockIsDone` w trzech miejscach (blok tygodnia, karta zasobnika, duch portalu)
+  + znacznik „✓ Wykonane” na bloku. TaskModal ma sekcję „Wykonane bloki” (jeden
+  wiersz per WorkloadEntry, etykieta dzień+zakres godzin, checkbox →
+  `SET_BLOCK_DONE`); otwarcie z konkretnego bloku niesie `?block=<id>` i
+  podświetla/przewija do jego wiersza. Repair wczytania przepuszcza pole przez
+  `...w` (bez strippingu). W chmurze kolumna `workload_entries.done`
+  (20260721220000; patrz cloud-database) — mirror `workloadRow.done = w.done ===
+  true`, hydracja `plannerData` czyta `row.done === true`, `MERGE_CLOUD_*`
+  podmienia wiersze autorytatywnie. Testy: rozszerzenia w `selectors.test.ts`,
+  `commandValidation.test.ts`, `cloudMerge.test.ts`, `cloudMirror.test.ts`,
+  `plannerData.test.ts`, `migrations.test.ts`.
 - `Client` carries contact fields (contactName/contactEmail/contactPhone/notes;
   columns from 20260718090000_clients_contact_fields, '' or missing = none — no
   repair pass, use-sites coalesce), edited on the `/clients` page via
@@ -174,8 +318,8 @@
   dangling workload row, or a milestone with a bad date/missing project) returns
   the prior state reference; a valid merge replaces same-id rows, keeps local-only
   rows and reconciles a duplicate bin pair to the cloud-id row with grid-snapped
-  summed hours. It never touches people/statuses/savedFilters/dictionaries (by
-  reference); workload and milestones ARE now merged.
+  summed hours. It never touches people/statuses/savedFilters/lastFilters/
+  dictionaries (by reference); workload and milestones ARE now merged.
 - SEAMLESS BACKGROUND REFRESH (Realtime). A `postgres_changes` event is only a
   "something changed" signal: `CloudSyncProvider` debounces bursts (1200 ms) into
   ONE full snapshot + `MERGE_CLOUD_ENTITIES`. Three rules keep it invisible:

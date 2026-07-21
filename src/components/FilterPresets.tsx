@@ -16,6 +16,7 @@ export function isCriteriaActive(c: SavedFilterCriteria): boolean {
   return (
     c.paid !== 'all' ||
     c.clientId !== '' ||
+    c.projectId !== '' ||
     c.statusId !== '' ||
     c.personId !== '' ||
     c.priority !== '' ||

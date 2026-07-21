@@ -17,15 +17,24 @@ import {
   availableHoursOnDate,
   binEntriesForTask,
   getClient,
+  getPerson,
   getStatus,
   planningStatusForTotals,
+  rangeAvailabilityForPerson,
 } from '../store/selectors';
 import { PlanningBadge } from './PlanningBadge';
 import { CommentsPanel } from './CommentsPanel';
 import { AllocationGrid, allocKey, type AllocMap } from './AllocationGrid';
 import { SaveStatus } from './SaveStatus';
 import { personColor } from '../utils/colors';
-import { formatDuration, isBinEntry, snapHours } from '../utils/time';
+import {
+  DAY_MINUTES,
+  MINUTE_STEP,
+  formatDuration,
+  formatMinutes,
+  isBinEntry,
+  snapHours,
+} from '../utils/time';
 import {
   eachDayInclusive,
   inclusiveDayCount,
@@ -35,6 +44,7 @@ import {
   MAX_TASK_PERIOD_DAYS,
   isValidDateStr,
   formatShortWithWeekday,
+  WEEKDAY_LABELS,
 } from '../utils/dates';
 import { useSaveStatus } from '../utils/useSaveStatus';
 import { useAutoSave } from '../utils/useAutoSave';
@@ -45,6 +55,27 @@ import {
   setNavGuard,
 } from '../utils/dirtyRegistry';
 
+// ---- Recurrence („Cykliczność") local helpers ----
+// Duration choices for a recurrence rule: 0:15…8:00 on the 15-minute grid.
+const RECUR_DURATION_OPTIONS = Array.from({ length: 32 }, (_, i) => (i + 1) * MINUTE_STEP);
+
+// "HH:MM" ↔ minutes-from-midnight (same pattern as WeekView), for the native
+// <input type="time" step={900}> used by the recurrence rule editor.
+function recurTimeToMinutes(value: string): number {
+  const [h, m] = value.split(':');
+  return Number(h) * 60 + Number(m);
+}
+function recurMinutesToTime(min: number): string {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+// 'yyyy-MM-dd' → 'dd.MM.yyyy' for the read-only override list.
+function recurDateLabel(date: string): string {
+  const [y, m, d] = date.split('-');
+  return `${d}.${m}.${y}`;
+}
+
 /**
  * Shared opener hook. Merges the task/project search params onto the CURRENT
  * location so the page underneath never changes.
@@ -54,7 +85,7 @@ export function useOpenTask() {
   const location = useLocation();
 
   const openTask = useCallback(
-    (id: string) => {
+    (id: string, blockId?: string) => {
       const params = new URLSearchParams(location.search);
       params.set('task', id);
       params.delete('project');
@@ -62,6 +93,10 @@ export function useOpenTask() {
       // existing task opened afterwards.
       params.delete('date');
       params.delete('assignee');
+      // Opening FROM a specific calendar/bin block highlights + scrolls to that
+      // block's row in the per-block „Wykonane bloki” list (PKG-per-block-done).
+      if (blockId) params.set('block', blockId);
+      else params.delete('block');
       navigate({ pathname: location.pathname, search: params.toString() });
     },
     [navigate, location.pathname, location.search],
@@ -79,6 +114,7 @@ export function useOpenTask() {
       else params.delete('date');
       if (prefill?.personId) params.set('assignee', prefill.personId);
       else params.delete('assignee');
+      params.delete('block');
       navigate({ pathname: location.pathname, search: params.toString() });
     },
     [navigate, location.pathname, location.search],
@@ -94,6 +130,7 @@ export function TaskModal() {
   const projectParam = searchParams.get('project');
   const dateParam = searchParams.get('date');
   const assigneeParam = searchParams.get('assignee');
+  const blockParam = searchParams.get('block');
 
   const close = useCallback(() => {
     setSearchParams(
@@ -103,6 +140,7 @@ export function TaskModal() {
         next.delete('project');
         next.delete('date');
         next.delete('assignee');
+        next.delete('block');
         return next;
       },
       { replace: false },
@@ -118,6 +156,7 @@ export function TaskModal() {
           projectParam={projectParam}
           dateParam={dateParam}
           assigneeParam={assigneeParam}
+          blockParam={blockParam}
           onClose={close}
         />
       )}
@@ -130,10 +169,18 @@ interface ShellProps {
   projectParam: string | null;
   dateParam: string | null;
   assigneeParam: string | null;
+  blockParam: string | null;
   onClose: () => void;
 }
 
-function TaskModalShell({ taskParam, projectParam, dateParam, assigneeParam, onClose }: ShellProps) {
+function TaskModalShell({
+  taskParam,
+  projectParam,
+  dateParam,
+  assigneeParam,
+  blockParam,
+  onClose,
+}: ShellProps) {
   const { state, dispatch } = useStore();
   const canManageTasks = useCan()('tasks.manage');
   const isNew = taskParam === 'new';
@@ -265,6 +312,7 @@ function TaskModalShell({ taskParam, projectParam, dateParam, assigneeParam, onC
                 initialProjectId={projectParam ?? undefined}
                 initialDate={dateParam ?? undefined}
                 initialPersonId={assigneeParam ?? undefined}
+                focusBlockId={blockParam ?? undefined}
                 onSaved={onClose}
                 onCancel={requestClose}
                 onDirtyChange={handleDirtyChange}
@@ -283,6 +331,7 @@ interface EditorProps {
   initialProjectId?: string;
   initialDate?: string;
   initialPersonId?: string;
+  focusBlockId?: string;
   onSaved: () => void;
   onCancel: () => void;
   onDirtyChange: (dirty: boolean) => void;
@@ -335,6 +384,7 @@ function TaskEditor({
   initialProjectId,
   initialDate,
   initialPersonId,
+  focusBlockId,
   onSaved,
   onCancel,
   onDirtyChange,
@@ -375,6 +425,18 @@ function TaskEditor({
   const [departmentId, setDepartmentId] = useState<string>(existing?.departmentId ?? '');
   const [checklist, setChecklist] = useState<ChecklistItem[]>(existing?.checklist ?? []);
   const [checklistInput, setChecklistInput] = useState('');
+
+  // ---- Cykliczność (recurrence) — LOCAL draft only, seeded once from the task's
+  // canonical rule. Never part of TaskDraft/auto-save: apply/clear/restore
+  // dispatch SET_TASK_RECURRENCE / SET_RECURRENCE_OVERRIDE explicitly so the
+  // delicate SAVE_TASK reconciliation path stays untouched (invariant 6). ----
+  const seedRule = existing?.recurrence;
+  const [recurDays, setRecurDays] = useState<number[]>(seedRule?.daysOfWeek ?? []);
+  const [recurStart, setRecurStart] = useState(
+    seedRule ? recurMinutesToTime(seedRule.startMinutes) : '09:00',
+  );
+  const [recurDurMin, setRecurDurMin] = useState(seedRule?.durationMinutes ?? 60);
+  const [recurUntil, setRecurUntil] = useState(seedRule?.until ?? '');
 
   // ---- Period ----
   // A calendar empty-slot right-click seeds the clicked day (validated — a
@@ -435,7 +497,12 @@ function TaskEditor({
   // Seed: łączne godziny osoby na zadaniu (kalendarz + zasobnik).
   const [soldRawByPerson, setSoldRawByPerson] = useState<Record<string, string>>(() => {
     const map: Record<string, string> = {};
-    if (existing) {
+    if (existing && existing.isDraft === true) {
+      // Szkic: godziny żyją w `draftHours` (workload jest pusty do publikacji).
+      for (const entry of existing.draftHours ?? []) {
+        map[entry.personId] = entry.hours > 0 ? String(entry.hours) : '';
+      }
+    } else if (existing) {
       const totals = new Map<string, number>();
       for (const w of state.workload) {
         if (w.taskId !== existing.id) continue;
@@ -473,6 +540,19 @@ function TaskEditor({
     () => new Set(periodValid ? eachDayInclusive(startDate, endDate) : []),
     [periodValid, startDate, endDate],
   );
+
+  // Dostępność każdej przypisanej osoby w okresie zadania — CZYSTO INFORMACYJNA
+  // (nigdy nie blokuje zapisu). `bookedHours` liczy istniejący workload INNYCH
+  // zadań (szkic nie ma własnego), więc panel pokazuje realne obłożenie.
+  const availabilityByPerson = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof rangeAvailabilityForPerson>>();
+    if (!periodValid) return map;
+    const days = eachDayInclusive(startDate, endDate);
+    for (const id of assigneeIds) {
+      map.set(id, rangeAvailabilityForPerson(state, id, days));
+    }
+    return map;
+  }, [state, assigneeIds, startDate, endDate, periodValid]);
 
   const outOfRangeCount = useMemo(() => {
     let n = 0;
@@ -693,15 +773,19 @@ function TaskEditor({
     assigneesValid &&
     isValidTaskDraft(state, draftForSave);
 
-  const doSave = (): boolean => {
+  const doSave = ({ publishNew = false }: { publishNew?: boolean } = {}): boolean => {
     setTitleTouched(true);
     if (!formValid) return false;
 
+    // NOWY szkic „Utwórz i opublikuj”: jeden SAVE_TASK z `isDraft: false` —
+    // standardowa ścieżka opublikowana materializuje binTotals sama, bez rundy
+    // po id (edycja istniejącego szkicu idzie osobno przez PUBLISH_TASK).
+    const draftToSave = publishNew ? { ...draftForSave, isDraft: false } : draftForSave;
     dispatch({
       type: 'SAVE_TASK',
       payload: {
         taskId: existing ? existing.id : null,
-        draft: draftForSave,
+        draft: draftToSave,
         assigneeIds,
         allocations: plannedCells,
         binTotals: binTargets,
@@ -717,6 +801,22 @@ function TaskEditor({
 
   const handleSave = () => {
     if (doSave()) onSaved();
+  };
+
+  // Publikacja ISTNIEJĄCEGO szkicu z karty zadania: najpierw zapis (żeby
+  // PUBLISH_TASK zobaczył świeże `draftHours`), potem publikacja i zamknięcie.
+  // Dwa kolejne dispatche są bezpieczne — React stosuje je po kolei.
+  const handlePublishExisting = () => {
+    if (!existing) return;
+    if (doSave()) {
+      dispatch({ type: 'PUBLISH_TASK', taskId: existing.id });
+      onSaved();
+    }
+  };
+
+  // Nowy szkic od razu opublikowany (jeden SAVE_TASK z isDraft:false).
+  const handleCreateAndPublish = () => {
+    if (doSave({ publishNew: true })) onSaved();
   };
 
   // Auto-zapis (tylko edycja istniejącego zadania — tworzenie zostaje jawne,
@@ -746,6 +846,91 @@ function TaskEditor({
     setChecklist((prev) => prev.filter((c) => c.id !== id));
   };
   const checklistDone = checklist.filter((c) => c.done).length;
+
+  // ---- Cykliczność derived values + explicit dispatch handlers ----
+  // Live rule/overrides read from the store each render (not the one-time seed),
+  // so the „Usuń" button and the override list reflect applied changes at once.
+  const liveRule = existing?.recurrence;
+  const recurStartMin = recurTimeToMinutes(recurStart);
+  const recurUntilInvalid = recurUntil !== '' && (!isValidDateStr(recurUntil) || recurUntil < startDate);
+  const recurApplyError =
+    recurDays.length === 0
+      ? 'Wybierz przynajmniej jeden dzień tygodnia.'
+      : !Number.isFinite(recurStartMin) || recurStartMin % MINUTE_STEP !== 0
+        ? 'Początek musi być w krokach co 15 minut.'
+        : recurUntilInvalid
+          ? 'Data „do dnia” nie może być wcześniejsza niż data rozpoczęcia.'
+          : recurStartMin + recurDurMin > DAY_MINUTES
+            ? 'Wystąpienie nie mieści się w dobie — koniec po 24:00.'
+            : null;
+
+  const toggleRecurDay = (iso: number) => {
+    setRecurDays((prev) =>
+      prev.includes(iso) ? prev.filter((d) => d !== iso) : [...prev, iso].sort((a, b) => a - b),
+    );
+  };
+  const applyRecurrence = () => {
+    if (!existing || recurApplyError) return;
+    dispatch({
+      type: 'SET_TASK_RECURRENCE',
+      taskId: existing.id,
+      recurrence: {
+        daysOfWeek: recurDays,
+        startMinutes: recurStartMin,
+        durationMinutes: recurDurMin,
+        ...(recurUntil !== '' ? { until: recurUntil } : {}),
+      },
+    });
+  };
+  const clearRecurrence = () => {
+    if (!existing) return;
+    dispatch({ type: 'SET_TASK_RECURRENCE', taskId: existing.id, recurrence: null });
+  };
+  const restoreOverride = (date: string) => {
+    if (!existing) return;
+    dispatch({ type: 'SET_RECURRENCE_OVERRIDE', taskId: existing.id, date, override: null });
+  };
+
+  // ---- Per-block „Wykonane bloki” (PKG-per-block-done) ----
+  // One row per WorkloadEntry (NOT aggregated per day): a task with two blocks on
+  // the same day shows two rows, each with its own tick. Dated blocks first
+  // (chronological by date, then start), bin rows last. SET_BLOCK_DONE toggles a
+  // single entry — the task status is never touched.
+  const taskBlocks = useMemo(() => {
+    if (!existing) return [];
+    return state.workload
+      .filter((w) => w.taskId === existing.id)
+      .slice()
+      .sort((a, b) => {
+        const aBin = isBinEntry(a);
+        const bBin = isBinEntry(b);
+        if (aBin !== bBin) return aBin ? 1 : -1;
+        if (a.date !== b.date) return a.date.localeCompare(b.date);
+        if (a.startMinutes !== b.startMinutes) return a.startMinutes - b.startMinutes;
+        return a.sortIndex - b.sortIndex;
+      });
+  }, [state.workload, existing]);
+
+  // Highlight + scroll to the block the user clicked, once the section renders.
+  const focusRowRef = useRef<HTMLLIElement>(null);
+  useEffect(() => {
+    if (focusBlockId && focusRowRef.current) {
+      focusRowRef.current.scrollIntoView({ block: 'nearest' });
+    }
+  }, [focusBlockId, taskBlocks.length]);
+
+  const blockRowLabel = (entry: (typeof taskBlocks)[number]): string => {
+    const person = getPerson(state, entry.personId);
+    const who = person ? `${person.name} — ` : '';
+    if (isBinEntry(entry)) {
+      return `${who}zasobnik (bez terminu), ${formatDuration(entry.plannedHours)}`;
+    }
+    const end = entry.startMinutes + entry.plannedHours * 60;
+    return `${who}${formatShortWithWeekday(entry.date)}, ${formatMinutes(
+      entry.startMinutes,
+    )}–${formatMinutes(end)} (${formatDuration(entry.plannedHours)})`;
+  };
+  const blocksDoneCount = taskBlocks.filter((b) => b.done === true).length;
 
   return (
     <div className="editor task-editor">
@@ -941,6 +1126,185 @@ function TaskEditor({
         {readOnly && checklist.length === 0 && <p className="field-hint">Brak elementów.</p>}
       </div>
 
+      {/* a1) Wykonane bloki — per-block completion (PKG-per-block-done). One row
+          per WorkloadEntry (NOT per day): each block's portion of hours has its
+          own tick. Toggling a block dispatches SET_BLOCK_DONE and NEVER changes
+          the task status. Only for saved tasks that already have blocks. */}
+      {isEdit && taskBlocks.length > 0 && (
+        <div className="editor-section">
+          <h2>Wykonane bloki</h2>
+          <p className="checklist-count">
+            wykonano {blocksDoneCount}/{taskBlocks.length}
+          </p>
+          <p className="field-hint">
+            Każdy blok w kalendarzu można oznaczyć jako wykonany niezależnie — status
+            zadania pozostaje bez zmian.
+          </p>
+          <ul className="checklist-list block-done-list">
+            {taskBlocks.map((entry) => {
+              const focused = focusBlockId === entry.id;
+              return (
+                <li
+                  key={entry.id}
+                  ref={focused ? focusRowRef : undefined}
+                  className={[
+                    'checklist-row',
+                    entry.done === true ? 'done' : '',
+                    focused ? 'focused' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                >
+                  <input
+                    type="checkbox"
+                    checked={entry.done === true}
+                    onChange={() =>
+                      dispatch({
+                        type: 'SET_BLOCK_DONE',
+                        entryId: entry.id,
+                        done: !(entry.done === true),
+                      })
+                    }
+                    disabled={readOnly}
+                    title={roTitle}
+                    aria-label={`Oznacz blok „${blockRowLabel(entry)}” jako wykonany`}
+                  />
+                  <span className="checklist-text">{blockRowLabel(entry)}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
+      {/* a2) Cykliczność — occurrences are purely presentational (invariant 1);
+          this section only dispatches SET_TASK_RECURRENCE / SET_RECURRENCE_OVERRIDE
+          and never touches the SAVE_TASK draft or auto-save. */}
+      <div className="editor-section">
+        <h2>Cykliczność</h2>
+        {!isEdit || isDraft ? (
+          <p className="field-hint">Zapisz i opublikuj zadanie, aby ustawić cykliczność.</p>
+        ) : !isValidDateStr(startDate) ? (
+          <p className="field-hint">Ustaw datę rozpoczęcia, aby dodać cykliczność.</p>
+        ) : (
+          <>
+            <p className="field-hint">
+              Wystąpienia są tylko podglądem w kalendarzu — nie tworzą zaplanowanych
+              godzin ani nie wpływają na sumy i przeciążenie.
+            </p>
+            <div className="field">
+              <label>Dni tygodnia</label>
+              <div className="recur-weekday-picker">
+                {WEEKDAY_LABELS.map((label, i) => {
+                  const iso = i + 1;
+                  const active = recurDays.includes(iso);
+                  return (
+                    <button
+                      key={iso}
+                      type="button"
+                      className={active ? 'recur-day-chip active' : 'recur-day-chip'}
+                      aria-pressed={active}
+                      disabled={readOnly}
+                      title={roTitle}
+                      onClick={() => toggleRecurDay(iso)}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="field-row">
+              <div className="field">
+                <label htmlFor="recur-start">Początek</label>
+                <input
+                  id="recur-start"
+                  type="time"
+                  step={900}
+                  value={recurStart}
+                  onChange={(e) => setRecurStart(e.target.value)}
+                  disabled={readOnly}
+                  title={roTitle}
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="recur-dur">Czas trwania</label>
+                <select
+                  id="recur-dur"
+                  value={recurDurMin}
+                  onChange={(e) => setRecurDurMin(Number(e.target.value))}
+                  disabled={readOnly}
+                  title={roTitle}
+                >
+                  {RECUR_DURATION_OPTIONS.map((min) => (
+                    <option key={min} value={min}>
+                      {formatDuration(min / 60)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="recur-until">Do dnia (opcjonalnie)</label>
+                <input
+                  id="recur-until"
+                  type="date"
+                  value={recurUntil}
+                  min={startDate}
+                  onChange={(e) => setRecurUntil(e.target.value)}
+                  disabled={readOnly}
+                  title={roTitle}
+                />
+              </div>
+            </div>
+            {recurApplyError && <p className="field-error">{recurApplyError}</p>}
+            {!readOnly && (
+              <div className="recur-actions">
+                <button
+                  type="button"
+                  className="btn primary"
+                  onClick={applyRecurrence}
+                  disabled={recurApplyError !== null}
+                >
+                  Zastosuj cykliczność
+                </button>
+                {liveRule && (
+                  <button type="button" className="btn danger-ghost" onClick={clearRecurrence}>
+                    Usuń cykliczność
+                  </button>
+                )}
+              </div>
+            )}
+            {liveRule && (liveRule.overrides?.length ?? 0) > 0 && (
+              <div className="recur-overrides">
+                <p className="field-hint">Wyjątki:</p>
+                <ul className="recur-override-list">
+                  {liveRule.overrides!.map((ov) => (
+                    <li key={ov.date} className="recur-override-row">
+                      <span className="recur-override-text">
+                        {ov.skip === true
+                          ? `${recurDateLabel(ov.date)} — pominięto`
+                          : `${recurDateLabel(ov.date)} — ${formatMinutes(
+                              ov.startMinutes ?? 0,
+                            )}, ${formatDuration((ov.durationMinutes ?? 0) / 60)}`}
+                      </span>
+                      {!readOnly && (
+                        <button
+                          type="button"
+                          className="btn ghost"
+                          onClick={() => restoreOverride(ov.date)}
+                        >
+                          Przywróć zgodnie z regułą
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
       {/* b) Period */}
       <div className="editor-section">
         <h2>Okres</h2>
@@ -1016,12 +1380,12 @@ function TaskEditor({
             })}
           </div>
         )}
-        {!isDraft && assignedPeople.length > 0 && (
+        {assignedPeople.length > 0 && (
           <div className="sold-hours">
             <p className="field-hint">
-              Edytujesz godziny każdej osoby na tym zadaniu (sprzedane). Szacunek
-              zadania to ich suma — wylicza się sam, nie ma osobnego pola. Część
-              niezaplanowana w kalendarzu trafia automatycznie do zasobnika osoby.
+              {isDraft
+                ? 'Edytujesz godziny każdej osoby na tym szkicu (sprzedane). Zapisują się ze szkicem, a po publikacji trafią do zasobnika osoby. Szacunek zadania to ich suma — wylicza się sam.'
+                : 'Edytujesz godziny każdej osoby na tym zadaniu (sprzedane). Szacunek zadania to ich suma — wylicza się sam, nie ma osobnego pola. Część niezaplanowana w kalendarzu trafia automatycznie do zasobnika osoby.'}
             </p>
             {assignedPeople.map((p) => {
               const sold = soldByPerson.get(p.id) ?? 0;
@@ -1050,9 +1414,15 @@ function TaskEditor({
                     disabled={readOnly}
                     title={roTitle}
                   />
-                  <span className="sold-hours-meta muted">
-                    w kalendarzu {formatDuration(dated)} • zasobnik {formatDuration(bin)}
-                  </span>
+                  {isDraft ? (
+                    <span className="sold-hours-meta muted">
+                      po publikacji do zasobnika: {formatDuration(sold)}
+                    </span>
+                  ) : (
+                    <span className="sold-hours-meta muted">
+                      w kalendarzu {formatDuration(dated)} • zasobnik {formatDuration(bin)}
+                    </span>
+                  )}
                   {clamped && (
                     <span className="field-error sold-hours-warn">
                       w kalendarzu więcej niż godziny osoby
@@ -1066,13 +1436,43 @@ function TaskEditor({
               <strong>{formatDuration(soldTotal)}</strong>{' '}
               <span className="muted">— wyliczany</span>
             </div>
+            {/* Panel dostępności (informacyjny) — dostępne vs zajęte w okresie
+                zadania, z podświetleniem przeciążonych dni. Nie blokuje zapisu. */}
+            {periodValid && (
+              <div className="availability-panel">
+                {assignedPeople.map((p) => {
+                  const avail = availabilityByPerson.get(p.id);
+                  if (!avail) return null;
+                  const overbooked = avail.overbookedDates.length > 0;
+                  return (
+                    <div key={p.id} className="availability-row">
+                      <span
+                        className="person-dot"
+                        style={{ background: personColor(p.id) }}
+                        aria-hidden
+                      />
+                      <span className="availability-name">{p.name}</span>
+                      <span className="availability-meta muted">
+                        Dostępność w okresie: dostępne {formatDuration(avail.availableHours)} /
+                        zajęte {formatDuration(avail.bookedHours)}
+                      </span>
+                      {overbooked && (
+                        <span className="field-error sold-hours-warn">
+                          przeciążenie: {avail.overbookedDates.length} dn.
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
         {isDraft ? (
           <p className="field-hint task-draft-hint">
-            <strong>Szkic.</strong> Po zapisaniu zadanie pozostaje szkicem, dopóki
-            nie klikniesz „Zapisz i opublikuj” w projekcie. Osoby możesz przypisać
-            już teraz; godziny (kalendarz i zasobnik) zaplanujesz po opublikowaniu.
+            <strong>Szkic.</strong> Godziny osób zapisują się ze szkicem i po
+            publikacji trafią do zasobnika. Zadanie pozostaje szkicem, dopóki go
+            nie opublikujesz.
           </p>
         ) : (
           <>
@@ -1218,17 +1618,40 @@ function TaskEditor({
             Zmiany zapisują się automatycznie.
           </span>
         )}
-        {!readOnly && (
-          <button
-            type="button"
-            className="btn primary"
-            onClick={handleSave}
-            disabled={state.projects.length === 0}
-            title={state.projects.length === 0 ? 'Najpierw utwórz projekt' : undefined}
-          >
-            {isEdit ? 'Zapisz i zamknij' : isDraft ? 'Utwórz szkic' : 'Utwórz zadanie'}
-          </button>
-        )}
+        {!readOnly &&
+          (isDraft ? (
+            <>
+              {/* Szkic: rozdzielone akcje — zapis szkicu vs publikacja. */}
+              <button
+                type="button"
+                className="btn"
+                onClick={handleSave}
+                disabled={state.projects.length === 0}
+                title={state.projects.length === 0 ? 'Najpierw utwórz projekt' : undefined}
+              >
+                {isEdit ? 'Zapisz szkic' : 'Utwórz szkic'}
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                onClick={isEdit ? handlePublishExisting : handleCreateAndPublish}
+                disabled={state.projects.length === 0}
+                title={state.projects.length === 0 ? 'Najpierw utwórz projekt' : undefined}
+              >
+                {isEdit ? 'Opublikuj' : 'Utwórz i opublikuj'}
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="btn primary"
+              onClick={handleSave}
+              disabled={state.projects.length === 0}
+              title={state.projects.length === 0 ? 'Najpierw utwórz projekt' : undefined}
+            >
+              {isEdit ? 'Zapisz i zamknij' : 'Utwórz zadanie'}
+            </button>
+          ))}
         <button type="button" className="btn ghost" onClick={onCancel}>
           {readOnly || !dirty ? 'Zamknij' : 'Anuluj'}
         </button>
