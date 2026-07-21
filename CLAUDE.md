@@ -24,7 +24,8 @@ covered interaction changes; release verification owns the full browser matrix.
 
 ## Global architecture
 
-- Vite 5, React 18, TypeScript strict, React Router 6, date-fns, plain CSS.
+- Vite 5, React 18, TypeScript strict, React Router 6, date-fns, plain CSS,
+  `motion` (Framer Motion) for animation and `lucide-react` for icons.
   No UI framework, Tailwind or drag library.
 - `src/store/AppStore.tsx` is the only mutation boundary; every change is a
   reducer action. `src/store/selectors.ts` owns derived reads.

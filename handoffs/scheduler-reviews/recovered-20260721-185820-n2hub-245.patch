@@ -1,0 +1,3210 @@
+diff --git a/handoffs/RUN-STATE.md b/handoffs/RUN-STATE.md
+index 1b346f7..aed6d56 100644
+--- a/handoffs/RUN-STATE.md
++++ b/handoffs/RUN-STATE.md
+@@ -1,65 +1,46 @@
+-# Run state — 20260721-154537-244 recurring tasks
++# Run state — 20260721-185820-245 events and meetings panel
+ 
+ ## Goal
+ 
+-Recurring tasks in the calendar: `Task.recurrence` rule + per-date overrides,
+-pure `src/utils/recurrence.ts` expansion (window-only, never materialized),
+-TaskModal section „Cykliczność”, presentational occurrence blocks in
+-WeekView (context menu: edit one / edit all) and a MonthView marker, cloud
+-column `tasks.recurrence` (jsonb, RLS inherited from tasks).
++Calendar events/meetings: new additive `CalendarEvent` entity + `AppData.events`,
++reducer CRUD with invariant-6 validation, storage repair (version stays 7),
++presentational event blocks in WeekView (+ MonthView marker), slot-menu item
++„+ Dodaj spotkanie”, panel „Wydarzenia” (`/wydarzenia`, `?wydarzenie=` modal),
++cloud table `public.events` (uuid[] attendees, jsonb recurrence, open-to-
++authenticated RLS, realtime) mirrored as the tenth planner family.
+ 
+ ## Packages
+ 
+-- `handoffs/packages/244-recurrence-core.md` — PKG-20260721-recurrence-core,
+-  tier: developer, ready. Model, util, reducer actions, storage repair, cloud
+-  mapping, migration `20260721170000_task_recurrence.sql`, tests, two wiki
+-  pages. Codex review required.
+-- `handoffs/packages/244-recurrence-ui.md` — PKG-20260721-recurrence-ui,
+-  tier: developer, ready, depends on core. TaskModal + WeekView overlay/menu +
+-  MonthView marker + scheduling wiki. High risk (invariant 7); Codex review
+-  required.
++- `handoffs/scheduler-reviews/n2hub-245-packages/events-and-meetings.md` —
++  PKG-20260721-events-and-meetings, tier: developer, ready, risk medium,
++  Codex review required. Single package (pieces tightly coupled).
+ 
+ ## Changed boundaries (planned)
+ 
+-- `src/types.ts`, `AppStore.tsx` (SET_TASK_RECURRENCE,
+-  SET_RECURRENCE_OVERRIDE), `storage.ts` (normalizeTaskMeta pass, version
+-  stays 7), `selectors.ts` (recurrenceOccurrencesForDate), new
+-  `utils/recurrence.ts`, `cloudMirror.ts`/`plannerData.ts`, new migration +
+-  `migrations.test.ts` registry (EXPECTED_POLICIES unchanged).
+-- UI: TaskModal, WeekView (additive overlay + recurMenu + one openSlotMenu
+-  guard), MonthView, styles.css.
+-
+-## Dev log
+-
+-- recurrence-core DONE. Added `TaskRecurrence`/`RecurrenceOverride`+Task field,
+-  `utils/recurrence.ts`, reducer `SET_TASK_RECURRENCE`/`SET_RECURRENCE_OVERRIDE`
+-  (invariant-6 same-ref), SAVE_TASK startDate re-anchor, storage repair,
+-  `recurrenceOccurrencesForDate` selector, migration `20260721170000`,
+-  cloudMirror/plannerData mapping, 2 wiki pages. `npm test` 1244 pass (+~50 new),
+-  `npm run build` green. Migration NOT applied to hosted Supabase. No context
+-  expansion beyond declared touchpoints.
+-
+-- recurrence-ui DONE. TaskModal „Cykliczność" section (weekday chips/start/dur/
+-  until, explicit dispatch, no auto-save), WeekView additive `.week-recur-block`
+-  overlay + `recurMenu` (no pointer handlers; openSlotMenu `.week-recur-block`
+-  guard), MonthView `.month-cell-recur` ⟳, styles.css, scheduling wiki. Overlay
+-  rendered BEFORE packed.map so real blocks paint on top (deviation from "after")
+-  — avoids touching `.week-block` stacking. `npm test` 1244 pass, build green,
+-  browser-check-bin-drag/placement/bin-split all PASS (`topAtBlock=week-block`).
+-  No context expansion beyond declared touchpoints.
+-
+-## Key settled decisions
+-
+-- Recurrence embedded on Task (jsonb column, checklist/draftHours precedent);
+-  anchor = task.startDate, end = `until` only; overrides shift time or skip,
+-  never move the date; canonical form is load-bearing for merge no-ops; drafts
+-  cannot carry a rule; occurrences are presentational only, no drag.
++- `src/types.ts`, `AppStore.tsx` (ADD/SAVE/DELETE_EVENT + optional `events` in
++  MERGE_CLOUD_ENTITIES), `commandValidation.ts`, `storage.ts` (repairEvents,
++  DATA_VERSION stays 7), `selectors.ts` (calendarEventsOnDate).
++- UI: WeekView (additive overlay + one slot-menu item + one guard line only —
++  invariant 7 untouched), MonthView marker, new EventsPage/EventModal, App.tsx
++  nav/route, icons.ts (CalendarClock), dirtyRegistry (`event-modal`), styles.css.
++- Cloud: new migration `20260721190000_events.sql` (NOT applied remotely),
++  `cloudMirror.ts`/`plannerData.ts`, `migrations.test.ts` (+EXPECTED_POLICIES).
++- Deliberately unchanged: `utils/recurrence.ts` (reused), `permissions.ts`
++  (reuse tasks.manage), `persistGate.ts`/`migrationStatus.ts` (tickets parity).
+ 
+ ## Verification
+ 
+-Focused vitest per core package; UI package runs full `npm test`, build and
+-`browser-check-bin-drag`. Migration NOT applied to hosted Supabase.
++Focused vitest (src/store, src/supabase) → full `npm test` + build +
++`browser-check-bin-drag` smoke. Scheduler owns final gates.
+ 
+ ## Open questions
+ 
+-None blocking.
++None blocking — all product decisions resolved in the package.
++
++## Developer result (implemented)
++
++All planned boundaries changed as scoped; WeekView diff is +86/-0 (additive only,
++no pointer/drag/packDayBlocks touch). Full `npm test` 1282 pass, `npm run build`
++green. New tests: eventActions, eventsStorage + extensions in selectors/cloudMerge/
++cloudMirror/plannerData/migrations. Deferred: `browser-check-bin-drag` — playwright
++not installed in this env; scheduler owns the browser matrix.
+diff --git a/handoffs/scheduler-reviews/20260721-185820-n2hub-245-events-and-meetings-panel.md b/handoffs/scheduler-reviews/20260721-185820-n2hub-245-events-and-meetings-panel.md
+new file mode 100644
+index 0000000..9b8d3eb
+--- /dev/null
++++ b/handoffs/scheduler-reviews/20260721-185820-n2hub-245-events-and-meetings-panel.md
+@@ -0,0 +1,112 @@
++# n2hub-245 — Panel wydarzeń / spotkania w kalendarzu
++
++Workflow: tier (`architect → developer → reviewer`), pakiet:
++`handoffs/scheduler-reviews/n2hub-245-packages/events-and-meetings.md`
++(PKG-20260721-events-and-meetings). Zadanie było aktualne — encji wydarzenia
++nie było w buildzie; `src/utils/recurrence.ts` (prompt 244) i menu slotu
++(prompt 236) istniały i zostały reużyte.
++
++## 1. Co wykonałem
++
++**Model i store.** Nowa encja `CalendarEvent { id, title, description,
++location, meetingUrl, date, startMinutes, durationMinutes, attendeeIds,
++recurrence? }` + kolekcja `events` w `AppData` (`src/types.ts`). Reducer CRUD
++`ADD/SAVE/DELETE_EVENT` w `src/store/AppStore.tsx` z walidacją w
++`src/store/commandValidation.ts` (tytuł, data, siatka 15 min / 0.25h, schemat
++URL, kanonizacja cykliczności); nieprawidłowa komenda zwraca **tę samą
++referencję stanu** (invariant 6). Kaskada `DELETE_PERSON` → `attendeeIds`.
++Repair w `src/store/storage.ts` (`emptyData` + `coerceArray` + `repairEvents`,
++fail-closed dla wpisów poza siatką, osieroceni uczestnicy zachowani);
++`DATA_VERSION` bez zmian = 7 (precedens: tickets). Selektor
++`calendarEventsOnDate` w `src/store/selectors.ts` z ekspansją wystąpień.
++
++**Cykliczność.** Reużyty `src/utils/recurrence.ts` + typ `TaskRecurrence`
++z promptu 244 — **zero drugiej implementacji**; kotwicą jest `event.date`.
++
++**Kalendarz (render + menu).** `WeekView.tsx` zmieniony czysto addytywnie
++(+86/−0): nakładka `EventBlock` (`.week-event-block`, fioletowy token w
++`src/styles.css`) pozycjonowana po `startMinutes`, wysokość ∝
++`durationMinutes`, bez udziału w pointer/drag i hit-teście gridu
++(invariant 7 nietknięty — wzór `.week-recur-block`). Menu kontekstowe pustego
++slotu ma drugą pozycję „+ Dodaj spotkanie (HH:mm)" z prefil­lem daty/godziny;
++gate: istniejące `tasks.manage` (menu już nim gate'owane — nowe uprawnienie
++duplikowałoby ten sam zbiór ról). `MonthView.tsx`: marker 📅 (wzór
++`month-cell-recur`).
++
++**Panel „Wydarzenia".** Nowa pozycja NAV + route `/wydarzenia` w
++`src/App.tsx` (ikona `CalendarClock` w `src/components/icons.ts`), lista w
++`src/pages/EventsPage.tsx`, modal `src/components/EventModal.tsx` sterowany
++URL-em `?wydarzenie=new` / `?wydarzenie=<id>` (wzór TaskModal/TicketModal),
++scope `event-modal` w `src/utils/dirtyRegistry.ts`. Pola po polsku,
++kontrolowane, wymagane z ` *`; przełącznik jednorazowe/cykliczne.
++
++**Chmura + RLS.** Migracja `supabase/migrations/20260721190000_events.sql`
++(forward-only, idempotentna, **tylko plik — nie aplikowana zdalnie**):
++`public.events` z `attendee_ids uuid[]` (parytet wzorca whole-row upsert,
++bez tabeli łączącej — RLS jej nie odpytuje), `recurrence jsonb`, CHECK-i
++siatki, `enable row level security`, `revoke all … from anon`, cztery
++polityki `to authenticated` + `with check`, publikacja realtime.
++Zarejestrowana w `src/supabase/migrations.test.ts` + `EXPECTED_POLICIES`.
++Mirror: `eventRow` + rodzina diff w `cloudMirror.ts`; hydracja
++cloud-authoritative przez `MERGE_CLOUD_ENTITIES` w `plannerData.ts`
++(zastąpienie kolekcji). Retirement bez zmian (parytet tickets).
++
++**Wiki.** Zaktualizowane 4 strony: `scheduling-and-calendar.md` (nakładka
++prezentacyjna + nowa pozycja menu, invariant 7), `state-and-persistence.md`
++(kolekcja, CRUD, repair, wersja 7), `cloud-database.md` (tabela, RLS,
++realtime, hydracja), `ui-navigation-and-onboarding.md` (route
++`/wydarzenia`, wzorzec `?wydarzenie=`).
++
++## 2. Testy i checki
++
++Nowe testy: `src/store/eventActions.test.ts` (CRUD, normalizacja,
++same-ref dla invalid draftów, kaskada), `src/store/eventsStorage.test.ts`
++(repair, fail-closed, idempotencja) oraz rozszerzenia
++`selectors.test.ts`, `cloudMerge.test.ts`, `cloudMirror.test.ts`,
++`plannerData.test.ts`, `migrations.test.ts`.
++
++- `npx tsc --noEmit` — czysto.
++- `npm test` — **48 plików, 1282 testy, wszystkie zielone** (bazowo 933;
++  potwierdzone dwukrotnie, w tym po odzysku — patrz sekcja 3).
++- `npm run build` — zielony.
++- `node scripts/browser-check-bin-drag.mjs` — **[chromium] VERDICT: PASS**
++  (heartbeat, pointer-liveness po dropie, zero pageErrors). Playwright nie
++  jest zależnością projektu — doinstalowany `npm i --no-save playwright`
++  (bez zmiany `package.json`), dev server na :5173 uruchomiony i zgaszony
++  na czas testu.
++
++## 3. Incydent w trakcie runu: worktree skasowany i odzyskany
++
++W trakcie pracy (po zakończeniu implementacji przez developera, w trakcie
++synchronizacji wiki) katalog runu
++`$TMPDIR/claude-scheduler-runs/20260721-185820-…` został **usunięty
++zewnętrznie** — proces schedulera nie żył, log runu urywa się po `npm ci`,
++`claude-scheduler-runs/` był pusty. Niezacommitowana praca zniknęła z dysku.
++
++Odzysk: worktree odtworzony pod tą samą ścieżką (`git worktree add --detach`
++z bazowego SHA `e84478f`, tego samego co oryginał), a wszystkie operacje
++plikowe odtworzone chronologicznie z transkryptów subagentów
++(`~/.claude/projects/...-n2hub-245.../subagents/agent-*.jsonl`): 70 operacji
++Write/Edit + 4 mutacje wykonane przez Bash (`sed`, trzy `cat >>` do plików
++testowych). Wierność potwierdzona: 0 nietrafionych edytów, liczba testów
++identyczna z oryginalnym przebiegiem developera (1282/1282), build i browser
++check zielone po odzysku. Kopia bezpieczeństwa pełnego diffa (3101 linii):
++`handoffs/scheduler-reviews/recovered-20260721-185820-n2hub-245.patch`
++w głównym repo (`~/Documents/AI/N2Media/N2click`, plik nieśledzony) — na
++wypadek ponownego wyczyszczenia katalogu tymczasowego przed commitem gate'u.
++
++Uwaga dla operatora: worktree jest **detached** na `e84478f` (celowo, żeby
++nie blokować gałęzi `review-integration` przy restarcie schedulera). Gate
++`npm test && npm run build` przechodzi w tym worktree.
++
++## 4. Ryzyka i ograniczenia
++
++- **Trwałość worktree**: katalog tymczasowy już raz zniknął; jeśli scheduler
++  wyczyści go ponownie przed commitem, zmiany odtwarza patch wskazany wyżej.
++- Browser check przeszedł na Chromium; pełną matrycę przeglądarek posiada
++  weryfikacja release'owa.
++- Migracja nie została zastosowana na zdalnej bazie (zgodnie z zasadą —
++  aplikowanie przez MCP za zgodą usera); do wykonania przy wdrożeniu.
++- `attendee_ids uuid[]` bez FK per-element (ograniczenie Postgresa dla
++  tablic) — spójność uczestników egzekwowana po stronie aplikacji (repair +
++  kaskada `DELETE_PERSON`), jak w analogicznych wzorcach domu.
+diff --git a/handoffs/scheduler-reviews/n2hub-245-packages/events-and-meetings.md b/handoffs/scheduler-reviews/n2hub-245-packages/events-and-meetings.md
+new file mode 100644
+index 0000000..1bc6531
+--- /dev/null
++++ b/handoffs/scheduler-reviews/n2hub-245-packages/events-and-meetings.md
+@@ -0,0 +1,297 @@
++# Handoff: Add calendar events/meetings (model, calendar render, panel „Wydarzenia”, cloud)
++
++- Package ID: PKG-20260721-events-and-meetings
++- Status: ready
++- Tier: developer
++- Depends on: none
++- Risk: medium (WeekView is stability-sensitive; the change is additive-presentational only)
++- Codex review: required — cross-module (store + storage + cloud + RLS + calendar UI)
++
++## Goal
++
++A new `CalendarEvent` entity (meetings) with reducer CRUD, storage repair,
++cloud mirror + RLS table, presentational blocks in WeekView (+ MonthView
++marker), a slot-menu shortcut „+ Dodaj spotkanie”, and a new panel
++„Wydarzenia” with a URL-driven modal. All user-facing strings Polish.
++
++## Wiki context
++
++- `openwiki/n2hub/state-and-persistence.md`
++- `openwiki/n2hub/scheduling-and-calendar.md`
++- `openwiki/n2hub/cloud-database.md`
++- `openwiki/n2hub/ui-navigation-and-onboarding.md`
++
++## Expected touchpoints
++
++- `src/types.ts` — `CalendarEvent` + `AppData.events`
++- `src/store/AppStore.tsx` — action union, reducer cases, MERGE_CLOUD_ENTITIES
++- `src/store/commandValidation.ts` — event draft validation/normalization
++- `src/store/storage.ts` — `emptyData()`, `coerceArray`, `repairEvents`
++- `src/store/selectors.ts` — `calendarEventsOnDate`
++- `src/components/WeekView.tsx` — EventBlock overlay + slot-menu item (additive only)
++- `src/components/MonthView.tsx` — marker
++- `src/components/EventModal.tsx` (new), `src/pages/EventsPage.tsx` (new)
++- `src/App.tsx`, `src/components/icons.ts`, `src/utils/dirtyRegistry.ts`
++- `src/styles.css`
++- `new: supabase/migrations/20260721190000_events.sql`
++- `src/supabase/cloudMirror.ts`, `src/supabase/plannerData.ts`, `src/supabase/migrations.test.ts`
++- Tests: `new: src/store/eventActions.test.ts`, `new: src/store/eventsStorage.test.ts`,
++  extensions in `cloudMerge.test.ts`, `selectors.test.ts`, `cloudMirror.test.ts`,
++  `plannerData.test.ts`, `migrations.test.ts`
++
++## Invariants
++
++- Invariant 6: every invalid event command returns the SAME state reference.
++- Invariant 7: NO changes to calendar pointer/drag handlers, `packDayBlocks`,
++  collision logic, rendered-column hit-testing or bin lifecycle. Event blocks
++  are additive presentational overlays exactly like `.week-recur-block`
++  (WeekView.tsx:961-1011): no pointer/drag handlers; only click/keyboard opens
++  the event modal.
++- Events NEVER create `WorkloadEntry` rows, never enter totals/overload/
++  collisions (invariant 1 parity with recurrence occurrences).
++- `DATA_VERSION` stays 7 — the collection is ADDITIVE (tickets precedent).
++- A failed save must never report `Zapisano`; no changes to save/conflict flows.
++- Never apply the migration to any remote database — file + tests only.
++- No new npm dependencies. No second recurrence implementation — reuse
++  `src/utils/recurrence.ts` verbatim (no edits to that file).
++
++## Prior decisions (ALL settled — do not reopen)
++
++1. **Permission gate: reuse `tasks.manage`.** The slot context menu already
++   opens only for `canManageTasks` (WeekView.tsx:1022, 1182, 1612); a second
++   item slots in without touching the gate. No new `PermAction`
++   (permissions.ts stays unchanged). EventsPage/EventModal gate create/edit/
++   delete controls with `can('tasks.manage')` + `NO_PERM_TITLE` tooltip; the
++   panel itself is visible to every role (tickets precedent, App.tsx:98-99).
++2. **Attendees: `attendee_ids uuid[]` column on `public.events`** (NOT a join
++   table). Whole-row upsert parity with `draftHoursRow`
++   (cloudMirror.ts:276-292: map local person id via `maps.people` /
++   `cloudProfileIds`, DROP unmappable entries, never null the row) and the
++   `profiles.work_days smallint[]` array precedent. A join table is only used
++   where RLS queries it (task_assignments) — events RLS does not.
++3. **No version bump.** Exact tickets precedent: `emptyData()` gets
++   `events: []`, load path gets `coerceArray(parsedRest.events, defaults.events)`
++   (storage.ts:1448 block) and a `repairEvents` pass wrapped around BOTH load
++   paths exactly where `repairTickets` sits (storage.ts:1070, 1400, 1463).
++4. **Recurrence: reuse `TaskRecurrence` type (types.ts:201-207) and
++   `src/utils/recurrence.ts` as-is.** `CalendarEvent.recurrence?: TaskRecurrence`;
++   anchor = `event.date`. Canonicalize with `normalizeRecurrence(raw, event.date)`
++   on THREE boundaries: reducer (ADD/SAVE_EVENT), `repairEvents`, cloud
++   hydration. Structurally invalid recurrence in a reducer draft → same state
++   reference. NO per-occurrence override UI for events (out of scope; overrides
++   surviving normalization are tolerated, not editable). One-time event = no
++   `recurrence` key („jednorazowo”).
++5. **MonthView: IN scope, marker only** — mirror `month-cell-recur`
++   (MonthView.tsx:69-108, styles.css:2141): a small 📅/dot marker with event
++   titles in `title`/`aria-label`, no blocks, no menu.
++6. **RLS: all four commands open `to authenticated`**
++   (`using (true)` / `with check (true)`), `revoke all ... from anon`, RLS
++   enabled, no FORCE. Justification: the calendar is an org-shared surface and
++   the cloud role mapping `handlowiec → worker` (cloudMirror.ts:44-49) makes
++   any role-restricted write either block handlowiec (who holds `tasks.manage`
++   locally) or require an attendee/creator model the local entity does not
++   carry. Client gate is UX-only per CLAUDE.md. Register
++   `'public.events': ['select', 'insert', 'update', 'delete']` in
++   `EXPECTED_POLICIES` (migrations.test.ts:36-74) and the filename in the list
++   (migrations.test.ts:101-124).
++7. **Realtime: add `public.events` to `supabase_realtime`** with the
++   idempotent do-block from 20260721150000_job_titles.sql:57-65 (events render
++   on the shared calendar — planner-entity parity, unlike tickets).
++8. **Retirement gate / coverage: NO changes** to `src/store/persistGate.ts`
++   (lines 20-50) or `src/supabase/migrationStatus.ts` (buildCoverageReport) —
++   exact tickets parity: a mirrored family absent from `NON_MIRRORED_KEYS`
++   already behaves correctly under the retirement gate.
++9. **Local model has NO createdAt/updatedAt** (prompt shape is canonical). The
++   cloud table has `created_at`/`updated_at` with server defaults + the
++   `app.set_updated_at` trigger (tickets.sql:42-45); `eventRow` OMITS both.
++10. **No activity-log entries and no cascades from project/task deletion** —
++    the collection is standalone (tickets precedent, AppStore.tsx:3524-3527).
++    ONE cascade: `DELETE_PERSON` filters the removed id out of every
++    `attendeeIds` (DELETE_COMPANY style); render also defensively ignores
++    unknown ids.
++11. **No demo events in `seed.ts`** (jobTitles/companies precedent).
++
++## Scope
++
++### 1. Model + reducer (types.ts, AppStore.tsx, commandValidation.ts)
++
++- `CalendarEvent { id, title, description, location, meetingUrl, date,
++  startMinutes, durationMinutes, attendeeIds: string[], recurrence?: TaskRecurrence }`
++  placed after `Ticket` (types.ts:330-341); `events: CalendarEvent[]` in
++  `AppData` after `tickets` (types.ts:403). Strings default `''`.
++- Actions `ADD_EVENT { draft }`, `SAVE_EVENT { eventId, draft }`,
++  `DELETE_EVENT { eventId }` mirroring ticket cases (AppStore.tsx:3528-3586):
++  trim strings, unknown id / invalid draft → same reference.
++- Validation in commandValidation.ts (`isValidEventDraft` +
++  `normalizeEventDraft`, isValidTicketDraft style): title required (non-empty
++  after trim); `date` a valid `yyyy-MM-dd` (utils/dates); `startMinutes` finite
++  integer, 15-grid, 0..1425; `durationMinutes` 15-grid, 15..1440;
++  `startMinutes + durationMinutes <= 1440` (one day); `attendeeIds` an array of
++  strings — dedupe and keep only ids present in `state.people` (normalization,
++  not rejection); `meetingUrl` non-empty ⇒ must pass
++  `normalizeProjectDocumentUrl` (src/utils/projectDocuments.ts — http/https
++  only, store the normalized value; unnormalizable non-empty url ⇒ reject
++  draft). `location`/`description`/`meetingUrl` may all be empty.
++  `recurrence`: absent/null ⇒ no key; otherwise `normalizeRecurrence(raw,
++  draft.date)` — `undefined` result for a PROVIDED rule ⇒ same reference.
++- `MERGE_CLOUD_ENTITIES`: optional `events` in the payload exactly like
++  `tickets` (AppStore.tsx:2602, 2622, 2677-2679, 2717-2719) — absent key
++  leaves the collection untouched (by reference); structurally invalid rows
++  fail-close (same reference); valid merge goes through `reconcileRows`
++  (reference-preserving).
++
++### 2. Storage (storage.ts)
++
++- `emptyData()` → `events: []`; `coerceArray(parsedRest.events, defaults.events)`.
++- `repairEvents` modeled on `repairTickets` (storage.ts:1070+), run at both
++  wrap sites (1400, 1463), idempotent by value: drop rows without `id`/`title`
++  or with an invalid `date`; coerce non-string fields to `''`; snap/reject
++  off-grid minutes fail-closed (drop the row — parity with workload
++  fail-closed rules); dedupe + string-filter `attendeeIds` (KEEP orphaned ids —
++  cloud may know people the local set does not; tickets keep the orphaned
++  reporter); re-canonicalize `recurrence` via `normalizeRecurrence(raw, date)`
++  (invalid ⇒ key removed); normalize `meetingUrl` via
++  `normalizeProjectDocumentUrl` (bad scheme ⇒ `''`). Legacy payload without
++  the key ⇒ `[]`, no echo-write.
++
++### 3. Selector (selectors.ts)
++
++- `calendarEventsOnDate(state, date, personFilter?)` next to
++  `recurrenceOccurrencesForDate` (selectors.ts:357-374), returning
++  `Array<{ event, startMinutes, durationMinutes, isOccurrence }>`:
++  - `date === event.date` → the base event (its own minutes) — emit ONCE even
++    when the rule also matches that day (no double render);
++  - else, with `recurrence`, use `expandOccurrences(event.recurrence,
++    event.date, date, date)` (recurrence.ts:171).
++  - Filter semantics: with an active non-empty `personFilter`, show the event
++    only if some attendee is in the filter; an event with EMPTY `attendeeIds`
++    stays visible (an unaddressed meeting is "everyone's").
++
++### 4. WeekView + MonthView (presentational only)
++
++- `EventBlock` component cloned from `RecurBlock` (WeekView.tsx:961-1011):
++  `position: absolute`, `top = startMinutes/60*HOUR_PX`, height from
++  `durationMinutes`, `role="button"`, `tabIndex=0`, Enter/Space + click open
++  the event modal, `stopPropagation` on click, NO pointer/context lifecycle
++  beyond stopping its own contextmenu (like `.week-recur-block`).
++- Render inside the day column mapping BEFORE `packed.map` alongside the
++  recurrence overlay (WeekView.tsx:1621-1634) so real blocks paint on top
++  (deviation-tested precedent from run 244).
++- `openSlotMenu` gains one guard line for `.week-event-block` next to the
++  `.week-recur-block` guard (WeekView.tsx:1183-1186). NOTHING else in
++  openSlotMenu/pointer paths changes.
++- Slot menu (WeekView.tsx:1968-1991): second `context-menu-item` button
++  „+ Dodaj spotkanie (HH:mm)” (`formatMinutes(slotMenu.startMinutes)`) →
++  opens the event modal in "new" mode prefilled with `slotMenu.date` +
++  `slotMenu.startMinutes` (mirror how `openNewTask` passes prefill,
++  WeekView.tsx:1201-1206), then `setSlotMenu(null)`.
++- New color tokens + classes in styles.css near `.week-recur-block`
++  (styles.css:1867-1898): solid distinct look (different hue family from
++  person/task colors, e.g. a violet `--event-*` token), `.week-event-block`,
++  `.month-cell-event`.
++- MonthView: events marker per decision 5.
++
++### 5. Panel „Wydarzenia” (App.tsx, EventsPage, EventModal)
++
++- Export `CalendarClock` from src/components/icons.ts (curated module).
++- NAV entry `['/wydarzenia', 'Wydarzenia', CalendarClock]` after
++  `'/calendar'` (App.tsx:86-101); route `<Route path="/wydarzenia"
++  element={<EventsPage />} />` (App.tsx:510 area); `<EventModal />` mounted
++  once next to `<TicketModal />` (App.tsx:533).
++- `EventModal` mirrors TicketModal (src/components/TicketModal.tsx:24,30):
++  URL param `wydarzenie` (`?wydarzenie=new` / `?wydarzenie=<id>`),
++  `useOpenEvent()` hook, `.task-modal-*` classes, own dirty scope
++  `'event-modal'` in dirtyRegistry.ts (mirror `'ticket-modal'`). Controlled
++  inputs, Polish labels, required marked ` *`: „Tytuł *”, „Data *”,
++  „Godzina *” (15-min steps), „Czas trwania *” (15-min steps, default 60 min),
++  optional: „Osoby” (attendee multi-select from `state.people`), „Link do
++  spotkania”, „Biuro / lokalizacja”, „Opis”, „Cykliczność” (jednorazowo |
++  weekday chips + optional „do” date, TaskModal „Cykliczność” pattern; the
++  rule's start/duration follow the event's own time fields). Explicit save
++  buttons dispatching ADD_EVENT/SAVE_EVENT; „Usuń” with confirm; live Polish
++  validation message while invalid.
++- `EventsPage`: list sorted by `date` then `startMinutes` (Polish empty state
++  „Brak wydarzeń”), each row opens `?wydarzenie=<id>`; „+ Dodaj wydarzenie”
++  gated by `tasks.manage`; show ⟳/„cykliczne” badge for recurring events.
++
++### 6. Cloud (migration + mirror + hydration)
++
++- `supabase/migrations/20260721190000_events.sql`, header comment + idempotent
++  style copied from 20260720230000_tickets.sql: table `public.events`
++  (`id uuid pk default gen_random_uuid()`, `title text not null` with a
++  1..300 length check, `description text not null default ''`,
++  `location text not null default ''`, `meeting_url text not null default ''`,
++  `event_date date not null`, `start_minutes integer not null` + grid CHECKs
++  (multiple of 15, `0 <= start`, `start + duration <= 1440`),
++  `duration_minutes integer not null` (>=15, multiple of 15),
++  `attendee_ids uuid[] not null default '{}'`, `recurrence jsonb` nullable,
++  `created_at`/`updated_at` + `app.set_updated_at` trigger). RLS + policies +
++  anon revoke + realtime per decisions 6-7. No new SQL functions.
++- `cloudMirror.ts`: `eventRow` after `ticketRow` (cloudMirror.ts:307-333) —
++  UUID id required; `attendee_ids` mapped per decision 2; `recurrence:
++  e.recurrence ?? null`; OMIT created_at/updated_at. Diff block as the tenth
++  family, exact tickets shape (cloudMirror.ts:604-616), Polish label
++  „Wydarzenie …”.
++- `plannerData.ts`: tenth parallel select
++  (`'events'`, `'id, title, description, location, meeting_url, event_date,
++  start_minutes, duration_minutes, attendee_ids, recurrence'`) in
++  `loadPlannerSnapshot` (plannerData.ts:312-347) + error fan-in; hydrate rows:
++  invalid `event_date`/off-grid minutes ⇒ skip with Polish diagnostic;
++  attendees mapped cloud→local via `personOf`, ids outside
++  `cloudProfileIds`/maps dropped; `recurrence` re-canonicalized via
++  `normalizeRecurrence(row.recurrence, date)`; add optional
++  `events?: CalendarEvent[]` to `CloudMergePayload` (plannerData.ts:166-180).
++
++## Out of scope
++
++- Per-occurrence override UI/menu for events; event drag/resize/collisions;
++  attendee availability or overload interplay; notifications/invitations/ICS;
++  MonthView event blocks; changes to `src/utils/recurrence.ts`,
++  `permissions.ts`, `persistGate.ts`, `migrationStatus.ts`; applying the
++  migration to the hosted project; onboarding tours for the new panel.
++
++## Acceptance
++
++- [ ] ADD/SAVE/DELETE_EVENT work; every invalid draft (empty title, bad date,
++      off-grid or over-midnight minutes, bad `meetingUrl` scheme, invalid
++      provided recurrence, unknown eventId) returns the SAME state reference.
++- [ ] `javascript:`/`data:` urls never persist and never render as `href`;
++      schemeless urls normalize to `https://`.
++- [ ] Legacy stored payload without `events` loads as `[]` with no echo-write;
++      malformed rows are repaired/dropped idempotently (second pass no-op).
++- [ ] WeekView shows event blocks at the right top/height, visually distinct
++      from task and recurrence blocks; recurring events appear on occurrence
++      dates with no double block on the anchor date; MonthView shows a marker.
++- [ ] Right-click empty slot (as admin/pm/handlowiec) shows BOTH „+ Dodaj
++      zadanie” and „+ Dodaj spotkanie (HH:mm)”; the latter opens the modal
++      prefilled with that date/time; `pracownik` still gets no menu.
++- [ ] No pointer/drag/hit-testing code path changed (diff review shows
++      WeekView changes are: one guard line, one menu item, overlay render,
++      imports/state for the overlay only).
++- [ ] `/wydarzenia` lists events; `?wydarzenie=new|<id>` opens/close-restores
++      the modal; dirty modal edits arm the navigation guard; all strings Polish.
++- [ ] Migration file passes `migrations.test.ts` (list, RLS conventions,
++      EXPECTED_POLICIES incl. `public.events`); never applied remotely.
++- [ ] Mirror round-trip: local event → `eventRow` → hydrated snapshot →
++      `MERGE_CLOUD_ENTITIES` reproduces the event (ids/attendees/recurrence);
++      merge without `events` key leaves the collection by reference.
++- [ ] `npm test` and `npm run build` green; no new dependencies.
++
++## Verification
++
++- Worker: `npx vitest run src/store src/supabase` (focused), then full
++  `npm test` and `npm run build`.
++- Browser: `node scripts/browser-check-bin-drag.mjs` — smoke that real blocks
++  still own pointer interaction over the new overlay (run-244 precedent:
++  expect `topAtBlock=week-block`). Other browser checks not required — no
++  covered interaction changed.
++- Scheduler owns final `npm run test:scheduler && npm test && npm run build`.
++
++## Wiki maintenance note (for the final reviewer)
++
++All four declared pages will likely need a short update after green:
++state-and-persistence.md (new additive collection + actions + repair),
++cloud-database.md (`public.events` table/RLS/realtime), scheduling-and-calendar.md
++(event overlay additive rule), ui-navigation-and-onboarding.md (`/wydarzenia`
++route + EventModal `?wydarzenie=` pattern). Single wiki decision stays with the
++reviewer.
+diff --git a/openwiki/n2hub/cloud-database.md b/openwiki/n2hub/cloud-database.md
+index 21e0715..9de7a83 100644
+--- a/openwiki/n2hub/cloud-database.md
++++ b/openwiki/n2hub/cloud-database.md
+@@ -130,6 +130,21 @@
+   dopóki status = 'nowe' (using + with check); DELETE wyłącznie administrator.
+   Tabela NIE jest w publikacji realtime — zmiany zgłoszeń nie wyzwalają
+   live-syncu, lista odświeża się przy hydracji.
++- `events` (20260721190000) — kalendarz spotkań, SAMODZIELNA tabela bez
++  powiązań z projektami/zadaniami: `title`/`description`/`location`/
++  `meeting_url`, `event_date`+`start_minutes`+`duration_minutes` (grid CHECKi,
++  0.25h-parity z `workload_entries`), `attendee_ids uuid[] not null default
++  '{}'` (KOLUMNA, nie tabela pośrednicząca — parytet z `profiles.work_days`),
++  `recurrence jsonb` nullable (ten sam kształt co `tasks.recurrence`), oraz
++  `created_at`/`updated_at` (trigger `app.set_updated_at`). RLS: wszystkie
++  cztery komendy `to authenticated` z `using (true)`/`with check (true)` —
++  kalendarz jest zasobem współdzielonym w całej organizacji, `anon` ma
++  `revoke all`. Tabela JEST w publikacji `supabase_realtime` (parytet z
++  planer-encjami, w odróżnieniu od `tickets`) — spotkania renderują się na
++  współdzielonym kalendarzu na żywo. Klient hydruje ją CHMUR-AUTORYTATYWNIE
++  przez `MERGE_CLOUD_ENTITIES` (jak pozostałe planer-rodziny), nie
++  `MERGE_CLOUD_DICTIONARIES`. Rejestr: `migrations.test.ts` (lista +
++  `public.events` w `EXPECTED_POLICIES`).
+ - Access model: administrator = everything; manager = own department
+   (profiles incl. UPDATE of non-admin members, memberships/assignments
+   restricted to own-department people) — and since 20260720170000 the manager
+diff --git a/openwiki/n2hub/scheduling-and-calendar.md b/openwiki/n2hub/scheduling-and-calendar.md
+index 51cc32e..866aaf3 100644
+--- a/openwiki/n2hub/scheduling-and-calendar.md
++++ b/openwiki/n2hub/scheduling-and-calendar.md
+@@ -43,6 +43,15 @@
+   `.month-cell-recur` ⟳ marker (no blocks/menu). The rule is edited in TaskModal
+   via explicit dispatch, never through the SAVE_TASK draft/auto-save. All bin
+   drag, pointer lifecycle and rendered-column hit-testing paths are untouched.
++- Calendar events (meetings, 2026-07-21) follow the same presentational-overlay
++  rule: `EventBlock` in WeekView renders `.week-event-block` positioned by
++  time, with no pointer/drag handlers — only click/keyboard opens
++  `EventModal`; a recurring event reuses `src/utils/recurrence.ts`
++  (`expandOccurrences`) to place occurrences without ever entering
++  `packDayBlocks`, collisions or totals. `openSlotMenu` guards
++  `.week-event-block` alongside `.week-recur-block`, and the slot context menu
++  gained a second item, „+ Dodaj spotkanie (HH:mm)", next to „+ Dodaj zadanie"
++  — invariant 7 (bin drag/pointer/hit-testing paths) is untouched.
+ 
+ ## Start here for
+ 
+diff --git a/openwiki/n2hub/state-and-persistence.md b/openwiki/n2hub/state-and-persistence.md
+index a8486ad..78e99a6 100644
+--- a/openwiki/n2hub/state-and-persistence.md
++++ b/openwiki/n2hub/state-and-persistence.md
+@@ -208,6 +208,29 @@
+   kolumna jsonb `tasks.recurrence` (patrz cloud-database). Testy:
+   `recurrence.test.ts`, `recurrenceActions.test.ts`, rozszerzenia w
+   `storage.test.ts`/`cloudMerge.test.ts`/`cloudMirror.test.ts`/`plannerData.test.ts`.
++- WYDARZENIA / SPOTKANIA (2026-07-21): kolekcja `events` w `AppData`
++  (`CalendarEvent` w `src/types.ts`, po `Ticket`) — tytuł/opis/lokalizacja/link
++  do spotkania, `date`+`startMinutes`+`durationMinutes` na siatce 15 min,
++  `attendeeIds: string[]` i opcjonalna `recurrence?: TaskRecurrence` (ten sam
++  typ i `normalizeRecurrence` co zadania, kotwica = `event.date`). Mutacje:
++  `ADD_EVENT`/`SAVE_EVENT`/`DELETE_EVENT` w reduktorze i `MERGE_CLOUD_ENTITIES`
++  (opcjonalny klucz `events` — brak => kolekcja nietknięta po referencji) —
++  pusty tytuł, zła data, minuty spoza siatki/doby, niepoprawny podany
++  `recurrence` lub nieznane `eventId` zwracają TĘ SAMĄ referencję stanu
++  (inwariant 6). Kolekcja jest ADDYTYWNA: `DATA_VERSION` zostaje na 7,
++  `emptyData()` daje `[]`, wczytanie ma `coerceArray(parsedRest.events, …)` i
++  pass `repairEvents` (storage.ts) na obu ścieżkach — odrzuca wiersze bez
++  `id`/`title` lub ze złą datą, snapuje/odrzuca minuty spoza siatki
++  (fail-closed), dedupe'uje `attendeeIds` (osierocone id zachowane — chmura
++  może znać osoby, których nie ma lokalnie) i re-kanonikalizuje `recurrence`.
++  Selektor `calendarEventsOnDate` (selectors.ts) zwraca zdarzenia bazowe i
++  wystąpienia cykliczne na daną datę (bez podwójnego renderu w dniu kotwicy);
++  wydarzenia NIGDY nie tworzą `WorkloadEntry` ani nie wchodzą do sum/
++  przeciążenia/kolizji (inwariant 1, parytet z wystąpieniami cyklicznymi).
++  W chmurze to tabela `public.events` (patrz cloud-database). Testy:
++  `eventActions.test.ts`, `eventsStorage.test.ts`, rozszerzenia w
++  `cloudMerge.test.ts`/`selectors.test.ts`/`cloudMirror.test.ts`/
++  `plannerData.test.ts`/`migrations.test.ts`.
+ - `Client` carries contact fields (contactName/contactEmail/contactPhone/notes;
+   columns from 20260718090000_clients_contact_fields, '' or missing = none — no
+   repair pass, use-sites coalesce), edited on the `/clients` page via
+diff --git a/openwiki/n2hub/ui-navigation-and-onboarding.md b/openwiki/n2hub/ui-navigation-and-onboarding.md
+index 7f3464e..7326617 100644
+--- a/openwiki/n2hub/ui-navigation-and-onboarding.md
++++ b/openwiki/n2hub/ui-navigation-and-onboarding.md
+@@ -52,6 +52,14 @@
+   powiela wzorzec TaskModal: `?zgloszenie=new|<id>`, `useOpenTicket()`, montaż raz
+   w App, klasy `.task-modal-*` i własny zakres strażnika nawigacji
+   (`'ticket-modal'` w `dirtyRegistry.ts`).
++- `/wydarzenia` („Wydarzenia", `src/pages/EventsPage.tsx`) is a new nav entry
++  after `/calendar` (App.tsx), visible to every role like `/zgloszenia` — not
++  gated like `/admin`; create/edit/delete controls are gated by
++  `tasks.manage` (reused permission, no new `PermAction`). It lists calendar
++  events sorted by date/time. `src/components/EventModal.tsx` mirrors
++  TicketModal's URL-driven pattern: `?wydarzenie=new|<id>`, `useOpenEvent()`,
++  mounted once in App next to `<TicketModal />`, `.task-modal-*` classes and
++  its own navigation-guard scope (`'event-modal'` in `dirtyRegistry.ts`).
+ - `src/onboarding/catalog.ts` owns copy, roles and route mapping; components
+   expose stable `data-tour` anchors only.
+ - `src/utils/dirtyRegistry.ts` and `src/utils/useSaveStatus.ts` support shared
+diff --git a/src/App.tsx b/src/App.tsx
+index 74ecea9..23ffe35 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -25,6 +25,7 @@ import { PersonProfilePage } from './pages/PersonProfilePage';
+ import { WorkloadPage } from './pages/WorkloadPage';
+ import { AdminPage } from './pages/AdminPage';
+ import { TicketsPage } from './pages/TicketsPage';
++import { EventsPage } from './pages/EventsPage';
+ import { AccountPage } from './pages/AccountPage';
+ import { TeamPage } from './pages/TeamPage';
+ import { canViewTeam } from './pages/teamScope';
+@@ -51,6 +52,7 @@ import { PersistenceBanner } from './components/PersistenceBanner';
+ import { CloudSyncBanner } from './components/CloudSyncBanner';
+ import { TaskModal } from './components/TaskModal';
+ import { TicketModal } from './components/TicketModal';
++import { EventModal } from './components/EventModal';
+ import { GlobalSearch } from './components/GlobalSearch';
+ import { Avatar } from './components/Avatar';
+ import {
+@@ -62,6 +64,7 @@ import {
+   GanttChart,
+   ListChecks,
+   CalendarDays,
++  CalendarClock,
+   Users,
+   Gauge,
+   Settings,
+@@ -92,6 +95,8 @@ const NAV: Array<[string, string, LucideIcon]> = [
+   ['/timeline', 'Oś czasu', GanttChart],
+   ['/tasks', 'Zadania', ListChecks],
+   ['/calendar', 'Kalendarz', CalendarDays],
++  // Wydarzenia / spotkania widzi KAŻDA rola (jak Kalendarz) — bez bramki.
++  ['/wydarzenia', 'Wydarzenia', CalendarClock],
+   ['/people', 'Zespół', Users],
+   ['/team', 'Struktura zespołu', Network],
+   ['/workload', 'Obciążenie', Gauge],
+@@ -503,6 +508,8 @@ export function App() {
+             <Route path="/tasks/new" element={<NewTaskRedirect />} />
+             <Route path="/tasks/:id" element={<TaskRedirect />} />
+             <Route path="/calendar" element={<CalendarPage />} />
++            {/* Wydarzenia / spotkania: widoczne dla każdej roli. */}
++            <Route path="/wydarzenia" element={<EventsPage />} />
+             <Route path="/people" element={<PeoplePage />} />
+             <Route path="/people/:id" element={<PersonProfilePage />} />
+             <Route path="/workload" element={<WorkloadPage />} />
+@@ -531,6 +538,8 @@ export function App() {
+       <TaskModal />
+       {/* Ten sam wzorzec dla zgłoszeń (?zgloszenie=new | <id>). */}
+       <TicketModal />
++      {/* Ten sam wzorzec dla wydarzeń (?wydarzenie=new | <id>). */}
++      <EventModal />
+       <DirtyNavigationGuard />
+       <OnboardingRoot
+         owner={actualUser}
+diff --git a/src/components/EventModal.tsx b/src/components/EventModal.tsx
+new file mode 100644
+index 0000000..504a6c8
+--- /dev/null
++++ b/src/components/EventModal.tsx
+@@ -0,0 +1,592 @@
++// Modal wydarzenia / spotkania. Wzorzec jest DOKŁADNIE ten sam co w TicketModal:
++// overlay sterowany parametrem `?wydarzenie=new` / `?wydarzenie=<id>`, montowany
++// RAZ na poziomie App, zamknięcie usuwa parametr i zostawia resztę URL-a
++// nietkniętą. Tworzenie/edycja/usuwanie są bramkowane `tasks.manage` (parytet ze
++// slot-menu kalendarza); sam panel widzi każda rola.
++import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
++import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
++import { AnimatePresence, motion } from 'motion/react';
++import { useStore } from '../store/AppStore';
++import { useCan } from '../store/useCan';
++import { NO_PERM_TITLE } from '../store/permissions';
++import type { EventDraft } from '../store/AppStore';
++import type { CalendarEvent } from '../types';
++import { isValidEventDraft } from '../store/commandValidation';
++import { isValidDateStr, todayStr, WEEKDAY_LABELS } from '../utils/dates';
++import { MINUTE_STEP, formatDuration } from '../utils/time';
++import { bypassNavGuardOnce, clearNavGuard, setNavGuard } from '../utils/dirtyRegistry';
++
++/** Parametr URL-a niosący modal wydarzenia (polski, jak reszta tras). */
++const EVENT_PARAM = 'wydarzenie';
++const DATE_PARAM = 'evDate';
++const START_PARAM = 'evStart';
++
++/** Opcje czasu trwania: 0:15…12:00 na siatce 15 minut. */
++const DURATION_OPTIONS = Array.from({ length: 48 }, (_, i) => (i + 1) * MINUTE_STEP);
++
++// "HH:MM" ↔ minuty-od-północy (jak w TaskModal/WeekView).
++function timeToMinutes(value: string): number {
++  const [h, m] = value.split(':');
++  return Number(h) * 60 + Number(m);
++}
++function minutesToTime(min: number): string {
++  const h = Math.floor(min / 60);
++  const m = min % 60;
++  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
++}
++
++/**
++ * Wspólny opener. Dokłada parametr wydarzenia do BIEŻĄCEJ lokalizacji, więc
++ * strona pod spodem nigdy się nie zmienia (jak useOpenTicket). `openNewEvent`
++ * przyjmuje opcjonalny prefill (data + minuty startu) — używa go slot-menu
++ * kalendarza.
++ */
++export function useOpenEvent() {
++  const navigate = useNavigate();
++  const location = useLocation();
++
++  const openEvent = useCallback(
++    (id: string) => {
++      const params = new URLSearchParams(location.search);
++      params.set(EVENT_PARAM, id);
++      params.delete(DATE_PARAM);
++      params.delete(START_PARAM);
++      navigate({ pathname: location.pathname, search: params.toString() });
++    },
++    [navigate, location.pathname, location.search],
++  );
++
++  const openNewEvent = useCallback(
++    (prefill?: { date?: string; startMinutes?: number }) => {
++      const params = new URLSearchParams(location.search);
++      params.set(EVENT_PARAM, 'new');
++      if (prefill?.date) params.set(DATE_PARAM, prefill.date);
++      else params.delete(DATE_PARAM);
++      if (prefill?.startMinutes !== undefined) params.set(START_PARAM, String(prefill.startMinutes));
++      else params.delete(START_PARAM);
++      navigate({ pathname: location.pathname, search: params.toString() });
++    },
++    [navigate, location.pathname, location.search],
++  );
++
++  return { openEvent, openNewEvent };
++}
++
++/** Punkt montowania na poziomie App. Widoczny tylko przy ustawionym parametrze. */
++export function EventModal() {
++  const [searchParams, setSearchParams] = useSearchParams();
++  const eventParam = searchParams.get(EVENT_PARAM);
++  const dateParam = searchParams.get(DATE_PARAM);
++  const startParam = searchParams.get(START_PARAM);
++
++  const close = useCallback(() => {
++    setSearchParams(
++      (prev) => {
++        const next = new URLSearchParams(prev);
++        next.delete(EVENT_PARAM);
++        next.delete(DATE_PARAM);
++        next.delete(START_PARAM);
++        return next;
++      },
++      { replace: false },
++    );
++  }, [setSearchParams]);
++
++  return (
++    <AnimatePresence>
++      {eventParam !== null && (
++        <EventModalShell
++          key="event-modal"
++          eventParam={eventParam}
++          dateParam={dateParam}
++          startParam={startParam}
++          onClose={close}
++        />
++      )}
++    </AnimatePresence>
++  );
++}
++
++interface ShellProps {
++  eventParam: string;
++  dateParam: string | null;
++  startParam: string | null;
++  onClose: () => void;
++}
++
++function EventModalShell({ eventParam, dateParam, startParam, onClose }: ShellProps) {
++  const { state, dispatch } = useStore();
++  const canManage = useCan()('tasks.manage');
++  const isNew = eventParam === 'new';
++  const existing = isNew ? undefined : state.events.find((e) => e.id === eventParam);
++  const notFound = !isNew && existing === undefined;
++
++  const dirtyRef = useRef(false);
++  const navGuardKey = useRef<object>({});
++  const handleDirtyChange = useCallback((d: boolean) => {
++    dirtyRef.current = d;
++    setNavGuard(navGuardKey.current, 'event-modal', d);
++  }, []);
++  useEffect(() => {
++    const key = navGuardKey.current;
++    return () => clearNavGuard(key);
++  }, []);
++
++  const closeDeliberately = useCallback(() => {
++    bypassNavGuardOnce();
++    onClose();
++  }, [onClose]);
++
++  const requestClose = useCallback(() => {
++    if (dirtyRef.current && !window.confirm('Masz niezapisane zmiany. Zamknąć bez zapisywania?')) {
++      return;
++    }
++    closeDeliberately();
++  }, [closeDeliberately]);
++
++  useEffect(() => {
++    const onKey = (e: KeyboardEvent) => {
++      if (e.key === 'Escape') requestClose();
++    };
++    window.addEventListener('keydown', onKey);
++    const prevOverflow = document.body.style.overflow;
++    document.body.style.overflow = 'hidden';
++    return () => {
++      window.removeEventListener('keydown', onKey);
++      document.body.style.overflow = prevOverflow;
++    };
++  }, [requestClose]);
++
++  const handleDelete = () => {
++    if (!existing || !canManage) return;
++    if (window.confirm(`Usunąć wydarzenie „${existing.title}”?`)) {
++      dispatch({ type: 'DELETE_EVENT', eventId: existing.id });
++      closeDeliberately();
++    }
++  };
++
++  const heading = notFound
++    ? 'Nie znaleziono wydarzenia'
++    : isNew
++      ? 'Nowe wydarzenie'
++      : 'Edytuj wydarzenie';
++
++  return (
++    <>
++      <motion.div
++        className="task-modal-scrim"
++        initial={{ opacity: 0 }}
++        animate={{ opacity: 1 }}
++        exit={{ opacity: 0 }}
++        transition={{ duration: 0.18 }}
++      />
++      <div className="task-modal-viewport" onClick={requestClose}>
++        <motion.div
++          className="task-modal-card ticket-modal-card"
++          role="dialog"
++          aria-modal="true"
++          aria-label={heading}
++          onClick={(e) => e.stopPropagation()}
++          initial={{ opacity: 0, scale: 0.96, y: 8 }}
++          animate={{ opacity: 1, scale: 1, y: 0 }}
++          exit={{ opacity: 0, scale: 0.96, y: 8 }}
++          transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
++        >
++          <div className="task-modal-head">
++            <h1 className="task-modal-title">{heading}</h1>
++            <div className="task-modal-head-actions">
++              {existing && canManage && (
++                <button type="button" className="btn danger-ghost" onClick={handleDelete}>
++                  Usuń
++                </button>
++              )}
++              <button
++                type="button"
++                className="task-modal-close"
++                onClick={requestClose}
++                aria-label="Zamknij"
++              >
++                ×
++              </button>
++            </div>
++          </div>
++          <div className="task-modal-body">
++            {notFound ? (
++              <div className="empty-state">
++                <p className="empty-title">Nie znaleziono wydarzenia</p>
++                <p className="empty-hint">
++                  Wydarzenie mogło zostać usunięte albo link jest nieaktualny.
++                </p>
++                <button type="button" className="btn primary" onClick={onClose}>
++                  Zamknij
++                </button>
++              </div>
++            ) : (
++              <EventEditor
++                key={eventParam}
++                existing={existing}
++                canManage={canManage}
++                prefillDate={dateParam}
++                prefillStart={startParam}
++                onDirtyChange={handleDirtyChange}
++                onSaved={closeDeliberately}
++                onCancel={requestClose}
++              />
++            )}
++          </div>
++        </motion.div>
++      </div>
++    </>
++  );
++}
++
++interface EditorProps {
++  existing: CalendarEvent | undefined;
++  canManage: boolean;
++  prefillDate: string | null;
++  prefillStart: string | null;
++  onDirtyChange: (dirty: boolean) => void;
++  onSaved: () => void;
++  onCancel: () => void;
++}
++
++function EventEditor({
++  existing,
++  canManage,
++  prefillDate,
++  prefillStart,
++  onDirtyChange,
++  onSaved,
++  onCancel,
++}: EditorProps) {
++  const { state, dispatch } = useStore();
++  const roTitle = canManage ? undefined : NO_PERM_TITLE;
++
++  const seedDate =
++    existing?.date ?? (prefillDate && isValidDateStr(prefillDate) ? prefillDate : todayStr());
++  const seedStart =
++    existing?.startMinutes ??
++    (prefillStart !== null && Number.isInteger(Number(prefillStart))
++      ? Math.max(0, Number(prefillStart))
++      : 9 * 60);
++
++  const [title, setTitle] = useState(existing?.title ?? '');
++  const [date, setDate] = useState(seedDate);
++  const [startTime, setStartTime] = useState(minutesToTime(seedStart));
++  const [durationMin, setDurationMin] = useState(existing?.durationMinutes ?? 60);
++  const [attendeeIds, setAttendeeIds] = useState<string[]>(existing?.attendeeIds ?? []);
++  const [meetingUrl, setMeetingUrl] = useState(existing?.meetingUrl ?? '');
++  const [location, setLocation] = useState(existing?.location ?? '');
++  const [description, setDescription] = useState(existing?.description ?? '');
++  const [recurring, setRecurring] = useState(existing?.recurrence !== undefined);
++  const [recurDays, setRecurDays] = useState<number[]>(existing?.recurrence?.daysOfWeek ?? []);
++  const [recurUntil, setRecurUntil] = useState(existing?.recurrence?.until ?? '');
++
++  const markDirty = () => onDirtyChange(true);
++
++  const toggleAttendee = (id: string) => {
++    setAttendeeIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
++    markDirty();
++  };
++  const toggleRecurDay = (iso: number) => {
++    setRecurDays((prev) =>
++      prev.includes(iso) ? prev.filter((d) => d !== iso) : [...prev, iso].sort((a, b) => a - b),
++    );
++    markDirty();
++  };
++
++  // Zbuduj draft z bieżącego formularza (jedno źródło dla walidacji i zapisu).
++  const draft: EventDraft = useMemo(() => {
++    const startMinutes = timeToMinutes(startTime);
++    return {
++      title,
++      description,
++      location,
++      meetingUrl,
++      date,
++      startMinutes,
++      durationMinutes: durationMin,
++      attendeeIds,
++      recurrence:
++        recurring && recurDays.length > 0
++          ? {
++              daysOfWeek: recurDays,
++              startMinutes,
++              durationMinutes: durationMin,
++              until: recurUntil !== '' ? recurUntil : undefined,
++            }
++          : null,
++    };
++  }, [
++    title,
++    description,
++    location,
++    meetingUrl,
++    date,
++    startTime,
++    durationMin,
++    attendeeIds,
++    recurring,
++    recurDays,
++    recurUntil,
++  ]);
++
++  const valid = isValidEventDraft(state, draft);
++  // Komunikat na żywo — pierwszy niespełniony warunek (kolejność jak w reduktorze).
++  const message = useMemo(() => {
++    if (title.trim() === '') return 'Podaj tytuł wydarzenia.';
++    if (!isValidDateStr(date)) return 'Podaj poprawną datę.';
++    const startMinutes = timeToMinutes(startTime);
++    if (!Number.isInteger(startMinutes) || startMinutes < 0) return 'Podaj poprawną godzinę.';
++    if (startMinutes + durationMin > 1440) return 'Wydarzenie nie mieści się w jednej dobie.';
++    if (meetingUrl.trim() !== '' && !valid) {
++      return 'Link do spotkania musi zaczynać się od http(s):// albo być poprawnym adresem.';
++    }
++    if (recurring && recurDays.length === 0) {
++      return 'Wybierz co najmniej jeden dzień tygodnia dla cykliczności.';
++    }
++    if (!valid) return 'Uzupełnij poprawnie wymagane pola.';
++    return null;
++  }, [title, date, startTime, durationMin, meetingUrl, valid, recurring, recurDays]);
++
++  const handleSubmit = (e: React.FormEvent) => {
++    e.preventDefault();
++    if (!canManage || !valid) return;
++    onDirtyChange(false);
++    if (existing) {
++      dispatch({ type: 'SAVE_EVENT', eventId: existing.id, draft });
++    } else {
++      dispatch({ type: 'ADD_EVENT', draft });
++    }
++    onSaved();
++  };
++
++  return (
++    <form className="ticket-form" onSubmit={handleSubmit} noValidate>
++      <div className="field">
++        <label htmlFor="ev-title">Tytuł *</label>
++        <input
++          id="ev-title"
++          value={title}
++          onChange={(e) => {
++            setTitle(e.target.value);
++            markDirty();
++          }}
++          placeholder="np. Spotkanie zespołu"
++          maxLength={300}
++          disabled={!canManage}
++          title={roTitle}
++        />
++      </div>
++
++      <div className="field-row">
++        <div className="field">
++          <label htmlFor="ev-date">Data *</label>
++          <input
++            id="ev-date"
++            type="date"
++            value={date}
++            onChange={(e) => {
++              setDate(e.target.value);
++              markDirty();
++            }}
++            disabled={!canManage}
++            title={roTitle}
++          />
++        </div>
++        <div className="field">
++          <label htmlFor="ev-start">Godzina *</label>
++          <input
++            id="ev-start"
++            type="time"
++            step={900}
++            value={startTime}
++            onChange={(e) => {
++              setStartTime(e.target.value);
++              markDirty();
++            }}
++            disabled={!canManage}
++            title={roTitle}
++          />
++        </div>
++        <div className="field">
++          <label htmlFor="ev-dur">Czas trwania *</label>
++          <select
++            id="ev-dur"
++            value={durationMin}
++            onChange={(e) => {
++              setDurationMin(Number(e.target.value));
++              markDirty();
++            }}
++            disabled={!canManage}
++            title={roTitle}
++          >
++            {DURATION_OPTIONS.map((min) => (
++              <option key={min} value={min}>
++                {formatDuration(min / 60)}
++              </option>
++            ))}
++          </select>
++        </div>
++      </div>
++
++      <div className="field">
++        <label>Osoby</label>
++        <div className="recur-weekday-picker">
++          {state.people.map((p) => {
++            const active = attendeeIds.includes(p.id);
++            return (
++              <button
++                key={p.id}
++                type="button"
++                className={active ? 'recur-day-chip active' : 'recur-day-chip'}
++                aria-pressed={active}
++                disabled={!canManage}
++                title={roTitle}
++                onClick={() => toggleAttendee(p.id)}
++              >
++                {p.name}
++              </button>
++            );
++          })}
++          {state.people.length === 0 && <span className="field-hint">Brak osób w zespole.</span>}
++        </div>
++      </div>
++
++      <div className="field">
++        <label htmlFor="ev-url">Link do spotkania</label>
++        <input
++          id="ev-url"
++          value={meetingUrl}
++          onChange={(e) => {
++            setMeetingUrl(e.target.value);
++            markDirty();
++          }}
++          placeholder="np. https://meet.example.com/abc"
++          disabled={!canManage}
++          title={roTitle}
++        />
++      </div>
++
++      <div className="field">
++        <label htmlFor="ev-location">Biuro / lokalizacja</label>
++        <input
++          id="ev-location"
++          value={location}
++          onChange={(e) => {
++            setLocation(e.target.value);
++            markDirty();
++          }}
++          placeholder="np. Sala konferencyjna, Warszawa"
++          disabled={!canManage}
++          title={roTitle}
++        />
++      </div>
++
++      <div className="field">
++        <label htmlFor="ev-desc">Opis</label>
++        <textarea
++          id="ev-desc"
++          value={description}
++          onChange={(e) => {
++            setDescription(e.target.value);
++            markDirty();
++          }}
++          rows={4}
++          disabled={!canManage}
++          title={roTitle}
++        />
++      </div>
++
++      <div className="field">
++        <label>Cykliczność</label>
++        <div className="field-row">
++          <label className="event-radio">
++            <input
++              type="radio"
++              name="ev-recur"
++              checked={!recurring}
++              onChange={() => {
++                setRecurring(false);
++                markDirty();
++              }}
++              disabled={!canManage}
++            />
++            Jednorazowo
++          </label>
++          <label className="event-radio">
++            <input
++              type="radio"
++              name="ev-recur"
++              checked={recurring}
++              onChange={() => {
++                setRecurring(true);
++                markDirty();
++              }}
++              disabled={!canManage}
++            />
++            Cyklicznie
++          </label>
++        </div>
++        {recurring && (
++          <>
++            <div className="recur-weekday-picker">
++              {WEEKDAY_LABELS.map((label, i) => {
++                const iso = i + 1;
++                const active = recurDays.includes(iso);
++                return (
++                  <button
++                    key={iso}
++                    type="button"
++                    className={active ? 'recur-day-chip active' : 'recur-day-chip'}
++                    aria-pressed={active}
++                    disabled={!canManage}
++                    title={roTitle}
++                    onClick={() => toggleRecurDay(iso)}
++                  >
++                    {label}
++                  </button>
++                );
++              })}
++            </div>
++            <div className="field">
++              <label htmlFor="ev-until">Do dnia (opcjonalnie)</label>
++              <input
++                id="ev-until"
++                type="date"
++                value={recurUntil}
++                min={date}
++                onChange={(e) => {
++                  setRecurUntil(e.target.value);
++                  markDirty();
++                }}
++                disabled={!canManage}
++                title={roTitle}
++              />
++            </div>
++            <p className="field-hint">
++              Wystąpienia są tylko podglądem w kalendarzu — nie tworzą zaplanowanych godzin.
++            </p>
++          </>
++        )}
++      </div>
++
++      {message && (
++        <p className="field-error" role="alert">
++          {message}
++        </p>
++      )}
++
++      <div className="form-actions">
++        {canManage && (
++          <button type="submit" className="btn primary" disabled={!valid}>
++            {existing ? 'Zapisz zmiany' : 'Dodaj wydarzenie'}
++          </button>
++        )}
++        <button type="button" className="btn ghost" onClick={onCancel}>
++          {canManage ? 'Anuluj' : 'Zamknij'}
++        </button>
++      </div>
++    </form>
++  );
++}
+diff --git a/src/components/MonthView.tsx b/src/components/MonthView.tsx
+index 949d3a9..9087fc9 100644
+--- a/src/components/MonthView.tsx
++++ b/src/components/MonthView.tsx
+@@ -10,6 +10,7 @@ import {
+   WEEKDAY_LABELS,
+ } from '../utils/dates';
+ import {
++  calendarEventsOnDate,
+   dayTotal,
+   entriesForDate,
+   overloadedPeopleOnDate,
+@@ -73,6 +74,12 @@ export function MonthView({ state, anchor, filter, onPickDay }: Props) {
+             new Set(recurrenceOccurrencesForDate(state, d, filter).map((r) => r.task.title)),
+           );
+ 
++          // Wydarzenia / spotkania na dany dzień — TYLKO prezentacyjny znacznik
++          // 📅 (MonthView nie renderuje bloków); sumy/kropki bez zmian.
++          const eventTitles = Array.from(
++            new Set(calendarEventsOnDate(state, d, filter).map((e) => e.event.title)),
++          );
++
+           return (
+             <button
+               type="button"
+@@ -109,6 +116,16 @@ export function MonthView({ state, anchor, filter, onPickDay }: Props) {
+                   ⟳
+                 </span>
+               )}
++              {eventTitles.length > 0 && (
++                <span
++                  className="month-cell-event"
++                  style={{ right: 3 + (birthdayNames.length > 0 ? 15 : 0) + (recurTitles.length > 0 ? 15 : 0) }}
++                  title={`Wydarzenia: ${eventTitles.join(', ')}`}
++                  aria-label={`Wydarzenia: ${eventTitles.join(', ')}`}
++                >
++                  📅
++                </span>
++              )}
+               {total > 0 && <span className="month-cell-hours">{formatDuration(total)}</span>}
+               {peopleIds.length > 0 && (
+                 <span className="month-cell-dots">
+diff --git a/src/components/WeekView.tsx b/src/components/WeekView.tsx
+index e7c7df8..5c18dc5 100644
+--- a/src/components/WeekView.tsx
++++ b/src/components/WeekView.tsx
+@@ -11,6 +11,7 @@ import type { AppData, Person, Project, Task, WorkloadEntry } from '../types';
+ import { useStore } from '../store/AppStore';
+ import { useCan } from '../store/useCan';
+ import { useOpenTask } from './TaskModal';
++import { useOpenEvent } from './EventModal';
+ import { personColor } from '../utils/colors';
+ import { clearLiveSyncHold, setLiveSyncHold } from '../utils/liveSyncGate';
+ import {
+@@ -32,6 +33,7 @@ import {
+   binTotalForPerson,
+   blockCollides,
+   blocksForPersonDate,
++  calendarEventsOnDate,
+   dayTotal,
+   entriesForDate,
+   getClient,
+@@ -1010,8 +1012,60 @@ function RecurBlock({ title, hue, occurrence, onOpen, onContextMenu }: RecurBloc
+   );
+ }
+ 
++// ---- Event (meeting) overlay (presentational only) ----
++// A calendar event rendered as a visually distinct, purely presentational block
++// (violet family, distinct from person/task colors AND from the dashed
++// recurrence ghost). NO pointer/drag/resize handlers (invariant 1 + 7): it never
++// enters packDayBlocks/collision/totals. Only click/keyboard opens the event
++// modal; it stops its own contextmenu so a right-click never falls through to the
++// slot menu (like `.week-recur-block`).
++interface EventBlockProps {
++  title: string;
++  startMinutes: number;
++  durationMinutes: number;
++  isOccurrence: boolean;
++  onOpen: () => void;
++}
++
++function EventBlock({ title, startMinutes, durationMinutes, isOccurrence, onOpen }: EventBlockProps) {
++  const top = (startMinutes / 60) * HOUR_PX;
++  const height = Math.max((durationMinutes / 60) * HOUR_PX, MIN_BLOCK_H);
++  const end = startMinutes + durationMinutes;
++  const className = ['week-event-block', isOccurrence ? 'recurring' : ''].filter(Boolean).join(' ');
++  return (
++    <div
++      className={className}
++      style={{ top, height }}
++      role="button"
++      tabIndex={0}
++      title={`📅 ${title} — ${formatMinutes(startMinutes)}–${formatMinutes(end)} (${formatDuration(
++        durationMinutes / 60,
++      )})${isOccurrence ? ' · cykliczne' : ''}. Kliknij, aby otworzyć wydarzenie.`}
++      onClick={(e) => {
++        e.stopPropagation();
++        onOpen();
++      }}
++      onKeyDown={(e) => {
++        if (e.key === 'Enter' || e.key === ' ') {
++          e.preventDefault();
++          onOpen();
++        }
++      }}
++      onContextMenu={(e) => e.stopPropagation()}
++    >
++      <span className="week-event-title">
++        {isOccurrence ? '⟳ ' : ''}📅 {title}
++      </span>
++      <span className="week-event-time">
++        {formatMinutes(startMinutes)}–{formatMinutes(end)}
++      </span>
++    </div>
++  );
++}
++
+ export function WeekView({ state, anchor, filter }: Props) {
+   const { openTask, openNewTask } = useOpenTask();
++  const { openEvent, openNewEvent } = useOpenEvent();
+   const { dispatch } = useStore();
+   const can = useCan();
+   const canEditAny = can('blocks.editAny');
+@@ -1184,6 +1238,9 @@ export function WeekView({ state, anchor, filter }: Props) {
+     // Defense-in-depth: an occurrence overlay already stops its own contextmenu,
+     // but never let a right-click on it fall through to "Dodaj zadanie".
+     if ((e.target as HTMLElement).closest('.week-recur-block')) return;
++    // Ten sam strażnik dla nakładki wydarzeń (stopuje własne contextmenu, ale
++    // nigdy nie wpuszczamy prawego kliku w „Dodaj zadanie/spotkanie”).
++    if ((e.target as HTMLElement).closest('.week-event-block')) return;
+     e.preventDefault();
+     const rect = e.currentTarget.getBoundingClientRect();
+     const startMinutes = slotStartFromOffset(e.clientY - rect.top, HOUR_PX);
+@@ -1205,6 +1262,14 @@ export function WeekView({ state, anchor, filter }: Props) {
+     setSlotMenu(null);
+   };
+ 
++  // „+ Dodaj spotkanie” z tego samego slot-menu: otwiera modal wydarzenia w
++  // trybie „nowe”, prefill datą + minutą startu klikniętego slotu.
++  const addEventInSlot = () => {
++    if (!slotMenu) return;
++    openNewEvent({ date: slotMenu.date, startMinutes: slotMenu.startMinutes });
++    setSlotMenu(null);
++  };
++
+   // Right-click an occurrence overlay → recurrence menu. Gate on permission
+   // FIRST (mirrors openSlotMenu): non-managers return early WITHOUT
+   // preventDefault/stopPropagation so their native browser menu still opens.
+@@ -1632,6 +1697,19 @@ export function WeekView({ state, anchor, filter }: Props) {
+                       onContextMenu={(ev) => openRecurMenu(task, occurrence, ev)}
+                     />
+                   ))}
++                  {/* Wydarzenia / spotkania: addytywna, prezentacyjna nakładka
++                      (inwariant 1 + 7) renderowana PRZED realnymi blokami — bez
++                      żadnej ścieżki wskaźnika/drag. */}
++                  {calendarEventsOnDate(state, d, filter).map((ev, i) => (
++                    <EventBlock
++                      key={`event-${ev.event.id}-${d}-${i}`}
++                      title={ev.event.title}
++                      startMinutes={ev.startMinutes}
++                      durationMinutes={ev.durationMinutes}
++                      isOccurrence={ev.isOccurrence}
++                      onOpen={() => openEvent(ev.event.id)}
++                    />
++                  ))}
+                   {packed.map(({ block: e, col, cols }) => {
+                     const task = getTask(state, e.taskId);
+                     const person = getPerson(state, e.personId);
+@@ -1985,6 +2063,14 @@ export function WeekView({ state, anchor, filter }: Props) {
+               >
+                 + Dodaj zadanie ({formatMinutes(slotMenu.startMinutes)})
+               </button>
++              <button
++                type="button"
++                role="menuitem"
++                className="context-menu-item"
++                onClick={addEventInSlot}
++              >
++                + Dodaj spotkanie ({formatMinutes(slotMenu.startMinutes)})
++              </button>
+             </div>
+           </motion.div>
+         )}
+diff --git a/src/components/icons.ts b/src/components/icons.ts
+index 599625b..59bc6a4 100644
+--- a/src/components/icons.ts
++++ b/src/components/icons.ts
+@@ -12,6 +12,7 @@ export {
+   GanttChart,
+   ListChecks,
+   CalendarDays,
++  CalendarClock,
+   Users,
+   Gauge,
+   Settings,
+diff --git a/src/pages/EventsPage.tsx b/src/pages/EventsPage.tsx
+new file mode 100644
+index 0000000..e51e7a3
+--- /dev/null
++++ b/src/pages/EventsPage.tsx
+@@ -0,0 +1,97 @@
++// Wydarzenia / spotkania: lista posortowana po dacie i godzinie. Każdy wiersz
++// otwiera modal (?wydarzenie=<id>); „+ Dodaj wydarzenie” jest bramkowane
++// `tasks.manage`. Panel widzi każda rola (parytet z „Zgłoszenia”).
++import { useMemo } from 'react';
++import { useStore } from '../store/AppStore';
++import { useCan } from '../store/useCan';
++import { NO_PERM_TITLE } from '../store/permissions';
++import type { CalendarEvent } from '../types';
++import { formatMinutes } from '../utils/time';
++import { formatShortWithWeekday } from '../utils/dates';
++import { useOpenEvent } from '../components/EventModal';
++import { CalendarClock, ChevronRight, Plus } from '../components/icons';
++
++export function EventsPage() {
++  const { state } = useStore();
++  const can = useCan();
++  const canManage = can('tasks.manage');
++  const { openNewEvent, openEvent } = useOpenEvent();
++
++  const sorted = useMemo(
++    () =>
++      state.events
++        .slice()
++        .sort((a, b) =>
++          a.date !== b.date ? a.date.localeCompare(b.date) : a.startMinutes - b.startMinutes,
++        ),
++    [state.events],
++  );
++
++  const attendeeNames = (event: CalendarEvent): string =>
++    event.attendeeIds
++      .map((id) => state.people.find((p) => p.id === id)?.name)
++      .filter((n): n is string => n !== undefined)
++      .join(', ');
++
++  return (
++    <section className="page">
++      <div className="page-head">
++        <h1>
++          <CalendarClock size={20} aria-hidden /> Wydarzenia
++        </h1>
++        <div className="page-head-actions">
++          <button
++            type="button"
++            className="btn primary"
++            onClick={() => openNewEvent()}
++            disabled={!canManage}
++            title={canManage ? undefined : NO_PERM_TITLE}
++          >
++            <Plus size={16} aria-hidden /> Dodaj wydarzenie
++          </button>
++        </div>
++      </div>
++
++      {sorted.length === 0 ? (
++        <div className="empty-state">
++          <p className="empty-title">Brak wydarzeń</p>
++          <p className="empty-hint">
++            Dodaj spotkanie tutaj albo prawym przyciskiem w kalendarzu.
++          </p>
++        </div>
++      ) : (
++        <ul className="event-list">
++          {sorted.map((event) => {
++            const names = attendeeNames(event);
++            return (
++              <li key={event.id}>
++                <button
++                  type="button"
++                  className="event-row"
++                  onClick={() => openEvent(event.id)}
++                >
++                  <div className="event-row-main">
++                    <span className="event-row-title">
++                      {event.title}
++                      {event.recurrence !== undefined && (
++                        <span className="event-row-badge" title="Wydarzenie cykliczne">
++                          ⟳ cykliczne
++                        </span>
++                      )}
++                    </span>
++                    <span className="event-row-meta">
++                      {formatShortWithWeekday(event.date)} · {formatMinutes(event.startMinutes)}
++                      {names !== '' ? ` · ${names}` : ''}
++                      {event.location !== '' ? ` · ${event.location}` : ''}
++                    </span>
++                  </div>
++                  <ChevronRight size={18} aria-hidden />
++                </button>
++              </li>
++            );
++          })}
++        </ul>
++      )}
++    </section>
++  );
++}
+diff --git a/src/store/AppStore.tsx b/src/store/AppStore.tsx
+index c3b0826..763f291 100644
+--- a/src/store/AppStore.tsx
++++ b/src/store/AppStore.tsx
+@@ -69,6 +69,7 @@ import {
+   isValidTicketDraft,
+   isValidTicketStatus,
+   lastViewFilterEqual,
++  normalizeEventDraft,
+   normalizeProjectDocumentDraft,
+   sanitizeFilterCriteria,
+   sanitizeLastViewFilter,
+@@ -163,6 +164,29 @@ export interface TicketDraft {
+   reporterId: string;
+ }
+ 
++/** Cykliczność w draftcie wydarzenia: surowa reguła (kanonikalizowana przez
++ *  `normalizeEventDraft`) albo `null`/brak = jednorazowo. Kotwica = `date`. */
++export interface EventRecurrenceDraft {
++  daysOfWeek: number[];
++  startMinutes: number;
++  durationMinutes: number;
++  until?: string;
++}
++
++/** Draft wydarzenia / spotkania (modal „Wydarzenia”). `id` nadaje reduktor.
++ *  Walidacja/normalizacja żyje w `normalizeEventDraft` (commandValidation). */
++export interface EventDraft {
++  title: string;
++  description: string;
++  location: string;
++  meetingUrl: string;
++  date: string;
++  startMinutes: number;
++  durationMinutes: number;
++  attendeeIds: string[];
++  recurrence?: EventRecurrenceDraft | null;
++}
++
+ export interface PersonDraft {
+   firstName: string;
+   lastName: string;
+@@ -267,6 +291,12 @@ export type Action =
+   | { type: 'SAVE_TICKET'; ticketId: string; draft: TicketDraft }
+   | { type: 'SET_TICKET_STATUS'; ticketId: string; status: TicketStatus }
+   | { type: 'DELETE_TICKET'; ticketId: string }
++  // Wydarzenia / spotkania („Wydarzenia”). Kolekcja addytywna i samodzielna —
++  // NIGDY nie tworzy godzin (inwariant 1). Niepoprawny draft / nieznane id =>
++  // TA SAMA referencja stanu (inwariant 6).
++  | { type: 'ADD_EVENT'; draft: EventDraft }
++  | { type: 'SAVE_EVENT'; eventId: string; draft: EventDraft }
++  | { type: 'DELETE_EVENT'; eventId: string }
+   | { type: 'ADD_PERSON'; person: PersonDraft }
+   | { type: 'UPDATE_PERSON'; personId: string; person: PersonDraft }
+   | { type: 'DELETE_PERSON'; personId: string }
+@@ -2000,6 +2030,13 @@ function deletePerson(state: AppData, personId: string): AppData {
+       .map((p) => (p.supervisorId === personId ? { ...p, supervisorId: '' } : p)),
+     assignments: state.assignments.filter((a) => a.personId !== personId),
+     workload: state.workload.filter((w) => w.personId !== personId),
++    // Kaskada wydarzeń: usuń id z listy uczestników każdego wydarzenia
++    // (styl DELETE_COMPANY). Render i tak defensywnie ignoruje nieznane id.
++    events: state.events.map((e) =>
++      e.attendeeIds.includes(personId)
++        ? { ...e, attendeeIds: e.attendeeIds.filter((id) => id !== personId) }
++        : e,
++    ),
+     currentUserId,
+     impersonatorId,
+   };
+@@ -2600,6 +2637,8 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
+   // Zgłoszenia są OPCJONALNE w ładunku (dopisane addytywnie): brak pola => bez
+   // zmian w kolekcji, obecne => walidacja i autorytatywna podmiana niżej.
+   if (payload.tickets !== undefined && !Array.isArray(payload.tickets)) return state;
++  // Wydarzenia — OPCJONALNE w ładunku (jak zgłoszenia): brak pola => bez zmian.
++  if (payload.events !== undefined && !Array.isArray(payload.events)) return state;
+ 
+   // Osoby najpierw (autorytatywnie), żeby walidacja encji widziała finalny
+   // zespół. Niepoprawny blok osób psuje całą hydrację (atomowość).
+@@ -2619,7 +2658,8 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
+     !payload.workload.every(isObjWithId) ||
+     !payload.comments.every(isObjWithId) ||
+     !payload.activity.every(isObjWithId) ||
+-    (payload.tickets !== undefined && !payload.tickets.every(isObjWithId))
++    (payload.tickets !== undefined && !payload.tickets.every(isObjWithId)) ||
++    (payload.events !== undefined && !payload.events.every(isObjWithId))
+   ) {
+     return state;
+   }
+@@ -2683,6 +2723,31 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
+     }
+   }
+ 
++  // Wydarzenia: walidacja struktury (data + siatka minut + doba). Uczestnicy są
++  // NORMALIZOWANI, nie odrzucani (render defensywnie ignoruje nieznane id), więc
++  // nie sprawdzamy ich przynależności do zespołu — inaczej niż zgłaszający.
++  if (payload.events !== undefined) {
++    for (const ev of payload.events) {
++      if (!isValidDateStr(ev.date)) return state;
++      if (!Array.isArray(ev.attendeeIds)) return state;
++      if (
++        !Number.isInteger(ev.startMinutes) ||
++        ev.startMinutes < 0 ||
++        ev.startMinutes % MINUTE_STEP !== 0
++      ) {
++        return state;
++      }
++      if (
++        !Number.isInteger(ev.durationMinutes) ||
++        ev.durationMinutes < MINUTE_STEP ||
++        ev.durationMinutes % MINUTE_STEP !== 0 ||
++        ev.startMinutes + ev.durationMinutes > DAY_MINUTES
++      ) {
++        return state;
++      }
++    }
++  }
++
+   // Assignments reconciled by (taskId, personId): a pair the local state
+   // already knows keeps its local row id (stable references); a genuinely new
+   // cloud pair gets a fresh uid. Pairs the cloud does not know are DROPPED.
+@@ -2717,6 +2782,9 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
+     ...(payload.tickets !== undefined
+       ? { tickets: reconcileRows(state.tickets, payload.tickets) }
+       : {}),
++    ...(payload.events !== undefined
++      ? { events: reconcileRows(state.events, payload.events) }
++      : {}),
+   };
+   const keys = Object.keys(merged) as Array<keyof AppData>;
+   return keys.every((k) => Object.is(merged[k], state[k])) ? state : merged;
+@@ -3584,6 +3652,31 @@ export function reducer(state: AppData, action: Action): AppData {
+       if (!state.tickets.some((t) => t.id === action.ticketId)) return state;
+       return { ...state, tickets: state.tickets.filter((t) => t.id !== action.ticketId) };
+     }
++    // ---- Wydarzenia / spotkania ----
++    // Walidacja + normalizacja żyje w commandValidation (normalizeEventDraft):
++    // pusty tytuł, zła data, minuty poza siatką/dobą, zły schemat `meetingUrl`
++    // albo strukturalnie niepoprawna PODANA reguła cykliczności => TA SAMA
++    // referencja stanu (inwariant 6). Wydarzenie NIGDY nie materializuje godzin.
++    case 'ADD_EVENT': {
++      const normalized = normalizeEventDraft(state, action.draft);
++      if (normalized === null) return state;
++      return { ...state, events: [...state.events, { id: uid(), ...normalized }] };
++    }
++    case 'SAVE_EVENT': {
++      if (!state.events.some((e) => e.id === action.eventId)) return state;
++      const normalized = normalizeEventDraft(state, action.draft);
++      if (normalized === null) return state;
++      return {
++        ...state,
++        events: state.events.map((e) =>
++          e.id === action.eventId ? { id: e.id, ...normalized } : e,
++        ),
++      };
++    }
++    case 'DELETE_EVENT': {
++      if (!state.events.some((e) => e.id === action.eventId)) return state;
++      return { ...state, events: state.events.filter((e) => e.id !== action.eventId) };
++    }
+     case 'LOAD_SAMPLE':
+       return { ...action.data, sampleBannerDismissed: true };
+     case 'DISMISS_SAMPLE_BANNER':
+diff --git a/src/store/cloudMerge.test.ts b/src/store/cloudMerge.test.ts
+index 61169e1..ddd89f9 100644
+--- a/src/store/cloudMerge.test.ts
++++ b/src/store/cloudMerge.test.ts
+@@ -803,3 +803,38 @@ describe('MERGE_CLOUD_ENTITIES — bezszwowe odświeżanie (referencje)', () =>
+     expect(merge(state, payload)).toBe(state);
+   });
+ });
++
++describe('MERGE_CLOUD_ENTITIES — events (optional, additive)', () => {
++  const cloudEvent = () => ({
++    id: 'ev-cloud',
++    title: 'Spotkanie z chmury',
++    description: '',
++    location: '',
++    meetingUrl: '',
++    date: '2026-07-21',
++    startMinutes: 540,
++    durationMinutes: 60,
++    attendeeIds: [P1],
++  });
++
++  it('absent events key leaves the collection untouched by reference', () => {
++    const state: AppData = { ...baseState(), events: [cloudEvent()] };
++    const next = merge(state, emptyPayload());
++    expect(next.events).toBe(state.events);
++  });
++
++  it('present events replaces the collection authoritatively', () => {
++    const state = baseState();
++    const next = merge(state, { ...emptyPayload(), events: [cloudEvent()] });
++    expect(next.events).toHaveLength(1);
++    expect(next.events[0].id).toBe('ev-cloud');
++    expect(next.events[0].attendeeIds).toEqual([P1]);
++  });
++
++  it('a structurally invalid event (off-grid minutes) fails closed to the same reference', () => {
++    const state = baseState();
++    const bad = { ...cloudEvent(), startMinutes: 545 };
++    const next = merge(state, { ...emptyPayload(), events: [bad] });
++    expect(next).toBe(state);
++  });
++});
+diff --git a/src/store/commandValidation.ts b/src/store/commandValidation.ts
+index 57a57f0..f5f565b 100644
+--- a/src/store/commandValidation.ts
++++ b/src/store/commandValidation.ts
+@@ -6,6 +6,7 @@
+ // runtime import cycle (AppStore imports these functions at runtime).
+ import type {
+   AppData,
++  CalendarEvent,
+   FilterPage,
+   FilterViewKey,
+   LastViewFilter,
+@@ -17,8 +18,10 @@ import {
+   isProjectDocumentKind,
+   normalizeProjectDocumentUrl,
+ } from '../utils/projectDocuments';
++import { normalizeRecurrence } from '../utils/recurrence';
+ import { isTicketKind, isTicketPriority, isTicketStatus } from '../utils/tickets';
+ import { TASK_PRIORITIES } from '../utils/priority';
++import { DAY_MINUTES, MINUTE_STEP } from '../utils/time';
+ import { isValidDateStr } from '../utils/dates';
+ import type {
+   TaskDraft,
+@@ -26,6 +29,7 @@ import type {
+   ProjectDocumentDraft,
+   PersonDraft,
+   TicketDraft,
++  EventDraft,
+ } from './AppStore';
+ 
+ export type RefEntityKind = 'task' | 'project' | 'milestone' | 'status' | 'person' | 'client';
+@@ -169,6 +173,86 @@ export function isValidTicketStatus(value: unknown): boolean {
+   return isTicketStatus(value);
+ }
+ 
++/** Skończona liczba całkowita na siatce 15 minut (bez limitu górnego). */
++function isGridMinute(m: unknown): m is number {
++  return typeof m === 'number' && Number.isInteger(m) && m % MINUTE_STEP === 0;
++}
++
++/**
++ * Wydarzenie / spotkanie: waliduje i NORMALIZUJE draft do postaci zapisu, albo
++ * zwraca `null`, gdy komenda ma zostać odrzucona (reduktor oddaje TĘ SAMĄ
++ * referencję stanu — inwariant 6). Jedno źródło prawdy: reduktor bierze stąd
++ * wartość, a UI tę samą regułę przez `isValidEventDraft`.
++ *
++ * Reguły:
++ * - `title` wymagany (niepusty po trim); pozostałe teksty są przycinane.
++ * - `date` poprawne 'yyyy-MM-dd'.
++ * - `startMinutes` na siatce 15 min, 0..1425; `durationMinutes` na siatce,
++ *   15..1440; `startMinutes + durationMinutes <= 1440` (mieści się w dobie).
++ * - `attendeeIds` — tablica; DEDUPLIKACJA + zachowanie tylko istniejących osób
++ *   (normalizacja, nie odrzucenie).
++ * - `meetingUrl` pusty ⇒ ''; niepusty MUSI przejść `normalizeProjectDocumentUrl`
++ *   (http/https; adres bez schematu → https://) — inaczej odrzucamy draft.
++ * - `recurrence` brak/null ⇒ brak klucza; podana reguła jest kanonikalizowana
++ *   `normalizeRecurrence(raw, date)` — `undefined` dla PODANEJ reguły ⇒ odrzut.
++ */
++export function normalizeEventDraft(
++  state: AppData,
++  draft: EventDraft,
++): Omit<CalendarEvent, 'id'> | null {
++  const title = draft.title.trim();
++  if (title === '') return null;
++  if (!isValidDateStr(draft.date)) return null;
++
++  const { startMinutes, durationMinutes } = draft;
++  if (!isGridMinute(startMinutes) || startMinutes < 0 || startMinutes > DAY_MINUTES - MINUTE_STEP) {
++    return null;
++  }
++  if (
++    !isGridMinute(durationMinutes) ||
++    durationMinutes < MINUTE_STEP ||
++    durationMinutes > DAY_MINUTES
++  ) {
++    return null;
++  }
++  if (startMinutes + durationMinutes > DAY_MINUTES) return null;
++
++  if (!Array.isArray(draft.attendeeIds)) return null;
++  const known = new Set(state.people.map((p) => p.id));
++  const attendeeIds = dedupeStrings(draft.attendeeIds).filter((id) => known.has(id));
++
++  let meetingUrl = '';
++  const rawUrl = draft.meetingUrl.trim();
++  if (rawUrl !== '') {
++    const normalizedUrl = normalizeProjectDocumentUrl(rawUrl);
++    if (normalizedUrl === null) return null;
++    meetingUrl = normalizedUrl;
++  }
++
++  const base: Omit<CalendarEvent, 'id' | 'recurrence'> = {
++    title,
++    description: draft.description.trim(),
++    location: draft.location.trim(),
++    meetingUrl,
++    date: draft.date,
++    startMinutes,
++    durationMinutes,
++    attendeeIds,
++  };
++
++  if (draft.recurrence === undefined || draft.recurrence === null) {
++    return base;
++  }
++  const recurrence = normalizeRecurrence(draft.recurrence, draft.date);
++  if (recurrence === undefined) return null;
++  return { ...base, recurrence };
++}
++
++/** Ta sama reguła co `normalizeEventDraft`, w formie predykatu dla UI. */
++export function isValidEventDraft(state: AppData, draft: EventDraft): boolean {
++  return normalizeEventDraft(state, draft) !== null;
++}
++
+ // ---- Filtry: sanityzacja kryteriów i „ostatnio użytego” filtra ---------------
+ // Czyste helpery współdzielone przez reduktor (`SET_LAST_FILTER`,
+ // `SAVE_FILTER_PRESET`) i repair wczytania (storage.ts). Trzymane TU (a nie w
+diff --git a/src/store/eventActions.test.ts b/src/store/eventActions.test.ts
+new file mode 100644
+index 0000000..fde91cc
+--- /dev/null
++++ b/src/store/eventActions.test.ts
+@@ -0,0 +1,190 @@
++// Reduktor wydarzeń: ADD_EVENT / SAVE_EVENT / DELETE_EVENT + walidacja
++// normalizeEventDraft. Nacisk na inwariant 6 — każda odrzucona komenda musi
++// zwrócić TĘ SAMĄ referencję stanu (nie kopię o równej wartości) — oraz na
++// inwariant 1 (wydarzenie NIGDY nie tworzy wierszy workload) i schemat URL.
++import { describe, expect, it } from 'vitest';
++import { reducer, type EventDraft } from './AppStore';
++import { emptyData } from './storage';
++import type { AppData, CalendarEvent, Person } from '../types';
++
++const PERSON_A = '11111111-1111-4111-8111-111111111111';
++const PERSON_B = '22222222-2222-4222-8222-222222222222';
++
++function person(id: string, name: string): Person {
++  return {
++    id,
++    firstName: name,
++    lastName: '',
++    name,
++    email: '',
++    phone: '',
++    role: '',
++    departmentId: '',
++    companyId: '',
++    avatar: '',
++    capacity: 8,
++    accessRole: 'administrator',
++    passwordHash: '',
++    workDays: [1, 2, 3, 4, 5],
++    workStartMinutes: 480,
++    workEndMinutes: 960,
++    supervisorId: '',
++    birthDate: '',
++  };
++}
++
++function baseState(events: CalendarEvent[] = []): AppData {
++  return {
++    ...emptyData(),
++    people: [person(PERSON_A, 'Ala'), person(PERSON_B, 'Bea')],
++    events,
++  };
++}
++
++function draft(overrides: Partial<EventDraft> = {}): EventDraft {
++  return {
++    title: 'Spotkanie zespołu',
++    description: 'Cotygodniowe',
++    location: 'Sala A',
++    meetingUrl: '',
++    date: '2026-07-21',
++    startMinutes: 9 * 60,
++    durationMinutes: 60,
++    attendeeIds: [PERSON_A],
++    recurrence: null,
++    ...overrides,
++  };
++}
++
++function event(overrides: Partial<CalendarEvent> = {}): CalendarEvent {
++  return {
++    id: '33333333-3333-4333-8333-333333333333',
++    title: 'Istniejące',
++    description: '',
++    location: '',
++    meetingUrl: '',
++    date: '2026-07-21',
++    startMinutes: 600,
++    durationMinutes: 30,
++    attendeeIds: [],
++    ...overrides,
++  };
++}
++
++describe('ADD_EVENT', () => {
++  it('dodaje wydarzenie z przyciętymi tekstami i bez klucza recurrence gdy jednorazowe', () => {
++    const state = baseState();
++    const next = reducer(state, {
++      type: 'ADD_EVENT',
++      draft: draft({ title: '  Spotkanie  ', description: '  x ' }),
++    });
++    expect(next.events).toHaveLength(1);
++    expect(next.events[0].title).toBe('Spotkanie');
++    expect(next.events[0].description).toBe('x');
++    expect('recurrence' in next.events[0]).toBe(false);
++    // Inwariant 1: żadnych wierszy workload.
++    expect(next.workload).toHaveLength(0);
++  });
++
++  it('deduplikuje uczestników i usuwa nieistniejące osoby', () => {
++    const next = reducer(baseState(), {
++      type: 'ADD_EVENT',
++      draft: draft({ attendeeIds: [PERSON_A, PERSON_A, 'nieznane', PERSON_B] }),
++    });
++    expect(next.events[0].attendeeIds).toEqual([PERSON_A, PERSON_B]);
++  });
++
++  it('normalizuje adres bez schematu do https:// i zapisuje wartość znormalizowaną', () => {
++    const next = reducer(baseState(), {
++      type: 'ADD_EVENT',
++      draft: draft({ meetingUrl: 'meet.example.com/abc' }),
++    });
++    expect(next.events[0].meetingUrl).toBe('https://meet.example.com/abc');
++  });
++
++  it('kanonikalizuje podaną regułę cykliczności (kotwica = data)', () => {
++    const next = reducer(baseState(), {
++      type: 'ADD_EVENT',
++      draft: draft({
++        recurrence: { daysOfWeek: [3, 3, 1], startMinutes: 540, durationMinutes: 60 },
++      }),
++    });
++    expect(next.events[0].recurrence?.daysOfWeek).toEqual([1, 3]);
++  });
++
++  const rejected: Array<[string, Partial<EventDraft>]> = [
++    ['pusty tytuł', { title: '   ' }],
++    ['zła data', { date: '2026-13-40' }],
++    ['start poza siatką', { startMinutes: 545 }],
++    ['czas trwania poza siatką', { durationMinutes: 20 }],
++    ['przekracza dobę', { startMinutes: 1425, durationMinutes: 60 }],
++    ['zły schemat URL', { meetingUrl: 'javascript:alert(1)' }],
++    ['schemat data:', { meetingUrl: 'data:text/html,x' }],
++    ['niepoprawna podana reguła', { recurrence: { daysOfWeek: [], startMinutes: 540, durationMinutes: 60 } }],
++  ];
++  for (const [label, override] of rejected) {
++    it(`odrzuca (${label}) i zwraca TĘ SAMĄ referencję stanu`, () => {
++      const state = baseState();
++      const next = reducer(state, { type: 'ADD_EVENT', draft: draft(override) });
++      expect(next).toBe(state);
++    });
++  }
++});
++
++describe('SAVE_EVENT', () => {
++  it('nadpisuje pola i zachowuje id; jednorazowe usuwa klucz recurrence', () => {
++    const existing = event({
++      recurrence: { daysOfWeek: [1], startMinutes: 600, durationMinutes: 30 },
++    });
++    const state = baseState([existing]);
++    const next = reducer(state, {
++      type: 'SAVE_EVENT',
++      eventId: existing.id,
++      draft: draft({ title: 'Nowy tytuł', recurrence: null }),
++    });
++    expect(next.events[0].id).toBe(existing.id);
++    expect(next.events[0].title).toBe('Nowy tytuł');
++    expect('recurrence' in next.events[0]).toBe(false);
++  });
++
++  it('nieznane id => TA SAMA referencja stanu', () => {
++    const state = baseState([event()]);
++    const next = reducer(state, { type: 'SAVE_EVENT', eventId: 'brak', draft: draft() });
++    expect(next).toBe(state);
++  });
++
++  it('niepoprawny draft na istniejącym id => TA SAMA referencja stanu', () => {
++    const existing = event();
++    const state = baseState([existing]);
++    const next = reducer(state, {
++      type: 'SAVE_EVENT',
++      eventId: existing.id,
++      draft: draft({ title: '' }),
++    });
++    expect(next).toBe(state);
++  });
++});
++
++describe('DELETE_EVENT', () => {
++  it('usuwa wydarzenie po id', () => {
++    const existing = event();
++    const state = baseState([existing]);
++    const next = reducer(state, { type: 'DELETE_EVENT', eventId: existing.id });
++    expect(next.events).toHaveLength(0);
++  });
++
++  it('nieznane id => TA SAMA referencja stanu', () => {
++    const state = baseState([event()]);
++    const next = reducer(state, { type: 'DELETE_EVENT', eventId: 'brak' });
++    expect(next).toBe(state);
++  });
++});
++
++describe('DELETE_PERSON — kaskada uczestników', () => {
++  it('usuwa id osoby z listy attendeeIds każdego wydarzenia', () => {
++    const ev = event({ attendeeIds: [PERSON_A, PERSON_B] });
++    const state = baseState([ev]);
++    const next = reducer(state, { type: 'DELETE_PERSON', personId: PERSON_B });
++    expect(next.events[0].attendeeIds).toEqual([PERSON_A]);
++  });
++});
+diff --git a/src/store/eventsStorage.test.ts b/src/store/eventsStorage.test.ts
+new file mode 100644
+index 0000000..4220cf9
+--- /dev/null
++++ b/src/store/eventsStorage.test.ts
+@@ -0,0 +1,126 @@
++// Repair kolekcji wydarzeń przy wczytaniu + obecność `events` w emptyData.
++// Kolekcja jest ADDYTYWNA: DATA_VERSION się nie zmienia, a starszy zapis bez
++// pola `events` wczytuje się jako pusta lista (bez echo-write). Reguły fail-closed:
++// off-grid / over-midnight minuty odrzucają wiersz, zły schemat URL => ''.
++import { describe, expect, it } from 'vitest';
++import { emptyData, repairEvents } from './storage';
++import type { AppData, CalendarEvent } from '../types';
++
++const withEvents = (events: unknown[]): AppData =>
++  ({ ...emptyData(), events: events as CalendarEvent[] });
++
++describe('emptyData', () => {
++  it('zawiera pustą kolekcję wydarzeń', () => {
++    expect(emptyData().events).toEqual([]);
++  });
++});
++
++describe('repairEvents', () => {
++  it('odrzuca wiersze bez id, bez tytułu albo ze złą datą', () => {
++    const repaired = repairEvents(
++      withEvents([
++        { id: '', title: 'Bez id', date: '2026-07-21', startMinutes: 540, durationMinutes: 60 },
++        { id: 'a', title: '   ', date: '2026-07-21', startMinutes: 540, durationMinutes: 60 },
++        { id: 'b', title: 'Zła data', date: '2026-13-40', startMinutes: 540, durationMinutes: 60 },
++        { id: 'c', title: 'Zostaje', date: '2026-07-21', startMinutes: 540, durationMinutes: 60 },
++        null,
++        'nie-obiekt',
++      ]),
++    );
++    expect(repaired.events.map((e) => e.id)).toEqual(['c']);
++  });
++
++  it('odrzuca wiersze z minutami poza siatką lub poza dobą (fail-closed)', () => {
++    const repaired = repairEvents(
++      withEvents([
++        { id: 'a', title: 'Off-grid start', date: '2026-07-21', startMinutes: 545, durationMinutes: 60 },
++        { id: 'b', title: 'Off-grid dur', date: '2026-07-21', startMinutes: 540, durationMinutes: 20 },
++        { id: 'c', title: 'Over midnight', date: '2026-07-21', startMinutes: 1425, durationMinutes: 60 },
++        { id: 'd', title: 'OK', date: '2026-07-21', startMinutes: 540, durationMinutes: 60 },
++      ]),
++    );
++    expect(repaired.events.map((e) => e.id)).toEqual(['d']);
++  });
++
++  it('normalizuje zły schemat meetingUrl do pustego stringa, dobry zostawia', () => {
++    const repaired = repairEvents(
++      withEvents([
++        {
++          id: 'a',
++          title: 'A',
++          date: '2026-07-21',
++          startMinutes: 540,
++          durationMinutes: 60,
++          meetingUrl: 'javascript:alert(1)',
++        },
++        {
++          id: 'b',
++          title: 'B',
++          date: '2026-07-21',
++          startMinutes: 540,
++          durationMinutes: 60,
++          meetingUrl: 'https://ok.example.com',
++        },
++      ]),
++    );
++    expect(repaired.events[0].meetingUrl).toBe('');
++    expect(repaired.events[1].meetingUrl).toBe('https://ok.example.com');
++  });
++
++  it('deduplikuje uczestników ale ZACHOWUJE osierocone id (chmura może je znać)', () => {
++    const repaired = repairEvents(
++      withEvents([
++        {
++          id: 'a',
++          title: 'A',
++          date: '2026-07-21',
++          startMinutes: 540,
++          durationMinutes: 60,
++          attendeeIds: ['p1', 'p1', 'p2', 5, ''],
++        },
++      ]),
++    );
++    expect(repaired.events[0].attendeeIds).toEqual(['p1', 'p2']);
++  });
++
++  it('re-kanonikalizuje recurrence i usuwa klucz gdy niepoprawny', () => {
++    const repaired = repairEvents(
++      withEvents([
++        {
++          id: 'a',
++          title: 'A',
++          date: '2026-07-21',
++          startMinutes: 540,
++          durationMinutes: 60,
++          recurrence: { daysOfWeek: [2, 2], startMinutes: 540, durationMinutes: 60 },
++        },
++        {
++          id: 'b',
++          title: 'B',
++          date: '2026-07-21',
++          startMinutes: 540,
++          durationMinutes: 60,
++          recurrence: { daysOfWeek: [], startMinutes: 540, durationMinutes: 60 },
++        },
++      ]),
++    );
++    expect(repaired.events[0].recurrence?.daysOfWeek).toEqual([2]);
++    expect('recurrence' in repaired.events[1]).toBe(false);
++  });
++
++  it('nie-tablica w miejscu kolekcji naprawia się do pustej listy', () => {
++    expect(
++      repairEvents({ ...emptyData(), events: null as unknown as CalendarEvent[] }).events,
++    ).toEqual([]);
++  });
++
++  it('jest idempotentny (drugi przebieg nic nie zmienia)', () => {
++    const once = repairEvents(
++      withEvents([
++        { id: 'a', title: 'A', date: '2026-07-21', startMinutes: 540, durationMinutes: 60, meetingUrl: 'foo.example' },
++        { id: '', title: 'X', date: '2026-07-21', startMinutes: 540, durationMinutes: 60 },
++      ]),
++    );
++    expect(repairEvents(once).events).toEqual(once.events);
++  });
++});
+diff --git a/src/store/seed.ts b/src/store/seed.ts
+index da71309..ec89690 100644
+--- a/src/store/seed.ts
++++ b/src/store/seed.ts
+@@ -693,6 +693,8 @@ export function buildSampleData(): AppData {
+     activity,
+     // Dane demonstracyjne nie zawierają zgłoszeń — zakładka „Zgłoszenia” startuje pusta.
+     tickets: [],
++    // Bez demonstracyjnych wydarzeń — panel „Wydarzenia” startuje pusty.
++    events: [],
+     currentUserId: kasia.id,
+     impersonatorId: '',
+     sampleBannerDismissed: true,
+diff --git a/src/store/selectors.test.ts b/src/store/selectors.test.ts
+index 8fce278..8f463ac 100644
+--- a/src/store/selectors.test.ts
++++ b/src/store/selectors.test.ts
+@@ -33,7 +33,9 @@ import {
+   todayAgendaForPerson,
+   unplannedTasksForPerson,
+   weekBlocksForPerson,
++  calendarEventsOnDate,
+ } from './selectors';
++import type { CalendarEvent } from '../types';
+ import { reducer } from './AppStore';
+ import { emptyData } from './storage';
+ import { BIN_DATE } from '../utils/time';
+@@ -1628,3 +1630,66 @@ describe('binTaskRowsForPerson / binHoursForTaskPerson after a partial schedule'
+     expect(binTaskRowsForPerson(state, 'p1')).toEqual([]);
+   });
+ });
++
++describe('calendarEventsOnDate', () => {
++  const baseEvent = (over: Partial<CalendarEvent> = {}): CalendarEvent => ({
++    id: 'e1',
++    title: 'Spotkanie',
++    description: '',
++    location: '',
++    meetingUrl: '',
++    date: '2026-07-21', // wtorek
++    startMinutes: 540,
++    durationMinutes: 60,
++    attendeeIds: [],
++    ...over,
++  });
++
++  it('emituje wydarzenie bazowe na jego dacie', () => {
++    const state = { ...emptyData(), events: [baseEvent()] };
++    const out = calendarEventsOnDate(state, '2026-07-21');
++    expect(out).toHaveLength(1);
++    expect(out[0].isOccurrence).toBe(false);
++    expect(out[0].startMinutes).toBe(540);
++  });
++
++  it('na dacie kotwicy nie dubluje wydarzenia mimo pasującej reguły', () => {
++    const state = {
++      ...emptyData(),
++      events: [
++        baseEvent({
++          recurrence: { daysOfWeek: [2], startMinutes: 540, durationMinutes: 60 },
++        }),
++      ],
++    };
++    const out = calendarEventsOnDate(state, '2026-07-21');
++    expect(out).toHaveLength(1);
++    expect(out[0].isOccurrence).toBe(false);
++  });
++
++  it('pokazuje wystąpienie cykliczne na innej dacie', () => {
++    const state = {
++      ...emptyData(),
++      events: [
++        baseEvent({
++          recurrence: { daysOfWeek: [2], startMinutes: 540, durationMinutes: 60 },
++        }),
++      ],
++    };
++    const out = calendarEventsOnDate(state, '2026-07-28'); // kolejny wtorek
++    expect(out).toHaveLength(1);
++    expect(out[0].isOccurrence).toBe(true);
++  });
++
++  it('filtr osób: wydarzenie z uczestnikiem spoza filtra jest ukryte', () => {
++    const state = { ...emptyData(), events: [baseEvent({ attendeeIds: ['p2'] })] };
++    const out = calendarEventsOnDate(state, '2026-07-21', new Set(['p1']));
++    expect(out).toHaveLength(0);
++  });
++
++  it('filtr osób: wydarzenie z PUSTĄ listą uczestników zostaje widoczne', () => {
++    const state = { ...emptyData(), events: [baseEvent({ attendeeIds: [] })] };
++    const out = calendarEventsOnDate(state, '2026-07-21', new Set(['p1']));
++    expect(out).toHaveLength(1);
++  });
++});
+diff --git a/src/store/selectors.ts b/src/store/selectors.ts
+index 402d376..016ed4d 100644
+--- a/src/store/selectors.ts
++++ b/src/store/selectors.ts
+@@ -2,6 +2,7 @@
+ import type {
+   ActivityEvent,
+   AppData,
++  CalendarEvent,
+   Client,
+   Comment,
+   CommentEntityType,
+@@ -373,6 +374,61 @@ export function recurrenceOccurrencesForDate(
+   return out;
+ }
+ 
++/** Jedno wystąpienie wydarzenia na dany dzień (bazowe albo z reguły cyklicznej). */
++export interface EventOnDate {
++  event: CalendarEvent;
++  startMinutes: number;
++  durationMinutes: number;
++  isOccurrence: boolean; // true, gdy z reguły cyklicznej (nie data bazowa)
++}
++
++/**
++ * Wydarzenia / spotkania na dany dzień — WYŁĄCZNIE prezentacyjne (inwariant 1:
++ * nigdy nie zasilają sum/przeciążenia/kolizji). Dla każdego wydarzenia:
++ * - gdy `date === event.date` → wydarzenie bazowe z jego własnymi minutami,
++ *   emitowane RAZ nawet gdy reguła też trafia w ten dzień (bez podwójnego
++ *   renderu na dacie kotwicy);
++ * - w innym wypadku, z regułą, rozwijamy przez `expandOccurrences` w oknie
++ *   [date..date].
++ * Semantyka filtra: przy aktywnym, NIEPUSTYM `personFilter` wydarzenie jest
++ * pokazane, gdy KTÓRYKOLWIEK z uczestników jest w filtrze; wydarzenie z PUSTĄ
++ * listą uczestników zostaje widoczne (spotkanie bez adresata jest „wszystkich”).
++ */
++export function calendarEventsOnDate(
++  state: AppData,
++  date: DateStr,
++  personFilter?: Set<string>,
++): EventOnDate[] {
++  const filterActive = personFilter !== undefined && personFilter.size > 0;
++  const out: EventOnDate[] = [];
++  for (const event of state.events) {
++    if (filterActive && event.attendeeIds.length > 0) {
++      if (!event.attendeeIds.some((id) => personFilter!.has(id))) continue;
++    }
++    if (date === event.date) {
++      // Data bazowa: emituj raz, własne minuty; reguła NIE dubluje tego dnia.
++      out.push({
++        event,
++        startMinutes: event.startMinutes,
++        durationMinutes: event.durationMinutes,
++        isOccurrence: false,
++      });
++      continue;
++    }
++    if (event.recurrence === undefined) continue;
++    const occurrences = expandOccurrences(event.recurrence, event.date, date, date);
++    for (const occ of occurrences) {
++      out.push({
++        event,
++        startMinutes: occ.startMinutes,
++        durationMinutes: occ.durationMinutes,
++        isOccurrence: true,
++      });
++    }
++  }
++  return out;
++}
++
+ /**
+  * A person's day agenda for the dashboard "Zadania na dziś" section. Pure.
+  * - `timed`: that person's dated (non-bin) workload entries on `date`, ascending
+diff --git a/src/store/storage.ts b/src/store/storage.ts
+index 4af572e..d7aebcd 100644
+--- a/src/store/storage.ts
++++ b/src/store/storage.ts
+@@ -3,6 +3,7 @@
+ import type {
+   AccessRole,
+   AppData,
++  CalendarEvent,
+   ChecklistItem,
+   Person,
+   Project,
+@@ -136,6 +137,7 @@ export function emptyData(): AppData {
+     comments: [],
+     activity: [],
+     tickets: [],
++    events: [],
+     currentUserId: '',
+     impersonatorId: '',
+     sampleBannerDismissed: false,
+@@ -1093,6 +1095,86 @@ export function repairTickets(data: AppData): AppData {
+   return { ...data, tickets };
+ }
+ 
++/**
++ * Idempotentny repair kolekcji wydarzeń / spotkań. Kolekcja jest ADDYTYWNA (bez
++ * podbicia DATA_VERSION), więc każdy starszy zapis wchodzi tu jako `[]` z
++ * emptyData i przechodzi bez zmian (brak echo-write).
++ *
++ * Zasady (parytet z `repairTickets` + reguły fail-closed workload):
++ * 1. Wiersz bez `id`, bez niepustego `title` albo z niepoprawną `date` jest
++ *    ODRZUCANY (nie da się go ani pokazać, ani zakotwiczyć).
++ * 2. Minuty startu/trwania poza siatką 15 min lub niemieszczące się w dobie
++ *    ODRZUCAJĄ wiersz (fail-closed, jak reguły workload) — bez cichego snapu.
++ * 3. Pola tekstowe koercjonowane do stringów; `meetingUrl` przez
++ *    `normalizeProjectDocumentUrl` (zły schemat => '').
++ * 4. `attendeeIds` deduplikowane i filtrowane do stringów, ale OSIEROCONE id są
++ *    ZACHOWANE (chmura może znać osoby, których lokalny zespół nie ma — parytet
++ *    z osieroconym zgłaszającym w `repairTickets`).
++ * 5. `recurrence` re-kanonikalizowana `normalizeRecurrence(raw, date)`; niepoprawna
++ *    => klucz usunięty (jednorazowo).
++ *
++ * Idempotentny po wartości: drugi przebieg na własnym wyniku nic nie zmienia.
++ */
++export function repairEvents(data: AppData): AppData {
++  const str = (v: unknown): string => (typeof v === 'string' ? v : '');
++  const source = Array.isArray(data.events) ? data.events : [];
++  const events: CalendarEvent[] = [];
++  for (const raw of source) {
++    if (typeof raw !== 'object' || raw === null) continue;
++    const e = raw as unknown as Record<string, unknown>;
++    const id = str(e.id);
++    const title = str(e.title).trim();
++    const date = str(e.date);
++    if (id === '' || title === '' || !isValidDateStr(date)) continue;
++
++    const startMinutes = e.startMinutes;
++    const durationMinutes = e.durationMinutes;
++    if (
++      typeof startMinutes !== 'number' ||
++      !Number.isInteger(startMinutes) ||
++      startMinutes < 0 ||
++      startMinutes % MINUTE_STEP !== 0
++    ) {
++      continue;
++    }
++    if (
++      typeof durationMinutes !== 'number' ||
++      !Number.isInteger(durationMinutes) ||
++      durationMinutes < MINUTE_STEP ||
++      durationMinutes % MINUTE_STEP !== 0 ||
++      startMinutes + durationMinutes > DAY_MINUTES
++    ) {
++      continue;
++    }
++
++    const rawAttendees = Array.isArray(e.attendeeIds) ? (e.attendeeIds as unknown[]) : [];
++    const attendeeIds: string[] = [];
++    const seen = new Set<string>();
++    for (const a of rawAttendees) {
++      if (typeof a !== 'string' || a === '' || seen.has(a)) continue;
++      seen.add(a);
++      attendeeIds.push(a);
++    }
++
++    const meetingUrl = normalizeProjectDocumentUrl(str(e.meetingUrl)) ?? '';
++    const recurrence = normalizeRecurrence(e.recurrence, date);
++
++    events.push({
++      id,
++      title,
++      description: str(e.description),
++      location: str(e.location),
++      meetingUrl,
++      date,
++      startMinutes,
++      durationMinutes,
++      attendeeIds,
++      ...(recurrence ? { recurrence } : {}),
++    });
++  }
++  return { ...data, events };
++}
++
+ /**
+  * Idempotent normalize pass for stable completion semantics. Runs on EVERY load
+  * — same philosophy as normalizeTaskMeta / normalizeDates — so a payload with a
+@@ -1397,14 +1479,16 @@ function readData(recordRevision: boolean): InternalLoadResult {
+     const version = typeof parsed.version === 'number' ? parsed.version : 1;
+     let data: AppData;
+     if (version < 2) {
+-      data = repairTickets(
+-        repairStatusReferences(
+-          sanitizeImpersonator(
+-            normalizeStatusFlags(
+-              normalizeTaskMeta(
+-                ensureStartMinutes(
+-                  normalizeDates(
+-                    normalizeWorkloadHours(migrateV4toV5(localizeLegacyData(migrateV1(parsed)))),
++      data = repairEvents(
++        repairTickets(
++          repairStatusReferences(
++            sanitizeImpersonator(
++              normalizeStatusFlags(
++                normalizeTaskMeta(
++                  ensureStartMinutes(
++                    normalizeDates(
++                      normalizeWorkloadHours(migrateV4toV5(localizeLegacyData(migrateV1(parsed)))),
++                    ),
+                   ),
+                 ),
+               ),
+@@ -1446,6 +1530,7 @@ function readData(recordRevision: boolean): InternalLoadResult {
+         comments: coerceArray(parsedRest.comments, defaults.comments),
+         activity: coerceArray(parsedRest.activity, defaults.activity),
+         tickets: coerceArray(parsedRest.tickets, defaults.tickets),
++        events: coerceArray(parsedRest.events, defaults.events),
+         savedFilters: coerceArray(parsedRest.savedFilters, defaults.savedFilters),
+         // `lastFilters` to obiekt (mapa widok→filtr), nie tablica: obecną-ale-
+         // niebędącą-obiektem wartość (np. tablica/`null`) koerujemy do `{}` tutaj,
+@@ -1460,12 +1545,14 @@ function readData(recordRevision: boolean): InternalLoadResult {
+       const localized =
+         version < LOCALIZATION_MIGRATION_VERSION ? localizeLegacyData(loaded) : loaded;
+       const migrated = migrateV4toV5(localized);
+-      data = repairTickets(
+-        repairStatusReferences(
+-          sanitizeImpersonator(
+-            normalizeStatusFlags(
+-              normalizeTaskMeta(
+-                ensureStartMinutes(normalizeDates(normalizeWorkloadHours(migrated))),
++      data = repairEvents(
++        repairTickets(
++          repairStatusReferences(
++            sanitizeImpersonator(
++              normalizeStatusFlags(
++                normalizeTaskMeta(
++                  ensureStartMinutes(normalizeDates(normalizeWorkloadHours(migrated))),
++                ),
+               ),
+             ),
+           ),
+diff --git a/src/styles.css b/src/styles.css
+index ff2fb11..cdff3ea 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -1910,6 +1910,115 @@ option {
+   font-variant-numeric: tabular-nums;
+ }
+ 
++/* ---------- Event (meeting) overlay (presentational only) ----------
++   A SOLID violet block, deliberately a different hue family from the person/task
++   colors AND from the dashed/striped recurrence ghost, so „spotkanie” reads at a
++   glance. Carries NO drag/resize affordance; rendered BEFORE the real blocks in
++   the column so real `.week-block`s always paint on top (invariant 7). */
++:root {
++  --event-bg: #6d4bd8;
++  --event-bg-soft: rgba(109, 75, 216, 0.16);
++  --event-border: #8a6bea;
++}
++.week-event-block {
++  position: absolute;
++  left: 1px;
++  right: 2px;
++  z-index: 0;
++  box-sizing: border-box;
++  text-align: left;
++  border: 1px solid var(--event-border);
++  border-left: 3px solid var(--event-bg);
++  border-radius: var(--n2-radius-xs);
++  background: var(--event-bg-soft);
++  padding: 3px 7px;
++  cursor: pointer;
++  color: var(--text);
++  display: flex;
++  flex-direction: column;
++  gap: 1px;
++  overflow: hidden;
++}
++.week-event-block:hover {
++  background: rgba(109, 75, 216, 0.24);
++}
++.week-event-block.recurring {
++  border-style: dashed;
++}
++.week-event-title {
++  font-size: var(--n2-type-xs);
++  font-weight: 600;
++  white-space: nowrap;
++  overflow: hidden;
++  text-overflow: ellipsis;
++}
++.week-event-time {
++  font-size: var(--n2-type-xs);
++  font-family: var(--n2-font-data);
++  font-variant-numeric: tabular-nums;
++  color: var(--text-muted);
++}
++
++/* Modal wydarzenia — wybór trybu cykliczności (jednorazowo / cyklicznie). */
++.event-radio {
++  display: inline-flex;
++  align-items: center;
++  gap: 6px;
++  font-size: var(--n2-type-sm);
++  cursor: pointer;
++}
++
++/* Lista „Wydarzenia” — wiersze klikalne otwierające modal. */
++.event-list {
++  list-style: none;
++  margin: 0;
++  padding: 0;
++  display: flex;
++  flex-direction: column;
++  gap: 6px;
++}
++.event-row {
++  width: 100%;
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  gap: 12px;
++  padding: 10px 14px;
++  border: 1px solid var(--n2-border);
++  border-radius: var(--n2-radius-sm);
++  background: var(--n2-surface);
++  cursor: pointer;
++  text-align: left;
++  color: inherit;
++}
++.event-row:hover {
++  border-color: var(--event-border);
++}
++.event-row-main {
++  display: flex;
++  flex-direction: column;
++  gap: 2px;
++  min-width: 0;
++}
++.event-row-title {
++  font-weight: 600;
++  display: flex;
++  align-items: center;
++  gap: 8px;
++}
++.event-row-badge {
++  font-size: var(--n2-type-xs);
++  font-weight: 500;
++  color: var(--event-bg);
++}
++.event-row-meta {
++  font-size: var(--n2-type-sm);
++  color: var(--text-muted);
++  white-space: nowrap;
++  overflow: hidden;
++  text-overflow: ellipsis;
++}
++
+ /* ---------- Bin column (Zasobnik: dateless blocks) ---------- */
+ 
+ /* Bin header — right pane header, aligns with the 200px bin pane below. */
+@@ -2147,6 +2256,16 @@ option {
+   color: var(--n2-lavender);
+   pointer-events: none;
+ }
++/* Znacznik wydarzeń / spotkań w komórce miesiąca — mały 📅 w rogu (tooltip z
++   tytułami). Czysto prezentacyjny; sumy/kropki bez zmian. */
++.month-cell-event {
++  position: absolute;
++  top: 2px;
++  right: 3px;
++  font-size: 11px;
++  line-height: 1;
++  pointer-events: none;
++}
+ .month-cell-dots {
+   display: flex;
+   align-items: center;
+diff --git a/src/supabase/cloudMirror.test.ts b/src/supabase/cloudMirror.test.ts
+index 0200542..f37598b 100644
+--- a/src/supabase/cloudMirror.test.ts
++++ b/src/supabase/cloudMirror.test.ts
+@@ -322,6 +322,51 @@ describe('diffToCloudOps — families', () => {
+ const MS = uuid('milestone-one');
+ const WB = uuid('wl-bin');
+ const WD = uuid('wl-dated');
++const EV = uuid('event-one');
++
++describe('diffToCloudOps — events family', () => {
++  const event = () => ({
++    id: EV,
++    title: 'Spotkanie',
++    description: '',
++    location: 'Sala A',
++    meetingUrl: 'https://meet.example.com/x',
++    date: '2026-07-21',
++    startMinutes: 540,
++    durationMinutes: 60,
++    attendeeIds: [PA, 'nieznane-lokalne'],
++    recurrence: { daysOfWeek: [2], startMinutes: 540, durationMinutes: 60 },
++  });
++
++  it('upserts an event, mapping attendee ids and dropping unmappable ones', () => {
++    const m = maps();
++    const withE: AppData = { ...localFixture(), events: [event()] };
++    const { ops } = diffToCloudOps(localFixture(), withE, m);
++    const up = ops.find((o) => o.table === 'events');
++    expect(up).toBeDefined();
++    expect(up!.row).toMatchObject({
++      id: EV,
++      title: 'Spotkanie',
++      meeting_url: 'https://meet.example.com/x',
++      event_date: '2026-07-21',
++      start_minutes: 540,
++      duration_minutes: 60,
++      attendee_ids: [CLOUD_PA], // 'nieznane-lokalne' dropped, never nulls the row
++    });
++    expect(up!.row!.recurrence).toMatchObject({ daysOfWeek: [2] });
++    // Never mirrors created_at/updated_at (server defaults + trigger).
++    expect(up!.row).not.toHaveProperty('created_at');
++  });
++
++  it('removes a deleted event by id', () => {
++    const m = maps();
++    const withE: AppData = { ...localFixture(), events: [event()] };
++    const del = diffToCloudOps(withE, localFixture(), m);
++    expect(del.ops).toEqual([
++      expect.objectContaining({ kind: 'remove', table: 'events', match: { id: EV } }),
++    ]);
++  });
++});
+ 
+ describe('diffToCloudOps — milestones + workload families', () => {
+   it('upserts and removes a milestone (by-id LWW)', () => {
+diff --git a/src/supabase/cloudMirror.ts b/src/supabase/cloudMirror.ts
+index 02a1737..5ea38f3 100644
+--- a/src/supabase/cloudMirror.ts
++++ b/src/supabase/cloudMirror.ts
+@@ -16,6 +16,7 @@ import type {
+   AccessRole,
+   ActivityEvent,
+   AppData,
++  CalendarEvent,
+   Client,
+   Comment,
+   Milestone,
+@@ -332,6 +333,44 @@ function ticketRow(
+   };
+ }
+ 
++/** Mapuje `CalendarEvent` na wiersz `public.events`. UUID id wymagany;
++ *  uczestnicy mapowani local→cloud (parytet z `draftHoursRow`): wpis
++ *  niemapowalny ODPADA, nigdy nie zerujemy całego wiersza. `recurrence`
++ *  zapisywana dosłownie (bez profili — bez mapowania). OMIJA created_at/updated_at
++ *  (serwerowe defaulty + trigger). */
++function eventRow(
++  e: CalendarEvent,
++  maps: CloudIdMaps,
++  diagnostics: string[],
++): Record<string, unknown> | null {
++  if (!isUuid(e.id)) {
++    diagnostics.push(DIAG.nonUuid);
++    return null;
++  }
++  const attendeeIds: string[] = [];
++  for (const localId of e.attendeeIds) {
++    const cloudId =
++      maps.people.get(localId) ?? (maps.cloudProfileIds.has(localId) ? localId : undefined);
++    if (cloudId === undefined) {
++      diagnostics.push(DIAG.unmappablePerson);
++      continue;
++    }
++    attendeeIds.push(cloudId);
++  }
++  return {
++    id: e.id,
++    title: e.title,
++    description: e.description,
++    location: e.location,
++    meeting_url: e.meetingUrl,
++    event_date: e.date,
++    start_minutes: e.startMinutes,
++    duration_minutes: e.durationMinutes,
++    attendee_ids: attendeeIds,
++    recurrence: e.recurrence ?? null,
++  };
++}
++
+ function workloadRow(
+   w: WorkloadEntry,
+   maps: CloudIdMaps,
+@@ -616,6 +655,25 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
+     }
+   }
+ 
++  // 8c) Wydarzenia / spotkania ---- (diff po id: upsert dodanych/zmienionych,
++  // remove usuniętych). Kolekcja addytywna i samodzielna; RLS otwarte dla
++  // zalogowanych (kalendarz współdzielony). Usunięcie propagujemy tylko dla UUID.
++  {
++    const prevMap = byId(prev.events);
++    const nextMap = byId(next.events);
++    for (const id of prevMap.keys()) {
++      if (!nextMap.has(id) && isUuid(id)) {
++        ops.push({ kind: 'remove', table: 'events', match: { id }, sourceId: id, label: 'Wydarzenie (usunięcie)' });
++      }
++    }
++    for (const e of next.events) {
++      const before = prevMap.get(e.id);
++      if (before && JSON.stringify(before) === JSON.stringify(e)) continue;
++      const row = eventRow(e, maps, diagnostics);
++      if (row) ops.push({ kind: 'upsert', table: 'events', row, sourceId: e.id, label: `Wydarzenie „${e.title}”` });
++    }
++  }
++
+   // 9) Słowniki organizacji ---- (statusy + działy + typy usług + kategorie
+   // prac + stanowiska + spółki). Po autorytatywnej hydracji lokalne wiersze noszą id chmury, a nowe
+   // dostają crypto.randomUUID — mutacje paneli admina płyną wprost do tabel
+diff --git a/src/supabase/migrations.test.ts b/src/supabase/migrations.test.ts
+index 47de832..43bacac 100644
+--- a/src/supabase/migrations.test.ts
++++ b/src/supabase/migrations.test.ts
+@@ -71,6 +71,10 @@ const EXPECTED_POLICIES: Record<string, string[]> = {
+   // Słownik spółek (20260721160000_companies): odczyt dla każdego zalogowanego,
+   // zapis wyłącznie administrator — pełne CRUD w politykach.
+   'public.companies': ['select', 'insert', 'update', 'delete'],
++  // Wydarzenia / spotkania (20260721190000_events): kalendarz to powierzchnia
++  // WSPÓŁDZIELONA — wszystkie komendy otwarte `to authenticated` (using/with
++  // check true). Pełne CRUD w politykach; bramka klienta jest wyłącznie UX.
++  'public.events': ['select', 'insert', 'update', 'delete'],
+ };
+ 
+ interface ParsedPolicy {
+@@ -121,6 +125,7 @@ describe('konwencja plików migracji', () => {
+       '20260721150000_job_titles.sql',
+       '20260721160000_companies.sql',
+       '20260721170000_task_recurrence.sql',
++      '20260721190000_events.sql',
+     ]);
+   });
+ 
+diff --git a/src/supabase/plannerData.test.ts b/src/supabase/plannerData.test.ts
+index e3ce32b..d02227a 100644
+--- a/src/supabase/plannerData.test.ts
++++ b/src/supabase/plannerData.test.ts
+@@ -445,7 +445,7 @@ describe('loadPlannerSnapshot', () => {
+     expect(result.ok).toBe(true);
+     if (!result.ok) return;
+     expect(result.payload).toEqual({
+-      clients: [], projects: [], milestones: [], tasks: [], assignments: [], workload: [], comments: [], activity: [], tickets: [],
++      clients: [], projects: [], milestones: [], tasks: [], assignments: [], workload: [], comments: [], activity: [], tickets: [], events: [],
+     });
+     expect(result.diagnostics).toEqual([]);
+   });
+@@ -506,3 +506,57 @@ describe('retirement flag accessors', () => {
+     expect(res.error).toEqual({ kind: 'transient', message: 'net' });
+   });
+ });
++
++describe('loadPlannerSnapshot — events family', () => {
++  it('hydrates events, maps attendees cloud->local, drops unmappable, canonicalizes recurrence', async () => {
++    const db = new FakeSelectDb().seed('events', [
++      {
++        id: uuid('event-one'),
++        title: 'Spotkanie',
++        description: 'opis',
++        location: 'Sala A',
++        meeting_url: 'https://meet.example.com/x',
++        event_date: '2026-07-21',
++        start_minutes: 540,
++        duration_minutes: 60,
++        attendee_ids: [CLOUD_PA, uuid('ghost-profile')],
++        recurrence: { daysOfWeek: [2, 2], startMinutes: 540, durationMinutes: 60 },
++      },
++    ]);
++    const result = await loadPlannerSnapshot(db, maps(), localFixture());
++    expect(result.ok).toBe(true);
++    if (!result.ok) return;
++    expect(result.payload.events).toHaveLength(1);
++    expect(result.payload.events![0]).toMatchObject({
++      title: 'Spotkanie',
++      meetingUrl: 'https://meet.example.com/x',
++      date: '2026-07-21',
++      startMinutes: 540,
++      durationMinutes: 60,
++      attendeeIds: [PA], // ghost profile dropped
++    });
++    expect(result.payload.events![0].recurrence?.daysOfWeek).toEqual([2]);
++  });
++
++  it('skips an event with off-grid minutes with a diagnostic', async () => {
++    const db = new FakeSelectDb().seed('events', [
++      {
++        id: uuid('event-bad'),
++        title: 'Zły',
++        description: '',
++        location: '',
++        meeting_url: '',
++        event_date: '2026-07-21',
++        start_minutes: 545,
++        duration_minutes: 60,
++        attendee_ids: [],
++        recurrence: null,
++      },
++    ]);
++    const result = await loadPlannerSnapshot(db, maps(), localFixture());
++    expect(result.ok).toBe(true);
++    if (!result.ok) return;
++    expect(result.payload.events).toEqual([]);
++    expect(result.diagnostics.some((d) => d.includes('Zły'))).toBe(true);
++  });
++});
+diff --git a/src/supabase/plannerData.ts b/src/supabase/plannerData.ts
+index adb03b8..44808d4 100644
+--- a/src/supabase/plannerData.ts
++++ b/src/supabase/plannerData.ts
+@@ -16,6 +16,7 @@ import type {
+   ActivityEntityType,
+   ActivityEvent,
+   AppData,
++  CalendarEvent,
+   Client,
+   Comment,
+   CommentEntityType,
+@@ -178,6 +179,12 @@ export interface CloudMergePayload {
+    * `loadPlannerSnapshot` zawsze je podaje.
+    */
+   tickets?: Ticket[];
++  /**
++   * Wydarzenia / spotkania. OPCJONALNE (kolekcja dopisana addytywnie): brak pola
++   * => reduktor nie rusza kolekcji, obecne => podmienia ją autorytatywnie.
++   * `loadPlannerSnapshot` zawsze je podaje.
++   */
++  events?: CalendarEvent[];
+   /**
+    * Profile chmury scalane PRZED walidacją encji (CloudSyncProvider dokleja je
+    * ze snapshotu organizacji), żeby wiersze osób bez lokalnej pary e-mailowej
+@@ -319,6 +326,7 @@ export async function loadPlannerSnapshot(
+     commentsRes,
+     activityRes,
+     ticketsRes,
++    eventsRes,
+   ] = await Promise.all([
+     db.select('clients', 'id, name, archived, contact_name, contact_email, contact_phone, notes'),
+     db.select(
+@@ -344,6 +352,10 @@ export async function loadPlannerSnapshot(
+       'tickets',
+       'id, title, area, description, kind, priority, status, reporter_id, created_at, updated_at',
+     ),
++    db.select(
++      'events',
++      'id, title, description, location, meeting_url, event_date, start_minutes, duration_minutes, attendee_ids, recurrence',
++    ),
+   ]);
+ 
+   if (
+@@ -355,7 +367,8 @@ export async function loadPlannerSnapshot(
+     workloadRes.error ||
+     commentsRes.error ||
+     activityRes.error ||
+-    ticketsRes.error
++    ticketsRes.error ||
++    eventsRes.error
+   ) {
+     return { ok: false, error: PLANNER_SNAPSHOT_ERROR };
+   }
+@@ -632,6 +645,61 @@ export async function loadPlannerSnapshot(
+     });
+   }
+ 
++  // Wydarzenia / spotkania ---- (`event_date` -> lokalne `date`; zła data lub
++  // minuty poza siatką/dobą => wiersz POMINIĘTY z diagnostyką. Uczestnicy
++  // mapowani cloud→local przez `personOf`; id spoza `cloudProfileIds`/map są
++  // usuwane (nie blokują wiersza). `recurrence` re-kanonikalizowana względem
++  // daty — NULL/legacy/śmieci => brak klucza.)
++  const events: CalendarEvent[] = [];
++  for (const row of eventsRes.rows) {
++    const title = str(row.title);
++    if (title === '') {
++      diagnostics.push('Wydarzenie pominięto — brak tytułu.');
++      continue;
++    }
++    const date = sqlDateToLocal(row.event_date);
++    if (!isValidDateStr(date)) {
++      diagnostics.push(`Wydarzenie „${title}” pominięto — nieprawidłowa data.`);
++      continue;
++    }
++    const startMinutes = row.start_minutes;
++    const durationMinutes = row.duration_minutes;
++    if (!isValidStartMinutes(startMinutes)) {
++      diagnostics.push(`Wydarzenie „${title}” pominięto — start poza siatką 15 minut.`);
++      continue;
++    }
++    if (
++      !isValidStartMinutes(durationMinutes) ||
++      durationMinutes < MINUTE_STEP ||
++      startMinutes + durationMinutes > DAY_MINUTES
++    ) {
++      diagnostics.push(`Wydarzenie „${title}” pominięto — czas trwania poza siatką lub dobą.`);
++      continue;
++    }
++    const rawAttendees = Array.isArray(row.attendee_ids) ? row.attendee_ids : [];
++    const seen = new Set<string>();
++    const attendeeIds: string[] = [];
++    for (const a of rawAttendees) {
++      const localId = personOf(a);
++      if (localId === '' || seen.has(localId)) continue;
++      seen.add(localId);
++      attendeeIds.push(localId);
++    }
++    const recurrence = normalizeRecurrence(row.recurrence, date);
++    events.push({
++      id: str(row.id),
++      title,
++      description: str(row.description),
++      location: str(row.location),
++      meetingUrl: str(row.meeting_url),
++      date,
++      startMinutes,
++      durationMinutes,
++      attendeeIds,
++      ...(recurrence ? { recurrence } : {}),
++    });
++  }
++
+   return {
+     ok: true,
+     payload: {
+@@ -644,6 +712,7 @@ export async function loadPlannerSnapshot(
+       comments,
+       activity,
+       tickets,
++      events,
+     },
+     diagnostics,
+   };
+diff --git a/src/types.ts b/src/types.ts
+index 82979e1..0f46b7c 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -340,6 +340,28 @@ export interface Ticket {
+   updatedAt: string; // ISO timestamp; odświeżany przy każdym zapisie
+ }
+ 
++/**
++ * Wydarzenie / spotkanie w kalendarzu. Encja SAMODZIELNA (parytet ze
++ * `Ticket`): NIGDY nie tworzy wierszy `WorkloadEntry`, nie wchodzi do sum,
++ * przeciążenia ani kolizji (inwariant 1). Renderowane w kalendarzu jako
++ * addytywna, prezentacyjna nakładka. Cykliczność reużywa `TaskRecurrence` z
++ * kotwicą = `event.date` (patrz `src/utils/recurrence.ts`); wydarzenie
++ * jednorazowe nie ma klucza `recurrence`. Pola tekstowe domyślnie `''`.
++ * Kolekcja jest ADDYTYWNA — `DATA_VERSION` zostaje na 7.
++ */
++export interface CalendarEvent {
++  id: string;
++  title: string; // „Tytuł” — wymagane (niepuste po trim)
++  description: string; // „Opis”; '' gdy nie podano
++  location: string; // „Biuro / lokalizacja”; '' gdy nie podano
++  meetingUrl: string; // „Link do spotkania”; '' albo znormalizowany http/https
++  date: DateStr; // kotwica wydarzenia (yyyy-MM-dd); kotwica reguły cyklicznej
++  startMinutes: number; // 0..1425, wielokrotność 15
++  durationMinutes: number; // 15..1440, wielokrotność 15; start + duration <= 1440
++  attendeeIds: string[]; // id osób (uczestnicy); zdeduplikowane, tylko istniejące
++  recurrence?: TaskRecurrence; // brak klucza = jednorazowo
++}
++
+ export type FilterPage = 'projects' | 'tasks' | 'kanban';
+ 
+ export interface SavedFilterCriteria {
+@@ -401,6 +423,7 @@ export interface AppData {
+   comments: Comment[];
+   activity: ActivityEvent[];
+   tickets: Ticket[];
++  events: CalendarEvent[];
+   currentUserId: string; // "acting as" person; '' when unset
+   // Safe impersonation: '' when not impersonating; otherwise the REAL logged-in
+   // person's id while `currentUserId` holds the impersonated identity. Additive
+diff --git a/src/utils/dirtyRegistry.ts b/src/utils/dirtyRegistry.ts
+index 02db67b..102dae8 100644
+--- a/src/utils/dirtyRegistry.ts
++++ b/src/utils/dirtyRegistry.ts
+@@ -34,7 +34,7 @@ export function anyDirty(): boolean {
+ // navigation: the task modal lives on the `?task=` search param, while the
+ // project editor lives on the pathname.
+ 
+-export type NavGuardScope = 'task-modal' | 'project-detail' | 'ticket-modal';
++export type NavGuardScope = 'task-modal' | 'project-detail' | 'ticket-modal' | 'event-modal';
+ 
+ const navGuards = new Map<object, NavGuardScope>();
+ 
+@@ -72,9 +72,11 @@ export function navGuardBlocks(
+   const nextParams = new URLSearchParams(next.search);
+   const taskChanged = currentParams.get('task') !== nextParams.get('task');
+   const ticketChanged = currentParams.get('zgloszenie') !== nextParams.get('zgloszenie');
++  const eventChanged = currentParams.get('wydarzenie') !== nextParams.get('wydarzenie');
+   return (
+     (scopes.has('task-modal') && taskChanged) ||
+     (scopes.has('ticket-modal') && ticketChanged) ||
++    (scopes.has('event-modal') && eventChanged) ||
+     (scopes.has('project-detail') && pathChanged)
+   );
+ }
+diff --git a/supabase/migrations/20260721190000_events.sql b/supabase/migrations/20260721190000_events.sql
+new file mode 100644
+index 0000000..1800ffc
+--- /dev/null
++++ b/supabase/migrations/20260721190000_events.sql
+@@ -0,0 +1,92 @@
++-- =============================================================================
++-- Migracja: 20260721190000_events
++--
++-- Wydarzenia / spotkania w kalendarzu („Wydarzenia”): spotkania zespołu z
++-- opcjonalną cyklicznością (RRULE-lite, jak `tasks.recurrence`) i listą
++-- uczestników. Tabela jest SAMODZIELNA — nie wiąże się z projektami/zadaniami i
++-- nie tworzy godzin planera.
++--
++-- Model dostępu (decyzja pakietu): kalendarz jest powierzchnią WSPÓŁDZIELONĄ w
++-- organizacji, a mapowanie ról chmury (`handlowiec → worker`) sprawia, że każdy
++-- model per-rola albo blokowałby handlowca (który lokalnie ma `tasks.manage`),
++-- albo wymagał modelu twórcy/uczestnika, którego lokalna encja nie niesie.
++-- Dlatego wszystkie cztery komendy są otwarte `to authenticated`
++-- (`using (true)` / `with check (true)`). Bramka klienta jest wyłącznie UX
++-- (patrz CLAUDE.md) — prawdziwej granicy pilnowałby przyszły model twórcy.
++--
++-- Uczestnicy są przechowywani jako kolumna `attendee_ids uuid[]` (NIE tabela
++-- łącznikowa) — parytet z `profiles.work_days smallint[]`; tabelę łącznikową
++-- stosujemy tylko tam, gdzie odpytuje ją RLS (task_assignments), a RLS wydarzeń
++-- tego nie robi.
++--
++-- Konwencja domu (patrz supabase/README.md): RLS w tym samym pliku, revoke anon,
++-- polityki to authenticated + with check, bez force row level security.
++-- Reużywamy istniejącego triggera `app.set_updated_at()` — BEZ nowych funkcji.
++-- Idempotentnie (`if not exists` / `drop policy if exists`): plik bywa aplikowany
++-- ręcznie przez SQL editor zanim `db push` uzupełni rejestr.
++-- =============================================================================
++
++create table if not exists public.events (
++  id uuid primary key default gen_random_uuid(),
++  title text not null check (char_length(title) between 1 and 300),
++  description text not null default '',
++  location text not null default '',
++  meeting_url text not null default '',
++  event_date date not null,
++  start_minutes integer not null
++    check (start_minutes >= 0 and start_minutes % 15 = 0),
++  duration_minutes integer not null
++    check (duration_minutes >= 15 and duration_minutes % 15 = 0),
++  attendee_ids uuid[] not null default '{}',
++  recurrence jsonb,
++  created_at timestamptz not null default now(),
++  updated_at timestamptz not null default now(),
++  check (start_minutes + duration_minutes <= 1440)
++);
++
++drop trigger if exists events_set_updated_at on public.events;
++create trigger events_set_updated_at
++  before update on public.events
++  for each row execute function app.set_updated_at();
++
++create index if not exists events_event_date_idx on public.events (event_date);
++
++-- -----------------------------------------------------------------------------
++-- RLS: deny-by-default + odebranie dostępu roli anon. Kalendarz to powierzchnia
++-- współdzielona — wszystkie komendy otwarte dla zalogowanych (patrz nagłówek).
++-- -----------------------------------------------------------------------------
++
++alter table public.events enable row level security;
++revoke all on public.events from anon;
++
++drop policy if exists "events_select" on public.events;
++create policy "events_select" on public.events
++  for select to authenticated
++  using (true);
++
++drop policy if exists "events_insert" on public.events;
++create policy "events_insert" on public.events
++  for insert to authenticated
++  with check (true);
++
++drop policy if exists "events_update" on public.events;
++create policy "events_update" on public.events
++  for update to authenticated
++  using (true)
++  with check (true);
++
++drop policy if exists "events_delete" on public.events;
++create policy "events_delete" on public.events
++  for delete to authenticated
++  using (true);
++
++-- Publikacja realtime (parytet z encjami planera — wydarzenia renderują się na
++-- współdzielonym kalendarzu) — idempotentnie:
++do $$
++begin
++  begin
++    alter publication supabase_realtime add table public.events;
++  exception
++    when duplicate_object then null;
++  end;
++end $$;

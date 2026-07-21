@@ -109,3 +109,9 @@ repair. Ordering must not touch completion semantics or calendar placement.
   `navOrderByUser`+helpers, shared `navItems.ts`, `NavOrderEditor` on Konto +
   Ustawienia; App orders before gate filter, live via `n2hub:nav-order-changed`.
 - tsc clean; full suite PASS 1118; build clean. Wiki updated.
+
+## PKG-changelog-panel
+- Panel „Co nowego": new `src/data/changelog.ts` (types + CHANGELOG + range
+  helper +test), `ChangelogModal.tsx` (TicketModal pattern), slim bar in
+  DashboardPage, styles in styles.css. First entry = fixy 224–238 + domknięcie.
+- npm test PASS 1123; build clean. No store touch. Wiki unchanged.
