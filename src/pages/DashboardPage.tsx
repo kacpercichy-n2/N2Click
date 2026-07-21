@@ -2,9 +2,13 @@
 // a MOCK team chat with fake presence, an SVG donut workload summary, and a
 // week strip of the user's blocks. All reads go through selectors; nothing here
 // mutates or persists (the chat is a mockup).
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'motion/react';
+import { Megaphone } from '../components/icons';
 import { useStore } from '../store/AppStore';
+import { CHANGELOG, changelogRangeLabel, isSameDayRange } from '../data/changelog';
+import { ChangelogModal } from '../components/ChangelogModal';
 import {
   currentUser,
   dayAvailabilityForPerson,
@@ -110,6 +114,8 @@ export function DashboardPage() {
   const { state } = useStore();
   const me = currentUser(state);
   const today = todayStr();
+  const [changelogOpen, setChangelogOpen] = useState(false);
+  const latestChange = CHANGELOG[0];
 
   // Edge case: setup mode (no people) or no resolvable acting user → keep the
   // original welcome empty-state exactly.
@@ -148,6 +154,37 @@ export function DashboardPage() {
         <h1>Dzień dobry, {me.firstName}</h1>
         <p className="dash-date">{formatRowLabel(today)}</p>
       </div>
+
+      {latestChange && (
+        <motion.div
+          className="changelog-bar"
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.24, ease: 'easeOut' }}
+        >
+          <Megaphone size={18} className="changelog-bar-icon" aria-hidden />
+          <span className="changelog-bar-text">
+            Zmiany i fixy wprowadzone{' '}
+            {isSameDayRange(latestChange.dateFrom, latestChange.dateTo) ? 'w dniu' : 'w dniach'}{' '}
+            <strong>{changelogRangeLabel(latestChange.dateFrom, latestChange.dateTo)}</strong>
+            <span className="changelog-bar-summary">{latestChange.summary}</span>
+          </span>
+          <span className="changelog-bar-actions">
+            <button
+              type="button"
+              className="btn ghost changelog-bar-btn"
+              onClick={() => setChangelogOpen(true)}
+            >
+              Czytaj całość
+            </button>
+            <Link to="/changelog" className="btn ghost changelog-bar-btn">
+              Zobacz pełną historię
+            </Link>
+          </span>
+        </motion.div>
+      )}
+
+      <ChangelogModal open={changelogOpen} onClose={() => setChangelogOpen(false)} />
 
       <motion.div
         className="dash-grid dash-welcome-grid"

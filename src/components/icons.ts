@@ -42,4 +42,5 @@ export {
   KeyRound,
   Network,
   Inbox,
+  Megaphone,
 } from 'lucide-react';

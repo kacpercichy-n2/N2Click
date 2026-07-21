@@ -12,6 +12,7 @@ import {
 import { motion } from 'motion/react';
 import { useStore } from './store/AppStore';
 import { DashboardPage } from './pages/DashboardPage';
+import { ChangelogPage } from './pages/ChangelogPage';
 import { MyWorkPage } from './pages/MyWorkPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { ProjectDetailPage } from './pages/ProjectDetailPage';
@@ -492,6 +493,8 @@ export function App() {
           <Routes>
             <Route path="/" element={<HomeRedirect />} />
             <Route path="/dashboard" element={<DashboardPage />} />
+            {/* Changelog: pełna historia wpisów z src/data/changelog.ts, dostępna dla każdej roli. */}
+            <Route path="/changelog" element={<ChangelogPage />} />
             <Route path="/my-work" element={<MyWorkPage />} />
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/projects/:id" element={<ProjectDetailPage />} />
