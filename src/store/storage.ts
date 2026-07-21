@@ -41,6 +41,7 @@ import {
   snapToStep,
   stackStartTimes,
 } from '../utils/time';
+import { isFilterViewKey, sanitizeLastViewFilter } from './commandValidation';
 
 const STORAGE_KEY = 'n2hub.data.v1';
 const LEGACY_STORAGE_KEYS = ['n2ub.data.v1', 'n2click.data.v1'];
@@ -56,6 +57,7 @@ export const DEFAULT_WORKDAYS: number[] = [1, 2, 3, 4, 5]; // Mon–Fri (ISO wee
 export const DEFAULT_FILTER_CRITERIA: SavedFilterCriteria = {
   paid: 'all',
   clientId: '',
+  projectId: '',
   statusId: '',
   personId: '',
   priority: '',
@@ -135,6 +137,7 @@ export function emptyData(): AppData {
     impersonatorId: '',
     sampleBannerDismissed: false,
     savedFilters: [],
+    lastFilters: {},
   };
 }
 
@@ -739,6 +742,36 @@ export function normalizeDates(data: AppData): AppData {
     };
   });
 
+  // `lastFilters` criteria from/to — ta sama reguła co dla savedFilters. Bronimy
+  // się przed jeszcze-niesanityzowanym wpisem (criteria niebędące obiektem);
+  // pełną sanityzację robi normalizeTaskMeta później na tej samej ścieżce.
+  let lastFiltersChanged = false;
+  const lastFilters: AppData['lastFilters'] = {};
+  for (const key of Object.keys(data.lastFilters ?? {}) as Array<keyof AppData['lastFilters']>) {
+    const entry = data.lastFilters[key];
+    if (entry === undefined) continue;
+    const criteria = entry.criteria as unknown;
+    if (typeof criteria !== 'object' || criteria === null) {
+      lastFilters[key] = entry;
+      continue;
+    }
+    const c = criteria as Record<string, unknown>;
+    const from = typeof c.from === 'string' ? c.from : '';
+    const to = typeof c.to === 'string' ? c.to : '';
+    const fromBad = from !== '' && !isValidDateStr(from);
+    const toBad = to !== '' && !isValidDateStr(to);
+    if (!fromBad && !toBad) {
+      lastFilters[key] = entry;
+      continue;
+    }
+    lastFiltersChanged = true;
+    lastFilters[key] = {
+      ...entry,
+      criteria: { ...entry.criteria, from: fromBad ? '' : from, to: toBad ? '' : to },
+    };
+  }
+  if (lastFiltersChanged) changed = true;
+
   const comments = data.comments.map((c) => {
     if (!Number.isNaN(Date.parse(c.createdAt))) return c;
     changed = true;
@@ -752,7 +785,17 @@ export function normalizeDates(data: AppData): AppData {
   });
 
   if (!changed) return data;
-  return { ...data, projects, tasks, milestones, workload, savedFilters, comments, activity };
+  return {
+    ...data,
+    projects,
+    tasks,
+    milestones,
+    workload,
+    savedFilters,
+    lastFilters,
+    comments,
+    activity,
+  };
 }
 
 /**
@@ -867,6 +910,7 @@ export function normalizeTaskMeta(data: AppData): AppData {
   const workCategories = Array.isArray(data.workCategories) ? data.workCategories : [];
   const categoryIds = new Set(workCategories.map((c) => c.id));
   const departmentIds = new Set(data.departments.map((d) => d.id));
+  const projectIds = new Set(data.projects.map((p) => p.id));
 
   const tasks: Task[] = data.tasks.map((raw) => {
     const t = raw as unknown as Record<string, unknown>;
@@ -925,10 +969,30 @@ export function normalizeTaskMeta(data: AppData): AppData {
     if (criteria.workCategoryId !== '' && !categoryIds.has(criteria.workCategoryId)) {
       criteria.workCategoryId = '';
     }
+    // `projectId` jest ADDYTYWNE (v7): stary preset dostaje '' ze spreadu, a
+    // dangling (brak wiersza w `projects`) resetuje się do '' — jak workCategoryId.
+    if (criteria.projectId !== '' && !projectIds.has(criteria.projectId)) {
+      criteria.projectId = '';
+    }
     return { ...f, criteria };
   });
 
-  return { ...data, workCategories, tasks: assignDefaultOrderIndex(tasks), savedFilters };
+  // `lastFilters` (ADDYTYWNE, v7): odrzuć nieznane klucze widoków i sanityzuj
+  // każdy wpis przez współdzielony `sanitizeLastViewFilter` (kryteria wypełnione,
+  // dangling projectId/workCategoryId → '', priority/planning spoza enuma → '',
+  // personIds zdeduplikowane). Idempotentne po wartości: czysty drugi przebieg
+  // daje wartościowo tę samą mapę.
+  const rawLastFilters =
+    typeof data.lastFilters === 'object' && data.lastFilters !== null && !Array.isArray(data.lastFilters)
+      ? (data.lastFilters as Record<string, unknown>)
+      : {};
+  const lastFilters: AppData['lastFilters'] = {};
+  for (const view of Object.keys(rawLastFilters)) {
+    if (!isFilterViewKey(view)) continue;
+    lastFilters[view] = sanitizeLastViewFilter(data, rawLastFilters[view]);
+  }
+
+  return { ...data, workCategories, tasks: assignDefaultOrderIndex(tasks), savedFilters, lastFilters };
 }
 
 /**
@@ -1367,6 +1431,15 @@ function readData(recordRevision: boolean): InternalLoadResult {
         activity: coerceArray(parsedRest.activity, defaults.activity),
         tickets: coerceArray(parsedRest.tickets, defaults.tickets),
         savedFilters: coerceArray(parsedRest.savedFilters, defaults.savedFilters),
+        // `lastFilters` to obiekt (mapa widok→filtr), nie tablica: obecną-ale-
+        // niebędącą-obiektem wartość (np. tablica/`null`) koerujemy do `{}` tutaj,
+        // resztę sanityzuje `normalizeTaskMeta` (nieznane widoki, kryteria).
+        lastFilters:
+          typeof parsedRest.lastFilters === 'object' &&
+          parsedRest.lastFilters !== null &&
+          !Array.isArray(parsedRest.lastFilters)
+            ? (parsedRest.lastFilters as AppData['lastFilters'])
+            : defaults.lastFilters,
       };
       const localized =
         version < LOCALIZATION_MIGRATION_VERSION ? localizeLegacyData(loaded) : loaded;

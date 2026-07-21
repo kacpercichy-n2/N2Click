@@ -21,6 +21,8 @@ import type {
   CommentEntityType,
   Department,
   FilterPage,
+  FilterViewKey,
+  LastViewFilter,
   Milestone,
   Person,
   Project,
@@ -54,14 +56,20 @@ import { anyDirty } from '../utils/dirtyRegistry';
 import { shouldSkipLocalPersist } from './persistGate';
 import {
   hasEntity,
+  isFilterPage,
+  isFilterViewKey,
   isRequiredName,
+  isStructuralLastViewFilter,
   isValidClientDraft,
   isValidPersonDraft,
   isValidProjectDraft,
   isValidTaskDraft,
   isValidTicketDraft,
   isValidTicketStatus,
+  lastViewFilterEqual,
   normalizeProjectDocumentDraft,
+  sanitizeFilterCriteria,
+  sanitizeLastViewFilter,
 } from './commandValidation';
 import {
   DEFAULT_TICKET_STATUS,
@@ -272,6 +280,10 @@ export type Action =
   | { type: 'DELETE_BLOCK'; entryId: string }
   | { type: 'SAVE_FILTER_PRESET'; name: string; page: FilterPage; criteria: SavedFilterCriteria }
   | { type: 'DELETE_FILTER_PRESET'; filterId: string }
+  // Zapamiętanie ostatnio użytego (nienazwanego) filtra dla widoku. LOKALNE ONLY.
+  // Sanityzowany → porównany po wartości → no-op zwraca TĘ SAMĄ referencję; nieznany
+  // widok lub strukturalnie zniekształcony ładunek też => ta sama referencja.
+  | { type: 'SET_LAST_FILTER'; view: FilterViewKey; filter: LastViewFilter }
   | { type: 'LOAD_SAMPLE'; data: AppData }
   | { type: 'DISMISS_SAMPLE_BANNER' }
   | { type: 'RESET_ALL'; data: AppData }
@@ -1063,7 +1075,50 @@ function deleteProject(state: AppData, projectId: string): AppData {
         ? e.entityId !== projectId
         : !taskIds.has(e.entityId),
     ),
+    // Kaskada filtrów: preset/ostatni filtr wskazujący usuwany projekt traci
+    // `criteria.projectId` (→ ''), jak kaskada DELETE_WORK_CATEGORY dla kategorii.
+    // Niepowiązane filtry zachowują SWOJĄ referencję (brak migotania widoków).
+    savedFilters: state.savedFilters.map((f) =>
+      f.criteria.projectId === projectId
+        ? { ...f, criteria: { ...f.criteria, projectId: '' } }
+        : f,
+    ),
+    lastFilters: clearProjectIdInLastFilters(state.lastFilters, projectId),
   };
+}
+
+/** Czyści jedno pole `criteria` (→ '') w każdym zapamiętanym filtrze wskazującym
+ *  usuwaną encję; niepowiązane wpisy zachowują SWOJĄ referencję. Wspólne dla
+ *  kaskady projektu i kategorii pracy. */
+function clearCriteriaFieldInLastFilters(
+  lastFilters: AppData['lastFilters'],
+  field: 'projectId' | 'workCategoryId',
+  value: string,
+): AppData['lastFilters'] {
+  const next: AppData['lastFilters'] = {};
+  for (const key of Object.keys(lastFilters) as Array<keyof AppData['lastFilters']>) {
+    const entry = lastFilters[key];
+    if (entry === undefined) continue;
+    next[key] =
+      entry.criteria[field] === value
+        ? { ...entry, criteria: { ...entry.criteria, [field]: '' } }
+        : entry;
+  }
+  return next;
+}
+
+function clearProjectIdInLastFilters(
+  lastFilters: AppData['lastFilters'],
+  projectId: string,
+): AppData['lastFilters'] {
+  return clearCriteriaFieldInLastFilters(lastFilters, 'projectId', projectId);
+}
+
+function clearWorkCategoryIdInLastFilters(
+  lastFilters: AppData['lastFilters'],
+  workCategoryId: string,
+): AppData['lastFilters'] {
+  return clearCriteriaFieldInLastFilters(lastFilters, 'workCategoryId', workCategoryId);
 }
 
 // ---- Insert block (calendar right-click) ----
@@ -3113,6 +3168,7 @@ export function reducer(state: AppData, action: Action): AppData {
             ? { ...filter, criteria: { ...filter.criteria, workCategoryId: '' } }
             : filter,
         ),
+        lastFilters: clearWorkCategoryIdInLastFilters(state.lastFilters, action.workCategoryId),
       };
     case 'SAVE_STATUS':
       return saveStatus(state, action.statusId, action.name, action.color);
@@ -3155,6 +3211,18 @@ export function reducer(state: AppData, action: Action): AppData {
     case 'SAVE_FILTER_PRESET': {
       const name = action.name.trim();
       if (!name) return state;
+      // Nieznana strona lub strukturalnie zniekształcone kryteria => TA SAMA
+      // referencja (inwariant 6). Dangling projectId/workCategoryId i wartości
+      // spoza enuma są sanityzowane do '' przez wspólny `sanitizeFilterCriteria`.
+      if (!isFilterPage(action.page)) return state;
+      if (
+        typeof action.criteria !== 'object' ||
+        action.criteria === null ||
+        Array.isArray(action.criteria)
+      ) {
+        return state;
+      }
+      const criteria = sanitizeFilterCriteria(state, action.criteria);
       const existing = state.savedFilters.find(
         (f) => f.page === action.page && f.name === name,
       );
@@ -3162,7 +3230,7 @@ export function reducer(state: AppData, action: Action): AppData {
         return {
           ...state,
           savedFilters: state.savedFilters.map((f) =>
-            f.id === existing.id ? { ...f, criteria: action.criteria } : f,
+            f.id === existing.id ? { ...f, criteria } : f,
           ),
         };
       }
@@ -3170,7 +3238,7 @@ export function reducer(state: AppData, action: Action): AppData {
         ...state,
         savedFilters: [
           ...state.savedFilters,
-          { id: uid(), name, page: action.page, criteria: action.criteria },
+          { id: uid(), name, page: action.page, criteria },
         ],
       };
     }
@@ -3179,6 +3247,20 @@ export function reducer(state: AppData, action: Action): AppData {
         ...state,
         savedFilters: state.savedFilters.filter((f) => f.id !== action.filterId),
       };
+    case 'SET_LAST_FILTER': {
+      // Nieznany widok lub strukturalnie zniekształcony ładunek => ta sama
+      // referencja (inwariant 6). Inaczej: sanityzuj, porównaj po wartości do
+      // bieżącego wpisu — no-op zwraca tę samą referencję.
+      if (!isFilterViewKey(action.view)) return state;
+      if (!isStructuralLastViewFilter(action.filter)) return state;
+      const sanitized = sanitizeLastViewFilter(state, action.filter);
+      const current = state.lastFilters[action.view];
+      if (current && lastViewFilterEqual(current, sanitized)) return state;
+      return {
+        ...state,
+        lastFilters: { ...state.lastFilters, [action.view]: sanitized },
+      };
+    }
     // ---- Zgłoszenia ----
     // Walidacja żyje w commandValidation (isValidTicketDraft): pusty tytuł/opis,
     // nieznany reporterId albo wartość spoza enuma => TA SAMA referencja stanu

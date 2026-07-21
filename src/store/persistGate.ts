@@ -41,6 +41,10 @@ const NON_MIRRORED_KEYS: Array<keyof AppData> = [
   'impersonatorId',
   'sampleBannerDismissed',
   'savedFilters',
+  // Ostatnio używane filtry: LOKALNE ONLY (jak savedFilters). Przejście
+  // dotykające WYŁĄCZNIE ich NIE może być zaklasyfikowane jako „tylko lustrzane”,
+  // bo zapis lokalny jest ich JEDYNĄ trwałością.
+  'lastFilters',
 ];
 
 // Runtime flaga zdrowia lustra chmury — prawdziwa TYLKO gdy status === 'ready',

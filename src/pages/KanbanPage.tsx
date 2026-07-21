@@ -9,16 +9,21 @@ import { useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import { useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
-import { activeStatuses, getClient } from '../store/selectors';
+import { activeStatuses, getClient, getProject } from '../store/selectors';
 import { Avatar } from '../components/Avatar';
 import { PriorityBadge } from '../components/PriorityBadge';
 import { FilterPanel, type FilterChip, type FilterGroup } from '../components/FilterPanel';
+import { FilterPresets, DEFAULT_CRITERIA } from '../components/FilterPresets';
 import { PersonFilter } from '../components/PersonFilter';
 import { useOpenTask } from '../components/TaskModal';
 import { buildKanbanColumns, buildTaskAssigneeIds } from './kanbanBoard';
 import { type PaidFilter } from './ProjectsPage';
 import { formatShortWithWeekday } from '../utils/dates';
-import type { Task } from '../types';
+import type { SavedFilterCriteria, Task } from '../types';
+
+// Stała pusta lista chipów osób — stabilna referencja, gdy widok nie ma jeszcze
+// zapamiętanego filtra (unika przeliczania Setu/tablicy co render).
+const EMPTY_PERSON_IDS: string[] = [];
 
 // Dark-legible, on-brand rotation for admin quick-created statuses.
 const STATUS_COLORS = ['#9aa7c4', '#5bdcff', '#ffc857', '#b9ff4d', '#c496ff', '#ff9640'];
@@ -34,21 +39,62 @@ export function KanbanPage() {
   const canManage = can('tasks.manage');
   const { openTask } = useOpenTask();
 
-  const [paidFilter, setPaidFilter] = useState<PaidFilter>('all');
-  const [clientFilter, setClientFilter] = useState('');
-  const [personFilter, setPersonFilter] = useState<Set<string>>(new Set());
   const [dragOver, setDragOver] = useState<string | null>(null); // statusId
   const [quickStatus, setQuickStatus] = useState('');
 
-  const board = useMemo(
-    () =>
-      buildKanbanColumns(state, {
-        paid: paidFilter,
-        clientId: clientFilter,
-        personIds: personFilter,
-      }),
-    [state, paidFilter, clientFilter, personFilter],
+  // Stan filtrów ZAPAMIĘTANY w store (`lastFilters.kanban`): FilterPanel-owe wymiary
+  // (paid/client/project) żyją w `criteria`, a chipy osób w `personIds`. Setter
+  // wysyła pełny snapshot przez `SET_LAST_FILTER` (no-op zapisu identycznego).
+  const remembered = state.lastFilters.kanban;
+  const criteria: SavedFilterCriteria = remembered?.criteria ?? DEFAULT_CRITERIA;
+  const paidFilter = criteria.paid;
+  const clientFilter = criteria.clientId;
+  const projectFilter = criteria.projectId;
+  const personIds = remembered?.personIds ?? EMPTY_PERSON_IDS;
+  // Set osób pochodny z `personIds` (Setów NIE trzymamy w AppData — inwariant 7:
+  // to tylko ZMIANA ŹRÓDŁA zaznaczenia, nie ścieżki wskaźnika kalendarza).
+  const personFilter = useMemo(() => new Set(personIds), [personIds]);
+
+  const commit = (next: { criteria?: SavedFilterCriteria; personIds?: string[] }) =>
+    dispatch({
+      type: 'SET_LAST_FILTER',
+      view: 'kanban',
+      filter: {
+        criteria: next.criteria ?? criteria,
+        personIds: next.personIds ?? personIds,
+        departmentId: '',
+        serviceTypeId: '',
+        planning: '',
+      },
+    });
+
+  const setPaidFilter = (v: PaidFilter) => commit({ criteria: { ...criteria, paid: v } });
+  const setClientFilter = (v: string) => commit({ criteria: { ...criteria, clientId: v } });
+  const setProjectFilter = (v: string) => commit({ criteria: { ...criteria, projectId: v } });
+  const setPersonFilter = (next: Set<string>) => commit({ personIds: [...next] });
+
+  const sortedProjects = useMemo(
+    () => [...state.projects].sort((a, b) => a.name.localeCompare(b.name)),
+    [state.projects],
   );
+
+  const board = useMemo(() => {
+    // buildKanbanColumns pozostaje NIEZMIENIONE (inwariant): filtr projektu
+    // nakładamy PO zbudowaniu tablicy, przycinając zadania każdej kolumny.
+    const full = buildKanbanColumns(state, {
+      paid: paidFilter,
+      clientId: clientFilter,
+      personIds: personFilter,
+    });
+    if (!projectFilter) return full;
+    return {
+      columns: full.columns.map((c) => ({
+        ...c,
+        tasks: c.tasks.filter((t) => t.projectId === projectFilter),
+      })),
+      archived: full.archived.filter((t) => t.projectId === projectFilter),
+    };
+  }, [state, paidFilter, clientFilter, projectFilter, personFilter]);
 
   // Cheap per-card lookups: no card scans projects/clients/assignments itself.
   const lookups = useMemo(
@@ -86,10 +132,23 @@ export function KanbanPage() {
         ...state.clients.map((c) => ({ value: c.id, label: c.name })),
       ],
     },
+    {
+      key: 'project',
+      label: 'Projekt',
+      value: projectFilter,
+      onChange: setProjectFilter,
+      options: [
+        { value: '', label: 'Wszystkie' },
+        ...sortedProjects.map((p) => ({ value: p.id, label: p.name })),
+      ],
+    },
   ];
 
   const activeCount =
-    (paidFilter !== 'all' ? 1 : 0) + (clientFilter ? 1 : 0) + (personFilter.size > 0 ? 1 : 0);
+    (paidFilter !== 'all' ? 1 : 0) +
+    (clientFilter ? 1 : 0) +
+    (projectFilter ? 1 : 0) +
+    (personFilter.size > 0 ? 1 : 0);
 
   const chips: FilterChip[] = [];
   if (paidFilter !== 'all')
@@ -100,6 +159,12 @@ export function KanbanPage() {
       label: `Klient: ${getClient(state, clientFilter)?.name ?? '—'}`,
       onRemove: () => setClientFilter(''),
     });
+  if (projectFilter)
+    chips.push({
+      key: 'project',
+      label: `Projekt: ${getProject(state, projectFilter)?.name ?? '—'}`,
+      onRemove: () => setProjectFilter(''),
+    });
   if (personFilter.size > 0)
     chips.push({
       key: 'person',
@@ -109,19 +174,16 @@ export function KanbanPage() {
       onRemove: () => setPersonFilter(new Set()),
     });
 
-  const clearAll = () => {
-    setPaidFilter('all');
-    setClientFilter('');
-    setPersonFilter(new Set());
-  };
+  const clearAll = () => commit({ criteria: DEFAULT_CRITERIA, personIds: [] });
 
-  const togglePerson = (personId: string) =>
-    setPersonFilter((prev) => {
-      const next = new Set(prev);
-      if (next.has(personId)) next.delete(personId);
-      else next.add(personId);
-      return next;
-    });
+  const applyPreset = (c: SavedFilterCriteria) => commit({ criteria: c });
+
+  const togglePerson = (personId: string) => {
+    const next = new Set(personFilter);
+    if (next.has(personId)) next.delete(personId);
+    else next.add(personId);
+    setPersonFilter(next);
+  };
 
   const onDrop = (statusId: string, e: React.DragEvent) => {
     e.preventDefault();
@@ -219,6 +281,8 @@ export function KanbanPage() {
           />
         </div>
       </div>
+
+      <FilterPresets page="kanban" criteria={criteria} onApply={applyPreset} />
 
       {statuses.length === 0 && board.archived.length === 0 ? (
         <div className="empty-state">

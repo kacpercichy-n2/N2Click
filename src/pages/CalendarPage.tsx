@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useStore } from '../store/AppStore';
+import { DEFAULT_FILTER_CRITERIA } from '../store/storage';
 import { PersonFilter } from '../components/PersonFilter';
 import { WeekView } from '../components/WeekView';
 import { MonthView } from '../components/MonthView';
@@ -13,21 +14,40 @@ import {
 
 type ViewMode = 'week' | 'month';
 
+// Stabilna pusta lista chipów osób (referencja) na czas braku zapamiętanego filtra.
+const EMPTY_PERSON_IDS: string[] = [];
+
 export function CalendarPage() {
-  const { state } = useStore();
+  const { state, dispatch } = useStore();
   const [view, setView] = useState<ViewMode>('week');
   const [anchor, setAnchor] = useState<string>(() => todayStr());
-  const [filter, setFilter] = useState<Set<string>>(new Set());
+
+  // Zaznaczenie osób jest ZAPAMIĘTANE w store (`lastFilters.calendar.personIds`)
+  // — przetrwa nawigację i przeładowanie. Set jest wyłącznie POCHODNY (inwariant 7:
+  // zmienia się tylko ŹRÓDŁO zaznaczenia, nie ścieżka wskaźnika kalendarza).
+  const personIds = state.lastFilters.calendar?.personIds ?? EMPTY_PERSON_IDS;
+  const filter = useMemo(() => new Set(personIds), [personIds]);
+
+  const commitPersonIds = (ids: string[]) =>
+    dispatch({
+      type: 'SET_LAST_FILTER',
+      view: 'calendar',
+      filter: {
+        criteria: DEFAULT_FILTER_CRITERIA,
+        personIds: ids,
+        departmentId: '',
+        serviceTypeId: '',
+        planning: '',
+      },
+    });
 
   const toggleFilter = (personId: string) => {
-    setFilter((prev) => {
-      const next = new Set(prev);
-      if (next.has(personId)) next.delete(personId);
-      else next.add(personId);
-      return next;
-    });
+    const next = new Set(filter);
+    if (next.has(personId)) next.delete(personId);
+    else next.add(personId);
+    commitPersonIds([...next]);
   };
-  const resetFilter = () => setFilter(new Set());
+  const resetFilter = () => commitPersonIds([]);
 
   const prev = () =>
     setAnchor((a) => (view === 'week' ? shiftWeek(a, -1) : shiftMonth(a, -1)));

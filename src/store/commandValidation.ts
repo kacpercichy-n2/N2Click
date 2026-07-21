@@ -4,12 +4,22 @@
 // dangling-reference and malformed-estimate commands before any activity row is
 // appended. Draft types come via a TYPE-ONLY import from AppStore so there is no
 // runtime import cycle (AppStore imports these functions at runtime).
-import type { AppData, Project } from '../types';
+import type {
+  AppData,
+  FilterPage,
+  FilterViewKey,
+  LastViewFilter,
+  Project,
+  SavedFilterCriteria,
+  TaskPriority,
+} from '../types';
 import {
   isProjectDocumentKind,
   normalizeProjectDocumentUrl,
 } from '../utils/projectDocuments';
 import { isTicketKind, isTicketPriority, isTicketStatus } from '../utils/tickets';
+import { TASK_PRIORITIES } from '../utils/priority';
+import { isValidDateStr } from '../utils/dates';
 import type {
   TaskDraft,
   ProjectDraft,
@@ -157,4 +167,154 @@ export function isValidTicketDraft(state: AppData, draft: TicketDraft): boolean 
 /** Status zgłoszenia należy do stałego zbioru wartości. */
 export function isValidTicketStatus(value: unknown): boolean {
   return isTicketStatus(value);
+}
+
+// ---- Filtry: sanityzacja kryteriów i „ostatnio użytego” filtra ---------------
+// Czyste helpery współdzielone przez reduktor (`SET_LAST_FILTER`,
+// `SAVE_FILTER_PRESET`) i repair wczytania (storage.ts). Trzymane TU (a nie w
+// selectors/storage), bo storage może je reużyć bez cyklu importów: ten moduł
+// zależy tylko od `types` (type-only), `utils/*` — nigdy od `storage`/`selectors`.
+
+/** Widoki zapamiętywanych filtrów — stały zbiór (patrz `FilterViewKey`). */
+export const FILTER_VIEW_KEYS: readonly FilterViewKey[] = [
+  'projects',
+  'tasks',
+  'kanban',
+  'workload',
+  'calendar',
+  'timeline',
+];
+
+export function isFilterViewKey(value: unknown): value is FilterViewKey {
+  return typeof value === 'string' && (FILTER_VIEW_KEYS as readonly string[]).includes(value);
+}
+
+/** Strony obsługujące nazwane presety filtrów (`SavedFilter.page`). */
+const FILTER_PAGES: readonly FilterPage[] = ['projects', 'tasks', 'kanban'];
+
+export function isFilterPage(value: unknown): value is FilterPage {
+  return typeof value === 'string' && (FILTER_PAGES as readonly string[]).includes(value);
+}
+
+// Dozwolone wartości filtra planowania. Kopia `PLANNING_STATUSES` z selectors.ts —
+// tu jako stały zbiór, bo import selectors dałby cykl (selectors → storage →
+// commandValidation). Jeśli etykiety planowania kiedyś się zmienią, zaktualizuj
+// oba miejsca.
+const PLANNING_FILTER_VALUES: readonly string[] = [
+  'nie rozplanowano',
+  'częściowo',
+  'rozplanowano',
+  'przekroczono',
+];
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function asString(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function dedupeStrings(values: unknown[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of values) {
+    if (typeof v !== 'string' || seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+  }
+  return out;
+}
+
+/**
+ * Buduje poprawne `SavedFilterCriteria` z surowej wartości (nieznane pola pomijane,
+ * brakujące dostają wartość „wszystko”). Sanityzacja referencji jak w
+ * `normalizeTaskMeta`: dangling `projectId`/`workCategoryId` → '', `priority` spoza
+ * enuma → '', niepoprawne `from`/`to` → ''. Deterministyczne i idempotentne po
+ * wartości. Nie importuje `DEFAULT_FILTER_CRITERIA` (unika cyklu ze storage) —
+ * pola są wypisane jawnie.
+ */
+export function sanitizeFilterCriteria(state: AppData, raw: unknown): SavedFilterCriteria {
+  const obj = isPlainObject(raw) ? raw : {};
+  const paid: SavedFilterCriteria['paid'] =
+    obj.paid === 'paid' || obj.paid === 'unpaid' ? obj.paid : 'all';
+  const priorityRaw = obj.priority;
+  const priority: '' | TaskPriority =
+    typeof priorityRaw === 'string' && (TASK_PRIORITIES as readonly string[]).includes(priorityRaw)
+      ? (priorityRaw as TaskPriority)
+      : '';
+  const rawProjectId = asString(obj.projectId);
+  const projectId =
+    rawProjectId !== '' && hasEntity(state, 'project', rawProjectId) ? rawProjectId : '';
+  const rawCategory = asString(obj.workCategoryId);
+  const workCategoryId =
+    rawCategory !== '' && state.workCategories.some((c) => c.id === rawCategory) ? rawCategory : '';
+  const from = isValidDateStr(asString(obj.from)) ? asString(obj.from) : '';
+  const to = isValidDateStr(asString(obj.to)) ? asString(obj.to) : '';
+  return {
+    paid,
+    clientId: asString(obj.clientId),
+    projectId,
+    statusId: asString(obj.statusId),
+    personId: asString(obj.personId),
+    priority,
+    workCategoryId,
+    from,
+    to,
+  };
+}
+
+/**
+ * Sanityzuje jeden `LastViewFilter`: kryteria przez `sanitizeFilterCriteria`,
+ * `personIds` do zdeduplikowanej tablicy stringów, `departmentId`/`serviceTypeId`
+ * do stringów, `planning` do wartości z enuma (nieznane → ''). Zawsze zwraca
+ * poprawny obiekt (leniwie koeruje) — struktury pilnuje `isStructuralLastViewFilter`.
+ */
+export function sanitizeLastViewFilter(state: AppData, raw: unknown): LastViewFilter {
+  const obj = isPlainObject(raw) ? raw : {};
+  const personIds = Array.isArray(obj.personIds) ? dedupeStrings(obj.personIds) : [];
+  const planning = PLANNING_FILTER_VALUES.includes(asString(obj.planning))
+    ? asString(obj.planning)
+    : '';
+  return {
+    criteria: sanitizeFilterCriteria(state, obj.criteria),
+    personIds,
+    departmentId: asString(obj.departmentId),
+    serviceTypeId: asString(obj.serviceTypeId),
+    planning,
+  };
+}
+
+/**
+ * Strażnik STRUKTURY dla ładunku reduktora `SET_LAST_FILTER`: obiekt z obiektowym
+ * `criteria` i tablicowym `personIds`. Strukturalnie zniekształcony ładunek =>
+ * reduktor zwraca TĘ SAMĄ referencję stanu (inwariant 6). (Repair wczytania jest
+ * leniwy i nie używa tego strażnika.)
+ */
+export function isStructuralLastViewFilter(raw: unknown): boolean {
+  return isPlainObject(raw) && isPlainObject(raw.criteria) && Array.isArray(raw.personIds);
+}
+
+/** Równość PO WARTOŚCI dwóch `LastViewFilter` — do wykrywania no-op zapisu. */
+export function lastViewFilterEqual(a: LastViewFilter, b: LastViewFilter): boolean {
+  if (a.departmentId !== b.departmentId) return false;
+  if (a.serviceTypeId !== b.serviceTypeId) return false;
+  if (a.planning !== b.planning) return false;
+  if (a.personIds.length !== b.personIds.length) return false;
+  for (let i = 0; i < a.personIds.length; i++) {
+    if (a.personIds[i] !== b.personIds[i]) return false;
+  }
+  const ca = a.criteria;
+  const cb = b.criteria;
+  return (
+    ca.paid === cb.paid &&
+    ca.clientId === cb.clientId &&
+    ca.projectId === cb.projectId &&
+    ca.statusId === cb.statusId &&
+    ca.personId === cb.personId &&
+    ca.priority === cb.priority &&
+    ca.workCategoryId === cb.workCategoryId &&
+    ca.from === cb.from &&
+    ca.to === cb.to
+  );
 }

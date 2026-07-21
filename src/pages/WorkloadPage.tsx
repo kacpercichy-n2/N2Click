@@ -6,7 +6,8 @@ import { Link } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import type { AppData } from '../types';
-import type { WorkloadEntry } from '../types';
+import type { SavedFilterCriteria, WorkloadEntry } from '../types';
+import { DEFAULT_FILTER_CRITERIA } from '../store/storage';
 import {
   availableHoursInRange,
   availableHoursOnDate,
@@ -149,9 +150,36 @@ export function WorkloadPage() {
   const canReassign = can('workload.reassign');
   const canMoveTask = can('tasks.manage');
   const [anchor, setAnchor] = useState(() => todayStr());
-  const [departmentFilter, setDepartmentFilter] = useState('');
-  const [clientFilter, setClientFilter] = useState('');
-  const [serviceFilter, setServiceFilter] = useState('');
+  // Stan filtrów ZAPAMIĘTANY w store (`lastFilters.workload`): dział/typ usługi to
+  // wymiary specyficzne dla widoku (`departmentId`/`serviceTypeId`), klient żyje w
+  // `criteria.clientId`. Setter wysyła pełny snapshot (no-op zapisu identycznego).
+  const remembered = state.lastFilters.workload;
+  const workloadCriteria: SavedFilterCriteria = remembered?.criteria ?? DEFAULT_FILTER_CRITERIA;
+  const departmentFilter = remembered?.departmentId ?? '';
+  const clientFilter = workloadCriteria.clientId;
+  const serviceFilter = remembered?.serviceTypeId ?? '';
+
+  const commitWorkload = (patch: {
+    departmentId?: string;
+    clientId?: string;
+    serviceTypeId?: string;
+  }) =>
+    dispatch({
+      type: 'SET_LAST_FILTER',
+      view: 'workload',
+      filter: {
+        criteria: { ...workloadCriteria, clientId: patch.clientId ?? clientFilter },
+        personIds: [],
+        departmentId: patch.departmentId ?? departmentFilter,
+        serviceTypeId: patch.serviceTypeId ?? serviceFilter,
+        planning: '',
+      },
+    });
+
+  const setDepartmentFilter = (v: string) => commitWorkload({ departmentId: v });
+  const setClientFilter = (v: string) => commitWorkload({ clientId: v });
+  const setServiceFilter = (v: string) => commitWorkload({ serviceTypeId: v });
+
   const [selected, setSelected] = useState<{ personId: string; date: string } | null>(
     null,
   );
@@ -250,11 +278,18 @@ export function WorkloadPage() {
       onRemove: () => setServiceFilter(''),
     });
 
-  const clearAll = () => {
-    setDepartmentFilter('');
-    setClientFilter('');
-    setServiceFilter('');
-  };
+  const clearAll = () =>
+    dispatch({
+      type: 'SET_LAST_FILTER',
+      view: 'workload',
+      filter: {
+        criteria: DEFAULT_FILTER_CRITERIA,
+        personIds: [],
+        departmentId: '',
+        serviceTypeId: '',
+        planning: '',
+      },
+    });
 
   // hours[personId][date] for this week, under the current filters.
   const weekEntries = state.workload.filter((w) => daySet.has(w.date) && entryPasses(w));

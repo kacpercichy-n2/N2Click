@@ -388,7 +388,7 @@ describe('buildDryRunReport — workload + milestones (retirement migration)', (
       tasks: [makeTask({ id: 't1', projectId: 'proj1' })],
       milestones: [{ id: 'm1', projectId: 'proj1', name: 'Kamień', date: '2026-07-08' }],
       workload: [wl({ id: 'w1' })],
-      savedFilters: [{ id: 'f1', name: 'Moje', page: 'tasks', criteria: { paid: 'all', clientId: '', statusId: '', personId: '', priority: '', workCategoryId: '', from: '', to: '' } }],
+      savedFilters: [{ id: 'f1', name: 'Moje', page: 'tasks', criteria: { paid: 'all', clientId: '', projectId: '', statusId: '', personId: '', priority: '', workCategoryId: '', from: '', to: '' } }],
     };
     const report = buildDryRunReport(data);
     expect(report.counts.target.workload_entries).toBe(1);

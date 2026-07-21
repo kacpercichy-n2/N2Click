@@ -273,6 +273,7 @@ describe('Work category CRUD', () => {
           criteria: {
             paid: 'all',
             clientId: '',
+            projectId: '',
             statusId: '',
             personId: '',
             priority: '',

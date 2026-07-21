@@ -2126,3 +2126,127 @@ describe('cloud retirement marker helpers', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// PKG-20260721-filters-store: SavedFilterCriteria.projectId + AppData.lastFilters
+// additive at DATA_VERSION 7. Load defaults + sanitizes both on every load.
+// ---------------------------------------------------------------------------
+
+describe('savedFilter projectId (additive at v7)', () => {
+  it("legacy savedFilter without projectId loads with projectId '' and untouched criteria", () => {
+    const filter = {
+      id: 'f1',
+      name: 'A',
+      page: 'tasks',
+      criteria: { paid: 'unpaid', clientId: 'c1', statusId: 's1', personId: 'p1', from: '', to: '' },
+    };
+    const payload = { ...emptyData(), savedFilters: [filter] };
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+    expect(data.savedFilters[0].criteria.projectId).toBe('');
+    expect(data.savedFilters[0].criteria.clientId).toBe('c1');
+    expect(data.savedFilters[0].criteria.paid).toBe('unpaid');
+  });
+
+  it("resets a dangling savedFilter projectId to '' while preserving a valid reference", () => {
+    const project: Project = {
+      id: 'p1',
+      clientId: '',
+      name: 'P',
+      description: '',
+      statusId: '',
+      paid: false,
+      startDate: '2026-07-06',
+      endDate: '2026-07-12',
+      departmentId: '',
+      serviceTypeId: '',
+      documents: [],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    const dangling = {
+      id: 'f1',
+      name: 'A',
+      page: 'tasks',
+      criteria: { ...DEFAULT_FILTER_CRITERIA, projectId: 'ghost' },
+    } as unknown as SavedFilter;
+    const valid = {
+      id: 'f2',
+      name: 'B',
+      page: 'tasks',
+      criteria: { ...DEFAULT_FILTER_CRITERIA, projectId: 'p1' },
+    } as unknown as SavedFilter;
+    const next = normalizeTaskMeta({ ...emptyData(), projects: [project], savedFilters: [dangling, valid] });
+    expect(next.savedFilters.find((f) => f.id === 'f1')!.criteria.projectId).toBe('');
+    expect(next.savedFilters.find((f) => f.id === 'f2')!.criteria.projectId).toBe('p1');
+  });
+});
+
+describe('AppData.lastFilters (additive at v7)', () => {
+  it('a payload WITHOUT lastFilters loads as {}', () => {
+    const { lastFilters: _drop, ...payload } = emptyData();
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+    expect(data.lastFilters).toEqual({});
+  });
+
+  it('coerces a present-but-non-object lastFilters (array) to {}', () => {
+    const payload = { ...emptyData(), lastFilters: ['nope'] as unknown };
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+    expect(data.lastFilters).toEqual({});
+  });
+
+  it('drops unknown view keys and sanitizes entries deterministically', () => {
+    const payload = {
+      ...emptyData(),
+      lastFilters: {
+        bogus: { criteria: {}, personIds: [] }, // unknown view -> dropped
+        tasks: {
+          criteria: { ...DEFAULT_FILTER_CRITERIA, priority: 'critical', projectId: 'ghost', from: 'garbage' },
+          personIds: ['a', 'a', 3, 'b'],
+          departmentId: 42,
+          serviceTypeId: 'srv',
+          planning: 'nieznane',
+        },
+      } as unknown,
+    };
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+    expect('bogus' in data.lastFilters).toBe(false);
+    const tasks = data.lastFilters.tasks!;
+    expect(tasks.criteria.priority).toBe('');
+    expect(tasks.criteria.projectId).toBe('');
+    expect(tasks.criteria.from).toBe('');
+    expect(tasks.personIds).toEqual(['a', 'b']);
+    expect(tasks.departmentId).toBe('');
+    expect(tasks.serviceTypeId).toBe('srv');
+    expect(tasks.planning).toBe('');
+  });
+
+  it('lastFilters repair is value-idempotent (load -> save-shape -> load)', () => {
+    const payload = {
+      ...emptyData(),
+      lastFilters: {
+        calendar: { criteria: { ...DEFAULT_FILTER_CRITERIA }, personIds: ['x'], departmentId: '', serviceTypeId: '', planning: '' },
+      },
+    };
+    const once = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+    const twice = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(once) }, () => loadData());
+    expect(twice.lastFilters).toEqual(once.lastFilters);
+  });
+
+  it('normalizeDates repairs invalid from/to inside a lastFilters entry', () => {
+    const data: AppData = {
+      ...emptyData(),
+      lastFilters: {
+        tasks: {
+          criteria: { ...DEFAULT_FILTER_CRITERIA, from: 'garbage', to: '2026-07-20' },
+          personIds: [],
+          departmentId: '',
+          serviceTypeId: '',
+          planning: '',
+        },
+      },
+    };
+    const next = normalizeDates(data);
+    expect(next.lastFilters.tasks!.criteria.from).toBe('');
+    expect(next.lastFilters.tasks!.criteria.to).toBe('2026-07-20');
+  });
+});

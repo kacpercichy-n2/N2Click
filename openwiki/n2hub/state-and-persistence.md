@@ -29,8 +29,9 @@
   categories → their tables; RLS: admin-only) and for PERSON PROFILE UPDATES
   (profiles UPDATE only — account creation stays with provisioning and
   deletion with the Supabase operator; PeoplePage hides add/delete in supabase
-  mode). Only per-user saved filters and sample/reset remain local-only
-  concepts (SampleBanner never renders in supabase mode).
+  mode). Only per-user saved filters, per-view last-used filters
+  (`AppData.lastFilters`) and sample/reset remain local-only concepts
+  (SampleBanner never renders in supabase mode).
   Constraint-violation write errors (23502/23503/23505/23514) drop the op with
   the Polish permission notice rather than stalling the retry queue. Local mode:
   zero diff.
@@ -117,6 +118,25 @@
   triggerem `protect_profile_privileges`); mapowana przez
   referenceData/cloudMirror i hydrowana przez MERGE_CLOUD_PEOPLE (patrz
   cloud-database).
+- FILTRY UJEDNOLICONE I TRWAŁE (2026-07-21): `SavedFilterCriteria.projectId`
+  (''=wszystkie) i `AppData.lastFilters` (`Partial<Record<FilterViewKey,
+  LastViewFilter>>` — ostatnio użyty filtr per widok: projects/tasks/kanban/
+  workload/calendar/timeline). Oba ADDYTYWNE (`DATA_VERSION` zostaje na 7) i
+  LOKALNE ONLY (jak `savedFilters` — brak domu w chmurze; per-użytkownik).
+  `FilterPage` zyskuje `'kanban'`. Repair na KAŻDYM wczytaniu: `normalizeTaskMeta`
+  daje presetom brakujący `projectId` (dangling → ''), a `lastFilters` odrzuca
+  nieznane klucze widoków i sanityzuje wpisy współdzielonym
+  `sanitizeLastViewFilter` (commandValidation: kryteria wypełnione, dangling
+  projectId/workCategoryId → '', priority/planning spoza enuma → '', personIds
+  zdeduplikowane); `normalizeDates` czyści from/to także w `lastFilters`. Zapis:
+  reduktor `SET_LAST_FILTER` (sanityzuj → porównaj po wartości → no-op zwraca tę
+  samą referencję; nieznany widok / strukturalnie zły ładunek → ta sama
+  referencja, inwariant 6). `SAVE_FILTER_PRESET` waliduje `page` i kryteria;
+  kaskady `deleteProject`/`DELETE_WORK_CATEGORY` czyszczą pole w savedFilters
+  ORAZ lastFilters. `MERGE_CLOUD_*` zostawiają `lastFilters` i `savedFilters` po
+  referencji; `persistGate.NON_MIRRORED_KEYS` zawiera `lastFilters` (zmiana
+  samych filtrów NIGDY nie pomija zapisu lokalnego). Testy: `filterState.test.ts`,
+  rozszerzenia w `storage.test.ts`/`cloudMerge.test.ts`/`persistGate.test.ts`.
 - `Client` carries contact fields (contactName/contactEmail/contactPhone/notes;
   columns from 20260718090000_clients_contact_fields, '' or missing = none — no
   repair pass, use-sites coalesce), edited on the `/clients` page via
@@ -166,8 +186,8 @@
   dangling workload row, or a milestone with a bad date/missing project) returns
   the prior state reference; a valid merge replaces same-id rows, keeps local-only
   rows and reconciles a duplicate bin pair to the cloud-id row with grid-snapped
-  summed hours. It never touches people/statuses/savedFilters/dictionaries (by
-  reference); workload and milestones ARE now merged.
+  summed hours. It never touches people/statuses/savedFilters/lastFilters/
+  dictionaries (by reference); workload and milestones ARE now merged.
 - SEAMLESS BACKGROUND REFRESH (Realtime). A `postgres_changes` event is only a
   "something changed" signal: `CloudSyncProvider` debounces bursts (1200 ms) into
   ONE full snapshot + `MERGE_CLOUD_ENTITIES`. Three rules keep it invisible:

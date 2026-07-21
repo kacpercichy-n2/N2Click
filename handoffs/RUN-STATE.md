@@ -1,48 +1,54 @@
-# Run state — 20260721-124104-239 task card hours and publish
+# Run state — 20260721-135536-240 unified and persistent filters
 
 ## Goal
 
-Drafts (`Task.isDraft`) accept per-person sold hours in TaskModal, persisted in
-a new additive `Task.draftHours` field (mirrored as `tasks.draft_hours` jsonb),
-materialized into bin `WorkloadEntry` rows on publish (one row per
-`(taskId, personId)`, invariant 4). TaskModal also gains a per-person
-availability panel (`rangeAvailabilityForPerson`) and split draft actions:
-"Zapisz szkic" / "Opublikuj" (existing draft → PUBLISH_TASK) and
-"Utwórz szkic" / "Utwórz i opublikuj" (new draft → non-draft SAVE_TASK).
+Add `SavedFilterCriteria.projectId` (+ „Projekt” filter on Tasks), unify
+person/client/project filtering across kanban/projects/tasks (kanban gains
+presets via additive `FilterPage: 'kanban'`), and persist the last-used filter
+per view in a new local-only `AppData.lastFilters` collection (reducer
+`SET_LAST_FILTER` + storage.ts repair), so filters survive navigation and
+reload. Data version stays 7 (additive, defaulted + sanitized on load).
 
 ## Packages
 
-- `handoffs/scheduler-reviews/239-architect-package.md`
-  (PKG-20260721-task-card-hours-publish) — Tier: developer, Risk: high,
-  Codex: required. Status: ready.
+- `handoffs/scheduler-reviews/240-architect-package.md`
+  - PKG-20260721-filters-store — developer, medium risk, Codex required.
+    Status: ready.
+  - PKG-20260721-filters-pages — developer, medium risk, Codex conditional.
+    Depends on filters-store. Status: ready.
 
 ## Changed boundaries (planned)
 
-- `Task.draftHours?` additive; key present only on drafts with hours (canonical
-  form keeps `sameRowValue` merges reference-preserving); deleted at publish.
-- `saveTask` draft branch persists it from `binTotals`; publish helpers
-  materialize bin rows and strip the field; `normalizeTaskMeta` repair.
-- New migration `20260721130000_task_draft_hours.sql`; `taskRow` +
-  `loadPlannerSnapshot` map `[{profile_id, hours}]` via people maps.
-- TaskModal: sold-hours unhidden for drafts (bin/grid stay hidden),
-  availability rows, split sticky actions gated by `tasks.manage`.
+- types.ts: `projectId` in criteria, `FilterPage`+'kanban', `FilterViewKey`,
+  `LastViewFilter`, `AppData.lastFilters`.
+- storage.ts: DEFAULT_FILTER_CRITERIA, emptyData, load coercion,
+  normalizeTaskMeta/normalizeDates repair for lastFilters; persistGate
+  NON_MIRRORED_KEYS + 'lastFilters'.
+- AppStore: SET_LAST_FILTER, SAVE_FILTER_PRESET validation, deleteProject /
+  DELETE_WORK_CATEGORY cascades. MERGE_CLOUD_* keep lastFilters by reference.
+- Six pages move filter state from useState to store-backed lastFilters.
+
+## Deviation (recorded)
+
+Queue prompt asked for cloud persistence via MERGE_CLOUD_*; savedFilters is a
+deliberately local-only per-user concept (wiki + reducer), so lastFilters is
+local-only beside it. No Supabase schema.
 
 ## Verification
 
-- Focused: draftTasks, storage, saveTaskWorkload, cloudMerge, cloudMirror,
-  plannerData, migrations suites (exact command in the package).
-- Browser: none — no scenario covers the draft modal; release matrix owns it.
-- Scheduler owns final `npm test && npm run build` (933 baseline stale, ~1086).
+- Focused: storage, filterState (new), cloudMerge, persistGate suites; build.
+- Browser: none — no pointer-path changes.
+- Scheduler owns final `npm test && npm run build`.
 
 ## Open questions
 
-- None blocking. Wiki likely stale after green: state-and-persistence "SZKICE
-  ZADAŃ" (drafts now carry hours) + cloud-database (`tasks.draft_hours`) —
-  final reviewer owns the verdict.
+- None blocking. Wiki after green: state-and-persistence (savedFilters →
+  + lastFilters, FilterPage 'kanban') likely stale.
 
-## Developer result (2026-07-21)
+## Developer result (both PKGs, green)
 
-Implemented as specified across types/AppStore/storage/cloud/TaskModal +
-migration; `dataImport.ts` also carries `draft_hours`. Focused suite green;
-full `npm test` 1116/1116 pass, `npm run build` clean. No scope expansion; no
-Codex needed. Next: scheduler re-runs the gate + reviewer/Codex pass.
+Implemented PKG-A + PKG-B. Store: types/storage/AppStore/commandValidation/
+persistGate/seed. Pages: FilterPresets + 6 pages moved to store-backed
+lastFilters (sanitizers in commandValidation, no cycle). Context expanded to
+seed.ts (required lastFilters:{}) + 2 test-literal fixes (exportDryRun/taskMeta).
+`npm test` 1142 pass, `npm run build` green. Wiki updated. No blockers.

@@ -278,11 +278,12 @@ export interface Ticket {
   updatedAt: string; // ISO timestamp; odświeżany przy każdym zapisie
 }
 
-export type FilterPage = 'projects' | 'tasks';
+export type FilterPage = 'projects' | 'tasks' | 'kanban';
 
 export interface SavedFilterCriteria {
   paid: 'all' | 'paid' | 'unpaid'; // meaningful on projects; keep 'all' for tasks
   clientId: string; // '' = all
+  projectId: string; // '' = all; meaningful on tasks/kanban — additive at v7
   statusId: string; // '' = all
   personId: string; // '' = all; assignee — meaningful on tasks
   priority: '' | TaskPriority; // '' = all; meaningful on tasks
@@ -296,6 +297,28 @@ export interface SavedFilter {
   name: string;
   page: FilterPage;
   criteria: SavedFilterCriteria;
+}
+
+/** Widoki, których ostatnio używany filtr zapamiętujemy (lokalnie, NIE w chmurze).
+ *  Filtry są per-użytkownik — jak `savedFilters` nie mają domu w chmurze. */
+export type FilterViewKey =
+  | 'projects'
+  | 'tasks'
+  | 'kanban'
+  | 'workload'
+  | 'calendar'
+  | 'timeline';
+
+/** Ostatnio używany (nienazwany) filtr dla jednego widoku. Trzymamy OBOK
+ *  `savedFilters` w `AppData`, wyłącznie lokalnie — przetrwanie nawigacji i
+ *  przeładowania. Sanityzowany i defaultowany na każdym wczytaniu (storage.ts)
+ *  oraz przy zapisie przez reduktor (`SET_LAST_FILTER`). */
+export interface LastViewFilter {
+  criteria: SavedFilterCriteria; // single-select dims + from/to dates
+  personIds: string[]; // PersonFilter multi-chips; [] = all
+  departmentId: string; // workload-only dim; '' = all
+  serviceTypeId: string; // workload-only dim; '' = all
+  planning: string; // tasks-only planning filter; '' = all
 }
 
 export interface AppData {
@@ -320,5 +343,10 @@ export interface AppData {
   // (no version bump) — defaulted + sanitized on every load in storage.ts.
   impersonatorId: string;
   sampleBannerDismissed: boolean;
-  savedFilters: SavedFilter[]; // named filter presets for Projects/Tasks pages
+  savedFilters: SavedFilter[]; // named filter presets for Projects/Tasks/Kanban pages
+  // Ostatnio używany filtr per widok (nienazwany). LOKALNIE ONLY — jak
+  // `savedFilters` nie ma domu w chmurze (per-użytkownik). Addytywne przy v7:
+  // defaultowane do `{}` i sanityzowane na każdym wczytaniu. Nieznane klucze
+  // widoków są odrzucane na wczytaniu.
+  lastFilters: Partial<Record<FilterViewKey, LastViewFilter>>;
 }

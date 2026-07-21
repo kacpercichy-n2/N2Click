@@ -693,5 +693,6 @@ export function buildSampleData(): AppData {
     impersonatorId: '',
     sampleBannerDismissed: true,
     savedFilters: [],
+    lastFilters: {},
   };
 }

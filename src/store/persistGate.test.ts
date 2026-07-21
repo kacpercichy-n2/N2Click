@@ -66,6 +66,9 @@ describe('touchesOnlyMirrored', () => {
     expect(touchesOnlyMirrored(prev, { ...prev, savedFilters: [...prev.savedFilters] })).toBe(false);
     expect(touchesOnlyMirrored(prev, { ...prev, currentUserId: 'x' })).toBe(false);
     expect(touchesOnlyMirrored(prev, { ...prev, impersonatorId: 'y' })).toBe(false);
+    // lastFilters jest NON_MIRRORED (lokalne only) — zmiana samych filtrów nie
+    // może zostać zaklasyfikowana jako „tylko lustrzane”.
+    expect(touchesOnlyMirrored(prev, { ...prev, lastFilters: { ...prev.lastFilters } })).toBe(false);
   });
 });
 
@@ -118,6 +121,23 @@ describe('shouldSkipLocalPersist', () => {
       setCloudMirrorHealthy(true);
       const prev = base();
       expect(shouldSkipLocalPersist(prev, { ...prev, statuses: [...prev.statuses] })).toBe(false);
+    });
+  });
+
+  it('never skips a lastFilters-only transition (its only persistence is local)', () => {
+    withLocalStorage(() => {
+      configureSupabaseEnv();
+      writeCloudRetirementMarker({ enabled: true });
+      setCloudMirrorHealthy(true);
+      const prev = base();
+      const next: AppData = { ...prev, lastFilters: { tasks: {
+        criteria: {
+          paid: 'all', clientId: '', projectId: '', statusId: '', personId: '',
+          priority: '', workCategoryId: '', from: '', to: '',
+        },
+        personIds: ['x'], departmentId: '', serviceTypeId: '', planning: '',
+      } } };
+      expect(shouldSkipLocalPersist(prev, next)).toBe(false);
     });
   });
 });

@@ -217,6 +217,53 @@ describe('MERGE_CLOUD_ENTITIES — merge semantics', () => {
     expect(next.clients.map((c) => c.id)).toEqual(['c-cloud']);
   });
 
+  it('leaves populated savedFilters AND lastFilters by reference on a full valid merge', () => {
+    const savedFilters = [
+      {
+        id: 'f1',
+        name: 'A',
+        page: 'tasks' as const,
+        criteria: {
+          paid: 'all' as const,
+          clientId: '',
+          projectId: '',
+          statusId: '',
+          personId: '',
+          priority: '' as const,
+          workCategoryId: '',
+          from: '',
+          to: '',
+        },
+      },
+    ];
+    const lastFilters = {
+      tasks: {
+        criteria: {
+          paid: 'all' as const,
+          clientId: '',
+          projectId: '',
+          statusId: '',
+          personId: '',
+          priority: '' as const,
+          workCategoryId: '',
+          from: '',
+          to: '',
+        },
+        personIds: ['x'],
+        departmentId: '',
+        serviceTypeId: '',
+        planning: '',
+      },
+    };
+    const state: AppData = { ...baseState(), savedFilters, lastFilters };
+    const next = merge(state, {
+      ...emptyPayload(),
+      clients: [client({ id: 'c-cloud', name: 'X' })],
+    });
+    expect(next.savedFilters).toBe(state.savedFilters);
+    expect(next.lastFilters).toBe(state.lastFilters);
+  });
+
   it('merges cloud comments and activity, appending by id (append semantics)', () => {
     const state = baseState();
     const cloudComment: Comment = {
