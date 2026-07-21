@@ -296,6 +296,35 @@ describe('loadPlannerSnapshot', () => {
     expect('draftHours' in result.payload.tasks.find((t) => t.id === TK2)!).toBe(false);
   });
 
+  it('hydrates recurrence only for published rows: canonical, NULL/draft => key absent', async () => {
+    const TK2 = uuid('task-two');
+    const TK3 = uuid('task-three');
+    const rec = {
+      daysOfWeek: [1],
+      startMinutes: 540,
+      durationMinutes: 60,
+      overrides: [{ date: '2026-07-13', skip: true }],
+    };
+    const db = new FakeSelectDb()
+      .seed('projects', [
+        { id: PR, client_id: null, name: 'P', description: '', status_id: S1, paid: false, start_date: '2026-07-06', end_date: '2026-07-20', department_id: null, service_type_id: null, created_at: '', updated_at: '' },
+      ])
+      .seed('tasks', [
+        // Published with a rule + override — hydrated canonically.
+        { id: TK, project_id: PR, status_id: S1, title: 'Cykliczne', description: '', start_date: '2026-07-06', end_date: '2026-07-20', estimated_hours: null, priority: 'normal', work_category_id: null, checklist: [], order_index: 0, is_draft: false, recurrence: rec, created_at: '', updated_at: '' },
+        // NULL column => key absent.
+        { id: TK2, project_id: PR, status_id: S1, title: 'Bez reguły', description: '', start_date: '2026-07-06', end_date: '2026-07-20', estimated_hours: null, priority: 'normal', work_category_id: null, checklist: [], order_index: 0, is_draft: false, recurrence: null, created_at: '', updated_at: '' },
+        // Draft row carrying a rule => never hydrated.
+        { id: TK3, project_id: PR, status_id: S1, title: 'Szkic z regułą', description: '', start_date: '2026-07-06', end_date: '2026-07-20', estimated_hours: null, priority: 'normal', work_category_id: null, checklist: [], order_index: 0, is_draft: true, recurrence: rec, created_at: '', updated_at: '' },
+      ]);
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.payload.tasks.find((t) => t.id === TK)!.recurrence).toEqual(rec);
+    expect('recurrence' in result.payload.tasks.find((t) => t.id === TK2)!).toBe(false);
+    expect('recurrence' in result.payload.tasks.find((t) => t.id === TK3)!).toBe(false);
+  });
+
   it('round-trip nieruszonego szkicu zachowuje formę kanoniczną draftHours (mirror -> hydracja)', async () => {
     const localTask: Task = {
       id: TK, projectId: PR, statusId: S1, title: 'Szkic', description: '',

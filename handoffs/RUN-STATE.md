@@ -1,56 +1,65 @@
-# Run state — 20260721-150911-243 companies scoping and visibility
+# Run state — 20260721-154537-244 recurring tasks
 
 ## Goal
 
-Company (Spółka) concept: `companies` dictionary (local + `public.companies`),
-admin-assigned `Person.companyId` / `profiles.company_id`, and a strictly
-NARROWING company condition woven into the `projects_select` RLS policy.
-Security-sensitive; high risk.
+Recurring tasks in the calendar: `Task.recurrence` rule + per-date overrides,
+pure `src/utils/recurrence.ts` expansion (window-only, never materialized),
+TaskModal section „Cykliczność”, presentational occurrence blocks in
+WeekView (context menu: edit one / edit all) and a MonthView marker, cloud
+column `tasks.recurrence` (jsonb, RLS inherited from tasks).
 
 ## Packages
 
-- `handoffs/packages/companies-scoping.md` — PKG-20260721-companies-scoping,
-  tier: developer, status: ready. Single package (implementation, RLS SQL and
-  tests are inseparable). Codex review required.
+- `handoffs/packages/244-recurrence-core.md` — PKG-20260721-recurrence-core,
+  tier: developer, ready. Model, util, reducer actions, storage repair, cloud
+  mapping, migration `20260721170000_task_recurrence.sql`, tests, two wiki
+  pages. Codex review required.
+- `handoffs/packages/244-recurrence-ui.md` — PKG-20260721-recurrence-ui,
+  tier: developer, ready, depends on core. TaskModal + WeekView overlay/menu +
+  MonthView marker + scheduling wiki. High risk (invariant 7); Codex review
+  required.
 
 ## Changed boundaries (planned)
 
-- New migration `supabase/migrations/20260721160000_companies.sql`: companies
-  table + policies, `profiles.company_id`, `app.current_company_id()`,
-  `app.project_in_company_scope()`, extended `protect_profile_privileges`
-  trigger (company_id admin-only), replaced `projects_select`
-  (baseline: 20260720190000), realtime publication.
-- Local model additive (DATA_VERSION stays 7): `AppData.companies`,
-  ADD/RENAME/DELETE_COMPANY, MERGE_CLOUD_DICTIONARIES/PEOPLE extensions,
-  storage repair, persistGate key, referenceData/cloudMirror wiring, App.tsx
-  dictionary dispatch, AdminPage „Spółki”, PersonProfilePage „Spółka”
-  (admin-only via profileEditPolicy).
+- `src/types.ts`, `AppStore.tsx` (SET_TASK_RECURRENCE,
+  SET_RECURRENCE_OVERRIDE), `storage.ts` (normalizeTaskMeta pass, version
+  stays 7), `selectors.ts` (recurrenceOccurrencesForDate), new
+  `utils/recurrence.ts`, `cloudMirror.ts`/`plannerData.ts`, new migration +
+  `migrations.test.ts` registry (EXPECTED_POLICIES unchanged).
+- UI: TaskModal, WeekView (additive overlay + recurMenu + one openSlotMenu
+  guard), MonthView, styles.css.
+
+## Dev log
+
+- recurrence-core DONE. Added `TaskRecurrence`/`RecurrenceOverride`+Task field,
+  `utils/recurrence.ts`, reducer `SET_TASK_RECURRENCE`/`SET_RECURRENCE_OVERRIDE`
+  (invariant-6 same-ref), SAVE_TASK startDate re-anchor, storage repair,
+  `recurrenceOccurrencesForDate` selector, migration `20260721170000`,
+  cloudMirror/plannerData mapping, 2 wiki pages. `npm test` 1244 pass (+~50 new),
+  `npm run build` green. Migration NOT applied to hosted Supabase. No context
+  expansion beyond declared touchpoints.
+
+- recurrence-ui DONE. TaskModal „Cykliczność" section (weekday chips/start/dur/
+  until, explicit dispatch, no auto-save), WeekView additive `.week-recur-block`
+  overlay + `recurMenu` (no pointer handlers; openSlotMenu `.week-recur-block`
+  guard), MonthView `.month-cell-recur` ⟳, styles.css, scheduling wiki. Overlay
+  rendered BEFORE packed.map so real blocks paint on top (deviation from "after")
+  — avoids touching `.week-block` stacking. `npm test` 1244 pass, build green,
+  browser-check-bin-drag/placement/bin-split all PASS (`topAtBlock=week-block`).
+  No context expansion beyond declared touchpoints.
 
 ## Key settled decisions
 
-- Company is a FILTER AND-ed onto today's non-admin conditions; true when the
-  user has no company — provably non-widening, company-less users keep
-  identical visibility. Project-in-company = any project member/task assignee
-  with that company; projects with no company-carrying people stay visible to
-  all (a manager's fresh empty project must not vanish on hydration).
-- Unified-filters (240) company criterion deferred — separate additive feature.
-- `tasks_select` untouched (client hydration cascade hides dependents);
-  raw-API limitation accepted and documented in the package.
+- Recurrence embedded on Task (jsonb column, checklist/draftHours precedent);
+  anchor = task.startDate, end = `until` only; overrides shift time or skip,
+  never move the date; canonical form is load-bearing for merge no-ops; drafts
+  cannot carry a rule; occurrences are presentational only, no drag.
 
 ## Verification
 
-Focused vitest set named in the package, then full `npm test` (933+) and
-`npm run build`. Migration is not applied to the hosted project by this run.
+Focused vitest per core package; UI package runs full `npm test`, build and
+`browser-check-bin-drag`. Migration NOT applied to hosted Supabase.
 
 ## Open questions
 
 None blocking.
-
-## Developer result (implementation)
-
-Implemented per package: new migration, local model (types/AppStore/storage/
-seed/persistGate), cloud wiring (referenceData/cloudMirror/App), UI (AdminPage
-„Spółki”, PersonProfilePage „Spółka” admin-only), new `companies.test.ts` +
-fixture/extension updates, three wiki pages. Focused vitest 337 passed; full
-`npm test` 1190 passed; `npm run build` green; `tsc --noEmit` clean. No
-deviations. Migration NOT applied to hosted Supabase.

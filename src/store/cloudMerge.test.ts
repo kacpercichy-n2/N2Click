@@ -724,6 +724,37 @@ describe('MERGE_CLOUD_ENTITIES — bezszwowe odświeżanie (referencje)', () => 
     expect(next.assignments).toBe(state.assignments);
   });
 
+  it('wiersz z cyklicznością identyczny wartościowo zachowuje SWOJĄ referencję (forma kanoniczna nośna)', () => {
+    const rec = {
+      daysOfWeek: [1],
+      startMinutes: 540,
+      durationMinutes: 60,
+      overrides: [{ date: '2026-07-13', skip: true as const }],
+    };
+    const state: AppData = {
+      ...mirroredState(),
+      tasks: [
+        makeTask({ id: T1, projectId: 'proj-1', recurrence: rec }),
+        makeTask({ id: T2, projectId: 'proj-1' }),
+      ],
+    };
+    const payload = mirrorPayload(state); // świeże obiekty, te same wartości
+    const next = merge(state, payload);
+    // Wartościowo identyczna cykliczność => wiersz zachowuje referencję.
+    expect(next.tasks[0]).toBe(state.tasks[0]);
+    expect(next.tasks).toBe(state.tasks);
+
+    // Realna zmiana w regule MUSI dać nowy obiekt.
+    const changed = mirrorPayload(state);
+    changed.tasks[0] = {
+      ...changed.tasks[0],
+      recurrence: { ...rec, overrides: [{ date: '2026-07-20', skip: true as const }] },
+    };
+    const nextChanged = merge(state, changed);
+    expect(nextChanged.tasks[0]).not.toBe(state.tasks[0]);
+    expect(nextChanged.tasks[0].recurrence!.overrides).toEqual([{ date: '2026-07-20', skip: true }]);
+  });
+
   it('zagnieżdżone tablice (checklist, mentionIds) porównywane wartościowo, nie referencyjnie', () => {
     const state = mirroredState();
     // Identyczna wartościowo checklist w świeżej tablicy => wiersz bez zmian.

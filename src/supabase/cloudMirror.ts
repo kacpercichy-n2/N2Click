@@ -264,6 +264,10 @@ function taskRow(
     // `[{ profile_id, hours }]`. personId mapowany jak w `ticketRow`; wpis
     // niemapowalny ODPADA (nie zerujemy całego wiersza). Brak `draftHours` => null.
     draft_hours: draftHoursRow(t, maps),
+    // Cykliczność (kolumna 20260721170000_task_recurrence, jsonb): obiekt
+    // kanoniczny zapisywany dosłownie. Wyjątki niosą tylko daty/minuty — bez
+    // profili, więc bez mapowania id. Brak `recurrence` => null.
+    recurrence: t.recurrence ?? null,
     created_at: t.createdAt,
     updated_at: t.updatedAt,
   };

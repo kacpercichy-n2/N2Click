@@ -1858,6 +1858,58 @@ option {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---------- Recurring-task occurrence overlay (presentational only) ----------
+   Visually distinct from real `.week-block`s: a dashed, translucent, striped
+   block that reads as a "ghost" of a repeating task. It carries NO drag/resize
+   affordance and is rendered BEFORE the real blocks in the column, so in the
+   same paint step (tree order) real blocks always paint on top of it — without
+   changing the `.week-block` stacking context (invariant 7). */
+.week-recur-block {
+  position: absolute;
+  left: 1px;
+  right: 2px;
+  z-index: 0;
+  box-sizing: border-box;
+  text-align: left;
+  border: 2px dashed var(--n2-lavender);
+  border-radius: var(--n2-radius-xs);
+  /* Faint diagonal stripes so it never looks like a solid, schedulable block. */
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(196, 150, 255, 0.16) 0,
+    rgba(196, 150, 255, 0.16) 6px,
+    rgba(196, 150, 255, 0.05) 6px,
+    rgba(196, 150, 255, 0.05) 12px
+  );
+  padding: 3px 7px;
+  cursor: pointer;
+  color: var(--text-muted);
+  opacity: 0.85;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+}
+.week-recur-block:hover {
+  opacity: 1;
+}
+.week-recur-block.overridden {
+  border-style: dotted;
+}
+.week-recur-title {
+  font-size: var(--n2-type-xs);
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.week-recur-time {
+  font-size: var(--n2-type-xs);
+  font-family: var(--n2-font-data);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---------- Bin column (Zasobnik: dateless blocks) ---------- */
 
 /* Bin header — right pane header, aligns with the 200px bin pane below. */
@@ -2084,6 +2136,17 @@ option {
   line-height: 1;
   pointer-events: none;
 }
+/* Znacznik cyklicznych zadań w komórce miesiąca — mały ⟳ w rogu (tooltip z
+   tytułami). Czysto prezentacyjny; sumy/kropki bez zmian. */
+.month-cell-recur {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--n2-lavender);
+  pointer-events: none;
+}
 .month-cell-dots {
   display: flex;
   align-items: center;
@@ -2227,6 +2290,66 @@ option {
   font-size: var(--n2-type-xs);
   color: var(--text-muted);
   margin: 0 0 8px;
+}
+
+/* ---------- TaskModal „Cykliczność" (recurrence rule editor) ---------- */
+.recur-weekday-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.recur-day-chip {
+  min-width: 40px;
+  padding: 5px 10px;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-xs);
+  background: var(--card-bg-2);
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: var(--n2-type-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--n2-transition);
+}
+.recur-day-chip:hover:not(:disabled) {
+  border-color: var(--n2-border-strong);
+}
+.recur-day-chip.active {
+  background: var(--n2-lavender);
+  border-color: var(--n2-lavender);
+  color: #1a1030;
+}
+.recur-day-chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.recur-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 4px;
+}
+.recur-overrides {
+  margin-top: 10px;
+}
+.recur-override-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.recur-override-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.recur-override-text {
+  font-size: var(--n2-type-xs);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Task-card checklist progress + category label. */

@@ -26,7 +26,14 @@ import { CommentsPanel } from './CommentsPanel';
 import { AllocationGrid, allocKey, type AllocMap } from './AllocationGrid';
 import { SaveStatus } from './SaveStatus';
 import { personColor } from '../utils/colors';
-import { formatDuration, isBinEntry, snapHours } from '../utils/time';
+import {
+  DAY_MINUTES,
+  MINUTE_STEP,
+  formatDuration,
+  formatMinutes,
+  isBinEntry,
+  snapHours,
+} from '../utils/time';
 import {
   eachDayInclusive,
   inclusiveDayCount,
@@ -36,6 +43,7 @@ import {
   MAX_TASK_PERIOD_DAYS,
   isValidDateStr,
   formatShortWithWeekday,
+  WEEKDAY_LABELS,
 } from '../utils/dates';
 import { useSaveStatus } from '../utils/useSaveStatus';
 import { useAutoSave } from '../utils/useAutoSave';
@@ -45,6 +53,27 @@ import {
   clearNavGuard,
   setNavGuard,
 } from '../utils/dirtyRegistry';
+
+// ---- Recurrence („Cykliczność") local helpers ----
+// Duration choices for a recurrence rule: 0:15…8:00 on the 15-minute grid.
+const RECUR_DURATION_OPTIONS = Array.from({ length: 32 }, (_, i) => (i + 1) * MINUTE_STEP);
+
+// "HH:MM" ↔ minutes-from-midnight (same pattern as WeekView), for the native
+// <input type="time" step={900}> used by the recurrence rule editor.
+function recurTimeToMinutes(value: string): number {
+  const [h, m] = value.split(':');
+  return Number(h) * 60 + Number(m);
+}
+function recurMinutesToTime(min: number): string {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+// 'yyyy-MM-dd' → 'dd.MM.yyyy' for the read-only override list.
+function recurDateLabel(date: string): string {
+  const [y, m, d] = date.split('-');
+  return `${d}.${m}.${y}`;
+}
 
 /**
  * Shared opener hook. Merges the task/project search params onto the CURRENT
@@ -376,6 +405,18 @@ function TaskEditor({
   const [departmentId, setDepartmentId] = useState<string>(existing?.departmentId ?? '');
   const [checklist, setChecklist] = useState<ChecklistItem[]>(existing?.checklist ?? []);
   const [checklistInput, setChecklistInput] = useState('');
+
+  // ---- Cykliczność (recurrence) — LOCAL draft only, seeded once from the task's
+  // canonical rule. Never part of TaskDraft/auto-save: apply/clear/restore
+  // dispatch SET_TASK_RECURRENCE / SET_RECURRENCE_OVERRIDE explicitly so the
+  // delicate SAVE_TASK reconciliation path stays untouched (invariant 6). ----
+  const seedRule = existing?.recurrence;
+  const [recurDays, setRecurDays] = useState<number[]>(seedRule?.daysOfWeek ?? []);
+  const [recurStart, setRecurStart] = useState(
+    seedRule ? recurMinutesToTime(seedRule.startMinutes) : '09:00',
+  );
+  const [recurDurMin, setRecurDurMin] = useState(seedRule?.durationMinutes ?? 60);
+  const [recurUntil, setRecurUntil] = useState(seedRule?.until ?? '');
 
   // ---- Period ----
   // A calendar empty-slot right-click seeds the clicked day (validated — a
@@ -786,6 +827,50 @@ function TaskEditor({
   };
   const checklistDone = checklist.filter((c) => c.done).length;
 
+  // ---- Cykliczność derived values + explicit dispatch handlers ----
+  // Live rule/overrides read from the store each render (not the one-time seed),
+  // so the „Usuń" button and the override list reflect applied changes at once.
+  const liveRule = existing?.recurrence;
+  const recurStartMin = recurTimeToMinutes(recurStart);
+  const recurUntilInvalid = recurUntil !== '' && (!isValidDateStr(recurUntil) || recurUntil < startDate);
+  const recurApplyError =
+    recurDays.length === 0
+      ? 'Wybierz przynajmniej jeden dzień tygodnia.'
+      : !Number.isFinite(recurStartMin) || recurStartMin % MINUTE_STEP !== 0
+        ? 'Początek musi być w krokach co 15 minut.'
+        : recurUntilInvalid
+          ? 'Data „do dnia” nie może być wcześniejsza niż data rozpoczęcia.'
+          : recurStartMin + recurDurMin > DAY_MINUTES
+            ? 'Wystąpienie nie mieści się w dobie — koniec po 24:00.'
+            : null;
+
+  const toggleRecurDay = (iso: number) => {
+    setRecurDays((prev) =>
+      prev.includes(iso) ? prev.filter((d) => d !== iso) : [...prev, iso].sort((a, b) => a - b),
+    );
+  };
+  const applyRecurrence = () => {
+    if (!existing || recurApplyError) return;
+    dispatch({
+      type: 'SET_TASK_RECURRENCE',
+      taskId: existing.id,
+      recurrence: {
+        daysOfWeek: recurDays,
+        startMinutes: recurStartMin,
+        durationMinutes: recurDurMin,
+        ...(recurUntil !== '' ? { until: recurUntil } : {}),
+      },
+    });
+  };
+  const clearRecurrence = () => {
+    if (!existing) return;
+    dispatch({ type: 'SET_TASK_RECURRENCE', taskId: existing.id, recurrence: null });
+  };
+  const restoreOverride = (date: string) => {
+    if (!existing) return;
+    dispatch({ type: 'SET_RECURRENCE_OVERRIDE', taskId: existing.id, date, override: null });
+  };
+
   return (
     <div className="editor task-editor">
       {/* a) Details */}
@@ -978,6 +1063,134 @@ function TaskEditor({
           </div>
         )}
         {readOnly && checklist.length === 0 && <p className="field-hint">Brak elementów.</p>}
+      </div>
+
+      {/* a2) Cykliczność — occurrences are purely presentational (invariant 1);
+          this section only dispatches SET_TASK_RECURRENCE / SET_RECURRENCE_OVERRIDE
+          and never touches the SAVE_TASK draft or auto-save. */}
+      <div className="editor-section">
+        <h2>Cykliczność</h2>
+        {!isEdit || isDraft ? (
+          <p className="field-hint">Zapisz i opublikuj zadanie, aby ustawić cykliczność.</p>
+        ) : !isValidDateStr(startDate) ? (
+          <p className="field-hint">Ustaw datę rozpoczęcia, aby dodać cykliczność.</p>
+        ) : (
+          <>
+            <p className="field-hint">
+              Wystąpienia są tylko podglądem w kalendarzu — nie tworzą zaplanowanych
+              godzin ani nie wpływają na sumy i przeciążenie.
+            </p>
+            <div className="field">
+              <label>Dni tygodnia</label>
+              <div className="recur-weekday-picker">
+                {WEEKDAY_LABELS.map((label, i) => {
+                  const iso = i + 1;
+                  const active = recurDays.includes(iso);
+                  return (
+                    <button
+                      key={iso}
+                      type="button"
+                      className={active ? 'recur-day-chip active' : 'recur-day-chip'}
+                      aria-pressed={active}
+                      disabled={readOnly}
+                      title={roTitle}
+                      onClick={() => toggleRecurDay(iso)}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="field-row">
+              <div className="field">
+                <label htmlFor="recur-start">Początek</label>
+                <input
+                  id="recur-start"
+                  type="time"
+                  step={900}
+                  value={recurStart}
+                  onChange={(e) => setRecurStart(e.target.value)}
+                  disabled={readOnly}
+                  title={roTitle}
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="recur-dur">Czas trwania</label>
+                <select
+                  id="recur-dur"
+                  value={recurDurMin}
+                  onChange={(e) => setRecurDurMin(Number(e.target.value))}
+                  disabled={readOnly}
+                  title={roTitle}
+                >
+                  {RECUR_DURATION_OPTIONS.map((min) => (
+                    <option key={min} value={min}>
+                      {formatDuration(min / 60)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="recur-until">Do dnia (opcjonalnie)</label>
+                <input
+                  id="recur-until"
+                  type="date"
+                  value={recurUntil}
+                  min={startDate}
+                  onChange={(e) => setRecurUntil(e.target.value)}
+                  disabled={readOnly}
+                  title={roTitle}
+                />
+              </div>
+            </div>
+            {recurApplyError && <p className="field-error">{recurApplyError}</p>}
+            {!readOnly && (
+              <div className="recur-actions">
+                <button
+                  type="button"
+                  className="btn primary"
+                  onClick={applyRecurrence}
+                  disabled={recurApplyError !== null}
+                >
+                  Zastosuj cykliczność
+                </button>
+                {liveRule && (
+                  <button type="button" className="btn danger-ghost" onClick={clearRecurrence}>
+                    Usuń cykliczność
+                  </button>
+                )}
+              </div>
+            )}
+            {liveRule && (liveRule.overrides?.length ?? 0) > 0 && (
+              <div className="recur-overrides">
+                <p className="field-hint">Wyjątki:</p>
+                <ul className="recur-override-list">
+                  {liveRule.overrides!.map((ov) => (
+                    <li key={ov.date} className="recur-override-row">
+                      <span className="recur-override-text">
+                        {ov.skip === true
+                          ? `${recurDateLabel(ov.date)} — pominięto`
+                          : `${recurDateLabel(ov.date)} — ${formatMinutes(
+                              ov.startMinutes ?? 0,
+                            )}, ${formatDuration((ov.durationMinutes ?? 0) / 60)}`}
+                      </span>
+                      {!readOnly && (
+                        <button
+                          type="button"
+                          className="btn ghost"
+                          onClick={() => restoreOverride(ov.date)}
+                        >
+                          Przywróć zgodnie z regułą
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </>
+        )}
       </div>
 
       {/* b) Period */}

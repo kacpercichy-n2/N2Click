@@ -27,6 +27,7 @@ import type {
   WorkloadEntry,
 } from '../types';
 import { isValidDateStr, periodError, MAX_TASK_PERIOD_DAYS } from '../utils/dates';
+import { normalizeRecurrence } from '../utils/recurrence';
 import {
   DEFAULT_TICKET_KIND,
   DEFAULT_TICKET_PRIORITY,
@@ -327,7 +328,7 @@ export async function loadPlannerSnapshot(
     db.select('milestones', 'id, project_id, name, milestone_date'),
     db.select(
       'tasks',
-      'id, project_id, status_id, title, description, start_date, end_date, estimated_hours, priority, work_category_id, department_id, checklist, order_index, is_draft, draft_hours, created_at, updated_at',
+      'id, project_id, status_id, title, description, start_date, end_date, estimated_hours, priority, work_category_id, department_id, checklist, order_index, is_draft, draft_hours, recurrence, created_at, updated_at',
     ),
     db.select('task_assignments', 'task_id, profile_id'),
     db.select(
@@ -462,6 +463,13 @@ export async function loadPlannerSnapshot(
       row.is_draft === true && Array.isArray(row.draft_hours)
         ? hydrateDraftHours(row.draft_hours as unknown[], personOf)
         : undefined;
+    // Cykliczność (kolumna 20260721170000_task_recurrence): tylko wiersze
+    // OPUBLIKOWANE (`is_draft !== true`) mogą nieść regułę (forma kanoniczna —
+    // szkic nigdy). `normalizeRecurrence` kanonikalizuje względem daty startu;
+    // NULL/legacy/śmieci => brak klucza. Autorytatywne: podmienia wartość lokalną
+    // przez ścieżkę `MERGE_CLOUD_ENTITIES` (bez zmian w reduktorze scalania).
+    const recurrence =
+      row.is_draft === true ? undefined : normalizeRecurrence(row.recurrence, startDate);
     tasks.push({
       id: str(row.id),
       projectId: str(row.project_id),
@@ -482,6 +490,7 @@ export async function loadPlannerSnapshot(
       // wiersz, brak kolumny, null) czytamy jako opublikowane.
       isDraft: row.is_draft === true,
       ...(draftHours ? { draftHours } : {}),
+      ...(recurrence ? { recurrence } : {}),
       createdAt: str(row.created_at),
       updatedAt: str(row.updated_at) || str(row.created_at),
     });

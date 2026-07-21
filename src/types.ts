@@ -157,8 +157,53 @@ export interface Task {
   // zadaniu opublikowanym). Egzekwowane w reduktorze, `normalizeTaskMeta` i
   // hydracji chmury. OPCJONALNE i ADDYTYWNE (`DATA_VERSION` zostaje na 7).
   draftHours?: { personId: string; hours: number }[];
+  // Reguła cykliczności (RRULE-lite) + per-datowe wyjątki. Wystąpienia są
+  // WYŁĄCZNIE prezentacyjne — nigdy nie tworzą wierszy `WorkloadEntry` ani nie
+  // zasilają sum/przeciążenia/kolizji (inwariant 1); mają własną granicę `until`
+  // i nie przechodzą przez limit 92 dni okresu bazowego (inwariant 2). FORMA
+  // KANONICZNA (patrz `TaskRecurrence` i `src/utils/recurrence.ts`): klucz
+  // obecny WYŁĄCZNIE gdy istnieje poprawna reguła; NIGDY na szkicu
+  // (`isDraft === true`) i NIGDY gdy `startDate` nie jest poprawną datą.
+  // Egzekwowane w reduktorze, `normalizeTaskMeta` i hydracji chmury. OPCJONALNE
+  // i ADDYTYWNE (`DATA_VERSION` zostaje na 7).
+  recurrence?: TaskRecurrence;
   createdAt: string; // ISO timestamp
   updatedAt: string; // ISO timestamp
+}
+
+/**
+ * Jeden per-datowy WYJĄTEK reguły cykliczności. `date` to ZAWSZE oryginalna data
+ * wystąpienia ('yyyy-MM-dd'), unikalna w obrębie `overrides` — wyjątek nigdy nie
+ * przenosi wystąpienia na inny dzień, tylko przesuwa jego godzinę albo pomija
+ * ten dzień. FORMA KANONICZNA (egzekwowana w reduktorze, repairze wczytania i
+ * hydracji chmury): albo `{ date, skip: true }` (bez pól czasu), albo
+ * `{ date, startMinutes, durationMinutes }` (przesunięcie czasu, oba pola
+ * obecne). Klucz `skip` występuje wyłącznie jako literalne `true`.
+ */
+export interface RecurrenceOverride {
+  date: DateStr; // oryginalna data wystąpienia (yyyy-MM-dd)
+  skip?: true; // pominięcie tego dnia; kanonicznie tylko literalne `true`
+  startMinutes?: number; // przesunięcie czasu — OBA pola obecne razem
+  durationMinutes?: number;
+}
+
+/**
+ * Reguła cykliczności zadania (RRULE-lite): powtarzanie w wybrane dni tygodnia o
+ * stałej porze, od kotwicy (`task.startDate`) do opcjonalnej włącznej granicy
+ * `until`. Wystąpienia są WYŁĄCZNIE prezentacyjne — NIGDY nie materializują się
+ * jako wiersze `WorkloadEntry` ani nie zasilają sum/przeciążenia/kolizji
+ * (inwariant 1). FORMA KANONICZNA (patrz `src/utils/recurrence.ts`): klucz
+ * `recurrence` istnieje TYLKO gdy reguła jest poprawna i zadanie jest
+ * opublikowane z poprawną datą startu; `until` obecny tylko gdy poprawny i
+ * `>= task.startDate`; `overrides` obecne tylko gdy niepuste, posortowane po
+ * dacie rosnąco. OPCJONALNE i ADDYTYWNE (`DATA_VERSION` zostaje na 7).
+ */
+export interface TaskRecurrence {
+  daysOfWeek: number[]; // ISO 1 (pon) … 7 (nd); zdeduplikowane, rosnąco, niepuste
+  startMinutes: number; // 0..1425, wielokrotność 15
+  durationMinutes: number; // 15..1440, wielokrotność 15; start + duration <= 1440
+  until?: DateStr; // włączna granica; brak klucza = otwarta
+  overrides?: RecurrenceOverride[]; // brak klucza gdy pusto; sort po dacie rosnąco
 }
 
 /** Access role — the app-permission tier (distinct from `role`, the job title). */

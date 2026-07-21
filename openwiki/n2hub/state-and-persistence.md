@@ -176,6 +176,38 @@
   tabela `public.companies` (patrz cloud-database). Testy: `companies.test.ts`,
   rozszerzenia w `storage.test.ts`/`cloudMerge.test.ts`/`referenceData.test.ts`/
   `cloudMirror.test.ts`/`profileEditPolicy.test.ts`.
+- CYKLICZNOŚĆ ZADAŃ (2026-07-21): `Task.recurrence?: TaskRecurrence` (reguła
+  RRULE-lite + per-datowe wyjątki; `RecurrenceOverride` w `src/types.ts`). Czysta
+  matematyka w `src/utils/recurrence.ts` (bez importów store/komponentów — tylko
+  `utils/dates`+`utils/time`): `isoWeekday`, `normalizeRecurrenceRule`,
+  `normalizeRecurrence`, `isOccurrenceDate`, `expandOccurrences` (rozwijanie
+  WYŁĄCZNIE w oknie [from..to], defensywny cap 400 dni). Wystąpienia są
+  WYŁĄCZNIE prezentacyjne: NIGDY nie tworzą wierszy `WorkloadEntry` ani nie
+  zasilają sum/`dayTotal`/przeciążenia/kolizji (inwariant 1); mają własną granicę
+  `until` i nie przechodzą przez limit 92 dni okresu bazowego (inwariant 2).
+  FORMA KANONICZNA (nośna dla `sameRowValue`/reference-preserving merge,
+  egzekwowana na TRZECH granicach — reduktor, `normalizeTaskMeta`, hydracja
+  chmury): klucz `recurrence` obecny tylko przy poprawnej regule, NIGDY na szkicu
+  (`isDraft === true`) i NIGDY przy niepoprawnym `startDate`; `until` tylko gdy
+  poprawny i `>= startDate`; wyjątek albo `{date, skip:true}` albo
+  `{date, startMinutes, durationMinutes}` na siatce 15 min, RÓŻNY od reguły,
+  którego `date` jest realną datą wystąpienia; `overrides` posortowane po dacie,
+  brak klucza gdy pusto. Mutacje: `SET_TASK_RECURRENCE` („edytuj wszystkie" /
+  utworzenie / `null` = wyczyszczenie reguły I wyjątków; zmiana reguły ZACHOWUJE
+  wyjątki i re-kanonikalizuje je) oraz `SET_RECURRENCE_OVERRIDE` („edytuj to
+  wystąpienie"; upsert/usuń po dacie, przesunięcie równe regule = usunięcie).
+  Każde niepoprawne wejście (nieznane id, szkic, niepoprawny start, reguła/until
+  poza zakresem, `date` niebędące wystąpieniem, przesunięcie poza siatką,
+  strukturalnie zły ładunek) zwraca TĘ SAMĄ referencję (inwariant 6). `SAVE_TASK`
+  zostawia `recurrence` nietknięte jak `isDraft`, Z WYJĄTKIEM zmiany `startDate` —
+  wtedy re-kotwiczy przez `normalizeRecurrence` (reguła przeżywa, wyjątki sprzed
+  nowego startu odpadają). `DELETE_TASK` zabiera je z zadaniem; `PUBLISH_*` nie
+  tyka (szkic nie może nieść reguły). Selektor prezentacyjny
+  `recurrenceOccurrencesForDate` (filtr jak `entriesForDate`). Pole ADDYTYWNE:
+  `DATA_VERSION` zostaje na 7, legacy bez pola = brak echo-write; w chmurze to
+  kolumna jsonb `tasks.recurrence` (patrz cloud-database). Testy:
+  `recurrence.test.ts`, `recurrenceActions.test.ts`, rozszerzenia w
+  `storage.test.ts`/`cloudMerge.test.ts`/`cloudMirror.test.ts`/`plannerData.test.ts`.
 - `Client` carries contact fields (contactName/contactEmail/contactPhone/notes;
   columns from 20260718090000_clients_contact_fields, '' or missing = none — no
   repair pass, use-sites coalesce), edited on the `/clients` page via

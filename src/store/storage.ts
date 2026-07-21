@@ -15,6 +15,7 @@ import type {
   WorkloadEntry,
 } from '../types';
 import { isValidDateStr, todayStr } from '../utils/dates';
+import { normalizeRecurrence } from '../utils/recurrence';
 import { TASK_PRIORITIES } from '../utils/priority';
 import {
   DEFAULT_PROJECT_DOCUMENT_KIND,
@@ -952,6 +953,12 @@ export function normalizeTaskMeta(data: AppData): AppData {
     // snapowanym do siatki, dedup po personId (pierwszy wygrywa); pusty wynik =>
     // brak klucza. Idempotentne po wartości.
     const draftHours = normalizeDraftHours(isDraft, t.draftHours);
+    // Cykliczność (`recurrence`, forma kanoniczna — patrz `TaskRecurrence`):
+    // szkic NIGDY nie niesie reguły; opublikowane zadanie kanonikalizuje wartość
+    // względem swojej daty startu przez `normalizeRecurrence` (niepoprawny
+    // startDate / śmieci => brak klucza). Legacy zapis bez pola wychodzi bez
+    // klucza (brak echo-write). Idempotentne po wartości.
+    const recurrence = isDraft ? undefined : normalizeRecurrence(t.recurrence, str(t.startDate));
     const base: Task = {
       ...(raw as Task),
       priority,
@@ -963,6 +970,8 @@ export function normalizeTaskMeta(data: AppData): AppData {
     };
     if (draftHours) base.draftHours = draftHours;
     else delete base.draftHours;
+    if (recurrence) base.recurrence = recurrence;
+    else delete base.recurrence;
     return base;
   });
 

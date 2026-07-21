@@ -86,6 +86,18 @@
   RLS/polityk ani publikacji realtime; klient mirroruje ją jak zwykłe pole
   zadania (`cloudMirror.taskRow.is_draft = t.isDraft === true`; hydracja
   `plannerData` czyta `row.is_draft === true`, spoza `true` => opublikowane).
+- `tasks.recurrence` (20260721170000_task_recurrence) — jsonb nullable
+  (NULL/legacy = brak reguły): cykliczność zadania (RRULE-lite) + per-datowe
+  wyjątki, osadzona jak `tasks.checklist`/`tasks.draft_hours`. Kształt kanoniczny:
+  `{ daysOfWeek:[1..7], startMinutes, durationMinutes, until?, overrides? }`;
+  wyjątki niosą TYLKO daty/minuty — żadnych id profili, więc bez mapowania id.
+  Świadomie BEZ osobnej tabeli: widoczność ma być identyczna z widocznością
+  zadania, więc RLS dziedziczy się z wiersza `public.tasks` — ZERO nowych polityk,
+  bez zmian w publikacji realtime. Klient mirroruje ją jak zwykłe pole
+  (`cloudMirror.taskRow.recurrence = t.recurrence ?? null`), a hydracja
+  `plannerData` kanonikalizuje przez `normalizeRecurrence` WYŁĄCZNIE dla wierszy
+  opublikowanych (`is_draft !== true`). Rejestr: `migrations.test.ts` (lista;
+  `EXPECTED_POLICIES` bez zmian).
 - `projects.documents` (20260721010000) — jsonb not null default `'[]'`, CHECK
   `jsonb_typeof(documents) = 'array'`: odnośniki do dokumentów handlowych
   (`{id, kind: oferta|wycena|brief|link, label, url}`). Kolumna osadzona jak

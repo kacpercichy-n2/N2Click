@@ -1,0 +1,38 @@
+-- =============================================================================
+-- Migracja: 20260721170000_task_recurrence
+--
+-- Cykliczność zadania (RRULE-lite): powtarzanie w wybrane dni tygodnia o stałej
+-- porze, od `tasks.start_date` do opcjonalnej włącznej granicy `until`, plus
+-- per-datowe wyjątki (pominięcie dnia albo przesunięcie godziny). Wystąpienia są
+-- WYŁĄCZNIE prezentacyjne — NIE tworzą wierszy `workload_entries` i nie zasilają
+-- sum/przeciążenia/kolizji.
+--
+-- Model: pojedyncza kolumna `tasks.recurrence jsonb` (nullable, NULL = brak
+-- reguły), dokładnie jak osadzone `tasks.checklist` / `tasks.draft_hours` /
+-- `projects.documents`. Kształt kanoniczny:
+--   {
+--     "daysOfWeek": [1..7],        -- ISO pon..nd, niepuste
+--     "startMinutes": 0..1425,     -- wielokrotność 15
+--     "durationMinutes": 15..1440, -- wielokrotność 15; start+duration <= 1440
+--     "until": "yyyy-MM-dd",       -- opcjonalne, włączne
+--     "overrides": [               -- opcjonalne
+--       { "date": "yyyy-MM-dd", "skip": true } |
+--       { "date": "yyyy-MM-dd", "startMinutes": n, "durationMinutes": n }
+--     ]
+--   }
+-- Wyjątki niosą wyłącznie daty i minuty — ŻADNYCH id profili, więc kolumna nie
+-- wymaga mapowania id ani osobnej kaskady.
+--
+-- Świadomie BEZ osobnej tabeli: widoczność ma być IDENTYCZNA z widocznością
+-- zadania, więc RLS dziedziczy się z wiersza `public.tasks` — zero nowych
+-- polityk, bez zmian w publikacji realtime. Nie tworzy tabeli, więc klient
+-- mirroruje tę kolumnę jak zwykłe pole zadania (`cloudMirror.taskRow.recurrence`,
+-- hydracja `plannerData` kanonikalizuje ją tylko dla wierszy opublikowanych).
+-- NULL/legacy = brak cykliczności.
+--
+-- Idempotentnie (`add column if not exists`): plik bywa aplikowany ręcznie przez
+-- SQL editor zanim `db push` uzupełni rejestr.
+-- =============================================================================
+
+alter table public.tasks
+  add column if not exists recurrence jsonb;

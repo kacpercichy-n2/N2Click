@@ -80,6 +80,7 @@ import {
   isTicketStatus,
 } from '../utils/tickets';
 import { wouldCreateSupervisorCycle } from './selectors';
+import { isOccurrenceDate, normalizeRecurrence } from '../utils/recurrence';
 import { ROLE_LABELS } from './permissions';
 import { registerPersonOrder } from '../utils/colors';
 import {
@@ -228,6 +229,23 @@ export type Action =
   | { type: 'SET_TASK_DATES'; taskId: string; startDate: string; endDate: string }
   | { type: 'SET_TASK_STATUS'; taskId: string; statusId: string }
   | { type: 'REORDER_PROJECT_TASK'; taskId: string; direction: -1 | 1 }
+  // Cykliczność zadania: reguła (create / „edytuj wszystkie” / clear) i per-datowy
+  // wyjątek („edytuj to wystąpienie”). Wystąpienia są WYŁĄCZNIE prezentacyjne —
+  // nie tworzą wierszy workload (inwariant 1). Niepoprawne wejście => TA SAMA
+  // referencja stanu (inwariant 6).
+  | {
+      type: 'SET_TASK_RECURRENCE';
+      taskId: string;
+      recurrence:
+        | { daysOfWeek: number[]; startMinutes: number; durationMinutes: number; until?: string }
+        | null;
+    }
+  | {
+      type: 'SET_RECURRENCE_OVERRIDE';
+      taskId: string;
+      date: string;
+      override: { skip: true } | { startMinutes: number; durationMinutes: number } | null;
+    }
   // Publikacja szkiców: całego projektu (atomowo) lub pojedynczego zadania.
   | { type: 'PUBLISH_PROJECT_DRAFTS'; projectId: string }
   | { type: 'PUBLISH_TASK'; taskId: string }
@@ -581,29 +599,39 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
       prev.projectId === draft.projectId
         ? prev.orderIndex
         : maxOrderIndexOfProject(state, draft.projectId) + 1;
-    tasks = tasks.map((t) =>
-      t.id === taskId
-        ? {
-            ...t,
-            projectId: draft.projectId,
-            statusId: draft.statusId,
-            title: draft.title,
-            description: draft.description,
-            startDate: draft.startDate,
-            endDate: draft.endDate,
-            estimatedHours: draft.estimatedHours,
-            priority: draft.priority,
-            workCategoryId,
-            departmentId,
-            checklist,
-            orderIndex,
-            // Edycja NIGDY nie zmienia stanu publikacji: zachowaj `isDraft`
-            // istniejącego zadania (publikację robią wyłącznie akcje PUBLISH_*).
-            isDraft: t.isDraft,
-            updatedAt: ts,
-          }
-        : t,
-    );
+    // Cykliczność jest zachowywana jak `isDraft` (edycja jej nie tyka), Z JEDNYM
+    // WYJĄTKIEM: zmiana `startDate` przesuwa kotwicę reguły, więc re-kanonikalizuj
+    // wartość względem nowej daty (reguła przeżywa; wyjątki sprzed nowego startu i
+    // niepoprawny `until` odpadają). Bez zmiany daty referencja zostaje nietknięta.
+    const recurrence =
+      prev.recurrence !== undefined && draft.startDate !== prev.startDate
+        ? normalizeRecurrence(prev.recurrence, draft.startDate)
+        : prev.recurrence;
+    tasks = tasks.map((t) => {
+      if (t.id !== taskId) return t;
+      const next: Task = {
+        ...t,
+        projectId: draft.projectId,
+        statusId: draft.statusId,
+        title: draft.title,
+        description: draft.description,
+        startDate: draft.startDate,
+        endDate: draft.endDate,
+        estimatedHours: draft.estimatedHours,
+        priority: draft.priority,
+        workCategoryId,
+        departmentId,
+        checklist,
+        orderIndex,
+        // Edycja NIGDY nie zmienia stanu publikacji: zachowaj `isDraft`
+        // istniejącego zadania (publikację robią wyłącznie akcje PUBLISH_*).
+        isDraft: t.isDraft,
+        updatedAt: ts,
+      };
+      if (recurrence) next.recurrence = recurrence;
+      else delete next.recurrence;
+      return next;
+    });
   }
 
   // Czy WYNIK zapisu jest szkicem? Tworzenie bierze sygnał z draftu, edycja
@@ -885,6 +913,119 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
       // samego aktora scala się w jeden wpis (świeży znacznik czasu).
       { collapse: !created },
     ),
+  };
+}
+
+/**
+ * „Edytuj wszystkie" / utworzenie reguły / wyczyszczenie cykliczności zadania.
+ * Odrzuca (TA SAMA referencja, inwariant 6): nieznane `taskId`; zadanie-szkic
+ * (szkic nie może nieść reguły); niepoprawna `task.startDate`;
+ * `normalizeRecurrenceRule` zwraca null (pusty/poza zakresem `daysOfWeek`, czasy
+ * poza siatką/nieskończone, duration <= 0, start+duration > 1440, `until`
+ * niepoprawny lub < startu). `recurrence: null` czyści regułę I jej wyjątki.
+ * Zmiana reguły ZACHOWUJE dotychczasowe wyjątki i re-kanonikalizuje je względem
+ * nowej reguły (nieaktualne daty i teraz-równe przesunięcia odpadają). Zapis
+ * wartościowo identyczny to no-op (ta sama referencja).
+ */
+function setTaskRecurrence(
+  state: AppData,
+  taskId: string,
+  recurrence:
+    | { daysOfWeek: number[]; startMinutes: number; durationMinutes: number; until?: string }
+    | null,
+): AppData {
+  const task = state.tasks.find((t) => t.id === taskId);
+  if (!task) return state;
+  // Szkic nie może nieść reguły (forma kanoniczna); niepoprawny start = brak kotwicy.
+  if (task.isDraft === true) return state;
+  if (!isValidDateStr(task.startDate)) return state;
+
+  if (recurrence === null) {
+    if (task.recurrence === undefined) return state; // brak reguły => no-op
+    const tasks = state.tasks.map((t) => {
+      if (t.id !== taskId) return t;
+      const { recurrence: _drop, ...rest } = t;
+      return { ...rest, updatedAt: nowIso() };
+    });
+    return {
+      ...state,
+      tasks,
+      activity: withActivity(state, 'task', taskId, 'wyłączył(a) cykliczność zadania'),
+    };
+  }
+
+  // Zachowaj istniejące wyjątki i re-kanonikalizuj je względem nowej reguły.
+  const next = normalizeRecurrence(
+    { ...recurrence, overrides: task.recurrence?.overrides },
+    task.startDate,
+  );
+  if (!next) return state; // reguła niepoprawna => ta sama referencja
+  if (task.recurrence !== undefined && sameRowValue(task.recurrence, next)) return state;
+  const tasks = state.tasks.map((t) =>
+    t.id === taskId ? { ...t, recurrence: next, updatedAt: nowIso() } : t,
+  );
+  return {
+    ...state,
+    tasks,
+    activity: withActivity(state, 'task', taskId, 'zmienił(a) cykliczność zadania'),
+  };
+}
+
+/**
+ * „Edytuj to wystąpienie": per-datowy wyjątek reguły cykliczności. Odrzuca (TA
+ * SAMA referencja, inwariant 6): nieznane `taskId`; zadanie bez `recurrence`;
+ * `date` niebędące datą wystąpienia (`isOccurrenceDate`); przesunięcie czasu
+ * poza siatką / duration < 15 / start+duration > 1440; strukturalnie zły ładunek.
+ * `override: null` usuwa wyjątek dla `date` (brak => no-op). Przesunięcie równe
+ * regule = usunięcie wyjątku (forma kanoniczna). Upsert po dacie; wynik posortowany.
+ */
+function setRecurrenceOverride(
+  state: AppData,
+  taskId: string,
+  date: string,
+  override: { skip: true } | { startMinutes: number; durationMinutes: number } | null,
+): AppData {
+  const task = state.tasks.find((t) => t.id === taskId);
+  if (!task) return state;
+  const rule = task.recurrence;
+  if (rule === undefined) return state;
+  if (!isOccurrenceDate(rule, task.startDate, date)) return state;
+
+  const existing = rule.overrides ?? [];
+  const others = existing.filter((o) => o.date !== date);
+  let nextOverrides: unknown[];
+  if (override === null) {
+    if (existing.length === others.length) return state; // brak wyjątku => no-op
+    nextOverrides = others;
+  } else if ('skip' in override && override.skip === true) {
+    nextOverrides = [...others, { date, skip: true }];
+  } else {
+    const rec = override as { startMinutes?: unknown; durationMinutes?: unknown };
+    const { startMinutes, durationMinutes } = rec;
+    const isGrid = (m: unknown): m is number =>
+      typeof m === 'number' && Number.isInteger(m) && m >= 0 && m <= DAY_MINUTES && m % MINUTE_STEP === 0;
+    if (
+      !isGrid(startMinutes) ||
+      !isGrid(durationMinutes) ||
+      durationMinutes < MINUTE_STEP ||
+      startMinutes + durationMinutes > DAY_MINUTES
+    ) {
+      return state; // poza siatką / za krótki / strukturalnie zły
+    }
+    nextOverrides = [...others, { date, startMinutes, durationMinutes }];
+  }
+
+  // Re-kanonikalizacja: przesunięcie równe regule odpada, wynik sortowany.
+  const next = normalizeRecurrence({ ...rule, overrides: nextOverrides }, task.startDate);
+  if (!next) return state; // reguła jest już kanoniczna — guard dla TS
+  if (sameRowValue(rule, next)) return state; // np. przesunięcie równe regule => no-op
+  const tasks = state.tasks.map((t) =>
+    t.id === taskId ? { ...t, recurrence: next, updatedAt: nowIso() } : t,
+  );
+  return {
+    ...state,
+    tasks,
+    activity: withActivity(state, 'task', taskId, 'zmienił(a) wystąpienie cyklicznego zadania'),
   };
 }
 
@@ -2599,6 +2740,10 @@ export function reducer(state: AppData, action: Action): AppData {
         activity: withActivity(next, 'project', task.projectId, `usunął(a) zadanie „${task.title}”`),
       };
     }
+    case 'SET_TASK_RECURRENCE':
+      return setTaskRecurrence(state, action.taskId, action.recurrence);
+    case 'SET_RECURRENCE_OVERRIDE':
+      return setRecurrenceOverride(state, action.taskId, action.date, action.override);
     case 'PUBLISH_PROJECT_DRAFTS':
       return publishProjectDrafts(state, action.projectId);
     case 'PUBLISH_TASK':

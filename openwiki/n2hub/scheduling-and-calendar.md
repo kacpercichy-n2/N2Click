@@ -31,6 +31,18 @@
 - Free-slot search rejects non-finite, non-positive, off-grid and over-day
   durations. Keyboard-activatable week blocks and bin cards respond to both
   Enter and Space without changing their pointer lifecycle.
+- Recurring-task occurrences are PRESENTATIONAL ONLY (invariant 1): WeekView
+  renders them as additive `.week-recur-block` overlays (dashed/striped, ⟳),
+  positioned by time and painted BEHIND real blocks; they never enter
+  `packDayBlocks`, collisions, totals or overload and carry NO pointer/drag
+  handlers — only click/keyboard opens the task and right-click opens the
+  `recurMenu`. Menu actions map only to the two reducer actions: „Pomiń ten
+  dzień"/„Edytuj to wystąpienie" → `SET_RECURRENCE_OVERRIDE`, „Edytuj wszystkie"
+  → TaskModal's „Cykliczność" section (`SET_TASK_RECURRENCE`). `openSlotMenu`
+  guards `.week-recur-block` alongside `.week-block`. MonthView shows only a
+  `.month-cell-recur` ⟳ marker (no blocks/menu). The rule is edited in TaskModal
+  via explicit dispatch, never through the SAVE_TASK draft/auto-save. All bin
+  drag, pointer lifecycle and rendered-column hit-testing paths are untouched.
 
 ## Start here for
 

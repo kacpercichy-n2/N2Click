@@ -19,6 +19,7 @@ import type {
 import { DEFAULT_CAPACITY } from './storage';
 import { blockEndMinutes, hasCollision, hoursToMinutes, isBinEntry } from '../utils/time';
 import { isBirthdayOn, isValidDateStr, parseDate } from '../utils/dates';
+import { expandOccurrences, type RecurrenceOccurrence } from '../utils/recurrence';
 
 // ---- Basic lookups ----
 
@@ -343,6 +344,33 @@ export function dayTotal(
     (sum, w) => sum + w.plannedHours,
     0,
   );
+}
+
+/**
+ * Wystąpienia cyklicznych OPUBLIKOWANYCH zadań na dany dzień — WYŁĄCZNIE
+ * prezentacyjne (inwariant 1: nigdy nie zasilają sum/przeciążenia/kolizji ani
+ * `dayTotal`). Semantyka filtra jak w {@link entriesForDate}: pusty/brak zbioru =
+ * wszyscy; inaczej zadanie pokazane, gdy KTÓRYKOLWIEK z przypisanych jest w
+ * filtrze. Szkice wykluczone (kanonicznie nigdy nie mają reguły, plus jawny
+ * strażnik `isPublishedTask`).
+ */
+export function recurrenceOccurrencesForDate(
+  state: AppData,
+  date: DateStr,
+  personFilter?: Set<string>,
+): Array<{ task: Task; occurrence: RecurrenceOccurrence }> {
+  const out: Array<{ task: Task; occurrence: RecurrenceOccurrence }> = [];
+  const filterActive = personFilter !== undefined && personFilter.size > 0;
+  for (const task of state.tasks) {
+    if (task.recurrence === undefined || !isPublishedTask(task)) continue;
+    if (filterActive) {
+      const assignees = assigneeIdsOfTask(state, task.id);
+      if (!assignees.some((id) => personFilter!.has(id))) continue;
+    }
+    const occurrences = expandOccurrences(task.recurrence, task.startDate, date, date);
+    for (const occurrence of occurrences) out.push({ task, occurrence });
+  }
+  return out;
 }
 
 /**

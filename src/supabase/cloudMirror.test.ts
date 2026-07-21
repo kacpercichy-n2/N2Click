@@ -239,6 +239,31 @@ describe('diffToCloudOps — families', () => {
     expect(rowOf(TK3).draft_hours).toBeNull();
   });
 
+  it('task upsert niesie recurrence dosłownie (obiekt kanoniczny; brak => null)', () => {
+    const m = maps();
+    const TK2 = uuid('task-two');
+    const rec = {
+      daysOfWeek: [1],
+      startMinutes: 540,
+      durationMinutes: 60,
+      overrides: [{ date: '2026-07-13', startMinutes: 600, durationMinutes: 30 }],
+    };
+    const prev: AppData = { ...localFixture(), tasks: [] };
+    const next: AppData = {
+      ...localFixture(),
+      tasks: [
+        makeTask({ id: TK, recurrence: rec }),
+        makeTask({ id: TK2 }), // brak reguły => null
+      ],
+    };
+    const upserts = diffToCloudOps(prev, next, m).ops.filter(
+      (o) => o.table === 'tasks' && o.kind === 'upsert',
+    );
+    const rowOf = (id: string) => upserts.find((o) => o.row!.id === id)!.row!;
+    expect(rowOf(TK).recurrence).toEqual(rec);
+    expect(rowOf(TK2).recurrence).toBeNull();
+  });
+
   it('a rejected reorder (unknown task) keeps the state reference so the diff emits zero ops', () => {
     const m = maps();
     const prev: AppData = { ...localFixture(), tasks: [makeTask({ id: TK, orderIndex: 0 })] };

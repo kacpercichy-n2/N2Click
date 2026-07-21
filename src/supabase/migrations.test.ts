@@ -120,6 +120,7 @@ describe('konwencja plików migracji', () => {
       '20260721130000_task_draft_hours.sql',
       '20260721150000_job_titles.sql',
       '20260721160000_companies.sql',
+      '20260721170000_task_recurrence.sql',
     ]);
   });
 

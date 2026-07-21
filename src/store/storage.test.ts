@@ -840,6 +840,60 @@ describe('normalizeTaskMeta', () => {
     expect(twice.tasks[0].draftHours).toEqual(once.tasks[0].draftHours);
   });
 
+  // Cykliczność (PKG-20260721-recurrence-core) — repair na wczytaniu.
+  it('a legacy task without a recurrence key round-trips unchanged (no echo-write)', () => {
+    const task = v5Task({ id: 't1' });
+    const next = normalizeTaskMeta({ ...emptyData(), tasks: [task] });
+    expect('recurrence' in next.tasks[0]).toBe(false);
+  });
+
+  it('preserves a canonical recurrence value on a published task', () => {
+    const rec = {
+      daysOfWeek: [1],
+      startMinutes: 540,
+      durationMinutes: 60,
+      overrides: [{ date: '2026-07-13', skip: true }],
+    };
+    // startDate 2026-07-06 is a Monday, so 07-13 is a real occurrence.
+    const task = v5Task({ id: 't1', recurrence: rec });
+    const next = normalizeTaskMeta({ ...emptyData(), tasks: [task] });
+    expect(next.tasks[0].recurrence).toEqual(rec);
+  });
+
+  it('drops a garbage recurrence value', () => {
+    const task = v5Task({ id: 't1', recurrence: { daysOfWeek: [], startMinutes: 5, durationMinutes: 3 } });
+    const next = normalizeTaskMeta({ ...emptyData(), tasks: [task] });
+    expect('recurrence' in next.tasks[0]).toBe(false);
+  });
+
+  it("drops a draft task's recurrence (a draft can never carry a rule)", () => {
+    const task = v5Task({
+      id: 't1',
+      isDraft: true,
+      recurrence: { daysOfWeek: [1], startMinutes: 540, durationMinutes: 60 },
+    });
+    const next = normalizeTaskMeta({ ...emptyData(), tasks: [task] });
+    expect('recurrence' in next.tasks[0]).toBe(false);
+  });
+
+  it('recurrence normalization is idempotent by value', () => {
+    const task = v5Task({
+      id: 't1',
+      recurrence: {
+        daysOfWeek: [3, 1, 1],
+        startMinutes: 540,
+        durationMinutes: 60,
+        overrides: [
+          { date: '2026-07-13', startMinutes: 600, durationMinutes: 30 },
+          { date: '2026-07-07', skip: true }, // Tue — not a Mon/Wed occurrence, dropped
+        ],
+      },
+    });
+    const once = normalizeTaskMeta({ ...emptyData(), tasks: [task] });
+    const twice = normalizeTaskMeta(once);
+    expect(twice.tasks[0].recurrence).toEqual(once.tasks[0].recurrence);
+  });
+
   it("fills a v5 saved filter's criteria with DEFAULT_FILTER_CRITERIA's priority/workCategoryId ('') while other criteria fields survive unchanged", () => {
     const filter = {
       id: 'f1',
