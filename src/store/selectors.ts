@@ -108,6 +108,22 @@ export function tasksOfProject(state: AppData, projectId: string): Task[] {
 }
 
 /**
+ * Szkic zadania: utworzone w projekcie, jeszcze NIEopublikowane (`isDraft`).
+ * Brak pola = opublikowane (legacy/chmura bez kolumny). Jedno miejsce prawdy dla
+ * wszystkich wykluczeń w widokach planowania (Moja praca, pulpit, kanban, lista
+ * zadań); godziny szkicu i tak nie istnieją, więc selektory oparte o `workload`
+ * (sumy, kalendarz, zasobnik, przeciążenie) wykluczają szkice samoczynnie.
+ */
+export function isDraftTask(task: Task): boolean {
+  return task.isDraft === true;
+}
+
+/** Odwrotność {@link isDraftTask}: zadanie opublikowane (lub legacy bez pola). */
+export function isPublishedTask(task: Task): boolean {
+  return task.isDraft !== true;
+}
+
+/**
  * Zadania projektu w RĘCZNEJ kolejności wyświetlania. Kanoniczny, całkowity i
  * deterministyczny klucz `(orderIndex asc, startDate asc, id asc)` — ten sam,
  * którego używa reducer `REORDER_PROJECT_TASK`. Rozstrzygnięcie po startDate/id
@@ -198,7 +214,9 @@ export function taskIdsOfPerson(state: AppData, personId: string): string[] {
 export function projectsOfPerson(state: AppData, personId: string): Project[] {
   const taskIds = new Set(taskIdsOfPerson(state, personId));
   const projectIds = new Set(
-    state.tasks.filter((t) => taskIds.has(t.id)).map((t) => t.projectId),
+    state.tasks
+      .filter((t) => taskIds.has(t.id) && isPublishedTask(t))
+      .map((t) => t.projectId),
   );
   return state.projects.filter((p) => projectIds.has(p.id));
 }
@@ -353,6 +371,7 @@ export function todayAgendaForPerson(
     .filter(
       (t) =>
         assignedTaskIds.has(t.id) &&
+        isPublishedTask(t) && // szkic nie trafia do agendy „na dziś”
         t.startDate <= date &&
         date <= t.endDate &&
         !doneIds.has(t.statusId) &&
@@ -611,6 +630,7 @@ export function overdueTasksForPerson(
     .filter(
       (t) =>
         assignedTaskIds.has(t.id) &&
+        isPublishedTask(t) && // szkic nie jest „po terminie” w Mojej pracy
         t.endDate < today &&
         !doneIds.has(t.statusId),
     )
@@ -646,6 +666,7 @@ export function unplannedTasksForPerson(state: AppData, personId: string): Task[
     .filter(
       (t) =>
         assignedTaskIds.has(t.id) &&
+        isPublishedTask(t) && // szkic nie jest „bez planu” — planuje się po publikacji
         !doneIds.has(t.statusId) &&
         !plannedTaskIds.has(t.id),
     )

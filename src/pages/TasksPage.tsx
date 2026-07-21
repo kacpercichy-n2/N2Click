@@ -57,7 +57,11 @@ export function TasksPage() {
   // Memoized so the filtering useMemo below has a stable array dependency.
   const allTasks = useMemo(
     () =>
-      [...state.tasks].sort((a, b) =>
+      // Szkice zadań są widoczne wyłącznie w widoku projektu — lista „Zadania”
+      // (widok planowania międzyprojektowy) pokazuje tylko opublikowane.
+      [...state.tasks]
+        .filter((t) => t.isDraft !== true)
+        .sort((a, b) =>
         a.startDate === b.startDate
           ? a.title.localeCompare(b.title)
           : a.startDate.localeCompare(b.startDate),

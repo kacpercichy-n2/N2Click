@@ -1153,9 +1153,12 @@ export function WeekView({ state, anchor, filter }: Props) {
   // this set, so it stays available as the default.
   const insertTaskOptions = (() => {
     if (!menu) return [];
-    if (can('tasks.manage')) return state.tasks;
+    // Szkice nie planują godzin (reduktor i tak odrzuca INSERT_BLOCK dla szkicu),
+    // więc nie pokazujemy ich w wyborze zadania do wstawienia bloku.
+    const publishable = state.tasks.filter((t) => t.isDraft !== true);
+    if (can('tasks.manage')) return publishable;
     const allowed = new Set(taskIdsOfPerson(state, menu.entry.personId));
-    return state.tasks.filter((t) => allowed.has(t.id));
+    return publishable.filter((t) => allowed.has(t.id));
   })();
   const menuDayHours = menu
     ? hoursForPersonOnDate(state, menu.entry.personId, menu.entry.date)

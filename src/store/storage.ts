@@ -862,7 +862,18 @@ export function normalizeTaskMeta(data: AppData): AppData {
     const rawOrder = t.orderIndex;
     const orderIndex =
       typeof rawOrder === 'number' && Number.isFinite(rawOrder) ? rawOrder : Number.NaN;
-    return { ...(raw as Task), priority, workCategoryId, departmentId, checklist, orderIndex };
+    // Szkic (pole opcjonalne, ADDYTYWNE): każdy starszy zapis i chmura bez
+    // kolumny czytają się jako OPUBLIKOWANE. Tylko jawne `true` zostaje szkicem.
+    const isDraft = t.isDraft === true;
+    return {
+      ...(raw as Task),
+      priority,
+      workCategoryId,
+      departmentId,
+      checklist,
+      orderIndex,
+      isDraft,
+    };
   });
 
   const savedFilters = data.savedFilters.map((f) => {

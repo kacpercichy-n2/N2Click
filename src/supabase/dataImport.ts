@@ -478,6 +478,8 @@ export async function runSupabaseImport(
         department_id: t.departmentId !== '' ? deptIdMap.get(t.departmentId) ?? null : null,
         checklist: t.checklist,
         order_index: t.orderIndex,
+        // Szkic (20260721020000_task_is_draft): brak pola => opublikowane.
+        is_draft: t.isDraft === true,
       });
       if (ins.error) {
         taskSummary.failed++;

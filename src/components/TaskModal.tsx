@@ -323,6 +323,12 @@ function TaskEditor({
   const roTitle = readOnly ? NO_PERM_TITLE : undefined;
   const existing = taskId ? state.tasks.find((t) => t.id === taskId) : undefined;
   const isEdit = Boolean(existing);
+  // Szkic: NOWE zadanie otwarte Z WIDOKU PROJEKTU (initialProjectId ustawione)
+  // startuje jako szkic; edycja zachowuje stan zadania. Bezpośrednie tworzenie
+  // gdzie indziej (Zadania, kalendarz, kanban — bez projektu) pozostaje
+  // publikacją natychmiastową. Szkic nie planuje godzin, więc chowamy sekcje
+  // planowania (godziny osób, zasobnik, siatka) do czasu publikacji.
+  const isDraft = existing ? existing.isDraft === true : Boolean(initialProjectId);
 
   const statuses = activeStatuses(state);
   // Keep the edited task's own archived status pickable so the select isn't
@@ -641,6 +647,9 @@ function TaskEditor({
     workCategoryId,
     departmentId,
     checklist,
+    // Sygnał tworzenia szkicu (reduktor używa go tylko przy tworzeniu; przy
+    // edycji zachowuje stan zadania). Brak wpływu na walidację draftu.
+    isDraft,
   };
   const assigneesValid = assigneeIds.every((id) => hasEntity(state, 'person', id));
   const formValid =
@@ -973,7 +982,7 @@ function TaskEditor({
             })}
           </div>
         )}
-        {assignedPeople.length > 0 && (
+        {!isDraft && assignedPeople.length > 0 && (
           <div className="sold-hours">
             <p className="field-hint">
               Edytujesz godziny każdej osoby na tym zadaniu (sprzedane). Szacunek
@@ -1025,47 +1034,59 @@ function TaskEditor({
             </div>
           </div>
         )}
-        {/* Podsumowanie planowania stoi tuż pod godzinami osób, bo porównuje
-            dokładnie te liczby: co jest sprzedane vs co leży w kalendarzu. */}
-        <div className="estimate-compare">
-          <span>
-            w kalendarzu{' '}
-            <strong className={overBudget ? 'over-budget' : undefined}>
-              {formatDuration(plannedTotalAll)}
-            </strong>
-            {binTotal > 0 && (
-              <span className="muted"> (+ {formatDuration(binTotal)} w zasobniku)</span>
-            )}
-          </span>
-          <span className="muted">vs</span>
-          <span>
-            {normalizedEstimate != null ? (
-              <>
-                szacunek <strong>{formatDuration(normalizedEstimate)}</strong>
-              </>
-            ) : (
-              <span className="muted">brak szacunku</span>
-            )}
-          </span>
-          <PlanningBadge
-            status={planningStatusForTotals(normalizedEstimate, plannedTotalAll, binTotal)}
-          />
-        </div>
-        {legacyEstimate != null && Math.abs(legacyEstimate - soldTotal) > 1e-9 && (
-          <p className="field-hint">
-            Poprzedni ręczny szacunek: {formatDuration(legacyEstimate)} — po zapisie
-            szacunkiem stanie się suma godzin osób.
+        {isDraft ? (
+          <p className="field-hint task-draft-hint">
+            <strong>Szkic.</strong> Po zapisaniu zadanie pozostaje szkicem, dopóki
+            nie klikniesz „Zapisz i opublikuj” w projekcie. Osoby możesz przypisać
+            już teraz; godziny (kalendarz i zasobnik) zaplanujesz po opublikowaniu.
           </p>
-        )}
-        {overBudget && (
-          <p className="estimate-over">
-            ⚠ W kalendarzu zaplanowano {formatDuration(plannedTotalAll - soldTotal)} ponad godziny
-            przypisane osobom. Zwiększ godziny osób lub ogranicz siatkę.
-          </p>
+        ) : (
+          <>
+            {/* Podsumowanie planowania stoi tuż pod godzinami osób, bo porównuje
+                dokładnie te liczby: co jest sprzedane vs co leży w kalendarzu. */}
+            <div className="estimate-compare">
+              <span>
+                w kalendarzu{' '}
+                <strong className={overBudget ? 'over-budget' : undefined}>
+                  {formatDuration(plannedTotalAll)}
+                </strong>
+                {binTotal > 0 && (
+                  <span className="muted"> (+ {formatDuration(binTotal)} w zasobniku)</span>
+                )}
+              </span>
+              <span className="muted">vs</span>
+              <span>
+                {normalizedEstimate != null ? (
+                  <>
+                    szacunek <strong>{formatDuration(normalizedEstimate)}</strong>
+                  </>
+                ) : (
+                  <span className="muted">brak szacunku</span>
+                )}
+              </span>
+              <PlanningBadge
+                status={planningStatusForTotals(normalizedEstimate, plannedTotalAll, binTotal)}
+              />
+            </div>
+            {legacyEstimate != null && Math.abs(legacyEstimate - soldTotal) > 1e-9 && (
+              <p className="field-hint">
+                Poprzedni ręczny szacunek: {formatDuration(legacyEstimate)} — po zapisie
+                szacunkiem stanie się suma godzin osób.
+              </p>
+            )}
+            {overBudget && (
+              <p className="estimate-over">
+                ⚠ W kalendarzu zaplanowano {formatDuration(plannedTotalAll - soldTotal)} ponad godziny
+                przypisane osobom. Zwiększ godziny osób lub ogranicz siatkę.
+              </p>
+            )}
+          </>
         )}
       </div>
 
-      {/* c2) Bin (zasobnik) — wyliczany z godzin osób, nie edytowany osobno */}
+      {/* c2) Bin (zasobnik) — wyliczany z godzin osób, nie edytowany osobno.
+          Szkic nie planuje godzin, więc sekcja pojawia się dopiero po publikacji. */}
+      {!isDraft && (
       <div className="editor-section">
         <h2>Zasobnik (bez terminu)</h2>
         {assignedPeople.length === 0 ? (
@@ -1109,8 +1130,11 @@ function TaskEditor({
           </>
         )}
       </div>
+      )}
 
-      {/* d) Daily allocation grid */}
+      {/* d) Daily allocation grid. Szkic nie planuje godzin — siatka pojawia się
+          dopiero po publikacji zadania w projekcie. */}
+      {!isDraft && (
       <div className="editor-section">
         <h2>Dzienny przydział godzin</h2>
         {!periodValid ? (
@@ -1140,6 +1164,7 @@ function TaskEditor({
           </>
         )}
       </div>
+      )}
 
       {/* e) Discussion (existing tasks only) */}
       {existing && (
@@ -1167,7 +1192,7 @@ function TaskEditor({
             disabled={state.projects.length === 0}
             title={state.projects.length === 0 ? 'Najpierw utwórz projekt' : undefined}
           >
-            {isEdit ? 'Zapisz i zamknij' : 'Utwórz zadanie'}
+            {isEdit ? 'Zapisz i zamknij' : isDraft ? 'Utwórz szkic' : 'Utwórz zadanie'}
           </button>
         )}
         <button type="button" className="btn ghost" onClick={onCancel}>

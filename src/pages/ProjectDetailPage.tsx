@@ -207,6 +207,20 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   if (!project) return null;
 
   const tasks = orderedTasksOfProject(state, project.id);
+  // Szkice zadań tego projektu — widoczne tylko tutaj, publikowane atomowo jedną
+  // akcją (inwariant 6). „Zapisz i opublikuj” przełącza wszystkie naraz.
+  const draftCount = tasks.filter((t) => t.isDraft === true).length;
+  const publishDrafts = () => {
+    if (draftCount === 0) return;
+    const label =
+      draftCount === 1
+        ? 'Opublikować 1 szkic zadania?'
+        : `Opublikować ${draftCount} szkiców zadań?`;
+    if (!window.confirm(`${label} Staną się widoczne w planowaniu (kalendarz, zasobnik, Moja praca).`)) {
+      return;
+    }
+    dispatch({ type: 'PUBLISH_PROJECT_DRAFTS', projectId: project.id });
+  };
   const derivedDepartments = departmentsOfProject(state, project.id);
   const milestones = milestonesOfProject(state, project.id);
   const statuses = activeStatuses(state);
@@ -627,15 +641,36 @@ function ProjectDetail({ projectId }: { projectId: string }) {
         <div className="section-head">
           <h2>Zadania ({tasks.length})</h2>
           {canManageTasks && (
-            <button
-              type="button"
-              className="btn soft"
-              onClick={() => openNewTask(project.id)}
-            >
-              + Nowe zadanie
-            </button>
+            <div className="section-head-actions">
+              {draftCount > 0 && (
+                <button
+                  type="button"
+                  className="btn primary"
+                  onClick={publishDrafts}
+                  title="Opublikuj wszystkie szkice zadań w tym projekcie"
+                >
+                  Zapisz i opublikuj ({draftCount})
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn soft"
+                onClick={() => openNewTask(project.id)}
+              >
+                + Nowe zadanie
+              </button>
+            </div>
           )}
         </div>
+        {draftCount > 0 && (
+          <p className="field-hint">
+            {draftCount === 1
+              ? 'Ten projekt ma 1 szkic zadania.'
+              : `Ten projekt ma ${draftCount} szkiców zadań.`}{' '}
+            Szkice są widoczne tylko tutaj i nie trafiają do planowania (kalendarz,
+            zasobnik, Moja praca), dopóki nie klikniesz „Zapisz i opublikuj”.
+          </p>
+        )}
         <p className="field-hint">
           Zaplanowano {formatDuration(projectPlannedTotal(state, project.id))} w całym projekcie.
         </p>
@@ -651,8 +686,15 @@ function ProjectDetail({ projectId }: { projectId: string }) {
                   onClick={() => openTask(t.id)}
                 >
                   <span className="task-title">{t.title}</span>
+                  {t.isDraft === true && (
+                    <span className="project-badge project-badge-draft" title="Szkic — nieopublikowane">
+                      szkic
+                    </span>
+                  )}
                   <StatusBadge status={getStatus(state, t.statusId)} />
-                  <PlanningBadge status={taskPlanningStatus(state, t.id)} />
+                  {t.isDraft !== true && (
+                    <PlanningBadge status={taskPlanningStatus(state, t.id)} />
+                  )}
                   <span className="muted">
                     {formatShortWithWeekday(t.startDate)} – {formatShortWithWeekday(t.endDate)} ·{' '}
                     {formatDuration(taskPlannedTotal(state, t.id))}

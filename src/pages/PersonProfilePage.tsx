@@ -150,7 +150,9 @@ function PersonProfile({ personId }: { personId: string }) {
 
   const projects = projectsOfPerson(state, person.id);
   const taskIds = new Set(taskIdsOfPerson(state, person.id));
-  const tasks = state.tasks.filter((t) => taskIds.has(t.id));
+  // Szkice nie „trafiają do osób” — profil pokazuje tylko opublikowane zadania
+  // (szkic jest widoczny wyłącznie w widoku projektu do czasu publikacji).
+  const tasks = state.tasks.filter((t) => taskIds.has(t.id) && t.isDraft !== true);
   const week = weekDays(todayStr());
   const capacity = personCapacity(state, person.id);
   const weekHours = week.reduce(

@@ -342,7 +342,8 @@ export function TimelinePage() {
         if (w.personId === person.id) involvedIds.add(w.taskId);
       }
       const tasks = state.tasks
-        .filter((t) => involvedIds.has(t.id))
+        // Szkice nie trafiają na oś czasu (widok planowania) — dopiero po publikacji.
+        .filter((t) => involvedIds.has(t.id) && t.isDraft !== true)
         .filter((t) => {
           if (!clientFilter) return true;
           const proj = getProject(state, t.projectId);

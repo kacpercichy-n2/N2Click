@@ -81,6 +81,29 @@
   odrzuca wiersze o niedozwolonym adresie i normalizuje nieznany `kind` do
   'link'. Usunięcie projektu zabiera
   listę bez osobnej kaskady; w chmurze to kolumna jsonb `projects.documents`.
+- SZKICE ZADAŃ (2026-07-21): `Task.isDraft?: boolean` (OPCJONALNE, ADDYTYWNE —
+  brak/`false` = opublikowane; `DATA_VERSION` zostaje na 7). Zadanie utworzone
+  WEWNĄTRZ projektu (modal otwarty z `initialProjectId`) startuje jako szkic;
+  bezpośrednie tworzenie gdzie indziej (Zadania/kalendarz/kanban) publikuje
+  natychmiast. Szkic NIE materializuje godzin: `saveTask` zapisuje zadanie +
+  przypisania, ale pomija CAŁĄ rekoncyliację workload (allocations/binTotals/
+  newUnassigned ignorowane) — planowane godziny żyją wyłącznie w `WorkloadEntry`
+  i powstają dopiero po publikacji (inwariant 1 + 4). Edycja NIGDY nie zmienia
+  `isDraft` (zachowuje stan zadania). Publikacja: `PUBLISH_PROJECT_DRAFTS`
+  (atomowo cały projekt; nieistniejący projekt/brak szkiców => ta sama
+  referencja, inwariant 6) i `PUBLISH_TASK` (pojedynczy; nie-szkic/nieistniejące
+  => ta sama referencja). `INSERT_BLOCK` na szkicu jest odrzucane (ta sama
+  referencja). Wykluczenia w widokach planowania są dwutorowe: selektory oparte o
+  `workload` (sumy/kalendarz/zasobnik/przeciążenie) wykluczają szkice
+  SAMOCZYNNIE (brak wierszy), a listy oparte o PRZYPISANIA filtrują jawnie —
+  `overdueTasksForPerson`, `unplannedTasksForPerson`, `todayAgendaForPerson`
+  (dateless), `projectsOfPerson` (selectors: `isDraftTask`/`isPublishedTask`),
+  plus kanban (`kanbanBoard.buildKanbanColumns`), lista „Zadania”
+  (`TasksPage`), oś czasu (`TimelinePage`) i profil osoby
+  (`PersonProfilePage`). Widok projektu POKAZUJE szkice (badge „szkic” +
+  „Zapisz i opublikuj”). Repair wczytania: `normalizeTaskMeta` ustawia
+  `isDraft: raw.isDraft === true`, więc każdy legacy zapis i chmura bez kolumny =
+  opublikowane. W chmurze to kolumna `tasks.is_draft` (patrz cloud-database).
 - `Client` carries contact fields (contactName/contactEmail/contactPhone/notes;
   columns from 20260718090000_clients_contact_fields, '' or missing = none — no
   repair pass, use-sites coalesce), edited on the `/clients` page via
@@ -174,7 +197,8 @@
 `selectors.test.ts`, `statusActions.test.ts`, `storage.test.ts`,
 `dateGuards.test.ts`, `taskMeta.test.ts`, `persistGate.test.ts` (retirement
 gate), `ticketActions.test.ts` + `ticketsStorage.test.ts` (zgłoszenia: reduktor,
-repair, uprawnienia). Cloud mirror: `src/supabase/cloudMirror.test.ts`, `plannerData.test.ts`,
+repair, uprawnienia), `draftTasks.test.ts` (szkice: saveTask pomija workload,
+PUBLISH_*, wykluczenia selektorów/kanban). Cloud mirror: `src/supabase/cloudMirror.test.ts`, `plannerData.test.ts`,
 `migrationStatus.test.ts` (coverage + handshake), `migrations.test.ts`.
 Bezszwowe odświeżanie w tle: `cloudMerge.test.ts` (blok „referencje”) +
 `src/utils/liveSyncGate.test.ts`.

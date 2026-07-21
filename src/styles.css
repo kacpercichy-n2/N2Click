@@ -877,6 +877,11 @@ textarea {
   color: var(--n2-sky, #7cc6ff);
   background: rgba(124, 198, 255, 0.12);
 }
+/* Szkic zadania (nieopublikowane) — ciepły, „roboczy” odcień bursztynowy. */
+.project-badge-draft {
+  color: var(--n2-amber, #f0b866);
+  background: rgba(240, 184, 102, 0.14);
+}
 .project-derived-departments {
   display: flex;
   flex-wrap: wrap;
@@ -2337,6 +2342,17 @@ option {
 }
 .section-head h2 {
   margin: 0;
+}
+/* Grupa akcji nagłówka sekcji (np. „Zapisz i opublikuj” + „Nowe zadanie”). */
+.section-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+/* Notka „szkic” w modalu zadania — spójna z pozostałymi field-hint. */
+.task-draft-hint {
+  line-height: 1.5;
 }
 
 .project-task-list {

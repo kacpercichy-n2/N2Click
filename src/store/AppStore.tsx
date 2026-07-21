@@ -112,6 +112,12 @@ export interface TaskDraft {
   workCategoryId: string;
   departmentId: string; // dział zadania; '' = brak (miękki fallback jak kategoria)
   checklist: ChecklistItem[];
+  // Sygnał TWORZENIA szkicu (tylko przy taskId === null). Zadanie utworzone z
+  // widoku projektu przychodzi z `isDraft: true` i NIE materializuje godzin.
+  // Przy EDYCJI ignorowane — reduktor zachowuje `isDraft` istniejącego zadania,
+  // więc formularz nie może przypadkiem opublikować ani cofnąć publikacji
+  // (jedyna droga to akcje PUBLISH_*). Brak pola = zadanie opublikowane.
+  isDraft?: boolean;
 }
 
 export interface ProjectDraft {
@@ -206,6 +212,9 @@ export type Action =
   | { type: 'SET_TASK_DATES'; taskId: string; startDate: string; endDate: string }
   | { type: 'SET_TASK_STATUS'; taskId: string; statusId: string }
   | { type: 'REORDER_PROJECT_TASK'; taskId: string; direction: -1 | 1 }
+  // Publikacja szkiców: całego projektu (atomowo) lub pojedynczego zadania.
+  | { type: 'PUBLISH_PROJECT_DRAFTS'; projectId: string }
+  | { type: 'PUBLISH_TASK'; taskId: string }
   | { type: 'SAVE_PROJECT'; projectId: string | null; draft: ProjectDraft }
   | { type: 'DELETE_PROJECT'; projectId: string }
   | { type: 'SET_PROJECT_STATUS'; projectId: string; statusId: string }
@@ -458,6 +467,9 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
       checklist,
       // Nowe zadanie ląduje NA KOŃCU swojego projektu.
       orderIndex: maxOrderIndexOfProject(state, draft.projectId) + 1,
+      // Szkic tylko przy tworzeniu z widoku projektu; wszędzie indziej publikacja
+      // natychmiastowa (brak flagi). Szkic pomija materializację godzin poniżej.
+      isDraft: draft.isDraft === true,
       createdAt: ts,
       updatedAt: ts,
     };
@@ -489,11 +501,23 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
             departmentId,
             checklist,
             orderIndex,
+            // Edycja NIGDY nie zmienia stanu publikacji: zachowaj `isDraft`
+            // istniejącego zadania (publikację robią wyłącznie akcje PUBLISH_*).
+            isDraft: t.isDraft,
             updatedAt: ts,
           }
         : t,
     );
   }
+
+  // Czy WYNIK zapisu jest szkicem? Tworzenie bierze sygnał z draftu, edycja
+  // zachowuje stan zadania. Szkic pomija CAŁĄ materializację godzin (zasobnik,
+  // kalendarz), bo planowane godziny żyją wyłącznie w `WorkloadEntry` i powstają
+  // dopiero po publikacji (inwariant 1 + 4). Przypisania powstają normalnie.
+  const resultIsDraft =
+    taskId === null
+      ? draft.isDraft === true
+      : state.tasks.find((t) => t.id === taskId)!.isDraft === true;
 
   // Rebuild assignments for this task from the desired set.
   const assignmentsOther = state.assignments.filter(
@@ -504,6 +528,28 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
     taskId: realTaskId,
     personId,
   }));
+
+  if (resultIsDraft) {
+    // Szkic: godziny NIE materializują się (inwariant 1 + 4). Workload zostaje
+    // nietknięty — dla świeżego szkicu jest pusty, a przy edycji szkicu nadal
+    // pusty. allocations / binTotals / newUnassigned z modalu są celowo
+    // pomijane; plan powstaje dopiero po publikacji. Zadanie i przypisania
+    // zapisują się normalnie, więc osoby można wybrać już na etapie szkicu.
+    return {
+      ...state,
+      tasks,
+      assignments: [...assignmentsOther, ...assignmentsForTask],
+      workload: state.workload,
+      activity: withActivity(
+        state,
+        'task',
+        realTaskId,
+        created ? 'utworzył(a) szkic zadania' : 'zaktualizował(a) szkic zadania',
+        undefined,
+        { collapse: !created },
+      ),
+    };
+  }
 
   // Reconcile this task's DATED workload against the desired per-(person,date)
   // day totals by DELTA — never a drop-and-recreate — so existing blocks keep
@@ -736,6 +782,51 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
   };
 }
 
+/**
+ * Publikacja WSZYSTKICH szkiców projektu jedną atomową akcją („Zapisz i
+ * opublikuj”). Przełącza `isDraft` na `false` dla każdego szkicu tego projektu;
+ * nic więcej się nie zmienia (przypisania już istnieją, godzin szkic nie miał).
+ * Nieistniejący projekt albo brak szkiców => TA SAMA referencja stanu
+ * (inwariant 6) — akcja bez efektu nie tworzy wpisu ani nowej referencji.
+ */
+function publishProjectDrafts(state: AppData, projectId: string): AppData {
+  if (!hasEntity(state, 'project', projectId)) return state;
+  const draftIds = new Set(
+    state.tasks.filter((t) => t.projectId === projectId && t.isDraft === true).map((t) => t.id),
+  );
+  if (draftIds.size === 0) return state;
+  const ts = nowIso();
+  return {
+    ...state,
+    tasks: state.tasks.map((t) =>
+      draftIds.has(t.id) ? { ...t, isDraft: false, updatedAt: ts } : t,
+    ),
+    activity: withActivity(
+      state,
+      'project',
+      projectId,
+      `opublikował(a) szkice zadań (${draftIds.size})`,
+    ),
+  };
+}
+
+/**
+ * Publikacja pojedynczego szkicu (bonus: „opublikuj” per zadanie). Zadanie musi
+ * istnieć i być szkicem — inaczej TA SAMA referencja stanu (inwariant 6).
+ */
+function publishTask(state: AppData, taskId: string): AppData {
+  const task = state.tasks.find((t) => t.id === taskId);
+  if (!task || task.isDraft !== true) return state;
+  const ts = nowIso();
+  return {
+    ...state,
+    tasks: state.tasks.map((t) =>
+      t.id === taskId ? { ...t, isDraft: false, updatedAt: ts } : t,
+    ),
+    activity: withActivity(state, 'task', taskId, 'opublikował(a) zadanie'),
+  };
+}
+
 function deleteTask(state: AppData, taskId: string): AppData {
   return {
     ...state,
@@ -890,6 +981,9 @@ function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
   }
   const task = state.tasks.find((t) => t.id === payload.taskId);
   if (!task) return state;
+  // Szkic nie materializuje godzin (inwariant 1 + 4): żadna ścieżka kalendarza
+  // nie może wstawić bloku dla nieopublikowanego zadania. Ta sama referencja.
+  if (task.isDraft === true) return state;
 
   // Snap to the 0.25h grid on write (input `step` is UI-only).
   const hours = snapHours(payload.hours);
@@ -2325,6 +2419,10 @@ export function reducer(state: AppData, action: Action): AppData {
         activity: withActivity(next, 'project', task.projectId, `usunął(a) zadanie „${task.title}”`),
       };
     }
+    case 'PUBLISH_PROJECT_DRAFTS':
+      return publishProjectDrafts(state, action.projectId);
+    case 'PUBLISH_TASK':
+      return publishTask(state, action.taskId);
     case 'MOVE_TASK':
       return moveTask(state, action.taskId, action.dayDelta);
     case 'SET_TASK_DATES':

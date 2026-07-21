@@ -302,7 +302,7 @@ export async function loadPlannerSnapshot(
     db.select('milestones', 'id, project_id, name, milestone_date'),
     db.select(
       'tasks',
-      'id, project_id, status_id, title, description, start_date, end_date, estimated_hours, priority, work_category_id, department_id, checklist, order_index, created_at, updated_at',
+      'id, project_id, status_id, title, description, start_date, end_date, estimated_hours, priority, work_category_id, department_id, checklist, order_index, is_draft, created_at, updated_at',
     ),
     db.select('task_assignments', 'task_id, profile_id'),
     db.select(
@@ -445,6 +445,9 @@ export async function loadPlannerSnapshot(
       departmentId: str(row.department_id),
       checklist,
       orderIndex,
+      // Szkic (20260721020000_task_is_draft): kolumna spoza `true` (starszy
+      // wiersz, brak kolumny, null) czytamy jako opublikowane.
+      isDraft: row.is_draft === true,
       createdAt: str(row.created_at),
       updatedAt: str(row.updated_at) || str(row.created_at),
     });

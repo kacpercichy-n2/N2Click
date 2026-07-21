@@ -97,6 +97,9 @@ export function buildKanbanColumns(state: AppData, filters: KanbanFilters): Kanb
 
   const archived: Task[] = [];
   for (const task of state.tasks) {
+    // Szkice zadań nie trafiają na tablicę — są widoczne wyłącznie w projekcie
+    // do czasu publikacji („Zapisz i opublikuj”). Brak pola = opublikowane.
+    if (task.isDraft === true) continue;
     if (!matchesFilters(task, filters, projectPaid, projectClient, assignees)) continue;
     const column = byStatusId.get(task.statusId);
     if (column) column.tasks.push(task);

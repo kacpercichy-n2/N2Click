@@ -109,6 +109,7 @@ describe('konwencja plików migracji', () => {
       '20260720200000_task_order_index.sql',
       '20260720230000_tickets.sql',
       '20260721010000_project_documents.sql',
+      '20260721020000_task_is_draft.sql',
     ]);
   });
 

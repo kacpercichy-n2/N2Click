@@ -193,6 +193,25 @@ describe('diffToCloudOps — families', () => {
     expect(rowOf(TK2).order_index).toBe(0);
   });
 
+  it('task upsert niesie is_draft (szkic true, opublikowane/legacy false)', () => {
+    const m = maps();
+    const TK2 = uuid('task-two');
+    const prev: AppData = { ...localFixture(), tasks: [] };
+    const next: AppData = {
+      ...localFixture(),
+      tasks: [
+        makeTask({ id: TK, isDraft: true }),
+        makeTask({ id: TK2 }), // brak pola => opublikowane
+      ],
+    };
+    const upserts = diffToCloudOps(prev, next, m).ops.filter(
+      (o) => o.table === 'tasks' && o.kind === 'upsert',
+    );
+    const rowOf = (id: string) => upserts.find((o) => o.row!.id === id)!.row!;
+    expect(rowOf(TK).is_draft).toBe(true);
+    expect(rowOf(TK2).is_draft).toBe(false);
+  });
+
   it('a rejected reorder (unknown task) keeps the state reference so the diff emits zero ops', () => {
     const m = maps();
     const prev: AppData = { ...localFixture(), tasks: [makeTask({ id: TK, orderIndex: 0 })] };

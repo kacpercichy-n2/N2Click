@@ -240,6 +240,27 @@ describe('loadPlannerSnapshot', () => {
     expect(result.payload.tasks.find((t) => t.id === TK2)!.orderIndex).toBe(0);
   });
 
+  it('hydrates is_draft (true => szkic; brak/null/inne => opublikowane)', async () => {
+    const TK2 = uuid('task-two');
+    const db = new FakeSelectDb()
+      .seed('projects', [
+        {
+          id: PR, client_id: null, name: 'P', description: '', status_id: S1, paid: false,
+          start_date: '2026-07-06', end_date: '2026-07-12', department_id: null, service_type_id: null,
+          created_at: '', updated_at: '',
+        },
+      ])
+      .seed('tasks', [
+        { id: TK, project_id: PR, status_id: S1, title: 'Szkic', description: '', start_date: '2026-07-06', end_date: '2026-07-08', estimated_hours: null, priority: 'normal', work_category_id: null, checklist: [], order_index: 0, is_draft: true, created_at: '', updated_at: '' },
+        { id: TK2, project_id: PR, status_id: S1, title: 'Bez kolumny', description: '', start_date: '2026-07-06', end_date: '2026-07-08', estimated_hours: null, priority: 'normal', work_category_id: null, checklist: [], order_index: 0, created_at: '', updated_at: '' },
+      ]);
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.payload.tasks.find((t) => t.id === TK)!.isDraft).toBe(true);
+    expect(result.payload.tasks.find((t) => t.id === TK2)!.isDraft).toBe(false);
+  });
+
   it('excludes a project with null dates and a task over the 92-day cap', async () => {
     const db = new FakeSelectDb()
       .seed('projects', [

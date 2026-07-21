@@ -51,6 +51,13 @@
   backfills 0..n-1 only for projects still all-default, so a re-run never
   clobbers manual order); `task_assignments (task_id, profile_id)`
   is task ownership.
+- `tasks.is_draft` (20260721020000_task_is_draft) — boolean not null default
+  `false`: szkic zadania (utworzone w projekcie, jeszcze nieopublikowane).
+  Domyślnie FALSE, więc każdy istniejący wiersz i wiersz bez jawnej flagi jest
+  opublikowany — bez migracji danych/backfillu. Nie tworzy tabeli, więc bez zmian
+  RLS/polityk ani publikacji realtime; klient mirroruje ją jak zwykłe pole
+  zadania (`cloudMirror.taskRow.is_draft = t.isDraft === true`; hydracja
+  `plannerData` czyta `row.is_draft === true`, spoza `true` => opublikowane).
 - `projects.documents` (20260721010000) — jsonb not null default `'[]'`, CHECK
   `jsonb_typeof(documents) = 'array'`: odnośniki do dokumentów handlowych
   (`{id, kind: oferta|wycena|brief|link, label, url}`). Kolumna osadzona jak

@@ -258,6 +258,8 @@ function taskRow(
     department_id: resolveDept(t.departmentId, maps.departments),
     checklist: t.checklist,
     order_index: t.orderIndex,
+    // Szkic (kolumna 20260721020000_task_is_draft): brak pola => opublikowane.
+    is_draft: t.isDraft === true,
     created_at: t.createdAt,
     updated_at: t.updatedAt,
   };

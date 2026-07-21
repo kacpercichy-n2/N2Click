@@ -124,6 +124,16 @@ export interface Task {
   // są od niej niezależne. Legacy repair nadaje deterministyczny domyślny ciąg
   // 0..n-1 per projekt w kolejności (startDate, createdAt, id).
   orderIndex: number;
+  // Szkic: zadanie utworzone WEWNĄTRZ projektu, jeszcze NIEopublikowane. Szkic
+  // jest widoczny wyłącznie w widoku projektu (oznaczony „szkic”) i celowo
+  // wykluczony z widoków planowania (Moja praca, pulpit, kanban, lista zadań) —
+  // NIGDY nie tworzy wierszy `WorkloadEntry` (zasobnik/kalendarz), więc godziny
+  // planera dla szkicu nie istnieją (inwariant 1). Publikacja („Zapisz i
+  // opublikuj” na projekcie) przełącza flagę na `false` jedną atomową akcją
+  // reduktora (inwariant 6). Pole OPCJONALNE i ADDYTYWNE: brak / `false` =
+  // opublikowane, więc legacy (localStorage), chmura bez kolumny i wszystkie
+  // dotychczasowe fixture'y czytają się jako opublikowane bez migracji danych.
+  isDraft?: boolean;
   createdAt: string; // ISO timestamp
   updatedAt: string; // ISO timestamp
 }

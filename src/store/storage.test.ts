@@ -824,9 +824,10 @@ describe('normalizeTaskMeta', () => {
       tasks: [task],
       savedFilters: [filter],
     });
-    // Zadanie sprzed pól `departmentId`/`orderIndex` zyskuje je (0 = jedyne
-    // zadanie projektu) — poza tym bez zmian.
-    expect(next.tasks[0]).toEqual({ ...task, departmentId: '', orderIndex: 0 });
+    // Zadanie sprzed pól `departmentId`/`orderIndex`/`isDraft` zyskuje je
+    // (0 = jedyne zadanie projektu; brak flagi => opublikowane) — poza tym bez
+    // zmian.
+    expect(next.tasks[0]).toEqual({ ...task, departmentId: '', orderIndex: 0, isDraft: false });
     expect(next.savedFilters[0].criteria).toEqual(filter.criteria);
   });
 
@@ -864,6 +865,18 @@ describe('normalizeTaskMeta', () => {
     expect(next.tasks.find((t) => t.id === 't1')!.orderIndex).toBe(5);
     // Appended AFTER the current max (5), not renumbered to 0/1.
     expect(next.tasks.find((t) => t.id === 't2')!.orderIndex).toBe(6);
+  });
+
+  // Szkice (PKG-20260721-draft-tasks): pole opcjonalne, ADDYTYWNE — legacy bez
+  // kolumny czyta się jako OPUBLIKOWANE, tylko jawne `true` zostaje szkicem.
+  it('normalizuje isDraft: brak pola / śmieci => false, jawne true => true', () => {
+    const legacy = v5Task({ id: 't1' }); // brak isDraft
+    const draftTask = { ...v5Task({ id: 't2' }), isDraft: true } as unknown as Task;
+    const garbage = { ...v5Task({ id: 't3' }), isDraft: 'yes' } as unknown as Task;
+    const next = normalizeTaskMeta({ ...emptyData(), tasks: [legacy, draftTask, garbage] });
+    expect(next.tasks.find((t) => t.id === 't1')!.isDraft).toBe(false);
+    expect(next.tasks.find((t) => t.id === 't2')!.isDraft).toBe(true);
+    expect(next.tasks.find((t) => t.id === 't3')!.isDraft).toBe(false);
   });
 
   it('is idempotent by value: a second pass on legacy data leaves orderIndex unchanged', () => {

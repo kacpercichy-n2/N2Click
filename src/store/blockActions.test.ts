@@ -303,6 +303,19 @@ describe('INSERT_BLOCK', () => {
     },
   );
 
+  it('odrzuca wstawienie bloku dla SZKICU (ta sama referencja) — szkic nie materializuje godzin', () => {
+    const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
+    const state = makeState({
+      // t2 to szkic z estymatą (headroom) — mimo budżetu reduktor musi odmówić.
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: 10, isDraft: true })],
+      workload: [ref],
+    });
+    expect(reducer(state, {
+      type: 'INSERT_BLOCK',
+      payload: { refEntryId: 'ref1', position: 'after', taskId: 't2', hours: 1 },
+    })).toBe(state);
+  });
+
   it('"przed" (before): places the new block at the ref start and pushes the ref later', () => {
     const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 });
     const state = makeState({
