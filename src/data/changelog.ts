@@ -84,6 +84,112 @@ export function isSameDayRange(dateFrom: DateStr, dateTo: DateStr): boolean {
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-07-21-funkcje-239-247',
+    dateFrom: '2026-07-21',
+    dateTo: '2026-07-21',
+    summary:
+      'Duża aktualizacja: wydarzenia i spotkania, zadania cykliczne, odhaczanie bloków w kalendarzu, lepsze szkice, trwałe filtry, stanowiska i spółki.',
+    items: [
+      // Wydarzenia — zupełnie nowy panel
+      {
+        area: 'Wydarzenia',
+        feature: 'Nowy panel „Wydarzenia” — spotkania w firmie',
+        description:
+          'W menu bocznym pojawiła się nowa pozycja „Wydarzenia”. To lista wszystkich spotkań i wydarzeń firmowych: każde ma nazwę, opis, miejsce, link do spotkania (np. Meet/Zoom), datę, godzinę rozpoczęcia, czas trwania i listę uczestników z zespołu. Kliknięcie wydarzenia otwiera okno edycji.',
+      },
+      {
+        area: 'Wydarzenia',
+        feature: 'Dodawanie spotkania prosto z kalendarza',
+        description:
+          'W Kalendarzu kliknij prawym przyciskiem na wolnym miejscu w wybranym dniu i godzinie i wybierz „+ Dodaj spotkanie” — otworzy się okno nowego wydarzenia z już ustawioną datą i godziną.',
+      },
+      {
+        area: 'Wydarzenia',
+        feature: 'Wydarzenia widoczne w kalendarzu',
+        description:
+          'Spotkania pokazują się w widoku tygodnia jako bloki w osobnym, niebieskim kolorze (innym niż bloki zadań), a w widoku miesiąca jako znacznik przy dniu — od razu widać, kiedy coś jest zaplanowane. Wydarzenia mogą też się powtarzać co tydzień w wybrane dni.',
+      },
+      // Kalendarz
+      {
+        area: 'Kalendarz',
+        feature: 'Zadania cykliczne (powtarzające się)',
+        description:
+          'W karcie zadania jest nowa sekcja „Cykliczność”: wybierasz dni tygodnia, godzinę rozpoczęcia, czas trwania i opcjonalnie datę końca. Powtórzenia pokazują się w kalendarzu jako kreskowane bloki ze znaczkiem ⟳. Prawym przyciskiem na takim bloku wybierzesz „Edytuj to wystąpienie” (przesunięcie tylko tego dnia), „Edytuj wszystkie” albo „Pomiń ten dzień”.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Odhaczanie pojedynczych bloków pracy',
+        description:
+          'Każdy blok w kalendarzu można teraz osobno oznaczyć jako wykonany — zrobiony blok dostaje znaczek ✓. W karcie zadania jest nowa sekcja „Wykonane bloki” z listą wszystkich bloków (osoba, dzień, godziny) i checkboxami. Gdy całe zadanie ma status „zrobione”, wszystkie jego bloki świecą się jako wykonane tak jak dotąd.',
+      },
+      // Zadania / szkice
+      {
+        area: 'Zadania',
+        feature: 'Godziny można wpisać już przy szkicu',
+        description:
+          'W szkicu zadania widać sekcję „Przypisane osoby” i można od razu wpisać planowane godziny dla każdej osoby. Godziny zapisują się razem ze szkicem, a przy publikacji automatycznie zamieniają się w normalne pozycje do zaplanowania w kalendarzu.',
+      },
+      {
+        area: 'Zadania',
+        feature: 'Podgląd dostępności przypisanych osób',
+        description:
+          'W karcie zadania, pod sumą godzin, widać dla każdej przypisanej osoby, ile ma wolnych, a ile zajętych godzin w okresie zadania — z wyraźnym ostrzeżeniem, jeśli byłaby przeciążona. Dzięki temu jeszcze przed zapisem wiadomo, czy ktoś ma miejsce na tę pracę.',
+      },
+      {
+        area: 'Zadania',
+        feature: 'Publikacja szkicu prosto z karty zadania',
+        description:
+          'W pasku na dole karty szkicu są teraz osobne przyciski: „Zapisz szkic” i „Opublikuj” (dla nowego szkicu: „Utwórz szkic” i „Utwórz i opublikuj”). Nie trzeba już wracać do strony projektu, żeby opublikować pojedyncze zadanie.',
+      },
+      // Filtry
+      {
+        area: 'Filtry',
+        feature: 'Filtr po projekcie i osobie w kolejnych widokach',
+        description:
+          'Na stronach Zadania i Kanban doszedł filtr „Projekt”, a na stronie Projekty filtr „Osoba”. Kanban obsługuje też zapisane zestawy filtrów, tak jak pozostałe widoki.',
+      },
+      {
+        area: 'Filtry',
+        feature: 'Aplikacja pamięta ostatnio użyte filtry',
+        description:
+          'Ustawione filtry w widokach Zadania, Projekty, Kanban, Obciążenie, Kalendarz i Oś czasu nie znikają już przy przejściu na inną stronę ani po odświeżeniu — po powrocie zastaniesz je dokładnie tak, jak je zostawiłeś.',
+      },
+      // Moja praca
+      {
+        area: 'Moja praca',
+        feature: 'Karta „Dzisiaj” bez zadań z innych dni',
+        description:
+          'Zadania bez zaplanowanych godzin pokazują się w „Dzisiaj” tylko w dniu swojego terminu, a nie każdego dnia trwania — lista naprawdę pokazuje to, co jest na dziś.',
+      },
+      // Ustawienia
+      {
+        area: 'Ustawienia',
+        feature: 'Słownik stanowisk',
+        description:
+          'W Ustawieniach (obok „Działów”) jest nowa sekcja „Stanowiska”: administrator dodaje, zmienia i usuwa nazwy stanowisk. W profilu osoby pole „Stanowisko” to teraz lista rozwijana z tego słownika, więc nazwy są spójne w całej firmie.',
+      },
+      {
+        area: 'Ustawienia',
+        feature: 'Spółki i zawężanie widoczności',
+        description:
+          'Nowa sekcja „Spółki” w Ustawieniach: administrator tworzy spółki i przypisuje do nich osoby w ich profilach. Osoba przypisana do spółki widzi projekty tylko swojej spółki; osoby bez spółki i administratorzy widzą wszystko jak dotąd.',
+      },
+      // Panel / ogólne
+      {
+        area: 'Panel',
+        feature: 'Pełna historia zmian',
+        description:
+          'W banerze „Co nowego” na Panelu obok „Czytaj całość” jest link „Zobacz pełną historię” — otwiera stronę ze wszystkimi dotychczasowymi wpisami dziennika zmian, od najnowszego.',
+      },
+      {
+        area: 'Ogólne',
+        feature: 'Pasek „Zapisz” już nie prześwituje',
+        description:
+          'Dolny, przyklejony pasek z przyciskami zapisu w karcie zadania i na stronie projektu dostał solidne tło — przewijana treść nie przebija już spod przycisków.',
+      },
+    ],
+  },
+  {
     id: '2026-07-20-fixy-224-238',
     dateFrom: '2026-07-20',
     dateTo: '2026-07-21',
