@@ -22,6 +22,7 @@ import type {
   Department,
   FilterPage,
   FilterViewKey,
+  JobTitle,
   LastViewFilter,
   Milestone,
   Person,
@@ -260,6 +261,9 @@ export type Action =
   | { type: 'ADD_DEPARTMENT'; name: string }
   | { type: 'RENAME_DEPARTMENT'; departmentId: string; name: string }
   | { type: 'DELETE_DEPARTMENT'; departmentId: string }
+  | { type: 'ADD_JOB_TITLE'; name: string }
+  | { type: 'RENAME_JOB_TITLE'; jobTitleId: string; name: string }
+  | { type: 'DELETE_JOB_TITLE'; jobTitleId: string }
   | { type: 'ADD_SERVICE_TYPE'; name: string }
   | { type: 'RENAME_SERVICE_TYPE'; serviceTypeId: string; name: string }
   | { type: 'DELETE_SERVICE_TYPE'; serviceTypeId: string }
@@ -2288,11 +2292,12 @@ export interface CloudDictionariesPayload {
   statuses: Status[];
   serviceTypes: ServiceType[];
   workCategories: WorkCategory[];
+  jobTitles: JobTitle[];
 }
 
 /**
  * AUTORYTATYWNE scalenie słowników organizacji z chmury (działy, statusy, typy
- * usług, kategorie prac) — lokalne kopie są zastępowane w całości. Fail-closed
+ * usług, kategorie prac, stanowiska) — lokalne kopie są zastępowane w całości. Fail-closed
  * (invariant 6): niepoprawna struktura ALBO zestaw statusów łamiący twardy
  * invariant planera (co najmniej jeden aktywny nie-ukończony i jeden aktywny
  * ukończony status) zwraca ORYGINALNĄ referencję stanu — w szczególności pusta
@@ -2301,18 +2306,20 @@ export interface CloudDictionariesPayload {
  */
 function mergeCloudDictionaries(state: AppData, payload: CloudDictionariesPayload): AppData {
   if (typeof payload !== 'object' || payload === null) return state;
-  const { departments, statuses, serviceTypes, workCategories } = payload;
+  const { departments, statuses, serviceTypes, workCategories, jobTitles } = payload;
   if (
     !Array.isArray(departments) ||
     !Array.isArray(statuses) ||
     !Array.isArray(serviceTypes) ||
-    !Array.isArray(workCategories)
+    !Array.isArray(workCategories) ||
+    !Array.isArray(jobTitles)
   ) {
     return state;
   }
   if (!departments.every(isValidNamedRow)) return state;
   if (!serviceTypes.every(isValidNamedRow)) return state;
   if (!workCategories.every(isValidNamedRow)) return state;
+  if (!jobTitles.every(isValidNamedRow)) return state;
   if (!statuses.every(isValidStatusRow)) return state;
   // Twardy invariant 5: przynajmniej jeden aktywny status w toku i jeden done.
   const hasActive = statuses.some((s) => !s.archived && !s.isDone);
@@ -2324,6 +2331,7 @@ function mergeCloudDictionaries(state: AppData, payload: CloudDictionariesPayloa
     sameNamedRows(state.departments, departments) &&
     sameNamedRows(state.serviceTypes, serviceTypes) &&
     sameNamedRows(state.workCategories, workCategories) &&
+    sameNamedRows(state.jobTitles, jobTitles) &&
     sameStatusRows(state.statuses, sorted)
   ) {
     return state;
@@ -2333,6 +2341,7 @@ function mergeCloudDictionaries(state: AppData, payload: CloudDictionariesPayloa
     departments: [...departments],
     serviceTypes: [...serviceTypes],
     workCategories: [...workCategories],
+    jobTitles: [...jobTitles],
     statuses: sorted,
   };
 }
@@ -3112,6 +3121,49 @@ export function reducer(state: AppData, action: Action): AppData {
           t.departmentId === action.departmentId ? { ...t, departmentId: '' } : t,
         ),
       };
+    case 'ADD_JOB_TITLE': {
+      // Nazwy stanowisk są unikalne bez rozróżniania wielkości liter (pl-PL).
+      const name = action.name.trim();
+      if (!name) return state;
+      const key = name.toLocaleLowerCase('pl-PL');
+      if (state.jobTitles.some((j) => j.name.trim().toLocaleLowerCase('pl-PL') === key)) return state;
+      return {
+        ...state,
+        jobTitles: [...state.jobTitles, { id: uid(), name }],
+      };
+    }
+    case 'RENAME_JOB_TITLE': {
+      const name = action.name.trim();
+      if (!name) return state;
+      const target = state.jobTitles.find((j) => j.id === action.jobTitleId);
+      if (!target) return state;
+      // Zmiana na aktualną nazwę (dosłownie) to no-op — ta sama referencja.
+      if (target.name === name) return state;
+      // Duplikat INNEGO wiersza (bez rozróżniania wielkości liter) odrzucamy.
+      const key = name.toLocaleLowerCase('pl-PL');
+      if (
+        state.jobTitles.some(
+          (j) => j.id !== action.jobTitleId && j.name.trim().toLocaleLowerCase('pl-PL') === key,
+        )
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        jobTitles: state.jobTitles.map((j) =>
+          j.id === action.jobTitleId ? { ...j, name } : j,
+        ),
+      };
+    }
+    case 'DELETE_JOB_TITLE': {
+      // Bez kaskady: `Person.role` to wolny tekst i zachowuje swoją wartość
+      // (select w profilu scala zaszłościowe wpisy). Nieznane id => ta sama referencja.
+      if (!state.jobTitles.some((j) => j.id === action.jobTitleId)) return state;
+      return {
+        ...state,
+        jobTitles: state.jobTitles.filter((j) => j.id !== action.jobTitleId),
+      };
+    }
     case 'ADD_SERVICE_TYPE': {
       const name = action.name.trim();
       if (!name) return state;

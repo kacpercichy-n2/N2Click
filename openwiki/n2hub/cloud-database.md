@@ -38,9 +38,14 @@
   `contact_phone`, `notes`; 20260718090000) and the published tables are in the
   `supabase_realtime` publication (20260718091000) — RLS applies to Realtime
   (WALRUS), clients treat events only as a "something changed" signal.
-- `clients`, `statuses`, `service_types`, `work_categories` — org-wide
-  dictionaries; read by every authenticated user, mutations admin-only
-  (clients: insert also manager).
+- `clients`, `statuses`, `service_types`, `work_categories`, `job_titles`
+  (20260721150000, słownik „Stanowiska”) — org-wide dictionaries; read by every
+  authenticated user, mutations admin-only (clients: insert also manager).
+  `job_titles` jest w publikacji `supabase_realtime` (parytet z `departments`),
+  mirrorowany jak zwykły słownik (`cloudMirror` piąty wpis `dicts`) i hydrowany
+  przez `referenceData.loadOrgSnapshot` → `OrgSnapshot.jobTitles` → App.tsx
+  `MERGE_CLOUD_DICTIONARIES`. Rejestr: `migrations.test.ts` (lista +
+  `public.job_titles` w `EXPECTED_POLICIES`).
 - `projects` → `client_id`, `status_id`, `service_type_id`, `department_id`
   (LEGACY — see below); `project_members (project_id, profile_id)` is the
   explicit worker access list. `tasks` → `project_id` (cascade), `status_id`,

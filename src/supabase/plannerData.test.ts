@@ -63,6 +63,7 @@ function orgFixture(): OrgSnapshot {
     statuses: [{ id: S1, name: 'Do zrobienia', slug: 'todo', color: '', order: 0, archived: false, isDone: false }],
     serviceTypes: [{ id: SV, name: 'Wideo' }],
     workCategories: [{ id: WC, name: 'Design' }],
+    jobTitles: [],
   };
 }
 const maps = (): CloudIdMaps => buildCloudIdMaps(localFixture(), orgFixture());

@@ -1,54 +1,55 @@
-# Run state — 20260721-135536-240 unified and persistent filters
+# Run state — 20260721-144300-242 job titles dictionary from UI
 
 ## Goal
 
-Add `SavedFilterCriteria.projectId` (+ „Projekt” filter on Tasks), unify
-person/client/project filtering across kanban/projects/tasks (kanban gains
-presets via additive `FilterPage: 'kanban'`), and persist the last-used filter
-per view in a new local-only `AppData.lastFilters` collection (reducer
-`SET_LAST_FILTER` + storage.ts repair), so filters survive navigation and
-reload. Data version stays 7 (additive, defaulted + sanitized on load).
+Admin-managed `jobTitles` dictionary ("Stanowiska" on AdminPage), wired into
+the profile "Stanowisko" select (merged with department-derived options and
+the legacy free-text value — nothing disappears), persisted additively
+(v7 stays) and mirrored to a new `public.job_titles` table (admin-write RLS)
+via the departments dictionary path.
 
 ## Packages
 
-- `handoffs/scheduler-reviews/240-architect-package.md`
-  - PKG-20260721-filters-store — developer, medium risk, Codex required.
-    Status: ready.
-  - PKG-20260721-filters-pages — developer, medium risk, Codex conditional.
-    Depends on filters-store. Status: ready.
+- `handoffs/scheduler-reviews/242-architect-package.md`
+  - PKG-20260721-job-titles-dictionary — developer, medium risk, Codex
+    required. Status: ready.
 
 ## Changed boundaries (planned)
 
-- types.ts: `projectId` in criteria, `FilterPage`+'kanban', `FilterViewKey`,
-  `LastViewFilter`, `AppData.lastFilters`.
-- storage.ts: DEFAULT_FILTER_CRITERIA, emptyData, load coercion,
-  normalizeTaskMeta/normalizeDates repair for lastFilters; persistGate
-  NON_MIRRORED_KEYS + 'lastFilters'.
-- AppStore: SET_LAST_FILTER, SAVE_FILTER_PRESET validation, deleteProject /
-  DELETE_WORK_CATEGORY cascades. MERGE_CLOUD_* keep lastFilters by reference.
-- Six pages move filter state from useState to store-backed lastFilters.
+- types.ts `JobTitle` + `AppData.jobTitles`; AppStore ADD/RENAME/DELETE_JOB_TITLE
+  (invariant-6 same-ref rejections incl. case-insensitive duplicates) and
+  `CloudDictionariesPayload.jobTitles` in `mergeCloudDictionaries`.
+- storage.ts emptyData + coerceArray; persistGate NON_MIRRORED_KEYS; seed.
+- AdminPage "Stanowiska" (SimpleList reuse) + cloud preview; PersonProfilePage
+  select via new `roleTitles.jobTitleSelectOptions` (accessRoleForTitle and
+  roleTitleOptions untouched).
+- Cloud: `supabase/migrations/20260721150000_job_titles.sql` (idempotent,
+  house RLS, realtime publication), migrations.test list + EXPECTED_POLICIES,
+  referenceData OrgSnapshot select, App.tsx dictionary dispatch, cloudMirror
+  fifth dict diff entry.
 
 ## Deviation (recorded)
 
-Queue prompt asked for cloud persistence via MERGE_CLOUD_*; savedFilters is a
-deliberately local-only per-user concept (wiki + reducer), so lastFilters is
-local-only beside it. No Supabase schema.
+Prompt asked for plannerData.ts + CloudMergePayload wiring; dictionaries
+hydrate via referenceData → MERGE_CLOUD_DICTIONARIES (departments path), so
+plannerData stays untouched.
 
 ## Verification
 
-- Focused: storage, filterState (new), cloudMerge, persistGate suites; build.
+- Focused: new jobTitles suite + storage/roleTitles/migrations/referenceData/
+  cloudMirror/taskMeta/persistGate/cloudMerge/exportDryRun/plannerData; build.
 - Browser: none — no pointer-path changes.
-- Scheduler owns final `npm test && npm run build`.
+- Scheduler owns final `npm run test:scheduler && npm test && npm run build`.
 
 ## Open questions
 
-- None blocking. Wiki after green: state-and-persistence (savedFilters →
-  + lastFilters, FilterPage 'kanban') likely stale.
+- None blocking. Wiki after green: state-and-persistence + cloud-database
+  (both declared) need the new collection/table bullets.
 
-## Developer result (both PKGs, green)
+## Developer result (green)
 
-Implemented PKG-A + PKG-B. Store: types/storage/AppStore/commandValidation/
-persistGate/seed. Pages: FilterPresets + 6 pages moved to store-backed
-lastFilters (sanitizers in commandValidation, no cycle). Context expanded to
-seed.ts (required lastFilters:{}) + 2 test-literal fixes (exportDryRun/taskMeta).
-`npm test` 1142 pass, `npm run build` green. Wiki updated. No blockers.
+Implemented all boundaries per package (no plannerData change). Fixed extra
+OrgSnapshot literals (projectDocuments/cloudMirror/migrationStatus/referenceData
+tests) for the new required field. Focused suites pass; `npm test` 1166 pass
+(43 files), `npm run build` green. Both declared wiki pages updated. No
+deviations beyond the pre-recorded hydration-path one.

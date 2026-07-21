@@ -1816,13 +1816,14 @@ describe('loadData collection coercion (storage-01: one corrupt collection must 
     ['a string', 'oops'],
   ];
 
-  // The 11 auxiliary collections guarded ONLY by the emptyData spread (the ones
+  // The auxiliary collections guarded ONLY by the emptyData spread (the ones
   // that used to blow up the whole load). Each must repair in isolation.
   const AUX_COLLECTION_KEYS = [
     'clients',
     'departments',
     'serviceTypes',
     'workCategories',
+    'jobTitles',
     'statuses',
     'projects',
     'milestones',
@@ -1873,6 +1874,18 @@ describe('loadData collection coercion (storage-01: one corrupt collection must 
       });
     }
   }
+
+  it('a legacy payload WITHOUT jobTitles loads with [] (additive collection, v7 stays)', () => {
+    const payload = { ...validV7Payload() };
+    delete (payload as Record<string, unknown>).jobTitles;
+    const result = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () =>
+      loadDataResult(),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.jobTitles).toEqual([]);
+    expect(result.data.tasks.map((t) => t.id)).toContain('t1');
+  });
 
   it('runs coercion BEFORE localizeLegacyData: a v5 payload with "statuses" null repairs to the default pipeline instead of throwing', () => {
     const payload = { ...validV7Payload(), version: 5, statuses: null };

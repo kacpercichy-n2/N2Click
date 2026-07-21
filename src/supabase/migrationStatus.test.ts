@@ -61,7 +61,7 @@ function orgFixture(): OrgSnapshot {
   return {
     profile: cloudProfile({ id: CLOUD_PA, email: 'a@x.com' }),
     profiles: [cloudProfile({ id: CLOUD_PA, email: 'a@x.com' })],
-    departments: [], statuses: [], serviceTypes: [], workCategories: [],
+    departments: [], statuses: [], serviceTypes: [], workCategories: [], jobTitles: [],
   };
 }
 const maps = (): CloudIdMaps => buildCloudIdMaps(localFixture(), orgFixture());

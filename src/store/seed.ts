@@ -678,6 +678,8 @@ export function buildSampleData(): AppData {
     departments,
     serviceTypes,
     workCategories,
+    // Dane demonstracyjne nie definiują stanowisk — słownik startuje pusty.
+    jobTitles: [],
     statuses,
     projects,
     milestones,

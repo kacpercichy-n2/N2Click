@@ -31,7 +31,7 @@ import {
 } from '../store/selectors';
 import { ROLE_LABELS, can, NO_PERM_TITLE } from '../store/permissions';
 import { hashPassword } from '../utils/password';
-import { accessRoleForTitle, roleTitleOptions } from '../utils/roleTitles';
+import { accessRoleForTitle, jobTitleSelectOptions } from '../utils/roleTitles';
 import type { AccessRole, Person } from '../types';
 import { Avatar } from '../components/Avatar';
 import { Coin } from '../components/Coin';
@@ -247,7 +247,7 @@ function PersonProfile({ personId }: { personId: string }) {
                 title={allow('roleTitle') ? undefined : NO_PERM_TITLE}
               >
                 <option value="">—</option>
-                {roleTitleOptions(state.departments, draft.role).map((t) => (
+                {jobTitleSelectOptions(state.jobTitles, state.departments, draft.role).map((t) => (
                   <option key={t} value={t}>
                     {t}
                   </option>

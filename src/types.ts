@@ -33,6 +33,12 @@ export interface WorkCategory {
   name: string;
 }
 
+/** Admin-managed stanowiska (job titles) dictionary; mirrors Department. */
+export interface JobTitle {
+  id: string;
+  name: string;
+}
+
 /** Task priority — fixed 4-value enum. Polish labels live in utils/priority.ts. */
 export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 
@@ -327,6 +333,7 @@ export interface AppData {
   departments: Department[];
   serviceTypes: ServiceType[];
   workCategories: WorkCategory[];
+  jobTitles: JobTitle[];
   statuses: Status[];
   projects: Project[];
   milestones: Milestone[];

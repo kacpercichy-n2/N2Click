@@ -83,6 +83,7 @@ function orgFixture(): OrgSnapshot {
     statuses: [{ id: S1, name: 'Do zrobienia', slug: 'todo', color: '#fff', order: 0, archived: false, isDone: false }],
     serviceTypes: [{ id: SV, name: 'Wideo' }],
     workCategories: [{ id: WC, name: 'Design' }],
+    jobTitles: [],
   };
 }
 const maps = (): CloudIdMaps => buildCloudIdMaps(localFixture(), orgFixture());
@@ -111,6 +112,7 @@ describe('buildCloudIdMaps', () => {
       serviceTypes: [{ id: SV, name: 'Wideo' }],
       workCategories: [{ id: WC, name: 'Design' }],
       departments: [{ id: uuid('cloud-dept'), name: 'Kreacja' }],
+      jobTitles: [],
     };
     const m = buildCloudIdMaps(local, org);
     expect(m.people.get(PA)).toBe(CLOUD_PA); // by normalized email
@@ -488,6 +490,25 @@ describe('diffToCloudOps — słowniki i profile (przewód zapisu paneli admina)
     expect(byTable('service_types')).toEqual([
       expect.objectContaining({ kind: 'remove', sourceId: SV }),
     ]);
+  });
+
+  it('stanowiska: dodanie/zmiana emituje upsert, usunięcie emituje remove do job_titles (UUID)', () => {
+    const jt = uuid('jt-1');
+    const prev: AppData = { ...localFixture(), jobTitles: [{ id: jt, name: 'Grafik' }] };
+    // Dodanie nowego + zmiana nazwy istniejącego.
+    const jt2 = uuid('jt-2');
+    const added: AppData = {
+      ...prev,
+      jobTitles: [{ id: jt, name: 'Senior Grafik' }, { id: jt2, name: 'Programista' }],
+    };
+    const addOps = diffToCloudOps(prev, added, maps()).ops.filter((o) => o.table === 'job_titles');
+    expect(addOps.map((o) => o.kind).sort()).toEqual(['upsert', 'upsert']);
+    expect(addOps.find((o) => o.sourceId === jt2)!.row).toMatchObject({ id: jt2, name: 'Programista' });
+    // Usunięcie wiersza o UUID emituje remove.
+    const removeOps = diffToCloudOps(prev, { ...prev, jobTitles: [] }, maps()).ops.filter(
+      (o) => o.table === 'job_titles',
+    );
+    expect(removeOps).toEqual([expect.objectContaining({ kind: 'remove', sourceId: jt })]);
   });
 
   it('edycja osoby emituje WYŁĄCZNIE update istniejącego profilu chmury', () => {

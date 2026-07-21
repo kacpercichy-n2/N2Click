@@ -137,6 +137,24 @@
   referencji; `persistGate.NON_MIRRORED_KEYS` zawiera `lastFilters` (zmiana
   samych filtrów NIGDY nie pomija zapisu lokalnego). Testy: `filterState.test.ts`,
   rozszerzenia w `storage.test.ts`/`cloudMerge.test.ts`/`persistGate.test.ts`.
+- STANOWISKA (2026-07-21): kolekcja `jobTitles` w `AppData` (`JobTitle` w
+  `src/types.ts`, tuż po `workCategories`) — słownik stanowisk zarządzany w
+  Administracji („Stanowiska”). Mutacje: `ADD_JOB_TITLE` / `RENAME_JOB_TITLE` /
+  `DELETE_JOB_TITLE` w reduktorze — trim; pusta nazwa, nieznane id oraz DUPLIKAT
+  bez rozróżniania wielkości liter (`toLocaleLowerCase('pl-PL')`, reguła TYLKO dla
+  stanowisk; działy zachowują historyczne zachowanie) zwracają TĘ SAMĄ referencję
+  (inwariant 6); rename na własną dokładną nazwę to no-op; DELETE bez kaskady —
+  `Person.role` (wolny tekst) zachowuje wartość. Kolekcja ADDYTYWNA: `DATA_VERSION`
+  zostaje na 7, `emptyData()`/seed dają `[]`, a wczytanie ma
+  `coerceArray(parsedRest.jobTitles, …)` (bez osobnego repair per-wiersz, parytet z
+  `departments`). `MERGE_CLOUD_DICTIONARIES` teraz zastępuje też `jobTitles`
+  (Array.isArray + isValidNamedRow, pusta chmura POPRAWNA, zniekształcony wiersz →
+  ta sama referencja); `MERGE_CLOUD_ENTITIES` nadal ich nie rusza (po referencji).
+  `persistGate.NON_MIRRORED_KEYS` zawiera `jobTitles`. Select „Stanowisko” w
+  profilu scala je przez `jobTitleSelectOptions` (słownik → opcje działowe →
+  bieżąca zaszłościowa wartość na końcu). W chmurze to tabela `public.job_titles`
+  (patrz cloud-database). Testy: `jobTitles.test.ts`, rozszerzenia w
+  `storage.test.ts`/`roleTitles.test.ts`/`referenceData.test.ts`/`cloudMirror.test.ts`.
 - `Client` carries contact fields (contactName/contactEmail/contactPhone/notes;
   columns from 20260718090000_clients_contact_fields, '' or missing = none — no
   repair pass, use-sites coalesce), edited on the `/clients` page via

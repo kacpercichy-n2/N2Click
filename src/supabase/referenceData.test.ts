@@ -78,7 +78,11 @@ function seedAdminDb(): FakeReferenceDb {
       { id: 'st2', name: 'Wideo' },
       { id: 'st1', name: 'Grafika' },
     ])
-    .seed('work_categories', [{ id: 'wc1', name: 'Projekt' }]);
+    .seed('work_categories', [{ id: 'wc1', name: 'Projekt' }])
+    .seed('job_titles', [
+      { id: 'jt2', name: 'Programista' },
+      { id: 'jt1', name: 'Grafik' },
+    ]);
 }
 
 // ---- 1. Snapshot mapping + sorting ------------------------------------------
@@ -114,6 +118,8 @@ describe('loadOrgSnapshot — mapping i sortowanie (admin)', () => {
     // Słowniki posortowane po nazwie.
     expect(snap.serviceTypes.map((s) => s.name)).toEqual(['Grafika', 'Wideo']);
     expect(snap.workCategories.map((c) => c.name)).toEqual(['Projekt']);
+    // Stanowiska: mapowane i posortowane po nazwie.
+    expect(snap.jobTitles.map((j) => j.name)).toEqual(['Grafik', 'Programista']);
   });
 });
 
@@ -152,7 +158,7 @@ describe('loadOrgSnapshot — wiersze zscope\'owane przez RLS', () => {
 
 describe('loadOrgSnapshot — atomowość i puste kolekcje', () => {
   it('dowolny błąd selectu psuje cały snapshot z jednym polskim komunikatem', async () => {
-    for (const table of ['profiles', 'departments', 'statuses', 'service_types', 'work_categories']) {
+    for (const table of ['profiles', 'departments', 'statuses', 'service_types', 'work_categories', 'job_titles']) {
       const db = seedAdminDb().failOn(table, 'boom-sdk-detail');
       const res = await loadOrgSnapshot(db, U_ADMIN);
       expect(res.ok).toBe(false);
@@ -174,6 +180,7 @@ describe('loadOrgSnapshot — atomowość i puste kolekcje', () => {
       statuses: [],
       serviceTypes: [],
       workCategories: [],
+      jobTitles: [],
     });
   });
 
@@ -212,7 +219,7 @@ describe('effectiveAccessRole — macierz fallbacków', () => {
     status: 'ready',
     snapshot: {
       profile: { id: 'cloud', firstName: 'C', lastName: '', email: '', roleTitle: '', cloudRole: 'manager', departmentId: null, supervisorId: null, phone: '', avatar: '', capacity: 8, workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, birthDate: '' },
-      profiles: [], departments: [], statuses: [], serviceTypes: [], workCategories: [],
+      profiles: [], departments: [], statuses: [], serviceTypes: [], workCategories: [], jobTitles: [],
     },
   };
   const readyNoProfile: OrgState = { status: 'ready', snapshot: { ...ready.snapshot, profile: null } as OrgSnapshot };

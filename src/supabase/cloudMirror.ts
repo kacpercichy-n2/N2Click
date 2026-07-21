@@ -613,7 +613,7 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
   }
 
   // 9) Słowniki organizacji ---- (statusy + działy + typy usług + kategorie
-  // prac). Po autorytatywnej hydracji lokalne wiersze noszą id chmury, a nowe
+  // prac + stanowiska). Po autorytatywnej hydracji lokalne wiersze noszą id chmury, a nowe
   // dostają crypto.randomUUID — mutacje paneli admina płyną wprost do tabel
   // (RLS: zapis wyłącznie administrator; odrzut ląduje w `dropped` z polską
   // etykietą). Usunięcie propagujemy tylko dla id w formacie UUID.
@@ -663,6 +663,15 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
         label: 'Kategoria prac',
         prevRows: prev.workCategories,
         nextRows: next.workCategories,
+        toRow: ((d: { id: string; name: string }) => ({ id: d.id, name: d.name })) as (
+          r: never,
+        ) => Record<string, unknown>,
+      },
+      {
+        table: 'job_titles',
+        label: 'Stanowisko',
+        prevRows: prev.jobTitles,
+        nextRows: next.jobTitles,
         toRow: ((d: { id: string; name: string }) => ({ id: d.id, name: d.name })) as (
           r: never,
         ) => Record<string, unknown>,
