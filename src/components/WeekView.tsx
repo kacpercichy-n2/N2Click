@@ -1391,6 +1391,16 @@ export function WeekView({ state, anchor, filter }: Props) {
     setMenu(null);
   };
 
+  // Per-block „wykonane” from the calendar context menu. Toggles from the LIVE
+  // entry, not the menu snapshot, so a flag merged in while the menu is open
+  // isn't flipped backwards; SET_BLOCK_DONE no-ops on an unknown entryId.
+  const doToggleDone = () => {
+    if (!menu) return;
+    const live = state.workload.find((w) => w.id === menu.entry.id);
+    dispatch({ type: 'SET_BLOCK_DONE', entryId: menu.entry.id, done: live?.done !== true });
+    setMenu(null);
+  };
+
   const doDelete = () => {
     if (!menu) return;
     if (window.confirm(`Usunąć blok ${formatDuration(menu.entry.plannedHours)} z zasobnika?`)) {
@@ -1464,6 +1474,10 @@ export function WeekView({ state, anchor, filter }: Props) {
 
   // Overload preview for the insert form.
   const menuPerson = menu ? getPerson(state, menu.entry.personId) : undefined;
+  // Live per-block done flag for the menu label (menu.entry is a snapshot).
+  const menuEntryDone = menu
+    ? state.workload.some((w) => w.id === menu.entry.id && w.done === true)
+    : false;
   // Task picker options for the insert form. Users who can manage tasks pick any
   // task; users limited to their own blocks (blocks.editOwn) may only insert for
   // tasks the block's person is ALREADY assigned to — INSERT_BLOCK auto-assigns,
@@ -1890,6 +1904,17 @@ export function WeekView({ state, anchor, filter }: Props) {
                     onClick={() => doSplit(4)}
                   >
                     Podziel na ćwiartki
+                  </button>
+                  <div className="context-menu-sep" role="separator" />
+                  {/* Per-block „wykonane” shortcut — same SET_BLOCK_DONE as the
+                      TaskModal checkbox, task status untouched. */}
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="context-menu-item"
+                    onClick={doToggleDone}
+                  >
+                    {menuEntryDone ? 'Odznacz „wykonane”' : '✓ Oznacz jako wykonane'}
                   </button>
                 </>
               )}

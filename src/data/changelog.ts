@@ -120,7 +120,7 @@ export const CHANGELOG: ChangelogEntry[] = [
         area: 'Kalendarz',
         feature: 'Odhaczanie pojedynczych bloków pracy',
         description:
-          'Każdy blok w kalendarzu można teraz osobno oznaczyć jako wykonany — zrobiony blok dostaje znaczek ✓. W karcie zadania jest nowa sekcja „Wykonane bloki” z listą wszystkich bloków (osoba, dzień, godziny) i checkboxami. Gdy całe zadanie ma status „zrobione”, wszystkie jego bloki świecą się jako wykonane tak jak dotąd.',
+          'Każdy blok w kalendarzu można teraz osobno oznaczyć jako wykonany — zrobiony blok dostaje znaczek ✓. Najszybciej zrobisz to prosto z kalendarza: kliknij blok prawym przyciskiem i wybierz „Oznacz jako wykonane” (albo „Odznacz”, jeśli się pomylisz). Oprócz tego w karcie zadania jest nowa sekcja „Wykonane bloki” z listą wszystkich bloków (osoba, dzień, godziny) i checkboxami. Gdy całe zadanie ma status „zrobione”, wszystkie jego bloki świecą się jako wykonane tak jak dotąd.',
       },
       // Zadania / szkice
       {
