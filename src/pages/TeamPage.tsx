@@ -27,7 +27,12 @@ import {
   type ProvisionFormState,
   type TeamDepartmentView,
 } from './teamScope';
+import { TeamStructureTree, personForTreeNode } from './TeamStructureTree';
+import type { Person } from '../types';
 import type { AccessRole as ProvisionAccessRole } from '../../supabase/functions/provision-account/contract';
+
+/** Tryb prezentacji obszaru Zespół: płaska lista działów vs drzewo struktury. */
+type TeamView = 'list' | 'structure';
 
 /** Serwerowa lista działów (UUID + nazwa) na potrzeby selectów formularza. */
 interface ServerDepartment {
@@ -52,6 +57,7 @@ export function TeamPage() {
   const auth = useAuth();
   const org = useOrgData();
   const me = currentUserSel(state);
+  const [view, setView] = useState<TeamView>('list');
 
   // Efektywna rola: w trybie supabase (samodzielnie, snapshot gotowy) rola z
   // chmury; w przeciwnym razie rola lokalna. Bramka nawigacji/trasy jest UX-owa.
@@ -77,12 +83,32 @@ export function TeamPage() {
     <section className="page">
       <div className="page-head">
         <h1>Zespół</h1>
+        <div className="cal-view-toggle" role="group" aria-label="Widok zespołu">
+          <button
+            type="button"
+            className={`toggle-btn${view === 'list' ? ' active' : ''}`}
+            aria-pressed={view === 'list'}
+            onClick={() => setView('list')}
+          >
+            Lista
+          </button>
+          <button
+            type="button"
+            className={`toggle-btn${view === 'structure' ? ' active' : ''}`}
+            aria-pressed={view === 'structure'}
+            onClick={() => setView('structure')}
+          >
+            Struktura
+          </button>
+        </div>
       </div>
 
       {isSupabase ? (
-        <CloudTeamHierarchy />
+        <CloudTeamHierarchy view={view} />
       ) : (
         <LocalTeamHierarchy
+          view={view}
+          people={scopedLocalPeople(state.people, teamAccessForUser(me))}
           groups={buildTeamHierarchy(state.people, state.departments, teamAccessForUser(me))}
         />
       )}
@@ -197,8 +223,28 @@ function HierarchyGroups({
   );
 }
 
-/** Hierarchia z lokalnego store'u (tryb lokalny — bez zmian względem dotąd). */
-function LocalTeamHierarchy({ groups }: { groups: TeamDepartmentView[] }) {
+/**
+ * Osoby lokalnego store'u zawężone do zakresu roli (administrator: wszyscy,
+ * menedżer: własny dział). Ten sam zbiór, na którym budujemy zarówno listę, jak
+ * i drzewo struktury — spójność między widokami.
+ */
+function scopedLocalPeople(people: Person[], access: ReturnType<typeof teamAccessForUser>): Person[] {
+  if (!access.visible) return [];
+  if (access.scope === 'all') return people;
+  return people.filter((p) => p.departmentId === access.departmentId);
+}
+
+/** Hierarchia z lokalnego store'u (tryb lokalny): lista albo drzewo struktury. */
+function LocalTeamHierarchy({
+  view,
+  people,
+  groups,
+}: {
+  view: TeamView;
+  people: Person[];
+  groups: TeamDepartmentView[];
+}) {
+  if (view === 'structure') return <TeamStructureTree people={people} />;
   return <HierarchyGroups groups={groups} />;
 }
 
@@ -207,7 +253,7 @@ function LocalTeamHierarchy({ groups }: { groups: TeamDepartmentView[] }) {
  * scope'uje wiersze (admin: wszystko, menedżer: własny dział, pracownik: siebie)
  * — tu wyłącznie grupujemy. Polskie stany ładowania/błędu/pustki.
  */
-function CloudTeamHierarchy() {
+function CloudTeamHierarchy({ view }: { view: TeamView }) {
   const { state, reload } = useOrgData();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [supError, setSupError] = useState<string | null>(null);
@@ -228,6 +274,25 @@ function CloudTeamHierarchy() {
 
   const { profiles, departments, profile } = state.snapshot;
   const isCloudAdmin = profile?.cloudRole === 'administrator';
+
+  // Widok „Struktura": drzewo z relacji supervisor_id nad już zscope'owanymi
+  // (RLS) profilami chmury. Konwersja CloudProfile → Person tylko na potrzeby
+  // awatara i linku profilu; edycja przełożonego pozostaje w widoku listy.
+  if (view === 'structure') {
+    const treePeople = profiles.map((p) =>
+      personForTreeNode({
+        id: p.id,
+        firstName: p.firstName,
+        lastName: p.lastName,
+        name: cloudProfileName(p),
+        email: p.email,
+        avatar: p.avatar,
+        role: p.roleTitle,
+        supervisorId: p.supervisorId ?? '',
+      }),
+    );
+    return <TeamStructureTree people={treePeople} />;
+  }
 
   // Edycja przełożonego tylko dla administratora chmury; RLS + trigger
   // `app.protect_profile_privileges` egzekwują to samo po stronie serwera.

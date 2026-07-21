@@ -5334,6 +5334,86 @@ option {
   flex-basis: 100%;
 }
 
+/* ---- Zespół: drzewo struktury (widok „Struktura") --------------------- */
+.team-structure {
+  margin-bottom: var(--n2-space-5);
+}
+.team-structure-note {
+  margin: 0 0 var(--n2-space-3);
+}
+/* Karta z przewijaniem poziomym — głębokie drzewo scrolluje wewnątrz karty,
+   nigdy nie rozpycha strony. */
+.team-structure-scroll {
+  background: var(--card-bg);
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-lg);
+  padding: var(--n2-space-5);
+  box-shadow: var(--shadow-sm);
+  overflow-x: auto;
+}
+.org-tree,
+.org-children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-2);
+}
+/* Wcięcie i pionowa linia łącząca podwładnych z przełożonym. */
+.org-children {
+  margin: var(--n2-space-2) 0 0 18px;
+  padding-left: 16px;
+  border-left: 1px solid var(--n2-border);
+}
+.org-node {
+  min-width: max-content;
+}
+.org-card {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--n2-space-3);
+  padding: 6px 10px;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-md);
+  background: rgba(255, 255, 255, 0.03);
+  text-decoration: none;
+  color: var(--n2-text);
+}
+.org-card:hover {
+  border-color: var(--n2-border-strong);
+  background: rgba(196, 150, 255, 0.1);
+}
+.org-card-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+.org-card-name {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+}
+.org-card-role {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+.org-cycle-tag {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 1px 6px;
+  border-radius: var(--n2-radius-pill);
+  background: rgba(217, 119, 6, 0.16);
+  color: var(--n2-warning);
+}
+.org-card-missing {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 /* ---- Klienci ---------------------------------------------------------- */
 .client-list {
   display: flex;

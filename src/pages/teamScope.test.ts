@@ -5,11 +5,14 @@ import {
   NO_DEPARTMENT_LABEL,
   PROVISION_ROLE_LABELS,
   buildCloudTeamHierarchy,
+  buildOrgChart,
   buildProvisionRequest,
   buildTeamHierarchy,
   canViewTeam,
   emptyProvisionForm,
   teamAccessForUser,
+  type OrgChartInput,
+  type OrgChartNode,
   type ProvisionFormState,
 } from './teamScope';
 import type { CloudProfile } from '../supabase/referenceData';
@@ -196,6 +199,89 @@ describe('buildCloudTeamHierarchy', () => {
       departments,
     );
     expect(groups[0].people[0].name).toBe('only@x.pl');
+  });
+});
+
+describe('buildOrgChart — drzewo struktury z relacji przełożony → podwładny', () => {
+  const item = (id: string, name: string, supervisorId = ''): OrgChartInput => ({
+    id,
+    name,
+    supervisorId,
+  });
+  // Zwraca zwięzłą reprezentację drzewa: id → posortowane dzieci (rekurencyjnie).
+  const shape = (nodes: OrgChartNode[]): Record<string, unknown> =>
+    Object.fromEntries(nodes.map((n) => [n.id, shape(n.children)]));
+
+  it('puste wejście => brak korzeni i brak cyklu', () => {
+    expect(buildOrgChart([])).toEqual({ roots: [], hasCycle: false });
+  });
+
+  it('buduje drzewo, sortuje korzenie i dzieci po nazwie (locale pl)', () => {
+    const chart = buildOrgChart([
+      item('boss', 'Zenon'),
+      item('a', 'Ala', 'boss'),
+      item('b', 'Świętosław', 'boss'),
+      item('c', 'Ćma', 'boss'),
+      item('sub', 'Adam', 'a'),
+    ]);
+    expect(chart.hasCycle).toBe(false);
+    // Jeden korzeń „Zenon"; dzieci posortowane po polsku: Ala, Ćma, Świętosław.
+    expect(shape(chart.roots)).toEqual({
+      boss: { a: { sub: {} }, c: {}, b: {} },
+    });
+  });
+
+  it('sierota wskazująca usuniętego/niewidocznego przełożonego => korzeń', () => {
+    const chart = buildOrgChart([item('lost', 'Zaginiony', 'nieistnieje')]);
+    expect(chart.hasCycle).toBe(false);
+    expect(chart.roots.map((r) => r.id)).toEqual(['lost']);
+    expect(chart.roots[0].inCycle).toBe(false);
+  });
+
+  it('wykrywa cykl A→B→A: obaj oznaczeni inCycle i awansowani do korzenia', () => {
+    const chart = buildOrgChart([item('a', 'Anna', 'b'), item('b', 'Bartek', 'a')]);
+    expect(chart.hasCycle).toBe(true);
+    const roots = chart.roots;
+    expect(roots.map((r) => r.id).sort()).toEqual(['a', 'b']);
+    expect(roots.every((r) => r.inCycle)).toBe(true);
+  });
+
+  it('samopodległość (A→A) to cykl długości 1', () => {
+    const chart = buildOrgChart([item('a', 'Anna', 'a')]);
+    expect(chart.hasCycle).toBe(true);
+    expect(chart.roots).toHaveLength(1);
+    expect(chart.roots[0]).toMatchObject({ id: 'a', inCycle: true });
+    expect(chart.roots[0].children).toEqual([]);
+  });
+
+  it('podwładny spoza cyklu wisi pod członkiem cyklu (render bez zapętlenia)', () => {
+    // A↔B cykl; C podlega A (poza cyklem). C renderuje się pod A w korzeniu.
+    const chart = buildOrgChart([
+      item('a', 'Anna', 'b'),
+      item('b', 'Bartek', 'a'),
+      item('c', 'Celina', 'a'),
+    ]);
+    expect(chart.hasCycle).toBe(true);
+    const a = chart.roots.find((r) => r.id === 'a')!;
+    const b = chart.roots.find((r) => r.id === 'b')!;
+    expect(a.inCycle && b.inCycle).toBe(true);
+    expect(a.children.map((c) => c.id)).toEqual(['c']);
+    expect(a.children[0].inCycle).toBe(false);
+    expect(b.children).toEqual([]);
+  });
+
+  it('rozłączne poddrzewa i cykl współistnieją niezależnie', () => {
+    const chart = buildOrgChart([
+      item('root', 'Root'),
+      item('kid', 'Kid', 'root'),
+      item('x', 'Xena', 'y'),
+      item('y', 'Yeti', 'x'),
+    ]);
+    expect(chart.hasCycle).toBe(true);
+    expect(chart.roots.map((r) => r.id).sort()).toEqual(['root', 'x', 'y']);
+    const root = chart.roots.find((r) => r.id === 'root')!;
+    expect(root.inCycle).toBe(false);
+    expect(root.children.map((c) => c.id)).toEqual(['kid']);
   });
 });
 

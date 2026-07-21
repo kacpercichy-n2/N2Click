@@ -190,6 +190,108 @@ export function buildCloudTeamHierarchy(
   return groups;
 }
 
+// --- Drzewo struktury organizacyjnej (relacja przełożony → podwładny) --------
+
+/** Węzeł drzewa struktury: id osoby, jej podwładni oraz flaga uczestnictwa w cyklu. */
+export interface OrgChartNode {
+  id: string;
+  /**
+   * true, gdy osoba należy do cyklu podległości (A→B→…→A). Takie osoby są
+   * awansowane do korzenia (nie zapętlamy renderu), a widok oznacza je polską notą.
+   */
+  inCycle: boolean;
+  children: OrgChartNode[];
+}
+
+export interface OrgChart {
+  /** Korzenie: osoby bez (widocznego) przełożonego oraz członkowie cykli. */
+  roots: OrgChartNode[];
+  /** true, gdy w danych wykryto co najmniej jeden cykl podległości. */
+  hasCycle: boolean;
+}
+
+/** Minimalne wejście selektora drzewa — niezależne od Reacta i modelu Person. */
+export interface OrgChartInput {
+  id: string;
+  name: string;
+  /** Id przełożonego; '' gdy brak. Cel spoza zbioru = sierota → korzeń. */
+  supervisorId: string;
+}
+
+/**
+ * Buduje drzewo struktury z relacji przełożony → podwładny nad już
+ * zscope'owanym zbiorem osób. Czysta funkcja (bez Reacta/DOM) — testowalna w node.
+ *
+ * Odporność na wady danych:
+ * - sierota wskazująca usuniętego/niewidocznego przełożonego → traktowana jak
+ *   korzeń (efektywny rodzic = brak);
+ * - cykle (także samopodległość A→A) → wykrywane strażnikiem odwiedzin; ich
+ *   członkowie trafiają do korzenia z flagą `inCycle`, więc render się nie zapętla.
+ *
+ * Korzenie i dzieci są sortowane po nazwie (locale 'pl'), a przy remisie po id —
+ * wynik jest deterministyczny niezależnie od kolejności wejścia.
+ */
+export function buildOrgChart(items: ReadonlyArray<OrgChartInput>): OrgChart {
+  const byId = new Map(items.map((it) => [it.id, it]));
+
+  // Efektywny rodzic: istniejący, różny od pustego wskaźnik na znany węzeł.
+  // Samopodległość (id === supervisorId) zostawiamy — to cykl długości 1.
+  const parent = new Map<string, string | null>();
+  for (const it of items) {
+    const sup = it.supervisorId;
+    parent.set(it.id, sup !== '' && byId.has(sup) ? sup : null);
+  }
+
+  // Wykrycie cykli: dla każdej osoby idziemy w górę po rodzicach; trafienie na
+  // węzeł „na ścieżce" (visiting) oznacza cykl — oznaczamy jego domknięcie.
+  const inCycle = new Set<string>();
+  const seen = new Map<string, 'visiting' | 'done'>();
+  for (const start of byId.keys()) {
+    if (seen.has(start)) continue;
+    const path: string[] = [];
+    const onPath = new Set<string>();
+    let cur: string | null = start;
+    while (cur !== null && !seen.has(cur)) {
+      seen.set(cur, 'visiting');
+      path.push(cur);
+      onPath.add(cur);
+      cur = parent.get(cur) ?? null;
+    }
+    if (cur !== null && onPath.has(cur)) {
+      for (let i = path.indexOf(cur); i < path.length; i++) inCycle.add(path[i]);
+    }
+    for (const n of path) seen.set(n, 'done');
+  }
+
+  // Budowa lasu: członek cyklu → korzeń (krawędź do rodzica-w-cyklu pominięta,
+  // więc mapa dzieci pozostaje acykliczna); pozostali podpięci pod rodzica.
+  const childIds = new Map<string, string[]>();
+  const rootIds: string[] = [];
+  for (const it of items) {
+    const p = parent.get(it.id) ?? null;
+    if (inCycle.has(it.id) || p === null) {
+      rootIds.push(it.id);
+    } else {
+      const list = childIds.get(p);
+      if (list) list.push(it.id);
+      else childIds.set(p, [it.id]);
+    }
+  }
+
+  const byName = (a: string, b: string): number => {
+    const na = byId.get(a)?.name ?? '';
+    const nb = byId.get(b)?.name ?? '';
+    return na.localeCompare(nb, 'pl') || a.localeCompare(b);
+  };
+  const build = (id: string): OrgChartNode => ({
+    id,
+    inCycle: inCycle.has(id),
+    children: (childIds.get(id) ?? []).sort(byName).map(build),
+  });
+
+  return { roots: rootIds.sort(byName).map(build), hasCycle: inCycle.size > 0 };
+}
+
 // --- Formularz zakładania konta ----------------------------------------------
 
 /** Polskie etykiety ról dostępu systemowego (kontrakt provisioningu). */
