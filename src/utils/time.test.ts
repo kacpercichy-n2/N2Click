@@ -9,9 +9,36 @@ import {
   packDayBlocks,
   planRippleInsert,
   rangesOverlap,
+  slotStartFromOffset,
   snapToStep,
   stackStartTimes,
 } from './time';
+
+// HOUR_PX geometry used by WeekView (84px/hour → 21px per 15-minute step).
+const HOUR_PX = 84;
+
+describe('slotStartFromOffset', () => {
+  it('maps a pixel offset to the snapped 15-minute start under the cursor', () => {
+    expect(slotStartFromOffset(0, HOUR_PX)).toBe(0);
+    expect(slotStartFromOffset(8 * HOUR_PX, HOUR_PX)).toBe(480); // 08:00
+    // 08:07 → snaps to the nearest quarter (08:00) rounding rule (.5+ rounds up).
+    expect(slotStartFromOffset(8 * HOUR_PX + 9, HOUR_PX)).toBe(480);
+    expect(slotStartFromOffset(8 * HOUR_PX + 12, HOUR_PX)).toBe(495); // 08:15
+  });
+
+  it('clamps within the day to a valid on-grid start', () => {
+    expect(slotStartFromOffset(-50, HOUR_PX)).toBe(0);
+    expect(slotStartFromOffset(24 * HOUR_PX, HOUR_PX)).toBe(1425); // 23:45, last slot
+    expect(slotStartFromOffset(999 * HOUR_PX, HOUR_PX)).toBe(1425);
+  });
+
+  it('falls back to 0 for a non-finite or non-positive geometry', () => {
+    expect(slotStartFromOffset(100, 0)).toBe(0);
+    expect(slotStartFromOffset(100, -84)).toBe(0);
+    expect(slotStartFromOffset(Number.NaN, HOUR_PX)).toBe(0);
+    expect(slotStartFromOffset(100, Number.POSITIVE_INFINITY)).toBe(0);
+  });
+});
 
 describe('snapToStep', () => {
   it('rounds to the nearest 15-minute step', () => {

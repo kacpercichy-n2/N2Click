@@ -58,17 +58,27 @@ export function useOpenTask() {
       const params = new URLSearchParams(location.search);
       params.set('task', id);
       params.delete('project');
+      // Prefill hints only apply to new-task creation — never leak onto an
+      // existing task opened afterwards.
+      params.delete('date');
+      params.delete('assignee');
       navigate({ pathname: location.pathname, search: params.toString() });
     },
     [navigate, location.pathname, location.search],
   );
 
   const openNewTask = useCallback(
-    (projectId?: string) => {
+    (projectId?: string, prefill?: { date?: string; personId?: string }) => {
       const params = new URLSearchParams(location.search);
       params.set('task', 'new');
       if (projectId) params.set('project', projectId);
       else params.delete('project');
+      // Optional creation prefill (e.g. right-clicking an empty calendar slot):
+      // a start date and/or a person to preselect as the sole assignee.
+      if (prefill?.date) params.set('date', prefill.date);
+      else params.delete('date');
+      if (prefill?.personId) params.set('assignee', prefill.personId);
+      else params.delete('assignee');
       navigate({ pathname: location.pathname, search: params.toString() });
     },
     [navigate, location.pathname, location.search],
@@ -82,6 +92,8 @@ export function TaskModal() {
   const [searchParams, setSearchParams] = useSearchParams();
   const taskParam = searchParams.get('task');
   const projectParam = searchParams.get('project');
+  const dateParam = searchParams.get('date');
+  const assigneeParam = searchParams.get('assignee');
 
   const close = useCallback(() => {
     setSearchParams(
@@ -89,6 +101,8 @@ export function TaskModal() {
         const next = new URLSearchParams(prev);
         next.delete('task');
         next.delete('project');
+        next.delete('date');
+        next.delete('assignee');
         return next;
       },
       { replace: false },
@@ -102,6 +116,8 @@ export function TaskModal() {
           key="task-modal"
           taskParam={taskParam}
           projectParam={projectParam}
+          dateParam={dateParam}
+          assigneeParam={assigneeParam}
           onClose={close}
         />
       )}
@@ -112,10 +128,12 @@ export function TaskModal() {
 interface ShellProps {
   taskParam: string;
   projectParam: string | null;
+  dateParam: string | null;
+  assigneeParam: string | null;
   onClose: () => void;
 }
 
-function TaskModalShell({ taskParam, projectParam, onClose }: ShellProps) {
+function TaskModalShell({ taskParam, projectParam, dateParam, assigneeParam, onClose }: ShellProps) {
   const { state, dispatch } = useStore();
   const canManageTasks = useCan()('tasks.manage');
   const isNew = taskParam === 'new';
@@ -245,6 +263,8 @@ function TaskModalShell({ taskParam, projectParam, onClose }: ShellProps) {
                 key={taskParam}
                 taskId={existing ? existing.id : null}
                 initialProjectId={projectParam ?? undefined}
+                initialDate={dateParam ?? undefined}
+                initialPersonId={assigneeParam ?? undefined}
                 onSaved={onClose}
                 onCancel={requestClose}
                 onDirtyChange={handleDirtyChange}
@@ -261,6 +281,8 @@ function TaskModalShell({ taskParam, projectParam, onClose }: ShellProps) {
 interface EditorProps {
   taskId: string | null;
   initialProjectId?: string;
+  initialDate?: string;
+  initialPersonId?: string;
   onSaved: () => void;
   onCancel: () => void;
   onDirtyChange: (dirty: boolean) => void;
@@ -311,6 +333,8 @@ function serializeDraft(v: {
 function TaskEditor({
   taskId,
   initialProjectId,
+  initialDate,
+  initialPersonId,
   onSaved,
   onCancel,
   onDirtyChange,
@@ -353,13 +377,23 @@ function TaskEditor({
   const [checklistInput, setChecklistInput] = useState('');
 
   // ---- Period ----
-  const [startDate, setStartDate] = useState(existing?.startDate ?? todayStr());
-  const [endDate, setEndDate] = useState(existing?.endDate ?? todayStr());
+  // A calendar empty-slot right-click seeds the clicked day (validated — a
+  // tampered URL param falls back to today). Editing an existing task ignores it.
+  const seededDate =
+    !existing && initialDate && isValidDateStr(initialDate) ? initialDate : todayStr();
+  const [startDate, setStartDate] = useState(existing?.startDate ?? seededDate);
+  const [endDate, setEndDate] = useState(existing?.endDate ?? seededDate);
 
   // ---- Assignees ----
-  const [assigneeIds, setAssigneeIds] = useState<string[]>(() =>
-    existing ? assigneeIdsOfTask(state, existing.id) : [],
-  );
+  // A person-filtered calendar preselects that person as the sole assignee for a
+  // brand-new task (only when they still exist in state).
+  const [assigneeIds, setAssigneeIds] = useState<string[]>(() => {
+    if (existing) return assigneeIdsOfTask(state, existing.id);
+    if (initialPersonId && state.people.some((p) => p.id === initialPersonId)) {
+      return [initialPersonId];
+    }
+    return [];
+  });
 
   // ---- Allocation map (personId|date -> hours), seeded from existing DATED
   // entries only. Bin entries (date === '') are shown in a separate section and

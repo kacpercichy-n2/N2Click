@@ -60,6 +60,7 @@ import {
   nextFreeStart,
   planRippleInsert,
   packDayBlocks,
+  slotStartFromOffset,
   snapHours,
   snapToStep,
 } from '../utils/time';
@@ -951,11 +952,15 @@ function BinCard({
 }
 
 export function WeekView({ state, anchor, filter }: Props) {
-  const { openTask } = useOpenTask();
+  const { openTask, openNewTask } = useOpenTask();
   const { dispatch } = useStore();
   const can = useCan();
   const canEditAny = can('blocks.editAny');
   const canEditOwn = can('blocks.editOwn');
+  // Empty-slot right-click offers "Dodaj zadanie"; task creation is gated by the
+  // same permission the read-only TaskModal enforces, so we don't surface it to
+  // users who can't create tasks.
+  const canManageTasks = can('tasks.manage');
   // A block is editable when the role edits anyone's blocks, or edits its own and
   // this block belongs to the logged-in user. The right-click insert flow lives
   // on the block itself, so it inherits the same rule.
@@ -978,6 +983,17 @@ export function WeekView({ state, anchor, filter }: Props) {
   const [schedStart, setSchedStart] = useState('08:00');
   const [schedHoursRaw, setSchedHoursRaw] = useState('1');
   const menuRef = useRef<HTMLDivElement | null>(null);
+
+  // Empty-slot context menu: right-clicking bare grid offers "Dodaj zadanie" at
+  // the snapped 15-minute start under the cursor. Separate from the block/bin
+  // `menu` above (which is keyed on a WorkloadEntry).
+  const [slotMenu, setSlotMenu] = useState<{
+    x: number;
+    y: number;
+    date: string;
+    startMinutes: number;
+  } | null>(null);
+  const slotMenuRef = useRef<HTMLDivElement | null>(null);
 
   // Transient cross-block drag state (a dragged block and its merge neighbor live
   // in different day-column component instances). mergeTargetId = the neighbor a
@@ -1034,8 +1050,60 @@ export function WeekView({ state, anchor, filter }: Props) {
     };
   }, [menu]);
 
+  // Same close discipline for the empty-slot menu, plus scroll: it is anchored to
+  // viewport coordinates, so any grid scroll (capture:true catches the inner
+  // viewport too) must dismiss it rather than leave it floating off its slot.
+  // Listeners subscribe only while open and unsubscribe on close — no leaks.
+  useEffect(() => {
+    if (!slotMenu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSlotMenu(null);
+    };
+    const onDown = (e: MouseEvent) => {
+      if (slotMenuRef.current && !slotMenuRef.current.contains(e.target as Node)) {
+        setSlotMenu(null);
+      }
+    };
+    const onScroll = () => setSlotMenu(null);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('scroll', onScroll, true);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('scroll', onScroll, true);
+    };
+  }, [slotMenu]);
+
+  // Right-click on bare grid (not a block — those own their own menu and stop the
+  // event) → offer "Dodaj zadanie" at the snapped start under the cursor.
+  const openSlotMenu = (date: string, e: React.MouseEvent<HTMLDivElement>) => {
+    if (!canManageTasks) return;
+    if ((e.target as HTMLElement).closest('.week-block')) return; // block's own menu
+    e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const startMinutes = slotStartFromOffset(e.clientY - rect.top, HOUR_PX);
+    setMenu(null);
+    setSlotMenu({
+      x: Math.min(e.clientX, window.innerWidth - 240),
+      y: Math.min(e.clientY, window.innerHeight - 100),
+      date,
+      startMinutes,
+    });
+  };
+
+  // Open task creation prefilled with the clicked day; when the week is filtered
+  // to exactly one person, preselect them as the sole assignee.
+  const addTaskInSlot = () => {
+    if (!slotMenu) return;
+    const personId = filter.size === 1 ? [...filter][0] : undefined;
+    openNewTask(undefined, { date: slotMenu.date, personId });
+    setSlotMenu(null);
+  };
+
   const openMenu = (entry: WorkloadEntry, e: React.MouseEvent) => {
     e.preventDefault();
+    setSlotMenu(null);
     setHoursRaw('1');
     setInsertTaskId(entry.taskId);
     setMenu({
@@ -1354,6 +1422,7 @@ export function WeekView({ state, anchor, filter }: Props) {
                   ]
                     .filter(Boolean)
                     .join(' ')}
+                  onContextMenu={canManageTasks ? (ev) => openSlotMenu(d, ev) : undefined}
                 >
                   {isTodayStr(d) && (
                     <div
@@ -1690,6 +1759,31 @@ export function WeekView({ state, anchor, filter }: Props) {
               </div>
             </div>
           )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {slotMenu && (
+          <motion.div
+            className="context-menu"
+            style={{ left: slotMenu.x, top: slotMenu.y, transformOrigin: 'top left' }}
+            role="menu"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            transition={{ duration: 0.12, ease: 'easeOut' }}
+          >
+            <div ref={slotMenuRef}>
+              <button
+                type="button"
+                role="menuitem"
+                className="context-menu-item"
+                onClick={addTaskInSlot}
+              >
+                + Dodaj zadanie ({formatMinutes(slotMenu.startMinutes)})
+              </button>
             </div>
           </motion.div>
         )}

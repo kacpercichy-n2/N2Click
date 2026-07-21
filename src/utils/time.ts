@@ -45,6 +45,19 @@ export function clampBlockStart(start: number, durationMin: number): number {
   return Math.max(0, Math.min(start, DAY_MINUTES - durationMin));
 }
 
+/**
+ * Snapped 15-minute start-of-day (minutes) for a vertical pixel offset inside a
+ * timed calendar column. `pxPerHour` is the column geometry (HOUR_PX). Clamps to
+ * a valid on-grid start within the day ([0, DAY_MINUTES - MINUTE_STEP]); a
+ * non-finite or non-positive geometry falls back to 0. Used by the empty-slot
+ * right-click "Dodaj zadanie" affordance.
+ */
+export function slotStartFromOffset(offsetPx: number, pxPerHour: number): number {
+  if (!Number.isFinite(offsetPx) || !Number.isFinite(pxPerHour) || pxPerHour <= 0) return 0;
+  const raw = snapToStep((offsetPx / pxPerHour) * 60);
+  return Math.max(0, Math.min(raw, DAY_MINUTES - MINUTE_STEP));
+}
+
 /** Format minutes-from-midnight as '8:00' / '13:45'. */
 export function formatMinutes(m: number): string {
   const h = Math.floor(m / 60);
