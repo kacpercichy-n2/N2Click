@@ -396,6 +396,8 @@ function workloadRow(
     planned_hours: w.plannedHours,
     start_minutes: w.startMinutes,
     sort_index: w.sortIndex,
+    // Per-block completion (PKG-per-block-done): additive column, default false.
+    done: w.done === true,
   };
 }
 

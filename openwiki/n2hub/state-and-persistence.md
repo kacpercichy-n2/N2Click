@@ -238,6 +238,29 @@
   uczestników = ogólnofirmowe, widoczne zawsze). Testy: `eventActions.test.ts`,
   rozszerzenia w `storage.test.ts`/`cloudMerge.test.ts`/`cloudMirror.test.ts`/
   `plannerData.test.ts`/`migrations.test.ts`.
+- WYKONANE BLOKI (2026-07-21): `WorkloadEntry.done?: boolean` (OPCJONALNE,
+  ADDYTYWNE — brak/`false` = niewykonany; `DATA_VERSION` zostaje na 7). Per-BLOK
+  (WorkloadEntry.id), NIE per-dzień: dwa bloki tego samego dnia (ta sama data,
+  różny `startMinutes`/`id`) mają niezależny stan. Status zadania
+  (`Task.statusId`) jest ROZŁĄCZNY — per-blokowe „wykonane” NIGDY go nie zmienia.
+  Mutacja `SET_BLOCK_DONE { entryId, done }` mapuje TYLKO wiersz o `entryId`
+  (wzorzec `SET_TASK_STATUS`); nieznane `entryId` albo wartość równa bieżącej
+  (no-op) zwracają TĘ SAMĄ referencję (inwariant 6, walidacja
+  `hasWorkloadEntry` w `commandValidation.ts`). Selektor prezentacyjny
+  `blockIsDone(state, task, entry)` = `entry.done === true ||
+  isDoneStatus(state, task.statusId)` — done-status zadania nadal podświetla
+  WSZYSTKIE bloki; `taskDisplayStatus` bez zmian sygnatury. WeekView używa
+  `blockIsDone` w trzech miejscach (blok tygodnia, karta zasobnika, duch portalu)
+  + znacznik „✓ Wykonane” na bloku. TaskModal ma sekcję „Wykonane bloki” (jeden
+  wiersz per WorkloadEntry, etykieta dzień+zakres godzin, checkbox →
+  `SET_BLOCK_DONE`); otwarcie z konkretnego bloku niesie `?block=<id>` i
+  podświetla/przewija do jego wiersza. Repair wczytania przepuszcza pole przez
+  `...w` (bez strippingu). W chmurze kolumna `workload_entries.done`
+  (20260721220000; patrz cloud-database) — mirror `workloadRow.done = w.done ===
+  true`, hydracja `plannerData` czyta `row.done === true`, `MERGE_CLOUD_*`
+  podmienia wiersze autorytatywnie. Testy: rozszerzenia w `selectors.test.ts`,
+  `commandValidation.test.ts`, `cloudMerge.test.ts`, `cloudMirror.test.ts`,
+  `plannerData.test.ts`, `migrations.test.ts`.
 - `Client` carries contact fields (contactName/contactEmail/contactPhone/notes;
   columns from 20260718090000_clients_contact_fields, '' or missing = none — no
   repair pass, use-sites coalesce), edited on the `/clients` page via

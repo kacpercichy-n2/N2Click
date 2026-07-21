@@ -343,7 +343,7 @@ export async function loadPlannerSnapshot(
     db.select('task_assignments', 'task_id, profile_id'),
     db.select(
       'workload_entries',
-      'id, task_id, profile_id, work_date, planned_hours, start_minutes, sort_index',
+      'id, task_id, profile_id, work_date, planned_hours, start_minutes, sort_index, done',
     ),
     db.select('comments', 'id, project_id, task_id, author_id, body, mention_ids, created_at'),
     db.select(
@@ -585,6 +585,9 @@ export async function loadPlannerSnapshot(
       plannedHours,
       startMinutes: startMinutes as number,
       sortIndex,
+      // Per-block completion (PKG-per-block-done): cloud-authoritative, anything
+      // other than the literal true (NULL/legacy/false) hydrates as not done.
+      done: row.done === true,
     });
   }
 

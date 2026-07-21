@@ -350,6 +350,22 @@ describe('MERGE_CLOUD_ENTITIES — milestones + workload merge', () => {
     expect(next.workload).toHaveLength(2);
   });
 
+  it('per-block done (PKG-per-block-done) survives the cloud merge on the payload row', () => {
+    const state = baseState(); // workload: [w1] dated, no done flag
+    const payload: CloudMergePayload = {
+      ...emptyPayload(),
+      projects: [makeProject({ id: 'proj-1' })],
+      tasks: [makeTask({ id: T1, projectId: 'proj-1' })],
+      workload: [
+        wl({ id: 'w1', done: true }), // cloud marks the existing block done
+        wl({ id: 'w-cloud', plannedHours: 1 }), // no flag -> undefined preserved
+      ],
+    };
+    const next = merge(state, payload);
+    expect(next.workload.find((w) => w.id === 'w1')!.done).toBe(true);
+    expect(next.workload.find((w) => w.id === 'w-cloud')!.done).toBeUndefined();
+  });
+
   it('bin pair: wiersz chmury wygrywa autorytatywnie (lokalny duplikat pary znika)', () => {
     const state: AppData = {
       ...baseState(),

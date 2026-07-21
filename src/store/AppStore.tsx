@@ -59,6 +59,7 @@ import { anyDirty } from '../utils/dirtyRegistry';
 import { shouldSkipLocalPersist } from './persistGate';
 import {
   hasEntity,
+  hasWorkloadEntry,
   isFilterPage,
   isFilterViewKey,
   isRequiredName,
@@ -245,6 +246,7 @@ export type Action =
   | { type: 'MOVE_TASK'; taskId: string; dayDelta: number }
   | { type: 'SET_TASK_DATES'; taskId: string; startDate: string; endDate: string }
   | { type: 'SET_TASK_STATUS'; taskId: string; statusId: string }
+  | { type: 'SET_BLOCK_DONE'; entryId: string; done: boolean }
   | { type: 'REORDER_PROJECT_TASK'; taskId: string; direction: -1 | 1 }
   // Cykliczność zadania: reguła (create / „edytuj wszystkie” / clear) i per-datowy
   // wyjątek („edytuj to wystąpienie”). Wystąpienia są WYŁĄCZNIE prezentacyjne —
@@ -2833,6 +2835,30 @@ export function reducer(state: AppData, action: Action): AppData {
           'task',
           action.taskId,
           `przeniósł/przeniosła zadanie do statusu „${status?.name ?? '?'}”`,
+        ),
+      };
+    }
+    case 'SET_BLOCK_DONE': {
+      // Per-block completion (PKG-20260721-per-block-done). Maps ONLY the entry
+      // with entryId; the task status stays untouched. Invariant 6: an unknown
+      // entryId, or a value already equal to the requested one (no-op), returns
+      // the SAME state reference (no churn, no activity row).
+      if (!hasWorkloadEntry(state, action.entryId)) return state;
+      const entry = state.workload.find((w) => w.id === action.entryId);
+      if (!entry) return state;
+      if ((entry.done === true) === action.done) return state;
+      return {
+        ...state,
+        workload: state.workload.map((w) =>
+          w.id === action.entryId ? { ...w, done: action.done } : w,
+        ),
+        activity: withActivity(
+          state,
+          'task',
+          entry.taskId,
+          action.done
+            ? `oznaczył/oznaczyła blok ${formatDuration(entry.plannedHours)} jako wykonany`
+            : `odznaczył/odznaczyła blok ${formatDuration(entry.plannedHours)} jako wykonany`,
         ),
       };
     }

@@ -1838,6 +1838,14 @@ option {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Per-block completion tick on a calendar/bin block (PKG-per-block-done). */
+.block-done-mark {
+  flex: none;
+  margin-left: auto;
+  color: var(--n2-success, #b9ff4d);
+  font-weight: 700;
+  line-height: 1;
+}
 .week-block-time {
   font-size: var(--n2-type-xs);
   color: var(--text-muted);
@@ -2427,6 +2435,14 @@ option {
 .checklist-row.done .checklist-text {
   text-decoration: line-through;
   color: var(--text-muted);
+}
+/* Per-block „Wykonane bloki”: highlight the row opened from a specific calendar
+   block so the user immediately sees which block they clicked. */
+.block-done-list .checklist-row.focused {
+  background: rgba(185, 255, 77, 0.12);
+  border-radius: 6px;
+  padding: 4px 6px;
+  margin: -4px -6px;
 }
 .checklist-add-row {
   display: flex;

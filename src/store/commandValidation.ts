@@ -52,6 +52,14 @@ export function hasEntity(state: AppData, kind: RefEntityKind, id: string): bool
   }
 }
 
+/** True when a workload entry (day block or bin row) with this id exists. Guards
+ *  SET_BLOCK_DONE next to SET_TASK_STATUS: an unknown entryId returns the same
+ *  state reference (invariant 6). Separate from `hasEntity` because workload is
+ *  not a RefEntityKind (a block has no display name and never gets referenced). */
+export function hasWorkloadEntry(state: AppData, entryId: string): boolean {
+  return state.workload.some((w) => w.id === entryId);
+}
+
 /** Required display name/title: non-empty after trim. */
 export function isRequiredName(value: string): boolean {
   return value.trim() !== '';

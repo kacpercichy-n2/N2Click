@@ -277,6 +277,14 @@ export interface WorkloadEntry {
   //    (one's end == the other's start, no gap) survive a SET_BLOCK_TIME — the
   //    calendar drag/resize path fuses them into one block (earlier id survives).
 
+  // Per-block completion (PKG-20260721-per-block-done). OPTIONAL + ADDITIVE:
+  // undefined/false = not done, true = this specific block's portion of hours is
+  // done. INDEPENDENT of Task.statusId — marking a block done never changes the
+  // task status, and a done task status still lights ALL its blocks
+  // (`blockIsDone`). Granularity is per WorkloadEntry.id, NOT per day: two blocks
+  // on the same date carry independent `done`. DATA_VERSION stays 7 (additive,
+  // like recurrence/isDraft); load repair passes it through untouched.
+  done?: boolean;
 }
 
 export type CommentEntityType = 'project' | 'task';

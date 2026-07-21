@@ -420,7 +420,7 @@ describe('loadPlannerSnapshot', () => {
       ])
       .seed('workload_entries', [
         { id: uuid('wl-bin'), task_id: TK, profile_id: CLOUD_PA, work_date: null, planned_hours: 4, start_minutes: 0, sort_index: 0 },
-        { id: uuid('wl-dated'), task_id: TK, profile_id: CLOUD_PA, work_date: '2026-07-06', planned_hours: 2, start_minutes: 480, sort_index: 1 },
+        { id: uuid('wl-dated'), task_id: TK, profile_id: CLOUD_PA, work_date: '2026-07-06', planned_hours: 2, start_minutes: 480, sort_index: 1, done: true },
         { id: uuid('wl-offgrid'), task_id: TK, profile_id: CLOUD_PA, work_date: '2026-07-06', planned_hours: 0.3, start_minutes: 0, sort_index: 2 }, // off-grid -> excluded
         { id: uuid('wl-ghost'), task_id: TK, profile_id: uuid('ghost-profile'), work_date: null, planned_hours: 1, start_minutes: 0, sort_index: 3 }, // unmappable -> excluded
         { id: uuid('wl-bin2'), task_id: TK, profile_id: CLOUD_PA, work_date: null, planned_hours: 1, start_minutes: 0, sort_index: 4 }, // dup bin pair -> excluded
@@ -434,8 +434,10 @@ describe('loadPlannerSnapshot', () => {
     ]);
     // Only the first bin row + the valid dated row survive; person reversed to PA.
     expect(p.workload).toHaveLength(2);
-    expect(p.workload.find((w) => w.date === '')).toMatchObject({ personId: PA, plannedHours: 4, startMinutes: 0 });
-    expect(p.workload.find((w) => w.date === '2026-07-06')).toMatchObject({ personId: PA, plannedHours: 2, startMinutes: 480 });
+    // Per-block done (PKG-per-block-done): bin row has no flag -> false; the
+    // dated row carried done:true in the cloud -> hydrates as done.
+    expect(p.workload.find((w) => w.date === '')).toMatchObject({ personId: PA, plannedHours: 4, startMinutes: 0, done: false });
+    expect(p.workload.find((w) => w.date === '2026-07-06')).toMatchObject({ personId: PA, plannedHours: 2, startMinutes: 480, done: true });
     expect(result.diagnostics.length).toBeGreaterThanOrEqual(3);
   });
 

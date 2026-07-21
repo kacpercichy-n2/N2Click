@@ -116,7 +116,14 @@
 - `workload_entries` — planned hours; `task_id` + `profile_id` cascade,
   `work_date NULL` = bin sentinel (unique partial index per
   `(task_id, profile_id)`), grid CHECKs (0.25h, 15-minute starts, day
-  boundary). `milestones` → `project_id`. `comments` and `activity_events`
+  boundary). `workload_entries.done` (20260721220000_workload_entry_done) —
+  boolean not null default `false`: per-BLOK znacznik „wykonane” (niezależny od
+  `tasks.status_id`). DEFAULT FALSE, więc każdy istniejący/legacy wiersz jest
+  niewykonany — bez backfillu. Nie tworzy tabeli: RLS dziedziczy z istniejących
+  polityk `workload_entries_*` (ZERO nowych polityk), tabela już w publikacji
+  realtime. Mirror `workloadRow.done = w.done === true`; hydracja `plannerData`
+  czyta `row.done === true`. Rejestr: `migrations.test.ts` (lista;
+  `EXPECTED_POLICIES` bez zmian). `milestones` → `project_id`. `comments` and `activity_events`
   are append-only (no UPDATE/DELETE policies). `app_settings` — org runtime
   flags (`local_writes_retired`).
 - `tickets` (20260720230000) — zgłoszenia zespołu („Zgłoszenia”), SAMODZIELNA

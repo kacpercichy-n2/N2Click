@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   availableHoursInRange,
   availableHoursOnDate,
+  blockIsDone,
   binHoursForTaskPerson,
   binTaskRowsForPerson,
   conflictDatesForTask,
@@ -136,6 +137,44 @@ describe('peopleWithBirthdayOnDate', () => {
       workload: [],
     });
     expect(peopleWithBirthdayOnDate(state, '2026-03-14')).toEqual([]);
+  });
+});
+
+describe('blockIsDone (PKG-per-block-done)', () => {
+  const ACTIVE = makeStatus({ id: 'active', isDone: false });
+  const DONE = makeStatus({ id: 'done', isDone: true });
+
+  it('two blocks on the same day carry INDEPENDENT done state', () => {
+    const a = makeEntry({ id: 'a', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480 });
+    const b = makeEntry({ id: 'b', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 840 });
+    const task = makeTask({ id: 't1', statusId: 'active' });
+    const state = makeState({
+      statuses: [ACTIVE, DONE],
+      tasks: [task],
+      people: [makePerson({ id: 'p1' })],
+      workload: [{ ...a, done: true }, b],
+    });
+    // Marking block a done must NOT light block b (same date, different id).
+    expect(blockIsDone(state, task, { ...a, done: true })).toBe(true);
+    expect(blockIsDone(state, task, b)).toBe(false);
+  });
+
+  it('a done task STATUS still lights ALL blocks regardless of the per-block flag', () => {
+    const a = makeEntry({ id: 'a', taskId: 't1', personId: 'p1', date: '2026-07-08' });
+    const b = makeEntry({ id: 'b', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 840 });
+    const task = makeTask({ id: 't1', statusId: 'done' });
+    const state = makeState({ statuses: [ACTIVE, DONE], tasks: [task] });
+    expect(blockIsDone(state, task, a)).toBe(true);
+    expect(blockIsDone(state, task, b)).toBe(true);
+  });
+
+  it('undefined/false done on an active task = not done', () => {
+    const a = makeEntry({ id: 'a', taskId: 't1', personId: 'p1' });
+    const task = makeTask({ id: 't1', statusId: 'active' });
+    const state = makeState({ statuses: [ACTIVE, DONE], tasks: [task] });
+    expect(blockIsDone(state, task, a)).toBe(false);
+    expect(blockIsDone(state, task, { ...a, done: false })).toBe(false);
+    expect(blockIsDone(state, task, { ...a, done: true })).toBe(true);
   });
 });
 

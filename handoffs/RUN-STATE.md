@@ -47,6 +47,15 @@ grid and gates submit through authoritative `isValidEventDraft` — a rejected
 draft shows an inline Polish error and keeps the modal open (no silent loss).
 Added gate unit tests. `npm test` PASS (1299); `npm run build` PASS.
 
+## PKG-per-block-done (247)
+
+Additive `WorkloadEntry.done?` + `SET_BLOCK_DONE` reducer/validation (invariant 6:
+unknown id & no-op keep same ref), `blockIsDone` selector, WeekView per-block tick,
+TaskModal „Wykonane bloki” list (open-from-block highlight via `?block=`), cloud
+round-trip (plannerData/cloudMirror) + migration `20260721220000_workload_entry_done`
+(done boolean default false, no RLS change). DATA_VERSION stays 7. `npm test` PASS
+(1308); `npm run build` PASS.
+
 ## Open questions
 
 None blocking.

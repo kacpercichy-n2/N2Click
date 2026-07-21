@@ -351,6 +351,21 @@ describe('diffToCloudOps — milestones + workload families', () => {
     ]);
   });
 
+  it('serializes the per-block done flag (PKG-per-block-done): true when set, false otherwise', () => {
+    const m = maps();
+    const base = { ...localFixture(), tasks: [makeTask({ id: TK })] };
+    const doneRow = { id: WD, taskId: TK, personId: PA, date: '2026-07-06', plannedHours: 2, startMinutes: 480, sortIndex: 0, done: true };
+    const withDone: AppData = { ...base, workload: [doneRow] };
+    const up = diffToCloudOps(base, withDone, m).ops.find((o) => o.table === 'workload_entries');
+    expect(up!.row).toMatchObject({ id: WD, done: true });
+
+    // A row without the flag serializes done: false (default, not undefined).
+    const plain = { ...doneRow, done: undefined };
+    const withPlain: AppData = { ...base, workload: [plain] };
+    const upPlain = diffToCloudOps(base, withPlain, m).ops.find((o) => o.table === 'workload_entries');
+    expect(upPlain!.row).toMatchObject({ id: WD, done: false });
+  });
+
   it('maps a bin workload row work_date to null', () => {
     const m = maps();
     const bin = { id: WB, taskId: TK, personId: PA, date: '', plannedHours: 4, startMinutes: 0, sortIndex: 0 };

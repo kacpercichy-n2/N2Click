@@ -33,6 +33,7 @@ import {
   binTotalForPerson,
   blockCollides,
   blocksForPersonDate,
+  blockIsDone,
   calendarEventsForDate,
   type CalendarEventOccurrence,
   dayTotal,
@@ -473,11 +474,15 @@ function TimedBlock({
   // czerwony akcent po terminie. Kolor osoby zostaje na lewej krawędzi (styl
   // inline), a klasy dragu/kolizji są w CSS PÓŹNIEJ, więc nadal wygrywają.
   const status = taskDisplayStatus(state, task, todayStr());
+  // Per-block completion is INDEPENDENT of the task status: a block is done when
+  // it carries its own flag OR the task status is done. Two blocks on the same
+  // day render independent done state.
+  const done = blockIsDone(state, task, entry);
   const statusNote = statusNoteFor(status, task.endDate);
   const className = [
     'week-block',
-    status === 'done' ? 'done' : '',
-    status === 'overdue' ? 'overdue' : '',
+    done ? 'done' : '',
+    status === 'overdue' && !done ? 'overdue' : '',
     editable ? '' : 'readonly',
     drag ? 'dragging' : '',
     drag?.colliding ? 'colliding' : '',
@@ -538,6 +543,11 @@ function TimedBlock({
       <span className="week-block-title">
         {project && <Coin paid={project.paid} size={12} />}
         {task.title}
+        {entry.done === true && (
+          <span className="block-done-mark" title="Wykonane" aria-label="Wykonane">
+            ✓
+          </span>
+        )}
       </span>
       <span className="week-block-time">
         {formatMinutes(start)}–{formatMinutes(end)}
@@ -863,11 +873,12 @@ function BinCard({
   // while window listeners own the drag. The visible card following the
   // pointer is a fixed portal ghost, so the bin pane cannot clip it.
   const status = taskDisplayStatus(state, task, todayStr());
+  const done = blockIsDone(state, task, entry);
   const statusNote = statusNoteFor(status, task.endDate);
   const className = [
     'week-bin-block',
-    status === 'done' ? 'done' : '',
-    status === 'overdue' ? 'overdue' : '',
+    done ? 'done' : '',
+    status === 'overdue' && !done ? 'overdue' : '',
     editable ? '' : 'readonly',
     drag ? 'drag-source' : '',
   ]
@@ -879,6 +890,11 @@ function BinCard({
       <span className="week-bin-block-title">
         {project && <Coin paid={project.paid} size={12} />}
         {task.title}
+        {entry.done === true && (
+          <span className="block-done-mark" title="Wykonane" aria-label="Wykonane">
+            ✓
+          </span>
+        )}
       </span>
       <span className="week-bin-block-hours">{formatDuration(entry.plannedHours)}</span>
     </>
@@ -939,8 +955,8 @@ function BinCard({
             className={[
               'week-bin-block',
               'week-bin-ghost',
-              status === 'done' ? 'done' : '',
-              status === 'overdue' ? 'overdue' : '',
+              done ? 'done' : '',
+              status === 'overdue' && !done ? 'overdue' : '',
               drag.colliding || (drag.hasMoved && !drag.valid) ? 'colliding' : '',
             ]
               .filter(Boolean)
@@ -1731,7 +1747,7 @@ export function WeekView({ state, anchor, filter }: Props) {
                         fusedId={fusedId}
                         setFusedId={setFusedId}
                         editable={canEditEntry(e.personId)}
-                        onOpen={() => openTask(task.id)}
+                        onOpen={() => openTask(task.id, e.id)}
                         onContextMenu={(ev) => openMenu(e, ev)}
                       />
                     );
@@ -1779,7 +1795,7 @@ export function WeekView({ state, anchor, filter }: Props) {
                           gridRef={gridRef}
                           viewportRef={viewportRef}
                           editable={canEditEntry(p.id)}
-                          onOpen={() => openTask(task.id)}
+                          onOpen={() => openTask(task.id, e.id)}
                           onContextMenu={(ev) => openMenu(e, ev)}
                           onSchedule={(btn) => openSchedule(e, btn)}
                         />

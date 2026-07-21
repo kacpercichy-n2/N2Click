@@ -17,6 +17,7 @@ import {
   availableHoursOnDate,
   binEntriesForTask,
   getClient,
+  getPerson,
   getStatus,
   planningStatusForTotals,
   rangeAvailabilityForPerson,
@@ -84,7 +85,7 @@ export function useOpenTask() {
   const location = useLocation();
 
   const openTask = useCallback(
-    (id: string) => {
+    (id: string, blockId?: string) => {
       const params = new URLSearchParams(location.search);
       params.set('task', id);
       params.delete('project');
@@ -92,6 +93,10 @@ export function useOpenTask() {
       // existing task opened afterwards.
       params.delete('date');
       params.delete('assignee');
+      // Opening FROM a specific calendar/bin block highlights + scrolls to that
+      // block's row in the per-block „Wykonane bloki” list (PKG-per-block-done).
+      if (blockId) params.set('block', blockId);
+      else params.delete('block');
       navigate({ pathname: location.pathname, search: params.toString() });
     },
     [navigate, location.pathname, location.search],
@@ -109,6 +114,7 @@ export function useOpenTask() {
       else params.delete('date');
       if (prefill?.personId) params.set('assignee', prefill.personId);
       else params.delete('assignee');
+      params.delete('block');
       navigate({ pathname: location.pathname, search: params.toString() });
     },
     [navigate, location.pathname, location.search],
@@ -124,6 +130,7 @@ export function TaskModal() {
   const projectParam = searchParams.get('project');
   const dateParam = searchParams.get('date');
   const assigneeParam = searchParams.get('assignee');
+  const blockParam = searchParams.get('block');
 
   const close = useCallback(() => {
     setSearchParams(
@@ -133,6 +140,7 @@ export function TaskModal() {
         next.delete('project');
         next.delete('date');
         next.delete('assignee');
+        next.delete('block');
         return next;
       },
       { replace: false },
@@ -148,6 +156,7 @@ export function TaskModal() {
           projectParam={projectParam}
           dateParam={dateParam}
           assigneeParam={assigneeParam}
+          blockParam={blockParam}
           onClose={close}
         />
       )}
@@ -160,10 +169,18 @@ interface ShellProps {
   projectParam: string | null;
   dateParam: string | null;
   assigneeParam: string | null;
+  blockParam: string | null;
   onClose: () => void;
 }
 
-function TaskModalShell({ taskParam, projectParam, dateParam, assigneeParam, onClose }: ShellProps) {
+function TaskModalShell({
+  taskParam,
+  projectParam,
+  dateParam,
+  assigneeParam,
+  blockParam,
+  onClose,
+}: ShellProps) {
   const { state, dispatch } = useStore();
   const canManageTasks = useCan()('tasks.manage');
   const isNew = taskParam === 'new';
@@ -295,6 +312,7 @@ function TaskModalShell({ taskParam, projectParam, dateParam, assigneeParam, onC
                 initialProjectId={projectParam ?? undefined}
                 initialDate={dateParam ?? undefined}
                 initialPersonId={assigneeParam ?? undefined}
+                focusBlockId={blockParam ?? undefined}
                 onSaved={onClose}
                 onCancel={requestClose}
                 onDirtyChange={handleDirtyChange}
@@ -313,6 +331,7 @@ interface EditorProps {
   initialProjectId?: string;
   initialDate?: string;
   initialPersonId?: string;
+  focusBlockId?: string;
   onSaved: () => void;
   onCancel: () => void;
   onDirtyChange: (dirty: boolean) => void;
@@ -365,6 +384,7 @@ function TaskEditor({
   initialProjectId,
   initialDate,
   initialPersonId,
+  focusBlockId,
   onSaved,
   onCancel,
   onDirtyChange,
@@ -871,6 +891,47 @@ function TaskEditor({
     dispatch({ type: 'SET_RECURRENCE_OVERRIDE', taskId: existing.id, date, override: null });
   };
 
+  // ---- Per-block „Wykonane bloki” (PKG-per-block-done) ----
+  // One row per WorkloadEntry (NOT aggregated per day): a task with two blocks on
+  // the same day shows two rows, each with its own tick. Dated blocks first
+  // (chronological by date, then start), bin rows last. SET_BLOCK_DONE toggles a
+  // single entry — the task status is never touched.
+  const taskBlocks = useMemo(() => {
+    if (!existing) return [];
+    return state.workload
+      .filter((w) => w.taskId === existing.id)
+      .slice()
+      .sort((a, b) => {
+        const aBin = isBinEntry(a);
+        const bBin = isBinEntry(b);
+        if (aBin !== bBin) return aBin ? 1 : -1;
+        if (a.date !== b.date) return a.date.localeCompare(b.date);
+        if (a.startMinutes !== b.startMinutes) return a.startMinutes - b.startMinutes;
+        return a.sortIndex - b.sortIndex;
+      });
+  }, [state.workload, existing]);
+
+  // Highlight + scroll to the block the user clicked, once the section renders.
+  const focusRowRef = useRef<HTMLLIElement>(null);
+  useEffect(() => {
+    if (focusBlockId && focusRowRef.current) {
+      focusRowRef.current.scrollIntoView({ block: 'nearest' });
+    }
+  }, [focusBlockId, taskBlocks.length]);
+
+  const blockRowLabel = (entry: (typeof taskBlocks)[number]): string => {
+    const person = getPerson(state, entry.personId);
+    const who = person ? `${person.name} — ` : '';
+    if (isBinEntry(entry)) {
+      return `${who}zasobnik (bez terminu), ${formatDuration(entry.plannedHours)}`;
+    }
+    const end = entry.startMinutes + entry.plannedHours * 60;
+    return `${who}${formatShortWithWeekday(entry.date)}, ${formatMinutes(
+      entry.startMinutes,
+    )}–${formatMinutes(end)} (${formatDuration(entry.plannedHours)})`;
+  };
+  const blocksDoneCount = taskBlocks.filter((b) => b.done === true).length;
+
   return (
     <div className="editor task-editor">
       {/* a) Details */}
@@ -1064,6 +1125,57 @@ function TaskEditor({
         )}
         {readOnly && checklist.length === 0 && <p className="field-hint">Brak elementów.</p>}
       </div>
+
+      {/* a1) Wykonane bloki — per-block completion (PKG-per-block-done). One row
+          per WorkloadEntry (NOT per day): each block's portion of hours has its
+          own tick. Toggling a block dispatches SET_BLOCK_DONE and NEVER changes
+          the task status. Only for saved tasks that already have blocks. */}
+      {isEdit && taskBlocks.length > 0 && (
+        <div className="editor-section">
+          <h2>Wykonane bloki</h2>
+          <p className="checklist-count">
+            wykonano {blocksDoneCount}/{taskBlocks.length}
+          </p>
+          <p className="field-hint">
+            Każdy blok w kalendarzu można oznaczyć jako wykonany niezależnie — status
+            zadania pozostaje bez zmian.
+          </p>
+          <ul className="checklist-list block-done-list">
+            {taskBlocks.map((entry) => {
+              const focused = focusBlockId === entry.id;
+              return (
+                <li
+                  key={entry.id}
+                  ref={focused ? focusRowRef : undefined}
+                  className={[
+                    'checklist-row',
+                    entry.done === true ? 'done' : '',
+                    focused ? 'focused' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                >
+                  <input
+                    type="checkbox"
+                    checked={entry.done === true}
+                    onChange={() =>
+                      dispatch({
+                        type: 'SET_BLOCK_DONE',
+                        entryId: entry.id,
+                        done: !(entry.done === true),
+                      })
+                    }
+                    disabled={readOnly}
+                    title={roTitle}
+                    aria-label={`Oznacz blok „${blockRowLabel(entry)}” jako wykonany`}
+                  />
+                  <span className="checklist-text">{blockRowLabel(entry)}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
 
       {/* a2) Cykliczność — occurrences are purely presentational (invariant 1);
           this section only dispatches SET_TASK_RECURRENCE / SET_RECURRENCE_OVERRIDE

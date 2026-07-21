@@ -687,6 +687,18 @@ export function taskDisplayStatus(
   return task.endDate < today ? 'overdue' : 'open';
 }
 
+/**
+ * Whether a SINGLE calendar/bin block is done (PKG-20260721-per-block-done).
+ * A block is done when it carries its OWN `done` flag OR when the parent task's
+ * status is a done status (a done task lights ALL its blocks — invariant 5 stays
+ * status-driven at the task level). The per-block flag is INDEPENDENT: two blocks
+ * on the same day render independent done state, and marking one done never
+ * changes `task.statusId`. Pure — no `Date.now`, no task-status mutation.
+ */
+export function blockIsDone(state: AppData, task: Task, entry: WorkloadEntry): boolean {
+  return entry.done === true || isDoneStatus(state, task.statusId);
+}
+
 // ---- Moja praca (my-work page) ----
 
 /**
