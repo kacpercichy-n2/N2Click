@@ -2,6 +2,7 @@
 import type {
   ActivityEvent,
   AppData,
+  CalendarEvent,
   Client,
   Comment,
   CommentEntityType,
@@ -369,6 +370,51 @@ export function recurrenceOccurrencesForDate(
     }
     const occurrences = expandOccurrences(task.recurrence, task.startDate, date, date);
     for (const occurrence of occurrences) out.push({ task, occurrence });
+  }
+  return out;
+}
+
+/** Jedno wystąpienie wydarzenia na konkretny dzień (czysto prezentacyjne). */
+export interface CalendarEventOccurrence {
+  event: CalendarEvent;
+  startMinutes: number;
+  durationMinutes: number;
+}
+
+/**
+ * Wydarzenia kalendarza na dany dzień — WYŁĄCZNIE prezentacyjne (inwariant 1:
+ * nigdy nie zasilają sum/przeciążenia/kolizji ani `dayTotal`). Jednorazowe gdy
+ * `event.date === date`; cykliczne rozwijane przez `expandOccurrences` (honoruje
+ * overrides). Semantyka filtra osób: pusty/brak = wszystko; niepusty = przecięcie
+ * z `attendeeIds` LUB wydarzenie ogólnofirmowe (`attendeeIds.length === 0` widać
+ * zawsze).
+ */
+export function calendarEventsForDate(
+  state: AppData,
+  date: DateStr,
+  personFilter?: Set<string>,
+): CalendarEventOccurrence[] {
+  const out: CalendarEventOccurrence[] = [];
+  const filterActive = personFilter !== undefined && personFilter.size > 0;
+  for (const event of state.events) {
+    if (filterActive) {
+      const companyWide = event.attendeeIds.length === 0;
+      if (!companyWide && !event.attendeeIds.some((id) => personFilter!.has(id))) continue;
+    }
+    if (event.recurrence === undefined) {
+      if (event.date === date) {
+        out.push({
+          event,
+          startMinutes: event.startMinutes,
+          durationMinutes: event.durationMinutes,
+        });
+      }
+      continue;
+    }
+    const occurrences = expandOccurrences(event.recurrence, event.date, date, date);
+    for (const occ of occurrences) {
+      out.push({ event, startMinutes: occ.startMinutes, durationMinutes: occ.durationMinutes });
+    }
   }
   return out;
 }

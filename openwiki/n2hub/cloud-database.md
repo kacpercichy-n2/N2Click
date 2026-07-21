@@ -130,6 +130,25 @@
   dopóki status = 'nowe' (using + with check); DELETE wyłącznie administrator.
   Tabela NIE jest w publikacji realtime — zmiany zgłoszeń nie wyzwalają
   live-syncu, lista odświeża się przy hydracji.
+- `events` (20260721210000) — wydarzenia / spotkania kalendarza („Wydarzenia”),
+  SAMODZIELNA tabela bez powiązań z projektami/zadaniami: `title` (CHECK 1..300),
+  `description`, `location`, `meeting_url` (CHECK ≤2048), `event_date`,
+  `start_minutes` (CHECK 0..1425, %15), `duration_minutes` (CHECK 15..1440, %15),
+  CHECK `start_minutes + duration_minutes <= 1440`, `attendee_ids uuid[]`
+  (BEZ FK — czyszczenie danglingów po stronie klienta), `recurrence jsonb`
+  (nullable, forma kanoniczna wydarzenia), `created_at`/`updated_at` (trigger
+  `app.set_updated_at`), index na `event_date`. RLS: kalendarz spotkań jest
+  OGÓLNOFIRMOWY, więc WSZYSTKIE polityki (`events_select/insert/update/delete`)
+  są `to authenticated` z `using (true)` / `with check (true)`. UZASADNIENIE:
+  lokalna rola `handlowiec` mapuje się w chmurze na `worker`, więc bramka po
+  `app.is_manager()` odcięłaby handlowca, który umawia spotkania — bramka
+  `events.manage` pozostaje UX-em po stronie klienta (jak cały system uprawnień).
+  Tabela JEST w publikacji `supabase_realtime` (idempotentny blok `do $$ …
+  exception when duplicate_object`) — kalendarze odświeżają się live. Mirror:
+  dziesiąta rodzina (`eventRow` + diff po id → `public.events`, attendee mapowany
+  per-id, niemapowalny odpada); hydracja filtruje dangling uczestnika per-wiersz.
+  Rejestr: plik w liście migracji + `public.events` w `EXPECTED_POLICIES`
+  (`migrations.test.ts`).
 - Access model: administrator = everything; manager = own department
   (profiles incl. UPDATE of non-admin members, memberships/assignments
   restricted to own-department people) — and since 20260720170000 the manager

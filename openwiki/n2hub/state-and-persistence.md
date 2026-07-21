@@ -208,6 +208,36 @@
   kolumna jsonb `tasks.recurrence` (patrz cloud-database). Testy:
   `recurrence.test.ts`, `recurrenceActions.test.ts`, rozszerzenia w
   `storage.test.ts`/`cloudMerge.test.ts`/`cloudMirror.test.ts`/`plannerData.test.ts`.
+- WYDARZENIA / SPOTKANIA (2026-07-21): kolekcja `events` w `AppData`
+  (`CalendarEvent` w `src/types.ts`). Encja ADDYTYWNA i CZYSTO PREZENTACYJNA —
+  NIGDY nie tworzy wierszy `WorkloadEntry` ani nie zasila sum/`dayTotal`/
+  przeciążenia/kolizji/`packDayBlocks` (inwariant 1). Cykliczność REUŻYWA
+  `TaskRecurrence` + `src/utils/recurrence.ts` (żadnej drugiej implementacji);
+  FORMA KANONICZNA `recurrence` (egzekwowana na TRZECH granicach — reduktor,
+  `repairEvents`, hydracja chmury przez `canonicalEventRecurrence` w
+  `commandValidation.ts`): czasy reguły = czasy wydarzenia (reduktor NADPISUJE
+  pola reguły przed normalizacją) i `daysOfWeek` zawiera `isoWeekday(date)`
+  (baza zawsze widoczna). Brak dnia kotwicy: reduktor ODRZUCA draft, a repair/
+  hydracja USUWAJĄ klucz. Mutacje: `ADD_EVENT` / `SAVE_EVENT` / `DELETE_EVENT`,
+  walidacja+normalizacja w `commandValidation.ts` (`normalizeEventDraft` —
+  pusty tytuł, zła data/czasy poza siatką 15 min, uczestnik spoza `people`, zły
+  `meetingUrl` (nie-http(s)) albo niekanoniczna cykliczność zwracają TĘ SAMĄ
+  referencję stanu; inwariant 6). Bez wpisów dziennika (parytet z ticketami).
+  Kolekcja ADDYTYWNA: `DATA_VERSION` zostaje na 7, `emptyData()` daje `[]`,
+  ścieżka wczytania ma `coerceArray(parsedRest.events, …)` + pass `repairEvents`
+  (odrzuca wiersze bez `id`/`title`/poprawnej daty; snapuje czasy w dół +
+  clamp; dedupe uczestników z ZACHOWANIEM danglingów — czyści je dopiero
+  hydracja chmury / filtr renderu; `meetingUrl` przez schemat). Uprawnienie
+  `events.manage` (administrator/pm/handlowiec; pracownik ogląda) — UX-owa
+  bramka, reduktor uprawnień NIE sprawdza. W chmurze mirroruje się jako
+  dziesiąta rodzina (`eventRow` + diff po id → `public.events`); attendee
+  wskazujący osobę spoza finalnego zespołu jest FILTROWANY per-wiersz w hydracji
+  (nie fail-close — kolumna-tablica bez FK). `events` w `CloudMergePayload` jest
+  OPCJONALNE (brak pola => reduktor nie rusza kolekcji). Selektor prezentacyjny
+  `calendarEventsForDate` (filtr jak `entriesForDate`; wydarzenie bez
+  uczestników = ogólnofirmowe, widoczne zawsze). Testy: `eventActions.test.ts`,
+  rozszerzenia w `storage.test.ts`/`cloudMerge.test.ts`/`cloudMirror.test.ts`/
+  `plannerData.test.ts`/`migrations.test.ts`.
 - `Client` carries contact fields (contactName/contactEmail/contactPhone/notes;
   columns from 20260718090000_clients_contact_fields, '' or missing = none — no
   repair pass, use-sites coalesce), edited on the `/clients` page via

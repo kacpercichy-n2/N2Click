@@ -11,6 +11,7 @@ import type { AppData, Person, Project, Task, WorkloadEntry } from '../types';
 import { useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import { useOpenTask } from './TaskModal';
+import { useOpenEvent } from './EventModal';
 import { personColor } from '../utils/colors';
 import { clearLiveSyncHold, setLiveSyncHold } from '../utils/liveSyncGate';
 import {
@@ -32,6 +33,8 @@ import {
   binTotalForPerson,
   blockCollides,
   blocksForPersonDate,
+  calendarEventsForDate,
+  type CalendarEventOccurrence,
   dayTotal,
   entriesForDate,
   getClient,
@@ -1010,8 +1013,52 @@ function RecurBlock({ title, hue, occurrence, onOpen, onContextMenu }: RecurBloc
   );
 }
 
+// ---- Calendar-event block (presentational only) ----
+// A calendar event / meeting rendered as a visually distinct, purely
+// presentational block (inwariant 1 + 7): it never enters
+// packDayBlocks/collision/totals and has NO pointer/drag handlers. Only
+// click/keyboard opens the event modal; right-click is guarded upstream so it
+// never opens the slot menu on top of it.
+interface EventBlockProps {
+  occ: CalendarEventOccurrence;
+  onOpen: () => void;
+}
+
+function EventBlock({ occ, onOpen }: EventBlockProps) {
+  const top = (occ.startMinutes / 60) * HOUR_PX;
+  const height = Math.max((occ.durationMinutes / 60) * HOUR_PX, MIN_BLOCK_H);
+  const end = occ.startMinutes + occ.durationMinutes;
+  return (
+    <div
+      className="week-event-block"
+      style={{ top, height }}
+      role="button"
+      tabIndex={0}
+      title={`📅 ${occ.event.title} — ${formatMinutes(occ.startMinutes)}–${formatMinutes(
+        end,
+      )}. Kliknij, aby otworzyć wydarzenie.`}
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpen();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+    >
+      <span className="week-event-title">📅 {occ.event.title}</span>
+      <span className="week-event-time">
+        {formatMinutes(occ.startMinutes)}–{formatMinutes(end)}
+      </span>
+    </div>
+  );
+}
+
 export function WeekView({ state, anchor, filter }: Props) {
   const { openTask, openNewTask } = useOpenTask();
+  const { openEvent, openNewEvent } = useOpenEvent();
   const { dispatch } = useStore();
   const can = useCan();
   const canEditAny = can('blocks.editAny');
@@ -1020,6 +1067,9 @@ export function WeekView({ state, anchor, filter }: Props) {
   // same permission the read-only TaskModal enforces, so we don't surface it to
   // users who can't create tasks.
   const canManageTasks = can('tasks.manage');
+  // Wydarzenia (spotkania) dodaje rola z `events.manage`; menu slotu i blok są
+  // czysto prezentacyjne (inwariant 7 — zero ścieżek pointer/drag).
+  const canManageEvents = can('events.manage');
   // A block is editable when the role edits anyone's blocks, or edits its own and
   // this block belongs to the logged-in user. The right-click insert flow lives
   // on the block itself, so it inherits the same rule.
@@ -1179,11 +1229,13 @@ export function WeekView({ state, anchor, filter }: Props) {
   // Right-click on bare grid (not a block — those own their own menu and stop the
   // event) → offer "Dodaj zadanie" at the snapped start under the cursor.
   const openSlotMenu = (date: string, e: React.MouseEvent<HTMLDivElement>) => {
-    if (!canManageTasks) return;
+    if (!canManageTasks && !canManageEvents) return;
     if ((e.target as HTMLElement).closest('.week-block')) return; // block's own menu
     // Defense-in-depth: an occurrence overlay already stops its own contextmenu,
-    // but never let a right-click on it fall through to "Dodaj zadanie".
+    // but never let a right-click on it fall through to the slot menu.
     if ((e.target as HTMLElement).closest('.week-recur-block')) return;
+    // Same guard for the presentational event block (no pointer path of its own).
+    if ((e.target as HTMLElement).closest('.week-event-block')) return;
     e.preventDefault();
     const rect = e.currentTarget.getBoundingClientRect();
     const startMinutes = slotStartFromOffset(e.clientY - rect.top, HOUR_PX);
@@ -1202,6 +1254,15 @@ export function WeekView({ state, anchor, filter }: Props) {
     if (!slotMenu) return;
     const personId = filter.size === 1 ? [...filter][0] : undefined;
     openNewTask(undefined, { date: slotMenu.date, personId });
+    setSlotMenu(null);
+  };
+
+  // Open event creation prefilled with the clicked day + snapped start; when the
+  // week is filtered to exactly one person, preselect them as sole attendee.
+  const addEventInSlot = () => {
+    if (!slotMenu) return;
+    const personId = filter.size === 1 ? [...filter][0] : undefined;
+    openNewEvent({ date: slotMenu.date, startMinutes: slotMenu.startMinutes, personId });
     setSlotMenu(null);
   };
 
@@ -1609,7 +1670,9 @@ export function WeekView({ state, anchor, filter }: Props) {
                   ]
                     .filter(Boolean)
                     .join(' ')}
-                  onContextMenu={canManageTasks ? (ev) => openSlotMenu(d, ev) : undefined}
+                  onContextMenu={
+                    canManageTasks || canManageEvents ? (ev) => openSlotMenu(d, ev) : undefined
+                  }
                 >
                   {isTodayStr(d) && (
                     <div
@@ -1618,6 +1681,18 @@ export function WeekView({ state, anchor, filter }: Props) {
                       aria-hidden
                     />
                   )}
+                  {/* Calendar events (spotkania): additive presentational overlay
+                      rendered BEFORE the real blocks (and before recurrences) so
+                      they always paint behind real task blocks — same paint step,
+                      tree order — without touching the `.week-block` stacking
+                      context or any pointer path (inwariant 1 + 7). */}
+                  {calendarEventsForDate(state, d, filter).map((occ) => (
+                    <EventBlock
+                      key={`event-${occ.event.id}-${d}`}
+                      occ={occ}
+                      onOpen={() => openEvent(occ.event.id)}
+                    />
+                  ))}
                   {/* Recurring-task occurrences: additive presentational overlay
                       rendered BEFORE the real blocks so they always paint behind
                       them (same paint step, tree order) without touching the
@@ -1977,14 +2052,26 @@ export function WeekView({ state, anchor, filter }: Props) {
             transition={{ duration: 0.12, ease: 'easeOut' }}
           >
             <div ref={slotMenuRef}>
-              <button
-                type="button"
-                role="menuitem"
-                className="context-menu-item"
-                onClick={addTaskInSlot}
-              >
-                + Dodaj zadanie ({formatMinutes(slotMenu.startMinutes)})
-              </button>
+              {canManageTasks && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="context-menu-item"
+                  onClick={addTaskInSlot}
+                >
+                  + Dodaj zadanie ({formatMinutes(slotMenu.startMinutes)})
+                </button>
+              )}
+              {canManageEvents && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="context-menu-item"
+                  onClick={addEventInSlot}
+                >
+                  + Dodaj spotkanie ({formatMinutes(slotMenu.startMinutes)})
+                </button>
+              )}
             </div>
           </motion.div>
         )}

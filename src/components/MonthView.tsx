@@ -10,6 +10,7 @@ import {
   WEEKDAY_LABELS,
 } from '../utils/dates';
 import {
+  calendarEventsForDate,
   dayTotal,
   entriesForDate,
   overloadedPeopleOnDate,
@@ -73,6 +74,14 @@ export function MonthView({ state, anchor, filter, onPickDay }: Props) {
             new Set(recurrenceOccurrencesForDate(state, d, filter).map((r) => r.task.title)),
           );
 
+          // Wydarzenia na dany dzień — TYLKO prezentacyjny znacznik 📅
+          // (MonthView nie renderuje pojedynczych bloków); sumy/kropki bez zmian.
+          const eventTitles = Array.from(
+            new Set(calendarEventsForDate(state, d, filter).map((oc) => oc.event.title)),
+          );
+          // Przesuwaj kolejne znaczniki inline o 18 px, żeby się nie nakładały.
+          const eventMarkerRight = 3 + 18 * ((birthdayNames.length > 0 ? 1 : 0) + (recurTitles.length > 0 ? 1 : 0));
+
           return (
             <button
               type="button"
@@ -107,6 +116,16 @@ export function MonthView({ state, anchor, filter, onPickDay }: Props) {
                   aria-label={`Cykliczne: ${recurTitles.join(', ')}`}
                 >
                   ⟳
+                </span>
+              )}
+              {eventTitles.length > 0 && (
+                <span
+                  className="month-cell-event"
+                  style={eventMarkerRight > 3 ? { right: eventMarkerRight } : undefined}
+                  title={`Wydarzenia: ${eventTitles.join(', ')}`}
+                  aria-label={`Wydarzenia: ${eventTitles.join(', ')}`}
+                >
+                  📅
                 </span>
               )}
               {total > 0 && <span className="month-cell-hours">{formatDuration(total)}</span>}

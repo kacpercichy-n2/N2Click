@@ -12,6 +12,7 @@ import type { CloudMergePayload } from '../supabase/plannerData';
 import type {
   ActivityEvent,
   AppData,
+  CalendarEvent,
   Client,
   Comment,
   Milestone,
@@ -20,6 +21,20 @@ import type {
   TaskAssignment,
   WorkloadEntry,
 } from '../types';
+
+const makeEvent = (o: Partial<CalendarEvent> & { id: string }): CalendarEvent => ({
+  title: 'Spotkanie',
+  description: '',
+  location: '',
+  meetingUrl: '',
+  date: '2026-07-06',
+  startMinutes: 540,
+  durationMinutes: 60,
+  attendeeIds: [],
+  createdAt: '2026-01-01T00:00:00.000Z',
+  updatedAt: '2026-01-01T00:00:00.000Z',
+  ...o,
+});
 
 const P1 = 'person-1';
 const P2 = 'person-2';
@@ -465,6 +480,47 @@ describe('MERGE_CLOUD_ENTITIES — fail-closed (invariant 6)', () => {
     const added = next.assignments.find((a: TaskAssignment) => a.taskId === T1 && a.personId === P2);
     expect(added).toBeDefined();
     expect(typeof added!.id).toBe('string');
+  });
+});
+
+describe('MERGE_CLOUD_ENTITIES — wydarzenia kalendarza', () => {
+  it('brak pola events => kolekcja nietknięta po referencji', () => {
+    const state: AppData = { ...baseState(), events: [makeEvent({ id: 'e1' })] };
+    const next = merge(state, { ...emptyPayload(), clients: [client({ id: 'c-cloud', name: 'X' })] });
+    expect(next.events).toBe(state.events);
+  });
+
+  it('no-op merge zwraca oryginalną referencję stanu', () => {
+    const E = makeEvent({ id: 'e1' });
+    const state: AppData = { ...emptyData(), events: [E] };
+    const next = merge(state, { ...emptyPayload(), events: [{ ...E }] });
+    expect(next).toBe(state);
+  });
+
+  it('fail-closed na złej dacie/czasach => ta sama referencja', () => {
+    const state: AppData = { ...emptyData(), events: [] };
+    expect(merge(state, { ...emptyPayload(), events: [makeEvent({ id: 'e1', date: 'zła' })] })).toBe(
+      state,
+    );
+    expect(
+      merge(state, { ...emptyPayload(), events: [makeEvent({ id: 'e2', startMinutes: 547 })] }),
+    ).toBe(state);
+    expect(
+      merge(state, {
+        ...emptyPayload(),
+        events: [makeEvent({ id: 'e3', startMinutes: 1425, durationMinutes: 30 })],
+      }),
+    ).toBe(state);
+  });
+
+  it('filtruje dangling uczestnika per-wiersz (bez fail-close)', () => {
+    const state = baseState(); // ma P1, P2, P3
+    const next = merge(state, {
+      ...emptyPayload(),
+      events: [makeEvent({ id: 'e1', attendeeIds: [P1, 'ghost', P2] })],
+    });
+    expect(next.events).toHaveLength(1);
+    expect(next.events[0].attendeeIds).toEqual([P1, P2]);
   });
 });
 

@@ -12,6 +12,7 @@ import type {
   Project,
   SavedFilterCriteria,
   TaskPriority,
+  TaskRecurrence,
 } from '../types';
 import {
   isProjectDocumentKind,
@@ -20,12 +21,15 @@ import {
 import { isTicketKind, isTicketPriority, isTicketStatus } from '../utils/tickets';
 import { TASK_PRIORITIES } from '../utils/priority';
 import { isValidDateStr } from '../utils/dates';
+import { DAY_MINUTES, MINUTE_STEP } from '../utils/time';
+import { isoWeekday, normalizeRecurrence } from '../utils/recurrence';
 import type {
   TaskDraft,
   ProjectDraft,
   ProjectDocumentDraft,
   PersonDraft,
   TicketDraft,
+  EventDraft,
 } from './AppStore';
 
 export type RefEntityKind = 'task' | 'project' | 'milestone' | 'status' | 'person' | 'client';
@@ -167,6 +171,137 @@ export function isValidTicketDraft(state: AppData, draft: TicketDraft): boolean 
 /** Status zgłoszenia należy do stałego zbioru wartości. */
 export function isValidTicketStatus(value: unknown): boolean {
   return isTicketStatus(value);
+}
+
+// ---- Wydarzenia kalendarza (spotkania) --------------------------------------
+
+/** Minuta startu na siatce 15 min, w dobie z miejscem na min. 15-minutowy czas
+ *  (0..1425). */
+function isValidStartMinutes(m: unknown): m is number {
+  return (
+    typeof m === 'number' &&
+    Number.isInteger(m) &&
+    m >= 0 &&
+    m <= DAY_MINUTES - MINUTE_STEP &&
+    m % MINUTE_STEP === 0
+  );
+}
+
+/** Czas trwania na siatce 15 min (15..1440). */
+function isValidDurationMinutes(m: unknown): m is number {
+  return (
+    typeof m === 'number' &&
+    Number.isInteger(m) &&
+    m >= MINUTE_STEP &&
+    m <= DAY_MINUTES &&
+    m % MINUTE_STEP === 0
+  );
+}
+
+/**
+ * FORMA KANONICZNA cykliczności wydarzenia (decyzja 2). Czas wydarzenia JEST
+ * czasem reguły — nadpisujemy `startMinutes`/`durationMinutes` reguły wartościami
+ * wydarzenia PRZED normalizacją. Zwraca kanoniczną regułę TYLKO gdy jest poprawna
+ * strukturalnie i `daysOfWeek` zawiera dzień tygodnia kotwicy (baza zawsze
+ * widoczna); inaczej `undefined` (repair/hydracja USUWAJĄ klucz, reduktor
+ * odrzuca draft). REUŻYWA `normalizeRecurrence` — bez drugiej implementacji.
+ */
+export function canonicalEventRecurrence(
+  raw: unknown,
+  date: string,
+  startMinutes: number,
+  durationMinutes: number,
+): TaskRecurrence | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  if (!isValidDateStr(date)) return undefined;
+  const forced = { ...(raw as Record<string, unknown>), startMinutes, durationMinutes };
+  const rule = normalizeRecurrence(forced, date);
+  if (rule === undefined) return undefined;
+  // Baza (dzień tygodnia kotwicy) musi być wśród dni reguły, inaczej wydarzenie
+  // bazowe nie byłoby wystąpieniem własnej reguły.
+  if (!rule.daysOfWeek.includes(isoWeekday(date))) return undefined;
+  return rule;
+}
+
+/** Znormalizowany draft wydarzenia gotowy do zapisania przez reduktor. */
+export interface NormalizedEventDraft {
+  title: string;
+  description: string;
+  location: string;
+  meetingUrl: string;
+  date: string;
+  startMinutes: number;
+  durationMinutes: number;
+  attendeeIds: string[];
+  recurrence?: TaskRecurrence;
+}
+
+/**
+ * Waliduje i normalizuje draft wydarzenia. Zwraca ZNORMALIZOWANY ładunek (trim
+ * tytułu/opisu/lokalizacji, dedupe uczestników, adres znormalizowany, reguła
+ * kanoniczna) albo `null`, gdy komenda ma zostać ODRZUCONA => reduktor oddaje TĘ
+ * SAMĄ referencję stanu (inwariant 6). Odrzucenia: pusty tytuł, zła data, czas
+ * poza siatką 15 min / poza dobą, `attendeeIds` niebędące tablicą stringów
+ * istniejących w `people`, `meetingUrl` niepusty odrzucony przez schemat,
+ * cykliczność zażądana lecz niekanoniczna (brak dnia kotwicy albo strukturalnie
+ * zła).
+ */
+export function normalizeEventDraft(
+  state: AppData,
+  draft: EventDraft,
+): NormalizedEventDraft | null {
+  const title = draft.title.trim();
+  if (title === '') return null;
+  if (!isValidDateStr(draft.date)) return null;
+  if (!isValidStartMinutes(draft.startMinutes)) return null;
+  if (!isValidDurationMinutes(draft.durationMinutes)) return null;
+  if (draft.startMinutes + draft.durationMinutes > DAY_MINUTES) return null;
+
+  if (!Array.isArray(draft.attendeeIds)) return null;
+  const attendeeIds: string[] = [];
+  const seen = new Set<string>();
+  for (const id of draft.attendeeIds) {
+    if (typeof id !== 'string') return null;
+    if (!hasEntity(state, 'person', id)) return null; // dangling => odrzuć (reduktor)
+    if (seen.has(id)) continue;
+    seen.add(id);
+    attendeeIds.push(id);
+  }
+
+  let meetingUrl = '';
+  if (draft.meetingUrl.trim() !== '') {
+    const normalized = normalizeProjectDocumentUrl(draft.meetingUrl);
+    if (normalized === null) return null;
+    meetingUrl = normalized;
+  }
+
+  let recurrence: TaskRecurrence | undefined;
+  if (draft.recurrence !== null && draft.recurrence !== undefined) {
+    recurrence = canonicalEventRecurrence(
+      draft.recurrence,
+      draft.date,
+      draft.startMinutes,
+      draft.durationMinutes,
+    );
+    if (recurrence === undefined) return null; // zażądano cykliczności, ale zła
+  }
+
+  return {
+    title,
+    description: draft.description.trim(),
+    location: draft.location.trim(),
+    meetingUrl,
+    date: draft.date,
+    startMinutes: draft.startMinutes,
+    durationMinutes: draft.durationMinutes,
+    attendeeIds,
+    ...(recurrence ? { recurrence } : {}),
+  };
+}
+
+/** UI-owa forma reguły dla bramki „Zapisz” (jedno źródło prawdy z reduktorem). */
+export function isValidEventDraft(state: AppData, draft: EventDraft): boolean {
+  return normalizeEventDraft(state, draft) !== null;
 }
 
 // ---- Filtry: sanityzacja kryteriów i „ostatnio użytego” filtra ---------------

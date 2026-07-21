@@ -18,6 +18,7 @@ import {
   normalizeStatusFlags,
   normalizeTaskMeta,
   normalizeWorkloadHours,
+  repairEvents,
   readCloudRetirementMarker,
   readEnvelopeRevision,
   repairStatusReferences,
@@ -2376,5 +2377,120 @@ describe('AppData.lastFilters (additive at v7)', () => {
     const next = normalizeDates(data);
     expect(next.lastFilters.tasks!.criteria.from).toBe('');
     expect(next.lastFilters.tasks!.criteria.to).toBe('2026-07-20');
+  });
+});
+
+// ---- repairEvents (wydarzenia kalendarza) -----------------------------------
+describe('repairEvents', () => {
+  const MON = '2026-07-06'; // poniedziałek (ISO 1)
+  const withEvents = (events: unknown[]): AppData =>
+    ({ ...emptyData(), events } as unknown as AppData);
+
+  it('odrzuca wiersz bez id / bez tytułu / ze złą datą', () => {
+    const data = withEvents([
+      { title: 'Brak id', date: MON, startMinutes: 540, durationMinutes: 60 },
+      { id: 'e1', title: '   ', date: MON, startMinutes: 540, durationMinutes: 60 },
+      { id: 'e2', title: 'Zła data', date: 'nope', startMinutes: 540, durationMinutes: 60 },
+    ]);
+    expect(repairEvents(data).events).toEqual([]);
+  });
+
+  it('snapuje czasy poza siatką w dół i clampuje do doby', () => {
+    const data = withEvents([
+      { id: 'e1', title: 'X', date: MON, startMinutes: 547, durationMinutes: 1000 },
+    ]);
+    const e = repairEvents(data).events[0];
+    expect(e.startMinutes).toBe(540); // 547 -> 540
+    expect(e.durationMinutes).toBe(900); // snap 990, potem clamp do 1440-540
+    expect(e.startMinutes + e.durationMinutes).toBe(1440);
+  });
+
+  it('odrzuca wiersz z nie-finite startMinutes', () => {
+    const data = withEvents([
+      { id: 'e1', title: 'X', date: MON, startMinutes: 'abc', durationMinutes: 60 },
+    ]);
+    expect(repairEvents(data).events).toEqual([]);
+  });
+
+  it('deduplikuje uczestników i zachowuje dangling id', () => {
+    const data = withEvents([
+      {
+        id: 'e1',
+        title: 'X',
+        date: MON,
+        startMinutes: 540,
+        durationMinutes: 60,
+        attendeeIds: ['a', 'a', 'ghost'],
+      },
+    ]);
+    expect(repairEvents(data).events[0].attendeeIds).toEqual(['a', 'ghost']);
+  });
+
+  it('normalizuje zły adres spotkania do ""', () => {
+    const data = withEvents([
+      { id: 'e1', title: 'X', date: MON, startMinutes: 540, durationMinutes: 60, meetingUrl: 'javascript:1' },
+    ]);
+    expect(repairEvents(data).events[0].meetingUrl).toBe('');
+  });
+
+  it('usuwa regułę bez dnia kotwicy, zachowuje kanoniczną', () => {
+    const withoutAnchor = withEvents([
+      {
+        id: 'e1',
+        title: 'X',
+        date: MON,
+        startMinutes: 540,
+        durationMinutes: 60,
+        attendeeIds: [],
+        recurrence: { daysOfWeek: [3], startMinutes: 540, durationMinutes: 60 },
+      },
+    ]);
+    expect('recurrence' in repairEvents(withoutAnchor).events[0]).toBe(false);
+
+    const canonical = withEvents([
+      {
+        id: 'e2',
+        title: 'Y',
+        date: MON,
+        startMinutes: 540,
+        durationMinutes: 60,
+        attendeeIds: [],
+        recurrence: { daysOfWeek: [1, 3], startMinutes: 540, durationMinutes: 60 },
+      },
+    ]);
+    expect(repairEvents(canonical).events[0].recurrence).toEqual({
+      daysOfWeek: [1, 3],
+      startMinutes: 540,
+      durationMinutes: 60,
+    });
+  });
+
+  it('jest idempotentny po wartości', () => {
+    const data = withEvents([
+      {
+        id: 'e1',
+        title: 'X',
+        date: MON,
+        startMinutes: 547,
+        durationMinutes: 1000,
+        attendeeIds: ['a', 'a'],
+        meetingUrl: 'example.test/x',
+        recurrence: { daysOfWeek: [1, 3], startMinutes: 0, durationMinutes: 15 },
+      },
+    ]);
+    const once = repairEvents(data);
+    const twice = repairEvents(once);
+    expect(twice.events).toEqual(once.events);
+  });
+
+  it('legacy payload bez pola events ładuje się z [] przez pełną ścieżkę wczytania', () => {
+    const legacy: Record<string, unknown> = { ...emptyData() };
+    delete legacy.events;
+    const result = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(legacy) }, () =>
+      loadDataResult(),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.events).toEqual([]);
   });
 });

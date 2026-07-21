@@ -43,6 +43,19 @@
   `.month-cell-recur` ⟳ marker (no blocks/menu). The rule is edited in TaskModal
   via explicit dispatch, never through the SAVE_TASK draft/auto-save. All bin
   drag, pointer lifecycle and rendered-column hit-testing paths are untouched.
+- Calendar events / meetings (2026-07-21) are PRESENTATIONAL ONLY (invariant 1):
+  WeekView renders each `calendarEventsForDate` occurrence as an additive
+  `.week-event-block` overlay (solid cyan border + left bar, `--event-accent`,
+  📅), positioned by `startMinutes`, height ∝ `durationMinutes`, painted BEHIND
+  real task blocks (tree order, `z-index: 0`); events never enter `packDayBlocks`,
+  collisions, totals, `dayTotal` or overload and carry NO pointer/drag handlers —
+  only click/keyboard opens `EventModal` (`?wydarzenie=<id>`). `openSlotMenu`
+  guards `.week-event-block` alongside `.week-recur-block`/`.week-block`, and its
+  gate widens to `canManageTasks || canManageEvents`: the slot menu shows „+ Dodaj
+  zadanie" at `tasks.manage` and „+ Dodaj spotkanie" at `events.manage`.
+  MonthView shows only a `.month-cell-event` 📅 marker (no blocks/menu; inline
+  `right` offset avoids collision with 🎂/⟳). All bin drag, pointer lifecycle and
+  rendered-column hit-testing paths remain untouched (invariant 7).
 
 ## Start here for
 

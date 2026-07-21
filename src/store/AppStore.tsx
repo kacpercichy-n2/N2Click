@@ -17,6 +17,7 @@ import type {
   ActivityEntityType,
   ActivityEvent,
   AppData,
+  CalendarEvent,
   ChecklistItem,
   CommentEntityType,
   Company,
@@ -68,6 +69,7 @@ import {
   isValidTaskDraft,
   isValidTicketDraft,
   isValidTicketStatus,
+  normalizeEventDraft,
   lastViewFilterEqual,
   normalizeProjectDocumentDraft,
   sanitizeFilterCriteria,
@@ -161,6 +163,21 @@ export interface TicketDraft {
   kind: TicketKind;
   priority: TicketPriority;
   reporterId: string;
+}
+
+/** Draft wydarzenia kalendarza (modal „Wydarzenia”). Pola modelu bez
+ *  id/createdAt/updatedAt. `recurrence` niesie surową regułę z UI albo `null`
+ *  (jednorazowe) — reduktor kanonikalizuje ją przez `normalizeEventDraft`. */
+export interface EventDraft {
+  title: string;
+  description: string;
+  location: string;
+  meetingUrl: string;
+  date: string;
+  startMinutes: number;
+  durationMinutes: number;
+  attendeeIds: string[];
+  recurrence: unknown | null;
 }
 
 export interface PersonDraft {
@@ -267,6 +284,9 @@ export type Action =
   | { type: 'SAVE_TICKET'; ticketId: string; draft: TicketDraft }
   | { type: 'SET_TICKET_STATUS'; ticketId: string; status: TicketStatus }
   | { type: 'DELETE_TICKET'; ticketId: string }
+  | { type: 'ADD_EVENT'; draft: EventDraft }
+  | { type: 'SAVE_EVENT'; eventId: string; draft: EventDraft }
+  | { type: 'DELETE_EVENT'; eventId: string }
   | { type: 'ADD_PERSON'; person: PersonDraft }
   | { type: 'UPDATE_PERSON'; personId: string; person: PersonDraft }
   | { type: 'DELETE_PERSON'; personId: string }
@@ -2600,6 +2620,8 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
   // Zgłoszenia są OPCJONALNE w ładunku (dopisane addytywnie): brak pola => bez
   // zmian w kolekcji, obecne => walidacja i autorytatywna podmiana niżej.
   if (payload.tickets !== undefined && !Array.isArray(payload.tickets)) return state;
+  // Wydarzenia (dziesiąta rodzina) są OPCJONALNE i ADDYTYWNE — jak zgłoszenia.
+  if (payload.events !== undefined && !Array.isArray(payload.events)) return state;
 
   // Osoby najpierw (autorytatywnie), żeby walidacja encji widziała finalny
   // zespół. Niepoprawny blok osób psuje całą hydrację (atomowość).
@@ -2619,7 +2641,8 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
     !payload.workload.every(isObjWithId) ||
     !payload.comments.every(isObjWithId) ||
     !payload.activity.every(isObjWithId) ||
-    (payload.tickets !== undefined && !payload.tickets.every(isObjWithId))
+    (payload.tickets !== undefined && !payload.tickets.every(isObjWithId)) ||
+    (payload.events !== undefined && !payload.events.every(isObjWithId))
   ) {
     return state;
   }
@@ -2683,6 +2706,40 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
     }
   }
 
+  // Wydarzenia: fail-closed STRUKTURALNIE (data + czasy na siatce jak workload),
+  // ale dangling uczestnik jest FILTROWANY per-wiersz (kolumna-tablica nie ma FK,
+  // stary id nie może blokować całej hydracji). Filtr jest deterministyczny =>
+  // merge zostaje idempotentny i reference-preserving.
+  let mergedEvents = state.events;
+  if (payload.events !== undefined) {
+    for (const e of payload.events) {
+      if (!isValidDateStr(e.date)) return state;
+      if (
+        !Number.isInteger(e.startMinutes) ||
+        e.startMinutes < 0 ||
+        e.startMinutes % MINUTE_STEP !== 0
+      ) {
+        return state;
+      }
+      if (
+        !Number.isInteger(e.durationMinutes) ||
+        e.durationMinutes < MINUTE_STEP ||
+        e.durationMinutes % MINUTE_STEP !== 0
+      ) {
+        return state;
+      }
+      if (e.startMinutes + e.durationMinutes > DAY_MINUTES) return state;
+      if (!Array.isArray(e.attendeeIds)) return state;
+    }
+    const filtered = payload.events.map((e) => {
+      const attendeeIds = e.attendeeIds.filter(
+        (id, i, arr) => personIds.has(id) && arr.indexOf(id) === i,
+      );
+      return attendeeIds.length === e.attendeeIds.length ? e : { ...e, attendeeIds };
+    });
+    mergedEvents = reconcileRows(state.events, filtered);
+  }
+
   // Assignments reconciled by (taskId, personId): a pair the local state
   // already knows keeps its local row id (stable references); a genuinely new
   // cloud pair gets a fresh uid. Pairs the cloud does not know are DROPPED.
@@ -2717,6 +2774,7 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
     ...(payload.tickets !== undefined
       ? { tickets: reconcileRows(state.tickets, payload.tickets) }
       : {}),
+    ...(payload.events !== undefined ? { events: mergedEvents } : {}),
   };
   const keys = Object.keys(merged) as Array<keyof AppData>;
   return keys.every((k) => Object.is(merged[k], state[k])) ? state : merged;
@@ -3583,6 +3641,66 @@ export function reducer(state: AppData, action: Action): AppData {
     case 'DELETE_TICKET': {
       if (!state.tickets.some((t) => t.id === action.ticketId)) return state;
       return { ...state, tickets: state.tickets.filter((t) => t.id !== action.ticketId) };
+    }
+    // ---- Wydarzenia kalendarza (spotkania) ----
+    // Walidacja i normalizacja żyją w commandValidation (normalizeEventDraft):
+    // pusty tytuł, zła data/czasy, dangling uczestnik, zły adres albo cykliczność
+    // bez dnia kotwicy => TA SAMA referencja stanu (inwariant 6). Kolekcja jest
+    // czysto prezentacyjna — brak kaskad, sum ani wpisów dziennika (inwariant 1).
+    case 'ADD_EVENT': {
+      const normalized = normalizeEventDraft(state, action.draft);
+      if (normalized === null) return state;
+      const stamp = nowIso();
+      return {
+        ...state,
+        events: [
+          ...state.events,
+          {
+            id: uid(),
+            title: normalized.title,
+            description: normalized.description,
+            location: normalized.location,
+            meetingUrl: normalized.meetingUrl,
+            date: normalized.date,
+            startMinutes: normalized.startMinutes,
+            durationMinutes: normalized.durationMinutes,
+            attendeeIds: normalized.attendeeIds,
+            ...(normalized.recurrence ? { recurrence: normalized.recurrence } : {}),
+            createdAt: stamp,
+            updatedAt: stamp,
+          },
+        ],
+      };
+    }
+    case 'SAVE_EVENT': {
+      if (!state.events.some((e) => e.id === action.eventId)) return state;
+      const normalized = normalizeEventDraft(state, action.draft);
+      if (normalized === null) return state;
+      return {
+        ...state,
+        events: state.events.map((e) => {
+          if (e.id !== action.eventId) return e;
+          const next: CalendarEvent = {
+            id: e.id,
+            title: normalized.title,
+            description: normalized.description,
+            location: normalized.location,
+            meetingUrl: normalized.meetingUrl,
+            date: normalized.date,
+            startMinutes: normalized.startMinutes,
+            durationMinutes: normalized.durationMinutes,
+            attendeeIds: normalized.attendeeIds,
+            ...(normalized.recurrence ? { recurrence: normalized.recurrence } : {}),
+            createdAt: e.createdAt,
+            updatedAt: nowIso(),
+          };
+          return next;
+        }),
+      };
+    }
+    case 'DELETE_EVENT': {
+      if (!state.events.some((e) => e.id === action.eventId)) return state;
+      return { ...state, events: state.events.filter((e) => e.id !== action.eventId) };
     }
     case 'LOAD_SAMPLE':
       return { ...action.data, sampleBannerDismissed: true };

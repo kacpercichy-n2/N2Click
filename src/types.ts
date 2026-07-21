@@ -340,6 +340,35 @@ export interface Ticket {
   updatedAt: string; // ISO timestamp; odświeżany przy każdym zapisie
 }
 
+/**
+ * Wydarzenie / spotkanie kalendarza. Kolekcja jest ADDYTYWNA i CZYSTO
+ * PREZENTACYJNA — wydarzenia NIGDY nie tworzą wierszy `WorkloadEntry` ani nie
+ * zasilają sum/przeciążenia/kolizji/`packDayBlocks` (inwariant 1). Renderowane w
+ * WeekView/MonthView innym kolorem niż zadania, zarządzane w panelu
+ * „Wydarzenia”. Cykliczność REUŻYWA `TaskRecurrence` + `src/utils/recurrence.ts`
+ * (żadnej drugiej implementacji).
+ *
+ * FORMA KANONICZNA `recurrence` (egzekwowana w reduktorze, `repairEvents` i
+ * hydracji chmury): gdy klucz istnieje, `rule.startMinutes === startMinutes` i
+ * `rule.durationMinutes === durationMinutes` (czas wydarzenia JEST czasem
+ * reguły), a `daysOfWeek` ZAWSZE zawiera `isoWeekday(date)` (baza widoczna).
+ * OPCJONALNE i ADDYTYWNE (`DATA_VERSION` zostaje 7).
+ */
+export interface CalendarEvent {
+  id: string;
+  title: string; // wymagane (trim niepusty)
+  description: string; // '' gdy brak
+  location: string; // biuro/lokalizacja; '' gdy brak
+  meetingUrl: string; // '' albo znormalizowany http(s) URL
+  date: DateStr; // kotwica; dla cyklicznych = anchor reguły
+  startMinutes: number; // 0..1425, wielokrotność 15
+  durationMinutes: number; // 15..1440, wielokrotność 15; start+dur <= 1440
+  attendeeIds: string[]; // ids z people, zdeduplikowane; [] = ogólnofirmowe
+  recurrence?: TaskRecurrence; // REUŻYTY typ; brak klucza = jednorazowe
+  createdAt: string; // ISO timestamp
+  updatedAt: string; // ISO timestamp; odświeżany przy każdym zapisie
+}
+
 export type FilterPage = 'projects' | 'tasks' | 'kanban';
 
 export interface SavedFilterCriteria {
@@ -401,6 +430,7 @@ export interface AppData {
   comments: Comment[];
   activity: ActivityEvent[];
   tickets: Ticket[];
+  events: CalendarEvent[];
   currentUserId: string; // "acting as" person; '' when unset
   // Safe impersonation: '' when not impersonating; otherwise the REAL logged-in
   // person's id while `currentUserId` holds the impersonated identity. Additive

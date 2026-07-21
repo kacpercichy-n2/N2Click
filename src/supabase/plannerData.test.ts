@@ -445,9 +445,52 @@ describe('loadPlannerSnapshot', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.payload).toEqual({
-      clients: [], projects: [], milestones: [], tasks: [], assignments: [], workload: [], comments: [], activity: [], tickets: [],
+      clients: [], projects: [], milestones: [], tasks: [], assignments: [], workload: [], comments: [], activity: [], tickets: [], events: [],
     });
     expect(result.diagnostics).toEqual([]);
+  });
+
+  it('mapuje wiersz wydarzenia: data/minuty/attendees/recurrence/meeting_url', async () => {
+    const EV = uuid('ev1');
+    const db = new FakeSelectDb().seed('events', [
+      {
+        id: EV,
+        title: 'Spotkanie',
+        description: 'opis',
+        location: 'Sala A',
+        meeting_url: 'meet.example.test/x', // bez schematu -> https://
+        event_date: '2026-07-06', // poniedziałek (ISO 1)
+        start_minutes: 540,
+        duration_minutes: 60,
+        attendee_ids: [CLOUD_PA, uuid('ghost-profile')], // ghost odpada
+        recurrence: { daysOfWeek: [1, 3], startMinutes: 0, durationMinutes: 15 }, // czasy zostaną wymuszone
+        created_at: '2026-01-01T00:00:00.000Z',
+        updated_at: '2026-02-01T00:00:00.000Z',
+      },
+    ]);
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.payload.events).toHaveLength(1);
+    const e = result.payload.events![0];
+    expect(e).toMatchObject({
+      id: EV,
+      title: 'Spotkanie',
+      location: 'Sala A',
+      meetingUrl: 'https://meet.example.test/x',
+      date: '2026-07-06',
+      startMinutes: 540,
+      durationMinutes: 60,
+      attendeeIds: [PA], // profil chmury zmapowany do lokalnego, ghost odpada
+    });
+    // Forma kanoniczna: czasy reguły = czasy wydarzenia; dzień kotwicy obecny.
+    expect(e.recurrence).toEqual({ daysOfWeek: [1, 3], startMinutes: 540, durationMinutes: 60 });
+  });
+
+  it('błąd selecta events => fail-closed z polskim komunikatem', async () => {
+    const db = new FakeSelectDb().fail('events');
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result).toEqual({ ok: false, error: PLANNER_SNAPSHOT_ERROR });
   });
 });
 

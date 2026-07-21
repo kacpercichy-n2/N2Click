@@ -34,7 +34,7 @@ export function anyDirty(): boolean {
 // navigation: the task modal lives on the `?task=` search param, while the
 // project editor lives on the pathname.
 
-export type NavGuardScope = 'task-modal' | 'project-detail' | 'ticket-modal';
+export type NavGuardScope = 'task-modal' | 'project-detail' | 'ticket-modal' | 'event-modal';
 
 const navGuards = new Map<object, NavGuardScope>();
 
@@ -72,9 +72,11 @@ export function navGuardBlocks(
   const nextParams = new URLSearchParams(next.search);
   const taskChanged = currentParams.get('task') !== nextParams.get('task');
   const ticketChanged = currentParams.get('zgloszenie') !== nextParams.get('zgloszenie');
+  const wydarzenieChanged = currentParams.get('wydarzenie') !== nextParams.get('wydarzenie');
   return (
     (scopes.has('task-modal') && taskChanged) ||
     (scopes.has('ticket-modal') && ticketChanged) ||
+    (scopes.has('event-modal') && wydarzenieChanged) ||
     (scopes.has('project-detail') && pathChanged)
   );
 }

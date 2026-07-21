@@ -26,6 +26,7 @@ import { PersonProfilePage } from './pages/PersonProfilePage';
 import { WorkloadPage } from './pages/WorkloadPage';
 import { AdminPage } from './pages/AdminPage';
 import { TicketsPage } from './pages/TicketsPage';
+import { EventsPage } from './pages/EventsPage';
 import { AccountPage } from './pages/AccountPage';
 import { TeamPage } from './pages/TeamPage';
 import { canViewTeam } from './pages/teamScope';
@@ -52,6 +53,7 @@ import { PersistenceBanner } from './components/PersistenceBanner';
 import { CloudSyncBanner } from './components/CloudSyncBanner';
 import { TaskModal } from './components/TaskModal';
 import { TicketModal } from './components/TicketModal';
+import { EventModal } from './components/EventModal';
 import { GlobalSearch } from './components/GlobalSearch';
 import { Avatar } from './components/Avatar';
 import {
@@ -74,6 +76,7 @@ import {
   KeyRound,
   Network,
   Inbox,
+  CalendarClock,
 } from './components/icons';
 import type { LucideIcon } from './components/icons';
 import { loadUiPrefs, updateUiPrefs } from './utils/uiPrefs';
@@ -93,6 +96,7 @@ const NAV: Array<[string, string, LucideIcon]> = [
   ['/timeline', 'Oś czasu', GanttChart],
   ['/tasks', 'Zadania', ListChecks],
   ['/calendar', 'Kalendarz', CalendarDays],
+  ['/wydarzenia', 'Wydarzenia', CalendarClock],
   ['/people', 'Zespół', Users],
   ['/team', 'Struktura zespołu', Network],
   ['/workload', 'Obciążenie', Gauge],
@@ -506,6 +510,8 @@ export function App() {
             <Route path="/tasks/new" element={<NewTaskRedirect />} />
             <Route path="/tasks/:id" element={<TaskRedirect />} />
             <Route path="/calendar" element={<CalendarPage />} />
+            {/* Wydarzenia: widoczne dla każdej roli (zarządzanie gated przez events.manage). */}
+            <Route path="/wydarzenia" element={<EventsPage />} />
             <Route path="/people" element={<PeoplePage />} />
             <Route path="/people/:id" element={<PersonProfilePage />} />
             <Route path="/workload" element={<WorkloadPage />} />
@@ -534,6 +540,8 @@ export function App() {
       <TaskModal />
       {/* Ten sam wzorzec dla zgłoszeń (?zgloszenie=new | <id>). */}
       <TicketModal />
+      {/* Ten sam wzorzec dla wydarzeń (?wydarzenie=new | <id>). */}
+      <EventModal />
       <DirtyNavigationGuard />
       <OnboardingRoot
         owner={actualUser}

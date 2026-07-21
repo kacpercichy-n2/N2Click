@@ -3,6 +3,7 @@
 import type {
   AccessRole,
   AppData,
+  CalendarEvent,
   ChecklistItem,
   Person,
   Project,
@@ -42,7 +43,11 @@ import {
   snapToStep,
   stackStartTimes,
 } from '../utils/time';
-import { isFilterViewKey, sanitizeLastViewFilter } from './commandValidation';
+import {
+  canonicalEventRecurrence,
+  isFilterViewKey,
+  sanitizeLastViewFilter,
+} from './commandValidation';
 
 const STORAGE_KEY = 'n2hub.data.v1';
 const LEGACY_STORAGE_KEYS = ['n2ub.data.v1', 'n2click.data.v1'];
@@ -136,6 +141,7 @@ export function emptyData(): AppData {
     comments: [],
     activity: [],
     tickets: [],
+    events: [],
     currentUserId: '',
     impersonatorId: '',
     sampleBannerDismissed: false,
@@ -1094,6 +1100,82 @@ export function repairTickets(data: AppData): AppData {
 }
 
 /**
+ * Idempotentny repair kolekcji wydarzeń kalendarza. Kolekcja jest ADDYTYWNA (bez
+ * podbicia DATA_VERSION), więc każdy starszy zapis wchodzi tu jako `[]` z
+ * emptyData i przechodzi bez zmian.
+ *
+ * Zasady (idempotentne po wartości):
+ * 1. Wiersz bez stringowego `id`, z pustym `title` po trim albo z niepoprawną
+ *    `date` jest ODRZUCANY (nie da się go pokazać ani zakotwiczyć reguły).
+ * 2. Pola tekstowe koercjonowane; `meetingUrl` przez `normalizeProjectDocumentUrl`
+ *    (pusty albo zły schemat => '').
+ * 3. `startMinutes` nie-finite => wiersz ODPADA; poza siatką => snap w dół do
+ *    wielokrotności 15 i clamp do [0, 1425]. `durationMinutes` analogicznie z
+ *    clampem do [15, 1440 − startMinutes].
+ * 4. `attendeeIds` => tylko stringi, dedupe (dangling id ZOSTAJE — czyści go
+ *    dopiero hydracja chmury / filtr renderu).
+ * 5. `recurrence` przez formę kanoniczną wydarzenia (czasy reguły = czasy
+ *    wydarzenia, dzień kotwicy w `daysOfWeek`); rozjazd/brak dnia kotwicy =>
+ *    USUNIĘCIE klucza (wydarzenie jednorazowe).
+ */
+export function repairEvents(data: AppData): AppData {
+  const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+  const source = Array.isArray(data.events) ? data.events : [];
+  const events: CalendarEvent[] = [];
+  for (const raw of source) {
+    if (typeof raw !== 'object' || raw === null) continue;
+    const e = raw as unknown as Record<string, unknown>;
+    const id = str(e.id);
+    const title = str(e.title).trim();
+    const date = str(e.date);
+    if (id === '' || title === '' || !isValidDateStr(date)) continue;
+
+    // Czasy: nie-finite start => odrzuć; inaczej snap-w-dół + clamp.
+    const rawStart = e.startMinutes;
+    if (typeof rawStart !== 'number' || !Number.isFinite(rawStart)) continue;
+    let startMinutes = Math.floor(rawStart / MINUTE_STEP) * MINUTE_STEP;
+    if (startMinutes < 0) startMinutes = 0;
+    if (startMinutes > DAY_MINUTES - MINUTE_STEP) startMinutes = DAY_MINUTES - MINUTE_STEP;
+
+    const rawDur = e.durationMinutes;
+    if (typeof rawDur !== 'number' || !Number.isFinite(rawDur)) continue;
+    let durationMinutes = Math.floor(rawDur / MINUTE_STEP) * MINUTE_STEP;
+    if (durationMinutes < MINUTE_STEP) durationMinutes = MINUTE_STEP;
+    const maxDur = DAY_MINUTES - startMinutes;
+    if (durationMinutes > maxDur) durationMinutes = maxDur;
+
+    const meetingUrl = normalizeProjectDocumentUrl(str(e.meetingUrl)) ?? '';
+
+    const attendeeSource = Array.isArray(e.attendeeIds) ? (e.attendeeIds as unknown[]) : [];
+    const attendeeIds: string[] = [];
+    const seen = new Set<string>();
+    for (const a of attendeeSource) {
+      if (typeof a !== 'string' || seen.has(a)) continue;
+      seen.add(a);
+      attendeeIds.push(a);
+    }
+
+    const recurrence = canonicalEventRecurrence(e.recurrence, date, startMinutes, durationMinutes);
+
+    events.push({
+      id,
+      title,
+      description: str(e.description),
+      location: str(e.location),
+      meetingUrl,
+      date,
+      startMinutes,
+      durationMinutes,
+      attendeeIds,
+      ...(recurrence ? { recurrence } : {}),
+      createdAt: str(e.createdAt),
+      updatedAt: str(e.updatedAt),
+    });
+  }
+  return { ...data, events };
+}
+
+/**
  * Idempotent normalize pass for stable completion semantics. Runs on EVERY load
  * — same philosophy as normalizeTaskMeta / normalizeDates — so a payload with a
  * missing or malformed `isDone` (e.g. a v6 payload predating the flag, or one
@@ -1446,6 +1528,7 @@ function readData(recordRevision: boolean): InternalLoadResult {
         comments: coerceArray(parsedRest.comments, defaults.comments),
         activity: coerceArray(parsedRest.activity, defaults.activity),
         tickets: coerceArray(parsedRest.tickets, defaults.tickets),
+        events: coerceArray(parsedRest.events, defaults.events),
         savedFilters: coerceArray(parsedRest.savedFilters, defaults.savedFilters),
         // `lastFilters` to obiekt (mapa widok→filtr), nie tablica: obecną-ale-
         // niebędącą-obiektem wartość (np. tablica/`null`) koerujemy do `{}` tutaj,
@@ -1477,6 +1560,10 @@ function readData(recordRevision: boolean): InternalLoadResult {
     // WYNIKU obu ścieżek (migracja i wczytanie w tej samej wersji) — zapis bez
     // `documents` wychodzi stąd z pustą listą.
     data = repairProjectDocuments(data);
+    // Wydarzenia kalendarza: pole ADDYTYWNE, więc repair biegnie na WYNIKU obu
+    // ścieżek (migracja i wczytanie w tej samej wersji) — zapis bez `events`
+    // wychodzi stąd z pustą listą.
+    data = repairEvents(data);
 
     const { revision: _revision, ...storedData } = parsed;
     return {

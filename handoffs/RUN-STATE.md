@@ -1,64 +1,51 @@
-# Run state — 20260721-154537-244 recurring tasks
+# Run state — 20260721-194939-n2hub-245 events and meetings panel
 
 ## Goal
 
-Recurring tasks in the calendar: `Task.recurrence` rule + per-date overrides,
-pure `src/utils/recurrence.ts` expansion (window-only, never materialized),
-TaskModal section „Cykliczność”, presentational occurrence blocks in
-WeekView (context menu: edit one / edit all) and a MonthView marker, cloud
-column `tasks.recurrence` (jsonb, RLS inherited from tasks).
+New additive `CalendarEvent` entity: create meetings from the calendar
+right-click slot menu, render them in WeekView/MonthView in a distinct color
+(purely presentational, invariant 7 untouched), manage them in a new
+`/wydarzenia` panel with a URL-driven modal, persist as `AppData.events`
+(DATA_VERSION stays 7), mirror to `public.events` (RLS, realtime publication)
+and hydrate via optional `MERGE_CLOUD_ENTITIES.events`.
 
 ## Packages
 
-- `handoffs/packages/244-recurrence-core.md` — PKG-20260721-recurrence-core,
-  tier: developer, ready. Model, util, reducer actions, storage repair, cloud
-  mapping, migration `20260721170000_task_recurrence.sql`, tests, two wiki
-  pages. Codex review required.
-- `handoffs/packages/244-recurrence-ui.md` — PKG-20260721-recurrence-ui,
-  tier: developer, ready, depends on core. TaskModal + WeekView overlay/menu +
-  MonthView marker + scheduling wiki. High risk (invariant 7); Codex review
-  required.
+- `handoffs/scheduler-reviews/20260721-194939-n2hub-245-architect-package.md` —
+  PKG-20260721-events-panel, tier: developer, ready, Codex review required.
+  Tests are inseparable from the implementation (no test-writer split).
 
 ## Changed boundaries (planned)
 
-- `src/types.ts`, `AppStore.tsx` (SET_TASK_RECURRENCE,
-  SET_RECURRENCE_OVERRIDE), `storage.ts` (normalizeTaskMeta pass, version
-  stays 7), `selectors.ts` (recurrenceOccurrencesForDate), new
-  `utils/recurrence.ts`, `cloudMirror.ts`/`plannerData.ts`, new migration +
-  `migrations.test.ts` registry (EXPECTED_POLICIES unchanged).
-- UI: TaskModal, WeekView (additive overlay + recurMenu + one openSlotMenu
-  guard), MonthView, styles.css.
-
-## Dev log
-
-- recurrence-core DONE. Added `TaskRecurrence`/`RecurrenceOverride`+Task field,
-  `utils/recurrence.ts`, reducer `SET_TASK_RECURRENCE`/`SET_RECURRENCE_OVERRIDE`
-  (invariant-6 same-ref), SAVE_TASK startDate re-anchor, storage repair,
-  `recurrenceOccurrencesForDate` selector, migration `20260721170000`,
-  cloudMirror/plannerData mapping, 2 wiki pages. `npm test` 1244 pass (+~50 new),
-  `npm run build` green. Migration NOT applied to hosted Supabase. No context
-  expansion beyond declared touchpoints.
-
-- recurrence-ui DONE. TaskModal „Cykliczność" section (weekday chips/start/dur/
-  until, explicit dispatch, no auto-save), WeekView additive `.week-recur-block`
-  overlay + `recurMenu` (no pointer handlers; openSlotMenu `.week-recur-block`
-  guard), MonthView `.month-cell-recur` ⟳, styles.css, scheduling wiki. Overlay
-  rendered BEFORE packed.map so real blocks paint on top (deviation from "after")
-  — avoids touching `.week-block` stacking. `npm test` 1244 pass, build green,
-  browser-check-bin-drag/placement/bin-split all PASS (`topAtBlock=week-block`).
-  No context expansion beyond declared touchpoints.
-
-## Key settled decisions
-
-- Recurrence embedded on Task (jsonb column, checklist/draftHours precedent);
-  anchor = task.startDate, end = `until` only; overrides shift time or skip,
-  never move the date; canonical form is load-bearing for merge no-ops; drafts
-  cannot carry a rule; occurrences are presentational only, no drag.
+- `src/types.ts`, `AppStore.tsx` (ADD/SAVE/DELETE_EVENT + optional `events` in
+  mergeCloudEntities), `commandValidation.ts`, `selectors.ts`
+  (calendarEventsForDate), `storage.ts` (repairEvents, coerceArray, no version
+  bump), `permissions.ts` (`events.manage`: administrator/pm/handlowiec).
+- UI: WeekView slot menu + EventBlock, MonthView marker, styles.css
+  (`--event-accent` = n2-info cyan), new EventsPage + EventModal
+  (`?wydarzenie=`), App NAV/route, icons, dirtyRegistry scope `event-modal`.
+- Cloud: new migration `20260721210000_events.sql` (org-open authenticated
+  policies — handlowiec maps to cloud `worker`, so no is_manager gate;
+  `attendee_ids uuid[]`, `recurrence` jsonb reusing `utils/recurrence.ts`),
+  `migrations.test.ts`, `cloudMirror.ts` (tenth family), `plannerData.ts`.
+  Migration file only — NOT applied to the hosted database.
 
 ## Verification
 
-Focused vitest per core package; UI package runs full `npm test`, build and
-`browser-check-bin-drag`. Migration NOT applied to hosted Supabase.
+Focused vitest list in the package, then full `npm test` + `npm run build`.
+Browser checks: none (no pointer-path changes allowed).
+
+## Worker result (developer)
+
+Implemented full package across all declared touchpoints. `npm test` PASS
+(1295, +39 new); `npm run build` PASS. Browser check: playwright not installed
+and package declared Browser=none (WeekView changes additive/presentational,
+pointer/drag/hit-test untouched). 4 wiki pages updated. No deviations.
+
+Reviewer blocker fixed: `EventModal.handleSubmit` now snaps times to the 15-min
+grid and gates submit through authoritative `isValidEventDraft` — a rejected
+draft shows an inline Polish error and keeps the modal open (no silent loss).
+Added gate unit tests. `npm test` PASS (1299); `npm run build` PASS.
 
 ## Open questions
 

@@ -16,6 +16,7 @@ import type {
   AccessRole,
   ActivityEvent,
   AppData,
+  CalendarEvent,
   Client,
   Comment,
   Milestone,
@@ -332,6 +333,47 @@ function ticketRow(
   };
 }
 
+/**
+ * Mapuje wydarzenie kalendarza na wiersz tabeli `events`. `id` musi być UUID;
+ * `attendee_ids` mapowane per-id jak w `draftHoursRow` — wpis o niemapowalnym
+ * personId ODPADA (bez zerowania całego wiersza). Kolumny snake_case; recurrence
+ * zapisywane dosłownie (obiekt kanoniczny) albo null.
+ */
+function eventRow(
+  e: CalendarEvent,
+  maps: CloudIdMaps,
+  diagnostics: string[],
+): Record<string, unknown> | null {
+  if (!isUuid(e.id)) {
+    diagnostics.push(DIAG.nonUuid);
+    return null;
+  }
+  const attendeeIds: string[] = [];
+  for (const personId of e.attendeeIds) {
+    const profileId =
+      maps.people.get(personId) ?? (maps.cloudProfileIds.has(personId) ? personId : undefined);
+    if (profileId === undefined) {
+      diagnostics.push(DIAG.unmappablePerson);
+      continue;
+    }
+    attendeeIds.push(profileId);
+  }
+  return {
+    id: e.id,
+    title: e.title,
+    description: e.description,
+    location: e.location,
+    meeting_url: e.meetingUrl,
+    event_date: e.date,
+    start_minutes: e.startMinutes,
+    duration_minutes: e.durationMinutes,
+    attendee_ids: attendeeIds,
+    recurrence: e.recurrence ?? null,
+    created_at: e.createdAt,
+    updated_at: e.updatedAt,
+  };
+}
+
 function workloadRow(
   w: WorkloadEntry,
   maps: CloudIdMaps,
@@ -613,6 +655,25 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
       if (before && JSON.stringify(before) === JSON.stringify(t)) continue;
       const row = ticketRow(t, maps, diagnostics);
       if (row) ops.push({ kind: 'upsert', table: 'tickets', row, sourceId: t.id, label: `Zgłoszenie „${t.title}”` });
+    }
+  }
+
+  // 8c) Wydarzenia kalendarza ---- (diff po id: upsert dodanych/zmienionych,
+  // remove usuniętych). Kolekcja addytywna i czysto prezentacyjna; kalendarz
+  // spotkań jest ogólnofirmowy (RLS `to authenticated`, using true).
+  {
+    const prevMap = byId(prev.events);
+    const nextMap = byId(next.events);
+    for (const id of prevMap.keys()) {
+      if (!nextMap.has(id) && isUuid(id)) {
+        ops.push({ kind: 'remove', table: 'events', match: { id }, sourceId: id, label: 'Wydarzenie (usunięcie)' });
+      }
+    }
+    for (const e of next.events) {
+      const before = prevMap.get(e.id);
+      if (before && JSON.stringify(before) === JSON.stringify(e)) continue;
+      const row = eventRow(e, maps, diagnostics);
+      if (row) ops.push({ kind: 'upsert', table: 'events', row, sourceId: e.id, label: `Wydarzenie „${e.title}”` });
     }
   }
 

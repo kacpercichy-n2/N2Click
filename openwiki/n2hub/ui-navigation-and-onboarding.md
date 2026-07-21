@@ -52,6 +52,20 @@
   powiela wzorzec TaskModal: `?zgloszenie=new|<id>`, `useOpenTicket()`, montaż raz
   w App, klasy `.task-modal-*` i własny zakres strażnika nawigacji
   (`'ticket-modal'` w `dirtyRegistry.ts`).
+- `/wydarzenia` („Wydarzenia”, ikona `CalendarClock`, w NAV po `/calendar`,
+  `src/pages/EventsPage.tsx`) jest widoczne dla KAŻDEJ roli. Segmentowany
+  przełącznik „Nadchodzące” (domyślny; `date >= dziś`) / „Minione”, sort po
+  `(date, startMinutes)`; wiersz pokazuje datę, zakres godzin, tytuł, uczestników
+  (albo „Ogólnofirmowe”), lokalizację, badge „Cykliczne: …" oraz link „Dołącz"
+  renderowany jako `href` WYŁĄCZNIE gdy `normalizeProjectDocumentUrl` przepuści.
+  Klik wiersza otwiera modal; „+ Dodaj wydarzenie" przy `events.manage`.
+  `src/components/EventModal.tsx` powiela wzorzec TaskModal: `?wydarzenie=new|<id>`,
+  `useOpenEvent()`, montaż raz w App, prefill rozłącznymi parametrami
+  (`wydarzenieData`/`wydarzenieStart`/`wydarzenieOsoba` — celowo różne od
+  `date`/`assignee` TaskModala), własny zakres strażnika nawigacji
+  (`'event-modal'`, warunek `wydarzenieChanged` w `navGuardBlocks`). Zapis ręczny
+  przyciskiem (bez auto-save). Prawy klik w pustą kolumnę WeekView oferuje
+  „+ Dodaj spotkanie (HH:mm)" przy `events.manage` (obok „+ Dodaj zadanie").
 - `src/onboarding/catalog.ts` owns copy, roles and route mapping; components
   expose stable `data-tour` anchors only.
 - `src/utils/dirtyRegistry.ts` and `src/utils/useSaveStatus.ts` support shared

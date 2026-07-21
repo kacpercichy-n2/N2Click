@@ -12,6 +12,7 @@ export {
   GanttChart,
   ListChecks,
   CalendarDays,
+  CalendarClock,
   Users,
   Gauge,
   Settings,

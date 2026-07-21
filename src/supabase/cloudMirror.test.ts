@@ -410,6 +410,54 @@ describe('diffToCloudOps — milestones + workload families', () => {
   });
 });
 
+describe('diffToCloudOps — wydarzenia kalendarza', () => {
+  const EV = uuid('event-1');
+  const makeEvent = (o: Record<string, unknown> = {}) => ({
+    id: EV,
+    title: 'Spotkanie',
+    description: '',
+    location: '',
+    meetingUrl: '',
+    date: '2026-07-06',
+    startMinutes: 540,
+    durationMinutes: 60,
+    attendeeIds: [] as string[],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    ...o,
+  });
+
+  it('event upsert mapuje attendees na profile chmury (niemapowalny odpada)', () => {
+    const m = maps();
+    const prev: AppData = { ...localFixture(), events: [] };
+    const next: AppData = {
+      ...localFixture(),
+      events: [makeEvent({ attendeeIds: [PA, uuid('ghost'), PB] })],
+    };
+    const { ops, diagnostics } = diffToCloudOps(prev, next, m);
+    const up = ops.find((o) => o.table === 'events' && o.kind === 'upsert');
+    expect(up).toBeDefined();
+    expect(up!.row).toMatchObject({
+      id: EV,
+      event_date: '2026-07-06',
+      start_minutes: 540,
+      duration_minutes: 60,
+      attendee_ids: [CLOUD_PA, CLOUD_PB],
+    });
+    expect(diagnostics.length).toBeGreaterThan(0); // niemapowalny uczestnik
+  });
+
+  it('emituje remove dla usuniętego wydarzenia (id UUID)', () => {
+    const m = maps();
+    const prev: AppData = { ...localFixture(), events: [makeEvent()] };
+    const next: AppData = { ...localFixture(), events: [] };
+    const rm = diffToCloudOps(prev, next, m).ops.find(
+      (o) => o.table === 'events' && o.kind === 'remove',
+    );
+    expect(rm!.match).toEqual({ id: EV });
+  });
+});
+
 // ---- applyCloudOps -----------------------------------------------------------
 
 class FakePlannerDb implements PlannerDb {

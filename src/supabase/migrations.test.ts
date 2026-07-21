@@ -71,6 +71,11 @@ const EXPECTED_POLICIES: Record<string, string[]> = {
   // Słownik spółek (20260721160000_companies): odczyt dla każdego zalogowanego,
   // zapis wyłącznie administrator — pełne CRUD w politykach.
   'public.companies': ['select', 'insert', 'update', 'delete'],
+  // Wydarzenia kalendarza (20260721210000_events): kalendarz OGÓLNOFIRMOWY —
+  // pełne CRUD dla każdego zalogowanego (`using (true)` / `with check (true)`),
+  // bo lokalna rola handlowiec mapuje się w chmurze na worker; bramka
+  // `events.manage` pozostaje UX-em po stronie klienta.
+  'public.events': ['select', 'insert', 'update', 'delete'],
 };
 
 interface ParsedPolicy {
@@ -121,6 +126,7 @@ describe('konwencja plików migracji', () => {
       '20260721150000_job_titles.sql',
       '20260721160000_companies.sql',
       '20260721170000_task_recurrence.sql',
+      '20260721210000_events.sql',
     ]);
   });
 
