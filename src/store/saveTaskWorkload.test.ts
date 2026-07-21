@@ -47,6 +47,7 @@ const PERSON: Person = {
   workStartMinutes: 480,
   workEndMinutes: 960,
   supervisorId: '',
+  birthDate: '',
 };
 
 function makeState(overrides: Partial<AppData> = {}): AppData {

@@ -104,6 +104,19 @@
   „Zapisz i opublikuj”). Repair wczytania: `normalizeTaskMeta` ustawia
   `isDraft: raw.isDraft === true`, więc każdy legacy zapis i chmura bez kolumny =
   opublikowane. W chmurze to kolumna `tasks.is_draft` (patrz cloud-database).
+- DATA URODZENIA (2026-07-21): `Person.birthDate` (yyyy-MM-dd, '' = brak;
+  OPCJONALNE, ADDYTYWNE — `DATA_VERSION` zostaje na 7). Repair biegnie w
+  `migratePerson` (wołany przez `migrateV4toV5` na KAŻDYM wczytaniu, nie tylko
+  version<5): brak pola albo wartość niebędąca poprawną 'yyyy-MM-dd' spada na ''.
+  Edytowalne w profilu (input „Data urodzenia”) wg `profileEditPolicy` — self i
+  menedżer własnego działu mają je w macierzy (jak telefon; NIE jest to
+  eskalacja uprawnień). Czysto prezentacyjne: `peopleWithBirthdayOnDate`
+  (selectors, dopasowanie miesiąc+dzień przez `isBirthdayOn`) zasila znacznik 🎂
+  w nagłówkach WeekView i komórkach MonthView (bez zmian ścieżek wskaźnika —
+  inwariant 7). W chmurze kolumna `profiles.birth_date date` (NIE objęta
+  triggerem `protect_profile_privileges`); mapowana przez
+  referenceData/cloudMirror i hydrowana przez MERGE_CLOUD_PEOPLE (patrz
+  cloud-database).
 - `Client` carries contact fields (contactName/contactEmail/contactPhone/notes;
   columns from 20260718090000_clients_contact_fields, '' or missing = none — no
   repair pass, use-sites coalesce), edited on the `/clients` page via

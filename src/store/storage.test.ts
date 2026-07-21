@@ -496,6 +496,44 @@ describe('loadData migration v4 -> v5', () => {
     expect(twice.people[0].accessRole).toBe('administrator');
   });
 
+  it('birthDate: brakujące => "", poprawna data przechodzi, śmieci koercjonują do "" (repair na każdym wczytaniu)', () => {
+    const person = (extra: Record<string, unknown>): Record<string, unknown> => ({
+      id: 'p1',
+      firstName: 'Ala',
+      lastName: '',
+      name: 'Ala',
+      email: '',
+      phone: '',
+      role: '',
+      departmentId: '',
+      avatar: '',
+      capacity: 8,
+      accessRole: 'administrator',
+      passwordHash: '',
+      workDays: [1, 2, 3, 4, 5],
+      workStartMinutes: 480,
+      workEndMinutes: 960,
+      supervisorId: '',
+      ...extra,
+    });
+    const payload = {
+      ...emptyData(),
+      version: 7,
+      people: [
+        person({ id: 'miss' }), // brak pola
+        person({ id: 'ok', birthDate: '1988-03-14' }), // poprawna
+        person({ id: 'bad', birthDate: '2026-13-40' }), // niepoprawna data
+        person({ id: 'garbage', birthDate: 42 }), // nie-string
+      ],
+    };
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+    const byId = (id: string) => data.people.find((p) => p.id === id)!;
+    expect(byId('miss').birthDate).toBe('');
+    expect(byId('ok').birthDate).toBe('1988-03-14');
+    expect(byId('bad').birthDate).toBe('');
+    expect(byId('garbage').birthDate).toBe('');
+  });
+
   it('defensively normalizes a v5-STAMPED payload whose people were never migrated (isAdmin still present, no accessRole) — normalization runs on every load, not only version < 5', () => {
     // A payload stamped version 5 but carrying pre-v5 people (the mid-dev/HMR
     // hazard the reviewer flagged): migrateV4toV5 only fired for version < 5, so

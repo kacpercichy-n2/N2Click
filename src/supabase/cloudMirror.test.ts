@@ -39,7 +39,7 @@ function makePerson(o: Partial<Person> & { id: string }): Person {
   return {
     firstName: 'A', lastName: 'B', name: 'A B', email: '', phone: '', role: '',
     departmentId: '', avatar: '', capacity: 8, accessRole: 'pracownik', passwordHash: '',
-    workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, supervisorId: '', ...o,
+    workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, supervisorId: '', birthDate: '', ...o,
   };
 }
 function makeProject(o: Partial<Project> & { id: string }): Project {
@@ -58,7 +58,7 @@ function makeTask(o: Partial<Task> & { id: string }): Task {
   };
 }
 const cloudProfile = (o: Partial<CloudProfile> & { id: string }): CloudProfile => ({
-  firstName: '', lastName: '', email: '', roleTitle: '', cloudRole: 'worker', departmentId: null, supervisorId: null, phone: '', avatar: '', capacity: 8, workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, ...o,
+  firstName: '', lastName: '', email: '', roleTitle: '', cloudRole: 'worker', departmentId: null, supervisorId: null, phone: '', avatar: '', capacity: 8, workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, birthDate: '', ...o,
 });
 
 // A local AppData + a cloud org snapshot whose ids/keys line up so the maps
@@ -472,7 +472,7 @@ describe('diffToCloudOps — słowniki i profile (przewód zapisu paneli admina)
     const next: AppData = {
       ...prev,
       people: [
-        { ...prev.people[0], role: 'Projektant', capacity: 6, accessRole: 'pm' },
+        { ...prev.people[0], role: 'Projektant', capacity: 6, accessRole: 'pm', birthDate: '1990-06-01' },
         prev.people[1],
         // Nowa osoba lokalna bez konta chmury — NIE wolno robić insertu.
         makePerson({ id: uuid('local-only'), email: 'nowa@x.com' }),
@@ -491,6 +491,7 @@ describe('diffToCloudOps — słowniki i profile (przewód zapisu paneli admina)
       role_title: 'Projektant',
       capacity: 6,
       access_role: 'manager',
+      birth_date: '1990-06-01', // '' mapuje się na null; poprawna data przechodzi
     });
     // Nowa osoba nie generuje op-a (konto tworzy provisioning) — jest diagnostyka.
     expect(diagnostics.length).toBeGreaterThan(0);

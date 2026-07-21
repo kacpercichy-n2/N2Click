@@ -141,6 +141,26 @@ function HierarchyGroups({
               {dept.people.map((p) => (
                 <li key={p.id} className="team-person">
                   <span className="team-person-name">{p.name}</span>
+                  <span className="team-person-contact">
+                    {p.email && (
+                      <a
+                        className="team-person-email"
+                        href={`mailto:${p.email}`}
+                        title={`Napisz e-mail do ${p.name}`}
+                      >
+                        {p.email}
+                      </a>
+                    )}
+                    {p.phone && (
+                      <a
+                        className="team-person-phone"
+                        href={`tel:${p.phone.replace(/\s+/g, '')}`}
+                        title={`Zadzwoń do ${p.name}`}
+                      >
+                        {p.phone}
+                      </a>
+                    )}
+                  </span>
                   <span className="team-person-meta">
                     {p.roleTitle && <span className="team-person-role">{p.roleTitle}</span>}
                     <span className="team-person-access">{p.accessRoleLabel}</span>

@@ -66,6 +66,7 @@ const PERSON: Person = {
   workStartMinutes: 480,
   workEndMinutes: 960,
   supervisorId: '',
+  birthDate: '',
 };
 const PERSON2: Person = { ...PERSON, id: 'p2', firstName: 'Bob', name: 'Bob', accessRole: 'pracownik' };
 
@@ -130,6 +131,7 @@ function personDraft(overrides: Partial<PersonDraft> = {}): PersonDraft {
     workStartMinutes: 480,
     workEndMinutes: 960,
     supervisorId: '',
+    birthDate: '',
     ...overrides,
   };
 }

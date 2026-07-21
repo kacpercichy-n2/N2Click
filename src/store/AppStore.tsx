@@ -166,6 +166,9 @@ export interface PersonDraft {
   workStartMinutes: number;
   workEndMinutes: number;
   supervisorId: string;
+  // Data urodzenia (yyyy-MM-dd); '' gdy nieustawiona. Opcjonalna, walidowana na
+  // repair przy wczytaniu (patrz migratePerson w storage.ts).
+  birthDate: string;
   // NOTE: passwordHash is intentionally NOT part of the draft — it is set only
   // via SET_PASSWORD so a profile save can never clobber a stored hash.
 }
@@ -1668,6 +1671,8 @@ function personFromDraft(draft: PersonDraft): Omit<Person, 'id' | 'passwordHash'
     workStartMinutes: draft.workStartMinutes,
     workEndMinutes: draft.workEndMinutes,
     supervisorId: draft.supervisorId,
+    // Data urodzenia: poprawna 'yyyy-MM-dd' albo '' (śmieci nie persystują).
+    birthDate: isValidDateStr(draft.birthDate) ? draft.birthDate : '',
   };
 }
 
@@ -1927,6 +1932,7 @@ function isValidCloudPersonRow(r: CloudPersonMergeRow): boolean {
   if (typeof r.departmentId !== 'string') return false;
   if (typeof r.phone !== 'string' || typeof r.avatar !== 'string') return false;
   if (typeof r.supervisorEmail !== 'string') return false;
+  if (typeof r.birthDate !== 'string') return false;
   if (!Number.isFinite(r.capacity) || r.capacity < 0 || r.capacity > 24) return false;
   if (!Array.isArray(r.workDays)) return false;
   if (r.workDays.some((d) => !Number.isInteger(d) || d < 1 || d > 7)) return false;
@@ -1961,6 +1967,8 @@ function cloudPersonFields(row: CloudPersonMergeRow): Omit<
     workDays,
     workStartMinutes: row.workStartMinutes,
     workEndMinutes: row.workEndMinutes,
+    // Poprawna 'yyyy-MM-dd' albo '' (spójnie z personFromDraft/migratePerson).
+    birthDate: isValidDateStr(row.birthDate) ? row.birthDate : '',
   };
 }
 
@@ -2026,6 +2034,7 @@ function applyCloudPeople(
       person.accessRole === fields.accessRole &&
       person.workStartMinutes === fields.workStartMinutes &&
       person.workEndMinutes === fields.workEndMinutes &&
+      person.birthDate === fields.birthDate &&
       sameWorkDays(person.workDays, fields.workDays);
     if (same) {
       updatedPeople.push(person);

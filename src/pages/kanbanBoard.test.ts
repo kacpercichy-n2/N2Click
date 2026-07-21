@@ -38,6 +38,7 @@ function makePerson(id: string, firstName: string): Person {
     id, firstName, lastName: 'Testowy', name: `${firstName} Testowy`, email: '', phone: '',
     role: '', departmentId: '', avatar: '', capacity: 8, accessRole: 'pracownik', passwordHash: '',
     workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, supervisorId: '',
+    birthDate: '',
   };
 }
 const ANNA = makePerson('p1', 'Anna');

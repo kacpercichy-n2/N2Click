@@ -67,6 +67,7 @@ export function buildSampleData(): AppData {
     workStartMinutes: 480,
     workEndMinutes: Math.min(1440, 480 + DEFAULT_CAPACITY * 60),
     supervisorId: '',
+    birthDate: '1988-03-14',
   };
   const ola: Person = {
     id: uid(),
@@ -85,6 +86,7 @@ export function buildSampleData(): AppData {
     workStartMinutes: 480,
     workEndMinutes: Math.min(1440, 480 + DEFAULT_CAPACITY * 60),
     supervisorId: kasia.id,
+    birthDate: '1994-07-22',
   };
   const marek: Person = {
     id: uid(),
@@ -103,6 +105,7 @@ export function buildSampleData(): AppData {
     workStartMinutes: 480,
     workEndMinutes: Math.min(1440, 480 + DEFAULT_CAPACITY * 60),
     supervisorId: kasia.id,
+    birthDate: '1991-11-05',
   };
   const people: Person[] = [ola, marek, kasia];
 

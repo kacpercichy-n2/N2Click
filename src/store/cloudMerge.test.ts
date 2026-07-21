@@ -118,6 +118,7 @@ function person(id: string) {
     workStartMinutes: 480,
     workEndMinutes: 960,
     supervisorId: '',
+    birthDate: '',
   };
 }
 
@@ -437,6 +438,7 @@ function cloudRow(o: Partial<CloudPersonMergeRow> & { id: string; email: string 
     workEndMinutes: 960,
     accessRole: 'pracownik',
     supervisorEmail: '',
+    birthDate: '',
     ...o,
   };
 }

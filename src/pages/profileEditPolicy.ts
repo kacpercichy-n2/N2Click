@@ -21,7 +21,8 @@ export type ProfileField =
   | 'accessRole'
   | 'workDays'
   | 'workHours'
-  | 'supervisorId';
+  | 'supervisorId'
+  | 'birthDate';
 
 const ALL_FIELDS: readonly ProfileField[] = [
   'firstName',
@@ -36,16 +37,27 @@ const ALL_FIELDS: readonly ProfileField[] = [
   'workDays',
   'workHours',
   'supervisorId',
+  'birthDate',
 ];
 
-const SELF_FIELDS: readonly ProfileField[] = ['firstName', 'lastName', 'phone', 'avatarEmoji'];
+// Self edytuje własne dane osobowe/kontaktowe, w tym datę urodzenia.
+const SELF_FIELDS: readonly ProfileField[] = [
+  'firstName',
+  'lastName',
+  'phone',
+  'avatarEmoji',
+  'birthDate',
+];
 
+// Menedżer prowadzi kartę osoby z własnego działu — data urodzenia mieści się w
+// tym samym zakresie co telefon/godziny (dane organizacyjne, nie uprawnienia).
 const MANAGER_FIELDS: readonly ProfileField[] = [
   'roleTitle',
   'phone',
   'workDays',
   'workHours',
   'supervisorId',
+  'birthDate',
 ];
 
 /**

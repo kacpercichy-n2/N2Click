@@ -80,6 +80,7 @@ function makePerson(overrides: Partial<Person> & { id: string }): Person {
     workStartMinutes: 480,
     workEndMinutes: 960,
     supervisorId: '',
+    birthDate: '',
     ...overrides,
   };
 }
@@ -1565,6 +1566,7 @@ function draftFromPerson(p: Person, overrides: Partial<PersonDraft> = {}): Perso
     workStartMinutes: p.workStartMinutes,
     workEndMinutes: p.workEndMinutes,
     supervisorId: p.supervisorId,
+    birthDate: '',
     ...overrides,
   };
 }

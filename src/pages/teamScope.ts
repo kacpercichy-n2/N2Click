@@ -58,6 +58,10 @@ export interface TeamPersonView {
   accessRoleLabel: string;
   /** Nazwa przełożonego; '' gdy brak. */
   supervisorName: string;
+  /** Telefon kontaktowy; '' gdy brak (lista kontaktów zespołu). */
+  phone: string;
+  /** E-mail kontaktowy; '' gdy brak. */
+  email: string;
 }
 
 export interface TeamDepartmentView {
@@ -77,6 +81,8 @@ function toPersonView(person: Person, nameById: Map<string, string>): TeamPerson
     roleTitle: person.role,
     accessRoleLabel: ROLE_LABELS[person.accessRole] ?? '',
     supervisorName: person.supervisorId ? nameById.get(person.supervisorId) ?? '' : '',
+    phone: person.phone,
+    email: person.email,
   };
 }
 
@@ -148,6 +154,8 @@ function cloudPersonView(p: CloudProfile, nameById: Map<string, string>): TeamPe
     accessRoleLabel: CLOUD_ROLE_LABELS[p.cloudRole],
     // Przełożony spoza widocznego (RLS) zbioru profili → '' (bez wiersza).
     supervisorName: p.supervisorId ? nameById.get(p.supervisorId) ?? '' : '',
+    phone: p.phone,
+    email: p.email,
   };
 }
 

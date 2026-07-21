@@ -20,6 +20,7 @@ import type {
   WorkCategory,
 } from '../types';
 import type { AuthMode } from '../auth/mode';
+import { isValidDateStr } from '../utils/dates';
 import type { ImportDb } from './dataImport';
 
 /** Read-only granica bazy: reużywamy `select` z ImportDb (jeden adapter). */
@@ -47,6 +48,8 @@ export interface CloudProfile {
   workDays: number[];
   workStartMinutes: number;
   workEndMinutes: number;
+  /** Data urodzenia (profiles.birth_date, yyyy-MM-dd); '' gdy brak/null. */
+  birthDate: string;
 }
 
 export interface OrgSnapshot {
@@ -133,6 +136,9 @@ function toCloudProfile(row: Record<string, unknown>): CloudProfile {
     workDays: toWorkDays(row.work_days),
     workStartMinutes: toMinutes(row.work_start_minutes, 480),
     workEndMinutes: toMinutes(row.work_end_minutes, 960),
+    // Postgres `date` przychodzi z PostgREST jako 'yyyy-MM-dd' albo null; śmieci
+    // (teoretyczne) spadają na ''.
+    birthDate: isValidDateStr(str(row.birth_date)) ? str(row.birth_date) : '',
   };
 }
 
@@ -171,7 +177,7 @@ export async function loadOrgSnapshot(db: ReferenceDb, userId: string): Promise<
     await Promise.all([
       db.select(
         'profiles',
-        'id, first_name, last_name, email, role_title, access_role, department_id, supervisor_id, phone, avatar, avatar_path, capacity, work_days, work_start_minutes, work_end_minutes',
+        'id, first_name, last_name, email, role_title, access_role, department_id, supervisor_id, phone, avatar, avatar_path, capacity, work_days, work_start_minutes, work_end_minutes, birth_date',
       ),
       db.select('departments', 'id, name'),
       db.select('statuses', 'id, name, slug, color, sort_order, archived, is_done'),
@@ -262,6 +268,8 @@ export interface CloudPersonMergeRow {
   accessRole: AccessRole;
   /** E-mail przełożonego ('' gdy brak lub przełożony poza widocznym zbiorem). */
   supervisorEmail: string;
+  /** Data urodzenia (yyyy-MM-dd); '' gdy brak. */
+  birthDate: string;
 }
 
 /**
@@ -291,6 +299,7 @@ export function buildCloudPeoplePayload(profiles: CloudProfile[]): CloudPersonMe
       workEndMinutes: p.workEndMinutes,
       accessRole: cloudRoleToAccessRole(p.cloudRole),
       supervisorEmail: (p.supervisorId ? emailById.get(p.supervisorId) : '') ?? '',
+      birthDate: p.birthDate,
     });
   }
   return rows;

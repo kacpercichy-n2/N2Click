@@ -120,6 +120,15 @@ export function formatShortWithWeekday(d: DateStr): string {
   return `${format(parsed, 'd MMM', { locale: pl })} (${format(parsed, 'EEEEEE', { locale: pl })})`;
 }
 
+/**
+ * Etykieta daty urodzenia jak „14 marca 1988". Puste albo niepoprawne wejście
+ * => '' (nigdy nie rzuca — chroni `format` przed Invalid Date).
+ */
+export function formatBirthday(birthDate: string): string {
+  if (!isValidDateStr(birthDate)) return '';
+  return format(parseDate(birthDate), 'd MMMM yyyy', { locale: pl });
+}
+
 /** Timestamp label like "3 Aug 2026, 14:05" from an ISO string. */
 export function formatTimestamp(iso: string): string {
   return format(new Date(iso), 'd MMM yyyy, HH:mm', { locale: pl });
@@ -145,6 +154,19 @@ export function isWeekend(d: DateStr): boolean {
 
 export function isSameDayStr(a: DateStr, b: DateStr): boolean {
   return a === b;
+}
+
+/**
+ * Czy `birthDate` (data urodzenia, 'yyyy-MM-dd') wypada w kalendarzu na dniu
+ * `day` — porównanie WYŁĄCZNIE miesiąca i dnia (rok urodzenia jest bez
+ * znaczenia dla rocznicy). Puste albo niepoprawne `birthDate` => `false`, więc
+ * nigdy nie rzuca. 29 lutego dopasowuje się tylko w latach przestępnych — nie
+ * przenosimy go sztucznie na 28 lutego (świadoma, prosta reguła).
+ */
+export function isBirthdayOn(birthDate: string, day: DateStr): boolean {
+  if (!isValidDateStr(birthDate)) return false;
+  // Oba są poprawnymi 'yyyy-MM-dd', więc segmenty MM-DD porównujemy jako string.
+  return birthDate.slice(5) === day.slice(5);
 }
 
 export function isTodayStr(d: DateStr): boolean {

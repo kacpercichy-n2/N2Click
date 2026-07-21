@@ -40,6 +40,7 @@ function person(overrides: Partial<Person> = {}): Person {
     workStartMinutes: 480,
     workEndMinutes: 960,
     supervisorId: '',
+    birthDate: '',
     ...overrides,
   };
 }
@@ -140,7 +141,7 @@ describe('buildTeamHierarchy', () => {
 describe('buildCloudTeamHierarchy', () => {
   const cloud = (o: Partial<CloudProfile> & { id: string }): CloudProfile => ({
     firstName: 'Jan', lastName: 'Kowalski', email: 'jan@x.pl', roleTitle: '', cloudRole: 'worker',
-    departmentId: null, supervisorId: null, phone: '', avatar: '', capacity: 8, workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, ...o,
+    departmentId: null, supervisorId: null, phone: '', avatar: '', capacity: 8, workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, birthDate: '', ...o,
   });
   const departments: Department[] = [
     { id: 'd-kre', name: 'Kreacja' },

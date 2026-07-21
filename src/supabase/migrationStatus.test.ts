@@ -28,11 +28,11 @@ function makePerson(o: Partial<Person> & { id: string }): Person {
   return {
     firstName: 'A', lastName: 'B', name: 'A B', email: '', phone: '', role: '',
     departmentId: '', avatar: '', capacity: 8, accessRole: 'administrator', passwordHash: '',
-    workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, supervisorId: '', ...o,
+    workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, supervisorId: '', birthDate: '', ...o,
   };
 }
 const cloudProfile = (o: Partial<CloudProfile> & { id: string }): CloudProfile => ({
-  firstName: '', lastName: '', email: '', roleTitle: '', cloudRole: 'administrator', departmentId: null, supervisorId: null, phone: '', avatar: '', capacity: 8, workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, ...o,
+  firstName: '', lastName: '', email: '', roleTitle: '', cloudRole: 'administrator', departmentId: null, supervisorId: null, phone: '', avatar: '', capacity: 8, workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, birthDate: '', ...o,
 });
 
 function localFixture(): AppData {

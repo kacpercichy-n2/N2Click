@@ -18,7 +18,7 @@ import type {
 } from '../types';
 import { DEFAULT_CAPACITY } from './storage';
 import { blockEndMinutes, hasCollision, hoursToMinutes, isBinEntry } from '../utils/time';
-import { isValidDateStr, parseDate } from '../utils/dates';
+import { isBirthdayOn, isValidDateStr, parseDate } from '../utils/dates';
 
 // ---- Basic lookups ----
 
@@ -722,6 +722,16 @@ export function overloadedPeopleOnDate(
   return relevant
     .filter((p) => dayAvailabilityForPerson(state, p.id, date).overbooked)
     .map((p) => p.id);
+}
+
+/**
+ * Osoby, których urodziny (miesiąc + dzień) wypadają na `date`. Czysto
+ * prezentacyjne — kalendarz pokazuje znacznik 🎂. Bierze pod uwagę cały zespół
+ * (urodziny nie zależą od filtra pracy). Kolejność jak w `state.people`
+ * (stabilna). Rok urodzenia bez znaczenia; patrz {@link isBirthdayOn}.
+ */
+export function peopleWithBirthdayOnDate(state: AppData, date: DateStr): Person[] {
+  return state.people.filter((p) => isBirthdayOn(p.birthDate, date));
 }
 
 /**

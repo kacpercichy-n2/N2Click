@@ -60,6 +60,7 @@ const PERSON: Person = {
   workStartMinutes: 480,
   workEndMinutes: 960,
   supervisorId: '',
+  birthDate: '',
 };
 
 /** Minimal valid AppData: one client, one status, one project, one task, one

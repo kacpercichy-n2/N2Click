@@ -38,7 +38,14 @@ import { Coin } from '../components/Coin';
 import { StatusBadge } from '../components/StatusBadge';
 import { DEFAULT_CAPACITY, defaultWorkEndMinutes } from '../store/storage';
 import { useOpenTask } from '../components/TaskModal';
-import { formatRowLabel, formatShortWithWeekday, isWeekend, todayStr, weekDays } from '../utils/dates';
+import {
+  formatBirthday,
+  formatRowLabel,
+  formatShortWithWeekday,
+  isWeekend,
+  todayStr,
+  weekDays,
+} from '../utils/dates';
 import { formatDuration, formatMinutes } from '../utils/time';
 import {
   END_MINUTE_OPTIONS,
@@ -101,6 +108,7 @@ function PersonProfile({ personId }: { personId: string }) {
     workStartMinutes: person?.workStartMinutes ?? 480,
     workEndMinutes: person?.workEndMinutes ?? defaultWorkEndMinutes(person?.capacity ?? DEFAULT_CAPACITY),
     supervisorId: person?.supervisorId ?? '',
+    birthDate: person?.birthDate ?? '',
   }));
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState('');
@@ -129,6 +137,7 @@ function PersonProfile({ personId }: { personId: string }) {
       workStartMinutes: allow('workHours') ? draft.workStartMinutes : person.workStartMinutes,
       workEndMinutes: allow('workHours') ? draft.workEndMinutes : person.workEndMinutes,
       supervisorId: allow('supervisorId') ? draft.supervisorId : person.supervisorId,
+      birthDate: allow('birthDate') ? draft.birthDate : person.birthDate,
     };
     if (!merged.firstName.trim()) return;
     if (allow('workHours') && hoursInvalid) {
@@ -296,6 +305,17 @@ function PersonProfile({ personId }: { personId: string }) {
                 placeholder="🙂"
                 disabled={!allow('avatarEmoji')}
                 title={allow('avatarEmoji') ? undefined : NO_PERM_TITLE}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="pp-birth">Data urodzenia</label>
+              <input
+                id="pp-birth"
+                type="date"
+                value={draft.birthDate}
+                onChange={(e) => set('birthDate', e.target.value)}
+                disabled={!allow('birthDate')}
+                title={allow('birthDate') ? undefined : NO_PERM_TITLE}
               />
             </div>
             <div className="field field-narrow">
@@ -716,7 +736,27 @@ function ProfileFacts({ person }: { person: Person }) {
         {person.phone && (
           <div className="profile-fact">
             <dt>Telefon</dt>
-            <dd>{person.phone}</dd>
+            <dd>
+              <a href={`tel:${person.phone.replace(/\s+/g, '')}`} className="profile-link">
+                {person.phone}
+              </a>
+            </dd>
+          </div>
+        )}
+        {person.email && (
+          <div className="profile-fact">
+            <dt>E-mail</dt>
+            <dd>
+              <a href={`mailto:${person.email}`} className="profile-link">
+                {person.email}
+              </a>
+            </dd>
+          </div>
+        )}
+        {person.birthDate && (
+          <div className="profile-fact">
+            <dt>Data urodzenia</dt>
+            <dd>🎂 {formatBirthday(person.birthDate)}</dd>
           </div>
         )}
         <div className="profile-fact">

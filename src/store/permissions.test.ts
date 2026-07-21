@@ -24,6 +24,7 @@ function makePerson(accessRole: AccessRole, overrides: Partial<Person> = {}): Pe
     workStartMinutes: 480,
     workEndMinutes: 960,
     supervisorId: '',
+    birthDate: '',
     ...overrides,
   };
 }

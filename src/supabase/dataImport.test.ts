@@ -85,7 +85,7 @@ function makePerson(o: Partial<Person> & { id: string }): Person {
   return {
     firstName: 'Ann', lastName: 'Nowak', name: 'Ann Nowak', email: '', phone: '', role: '',
     departmentId: '', avatar: '', capacity: 8, accessRole: 'pracownik', passwordHash: '',
-    workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, supervisorId: '', ...o,
+    workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, supervisorId: '', birthDate: '', ...o,
   };
 }
 

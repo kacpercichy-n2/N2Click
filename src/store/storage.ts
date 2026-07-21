@@ -176,6 +176,9 @@ function migratePerson(raw: Record<string, unknown>): Person {
       ? 'administrator'
       : 'pracownik';
   const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+  // Data urodzenia jest ADDYTYWNA i opcjonalna: brak pola => ''; wartość, która
+  // nie jest poprawną 'yyyy-MM-dd', również spada na '' (nigdy nie rzuca).
+  const birthDate = isValidDateStr(str(raw.birthDate)) ? str(raw.birthDate) : '';
   return {
     id: str(raw.id),
     firstName: str(raw.firstName),
@@ -195,6 +198,7 @@ function migratePerson(raw: Record<string, unknown>): Person {
     workEndMinutes:
       typeof raw.workEndMinutes === 'number' ? raw.workEndMinutes : defaultWorkEndMinutes(capacity),
     supervisorId: str(raw.supervisorId),
+    birthDate,
   };
 }
 

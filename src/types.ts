@@ -169,6 +169,10 @@ export interface Person {
   // Supervisor (przełożony); '' when none. Must never form a cycle — the reducer
   // drops a cycle-forming value (see wouldCreateSupervisorCycle in selectors.ts).
   supervisorId: string;
+  // Data urodzenia (yyyy-MM-dd); '' when unset. Presentational only — surfaces a
+  // birthday marker in the calendar on the matching month+day. Never a required
+  // field. Validated as a real 'yyyy-MM-dd' date on load (garbage → '').
+  birthDate: DateStr;
 }
 
 export interface TaskAssignment {

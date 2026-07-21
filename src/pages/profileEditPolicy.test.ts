@@ -27,6 +27,7 @@ const person = (over: Partial<Person> = {}): Person => ({
   workStartMinutes: 480,
   workEndMinutes: 960,
   supervisorId: '',
+  birthDate: '',
   ...over,
 });
 
@@ -44,6 +45,7 @@ const ALL: ProfileField[] = [
   'workDays',
   'workHours',
   'supervisorId',
+  'birthDate',
 ];
 const opts = { peopleCount: 5 };
 
@@ -62,7 +64,7 @@ describe('editableProfileFields', () => {
   it('self (nie-admin) — zawężony zbiór; email NIE jest edytowalny', () => {
     const self = person({ accessRole: 'pracownik' });
     const set = editableProfileFields(self, self, opts);
-    expect(sorted(set)).toEqual(['avatarEmoji', 'firstName', 'lastName', 'phone']);
+    expect(sorted(set)).toEqual(['avatarEmoji', 'birthDate', 'firstName', 'lastName', 'phone']);
     expect(set.has('email')).toBe(false);
     expect(set.has('departmentId')).toBe(false);
     expect(set.has('accessRole')).toBe(false);
@@ -73,6 +75,7 @@ describe('editableProfileFields', () => {
     const pm = person({ accessRole: 'pm', departmentId: 'dep-a' });
     const target = person({ accessRole: 'pracownik', departmentId: 'dep-a' });
     expect(sorted(editableProfileFields(pm, target, opts))).toEqual([
+      'birthDate',
       'phone',
       'roleTitle',
       'supervisorId',
@@ -103,6 +106,7 @@ describe('editableProfileFields', () => {
     const pm = person({ accessRole: 'pm', departmentId: 'dep-a' });
     expect(sorted(editableProfileFields(pm, pm, opts))).toEqual([
       'avatarEmoji',
+      'birthDate',
       'firstName',
       'lastName',
       'phone',

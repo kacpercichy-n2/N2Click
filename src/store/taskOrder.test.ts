@@ -33,6 +33,7 @@ const PERSON: Person = {
   id: 'p1', firstName: 'Anna', lastName: 'Kowalska', name: 'Anna Kowalska', email: '', phone: '',
   role: '', departmentId: '', avatar: '', capacity: 8, accessRole: 'administrator', passwordHash: '',
   workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, supervisorId: '',
+  birthDate: '',
 };
 
 function makeTask(overrides: Partial<Task> & { id: string }): Task {

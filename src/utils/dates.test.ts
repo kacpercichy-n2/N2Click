@@ -5,7 +5,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   addDaysStr,
+  formatBirthday,
   formatShortWithWeekday,
+  isBirthdayOn,
   isValidDateStr,
   MAX_TASK_PERIOD_DAYS,
   PERIOD_ERROR_LABELS,
@@ -82,6 +84,40 @@ describe('formatShortWithWeekday', () => {
   it('appends the abbreviated Polish weekday for a Sunday', () => {
     // 2026-11-01 is a Sunday.
     expect(formatShortWithWeekday('2026-11-01')).toBe('1 lis (nie)');
+  });
+});
+
+describe('isBirthdayOn', () => {
+  it('dopasowuje po miesiącu i dniu, ignorując rok urodzenia', () => {
+    expect(isBirthdayOn('1988-03-14', '2026-03-14')).toBe(true);
+    expect(isBirthdayOn('1988-03-14', '2030-03-14')).toBe(true);
+  });
+
+  it('nie dopasowuje innego dnia ani miesiąca', () => {
+    expect(isBirthdayOn('1988-03-14', '2026-03-15')).toBe(false);
+    expect(isBirthdayOn('1988-03-14', '2026-04-14')).toBe(false);
+  });
+
+  it('puste albo niepoprawne birthDate => false (nigdy nie rzuca)', () => {
+    expect(isBirthdayOn('', '2026-03-14')).toBe(false);
+    expect(isBirthdayOn('nonsens', '2026-03-14')).toBe(false);
+    expect(isBirthdayOn('2026-13-40', '2026-03-14')).toBe(false);
+  });
+
+  it('29 lutego dopasowuje tylko rok przestępny (bez sztucznego przeniesienia)', () => {
+    expect(isBirthdayOn('2000-02-29', '2028-02-29')).toBe(true); // 2028 przestępny
+    expect(isBirthdayOn('2000-02-29', '2027-02-28')).toBe(false);
+  });
+});
+
+describe('formatBirthday', () => {
+  it('formatuje pełną datę po polsku', () => {
+    expect(formatBirthday('1988-03-14')).toBe('14 marca 1988');
+  });
+
+  it('puste/niepoprawne => pusty string', () => {
+    expect(formatBirthday('')).toBe('');
+    expect(formatBirthday('2026-99-99')).toBe('');
   });
 });
 

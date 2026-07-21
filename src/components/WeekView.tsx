@@ -40,6 +40,7 @@ import {
   growAllowanceHours,
   hoursForPersonOnDate,
   overloadedPeopleOnDate,
+  peopleWithBirthdayOnDate,
   personCapacity,
   taskDisplayStatus,
   taskGrowAllowance,
@@ -1353,6 +1354,11 @@ export function WeekView({ state, anchor, filter }: Props) {
                 .map((id) => getPerson(state, id)?.name)
                 .filter(Boolean)
                 .join(', ');
+              // Znacznik urodzin (miesiąc+dzień) — czysto prezentacyjny, cały
+              // zespół niezależnie od filtra. Tooltip po polsku z imionami.
+              const birthdayNames = peopleWithBirthdayOnDate(state, d)
+                .map((p) => p.name)
+                .filter(Boolean);
               return (
                 <div
                   key={`head-${d}`}
@@ -1371,6 +1377,14 @@ export function WeekView({ state, anchor, filter }: Props) {
                     {format(parseDate(d), 'd MMM', { locale: pl })}
                   </div>
                   <div className="week-col-total">{empty ? '—' : formatDuration(total)}</div>
+                  {birthdayNames.length > 0 && (
+                    <div
+                      className="week-col-birthday"
+                      title={`Urodziny: ${birthdayNames.join(', ')}`}
+                    >
+                      🎂 {birthdayNames.join(', ')}
+                    </div>
+                  )}
                   {overloadNames && (
                     <div
                       className="week-col-overload"

@@ -22,6 +22,7 @@ import {
   isImpersonating,
   overdueTasksForPerson,
   overloadedDatesForPersonInRange,
+  peopleWithBirthdayOnDate,
   planningStatusForTotals,
   realUser,
   realUserId,
@@ -79,6 +80,7 @@ function makePerson(overrides: Partial<Person> & { id: string }): Person {
     workStartMinutes: 480,
     workEndMinutes: 960,
     supervisorId: '',
+    birthDate: '',
     ...overrides,
   };
 }
@@ -112,6 +114,29 @@ function makeStatus(overrides: Partial<Status> & { id: string }): Status {
     ...overrides,
   };
 }
+
+describe('peopleWithBirthdayOnDate', () => {
+  it('zwraca osoby, których urodziny (miesiąc+dzień) wypadają na dniu — niezależnie od roku', () => {
+    const state = makeState({
+      people: [
+        makePerson({ id: 'p1', name: 'Ala', birthDate: '1988-03-14' }),
+        makePerson({ id: 'p2', name: 'Bok', birthDate: '1994-07-22' }),
+        makePerson({ id: 'p3', name: 'Cezary', birthDate: '' }),
+      ],
+    });
+    expect(peopleWithBirthdayOnDate(state, '2026-03-14').map((p) => p.id)).toEqual(['p1']);
+    expect(peopleWithBirthdayOnDate(state, '2031-07-22').map((p) => p.id)).toEqual(['p2']);
+    expect(peopleWithBirthdayOnDate(state, '2026-01-01')).toEqual([]);
+  });
+
+  it('ignoruje puste/niepoprawne daty i nie zależy od filtra pracy', () => {
+    const state = makeState({
+      people: [makePerson({ id: 'p1', birthDate: 'nonsens' })],
+      workload: [],
+    });
+    expect(peopleWithBirthdayOnDate(state, '2026-03-14')).toEqual([]);
+  });
+});
 
 describe('conflictDatesForTask — bin exclusion (regression)', () => {
   it("never returns BIN_DATE/'' even when a person's bin hours alone exceed their capacity", () => {

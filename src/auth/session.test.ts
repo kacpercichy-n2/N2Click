@@ -245,6 +245,7 @@ function person(overrides: Partial<Person>): Person {
     workStartMinutes: 480,
     workEndMinutes: 960,
     supervisorId: '',
+    birthDate: '',
     ...overrides,
   };
 }

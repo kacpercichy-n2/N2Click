@@ -89,3 +89,9 @@ repair. Ordering must not touch completion semantics or calendar placement.
   `javascript:`/`data:` odrzucane (przechowywany XSS, projekty są współdzielone).
 - Focused PASS (24); full suite PASS 1068 (baseline 1044, prompt's 933 stale);
   `npm run build` clean. Wiki: `cloud-database.md` + `state-and-persistence.md`.
+
+## birthDate test fixtures
+- Added `birthDate: ''` to Person/PersonDraft/CloudProfile/CloudPersonMergeRow
+  factories+literals across 23 test files. Also updated profileEditPolicy.test.ts
+  editable-field assertions (birthDate is self/manager/all-editable per prod).
+- tsc clean; full suite PASS 1086/1086. No production files touched.

@@ -13,6 +13,7 @@ import {
   dayTotal,
   entriesForDate,
   overloadedPeopleOnDate,
+  peopleWithBirthdayOnDate,
 } from '../store/selectors';
 import { personColor } from '../utils/colors';
 import { formatDuration } from '../utils/time';
@@ -62,6 +63,9 @@ export function MonthView({ state, anchor, filter, onPickDay }: Props) {
           const shown = peopleIds.slice(0, MAX_DOTS);
           const extra = peopleIds.length - shown.length;
 
+          // Urodziny (miesiąc+dzień) — cały zespół, niezależnie od filtra pracy.
+          const birthdayNames = peopleWithBirthdayOnDate(state, d).map((p) => p.name);
+
           return (
             <button
               type="button"
@@ -79,6 +83,15 @@ export function MonthView({ state, anchor, filter, onPickDay }: Props) {
               title={total > 0 ? `zaplanowano ${formatDuration(total)}` : 'Brak pracy'}
             >
               <span className="month-cell-num">{dayNumber(d)}</span>
+              {birthdayNames.length > 0 && (
+                <span
+                  className="month-cell-birthday"
+                  title={`Urodziny: ${birthdayNames.join(', ')}`}
+                  aria-label={`Urodziny: ${birthdayNames.join(', ')}`}
+                >
+                  🎂
+                </span>
+              )}
               {total > 0 && <span className="month-cell-hours">{formatDuration(total)}</span>}
               {peopleIds.length > 0 && (
                 <span className="month-cell-dots">

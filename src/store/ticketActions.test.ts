@@ -26,6 +26,7 @@ function person(): Person {
     workStartMinutes: 480,
     workEndMinutes: 960,
     supervisorId: '',
+    birthDate: '',
   };
 }
 

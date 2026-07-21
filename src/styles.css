@@ -1527,6 +1527,17 @@ option {
   font-weight: 600;
 }
 
+/* Znacznik urodzin w nagłówku dnia — czysto prezentacyjny (🎂 + imiona). */
+.week-col-birthday {
+  margin-top: 4px;
+  font-size: var(--n2-type-xs);
+  color: var(--n2-accent, #b5179e);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Body row: fixed axis pane | scrollable days viewport | always-visible bin. */
 .week-main {
   display: flex;
@@ -2063,6 +2074,15 @@ option {
   color: var(--text);
   font-family: var(--n2-font-data);
   font-variant-numeric: tabular-nums;
+}
+/* Znacznik urodzin w komórce miesiąca — mały 🎂 w rogu (tooltip z imionami). */
+.month-cell-birthday {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  font-size: 11px;
+  line-height: 1;
+  pointer-events: none;
 }
 .month-cell-dots {
   display: flex;
@@ -5288,6 +5308,22 @@ option {
 }
 .team-person-access {
   font-weight: 500;
+}
+/* Lista kontaktów zespołu — klikalne linki tel:/mailto:. */
+.team-person-contact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--n2-space-2) var(--n2-space-4);
+  font-size: 0.9rem;
+}
+.team-person-email,
+.team-person-phone {
+  color: var(--n2-accent, #4361ee);
+  text-decoration: none;
+}
+.team-person-email:hover,
+.team-person-phone:hover {
+  text-decoration: underline;
 }
 .team-provision-note {
   margin-top: var(--n2-space-4);
