@@ -19,6 +19,7 @@ import type {
   AppData,
   ChecklistItem,
   CommentEntityType,
+  Company,
   Department,
   FilterPage,
   FilterViewKey,
@@ -168,6 +169,9 @@ export interface PersonDraft {
   phone: string;
   role: string;
   departmentId: string;
+  // Spółka (przypisanie administratora). Wymagana w draftcie jak supervisorId;
+  // '' = brak. `Person.companyId` pozostaje opcjonalne (zaszłości).
+  companyId: string;
   avatar: string;
   capacity: number;
   accessRole: AccessRole;
@@ -264,6 +268,9 @@ export type Action =
   | { type: 'ADD_JOB_TITLE'; name: string }
   | { type: 'RENAME_JOB_TITLE'; jobTitleId: string; name: string }
   | { type: 'DELETE_JOB_TITLE'; jobTitleId: string }
+  | { type: 'ADD_COMPANY'; name: string }
+  | { type: 'RENAME_COMPANY'; companyId: string; name: string }
+  | { type: 'DELETE_COMPANY'; companyId: string }
   | { type: 'ADD_SERVICE_TYPE'; name: string }
   | { type: 'RENAME_SERVICE_TYPE'; serviceTypeId: string; name: string }
   | { type: 'DELETE_SERVICE_TYPE'; serviceTypeId: string }
@@ -1813,6 +1820,7 @@ function personFromDraft(draft: PersonDraft): Omit<Person, 'id' | 'passwordHash'
     phone: draft.phone.trim(),
     role: draft.role.trim(),
     departmentId: draft.departmentId,
+    companyId: draft.companyId,
     avatar: draft.avatar.trim(),
     capacity,
     accessRole: draft.accessRole,
@@ -2080,6 +2088,7 @@ function isValidCloudPersonRow(r: CloudPersonMergeRow): boolean {
   if (typeof r.firstName !== 'string' || r.firstName.trim() === '') return false;
   if (typeof r.lastName !== 'string' || typeof r.role !== 'string') return false;
   if (typeof r.departmentId !== 'string') return false;
+  if (typeof r.companyId !== 'string') return false;
   if (typeof r.phone !== 'string' || typeof r.avatar !== 'string') return false;
   if (typeof r.supervisorEmail !== 'string') return false;
   if (typeof r.birthDate !== 'string') return false;
@@ -2110,6 +2119,7 @@ function cloudPersonFields(row: CloudPersonMergeRow): Omit<
     phone: row.phone.trim(),
     role: row.role.trim(),
     departmentId: row.departmentId,
+    companyId: row.companyId,
     avatar: row.avatar.trim(),
     // Spójnie z personFromDraft: UI deklaruje zakres [1, 24].
     capacity: Math.min(24, Math.max(1, row.capacity)),
@@ -2179,6 +2189,7 @@ function applyCloudPeople(
       person.phone === fields.phone &&
       person.role === fields.role &&
       person.departmentId === fields.departmentId &&
+      (person.companyId ?? '') === fields.companyId &&
       person.avatar === fields.avatar &&
       person.capacity === fields.capacity &&
       person.accessRole === fields.accessRole &&
@@ -2293,11 +2304,12 @@ export interface CloudDictionariesPayload {
   serviceTypes: ServiceType[];
   workCategories: WorkCategory[];
   jobTitles: JobTitle[];
+  companies: Company[];
 }
 
 /**
  * AUTORYTATYWNE scalenie słowników organizacji z chmury (działy, statusy, typy
- * usług, kategorie prac, stanowiska) — lokalne kopie są zastępowane w całości. Fail-closed
+ * usług, kategorie prac, stanowiska, spółki) — lokalne kopie są zastępowane w całości. Fail-closed
  * (invariant 6): niepoprawna struktura ALBO zestaw statusów łamiący twardy
  * invariant planera (co najmniej jeden aktywny nie-ukończony i jeden aktywny
  * ukończony status) zwraca ORYGINALNĄ referencję stanu — w szczególności pusta
@@ -2306,13 +2318,14 @@ export interface CloudDictionariesPayload {
  */
 function mergeCloudDictionaries(state: AppData, payload: CloudDictionariesPayload): AppData {
   if (typeof payload !== 'object' || payload === null) return state;
-  const { departments, statuses, serviceTypes, workCategories, jobTitles } = payload;
+  const { departments, statuses, serviceTypes, workCategories, jobTitles, companies } = payload;
   if (
     !Array.isArray(departments) ||
     !Array.isArray(statuses) ||
     !Array.isArray(serviceTypes) ||
     !Array.isArray(workCategories) ||
-    !Array.isArray(jobTitles)
+    !Array.isArray(jobTitles) ||
+    !Array.isArray(companies)
   ) {
     return state;
   }
@@ -2320,6 +2333,7 @@ function mergeCloudDictionaries(state: AppData, payload: CloudDictionariesPayloa
   if (!serviceTypes.every(isValidNamedRow)) return state;
   if (!workCategories.every(isValidNamedRow)) return state;
   if (!jobTitles.every(isValidNamedRow)) return state;
+  if (!companies.every(isValidNamedRow)) return state;
   if (!statuses.every(isValidStatusRow)) return state;
   // Twardy invariant 5: przynajmniej jeden aktywny status w toku i jeden done.
   const hasActive = statuses.some((s) => !s.archived && !s.isDone);
@@ -2332,6 +2346,7 @@ function mergeCloudDictionaries(state: AppData, payload: CloudDictionariesPayloa
     sameNamedRows(state.serviceTypes, serviceTypes) &&
     sameNamedRows(state.workCategories, workCategories) &&
     sameNamedRows(state.jobTitles, jobTitles) &&
+    sameNamedRows(state.companies, companies) &&
     sameStatusRows(state.statuses, sorted)
   ) {
     return state;
@@ -2342,6 +2357,7 @@ function mergeCloudDictionaries(state: AppData, payload: CloudDictionariesPayloa
     serviceTypes: [...serviceTypes],
     workCategories: [...workCategories],
     jobTitles: [...jobTitles],
+    companies: [...companies],
     statuses: sorted,
   };
 }
@@ -3162,6 +3178,53 @@ export function reducer(state: AppData, action: Action): AppData {
       return {
         ...state,
         jobTitles: state.jobTitles.filter((j) => j.id !== action.jobTitleId),
+      };
+    }
+    case 'ADD_COMPANY': {
+      // Nazwy spółek są unikalne bez rozróżniania wielkości liter (pl-PL).
+      const name = action.name.trim();
+      if (!name) return state;
+      const key = name.toLocaleLowerCase('pl-PL');
+      if (state.companies.some((c) => c.name.trim().toLocaleLowerCase('pl-PL') === key)) return state;
+      return {
+        ...state,
+        companies: [...state.companies, { id: uid(), name }],
+      };
+    }
+    case 'RENAME_COMPANY': {
+      const name = action.name.trim();
+      if (!name) return state;
+      const target = state.companies.find((c) => c.id === action.companyId);
+      if (!target) return state;
+      // Zmiana na aktualną nazwę (dosłownie) to no-op — ta sama referencja.
+      if (target.name === name) return state;
+      // Duplikat INNEGO wiersza (bez rozróżniania wielkości liter) odrzucamy.
+      const key = name.toLocaleLowerCase('pl-PL');
+      if (
+        state.companies.some(
+          (c) => c.id !== action.companyId && c.name.trim().toLocaleLowerCase('pl-PL') === key,
+        )
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        companies: state.companies.map((c) =>
+          c.id === action.companyId ? { ...c, name } : c,
+        ),
+      };
+    }
+    case 'DELETE_COMPANY': {
+      // Kaskada etykiety (jak DELETE_DEPARTMENT): usunięcie spółki czyści
+      // `Person.companyId` na osobach; chmurowy FK `on delete set null` to lustruje.
+      // Nieznane id => ta sama referencja.
+      if (!state.companies.some((c) => c.id === action.companyId)) return state;
+      return {
+        ...state,
+        companies: state.companies.filter((c) => c.id !== action.companyId),
+        people: state.people.map((p) =>
+          p.companyId === action.companyId ? { ...p, companyId: '' } : p,
+        ),
       };
     }
     case 'ADD_SERVICE_TYPE': {

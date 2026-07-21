@@ -36,6 +36,7 @@ const NON_MIRRORED_KEYS: Array<keyof AppData> = [
   'serviceTypes',
   'workCategories',
   'jobTitles',
+  'companies',
   'statuses',
   'people',
   'currentUserId',

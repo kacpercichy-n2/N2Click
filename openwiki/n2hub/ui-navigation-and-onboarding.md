@@ -38,6 +38,11 @@
   `main.tsx`.
 - `src/pages/` owns route-specific screens; `src/components/TaskModal.tsx` owns
   task editing and its allocation grid.
+- Profile edit matrix (`src/pages/profileEditPolicy.ts`) gains an ADMIN-ONLY
+  „Spółka” field (`companyId` in `ALL_FIELDS` only — nie self, nie manager),
+  rendered as a select in PersonProfilePage next to „Dział”; parity with the
+  server `app.protect_profile_privileges` trigger (spółka zawęża widoczność
+  projektów w chmurze). AdminPage adds a „Spółki” CRUD section after „Działy”.
 - `/zgloszenia` („Zgłoszenia”, `src/pages/TicketsPage.tsx`) jest widoczne dla
   KAŻDEJ roli — nie jest bramkowane jak `/admin`. Dwa tryby w segmentowanym
   przełączniku: „Zgłoś” (otwiera modal) i „Zgłoszone” (tabela z filtrami status +

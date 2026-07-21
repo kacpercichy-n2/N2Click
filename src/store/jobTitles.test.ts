@@ -94,6 +94,7 @@ describe('MERGE_CLOUD_DICTIONARIES — jobTitles', () => {
     serviceTypes: [],
     workCategories: [],
     jobTitles,
+    companies: [],
   });
 
   it('zastępuje jobTitles autorytatywnie', () => {

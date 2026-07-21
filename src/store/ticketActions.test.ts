@@ -18,6 +18,7 @@ function person(): Person {
     phone: '',
     role: '',
     departmentId: '',
+    companyId: '',
     avatar: '',
     capacity: 8,
     accessRole: 'administrator',

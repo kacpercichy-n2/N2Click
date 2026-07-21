@@ -39,6 +39,7 @@ const ALL: ProfileField[] = [
   'phone',
   'roleTitle',
   'departmentId',
+  'companyId',
   'avatarEmoji',
   'capacity',
   'accessRole',
@@ -67,8 +68,21 @@ describe('editableProfileFields', () => {
     expect(sorted(set)).toEqual(['avatarEmoji', 'birthDate', 'firstName', 'lastName', 'phone']);
     expect(set.has('email')).toBe(false);
     expect(set.has('departmentId')).toBe(false);
+    expect(set.has('companyId')).toBe(false); // spółka wyłącznie administrator
     expect(set.has('accessRole')).toBe(false);
     expect(set.has('capacity')).toBe(false);
+  });
+
+  it('spółka (companyId) jest edytowalna wyłącznie przez administratora / tryb setup', () => {
+    const admin = person({ accessRole: 'administrator' });
+    const target = person({ accessRole: 'pracownik', departmentId: 'dep-a' });
+    // administrator: tak
+    expect(editableProfileFields(admin, target, opts).has('companyId')).toBe(true);
+    // tryb setup: tak
+    expect(editableProfileFields(undefined, target, { peopleCount: 0 }).has('companyId')).toBe(true);
+    // PM z tego samego działu: nie
+    const pm = person({ accessRole: 'pm', departmentId: 'dep-a' });
+    expect(editableProfileFields(pm, target, opts).has('companyId')).toBe(false);
   });
 
   it('PM — cel z własnego działu (nie-admin, nie self)', () => {

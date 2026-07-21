@@ -19,6 +19,7 @@ function person(accessRole: Person['accessRole']): Person {
     phone: '',
     role: '',
     departmentId: '',
+    companyId: '',
     avatar: '',
     capacity: 8,
     accessRole,

@@ -124,6 +124,7 @@ export function emptyData(): AppData {
     serviceTypes: [],
     workCategories: [],
     jobTitles: [],
+    companies: [],
     statuses: buildDefaultStatuses(),
     projects: [],
     milestones: [],
@@ -192,6 +193,9 @@ function migratePerson(raw: Record<string, unknown>): Person {
     phone: str(raw.phone),
     role: str(raw.role),
     departmentId: str(raw.departmentId),
+    // Spółka (pole ADDYTYWNE, opcjonalne): brak / nie-string => '' na każdym
+    // wczytaniu (jak departmentId). Repair dławi śmieci przed hydracją.
+    companyId: str(raw.companyId),
     avatar: str(raw.avatar),
     capacity,
     accessRole,
@@ -1422,6 +1426,7 @@ function readData(recordRevision: boolean): InternalLoadResult {
         serviceTypes: coerceArray(parsedRest.serviceTypes, defaults.serviceTypes),
         workCategories: coerceArray(parsedRest.workCategories, defaults.workCategories),
         jobTitles: coerceArray(parsedRest.jobTitles, defaults.jobTitles),
+        companies: coerceArray(parsedRest.companies, defaults.companies),
         statuses: coerceArray(parsedRest.statuses, defaults.statuses),
         projects: coerceArray(parsedRest.projects, defaults.projects),
         milestones: coerceArray(parsedRest.milestones, defaults.milestones),

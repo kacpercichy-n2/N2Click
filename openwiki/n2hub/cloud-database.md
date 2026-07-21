@@ -22,7 +22,9 @@
 - `profiles` — 1:1 with `auth.users` (same id, `on delete cascade`). Fields:
   `first_name` (required 1–100), `last_name`, `email`, `role_title`
   (stanowisko), `access_role` (enum `administrator|manager|worker`),
-  `department_id`, `avatar_path` (private `avatars` bucket,
+  `department_id`, `company_id` (20260721160000 → `companies.id`,
+  `on delete set null`; admin-only via `app.protect_profile_privileges`),
+  `avatar_path` (private `avatars` bucket,
   `<profile id>/<file>`), `must_change_password` (UX gate: forced first-login
   password change, self-cleared after a successful change), planner fields
   `phone`, `avatar` (emoji), `capacity` (0–24), `work_days` (smallint[] ⊂ 1–7),
@@ -31,8 +33,8 @@
   `MERGE_CLOUD_PEOPLE`),
   `supervisor_id` → `profiles.id` (przełożony; nullable, `on delete set null`,
   no self-reference; only administrators may change it — enforced by the
-  `app.protect_profile_privileges` trigger, same as `access_role` and
-  `department_id`). There is NO auto-provisioning trigger on `auth.users`:
+  `app.protect_profile_privileges` trigger, same as `access_role`,
+  `department_id` and `company_id`). There is NO auto-provisioning trigger on `auth.users`:
   profiles are created by the provisioning Edge Function or operator SQL.
 - `clients` also carries contact columns (`contact_name`, `contact_email`,
   `contact_phone`, `notes`; 20260718090000) and the published tables are in the
@@ -46,6 +48,27 @@
   przez `referenceData.loadOrgSnapshot` → `OrgSnapshot.jobTitles` → App.tsx
   `MERGE_CLOUD_DICTIONARIES`. Rejestr: `migrations.test.ts` (lista +
   `public.job_titles` w `EXPECTED_POLICIES`).
+- `companies` (20260721160000, słownik „Spółki”) — org-wide dictionary, ten sam
+  wzorzec co `job_titles`: odczyt dla każdego zalogowanego, zapis admin-only,
+  w publikacji `supabase_realtime`, mirrorowany jako SZÓSTY wpis `dicts`
+  (`cloudMirror`) i hydrowany `loadOrgSnapshot` → `OrgSnapshot.companies` →
+  App.tsx `MERGE_CLOUD_DICTIONARIES`. Rejestr: `migrations.test.ts` (lista +
+  `public.companies` w `EXPECTED_POLICIES`). Osoba dostaje spółkę przez
+  `profiles.company_id` (admin-only), a ta ZAWĘŻA widoczność projektów:
+  - `app.current_company_id()` (definer, stable) — spółka zalogowanego (null =
+    bez spółki => brak zawężenia);
+  - `app.project_in_company_scope(project)` (definer, stable) — true gdy
+    użytkownik bez spółki, LUB projekt „neutralny” (żaden członek/przypisany nie
+    ma spółki — świeży/nieobsadzony projekt nie znika twórcy), LUB jakiś
+    członek/przypisany ma spółkę użytkownika;
+  - `projects_select` (przepisana z 20260720190000) = `admin OR
+    (project_in_company_scope(id) AND <dotychczasowe warunki nie-admina>)`.
+    Predykat jest starym predykatem AND-owanym z zakresem spółki, a zakres ≡
+    true przy null — użytkownik bez spółki widzi bajt-w-bajt to co dziś, nikt nie
+    zyskuje wiersza. Zawężenie realnie dotyka wyłącznie gałęzi `is_manager()`:
+    członek/przypisany ze spółką X sam spełnia zakres X, więc nie traci dostępu.
+    ŻADNA inna polityka (tasks/workload) się nie zmienia — zależne wiersze
+    ukrytego projektu odpada kaskada hydracji `loadPlannerSnapshot`.
 - `projects` → `client_id`, `status_id`, `service_type_id`, `department_id`
   (LEGACY — see below); `project_members (project_id, profile_id)` is the
   explicit worker access list. `tasks` → `project_id` (cascade), `status_id`,

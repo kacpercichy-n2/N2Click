@@ -101,6 +101,7 @@ function PersonProfile({ personId }: { personId: string }) {
     phone: person?.phone ?? '',
     role: person?.role ?? '',
     departmentId: person?.departmentId ?? '',
+    companyId: person?.companyId ?? '',
     avatar: person?.avatar ?? '',
     capacity: person?.capacity ?? DEFAULT_CAPACITY,
     accessRole: person?.accessRole ?? 'pracownik',
@@ -130,6 +131,7 @@ function PersonProfile({ personId }: { personId: string }) {
       phone: allow('phone') ? draft.phone : person.phone,
       role: allow('roleTitle') ? draft.role : person.role,
       departmentId: allow('departmentId') ? draft.departmentId : person.departmentId,
+      companyId: allow('companyId') ? draft.companyId : person.companyId ?? '',
       avatar: allow('avatarEmoji') ? draft.avatar : person.avatar,
       capacity: allow('capacity') ? draft.capacity : person.capacity,
       accessRole: allow('accessRole') ? draft.accessRole : person.accessRole,
@@ -267,6 +269,23 @@ function PersonProfile({ personId }: { personId: string }) {
                 {state.departments.map((d) => (
                   <option key={d.id} value={d.id}>
                     {d.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="pp-company">Spółka</label>
+              <select
+                id="pp-company"
+                value={draft.companyId}
+                onChange={(e) => set('companyId', e.target.value)}
+                disabled={!allow('companyId')}
+                title={allow('companyId') ? undefined : NO_PERM_TITLE}
+              >
+                <option value="">—</option>
+                {state.companies.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
                   </option>
                 ))}
               </select>

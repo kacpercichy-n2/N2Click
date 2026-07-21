@@ -110,6 +110,7 @@ function person(id: string) {
     phone: '',
     role: '',
     departmentId: '',
+    companyId: '',
     avatar: '',
     capacity: 8,
     accessRole: 'pracownik' as const,
@@ -477,6 +478,7 @@ function cloudRow(o: Partial<CloudPersonMergeRow> & { id: string; email: string 
     lastName: 'Osoba',
     role: '',
     departmentId: '',
+    companyId: '',
     phone: '',
     avatar: '',
     capacity: 8,
@@ -565,6 +567,24 @@ describe('MERGE_CLOUD_PEOPLE', () => {
     expect(self.people[0].supervisorId).toBe('');
   });
 
+  it('przenosi spółkę z chmury na osobę (autorytatywnie)', () => {
+    const state: AppData = {
+      ...baseState(),
+      people: [{ ...person(P1), email: 'kacper@x.pl', companyId: 'stara' }],
+    };
+    const next = reducer(state, {
+      type: 'MERGE_CLOUD_PEOPLE',
+      payload: [cloudRow({ id: UUID_K, email: 'kacper@x.pl', firstName: 'Kacper', companyId: 'cloud-company' })],
+    });
+    expect(next).not.toBe(state);
+    expect(next.people[0].companyId).toBe('cloud-company');
+    // Idempotencja: ten sam payload => ta sama referencja (spółka już zgodna).
+    expect(reducer(next, {
+      type: 'MERGE_CLOUD_PEOPLE',
+      payload: [cloudRow({ id: UUID_K, email: 'kacper@x.pl', firstName: 'Kacper', companyId: 'cloud-company' })],
+    })).toBe(next);
+  });
+
   it('niepoprawny payload => oryginalna referencja stanu (invariant 6)', () => {
     const state = baseState();
     const bad = [
@@ -574,6 +594,8 @@ describe('MERGE_CLOUD_PEOPLE', () => {
       cloudRow({ id: UUID_K, email: 'a@x.pl', capacity: 99 }),
       cloudRow({ id: UUID_K, email: 'a@x.pl', workDays: [0, 9] }),
       cloudRow({ id: UUID_K, email: 'a@x.pl', workStartMinutes: -1 }),
+      // Nie-string companyId => wiersz odrzucony, cały payload fail-closed.
+      cloudRow({ id: UUID_K, email: 'a@x.pl', companyId: 42 as unknown as string }),
     ];
     for (const row of bad) {
       expect(reducer(state, { type: 'MERGE_CLOUD_PEOPLE', payload: [row] })).toBe(state);

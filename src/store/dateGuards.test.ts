@@ -51,6 +51,7 @@ const PERSON: Person = {
   email: '',
   role: '',
   departmentId: '',
+  companyId: '',
   avatar: '',
   capacity: 8,
   phone: '',

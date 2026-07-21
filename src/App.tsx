@@ -167,6 +167,7 @@ export function App() {
         serviceTypes: snap.serviceTypes,
         workCategories: snap.workCategories,
         jobTitles: snap.jobTitles,
+        companies: snap.companies,
       },
     });
     dispatch({ type: 'MERGE_CLOUD_PEOPLE', payload: buildCloudPeoplePayload(snap.profiles) });

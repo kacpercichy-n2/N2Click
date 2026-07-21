@@ -414,6 +414,7 @@ describe('loadData migration v4 -> v5', () => {
         email: '',
         role: '',
         departmentId: '',
+        companyId: '',
         avatar: '',
         capacity: 6,
         isAdmin: true,
@@ -426,6 +427,7 @@ describe('loadData migration v4 -> v5', () => {
         email: '',
         role: '',
         departmentId: '',
+        companyId: '',
         avatar: '',
         capacity: 8,
         isAdmin: false,
@@ -438,6 +440,7 @@ describe('loadData migration v4 -> v5', () => {
         email: '',
         role: '',
         departmentId: '',
+        companyId: '',
         avatar: '',
         capacity: 20, // work-end minute must clamp to 24:00, not overflow
         isAdmin: false,
@@ -482,6 +485,7 @@ describe('loadData migration v4 -> v5', () => {
         email: '',
         role: '',
         departmentId: '',
+        companyId: '',
         avatar: '',
         capacity: 6,
         isAdmin: true,
@@ -506,6 +510,7 @@ describe('loadData migration v4 -> v5', () => {
       phone: '',
       role: '',
       departmentId: '',
+      companyId: '',
       avatar: '',
       capacity: 8,
       accessRole: 'administrator',
@@ -534,6 +539,42 @@ describe('loadData migration v4 -> v5', () => {
     expect(byId('garbage').birthDate).toBe('');
   });
 
+  it('companyId: brakujące => "", string przechodzi, nie-string => "" (repair migratePerson na każdym wczytaniu)', () => {
+    const person = (extra: Record<string, unknown>): Record<string, unknown> => ({
+      id: 'p1',
+      firstName: 'Ala',
+      lastName: '',
+      name: 'Ala',
+      email: '',
+      phone: '',
+      role: '',
+      departmentId: '',
+      avatar: '',
+      capacity: 8,
+      accessRole: 'administrator',
+      passwordHash: '',
+      workDays: [1, 2, 3, 4, 5],
+      workStartMinutes: 480,
+      workEndMinutes: 960,
+      supervisorId: '',
+      ...extra,
+    });
+    const payload = {
+      ...emptyData(),
+      version: 7,
+      people: [
+        person({ id: 'miss' }), // brak pola => ''
+        person({ id: 'ok', companyId: 'company-uuid' }), // string przechodzi
+        person({ id: 'garbage', companyId: 42 }), // nie-string => ''
+      ],
+    };
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+    const byId = (id: string) => data.people.find((p) => p.id === id)!;
+    expect(byId('miss').companyId).toBe('');
+    expect(byId('ok').companyId).toBe('company-uuid');
+    expect(byId('garbage').companyId).toBe('');
+  });
+
   it('defensively normalizes a v5-STAMPED payload whose people were never migrated (isAdmin still present, no accessRole) — normalization runs on every load, not only version < 5', () => {
     // A payload stamped version 5 but carrying pre-v5 people (the mid-dev/HMR
     // hazard the reviewer flagged): migrateV4toV5 only fired for version < 5, so
@@ -549,6 +590,7 @@ describe('loadData migration v4 -> v5', () => {
           email: '',
           role: '',
           departmentId: '',
+          companyId: '',
           avatar: '',
           capacity: 8,
           isAdmin: true, // legacy flag, no accessRole
@@ -561,6 +603,7 @@ describe('loadData migration v4 -> v5', () => {
           email: '',
           role: '',
           departmentId: '',
+          companyId: '',
           avatar: '',
           capacity: 8,
           isAdmin: false,
@@ -612,6 +655,7 @@ describe('impersonatorId persistence (PKG-20260708-b2-tests)', () => {
           email: '',
           role: '',
           departmentId: '',
+          companyId: '',
           avatar: '',
           capacity: 8,
           accessRole: 'administrator',
@@ -624,6 +668,7 @@ describe('impersonatorId persistence (PKG-20260708-b2-tests)', () => {
           email: '',
           role: '',
           departmentId: '',
+          companyId: '',
           avatar: '',
           capacity: 8,
           accessRole: 'pracownik',
@@ -1003,6 +1048,7 @@ describe('loadData migration v5 -> v6 (task metadata)', () => {
           email: '',
           role: '',
           departmentId: '',
+          companyId: '',
           avatar: '',
           capacity: 8,
           accessRole: 'administrator',
@@ -1785,6 +1831,7 @@ describe('loadData collection coercion (storage-01: one corrupt collection must 
       phone: '',
       role: '',
       departmentId: '',
+      companyId: '',
       avatar: '',
       capacity: 8,
       accessRole: 'administrator',
@@ -1824,6 +1871,7 @@ describe('loadData collection coercion (storage-01: one corrupt collection must 
     'serviceTypes',
     'workCategories',
     'jobTitles',
+    'companies',
     'statuses',
     'projects',
     'milestones',
@@ -1884,6 +1932,19 @@ describe('loadData collection coercion (storage-01: one corrupt collection must 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.data.jobTitles).toEqual([]);
+    expect(result.data.tasks.map((t) => t.id)).toContain('t1');
+  });
+
+  it('a legacy payload WITHOUT companies loads with [] (additive collection, v7 stays)', () => {
+    const payload = { ...validV7Payload() };
+    delete (payload as Record<string, unknown>).companies;
+    const result = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () =>
+      loadDataResult(),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.companies).toEqual([]);
+    expect(result.data.version).toBe(DATA_VERSION);
     expect(result.data.tasks.map((t) => t.id)).toContain('t1');
   });
 

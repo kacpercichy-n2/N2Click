@@ -71,6 +71,7 @@ function makePerson(overrides: Partial<Person> & { id: string }): Person {
     email: '',
     role: '',
     departmentId: '',
+    companyId: '',
     avatar: '',
     capacity: 8,
     phone: '',

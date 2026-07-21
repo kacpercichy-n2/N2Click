@@ -155,6 +155,27 @@
   bieżąca zaszłościowa wartość na końcu). W chmurze to tabela `public.job_titles`
   (patrz cloud-database). Testy: `jobTitles.test.ts`, rozszerzenia w
   `storage.test.ts`/`roleTitles.test.ts`/`referenceData.test.ts`/`cloudMirror.test.ts`.
+- SPÓŁKI (2026-07-21): kolekcja `companies` w `AppData` (`Company` w
+  `src/types.ts`, tuż po `jobTitles`) — słownik spółek zarządzany w Administracji
+  („Spółki”, sekcja tuż po „Działy”). Mutacje: `ADD_COMPANY` / `RENAME_COMPANY` /
+  `DELETE_COMPANY` w reduktorze — kopia wzorca `jobTitles` (trim; pusta nazwa,
+  nieznane id, DUPLIKAT case-insensitive `toLocaleLowerCase('pl-PL')`, rename na
+  własną nazwę → TA SAMA referencja, inwariant 6). RÓŻNICA: `DELETE_COMPANY`
+  kaskadowo czyści `Person.companyId` (`=== '' ` na dopasowanych — styl
+  `DELETE_DEPARTMENT`; chmurowy FK `on delete set null` to lustruje). Nowe pole
+  `Person.companyId?` (opcjonalne, `'' = brak`; repair `migratePerson`:
+  brak/nie-string → `''`) — przypisanie administratora zawężające widoczność
+  projektów w chmurze (RLS). Kolekcja ADDYTYWNA: `DATA_VERSION` zostaje 7,
+  `emptyData()`/seed dają `[]`, wczytanie ma `coerceArray(parsedRest.companies, …)`.
+  `MERGE_CLOUD_DICTIONARIES` zastępuje też `companies` (Array.isArray +
+  isValidNamedRow, pusta chmura POPRAWNA, zniekształcony wiersz → ta sama
+  referencja); `MERGE_CLOUD_PEOPLE` niesie `companyId` (walidacja wymaga stringa —
+  nie-string ⇒ fail-closed, ta sama referencja). `persistGate.NON_MIRRORED_KEYS`
+  zawiera `companies`. Select „Spółka” w profilu jest ADMIN-ONLY
+  (`profileEditPolicy` ALL_FIELDS, parytet z serwerowym triggerem). W chmurze to
+  tabela `public.companies` (patrz cloud-database). Testy: `companies.test.ts`,
+  rozszerzenia w `storage.test.ts`/`cloudMerge.test.ts`/`referenceData.test.ts`/
+  `cloudMirror.test.ts`/`profileEditPolicy.test.ts`.
 - `Client` carries contact fields (contactName/contactEmail/contactPhone/notes;
   columns from 20260718090000_clients_contact_fields, '' or missing = none — no
   repair pass, use-sites coalesce), edited on the `/clients` page via

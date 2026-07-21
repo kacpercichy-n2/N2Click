@@ -28,6 +28,7 @@ const emptyDraft = (): PersonDraft => ({
   phone: '',
   role: '',
   departmentId: '',
+  companyId: '',
   avatar: '',
   capacity: DEFAULT_CAPACITY,
   accessRole: 'pracownik',

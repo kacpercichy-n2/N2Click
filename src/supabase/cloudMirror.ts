@@ -613,7 +613,7 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
   }
 
   // 9) Słowniki organizacji ---- (statusy + działy + typy usług + kategorie
-  // prac + stanowiska). Po autorytatywnej hydracji lokalne wiersze noszą id chmury, a nowe
+  // prac + stanowiska + spółki). Po autorytatywnej hydracji lokalne wiersze noszą id chmury, a nowe
   // dostają crypto.randomUUID — mutacje paneli admina płyną wprost do tabel
   // (RLS: zapis wyłącznie administrator; odrzut ląduje w `dropped` z polską
   // etykietą). Usunięcie propagujemy tylko dla id w formacie UUID.
@@ -672,6 +672,15 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
         label: 'Stanowisko',
         prevRows: prev.jobTitles,
         nextRows: next.jobTitles,
+        toRow: ((d: { id: string; name: string }) => ({ id: d.id, name: d.name })) as (
+          r: never,
+        ) => Record<string, unknown>,
+      },
+      {
+        table: 'companies',
+        label: 'Spółka',
+        prevRows: prev.companies,
+        nextRows: next.companies,
         toRow: ((d: { id: string; name: string }) => ({ id: d.id, name: d.name })) as (
           r: never,
         ) => Record<string, unknown>,
@@ -748,6 +757,7 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
           work_start_minutes: p.workStartMinutes,
           work_end_minutes: p.workEndMinutes,
           department_id: p.departmentId === '' ? null : p.departmentId,
+          company_id: (p.companyId ?? '') === '' ? null : p.companyId,
           supervisor_id: supervisorProfileId,
           access_role: ACCESS_ROLE_TO_CLOUD[p.accessRole],
           birth_date: p.birthDate === '' ? null : p.birthDate,

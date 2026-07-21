@@ -16,6 +16,7 @@ function makePerson(accessRole: AccessRole, overrides: Partial<Person> = {}): Pe
     phone: '',
     role: '',
     departmentId: '',
+    companyId: '',
     avatar: '',
     capacity: 8,
     accessRole,

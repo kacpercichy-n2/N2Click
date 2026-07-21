@@ -39,6 +39,12 @@ export interface JobTitle {
   name: string;
 }
 
+/** Admin-managed spółki (companies) dictionary; mirrors Department. */
+export interface Company {
+  id: string;
+  name: string;
+}
+
 /** Task priority — fixed 4-value enum. Polish labels live in utils/priority.ts. */
 export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 
@@ -167,6 +173,11 @@ export interface Person {
   phone: string; // '' when unset
   role: string; // job title; '' when unset
   departmentId: string; // '' when unset
+  // Spółka przypisana przez administratora ('' = brak). Zawęża widoczność
+  // projektów w chmurze (RLS) — patrz openwiki/n2hub/cloud-database.md.
+  // OPCJONALNE i ADDYTYWNE: legacy payload / chmura bez kolumny czytają '' na
+  // repairze (migratePerson). DATA_VERSION zostaje 7.
+  companyId?: string;
   avatar: string; // emoji; '' -> initials fallback
   capacity: number; // available hours per day (overload threshold + availability quantum)
   // App-permission tier (replaced the old `isAdmin` flag in migration v4→v5).
@@ -334,6 +345,7 @@ export interface AppData {
   serviceTypes: ServiceType[];
   workCategories: WorkCategory[];
   jobTitles: JobTitle[];
+  companies: Company[];
   statuses: Status[];
   projects: Project[];
   milestones: Milestone[];

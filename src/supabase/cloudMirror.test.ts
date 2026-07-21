@@ -58,7 +58,7 @@ function makeTask(o: Partial<Task> & { id: string }): Task {
   };
 }
 const cloudProfile = (o: Partial<CloudProfile> & { id: string }): CloudProfile => ({
-  firstName: '', lastName: '', email: '', roleTitle: '', cloudRole: 'worker', departmentId: null, supervisorId: null, phone: '', avatar: '', capacity: 8, workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, birthDate: '', ...o,
+  firstName: '', lastName: '', email: '', roleTitle: '', cloudRole: 'worker', departmentId: null, companyId: null, supervisorId: null, phone: '', avatar: '', capacity: 8, workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, birthDate: '', ...o,
 });
 
 // A local AppData + a cloud org snapshot whose ids/keys line up so the maps
@@ -84,6 +84,7 @@ function orgFixture(): OrgSnapshot {
     serviceTypes: [{ id: SV, name: 'Wideo' }],
     workCategories: [{ id: WC, name: 'Design' }],
     jobTitles: [],
+    companies: [],
   };
 }
 const maps = (): CloudIdMaps => buildCloudIdMaps(localFixture(), orgFixture());
@@ -113,6 +114,7 @@ describe('buildCloudIdMaps', () => {
       workCategories: [{ id: WC, name: 'Design' }],
       departments: [{ id: uuid('cloud-dept'), name: 'Kreacja' }],
       jobTitles: [],
+      companies: [],
     };
     const m = buildCloudIdMaps(local, org);
     expect(m.people.get(PA)).toBe(CLOUD_PA); // by normalized email
@@ -511,12 +513,31 @@ describe('diffToCloudOps — słowniki i profile (przewód zapisu paneli admina)
     expect(removeOps).toEqual([expect.objectContaining({ kind: 'remove', sourceId: jt })]);
   });
 
+  it('spółki: dodanie/zmiana emituje upsert, usunięcie emituje remove do companies (UUID)', () => {
+    const co = uuid('co-1');
+    const prev: AppData = { ...localFixture(), companies: [{ id: co, name: 'Acme' }] };
+    // Dodanie nowego + zmiana nazwy istniejącego.
+    const co2 = uuid('co-2');
+    const added: AppData = {
+      ...prev,
+      companies: [{ id: co, name: 'Acme Studio' }, { id: co2, name: 'Globex' }],
+    };
+    const addOps = diffToCloudOps(prev, added, maps()).ops.filter((o) => o.table === 'companies');
+    expect(addOps.map((o) => o.kind).sort()).toEqual(['upsert', 'upsert']);
+    expect(addOps.find((o) => o.sourceId === co2)!.row).toMatchObject({ id: co2, name: 'Globex' });
+    // Usunięcie wiersza o UUID emituje remove.
+    const removeOps = diffToCloudOps(prev, { ...prev, companies: [] }, maps()).ops.filter(
+      (o) => o.table === 'companies',
+    );
+    expect(removeOps).toEqual([expect.objectContaining({ kind: 'remove', sourceId: co })]);
+  });
+
   it('edycja osoby emituje WYŁĄCZNIE update istniejącego profilu chmury', () => {
     const prev = localFixture();
     const next: AppData = {
       ...prev,
       people: [
-        { ...prev.people[0], role: 'Projektant', capacity: 6, accessRole: 'pm', birthDate: '1990-06-01' },
+        { ...prev.people[0], role: 'Projektant', capacity: 6, accessRole: 'pm', birthDate: '1990-06-01', companyId: 'company-uuid' },
         prev.people[1],
         // Nowa osoba lokalna bez konta chmury — NIE wolno robić insertu.
         makePerson({ id: uuid('local-only'), email: 'nowa@x.com' }),
@@ -536,6 +557,7 @@ describe('diffToCloudOps — słowniki i profile (przewód zapisu paneli admina)
       capacity: 6,
       access_role: 'manager',
       birth_date: '1990-06-01', // '' mapuje się na null; poprawna data przechodzi
+      company_id: 'company-uuid', // '' mapuje się na null; ustawiona spółka przechodzi
     });
     // Nowa osoba nie generuje op-a (konto tworzy provisioning) — jest diagnostyka.
     expect(diagnostics.length).toBeGreaterThan(0);

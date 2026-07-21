@@ -24,6 +24,7 @@ export function AdminPage() {
   const [statusColor, setStatusColor] = useState(NEW_STATUS_COLOR);
   const [depInput, setDepInput] = useState('');
   const [titleInput, setTitleInput] = useState('');
+  const [companyInput, setCompanyInput] = useState('');
   const [svcInput, setSvcInput] = useState('');
   const [catInput, setCatInput] = useState('');
 
@@ -265,6 +266,46 @@ export function AdminPage() {
       </div>
 
       <div className="editor-section">
+        <h2>Spółki</h2>
+        <SimpleList
+          items={state.companies}
+          onRename={(id, name) => dispatch({ type: 'RENAME_COMPANY', companyId: id, name })}
+          onDelete={(id, name) => {
+            if (
+              window.confirm(
+                `Usunąć spółkę „${name}”? Osoby stracą przypisanie do spółki, a widoczność projektów w chmurze przestanie być nią zawężana.`,
+              )
+            ) {
+              dispatch({ type: 'DELETE_COMPANY', companyId: id });
+            }
+          }}
+        />
+        <form
+          className="admin-add-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!companyInput.trim()) return;
+            dispatch({ type: 'ADD_COMPANY', name: companyInput });
+            setCompanyInput('');
+          }}
+        >
+          <input
+            value={companyInput}
+            onChange={(e) => setCompanyInput(e.target.value)}
+            placeholder="Nazwa nowej spółki"
+            aria-label="Nazwa nowej spółki"
+          />
+          <button type="submit" className="btn primary" disabled={!companyInput.trim()}>
+            Dodaj spółkę
+          </button>
+        </form>
+        <p className="field-hint">
+          Spółka przypisana osobie zawęża w chmurze widoczność projektów do jej
+          spółki. Osoby bez spółki widzą dokładnie to co dotychczas.
+        </p>
+      </div>
+
+      <div className="editor-section">
         <h2>Stanowiska</h2>
         <SimpleList
           items={state.jobTitles}
@@ -460,6 +501,19 @@ function CloudDictionaries() {
               {state.snapshot.jobTitles.map((j) => (
                 <li key={j.id} className="admin-simple-row">
                   <span>{j.name}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <h3>Spółki</h3>
+          {state.snapshot.companies.length === 0 ? (
+            <p className="field-hint">Brak spółek w chmurze.</p>
+          ) : (
+            <ul className="admin-simple-list">
+              {state.snapshot.companies.map((c) => (
+                <li key={c.id} className="admin-simple-row">
+                  <span>{c.name}</span>
                 </li>
               ))}
             </ul>
