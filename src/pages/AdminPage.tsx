@@ -9,6 +9,7 @@ import { allStatusesOrdered, isAdminUser } from '../store/selectors';
 import { StatusBadge } from '../components/StatusBadge';
 import { ExportDryRunPanel } from '../components/ExportDryRunPanel';
 import { MigrationStatusPanel } from '../components/MigrationStatusPanel';
+import { NavOrderEditor } from '../components/NavOrderEditor';
 import { useAuth } from '../auth/SessionProvider';
 import { useOrgData } from '../supabase/OrgDataProvider';
 
@@ -332,6 +333,8 @@ export function AdminPage() {
       </div>
 
       {mode === 'supabase' && <CloudDictionaries />}
+
+      <NavOrderEditor />
 
       <ExportDryRunPanel />
 

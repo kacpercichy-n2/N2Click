@@ -103,3 +103,9 @@ repair. Ordering must not touch completion semantics or calendar placement.
 - Files: App.tsx, TeamTabs.tsx (new), People/Team/Admin/Projects/Kanban pages,
   catalog.ts, styles.css, wiki. tsc clean; full suite PASS 1104; build clean.
 - Browser checks (ui-keyboard, onboarding) deferred — playwright not installed.
+
+## PKG-20260721-nav-user-order
+- Per-user (per-browser) sidebar order: new pure `navOrder.ts`(+test), uiPrefs
+  `navOrderByUser`+helpers, shared `navItems.ts`, `NavOrderEditor` on Konto +
+  Ustawienia; App orders before gate filter, live via `n2hub:nav-order-changed`.
+- tsc clean; full suite PASS 1118; build clean. Wiki updated.

@@ -41,11 +41,15 @@ export type UserOnboardingProgress = {
 export type UiPrefs = {
   sidebarCollapsed: boolean;
   onboardingByUser: Record<string, UserOnboardingProgress>;
+  // Per-user (per-browser) sidebar nav order: realUserId → route paths. Only a
+  // permutation of the default NAV order; self-repairing on read (see navOrder).
+  navOrderByUser: Record<string, string[]>;
 };
 
 const DEFAULT_PREFS: UiPrefs = {
   sidebarCollapsed: false,
   onboardingByUser: {},
+  navOrderByUser: {},
 };
 
 const DEFAULT_USER_PROGRESS: UserOnboardingProgress = {
@@ -74,6 +78,12 @@ function readModuleProgress(value: unknown): TutorialModuleProgress | undefined 
         ? raw.completedVersion
         : null,
   };
+}
+
+/** Keep only string entries of a stored nav-order array; anything else → null. */
+function readNavOrder(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.filter((entry): entry is string => typeof entry === 'string');
 }
 
 function readUserProgress(value: unknown): UserOnboardingProgress {
@@ -115,6 +125,14 @@ export function loadUiPrefs(): UiPrefs {
               ]),
             )
           : {},
+      navOrderByUser:
+        parsed?.navOrderByUser && typeof parsed.navOrderByUser === 'object'
+          ? Object.fromEntries(
+              Object.entries(parsed.navOrderByUser)
+                .map(([userId, value]) => [userId, readNavOrder(value)] as const)
+                .filter((entry): entry is readonly [string, string[]] => entry[1] !== null),
+            )
+          : {},
     };
   } catch {
     return { ...DEFAULT_PREFS };
@@ -152,6 +170,22 @@ export function updateOnboardingForUser(
     onboardingByUser: {
       ...prefs.onboardingByUser,
       [userId]: update(onboardingForUser(prefs, userId)),
+    },
+  }));
+}
+
+/** The stored sidebar nav order for a real user (missing → empty = use defaults). */
+export function navOrderForUser(prefs: UiPrefs, userId: string): string[] {
+  return prefs.navOrderByUser[userId] ?? [];
+}
+
+/** Persist a user's sidebar nav order without erasing another UI feature's state. */
+export function updateNavOrderForUser(userId: string, order: string[]): UiPrefs {
+  return updateUiPrefs((prefs) => ({
+    ...prefs,
+    navOrderByUser: {
+      ...prefs.navOrderByUser,
+      [userId]: order,
     },
   }));
 }

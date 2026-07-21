@@ -53,6 +53,22 @@
   byte-for-byte unchanged (no client created). Client-side only; UX gate, not a
   security boundary. `SessionProvider` then `OrgDataProvider` wrap the router in
   `main.tsx`.
+- The nav config (routes, labels, icons, shipped default order) lives in
+  `src/components/navItems.ts` (`NAV`), imported by both `App.tsx` and the
+  reorder editor. Each user can reorder the sidebar (↑/↓) per user PER BROWSER:
+  the order is stored in `uiPrefs` as `navOrderByUser` (device-local
+  `n2hub.ui.v1`, keyed by `realUserId`, so impersonation never overwrites it),
+  parsed defensively (arrays of strings only). `src/utils/navOrder.ts`
+  (`applyNavOrder`/`moveNavPath`, pure + unit-tested) is self-repairing: unknown
+  or duplicate stored paths are dropped and missing defaults appended in default
+  order, so no migration is ever needed. App applies the order BEFORE the gate
+  filter (`canAdmin`, supabase-only Konto), so a stored order can never reveal a
+  gated item. `src/components/NavOrderEditor.tsx` (section „Kolejność menu")
+  mounts on both the Konto page (`/account`, every cloud user) and Ustawienia
+  (`/admin`); it lists the user's VISIBLE items, moves a visible item by swapping
+  with its nearest visible neighbour in the FULL stored order (hidden gated items
+  keep their positions), persists via `updateNavOrderForUser` and fires a
+  `n2hub:nav-order-changed` window event so App re-orders the live sidebar.
 - `src/pages/` owns route-specific screens; `src/components/TaskModal.tsx` owns
   task editing and its allocation grid.
 - `/zgloszenia` („Zgłoszenia”, `src/pages/TicketsPage.tsx`) jest widoczne dla
