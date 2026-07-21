@@ -5484,7 +5484,10 @@ option {
   position: sticky;
   bottom: 0;
   z-index: 5;
-  background: var(--card-bg);
+  /* Treść przewija się POD paskiem — tło musi być w pełni kryjące
+     (--card-bg to półprzezroczysty rgba i prześwitywał). */
+  background: var(--n2-panel);
+  box-shadow: 0 -10px 18px -14px rgba(0, 0, 0, 0.7);
   border-top: 1px solid var(--n2-border);
   padding: var(--n2-space-3) 0;
   margin-top: var(--n2-space-4);

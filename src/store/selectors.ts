@@ -349,9 +349,11 @@ export function dayTotal(
  * A person's day agenda for the dashboard "Zadania na dziś" section. Pure.
  * - `timed`: that person's dated (non-bin) workload entries on `date`, ascending
  *   `startMinutes` (ties by `sortIndex`) — the calendar order IS the priority.
- * - `dateless`: tasks the person is assigned to whose period covers `date` but
- *   which have NO entry for that person that day, excluding done-status tasks
- *   (any status with `isDone`, via `doneStatusIds`), sorted by nearest `endDate` then title.
+ * - `dateless`: tasks the person is assigned to whose deadline (`endDate`) IS
+ *   `date` but which have NO entry for that person that day, excluding
+ *   done-status tasks (any status with `isDone`, via `doneStatusIds`), sorted
+ *   by title. Tasks merely *spanning* `date` stay out — otherwise a multi-day
+ *   task without calendar blocks would show up in the agenda every single day.
  * There is intentionally no priority field — ordering is derived here only.
  */
 export function todayAgendaForPerson(
@@ -372,12 +374,11 @@ export function todayAgendaForPerson(
       (t) =>
         assignedTaskIds.has(t.id) &&
         isPublishedTask(t) && // szkic nie trafia do agendy „na dziś”
-        t.startDate <= date &&
-        date <= t.endDate &&
+        t.endDate === date &&
         !doneIds.has(t.statusId) &&
         !timedTaskIds.has(t.id),
     )
-    .sort((a, b) => a.endDate.localeCompare(b.endDate) || a.title.localeCompare(b.title));
+    .sort((a, b) => a.title.localeCompare(b.title)); // endDate === date dla wszystkich
 
   return { timed, dateless };
 }

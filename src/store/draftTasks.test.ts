@@ -416,8 +416,8 @@ describe('selektory — szkice wykluczone z planowania', () => {
 
     expect(overdueTasksForPerson(s, 'p1', today).map((t) => t.id)).toEqual(['tp']);
     expect(unplannedTasksForPerson(s, 'p1').map((t) => t.id)).toEqual(['tp']);
-    // Zadania pokrywają 2026-06-01..02; agenda „na dziś” dla tej daty.
-    const agenda = todayAgendaForPerson(s, 'p1', '2026-06-01');
+    // Zadania mają deadline 2026-06-02; agenda „na dziś” pokazuje dateless tylko w dniu terminu.
+    const agenda = todayAgendaForPerson(s, 'p1', '2026-06-02');
     expect(agenda.dateless.map((t) => t.id)).toEqual(['tp']);
     // Osoba jest przypisana tylko przez szkic + opublikowane => projekt raz.
     expect(projectsOfPerson(s, 'p1').map((p) => p.id)).toEqual(['proj1']);
