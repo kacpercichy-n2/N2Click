@@ -1,11 +1,16 @@
 // Zgłoszenia: jedno miejsce, w którym zespół składa błędy, usprawnienia i
-// prośby o nowe funkcje. Dwa tryby (segmentowany przełącznik u góry):
-//   * „Zgłoś”     — otwiera modal zgłoszenia (?zgloszenie=new),
-//   * „Zgłoszone” — lista z filtrami, rozwijanym opisem i (dla `tickets.manage`)
-//                   inline zmianą statusu, usuwaniem i eksportem CSV.
+// prośby o nowe funkcje.
 //
-// Zakres widoczności to bramka UX: bez `tickets.manage` widać WYŁĄCZNIE własne
-// zgłoszenia. Prawdziwą granicę pilnuje RLS na `public.tickets`.
+// Bez `tickets.manage` (specjalista, menadżer, handlowiec) strona jest
+// WYŁĄCZNIE skrzynką nadawczą: przycisk otwierający formularz, bez żadnej
+// listy — decyzja 2026-07-21 („każdy dodaje, listę widzi administrator”).
+//
+// Z `tickets.manage` (administrator) — dwa tryby (segmentowany przełącznik):
+//   * „Zgłoś”     — otwiera modal zgłoszenia (?zgloszenie=new),
+//   * „Zgłoszone” — pełna lista z filtrami, rozwijanym opisem, inline zmianą
+//                   statusu, usuwaniem i eksportem CSV.
+//
+// To bramka UX — prawdziwą granicę pilnuje RLS na `public.tickets`.
 import { useMemo, useState } from 'react';
 import { useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
@@ -75,6 +80,33 @@ export function TicketsPage() {
       dispatch({ type: 'DELETE_TICKET', ticketId: ticket.id });
     }
   };
+
+  // Bez `tickets.manage`: sama skrzynka nadawcza — każda rola może zgłosić,
+  // ale listę (także własnych zgłoszeń) obsługuje wyłącznie administrator.
+  if (!canManage) {
+    return (
+      <section className="page">
+        <div className="page-head">
+          <h1>Zgłoszenia</h1>
+          <div className="page-head-actions">
+            <button type="button" className="btn primary" onClick={openNewTicket}>
+              <Plus size={16} aria-hidden /> Nowe zgłoszenie
+            </button>
+          </div>
+        </div>
+        <div className="empty-state">
+          <p className="empty-title">Zgłoś błąd, usprawnienie lub nową funkcję</p>
+          <p className="empty-hint">
+            Formularz otwiera się w oknie nad tą stroną. Wypełnij nazwę i opis — reszta pól ma
+            sensowne wartości domyślne. Zgłoszenie trafia do administratora.
+          </p>
+          <button type="button" className="btn primary" onClick={openNewTicket}>
+            Otwórz formularz
+          </button>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="page">
