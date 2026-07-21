@@ -5694,3 +5694,120 @@ a.toggle-btn {
   color: var(--text-muted);
   white-space: pre-wrap;
 }
+
+/* Dziennik zmian („Co nowego") — slim pasek na Panelu + popout. Pasek reużywa
+   tokenów lawendowych, popout rodziny `.task-modal-*` (patrz ChangelogModal). */
+.changelog-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-3);
+  margin-bottom: var(--n2-space-5);
+  padding: 10px var(--n2-space-4);
+  border: 1px solid rgba(196, 150, 255, 0.35);
+  border-radius: var(--n2-radius-pill);
+  background: linear-gradient(
+    90deg,
+    rgba(196, 150, 255, 0.16),
+    rgba(196, 150, 255, 0.05)
+  );
+}
+.changelog-bar-icon {
+  flex: none;
+  color: var(--n2-lavender);
+}
+.changelog-bar-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--n2-type-sm);
+  color: var(--n2-text-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.changelog-bar-text strong {
+  color: var(--n2-text);
+}
+.changelog-bar-summary {
+  margin-left: var(--n2-space-2);
+  color: var(--n2-text-muted);
+}
+.changelog-bar-btn {
+  flex: none;
+}
+@media (max-width: 640px) {
+  .changelog-bar-summary {
+    display: none;
+  }
+}
+
+.changelog-modal-card {
+  max-width: 760px;
+}
+.changelog-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-6);
+}
+.changelog-entry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-4);
+}
+.changelog-entry + .changelog-entry {
+  padding-top: var(--n2-space-6);
+  border-top: 1px solid var(--n2-border);
+}
+.changelog-entry-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--n2-space-2) var(--n2-space-3);
+}
+.changelog-entry-range {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: var(--n2-radius-pill);
+  background: rgba(196, 150, 255, 0.16);
+  color: var(--n2-lavender);
+  font-weight: 600;
+  font-size: var(--n2-type-sm);
+}
+.changelog-entry-summary {
+  margin: 0;
+  color: var(--n2-text-soft);
+}
+.changelog-areas {
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-5);
+}
+.changelog-area-title {
+  margin: 0 0 var(--n2-space-2);
+  font-size: var(--n2-type-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--n2-text-muted);
+}
+.changelog-area-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-3);
+}
+.changelog-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.changelog-item-feature {
+  font-weight: 600;
+  color: var(--n2-text);
+}
+.changelog-item-desc {
+  color: var(--n2-text-soft);
+  font-size: var(--n2-type-sm);
+  line-height: 1.5;
+}
