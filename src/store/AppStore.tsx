@@ -2232,23 +2232,33 @@ function sameRowValue(a: unknown, b: unknown): boolean {
 }
 
 /**
- * BEZSZWOWE scalenie kolekcji: chmura pozostaje autorytatywna (zbiór i kolejność
- * wierszy pochodzą z `next`), ale wiersz identyczny wartościowo zachowuje SWOJĄ
- * DOTYCHCZASOWĄ REFERENCJĘ, a kolekcja bez żadnej zmiany zwraca dotychczasową
- * TABLICĘ. Bez tego każde odświeżenie z Realtime tworzyło komplet nowych
- * obiektów, unieważniało wszystkie `useMemo`/selektory i przerysowywało
- * kalendarz oraz mapę — źródło migotania.
+ * BEZSZWOWE scalenie kolekcji: chmura pozostaje autorytatywna dla ZBIORU
+ * wierszy (wiersz nieznany chmurze odpada, nowy dochodzi), ale KOLEJNOŚĆ jest
+ * lokalna: wiersz znany obu stronom zostaje na swojej dotychczasowej pozycji,
+ * a genuinie nowe wiersze chmury dochodzą NA KONIEC w kolejności ładunku.
+ * Postgres bez ORDER BY zwraca wiersze w kolejności sterty (każdy UPDATE
+ * przenosi wiersz), więc honorowanie kolejności chmury permutowało tablice przy
+ * każdym odświeżeniu w tle i widoki z tie-breakiem po kolejności tablicy
+ * wizualnie przestawiały elementy. Wiersz identyczny wartościowo zachowuje
+ * SWOJĄ DOTYCHCZASOWĄ REFERENCJĘ, a kolekcja bez żadnej zmiany zwraca
+ * dotychczasową TABLICĘ — hydracja, która niczego nie zmienia, jest wizualnym
+ * no-opem (żaden useMemo/selektor nie traci ważności).
  */
 function reconcileRows<T extends { id: string }>(prev: T[], next: T[]): T[] {
-  const byId = new Map(prev.map((row) => [row.id, row]));
-  let identical = prev.length === next.length;
-  const out = next.map((row, i) => {
-    const local = byId.get(row.id);
-    const kept = local !== undefined && sameRowValue(local, row) ? local : row;
-    if (identical && prev[i] !== kept) identical = false;
-    return kept;
-  });
-  return identical ? prev : out;
+  const cloudById = new Map(next.map((row) => [row.id, row]));
+  const prevIds = new Set(prev.map((row) => row.id));
+  const out: T[] = [];
+  for (const row of prev) {
+    const cloud = cloudById.get(row.id);
+    if (cloud === undefined) continue; // usunięty w chmurze
+    cloudById.delete(row.id); // duplikat id w prev nie wskrzesi wiersza
+    out.push(sameRowValue(row, cloud) ? row : cloud);
+  }
+  for (const row of next) {
+    if (!prevIds.has(row.id)) out.push(row);
+  }
+  if (out.length === prev.length && out.every((row, i) => row === prev[i])) return prev;
+  return out;
 }
 
 /** Ta sama tablica, gdy scalenie nie zmieniło żadnej pozycji ani długości. */
@@ -2259,9 +2269,11 @@ function keepArrayIfSame<T>(prev: T[], next: T[]): T[] {
 
 /**
  * AUTHORITATIVE hydration of the eight mirrored cloud collections: the cloud is
- * the single source of truth, so the payload REPLACES each collection (local
- * rows the cloud does not know are dropped — this is what retires demo/sample
- * planner data on every browser). Runs once per sign-in with an empty push
+ * the single source of truth for MEMBERSHIP and row VALUES (local rows the
+ * cloud does not know are dropped — this is what retires demo/sample planner
+ * data on every browser), while array ORDER stays local for surviving rows
+ * (see reconcileRows — Postgres heap order is unstable and must not permute
+ * the UI on background refreshes). Runs once per sign-in with an empty push
  * queue, so no unsynced local edit can be lost here. When `payload.people` is
  * present, the RLS profile set is applied FIRST (same semantics as
  * MERGE_CLOUD_PEOPLE), so entity validation sees the final team.
@@ -2372,17 +2384,23 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
   }
 
   // Assignments reconciled by (taskId, personId): a pair the local state
-  // already knows keeps its local row id (stable references); a genuinely new
-  // cloud pair gets a fresh uid. Pairs the cloud does not know are DROPPED.
-  const localByPair = new Map(state.assignments.map((a) => [`${a.taskId}|${a.personId}`, a]));
+  // already knows keeps its local row (id AND position — background hydration
+  // must not reorder the UI); a genuinely new cloud pair gets a fresh uid
+  // appended at the end. Pairs the cloud does not know are DROPPED.
+  const payloadPairs = new Set(payload.assignments.map((a) => `${a.taskId}|${a.personId}`));
   const seenPairs = new Set<string>();
   const assignments: TaskAssignment[] = [];
+  for (const a of state.assignments) {
+    const key = `${a.taskId}|${a.personId}`;
+    if (!payloadPairs.has(key) || seenPairs.has(key)) continue;
+    seenPairs.add(key);
+    assignments.push(a);
+  }
   for (const a of payload.assignments) {
     const key = `${a.taskId}|${a.personId}`;
     if (seenPairs.has(key)) continue;
     seenPairs.add(key);
-    const existing = localByPair.get(key);
-    assignments.push(existing ?? { id: uid(), taskId: a.taskId, personId: a.personId });
+    assignments.push({ id: uid(), taskId: a.taskId, personId: a.personId });
   }
 
   // Scalenie zachowujące referencje: wiersz bajtowo identyczny zostaje TYM

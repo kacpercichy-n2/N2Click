@@ -240,6 +240,45 @@ describe('loadPlannerSnapshot', () => {
     expect(result.payload.tasks.find((t) => t.id === TK2)!.orderIndex).toBe(0);
   });
 
+  it('kolejność ładunku jest deterministyczna niezależnie od kolejności wierszy serwera', async () => {
+    // Selecty nie mają ORDER BY (Postgres zwraca kolejność sterty, zmienną po
+    // każdym UPDATE) — snapshot sortuje po stabilnych kluczach, żeby dwa
+    // odczyty tego samego zbioru były identyczne (bez permutacji w UI).
+    const TK2 = uuid('task-two');
+    const CLI2 = uuid('client-two');
+    const projectRow = {
+      id: PR, client_id: null, name: 'P', description: '', status_id: S1, paid: false,
+      start_date: '2026-07-06', end_date: '2026-07-12', department_id: null, service_type_id: null,
+      created_at: '', updated_at: '',
+    };
+    const taskRow = (id: string, createdAt: string) => ({
+      id, project_id: PR, status_id: S1, title: 'T', description: '', start_date: '2026-07-06',
+      end_date: '2026-07-08', estimated_hours: null, priority: 'normal', work_category_id: null,
+      checklist: [], created_at: createdAt, updated_at: createdAt,
+    });
+    const clientRow = (id: string, name: string) => ({ id, name, archived: false });
+    // TK2 „starszy” (wcześniejszy created_at), ale serwer zwraca go RAZ na
+    // początku, RAZ na końcu — wynik musi być ten sam.
+    const seedA = (db: FakeSelectDb) => db
+      .seed('projects', [projectRow])
+      .seed('clients', [clientRow(CLI, 'Beta'), clientRow(CLI2, 'Alfa')])
+      .seed('tasks', [taskRow(TK, '2026-02-01T00:00:00.000Z'), taskRow(TK2, '2026-01-01T00:00:00.000Z')]);
+    const seedB = (db: FakeSelectDb) => db
+      .seed('projects', [projectRow])
+      .seed('clients', [clientRow(CLI2, 'Alfa'), clientRow(CLI, 'Beta')])
+      .seed('tasks', [taskRow(TK2, '2026-01-01T00:00:00.000Z'), taskRow(TK, '2026-02-01T00:00:00.000Z')]);
+
+    const resA = await loadPlannerSnapshot(seedA(new FakeSelectDb()), maps(), localFixture());
+    const resB = await loadPlannerSnapshot(seedB(new FakeSelectDb()), maps(), localFixture());
+    expect(resA.ok && resB.ok).toBe(true);
+    if (!resA.ok || !resB.ok) return;
+    // Zadania chronologicznie (created_at, id), klienci po (nazwa, id).
+    expect(resA.payload.tasks.map((t) => t.id)).toEqual([TK2, TK]);
+    expect(resB.payload.tasks.map((t) => t.id)).toEqual(resA.payload.tasks.map((t) => t.id));
+    expect(resA.payload.clients.map((c) => c.name)).toEqual(['Alfa', 'Beta']);
+    expect(resB.payload.clients.map((c) => c.id)).toEqual(resA.payload.clients.map((c) => c.id));
+  });
+
   it('hydrates is_draft (true => szkic; brak/null/inne => opublikowane)', async () => {
     const TK2 = uuid('task-two');
     const db = new FakeSelectDb()

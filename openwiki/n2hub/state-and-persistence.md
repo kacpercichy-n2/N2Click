@@ -40,8 +40,16 @@
   (~1.2 s) full sync: a SILENT org refetch (`OrgDataProvider.refreshSilently` —
   stale-while-revalidate, state never drops to `loading`, so the mirror queue
   and `active` survive) followed by planner rehydration. While the channel is
-  SUBSCRIBED (`live` in `useCloudSync()`), CloudSyncBanner renders nothing; the
-  manual-refresh hint banner is the fallback when live is down. Guards that
+  SUBSCRIBED (`live` in `useCloudSync()`), CloudSyncBanner renders nothing. A
+  dropped channel (CHANNEL_ERROR/TIMED_OUT/CLOSED — laptop sleep, network
+  change, token refresh) is REBUILT with exponential backoff
+  (`src/utils/liveChannel.ts` reconnectDelayMs: 1 s → 30 s cap; stale-channel
+  events are ignored during rebuild) and every return to SUBSCRIBED schedules
+  one catch-up live sync, so events from the dead window are never silently
+  lost. The manual-refresh hint banner is a LAST-RESORT fallback: it renders
+  only after `live` has been continuously false for ≥30 s
+  (`useSustained` in CloudSyncBanner), so channel blips never flash it or
+  shift the layout. Guards that
   keep this safe: `loadPlannerSnapshot` filters dependents of skipped
   projects/tasks (one orphan must not no-op the whole fail-closed merge), an
   EMPTY cloud people payload fail-closes when local people exist (RLS anomaly
@@ -171,9 +179,15 @@
 - SEAMLESS BACKGROUND REFRESH (Realtime). A `postgres_changes` event is only a
   "something changed" signal: `CloudSyncProvider` debounces bursts (1200 ms) into
   ONE full snapshot + `MERGE_CLOUD_ENTITIES`. Three rules keep it invisible:
-  (a) the merge is REFERENCE-PRESERVING — a value-identical row keeps its object,
-  an unchanged collection keeps its array, and a no-op merge returns the ORIGINAL
-  state reference, so view memoization is not invalidated and nothing remounts;
+  (a) the merge is REFERENCE- and ORDER-PRESERVING — a value-identical row keeps
+  its object, a surviving row keeps its LOCAL array position (cloud is
+  authoritative for membership and values only; new cloud rows append at the
+  end), an unchanged collection keeps its array, and a no-op merge returns the
+  ORIGINAL state reference, so view memoization is not invalidated and nothing
+  remounts or visually reorders — the snapshot selects have no ORDER BY, so
+  `loadPlannerSnapshot` additionally sorts the payload by stable keys
+  (created_at/name/date + id) to keep first hydration and appended-row order
+  deterministic across refetches and browsers;
   (b) a BACKGROUND refresh never sets status `hydrating`, so the
   "Wczytywanie danych z serwera…" banner is reserved for initial hydration,
   manual refresh and retry (error/conflict banners are unaffected);

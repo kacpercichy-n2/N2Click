@@ -671,16 +671,47 @@ describe('MERGE_CLOUD_ENTITIES — bezszwowe odświeżanie (referencje)', () => 
     expect(next.tasks[0].checklist[0].done).toBe(true);
   });
 
-  it('kolejność z chmury jest autorytatywna, ale wiersze zachowują referencje', () => {
+  it('permutacja kolejności z chmury NIE przestawia lokalnej tablicy (heap order Postgresa)', () => {
+    // Selecty snapshotu nie mają ORDER BY — serwer permutuje wiersze po każdym
+    // UPDATE. Wartościowo identyczny ładunek w innej kolejności musi być
+    // pełnym no-opem: ta sama tablica, ta sama referencja stanu.
     const state = mirroredState();
     const payload = mirrorPayload(state);
     payload.tasks = [payload.tasks[1], payload.tasks[0]];
 
     const next = merge(state, payload);
-    expect(next.tasks.map((t) => t.id)).toEqual([T2, T1]);
-    expect(next.tasks[0]).toBe(state.tasks[1]);
-    expect(next.tasks[1]).toBe(state.tasks[0]);
-    expect(next.workload).toBe(state.workload);
+    expect(next.tasks.map((t) => t.id)).toEqual([T1, T2]);
+    expect(next.tasks).toBe(state.tasks);
+    expect(next).toBe(state);
+  });
+
+  it('istniejące wiersze trzymają pozycje, nowe z chmury dochodzą na koniec', () => {
+    const state = mirroredState();
+    const payload = mirrorPayload(state);
+    const t3 = makeTask({ id: 'task-3', projectId: payload.projects[0].id });
+    // Nowy wiersz na POCZĄTKU ładunku (świeży insert bywa pierwszy w stercie).
+    payload.tasks = [t3, payload.tasks[1], payload.tasks[0]];
+
+    const next = merge(state, payload);
+    expect(next.tasks.map((t) => t.id)).toEqual([T1, T2, 'task-3']);
+    expect(next.tasks[0]).toBe(state.tasks[0]);
+    expect(next.tasks[1]).toBe(state.tasks[1]);
+  });
+
+  it('przypisania trzymają lokalną kolejność i id, nowe pary dochodzą na koniec', () => {
+    const state = mirroredState();
+    const payload = mirrorPayload(state);
+    // Permutacja istniejących par + nowa para na początku ładunku.
+    payload.assignments = [
+      { taskId: T2, personId: P2 },
+      ...[...payload.assignments].reverse(),
+    ];
+
+    const next = merge(state, payload);
+    expect(next.assignments.slice(0, state.assignments.length)).toEqual(state.assignments);
+    const appended = next.assignments[next.assignments.length - 1];
+    expect(appended.taskId).toBe(T2);
+    expect(appended.personId).toBe(P2);
   });
 
   it('wiersz usunięty w chmurze zmienia tylko swoją kolekcję', () => {

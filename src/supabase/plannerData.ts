@@ -589,21 +589,36 @@ export async function loadPlannerSnapshot(
     });
   }
 
+  // DETERMINISTYCZNA kolejność ładunku: selecty nie mają ORDER BY, więc
+  // Postgres zwraca wiersze w kolejności sterty (każdy UPDATE przenosi wiersz
+  // fizycznie na koniec) — dwa kolejne snapshoty tego samego zbioru potrafiły
+  // się różnić samą permutacją. Sortujemy po stabilnych kluczach, żeby pierwsza
+  // hydracja i dokładanie NOWYCH wierszy (reconcileRows appenduje w kolejności
+  // ładunku) były identyczne między odświeżeniami i przeglądarkami.
   return {
     ok: true,
     payload: {
-      clients,
-      projects,
-      milestones,
-      tasks,
-      assignments,
-      workload,
-      comments,
-      activity,
-      tickets,
+      clients: sortStable(clients, (c) => c.name),
+      projects: sortStable(projects, (p) => p.createdAt),
+      milestones: sortStable(milestones, (m) => m.date),
+      tasks: sortStable(tasks, (t) => t.createdAt),
+      assignments: [...assignments].sort((a, b) =>
+        cmp(`${a.taskId}|${a.personId}`, `${b.taskId}|${b.personId}`),
+      ),
+      workload: sortStable(workload, () => ''),
+      comments: sortStable(comments, (c) => c.createdAt),
+      activity: sortStable(activity, (e) => e.createdAt),
+      tickets: sortStable(tickets, (t) => t.createdAt),
     },
     diagnostics,
   };
+}
+
+const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+/** Sort po (klucz, id) — całkowity porządek niezależny od kolejności z serwera. */
+function sortStable<T extends { id: string }>(rows: T[], key: (row: T) => string): T[] {
+  return [...rows].sort((a, b) => cmp(key(a), key(b)) || cmp(a.id, b.id));
 }
 
 // ---- Flaga wycofania zapisów lokalnych (app_settings) ------------------------

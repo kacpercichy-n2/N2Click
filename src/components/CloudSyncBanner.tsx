@@ -4,12 +4,37 @@
 // Priorytet: błąd hydracji > błąd przejściowy zapisu > porzucone (brak
 // uprawnień) > gotowe z pustą kolejką (odśwież). Wszystkie napisy po polsku;
 // nigdy nie pokazujemy surowego komunikatu SDK.
+import { useEffect, useState } from 'react';
 import { useCloudSync } from '../supabase/CloudSyncProvider';
 import { STALE_HINT_MSG, SYNC_ERROR_MSG, SYNC_PERMISSION_MSG } from '../supabase/cloudMirror';
+
+/** Karencja braku kanału Realtime, zanim pokażemy baner „dane nieaktualne”. */
+const STALE_GRACE_MS = 30_000;
+
+/**
+ * True dopiero, gdy warunek utrzymuje się NIEPRZERWANIE przez `ms`. Każdy
+ * powrót warunku do false zeruje licznik. Chwilowe zerwania kanału Realtime
+ * (uśpienie, zmiana sieci — przebudowują się same z backoffem) nie mogą migać
+ * banerem i przesuwać layoutu nad kalendarzem.
+ */
+function useSustained(condition: boolean, ms: number): boolean {
+  const [sustained, setSustained] = useState(false);
+  useEffect(() => {
+    if (!condition) {
+      setSustained(false);
+      return;
+    }
+    const timer = setTimeout(() => setSustained(true), ms);
+    return () => clearTimeout(timer);
+  }, [condition, ms]);
+  return sustained;
+}
 
 export function CloudSyncBanner() {
   const { status, pendingCount, error, live, dropped, retry, refresh, dismissDropped } =
     useCloudSync();
+  // Hook przed wczesnymi returnami (stała lista hooków między renderami).
+  const staleForLong = useSustained(status === 'ready' && !live, STALE_GRACE_MS);
 
   // Błąd hydracji: dane lokalne pozostają w pełni używalne.
   if (status === 'error') {
@@ -78,9 +103,10 @@ export function CloudSyncBanner() {
     return null;
   }
 
-  // Gotowe, ale bez kanału Realtime (offline / stara publikacja): oferuj
-  // ręczne odświeżenie (last-write-wins).
-  if (status === 'ready' && pendingCount === 0) {
+  // Gotowe, ale kanał Realtime leży NIEPRZERWANIE od ≥30 s (offline / stara
+  // publikacja) — dopiero wtedy oferuj ręczne odświeżenie (last-write-wins).
+  // Krótkie zerwania łata resubscribe + dociągnięcie w CloudSyncProvider.
+  if (status === 'ready' && pendingCount === 0 && staleForLong) {
     return (
       <div className="persistence-banner persistence-banner--info" role="status">
         <div className="persistence-banner-text">

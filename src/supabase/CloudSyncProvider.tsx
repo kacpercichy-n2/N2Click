@@ -20,6 +20,7 @@ import {
 import { usePersistence, useStore } from '../store/AppStore';
 import { setCloudMirrorHealthy } from '../store/persistGate';
 import { anyLiveSyncHold } from '../utils/liveSyncGate';
+import { reconnectDelayMs } from '../utils/liveChannel';
 import { writeCloudRetirementMarker } from '../store/storage';
 import { useAuth } from '../auth/SessionProvider';
 import { useOrgData } from './OrgDataProvider';
@@ -295,28 +296,77 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   // Subskrypcja Realtime: jedno źródło zdarzeń postgres_changes dla wszystkich
   // opublikowanych tabel (publikacja supabase_realtime; RLS obowiązuje).
   // Zdarzenie => zaplanuj pełną synchronizację (debounce zlewa serie zmian).
+  // Kanał POTRAFI paść (uśpienie laptopa, zmiana sieci, odświeżenie tokena):
+  // na CHANNEL_ERROR/TIMED_OUT/CLOSED przebudowujemy go z wykładniczym
+  // backoffem, a po każdym POWROCIE do SUBSCRIBED dociągamy pełną
+  // synchronizację — zdarzenia z okresu martwego kanału nie mają prawa
+  // przepaść po cichu (wcześniej jedynym „ratunkiem” był ręczny baner).
   useEffect(() => {
     if (!active || !userId) {
       setLive(false);
       return;
     }
     const client = getSupabaseClient();
-    const channel = client
-      .channel(`planner-live-${userId}`)
-      .on('postgres_changes', { event: '*', schema: 'public' }, () => {
-        liveSyncRef.current();
-      })
-      .subscribe((subscribeStatus: string) => {
-        if (!mountedRef.current) return;
-        setLive(subscribeStatus === 'SUBSCRIBED');
+    let disposed = false;
+    let current: ReturnType<typeof client.channel> | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let attempt = 0;
+    let hadSubscription = false;
+
+    const scheduleReconnect = (): void => {
+      if (disposed || reconnectTimer !== null) return;
+      const delay = reconnectDelayMs(attempt);
+      attempt += 1;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        const stale = current;
+        current = null;
+        if (stale) void client.removeChannel(stale);
+        connect();
+      }, delay);
+    };
+
+    const connect = (): void => {
+      if (disposed) return;
+      const channel = client
+        .channel(`planner-live-${userId}`)
+        .on('postgres_changes', { event: '*', schema: 'public' }, () => {
+          liveSyncRef.current();
+        });
+      current = channel;
+      channel.subscribe((subscribeStatus: string) => {
+        // Zdarzenia porzuconego kanału (w trakcie przebudowy) ignorujemy —
+        // spóźniony CLOSED starego kanału nie może zerwać świeżego, zdrowego.
+        if (disposed || !mountedRef.current || current !== channel) return;
+        if (subscribeStatus === 'SUBSCRIBED') {
+          attempt = 0;
+          setLive(true);
+          // Powrót po przerwie: dociągnij zmiany z martwego okna kanału.
+          if (hadSubscription) liveSyncRef.current();
+          hadSubscription = true;
+          return;
+        }
+        if (
+          subscribeStatus === 'CHANNEL_ERROR' ||
+          subscribeStatus === 'TIMED_OUT' ||
+          subscribeStatus === 'CLOSED'
+        ) {
+          setLive(false);
+          scheduleReconnect();
+        }
       });
+    };
+
+    connect();
     return () => {
+      disposed = true;
       setLive(false);
+      if (reconnectTimer !== null) clearTimeout(reconnectTimer);
       if (liveSyncTimerRef.current !== null) {
         clearTimeout(liveSyncTimerRef.current);
         liveSyncTimerRef.current = null;
       }
-      void client.removeChannel(channel);
+      if (current) void client.removeChannel(current);
     };
   }, [active, userId]);
 
