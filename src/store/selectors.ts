@@ -856,10 +856,13 @@ export function searchAll(
 
   const tasks = state.tasks.filter(
     (t) =>
-      normalize(t.title).includes(q) ||
-      normalize(t.description).includes(q) ||
-      matchedStatusIds.has(t.statusId) ||
-      inPeriod(t.startDate, t.endDate),
+      // Szkic jest widoczny wyłącznie w widoku projektu — nie w wynikach
+      // wyszukiwania (ta sama lista wykluczeń, co TasksPage/kanban/agenda).
+      isPublishedTask(t) &&
+      (normalize(t.title).includes(q) ||
+        normalize(t.description).includes(q) ||
+        matchedStatusIds.has(t.statusId) ||
+        inPeriod(t.startDate, t.endDate)),
   );
 
   const clients = state.clients.filter((c) => normalize(c.name).includes(q));

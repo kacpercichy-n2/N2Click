@@ -254,6 +254,19 @@ describe('searchAll strict date query', () => {
   });
 });
 
+describe('searchAll draft exclusion', () => {
+  it('never returns draft tasks — a szkic is visible only inside its project', () => {
+    const state = makeState({
+      tasks: [
+        makeTask({ id: 'pub', title: 'Kampania zimowa' }),
+        makeTask({ id: 'draft', title: 'Kampania letnia', isDraft: true }),
+      ],
+    });
+    const found = searchAll(state, 'kampania').tasks.map((t) => t.id);
+    expect(found).toEqual(['pub']);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // growAllowanceHours (PKG-20260708-budget-store)
 // ---------------------------------------------------------------------------

@@ -91,6 +91,10 @@ function TicketModalShell({ ticketParam, onClose }: ShellProps) {
   // — prawdziwą pilnuje RLS na `public.tickets`.
   const visible = existing !== undefined && (canManage || existing.reporterId === me?.id);
   const notFound = !isNew && !visible;
+  // Zgłaszający edytuje własne zgłoszenie tylko, dopóki jest „nowe" — po podjęciu
+  // triage'u edycja należy do administratora. Lustro polityki RLS `tickets_update`:
+  // bez tej bramki lokalny zapis „przechodzi", a chmura po cichu go odrzuca i cofa.
+  const readOnly = existing !== undefined && !canManage && existing.status !== 'nowe';
 
   const dirtyRef = useRef(false);
   // Rejestracja strażnika nawigacji jest SYNCHRONICZNA (nie w efekcie): zapis
@@ -143,7 +147,9 @@ function TicketModalShell({ ticketParam, onClose }: ShellProps) {
     ? 'Nie znaleziono zgłoszenia'
     : isNew
       ? 'Nowe zgłoszenie'
-      : 'Edytuj zgłoszenie';
+      : readOnly
+        ? 'Podgląd zgłoszenia'
+        : 'Edytuj zgłoszenie';
 
   return (
     <>
@@ -199,6 +205,7 @@ function TicketModalShell({ ticketParam, onClose }: ShellProps) {
               <TicketEditor
                 key={ticketParam}
                 existing={existing}
+                readOnly={readOnly}
                 onDirtyChange={handleDirtyChange}
                 onSaved={closeDeliberately}
                 onCancel={requestClose}
@@ -213,6 +220,8 @@ function TicketModalShell({ ticketParam, onClose }: ShellProps) {
 
 interface EditorProps {
   existing: Ticket | undefined;
+  /** Zgłoszenie po triage'u (status ≠ „nowe") bez `tickets.manage`: sam podgląd. */
+  readOnly: boolean;
   onDirtyChange: (dirty: boolean) => void;
   onSaved: () => void;
   onCancel: () => void;
@@ -234,7 +243,7 @@ interface FieldErrors {
   reporter?: string;
 }
 
-function TicketEditor({ existing, onDirtyChange, onSaved, onCancel }: EditorProps) {
+function TicketEditor({ existing, readOnly, onDirtyChange, onSaved, onCancel }: EditorProps) {
   const { state, dispatch } = useStore();
   const me = currentUserSel(state);
   const [draft, setDraft] = useState<TicketDraft>(() => draftOf(existing, me?.id ?? ''));
@@ -243,6 +252,7 @@ function TicketEditor({ existing, onDirtyChange, onSaved, onCancel }: EditorProp
   // Pola są w pełni kontrolowane; każda zmiana ustawia dirty i KASUJE błąd tego
   // pola (walidacja jest ręczna, przy wysyłce — nie krzyczy w trakcie pisania).
   const patch = (values: Partial<TicketDraft>, clear?: keyof FieldErrors) => {
+    if (readOnly) return;
     setDraft((d) => ({ ...d, ...values }));
     onDirtyChange(true);
     if (clear) setErrors((e) => (e[clear] === undefined ? e : { ...e, [clear]: undefined }));
@@ -250,6 +260,7 @@ function TicketEditor({ existing, onDirtyChange, onSaved, onCancel }: EditorProp
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (readOnly) return;
     const next: FieldErrors = {};
     if (draft.title.trim() === '') next.title = 'Nazwa zgłoszenia jest wymagana.';
     if (draft.description.trim() === '') next.description = 'Opis jest wymagany.';
@@ -280,6 +291,7 @@ function TicketEditor({ existing, onDirtyChange, onSaved, onCancel }: EditorProp
           onChange={(e) => patch({ title: e.target.value }, 'title')}
           placeholder="np. Kalendarz nie zapisuje przesuniętego bloku"
           maxLength={300}
+          disabled={readOnly}
           aria-invalid={errors.title !== undefined}
         />
         {errors.title && (
@@ -297,6 +309,7 @@ function TicketEditor({ existing, onDirtyChange, onSaved, onCancel }: EditorProp
           onChange={(e) => patch({ area: e.target.value })}
           placeholder="np. Kalendarz, Projekty, Logowanie"
           maxLength={300}
+          disabled={readOnly}
         />
       </div>
 
@@ -308,6 +321,7 @@ function TicketEditor({ existing, onDirtyChange, onSaved, onCancel }: EditorProp
           onChange={(e) => patch({ description: e.target.value }, 'description')}
           placeholder="Co się dzieje, czego oczekujesz, jak to powtórzyć?"
           rows={6}
+          disabled={readOnly}
           aria-invalid={errors.description !== undefined}
         />
         {errors.description && (
@@ -323,6 +337,7 @@ function TicketEditor({ existing, onDirtyChange, onSaved, onCancel }: EditorProp
           <select
             id="ticket-kind"
             value={draft.kind}
+            disabled={readOnly}
             onChange={(e) => patch({ kind: e.target.value as TicketDraft['kind'] })}
           >
             {TICKET_KINDS.map((kind) => (
@@ -337,6 +352,7 @@ function TicketEditor({ existing, onDirtyChange, onSaved, onCancel }: EditorProp
           <select
             id="ticket-priority"
             value={draft.priority}
+            disabled={readOnly}
             onChange={(e) => patch({ priority: e.target.value as TicketDraft['priority'] })}
           >
             {TICKET_PRIORITIES.map((priority) => (
@@ -358,12 +374,20 @@ function TicketEditor({ existing, onDirtyChange, onSaved, onCancel }: EditorProp
         </p>
       )}
 
+      {readOnly && (
+        <p className="field-hint">
+          Zgłoszenie zostało podjęte — edycją zajmuje się administrator.
+        </p>
+      )}
+
       <div className="form-actions">
-        <button type="submit" className="btn primary">
-          {existing ? 'Zapisz zmiany' : 'Wyślij zgłoszenie'}
-        </button>
+        {!readOnly && (
+          <button type="submit" className="btn primary">
+            {existing ? 'Zapisz zmiany' : 'Wyślij zgłoszenie'}
+          </button>
+        )}
         <button type="button" className="btn ghost" onClick={onCancel}>
-          Anuluj
+          {readOnly ? 'Zamknij' : 'Anuluj'}
         </button>
       </div>
     </form>

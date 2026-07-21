@@ -255,6 +255,7 @@ function LocalTeamHierarchy({
  */
 function CloudTeamHierarchy({ view }: { view: TeamView }) {
   const { state, reload } = useOrgData();
+  const { state: appState } = useStore();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [supError, setSupError] = useState<string | null>(null);
 
@@ -279,16 +280,31 @@ function CloudTeamHierarchy({ view }: { view: TeamView }) {
   // (RLS) profilami chmury. Konwersja CloudProfile → Person tylko na potrzeby
   // awatara i linku profilu; edycja przełożonego pozostaje w widoku listy.
   if (view === 'structure') {
+    // Profil chmurowy może odpowiadać osobie sprzed prowizjonowania (dopasowanie
+    // po e-mailu ZACHOWUJE lokalne id — patrz applyCloudPeople), a strona profilu
+    // /people/<id> zna wyłącznie lokalne id. Tłumaczymy więc spójnie id węzła
+    // i przełożonego na lokalne id po e-mailu, z id profilu jako fallbackiem —
+    // inaczej klik w węzeł otwiera „Nie znaleziono osoby".
+    const localIdByEmail = new Map<string, string>();
+    for (const person of appState.people) {
+      const email = person.email.trim().toLowerCase();
+      if (email !== '' && !localIdByEmail.has(email)) localIdByEmail.set(email, person.id);
+    }
+    const emailById = new Map(profiles.map((p) => [p.id, p.email]));
+    const nodeId = (profileId: string): string => {
+      const email = (emailById.get(profileId) ?? '').trim().toLowerCase();
+      return (email !== '' ? localIdByEmail.get(email) : undefined) ?? profileId;
+    };
     const treePeople = profiles.map((p) =>
       personForTreeNode({
-        id: p.id,
+        id: nodeId(p.id),
         firstName: p.firstName,
         lastName: p.lastName,
         name: cloudProfileName(p),
         email: p.email,
         avatar: p.avatar,
         role: p.roleTitle,
-        supervisorId: p.supervisorId ?? '',
+        supervisorId: p.supervisorId ? nodeId(p.supervisorId) : '',
       }),
     );
     return <TeamStructureTree people={treePeople} />;

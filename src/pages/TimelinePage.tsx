@@ -292,9 +292,11 @@ export function TimelinePage() {
     for (const g of groups) {
       const projects: (typeof result)[number]['projects'] = [];
       for (const p of g.projects) {
-        const all = tasksOfProject(state, p.id).sort((a, b) =>
-          a.startDate.localeCompare(b.startDate),
-        );
+        // Szkice nie trafiają na oś czasu (jak w widoku osób poniżej) — dopiero
+        // po publikacji.
+        const all = tasksOfProject(state, p.id)
+          .filter((t) => t.isDraft !== true)
+          .sort((a, b) => a.startDate.localeCompare(b.startDate));
         const tasks =
           ownerFilter.size === 0
             ? all
