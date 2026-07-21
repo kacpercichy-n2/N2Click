@@ -223,7 +223,7 @@ export function KanbanPage() {
       {statuses.length === 0 && board.archived.length === 0 ? (
         <div className="empty-state">
           <p className="empty-title">Brak statusów</p>
-          <p className="empty-hint">Administrator może utworzyć statusy lejka w panelu Administracja.</p>
+          <p className="empty-hint">Administrator może utworzyć statusy lejka w panelu Ustawienia.</p>
         </div>
       ) : (
         <div className="kanban-board" data-tour="kanban.board">

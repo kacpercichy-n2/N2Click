@@ -95,3 +95,11 @@ repair. Ordering must not touch completion semantics or calendar placement.
   factories+literals across 23 test files. Also updated profileEditPolicy.test.ts
   editable-field assertions (birthDate is self/manager/all-editable per prod).
 - tsc clean; full suite PASS 1086/1086. No production files touched.
+
+## PKG-20260721-nav-reorder
+- Reordered NAV, inlined Konto (supabase-only), renamed Administracja→Ustawienia
+  (route /admin), moved /zgloszenia + help into a `.sidebar-footer` row; new
+  shared `TeamTabs` folds Struktura under Zespół (/team gates intact).
+- Files: App.tsx, TeamTabs.tsx (new), People/Team/Admin/Projects/Kanban pages,
+  catalog.ts, styles.css, wiki. tsc clean; full suite PASS 1104; build clean.
+- Browser checks (ui-keyboard, onboarding) deferred — playwright not installed.

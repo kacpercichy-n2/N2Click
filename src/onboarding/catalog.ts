@@ -300,7 +300,7 @@ export const TUTORIAL_MODULES: TutorialModule[] = [
   },
   {
     id: 'admin',
-    title: 'Administracja',
+    title: 'Ustawienia',
     summary: 'Statusy lejka i wspólne słowniki.',
     minutes: '3 min',
     roles: ['administrator'],

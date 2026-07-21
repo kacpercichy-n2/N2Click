@@ -30,7 +30,7 @@ export function AdminPage() {
     return (
       <section className="page">
         <div className="page-head">
-          <h1>Administracja</h1>
+          <h1>Ustawienia</h1>
         </div>
         <div className="empty-state">
           <p className="empty-title">Tylko dla adminów</p>
@@ -73,7 +73,7 @@ export function AdminPage() {
   return (
     <section className="page">
       <div className="page-head">
-        <h1>Administracja</h1>
+        <h1>Ustawienia</h1>
       </div>
 
       <div className="editor-section" data-tour="admin.statuses">

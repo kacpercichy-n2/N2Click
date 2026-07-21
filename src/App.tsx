@@ -71,7 +71,6 @@ import {
   ChevronsRight,
   CircleHelp,
   KeyRound,
-  Network,
   Inbox,
 } from './components/icons';
 import type { LucideIcon } from './components/icons';
@@ -86,18 +85,18 @@ import { OnboardingRoot } from './onboarding/OnboardingRoot';
 const NAV: Array<[string, string, LucideIcon]> = [
   ['/dashboard', 'Panel', LayoutDashboard],
   ['/my-work', 'Moja praca', ClipboardList],
-  ['/projects', 'Projekty', FolderKanban],
   ['/clients', 'Klienci', Building2],
-  ['/kanban', 'Kanban', Columns3],
-  ['/timeline', 'Oś czasu', GanttChart],
+  ['/projects', 'Projekty', FolderKanban],
   ['/tasks', 'Zadania', ListChecks],
+  ['/kanban', 'Kanban', Columns3],
   ['/calendar', 'Kalendarz', CalendarDays],
-  ['/people', 'Zespół', Users],
-  ['/team', 'Struktura zespołu', Network],
+  ['/timeline', 'Oś czasu', GanttChart],
   ['/workload', 'Obciążenie', Gauge],
-  // Zgłoszenia widzi KAŻDY (każda rola może zgłosić) — bez bramki jak /admin.
-  ['/zgloszenia', 'Zgłoszenia', Inbox],
-  ['/admin', 'Administracja', Settings],
+  ['/people', 'Zespół', Users],
+  // Konto istnieje tylko dla realnego konta Supabase (tryb lokalny nie zna
+  // tego pojęcia) — filtr niżej ukrywa je w trybie lokalnym.
+  ['/account', 'Konto', KeyRound],
+  ['/admin', 'Ustawienia', Settings],
 ];
 
 const MOBILE_NAV_QUERY = '(max-width: 760px)';
@@ -367,11 +366,22 @@ export function App() {
         </div>
         <GlobalSearch />
         <nav className="app-nav" data-tour="shell.nav">
-          {NAV.filter(([to]) => (to !== '/admin' || canAdmin) && (to !== '/team' || canTeam)).map(([to, label, Icon]) => (
+          {NAV.filter(
+            ([to]) =>
+              (to !== '/admin' || canAdmin) &&
+              (to !== '/account' || auth.mode === 'supabase'),
+          ).map(([to, label, Icon]) => (
             <NavLink
               key={to}
               to={to}
-              className={navClass}
+              // „Zespół" pozostaje aktywny także na obszarze Struktura zespołu
+              // (/team i /people/:id), do którego prowadzą zakładki TeamTabs.
+              className={
+                to === '/people'
+                  ? ({ isActive }) =>
+                      navClass({ isActive: isActive || location.pathname.startsWith('/team') })
+                  : navClass
+              }
               title={label}
               onClick={() => setMenuOpen(false)}
             >
@@ -379,29 +389,30 @@ export function App() {
               <span className="nav-label">{label}</span>
             </NavLink>
           ))}
-          {/* Account panel (self-service password change) exists only for a real
-              Supabase account; local mode has no such concept. */}
-          {auth.mode === 'supabase' && (
-            <NavLink
-              to="/account"
-              className={navClass}
-              title="Konto"
-              onClick={() => setMenuOpen(false)}
-            >
-              <KeyRound size={18} aria-hidden className="nav-icon" />
-              <span className="nav-label">Konto</span>
-            </NavLink>
-          )}
         </nav>
-        <button
-          type="button"
-          className="sidebar-help"
-          data-tour="shell.help"
-          onClick={() => window.dispatchEvent(new Event('n2hub:open-tutorials'))}
-        >
-          <CircleHelp size={18} aria-hidden />
-          <span className="nav-label">Pomoc i samouczki</span>
-        </button>
+        {/* Stopka paska: przypięte Zgłoszenia (widoczne dla każdej roli, poza
+            przewijaną listą nawigacji) obok okrągłego przycisku pomocy. */}
+        <div className="sidebar-footer">
+          <NavLink
+            to="/zgloszenia"
+            className={({ isActive }) => (isActive ? 'sidebar-tickets active' : 'sidebar-tickets')}
+            title="Zgłoszenia"
+            onClick={() => setMenuOpen(false)}
+          >
+            <Inbox size={18} aria-hidden className="nav-icon" />
+            <span className="nav-label">Zgłoszenia</span>
+          </NavLink>
+          <button
+            type="button"
+            className="sidebar-help"
+            data-tour="shell.help"
+            aria-label="Pomoc i samouczki"
+            title="Pomoc i samouczki"
+            onClick={() => window.dispatchEvent(new Event('n2hub:open-tutorials'))}
+          >
+            <CircleHelp size={18} aria-hidden />
+          </button>
+        </div>
         {state.people.length > 0 && (
           <div className="acting-as-wrap">
             {/* Collapsed avatar shortcut (CSS-shown only >1180px + collapsed). */}

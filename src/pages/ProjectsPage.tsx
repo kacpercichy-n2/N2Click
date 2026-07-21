@@ -401,7 +401,7 @@ export function ProjectsPage() {
       {state.clients.length === 0 && state.projects.length === 0 && (
         <p className="field-hint">
           Wskazówka: klientami i pozostałą strukturą możesz też zarządzać w panelu{' '}
-          <Link to="/admin">Administracja</Link>.
+          <Link to="/admin">Ustawienia</Link>.
         </p>
       )}
     </section>
