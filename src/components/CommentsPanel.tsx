@@ -16,6 +16,9 @@ import { formatTimestamp } from '../utils/dates';
 interface Props {
   entityType: CommentEntityType;
   entityId: string;
+  /** Wysokość pola nowego komentarza (liczba wierszy). Domyślnie 2; karta
+   *  projektu przekazuje więcej, żeby dyskusja była wygodniejsza. */
+  inputRows?: number;
 }
 
 /**
@@ -62,7 +65,7 @@ function MentionBody({ body, people }: { body: string; people: Person[] }) {
   return <>{parts}</>;
 }
 
-export function CommentsPanel({ entityType, entityId }: Props) {
+export function CommentsPanel({ entityType, entityId, inputRows = 2 }: Props) {
   const { state, dispatch } = useStore();
   const [tab, setTab] = useState<'comments' | 'activity'>('comments');
   const [body, setBody] = useState('');
@@ -151,7 +154,7 @@ export function CommentsPanel({ entityType, entityId }: Props) {
             <textarea
               value={body}
               onChange={(e) => setBody(e.target.value)}
-              rows={2}
+              rows={inputRows}
               placeholder={
                 me
                   ? `Komentujesz jako ${me.name}… użyj @imię, żeby kogoś oznaczyć`

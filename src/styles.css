@@ -930,6 +930,12 @@ textarea {
   margin-bottom: var(--n2-space-4);
   box-shadow: var(--shadow-sm);
 }
+/* Subtelne wyróżnienie sekcji „Dyskusja" na karcie projektu, spójne z tokenami
+   akcentu (lawenda). */
+.editor-section-discussion {
+  border-color: var(--n2-border-strong);
+  border-left: 3px solid var(--n2-lavender);
+}
 .field {
   display: flex;
   flex-direction: column;
@@ -2656,12 +2662,17 @@ option {
   margin-bottom: 22px;
 }
 .client-group-name {
-  font-size: var(--n2-type-xs);
-  font-family: var(--n2-font-mono);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  margin: 0 0 10px;
+  display: inline-block;
+  width: fit-content;
+  font-size: var(--n2-type-lg);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text);
+  background: rgba(196, 150, 255, 0.12);
+  border: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-sm);
+  padding: var(--n2-space-2) var(--n2-space-4);
+  margin: 0 0 12px;
 }
 .project-create {
   background: var(--card-bg);

@@ -83,6 +83,14 @@ IconButton in TaskModal/EventModal/TicketModal/ChangelogModal. TaskEditor sectio
 reordered (osoby+godziny after Szczegóły) — pure JSX move. `npx tsc` + `npm test`
 PASS (1327). Deferred: ProjectDetailPage add-btn, OnboardingRoot close (out of scope).
 
+## 251 projects detail layout
+
+ProjectsPage: `.client-group-name` → visible blob (tokens), create-hint drops
+"kamienie milowe". ProjectDetailPage: opis rows 6, milestone UI + dead code
+removed (dropped isValidDateStr/milestonesOfProject imports — no other uses),
+Zadania moved after Szczegóły, Dyskusja accent + `inputRows={4}` (new
+CommentsPanel prop, default 2). npm test PASS (1327), npm run build PASS.
+
 ## Open questions
 
 None blocking.

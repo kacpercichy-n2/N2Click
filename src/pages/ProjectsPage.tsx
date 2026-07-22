@@ -330,8 +330,8 @@ export function ProjectsPage() {
             </button>
           </div>
           <p className="field-hint">
-            Status, płatność, dział, typ usługi, kamienie milowe i opis edytujesz
-            później na karcie projektu.
+            Status, płatność, dział, typ usługi i opis edytujesz później na karcie
+            projektu.
           </p>
         </form>
       )}

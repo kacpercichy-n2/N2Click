@@ -1,6 +1,6 @@
 // Project detail card: editable fields (client, status, paid coin, dates,
-// department, service type, description), milestones, dokumenty handlowe
-// (odnośniki), the project's tasks, and the chat/comments + activity section.
+// department, service type, description), dokumenty handlowe (odnośniki), the
+// project's tasks, and the chat/comments + activity section.
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useStore, usePersistence } from '../store/AppStore';
@@ -19,7 +19,6 @@ import {
   assigneesOfTask,
   departmentsOfProject,
   getStatus,
-  milestonesOfProject,
   projectPlannedTotal,
   taskPlannedTotal,
   taskPlanningStatus,
@@ -33,7 +32,7 @@ import { CommentsPanel } from '../components/CommentsPanel';
 import { SaveStatus } from '../components/SaveStatus';
 import { useOpenTask } from '../components/TaskModal';
 import { ChevronRight } from '../components/icons';
-import { formatShortWithWeekday, todayStr, isValidDateStr, periodError, PERIOD_ERROR_LABELS } from '../utils/dates';
+import { formatShortWithWeekday, todayStr, periodError, PERIOD_ERROR_LABELS } from '../utils/dates';
 import { formatDuration } from '../utils/time';
 import { useSaveStatus } from '../utils/useSaveStatus';
 import { useAutoSave } from '../utils/useAutoSave';
@@ -91,11 +90,6 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   const [departmentId] = useState(project?.departmentId ?? '');
   const [serviceTypeId, setServiceTypeId] = useState(project?.serviceTypeId ?? '');
   const [error, setError] = useState('');
-
-  // ---- Milestone form ----
-  const [msName, setMsName] = useState('');
-  const [msDate, setMsDate] = useState(todayStr());
-  const [msError, setMsError] = useState('');
 
   // ---- Formularz dokumentów (jeden formularz obsługuje dodawanie i edycję) ----
   // `docEditId === null` => dodawanie nowego odnośnika.
@@ -222,7 +216,6 @@ function ProjectDetail({ projectId }: { projectId: string }) {
     dispatch({ type: 'PUBLISH_PROJECT_DRAFTS', projectId: project.id });
   };
   const derivedDepartments = departmentsOfProject(state, project.id);
-  const milestones = milestonesOfProject(state, project.id);
   const statuses = activeStatuses(state);
   const currentStatus = getStatus(state, project.statusId);
   // Archived current status must remain pickable so the select isn't lying.
@@ -244,24 +237,6 @@ function ProjectDetail({ projectId }: { projectId: string }) {
       bypassNavGuardOnce();
       navigate('/projects');
     }
-  };
-
-  const addMilestone = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!msName.trim()) return;
-    if (!isValidDateStr(msDate)) {
-      setMsError('Podaj prawidłową datę kamienia milowego.');
-      return;
-    }
-    dispatch({
-      type: 'SAVE_MILESTONE',
-      milestoneId: null,
-      projectId: project.id,
-      name: msName,
-      date: msDate,
-    });
-    setMsName('');
-    setMsError('');
   };
 
   const resetDocForm = () => {
@@ -455,7 +430,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
           <label htmlFor="pd-desc">Opis</label>
           <textarea
             id="pd-desc"
-            rows={3}
+            rows={6}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             disabled={!canManage}
@@ -479,161 +454,6 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               Zapisz teraz
             </button>
           </div>
-        )}
-      </div>
-
-      <div className="editor-section">
-        <h2>Kamienie milowe</h2>
-        {milestones.length === 0 ? (
-          <p className="field-hint">Brak kamieni milowych.</p>
-        ) : (
-          <ul className="milestone-list">
-            {milestones.map((m) => (
-              <li key={m.id} className="milestone-row">
-                <span className="milestone-diamond" aria-hidden>
-                  ◆
-                </span>
-                <span className="milestone-name">{m.name}</span>
-                <input
-                  type="date"
-                  value={m.date}
-                  onChange={(e) => {
-                    // Ignore invalid/cleared dates — the controlled input snaps
-                    // back to the stored value, so the milestone keeps its date.
-                    if (!isValidDateStr(e.target.value)) return;
-                    dispatch({
-                      type: 'MOVE_MILESTONE',
-                      milestoneId: m.id,
-                      date: e.target.value,
-                    });
-                  }}
-                  aria-label={`Data dla ${m.name}`}
-                  disabled={!canManage}
-                  title={disabledTitle}
-                />
-                {canManage && (
-                  <button
-                    type="button"
-                    className="btn danger-ghost"
-                    onClick={() => dispatch({ type: 'DELETE_MILESTONE', milestoneId: m.id })}
-                  >
-                    Usuń
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-        {canManage && (
-          <form className="milestone-form" onSubmit={addMilestone}>
-            <input
-              value={msName}
-              onChange={(e) => setMsName(e.target.value)}
-              placeholder="Nazwa kamienia milowego"
-              aria-label="Nazwa kamienia milowego"
-            />
-            <input
-              type="date"
-              value={msDate}
-              onChange={(e) => setMsDate(e.target.value)}
-              aria-label="Data kamienia milowego"
-            />
-            <button type="submit" className="btn soft" disabled={!msName.trim()}>
-              Dodaj kamień milowy
-            </button>
-            {msError && <p className="field-error">{msError}</p>}
-          </form>
-        )}
-      </div>
-
-      <div className="editor-section">
-        <h2>Dokumenty</h2>
-        {/* Wyłącznie ODNOŚNIKI (oferta, wycena, brief, link) — aplikacja nie
-            przechowuje plików. Odnośnik otwiera się w nowej karcie. */}
-        {project.documents.length === 0 ? (
-          <p className="field-hint">Brak dokumentów.</p>
-        ) : (
-          <ul className="document-list">
-            {project.documents.map((d) => {
-              // Obrona przy RENDEROWANIU, nie tylko na wejściu: projekty są
-              // danymi współdzielonymi, więc wiersz mógł przyjść z chmury albo
-              // ze starszego zapisu. Adres o niedozwolonym schemacie nie trafia
-              // do `href` — pokazujemy sam tekst.
-              const href = normalizeProjectDocumentUrl(d.url);
-              return (
-                <li key={d.id} className="document-row">
-                  <span className="project-badge project-badge-document">
-                    {PROJECT_DOCUMENT_KIND_LABELS[d.kind]}
-                  </span>
-                  {href === null ? (
-                    <span className="document-link document-link-blocked" title={d.url}>
-                      {d.label || d.url} (niedozwolony adres)
-                    </span>
-                  ) : (
-                    <a
-                      className="document-link"
-                      href={href}
-                      target="_blank"
-                      rel="noopener"
-                      title={href}
-                    >
-                      {d.label || d.url}
-                    </a>
-                  )}
-                  {canManage && (
-                    <span className="document-row-actions">
-                      <button type="button" className="btn ghost" onClick={() => startDocEdit(d)}>
-                        Edytuj
-                      </button>
-                      <button
-                        type="button"
-                        className="btn danger-ghost"
-                        onClick={() => removeDocument(d)}
-                      >
-                        Usuń
-                      </button>
-                    </span>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-        {canManage && (
-          <form className="document-form" onSubmit={submitDocument}>
-            <select
-              value={docKind}
-              onChange={(e) => setDocKind(e.target.value as ProjectDocumentKind)}
-              aria-label="Rodzaj dokumentu"
-            >
-              {PROJECT_DOCUMENT_KINDS.map((k) => (
-                <option key={k} value={k}>
-                  {PROJECT_DOCUMENT_KIND_LABELS[k]}
-                </option>
-              ))}
-            </select>
-            <input
-              value={docLabel}
-              onChange={(e) => setDocLabel(e.target.value)}
-              placeholder="Nazwa (opcjonalnie)"
-              aria-label="Nazwa dokumentu"
-            />
-            <input
-              value={docUrl}
-              onChange={(e) => setDocUrl(e.target.value)}
-              placeholder="Adres (URL) *"
-              aria-label="Adres dokumentu"
-            />
-            <button type="submit" className="btn soft" disabled={!docUrl.trim()}>
-              {docEditId === null ? 'Dodaj dokument' : 'Zapisz dokument'}
-            </button>
-            {docEditId !== null && (
-              <button type="button" className="btn ghost" onClick={resetDocForm}>
-                Anuluj
-              </button>
-            )}
-            {docError && <p className="field-error">{docError}</p>}
-          </form>
         )}
       </div>
 
@@ -739,8 +559,99 @@ function ProjectDetail({ projectId }: { projectId: string }) {
       </div>
 
       <div className="editor-section">
+        <h2>Dokumenty</h2>
+        {/* Wyłącznie ODNOŚNIKI (oferta, wycena, brief, link) — aplikacja nie
+            przechowuje plików. Odnośnik otwiera się w nowej karcie. */}
+        {project.documents.length === 0 ? (
+          <p className="field-hint">Brak dokumentów.</p>
+        ) : (
+          <ul className="document-list">
+            {project.documents.map((d) => {
+              // Obrona przy RENDEROWANIU, nie tylko na wejściu: projekty są
+              // danymi współdzielonymi, więc wiersz mógł przyjść z chmury albo
+              // ze starszego zapisu. Adres o niedozwolonym schemacie nie trafia
+              // do `href` — pokazujemy sam tekst.
+              const href = normalizeProjectDocumentUrl(d.url);
+              return (
+                <li key={d.id} className="document-row">
+                  <span className="project-badge project-badge-document">
+                    {PROJECT_DOCUMENT_KIND_LABELS[d.kind]}
+                  </span>
+                  {href === null ? (
+                    <span className="document-link document-link-blocked" title={d.url}>
+                      {d.label || d.url} (niedozwolony adres)
+                    </span>
+                  ) : (
+                    <a
+                      className="document-link"
+                      href={href}
+                      target="_blank"
+                      rel="noopener"
+                      title={href}
+                    >
+                      {d.label || d.url}
+                    </a>
+                  )}
+                  {canManage && (
+                    <span className="document-row-actions">
+                      <button type="button" className="btn ghost" onClick={() => startDocEdit(d)}>
+                        Edytuj
+                      </button>
+                      <button
+                        type="button"
+                        className="btn danger-ghost"
+                        onClick={() => removeDocument(d)}
+                      >
+                        Usuń
+                      </button>
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {canManage && (
+          <form className="document-form" onSubmit={submitDocument}>
+            <select
+              value={docKind}
+              onChange={(e) => setDocKind(e.target.value as ProjectDocumentKind)}
+              aria-label="Rodzaj dokumentu"
+            >
+              {PROJECT_DOCUMENT_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {PROJECT_DOCUMENT_KIND_LABELS[k]}
+                </option>
+              ))}
+            </select>
+            <input
+              value={docLabel}
+              onChange={(e) => setDocLabel(e.target.value)}
+              placeholder="Nazwa (opcjonalnie)"
+              aria-label="Nazwa dokumentu"
+            />
+            <input
+              value={docUrl}
+              onChange={(e) => setDocUrl(e.target.value)}
+              placeholder="Adres (URL) *"
+              aria-label="Adres dokumentu"
+            />
+            <button type="submit" className="btn soft" disabled={!docUrl.trim()}>
+              {docEditId === null ? 'Dodaj dokument' : 'Zapisz dokument'}
+            </button>
+            {docEditId !== null && (
+              <button type="button" className="btn ghost" onClick={resetDocForm}>
+                Anuluj
+              </button>
+            )}
+            {docError && <p className="field-error">{docError}</p>}
+          </form>
+        )}
+      </div>
+
+      <div className="editor-section editor-section-discussion">
         <h2>Dyskusja</h2>
-        <CommentsPanel entityType="project" entityId={project.id} />
+        <CommentsPanel entityType="project" entityId={project.id} inputRows={4} />
       </div>
     </section>
   );
