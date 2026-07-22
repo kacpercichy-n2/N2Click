@@ -130,6 +130,7 @@ describe('konwencja plików migracji', () => {
       '20260721220000_workload_entry_done.sql',
       '20260722120000_project_company.sql',
       '20260722121000_full_access_for_all_profiles.sql',
+      '20260722130000_client_contacts.sql',
     ]);
   });
 

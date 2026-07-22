@@ -9,11 +9,7 @@ import { useStore } from '../store/AppStore';
 import { verifyPassword } from '../utils/password';
 import { Avatar } from '../components/Avatar';
 import { markOnboardingLogin } from '../utils/uiPrefs';
-import type { AccessRole } from '../types';
-
-export function landingPathForRole(role: AccessRole | undefined): '/my-work' | '/dashboard' {
-  return role === 'ograniczone' ? '/my-work' : '/dashboard';
-}
+import { HOME_PATH } from './homeRoute';
 
 export function LoginPage() {
   const { state, dispatch } = useStore();
@@ -24,10 +20,10 @@ export function LoginPage() {
   const [busy, setBusy] = useState(false);
 
   const login = (personId: string) => {
-    const person = state.people.find((candidate) => candidate.id === personId);
+    // Jeden wspólny home dla każdej roli — „Panel" (patrz homeRoute.ts).
     markOnboardingLogin(personId);
     dispatch({ type: 'SET_CURRENT_USER', personId });
-    navigate(landingPathForRole(person?.accessRole));
+    navigate(HOME_PATH);
   };
 
   // Row click: passwordless people log straight in; protected people open the

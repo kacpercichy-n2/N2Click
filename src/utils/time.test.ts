@@ -1,6 +1,7 @@
 // Unit tests for pure time-of-day math (src/utils/time.ts).
 import { describe, expect, it } from 'vitest';
 import {
+  dropStartFromAnchor,
   findFreeStart,
   formatDuration,
   formatMinutes,
@@ -37,6 +38,51 @@ describe('slotStartFromOffset', () => {
     expect(slotStartFromOffset(100, -84)).toBe(0);
     expect(slotStartFromOffset(Number.NaN, HOUR_PX)).toBe(0);
     expect(slotStartFromOffset(100, Number.POSITIVE_INFINITY)).toBe(0);
+  });
+});
+
+describe('dropStartFromAnchor', () => {
+  const dur = (hours: number) => hours * 60;
+
+  it('maps an on-grid card-top anchor exactly', () => {
+    expect(dropStartFromAnchor(0, HOUR_PX, dur(1))).toBe(0);
+    expect(dropStartFromAnchor(8 * HOUR_PX, HOUR_PX, dur(1))).toBe(480); // 08:00
+  });
+
+  it('rounds magnetically to the NEAREST 15-minute slot (21px = one quarter)', () => {
+    // Just below the midpoint stays on the current slot, just above jumps to the next.
+    expect(dropStartFromAnchor(8 * HOUR_PX + 9, HOUR_PX, dur(1))).toBe(480); // 08:00
+    expect(dropStartFromAnchor(8 * HOUR_PX + 12, HOUR_PX, dur(1))).toBe(495); // 08:15
+  });
+
+  it('anchors on the card top, so a grab offset is already folded into the anchor', () => {
+    // Cursor sits 30px below the card top; the caller passes anchor = cursorY - grabY.
+    // A cursor at 08:00+30px with a 30px grab yields an 08:00 anchor → 08:00 start.
+    expect(dropStartFromAnchor(8 * HOUR_PX, HOUR_PX, dur(2))).toBe(480);
+  });
+
+  it('clamps at day end so the whole duration still fits', () => {
+    // Anchor at/past 24:00 with a 2h block clamps to 22:00 (1440 - 120).
+    expect(dropStartFromAnchor(24 * HOUR_PX, HOUR_PX, dur(2))).toBe(1320);
+    expect(dropStartFromAnchor(999 * HOUR_PX, HOUR_PX, dur(2))).toBe(1320);
+  });
+
+  it('clamps a negative anchor to 0', () => {
+    expect(dropStartFromAnchor(-50, HOUR_PX, dur(1))).toBe(0);
+  });
+
+  it('falls back to 0 for non-finite or non-positive geometry/duration', () => {
+    expect(dropStartFromAnchor(100, 0, dur(1))).toBe(0);
+    expect(dropStartFromAnchor(100, -HOUR_PX, dur(1))).toBe(0);
+    expect(dropStartFromAnchor(Number.NaN, HOUR_PX, dur(1))).toBe(0);
+    expect(dropStartFromAnchor(100, Number.POSITIVE_INFINITY, dur(1))).toBe(0);
+    expect(dropStartFromAnchor(100, HOUR_PX, Number.NaN)).toBe(0);
+  });
+
+  it('returns an on-grid start even for an off-grid duration', () => {
+    const start = dropStartFromAnchor(8 * HOUR_PX + 4, HOUR_PX, 100); // 100 min is off the 15-grid
+    expect(start % 15).toBe(0);
+    expect(start).toBe(480);
   });
 });
 

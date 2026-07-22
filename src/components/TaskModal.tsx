@@ -23,6 +23,8 @@ import {
   rangeAvailabilityForPerson,
 } from '../store/selectors';
 import { PlanningBadge } from './PlanningBadge';
+import { IconButton } from './IconButton';
+import { X } from './icons';
 import { CommentsPanel } from './CommentsPanel';
 import { AllocationGrid, allocKey, type AllocMap } from './AllocationGrid';
 import { SaveStatus } from './SaveStatus';
@@ -284,14 +286,12 @@ function TaskModalShell({
                   Usuń
                 </button>
               )}
-              <button
-                type="button"
+              <IconButton
                 className="task-modal-close"
+                icon={<X size={18} aria-hidden />}
                 onClick={requestClose}
-                aria-label="Zamknij"
-              >
-                ×
-              </button>
+                label="Zamknij"
+              />
             </div>
           </div>
           <div className="task-modal-body">
@@ -544,6 +544,10 @@ function TaskEditor({
   // Dostępność każdej przypisanej osoby w okresie zadania — CZYSTO INFORMACYJNA
   // (nigdy nie blokuje zapisu). `bookedHours` liczy istniejący workload INNYCH
   // zadań (szkic nie ma własnego), więc panel pokazuje realne obłożenie.
+  // Dependency narrowed from the whole `state` to only the slices
+  // `rangeAvailabilityForPerson` actually reads (people → workdays/capacity,
+  // workload → booked hours), so unrelated store changes don't recompute it.
+  // Result is byte-identical; `state` is still passed to the pure selector.
   const availabilityByPerson = useMemo(() => {
     const map = new Map<string, ReturnType<typeof rangeAvailabilityForPerson>>();
     if (!periodValid) return map;
@@ -552,7 +556,8 @@ function TaskEditor({
       map.set(id, rangeAvailabilityForPerson(state, id, days));
     }
     return map;
-  }, [state, assigneeIds, startDate, endDate, periodValid]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.people, state.workload, assigneeIds, startDate, endDate, periodValid]);
 
   const outOfRangeCount = useMemo(() => {
     let n = 0;
@@ -593,7 +598,10 @@ function TaskEditor({
 
   // ---- Handlers ----
 
-  const setCell = (personId: string, date: string, hours: number) => {
+  // Stable handlers (useCallback) so the memoized AllocationGrid — which runs
+  // per-cell availability/overload scans — is not re-rendered/rescanned when the
+  // user types in an unrelated editor field.
+  const setCell = useCallback((personId: string, date: string, hours: number) => {
     // Snap to the 0.25 grid the store persists on. The grid cell input is
     // controlled directly by this numeric map (no separate raw-string field to
     // hold in-flight keystrokes), so snapping here — the setter that writes the
@@ -608,30 +616,36 @@ function TaskEditor({
       else delete next[key];
       return next;
     });
-  };
+  }, []);
 
-  const fillWeekdays = (personId: string) => {
-    setAllocations((prev) => {
-      const next = { ...prev };
-      for (const d of eachDayInclusive(startDate, endDate)) {
-        // Fill the person's own workdays with their daily availability
-        // (capacity on a workday, 0 otherwise) instead of hardcoded Mon–Fri/8h.
-        const hours = availableHoursOnDate(state, personId, d);
-        if (hours > 0) next[allocKey(personId, d)] = hours;
-      }
-      return next;
-    });
-  };
+  const fillWeekdays = useCallback(
+    (personId: string) => {
+      setAllocations((prev) => {
+        const next = { ...prev };
+        for (const d of eachDayInclusive(startDate, endDate)) {
+          // Fill the person's own workdays with their daily availability
+          // (capacity on a workday, 0 otherwise) instead of hardcoded Mon–Fri/8h.
+          const hours = availableHoursOnDate(state, personId, d);
+          if (hours > 0) next[allocKey(personId, d)] = hours;
+        }
+        return next;
+      });
+    },
+    [state, startDate, endDate],
+  );
 
-  const clearPerson = (personId: string) => {
-    setAllocations((prev) => {
-      const next = { ...prev };
-      for (const d of eachDayInclusive(startDate, endDate)) {
-        delete next[allocKey(personId, d)];
-      }
-      return next;
-    });
-  };
+  const clearPerson = useCallback(
+    (personId: string) => {
+      setAllocations((prev) => {
+        const next = { ...prev };
+        for (const d of eachDayInclusive(startDate, endDate)) {
+          delete next[allocKey(personId, d)];
+        }
+        return next;
+      });
+    },
+    [startDate, endDate],
+  );
 
   const toggleAssignee = (personId: string) => {
     const isAssigned = assigneeIds.includes(personId);
@@ -1063,6 +1077,212 @@ function TaskEditor({
         </div>
       </div>
 
+      {/* c) Assignees */}
+      <div className="editor-section">
+        <h2>Przypisane osoby</h2>
+        {state.people.length === 0 ? (
+          <p className="field-hint">
+            Nie ma jeszcze osób. <Link to="/people">Dodaj osoby</Link>, aby przypisać pracę.
+          </p>
+        ) : (
+          <div className="assignee-picker">
+            {state.people.map((p) => {
+              const checked = assigneeIds.includes(p.id);
+              return (
+                <label
+                  key={p.id}
+                  className={checked ? 'assignee-chip checked' : 'assignee-chip'}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleAssignee(p.id)}
+                    disabled={readOnly}
+                    title={roTitle}
+                  />
+                  <span
+                    className="person-dot"
+                    style={{ background: personColor(p.id) }}
+                    aria-hidden
+                  />
+                  {p.name}
+                </label>
+              );
+            })}
+          </div>
+        )}
+        {assignedPeople.length > 0 && (
+          <div className="sold-hours">
+            <p className="field-hint">
+              {isDraft
+                ? 'Edytujesz godziny każdej osoby na tym szkicu (sprzedane). Zapisują się ze szkicem, a po publikacji trafią do zasobnika osoby. Szacunek zadania to ich suma — wylicza się sam.'
+                : 'Edytujesz godziny każdej osoby na tym zadaniu (sprzedane). Szacunek zadania to ich suma — wylicza się sam, nie ma osobnego pola. Część niezaplanowana w kalendarzu trafia automatycznie do zasobnika osoby.'}
+            </p>
+            {assignedPeople.map((p) => {
+              const sold = soldByPerson.get(p.id) ?? 0;
+              const dated = datedByPerson.get(p.id) ?? 0;
+              const bin = Math.max(0, snapHours(sold - dated));
+              const clamped = dated > sold + 1e-9;
+              return (
+                <div key={p.id} className="sold-hours-row">
+                  <span
+                    className="person-dot"
+                    style={{ background: personColor(p.id) }}
+                    aria-hidden
+                  />
+                  <span className="sold-hours-name">{p.name}</span>
+                  <input
+                    type="number"
+                    className="sold-hours-input"
+                    min={0}
+                    step={0.25}
+                    value={soldRawByPerson[p.id] ?? ''}
+                    onChange={(e) =>
+                      setSoldRawByPerson((prev) => ({ ...prev, [p.id]: e.target.value }))
+                    }
+                    placeholder="0"
+                    aria-label={`Godziny dla ${p.name}`}
+                    disabled={readOnly}
+                    title={roTitle}
+                  />
+                  {isDraft ? (
+                    <span className="sold-hours-meta muted">
+                      po publikacji do zasobnika: {formatDuration(sold)}
+                    </span>
+                  ) : (
+                    <span className="sold-hours-meta muted">
+                      w kalendarzu {formatDuration(dated)} • zasobnik {formatDuration(bin)}
+                    </span>
+                  )}
+                  {clamped && (
+                    <span className="field-error sold-hours-warn">
+                      w kalendarzu więcej niż godziny osoby
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+            <div className="sold-hours-total">
+              Szacunek zadania (suma godzin osób):{' '}
+              <strong>{formatDuration(soldTotal)}</strong>{' '}
+              <span className="muted">— wyliczany</span>
+            </div>
+            {/* Panel dostępności (informacyjny) — dostępne vs zajęte w okresie
+                zadania, z podświetleniem przeciążonych dni. Nie blokuje zapisu. */}
+            {periodValid && (
+              <div className="availability-panel">
+                {assignedPeople.map((p) => {
+                  const avail = availabilityByPerson.get(p.id);
+                  if (!avail) return null;
+                  const overbooked = avail.overbookedDates.length > 0;
+                  return (
+                    <div key={p.id} className="availability-row">
+                      <span
+                        className="person-dot"
+                        style={{ background: personColor(p.id) }}
+                        aria-hidden
+                      />
+                      <span className="availability-name">{p.name}</span>
+                      <span className="availability-meta muted">
+                        Dostępność w okresie: dostępne {formatDuration(avail.availableHours)} /
+                        zajęte {formatDuration(avail.bookedHours)}
+                      </span>
+                      {overbooked && (
+                        <span className="field-error sold-hours-warn">
+                          przeciążenie: {avail.overbookedDates.length} dn.
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+        {isDraft ? (
+          <p className="field-hint task-draft-hint">
+            <strong>Szkic.</strong> Godziny osób zapisują się ze szkicem i po
+            publikacji trafią do zasobnika. Zadanie pozostaje szkicem, dopóki go
+            nie opublikujesz.
+          </p>
+        ) : (
+          <>
+            {/* Podsumowanie planowania stoi tuż pod godzinami osób, bo porównuje
+                dokładnie te liczby: co jest sprzedane vs co leży w kalendarzu. */}
+            <div className="estimate-compare">
+              <span>
+                w kalendarzu{' '}
+                <strong className={overBudget ? 'over-budget' : undefined}>
+                  {formatDuration(plannedTotalAll)}
+                </strong>
+                {binTotal > 0 && (
+                  <span className="muted"> (+ {formatDuration(binTotal)} w zasobniku)</span>
+                )}
+              </span>
+              <span className="muted">vs</span>
+              <span>
+                {normalizedEstimate != null ? (
+                  <>
+                    szacunek <strong>{formatDuration(normalizedEstimate)}</strong>
+                  </>
+                ) : (
+                  <span className="muted">brak szacunku</span>
+                )}
+              </span>
+              <PlanningBadge
+                status={planningStatusForTotals(normalizedEstimate, plannedTotalAll, binTotal)}
+              />
+            </div>
+            {legacyEstimate != null && Math.abs(legacyEstimate - soldTotal) > 1e-9 && (
+              <p className="field-hint">
+                Poprzedni ręczny szacunek: {formatDuration(legacyEstimate)} — po zapisie
+                szacunkiem stanie się suma godzin osób.
+              </p>
+            )}
+            {overBudget && (
+              <p className="estimate-over">
+                ⚠ W kalendarzu zaplanowano {formatDuration(plannedTotalAll - soldTotal)} ponad godziny
+                przypisane osobom. Zwiększ godziny osób lub ogranicz siatkę.
+              </p>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* d) Daily allocation grid. Szkic nie planuje godzin — siatka pojawia się
+          dopiero po publikacji zadania w projekcie. */}
+      {!isDraft && (
+      <div className="editor-section">
+        <h2>Dzienny przydział godzin</h2>
+        {!periodValid ? (
+          <p className="field-hint">Ustaw prawidłowy okres, aby planować godziny.</p>
+        ) : assignedPeople.length === 0 ? (
+          <p className="field-hint">Przypisz co najmniej jedną osobę, aby planować godziny.</p>
+        ) : (
+          <>
+            {outOfRangeCount > 0 && (
+              <p className="field-notice">
+                Przy zapisie zostanie usunięta liczba wpisów poza nowym okresem: {outOfRangeCount}.
+              </p>
+            )}
+            <AllocationGrid
+              state={state}
+              currentTaskId={existing ? existing.id : null}
+              startDate={startDate}
+              endDate={endDate}
+              people={assignedPeople}
+              allocations={allocations}
+              blockCounts={multiBlockCounts}
+              onChange={setCell}
+              onFillWeekdays={fillWeekdays}
+              onClearPerson={clearPerson}
+              readOnly={readOnly}
+            />
+          </>
+        )}
+      </div>
+      )}
+
       {/* a2) Checklist */}
       <div className="editor-section">
         <h2>Checklista</h2>
@@ -1346,178 +1566,6 @@ function TaskEditor({
         )}
       </div>
 
-      {/* c) Assignees */}
-      <div className="editor-section">
-        <h2>Przypisane osoby</h2>
-        {state.people.length === 0 ? (
-          <p className="field-hint">
-            Nie ma jeszcze osób. <Link to="/people">Dodaj osoby</Link>, aby przypisać pracę.
-          </p>
-        ) : (
-          <div className="assignee-picker">
-            {state.people.map((p) => {
-              const checked = assigneeIds.includes(p.id);
-              return (
-                <label
-                  key={p.id}
-                  className={checked ? 'assignee-chip checked' : 'assignee-chip'}
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => toggleAssignee(p.id)}
-                    disabled={readOnly}
-                    title={roTitle}
-                  />
-                  <span
-                    className="person-dot"
-                    style={{ background: personColor(p.id) }}
-                    aria-hidden
-                  />
-                  {p.name}
-                </label>
-              );
-            })}
-          </div>
-        )}
-        {assignedPeople.length > 0 && (
-          <div className="sold-hours">
-            <p className="field-hint">
-              {isDraft
-                ? 'Edytujesz godziny każdej osoby na tym szkicu (sprzedane). Zapisują się ze szkicem, a po publikacji trafią do zasobnika osoby. Szacunek zadania to ich suma — wylicza się sam.'
-                : 'Edytujesz godziny każdej osoby na tym zadaniu (sprzedane). Szacunek zadania to ich suma — wylicza się sam, nie ma osobnego pola. Część niezaplanowana w kalendarzu trafia automatycznie do zasobnika osoby.'}
-            </p>
-            {assignedPeople.map((p) => {
-              const sold = soldByPerson.get(p.id) ?? 0;
-              const dated = datedByPerson.get(p.id) ?? 0;
-              const bin = Math.max(0, snapHours(sold - dated));
-              const clamped = dated > sold + 1e-9;
-              return (
-                <div key={p.id} className="sold-hours-row">
-                  <span
-                    className="person-dot"
-                    style={{ background: personColor(p.id) }}
-                    aria-hidden
-                  />
-                  <span className="sold-hours-name">{p.name}</span>
-                  <input
-                    type="number"
-                    className="sold-hours-input"
-                    min={0}
-                    step={0.25}
-                    value={soldRawByPerson[p.id] ?? ''}
-                    onChange={(e) =>
-                      setSoldRawByPerson((prev) => ({ ...prev, [p.id]: e.target.value }))
-                    }
-                    placeholder="0"
-                    aria-label={`Godziny dla ${p.name}`}
-                    disabled={readOnly}
-                    title={roTitle}
-                  />
-                  {isDraft ? (
-                    <span className="sold-hours-meta muted">
-                      po publikacji do zasobnika: {formatDuration(sold)}
-                    </span>
-                  ) : (
-                    <span className="sold-hours-meta muted">
-                      w kalendarzu {formatDuration(dated)} • zasobnik {formatDuration(bin)}
-                    </span>
-                  )}
-                  {clamped && (
-                    <span className="field-error sold-hours-warn">
-                      w kalendarzu więcej niż godziny osoby
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-            <div className="sold-hours-total">
-              Szacunek zadania (suma godzin osób):{' '}
-              <strong>{formatDuration(soldTotal)}</strong>{' '}
-              <span className="muted">— wyliczany</span>
-            </div>
-            {/* Panel dostępności (informacyjny) — dostępne vs zajęte w okresie
-                zadania, z podświetleniem przeciążonych dni. Nie blokuje zapisu. */}
-            {periodValid && (
-              <div className="availability-panel">
-                {assignedPeople.map((p) => {
-                  const avail = availabilityByPerson.get(p.id);
-                  if (!avail) return null;
-                  const overbooked = avail.overbookedDates.length > 0;
-                  return (
-                    <div key={p.id} className="availability-row">
-                      <span
-                        className="person-dot"
-                        style={{ background: personColor(p.id) }}
-                        aria-hidden
-                      />
-                      <span className="availability-name">{p.name}</span>
-                      <span className="availability-meta muted">
-                        Dostępność w okresie: dostępne {formatDuration(avail.availableHours)} /
-                        zajęte {formatDuration(avail.bookedHours)}
-                      </span>
-                      {overbooked && (
-                        <span className="field-error sold-hours-warn">
-                          przeciążenie: {avail.overbookedDates.length} dn.
-                        </span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-        {isDraft ? (
-          <p className="field-hint task-draft-hint">
-            <strong>Szkic.</strong> Godziny osób zapisują się ze szkicem i po
-            publikacji trafią do zasobnika. Zadanie pozostaje szkicem, dopóki go
-            nie opublikujesz.
-          </p>
-        ) : (
-          <>
-            {/* Podsumowanie planowania stoi tuż pod godzinami osób, bo porównuje
-                dokładnie te liczby: co jest sprzedane vs co leży w kalendarzu. */}
-            <div className="estimate-compare">
-              <span>
-                w kalendarzu{' '}
-                <strong className={overBudget ? 'over-budget' : undefined}>
-                  {formatDuration(plannedTotalAll)}
-                </strong>
-                {binTotal > 0 && (
-                  <span className="muted"> (+ {formatDuration(binTotal)} w zasobniku)</span>
-                )}
-              </span>
-              <span className="muted">vs</span>
-              <span>
-                {normalizedEstimate != null ? (
-                  <>
-                    szacunek <strong>{formatDuration(normalizedEstimate)}</strong>
-                  </>
-                ) : (
-                  <span className="muted">brak szacunku</span>
-                )}
-              </span>
-              <PlanningBadge
-                status={planningStatusForTotals(normalizedEstimate, plannedTotalAll, binTotal)}
-              />
-            </div>
-            {legacyEstimate != null && Math.abs(legacyEstimate - soldTotal) > 1e-9 && (
-              <p className="field-hint">
-                Poprzedni ręczny szacunek: {formatDuration(legacyEstimate)} — po zapisie
-                szacunkiem stanie się suma godzin osób.
-              </p>
-            )}
-            {overBudget && (
-              <p className="estimate-over">
-                ⚠ W kalendarzu zaplanowano {formatDuration(plannedTotalAll - soldTotal)} ponad godziny
-                przypisane osobom. Zwiększ godziny osób lub ogranicz siatkę.
-              </p>
-            )}
-          </>
-        )}
-      </div>
-
       {/* c2) Bin (zasobnik) — wyliczany z godzin osób, nie edytowany osobno.
           Szkic nie planuje godzin, więc sekcja pojawia się dopiero po publikacji. */}
       {!isDraft && (
@@ -1561,40 +1609,6 @@ function TaskEditor({
               Zasobnik = godziny osoby minus godziny w kalendarzu. Bloki bez
               terminu przeciągniesz na siatkę w widoku tygodnia kalendarza.
             </p>
-          </>
-        )}
-      </div>
-      )}
-
-      {/* d) Daily allocation grid. Szkic nie planuje godzin — siatka pojawia się
-          dopiero po publikacji zadania w projekcie. */}
-      {!isDraft && (
-      <div className="editor-section">
-        <h2>Dzienny przydział godzin</h2>
-        {!periodValid ? (
-          <p className="field-hint">Ustaw prawidłowy okres, aby planować godziny.</p>
-        ) : assignedPeople.length === 0 ? (
-          <p className="field-hint">Przypisz co najmniej jedną osobę, aby planować godziny.</p>
-        ) : (
-          <>
-            {outOfRangeCount > 0 && (
-              <p className="field-notice">
-                Przy zapisie zostanie usunięta liczba wpisów poza nowym okresem: {outOfRangeCount}.
-              </p>
-            )}
-            <AllocationGrid
-              state={state}
-              currentTaskId={existing ? existing.id : null}
-              startDate={startDate}
-              endDate={endDate}
-              people={assignedPeople}
-              allocations={allocations}
-              blockCounts={multiBlockCounts}
-              onChange={setCell}
-              onFillWeekdays={fillWeekdays}
-              onClearPerson={clearPerson}
-              readOnly={readOnly}
-            />
           </>
         )}
       </div>

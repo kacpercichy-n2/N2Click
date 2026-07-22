@@ -30,7 +30,7 @@ import type {
 import { isValidDateStr, periodError, MAX_TASK_PERIOD_DAYS } from '../utils/dates';
 import { normalizeRecurrence } from '../utils/recurrence';
 import { normalizeProjectDocumentUrl } from '../utils/projectDocuments';
-import { canonicalEventRecurrence } from '../store/commandValidation';
+import { canonicalEventRecurrence, sanitizeClientContacts } from '../store/commandValidation';
 import {
   DEFAULT_TICKET_KIND,
   DEFAULT_TICKET_PRIORITY,
@@ -339,7 +339,7 @@ export async function loadPlannerSnapshot(
     ticketsRes,
     eventsRes,
   ] = await Promise.all([
-    db.select('clients', 'id, name, archived, contact_name, contact_email, contact_phone, notes'),
+    db.select('clients', 'id, name, archived, contact_name, contact_email, contact_phone, notes, contacts'),
     db.select(
       'projects',
       'id, client_id, name, description, status_id, paid, start_date, end_date, department_id, service_type_id, company_id, documents, created_at, updated_at',
@@ -392,16 +392,21 @@ export async function loadPlannerSnapshot(
   const workCategoryOf = makeReverse(maps.workCategories);
   const personOf = makeReverse(maps.people, maps.cloudProfileIds);
 
-  // Klienci ----
-  const clients: Client[] = clientsRes.rows.map((row) => ({
-    id: str(row.id),
-    name: str(row.name),
-    archived: boolVal(row.archived),
-    contactName: str(row.contact_name),
-    contactEmail: str(row.contact_email),
-    contactPhone: str(row.contact_phone),
-    notes: str(row.notes),
-  }));
+  // Klienci ---- (`contacts` sanityzowane do formy kanonicznej: klucz obecny
+  // wyłącznie gdy jest ≥1 poprawna dodatkowa osoba; []/null/zniekształcone => brak).
+  const clients: Client[] = clientsRes.rows.map((row) => {
+    const contacts = sanitizeClientContacts(row.contacts);
+    return {
+      id: str(row.id),
+      name: str(row.name),
+      archived: boolVal(row.archived),
+      contactName: str(row.contact_name),
+      contactEmail: str(row.contact_email),
+      contactPhone: str(row.contact_phone),
+      notes: str(row.notes),
+      ...(contacts ? { contacts } : {}),
+    };
+  });
 
   // Projekty ---- (id/departmentId/clientId dosłownie; słowniki przez reverse).
   const projects: Project[] = [];

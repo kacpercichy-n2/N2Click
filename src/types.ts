@@ -6,6 +6,20 @@
 
 export type DateStr = string; // 'yyyy-MM-dd'
 
+/**
+ * Jedna DODATKOWA osoba kontaktowa klienta. Główna osoba zostaje w
+ * `contactName`/`contactEmail`/`contactPhone` klienta — `contacts` trzyma
+ * WYŁĄCZNIE dodatkowe osoby (brak klucza / [] = brak dodatkowych). Dla telefonu
+ * i e-maila `'' = brak`. OPCJONALNE i ADDYTYWNE (`DATA_VERSION` zostaje 7).
+ */
+export interface ClientContact {
+  id: string;
+  firstName: string; // wymagane (niepuste po trim) na zapisie
+  lastName: string; // wymagane (niepuste po trim) na zapisie
+  phone: string; // '' = brak
+  email: string; // '' = brak
+}
+
 export interface Client {
   id: string;
   name: string; // required
@@ -15,6 +29,12 @@ export interface Client {
   contactEmail?: string;
   contactPhone?: string;
   notes?: string;
+  // WYŁĄCZNIE dodatkowe osoby kontaktowe; główna osoba zostaje w
+  // contactName/contactEmail/contactPhone. FORMA KANONICZNA: brak klucza gdy
+  // pusto (nigdy []), egzekwowana na trzech granicach — reduktor,
+  // `repairClients` (storage) i hydracja chmury. OPCJONALNE i ADDYTYWNE
+  // (`DATA_VERSION` zostaje 7): legacy klient bez pola czyta się bez zmian.
+  contacts?: ClientContact[];
 }
 
 export interface Department {
@@ -311,7 +331,7 @@ export type ActivityEntityType =
   | 'person' // entityId = person id
   | 'status' // entityId = status id
   | 'client' // entityId = client id
-  | 'system'; // session events (login/logout/impersonation), entityId = ''
+  | 'system'; // session events (login/logout), entityId = ''
 
 export interface Comment {
   id: string;
@@ -329,10 +349,11 @@ export interface ActivityEvent {
   id: string;
   entityType: ActivityEntityType;
   entityId: string;
-  actorId: string; // acting identity ('' when no acting user); the IMPERSONATED person while impersonating
-  // Real logged-in administrator when the row was written under impersonation;
-  // '' when not impersonating. Optional: rows persisted before this field exist
-  // without it and load fine (additive, no version bump).
+  actorId: string; // acting identity ('' when no acting user)
+  // READ-ONLY HISTORICAL attribution: old rows written under the removed
+  // impersonation feature carry the real administrator here (still displayed for
+  // those rows and mapped from the cloud `impersonator_id` column). New rows are
+  // always stamped ''. Optional: rows persisted before this field load fine.
   impersonatorId?: string;
   message: string;
   createdAt: string; // ISO timestamp
@@ -461,10 +482,6 @@ export interface AppData {
   tickets: Ticket[];
   events: CalendarEvent[];
   currentUserId: string; // "acting as" person; '' when unset
-  // Safe impersonation: '' when not impersonating; otherwise the REAL logged-in
-  // person's id while `currentUserId` holds the impersonated identity. Additive
-  // (no version bump) — defaulted + sanitized on every load in storage.ts.
-  impersonatorId: string;
   sampleBannerDismissed: boolean;
   savedFilters: SavedFilter[]; // named filter presets for Projects/Tasks/Kanban pages
   // Ostatnio używany filtr per widok (nienazwany). LOKALNIE ONLY — jak

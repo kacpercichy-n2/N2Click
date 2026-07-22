@@ -47,7 +47,7 @@ export const TUTORIAL_MODULES: TutorialModule[] = [
       {
         target: 'shell.main',
         title: 'Twój punkt startowy',
-        body: 'Po zalogowaniu trafiasz na widok dopasowany do Twojej roli — pracownik zaczyna od widoku Moja praca, a pozostałe role od podsumowania zespołu. Szczegóły zawsze otworzysz bez utraty miejsca na stronie.',
+        body: 'Po zalogowaniu trafiasz na Panel — jeden wspólny widok startowy z dzisiejszym planem, Zasobnikiem, alertami i podsumowaniem zespołu. Szczegóły zawsze otworzysz bez utraty miejsca na stronie.',
         route: '@current',
         note: 'Gdy dane zmienią się w innej karcie przeglądarki, aplikacja nigdy nie nadpisze Twojej pracy po cichu — zapyta, którą wersję zostawić.',
       },
@@ -61,7 +61,7 @@ export const TUTORIAL_MODULES: TutorialModule[] = [
   },
   {
     id: 'home',
-    title: 'Panel i moja praca',
+    title: 'Panel',
     summary: 'Dzisiejszy plan, Zasobnik i alerty.',
     minutes: '2 min',
     roles: EVERYONE,

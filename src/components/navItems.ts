@@ -5,11 +5,13 @@
  * order stays a mere permutation of these paths (see `src/utils/navOrder.ts`).
  * Gates (canAdmin, supabase-only Konto) are applied by the renderer AFTER
  * ordering — never encoded here.
+ *
+ * „Moja praca” (/my-work) zniknęła 2026-07-22 (run 258): jej sekcje żyją na
+ * Panelu, a stara trasa przekierowuje na /dashboard (patrz homeRoute.ts).
  */
 import type { LucideIcon } from './icons';
 import {
   LayoutDashboard,
-  ClipboardList,
   FolderKanban,
   Building2,
   Columns3,
@@ -27,7 +29,6 @@ export type NavItem = [string, string, LucideIcon];
 
 export const NAV: NavItem[] = [
   ['/dashboard', 'Panel', LayoutDashboard],
-  ['/my-work', 'Moja praca', ClipboardList],
   ['/clients', 'Klienci', Building2],
   ['/projects', 'Projekty', FolderKanban],
   ['/tasks', 'Zadania', ListChecks],

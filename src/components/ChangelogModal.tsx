@@ -8,6 +8,8 @@ import { useCallback, useEffect } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { CHANGELOG, changelogRangeLabel } from '../data/changelog';
 import type { ChangelogEntry, ChangelogItem } from '../data/changelog';
+import { IconButton } from './IconButton';
+import { X } from './icons';
 
 /** Grupuje zmiany wpisu po panelu (`area`), zachowując kolejność pierwszego
  *  wystąpienia — bez sortowania alfabetycznego, żeby autor sam decydował o
@@ -79,14 +81,12 @@ function ChangelogModalShell({ onClose }: { onClose: () => void }) {
           <div className="task-modal-head">
             <h1 className="task-modal-title">Co nowego</h1>
             <div className="task-modal-head-actions">
-              <button
-                type="button"
+              <IconButton
                 className="task-modal-close"
+                icon={<X size={18} aria-hidden />}
                 onClick={requestClose}
-                aria-label="Zamknij"
-              >
-                ×
-              </button>
+                label="Zamknij"
+              />
             </div>
           </div>
           <div className="task-modal-body">

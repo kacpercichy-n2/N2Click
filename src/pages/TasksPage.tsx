@@ -22,8 +22,10 @@ import {
 import type { SavedFilterCriteria, TaskPriority } from '../types';
 import { PRIORITY_LABELS, TASK_PRIORITIES } from '../utils/priority';
 import { FilterPresets, DEFAULT_CRITERIA } from '../components/FilterPresets';
-import { FilterPanel, type FilterChip, type FilterGroup } from '../components/FilterPanel';
-import { ChevronRight, Check } from '../components/icons';
+import { type FilterChip, type FilterGroup } from '../components/FilterPanel';
+import { FilterBar } from '../components/FilterBar';
+import { ChevronRight, Check, Plus, X } from '../components/icons';
+import { IconButton } from '../components/IconButton';
 import { formatShort, formatShortWithWeekday } from '../utils/dates';
 import { PersonChip } from '../components/PersonChip';
 import { StatusBadge } from '../components/StatusBadge';
@@ -314,7 +316,7 @@ export function TasksPage() {
         <h1>Zadania</h1>
         {canManageTasks && (
           <button type="button" className="btn primary" onClick={() => openNewTask()}>
-            + Nowe zadanie
+            <Plus size={16} aria-hidden />Nowe zadanie
           </button>
         )}
       </div>
@@ -327,26 +329,28 @@ export function TasksPage() {
           </p>
           {canManageTasks && (
             <button type="button" className="btn primary" onClick={() => openNewTask()}>
-              + Nowe zadanie
+              <Plus size={16} aria-hidden />Nowe zadanie
             </button>
           )}
         </div>
       ) : (
         <>
-          <div className="cal-toolbar" data-tour="tasks.filters">
-            <FilterPanel
-              groups={filterGroups}
-              dates={{ from, to, onFrom: setFrom, onTo: setTo }}
-              activeCount={activeCount}
-              onClearAll={clearFilters}
-              chips={chips}
-            />
-            <span className="filter-count muted">
-              {tasks.length} z {allTasks.length} zadań
-            </span>
-          </div>
-
-          <FilterPresets page="tasks" criteria={criteria} onApply={applyPreset} />
+          <FilterBar
+            dataTour="tasks.filters"
+            filterPanel={{
+              groups: filterGroups,
+              dates: { from, to, onFrom: setFrom, onTo: setTo },
+              activeCount,
+              onClearAll: clearFilters,
+              chips,
+            }}
+            presets={<FilterPresets page="tasks" criteria={criteria} onApply={applyPreset} />}
+            trailing={
+              <span className="filter-count muted">
+                {tasks.length} z {allTasks.length} zadań
+              </span>
+            }
+          />
 
           {tasks.length === 0 ? (
             <div className="empty-state">
@@ -406,15 +410,14 @@ export function TasksPage() {
                 </button>
                 {canManageTasks && (
                   <div className="card-actions">
-                    <button
-                      type="button"
-                      className="btn danger-ghost task-delete"
+                    <IconButton
+                      className="task-delete"
+                      variant="danger"
+                      icon={<X size={16} aria-hidden />}
                       onClick={() => handleDelete(task.id, task.title)}
-                      aria-label={`Usuń ${task.title}`}
+                      label={`Usuń ${task.title}`}
                       title="Usuń"
-                    >
-                      Usuń
-                    </button>
+                    />
                   </div>
                 )}
               </li>

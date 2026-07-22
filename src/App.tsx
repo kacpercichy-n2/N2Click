@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Link,
   NavLink,
   Navigate,
   Route,
@@ -13,7 +14,6 @@ import { motion } from 'motion/react';
 import { useStore } from './store/AppStore';
 import { DashboardPage } from './pages/DashboardPage';
 import { ChangelogPage } from './pages/ChangelogPage';
-import { MyWorkPage } from './pages/MyWorkPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { ProjectDetailPage } from './pages/ProjectDetailPage';
 import { ClientsPage } from './pages/ClientsPage';
@@ -30,7 +30,8 @@ import { EventsPage } from './pages/EventsPage';
 import { AccountPage } from './pages/AccountPage';
 import { TeamPage } from './pages/TeamPage';
 import { canViewTeam } from './pages/teamScope';
-import { landingPathForRole, LoginPage } from './pages/LoginPage';
+import { LoginPage } from './pages/LoginPage';
+import { HOME_PATH } from './pages/homeRoute';
 import { useAuth } from './auth/SessionProvider';
 import { useOrgData } from './supabase/OrgDataProvider';
 import { buildCloudPeoplePayload, effectiveAccessRole } from './supabase/referenceData';
@@ -42,12 +43,6 @@ import {
 } from './auth/AuthScreens';
 import { findPersonByEmail } from './auth/profile';
 import { can } from './store/permissions';
-import {
-  currentUser as currentUserSel,
-  isImpersonating,
-  realUser,
-  realUserId,
-} from './store/selectors';
 import { SampleBanner } from './components/SampleBanner';
 import { PersistenceBanner } from './components/PersistenceBanner';
 import { CloudSyncBanner } from './components/CloudSyncBanner';
@@ -57,7 +52,6 @@ import { EventModal } from './components/EventModal';
 import { GlobalSearch } from './components/GlobalSearch';
 import { Avatar } from './components/Avatar';
 import {
-  Users,
   Menu,
   X,
   ChevronsLeft,
@@ -117,12 +111,6 @@ export function App() {
       return next;
     });
   };
-  const expandSidebar = () => {
-    if (!collapsed) return;
-    setCollapsed(false);
-    updateUiPrefs({ sidebarCollapsed: false });
-  };
-
   // Pełna synchronizacja zespołu (tryb supabase): każdy gotowy snapshot
   // organizacji scala WSZYSTKIE widoczne (RLS) profile chmury w lokalną listę
   // osób — w tym własny profil zalogowanego konta, więc świeża przeglądarka
@@ -153,21 +141,13 @@ export function App() {
   }, [authedSignedIn, auth.mustChangePassword, orgState, dispatch]);
 
   const currentUser = state.people.find((p) => p.id === state.currentUserId);
-  // Real logged-in identity (the impersonator while impersonating). Only the
-  // "Występuj jako" switcher visibility and the return banner key off this;
-  // everything else is a true preview of the acted-as `currentUser`.
-  const actualUser = realUser(state);
-  const impersonating = isImpersonating(state);
   const peopleCount = state.people.length;
   const canAdmin = can(currentUser, 'admin.panel', { peopleCount });
   // `/team` visibility mirrors the server role model (worker hidden, manager =
   // own department, administrator = all). UX gate only — see pages/teamScope.ts.
-  // In Supabase mode (self-acting, snapshot ready) the effective cloud role
-  // drives it; otherwise the local role (loading/error/local mode/impersonating).
-  const teamRole = effectiveAccessRole(currentUser, org.state, {
-    mode: auth.mode,
-    impersonating,
-  });
+  // In Supabase mode (snapshot ready) the effective cloud role drives it;
+  // otherwise the local role (loading/error/local mode).
+  const teamRole = effectiveAccessRole(currentUser, org.state, { mode: auth.mode });
   const teamUser = currentUser && teamRole ? { ...currentUser, accessRole: teamRole } : currentUser;
   const canTeam = canViewTeam(teamUser);
   // Session gate: with people present and nobody resolving to a current user,
@@ -177,10 +157,11 @@ export function App() {
   // the API. A deleted current user falls back here (DELETE_PERSON clears it).
   const needsLogin = state.people.length > 0 && !currentUser;
 
-  // Per-user (per-browser) sidebar order: a permutation of NAV keyed by the REAL
-  // logged-in id (impersonation must not switch it). '' → defaults. Gates below
-  // still run AFTER ordering, so a stored order can never reveal a gated item.
-  const orderUserId = realUserId(state);
+  // Per-user (per-browser) sidebar order: a permutation of NAV keyed by the
+  // logged-in id (impersonacja usunięta w 257 — currentUserId JEST realnym
+  // użytkownikiem). '' → defaults. Gates below still run AFTER ordering, so a
+  // stored order can never reveal a gated item.
+  const orderUserId = state.currentUserId;
   const orderedNav = useMemo(() => {
     const stored = orderUserId ? navOrderForUser(loadUiPrefs(), orderUserId) : [];
     const orderedPaths = applyNavOrder(
@@ -307,8 +288,8 @@ export function App() {
       return <AuthBlocked email={email.trim()} onSignOut={() => void handleLogout()} />;
     }
     // Matched, but SET_CURRENT_USER may not have synced yet — never flash the
-    // shell before the real identity resolves to the matched person.
-    if (realUserId(state) !== person.id) return <AuthLoading />;
+    // shell before the acting identity resolves to the matched person.
+    if (state.currentUserId !== person.id) return <AuthLoading />;
   }
 
   if (needsLogin) {
@@ -422,53 +403,43 @@ export function App() {
           </button>
         </div>
         {state.people.length > 0 && (
-          <div className="acting-as-wrap">
-            {/* Collapsed avatar shortcut (CSS-shown only >1180px + collapsed). */}
-            <button
-              type="button"
-              className="acting-as-collapsed"
-              title={
-                currentUser ? `Występuj jako: ${currentUser.name}` : 'Występuj jako'
-              }
-              aria-label={
-                currentUser ? `Występuj jako: ${currentUser.name}` : 'Występuj jako'
-              }
-              onClick={expandSidebar}
-            >
-              {currentUser ? (
+          <div className="sidebar-user">
+            {/* Collapsed avatar shortcut (CSS-shown only >1180px + collapsed):
+                links to the user's own profile (the chevron toggle is the only
+                expand control now). */}
+            {currentUser && (
+              <Link
+                to={`/people/${currentUser.id}`}
+                className="sidebar-user-collapsed"
+                title={`Mój profil: ${currentUser.name}`}
+                aria-label={`Mój profil: ${currentUser.name}`}
+                onClick={() => setMenuOpen(false)}
+              >
                 <Avatar person={currentUser} size={32} />
-              ) : (
-                <Users size={20} aria-hidden />
-              )}
-            </button>
-            {/* "Występuj jako" is an administrator-only quick switch now. Gated
-                on the REAL logged-in user so it never vanishes while the admin
-                is previewing another identity. */}
-            {can(actualUser, 'users.impersonate', { peopleCount: state.people.length }) && (
-              <label className="acting-as" title="Aktualny użytkownik aplikacji (autor komentarzy, uprawnienia admina)">
-                <span className="acting-as-label">Występuj jako</span>
-                <select
-                  value={state.currentUserId}
-                  onChange={(e) =>
-                    dispatch({ type: 'IMPERSONATE', personId: e.target.value })
-                  }
-                >
-                  {state.people.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              </Link>
             )}
-            {/* Everyone can log out (returns to the login screen). */}
-            <button
-              type="button"
-              className="btn ghost logout-btn"
-              onClick={() => void handleLogout()}
-            >
-              Wyloguj
-            </button>
+            {/* Expanded footer row: avatar → own profile + narrower logout. */}
+            <div className="sidebar-user-row">
+              {currentUser && (
+                <Link
+                  to={`/people/${currentUser.id}`}
+                  className="sidebar-user-avatar"
+                  title={`Mój profil: ${currentUser.name}`}
+                  aria-label={`Mój profil: ${currentUser.name}`}
+                  onClick={() => setMenuOpen(false)}
+                >
+                  <Avatar person={currentUser} size={32} />
+                </Link>
+              )}
+              {/* Everyone can log out (returns to the login screen). */}
+              <button
+                type="button"
+                className="btn ghost logout-btn"
+                onClick={() => void handleLogout()}
+              >
+                Wyloguj
+              </button>
+            </div>
           </div>
         )}
       </aside>
@@ -479,20 +450,6 @@ export function App() {
         aria-hidden={mobileNav && menuOpen ? true : undefined}
         {...openMobileMainProps}
       >
-        {impersonating && currentUser && actualUser && (
-          <div className="impersonation-banner" role="status">
-            <span className="impersonation-banner-text">
-              Występujesz jako {currentUser.name} — aktywne są uprawnienia tej osoby.
-            </span>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => dispatch({ type: 'STOP_IMPERSONATION' })}
-            >
-              Wróć do {actualUser.name}
-            </button>
-          </div>
-        )}
         {/* Persistence banner shows on every routed page (not the login screen —
             no edits happen there and a clean tab auto-refreshes silently). */}
         <PersistenceBanner />
@@ -510,7 +467,8 @@ export function App() {
             <Route path="/dashboard" element={<DashboardPage />} />
             {/* Changelog: pełna historia wpisów z src/data/changelog.ts, dostępna dla każdej roli. */}
             <Route path="/changelog" element={<ChangelogPage />} />
-            <Route path="/my-work" element={<MyWorkPage />} />
+            {/* „Moja praca" scalona w „Panel"; stary link/zakładka nie pęka. */}
+            <Route path="/my-work" element={<Navigate to={HOME_PATH} replace />} />
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/projects/:id" element={<ProjectDetailPage />} />
             <Route path="/clients" element={<ClientsPage />} />
@@ -537,11 +495,9 @@ export function App() {
               path="/team"
               element={canTeam ? <TeamPage /> : <Navigate to="/dashboard" replace />}
             />
-            {/* Account panel: real Supabase account only. Local mode redirects. */}
-            <Route
-              path="/account"
-              element={auth.mode === 'supabase' ? <AccountPage /> : <Navigate to="/" replace />}
-            />
+            {/* Ustawienia: dostępne w OBU trybach (tryb lokalny widzi tylko
+                sekcję „Interfejs”). */}
+            <Route path="/account" element={<AccountPage />} />
             <Route path="*" element={<HomeRedirect />} />
           </Routes>
         </motion.div>
@@ -554,11 +510,7 @@ export function App() {
       {/* Ten sam wzorzec dla wydarzeń (?wydarzenie=new | <id>). */}
       <EventModal />
       <DirtyNavigationGuard />
-      <OnboardingRoot
-        owner={actualUser}
-        viewer={currentUser}
-        impersonating={impersonating}
-      />
+      <OnboardingRoot owner={currentUser} viewer={currentUser} />
     </div>
   );
 }
@@ -606,15 +558,12 @@ function DirtyNavigationGuard() {
 }
 
 /**
- * Landing redirect for `/` and unknown routes. `pracownik`-role users land on
- * their work page (`/my-work`); everyone else — admin/pm/handlowiec, setup mode,
- * or an unresolved user — keeps the dashboard. Keys off the acted-as
- * `currentUser`, so impersonation previews the target role's landing (correct).
+ * Landing redirect for `/` and unknown routes. „Panel" (`HOME_PATH`) is the one
+ * and only home for every role now — the former per-role „Moja praca" surface
+ * was merged into it (Zasobnik + Alerty are Panel tiles).
  */
 function HomeRedirect() {
-  const { state } = useStore();
-  const dest = landingPathForRole(currentUserSel(state)?.accessRole);
-  return <Navigate to={dest} replace />;
+  return <Navigate to={HOME_PATH} replace />;
 }
 
 /** `/tasks/new[?project=<id>]` → `/tasks?task=new[&project=<id>]`. */

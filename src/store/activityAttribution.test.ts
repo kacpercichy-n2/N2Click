@@ -1,8 +1,10 @@
 // Unit tests for honest local activity attribution shipped by
-// PKG-20260714-activity-attribution: every activity row carries a dual identity
-// (acting `actorId` + real `impersonatorId`), the reducer writes exactly ONE
-// row for the enumerated person/status/session/deletion events, and rejected /
-// no-op commands append none while preserving the original state reference.
+// PKG-20260714-activity-attribution. Impersonation was removed
+// (PKG-20260722-settings-nav-cleanup), so every new row now stamps
+// `impersonatorId: ''` (the field survives only as read-only historical
+// attribution on old/cloud rows). The reducer writes exactly ONE row for the
+// enumerated person/status/session/deletion events, and rejected / no-op
+// commands append none while preserving the original state reference.
 // Pure reducer tests — no React, no localStorage: build AppData fixtures by hand
 // and dispatch through the exported `reducer`. Follows the fixture style of
 // statusActions.test.ts / commandValidation.test.ts.
@@ -90,7 +92,6 @@ function makeState(overrides: Partial<ReturnType<typeof emptyData>> = {}) {
     tasks: [TASK],
     people: [ADMIN, WORKER, WORKER3],
     currentUserId: 'p1',
-    impersonatorId: '',
     ...overrides,
   };
 }
@@ -138,99 +139,9 @@ describe('1. default stamping (not impersonating)', () => {
   });
 });
 
-describe('2. dual identity while impersonating', () => {
-  it('actorId = impersonated, impersonatorId = real admin', () => {
-    let state = makeState({ currentUserId: '', impersonatorId: '' });
-    state = reducer(state, { type: 'SET_CURRENT_USER', personId: 'p1' });
-    state = reducer(state, { type: 'IMPERSONATE', personId: 'p2' });
-    const next = reducer(state, {
-      type: 'ADD_COMMENT',
-      entityType: 'task',
-      entityId: 't1',
-      body: 'Test',
-      mentionIds: [],
-    });
-    const row = lastRow(next);
-    expect(row.actorId).toBe('p2');
-    expect(row.impersonatorId).toBe('p1');
-  });
-});
-
-describe('3. IMPERSONATE start', () => {
-  it('one system row attributed to admin, impersonatorId empty', () => {
-    const state = makeState({ currentUserId: 'p1', impersonatorId: '' });
-    const next = reducer(state, { type: 'IMPERSONATE', personId: 'p2' });
-    expect(next.activity.length).toBe(state.activity.length + 1);
-    const row = lastRow(next);
-    expect(row.entityType).toBe('system');
-    expect(row.entityId).toBe('');
-    expect(row.actorId).toBe('p1');
-    expect(row.impersonatorId).toBe('');
-    expect(row.message).toBe('rozpoczął(a) podgląd jako „Jan Nowak”');
-  });
-});
-
-describe('4. chained IMPERSONATE', () => {
-  it('one row per switch; impersonator stays the original admin', () => {
-    let state = makeState({ currentUserId: 'p1', impersonatorId: '' });
-    state = reducer(state, { type: 'IMPERSONATE', personId: 'p2' });
-    const afterFirst = state.activity.length;
-    state = reducer(state, { type: 'IMPERSONATE', personId: 'p3' });
-    expect(state.activity.length).toBe(afterFirst + 1);
-    expect(state.impersonatorId).toBe('p1');
-    const row = lastRow(state);
-    expect(row.actorId).toBe('p1');
-    expect(row.message).toBe('rozpoczął(a) podgląd jako „Ewa Wiśniewska”');
-  });
-});
-
-describe('5. impersonation END (return branch + STOP_IMPERSONATION)', () => {
-  it('IMPERSONATE return branch logs one end row', () => {
-    let state = makeState({ currentUserId: 'p1', impersonatorId: '' });
-    state = reducer(state, { type: 'IMPERSONATE', personId: 'p2' }); // now impersonating p2 as p1
-    const before = state.activity.length;
-    const next = reducer(state, { type: 'IMPERSONATE', personId: 'p1' }); // pick impersonator's own row = return
-    expect(next.activity.length).toBe(before + 1);
-    expect(next.currentUserId).toBe('p1');
-    expect(next.impersonatorId).toBe('');
-    const row = lastRow(next);
-    expect(row.actorId).toBe('p1');
-    expect(row.message).toBe('zakończył(a) podgląd jako „Jan Nowak”');
-  });
-
-  it('STOP_IMPERSONATION logs one end row', () => {
-    let state = makeState({ currentUserId: 'p1', impersonatorId: '' });
-    state = reducer(state, { type: 'IMPERSONATE', personId: 'p2' });
-    const before = state.activity.length;
-    const next = reducer(state, { type: 'STOP_IMPERSONATION' });
-    expect(next.activity.length).toBe(before + 1);
-    const row = lastRow(next);
-    expect(row.actorId).toBe('p1');
-    expect(row.message).toBe('zakończył(a) podgląd jako „Jan Nowak”');
-  });
-
-  it('STOP_IMPERSONATION while not impersonating -> same reference, no row', () => {
-    const state = makeState({ currentUserId: 'p1', impersonatorId: '' });
-    const next = reducer(state, { type: 'STOP_IMPERSONATION' });
-    expect(next).toBe(state);
-  });
-});
-
-describe('6. IMPERSONATE no-ops', () => {
-  it('unknown target -> same reference', () => {
-    const state = makeState({ currentUserId: 'p1', impersonatorId: '' });
-    expect(reducer(state, { type: 'IMPERSONATE', personId: 'ghost' })).toBe(state);
-  });
-
-  it('target === current identity -> same reference', () => {
-    const state = makeState({ currentUserId: 'p1', impersonatorId: '' });
-    expect(reducer(state, { type: 'IMPERSONATE', personId: 'p1' })).toBe(state);
-  });
-});
-
 describe('7. SET_CURRENT_USER', () => {
   it('login writes a system row attributed to the id via override', () => {
-    const state = makeState({ currentUserId: '', impersonatorId: '' });
+    const state = makeState({ currentUserId: '' });
     const next = reducer(state, { type: 'SET_CURRENT_USER', personId: 'p1' });
     expect(next.activity.length).toBe(state.activity.length + 1);
     const row = lastRow(next);
@@ -240,14 +151,14 @@ describe('7. SET_CURRENT_USER', () => {
     expect(row.message).toBe('zalogował(a) się');
   });
 
-  it('same-id re-select (not impersonating) -> no new row', () => {
-    const state = makeState({ currentUserId: 'p1', impersonatorId: '' });
+  it('same-id re-select -> no new row', () => {
+    const state = makeState({ currentUserId: 'p1' });
     const next = reducer(state, { type: 'SET_CURRENT_USER', personId: 'p1' });
     expect(next.activity.length).toBe(state.activity.length);
   });
 
   it("'' clears identity -> no row", () => {
-    const state = makeState({ currentUserId: 'p1', impersonatorId: '' });
+    const state = makeState({ currentUserId: 'p1' });
     const next = reducer(state, { type: 'SET_CURRENT_USER', personId: '' });
     expect(next.currentUserId).toBe('');
     expect(next.activity.length).toBe(state.activity.length);
@@ -261,7 +172,7 @@ describe('7. SET_CURRENT_USER', () => {
 
 describe('8. LOGOUT', () => {
   it('records the pre-logout identity', () => {
-    const state = makeState({ currentUserId: 'p1', impersonatorId: '' });
+    const state = makeState({ currentUserId: 'p1' });
     const next = reducer(state, { type: 'LOGOUT' });
     expect(next.activity.length).toBe(state.activity.length + 1);
     const row = lastRow(next);
@@ -271,16 +182,8 @@ describe('8. LOGOUT', () => {
     expect(row.message).toBe('wylogował(a) się');
   });
 
-  it('dual-stamps when it ends an impersonation', () => {
-    const state = makeState({ currentUserId: 'p2', impersonatorId: 'p1' });
-    const next = reducer(state, { type: 'LOGOUT' });
-    const row = lastRow(next);
-    expect(row.actorId).toBe('p2');
-    expect(row.impersonatorId).toBe('p1');
-  });
-
   it('logged-out LOGOUT -> no row', () => {
-    const state = makeState({ currentUserId: '', impersonatorId: '' });
+    const state = makeState({ currentUserId: '' });
     const next = reducer(state, { type: 'LOGOUT' });
     expect(next.activity.length).toBe(state.activity.length);
   });

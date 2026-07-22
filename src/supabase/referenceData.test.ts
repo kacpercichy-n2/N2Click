@@ -236,32 +236,28 @@ describe('effectiveAccessRole — macierz fallbacków', () => {
   };
   const readyNoProfile: OrgState = { status: 'ready', snapshot: { ...ready.snapshot, profile: null } as OrgSnapshot };
 
-  it('tryb supabase + ready + własny profil + nie personifikacja => rola chmury', () => {
+  it('tryb supabase + ready + własny profil => rola chmury', () => {
     // cloudRole 'manager' → 'pelne' (kolaps ról); różni się od lokalnej 'ograniczone'.
-    expect(effectiveAccessRole(localUser, ready, { mode: 'supabase', impersonating: false })).toBe('pelne');
-  });
-
-  it('personifikacja => rola lokalna', () => {
-    expect(effectiveAccessRole(localUser, ready, { mode: 'supabase', impersonating: true })).toBe('ograniczone');
+    expect(effectiveAccessRole(localUser, ready, { mode: 'supabase' })).toBe('pelne');
   });
 
   it('tryb lokalny => rola lokalna', () => {
-    expect(effectiveAccessRole(localUser, ready, { mode: 'local', impersonating: false })).toBe('ograniczone');
+    expect(effectiveAccessRole(localUser, ready, { mode: 'local' })).toBe('ograniczone');
   });
 
   it('ładowanie / błąd / idle => rola lokalna', () => {
     for (const org of [{ status: 'idle' }, { status: 'loading' }, { status: 'error', message: 'x' }] as OrgState[]) {
-      expect(effectiveAccessRole(localUser, org, { mode: 'supabase', impersonating: false })).toBe('ograniczone');
+      expect(effectiveAccessRole(localUser, org, { mode: 'supabase' })).toBe('ograniczone');
     }
   });
 
   it('brak profilu w chmurze => rola lokalna', () => {
-    expect(effectiveAccessRole(localUser, readyNoProfile, { mode: 'supabase', impersonating: false })).toBe('ograniczone');
+    expect(effectiveAccessRole(localUser, readyNoProfile, { mode: 'supabase' })).toBe('ograniczone');
   });
 
   it('brak użytkownika => undefined', () => {
-    expect(effectiveAccessRole(undefined, ready, { mode: 'supabase', impersonating: false })).toBeUndefined();
-    expect(effectiveAccessRole(undefined, ready, { mode: 'local', impersonating: false })).toBeUndefined();
+    expect(effectiveAccessRole(undefined, ready, { mode: 'supabase' })).toBeUndefined();
+    expect(effectiveAccessRole(undefined, ready, { mode: 'local' })).toBeUndefined();
   });
 });
 

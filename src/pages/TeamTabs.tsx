@@ -8,7 +8,7 @@ import { Link } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
 import { useAuth } from '../auth/SessionProvider';
 import { useOrgData } from '../supabase/OrgDataProvider';
-import { currentUser as currentUserSel, isImpersonating } from '../store/selectors';
+import { currentUser as currentUserSel } from '../store/selectors';
 import { effectiveAccessRole } from '../supabase/referenceData';
 import { canViewTeam } from './teamScope';
 
@@ -20,10 +20,7 @@ export function TeamTabs({ active }: { active: 'people' | 'structure' }) {
 
   // Efektywna rola: w trybie supabase (samodzielnie, snapshot gotowy) rola z
   // chmury; w przeciwnym razie rola lokalna.
-  const effectiveRole = effectiveAccessRole(me, org.state, {
-    mode: auth.mode,
-    impersonating: isImpersonating(state),
-  });
+  const effectiveRole = effectiveAccessRole(me, org.state, { mode: auth.mode });
   const effectiveMe = me && effectiveRole ? { ...me, accessRole: effectiveRole } : me;
 
   // Bez dostępu do struktury nie pokazujemy paska — strona /people wygląda jak dotąd.

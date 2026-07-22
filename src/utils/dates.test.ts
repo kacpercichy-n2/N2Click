@@ -10,6 +10,8 @@ import {
   isBirthdayOn,
   isValidDateStr,
   MAX_TASK_PERIOD_DAYS,
+  monthEnd,
+  monthStart,
   PERIOD_ERROR_LABELS,
   periodError,
   type PeriodError,
@@ -135,5 +137,25 @@ describe('PERIOD_ERROR_LABELS', () => {
     const label = PERIOD_ERROR_LABELS[err];
     expect(typeof label).toBe('string');
     expect(label.trim().length).toBeGreaterThan(0);
+  });
+});
+
+describe('monthStart / monthEnd', () => {
+  it('returns first and last day of a 31-day month', () => {
+    expect(monthStart('2026-07-22')).toBe('2026-07-01');
+    expect(monthEnd('2026-07-22')).toBe('2026-07-31');
+  });
+
+  it('returns the last day of a 30-day month', () => {
+    expect(monthEnd('2026-06-15')).toBe('2026-06-30');
+  });
+
+  it('returns 28 for February in a non-leap year', () => {
+    expect(monthStart('2026-02-10')).toBe('2026-02-01');
+    expect(monthEnd('2026-02-10')).toBe('2026-02-28');
+  });
+
+  it('returns 29 for February in a leap year', () => {
+    expect(monthEnd('2024-02-10')).toBe('2024-02-29');
   });
 });

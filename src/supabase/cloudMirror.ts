@@ -181,6 +181,9 @@ function clientRow(c: Client): Record<string, unknown> {
     contact_email: c.contactEmail ?? '',
     contact_phone: c.contactPhone ?? '',
     notes: c.notes ?? '',
+    // Dodatkowe osoby kontaktowe: kolumna jsonb (default '[]'); klient bez
+    // klucza mirroruje się jako pusta tablica.
+    contacts: c.contacts ?? [],
   };
 }
 

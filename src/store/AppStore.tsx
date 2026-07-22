@@ -19,6 +19,7 @@ import type {
   AppData,
   CalendarEvent,
   ChecklistItem,
+  ClientContact,
   CommentEntityType,
   Company,
   Department,
@@ -48,6 +49,7 @@ import type { CloudPersonMergeRow } from '../supabase/referenceData';
 import { normalizeEmail } from '../auth/profile';
 import {
   DEFAULT_CAPACITY,
+  isOwnLastWrite,
   loadDataResult,
   sanitizeWorkDays,
   saveData,
@@ -56,6 +58,7 @@ import {
   type SaveFailureReason,
 } from './storage';
 import { anyDirty } from '../utils/dirtyRegistry';
+import { createPersistCoalescer, PERSIST_COALESCE_MS } from './persistCoalescer';
 import { shouldSkipLocalPersist } from './persistGate';
 import {
   hasEntity,
@@ -73,6 +76,7 @@ import {
   normalizeEventDraft,
   lastViewFilterEqual,
   normalizeProjectDocumentDraft,
+  sanitizeClientContacts,
   sanitizeFilterCriteria,
   sanitizeLastViewFilter,
 } from './commandValidation';
@@ -295,13 +299,11 @@ export type Action =
   | { type: 'UPDATE_PERSON'; personId: string; person: PersonDraft }
   | { type: 'DELETE_PERSON'; personId: string }
   | { type: 'SET_CURRENT_USER'; personId: string }
-  | { type: 'IMPERSONATE'; personId: string }
-  | { type: 'STOP_IMPERSONATION' }
   | { type: 'SET_PASSWORD'; personId: string; passwordHash: string }
   | { type: 'LOGOUT' }
-  | { type: 'ADD_CLIENT'; name: string; contactName?: string; contactEmail?: string; contactPhone?: string; notes?: string }
+  | { type: 'ADD_CLIENT'; name: string; contactName?: string; contactEmail?: string; contactPhone?: string; notes?: string; contacts?: ClientContact[] }
   | { type: 'RENAME_CLIENT'; clientId: string; name: string }
-  | { type: 'SAVE_CLIENT'; clientId: string; name: string; contactName: string; contactEmail: string; contactPhone: string; notes: string }
+  | { type: 'SAVE_CLIENT'; clientId: string; name: string; contactName: string; contactEmail: string; contactPhone: string; notes: string; contacts?: ClientContact[] }
   | { type: 'SET_CLIENT_ARCHIVED'; clientId: string; archived: boolean }
   | { type: 'DELETE_CLIENT'; clientId: string }
   | { type: 'ADD_DEPARTMENT'; name: string }
@@ -370,19 +372,19 @@ function nowIso(): string {
 
 // Local, user-editable activity log for attribution/UX. localStorage is
 // client-mutable, so this is NOT a security audit trail. Every row carries the
-// acting identity plus (when impersonating) the real administrator, so the log
-// stays honest about who did what. `as` overrides the stamp for session events
-// where the pre-transition `currentUserId` is not the honest author.
+// acting identity, so the log stays honest about who did what. `as` overrides
+// the stamp for session events where the pre-transition `currentUserId` is not
+// the honest author. `impersonatorId` is always '' on new rows — it survives
+// only as a read-only historical attribution field on old/cloud rows.
 function withActivity(
   state: AppData,
   entityType: ActivityEntityType,
   entityId: string,
   message: string,
-  as?: { actorId: string; impersonatorId: string },
+  as?: { actorId: string },
   options?: { collapse?: boolean },
 ): ActivityEvent[] {
   const actorId = as ? as.actorId : state.currentUserId;
-  const impersonatorId = as ? as.impersonatorId : state.impersonatorId;
   // collapse: identyczny wpis (encja+treść+aktor) bezpośrednio na końcu listy
   // dostaje świeży znacznik czasu zamiast duplikatu — auto-zapis nie zaśmieca
   // dziennika serią „zaktualizował(a)”.
@@ -394,7 +396,7 @@ function withActivity(
       last.entityId === entityId &&
       last.message === message &&
       last.actorId === actorId &&
-      last.impersonatorId === impersonatorId
+      (last.impersonatorId ?? '') === ''
     ) {
       return [...state.activity.slice(0, -1), { ...last, createdAt: nowIso() }];
     }
@@ -406,7 +408,7 @@ function withActivity(
       entityType,
       entityId,
       actorId,
-      impersonatorId,
+      impersonatorId: '',
       message,
       createdAt: nowIso(),
     },
@@ -2013,21 +2015,8 @@ function personFromDraft(draft: PersonDraft): Omit<Person, 'id' | 'passwordHash'
 }
 
 function deletePerson(state: AppData, personId: string): AppData {
-  // Impersonation interplay: deleting the impersonated person (currentUserId)
-  // while impersonating returns the session to the impersonator; deleting the
-  // impersonator ends the bookkeeping but keeps the acted-as identity. Falls
-  // back to the plain currentUserId reset when not impersonating.
-  const impersonating = state.impersonatorId !== '';
-  let currentUserId = state.currentUserId;
-  let impersonatorId = state.impersonatorId;
-  if (impersonating && personId === state.currentUserId) {
-    currentUserId = state.impersonatorId;
-    impersonatorId = '';
-  } else if (personId === state.impersonatorId) {
-    impersonatorId = '';
-  } else if (personId === state.currentUserId) {
-    currentUserId = '';
-  }
+  // Deleting the acting user clears the session identity ('' = logged out).
+  const currentUserId = personId === state.currentUserId ? '' : state.currentUserId;
   return {
     ...state,
     // Cascade (invariant 5): drop the person, their assignments/workload, and
@@ -2038,7 +2027,6 @@ function deletePerson(state: AppData, personId: string): AppData {
     assignments: state.assignments.filter((a) => a.personId !== personId),
     workload: state.workload.filter((w) => w.personId !== personId),
     currentUserId,
-    impersonatorId,
   };
 }
 
@@ -2419,15 +2407,14 @@ function applyCloudPeople(
   return { ok: true, people, changed };
 }
 
-/** Czyści tożsamości sesji wskazujące osoby usunięte przez scalenie. */
+/** Czyści tożsamość sesji wskazującą osobę usuniętą przez scalenie. */
 function reconcileIdentityAfterPeopleMerge(
   state: AppData,
   people: Person[],
-): Pick<AppData, 'currentUserId' | 'impersonatorId'> {
+): Pick<AppData, 'currentUserId'> {
   const ids = new Set(people.map((p) => p.id));
   return {
     currentUserId: ids.has(state.currentUserId) ? state.currentUserId : '',
-    impersonatorId: ids.has(state.impersonatorId) ? state.impersonatorId : '',
   };
 }
 
@@ -2538,6 +2525,20 @@ function mergeCloudDictionaries(state: AppData, payload: CloudDictionariesPayloa
     companies: [...companies],
     statuses: sorted,
   };
+}
+
+/** Trim the four text fields of each additional client contact for storage. The
+ *  array shape is already validated by isValidClientDraft (strict gate), so this
+ *  only normalizes whitespace; an undefined/[] input yields []. */
+function trimClientContacts(contacts: ClientContact[] | undefined): ClientContact[] {
+  if (!contacts) return [];
+  return contacts.map((c) => ({
+    id: c.id,
+    firstName: c.firstName.trim(),
+    lastName: c.lastName.trim(),
+    phone: c.phone.trim(),
+    email: c.email.trim(),
+  }));
 }
 
 // ---- Cloud hydration merge ----
@@ -2676,6 +2677,28 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
     return state;
   }
 
+  // Klienci: `contacts` jest ADDYTYWNE. Fail-closed STRUKTURALNIE — klient,
+  // którego klucz `contacts` JEST obecny, ale nie jest tablicą, odrzuca całą
+  // hydrację (invariant 6). Zniekształcone WIERSZE są filtrowane
+  // deterministycznie przez `sanitizeClientContacts` (idempotentne =>
+  // odświeżenie w tle zostaje reference-preserving). Forma kanoniczna:
+  // klient bez klucza przechodzi jako TEN SAM obiekt; sanityzacja do pustej =>
+  // obiekt BEZ klucza.
+  for (const c of payload.clients) {
+    const rec = c as unknown as Record<string, unknown>;
+    if (rec.contacts !== undefined && !Array.isArray(rec.contacts)) return state;
+  }
+  const mappedClients = payload.clients.map((c) => {
+    const rec = c as unknown as Record<string, unknown>;
+    if (rec.contacts === undefined) return c;
+    const contacts = sanitizeClientContacts(rec.contacts);
+    if (contacts === undefined) {
+      const { contacts: _drop, ...rest } = rec;
+      return rest as unknown as typeof c;
+    }
+    return { ...(rec as object), contacts } as unknown as typeof c;
+  });
+
   // Autorytatywnie: referencje walidujemy wobec ZBIORU DOCELOWEGO (payload),
   // nie sumy z lokalnym — wiersz wskazujący encję spoza chmury jest błędem.
   const projectIds = new Set<string>(payload.projects.map((p) => p.id));
@@ -2798,7 +2821,7 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
     ...state,
     people: mergedPeople,
     ...reconcileIdentityAfterPeopleMerge(state, mergedPeople),
-    clients: reconcileRows(state.clients, payload.clients),
+    clients: reconcileRows(state.clients, mappedClients),
     projects: reconcileRows(state.projects, payload.projects),
     milestones: reconcileRows(state.milestones, payload.milestones),
     tasks: reconcileRows(state.tasks, payload.tasks),
@@ -3169,9 +3192,9 @@ export function reducer(state: AppData, action: Action): AppData {
         return state;
       }
       const next = deletePerson(state, action.personId);
-      // Stamp from the PRE-delete state deliberately: deletePerson may rewrite
-      // currentUserId/impersonatorId (impersonation interplay) and the row must
-      // reflect who acted. The 'person' row survives — it is never pruned.
+      // Stamp from the PRE-delete state deliberately: deletePerson may clear
+      // currentUserId (deleting the acting user) and the row must reflect who
+      // acted. The 'person' row survives — it is never pruned.
       return {
         ...next,
         activity: withActivity(state, 'person', action.personId, `usunął(a) osobę „${target!.name}”`),
@@ -3181,14 +3204,10 @@ export function reducer(state: AppData, action: Action): AppData {
       // '' is a programmatic identity clear; any other id must exist so a
       // dangling personId can never be persisted as the acting user.
       if (action.personId !== '' && !hasEntity(state, 'person', action.personId)) return state;
-      // Login / direct identity set: always ends any impersonation.
-      const nextUser = { ...state, currentUserId: action.personId, impersonatorId: '' };
+      const nextUser = { ...state, currentUserId: action.personId };
       // '' clears identity programmatically — only LOGOUT records a logout, so no
-      // row here. A same-id re-select (not impersonating) is a no-op — no row.
-      if (
-        action.personId === '' ||
-        (action.personId === state.currentUserId && state.impersonatorId === '')
-      ) {
+      // row here. A same-id re-select is a no-op — no row.
+      if (action.personId === '' || action.personId === state.currentUserId) {
         return nextUser;
       }
       // Login row: the pre-state currentUserId may be '', so attribute to the id
@@ -3197,60 +3216,7 @@ export function reducer(state: AppData, action: Action): AppData {
         ...nextUser,
         activity: withActivity(state, 'system', '', 'zalogował(a) się', {
           actorId: action.personId,
-          impersonatorId: '',
         }),
-      };
-    }
-    case 'IMPERSONATE': {
-      // No-op when the target doesn't exist or is already the acted-as identity.
-      const exists = state.people.some((p) => p.id === action.personId);
-      if (!exists || action.personId === state.currentUserId) return state;
-      // Picking the current impersonator's own row means "return" — an END event.
-      if (action.personId === state.impersonatorId) {
-        const acted = state.people.find((p) => p.id === state.currentUserId);
-        return {
-          ...state,
-          currentUserId: state.impersonatorId,
-          impersonatorId: '',
-          activity: withActivity(
-            state,
-            'system',
-            '',
-            `zakończył(a) podgląd jako „${acted?.name ?? '?'}”`,
-            { actorId: state.impersonatorId, impersonatorId: '' },
-          ),
-        };
-      }
-      // Chained switches keep the ORIGINAL real user as the impersonator. The
-      // impersonation act itself is the real administrator's own action.
-      const target = state.people.find((p) => p.id === action.personId);
-      return {
-        ...state,
-        currentUserId: action.personId,
-        impersonatorId: state.impersonatorId || state.currentUserId,
-        activity: withActivity(
-          state,
-          'system',
-          '',
-          `rozpoczął(a) podgląd jako „${target?.name ?? '?'}”`,
-          { actorId: state.impersonatorId || state.currentUserId, impersonatorId: '' },
-        ),
-      };
-    }
-    case 'STOP_IMPERSONATION': {
-      if (state.impersonatorId === '') return state;
-      const acted = state.people.find((p) => p.id === state.currentUserId);
-      return {
-        ...state,
-        currentUserId: state.impersonatorId,
-        impersonatorId: '',
-        activity: withActivity(
-          state,
-          'system',
-          '',
-          `zakończył(a) podgląd jako „${acted?.name ?? '?'}”`,
-          { actorId: state.impersonatorId, impersonatorId: '' },
-        ),
       };
     }
     case 'SET_PASSWORD': {
@@ -3270,25 +3236,24 @@ export function reducer(state: AppData, action: Action): AppData {
       };
     }
     case 'LOGOUT': {
-      // Full logout (not "return"): clears both the acted-as and real identity.
-      // Nobody to log out -> no row, state result unchanged from before.
-      if (state.currentUserId === '' && state.impersonatorId === '') {
-        return { ...state, currentUserId: '', impersonatorId: '' };
+      // Full logout: clears the acting identity. Nobody to log out -> no row,
+      // state result unchanged from before.
+      if (state.currentUserId === '') {
+        return { ...state, currentUserId: '' };
       }
-      // Default pre-transition stamping records dual identity when logging out
-      // mid-impersonation.
       return {
         ...state,
         currentUserId: '',
-        impersonatorId: '',
         activity: withActivity(state, 'system', '', 'wylogował(a) się'),
       };
     }
     case 'ADD_CLIENT': {
-      // Wymagane: nazwa, osoba kontaktowa i e-mail LUB telefon
-      // (isValidClientDraft). Niepełny draft => TA SAMA referencja stanu.
+      // Wymagane: nazwa, osoba kontaktowa i e-mail ORAZ telefon
+      // (isValidClientDraft, reguła AND). Niepełny draft albo niepoprawne
+      // `contacts` => TA SAMA referencja stanu (invariant 6).
       if (!isValidClientDraft(action)) return state;
       const name = action.name.trim();
+      const contacts = trimClientContacts(action.contacts);
       return {
         ...state,
         clients: [
@@ -3301,31 +3266,37 @@ export function reducer(state: AppData, action: Action): AppData {
             contactEmail: action.contactEmail?.trim() ?? '',
             contactPhone: action.contactPhone?.trim() ?? '',
             notes: action.notes?.trim() ?? '',
+            // Forma kanoniczna: klucz obecny WYŁĄCZNIE gdy jest ≥1 dodatkowa osoba.
+            ...(contacts.length > 0 ? { contacts } : {}),
           },
         ],
       };
     }
     case 'SAVE_CLIENT': {
       // Jak RENAME_CLIENT: nieznane id odrzucone; do tego pełen komplet pól
-      // wymaganych (isValidClientDraft) — brak nazwy, osoby kontaktowej albo
-      // obu kanałów kontaktu zwraca TĘ SAMĄ referencję stanu (invariant 6).
+      // wymaganych (isValidClientDraft, reguła AND) — brak nazwy, osoby
+      // kontaktowej, e-maila albo telefonu, lub niepoprawne `contacts` zwraca TĘ
+      // SAMĄ referencję stanu (invariant 6).
       if (!isValidClientDraft(action)) return state;
       const name = action.name.trim();
       if (!state.clients.some((c) => c.id === action.clientId)) return state;
+      const contacts = trimClientContacts(action.contacts);
       return {
         ...state,
-        clients: state.clients.map((c) =>
-          c.id === action.clientId
-            ? {
-                ...c,
-                name,
-                contactName: action.contactName.trim(),
-                contactEmail: action.contactEmail.trim(),
-                contactPhone: action.contactPhone.trim(),
-                notes: action.notes.trim(),
-              }
-            : c,
-        ),
+        clients: state.clients.map((c) => {
+          if (c.id !== action.clientId) return c;
+          // `contacts: []` USUWA klucz (forma kanoniczna — nigdy pusta tablica).
+          const { contacts: _drop, ...rest } = c;
+          return {
+            ...rest,
+            name,
+            contactName: action.contactName.trim(),
+            contactEmail: action.contactEmail.trim(),
+            contactPhone: action.contactPhone.trim(),
+            notes: action.notes.trim(),
+            ...(contacts.length > 0 ? { contacts } : {}),
+          };
+        }),
       };
     }
     case 'SET_CLIENT_ARCHIVED': {
@@ -3870,8 +3841,34 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const lastPersistAttemptRef = useRef<AppData | null>(null);
 
   // Assign person colours by stable list order. Done during render (idempotent)
-  // so colours are correct on the first paint of any consumer.
-  registerPersonOrder(state.people.map((p) => p.id));
+  // so colours are correct on the first paint of any consumer — but guarded by
+  // the last `state.people` reference so an unrelated dispatch (the common case)
+  // does not rebuild the id list + re-register on every provider render.
+  const lastPeopleRef = useRef<AppData['people'] | null>(null);
+  if (lastPeopleRef.current !== state.people) {
+    lastPeopleRef.current = state.people;
+    registerPersonOrder(state.people.map((p) => p.id));
+  }
+
+  // One coalescer for the whole provider lifetime (created lazily on first
+  // render). `onResult` mirrors the exact outcome handling the [state] effect
+  // used to do inline: record saveError (eagerly on the ref too, so the
+  // external-change callback can read a just-completed flush's outcome
+  // synchronously) and — on success — collapse an open conflict to resolved
+  // (implicit keep-mine). saveData / setSaveError / setExternal are all stable.
+  const coalescerRef = useRef<ReturnType<typeof createPersistCoalescer> | null>(null);
+  if (coalescerRef.current === null) {
+    coalescerRef.current = createPersistCoalescer({
+      save: saveData,
+      onResult: (result) => {
+        saveErrorRef.current = result.ok ? null : result.reason;
+        setSaveError(result.ok ? null : result.reason);
+        if (result.ok) setExternal((prev) => (prev === 'conflict' ? 'none' : prev));
+      },
+      delayMs: PERSIST_COALESCE_MS,
+    });
+  }
+  const coalescer = coalescerRef.current;
 
   // Persist on every state change and RECORD the real outcome. A failed write
   // surfaces via `saveError` (usePersistence); a subsequent successful write
@@ -3879,6 +3876,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   // external conflict to resolved (continuing to work here is an implicit
   // keep-mine). The first run (and the run right after an in-place
   // REPLACE_FROM_STORAGE) is skipped: that state already matches storage.
+  //
+  // The write itself is COALESCED (see persistCoalescer): rapid dispatch (a
+  // drag) now serializes once per window instead of on every action. The
+  // skip-first / StrictMode-replay guards and the retirement gate are evaluated
+  // PER TRANSITION exactly as before; only the terminal saveData(state) call is
+  // replaced by coalescer.schedule(state). A gated transition schedules nothing
+  // and does NOT disturb an already-pending older state (that older state still
+  // saves on its own timer — the old world had already written it).
   useEffect(() => {
     if (skipPersistRef.current) {
       skipPersistRef.current = false;
@@ -3896,25 +3901,58 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     if (prevAttempted !== null && shouldSkipLocalPersist(prevAttempted, state)) {
       return;
     }
-    const result = saveData(state);
-    setSaveError(result.ok ? null : result.reason);
-    if (result.ok) setExternal((prev) => (prev === 'conflict' ? 'none' : prev));
+    coalescer.schedule(state);
   }, [state]);
+
+  // Mount-once: force any pending coalesced save to disk before the tab is
+  // hidden or torn down. `pagehide` and a `hidden` visibility transition are the
+  // reliable "user is leaving" signals; the cleanup flush protects the
+  // StrictMode dev double-mount (a pending state must never be silently lost —
+  // mount 1 skips the first persist so its cleanup flush is a no-op).
+  useEffect(() => {
+    const flushPending = (): void => coalescer.flush();
+    const onVisibility = (): void => {
+      if (document.visibilityState === 'hidden') coalescer.flush();
+    };
+    window.addEventListener('pagehide', flushPending);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('pagehide', flushPending);
+      document.removeEventListener('visibilitychange', onVisibility);
+      coalescer.flush();
+    };
+  }, []);
 
   // Mount-once: subscribe to same-browser external tab writes. A clean tab
   // refreshes in place; a dirty tab (unsaved form edits, a failed local write,
   // or an already-open conflict) raises an explicit conflict choice instead of
   // being silently overwritten.
   useEffect(() => {
-    return subscribeExternalChanges(() => {
+    return subscribeExternalChanges((info) => {
+      // If a coalesced save is pending, flush it FIRST. subscribeExternalChanges
+      // already max-merged latestKnownRevision with the incoming revision, so
+      // this write lands ABOVE the external revision by construction. A SUCCESS
+      // means storage now equals our state → silent keep-mine short-circuit
+      // (reproduces the old-world race where a local dispatch saved after the
+      // external write). A FAILURE left saveError set, so fall through: the
+      // dirty check below then raises the explicit conflict.
+      if (coalescer.hasPending()) {
+        coalescer.flush();
+        if (saveErrorRef.current === null) return;
+      } else if (isOwnLastWrite(info.newValue)) {
+        // Cheap fast path: the event carries our own bounced-back write (byte
+        // compare) or storage still holds our last revision — our own content,
+        // so skip parsing + deep-comparing the whole envelope.
+        return;
+      }
       const loaded = loadDataResult();
       if (!loaded.ok) {
         setLoadError(loaded.error);
         return;
       }
       const incoming = loaded.data;
-      // Silent short-circuit when storage already matches our state (our own
-      // echo bounced back, or an identical write): no dispatch, no banner.
+      // Full semantic compare fallback: an external tab may have written data
+      // identical to ours under a different revision (no dispatch, no banner).
       if (JSON.stringify(incoming) === JSON.stringify(stateRef.current)) return;
       const dirty =
         anyDirty() || saveErrorRef.current !== null || externalRef.current === 'conflict';
@@ -3929,6 +3967,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const retryPersist = useCallback(() => {
+    // Drop the pending coalesced write (stateRef is newest — the pending copy is
+    // redundant) and write immediately, as before.
+    coalescer.cancel();
     const result = saveData(stateRef.current);
     setSaveError(result.ok ? null : result.reason);
     if (result.ok) setExternal((prev) => (prev === 'conflict' ? 'none' : prev));
@@ -3940,12 +3981,18 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       setLoadError(loaded.error);
       return;
     }
+    // The user chose the external version: drop any pending local write so it
+    // cannot clobber the external payload afterwards (old-world equivalent left
+    // storage holding the external write).
+    coalescer.cancel();
     skipPersistRef.current = !loaded.needsWriteback;
     dispatch({ type: 'REPLACE_FROM_STORAGE', data: loaded.data });
     setExternal('none');
   }, []);
 
   const keepLocal = useCallback(() => {
+    // Drop the redundant pending write and persist the newest state immediately.
+    coalescer.cancel();
     const result = saveData(stateRef.current);
     setSaveError(result.ok ? null : result.reason);
     if (result.ok) setExternal('none');

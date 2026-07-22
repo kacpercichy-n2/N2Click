@@ -40,7 +40,6 @@ const NON_MIRRORED_KEYS: Array<keyof AppData> = [
   'statuses',
   'people',
   'currentUserId',
-  'impersonatorId',
   'sampleBannerDismissed',
   'savedFilters',
   // Ostatnio używane filtry: LOKALNE ONLY (jak savedFilters). Przejście

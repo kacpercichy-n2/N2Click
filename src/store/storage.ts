@@ -5,6 +5,7 @@ import type {
   AppData,
   CalendarEvent,
   ChecklistItem,
+  Client,
   Person,
   Project,
   ProjectDocument,
@@ -46,6 +47,7 @@ import {
 import {
   canonicalEventRecurrence,
   isFilterViewKey,
+  sanitizeClientContacts,
   sanitizeLastViewFilter,
 } from './commandValidation';
 
@@ -144,7 +146,6 @@ export function emptyData(): AppData {
     tickets: [],
     events: [],
     currentUserId: '',
-    impersonatorId: '',
     sampleBannerDismissed: false,
     savedFilters: [],
     lastFilters: {},
@@ -364,7 +365,6 @@ function migrateV1(raw: Record<string, unknown>): AppData {
     assignments: v1Assignments,
     workload,
     currentUserId: people[0]?.id ?? '',
-    impersonatorId: '',
     sampleBannerDismissed: Boolean(raw.sampleBannerDismissed),
   };
 }
@@ -808,19 +808,19 @@ export function normalizeDates(data: AppData): AppData {
 }
 
 /**
- * Clears a stale `impersonatorId` on every load (idempotent, like
- * ensureStartMinutes). Impersonation bookkeeping must reference a real person
- * distinct from the acted-as identity; anything else resets to '' (= not
- * impersonating). Disjoint from ensureStartMinutes — order is irrelevant.
+ * Strips a stray legacy `impersonatorId` key on load (the field was removed from
+ * AppData; impersonation no longer exists). Idempotent — a payload without the
+ * key comes out the SAME reference, so a clean current-version load never
+ * echo-writes. A legacy mid-impersonation payload simply loads acting as its
+ * persisted `currentUserId` (the acted-as identity); the real session is
+ * re-asserted by SET_CURRENT_USER on the next login anyway.
  */
-export function sanitizeImpersonator(data: AppData): AppData {
-  const id = data.impersonatorId;
-  if (id === '') return data;
-  const dangling = !data.people.some((p) => p.id === id);
-  if (dangling || id === data.currentUserId) {
-    return { ...data, impersonatorId: '' };
-  }
-  return data;
+export function stripLegacyImpersonatorId(data: AppData): AppData {
+  if (!('impersonatorId' in (data as unknown as Record<string, unknown>))) return data;
+  const { impersonatorId: _legacy, ...rest } = data as AppData & {
+    impersonatorId?: string;
+  };
+  return rest;
 }
 
 /**
@@ -836,7 +836,7 @@ export function sanitizeImpersonator(data: AppData): AppData {
  *   plainly-missing case, this also catches a non-array value);
  * - every task has a valid `priority` (unknown value → 'normal'), a string
  *   `workCategoryId` that references an existing dictionary row (dangling
- *   reference → '', same spirit as sanitizeImpersonator), and a well-shaped
+ *   reference → ''), and a well-shaped
  *   `checklist` (non-array → []; each item coerced to { id, text, done },
  *   non-object entries dropped);
  * - every saved filter's criteria is filled from DEFAULT_FILTER_CRITERIA (old
@@ -1179,6 +1179,30 @@ export function repairEvents(data: AppData): AppData {
 }
 
 /**
+ * Idempotentny repair DODATKOWYCH osób kontaktowych klienta (`Client.contacts`).
+ * Pole ADDYTYWNE (bez podbicia DATA_VERSION), więc każdy starszy zapis wchodzi
+ * tu BEZ klucza i wychodzi bez zmian (ta sama referencja obiektu) — kluczowe dla
+ * braku echo-write przy czystym wczytaniu w bieżącej wersji. Wiersze przechodzą
+ * przez `sanitizeClientContacts` (leniwie: koercja pól, drop wiersza bez `id`
+ * albo z pustym imieniem+nazwiskiem, dedupe po id). Forma kanoniczna: sanityzacja
+ * do pustej => USUNIĘCIE klucza (nigdy `contacts: []`).
+ */
+export function repairClients(data: AppData): AppData {
+  const source = Array.isArray(data.clients) ? data.clients : [];
+  const clients: Client[] = source.map((c) => {
+    const rec = c as unknown as Record<string, unknown>;
+    if (rec.contacts === undefined) return c; // legacy bez pola => ten sam obiekt
+    const contacts = sanitizeClientContacts(rec.contacts);
+    if (contacts === undefined) {
+      const { contacts: _drop, ...rest } = rec;
+      return rest as unknown as Client;
+    }
+    return { ...(rec as object), contacts } as unknown as Client;
+  });
+  return { ...data, clients };
+}
+
+/**
  * Idempotent normalize pass for stable completion semantics. Runs on EVERY load
  * — same philosophy as normalizeTaskMeta / normalizeDates — so a payload with a
  * missing or malformed `isDone` (e.g. a v6 payload predating the flag, or one
@@ -1297,8 +1321,13 @@ export function repairStatusReferences(data: AppData): AppData {
 
 export type SaveFailureReason = 'quota' | 'unavailable' | 'serialization' | 'unknown';
 export type SaveResult = { ok: true; revision: number } | { ok: false; reason: SaveFailureReason };
-/** Payload of an external same-browser tab write. `null` = key cleared / unparsable. */
-export type ExternalChangeInfo = { revision: number | null };
+/**
+ * Payload of an external same-browser tab write. `revision` is the envelope
+ * revision (`null` = key cleared / unparsable). `newValue` is the raw event
+ * payload, carried so the provider can cheaply detect its own bounced-back
+ * write (byte compare) before parsing + deep-comparing the multi-MB envelope.
+ */
+export type ExternalChangeInfo = { revision: number | null; newValue?: string | null };
 
 // Monotonic revision counter, owned entirely by this module. Bumped on every
 // successful save; recorded (not bumped) on load and max-merged on external
@@ -1307,9 +1336,50 @@ export type ExternalChangeInfo = { revision: number | null };
 // lie about which write is newest.
 let latestKnownRevision = 0;
 
+// The exact raw string and revision of our LAST successful save. Unlike
+// latestKnownRevision (which is max-merged with observed external revisions),
+// these are only ever set by saveData, so they still identify our own write
+// even after an external storage event bumped latestKnownRevision. Used by the
+// external-change fast path to skip parsing our own bounced-back payload.
+let lastWrittenRaw: string | null = null;
+let lastWrittenRevision: number | null = null;
+
 /** The highest revision this module has written or observed. Exposed for tests. */
 export function getLatestKnownRevision(): number {
   return latestKnownRevision;
+}
+
+/** The exact raw payload of our last successful save (null before any save). */
+export function getLastWrittenRaw(): string | null {
+  return lastWrittenRaw;
+}
+
+/** The revision of our last successful save (null before any save). */
+export function getLastWrittenRevision(): number | null {
+  return lastWrittenRevision;
+}
+
+/**
+ * Cheap "is this external storage event our own last write bounced back?" test,
+ * used to avoid parsing + deep-comparing the multi-MB envelope on every event.
+ * True when the event's raw payload is byte-identical to what we last wrote, OR
+ * the current storage envelope revision equals our last saved revision. A false
+ * result means the provider must fall back to the full semantic compare (an
+ * external tab may have written identical data under a different revision).
+ */
+export function isOwnLastWrite(newValue: string | null | undefined): boolean {
+  if (lastWrittenRaw !== null && newValue != null && newValue === lastWrittenRaw) {
+    return true;
+  }
+  if (lastWrittenRevision === null) return false;
+  let currentRaw: string | null;
+  try {
+    currentRaw = localStorage.getItem(STORAGE_KEY);
+  } catch {
+    return false;
+  }
+  const currentRev = readEnvelopeRevision(currentRaw);
+  return currentRev !== null && currentRev === lastWrittenRevision;
 }
 
 /** Coerce an unknown envelope revision to a finite integer ≥ 0, else null. */
@@ -1373,7 +1443,7 @@ export function subscribeExternalChanges(cb: (info: ExternalChangeInfo) => void)
     if (e.key !== STORAGE_KEY && e.key !== null) return;
     const incoming = readEnvelopeRevision(e.newValue);
     latestKnownRevision = Math.max(latestKnownRevision, incoming ?? 0);
-    cb({ revision: incoming });
+    cb({ revision: incoming, newValue: e.newValue });
   };
   window.addEventListener('storage', handler);
   return () => window.removeEventListener('storage', handler);
@@ -1484,7 +1554,7 @@ function readData(recordRevision: boolean): InternalLoadResult {
     if (version < 2) {
       data = repairTickets(
         repairStatusReferences(
-          sanitizeImpersonator(
+          stripLegacyImpersonatorId(
             normalizeStatusFlags(
               normalizeTaskMeta(
                 ensureStartMinutes(
@@ -1548,7 +1618,7 @@ function readData(recordRevision: boolean): InternalLoadResult {
       const migrated = migrateV4toV5(localized);
       data = repairTickets(
         repairStatusReferences(
-          sanitizeImpersonator(
+          stripLegacyImpersonatorId(
             normalizeStatusFlags(
               normalizeTaskMeta(
                 ensureStartMinutes(normalizeDates(normalizeWorkloadHours(migrated))),
@@ -1567,6 +1637,10 @@ function readData(recordRevision: boolean): InternalLoadResult {
     // ścieżek (migracja i wczytanie w tej samej wersji) — zapis bez `events`
     // wychodzi stąd z pustą listą.
     data = repairEvents(data);
+    // Dodatkowe osoby kontaktowe klienta: pole ADDYTYWNE, repair biegnie na
+    // WYNIKU obu ścieżek. Klient bez klucza `contacts` wychodzi TYM SAMYM
+    // obiektem (brak echo-write przy czystym wczytaniu w bieżącej wersji).
+    data = repairClients(data);
 
     const { revision: _revision, ...storedData } = parsed;
     return {
@@ -1653,6 +1727,8 @@ export function saveData(data: AppData): SaveResult {
     return { ok: false, reason: classifyStorageError(err) };
   }
   latestKnownRevision = revision;
+  lastWrittenRaw = raw;
+  lastWrittenRevision = revision;
   return { ok: true, revision };
 }
 
@@ -1695,4 +1771,6 @@ export function clearData(): void {
     // ignore
   }
   latestKnownRevision = 0;
+  lastWrittenRaw = null;
+  lastWrittenRevision = null;
 }

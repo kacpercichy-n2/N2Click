@@ -1006,31 +1006,37 @@ export function searchAll(
   };
 }
 
+/**
+ * Per-render metadata the search palette needs to label its rows, precomputed in
+ * a single pass so the overlay never runs per-result `getClient`/`getProject`/
+ * `getStatus`/`projectsOfClient` lookups on every render (incl. arrow-key/hover
+ * active-row changes). Byte-identical to the naive per-result calls: the lookup
+ * maps mirror the `.find(...)` selectors (ids are unique) and
+ * `clientProjectCounts` mirrors `projectsOfClient(...).length` (absent client =>
+ * 0, matching `?? 0`).
+ */
+export interface SearchResultMeta {
+  clientsById: Map<string, Client>;
+  projectsById: Map<string, Project>;
+  statusesById: Map<string, Status>;
+  clientProjectCounts: Map<string, number>;
+}
+
+export function buildSearchResultMeta(state: AppData): SearchResultMeta {
+  const clientsById = new Map(state.clients.map((c) => [c.id, c]));
+  const projectsById = new Map(state.projects.map((p) => [p.id, p]));
+  const statusesById = new Map(state.statuses.map((s) => [s.id, s]));
+  const clientProjectCounts = new Map<string, number>();
+  for (const p of state.projects) {
+    clientProjectCounts.set(p.clientId, (clientProjectCounts.get(p.clientId) ?? 0) + 1);
+  }
+  return { clientsById, projectsById, statusesById, clientProjectCounts };
+}
+
 // ---- Permissions ----
 
 export function currentUser(state: AppData): Person | undefined {
   return state.currentUserId ? getPerson(state, state.currentUserId) : undefined;
-}
-
-/**
- * The REAL logged-in person's id — the impersonator while impersonating,
- * otherwise the acted-as identity. Use this (not `currentUserId`) only for the
- * "Występuj jako" switcher visibility and the impersonation return path; every
- * other read stays a true preview of the acted-as identity.
- */
-export function realUserId(state: AppData): string {
-  return state.impersonatorId || state.currentUserId;
-}
-
-/** The REAL logged-in Person (see `realUserId`), or undefined if unresolved. */
-export function realUser(state: AppData): Person | undefined {
-  const id = realUserId(state);
-  return id ? getPerson(state, id) : undefined;
-}
-
-/** True when an impersonation session is active (`impersonatorId !== ''`). */
-export function isImpersonating(state: AppData): boolean {
-  return state.impersonatorId !== '';
 }
 
 /**

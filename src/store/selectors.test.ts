@@ -10,23 +10,25 @@ import {
   blockIsDone,
   binHoursForTaskPerson,
   binTaskRowsForPerson,
+  buildSearchResultMeta,
   conflictDatesForTask,
   conflictDatesForTaskPerson,
   dayAvailabilityForPerson,
   doneStatusIds,
+  getClient,
+  getProject,
+  getStatus,
+  projectsOfClient,
   loadPercent,
   rangeAvailabilityForPerson,
   growAllowanceHours,
   hoursForTaskPersonOnDate,
   isDoneStatus,
   isPersonWorkday,
-  isImpersonating,
   overdueTasksForPerson,
   overloadedDatesForPersonInRange,
   peopleWithBirthdayOnDate,
   planningStatusForTotals,
-  realUser,
-  realUserId,
   searchAll,
   taskDisplayStatus,
   taskGrowAllowance,
@@ -307,6 +309,70 @@ describe('searchAll draft exclusion', () => {
   });
 });
 
+describe('buildSearchResultMeta — parity with per-result selector calls', () => {
+  function makeProject(id: string, clientId: string, statusId: string) {
+    return {
+      id, clientId, name: `Projekt ${id}`, description: '', statusId,
+      paid: false, startDate: '2026-02-01', endDate: '2026-03-05', departmentId: '',
+      serviceTypeId: '', documents: [],
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+  }
+  function makeClient(id: string, name: string) {
+    return { id, name, archived: false, notes: '' };
+  }
+
+  const state = makeState({
+    clients: [makeClient('cA', 'Klient A'), makeClient('cB', 'Klient B'), makeClient('cEmpty', 'Bez projektów')],
+    projects: [
+      makeProject('pA1', 'cA', 'status1'),
+      makeProject('pA2', 'cA', 'status2'),
+      makeProject('pB1', 'cB', 'status1'),
+    ],
+    statuses: [
+      makeStatus({ id: 'status1', name: 'W toku' }),
+      makeStatus({ id: 'status2', name: 'Zrobione', isDone: true }),
+    ],
+    tasks: [makeTask({ id: 't1', projectId: 'pA1', statusId: 'status1' })],
+  });
+
+  it('lookup maps mirror getClient/getProject/getStatus (incl. missing => undefined)', () => {
+    const meta = buildSearchResultMeta(state);
+    for (const id of ['cA', 'cB', 'cEmpty', 'nope']) {
+      expect(meta.clientsById.get(id)).toBe(getClient(state, id));
+    }
+    for (const id of ['pA1', 'pA2', 'pB1', 'nope']) {
+      expect(meta.projectsById.get(id)).toBe(getProject(state, id));
+    }
+    for (const id of ['status1', 'status2', 'nope']) {
+      expect(meta.statusesById.get(id)).toBe(getStatus(state, id));
+    }
+  });
+
+  it('clientProjectCounts mirrors projectsOfClient(...).length (absent client => 0)', () => {
+    const meta = buildSearchResultMeta(state);
+    for (const id of ['cA', 'cB', 'cEmpty', 'nope']) {
+      expect(meta.clientProjectCounts.get(id) ?? 0).toBe(projectsOfClient(state, id).length);
+    }
+  });
+
+  it('drives byte-identical row metadata across live searchAll results', () => {
+    const meta = buildSearchResultMeta(state);
+    const results = searchAll(state, 'projekt');
+    for (const p of results.projects) {
+      expect(meta.clientsById.get(p.clientId)).toBe(getClient(state, p.clientId));
+      expect(meta.statusesById.get(p.statusId)).toBe(getStatus(state, p.statusId));
+    }
+    for (const t of results.tasks) {
+      expect(meta.projectsById.get(t.projectId)).toBe(getProject(state, t.projectId));
+      expect(meta.statusesById.get(t.statusId)).toBe(getStatus(state, t.statusId));
+    }
+    for (const c of results.clients) {
+      expect(meta.clientProjectCounts.get(c.id) ?? 0).toBe(projectsOfClient(state, c.id).length);
+    }
+  });
+});
+
 // ---------------------------------------------------------------------------
 // growAllowanceHours (PKG-20260708-budget-store)
 // ---------------------------------------------------------------------------
@@ -428,32 +494,6 @@ describe('growAllowanceHours — number contract (PKG-20260708-b2-tests)', () =>
   it('returns 0 for a missing entry id', () => {
     const state = makeState({ tasks: [makeTask({ id: 't1' })], workload: [] });
     expect(growAllowanceHours(state, 'does-not-exist')).toBe(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// realUserId / realUser / isImpersonating — coverage added by
-// PKG-20260708-b2-tests (implementation shipped by PKG-20260708-b2-impersonation).
-// ---------------------------------------------------------------------------
-
-describe('realUserId / realUser / isImpersonating (PKG-20260708-b2-tests)', () => {
-  it('not impersonating: realUserId/realUser resolve to self, isImpersonating is false', () => {
-    const p1 = makePerson({ id: 'p1', name: 'Ann' });
-    const state = makeState({ people: [p1], currentUserId: 'p1', impersonatorId: '' });
-
-    expect(realUserId(state)).toBe('p1');
-    expect(realUser(state)?.id).toBe('p1');
-    expect(isImpersonating(state)).toBe(false);
-  });
-
-  it('impersonating: realUserId/realUser resolve to the impersonator, isImpersonating is true', () => {
-    const p1 = makePerson({ id: 'p1', name: 'Ann' });
-    const p2 = makePerson({ id: 'p2', name: 'Bob' });
-    const state = makeState({ people: [p1, p2], currentUserId: 'p2', impersonatorId: 'p1' });
-
-    expect(realUserId(state)).toBe('p1');
-    expect(realUser(state)?.id).toBe('p1');
-    expect(isImpersonating(state)).toBe(true);
   });
 });
 

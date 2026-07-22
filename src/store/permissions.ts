@@ -29,7 +29,6 @@ export type PermAction =
   | 'profile.editOwn' // own contact fields, avatar, password
   | 'workload.reassign' // WorkloadPage reassign control
   | 'admin.panel' // admin page: statuses, clients, departments, service types
-  | 'users.impersonate' // "Występuj jako" quick switch
   | 'comments.add' // post comments
   | 'tickets.create' // złożenie zgłoszenia („Zgłoszenia” → „Zgłoś”) — KAŻDA rola
   | 'tickets.manage' // wgląd we wszystkie zgłoszenia, zmiana statusu, usuwanie, eksport
@@ -53,7 +52,6 @@ const MATRIX: Record<AccessRole, ReadonlySet<PermAction>> = {
     'profile.editOwn',
     'workload.reassign',
     'admin.panel',
-    'users.impersonate',
     'comments.add',
     'tickets.create',
     'tickets.manage',

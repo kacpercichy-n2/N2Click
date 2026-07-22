@@ -541,6 +541,63 @@ describe('loadPlannerSnapshot', () => {
     const result = await loadPlannerSnapshot(db, maps(), localFixture());
     expect(result).toEqual({ ok: false, error: PLANNER_SNAPSHOT_ERROR });
   });
+
+  it('mapuje kolumnę contacts do sanityzowanej listy i POMIJA klucz dla []/null/zniekształconych', async () => {
+    const db = new FakeSelectDb().seed('clients', [
+      // Poprawne wiersze + śmieci: koercja/trim, drop bez id, drop puste imię+nazwisko.
+      {
+        id: CLI,
+        name: 'Z osobami',
+        archived: false,
+        contacts: [
+          { id: 'k1', firstName: ' Marek ', lastName: 'Kos', phone: 5, email: null },
+          { firstName: 'Bez', lastName: 'Id' },
+        ],
+      },
+      { id: uuid('c-empty'), name: 'Pusta tablica', archived: false, contacts: [] },
+      { id: uuid('c-null'), name: 'Null', archived: false, contacts: null },
+      { id: uuid('c-bad'), name: 'Nie-tablica', archived: false, contacts: 'nope' },
+    ]);
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const byId = new Map(result.payload.clients.map((c) => [c.id, c]));
+    expect(byId.get(CLI)!.contacts).toEqual([
+      { id: 'k1', firstName: 'Marek', lastName: 'Kos', phone: '', email: '' },
+    ]);
+    for (const id of [uuid('c-empty'), uuid('c-null'), uuid('c-bad')]) {
+      expect('contacts' in byId.get(id)!).toBe(false);
+    }
+  });
+
+  it('round-trip: lokalny klient z contacts → clientRow → select → hydracja = kanoniczny klient', async () => {
+    const m = maps();
+    const contacts = [{ id: 'k1', firstName: 'Marek', lastName: 'Kos', phone: '600', email: 'm@k.pl' }];
+    const withContacts = { id: CLI, name: 'Acme', archived: false, contacts };
+    const noContacts = { id: uuid('c-2'), name: 'Beta', archived: false };
+    // clientRow przez diffToCloudOps (mirror po reduktorze).
+    const next: AppData = { ...localFixture(), clients: [withContacts, noContacts] };
+    const { ops } = diffToCloudOps(localFixture(), next, m);
+    const rows = ops.filter((o) => o.table === 'clients').map((o) => o.row!);
+    const db = new FakeSelectDb().seed('clients', rows);
+    const result = await loadPlannerSnapshot(db, m, localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const byId = new Map(result.payload.clients.map((c) => [c.id, c]));
+    // Klient z osobami wraca deep-equal do kanonicznego kształtu.
+    expect(byId.get(CLI)).toEqual({
+      id: CLI,
+      name: 'Acme',
+      archived: false,
+      contactName: '',
+      contactEmail: '',
+      contactPhone: '',
+      notes: '',
+      contacts,
+    });
+    // Klient bez osób round-trip BEZ zyskania klucza contacts.
+    expect('contacts' in byId.get(uuid('c-2'))!).toBe(false);
+  });
 });
 
 // ---- Retirement flag accessors ----------------------------------------------

@@ -8,7 +8,7 @@
 // Choosing an option applies live (no "Zastosuj"). Closes on outside
 // mousedown, Escape, or toggling the button — mirroring the WeekView
 // context-menu pattern (no page-blocking scrim).
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Filter, X } from './icons';
 
 export interface FilterGroup {
@@ -28,6 +28,7 @@ export interface FilterChip {
 export function FilterPanel({
   groups,
   dates,
+  extra,
   activeCount,
   onClearAll,
   chips,
@@ -39,6 +40,9 @@ export function FilterPanel({
     onFrom: (v: string) => void;
     onTo: (v: string) => void;
   };
+  /** Optional additional controls rendered inside the popover (e.g. a
+   *  multi-select "Osoby" fieldset). Purely additive; other consumers omit it. */
+  extra?: ReactNode;
   activeCount: number;
   onClearAll: () => void;
   chips: FilterChip[];
@@ -119,6 +123,7 @@ export function FilterPanel({
                 </div>
               </fieldset>
             )}
+            {extra}
             <div className="filter-popover-foot">
               <button
                 type="button"

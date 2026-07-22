@@ -1,4 +1,5 @@
-// Klienci: lista z danymi kontaktowymi, formularz dodawania, edycja inline,
+// Klienci: lista z rozwijanymi kartami (opis + dodatkowe osoby kontaktowe
+// widoczne dopiero po rozwinięciu), formularz dodawania, edycja inline,
 // archiwizacja i usuwanie (kaskadowe — patrz DELETE_CLIENT w reduktorze).
 // Uprawnienie `clients.manage` steruje edycją; podgląd ma każdy, kto widzi
 // nawigację (jak Projekty).
@@ -7,8 +8,17 @@ import { Link } from 'react-router-dom';
 import { usePersistence, useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import type { Client } from '../types';
-import { ChevronRight, Plus } from '../components/icons';
-import { isValidClientDraft } from '../store/commandValidation';
+import { ChevronRight, Plus, Trash2 } from '../components/icons';
+import {
+  clientDraftError,
+  draftOf,
+  draftToActionPayload,
+  emptyDraft,
+  joinContactName,
+  newContactRow,
+  normalizedDraft,
+  type ClientFormDraft,
+} from './clientContactForm';
 import { useAutoSave } from '../utils/useAutoSave';
 
 function polishCount(n: number, one: string, few: string, many: string): string {
@@ -19,99 +29,158 @@ function polishCount(n: number, one: string, few: string, many: string): string 
   return many;
 }
 
-interface ClientDraft {
-  name: string;
-  contactName: string;
-  contactEmail: string;
-  contactPhone: string;
-  notes: string;
-}
+type DraftUpdater = (updater: (d: ClientFormDraft) => ClientFormDraft) => void;
 
-const emptyDraft = (): ClientDraft => ({
-  name: '',
-  contactName: '',
-  contactEmail: '',
-  contactPhone: '',
-  notes: '',
-});
-
-const draftOf = (c: Client): ClientDraft => ({
-  name: c.name,
-  contactName: c.contactName ?? '',
-  contactEmail: c.contactEmail ?? '',
-  contactPhone: c.contactPhone ?? '',
-  notes: c.notes ?? '',
-});
-
-/** Komunikat walidacji wymaganych pól klienta ('' = draft poprawny). Reguła jest
- *  ta sama, którą egzekwuje reduktor (`isValidClientDraft`); tutaj tylko
- *  rozróżniamy, KTÓREGO pola brakuje. */
-function clientDraftError(d: ClientDraft): string {
-  if (!d.name.trim()) return 'Nazwa klienta jest wymagana';
-  if (!d.contactName.trim()) return 'Osoba kontaktowa jest wymagana';
-  if (!d.contactEmail.trim() && !d.contactPhone.trim()) {
-    return 'Podaj co najmniej jeden kontakt: e-mail lub telefon';
-  }
-  return '';
-}
-
-/** Pola kontaktowe draftu (bez nazwy) — wspólne dla formularza i edycji. */
-function ContactFields({
+/** Pola formularza klienta: nazwa, główna osoba kontaktowa, dodatkowe osoby i
+ *  opis. Wspólne dla tworzenia i edycji. */
+function ClientFormFields({
   idPrefix,
   draft,
-  onChange,
+  onDraft,
 }: {
   idPrefix: string;
-  draft: ClientDraft;
-  onChange: (patch: Partial<ClientDraft>) => void;
+  draft: ClientFormDraft;
+  onDraft: DraftUpdater;
 }) {
+  const setPrimary = (patch: Partial<ClientFormDraft['primary']>) =>
+    onDraft((d) => ({ ...d, primary: { ...d.primary, ...patch } }));
+  const setContact = (id: string, patch: Partial<ClientFormDraft['contacts'][number]>) =>
+    onDraft((d) => ({
+      ...d,
+      contacts: d.contacts.map((r) => (r.id === id ? { ...r, ...patch } : r)),
+    }));
+  const addContact = () => onDraft((d) => ({ ...d, contacts: [...d.contacts, newContactRow()] }));
+  const removeContact = (id: string) =>
+    onDraft((d) => ({ ...d, contacts: d.contacts.filter((r) => r.id !== id) }));
+
   return (
     <>
-      <div className="field">
-        <label htmlFor={`${idPrefix}-contact`}>Osoba kontaktowa *</label>
-        <input
-          id={`${idPrefix}-contact`}
-          value={draft.contactName}
-          onChange={(e) => onChange({ contactName: e.target.value })}
-          placeholder="np. Anna Nowak"
-          maxLength={200}
-        />
+      <div className="field-row">
+        <div className="field">
+          <label htmlFor={`${idPrefix}-name`}>Nazwa klienta *</label>
+          <input
+            id={`${idPrefix}-name`}
+            value={draft.name}
+            onChange={(e) => onDraft((d) => ({ ...d, name: e.target.value }))}
+            placeholder="np. Acme Foods"
+            maxLength={200}
+          />
+        </div>
       </div>
-      <div className="field">
-        <label htmlFor={`${idPrefix}-email`}>E-mail *</label>
-        <input
-          id={`${idPrefix}-email`}
-          type="email"
-          value={draft.contactEmail}
-          onChange={(e) => onChange({ contactEmail: e.target.value })}
-          placeholder="np. anna@firma.pl"
-          maxLength={320}
-          aria-describedby={`${idPrefix}-contact-hint`}
-        />
-        <p className="field-hint" id={`${idPrefix}-contact-hint`}>
-          Wystarczy jedno z pól: e-mail lub telefon.
-        </p>
-      </div>
-      <div className="field">
-        <label htmlFor={`${idPrefix}-phone`}>Telefon *</label>
-        <input
-          id={`${idPrefix}-phone`}
-          type="tel"
-          value={draft.contactPhone}
-          onChange={(e) => onChange({ contactPhone: e.target.value })}
-          placeholder="np. +48 600 100 200"
-          maxLength={40}
-          aria-describedby={`${idPrefix}-contact-hint`}
-        />
-      </div>
+
+      <fieldset className="client-contact-group">
+        <legend>Główna osoba kontaktowa</legend>
+        <div className="field-row">
+          <div className="field">
+            <label htmlFor={`${idPrefix}-first`}>Imię *</label>
+            <input
+              id={`${idPrefix}-first`}
+              value={draft.primary.firstName}
+              onChange={(e) => setPrimary({ firstName: e.target.value })}
+              placeholder="np. Anna"
+              maxLength={100}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor={`${idPrefix}-last`}>Nazwisko *</label>
+            <input
+              id={`${idPrefix}-last`}
+              value={draft.primary.lastName}
+              onChange={(e) => setPrimary({ lastName: e.target.value })}
+              placeholder="np. Nowak"
+              maxLength={100}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor={`${idPrefix}-phone`}>Telefon *</label>
+            <input
+              id={`${idPrefix}-phone`}
+              type="tel"
+              value={draft.primary.phone}
+              onChange={(e) => setPrimary({ phone: e.target.value })}
+              placeholder="np. +48 600 100 200"
+              maxLength={40}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor={`${idPrefix}-email`}>E-mail *</label>
+            <input
+              id={`${idPrefix}-email`}
+              type="email"
+              value={draft.primary.email}
+              onChange={(e) => setPrimary({ email: e.target.value })}
+              placeholder="np. anna@firma.pl"
+              maxLength={320}
+            />
+          </div>
+        </div>
+      </fieldset>
+
+      {draft.contacts.map((row, i) => (
+        <fieldset className="client-contact-group" key={row.id}>
+          <legend>Dodatkowa osoba kontaktowa {i + 1}</legend>
+          <div className="field-row">
+            <div className="field">
+              <label htmlFor={`${idPrefix}-c-${row.id}-first`}>Imię *</label>
+              <input
+                id={`${idPrefix}-c-${row.id}-first`}
+                value={row.firstName}
+                onChange={(e) => setContact(row.id, { firstName: e.target.value })}
+                maxLength={100}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor={`${idPrefix}-c-${row.id}-last`}>Nazwisko *</label>
+              <input
+                id={`${idPrefix}-c-${row.id}-last`}
+                value={row.lastName}
+                onChange={(e) => setContact(row.id, { lastName: e.target.value })}
+                maxLength={100}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor={`${idPrefix}-c-${row.id}-phone`}>Telefon</label>
+              <input
+                id={`${idPrefix}-c-${row.id}-phone`}
+                type="tel"
+                value={row.phone}
+                onChange={(e) => setContact(row.id, { phone: e.target.value })}
+                maxLength={40}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor={`${idPrefix}-c-${row.id}-email`}>E-mail</label>
+              <input
+                id={`${idPrefix}-c-${row.id}-email`}
+                type="email"
+                value={row.email}
+                onChange={(e) => setContact(row.id, { email: e.target.value })}
+                maxLength={320}
+              />
+            </div>
+            <button
+              type="button"
+              className="btn danger-ghost small client-contact-remove"
+              onClick={() => removeContact(row.id)}
+            >
+              <Trash2 size={14} aria-hidden /> Usuń
+            </button>
+          </div>
+        </fieldset>
+      ))}
+
+      <button type="button" className="btn ghost small client-contact-add" onClick={addContact}>
+        <Plus size={14} aria-hidden /> Dodaj osobę kontaktową
+      </button>
+
       <div className="field field-wide">
-        <label htmlFor={`${idPrefix}-notes`}>Notatki</label>
+        <label htmlFor={`${idPrefix}-notes`}>Opis klienta</label>
         <textarea
           id={`${idPrefix}-notes`}
           value={draft.notes}
-          onChange={(e) => onChange({ notes: e.target.value })}
-          placeholder="np. ustalenia handlowe, preferencje"
-          rows={2}
+          onChange={(e) => onDraft((d) => ({ ...d, notes: e.target.value }))}
+          placeholder="np. ustalenia handlowe, preferencje, historia współpracy"
+          rows={3}
           maxLength={4000}
         />
       </div>
@@ -125,11 +194,13 @@ export function ClientsPage() {
   const canManage = useCan()('clients.manage');
 
   const [creating, setCreating] = useState(false);
-  const [draft, setDraft] = useState<ClientDraft>(emptyDraft);
+  const [draft, setDraft] = useState<ClientFormDraft>(emptyDraft);
   const [createError, setCreateError] = useState('');
   const [showArchived, setShowArchived] = useState(false);
   const [editingId, setEditingId] = useState('');
-  const [editDraft, setEditDraft] = useState<ClientDraft>(emptyDraft);
+  const [editDraft, setEditDraft] = useState<ClientFormDraft>(emptyDraft);
+  // Rozwinięta karta — pojedynczy akordeon, stan LOKALNY (nie trwały).
+  const [expandedId, setExpandedId] = useState('');
 
   const projectCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -155,14 +226,7 @@ export function ClientsPage() {
       setCreateError(error);
       return;
     }
-    dispatch({
-      type: 'ADD_CLIENT',
-      name: draft.name,
-      contactName: draft.contactName,
-      contactEmail: draft.contactEmail,
-      contactPhone: draft.contactPhone,
-      notes: draft.notes,
-    });
+    dispatch({ type: 'ADD_CLIENT', ...draftToActionPayload(draft) });
     setDraft(emptyDraft());
     setCreateError('');
     setCreating(false);
@@ -174,40 +238,24 @@ export function ClientsPage() {
   };
 
   const commitEdit = () => {
-    if (editingId === '' || !isValidClientDraft(editDraft)) return;
-    dispatch({
-      type: 'SAVE_CLIENT',
-      clientId: editingId,
-      name: editDraft.name,
-      contactName: editDraft.contactName,
-      contactEmail: editDraft.contactEmail,
-      contactPhone: editDraft.contactPhone,
-      notes: editDraft.notes,
-    });
+    if (editingId === '' || clientDraftError(editDraft) !== '') return;
+    dispatch({ type: 'SAVE_CLIENT', clientId: editingId, ...draftToActionPayload(editDraft) });
   };
 
-  // Auto-zapis edycji: TYLKO draft spełniający regułę wymaganych pól (nazwa +
-  // osoba kontaktowa + e-mail lub telefon) zapisuje się w tle po pauzie w
-  // pisaniu. Niepełny draft WSTRZYMUJE auto-zapis (useAutoSave nie odpala
-  // `save`), więc nigdy nie pojawi się fałszywe „Zapisano”; przycisk „Zamknij”
-  // tylko zwija formularz.
+  // Auto-zapis edycji: TYLKO draft spełniający regułę formularza (nazwa + pełna
+  // główna osoba kontaktowa + poprawne dodatkowe osoby) zapisuje się w tle po
+  // pauzie w pisaniu. Reguła formularza jest STRICTLY silniejsza od bramki
+  // reduktora, więc żaden auto-zapis nie zostanie po cichu odrzucony i nie
+  // pojawi się fałszywe „Zapisano”. Niepełny draft WSTRZYMUJE auto-zapis
+  // (useAutoSave nie odpala `save`); przycisk „Zamknij” tylko zwija formularz.
   const editedClient = state.clients.find((c) => c.id === editingId);
   const editDirty =
-    editedClient !== undefined &&
-    JSON.stringify(draftOf(editedClient)) !==
-      JSON.stringify({
-        ...editDraft,
-        name: editDraft.name.trim(),
-        contactName: editDraft.contactName.trim(),
-        contactEmail: editDraft.contactEmail.trim(),
-        contactPhone: editDraft.contactPhone.trim(),
-        notes: editDraft.notes.trim(),
-      });
+    editedClient !== undefined && normalizedDraft(draftOf(editedClient)) !== normalizedDraft(editDraft);
   useAutoSave({
     // Jawny konflikt kart wstrzymuje auto-zapis (decyzja należy do banera).
     enabled: canManage && editingId !== '' && external !== 'conflict',
     dirty: editDirty,
-    valid: isValidClientDraft(editDraft),
+    valid: clientDraftError(editDraft) === '',
     signature: JSON.stringify(editDraft),
     save: commitEdit,
   });
@@ -234,6 +282,8 @@ export function ClientsPage() {
       dispatch({ type: 'DELETE_CLIENT', clientId: c.id });
     }
   };
+
+  const toggleExpanded = (id: string) => setExpandedId((cur) => (cur === id ? '' : id));
 
   return (
     <section className="page">
@@ -264,29 +314,14 @@ export function ClientsPage() {
 
       {canManage && creating && (
         <form className="client-create project-create" onSubmit={submitCreate}>
-          <div className="field-row">
-            <div className="field">
-              <label htmlFor="cl-name">Nazwa klienta *</label>
-              <input
-                id="cl-name"
-                value={draft.name}
-                onChange={(e) => {
-                  setDraft((d) => ({ ...d, name: e.target.value }));
-                  if (createError) setCreateError('');
-                }}
-                placeholder="np. Acme Foods"
-                maxLength={200}
-              />
-            </div>
-            <ContactFields
-              idPrefix="cl"
-              draft={draft}
-              onChange={(patch) => {
-                setDraft((d) => ({ ...d, ...patch }));
-                if (createError) setCreateError('');
-              }}
-            />
-          </div>
+          <ClientFormFields
+            idPrefix="cl"
+            draft={draft}
+            onDraft={(updater) => {
+              setDraft(updater);
+              if (createError) setCreateError('');
+            }}
+          />
           {createError && (
             <p className="field-error" role="alert">
               {createError}
@@ -313,28 +348,19 @@ export function ClientsPage() {
           {clients.map((c) => {
             const count = projectCounts.get(c.id) ?? 0;
             const editing = editingId === c.id;
+            const expanded = expandedId === c.id;
+            const extraCount = c.contacts?.length ?? 0;
+            const detailsId = `client-details-${c.id}`;
+            const handleMainClick = (e: React.MouseEvent) => {
+              const target = e.target as HTMLElement;
+              if (target.closest('a') || target.closest('button')) return;
+              toggleExpanded(c.id);
+            };
             return (
               <div key={c.id} className={c.archived ? 'client-card archived' : 'client-card'}>
                 {editing ? (
                   <form className="client-edit project-create" onSubmit={submitEdit}>
-                    <div className="field-row">
-                      <div className="field">
-                        <label htmlFor="cle-name">Nazwa klienta *</label>
-                        <input
-                          id="cle-name"
-                          value={editDraft.name}
-                          onChange={(e) =>
-                            setEditDraft((d) => ({ ...d, name: e.target.value }))
-                          }
-                          maxLength={200}
-                        />
-                      </div>
-                      <ContactFields
-                        idPrefix="cle"
-                        draft={editDraft}
-                        onChange={(patch) => setEditDraft((d) => ({ ...d, ...patch }))}
-                      />
-                    </div>
+                    <ClientFormFields idPrefix={`cle-${c.id}`} draft={editDraft} onDraft={setEditDraft} />
                     {editError && (
                       <p className="field-error" role="alert">
                         {editError}
@@ -353,11 +379,29 @@ export function ClientsPage() {
                   </form>
                 ) : (
                   <>
-                    <div className="client-card-main">
-                      <div className="client-card-title">
+                    <div className="client-card-main" onClick={handleMainClick}>
+                      <button
+                        type="button"
+                        className={expanded ? 'client-card-toggle expanded' : 'client-card-toggle'}
+                        aria-expanded={expanded}
+                        aria-controls={detailsId}
+                        onClick={() => toggleExpanded(c.id)}
+                      >
+                        <ChevronRight size={16} className="client-card-chevron" aria-hidden />
                         <strong>{c.name}</strong>
                         {c.archived && <span className="muted"> (zarchiwizowany)</span>}
-                      </div>
+                        {extraCount > 0 && (
+                          <span className="client-contact-badge">
+                            +{extraCount}{' '}
+                            {polishCount(
+                              extraCount,
+                              'os. kontaktowa',
+                              'os. kontaktowe',
+                              'os. kontaktowych',
+                            )}
+                          </span>
+                        )}
+                      </button>
                       <div className="client-card-meta muted">
                         {c.contactName && <span>{c.contactName}</span>}
                         {c.contactEmail && (
@@ -370,7 +414,36 @@ export function ClientsPage() {
                           <span>Brak danych kontaktowych</span>
                         )}
                       </div>
-                      {c.notes && <p className="client-card-notes muted">{c.notes}</p>}
+                      {expanded && (
+                        <div className="client-card-details" id={detailsId}>
+                          {!c.notes && extraCount === 0 ? (
+                            <p className="muted">Brak dodatkowych informacji</p>
+                          ) : (
+                            <>
+                              {c.notes && (
+                                <div className="client-detail-section">
+                                  <h4>Opis</h4>
+                                  <p className="client-card-notes">{c.notes}</p>
+                                </div>
+                              )}
+                              {extraCount > 0 && (
+                                <div className="client-detail-section">
+                                  <h4>Dodatkowe osoby kontaktowe</h4>
+                                  <ul className="client-contact-list">
+                                    {c.contacts!.map((k) => (
+                                      <li key={k.id}>
+                                        <span>{joinContactName(k.firstName, k.lastName)}</span>
+                                        {k.phone && <a href={`tel:${k.phone}`}>{k.phone}</a>}
+                                        {k.email && <a href={`mailto:${k.email}`}>{k.email}</a>}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <div className="client-card-actions">
                       <Link className="btn ghost small" to={`/projects?client=${c.id}`}>

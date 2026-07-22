@@ -19,6 +19,8 @@ import {
   TICKET_PRIORITY_LABELS,
 } from '../utils/tickets';
 import { bypassNavGuardOnce, clearNavGuard, setNavGuard } from '../utils/dirtyRegistry';
+import { IconButton } from './IconButton';
+import { X } from './icons';
 
 /** Parametr URL-a niosący modal zgłoszenia (polski, jak reszta tras). */
 const TICKET_PARAM = 'zgloszenie';
@@ -180,14 +182,12 @@ function TicketModalShell({ ticketParam, onClose }: ShellProps) {
                   Usuń
                 </button>
               )}
-              <button
-                type="button"
+              <IconButton
                 className="task-modal-close"
+                icon={<X size={18} aria-hidden />}
                 onClick={requestClose}
-                aria-label="Zamknij"
-              >
-                ×
-              </button>
+                label="Zamknij"
+              />
             </div>
           </div>
           <div className="task-modal-body">

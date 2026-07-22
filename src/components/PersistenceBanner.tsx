@@ -1,5 +1,5 @@
-// Global persistence banner — the house pattern (like the impersonation
-// banner), no toasts. Surfaces three mutually exclusive, honest states about
+// Global persistence banner — the house banner pattern, no toasts. Surfaces
+// three mutually exclusive, honest states about
 // LOCAL persistence (same-browser only — never a collaboration claim):
 //   1. a durable write FAILURE with recovery guidance (export copy + retry),
 //   2. a two-tab CONFLICT choice (local edits vs. another tab's write),

@@ -1,7 +1,7 @@
 // The core allocation UI: rows = each calendar day in the period, columns = one
 // per assigned person, cells = editable planned-hours inputs. Overload tinting
 // uses the person's TOTAL across all tasks for that date.
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import type { AppData, Person } from '../types';
 import { personColor } from '../utils/colors';
 import {
@@ -33,7 +33,11 @@ interface Props {
   readOnly?: boolean; // gate: disable inputs + hide fill/clear when the role can't manage tasks
 }
 
-export function AllocationGrid({
+// Memoized: the grid runs per-cell availability/overload scans on every render,
+// so with stable props (the TaskModal editor passes memoized allocations/people
+// and useCallback handlers) typing elsewhere in the editor no longer re-renders
+// or rescans it.
+export const AllocationGrid = memo(function AllocationGrid({
   state,
   currentTaskId,
   startDate,
@@ -194,4 +198,4 @@ export function AllocationGrid({
       </table>
     </div>
   );
-}
+});

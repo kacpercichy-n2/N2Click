@@ -11,20 +11,26 @@ import {
   clearData,
   ensureStartMinutes,
   emptyData,
+  getLastWrittenRaw,
+  getLastWrittenRevision,
   getLatestKnownRevision,
+  isOwnLastWrite,
   loadData,
   loadDataResult,
   normalizeDates,
   normalizeStatusFlags,
   normalizeTaskMeta,
   normalizeWorkloadHours,
+  repairClients,
   repairEvents,
   readCloudRetirementMarker,
   readEnvelopeRevision,
   repairStatusReferences,
   saveData,
+  subscribeExternalChanges,
   writeCloudRetirementMarker,
 } from './storage';
+import type { ExternalChangeInfo } from './storage';
 import { todayStr } from '../utils/dates';
 import { BIN_DATE } from '../utils/time';
 import type {
@@ -631,92 +637,44 @@ describe('loadData migration v4 -> v5', () => {
 });
 
 // ---------------------------------------------------------------------------
-// impersonatorId default/round-trip/sanitize (PKG-20260708-b2-tests, covering
-// the additive field shipped by PKG-20260708-b2-impersonation). Version stays
-// 5 (additive, no bump) — payloads here are already v5-shaped.
+// Legacy impersonatorId strip-on-load (PKG-20260722-settings-nav-cleanup). The
+// field was removed from AppData; a stray legacy key is stripped once, a clean
+// v7 payload without it never echo-writes, and loading stays idempotent. No
+// DATA_VERSION bump (stays 7).
 // ---------------------------------------------------------------------------
 
-describe('impersonatorId persistence (PKG-20260708-b2-tests)', () => {
-  function v5Payload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-    return {
-      version: 5,
-      clients: [],
-      departments: [],
-      serviceTypes: [],
-      statuses: [],
-      projects: [],
-      milestones: [],
-      tasks: [],
-      people: [
-        {
-          id: 'p1',
-          firstName: 'Ann',
-          lastName: 'Admin',
-          name: 'Ann Admin',
-          email: '',
-          role: '',
-          departmentId: '',
-          companyId: '',
-          avatar: '',
-          capacity: 8,
-          accessRole: 'administrator',
-        },
-        {
-          id: 'p2',
-          firstName: 'Bob',
-          lastName: 'Staff',
-          name: 'Bob Staff',
-          email: '',
-          role: '',
-          departmentId: '',
-          companyId: '',
-          avatar: '',
-          capacity: 8,
-          accessRole: 'pracownik',
-        },
-      ],
-      assignments: [],
-      workload: [],
-      comments: [],
-      activity: [],
-      currentUserId: 'p1',
-      sampleBannerDismissed: false,
-      savedFilters: [],
-      ...overrides,
-    };
-  }
-
-  it("a persisted payload WITHOUT impersonatorId loads with the '' default", () => {
-    const payload = v5Payload(); // no impersonatorId key at all
-    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
-    expect(data.impersonatorId).toBe('');
+describe('legacy impersonatorId strip-on-load', () => {
+  it('a legacy payload WITH impersonatorId loads with the key absent and currentUserId preserved (written back once)', () => {
+    const legacy = { ...emptyData(), currentUserId: 'p2', impersonatorId: 'p1' };
+    const result = withLocalStorage(
+      { [STORAGE_KEY]: JSON.stringify(legacy) },
+      () => loadDataResult(),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect('impersonatorId' in result.data).toBe(false);
+    expect(result.data.currentUserId).toBe('p2');
+    // The strip is a deterministic repair -> written back exactly once.
+    expect(result.needsWriteback).toBe(true);
   });
 
-  it('a valid non-empty impersonatorId round-trips', () => {
-    const payload = v5Payload({ currentUserId: 'p2', impersonatorId: 'p1' });
-    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
-    expect(data.impersonatorId).toBe('p1');
-    expect(data.currentUserId).toBe('p2');
+  it('a clean v7 payload without the key does not echo-write', () => {
+    const clean = emptyData(); // no impersonatorId key
+    const result = withLocalStorage(
+      { [STORAGE_KEY]: JSON.stringify(clean) },
+      () => loadDataResult(),
+    );
+    expect(result.ok && result.needsWriteback).toBe(false);
+    if (!result.ok) return;
+    expect('impersonatorId' in result.data).toBe(false);
   });
 
-  it("sanitizes an impersonatorId referencing a non-existent person to ''", () => {
-    const payload = v5Payload({ currentUserId: 'p2', impersonatorId: 'ghost' });
-    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
-    expect(data.impersonatorId).toBe('');
-  });
-
-  it("sanitizes an impersonatorId equal to currentUserId to ''", () => {
-    const payload = v5Payload({ currentUserId: 'p1', impersonatorId: 'p1' });
-    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
-    expect(data.impersonatorId).toBe('');
-  });
-
-  it('loading is idempotent: load -> save-shape -> load again yields the same impersonatorId', () => {
-    const payload = v5Payload({ currentUserId: 'p2', impersonatorId: 'p1' });
-    const once = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+  it('loading stays idempotent after the strip', () => {
+    const legacy = { ...emptyData(), currentUserId: 'p2', impersonatorId: 'p1' };
+    const once = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(legacy) }, () => loadData());
     const twice = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(once) }, () => loadData());
     expect(twice).toEqual(once);
-    expect(twice.impersonatorId).toBe('p1');
+    expect('impersonatorId' in twice).toBe(false);
   });
 });
 
@@ -1711,6 +1669,137 @@ describe('saveData / envelope revision (PKG-20260713c-persist-tests)', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// n2hub-259 (persist coalescing): the external-change fast path. saveData now
+// records the exact raw payload + revision of the LAST successful write so the
+// provider can cheaply detect its own bounced-back write before parsing +
+// deep-comparing the multi-MB envelope. `latestKnownRevision` is max-merged
+// with observed external revisions, so these dedicated fields (untouched by
+// storage events) are what identify OUR write. clearData resets both.
+// ---------------------------------------------------------------------------
+
+describe('saveData last-written tracking (n2hub-259 persist coalescing)', () => {
+  it('records the exact raw payload and revision of the last successful save', () => {
+    clearData();
+    expect(getLastWrittenRaw()).toBeNull();
+    expect(getLastWrittenRevision()).toBeNull();
+    withLocalStorage({}, () => {
+      const r = saveData(emptyData());
+      expect(r.ok).toBe(true);
+      const raw = localStorage.getItem(STORAGE_KEY)!;
+      expect(getLastWrittenRaw()).toBe(raw);
+      expect(getLastWrittenRevision()).toBe(r.ok ? r.revision : null);
+    });
+  });
+
+  it('a FAILED save does not update the last-written raw/revision', () => {
+    clearData();
+    withLocalStorage({}, () => {
+      saveData(emptyData()); // revision 1 recorded
+    });
+    const rawAfterOk = getLastWrittenRaw();
+    withLocalStorage(
+      {},
+      () => {
+        const rFail = saveData(emptyData());
+        expect(rFail).toEqual({ ok: false, reason: 'quota' });
+      },
+      { setItem: () => { throw { name: 'QuotaExceededError' }; } },
+    );
+    expect(getLastWrittenRaw()).toBe(rawAfterOk);
+    expect(getLastWrittenRevision()).toBe(1);
+  });
+
+  it('clearData resets the last-written raw/revision to null', () => {
+    withLocalStorage({}, () => {
+      saveData(emptyData());
+    });
+    clearData();
+    expect(getLastWrittenRaw()).toBeNull();
+    expect(getLastWrittenRevision()).toBeNull();
+  });
+});
+
+describe('isOwnLastWrite (n2hub-259 persist coalescing)', () => {
+  it('is false before any save (no raw, no revision recorded)', () => {
+    clearData();
+    withLocalStorage({}, () => {
+      expect(isOwnLastWrite('anything')).toBe(false);
+      expect(isOwnLastWrite(null)).toBe(false);
+    });
+  });
+
+  it('is true when the event payload is byte-identical to our last write', () => {
+    clearData();
+    withLocalStorage({}, () => {
+      saveData(emptyData());
+      const raw = localStorage.getItem(STORAGE_KEY)!;
+      expect(isOwnLastWrite(raw)).toBe(true);
+    });
+  });
+
+  it('is true via the revision path when storage still holds our last revision (differing/absent payload)', () => {
+    clearData();
+    withLocalStorage({}, () => {
+      saveData(emptyData()); // revision 1, storage envelope revision 1
+      expect(isOwnLastWrite('some-unrelated-string')).toBe(true);
+      expect(isOwnLastWrite(null)).toBe(true);
+    });
+  });
+
+  it('is false when another tab has written a higher revision and the payload differs', () => {
+    clearData();
+    withLocalStorage({}, () => {
+      saveData(emptyData()); // our last write: revision 1
+      // Simulate an external tab overwriting storage with revision 2.
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...emptyData(), revision: 2 }));
+      expect(isOwnLastWrite('unrelated')).toBe(false);
+    });
+  });
+});
+
+describe('subscribeExternalChanges carries the raw newValue (n2hub-259)', () => {
+  function withWindow<T>(fn: (dispatch: (e: { key: string | null; newValue: string | null }) => void) => T): T {
+    const handlers: Array<(e: { key: string | null; newValue: string | null }) => void> = [];
+    const win = {
+      addEventListener: (_type: string, h: (e: never) => void) => handlers.push(h as never),
+      removeEventListener: () => {},
+    };
+    const prev = (globalThis as { window?: unknown }).window;
+    (globalThis as { window?: unknown }).window = win;
+    try {
+      return fn((e) => handlers.forEach((h) => h(e)));
+    } finally {
+      (globalThis as { window?: unknown }).window = prev;
+    }
+  }
+
+  it('delivers both the envelope revision and the raw event payload to the callback', () => {
+    clearData();
+    withWindow((dispatch) => {
+      const received: ExternalChangeInfo[] = [];
+      const unsub = subscribeExternalChanges((info) => received.push(info));
+      const raw = JSON.stringify({ ...emptyData(), revision: 5 });
+      dispatch({ key: STORAGE_KEY, newValue: raw });
+      expect(received).toHaveLength(1);
+      expect(received[0].revision).toBe(5);
+      expect(received[0].newValue).toBe(raw);
+      unsub();
+    });
+  });
+
+  it('ignores events for an unrelated key', () => {
+    clearData();
+    withWindow((dispatch) => {
+      const received: ExternalChangeInfo[] = [];
+      const unsub = subscribeExternalChanges((info) => received.push(info));
+      dispatch({ key: 'some.other.key', newValue: '{}' });
+      expect(received).toHaveLength(0);
+      unsub();
+    });
+  });
+});
+
 describe('classifyStorageError (PKG-20260713c-persist-tests)', () => {
   it("classifies all four quota-error shapes (Chromium / Firefox / legacy Safari code 22 / Safari private-mode code 1014) as 'quota'", () => {
     expect(classifyStorageError({ name: 'QuotaExceededError' })).toBe('quota');
@@ -2492,5 +2581,62 @@ describe('repairEvents', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.data.events).toEqual([]);
+  });
+});
+
+// ---- repairClients (dodatkowe osoby kontaktowe) -----------------------------
+describe('repairClients', () => {
+  const withClients = (clients: unknown[]): AppData =>
+    ({ ...emptyData(), clients } as unknown as AppData);
+
+  it('legacy klient BEZ pola contacts wychodzi tym samym obiektem (brak echo-write)', () => {
+    const legacy = { id: 'c1', name: 'Acme', archived: false, contactName: 'Anna' };
+    const data = withClients([legacy]);
+    const out = repairClients(data);
+    expect(out.clients[0]).toBe(legacy); // ta sama referencja
+    expect('contacts' in out.clients[0]).toBe(false);
+  });
+
+  it('naprawia zniekształcone contacts wg reguł sanitize', () => {
+    const data = withClients([
+      {
+        id: 'c1',
+        name: 'Acme',
+        archived: false,
+        contacts: [
+          { id: 'k1', firstName: ' Marek ', lastName: 'Kos', phone: 5, email: null }, // koercja + trim
+          { firstName: 'Bez', lastName: 'Id' }, // brak id -> drop
+          { id: 'k2', firstName: '', lastName: '' }, // puste imię+nazwisko -> drop
+          { id: 'k1', firstName: 'Dup', lastName: 'Licate' }, // dup id -> drop
+        ],
+      },
+    ]);
+    expect(repairClients(data).clients[0].contacts).toEqual([
+      { id: 'k1', firstName: 'Marek', lastName: 'Kos', phone: '', email: '' },
+    ]);
+  });
+
+  it('usuwa klucz gdy contacts to nie-tablica albo sanityzuje się do pustej', () => {
+    const nonArray = withClients([{ id: 'c1', name: 'Acme', archived: false, contacts: 'nope' }]);
+    expect('contacts' in repairClients(nonArray).clients[0]).toBe(false);
+    const emptyish = withClients([
+      { id: 'c2', name: 'Beta', archived: false, contacts: [{ id: 'k1', firstName: '', lastName: '' }] },
+    ]);
+    expect('contacts' in repairClients(emptyish).clients[0]).toBe(false);
+  });
+
+  it('zachowuje poprawne contacts dosłownie', () => {
+    const good = [{ id: 'k1', firstName: 'Marek', lastName: 'Kos', phone: '600', email: 'm@k.pl' }];
+    const data = withClients([{ id: 'c1', name: 'Acme', archived: false, contacts: good }]);
+    expect(repairClients(data).clients[0].contacts).toEqual(good);
+  });
+
+  it('czysty payload bez contacts nie robi echo-write przez pełną ścieżkę wczytania', () => {
+    const clean = { ...emptyData(), clients: [{ id: 'c1', name: 'Acme', archived: false }] };
+    const result = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(clean) }, () => loadDataResult());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.needsWriteback).toBe(false);
+    expect('contacts' in result.data.clients[0]).toBe(false);
   });
 });

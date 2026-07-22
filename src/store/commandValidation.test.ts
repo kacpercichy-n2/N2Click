@@ -7,7 +7,13 @@
 import { describe, expect, it } from 'vitest';
 import { reducer, type PersonDraft, type ProjectDraft, type TaskDraft } from './AppStore';
 import { emptyData } from './storage';
-import { hasEntity, isValidClientDraft, isValidTaskDraft } from './commandValidation';
+import {
+  hasEntity,
+  isValidClientContacts,
+  isValidClientDraft,
+  isValidTaskDraft,
+  sanitizeClientContacts,
+} from './commandValidation';
 import type { Client, Milestone, Person, Project, Status, Task, WorkloadEntry } from '../types';
 
 const CLIENT: Client = { id: 'c1', name: 'Client', archived: false };
@@ -514,14 +520,13 @@ describe('valid / valid-legacy payloads still apply', () => {
     expect(next.projects.length).toBe(state.projects.length + 1);
   });
 
-  it('SET_CURRENT_USER sets an existing person, and \'\' clears both identity fields', () => {
+  it('SET_CURRENT_USER sets an existing person, and \'\' clears the identity', () => {
     const state = makeState();
     const set = reducer(state, { type: 'SET_CURRENT_USER', personId: 'p1' });
     expect(set.currentUserId).toBe('p1');
-    const seeded = { ...makeState(), currentUserId: 'p1', impersonatorId: 'p2' };
+    const seeded = { ...makeState(), currentUserId: 'p1' };
     const cleared = reducer(seeded, { type: 'SET_CURRENT_USER', personId: '' });
     expect(cleared.currentUserId).toBe('');
-    expect(cleared.impersonatorId).toBe('');
   });
 
   it('UPDATE_PERSON valid edit applies, but last-admin demotion is still refused', () => {
@@ -546,7 +551,7 @@ describe('valid / valid-legacy payloads still apply', () => {
 
 // Wymagane pola klienta: nazwa + osoba kontaktowa + (e-mail LUB telefon).
 // Świadomie BEZ walidacji formatu e-maila — to reguła kompletności danych.
-describe('isValidClientDraft (client required fields)', () => {
+describe('isValidClientDraft (client required fields — AND rule)', () => {
   const full = {
     name: 'Acme',
     contactName: 'Anna Nowak',
@@ -554,15 +559,18 @@ describe('isValidClientDraft (client required fields)', () => {
     contactPhone: '+48 600 100 200',
   };
 
-  it('accepts a full draft, and e-mail-only / phone-only variants', () => {
+  it('accepts a draft with BOTH channels present', () => {
     expect(isValidClientDraft(full)).toBe(true);
-    expect(isValidClientDraft({ ...full, contactPhone: '' })).toBe(true);
-    expect(isValidClientDraft({ ...full, contactEmail: '' })).toBe(true);
-    // Missing (undefined) contact channel behaves exactly like ''.
-    expect(isValidClientDraft({ name: 'Acme', contactName: 'Anna', contactEmail: 'a@b.pl' })).toBe(true);
   });
 
-  it('rejects a missing name, a missing contact person and a missing e-mail+phone pair', () => {
+  it('rejects an e-mail-only or phone-only draft (the OR rule is gone)', () => {
+    expect(isValidClientDraft({ ...full, contactPhone: '' })).toBe(false);
+    expect(isValidClientDraft({ ...full, contactEmail: '' })).toBe(false);
+    // Missing (undefined) contact channel behaves exactly like ''.
+    expect(isValidClientDraft({ name: 'Acme', contactName: 'Anna', contactEmail: 'a@b.pl' })).toBe(false);
+  });
+
+  it('rejects a missing name, a missing contact person and a missing channel', () => {
     expect(isValidClientDraft({ ...full, name: '' })).toBe(false);
     expect(isValidClientDraft({ ...full, contactName: '' })).toBe(false);
     expect(isValidClientDraft({ ...full, contactEmail: '', contactPhone: '' })).toBe(false);
@@ -572,44 +580,131 @@ describe('isValidClientDraft (client required fields)', () => {
   it('treats whitespace-only values as empty', () => {
     expect(isValidClientDraft({ ...full, name: '   ' })).toBe(false);
     expect(isValidClientDraft({ ...full, contactName: '  \t ' })).toBe(false);
-    expect(isValidClientDraft({ ...full, contactEmail: '  ', contactPhone: ' ' })).toBe(false);
-    // A whitespace e-mail still passes when the phone carries the contact.
-    expect(isValidClientDraft({ ...full, contactEmail: '  ' })).toBe(true);
+    expect(isValidClientDraft({ ...full, contactEmail: '  ' })).toBe(false);
+    expect(isValidClientDraft({ ...full, contactPhone: ' ' })).toBe(false);
   });
 
   it('does NOT check the e-mail format (data completeness, not a format boundary)', () => {
-    expect(isValidClientDraft({ ...full, contactEmail: 'nie-jest-mailem', contactPhone: '' })).toBe(true);
+    expect(isValidClientDraft({ ...full, contactEmail: 'nie-jest-mailem' })).toBe(true);
+  });
+
+  it('rejects when a present `contacts` array is structurally invalid', () => {
+    expect(isValidClientDraft({ ...full, contacts: 'not-an-array' })).toBe(false);
+    expect(isValidClientDraft({ ...full, contacts: [{ id: 'k1', firstName: 'Jan', lastName: '' }] })).toBe(false);
+    // undefined contacts is fine; a valid array is fine.
+    expect(isValidClientDraft({ ...full, contacts: undefined })).toBe(true);
+    expect(
+      isValidClientDraft({ ...full, contacts: [{ id: 'k1', firstName: 'Jan', lastName: 'Kos', phone: '', email: '' }] }),
+    ).toBe(true);
   });
 });
 
-describe('ADD_CLIENT / SAVE_CLIENT required-field validation', () => {
-  const contact = { contactName: 'Anna Nowak', contactEmail: 'anna@acme.pl', contactPhone: '' };
+describe('isValidClientContacts (strict reducer gate)', () => {
+  const row = { id: 'k1', firstName: 'Jan', lastName: 'Kos', phone: '', email: '' };
+
+  it('accepts an empty array and well-formed rows', () => {
+    expect(isValidClientContacts([])).toBe(true);
+    expect(isValidClientContacts([row])).toBe(true);
+    expect(isValidClientContacts([row, { ...row, id: 'k2', phone: '600' }])).toBe(true);
+    // phone/email may be omitted (treated as '').
+    expect(isValidClientContacts([{ id: 'k3', firstName: 'Ala', lastName: 'Ma' }])).toBe(true);
+  });
+
+  it('rejects a non-array, a missing/duplicate id, blank names, and non-string channels', () => {
+    expect(isValidClientContacts('x')).toBe(false);
+    expect(isValidClientContacts([{ firstName: 'Jan', lastName: 'Kos' }])).toBe(false); // no id
+    expect(isValidClientContacts([{ ...row, id: '' }])).toBe(false); // empty id
+    expect(isValidClientContacts([row, { ...row }])).toBe(false); // duplicate id
+    expect(isValidClientContacts([{ ...row, firstName: '  ' }])).toBe(false); // blank first
+    expect(isValidClientContacts([{ ...row, lastName: '' }])).toBe(false); // blank last
+    expect(isValidClientContacts([{ ...row, phone: 123 }])).toBe(false); // non-string phone
+    expect(isValidClientContacts([null])).toBe(false);
+  });
+});
+
+describe('sanitizeClientContacts (lenient load/hydration cleaner)', () => {
+  it('coerces, trims, drops junk and dedupes; empty result → undefined', () => {
+    expect(sanitizeClientContacts('x')).toBeUndefined();
+    expect(sanitizeClientContacts([])).toBeUndefined();
+    // Row without id dropped; blank-both-names dropped; empty → undefined.
+    expect(sanitizeClientContacts([{ firstName: 'Jan', lastName: 'Kos' }])).toBeUndefined();
+    expect(sanitizeClientContacts([{ id: 'k1', firstName: '  ', lastName: '' }])).toBeUndefined();
+    // Coercion + trim of the four fields; non-string channels → ''.
+    expect(
+      sanitizeClientContacts([{ id: 'k1', firstName: ' Jan ', lastName: ' Kos ', phone: 123, email: null }]),
+    ).toEqual([{ id: 'k1', firstName: 'Jan', lastName: 'Kos', phone: '', email: '' }]);
+    // Dedupe by id (first wins).
+    expect(
+      sanitizeClientContacts([
+        { id: 'k1', firstName: 'Jan', lastName: 'Kos' },
+        { id: 'k1', firstName: 'Ala', lastName: 'Ma' },
+      ]),
+    ).toEqual([{ id: 'k1', firstName: 'Jan', lastName: 'Kos', phone: '', email: '' }]);
+  });
+
+  it('is idempotent: sanitize(sanitize(x)) ≡ sanitize(x)', () => {
+    const raw = [
+      { id: 'k1', firstName: ' Jan ', lastName: 'Kos', phone: 5, email: '' },
+      { id: '', firstName: 'x', lastName: 'y' },
+      { id: 'k2', firstName: '', lastName: '' },
+    ];
+    const once = sanitizeClientContacts(raw);
+    expect(sanitizeClientContacts(once)).toEqual(once);
+  });
+});
+
+describe('ADD_CLIENT / SAVE_CLIENT required-field validation (AND rule)', () => {
+  // Complete contact now needs BOTH channels.
+  const contact = { contactName: 'Anna Nowak', contactEmail: 'anna@acme.pl', contactPhone: '+48 600 100 200' };
 
   it('ADD_CLIENT rejects an incomplete draft by the SAME state reference', () => {
     const state = makeState();
     expectRejected(state, reducer(state, { type: 'ADD_CLIENT', name: 'Acme' }));
     expectRejected(state, reducer(state, { type: 'ADD_CLIENT', name: 'Acme', contactName: 'Anna' }));
+    // e-mail-only and phone-only are now rejected.
     expectRejected(
       state,
-      reducer(state, { type: 'ADD_CLIENT', name: '  ', ...contact }),
+      reducer(state, { type: 'ADD_CLIENT', name: 'Acme', contactName: 'Anna', contactEmail: 'a@b.pl' }),
     );
     expectRejected(
       state,
-      reducer(state, { type: 'ADD_CLIENT', name: 'Acme', contactName: ' ', contactEmail: 'a@b.pl' }),
+      reducer(state, { type: 'ADD_CLIENT', name: 'Acme', contactName: 'Anna', contactPhone: '600' }),
     );
+    expectRejected(state, reducer(state, { type: 'ADD_CLIENT', name: '  ', ...contact }));
   });
 
-  it('ADD_CLIENT accepts a complete draft (contact person + one channel)', () => {
+  it('ADD_CLIENT accepts a complete draft and stores trimmed contacts, omitting an empty list', () => {
     const state = makeState();
     const next = reducer(state, { type: 'ADD_CLIENT', name: ' Acme ', ...contact });
     expect(next).not.toBe(state);
     expect(next.clients.length).toBe(state.clients.length + 1);
-    expect(next.clients[next.clients.length - 1]).toMatchObject({
+    const added = next.clients[next.clients.length - 1];
+    expect(added).toMatchObject({
       name: 'Acme',
       contactName: 'Anna Nowak',
       contactEmail: 'anna@acme.pl',
-      contactPhone: '',
+      contactPhone: '+48 600 100 200',
     });
+    // Canonical: no `contacts` key when the list is empty/absent.
+    expect('contacts' in added).toBe(false);
+
+    // With additional persons: trimmed and stored under `contacts`.
+    const withContacts = reducer(state, {
+      type: 'ADD_CLIENT',
+      name: 'Acme',
+      ...contact,
+      contacts: [{ id: 'k1', firstName: ' Marek ', lastName: ' Kos ', phone: ' 600 ', email: ' m@k.pl ' }],
+    });
+    const c2 = withContacts.clients[withContacts.clients.length - 1];
+    expect(c2.contacts).toEqual([{ id: 'k1', firstName: 'Marek', lastName: 'Kos', phone: '600', email: 'm@k.pl' }]);
+  });
+
+  it('ADD_CLIENT rejects a structurally invalid contacts payload by the SAME state reference', () => {
+    const state = makeState();
+    expectRejected(
+      state,
+      reducer(state, { type: 'ADD_CLIENT', name: 'Acme', ...contact, contacts: [{ id: 'k1', firstName: 'Jan', lastName: '' }] as never }),
+    );
   });
 
   it('SAVE_CLIENT rejects an incomplete draft by the SAME state reference', () => {
@@ -617,44 +712,66 @@ describe('ADD_CLIENT / SAVE_CLIENT required-field validation', () => {
     const base = { type: 'SAVE_CLIENT' as const, clientId: 'c1', notes: '' };
     expectRejected(
       state,
-      reducer(state, { ...base, name: 'Acme', contactName: '', contactEmail: 'a@b.pl', contactPhone: '' }),
+      reducer(state, { ...base, name: 'Acme', contactName: '', contactEmail: 'a@b.pl', contactPhone: '600' }),
     );
     expectRejected(
       state,
-      reducer(state, { ...base, name: 'Acme', contactName: 'Anna', contactEmail: '', contactPhone: '' }),
+      reducer(state, { ...base, name: 'Acme', contactName: 'Anna', contactEmail: '', contactPhone: '600' }),
     );
     expectRejected(
       state,
-      reducer(state, { ...base, name: '', contactName: 'Anna', contactEmail: 'a@b.pl', contactPhone: '' }),
+      reducer(state, { ...base, name: 'Acme', contactName: 'Anna', contactEmail: 'a@b.pl', contactPhone: '' }),
     );
   });
 
-  it('SAVE_CLIENT applies a complete draft and still rejects an unknown id', () => {
+  it('SAVE_CLIENT rejects an invalid contacts payload by the SAME state reference (invariant 6)', () => {
+    const state = makeState();
+    expectRejected(
+      state,
+      reducer(state, {
+        type: 'SAVE_CLIENT',
+        clientId: 'c1',
+        name: 'Acme',
+        ...contact,
+        notes: '',
+        contacts: [{ id: 'k1', firstName: 'Jan', lastName: '' }] as never,
+      }),
+    );
+  });
+
+  it('SAVE_CLIENT applies a complete draft, stores/removes contacts, and rejects an unknown id', () => {
     const state = makeState();
     const saved = reducer(state, {
       type: 'SAVE_CLIENT',
       clientId: 'c1',
       name: 'Acme',
-      contactName: 'Anna Nowak',
-      contactEmail: '',
-      contactPhone: '+48 600 100 200',
+      ...contact,
       notes: '',
+      contacts: [{ id: 'k1', firstName: 'Marek', lastName: 'Kos', phone: '', email: '' }],
     });
     expect(saved).not.toBe(state);
-    expect(saved.clients.find((c) => c.id === 'c1')).toMatchObject({
+    const c1 = saved.clients.find((c) => c.id === 'c1');
+    expect(c1).toMatchObject({ name: 'Acme', contactName: 'Anna Nowak', contactPhone: '+48 600 100 200' });
+    expect(c1?.contacts).toEqual([{ id: 'k1', firstName: 'Marek', lastName: 'Kos', phone: '', email: '' }]);
+
+    // Saving with `contacts: []` REMOVES the key from the stored client.
+    const cleared = reducer(saved, {
+      type: 'SAVE_CLIENT',
+      clientId: 'c1',
       name: 'Acme',
-      contactName: 'Anna Nowak',
-      contactPhone: '+48 600 100 200',
+      ...contact,
+      notes: '',
+      contacts: [],
     });
+    expect('contacts' in cleared.clients.find((c) => c.id === 'c1')!).toBe(false);
+
     expectRejected(
       state,
       reducer(state, {
         type: 'SAVE_CLIENT',
         clientId: 'ghost',
         name: 'Acme',
-        contactName: 'Anna Nowak',
-        contactEmail: 'anna@acme.pl',
-        contactPhone: '',
+        ...contact,
         notes: '',
       }),
     );

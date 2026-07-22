@@ -19,7 +19,8 @@ import {
 } from '../store/selectors';
 import { Avatar } from '../components/Avatar';
 import { PriorityBadge } from '../components/PriorityBadge';
-import { FilterPanel, type FilterChip, type FilterGroup } from '../components/FilterPanel';
+import { type FilterChip, type FilterGroup } from '../components/FilterPanel';
+import { FilterBar } from '../components/FilterBar';
 import { FilterPresets, DEFAULT_CRITERIA } from '../components/FilterPresets';
 import { PersonFilter } from '../components/PersonFilter';
 import { useOpenTask } from '../components/TaskModal';
@@ -294,23 +295,25 @@ export function KanbanPage() {
     <section className="page page-wide">
       <div className="page-head">
         <h1>Kanban</h1>
-        <div className="cal-toolbar">
+      </div>
+
+      <FilterBar
+        filterPanel={{
+          groups: filterGroups,
+          activeCount,
+          onClearAll: clearAll,
+          chips,
+        }}
+        personFilter={
           <PersonFilter
             people={state.people}
             selected={personFilter}
             onToggle={togglePerson}
             onAll={() => setPersonFilter(new Set())}
           />
-          <FilterPanel
-            groups={filterGroups}
-            activeCount={activeCount}
-            onClearAll={clearAll}
-            chips={chips}
-          />
-        </div>
-      </div>
-
-      <FilterPresets page="kanban" criteria={criteria} onApply={applyPreset} />
+        }
+        presets={<FilterPresets page="kanban" criteria={criteria} onApply={applyPreset} />}
+      />
 
       {statuses.length === 0 && board.archived.length === 0 ? (
         <div className="empty-state">

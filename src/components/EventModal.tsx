@@ -16,7 +16,10 @@ import { addDaysStr, isValidDateStr, todayStr, WEEKDAY_LABELS } from '../utils/d
 import { MINUTE_STEP } from '../utils/time';
 import { isoWeekday } from '../utils/recurrence';
 import { normalizeProjectDocumentUrl } from '../utils/projectDocuments';
+import { personColor } from '../utils/colors';
 import { bypassNavGuardOnce, clearNavGuard, setNavGuard } from '../utils/dirtyRegistry';
+import { IconButton } from './IconButton';
+import { X } from './icons';
 
 /** Parametr URL-a niosący modal wydarzenia (polski, jak reszta tras). */
 const EVENT_PARAM = 'wydarzenie';
@@ -206,14 +209,12 @@ function EventModalShell({ eventParam, prefill, onClose }: ShellProps) {
                   Usuń
                 </button>
               )}
-              <button
-                type="button"
+              <IconButton
                 className="task-modal-close"
+                icon={<X size={18} aria-hidden />}
                 onClick={requestClose}
-                aria-label="Zamknij"
-              >
-                ×
-              </button>
+                label="Zamknij"
+              />
             </div>
           </div>
           <div className="task-modal-body">
@@ -509,18 +510,29 @@ function EventEditor({
         {sortedPeople.length === 0 ? (
           <p className="field-hint">Brak osób w zespole.</p>
         ) : (
-          <div className="event-attendees">
-            {sortedPeople.map((p) => (
-              <label key={p.id} className="event-attendee-chip">
-                <input
-                  type="checkbox"
-                  checked={attendeeIds.includes(p.id)}
-                  onChange={() => toggleAttendee(p.id)}
-                  disabled={readOnly}
-                />
-                <span>{p.name}</span>
-              </label>
-            ))}
+          <div className="assignee-picker">
+            {sortedPeople.map((p) => {
+              const checked = attendeeIds.includes(p.id);
+              return (
+                <label
+                  key={p.id}
+                  className={checked ? 'assignee-chip checked' : 'assignee-chip'}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleAttendee(p.id)}
+                    disabled={readOnly}
+                  />
+                  <span
+                    className="person-dot"
+                    style={{ background: personColor(p.id) }}
+                    aria-hidden
+                  />
+                  {p.name}
+                </label>
+              );
+            })}
           </div>
         )}
         <p className="field-hint">Bez zaznaczenia wydarzenie jest ogólnofirmowe.</p>

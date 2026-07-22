@@ -65,7 +65,6 @@ describe('touchesOnlyMirrored', () => {
     expect(touchesOnlyMirrored(prev, { ...prev, people: [...prev.people] })).toBe(false);
     expect(touchesOnlyMirrored(prev, { ...prev, savedFilters: [...prev.savedFilters] })).toBe(false);
     expect(touchesOnlyMirrored(prev, { ...prev, currentUserId: 'x' })).toBe(false);
-    expect(touchesOnlyMirrored(prev, { ...prev, impersonatorId: 'y' })).toBe(false);
     // lastFilters jest NON_MIRRORED (lokalne only) — zmiana samych filtrów nie
     // może zostać zaklasyfikowana jako „tylko lustrzane”.
     expect(touchesOnlyMirrored(prev, { ...prev, lastFilters: { ...prev.lastFilters } })).toBe(false);

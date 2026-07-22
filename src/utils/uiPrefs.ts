@@ -111,7 +111,7 @@ export function loadUiPrefs(): UiPrefs {
     const raw = localStorage.getItem(UI_PREFS_KEY);
     if (!raw) return { ...DEFAULT_PREFS };
     const parsed = JSON.parse(raw) as Partial<UiPrefs> | null;
-    return {
+    const prefs: UiPrefs = {
       sidebarCollapsed:
         typeof parsed?.sidebarCollapsed === 'boolean'
           ? parsed.sidebarCollapsed
@@ -134,6 +134,7 @@ export function loadUiPrefs(): UiPrefs {
             )
           : {},
     };
+    return prefs;
   } catch {
     return { ...DEFAULT_PREFS };
   }

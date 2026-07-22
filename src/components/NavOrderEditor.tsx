@@ -9,7 +9,6 @@ import { useMemo, useState } from 'react';
 import { useStore } from '../store/AppStore';
 import { useAuth } from '../auth/SessionProvider';
 import { can } from '../store/permissions';
-import { realUserId } from '../store/selectors';
 import { NAV, type NavItem } from './navItems';
 import { applyNavOrder } from '../utils/navOrder';
 import { loadUiPrefs, navOrderForUser, updateNavOrderForUser } from '../utils/uiPrefs';
@@ -21,7 +20,8 @@ export function NavOrderEditor() {
   const { mode } = useAuth();
   const [version, setVersion] = useState(0);
 
-  const userId = realUserId(state);
+  // Impersonacja usunięta (run 257) — currentUserId JEST realnym użytkownikiem.
+  const userId = state.currentUserId;
   const currentUser = state.people.find((p) => p.id === state.currentUserId);
   const canAdmin = can(currentUser, 'admin.panel', { peopleCount: state.people.length });
 

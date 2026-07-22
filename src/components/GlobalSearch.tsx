@@ -3,17 +3,18 @@
 // `searchAll` selector, with a flat keyboard-navigable result list. Rendered
 // once at App level; the overlay is fixed-positioned so its DOM location does
 // not matter. Selecting a result jumps to the entity and closes the palette.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import { useStore } from '../store/AppStore';
-import {
-  getClient,
-  getProject,
-  getStatus,
-  projectsOfClient,
-  searchAll,
-} from '../store/selectors';
+import { buildSearchResultMeta, searchAll } from '../store/selectors';
 import { StatusBadge } from './StatusBadge';
 import { Avatar } from './Avatar';
 import { Search, ChevronRight } from './icons';
@@ -114,7 +115,16 @@ function SearchOverlay({ onClose }: { onClose: () => void }) {
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const results = useMemo(() => searchAll(state, query), [state, query]);
+  // Defer the query so each keystroke stays responsive: the input updates
+  // immediately while the (potentially large) `searchAll` scan runs against the
+  // deferred value. The FINAL results are identical to running it synchronously.
+  const deferredQuery = useDeferredValue(query);
+  const results = useMemo(() => searchAll(state, deferredQuery), [state, deferredQuery]);
+
+  // Row-label metadata built once per state revision (not per result, per render
+  // or per active-row change): client/project/status lookup maps + client project
+  // counts. Identical output to the former per-result selector calls.
+  const meta = useMemo(() => buildSearchResultMeta(state), [state]);
 
   // Flatten all rows once so ↑/↓ index math stays trivial.
   const flat = useMemo<FlatItem[]>(
@@ -259,7 +269,7 @@ function SearchOverlay({ onClose }: { onClose: () => void }) {
                     <>
                       {results.projects.map((p) => {
                         const i = idx++;
-                        const client = getClient(state, p.clientId);
+                        const client = meta.clientsById.get(p.clientId);
                         return (
                           <button
                             type="button"
@@ -273,7 +283,7 @@ function SearchOverlay({ onClose }: { onClose: () => void }) {
                           >
                             <span className="gs-row-main">
                               <span className="gs-row-title">{p.name}</span>
-                              <StatusBadge status={getStatus(state, p.statusId)} />
+                              <StatusBadge status={meta.statusesById.get(p.statusId)} />
                             </span>
                             <span className="gs-row-meta">
                               {client ? client.name : 'Bez klienta'} ·{' '}
@@ -294,7 +304,7 @@ function SearchOverlay({ onClose }: { onClose: () => void }) {
                     <>
                       {results.tasks.map((t) => {
                         const i = idx++;
-                        const project = getProject(state, t.projectId);
+                        const project = meta.projectsById.get(t.projectId);
                         return (
                           <button
                             type="button"
@@ -308,7 +318,7 @@ function SearchOverlay({ onClose }: { onClose: () => void }) {
                           >
                             <span className="gs-row-main">
                               <span className="gs-row-title">{t.title}</span>
-                              <StatusBadge status={getStatus(state, t.statusId)} />
+                              <StatusBadge status={meta.statusesById.get(t.statusId)} />
                             </span>
                             <span className="gs-row-meta">
                               {project ? project.name : 'Bez projektu'} ·{' '}
@@ -329,7 +339,7 @@ function SearchOverlay({ onClose }: { onClose: () => void }) {
                     <>
                       {results.clients.map((c) => {
                         const i = idx++;
-                        const count = projectsOfClient(state, c.id).length;
+                        const count = meta.clientProjectCounts.get(c.id) ?? 0;
                         return (
                           <button
                             type="button"

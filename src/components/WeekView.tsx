@@ -4,7 +4,7 @@
 // (same day or cross-day) and edge-drag to resize on a 15-min grid; a same-person
 // time overlap shows a danger tint and the drop reverts. Right-clicking a block
 // still opens "Dodaj przed / Dodaj po" to ripple-insert a new block.
-import { useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import type { AppData, Person, Project, Task, WorkloadEntry } from '../types';
@@ -27,46 +27,39 @@ import {
 import { format } from 'date-fns';
 import { pl } from 'date-fns/locale/pl';
 import {
-  assigneeIdsOfTask,
   availableHoursOnDate,
-  binEntriesForPerson,
-  binTotalForPerson,
   blockCollides,
   blocksForPersonDate,
   blockIsDone,
-  calendarEventsForDate,
   type CalendarEventOccurrence,
-  dayTotal,
-  entriesForDate,
   getClient,
   getPerson,
   getProject,
   getTask,
   growAllowanceHours,
   hoursForPersonOnDate,
-  overloadedPeopleOnDate,
-  peopleWithBirthdayOnDate,
   personCapacity,
-  recurrenceOccurrencesForDate,
   taskDisplayStatus,
   taskGrowAllowance,
   taskIdsOfPerson,
 } from '../store/selectors';
+import { buildWeekModel, personDateKey } from './weekViewModel';
 import {
   DAY_MINUTES,
   HOURS_STEP,
   MINUTE_STEP,
   blockEndMinutes,
   clampBlockStart,
+  dropStartFromAnchor,
   findFreeStart,
   formatDuration,
   formatMinutes,
+  hasCollision,
   hoursToMinutes,
   isBinEntry,
   minutesToHours,
   nextFreeStart,
   planRippleInsert,
-  packDayBlocks,
   slotStartFromOffset,
   snapHours,
   snapToStep,
@@ -142,6 +135,17 @@ interface DragState {
   mode: DragMode;
   originX: number;
   originY: number;
+  // Pointer position + grab offset + block size captured for the fixed portal
+  // ghost that rides over the bin pane (a move drag toward the bin is clipped by
+  // the days viewport overflow, so the in-column block can never appear there).
+  // Additive presentational fields only — set in begin()/onPointerMove(), never
+  // read by the drop dispatch or the cancel paths.
+  clientX: number;
+  clientY: number;
+  grabX: number;
+  grabY: number;
+  width: number;
+  height: number;
   colWidth: number;
   projStart: number; // projected startMinutes
   projHours: number; // projected plannedHours
@@ -166,16 +170,26 @@ interface BlockProps {
   cols: number;
   gridRef: React.RefObject<HTMLDivElement | null>;
   binRef: React.RefObject<HTMLDivElement | null>;
-  mergeTargetId: string | null;
+  // Per-(person, date) dated blocks for O(1) collision / merge-neighbor lookups
+  // during drag (replaces the per-frame `state.workload` scan). Stable reference
+  // from the parent's memoized week model, so it never invalidates the memo.
+  blocksByPersonDate: Map<string, WorkloadEntry[]>;
+  // Per-block boolean (not the raw id): only the OLD and NEW merge target flip,
+  // so changing the merge target during a drag re-renders just those two blocks
+  // plus the dragged one, not every block.
+  isMergeTarget: boolean;
   setMergeTargetId: (id: string | null) => void;
-  fusedId: string | null;
+  // Per-block boolean for the same reason (was the raw `fusedId`).
+  isFused: boolean;
   setFusedId: (id: string | null) => void;
   editable: boolean;
-  onOpen: () => void;
-  onContextMenu: (e: React.MouseEvent) => void;
+  // Stable parent callbacks (identity preserved across renders) so React.memo
+  // holds. They take the block's own data instead of a per-render closure.
+  onOpen: (taskId: string, entryId: string) => void;
+  onContextMenu: (entry: WorkloadEntry, e: React.MouseEvent) => void;
 }
 
-function TimedBlock({
+function TimedBlockImpl({
   state,
   entry,
   task,
@@ -187,9 +201,10 @@ function TimedBlock({
   cols,
   gridRef,
   binRef,
-  mergeTargetId,
+  blocksByPersonDate,
+  isMergeTarget,
   setMergeTargetId,
-  fusedId,
+  isFused,
   setFusedId,
   editable,
   onOpen,
@@ -203,6 +218,30 @@ function TimedBlock({
   // previous projection (or no-op), even though the preview already moved.
   const dragRef = useRef<DragState | null>(null);
   const moved = useRef(false);
+  // Frame throttle: a pointermove writes the projection into `dragRef`
+  // synchronously (so finish() can read the newest drop) but only flushes it to
+  // React state / the parent merge affordance once per animation frame. `rafRef`
+  // holds the pending frame id so cancel/finish/unmount can drop a queued flush
+  // and no stale frame paints after cleanup.
+  const rafRef = useRef<number | null>(null);
+  const cancelRaf = () => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+  };
+  // Flush the latest projection to React state + the cross-block merge target.
+  const flushDrag = () => {
+    rafRef.current = null;
+    const d = dragRef.current;
+    if (!d) return;
+    setDrag(d);
+    setMergeTargetId(d.willMergeWithId);
+  };
+  const scheduleFlush = () => {
+    if (rafRef.current !== null) return; // a frame is already queued; it reads the newest ref
+    rafRef.current = requestAnimationFrame(flushDrag);
+  };
   // Pointer-capture bookkeeping — released before any dispatch (a drop-to-bin
   // unmounts this block; releasing after would wedge document-wide pointer
   // delivery, matching the bin-card freeze fix).
@@ -224,11 +263,16 @@ function TimedBlock({
   // window. Releases pointer capture defensively, drops the synchronous ref and
   // the React preview, and clears the cross-column merge affordance.
   const cancelDrag = () => {
+    cancelRaf();
     releaseCapture();
     dragRef.current = null;
     setDrag(null);
     setMergeTargetId(null);
   };
+
+  // A drag interrupted by unmount (navigation, a merge that removes this block)
+  // must never leave a queued animation frame that fires after teardown.
+  useEffect(() => () => cancelRaf(), []);
 
   const baseStart = entry.startMinutes;
   const baseHours = entry.plannedHours;
@@ -283,6 +327,11 @@ function TimedBlock({
     moved.current = false;
     const rect = gridRef.current?.getBoundingClientRect();
     const colWidth = rect ? rect.width / DAY_COLS : 0;
+    // Block geometry for the over-bin ghost: grab offset keeps it aligned under
+    // the pointer; width/height keep its size out of flow. For the top/bottom
+    // resize handles currentTarget is the handle span, but the ghost only renders
+    // for a move drag over the bin, so those captured values are never used.
+    const blockRect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     // Capture the grow allowance ONCE at drag start (state won't change mid-drag).
     // Always a number now: bin hours + headroom (0 for null-estimate tasks).
     const maxHours = baseHours + growAllowanceHours(state, entry.id);
@@ -290,6 +339,12 @@ function TimedBlock({
       mode,
       originX: e.clientX,
       originY: e.clientY,
+      clientX: e.clientX,
+      clientY: e.clientY,
+      grabX: e.clientX - blockRect.left,
+      grabY: e.clientY - blockRect.top,
+      width: blockRect.width,
+      height: blockRect.height,
       colWidth,
       projStart: baseStart,
       projHours: baseHours,
@@ -305,19 +360,24 @@ function TimedBlock({
     setDrag(nextDrag);
   };
 
-  const onPointerMove = (e: React.PointerEvent) => {
+  // Synchronous projection: compute the newest drop from the pointer event and
+  // write it into `dragRef` (so finish() always sees the latest drop), WITHOUT
+  // touching React state. Returns the projection, or null when the drag was
+  // cancelled or is not active. The visual flush to React state / the parent
+  // merge affordance is deferred to an animation frame by the caller.
+  const projectMove = (e: React.PointerEvent): DragState | null => {
     const activeDrag = dragRef.current;
-    if (!activeDrag) return;
+    if (!activeDrag) return null;
     // Interruption recovery, mirroring BinCard.move: a mouse released OUTSIDE the
     // window delivers its next real pointermove with no buttons pressed even
     // though this element never received a pointerup — treat that as a cancel
     // (revert). The `type === 'pointermove'` gate is load-bearing: finish()
-    // re-invokes this handler with the pointerup event to project the final drop
-    // synchronously, and that event's buttons are legitimately 0 — it must still
-    // commit, so only a genuine pointermove may trigger the cancel.
+    // re-invokes this projection with the pointerup event to project the final
+    // drop synchronously, and that event's buttons are legitimately 0 — it must
+    // still commit, so only a genuine pointermove may trigger the cancel.
     if (e.type === 'pointermove' && e.pointerType === 'mouse' && e.buttons === 0) {
       cancelDrag();
-      return;
+      return null;
     }
     const dy = e.clientY - activeDrag.originY;
     const deltaMin = snapToStep((dy / HOUR_PX) * 60);
@@ -376,25 +436,27 @@ function TimedBlock({
     }
 
     // Over the bin there is no date and no collision — dropping just strips the
-    // block's date/time.
+    // block's date/time. Collision now reads the precomputed per-(person, date)
+    // index instead of re-scanning `state.workload` each frame; the result is
+    // identical to `blockCollides` (per-person, filter-independent).
+    const projDate = days[projDayIndex];
+    const dayBlocks = blocksByPersonDate.get(personDateKey(person.id, projDate)) ?? [];
     const colliding = overBin
       ? false
-      : blockCollides(state, person.id, days[projDayIndex], projStart, projHours, entry.id);
+      : hasCollision(dayBlocks, projStart, hoursToMinutes(projHours), entry.id);
 
     // Will-merge affordance: mirror the reducer's merge predicate exactly — same
     // task, same person, same date, exact adjacency (touching edge), no collision,
-    // not over the bin. The drop would fuse into that neighbor.
+    // not over the bin. The drop would fuse into that neighbor. The index list is
+    // already scoped to this person + date, so we only match on task + adjacency.
     let willMergeWithId: string | null = null;
     let willMergeEdge: 'top' | 'bottom' | null = null;
     if (!overBin && !colliding) {
-      const projDate = days[projDayIndex];
       const projEnd = blockEndMinutes(projStart, projHours);
-      const neighbor = state.workload.find(
+      const neighbor = dayBlocks.find(
         (w) =>
           w.id !== entry.id &&
-          w.personId === person.id &&
           w.taskId === entry.taskId &&
-          w.date === projDate &&
           (blockEndMinutes(w.startMinutes, w.plannedHours) === projStart ||
             projEnd === w.startMinutes),
       );
@@ -406,10 +468,11 @@ function TimedBlock({
             : 'bottom';
       }
     }
-    setMergeTargetId(willMergeWithId);
 
     const nextDrag: DragState = {
       ...activeDrag,
+      clientX: e.clientX,
+      clientY: e.clientY,
       projStart,
       projHours,
       projDayIndex,
@@ -420,14 +483,21 @@ function TimedBlock({
       willMergeEdge,
     };
     dragRef.current = nextDrag;
-    setDrag(nextDrag);
+    return nextDrag;
+  };
+
+  // React pointermove handler: project synchronously into the ref, then coalesce
+  // the visual update onto the next animation frame.
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (projectMove(e)) scheduleFlush();
   };
 
   const finish = (e: React.PointerEvent) => {
     // Project the pointer-up coordinates synchronously. Browsers do not promise
     // a separate final pointermove, and React may batch that move with pointerup.
-    onPointerMove(e);
-    const finalDrag = dragRef.current;
+    // Drop the pending frame — we commit the final projection right here.
+    const finalDrag = projectMove(e);
+    cancelRaf();
     if (!finalDrag) return;
     const { projStart, projHours, projDayIndex, overBin, colliding, willMergeWithId } = finalDrag;
     // Release capture before dispatch — a drop-to-bin unmounts this block.
@@ -443,9 +513,12 @@ function TimedBlock({
     }
     if (colliding) return; // invalid drop → snap back (re-render restores it)
     // Merge drop: the reducer keeps the EARLIER-starting block's id. Remember it
-    // so the surviving block plays the fuse animation after it re-renders.
+    // so the surviving block plays the fuse animation after it re-renders. The
+    // neighbor is looked up from the same per-(person, date) index.
     if (willMergeWithId) {
-      const neighbor = state.workload.find((w) => w.id === willMergeWithId);
+      const finalDayBlocks =
+        blocksByPersonDate.get(personDateKey(person.id, days[projDayIndex])) ?? [];
+      const neighbor = finalDayBlocks.find((w) => w.id === willMergeWithId);
       if (neighbor) {
         setFusedId(projStart < neighbor.startMinutes ? entry.id : neighbor.id);
       }
@@ -469,7 +542,7 @@ function TimedBlock({
   const top = (start / 60) * HOUR_PX;
   const height = Math.max(MIN_BLOCK_H, hours * HOUR_PX);
 
-  const isMergeTarget = !drag && mergeTargetId === entry.id;
+  const showMergeTarget = !drag && isMergeTarget;
   // Status zadania jest czysto prezentacyjny: zielony odcień dla zakończonych,
   // czerwony akcent po terminie. Kolor osoby zostaje na lewej krawędzi (styl
   // inline), a klasy dragu/kolizji są w CSS PÓŹNIEJ, więc nadal wygrywają.
@@ -491,13 +564,14 @@ function TimedBlock({
     drag?.willMergeWithId ? 'will-merge' : '',
     drag?.willMergeEdge === 'top' ? 'merge-top' : '',
     drag?.willMergeEdge === 'bottom' ? 'merge-bottom' : '',
-    isMergeTarget ? 'will-merge-target' : '',
-    fusedId === entry.id ? 'fused' : '',
+    showMergeTarget ? 'will-merge-target' : '',
+    isFused ? 'fused' : '',
   ]
     .filter(Boolean)
     .join(' ');
 
   return (
+    <>
     <div
       className={className}
       data-tour="calendar.block"
@@ -523,19 +597,19 @@ function TimedBlock({
       onPointerUp={editable ? finish : undefined}
       onPointerCancel={editable ? cancelDrag : undefined}
       onAnimationEnd={() => {
-        if (fusedId === entry.id) setFusedId(null);
+        if (isFused) setFusedId(null);
       }}
       onClick={(e) => {
         e.stopPropagation();
-        if (!moved.current) onOpen();
+        if (!moved.current) onOpen(task.id, entry.id);
       }}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
-          onOpen();
+          onOpen(task.id, entry.id);
         }
       }}
-      onContextMenu={editable ? onContextMenu : undefined}
+      onContextMenu={editable ? (e) => onContextMenu(entry, e) : undefined}
     >
       {editable && (
         <span className="week-block-handle top" onPointerDown={begin('top')} aria-hidden />
@@ -565,8 +639,47 @@ function TimedBlock({
         <span className="week-block-handle bottom" onPointerDown={begin('bottom')} aria-hidden />
       )}
     </div>
+    {/* Over-bin ghost: a fixed portal copy of the block riding under the pointer
+        while a move drag is over the bin pane. The in-column block is clipped by
+        the days viewport overflow and can never appear over the sibling bin, so
+        this ghost (like BinCard's) escapes to <body>. Purely presentational:
+        pointer-events: none, aria-hidden, no drag handlers; it renders from
+        `drag`, so any cancel/finish path removes it. */}
+    {drag &&
+      drag.mode === 'move' &&
+      drag.overBin &&
+      createPortal(
+        <div
+          className="week-block week-drag-ghost to-bin"
+          style={{
+            left: drag.clientX - drag.grabX,
+            top: drag.clientY - drag.grabY,
+            width: drag.width || undefined,
+            height: drag.height || undefined,
+            borderLeftColor: personColor(person.id),
+          }}
+          aria-hidden
+        >
+          <span className="week-block-title">
+            {project && <Coin paid={project.paid} size={12} />}
+            {task.title}
+          </span>
+          <span className="week-block-time">
+            {formatMinutes(start)}–{formatMinutes(end)}
+          </span>
+        </div>,
+        document.body,
+      )}
+    </>
   );
 }
+
+// Memo boundary: with all incoming props referentially stable during a drag
+// (`state`, `days` and `blocksByPersonDate` come from the parent's memoized
+// model; callbacks are useCallback-stable; the merge/fuse affordances arrive as
+// per-block booleans), changing the merge target re-renders only the OLD and NEW
+// target blocks plus the dragged one — not every block on the grid.
+const TimedBlock = memo(TimedBlockImpl);
 
 // ---- Bin card: a dateless block that drags OUT of the bin onto the grid ----
 
@@ -605,13 +718,17 @@ interface BinCardProps {
   days: string[];
   gridRef: React.RefObject<HTMLDivElement | null>;
   viewportRef: React.RefObject<HTMLDivElement | null>;
+  // Per-(person, date) collision index (see BlockProps); replaces the per-frame
+  // `blockCollides` workload scan while a bin card drags over the grid.
+  blocksByPersonDate: Map<string, WorkloadEntry[]>;
   editable: boolean;
-  onOpen: () => void;
-  onContextMenu: (e: React.MouseEvent) => void;
-  onSchedule: (anchor: HTMLElement) => void;
+  // Stable parent callbacks taking the card's own data (memo-friendly).
+  onOpen: (taskId: string, entryId: string) => void;
+  onContextMenu: (entry: WorkloadEntry, e: React.MouseEvent) => void;
+  onSchedule: (entry: WorkloadEntry, anchor: HTMLElement) => void;
 }
 
-function BinCard({
+function BinCardImpl({
   state,
   entry,
   task,
@@ -620,6 +737,7 @@ function BinCard({
   days,
   gridRef,
   viewportRef,
+  blocksByPersonDate,
   editable,
   onOpen,
   onContextMenu,
@@ -746,12 +864,22 @@ function BinCard({
       colIndex = valid ? hitIndex : -1;
 
       const dur = entry.plannedHours * 60;
-      const relY = clientY - gridRect.top;
-      startMin = clampBlockStart(snapToStep((relY / HOUR_PX) * 60), dur);
+      // Anchor the drop to the ghost card's TOP edge (clientY − grabY), NOT the
+      // cursor: the visible ghost's top sits at `clientY − grabY`, so mapping the
+      // cursor would land the block `grabY` px below where the card points. The
+      // column (X) stays cursor-based; only this vertical slot uses the card top.
+      const anchorY = clientY - activeDrag.grabY;
+      startMin = dropStartFromAnchor(anchorY - gridRect.top, HOUR_PX, dur);
+      // Collision from the precomputed index (identical to the old
+      // `blockCollides`: this person's dated blocks on the target day; a bin row
+      // has no dated presence, so there is no self to exclude).
+      const dayBlocks = valid
+        ? blocksByPersonDate.get(personDateKey(person.id, days[colIndex])) ?? []
+        : [];
       colliding = unplaceable
         ? true
         : valid
-          ? blockCollides(state, person.id, days[colIndex], startMin, entry.plannedHours)
+          ? hasCollision(dayBlocks, startMin, hoursToMinutes(entry.plannedHours))
           : false;
     }
 
@@ -919,15 +1047,15 @@ function BinCard({
         onPointerDown={editable ? begin : undefined}
         onClick={(e) => {
           e.stopPropagation();
-          if (!moved.current) onOpen();
+          if (!moved.current) onOpen(task.id, entry.id);
         }}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
-            onOpen();
+            onOpen(task.id, entry.id);
           }
         }}
-        onContextMenu={editable ? onContextMenu : undefined}
+        onContextMenu={editable ? (e) => onContextMenu(entry, e) : undefined}
       >
         {content}
         {editable && canSchedule && (
@@ -940,7 +1068,7 @@ function BinCard({
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
-                onSchedule(e.currentTarget);
+                onSchedule(entry, e.currentTarget);
               }}
               onKeyDown={(e) => e.stopPropagation()}
             >
@@ -973,9 +1101,41 @@ function BinCard({
           </div>,
           document.body,
         )}
+      {/* In-column drop-slot preview: a purely presentational band showing the
+          EXACT slot the drop will land in (same top/height SET_BLOCK_TIME would
+          dispatch). Portalled into the target day column so it scrolls with the
+          grid; pointer-events: none keeps it invisible to elementFromPoint. It
+          renders straight from `drag`, so any cancel/finish path (which clears
+          `drag`) removes it — no extra listeners. */}
+      {drag &&
+        drag.valid &&
+        drag.colIndex >= 0 &&
+        (() => {
+          const column = gridRef.current?.querySelector<HTMLElement>(
+            `.week-day-col[data-day-index="${drag.colIndex}"]`,
+          );
+          if (!column) return null;
+          return createPortal(
+            <div
+              className={['week-drop-preview', drag.colliding ? 'colliding' : '']
+                .filter(Boolean)
+                .join(' ')}
+              style={{
+                top: (drag.startMin / 60) * HOUR_PX,
+                height: entry.plannedHours * HOUR_PX,
+              }}
+              aria-hidden
+            />,
+            column,
+          );
+        })()}
     </>
   );
 }
+
+// Memo boundary: a bin card's props are stable while OTHER interactions (a grid
+// block drag) re-render WeekView, so those no longer re-render every bin card.
+const BinCard = memo(BinCardImpl);
 
 // ---- Recurring-task occurrence overlay (presentational only) ----
 // A recurring task's occurrence rendered as a visually distinct, purely
@@ -984,14 +1144,16 @@ function BinCard({
 // block. Only click/keyboard opens the task and right-click opens the recurrence
 // menu — no pointer lifecycle whatsoever.
 interface RecurBlockProps {
-  title: string;
+  task: Task;
   hue: string;
   occurrence: RecurrenceOccurrence;
-  onOpen: () => void;
-  onContextMenu: (e: React.MouseEvent) => void;
+  // Stable parent callbacks taking the occurrence's own data (memo-friendly).
+  onOpen: (taskId: string) => void;
+  onContextMenu: (task: Task, occ: RecurrenceOccurrence, e: React.MouseEvent) => void;
 }
 
-function RecurBlock({ title, hue, occurrence, onOpen, onContextMenu }: RecurBlockProps) {
+function RecurBlockImpl({ task, hue, occurrence, onOpen, onContextMenu }: RecurBlockProps) {
+  const title = task.title;
   const top = (occurrence.startMinutes / 60) * HOUR_PX;
   const height = Math.max((occurrence.durationMinutes / 60) * HOUR_PX, MIN_BLOCK_H);
   const end = occurrence.startMinutes + occurrence.durationMinutes;
@@ -1011,15 +1173,15 @@ function RecurBlock({ title, hue, occurrence, onOpen, onContextMenu }: RecurBloc
       )}). Kliknij, aby otworzyć zadanie; kliknij prawym przyciskiem, aby edytować wystąpienie.`}
       onClick={(e) => {
         e.stopPropagation();
-        onOpen();
+        onOpen(task.id);
       }}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
-          onOpen();
+          onOpen(task.id);
         }
       }}
-      onContextMenu={onContextMenu}
+      onContextMenu={(e) => onContextMenu(task, occurrence, e)}
     >
       <span className="week-recur-title">⟳ {title}</span>
       <span className="week-recur-time">
@@ -1029,6 +1191,8 @@ function RecurBlock({ title, hue, occurrence, onOpen, onContextMenu }: RecurBloc
   );
 }
 
+const RecurBlock = memo(RecurBlockImpl);
+
 // ---- Calendar-event block (presentational only) ----
 // A calendar event / meeting rendered as a visually distinct, purely
 // presentational block (inwariant 1 + 7): it never enters
@@ -1037,10 +1201,11 @@ function RecurBlock({ title, hue, occurrence, onOpen, onContextMenu }: RecurBloc
 // never opens the slot menu on top of it.
 interface EventBlockProps {
   occ: CalendarEventOccurrence;
-  onOpen: () => void;
+  // Stable parent callback taking the event id (memo-friendly).
+  onOpen: (eventId: string) => void;
 }
 
-function EventBlock({ occ, onOpen }: EventBlockProps) {
+function EventBlockImpl({ occ, onOpen }: EventBlockProps) {
   const top = (occ.startMinutes / 60) * HOUR_PX;
   const height = Math.max((occ.durationMinutes / 60) * HOUR_PX, MIN_BLOCK_H);
   const end = occ.startMinutes + occ.durationMinutes;
@@ -1055,12 +1220,12 @@ function EventBlock({ occ, onOpen }: EventBlockProps) {
       )}. Kliknij, aby otworzyć wydarzenie.`}
       onClick={(e) => {
         e.stopPropagation();
-        onOpen();
+        onOpen(occ.event.id);
       }}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
-          onOpen();
+          onOpen(occ.event.id);
         }
       }}
     >
@@ -1071,6 +1236,8 @@ function EventBlock({ occ, onOpen }: EventBlockProps) {
     </div>
   );
 }
+
+const EventBlock = memo(EventBlockImpl);
 
 export function WeekView({ state, anchor, filter }: Props) {
   const { openTask, openNewTask } = useOpenTask();
@@ -1092,7 +1259,23 @@ export function WeekView({ state, anchor, filter }: Props) {
   const canEditEntry = (personId: string): boolean =>
     canEditAny ||
     (canEditOwn && personId === state.currentUserId && state.currentUserId !== '');
-  const days = weekDays(anchor);
+  // Memoize the 7-day array so its reference is stable across drag re-renders —
+  // otherwise a fresh `days` array would invalidate every memoized block's props.
+  const days = useMemo(() => weekDays(anchor), [anchor]);
+
+  // The precomputed week index: one pass per (state, days, filter) instead of a
+  // scan-per-block-per-render. Stable while a drag only flips local/merge state,
+  // so the memoized leaves below keep their props and skip re-rendering.
+  const model = useMemo(() => buildWeekModel(state, days, filter), [state, days, filter]);
+
+  // Stable open handlers so the memoized leaves keep referentially-equal props.
+  // They stay identical across drag re-renders (openTask/openEvent only change on
+  // navigation), so they never invalidate a block's memo mid-drag.
+  const handleOpenTask = useCallback(
+    (taskId: string, entryId?: string) => openTask(taskId, entryId),
+    [openTask],
+  );
+  const handleOpenEvent = useCallback((eventId: string) => openEvent(eventId), [openEvent]);
 
   const gridRef = useRef<HTMLDivElement | null>(null); // .week-days-grid (7 columns, 0:00 at top)
   const viewportRef = useRef<HTMLDivElement | null>(null); // .week-days-viewport (both scrollbars)
@@ -1287,7 +1470,8 @@ export function WeekView({ state, anchor, filter }: Props) {
   // preventDefault/stopPropagation so their native browser menu still opens.
   // Managers suppress the native menu and stop propagation so the slot menu
   // never also opens (occurrence edits mirror TaskModal's tasks.manage gate).
-  const openRecurMenu = (task: Task, occ: RecurrenceOccurrence, e: React.MouseEvent) => {
+  const openRecurMenu = useCallback(
+    (task: Task, occ: RecurrenceOccurrence, e: React.MouseEvent) => {
     if (!canManageTasks) return;
     e.preventDefault();
     e.stopPropagation();
@@ -1306,7 +1490,9 @@ export function WeekView({ state, anchor, filter }: Props) {
       y: Math.min(e.clientY, window.innerHeight - 260),
       step: 'menu',
     });
-  };
+    },
+    [canManageTasks],
+  );
 
   const recurSkipDay = () => {
     if (!recurMenu) return;
@@ -1352,7 +1538,9 @@ export function WeekView({ state, anchor, filter }: Props) {
     setRecurMenu(null);
   };
 
-  const openMenu = (entry: WorkloadEntry, e: React.MouseEvent) => {
+  // Stable (useCallback) so passing it as the block/bin context-menu handler does
+  // not invalidate their memo. Depends only on stable state setters.
+  const openMenu = useCallback((entry: WorkloadEntry, e: React.MouseEvent) => {
     e.preventDefault();
     setSlotMenu(null);
     setHoursRaw('1');
@@ -1364,7 +1552,7 @@ export function WeekView({ state, anchor, filter }: Props) {
       step: 'menu',
       position: 'after',
     });
-  };
+  }, []);
 
   const confirmInsert = () => {
     if (!menu) return;
@@ -1426,18 +1614,24 @@ export function WeekView({ state, anchor, filter }: Props) {
     setSchedStart(minutesToTimeStr(findFreeStart(blocks, dur) ?? nextFreeStart(blocks, dur)));
   };
 
-  // Entry point A: the card button. Anchor the menu to the button rect.
-  const openSchedule = (entry: WorkloadEntry, btn: HTMLElement) => {
-    const rect = btn.getBoundingClientRect();
-    initScheduleForm(entry);
-    setMenu({
-      entry,
-      x: Math.min(rect.left, window.innerWidth - 280),
-      y: Math.min(rect.bottom + 4, window.innerHeight - 240),
-      step: 'schedule',
-      position: 'after',
-    });
-  };
+  // Entry point A: the card button. Anchor the menu to the button rect. Stable
+  // (useCallback, `state`-keyed) so bin cards keep their memo while an unrelated
+  // grid-block drag re-renders WeekView; a state change re-renders cards anyway.
+  const openSchedule = useCallback(
+    (entry: WorkloadEntry, btn: HTMLElement) => {
+      const rect = btn.getBoundingClientRect();
+      initScheduleForm(entry);
+      setMenu({
+        entry,
+        x: Math.min(rect.left, window.innerWidth - 280),
+        y: Math.min(rect.bottom + 4, window.innerHeight - 240),
+        step: 'schedule',
+        position: 'after',
+      });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [state],
+  );
 
   // Re-derive the start whenever the selected DATE changes; manual edits to the
   // start otherwise persist (they don't call this).
@@ -1465,12 +1659,8 @@ export function WeekView({ state, anchor, filter }: Props) {
     setMenu(null);
   };
 
-  // Bin (zasobnik) content — week-independent, per-person, filtered.
-  const inFilter = (id: string) => filter.size === 0 || filter.has(id);
-  const binPeople = state.people.filter(
-    (p) => inFilter(p.id) && binEntriesForPerson(state, p.id).length > 0,
-  );
-  const binGrandTotal = binPeople.reduce((s, p) => s + binTotalForPerson(state, p.id), 0);
+  // Bin (zasobnik) content — precomputed in the week model (per-person, filtered).
+  const binGrandTotal = model.binGrandTotal;
 
   // Overload preview for the insert form.
   const menuPerson = menu ? getPerson(state, menu.entry.personId) : undefined;
@@ -1610,19 +1800,8 @@ export function WeekView({ state, anchor, filter }: Props) {
         <div className="week-corner" />
         <div className="week-head-track" ref={headTrackRef}>
           <div className="week-head-inner">
-            {days.map((d) => {
-              const total = dayTotal(state, d, filter);
-              const overloadedIds = overloadedPeopleOnDate(state, d, filter);
-              const empty = entriesForDate(state, d, filter).length === 0;
-              const overloadNames = overloadedIds
-                .map((id) => getPerson(state, id)?.name)
-                .filter(Boolean)
-                .join(', ');
-              // Znacznik urodzin (miesiąc+dzień) — czysto prezentacyjny, cały
-              // zespół niezależnie od filtra. Tooltip po polsku z imionami.
-              const birthdayNames = peopleWithBirthdayOnDate(state, d)
-                .map((p) => p.name)
-                .filter(Boolean);
+            {model.days.map((day) => {
+              const d = day.date;
               return (
                 <div
                   key={`head-${d}`}
@@ -1640,22 +1819,24 @@ export function WeekView({ state, anchor, filter }: Props) {
                   <div className="week-col-date">
                     {format(parseDate(d), 'd MMM', { locale: pl })}
                   </div>
-                  <div className="week-col-total">{empty ? '—' : formatDuration(total)}</div>
-                  {birthdayNames.length > 0 && (
+                  <div className="week-col-total">
+                    {day.empty ? '—' : formatDuration(day.total)}
+                  </div>
+                  {day.birthdayNames.length > 0 && (
                     <div
                       className="week-col-birthday"
-                      title={`Urodziny: ${birthdayNames.join(', ')}`}
+                      title={`Urodziny: ${day.birthdayNames.join(', ')}`}
                     >
-                      🎂 {birthdayNames.join(', ')}
+                      🎂 {day.birthdayNames.join(', ')}
                     </div>
                   )}
-                  {overloadNames && (
+                  {day.overloadNames && (
                     <div
                       className="week-col-overload"
                       data-tour="calendar.overload"
-                      title={`Powyżej dostępności: ${overloadNames}`}
+                      title={`Powyżej dostępności: ${day.overloadNames}`}
                     >
-                      ⚠ {overloadNames}
+                      ⚠ {day.overloadNames}
                     </div>
                   )}
                 </div>
@@ -1686,9 +1867,8 @@ export function WeekView({ state, anchor, filter }: Props) {
 
         <div className="week-days-viewport" ref={viewportRef} onScroll={onViewportScroll}>
           <div className="week-days-grid" ref={gridRef} style={{ height: DAY_BODY_H }}>
-            {days.map((d, dayIndex) => {
-              const entries = entriesForDate(state, d, filter);
-              const packed = packDayBlocks(entries);
+            {model.days.map((day, dayIndex) => {
+              const d = day.date;
               return (
                 <div
                   key={`col-${d}`}
@@ -1716,56 +1896,51 @@ export function WeekView({ state, anchor, filter }: Props) {
                       they always paint behind real task blocks — same paint step,
                       tree order — without touching the `.week-block` stacking
                       context or any pointer path (inwariant 1 + 7). */}
-                  {calendarEventsForDate(state, d, filter).map((occ) => (
+                  {day.events.map((occ) => (
                     <EventBlock
                       key={`event-${occ.event.id}-${d}`}
                       occ={occ}
-                      onOpen={() => openEvent(occ.event.id)}
+                      onOpen={handleOpenEvent}
                     />
                   ))}
                   {/* Recurring-task occurrences: additive presentational overlay
                       rendered BEFORE the real blocks so they always paint behind
                       them (same paint step, tree order) without touching the
                       `.week-block` stacking context or any pointer path. */}
-                  {recurrenceOccurrencesForDate(state, d, filter).map(({ task, occurrence }) => (
+                  {day.recurrences.map(({ task, occurrence, hue }) => (
                     <RecurBlock
                       key={`recur-${task.id}-${occurrence.date}`}
-                      title={task.title}
-                      hue={personColor(assigneeIdsOfTask(state, task.id)[0] ?? '')}
+                      task={task}
+                      hue={hue}
                       occurrence={occurrence}
-                      onOpen={() => openTask(task.id)}
-                      onContextMenu={(ev) => openRecurMenu(task, occurrence, ev)}
+                      onOpen={handleOpenTask}
+                      onContextMenu={openRecurMenu}
                     />
                   ))}
-                  {packed.map(({ block: e, col, cols }) => {
-                    const task = getTask(state, e.taskId);
-                    const person = getPerson(state, e.personId);
-                    if (!task || !person) return null;
-                    const project = getProject(state, task.projectId);
-                    return (
-                      <TimedBlock
-                        key={e.id}
-                        state={state}
-                        entry={e}
-                        task={task}
-                        person={person}
-                        project={project}
-                        dayIndex={dayIndex}
-                        days={days}
-                        col={col}
-                        cols={cols}
-                        gridRef={gridRef}
-                        binRef={binRef}
-                        mergeTargetId={mergeTargetId}
-                        setMergeTargetId={setMergeTargetId}
-                        fusedId={fusedId}
-                        setFusedId={setFusedId}
-                        editable={canEditEntry(e.personId)}
-                        onOpen={() => openTask(task.id, e.id)}
-                        onContextMenu={(ev) => openMenu(e, ev)}
-                      />
-                    );
-                  })}
+                  {day.blocks.map(({ block: e, col, cols, task, person, project }) => (
+                    <TimedBlock
+                      key={e.id}
+                      state={state}
+                      entry={e}
+                      task={task}
+                      person={person}
+                      project={project}
+                      dayIndex={dayIndex}
+                      days={days}
+                      col={col}
+                      cols={cols}
+                      gridRef={gridRef}
+                      binRef={binRef}
+                      blocksByPersonDate={model.blocksByPersonDate}
+                      isMergeTarget={mergeTargetId === e.id}
+                      setMergeTargetId={setMergeTargetId}
+                      isFused={fusedId === e.id}
+                      setFusedId={setFusedId}
+                      editable={canEditEntry(e.personId)}
+                      onOpen={handleOpenTask}
+                      onContextMenu={openMenu}
+                    />
+                  ))}
                 </div>
               );
             })}
@@ -1775,11 +1950,10 @@ export function WeekView({ state, anchor, filter }: Props) {
         {/* Bin pane: always visible, own vertical scroll, outside the days scroller. */}
         <div className="week-bin-pane" ref={binRef} data-tour="calendar.bin">
           <div className="week-bin-col">
-            {binPeople.length === 0 ? (
+            {model.bin.length === 0 ? (
               <p className="week-bin-empty">Brak bloków bez terminu</p>
             ) : (
-              binPeople.map((p) => {
-                const entries = binEntriesForPerson(state, p.id);
+              model.bin.map(({ person: p, total, entries }) => {
                 return (
                   <div key={`bin-${p.id}`} className="week-bin-group">
                     <div className="week-bin-group-head">
@@ -1790,31 +1964,27 @@ export function WeekView({ state, anchor, filter }: Props) {
                       />
                       {p.name}
                       <span className="week-bin-group-total">
-                        {formatDuration(binTotalForPerson(state, p.id))}
+                        {formatDuration(total)}
                       </span>
                     </div>
-                    {entries.map((e) => {
-                      const task = getTask(state, e.taskId);
-                      if (!task) return null;
-                      const project = getProject(state, task.projectId);
-                      return (
-                        <BinCard
-                          key={e.id}
-                          state={state}
-                          entry={e}
-                          task={task}
-                          person={p}
-                          project={project}
-                          days={days}
-                          gridRef={gridRef}
-                          viewportRef={viewportRef}
-                          editable={canEditEntry(p.id)}
-                          onOpen={() => openTask(task.id, e.id)}
-                          onContextMenu={(ev) => openMenu(e, ev)}
-                          onSchedule={(btn) => openSchedule(e, btn)}
-                        />
-                      );
-                    })}
+                    {entries.map(({ entry: e, task, project }) => (
+                      <BinCard
+                        key={e.id}
+                        state={state}
+                        entry={e}
+                        task={task}
+                        person={p}
+                        project={project}
+                        days={days}
+                        gridRef={gridRef}
+                        viewportRef={viewportRef}
+                        blocksByPersonDate={model.blocksByPersonDate}
+                        editable={canEditEntry(p.id)}
+                        onOpen={handleOpenTask}
+                        onContextMenu={openMenu}
+                        onSchedule={openSchedule}
+                      />
+                    ))}
                   </div>
                 );
               })

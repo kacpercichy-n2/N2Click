@@ -333,28 +333,6 @@ textarea {
   width: 100%;
 }
 
-.acting-as {
-  display: flex;
-  flex-direction: column;
-  gap: var(--n2-space-2);
-  margin-top: auto;
-  padding-top: var(--n2-space-4);
-  border-top: 1px solid var(--n2-border);
-  font-size: var(--n2-type-xs);
-  color: var(--n2-text-muted);
-}
-.acting-as-label {
-  font-family: var(--n2-font-mono);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--n2-lavender);
-}
-.acting-as select {
-  max-width: none;
-  width: 100%;
-  min-height: 40px;
-}
-
 /* Brand row now holds the brand + the collapse toggle. */
 .app-brand-row {
   display: flex;
@@ -383,15 +361,13 @@ textarea {
   color: var(--n2-text);
 }
 
-/* Wrapper pins the acting-as controls to the bottom of the sidebar. */
-.acting-as-wrap {
+/* Wrapper pins the user footer to the bottom of the sidebar. */
+.sidebar-user {
   margin-top: auto;
 }
-.acting-as-wrap .acting-as {
-  margin-top: 0;
-}
-/* Collapsed-only avatar shortcut — hidden by default, revealed >1180px. */
-.acting-as-collapsed {
+/* Collapsed-only avatar shortcut — hidden by default, revealed >1180px. Links
+   to the user's own profile. */
+.sidebar-user-collapsed {
   display: none;
   place-items: center;
   width: 100%;
@@ -402,11 +378,51 @@ textarea {
   color: var(--n2-text-soft);
   cursor: pointer;
 }
+/* Expanded footer row: avatar bubble (→ own profile) next to a narrower logout. */
+.sidebar-user-row {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+  padding-top: var(--n2-space-4);
+  border-top: 1px solid var(--n2-border);
+}
+.sidebar-user-avatar {
+  display: inline-flex;
+  flex-shrink: 0;
+  border-radius: 999px;
+}
 
-/* Universal logout, pinned below the (admin-only) impersonate select. */
+/* Logout sits next to the avatar and takes the remaining width (not full). */
 .logout-btn {
-  width: 100%;
-  margin-top: var(--n2-space-3);
+  flex: 1;
+  justify-content: center;
+}
+
+/* ---------- Menu-order editor (Ustawienia → Interfejs) ---------- */
+.nav-order-list {
+  list-style: none;
+  margin: 0 0 var(--n2-space-3);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-2);
+  max-width: 420px;
+}
+.nav-order-item {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+  padding: var(--n2-space-2) var(--n2-space-3);
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-md);
+  background: var(--n2-surface);
+}
+.nav-order-label {
+  flex: 1;
+}
+.nav-order-btn {
+  padding: var(--n2-space-1) var(--n2-space-2);
+  min-width: 32px;
   justify-content: center;
 }
 
@@ -677,40 +693,8 @@ textarea {
   flex-shrink: 0;
 }
 
-/* Persistent impersonation banner (admin previewing another identity). Warning
-   tones so it reads as a temporary, reversible mode. No animation by design. */
-.impersonation-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--n2-space-4);
-  border: 1px solid var(--n2-warning);
-  border-radius: var(--n2-radius-md);
-  background: var(--n2-warning-soft);
-  padding: var(--n2-space-3) var(--n2-space-5);
-  margin-bottom: var(--n2-space-6);
-}
-.impersonation-banner-text {
-  color: var(--n2-warning);
-  font-weight: 600;
-}
-.impersonation-banner .btn {
-  flex-shrink: 0;
-}
-@media (max-width: 760px) {
-  .impersonation-banner {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--n2-space-2);
-  }
-  .impersonation-banner .btn {
-    width: 100%;
-  }
-}
-
 /* Global persistence banner (honest local write outcomes / two-tab safety).
-   Mirrors the impersonation banner's layout; semantic tones by variant. No
-   animation by design. */
+   Semantic tones by variant. No animation by design. */
 .persistence-banner {
   display: flex;
   align-items: center;
@@ -861,6 +845,9 @@ textarea {
   color: var(--text);
 }
 .project-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: var(--n2-type-xs);
   font-weight: 500;
   font-family: var(--n2-font-mono);
@@ -927,6 +914,12 @@ textarea {
   margin-bottom: var(--n2-space-4);
   box-shadow: var(--shadow-sm);
 }
+/* Subtelne wyróżnienie sekcji „Dyskusja" na karcie projektu, spójne z tokenami
+   akcentu (lawenda). */
+.editor-section-discussion {
+  border-color: var(--n2-border-strong);
+  border-left: 3px solid var(--n2-lavender);
+}
 .field {
   display: flex;
   flex-direction: column;
@@ -954,6 +947,7 @@ input[type='text'],
 input[type='email'],
 input[type='number'],
 input[type='date'],
+input[type='time'],
 input:not([type]),
 textarea,
 select {
@@ -987,7 +981,8 @@ textarea {
   resize: vertical;
 }
 /* Date pickers / dropdown chrome legible on dark. */
-input[type='date']::-webkit-calendar-picker-indicator {
+input[type='date']::-webkit-calendar-picker-indicator,
+input[type='time']::-webkit-calendar-picker-indicator {
   filter: invert(0.85);
   cursor: pointer;
 }
@@ -1007,6 +1002,20 @@ option {
   color: var(--text-muted);
   font-size: var(--n2-type-sm);
   margin: 0;
+}
+/* Timeline: the drag hint and the "Filtry" popover share one row; the hint
+   takes remaining width so the filter button hugs the right edge. */
+.timeline-hint-row {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.timeline-hint-row .field-hint {
+  flex: 1 1 240px;
+}
+.timeline-hint-row .filter-bar {
+  flex: 0 0 auto;
 }
 .field-notice {
   color: var(--n2-warning);
@@ -1633,6 +1642,28 @@ a.toggle-btn {
   background-color: rgba(196, 150, 255, 0.06);
 }
 
+/* Drop-slot preview while dragging a bin card over a day column: a translucent
+   band at the EXACT top/height the drop will dispatch, so what you see is where
+   it lands. Lavender when placeable, danger when it would collide (mirrors the
+   ghost's red state). pointer-events: none is load-bearing — it must be
+   invisible to document.elementFromPoint hit-testing; z-index sits below
+   .week-block.dragging (30). Portalled into the target .week-day-col. */
+.week-drop-preview {
+  position: absolute;
+  left: 1px;
+  right: 2px;
+  box-sizing: border-box;
+  border: 1px dashed var(--n2-lavender);
+  border-radius: var(--n2-radius-xs);
+  background: rgba(196, 150, 255, 0.14);
+  pointer-events: none;
+  z-index: 20;
+}
+.week-drop-preview.colliding {
+  border-color: var(--n2-danger);
+  background: var(--n2-danger-soft, rgba(255, 79, 114, 0.16));
+}
+
 /* Linia „teraz” w dzisiejszej kolumnie: nad statycznymi blokami (z-index 10),
    pod przeciąganym blokiem (.dragging ma 30). pointer-events: none — czysto
    prezentacyjna, nie może przechwycić dragu ani hit-testingu siatki. */
@@ -2071,6 +2102,20 @@ a.toggle-btn {
   transition: none;
   box-shadow: var(--n2-shadow-violet, 0 8px 24px rgba(0, 0, 0, 0.4));
 }
+/* Fixed drag ghost for a timed block dragged over the bin pane — mirrors
+   .week-bin-ghost. Escapes the days-viewport overflow that clips the in-column
+   block, so the card can be seen riding over the bin. Purely visual: no pointer
+   events. The compound selector overrides .week-block's absolute positioning. */
+.week-block.week-drag-ghost {
+  position: fixed;
+  z-index: 1000;
+  margin: 0;
+  transform: none;
+  pointer-events: none;
+  transition: none;
+  opacity: 0.96;
+  box-shadow: var(--n2-shadow-violet, 0 8px 24px rgba(0, 0, 0, 0.4));
+}
 .week-bin-block-title {
   font-size: var(--n2-type-xs);
   font-weight: 600;
@@ -2292,13 +2337,7 @@ a.toggle-btn {
   margin-right: 12px;
 }
 
-/* Modal wydarzenia: lista osób + wybór trybu cykliczności. */
-.event-attendees {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 12px;
-}
-.event-attendee-chip,
+/* Modal wydarzenia: wybór trybu cykliczności (osoby używają .assignee-chip). */
 .event-radio {
   display: inline-flex;
   align-items: center;
@@ -2558,6 +2597,45 @@ a.toggle-btn {
   transform: scale(1.12);
 }
 
+/* Okrągły przycisk ikonowy (komponent IconButton). Flex-centruje SVG w
+   kwadratowym polu — koniec z glifami tekstowymi siadającymi za nisko. */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--n2-border);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--n2-text-soft);
+  cursor: pointer;
+  transition: background var(--n2-transition), color var(--n2-transition),
+    border-color var(--n2-transition), transform var(--n2-transition);
+}
+.icon-btn svg {
+  display: block;
+}
+.icon-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--n2-text);
+  border-color: var(--n2-border-strong);
+}
+.icon-btn:active {
+  transform: scale(0.94);
+}
+.icon-btn.danger {
+  background: transparent;
+  border-color: transparent;
+  color: var(--danger);
+}
+.icon-btn.danger:hover {
+  background: var(--n2-danger-soft);
+  border-color: transparent;
+  color: var(--danger);
+}
+
 .avatar {
   display: inline-grid;
   place-items: center;
@@ -2618,12 +2696,17 @@ a.toggle-btn {
   margin-bottom: 22px;
 }
 .client-group-name {
-  font-size: var(--n2-type-xs);
-  font-family: var(--n2-font-mono);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  margin: 0 0 10px;
+  display: inline-block;
+  width: fit-content;
+  font-size: var(--n2-type-lg);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text);
+  background: rgba(196, 150, 255, 0.12);
+  border: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-sm);
+  padding: var(--n2-space-2) var(--n2-space-4);
+  margin: 0 0 12px;
 }
 .project-create {
   background: var(--card-bg);
@@ -3430,13 +3513,64 @@ a.toggle-btn {
   text-transform: capitalize;
 }
 
-/* 2×2 grid on wide screens; single column on narrow. */
+/* Explicit 2-column layout (wide, ~2fr | 1fr):
+ *   RZĄD 2 · powiadomienia | obciążenie
+ *   RZĄD 3 · zadania       | zespół
+ *   RZĄD 4 · tydzień (full width)
+ *   RZĄD 5 · zasobnik | alerty (kafle scalone z dawnej „Moja praca")
+ * The changelog bar sits ABOVE the grid, not inside it. */
 .dash-welcome-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  grid-template-areas:
+    'notifications workload'
+    'today team'
+    'week week'
+    'bin alerts';
+  align-items: stretch;
 }
+.dash-area-notifications {
+  grid-area: notifications;
+}
+.dash-area-workload {
+  grid-area: workload;
+}
+.dash-area-today {
+  grid-area: today;
+}
+.dash-area-team {
+  grid-area: team;
+}
+.dash-area-week {
+  grid-area: week;
+}
+.dash-area-bin {
+  grid-area: bin;
+}
+.dash-area-alerts {
+  grid-area: alerts;
+}
+/* Row 3 cards share a stretched grid row; flex column lets the team roster's
+ * internal scroll work within the shared height. */
+.dash-area-today,
+.dash-area-team {
+  display: flex;
+  flex-direction: column;
+}
+/* Single column on narrow: drop the areas and flow by DOM order
+ * (powiadomienia, obciążenie, zadania, zespół, tydzień). */
 @media (max-width: 1180px) {
   .dash-welcome-grid {
     grid-template-columns: 1fr;
+    grid-template-areas: none;
+  }
+  .dash-area-notifications,
+  .dash-area-workload,
+  .dash-area-today,
+  .dash-area-team,
+  .dash-area-week,
+  .dash-area-bin,
+  .dash-area-alerts {
+    grid-area: auto;
   }
 }
 
@@ -3495,17 +3629,7 @@ a.toggle-btn {
   font-weight: 500;
 }
 
-/* ---------- Moja praca (/my-work) ---------- */
-
-/* Three cards side-by-side on wide screens; collapse to one column narrow. */
-.my-work-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-@media (max-width: 1180px) {
-  .my-work-grid {
-    grid-template-columns: 1fr;
-  }
-}
+/* ---------- Zasobnik + Alerty (Panel tiles, dawniej „Moja praca") ---------- */
 
 .my-work-hours {
   font-family: var(--n2-font-data);
@@ -3556,7 +3680,9 @@ a.toggle-btn {
   border-color: var(--n2-danger);
 }
 
-/* (b) Team chat mock */
+/* (b) Team roster — max ~4 rows visible, the rest scroll inside the tile so it
+ *  never stretches the viewport. Grows to share the row-3 height (flex: 1) but
+ *  is capped so 5+ people scroll. Row ≈ 32px avatar + 12px padding ≈ 44px. */
 .chat-people {
   list-style: none;
   margin: 0;
@@ -3564,6 +3690,10 @@ a.toggle-btn {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  flex: 1;
+  min-height: 0;
+  max-height: 200px;
+  overflow-y: auto;
 }
 .chat-person {
   display: flex;
@@ -3736,33 +3866,43 @@ a.toggle-btn {
   }
 }
 
-/* (c) Workload donuts */
+/* (c) Workload donuts — compact so both fit the narrow ~1fr column; they wrap
+ *  (stack) via flex when the column is too tight for two side by side. */
 .donut-row {
   display: flex;
-  gap: 24px;
+  gap: 16px;
   flex-wrap: wrap;
   justify-content: space-around;
 }
 .donut {
-  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
 }
+/* The ring box is the positioning context for the center overlay, so the value
+ * stays centered on the SVG regardless of the `size` used to render it (no more
+ * hardcoded `top: 60px`). */
+.donut-ring {
+  position: relative;
+  display: flex;
+}
 .donut-center {
   position: absolute;
-  top: 60px;
-  left: 0;
-  right: 0;
-  transform: translateY(-50%);
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
   text-align: center;
   pointer-events: none;
 }
 .donut-value {
   font-family: var(--n2-font-data);
   font-weight: 700;
-  font-size: var(--n2-type-md);
+  font-size: var(--n2-type-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
 }
 .donut-value.over,
 .donut-pct.over {
@@ -4367,7 +4507,7 @@ a.toggle-btn {
   /* The collapse toggle + collapsed avatar are desktop-only; the 1-column
      strip and mobile drawer ignore the stored pref entirely. */
   .sidebar-toggle,
-  .acting-as-collapsed {
+  .sidebar-user-collapsed {
     display: none;
   }
   .app-sidebar {
@@ -4382,15 +4522,8 @@ a.toggle-btn {
   .app-nav-link {
     justify-content: center;
   }
-  .acting-as {
+  .sidebar-user {
     margin-top: 0;
-    flex-direction: row;
-    align-items: center;
-    flex-wrap: wrap;
-  }
-  .acting-as select {
-    width: auto;
-    max-width: 220px;
   }
 }
 
@@ -4469,12 +4602,17 @@ a.toggle-btn {
   .sidebar-collapsed .app-nav-link:hover .nav-icon {
     transform: scale(1.08);
   }
-  /* Swap the acting-as select for the avatar shortcut. */
-  .sidebar-collapsed .acting-as {
+  /* Swap the expanded avatar row for the standalone avatar shortcut. The logout
+     button stays visible; only the expanded avatar bubble is hidden. */
+  .sidebar-collapsed .sidebar-user-collapsed {
+    display: grid;
+  }
+  .sidebar-collapsed .sidebar-user-avatar {
     display: none;
   }
-  .sidebar-collapsed .acting-as-collapsed {
-    display: grid;
+  .sidebar-collapsed .sidebar-user-row {
+    border-top: none;
+    padding-top: 0;
   }
   /* Stopka w trybie zwiniętym: pionowy stos dwóch wyśrodkowanych kółek 44px
      (ten sam wzorzec co zwinięty .app-nav-link); etykieta Zgłoszenia ukryta. */
@@ -5052,6 +5190,31 @@ a.toggle-btn {
   font-size: var(--n2-type-sm);
   white-space: nowrap;
 }
+/* Reusable one-row filter toolbar composing FilterPanel + person chips +
+   presets + a trailing counter. Distinct from `.filter-bar` (the FilterPanel
+   root). Wraps on narrow widths; the trailing slot is pushed to the end. */
+.filter-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--n2-space-4);
+  margin-bottom: 14px;
+}
+.filter-toolbar-people,
+.filter-toolbar-presets {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.filter-toolbar-presets .filter-presets {
+  margin-bottom: 0;
+}
+.filter-toolbar-trailing {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+}
 .btn.primary.small,
 .btn.small {
   padding: 5px 10px;
@@ -5182,15 +5345,6 @@ a.toggle-btn {
   /* The brand already lives in the top bar — hide the drawer's copy. */
   .app-sidebar .app-brand {
     display: none;
-  }
-  /* Restore the vertical acting-as layout inside the drawer. */
-  .acting-as {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .acting-as select {
-    width: 100%;
-    max-width: none;
   }
 
   .app-drawer-scrim {
@@ -5925,6 +6079,97 @@ a.toggle-btn {
   border: none;
   padding: 0;
   box-shadow: none;
+}
+
+/* Rozwijana karta klienta: nagłówek-przełącznik + sekcja szczegółów. */
+.client-card-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.client-card-toggle strong {
+  font-size: 1.02em;
+}
+.client-card-chevron {
+  flex: 0 0 auto;
+  transition: transform 0.15s ease;
+  color: var(--n2-text-muted, #7a8699);
+}
+.client-card-toggle.expanded .client-card-chevron {
+  transform: rotate(90deg);
+}
+.client-contact-badge {
+  font-size: 0.78em;
+  color: var(--n2-text-muted, #7a8699);
+  background: var(--n2-surface-2, rgba(120, 130, 150, 0.12));
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.client-card-details {
+  margin-top: var(--n2-space-3);
+  padding-top: var(--n2-space-3);
+  border-top: 1px solid var(--n2-border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-3);
+}
+.client-detail-section h4 {
+  margin: 0 0 4px;
+  font-size: 0.82em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--n2-text-muted, #7a8699);
+}
+.client-detail-section .client-card-notes {
+  white-space: pre-line;
+}
+.client-contact-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.client-contact-list li {
+  display: flex;
+  gap: var(--n2-space-4);
+  flex-wrap: wrap;
+  font-size: 0.9em;
+}
+.client-contact-list li > span:first-child {
+  font-weight: 600;
+}
+
+/* Formularz osób kontaktowych: grupy pól + akcje wierszy. */
+.client-contact-group {
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-md, 8px);
+  padding: var(--n2-space-3);
+  margin: 0 0 var(--n2-space-3);
+}
+.client-contact-group > legend {
+  padding: 0 6px;
+  font-size: 0.82em;
+  color: var(--n2-text-muted, #7a8699);
+}
+.client-contact-group .field-row {
+  align-items: flex-end;
+}
+.client-contact-remove {
+  flex: 0 0 auto;
+}
+.client-contact-add {
+  align-self: flex-start;
+  margin-bottom: var(--n2-space-3);
 }
 .form-actions {
   display: flex;

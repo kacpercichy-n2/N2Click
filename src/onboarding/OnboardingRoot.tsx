@@ -16,6 +16,7 @@ import {
   loadUiPrefs,
 } from '../utils/uiPrefs';
 import { ArrowLeft, Check, CircleHelp, Compass, Sparkles } from '../components/icons';
+import { HOME_PATH } from '../pages/homeRoute';
 import { moduleById, modulesForRole, type TourStep, type TutorialModule } from './catalog';
 
 type TourState = { moduleId: TutorialModuleId; stepIndex: number } | null;
@@ -121,9 +122,10 @@ function isModuleComplete(prefs: UiPrefs, ownerKey: string, moduleId: TutorialMo
   return progress.status === 'completed' && progress.completedVersion === ONBOARDING_VERSION;
 }
 
-function resolveRoute(route: string, role: Person['accessRole'] | undefined, current: string): string {
+function resolveRoute(route: string, current: string): string {
   if (route === '@current') return current;
-  if (route === '@home') return role === 'ograniczone' ? '/my-work' : '/dashboard';
+  // Jeden wspólny home dla każdej roli — „Panel" (patrz homeRoute.ts).
+  if (route === '@home') return HOME_PATH;
   return route;
 }
 
@@ -172,11 +174,9 @@ function popupPosition(rect: Rect, keepTargetClear = false): CSSProperties {
 export function OnboardingRoot({
   owner,
   viewer,
-  impersonating,
 }: {
   owner: Person | undefined;
   viewer: Person | undefined;
-  impersonating: boolean;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -217,7 +217,7 @@ export function OnboardingRoot({
   }, []);
 
   useEffect(() => {
-    if (impersonating || !owner || autoStarted.current === ownerKey) return;
+    if (!owner || autoStarted.current === ownerKey) return;
     if (!hasPendingOnboardingLogin(ownerKey)) return;
     if (ownerProgress.introVersionSeen >= ONBOARDING_VERSION || ownerProgress.autoTourHandled) return;
     // StrictMode intentionally runs an effect setup/cleanup/setup cycle in
@@ -228,13 +228,13 @@ export function OnboardingRoot({
       setPanel('intro');
     }, 350);
     return () => window.clearTimeout(timer);
-  }, [impersonating, owner, ownerKey, ownerProgress.autoTourHandled, ownerProgress.introVersionSeen]);
+  }, [owner, ownerKey, ownerProgress.autoTourHandled, ownerProgress.introVersionSeen]);
 
   useEffect(() => {
     if (!tour || !activeStep) return;
-    const route = resolveRoute(activeStep.route, role, location.pathname);
+    const route = resolveRoute(activeStep.route, location.pathname);
     if (route !== location.pathname) navigate(route);
-  }, [activeStep, location.pathname, navigate, role, tour]);
+  }, [activeStep, location.pathname, navigate, tour]);
 
   useEffect(() => {
     setPracticeDone(false);
@@ -391,7 +391,6 @@ export function OnboardingRoot({
     ? availableModules.find((module) => module.id === hintedModuleId)
     : undefined;
   const shouldShowHint =
-    !impersonating &&
     Boolean(hintedModule) &&
     panel === 'none' &&
     !tour &&
