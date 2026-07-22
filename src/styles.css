@@ -3392,13 +3392,55 @@ option {
   text-transform: capitalize;
 }
 
-/* 2×2 grid on wide screens; single column on narrow. */
+/* Explicit 2-column layout (wide, ~2fr | 1fr):
+ *   RZĄD 2 · powiadomienia | obciążenie
+ *   RZĄD 3 · zadania       | zespół
+ *   RZĄD 4 · tydzień (full width)
+ * Row 5 („Pozostałe kategorie") is a reserved slot, not rendered yet.
+ * The changelog bar sits ABOVE the grid, not inside it. */
 .dash-welcome-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  grid-template-areas:
+    'notifications workload'
+    'today team'
+    'week week';
+  align-items: stretch;
 }
+.dash-area-notifications {
+  grid-area: notifications;
+}
+.dash-area-workload {
+  grid-area: workload;
+}
+.dash-area-today {
+  grid-area: today;
+}
+.dash-area-team {
+  grid-area: team;
+}
+.dash-area-week {
+  grid-area: week;
+}
+/* Row 3 cards share a stretched grid row; flex column lets the team roster's
+ * internal scroll work within the shared height. */
+.dash-area-today,
+.dash-area-team {
+  display: flex;
+  flex-direction: column;
+}
+/* Single column on narrow: drop the areas and flow by DOM order
+ * (powiadomienia, obciążenie, zadania, zespół, tydzień). */
 @media (max-width: 1180px) {
   .dash-welcome-grid {
     grid-template-columns: 1fr;
+    grid-template-areas: none;
+  }
+  .dash-area-notifications,
+  .dash-area-workload,
+  .dash-area-today,
+  .dash-area-team,
+  .dash-area-week {
+    grid-area: auto;
   }
 }
 
@@ -3518,7 +3560,9 @@ option {
   border-color: var(--n2-danger);
 }
 
-/* (b) Team chat mock */
+/* (b) Team roster — max ~4 rows visible, the rest scroll inside the tile so it
+ *  never stretches the viewport. Grows to share the row-3 height (flex: 1) but
+ *  is capped so 5+ people scroll. Row ≈ 32px avatar + 12px padding ≈ 44px. */
 .chat-people {
   list-style: none;
   margin: 0;
@@ -3526,6 +3570,10 @@ option {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  flex: 1;
+  min-height: 0;
+  max-height: 200px;
+  overflow-y: auto;
 }
 .chat-person {
   display: flex;
@@ -3698,33 +3746,43 @@ option {
   }
 }
 
-/* (c) Workload donuts */
+/* (c) Workload donuts — compact so both fit the narrow ~1fr column; they wrap
+ *  (stack) via flex when the column is too tight for two side by side. */
 .donut-row {
   display: flex;
-  gap: 24px;
+  gap: 16px;
   flex-wrap: wrap;
   justify-content: space-around;
 }
 .donut {
-  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
 }
+/* The ring box is the positioning context for the center overlay, so the value
+ * stays centered on the SVG regardless of the `size` used to render it (no more
+ * hardcoded `top: 60px`). */
+.donut-ring {
+  position: relative;
+  display: flex;
+}
 .donut-center {
   position: absolute;
-  top: 60px;
-  left: 0;
-  right: 0;
-  transform: translateY(-50%);
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
   text-align: center;
   pointer-events: none;
 }
 .donut-value {
   font-family: var(--n2-font-data);
   font-weight: 700;
-  font-size: var(--n2-type-md);
+  font-size: var(--n2-type-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
 }
 .donut-value.over,
 .donut-pct.over {

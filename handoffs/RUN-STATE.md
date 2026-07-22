@@ -65,6 +65,15 @@ Projects/Tasks/Kanban swapped to it (Kanban PersonFilter moved below header). Ne
 tests + projectsOfPerson/assigneeIdsOfTask edge cases. `npm test` PASS (1321);
 `npm run build` PASS. No reducer/store changes.
 
+## PKG-dashboard-layout (249)
+
+DashboardPage rebuilt to explicit `grid-template-areas` (2fr|1fr): powiadomienia|
+obciążenie, zadania|zespół, tydzień full-width; row 5 reserved as comment only.
+New Powiadomienia UI slot (empty state), Zespół `(N)` counter + 4-row scroll,
+donut center re-anchored to a `.donut-ring` box (dropped `top:60px`) with xs
+tabular value. New pure `src/pages/dashboardPanels.ts` (+test). No store changes.
+`npm test` PASS (1327, +6); `npm run build` PASS. Wiki unchanged (accurate).
+
 ## Open questions
 
 None blocking.
