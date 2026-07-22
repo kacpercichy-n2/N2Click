@@ -149,6 +149,20 @@ describe('diffToCloudOps — families', () => {
     ]);
   });
 
+  it('clientRow niesie contacts: [] gdy klient nie ma klucza, a tablicę dosłownie gdy ma', () => {
+    const m = maps();
+    // Bez klucza => pusta tablica w wierszu chmury.
+    const noKey: AppData = { ...localFixture(), clients: [{ id: CLI, name: 'Klient', archived: false }] };
+    const addNoKey = diffToCloudOps(localFixture(), noKey, m);
+    expect(addNoKey.ops[0].row).toMatchObject({ id: CLI, contacts: [] });
+
+    // Z kluczem => tablica dosłownie.
+    const contacts = [{ id: 'k1', firstName: 'Marek', lastName: 'Kos', phone: '600', email: 'm@k.pl' }];
+    const withKey: AppData = { ...localFixture(), clients: [{ id: CLI, name: 'Klient', archived: false, contacts }] };
+    const addWithKey = diffToCloudOps(localFixture(), withKey, m);
+    expect(addWithKey.ops[0].row).toMatchObject({ id: CLI, contacts });
+  });
+
   it('save project with a new client emits client upsert THEN project upsert', () => {
     const m = maps();
     const prev = localFixture();

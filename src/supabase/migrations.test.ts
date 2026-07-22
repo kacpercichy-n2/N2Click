@@ -128,6 +128,7 @@ describe('konwencja plików migracji', () => {
       '20260721170000_task_recurrence.sql',
       '20260721210000_events.sql',
       '20260721220000_workload_entry_done.sql',
+      '20260722130000_client_contacts.sql',
     ]);
   });
 

@@ -119,6 +119,16 @@ export function buildSampleData(): AppData {
     contactName: 'Anna Kowalska',
     contactEmail: 'anna.kowalska@acmefoods.pl',
     contactPhone: '+48 600 100 200',
+    // Dodatkowe osoby kontaktowe — demo dla rozwijanej karty i mirrora chmury.
+    contacts: [
+      {
+        id: uid(),
+        firstName: 'Marek',
+        lastName: 'Dąbrowski',
+        phone: '+48 600 100 210',
+        email: 'marek.dabrowski@acmefoods.pl',
+      },
+    ],
   };
   const nordic = {
     id: uid(),
@@ -134,14 +144,14 @@ export function buildSampleData(): AppData {
     archived: false,
     contactName: 'Magda Lewandowska',
     contactEmail: 'magda@velaliving.pl',
-    contactPhone: '',
+    contactPhone: '+48 600 100 202',
   };
   const greenVolt = {
     id: uid(),
     name: 'GreenVolt Energy',
     archived: false,
     contactName: 'Tomasz Wójcik',
-    contactEmail: '',
+    contactEmail: 'tomasz.wojcik@greenvolt.pl',
     contactPhone: '+48 600 100 203',
   };
   const mizu = {

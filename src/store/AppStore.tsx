@@ -19,6 +19,7 @@ import type {
   AppData,
   CalendarEvent,
   ChecklistItem,
+  ClientContact,
   CommentEntityType,
   Company,
   Department,
@@ -73,6 +74,7 @@ import {
   normalizeEventDraft,
   lastViewFilterEqual,
   normalizeProjectDocumentDraft,
+  sanitizeClientContacts,
   sanitizeFilterCriteria,
   sanitizeLastViewFilter,
 } from './commandValidation';
@@ -297,9 +299,9 @@ export type Action =
   | { type: 'STOP_IMPERSONATION' }
   | { type: 'SET_PASSWORD'; personId: string; passwordHash: string }
   | { type: 'LOGOUT' }
-  | { type: 'ADD_CLIENT'; name: string; contactName?: string; contactEmail?: string; contactPhone?: string; notes?: string }
+  | { type: 'ADD_CLIENT'; name: string; contactName?: string; contactEmail?: string; contactPhone?: string; notes?: string; contacts?: ClientContact[] }
   | { type: 'RENAME_CLIENT'; clientId: string; name: string }
-  | { type: 'SAVE_CLIENT'; clientId: string; name: string; contactName: string; contactEmail: string; contactPhone: string; notes: string }
+  | { type: 'SAVE_CLIENT'; clientId: string; name: string; contactName: string; contactEmail: string; contactPhone: string; notes: string; contacts?: ClientContact[] }
   | { type: 'SET_CLIENT_ARCHIVED'; clientId: string; archived: boolean }
   | { type: 'DELETE_CLIENT'; clientId: string }
   | { type: 'ADD_DEPARTMENT'; name: string }
@@ -2525,6 +2527,20 @@ function mergeCloudDictionaries(state: AppData, payload: CloudDictionariesPayloa
   };
 }
 
+/** Trim the four text fields of each additional client contact for storage. The
+ *  array shape is already validated by isValidClientDraft (strict gate), so this
+ *  only normalizes whitespace; an undefined/[] input yields []. */
+function trimClientContacts(contacts: ClientContact[] | undefined): ClientContact[] {
+  if (!contacts) return [];
+  return contacts.map((c) => ({
+    id: c.id,
+    firstName: c.firstName.trim(),
+    lastName: c.lastName.trim(),
+    phone: c.phone.trim(),
+    email: c.email.trim(),
+  }));
+}
+
 // ---- Cloud hydration merge ----
 
 function isObjWithId(v: unknown): v is { id: string } {
@@ -2649,6 +2665,28 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
     return state;
   }
 
+  // Klienci: `contacts` jest ADDYTYWNE. Fail-closed STRUKTURALNIE — klient,
+  // którego klucz `contacts` JEST obecny, ale nie jest tablicą, odrzuca całą
+  // hydrację (invariant 6). Zniekształcone WIERSZE są filtrowane
+  // deterministycznie przez `sanitizeClientContacts` (idempotentne =>
+  // odświeżenie w tle zostaje reference-preserving). Forma kanoniczna:
+  // klient bez klucza przechodzi jako TEN SAM obiekt; sanityzacja do pustej =>
+  // obiekt BEZ klucza.
+  for (const c of payload.clients) {
+    const rec = c as unknown as Record<string, unknown>;
+    if (rec.contacts !== undefined && !Array.isArray(rec.contacts)) return state;
+  }
+  const mappedClients = payload.clients.map((c) => {
+    const rec = c as unknown as Record<string, unknown>;
+    if (rec.contacts === undefined) return c;
+    const contacts = sanitizeClientContacts(rec.contacts);
+    if (contacts === undefined) {
+      const { contacts: _drop, ...rest } = rec;
+      return rest as unknown as typeof c;
+    }
+    return { ...(rec as object), contacts } as unknown as typeof c;
+  });
+
   // Autorytatywnie: referencje walidujemy wobec ZBIORU DOCELOWEGO (payload),
   // nie sumy z lokalnym — wiersz wskazujący encję spoza chmury jest błędem.
   const projectIds = new Set<string>(payload.projects.map((p) => p.id));
@@ -2765,7 +2803,7 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
     ...state,
     people: mergedPeople,
     ...reconcileIdentityAfterPeopleMerge(state, mergedPeople),
-    clients: reconcileRows(state.clients, payload.clients),
+    clients: reconcileRows(state.clients, mappedClients),
     projects: reconcileRows(state.projects, payload.projects),
     milestones: reconcileRows(state.milestones, payload.milestones),
     tasks: reconcileRows(state.tasks, payload.tasks),
@@ -3252,10 +3290,12 @@ export function reducer(state: AppData, action: Action): AppData {
       };
     }
     case 'ADD_CLIENT': {
-      // Wymagane: nazwa, osoba kontaktowa i e-mail LUB telefon
-      // (isValidClientDraft). Niepełny draft => TA SAMA referencja stanu.
+      // Wymagane: nazwa, osoba kontaktowa i e-mail ORAZ telefon
+      // (isValidClientDraft, reguła AND). Niepełny draft albo niepoprawne
+      // `contacts` => TA SAMA referencja stanu (invariant 6).
       if (!isValidClientDraft(action)) return state;
       const name = action.name.trim();
+      const contacts = trimClientContacts(action.contacts);
       return {
         ...state,
         clients: [
@@ -3268,31 +3308,37 @@ export function reducer(state: AppData, action: Action): AppData {
             contactEmail: action.contactEmail?.trim() ?? '',
             contactPhone: action.contactPhone?.trim() ?? '',
             notes: action.notes?.trim() ?? '',
+            // Forma kanoniczna: klucz obecny WYŁĄCZNIE gdy jest ≥1 dodatkowa osoba.
+            ...(contacts.length > 0 ? { contacts } : {}),
           },
         ],
       };
     }
     case 'SAVE_CLIENT': {
       // Jak RENAME_CLIENT: nieznane id odrzucone; do tego pełen komplet pól
-      // wymaganych (isValidClientDraft) — brak nazwy, osoby kontaktowej albo
-      // obu kanałów kontaktu zwraca TĘ SAMĄ referencję stanu (invariant 6).
+      // wymaganych (isValidClientDraft, reguła AND) — brak nazwy, osoby
+      // kontaktowej, e-maila albo telefonu, lub niepoprawne `contacts` zwraca TĘ
+      // SAMĄ referencję stanu (invariant 6).
       if (!isValidClientDraft(action)) return state;
       const name = action.name.trim();
       if (!state.clients.some((c) => c.id === action.clientId)) return state;
+      const contacts = trimClientContacts(action.contacts);
       return {
         ...state,
-        clients: state.clients.map((c) =>
-          c.id === action.clientId
-            ? {
-                ...c,
-                name,
-                contactName: action.contactName.trim(),
-                contactEmail: action.contactEmail.trim(),
-                contactPhone: action.contactPhone.trim(),
-                notes: action.notes.trim(),
-              }
-            : c,
-        ),
+        clients: state.clients.map((c) => {
+          if (c.id !== action.clientId) return c;
+          // `contacts: []` USUWA klucz (forma kanoniczna — nigdy pusta tablica).
+          const { contacts: _drop, ...rest } = c;
+          return {
+            ...rest,
+            name,
+            contactName: action.contactName.trim(),
+            contactEmail: action.contactEmail.trim(),
+            contactPhone: action.contactPhone.trim(),
+            notes: action.notes.trim(),
+            ...(contacts.length > 0 ? { contacts } : {}),
+          };
+        }),
       };
     }
     case 'SET_CLIENT_ARCHIVED': {

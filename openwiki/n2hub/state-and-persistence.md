@@ -261,18 +261,39 @@
   podmienia wiersze autorytatywnie. Testy: rozszerzenia w `selectors.test.ts`,
   `commandValidation.test.ts`, `cloudMerge.test.ts`, `cloudMirror.test.ts`,
   `plannerData.test.ts`, `migrations.test.ts`.
-- `Client` carries contact fields (contactName/contactEmail/contactPhone/notes;
-  columns from 20260718090000_clients_contact_fields, '' or missing = none — no
-  repair pass, use-sites coalesce), edited on the `/clients` page via
-  `SAVE_CLIENT`/`SET_CLIENT_ARCHIVED`. WYMAGANE POLA (2026-07-21): every NEW
-  write via `ADD_CLIENT`/`SAVE_CLIENT` must carry name + contactName + (email OR
-  phone) — `isValidClientDraft` in `commandValidation.ts`; a shortfall returns
-  the SAME state reference (invariant 6). Presence only, NO e-mail regex. The
-  rule gates the reducer only: load/repair/migration never routes through it, so
-  legacy clients without contact data stay readable and are asked for the
-  missing fields on their next edit (ClientsPage shows a live Polish message and
-  auto-save stays paused). The AdminPage name-only client quick-add is gone
-  (link to `/clients`); `seed.ts` demo clients satisfy the rule.
+- `Client` carries a PRIMARY contact (contactName/contactEmail/contactPhone) plus
+  a description in `notes` (columns from 20260718090000_clients_contact_fields,
+  '' or missing = none), edited on the `/clients` page via
+  `SAVE_CLIENT`/`SET_CLIENT_ARCHIVED`. WYMAGANE POLA (2026-07-22, zaostrzone):
+  every NEW write via `ADD_CLIENT`/`SAVE_CLIENT` must carry name + contactName +
+  e-mail AND phone (the earlier OR became AND) — `isValidClientDraft` in
+  `commandValidation.ts`; a shortfall returns the SAME state reference
+  (invariant 6). Presence only, NO e-mail regex. The rule gates the reducer only:
+  load/repair/migration never routes through it, so legacy clients (missing a
+  channel, or a single-word contactName) stay readable and are asked to complete
+  the missing field on their next edit (ClientsPage shows a live Polish message
+  and auto-save stays paused). `seed.ts` demo clients satisfy the rule.
+- DODATKOWE OSOBY KONTAKTOWE (2026-07-22): `Client.contacts?: ClientContact[]`
+  (`{id, firstName, lastName, phone, email}`; '' = brak dla phone/email). Trzyma
+  WYŁĄCZNIE dodatkowe osoby — główna zostaje w contactName/contactEmail/
+  contactPhone (zero migracji danych). FORMA KANONICZNA: klucz OBECNY tylko przy
+  ≥1 poprawnej osobie (nigdy `[]`), egzekwowana na TRZECH granicach — reduktor
+  (`ADD_CLIENT`/`SAVE_CLIENT`; `contacts` walidowane strict przez
+  `isValidClientContacts`, niepoprawne => ta sama referencja; `contacts: []`
+  USUWA klucz), `repairClients` (storage, biegnie po `repairEvents` na wyniku obu
+  ścieżek wczytania; `sanitizeClientContacts` leniwie — koercja/trim, drop
+  wiersza bez id albo z pustym imieniem+nazwiskiem, dedupe po id) i hydracja
+  chmury (`MERGE_CLOUD_ENTITIES`: klient z NIE-tablicowym `contacts` => fail-close
+  ta sama referencja; wiersze filtrowane deterministycznie => reference-preserving
+  merge). Pole ADDYTYWNE: `DATA_VERSION` zostaje 7, legacy bez klucza = brak
+  echo-write. ClientsPage: rozwijana karta (natywny `<button>`
+  `aria-expanded`/`aria-controls`, pojedynczy akordeon, stan lokalny) chowa opis
+  i dodatkowe osoby do rozwinięcia; formularz ma listę osób (imię/nazwisko/
+  telefon/e-mail + „Dodaj/Usuń”) i pole „Opis klienta” (mapuje `notes`). Czyste
+  helpery split/join/draft w `src/pages/clientContactForm.ts`. W chmurze kolumna
+  jsonb `clients.contacts` (patrz cloud-database). Testy: `clientContactForm.test.ts`,
+  rozszerzenia w `commandValidation.test.ts`/`storage.test.ts`/`cloudMerge.test.ts`/
+  `cloudMirror.test.ts`/`plannerData.test.ts`/`migrations.test.ts`.
 - AUTO-SAVE (2026-07-17): clients (edit form), ProjectDetailPage and TaskModal
   (existing tasks) auto-commit VALID dirty drafts after ~0.9 s idle
   (`src/utils/useAutoSave.ts`); invalid drafts wait for the inline fix and an

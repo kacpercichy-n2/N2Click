@@ -6,6 +6,7 @@
 // runtime import cycle (AppStore imports these functions at runtime).
 import type {
   AppData,
+  ClientContact,
   FilterPage,
   FilterViewKey,
   LastViewFilter,
@@ -103,26 +104,82 @@ export function isValidProjectDraft(
 }
 
 /** Contact-carrying client payload shared by ADD_CLIENT (optional fields) and
- *  SAVE_CLIENT (always present). Missing === empty. */
+ *  SAVE_CLIENT (always present). Missing === empty. `contacts` (when present)
+ *  are the DODATKOWE osoby kontaktowe; strict-validated by isValidClientContacts. */
 export interface ClientContactDraft {
   name: string;
   contactName?: string;
   contactEmail?: string;
   contactPhone?: string;
+  contacts?: unknown;
 }
 
-/** Client: name required, contact person required, and AT LEAST ONE contact
- *  channel (e-mail OR phone). Deliberately NO e-mail format/regex check —
- *  this is a data-completeness rule, not a format or security boundary, so a
- *  legacy value must never be rejected for its shape (valid-legacy rule).
- *  Only NEW writes are gated: load/repair never routes through the reducer, so
- *  clients persisted before this rule stay readable and untouched. */
+/** Client: name required, contact person required, and BOTH contact channels
+ *  (e-mail AND phone) present — this tightened the earlier "e-mail OR phone"
+ *  rule. Deliberately NO e-mail format/regex check — this is a data-completeness
+ *  rule, not a format or security boundary, so a legacy value must never be
+ *  rejected for its shape (valid-legacy rule); only NEW writes are gated, and a
+ *  legacy client is simply asked to complete the missing channel on its next
+ *  edit. `contacts`, when present, must pass strict isValidClientContacts. */
 export function isValidClientDraft(draft: ClientContactDraft): boolean {
   return (
     isRequiredName(draft.name) &&
     isRequiredName(draft.contactName ?? '') &&
-    (isRequiredName(draft.contactEmail ?? '') || isRequiredName(draft.contactPhone ?? ''))
+    isRequiredName(draft.contactEmail ?? '') &&
+    isRequiredName(draft.contactPhone ?? '') &&
+    (draft.contacts === undefined || isValidClientContacts(draft.contacts))
   );
+}
+
+/** STRICT reducer gate for the additional-contacts array: an array whose every
+ *  row is an object with a non-empty unique string `id`, non-blank `firstName`
+ *  and `lastName` (after trim), and string `phone`/`email` (missing === ''). No
+ *  shape checks on phone/e-mail (valid-legacy). An empty array is valid — the
+ *  reducer only STORES a non-empty array, but the gate accepts []. */
+export function isValidClientContacts(value: unknown): value is ClientContact[] {
+  if (!Array.isArray(value)) return false;
+  const ids = new Set<string>();
+  for (const raw of value) {
+    if (typeof raw !== 'object' || raw === null) return false;
+    const r = raw as Record<string, unknown>;
+    if (typeof r.id !== 'string' || r.id === '' || ids.has(r.id)) return false;
+    ids.add(r.id);
+    if (typeof r.firstName !== 'string' || r.firstName.trim() === '') return false;
+    if (typeof r.lastName !== 'string' || r.lastName.trim() === '') return false;
+    if (r.phone !== undefined && typeof r.phone !== 'string') return false;
+    if (r.email !== undefined && typeof r.email !== 'string') return false;
+  }
+  return true;
+}
+
+/** LENIENT load/hydration cleaner for the additional-contacts array. Non-array →
+ *  undefined. Per row: drop unless an object with a non-empty string `id`;
+ *  coerce non-string firstName/lastName/phone/email to ''; trim all four; drop a
+ *  row whose firstName AND lastName are both empty; dedupe by id (first wins).
+ *  Empty result → undefined (canonical key-omitted-when-empty). Deterministic
+ *  and idempotent: sanitize(sanitize(x)) ≡ sanitize(x). */
+export function sanitizeClientContacts(value: unknown): ClientContact[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+  const out: ClientContact[] = [];
+  const seen = new Set<string>();
+  for (const raw of value) {
+    if (typeof raw !== 'object' || raw === null) continue;
+    const r = raw as Record<string, unknown>;
+    if (typeof r.id !== 'string' || r.id === '' || seen.has(r.id)) continue;
+    const firstName = str(r.firstName).trim();
+    const lastName = str(r.lastName).trim();
+    if (firstName === '' && lastName === '') continue;
+    seen.add(r.id);
+    out.push({
+      id: r.id,
+      firstName,
+      lastName,
+      phone: str(r.phone).trim(),
+      email: str(r.email).trim(),
+    });
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 /**

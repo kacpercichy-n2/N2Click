@@ -540,6 +540,83 @@ describe('MERGE_CLOUD_ENTITIES — wydarzenia kalendarza', () => {
   });
 });
 
+describe('MERGE_CLOUD_ENTITIES — dodatkowe osoby kontaktowe klienta', () => {
+  const contact = (id: string, over: Record<string, unknown> = {}) => ({
+    id,
+    firstName: 'Marek',
+    lastName: 'Kos',
+    phone: '',
+    email: '',
+    ...over,
+  });
+
+  it('(a) klient z NIE-tablicowym contacts => ta sama referencja stanu (invariant 6)', () => {
+    const state = baseState();
+    const bad = {
+      ...emptyPayload(),
+      clients: [{ ...client({ id: 'c-cloud', name: 'X' }), contacts: 'nope' } as unknown as Client],
+    };
+    expect(merge(state, bad)).toBe(state);
+  });
+
+  it('(b) filtruje zniekształcone wiersze deterministycznie; blank-both-names odpada', () => {
+    const state = baseState();
+    const next = merge(state, {
+      ...emptyPayload(),
+      clients: [
+        {
+          ...client({ id: 'c-cloud', name: 'X' }),
+          contacts: [
+            contact('k1', { firstName: ' Marek ', phone: 5 }),
+            { firstName: 'Bez', lastName: 'Id' }, // brak id
+            contact('k2', { firstName: '', lastName: '' }), // puste -> drop
+          ],
+        } as unknown as Client,
+      ],
+    });
+    expect(next.clients.find((c) => c.id === 'c-cloud')!.contacts).toEqual([
+      { id: 'k1', firstName: 'Marek', lastName: 'Kos', phone: '', email: '' },
+    ]);
+  });
+
+  it('(c) poprawne contacts podmieniają kolekcję autorytatywnie', () => {
+    const state: AppData = {
+      ...baseState(),
+      clients: [{ ...client({ id: 'c1', name: 'Acme' }), contacts: [contact('old')] }],
+    };
+    const next = merge(state, {
+      ...emptyPayload(),
+      clients: [{ ...client({ id: 'c1', name: 'Acme' }), contacts: [contact('k9', { firstName: 'Ala', lastName: 'Ma' })] }],
+    });
+    expect(next.clients[0].contacts).toEqual([
+      { id: 'k9', firstName: 'Ala', lastName: 'Ma', phone: '', email: '' },
+    ]);
+  });
+
+  it('(d) wiersz value-identyczny zachowuje obiekt; no-op merge zwraca ORYGINALNĄ referencję', () => {
+    const c1 = { ...client({ id: 'c1', name: 'Acme' }), contacts: [contact('k1')] };
+    const cNoKey = client({ id: 'c2', name: 'Beta' });
+    const state: AppData = { ...emptyData(), clients: [c1, cNoKey] };
+    // Payload niesie te same wartości (z contacts jako tablica); merge no-op.
+    const next = merge(state, {
+      ...emptyPayload(),
+      clients: [{ ...client({ id: 'c1', name: 'Acme' }), contacts: [contact('k1')] }, client({ id: 'c2', name: 'Beta' })],
+    });
+    expect(next).toBe(state);
+    expect(next.clients[0]).toBe(c1);
+    expect(next.clients[1]).toBe(cNoKey);
+  });
+
+  it('klient z contacts:[] w chmurze hydruje się BEZ klucza (forma kanoniczna)', () => {
+    const state = baseState();
+    const next = merge(state, {
+      ...emptyPayload(),
+      clients: [{ ...client({ id: 'c-cloud', name: 'X' }), contacts: [] } as unknown as Client],
+    });
+    expect('contacts' in next.clients.find((c) => c.id === 'c-cloud')!).toBe(false);
+  });
+});
+
 // ---- MERGE_CLOUD_PEOPLE (pełna synchronizacja osób) --------------------------
 
 import type { CloudPersonMergeRow } from '../supabase/referenceData';

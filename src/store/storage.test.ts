@@ -18,6 +18,7 @@ import {
   normalizeStatusFlags,
   normalizeTaskMeta,
   normalizeWorkloadHours,
+  repairClients,
   repairEvents,
   readCloudRetirementMarker,
   readEnvelopeRevision,
@@ -2492,5 +2493,62 @@ describe('repairEvents', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.data.events).toEqual([]);
+  });
+});
+
+// ---- repairClients (dodatkowe osoby kontaktowe) -----------------------------
+describe('repairClients', () => {
+  const withClients = (clients: unknown[]): AppData =>
+    ({ ...emptyData(), clients } as unknown as AppData);
+
+  it('legacy klient BEZ pola contacts wychodzi tym samym obiektem (brak echo-write)', () => {
+    const legacy = { id: 'c1', name: 'Acme', archived: false, contactName: 'Anna' };
+    const data = withClients([legacy]);
+    const out = repairClients(data);
+    expect(out.clients[0]).toBe(legacy); // ta sama referencja
+    expect('contacts' in out.clients[0]).toBe(false);
+  });
+
+  it('naprawia zniekształcone contacts wg reguł sanitize', () => {
+    const data = withClients([
+      {
+        id: 'c1',
+        name: 'Acme',
+        archived: false,
+        contacts: [
+          { id: 'k1', firstName: ' Marek ', lastName: 'Kos', phone: 5, email: null }, // koercja + trim
+          { firstName: 'Bez', lastName: 'Id' }, // brak id -> drop
+          { id: 'k2', firstName: '', lastName: '' }, // puste imię+nazwisko -> drop
+          { id: 'k1', firstName: 'Dup', lastName: 'Licate' }, // dup id -> drop
+        ],
+      },
+    ]);
+    expect(repairClients(data).clients[0].contacts).toEqual([
+      { id: 'k1', firstName: 'Marek', lastName: 'Kos', phone: '', email: '' },
+    ]);
+  });
+
+  it('usuwa klucz gdy contacts to nie-tablica albo sanityzuje się do pustej', () => {
+    const nonArray = withClients([{ id: 'c1', name: 'Acme', archived: false, contacts: 'nope' }]);
+    expect('contacts' in repairClients(nonArray).clients[0]).toBe(false);
+    const emptyish = withClients([
+      { id: 'c2', name: 'Beta', archived: false, contacts: [{ id: 'k1', firstName: '', lastName: '' }] },
+    ]);
+    expect('contacts' in repairClients(emptyish).clients[0]).toBe(false);
+  });
+
+  it('zachowuje poprawne contacts dosłownie', () => {
+    const good = [{ id: 'k1', firstName: 'Marek', lastName: 'Kos', phone: '600', email: 'm@k.pl' }];
+    const data = withClients([{ id: 'c1', name: 'Acme', archived: false, contacts: good }]);
+    expect(repairClients(data).clients[0].contacts).toEqual(good);
+  });
+
+  it('czysty payload bez contacts nie robi echo-write przez pełną ścieżkę wczytania', () => {
+    const clean = { ...emptyData(), clients: [{ id: 'c1', name: 'Acme', archived: false }] };
+    const result = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(clean) }, () => loadDataResult());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.needsWriteback).toBe(false);
+    expect('contacts' in result.data.clients[0]).toBe(false);
   });
 });

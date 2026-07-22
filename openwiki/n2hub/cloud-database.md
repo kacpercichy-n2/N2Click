@@ -40,6 +40,16 @@
   `contact_phone`, `notes`; 20260718090000) and the published tables are in the
   `supabase_realtime` publication (20260718091000) — RLS applies to Realtime
   (WALRUS), clients treat events only as a "something changed" signal.
+  `clients.contacts` (20260722130000_client_contacts) — jsonb not null default
+  `'[]'`, CHECK `jsonb_typeof(contacts) = 'array'`: DODATKOWE osoby kontaktowe
+  (`{id, firstName, lastName, phone, email}`), osadzone jak `projects.documents`
+  (20260721010000). Świadomie BEZ tabeli: widoczność osób ≡ widoczność klienta,
+  RLS dziedziczy z wiersza `public.clients` — ZERO nowych polityk, `clients` już
+  w publikacji realtime (bez zmian). Główna osoba zostaje w kolumnach
+  `contact_*` — kolumna trzyma tylko dodatkowe. Mirror `clientRow.contacts =
+  c.contacts ?? []`; hydracja `plannerData` sanityzuje przez
+  `sanitizeClientContacts` (klucz pomijany dla `[]`/null/zniekształconych).
+  Rejestr: `migrations.test.ts` (lista; `EXPECTED_POLICIES` bez zmian).
 - `clients`, `statuses`, `service_types`, `work_categories`, `job_titles`
   (20260721150000, słownik „Stanowiska”) — org-wide dictionaries; read by every
   authenticated user, mutations admin-only (clients: insert also manager).

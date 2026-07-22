@@ -5890,6 +5890,97 @@ option {
   padding: 0;
   box-shadow: none;
 }
+
+/* Rozwijana karta klienta: nagłówek-przełącznik + sekcja szczegółów. */
+.client-card-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.client-card-toggle strong {
+  font-size: 1.02em;
+}
+.client-card-chevron {
+  flex: 0 0 auto;
+  transition: transform 0.15s ease;
+  color: var(--n2-text-muted, #7a8699);
+}
+.client-card-toggle.expanded .client-card-chevron {
+  transform: rotate(90deg);
+}
+.client-contact-badge {
+  font-size: 0.78em;
+  color: var(--n2-text-muted, #7a8699);
+  background: var(--n2-surface-2, rgba(120, 130, 150, 0.12));
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.client-card-details {
+  margin-top: var(--n2-space-3);
+  padding-top: var(--n2-space-3);
+  border-top: 1px solid var(--n2-border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-3);
+}
+.client-detail-section h4 {
+  margin: 0 0 4px;
+  font-size: 0.82em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--n2-text-muted, #7a8699);
+}
+.client-detail-section .client-card-notes {
+  white-space: pre-line;
+}
+.client-contact-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.client-contact-list li {
+  display: flex;
+  gap: var(--n2-space-4);
+  flex-wrap: wrap;
+  font-size: 0.9em;
+}
+.client-contact-list li > span:first-child {
+  font-weight: 600;
+}
+
+/* Formularz osób kontaktowych: grupy pól + akcje wierszy. */
+.client-contact-group {
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-md, 8px);
+  padding: var(--n2-space-3);
+  margin: 0 0 var(--n2-space-3);
+}
+.client-contact-group > legend {
+  padding: 0 6px;
+  font-size: 0.82em;
+  color: var(--n2-text-muted, #7a8699);
+}
+.client-contact-group .field-row {
+  align-items: flex-end;
+}
+.client-contact-remove {
+  flex: 0 0 auto;
+}
+.client-contact-add {
+  align-self: flex-start;
+  margin-bottom: var(--n2-space-3);
+}
 .form-actions {
   display: flex;
   gap: var(--n2-space-2);

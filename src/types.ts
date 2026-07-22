@@ -6,6 +6,20 @@
 
 export type DateStr = string; // 'yyyy-MM-dd'
 
+/**
+ * Jedna DODATKOWA osoba kontaktowa klienta. Główna osoba zostaje w
+ * `contactName`/`contactEmail`/`contactPhone` klienta — `contacts` trzyma
+ * WYŁĄCZNIE dodatkowe osoby (brak klucza / [] = brak dodatkowych). Dla telefonu
+ * i e-maila `'' = brak`. OPCJONALNE i ADDYTYWNE (`DATA_VERSION` zostaje 7).
+ */
+export interface ClientContact {
+  id: string;
+  firstName: string; // wymagane (niepuste po trim) na zapisie
+  lastName: string; // wymagane (niepuste po trim) na zapisie
+  phone: string; // '' = brak
+  email: string; // '' = brak
+}
+
 export interface Client {
   id: string;
   name: string; // required
@@ -15,6 +29,12 @@ export interface Client {
   contactEmail?: string;
   contactPhone?: string;
   notes?: string;
+  // WYŁĄCZNIE dodatkowe osoby kontaktowe; główna osoba zostaje w
+  // contactName/contactEmail/contactPhone. FORMA KANONICZNA: brak klucza gdy
+  // pusto (nigdy []), egzekwowana na trzech granicach — reduktor,
+  // `repairClients` (storage) i hydracja chmury. OPCJONALNE i ADDYTYWNE
+  // (`DATA_VERSION` zostaje 7): legacy klient bez pola czyta się bez zmian.
+  contacts?: ClientContact[];
 }
 
 export interface Department {

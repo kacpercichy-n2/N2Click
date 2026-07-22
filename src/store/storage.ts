@@ -5,6 +5,7 @@ import type {
   AppData,
   CalendarEvent,
   ChecklistItem,
+  Client,
   Person,
   Project,
   ProjectDocument,
@@ -46,6 +47,7 @@ import {
 import {
   canonicalEventRecurrence,
   isFilterViewKey,
+  sanitizeClientContacts,
   sanitizeLastViewFilter,
 } from './commandValidation';
 
@@ -1176,6 +1178,30 @@ export function repairEvents(data: AppData): AppData {
 }
 
 /**
+ * Idempotentny repair DODATKOWYCH osób kontaktowych klienta (`Client.contacts`).
+ * Pole ADDYTYWNE (bez podbicia DATA_VERSION), więc każdy starszy zapis wchodzi
+ * tu BEZ klucza i wychodzi bez zmian (ta sama referencja obiektu) — kluczowe dla
+ * braku echo-write przy czystym wczytaniu w bieżącej wersji. Wiersze przechodzą
+ * przez `sanitizeClientContacts` (leniwie: koercja pól, drop wiersza bez `id`
+ * albo z pustym imieniem+nazwiskiem, dedupe po id). Forma kanoniczna: sanityzacja
+ * do pustej => USUNIĘCIE klucza (nigdy `contacts: []`).
+ */
+export function repairClients(data: AppData): AppData {
+  const source = Array.isArray(data.clients) ? data.clients : [];
+  const clients: Client[] = source.map((c) => {
+    const rec = c as unknown as Record<string, unknown>;
+    if (rec.contacts === undefined) return c; // legacy bez pola => ten sam obiekt
+    const contacts = sanitizeClientContacts(rec.contacts);
+    if (contacts === undefined) {
+      const { contacts: _drop, ...rest } = rec;
+      return rest as unknown as Client;
+    }
+    return { ...(rec as object), contacts } as unknown as Client;
+  });
+  return { ...data, clients };
+}
+
+/**
  * Idempotent normalize pass for stable completion semantics. Runs on EVERY load
  * — same philosophy as normalizeTaskMeta / normalizeDates — so a payload with a
  * missing or malformed `isDone` (e.g. a v6 payload predating the flag, or one
@@ -1564,6 +1590,10 @@ function readData(recordRevision: boolean): InternalLoadResult {
     // ścieżek (migracja i wczytanie w tej samej wersji) — zapis bez `events`
     // wychodzi stąd z pustą listą.
     data = repairEvents(data);
+    // Dodatkowe osoby kontaktowe klienta: pole ADDYTYWNE, repair biegnie na
+    // WYNIKU obu ścieżek. Klient bez klucza `contacts` wychodzi TYM SAMYM
+    // obiektem (brak echo-write przy czystym wczytaniu w bieżącej wersji).
+    data = repairClients(data);
 
     const { revision: _revision, ...storedData } = parsed;
     return {
