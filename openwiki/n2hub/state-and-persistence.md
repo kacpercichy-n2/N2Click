@@ -172,14 +172,16 @@
   kaskadowo czyści `Person.companyId` (`=== '' ` na dopasowanych — styl
   `DELETE_DEPARTMENT`; chmurowy FK `on delete set null` to lustruje). Nowe pole
   `Person.companyId?` (opcjonalne, `'' = brak`; repair `migratePerson`:
-  brak/nie-string → `''`) — przypisanie administratora zawężające widoczność
-  projektów w chmurze (RLS). Kolekcja ADDYTYWNA: `DATA_VERSION` zostaje 7,
+  brak/nie-string → `''`) — OD 2026-07-22 czysto informacyjne + źródło
+  DOMYŚLNEGO filtra spółek (dawne RLS-owe zawężanie projektów jest martwe,
+  wszyscy są chmurowymi administratorami — patrz wpis KOLAPS RÓL niżej).
+  Kolekcja ADDYTYWNA: `DATA_VERSION` zostaje 7,
   `emptyData()`/seed dają `[]`, wczytanie ma `coerceArray(parsedRest.companies, …)`.
   `MERGE_CLOUD_DICTIONARIES` zastępuje też `companies` (Array.isArray +
   isValidNamedRow, pusta chmura POPRAWNA, zniekształcony wiersz → ta sama
   referencja); `MERGE_CLOUD_PEOPLE` niesie `companyId` (walidacja wymaga stringa —
   nie-string ⇒ fail-closed, ta sama referencja). `persistGate.NON_MIRRORED_KEYS`
-  zawiera `companies`. Select „Spółka” w profilu jest ADMIN-ONLY
+  zawiera `companies`. Select „Spółka” w profilu wymaga roli `pelne`
   (`profileEditPolicy` ALL_FIELDS, parytet z serwerowym triggerem). W chmurze to
   tabela `public.companies` (patrz cloud-database). Testy: `companies.test.ts`,
   rozszerzenia w `storage.test.ts`/`cloudMerge.test.ts`/`referenceData.test.ts`/
@@ -236,7 +238,7 @@
   (odrzuca wiersze bez `id`/`title`/poprawnej daty; snapuje czasy w dół +
   clamp; dedupe uczestników z ZACHOWANIEM danglingów — czyści je dopiero
   hydracja chmury / filtr renderu; `meetingUrl` przez schemat). Uprawnienie
-  `events.manage` (administrator/pm/handlowiec; pracownik ogląda) — UX-owa
+  `events.manage` (rola `pelne`; `ograniczone` ogląda) — UX-owa
   bramka, reduktor uprawnień NIE sprawdza. W chmurze mirroruje się jako
   dziesiąta rodzina (`eventRow` + diff po id → `public.events`); attendee
   wskazujący osobę spoza finalnego zespołu jest FILTROWANY per-wiersz w hydracji
@@ -269,6 +271,50 @@
   podmienia wiersze autorytatywnie. Testy: rozszerzenia w `selectors.test.ts`,
   `commandValidation.test.ts`, `cloudMerge.test.ts`, `cloudMirror.test.ts`,
   `plannerData.test.ts`, `migrations.test.ts`.
+- KOLAPS RÓL (2026-07-22): `AccessRole` = `'pelne' | 'ograniczone'` (koniec
+  czterech ról administrator/pm/handlowiec/pracownik). `pelne` = dawna matryca
+  administratora, `ograniczone` = dawna matryca pracownika (`permissions.ts`
+  MATRIX ma dwa klucze; ROLE_LABELS „Pełne”/„Ograniczone”). Repair
+  `migratePerson`: KAŻDA wartość poza `'ograniczone'` (legacy role, stary
+  `isAdmin`, śmieci) → `'pelne'` — `DATA_VERSION` zostaje 7. Straże reduktora
+  („ostatni admin” w UPDATE/DELETE_PERSON, wymuszenie roli pierwszej osoby,
+  `MERGE_ACCESS_ROLES`) działają na `'pelne'`; `selectors.isAdminUser` ===
+  `accessRole === 'pelne'`. Sprzężenie stanowisko→rola (`accessRoleForTitle`)
+  USUNIĘTE — stanowisko jest czysto opisowe. UI NIE pokazuje poziomu uprawnień
+  (pole „Uprawnienia” zniknęło z profilu i formularza dodawania, znaczek
+  „administrator” z list, wiersz „Rola” z karty konta; login pokazuje
+  stanowisko). Zespół (`teamScope.teamAccessForUser`) jest widoczny dla KAŻDEGO
+  zalogowanego (`scope: 'all'`; wariant `department` usunięty);
+  `profileEditPolicy` bez gałęzi menedżera (pelne→wszystko, self→SELF_FIELDS).
+  Mapowanie chmury: `pelne`↔`administrator`, `ograniczone`↔`worker`
+  (chmurowy `manager` hydratuje się jako `pelne`); wszystkie istniejące profile
+  chmurowe podbite migracją 20260722121000, provisioning domyślnie
+  `administrator` (`PROVISION_ROLE_OPTIONS`: Pełne/Ograniczone). Testy: cała
+  siatka ról w ~29 plikach testowych przepisana.
+- SPÓŁKA WYKONAWCZA PROJEKTU + FILTR SPÓŁEK (2026-07-22):
+  `Project.companyId?: string` (OPCJONALNE, ADDYTYWNE — `'' = brak/neutralny`;
+  repair w `repairProjectDocuments` koercjonuje brak/nie-string do `''`;
+  `DATA_VERSION` zostaje 7). `ProjectDraft.companyId` WYMAGANE; `SAVE_PROJECT`
+  koercjonuje nieznane id do `''`; `DELETE_COMPANY` kaskadowo czyści też
+  `Project.companyId` oraz `criteria.companyId` w `savedFilters`/`lastFilters`.
+  Select „Spółka wykonawcza” w karcie projektu; nowy projekt dziedziczy spółkę
+  twórcy. `SavedFilterCriteria.companyId` (ADDYTYWNE, `'' = wszystkie`;
+  sanityzacja dangling → `''` w `sanitizeFilterCriteria` i repairze presetów;
+  `lastViewFilterEqual` porównuje). Filtr „Spółka” na Projektach/Zadaniach/
+  Kanbanie; selektory: `projectMatchesCompanyFilter` (projekt BEZ spółki pasuje
+  ZAWSZE — neutralny nie znika nikomu) i `defaultCriteriaForUser` (kryteria
+  inicjalne widoku = „wszystko” + spółka zalogowanego, gdy istnieje w słowniku).
+  W chmurze kolumna `projects.company_id` (20260722120000; FK
+  `on delete set null`, ZERO zmian RLS) — mirror `projectRow.company_id` po
+  lokalnym id (`'' → NULL`), hydracja `plannerData` czyta NULL/brak jako `''`.
+- QUICK-ADD SŁOWNIKÓW (2026-07-22): selecty Stanowisko/Dział/Spółka w edycji
+  profilu osoby mają opcję `+ Nowe…` (`NEW_OPTION_VALUE` w
+  `src/components/QuickAddModal.tsx`) otwierającą modal jednopolowy; zapis idzie
+  ISTNIEJĄCYMI akcjami `ADD_JOB_TITLE`/`ADD_DEPARTMENT`/`ADD_COMPANY` (reguły
+  unikalności i mirror bez zmian), duplikaty łapie `validate` przed dispatchem.
+  Nowy dział/spółka są namierzane po znormalizowanej nazwie w efekcie i dopiero
+  wtedy wybierane w drafcie (id nadaje reduktor); stanowisko (wolny tekst)
+  ustawiane od razu.
 - `Client` carries contact fields (contactName/contactEmail/contactPhone/notes;
   columns from 20260718090000_clients_contact_fields, '' or missing = none — no
   repair pass, use-sites coalesce), edited on the `/clients` page via

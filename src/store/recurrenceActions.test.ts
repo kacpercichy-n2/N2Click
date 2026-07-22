@@ -20,7 +20,7 @@ const PROJECT: Project = {
 };
 const PERSON: Person = {
   id: 'p1', firstName: 'Ala', lastName: '', name: 'Ala', email: '', phone: '', role: '',
-  departmentId: '', avatar: '', capacity: 8, accessRole: 'pracownik', passwordHash: '',
+  departmentId: '', avatar: '', capacity: 8, accessRole: 'pelne', passwordHash: '',
   workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, supervisorId: '', birthDate: '',
 };
 const PERSON2: Person = { ...PERSON, id: 'p2', firstName: 'Bo', name: 'Bo' };

@@ -90,6 +90,9 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   // pochodne z zadań — patrz selectors.departmentsOfProject), bez edycji w UI.
   const [departmentId] = useState(project?.departmentId ?? '');
   const [serviceTypeId, setServiceTypeId] = useState(project?.serviceTypeId ?? '');
+  // Spółka wykonawcza projektu (2026-07-22): jawne przypisanie ze słownika,
+  // steruje domyślnym filtrem widoków — patrz types.Project.companyId.
+  const [companyId, setCompanyId] = useState(project?.companyId ?? '');
   const [error, setError] = useState('');
 
   // ---- Milestone form ----
@@ -113,7 +116,8 @@ function ProjectDetail({ projectId }: { projectId: string }) {
       startDate !== project.startDate ||
       endDate !== project.endDate ||
       departmentId !== project.departmentId ||
-      serviceTypeId !== project.serviceTypeId
+      serviceTypeId !== project.serviceTypeId ||
+      companyId !== (project.companyId ?? '')
     : false;
   const { saveError, external } = usePersistence();
   const { status, markSaved } = useSaveStatus(dirty, saveError !== null);
@@ -153,6 +157,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
       endDate,
       departmentId,
       serviceTypeId,
+      companyId,
     };
     dispatch({ type: 'SAVE_PROJECT', projectId: project.id, draft });
     // Normalize local state to exactly what was persisted so `dirty` clears
@@ -179,6 +184,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
           endDate,
           departmentId,
           serviceTypeId,
+          companyId,
         },
         project,
       )
@@ -198,6 +204,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
       endDate,
       departmentId,
       serviceTypeId,
+      companyId,
     ]),
     save,
   });
@@ -446,6 +453,23 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               {state.serviceTypes.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="pd-company">Spółka wykonawcza</label>
+            <select
+              id="pd-company"
+              value={companyId}
+              onChange={(e) => setCompanyId(e.target.value)}
+              disabled={!canManage}
+              title={disabledTitle}
+            >
+              <option value="">—</option>
+              {state.companies.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
                 </option>
               ))}
             </select>

@@ -9,7 +9,14 @@ import { useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import { useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
-import { activeStatuses, getClient, getProject } from '../store/selectors';
+import {
+  activeStatuses,
+  defaultCriteriaForUser,
+  getClient,
+  getCompany,
+  getProject,
+  projectMatchesCompanyFilter,
+} from '../store/selectors';
 import { Avatar } from '../components/Avatar';
 import { PriorityBadge } from '../components/PriorityBadge';
 import { FilterPanel, type FilterChip, type FilterGroup } from '../components/FilterPanel';
@@ -46,10 +53,12 @@ export function KanbanPage() {
   // (paid/client/project) żyją w `criteria`, a chipy osób w `personIds`. Setter
   // wysyła pełny snapshot przez `SET_LAST_FILTER` (no-op zapisu identycznego).
   const remembered = state.lastFilters.kanban;
-  const criteria: SavedFilterCriteria = remembered?.criteria ?? DEFAULT_CRITERIA;
+  // Wartość inicjalna (bez zapamiętanego filtra) zawęża do spółki zalogowanego.
+  const criteria: SavedFilterCriteria = remembered?.criteria ?? defaultCriteriaForUser(state);
   const paidFilter = criteria.paid;
   const clientFilter = criteria.clientId;
   const projectFilter = criteria.projectId;
+  const companyFilter = criteria.companyId;
   const personIds = remembered?.personIds ?? EMPTY_PERSON_IDS;
   // Set osób pochodny z `personIds` (Setów NIE trzymamy w AppData — inwariant 7:
   // to tylko ZMIANA ŹRÓDŁA zaznaczenia, nie ścieżki wskaźnika kalendarza).
@@ -71,6 +80,7 @@ export function KanbanPage() {
   const setPaidFilter = (v: PaidFilter) => commit({ criteria: { ...criteria, paid: v } });
   const setClientFilter = (v: string) => commit({ criteria: { ...criteria, clientId: v } });
   const setProjectFilter = (v: string) => commit({ criteria: { ...criteria, projectId: v } });
+  const setCompanyFilter = (v: string) => commit({ criteria: { ...criteria, companyId: v } });
   const setPersonFilter = (next: Set<string>) => commit({ personIds: [...next] });
 
   const sortedProjects = useMemo(
@@ -79,22 +89,23 @@ export function KanbanPage() {
   );
 
   const board = useMemo(() => {
-    // buildKanbanColumns pozostaje NIEZMIENIONE (inwariant): filtr projektu
-    // nakładamy PO zbudowaniu tablicy, przycinając zadania każdej kolumny.
+    // buildKanbanColumns pozostaje NIEZMIENIONE (inwariant): filtry projektu i
+    // spółki nakładamy PO zbudowaniu tablicy, przycinając zadania każdej kolumny.
     const full = buildKanbanColumns(state, {
       paid: paidFilter,
       clientId: clientFilter,
       personIds: personFilter,
     });
-    if (!projectFilter) return full;
+    if (!projectFilter && !companyFilter) return full;
+    const keep = (t: Task) =>
+      (!projectFilter || t.projectId === projectFilter) &&
+      (!companyFilter ||
+        projectMatchesCompanyFilter(getProject(state, t.projectId) ?? {}, companyFilter));
     return {
-      columns: full.columns.map((c) => ({
-        ...c,
-        tasks: c.tasks.filter((t) => t.projectId === projectFilter),
-      })),
-      archived: full.archived.filter((t) => t.projectId === projectFilter),
+      columns: full.columns.map((c) => ({ ...c, tasks: c.tasks.filter(keep) })),
+      archived: full.archived.filter(keep),
     };
-  }, [state, paidFilter, clientFilter, projectFilter, personFilter]);
+  }, [state, paidFilter, clientFilter, projectFilter, companyFilter, personFilter]);
 
   // Cheap per-card lookups: no card scans projects/clients/assignments itself.
   const lookups = useMemo(
@@ -142,12 +153,23 @@ export function KanbanPage() {
         ...sortedProjects.map((p) => ({ value: p.id, label: p.name })),
       ],
     },
+    {
+      key: 'company',
+      label: 'Spółka',
+      value: companyFilter,
+      onChange: setCompanyFilter,
+      options: [
+        { value: '', label: 'Wszystkie spółki' },
+        ...state.companies.map((c) => ({ value: c.id, label: c.name })),
+      ],
+    },
   ];
 
   const activeCount =
     (paidFilter !== 'all' ? 1 : 0) +
     (clientFilter ? 1 : 0) +
     (projectFilter ? 1 : 0) +
+    (companyFilter ? 1 : 0) +
     (personFilter.size > 0 ? 1 : 0);
 
   const chips: FilterChip[] = [];
@@ -164,6 +186,12 @@ export function KanbanPage() {
       key: 'project',
       label: `Projekt: ${getProject(state, projectFilter)?.name ?? '—'}`,
       onRemove: () => setProjectFilter(''),
+    });
+  if (companyFilter)
+    chips.push({
+      key: 'company',
+      label: `Spółka: ${getCompany(state, companyFilter)?.name ?? '—'}`,
+      onRemove: () => setCompanyFilter(''),
     });
   if (personFilter.size > 0)
     chips.push({

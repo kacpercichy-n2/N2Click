@@ -38,7 +38,7 @@ const TK = uuid('task-one');
 function makePerson(o: Partial<Person> & { id: string }): Person {
   return {
     firstName: 'A', lastName: 'B', name: 'A B', email: '', phone: '', role: '',
-    departmentId: '', avatar: '', capacity: 8, accessRole: 'pracownik', passwordHash: '',
+    departmentId: '', avatar: '', capacity: 8, accessRole: 'pelne', passwordHash: '',
     workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, supervisorId: '', birthDate: '', ...o,
   };
 }
@@ -625,7 +625,7 @@ describe('diffToCloudOps — słowniki i profile (przewód zapisu paneli admina)
     const next: AppData = {
       ...prev,
       people: [
-        { ...prev.people[0], role: 'Projektant', capacity: 6, accessRole: 'pm', birthDate: '1990-06-01', companyId: 'company-uuid' },
+        { ...prev.people[0], role: 'Projektant', capacity: 6, accessRole: 'ograniczone', birthDate: '1990-06-01', companyId: 'company-uuid' },
         prev.people[1],
         // Nowa osoba lokalna bez konta chmury — NIE wolno robić insertu.
         makePerson({ id: uuid('local-only'), email: 'nowa@x.com' }),
@@ -643,7 +643,7 @@ describe('diffToCloudOps — słowniki i profile (przewód zapisu paneli admina)
     expect(up.row).toMatchObject({
       role_title: 'Projektant',
       capacity: 6,
-      access_role: 'manager',
+      access_role: 'worker',
       birth_date: '1990-06-01', // '' mapuje się na null; poprawna data przechodzi
       company_id: 'company-uuid', // '' mapuje się na null; ustawiona spółka przechodzi
     });

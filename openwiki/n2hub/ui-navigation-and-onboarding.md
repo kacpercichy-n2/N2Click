@@ -17,11 +17,12 @@
   focus trap covers it. Collapsed rail stacks the footer to two 44px circles.
 - `/team` (Struktura zespołu) is reached via the shared `src/pages/TeamTabs.tsx`
   tab bar (Pracownicy → `/people`, Struktura zespołu → `/team`) rendered on both
-  the Zespół (`/people`) and `/team` pages, not from its own nav item. The
-  Struktura tab and the whole tab bar render only when `canViewTeam` passes over
-  the effective role (same recipe TeamPage uses); the „Zespół” nav link stays
-  highlighted on `/people`, `/people/:id` and `/team`. Both routes keep their
-  existing guards (`canTeam`, page-level `canViewTeam` redirect).
+  the Zespół (`/people`) and `/team` pages, not from its own nav item. Od
+  2026-07-22 `canViewTeam` przepuszcza KAŻDEGO zalogowanego (kolaps ról: obszar
+  Zespół widoczny dla wszystkich, rola `ograniczone` ogranicza tylko edycję) —
+  bramki `canTeam`/`canViewTeam` zostają w kodzie jako strażnik braku
+  tożsamości. The „Zespół” nav link stays highlighted on `/people`,
+  `/people/:id` and `/team`.
 - `src/auth/` owns the login gate. Mode is decided once at startup (local vs
   Supabase). Local mode (no/invalid Supabase config) keeps the demo person-picker
   `src/pages/LoginPage.tsx` and the `currentUserId` gate. Supabase mode gates the

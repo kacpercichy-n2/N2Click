@@ -1,6 +1,7 @@
-// Stanowisko jako opcja + sprzężenie stanowisko → rola dostępu.
+// Stanowisko jako opcja listy wyboru. Sprzężenie stanowisko → rola dostępu
+// zniknęło razem z kolapsem ról (2026-07-22) — testów `accessRoleForTitle` brak.
 import { describe, expect, it } from 'vitest';
-import { accessRoleForTitle, jobTitleSelectOptions, roleTitleOptions } from './roleTitles';
+import { jobTitleSelectOptions, roleTitleOptions } from './roleTitles';
 
 const DEPTS = [
   { id: 'd1', name: 'Design i IT' },
@@ -62,23 +63,5 @@ describe('jobTitleSelectOptions', () => {
   it('istniejąca (zaszłościowa) wartość nigdy nie znika z listy', () => {
     const opts = jobTitleSelectOptions([], [], 'Projektantka');
     expect(opts).toContain('Projektantka');
-  });
-});
-
-describe('accessRoleForTitle', () => {
-  it('Menadżer {dział} → pm; Specjalista {dział} → pracownik', () => {
-    expect(accessRoleForTitle('Menadżer Design i IT')).toBe('pm');
-    expect(accessRoleForTitle('Specjalista Design i IT')).toBe('pracownik');
-  });
-
-  it('toleruje wielkość liter i pisownię „Menadzer”', () => {
-    expect(accessRoleForTitle('menadzer Produkcja')).toBe('pm');
-    expect(accessRoleForTitle('SPECJALISTA Produkcja')).toBe('pracownik');
-  });
-
-  it('inne/własne stanowiska nie zmieniają roli (null)', () => {
-    expect(accessRoleForTitle('Projektantka')).toBeNull();
-    expect(accessRoleForTitle('')).toBeNull();
-    expect(accessRoleForTitle('Menadżerka')).toBeNull(); // brak spacji-separatora
   });
 });

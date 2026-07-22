@@ -342,7 +342,7 @@ export async function loadPlannerSnapshot(
     db.select('clients', 'id, name, archived, contact_name, contact_email, contact_phone, notes'),
     db.select(
       'projects',
-      'id, client_id, name, description, status_id, paid, start_date, end_date, department_id, service_type_id, documents, created_at, updated_at',
+      'id, client_id, name, description, status_id, paid, start_date, end_date, department_id, service_type_id, company_id, documents, created_at, updated_at',
     ),
     db.select('milestones', 'id, project_id, name, milestone_date'),
     db.select(
@@ -423,6 +423,9 @@ export async function loadPlannerSnapshot(
       endDate,
       departmentId: str(row.department_id),
       serviceTypeId: serviceTypeOf(row.service_type_id),
+      // Spółka wykonawcza (20260722): id słownika dosłownie (companies mirroruje
+      // się po lokalnych id, jak profiles.company_id); NULL/brak kolumny => ''.
+      companyId: str(row.company_id),
       // jsonb (20260721010000_project_documents): wartość spoza tablicy (starszy
       // wiersz, brak kolumny) czytamy jako pustą listę — jak `checklist` zadania.
       documents: Array.isArray(row.documents) ? (row.documents as Project['documents']) : [],

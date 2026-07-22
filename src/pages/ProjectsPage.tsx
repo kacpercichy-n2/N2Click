@@ -7,12 +7,16 @@ import { useCan } from '../store/useCan';
 import type { ProjectDraft } from '../store/AppStore';
 import {
   activeStatuses,
+  currentUser,
+  defaultCriteriaForUser,
   departmentsOfProject,
   getClient,
+  getCompany,
   getPerson,
   getServiceType,
   getStatus,
   peopleIdsOfProject,
+  projectMatchesCompanyFilter,
   projectPlannedTotal,
   projectsOfPerson,
   tasksOfProject,
@@ -57,11 +61,14 @@ export function ProjectsPage() {
   // nawigację i przeładowanie. Każdy setter wysyła pełny snapshot przez
   // `SET_LAST_FILTER` (reduktor no-opuje zapis wartościowo identyczny).
   const rememberedProjects = state.lastFilters.projects;
-  const projectsCriteria: SavedFilterCriteria = rememberedProjects?.criteria ?? DEFAULT_CRITERIA;
+  // Wartość inicjalna (bez zapamiętanego filtra) zawęża do spółki zalogowanego.
+  const projectsCriteria: SavedFilterCriteria =
+    rememberedProjects?.criteria ?? defaultCriteriaForUser(state);
   const paidFilter = projectsCriteria.paid;
   const clientFilter = projectsCriteria.clientId;
   const personFilter = projectsCriteria.personId;
   const statusFilter = projectsCriteria.statusId;
+  const companyFilter = projectsCriteria.companyId;
   const from = projectsCriteria.from;
   const to = projectsCriteria.to;
 
@@ -82,6 +89,7 @@ export function ProjectsPage() {
   const setClientFilter = (v: string) => commit({ ...projectsCriteria, clientId: v });
   const setPersonFilter = (v: string) => commit({ ...projectsCriteria, personId: v });
   const setStatusFilter = (v: string) => commit({ ...projectsCriteria, statusId: v });
+  const setCompanyFilter = (v: string) => commit({ ...projectsCriteria, companyId: v });
   const setFrom = (v: string) => commit({ ...projectsCriteria, from: v });
   const setTo = (v: string) => commit({ ...projectsCriteria, to: v });
 
@@ -121,11 +129,12 @@ export function ProjectsPage() {
           (!clientFilter || p.clientId === clientFilter) &&
           (!personProjectIds || personProjectIds.has(p.id)) &&
           (!statusFilter || p.statusId === statusFilter) &&
+          projectMatchesCompanyFilter(p, companyFilter) &&
           // Period overlap: [startDate, endDate] vs [from, to].
           (!from || p.endDate >= from) &&
           (!to || p.startDate <= to),
       ),
-    [state.projects, paidFilter, clientFilter, personProjectIds, statusFilter, from, to],
+    [state.projects, paidFilter, clientFilter, personProjectIds, statusFilter, companyFilter, from, to],
   );
 
   const criteria: SavedFilterCriteria = projectsCriteria;
@@ -177,6 +186,16 @@ export function ProjectsPage() {
         ...statuses.map((s) => ({ value: s.id, label: s.name })),
       ],
     },
+    {
+      key: 'company',
+      label: 'Spółka',
+      value: companyFilter,
+      onChange: setCompanyFilter,
+      options: [
+        { value: '', label: 'Wszystkie spółki' },
+        ...state.companies.map((c) => ({ value: c.id, label: c.name })),
+      ],
+    },
   ];
 
   const activeCount =
@@ -184,6 +203,7 @@ export function ProjectsPage() {
     (clientFilter ? 1 : 0) +
     (personFilter ? 1 : 0) +
     (statusFilter ? 1 : 0) +
+    (companyFilter ? 1 : 0) +
     (from ? 1 : 0) +
     (to ? 1 : 0);
 
@@ -207,6 +227,12 @@ export function ProjectsPage() {
       key: 'status',
       label: `Status: ${getStatus(state, statusFilter)?.name ?? '—'}`,
       onRemove: () => setStatusFilter(''),
+    });
+  if (companyFilter)
+    chips.push({
+      key: 'company',
+      label: `Spółka: ${getCompany(state, companyFilter)?.name ?? '—'}`,
+      onRemove: () => setCompanyFilter(''),
     });
   if (from) chips.push({ key: 'from', label: `Od: ${formatShort(from)}`, onRemove: () => setFrom('') });
   if (to) chips.push({ key: 'to', label: `Do: ${formatShort(to)}`, onRemove: () => setTo('') });
@@ -251,6 +277,8 @@ export function ProjectsPage() {
       endDate,
       departmentId: '',
       serviceTypeId: '',
+      // Domyślna spółka wykonawcza = spółka twórcy; zmiana w karcie projektu.
+      companyId: currentUser(state)?.companyId ?? '',
     };
     dispatch({ type: 'SAVE_PROJECT', projectId: null, draft });
     setName('');

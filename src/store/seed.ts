@@ -61,7 +61,7 @@ export function buildSampleData(): AppData {
     departmentId: depMgmt.id,
     avatar: '📋',
     capacity: DEFAULT_CAPACITY,
-    accessRole: 'administrator', // Kasia manages statuses & admin settings
+    accessRole: 'pelne', // Kasia manages statuses & admin settings
     passwordHash: '',
     workDays: [1, 2, 3, 4, 5],
     workStartMinutes: 480,
@@ -80,7 +80,7 @@ export function buildSampleData(): AppData {
     departmentId: depDesign.id,
     avatar: '🎨',
     capacity: DEFAULT_CAPACITY,
-    accessRole: 'pm',
+    accessRole: 'pelne',
     passwordHash: '',
     workDays: [1, 2, 3, 4], // Mon–Thu — availability math is visibly non-uniform
     workStartMinutes: 480,
@@ -99,7 +99,7 @@ export function buildSampleData(): AppData {
     departmentId: depDev.id,
     avatar: '💻',
     capacity: DEFAULT_CAPACITY,
-    accessRole: 'pracownik',
+    accessRole: 'pelne',
     passwordHash: '',
     workDays: [1, 2, 3, 4, 5],
     workStartMinutes: 480,

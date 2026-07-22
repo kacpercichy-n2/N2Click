@@ -14,10 +14,8 @@ export const NO_PERM_TITLE = 'Brak uprawnień';
 
 /** Polish labels for the access roles (UI selects / badges). */
 export const ROLE_LABELS: Record<AccessRole, string> = {
-  administrator: 'Administrator',
-  pm: 'PM',
-  handlowiec: 'Handlowiec',
-  pracownik: 'Pracownik',
+  pelne: 'Pełne',
+  ograniczone: 'Ograniczone',
 };
 
 export type PermAction =
@@ -37,9 +35,14 @@ export type PermAction =
   | 'tickets.manage' // wgląd we wszystkie zgłoszenia, zmiana statusu, usuwanie, eksport
   | 'events.manage'; // tworzenie/edycja/usuwanie wydarzeń kalendarza (spotkań)
 
-/** Per-role allow-set. Absence ⇒ denied. Everyone may VIEW every page but /admin. */
+/**
+ * Per-role allow-set. Absence ⇒ denied. Everyone may VIEW every page but /admin.
+ * Decyzja 2026-07-22: dwie role — `pelne` (dawna matryca administratora; każdy
+ * pracownik firmy ma dziś pełne) i `ograniczone` (dawna matryca pracownika —
+ * rezerwowa, nikomu obecnie nie nadawana).
+ */
 const MATRIX: Record<AccessRole, ReadonlySet<PermAction>> = {
-  administrator: new Set<PermAction>([
+  pelne: new Set<PermAction>([
     'projects.manage',
     'projects.paid',
     'clients.manage',
@@ -56,32 +59,7 @@ const MATRIX: Record<AccessRole, ReadonlySet<PermAction>> = {
     'tickets.manage',
     'events.manage',
   ]),
-  pm: new Set<PermAction>([
-    'projects.manage',
-    'tasks.manage',
-    'blocks.editAny',
-    'blocks.editOwn',
-    'profile.editOwn',
-    'workload.reassign',
-    'comments.add',
-    'tickets.create',
-    'events.manage',
-  ]),
-  // Zadania dodaje każda rola poza specjalistą (pracownik): menedżer działu
-  // (pm), handlowiec i administrator — decyzja 2026-07-20.
-  handlowiec: new Set<PermAction>([
-    'projects.manage',
-    'projects.paid',
-    'clients.manage',
-    'tasks.manage',
-    'blocks.editOwn',
-    'profile.editOwn',
-    'comments.add',
-    'tickets.create',
-    // Handlowiec umawia spotkania z klientami — decyzja 2026-07-21.
-    'events.manage',
-  ]),
-  pracownik: new Set<PermAction>([
+  ograniczone: new Set<PermAction>([
     'blocks.editOwn',
     'profile.editOwn',
     'comments.add',

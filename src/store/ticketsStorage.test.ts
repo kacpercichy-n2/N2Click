@@ -121,15 +121,13 @@ describe('repairTickets', () => {
 
 describe('uprawnienia zgłoszeń', () => {
   it('każda rola może zgłaszać', () => {
-    for (const role of ['administrator', 'pm', 'handlowiec', 'pracownik'] as const) {
+    for (const role of ['pelne', 'ograniczone'] as const) {
       expect(can(person(role), 'tickets.create')).toBe(true);
     }
   });
 
-  it('triage (tickets.manage) ma wyłącznie administrator', () => {
-    expect(can(person('administrator'), 'tickets.manage')).toBe(true);
-    for (const role of ['pm', 'handlowiec', 'pracownik'] as const) {
-      expect(can(person(role), 'tickets.manage')).toBe(false);
-    }
+  it('triage (tickets.manage) ma wyłącznie rola pełne', () => {
+    expect(can(person('pelne'), 'tickets.manage')).toBe(true);
+    expect(can(person('ograniczone'), 'tickets.manage')).toBe(false);
   });
 });

@@ -7,7 +7,6 @@
 // jsdom (patrz vitest.config.ts, environment: 'node').
 import type { Department, Person } from '../types';
 import type { CloudProfile } from '../supabase/referenceData';
-import { ROLE_LABELS } from '../store/permissions';
 import {
   DEFAULT_INITIAL_PASSWORD,
   parseProvisionRequest,
@@ -19,27 +18,16 @@ import {
 
 /**
  * Efektywny zakres widoczności obszaru „Zespół" dla bieżącego użytkownika.
- * Mapowanie ról (zgodnie z komentarzem w migracji rdzenia): lokalny `pracownik`
- * i `handlowiec` = worker → obszar UKRYTY; `pm` = manager → wyłącznie własny
- * dział; `administrator` → wszystkie działy. To gate UX — realny zakres wymusza
- * serwer (RLS), nie ten kod.
+ * Decyzja 2026-07-22: KAŻDY zalogowany widzi cały zespół (wszystkie działy,
+ * dostępność innych) — widoczność steruje się filtrowaniem, nie rolą. Rola
+ * `ograniczone` ogranicza wyłącznie EDYCJĘ (people.manage w permissions.ts),
+ * nie podgląd. To gate UX — realny zakres wymusza serwer (RLS), nie ten kod.
  */
-export type TeamAccess =
-  | { visible: false }
-  | { visible: true; scope: 'all' }
-  | { visible: true; scope: 'department'; departmentId: string };
+export type TeamAccess = { visible: false } | { visible: true; scope: 'all' };
 
 export function teamAccessForUser(user: Person | undefined): TeamAccess {
   if (!user) return { visible: false };
-  switch (user.accessRole) {
-    case 'administrator':
-      return { visible: true, scope: 'all' };
-    case 'pm':
-      return { visible: true, scope: 'department', departmentId: user.departmentId };
-    // 'handlowiec' oraz 'pracownik' → worker: brak dostępu do obszaru.
-    default:
-      return { visible: false };
-  }
+  return { visible: true, scope: 'all' };
 }
 
 /** Czy obszar „Zespół" jest w ogóle widoczny dla użytkownika (nav + trasa). */
@@ -54,8 +42,6 @@ export interface TeamPersonView {
   name: string;
   /** Stanowisko (job title) — pole `role`. '' gdy nieustawione. */
   roleTitle: string;
-  /** Polska etykieta roli dostępu (ROLE_LABELS). */
-  accessRoleLabel: string;
   /** Nazwa przełożonego; '' gdy brak. */
   supervisorName: string;
   /** Telefon kontaktowy; '' gdy brak (lista kontaktów zespołu). */
@@ -79,7 +65,6 @@ function toPersonView(person: Person, nameById: Map<string, string>): TeamPerson
     id: person.id,
     name: person.name,
     roleTitle: person.role,
-    accessRoleLabel: ROLE_LABELS[person.accessRole] ?? '',
     supervisorName: person.supervisorId ? nameById.get(person.supervisorId) ?? '' : '',
     phone: person.phone,
     email: person.email,
@@ -87,10 +72,9 @@ function toPersonView(person: Person, nameById: Map<string, string>): TeamPerson
 }
 
 /**
- * Buduje widoczną hierarchię działów → osób dla danego zakresu dostępu.
- * Administrator (`scope: 'all'`) widzi wszystkie działy oraz grupę „Bez działu"
- * dla osób bez (lub z nieznanym) działem. Menedżer (`scope: 'department'`) widzi
- * wyłącznie własny dział. Brak dostępu → pusta lista.
+ * Buduje widoczną hierarchię działów → osób. Każdy zalogowany widzi wszystkie
+ * działy oraz grupę „Bez działu" dla osób bez (lub z nieznanym) działem.
+ * Brak dostępu (niezalogowany) → pusta lista.
  */
 export function buildTeamHierarchy(
   people: Person[],
@@ -103,7 +87,6 @@ export function buildTeamHierarchy(
   const groups: TeamDepartmentView[] = [];
 
   for (const dept of departments) {
-    if (access.scope === 'department' && dept.id !== access.departmentId) continue;
     const members = people.filter((p) => p.departmentId === dept.id);
     groups.push({
       id: dept.id,
@@ -112,34 +95,19 @@ export function buildTeamHierarchy(
     });
   }
 
-  // Grupa „Bez działu" tylko dla administratora — menedżer jest scope'owany do
-  // własnego działu.
-  if (access.scope === 'all') {
-    const orphans = people.filter((p) => p.departmentId === '' || !knownDeptIds.has(p.departmentId));
-    if (orphans.length > 0) {
-      groups.push({
-        id: '',
-        name: NO_DEPARTMENT_LABEL,
-        people: orphans.map((p) => toPersonView(p, nameById)),
-      });
-    }
+  const orphans = people.filter((p) => p.departmentId === '' || !knownDeptIds.has(p.departmentId));
+  if (orphans.length > 0) {
+    groups.push({
+      id: '',
+      name: NO_DEPARTMENT_LABEL,
+      people: orphans.map((p) => toPersonView(p, nameById)),
+    });
   }
 
   return groups;
 }
 
 // --- Hierarchia z chmury (tryb supabase) -------------------------------------
-
-/**
- * Polskie etykiety ról CHMURY (public.access_role: administrator/manager/worker).
- * `manager` to „Menedżer", `worker` to „Pracownik" — mapowanie RLS, nie lokalne
- * cztery role planera.
- */
-const CLOUD_ROLE_LABELS: Record<CloudProfile['cloudRole'], string> = {
-  administrator: 'Administrator',
-  manager: 'Menedżer',
-  worker: 'Pracownik',
-};
 
 /** Nazwa wyświetlana profilu chmury (imię+nazwisko → e-mail → placeholder). */
 export function cloudProfileName(p: CloudProfile): string {
@@ -151,7 +119,6 @@ function cloudPersonView(p: CloudProfile, nameById: Map<string, string>): TeamPe
     id: p.id,
     name: cloudProfileName(p),
     roleTitle: p.roleTitle,
-    accessRoleLabel: CLOUD_ROLE_LABELS[p.cloudRole],
     // Przełożony spoza widocznego (RLS) zbioru profili → '' (bez wiersza).
     supervisorName: p.supervisorId ? nameById.get(p.supervisorId) ?? '' : '',
     phone: p.phone,
@@ -294,12 +261,18 @@ export function buildOrgChart(items: ReadonlyArray<OrgChartInput>): OrgChart {
 
 // --- Formularz zakładania konta ----------------------------------------------
 
-/** Polskie etykiety ról dostępu systemowego (kontrakt provisioningu). */
-export const PROVISION_ROLE_LABELS: Record<ProvisionAccessRole, string> = {
-  administrator: 'Administrator',
-  manager: 'Menedżer',
-  worker: 'Pracownik',
-};
+/**
+ * Opcje selecta „Uprawnienia” formularza konta: dwa poziomy planera mapowane na
+ * enum chmury (pełne→administrator, ograniczone→worker). Chmurowy `manager`
+ * pozostaje w kontrakcie jako zaszłość — nowych kont z nim nie zakładamy.
+ */
+export const PROVISION_ROLE_OPTIONS: ReadonlyArray<{
+  value: ProvisionAccessRole;
+  label: string;
+}> = [
+  { value: 'administrator', label: 'Pełne' },
+  { value: 'worker', label: 'Ograniczone' },
+];
 
 /** Stan formularza zakładania konta. Działy/menedżer to UUID-y serwerowe. */
 export interface ProvisionFormState {
@@ -322,7 +295,9 @@ export function emptyProvisionForm(): ProvisionFormState {
     roleTitle: '',
     departmentId: '',
     managerProfileId: '',
-    accessRole: 'worker',
+    // Domyślnie pełne uprawnienia (decyzja 2026-07-22): każdy nowy członek
+    // zespołu dostaje chmurowego administratora.
+    accessRole: 'administrator',
   };
 }
 

@@ -456,7 +456,6 @@ export function App() {
                   {state.people.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
-                      {p.accessRole === 'administrator' ? ' (administrator)' : ''}
                     </option>
                   ))}
                 </select>

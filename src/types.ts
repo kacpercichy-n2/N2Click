@@ -97,6 +97,13 @@ export interface Project {
   endDate: DateStr;
   departmentId: string; // '' when unset
   serviceTypeId: string; // '' when unset
+  // Spółka WYKONAWCZA projektu ('' = brak / projekt ogólnofirmowy) — jawne
+  // przypisanie ze słownika `companies` (decyzja 2026-07-22). Steruje wyłącznie
+  // DOMYŚLNYM filtrem widoków (osoba ze spółką X bazowo widzi projekty/taski
+  // spółki X i może filtrem dołożyć inne) — nigdy twardą widocznością.
+  // OPCJONALNE i ADDYTYWNE: legacy payload / chmura bez kolumny czytają '' na
+  // repairze wczytania. DATA_VERSION zostaje 7.
+  companyId?: string;
   // Odnośniki do dokumentów handlowych; osadzone, wymieniane w całości przy
   // zapisie (jak `Task.checklist`). Legacy payload bez pola dostaje [] w
   // repairze wczytania (storage.repairProjectDocuments).
@@ -206,8 +213,15 @@ export interface TaskRecurrence {
   overrides?: RecurrenceOverride[]; // brak klucza gdy pusto; sort po dacie rosnąco
 }
 
-/** Access role — the app-permission tier (distinct from `role`, the job title). */
-export type AccessRole = 'administrator' | 'pm' | 'handlowiec' | 'pracownik';
+/**
+ * Access role — the app-permission tier (distinct from `role`, the job title).
+ * Two tiers since 2026-07-22: `pelne` (full — the old administrator matrix) and
+ * `ograniczone` (limited — the old pracownik matrix). Legacy stored values
+ * (`administrator|pm|handlowiec|pracownik`) map to `pelne` on load repair
+ * (storage.migratePerson). Cloud `access_role` keeps its own 3-value enum;
+ * mapping lives at the referenceData/cloudMirror boundary.
+ */
+export type AccessRole = 'pelne' | 'ograniczone';
 
 export interface Person {
   id: string;
@@ -218,10 +232,12 @@ export interface Person {
   phone: string; // '' when unset
   role: string; // job title; '' when unset
   departmentId: string; // '' when unset
-  // Spółka przypisana przez administratora ('' = brak). Zawęża widoczność
-  // projektów w chmurze (RLS) — patrz openwiki/n2hub/cloud-database.md.
-  // OPCJONALNE i ADDYTYWNE: legacy payload / chmura bez kolumny czytają '' na
-  // repairze (migratePerson). DATA_VERSION zostaje 7.
+  // Spółka osoby ('' = brak). Od 2026-07-22 czysto informacyjna + źródło
+  // DOMYŚLNEGO filtra spółek w widokach (osoba ze spółką X bazowo widzi
+  // projekty/taski swojej spółki; filtrem może dołożyć inne). Dawne RLS-owe
+  // zawężanie projektów po spółce jest martwe — wszyscy są chmurowymi
+  // administratorami. OPCJONALNE i ADDYTYWNE: legacy payload / chmura bez
+  // kolumny czytają '' na repairze (migratePerson). DATA_VERSION zostaje 7.
   companyId?: string;
   avatar: string; // emoji; '' -> initials fallback
   capacity: number; // available hours per day (overload threshold + availability quantum)
@@ -387,6 +403,11 @@ export interface SavedFilterCriteria {
   personId: string; // '' = all; assignee — meaningful on tasks
   priority: '' | TaskPriority; // '' = all; meaningful on tasks
   workCategoryId: string; // '' = all; meaningful on tasks
+  // Spółka wykonawcza projektu ('' = wszystkie) — additive 2026-07-22. Dopasowuje
+  // projekt spółki ORAZ projekt „neutralny” (bez spółki) — świeży/nieprzypisany
+  // projekt nie znika nikomu. Wartością INICJALNĄ widoku (bez zapamiętanego
+  // filtra) jest spółka zalogowanego — patrz defaultCriteriaForUser.
+  companyId: string;
   from: DateStr | ''; // period overlap lower bound
   to: DateStr | ''; // period overlap upper bound
 }

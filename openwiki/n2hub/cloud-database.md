@@ -54,7 +54,12 @@
   (`cloudMirror`) i hydrowany `loadOrgSnapshot` → `OrgSnapshot.companies` →
   App.tsx `MERGE_CLOUD_DICTIONARIES`. Rejestr: `migrations.test.ts` (lista +
   `public.companies` w `EXPECTED_POLICIES`). Osoba dostaje spółkę przez
-  `profiles.company_id` (admin-only), a ta ZAWĘŻA widoczność projektów:
+  `profiles.company_id` (admin-only). UWAGA (2026-07-22): poniższe zawężanie
+  widoczności projektów po spółce jest MARTWĄ GAŁĘZIĄ — po 20260722121000 każdy
+  profil ma `access_role=administrator`, więc `projects_select` przepuszcza
+  wszystko gałęzią admina; spółka steruje wyłącznie DOMYŚLNYM filtrem widoków
+  po stronie klienta. Predykaty zostają w SQL nietknięte (zero ryzyka
+  regresji), do ewentualnego sprzątnięcia osobną migracją:
   - `app.current_company_id()` (definer, stable) — spółka zalogowanego (null =
     bez spółki => brak zawężenia);
   - `app.project_in_company_scope(project)` (definer, stable) — true gdy
@@ -156,6 +161,22 @@
   per-id, niemapowalny odpada); hydracja filtruje dangling uczestnika per-wiersz.
   Rejestr: plik w liście migracji + `public.events` w `EXPECTED_POLICIES`
   (`migrations.test.ts`).
+- `projects.company_id` (20260722120000, spółka WYKONAWCZA projektu) — FK →
+  `companies.id`, `on delete set null`, nullable; ZERO zmian polityk RLS i
+  publikacji realtime (projects już tam jest). Mirror: `cloudMirror.projectRow`
+  pisze lokalne id słownika (`'' → NULL` — companies mirrorują się po id, jak
+  `profiles.company_id`); hydracja `plannerData` czyta NULL/brak kolumny jako
+  `''`. Jednorazowy `dataImport` celowo NIE niesie kolumny (nullable). Rejestr:
+  `migrations.test.ts` (lista; `EXPECTED_POLICIES` bez zmian).
+- KOLAPS RÓL (20260722121000_full_access_for_all_profiles) — migracja DANYCH:
+  wszystkie profile dostają `access_role='administrator'` (decyzja 2026-07-22:
+  każdy pracownik ma pełne uprawnienia; lokalny model to `pelne`↔administrator,
+  `ograniczone`↔worker — patrz state-and-persistence). Enum i polityki RLS
+  NIETKNIĘTE (manager/worker zostają jako reprezentacja kont „ograniczonych”);
+  trigger `app.protect_profile_privileges` przepuszcza operatora
+  (`auth.uid() IS NULL`). Provisioning nowych kont domyślnie `administrator`
+  (frontend `teamScope.emptyProvisionForm`). Opisany niżej model
+  manager/worker obowiązuje więc tylko dla przyszłych kont „ograniczonych”.
 - Access model: administrator = everything; manager = own department
   (profiles incl. UPDATE of non-admin members, memberships/assignments
   restricted to own-department people) — and since 20260720170000 the manager

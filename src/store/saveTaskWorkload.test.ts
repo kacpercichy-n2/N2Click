@@ -42,7 +42,7 @@ const PERSON: Person = {
   avatar: '',
   capacity: 8,
   phone: '',
-  accessRole: 'pracownik',
+  accessRole: 'pelne',
   passwordHash: '',
   workDays: [1, 2, 3, 4, 5],
   workStartMinutes: 480,

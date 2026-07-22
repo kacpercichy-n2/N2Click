@@ -122,15 +122,13 @@ export interface DryRunReport {
   warnings: DryRunIssue[];
 }
 
-// Working role mapping, per supabase/migrations/20260715210000_core_schema.sql:
-// administrator -> administrator, pm -> manager, handlowiec/pracownik -> worker.
+// Working role mapping onto the cloud enum (which keeps its 3 values):
+// pelne -> administrator, ograniczone -> worker.
 const ROLE_TARGET: Record<AccessRole, 'administrator' | 'manager' | 'worker'> = {
-  administrator: 'administrator',
-  pm: 'manager',
-  handlowiec: 'worker',
-  pracownik: 'worker',
+  pelne: 'administrator',
+  ograniczone: 'worker',
 };
-const ROLE_ORDER: AccessRole[] = ['administrator', 'pm', 'handlowiec', 'pracownik'];
+const ROLE_ORDER: AccessRole[] = ['pelne', 'ograniczone'];
 
 // Fields present in the localStorage model but with NO column in the Supabase
 // schema — they would be dropped by a migration. Static per the architect's

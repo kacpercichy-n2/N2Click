@@ -19,7 +19,7 @@ function makeState(overrides: Partial<AppData> = {}): AppData {
 function makePerson(overrides: Partial<Person> & { id: string }): Person {
   return {
     firstName: 'A', lastName: 'B', name: 'A B', email: '', phone: '', role: '',
-    departmentId: '', companyId: '', avatar: '', capacity: 8, accessRole: 'pracownik', passwordHash: '',
+    departmentId: '', companyId: '', avatar: '', capacity: 8, accessRole: 'pelne', passwordHash: '',
     workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, supervisorId: '',
     birthDate: '', ...overrides,
   };

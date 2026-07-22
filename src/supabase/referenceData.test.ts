@@ -211,10 +211,10 @@ describe('loadOrgSnapshot — atomowość i puste kolekcje', () => {
 // ---- 4. cloudRoleToAccessRole ----------------------------------------------
 
 describe('cloudRoleToAccessRole', () => {
-  it('mapuje odwrotnie do frontendu (handlowiec kolapsuje do worker semantyki)', () => {
-    expect(cloudRoleToAccessRole('administrator')).toBe('administrator');
-    expect(cloudRoleToAccessRole('manager')).toBe('pm');
-    expect(cloudRoleToAccessRole('worker')).toBe('pracownik');
+  it('mapuje enum chmury na dwie role planera: worker→ograniczone, reszta→pełne', () => {
+    expect(cloudRoleToAccessRole('administrator')).toBe('pelne');
+    expect(cloudRoleToAccessRole('manager')).toBe('pelne');
+    expect(cloudRoleToAccessRole('worker')).toBe('ograniczone');
   });
 });
 
@@ -223,7 +223,7 @@ describe('cloudRoleToAccessRole', () => {
 describe('effectiveAccessRole — macierz fallbacków', () => {
   const localUser: Person = {
     id: 'local', firstName: 'L', lastName: '', name: 'L', email: '', phone: '', role: '',
-    departmentId: '', avatar: '', capacity: 8, accessRole: 'handlowiec', passwordHash: '',
+    departmentId: '', avatar: '', capacity: 8, accessRole: 'ograniczone', passwordHash: '',
     workDays: [1, 2, 3, 4, 5], workStartMinutes: 480, workEndMinutes: 960, supervisorId: '',
     birthDate: '',
   };
@@ -237,25 +237,26 @@ describe('effectiveAccessRole — macierz fallbacków', () => {
   const readyNoProfile: OrgState = { status: 'ready', snapshot: { ...ready.snapshot, profile: null } as OrgSnapshot };
 
   it('tryb supabase + ready + własny profil + nie personifikacja => rola chmury', () => {
-    expect(effectiveAccessRole(localUser, ready, { mode: 'supabase', impersonating: false })).toBe('pm');
+    // cloudRole 'manager' → 'pelne' (kolaps ról); różni się od lokalnej 'ograniczone'.
+    expect(effectiveAccessRole(localUser, ready, { mode: 'supabase', impersonating: false })).toBe('pelne');
   });
 
   it('personifikacja => rola lokalna', () => {
-    expect(effectiveAccessRole(localUser, ready, { mode: 'supabase', impersonating: true })).toBe('handlowiec');
+    expect(effectiveAccessRole(localUser, ready, { mode: 'supabase', impersonating: true })).toBe('ograniczone');
   });
 
   it('tryb lokalny => rola lokalna', () => {
-    expect(effectiveAccessRole(localUser, ready, { mode: 'local', impersonating: false })).toBe('handlowiec');
+    expect(effectiveAccessRole(localUser, ready, { mode: 'local', impersonating: false })).toBe('ograniczone');
   });
 
   it('ładowanie / błąd / idle => rola lokalna', () => {
     for (const org of [{ status: 'idle' }, { status: 'loading' }, { status: 'error', message: 'x' }] as OrgState[]) {
-      expect(effectiveAccessRole(localUser, org, { mode: 'supabase', impersonating: false })).toBe('handlowiec');
+      expect(effectiveAccessRole(localUser, org, { mode: 'supabase', impersonating: false })).toBe('ograniczone');
     }
   });
 
   it('brak profilu w chmurze => rola lokalna', () => {
-    expect(effectiveAccessRole(localUser, readyNoProfile, { mode: 'supabase', impersonating: false })).toBe('handlowiec');
+    expect(effectiveAccessRole(localUser, readyNoProfile, { mode: 'supabase', impersonating: false })).toBe('ograniczone');
   });
 
   it('brak użytkownika => undefined', () => {
@@ -278,8 +279,9 @@ describe('buildCloudPeoplePayload', () => {
       profile({ id: 'u-x', email: '' }),
     ]);
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toMatchObject({ id: 'u-k', accessRole: 'administrator', supervisorEmail: '' });
-    expect(rows[1]).toMatchObject({ id: 'u-z', accessRole: 'pm', supervisorEmail: 'kacper@x.pl' });
+    // cloudRole 'administrator' i 'manager' kolapsują do 'pelne'.
+    expect(rows[0]).toMatchObject({ id: 'u-k', accessRole: 'pelne', supervisorEmail: '' });
+    expect(rows[1]).toMatchObject({ id: 'u-z', accessRole: 'pelne', supervisorEmail: 'kacper@x.pl' });
   });
 
   it('puste imię spada na część lokalną e-maila (walidacja wymaga imienia)', () => {

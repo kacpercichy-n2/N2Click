@@ -55,7 +55,7 @@ const PERSON: Person = {
   avatar: '',
   capacity: 8,
   phone: '',
-  accessRole: 'pracownik',
+  accessRole: 'pelne',
   passwordHash: '',
   workDays: [1, 2, 3, 4, 5],
   workStartMinutes: 480,
@@ -89,6 +89,7 @@ function draftFromProject(overrides: Partial<ProjectDraft> = {}): ProjectDraft {
     endDate: PROJECT.endDate,
     departmentId: PROJECT.departmentId,
     serviceTypeId: PROJECT.serviceTypeId,
+    companyId: PROJECT.companyId ?? '',
     ...overrides,
   };
 }

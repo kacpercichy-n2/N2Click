@@ -405,7 +405,7 @@ describe('loadData migration v4 -> v5', () => {
     };
   }
 
-  it('maps isAdmin true -> accessRole "administrator", isAdmin false -> "pracownik", strips isAdmin, fills documented defaults, and bumps the version to 5', () => {
+  it('po kolapsie ról każda legacy wartość (isAdmin true/false) -> accessRole "pelne", strips isAdmin, fills documented defaults, and bumps the version to 5', () => {
     const payload = v4Payload([
       {
         id: 'p1',
@@ -457,9 +457,9 @@ describe('loadData migration v4 -> v5', () => {
     const p2 = data.people.find((p) => p.id === 'p2')!;
     const p3 = data.people.find((p) => p.id === 'p3')!;
 
-    expect(p1.accessRole).toBe('administrator');
-    expect(p2.accessRole).toBe('pracownik');
-    expect(p3.accessRole).toBe('pracownik');
+    expect(p1.accessRole).toBe('pelne');
+    expect(p2.accessRole).toBe('pelne');
+    expect(p3.accessRole).toBe('pelne');
     expect(Object.prototype.hasOwnProperty.call(p1, 'isAdmin')).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(p2, 'isAdmin')).toBe(false);
 
@@ -498,7 +498,7 @@ describe('loadData migration v4 -> v5', () => {
 
     expect(twice).toEqual(once);
     expect(twice.version).toBe(7);
-    expect(twice.people[0].accessRole).toBe('administrator');
+    expect(twice.people[0].accessRole).toBe('pelne');
   });
 
   it('birthDate: brakujące => "", poprawna data przechodzi, śmieci koercjonują do "" (repair na każdym wczytaniu)', () => {
@@ -617,8 +617,8 @@ describe('loadData migration v4 -> v5', () => {
 
     const p1 = data.people.find((p) => p.id === 'p1')!;
     const p2 = data.people.find((p) => p.id === 'p2')!;
-    expect(p1.accessRole).toBe('administrator');
-    expect(p2.accessRole).toBe('pracownik');
+    expect(p1.accessRole).toBe('pelne');
+    expect(p2.accessRole).toBe('pelne');
     expect(Object.prototype.hasOwnProperty.call(p1, 'isAdmin')).toBe(false);
     expect(p1.workDays).toEqual([1, 2, 3, 4, 5]);
     expect(p1.workStartMinutes).toBe(480);

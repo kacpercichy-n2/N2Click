@@ -60,7 +60,7 @@ function makePerson(overrides: Partial<Person> & { id: string }): Person {
     companyId: '',
     avatar: '',
     capacity: 8,
-    accessRole: 'pracownik',
+    accessRole: 'pelne',
     passwordHash: '',
     workDays: [1, 2, 3, 4, 5],
     workStartMinutes: 480,
@@ -224,10 +224,10 @@ describe('buildDryRunReport — mapping diagnostics', () => {
 
   function fixture(): AppData {
     const people: Person[] = [
-      makePerson({ id: 'admin', accessRole: 'administrator' }),
-      makePerson({ id: 'pm', accessRole: 'pm' }),
-      makePerson({ id: 'sales', accessRole: 'handlowiec' }),
-      makePerson({ id: 'worker', firstName: '', accessRole: 'pracownik' }), // empty firstName -> blocker
+      makePerson({ id: 'admin', accessRole: 'pelne' }),
+      makePerson({ id: 'full2', accessRole: 'pelne' }),
+      makePerson({ id: 'full3', accessRole: 'pelne' }),
+      makePerson({ id: 'worker', firstName: '', accessRole: 'ograniczone' }), // empty firstName -> blocker
     ];
     const projects: Project[] = [makeProject({ id: 'proj1', name: longName })]; // >300 -> blocker
     const tasks: Task[] = [makeTask({ id: 't1', projectId: 'ghost', title: 'OK' })]; // dangling projectId -> blocker
@@ -266,12 +266,10 @@ describe('buildDryRunReport — mapping diagnostics', () => {
     // project_members: distinct (projectId, personId) through the task -> one pair.
     expect(report.counts.target.project_members).toBe(1);
 
-    // Role mapping counts, one of each role.
+    // Role mapping counts po kolapsie ról: 3× pełne (→administrator), 1× ograniczone (→worker).
     const roleFor = (role: string) => report.roleMapping.find((r) => r.sourceRole === role)!;
-    expect(roleFor('administrator')).toMatchObject({ targetRole: 'administrator', count: 1 });
-    expect(roleFor('pm')).toMatchObject({ targetRole: 'manager', count: 1 });
-    expect(roleFor('handlowiec')).toMatchObject({ targetRole: 'worker', count: 1 });
-    expect(roleFor('pracownik')).toMatchObject({ targetRole: 'worker', count: 1 });
+    expect(roleFor('pelne')).toMatchObject({ targetRole: 'administrator', count: 3 });
+    expect(roleFor('ograniczone')).toMatchObject({ targetRole: 'worker', count: 1 });
 
     // Person-id remap entry present with the people count.
     expect(report.idMappings[0].count).toBe(4);
@@ -362,8 +360,8 @@ describe('buildDryRunReport — mapping diagnostics', () => {
       statuses: [],
       departments: [{ id: 'd1', name: 'Projektowanie' }],
       people: [
-        makePerson({ id: 'p1', accessRole: 'administrator', departmentId: 'd1' }),
-        makePerson({ id: 'p2', accessRole: 'pracownik', departmentId: 'ghost' }), // dangling -> warning
+        makePerson({ id: 'p1', accessRole: 'pelne', departmentId: 'd1' }),
+        makePerson({ id: 'p2', accessRole: 'pelne', departmentId: 'ghost' }), // dangling -> warning
       ],
       projects: [makeProject({ id: 'proj1', name: 'Realny projekt' })],
       tasks: [makeTask({ id: 't1', projectId: 'proj1' })],
@@ -389,7 +387,7 @@ describe('buildDryRunReport — workload + milestones (retirement migration)', (
       tasks: [makeTask({ id: 't1', projectId: 'proj1' })],
       milestones: [{ id: 'm1', projectId: 'proj1', name: 'Kamień', date: '2026-07-08' }],
       workload: [wl({ id: 'w1' })],
-      savedFilters: [{ id: 'f1', name: 'Moje', page: 'tasks', criteria: { paid: 'all', clientId: '', projectId: '', statusId: '', personId: '', priority: '', workCategoryId: '', from: '', to: '' } }],
+      savedFilters: [{ id: 'f1', name: 'Moje', page: 'tasks', criteria: { paid: 'all', clientId: '', companyId: '', projectId: '', statusId: '', personId: '', priority: '', workCategoryId: '', from: '', to: '' } }],
     };
     const report = buildDryRunReport(data);
     expect(report.counts.target.workload_entries).toBe(1);

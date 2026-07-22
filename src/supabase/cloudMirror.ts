@@ -43,10 +43,8 @@ export const STALE_HINT_MSG = 'Dane mogą być nieaktualne — odśwież dane z 
 
 /** Udokumentowane mapowanie ról frontend→cloud (patrz referenceData.ts). */
 const ACCESS_ROLE_TO_CLOUD: Record<AccessRole, 'administrator' | 'manager' | 'worker'> = {
-  administrator: 'administrator',
-  pm: 'manager',
-  handlowiec: 'worker',
-  pracownik: 'worker',
+  pelne: 'administrator',
+  ograniczone: 'worker',
 };
 
 const DIAG = {
@@ -220,6 +218,9 @@ function projectRow(
     end_date: dateOrNull(p.endDate),
     department_id: resolveDept(p.departmentId, maps.departments),
     service_type_id: service.cloud,
+    // Spółka wykonawcza: companies mirroruje się po lokalnych id (jak
+    // profiles.company_id), więc bez mapowania; '' => NULL.
+    company_id: (p.companyId ?? '') === '' ? null : p.companyId,
     documents: p.documents,
     created_at: p.createdAt,
     updated_at: p.updatedAt,

@@ -75,7 +75,7 @@ function makePerson(overrides: Partial<Person> & { id: string }): Person {
     avatar: '',
     capacity: 8,
     phone: '',
-    accessRole: 'pracownik',
+    accessRole: 'ograniczone',
     passwordHash: '',
     workDays: [1, 2, 3, 4, 5],
     workStartMinutes: 480,
@@ -1656,68 +1656,68 @@ describe('SET_PASSWORD / LOGOUT', () => {
 });
 
 describe('ADD_PERSON fresh-setup admin guard', () => {
-  it('forces the FIRST person into an empty people list to administrator, even when the draft asks for pracownik', () => {
+  it('forces the FIRST person into an empty people list to pełne, even when the draft asks for ograniczone', () => {
     const state = makeState({ people: [] });
 
     const next = reducer(state, {
       type: 'ADD_PERSON',
-      person: draftFromPerson(makePerson({ id: 'ignored', accessRole: 'pracownik' })),
+      person: draftFromPerson(makePerson({ id: 'ignored', accessRole: 'ograniczone' })),
     });
 
     expect(next.people).toHaveLength(1);
-    expect(next.people[0].accessRole).toBe('administrator');
+    expect(next.people[0].accessRole).toBe('pelne');
   });
 
   it('respects the draft role for subsequent people (list is non-empty)', () => {
-    const admin = makePerson({ id: 'p1', accessRole: 'administrator' });
+    const admin = makePerson({ id: 'p1', accessRole: 'pelne' });
     const state = makeState({ people: [admin] });
 
     const next = reducer(state, {
       type: 'ADD_PERSON',
-      person: draftFromPerson(makePerson({ id: 'ignored', accessRole: 'pracownik' })),
+      person: draftFromPerson(makePerson({ id: 'ignored', accessRole: 'ograniczone' })),
     });
 
     expect(next.people).toHaveLength(2);
-    expect(next.people[1].accessRole).toBe('pracownik');
+    expect(next.people[1].accessRole).toBe('ograniczone');
   });
 });
 
 describe('UPDATE_PERSON last-admin demote guard', () => {
-  it('rejects demoting the ONLY administrator (returns state unchanged, same ref)', () => {
-    const admin = makePerson({ id: 'p1', accessRole: 'administrator' });
-    const staff = makePerson({ id: 'p2', accessRole: 'pracownik' });
+  it('rejects demoting the ONLY pełne (returns state unchanged, same ref)', () => {
+    const admin = makePerson({ id: 'p1', accessRole: 'pelne' });
+    const staff = makePerson({ id: 'p2', accessRole: 'ograniczone' });
     const state = makeState({ people: [admin, staff] });
 
     const next = reducer(state, {
       type: 'UPDATE_PERSON',
       personId: 'p1',
-      person: draftFromPerson(admin, { accessRole: 'pm' }),
+      person: draftFromPerson(admin, { accessRole: 'ograniczone' }),
     });
 
     expect(next).toBe(state);
   });
 
-  it('allows demoting an administrator when another administrator remains', () => {
-    const a1 = makePerson({ id: 'p1', accessRole: 'administrator' });
-    const a2 = makePerson({ id: 'p2', accessRole: 'administrator' });
+  it('allows demoting a pełne when another pełne remains', () => {
+    const a1 = makePerson({ id: 'p1', accessRole: 'pelne' });
+    const a2 = makePerson({ id: 'p2', accessRole: 'pelne' });
     const state = makeState({ people: [a1, a2] });
 
     const next = reducer(state, {
       type: 'UPDATE_PERSON',
       personId: 'p1',
-      person: draftFromPerson(a1, { accessRole: 'pm' }),
+      person: draftFromPerson(a1, { accessRole: 'ograniczone' }),
     });
 
     expect(next).not.toBe(state);
-    expect(next.people.find((p) => p.id === 'p1')!.accessRole).toBe('pm');
-    expect(next.people.find((p) => p.id === 'p2')!.accessRole).toBe('administrator');
+    expect(next.people.find((p) => p.id === 'p1')!.accessRole).toBe('ograniczone');
+    expect(next.people.find((p) => p.id === 'p2')!.accessRole).toBe('pelne');
   });
 });
 
 describe('DELETE_PERSON last-admin + supervisor cascade', () => {
-  it('rejects deleting the ONLY administrator (returns state unchanged, same ref)', () => {
-    const admin = makePerson({ id: 'p1', accessRole: 'administrator' });
-    const staff = makePerson({ id: 'p2', accessRole: 'pracownik' });
+  it('rejects deleting the ONLY pełne (returns state unchanged, same ref)', () => {
+    const admin = makePerson({ id: 'p1', accessRole: 'pelne' });
+    const staff = makePerson({ id: 'p2', accessRole: 'ograniczone' });
     const state = makeState({ people: [admin, staff] });
 
     const next = reducer(state, { type: 'DELETE_PERSON', personId: 'p1' });
@@ -1725,9 +1725,9 @@ describe('DELETE_PERSON last-admin + supervisor cascade', () => {
     expect(next).toBe(state);
   });
 
-  it('allows deleting an administrator when another administrator remains', () => {
-    const a1 = makePerson({ id: 'p1', accessRole: 'administrator' });
-    const a2 = makePerson({ id: 'p2', accessRole: 'administrator' });
+  it('allows deleting a pełne when another pełne remains', () => {
+    const a1 = makePerson({ id: 'p1', accessRole: 'pelne' });
+    const a2 = makePerson({ id: 'p2', accessRole: 'pelne' });
     const state = makeState({ people: [a1, a2] });
 
     const next = reducer(state, { type: 'DELETE_PERSON', personId: 'p1' });
@@ -1736,11 +1736,11 @@ describe('DELETE_PERSON last-admin + supervisor cascade', () => {
   });
 
   it('clears dangling supervisorId on remaining people when their supervisor is deleted', () => {
-    const boss = makePerson({ id: 'p1', accessRole: 'administrator' });
-    const admin2 = makePerson({ id: 'p0', accessRole: 'administrator' });
-    const sub1 = makePerson({ id: 'p2', accessRole: 'pracownik', supervisorId: 'p1' });
-    const sub2 = makePerson({ id: 'p3', accessRole: 'pracownik', supervisorId: 'p1' });
-    const other = makePerson({ id: 'p4', accessRole: 'pracownik', supervisorId: 'p0' });
+    const boss = makePerson({ id: 'p1', accessRole: 'pelne' });
+    const admin2 = makePerson({ id: 'p0', accessRole: 'pelne' });
+    const sub1 = makePerson({ id: 'p2', accessRole: 'ograniczone', supervisorId: 'p1' });
+    const sub2 = makePerson({ id: 'p3', accessRole: 'ograniczone', supervisorId: 'p1' });
+    const other = makePerson({ id: 'p4', accessRole: 'ograniczone', supervisorId: 'p0' });
     const state = makeState({ people: [admin2, boss, sub1, sub2, other] });
 
     const next = reducer(state, { type: 'DELETE_PERSON', personId: 'p1' });
@@ -2214,8 +2214,8 @@ describe('REASSIGN_ENTRY dated free-slot placement (PKG-20260713b-placement-test
 
 describe('Impersonation reducer (PKG-20260708-b2-tests)', () => {
   it('IMPERSONATE sets currentUserId to the target and impersonatorId to the previous user; no-ops for a non-existent person and for personId === currentUserId', () => {
-    const admin = makePerson({ id: 'p1', accessRole: 'administrator' });
-    const staff = makePerson({ id: 'p2', accessRole: 'pracownik' });
+    const admin = makePerson({ id: 'p1', accessRole: 'pelne' });
+    const staff = makePerson({ id: 'p2', accessRole: 'ograniczone' });
     const state = makeState({ people: [admin, staff], currentUserId: 'p1' });
 
     const next = reducer(state, { type: 'IMPERSONATE', personId: 'p2' });
@@ -2230,9 +2230,9 @@ describe('Impersonation reducer (PKG-20260708-b2-tests)', () => {
   });
 
   it('chained impersonation preserves the ORIGINAL impersonator; IMPERSONATE with personId === impersonatorId acts as return', () => {
-    const admin = makePerson({ id: 'p1', accessRole: 'administrator' });
-    const staff1 = makePerson({ id: 'p2', accessRole: 'pracownik' });
-    const staff2 = makePerson({ id: 'p3', accessRole: 'pracownik' });
+    const admin = makePerson({ id: 'p1', accessRole: 'pelne' });
+    const staff1 = makePerson({ id: 'p2', accessRole: 'ograniczone' });
+    const staff2 = makePerson({ id: 'p3', accessRole: 'ograniczone' });
     const state = makeState({
       people: [admin, staff1, staff2],
       currentUserId: 'p2', // already impersonating p2
@@ -2249,8 +2249,8 @@ describe('Impersonation reducer (PKG-20260708-b2-tests)', () => {
   });
 
   it("STOP_IMPERSONATION restores currentUserId from impersonatorId and clears it; no-ops at ''", () => {
-    const admin = makePerson({ id: 'p1', accessRole: 'administrator' });
-    const staff = makePerson({ id: 'p2', accessRole: 'pracownik' });
+    const admin = makePerson({ id: 'p1', accessRole: 'pelne' });
+    const staff = makePerson({ id: 'p2', accessRole: 'ograniczone' });
     const state = makeState({ people: [admin, staff], currentUserId: 'p2', impersonatorId: 'p1' });
 
     const next = reducer(state, { type: 'STOP_IMPERSONATION' });
@@ -2262,9 +2262,9 @@ describe('Impersonation reducer (PKG-20260708-b2-tests)', () => {
   });
 
   it('SET_CURRENT_USER and LOGOUT both clear impersonatorId; LOGOUT also clears currentUserId', () => {
-    const admin = makePerson({ id: 'p1', accessRole: 'administrator' });
-    const staff = makePerson({ id: 'p2', accessRole: 'pracownik' });
-    const staff2 = makePerson({ id: 'p3', accessRole: 'pracownik' });
+    const admin = makePerson({ id: 'p1', accessRole: 'pelne' });
+    const staff = makePerson({ id: 'p2', accessRole: 'ograniczone' });
+    const staff2 = makePerson({ id: 'p3', accessRole: 'ograniczone' });
     const state = makeState({ people: [admin, staff, staff2], currentUserId: 'p2', impersonatorId: 'p1' });
 
     const setUser = reducer(state, { type: 'SET_CURRENT_USER', personId: 'p3' });
@@ -2277,9 +2277,9 @@ describe('Impersonation reducer (PKG-20260708-b2-tests)', () => {
   });
 
   it('DELETE_PERSON of the impersonated person returns the session to the impersonator; deleting the impersonator clears impersonatorId only', () => {
-    const untouchedAdmin = makePerson({ id: 'p0', accessRole: 'administrator' }); // satisfies the last-admin guard
-    const impersonator = makePerson({ id: 'p1', accessRole: 'pracownik' });
-    const impersonated = makePerson({ id: 'p2', accessRole: 'pracownik' });
+    const untouchedAdmin = makePerson({ id: 'p0', accessRole: 'pelne' }); // satisfies the last-admin guard
+    const impersonator = makePerson({ id: 'p1', accessRole: 'ograniczone' });
+    const impersonated = makePerson({ id: 'p2', accessRole: 'ograniczone' });
     const state = makeState({
       people: [untouchedAdmin, impersonator, impersonated],
       currentUserId: 'p2',

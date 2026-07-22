@@ -6,14 +6,13 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
-import { ROLE_LABELS } from '../store/permissions';
 import { verifyPassword } from '../utils/password';
 import { Avatar } from '../components/Avatar';
 import { markOnboardingLogin } from '../utils/uiPrefs';
 import type { AccessRole } from '../types';
 
 export function landingPathForRole(role: AccessRole | undefined): '/my-work' | '/dashboard' {
-  return role === 'pracownik' ? '/my-work' : '/dashboard';
+  return role === 'ograniczone' ? '/my-work' : '/dashboard';
 }
 
 export function LoginPage() {
@@ -82,7 +81,9 @@ export function LoginPage() {
                   <Avatar person={person} size={36} />
                   <span className="login-person-text">
                     <span className="login-person-name">{person.name}</span>
-                    <span className="login-person-role">{ROLE_LABELS[person.accessRole]}</span>
+                    {/* Stanowisko zamiast poziomu uprawnień — uprawnienia są
+                        niewidoczne w UI od 2026-07-22 (wszyscy mają pełne). */}
+                    {person.role && <span className="login-person-role">{person.role}</span>}
                   </span>
                   <span className="login-person-lock" aria-hidden>
                     {hasPassword ? '🔒' : ''}

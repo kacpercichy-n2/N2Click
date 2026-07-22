@@ -68,6 +68,7 @@ export const DEFAULT_FILTER_CRITERIA: SavedFilterCriteria = {
   personId: '',
   priority: '',
   workCategoryId: '',
+  companyId: '',
   from: '',
   to: '',
 };
@@ -168,25 +169,21 @@ function coerceArray<T>(value: unknown, fallback: T[]): T[] {
   return Array.isArray(value) ? (value as T[]) : fallback;
 }
 
-const ACCESS_ROLES: AccessRole[] = ['administrator', 'pm', 'handlowiec', 'pracownik'];
-
 /**
  * Normalize one stored person (any pre-v5 or v5 shape) into the current Person.
- * - `accessRole`: kept if already a valid role; otherwise derived from the old
- *   `isAdmin` flag (`true` → 'administrator', else 'pracownik').
+ * - `accessRole`: dwie role od 2026-07-22 — zachowane tylko `pelne`/`ograniczone`;
+ *   KAŻDA inna wartość (legacy `administrator|pm|handlowiec|pracownik`, stary
+ *   `isAdmin`, śmieci) spada na `pelne` — decyzja: wszyscy w firmie mają pełne
+ *   uprawnienia, zawężanie jest świadomym, ręcznym wyjątkiem.
  * - new fields (`phone`, `passwordHash`, `workDays`, work hours, `supervisorId`)
  *   get the documented defaults when absent. `workDays` MISSING ⇒ Mon–Fri;
  *   PRESENT ⇒ sanitized (empty allowed).
- * Idempotent: an already-v5 person round-trips unchanged (`isAdmin` is dropped).
+ * Idempotent: an already-current person round-trips unchanged (`isAdmin` is dropped).
  */
 function migratePerson(raw: Record<string, unknown>): Person {
   const capacity =
     typeof raw.capacity === 'number' && raw.capacity > 0 ? raw.capacity : DEFAULT_CAPACITY;
-  const accessRole: AccessRole = ACCESS_ROLES.includes(raw.accessRole as AccessRole)
-    ? (raw.accessRole as AccessRole)
-    : raw.isAdmin === true
-      ? 'administrator'
-      : 'pracownik';
+  const accessRole: AccessRole = raw.accessRole === 'ograniczone' ? 'ograniczone' : 'pelne';
   const str = (v: unknown): string => (typeof v === 'string' ? v : '');
   // Data urodzenia jest ADDYTYWNA i opcjonalna: brak pola => ''; wartość, która
   // nie jest poprawną 'yyyy-MM-dd', również spada na '' (nigdy nie rzuca).
@@ -994,6 +991,10 @@ export function normalizeTaskMeta(data: AppData): AppData {
     if (criteria.projectId !== '' && !projectIds.has(criteria.projectId)) {
       criteria.projectId = '';
     }
+    // `companyId` (ADDYTYWNE, 2026-07-22): dangling spółka → '' — ten sam wzorzec.
+    if (criteria.companyId !== '' && !data.companies.some((c) => c.id === criteria.companyId)) {
+      criteria.companyId = '';
+    }
     return { ...f, criteria };
   });
 
@@ -1051,7 +1052,9 @@ export function repairProjectDocuments(data: AppData): AppData {
         url,
       });
     }
-    return { ...(raw as Project), documents };
+    // Spółka wykonawcza (pole ADDYTYWNE, opcjonalne): brak / nie-string => ''
+    // na każdym wczytaniu — jak `Person.companyId` w migratePerson.
+    return { ...(raw as Project), documents, companyId: str(p.companyId) };
   });
   return { ...data, projects };
 }

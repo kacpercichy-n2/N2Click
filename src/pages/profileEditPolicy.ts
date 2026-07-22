@@ -53,27 +53,16 @@ const SELF_FIELDS: readonly ProfileField[] = [
   'birthDate',
 ];
 
-// Menedżer prowadzi kartę osoby z własnego działu — data urodzenia mieści się w
-// tym samym zakresie co telefon/godziny (dane organizacyjne, nie uprawnienia).
-const MANAGER_FIELDS: readonly ProfileField[] = [
-  'roleTitle',
-  'phone',
-  'workDays',
-  'workHours',
-  'supervisorId',
-  'birthDate',
-];
-
 /**
  * Zbiór pól, które `actor` może edytować u `target`.
  *
- * Kolejność reguł (ustalona macierz):
+ * Kolejność reguł (macierz po kolapsie ról 2026-07-22):
  *  1. tryb setup (`peopleCount === 0`) — wszystko (brak lockoutu),
- *  2. administrator — wszystko,
- *  3. self (nie-admin, `actor.id === target.id`) — imię/nazwisko/telefon/emoji,
- *  4. PM na osobie z WŁASNEGO działu (niebędącej sobą ani administratorem) —
- *     stanowisko/telefon/dni robocze/godziny/przełożony,
- *  5. w przeciwnym razie / brak aktora — zbiór pusty.
+ *  2. rola `pelne` — wszystko (dawna reguła administratora),
+ *  3. self (rola `ograniczone`, `actor.id === target.id`) —
+ *     imię/nazwisko/telefon/emoji/data urodzenia,
+ *  4. w przeciwnym razie / brak aktora — zbiór pusty.
+ * Dawna gałąź menedżera działu (PM) odeszła razem z rolą `pm`.
  */
 export function editableProfileFields(
   actor: Person | undefined,
@@ -82,16 +71,8 @@ export function editableProfileFields(
 ): ReadonlySet<ProfileField> {
   if (opts.peopleCount === 0) return new Set(ALL_FIELDS);
   if (!actor) return new Set();
-  if (actor.accessRole === 'administrator') return new Set(ALL_FIELDS);
+  if (actor.accessRole === 'pelne') return new Set(ALL_FIELDS);
   if (actor.id === target.id) return new Set(SELF_FIELDS);
-  if (
-    actor.accessRole === 'pm' &&
-    actor.departmentId !== '' &&
-    actor.departmentId === target.departmentId &&
-    target.accessRole !== 'administrator'
-  ) {
-    return new Set(MANAGER_FIELDS);
-  }
   return new Set();
 }
 
@@ -106,8 +87,8 @@ export function canEditAnyProfileField(
 
 /**
  * Czy aktor może wgrać/usunąć zdjęcie profilowe docelowej osoby. Tylko w trybie
- * Supabase i tylko dla: trybu setup, administratora albo samego siebie
- * (menedżer NIGDY nie wgrywa cudzych zdjęć — odzwierciedla RLS Storage).
+ * Supabase i tylko dla: trybu setup, roli `pelne` albo samego siebie
+ * (odzwierciedla RLS Storage).
  */
 export function canUploadAvatarPhoto(
   actor: Person | undefined,
@@ -118,5 +99,5 @@ export function canUploadAvatarPhoto(
   if (mode !== 'supabase') return false;
   if (opts.peopleCount === 0) return true;
   if (!actor) return false;
-  return actor.accessRole === 'administrator' || actor.id === target.id;
+  return actor.accessRole === 'pelne' || actor.id === target.id;
 }

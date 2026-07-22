@@ -30,10 +30,11 @@ function makePerson(accessRole: AccessRole, overrides: Partial<Person> = {}): Pe
   };
 }
 
-// The full matrix from PKG-20260708-auth-data decision 7 — one cell per
-// (role, action). This is the spec; `can()` is checked against it exactly.
+// Pełna matryca po kolapsie ról (2026-07-22) — jedna komórka na (rola, akcja).
+// `pelne` = dawny zbiór administratora (wszystko), `ograniczone` = dawny zbiór
+// pracownika (tylko blocks.editOwn, profile.editOwn, comments.add, tickets.create).
 const MATRIX: Record<AccessRole, Record<PermAction, boolean>> = {
-  administrator: {
+  pelne: {
     'projects.manage': true,
     'projects.paid': true,
     'clients.manage': true,
@@ -50,42 +51,7 @@ const MATRIX: Record<AccessRole, Record<PermAction, boolean>> = {
     'tickets.manage': true,
     'events.manage': true,
   },
-  pm: {
-    'projects.manage': true,
-    'projects.paid': false,
-    'clients.manage': false,
-    'tasks.manage': true,
-    'blocks.editAny': true,
-    'blocks.editOwn': true,
-    'people.manage': false,
-    'profile.editOwn': true,
-    'workload.reassign': true,
-    'admin.panel': false,
-    'users.impersonate': false,
-    'comments.add': true,
-    'tickets.create': true,
-    'tickets.manage': false,
-    'events.manage': true,
-  },
-  handlowiec: {
-    'projects.manage': true,
-    'projects.paid': true,
-    'clients.manage': true,
-    // Zadań nie dodaje wyłącznie specjalista (pracownik) — decyzja 2026-07-20.
-    'tasks.manage': true,
-    'blocks.editAny': false,
-    'blocks.editOwn': true,
-    'people.manage': false,
-    'profile.editOwn': true,
-    'workload.reassign': false,
-    'admin.panel': false,
-    'users.impersonate': false,
-    'comments.add': true,
-    'tickets.create': true,
-    'tickets.manage': false,
-    'events.manage': true,
-  },
-  pracownik: {
+  ograniczone: {
     'projects.manage': false,
     'projects.paid': false,
     'clients.manage': false,
@@ -105,7 +71,7 @@ const MATRIX: Record<AccessRole, Record<PermAction, boolean>> = {
 };
 
 const ROLES = Object.keys(MATRIX) as AccessRole[];
-const ACTIONS = Object.keys(MATRIX.administrator) as PermAction[];
+const ACTIONS = Object.keys(MATRIX.pelne) as PermAction[];
 
 const CASES: Array<[AccessRole, PermAction, boolean]> = ROLES.flatMap((role) =>
   ACTIONS.map((action) => [role, action, MATRIX[role][action]] as [AccessRole, PermAction, boolean]),
@@ -131,12 +97,10 @@ describe('can() — full role x action matrix', () => {
 });
 
 describe('ROLE_LABELS', () => {
-  it('has the four Polish role labels', () => {
+  it('has the two Polish role labels', () => {
     expect(ROLE_LABELS).toEqual({
-      administrator: 'Administrator',
-      pm: 'PM',
-      handlowiec: 'Handlowiec',
-      pracownik: 'Pracownik',
+      pelne: 'Pełne',
+      ograniczone: 'Ograniczone',
     });
   });
 });

@@ -22,7 +22,7 @@ export type TutorialModule = {
   steps: TourStep[];
 };
 
-const EVERYONE: AccessRole[] = ['administrator', 'pm', 'handlowiec', 'pracownik'];
+const EVERYONE: AccessRole[] = ['pelne', 'ograniczone'];
 
 export const TUTORIAL_MODULES: TutorialModule[] = [
   {
@@ -261,7 +261,7 @@ export const TUTORIAL_MODULES: TutorialModule[] = [
     title: 'Obciążenie zespołu',
     summary: 'Dostępność osób i rozkład pracy w tygodniu.',
     minutes: '2 min',
-    roles: ['administrator', 'pm'],
+    roles: ['pelne'],
     steps: [
       {
         target: 'workload.table',
@@ -303,7 +303,7 @@ export const TUTORIAL_MODULES: TutorialModule[] = [
     title: 'Ustawienia',
     summary: 'Statusy lejka i wspólne słowniki.',
     minutes: '3 min',
-    roles: ['administrator'],
+    roles: ['pelne'],
     steps: [
       {
         target: 'admin.statuses',

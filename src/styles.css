@@ -5950,6 +5950,11 @@ a.toggle-btn {
 .ticket-modal-card {
   max-width: 720px;
 }
+/* Modal „szybkiego dodania” wpisu słownika (QuickAddModal) — jedno pole nazwy,
+   więc karta jest wyraźnie węższa niż formularze zgłoszeń/zadań. */
+.quick-add-card {
+  max-width: 420px;
+}
 .ticket-filters {
   display: flex;
   align-items: center;

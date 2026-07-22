@@ -144,6 +144,8 @@ export interface ProjectDraft {
   endDate: string;
   departmentId: string;
   serviceTypeId: string;
+  /** Spółka wykonawcza ('' = brak); nieznane id jest koercjonowane do ''. */
+  companyId: string;
 }
 
 /** Draft odnośnika do dokumentu projektu (karta „Dokumenty”). `id` NIE jest
@@ -1201,6 +1203,12 @@ function saveProject(
   // UNCHANGED dangling clientId stays editable on a legacy orphan project).
   if (!isValidProjectDraft(state, draft, existing)) return state;
   const ts = nowIso();
+  // Spółka wykonawcza: nieznane id nie może wejść do stanu (kaskada
+  // DELETE_COMPANY utrzymuje potem czystość) — koercja do '' zamiast odmowy.
+  const companyId = state.companies.some((c) => c.id === draft.companyId)
+    ? draft.companyId
+    : '';
+  draft = { ...draft, companyId };
 
   if (projectId === null) {
     // `documents` nie jest częścią draftu — nowy projekt startuje bez odnośników,
@@ -1266,7 +1274,7 @@ function deleteProject(state: AppData, projectId: string): AppData {
  *  kaskady projektu i kategorii pracy. */
 function clearCriteriaFieldInLastFilters(
   lastFilters: AppData['lastFilters'],
-  field: 'projectId' | 'workCategoryId',
+  field: 'projectId' | 'workCategoryId' | 'companyId',
   value: string,
 ): AppData['lastFilters'] {
   const next: AppData['lastFilters'] = {};
@@ -1293,6 +1301,13 @@ function clearWorkCategoryIdInLastFilters(
   workCategoryId: string,
 ): AppData['lastFilters'] {
   return clearCriteriaFieldInLastFilters(lastFilters, 'workCategoryId', workCategoryId);
+}
+
+function clearCompanyIdInLastFilters(
+  lastFilters: AppData['lastFilters'],
+  companyId: string,
+): AppData['lastFilters'] {
+  return clearCriteriaFieldInLastFilters(lastFilters, 'companyId', companyId);
 }
 
 // ---- Insert block (calendar right-click) ----
@@ -2241,7 +2256,7 @@ function saveMilestone(
 
 // ---- Cloud people merge (pełna synchronizacja zespołu) ----
 
-const MERGE_ACCESS_ROLES = new Set<AccessRole>(['administrator', 'pm', 'handlowiec', 'pracownik']);
+const MERGE_ACCESS_ROLES = new Set<AccessRole>(['pelne', 'ograniczone']);
 
 /** Walidacja jednego wiersza payloadu osób — fail-closed dla całego scalenia. */
 function isValidCloudPersonRow(r: CloudPersonMergeRow): boolean {
@@ -3094,9 +3109,9 @@ export function reducer(state: AppData, action: Action): AppData {
         ? ''
         : base.supervisorId;
       // Fresh-setup lockout guard: the FIRST person created into an empty people
-      // list is forced to administrator. Otherwise the login gate would activate
-      // (people.length > 0) with zero admins and no in-app recovery path.
-      const accessRole = state.people.length === 0 ? 'administrator' : base.accessRole;
+      // list is forced to `pelne`. Otherwise the login gate would activate
+      // (people.length > 0) with zero full-access users and no recovery path.
+      const accessRole = state.people.length === 0 ? 'pelne' : base.accessRole;
       return {
         ...state,
         people: [...state.people, { id, ...base, accessRole, supervisorId, passwordHash: '' }],
@@ -3112,10 +3127,10 @@ export function reducer(state: AppData, action: Action): AppData {
       const target = state.people.find((p) => p.id === action.personId);
       if (!target) return state;
       if (!isValidPersonDraft(action.person)) return state;
-      const adminCount = state.people.filter((p) => p.accessRole === 'administrator').length;
+      const adminCount = state.people.filter((p) => p.accessRole === 'pelne').length;
       if (
-        target?.accessRole === 'administrator' &&
-        base.accessRole !== 'administrator' &&
+        target?.accessRole === 'pelne' &&
+        base.accessRole !== 'pelne' &&
         adminCount === 1
       ) {
         return state;
@@ -3149,8 +3164,8 @@ export function reducer(state: AppData, action: Action): AppData {
       // (returns state unchanged). Applied BEFORE the deletePerson cascade so the
       // supervisorId cleanup only runs on an allowed delete.
       const target = state.people.find((p) => p.id === action.personId);
-      const adminCount = state.people.filter((p) => p.accessRole === 'administrator').length;
-      if (target?.accessRole === 'administrator' && adminCount === 1) {
+      const adminCount = state.people.filter((p) => p.accessRole === 'pelne').length;
+      if (target?.accessRole === 'pelne' && adminCount === 1) {
         return state;
       }
       const next = deletePerson(state, action.personId);
@@ -3463,7 +3478,8 @@ export function reducer(state: AppData, action: Action): AppData {
     }
     case 'DELETE_COMPANY': {
       // Kaskada etykiety (jak DELETE_DEPARTMENT): usunięcie spółki czyści
-      // `Person.companyId` na osobach; chmurowy FK `on delete set null` to lustruje.
+      // `Person.companyId` na osobach ORAZ `Project.companyId` (spółkę
+      // wykonawczą) na projektach; chmurowy FK `on delete set null` to lustruje.
       // Nieznane id => ta sama referencja.
       if (!state.companies.some((c) => c.id === action.companyId)) return state;
       return {
@@ -3472,6 +3488,17 @@ export function reducer(state: AppData, action: Action): AppData {
         people: state.people.map((p) =>
           p.companyId === action.companyId ? { ...p, companyId: '' } : p,
         ),
+        projects: state.projects.map((p) =>
+          p.companyId === action.companyId ? { ...p, companyId: '' } : p,
+        ),
+        // Kaskada filtrów (jak deleteProject dla projectId): preset/ostatni filtr
+        // wskazujący usuwaną spółkę traci `criteria.companyId` (→ '').
+        savedFilters: state.savedFilters.map((f) =>
+          f.criteria.companyId === action.companyId
+            ? { ...f, criteria: { ...f.criteria, companyId: '' } }
+            : f,
+        ),
+        lastFilters: clearCompanyIdInLastFilters(state.lastFilters, action.companyId),
       };
     }
     case 'ADD_SERVICE_TYPE': {

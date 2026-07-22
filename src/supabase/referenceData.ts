@@ -78,20 +78,12 @@ export const ORG_SNAPSHOT_ERROR = 'Nie udało się wczytać danych organizacji z
 
 /**
  * Odwrotność udokumentowanego mapowania frontend→cloud
- * (`administrator→administrator`, `pm→manager`, `handlowiec/pracownik→worker`).
- * `handlowiec` nie jest reprezentowalny po stronie serwera i celowo ląduje na
- * `pracownik` w UX trybu supabase — to jest prawda RLS (worker), a nie utrata
- * uprawnień handlowca planera lokalnego.
+ * (`pelne→administrator`, `ograniczone→worker`). Chmurowy `manager` (zaszłość —
+ * nowe konta go nie dostają) ląduje na `pelne`: od 2026-07-22 wszyscy pracownicy
+ * mają pełne uprawnienia, a `worker` jest jedyną reprezentacją zawężenia.
  */
 export function cloudRoleToAccessRole(role: CloudRole): AccessRole {
-  switch (role) {
-    case 'administrator':
-      return 'administrator';
-    case 'manager':
-      return 'pm';
-    case 'worker':
-      return 'pracownik';
-  }
+  return role === 'worker' ? 'ograniczone' : 'pelne';
 }
 
 // ---- Mapowanie wierszy -------------------------------------------------------

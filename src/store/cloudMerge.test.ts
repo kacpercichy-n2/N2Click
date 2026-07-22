@@ -128,7 +128,7 @@ function person(id: string) {
     companyId: '',
     avatar: '',
     capacity: 8,
-    accessRole: 'pracownik' as const,
+    accessRole: 'pelne' as const,
     passwordHash: '',
     workDays: [1, 2, 3, 4, 5],
     workStartMinutes: 480,
@@ -242,6 +242,7 @@ describe('MERGE_CLOUD_ENTITIES — merge semantics', () => {
         criteria: {
           paid: 'all' as const,
           clientId: '',
+          companyId: '',
           projectId: '',
           statusId: '',
           personId: '',
@@ -257,6 +258,7 @@ describe('MERGE_CLOUD_ENTITIES — merge semantics', () => {
         criteria: {
           paid: 'all' as const,
           clientId: '',
+          companyId: '',
           projectId: '',
           statusId: '',
           personId: '',
@@ -557,7 +559,7 @@ function cloudRow(o: Partial<CloudPersonMergeRow> & { id: string; email: string 
     workDays: [1, 2, 3, 4, 5],
     workStartMinutes: 480,
     workEndMinutes: 960,
-    accessRole: 'pracownik',
+    accessRole: 'ograniczone',
     supervisorEmail: '',
     birthDate: '',
     ...o,
@@ -572,13 +574,13 @@ describe('MERGE_CLOUD_PEOPLE', () => {
     const state: AppData = {
       ...baseState(),
       people: [
-        { ...person(P1), email: 'kacper@x.pl', passwordHash: 'h', departmentId: 'd-local', accessRole: 'pracownik' },
+        { ...person(P1), email: 'kacper@x.pl', passwordHash: 'h', departmentId: 'd-local', accessRole: 'ograniczone' },
       ],
     };
     const next = reducer(state, {
       type: 'MERGE_CLOUD_PEOPLE',
       payload: [
-        cloudRow({ id: UUID_K, email: 'Kacper@X.PL', firstName: 'Kacper', lastName: 'Cichy', role: 'Menadżer', departmentId: 'd-cloud', accessRole: 'administrator', capacity: 6 }),
+        cloudRow({ id: UUID_K, email: 'Kacper@X.PL', firstName: 'Kacper', lastName: 'Cichy', role: 'Menadżer', departmentId: 'd-cloud', accessRole: 'pelne', capacity: 6 }),
       ],
     });
     expect(next).not.toBe(state);
@@ -587,7 +589,7 @@ describe('MERGE_CLOUD_PEOPLE', () => {
     expect(p.id).toBe(P1); // lokalne id zachowane
     expect(p.passwordHash).toBe('h');
     expect(p.departmentId).toBe('d-cloud'); // dział jest prawdą chmury
-    expect(p).toMatchObject({ firstName: 'Kacper', lastName: 'Cichy', name: 'Kacper Cichy', role: 'Menadżer', accessRole: 'administrator', capacity: 6 });
+    expect(p).toMatchObject({ firstName: 'Kacper', lastName: 'Cichy', name: 'Kacper Cichy', role: 'Menadżer', accessRole: 'pelne', capacity: 6 });
   });
 
   it('tworzy brakującą osobę z id profilu chmury i rozwiązuje przełożonego po e-mailu', () => {

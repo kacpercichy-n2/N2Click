@@ -61,7 +61,7 @@ const PERSON: Person = {
   avatar: '',
   capacity: 8,
   phone: '',
-  accessRole: 'administrator',
+  accessRole: 'pelne',
   passwordHash: '',
   workDays: [1, 2, 3, 4, 5],
   workStartMinutes: 480,
@@ -69,7 +69,7 @@ const PERSON: Person = {
   supervisorId: '',
   birthDate: '',
 };
-const PERSON2: Person = { ...PERSON, id: 'p2', firstName: 'Bob', name: 'Bob', accessRole: 'pracownik' };
+const PERSON2: Person = { ...PERSON, id: 'p2', firstName: 'Bob', name: 'Bob', accessRole: 'ograniczone' };
 
 /** Minimal valid AppData: one client, two statuses, one project + one legacy
  *  orphan project, one task, one milestone, two people. Fresh per call. */
@@ -113,6 +113,7 @@ function draftFromProject(overrides: Partial<ProjectDraft> = {}): ProjectDraft {
     endDate: PROJECT.endDate,
     departmentId: PROJECT.departmentId,
     serviceTypeId: PROJECT.serviceTypeId,
+    companyId: PROJECT.companyId ?? '',
     ...overrides,
   };
 }
@@ -128,7 +129,7 @@ function personDraft(overrides: Partial<PersonDraft> = {}): PersonDraft {
     companyId: '',
     avatar: '',
     capacity: 8,
-    accessRole: 'pracownik',
+    accessRole: 'ograniczone',
     workDays: [1, 2, 3, 4, 5],
     workStartMinutes: 480,
     workEndMinutes: 960,
@@ -529,7 +530,7 @@ describe('valid / valid-legacy payloads still apply', () => {
     const renamed = reducer(state, {
       type: 'UPDATE_PERSON',
       personId: 'p1',
-      person: personDraft({ firstName: 'Alicja', accessRole: 'administrator' }),
+      person: personDraft({ firstName: 'Alicja', accessRole: 'pelne' }),
     });
     expect(renamed).not.toBe(state);
     expect(renamed.people.find((p) => p.id === 'p1')!.firstName).toBe('Alicja');
@@ -537,7 +538,7 @@ describe('valid / valid-legacy payloads still apply', () => {
     const demoted = reducer(state, {
       type: 'UPDATE_PERSON',
       personId: 'p1',
-      person: personDraft({ firstName: 'Ala', accessRole: 'pracownik' }),
+      person: personDraft({ firstName: 'Ala', accessRole: 'ograniczone' }),
     });
     expectRejected(state, demoted);
   });

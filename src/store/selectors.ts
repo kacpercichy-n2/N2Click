@@ -6,18 +6,20 @@ import type {
   Client,
   Comment,
   CommentEntityType,
+  Company,
   DateStr,
   Department,
   Milestone,
   Person,
   Project,
+  SavedFilterCriteria,
   ServiceType,
   Status,
   Task,
   WorkCategory,
   WorkloadEntry,
 } from '../types';
-import { DEFAULT_CAPACITY } from './storage';
+import { DEFAULT_CAPACITY, DEFAULT_FILTER_CRITERIA } from './storage';
 import { blockEndMinutes, hasCollision, hoursToMinutes, isBinEntry } from '../utils/time';
 import { isBirthdayOn, isValidDateStr, parseDate } from '../utils/dates';
 import { expandOccurrences, type RecurrenceOccurrence } from '../utils/recurrence';
@@ -63,6 +65,41 @@ export function getWorkCategory(
   workCategoryId: string,
 ): WorkCategory | undefined {
   return state.workCategories.find((c) => c.id === workCategoryId);
+}
+
+export function getCompany(state: AppData, companyId: string): Company | undefined {
+  return state.companies.find((c) => c.id === companyId);
+}
+
+// ---- Spółka wykonawcza (filtr widoków) ----
+
+/**
+ * Czy projekt pasuje do filtra spółki. Pusty filtr = wszystko. Aktywny filtr
+ * dopasowuje projekty tej spółki ORAZ projekty „neutralne” (bez spółki) —
+ * świeży/nieprzypisany projekt nie znika nikomu (analogia do dawnej reguły
+ * chmurowej `project_in_company_scope`).
+ */
+export function projectMatchesCompanyFilter(
+  project: Pick<Project, 'companyId'>,
+  companyId: string,
+): boolean {
+  return companyId === '' || !project.companyId || project.companyId === companyId;
+}
+
+/**
+ * Kryteria INICJALNE widoku dla bieżącego użytkownika (gdy brak zapamiętanego
+ * filtra): „wszystko” + spółka zalogowanego jako domyślny filtr spółek
+ * (decyzja 2026-07-22: bazowo widzisz projekty/taski swojej spółki, filtrem
+ * dokładasz resztę). Osoba bez spółki startuje bez zawężenia.
+ */
+export function defaultCriteriaForUser(state: AppData): SavedFilterCriteria {
+  const me = currentUser(state);
+  const companyId = me?.companyId ?? '';
+  // Spółka mogła zostać usunięta ze słownika — nie inicjalizuj danglingiem.
+  if (companyId === '' || !state.companies.some((c) => c.id === companyId)) {
+    return DEFAULT_FILTER_CRITERIA;
+  }
+  return { ...DEFAULT_FILTER_CRITERIA, companyId };
 }
 
 // ---- Statuses ----
@@ -1003,7 +1040,7 @@ export function isImpersonating(state: AppData): boolean {
  */
 export function isAdminUser(state: AppData): boolean {
   if (state.people.length === 0) return true;
-  return currentUser(state)?.accessRole === 'administrator';
+  return currentUser(state)?.accessRole === 'pelne';
 }
 
 /**

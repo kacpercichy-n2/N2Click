@@ -29,11 +29,12 @@ import {
   taskPlannedTotalForPerson,
   wouldCreateSupervisorCycle,
 } from '../store/selectors';
-import { ROLE_LABELS, can, NO_PERM_TITLE } from '../store/permissions';
+import { can, NO_PERM_TITLE } from '../store/permissions';
 import { hashPassword } from '../utils/password';
-import { accessRoleForTitle, jobTitleSelectOptions } from '../utils/roleTitles';
-import type { AccessRole, Person } from '../types';
+import { jobTitleSelectOptions } from '../utils/roleTitles';
+import type { Person } from '../types';
 import { Avatar } from '../components/Avatar';
+import { QuickAddModal, NEW_OPTION_VALUE } from '../components/QuickAddModal';
 import { Coin } from '../components/Coin';
 import { StatusBadge } from '../components/StatusBadge';
 import { DEFAULT_CAPACITY, defaultWorkEndMinutes } from '../store/storage';
@@ -104,7 +105,7 @@ function PersonProfile({ personId }: { personId: string }) {
     companyId: person?.companyId ?? '',
     avatar: person?.avatar ?? '',
     capacity: person?.capacity ?? DEFAULT_CAPACITY,
-    accessRole: person?.accessRole ?? 'pracownik',
+    accessRole: person?.accessRole ?? 'pelne',
     workDays: person?.workDays ?? [1, 2, 3, 4, 5],
     workStartMinutes: person?.workStartMinutes ?? 480,
     workEndMinutes: person?.workEndMinutes ?? defaultWorkEndMinutes(person?.capacity ?? DEFAULT_CAPACITY),
@@ -113,6 +114,30 @@ function PersonProfile({ personId }: { personId: string }) {
   }));
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState('');
+
+  // „+ Nowe…” w selektach słownikowych: który modal szybkiego dodania jest
+  // otwarty. Nowy dział/spółka dostają id w reduktorze, więc świeży wpis
+  // namierzamy po znormalizowanej nazwie w efekcie poniżej i dopiero wtedy
+  // ustawiamy go w drafcie (stanowisko to wolny tekst — ustawiane od razu).
+  const [quickAdd, setQuickAdd] = useState<null | 'jobTitle' | 'department' | 'company'>(null);
+  const [pendingDict, setPendingDict] = useState<null | {
+    kind: 'department' | 'company';
+    name: string;
+  }>(null);
+  useEffect(() => {
+    if (!pendingDict) return;
+    const key = pendingDict.name.trim().toLocaleLowerCase('pl-PL');
+    const list = pendingDict.kind === 'department' ? state.departments : state.companies;
+    const match = list.find((e) => e.name.trim().toLocaleLowerCase('pl-PL') === key);
+    if (match) {
+      setDraft((d) =>
+        pendingDict.kind === 'department'
+          ? { ...d, departmentId: match.id }
+          : { ...d, companyId: match.id },
+      );
+      setPendingDict(null);
+    }
+  }, [pendingDict, state.departments, state.companies]);
 
   if (!person) return null;
 
@@ -179,9 +204,6 @@ function PersonProfile({ personId }: { personId: string }) {
           <Avatar person={person} size={44} />
           <span>
             {person.name}
-            {person.accessRole === 'administrator' && (
-              <span className="admin-tag">administrator</span>
-            )}
             <span className="profile-subtitle">
               {[person.role, getDepartment(state, person.departmentId)?.name]
                 .filter(Boolean)
@@ -230,21 +252,11 @@ function PersonProfile({ personId }: { personId: string }) {
               <select
                 id="pp-role"
                 value={draft.role}
-                onChange={(e) => {
-                  const title = e.target.value;
-                  // Sprzężenie stanowisko → rola dostępu: Menadżer → pm,
-                  // Specjalista → pracownik. Nigdy nie degraduje administratora
-                  // i działa tylko, gdy aktor może zmieniać rolę dostępu
-                  // (ręczne nadpisanie selektem roli pozostaje możliwe).
-                  const derived = accessRoleForTitle(title);
-                  setDraft((d) => ({
-                    ...d,
-                    role: title,
-                    ...(derived && allow('accessRole') && d.accessRole !== 'administrator'
-                      ? { accessRole: derived }
-                      : {}),
-                  }));
-                }}
+                onChange={(e) =>
+                  e.target.value === NEW_OPTION_VALUE
+                    ? setQuickAdd('jobTitle')
+                    : set('role', e.target.value)
+                }
                 disabled={!allow('roleTitle')}
                 title={allow('roleTitle') ? undefined : NO_PERM_TITLE}
               >
@@ -254,6 +266,7 @@ function PersonProfile({ personId }: { personId: string }) {
                     {t}
                   </option>
                 ))}
+                <option value={NEW_OPTION_VALUE}>+ Nowe stanowisko…</option>
               </select>
             </div>
             <div className="field">
@@ -261,7 +274,11 @@ function PersonProfile({ personId }: { personId: string }) {
               <select
                 id="pp-dep"
                 value={draft.departmentId}
-                onChange={(e) => set('departmentId', e.target.value)}
+                onChange={(e) =>
+                  e.target.value === NEW_OPTION_VALUE
+                    ? setQuickAdd('department')
+                    : set('departmentId', e.target.value)
+                }
                 disabled={!allow('departmentId')}
                 title={allow('departmentId') ? undefined : NO_PERM_TITLE}
               >
@@ -271,6 +288,7 @@ function PersonProfile({ personId }: { personId: string }) {
                     {d.name}
                   </option>
                 ))}
+                <option value={NEW_OPTION_VALUE}>+ Nowy dział…</option>
               </select>
             </div>
             <div className="field">
@@ -278,7 +296,11 @@ function PersonProfile({ personId }: { personId: string }) {
               <select
                 id="pp-company"
                 value={draft.companyId}
-                onChange={(e) => set('companyId', e.target.value)}
+                onChange={(e) =>
+                  e.target.value === NEW_OPTION_VALUE
+                    ? setQuickAdd('company')
+                    : set('companyId', e.target.value)
+                }
                 disabled={!allow('companyId')}
                 title={allow('companyId') ? undefined : NO_PERM_TITLE}
               >
@@ -288,6 +310,7 @@ function PersonProfile({ personId }: { personId: string }) {
                     {c.name}
                   </option>
                 ))}
+                <option value={NEW_OPTION_VALUE}>+ Nowa spółka…</option>
               </select>
             </div>
           </div>
@@ -351,22 +374,8 @@ function PersonProfile({ personId }: { personId: string }) {
                 title={allow('capacity') ? undefined : NO_PERM_TITLE}
               />
             </div>
-            <div className="field field-narrow">
-              <label htmlFor="pp-role-access">Uprawnienia</label>
-              <select
-                id="pp-role-access"
-                value={draft.accessRole}
-                onChange={(e) => set('accessRole', e.target.value as AccessRole)}
-                disabled={!allow('accessRole')}
-                title={allow('accessRole') ? undefined : NO_PERM_TITLE}
-              >
-                {(Object.keys(ROLE_LABELS) as AccessRole[]).map((r) => (
-                  <option key={r} value={r}>
-                    {ROLE_LABELS[r]}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {/* Pole „Uprawnienia” celowo ukryte (2026-07-22): wszyscy mają rolę
+                „pelne”, a draft.accessRole przenosi zapisaną wartość bez zmian. */}
           </div>
           <div className="field-row">
             <div className="field">
@@ -557,6 +566,65 @@ function PersonProfile({ personId }: { personId: string }) {
           </ul>
         )}
       </div>
+
+      {quickAdd === 'jobTitle' && (
+        <QuickAddModal
+          title="Nowe stanowisko"
+          label="Nazwa stanowiska *"
+          placeholder="np. Specjalista SEO"
+          validate={(n) =>
+            state.jobTitles.some(
+              (j) => j.name.trim().toLocaleLowerCase('pl-PL') === n.toLocaleLowerCase('pl-PL'),
+            )
+              ? 'Takie stanowisko już istnieje'
+              : null
+          }
+          onSubmit={(n) => {
+            dispatch({ type: 'ADD_JOB_TITLE', name: n });
+            // Stanowisko osoby to wolny tekst — nowy wpis wybieramy od razu.
+            set('role', n);
+          }}
+          onClose={() => setQuickAdd(null)}
+        />
+      )}
+      {quickAdd === 'department' && (
+        <QuickAddModal
+          title="Nowy dział"
+          label="Nazwa działu *"
+          placeholder="np. Marketing"
+          validate={(n) =>
+            state.departments.some(
+              (d) => d.name.trim().toLocaleLowerCase('pl-PL') === n.toLocaleLowerCase('pl-PL'),
+            )
+              ? 'Taki dział już istnieje'
+              : null
+          }
+          onSubmit={(n) => {
+            dispatch({ type: 'ADD_DEPARTMENT', name: n });
+            setPendingDict({ kind: 'department', name: n });
+          }}
+          onClose={() => setQuickAdd(null)}
+        />
+      )}
+      {quickAdd === 'company' && (
+        <QuickAddModal
+          title="Nowa spółka"
+          label="Nazwa spółki *"
+          placeholder="np. N2 Rental"
+          validate={(n) =>
+            state.companies.some(
+              (c) => c.name.trim().toLocaleLowerCase('pl-PL') === n.toLocaleLowerCase('pl-PL'),
+            )
+              ? 'Taka spółka już istnieje'
+              : null
+          }
+          onSubmit={(n) => {
+            dispatch({ type: 'ADD_COMPANY', name: n });
+            setPendingDict({ kind: 'company', name: n });
+          }}
+          onClose={() => setQuickAdd(null)}
+        />
+      )}
     </section>
   );
 }

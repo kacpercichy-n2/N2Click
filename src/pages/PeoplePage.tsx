@@ -1,5 +1,5 @@
 // People: employee list + add form (first/last name, job title, department,
-// avatar emoji, daily capacity, admin flag). Click a person for their profile.
+// avatar emoji, daily capacity). Click a person for their profile.
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
@@ -7,13 +7,11 @@ import { useAuth } from '../auth/SessionProvider';
 import { useCan } from '../store/useCan';
 import type { PersonDraft } from '../store/AppStore';
 import { getDepartment, personTotalHours } from '../store/selectors';
-import { ROLE_LABELS } from '../store/permissions';
-import type { AccessRole } from '../types';
 import { Avatar } from '../components/Avatar';
 import { ChevronRight } from '../components/icons';
 import { DEFAULT_CAPACITY, defaultWorkEndMinutes } from '../store/storage';
 import { formatDuration, formatMinutes } from '../utils/time';
-import { accessRoleForTitle, roleTitleOptions } from '../utils/roleTitles';
+import { roleTitleOptions } from '../utils/roleTitles';
 import {
   END_MINUTE_OPTIONS,
   START_MINUTE_OPTIONS,
@@ -32,7 +30,9 @@ const emptyDraft = (): PersonDraft => ({
   companyId: '',
   avatar: '',
   capacity: DEFAULT_CAPACITY,
-  accessRole: 'pracownik',
+  // Decyzja 2026-07-22: każdy nowy członek zespołu dostaje pełne uprawnienia;
+  // pole nie jest już wystawione w formularzu.
+  accessRole: 'pelne',
   workDays: [1, 2, 3, 4, 5],
   workStartMinutes: 480,
   workEndMinutes: defaultWorkEndMinutes(DEFAULT_CAPACITY),
@@ -124,18 +124,7 @@ export function PeoplePage() {
           <select
             id="p-role"
             value={draft.role}
-            onChange={(e) => {
-              const title = e.target.value;
-              // Sprzężenie stanowisko → rola dostępu (bez degradacji admina).
-              const derived = accessRoleForTitle(title);
-              setDraft((d) => ({
-                ...d,
-                role: title,
-                ...(derived && d.accessRole !== 'administrator'
-                  ? { accessRole: derived }
-                  : {}),
-              }));
-            }}
+            onChange={(e) => set('role', e.target.value)}
           >
             <option value="">—</option>
             {roleTitleOptions(state.departments, draft.role).map((t) => (
@@ -201,20 +190,7 @@ export function PeoplePage() {
             onChange={(e) => set('capacity', Number(e.target.value) || DEFAULT_CAPACITY)}
           />
         </div>
-        <div className="field field-narrow">
-          <label htmlFor="p-role-access">Uprawnienia</label>
-          <select
-            id="p-role-access"
-            value={draft.accessRole}
-            onChange={(e) => set('accessRole', e.target.value as AccessRole)}
-          >
-            {(Object.keys(ROLE_LABELS) as AccessRole[]).map((r) => (
-              <option key={r} value={r}>
-                {ROLE_LABELS[r]}
-              </option>
-            ))}
-          </select>
-        </div>
+        {/* Pole „Uprawnienia” celowo ukryte (2026-07-22) — każdy dostaje „pelne”. */}
         <div className="field">
           <label>Dni robocze</label>
           <div className="weekday-chips" role="group" aria-label="Dni robocze">
@@ -303,12 +279,7 @@ export function PeoplePage() {
             <li key={p.id} className="person-row">
               <Avatar person={p} size={36} />
               <Link to={`/people/${p.id}`} className="person-row-main">
-                <span className="person-row-name">
-                  {p.name}
-                  {p.accessRole === 'administrator' && (
-                    <span className="admin-tag">administrator</span>
-                  )}
-                </span>
+                <span className="person-row-name">{p.name}</span>
                 <span className="person-row-sub">
                   {p.role && <span className="person-row-role">{p.role}</span>}
                   {p.departmentId && (

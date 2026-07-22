@@ -9,7 +9,6 @@ import { validateNewPassword } from '../auth/passwordChange';
 import { useStore } from '../store/AppStore';
 import { useOrgData } from '../supabase/OrgDataProvider';
 import type { CloudProfile } from '../supabase/referenceData';
-import { PROVISION_ROLE_LABELS } from './teamScope';
 import { NavOrderEditor } from '../components/NavOrderEditor';
 
 export function AccountPage() {
@@ -169,10 +168,8 @@ function CloudProfileDetails({
         <dt>E-mail</dt>
         <dd>{profile.email || '—'}</dd>
       </div>
-      <div>
-        <dt>Rola</dt>
-        <dd>{PROVISION_ROLE_LABELS[profile.cloudRole]}</dd>
-      </div>
+      {/* Wiersz „Rola” usunięty 2026-07-22 — poziom uprawnień nie jest
+          pokazywany w UI (wszyscy mają pełne). */}
       <div>
         <dt>Dział</dt>
         <dd>{departmentName ?? 'Brak działu'}</dd>

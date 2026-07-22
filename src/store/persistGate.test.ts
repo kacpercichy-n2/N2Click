@@ -132,7 +132,7 @@ describe('shouldSkipLocalPersist', () => {
       const prev = base();
       const next: AppData = { ...prev, lastFilters: { tasks: {
         criteria: {
-          paid: 'all', clientId: '', projectId: '', statusId: '', personId: '',
+          paid: 'all', clientId: '', companyId: '', projectId: '', statusId: '', personId: '',
           priority: '', workCategoryId: '', from: '', to: '',
         },
         personIds: ['x'], departmentId: '', serviceTypeId: '', planning: '',

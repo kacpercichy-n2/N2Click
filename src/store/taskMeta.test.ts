@@ -273,6 +273,7 @@ describe('Work category CRUD', () => {
           criteria: {
             paid: 'all',
             clientId: '',
+            companyId: '',
             projectId: '',
             statusId: '',
             personId: '',
@@ -419,7 +420,7 @@ function personDraft(overrides: Partial<PersonDraft> = {}): PersonDraft {
     companyId: '',
     avatar: '',
     capacity: 8,
-    accessRole: 'pracownik',
+    accessRole: 'ograniczone',
     workDays: [1, 2, 3, 4, 5],
     workStartMinutes: 480,
     workEndMinutes: 960,
@@ -441,7 +442,7 @@ function makePerson(overrides: Partial<Person> & { id: string }): Person {
     companyId: '',
     avatar: '',
     capacity: 8,
-    accessRole: 'administrator',
+    accessRole: 'pelne',
     passwordHash: '',
     workDays: [1, 2, 3, 4, 5],
     workStartMinutes: 480,
@@ -472,7 +473,7 @@ describe('Person capacity clamp (defense-in-depth [1, 24])', () => {
     const next = reducer(state, {
       type: 'UPDATE_PERSON',
       personId: 'p1',
-      person: personDraft({ firstName: 'Ala', accessRole: 'administrator', capacity: 999 }),
+      person: personDraft({ firstName: 'Ala', accessRole: 'pelne', capacity: 999 }),
     });
     expect(next.people.find((p) => p.id === 'p1')!.capacity).toBe(24);
   });

@@ -69,7 +69,7 @@ const ADMIN: Person = {
   avatar: '',
   capacity: 8,
   phone: '',
-  accessRole: 'administrator',
+  accessRole: 'pelne',
   passwordHash: '',
   workDays: [1, 2, 3, 4, 5],
   workStartMinutes: 480,
@@ -77,8 +77,8 @@ const ADMIN: Person = {
   supervisorId: '',
   birthDate: '',
 };
-const WORKER: Person = { ...ADMIN, id: 'p2', firstName: 'Jan', lastName: 'Nowak', name: 'Jan Nowak', accessRole: 'pracownik' };
-const WORKER3: Person = { ...ADMIN, id: 'p3', firstName: 'Ewa', lastName: 'Wiśniewska', name: 'Ewa Wiśniewska', accessRole: 'pracownik' };
+const WORKER: Person = { ...ADMIN, id: 'p2', firstName: 'Jan', lastName: 'Nowak', name: 'Jan Nowak', accessRole: 'ograniczone' };
+const WORKER3: Person = { ...ADMIN, id: 'p3', firstName: 'Ewa', lastName: 'Wiśniewska', name: 'Ewa Wiśniewska', accessRole: 'ograniczone' };
 
 /** Fresh valid AppData per call; caller may override identity fields. */
 function makeState(overrides: Partial<ReturnType<typeof emptyData>> = {}) {
@@ -106,7 +106,7 @@ function personDraft(overrides: Partial<PersonDraft> = {}): PersonDraft {
     companyId: '',
     avatar: '',
     capacity: 8,
-    accessRole: 'pracownik',
+    accessRole: 'ograniczone',
     workDays: [1, 2, 3, 4, 5],
     workStartMinutes: 480,
     workEndMinutes: 960,
@@ -325,13 +325,13 @@ describe('10. ADD_PERSON / UPDATE_PERSON', () => {
     const next = reducer(state, {
       type: 'UPDATE_PERSON',
       personId: 'p2',
-      person: personDraft({ firstName: 'Jan', lastName: 'Nowak', accessRole: 'pm' }),
+      person: personDraft({ firstName: 'Jan', lastName: 'Nowak', accessRole: 'pelne' }),
     });
     expect(next.activity.length).toBe(state.activity.length + 1);
     const row = lastRow(next);
     expect(row.message).toContain('rola:');
-    expect(row.message).toContain(ROLE_LABELS.pracownik);
-    expect(row.message).toContain(ROLE_LABELS.pm);
+    expect(row.message).toContain(ROLE_LABELS.ograniczone);
+    expect(row.message).toContain(ROLE_LABELS.pelne);
   });
 
   it('UPDATE_PERSON without role change logs a plain update row', () => {
@@ -339,7 +339,7 @@ describe('10. ADD_PERSON / UPDATE_PERSON', () => {
     const next = reducer(state, {
       type: 'UPDATE_PERSON',
       personId: 'p2',
-      person: personDraft({ firstName: 'Janek', lastName: 'Nowak', accessRole: 'pracownik' }),
+      person: personDraft({ firstName: 'Janek', lastName: 'Nowak', accessRole: 'ograniczone' }),
     });
     expect(next.activity.length).toBe(state.activity.length + 1);
     expect(lastRow(next).message).toBe('zaktualizował(a) dane osoby „Janek Nowak”');
@@ -350,7 +350,7 @@ describe('10. ADD_PERSON / UPDATE_PERSON', () => {
     const next = reducer(state, {
       type: 'UPDATE_PERSON',
       personId: 'p1',
-      person: personDraft({ firstName: 'Anna', lastName: 'Kowalska', accessRole: 'pracownik' }),
+      person: personDraft({ firstName: 'Anna', lastName: 'Kowalska', accessRole: 'ograniczone' }),
     });
     expect(next).toBe(state);
   });

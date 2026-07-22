@@ -109,7 +109,7 @@ export function personForTreeNode(input: {
     departmentId: '',
     avatar: input.avatar,
     capacity: 8,
-    accessRole: 'pracownik',
+    accessRole: 'pelne',
     passwordHash: '',
     workDays: [1, 2, 3, 4, 5],
     workStartMinutes: 480,

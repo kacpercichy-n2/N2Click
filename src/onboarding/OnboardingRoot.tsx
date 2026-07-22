@@ -123,7 +123,7 @@ function isModuleComplete(prefs: UiPrefs, ownerKey: string, moduleId: TutorialMo
 
 function resolveRoute(route: string, role: Person['accessRole'] | undefined, current: string): string {
   if (route === '@current') return current;
-  if (route === '@home') return role === 'pracownik' ? '/my-work' : '/dashboard';
+  if (route === '@home') return role === 'ograniczone' ? '/my-work' : '/dashboard';
   return route;
 }
 

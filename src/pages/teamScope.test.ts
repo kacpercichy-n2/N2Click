@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   NO_DEPARTMENT_LABEL,
-  PROVISION_ROLE_LABELS,
+  PROVISION_ROLE_OPTIONS,
   buildCloudTeamHierarchy,
   buildOrgChart,
   buildProvisionRequest,
@@ -38,7 +38,7 @@ function person(overrides: Partial<Person> = {}): Person {
     companyId: '',
     avatar: '',
     capacity: 8,
-    accessRole: 'pracownik',
+    accessRole: 'pelne',
     passwordHash: '',
     workDays: [1, 2, 3, 4, 5],
     workStartMinutes: 480,
@@ -49,31 +49,15 @@ function person(overrides: Partial<Person> = {}): Person {
   };
 }
 
-describe('teamAccessForUser / canViewTeam — cztery role lokalne', () => {
-  it('ukrywa obszar dla pracownika (worker)', () => {
-    const user = person({ accessRole: 'pracownik' });
-    expect(teamAccessForUser(user)).toEqual({ visible: false });
-    expect(canViewTeam(user)).toBe(false);
-  });
-
-  it('ukrywa obszar dla handlowca (worker)', () => {
-    const user = person({ accessRole: 'handlowiec' });
-    expect(teamAccessForUser(user)).toEqual({ visible: false });
-    expect(canViewTeam(user)).toBe(false);
-  });
-
-  it('daje menedżerowi (pm) zakres własnego działu', () => {
-    const user = person({ accessRole: 'pm', departmentId: 'dep-marketing' });
-    expect(teamAccessForUser(user)).toEqual({
-      visible: true,
-      scope: 'department',
-      departmentId: 'dep-marketing',
-    });
+describe('teamAccessForUser / canViewTeam — po kolapsie ról', () => {
+  it('daje każdemu zalogowanemu (rola „pełne") zakres wszystkich działów', () => {
+    const user = person({ accessRole: 'pelne' });
+    expect(teamAccessForUser(user)).toEqual({ visible: true, scope: 'all' });
     expect(canViewTeam(user)).toBe(true);
   });
 
-  it('daje administratorowi zakres wszystkich działów', () => {
-    const user = person({ accessRole: 'administrator' });
+  it('daje każdemu zalogowanemu (rola „ograniczone") zakres wszystkich działów', () => {
+    const user = person({ accessRole: 'ograniczone', departmentId: 'dep-marketing' });
     expect(teamAccessForUser(user)).toEqual({ visible: true, scope: 'all' });
     expect(canViewTeam(user)).toBe(true);
   });
@@ -92,7 +76,7 @@ describe('buildTeamHierarchy', () => {
     { id: 'd-sales', name: 'Dział handlowy' },
   ];
   const people: Person[] = [
-    person({ id: 'boss', name: 'Szef Działu', accessRole: 'pm', departmentId: 'd-mkt', role: 'Kierownik' }),
+    person({ id: 'boss', name: 'Szef Działu', accessRole: 'pelne', departmentId: 'd-mkt', role: 'Kierownik' }),
     person({ id: 'm1', name: 'Marek Marketing', departmentId: 'd-mkt', role: 'Specjalista', supervisorId: 'boss' }),
     person({ id: 'des', name: 'Dorota Design', departmentId: 'd-design', role: 'Projektantka' }),
     person({ id: 'lost', name: 'Bez Działu', departmentId: '' }),
@@ -103,7 +87,7 @@ describe('buildTeamHierarchy', () => {
     expect(buildTeamHierarchy(people, departments, { visible: false })).toEqual([]);
   });
 
-  it('administrator widzi wszystkie działy oraz grupę „Bez działu"', () => {
+  it('każdy zalogowany widzi wszystkie działy oraz grupę „Bez działu"', () => {
     const groups = buildTeamHierarchy(people, departments, { visible: true, scope: 'all' });
     const names = groups.map((g) => g.name);
     expect(names).toEqual([
@@ -118,26 +102,13 @@ describe('buildTeamHierarchy', () => {
     expect(orphan?.people.map((p) => p.id).sort()).toEqual(['ghost', 'lost']);
   });
 
-  it('menedżer widzi wyłącznie własny dział', () => {
-    const groups = buildTeamHierarchy(people, departments, {
-      visible: true,
-      scope: 'department',
-      departmentId: 'd-mkt',
-    });
-    expect(groups).toHaveLength(1);
-    expect(groups[0].name).toBe('Marketing');
-    expect(groups[0].people.map((p) => p.id).sort()).toEqual(['boss', 'm1']);
-  });
-
-  it('renderuje stanowisko, etykietę roli dostępu i przełożonego', () => {
+  it('renderuje stanowisko i przełożonego (etykieta roli dostępu zniknęła z widoku)', () => {
     const groups = buildTeamHierarchy(people, departments, { visible: true, scope: 'all' });
     const mkt = groups.find((g) => g.id === 'd-mkt')!;
     const marek = mkt.people.find((p) => p.id === 'm1')!;
     expect(marek.roleTitle).toBe('Specjalista');
-    expect(marek.accessRoleLabel).toBe('Pracownik');
     expect(marek.supervisorName).toBe('Szef Działu');
     const boss = mkt.people.find((p) => p.id === 'boss')!;
-    expect(boss.accessRoleLabel).toBe('PM');
     expect(boss.supervisorName).toBe('');
   });
 });
@@ -160,8 +131,7 @@ describe('buildCloudTeamHierarchy', () => {
     const groups = buildCloudTeamHierarchy(profiles, departments);
     expect(groups.map((g) => g.name)).toEqual(['Kreacja', 'Strategia']);
     const ada = groups[0].people[0];
-    expect(ada).toMatchObject({ name: 'Ada Admin', roleTitle: 'Szef', accessRoleLabel: 'Administrator', supervisorName: '' });
-    expect(groups[1].people[0].accessRoleLabel).toBe('Menedżer');
+    expect(ada).toMatchObject({ name: 'Ada Admin', roleTitle: 'Szef', supervisorName: '' });
     expect(groups[1].people[0].supervisorName).toBe('Ada Admin');
   });
 
@@ -286,13 +256,12 @@ describe('buildOrgChart — drzewo struktury z relacji przełożony → podwład
   });
 });
 
-describe('PROVISION_ROLE_LABELS', () => {
-  it('mapuje trzy role dostępu na polskie etykiety', () => {
-    expect(PROVISION_ROLE_LABELS).toEqual({
-      administrator: 'Administrator',
-      manager: 'Menedżer',
-      worker: 'Pracownik',
-    });
+describe('PROVISION_ROLE_OPTIONS', () => {
+  it('daje dwie opcje selecta: administrator→Pełne, worker→Ograniczone', () => {
+    expect(PROVISION_ROLE_OPTIONS).toEqual([
+      { value: 'administrator', label: 'Pełne' },
+      { value: 'worker', label: 'Ograniczone' },
+    ]);
   });
 });
 
@@ -348,19 +317,19 @@ describe('buildProvisionRequest — walidacja (reużycie kontraktu)', () => {
     expect(result).toEqual({ ok: false, message: PROVISIONING_MESSAGES.departmentIdInvalid });
   });
 
-  it('emptyProvisionForm startuje z rolą worker i pustymi polami', () => {
+  it('emptyProvisionForm startuje z rolą administrator (pełne) i pustymi polami', () => {
     const form = emptyProvisionForm();
-    expect(form.accessRole).toBe('worker');
+    expect(form.accessRole).toBe('administrator');
     expect(form.departmentId).toBe('');
     expect(form.managerProfileId).toBe('');
   });
 });
 
-// Test kontrolny: żaden akceptowany dla /team lokalny accessRole nie jest
-// pominięty w mapowaniu (dokumentuje pełną enum lokalnych ról).
+// Test kontrolny: obie lokalne role po kolapsie mają zdefiniowaną widoczność
+// (dokumentuje pełną enum lokalnych ról: pełne/ograniczone).
 describe('kompletność mapowania ról', () => {
   it('każda lokalna rola ma zdefiniowaną widoczność', () => {
-    const roles: AccessRole[] = ['administrator', 'pm', 'handlowiec', 'pracownik'];
+    const roles: AccessRole[] = ['pelne', 'ograniczone'];
     for (const role of roles) {
       const access = teamAccessForUser(person({ accessRole: role }));
       expect(typeof access.visible).toBe('boolean');

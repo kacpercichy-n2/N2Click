@@ -6,11 +6,14 @@ import {
   activeStatuses,
   assigneeIdsOfTask,
   assigneesOfTask,
+  defaultCriteriaForUser,
   getClient,
+  getCompany,
   getPerson,
   getProject,
   getStatus,
   getWorkCategory,
+  projectMatchesCompanyFilter,
   taskPlannedTotal,
   taskPlanningStatus,
   PLANNING_STATUSES,
@@ -44,13 +47,15 @@ export function TasksPage() {
   // nawigację i przeładowanie. Każdy setter wysyła pełny, znormalizowany snapshot
   // przez `SET_LAST_FILTER` (reduktor no-opuje zapis wartościowo identyczny).
   const remembered = state.lastFilters.tasks;
-  const criteria: SavedFilterCriteria = remembered?.criteria ?? DEFAULT_CRITERIA;
+  // Wartość inicjalna (bez zapamiętanego filtra) zawęża do spółki zalogowanego.
+  const criteria: SavedFilterCriteria = remembered?.criteria ?? defaultCriteriaForUser(state);
   const clientFilter = criteria.clientId;
   const projectFilter = criteria.projectId;
   const statusFilter = criteria.statusId;
   const personFilter = criteria.personId;
   const priorityFilter = criteria.priority;
   const categoryFilter = criteria.workCategoryId;
+  const companyFilter = criteria.companyId;
   const from = criteria.from;
   const to = criteria.to;
   // Filtr planowania (single-select). NIE jest częścią `criteria`/presetów, ale
@@ -77,6 +82,7 @@ export function TasksPage() {
   const setPriorityFilter = (v: '' | TaskPriority) =>
     commit({ ...criteria, priority: v }, planningFilter);
   const setCategoryFilter = (v: string) => commit({ ...criteria, workCategoryId: v }, planningFilter);
+  const setCompanyFilter = (v: string) => commit({ ...criteria, companyId: v }, planningFilter);
   const setFrom = (v: string) => commit({ ...criteria, from: v }, planningFilter);
   const setTo = (v: string) => commit({ ...criteria, to: v }, planningFilter);
   const setPlanningFilter = (v: '' | PlanningStatus) => commit(criteria, v);
@@ -110,6 +116,14 @@ export function TasksPage() {
         if (planningFilter && taskPlanningStatus(state, t.id) !== planningFilter) return false;
         if (priorityFilter && t.priority !== priorityFilter) return false;
         if (categoryFilter && t.workCategoryId !== categoryFilter) return false;
+        // Spółka wykonawcza zadania = spółka jego PROJEKTU (projekt „neutralny”
+        // bez spółki pasuje zawsze — patrz projectMatchesCompanyFilter).
+        if (
+          companyFilter &&
+          !projectMatchesCompanyFilter(getProject(state, t.projectId) ?? {}, companyFilter)
+        ) {
+          return false;
+        }
         // Period-overlap on the task span: [startDate, endDate] vs [from, to].
         if (from && t.endDate < from) return false;
         if (to && t.startDate > to) return false;
@@ -125,6 +139,7 @@ export function TasksPage() {
       planningFilter,
       priorityFilter,
       categoryFilter,
+      companyFilter,
       from,
       to,
     ],
@@ -211,6 +226,16 @@ export function TasksPage() {
         ...PLANNING_STATUSES.map((s) => ({ value: s, label: s })),
       ],
     },
+    {
+      key: 'company',
+      label: 'Spółka',
+      value: companyFilter,
+      onChange: setCompanyFilter,
+      options: [
+        { value: '', label: 'Wszystkie spółki' },
+        ...state.companies.map((c) => ({ value: c.id, label: c.name })),
+      ],
+    },
   ];
 
   const activeCount =
@@ -221,6 +246,7 @@ export function TasksPage() {
     (planningFilter ? 1 : 0) +
     (priorityFilter ? 1 : 0) +
     (categoryFilter ? 1 : 0) +
+    (companyFilter ? 1 : 0) +
     (from ? 1 : 0) +
     (to ? 1 : 0);
 
@@ -266,6 +292,12 @@ export function TasksPage() {
       key: 'category',
       label: `Kategoria: ${getWorkCategory(state, categoryFilter)?.name ?? '—'}`,
       onRemove: () => setCategoryFilter(''),
+    });
+  if (companyFilter)
+    chips.push({
+      key: 'company',
+      label: `Spółka: ${getCompany(state, companyFilter)?.name ?? '—'}`,
+      onRemove: () => setCompanyFilter(''),
     });
   if (from) chips.push({ key: 'from', label: `Od: ${formatShort(from)}`, onRemove: () => setFrom('') });
   if (to) chips.push({ key: 'to', label: `Do: ${formatShort(to)}`, onRemove: () => setTo('') });

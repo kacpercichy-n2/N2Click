@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
-import { accessRoleForTitle, roleTitleOptions } from '../utils/roleTitles';
+import { roleTitleOptions } from '../utils/roleTitles';
 import { currentUser as currentUserSel, isImpersonating } from '../store/selectors';
 import { useAuth } from '../auth/SessionProvider';
 import { getSupabaseClient } from '../supabase/client';
@@ -16,7 +16,7 @@ import { provisionAccount } from '../supabase/provisioning';
 import { useOrgData } from '../supabase/OrgDataProvider';
 import { effectiveAccessRole } from '../supabase/referenceData';
 import {
-  PROVISION_ROLE_LABELS,
+  PROVISION_ROLE_OPTIONS,
   buildCloudTeamHierarchy,
   buildProvisionRequest,
   buildTeamHierarchy,
@@ -68,16 +68,17 @@ export function TeamPage() {
   });
   const effectiveMe = me && effectiveRole ? { ...me, accessRole: effectiveRole } : me;
 
-  // Gate UX: obszar niewidoczny dla worker (pracownik/handlowiec) → redirect.
+  // Gate UX: obszar widoczny dla każdego zalogowanego (2026-07-22) — redirect
+  // zostaje wyłącznie dla braku tożsamości.
   if (!canViewTeam(effectiveMe)) {
     return <Navigate to="/dashboard" replace />;
   }
 
   const isSupabase = auth.mode === 'supabase';
 
-  // Zakładanie konta jest za jawną akcją i tylko dla lokalnego administratora w
-  // trybie supabase. W trybie lokalnym pokazujemy krótką informację zamiast akcji.
-  const isAdmin = me?.accessRole === 'administrator';
+  // Zakładanie konta jest za jawną akcją i tylko dla roli `pelne` w trybie
+  // supabase. W trybie lokalnym pokazujemy krótką informację zamiast akcji.
+  const isAdmin = me?.accessRole === 'pelne';
   const canProvision = isAdmin && isSupabase;
 
   return (
@@ -191,7 +192,6 @@ function HierarchyGroups({
                   </span>
                   <span className="team-person-meta">
                     {p.roleTitle && <span className="team-person-role">{p.roleTitle}</span>}
-                    <span className="team-person-access">{p.accessRoleLabel}</span>
                     {!supervisorEdit && p.supervisorName && (
                       <span className="team-person-sup">Przełożony: {p.supervisorName}</span>
                     )}
@@ -226,14 +226,13 @@ function HierarchyGroups({
 }
 
 /**
- * Osoby lokalnego store'u zawężone do zakresu roli (administrator: wszyscy,
- * menedżer: własny dział). Ten sam zbiór, na którym budujemy zarówno listę, jak
- * i drzewo struktury — spójność między widokami.
+ * Osoby lokalnego store'u dla obszaru Zespół. Od 2026-07-22 każdy zalogowany
+ * widzi wszystkich — zakres roli już nie zawęża zbioru; ten sam zbiór buduje
+ * listę i drzewo struktury (spójność między widokami).
  */
 function scopedLocalPeople(people: Person[], access: ReturnType<typeof teamAccessForUser>): Person[] {
   if (!access.visible) return [];
-  if (access.scope === 'all') return people;
-  return people.filter((p) => p.departmentId === access.departmentId);
+  return people;
 }
 
 /** Hierarchia z lokalnego store'u (tryb lokalny): lista albo drzewo struktury. */
@@ -522,20 +521,7 @@ function ProvisionSection() {
             <select
               id="t-role-title"
               value={form.roleTitle}
-              onChange={(e) => {
-                const title = e.target.value;
-                // Sprzężenie stanowisko → rola dostępu (chmurowe nazwy:
-                // Menadżer → manager, Specjalista → worker); wybranego
-                // ręcznie administratora nigdy nie degradujemy.
-                const derived = accessRoleForTitle(title);
-                setForm((f) => ({
-                  ...f,
-                  roleTitle: title,
-                  ...(derived && f.accessRole !== 'administrator'
-                    ? { accessRole: (derived === 'pm' ? 'manager' : 'worker') as ProvisionAccessRole }
-                    : {}),
-                }));
-              }}
+              onChange={(e) => set('roleTitle', e.target.value)}
             >
               <option value="">—</option>
               {roleTitleOptions(state.departments, form.roleTitle).map((t) => (
@@ -552,9 +538,9 @@ function ProvisionSection() {
               value={form.accessRole}
               onChange={(e) => set('accessRole', e.target.value as ProvisionAccessRole)}
             >
-              {(Object.keys(PROVISION_ROLE_LABELS) as ProvisionAccessRole[]).map((r) => (
-                <option key={r} value={r}>
-                  {PROVISION_ROLE_LABELS[r]}
+              {PROVISION_ROLE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
                 </option>
               ))}
             </select>

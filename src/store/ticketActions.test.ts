@@ -21,7 +21,7 @@ function person(): Person {
     companyId: '',
     avatar: '',
     capacity: 8,
-    accessRole: 'administrator',
+    accessRole: 'pelne',
     passwordHash: '',
     workDays: [1, 2, 3, 4, 5],
     workStartMinutes: 480,

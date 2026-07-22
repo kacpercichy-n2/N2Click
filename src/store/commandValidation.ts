@@ -392,6 +392,10 @@ export function sanitizeFilterCriteria(state: AppData, raw: unknown): SavedFilte
   const rawCategory = asString(obj.workCategoryId);
   const workCategoryId =
     rawCategory !== '' && state.workCategories.some((c) => c.id === rawCategory) ? rawCategory : '';
+  // Spółka (additive 2026-07-22): dangling id → '' — jak workCategoryId.
+  const rawCompany = asString(obj.companyId);
+  const companyId =
+    rawCompany !== '' && state.companies.some((c) => c.id === rawCompany) ? rawCompany : '';
   const from = isValidDateStr(asString(obj.from)) ? asString(obj.from) : '';
   const to = isValidDateStr(asString(obj.to)) ? asString(obj.to) : '';
   return {
@@ -402,6 +406,7 @@ export function sanitizeFilterCriteria(state: AppData, raw: unknown): SavedFilte
     personId: asString(obj.personId),
     priority,
     workCategoryId,
+    companyId,
     from,
     to,
   };
@@ -457,6 +462,7 @@ export function lastViewFilterEqual(a: LastViewFilter, b: LastViewFilter): boole
     ca.personId === cb.personId &&
     ca.priority === cb.priority &&
     ca.workCategoryId === cb.workCategoryId &&
+    ca.companyId === cb.companyId &&
     ca.from === cb.from &&
     ca.to === cb.to
   );
