@@ -6041,6 +6041,17 @@ a.toggle-btn {
   flex-wrap: wrap;
   margin-bottom: 12px;
 }
+/* Wiersz wykonanego zgłoszenia (tab „Wykonane”): zielone tło + lewa belka,
+   żeby status był czytelny na pierwszy rzut oka. */
+.ticket-row-done > td {
+  background: var(--n2-success-soft);
+}
+.ticket-row-done > td:first-child {
+  box-shadow: inset 3px 0 0 var(--n2-success);
+}
+.ticket-row-done .ticket-title-btn {
+  color: var(--n2-success);
+}
 .ticket-count {
   color: var(--text-muted);
   font-size: var(--n2-type-sm);
