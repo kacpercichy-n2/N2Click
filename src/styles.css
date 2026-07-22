@@ -1638,6 +1638,28 @@ option {
   background-color: rgba(196, 150, 255, 0.06);
 }
 
+/* Drop-slot preview while dragging a bin card over a day column: a translucent
+   band at the EXACT top/height the drop will dispatch, so what you see is where
+   it lands. Lavender when placeable, danger when it would collide (mirrors the
+   ghost's red state). pointer-events: none is load-bearing — it must be
+   invisible to document.elementFromPoint hit-testing; z-index sits below
+   .week-block.dragging (30). Portalled into the target .week-day-col. */
+.week-drop-preview {
+  position: absolute;
+  left: 1px;
+  right: 2px;
+  box-sizing: border-box;
+  border: 1px dashed var(--n2-lavender);
+  border-radius: var(--n2-radius-xs);
+  background: rgba(196, 150, 255, 0.14);
+  pointer-events: none;
+  z-index: 20;
+}
+.week-drop-preview.colliding {
+  border-color: var(--n2-danger);
+  background: var(--n2-danger-soft, rgba(255, 79, 114, 0.16));
+}
+
 /* Linia „teraz” w dzisiejszej kolumnie: nad statycznymi blokami (z-index 10),
    pod przeciąganym blokiem (.dragging ma 30). pointer-events: none — czysto
    prezentacyjna, nie może przechwycić dragu ani hit-testingu siatki. */
@@ -2074,6 +2096,20 @@ option {
   margin: 0;
   pointer-events: none;
   transition: none;
+  box-shadow: var(--n2-shadow-violet, 0 8px 24px rgba(0, 0, 0, 0.4));
+}
+/* Fixed drag ghost for a timed block dragged over the bin pane — mirrors
+   .week-bin-ghost. Escapes the days-viewport overflow that clips the in-column
+   block, so the card can be seen riding over the bin. Purely visual: no pointer
+   events. The compound selector overrides .week-block's absolute positioning. */
+.week-block.week-drag-ghost {
+  position: fixed;
+  z-index: 1000;
+  margin: 0;
+  transform: none;
+  pointer-events: none;
+  transition: none;
+  opacity: 0.96;
   box-shadow: var(--n2-shadow-violet, 0 8px 24px rgba(0, 0, 0, 0.4));
 }
 .week-bin-block-title {

@@ -45,3 +45,10 @@ contacts), reducer ADD/SAVE_CLIENT + mergeCloudEntities (invariant 6),
 repairClients, cloud round-trip, migration 20260722130000 (not applied),
 ClientsPage expand/collapse + clientContactForm.ts + CSS, seed. Focused +
 full `npm test`: 1358 passed. `npm run build`: green. Wiki updated.
+
+## 20260722-134519 calendar-dnd-snap (developer)
+time.ts: dropStartFromAnchor helper. WeekView: BinCard drop now anchors on
+card-top (grabY) + in-column .week-drop-preview portal; TimedBlock DragState +
+over-bin fixed portal ghost. styles.css: .week-drop-preview/.week-drag-ghost.
+No reducer/collision/pointer-lifecycle changes. Focused vitest 51 pass; npm test
+1365 pass; build green. Wiki unchanged (boundaries/invariants/routes intact).

@@ -58,6 +58,7 @@ import {
   MINUTE_STEP,
   blockEndMinutes,
   clampBlockStart,
+  dropStartFromAnchor,
   findFreeStart,
   formatDuration,
   formatMinutes,
@@ -142,6 +143,17 @@ interface DragState {
   mode: DragMode;
   originX: number;
   originY: number;
+  // Pointer position + grab offset + block size captured for the fixed portal
+  // ghost that rides over the bin pane (a move drag toward the bin is clipped by
+  // the days viewport overflow, so the in-column block can never appear there).
+  // Additive presentational fields only — set in begin()/onPointerMove(), never
+  // read by the drop dispatch or the cancel paths.
+  clientX: number;
+  clientY: number;
+  grabX: number;
+  grabY: number;
+  width: number;
+  height: number;
   colWidth: number;
   projStart: number; // projected startMinutes
   projHours: number; // projected plannedHours
@@ -283,6 +295,11 @@ function TimedBlock({
     moved.current = false;
     const rect = gridRef.current?.getBoundingClientRect();
     const colWidth = rect ? rect.width / DAY_COLS : 0;
+    // Block geometry for the over-bin ghost: grab offset keeps it aligned under
+    // the pointer; width/height keep its size out of flow. For the top/bottom
+    // resize handles currentTarget is the handle span, but the ghost only renders
+    // for a move drag over the bin, so those captured values are never used.
+    const blockRect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     // Capture the grow allowance ONCE at drag start (state won't change mid-drag).
     // Always a number now: bin hours + headroom (0 for null-estimate tasks).
     const maxHours = baseHours + growAllowanceHours(state, entry.id);
@@ -290,6 +307,12 @@ function TimedBlock({
       mode,
       originX: e.clientX,
       originY: e.clientY,
+      clientX: e.clientX,
+      clientY: e.clientY,
+      grabX: e.clientX - blockRect.left,
+      grabY: e.clientY - blockRect.top,
+      width: blockRect.width,
+      height: blockRect.height,
       colWidth,
       projStart: baseStart,
       projHours: baseHours,
@@ -410,6 +433,8 @@ function TimedBlock({
 
     const nextDrag: DragState = {
       ...activeDrag,
+      clientX: e.clientX,
+      clientY: e.clientY,
       projStart,
       projHours,
       projDayIndex,
@@ -498,6 +523,7 @@ function TimedBlock({
     .join(' ');
 
   return (
+    <>
     <div
       className={className}
       data-tour="calendar.block"
@@ -565,6 +591,38 @@ function TimedBlock({
         <span className="week-block-handle bottom" onPointerDown={begin('bottom')} aria-hidden />
       )}
     </div>
+    {/* Over-bin ghost: a fixed portal copy of the block riding under the pointer
+        while a move drag is over the bin pane. The in-column block is clipped by
+        the days viewport overflow and can never appear over the sibling bin, so
+        this ghost (like BinCard's) escapes to <body>. Purely presentational:
+        pointer-events: none, aria-hidden, no drag handlers; it renders from
+        `drag`, so any cancel/finish path removes it. */}
+    {drag &&
+      drag.mode === 'move' &&
+      drag.overBin &&
+      createPortal(
+        <div
+          className="week-block week-drag-ghost to-bin"
+          style={{
+            left: drag.clientX - drag.grabX,
+            top: drag.clientY - drag.grabY,
+            width: drag.width || undefined,
+            height: drag.height || undefined,
+            borderLeftColor: personColor(person.id),
+          }}
+          aria-hidden
+        >
+          <span className="week-block-title">
+            {project && <Coin paid={project.paid} size={12} />}
+            {task.title}
+          </span>
+          <span className="week-block-time">
+            {formatMinutes(start)}–{formatMinutes(end)}
+          </span>
+        </div>,
+        document.body,
+      )}
+    </>
   );
 }
 
@@ -746,8 +804,12 @@ function BinCard({
       colIndex = valid ? hitIndex : -1;
 
       const dur = entry.plannedHours * 60;
-      const relY = clientY - gridRect.top;
-      startMin = clampBlockStart(snapToStep((relY / HOUR_PX) * 60), dur);
+      // Anchor the drop to the ghost card's TOP edge (clientY − grabY), NOT the
+      // cursor: the visible ghost's top sits at `clientY − grabY`, so mapping the
+      // cursor would land the block `grabY` px below where the card points. The
+      // column (X) stays cursor-based; only this vertical slot uses the card top.
+      const anchorY = clientY - activeDrag.grabY;
+      startMin = dropStartFromAnchor(anchorY - gridRect.top, HOUR_PX, dur);
       colliding = unplaceable
         ? true
         : valid
@@ -973,6 +1035,34 @@ function BinCard({
           </div>,
           document.body,
         )}
+      {/* In-column drop-slot preview: a purely presentational band showing the
+          EXACT slot the drop will land in (same top/height SET_BLOCK_TIME would
+          dispatch). Portalled into the target day column so it scrolls with the
+          grid; pointer-events: none keeps it invisible to elementFromPoint. It
+          renders straight from `drag`, so any cancel/finish path (which clears
+          `drag`) removes it — no extra listeners. */}
+      {drag &&
+        drag.valid &&
+        drag.colIndex >= 0 &&
+        (() => {
+          const column = gridRef.current?.querySelector<HTMLElement>(
+            `.week-day-col[data-day-index="${drag.colIndex}"]`,
+          );
+          if (!column) return null;
+          return createPortal(
+            <div
+              className={['week-drop-preview', drag.colliding ? 'colliding' : '']
+                .filter(Boolean)
+                .join(' ')}
+              style={{
+                top: (drag.startMin / 60) * HOUR_PX,
+                height: entry.plannedHours * HOUR_PX,
+              }}
+              aria-hidden
+            />,
+            column,
+          );
+        })()}
     </>
   );
 }

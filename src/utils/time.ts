@@ -58,6 +58,30 @@ export function slotStartFromOffset(offsetPx: number, pxPerHour: number): number
   return Math.max(0, Math.min(raw, DAY_MINUTES - MINUTE_STEP));
 }
 
+/**
+ * Snapped, clamped startMinutes for a dragged card whose TOP edge sits at
+ * `anchorOffsetPx` inside a timed column. Magnetic: rounds to the nearest
+ * 15-minute slot, then clamps so `durationMin` fits in the day. Non-finite or
+ * non-positive geometry falls back to 0. Unlike `slotStartFromOffset` (a bare
+ * cursor→slot mapping), this anchors on the card top and reserves room for the
+ * whole block so what the drop-preview shows is exactly where the drop lands.
+ */
+export function dropStartFromAnchor(
+  anchorOffsetPx: number,
+  pxPerHour: number,
+  durationMin: number,
+): number {
+  if (
+    !Number.isFinite(anchorOffsetPx) ||
+    !Number.isFinite(pxPerHour) ||
+    !Number.isFinite(durationMin) ||
+    pxPerHour <= 0
+  ) {
+    return 0;
+  }
+  return clampBlockStart(snapToStep((anchorOffsetPx / pxPerHour) * 60), durationMin);
+}
+
 /** Format minutes-from-midnight as '8:00' / '13:45'. */
 export function formatMinutes(m: number): string {
   const h = Math.floor(m / 60);
