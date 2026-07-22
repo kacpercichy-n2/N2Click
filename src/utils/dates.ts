@@ -219,6 +219,16 @@ export function shiftMonth(d: DateStr, delta: number): DateStr {
   return toDateStr(addMonths(parseDate(d), delta));
 }
 
+/** First calendar day of the month containing d ('yyyy-MM-01'). */
+export function monthStart(d: DateStr): DateStr {
+  return toDateStr(startOfMonth(parseDate(d)));
+}
+
+/** Last calendar day of the month containing d (28–31 depending on month). */
+export function monthEnd(d: DateStr): DateStr {
+  return toDateStr(endOfMonth(parseDate(d)));
+}
+
 export function monthLabel(d: DateStr): string {
   return format(parseDate(d), 'LLLL yyyy', { locale: pl });
 }

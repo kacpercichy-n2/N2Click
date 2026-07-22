@@ -9,6 +9,7 @@ import { useCan } from '../store/useCan';
 import { DEFAULT_FILTER_CRITERIA } from '../store/storage';
 import { useOpenTask } from '../components/TaskModal';
 import { PersonFilter } from '../components/PersonFilter';
+import { FilterPanel, type FilterChip, type FilterGroup } from '../components/FilterPanel';
 import { ZoomIn, ZoomOut } from '../components/icons';
 import type { Milestone, Person, Project, SavedFilterCriteria, Task } from '../types';
 import {
@@ -30,22 +31,22 @@ import {
   diffDays,
   formatShort,
   isWeekend,
-  shiftWeek,
   todayStr,
   weekStart,
 } from '../utils/dates';
+import {
+  DEFAULT_ZOOM_LEVEL,
+  canZoomIn as canZoomInLevel,
+  canZoomOut as canZoomOutLevel,
+  shiftAnchor,
+  zoomIn as zoomInLevel,
+  zoomOut as zoomOutLevel,
+  zoomView,
+  type ZoomLevel,
+} from './timelineZoom';
 
 // Stabilna pusta lista chipów osób (referencja) na czas braku zapamiętanego filtra.
 const EMPTY_PERSON_IDS: string[] = [];
-
-const DEFAULT_DAY_W = 26; // px per day
-const ZOOM_LEVELS = [14, 26, 40] as const; // px per day
-const WEEK_PRESETS: Array<[number, string]> = [
-  [2, '2 tyg.'],
-  [6, '6 tyg.'],
-  [10, '10 tyg.'],
-  [26, '26 tyg.'],
-];
 
 type DragMode = 'move' | 'start' | 'end';
 
@@ -243,24 +244,33 @@ export function TimelinePage() {
   const canManageTasks = can('tasks.manage');
   const [mode, setMode] = useState<'projects' | 'people'>('projects');
   const [anchor, setAnchor] = useState(() => todayStr());
-  const [dayW, setDayW] = useState<number>(DEFAULT_DAY_W);
-  const [weeks, setWeeks] = useState(10);
+  const [level, setLevel] = useState<ZoomLevel>(DEFAULT_ZOOM_LEVEL);
 
   // Stan filtrów ZAPAMIĘTANY w store (`lastFilters.timeline`): chipy osób w
-  // `personIds`, klient w `criteria.clientId`. Setter wysyła pełny snapshot
-  // (no-op zapisu identycznego). Set osób jest wyłącznie POCHODNY (inwariant 7).
+  // `personIds`, klient w `criteria.clientId`, projekt w `criteria.projectId`.
+  // Setter wysyła pełny snapshot (no-op zapisu identycznego). Set osób jest
+  // wyłącznie POCHODNY (inwariant 7).
   const rememberedTimeline = state.lastFilters.timeline;
   const timelineCriteria: SavedFilterCriteria = rememberedTimeline?.criteria ?? DEFAULT_FILTER_CRITERIA;
   const clientFilter = timelineCriteria.clientId;
+  const projectFilter = timelineCriteria.projectId;
   const ownerIds = rememberedTimeline?.personIds ?? EMPTY_PERSON_IDS;
   const ownerFilter = useMemo(() => new Set(ownerIds), [ownerIds]);
 
-  const commitTimeline = (patch: { clientId?: string; personIds?: string[] }) =>
+  const commitTimeline = (patch: {
+    clientId?: string;
+    projectId?: string;
+    personIds?: string[];
+  }) =>
     dispatch({
       type: 'SET_LAST_FILTER',
       view: 'timeline',
       filter: {
-        criteria: { ...timelineCriteria, clientId: patch.clientId ?? clientFilter },
+        criteria: {
+          ...timelineCriteria,
+          clientId: patch.clientId ?? clientFilter,
+          projectId: patch.projectId ?? projectFilter,
+        },
         personIds: patch.personIds ?? ownerIds,
         departmentId: '',
         serviceTypeId: '',
@@ -270,14 +280,15 @@ export function TimelinePage() {
 
   const setOwnerIds = (ids: string[]) => commitTimeline({ personIds: ids });
   const setClientFilter = (v: string) => commitTimeline({ clientId: v });
+  const setProjectFilter = (v: string) => commitTimeline({ projectId: v });
+  const clearFilters = () =>
+    commitTimeline({ clientId: '', projectId: '', personIds: [] });
 
-  const zoomIdx = ZOOM_LEVELS.indexOf(dayW as (typeof ZOOM_LEVELS)[number]);
-  const canZoomIn = zoomIdx < ZOOM_LEVELS.length - 1;
-  const canZoomOut = zoomIdx > 0;
+  const canZoomIn = canZoomInLevel(level);
+  const canZoomOut = canZoomOutLevel(level);
 
-  // Visible range: from one week before the anchor's Monday, `weeks` weeks long.
-  const rangeStart = shiftWeek(weekStart(anchor), -1);
-  const totalDays = weeks * 7;
+  // Visible range + geometry for the current zoom level, anchored at `anchor`.
+  const { rangeStart, totalDays, dayW } = zoomView(level, anchor);
   const days = useMemo(
     () => Array.from({ length: totalDays }, (_, i) => addDaysStr(rangeStart, i)),
     [rangeStart, totalDays],
@@ -290,19 +301,22 @@ export function TimelinePage() {
 
   // Group projects by client, in client-list order, narrowed by the client filter.
   const groups = useMemo(() => {
+    const matchesProject = (p: Project) => !projectFilter || p.id === projectFilter;
     const out: Array<{ name: string; projects: Project[] }> = [];
     for (const c of state.clients) {
       if (clientFilter && c.id !== clientFilter) continue;
-      const own = state.projects.filter((p) => p.clientId === c.id);
+      const own = state.projects.filter((p) => p.clientId === c.id && matchesProject(p));
       if (own.length > 0) out.push({ name: c.name, projects: own });
     }
     if (!clientFilter) {
       const known = new Set(state.clients.map((c) => c.id));
-      const orphans = state.projects.filter((p) => !known.has(p.clientId));
+      const orphans = state.projects.filter(
+        (p) => !known.has(p.clientId) && matchesProject(p),
+      );
       if (orphans.length > 0) out.push({ name: 'Bez klienta', projects: orphans });
     }
     return out;
-  }, [state.clients, state.projects, clientFilter]);
+  }, [state.clients, state.projects, clientFilter, projectFilter]);
 
   // Apply the owner filter and precompute per-task conflict day offsets. Offsets
   // are relative to each task's start (range-independent) so this memo survives
@@ -371,6 +385,7 @@ export function TimelinePage() {
       const tasks = state.tasks
         // Szkice nie trafiają na oś czasu (widok planowania) — dopiero po publikacji.
         .filter((t) => involvedIds.has(t.id) && t.isDraft !== true)
+        .filter((t) => !projectFilter || t.projectId === projectFilter)
         .filter((t) => {
           if (!clientFilter) return true;
           const proj = getProject(state, t.projectId);
@@ -400,6 +415,7 @@ export function TimelinePage() {
   }, [
     ownerKey,
     clientFilter,
+    projectFilter,
     state.people,
     state.tasks,
     state.assignments,
@@ -424,6 +440,61 @@ export function TimelinePage() {
     }
   };
 
+  // Filtry (domyślnie zwinięty popover): Klient + Projekt jako grupy radio, Osoby
+  // jako multi-select przez `extra`. Lista projektów zawężona do wybranego klienta.
+  const projectOptions = state.projects
+    .filter((p) => !clientFilter || p.clientId === clientFilter)
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const selectedProject = state.projects.find((p) => p.id === projectFilter);
+  const selectedClient = state.clients.find((c) => c.id === clientFilter);
+  const filterGroups: FilterGroup[] = [
+    {
+      key: 'client',
+      label: 'Klient',
+      value: clientFilter,
+      onChange: setClientFilter,
+      options: [
+        { value: '', label: 'Wszyscy klienci' },
+        ...state.clients.map((c) => ({ value: c.id, label: c.name })),
+      ],
+    },
+    {
+      key: 'project',
+      label: 'Projekt',
+      value: projectFilter,
+      onChange: setProjectFilter,
+      options: [
+        { value: '', label: 'Wszystkie projekty' },
+        ...projectOptions.map((p) => ({ value: p.id, label: p.name })),
+      ],
+    },
+  ];
+  const activeCount =
+    (clientFilter ? 1 : 0) + (projectFilter ? 1 : 0) + (ownerFilter.size > 0 ? 1 : 0);
+  const chips: FilterChip[] = [];
+  if (clientFilter)
+    chips.push({
+      key: 'client',
+      label: `Klient: ${selectedClient?.name ?? '—'}`,
+      onRemove: () => setClientFilter(''),
+    });
+  if (projectFilter)
+    chips.push({
+      key: 'project',
+      label: `Projekt: ${selectedProject?.name ?? '—'}`,
+      onRemove: () => setProjectFilter(''),
+    });
+  if (ownerFilter.size > 0)
+    chips.push({
+      key: 'persons',
+      label:
+        ownerFilter.size === 1
+          ? `Osoby: ${state.people.find((p) => ownerFilter.has(p.id))?.name ?? '—'}`
+          : `Osoby: ${ownerFilter.size}`,
+      onRemove: () => setOwnerIds([]),
+    });
+
   return (
     <section className="page page-wide">
       <div className="page-head">
@@ -432,7 +503,7 @@ export function TimelinePage() {
           <button
             type="button"
             className="nav-btn"
-            onClick={() => setAnchor((a) => shiftWeek(a, -2))}
+            onClick={() => setAnchor((a) => shiftAnchor(level, a, -1))}
             aria-label="Wcześniej"
           >
             ‹
@@ -443,7 +514,7 @@ export function TimelinePage() {
           <button
             type="button"
             className="nav-btn"
-            onClick={() => setAnchor((a) => shiftWeek(a, 2))}
+            onClick={() => setAnchor((a) => shiftAnchor(level, a, 1))}
             aria-label="Później"
           >
             ›
@@ -455,7 +526,7 @@ export function TimelinePage() {
             <button
               type="button"
               className="nav-btn"
-              onClick={() => canZoomOut && setDayW(ZOOM_LEVELS[zoomIdx - 1])}
+              onClick={() => canZoomOut && setLevel((l) => zoomOutLevel(l))}
               disabled={!canZoomOut}
               aria-label="Pomniejsz"
             >
@@ -464,7 +535,7 @@ export function TimelinePage() {
             <button
               type="button"
               className="nav-btn"
-              onClick={() => canZoomIn && setDayW(ZOOM_LEVELS[zoomIdx + 1])}
+              onClick={() => canZoomIn && setLevel((l) => zoomInLevel(l))}
               disabled={!canZoomIn}
               aria-label="Powiększ"
             >
@@ -473,11 +544,35 @@ export function TimelinePage() {
           </div>
         </div>
       </div>
-      <p className="field-hint">
-        {mode === 'projects'
-          ? 'Przeciągnij pasek, aby zmienić termin; przeciągnij krawędzie, aby zmienić start lub koniec. Przesunięcie zadania przesuwa razem z nim zaplanowane godziny. ◆ kamienie milowe też można przeciągać.'
-          : 'Widok według osób: każdy wiersz to zadanie danej osoby. Kliknij pasek, aby otworzyć zadanie. Paski są tylko do odczytu — terminy zmieniasz w trybie Projekty.'}
-      </p>
+      <div className="timeline-hint-row">
+        <p className="field-hint">
+          {mode === 'projects'
+            ? 'Przeciągnij pasek, aby zmienić termin; przeciągnij krawędzie, aby zmienić start lub koniec. Przesunięcie zadania przesuwa razem z nim zaplanowane godziny. ◆ kamienie milowe też można przeciągać.'
+            : 'Widok według osób: każdy wiersz to zadanie danej osoby. Kliknij pasek, aby otworzyć zadanie. Paski są tylko do odczytu — terminy zmieniasz w trybie Projekty.'}
+        </p>
+        <FilterPanel
+          groups={filterGroups}
+          activeCount={activeCount}
+          onClearAll={clearFilters}
+          chips={chips}
+          extra={
+            <fieldset className="filter-group">
+              <legend>Osoby</legend>
+              <PersonFilter
+                people={state.people}
+                selected={ownerFilter}
+                onToggle={(id) => {
+                  const next = new Set(ownerFilter);
+                  if (next.has(id)) next.delete(id);
+                  else next.add(id);
+                  setOwnerIds([...next]);
+                }}
+                onAll={() => setOwnerIds([])}
+              />
+            </fieldset>
+          }
+        />
+      </div>
 
       <div className="cal-toolbar">
         <div className="cal-view-toggle" role="group" aria-label="Tryb widoku">
@@ -496,41 +591,6 @@ export function TimelinePage() {
             Osoby
           </button>
         </div>
-        <div className="cal-view-toggle" role="group" aria-label="Zakres widoku">
-          {WEEK_PRESETS.map(([w, label]) => (
-            <button
-              key={w}
-              type="button"
-              className={weeks === w ? 'toggle-btn active' : 'toggle-btn'}
-              onClick={() => setWeeks(w)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <PersonFilter
-          people={state.people}
-          selected={ownerFilter}
-          onToggle={(id) => {
-            const next = new Set(ownerFilter);
-            if (next.has(id)) next.delete(id);
-            else next.add(id);
-            setOwnerIds([...next]);
-          }}
-          onAll={() => setOwnerIds([])}
-        />
-        <select
-          value={clientFilter}
-          onChange={(e) => setClientFilter(e.target.value)}
-          aria-label="Filtruj po kliencie"
-        >
-          <option value="">Wszyscy klienci</option>
-          {state.clients.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
       </div>
 
       {(mode === 'projects' ? state.projects.length === 0 : peopleView.length === 0) ? (
@@ -555,7 +615,9 @@ export function TimelinePage() {
               <div className="timeline-label" />
               <div className="timeline-track">
                 {days.map((d, i) =>
-                  i % 7 === 0 ? (
+                  // Label every Monday (the range may not start on one, e.g. the
+                  // month view) plus day 0 so the first column is always labelled.
+                  weekStart(d) === d || i === 0 ? (
                     <span key={d} className="timeline-week-label" style={{ left: i * dayW }}>
                       {formatShort(d)}
                     </span>

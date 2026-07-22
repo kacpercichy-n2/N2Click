@@ -1017,6 +1017,20 @@ option {
   font-size: var(--n2-type-sm);
   margin: 0;
 }
+/* Timeline: the drag hint and the "Filtry" popover share one row; the hint
+   takes remaining width so the filter button hugs the right edge. */
+.timeline-hint-row {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.timeline-hint-row .field-hint {
+  flex: 1 1 240px;
+}
+.timeline-hint-row .filter-bar {
+  flex: 0 0 auto;
+}
 .field-notice {
   color: var(--n2-warning);
   background: var(--n2-warning-soft);
