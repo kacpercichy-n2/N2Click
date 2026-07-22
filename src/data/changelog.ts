@@ -84,6 +84,123 @@ export function isSameDayRange(dateFrom: DateStr, dateTo: DateStr): boolean {
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-07-22-role-spolki-i-porzadki',
+    dateFrom: '2026-07-22',
+    dateTo: '2026-07-22',
+    summary:
+      'Wielka aktualizacja: pełne uprawnienia dla każdego, spółki przy projektach, nowy Panel-kokpit, czytelniejsze karty projektów i profili, rozwijane karty klientów, precyzyjne przeciąganie w kalendarzu i wyraźnie szybsza aplikacja.',
+    items: [
+      // Uprawnienia / zespół
+      {
+        area: 'Zespół',
+        feature: 'Każdy może planować i widzi wszystko',
+        description:
+          'Koniec podziału na role PM / handlowiec / pracownik. Teraz każda osoba w firmie może tworzyć i edytować projekty, zadania i wydarzenia oraz widzi cały zespół i dostępność wszystkich — także z innych działów. To, co widzisz na listach, zawężasz filtrami, a nie uprawnieniami. Pole „Uprawnienia” zniknęło z profili (wszyscy mają pełne).',
+      },
+      {
+        area: 'Zespół',
+        feature: 'Profil osoby w jednym widoku, edycja od razu',
+        description:
+          'Strona profilu nie ma już osobnego trybu „Edytuj profil” — dane podstawowe (zdjęcie, imię, stanowisko, dział, spółka) są w pierwszej karcie, a każde pole zmieniasz bezpośrednio na stronie. Zdjęcie podmienisz małym ołówkiem na awatarze.',
+      },
+      {
+        area: 'Zespół',
+        feature: 'Nowe stanowisko, dział lub spółka prosto z profilu',
+        description:
+          'W listach „Stanowisko”, „Dział” i „Spółka” w profilu osoby jest opcja „+ Nowe…” — otwiera małe okno, w którym wpisujesz nazwę, a nowy wpis od razu zostaje wybrany. Nie trzeba chodzić do Ustawień.',
+      },
+      {
+        area: 'Zespół',
+        feature: 'Koniec funkcji „Występuj jako”',
+        description:
+          'Podszywanie się pod innego użytkownika zostało usunięte — każdy pracuje na własnym koncie, a awatar w stopce menu prowadzi do Twojego profilu.',
+      },
+      // Projekty / spółki
+      {
+        area: 'Projekty',
+        feature: 'Spółka wykonawcza projektu',
+        description:
+          'W karcie projektu wybierzesz, która spółka go realizuje. Na listach Projekty, Zadania i Kanban jest filtr „Spółka” — domyślnie ustawiony na Twoją spółkę, więc widzisz przede wszystkim swoje tematy, ale jednym kliknięciem możesz zobaczyć projekty pozostałych spółek. Projekt bez przypisanej spółki jest widoczny dla wszystkich.',
+      },
+      {
+        area: 'Projekty',
+        feature: 'Czytelniejsza karta projektu',
+        description:
+          'Zadania są zaraz pod szczegółami, pole opisu jest dwa razy większe, sekcja „Dyskusja” wyraźnie wyróżniona, a na liście projektów nazwa klienta stała się widoczną etykietą. Sekcja „Kamienie milowe” zniknęła z karty (daty nadal widać na osi czasu).',
+      },
+      // Panel
+      {
+        area: 'Panel',
+        feature: 'Panel-kokpit i pożegnanie „Mojej pracy”',
+        description:
+          'Strona główna to teraz uporządkowany kokpit z kaflami: powiadomienia, obciążenie, zadania na dziś, zespół i Twój tydzień. Wszystko z dawnej zakładki „Moja praca” (nierozplanowane godziny, alerty) też jest na Panelu — osobna zakładka zniknęła, a stare linki dalej działają.',
+      },
+      // Filtry
+      {
+        area: 'Filtry',
+        feature: 'Jeden wspólny pasek filtrów',
+        description:
+          'Na Projektach, Zadaniach i Kanbanie filtry, zapisane zestawy i licznik wyników są zebrane w jednym pasku nad listą — wszędzie wyglądają i działają tak samo.',
+      },
+      // Klienci
+      {
+        area: 'Klienci',
+        feature: 'Rozwijane karty i wiele osób kontaktowych',
+        description:
+          'Karta klienta pokazuje na skróconej wersji nazwę i głównego kontakta, a po rozwinięciu opis i dodatkowe osoby kontaktowe — możesz ich dopisać dowolnie wiele (imię, nazwisko, telefon, e-mail). Nowy klient wymaga teraz kompletu danych kontaktowych.',
+      },
+      // Kalendarz
+      {
+        area: 'Kalendarz',
+        feature: 'Precyzyjne przeciąganie bloków',
+        description:
+          'Przeciągany blok ląduje dokładnie tam, gdzie pokazuje podgląd, przyciąga się do pełnych kwadransów, a przy kolizji z innym blokiem podgląd robi się czerwony. Blok nie znika już przy przenoszeniu do zasobnika.',
+      },
+      // Oś czasu
+      {
+        area: 'Oś czasu',
+        feature: 'Powiększenie: tydzień, dwa tygodnie, miesiąc',
+        description:
+          'Zamiast zakładek zakresu są przyciski Powiększ/Pomniejsz (trzy poziomy), strzałki do przewijania i „Dzisiaj”, a filtry (klient, projekt, osoby) mieszczą się w jednym panelu „Filtry”.',
+      },
+      // Wydarzenia
+      {
+        area: 'Wydarzenia',
+        feature: 'Dopracowane okno wydarzenia',
+        description:
+          'Pola godzin „Początek” i „Koniec” wyglądają jak reszta formularza, a uczestników wybiera się czytelnymi „pigułkami” z kolorami osób — jak w karcie zadania.',
+      },
+      // Zadania
+      {
+        area: 'Zadania',
+        feature: 'Spójne ikony i lepszy układ karty zadania',
+        description:
+          'Przyciski ikonowe na kafelkach zadań (usuń, dodaj, płatność) są równe i wyśrodkowane, a w karcie zadania sekcje „Przypisane osoby” i „Dzienny przydział godzin” przeniosły się wyżej — bliżej tego, czego szukasz najczęściej.',
+      },
+      // Ustawienia
+      {
+        area: 'Ustawienia',
+        feature: 'Własna kolejność menu bocznego',
+        description:
+          'W Ustawieniach (sekcja „Kolejność menu”) ustawisz strzałkami własną kolejność pozycji w menu bocznym — każdy użytkownik na swoim komputerze widzi menu tak, jak lubi.',
+      },
+      // Zgłoszenia
+      {
+        area: 'Zgłoszenia',
+        feature: 'Wykonane zgłoszenia świecą się na zielono',
+        description:
+          'Zgłoszenia oznaczone jako „zrobione” mają na liście zielone tło i zielony tytuł — od razu widać, co już załatwione, a filtr statusu pozwala je schować.',
+      },
+      // Ogólne / wydajność
+      {
+        area: 'Ogólne',
+        feature: 'Aplikacja działa szybciej',
+        description:
+          'Trzy porcje optymalizacji: zapisywanie danych nie spowalnia już pracy (zapis raz na sekundę zamiast przy każdej zmianie), kalendarz tygodniowy jest płynniejszy przy przeciąganiu, a wyszukiwarka i karta zadania reagują szybciej przy pisaniu.',
+      },
+    ],
+  },
+  {
     id: '2026-07-21-funkcje-239-247',
     dateFrom: '2026-07-21',
     dateTo: '2026-07-21',
