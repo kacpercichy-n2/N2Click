@@ -5,7 +5,6 @@
 // pinned separately in App.tsx and is NOT part of this list.
 import {
   LayoutDashboard,
-  ClipboardList,
   FolderKanban,
   Building2,
   Columns3,
@@ -23,7 +22,6 @@ import type { LucideIcon } from './icons';
 
 export const NAV_ITEMS: Array<[string, string, LucideIcon]> = [
   ['/dashboard', 'Panel', LayoutDashboard],
-  ['/my-work', 'Moja praca', ClipboardList],
   ['/projects', 'Projekty', FolderKanban],
   ['/clients', 'Klienci', Building2],
   ['/kanban', 'Kanban', Columns3],

@@ -14,7 +14,6 @@ import { motion } from 'motion/react';
 import { useStore } from './store/AppStore';
 import { DashboardPage } from './pages/DashboardPage';
 import { ChangelogPage } from './pages/ChangelogPage';
-import { MyWorkPage } from './pages/MyWorkPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { ProjectDetailPage } from './pages/ProjectDetailPage';
 import { ClientsPage } from './pages/ClientsPage';
@@ -31,7 +30,8 @@ import { EventsPage } from './pages/EventsPage';
 import { AccountPage } from './pages/AccountPage';
 import { TeamPage } from './pages/TeamPage';
 import { canViewTeam } from './pages/teamScope';
-import { landingPathForRole, LoginPage } from './pages/LoginPage';
+import { LoginPage } from './pages/LoginPage';
+import { HOME_PATH } from './pages/homeRoute';
 import { useAuth } from './auth/SessionProvider';
 import { useOrgData } from './supabase/OrgDataProvider';
 import { buildCloudPeoplePayload, effectiveAccessRole } from './supabase/referenceData';
@@ -43,7 +43,6 @@ import {
 } from './auth/AuthScreens';
 import { findPersonByEmail } from './auth/profile';
 import { can } from './store/permissions';
-import { currentUser as currentUserSel } from './store/selectors';
 import { SampleBanner } from './components/SampleBanner';
 import { PersistenceBanner } from './components/PersistenceBanner';
 import { CloudSyncBanner } from './components/CloudSyncBanner';
@@ -443,7 +442,8 @@ export function App() {
             <Route path="/dashboard" element={<DashboardPage />} />
             {/* Changelog: pełna historia wpisów z src/data/changelog.ts, dostępna dla każdej roli. */}
             <Route path="/changelog" element={<ChangelogPage />} />
-            <Route path="/my-work" element={<MyWorkPage />} />
+            {/* „Moja praca" scalona w „Panel"; stary link/zakładka nie pęka. */}
+            <Route path="/my-work" element={<Navigate to={HOME_PATH} replace />} />
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/projects/:id" element={<ProjectDetailPage />} />
             <Route path="/clients" element={<ClientsPage />} />
@@ -533,14 +533,12 @@ function DirtyNavigationGuard() {
 }
 
 /**
- * Landing redirect for `/` and unknown routes. `pracownik`-role users land on
- * their work page (`/my-work`); everyone else — admin/pm/handlowiec, setup mode,
- * or an unresolved user — keeps the dashboard.
+ * Landing redirect for `/` and unknown routes. „Panel" (`HOME_PATH`) is the one
+ * and only home for every role now — the former per-role „Moja praca" surface
+ * was merged into it (Zasobnik + Alerty are Panel tiles).
  */
 function HomeRedirect() {
-  const { state } = useStore();
-  const dest = landingPathForRole(currentUserSel(state)?.accessRole);
-  return <Navigate to={dest} replace />;
+  return <Navigate to={HOME_PATH} replace />;
 }
 
 /** `/tasks/new[?project=<id>]` → `/tasks?task=new[&project=<id>]`. */

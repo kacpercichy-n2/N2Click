@@ -92,8 +92,12 @@
   permissions are UX, not a backend security boundary.
 - Task/project editor changes must preserve save-state and persistence banners.
 - For navigation work, distinguish clean navigation from discarding a dirty edit.
-- Role homes are explicit: workers land on `/my-work`; other roles land on
-  `/dashboard`. On mobile, a closed drawer is inert, and an open drawer contains
+- There is one home for every role: „Panel" (`/dashboard`, `HOME_PATH` in
+  `src/pages/homeRoute.ts`). The former per-role „Moja praca" page was merged
+  into it — its Zasobnik and Alerty cards are now Panel tiles (grid areas `bin`
+  and `alerts`), keeping `data-tour="home.bin"`/`home.alerts`. Legacy `/my-work`
+  redirects to `HOME_PATH`; login, `/` and the onboarding `@home` token all
+  resolve there. On mobile, a closed drawer is inert, and an open drawer contains
   keyboard focus until it closes and restores focus to its trigger.
 
 ## Start here for

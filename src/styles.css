@@ -3479,14 +3479,15 @@ option {
  *   RZĄD 2 · powiadomienia | obciążenie
  *   RZĄD 3 · zadania       | zespół
  *   RZĄD 4 · tydzień (full width)
- * Row 5 („Pozostałe kategorie") is a reserved slot, not rendered yet.
+ *   RZĄD 5 · zasobnik | alerty (kafle scalone z dawnej „Moja praca")
  * The changelog bar sits ABOVE the grid, not inside it. */
 .dash-welcome-grid {
   grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
   grid-template-areas:
     'notifications workload'
     'today team'
-    'week week';
+    'week week'
+    'bin alerts';
   align-items: stretch;
 }
 .dash-area-notifications {
@@ -3503,6 +3504,12 @@ option {
 }
 .dash-area-week {
   grid-area: week;
+}
+.dash-area-bin {
+  grid-area: bin;
+}
+.dash-area-alerts {
+  grid-area: alerts;
 }
 /* Row 3 cards share a stretched grid row; flex column lets the team roster's
  * internal scroll work within the shared height. */
@@ -3522,7 +3529,9 @@ option {
   .dash-area-workload,
   .dash-area-today,
   .dash-area-team,
-  .dash-area-week {
+  .dash-area-week,
+  .dash-area-bin,
+  .dash-area-alerts {
     grid-area: auto;
   }
 }
@@ -3582,17 +3591,7 @@ option {
   font-weight: 500;
 }
 
-/* ---------- Moja praca (/my-work) ---------- */
-
-/* Three cards side-by-side on wide screens; collapse to one column narrow. */
-.my-work-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-@media (max-width: 1180px) {
-  .my-work-grid {
-    grid-template-columns: 1fr;
-  }
-}
+/* ---------- Zasobnik + Alerty (Panel tiles, dawniej „Moja praca") ---------- */
 
 .my-work-hours {
   font-family: var(--n2-font-data);

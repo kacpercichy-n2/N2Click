@@ -54,3 +54,11 @@ None — all design decisions settled in the package.
 AccountPage "Profil w chmurze", impersonation fallback mentions);
 `state-and-persistence.md` loses `impersonatorId` bookkeeping. Final reviewer
 owns the wiki decision.
+
+## 258 — merge Panel + Moja praca (developer)
+
+Merged „Moja praca" into „Panel": Zasobnik+Alerty are new Panel tiles (grid areas
+`bin`/`alerts`), single home `HOME_PATH='/dashboard'` (new pure `homeRoute.ts`+test).
+`/my-work`→redirect; MyWorkPage + nav item + `landingPathForRole` removed;
+OnboardingRoot `@home`/catalog copy updated. `npm test` 1373 pass; build green.
+Touched CSS + selectors sections unchanged. Blocker: none.

@@ -16,6 +16,7 @@ import {
   loadUiPrefs,
 } from '../utils/uiPrefs';
 import { ArrowLeft, Check, CircleHelp, Compass, Sparkles } from '../components/icons';
+import { HOME_PATH } from '../pages/homeRoute';
 import { moduleById, modulesForRole, type TourStep, type TutorialModule } from './catalog';
 
 type TourState = { moduleId: TutorialModuleId; stepIndex: number } | null;
@@ -121,9 +122,10 @@ function isModuleComplete(prefs: UiPrefs, ownerKey: string, moduleId: TutorialMo
   return progress.status === 'completed' && progress.completedVersion === ONBOARDING_VERSION;
 }
 
-function resolveRoute(route: string, role: Person['accessRole'] | undefined, current: string): string {
+function resolveRoute(route: string, current: string): string {
   if (route === '@current') return current;
-  if (route === '@home') return role === 'pracownik' ? '/my-work' : '/dashboard';
+  // Jeden wspólny home dla każdej roli — „Panel" (patrz homeRoute.ts).
+  if (route === '@home') return HOME_PATH;
   return route;
 }
 
@@ -230,9 +232,9 @@ export function OnboardingRoot({
 
   useEffect(() => {
     if (!tour || !activeStep) return;
-    const route = resolveRoute(activeStep.route, role, location.pathname);
+    const route = resolveRoute(activeStep.route, location.pathname);
     if (route !== location.pathname) navigate(route);
-  }, [activeStep, location.pathname, navigate, role, tour]);
+  }, [activeStep, location.pathname, navigate, tour]);
 
   useEffect(() => {
     setPracticeDone(false);
