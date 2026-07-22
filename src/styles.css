@@ -861,6 +861,9 @@ textarea {
   color: var(--text);
 }
 .project-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: var(--n2-type-xs);
   font-weight: 500;
   font-family: var(--n2-font-mono);
@@ -2552,6 +2555,45 @@ option {
 .coin-btn:hover {
   background: rgba(255, 255, 255, 0.08);
   transform: scale(1.12);
+}
+
+/* Okrągły przycisk ikonowy (komponent IconButton). Flex-centruje SVG w
+   kwadratowym polu — koniec z glifami tekstowymi siadającymi za nisko. */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--n2-border);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--n2-text-soft);
+  cursor: pointer;
+  transition: background var(--n2-transition), color var(--n2-transition),
+    border-color var(--n2-transition), transform var(--n2-transition);
+}
+.icon-btn svg {
+  display: block;
+}
+.icon-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--n2-text);
+  border-color: var(--n2-border-strong);
+}
+.icon-btn:active {
+  transform: scale(0.94);
+}
+.icon-btn.danger {
+  background: transparent;
+  border-color: transparent;
+  color: var(--danger);
+}
+.icon-btn.danger:hover {
+  background: var(--n2-danger-soft);
+  border-color: transparent;
+  color: var(--danger);
 }
 
 .avatar {

@@ -74,6 +74,15 @@ donut center re-anchored to a `.donut-ring` box (dropped `top:60px`) with xs
 tabular value. New pure `src/pages/dashboardPanels.ts` (+test). No store changes.
 `npm test` PASS (1327, +6); `npm run build` PASS. Wiki unchanged (accurate).
 
+## PKG-tasks-tiles-icons (250)
+
+New `src/components/IconButton.tsx` (+`.icon-btn`/`.icon-btn.danger` CSS) to kill
+line-height mis-centering. TasksPage: delete→IconButton(X danger), Plus icons on
+both add buttons, `.project-badge` now inline-flex+gap. Close buttons `×`→X
+IconButton in TaskModal/EventModal/TicketModal/ChangelogModal. TaskEditor sections
+reordered (osoby+godziny after Szczegóły) — pure JSX move. `npx tsc` + `npm test`
+PASS (1327). Deferred: ProjectDetailPage add-btn, OnboardingRoot close (out of scope).
+
 ## Open questions
 
 None blocking.

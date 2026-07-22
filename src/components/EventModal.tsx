@@ -17,6 +17,8 @@ import { MINUTE_STEP } from '../utils/time';
 import { isoWeekday } from '../utils/recurrence';
 import { normalizeProjectDocumentUrl } from '../utils/projectDocuments';
 import { bypassNavGuardOnce, clearNavGuard, setNavGuard } from '../utils/dirtyRegistry';
+import { IconButton } from './IconButton';
+import { X } from './icons';
 
 /** Parametr URL-a niosący modal wydarzenia (polski, jak reszta tras). */
 const EVENT_PARAM = 'wydarzenie';
@@ -206,14 +208,12 @@ function EventModalShell({ eventParam, prefill, onClose }: ShellProps) {
                   Usuń
                 </button>
               )}
-              <button
-                type="button"
+              <IconButton
                 className="task-modal-close"
+                icon={<X size={18} aria-hidden />}
                 onClick={requestClose}
-                aria-label="Zamknij"
-              >
-                ×
-              </button>
+                label="Zamknij"
+              />
             </div>
           </div>
           <div className="task-modal-body">

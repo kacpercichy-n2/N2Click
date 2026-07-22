@@ -21,7 +21,8 @@ import { PRIORITY_LABELS, TASK_PRIORITIES } from '../utils/priority';
 import { FilterPresets, DEFAULT_CRITERIA } from '../components/FilterPresets';
 import { type FilterChip, type FilterGroup } from '../components/FilterPanel';
 import { FilterBar } from '../components/FilterBar';
-import { ChevronRight, Check } from '../components/icons';
+import { ChevronRight, Check, Plus, X } from '../components/icons';
+import { IconButton } from '../components/IconButton';
 import { formatShort, formatShortWithWeekday } from '../utils/dates';
 import { PersonChip } from '../components/PersonChip';
 import { StatusBadge } from '../components/StatusBadge';
@@ -283,7 +284,7 @@ export function TasksPage() {
         <h1>Zadania</h1>
         {canManageTasks && (
           <button type="button" className="btn primary" onClick={() => openNewTask()}>
-            + Nowe zadanie
+            <Plus size={16} aria-hidden />Nowe zadanie
           </button>
         )}
       </div>
@@ -296,7 +297,7 @@ export function TasksPage() {
           </p>
           {canManageTasks && (
             <button type="button" className="btn primary" onClick={() => openNewTask()}>
-              + Nowe zadanie
+              <Plus size={16} aria-hidden />Nowe zadanie
             </button>
           )}
         </div>
@@ -377,15 +378,14 @@ export function TasksPage() {
                 </button>
                 {canManageTasks && (
                   <div className="card-actions">
-                    <button
-                      type="button"
-                      className="btn danger-ghost task-delete"
+                    <IconButton
+                      className="task-delete"
+                      variant="danger"
+                      icon={<X size={16} aria-hidden />}
                       onClick={() => handleDelete(task.id, task.title)}
-                      aria-label={`Usuń ${task.title}`}
+                      label={`Usuń ${task.title}`}
                       title="Usuń"
-                    >
-                      Usuń
-                    </button>
+                    />
                   </div>
                 )}
               </li>
