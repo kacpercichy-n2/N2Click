@@ -5,13 +5,12 @@
 // WYŁĄCZNIE skrzynką nadawczą: przycisk otwierający formularz, bez żadnej
 // listy — decyzja 2026-07-21 („każdy dodaje, listę widzi administrator”).
 //
-// Z `tickets.manage` (rola pelne) — trzy tryby (segmentowany przełącznik):
+// Z `tickets.manage` (rola pelne) — dwa tryby (segmentowany przełącznik):
 //   * „Zgłoś”     — otwiera modal zgłoszenia (?zgloszenie=new),
-//   * „Zgłoszone” — AKTYWNE zgłoszenia (status ≠ zrobione) z filtrami,
-//                   rozwijanym opisem, inline zmianą statusu, usuwaniem i CSV,
-//   * „Wykonane”  — wyłącznie status `zrobione` (zielone wiersze; decyzja
-//                   2026-07-22 — wykonane nie mieszają się z aktywnymi).
-// Zmiana statusu na `zrobione` przenosi wiersz do „Wykonane” (i odwrotnie).
+//   * „Zgłoszone” — pełna lista z filtrami, rozwijanym opisem, inline zmianą
+//                   statusu, usuwaniem i eksportem CSV. Wiersze `zrobione` są
+//                   podświetlone na zielono (.ticket-row-done; decyzja
+//                   2026-07-22 — bez osobnego taba, wystarcza filtr statusu).
 //
 // To bramka UX — prawdziwą granicę pilnuje RLS na `public.tickets`.
 import { useMemo, useState } from 'react';
@@ -31,10 +30,7 @@ import { useOpenTicket } from '../components/TicketModal';
 import { ChevronRight, Plus } from '../components/icons';
 import { buildTicketsCsv, ticketsCsvFilename, type TicketExportRow } from './ticketsExport';
 
-type Mode = 'zglos' | 'zgloszone' | 'wykonane';
-
-/** Statusy AKTYWNE (tab „Zgłoszone”) — wszystko poza `zrobione`. */
-const ACTIVE_STATUSES = TICKET_STATUSES.filter((s) => s !== 'zrobione');
+type Mode = 'zglos' | 'zgloszone';
 
 export function TicketsPage() {
   const { state, dispatch } = useStore();
@@ -51,19 +47,18 @@ export function TicketsPage() {
   const nameOfReporter = (reporterId: string): string =>
     state.people.find((p) => p.id === reporterId)?.name ?? 'nieznany';
 
-  // Zakres + tab (aktywne vs wykonane) + filtry + sort od najnowszych. Jedno
-  // źródło dla tabeli i eksportu, więc „Eksportuj” zapisuje DOKŁADNIE to, co widać.
+  // Zakres + filtry + sort od najnowszych. Jedno źródło dla tabeli i eksportu,
+  // więc „Eksportuj” zawsze zapisuje DOKŁADNIE to, co widać.
   const visible = useMemo(() => {
     const scoped = canManage
       ? state.tickets
       : state.tickets.filter((t) => me !== undefined && t.reporterId === me.id);
     return scoped
-      .filter((t) => (mode === 'wykonane' ? t.status === 'zrobione' : t.status !== 'zrobione'))
       .filter((t) => (statusFilter === '' || t.status === statusFilter))
       .filter((t) => (kindFilter === '' || t.kind === kindFilter))
       .slice()
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  }, [state.tickets, canManage, me, mode, statusFilter, kindFilter]);
+  }, [state.tickets, canManage, me, statusFilter, kindFilter]);
 
   const handleExport = () => {
     const rows: TicketExportRow[] = visible.map((ticket) => ({
@@ -120,7 +115,7 @@ export function TicketsPage() {
       <div className="page-head">
         <h1>Zgłoszenia</h1>
         <div className="page-head-actions">
-          {mode !== 'zglos' && canManage && (
+          {mode === 'zgloszone' && canManage && (
             <button
               type="button"
               className="btn"
@@ -154,26 +149,9 @@ export function TicketsPage() {
           role="tab"
           aria-selected={mode === 'zgloszone'}
           className={mode === 'zgloszone' ? 'toggle-btn active' : 'toggle-btn'}
-          onClick={() => {
-            setMode('zgloszone');
-            // Filtr statusu „zrobione” nie ma sensu w tabie aktywnych.
-            if (statusFilter === 'zrobione') setStatusFilter('');
-          }}
+          onClick={() => setMode('zgloszone')}
         >
           Zgłoszone
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={mode === 'wykonane'}
-          className={mode === 'wykonane' ? 'toggle-btn active' : 'toggle-btn'}
-          onClick={() => {
-            setMode('wykonane');
-            // W tym tabie wszystko jest `zrobione` — filtr statusu zbędny.
-            setStatusFilter('');
-          }}
-        >
-          Wykonane
         </button>
       </div>
 
@@ -191,22 +169,20 @@ export function TicketsPage() {
       ) : (
         <>
           <div className="ticket-filters">
-            {mode === 'zgloszone' && (
-              <label className="field-inline">
-                <span>Status</span>
-                <select
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value as '' | TicketStatus)}
-                >
-                  <option value="">Wszystkie</option>
-                  {ACTIVE_STATUSES.map((s) => (
-                    <option key={s} value={s}>
-                      {TICKET_STATUS_LABELS[s]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
+            <label className="field-inline">
+              <span>Status</span>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as '' | TicketStatus)}
+              >
+                <option value="">Wszystkie</option>
+                {TICKET_STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {TICKET_STATUS_LABELS[s]}
+                  </option>
+                ))}
+              </select>
+            </label>
             <label className="field-inline">
               <span>Rodzaj</span>
               <select
@@ -228,15 +204,11 @@ export function TicketsPage() {
 
           {visible.length === 0 ? (
             <div className="empty-state">
-              <p className="empty-title">
-                {mode === 'wykonane' ? 'Brak wykonanych zgłoszeń' : 'Brak zgłoszeń'}
-              </p>
+              <p className="empty-title">Brak zgłoszeń</p>
               <p className="empty-hint">
-                {mode === 'wykonane'
-                  ? 'Zgłoszenia ze statusem „zrobione” trafiają tutaj automatycznie.'
-                  : canManage
-                    ? 'Nikt jeszcze nic nie zgłosił albo filtry nic nie przepuszczają.'
-                    : 'Nie masz jeszcze żadnych zgłoszeń. Użyj przycisku „Zgłoś”.'}
+                {canManage
+                  ? 'Nikt jeszcze nic nie zgłosił albo filtry nic nie przepuszczają.'
+                  : 'Nie masz jeszcze żadnych zgłoszeń. Użyj przycisku „Zgłoś”.'}
               </p>
             </div>
           ) : (

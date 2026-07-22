@@ -80,13 +80,12 @@
 - `/zgloszenia` („Zgłoszenia”, `src/pages/TicketsPage.tsx`) jest widoczne dla
   KAŻDEJ roli — nie jest bramkowane jak `/admin`. Bez `tickets.manage` strona to
   wyłącznie skrzynka nadawcza (przycisk otwierający modal, ŻADNEJ listy — decyzja
-  2026-07-21). Z `tickets.manage` (rola `pelne`): TRZY tryby w segmentowanym
-  przełączniku (decyzja 2026-07-22) — „Zgłoś” (otwiera modal), „Zgłoszone”
-  (wyłącznie AKTYWNE, `status !== 'zrobione'`; filtry status[bez zrobione] +
-  rodzaj, sort od najnowszych, rozwijany opis, inline status, usuwanie, eksport
-  CSV; serializer: `src/pages/ticketsExport.ts`) i „Wykonane” (wyłącznie
-  `zrobione`, zielone wiersze `.ticket-row-done`, bez filtra statusu). Zmiana
-  statusu na `zrobione` przenosi wiersz między tabami automatycznie. `src/components/TicketModal.tsx`
+  2026-07-21). Z `tickets.manage` (rola `pelne`): dwa tryby w segmentowanym
+  przełączniku — „Zgłoś” (otwiera modal) i „Zgłoszone” (pełna tabela z filtrami
+  status + rodzaj, sort od najnowszych, rozwijany opis, inline status, usuwanie
+  i eksport CSV; serializer: `src/pages/ticketsExport.ts`). Wiersze `zrobione`
+  są podświetlone na zielono (`.ticket-row-done`; decyzja 2026-07-22 — bez
+  osobnego taba, wystarcza filtr statusu). `src/components/TicketModal.tsx`
   powiela wzorzec TaskModal: `?zgloszenie=new|<id>`, `useOpenTicket()`, montaż raz
   w App, klasy `.task-modal-*` i własny zakres strażnika nawigacji
   (`'ticket-modal'` w `dirtyRegistry.ts`).
