@@ -963,6 +963,7 @@ input[type='text'],
 input[type='email'],
 input[type='number'],
 input[type='date'],
+input[type='time'],
 input:not([type]),
 textarea,
 select {
@@ -996,7 +997,8 @@ textarea {
   resize: vertical;
 }
 /* Date pickers / dropdown chrome legible on dark. */
-input[type='date']::-webkit-calendar-picker-indicator {
+input[type='date']::-webkit-calendar-picker-indicator,
+input[type='time']::-webkit-calendar-picker-indicator {
   filter: invert(0.85);
   cursor: pointer;
 }
@@ -2347,13 +2349,7 @@ option {
   margin-right: 12px;
 }
 
-/* Modal wydarzenia: lista osób + wybór trybu cykliczności. */
-.event-attendees {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 12px;
-}
-.event-attendee-chip,
+/* Modal wydarzenia: wybór trybu cykliczności (osoby używają .assignee-chip). */
 .event-radio {
   display: inline-flex;
   align-items: center;
