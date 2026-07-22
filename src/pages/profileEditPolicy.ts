@@ -71,9 +71,8 @@ const MANAGER_FIELDS: readonly ProfileField[] = [
  *  1. tryb setup (`peopleCount === 0`) — wszystko (brak lockoutu),
  *  2. administrator — wszystko,
  *  3. self (nie-admin, `actor.id === target.id`) — imię/nazwisko/telefon/emoji,
- *  4. PM na SPECJALIŚCIE z WŁASNEGO działu — celu, który nie jest sobą,
- *     administratorem ANI innym menedżerem (pm) — stanowisko/telefon/dni
- *     robocze/godziny/przełożony,
+ *  4. PM na osobie z WŁASNEGO działu (niebędącej sobą ani administratorem) —
+ *     stanowisko/telefon/dni robocze/godziny/przełożony,
  *  5. w przeciwnym razie / brak aktora — zbiór pusty.
  */
 export function editableProfileFields(
@@ -89,36 +88,11 @@ export function editableProfileFields(
     actor.accessRole === 'pm' &&
     actor.departmentId !== '' &&
     actor.departmentId === target.departmentId &&
-    target.accessRole !== 'administrator' &&
-    target.accessRole !== 'pm'
+    target.accessRole !== 'administrator'
   ) {
     return new Set(MANAGER_FIELDS);
   }
   return new Set();
-}
-
-/**
- * Czy aktor może zobaczyć SZCZEGÓŁY profilu celu — obłożenie („Ten tydzień"),
- * przypisane projekty i zadania. To zawężona widoczność organizacyjna: pełny
- * wgląd ma tryb setup, administrator, sam zainteresowany oraz menedżer (`pm`) z
- * niepustym działem równym działowi celu. Specjalista widzi u INNYCH wyłącznie
- * informacje ogólne (bez tej sekcji). Gate UX/spójności, nie bezpieczeństwa —
- * realną granicą jest RLS na serwerze.
- */
-export function canViewProfileDetails(
-  actor: Person | undefined,
-  target: Person,
-  opts: { peopleCount: number },
-): boolean {
-  if (opts.peopleCount === 0) return true;
-  if (!actor) return false;
-  if (actor.accessRole === 'administrator') return true;
-  if (actor.id === target.id) return true;
-  return (
-    actor.accessRole === 'pm' &&
-    actor.departmentId !== '' &&
-    actor.departmentId === target.departmentId
-  );
 }
 
 /** Czy aktor może edytować cokolwiek w profilu docelowej osoby. */

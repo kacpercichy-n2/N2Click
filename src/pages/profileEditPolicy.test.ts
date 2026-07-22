@@ -5,7 +5,6 @@ import type { AccessRole, Person } from '../types';
 import {
   canEditAnyProfileField,
   canUploadAvatarPhoto,
-  canViewProfileDetails,
   editableProfileFields,
   type ProfileField,
 } from './profileEditPolicy';
@@ -86,20 +85,17 @@ describe('editableProfileFields', () => {
     expect(editableProfileFields(pm, target, opts).has('companyId')).toBe(false);
   });
 
-  it('PM — specjalista (pracownik/handlowiec) z własnego działu (nie-admin, nie self)', () => {
-    // D1: „specjalista" = pracownik LUB handlowiec — obie role są edytowalne.
-    for (const role of ['pracownik', 'handlowiec'] as AccessRole[]) {
-      const pm = person({ accessRole: 'pm', departmentId: 'dep-a' });
-      const target = person({ accessRole: role, departmentId: 'dep-a' });
-      expect(sorted(editableProfileFields(pm, target, opts))).toEqual([
-        'birthDate',
-        'phone',
-        'roleTitle',
-        'supervisorId',
-        'workDays',
-        'workHours',
-      ]);
-    }
+  it('PM — cel z własnego działu (nie-admin, nie self)', () => {
+    const pm = person({ accessRole: 'pm', departmentId: 'dep-a' });
+    const target = person({ accessRole: 'pracownik', departmentId: 'dep-a' });
+    expect(sorted(editableProfileFields(pm, target, opts))).toEqual([
+      'birthDate',
+      'phone',
+      'roleTitle',
+      'supervisorId',
+      'workDays',
+      'workHours',
+    ]);
   });
 
   it('PM — cel z innego działu → pusto', () => {
@@ -118,12 +114,6 @@ describe('editableProfileFields', () => {
     const pm = person({ accessRole: 'pm', departmentId: 'dep-a' });
     const target = person({ accessRole: 'administrator', departmentId: 'dep-a' });
     expect(editableProfileFields(pm, target, opts).size).toBe(0);
-  });
-
-  it('PM — cel INNY PM z tego samego działu → pusto (menedżer nie edytuje menedżera)', () => {
-    const pm = person({ accessRole: 'pm', departmentId: 'dep-a' });
-    const otherPm = person({ accessRole: 'pm', departmentId: 'dep-a' });
-    expect(editableProfileFields(pm, otherPm, opts).size).toBe(0);
   });
 
   it('PM na samym sobie → zbiór self (nie zbiór menedżera)', () => {
@@ -155,58 +145,6 @@ describe('editableProfileFields', () => {
     const other = person({ accessRole: 'pracownik', departmentId: 'dep-b' });
     expect(canEditAnyProfileField(admin, other, opts)).toBe(true);
     expect(canEditAnyProfileField(worker, other, opts)).toBe(false);
-  });
-});
-
-describe('canViewProfileDetails — obłożenie / projekty / zadania', () => {
-  it('tryb setup (0 osób) → widoczne nawet bez aktora', () => {
-    expect(canViewProfileDetails(undefined, person(), { peopleCount: 0 })).toBe(true);
-  });
-
-  it('administrator widzi szczegóły dowolnej osoby', () => {
-    const admin = person({ accessRole: 'administrator' });
-    const target = person({ departmentId: 'dep-b' });
-    expect(canViewProfileDetails(admin, target, opts)).toBe(true);
-  });
-
-  it('self widzi własne szczegóły (także specjalista)', () => {
-    const self = person({ accessRole: 'pracownik' });
-    expect(canViewProfileDetails(self, self, opts)).toBe(true);
-  });
-
-  it('PM widzi szczegóły osoby z własnego działu (dowolna rola celu)', () => {
-    const pm = person({ accessRole: 'pm', departmentId: 'dep-a' });
-    const otherPm = person({ accessRole: 'pm', departmentId: 'dep-a' });
-    expect(canViewProfileDetails(pm, otherPm, opts)).toBe(true);
-    // Specjalista (pracownik/handlowiec) z własnego działu — obie role widoczne.
-    for (const role of ['pracownik', 'handlowiec'] as AccessRole[]) {
-      const target = person({ accessRole: role, departmentId: 'dep-a' });
-      expect(canViewProfileDetails(pm, target, opts)).toBe(true);
-    }
-  });
-
-  it('PM NIE widzi szczegółów osoby z innego działu', () => {
-    const pm = person({ accessRole: 'pm', departmentId: 'dep-a' });
-    const target = person({ accessRole: 'pracownik', departmentId: 'dep-b' });
-    expect(canViewProfileDetails(pm, target, opts)).toBe(false);
-  });
-
-  it('PM bez działu ("") nie widzi szczegółów innych mimo pustego działu celu', () => {
-    const pm = person({ accessRole: 'pm', departmentId: '' });
-    const target = person({ accessRole: 'pracownik', departmentId: '' });
-    expect(canViewProfileDetails(pm, target, opts)).toBe(false);
-  });
-
-  it('specjalista (pracownik/handlowiec) NIE widzi szczegółów innych', () => {
-    for (const role of ['pracownik', 'handlowiec'] as AccessRole[]) {
-      const actor = person({ accessRole: role, departmentId: 'dep-a' });
-      const target = person({ accessRole: 'pracownik', departmentId: 'dep-a' });
-      expect(canViewProfileDetails(actor, target, opts)).toBe(false);
-    }
-  });
-
-  it('undefined aktor (poza setup) → false', () => {
-    expect(canViewProfileDetails(undefined, person(), opts)).toBe(false);
   });
 });
 

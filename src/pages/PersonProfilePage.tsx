@@ -1,16 +1,12 @@
-// Employee profile: one integrated panel. Basic data (avatar + name/role/dept/
-// company) sits in the first card with an in-place pencil bubble for the photo;
-// remaining fields follow in the same panel. Every field renders as an
-// input/select when policy allows it, otherwise as read-only text. Assigned
-// projects/tasks and this week's workload are gated by `canViewProfileDetails`.
-import { useEffect, useRef, useState } from 'react';
+// Employee profile: avatar, name, job title, department, editable details,
+// assigned projects/tasks, and this week's workload/availability.
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
 import type { PersonDraft } from '../store/AppStore';
 import { useAuth } from '../auth/SessionProvider';
 import {
   canUploadAvatarPhoto,
-  canViewProfileDetails,
   editableProfileFields,
   type ProfileField,
 } from './profileEditPolicy';
@@ -33,7 +29,7 @@ import {
   taskPlannedTotalForPerson,
   wouldCreateSupervisorCycle,
 } from '../store/selectors';
-import { ROLE_LABELS, can } from '../store/permissions';
+import { ROLE_LABELS, can, NO_PERM_TITLE } from '../store/permissions';
 import { hashPassword } from '../utils/password';
 import { accessRoleForTitle, jobTitleSelectOptions } from '../utils/roleTitles';
 import type { AccessRole, Person } from '../types';
@@ -88,7 +84,7 @@ function PersonProfile({ personId }: { personId: string }) {
   const peopleCount = state.people.length;
   const isOwn = personId === state.currentUserId;
   // Pure role/department policy drives which fields are editable. `save()` takes
-  // locked fields from the current `person`, never from the (absent) draft input.
+  // locked fields from the current `person`, never from the (disabled) draft.
   const fields: ReadonlySet<ProfileField> = person
     ? editableProfileFields(actor, person, { peopleCount })
     : new Set<ProfileField>();
@@ -96,9 +92,6 @@ function PersonProfile({ personId }: { personId: string }) {
   const canEdit = fields.size > 0;
   const canUploadPhoto = person
     ? canUploadAvatarPhoto(actor, person, auth.mode, { peopleCount })
-    : false;
-  const canViewDetails = person
-    ? canViewProfileDetails(actor, person, { peopleCount })
     : false;
 
   const [draft, setDraft] = useState<PersonDraft>(() => ({
@@ -118,6 +111,7 @@ function PersonProfile({ personId }: { personId: string }) {
     supervisorId: person?.supervisorId ?? '',
     birthDate: person?.birthDate ?? '',
   }));
+  const [editing, setEditing] = useState(false);
   const [error, setError] = useState('');
 
   if (!person) return null;
@@ -129,7 +123,7 @@ function PersonProfile({ personId }: { personId: string }) {
 
   const save = () => {
     // Merge the draft over the current person, taking ONLY permitted fields;
-    // locked fields keep the person's current value (never a read-only draft).
+    // locked fields keep the person's current value (never the disabled input).
     const merged: PersonDraft = {
       firstName: allow('firstName') ? draft.firstName : person.firstName,
       lastName: allow('lastName') ? draft.lastName : person.lastName,
@@ -154,6 +148,7 @@ function PersonProfile({ personId }: { personId: string }) {
     }
     setError('');
     dispatch({ type: 'UPDATE_PERSON', personId: person.id, person: merged });
+    setEditing(false);
   };
 
   // Supervisor candidates: everyone except this person and anyone whose
@@ -163,10 +158,6 @@ function PersonProfile({ personId }: { personId: string }) {
       p.id !== person.id &&
       !wouldCreateSupervisorCycle(state.people, person.id, p.id),
   );
-  const supervisor = person.supervisorId
-    ? state.people.find((p) => p.id === person.supervisorId)
-    : undefined;
-  const subordinates = state.people.filter((p) => p.supervisorId === person.id);
 
   const projects = projectsOfPerson(state, person.id);
   const taskIds = new Set(taskIdsOfPerson(state, person.id));
@@ -202,207 +193,152 @@ function PersonProfile({ personId }: { personId: string }) {
           <Link to="/people" className="btn ghost">
             Wróć
           </Link>
+          {canEdit && (
+            <button type="button" className="btn soft" onClick={() => setEditing((v) => !v)}>
+              {editing ? 'Zamknij edycję' : 'Edytuj profil'}
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Pierwsza karta: dane podstawowe (awatar + imię/nazwisko/stanowisko/dział/spółka). */}
-      <div className="editor-section profile-basics">
-        <div className="profile-basics-main">
-          {canUploadPhoto ? (
-            <ProfilePhotoAvatar
-              person={person}
-              isSelf={isOwn}
-              sessionUserId={auth.state.session?.user?.id ?? null}
-            />
-          ) : (
-            <div className="profile-avatar-block">
-              <Avatar person={person} size={72} />
+      {canEdit && editing && (
+        <div className="editor-section">
+          <h2>Edytuj profil</h2>
+          <div className="field-row">
+            <div className="field">
+              <label htmlFor="pp-first">Imię *</label>
+              <input
+                id="pp-first"
+                value={draft.firstName}
+                onChange={(e) => set('firstName', e.target.value)}
+                disabled={!allow('firstName')}
+                title={allow('firstName') ? undefined : NO_PERM_TITLE}
+              />
             </div>
-          )}
-          <div className="profile-basics-fields">
-            <div className="field-row">
-              <div className="field">
-                <label htmlFor="pp-first">Imię{allow('firstName') ? ' *' : ''}</label>
-                {allow('firstName') ? (
-                  <input
-                    id="pp-first"
-                    value={draft.firstName}
-                    onChange={(e) => set('firstName', e.target.value)}
-                  />
-                ) : (
-                  <div className="field-readonly">{person.firstName || '—'}</div>
-                )}
-              </div>
-              <div className="field">
-                <label htmlFor="pp-last">Nazwisko</label>
-                {allow('lastName') ? (
-                  <input
-                    id="pp-last"
-                    value={draft.lastName}
-                    onChange={(e) => set('lastName', e.target.value)}
-                  />
-                ) : (
-                  <div className="field-readonly">{person.lastName || '—'}</div>
-                )}
-              </div>
-              <div className="field">
-                <label htmlFor="pp-role">Stanowisko</label>
-                {allow('roleTitle') ? (
-                  <select
-                    id="pp-role"
-                    value={draft.role}
-                    onChange={(e) => {
-                      const title = e.target.value;
-                      // Sprzężenie stanowisko → rola dostępu: Menadżer → pm,
-                      // Specjalista → pracownik. Nigdy nie degraduje administratora
-                      // i działa tylko, gdy aktor może zmieniać rolę dostępu
-                      // (ręczne nadpisanie selektem roli pozostaje możliwe).
-                      const derived = accessRoleForTitle(title);
-                      setDraft((d) => ({
-                        ...d,
-                        role: title,
-                        ...(derived && allow('accessRole') && d.accessRole !== 'administrator'
-                          ? { accessRole: derived }
-                          : {}),
-                      }));
-                    }}
-                  >
-                    <option value="">—</option>
-                    {jobTitleSelectOptions(state.jobTitles, state.departments, draft.role).map((t) => (
-                      <option key={t} value={t}>
-                        {t}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <div className="field-readonly">{person.role || '—'}</div>
-                )}
-              </div>
+            <div className="field">
+              <label htmlFor="pp-last">Nazwisko</label>
+              <input
+                id="pp-last"
+                value={draft.lastName}
+                onChange={(e) => set('lastName', e.target.value)}
+                disabled={!allow('lastName')}
+                title={allow('lastName') ? undefined : NO_PERM_TITLE}
+              />
             </div>
-            <div className="field-row">
-              <div className="field">
-                <label htmlFor="pp-dep">Dział</label>
-                {allow('departmentId') ? (
-                  <select
-                    id="pp-dep"
-                    value={draft.departmentId}
-                    onChange={(e) => set('departmentId', e.target.value)}
-                  >
-                    <option value="">—</option>
-                    {state.departments.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.name}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <div className="field-readonly">
-                    {getDepartment(state, person.departmentId)?.name || '—'}
-                  </div>
-                )}
-              </div>
-              <div className="field">
-                <label htmlFor="pp-company">Spółka</label>
-                {allow('companyId') ? (
-                  <select
-                    id="pp-company"
-                    value={draft.companyId}
-                    onChange={(e) => set('companyId', e.target.value)}
-                  >
-                    <option value="">—</option>
-                    {state.companies.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <div className="field-readonly">
-                    {state.companies.find((c) => c.id === person.companyId)?.name || '—'}
-                  </div>
-                )}
-              </div>
+            <div className="field">
+              <label htmlFor="pp-role">Stanowisko</label>
+              <select
+                id="pp-role"
+                value={draft.role}
+                onChange={(e) => {
+                  const title = e.target.value;
+                  // Sprzężenie stanowisko → rola dostępu: Menadżer → pm,
+                  // Specjalista → pracownik. Nigdy nie degraduje administratora
+                  // i działa tylko, gdy aktor może zmieniać rolę dostępu
+                  // (ręczne nadpisanie selektem roli pozostaje możliwe).
+                  const derived = accessRoleForTitle(title);
+                  setDraft((d) => ({
+                    ...d,
+                    role: title,
+                    ...(derived && allow('accessRole') && d.accessRole !== 'administrator'
+                      ? { accessRole: derived }
+                      : {}),
+                  }));
+                }}
+                disabled={!allow('roleTitle')}
+                title={allow('roleTitle') ? undefined : NO_PERM_TITLE}
+              >
+                <option value="">—</option>
+                {jobTitleSelectOptions(state.jobTitles, state.departments, draft.role).map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="pp-dep">Dział</label>
+              <select
+                id="pp-dep"
+                value={draft.departmentId}
+                onChange={(e) => set('departmentId', e.target.value)}
+                disabled={!allow('departmentId')}
+                title={allow('departmentId') ? undefined : NO_PERM_TITLE}
+              >
+                <option value="">—</option>
+                {state.departments.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="pp-company">Spółka</label>
+              <select
+                id="pp-company"
+                value={draft.companyId}
+                onChange={(e) => set('companyId', e.target.value)}
+                disabled={!allow('companyId')}
+                title={allow('companyId') ? undefined : NO_PERM_TITLE}
+              >
+                <option value="">—</option>
+                {state.companies.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* Kolejna sekcja tego samego panelu: pozostałe pola (input-albo-tekst). */}
-      <div className="editor-section">
-        <h2>Szczegóły</h2>
-        <div className="field-row">
-          <div className="field">
-            <label htmlFor="pp-email">E-mail</label>
-            {allow('email') ? (
+          <div className="field-row">
+            <div className="field">
+              <label htmlFor="pp-email">Email</label>
               <input
                 id="pp-email"
                 type="email"
                 value={draft.email}
                 onChange={(e) => set('email', e.target.value)}
+                disabled={!allow('email')}
+                title={allow('email') ? undefined : NO_PERM_TITLE}
               />
-            ) : person.email ? (
-              <div className="field-readonly">
-                <a href={`mailto:${person.email}`} className="profile-link">
-                  {person.email}
-                </a>
-              </div>
-            ) : (
-              <div className="field-readonly">—</div>
-            )}
-          </div>
-          <div className="field">
-            <label htmlFor="pp-phone">Telefon</label>
-            {allow('phone') ? (
+            </div>
+            <div className="field">
+              <label htmlFor="pp-phone">Telefon</label>
               <input
                 id="pp-phone"
                 value={draft.phone}
                 onChange={(e) => set('phone', e.target.value)}
                 placeholder="opcjonalnie"
+                disabled={!allow('phone')}
+                title={allow('phone') ? undefined : NO_PERM_TITLE}
               />
-            ) : person.phone ? (
-              <div className="field-readonly">
-                <a href={`tel:${person.phone.replace(/\s+/g, '')}`} className="profile-link">
-                  {person.phone}
-                </a>
-              </div>
-            ) : (
-              <div className="field-readonly">—</div>
-            )}
-          </div>
-          <div className="field">
-            <label htmlFor="pp-birth">Data urodzenia</label>
-            {allow('birthDate') ? (
-              <input
-                id="pp-birth"
-                type="date"
-                value={draft.birthDate}
-                onChange={(e) => set('birthDate', e.target.value)}
-              />
-            ) : (
-              <div className="field-readonly">
-                {person.birthDate ? `🎂 ${formatBirthday(person.birthDate)}` : '—'}
-              </div>
-            )}
-          </div>
-        </div>
-        <div className="field-row">
-          <div className="field field-narrow">
-            <label htmlFor="pp-avatar">Avatar</label>
-            {allow('avatarEmoji') ? (
+            </div>
+            <div className="field field-narrow">
+              <label htmlFor="pp-avatar">Avatar</label>
               <input
                 id="pp-avatar"
                 value={draft.avatar}
                 onChange={(e) => set('avatar', e.target.value)}
                 maxLength={4}
                 placeholder="🙂"
+                disabled={!allow('avatarEmoji')}
+                title={allow('avatarEmoji') ? undefined : NO_PERM_TITLE}
               />
-            ) : (
-              <div className="field-readonly">{person.avatar || '—'}</div>
-            )}
-          </div>
-          <div className="field field-narrow">
-            <label htmlFor="pp-cap">Godziny/dzień</label>
-            {allow('capacity') ? (
+            </div>
+            <div className="field">
+              <label htmlFor="pp-birth">Data urodzenia</label>
+              <input
+                id="pp-birth"
+                type="date"
+                value={draft.birthDate}
+                onChange={(e) => set('birthDate', e.target.value)}
+                disabled={!allow('birthDate')}
+                title={allow('birthDate') ? undefined : NO_PERM_TITLE}
+              />
+            </div>
+            <div className="field field-narrow">
+              <label htmlFor="pp-cap">Godziny/dzień</label>
               <input
                 id="pp-cap"
                 type="number"
@@ -411,18 +347,18 @@ function PersonProfile({ personId }: { personId: string }) {
                 step={0.5}
                 value={draft.capacity}
                 onChange={(e) => set('capacity', Number(e.target.value) || DEFAULT_CAPACITY)}
+                disabled={!allow('capacity')}
+                title={allow('capacity') ? undefined : NO_PERM_TITLE}
               />
-            ) : (
-              <div className="field-readonly">{formatDuration(person.capacity)}</div>
-            )}
-          </div>
-          <div className="field field-narrow">
-            <label htmlFor="pp-role-access">Uprawnienia</label>
-            {allow('accessRole') ? (
+            </div>
+            <div className="field field-narrow">
+              <label htmlFor="pp-role-access">Uprawnienia</label>
               <select
                 id="pp-role-access"
                 value={draft.accessRole}
                 onChange={(e) => set('accessRole', e.target.value as AccessRole)}
+                disabled={!allow('accessRole')}
+                title={allow('accessRole') ? undefined : NO_PERM_TITLE}
               >
                 {(Object.keys(ROLE_LABELS) as AccessRole[]).map((r) => (
                   <option key={r} value={r}>
@@ -430,86 +366,75 @@ function PersonProfile({ personId }: { personId: string }) {
                   </option>
                 ))}
               </select>
-            ) : (
-              <div className="field-readonly">{ROLE_LABELS[person.accessRole]}</div>
-            )}
+            </div>
           </div>
-        </div>
-        <div className="field-row">
-          <div className="field">
-            <label>Dni robocze</label>
-            {allow('workDays') ? (
+          <div className="field-row">
+            <div className="field">
+              <label>Dni robocze</label>
               <div className="weekday-chips" role="group" aria-label="Dni robocze">
                 {WEEKDAY_CHIPS.map((c) => (
                   <label
                     key={c.iso}
                     className={`weekday-chip${draft.workDays.includes(c.iso) ? ' on' : ''}`}
+                    title={allow('workDays') ? undefined : NO_PERM_TITLE}
                   >
                     <input
                       type="checkbox"
                       checked={draft.workDays.includes(c.iso)}
+                      disabled={!allow('workDays')}
                       onChange={() => set('workDays', toggleWorkDay(draft.workDays, c.iso))}
                     />
                     <span>{c.label}</span>
                   </label>
                 ))}
               </div>
-            ) : (
-              <div className="field-readonly">{formatWorkDays(person.workDays)}</div>
-            )}
-          </div>
-          {allow('workHours') ? (
-            <>
-              <div className="field field-narrow">
-                <label htmlFor="pp-work-start">Praca od</label>
-                <select
-                  id="pp-work-start"
-                  value={draft.workStartMinutes}
-                  onChange={(e) => {
-                    set('workStartMinutes', Number(e.target.value));
-                    if (error) setError('');
-                  }}
-                >
-                  {START_MINUTE_OPTIONS.map((m) => (
-                    <option key={m} value={m}>
-                      {formatMinutes(m)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="field field-narrow">
-                <label htmlFor="pp-work-end">Praca do</label>
-                <select
-                  id="pp-work-end"
-                  value={draft.workEndMinutes}
-                  onChange={(e) => {
-                    set('workEndMinutes', Number(e.target.value));
-                    if (error) setError('');
-                  }}
-                >
-                  {END_MINUTE_OPTIONS.map((m) => (
-                    <option key={m} value={m}>
-                      {formatMinutes(m)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </>
-          ) : (
-            <div className="field">
-              <label>Godziny pracy</label>
-              <div className="field-readonly">
-                {formatMinutes(person.workStartMinutes)}–{formatMinutes(person.workEndMinutes)}
-              </div>
             </div>
-          )}
-          <div className="field">
-            <label htmlFor="pp-supervisor">Przełożony</label>
-            {allow('supervisorId') ? (
+            <div className="field field-narrow">
+              <label htmlFor="pp-work-start">Praca od</label>
+              <select
+                id="pp-work-start"
+                value={draft.workStartMinutes}
+                onChange={(e) => {
+                  set('workStartMinutes', Number(e.target.value));
+                  if (error) setError('');
+                }}
+                disabled={!allow('workHours')}
+                title={allow('workHours') ? undefined : NO_PERM_TITLE}
+              >
+                {START_MINUTE_OPTIONS.map((m) => (
+                  <option key={m} value={m}>
+                    {formatMinutes(m)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field field-narrow">
+              <label htmlFor="pp-work-end">Praca do</label>
+              <select
+                id="pp-work-end"
+                value={draft.workEndMinutes}
+                onChange={(e) => {
+                  set('workEndMinutes', Number(e.target.value));
+                  if (error) setError('');
+                }}
+                disabled={!allow('workHours')}
+                title={allow('workHours') ? undefined : NO_PERM_TITLE}
+              >
+                {END_MINUTE_OPTIONS.map((m) => (
+                  <option key={m} value={m}>
+                    {formatMinutes(m)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="pp-supervisor">Przełożony</label>
               <select
                 id="pp-supervisor"
                 value={draft.supervisorId}
                 onChange={(e) => set('supervisorId', e.target.value)}
+                disabled={!allow('supervisorId')}
+                title={allow('supervisorId') ? undefined : NO_PERM_TITLE}
               >
                 <option value="">—</option>
                 {supervisorOptions.map((p) => (
@@ -518,39 +443,10 @@ function PersonProfile({ personId }: { personId: string }) {
                   </option>
                 ))}
               </select>
-            ) : (
-              <div className="field-readonly">
-                {supervisor ? (
-                  <Link to={`/people/${supervisor.id}`} className="profile-link">
-                    {supervisor.name}
-                  </Link>
-                ) : (
-                  '—'
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-        {subordinates.length > 0 && (
-          <div className="field">
-            <label>Podwładni</label>
-            <div className="field-readonly profile-fact-links">
-              {subordinates.map((p, i) => (
-                <span key={p.id}>
-                  <Link to={`/people/${p.id}`} className="profile-link">
-                    {p.name}
-                  </Link>
-                  {i < subordinates.length - 1 ? ', ' : ''}
-                </span>
-              ))}
             </div>
           </div>
-        )}
-        {canEdit && (
           <p className="field-hint">Limit dzienny liczony jest z pola dostępności.</p>
-        )}
-        {error && <p className="field-error">{error}</p>}
-        {canEdit && (
+          {error && <p className="field-error">{error}</p>}
           <div className="editor-actions">
             <button
               type="button"
@@ -561,115 +457,117 @@ function PersonProfile({ personId }: { personId: string }) {
               Zapisz profil
             </button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      {canUploadPhoto && (
+        <AvatarPhotoSection
+          person={person}
+          isSelf={isOwn}
+          sessionUserId={auth.state.session?.user?.id ?? null}
+        />
+      )}
+
+      <ProfileFacts person={person} />
 
       <PasswordSection person={person} />
 
-      {canViewDetails && (
-        <div className="editor-section">
-          <h2>Ten tydzień</h2>
-          <p>
-            Przypisano <strong>{formatDuration(weekHours)}</strong> z{' '}
-            <strong>{formatDuration(available)}</strong> dostępnych ({formatDuration(capacity)}/dzień) ·{' '}
-            łącznie przypisano {formatDuration(personTotalHours(state, person.id))}.
-          </p>
-          <div className="profile-week">
-            {week.map((d) => {
-              const h = hoursForPersonOnDate(state, person.id, d);
-              const over = h > capacity;
-              return (
-                <div
-                  key={d}
-                  className={[
-                    'profile-day',
-                    isWeekend(d) ? 'weekend' : '',
-                    over ? 'overload' : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' ')}
+      <div className="editor-section">
+        <h2>Ten tydzień</h2>
+        <p>
+          Przypisano <strong>{formatDuration(weekHours)}</strong> z{' '}
+          <strong>{formatDuration(available)}</strong> dostępnych ({formatDuration(capacity)}/dzień) ·{' '}
+          łącznie przypisano {formatDuration(personTotalHours(state, person.id))}.
+        </p>
+        <div className="profile-week">
+          {week.map((d) => {
+            const h = hoursForPersonOnDate(state, person.id, d);
+            const over = h > capacity;
+            return (
+              <div
+                key={d}
+                className={[
+                  'profile-day',
+                  isWeekend(d) ? 'weekend' : '',
+                  over ? 'overload' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+              >
+                <span className="profile-day-label">{formatRowLabel(d)}</span>
+                <span className="profile-day-hours">
+                  {h === 0 ? '—' : formatDuration(h)}
+                  {over && ' ⚠'}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="editor-section">
+        <h2>Projekty ({projects.length})</h2>
+        {projects.length === 0 ? (
+          <p className="field-hint">Ta osoba nie jest jeszcze w żadnym projekcie.</p>
+        ) : (
+          <ul className="project-task-list">
+            {projects.map((p) => (
+              <li key={p.id} className="project-task-row">
+                <button
+                  type="button"
+                  className="project-task-main"
+                  onClick={() => navigate(`/projects/${p.id}`)}
                 >
-                  <span className="profile-day-label">{formatRowLabel(d)}</span>
-                  <span className="profile-day-hours">
-                    {h === 0 ? '—' : formatDuration(h)}
-                    {over && ' ⚠'}
+                  <Coin paid={p.paid} size={14} />
+                  <span className="task-title">{p.name}</span>
+                  <StatusBadge status={getStatus(state, p.statusId)} />
+                  <span className="muted">
+                    {formatShortWithWeekday(p.startDate)} – {formatShortWithWeekday(p.endDate)}
                   </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
-      {canViewDetails && (
-        <div className="editor-section">
-          <h2>Projekty ({projects.length})</h2>
-          {projects.length === 0 ? (
-            <p className="field-hint">Ta osoba nie jest jeszcze w żadnym projekcie.</p>
-          ) : (
-            <ul className="project-task-list">
-              {projects.map((p) => (
-                <li key={p.id} className="project-task-row">
-                  <button
-                    type="button"
-                    className="project-task-main"
-                    onClick={() => navigate(`/projects/${p.id}`)}
-                  >
-                    <Coin paid={p.paid} size={14} />
-                    <span className="task-title">{p.name}</span>
-                    <StatusBadge status={getStatus(state, p.statusId)} />
-                    <span className="muted">
-                      {formatShortWithWeekday(p.startDate)} – {formatShortWithWeekday(p.endDate)}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-
-      {canViewDetails && (
-        <div className="editor-section">
-          <h2>Zadania ({tasks.length})</h2>
-          {tasks.length === 0 ? (
-            <p className="field-hint">Brak przypisanych zadań.</p>
-          ) : (
-            <ul className="project-task-list">
-              {tasks.map((t) => (
-                <li key={t.id} className="project-task-row">
-                  <button
-                    type="button"
-                    className="project-task-main"
-                    onClick={() => openTask(t.id)}
-                  >
-                    <span className="task-title">{t.title}</span>
-                    <StatusBadge status={getStatus(state, t.statusId)} />
-                    <span className="muted">
-                      {formatShortWithWeekday(t.startDate)} – {formatShortWithWeekday(t.endDate)} ·{' '}
-                      {formatDuration(taskPlannedTotalForPerson(state, t.id, person.id))} dla{' '}
-                      {person.firstName}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
+      <div className="editor-section">
+        <h2>Zadania ({tasks.length})</h2>
+        {tasks.length === 0 ? (
+          <p className="field-hint">Brak przypisanych zadań.</p>
+        ) : (
+          <ul className="project-task-list">
+            {tasks.map((t) => (
+              <li key={t.id} className="project-task-row">
+                <button
+                  type="button"
+                  className="project-task-main"
+                  onClick={() => openTask(t.id)}
+                >
+                  <span className="task-title">{t.title}</span>
+                  <StatusBadge status={getStatus(state, t.statusId)} />
+                  <span className="muted">
+                    {formatShortWithWeekday(t.startDate)} – {formatShortWithWeekday(t.endDate)} ·{' '}
+                    {formatDuration(taskPlannedTotalForPerson(state, t.id, person.id))} dla{' '}
+                    {person.firstName}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </section>
   );
 }
 
 /**
- * Awatar w pierwszej karcie z bąbelkiem ołówka do zmiany zdjęcia (private-bucket,
- * tryb Supabase). Rodzic montuje ten komponent WYŁĄCZNIE gdy
- * `canUploadAvatarPhoto` jest true, więc w trybie lokalnym nigdy się nie montuje
- * (i nie dotyka klienta Supabase). Pobranie zawsze przez signed URL; błędy
- * degradują do inicjałów/emoji, nigdy nie blokują. Świeżo wgrane zdjęcie zasila
- * awatar pierwszej karty przez lokalny stan `photoUrl`.
+ * "Zdjęcie profilowe" — private-bucket avatar photo (Supabase mode only). The
+ * parent renders this ONLY when `canUploadAvatarPhoto` is true, so it never
+ * mounts (and never touches the Supabase client) in local mode. Retrieval is
+ * always via a signed URL; failures fall back to initials/emoji, never block.
  */
-function ProfilePhotoAvatar({
+function AvatarPhotoSection({
   person,
   isSelf,
   sessionUserId,
@@ -686,7 +584,6 @@ function ProfilePhotoAvatar({
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const email = person.email;
 
@@ -777,29 +674,8 @@ function ProfilePhotoAvatar({
   };
 
   return (
-    <div className="profile-avatar-block">
-      <div className="profile-avatar-wrap">
-        <Avatar person={person} size={72} photoUrl={photoUrl ?? undefined} />
-        {phase === 'ready' && (
-          <button
-            type="button"
-            className="avatar-edit-bubble"
-            aria-label="Zmień zdjęcie"
-            disabled={busy}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            ✎
-          </button>
-        )}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
-          disabled={busy}
-          onChange={(e) => void onFile(e)}
-          style={{ display: 'none' }}
-        />
-      </div>
+    <div className="editor-section">
+      <h2>Zdjęcie profilowe</h2>
       {phase === 'loading' && (
         <p className="field-hint" role="status">
           Ładowanie zdjęcia…
@@ -811,36 +687,135 @@ function ProfilePhotoAvatar({
         </p>
       )}
       {phase === 'no-account' && (
-        <p className="field-hint">Bez konta — zdjęcie po jego utworzeniu.</p>
+        <p className="field-hint">
+          Ta osoba nie ma jeszcze konta — zdjęcie profilowe będzie dostępne po jego utworzeniu.
+        </p>
       )}
       {phase === 'ready' && (
-        <div className="profile-photo-actions">
-          {busy && (
-            <span className="field-hint" role="status">
-              Wysyłanie…
-            </span>
-          )}
-          {avatarPath && !busy && (
-            <button
-              type="button"
-              className="avatar-remove-link"
-              onClick={() => void onRemove()}
-            >
-              Usuń zdjęcie
-            </button>
-          )}
-          {error && (
-            <p className="field-error" role="alert">
-              {error}
+        <div className="avatar-photo-section">
+          <Avatar person={person} size={72} photoUrl={photoUrl ?? undefined} />
+          <div className="avatar-photo-controls">
+            <label className="btn soft" htmlFor="pp-photo">
+              {busy ? 'Wysyłanie…' : photoUrl ? 'Zmień zdjęcie' : 'Wgraj zdjęcie'}
+            </label>
+            <input
+              id="pp-photo"
+              type="file"
+              accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+              disabled={busy}
+              onChange={(e) => void onFile(e)}
+              style={{ display: 'none' }}
+            />
+            {avatarPath && (
+              <button
+                type="button"
+                className="btn danger-ghost"
+                disabled={busy}
+                onClick={() => void onRemove()}
+              >
+                Usuń zdjęcie
+              </button>
+            )}
+            {error && (
+              <p className="field-error" role="alert">
+                {error}
+              </p>
+            )}
+            {notice && (
+              <p className="field-hint" role="status">
+                {notice}
+              </p>
+            )}
+            <p className="field-hint">
+              Zdjęcie zapisuje się automatycznie po wybraniu pliku — bez
+              osobnego przycisku „Zapisz”. Będzie widoczne w całej aplikacji.
             </p>
-          )}
-          {notice && (
-            <p className="field-hint" role="status">
-              {notice}
-            </p>
-          )}
+          </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Read-only profile facts: telefon, dni robocze, godziny pracy, przełożony and
+ * podwładni (the latter linked to their profiles; row omitted when empty).
+ */
+function ProfileFacts({ person }: { person: Person }) {
+  const { state } = useStore();
+  const supervisor = person.supervisorId
+    ? state.people.find((p) => p.id === person.supervisorId)
+    : undefined;
+  const subordinates = state.people.filter((p) => p.supervisorId === person.id);
+
+  return (
+    <div className="editor-section">
+      <h2>Informacje</h2>
+      <dl className="profile-facts">
+        {person.phone && (
+          <div className="profile-fact">
+            <dt>Telefon</dt>
+            <dd>
+              <a href={`tel:${person.phone.replace(/\s+/g, '')}`} className="profile-link">
+                {person.phone}
+              </a>
+            </dd>
+          </div>
+        )}
+        {person.email && (
+          <div className="profile-fact">
+            <dt>E-mail</dt>
+            <dd>
+              <a href={`mailto:${person.email}`} className="profile-link">
+                {person.email}
+              </a>
+            </dd>
+          </div>
+        )}
+        {person.birthDate && (
+          <div className="profile-fact">
+            <dt>Data urodzenia</dt>
+            <dd>🎂 {formatBirthday(person.birthDate)}</dd>
+          </div>
+        )}
+        <div className="profile-fact">
+          <dt>Dni robocze</dt>
+          <dd>{formatWorkDays(person.workDays)}</dd>
+        </div>
+        <div className="profile-fact">
+          <dt>Godziny pracy</dt>
+          <dd>
+            {formatMinutes(person.workStartMinutes)}–{formatMinutes(person.workEndMinutes)}
+          </dd>
+        </div>
+        <div className="profile-fact">
+          <dt>Przełożony</dt>
+          <dd>
+            {supervisor ? (
+              <Link to={`/people/${supervisor.id}`} className="profile-link">
+                {supervisor.name}
+              </Link>
+            ) : (
+              '—'
+            )}
+          </dd>
+        </div>
+        {subordinates.length > 0 && (
+          <div className="profile-fact">
+            <dt>Podwładni</dt>
+            <dd className="profile-fact-links">
+              {subordinates.map((p, i) => (
+                <span key={p.id}>
+                  <Link to={`/people/${p.id}`} className="profile-link">
+                    {p.name}
+                  </Link>
+                  {i < subordinates.length - 1 ? ', ' : ''}
+                </span>
+              ))}
+            </dd>
+          </div>
+        )}
+      </dl>
     </div>
   );
 }
