@@ -62,12 +62,21 @@ const CONSTRAINT_CODES = new Set(['23502', '23503', '23505', '23514']);
 
 /**
  * Klasyfikuje błąd zapisu z PostgREST: kod `42501`, komunikat pasujący do wzorca
- * RLS lub kod naruszenia ograniczenia (23502/23503/23505/23514) => `'permission'`
- * (odrzucenie — op zostaje porzucony, dane zostają lokalnie); wszystko inne =>
- * `'transient'` (można ponowić).
+ * RLS, kod naruszenia ograniczenia (23502/23503/23505/23514) lub wyjątek
+ * zgłoszony przez trigger (`raise exception`, klasa P0…) => `'permission'`
+ * (odrzucenie — op zostaje porzucony z notatką, dane zostają lokalnie);
+ * wszystko inne => `'transient'` (można ponowić). Wyjątki triggerów (np.
+ * protect_profile_privileges: „Tylko administrator może zmieniać rolę…") są
+ * deterministyczne — ponawianie nigdy nie pomoże, a jako 'transient' JEDEN taki
+ * op blokował całą kolejkę lustra tej przeglądarki w nieskończoność (żadna
+ * późniejsza edycja nie docierała do chmury).
  */
 export function classifyWriteError(code: string | null, message: string): CloudWriteError {
-  if (code === '42501' || (code !== null && CONSTRAINT_CODES.has(code)) || PERMISSION_RE.test(message)) {
+  if (
+    code === '42501' ||
+    (code !== null && (CONSTRAINT_CODES.has(code) || code.startsWith('P0'))) ||
+    PERMISSION_RE.test(message)
+  ) {
     return { kind: 'permission', message };
   }
   return { kind: 'transient', message };

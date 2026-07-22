@@ -103,6 +103,14 @@ describe('classifyWriteError', () => {
     expect(classifyWriteError('23505', 'duplicate key').kind).toBe('permission');
     expect(classifyWriteError('23514', 'check constraint').kind).toBe('permission');
   });
+  it('classifies trigger raise exception (P0001) as permission (drop, not retry)', () => {
+    // Wyjątek triggera (np. protect_profile_privileges) jest deterministyczny —
+    // jako 'transient' jeden taki op zatykał całą kolejkę lustra na zawsze.
+    expect(
+      classifyWriteError('P0001', 'Tylko administrator może zmieniać rolę dostępu lub dział profilu')
+        .kind,
+    ).toBe('permission');
+  });
   it('classifies everything else as transient', () => {
     expect(classifyWriteError('08006', 'connection failure').kind).toBe('transient');
     expect(classifyWriteError(null, 'fetch failed').kind).toBe('transient');
