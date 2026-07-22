@@ -12,7 +12,7 @@ import { useCan } from '../store/useCan';
 import type { EventDraft } from '../store/AppStore';
 import { isValidEventDraft } from '../store/commandValidation';
 import type { CalendarEvent } from '../types';
-import { isValidDateStr, todayStr, WEEKDAY_LABELS } from '../utils/dates';
+import { addDaysStr, isValidDateStr, todayStr, WEEKDAY_LABELS } from '../utils/dates';
 import { MINUTE_STEP } from '../utils/time';
 import { isoWeekday } from '../utils/recurrence';
 import { normalizeProjectDocumentUrl } from '../utils/projectDocuments';
@@ -308,12 +308,10 @@ function EventEditor({
 
   const markDirty = () => onDirtyChange(true);
 
-  // Dzień tygodnia kotwicy jest ZAWSZE zaznaczony i nieodznaczalny (baza reguły
-  // musi być własnym wystąpieniem — inaczej reduktor odrzuca cykliczność).
-  const anchorIso = isValidDateStr(date) ? isoWeekday(date) : 0;
-
+  // Dni tygodnia są w pełni odznaczalne. Reduktor nadal wymaga, by baza była
+  // własnym wystąpieniem reguły — gdy wybrane dni nie obejmują dnia tygodnia
+  // wpisanej daty, zapis przesuwa datę bazową na najbliższy wybrany dzień.
   const toggleDay = (iso: number) => {
-    if (iso === anchorIso) return; // baza nieodznaczalna
     setRecurDays((prev) =>
       prev.includes(iso) ? prev.filter((d) => d !== iso) : [...prev, iso],
     );
@@ -352,16 +350,32 @@ function EventEditor({
     if (meetingUrl.trim() !== '' && normalizeProjectDocumentUrl(meetingUrl) === null) {
       next.meetingUrl = 'Adres musi zaczynać się od http(s):// .';
     }
+    if (recurring && recurDays.length === 0) {
+      next.form = 'Wybierz przynajmniej jeden dzień tygodnia cykliczności.';
+    }
     if (Object.values(next).some((v) => v !== undefined)) {
       setErrors(next);
       return;
     }
 
     const durationMinutes = endMinutes - startMinutes;
-    // Dzień kotwicy zawsze w regule; UI nie tworzy wyjątków (brak menu wystąpień).
+    // UI nie tworzy wyjątków (brak menu wystąpień).
     const daysOfWeek = recurring
-      ? Array.from(new Set([...recurDays, anchorIso])).sort((a, b) => a - b)
+      ? Array.from(new Set(recurDays)).sort((a, b) => a - b)
       : [];
+    // Reduktor wymaga, by baza była własnym wystąpieniem reguły — gdy wybrane
+    // dni nie obejmują dnia tygodnia wpisanej daty, przesuwamy datę bazową na
+    // najbliższy wybrany dzień (np. środa + wybór wt/czw => czwartek).
+    let effectiveDate = date;
+    if (recurring && !daysOfWeek.includes(isoWeekday(date))) {
+      for (let i = 1; i <= 6; i++) {
+        const candidate = addDaysStr(date, i);
+        if (daysOfWeek.includes(isoWeekday(candidate))) {
+          effectiveDate = candidate;
+          break;
+        }
+      }
+    }
     const recurrence = recurring
       ? {
           daysOfWeek,
@@ -376,7 +390,7 @@ function EventEditor({
       description,
       location,
       meetingUrl,
-      date,
+      date: effectiveDate,
       startMinutes,
       durationMinutes,
       attendeeIds,
@@ -392,7 +406,7 @@ function EventEditor({
     if (!isValidEventDraft(state, draft)) {
       setErrors({
         form: recurring
-          ? 'Nie udało się zapisać. Sprawdź cykliczność — „Do" nie może być wcześniejsze niż data wydarzenia.'
+          ? 'Nie udało się zapisać. Sprawdź cykliczność — „Do" nie może być wcześniejsze niż pierwsze wystąpienie wydarzenia.'
           : 'Nie udało się zapisać wydarzenia. Sprawdź wprowadzone dane.',
       });
       return;
@@ -598,14 +612,14 @@ function EventEditor({
             <div className="recur-weekday-picker">
               {WEEKDAY_LABELS.map((label, i) => {
                 const iso = i + 1;
-                const active = iso === anchorIso || recurDays.includes(iso);
+                const active = recurDays.includes(iso);
                 return (
                   <button
                     key={iso}
                     type="button"
                     className={active ? 'recur-day-chip active' : 'recur-day-chip'}
                     aria-pressed={active}
-                    disabled={readOnly || iso === anchorIso}
+                    disabled={readOnly}
                     onClick={() => toggleDay(iso)}
                   >
                     {label}
@@ -628,7 +642,8 @@ function EventEditor({
               />
             </div>
             <p className="field-hint">
-              Dzień tygodnia daty jest zawsze zaznaczony — to baza wydarzenia.
+              Jeśli wybrane dni nie obejmują dnia tygodnia daty, wydarzenie
+              przesunie się na najbliższy wybrany dzień.
             </p>
           </>
         )}
