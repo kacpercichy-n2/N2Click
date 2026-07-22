@@ -4,12 +4,13 @@
 // W odróżnieniu od TicketModal nie chodzi tu o edycję danych, więc modal jest
 // sterowany zwykłym stanem (`open`/`onClose`), bez parametru w URL i strażnika
 // nawigacji.
-import { useCallback, useEffect } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import { useCallback } from 'react';
+import { AnimatePresence } from 'motion/react';
 import { CHANGELOG, changelogRangeLabel } from '../data/changelog';
 import type { ChangelogEntry, ChangelogItem } from '../data/changelog';
 import { IconButton } from './IconButton';
 import { X } from './icons';
+import { ModalFrame } from './ModalFrame';
 
 /** Grupuje zmiany wpisu po panelu (`area`), zachowując kolejność pierwszego
  *  wystąpienia — bez sortowania alfabetycznego, żeby autor sam decydował o
@@ -44,61 +45,31 @@ export function ChangelogModal({ open, onClose }: Props) {
 function ChangelogModalShell({ onClose }: { onClose: () => void }) {
   const requestClose = useCallback(() => onClose(), [onClose]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') requestClose();
-    };
-    window.addEventListener('keydown', onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [requestClose]);
-
   return (
-    <>
-      <motion.div
-        className="task-modal-scrim"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.18 }}
-      />
-      <div className="task-modal-viewport" onClick={requestClose}>
-        <motion.div
-          className="task-modal-card changelog-modal-card"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Dziennik zmian"
-          onClick={(e) => e.stopPropagation()}
-          initial={{ opacity: 0, scale: 0.96, y: 8 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.96, y: 8 }}
-          transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-        >
-          <div className="task-modal-head">
-            <h1 className="task-modal-title">Co nowego</h1>
-            <div className="task-modal-head-actions">
-              <IconButton
-                className="task-modal-close"
-                icon={<X size={18} aria-hidden />}
-                onClick={requestClose}
-                label="Zamknij"
-              />
-            </div>
-          </div>
-          <div className="task-modal-body">
-            <div className="changelog-list">
-              {CHANGELOG.map((entry) => (
-                <ChangelogEntryBlock key={entry.id} entry={entry} />
-              ))}
-            </div>
-          </div>
-        </motion.div>
+    <ModalFrame
+      ariaLabel="Dziennik zmian"
+      cardClassName="changelog-modal-card"
+      onRequestClose={requestClose}
+    >
+      <div className="task-modal-head">
+        <h1 className="task-modal-title">Co nowego</h1>
+        <div className="task-modal-head-actions">
+          <IconButton
+            className="task-modal-close"
+            icon={<X size={18} aria-hidden />}
+            onClick={requestClose}
+            label="Zamknij"
+          />
+        </div>
       </div>
-    </>
+      <div className="task-modal-body">
+        <div className="changelog-list">
+          {CHANGELOG.map((entry) => (
+            <ChangelogEntryBlock key={entry.id} entry={entry} />
+          ))}
+        </div>
+      </div>
+    </ModalFrame>
   );
 }
 

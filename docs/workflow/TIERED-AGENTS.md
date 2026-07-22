@@ -58,6 +58,12 @@ focused checks during iteration; the scheduler runs one final
 failure. Browser checks run only when the
 prompt names the changed interaction or the release bundle owns the matrix.
 
+Shared frontend primitives and compositor-sensitive work also read
+`openwiki/n2hub/frontend-performance-and-primitives.md`. The architect/developer
+must compare at least two primary implementations (for example Radix, shadcn/ui,
+Base UI, React Aria or Astryx), distinguish borrowed structure from local
+adaptation, and require evidence from the real reporting device for GPU claims.
+
 `handoffs/RUN-STATE.md` is a compact current-run index, not history. Packages and
 named check artifacts retain detailed evidence. The final reviewer/orchestrator
 records one wiki decision after seeing the final diff.

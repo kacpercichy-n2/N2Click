@@ -27,6 +27,13 @@ gate, commit and push.
 Run a check in Chromium and WebKit only when its covered behavior changes or a
 release verification prompt explicitly requests the full matrix.
 
+Rendering/GPU fixes require a local interaction check in addition to the normal
+test suite. Record viewport, DPR and target hardware; use Paint Flashing and a
+Performance/Layers trace to verify that the full viewport is not repainted.
+Automation may confirm DOM/layer invariants, but the device that reported the
+problem is authoritative. See
+[frontend-performance-and-primitives.md](frontend-performance-and-primitives.md).
+
 The release bundle is `npm run check:browser-release`
 (`scripts/run-browser-regression.mjs`): it builds once, owns its own preview
 server on port 5173, and runs all five checks in Chromium and WebKit.

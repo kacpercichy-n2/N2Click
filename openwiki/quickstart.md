@@ -6,6 +6,7 @@ declared page below, named source touchpoints and direct dependencies.
 - [State and persistence](n2hub/state-and-persistence.md)
 - [Scheduling and calendar](n2hub/scheduling-and-calendar.md)
 - [UI, navigation and onboarding](n2hub/ui-navigation-and-onboarding.md)
+- [Frontend performance and UI primitives](n2hub/frontend-performance-and-primitives.md)
 - [Testing and automation](n2hub/testing-and-automation.md)
 - [Scoped source map](n2hub/INDEX.md)
 

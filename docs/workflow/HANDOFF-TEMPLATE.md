@@ -10,6 +10,10 @@ handoff.
 - Invariants and out-of-scope boundaries are explicit.
 - Acceptance criteria are observable and testable.
 - Focused verification is named; scheduler-owned full checks are not repeated.
+- Shared UI primitives name at least two primary reference implementations and
+  the structural differences from N2Hub.
+- Rendering-performance work names the target viewport/DPR/device and the trace
+  or paint evidence required for acceptance.
 - No product or architecture decision is unresolved.
 
 If any item fails, use `Status: blocked-needs-decision` and stop.
@@ -53,6 +57,9 @@ If any item fails, use `Status: blocked-needs-decision` and stop.
 
 ## Prior decisions
 - <settled decisions only>
+
+## External reference patterns
+- <official implementation/specification + adopted/rejected structure>
 ```
 
 Report back only changed boundaries, exact focused results, context expansions,

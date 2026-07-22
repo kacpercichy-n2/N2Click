@@ -36,6 +36,19 @@ covered interaction changes; release verification owns the full browser matrix.
 - Current data version is 7. Storage repairs legacy data on load. A failed save
   must never report `Zapisano`; same-browser tab conflicts must remain explicit.
 
+## Frontend primitives and performance
+
+- Shared dialogs, overlays, popovers, selects, menus and rendering-sensitive
+  interactions must start with the focused context in
+  `openwiki/n2hub/frontend-performance-and-primitives.md`.
+- Before writing custom primitive behavior, compare at least two current primary
+  sources such as Radix, shadcn/ui, Base UI, React Aria, Astryx by Meta, MUI,
+  browser specifications or web.dev. Libraries are references unless the task
+  explicitly approves adopting one.
+- GPU/compositor claims require a trace and a check on the device that reports
+  the problem. Do not treat `will-change`, `translateZ(0)`, filters or blur as
+  automatic optimizations.
+
 ## Hard invariants
 
 1. Planned hours live only in `WorkloadEntry`; totals are derived.

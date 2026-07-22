@@ -79,6 +79,14 @@
   `n2hub:nav-order-changed` window event so App re-orders the live sidebar.
 - `src/pages/` owns route-specific screens; `src/components/TaskModal.tsx` owns
   task editing and its allocation grid.
+- `src/components/ModalFrame.tsx` owns the shared portal, modal stack, Escape,
+  body scroll lock and inert root for Task, Event, Ticket, Quick Add and
+  Changelog modals. The frosted background is a one-time opaque canvas produced
+  by `modalBackdropSnapshot.ts`; the live app is hidden after capture so modal
+  scrolling never blends against or filters `#root`. There is one scroller,
+  `.task-modal-body`, and the snapshot/card must not use scale animation. Read
+  [frontend-performance-and-primitives.md](frontend-performance-and-primitives.md)
+  before changing this boundary.
 - Profile edit matrix (`src/pages/profileEditPolicy.ts`) gains an ADMIN-ONLY
   „Spółka” field (`companyId` in `ALL_FIELDS` only — nie self, nie manager),
   rendered as a select in PersonProfilePage next to „Dział”; parity with the
@@ -140,4 +148,6 @@
 ## Start here for
 
 Routes, modals, dirty-edit protection, accessibility, roles, onboarding,
-global shell UI and view-specific UI changes.
+global shell UI and view-specific UI changes. Rendering-sensitive primitive
+work additionally starts with
+[frontend-performance-and-primitives.md](frontend-performance-and-primitives.md).

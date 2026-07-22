@@ -4,7 +4,7 @@
 // Dzięki temu „Zgłoś” nie opuszcza bieżącej strony i da się podlinkować.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence } from 'motion/react';
 import { useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import type { TicketDraft } from '../store/AppStore';
@@ -21,6 +21,7 @@ import {
 import { bypassNavGuardOnce, clearNavGuard, setNavGuard } from '../utils/dirtyRegistry';
 import { IconButton } from './IconButton';
 import { X } from './icons';
+import { ModalFrame } from './ModalFrame';
 
 /** Parametr URL-a niosący modal zgłoszenia (polski, jak reszta tras). */
 const TICKET_PARAM = 'zgloszenie';
@@ -124,19 +125,6 @@ function TicketModalShell({ ticketParam, onClose }: ShellProps) {
     closeDeliberately();
   }, [closeDeliberately]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') requestClose();
-    };
-    window.addEventListener('keydown', onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [requestClose]);
-
   const handleDelete = () => {
     if (!existing || !canManage) return;
     if (window.confirm(`Usunąć zgłoszenie „${existing.title}”?`)) {
@@ -154,67 +142,50 @@ function TicketModalShell({ ticketParam, onClose }: ShellProps) {
         : 'Edytuj zgłoszenie';
 
   return (
-    <>
-      <motion.div
-        className="task-modal-scrim"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.18 }}
-      />
-      <div className="task-modal-viewport" onClick={requestClose}>
-        <motion.div
-          className="task-modal-card ticket-modal-card"
-          role="dialog"
-          aria-modal="true"
-          aria-label={heading}
-          onClick={(e) => e.stopPropagation()}
-          initial={{ opacity: 0, scale: 0.96, y: 8 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.96, y: 8 }}
-          transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-        >
-          <div className="task-modal-head">
-            <h1 className="task-modal-title">{heading}</h1>
-            <div className="task-modal-head-actions">
-              {existing && visible && canManage && (
-                <button type="button" className="btn danger-ghost" onClick={handleDelete}>
-                  Usuń
-                </button>
-              )}
-              <IconButton
-                className="task-modal-close"
-                icon={<X size={18} aria-hidden />}
-                onClick={requestClose}
-                label="Zamknij"
-              />
-            </div>
-          </div>
-          <div className="task-modal-body">
-            {notFound ? (
-              <div className="empty-state">
-                <p className="empty-title">Nie znaleziono zgłoszenia</p>
-                <p className="empty-hint">
-                  Zgłoszenie mogło zostać usunięte albo link jest nieaktualny.
-                </p>
-                <button type="button" className="btn primary" onClick={onClose}>
-                  Zamknij
-                </button>
-              </div>
-            ) : (
-              <TicketEditor
-                key={ticketParam}
-                existing={existing}
-                readOnly={readOnly}
-                onDirtyChange={handleDirtyChange}
-                onSaved={closeDeliberately}
-                onCancel={requestClose}
-              />
-            )}
-          </div>
-        </motion.div>
+    <ModalFrame
+      ariaLabel={heading}
+      cardClassName="ticket-modal-card"
+      onRequestClose={requestClose}
+    >
+      <div className="task-modal-head">
+        <h1 className="task-modal-title">{heading}</h1>
+        <div className="task-modal-head-actions">
+          {existing && visible && canManage && (
+            <button type="button" className="btn danger-ghost" onClick={handleDelete}>
+              Usuń
+            </button>
+          )}
+          <IconButton
+            className="task-modal-close"
+            icon={<X size={18} aria-hidden />}
+            onClick={requestClose}
+            label="Zamknij"
+          />
+        </div>
       </div>
-    </>
+      <div className="task-modal-body">
+        {notFound ? (
+          <div className="empty-state">
+            <p className="empty-title">Nie znaleziono zgłoszenia</p>
+            <p className="empty-hint">
+              Zgłoszenie mogło zostać usunięte albo link jest nieaktualny.
+            </p>
+            <button type="button" className="btn primary" onClick={onClose}>
+              Zamknij
+            </button>
+          </div>
+        ) : (
+          <TicketEditor
+            key={ticketParam}
+            existing={existing}
+            readOnly={readOnly}
+            onDirtyChange={handleDirtyChange}
+            onSaved={closeDeliberately}
+            onCancel={requestClose}
+          />
+        )}
+      </div>
+    </ModalFrame>
   );
 }
 

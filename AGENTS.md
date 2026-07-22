@@ -11,3 +11,8 @@ without a concrete dependency. Record every necessary context expansion.
 OpenWiki generation is optional and local. The deterministic CI check validates
 wiki links and runs the scheduler gate/recovery tests without calling an LLM or
 external API.
+
+For shared frontend primitives or rendering/performance work, also read
+`openwiki/n2hub/frontend-performance-and-primitives.md`. Compare current primary
+implementations (for example Radix, shadcn/ui, Base UI, React Aria or Astryx)
+before inventing behavior, and record the comparison plus real-device evidence.

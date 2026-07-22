@@ -5,7 +5,7 @@
 // unikalności i mirror do chmury pozostają w jednym miejscu; `validate` pozwala
 // wołającemu pokazać duplikat PRZED dispatchem (reduktor odrzuca po cichu).
 import { useState } from 'react';
-import { motion } from 'motion/react';
+import { ModalFrame } from './ModalFrame';
 
 /** Wartość-strażnik opcji „+ Nowe…” w selektach słownikowych. */
 export const NEW_OPTION_VALUE = '__nowy-wpis__';
@@ -47,63 +47,48 @@ export function QuickAddModal({
   };
 
   return (
-    <>
-      <motion.div
-        className="task-modal-scrim"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.18 }}
-      />
-      <div className="task-modal-viewport" onClick={onClose}>
-        <motion.div
-          className="task-modal-card quick-add-card"
-          role="dialog"
-          aria-modal="true"
-          aria-label={title}
-          onClick={(e) => e.stopPropagation()}
-          initial={{ opacity: 0, scale: 0.96, y: 8 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-        >
-          <div className="task-modal-head">
-            <h1 className="task-modal-title">{title}</h1>
-            <div className="task-modal-head-actions">
-              <button
-                type="button"
-                className="task-modal-close"
-                onClick={onClose}
-                aria-label="Zamknij"
-              >
-                ×
-              </button>
-            </div>
-          </div>
-          <form className="task-modal-body" onSubmit={submit}>
-            <div className="field">
-              <label htmlFor="quick-add-name">{label}</label>
-              <input
-                id="quick-add-name"
-                autoFocus
-                value={name}
-                onChange={(e) => {
-                  setName(e.target.value);
-                  setError('');
-                }}
-                placeholder={placeholder}
-              />
-              {error && <p className="field-error">{error}</p>}
-            </div>
-            <div className="field-row">
-              <button type="submit" className="btn primary">
-                Dodaj
-              </button>
-              <button type="button" className="btn ghost" onClick={onClose}>
-                Anuluj
-              </button>
-            </div>
-          </form>
-        </motion.div>
+    <ModalFrame
+      ariaLabel={title}
+      cardClassName="quick-add-card"
+      onRequestClose={onClose}
+    >
+      <div className="task-modal-head">
+        <h1 className="task-modal-title">{title}</h1>
+        <div className="task-modal-head-actions">
+          <button
+            type="button"
+            className="task-modal-close"
+            onClick={onClose}
+            aria-label="Zamknij"
+          >
+            ×
+          </button>
+        </div>
       </div>
-    </>
+      <form className="task-modal-body" onSubmit={submit}>
+        <div className="field">
+          <label htmlFor="quick-add-name">{label}</label>
+          <input
+            id="quick-add-name"
+            autoFocus
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value);
+              setError('');
+            }}
+            placeholder={placeholder}
+          />
+          {error && <p className="field-error">{error}</p>}
+        </div>
+        <div className="field-row">
+          <button type="submit" className="btn primary">
+            Dodaj
+          </button>
+          <button type="button" className="btn ghost" onClick={onClose}>
+            Anuluj
+          </button>
+        </div>
+      </form>
+    </ModalFrame>
   );
 }

@@ -4,7 +4,7 @@
 // params while keeping the rest of the URL (and the page's scroll) intact.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence } from 'motion/react';
 import { useStore, usePersistence } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import { NO_PERM_TITLE } from '../store/permissions';
@@ -56,6 +56,7 @@ import {
   clearNavGuard,
   setNavGuard,
 } from '../utils/dirtyRegistry';
+import { ModalFrame } from './ModalFrame';
 
 // ---- Recurrence („Cykliczność") local helpers ----
 // Duration choices for a recurrence rule: 0:15…8:00 on the 15-minute grid.
@@ -228,20 +229,6 @@ function TaskModalShell({
     closeDeliberately();
   }, [closeDeliberately]);
 
-  // Escape closes (with guard); body scroll locked while the modal is open.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') requestClose();
-    };
-    window.addEventListener('keydown', onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [requestClose]);
-
   const handleDelete = () => {
     if (!existing) return;
     if (
@@ -257,72 +244,51 @@ function TaskModalShell({
   const heading = notFound ? 'Nie znaleziono zadania' : isNew ? 'Nowe zadanie' : 'Edytuj zadanie';
 
   return (
-    <>
-      <motion.div
-        className="task-modal-scrim"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.18 }}
-      />
-      <div className="task-modal-viewport" onClick={requestClose}>
-        <motion.div
-          className="task-modal-card"
-          role="dialog"
-          aria-modal="true"
-          aria-label={heading}
-          onClick={(e) => e.stopPropagation()}
-          initial={{ opacity: 0, scale: 0.96, y: 8 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.96, y: 8 }}
-          transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-        >
-          <div className="task-modal-head">
-            <h1 className="task-modal-title">{heading}</h1>
-            <div className="task-modal-head-actions">
-              {!notFound && <SaveStatus status={status} />}
-              {existing && canManageTasks && (
-                <button type="button" className="btn danger-ghost" onClick={handleDelete}>
-                  Usuń
-                </button>
-              )}
-              <IconButton
-                className="task-modal-close"
-                icon={<X size={18} aria-hidden />}
-                onClick={requestClose}
-                label="Zamknij"
-              />
-            </div>
-          </div>
-          <div className="task-modal-body">
-            {notFound ? (
-              <div className="empty-state">
-                <p className="empty-title">Nie znaleziono zadania</p>
-                <p className="empty-hint">
-                  Zadanie mogło zostać usunięte albo link jest nieaktualny.
-                </p>
-                <button type="button" className="btn primary" onClick={onClose}>
-                  Zamknij
-                </button>
-              </div>
-            ) : (
-              <TaskEditor
-                key={taskParam}
-                taskId={existing ? existing.id : null}
-                initialProjectId={projectParam ?? undefined}
-                initialDate={dateParam ?? undefined}
-                initialPersonId={assigneeParam ?? undefined}
-                focusBlockId={blockParam ?? undefined}
-                onSaved={onClose}
-                onCancel={requestClose}
-                onDirtyChange={handleDirtyChange}
-                markSaved={markSaved}
-              />
-            )}
-          </div>
-        </motion.div>
+    <ModalFrame ariaLabel={heading} onRequestClose={requestClose}>
+      <div className="task-modal-head">
+        <h1 className="task-modal-title">{heading}</h1>
+        <div className="task-modal-head-actions">
+          {!notFound && <SaveStatus status={status} />}
+          {existing && canManageTasks && (
+            <button type="button" className="btn danger-ghost" onClick={handleDelete}>
+              Usuń
+            </button>
+          )}
+          <IconButton
+            className="task-modal-close"
+            icon={<X size={18} aria-hidden />}
+            onClick={requestClose}
+            label="Zamknij"
+          />
+        </div>
       </div>
-    </>
+      <div className="task-modal-body">
+        {notFound ? (
+          <div className="empty-state">
+            <p className="empty-title">Nie znaleziono zadania</p>
+            <p className="empty-hint">
+              Zadanie mogło zostać usunięte albo link jest nieaktualny.
+            </p>
+            <button type="button" className="btn primary" onClick={onClose}>
+              Zamknij
+            </button>
+          </div>
+        ) : (
+          <TaskEditor
+            key={taskParam}
+            taskId={existing ? existing.id : null}
+            initialProjectId={projectParam ?? undefined}
+            initialDate={dateParam ?? undefined}
+            initialPersonId={assigneeParam ?? undefined}
+            focusBlockId={blockParam ?? undefined}
+            onSaved={onClose}
+            onCancel={requestClose}
+            onDirtyChange={handleDirtyChange}
+            markSaved={markSaved}
+          />
+        )}
+      </div>
+    </ModalFrame>
   );
 }
 

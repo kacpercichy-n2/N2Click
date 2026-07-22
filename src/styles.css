@@ -4396,15 +4396,29 @@ a.toggle-btn {
   margin: 8px 4px 4px;
 }
 
-/* ---------- Task popout modal ---------- */
+/* ---------- Shared modal ---------- */
 
-.task-modal-scrim {
+.task-modal-snapshot {
   position: fixed;
   inset: 0;
   z-index: 1000;
-  background: rgba(4, 3, 8, 0.68);
-  backdrop-filter: blur(6px);
+  overflow: hidden;
+  background-color: #08070d;
+  background-image:
+    radial-gradient(circle at 18% 10%, rgba(112, 0, 255, 0.12), transparent 32%),
+    radial-gradient(circle at 78% 74%, rgba(60, 0, 94, 0.16), transparent 38%);
   pointer-events: none;
+}
+.task-modal-snapshot-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* Bitmapa jest już w DOM i całkowicie zasłania aplikację. Wyłączenie jej z
+   malowania jest warunkiem stałego kosztu scrolla niezależnie od GPU/DPR. */
+html[data-modal-backdrop='snapshot'] #root {
+  visibility: hidden;
 }
 .task-modal-viewport {
   position: fixed;
@@ -4414,7 +4428,9 @@ a.toggle-btn {
   align-items: flex-start;
   justify-content: center;
   padding: clamp(16px, 5vh, 56px) var(--n2-space-4);
-  overflow-y: auto;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  isolation: isolate;
 }
 .task-modal-card {
   width: 94vw;
@@ -4427,6 +4443,7 @@ a.toggle-btn {
   border-radius: var(--n2-radius-lg);
   box-shadow: var(--n2-shadow-soft);
   overflow: hidden;
+  min-height: 0;
 }
 .task-modal-head {
   display: flex;
@@ -4473,13 +4490,9 @@ a.toggle-btn {
 }
 .task-modal-body {
   padding: var(--n2-space-6);
+  min-height: 0;
   overflow-y: auto;
-  /* Promuj przewijany kontener na własną warstwę GPU, żeby scroll był
-   * kompozytowany (poza głównym wątkiem). Bez tego półprzezroczysty
-   * `.task-modal-scrim` nad stroną wyłącza kompozytowany scroll i każda
-   * klatka rasteryzuje na nowo cały viewport (zmierzone: ~200 długich
-   * klatek >50 ms na jeden gest → ~0 po promocji). Wygląd bez zmian. */
-  transform: translateZ(0);
+  overscroll-behavior: contain;
 }
 /* Editor lives inside the scrollable modal body — drop the page-level max-width. */
 .task-modal-body .editor {
