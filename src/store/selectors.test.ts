@@ -10,10 +10,15 @@ import {
   blockIsDone,
   binHoursForTaskPerson,
   binTaskRowsForPerson,
+  buildSearchResultMeta,
   conflictDatesForTask,
   conflictDatesForTaskPerson,
   dayAvailabilityForPerson,
   doneStatusIds,
+  getClient,
+  getProject,
+  getStatus,
+  projectsOfClient,
   loadPercent,
   rangeAvailabilityForPerson,
   growAllowanceHours,
@@ -288,6 +293,70 @@ describe('searchAll strict date query', () => {
     });
     expect(searchAll(state, '2026-02-31').projects).toEqual([]);
     expect(searchAll(state, '2026-02-31').tasks).toEqual([]);
+  });
+});
+
+describe('buildSearchResultMeta — parity with per-result selector calls', () => {
+  function makeProject(id: string, clientId: string, statusId: string) {
+    return {
+      id, clientId, name: `Projekt ${id}`, description: '', statusId,
+      paid: false, startDate: '2026-02-01', endDate: '2026-03-05', departmentId: '',
+      serviceTypeId: '', documents: [],
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+  }
+  function makeClient(id: string, name: string) {
+    return { id, name, archived: false, notes: '' };
+  }
+
+  const state = makeState({
+    clients: [makeClient('cA', 'Klient A'), makeClient('cB', 'Klient B'), makeClient('cEmpty', 'Bez projektów')],
+    projects: [
+      makeProject('pA1', 'cA', 'status1'),
+      makeProject('pA2', 'cA', 'status2'),
+      makeProject('pB1', 'cB', 'status1'),
+    ],
+    statuses: [
+      makeStatus({ id: 'status1', name: 'W toku' }),
+      makeStatus({ id: 'status2', name: 'Zrobione', isDone: true }),
+    ],
+    tasks: [makeTask({ id: 't1', projectId: 'pA1', statusId: 'status1' })],
+  });
+
+  it('lookup maps mirror getClient/getProject/getStatus (incl. missing => undefined)', () => {
+    const meta = buildSearchResultMeta(state);
+    for (const id of ['cA', 'cB', 'cEmpty', 'nope']) {
+      expect(meta.clientsById.get(id)).toBe(getClient(state, id));
+    }
+    for (const id of ['pA1', 'pA2', 'pB1', 'nope']) {
+      expect(meta.projectsById.get(id)).toBe(getProject(state, id));
+    }
+    for (const id of ['status1', 'status2', 'nope']) {
+      expect(meta.statusesById.get(id)).toBe(getStatus(state, id));
+    }
+  });
+
+  it('clientProjectCounts mirrors projectsOfClient(...).length (absent client => 0)', () => {
+    const meta = buildSearchResultMeta(state);
+    for (const id of ['cA', 'cB', 'cEmpty', 'nope']) {
+      expect(meta.clientProjectCounts.get(id) ?? 0).toBe(projectsOfClient(state, id).length);
+    }
+  });
+
+  it('drives byte-identical row metadata across live searchAll results', () => {
+    const meta = buildSearchResultMeta(state);
+    const results = searchAll(state, 'projekt');
+    for (const p of results.projects) {
+      expect(meta.clientsById.get(p.clientId)).toBe(getClient(state, p.clientId));
+      expect(meta.statusesById.get(p.statusId)).toBe(getStatus(state, p.statusId));
+    }
+    for (const t of results.tasks) {
+      expect(meta.projectsById.get(t.projectId)).toBe(getProject(state, t.projectId));
+      expect(meta.statusesById.get(t.statusId)).toBe(getStatus(state, t.statusId));
+    }
+    for (const c of results.clients) {
+      expect(meta.clientProjectCounts.get(c.id) ?? 0).toBe(projectsOfClient(state, c.id).length);
+    }
   });
 });
 

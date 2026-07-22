@@ -544,6 +544,10 @@ function TaskEditor({
   // Dostępność każdej przypisanej osoby w okresie zadania — CZYSTO INFORMACYJNA
   // (nigdy nie blokuje zapisu). `bookedHours` liczy istniejący workload INNYCH
   // zadań (szkic nie ma własnego), więc panel pokazuje realne obłożenie.
+  // Dependency narrowed from the whole `state` to only the slices
+  // `rangeAvailabilityForPerson` actually reads (people → workdays/capacity,
+  // workload → booked hours), so unrelated store changes don't recompute it.
+  // Result is byte-identical; `state` is still passed to the pure selector.
   const availabilityByPerson = useMemo(() => {
     const map = new Map<string, ReturnType<typeof rangeAvailabilityForPerson>>();
     if (!periodValid) return map;
@@ -552,7 +556,8 @@ function TaskEditor({
       map.set(id, rangeAvailabilityForPerson(state, id, days));
     }
     return map;
-  }, [state, assigneeIds, startDate, endDate, periodValid]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.people, state.workload, assigneeIds, startDate, endDate, periodValid]);
 
   const outOfRangeCount = useMemo(() => {
     let n = 0;
@@ -593,7 +598,10 @@ function TaskEditor({
 
   // ---- Handlers ----
 
-  const setCell = (personId: string, date: string, hours: number) => {
+  // Stable handlers (useCallback) so the memoized AllocationGrid — which runs
+  // per-cell availability/overload scans — is not re-rendered/rescanned when the
+  // user types in an unrelated editor field.
+  const setCell = useCallback((personId: string, date: string, hours: number) => {
     // Snap to the 0.25 grid the store persists on. The grid cell input is
     // controlled directly by this numeric map (no separate raw-string field to
     // hold in-flight keystrokes), so snapping here — the setter that writes the
@@ -608,30 +616,36 @@ function TaskEditor({
       else delete next[key];
       return next;
     });
-  };
+  }, []);
 
-  const fillWeekdays = (personId: string) => {
-    setAllocations((prev) => {
-      const next = { ...prev };
-      for (const d of eachDayInclusive(startDate, endDate)) {
-        // Fill the person's own workdays with their daily availability
-        // (capacity on a workday, 0 otherwise) instead of hardcoded Mon–Fri/8h.
-        const hours = availableHoursOnDate(state, personId, d);
-        if (hours > 0) next[allocKey(personId, d)] = hours;
-      }
-      return next;
-    });
-  };
+  const fillWeekdays = useCallback(
+    (personId: string) => {
+      setAllocations((prev) => {
+        const next = { ...prev };
+        for (const d of eachDayInclusive(startDate, endDate)) {
+          // Fill the person's own workdays with their daily availability
+          // (capacity on a workday, 0 otherwise) instead of hardcoded Mon–Fri/8h.
+          const hours = availableHoursOnDate(state, personId, d);
+          if (hours > 0) next[allocKey(personId, d)] = hours;
+        }
+        return next;
+      });
+    },
+    [state, startDate, endDate],
+  );
 
-  const clearPerson = (personId: string) => {
-    setAllocations((prev) => {
-      const next = { ...prev };
-      for (const d of eachDayInclusive(startDate, endDate)) {
-        delete next[allocKey(personId, d)];
-      }
-      return next;
-    });
-  };
+  const clearPerson = useCallback(
+    (personId: string) => {
+      setAllocations((prev) => {
+        const next = { ...prev };
+        for (const d of eachDayInclusive(startDate, endDate)) {
+          delete next[allocKey(personId, d)];
+        }
+        return next;
+      });
+    },
+    [startDate, endDate],
+  );
 
   const toggleAssignee = (personId: string) => {
     const isAssigned = assigneeIds.includes(personId);

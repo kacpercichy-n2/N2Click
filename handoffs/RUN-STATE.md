@@ -74,3 +74,10 @@ Merged „Moja praca" into „Panel": Zasobnik+Alerty are new Panel tiles (grid 
 `/my-work`→redirect; MyWorkPage + nav item + `landingPathForRole` removed;
 OnboardingRoot `@home`/catalog copy updated. `npm test` 1373 pass; build green.
 Touched CSS + selectors sections unchanged. Blocker: none.
+
+## 261-perf-taskmodal-search
+GlobalSearch: useDeferredValue(query) + `buildSearchResultMeta` (selectors) maps
+replace per-result getClient/getProject/getStatus/projectsOfClient in render.
+TaskModal: AllocationGrid now React.memo + useCallback handlers; availabilityByPerson
+deps narrowed to state.people/state.workload (identical). +focused selectors tests.
+`npm test` 1406 pass; build green. Blocker: none.
