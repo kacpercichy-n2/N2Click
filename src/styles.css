@@ -4474,6 +4474,12 @@ a.toggle-btn {
 .task-modal-body {
   padding: var(--n2-space-6);
   overflow-y: auto;
+  /* Promuj przewijany kontener na własną warstwę GPU, żeby scroll był
+   * kompozytowany (poza głównym wątkiem). Bez tego półprzezroczysty
+   * `.task-modal-scrim` nad stroną wyłącza kompozytowany scroll i każda
+   * klatka rasteryzuje na nowo cały viewport (zmierzone: ~200 długich
+   * klatek >50 ms na jeden gest → ~0 po promocji). Wygląd bez zmian. */
+  transform: translateZ(0);
 }
 /* Editor lives inside the scrollable modal body — drop the page-level max-width. */
 .task-modal-body .editor {
