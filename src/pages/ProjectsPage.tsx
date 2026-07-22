@@ -20,7 +20,8 @@ import {
 import { Coin } from '../components/Coin';
 import { StatusBadge } from '../components/StatusBadge';
 import { FilterPresets, DEFAULT_CRITERIA } from '../components/FilterPresets';
-import { FilterPanel, type FilterChip, type FilterGroup } from '../components/FilterPanel';
+import { type FilterChip, type FilterGroup } from '../components/FilterPanel';
+import { FilterBar } from '../components/FilterBar';
 import { useOpenTask } from '../components/TaskModal';
 import { ChevronRight, GanttChart, Plus } from '../components/icons';
 import type { SavedFilterCriteria } from '../types';
@@ -335,21 +336,23 @@ export function ProjectsPage() {
         </form>
       )}
 
-      <div className="cal-toolbar" data-tour="projects.filters">
-        <FilterPanel
-          groups={filterGroups}
-          dates={{ from, to, onFrom: setFrom, onTo: setTo }}
-          activeCount={activeCount}
-          onClearAll={() => applyPreset(DEFAULT_CRITERIA)}
-          chips={chips}
-        />
-        <span className="filter-count muted">
-          {filtered.length} z {state.projects.length}{' '}
-          {polishCount(state.projects.length, 'projekt', 'projekty', 'projektów')}
-        </span>
-      </div>
-
-      <FilterPresets page="projects" criteria={criteria} onApply={applyPreset} />
+      <FilterBar
+        dataTour="projects.filters"
+        filterPanel={{
+          groups: filterGroups,
+          dates: { from, to, onFrom: setFrom, onTo: setTo },
+          activeCount,
+          onClearAll: () => applyPreset(DEFAULT_CRITERIA),
+          chips,
+        }}
+        presets={<FilterPresets page="projects" criteria={criteria} onApply={applyPreset} />}
+        trailing={
+          <span className="filter-count muted">
+            {filtered.length} z {state.projects.length}{' '}
+            {polishCount(state.projects.length, 'projekt', 'projekty', 'projektów')}
+          </span>
+        }
+      />
 
       {groups.length === 0 ? (
         <div className="empty-state">

@@ -56,6 +56,15 @@ round-trip (plannerData/cloudMirror) + migration `20260721220000_workload_entry_
 (done boolean default false, no RLS change). DATA_VERSION stays 7. `npm test` PASS
 (1308); `npm run build` PASS.
 
+## PKG-filter-bar-pattern (248)
+
+New dumb `src/components/FilterBar.tsx` composing FilterPanel + optional PersonFilter
+slot + FilterPresets (now in-bar) + trailing counter, `data-tour` pass-through.
+Projects/Tasks/Kanban swapped to it (Kanban PersonFilter moved below header). New
+`.filter-toolbar` CSS (kept `.filter-bar` intact). Added FilterBar SSR composition
+tests + projectsOfPerson/assigneeIdsOfTask edge cases. `npm test` PASS (1321);
+`npm run build` PASS. No reducer/store changes.
+
 ## Open questions
 
 None blocking.

@@ -19,7 +19,8 @@ import {
 import type { SavedFilterCriteria, TaskPriority } from '../types';
 import { PRIORITY_LABELS, TASK_PRIORITIES } from '../utils/priority';
 import { FilterPresets, DEFAULT_CRITERIA } from '../components/FilterPresets';
-import { FilterPanel, type FilterChip, type FilterGroup } from '../components/FilterPanel';
+import { type FilterChip, type FilterGroup } from '../components/FilterPanel';
+import { FilterBar } from '../components/FilterBar';
 import { ChevronRight, Check } from '../components/icons';
 import { formatShort, formatShortWithWeekday } from '../utils/dates';
 import { PersonChip } from '../components/PersonChip';
@@ -301,20 +302,22 @@ export function TasksPage() {
         </div>
       ) : (
         <>
-          <div className="cal-toolbar" data-tour="tasks.filters">
-            <FilterPanel
-              groups={filterGroups}
-              dates={{ from, to, onFrom: setFrom, onTo: setTo }}
-              activeCount={activeCount}
-              onClearAll={clearFilters}
-              chips={chips}
-            />
-            <span className="filter-count muted">
-              {tasks.length} z {allTasks.length} zadań
-            </span>
-          </div>
-
-          <FilterPresets page="tasks" criteria={criteria} onApply={applyPreset} />
+          <FilterBar
+            dataTour="tasks.filters"
+            filterPanel={{
+              groups: filterGroups,
+              dates: { from, to, onFrom: setFrom, onTo: setTo },
+              activeCount,
+              onClearAll: clearFilters,
+              chips,
+            }}
+            presets={<FilterPresets page="tasks" criteria={criteria} onApply={applyPreset} />}
+            trailing={
+              <span className="filter-count muted">
+                {tasks.length} z {allTasks.length} zadań
+              </span>
+            }
+          />
 
           {tasks.length === 0 ? (
             <div className="empty-state">
