@@ -49,6 +49,7 @@ import type { CloudPersonMergeRow } from '../supabase/referenceData';
 import { normalizeEmail } from '../auth/profile';
 import {
   DEFAULT_CAPACITY,
+  isOwnLastWrite,
   loadDataResult,
   sanitizeWorkDays,
   saveData,
@@ -57,6 +58,7 @@ import {
   type SaveFailureReason,
 } from './storage';
 import { anyDirty } from '../utils/dirtyRegistry';
+import { createPersistCoalescer, PERSIST_COALESCE_MS } from './persistCoalescer';
 import { shouldSkipLocalPersist } from './persistGate';
 import {
   hasEntity,
@@ -3794,8 +3796,34 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const lastPersistAttemptRef = useRef<AppData | null>(null);
 
   // Assign person colours by stable list order. Done during render (idempotent)
-  // so colours are correct on the first paint of any consumer.
-  registerPersonOrder(state.people.map((p) => p.id));
+  // so colours are correct on the first paint of any consumer — but guarded by
+  // the last `state.people` reference so an unrelated dispatch (the common case)
+  // does not rebuild the id list + re-register on every provider render.
+  const lastPeopleRef = useRef<AppData['people'] | null>(null);
+  if (lastPeopleRef.current !== state.people) {
+    lastPeopleRef.current = state.people;
+    registerPersonOrder(state.people.map((p) => p.id));
+  }
+
+  // One coalescer for the whole provider lifetime (created lazily on first
+  // render). `onResult` mirrors the exact outcome handling the [state] effect
+  // used to do inline: record saveError (eagerly on the ref too, so the
+  // external-change callback can read a just-completed flush's outcome
+  // synchronously) and — on success — collapse an open conflict to resolved
+  // (implicit keep-mine). saveData / setSaveError / setExternal are all stable.
+  const coalescerRef = useRef<ReturnType<typeof createPersistCoalescer> | null>(null);
+  if (coalescerRef.current === null) {
+    coalescerRef.current = createPersistCoalescer({
+      save: saveData,
+      onResult: (result) => {
+        saveErrorRef.current = result.ok ? null : result.reason;
+        setSaveError(result.ok ? null : result.reason);
+        if (result.ok) setExternal((prev) => (prev === 'conflict' ? 'none' : prev));
+      },
+      delayMs: PERSIST_COALESCE_MS,
+    });
+  }
+  const coalescer = coalescerRef.current;
 
   // Persist on every state change and RECORD the real outcome. A failed write
   // surfaces via `saveError` (usePersistence); a subsequent successful write
@@ -3803,6 +3831,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   // external conflict to resolved (continuing to work here is an implicit
   // keep-mine). The first run (and the run right after an in-place
   // REPLACE_FROM_STORAGE) is skipped: that state already matches storage.
+  //
+  // The write itself is COALESCED (see persistCoalescer): rapid dispatch (a
+  // drag) now serializes once per window instead of on every action. The
+  // skip-first / StrictMode-replay guards and the retirement gate are evaluated
+  // PER TRANSITION exactly as before; only the terminal saveData(state) call is
+  // replaced by coalescer.schedule(state). A gated transition schedules nothing
+  // and does NOT disturb an already-pending older state (that older state still
+  // saves on its own timer — the old world had already written it).
   useEffect(() => {
     if (skipPersistRef.current) {
       skipPersistRef.current = false;
@@ -3820,25 +3856,58 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     if (prevAttempted !== null && shouldSkipLocalPersist(prevAttempted, state)) {
       return;
     }
-    const result = saveData(state);
-    setSaveError(result.ok ? null : result.reason);
-    if (result.ok) setExternal((prev) => (prev === 'conflict' ? 'none' : prev));
+    coalescer.schedule(state);
   }, [state]);
+
+  // Mount-once: force any pending coalesced save to disk before the tab is
+  // hidden or torn down. `pagehide` and a `hidden` visibility transition are the
+  // reliable "user is leaving" signals; the cleanup flush protects the
+  // StrictMode dev double-mount (a pending state must never be silently lost —
+  // mount 1 skips the first persist so its cleanup flush is a no-op).
+  useEffect(() => {
+    const flushPending = (): void => coalescer.flush();
+    const onVisibility = (): void => {
+      if (document.visibilityState === 'hidden') coalescer.flush();
+    };
+    window.addEventListener('pagehide', flushPending);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('pagehide', flushPending);
+      document.removeEventListener('visibilitychange', onVisibility);
+      coalescer.flush();
+    };
+  }, []);
 
   // Mount-once: subscribe to same-browser external tab writes. A clean tab
   // refreshes in place; a dirty tab (unsaved form edits, a failed local write,
   // or an already-open conflict) raises an explicit conflict choice instead of
   // being silently overwritten.
   useEffect(() => {
-    return subscribeExternalChanges(() => {
+    return subscribeExternalChanges((info) => {
+      // If a coalesced save is pending, flush it FIRST. subscribeExternalChanges
+      // already max-merged latestKnownRevision with the incoming revision, so
+      // this write lands ABOVE the external revision by construction. A SUCCESS
+      // means storage now equals our state → silent keep-mine short-circuit
+      // (reproduces the old-world race where a local dispatch saved after the
+      // external write). A FAILURE left saveError set, so fall through: the
+      // dirty check below then raises the explicit conflict.
+      if (coalescer.hasPending()) {
+        coalescer.flush();
+        if (saveErrorRef.current === null) return;
+      } else if (isOwnLastWrite(info.newValue)) {
+        // Cheap fast path: the event carries our own bounced-back write (byte
+        // compare) or storage still holds our last revision — our own content,
+        // so skip parsing + deep-comparing the whole envelope.
+        return;
+      }
       const loaded = loadDataResult();
       if (!loaded.ok) {
         setLoadError(loaded.error);
         return;
       }
       const incoming = loaded.data;
-      // Silent short-circuit when storage already matches our state (our own
-      // echo bounced back, or an identical write): no dispatch, no banner.
+      // Full semantic compare fallback: an external tab may have written data
+      // identical to ours under a different revision (no dispatch, no banner).
       if (JSON.stringify(incoming) === JSON.stringify(stateRef.current)) return;
       const dirty =
         anyDirty() || saveErrorRef.current !== null || externalRef.current === 'conflict';
@@ -3853,6 +3922,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const retryPersist = useCallback(() => {
+    // Drop the pending coalesced write (stateRef is newest — the pending copy is
+    // redundant) and write immediately, as before.
+    coalescer.cancel();
     const result = saveData(stateRef.current);
     setSaveError(result.ok ? null : result.reason);
     if (result.ok) setExternal((prev) => (prev === 'conflict' ? 'none' : prev));
@@ -3864,12 +3936,18 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       setLoadError(loaded.error);
       return;
     }
+    // The user chose the external version: drop any pending local write so it
+    // cannot clobber the external payload afterwards (old-world equivalent left
+    // storage holding the external write).
+    coalescer.cancel();
     skipPersistRef.current = !loaded.needsWriteback;
     dispatch({ type: 'REPLACE_FROM_STORAGE', data: loaded.data });
     setExternal('none');
   }, []);
 
   const keepLocal = useCallback(() => {
+    // Drop the redundant pending write and persist the newest state immediately.
+    coalescer.cancel();
     const result = saveData(stateRef.current);
     setSaveError(result.ok ? null : result.reason);
     if (result.ok) setExternal('none');

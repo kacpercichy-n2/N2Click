@@ -1318,8 +1318,13 @@ export function repairStatusReferences(data: AppData): AppData {
 
 export type SaveFailureReason = 'quota' | 'unavailable' | 'serialization' | 'unknown';
 export type SaveResult = { ok: true; revision: number } | { ok: false; reason: SaveFailureReason };
-/** Payload of an external same-browser tab write. `null` = key cleared / unparsable. */
-export type ExternalChangeInfo = { revision: number | null };
+/**
+ * Payload of an external same-browser tab write. `revision` is the envelope
+ * revision (`null` = key cleared / unparsable). `newValue` is the raw event
+ * payload, carried so the provider can cheaply detect its own bounced-back
+ * write (byte compare) before parsing + deep-comparing the multi-MB envelope.
+ */
+export type ExternalChangeInfo = { revision: number | null; newValue?: string | null };
 
 // Monotonic revision counter, owned entirely by this module. Bumped on every
 // successful save; recorded (not bumped) on load and max-merged on external
@@ -1328,9 +1333,50 @@ export type ExternalChangeInfo = { revision: number | null };
 // lie about which write is newest.
 let latestKnownRevision = 0;
 
+// The exact raw string and revision of our LAST successful save. Unlike
+// latestKnownRevision (which is max-merged with observed external revisions),
+// these are only ever set by saveData, so they still identify our own write
+// even after an external storage event bumped latestKnownRevision. Used by the
+// external-change fast path to skip parsing our own bounced-back payload.
+let lastWrittenRaw: string | null = null;
+let lastWrittenRevision: number | null = null;
+
 /** The highest revision this module has written or observed. Exposed for tests. */
 export function getLatestKnownRevision(): number {
   return latestKnownRevision;
+}
+
+/** The exact raw payload of our last successful save (null before any save). */
+export function getLastWrittenRaw(): string | null {
+  return lastWrittenRaw;
+}
+
+/** The revision of our last successful save (null before any save). */
+export function getLastWrittenRevision(): number | null {
+  return lastWrittenRevision;
+}
+
+/**
+ * Cheap "is this external storage event our own last write bounced back?" test,
+ * used to avoid parsing + deep-comparing the multi-MB envelope on every event.
+ * True when the event's raw payload is byte-identical to what we last wrote, OR
+ * the current storage envelope revision equals our last saved revision. A false
+ * result means the provider must fall back to the full semantic compare (an
+ * external tab may have written identical data under a different revision).
+ */
+export function isOwnLastWrite(newValue: string | null | undefined): boolean {
+  if (lastWrittenRaw !== null && newValue != null && newValue === lastWrittenRaw) {
+    return true;
+  }
+  if (lastWrittenRevision === null) return false;
+  let currentRaw: string | null;
+  try {
+    currentRaw = localStorage.getItem(STORAGE_KEY);
+  } catch {
+    return false;
+  }
+  const currentRev = readEnvelopeRevision(currentRaw);
+  return currentRev !== null && currentRev === lastWrittenRevision;
 }
 
 /** Coerce an unknown envelope revision to a finite integer ≥ 0, else null. */
@@ -1394,7 +1440,7 @@ export function subscribeExternalChanges(cb: (info: ExternalChangeInfo) => void)
     if (e.key !== STORAGE_KEY && e.key !== null) return;
     const incoming = readEnvelopeRevision(e.newValue);
     latestKnownRevision = Math.max(latestKnownRevision, incoming ?? 0);
-    cb({ revision: incoming });
+    cb({ revision: incoming, newValue: e.newValue });
   };
   window.addEventListener('storage', handler);
   return () => window.removeEventListener('storage', handler);
@@ -1678,6 +1724,8 @@ export function saveData(data: AppData): SaveResult {
     return { ok: false, reason: classifyStorageError(err) };
   }
   latestKnownRevision = revision;
+  lastWrittenRaw = raw;
+  lastWrittenRevision = revision;
   return { ok: true, revision };
 }
 
@@ -1720,4 +1768,6 @@ export function clearData(): void {
     // ignore
   }
   latestKnownRevision = 0;
+  lastWrittenRaw = null;
+  lastWrittenRevision = null;
 }

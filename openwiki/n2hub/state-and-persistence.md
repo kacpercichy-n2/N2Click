@@ -350,6 +350,22 @@
   all workload rows when editing a task.
 - `saveData` reports success or a classified failure. Failed persistence must
   never surface as `Zapisano` and same-browser conflicts must remain explicit.
+- PERSIST COALESCING (2026-07-22): the provider's per-transition
+  `saveData` is now COALESCED through `src/store/persistCoalescer.ts`
+  (`createPersistCoalescer`, trailing NON-restarting window `PERSIST_COALESCE_MS`
+  = 1000): rapid dispatch (a drag) serializes ONCE per window (newest state)
+  instead of on every action. The skip-first / StrictMode-replay guards and the
+  retirement gate (`shouldSkipLocalPersist`) still run PER TRANSITION; only the
+  terminal write is deferred. Immediate `flush()` on `pagehide` /
+  visibility→hidden and on the provider-unmount cleanup bounds the data-loss
+  window; `retryPersist`/`keepLocal`/`acceptExternal` `cancel()` the pending
+  write then act as before. The external-change callback `flush()`es pending
+  first (a successful flush short-circuits — keep-mine), then uses a cheap
+  self-write fast path (`isOwnLastWrite` in storage.ts: byte-match on the last
+  written raw payload, tracked with its revision, or a matching current envelope
+  revision) before the full `JSON.stringify` semantic compare fallback.
+  `ExternalChangeInfo` now also carries the event's raw `newValue`. Tests:
+  `persistCoalescer.test.ts`, extensions in `storage.test.ts`.
 - Storage loading is fail-closed. A missing key starts with empty data, but
   unavailable, malformed or structurally invalid stored data must reach the
   recovery screen without replacing the raw payload. The user can export that

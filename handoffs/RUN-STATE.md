@@ -1,3 +1,15 @@
+# Run state — 20260722-161131-n2hub-259 perf: persist coalescing
+
+New `src/store/persistCoalescer.ts` (trailing non-restarting, 1000ms) wired into
+`AppStore.tsx`: `[state]` effect schedules instead of sync `saveData`;
+pagehide/visibility/unmount flush; retry/keepLocal/acceptExternal cancel first;
+external-change flush-then-`isOwnLastWrite` fast path. `storage.ts` tracks last
+written raw+revision; `ExternalChangeInfo.newValue` added; registerPersonOrder
+render-guarded. Tests: persistCoalescer.test.ts + storage.test.ts. Focused +
+full suite (1393) + build all green.
+
+---
+
 # Run state — 20260722-144152-n2hub-257 settings + nav cleanup
 
 ## Goal

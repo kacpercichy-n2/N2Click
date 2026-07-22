@@ -11,7 +11,10 @@ import {
   clearData,
   ensureStartMinutes,
   emptyData,
+  getLastWrittenRaw,
+  getLastWrittenRevision,
   getLatestKnownRevision,
+  isOwnLastWrite,
   loadData,
   loadDataResult,
   normalizeDates,
@@ -24,8 +27,10 @@ import {
   readEnvelopeRevision,
   repairStatusReferences,
   saveData,
+  subscribeExternalChanges,
   writeCloudRetirementMarker,
 } from './storage';
+import type { ExternalChangeInfo } from './storage';
 import { todayStr } from '../utils/dates';
 import { BIN_DATE } from '../utils/time';
 import type {
@@ -1660,6 +1665,137 @@ describe('saveData / envelope revision (PKG-20260713c-persist-tests)', () => {
     withLocalStorage({}, () => {
       const r2 = saveData(emptyData());
       expect(r2).toEqual({ ok: true, revision: 2 }); // no gap from the failure
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// n2hub-259 (persist coalescing): the external-change fast path. saveData now
+// records the exact raw payload + revision of the LAST successful write so the
+// provider can cheaply detect its own bounced-back write before parsing +
+// deep-comparing the multi-MB envelope. `latestKnownRevision` is max-merged
+// with observed external revisions, so these dedicated fields (untouched by
+// storage events) are what identify OUR write. clearData resets both.
+// ---------------------------------------------------------------------------
+
+describe('saveData last-written tracking (n2hub-259 persist coalescing)', () => {
+  it('records the exact raw payload and revision of the last successful save', () => {
+    clearData();
+    expect(getLastWrittenRaw()).toBeNull();
+    expect(getLastWrittenRevision()).toBeNull();
+    withLocalStorage({}, () => {
+      const r = saveData(emptyData());
+      expect(r.ok).toBe(true);
+      const raw = localStorage.getItem(STORAGE_KEY)!;
+      expect(getLastWrittenRaw()).toBe(raw);
+      expect(getLastWrittenRevision()).toBe(r.ok ? r.revision : null);
+    });
+  });
+
+  it('a FAILED save does not update the last-written raw/revision', () => {
+    clearData();
+    withLocalStorage({}, () => {
+      saveData(emptyData()); // revision 1 recorded
+    });
+    const rawAfterOk = getLastWrittenRaw();
+    withLocalStorage(
+      {},
+      () => {
+        const rFail = saveData(emptyData());
+        expect(rFail).toEqual({ ok: false, reason: 'quota' });
+      },
+      { setItem: () => { throw { name: 'QuotaExceededError' }; } },
+    );
+    expect(getLastWrittenRaw()).toBe(rawAfterOk);
+    expect(getLastWrittenRevision()).toBe(1);
+  });
+
+  it('clearData resets the last-written raw/revision to null', () => {
+    withLocalStorage({}, () => {
+      saveData(emptyData());
+    });
+    clearData();
+    expect(getLastWrittenRaw()).toBeNull();
+    expect(getLastWrittenRevision()).toBeNull();
+  });
+});
+
+describe('isOwnLastWrite (n2hub-259 persist coalescing)', () => {
+  it('is false before any save (no raw, no revision recorded)', () => {
+    clearData();
+    withLocalStorage({}, () => {
+      expect(isOwnLastWrite('anything')).toBe(false);
+      expect(isOwnLastWrite(null)).toBe(false);
+    });
+  });
+
+  it('is true when the event payload is byte-identical to our last write', () => {
+    clearData();
+    withLocalStorage({}, () => {
+      saveData(emptyData());
+      const raw = localStorage.getItem(STORAGE_KEY)!;
+      expect(isOwnLastWrite(raw)).toBe(true);
+    });
+  });
+
+  it('is true via the revision path when storage still holds our last revision (differing/absent payload)', () => {
+    clearData();
+    withLocalStorage({}, () => {
+      saveData(emptyData()); // revision 1, storage envelope revision 1
+      expect(isOwnLastWrite('some-unrelated-string')).toBe(true);
+      expect(isOwnLastWrite(null)).toBe(true);
+    });
+  });
+
+  it('is false when another tab has written a higher revision and the payload differs', () => {
+    clearData();
+    withLocalStorage({}, () => {
+      saveData(emptyData()); // our last write: revision 1
+      // Simulate an external tab overwriting storage with revision 2.
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...emptyData(), revision: 2 }));
+      expect(isOwnLastWrite('unrelated')).toBe(false);
+    });
+  });
+});
+
+describe('subscribeExternalChanges carries the raw newValue (n2hub-259)', () => {
+  function withWindow<T>(fn: (dispatch: (e: { key: string | null; newValue: string | null }) => void) => T): T {
+    const handlers: Array<(e: { key: string | null; newValue: string | null }) => void> = [];
+    const win = {
+      addEventListener: (_type: string, h: (e: never) => void) => handlers.push(h as never),
+      removeEventListener: () => {},
+    };
+    const prev = (globalThis as { window?: unknown }).window;
+    (globalThis as { window?: unknown }).window = win;
+    try {
+      return fn((e) => handlers.forEach((h) => h(e)));
+    } finally {
+      (globalThis as { window?: unknown }).window = prev;
+    }
+  }
+
+  it('delivers both the envelope revision and the raw event payload to the callback', () => {
+    clearData();
+    withWindow((dispatch) => {
+      const received: ExternalChangeInfo[] = [];
+      const unsub = subscribeExternalChanges((info) => received.push(info));
+      const raw = JSON.stringify({ ...emptyData(), revision: 5 });
+      dispatch({ key: STORAGE_KEY, newValue: raw });
+      expect(received).toHaveLength(1);
+      expect(received[0].revision).toBe(5);
+      expect(received[0].newValue).toBe(raw);
+      unsub();
+    });
+  });
+
+  it('ignores events for an unrelated key', () => {
+    clearData();
+    withWindow((dispatch) => {
+      const received: ExternalChangeInfo[] = [];
+      const unsub = subscribeExternalChanges((info) => received.push(info));
+      dispatch({ key: 'some.other.key', newValue: '{}' });
+      expect(received).toHaveLength(0);
+      unsub();
     });
   });
 });
