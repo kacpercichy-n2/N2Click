@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Link,
   NavLink,
   Navigate,
   Route,
@@ -42,12 +43,7 @@ import {
 } from './auth/AuthScreens';
 import { findPersonByEmail } from './auth/profile';
 import { can } from './store/permissions';
-import {
-  currentUser as currentUserSel,
-  isImpersonating,
-  realUser,
-  realUserId,
-} from './store/selectors';
+import { currentUser as currentUserSel } from './store/selectors';
 import { SampleBanner } from './components/SampleBanner';
 import { PersistenceBanner } from './components/PersistenceBanner';
 import { CloudSyncBanner } from './components/CloudSyncBanner';
@@ -57,28 +53,14 @@ import { EventModal } from './components/EventModal';
 import { GlobalSearch } from './components/GlobalSearch';
 import { Avatar } from './components/Avatar';
 import {
-  LayoutDashboard,
-  ClipboardList,
-  FolderKanban,
-  Building2,
-  Columns3,
-  GanttChart,
-  ListChecks,
-  CalendarDays,
-  Users,
-  Gauge,
   Settings,
   Menu,
   X,
   ChevronsLeft,
   ChevronsRight,
   CircleHelp,
-  KeyRound,
-  Network,
-  Inbox,
-  CalendarClock,
 } from './components/icons';
-import type { LucideIcon } from './components/icons';
+import { NAV_ITEMS, orderNavPaths } from './components/navItems';
 import { loadUiPrefs, updateUiPrefs } from './utils/uiPrefs';
 import {
   consumeNavGuardBypass,
@@ -87,23 +69,7 @@ import {
 } from './utils/dirtyRegistry';
 import { OnboardingRoot } from './onboarding/OnboardingRoot';
 
-const NAV: Array<[string, string, LucideIcon]> = [
-  ['/dashboard', 'Panel', LayoutDashboard],
-  ['/my-work', 'Moja praca', ClipboardList],
-  ['/projects', 'Projekty', FolderKanban],
-  ['/clients', 'Klienci', Building2],
-  ['/kanban', 'Kanban', Columns3],
-  ['/timeline', 'Oś czasu', GanttChart],
-  ['/tasks', 'Zadania', ListChecks],
-  ['/calendar', 'Kalendarz', CalendarDays],
-  ['/wydarzenia', 'Wydarzenia', CalendarClock],
-  ['/people', 'Zespół', Users],
-  ['/team', 'Struktura zespołu', Network],
-  ['/workload', 'Obciążenie', Gauge],
-  // Zgłoszenia widzi KAŻDY (każda rola może zgłosić) — bez bramki jak /admin.
-  ['/zgloszenia', 'Zgłoszenia', Inbox],
-  ['/admin', 'Administracja', Settings],
-];
+const NAV_ITEM_BY_PATH = new Map(NAV_ITEMS.map((item) => [item[0], item]));
 
 const MOBILE_NAV_QUERY = '(max-width: 760px)';
 const DRAWER_FOCUSABLE = [
@@ -132,6 +98,11 @@ export function App() {
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => loadUiPrefs().sidebarCollapsed);
+  // Device-local sidebar order (paths). The Ustawienia editor persists it and
+  // fires 'n2hub:nav-order-changed'; the effect below reloads it into state so
+  // the sidebar reorders in the same tab without a reload (house pattern — see
+  // 'n2hub:open-tutorials').
+  const [navOrder, setNavOrder] = useState(() => loadUiPrefs().navOrder);
   const [mobileNav, setMobileNav] = useState(() => window.matchMedia(MOBILE_NAV_QUERY).matches);
   const hamburgerRef = useRef<HTMLButtonElement>(null);
   const drawerRef = useRef<HTMLElement>(null);
@@ -143,12 +114,6 @@ export function App() {
       return next;
     });
   };
-  const expandSidebar = () => {
-    if (!collapsed) return;
-    setCollapsed(false);
-    updateUiPrefs({ sidebarCollapsed: false });
-  };
-
   // Pełna synchronizacja zespołu (tryb supabase): każdy gotowy snapshot
   // organizacji scala WSZYSTKIE widoczne (RLS) profile chmury w lokalną listę
   // osób — w tym własny profil zalogowanego konta, więc świeża przeglądarka
@@ -179,21 +144,13 @@ export function App() {
   }, [authedSignedIn, auth.mustChangePassword, orgState, dispatch]);
 
   const currentUser = state.people.find((p) => p.id === state.currentUserId);
-  // Real logged-in identity (the impersonator while impersonating). Only the
-  // "Występuj jako" switcher visibility and the return banner key off this;
-  // everything else is a true preview of the acted-as `currentUser`.
-  const actualUser = realUser(state);
-  const impersonating = isImpersonating(state);
   const peopleCount = state.people.length;
   const canAdmin = can(currentUser, 'admin.panel', { peopleCount });
   // `/team` visibility mirrors the server role model (worker hidden, manager =
   // own department, administrator = all). UX gate only — see pages/teamScope.ts.
-  // In Supabase mode (self-acting, snapshot ready) the effective cloud role
-  // drives it; otherwise the local role (loading/error/local mode/impersonating).
-  const teamRole = effectiveAccessRole(currentUser, org.state, {
-    mode: auth.mode,
-    impersonating,
-  });
+  // In Supabase mode (snapshot ready) the effective cloud role drives it;
+  // otherwise the local role (loading/error/local mode).
+  const teamRole = effectiveAccessRole(currentUser, org.state, { mode: auth.mode });
   const teamUser = currentUser && teamRole ? { ...currentUser, accessRole: teamRole } : currentUser;
   const canTeam = canViewTeam(teamUser);
   // Session gate: with people present and nobody resolving to a current user,
@@ -221,6 +178,13 @@ export function App() {
     sync();
     media.addEventListener('change', sync);
     return () => media.removeEventListener('change', sync);
+  }, []);
+
+  // Reload the saved menu order whenever the Ustawienia editor changes it.
+  useEffect(() => {
+    const reload = () => setNavOrder(loadUiPrefs().navOrder);
+    window.addEventListener('n2hub:nav-order-changed', reload);
+    return () => window.removeEventListener('n2hub:nav-order-changed', reload);
   }, []);
 
   // Close the mobile drawer whenever the route changes.
@@ -309,8 +273,8 @@ export function App() {
       return <AuthBlocked email={email.trim()} onSignOut={() => void handleLogout()} />;
     }
     // Matched, but SET_CURRENT_USER may not have synced yet — never flash the
-    // shell before the real identity resolves to the matched person.
-    if (realUserId(state) !== person.id) return <AuthLoading />;
+    // shell before the acting identity resolves to the matched person.
+    if (state.currentUserId !== person.id) return <AuthLoading />;
   }
 
   if (needsLogin) {
@@ -374,31 +338,36 @@ export function App() {
         </div>
         <GlobalSearch />
         <nav className="app-nav" data-tour="shell.nav">
-          {NAV.filter(([to]) => (to !== '/admin' || canAdmin) && (to !== '/team' || canTeam)).map(([to, label, Icon]) => (
-            <NavLink
-              key={to}
-              to={to}
-              className={navClass}
-              title={label}
-              onClick={() => setMenuOpen(false)}
-            >
-              <Icon size={18} aria-hidden className="nav-icon" />
-              <span className="nav-label">{label}</span>
-            </NavLink>
-          ))}
-          {/* Account panel (self-service password change) exists only for a real
-              Supabase account; local mode has no such concept. */}
-          {auth.mode === 'supabase' && (
-            <NavLink
-              to="/account"
-              className={navClass}
-              title="Konto"
-              onClick={() => setMenuOpen(false)}
-            >
-              <KeyRound size={18} aria-hidden className="nav-icon" />
-              <span className="nav-label">Konto</span>
-            </NavLink>
-          )}
+          {orderNavPaths(NAV_ITEMS.map(([to]) => to), navOrder)
+            .filter((to) => (to !== '/admin' || canAdmin) && (to !== '/team' || canTeam))
+            .map((to) => {
+              const item = NAV_ITEM_BY_PATH.get(to);
+              if (!item) return null;
+              const [, label, Icon] = item;
+              return (
+                <NavLink
+                  key={to}
+                  to={to}
+                  className={navClass}
+                  title={label}
+                  onClick={() => setMenuOpen(false)}
+                >
+                  <Icon size={18} aria-hidden className="nav-icon" />
+                  <span className="nav-label">{label}</span>
+                </NavLink>
+              );
+            })}
+          {/* Ustawienia: preferencje interfejsu (oba tryby) + zmiana hasła w
+              trybie supabase. Przypięte PO liście, poza edytorem kolejności. */}
+          <NavLink
+            to="/account"
+            className={navClass}
+            title="Ustawienia"
+            onClick={() => setMenuOpen(false)}
+          >
+            <Settings size={18} aria-hidden className="nav-icon" />
+            <span className="nav-label">Ustawienia</span>
+          </NavLink>
         </nav>
         <button
           type="button"
@@ -410,54 +379,43 @@ export function App() {
           <span className="nav-label">Pomoc i samouczki</span>
         </button>
         {state.people.length > 0 && (
-          <div className="acting-as-wrap">
-            {/* Collapsed avatar shortcut (CSS-shown only >1180px + collapsed). */}
-            <button
-              type="button"
-              className="acting-as-collapsed"
-              title={
-                currentUser ? `Występuj jako: ${currentUser.name}` : 'Występuj jako'
-              }
-              aria-label={
-                currentUser ? `Występuj jako: ${currentUser.name}` : 'Występuj jako'
-              }
-              onClick={expandSidebar}
-            >
-              {currentUser ? (
+          <div className="sidebar-user">
+            {/* Collapsed avatar shortcut (CSS-shown only >1180px + collapsed):
+                links to the user's own profile (the chevron toggle is the only
+                expand control now). */}
+            {currentUser && (
+              <Link
+                to={`/people/${currentUser.id}`}
+                className="sidebar-user-collapsed"
+                title={`Mój profil: ${currentUser.name}`}
+                aria-label={`Mój profil: ${currentUser.name}`}
+                onClick={() => setMenuOpen(false)}
+              >
                 <Avatar person={currentUser} size={32} />
-              ) : (
-                <Users size={20} aria-hidden />
-              )}
-            </button>
-            {/* "Występuj jako" is an administrator-only quick switch now. Gated
-                on the REAL logged-in user so it never vanishes while the admin
-                is previewing another identity. */}
-            {can(actualUser, 'users.impersonate', { peopleCount: state.people.length }) && (
-              <label className="acting-as" title="Aktualny użytkownik aplikacji (autor komentarzy, uprawnienia admina)">
-                <span className="acting-as-label">Występuj jako</span>
-                <select
-                  value={state.currentUserId}
-                  onChange={(e) =>
-                    dispatch({ type: 'IMPERSONATE', personId: e.target.value })
-                  }
-                >
-                  {state.people.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                      {p.accessRole === 'administrator' ? ' (administrator)' : ''}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              </Link>
             )}
-            {/* Everyone can log out (returns to the login screen). */}
-            <button
-              type="button"
-              className="btn ghost logout-btn"
-              onClick={() => void handleLogout()}
-            >
-              Wyloguj
-            </button>
+            {/* Expanded footer row: avatar → own profile + narrower logout. */}
+            <div className="sidebar-user-row">
+              {currentUser && (
+                <Link
+                  to={`/people/${currentUser.id}`}
+                  className="sidebar-user-avatar"
+                  title={`Mój profil: ${currentUser.name}`}
+                  aria-label={`Mój profil: ${currentUser.name}`}
+                  onClick={() => setMenuOpen(false)}
+                >
+                  <Avatar person={currentUser} size={32} />
+                </Link>
+              )}
+              {/* Everyone can log out (returns to the login screen). */}
+              <button
+                type="button"
+                className="btn ghost logout-btn"
+                onClick={() => void handleLogout()}
+              >
+                Wyloguj
+              </button>
+            </div>
           </div>
         )}
       </aside>
@@ -468,20 +426,6 @@ export function App() {
         aria-hidden={mobileNav && menuOpen ? true : undefined}
         {...openMobileMainProps}
       >
-        {impersonating && currentUser && actualUser && (
-          <div className="impersonation-banner" role="status">
-            <span className="impersonation-banner-text">
-              Występujesz jako {currentUser.name} — aktywne są uprawnienia tej osoby.
-            </span>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => dispatch({ type: 'STOP_IMPERSONATION' })}
-            >
-              Wróć do {actualUser.name}
-            </button>
-          </div>
-        )}
         {/* Persistence banner shows on every routed page (not the login screen —
             no edits happen there and a clean tab auto-refreshes silently). */}
         <PersistenceBanner />
@@ -526,11 +470,9 @@ export function App() {
               path="/team"
               element={canTeam ? <TeamPage /> : <Navigate to="/dashboard" replace />}
             />
-            {/* Account panel: real Supabase account only. Local mode redirects. */}
-            <Route
-              path="/account"
-              element={auth.mode === 'supabase' ? <AccountPage /> : <Navigate to="/" replace />}
-            />
+            {/* Ustawienia: dostępne w OBU trybach (tryb lokalny widzi tylko
+                sekcję „Interfejs”). */}
+            <Route path="/account" element={<AccountPage />} />
             <Route path="*" element={<HomeRedirect />} />
           </Routes>
         </motion.div>
@@ -543,11 +485,7 @@ export function App() {
       {/* Ten sam wzorzec dla wydarzeń (?wydarzenie=new | <id>). */}
       <EventModal />
       <DirtyNavigationGuard />
-      <OnboardingRoot
-        owner={actualUser}
-        viewer={currentUser}
-        impersonating={impersonating}
-      />
+      <OnboardingRoot owner={currentUser} viewer={currentUser} />
     </div>
   );
 }
@@ -597,8 +535,7 @@ function DirtyNavigationGuard() {
 /**
  * Landing redirect for `/` and unknown routes. `pracownik`-role users land on
  * their work page (`/my-work`); everyone else — admin/pm/handlowiec, setup mode,
- * or an unresolved user — keeps the dashboard. Keys off the acted-as
- * `currentUser`, so impersonation previews the target role's landing (correct).
+ * or an unresolved user — keeps the dashboard.
  */
 function HomeRedirect() {
   const { state } = useStore();

@@ -315,7 +315,7 @@ export type ActivityEntityType =
   | 'person' // entityId = person id
   | 'status' // entityId = status id
   | 'client' // entityId = client id
-  | 'system'; // session events (login/logout/impersonation), entityId = ''
+  | 'system'; // session events (login/logout), entityId = ''
 
 export interface Comment {
   id: string;
@@ -333,10 +333,11 @@ export interface ActivityEvent {
   id: string;
   entityType: ActivityEntityType;
   entityId: string;
-  actorId: string; // acting identity ('' when no acting user); the IMPERSONATED person while impersonating
-  // Real logged-in administrator when the row was written under impersonation;
-  // '' when not impersonating. Optional: rows persisted before this field exist
-  // without it and load fine (additive, no version bump).
+  actorId: string; // acting identity ('' when no acting user)
+  // READ-ONLY HISTORICAL attribution: old rows written under the removed
+  // impersonation feature carry the real administrator here (still displayed for
+  // those rows and mapped from the cloud `impersonator_id` column). New rows are
+  // always stamped ''. Optional: rows persisted before this field load fine.
   impersonatorId?: string;
   message: string;
   createdAt: string; // ISO timestamp
@@ -460,10 +461,6 @@ export interface AppData {
   tickets: Ticket[];
   events: CalendarEvent[];
   currentUserId: string; // "acting as" person; '' when unset
-  // Safe impersonation: '' when not impersonating; otherwise the REAL logged-in
-  // person's id while `currentUserId` holds the impersonated identity. Additive
-  // (no version bump) — defaulted + sanitized on every load in storage.ts.
-  impersonatorId: string;
   sampleBannerDismissed: boolean;
   savedFilters: SavedFilter[]; // named filter presets for Projects/Tasks/Kanban pages
   // Ostatnio używany filtr per widok (nienazwany). LOKALNIE ONLY — jak

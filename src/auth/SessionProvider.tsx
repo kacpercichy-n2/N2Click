@@ -17,7 +17,6 @@ import {
   type ReactNode,
 } from 'react';
 import { useStore } from '../store/AppStore';
-import { realUserId } from '../store/selectors';
 import { getSupabaseClient } from '../supabase/client';
 import { detectAuthMode, type AuthMode } from './mode';
 import {
@@ -118,12 +117,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [mode]);
 
   // Skojarzenie tożsamości: po zalogowaniu/odtworzeniu wskaż `currentUserId` na
-  // dopasowaną osobę — ale TYLKO gdy realny użytkownik się różni, żeby nie
-  // zdeptać aktywnej personifikacji tego samego realnego użytkownika.
+  // dopasowaną osobę — ale TYLKO gdy się różni, żeby nie dispatchować w kółko.
   useEffect(() => {
     if (mode !== 'supabase' || sessionState.status !== 'signedIn') return;
     const person = findPersonByEmail(storeState.people, sessionState.session?.user?.email);
-    if (person && realUserId(storeState) !== person.id) {
+    if (person && storeState.currentUserId !== person.id) {
       dispatch({ type: 'SET_CURRENT_USER', personId: person.id });
     }
   }, [mode, sessionState.status, sessionState.session, storeState, dispatch]);

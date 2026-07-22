@@ -172,11 +172,9 @@ function popupPosition(rect: Rect, keepTargetClear = false): CSSProperties {
 export function OnboardingRoot({
   owner,
   viewer,
-  impersonating,
 }: {
   owner: Person | undefined;
   viewer: Person | undefined;
-  impersonating: boolean;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -217,7 +215,7 @@ export function OnboardingRoot({
   }, []);
 
   useEffect(() => {
-    if (impersonating || !owner || autoStarted.current === ownerKey) return;
+    if (!owner || autoStarted.current === ownerKey) return;
     if (!hasPendingOnboardingLogin(ownerKey)) return;
     if (ownerProgress.introVersionSeen >= ONBOARDING_VERSION || ownerProgress.autoTourHandled) return;
     // StrictMode intentionally runs an effect setup/cleanup/setup cycle in
@@ -228,7 +226,7 @@ export function OnboardingRoot({
       setPanel('intro');
     }, 350);
     return () => window.clearTimeout(timer);
-  }, [impersonating, owner, ownerKey, ownerProgress.autoTourHandled, ownerProgress.introVersionSeen]);
+  }, [owner, ownerKey, ownerProgress.autoTourHandled, ownerProgress.introVersionSeen]);
 
   useEffect(() => {
     if (!tour || !activeStep) return;
@@ -391,7 +389,6 @@ export function OnboardingRoot({
     ? availableModules.find((module) => module.id === hintedModuleId)
     : undefined;
   const shouldShowHint =
-    !impersonating &&
     Boolean(hintedModule) &&
     panel === 'none' &&
     !tour &&

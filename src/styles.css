@@ -333,28 +333,6 @@ textarea {
   width: 100%;
 }
 
-.acting-as {
-  display: flex;
-  flex-direction: column;
-  gap: var(--n2-space-2);
-  margin-top: auto;
-  padding-top: var(--n2-space-4);
-  border-top: 1px solid var(--n2-border);
-  font-size: var(--n2-type-xs);
-  color: var(--n2-text-muted);
-}
-.acting-as-label {
-  font-family: var(--n2-font-mono);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--n2-lavender);
-}
-.acting-as select {
-  max-width: none;
-  width: 100%;
-  min-height: 40px;
-}
-
 /* Brand row now holds the brand + the collapse toggle. */
 .app-brand-row {
   display: flex;
@@ -383,15 +361,13 @@ textarea {
   color: var(--n2-text);
 }
 
-/* Wrapper pins the acting-as controls to the bottom of the sidebar. */
-.acting-as-wrap {
+/* Wrapper pins the user footer to the bottom of the sidebar. */
+.sidebar-user {
   margin-top: auto;
 }
-.acting-as-wrap .acting-as {
-  margin-top: 0;
-}
-/* Collapsed-only avatar shortcut — hidden by default, revealed >1180px. */
-.acting-as-collapsed {
+/* Collapsed-only avatar shortcut — hidden by default, revealed >1180px. Links
+   to the user's own profile. */
+.sidebar-user-collapsed {
   display: none;
   place-items: center;
   width: 100%;
@@ -402,11 +378,51 @@ textarea {
   color: var(--n2-text-soft);
   cursor: pointer;
 }
+/* Expanded footer row: avatar bubble (→ own profile) next to a narrower logout. */
+.sidebar-user-row {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+  padding-top: var(--n2-space-4);
+  border-top: 1px solid var(--n2-border);
+}
+.sidebar-user-avatar {
+  display: inline-flex;
+  flex-shrink: 0;
+  border-radius: 999px;
+}
 
-/* Universal logout, pinned below the (admin-only) impersonate select. */
+/* Logout sits next to the avatar and takes the remaining width (not full). */
 .logout-btn {
-  width: 100%;
-  margin-top: var(--n2-space-3);
+  flex: 1;
+  justify-content: center;
+}
+
+/* ---------- Menu-order editor (Ustawienia → Interfejs) ---------- */
+.nav-order-list {
+  list-style: none;
+  margin: 0 0 var(--n2-space-3);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-2);
+  max-width: 420px;
+}
+.nav-order-item {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+  padding: var(--n2-space-2) var(--n2-space-3);
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-md);
+  background: var(--n2-surface);
+}
+.nav-order-label {
+  flex: 1;
+}
+.nav-order-btn {
+  padding: var(--n2-space-1) var(--n2-space-2);
+  min-width: 32px;
   justify-content: center;
 }
 
@@ -677,40 +693,8 @@ textarea {
   flex-shrink: 0;
 }
 
-/* Persistent impersonation banner (admin previewing another identity). Warning
-   tones so it reads as a temporary, reversible mode. No animation by design. */
-.impersonation-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--n2-space-4);
-  border: 1px solid var(--n2-warning);
-  border-radius: var(--n2-radius-md);
-  background: var(--n2-warning-soft);
-  padding: var(--n2-space-3) var(--n2-space-5);
-  margin-bottom: var(--n2-space-6);
-}
-.impersonation-banner-text {
-  color: var(--n2-warning);
-  font-weight: 600;
-}
-.impersonation-banner .btn {
-  flex-shrink: 0;
-}
-@media (max-width: 760px) {
-  .impersonation-banner {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--n2-space-2);
-  }
-  .impersonation-banner .btn {
-    width: 100%;
-  }
-}
-
 /* Global persistence banner (honest local write outcomes / two-tab safety).
-   Mirrors the impersonation banner's layout; semantic tones by variant. No
-   animation by design. */
+   Semantic tones by variant. No animation by design. */
 .persistence-banner {
   display: flex;
   align-items: center;
@@ -4486,7 +4470,7 @@ option {
   /* The collapse toggle + collapsed avatar are desktop-only; the 1-column
      strip and mobile drawer ignore the stored pref entirely. */
   .sidebar-toggle,
-  .acting-as-collapsed {
+  .sidebar-user-collapsed {
     display: none;
   }
   .app-sidebar {
@@ -4501,15 +4485,8 @@ option {
   .app-nav-link {
     justify-content: center;
   }
-  .acting-as {
+  .sidebar-user {
     margin-top: 0;
-    flex-direction: row;
-    align-items: center;
-    flex-wrap: wrap;
-  }
-  .acting-as select {
-    width: auto;
-    max-width: 220px;
   }
 }
 
@@ -4588,12 +4565,17 @@ option {
   .sidebar-collapsed .app-nav-link:hover .nav-icon {
     transform: scale(1.08);
   }
-  /* Swap the acting-as select for the avatar shortcut. */
-  .sidebar-collapsed .acting-as {
+  /* Swap the expanded avatar row for the standalone avatar shortcut. The logout
+     button stays visible; only the expanded avatar bubble is hidden. */
+  .sidebar-collapsed .sidebar-user-collapsed {
+    display: grid;
+  }
+  .sidebar-collapsed .sidebar-user-avatar {
     display: none;
   }
-  .sidebar-collapsed .acting-as-collapsed {
-    display: grid;
+  .sidebar-collapsed .sidebar-user-row {
+    border-top: none;
+    padding-top: 0;
   }
 }
 
@@ -5306,15 +5288,6 @@ option {
   /* The brand already lives in the top bar — hide the drawer's copy. */
   .app-sidebar .app-brand {
     display: none;
-  }
-  /* Restore the vertical acting-as layout inside the drawer. */
-  .acting-as {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .acting-as select {
-    width: 100%;
-    max-width: none;
   }
 
   .app-drawer-scrim {

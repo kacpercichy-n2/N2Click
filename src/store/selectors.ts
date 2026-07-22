@@ -973,27 +973,6 @@ export function currentUser(state: AppData): Person | undefined {
 }
 
 /**
- * The REAL logged-in person's id — the impersonator while impersonating,
- * otherwise the acted-as identity. Use this (not `currentUserId`) only for the
- * "Występuj jako" switcher visibility and the impersonation return path; every
- * other read stays a true preview of the acted-as identity.
- */
-export function realUserId(state: AppData): string {
-  return state.impersonatorId || state.currentUserId;
-}
-
-/** The REAL logged-in Person (see `realUserId`), or undefined if unresolved. */
-export function realUser(state: AppData): Person | undefined {
-  const id = realUserId(state);
-  return id ? getPerson(state, id) : undefined;
-}
-
-/** True when an impersonation session is active (`impersonatorId !== ''`). */
-export function isImpersonating(state: AppData): boolean {
-  return state.impersonatorId !== '';
-}
-
-/**
  * Admin gate for the admin panel and status management. With no people yet
  * there is nobody to be admin, so setup stays unlocked (prevents lockout).
  * Reimplemented on `accessRole` (v5); keeps its name/signature and the rule.

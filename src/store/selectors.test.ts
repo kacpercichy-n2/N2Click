@@ -20,13 +20,10 @@ import {
   hoursForTaskPersonOnDate,
   isDoneStatus,
   isPersonWorkday,
-  isImpersonating,
   overdueTasksForPerson,
   overloadedDatesForPersonInRange,
   peopleWithBirthdayOnDate,
   planningStatusForTotals,
-  realUser,
-  realUserId,
   searchAll,
   taskDisplayStatus,
   taskGrowAllowance,
@@ -415,32 +412,6 @@ describe('growAllowanceHours — number contract (PKG-20260708-b2-tests)', () =>
   it('returns 0 for a missing entry id', () => {
     const state = makeState({ tasks: [makeTask({ id: 't1' })], workload: [] });
     expect(growAllowanceHours(state, 'does-not-exist')).toBe(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// realUserId / realUser / isImpersonating — coverage added by
-// PKG-20260708-b2-tests (implementation shipped by PKG-20260708-b2-impersonation).
-// ---------------------------------------------------------------------------
-
-describe('realUserId / realUser / isImpersonating (PKG-20260708-b2-tests)', () => {
-  it('not impersonating: realUserId/realUser resolve to self, isImpersonating is false', () => {
-    const p1 = makePerson({ id: 'p1', name: 'Ann' });
-    const state = makeState({ people: [p1], currentUserId: 'p1', impersonatorId: '' });
-
-    expect(realUserId(state)).toBe('p1');
-    expect(realUser(state)?.id).toBe('p1');
-    expect(isImpersonating(state)).toBe(false);
-  });
-
-  it('impersonating: realUserId/realUser resolve to the impersonator, isImpersonating is true', () => {
-    const p1 = makePerson({ id: 'p1', name: 'Ann' });
-    const p2 = makePerson({ id: 'p2', name: 'Bob' });
-    const state = makeState({ people: [p1, p2], currentUserId: 'p2', impersonatorId: 'p1' });
-
-    expect(realUserId(state)).toBe('p1');
-    expect(realUser(state)?.id).toBe('p1');
-    expect(isImpersonating(state)).toBe(true);
   });
 });
 

@@ -37,8 +37,8 @@ export function AdminPage() {
         <div className="empty-state">
           <p className="empty-title">Tylko dla adminów</p>
           <p className="empty-hint">
-            Przełącz „Występuj jako” w nagłówku na osobę z uprawnieniami admina,
-            aby zarządzać statusami, klientami, działami i typami usług.
+            Zaloguj się na konto z uprawnieniami administratora, aby zarządzać
+            statusami, klientami, działami i typami usług.
           </p>
         </div>
       </section>

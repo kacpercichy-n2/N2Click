@@ -295,8 +295,6 @@ export type Action =
   | { type: 'UPDATE_PERSON'; personId: string; person: PersonDraft }
   | { type: 'DELETE_PERSON'; personId: string }
   | { type: 'SET_CURRENT_USER'; personId: string }
-  | { type: 'IMPERSONATE'; personId: string }
-  | { type: 'STOP_IMPERSONATION' }
   | { type: 'SET_PASSWORD'; personId: string; passwordHash: string }
   | { type: 'LOGOUT' }
   | { type: 'ADD_CLIENT'; name: string; contactName?: string; contactEmail?: string; contactPhone?: string; notes?: string; contacts?: ClientContact[] }
@@ -370,19 +368,19 @@ function nowIso(): string {
 
 // Local, user-editable activity log for attribution/UX. localStorage is
 // client-mutable, so this is NOT a security audit trail. Every row carries the
-// acting identity plus (when impersonating) the real administrator, so the log
-// stays honest about who did what. `as` overrides the stamp for session events
-// where the pre-transition `currentUserId` is not the honest author.
+// acting identity, so the log stays honest about who did what. `as` overrides
+// the stamp for session events where the pre-transition `currentUserId` is not
+// the honest author. `impersonatorId` is always '' on new rows — it survives
+// only as a read-only historical attribution field on old/cloud rows.
 function withActivity(
   state: AppData,
   entityType: ActivityEntityType,
   entityId: string,
   message: string,
-  as?: { actorId: string; impersonatorId: string },
+  as?: { actorId: string },
   options?: { collapse?: boolean },
 ): ActivityEvent[] {
   const actorId = as ? as.actorId : state.currentUserId;
-  const impersonatorId = as ? as.impersonatorId : state.impersonatorId;
   // collapse: identyczny wpis (encja+treść+aktor) bezpośrednio na końcu listy
   // dostaje świeży znacznik czasu zamiast duplikatu — auto-zapis nie zaśmieca
   // dziennika serią „zaktualizował(a)”.
@@ -394,7 +392,7 @@ function withActivity(
       last.entityId === entityId &&
       last.message === message &&
       last.actorId === actorId &&
-      last.impersonatorId === impersonatorId
+      (last.impersonatorId ?? '') === ''
     ) {
       return [...state.activity.slice(0, -1), { ...last, createdAt: nowIso() }];
     }
@@ -406,7 +404,7 @@ function withActivity(
       entityType,
       entityId,
       actorId,
-      impersonatorId,
+      impersonatorId: '',
       message,
       createdAt: nowIso(),
     },
@@ -2000,21 +1998,8 @@ function personFromDraft(draft: PersonDraft): Omit<Person, 'id' | 'passwordHash'
 }
 
 function deletePerson(state: AppData, personId: string): AppData {
-  // Impersonation interplay: deleting the impersonated person (currentUserId)
-  // while impersonating returns the session to the impersonator; deleting the
-  // impersonator ends the bookkeeping but keeps the acted-as identity. Falls
-  // back to the plain currentUserId reset when not impersonating.
-  const impersonating = state.impersonatorId !== '';
-  let currentUserId = state.currentUserId;
-  let impersonatorId = state.impersonatorId;
-  if (impersonating && personId === state.currentUserId) {
-    currentUserId = state.impersonatorId;
-    impersonatorId = '';
-  } else if (personId === state.impersonatorId) {
-    impersonatorId = '';
-  } else if (personId === state.currentUserId) {
-    currentUserId = '';
-  }
+  // Deleting the acting user clears the session identity ('' = logged out).
+  const currentUserId = personId === state.currentUserId ? '' : state.currentUserId;
   return {
     ...state,
     // Cascade (invariant 5): drop the person, their assignments/workload, and
@@ -2025,7 +2010,6 @@ function deletePerson(state: AppData, personId: string): AppData {
     assignments: state.assignments.filter((a) => a.personId !== personId),
     workload: state.workload.filter((w) => w.personId !== personId),
     currentUserId,
-    impersonatorId,
   };
 }
 
@@ -2406,15 +2390,14 @@ function applyCloudPeople(
   return { ok: true, people, changed };
 }
 
-/** Czyści tożsamości sesji wskazujące osoby usunięte przez scalenie. */
+/** Czyści tożsamość sesji wskazującą osobę usuniętą przez scalenie. */
 function reconcileIdentityAfterPeopleMerge(
   state: AppData,
   people: Person[],
-): Pick<AppData, 'currentUserId' | 'impersonatorId'> {
+): Pick<AppData, 'currentUserId'> {
   const ids = new Set(people.map((p) => p.id));
   return {
     currentUserId: ids.has(state.currentUserId) ? state.currentUserId : '',
-    impersonatorId: ids.has(state.impersonatorId) ? state.impersonatorId : '',
   };
 }
 
@@ -3174,9 +3157,9 @@ export function reducer(state: AppData, action: Action): AppData {
         return state;
       }
       const next = deletePerson(state, action.personId);
-      // Stamp from the PRE-delete state deliberately: deletePerson may rewrite
-      // currentUserId/impersonatorId (impersonation interplay) and the row must
-      // reflect who acted. The 'person' row survives — it is never pruned.
+      // Stamp from the PRE-delete state deliberately: deletePerson may clear
+      // currentUserId (deleting the acting user) and the row must reflect who
+      // acted. The 'person' row survives — it is never pruned.
       return {
         ...next,
         activity: withActivity(state, 'person', action.personId, `usunął(a) osobę „${target!.name}”`),
@@ -3186,14 +3169,10 @@ export function reducer(state: AppData, action: Action): AppData {
       // '' is a programmatic identity clear; any other id must exist so a
       // dangling personId can never be persisted as the acting user.
       if (action.personId !== '' && !hasEntity(state, 'person', action.personId)) return state;
-      // Login / direct identity set: always ends any impersonation.
-      const nextUser = { ...state, currentUserId: action.personId, impersonatorId: '' };
+      const nextUser = { ...state, currentUserId: action.personId };
       // '' clears identity programmatically — only LOGOUT records a logout, so no
-      // row here. A same-id re-select (not impersonating) is a no-op — no row.
-      if (
-        action.personId === '' ||
-        (action.personId === state.currentUserId && state.impersonatorId === '')
-      ) {
+      // row here. A same-id re-select is a no-op — no row.
+      if (action.personId === '' || action.personId === state.currentUserId) {
         return nextUser;
       }
       // Login row: the pre-state currentUserId may be '', so attribute to the id
@@ -3202,60 +3181,7 @@ export function reducer(state: AppData, action: Action): AppData {
         ...nextUser,
         activity: withActivity(state, 'system', '', 'zalogował(a) się', {
           actorId: action.personId,
-          impersonatorId: '',
         }),
-      };
-    }
-    case 'IMPERSONATE': {
-      // No-op when the target doesn't exist or is already the acted-as identity.
-      const exists = state.people.some((p) => p.id === action.personId);
-      if (!exists || action.personId === state.currentUserId) return state;
-      // Picking the current impersonator's own row means "return" — an END event.
-      if (action.personId === state.impersonatorId) {
-        const acted = state.people.find((p) => p.id === state.currentUserId);
-        return {
-          ...state,
-          currentUserId: state.impersonatorId,
-          impersonatorId: '',
-          activity: withActivity(
-            state,
-            'system',
-            '',
-            `zakończył(a) podgląd jako „${acted?.name ?? '?'}”`,
-            { actorId: state.impersonatorId, impersonatorId: '' },
-          ),
-        };
-      }
-      // Chained switches keep the ORIGINAL real user as the impersonator. The
-      // impersonation act itself is the real administrator's own action.
-      const target = state.people.find((p) => p.id === action.personId);
-      return {
-        ...state,
-        currentUserId: action.personId,
-        impersonatorId: state.impersonatorId || state.currentUserId,
-        activity: withActivity(
-          state,
-          'system',
-          '',
-          `rozpoczął(a) podgląd jako „${target?.name ?? '?'}”`,
-          { actorId: state.impersonatorId || state.currentUserId, impersonatorId: '' },
-        ),
-      };
-    }
-    case 'STOP_IMPERSONATION': {
-      if (state.impersonatorId === '') return state;
-      const acted = state.people.find((p) => p.id === state.currentUserId);
-      return {
-        ...state,
-        currentUserId: state.impersonatorId,
-        impersonatorId: '',
-        activity: withActivity(
-          state,
-          'system',
-          '',
-          `zakończył(a) podgląd jako „${acted?.name ?? '?'}”`,
-          { actorId: state.impersonatorId, impersonatorId: '' },
-        ),
       };
     }
     case 'SET_PASSWORD': {
@@ -3275,17 +3201,14 @@ export function reducer(state: AppData, action: Action): AppData {
       };
     }
     case 'LOGOUT': {
-      // Full logout (not "return"): clears both the acted-as and real identity.
-      // Nobody to log out -> no row, state result unchanged from before.
-      if (state.currentUserId === '' && state.impersonatorId === '') {
-        return { ...state, currentUserId: '', impersonatorId: '' };
+      // Full logout: clears the acting identity. Nobody to log out -> no row,
+      // state result unchanged from before.
+      if (state.currentUserId === '') {
+        return { ...state, currentUserId: '' };
       }
-      // Default pre-transition stamping records dual identity when logging out
-      // mid-impersonation.
       return {
         ...state,
         currentUserId: '',
-        impersonatorId: '',
         activity: withActivity(state, 'system', '', 'wylogował(a) się'),
       };
     }

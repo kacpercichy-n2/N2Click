@@ -145,7 +145,6 @@ export function emptyData(): AppData {
     tickets: [],
     events: [],
     currentUserId: '',
-    impersonatorId: '',
     sampleBannerDismissed: false,
     savedFilters: [],
     lastFilters: {},
@@ -369,7 +368,6 @@ function migrateV1(raw: Record<string, unknown>): AppData {
     assignments: v1Assignments,
     workload,
     currentUserId: people[0]?.id ?? '',
-    impersonatorId: '',
     sampleBannerDismissed: Boolean(raw.sampleBannerDismissed),
   };
 }
@@ -813,19 +811,19 @@ export function normalizeDates(data: AppData): AppData {
 }
 
 /**
- * Clears a stale `impersonatorId` on every load (idempotent, like
- * ensureStartMinutes). Impersonation bookkeeping must reference a real person
- * distinct from the acted-as identity; anything else resets to '' (= not
- * impersonating). Disjoint from ensureStartMinutes — order is irrelevant.
+ * Strips a stray legacy `impersonatorId` key on load (the field was removed from
+ * AppData; impersonation no longer exists). Idempotent — a payload without the
+ * key comes out the SAME reference, so a clean current-version load never
+ * echo-writes. A legacy mid-impersonation payload simply loads acting as its
+ * persisted `currentUserId` (the acted-as identity); the real session is
+ * re-asserted by SET_CURRENT_USER on the next login anyway.
  */
-export function sanitizeImpersonator(data: AppData): AppData {
-  const id = data.impersonatorId;
-  if (id === '') return data;
-  const dangling = !data.people.some((p) => p.id === id);
-  if (dangling || id === data.currentUserId) {
-    return { ...data, impersonatorId: '' };
-  }
-  return data;
+export function stripLegacyImpersonatorId(data: AppData): AppData {
+  if (!('impersonatorId' in (data as unknown as Record<string, unknown>))) return data;
+  const { impersonatorId: _legacy, ...rest } = data as AppData & {
+    impersonatorId?: string;
+  };
+  return rest;
 }
 
 /**
@@ -841,7 +839,7 @@ export function sanitizeImpersonator(data: AppData): AppData {
  *   plainly-missing case, this also catches a non-array value);
  * - every task has a valid `priority` (unknown value → 'normal'), a string
  *   `workCategoryId` that references an existing dictionary row (dangling
- *   reference → '', same spirit as sanitizeImpersonator), and a well-shaped
+ *   reference → ''), and a well-shaped
  *   `checklist` (non-array → []; each item coerced to { id, text, done },
  *   non-object entries dropped);
  * - every saved filter's criteria is filled from DEFAULT_FILTER_CRITERIA (old
@@ -1507,7 +1505,7 @@ function readData(recordRevision: boolean): InternalLoadResult {
     if (version < 2) {
       data = repairTickets(
         repairStatusReferences(
-          sanitizeImpersonator(
+          stripLegacyImpersonatorId(
             normalizeStatusFlags(
               normalizeTaskMeta(
                 ensureStartMinutes(
@@ -1571,7 +1569,7 @@ function readData(recordRevision: boolean): InternalLoadResult {
       const migrated = migrateV4toV5(localized);
       data = repairTickets(
         repairStatusReferences(
-          sanitizeImpersonator(
+          stripLegacyImpersonatorId(
             normalizeStatusFlags(
               normalizeTaskMeta(
                 ensureStartMinutes(normalizeDates(normalizeWorkloadHours(migrated))),

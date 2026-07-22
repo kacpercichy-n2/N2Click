@@ -632,92 +632,44 @@ describe('loadData migration v4 -> v5', () => {
 });
 
 // ---------------------------------------------------------------------------
-// impersonatorId default/round-trip/sanitize (PKG-20260708-b2-tests, covering
-// the additive field shipped by PKG-20260708-b2-impersonation). Version stays
-// 5 (additive, no bump) — payloads here are already v5-shaped.
+// Legacy impersonatorId strip-on-load (PKG-20260722-settings-nav-cleanup). The
+// field was removed from AppData; a stray legacy key is stripped once, a clean
+// v7 payload without it never echo-writes, and loading stays idempotent. No
+// DATA_VERSION bump (stays 7).
 // ---------------------------------------------------------------------------
 
-describe('impersonatorId persistence (PKG-20260708-b2-tests)', () => {
-  function v5Payload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-    return {
-      version: 5,
-      clients: [],
-      departments: [],
-      serviceTypes: [],
-      statuses: [],
-      projects: [],
-      milestones: [],
-      tasks: [],
-      people: [
-        {
-          id: 'p1',
-          firstName: 'Ann',
-          lastName: 'Admin',
-          name: 'Ann Admin',
-          email: '',
-          role: '',
-          departmentId: '',
-          companyId: '',
-          avatar: '',
-          capacity: 8,
-          accessRole: 'administrator',
-        },
-        {
-          id: 'p2',
-          firstName: 'Bob',
-          lastName: 'Staff',
-          name: 'Bob Staff',
-          email: '',
-          role: '',
-          departmentId: '',
-          companyId: '',
-          avatar: '',
-          capacity: 8,
-          accessRole: 'pracownik',
-        },
-      ],
-      assignments: [],
-      workload: [],
-      comments: [],
-      activity: [],
-      currentUserId: 'p1',
-      sampleBannerDismissed: false,
-      savedFilters: [],
-      ...overrides,
-    };
-  }
-
-  it("a persisted payload WITHOUT impersonatorId loads with the '' default", () => {
-    const payload = v5Payload(); // no impersonatorId key at all
-    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
-    expect(data.impersonatorId).toBe('');
+describe('legacy impersonatorId strip-on-load', () => {
+  it('a legacy payload WITH impersonatorId loads with the key absent and currentUserId preserved (written back once)', () => {
+    const legacy = { ...emptyData(), currentUserId: 'p2', impersonatorId: 'p1' };
+    const result = withLocalStorage(
+      { [STORAGE_KEY]: JSON.stringify(legacy) },
+      () => loadDataResult(),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect('impersonatorId' in result.data).toBe(false);
+    expect(result.data.currentUserId).toBe('p2');
+    // The strip is a deterministic repair -> written back exactly once.
+    expect(result.needsWriteback).toBe(true);
   });
 
-  it('a valid non-empty impersonatorId round-trips', () => {
-    const payload = v5Payload({ currentUserId: 'p2', impersonatorId: 'p1' });
-    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
-    expect(data.impersonatorId).toBe('p1');
-    expect(data.currentUserId).toBe('p2');
+  it('a clean v7 payload without the key does not echo-write', () => {
+    const clean = emptyData(); // no impersonatorId key
+    const result = withLocalStorage(
+      { [STORAGE_KEY]: JSON.stringify(clean) },
+      () => loadDataResult(),
+    );
+    expect(result.ok && result.needsWriteback).toBe(false);
+    if (!result.ok) return;
+    expect('impersonatorId' in result.data).toBe(false);
   });
 
-  it("sanitizes an impersonatorId referencing a non-existent person to ''", () => {
-    const payload = v5Payload({ currentUserId: 'p2', impersonatorId: 'ghost' });
-    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
-    expect(data.impersonatorId).toBe('');
-  });
-
-  it("sanitizes an impersonatorId equal to currentUserId to ''", () => {
-    const payload = v5Payload({ currentUserId: 'p1', impersonatorId: 'p1' });
-    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
-    expect(data.impersonatorId).toBe('');
-  });
-
-  it('loading is idempotent: load -> save-shape -> load again yields the same impersonatorId', () => {
-    const payload = v5Payload({ currentUserId: 'p2', impersonatorId: 'p1' });
-    const once = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+  it('loading stays idempotent after the strip', () => {
+    const legacy = { ...emptyData(), currentUserId: 'p2', impersonatorId: 'p1' };
+    const once = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(legacy) }, () => loadData());
     const twice = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(once) }, () => loadData());
     expect(twice).toEqual(once);
-    expect(twice.impersonatorId).toBe('p1');
+    expect('impersonatorId' in twice).toBe(false);
   });
 });
 

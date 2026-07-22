@@ -519,14 +519,13 @@ describe('valid / valid-legacy payloads still apply', () => {
     expect(next.projects.length).toBe(state.projects.length + 1);
   });
 
-  it('SET_CURRENT_USER sets an existing person, and \'\' clears both identity fields', () => {
+  it('SET_CURRENT_USER sets an existing person, and \'\' clears the identity', () => {
     const state = makeState();
     const set = reducer(state, { type: 'SET_CURRENT_USER', personId: 'p1' });
     expect(set.currentUserId).toBe('p1');
-    const seeded = { ...makeState(), currentUserId: 'p1', impersonatorId: 'p2' };
+    const seeded = { ...makeState(), currentUserId: 'p1' };
     const cleared = reducer(seeded, { type: 'SET_CURRENT_USER', personId: '' });
     expect(cleared.currentUserId).toBe('');
-    expect(cleared.impersonatorId).toBe('');
   });
 
   it('UPDATE_PERSON valid edit applies, but last-admin demotion is still refused', () => {

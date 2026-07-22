@@ -1,20 +1,136 @@
-// Panel konta: dobrowolna zmiana hasła w trybie Supabase. Reużywa czystego
-// modułu walidacji (src/auth/passwordChange.ts) i `changePassword` z kontekstu
-// sesji. Dostępny wyłącznie dla realnego konta Supabase — w trybie lokalnym
-// trasa przekierowuje na `/` (patrz App.tsx). Nigdy nie wyświetlamy haseł.
+// Panel „Ustawienia”: preferencje interfejsu (kolejność menu bocznego — LOKALNIE
+// per urządzenie) oraz dobrowolna zmiana hasła w trybie Supabase. Reużywa
+// czystego modułu walidacji (src/auth/passwordChange.ts) i `changePassword` z
+// kontekstu sesji. Trasa `/account` działa w OBU trybach; sekcja „Zmiana hasła”
+// renderuje się wyłącznie dla realnego konta Supabase. Nigdy nie pokazujemy haseł.
 import { useState, type FormEvent } from 'react';
-import { Link } from 'react-router-dom';
 import { useAuth } from '../auth/SessionProvider';
 import { validateNewPassword } from '../auth/passwordChange';
 import { useStore } from '../store/AppStore';
 import { useOrgData } from '../supabase/OrgDataProvider';
-import type { CloudProfile } from '../supabase/referenceData';
-import { PROVISION_ROLE_LABELS } from './teamScope';
+import { effectiveAccessRole } from '../supabase/referenceData';
+import { currentUser as currentUserSel } from '../store/selectors';
+import { can } from '../store/permissions';
+import { canViewTeam } from './teamScope';
+import { NAV_ITEMS, orderNavPaths } from '../components/navItems';
+import { loadUiPrefs, updateUiPrefs } from '../utils/uiPrefs';
 
 export function AccountPage() {
   const { changePassword, mode } = useAuth();
+
+  return (
+    <section className="page">
+      <div className="page-head">
+        <h1>Ustawienia</h1>
+      </div>
+
+      <InterfaceSection />
+
+      {mode === 'supabase' && <PasswordSection changePassword={changePassword} />}
+    </section>
+  );
+}
+
+/**
+ * Sekcja „Interfejs”: edytor kolejności menu bocznego. LOKALNE ONLY (per
+ * urządzenie, `n2hub.ui.v1`). Lista pokazuje wyłącznie pozycje, które ten
+ * użytkownik widzi (ten sam filtr canAdmin/canTeam co pasek boczny). Każda
+ * zmiana zapisuje pełną widoczną kolejność i emituje `n2hub:nav-order-changed`,
+ * więc pasek przestawia się natychmiast (bez przeładowania).
+ */
+function InterfaceSection() {
   const { state } = useStore();
-  const currentUserId = state.currentUserId;
+  const auth = useAuth();
+  const org = useOrgData();
+  const currentUser = currentUserSel(state);
+  const peopleCount = state.people.length;
+  const canAdmin = can(currentUser, 'admin.panel', { peopleCount });
+  const teamRole = effectiveAccessRole(currentUser, org.state, { mode: auth.mode });
+  const teamUser = currentUser && teamRole ? { ...currentUser, accessRole: teamRole } : currentUser;
+  const canTeam = canViewTeam(teamUser);
+
+  const [navOrder, setNavOrder] = useState(() => loadUiPrefs().navOrder);
+
+  const allPaths = NAV_ITEMS.map(([to]) => to);
+  const isVisible = (to: string) =>
+    (to !== '/admin' || canAdmin) && (to !== '/team' || canTeam);
+  // Kolejność efektywna (zapisana → domyślna) zawężona do widocznych pozycji.
+  const visibleOrder = orderNavPaths(allPaths, navOrder).filter(isVisible);
+  const labelFor = new Map(NAV_ITEMS.map(([to, label]) => [to, label]));
+  const iconFor = new Map(NAV_ITEMS.map(([to, , Icon]) => [to, Icon]));
+
+  const persist = (order: string[]) => {
+    updateUiPrefs({ navOrder: order });
+    setNavOrder(order);
+    window.dispatchEvent(new Event('n2hub:nav-order-changed'));
+  };
+
+  const move = (index: number, delta: -1 | 1) => {
+    const target = index + delta;
+    if (target < 0 || target >= visibleOrder.length) return;
+    const next = [...visibleOrder];
+    [next[index], next[target]] = [next[target], next[index]];
+    persist(next);
+  };
+
+  const resetOrder = () => {
+    updateUiPrefs((prefs) => {
+      const { navOrder: _drop, ...rest } = prefs;
+      return rest;
+    });
+    setNavOrder(undefined);
+    window.dispatchEvent(new Event('n2hub:nav-order-changed'));
+  };
+
+  return (
+    <div className="editor-section">
+      <h2>Interfejs</h2>
+      <h3>Kolejność menu</h3>
+      <p className="field-hint">
+        Ustaw kolejność pozycji menu bocznego. Zmiana obowiązuje na tym urządzeniu.
+      </p>
+      <ul className="nav-order-list">
+        {visibleOrder.map((to, index) => {
+          const Icon = iconFor.get(to);
+          return (
+            <li key={to} className="nav-order-item">
+              {Icon && <Icon size={18} aria-hidden className="nav-icon" />}
+              <span className="nav-order-label">{labelFor.get(to)}</span>
+              <button
+                type="button"
+                className="btn ghost nav-order-btn"
+                aria-label="W górę"
+                disabled={index === 0}
+                onClick={() => move(index, -1)}
+              >
+                ↑
+              </button>
+              <button
+                type="button"
+                className="btn ghost nav-order-btn"
+                aria-label="W dół"
+                disabled={index === visibleOrder.length - 1}
+                onClick={() => move(index, 1)}
+              >
+                ↓
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      <button type="button" className="btn ghost" onClick={resetOrder}>
+        Przywróć domyślną kolejność
+      </button>
+    </div>
+  );
+}
+
+/** Sekcja „Zmiana hasła” (tryb supabase). */
+function PasswordSection({
+  changePassword,
+}: {
+  changePassword: ReturnType<typeof useAuth>['changePassword'];
+}) {
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -44,136 +160,52 @@ export function AccountPage() {
   };
 
   return (
-    <section className="page">
-      <div className="page-head">
-        <h1>Konto</h1>
-      </div>
-
-      {currentUserId && (
-        <div className="editor-section">
-          <h2>Profil</h2>
-          <p className="field-hint">
-            <Link to={`/people/${currentUserId}`} className="profile-link">
-              Mój profil
-            </Link>
-          </p>
-        </div>
-      )}
-
-      {mode === 'supabase' && <CloudProfileSection />}
-
-      <div className="editor-section">
-        <h2>Zmiana hasła</h2>
-        <p className="field-hint">
-          Ustaw nowe hasło do swojego konta. Hasło musi mieć co najmniej 8 znaków.
-        </p>
-        <form className="login-password" onSubmit={(e) => void onSubmit(e)}>
-          <label className="field">
-            <span>Nowe hasło</span>
-            <input
-              type="password"
-              value={password}
-              autoComplete="new-password"
-              disabled={busy}
-              onChange={(e) => {
-                setPassword(e.target.value);
-                setSuccess(false);
-              }}
-              className={error ? 'invalid' : undefined}
-              aria-invalid={error ? true : undefined}
-            />
-          </label>
-          <label className="field">
-            <span>Powtórz nowe hasło</span>
-            <input
-              type="password"
-              value={confirm}
-              autoComplete="new-password"
-              disabled={busy}
-              onChange={(e) => {
-                setConfirm(e.target.value);
-                setSuccess(false);
-              }}
-              className={error ? 'invalid' : undefined}
-              aria-invalid={error ? true : undefined}
-            />
-          </label>
-          {error && <p className="field-error">{error}</p>}
-          {success && (
-            <p className="field-hint" role="status">
-              Hasło zostało zmienione.
-            </p>
-          )}
-          <button type="submit" className="btn primary" disabled={busy}>
-            {busy ? 'Zapisywanie…' : 'Zmień hasło'}
-          </button>
-        </form>
-      </div>
-    </section>
-  );
-}
-
-/**
- * Profil z chmury (tryb supabase): odczyt RLS-owy przez OrgDataProvider. RLS jest
- * autorytatywne — kontrole klienta są wyłącznie UX. Ładowanie/błąd/„brak profilu"
- * po polsku; nigdy nie pokazujemy surowego komunikatu SDK.
- */
-function CloudProfileSection() {
-  const { state, reload } = useOrgData();
-
-  return (
     <div className="editor-section">
-      <h2>Profil w chmurze</h2>
-      {state.status === 'idle' || state.status === 'loading' ? (
-        <p className="field-hint">Ładowanie profilu…</p>
-      ) : state.status === 'error' ? (
-        <>
-          <p className="field-error">{state.message}</p>
-          <button type="button" className="btn ghost" onClick={reload}>
-            Spróbuj ponownie
-          </button>
-        </>
-      ) : state.snapshot.profile === null ? (
-        <p className="field-hint">Brak profilu w chmurze dla tego konta.</p>
-      ) : (
-        <CloudProfileDetails
-          profile={state.snapshot.profile}
-          departmentName={
-            state.snapshot.departments.find((d) => d.id === state.snapshot.profile?.departmentId)
-              ?.name ?? null
-          }
-        />
-      )}
+      <h2>Zmiana hasła</h2>
+      <p className="field-hint">
+        Ustaw nowe hasło do swojego konta. Hasło musi mieć co najmniej 8 znaków.
+      </p>
+      <form className="login-password" onSubmit={(e) => void onSubmit(e)}>
+        <label className="field">
+          <span>Nowe hasło</span>
+          <input
+            type="password"
+            value={password}
+            autoComplete="new-password"
+            disabled={busy}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              setSuccess(false);
+            }}
+            className={error ? 'invalid' : undefined}
+            aria-invalid={error ? true : undefined}
+          />
+        </label>
+        <label className="field">
+          <span>Powtórz nowe hasło</span>
+          <input
+            type="password"
+            value={confirm}
+            autoComplete="new-password"
+            disabled={busy}
+            onChange={(e) => {
+              setConfirm(e.target.value);
+              setSuccess(false);
+            }}
+            className={error ? 'invalid' : undefined}
+            aria-invalid={error ? true : undefined}
+          />
+        </label>
+        {error && <p className="field-error">{error}</p>}
+        {success && (
+          <p className="field-hint" role="status">
+            Hasło zostało zmienione.
+          </p>
+        )}
+        <button type="submit" className="btn primary" disabled={busy}>
+          {busy ? 'Zapisywanie…' : 'Zmień hasło'}
+        </button>
+      </form>
     </div>
-  );
-}
-
-function CloudProfileDetails({
-  profile,
-  departmentName,
-}: {
-  profile: CloudProfile;
-  departmentName: string | null;
-}) {
-  const fullName = `${profile.firstName} ${profile.lastName}`.trim() || '(bez nazwy)';
-  return (
-    <dl className="cloud-profile">
-      <div>
-        <dt>Imię i nazwisko</dt>
-        <dd>{fullName}</dd>
-      </div>
-      <div>
-        <dt>E-mail</dt>
-        <dd>{profile.email || '—'}</dd>
-      </div>
-      <div>
-        <dt>Rola</dt>
-        <dd>{PROVISION_ROLE_LABELS[profile.cloudRole]}</dd>
-      </div>
-      <div>
-        <dt>Dział</dt>
-        <dd>{departmentName ?? 'Brak działu'}</dd>
-      </div>
-    </dl>
   );
 }

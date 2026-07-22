@@ -705,7 +705,6 @@ export function buildSampleData(): AppData {
     // Dane demonstracyjne nie zawierają zgłoszeń — zakładka „Zgłoszenia” startuje pusta.
     tickets: [],
     currentUserId: kasia.id,
-    impersonatorId: '',
     sampleBannerDismissed: true,
     savedFilters: [],
     lastFilters: {},

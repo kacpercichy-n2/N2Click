@@ -19,16 +19,23 @@
   truth for profile fields incl. access role/capacity/work days/supervisor;
   local-only people are never deleted and local departmentId/passwordHash are
   kept. The blocked screen remains only for the edge case of
-  a session without a cloud profile row. A `/account` panel + nav link
-  (Supabase mode only; local redirects to `/`) offers self-service password
-  change. Identity association is by email only (planner data references local
+  a session without a cloud profile row. The `/account` „Ustawienia” panel + nav
+  link (gear icon; Administracja uses `ShieldCheck`) is available in BOTH modes —
+  it always shows the „Interfejs” section (device-local sidebar menu-order editor,
+  `UiPrefs.navOrder`, pure `orderNavPaths` in `src/components/navItems.ts`, reactive
+  via the `'n2hub:nav-order-changed'` window event) and, in Supabase mode only, the
+  self-service password change. Impersonation („Występuj jako”) was removed
+  entirely (UI switcher/banner, `IMPERSONATE`/`STOP_IMPERSONATION`,
+  `AppData.impersonatorId`, `users.impersonate`); the sidebar footer avatar now
+  links to the user's own profile (`/people/<own id>`). Identity association is by
+  email only (planner data references local
   person ids). In Supabase mode the authenticated profile, department, access role
   and team visibility are READ from Supabase (RLS output is authoritative) via
   `src/supabase/OrgDataProvider.tsx` + pure `src/supabase/referenceData.ts`
   (`loadOrgSnapshot`, `effectiveAccessRole`); never from JWT/metadata. While that
-  snapshot loads, on error, in local mode, or while impersonating, the local
+  snapshot loads, on error, or in local mode, the local
   `Person` role is the fallback. Cloud statuses/service types/work categories are
-  loaded and displayed (AccountPage `Profil w chmurze`, TeamPage cloud hierarchy
+  loaded and displayed (TeamPage cloud hierarchy
   — incl. `profiles.supervisor_id` shown as `Przełożony:` and editable inline by
   a cloud administrator (server truth: RLS + profile-privileges trigger) —,
   AdminPage `Słowniki w chmurze`), but the planner still renders/mutates the LOCAL

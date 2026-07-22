@@ -41,6 +41,9 @@ export type UserOnboardingProgress = {
 export type UiPrefs = {
   sidebarCollapsed: boolean;
   onboardingByUser: Record<string, UserOnboardingProgress>;
+  // Device-local sidebar menu order (nav paths). Absent = default order; see
+  // src/components/navItems.ts `orderNavPaths`.
+  navOrder?: string[];
 };
 
 const DEFAULT_PREFS: UiPrefs = {
@@ -101,7 +104,7 @@ export function loadUiPrefs(): UiPrefs {
     const raw = localStorage.getItem(UI_PREFS_KEY);
     if (!raw) return { ...DEFAULT_PREFS };
     const parsed = JSON.parse(raw) as Partial<UiPrefs> | null;
-    return {
+    const prefs: UiPrefs = {
       sidebarCollapsed:
         typeof parsed?.sidebarCollapsed === 'boolean'
           ? parsed.sidebarCollapsed
@@ -116,6 +119,12 @@ export function loadUiPrefs(): UiPrefs {
             )
           : {},
     };
+    // navOrder: keep the key only when the raw value is an array; drop any
+    // non-string entries. A missing/malformed value omits the key entirely.
+    if (Array.isArray(parsed?.navOrder)) {
+      prefs.navOrder = parsed.navOrder.filter((p): p is string => typeof p === 'string');
+    }
+    return prefs;
   } catch {
     return { ...DEFAULT_PREFS };
   }

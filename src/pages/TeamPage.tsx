@@ -9,7 +9,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
 import { accessRoleForTitle, roleTitleOptions } from '../utils/roleTitles';
-import { currentUser as currentUserSel, isImpersonating } from '../store/selectors';
+import { currentUser as currentUserSel } from '../store/selectors';
 import { useAuth } from '../auth/SessionProvider';
 import { getSupabaseClient } from '../supabase/client';
 import { provisionAccount } from '../supabase/provisioning';
@@ -61,10 +61,7 @@ export function TeamPage() {
 
   // Efektywna rola: w trybie supabase (samodzielnie, snapshot gotowy) rola z
   // chmury; w przeciwnym razie rola lokalna. Bramka nawigacji/trasy jest UX-owa.
-  const effectiveRole = effectiveAccessRole(me, org.state, {
-    mode: auth.mode,
-    impersonating: isImpersonating(state),
-  });
+  const effectiveRole = effectiveAccessRole(me, org.state, { mode: auth.mode });
   const effectiveMe = me && effectiveRole ? { ...me, accessRole: effectiveRole } : me;
 
   // Gate UX: obszar niewidoczny dla worker (pracownik/handlowiec) → redirect.

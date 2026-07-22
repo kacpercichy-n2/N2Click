@@ -44,4 +44,5 @@ export {
   Network,
   Inbox,
   Megaphone,
+  ShieldCheck,
 } from 'lucide-react';

@@ -1,61 +1,56 @@
-# Run state — 20260722-131754-n2hub-252 clients expand + contacts
+# Run state — 20260722-144152-n2hub-257 settings + nav cleanup
 
 ## Goal
 
-Clients page: collapsed cards hide the description (overflow fix), click
-expands in place (opis + additional contact persons, keyboard-accessible).
-Form: required = nazwa + imię/nazwisko głównej osoby + telefon + e-mail (AND,
-was OR), plus-button list of additional contacts. Additive
-`Client.contacts?: ClientContact[]` with full cloud round-trip; `notes`
-relabeled „Opis klienta” (no new field). DATA_VERSION stays 7.
+"Konto" → "Ustawienia" (gear; Administracja switches to ShieldCheck), settings
+page = NEW menu-order editor (device-local `UiPrefs.navOrder`, up/down + reset,
+no drag) + password change (supabase-only), duplicated Mój profil / Profil w
+chmurze sections removed, sidebar footer = avatar bubble → `/people/<own id>` +
+narrower "Wyloguj", and FULL impersonation removal (UI switcher, banner,
+IMPERSONATE/STOP actions, `AppData.impersonatorId`, `users.impersonate`,
+selectors, persistGate/storage/seed/export plumbing). Historical
+`ActivityEvent.impersonatorId?` stays read-only; cloud sync untouched; no DB
+migration; DATA_VERSION stays 7.
 
 ## Packages
 
-- `handoffs/packages/n2hub-252-clients-expand-contacts.md` —
-  PKG-20260722-clients-expand-contacts, tier: developer, ready, Codex review
-  required. Code + tests in one package (inseparable).
+- `handoffs/packages/settings-nav-cleanup.md` —
+  PKG-20260722-settings-nav-cleanup, tier: developer, ready, Codex review
+  required. Single package (items are interlocked in App.tsx/AccountPage).
 
 ## Changed boundaries (planned)
 
-- `src/types.ts` (ClientContact), `commandValidation.ts` (AND rule,
-  isValidClientContacts strict / sanitizeClientContacts lenient),
-  `AppStore.tsx` (ADD/SAVE_CLIENT + mergeCloudEntities per-row sanitize,
-  non-array fail-closed), `storage.ts` (repairClients, no echo-write).
-- Cloud: `cloudMirror.clientRow.contacts`, `plannerData` select+map, new
-  migration `20260722130000_client_contacts.sql` (jsonb, array CHECK, no RLS
-  change; file only — NOT applied), `migrations.test.ts` list.
-- UI: `ClientsPage.tsx`, new pure `src/pages/clientContactForm.ts`
-  (split/join primary contactName, draft error), `styles.css`.
+- Shell/UI: `src/App.tsx`, new `src/components/navItems.ts` (+test),
+  `src/components/icons.ts` (ShieldCheck), `src/pages/AccountPage.tsx`,
+  `src/utils/uiPrefs.ts`, `src/styles.css`, `src/onboarding/OnboardingRoot.tsx`,
+  `src/pages/AdminPage.tsx`.
+- Store: `src/types.ts`, `AppStore.tsx`, `selectors.ts`, `permissions.ts`,
+  `useCan.ts`, `persistGate.ts`, `storage.ts` (strip legacy key, no echo-write),
+  `seed.ts`, `exportDryRun.ts`, `src/supabase/referenceData.ts` (opts lose
+  `impersonating`), `src/pages/TeamPage.tsx`.
 
 ## Verification
 
-Focused vitest list in the package → full `npm test` + `npm run build`.
-Browser: none (no pointer/scheduling paths). Invariant-6 tests for every
-changed reducer path.
+Focused vitest list in the package, then `npm test` + `npm run build`;
+browser: `node scripts/browser-check-ui-keyboard.mjs` (footer DOM changes;
+"Wyloguj" accessible name preserved). teamScope/profileEditPolicy tests must
+pass unmodified.
+
+## Developer result (n2hub-257)
+
+Implemented in full. Focused list PASS 669/0; `npm test` 1379 passed (54 files);
+`npm run build` green. Browser check NOT run — playwright not installed in this
+worktree; footer keeps `<button name="Wyloguj">` so the script contract holds.
+Context expansion: `src/auth/SessionProvider.tsx` used deleted `realUserId` →
+switched to `state.currentUserId` (direct dependency, noted as deviation).
 
 ## Open questions
 
-None blocking — all decisions settled in the package (notes relabel, legacy
-primary stays single-string, contacts key omitted when empty).
+None — all design decisions settled in the package.
 
-## Developer result (20260722)
+## Wiki note
 
-Implemented full package: types, validation (AND rule + isValid/sanitize
-contacts), reducer ADD/SAVE_CLIENT + mergeCloudEntities (invariant 6),
-repairClients, cloud round-trip, migration 20260722130000 (not applied),
-ClientsPage expand/collapse + clientContactForm.ts + CSS, seed. Focused +
-full `npm test`: 1358 passed. `npm run build`: green. Wiki updated.
-
-## 20260722-134519 calendar-dnd-snap (developer)
-time.ts: dropStartFromAnchor helper. WeekView: BinCard drop now anchors on
-card-top (grabY) + in-column .week-drop-preview portal; TimedBlock DragState +
-over-bin fixed portal ghost. styles.css: .week-drop-preview/.week-drag-ghost.
-No reducer/collision/pointer-lifecycle changes. Focused vitest 51 pass; npm test
-1365 pass; build green. Wiki unchanged (boundaries/invariants/routes intact).
-
-## 20260722-142139 profile-team-integration (developer)
-profileEditPolicy.ts: PM rule excludes pm targets (D1); new canViewProfileDetails
-(D2). PersonProfilePage.tsx rewritten: single panel, no edit button, input-or-text
-fields, first card avatar+pencil bubble (D4/D5), details gated by canViewDetails.
-styles.css: bubble/read-only/basics classes. teamScope/TeamPage unchanged (D7).
-Focused+full npm test 1392 pass; build green.
+`ui-navigation-and-onboarding.md` will be stale (Konto/`/account` description,
+AccountPage "Profil w chmurze", impersonation fallback mentions);
+`state-and-persistence.md` loses `impersonatorId` bookkeeping. Final reviewer
+owns the wiki decision.

@@ -253,21 +253,20 @@ export type OrgState =
 
 /**
  * Efektywna rola dostępu dla bramek UX. Zwraca zmapowaną rolę CHMURY tylko gdy:
- * tryb === 'supabase', snapshot jest `ready`, ma własny `profile` i NIE trwa
- * personifikacja. W każdym innym przypadku (tryb lokalny, ładowanie, błąd,
- * brak profilu w chmurze, personifikacja) obowiązuje lokalna `accessRole`
- * (albo `undefined`, gdy nie ma użytkownika). Autoryzacja i tak żyje po stronie
- * serwera (RLS) — to wyłącznie spójność widoku.
+ * tryb === 'supabase', snapshot jest `ready` i ma własny `profile`. W każdym
+ * innym przypadku (tryb lokalny, ładowanie, błąd, brak profilu w chmurze)
+ * obowiązuje lokalna `accessRole` (albo `undefined`, gdy nie ma użytkownika).
+ * Autoryzacja i tak żyje po stronie serwera (RLS) — to wyłącznie spójność widoku.
  */
 export function effectiveAccessRole(
   localUser: Person | undefined,
   org: OrgState,
-  opts: { mode: AuthMode; impersonating: boolean },
+  opts: { mode: AuthMode },
 ): AccessRole | undefined {
   const localRole = localUser?.accessRole;
   // Bez lokalnej tożsamości nie ma kogo bramkować — undefined w każdym trybie.
   if (!localUser) return localRole;
-  if (opts.mode !== 'supabase' || opts.impersonating) return localRole;
+  if (opts.mode !== 'supabase') return localRole;
   if (org.status !== 'ready' || !org.snapshot.profile) return localRole;
   return cloudRoleToAccessRole(org.snapshot.profile.cloudRole);
 }

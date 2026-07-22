@@ -152,7 +152,7 @@ describe('peekDataResult — valid data + zero side effects', () => {
 });
 
 describe('buildExportPayload — sanitization + metadata', () => {
-  it('strips passwordHash / currentUserId / impersonatorId and stamps format + versions + exportedAt', () => {
+  it('strips passwordHash / currentUserId and stamps format + versions + exportedAt', () => {
     const data: AppData = {
       ...emptyData(),
       people: [
@@ -160,7 +160,6 @@ describe('buildExportPayload — sanitization + metadata', () => {
         makePerson({ id: 'p2', passwordHash: 'hash-b' }),
       ],
       currentUserId: 'p1',
-      impersonatorId: 'p2',
     };
     const now = new Date('2026-07-16T09:43:27.000Z');
     const payload = buildExportPayload(data, 6, now);
@@ -171,7 +170,7 @@ describe('buildExportPayload — sanitization + metadata', () => {
     expect(payload.exportedAt).toBe('2026-07-16T09:43:27.000Z');
     expect(payload.data.people.every((p) => p.passwordHash === '')).toBe(true);
     expect(payload.data.currentUserId).toBe('');
-    expect(payload.data.impersonatorId).toBe('');
+    expect('impersonatorId' in payload.data).toBe(false);
 
     // No credential/session values may appear anywhere in the serialized output.
     const serialized = JSON.stringify(payload);

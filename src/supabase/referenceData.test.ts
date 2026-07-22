@@ -236,31 +236,27 @@ describe('effectiveAccessRole — macierz fallbacków', () => {
   };
   const readyNoProfile: OrgState = { status: 'ready', snapshot: { ...ready.snapshot, profile: null } as OrgSnapshot };
 
-  it('tryb supabase + ready + własny profil + nie personifikacja => rola chmury', () => {
-    expect(effectiveAccessRole(localUser, ready, { mode: 'supabase', impersonating: false })).toBe('pm');
-  });
-
-  it('personifikacja => rola lokalna', () => {
-    expect(effectiveAccessRole(localUser, ready, { mode: 'supabase', impersonating: true })).toBe('handlowiec');
+  it('tryb supabase + ready + własny profil => rola chmury', () => {
+    expect(effectiveAccessRole(localUser, ready, { mode: 'supabase' })).toBe('pm');
   });
 
   it('tryb lokalny => rola lokalna', () => {
-    expect(effectiveAccessRole(localUser, ready, { mode: 'local', impersonating: false })).toBe('handlowiec');
+    expect(effectiveAccessRole(localUser, ready, { mode: 'local' })).toBe('handlowiec');
   });
 
   it('ładowanie / błąd / idle => rola lokalna', () => {
     for (const org of [{ status: 'idle' }, { status: 'loading' }, { status: 'error', message: 'x' }] as OrgState[]) {
-      expect(effectiveAccessRole(localUser, org, { mode: 'supabase', impersonating: false })).toBe('handlowiec');
+      expect(effectiveAccessRole(localUser, org, { mode: 'supabase' })).toBe('handlowiec');
     }
   });
 
   it('brak profilu w chmurze => rola lokalna', () => {
-    expect(effectiveAccessRole(localUser, readyNoProfile, { mode: 'supabase', impersonating: false })).toBe('handlowiec');
+    expect(effectiveAccessRole(localUser, readyNoProfile, { mode: 'supabase' })).toBe('handlowiec');
   });
 
   it('brak użytkownika => undefined', () => {
-    expect(effectiveAccessRole(undefined, ready, { mode: 'supabase', impersonating: false })).toBeUndefined();
-    expect(effectiveAccessRole(undefined, ready, { mode: 'local', impersonating: false })).toBeUndefined();
+    expect(effectiveAccessRole(undefined, ready, { mode: 'supabase' })).toBeUndefined();
+    expect(effectiveAccessRole(undefined, ready, { mode: 'local' })).toBeUndefined();
   });
 });
 

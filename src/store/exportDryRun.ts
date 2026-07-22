@@ -14,14 +14,14 @@ export interface ExportPayload {
   // Raw `version` field found in the stored JSON (peek's storedVersion).
   storedVersion: number;
   exportedAt: string; // ISO timestamp from the caller-supplied `now`
-  data: AppData; // sanitized: no passwordHash / currentUserId / impersonatorId
+  data: AppData; // sanitized: no passwordHash / currentUserId
 }
 
 /**
  * Build the downloadable backup payload from PEEKED data. Sanitizes every
  * credential/session field so the file never carries secrets: each
- * `person.passwordHash`, `currentUserId` and `impersonatorId` is blanked.
- * Nothing else is altered and no `revision` is added (peek data carries none).
+ * `person.passwordHash` and `currentUserId` is blanked. Nothing else is altered
+ * and no `revision` is added (peek data carries none).
  */
 export function buildExportPayload(
   data: AppData,
@@ -32,7 +32,6 @@ export function buildExportPayload(
     ...data,
     people: data.people.map((p) => ({ ...p, passwordHash: '' })),
     currentUserId: '',
-    impersonatorId: '',
   };
   return {
     format: 'n2hub-backup',

@@ -2208,93 +2208,51 @@ describe('REASSIGN_ENTRY dated free-slot placement (PKG-20260713b-placement-test
 });
 
 // ---------------------------------------------------------------------------
-// Impersonation reducer — coverage added by PKG-20260708-b2-tests
-// (implementation shipped by PKG-20260708-b2-impersonation).
+// Session identity reducer — impersonation was removed (PKG-20260722-settings-
+// nav-cleanup). The removed commands must now fall to the reducer default and
+// preserve the state reference (invariant 6); identity resolution is otherwise
+// unchanged.
 // ---------------------------------------------------------------------------
 
-describe('Impersonation reducer (PKG-20260708-b2-tests)', () => {
-  it('IMPERSONATE sets currentUserId to the target and impersonatorId to the previous user; no-ops for a non-existent person and for personId === currentUserId', () => {
+describe('Session identity reducer (impersonation removed)', () => {
+  it('the removed IMPERSONATE / STOP_IMPERSONATION commands return the SAME state reference (invariant 6)', () => {
     const admin = makePerson({ id: 'p1', accessRole: 'administrator' });
     const staff = makePerson({ id: 'p2', accessRole: 'pracownik' });
     const state = makeState({ people: [admin, staff], currentUserId: 'p1' });
 
-    const next = reducer(state, { type: 'IMPERSONATE', personId: 'p2' });
-    expect(next.currentUserId).toBe('p2');
-    expect(next.impersonatorId).toBe('p1');
-
-    const noopMissing = reducer(state, { type: 'IMPERSONATE', personId: 'does-not-exist' });
-    expect(noopMissing).toBe(state);
-
-    const noopSelf = reducer(state, { type: 'IMPERSONATE', personId: 'p1' }); // == currentUserId
-    expect(noopSelf).toBe(state);
+    expect(reducer(state, { type: 'IMPERSONATE', personId: 'p2' } as never)).toBe(state);
+    expect(reducer(state, { type: 'STOP_IMPERSONATION' } as never)).toBe(state);
   });
 
-  it('chained impersonation preserves the ORIGINAL impersonator; IMPERSONATE with personId === impersonatorId acts as return', () => {
-    const admin = makePerson({ id: 'p1', accessRole: 'administrator' });
-    const staff1 = makePerson({ id: 'p2', accessRole: 'pracownik' });
-    const staff2 = makePerson({ id: 'p3', accessRole: 'pracownik' });
+  it('DELETE_PERSON of the current user clears currentUserId', () => {
+    const untouchedAdmin = makePerson({ id: 'p0', accessRole: 'administrator' }); // satisfies the last-admin guard
+    const acting = makePerson({ id: 'p1', accessRole: 'pracownik' });
+    const other = makePerson({ id: 'p2', accessRole: 'pracownik' });
     const state = makeState({
-      people: [admin, staff1, staff2],
-      currentUserId: 'p2', // already impersonating p2
-      impersonatorId: 'p1', // original real user
+      people: [untouchedAdmin, acting, other],
+      currentUserId: 'p1',
     });
 
-    const chained = reducer(state, { type: 'IMPERSONATE', personId: 'p3' });
-    expect(chained.currentUserId).toBe('p3');
-    expect(chained.impersonatorId).toBe('p1'); // original preserved, not p2
+    const afterDeleteSelf = reducer(state, { type: 'DELETE_PERSON', personId: 'p1' });
+    expect(afterDeleteSelf.currentUserId).toBe('');
+    expect(afterDeleteSelf.people.some((p) => p.id === 'p1')).toBe(false);
 
-    const returned = reducer(state, { type: 'IMPERSONATE', personId: 'p1' }); // == impersonatorId
-    expect(returned.currentUserId).toBe('p1');
-    expect(returned.impersonatorId).toBe('');
+    const afterDeleteOther = reducer(state, { type: 'DELETE_PERSON', personId: 'p2' });
+    expect(afterDeleteOther.currentUserId).toBe('p1'); // acting identity kept
+    expect(afterDeleteOther.people.some((p) => p.id === 'p2')).toBe(false);
   });
 
-  it("STOP_IMPERSONATION restores currentUserId from impersonatorId and clears it; no-ops at ''", () => {
-    const admin = makePerson({ id: 'p1', accessRole: 'administrator' });
-    const staff = makePerson({ id: 'p2', accessRole: 'pracownik' });
-    const state = makeState({ people: [admin, staff], currentUserId: 'p2', impersonatorId: 'p1' });
-
-    const next = reducer(state, { type: 'STOP_IMPERSONATION' });
-    expect(next.currentUserId).toBe('p1');
-    expect(next.impersonatorId).toBe('');
-
-    const notImpersonating = makeState({ people: [admin, staff], currentUserId: 'p1', impersonatorId: '' });
-    expect(reducer(notImpersonating, { type: 'STOP_IMPERSONATION' })).toBe(notImpersonating);
-  });
-
-  it('SET_CURRENT_USER and LOGOUT both clear impersonatorId; LOGOUT also clears currentUserId', () => {
+  it('SET_CURRENT_USER and LOGOUT still resolve identity', () => {
     const admin = makePerson({ id: 'p1', accessRole: 'administrator' });
     const staff = makePerson({ id: 'p2', accessRole: 'pracownik' });
     const staff2 = makePerson({ id: 'p3', accessRole: 'pracownik' });
-    const state = makeState({ people: [admin, staff, staff2], currentUserId: 'p2', impersonatorId: 'p1' });
+    const state = makeState({ people: [admin, staff, staff2], currentUserId: 'p2' });
 
     const setUser = reducer(state, { type: 'SET_CURRENT_USER', personId: 'p3' });
     expect(setUser.currentUserId).toBe('p3');
-    expect(setUser.impersonatorId).toBe('');
 
     const loggedOut = reducer(state, { type: 'LOGOUT' });
     expect(loggedOut.currentUserId).toBe('');
-    expect(loggedOut.impersonatorId).toBe('');
-  });
-
-  it('DELETE_PERSON of the impersonated person returns the session to the impersonator; deleting the impersonator clears impersonatorId only', () => {
-    const untouchedAdmin = makePerson({ id: 'p0', accessRole: 'administrator' }); // satisfies the last-admin guard
-    const impersonator = makePerson({ id: 'p1', accessRole: 'pracownik' });
-    const impersonated = makePerson({ id: 'p2', accessRole: 'pracownik' });
-    const state = makeState({
-      people: [untouchedAdmin, impersonator, impersonated],
-      currentUserId: 'p2',
-      impersonatorId: 'p1',
-    });
-
-    const afterDeleteImpersonated = reducer(state, { type: 'DELETE_PERSON', personId: 'p2' });
-    expect(afterDeleteImpersonated.currentUserId).toBe('p1');
-    expect(afterDeleteImpersonated.impersonatorId).toBe('');
-    expect(afterDeleteImpersonated.people.some((p) => p.id === 'p2')).toBe(false);
-
-    const afterDeleteImpersonator = reducer(state, { type: 'DELETE_PERSON', personId: 'p1' });
-    expect(afterDeleteImpersonator.impersonatorId).toBe('');
-    expect(afterDeleteImpersonator.currentUserId).toBe('p2'); // acted-as identity kept
-    expect(afterDeleteImpersonator.people.some((p) => p.id === 'p1')).toBe(false);
   });
 });
 
