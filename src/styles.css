@@ -4179,6 +4179,85 @@ option {
   font-weight: 500;
 }
 
+/* Zintegrowany panel profilu: pierwsza karta „dane podstawowe" + read-only pola */
+.profile-basics-main {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.profile-basics-fields {
+  flex: 1;
+  min-width: 240px;
+}
+.profile-avatar-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.profile-avatar-wrap {
+  position: relative;
+  width: 72px;
+  height: 72px;
+}
+/* Bąbelek ołówka nałożony na awatar — otwiera ukryty wybór pliku. */
+.avatar-edit-bubble {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid var(--card-bg);
+  background: var(--n2-lavender);
+  color: var(--n2-text-inverse);
+  font-size: 13px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+}
+.avatar-edit-bubble:hover {
+  background: var(--n2-lavender-mist);
+}
+.avatar-edit-bubble:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.profile-photo-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+}
+/* Dyskretny link „Usuń zdjęcie" przy karcie (nie wielka sekcja). */
+.avatar-remove-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: var(--n2-type-xs);
+  color: var(--text-muted);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.avatar-remove-link:hover {
+  color: var(--n2-danger);
+}
+/* Wartość pola w trybie read-only (pole niedostępne do edycji). */
+.field-readonly {
+  font-weight: 600;
+  color: var(--n2-text);
+  padding: 8px 0;
+  min-height: 20px;
+  word-break: break-word;
+}
+
 .profile-week {
   display: grid;
   grid-template-columns: repeat(7, 1fr);

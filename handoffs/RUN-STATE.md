@@ -52,3 +52,10 @@ card-top (grabY) + in-column .week-drop-preview portal; TimedBlock DragState +
 over-bin fixed portal ghost. styles.css: .week-drop-preview/.week-drag-ghost.
 No reducer/collision/pointer-lifecycle changes. Focused vitest 51 pass; npm test
 1365 pass; build green. Wiki unchanged (boundaries/invariants/routes intact).
+
+## 20260722-142139 profile-team-integration (developer)
+profileEditPolicy.ts: PM rule excludes pm targets (D1); new canViewProfileDetails
+(D2). PersonProfilePage.tsx rewritten: single panel, no edit button, input-or-text
+fields, first card avatar+pencil bubble (D4/D5), details gated by canViewDetails.
+styles.css: bubble/read-only/basics classes. teamScope/TeamPage unchanged (D7).
+Focused+full npm test 1392 pass; build green.
