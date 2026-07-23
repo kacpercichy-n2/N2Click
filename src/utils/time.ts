@@ -224,6 +224,20 @@ export function findFreeStart(
       const end = blockEndMinutes(b.startMinutes, b.plannedHours);
       candidateSet.add(Math.ceil(end / MINUTE_STEP) * MINUTE_STEP);
     }
+    // Gdy unikamy dotknięcia krawędzi (auto-merge), dokładamy kandydatów
+    // odsuniętych o jeden krok siatki od bloków avoidTouch: jeden krok ZA końcem
+    // (dotknięcie od góry — np. 11:00 → 11:15) oraz jeden krok + czas trwania
+    // PRZED startem (dotknięcie od dołu). Bez nich jedynym wolnym slotem bywał
+    // 00:00 zamiast realnego okna tuż obok bloku. Bramkowane `requireNoTouch`,
+    // więc scanGap(false) i ścieżki bez avoidTouch zostają bajtowo identyczne.
+    if (requireNoTouch && avoidTouch) {
+      for (const t of avoidTouch) {
+        const end = blockEndMinutes(t.startMinutes, t.plannedHours);
+        candidateSet.add(Math.ceil(end / MINUTE_STEP) * MINUTE_STEP + MINUTE_STEP);
+        const beforeStart = t.startMinutes - MINUTE_STEP - durationMin;
+        if (beforeStart >= 0) candidateSet.add(beforeStart);
+      }
+    }
     const candidates = [...candidateSet];
     const working = candidates.filter((c) => c >= WORKDAY_START_MIN).sort((a, b) => a - b);
     const night = candidates.filter((c) => c < WORKDAY_START_MIN).sort((a, b) => a - b);

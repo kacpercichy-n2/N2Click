@@ -104,11 +104,24 @@ export function eligibleRecipients(profiles: RecipientProfile[]): Map<string, Re
 }
 
 /**
+ * Zwraca ZBIÓR id do zaklaśnięcia (claim-before-send): cały wybrany wsad, bez
+ * duplikatów. Wywołujący JEDNYM UPDATE-em stempluje `emailed_at` na tych id
+ * (z warunkiem `emailed_at is null`) PRZED wysyłką, żeby nakładające się cykle/
+ * instancje cronu dostały rozłączne podzbiory, a porażka po zaklaśnięciu = co
+ * najwyżej brak jednego maila, NIGDY zbiorczy duplikat. Czysta i deterministyczna.
+ */
+export function claimBatchIds(records: Array<{ id: string }>): string[] {
+  return [...new Set(records.map((r) => r.id).filter((id) => id !== ''))];
+}
+
+/**
  * Grupuje niewysłane powiadomienia per odbiorca, POMIJAJĄC te, których odbiorca
  * nie jest uprawniony (opt-out, brak konta/adresu). Kolejność wsadów i
  * powiadomień w nich jest zachowana wg wejścia (deterministyczna). Zwraca też
- * `skippedIds` — powiadomienia świadomie pominięte (żeby wywołujący i tak
- * ustawił im `emailed_at` i nie wybierał ich w kółko).
+ * `skippedIds` — powiadomienia świadomie pominięte (opt-out/brak adresu). W
+ * przepływie claim-before-send są ONE JUŻ ostemplowane `emailed_at` (zaklaśnięte
+ * z całym wsadem), więc nie wymagają osobnego zapisu — `skippedIds` służy już
+ * tylko licznikowi `skipped` w odpowiedzi diagnostycznej.
  */
 export function groupNotificationsByRecipient(
   notifications: NotificationRecord[],

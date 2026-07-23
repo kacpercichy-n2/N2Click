@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildRecipientEmail,
+  claimBatchIds,
   eligibleRecipients,
   groupNotificationsByRecipient,
   notificationLine,
@@ -111,6 +112,19 @@ describe('groupNotificationsByRecipient — grupowanie i pomijanie', () => {
       eligible,
     );
     expect(batches.map((b) => b.recipient.id)).toEqual(['rec-2', 'rec-1']);
+  });
+});
+
+describe('claimBatchIds — claim-before-send', () => {
+  it('zwraca wszystkie id wsadu (także tych, którzy zostaną pominięci) do zaklaśnięcia', () => {
+    // Pominięci (opt-out/brak adresu) MUSZĄ być w zbiorze claim, żeby kolejny
+    // cron ich nie wybierał w kółko — claim stempluje cały wybrany wsad.
+    const ids = claimBatchIds([{ id: 'n1' }, { id: 'n2' }, { id: 'n3' }]);
+    expect(ids).toEqual(['n1', 'n2', 'n3']);
+  });
+
+  it('deduplikuje i odrzuca puste id', () => {
+    expect(claimBatchIds([{ id: 'n1' }, { id: 'n1' }, { id: '' }, { id: 'n2' }])).toEqual(['n1', 'n2']);
   });
 });
 

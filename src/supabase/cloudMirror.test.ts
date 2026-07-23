@@ -567,6 +567,63 @@ describe('applyCloudOps', () => {
     expect(result.dropped).toEqual([{ label: 'Op two', message: 'row-level security' }]);
     expect(db.calls).toHaveLength(3);
   });
+
+  // Powiadomienia są best-effort: brak tabeli (42P01/PGRST205) ani żaden inny
+  // błąd nie może zamrozić syncu innych encji ani odsłonić banera użytkownikowi.
+  const notifOp = (id: string): CloudOp => ({
+    kind: 'upsert',
+    table: 'notifications',
+    row: { id },
+    sourceId: id,
+    label: 'Powiadomienie',
+  });
+
+  it('drops a notification op on a 42P01 missing-table error silently and keeps applying other entities', async () => {
+    const db = new FakePlannerDb();
+    db.upsertErr = (table) =>
+      table === 'notifications'
+        ? { kind: 'transient', message: 'relation "public.notifications" does not exist (42P01)' }
+        : null;
+    const result = await applyCloudOps(db, [op('one'), notifOp('n1'), op('three')]);
+    expect(result.error).toBeNull(); // no transient stop
+    expect(result.remaining).toHaveLength(0);
+    expect(result.done).toBe(2); // both planner ops applied
+    expect(result.dropped).toHaveLength(0); // silent — brak banera błędu zapisu dla użytkownika
+    // notification attempted, then op 'three' still ran (not frozen at queue head).
+    expect(db.calls).toEqual([
+      { op: 'upsert', table: 'clients' },
+      { op: 'upsert', table: 'notifications' },
+      { op: 'upsert', table: 'clients' },
+    ]);
+  });
+
+  it('drops a notification op on a PGRST205 schema-cache miss and continues', async () => {
+    const db = new FakePlannerDb();
+    db.upsertErr = (table) =>
+      table === 'notifications'
+        ? { kind: 'transient', message: "Could not find the table 'public.notifications' in the schema cache (PGRST205)" }
+        : null;
+    const result = await applyCloudOps(db, [notifOp('n1'), op('after')]);
+    expect(result.error).toBeNull();
+    expect(result.dropped).toHaveLength(0);
+    expect(result.done).toBe(1);
+    expect(db.calls).toHaveLength(2);
+  });
+
+  it('a notification drop never masks a later planner-entity transient stop (regression guard)', async () => {
+    const db = new FakePlannerDb();
+    db.upsertErr = (table, row) => {
+      if (table === 'notifications') return { kind: 'transient', message: '42P01' };
+      return row.id === 'stop' ? { kind: 'transient', message: 'network' } : null;
+    };
+    const result = await applyCloudOps(db, [op('one'), notifOp('n1'), op('stop'), op('after')]);
+    expect(result.done).toBe(1); // 'one' applied; notification dropped; 'stop' halts
+    expect(result.dropped).toHaveLength(0);
+    expect(result.error).toBe(
+      'Nie udało się zapisać zmian na serwerze. Dane pozostały w tej przeglądarce.',
+    );
+    expect(result.remaining.map((o) => o.sourceId)).toEqual(['stop', 'after']);
+  });
 });
 
 describe('diffToCloudOps — słowniki i profile (przewód zapisu paneli admina)', () => {

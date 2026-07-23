@@ -98,3 +98,10 @@ ActivePersonChips + PersonFilterSection (PersonFilter.tsx); FilterBar gains
 `person` prop (replaces personFilter slot). Kanban/Timeline/Calendar migrated;
 compact active chips + "Osoby" section shared. CSS for .person-active-chip.
 Tests updated/added (FilterBar, PersonFilter). Full suite 1483 pass, build green.
+
+n2hub-269 notifications-hardening: (A) applyCloudOps drops notifications-table
+ops on any error silently (no transient stop, no banner). (C)
+loadNotificationsSnapshot returns {available} — transient skips merge, missing
+table degrades to []. (B) Edge fn claim-before-send (claimBatchIds). (D)
+findFreeStart adds one-grid-step past-end/before-start avoidTouch candidates.
+Tests added across 4 files. Full suite 1492 pass, build green.

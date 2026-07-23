@@ -880,6 +880,13 @@ export interface ApplyOpsResult {
  * Wykonuje operacje sekwencyjnie. Na błędzie 'transient' ZATRZYMUJE się i zwraca
  * pozostałą kolejkę (do ponowienia) z komunikatem SYNC_ERROR_MSG; na błędzie
  * 'permission' PORZUCA operację (notatka), zapisuje i kontynuuje. Nigdy nie rzuca.
+ *
+ * WYJĄTEK — zapisy powiadomień (`table === 'notifications'`) są BEST-EFFORT:
+ * powiadomienia dublują sygnał, który już żyje w in-app, a tabela bywa jeszcze
+ * niezaaplikowana (migracja) → brak tabeli/kolumny (42P01/PGRST205/PGRST204)
+ * albo dowolny inny błąd PORZUCA op po cichu (log tylko w DEV) i KONTYNUUJE.
+ * Taki drop NIGDY nie zatrzymuje syncu innych encji (transient by zamroził całą
+ * kolejkę na czele) ani nie trafia do `dropped` (żadnego banera dla użytkownika).
  */
 export async function applyCloudOps(db: PlannerDb, ops: CloudOp[]): Promise<ApplyOpsResult> {
   let done = 0;
@@ -893,6 +900,13 @@ export async function applyCloudOps(db: PlannerDb, ops: CloudOp[]): Promise<Appl
           ? await db.update(op.table, op.row ?? {}, op.match ?? {})
           : await db.remove(op.table, op.match ?? {});
     if (res.error) {
+      if (op.table === 'notifications') {
+        // Best-effort: cichy drop (dowolny błąd), bez zatrzymania i bez banera.
+        if (import.meta.env.DEV) {
+          console.debug('[cloud] Pominięto zapis powiadomienia (best-effort):', op.label, res.error.message);
+        }
+        continue;
+      }
       if (res.error.kind === 'transient') {
         return { done, dropped, remaining: ops.slice(i), error: SYNC_ERROR_MSG };
       }
