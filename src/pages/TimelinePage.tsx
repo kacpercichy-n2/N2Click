@@ -8,7 +8,7 @@ import { useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import { DEFAULT_FILTER_CRITERIA } from '../store/storage';
 import { useOpenTask } from '../components/TaskModal';
-import { PersonFilter } from '../components/PersonFilter';
+import { ActivePersonChips, PersonFilterSection } from '../components/PersonFilter';
 import { FilterPanel, type FilterChip, type FilterGroup } from '../components/FilterPanel';
 import { ZoomIn, ZoomOut } from '../components/icons';
 import type { Milestone, Person, Project, SavedFilterCriteria, Task } from '../types';
@@ -279,6 +279,12 @@ export function TimelinePage() {
     });
 
   const setOwnerIds = (ids: string[]) => commitTimeline({ personIds: ids });
+  const toggleOwner = (id: string) => {
+    const next = new Set(ownerFilter);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setOwnerIds([...next]);
+  };
   const setClientFilter = (v: string) => commitTimeline({ clientId: v });
   const setProjectFilter = (v: string) => commitTimeline({ projectId: v });
   const clearFilters = () =>
@@ -485,15 +491,8 @@ export function TimelinePage() {
       label: `Projekt: ${selectedProject?.name ?? '—'}`,
       onRemove: () => setProjectFilter(''),
     });
-  if (ownerFilter.size > 0)
-    chips.push({
-      key: 'persons',
-      label:
-        ownerFilter.size === 1
-          ? `Osoby: ${state.people.find((p) => ownerFilter.has(p.id))?.name ?? '—'}`
-          : `Osoby: ${ownerFilter.size}`,
-      onRemove: () => setOwnerIds([]),
-    });
+  // Zaznaczone osoby renderują się jako kompaktowe chipy obok popovera
+  // (ActivePersonChips), a nie jako pojedynczy zbiorczy chip.
 
   return (
     <section className="page page-wide">
@@ -556,21 +555,18 @@ export function TimelinePage() {
           onClearAll={clearFilters}
           chips={chips}
           extra={
-            <fieldset className="filter-group">
-              <legend>Osoby</legend>
-              <PersonFilter
-                people={state.people}
-                selected={ownerFilter}
-                onToggle={(id) => {
-                  const next = new Set(ownerFilter);
-                  if (next.has(id)) next.delete(id);
-                  else next.add(id);
-                  setOwnerIds([...next]);
-                }}
-                onAll={() => setOwnerIds([])}
-              />
-            </fieldset>
+            <PersonFilterSection
+              people={state.people}
+              selected={ownerFilter}
+              onToggle={toggleOwner}
+              onAll={() => setOwnerIds([])}
+            />
           }
+        />
+        <ActivePersonChips
+          people={state.people}
+          selected={ownerFilter}
+          onRemove={toggleOwner}
         />
       </div>
 

@@ -92,3 +92,9 @@ replace per-result getClient/getProject/getStatus/projectsOfClient in render.
 TaskModal: AllocationGrid now React.memo + useCallback handlers; availabilityByPerson
 deps narrowed to state.people/state.workload (identical). +focused selectors tests.
 `npm test` 1406 pass; build green. Blocker: none.
+
+n2hub-268: person selection moved into Filtry popover. New shared
+ActivePersonChips + PersonFilterSection (PersonFilter.tsx); FilterBar gains
+`person` prop (replaces personFilter slot). Kanban/Timeline/Calendar migrated;
+compact active chips + "Osoby" section shared. CSS for .person-active-chip.
+Tests updated/added (FilterBar, PersonFilter). Full suite 1483 pass, build green.

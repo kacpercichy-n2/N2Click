@@ -15,7 +15,6 @@ import { PriorityBadge } from '../components/PriorityBadge';
 import { type FilterChip, type FilterGroup } from '../components/FilterPanel';
 import { FilterBar } from '../components/FilterBar';
 import { FilterPresets, DEFAULT_CRITERIA } from '../components/FilterPresets';
-import { PersonFilter } from '../components/PersonFilter';
 import { useOpenTask } from '../components/TaskModal';
 import { buildKanbanColumns, buildTaskAssigneeIds } from './kanbanBoard';
 import { type PaidFilter } from './ProjectsPage';
@@ -166,14 +165,8 @@ export function KanbanPage() {
       label: `Projekt: ${getProject(state, projectFilter)?.name ?? '—'}`,
       onRemove: () => setProjectFilter(''),
     });
-  if (personFilter.size > 0)
-    chips.push({
-      key: 'person',
-      label: `Osoby: ${[...personFilter]
-        .map((id) => lookups.people.get(id)?.name ?? '—')
-        .join(', ')}`,
-      onRemove: () => setPersonFilter(new Set()),
-    });
+  // Zaznaczone osoby renderują się jako kompaktowe chipy w pasku (FilterBar
+  // `person`), a nie jako pojedynczy zbiorczy chip w popoverze.
 
   const clearAll = () => commit({ criteria: DEFAULT_CRITERIA, personIds: [] });
 
@@ -276,14 +269,12 @@ export function KanbanPage() {
           onClearAll: clearAll,
           chips,
         }}
-        personFilter={
-          <PersonFilter
-            people={state.people}
-            selected={personFilter}
-            onToggle={togglePerson}
-            onAll={() => setPersonFilter(new Set())}
-          />
-        }
+        person={{
+          people: state.people,
+          selected: personFilter,
+          onToggle: togglePerson,
+          onAll: () => setPersonFilter(new Set()),
+        }}
         presets={<FilterPresets page="kanban" criteria={criteria} onApply={applyPreset} />}
       />
 

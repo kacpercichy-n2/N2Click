@@ -1475,6 +1475,40 @@ option {
   background: rgba(196, 150, 255, 0.16);
 }
 
+/* Compact chips for the ACTIVE person selection shown in the filter bar row.
+   Visually a filter-chip with a colour dot and an inline remove affordance. */
+.person-active-chips {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.person-active-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--n2-border);
+  background: rgba(255, 255, 255, 0.045);
+  border-radius: var(--n2-radius-pill);
+  padding: 5px 11px;
+  cursor: pointer;
+  font-size: var(--n2-type-sm);
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--text);
+  transition: border-color var(--n2-transition), background var(--n2-transition), color var(--n2-transition);
+}
+.person-active-chip:hover {
+  color: var(--n2-danger);
+}
+.person-active-chip.more {
+  cursor: default;
+  color: var(--text-muted);
+}
+.person-active-chip.more:hover {
+  color: var(--text-muted);
+}
+
 /* ---------- Week view (timed day grid) ---------- */
 
 .week-cal {
