@@ -76,6 +76,12 @@ const EXPECTED_POLICIES: Record<string, string[]> = {
   // bo lokalna rola handlowiec mapuje się w chmurze na worker; bramka
   // `events.manage` pozostaje UX-em po stronie klienta.
   'public.events': ['select', 'insert', 'update', 'delete'],
+  // Powiadomienia in-app (20260723120000_notifications): per-użytkownik —
+  // SELECT/UPDATE wyłącznie własnych wierszy (odbiorca; UPDATE oznacza jako
+  // przeczytane), INSERT dla każdego zalogowanego (klient generuje zdarzenia w
+  // imieniu działającego użytkownika, wstawiając wiersze dla innych odbiorców).
+  // Bez DELETE — powiadomień nie kasujemy z klienta.
+  'public.notifications': ['select', 'insert', 'update'],
 };
 
 interface ParsedPolicy {
@@ -129,6 +135,7 @@ describe('konwencja plików migracji', () => {
       '20260721210000_events.sql',
       '20260721220000_workload_entry_done.sql',
       '20260722130000_client_contacts.sql',
+      '20260723120000_notifications.sql',
     ]);
   });
 

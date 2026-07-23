@@ -26,6 +26,7 @@ import { useOrgData } from './OrgDataProvider';
 import { getSupabaseClient } from './client';
 import {
   createSupabasePlannerDb,
+  loadNotificationsSnapshot,
   loadPlannerSnapshot,
   readRetirementSetting,
   type PlannerDb,
@@ -37,6 +38,7 @@ import {
   type CloudIdMaps,
   type CloudOp,
 } from './cloudMirror';
+import { notificationInsertsFromDiff } from './notificationEvents';
 import { buildCloudPeoplePayload, type OrgSnapshot } from './referenceData';
 import { createLiveTracker } from './liveChannelTracker';
 
@@ -82,6 +84,9 @@ const SUPPRESSED = new Set([
   'MERGE_CLOUD_ENTITIES',
   'MERGE_CLOUD_PEOPLE',
   'MERGE_CLOUD_DICTIONARIES',
+  // Hydracja powiadomień odbiorcy jest autorytatywna (cloud->local): `read_at`
+  // z chmury nie może wracać jako mirror-update, więc tłumimy to przejście.
+  'MERGE_CLOUD_NOTIFICATIONS',
   'REPLACE_FROM_STORAGE',
   'LOAD_SAMPLE',
   'RESET_ALL',
@@ -238,6 +243,12 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
           type: 'MERGE_CLOUD_ENTITIES',
           payload: { ...result.payload, people: buildCloudPeoplePayload(snap.profiles) },
         });
+        // Powiadomienia in-app: OSOBNY loader degradujący się do [] (tabela może
+        // być jeszcze niezaaplikowana) — nie blokuje reszty syncu ani statusu.
+        const notifications = await loadNotificationsSnapshot(getDb(), maps);
+        if (mountedRef.current) {
+          dispatch({ type: 'MERGE_CLOUD_NOTIFICATIONS', payload: { notifications } });
+        }
         setStatus('ready');
         // Odświeżenie w tle nie przechodzi przez krawędź 'hydrating'→'ready',
         // więc efekt na krawędzi statusu nie odpali: świeżą kopię do odzysku
@@ -430,9 +441,20 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       return;
     }
     const { ops } = diffToCloudOps(prevRef.current, state, maps);
+    // Zdarzenia powiadomień: liczone z TEGO SAMEGO diffa, wstawiane W IMIENIU
+    // działającego użytkownika DLA innych odbiorców (recipient===self pomijany).
+    // Kolejność bez znaczenia — `notifications` nie ma FK do zadań/projektów.
+    const notifRows = userId ? notificationInsertsFromDiff(prevRef.current, state, maps, userId) : [];
     prevRef.current = state;
-    if (ops.length === 0) return;
-    queueRef.current.push(...ops);
+    if (ops.length === 0 && notifRows.length === 0) return;
+    const notifOps: CloudOp[] = notifRows.map((row, i) => ({
+      kind: 'upsert',
+      table: 'notifications',
+      row: row as unknown as Record<string, unknown>,
+      sourceId: `notif:${row.recipient_id}:${row.type}:${i}`,
+      label: 'Powiadomienie',
+    }));
+    queueRef.current.push(...ops, ...notifOps);
     setPending(queueRef.current.length);
     void processQueue();
   }, [state, active, userId, lastActionRef, processQueue, setPending]);

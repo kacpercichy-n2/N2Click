@@ -6,7 +6,7 @@
 // Powiadomienia is a UI slot only (no data source yet — it receives an empty
 // list).
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { Megaphone } from '../components/icons';
 import { useStore } from '../store/AppStore';
@@ -17,6 +17,7 @@ import {
   currentUser,
   dayAvailabilityForPerson,
   getClient,
+  getPerson,
   getProject,
   loadPercent,
   overdueTasksForPerson,
@@ -24,6 +25,7 @@ import {
   rangeAvailabilityForPerson,
   taskPlanningStatus,
   unplannedTasksForPerson,
+  unreadNotificationsForPerson,
   weekBlocksForPerson,
 } from '../store/selectors';
 import { Avatar } from '../components/Avatar';
@@ -44,6 +46,7 @@ import {
 import { formatMinutes, formatDuration } from '../utils/time';
 import type { Task } from '../types';
 import {
+  notificationEntry,
   teamHeaderLabel,
   visibleNotifications,
   type NotificationEntry,
@@ -135,8 +138,9 @@ function WorkloadDonut({
 }
 
 export function DashboardPage() {
-  const { state } = useStore();
+  const { state, dispatch } = useStore();
   const { openTask } = useOpenTask();
+  const navigate = useNavigate();
   const me = currentUser(state);
   const today = todayStr();
   const [changelogOpen, setChangelogOpen] = useState(false);
@@ -165,11 +169,30 @@ export function DashboardPage() {
 
   const coworkers = state.people.filter((p) => p.id !== me.id);
 
-  // Powiadomienia — UI slot only. There is no event source yet, so this is
-  // deliberately empty; the tile renders its empty state (see prompt 258 for a
-  // real feed). The visibility cap lives in `visibleNotifications`.
-  const notifications: NotificationEntry[] = [];
+  // Powiadomienia — realny feed z chmury: nieprzeczytane powiadomienia odbiorcy,
+  // najnowsze najpierw, zmapowane na polską treść (kto/co/gdzie) przez czysty
+  // `notificationEntry`. Cap widoczności (max 3) żyje w `visibleNotifications`;
+  // „oznacz wszystkie" dotyczy WSZYSTKICH nieprzeczytanych (nie tylko widocznych).
+  const unreadNotifications = unreadNotificationsForPerson(state, me.id);
+  const notifications: NotificationEntry[] = unreadNotifications.map((n) => {
+    const task = n.payload.taskId ? state.tasks.find((t) => t.id === n.payload.taskId) : undefined;
+    const projectId = n.payload.projectId ?? task?.projectId ?? '';
+    const project = projectId ? getProject(state, projectId) : undefined;
+    const actor = n.payload.actorId ? getPerson(state, n.payload.actorId) : undefined;
+    return notificationEntry(n, {
+      actorName: actor?.name ?? '',
+      taskTitle: task?.title ?? '',
+      projectName: project?.name ?? '',
+    });
+  });
   const shownNotifications = visibleNotifications(notifications);
+
+  const openNotification = (entry: NotificationEntry): void => {
+    dispatch({ type: 'MARK_NOTIFICATION_READ', notificationId: entry.id });
+    const target = entry.target;
+    if (target?.kind === 'task') openTask(target.taskId);
+    else if (target?.kind === 'project') navigate(`/projects/${target.projectId}`);
+  };
 
   // Workload donuts (today + this week) — both read the authoritative
   // availability selectors so a booked zero-availability day stays dangerous.
@@ -241,18 +264,45 @@ export function DashboardPage() {
         initial="hidden"
         animate="show"
       >
-        {/* RZĄD 2 · Powiadomienia — UI slot only (no data source yet). Renders
-         *  the empty state so the slot stays visible in the layout. */}
+        {/* RZĄD 2 · Powiadomienia — realny feed nieprzeczytanych (max 3). Klik w
+         *  wiersz otwiera obiekt i oznacza jako przeczytane; „✓" oznacza bez
+         *  otwierania; nagłówek ma „Oznacz wszystkie". Layout karty z 249. */}
         <motion.div className="dash-card dash-area-notifications" variants={dashCardVariants}>
-          <h2>Powiadomienia</h2>
+          <div className="dash-card-head">
+            <h2>Powiadomienia</h2>
+            {unreadNotifications.length > 0 && (
+              <button
+                type="button"
+                className="link-btn"
+                onClick={() => dispatch({ type: 'MARK_ALL_NOTIFICATIONS_READ' })}
+              >
+                Oznacz wszystkie
+              </button>
+            )}
+          </div>
           {shownNotifications.length === 0 ? (
             <p className="field-hint">Brak nowych powiadomień</p>
           ) : (
             <ul className="dash-list">
               {shownNotifications.map((n) => (
-                <li key={n.id} className="dash-row">
-                  <span className="dash-row-name">{n.title}</span>
-                  {n.when && <span className="dash-row-when">{n.when}</span>}
+                <li key={n.id} className="dash-notif-row">
+                  <button
+                    type="button"
+                    className="dash-row dash-notif-open"
+                    onClick={() => openNotification(n)}
+                  >
+                    <span className="dash-row-name">{n.title}</span>
+                    {n.when && <span className="dash-row-when">{n.when}</span>}
+                  </button>
+                  <button
+                    type="button"
+                    className="link-btn dash-notif-read"
+                    title="Oznacz jako przeczytane"
+                    aria-label="Oznacz jako przeczytane"
+                    onClick={() => dispatch({ type: 'MARK_NOTIFICATION_READ', notificationId: n.id })}
+                  >
+                    ✓
+                  </button>
                 </li>
               ))}
             </ul>

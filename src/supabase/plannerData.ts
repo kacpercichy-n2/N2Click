@@ -21,12 +21,14 @@ import type {
   Comment,
   CommentEntityType,
   Milestone,
+  Notification,
   Project,
   Task,
   TaskPriority,
   Ticket,
   WorkloadEntry,
 } from '../types';
+import { isNotificationType, sanitizeNotificationPayload } from '../utils/notifications';
 import { isValidDateStr, periodError, MAX_TASK_PERIOD_DAYS } from '../utils/dates';
 import { normalizeRecurrence } from '../utils/recurrence';
 import { normalizeProjectDocumentUrl } from '../utils/projectDocuments';
@@ -725,6 +727,61 @@ export async function loadPlannerSnapshot(
     },
     diagnostics,
   };
+}
+
+// ---- Powiadomienia in-app (osobny, degradujący się bezpiecznie loader) -------
+
+/**
+ * Wczytuje własne powiadomienia zalogowanego odbiorcy (RLS zawęża SELECT do
+ * `recipient_id = auth.uid()`). ŚWIADOMIE ODDZIELNIE od `loadPlannerSnapshot`:
+ * `read_at`/tabela `notifications` jest rozszerzeniem addytywnym, a migracja może
+ * być jeszcze niezaaplikowana w środowisku — dlatego JAKIKOLWIEK błąd selectu
+ * (w tym „relation does not exist") degraduje się do PUSTEJ listy, nigdy nie
+ * blokując reszty syncu. Wiersz bez id / niemapowalnego odbiorcy / z nieznanym
+ * `type` jest pomijany. `read_at` null => '' (nieprzeczytane).
+ */
+export async function loadNotificationsSnapshot(
+  db: Pick<PlannerDb, 'select'>,
+  maps: CloudIdMaps,
+): Promise<Notification[]> {
+  let res: Awaited<ReturnType<PlannerDb['select']>>;
+  try {
+    res = await db.select(
+      'notifications',
+      'id, recipient_id, type, payload, read_at, created_at',
+    );
+  } catch {
+    return [];
+  }
+  if (res.error) return []; // np. tabela nie istnieje (migracja niezaaplikowana)
+  const personOf = makeReverse(maps.people, maps.cloudProfileIds);
+  const notifications: Notification[] = [];
+  for (const row of res.rows) {
+    const id = str(row.id);
+    const recipientId = personOf(row.recipient_id);
+    if (id === '' || recipientId === '' || !isNotificationType(row.type)) continue;
+    // `payload.actorId` przechowywany jako id PROFILU chmury (kanonicznie). Osoby
+    // dopasowane po e-mailu zachowują LOKALNE id (może różnić się od chmurowego),
+    // więc rozwiązujemy aktora przez reverse — niemapowalny => klucz pominięty
+    // („Ktoś" w UI). `taskId`/`projectId` noszą id encji dosłownie (== chmura),
+    // więc nie wymagają mapowania.
+    const payload = sanitizeNotificationPayload(row.payload);
+    if (payload.actorId !== undefined) {
+      const localActor = personOf(payload.actorId);
+      if (localActor !== '') payload.actorId = localActor;
+      else delete payload.actorId;
+    }
+    notifications.push({
+      id,
+      recipientId,
+      type: row.type,
+      payload,
+      // timestamptz null => '' (nieprzeczytane); string ISO przechodzi wprost.
+      readAt: str(row.read_at),
+      createdAt: str(row.created_at),
+    });
+  }
+  return notifications;
 }
 
 // ---- Flaga wycofania zapisów lokalnych (app_settings) ------------------------

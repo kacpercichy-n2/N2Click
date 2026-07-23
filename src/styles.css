@@ -3462,6 +3462,23 @@ option {
   color: var(--n2-danger);
 }
 
+/* Powiadomienia: wiersz = klikalny obszar (otwiera obiekt) + osobny „✓" (oznacz
+ * jako przeczytane bez otwierania). `dash-notif-open` reużywa stylu `.dash-row`. */
+.dash-notif-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.dash-notif-open {
+  flex: 1;
+  min-width: 0;
+}
+.dash-notif-read {
+  flex: none;
+  padding: 4px 6px;
+  line-height: 1;
+}
+
 /* ---------- Dashboard: worker welcome page ---------- */
 
 .dash-greeting h1 {

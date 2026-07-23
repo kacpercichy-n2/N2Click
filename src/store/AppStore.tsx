@@ -28,6 +28,7 @@ import type {
   JobTitle,
   LastViewFilter,
   Milestone,
+  Notification,
   Person,
   Project,
   ProjectDocument,
@@ -86,6 +87,7 @@ import {
   isTicketPriority,
   isTicketStatus,
 } from '../utils/tickets';
+import { isNotificationType } from '../utils/notifications';
 import { mergeCoversEventOrRecurrence, wouldCreateSupervisorCycle } from './selectors';
 import { isOccurrenceDate, normalizeRecurrence } from '../utils/recurrence';
 import { ROLE_LABELS } from './permissions';
@@ -356,7 +358,14 @@ export type Action =
   | { type: 'MERGE_CLOUD_PEOPLE'; payload: CloudPersonMergeRow[] }
   // AUTORYTATYWNA hydracja słowników organizacji (działy, statusy, typy usług,
   // kategorie prac) z chmury. Fail-closed na invariancie statusów.
-  | { type: 'MERGE_CLOUD_DICTIONARIES'; payload: CloudDictionariesPayload };
+  | { type: 'MERGE_CLOUD_DICTIONARIES'; payload: CloudDictionariesPayload }
+  // Powiadomienia in-app: oznaczenie jako przeczytane (pojedynczo / wszystkie)
+  // oraz AUTORYTATYWNA hydracja własnych powiadomień odbiorcy z chmury. Nieznane
+  // id / brak nieprzeczytanych / niepoprawny ładunek => TA SAMA referencja
+  // (inwariant 6).
+  | { type: 'MARK_NOTIFICATION_READ'; notificationId: string }
+  | { type: 'MARK_ALL_NOTIFICATIONS_READ' }
+  | { type: 'MERGE_CLOUD_NOTIFICATIONS'; payload: CloudNotificationsPayload };
 
 function uid(): string {
   return crypto.randomUUID();
@@ -2518,6 +2527,74 @@ function mergeCloudDictionaries(state: AppData, payload: CloudDictionariesPayloa
   };
 }
 
+// ---- Powiadomienia in-app -----------------------------------------------------
+
+export interface CloudNotificationsPayload {
+  notifications: Notification[];
+}
+
+/** Strukturalna walidacja wiersza powiadomienia (fail-closed jak reszta hydracji). */
+function isValidNotificationRow(v: unknown): v is Notification {
+  if (!isObjWithId(v)) return false;
+  const n = v as unknown as Record<string, unknown>;
+  return (
+    typeof n.recipientId === 'string' &&
+    n.recipientId !== '' &&
+    isNotificationType(n.type) &&
+    typeof n.readAt === 'string' &&
+    typeof n.createdAt === 'string' &&
+    typeof n.payload === 'object' &&
+    n.payload !== null &&
+    !Array.isArray(n.payload)
+  );
+}
+
+/**
+ * AUTORYTATYWNA hydracja powiadomień odbiorcy z chmury. Payload REPLACES kolekcję
+ * (reference-preserving: wiersz bajtowo równy zachowuje referencję, kolekcja bez
+ * zmian zostaje tą samą tablicą — brak migotania przy odświeżeniu w tle).
+ * Fail-closed (inwariant 6): payload spoza obiektu, `notifications` nie-tablica
+ * lub jakikolwiek strukturalnie zły wiersz => ORYGINALNA referencja stanu.
+ */
+function mergeCloudNotifications(state: AppData, payload: CloudNotificationsPayload): AppData {
+  if (typeof payload !== 'object' || payload === null) return state;
+  const { notifications } = payload;
+  if (!Array.isArray(notifications)) return state;
+  if (!notifications.every(isValidNotificationRow)) return state;
+  const merged = reconcileRows(state.notifications, notifications);
+  return merged === state.notifications ? state : { ...state, notifications: merged };
+}
+
+/**
+ * Oznaczenie JEDNEGO powiadomienia jako przeczytane (`read_at`). Nieznane id albo
+ * już przeczytane => TA SAMA referencja (inwariant 6). Kolumna `read_at`
+ * lustruje się do chmury przez diff (cloudMirror). Bez wpisu dziennika.
+ */
+function markNotificationRead(state: AppData, notificationId: string): AppData {
+  const target = state.notifications.find((n) => n.id === notificationId);
+  if (!target || target.readAt !== '') return state;
+  const ts = nowIso();
+  return {
+    ...state,
+    notifications: state.notifications.map((n) =>
+      n.id === notificationId ? { ...n, readAt: ts } : n,
+    ),
+  };
+}
+
+/** Oznaczenie WSZYSTKICH nieprzeczytanych jako przeczytane. Brak nieprzeczytanych
+ *  => TA SAMA referencja (inwariant 6). */
+function markAllNotificationsRead(state: AppData): AppData {
+  if (!state.notifications.some((n) => n.readAt === '')) return state;
+  const ts = nowIso();
+  return {
+    ...state,
+    notifications: state.notifications.map((n) =>
+      n.readAt === '' ? { ...n, readAt: ts } : n,
+    ),
+  };
+}
+
 /** Trim the four text fields of each additional client contact for storage. The
  *  array shape is already validated by isValidClientDraft (strict gate), so this
  *  only normalizes whitespace; an undefined/[] input yields []. */
@@ -3719,6 +3796,12 @@ export function reducer(state: AppData, action: Action): AppData {
       return mergeCloudPeople(state, action.payload);
     case 'MERGE_CLOUD_DICTIONARIES':
       return mergeCloudDictionaries(state, action.payload);
+    case 'MARK_NOTIFICATION_READ':
+      return markNotificationRead(state, action.notificationId);
+    case 'MARK_ALL_NOTIFICATIONS_READ':
+      return markAllNotificationsRead(state);
+    case 'MERGE_CLOUD_NOTIFICATIONS':
+      return mergeCloudNotifications(state, action.payload);
     default:
       return state;
   }

@@ -9,6 +9,7 @@ import type {
   DateStr,
   Department,
   Milestone,
+  Notification,
   Person,
   Project,
   ServiceType,
@@ -1026,6 +1027,27 @@ export function buildSearchResultMeta(state: AppData): SearchResultMeta {
 
 export function currentUser(state: AppData): Person | undefined {
   return state.currentUserId ? getPerson(state, state.currentUserId) : undefined;
+}
+
+/**
+ * Nieprzeczytane powiadomienia odbiorcy, NAJNOWSZE najpierw (`createdAt` malejąco,
+ * tie-break po `id` dla stabilnej kolejności). Panel pokazuje pierwsze
+ * `MAX_NOTIFICATIONS` (patrz `visibleNotifications`).
+ */
+export function unreadNotificationsForPerson(state: AppData, personId: string): Notification[] {
+  return state.notifications
+    .filter((n) => n.recipientId === personId && n.readAt === '')
+    .sort((a, b) =>
+      a.createdAt < b.createdAt
+        ? 1
+        : a.createdAt > b.createdAt
+          ? -1
+          : a.id < b.id
+            ? 1
+            : a.id > b.id
+              ? -1
+              : 0,
+    );
 }
 
 /**
