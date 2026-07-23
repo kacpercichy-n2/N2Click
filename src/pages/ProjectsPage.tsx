@@ -24,6 +24,7 @@ import { type FilterChip, type FilterGroup } from '../components/FilterPanel';
 import { FilterBar } from '../components/FilterBar';
 import { useOpenTask } from '../components/TaskModal';
 import { ChevronRight, GanttChart, Plus } from '../components/icons';
+import { sortProjectGroups } from './projectSort';
 import type { SavedFilterCriteria } from '../types';
 import { addDaysStr, formatShort, formatShortWithWeekday, todayStr } from '../utils/dates';
 import { periodError, PERIOD_ERROR_LABELS } from '../utils/dates';
@@ -212,7 +213,9 @@ export function ProjectsPage() {
   if (from) chips.push({ key: 'from', label: `Od: ${formatShort(from)}`, onRemove: () => setFrom('') });
   if (to) chips.push({ key: 'to', label: `Do: ${formatShort(to)}`, onRemove: () => setTo('') });
 
-  // Group by client (clients in list order, then any orphaned projects).
+  // Group by client, then sort for presentation only: groups alphabetical by
+  // client name, projects alphabetical within each group, „Bez klienta" last
+  // (see `sortProjectGroups`). Store order and persistence stay untouched.
   const groups = useMemo(() => {
     const out: Array<{ clientId: string; clientName: string; projects: typeof filtered }> = [];
     for (const c of state.clients) {
@@ -223,7 +226,7 @@ export function ProjectsPage() {
     const orphans = filtered.filter((p) => !known.has(p.clientId));
     if (orphans.length > 0)
       out.push({ clientId: '', clientName: 'Bez klienta', projects: orphans });
-    return out;
+    return sortProjectGroups(out);
   }, [filtered, state.clients]);
 
   const submit = (e: React.FormEvent) => {
