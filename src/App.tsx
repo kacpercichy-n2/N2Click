@@ -43,6 +43,8 @@ import {
 } from './auth/AuthScreens';
 import { findPersonByEmail } from './auth/profile';
 import { can } from './store/permissions';
+import { unreadNotificationCountFor } from './utils/tabBadge';
+import { useTabBadge } from './utils/useTabBadge';
 import { SampleBanner } from './components/SampleBanner';
 import { PersistenceBanner } from './components/PersistenceBanner';
 import { CloudSyncBanner } from './components/CloudSyncBanner';
@@ -141,6 +143,10 @@ export function App() {
   }, [authedSignedIn, auth.mustChangePassword, orgState, dispatch]);
 
   const currentUser = state.people.find((p) => p.id === state.currentUserId);
+  // Badge karty przeglądarki (favicon + tytuł) — te same dane co karta
+  // „Powiadomienia” na Panelu; wylogowanie => licznik 0 => przywrócenie
+  // oryginalnej karty. Wpięty tu raz, więc działa na każdej stronie aplikacji.
+  useTabBadge(unreadNotificationCountFor(state.notifications, currentUser?.id));
   const peopleCount = state.people.length;
   const canAdmin = can(currentUser, 'admin.panel', { peopleCount });
   // `/team` visibility mirrors the server role model (worker hidden, manager =

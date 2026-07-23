@@ -118,6 +118,14 @@
   (`'event-modal'`, warunek `wydarzenieChanged` w `navGuardBlocks`). Zapis ręczny
   przyciskiem (bez auto-save). Prawy klik w pustą kolumnę WeekView oferuje
   „+ Dodaj spotkanie (HH:mm)" przy `events.manage` (obok „+ Dodaj zadanie").
+- Badge karty przeglądarki (favicon + `document.title` z licznikiem
+  nieprzeczytanych powiadomień): czysta logika w `src/utils/tabBadge.ts`
+  (etykiety `1–9`/`9+`, licznik, applier apply/restore — testowane w node),
+  cienka warstwa DOM/canvas tamże, hook `src/utils/useTabBadge.ts` wpięty RAZ w
+  `App()` przed bramkami logowania. Licznik = te same dane co karta
+  „Powiadomienia” (`readAt === ''`, odbiorca = zalogowany); 0 => przywrócenie
+  oryginalnej karty. `index.html` nie deklaruje `<link rel="icon">` — host
+  tworzy własny link i usuwa go przy zeru.
 - `src/onboarding/catalog.ts` owns copy, roles and route mapping; components
   expose stable `data-tour` anchors only.
 - `src/utils/dirtyRegistry.ts` and `src/utils/useSaveStatus.ts` support shared
