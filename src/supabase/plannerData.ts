@@ -21,12 +21,14 @@ import type {
   Comment,
   CommentEntityType,
   Milestone,
+  Notification,
   Project,
   Task,
   TaskPriority,
   Ticket,
   WorkloadEntry,
 } from '../types';
+import { isNotificationType, sanitizeNotificationPayload } from '../utils/notifications';
 import { isValidDateStr, periodError, MAX_TASK_PERIOD_DAYS } from '../utils/dates';
 import { normalizeRecurrence } from '../utils/recurrence';
 import { normalizeProjectDocumentUrl } from '../utils/projectDocuments';
@@ -756,6 +758,86 @@ const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 /** Sort po (klucz, id) — całkowity porządek niezależny od kolejności z serwera. */
 function sortStable<T extends { id: string }>(rows: T[], key: (row: T) => string): T[] {
   return [...rows].sort((a, b) => cmp(key(a), key(b)) || cmp(a.id, b.id));
+}
+
+// ---- Powiadomienia in-app (osobny, degradujący się bezpiecznie loader) -------
+
+/**
+ * Wynik hydracji powiadomień. `available: true` => wołający PODMIENIA kolekcję
+ * autorytatywnie (dane albo PUSTO, gdy tabela nie istnieje). `available: false`
+ * => błąd PRZEJŚCIOWY (sieć/backend): wołający NIE dispatchuje scalenia i
+ * ZOSTAWIA poprzedni stan (panel nie miga pustką na chwilowym błędzie).
+ */
+export type NotificationsSnapshotResult =
+  | { available: true; notifications: Notification[] }
+  | { available: false };
+
+// Komunikaty PostgREST/PG dla braku tabeli/relacji (migracja niezaaplikowana):
+// PG 42P01 „relation does not exist", PostgREST PGRST205 „Could not find the
+// table ... in the schema cache". Traktujemy je jako trwałą degradację do [].
+const MISSING_TABLE_RE = /does not exist|PGRST205|could not find the table|schema cache|42P01/i;
+
+/**
+ * Wczytuje własne powiadomienia zalogowanego odbiorcy (RLS zawęża SELECT do
+ * `recipient_id = auth.uid()`). ŚWIADOMIE ODDZIELNIE od `loadPlannerSnapshot`:
+ * `read_at`/tabela `notifications` jest rozszerzeniem addytywnym, a migracja może
+ * być jeszcze niezaaplikowana w środowisku.
+ *
+ * ROZRÓŻNIENIE BŁĘDÓW: brak tabeli (42P01/PGRST205) degraduje się do PUSTEJ
+ * listy z `available: true` (podmiana autorytatywna — środowisko bez migracji
+ * po prostu nie ma powiadomień). Błąd PRZEJŚCIOWY (sieć/wyjątek) zwraca
+ * `available: false` — wołający zostawia poprzedni stan, żeby panel nie migał
+ * pustką na chwilowym błędzie. Wiersz bez id / niemapowalnego odbiorcy / z
+ * nieznanym `type` jest pomijany. `read_at` null => '' (nieprzeczytane).
+ */
+export async function loadNotificationsSnapshot(
+  db: Pick<PlannerDb, 'select'>,
+  maps: CloudIdMaps,
+): Promise<NotificationsSnapshotResult> {
+  let res: Awaited<ReturnType<PlannerDb['select']>>;
+  try {
+    res = await db.select(
+      'notifications',
+      'id, recipient_id, type, payload, read_at, created_at',
+    );
+  } catch {
+    // Wyjątek (np. sieć) => przejściowe: nie ruszaj panelu.
+    return { available: false };
+  }
+  if (res.error) {
+    // Brak tabeli => degradacja do [] (podmiana). Inny błąd => przejściowe.
+    return MISSING_TABLE_RE.test(res.error)
+      ? { available: true, notifications: [] }
+      : { available: false };
+  }
+  const personOf = makeReverse(maps.people, maps.cloudProfileIds);
+  const notifications: Notification[] = [];
+  for (const row of res.rows) {
+    const id = str(row.id);
+    const recipientId = personOf(row.recipient_id);
+    if (id === '' || recipientId === '' || !isNotificationType(row.type)) continue;
+    // `payload.actorId` przechowywany jako id PROFILU chmury (kanonicznie). Osoby
+    // dopasowane po e-mailu zachowują LOKALNE id (może różnić się od chmurowego),
+    // więc rozwiązujemy aktora przez reverse — niemapowalny => klucz pominięty
+    // („Ktoś" w UI). `taskId`/`projectId` noszą id encji dosłownie (== chmura),
+    // więc nie wymagają mapowania.
+    const payload = sanitizeNotificationPayload(row.payload);
+    if (payload.actorId !== undefined) {
+      const localActor = personOf(payload.actorId);
+      if (localActor !== '') payload.actorId = localActor;
+      else delete payload.actorId;
+    }
+    notifications.push({
+      id,
+      recipientId,
+      type: row.type,
+      payload,
+      // timestamptz null => '' (nieprzeczytane); string ISO przechodzi wprost.
+      readAt: str(row.read_at),
+      createdAt: str(row.created_at),
+    });
+  }
+  return { available: true, notifications };
 }
 
 // ---- Flaga wycofania zapisów lokalnych (app_settings) ------------------------

@@ -208,6 +208,47 @@
   (`auth.uid() IS NULL`). Provisioning nowych kont domyślnie `administrator`
   (frontend `teamScope.emptyProvisionForm`). Opisany niżej model
   manager/worker obowiązuje więc tylko dla przyszłych kont „ograniczonych”.
+- `notifications` (20260723120000) — powiadomienia in-app, SAMODZIELNA tabela
+  per-użytkownik: `recipient_id` → `profiles.id` (`on delete cascade`), `type`
+  (text, CHECK 1..100), `payload` (jsonb default `'{}'` — np. taskId/projectId/
+  commentId/actorId), `read_at` (timestamptz null = nieprzeczytane), `created_at`.
+  RLS PER-UŻYTKOWNIK: SELECT/UPDATE wyłącznie własnych wierszy
+  (`recipient_id = auth.uid()`; UPDATE służy TYLKO oznaczeniu `read_at`, with
+  check pilnuje odbiorcy), INSERT dla KAŻDEGO zalogowanego (`with check (true)`)
+  — inaczej niż tickets, bo zdarzenia generuje klient DZIAŁAJĄCEGO użytkownika
+  W IMIENIU innych odbiorców; widoczność chroni SELECT. BEZ polityki DELETE.
+  Tabela JEST w publikacji `supabase_realtime` (świeże powiadomienie odbiorcy
+  pojawia się live; WALRUS respektuje RLS). Rozszerzenie WYŁĄCZNIE addytywne —
+  zero zmian w istniejących tabelach. Hydracja przez OSOBNY, degradujący się
+  loader (`loadNotificationsSnapshot` — zwraca `{available}`: brak tabeli
+  (42P01/PGRST205) => `available` z pustą listą (autorytatywna podmiana), błąd
+  PRZEJŚCIOWY => `available:false`, wołający POMIJA dispatch
+  `MERGE_CLOUD_NOTIFICATIONS` i ZOSTAWIA poprzedni panel (nie miga pustką); nie
+  blokuje reszty syncu); mirror lustruje WYŁĄCZNIE `read_at` (UPDATE),
+  wstawienia idą warstwą zdarzeń (`notificationEvents`, nie diff). Rejestr:
+  `migrations.test.ts` (lista + `public.notifications` w `EXPECTED_POLICIES` =
+  `['select','insert','update']`).
+- `notifications.emailed_at` (20260723130000, ADDYTYWNA kolumna `timestamptz
+  null` + częściowy indeks `where emailed_at is null`) + `profiles.
+  email_notifications` (20260723131000, `boolean not null default false`) —
+  opcjonalne dublowanie powiadomień in-app MAILEM. Druga Edge Function
+  `send-notification-emails` (czysty `contract.ts` + `index.ts` w Deno, wzorzec
+  jak `provision-account`) wybiera wsad `emailed_at is null` (limit 50), grupuje
+  per odbiorca, pomija opt-out (`email_notifications = false`, DOMYŚLNIE) i bez
+  adresu. CLAIM-BEFORE-SEND: JEDNYM UPDATE-em stempluje `emailed_at` (where
+  `emailed_at is null`, `.select()` zwraca REALNIE zaklaśnięte wiersze) PRZED
+  wysyłką, i dopiero zaklaśnięte wiersze idą jednym polskim mailem zbiorczym
+  (Resend, czysty `fetch`). Porażka wysyłki po zaklaśnięciu = najwyżej brak
+  jednego maila, NIGDY zbiorczy duplikat; nakładające się cykle dostają rozłączne
+  podzbiory. Bez sekretów
+  (`RESEND_API_KEY`/`NOTIFY_FROM_EMAIL`) — czysty no-op. Wołanie CYKLICZNE to
+  krok operatora (cron ~5 min), nie kod aplikacji. Preferencja round-trip przez
+  model profilu jak `birth_date`: `Person.emailNotifications?` (opcjonalne, brak
+  => false) ↔ `profiles.email_notifications` (mirror UPDATE / hydracja
+  `referenceData`), edytowalna w profilu (`profileEditPolicy` SELF/ALL). Logika
+  selekcji/treści testowana w repo (`src/supabase/notificationEmails.test.ts`:
+  opt-out + no-op bez sekretów). Rejestr: oba pliki w liście `migrations.test.ts`
+  (ALTER-y, bez nowych polityk).
 - Access model: administrator = everything; manager = own department
   (profiles incl. UPDATE of non-admin members, memberships/assignments
   restricted to own-department people) — and since 20260720170000 the manager

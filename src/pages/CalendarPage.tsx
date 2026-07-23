@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useStore } from '../store/AppStore';
 import { DEFAULT_FILTER_CRITERIA } from '../store/storage';
-import { PersonFilter } from '../components/PersonFilter';
+import { FilterBar } from '../components/FilterBar';
 import { WeekView } from '../components/WeekView';
 import { MonthView } from '../components/MonthView';
 import {
@@ -101,11 +101,19 @@ export function CalendarPage() {
       </div>
 
       {state.people.length > 0 && (
-        <PersonFilter
-          people={state.people}
-          selected={filter}
-          onToggle={toggleFilter}
-          onAll={resetFilter}
+        <FilterBar
+          filterPanel={{
+            groups: [],
+            activeCount: filter.size > 0 ? 1 : 0,
+            onClearAll: resetFilter,
+            chips: [],
+          }}
+          person={{
+            people: state.people,
+            selected: filter,
+            onToggle: toggleFilter,
+            onAll: resetFilter,
+          }}
         />
       )}
 

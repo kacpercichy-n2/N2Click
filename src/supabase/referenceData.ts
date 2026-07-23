@@ -59,6 +59,8 @@ export interface CloudProfile {
    *  kanoniczny ISO (Z) albo '' gdy brak/null. OPCJONALNE — `toCloudProfile`
    *  zawsze ustawia, ale starsze fixture'y/literały mogą pomijać. */
   notificationsSeenAt?: string;
+  /** Opt-in mailowy (profiles.email_notifications); brak => false. */
+  emailNotifications?: boolean;
 }
 
 export interface OrgSnapshot {
@@ -147,6 +149,7 @@ function toCloudProfile(row: Record<string, unknown>): CloudProfile {
     // Postgres `timestamptz` przychodzi z PostgREST w wariantach offsetu; NORMALIZUJ
     // do kanonicznego ISO (Z), by porównania watermarku były jednorodne. NULL/śmieci => ''.
     notificationsSeenAt: toIsoOrEmpty(row.notifications_seen_at),
+    emailNotifications: bool(row.email_notifications),
   };
 }
 
@@ -200,7 +203,7 @@ export async function loadOrgSnapshot(db: ReferenceDb, userId: string): Promise<
   ] = await Promise.all([
     db.select(
       'profiles',
-      'id, first_name, last_name, email, role_title, access_role, department_id, company_id, supervisor_id, phone, avatar, avatar_path, capacity, work_days, work_start_minutes, work_end_minutes, birth_date, notifications_seen_at',
+      'id, first_name, last_name, email, role_title, access_role, department_id, company_id, supervisor_id, phone, avatar, avatar_path, capacity, work_days, work_start_minutes, work_end_minutes, birth_date, notifications_seen_at, email_notifications',
     ),
     db.select('departments', 'id, name'),
     db.select('statuses', 'id, name, slug, color, sort_order, archived, is_done'),
@@ -313,6 +316,8 @@ export interface CloudPersonMergeRow {
   /** Watermark „przeczytane" powiadomień (kanoniczny ISO); '' gdy brak.
    *  OPCJONALNE — starsze payloady/fixture'y bez pola czyta się jako ''. */
   notificationsSeenAt?: string;
+  /** Opt-in mailowy; brak => false. */
+  emailNotifications?: boolean;
 }
 
 /**
@@ -345,6 +350,7 @@ export function buildCloudPeoplePayload(profiles: CloudProfile[]): CloudPersonMe
       supervisorEmail: (p.supervisorId ? emailById.get(p.supervisorId) : '') ?? '',
       birthDate: p.birthDate,
       notificationsSeenAt: p.notificationsSeenAt,
+      emailNotifications: p.emailNotifications === true,
     });
   }
   return rows;

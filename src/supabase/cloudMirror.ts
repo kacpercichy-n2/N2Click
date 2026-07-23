@@ -683,6 +683,31 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
     }
   }
 
+  // 8d) Powiadomienia in-app ---- WYŁĄCZNIE aktualizacja `read_at` (oznaczenie
+  // jako przeczytane). Wstawienia generuje warstwa zdarzeń (notificationEvents)
+  // w imieniu działającego użytkownika DLA innych odbiorców — nigdy nie
+  // pojawiają się w tym diffie; własne powiadomienia przychodzą przez
+  // MERGE_CLOUD_NOTIFICATIONS (stłumione w mirrorze). Usunięć klient nie robi.
+  {
+    const prevMap = byId(prev.notifications);
+    for (const n of next.notifications) {
+      const before = prevMap.get(n.id);
+      if (!before || before.readAt === n.readAt) continue;
+      if (!isUuid(n.id)) {
+        diagnostics.push(DIAG.nonUuid);
+        continue;
+      }
+      ops.push({
+        kind: 'update',
+        table: 'notifications',
+        match: { id: n.id },
+        row: { read_at: n.readAt === '' ? null : n.readAt },
+        sourceId: n.id,
+        label: 'Powiadomienie (odczyt)',
+      });
+    }
+  }
+
   // 9) Słowniki organizacji ---- (statusy + działy + typy usług + kategorie
   // prac + stanowiska + spółki). Po autorytatywnej hydracji lokalne wiersze noszą id chmury, a nowe
   // dostają crypto.randomUUID — mutacje paneli admina płyną wprost do tabel
@@ -834,6 +859,7 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
           birth_date: p.birthDate === '' ? null : p.birthDate,
           // Watermark „przeczytane": ISO albo NULL (brak = wszystko nieprzeczytane).
           notifications_seen_at: p.notificationsSeenAt ? p.notificationsSeenAt : null,
+          email_notifications: p.emailNotifications ?? false,
         },
         sourceId: p.id,
         label: `Profil „${p.name}”`,
@@ -857,6 +883,13 @@ export interface ApplyOpsResult {
  * Wykonuje operacje sekwencyjnie. Na błędzie 'transient' ZATRZYMUJE się i zwraca
  * pozostałą kolejkę (do ponowienia) z komunikatem SYNC_ERROR_MSG; na błędzie
  * 'permission' PORZUCA operację (notatka), zapisuje i kontynuuje. Nigdy nie rzuca.
+ *
+ * WYJĄTEK — zapisy powiadomień (`table === 'notifications'`) są BEST-EFFORT:
+ * powiadomienia dublują sygnał, który już żyje w in-app, a tabela bywa jeszcze
+ * niezaaplikowana (migracja) → brak tabeli/kolumny (42P01/PGRST205/PGRST204)
+ * albo dowolny inny błąd PORZUCA op po cichu (log tylko w DEV) i KONTYNUUJE.
+ * Taki drop NIGDY nie zatrzymuje syncu innych encji (transient by zamroził całą
+ * kolejkę na czele) ani nie trafia do `dropped` (żadnego banera dla użytkownika).
  */
 export async function applyCloudOps(db: PlannerDb, ops: CloudOp[]): Promise<ApplyOpsResult> {
   let done = 0;
@@ -870,6 +903,13 @@ export async function applyCloudOps(db: PlannerDb, ops: CloudOp[]): Promise<Appl
           ? await db.update(op.table, op.row ?? {}, op.match ?? {})
           : await db.remove(op.table, op.match ?? {});
     if (res.error) {
+      if (op.table === 'notifications') {
+        // Best-effort: cichy drop (dowolny błąd), bez zatrzymania i bez banera.
+        if (import.meta.env.DEV) {
+          console.debug('[cloud] Pominięto zapis powiadomienia (best-effort):', op.label, res.error.message);
+        }
+        continue;
+      }
       if (res.error.kind === 'transient') {
         return { done, dropped, remaining: ops.slice(i), error: SYNC_ERROR_MSG };
       }

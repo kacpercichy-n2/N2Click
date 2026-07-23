@@ -1,3 +1,14 @@
+# Run state — 20260723-101440-n2hub-262 calendar split-blocks
+
+Merge guard so a fused same-task block never swallows a meeting the user split
+around. New `mergeCoversEventOrRecurrence` (selectors.ts); reducer merge loop
+(AppStore.tsx ~1697) skips guarded pairs; `findFreeStart` gains `avoidTouch`
+(time.ts) wired at 2 WeekView bin-schedule sites; new `eventBusyByPersonDate`
+in weekViewModel + will-merge affordance mirror. Tests added (blockActions,
+time). Focused 181, full suite 1412, build all green. wiki unchanged.
+
+---
+
 # Run state — 20260722-161131-n2hub-259 perf: persist coalescing
 
 New `src/store/persistCoalescer.ts` (trailing non-restarting, 1000ms) wired into
@@ -81,3 +92,16 @@ replace per-result getClient/getProject/getStatus/projectsOfClient in render.
 TaskModal: AllocationGrid now React.memo + useCallback handlers; availabilityByPerson
 deps narrowed to state.people/state.workload (identical). +focused selectors tests.
 `npm test` 1406 pass; build green. Blocker: none.
+
+n2hub-268: person selection moved into Filtry popover. New shared
+ActivePersonChips + PersonFilterSection (PersonFilter.tsx); FilterBar gains
+`person` prop (replaces personFilter slot). Kanban/Timeline/Calendar migrated;
+compact active chips + "Osoby" section shared. CSS for .person-active-chip.
+Tests updated/added (FilterBar, PersonFilter). Full suite 1483 pass, build green.
+
+n2hub-269 notifications-hardening: (A) applyCloudOps drops notifications-table
+ops on any error silently (no transient stop, no banner). (C)
+loadNotificationsSnapshot returns {available} — transient skips merge, missing
+table degrades to []. (B) Edge fn claim-before-send (claimBatchIds). (D)
+findFreeStart adds one-grid-step past-end/before-start avoidTouch candidates.
+Tests added across 4 files. Full suite 1492 pass, build green.

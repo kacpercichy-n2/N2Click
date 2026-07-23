@@ -6,6 +6,7 @@ import type {
   CalendarEvent,
   ChecklistItem,
   Client,
+  Notification,
   Person,
   Project,
   ProjectDocument,
@@ -50,6 +51,7 @@ import {
   sanitizeClientContacts,
   sanitizeLastViewFilter,
 } from './commandValidation';
+import { isNotificationType, sanitizeNotificationPayload } from '../utils/notifications';
 
 const STORAGE_KEY = 'n2hub.data.v1';
 const LEGACY_STORAGE_KEYS = ['n2ub.data.v1', 'n2click.data.v1'];
@@ -145,6 +147,7 @@ export function emptyData(): AppData {
     activity: [],
     tickets: [],
     events: [],
+    notifications: [],
     currentUserId: '',
     sampleBannerDismissed: false,
     savedFilters: [],
@@ -219,6 +222,8 @@ function migratePerson(raw: Record<string, unknown>): Person {
     supervisorId: str(raw.supervisorId),
     birthDate,
     ...(notificationsSeenAt !== undefined ? { notificationsSeenAt } : {}),
+    // Opt-in mailowy (ADDYTYWNE, opcjonalne): brak / nie-boolean => false.
+    emailNotifications: raw.emailNotifications === true,
   };
 }
 
@@ -1215,6 +1220,39 @@ export function repairClients(data: AppData): AppData {
 }
 
 /**
+ * Idempotentny repair powiadomień in-app (`AppData.notifications`). Pole
+ * ADDYTYWNE (bez podbicia DATA_VERSION), więc każdy starszy zapis wchodzi tu jako
+ * `[]` (z emptyData) i przechodzi bez zmian.
+ *
+ * Zasady (idempotentne po wartości):
+ * 1. Wiersz bez stringowego `id`, bez `recipientId` albo z nieznanym `type` jest
+ *    ODRZUCANY (nie da się go pokazać ani sensownie oznaczyć).
+ * 2. `payload` przez `sanitizeNotificationPayload` (tylko znane, niepuste
+ *    stringowe klucze); `readAt`/`createdAt` koercjonowane do stringa.
+ */
+export function repairNotifications(data: AppData): AppData {
+  const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+  const source = Array.isArray(data.notifications) ? data.notifications : [];
+  const notifications: Notification[] = [];
+  for (const raw of source) {
+    if (typeof raw !== 'object' || raw === null) continue;
+    const n = raw as unknown as Record<string, unknown>;
+    const id = str(n.id);
+    const recipientId = str(n.recipientId);
+    if (id === '' || recipientId === '' || !isNotificationType(n.type)) continue;
+    notifications.push({
+      id,
+      recipientId,
+      type: n.type,
+      payload: sanitizeNotificationPayload(n.payload),
+      readAt: str(n.readAt),
+      createdAt: str(n.createdAt),
+    });
+  }
+  return { ...data, notifications };
+}
+
+/**
  * Idempotent normalize pass for stable completion semantics. Runs on EVERY load
  * — same philosophy as normalizeTaskMeta / normalizeDates — so a payload with a
  * missing or malformed `isDone` (e.g. a v6 payload predating the flag, or one
@@ -1614,6 +1652,7 @@ function readData(recordRevision: boolean): InternalLoadResult {
         activity: coerceArray(parsedRest.activity, defaults.activity),
         tickets: coerceArray(parsedRest.tickets, defaults.tickets),
         events: coerceArray(parsedRest.events, defaults.events),
+        notifications: coerceArray(parsedRest.notifications, defaults.notifications),
         savedFilters: coerceArray(parsedRest.savedFilters, defaults.savedFilters),
         // `lastFilters` to obiekt (mapa widok→filtr), nie tablica: obecną-ale-
         // niebędącą-obiektem wartość (np. tablica/`null`) koerujemy do `{}` tutaj,
@@ -1653,6 +1692,9 @@ function readData(recordRevision: boolean): InternalLoadResult {
     // WYNIKU obu ścieżek. Klient bez klucza `contacts` wychodzi TYM SAMYM
     // obiektem (brak echo-write przy czystym wczytaniu w bieżącej wersji).
     data = repairClients(data);
+    // Powiadomienia in-app: pole ADDYTYWNE, repair biegnie na WYNIKU obu ścieżek
+    // (zapis bez `notifications` wychodzi stąd z pustą listą).
+    data = repairNotifications(data);
 
     const { revision: _revision, ...storedData } = parsed;
     return {

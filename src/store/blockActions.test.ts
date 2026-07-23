@@ -6,7 +6,7 @@ import { reducer, type PersonDraft, type TaskDraft } from './AppStore';
 import { emptyData } from './storage';
 import { BIN_DATE, hasCollision, hoursToMinutes } from '../utils/time';
 import { addDaysStr, MAX_TASK_PERIOD_DAYS } from '../utils/dates';
-import type { AppData, Person, Project, Status, Task, WorkloadEntry } from '../types';
+import type { AppData, CalendarEvent, Person, Project, Status, Task, WorkloadEntry } from '../types';
 
 // Reference entities the SAVE_TASK drafts point at (projectId 'proj1' /
 // statusId 'status1'), so the reducer's reference-existence guard accepts them.
@@ -1209,6 +1209,122 @@ describe('SET_BLOCK_TIME adjacent-block merge', () => {
     expect(next.workload.find((w) => w.id === 'eb')!.startMinutes).toBe(615);
     const activityMsg = next.activity[next.activity.length - 1].message;
     expect(activityMsg).not.toContain('połączono sąsiednie bloki');
+  });
+
+  // A merge is intentional-only and must never silently swallow a calendar event
+  // or recurring occurrence the two blocks were split around (invariant 1: those
+  // are presentational and never collide, so nothing else guards this pair).
+  const makeEvent = (
+    overrides: Partial<CalendarEvent> & { id: string; startMinutes: number; durationMinutes: number },
+  ): CalendarEvent => ({
+    title: 'Spotkanie',
+    description: '',
+    location: '',
+    meetingUrl: '',
+    date: '2026-07-08',
+    attendeeIds: ['p1'],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  });
+
+  it('does NOT merge exactly-adjacent same-task blocks when a calendar EVENT lies inside the fused span — the two blocks stay split (the drop still moved the block)', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 }); // 480-600
+    const e2 = makeEntry({ id: 'e2', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 100, plannedHours: 2, sortIndex: 1 }); // elsewhere
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      workload: [e1, e2],
+      events: [makeEvent({ id: 'ev1', startMinutes: 600, durationMinutes: 60 })], // 600-660, inside fused 480-720
+    });
+
+    const next = reducer(state, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'e2',
+      date: '2026-07-08',
+      startMinutes: 600, // touches e1's end (600) — would fuse into 480-720 over the meeting
+      plannedHours: 2,
+    });
+
+    expect(next.workload).toHaveLength(2); // NOT merged
+    expect(next.workload.find((w) => w.id === 'e1')!.plannedHours).toBe(2);
+    expect(next.workload.find((w) => w.id === 'e2')!.startMinutes).toBe(600); // the drop still applied
+    const activityMsg = next.activity[next.activity.length - 1].message;
+    expect(activityMsg).not.toContain('połączono sąsiednie bloki');
+  });
+
+  it('does NOT merge exactly-adjacent same-task blocks when a recurring TASK occurrence lies inside the fused span', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 }); // 480-600
+    const e2 = makeEntry({ id: 'e2', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 100, plannedHours: 2, sortIndex: 1 });
+    const recurringTask = makeTask({
+      id: 'tr',
+      recurrence: { daysOfWeek: [1, 2, 3, 4, 5, 6, 7], startMinutes: 600, durationMinutes: 60 }, // occurrence 600-660
+    });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' }), recurringTask],
+      assignments: [{ id: 'a1', taskId: 'tr', personId: 'p1' }],
+      workload: [e1, e2],
+    });
+
+    const next = reducer(state, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'e2',
+      date: '2026-07-08',
+      startMinutes: 600,
+      plannedHours: 2,
+    });
+
+    expect(next.workload).toHaveLength(2); // NOT merged
+    expect(next.workload.find((w) => w.id === 'e2')!.startMinutes).toBe(600);
+    const activityMsg = next.activity[next.activity.length - 1].message;
+    expect(activityMsg).not.toContain('połączono sąsiednie bloki');
+  });
+
+  it('regression: exactly-adjacent same-task blocks with NO event/recurrence in the fused span STILL merge (guard does not over-block)', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 }); // 480-600
+    const e2 = makeEntry({ id: 'e2', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 100, plannedHours: 2, sortIndex: 1 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      workload: [e1, e2],
+    });
+
+    const next = reducer(state, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'e2',
+      date: '2026-07-08',
+      startMinutes: 600,
+      plannedHours: 2,
+    });
+
+    expect(next.workload).toHaveLength(1);
+    const survivor = next.workload[0];
+    expect(survivor.id).toBe('e1'); // earlier id survives
+    expect(survivor.startMinutes).toBe(480);
+    expect(survivor.plannedHours).toBe(4); // 2h + 2h summed
+    const activityMsg = next.activity[next.activity.length - 1].message;
+    expect(activityMsg).toContain('połączono sąsiednie bloki');
+  });
+
+  it('an event that only TOUCHES the fused edge (starts exactly at fusedEnd) does NOT block the merge (touching is not covering)', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 }); // 480-600
+    const e2 = makeEntry({ id: 'e2', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 100, plannedHours: 2, sortIndex: 1 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      workload: [e1, e2],
+      events: [makeEvent({ id: 'ev1', startMinutes: 720, durationMinutes: 60 })], // 720-780, starts exactly at fusedEnd 720
+    });
+
+    const next = reducer(state, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'e2',
+      date: '2026-07-08',
+      startMinutes: 600,
+      plannedHours: 2,
+    });
+
+    expect(next.workload).toHaveLength(1); // still merges — the event only touches
+    expect(next.workload[0].plannedHours).toBe(4);
+    const activityMsg = next.activity[next.activity.length - 1].message;
+    expect(activityMsg).toContain('połączono sąsiednie bloki');
   });
 });
 

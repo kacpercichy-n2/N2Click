@@ -315,6 +315,27 @@
   Nowy dział/spółka są namierzane po znormalizowanej nazwie w efekcie i dopiero
   wtedy wybierane w drafcie (id nadaje reduktor); stanowisko (wolny tekst)
   ustawiane od razu.
+- POWIADOMIENIA IN-APP (2026-07-23): kolekcja `notifications` w `AppData`
+  (`Notification` w `src/types.ts`; `type` ∈ task_assigned/project_comment/
+  bin_item, `payload` = taskId/projectId/commentId/actorId, `readAt` '' =
+  nieprzeczytane). Cloud-authoritative i ADDYTYWNA (`DATA_VERSION` zostaje 7):
+  WŁASNE powiadomienia odbiorcy przychodzą OSOBNYM `MERGE_CLOUD_NOTIFICATIONS`
+  (reference-preserving replace; niepoprawny payload / zły wiersz => ta sama
+  referencja, inwariant 6; loader degraduje się do [] gdy tabela nie istnieje).
+  Oznaczenie jako przeczytane: `MARK_NOTIFICATION_READ` / `MARK_ALL_NOTIFICATIONS_READ`
+  (nieznane id / brak nieprzeczytanych => ta sama referencja) — lustruje kolumnę
+  `read_at` przez diff (cloudMirror sekcja 8d, WYŁĄCZNIE UPDATE). GENEROWANIE
+  zdarzeń jest KLIENCKIE, z diffa stanu w warstwie mirror (`src/supabase/
+  notificationEvents.ts` `notificationInsertsFromDiff`): (a) nowa para
+  przypisania do opublikowanego zadania, (b) nowy komentarz projektu → uczestnicy
+  (osoby przypisane do zadań projektu), (c) nowy wiersz zasobnika — zawsze DLA
+  INNYCH osób (recipient===self pomijany), a (a) dedupuje (c) dla tej samej pary.
+  `MERGE_CLOUD_NOTIFICATIONS` jest w `SUPPRESSED` (hydracja cloud→local nie
+  wraca jako mirror). Repair wczytania: `repairNotifications` (biegnie po
+  `repairClients`; drop wiersza bez id/recipientId/znanego `type`, sanityzacja
+  payloadu). W chmurze tabela `public.notifications` (patrz cloud-database).
+  Testy: `src/utils/notifications.test.ts`, `src/supabase/notifications.test.ts`,
+  `src/store/notifications.test.ts`, rozszerzenia w `dashboardPanels.test.ts`.
 - `Client` carries a PRIMARY contact (contactName/contactEmail/contactPhone) plus
   a description in `notes` (columns from 20260718090000_clients_contact_fields,
   '' or missing = none), edited on the `/clients` page via

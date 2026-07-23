@@ -1,6 +1,7 @@
 // Unit tests for pure time-of-day math (src/utils/time.ts).
 import { describe, expect, it } from 'vitest';
 import {
+  blockEndMinutes,
   dropStartFromAnchor,
   findFreeStart,
   formatDuration,
@@ -256,6 +257,58 @@ describe('findFreeStart', () => {
     const start = findFreeStart(blocks, 60);
     expect(start).toBe(615); // 606 snapped UP to 615 (not 600 or 605)
     expect(hasCollision(blocks.map((b, i) => ({ id: String(i), ...b })), start!, 60)).toBe(false);
+  });
+
+  it('avoidTouch: when the append default would touch a same-task block edge, returns a valid non-touching collision-free start instead (2-arg call still appends)', () => {
+    const sameTask = { startMinutes: 480, plannedHours: 2 }; // 480-600
+    const blocks = [sameTask];
+    // Plain 2-arg call still appends exactly at the block's end (touching) —
+    // backward compatible, seed/SAVE_TASK/existing placements are unaffected.
+    expect(findFreeStart(blocks, 60)).toBe(600);
+    // With avoidTouch = that block, the default (600, touching 600) is rejected
+    // in favor of the earliest non-touching WORKING-hours gap: one grid step past
+    // the touched end (600 → 615), preferred over the 00:00 night gap. This is the
+    // fix for the old "Zaplanuj część proposes 00:00" defect.
+    const guarded = findFreeStart(blocks, 60, [sameTask]);
+    expect(guarded).toBe(615); // 10:15, one 15-min step past the same-task end
+    // The result is collision-free and does not touch the same-task block's edges.
+    expect(hasCollision(blocks.map((b, i) => ({ id: String(i), ...b })), guarded!, 60)).toBe(false);
+    expect(guarded! + 60).not.toBe(sameTask.startMinutes); // does not abut its start
+    expect(guarded).not.toBe(blockEndMinutes(sameTask.startMinutes, sameTask.plannedHours)); // not its end
+  });
+
+  it('avoidTouch: lone 09:00–11:00 block proposes 11:15, not 00:00 (past-end grid-step candidate)', () => {
+    const sameTask = { startMinutes: 540, plannedHours: 2 }; // 540-660 (09:00-11:00)
+    const blocks = [sameTask];
+    // Append default is 660 (11:00) — touches the same-task end. The guard now
+    // offers 660 + MINUTE_STEP = 675 (11:15), a working-hours non-touching slot,
+    // instead of falling all the way back to the 00:00 night gap (old defect).
+    const guarded = findFreeStart(blocks, 60, [sameTask]);
+    expect(guarded).toBe(675); // 11:15
+    expect(hasCollision(blocks.map((b, i) => ({ id: String(i), ...b })), guarded!, 60)).toBe(false);
+  });
+
+  it('avoidTouch: rejects an earliest candidate that would touch the same-task block FROM BELOW and escapes to a non-touching slot', () => {
+    const sameTask = { startMinutes: 540, plannedHours: 1 }; // 540-600 (09:00-10:00)
+    const blocks = [sameTask];
+    // Standard candidate 480 (08:00) fits before the block but 480+60 = 540 abuts
+    // its START (touch-from-below → auto-merge), so it is rejected; the append
+    // candidate 600 touches its end. The guard escapes to 600 + MINUTE_STEP = 615.
+    const guarded = findFreeStart(blocks, 60, [sameTask]);
+    expect(guarded).toBe(615); // 10:15
+    expect(guarded! + 60).not.toBe(sameTask.startMinutes); // never abuts its start
+    expect(guarded).not.toBe(blockEndMinutes(sameTask.startMinutes, sameTask.plannedHours)); // nor its end
+    expect(hasCollision(blocks.map((b, i) => ({ id: String(i), ...b })), guarded!, 60)).toBe(false);
+  });
+
+  it('avoidTouch: when NO non-touching slot exists, keeps the touching primary (merge unavoidable is acceptable)', () => {
+    // Whole day solid except the single append slot that touches the same-task block.
+    const sameTask = { startMinutes: 0, plannedHours: 8 }; // 00:00-08:00 (ends at WORKDAY_START_MIN)
+    const filler = { startMinutes: 540, plannedHours: 15 }; // 09:00-24:00 solid
+    const blocks = [sameTask, filler];
+    // Only the 480-540 gap fits a 60-min block, and 480 touches sameTask's end.
+    const guarded = findFreeStart(blocks, 60, [sameTask]);
+    expect(guarded).toBe(480); // no non-touching alternative → keep the touching primary
   });
 });
 

@@ -87,6 +87,17 @@ export interface WeekModel {
    * `blockCollides`). Only the seven rendered days are indexed.
    */
   blocksByPersonDate: Map<string, WorkloadEntry[]>;
+  /**
+   * Per-(person, date) union of that person's calendar-event occurrences and
+   * recurring-task occurrences (presentational occupancy), as `{start, end}`
+   * minute intervals. Filter-INDEPENDENT and person-scoped (built via a
+   * single-person Set, exactly like a per-person occupancy). Built ONLY for
+   * (person, date) pairs that have at least one dated block — the only pairs
+   * where an adjacency merge can happen. Keyed by {@link personDateKey}. The
+   * will-merge affordance uses it to mirror the reducer's merge guard (a fused
+   * block must never silently swallow a meeting) without a per-drag-frame scan.
+   */
+  eventBusyByPersonDate: Map<string, Array<{ start: number; end: number }>>;
 }
 
 /** Stable composite key for {@link WeekModel.blocksByPersonDate}. */
@@ -112,6 +123,39 @@ export function buildBlocksByPersonDate(
     const list = map.get(key);
     if (list) list.push(w);
     else map.set(key, [w]);
+  }
+  return map;
+}
+
+/**
+ * Build the per-(person, date) presentational-occupancy index (calendar events +
+ * recurring-task occurrences) for the given days, but ONLY for (person, date)
+ * pairs that already appear in {@link buildBlocksByPersonDate} (the only pairs
+ * where a merge can occur). Person-scoped via a single-person Set — each entry
+ * therefore also includes company-wide events and recurring tasks the person is
+ * assigned to, exactly this person's occupancy. Pure; used to mirror the reducer
+ * merge guard in the will-merge affordance without a per-drag-frame global scan.
+ */
+export function buildEventBusyByPersonDate(
+  state: AppData,
+  blocksByPersonDate: Map<string, WorkloadEntry[]>,
+): Map<string, Array<{ start: number; end: number }>> {
+  const map = new Map<string, Array<{ start: number; end: number }>>();
+  for (const [key, list] of blocksByPersonDate) {
+    if (list.length === 0) continue;
+    const { personId, date } = list[0];
+    const forPerson = new Set([personId]);
+    const busy: Array<{ start: number; end: number }> = [];
+    for (const occ of calendarEventsForDate(state, date, forPerson)) {
+      busy.push({ start: occ.startMinutes, end: occ.startMinutes + occ.durationMinutes });
+    }
+    for (const { occurrence } of recurrenceOccurrencesForDate(state, date, forPerson)) {
+      busy.push({
+        start: occurrence.startMinutes,
+        end: occurrence.startMinutes + occurrence.durationMinutes,
+      });
+    }
+    if (busy.length > 0) map.set(key, busy);
   }
   return map;
 }
@@ -193,10 +237,13 @@ export function buildWeekModel(
   });
   const binGrandTotal = binPeople.reduce((s, p) => s + binTotalForPerson(state, p.id), 0);
 
+  const blocksByPersonDate = buildBlocksByPersonDate(state, days);
+
   return {
     days: dayModels,
     bin,
     binGrandTotal,
-    blocksByPersonDate: buildBlocksByPersonDate(state, days),
+    blocksByPersonDate,
+    eventBusyByPersonDate: buildEventBusyByPersonDate(state, blocksByPersonDate),
   };
 }
