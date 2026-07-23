@@ -856,6 +856,7 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
           supervisor_id: supervisorProfileId,
           access_role: ACCESS_ROLE_TO_CLOUD[p.accessRole],
           birth_date: p.birthDate === '' ? null : p.birthDate,
+          email_notifications: p.emailNotifications ?? false,
         },
         sourceId: p.id,
         label: `Profil „${p.name}”`,

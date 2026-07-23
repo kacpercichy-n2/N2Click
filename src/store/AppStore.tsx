@@ -207,6 +207,9 @@ export interface PersonDraft {
   // Data urodzenia (yyyy-MM-dd); '' gdy nieustawiona. Opcjonalna, walidowana na
   // repair przy wczytaniu (patrz migratePerson w storage.ts).
   birthDate: string;
+  // Opt-in na powiadomienia mailowe. OPCJONALNE w draftcie (brak => false),
+  // spójnie z `Person.emailNotifications`.
+  emailNotifications?: boolean;
   // NOTE: passwordHash is intentionally NOT part of the draft — it is set only
   // via SET_PASSWORD so a profile save can never clobber a stored hash.
 }
@@ -2011,6 +2014,8 @@ function personFromDraft(draft: PersonDraft): Omit<Person, 'id' | 'passwordHash'
     supervisorId: draft.supervisorId,
     // Data urodzenia: poprawna 'yyyy-MM-dd' albo '' (śmieci nie persystują).
     birthDate: isValidDateStr(draft.birthDate) ? draft.birthDate : '',
+    // Opt-in mailowy: brak => false (nie spamujemy).
+    emailNotifications: draft.emailNotifications === true,
   };
 }
 
@@ -2258,6 +2263,7 @@ function isValidCloudPersonRow(r: CloudPersonMergeRow): boolean {
   if (typeof r.phone !== 'string' || typeof r.avatar !== 'string') return false;
   if (typeof r.supervisorEmail !== 'string') return false;
   if (typeof r.birthDate !== 'string') return false;
+  if (r.emailNotifications !== undefined && typeof r.emailNotifications !== 'boolean') return false;
   if (!Number.isFinite(r.capacity) || r.capacity < 0 || r.capacity > 24) return false;
   if (!Array.isArray(r.workDays)) return false;
   if (r.workDays.some((d) => !Number.isInteger(d) || d < 1 || d > 7)) return false;
@@ -2295,6 +2301,8 @@ function cloudPersonFields(row: CloudPersonMergeRow): Omit<
     workEndMinutes: row.workEndMinutes,
     // Poprawna 'yyyy-MM-dd' albo '' (spójnie z personFromDraft/migratePerson).
     birthDate: isValidDateStr(row.birthDate) ? row.birthDate : '',
+    // Opt-in mailowy z profilu chmury (brak => false).
+    emailNotifications: row.emailNotifications === true,
   };
 }
 
@@ -2362,6 +2370,7 @@ function applyCloudPeople(
       person.workStartMinutes === fields.workStartMinutes &&
       person.workEndMinutes === fields.workEndMinutes &&
       person.birthDate === fields.birthDate &&
+      (person.emailNotifications ?? false) === fields.emailNotifications &&
       sameWorkDays(person.workDays, fields.workDays);
     if (same) {
       updatedPeople.push(person);

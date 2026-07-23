@@ -37,6 +37,7 @@ const emptyDraft = (): PersonDraft => ({
   workEndMinutes: defaultWorkEndMinutes(DEFAULT_CAPACITY),
   supervisorId: '',
   birthDate: '',
+  emailNotifications: false,
 });
 
 export function PeoplePage() {

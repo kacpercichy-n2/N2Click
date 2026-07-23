@@ -47,6 +47,7 @@ const ALL: ProfileField[] = [
   'workHours',
   'supervisorId',
   'birthDate',
+  'emailNotifications',
 ];
 const opts = { peopleCount: 5 };
 
@@ -65,7 +66,14 @@ describe('editableProfileFields', () => {
   it('self (nie-admin) — zawężony zbiór; email NIE jest edytowalny', () => {
     const self = person({ accessRole: 'pracownik' });
     const set = editableProfileFields(self, self, opts);
-    expect(sorted(set)).toEqual(['avatarEmoji', 'birthDate', 'firstName', 'lastName', 'phone']);
+    expect(sorted(set)).toEqual([
+      'avatarEmoji',
+      'birthDate',
+      'emailNotifications',
+      'firstName',
+      'lastName',
+      'phone',
+    ]);
     expect(set.has('email')).toBe(false);
     expect(set.has('departmentId')).toBe(false);
     expect(set.has('companyId')).toBe(false); // spółka wyłącznie administrator
@@ -121,6 +129,7 @@ describe('editableProfileFields', () => {
     expect(sorted(editableProfileFields(pm, pm, opts))).toEqual([
       'avatarEmoji',
       'birthDate',
+      'emailNotifications',
       'firstName',
       'lastName',
       'phone',

@@ -266,6 +266,11 @@ export interface Person {
   // birthday marker in the calendar on the matching month+day. Never a required
   // field. Validated as a real 'yyyy-MM-dd' date on load (garbage → '').
   birthDate: DateStr;
+  // Opt-in na dublowanie powiadomień in-app mailem (kolumna
+  // `profiles.email_notifications`, czytana przez Edge Function
+  // `send-notification-emails`). OPCJONALNE i ADDYTYWNE: brak / legacy => false
+  // (nie spamujemy). DATA_VERSION zostaje 7.
+  emailNotifications?: boolean;
 }
 
 export interface TaskAssignment {

@@ -136,6 +136,8 @@ describe('konwencja plików migracji', () => {
       '20260721220000_workload_entry_done.sql',
       '20260722130000_client_contacts.sql',
       '20260723120000_notifications.sql',
+      '20260723130000_notifications_emailed_at.sql',
+      '20260723131000_profiles_email_notifications.sql',
     ]);
   });
 

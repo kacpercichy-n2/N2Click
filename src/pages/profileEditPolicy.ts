@@ -23,7 +23,8 @@ export type ProfileField =
   | 'workDays'
   | 'workHours'
   | 'supervisorId'
-  | 'birthDate';
+  | 'birthDate'
+  | 'emailNotifications';
 
 const ALL_FIELDS: readonly ProfileField[] = [
   'firstName',
@@ -42,15 +43,19 @@ const ALL_FIELDS: readonly ProfileField[] = [
   'workHours',
   'supervisorId',
   'birthDate',
+  // Osobista preferencja powiadomień mailowych.
+  'emailNotifications',
 ];
 
-// Self edytuje własne dane osobowe/kontaktowe, w tym datę urodzenia.
+// Self edytuje własne dane osobowe/kontaktowe, datę urodzenia oraz własną
+// preferencję powiadomień mailowych (to ustawienie „o sobie", nie uprawnienie).
 const SELF_FIELDS: readonly ProfileField[] = [
   'firstName',
   'lastName',
   'phone',
   'avatarEmoji',
   'birthDate',
+  'emailNotifications',
 ];
 
 // Menedżer prowadzi kartę osoby z własnego działu — data urodzenia mieści się w

@@ -218,6 +218,8 @@ function migratePerson(raw: Record<string, unknown>): Person {
       typeof raw.workEndMinutes === 'number' ? raw.workEndMinutes : defaultWorkEndMinutes(capacity),
     supervisorId: str(raw.supervisorId),
     birthDate,
+    // Opt-in mailowy (ADDYTYWNE, opcjonalne): brak / nie-boolean => false.
+    emailNotifications: raw.emailNotifications === true,
   };
 }
 

@@ -110,6 +110,7 @@ function PersonProfile({ personId }: { personId: string }) {
     workEndMinutes: person?.workEndMinutes ?? defaultWorkEndMinutes(person?.capacity ?? DEFAULT_CAPACITY),
     supervisorId: person?.supervisorId ?? '',
     birthDate: person?.birthDate ?? '',
+    emailNotifications: person?.emailNotifications ?? false,
   }));
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState('');
@@ -140,6 +141,9 @@ function PersonProfile({ personId }: { personId: string }) {
       workEndMinutes: allow('workHours') ? draft.workEndMinutes : person.workEndMinutes,
       supervisorId: allow('supervisorId') ? draft.supervisorId : person.supervisorId,
       birthDate: allow('birthDate') ? draft.birthDate : person.birthDate,
+      emailNotifications: allow('emailNotifications')
+        ? draft.emailNotifications
+        : person.emailNotifications ?? false,
     };
     if (!merged.firstName.trim()) return;
     if (allow('workHours') && hoursInvalid) {
@@ -336,6 +340,20 @@ function PersonProfile({ personId }: { personId: string }) {
                 disabled={!allow('birthDate')}
                 title={allow('birthDate') ? undefined : NO_PERM_TITLE}
               />
+            </div>
+            <div className="field">
+              <label
+                className="checkbox-field"
+                title={allow('emailNotifications') ? undefined : NO_PERM_TITLE}
+              >
+                <input
+                  type="checkbox"
+                  checked={draft.emailNotifications === true}
+                  onChange={(e) => set('emailNotifications', e.target.checked)}
+                  disabled={!allow('emailNotifications')}
+                />
+                <span>Powiadomienia mailowe</span>
+              </label>
             </div>
             <div className="field field-narrow">
               <label htmlFor="pp-cap">Godziny/dzień</label>
