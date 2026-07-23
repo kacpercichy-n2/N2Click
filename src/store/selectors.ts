@@ -1175,3 +1175,149 @@ export function loadPercent(bookedHours: number, availableHours: number): number
   if (availableHours > 0) return Math.round((bookedHours / availableHours) * 100);
   return bookedHours > 0 ? null : 0;
 }
+
+// ---- Powiadomienia (derived, non-persisted) ----
+//
+// There is no notification TABLE — a notification is a DERIVED read over data we
+// already keep (inwariant 1: pochodne, nie osobny stan). Two structured sources
+// feed the Panel „Powiadomienia" tile, each scoped to one recipient and to
+// events caused by SOMEONE ELSE within a recent window:
+//   1. @-wzmianki — `Comment.mentionIds` zawiera odbiorcę, autor ≠ odbiorca.
+//   2. Przypisania — `TaskAssignment` na odbiorcę dla zadania, które utworzył
+//      ktoś inny (aktor z wpisu „utworzył(a) …" w dzienniku aktywności).
+// Bez tabeli nie ma trwałego stanu „przeczytane"; zamiast tego pokazujemy
+// najświeższe trafne zdarzenia z ostatnich `NOTIFICATION_WINDOW_DAYS` dni.
+
+/** How far back the derived feed looks. Older events fall off the tile. */
+export const NOTIFICATION_WINDOW_DAYS = 14;
+
+export type NotificationKind = 'mention' | 'assignment';
+
+/** One derived notification row for a person. Not persisted; rebuilt per render. */
+export interface PersonNotification {
+  id: string; // stable per source event: `${kind}:${sourceId}`
+  kind: NotificationKind;
+  actorId: string; // who caused it (never the recipient, never '')
+  actorName: string;
+  entityType: CommentEntityType; // 'task' | 'project' — what to open
+  entityId: string;
+  taskId: string; // task to open in the modal; '' for a project-scoped mention
+  title: string; // ready-to-render Polish sentence
+  createdAt: string; // ISO timestamp of the source event (for sort + display)
+  read: boolean; // createdAt <= recipient's notificationsSeenAt watermark
+}
+
+/** How many of a derived feed are still unread. Pure over the returned list. */
+export function unreadNotificationCount(notifications: readonly PersonNotification[]): number {
+  return notifications.reduce((n, x) => (x.read ? n : n + 1), 0);
+}
+
+/** The task's creation event, whose actor is the person who assigned the task.
+ *  Covers both a direct create and a draft that was created then published. */
+function taskCreationEvent(state: AppData, taskId: string): ActivityEvent | undefined {
+  return state.activity.find(
+    (e) => e.entityType === 'task' && e.entityId === taskId && e.message.startsWith('utworzył'),
+  );
+}
+
+/** Human label + openable task id for a comment's target entity. Empty label
+ *  when the entity no longer exists (skip the row). */
+function commentTargetLabel(
+  state: AppData,
+  entityType: CommentEntityType,
+  entityId: string,
+): { label: string; taskId: string } {
+  if (entityType === 'task') {
+    const task = getTask(state, entityId);
+    return { label: task ? task.title : '', taskId: task ? task.id : '' };
+  }
+  const project = getProject(state, entityId);
+  return { label: project ? `projekt „${project.name}”` : '', taskId: '' };
+}
+
+/**
+ * Derived notification feed for one person, newest first. `nowIso` is injected
+ * (never read from the clock here) so the selector stays pure and testable; the
+ * caller passes `new Date().toISOString()`. Returns every match within the
+ * window — the display cap (max 3) lives in `visibleNotifications`.
+ */
+export function notificationsForPerson(
+  state: AppData,
+  personId: string,
+  nowIso: string,
+): PersonNotification[] {
+  if (!personId) return [];
+  // Porównania po czasie NUMERYCZNIE (getTime), nie po stringu: znaczniki mogą
+  // przychodzić w różnych formatach (lokalny ISO 'Z' vs chmurowy timestamptz),
+  // więc porównanie leksykalne byłoby zawodne.
+  const cutoffMs = new Date(nowIso).getTime() - NOTIFICATION_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  const withinWindow = (createdAt: string): boolean => {
+    const ms = new Date(createdAt).getTime();
+    return !Number.isNaN(ms) && ms >= cutoffMs;
+  };
+  // Watermark „przeczytane": zdarzenie z createdAt <= seenAt jest przeczytane.
+  const seenMs = new Date(getPerson(state, personId)?.notificationsSeenAt ?? '').getTime();
+  const isRead = (createdAt: string): boolean =>
+    !Number.isNaN(seenMs) && new Date(createdAt).getTime() <= seenMs;
+  const out: PersonNotification[] = [];
+
+  // 1. @-wzmianki: ktoś inny wspomniał tę osobę w komentarzu.
+  for (const c of state.comments) {
+    if (c.authorId === personId || c.authorId === '') continue;
+    if (!c.mentionIds.includes(personId)) continue;
+    if (!withinWindow(c.createdAt)) continue;
+    const author = getPerson(state, c.authorId);
+    if (!author) continue;
+    const { label, taskId } = commentTargetLabel(state, c.entityType, c.entityId);
+    if (!label) continue;
+    out.push({
+      id: `mention:${c.id}`,
+      kind: 'mention',
+      actorId: c.authorId,
+      actorName: author.name,
+      entityType: c.entityType,
+      entityId: c.entityId,
+      taskId,
+      title: `${author.name} wspomniał(a) Cię w komentarzu — ${label}`,
+      createdAt: c.createdAt,
+      read: isRead(c.createdAt),
+    });
+  }
+
+  // 2. Przypisania: ktoś inny utworzył zadanie przypisane tej osobie. Autor to
+  //    STRUKTURALNE `task.createdBy` (kolumna chmury z DEFAULT auth.uid());
+  //    fallback dla starszych zadań bez tego pola — najstarsze zdarzenie
+  //    „utworzył(a) …" z dziennika aktywności. Czas = utworzenie zadania.
+  for (const a of state.assignments) {
+    if (a.personId !== personId) continue;
+    const task = getTask(state, a.taskId);
+    if (!task || isDraftTask(task)) continue;
+    let assignerId = task.createdBy ?? '';
+    let assignedAt = task.createdAt;
+    if (assignerId === '') {
+      const creation = taskCreationEvent(state, task.id);
+      if (creation) {
+        assignerId = creation.actorId;
+        assignedAt = creation.createdAt;
+      }
+    }
+    if (assignerId === '' || assignerId === personId) continue;
+    if (!withinWindow(assignedAt)) continue;
+    const actor = getPerson(state, assignerId);
+    if (!actor) continue;
+    out.push({
+      id: `assignment:${a.id}`,
+      kind: 'assignment',
+      actorId: assignerId,
+      actorName: actor.name,
+      entityType: 'task',
+      entityId: task.id,
+      taskId: task.id,
+      title: `${actor.name} przypisał(a) Ci zadanie — ${task.title}`,
+      createdAt: assignedAt,
+      read: isRead(assignedAt),
+    });
+  }
+
+  return out.sort((x, y) => new Date(y.createdAt).getTime() - new Date(x.createdAt).getTime());
+}

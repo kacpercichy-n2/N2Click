@@ -55,6 +55,10 @@ export interface CloudProfile {
   workEndMinutes: number;
   /** Data urodzenia (profiles.birth_date, yyyy-MM-dd); '' gdy brak/null. */
   birthDate: string;
+  /** Watermark „przeczytane" powiadomień (profiles.notifications_seen_at);
+   *  kanoniczny ISO (Z) albo '' gdy brak/null. OPCJONALNE — `toCloudProfile`
+   *  zawsze ustawia, ale starsze fixture'y/literały mogą pomijać. */
+  notificationsSeenAt?: string;
 }
 
 export interface OrgSnapshot {
@@ -140,7 +144,18 @@ function toCloudProfile(row: Record<string, unknown>): CloudProfile {
     // Postgres `date` przychodzi z PostgREST jako 'yyyy-MM-dd' albo null; śmieci
     // (teoretyczne) spadają na ''.
     birthDate: isValidDateStr(str(row.birth_date)) ? str(row.birth_date) : '',
+    // Postgres `timestamptz` przychodzi z PostgREST w wariantach offsetu; NORMALIZUJ
+    // do kanonicznego ISO (Z), by porównania watermarku były jednorodne. NULL/śmieci => ''.
+    notificationsSeenAt: toIsoOrEmpty(row.notifications_seen_at),
   };
+}
+
+/** Parsowalny znacznik czasu -> kanoniczny ISO (Z); wszystko inne -> ''. */
+function toIsoOrEmpty(value: unknown): string {
+  const s = str(value);
+  if (s === '') return '';
+  const ms = new Date(s).getTime();
+  return Number.isNaN(ms) ? '' : new Date(ms).toISOString();
 }
 
 function toDepartment(row: Record<string, unknown>): Department {
@@ -185,7 +200,7 @@ export async function loadOrgSnapshot(db: ReferenceDb, userId: string): Promise<
   ] = await Promise.all([
     db.select(
       'profiles',
-      'id, first_name, last_name, email, role_title, access_role, department_id, company_id, supervisor_id, phone, avatar, avatar_path, capacity, work_days, work_start_minutes, work_end_minutes, birth_date',
+      'id, first_name, last_name, email, role_title, access_role, department_id, company_id, supervisor_id, phone, avatar, avatar_path, capacity, work_days, work_start_minutes, work_end_minutes, birth_date, notifications_seen_at',
     ),
     db.select('departments', 'id, name'),
     db.select('statuses', 'id, name, slug, color, sort_order, archived, is_done'),
@@ -295,6 +310,9 @@ export interface CloudPersonMergeRow {
   supervisorEmail: string;
   /** Data urodzenia (yyyy-MM-dd); '' gdy brak. */
   birthDate: string;
+  /** Watermark „przeczytane" powiadomień (kanoniczny ISO); '' gdy brak.
+   *  OPCJONALNE — starsze payloady/fixture'y bez pola czyta się jako ''. */
+  notificationsSeenAt?: string;
 }
 
 /**
@@ -326,6 +344,7 @@ export function buildCloudPeoplePayload(profiles: CloudProfile[]): CloudPersonMe
       accessRole: cloudRoleToAccessRole(p.cloudRole),
       supervisorEmail: (p.supervisorId ? emailById.get(p.supervisorId) : '') ?? '',
       birthDate: p.birthDate,
+      notificationsSeenAt: p.notificationsSeenAt,
     });
   }
   return rows;

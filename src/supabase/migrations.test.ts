@@ -131,6 +131,8 @@ describe('konwencja plików migracji', () => {
       '20260722120000_project_company.sql',
       '20260722121000_full_access_for_all_profiles.sql',
       '20260722130000_client_contacts.sql',
+      '20260723120000_profiles_notifications_seen.sql',
+      '20260723130000_tasks_created_by_default_backfill.sql',
     ]);
   });
 

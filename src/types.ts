@@ -194,6 +194,16 @@ export interface Task {
   // Egzekwowane w reduktorze, `normalizeTaskMeta` i hydracji chmury. OPCJONALNE
   // i ADDYTYWNE (`DATA_VERSION` zostaje na 7).
   recurrence?: TaskRecurrence;
+  // Autor zadania (id osoby, która je utworzyła) — STRUKTURALNY sygnał autora
+  // zasilający feed powiadomień („X przypisał(a) Ci zadanie"), czystszy niż
+  // parsowanie „utworzył(a) …" z dziennika aktywności. Chmura: kolumna
+  // `tasks.created_by` z DEFAULT auth.uid() (migracja 20260723130000) —
+  // wypełniana przez serwer przy insertcie mirrora. Reduktor stempluje ją
+  // lokalnie przy tworzeniu (tryb offline + natychmiastowy stan). OPCJONALNE
+  // i ADDYTYWNE (`DATA_VERSION` zostaje 7): brak / '' = nieznany autor (feed
+  // po prostu nie zgłasza przypisania — łagodna degradacja). Klucz obecny
+  // wyłącznie gdy niesie niepuste id — egzekwowane w repairze i hydracji.
+  createdBy?: string;
   createdAt: string; // ISO timestamp
   updatedAt: string; // ISO timestamp
 }
@@ -282,6 +292,14 @@ export interface Person {
   // birthday marker in the calendar on the matching month+day. Never a required
   // field. Validated as a real 'yyyy-MM-dd' date on load (garbage → '').
   birthDate: DateStr;
+  // Znacznik „przeczytane" feedu powiadomień (Panel): ISO timestamp ostatniego
+  // oznaczenia jako przeczytane. Powiadomienie z `createdAt <= notificationsSeenAt`
+  // jest przeczytane; nowsze — nieprzeczytane. LOCAL-ONLY (jak `birthDate` /
+  // `savedFilters`): pole planera Person nie ma domu w chmurze — profile są
+  // zewnętrzne/auth. OPCJONALNE i ADDYTYWNE (`DATA_VERSION` zostaje 7): brak /
+  // nie-ISO => nieobecny (wszystko nieprzeczytane). Klucz obecny WYŁĄCZNIE gdy
+  // niesie poprawny ISO — egzekwowane w `migratePerson` i reduktorze.
+  notificationsSeenAt?: string;
 }
 
 export interface TaskAssignment {

@@ -3476,6 +3476,7 @@ a.toggle-btn {
   padding: 6px 8px;
   border-radius: var(--n2-radius-sm);
   cursor: pointer;
+  text-decoration: none;
 }
 .dash-row:hover {
   background: var(--card-bg-hover);
@@ -3604,6 +3605,41 @@ a.toggle-btn {
   border-radius: var(--n2-radius-pill);
   padding: 2px 10px;
   white-space: nowrap;
+}
+
+/* Powiadomienia: licznik nieprzeczytanych (pill w nagłówku), kropka na wierszu
+   i wyróżnienie nieprzeczytanego. Kolory z palety-stałych (nie flipują z motywem)
+   dla gwarantowanego kontrastu tekstu na lawendzie. */
+.dash-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 8px;
+  padding: 0 5px;
+  border-radius: var(--n2-radius-pill);
+  background: var(--primary);
+  color: var(--n2-night);
+  font-size: var(--n2-type-xs);
+  font-family: var(--n2-font-data);
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: middle;
+}
+.dash-unread-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+.dash-area-notifications .dash-row.is-unread .dash-row-name {
+  font-weight: 700;
+}
+.dash-area-notifications .dash-row:not(.is-unread) .dash-row-name {
+  font-weight: 500;
+  color: var(--text-muted);
 }
 
 /* (a) Today's agenda rows */

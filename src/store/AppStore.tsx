@@ -287,6 +287,8 @@ export type Action =
   | { type: 'MOVE_MILESTONE'; milestoneId: string; date: string }
   | { type: 'DELETE_MILESTONE'; milestoneId: string }
   | { type: 'ADD_COMMENT'; entityType: CommentEntityType; entityId: string; body: string; mentionIds: string[] }
+  // Oznacza feed powiadomień zalogowanej osoby jako przeczytany do teraz.
+  | { type: 'MARK_NOTIFICATIONS_SEEN' }
   // Zgłoszenia zespołu („Zgłoszenia”). Kolekcja addytywna, bez powiązań kaskadowych.
   | { type: 'ADD_TICKET'; draft: TicketDraft }
   | { type: 'SAVE_TICKET'; ticketId: string; draft: TicketDraft }
@@ -610,6 +612,9 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
       // Szkic tylko przy tworzeniu z widoku projektu; wszędzie indziej publikacja
       // natychmiastowa (brak flagi). Szkic pomija materializację godzin poniżej.
       isDraft: draft.isDraft === true,
+      // Autor zadania — sygnał dla feedu powiadomień. Klucz obecny tylko gdy jest
+      // zalogowany użytkownik (spójnie z chmurowym DEFAULT auth.uid()).
+      ...(state.currentUserId ? { createdBy: state.currentUserId } : {}),
       createdAt: ts,
       updatedAt: ts,
     };
@@ -2258,6 +2263,7 @@ function isValidCloudPersonRow(r: CloudPersonMergeRow): boolean {
   if (typeof r.phone !== 'string' || typeof r.avatar !== 'string') return false;
   if (typeof r.supervisorEmail !== 'string') return false;
   if (typeof r.birthDate !== 'string') return false;
+  if (r.notificationsSeenAt !== undefined && typeof r.notificationsSeenAt !== 'string') return false;
   if (!Number.isFinite(r.capacity) || r.capacity < 0 || r.capacity > 24) return false;
   if (!Array.isArray(r.workDays)) return false;
   if (r.workDays.some((d) => !Number.isInteger(d) || d < 1 || d > 7)) return false;
@@ -2300,6 +2306,14 @@ function cloudPersonFields(row: CloudPersonMergeRow): Omit<
 
 const sameWorkDays = (a: number[], b: number[]): boolean =>
   a.length === b.length && a.every((v, i) => v === b[i]);
+
+/** Późniejszy z dwóch znaczników „przeczytane" (ISO); '' = brak (−∞). Watermark
+ *  jest MONOTONICZNY — scalenie lokalne↔chmura nigdy nie cofa przeczytanego. */
+function laterIso(a: string, b: string): string {
+  if (a === '') return b;
+  if (b === '') return a;
+  return new Date(a).getTime() >= new Date(b).getTime() ? a : b;
+}
 
 /**
  * AUTORYTATYWNE zastosowanie RLS-owych profili chmury do listy osób — chmura
@@ -2347,6 +2361,10 @@ function applyCloudPeople(
     }
     matched.add(key);
     const fields = cloudPersonFields(row);
+    // Watermark „przeczytane": bierz PÓŹNIEJSZY z lokalnego i chmurowego (monotoniczny,
+    // odporny na wyścig dwóch urządzeń). Klucz kanonicznie obecny tylko gdy niepusty.
+    const mergedSeen = laterIso(person.notificationsSeenAt ?? '', row.notificationsSeenAt ?? '');
+    const seenChanged = (person.notificationsSeenAt ?? '') !== mergedSeen;
     const same =
       person.firstName === fields.firstName &&
       person.lastName === fields.lastName &&
@@ -2362,12 +2380,17 @@ function applyCloudPeople(
       person.workStartMinutes === fields.workStartMinutes &&
       person.workEndMinutes === fields.workEndMinutes &&
       person.birthDate === fields.birthDate &&
-      sameWorkDays(person.workDays, fields.workDays);
+      sameWorkDays(person.workDays, fields.workDays) &&
+      !seenChanged;
     if (same) {
       updatedPeople.push(person);
     } else {
       changed = true;
-      updatedPeople.push({ ...person, ...fields });
+      updatedPeople.push({
+        ...person,
+        ...fields,
+        ...(mergedSeen !== '' ? { notificationsSeenAt: mergedSeen } : {}),
+      });
     }
   }
 
@@ -2382,6 +2405,7 @@ function applyCloudPeople(
       ...cloudPersonFields(row),
       passwordHash: '',
       supervisorId: '',
+      ...(row.notificationsSeenAt ? { notificationsSeenAt: row.notificationsSeenAt } : {}),
     });
     existingIds.add(row.id);
   }
@@ -3120,6 +3144,20 @@ export function reducer(state: AppData, action: Action): AppData {
           },
         ],
         activity: withActivity(state, action.entityType, action.entityId, 'dodał(a) komentarz'),
+      };
+    }
+    case 'MARK_NOTIFICATIONS_SEEN': {
+      // Stempluje „przeczytane do teraz" na zalogowanej osobie. Bez aktywnego
+      // użytkownika lub gdy jego id nie istnieje — TA SAMA referencja (inwariant
+      // 6). Czytanie powiadomień nie jest zdarzeniem dziennika (brak activity).
+      const meId = state.currentUserId;
+      if (!meId || !state.people.some((p) => p.id === meId)) return state;
+      const seenAt = nowIso();
+      return {
+        ...state,
+        people: state.people.map((p) =>
+          p.id === meId ? { ...p, notificationsSeenAt: seenAt } : p,
+        ),
       };
     }
     case 'ADD_PERSON': {

@@ -189,6 +189,12 @@ function migratePerson(raw: Record<string, unknown>): Person {
   // Data urodzenia jest ADDYTYWNA i opcjonalna: brak pola => ''; wartość, która
   // nie jest poprawną 'yyyy-MM-dd', również spada na '' (nigdy nie rzuca).
   const birthDate = isValidDateStr(str(raw.birthDate)) ? str(raw.birthDate) : '';
+  // Znacznik „przeczytane" powiadomień: ADDYTYWNY, opcjonalny. Klucz obecny
+  // WYŁĄCZNIE gdy raw niesie poprawny ISO timestamp (parsowalny na datę); brak
+  // pola / śmieci => nieobecny (wszystko nieprzeczytane). Nigdy nie rzuca.
+  const seenRaw = str(raw.notificationsSeenAt);
+  const notificationsSeenAt =
+    seenRaw !== '' && !Number.isNaN(new Date(seenRaw).getTime()) ? seenRaw : undefined;
   return {
     id: str(raw.id),
     firstName: str(raw.firstName),
@@ -212,6 +218,7 @@ function migratePerson(raw: Record<string, unknown>): Person {
       typeof raw.workEndMinutes === 'number' ? raw.workEndMinutes : defaultWorkEndMinutes(capacity),
     supervisorId: str(raw.supervisorId),
     birthDate,
+    ...(notificationsSeenAt !== undefined ? { notificationsSeenAt } : {}),
   };
 }
 
@@ -975,6 +982,11 @@ export function normalizeTaskMeta(data: AppData): AppData {
     else delete base.draftHours;
     if (recurrence) base.recurrence = recurrence;
     else delete base.recurrence;
+    // Autor zadania (`createdBy`, opcjonalne/ADDYTYWNE): klucz obecny WYŁĄCZNIE
+    // gdy niesie niepuste id (legacy/chmura bez pola / '' / śmieci => nieobecny).
+    const createdBy = str(t.createdBy);
+    if (createdBy !== '') base.createdBy = createdBy;
+    else delete base.createdBy;
     return base;
   });
 

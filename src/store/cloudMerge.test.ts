@@ -736,6 +736,53 @@ describe('MERGE_CLOUD_PEOPLE', () => {
     })).toBe(next);
   });
 
+  it('watermark „przeczytane": bierze PÓŹNIEJSZY z lokalnego i chmurowego (monotoniczny)', () => {
+    const local = '2026-07-23T10:00:00.000Z';
+    const cloudNewer = '2026-07-23T12:00:00.000Z';
+    const cloudOlder = '2026-07-23T08:00:00.000Z';
+
+    // Chmura nowsza => wygrywa chmura.
+    const s1: AppData = {
+      ...baseState(),
+      people: [{ ...person(P1), email: 'kacper@x.pl', notificationsSeenAt: local }],
+    };
+    const n1 = reducer(s1, {
+      type: 'MERGE_CLOUD_PEOPLE',
+      payload: [cloudRow({ id: UUID_K, email: 'kacper@x.pl', notificationsSeenAt: cloudNewer })],
+    });
+    expect(n1.people[0].notificationsSeenAt).toBe(cloudNewer);
+
+    // Chmura starsza => wygrywa lokalny (przeczytane nie cofa się); brak zmiany => ta sama referencja.
+    const s2: AppData = {
+      ...baseState(),
+      people: [{ ...person(P1), email: 'kacper@x.pl', notificationsSeenAt: local }],
+    };
+    const n2 = reducer(s2, {
+      type: 'MERGE_CLOUD_PEOPLE',
+      payload: [cloudRow({ id: UUID_K, email: 'kacper@x.pl', notificationsSeenAt: cloudOlder })],
+    });
+    expect(n2.people[0].notificationsSeenAt).toBe(local); // starszy chmurowy nie cofa
+
+    // Nowa osoba z chmury niesie swój watermark.
+    const s3: AppData = { ...baseState(), people: [] };
+    const n3 = reducer(s3, {
+      type: 'MERGE_CLOUD_PEOPLE',
+      payload: [cloudRow({ id: UUID_Z, email: 'zuza@x.pl', notificationsSeenAt: cloudNewer })],
+    });
+    expect(n3.people[0].notificationsSeenAt).toBe(cloudNewer);
+
+    // Bez watermarku po obu stronach => klucz nieobecny (forma kanoniczna).
+    const s4: AppData = {
+      ...baseState(),
+      people: [{ ...person(P1), email: 'kacper@x.pl' }],
+    };
+    const n4 = reducer(s4, {
+      type: 'MERGE_CLOUD_PEOPLE',
+      payload: [cloudRow({ id: UUID_K, email: 'kacper@x.pl', firstName: 'Kacper', role: 'X' })],
+    });
+    expect('notificationsSeenAt' in n4.people[0]).toBe(false);
+  });
+
   it('niepoprawny payload => oryginalna referencja stanu (invariant 6)', () => {
     const state = baseState();
     const bad = [

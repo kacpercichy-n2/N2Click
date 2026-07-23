@@ -832,6 +832,8 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
           supervisor_id: supervisorProfileId,
           access_role: ACCESS_ROLE_TO_CLOUD[p.accessRole],
           birth_date: p.birthDate === '' ? null : p.birthDate,
+          // Watermark „przeczytane": ISO albo NULL (brak = wszystko nieprzeczytane).
+          notifications_seen_at: p.notificationsSeenAt ? p.notificationsSeenAt : null,
         },
         sourceId: p.id,
         label: `Profil „${p.name}”`,

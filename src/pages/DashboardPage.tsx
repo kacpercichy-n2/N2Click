@@ -19,6 +19,8 @@ import {
   getClient,
   getProject,
   loadPercent,
+  notificationsForPerson,
+  unreadNotificationCount,
   overdueTasksForPerson,
   overloadedDatesForPersonInRange,
   rangeAvailabilityForPerson,
@@ -42,12 +44,9 @@ import {
   dayNumber,
 } from '../utils/dates';
 import { formatMinutes, formatDuration } from '../utils/time';
+import { formatTimestamp } from '../utils/dates';
 import type { Task } from '../types';
-import {
-  teamHeaderLabel,
-  visibleNotifications,
-  type NotificationEntry,
-} from './dashboardPanels';
+import { teamHeaderLabel, visibleNotifications } from './dashboardPanels';
 
 // Staggered entrance for the dashboard cards.
 const dashGridVariants = {
@@ -135,7 +134,7 @@ function WorkloadDonut({
 }
 
 export function DashboardPage() {
-  const { state } = useStore();
+  const { state, dispatch } = useStore();
   const { openTask } = useOpenTask();
   const me = currentUser(state);
   const today = todayStr();
@@ -165,11 +164,15 @@ export function DashboardPage() {
 
   const coworkers = state.people.filter((p) => p.id !== me.id);
 
-  // Powiadomienia — UI slot only. There is no event source yet, so this is
-  // deliberately empty; the tile renders its empty state (see prompt 258 for a
-  // real feed). The visibility cap lives in `visibleNotifications`.
-  const notifications: NotificationEntry[] = [];
+  // Powiadomienia — derived feed (selectors.notificationsForPerson): @-wzmianki
+  // i przypisania zadań od innych osób z ostatniego okna. Pochodne, nietrwałe;
+  // `now` wstrzykiwany, by selektor był czysty. Cap (max 3) w `visibleNotifications`.
+  const notifications = notificationsForPerson(state, me.id, new Date().toISOString());
   const shownNotifications = visibleNotifications(notifications);
+  const unreadCount = unreadNotificationCount(notifications);
+  const markNotificationsSeen = () => {
+    if (unreadCount > 0) dispatch({ type: 'MARK_NOTIFICATIONS_SEEN' });
+  };
 
   // Workload donuts (today + this week) — both read the authoritative
   // availability selectors so a booked zero-availability day stays dangerous.
@@ -241,20 +244,63 @@ export function DashboardPage() {
         initial="hidden"
         animate="show"
       >
-        {/* RZĄD 2 · Powiadomienia — UI slot only (no data source yet). Renders
-         *  the empty state so the slot stays visible in the layout. */}
+        {/* RZĄD 2 · Powiadomienia — derived feed (@-wzmianki + przypisania).
+         *  Wiersz zadaniowy otwiera modal; wzmianka projektowa linkuje do
+         *  projektu. Pusta lista renderuje stan pusty. */}
         <motion.div className="dash-card dash-area-notifications" variants={dashCardVariants}>
-          <h2>Powiadomienia</h2>
+          <div className="dash-card-head">
+            <h2>
+              Powiadomienia
+              {unreadCount > 0 && (
+                <span className="dash-badge" aria-label={`${unreadCount} nieprzeczytanych`}>
+                  {unreadCount}
+                </span>
+              )}
+            </h2>
+            {unreadCount > 0 && (
+              <button type="button" className="link-btn" onClick={markNotificationsSeen}>
+                Oznacz jako przeczytane
+              </button>
+            )}
+          </div>
           {shownNotifications.length === 0 ? (
             <p className="field-hint">Brak nowych powiadomień</p>
           ) : (
             <ul className="dash-list">
-              {shownNotifications.map((n) => (
-                <li key={n.id} className="dash-row">
-                  <span className="dash-row-name">{n.title}</span>
-                  {n.when && <span className="dash-row-when">{n.when}</span>}
-                </li>
-              ))}
+              {shownNotifications.map((n) => {
+                const rowClass = `dash-row${n.read ? '' : ' is-unread'}`;
+                const body = (
+                  <>
+                    {!n.read && <span className="dash-unread-dot" aria-hidden="true" />}
+                    <span className="dash-row-name">{n.title}</span>
+                    <span className="dash-row-when">{formatTimestamp(n.createdAt)}</span>
+                  </>
+                );
+                return (
+                  <li key={n.id}>
+                    {n.taskId ? (
+                      <button
+                        type="button"
+                        className={rowClass}
+                        onClick={() => {
+                          markNotificationsSeen();
+                          openTask(n.taskId);
+                        }}
+                      >
+                        {body}
+                      </button>
+                    ) : (
+                      <Link
+                        className={rowClass}
+                        to={`/projects/${n.entityId}`}
+                        onClick={markNotificationsSeen}
+                      >
+                        {body}
+                      </Link>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </motion.div>

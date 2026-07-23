@@ -30,7 +30,12 @@
   `phone`, `avatar` (emoji), `capacity` (0–24), `work_days` (smallint[] ⊂ 1–7),
   `work_start_minutes`/`work_end_minutes` (migration
   20260717130000_profiles_planner_fields; hydrated into local people via
-  `MERGE_CLOUD_PEOPLE`),
+  `MERGE_CLOUD_PEOPLE`), `birth_date` (20260721030000),
+  `notifications_seen_at` (20260723120000_profiles_notifications_seen —
+  watermark „przeczytane" feedu powiadomień Panelu; owner/admin-editable, poza
+  `protect_profile_privileges`. Scalenie `applyCloudPeople` bierze PÓŹNIEJSZY z
+  lokalnego i chmurowego znacznika — watermark jest MONOTONICZNY, przeczytane
+  nie cofa się przy wyścigu urządzeń),
   `supervisor_id` → `profiles.id` (przełożony; nullable, `on delete set null`,
   no self-reference; only administrators may change it — enforced by the
   `app.protect_profile_privileges` trigger, same as `access_role`,
@@ -101,6 +106,22 @@
   RLS/polityk ani publikacji realtime; klient mirroruje ją jak zwykłe pole
   zadania (`cloudMirror.taskRow.is_draft = t.isDraft === true`; hydracja
   `plannerData` czyta `row.is_draft === true`, spoza `true` => opublikowane).
+- `tasks.created_by` (kolumna istniała od core; OŻYWIONA
+  20260723130000_tasks_created_by_default_backfill) — autor zadania (FK
+  `profiles.id`), STRUKTURALNY sygnał dla feedu powiadomień („X przypisał(a) Ci
+  zadanie"), czystszy niż parsowanie treści „utworzył(a) …" z activity log.
+  Wcześniej NULL na wszystkich wierszach; migracja nadaje `default auth.uid()`
+  (mirror CELOWO pomija kolumnę w `taskRow`, więc serwer wypełnia autora =
+  zalogowany twórca; polityki tasks nie odwołują się do `created_by`, więc
+  default jest bezpieczny) i backfilluje historię z najstarszego zdarzenia
+  „utworzył%". Reduktor stempluje `Task.createdBy = currentUserId` przy tworzeniu
+  (offline + natychmiastowy stan); hydracja `plannerData` czyta `row.created_by`
+  przez `personOf` (niemapowalny/NULL => brak klucza). Selektor
+  `notificationsForPerson` używa `task.createdBy`, fallback: activity log.
+  UWAGA: dormant `public.notifications` + `profiles.email_notifications` +
+  `notifications.emailed_at` NIE są podpięte — feed jest kliencko-pochodny
+  (świadoma decyzja; e-mail poza zakresem). Patrz pamięć
+  „dormant-cloud-notifications-infra".
 - `tasks.recurrence` (20260721170000_task_recurrence) — jsonb nullable
   (NULL/legacy = brak reguły): cykliczność zadania (RRULE-lite) + per-datowe
   wyjątki, osadzona jak `tasks.checklist`/`tasks.draft_hours`. Kształt kanoniczny:

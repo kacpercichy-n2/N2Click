@@ -546,6 +546,45 @@ describe('loadData migration v4 -> v5', () => {
     expect(byId('garbage').birthDate).toBe('');
   });
 
+  it('notificationsSeenAt: poprawny ISO przechodzi, brak/śmieci => nieobecny (klucz kanoniczny)', () => {
+    const person = (extra: Record<string, unknown>): Record<string, unknown> => ({
+      id: 'p1',
+      firstName: 'Ala',
+      lastName: '',
+      name: 'Ala',
+      email: '',
+      phone: '',
+      role: '',
+      departmentId: '',
+      companyId: '',
+      avatar: '',
+      capacity: 8,
+      accessRole: 'administrator',
+      passwordHash: '',
+      workDays: [1, 2, 3, 4, 5],
+      workStartMinutes: 480,
+      workEndMinutes: 960,
+      supervisorId: '',
+      ...extra,
+    });
+    const payload = {
+      ...emptyData(),
+      version: 7,
+      people: [
+        person({ id: 'miss' }), // brak pola
+        person({ id: 'ok', notificationsSeenAt: '2026-07-23T10:00:00.000Z' }), // ISO ok
+        person({ id: 'bad', notificationsSeenAt: 'wczoraj' }), // nieparsowalne
+        person({ id: 'garbage', notificationsSeenAt: 99 }), // nie-string
+      ],
+    };
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+    const byId = (id: string) => data.people.find((p) => p.id === id)!;
+    expect(byId('ok').notificationsSeenAt).toBe('2026-07-23T10:00:00.000Z');
+    expect('notificationsSeenAt' in byId('miss')).toBe(false);
+    expect('notificationsSeenAt' in byId('bad')).toBe(false);
+    expect('notificationsSeenAt' in byId('garbage')).toBe(false);
+  });
+
   it('companyId: brakujące => "", string przechodzi, nie-string => "" (repair migratePerson na każdym wczytaniu)', () => {
     const person = (extra: Record<string, unknown>): Record<string, unknown> => ({
       id: 'p1',

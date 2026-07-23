@@ -347,7 +347,7 @@ export async function loadPlannerSnapshot(
     db.select('milestones', 'id, project_id, name, milestone_date'),
     db.select(
       'tasks',
-      'id, project_id, status_id, title, description, start_date, end_date, estimated_hours, priority, work_category_id, department_id, checklist, order_index, is_draft, draft_hours, recurrence, created_at, updated_at',
+      'id, project_id, status_id, title, description, start_date, end_date, estimated_hours, priority, work_category_id, department_id, checklist, order_index, is_draft, draft_hours, recurrence, created_by, created_at, updated_at',
     ),
     db.select('task_assignments', 'task_id, profile_id'),
     db.select(
@@ -523,6 +523,10 @@ export async function loadPlannerSnapshot(
       isDraft: row.is_draft === true,
       ...(draftHours ? { draftHours } : {}),
       ...(recurrence ? { recurrence } : {}),
+      // Autor zadania (kolumna 20260723130000_tasks_created_by): profil chmury
+      // przez `personOf` -> lokalne id; niemapowalny/NULL => brak klucza (forma
+      // kanoniczna, jak w normalizeTaskMeta). Zasila feed powiadomień.
+      ...(personOf(row.created_by) ? { createdBy: personOf(row.created_by) } : {}),
       createdAt: str(row.created_at),
       updatedAt: str(row.updated_at) || str(row.created_at),
     });
