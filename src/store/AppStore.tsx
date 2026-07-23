@@ -86,7 +86,7 @@ import {
   isTicketPriority,
   isTicketStatus,
 } from '../utils/tickets';
-import { wouldCreateSupervisorCycle } from './selectors';
+import { mergeCoversEventOrRecurrence, wouldCreateSupervisorCycle } from './selectors';
 import { isOccurrenceDate, normalizeRecurrence } from '../utils/recurrence';
 import { ROLE_LABELS } from './permissions';
 import { registerPersonOrder } from '../utils/colors';
@@ -1697,15 +1697,21 @@ function setBlockTime(
     for (let i = 0; i < group.length - 1; i++) {
       const a = group[i];
       const b = group[i + 1];
-      if (blockEndMinutes(a.startMinutes, a.plannedHours) === b.startMinutes) {
-        const sumQ = toQuarters(a.plannedHours) + toQuarters(b.plannedHours);
-        workloadArr = workloadArr
-          .filter((w) => w.id !== b.id)
-          .map((w) => (w.id === a.id ? { ...w, plannedHours: sumQ * HOURS_STEP } : w));
-        survivorId = a.id;
-        merged = true;
-        break;
+      if (blockEndMinutes(a.startMinutes, a.plannedHours) !== b.startMinutes) continue;
+      const fusedEnd = blockEndMinutes(b.startMinutes, b.plannedHours);
+      // Merge is intentional-only: never let a fused block swallow a meeting /
+      // recurring occurrence the two blocks were split around (events never collide,
+      // so nothing else guards this). Skip this pair; keep them as two blocks.
+      if (mergeCoversEventOrRecurrence(state, entry.personId, date, a.startMinutes, fusedEnd)) {
+        continue;
       }
+      const sumQ = toQuarters(a.plannedHours) + toQuarters(b.plannedHours);
+      workloadArr = workloadArr
+        .filter((w) => w.id !== b.id)
+        .map((w) => (w.id === a.id ? { ...w, plannedHours: sumQ * HOURS_STEP } : w));
+      survivorId = a.id;
+      merged = true;
+      break;
     }
     if (!merged) break;
   }

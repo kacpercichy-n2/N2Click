@@ -18,7 +18,7 @@ import type {
   WorkloadEntry,
 } from '../types';
 import { DEFAULT_CAPACITY } from './storage';
-import { blockEndMinutes, hasCollision, hoursToMinutes, isBinEntry } from '../utils/time';
+import { blockEndMinutes, hasCollision, hoursToMinutes, isBinEntry, rangesOverlap } from '../utils/time';
 import { isBirthdayOn, isValidDateStr, parseDate } from '../utils/dates';
 import { expandOccurrences, type RecurrenceOccurrence } from '../utils/recurrence';
 
@@ -417,6 +417,35 @@ export function calendarEventsForDate(
     }
   }
   return out;
+}
+
+/**
+ * Czy scalenie bloków w przedział [mergedStart, mergedEnd) przykryłoby
+ * wydarzenie lub wystąpienie zadania cyklicznego zajmujące TĘ osobę tego dnia?
+ * Wydarzenia/wystąpienia są czysto prezentacyjne (inwariant 1) i nigdy nie
+ * kolidują z blokami — ale scalenie (funkcja intencjonalna) NIE MOŻE po cichu
+ * połknąć spotkania, wokół którego użytkownik rozdzielił dwa bloki. Stykająca
+ * się krawędź nie jest przykryciem (rangesOverlap traktuje styk jako brak kolizji).
+ */
+export function mergeCoversEventOrRecurrence(
+  state: AppData,
+  personId: string,
+  date: DateStr,
+  mergedStart: number,
+  mergedEnd: number,
+): boolean {
+  const forPerson = new Set([personId]);
+  for (const occ of calendarEventsForDate(state, date, forPerson)) {
+    if (rangesOverlap(mergedStart, mergedEnd, occ.startMinutes, occ.startMinutes + occ.durationMinutes)) {
+      return true;
+    }
+  }
+  for (const { occurrence } of recurrenceOccurrencesForDate(state, date, forPerson)) {
+    if (rangesOverlap(mergedStart, mergedEnd, occurrence.startMinutes, occurrence.startMinutes + occurrence.durationMinutes)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**

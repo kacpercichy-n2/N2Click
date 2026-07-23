@@ -1,3 +1,14 @@
+# Run state — 20260723-101440-n2hub-262 calendar split-blocks
+
+Merge guard so a fused same-task block never swallows a meeting the user split
+around. New `mergeCoversEventOrRecurrence` (selectors.ts); reducer merge loop
+(AppStore.tsx ~1697) skips guarded pairs; `findFreeStart` gains `avoidTouch`
+(time.ts) wired at 2 WeekView bin-schedule sites; new `eventBusyByPersonDate`
+in weekViewModel + will-merge affordance mirror. Tests added (blockActions,
+time). Focused 181, full suite 1412, build all green. wiki unchanged.
+
+---
+
 # Run state — 20260722-161131-n2hub-259 perf: persist coalescing
 
 New `src/store/persistCoalescer.ts` (trailing non-restarting, 1000ms) wired into
