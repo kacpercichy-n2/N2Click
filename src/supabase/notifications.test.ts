@@ -160,18 +160,37 @@ function fakeDb(
 }
 
 describe('loadNotificationsSnapshot — hydracja + graceful degradation', () => {
-  it('degraduje się do [] gdy tabela nie istnieje (błąd selectu)', async () => {
+  it('brak tabeli (42P01) => available z pustą listą (autorytatywna podmiana)', async () => {
     const db = fakeDb(() => ({ rows: [], error: 'relation "public.notifications" does not exist' }));
-    await expect(loadNotificationsSnapshot(db, maps())).resolves.toEqual([]);
+    await expect(loadNotificationsSnapshot(db, maps())).resolves.toEqual({
+      available: true,
+      notifications: [],
+    });
   });
 
-  it('degraduje się do [] gdy select rzuci wyjątkiem', async () => {
+  it('brak tabeli (PGRST205 schema cache) => available z pustą listą', async () => {
+    const db = fakeDb(() => ({
+      rows: [],
+      error: "Could not find the table 'public.notifications' in the schema cache",
+    }));
+    await expect(loadNotificationsSnapshot(db, maps())).resolves.toEqual({
+      available: true,
+      notifications: [],
+    });
+  });
+
+  it('błąd PRZEJŚCIOWY selectu => available:false (wołający zostawia poprzedni stan)', async () => {
+    const db = fakeDb(() => ({ rows: [], error: 'timeout / network error' }));
+    await expect(loadNotificationsSnapshot(db, maps())).resolves.toEqual({ available: false });
+  });
+
+  it('wyjątek selectu => available:false (nie miga pustką panelu)', async () => {
     const db: Pick<PlannerDb, 'select'> = {
       select: async () => {
         throw new Error('network');
       },
     };
-    await expect(loadNotificationsSnapshot(db, maps())).resolves.toEqual([]);
+    await expect(loadNotificationsSnapshot(db, maps())).resolves.toEqual({ available: false });
   });
 
   it('mapuje wiersze; read_at null => nieprzeczytane, nieznany type pomijany', async () => {
@@ -184,16 +203,19 @@ describe('loadNotificationsSnapshot — hydracja + graceful degradation', () => 
       error: null,
     }));
     const out = await loadNotificationsSnapshot(db, maps());
-    expect(out).toEqual([
-      {
-        id: NID,
-        recipientId: PB, // reverse map cloud->local
-        type: 'task_assigned',
-        payload: { taskId: TK, projectId: PR },
-        readAt: '',
-        createdAt: '2026-07-07T10:00:00.000Z',
-      },
-    ]);
+    expect(out).toEqual({
+      available: true,
+      notifications: [
+        {
+          id: NID,
+          recipientId: PB, // reverse map cloud->local
+          type: 'task_assigned',
+          payload: { taskId: TK, projectId: PR },
+          readAt: '',
+          createdAt: '2026-07-07T10:00:00.000Z',
+        },
+      ],
+    });
   });
 
   it('mapuje payload.actorId (id profilu chmury) na lokalne id osoby', async () => {
@@ -205,7 +227,7 @@ describe('loadNotificationsSnapshot — hydracja + graceful degradation', () => 
       error: null,
     }));
     const out = await loadNotificationsSnapshot(db, maps());
-    expect(out[0].payload.actorId).toBe(PA); // reverse map cloud->local
+    expect(out.available && out.notifications[0].payload.actorId).toBe(PA); // reverse map cloud->local
   });
 });
 

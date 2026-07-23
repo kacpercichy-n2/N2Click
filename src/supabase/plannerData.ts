@@ -759,18 +759,37 @@ function sortStable<T extends { id: string }>(rows: T[], key: (row: T) => string
 // ---- Powiadomienia in-app (osobny, degradujący się bezpiecznie loader) -------
 
 /**
+ * Wynik hydracji powiadomień. `available: true` => wołający PODMIENIA kolekcję
+ * autorytatywnie (dane albo PUSTO, gdy tabela nie istnieje). `available: false`
+ * => błąd PRZEJŚCIOWY (sieć/backend): wołający NIE dispatchuje scalenia i
+ * ZOSTAWIA poprzedni stan (panel nie miga pustką na chwilowym błędzie).
+ */
+export type NotificationsSnapshotResult =
+  | { available: true; notifications: Notification[] }
+  | { available: false };
+
+// Komunikaty PostgREST/PG dla braku tabeli/relacji (migracja niezaaplikowana):
+// PG 42P01 „relation does not exist", PostgREST PGRST205 „Could not find the
+// table ... in the schema cache". Traktujemy je jako trwałą degradację do [].
+const MISSING_TABLE_RE = /does not exist|PGRST205|could not find the table|schema cache|42P01/i;
+
+/**
  * Wczytuje własne powiadomienia zalogowanego odbiorcy (RLS zawęża SELECT do
  * `recipient_id = auth.uid()`). ŚWIADOMIE ODDZIELNIE od `loadPlannerSnapshot`:
  * `read_at`/tabela `notifications` jest rozszerzeniem addytywnym, a migracja może
- * być jeszcze niezaaplikowana w środowisku — dlatego JAKIKOLWIEK błąd selectu
- * (w tym „relation does not exist") degraduje się do PUSTEJ listy, nigdy nie
- * blokując reszty syncu. Wiersz bez id / niemapowalnego odbiorcy / z nieznanym
- * `type` jest pomijany. `read_at` null => '' (nieprzeczytane).
+ * być jeszcze niezaaplikowana w środowisku.
+ *
+ * ROZRÓŻNIENIE BŁĘDÓW: brak tabeli (42P01/PGRST205) degraduje się do PUSTEJ
+ * listy z `available: true` (podmiana autorytatywna — środowisko bez migracji
+ * po prostu nie ma powiadomień). Błąd PRZEJŚCIOWY (sieć/wyjątek) zwraca
+ * `available: false` — wołający zostawia poprzedni stan, żeby panel nie migał
+ * pustką na chwilowym błędzie. Wiersz bez id / niemapowalnego odbiorcy / z
+ * nieznanym `type` jest pomijany. `read_at` null => '' (nieprzeczytane).
  */
 export async function loadNotificationsSnapshot(
   db: Pick<PlannerDb, 'select'>,
   maps: CloudIdMaps,
-): Promise<Notification[]> {
+): Promise<NotificationsSnapshotResult> {
   let res: Awaited<ReturnType<PlannerDb['select']>>;
   try {
     res = await db.select(
@@ -778,9 +797,15 @@ export async function loadNotificationsSnapshot(
       'id, recipient_id, type, payload, read_at, created_at',
     );
   } catch {
-    return [];
+    // Wyjątek (np. sieć) => przejściowe: nie ruszaj panelu.
+    return { available: false };
   }
-  if (res.error) return []; // np. tabela nie istnieje (migracja niezaaplikowana)
+  if (res.error) {
+    // Brak tabeli => degradacja do [] (podmiana). Inny błąd => przejściowe.
+    return MISSING_TABLE_RE.test(res.error)
+      ? { available: true, notifications: [] }
+      : { available: false };
+  }
   const personOf = makeReverse(maps.people, maps.cloudProfileIds);
   const notifications: Notification[] = [];
   for (const row of res.rows) {
@@ -808,7 +833,7 @@ export async function loadNotificationsSnapshot(
       createdAt: str(row.created_at),
     });
   }
-  return notifications;
+  return { available: true, notifications };
 }
 
 // ---- Flaga wycofania zapisów lokalnych (app_settings) ------------------------

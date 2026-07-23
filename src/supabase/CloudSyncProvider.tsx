@@ -244,11 +244,17 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
           type: 'MERGE_CLOUD_ENTITIES',
           payload: { ...result.payload, people: buildCloudPeoplePayload(snap.profiles) },
         });
-        // Powiadomienia in-app: OSOBNY loader degradujący się do [] (tabela może
-        // być jeszcze niezaaplikowana) — nie blokuje reszty syncu ani statusu.
-        const notifications = await loadNotificationsSnapshot(getDb(), maps);
-        if (mountedRef.current) {
-          dispatch({ type: 'MERGE_CLOUD_NOTIFICATIONS', payload: { notifications } });
+        // Powiadomienia in-app: OSOBNY loader — nie blokuje reszty syncu ani
+        // statusu. Brak tabeli (migracja niezaaplikowana) => `available` z []
+        // (podmiana autorytatywna). Błąd PRZEJŚCIOWY => `available: false`:
+        // NIE dispatchujemy scalenia, zostawiamy poprzedni stan (panel nie miga
+        // pustką na chwilowym błędzie sieci).
+        const notifResult = await loadNotificationsSnapshot(getDb(), maps);
+        if (mountedRef.current && notifResult.available) {
+          dispatch({
+            type: 'MERGE_CLOUD_NOTIFICATIONS',
+            payload: { notifications: notifResult.notifications },
+          });
         }
         setStatus('ready');
         // Odświeżenie w tle nie przechodzi przez krawędź 'hydrating'→'ready',

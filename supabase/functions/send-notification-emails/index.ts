@@ -16,6 +16,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import {
   buildRecipientEmail,
+  claimBatchIds,
   eligibleRecipients,
   groupNotificationsByRecipient,
   readMailerConfig,
@@ -70,10 +71,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  // 3. Wsad niewysłanych powiadomień (najstarsze pierwsze).
-  const { data: rawNotifications, error: notifError } = await db
+  // 3. Wybór wsadu niewysłanych powiadomień (najstarsze pierwsze) — tylko id.
+  const { data: pendingRows, error: notifError } = await db
     .from('notifications')
-    .select('id, recipient_id, type, payload')
+    .select('id')
     .is('emailed_at', null)
     .order('created_at', { ascending: true })
     .limit(BATCH_LIMIT);
@@ -81,13 +82,43 @@ Deno.serve(async (req: Request): Promise<Response> => {
     console.error('send-notification-emails: nie udało się pobrać powiadomień', notifError.code ?? '');
     return json(500, { error: 'Błąd serwera. Spróbuj ponownie później.' });
   }
-  const notifications: NotificationRecord[] = (rawNotifications ?? []).map((r) => ({
-    id: String(r.id),
-    recipientId: String(r.recipient_id),
-    type: r.type,
-    payload: (r.payload ?? {}) as NotificationRecord['payload'],
-  }));
+  const batchIds = claimBatchIds((pendingRows ?? []).map((r) => ({ id: String(r.id) })));
+  if (batchIds.length === 0) {
+    return json(200, { ok: true, configured: true, sent: 0, skipped: 0 });
+  }
+
+  // 3b. CLAIM-BEFORE-SEND: JEDNYM UPDATE-em stempluj `emailed_at` na wybranym
+  //     wsadzie z warunkiem `emailed_at is null` i zwróć REALNIE zaklaśnięte
+  //     wiersze (`.select()`). Nakładające się cykle / druga instancja cronu
+  //     dostają ROZŁĄCZNE podzbiory — wiersz już zaklaśnięty gdzie indziej
+  //     wypada z `emailed_at is null`. Po tym kroku żaden zaklaśnięty wiersz nie
+  //     zostanie wybrany ponownie: porażka wysyłki = najwyżej brak jednego maila
+  //     (powiadomienie i tak żyje in-app), NIGDY zbiorczy duplikat co cykl.
+  const stampedAt = new Date().toISOString();
+  const { data: claimedRows, error: claimError } = await db
+    .from('notifications')
+    .update({ emailed_at: stampedAt })
+    .in('id', batchIds)
+    .is('emailed_at', null)
+    .select('id, recipient_id, type, payload');
+  if (claimError) {
+    console.error('send-notification-emails: nie udało się zaklaśnąć wsadu', claimError.code ?? '');
+    return json(500, { error: 'Błąd serwera. Spróbuj ponownie później.' });
+  }
+  // `.select()` po UPDATE nie gwarantuje kolejności `created_at`, więc
+  // przywracamy porządek NAJSTARSZE-PIERWSZE wg pozycji w `batchIds` (wsad był
+  // sortowany rosnąco po `created_at`) — treść maila ma linie w tej kolejności.
+  const orderOf = new Map(batchIds.map((id, i) => [id, i]));
+  const notifications: NotificationRecord[] = (claimedRows ?? [])
+    .map((r) => ({
+      id: String(r.id),
+      recipientId: String(r.recipient_id),
+      type: r.type,
+      payload: (r.payload ?? {}) as NotificationRecord['payload'],
+    }))
+    .sort((a, b) => (orderOf.get(a.id) ?? 0) - (orderOf.get(b.id) ?? 0));
   if (notifications.length === 0) {
+    // Inny przebieg zaklaśnął cały wsad w międzyczasie — nic do zrobienia.
     return json(200, { ok: true, configured: true, sent: 0, skipped: 0 });
   }
 
@@ -137,9 +168,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const eligible = eligibleRecipients(recipientProfiles);
   const { batches, skippedIds } = groupNotificationsByRecipient(notifications, eligible);
 
-  // 6. Wysyłka: jeden mail per odbiorca. Sukces => oznacz `emailed_at`;
-  //    błąd wysyłki => NIE oznaczaj (kolejny cron spróbuje ponownie).
-  const toMark: string[] = [...skippedIds];
+  // 6. Wysyłka: jeden mail per odbiorca. Wsad jest JUŻ zaklaśnięty (krok 3b), więc
+  //    `emailed_at` jest ustawione — nie ma tu żadnego zapisu. Porażka wysyłki po
+  //    zaklaśnięciu = najwyżej brak jednego maila (powiadomienie żyje in-app),
+  //    NIGDY zbiorczy duplikat. Pominięci (opt-out/brak adresu) też są już
+  //    zaklaśnięci, więc kolejny cron ich nie wybierze.
   let sent = 0;
   for (const batch of batches) {
     const email = buildRecipientEmail(batch, names, mailer.hubUrl);
@@ -164,24 +197,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
         continue;
       }
       sent += 1;
-      for (const n of batch.notifications) toMark.push(n.id);
     } catch (_e) {
       console.error('send-notification-emails: błąd sieci przy wysyłce do dostawcy');
-      // Bez oznaczenia — retry w kolejnym cyklu.
-    }
-  }
-
-  // 7. Idempotencja: ustaw `emailed_at` na wysłanych i świadomie pominiętych, żeby
-  //    kolejny cron ich nie wybierał. Wiersze z błędem wysyłki zostają null.
-  if (toMark.length > 0) {
-    const stampedAt = new Date().toISOString();
-    const { error: markError } = await db
-      .from('notifications')
-      .update({ emailed_at: stampedAt })
-      .in('id', toMark);
-    if (markError) {
-      console.error('send-notification-emails: nie udało się oznaczyć emailed_at', markError.code ?? '');
-      return json(500, { error: 'Błąd serwera. Spróbuj ponownie później.' });
+      // Zaklaśnięte wcześniej — świadomie NIE ponawiamy (unikamy duplikatów).
     }
   }
 
