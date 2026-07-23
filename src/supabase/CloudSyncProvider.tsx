@@ -38,8 +38,14 @@ import {
   type CloudOp,
 } from './cloudMirror';
 import { buildCloudPeoplePayload, type OrgSnapshot } from './referenceData';
+import { createLiveTracker } from './liveChannelTracker';
 
 export type CloudSyncStatus = 'idle' | 'hydrating' | 'ready' | 'error';
+
+// Ile ms nieprzerwanej utraty statusu kanału traktujemy jako realną utratę
+// live (a nie przejściowy flap drop→rejoin). Krótki rejoin w tym oknie =
+// ciągłość, więc baner stale-hint nie miga przy cichym syncu.
+const LIVE_DROP_GRACE_MS = 5_000;
 
 export interface CloudSyncValue {
   status: CloudSyncStatus;
@@ -295,23 +301,36 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   // Subskrypcja Realtime: jedno źródło zdarzeń postgres_changes dla wszystkich
   // opublikowanych tabel (publikacja supabase_realtime; RLS obowiązuje).
   // Zdarzenie => zaplanuj pełną synchronizację (debounce zlewa serie zmian).
+  //
+  // Flaga `live` przechodzi przez histerezę (createLiveTracker): zwrotka
+  // `subscribe` woła się na KAŻDYM przejściu socketu, więc przejściowy flap
+  // (drop → natychmiastowy rejoin) NIE zbija `live` — dopiero utrata dłuższa
+  // niż LIVE_DROP_GRACE_MS. Dzięki temu udany cichy sync = zero banera, a realna
+  // utrata kanału nadal odsłania baner stale-hint (fallback).
   useEffect(() => {
     if (!active || !userId) {
       setLive(false);
       return;
     }
     const client = getSupabaseClient();
+    const tracker = createLiveTracker({
+      graceMs: LIVE_DROP_GRACE_MS,
+      setLive: (next) => {
+        if (mountedRef.current) setLive(next);
+      },
+      schedule: (fn, ms) => setTimeout(fn, ms),
+      cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    });
     const channel = client
       .channel(`planner-live-${userId}`)
       .on('postgres_changes', { event: '*', schema: 'public' }, () => {
         liveSyncRef.current();
       })
       .subscribe((subscribeStatus: string) => {
-        if (!mountedRef.current) return;
-        setLive(subscribeStatus === 'SUBSCRIBED');
+        tracker.onStatus(subscribeStatus);
       });
     return () => {
-      setLive(false);
+      tracker.dispose();
       if (liveSyncTimerRef.current !== null) {
         clearTimeout(liveSyncTimerRef.current);
         liveSyncTimerRef.current = null;
