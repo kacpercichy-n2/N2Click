@@ -189,6 +189,10 @@ export function nextFreeStart(
 export function findFreeStart(
   blocks: Array<{ startMinutes: number; plannedHours: number }>,
   durationMin: number,
+  /** Same-task blocks whose edges the result should avoid touching, when a
+   *  non-touching collision-free slot is available (prevents an unintended
+   *  auto-merge; a deliberate on-edge drag still merges). */
+  avoidTouch?: Array<{ startMinutes: number; plannedHours: number }>,
 ): number | null {
   if (
     !Number.isFinite(durationMin) ||
@@ -199,35 +203,65 @@ export function findFreeStart(
   ) {
     return null;
   }
-  if (blocks.length === 0) return clampBlockStart(WORKDAY_START_MIN, durationMin);
 
-  // Prefer appending after the last block (identical to nextFreeStart's answer
-  // whenever no clamp would be needed — preserves every current placement).
-  const maxEnd = blocks.reduce(
-    (m, b) => Math.max(m, blockEndMinutes(b.startMinutes, b.plannedHours)),
-    0,
-  );
-  const snapped = Math.ceil(maxEnd / MINUTE_STEP) * MINUTE_STEP;
-  if (snapped + durationMin <= DAY_MINUTES) return snapped;
-
-  // Append would clamp — scan for the earliest real gap instead.
-  const candidateSet = new Set<number>([0, WORKDAY_START_MIN]);
-  for (const b of blocks) {
-    const end = blockEndMinutes(b.startMinutes, b.plannedHours);
-    candidateSet.add(Math.ceil(end / MINUTE_STEP) * MINUTE_STEP);
-  }
-  const candidates = [...candidateSet];
-  const working = candidates.filter((c) => c >= WORKDAY_START_MIN).sort((a, b) => a - b);
-  const night = candidates.filter((c) => c < WORKDAY_START_MIN).sort((a, b) => a - b);
-  for (const candidate of [...working, ...night]) {
-    if (candidate + durationMin > DAY_MINUTES) continue;
-    const end = candidate + durationMin;
-    const collides = blocks.some((b) =>
-      rangesOverlap(candidate, end, b.startMinutes, blockEndMinutes(b.startMinutes, b.plannedHours)),
+  // True when candidate `c` sits exactly on an avoidTouch block's edge (its end,
+  // or `c`'s end abutting that block's start) — the case that would auto-merge.
+  const touchesAvoid = (c: number): boolean => {
+    if (!avoidTouch) return false;
+    return avoidTouch.some(
+      (t) =>
+        c === blockEndMinutes(t.startMinutes, t.plannedHours) ||
+        c + durationMin === t.startMinutes,
     );
-    if (!collides) return candidate;
+  };
+
+  // Earliest in-day, collision-free candidate from the standard set
+  // ({0, WORKDAY_START_MIN} ∪ each block's snapped-up end), working-hours first
+  // then night, ascending. `requireNoTouch` also rejects avoidTouch edges.
+  const scanGap = (requireNoTouch: boolean): number | null => {
+    const candidateSet = new Set<number>([0, WORKDAY_START_MIN]);
+    for (const b of blocks) {
+      const end = blockEndMinutes(b.startMinutes, b.plannedHours);
+      candidateSet.add(Math.ceil(end / MINUTE_STEP) * MINUTE_STEP);
+    }
+    const candidates = [...candidateSet];
+    const working = candidates.filter((c) => c >= WORKDAY_START_MIN).sort((a, b) => a - b);
+    const night = candidates.filter((c) => c < WORKDAY_START_MIN).sort((a, b) => a - b);
+    for (const candidate of [...working, ...night]) {
+      if (candidate + durationMin > DAY_MINUTES) continue;
+      const end = candidate + durationMin;
+      const collides = blocks.some((b) =>
+        rangesOverlap(candidate, end, b.startMinutes, blockEndMinutes(b.startMinutes, b.plannedHours)),
+      );
+      if (collides) continue;
+      if (requireNoTouch && touchesAvoid(candidate)) continue;
+      return candidate;
+    }
+    return null;
+  };
+
+  // Current answer, unchanged: append-preferred, else earliest-fit gap.
+  let primary: number | null;
+  if (blocks.length === 0) {
+    primary = clampBlockStart(WORKDAY_START_MIN, durationMin);
+  } else {
+    // Prefer appending after the last block (identical to nextFreeStart's answer
+    // whenever no clamp would be needed — preserves every current placement).
+    const maxEnd = blocks.reduce(
+      (m, b) => Math.max(m, blockEndMinutes(b.startMinutes, b.plannedHours)),
+      0,
+    );
+    const snapped = Math.ceil(maxEnd / MINUTE_STEP) * MINUTE_STEP;
+    primary = snapped + durationMin <= DAY_MINUTES ? snapped : scanGap(false);
   }
-  return null;
+
+  // Backward compatible: no avoidTouch (or nothing found) ⇒ byte-identical result.
+  if (primary === null || !avoidTouch || avoidTouch.length === 0) return primary;
+  if (!touchesAvoid(primary)) return primary;
+
+  // primary would touch a same-task edge → prefer a non-touching gap if one exists.
+  const nonTouching = scanGap(true);
+  return nonTouching !== null ? nonTouching : primary;
 }
 
 /**

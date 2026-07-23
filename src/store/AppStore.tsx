@@ -28,6 +28,7 @@ import type {
   JobTitle,
   LastViewFilter,
   Milestone,
+  Notification,
   Person,
   Project,
   ProjectDocument,
@@ -86,7 +87,8 @@ import {
   isTicketPriority,
   isTicketStatus,
 } from '../utils/tickets';
-import { wouldCreateSupervisorCycle } from './selectors';
+import { isNotificationType } from '../utils/notifications';
+import { mergeCoversEventOrRecurrence, wouldCreateSupervisorCycle } from './selectors';
 import { isOccurrenceDate, normalizeRecurrence } from '../utils/recurrence';
 import { ROLE_LABELS } from './permissions';
 import { registerPersonOrder } from '../utils/colors';
@@ -207,6 +209,9 @@ export interface PersonDraft {
   // Data urodzenia (yyyy-MM-dd); '' gdy nieustawiona. Opcjonalna, walidowana na
   // repair przy wczytaniu (patrz migratePerson w storage.ts).
   birthDate: string;
+  // Opt-in na powiadomienia mailowe. OPCJONALNE w draftcie (brak => false),
+  // spójnie z `Person.emailNotifications`.
+  emailNotifications?: boolean;
   // NOTE: passwordHash is intentionally NOT part of the draft — it is set only
   // via SET_PASSWORD so a profile save can never clobber a stored hash.
 }
@@ -358,7 +363,14 @@ export type Action =
   | { type: 'MERGE_CLOUD_PEOPLE'; payload: CloudPersonMergeRow[] }
   // AUTORYTATYWNA hydracja słowników organizacji (działy, statusy, typy usług,
   // kategorie prac) z chmury. Fail-closed na invariancie statusów.
-  | { type: 'MERGE_CLOUD_DICTIONARIES'; payload: CloudDictionariesPayload };
+  | { type: 'MERGE_CLOUD_DICTIONARIES'; payload: CloudDictionariesPayload }
+  // Powiadomienia in-app: oznaczenie jako przeczytane (pojedynczo / wszystkie)
+  // oraz AUTORYTATYWNA hydracja własnych powiadomień odbiorcy z chmury. Nieznane
+  // id / brak nieprzeczytanych / niepoprawny ładunek => TA SAMA referencja
+  // (inwariant 6).
+  | { type: 'MARK_NOTIFICATION_READ'; notificationId: string }
+  | { type: 'MARK_ALL_NOTIFICATIONS_READ' }
+  | { type: 'MERGE_CLOUD_NOTIFICATIONS'; payload: CloudNotificationsPayload };
 
 function uid(): string {
   return crypto.randomUUID();
@@ -1712,15 +1724,21 @@ function setBlockTime(
     for (let i = 0; i < group.length - 1; i++) {
       const a = group[i];
       const b = group[i + 1];
-      if (blockEndMinutes(a.startMinutes, a.plannedHours) === b.startMinutes) {
-        const sumQ = toQuarters(a.plannedHours) + toQuarters(b.plannedHours);
-        workloadArr = workloadArr
-          .filter((w) => w.id !== b.id)
-          .map((w) => (w.id === a.id ? { ...w, plannedHours: sumQ * HOURS_STEP } : w));
-        survivorId = a.id;
-        merged = true;
-        break;
+      if (blockEndMinutes(a.startMinutes, a.plannedHours) !== b.startMinutes) continue;
+      const fusedEnd = blockEndMinutes(b.startMinutes, b.plannedHours);
+      // Merge is intentional-only: never let a fused block swallow a meeting /
+      // recurring occurrence the two blocks were split around (events never collide,
+      // so nothing else guards this). Skip this pair; keep them as two blocks.
+      if (mergeCoversEventOrRecurrence(state, entry.personId, date, a.startMinutes, fusedEnd)) {
+        continue;
       }
+      const sumQ = toQuarters(a.plannedHours) + toQuarters(b.plannedHours);
+      workloadArr = workloadArr
+        .filter((w) => w.id !== b.id)
+        .map((w) => (w.id === a.id ? { ...w, plannedHours: sumQ * HOURS_STEP } : w));
+      survivorId = a.id;
+      merged = true;
+      break;
     }
     if (!merged) break;
   }
@@ -2011,6 +2029,8 @@ function personFromDraft(draft: PersonDraft): Omit<Person, 'id' | 'passwordHash'
     supervisorId: draft.supervisorId,
     // Data urodzenia: poprawna 'yyyy-MM-dd' albo '' (śmieci nie persystują).
     birthDate: isValidDateStr(draft.birthDate) ? draft.birthDate : '',
+    // Opt-in mailowy: brak => false (nie spamujemy).
+    emailNotifications: draft.emailNotifications === true,
   };
 }
 
@@ -2258,6 +2278,7 @@ function isValidCloudPersonRow(r: CloudPersonMergeRow): boolean {
   if (typeof r.phone !== 'string' || typeof r.avatar !== 'string') return false;
   if (typeof r.supervisorEmail !== 'string') return false;
   if (typeof r.birthDate !== 'string') return false;
+  if (r.emailNotifications !== undefined && typeof r.emailNotifications !== 'boolean') return false;
   if (!Number.isFinite(r.capacity) || r.capacity < 0 || r.capacity > 24) return false;
   if (!Array.isArray(r.workDays)) return false;
   if (r.workDays.some((d) => !Number.isInteger(d) || d < 1 || d > 7)) return false;
@@ -2295,6 +2316,8 @@ function cloudPersonFields(row: CloudPersonMergeRow): Omit<
     workEndMinutes: row.workEndMinutes,
     // Poprawna 'yyyy-MM-dd' albo '' (spójnie z personFromDraft/migratePerson).
     birthDate: isValidDateStr(row.birthDate) ? row.birthDate : '',
+    // Opt-in mailowy z profilu chmury (brak => false).
+    emailNotifications: row.emailNotifications === true,
   };
 }
 
@@ -2362,6 +2385,7 @@ function applyCloudPeople(
       person.workStartMinutes === fields.workStartMinutes &&
       person.workEndMinutes === fields.workEndMinutes &&
       person.birthDate === fields.birthDate &&
+      (person.emailNotifications ?? false) === fields.emailNotifications &&
       sameWorkDays(person.workDays, fields.workDays);
     if (same) {
       updatedPeople.push(person);
@@ -2524,6 +2548,74 @@ function mergeCloudDictionaries(state: AppData, payload: CloudDictionariesPayloa
     jobTitles: [...jobTitles],
     companies: [...companies],
     statuses: sorted,
+  };
+}
+
+// ---- Powiadomienia in-app -----------------------------------------------------
+
+export interface CloudNotificationsPayload {
+  notifications: Notification[];
+}
+
+/** Strukturalna walidacja wiersza powiadomienia (fail-closed jak reszta hydracji). */
+function isValidNotificationRow(v: unknown): v is Notification {
+  if (!isObjWithId(v)) return false;
+  const n = v as unknown as Record<string, unknown>;
+  return (
+    typeof n.recipientId === 'string' &&
+    n.recipientId !== '' &&
+    isNotificationType(n.type) &&
+    typeof n.readAt === 'string' &&
+    typeof n.createdAt === 'string' &&
+    typeof n.payload === 'object' &&
+    n.payload !== null &&
+    !Array.isArray(n.payload)
+  );
+}
+
+/**
+ * AUTORYTATYWNA hydracja powiadomień odbiorcy z chmury. Payload REPLACES kolekcję
+ * (reference-preserving: wiersz bajtowo równy zachowuje referencję, kolekcja bez
+ * zmian zostaje tą samą tablicą — brak migotania przy odświeżeniu w tle).
+ * Fail-closed (inwariant 6): payload spoza obiektu, `notifications` nie-tablica
+ * lub jakikolwiek strukturalnie zły wiersz => ORYGINALNA referencja stanu.
+ */
+function mergeCloudNotifications(state: AppData, payload: CloudNotificationsPayload): AppData {
+  if (typeof payload !== 'object' || payload === null) return state;
+  const { notifications } = payload;
+  if (!Array.isArray(notifications)) return state;
+  if (!notifications.every(isValidNotificationRow)) return state;
+  const merged = reconcileRows(state.notifications, notifications);
+  return merged === state.notifications ? state : { ...state, notifications: merged };
+}
+
+/**
+ * Oznaczenie JEDNEGO powiadomienia jako przeczytane (`read_at`). Nieznane id albo
+ * już przeczytane => TA SAMA referencja (inwariant 6). Kolumna `read_at`
+ * lustruje się do chmury przez diff (cloudMirror). Bez wpisu dziennika.
+ */
+function markNotificationRead(state: AppData, notificationId: string): AppData {
+  const target = state.notifications.find((n) => n.id === notificationId);
+  if (!target || target.readAt !== '') return state;
+  const ts = nowIso();
+  return {
+    ...state,
+    notifications: state.notifications.map((n) =>
+      n.id === notificationId ? { ...n, readAt: ts } : n,
+    ),
+  };
+}
+
+/** Oznaczenie WSZYSTKICH nieprzeczytanych jako przeczytane. Brak nieprzeczytanych
+ *  => TA SAMA referencja (inwariant 6). */
+function markAllNotificationsRead(state: AppData): AppData {
+  if (!state.notifications.some((n) => n.readAt === '')) return state;
+  const ts = nowIso();
+  return {
+    ...state,
+    notifications: state.notifications.map((n) =>
+      n.readAt === '' ? { ...n, readAt: ts } : n,
+    ),
   };
 }
 
@@ -3758,6 +3850,12 @@ export function reducer(state: AppData, action: Action): AppData {
       return mergeCloudPeople(state, action.payload);
     case 'MERGE_CLOUD_DICTIONARIES':
       return mergeCloudDictionaries(state, action.payload);
+    case 'MARK_NOTIFICATION_READ':
+      return markNotificationRead(state, action.notificationId);
+    case 'MARK_ALL_NOTIFICATIONS_READ':
+      return markAllNotificationsRead(state);
+    case 'MERGE_CLOUD_NOTIFICATIONS':
+      return mergeCloudNotifications(state, action.payload);
     default:
       return state;
   }

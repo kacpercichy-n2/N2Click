@@ -84,6 +84,63 @@ export function isSameDayRange(dateFrom: DateStr, dateTo: DateStr): boolean {
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-07-23-powiadomienia-kalendarz-filtry',
+    dateFrom: '2026-07-23',
+    dateTo: '2026-07-23',
+    summary:
+      'Powiadomienia w aplikacji (z opcją kopii na maila), naprawione planowanie zadań w kilku blokach, spokojniejszy kalendarz i ekran bez wyskakującego banera, posortowane projekty i odchudzona belka filtrów.',
+    items: [
+      {
+        area: 'Panel',
+        feature: 'Powiadomienia w aplikacji',
+        description:
+          'Karta „Powiadomienia” na Panelu w końcu działa: dostaniesz znać, gdy ktoś przypisze Ci zadanie, doda komentarz w Twoim projekcie albo wrzuci pracę do Twojego zasobnika. Widzisz maksymalnie 3 najnowsze nieprzeczytane, a każde możesz odhaczyć pojedynczo lub wszystkie naraz.',
+      },
+      {
+        area: 'Panel',
+        feature: 'Kopia powiadomień na maila (opcjonalnie)',
+        description:
+          'W swoim profilu możesz włączyć „Powiadomienia mailowe” — wtedy zbiorczy mail z nowymi powiadomieniami przyjdzie też na Twoją skrzynkę. Domyślnie ta opcja jest wyłączona, więc nikt nie dostaje maili bez własnej zgody.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'To samo zadanie w kilku blokach jednego dnia',
+        description:
+          'Możesz rozplanować jedno zadanie na dwa osobne bloki (np. przed i po spotkaniu) — system nie sklei ich już samoczynnie w jeden długi blok nachodzący na spotkanie. Łączenie bloków działa tylko wtedy, gdy sam upuścisz je dokładnie na styk i nie zasłoni to żadnego wydarzenia.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Lepsza podpowiedź godziny przy „Zaplanuj część”',
+        description:
+          'Planując kolejną część zadania, dostaniesz sensowną propozycję startu (np. kwadrans po istniejącym bloku) zamiast północy.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Zadania cykliczne bez migotania',
+        description:
+          'Wystąpienia zadań cyklicznych są stabilne — nie znikają i nie pojawiają się ponownie podczas odświeżania danych w tle.',
+      },
+      {
+        area: 'Ogólne',
+        feature: 'Koniec wyskakującego niebieskiego banera',
+        description:
+          'Pasek o odświeżaniu danych nie pojawia się już co pół minuty przy normalnej pracy. Zobaczysz go tylko wtedy, gdy połączenie na żywo faktycznie padnie i dane mogą być nieaktualne.',
+      },
+      {
+        area: 'Projekty',
+        feature: 'Lista projektów posortowana po kliencie',
+        description:
+          'Projekty na liście są ułożone alfabetycznie według nazwy klienta, a w obrębie klienta — według nazwy projektu. Koniec szukania po „losowej” kolejności.',
+      },
+      {
+        area: 'Filtry',
+        feature: 'Wybór osób schowany w panelu „Filtry”',
+        description:
+          'Przyciski z osobami nie zajmują już całej belki nad listami. Osoby wybierasz w panelu „Filtry”, a na belce zostają tylko chipy aktualnie wybranych (z możliwością szybkiego zdjęcia) i licznik na przycisku.',
+      },
+    ],
+  },
+  {
     id: '2026-07-22-role-spolki-i-porzadki',
     dateFrom: '2026-07-22',
     dateTo: '2026-07-22',

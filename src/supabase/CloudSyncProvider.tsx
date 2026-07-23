@@ -27,6 +27,7 @@ import { useOrgData } from './OrgDataProvider';
 import { getSupabaseClient } from './client';
 import {
   createSupabasePlannerDb,
+  loadNotificationsSnapshot,
   loadPlannerSnapshot,
   readRetirementSetting,
   type PlannerDb,
@@ -38,9 +39,16 @@ import {
   type CloudIdMaps,
   type CloudOp,
 } from './cloudMirror';
+import { notificationInsertsFromDiff } from './notificationEvents';
 import { buildCloudPeoplePayload, type OrgSnapshot } from './referenceData';
+import { createLiveTracker } from './liveChannelTracker';
 
 export type CloudSyncStatus = 'idle' | 'hydrating' | 'ready' | 'error';
+
+// Ile ms nieprzerwanej utraty statusu kanału traktujemy jako realną utratę
+// live (a nie przejściowy flap drop→rejoin). Krótki rejoin w tym oknie =
+// ciągłość, więc baner stale-hint nie miga przy cichym syncu.
+const LIVE_DROP_GRACE_MS = 5_000;
 
 export interface CloudSyncValue {
   status: CloudSyncStatus;
@@ -77,6 +85,9 @@ const SUPPRESSED = new Set([
   'MERGE_CLOUD_ENTITIES',
   'MERGE_CLOUD_PEOPLE',
   'MERGE_CLOUD_DICTIONARIES',
+  // Hydracja powiadomień odbiorcy jest autorytatywna (cloud->local): `read_at`
+  // z chmury nie może wracać jako mirror-update, więc tłumimy to przejście.
+  'MERGE_CLOUD_NOTIFICATIONS',
   'REPLACE_FROM_STORAGE',
   'LOAD_SAMPLE',
   'RESET_ALL',
@@ -233,6 +244,12 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
           type: 'MERGE_CLOUD_ENTITIES',
           payload: { ...result.payload, people: buildCloudPeoplePayload(snap.profiles) },
         });
+        // Powiadomienia in-app: OSOBNY loader degradujący się do [] (tabela może
+        // być jeszcze niezaaplikowana) — nie blokuje reszty syncu ani statusu.
+        const notifications = await loadNotificationsSnapshot(getDb(), maps);
+        if (mountedRef.current) {
+          dispatch({ type: 'MERGE_CLOUD_NOTIFICATIONS', payload: { notifications } });
+        }
         setStatus('ready');
         // Odświeżenie w tle nie przechodzi przez krawędź 'hydrating'→'ready',
         // więc efekt na krawędzi statusu nie odpali: świeżą kopię do odzysku
@@ -301,6 +318,12 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   // backoffem, a po każdym POWROCIE do SUBSCRIBED dociągamy pełną
   // synchronizację — zdarzenia z okresu martwego kanału nie mają prawa
   // przepaść po cichu (wcześniej jedynym „ratunkiem” był ręczny baner).
+  //
+  // Flaga `live` przechodzi przez histerezę (createLiveTracker): zwrotka
+  // `subscribe` woła się na KAŻDYM przejściu socketu, więc przejściowy flap
+  // (drop → natychmiastowy rejoin) NIE zbija `live` — dopiero utrata dłuższa
+  // niż LIVE_DROP_GRACE_MS. Dzięki temu udany cichy sync = zero banera, a realna
+  // utrata kanału nadal odsłania baner stale-hint (fallback).
   useEffect(() => {
     if (!active || !userId) {
       setLive(false);
@@ -312,6 +335,14 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let attempt = 0;
     let hadSubscription = false;
+    const tracker = createLiveTracker({
+      graceMs: LIVE_DROP_GRACE_MS,
+      setLive: (next) => {
+        if (mountedRef.current) setLive(next);
+      },
+      schedule: (fn, ms) => setTimeout(fn, ms),
+      cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    });
 
     const scheduleReconnect = (): void => {
       if (disposed || reconnectTimer !== null) return;
@@ -338,9 +369,10 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
         // Zdarzenia porzuconego kanału (w trakcie przebudowy) ignorujemy —
         // spóźniony CLOSED starego kanału nie może zerwać świeżego, zdrowego.
         if (disposed || !mountedRef.current || current !== channel) return;
+        // Histereza `live`: flap nie zbija flagi, przebudowa kanału i tak rusza.
+        tracker.onStatus(subscribeStatus);
         if (subscribeStatus === 'SUBSCRIBED') {
           attempt = 0;
-          setLive(true);
           // Powrót po przerwie: dociągnij zmiany z martwego okna kanału.
           if (hadSubscription) liveSyncRef.current();
           hadSubscription = true;
@@ -351,7 +383,6 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
           subscribeStatus === 'TIMED_OUT' ||
           subscribeStatus === 'CLOSED'
         ) {
-          setLive(false);
           scheduleReconnect();
         }
       });
@@ -360,7 +391,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     connect();
     return () => {
       disposed = true;
-      setLive(false);
+      tracker.dispose();
       if (reconnectTimer !== null) clearTimeout(reconnectTimer);
       if (liveSyncTimerRef.current !== null) {
         clearTimeout(liveSyncTimerRef.current);
@@ -461,9 +492,20 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       return;
     }
     const { ops } = diffToCloudOps(prevRef.current, state, maps);
+    // Zdarzenia powiadomień: liczone z TEGO SAMEGO diffa, wstawiane W IMIENIU
+    // działającego użytkownika DLA innych odbiorców (recipient===self pomijany).
+    // Kolejność bez znaczenia — `notifications` nie ma FK do zadań/projektów.
+    const notifRows = userId ? notificationInsertsFromDiff(prevRef.current, state, maps, userId) : [];
     prevRef.current = state;
-    if (ops.length === 0) return;
-    queueRef.current.push(...ops);
+    if (ops.length === 0 && notifRows.length === 0) return;
+    const notifOps: CloudOp[] = notifRows.map((row, i) => ({
+      kind: 'upsert',
+      table: 'notifications',
+      row: row as unknown as Record<string, unknown>,
+      sourceId: `notif:${row.recipient_id}:${row.type}:${i}`,
+      label: 'Powiadomienie',
+    }));
+    queueRef.current.push(...ops, ...notifOps);
     setPending(queueRef.current.length);
     void processQueue();
   }, [state, active, userId, lastActionRef, processQueue, setPending]);

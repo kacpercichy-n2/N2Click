@@ -116,6 +116,7 @@ function PersonProfile({ personId }: { personId: string }) {
     workEndMinutes: person?.workEndMinutes ?? defaultWorkEndMinutes(person?.capacity ?? DEFAULT_CAPACITY),
     supervisorId: person?.supervisorId ?? '',
     birthDate: person?.birthDate ?? '',
+    emailNotifications: person?.emailNotifications ?? false,
   }));
   const [error, setError] = useState('');
 
@@ -169,6 +170,9 @@ function PersonProfile({ personId }: { personId: string }) {
       workEndMinutes: allow('workHours') ? draft.workEndMinutes : person.workEndMinutes,
       supervisorId: allow('supervisorId') ? draft.supervisorId : person.supervisorId,
       birthDate: allow('birthDate') ? draft.birthDate : person.birthDate,
+      emailNotifications: allow('emailNotifications')
+        ? draft.emailNotifications
+        : person.emailNotifications ?? false,
     };
     if (!merged.firstName.trim()) return;
     if (allow('workHours') && hoursInvalid) {
@@ -422,6 +426,17 @@ function PersonProfile({ personId }: { personId: string }) {
             ) : (
               <div className="field-readonly">{person.avatar || '—'}</div>
             )}
+          </div>
+          <div className="field">
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={draft.emailNotifications === true}
+                onChange={(e) => set('emailNotifications', e.target.checked)}
+                disabled={!allow('emailNotifications')}
+              />
+              <span>Powiadomienia mailowe</span>
+            </label>
           </div>
           <div className="field field-narrow">
             <label htmlFor="pp-cap">Godziny/dzień</label>

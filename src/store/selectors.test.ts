@@ -916,6 +916,40 @@ describe('todayAgendaForPerson', () => {
     expect(todayAgendaForPerson(state, 'p1', '2026-07-11').dateless).toEqual([]);
   });
 
+  it('mon–fri task planned only on Thursday does NOT show on Wednesday, only on Thursday (264)', () => {
+    // Zgłoszenie: zadanie z okresem pon–pt widoczne w środę, mimo że w kalendarzu
+    // zaplanowane na czwartek. Agenda „na dziś” filtruje po wpisach workload
+    // (w.date === date), nie po okresie zadania — więc środa jest pusta.
+    const monFri = makeTask({
+      id: 't-monfri',
+      title: 'Pon–pt, blok tylko w czwartek',
+      startDate: '2026-07-06', // poniedziałek
+      endDate: '2026-07-10', // piątek
+    });
+    const thursdayEntry = makeEntry({
+      id: 'e-thu',
+      taskId: 't-monfri',
+      personId: 'p1',
+      date: '2026-07-09', // czwartek
+      startMinutes: 540,
+    });
+    const state = makeState({
+      tasks: [monFri],
+      people: [makePerson({ id: 'p1' })],
+      assignments: [makeAssignment({ id: 'a1', taskId: 't-monfri', personId: 'p1' })],
+      workload: [thursdayEntry],
+    });
+
+    // Środa (DATE) — nic: brak wpisu tego dnia, a deadline (piątek) też nie jest dziś.
+    const wed = todayAgendaForPerson(state, 'p1', DATE);
+    expect(wed.timed).toEqual([]);
+    expect(wed.dateless).toEqual([]);
+
+    // Czwartek — pokazuje się jako wpis czasowy.
+    const thu = todayAgendaForPerson(state, 'p1', '2026-07-09');
+    expect(thu.timed.map((w) => w.id)).toEqual(['e-thu']);
+  });
+
   it('empty results: a person with no assignments and no entries gets both arrays empty', () => {
     const state = makeState({
       tasks: [makeTask({ id: 't1' })],

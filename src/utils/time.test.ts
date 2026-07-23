@@ -1,6 +1,7 @@
 // Unit tests for pure time-of-day math (src/utils/time.ts).
 import { describe, expect, it } from 'vitest';
 import {
+  blockEndMinutes,
   dropStartFromAnchor,
   findFreeStart,
   formatDuration,
@@ -256,6 +257,35 @@ describe('findFreeStart', () => {
     const start = findFreeStart(blocks, 60);
     expect(start).toBe(615); // 606 snapped UP to 615 (not 600 or 605)
     expect(hasCollision(blocks.map((b, i) => ({ id: String(i), ...b })), start!, 60)).toBe(false);
+  });
+
+  it('avoidTouch: when the append default would touch a same-task block edge, returns a valid non-touching collision-free start instead (2-arg call still appends)', () => {
+    const sameTask = { startMinutes: 480, plannedHours: 2 }; // 480-600
+    const blocks = [sameTask];
+    // Plain 2-arg call still appends exactly at the block's end (touching) —
+    // backward compatible, seed/SAVE_TASK/existing placements are unaffected.
+    expect(findFreeStart(blocks, 60)).toBe(600);
+    // With avoidTouch = that block, the default (600, touching 600) is rejected
+    // in favor of the earliest non-touching gap: the 00:00-08:00 night gap at 0
+    // (0+60 does not touch 480, and 480 the appended candidate is the only
+    // working-hours option — so the first qualifying candidate is 0).
+    const guarded = findFreeStart(blocks, 60, [sameTask]);
+    expect(guarded).not.toBeNull();
+    expect(guarded).not.toBe(600); // no longer glued to the same-task edge
+    // The result is collision-free and does not touch the same-task block's edges.
+    expect(hasCollision(blocks.map((b, i) => ({ id: String(i), ...b })), guarded!, 60)).toBe(false);
+    expect(guarded! + 60).not.toBe(sameTask.startMinutes); // does not abut its start
+    expect(guarded).not.toBe(blockEndMinutes(sameTask.startMinutes, sameTask.plannedHours)); // not its end
+  });
+
+  it('avoidTouch: when NO non-touching slot exists, keeps the touching primary (merge unavoidable is acceptable)', () => {
+    // Whole day solid except the single append slot that touches the same-task block.
+    const sameTask = { startMinutes: 0, plannedHours: 8 }; // 00:00-08:00 (ends at WORKDAY_START_MIN)
+    const filler = { startMinutes: 540, plannedHours: 15 }; // 09:00-24:00 solid
+    const blocks = [sameTask, filler];
+    // Only the 480-540 gap fits a 60-min block, and 480 touches sameTask's end.
+    const guarded = findFreeStart(blocks, 60, [sameTask]);
+    expect(guarded).toBe(480); // no non-touching alternative → keep the touching primary
   });
 });
 

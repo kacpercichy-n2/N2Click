@@ -704,6 +704,8 @@ export function buildSampleData(): AppData {
     activity,
     // Dane demonstracyjne nie zawierają zgłoszeń — zakładka „Zgłoszenia” startuje pusta.
     tickets: [],
+    // Dane demonstracyjne nie zawierają powiadomień — Panel startuje z pustym slotem.
+    notifications: [],
     currentUserId: kasia.id,
     sampleBannerDismissed: true,
     savedFilters: [],

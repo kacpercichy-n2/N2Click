@@ -55,6 +55,8 @@ export interface CloudProfile {
   workEndMinutes: number;
   /** Data urodzenia (profiles.birth_date, yyyy-MM-dd); '' gdy brak/null. */
   birthDate: string;
+  /** Opt-in mailowy (profiles.email_notifications); brak => false. */
+  emailNotifications?: boolean;
 }
 
 export interface OrgSnapshot {
@@ -140,6 +142,7 @@ function toCloudProfile(row: Record<string, unknown>): CloudProfile {
     // Postgres `date` przychodzi z PostgREST jako 'yyyy-MM-dd' albo null; śmieci
     // (teoretyczne) spadają na ''.
     birthDate: isValidDateStr(str(row.birth_date)) ? str(row.birth_date) : '',
+    emailNotifications: bool(row.email_notifications),
   };
 }
 
@@ -185,7 +188,7 @@ export async function loadOrgSnapshot(db: ReferenceDb, userId: string): Promise<
   ] = await Promise.all([
     db.select(
       'profiles',
-      'id, first_name, last_name, email, role_title, access_role, department_id, company_id, supervisor_id, phone, avatar, avatar_path, capacity, work_days, work_start_minutes, work_end_minutes, birth_date',
+      'id, first_name, last_name, email, role_title, access_role, department_id, company_id, supervisor_id, phone, avatar, avatar_path, capacity, work_days, work_start_minutes, work_end_minutes, birth_date, email_notifications',
     ),
     db.select('departments', 'id, name'),
     db.select('statuses', 'id, name, slug, color, sort_order, archived, is_done'),
@@ -295,6 +298,8 @@ export interface CloudPersonMergeRow {
   supervisorEmail: string;
   /** Data urodzenia (yyyy-MM-dd); '' gdy brak. */
   birthDate: string;
+  /** Opt-in mailowy; brak => false. */
+  emailNotifications?: boolean;
 }
 
 /**
@@ -326,6 +331,7 @@ export function buildCloudPeoplePayload(profiles: CloudProfile[]): CloudPersonMe
       accessRole: cloudRoleToAccessRole(p.cloudRole),
       supervisorEmail: (p.supervisorId ? emailById.get(p.supervisorId) : '') ?? '',
       birthDate: p.birthDate,
+      emailNotifications: p.emailNotifications === true,
     });
   }
   return rows;

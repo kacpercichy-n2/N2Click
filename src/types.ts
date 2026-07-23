@@ -282,6 +282,11 @@ export interface Person {
   // birthday marker in the calendar on the matching month+day. Never a required
   // field. Validated as a real 'yyyy-MM-dd' date on load (garbage → '').
   birthDate: DateStr;
+  // Opt-in na dublowanie powiadomień in-app mailem (kolumna
+  // `profiles.email_notifications`, czytana przez Edge Function
+  // `send-notification-emails`). OPCJONALNE i ADDYTYWNE: brak / legacy => false
+  // (nie spamujemy). DATA_VERSION zostaje 7.
+  emailNotifications?: boolean;
 }
 
 export interface TaskAssignment {
@@ -414,6 +419,39 @@ export interface CalendarEvent {
   updatedAt: string; // ISO timestamp; odświeżany przy każdym zapisie
 }
 
+/** Rodzaj powiadomienia in-app — stały zbiór wartości (persystencja + kolumna
+ *  `notifications.type`). Etykiety/treść po polsku buduje `dashboardPanels.ts`. */
+export type NotificationType = 'task_assigned' | 'project_comment' | 'bin_item';
+
+/** Ładunek powiadomienia (`notifications.payload`, jsonb): dokąd prowadzi klik i
+ *  kto je wywołał. Wszystkie pola OPCJONALNE — kształt zależy od `type`. */
+export interface NotificationPayload {
+  taskId?: string;
+  projectId?: string;
+  commentId?: string;
+  /** Osoba, która wywołała zdarzenie (lokalne id == id profilu chmury). */
+  actorId?: string;
+}
+
+/**
+ * Jedno powiadomienie in-app dla ODBIORCY. Kolekcja jest ADDYTYWNA i
+ * cloud-authoritative: własne wiersze przychodzą przez hydrację
+ * (`MERGE_CLOUD_NOTIFICATIONS`), oznaczenie jako przeczytane lustruje kolumnę
+ * `read_at`. Zdarzenia dla INNYCH osób generuje klient działającego użytkownika
+ * (warstwa mirror) — nigdy nie trafiają do jego własnego stanu. `DATA_VERSION`
+ * zostaje 7.
+ */
+export interface Notification {
+  id: string;
+  /** Odbiorca — lokalne id osoby (== id profilu chmury, autorytatywnie). */
+  recipientId: string;
+  type: NotificationType;
+  payload: NotificationPayload;
+  /** '' = nieprzeczytane; inaczej znacznik czasu ISO oznaczenia jako przeczytane. */
+  readAt: string;
+  createdAt: string; // ISO timestamp
+}
+
 export type FilterPage = 'projects' | 'tasks' | 'kanban';
 
 export interface SavedFilterCriteria {
@@ -481,6 +519,9 @@ export interface AppData {
   activity: ActivityEvent[];
   tickets: Ticket[];
   events: CalendarEvent[];
+  // Powiadomienia in-app dla ZALOGOWANEGO odbiorcy (cloud-authoritative,
+  // hydrowane z chmury; addytywne, DATA_VERSION zostaje 7).
+  notifications: Notification[];
   currentUserId: string; // "acting as" person; '' when unset
   sampleBannerDismissed: boolean;
   savedFilters: SavedFilter[]; // named filter presets for Projects/Tasks/Kanban pages

@@ -4,6 +4,8 @@
 // atomic failure and empty-collection validity. No SDK, no live Supabase.
 import { describe, expect, it } from 'vitest';
 import { emptyData } from '../store/storage';
+import { reducer } from '../store/AppStore';
+import { expandOccurrences, normalizeRecurrence } from '../utils/recurrence';
 import type { AppData, Person, Task } from '../types';
 import type { CloudProfile, OrgSnapshot } from './referenceData';
 import { buildCloudIdMaps, diffToCloudOps, type CloudIdMaps } from './cloudMirror';
@@ -395,6 +397,79 @@ describe('loadPlannerSnapshot', () => {
     if (!result.ok) return;
     // Klucz obecny i wartość identyczna => sameRowValue zostaje no-opem.
     expect(result.payload.tasks[0].draftHours).toEqual(localTask.draftHours);
+  });
+
+  // Regresja migotania cyklicznego (N2HUB-263): opublikowane zadanie z regułą
+  // przechodzi PEŁNY round-trip syncu bez okna, w którym reguła znika. Trzy
+  // legi: mirror (reguła do jsonb dosłownie) -> hydracja (normalizeRecurrence
+  // kanonikalizuje wobec startu, idempotentnie) -> MERGE_CLOUD_ENTITIES. Wartość
+  // identyczna => `sameRowValue` no-op => wiersz i cała kolekcja zachowują
+  // referencję => `useMemo` modelu tygodnia (WeekView) się nie unieważnia, więc
+  // wystąpienia nie znikają i nie wracają przy każdym cyklu Realtime (~1,2 s).
+  it('round-trip opublikowanego zadania cyklicznego: reguła, wystąpienia i referencja stanu (brak migotania)', async () => {
+    const startDate = '2026-07-06'; // poniedziałek
+    // Reguła Pn/Śr o 9:00–10:00 z wyjątkami: pominięcie Pn 13.07 i przesunięcie
+    // Śr 15.07 na 10:00–11:30. Zbudowana przez normalizeRecurrence, więc niesie
+    // DOKŁADNIE formę kanoniczną, którą utrwala reduktor (SET_TASK_RECURRENCE).
+    const recurrence = normalizeRecurrence(
+      {
+        daysOfWeek: [1, 3],
+        startMinutes: 540,
+        durationMinutes: 60,
+        overrides: [
+          { date: '2026-07-13', skip: true },
+          { date: '2026-07-15', startMinutes: 600, durationMinutes: 90 },
+        ],
+      },
+      startDate,
+    );
+    expect(recurrence).toBeDefined();
+    const localTask: Task = {
+      id: TK, projectId: PR, statusId: S1, title: 'Cykliczne', description: '',
+      startDate, endDate: '2026-07-20', estimatedHours: null, priority: 'normal',
+      workCategoryId: '', departmentId: '', checklist: [], orderIndex: 0, isDraft: false,
+      recurrence,
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    // 1) Mirror: wiersz OPUBLIKOWANY, reguła zapisana do jsonb dosłownie.
+    const ops = diffToCloudOps(
+      { ...localFixture(), tasks: [] },
+      { ...localFixture(), tasks: [localTask] },
+      maps(),
+    ).ops;
+    const taskRow = ops.find((o) => o.table === 'tasks' && o.kind === 'upsert')!.row!;
+    expect(taskRow.is_draft).toBe(false);
+    expect(taskRow.recurrence).toEqual(recurrence);
+
+    // 2) Hydracja: normalizeRecurrence(row.recurrence, start) => wartość IDENTYCZNA
+    //    (idempotencja na formie kanonicznej), zadanie dalej opublikowane.
+    const db = new FakeSelectDb()
+      .seed('projects', [
+        { id: PR, client_id: null, name: 'P', description: '', status_id: S1, paid: false, start_date: startDate, end_date: '2026-07-20', department_id: null, service_type_id: null, created_at: '', updated_at: '' },
+      ])
+      .seed('tasks', [taskRow]);
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const hydrated = result.payload.tasks.find((t) => t.id === TK)!;
+    expect(hydrated.isDraft).toBe(false);
+    expect(hydrated.recurrence).toEqual(recurrence);
+
+    // 3) Wystąpienia deterministycznie identyczne w oknie tygodnia (te same daty,
+    //    minuty i flaga override) — pominięcie 13.07, przesunięcie 15.07.
+    const expandLocal = expandOccurrences(localTask.recurrence!, localTask.startDate, '2026-07-06', '2026-07-20');
+    const expandHydrated = expandOccurrences(hydrated.recurrence!, hydrated.startDate, '2026-07-06', '2026-07-20');
+    expect(expandHydrated).toEqual(expandLocal);
+    expect(expandLocal.map((o) => o.date)).toEqual(['2026-07-06', '2026-07-08', '2026-07-15', '2026-07-20']);
+    expect(expandLocal.find((o) => o.date === '2026-07-15')).toMatchObject({ startMinutes: 600, durationMinutes: 90, overridden: true });
+
+    // 4) MERGE autorytatywny na wartościowo identycznym wierszu => TA SAMA
+    //    referencja zadania I całej kolekcji `tasks` (reconcileRows/sameRowValue).
+    const state: AppData = { ...localFixture(), tasks: [localTask] };
+    const merged = reducer(state, { type: 'MERGE_CLOUD_ENTITIES', payload: result.payload });
+    expect(merged.tasks[0]).toBe(state.tasks[0]);
+    expect(merged.tasks).toBe(state.tasks);
   });
 
   it('excludes a project with null dates and a task over the 92-day cap', async () => {

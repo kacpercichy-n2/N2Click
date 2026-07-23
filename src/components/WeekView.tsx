@@ -60,6 +60,7 @@ import {
   minutesToHours,
   nextFreeStart,
   planRippleInsert,
+  rangesOverlap,
   slotStartFromOffset,
   snapHours,
   snapToStep,
@@ -174,6 +175,11 @@ interface BlockProps {
   // during drag (replaces the per-frame `state.workload` scan). Stable reference
   // from the parent's memoized week model, so it never invalidates the memo.
   blocksByPersonDate: Map<string, WorkloadEntry[]>;
+  // Per-(person, date) presentational-occupancy index (calendar events + recurring
+  // occurrences) from the memoized model. Lets the will-merge affordance mirror the
+  // reducer's merge guard — a fused block must never silently swallow a meeting —
+  // without a per-drag-frame global scan. Stable reference (memo-safe).
+  eventBusyByPersonDate: Map<string, Array<{ start: number; end: number }>>;
   // Per-block boolean (not the raw id): only the OLD and NEW merge target flip,
   // so changing the merge target during a drag re-renders just those two blocks
   // plus the dragged one, not every block.
@@ -202,6 +208,7 @@ function TimedBlockImpl({
   gridRef,
   binRef,
   blocksByPersonDate,
+  eventBusyByPersonDate,
   isMergeTarget,
   setMergeTargetId,
   isFused,
@@ -461,11 +468,24 @@ function TimedBlockImpl({
             projEnd === w.startMinutes),
       );
       if (neighbor) {
-        willMergeWithId = neighbor.id;
-        willMergeEdge =
-          blockEndMinutes(neighbor.startMinutes, neighbor.plannedHours) === projStart
-            ? 'top'
-            : 'bottom';
+        // Mirror the reducer's merge guard: if the fused span would cover an
+        // event / recurring occupancy this person has that day, the reducer
+        // refuses to merge — so suppress the affordance too (never arm setFusedId
+        // for a drop the reducer will not fuse).
+        const mergedStart = Math.min(projStart, neighbor.startMinutes);
+        const mergedEnd = Math.max(
+          projEnd,
+          blockEndMinutes(neighbor.startMinutes, neighbor.plannedHours),
+        );
+        const busy = eventBusyByPersonDate.get(personDateKey(person.id, projDate)) ?? [];
+        const covers = busy.some((b) => rangesOverlap(mergedStart, mergedEnd, b.start, b.end));
+        if (!covers) {
+          willMergeWithId = neighbor.id;
+          willMergeEdge =
+            blockEndMinutes(neighbor.startMinutes, neighbor.plannedHours) === projStart
+              ? 'top'
+              : 'bottom';
+        }
       }
     }
 
@@ -1608,10 +1628,11 @@ export function WeekView({ state, anchor, filter }: Props) {
       Math.min(maxHours, personCapacity(state, entry.personId), 24),
     );
     const blocks = blocksForPersonDate(state, entry.personId, date);
+    const sameTask = blocks.filter((b) => b.taskId === entry.taskId);
     const dur = hoursToMinutes(defHours);
     setSchedDate(date);
     setSchedHoursRaw(String(defHours));
-    setSchedStart(minutesToTimeStr(findFreeStart(blocks, dur) ?? nextFreeStart(blocks, dur)));
+    setSchedStart(minutesToTimeStr(findFreeStart(blocks, dur, sameTask) ?? nextFreeStart(blocks, dur)));
   };
 
   // Entry point A: the card button. Anchor the menu to the button rect. Stable
@@ -1641,7 +1662,8 @@ export function WeekView({ state, anchor, filter }: Props) {
     const raw = Number(schedHoursRaw);
     const dur = hoursToMinutes(Number.isNaN(raw) ? 0.25 : snapHours(Math.min(24, raw)));
     const blocks = blocksForPersonDate(state, menu.entry.personId, value);
-    setSchedStart(minutesToTimeStr(findFreeStart(blocks, dur) ?? nextFreeStart(blocks, dur)));
+    const sameTask = blocks.filter((b) => b.taskId === menu.entry.taskId);
+    setSchedStart(minutesToTimeStr(findFreeStart(blocks, dur, sameTask) ?? nextFreeStart(blocks, dur)));
   };
 
   const confirmSchedule = () => {
@@ -1932,6 +1954,7 @@ export function WeekView({ state, anchor, filter }: Props) {
                       gridRef={gridRef}
                       binRef={binRef}
                       blocksByPersonDate={model.blocksByPersonDate}
+                      eventBusyByPersonDate={model.eventBusyByPersonDate}
                       isMergeTarget={mergeTargetId === e.id}
                       setMergeTargetId={setMergeTargetId}
                       isFused={fusedId === e.id}

@@ -683,6 +683,31 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
     }
   }
 
+  // 8d) Powiadomienia in-app ---- WYŁĄCZNIE aktualizacja `read_at` (oznaczenie
+  // jako przeczytane). Wstawienia generuje warstwa zdarzeń (notificationEvents)
+  // w imieniu działającego użytkownika DLA innych odbiorców — nigdy nie
+  // pojawiają się w tym diffie; własne powiadomienia przychodzą przez
+  // MERGE_CLOUD_NOTIFICATIONS (stłumione w mirrorze). Usunięć klient nie robi.
+  {
+    const prevMap = byId(prev.notifications);
+    for (const n of next.notifications) {
+      const before = prevMap.get(n.id);
+      if (!before || before.readAt === n.readAt) continue;
+      if (!isUuid(n.id)) {
+        diagnostics.push(DIAG.nonUuid);
+        continue;
+      }
+      ops.push({
+        kind: 'update',
+        table: 'notifications',
+        match: { id: n.id },
+        row: { read_at: n.readAt === '' ? null : n.readAt },
+        sourceId: n.id,
+        label: 'Powiadomienie (odczyt)',
+      });
+    }
+  }
+
   // 9) Słowniki organizacji ---- (statusy + działy + typy usług + kategorie
   // prac + stanowiska + spółki). Po autorytatywnej hydracji lokalne wiersze noszą id chmury, a nowe
   // dostają crypto.randomUUID — mutacje paneli admina płyną wprost do tabel
@@ -832,6 +857,7 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
           supervisor_id: supervisorProfileId,
           access_role: ACCESS_ROLE_TO_CLOUD[p.accessRole],
           birth_date: p.birthDate === '' ? null : p.birthDate,
+          email_notifications: p.emailNotifications ?? false,
         },
         sourceId: p.id,
         label: `Profil „${p.name}”`,
