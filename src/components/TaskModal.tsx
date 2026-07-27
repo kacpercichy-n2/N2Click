@@ -51,6 +51,7 @@ import {
 import { useSaveStatus } from '../utils/useSaveStatus';
 import { useAutoSave } from '../utils/useAutoSave';
 import { hasEntity, isValidTaskDraft } from '../store/commandValidation';
+import { collectTaskSaveBlockers, type SaveBlocker } from './taskSaveBlockers';
 import {
   bypassNavGuardOnce,
   clearNavGuard,
@@ -76,6 +77,20 @@ function recurMinutesToTime(min: number): string {
 function recurDateLabel(date: string): string {
   const [y, m, d] = date.split('-');
   return `${d}.${m}.${y}`;
+}
+
+// IA-12 — nieudany zapis musi mieć widoczny skutek. Skacze do pola, które
+// blokuje zapis (i ustawia na nim fokus), zamiast po cichu nic nie robić.
+// Modal jest jednym DOM-em, więc korzysta z tego zarówno stopka edytora, jak i
+// klikalna odznaka zapisu w nagłówku.
+function focusSaveBlocker(blocker: SaveBlocker): void {
+  if (blocker.focusId === null) return;
+  const el = document.getElementById(blocker.focusId);
+  if (!el) return;
+  // `preventScroll` + jawny scrollIntoView: jedno przewinięcie na środek pola,
+  // nie dwa (fokus przewijałby minimalnie, pod sticky pasek akcji).
+  el.focus({ preventScroll: true });
+  el.scrollIntoView({ block: 'center' });
 }
 
 /**
@@ -209,6 +224,9 @@ function TaskModalShell({
   }, []);
   const { saveError } = usePersistence();
   const { status, markSaved } = useSaveStatus(dirty, saveError !== null);
+  // IA-12 — powody, dla których zapis nie przejdzie. Edytor je liczy, nagłówek
+  // pokazuje je na odznace zapisu (klik = skok do przyczyny).
+  const [blockers, setBlockers] = useState<SaveBlocker[]>([]);
 
   // Deliberate close: the user already confirmed (or nothing needs asking), so
   // the closing navigation must not raise the router guard a second time.
@@ -280,7 +298,19 @@ function TaskModalShell({
           <div className="task-modal-head">
             <h1 className="task-modal-title">{heading}</h1>
             <div className="task-modal-head-actions">
-              {!notFound && <SaveStatus status={status} />}
+              {!notFound && (
+                <SaveStatus
+                  status={status}
+                  blocked={
+                    blockers.length > 0
+                      ? {
+                          message: blockers[0].message,
+                          onJump: () => focusSaveBlocker(blockers[0]),
+                        }
+                      : undefined
+                  }
+                />
+              )}
               {existing && canManageTasks && (
                 <button type="button" className="btn danger-ghost" onClick={handleDelete}>
                   Usuń
@@ -316,6 +346,7 @@ function TaskModalShell({
                 onSaved={onClose}
                 onCancel={requestClose}
                 onDirtyChange={handleDirtyChange}
+                onBlockersChange={setBlockers}
                 markSaved={markSaved}
               />
             )}
@@ -335,6 +366,8 @@ interface EditorProps {
   onSaved: () => void;
   onCancel: () => void;
   onDirtyChange: (dirty: boolean) => void;
+  /** IA-12 — aktualne powody blokujące zapis (dla odznaki w nagłówku). */
+  onBlockersChange: (blockers: SaveBlocker[]) => void;
   markSaved: () => void;
 }
 
@@ -388,6 +421,7 @@ function TaskEditor({
   onSaved,
   onCancel,
   onDirtyChange,
+  onBlockersChange,
   markSaved,
 }: EditorProps) {
   const { state, dispatch } = useStore();
@@ -437,6 +471,10 @@ function TaskEditor({
   );
   const [recurDurMin, setRecurDurMin] = useState(seedRule?.durationMinutes ?? 60);
   const [recurUntil, setRecurUntil] = useState(seedRule?.until ?? '');
+  // AT-07 — walidacja cykliczności startuje dopiero, gdy użytkownik ruszy tę
+  // sekcję. Zadanie bez reguły otwierało się z czerwonym „Wybierz przynajmniej
+  // jeden dzień tygodnia", choć nikt cykliczności nie włączał.
+  const [recurTouched, setRecurTouched] = useState(false);
 
   // ---- Period ----
   // A calendar empty-slot right-click seeds the clicked day (validated — a
@@ -780,16 +818,44 @@ function TaskEditor({
     isDraft,
   };
   const assigneesValid = assigneeIds.every((id) => hasEntity(state, 'person', id));
-  const formValid =
-    !titleError &&
-    periodValid &&
-    !projectError &&
-    assigneesValid &&
-    isValidTaskDraft(state, draftForSave);
+  // IA-12 — jedna lista zamiast anonimowego boolean-a: te same bramki, ale z
+  // powodem i kotwicą fokusa. `formValid` (auto-zapis + ręczny zapis) to nadal
+  // dokładnie „nic nie blokuje”, więc reduktor nigdy nie dostaje złego payloadu
+  // (invariant 6).
+  const blockers = collectTaskSaveBlockers({
+    title,
+    projectValid: !projectError,
+    hasProjects: state.projects.length > 0,
+    statusValid: hasEntity(state, 'status', statusId),
+    period: perErr,
+    assigneesValid,
+    draftValid: isValidTaskDraft(state, draftForSave),
+  });
+  const formValid = blockers.length === 0;
+
+  // Raport do powłoki modala (odznaka zapisu). Sygnatura tekstowa trzyma efekt
+  // przy jednym wywołaniu na REALNĄ zmianę listy, nie na każdy render.
+  const blockerSignature = blockers.map((b) => `${b.id}:${b.message}`).join('|');
+  const blockersRef = useRef(blockers);
+  blockersRef.current = blockers;
+  useEffect(() => {
+    onBlockersChange(blockersRef.current);
+  }, [blockerSignature, onBlockersChange]);
+
+  // Nieudana próba zapisu odsłania listę powodów przy przycisku (przed pierwszą
+  // próbą pusty formularz nowego zadania nie krzyczy).
+  const [saveAttempted, setSaveAttempted] = useState(false);
 
   const doSave = ({ publishNew = false }: { publishNew?: boolean } = {}): boolean => {
     setTitleTouched(true);
-    if (!formValid) return false;
+    if (!formValid) {
+      // Przycisk nigdy nie jest jednocześnie aktywny i martwy: pokazujemy powody
+      // i przenosimy użytkownika do pierwszego z nich.
+      setSaveAttempted(true);
+      focusSaveBlocker(blockers[0]);
+      return false;
+    }
+    setSaveAttempted(false);
 
     // NOWY szkic „Utwórz i opublikuj”: jeden SAVE_TASK z `isDraft: false` —
     // standardowa ścieżka opublikowana materializuje binTotals sama, bez rundy
@@ -878,7 +944,10 @@ function TaskEditor({
             ? 'Wystąpienie nie mieści się w dobie — koniec po 24:00.'
             : null;
 
+  // Każda edycja sekcji „Cykliczność” odsłania jej walidację (AT-07).
+  const recurEdited = () => setRecurTouched(true);
   const toggleRecurDay = (iso: number) => {
+    recurEdited();
     setRecurDays((prev) =>
       prev.includes(iso) ? prev.filter((d) => d !== iso) : [...prev, iso].sort((a, b) => a - b),
     );
@@ -1085,7 +1154,8 @@ function TaskEditor({
             Nie ma jeszcze osób. <Link to="/people">Dodaj osoby</Link>, aby przypisać pracę.
           </p>
         ) : (
-          <div className="assignee-picker">
+          // `id` + `tabIndex` to kotwica skoku z listy blokad zapisu (IA-12).
+          <div className="assignee-picker" id="t-assignees" tabIndex={-1}>
             {state.people.map((p) => {
               const checked = assigneeIds.includes(p.id);
               return (
@@ -1442,7 +1512,10 @@ function TaskEditor({
                   type="time"
                   step={900}
                   value={recurStart}
-                  onChange={(e) => setRecurStart(e.target.value)}
+                  onChange={(e) => {
+                    recurEdited();
+                    setRecurStart(e.target.value);
+                  }}
                   disabled={readOnly}
                   title={roTitle}
                 />
@@ -1452,7 +1525,10 @@ function TaskEditor({
                 <select
                   id="recur-dur"
                   value={recurDurMin}
-                  onChange={(e) => setRecurDurMin(Number(e.target.value))}
+                  onChange={(e) => {
+                    recurEdited();
+                    setRecurDurMin(Number(e.target.value));
+                  }}
                   disabled={readOnly}
                   title={roTitle}
                 >
@@ -1470,13 +1546,18 @@ function TaskEditor({
                   type="date"
                   value={recurUntil}
                   min={startDate}
-                  onChange={(e) => setRecurUntil(e.target.value)}
+                  onChange={(e) => {
+                    recurEdited();
+                    setRecurUntil(e.target.value);
+                  }}
                   disabled={readOnly}
                   title={roTitle}
                 />
               </div>
             </div>
-            {recurApplyError && <p className="field-error">{recurApplyError}</p>}
+            {recurTouched && recurApplyError && (
+              <p className="field-error">{recurApplyError}</p>
+            )}
             {!readOnly && (
               <div className="recur-actions">
                 <button
@@ -1484,6 +1565,9 @@ function TaskEditor({
                   className="btn primary"
                   onClick={applyRecurrence}
                   disabled={recurApplyError !== null}
+                  // Nietknięta sekcja nie pokazuje czerwonego błędu, więc powód
+                  // wyłączenia przycisku niesie tooltip (AT-07).
+                  title={recurApplyError ?? undefined}
                 >
                   Zastosuj cykliczność
                 </button>
@@ -1627,6 +1711,31 @@ function TaskEditor({
         <p className="field-error">Wybierz projekt dla tego zadania.</p>
       )}
       <div className="editor-actions editor-actions-sticky">
+        {/* IA-12 — powody, przez które zapis nie przejdzie, stoją PRZY przycisku
+            (przyczyna bywa kilka tysięcy pikseli wyżej). Każdy powód z kotwicą
+            jest klikalny i przenosi do swojego pola. */}
+        {!readOnly && blockers.length > 0 && (saveAttempted || (isEdit && dirty)) && (
+          <div className="save-blockers" role="alert">
+            <p className="save-blockers-title">Nie można zapisać:</p>
+            <ul className="save-blockers-list">
+              {blockers.map((b) => (
+                <li key={b.id}>
+                  {b.focusId === null ? (
+                    b.message
+                  ) : (
+                    <button
+                      type="button"
+                      className="link-btn"
+                      onClick={() => focusSaveBlocker(b)}
+                    >
+                      {b.message}
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {!readOnly && isEdit && (
           <span className="field-hint autosave-hint" role="status">
             Zmiany zapisują się automatycznie.

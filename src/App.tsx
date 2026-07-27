@@ -374,37 +374,28 @@ export function App() {
             <span className="nav-label">Ustawienia</span>
           </NavLink>
         </nav>
-        <button
-          type="button"
-          className="sidebar-help"
-          data-tour="shell.help"
-          onClick={() => window.dispatchEvent(new Event('n2hub:open-tutorials'))}
-        >
-          <CircleHelp size={18} aria-hidden />
-          <span className="nav-label">Pomoc i samouczki</span>
-        </button>
-        {state.people.length > 0 && (
-          <div className="sidebar-user">
-            {/* Collapsed avatar shortcut (CSS-shown only >1180px + collapsed):
-                links to the user's own profile (the chevron toggle is the only
-                expand control now). */}
-            {currentUser && (
-              <Link
-                to={`/people/${currentUser.id}`}
-                className="sidebar-user-collapsed"
-                title={`Mój profil: ${currentUser.name}`}
-                aria-label={`Mój profil: ${currentUser.name}`}
-                onClick={() => setMenuOpen(false)}
-              >
-                <Avatar person={currentUser} size={32} />
-              </Link>
-            )}
-            {/* Expanded footer row: avatar → own profile + narrower logout. */}
-            <div className="sidebar-user-row">
+        {/* S1 — stopka sidebara jest jednym blokiem przyklejonym do dołu (kryjące
+            tło + gradient nad nią), żeby przewijana lista nawigacji nigdy się z
+            nią nie zlewała i żeby było widać, że pod „Ustawieniami” coś jest. */}
+        <div className="sidebar-footer">
+          <button
+            type="button"
+            className="sidebar-help"
+            data-tour="shell.help"
+            onClick={() => window.dispatchEvent(new Event('n2hub:open-tutorials'))}
+          >
+            <CircleHelp size={18} aria-hidden />
+            <span className="nav-label">Pomoc i samouczki</span>
+          </button>
+          {state.people.length > 0 && (
+            <div className="sidebar-user">
+              {/* Collapsed avatar shortcut (CSS-shown only >1180px + collapsed):
+                  links to the user's own profile (the chevron toggle is the only
+                  expand control now). */}
               {currentUser && (
                 <Link
                   to={`/people/${currentUser.id}`}
-                  className="sidebar-user-avatar"
+                  className="sidebar-user-collapsed"
                   title={`Mój profil: ${currentUser.name}`}
                   aria-label={`Mój profil: ${currentUser.name}`}
                   onClick={() => setMenuOpen(false)}
@@ -412,17 +403,31 @@ export function App() {
                   <Avatar person={currentUser} size={32} />
                 </Link>
               )}
-              {/* Everyone can log out (returns to the login screen). */}
-              <button
-                type="button"
-                className="btn ghost logout-btn"
-                onClick={() => void handleLogout()}
-              >
-                Wyloguj
-              </button>
+              {/* Expanded footer row: avatar → own profile + narrower logout. */}
+              <div className="sidebar-user-row">
+                {currentUser && (
+                  <Link
+                    to={`/people/${currentUser.id}`}
+                    className="sidebar-user-avatar"
+                    title={`Mój profil: ${currentUser.name}`}
+                    aria-label={`Mój profil: ${currentUser.name}`}
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    <Avatar person={currentUser} size={32} />
+                  </Link>
+                )}
+                {/* Everyone can log out (returns to the login screen). */}
+                <button
+                  type="button"
+                  className="btn ghost logout-btn"
+                  onClick={() => void handleLogout()}
+                >
+                  Wyloguj
+                </button>
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </aside>
 
       <main

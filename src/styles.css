@@ -315,7 +315,10 @@ textarea {
 .app-nav-link {
   display: flex;
   align-items: center;
-  min-height: 44px;
+  /* S1 — 38 px zamiast 44 px skraca listę o ~6 px na pozycję, więc na typowym
+     ekranie mieści się jej znacznie więcej bez przewijania. Widok mobilny
+     (≤1180 px) wraca do 44 px — tam liczy się cel dotykowy. */
+  min-height: 38px;
   padding: 0 var(--n2-space-4);
   border: 1px solid transparent;
   border-radius: var(--n2-radius-pill);
@@ -373,6 +376,32 @@ textarea {
   color: var(--n2-text);
 }
 
+/* S1 — stopka sidebara („Pomoc i samouczki” + blok użytkownika) trzyma się dołu
+   i NIGDY nie miesza się z listą nawigacji: kryjące tło (lista ma tylko
+   półprzezroczyste `--n2-surface`, więc przewijane pozycje prześwitywały) oraz
+   `sticky`, gdy to sam sidebar zaczyna się przewijać. Gradient nad stopką jest
+   sygnałem „jest tego więcej” — nakładkowe paski przewijania macOS same z
+   siebie niczego nie pokazują. */
+.sidebar-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-6);
+  background: var(--n2-panel);
+}
+.sidebar-footer::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 12px;
+  background: linear-gradient(to top, var(--n2-panel), rgba(32, 32, 36, 0));
+  pointer-events: none;
+}
 /* Wrapper pins the user footer to the bottom of the sidebar. */
 .sidebar-user {
   margin-top: auto;
@@ -4516,6 +4545,29 @@ option {
 .task-modal-body {
   padding: var(--n2-space-6);
   overflow-y: auto;
+  /* Fokus przeniesiony na pole (np. przez listę blokad zapisu) nie może wylądować
+     pod przyklejonym paskiem akcji — 96 px to jego wysokość z zapasem. */
+  scroll-padding-bottom: 96px;
+}
+/* S2 — dolny padding modala tworzył pas ~24 px POD przyklejonym paskiem akcji,
+   przez który przewijana treść była widoczna i ucięta. Gdy pasek istnieje,
+   padding schodzi do zera i pasek siada równo na dole karty; odstęp nad nim
+   daje własny `margin-top` paska. Modale bez paska (wydarzenie, zgłoszenie,
+   changelog) zachowują pełny padding. */
+.task-modal-body:has(.editor-actions-sticky) {
+  padding-bottom: 0;
+}
+/* S3 — `thead` siatki przydziału jest `sticky`, ale jej kontener przewijał się
+   tylko w poziomie, więc nagłówek uciekał z ekranu razem z tabelą. Własne
+   przewijanie pionowe robi z `.alloc-wrap` prawdziwy scrollport tego `sticky`
+   (zmiana ograniczona do modala — widok Obciążenia zostaje bez zmian). */
+.task-modal-body .alloc-wrap {
+  max-height: 60vh;
+  overflow: auto;
+  /* Dojechanie palcem do końca siatki ma przewijać dalej treść modala (tło i
+     tak jest zablokowane, dopóki modal jest otwarty) — inaczej gest grzązłby
+     w tabeli. */
+  overscroll-behavior: auto;
 }
 /* Editor lives inside the scrollable modal body — drop the page-level max-width. */
 .task-modal-body .editor {
@@ -4566,9 +4618,21 @@ option {
   }
   .app-nav-link {
     justify-content: center;
+    /* Poza desktopem wracamy do 44 px — minimalny cel dotykowy. */
+    min-height: 44px;
   }
   .sidebar-user {
     margin-top: 0;
+  }
+  /* Pasek/szuflada nie ma własnego przewijania listy, więc stopka jest zwykłym
+     blokiem (bez sticky i bez gradientu). */
+  .sidebar-footer {
+    position: static;
+    margin-top: 0;
+    background: transparent;
+  }
+  .sidebar-footer::before {
+    display: none;
   }
 }
 
@@ -6194,10 +6258,61 @@ option {
   margin-top: var(--n2-space-4);
   display: flex;
   align-items: center;
+  /* Lista blokad zapisu (IA-12) zajmuje całą szerokość i spycha przyciski do
+     kolejnego wiersza — dlatego pasek musi umieć się zawijać. */
+  flex-wrap: wrap;
   gap: var(--n2-space-3);
+}
+/* Delikatny gradient nad paskiem: sygnał, że treść przewija się pod nim. */
+.editor-actions-sticky::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 14px;
+  background: linear-gradient(to top, var(--n2-panel), rgba(32, 32, 36, 0));
+  pointer-events: none;
 }
 .autosave-hint {
   margin: 0 auto 0 0;
+}
+
+/* ---- IA-12: powody blokujące zapis, przy samym przycisku ---------------- */
+.save-blockers {
+  flex: 1 1 100%;
+  padding: var(--n2-space-2) var(--n2-space-3);
+  border: 1px solid var(--n2-danger);
+  border-radius: var(--n2-radius-xs);
+  background: var(--n2-danger-soft);
+  font-size: var(--n2-type-sm);
+}
+.save-blockers-title {
+  margin: 0 0 4px;
+  color: var(--n2-text);
+  font-weight: 600;
+}
+.save-blockers-list {
+  margin: 0;
+  padding-left: var(--n2-space-5);
+  color: var(--n2-text-soft);
+}
+.save-blockers-list li {
+  margin: 2px 0;
+}
+.save-blockers-list .link-btn {
+  text-align: left;
+}
+/* Odznaka zapisu jako przycisk skoku do przyczyny (ten sam wygląd co ostrzeżenie). */
+.save-status--blocked {
+  border: 1px solid var(--n2-danger);
+  background: var(--n2-danger-soft);
+  color: var(--n2-danger);
+  cursor: pointer;
+}
+.save-status--blocked:hover,
+.save-status--blocked:focus-visible {
+  background: rgba(255, 79, 114, 0.26);
 }
 
 /* ---- Godziny sprzedane per osoba (TaskModal) --------------------------- */

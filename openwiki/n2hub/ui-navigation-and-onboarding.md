@@ -44,7 +44,14 @@
   security boundary. `SessionProvider` then `OrgDataProvider` wrap the router in
   `main.tsx`.
 - `src/pages/` owns route-specific screens; `src/components/TaskModal.tsx` owns
-  task editing and its allocation grid.
+  task editing and its allocation grid. Powody blokujące zapis zadania są czyste
+  i testowane osobno (`src/components/taskSaveBlockers.ts`,
+  `collectTaskSaveBlockers` + `taskSaveBlockers.test.ts`): `formValid` = pusta
+  lista, a nieudany zapis MUSI dać skutek — skacze do pierwszego złego pola
+  (kotwice `t-title`/`t-project`/`t-status`/`t-start`/`t-end`/`t-assignees`),
+  wypisuje powody w sticky stopce edytora i udostępnia je klikalnej odznace
+  zapisu (`SaveStatus` prop `blocked`). Walidacja sekcji „Cykliczność” startuje
+  dopiero po jej edycji — nietknięta nie pokazuje błędu.
 - Profile edit matrix (`src/pages/profileEditPolicy.ts`) gains an ADMIN-ONLY
   „Spółka” field (`companyId` in `ALL_FIELDS` only — nie self, nie manager),
   rendered as a select in PersonProfilePage next to „Dział”; parity with the
