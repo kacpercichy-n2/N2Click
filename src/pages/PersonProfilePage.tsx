@@ -38,6 +38,7 @@ import { Coin } from '../components/Coin';
 import { StatusBadge } from '../components/StatusBadge';
 import { DEFAULT_CAPACITY, defaultWorkEndMinutes } from '../store/storage';
 import { useOpenTask } from '../components/TaskModal';
+import { useConfirm } from '../components/ConfirmProvider';
 import {
   formatBirthday,
   formatRowLabel,
@@ -847,6 +848,7 @@ function ProfileFacts({ person }: { person: Person }) {
  */
 function PasswordSection({ person }: { person: Person }) {
   const { state, dispatch } = useStore();
+  const askConfirm = useConfirm();
   const currentUser = state.people.find((p) => p.id === state.currentUserId);
   const opts = { peopleCount: state.people.length };
   const canManage = can(currentUser, 'people.manage', opts);
@@ -885,8 +887,17 @@ function PasswordSection({ person }: { person: Person }) {
     }
   };
 
-  const clear = () => {
-    if (!window.confirm(`Usunąć hasło osoby ${person.name}? Będzie mogła logować się bez hasła.`)) {
+  const clear = async () => {
+    // `askConfirm`, a nie `confirm` — lokalny stan pola „powtórz hasło” już
+    // zajmuje tę nazwę w tym komponencie.
+    if (
+      !(await askConfirm({
+        title: `Usunąć hasło osoby ${person.name}?`,
+        consequences: 'Będzie mogła logować się bez hasła.',
+        confirmLabel: 'Usuń hasło',
+        tone: 'danger',
+      }))
+    ) {
       return;
     }
     dispatch({ type: 'SET_PASSWORD', personId: person.id, passwordHash: '' });

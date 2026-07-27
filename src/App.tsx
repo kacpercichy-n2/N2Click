@@ -52,6 +52,7 @@ import { TaskModal } from './components/TaskModal';
 import { TicketModal } from './components/TicketModal';
 import { EventModal } from './components/EventModal';
 import { GlobalSearch } from './components/GlobalSearch';
+import { useConfirm } from './components/ConfirmProvider';
 import { Avatar } from './components/Avatar';
 import {
   Settings,
@@ -512,6 +513,7 @@ export function App() {
  * form navigates untouched.
  */
 function DirtyNavigationGuard() {
+  const confirm = useConfirm();
   const blocker = useBlocker(
     useCallback(
       ({ currentLocation, nextLocation }: {
@@ -528,17 +530,33 @@ function DirtyNavigationGuard() {
     ),
   );
 
-  // Same pattern as react-router's usePrompt: resolve the blocked state with a
-  // native confirm. Cancel keeps the URL and the edit; confirm proceeds. The
-  // setTimeout avoids racing the history revert on Back/Forward pops.
+  // Same pattern as react-router's usePrompt, ale pytanie jest teraz wspólnym
+  // oknem `alertdialog` (asynchronicznym). Cancel keeps the URL and the edit;
+  // confirm proceeds. The setTimeout avoids racing the history revert on
+  // Back/Forward pops.
+  //
+  // Dwie rzeczy, których nie wymagał natywny (blokujący) `confirm`:
+  //  * `askingRef` — dopóki pytanie wisi, żaden ponowny render z tym samym
+  //    zablokowanym stanem nie może dołożyć drugiego pytania do kolejki;
+  //  * `proceed`/`reset` zdjęte z blockera PRZED `await` — rozstrzygamy DOKŁADNIE
+  //    tę nawigację, o którą pytaliśmy, nawet jeśli obiekt blockera się zmienił.
+  const askingRef = useRef(false);
   useEffect(() => {
     if (blocker.state !== 'blocked') return;
-    if (window.confirm('Masz niezapisane zmiany. Opuścić bez zapisywania?')) {
-      setTimeout(blocker.proceed, 0);
-    } else {
-      blocker.reset();
-    }
-  }, [blocker]);
+    if (askingRef.current) return;
+    askingRef.current = true;
+    const { proceed, reset } = blocker;
+    void confirm({
+      title: 'Masz niezapisane zmiany.',
+      description: 'Opuścić bez zapisywania?',
+      confirmLabel: 'Opuść bez zapisywania',
+      cancelLabel: 'Wróć do edycji',
+    }).then((leave) => {
+      askingRef.current = false;
+      if (leave) setTimeout(proceed, 0);
+      else reset();
+    });
+  }, [blocker, confirm]);
 
   return null;
 }

@@ -16,6 +16,7 @@ import {
 } from '../utils/projectDocuments';
 import {
   activeStatuses,
+  assigneeIdsOfTask,
   assigneesOfTask,
   departmentsOfProject,
   getStatus,
@@ -31,6 +32,8 @@ import { PersonChip } from '../components/PersonChip';
 import { CommentsPanel } from '../components/CommentsPanel';
 import { SaveStatus } from '../components/SaveStatus';
 import { useOpenTask } from '../components/TaskModal';
+import { useConfirm } from '../components/ConfirmProvider';
+import { buildDeleteConsequence } from '../components/confirmDialog';
 import { ChevronRight } from '../components/icons';
 import { formatShortWithWeekday, todayStr, periodError, PERIOD_ERROR_LABELS } from '../utils/dates';
 import { formatDuration } from '../utils/time';
@@ -71,6 +74,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   const navigate = useNavigate();
   const { openTask, openNewTask } = useOpenTask();
   const { state, dispatch } = useStore();
+  const confirm = useConfirm();
   const can = useCan();
   const canManage = can('projects.manage');
   const canPaid = can('projects.paid');
@@ -204,16 +208,23 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   // Szkice zadań tego projektu — widoczne tylko tutaj, publikowane atomowo jedną
   // akcją (inwariant 6). „Zapisz i opublikuj” przełącza wszystkie naraz.
   const draftCount = tasks.filter((t) => t.isDraft === true).length;
-  const publishDrafts = () => {
+  const publishDrafts = async () => {
     if (draftCount === 0) return;
     const label =
       draftCount === 1
         ? 'Opublikować 1 szkic zadania?'
         : `Opublikować ${draftCount} szkiców zadań?`;
-    if (!window.confirm(`${label} Staną się widoczne w planowaniu (kalendarz, zasobnik, Moja praca).`)) {
+    // Publikacja nie NISZCZY danych — zwykłe potwierdzenie, bez czerwieni.
+    if (
+      !(await confirm({
+        title: label,
+        description: 'Staną się widoczne w planowaniu (kalendarz, zasobnik, Moja praca).',
+        confirmLabel: 'Opublikuj',
+      }))
+    ) {
       return;
     }
-    dispatch({ type: 'PUBLISH_PROJECT_DRAFTS', projectId: project.id });
+    dispatch({ type: 'PUBLISH_PROJECT_DRAFTS', projectId });
   };
   const derivedDepartments = departmentsOfProject(state, project.id);
   const statuses = activeStatuses(state);
@@ -225,15 +236,29 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   const togglePaid = () =>
     dispatch({ type: 'SET_PROJECT_PAID', projectId: project.id, paid: !project.paid });
 
-  const remove = () => {
+  const remove = async () => {
+    // `projectId` (prop) jest stabilny przez cały `await` — komponent remontuje
+    // się per id projektu. Liczniki z istniejących selektorów (godziny
+    // derywowane z `WorkloadEntry` — inwariant 1).
+    const consequences = buildDeleteConsequence({
+      tasks: tasks.length,
+      assignments: tasks.reduce((n, t) => n + assigneeIdsOfTask(state, t.id).length, 0),
+      plannedHours: projectPlannedTotal(state, projectId),
+    });
     if (
-      window.confirm(
-        `Usunąć projekt „${project.name}”? To usunie ${tasks.length} zadań, przypisania, zaplanowane godziny, kamienie milowe i komentarze.`,
-      )
+      await confirm({
+        title: `Usunąć projekt „${project.name}”?`,
+        description: 'Znikną też kamienie milowe i komentarze projektu.',
+        consequences,
+        confirmLabel: 'Usuń projekt',
+        tone: 'danger',
+        requireAck: consequences !== '',
+      })
     ) {
-      dispatch({ type: 'DELETE_PROJECT', projectId: project.id });
+      dispatch({ type: 'DELETE_PROJECT', projectId });
       // The guard registry still holds the (now moot) dirty draft until the
-      // next effect pass — this navigation was deliberately confirmed.
+      // next effect pass — this navigation was deliberately confirmed. Bypass i
+      // nawigacja zostają NIEROZDZIELNĄ parą, tak jak przed zmianą.
       bypassNavGuardOnce();
       navigate('/projects');
     }
@@ -277,12 +302,22 @@ function ProjectDetail({ projectId }: { projectId: string }) {
     resetDocForm();
   };
 
-  const removeDocument = (doc: ProjectDocument) => {
-    if (!window.confirm(`Usunąć dokument „${doc.label || doc.url}”?`)) return;
+  const removeDocument = async (doc: ProjectDocument) => {
+    // Dokument to sam ODNOŚNIK (żadnych plików), więc nie ma skutków do
+    // wyliczenia — jednoklikowe pytanie.
+    if (
+      !(await confirm({
+        title: `Usunąć dokument „${doc.label || doc.url}”?`,
+        confirmLabel: 'Usuń dokument',
+        tone: 'danger',
+      }))
+    ) {
+      return;
+    }
     if (docEditId === doc.id) resetDocForm();
     dispatch({
       type: 'DELETE_PROJECT_DOCUMENT',
-      projectId: project.id,
+      projectId,
       documentId: doc.id,
     });
   };
@@ -300,14 +335,20 @@ function ProjectDetail({ projectId }: { projectId: string }) {
           <button
             type="button"
             className="btn ghost"
-            onClick={() => {
+            onClick={async () => {
               if (
                 dirty &&
-                !window.confirm('Masz niezapisane zmiany. Opuścić bez zapisywania?')
+                !(await confirm({
+                  title: 'Masz niezapisane zmiany.',
+                  description: 'Opuścić bez zapisywania?',
+                  confirmLabel: 'Opuść bez zapisywania',
+                  cancelLabel: 'Wróć do edycji',
+                }))
               ) {
                 return;
               }
               // Already confirmed (or clean) — don't let the router guard ask again.
+              // Bypass i nawigacja są wołane RAZEM, bez `await` pomiędzy.
               bypassNavGuardOnce();
               navigate('/projects');
             }}

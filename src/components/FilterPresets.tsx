@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { useStore } from '../store/AppStore';
 import type { FilterPage, SavedFilterCriteria } from '../types';
 import { DEFAULT_FILTER_CRITERIA } from '../store/storage';
+import { useConfirm } from './ConfirmProvider';
 import { Bookmark, Check, X } from './icons';
 
 // Single source of truth lives in storage.ts; re-exported under the name the
@@ -36,14 +37,23 @@ export function FilterPresets({
   onApply: (criteria: SavedFilterCriteria) => void;
 }) {
   const { state, dispatch } = useStore();
+  const confirm = useConfirm();
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState('');
 
   const presets = state.savedFilters.filter((f) => f.page === page);
   const canSave = isCriteriaActive(criteria);
 
-  const remove = (filterId: string, filterName: string) => {
-    if (window.confirm(`Usunąć zapisany filtr „${filterName}”?`)) {
+  // Preset to zapisane kryteria, nie dane planu — jednoklikowe pytanie bez
+  // wyliczania skutków i bez `requireAck`.
+  const remove = async (filterId: string, filterName: string) => {
+    if (
+      await confirm({
+        title: `Usunąć zapisany filtr „${filterName}”?`,
+        confirmLabel: 'Usuń filtr',
+        tone: 'danger',
+      })
+    ) {
       dispatch({ type: 'DELETE_FILTER_PRESET', filterId });
     }
   };

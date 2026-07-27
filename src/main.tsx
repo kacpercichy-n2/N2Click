@@ -8,6 +8,7 @@ import { OrgDataProvider } from './supabase/OrgDataProvider';
 import { CloudSyncProvider } from './supabase/CloudSyncProvider';
 import { AvatarUrlsProvider } from './supabase/AvatarUrlsProvider';
 import { App } from './App';
+import { ConfirmProvider } from './components/ConfirmProvider';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { installNumberInputWheelGuard } from './utils/numberInputWheel';
 import './styles.css';
@@ -45,34 +46,43 @@ const router = createBrowserRouter(
 createRoot(rootEl).render(
   <StrictMode>
     <ErrorBoundary>
-      <AppStoreProvider>
-        {/* SessionProvider decides local vs Supabase auth mode once at startup
-            and (in Supabase mode) gates the shell behind a real Auth session.
-            It sits inside the store (needs people/dispatch) and outside the
-            router (needs no router hooks). */}
-        <SessionProvider>
-          {/* Reads the RLS-scoped org snapshot in Supabase mode (idle in local
-              mode — no client is created). Sits inside SessionProvider (needs the
-              auth mode + session) and outside the router (needs no router hooks). */}
-          <OrgDataProvider>
-            {/* Mirrors the seven planner groups to Supabase (writes) and
-                hydrates them on sign-in (one MERGE_CLOUD_ENTITIES). Sits inside
-                OrgDataProvider (needs the org snapshot) and outside the router
-                (needs no router hooks). Idle in local mode — no client created. */}
-            <CloudSyncProvider>
-              {/* Podpisane URL-e zdjęć profilowych dla całego UI (tryb
-                  supabase); w trybie lokalnym mapy są puste i nic się nie
-                  zmienia. Wewnątrz OrgDataProvider (czyta snapshot). */}
-              <AvatarUrlsProvider>
-                {/* Respect OS "reduce motion" for every animation in the app. */}
-                <MotionConfig reducedMotion="user">
-                  <RouterProvider router={router} future={{ v7_startTransition: true }} />
-                </MotionConfig>
-              </AvatarUrlsProvider>
-            </CloudSyncProvider>
-          </OrgDataProvider>
-        </SessionProvider>
-      </AppStoreProvider>
+      {/* Jedno okno potwierdzenia (`role="alertdialog"`) dla całej aplikacji,
+          zamiast `window.confirm`. Stoi NAJWYŻEJ, bo pytają z niego zarówno
+          strony i modale pod routerem, jak i banery spoza niego; niczego nie
+          czyta (ani store'a, ani routera), więc nie ma powodu schodzić niżej.
+          ErrorBoundary zostaje NAD nim — ekran awarii nie może zależeć od
+          drzewa, które właśnie się wysypało (dlatego jako jedyny trzyma
+          natywny `window.confirm`). */}
+      <ConfirmProvider>
+        <AppStoreProvider>
+          {/* SessionProvider decides local vs Supabase auth mode once at startup
+              and (in Supabase mode) gates the shell behind a real Auth session.
+              It sits inside the store (needs people/dispatch) and outside the
+              router (needs no router hooks). */}
+          <SessionProvider>
+            {/* Reads the RLS-scoped org snapshot in Supabase mode (idle in local
+                mode — no client is created). Sits inside SessionProvider (needs the
+                auth mode + session) and outside the router (needs no router hooks). */}
+            <OrgDataProvider>
+              {/* Mirrors the seven planner groups to Supabase (writes) and
+                  hydrates them on sign-in (one MERGE_CLOUD_ENTITIES). Sits inside
+                  OrgDataProvider (needs the org snapshot) and outside the router
+                  (needs no router hooks). Idle in local mode — no client created. */}
+              <CloudSyncProvider>
+                {/* Podpisane URL-e zdjęć profilowych dla całego UI (tryb
+                    supabase); w trybie lokalnym mapy są puste i nic się nie
+                    zmienia. Wewnątrz OrgDataProvider (czyta snapshot). */}
+                <AvatarUrlsProvider>
+                  {/* Respect OS "reduce motion" for every animation in the app. */}
+                  <MotionConfig reducedMotion="user">
+                    <RouterProvider router={router} future={{ v7_startTransition: true }} />
+                  </MotionConfig>
+                </AvatarUrlsProvider>
+              </CloudSyncProvider>
+            </OrgDataProvider>
+          </SessionProvider>
+        </AppStoreProvider>
+      </ConfirmProvider>
     </ErrorBoundary>
   </StrictMode>,
 );

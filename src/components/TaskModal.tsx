@@ -21,9 +21,12 @@ import {
   getStatus,
   planningStatusForTotals,
   rangeAvailabilityForPerson,
+  taskPlannedTotal,
 } from '../store/selectors';
 import { PlanningBadge } from './PlanningBadge';
 import { useModalShell } from './useModalShell';
+import { useConfirm } from './ConfirmProvider';
+import { buildDeleteConsequence } from './confirmDialog';
 import { IconButton } from './IconButton';
 import { X } from './icons';
 import { CommentsPanel } from './CommentsPanel';
@@ -213,6 +216,7 @@ function TaskModalShell({
   onClose,
 }: ShellProps) {
   const { state, dispatch } = useStore();
+  const confirm = useConfirm();
   const canManageTasks = useCan()('tasks.manage');
   const isNew = taskParam === 'new';
   const existing = isNew ? undefined : state.tasks.find((t) => t.id === taskParam);
@@ -249,16 +253,27 @@ function TaskModalShell({
     onClose();
   }, [onClose]);
 
-  // Any close path prompts when there are unsaved changes.
-  const requestClose = useCallback(() => {
-    if (
-      dirtyRef.current &&
-      !window.confirm('Masz niezapisane zmiany. Zamknąć bez zapisywania?')
-    ) {
-      return;
+  // Any close path prompts when there are unsaved changes. Pytanie jest teraz
+  // ASYNCHRONICZNE, więc drugie Escape/kliknięcie w trakcie nie może dołożyć
+  // drugiego pytania do kolejki. `closeDeliberately` (bypass strażnika +
+  // nawigacja) nadal biegnie w JEDNEJ, nieprzerwanej parze.
+  const askingRef = useRef(false);
+  const requestClose = useCallback(async () => {
+    if (askingRef.current) return;
+    if (dirtyRef.current) {
+      askingRef.current = true;
+      const leave = await confirm({
+        title: 'Masz niezapisane zmiany.',
+        description: 'Zamknąć bez zapisywania?',
+        confirmLabel: 'Zamknij bez zapisywania',
+        cancelLabel: 'Wróć do edycji',
+        // Bez `requireAck`: to porzucenie SZKICU, nie utrata zapisanych danych.
+      });
+      askingRef.current = false;
+      if (!leave) return;
     }
     closeDeliberately();
-  }, [closeDeliberately]);
+  }, [closeDeliberately, confirm]);
 
   // Escape (z pytaniem o niezapisane zmiany), pułapka fokusa, powrót fokusa po
   // zamknięciu i blokada scrolla — wszystko we wspólnej powłoce modala.
@@ -268,14 +283,25 @@ function TaskModalShell({
     labelledBy: titleId,
   });
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!existing) return;
+    // Prawdziwe liczby z selektorów zamiast ogólnika; godziny są derywowane z
+    // `WorkloadEntry` (inwariant 1). Cel zapamiętany PRZED `await`.
+    const taskId = existing.id;
+    const consequences = buildDeleteConsequence({
+      assignments: assigneeIdsOfTask(state, taskId).length,
+      plannedHours: taskPlannedTotal(state, taskId),
+    });
     if (
-      window.confirm(
-        `Usunąć „${existing.title}”? To usunie przypisania i zaplanowane godziny.`,
-      )
+      await confirm({
+        title: `Usunąć „${existing.title}”?`,
+        consequences,
+        confirmLabel: 'Usuń zadanie',
+        tone: 'danger',
+        requireAck: consequences !== '',
+      })
     ) {
-      dispatch({ type: 'DELETE_TASK', taskId: existing.id });
+      dispatch({ type: 'DELETE_TASK', taskId });
       closeDeliberately();
     }
   };
@@ -440,6 +466,7 @@ function TaskEditor({
 }: EditorProps) {
   const { state, dispatch } = useStore();
   const { external } = usePersistence();
+  const confirm = useConfirm();
   const canManage = useCan()('tasks.manage');
   const readOnly = !canManage;
   const roTitle = readOnly ? NO_PERM_TITLE : undefined;
@@ -764,7 +791,7 @@ function TaskEditor({
     [startDate, endDate],
   );
 
-  const toggleAssignee = (personId: string) => {
+  const toggleAssignee = async (personId: string) => {
     const isAssigned = assigneeIds.includes(personId);
     if (isAssigned) {
       const person = state.people.find((p) => p.id === personId);
@@ -784,11 +811,14 @@ function TaskEditor({
           existingBinForPerson > 0
             ? ` (w tym ${formatDuration(existingBinForPerson)} w zasobniku)`
             : '';
-        const ok = window.confirm(
-          `Usunąć ${person?.name ?? 'tę osobę'} oraz ${formatDuration(
-            droppedTotal,
-          )} zaplanowanej pracy z tego zadania${binSuffix}?`,
-        );
+        // Wszystkie settery poniżej są funkcyjne (`prev => …`), więc przejście
+        // na `await` nie może zapisać nieaktualnego stanu.
+        const ok = await confirm({
+          title: `Usunąć ${person?.name ?? 'tę osobę'} z tego zadania?`,
+          consequences: `To usunie ${formatDuration(droppedTotal)} zaplanowanej pracy${binSuffix}.`,
+          confirmLabel: 'Usuń osobę',
+          tone: 'danger',
+        });
         if (!ok) return;
       }
       setAssigneeIds((prev) => prev.filter((pid) => pid !== personId));

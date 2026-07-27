@@ -54,6 +54,7 @@ import {
 } from './weekViewLayout';
 import { useNowTick } from '../utils/useNowTick';
 import { OverlayLayer, useOverlay } from './useOverlay';
+import { useConfirm } from './ConfirmProvider';
 import type { OverlayRect } from './overlayShell';
 import {
   DAY_MINUTES,
@@ -1366,6 +1367,7 @@ export function WeekView({ state, anchor, filter }: Props) {
   const { openTask, openNewTask } = useOpenTask();
   const { openEvent, openNewEvent } = useOpenEvent();
   const { dispatch } = useStore();
+  const confirm = useConfirm();
   const can = useCan();
   const canEditAny = can('blocks.editAny');
   const canEditOwn = can('blocks.editOwn');
@@ -1708,12 +1710,24 @@ export function WeekView({ state, anchor, filter }: Props) {
     setMenu(null);
   };
 
-  const doDelete = () => {
+  const doDelete = async () => {
     if (!menu) return;
-    if (window.confirm(`Usunąć blok ${formatDuration(menu.entry.plannedHours)} z zasobnika?`)) {
-      dispatch({ type: 'DELETE_BLOCK', entryId: menu.entry.id });
-    }
+    // Wpis bierzemy PRZED pytaniem, a menu zamykamy od razu: nakładka z
+    // cyklem życia wskaźnika nie może przeżyć `await` (inwariant 7). Sam
+    // efekt (`DELETE_BLOCK` z tym samym `entryId`) zostaje bez zmian.
+    const entry = menu.entry;
     setMenu(null);
+    if (
+      await confirm({
+        // Tytuł NAZYWA już cały skutek (tyle godzin znika z zasobnika), więc
+        // osobne zdanie o konsekwencjach byłoby powtórzeniem.
+        title: `Usunąć blok ${formatDuration(entry.plannedHours)} z zasobnika?`,
+        confirmLabel: 'Usuń blok',
+        tone: 'danger',
+      })
+    ) {
+      dispatch({ type: 'DELETE_BLOCK', entryId: entry.id });
+    }
   };
 
   // ---- "Zaplanuj część" (partial bin scheduling) ----

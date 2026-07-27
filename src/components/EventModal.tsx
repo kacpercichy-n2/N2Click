@@ -19,6 +19,7 @@ import { normalizeProjectDocumentUrl } from '../utils/projectDocuments';
 import { personColor } from '../utils/colors';
 import { bypassNavGuardOnce, clearNavGuard, setNavGuard } from '../utils/dirtyRegistry';
 import { useModalShell } from './useModalShell';
+import { useConfirm } from './ConfirmProvider';
 import { IconButton } from './IconButton';
 import { X } from './icons';
 
@@ -123,6 +124,7 @@ interface ShellProps {
 
 function EventModalShell({ eventParam, prefill, onClose }: ShellProps) {
   const { state, dispatch } = useStore();
+  const confirm = useConfirm();
   const can = useCan();
   const canManage = can('events.manage');
   const isNew = eventParam === 'new';
@@ -145,12 +147,25 @@ function EventModalShell({ eventParam, prefill, onClose }: ShellProps) {
     onClose();
   }, [onClose]);
 
-  const requestClose = useCallback(() => {
-    if (dirtyRef.current && !window.confirm('Masz niezapisane zmiany. Zamknąć bez zapisywania?')) {
-      return;
+  // Pytanie o porzucenie zmian jest ASYNCHRONICZNE, więc drugie Escape/kliknięcie
+  // w trakcie nie może dołożyć drugiego pytania do kolejki.
+  const askingRef = useRef(false);
+  const requestClose = useCallback(async () => {
+    if (askingRef.current) return;
+    if (dirtyRef.current) {
+      askingRef.current = true;
+      const leave = await confirm({
+        title: 'Masz niezapisane zmiany.',
+        description: 'Zamknąć bez zapisywania?',
+        confirmLabel: 'Zamknij bez zapisywania',
+        cancelLabel: 'Wróć do edycji',
+        // Bez `requireAck`: to porzucenie SZKICU, nie utrata zapisanych danych.
+      });
+      askingRef.current = false;
+      if (!leave) return;
     }
     closeDeliberately();
-  }, [closeDeliberately]);
+  }, [closeDeliberately, confirm]);
 
   // Escape, pułapka fokusa, powrót fokusa i blokada scrolla — wspólna powłoka.
   const titleId = useId();
@@ -159,10 +174,21 @@ function EventModalShell({ eventParam, prefill, onClose }: ShellProps) {
     labelledBy: titleId,
   });
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!existing || !canManage) return;
-    if (window.confirm(`Usunąć wydarzenie „${existing.title}”?`)) {
-      dispatch({ type: 'DELETE_EVENT', eventId: existing.id });
+    // Cel zapamiętany PRZED `await` — modal może się w międzyczasie przewinąć
+    // na inny parametr URL-a. Wydarzenie jest czysto prezentacyjne: nie ciągnie
+    // za sobą przypisań ani wierszy `WorkloadEntry` (inwariant 1), więc nie ma
+    // skutków do wyliczenia.
+    const eventId = existing.id;
+    if (
+      await confirm({
+        title: `Usunąć wydarzenie „${existing.title}”?`,
+        confirmLabel: 'Usuń wydarzenie',
+        tone: 'danger',
+      })
+    ) {
+      dispatch({ type: 'DELETE_EVENT', eventId });
       closeDeliberately();
     }
   };

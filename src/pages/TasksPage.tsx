@@ -23,6 +23,8 @@ import { type FilterChip, type FilterGroup } from '../components/FilterPanel';
 import { FilterBar } from '../components/FilterBar';
 import { ChevronRight, Check, Plus, X } from '../components/icons';
 import { IconButton } from '../components/IconButton';
+import { useConfirm } from '../components/ConfirmProvider';
+import { buildDeleteConsequence } from '../components/confirmDialog';
 import { formatShort, formatShortWithWeekday } from '../utils/dates';
 import { PersonChip } from '../components/PersonChip';
 import { StatusBadge } from '../components/StatusBadge';
@@ -40,6 +42,7 @@ export function TasksPage() {
   const { state, dispatch } = useStore();
   const { openTask, openNewTask } = useOpenTask();
   const canManageTasks = useCan()('tasks.manage');
+  const confirm = useConfirm();
   const statuses = activeStatuses(state);
 
   // Stan filtrów jest ZAPAMIĘTANY w store (`lastFilters.tasks`) — przetrwa
@@ -272,8 +275,24 @@ export function TasksPage() {
   if (from) chips.push({ key: 'from', label: `Od: ${formatShort(from)}`, onRemove: () => setFrom('') });
   if (to) chips.push({ key: 'to', label: `Do: ${formatShort(to)}`, onRemove: () => setTo('') });
 
-  const handleDelete = (taskId: string, title: string) => {
-    if (window.confirm(`Usunąć „${title}”? To usunie przypisania i zaplanowane godziny.`)) {
+  const handleDelete = async (taskId: string, title: string) => {
+    // Zamiast ogólnikowego „to usunie przypisania i godziny” podajemy PRAWDZIWE
+    // liczby z istniejących selektorów. Sumy godzin są derywowane z
+    // `WorkloadEntry` (inwariant 1) — nic nie jest przechowywane osobno.
+    const consequences = buildDeleteConsequence({
+      assignments: assigneeIdsOfTask(state, taskId).length,
+      plannedHours: taskPlannedTotal(state, taskId),
+    });
+    if (
+      await confirm({
+        title: `Usunąć „${title}”?`,
+        consequences,
+        confirmLabel: 'Usuń zadanie',
+        tone: 'danger',
+        // Świadome potwierdzenie tylko wtedy, gdy naprawdę coś ginie.
+        requireAck: consequences !== '',
+      })
+    ) {
       dispatch({ type: 'DELETE_TASK', taskId });
     }
   };

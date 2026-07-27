@@ -72,12 +72,22 @@ export interface ModalShellOptions {
   labelledBy: string;
   /** `id` widocznego opisu/podtytułu — pomijane, gdy modal go nie ma. */
   describedBy?: string;
+  /** Rola dialogu; `alertdialog` dla pytań wymagających decyzji. Domyślnie `dialog`. */
+  role?: 'dialog' | 'alertdialog';
+  /**
+   * Dialog LEŻY NA INNYM modalu (potwierdzenie nad TaskModalem). Nasłuch
+   * klawiatury idzie wtedy w fazie CAPTURE i zatrzymuje propagację Escape/Tab,
+   * więc pułapka spod spodu ani nie zamknie swojego modala, ani nie wyrwie
+   * fokusa z wierzchniego dialogu. Ten sam mechanizm co stos nakładek w
+   * `overlayShell.ts`.
+   */
+  stacked?: boolean;
 }
 
 export interface ModalShell {
   cardRef: RefObject<HTMLDivElement>;
   cardProps: {
-    role: 'dialog';
+    role: 'dialog' | 'alertdialog';
     'aria-modal': true;
     'aria-labelledby': string;
     'aria-describedby'?: string;
@@ -93,6 +103,8 @@ export function useModalShell({
   onRequestClose,
   labelledBy,
   describedBy,
+  role = 'dialog',
+  stacked = false,
 }: ModalShellOptions): ModalShell {
   const cardRef = useRef<HTMLDivElement>(null);
   // Nasłuchy rejestrują się RAZ, a bieżące zamknięcie czytają z refa — inaczej
@@ -126,16 +138,21 @@ export function useModalShell({
     else elements[index].focus();
   }, []);
 
-  // Escape zamyka, Tab krąży w karcie.
+  // Escape zamyka, Tab krąży w karcie. W trybie `stacked` nasłuch stoi w fazie
+  // capture i konsumuje oba klawisze (`stopPropagation`), więc pułapka modala
+  // pod spodem nigdy ich nie zobaczy — także przy `action.type === 'none'`,
+  // inaczej Tab w środku listy przeskoczyłby do modala rodzica.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
+        if (stacked) event.stopPropagation();
         closeRef.current();
         return;
       }
       if (!shouldHandleTrapKey(event)) return;
       const card = cardRef.current;
       if (card === null) return;
+      if (stacked) event.stopPropagation();
       const elements = tabbableElements(card);
       const active = document.activeElement;
       const currentIndex = active instanceof HTMLElement ? elements.indexOf(active) : -1;
@@ -145,9 +162,9 @@ export function useModalShell({
       if (action.type === 'card') card.focus();
       else elements[action.index].focus();
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
+    window.addEventListener('keydown', onKey, stacked);
+    return () => window.removeEventListener('keydown', onKey, stacked);
+  }, [stacked]);
 
   // Blokada scrolla + kompensacja znikającego paska przewijania.
   useEffect(() => {
@@ -185,7 +202,7 @@ export function useModalShell({
   return {
     cardRef,
     cardProps: {
-      role: 'dialog',
+      role,
       'aria-modal': true,
       'aria-labelledby': labelledBy,
       ...(describedBy !== undefined ? { 'aria-describedby': describedBy } : {}),

@@ -8,7 +8,11 @@ import { Link } from 'react-router-dom';
 import { usePersistence, useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import type { Client } from '../types';
+import { projectPlannedTotal, projectsOfClient, tasksOfProject } from '../store/selectors';
 import { ChevronRight, Plus, Trash2 } from '../components/icons';
+import { useConfirm } from '../components/ConfirmProvider';
+import { buildDeleteConsequence } from '../components/confirmDialog';
+import { polishCount } from '../utils/polishPlural';
 import {
   clientDraftError,
   draftOf,
@@ -20,14 +24,6 @@ import {
   type ClientFormDraft,
 } from './clientContactForm';
 import { useAutoSave } from '../utils/useAutoSave';
-
-function polishCount(n: number, one: string, few: string, many: string): string {
-  const mod10 = n % 10;
-  const mod100 = n % 100;
-  if (n === 1) return one;
-  if (mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14)) return few;
-  return many;
-}
 
 type DraftUpdater = (updater: (d: ClientFormDraft) => ClientFormDraft) => void;
 
@@ -192,6 +188,7 @@ export function ClientsPage() {
   const { state, dispatch } = useStore();
   const { external } = usePersistence();
   const canManage = useCan()('clients.manage');
+  const confirm = useConfirm();
 
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState<ClientFormDraft>(emptyDraft);
@@ -272,13 +269,27 @@ export function ClientsPage() {
     setEditingId('');
   };
 
-  const remove = (c: Client) => {
-    const count = projectCounts.get(c.id) ?? 0;
-    const cascade =
-      count > 0
-        ? ` Usunie to także ${count} ${polishCount(count, 'projekt', 'projekty', 'projektów')} tego klienta wraz z zadaniami i godzinami.`
-        : '';
-    if (window.confirm(`Usunąć klienta „${c.name}”?${cascade}`)) {
+  const remove = async (c: Client) => {
+    // Liczba projektów zostaje z `projectCounts` (bez zmian); zadania i godziny
+    // dokładamy z istniejących selektorów, żeby kaskada była nazwana wprost.
+    const projects = projectCounts.get(c.id) ?? 0;
+    const clientProjects = projectsOfClient(state, c.id);
+    const tasks = clientProjects.reduce((n, p) => n + tasksOfProject(state, p.id).length, 0);
+    const plannedHours = clientProjects.reduce(
+      (h, p) => h + projectPlannedTotal(state, p.id),
+      0,
+    );
+    const consequences = buildDeleteConsequence({ projects, tasks, plannedHours });
+    if (
+      await confirm({
+        title: `Usunąć klienta „${c.name}”?`,
+        consequences,
+        confirmLabel: 'Usuń klienta',
+        tone: 'danger',
+        // Kaskada niszczy prawdziwe dane planu — świadome potwierdzenie.
+        requireAck: consequences !== '',
+      })
+    ) {
       dispatch({ type: 'DELETE_CLIENT', clientId: c.id });
     }
   };

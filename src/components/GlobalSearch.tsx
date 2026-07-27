@@ -19,6 +19,7 @@ import { StatusBadge } from './StatusBadge';
 import { Avatar } from './Avatar';
 import { Search, ChevronRight } from './icons';
 import { formatShortWithWeekday } from '../utils/dates';
+import { polishCount } from '../utils/polishPlural';
 import { useOpenTask } from './TaskModal';
 
 type FlatItem =
@@ -26,15 +27,6 @@ type FlatItem =
   | { kind: 'task'; id: string }
   | { kind: 'client'; id: string }
   | { kind: 'person'; id: string };
-
-/** Polish plural rule: 1 → one, 2–4 (not 12–14) → few, else → many. */
-function polishCount(n: number, one: string, few: string, many: string): string {
-  const mod10 = n % 10;
-  const mod100 = n % 100;
-  if (n === 1) return one;
-  if (mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14)) return few;
-  return many;
-}
 
 function isTypingTarget(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false;

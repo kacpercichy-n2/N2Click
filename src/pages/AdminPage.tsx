@@ -5,8 +5,16 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
-import { allStatusesOrdered, isAdminUser } from '../store/selectors';
+import {
+  allStatusesOrdered,
+  isAdminUser,
+  projectPlannedTotal,
+  projectsOfClient,
+  tasksOfProject,
+} from '../store/selectors';
 import { StatusBadge } from '../components/StatusBadge';
+import { useConfirm } from '../components/ConfirmProvider';
+import { buildDeleteConsequence } from '../components/confirmDialog';
 import { ExportDryRunPanel } from '../components/ExportDryRunPanel';
 import { MigrationStatusPanel } from '../components/MigrationStatusPanel';
 import { useAuth } from '../auth/SessionProvider';
@@ -18,6 +26,7 @@ const NEW_STATUS_COLOR = '#c496ff';
 export function AdminPage() {
   const { state, dispatch } = useStore();
   const { mode } = useAuth();
+  const confirm = useConfirm();
   const admin = isAdminUser(state);
 
   const [statusInput, setStatusInput] = useState('');
@@ -213,12 +222,25 @@ export function AdminPage() {
         <SimpleList
           items={state.clients.map((c) => ({ id: c.id, name: c.name }))}
           onRename={(id, name) => dispatch({ type: 'RENAME_CLIENT', clientId: id, name })}
-          onDelete={(id, name) => {
-            const count = state.projects.filter((p) => p.clientId === id).length;
+          onDelete={async (id, name) => {
+            // Ta sama kaskada co na stronie Klienci — liczniki z selektorów.
+            const clientProjects = projectsOfClient(state, id);
+            const consequences = buildDeleteConsequence({
+              projects: clientProjects.length,
+              tasks: clientProjects.reduce((n, p) => n + tasksOfProject(state, p.id).length, 0),
+              plannedHours: clientProjects.reduce(
+                (h, p) => h + projectPlannedTotal(state, p.id),
+                0,
+              ),
+            });
             if (
-              window.confirm(
-                `Usunąć klienta „${name}”?${count > 0 ? ` To usunie też jego projekty (${count}) wraz ze wszystkimi zadaniami i zaplanowanymi godzinami.` : ''}`,
-              )
+              await confirm({
+                title: `Usunąć klienta „${name}”?`,
+                consequences,
+                confirmLabel: 'Usuń klienta',
+                tone: 'danger',
+                requireAck: consequences !== '',
+              })
             ) {
               dispatch({ type: 'DELETE_CLIENT', clientId: id });
             }
@@ -238,8 +260,17 @@ export function AdminPage() {
         <SimpleList
           items={state.departments}
           onRename={(id, name) => dispatch({ type: 'RENAME_DEPARTMENT', departmentId: id, name })}
-          onDelete={(id, name) => {
-            if (window.confirm(`Usunąć dział „${name}”? Osoby i projekty stracą tę etykietę.`)) {
+          onDelete={async (id, name) => {
+            // Usunięcie pozycji słownika zdejmuje ETYKIETĘ — nie kasuje osób,
+            // projektów ani godzin, więc pytanie zostaje jednoklikowe.
+            if (
+              await confirm({
+                title: `Usunąć dział „${name}”?`,
+                consequences: 'Osoby i projekty stracą tę etykietę.',
+                confirmLabel: 'Usuń dział',
+                tone: 'danger',
+              })
+            ) {
               dispatch({ type: 'DELETE_DEPARTMENT', departmentId: id });
             }
           }}
@@ -270,11 +301,15 @@ export function AdminPage() {
         <SimpleList
           items={state.companies}
           onRename={(id, name) => dispatch({ type: 'RENAME_COMPANY', companyId: id, name })}
-          onDelete={(id, name) => {
+          onDelete={async (id, name) => {
             if (
-              window.confirm(
-                `Usunąć spółkę „${name}”? Osoby stracą przypisanie do spółki, a widoczność projektów w chmurze przestanie być nią zawężana.`,
-              )
+              await confirm({
+                title: `Usunąć spółkę „${name}”?`,
+                consequences:
+                  'Osoby stracą przypisanie do spółki, a widoczność projektów w chmurze przestanie być nią zawężana.',
+                confirmLabel: 'Usuń spółkę',
+                tone: 'danger',
+              })
             ) {
               dispatch({ type: 'DELETE_COMPANY', companyId: id });
             }
@@ -310,11 +345,14 @@ export function AdminPage() {
         <SimpleList
           items={state.jobTitles}
           onRename={(id, name) => dispatch({ type: 'RENAME_JOB_TITLE', jobTitleId: id, name })}
-          onDelete={(id, name) => {
+          onDelete={async (id, name) => {
             if (
-              window.confirm(
-                `Usunąć stanowisko „${name}”? Osoby zachowają dotychczasowy wpis w profilu.`,
-              )
+              await confirm({
+                title: `Usunąć stanowisko „${name}”?`,
+                consequences: 'Osoby zachowają dotychczasowy wpis w profilu.',
+                confirmLabel: 'Usuń stanowisko',
+                tone: 'danger',
+              })
             ) {
               dispatch({ type: 'DELETE_JOB_TITLE', jobTitleId: id });
             }
@@ -352,8 +390,15 @@ export function AdminPage() {
           onRename={(id, name) =>
             dispatch({ type: 'RENAME_SERVICE_TYPE', serviceTypeId: id, name })
           }
-          onDelete={(id, name) => {
-            if (window.confirm(`Usunąć typ usługi „${name}”? Projekty stracą tę etykietę.`)) {
+          onDelete={async (id, name) => {
+            if (
+              await confirm({
+                title: `Usunąć typ usługi „${name}”?`,
+                consequences: 'Projekty stracą tę etykietę.',
+                confirmLabel: 'Usuń typ usługi',
+                tone: 'danger',
+              })
+            ) {
               dispatch({ type: 'DELETE_SERVICE_TYPE', serviceTypeId: id });
             }
           }}
@@ -386,8 +431,15 @@ export function AdminPage() {
           onRename={(id, name) =>
             dispatch({ type: 'RENAME_WORK_CATEGORY', workCategoryId: id, name })
           }
-          onDelete={(id, name) => {
-            if (window.confirm(`Usunąć kategorię „${name}”? Zadania stracą tę etykietę.`)) {
+          onDelete={async (id, name) => {
+            if (
+              await confirm({
+                title: `Usunąć kategorię „${name}”?`,
+                consequences: 'Zadania stracą tę etykietę.',
+                confirmLabel: 'Usuń kategorię',
+                tone: 'danger',
+              })
+            ) {
               dispatch({ type: 'DELETE_WORK_CATEGORY', workCategoryId: id });
             }
           }}

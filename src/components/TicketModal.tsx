@@ -20,6 +20,7 @@ import {
 } from '../utils/tickets';
 import { bypassNavGuardOnce, clearNavGuard, setNavGuard } from '../utils/dirtyRegistry';
 import { useModalShell } from './useModalShell';
+import { useConfirm } from './ConfirmProvider';
 import { IconButton } from './IconButton';
 import { X } from './icons';
 
@@ -84,6 +85,7 @@ interface ShellProps {
 
 function TicketModalShell({ ticketParam, onClose }: ShellProps) {
   const { state, dispatch } = useStore();
+  const confirm = useConfirm();
   const can = useCan();
   const canManage = can('tickets.manage');
   const me = currentUserSel(state);
@@ -114,12 +116,25 @@ function TicketModalShell({ ticketParam, onClose }: ShellProps) {
     onClose();
   }, [onClose]);
 
-  const requestClose = useCallback(() => {
-    if (dirtyRef.current && !window.confirm('Masz niezapisane zmiany. Zamknąć bez zapisywania?')) {
-      return;
+  // Pytanie o porzucenie zmian jest ASYNCHRONICZNE, więc drugie Escape/kliknięcie
+  // w trakcie nie może dołożyć drugiego pytania do kolejki.
+  const askingRef = useRef(false);
+  const requestClose = useCallback(async () => {
+    if (askingRef.current) return;
+    if (dirtyRef.current) {
+      askingRef.current = true;
+      const leave = await confirm({
+        title: 'Masz niezapisane zmiany.',
+        description: 'Zamknąć bez zapisywania?',
+        confirmLabel: 'Zamknij bez zapisywania',
+        cancelLabel: 'Wróć do edycji',
+        // Bez `requireAck`: to porzucenie SZKICU, nie utrata zapisanych danych.
+      });
+      askingRef.current = false;
+      if (!leave) return;
     }
     closeDeliberately();
-  }, [closeDeliberately]);
+  }, [closeDeliberately, confirm]);
 
   // Escape, pułapka fokusa, powrót fokusa i blokada scrolla — wspólna powłoka.
   const titleId = useId();
@@ -128,10 +143,19 @@ function TicketModalShell({ ticketParam, onClose }: ShellProps) {
     labelledBy: titleId,
   });
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!existing || !canManage) return;
-    if (window.confirm(`Usunąć zgłoszenie „${existing.title}”?`)) {
-      dispatch({ type: 'DELETE_TICKET', ticketId: existing.id });
+    // Cel zapamiętany PRZED `await` — modal może się w międzyczasie przewinąć
+    // na inny parametr URL-a.
+    const ticketId = existing.id;
+    if (
+      await confirm({
+        title: `Usunąć zgłoszenie „${existing.title}”?`,
+        confirmLabel: 'Usuń zgłoszenie',
+        tone: 'danger',
+      })
+    ) {
+      dispatch({ type: 'DELETE_TICKET', ticketId });
       closeDeliberately();
     }
   };

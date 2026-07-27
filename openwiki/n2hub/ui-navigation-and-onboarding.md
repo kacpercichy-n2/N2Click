@@ -103,6 +103,34 @@
   tekstu wyprowadzone z karty nie kasuje edycji). Nazwa dialogu idzie z
   `aria-labelledby` na widoczny `<h1 class="task-modal-title">` (`useId`).
   `OnboardingRoot` i `GlobalSearch` mają własną obsługę i NIE korzystają z hooka.
+- Potwierdzenia są WSPÓLNE i NIE używają `window.confirm`: czysta logika w
+  `src/components/confirmDialog.ts` (kolejka FIFO `enqueueConfirm` /
+  `resolveConfirm` — drugie pytanie czeka na rozstrzygnięcie pierwszego,
+  nieznane `id` zwraca TĘ SAMĄ referencję, więc obietnica nie rozstrzyga się
+  dwa razy; `drainConfirms` na odmontowaniu; bramka `confirmIsBlocked`
+  (`requireAck`); budowniczy treści skutków `buildDeleteConsequence` —
+  „To usunie 3 przypisania i 24,5 zaplanowanej godziny.”, forma „To usunie …”
+  celowo omija uzgodnienie rodzaju/liczby czasownika; wspólna odmiana w
+  `src/utils/polishPlural.ts` — `polishCount`/`polishAmount`, ułamek bierze
+  dopełniacz l. poj.; testy `confirmDialog.test.ts` w node). Cienka warstwa
+  React/DOM w `src/components/ConfirmProvider.tsx`: `useConfirm()` zwraca
+  `(opcje) => Promise<boolean>`, dostawca montuje się RAZ w `main.tsx` PONAD
+  `AppStoreProvider` (niczego nie czyta) i renderuje DOKŁADNIE jeden
+  `role="alertdialog"` przez `useModalShell` — fokus startowy na „Anuluj”
+  (`data-autofocus`), Escape i tło = anulowanie, `aria-describedby` na zdaniu o
+  skutkach, czerwień (`.btn.danger`) TYLKO na przycisku niszczącym, `--n2-z-confirm`
+  = 1200 (ponad banerem 1050 i samouczkami 1100). `useModalShell` zyskało dwie
+  opcje: `role` oraz `stacked` (nasłuch klawiatury w fazie CAPTURE +
+  `stopPropagation` na Escape/Tab), dzięki czemu dialog nad TaskModalem/
+  EventModalem nie zamyka modala pod spodem i nie oddaje mu fokusa; licznik
+  blokady scrolla jest wspólny, więc nałożenie nie odblokowuje strony.
+  `requireAck` (checkbox) tylko tam, gdzie NAPRAWDĘ giną dane (kaskada klienta/
+  projektu, usunięcie zadania lub osoby z godzinami) — NIGDY przy „porzucić
+  niezapisane zmiany”. JEDYNY świadomy wyjątek to
+  `src/components/ErrorBoundary.tsx`: ekran awarii zostaje przy natywnym
+  `window.confirm`, bo renderuje się dopiero po wysypce drzewa, a ta sama klasa
+  jest zamontowana także PONAD dostawcą (`browser-check-date-hardening.mjs`
+  nadal steruje tam natywnym dialogiem).
 - Powłoka nakładek (popover / menu kontekstowe) jest WSPÓLNA i równoległa do
   powłoki modali: czysta logika w `src/components/overlayShell.ts`
   (`resolveOverlayPosition` — flip/shift + `availableHeight`;

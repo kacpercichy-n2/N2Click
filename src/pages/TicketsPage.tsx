@@ -20,6 +20,7 @@ import {
 } from '../utils/tickets';
 import { todayStr } from '../utils/dates';
 import { useOpenTicket } from '../components/TicketModal';
+import { useConfirm } from '../components/ConfirmProvider';
 import { ChevronRight, Plus } from '../components/icons';
 import { buildTicketsCsv, ticketsCsvFilename, type TicketExportRow } from './ticketsExport';
 
@@ -31,6 +32,7 @@ export function TicketsPage() {
   const canManage = can('tickets.manage');
   const me = currentUserSel(state);
   const { openNewTicket, openTicket } = useOpenTicket();
+  const confirm = useConfirm();
 
   const [mode, setMode] = useState<Mode>('zgloszone');
   const [statusFilter, setStatusFilter] = useState<'' | TicketStatus>('');
@@ -69,9 +71,17 @@ export function TicketsPage() {
     URL.revokeObjectURL(url);
   };
 
-  const handleDelete = (ticket: Ticket) => {
+  const handleDelete = async (ticket: Ticket) => {
     if (!canManage) return;
-    if (window.confirm(`Usunąć zgłoszenie „${ticket.title}”?`)) {
+    if (
+      await confirm({
+        title: `Usunąć zgłoszenie „${ticket.title}”?`,
+        // Zgłoszenie nie ciągnie za sobą przypisań ani godzin — nie ma skutków
+        // do wyliczenia, więc pytanie zostaje jednoklikowe.
+        confirmLabel: 'Usuń zgłoszenie',
+        tone: 'danger',
+      })
+    ) {
       dispatch({ type: 'DELETE_TICKET', ticketId: ticket.id });
     }
   };

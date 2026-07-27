@@ -162,3 +162,12 @@ topmost-only Escape, pointerdown+click dismiss, menu keyboard) now back the thre
 WeekView menus and FilterPanel; z-index tokens added. Domain/drag code untouched.
 npm test 1630→1667 pass, build green. Playwright missing — ad-hoc CDP smoke
 instead. No context expansion.
+
+n2hub-279 confirm alertdialog: new pure `confirmDialog.ts` (FIFO queue,
+`requireAck` gate, Polish consequence builder) + `ConfirmProvider`/`useConfirm`
+rendering one `role="alertdialog"` via `useModalShell` (new `role` + `stacked`
+capture-phase key trap); `polishCount` deduped into `utils/polishPlural.ts`.
+28/29 `window.confirm` migrated — ErrorBoundary keeps the native one (renders
+after the tree crashed, also mounted above the provider). npm test 1684 pass,
+build green. Onboarding browser check updated (playwright unavailable). Wiki
+updated.

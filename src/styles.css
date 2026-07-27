@@ -164,6 +164,9 @@
   --n2-z-banner: 1050;
   --n2-z-toast: 1090;
   --n2-z-onboarding: 1100;
+  /* Okno potwierdzenia stoi PONAD wszystkim: pytają z niego także baner
+     trwałości (1050) i samouczki (1100), a jego odpowiedź blokuje operację. */
+  --n2-z-confirm: 1200;
 
   --radius: var(--n2-radius-md);
   --radius-sm: var(--n2-radius-sm);
@@ -705,6 +708,18 @@ textarea {
 }
 .btn.danger-ghost:hover {
   background: var(--n2-danger-soft);
+}
+/* Pełna czerwień jest ZAREZERWOWANA dla przycisku wykonującego operację
+   niszczącą (potwierdzenie w oknie `alertdialog`) — nigdy dla „Anuluj”. */
+.btn.danger {
+  background: var(--danger);
+  border-color: transparent;
+  color: var(--n2-text-inverse);
+  box-shadow: 0 14px 38px rgba(255, 79, 114, 0.22);
+}
+.btn.danger:hover {
+  background: var(--danger);
+  filter: brightness(1.08);
 }
 .btn:disabled {
   opacity: 0.5;
@@ -4798,6 +4813,89 @@ option {
   }
   .task-modal-body {
     padding: var(--n2-space-4);
+  }
+}
+
+/* ---------- Okno potwierdzenia (alertdialog) ---------- */
+
+/* Dziedziczy szkielet po powłoce modala (`.task-modal-scrim` /
+   `.task-modal-viewport` / `.task-modal-card`); tutaj zostaje tylko to, co je
+   różni: pozycja na drabinie `--n2-z-*`, wąska karta i wyśrodkowanie. */
+.confirm-scrim {
+  z-index: var(--n2-z-confirm);
+  backdrop-filter: blur(3px);
+}
+.confirm-viewport {
+  z-index: calc(var(--n2-z-confirm) + 1);
+  align-items: center;
+}
+.confirm-card {
+  width: min(92vw, 460px);
+  max-width: 460px;
+  /* Wejście karty robi CSS, a nie `motion` — dostawca stoi ponad
+     `MotionConfig`, a globalna reguła `prefers-reduced-motion` (niżej w tym
+     pliku) i tak skraca każdą animację do 0,01 ms. */
+  animation: confirm-card-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes confirm-card-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+}
+.confirm-body {
+  padding: var(--n2-space-6) var(--n2-space-6) var(--n2-space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-3);
+}
+.confirm-title {
+  font-size: var(--n2-type-md);
+  line-height: 1.35;
+}
+.confirm-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-2);
+}
+.confirm-text p {
+  margin: 0;
+  font-size: var(--n2-type-sm);
+  color: var(--n2-text-soft);
+}
+.confirm-consequences.danger {
+  color: var(--danger);
+}
+.confirm-ack {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--n2-space-2);
+  font-size: var(--n2-type-sm);
+  color: var(--n2-text-soft);
+  cursor: pointer;
+}
+.confirm-ack input {
+  margin-top: 2px;
+  flex: 0 0 auto;
+}
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--n2-space-2);
+  padding: var(--n2-space-4) var(--n2-space-6);
+  border-top: 1px solid var(--n2-border);
+  background: var(--n2-panel-soft);
+}
+
+@media (max-width: 760px) {
+  .confirm-card {
+    width: 94vw;
+  }
+  .confirm-body {
+    padding: var(--n2-space-5) var(--n2-space-4) var(--n2-space-4);
+  }
+  .confirm-actions {
+    padding: var(--n2-space-3) var(--n2-space-4);
   }
 }
 

@@ -8,6 +8,7 @@
 // Polish; styling uses existing --n2-* semantic tokens; no animation.
 import { useEffect } from 'react';
 import { useStore, usePersistence } from '../store/AppStore';
+import { useConfirm } from './ConfirmProvider';
 import { exportRawData } from '../store/storage';
 import type { SaveFailureReason } from '../store/storage';
 
@@ -22,6 +23,7 @@ const FAILURE_FIRST_SENTENCE: Record<SaveFailureReason, string> = {
 
 export function PersistenceBanner() {
   const { state } = useStore();
+  const confirm = useConfirm();
   const {
     saveError,
     external,
@@ -105,13 +107,18 @@ export function PersistenceBanner() {
             type="button"
             className="btn primary"
             onClick={() => {
-              if (
-                window.confirm(
-                  'Wczytać dane zapisane przez inną kartę? Niezapisane zmiany w tej karcie zostaną utracone.',
-                )
-              ) {
-                acceptExternal();
-              }
+              // Baner renderuje się WEWNĄTRZ App, więc dostawca potwierdzeń
+              // (montowany w `main.tsx` nad wszystkim) jest jego przodkiem.
+              void confirm({
+                title: 'Wczytać dane zapisane przez inną kartę?',
+                consequences: 'Niezapisane zmiany w tej karcie zostaną utracone.',
+                confirmLabel: 'Wczytaj wersję z innej karty',
+                tone: 'danger',
+                // Bez `requireAck`: to konflikt niezapisanych zmian, nie
+                // kasowanie zapisanych danych.
+              }).then((ok) => {
+                if (ok) acceptExternal();
+              });
             }}
           >
             Wczytaj wersję z innej karty

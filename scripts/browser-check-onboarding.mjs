@@ -74,22 +74,24 @@ async function run() {
       hasText: 'Kalendarz: planowanie zaawansowane',
     });
     const advancedStart = advanced.getByRole('button', { name: 'Uruchom' });
-    let confirmationPromise = page.waitForEvent('dialog');
-    let startClick = advancedStart.click();
-    let confirmation = await confirmationPromise;
+    // The disclosure is no longer a native `window.confirm`: it is the shared
+    // in-app `role="alertdialog"` from ConfirmProvider, so it is driven with
+    // ordinary locators instead of `page.waitForEvent('dialog')`.
+    const confirmDialog = page.locator('.confirm-card[role="alertdialog"]');
+    await advancedStart.click();
+    await confirmDialog.waitFor({ state: 'visible', timeout: 3000 }).catch(() => {});
     check(
-      confirmation.type() === 'confirm' && confirmation.message().includes('Zmiany zostaną zapisane w planie'),
+      (await confirmDialog.textContent())?.includes('Zmiany zostaną zapisane w planie') ?? false,
       'advanced live practice requires an explicit real-plan confirmation',
     );
-    await confirmation.dismiss();
-    await startClick;
+    await confirmDialog.getByRole('button', { name: 'Anuluj' }).click();
+    await confirmDialog.waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {});
     check(await center.isVisible().catch(() => false), 'cancelling the confirmation keeps the tutorial centre open');
 
-    confirmationPromise = page.waitForEvent('dialog');
-    startClick = advancedStart.click();
-    confirmation = await confirmationPromise;
-    await confirmation.accept();
-    await startClick;
+    await advancedStart.click();
+    await confirmDialog.waitFor({ state: 'visible', timeout: 3000 }).catch(() => {});
+    await confirmDialog.getByRole('button', { name: 'Uruchom samouczek' }).click();
+    await confirmDialog.waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {});
     await page.locator('.week-block[data-tour="calendar.block"]').first().waitFor({ timeout: 5000 });
     await coachmark.waitFor({ state: 'visible', timeout: 3000 }).catch(() => {});
     const practice = coachmark.locator('.onboarding-practice');

@@ -16,6 +16,7 @@ import {
   loadUiPrefs,
 } from '../utils/uiPrefs';
 import { ArrowLeft, Check, CircleHelp, Compass, Sparkles } from '../components/icons';
+import { useConfirm } from '../components/ConfirmProvider';
 import { HOME_PATH } from '../pages/homeRoute';
 import { moduleById, modulesForRole, type TourStep, type TutorialModule } from './catalog';
 
@@ -545,6 +546,7 @@ function TutorialCenter({
   onReset: () => void;
 }) {
   const titleRef = useRef<HTMLHeadingElement>(null);
+  const confirm = useConfirm();
   useEffect(() => titleRef.current?.focus(), []);
   return (
     <motion.div className="onboarding-layer" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
@@ -577,7 +579,14 @@ function TutorialCenter({
             type="button"
             className="btn ghost"
             onClick={() => {
-              if (window.confirm('Zresetować postęp samouczków dla tego użytkownika?')) onReset();
+              void confirm({
+                title: 'Zresetować postęp samouczków dla tego użytkownika?',
+                consequences: 'Ukończone i rozpoczęte samouczki wrócą do stanu początkowego.',
+                confirmLabel: 'Zresetuj postęp',
+                tone: 'danger',
+              }).then((ok) => {
+                if (ok) onReset();
+              });
             }}
           >
             Zresetuj postęp
@@ -600,12 +609,18 @@ function TutorialCenter({
                 <button
                   type="button"
                   className="btn soft"
-                  onClick={() => {
+                  onClick={async () => {
+                    // Jawne ujawnienie ćwiczeń na żywo (wiki: onboarding NIE
+                    // rusza danych bez tego pytania). Treść zdania o skutkach
+                    // zostaje bez zmian.
                     if (
                       module.id === 'calendar-advanced' &&
-                      !window.confirm(
-                        'Ćwiczenia na żywo przesuwają, wydłużają i planują prawdziwe bloki czasu. Zmiany zostaną zapisane w planie. Uruchomić samouczek?',
-                      )
+                      !(await confirm({
+                        title: 'Uruchomić samouczek zaawansowanego kalendarza?',
+                        consequences:
+                          'Ćwiczenia na żywo przesuwają, wydłużają i planują prawdziwe bloki czasu. Zmiany zostaną zapisane w planie.',
+                        confirmLabel: 'Uruchom samouczek',
+                      }))
                     ) {
                       return;
                     }
