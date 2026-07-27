@@ -3,6 +3,9 @@
 ## Boundaries
 
 - `src/components/WeekView.tsx` owns timed-grid interaction and bin-card UI.
+- `src/components/weekViewLayout.ts` (pure) owns the PRESENTATIONAL working
+  window: `WORK_START_HOUR`/`WORK_END_HOUR` (9–17), the default scroll offset and
+  the px bounds fed to CSS as `--week-work-top`/`--week-work-bottom`.
 - `src/utils/time.ts` owns pure time calculations, collision checks, packing,
   free-slot search and quarter-hour math.
 - `src/utils/touchDrag.ts` (pure state machine) + `src/utils/useTouchDragGate.ts`
@@ -51,6 +54,13 @@
   that never engages keeps today's context menu. Coarse pointers also hide
   `.week-block-handle` (6 px, untargetable), so touch gets move-only; `.bar-handle`
   is unchanged.
+- Working window (2026-07-27) is PRESENTATION ONLY (invariant 1 + 7): the week
+  grid opens scrolled to `WORK_START_HOUR` and slots outside 9:00–17:00 get a
+  dimming `linear-gradient` LAYER on `.week-day-col` plus faded axis labels.
+  No DOM node, no `pointer-events`, no z-index — snapping, collisions, drag and
+  data are untouched, and off-window slots stay fully usable. The date+clock
+  badge lives OUTSIDE the grid (`NowClockBadge` in the calendar toolbar row,
+  `useNowTick` 30 s); the `.week-now-line` in today's column is unchanged.
 - Automatic placement uses a real free-slot search and rejects when no slot fits;
   it must not clamp into an overlap near midnight.
 - Free-slot search rejects non-finite, non-positive, off-grid and over-day
@@ -90,6 +100,7 @@ availability/overload calculations, drag lifecycle and time utilities.
 ## Relevant tests and checks
 
 `src/utils/time.test.ts`, `src/utils/touchDrag.test.ts`,
+`src/components/weekViewLayout.test.ts`,
 `src/store/blockActions.test.ts`,
 `scripts/browser-check-bin-drag.mjs`, `browser-check-bin-split.mjs`, and
 `browser-check-placement.mjs`.

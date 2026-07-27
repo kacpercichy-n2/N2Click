@@ -38,6 +38,9 @@
      lawendowa paleta zadań/cykliczności. */
   --event-accent: var(--n2-info);
   --event-accent-soft: var(--n2-info-soft);
+  /* Przygaszenie slotów kalendarza poza oknem godzin agencji (9:00–17:00).
+     Wyłącznie prezentacja — te sloty działają normalnie. */
+  --week-offhours-tint: rgba(0, 0, 0, 0.34);
   --n2-warning: #ffc857;
   --n2-warning-soft: rgba(255, 200, 87, 0.16);
   --n2-danger: #ff4f72;
@@ -1450,19 +1453,58 @@ option {
 
 /* ---------- Calendar toolbar ---------- */
 
+/* JEDEN wiersz sterowania nad siatką: tytuł + widok + nawigacja + „Filtry”
+   + zegar. Zastąpił trzy wiersze (page-head / cal-toolbar / filter-toolbar),
+   dzięki czemu sam kalendarz jest wyższy. `align-items: center` trzyma
+   wszystkie kontrolki w jednej linii bazowej; przy wąskim ekranie wiersz
+   zawija się tak jak wcześniej. */
 .cal-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--n2-space-4);
   flex-wrap: wrap;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
+}
+.cal-title {
+  margin: 0;
+  font-size: var(--n2-type-xl, 1.25rem);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+/* FilterBar wewnątrz paska nie dokłada już własnego wiersza ani odstępu. */
+.cal-toolbar .filter-toolbar {
+  margin-bottom: 0;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .cal-view-toggle,
 .cal-nav {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+/* Plakietka data + zegar HH:mm — dawniej absolutny narożnik NAD siatką
+   (zasłaniał bloki), teraz zwykły element na końcu paska sterowania. */
+.cal-now-badge {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 10px;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-pill);
+  background: rgba(255, 255, 255, 0.045);
+  white-space: nowrap;
+}
+.cal-now-badge-date {
+  font-size: var(--n2-type-xs);
+  color: var(--text-faint);
+}
+.cal-now-badge-time {
+  font-family: var(--n2-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--n2-type-sm);
+  color: var(--text);
 }
 .toggle-btn {
   border: 1px solid var(--n2-border);
@@ -1665,8 +1707,12 @@ option {
 .week-main {
   display: flex;
   /* `dvh` — chowający się pasek adresu iOS zmieniał `vh` w trakcie przewijania
-     i wysokość siatki godzin skakała (MO-15). Na desktopie bez różnicy. */
-  max-height: 70dvh;
+     i wysokość siatki godzin skakała (MO-15). Na desktopie bez różnicy.
+     Po scaleniu wierszy sterowania nad kalendarzem siatka zabiera odzyskaną
+     przestrzeń: `calc(100dvh - 168px)` to padding powłoki + jeden pasek
+     kontrolek + nagłówek dni; 70dvh zostaje jako dolna granica dla niskich
+     okien, żeby widok nigdy nie zrobił się niższy niż dotychczas. */
+  max-height: max(70dvh, calc(100dvh - 168px));
 }
 /* Fixed hour axis — outside the horizontal scroller, opaque, vertical-synced. */
 .week-axis-pane {
@@ -1722,6 +1768,10 @@ option {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+/* Godziny poza oknem roboczym (9–17) — przygaszone tak jak sloty siatki. */
+.week-axis-label.off-hours {
+  opacity: 0.45;
+}
 
 /* Day columns: hour + half-hour lines drawn as a background */
 .week-day-col {
@@ -1744,6 +1794,21 @@ option {
       rgba(255, 255, 255, 0.03) 1px,
       transparent 1px,
       transparent 21px
+    ),
+    /* Okno godzin agencji: wszystko poza 9:00–17:00 dostaje przygaszające
+       przyciemnienie. Granice `--week-work-top` / `--week-work-bottom` ustawia
+       inline `.week-days-grid` z WORK_START_HOUR / WORK_END_HOUR (TS jest
+       jedynym źródłem prawdy). Warstwa jest NA SAMYM DOLE stosu teł, więc
+       linie godzin i kwadransów zostają czytelne, a sloty poza oknem działają
+       normalnie — to wyłącznie tło, bez węzłów DOM i bez hit-testingu. */
+    linear-gradient(
+      to bottom,
+      var(--week-offhours-tint) 0,
+      var(--week-offhours-tint) var(--week-work-top, 0px),
+      transparent var(--week-work-top, 0px),
+      transparent var(--week-work-bottom, 100%),
+      var(--week-offhours-tint) var(--week-work-bottom, 100%),
+      var(--week-offhours-tint) 100%
     );
 }
 .week-day-col.weekend {
@@ -1798,34 +1863,8 @@ option {
   background: var(--n2-danger);
 }
 
-/* Narożna plakietka daty/zegara: przyklejona do lewego dolnego rogu widoku
-   kalendarza (.week-cal jest position: relative, overflow: hidden). */
-.week-now-badge {
-  position: absolute;
-  left: 8px;
-  bottom: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding: 6px 10px;
-  border: 1px solid var(--n2-border);
-  border-radius: var(--n2-radius-xs);
-  background: rgba(20, 18, 26, 0.92);
-  pointer-events: none;
-  z-index: 40;
-}
-.week-now-badge-date {
-  font-size: var(--n2-type-xs);
-  color: var(--text-faint);
-  white-space: nowrap;
-}
-.week-now-badge-time {
-  font-family: var(--n2-font-mono);
-  font-variant-numeric: tabular-nums;
-  font-size: var(--n2-type-md);
-  color: var(--text);
-  line-height: 1.1;
-}
+/* Plakietka daty/zegara nie wisi już nad siatką — mieszka w pasku sterowania
+   kalendarza jako `.cal-now-badge` (sekcja „Calendar toolbar”). */
 
 /* Absolutely-positioned timed blocks */
 .week-block {
@@ -4656,6 +4695,12 @@ option {
   }
   .cal-toolbar {
     justify-content: flex-start;
+    gap: var(--n2-space-3);
+  }
+  /* Wąski ekran: w plakietce zostaje sam zegar, pełna data zabierałaby cały
+     wiersz sterowania (dłuższe polskie nazwy dni/miesięcy). */
+  .cal-now-badge-date {
+    display: none;
   }
   .profile-week {
     grid-template-columns: repeat(2, 1fr);

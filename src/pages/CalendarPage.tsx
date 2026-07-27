@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useStore } from '../store/AppStore';
 import { DEFAULT_FILTER_CRITERIA } from '../store/storage';
 import { FilterBar } from '../components/FilterBar';
+import { NowClockBadge } from '../components/NowClockBadge';
 import { WeekView } from '../components/WeekView';
 import { MonthView } from '../components/MonthView';
 import {
@@ -64,11 +65,15 @@ export function CalendarPage() {
 
   return (
     <section className="page">
-      <div className="page-head">
-        <h1>Kalendarz</h1>
-      </div>
-
+      {/* JEDEN pasek sterowania nad siatką: tytuł + przełącznik widoku + nawigacja
+          + „Filtry” (z osobami) + zegar. Wcześniej były to trzy osobne wiersze
+          (page-head / cal-toolbar / filter-toolbar) — złożenie ich oddaje ~90px
+          wysokości samemu kalendarzowi (zgłoszenie zespołu). Zmiana jest czysto
+          układowa: żadne zachowanie filtrowania ani nawigacji się nie zmienia,
+          a kotwica onboardingu `calendar.toolbar` zostaje na tym wierszu. */}
       <div className="cal-toolbar" data-tour="calendar.toolbar">
+        <h1 className="cal-title">Kalendarz</h1>
+
         <div className="cal-view-toggle" role="group" aria-label="Widok kalendarza">
           <button
             type="button"
@@ -98,24 +103,26 @@ export function CalendarPage() {
           </button>
           <span className="cal-range-label">{label}</span>
         </div>
-      </div>
 
-      {state.people.length > 0 && (
-        <FilterBar
-          filterPanel={{
-            groups: [],
-            activeCount: filter.size > 0 ? 1 : 0,
-            onClearAll: resetFilter,
-            chips: [],
-          }}
-          person={{
-            people: state.people,
-            selected: filter,
-            onToggle: toggleFilter,
-            onAll: resetFilter,
-          }}
-        />
-      )}
+        {state.people.length > 0 && (
+          <FilterBar
+            filterPanel={{
+              groups: [],
+              activeCount: filter.size > 0 ? 1 : 0,
+              onClearAll: resetFilter,
+              chips: [],
+            }}
+            person={{
+              people: state.people,
+              selected: filter,
+              onToggle: toggleFilter,
+              onAll: resetFilter,
+            }}
+          />
+        )}
+
+        <NowClockBadge />
+      </div>
 
       {view === 'week' ? (
         <WeekView state={state} anchor={anchor} filter={filter} />

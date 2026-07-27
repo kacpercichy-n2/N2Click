@@ -46,6 +46,12 @@ import {
 } from '../store/selectors';
 import { buildWeekModel, personDateKey } from './weekViewModel';
 import {
+  isOffHour,
+  workWindowCssVars,
+  workWindowScrollTop,
+} from './weekViewLayout';
+import { useNowTick } from '../utils/useNowTick';
+import {
   DAY_MINUTES,
   HOURS_STEP,
   MINUTE_STEP,
@@ -86,7 +92,10 @@ const DAY_BODY_H = 24 * HOUR_PX; // 2016px full-day column height
 // + 8px), nawet jeśli wizualnie zachodzą na kolejny kwadrans siatki —
 // geometria dragu/resize liczy się z pozycji kursora, nie z wysokości bloku.
 const MIN_BLOCK_H = 50;
-const SCROLL_TO_MIN = 8 * 60; // open scrolled to 08:00
+// Okno godzin agencji (9:00–17:00) mieszka w `weekViewLayout.ts` jako
+// WORK_START_HOUR / WORK_END_HOUR — stąd bierze się i domyślne przewinięcie
+// siatki, i przygaszenie slotów poza oknem. Same sloty pozostają w pełni
+// funkcjonalne (bez zmian w snapowaniu, kolizjach, dragu i danych).
 const DAY_COLS = 7; // the days grid holds 7 columns (no axis inside)
 // Duration choices for a recurrence occurrence override: 0:15…8:00 on the
 // 15-minute grid (minutes). Labeled via formatDuration in the menu.
@@ -1406,19 +1415,16 @@ export function WeekView({ state, anchor, filter }: Props) {
     return () => clearTimeout(t);
   }, [fusedId]);
 
-  // Open the grid scrolled to ~07:00 (once, on mount).
+  // Otwórz siatkę przewiniętą na początek okna roboczego (9:00), raz na mount.
   useEffect(() => {
-    if (viewportRef.current) viewportRef.current.scrollTop = (SCROLL_TO_MIN / 60) * HOUR_PX;
+    if (viewportRef.current) viewportRef.current.scrollTop = workWindowScrollTop(HOUR_PX);
   }, []);
 
-  // Zegar „teraz”: napędza linię bieżącej godziny w dzisiejszej kolumnie oraz
-  // narożną etykietę daty/zegara. Odświeżany co 30 s, żeby wskazanie nigdy nie
-  // odstawało o więcej niż pół minuty; czysto prezentacyjny (invariant 7).
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(new Date()), 30_000);
-    return () => window.clearInterval(id);
-  }, []);
+  // Zegar „teraz”: napędza linię bieżącej godziny w dzisiejszej kolumnie.
+  // Odświeżany co 30 s, żeby wskazanie nigdy nie odstawało o więcej niż pół
+  // minuty; czysto prezentacyjny (invariant 7). Plakietka daty/zegara żyje
+  // teraz w pasku kalendarza (NowClockBadge), poza siatką.
+  const now = useNowTick();
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
   // Keep the fixed axis pane (vertical) and header track (horizontal) in step
@@ -1916,7 +1922,11 @@ export function WeekView({ state, anchor, filter }: Props) {
         <div className="week-axis-pane" ref={axisPaneRef}>
           <div className="week-axis" style={{ height: DAY_BODY_H }}>
             {hours.map((h) => (
-              <span key={h} className="week-axis-label" style={{ top: h * HOUR_PX }}>
+              <span
+                key={h}
+                className={isOffHour(h) ? 'week-axis-label off-hours' : 'week-axis-label'}
+                style={{ top: h * HOUR_PX }}
+              >
                 {h}:00
               </span>
             ))}
@@ -1924,7 +1934,15 @@ export function WeekView({ state, anchor, filter }: Props) {
         </div>
 
         <div className="week-days-viewport" ref={viewportRef} onScroll={onViewportScroll}>
-          <div className="week-days-grid" ref={gridRef} style={{ height: DAY_BODY_H }}>
+          {/* Granice okna roboczego jadą do CSS jako zmienne w px — warstwa
+              `linear-gradient` w `.week-day-col` przygasza sloty poza 9–17.
+              Samo TŁO: żadnych nowych węzłów DOM, więc hit-testing kolumn,
+              drag i kolizje pozostają bajt w bajt te same (inwariant 7). */}
+          <div
+            className="week-days-grid"
+            ref={gridRef}
+            style={{ height: DAY_BODY_H, ...workWindowCssVars(HOUR_PX) }}
+          >
             {model.days.map((day, dayIndex) => {
               const d = day.date;
               return (
@@ -2052,14 +2070,9 @@ export function WeekView({ state, anchor, filter }: Props) {
         </div>
       </div>
 
-      {/* Narożna plakietka: dzisiejsza data (z dniem tygodnia) + zegar HH:mm.
-          pointer-events: none w CSS — nie może przechwycić dragu bloków. */}
-      <div className="week-now-badge">
-        <span className="week-now-badge-date">
-          {format(now, 'EEEE, d MMMM', { locale: pl })}
-        </span>
-        <span className="week-now-badge-time">{format(now, 'HH:mm')}</span>
-      </div>
+      {/* Plakietka „data + zegar HH:mm” przeniesiona POZA siatkę — renderuje ją
+          pasek kalendarza (`NowClockBadge` w CalendarPage), bo narożna wersja
+          zasłaniała bloki. Linia „teraz” w kolumnie dnia zostaje bez zmian. */}
 
       <AnimatePresence>
         {menu && (
