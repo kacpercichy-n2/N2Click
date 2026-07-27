@@ -2,7 +2,12 @@
 <html lang="pl">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- `viewport-fit=cover` udostępnia `env(safe-area-inset-*)` przyklejonym
+         paskom (MO-14). Bez `maximum-scale`/`user-scalable` — zoom zostaje. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#050406" />
     <title>N2Hub Planer</title>

@@ -182,6 +182,15 @@ body {
   text-rendering: geometricPrecision;
 }
 
+/* MO-16 — na telefonie pociągnięcie w dół nad górną krawędzią nie może
+   przeładować aplikacji (pull-to-refresh gubi niezapisany stan formularza).
+   Poziomy overscroll zostaje: gest „wstecz" przeglądarki działa dalej. */
+@media (max-width: 760px) {
+  html {
+    overscroll-behavior-y: none;
+  }
+}
+
 h1 {
   font-size: 1.55rem;
   font-weight: 600;
@@ -247,6 +256,8 @@ textarea {
   box-shadow: var(--n2-shadow-soft);
   backdrop-filter: var(--n2-blur-glass);
   overflow-y: auto;
+  /* MO-16 — dojechanie do końca szuflady nie może przewijać strony pod spodem. */
+  overscroll-behavior: contain;
 }
 
 .app-brand {
@@ -285,6 +296,7 @@ textarea {
      viewports the layout is unchanged. */
   min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--n2-border-strong) transparent;
 }
@@ -823,6 +835,9 @@ textarea {
 }
 .task-card-main {
   flex: 1;
+  /* Bez tego `flex: 1` startuje od `min-width: auto`, więc karta rozciągała się
+     do `min-content` treści i `overflow: hidden` obcinał daty/godziny (MO-17). */
+  min-width: 0;
   text-align: left;
   background: none;
   border: none;
@@ -837,7 +852,8 @@ textarea {
 .task-card-top {
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 6px 10px;
 }
 .task-title {
   font-size: var(--n2-type-md);
@@ -1001,6 +1017,19 @@ input[type='time']::-webkit-calendar-picker-indicator {
 option {
   color: var(--n2-text);
   background: var(--n2-panel);
+}
+/* MO-05 — iOS Safari sam przybliża stronę, gdy fokusowane pole ma mniej niż
+   16px. Poniżej 760px podnosimy każde pole edycyjne do 16px i do wysokości
+   kciuka (48px). ŚWIADOMIE bez `maximum-scale` w meta viewport — to zablokowałoby
+   zoom dostępnościowy. Checkboxy, radia, kolor i plik pomijamy: `min-height`
+   rozdąłby je do kwadratu 48px. */
+@media (max-width: 760px) {
+  input:not([type='checkbox']):not([type='radio']):not([type='color']):not([type='file']):not([type='range']),
+  textarea,
+  select {
+    font-size: 16px;
+    min-height: 48px;
+  }
 }
 .field-error {
   color: var(--danger);
@@ -1176,6 +1205,7 @@ option {
 
 .alloc-wrap {
   overflow-x: auto;
+  overscroll-behavior: contain;
   border: 1px solid var(--n2-border);
   border-radius: var(--n2-radius-lg);
   background: var(--card-bg);
@@ -1340,6 +1370,7 @@ option {
 .person-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 14px;
   background: var(--card-bg);
   border: 1px solid var(--n2-border);
@@ -1352,6 +1383,9 @@ option {
 }
 .person-row-main {
   flex: 1;
+  /* Nazwisko + e-mail muszą móc się zwinąć; inaczej `min-content` wiersza
+     dopychał „przypisano …h" i „Usuń" poza ekran telefonu (MO-17). */
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -1368,6 +1402,7 @@ option {
 }
 .person-row-sub {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   color: var(--text-muted);
   font-size: var(--n2-type-sm);
@@ -1600,7 +1635,9 @@ option {
 /* Body row: fixed axis pane | scrollable days viewport | always-visible bin. */
 .week-main {
   display: flex;
-  max-height: 70vh;
+  /* `dvh` — chowający się pasek adresu iOS zmieniał `vh` w trakcie przewijania
+     i wysokość siatki godzin skakała (MO-15). Na desktopie bez różnicy. */
+  max-height: 70dvh;
 }
 /* Fixed hour axis — outside the horizontal scroller, opaque, vertical-synced. */
 .week-axis-pane {
@@ -1621,6 +1658,8 @@ option {
   flex: 1 1 auto;
   min-width: 0;
   overflow: auto;
+  /* MO-16 — przewijanie kolumn dni nie przenosi się na dokument. */
+  overscroll-behavior: contain;
   scrollbar-gutter: stable;
   /* Drag gestures cross block text; text-selection would hijack the next drag. */
   -webkit-user-select: none;
@@ -1638,6 +1677,7 @@ option {
   width: 200px;
   overflow-y: auto;
   overflow-x: hidden;
+  overscroll-behavior: contain;
   border-left: 1px solid var(--n2-border-strong);
   background: var(--card-bg-2);
   -webkit-user-select: none;
@@ -3147,6 +3187,7 @@ option {
 
 .timeline-scroll {
   overflow-x: auto;
+  overscroll-behavior: contain;
   border: 1px solid var(--n2-border);
   border-radius: var(--n2-radius-lg);
   background: var(--card-bg);
@@ -3472,6 +3513,9 @@ option {
   border-radius: var(--n2-radius-lg);
   padding: var(--n2-space-6);
   box-shadow: var(--shadow-sm);
+  /* Kafel to element siatki — bez `min-width: 0` jego `min-content` (pigułki,
+     `nowrap`, pierścienie) rozpycha ścieżkę zamiast się zwężać (MO-17). */
+  min-width: 0;
 }
 .dash-pipeline {
   list-style: none;
@@ -3507,6 +3551,7 @@ option {
   align-items: center;
   gap: 8px;
   width: 100%;
+  min-width: 0;
   background: none;
   border: none;
   font: inherit;
@@ -3616,7 +3661,7 @@ option {
  * (powiadomienia, obciążenie, zadania, zespół, tydzień). */
 @media (max-width: 1180px) {
   .dash-welcome-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     grid-template-areas: none;
   }
   .dash-area-notifications,
@@ -3683,6 +3728,20 @@ option {
 }
 .agenda-dateless .dash-row-name {
   font-weight: 500;
+}
+/* Na telefonie stała szerokość godziny i „max-width: 40%" na meta zjadały całą
+   nazwę; obie wartości luzujemy, a wiersz może się zawinąć (MO-17). */
+@media (max-width: 760px) {
+  .agenda-list .dash-row {
+    flex-wrap: wrap;
+    gap: 4px 10px;
+  }
+  .agenda-time {
+    min-width: 0;
+  }
+  .agenda-meta {
+    max-width: 100%;
+  }
 }
 
 /* ---------- Zasobnik + Alerty (Panel tiles, dawniej „Moja praca") ---------- */
@@ -3917,8 +3976,12 @@ option {
     right: 0;
     bottom: 0;
     width: auto;
-    max-height: 70vh;
+    max-height: 70dvh;
     border-radius: var(--n2-radius-md) var(--n2-radius-md) 0 0;
+  }
+  /* Dokowany do dołu — pole wiadomości musi ominąć pasek gestu (MO-14). */
+  .chat-popup-input {
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
   }
 }
 
@@ -4396,7 +4459,9 @@ option {
 .task-modal-card {
   width: 94vw;
   max-width: 980px;
-  max-height: 88vh;
+  /* `dvh`, nie `vh` — pasek adresu iOS chowa się przy przewijaniu i karta
+     „podskakiwała" o jego wysokość (MO-15). Na desktopie 1dvh == 1vh. */
+  max-height: 88dvh;
   display: flex;
   flex-direction: column;
   background: var(--n2-panel);
@@ -4464,7 +4529,7 @@ option {
   .task-modal-card {
     width: 100vw;
     max-width: none;
-    max-height: 94vh;
+    max-height: 94dvh;
     border-radius: var(--n2-radius-md);
   }
   .task-modal-head {
@@ -4478,8 +4543,11 @@ option {
 /* ---------- Responsive ---------- */
 
 @media (max-width: 1180px) {
+  /* `minmax(0, 1fr)`, nie `1fr` — domyślne `auto` minimum daje ścieżce podłogę
+     `min-content`, więc jeden szeroki kafel rozpychał całą powłokę i tworzył
+     poziomy scroll dokumentu na telefonie (MO-17). */
   .app-shell {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   /* The collapse toggle + collapsed avatar are desktop-only; the 1-column
      strip and mobile drawer ignore the stored pref entirely. */
@@ -5031,8 +5099,9 @@ option {
   z-index: 40;
   min-width: 260px;
   max-width: 320px;
-  max-height: 70vh;
+  max-height: 70dvh;
   overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: var(--n2-space-4);
@@ -6119,6 +6188,9 @@ option {
   box-shadow: 0 -10px 18px -14px rgba(0, 0, 0, 0.7);
   border-top: 1px solid var(--n2-border);
   padding: var(--n2-space-3) 0;
+  /* MO-14 — na iPhonie „Zapisz i zamknij" wpadał pod pasek gestu domowego.
+     `max()` sprawia, że przy zerowym inset (desktop) padding jest bez zmian. */
+  padding-bottom: max(var(--n2-space-3), env(safe-area-inset-bottom));
   margin-top: var(--n2-space-4);
   display: flex;
   align-items: center;
@@ -6302,6 +6374,20 @@ option {
 }
 .changelog-bar-btn {
   flex: none;
+}
+/* Ikona + tekst + dwie akcje mieszczą się w jednej linii dopiero od ~390px.
+   Niżej akcje schodzą do drugiej linii zamiast rozpychać dokument (MO-17);
+   przy dwóch liniach pigułka zamienia się w zaokrąglony prostokąt. */
+@media (max-width: 760px) {
+  .changelog-bar {
+    flex-wrap: wrap;
+    row-gap: var(--n2-space-2);
+    border-radius: var(--n2-radius-lg);
+  }
+  .changelog-bar-actions {
+    flex: 1 1 auto;
+    justify-content: flex-end;
+  }
 }
 @media (max-width: 640px) {
   .changelog-bar-summary {
