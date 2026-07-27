@@ -38,9 +38,11 @@ release matrix (`run-browser-regression.mjs`). Run each on demand (Chromium and
 WebKit) only when its covered behavior changes:
 
 - `browser-check-date-hardening.mjs`: invalid/corrupt-date handling — inline
-  Polish errors, no blank screen or uncaught `RangeError`, malformed JSON stays
-  byte-identical and exportable until reset, repairable payloads load repaired,
-  and the render-throw recovery screen resets cleanly.
+  Polish errors (the reversed-period assertion drives an explicit `.blur()` on
+  the date input first, since inline field errors are blur/save-gated), no
+  blank screen or uncaught `RangeError`, malformed JSON stays byte-identical
+  and exportable until reset, repairable payloads load repaired, and the
+  render-throw recovery screen resets cleanly.
 - `browser-check-ui-keyboard.mjs`: worker role landing, mobile drawer
   inertness/focus containment and Space activation for week blocks and bin cards.
 - `browser-check-savetask-multiblock.mjs`: `SAVE_TASK` reconciles per-person/day

@@ -171,3 +171,14 @@ capture-phase key trap); `polishCount` deduped into `utils/polishPlural.ts`.
 after the tree crashed, also mounted above the provider). npm test 1684 pass,
 build green. Onboarding browser check updated (playwright unavailable). Wiki
 updated.
+
+n2hub-280 field contract: new pure `fieldContract.ts` (+20 tests; renamed from
+`field.ts` — case-insensitive clash with `Field.tsx`) + thin `Field.tsx`
+(`focusFieldById`) adopted by Task/Event/TicketModal; blur/save-first timing, one
+counted `role="alert"` per modal, `t-period-error` dual invalid, TaskModal
+`<form>` excludes Dyskusja. npm test 1684→1710 pass, build green. Expansion:
+date-hardening check now blurs. See PKG-20260728-form-field-contract.
+Wiki sync (test-writer): added fieldContract/Field bullet + corrected
+Cykliczność-only touch claim in ui-navigation-and-onboarding.md; noted
+date-hardening's new blur() in testing-and-automation.md. `npm run
+check:openwiki` pass. No other files touched.

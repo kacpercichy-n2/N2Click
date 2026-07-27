@@ -21,6 +21,8 @@ import {
 import { bypassNavGuardOnce, clearNavGuard, setNavGuard } from '../utils/dirtyRegistry';
 import { useModalShell } from './useModalShell';
 import { useConfirm } from './ConfirmProvider';
+import { Field, focusFieldById } from './Field';
+import { firstInvalidKey, saveErrorSummary } from './fieldContract';
 import { IconButton } from './IconButton';
 import { X } from './icons';
 
@@ -253,30 +255,74 @@ interface FieldErrors {
   reporter?: string;
 }
 
+/**
+ * Pola formularza w KOLEJNOŚCI FORMULARZA. Jedno źródło zarówno etykiet do
+ * liczonego podsumowania, jak i rozstrzygnięcia „pierwsze złe pole" (fokus po
+ * nieudanej wysyłce). `domId: null` = przyczyna bez kotwicy (zgłaszający).
+ */
+const TICKET_FIELDS: ReadonlyArray<{ key: keyof FieldErrors; domId: string | null; label: string }> =
+  [
+    { key: 'title', domId: 'ticket-title', label: 'Nazwa zgłoszenia' },
+    { key: 'description', domId: 'ticket-description', label: 'Opis' },
+    { key: 'reporter', domId: null, label: 'Zgłaszający' },
+  ];
+const TICKET_FIELD_KEYS = TICKET_FIELDS.map((f) => f.key);
+
+// Reguły pól — po JEDNEJ czystej funkcji na pole, używanej przez blur, ponowne
+// sprawdzenie w trakcie pisania (tylko gdy pole już się czerwieni) ORAZ wysyłkę.
+// Trzy ścieżki nie mogą się dzięki temu rozjechać.
+function titleRule(value: string): string | undefined {
+  return value.trim() === '' ? 'Nazwa zgłoszenia jest wymagana.' : undefined;
+}
+function descriptionRule(value: string): string | undefined {
+  return value.trim() === '' ? 'Opis jest wymagany.' : undefined;
+}
+
 function TicketEditor({ existing, onDirtyChange, onSaved, onCancel }: EditorProps) {
   const { state, dispatch } = useStore();
   const me = currentUserSel(state);
   const [draft, setDraft] = useState<TicketDraft>(() => draftOf(existing, me?.id ?? ''));
   const [errors, setErrors] = useState<FieldErrors>({});
 
-  // Pola są w pełni kontrolowane; każda zmiana ustawia dirty i KASUJE błąd tego
-  // pola (walidacja jest ręczna, przy wysyłce — nie krzyczy w trakcie pisania).
-  const patch = (values: Partial<TicketDraft>, clear?: keyof FieldErrors) => {
+  const reporterRule = (reporterId: string): string | undefined =>
+    reporterId === '' || !state.people.some((p) => p.id === reporterId)
+      ? 'Nie rozpoznano zgłaszającego — zaloguj się ponownie.'
+      : undefined;
+
+  /** Zapis wyniku reguły pola (ustawia LUB kasuje komunikat). */
+  const setFieldError = (key: keyof FieldErrors, message: string | undefined) => {
+    setErrors((e) => (e[key] === message ? e : { ...e, [key]: message }));
+  };
+
+  // Pola są w pełni kontrolowane; każda zmiana ustawia dirty i — tylko gdy pole
+  // JUŻ ma błąd — sprawdza jego regułę ponownie (czysty formularz milczy w
+  // trakcie pisania, a poprawiony błąd znika natychmiast).
+  const patch = (
+    values: Partial<TicketDraft>,
+    recheck?: { key: keyof FieldErrors; rule: () => string | undefined },
+  ) => {
     setDraft((d) => ({ ...d, ...values }));
     onDirtyChange(true);
-    if (clear) setErrors((e) => (e[clear] === undefined ? e : { ...e, [clear]: undefined }));
+    if (recheck && errors[recheck.key] !== undefined) {
+      setFieldError(recheck.key, recheck.rule());
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const next: FieldErrors = {};
-    if (draft.title.trim() === '') next.title = 'Nazwa zgłoszenia jest wymagana.';
-    if (draft.description.trim() === '') next.description = 'Opis jest wymagany.';
-    if (draft.reporterId === '' || !state.people.some((p) => p.id === draft.reporterId)) {
-      next.reporter = 'Nie rozpoznano zgłaszającego — zaloguj się ponownie.';
-    }
+    next.title = titleRule(draft.title);
+    next.description = descriptionRule(draft.description);
+    next.reporter = reporterRule(draft.reporterId);
     setErrors(next);
-    if (Object.values(next).some((v) => v !== undefined)) return;
+    if (Object.values(next).some((v) => v !== undefined)) {
+      // Nieudana wysyłka MUSI mieć skutek: fokus + przewinięcie do pierwszego
+      // złego pola (zgłaszający nie ma kotwicy — zostaje samo podsumowanie).
+      const firstKey = firstInvalidKey(TICKET_FIELD_KEYS, next);
+      const domId = TICKET_FIELDS.find((f) => f.key === firstKey)?.domId;
+      if (domId) focusFieldById(domId);
+      return;
+    }
 
     // Dirty czyścimy PRZED nawigacją zamykającą, żeby strażnik nie zapytał o
     // porzucenie właśnie zapisanej zmiany.
@@ -289,92 +335,113 @@ function TicketEditor({ existing, onDirtyChange, onSaved, onCancel }: EditorProp
     onSaved();
   };
 
+  // JEDNO ogłaszane podsumowanie na modal (per-pole błędy nie mają `role="alert"`).
+  const summaryLabels = TICKET_FIELDS.filter((f) => errors[f.key] !== undefined).map(
+    (f) => f.label,
+  );
+  const summary =
+    summaryLabels.length > 0
+      ? saveErrorSummary(
+          existing ? 'Nie można zapisać zgłoszenia' : 'Nie można wysłać zgłoszenia',
+          summaryLabels,
+        )
+      : null;
+
   return (
     <form className="ticket-form" onSubmit={handleSubmit} noValidate>
-      <div className="field">
-        <label htmlFor="ticket-title">Nazwa zgłoszenia *</label>
-        <input
-          id="ticket-title"
-          data-autofocus
-          value={draft.title}
-          onChange={(e) => patch({ title: e.target.value }, 'title')}
-          placeholder="np. Kalendarz nie zapisuje przesuniętego bloku"
-          maxLength={300}
-          aria-invalid={errors.title !== undefined}
-        />
-        {errors.title && (
-          <p className="field-error" role="alert">
-            {errors.title}
-          </p>
+      <Field id="ticket-title" label="Nazwa zgłoszenia *" error={errors.title}>
+        {(control) => (
+          <input
+            {...control}
+            data-autofocus
+            value={draft.title}
+            onChange={(e) =>
+              patch({ title: e.target.value }, {
+                key: 'title',
+                rule: () => titleRule(e.target.value),
+              })
+            }
+            onBlur={(e) => setFieldError('title', titleRule(e.target.value))}
+            placeholder="np. Kalendarz nie zapisuje przesuniętego bloku"
+            maxLength={300}
+          />
         )}
-      </div>
+      </Field>
 
-      <div className="field">
-        <label htmlFor="ticket-area">Funkcja / czego dotyczy</label>
-        <input
-          id="ticket-area"
-          value={draft.area}
-          onChange={(e) => patch({ area: e.target.value })}
-          placeholder="np. Kalendarz, Projekty, Logowanie"
-          maxLength={300}
-        />
-      </div>
-
-      <div className="field">
-        <label htmlFor="ticket-description">Opis *</label>
-        <textarea
-          id="ticket-description"
-          value={draft.description}
-          onChange={(e) => patch({ description: e.target.value }, 'description')}
-          placeholder="Co się dzieje, czego oczekujesz, jak to powtórzyć?"
-          rows={6}
-          aria-invalid={errors.description !== undefined}
-        />
-        {errors.description && (
-          <p className="field-error" role="alert">
-            {errors.description}
-          </p>
+      <Field id="ticket-area" label="Funkcja / czego dotyczy">
+        {(control) => (
+          <input
+            {...control}
+            value={draft.area}
+            onChange={(e) => patch({ area: e.target.value })}
+            placeholder="np. Kalendarz, Projekty, Logowanie"
+            maxLength={300}
+          />
         )}
-      </div>
+      </Field>
+
+      <Field id="ticket-description" label="Opis *" error={errors.description}>
+        {(control) => (
+          <textarea
+            {...control}
+            value={draft.description}
+            onChange={(e) =>
+              patch({ description: e.target.value }, {
+                key: 'description',
+                rule: () => descriptionRule(e.target.value),
+              })
+            }
+            onBlur={(e) => setFieldError('description', descriptionRule(e.target.value))}
+            placeholder="Co się dzieje, czego oczekujesz, jak to powtórzyć?"
+            rows={6}
+          />
+        )}
+      </Field>
 
       <div className="field-row">
-        <div className="field">
-          <label htmlFor="ticket-kind">Rodzaj</label>
-          <select
-            id="ticket-kind"
-            value={draft.kind}
-            onChange={(e) => patch({ kind: e.target.value as TicketDraft['kind'] })}
-          >
-            {TICKET_KINDS.map((kind) => (
-              <option key={kind} value={kind}>
-                {TICKET_KIND_LABELS[kind]}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="field">
-          <label htmlFor="ticket-priority">Priorytet</label>
-          <select
-            id="ticket-priority"
-            value={draft.priority}
-            onChange={(e) => patch({ priority: e.target.value as TicketDraft['priority'] })}
-          >
-            {TICKET_PRIORITIES.map((priority) => (
-              <option key={priority} value={priority}>
-                {TICKET_PRIORITY_LABELS[priority]}
-              </option>
-            ))}
-          </select>
-        </div>
+        <Field id="ticket-kind" label="Rodzaj">
+          {(control) => (
+            <select
+              {...control}
+              value={draft.kind}
+              onChange={(e) => patch({ kind: e.target.value as TicketDraft['kind'] })}
+            >
+              {TICKET_KINDS.map((kind) => (
+                <option key={kind} value={kind}>
+                  {TICKET_KIND_LABELS[kind]}
+                </option>
+              ))}
+            </select>
+          )}
+        </Field>
+        <Field id="ticket-priority" label="Priorytet">
+          {(control) => (
+            <select
+              {...control}
+              value={draft.priority}
+              onChange={(e) => patch({ priority: e.target.value as TicketDraft['priority'] })}
+            >
+              {TICKET_PRIORITIES.map((priority) => (
+                <option key={priority} value={priority}>
+                  {TICKET_PRIORITY_LABELS[priority]}
+                </option>
+              ))}
+            </select>
+          )}
+        </Field>
       </div>
 
       <p className="field-hint">
         Zgłaszający: {me?.name ?? 'nieznany'}
         {existing ? null : '. Nowe zgłoszenie trafia na listę ze statusem „Nowe”.'}
       </p>
-      {errors.reporter && (
+      {/* Zgłaszający nie jest polem (nie da się go wybrać), więc jego komunikat
+          zostaje osobnym akapitem — ogłasza go liczone podsumowanie niżej. */}
+      {errors.reporter && <p className="field-error">{errors.reporter}</p>}
+
+      {summary && (
         <p className="field-error" role="alert">
-          {errors.reporter}
+          {summary}
         </p>
       )}
 

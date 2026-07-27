@@ -20,6 +20,8 @@ import { personColor } from '../utils/colors';
 import { bypassNavGuardOnce, clearNavGuard, setNavGuard } from '../utils/dirtyRegistry';
 import { useModalShell } from './useModalShell';
 import { useConfirm } from './ConfirmProvider';
+import { Field, focusFieldById } from './Field';
+import { firstInvalidKey, saveErrorSummary } from './fieldContract';
 import { IconButton } from './IconButton';
 import { X } from './icons';
 
@@ -284,10 +286,46 @@ interface FieldErrors {
   form?: string;
 }
 
+/**
+ * Pola formularza w KOLEJNOŚCI FORMULARZA. Jedno źródło zarówno etykiet do
+ * liczonego podsumowania, jak i rozstrzygnięcia „pierwsze złe pole" (fokus po
+ * nieudanym zapisie). `form` nie jest polem, więc go tu nie ma.
+ */
+const EVENT_FIELDS: ReadonlyArray<{ key: keyof FieldErrors; domId: string; label: string }> = [
+  { key: 'title', domId: 'event-title', label: 'Tytuł' },
+  { key: 'date', domId: 'event-date', label: 'Data' },
+  { key: 'time', domId: 'event-start', label: 'Godziny' },
+  { key: 'meetingUrl', domId: 'event-url', label: 'Link do spotkania' },
+];
+const EVENT_FIELD_KEYS = EVENT_FIELDS.map((f) => f.key);
+
 /** Zaokrągla minuty do najbliższej wielokrotności siatki 15 min (ręcznie
  *  wpisany czas jak 09:10 trafia na 09:15 — `step={900}` sam tego nie wymusza). */
 function snapToGrid(min: number): number {
   return Math.round(min / MINUTE_STEP) * MINUTE_STEP;
+}
+
+// Reguły pól — po JEDNEJ czystej funkcji na pole, używanej przez blur, ponowne
+// sprawdzenie w trakcie pisania (tylko gdy pole już się czerwieni) ORAZ zapis.
+// Trzy ścieżki nie mogą się dzięki temu rozjechać.
+function titleRule(value: string): string | undefined {
+  return value.trim() === '' ? 'Tytuł jest wymagany.' : undefined;
+}
+function dateRule(value: string): string | undefined {
+  return !isValidDateStr(value) ? 'Podaj poprawną datę.' : undefined;
+}
+/** Zakres godzin: błąd należy do PARY pól, nie do jednego z nich. */
+function timeRule(start: string, end: string): string | undefined {
+  const startMinutes = snapToGrid(timeToMinutes(start));
+  const endMinutes = snapToGrid(timeToMinutes(end));
+  return !Number.isFinite(startMinutes) || !Number.isFinite(endMinutes) || endMinutes <= startMinutes
+    ? 'Koniec musi być późniejszy niż początek.'
+    : undefined;
+}
+function meetingUrlRule(value: string): string | undefined {
+  return value.trim() !== '' && normalizeProjectDocumentUrl(value) === null
+    ? 'Adres musi zaczynać się od http(s):// .'
+    : undefined;
 }
 
 function EventEditor({
@@ -330,6 +368,16 @@ function EventEditor({
 
   const markDirty = () => onDirtyChange(true);
 
+  /** Zapis wyniku reguły pola (ustawia LUB kasuje komunikat). */
+  const setFieldError = (key: keyof FieldErrors, message: string | undefined) => {
+    setErrors((x) => (x[key] === message ? x : { ...x, [key]: message }));
+  };
+  /** Ponowne sprawdzenie w trakcie pisania — TYLKO gdy pole już się czerwieni.
+   *  Czyste pole milczy do blur/zapisu, a poprawiony błąd znika natychmiast. */
+  const recheckIfErroring = (key: keyof FieldErrors, rule: () => string | undefined) => {
+    if (errors[key] !== undefined) setFieldError(key, rule());
+  };
+
   // Dzień tygodnia kotwicy jest ZAWSZE zaznaczony i nieodznaczalny (baza reguły
   // musi być własnym wystąpieniem — inaczej reduktor odrzuca cykliczność).
   const anchorIso = isValidDateStr(date) ? isoWeekday(date) : 0;
@@ -358,24 +406,21 @@ function EventEditor({
     e.preventDefault();
     if (readOnly) return;
     const next: FieldErrors = {};
-    if (title.trim() === '') next.title = 'Tytuł jest wymagany.';
-    if (!isValidDateStr(date)) next.date = 'Podaj poprawną datę.';
+    next.title = titleRule(title);
+    next.date = dateRule(date);
+    next.time = timeRule(startTime, endTime);
+    next.meetingUrl = meetingUrlRule(meetingUrl);
     // Snap ręcznie wpisanych czasów na siatkę 15 min PRZED zbudowaniem draftu —
     // `step={900}` nie blokuje ręcznego 09:10, a reduktor odrzuciłby taki czas.
     const startMinutes = snapToGrid(timeToMinutes(startTime));
     const endMinutes = snapToGrid(timeToMinutes(endTime));
-    if (
-      !Number.isFinite(startMinutes) ||
-      !Number.isFinite(endMinutes) ||
-      endMinutes <= startMinutes
-    ) {
-      next.time = 'Koniec musi być późniejszy niż początek.';
-    }
-    if (meetingUrl.trim() !== '' && normalizeProjectDocumentUrl(meetingUrl) === null) {
-      next.meetingUrl = 'Adres musi zaczynać się od http(s):// .';
-    }
     if (Object.values(next).some((v) => v !== undefined)) {
       setErrors(next);
+      // Nieudany zapis MUSI mieć skutek: fokus + przewinięcie do pierwszego
+      // złego pola (błąd zakresu godzin celuje w pole początku).
+      const firstKey = firstInvalidKey(EVENT_FIELD_KEYS, next);
+      const domId = EVENT_FIELDS.find((f) => f.key === firstKey)?.domId;
+      if (domId) focusFieldById(domId);
       return;
     }
 
@@ -430,85 +475,102 @@ function EventEditor({
     onSaved();
   };
 
+  // JEDNO ogłaszane podsumowanie na modal: komunikat odrzuconego draftu ma
+  // pierwszeństwo (mówi więcej), inaczej liczona lista złych pól.
+  const summaryLabels = EVENT_FIELDS.filter((f) => errors[f.key] !== undefined).map((f) => f.label);
+  const summary =
+    errors.form ??
+    (summaryLabels.length > 0
+      ? saveErrorSummary('Nie można zapisać wydarzenia', summaryLabels)
+      : null);
+
   return (
     <form className="ticket-form" onSubmit={handleSubmit} noValidate>
-      <div className="field">
-        <label htmlFor="event-title">Tytuł *</label>
-        <input
-          id="event-title"
-          data-autofocus
-          value={title}
-          onChange={(e) => {
-            setTitle(e.target.value);
-            markDirty();
-            if (errors.title) setErrors((x) => ({ ...x, title: undefined }));
-          }}
-          placeholder="np. Spotkanie z klientem"
-          maxLength={300}
-          disabled={readOnly}
-          aria-invalid={errors.title !== undefined}
-        />
-        {errors.title && (
-          <p className="field-error" role="alert">
-            {errors.title}
-          </p>
+      <Field id="event-title" label="Tytuł *" error={errors.title}>
+        {(control) => (
+          <input
+            {...control}
+            data-autofocus
+            value={title}
+            onChange={(e) => {
+              setTitle(e.target.value);
+              markDirty();
+              recheckIfErroring('title', () => titleRule(e.target.value));
+            }}
+            onBlur={(e) => setFieldError('title', titleRule(e.target.value))}
+            placeholder="np. Spotkanie z klientem"
+            maxLength={300}
+            disabled={readOnly}
+          />
         )}
-      </div>
+      </Field>
 
       <div className="field-row">
-        <div className="field">
-          <label htmlFor="event-date">Data *</label>
-          <input
-            id="event-date"
-            type="date"
-            value={date}
-            onChange={(e) => {
-              setDate(e.target.value);
-              markDirty();
-              if (errors.date) setErrors((x) => ({ ...x, date: undefined }));
-            }}
-            disabled={readOnly}
-            aria-invalid={errors.date !== undefined}
-          />
-          {errors.date && (
-            <p className="field-error" role="alert">
-              {errors.date}
-            </p>
+        <Field id="event-date" label="Data *" error={errors.date}>
+          {(control) => (
+            <input
+              {...control}
+              type="date"
+              value={date}
+              onChange={(e) => {
+                setDate(e.target.value);
+                markDirty();
+                recheckIfErroring('date', () => dateRule(e.target.value));
+              }}
+              onBlur={(e) => setFieldError('date', dateRule(e.target.value))}
+              disabled={readOnly}
+            />
           )}
-        </div>
-        <div className="field">
-          <label htmlFor="event-start">Początek *</label>
-          <input
-            id="event-start"
-            type="time"
-            step={900}
-            value={startTime}
-            onChange={(e) => {
-              setStartTime(e.target.value);
-              markDirty();
-              if (errors.time) setErrors((x) => ({ ...x, time: undefined }));
-            }}
-            disabled={readOnly}
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="event-end">Koniec *</label>
-          <input
-            id="event-end"
-            type="time"
-            step={900}
-            value={endTime}
-            onChange={(e) => {
-              setEndTime(e.target.value);
-              markDirty();
-              if (errors.time) setErrors((x) => ({ ...x, time: undefined }));
-            }}
-            disabled={readOnly}
-          />
-        </div>
+        </Field>
+        {/* Błąd zakresu godzin opisuje OBA pola jednym akapitem (`event-time-error`)
+            i oznacza oba jako niepoprawne — żadne z nich nie jest samo w sobie złe. */}
+        <Field
+          id="event-start"
+          label="Początek *"
+          invalid={errors.time !== undefined}
+          {...(errors.time !== undefined ? { describedByExtra: 'event-time-error' } : {})}
+        >
+          {(control) => (
+            <input
+              {...control}
+              type="time"
+              step={900}
+              value={startTime}
+              onChange={(e) => {
+                setStartTime(e.target.value);
+                markDirty();
+                recheckIfErroring('time', () => timeRule(e.target.value, endTime));
+              }}
+              onBlur={(e) => setFieldError('time', timeRule(e.target.value, endTime))}
+              disabled={readOnly}
+            />
+          )}
+        </Field>
+        <Field
+          id="event-end"
+          label="Koniec *"
+          invalid={errors.time !== undefined}
+          {...(errors.time !== undefined ? { describedByExtra: 'event-time-error' } : {})}
+        >
+          {(control) => (
+            <input
+              {...control}
+              type="time"
+              step={900}
+              value={endTime}
+              onChange={(e) => {
+                setEndTime(e.target.value);
+                markDirty();
+                recheckIfErroring('time', () => timeRule(startTime, e.target.value));
+              }}
+              onBlur={(e) => setFieldError('time', timeRule(startTime, e.target.value))}
+              disabled={readOnly}
+            />
+          )}
+        </Field>
       </div>
       {errors.time && (
-        <p className="field-error" role="alert">
+        <p className="field-error" id="event-time-error">
           {errors.time}
         </p>
       )}
@@ -546,56 +608,54 @@ function EventEditor({
         <p className="field-hint">Bez zaznaczenia wydarzenie jest ogólnofirmowe.</p>
       </div>
 
-      <div className="field">
-        <label htmlFor="event-url">Link do spotkania</label>
-        <input
-          id="event-url"
-          value={meetingUrl}
-          onChange={(e) => {
-            setMeetingUrl(e.target.value);
-            markDirty();
-            if (errors.meetingUrl) setErrors((x) => ({ ...x, meetingUrl: undefined }));
-          }}
-          placeholder="np. https://meet.example.com/spotkanie"
-          maxLength={2048}
-          disabled={readOnly}
-          aria-invalid={errors.meetingUrl !== undefined}
-        />
-        {errors.meetingUrl && (
-          <p className="field-error" role="alert">
-            {errors.meetingUrl}
-          </p>
+      <Field id="event-url" label="Link do spotkania" error={errors.meetingUrl}>
+        {(control) => (
+          <input
+            {...control}
+            value={meetingUrl}
+            onChange={(e) => {
+              setMeetingUrl(e.target.value);
+              markDirty();
+              recheckIfErroring('meetingUrl', () => meetingUrlRule(e.target.value));
+            }}
+            onBlur={(e) => setFieldError('meetingUrl', meetingUrlRule(e.target.value))}
+            placeholder="np. https://meet.example.com/spotkanie"
+            maxLength={2048}
+            disabled={readOnly}
+          />
         )}
-      </div>
+      </Field>
 
-      <div className="field">
-        <label htmlFor="event-location">Biuro / lokalizacja</label>
-        <input
-          id="event-location"
-          value={location}
-          onChange={(e) => {
-            setLocation(e.target.value);
-            markDirty();
-          }}
-          placeholder="np. Sala konferencyjna, Biuro Warszawa"
-          maxLength={300}
-          disabled={readOnly}
-        />
-      </div>
+      <Field id="event-location" label="Biuro / lokalizacja">
+        {(control) => (
+          <input
+            {...control}
+            value={location}
+            onChange={(e) => {
+              setLocation(e.target.value);
+              markDirty();
+            }}
+            placeholder="np. Sala konferencyjna, Biuro Warszawa"
+            maxLength={300}
+            disabled={readOnly}
+          />
+        )}
+      </Field>
 
-      <div className="field">
-        <label htmlFor="event-desc">Opis</label>
-        <textarea
-          id="event-desc"
-          value={description}
-          onChange={(e) => {
-            setDescription(e.target.value);
-            markDirty();
-          }}
-          rows={4}
-          disabled={readOnly}
-        />
-      </div>
+      <Field id="event-desc" label="Opis">
+        {(control) => (
+          <textarea
+            {...control}
+            value={description}
+            onChange={(e) => {
+              setDescription(e.target.value);
+              markDirty();
+            }}
+            rows={4}
+            disabled={readOnly}
+          />
+        )}
+      </Field>
 
       <div className="field">
         <label>Cykliczność</label>
@@ -647,20 +707,21 @@ function EventEditor({
                 );
               })}
             </div>
-            <div className="field">
-              <label htmlFor="event-until">Do (opcjonalnie)</label>
-              <input
-                id="event-until"
-                type="date"
-                value={until}
-                min={date}
-                onChange={(e) => {
-                  setUntil(e.target.value);
-                  markDirty();
-                }}
-                disabled={readOnly}
-              />
-            </div>
+            <Field id="event-until" label="Do (opcjonalnie)">
+              {(control) => (
+                <input
+                  {...control}
+                  type="date"
+                  value={until}
+                  min={date}
+                  onChange={(e) => {
+                    setUntil(e.target.value);
+                    markDirty();
+                  }}
+                  disabled={readOnly}
+                />
+              )}
+            </Field>
             <p className="field-hint">
               Dzień tygodnia daty jest zawsze zaznaczony — to baza wydarzenia.
             </p>
@@ -668,9 +729,9 @@ function EventEditor({
         )}
       </div>
 
-      {errors.form && (
+      {summary && (
         <p className="field-error" role="alert">
-          {errors.form}
+          {summary}
         </p>
       )}
 

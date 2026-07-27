@@ -19,7 +19,20 @@ export interface SaveBlocker {
   message: string;
   /** `id` pola, do którego skacze fokus; `null` = brak kotwicy w DOM. */
   focusId: string | null;
+  /** Nazwa pola do JEDNEGO liczonego podsumowania („popraw 2 pola: Tytuł,
+   *  Okres.”); `null` = przyczyna bez własnego pola. JEDYNE źródło etykiet. */
+  fieldLabel: string | null;
 }
+
+/** Etykiety pól do podsumowania — po jednej na `SaveBlockerId`. */
+const BLOCKER_FIELD_LABELS: Record<SaveBlockerId, string | null> = {
+  title: 'Tytuł',
+  project: 'Projekt',
+  status: 'Status',
+  period: 'Okres',
+  assignees: 'Osoby',
+  other: null,
+};
 
 /** Krótkie etykiety „przy przycisku” — celowo zwięźlejsze niż inline'owe
  *  PERIOD_ERROR_LABELS (te zostają pod polami okresu bez zmian). */
@@ -35,6 +48,18 @@ const PERIOD_BLOCKER_LABELS: Record<PeriodError, string> = {
 /** Które pole okresu jest winne — start tylko wtedy, gdy to on jest zły. */
 function periodFocusId(error: PeriodError): string {
   return error === 'missing-start' || error === 'invalid-start' ? 't-start' : 't-end';
+}
+
+/**
+ * Które pola okresu oznaczyć jako `aria-invalid`. Błąd POJEDYNCZEJ daty wskazuje
+ * jedno pole, a błąd ZAKRESU (`reversed` / `too-long`) oba — żadna z dat nie jest
+ * sama w sobie zła, złe jest ich zestawienie, więc czytnik musi wskazać obie
+ * (jeden współdzielony opis: `t-period-error`).
+ */
+export function periodInvalidTargets(error: PeriodError): { start: boolean; end: boolean } {
+  if (error === 'missing-start' || error === 'invalid-start') return { start: true, end: false };
+  if (error === 'missing-end' || error === 'invalid-end') return { start: false, end: true };
+  return { start: true, end: true };
 }
 
 export interface SaveBlockerInput {
@@ -62,7 +87,9 @@ export interface SaveBlockerInput {
  * zamiast martwego przycisku.
  */
 export function collectTaskSaveBlockers(input: SaveBlockerInput): SaveBlocker[] {
-  const blockers: SaveBlocker[] = [];
+  // Etykieta pola dokłada się na końcu z JEDNEJ mapy, żeby nie dało się jej
+  // pominąć ani rozjechać z `id` przy dodaniu nowej przyczyny.
+  const blockers: Array<Omit<SaveBlocker, 'fieldLabel'>> = [];
 
   if (input.title.trim() === '') {
     blockers.push({ id: 'title', message: 'Tytuł: wpisz nazwę zadania.', focusId: 't-title' });
@@ -99,5 +126,5 @@ export function collectTaskSaveBlockers(input: SaveBlockerInput): SaveBlocker[] 
     });
   }
 
-  return blockers;
+  return blockers.map((b) => ({ ...b, fieldLabel: BLOCKER_FIELD_LABELS[b.id] }));
 }

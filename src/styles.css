@@ -4800,6 +4800,13 @@ option {
 .task-modal-body .editor-section:last-of-type {
   margin-bottom: 0;
 }
+/* Sekcje edytora zadania siedzą w `<form class="task-editor-form">` (semantyka +
+   Enter = zapis), więc ostatnia sekcja WEWNĄTRZ formularza zaczęła łapać regułę
+   powyżej i zjadała odstęp przed „Dyskusją". Klasa opakowania zawęża naprawę
+   dokładnie do tego przypadku. */
+.task-editor-form .editor-section:last-of-type {
+  margin-bottom: var(--n2-space-4);
+}
 
 @media (max-width: 760px) {
   .task-modal-card {

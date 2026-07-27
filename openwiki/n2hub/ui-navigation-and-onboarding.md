@@ -50,8 +50,11 @@
   lista, a nieudany zapis MUSI dać skutek — skacze do pierwszego złego pola
   (kotwice `t-title`/`t-project`/`t-status`/`t-start`/`t-end`/`t-assignees`),
   wypisuje powody w sticky stopce edytora i udostępnia je klikalnej odznace
-  zapisu (`SaveStatus` prop `blocked`). Walidacja sekcji „Cykliczność” startuje
-  dopiero po jej edycji — nietknięta nie pokazuje błędu.
+  zapisu (`SaveStatus` prop `blocked`). Widoczność błędu podąża za wspólnym
+  modelem czasowym (patrz kontrakt pola niżej): pierwsza walidacja na blur albo
+  przy próbie zapisu, potem żywa rewalidacja tylko dla pól, które już raz
+  pokazały błąd; sekcja „Cykliczność” rządzi się tą samą zasadą względem
+  własnej edycji.
 - Profile edit matrix (`src/pages/profileEditPolicy.ts`) gains an ADMIN-ONLY
   „Spółka” field (`companyId` in `ALL_FIELDS` only — nie self, nie manager),
   rendered as a select in PersonProfilePage next to „Dział”; parity with the
@@ -151,6 +154,23 @@
   stos, zamykanie i powrót fokusa, z przyciskiem „Filtry” jako triggerem.
   Drabina `z-index` jest stokenizowana jako `--n2-z-*` w `:root`; na `var()`
   przeszły tylko `.context-menu` i `.filter-popover`.
+- Kontrakt pola formularza jest WSPÓLNY i równoległy do powłoki modali/nakładek:
+  czysta logika w `src/components/fieldContract.ts` (`fieldIds` / `fieldAria` /
+  `firstInvalidKey` / `saveErrorSummary` + `fieldContract.test.ts` w node),
+  cienka warstwa DOM w `src/components/Field.tsx` (`.field` > `<label htmlFor>`
+  > kontrolka > `.field-hint` > `.field-error`, spięte przez
+  `aria-describedby`/`aria-invalid`; eksportuje też `focusFieldById`). Przyjęty
+  przez TaskModal/EventModal/TicketModal: na modal przypada JEDNO ogłaszane
+  `role="alert"` z liczonym polskim podsumowaniem („Nie można zapisać zadania —
+  popraw 2 pola: Tytuł, Okres.”) — błędy per-pole go NIE mają. W TaskModal
+  `SaveBlocker.fieldLabel` (`src/components/taskSaveBlockers.ts`) jest jedynym
+  źródłem etykiet podsumowania, a `periodInvalidTargets` oznacza OBA pola daty
+  przy błędzie zakresu (`reversed`/`too-long`) i jedno przy błędzie pojedynczej
+  daty. Pola TaskModala siedzą w
+  `<form className="task-editor-form" onSubmit>` obejmującym sekcje OD
+  „Szczegóły” DO „Zasobnik” WYŁĄCZNIE — „Dyskusja” (własny `<form>` w
+  `CommentsPanel`, zagnieżdżenie byłoby nielegalnym HTML-em) i sticky pasek
+  akcji zostają POZA formularzem.
 - `src/utils/dirtyRegistry.ts` and `src/utils/useSaveStatus.ts` support shared
   unsaved-edit and save-state behavior. The registry also holds the opt-in
   router navigation guard (scopes `task-modal`/`project-detail` plus a one-shot

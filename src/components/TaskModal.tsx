@@ -61,7 +61,14 @@ import {
 import { useSaveStatus } from '../utils/useSaveStatus';
 import { useAutoSave } from '../utils/useAutoSave';
 import { hasEntity, isValidTaskDraft } from '../store/commandValidation';
-import { collectTaskSaveBlockers, type SaveBlocker } from './taskSaveBlockers';
+import {
+  collectTaskSaveBlockers,
+  periodInvalidTargets,
+  type SaveBlocker,
+  type SaveBlockerId,
+} from './taskSaveBlockers';
+import { Field, focusFieldById } from './Field';
+import { fieldAria, saveErrorSummary } from './fieldContract';
 import {
   bypassNavGuardOnce,
   clearNavGuard,
@@ -102,12 +109,9 @@ function recurDateLabel(date: string): string {
 // klikalna odznaka zapisu w nagłówku.
 function focusSaveBlocker(blocker: SaveBlocker): void {
   if (blocker.focusId === null) return;
-  const el = document.getElementById(blocker.focusId);
-  if (!el) return;
-  // `preventScroll` + jawny scrollIntoView: jedno przewinięcie na środek pola,
-  // nie dwa (fokus przewijałby minimalnie, pod sticky pasek akcji).
-  el.focus({ preventScroll: true });
-  el.scrollIntoView({ block: 'center' });
+  // Sam skok (fokus + JEDNO przewinięcie na środek) jest wspólny dla trzech
+  // modali i mieszka w `Field.tsx` jako `focusFieldById`.
+  focusFieldById(blocker.focusId);
 }
 
 /**
@@ -621,12 +625,18 @@ function TaskEditor({
     return map;
   });
 
-  const [titleTouched, setTitleTouched] = useState(false);
+  // Timing walidacji: pole „krzyczy" dopiero po opuszczeniu go (blur) albo po
+  // nieudanej próbie zapisu (`saveAttempted` odsłania wszystko). Blokady liczą
+  // się co render, więc widoczny błąd waliduje się na żywo i znika w chwili
+  // poprawienia, a nietknięte pole nie czerwieni się przy pisaniu.
+  const [touched, setTouched] = useState<ReadonlySet<SaveBlockerId>>(new Set());
+  const markTouched = (id: SaveBlockerId) => {
+    setTouched((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+  };
 
   // Pole startowe modala: `data-autofocus` na tytule (fokus ustawia powłoka
   // `useModalShell`, żeby nie było dwóch konkurencyjnych `.focus()`).
 
-  const titleError = title.trim() === '';
   const perErr = periodError(startDate, endDate, { maxDays: MAX_TASK_PERIOD_DAYS });
   const periodValid = perErr === null;
   // Only computed for display below, and only rendered when periodValid — so a
@@ -969,8 +979,18 @@ function TaskEditor({
   // próbą pusty formularz nowego zadania nie krzyczy).
   const [saveAttempted, setSaveAttempted] = useState(false);
 
+  // Widoczność błędu przy polu: przyczyna ISTNIEJE i pole było już opuszczone
+  // albo zapis się nie udał. To samo bramkuje `aria-invalid`.
+  const blockerById = new Map(blockers.map((b) => [b.id, b] as const));
+  const showError = (id: SaveBlockerId): boolean =>
+    blockerById.has(id) && (touched.has(id) || saveAttempted);
+  // Okres to JEDNA przyczyna na DWÓCH polach: widoczność wspólna, a oznaczenie
+  // `aria-invalid` zależy od wariantu błędu.
+  const periodErrorVisible = showError('period');
+  const periodTargets =
+    perErr !== null ? periodInvalidTargets(perErr) : { start: false, end: false };
+
   const doSave = ({ publishNew = false }: { publishNew?: boolean } = {}): boolean => {
-    setTitleTouched(true);
     if (!formValid) {
       // Przycisk nigdy nie jest jednocześnie aktywny i martwy: pokazujemy powody
       // i przenosimy użytkownika do pierwszego z nich.
@@ -1140,98 +1160,134 @@ function TaskEditor({
 
   return (
     <div className="editor task-editor">
+      {/* Formularz obejmuje sekcje OD „Szczegóły" DO „Zasobnik". „Dyskusja" i
+          sticky pasek akcji zostają POZA nim: CommentsPanel ma własny
+          `<form>` (zagnieżdżenie jest nielegalne w HTML i „Skomentuj"
+          zapisywałoby zadanie). */}
+      <form
+        className="task-editor-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          handleSave();
+        }}
+        noValidate
+      >
       {/* a) Details */}
       <div className="editor-section">
         <h2>Szczegóły</h2>
-        <div className="field">
-          <label htmlFor="t-title">Tytuł *</label>
-          <input
-            id="t-title"
-            data-autofocus
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            onBlur={() => setTitleTouched(true)}
-            className={titleTouched && titleError ? 'invalid' : undefined}
-            placeholder="Co trzeba zrobić?"
-            disabled={readOnly}
-            title={roTitle}
-          />
-          {titleTouched && titleError && <p className="field-error">Tytuł jest wymagany</p>}
-        </div>
-        <div className="field">
-          <label htmlFor="t-desc">Opis</label>
-          <textarea
-            id="t-desc"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            rows={3}
-            placeholder="Opcjonalne szczegóły"
-            disabled={readOnly}
-            title={roTitle}
-          />
-        </div>
+        <Field
+          id="t-title"
+          label="Tytuł *"
+          error={showError('title') ? 'Tytuł jest wymagany' : undefined}
+        >
+          {(control) => (
+            <input
+              {...control}
+              data-autofocus
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              onBlur={() => markTouched('title')}
+              className={showError('title') ? 'invalid' : undefined}
+              placeholder="Co trzeba zrobić?"
+              disabled={readOnly}
+              title={roTitle}
+            />
+          )}
+        </Field>
+        <Field id="t-desc" label="Opis">
+          {(control) => (
+            <textarea
+              {...control}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={3}
+              placeholder="Opcjonalne szczegóły"
+              disabled={readOnly}
+              title={roTitle}
+            />
+          )}
+        </Field>
         <div className="field-row">
-          <div className="field">
-            <label htmlFor="t-project">Projekt *</label>
-            {state.projects.length === 0 ? (
-              <p className="field-hint">
-                Nie ma jeszcze projektów — najpierw <Link to="/projects">utwórz projekt</Link>.
-                Każde zadanie musi należeć do projektu.
-              </p>
-            ) : (
+          <Field
+            id="t-project"
+            label="Projekt *"
+            // Pusta baza projektów ma własną podpowiedź („najpierw utwórz
+            // projekt"), więc inline'owy błąd wyboru jej nie dubluje.
+            error={
+              showError('project') && state.projects.length > 0
+                ? 'Wybierz projekt dla tego zadania.'
+                : undefined
+            }
+          >
+            {(control) =>
+              state.projects.length === 0 ? (
+                <p className="field-hint">
+                  Nie ma jeszcze projektów — najpierw <Link to="/projects">utwórz projekt</Link>.
+                  Każde zadanie musi należeć do projektu.
+                </p>
+              ) : (
+                <select
+                  {...control}
+                  value={projectId}
+                  onChange={(e) => setProjectId(e.target.value)}
+                  onBlur={() => markTouched('project')}
+                  disabled={readOnly}
+                  title={roTitle}
+                >
+                  {state.projects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                      {getClient(state, p.clientId)
+                        ? ` — ${getClient(state, p.clientId)?.name}`
+                        : ''}
+                    </option>
+                  ))}
+                </select>
+              )
+            }
+          </Field>
+          <Field
+            id="t-status"
+            label="Status *"
+            error={showError('status') ? 'Wybierz istniejący status.' : undefined}
+          >
+            {(control) => (
               <select
-                id="t-project"
-                value={projectId}
-                onChange={(e) => setProjectId(e.target.value)}
+                {...control}
+                value={statusId}
+                onChange={(e) => setStatusId(e.target.value)}
+                onBlur={() => markTouched('status')}
                 disabled={readOnly}
                 title={roTitle}
               >
-                {state.projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                    {getClient(state, p.clientId)
-                      ? ` — ${getClient(state, p.clientId)?.name}`
-                      : ''}
+                {pickableStatuses.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                    {s.archived ? ' (zarchiwizowany)' : ''}
                   </option>
                 ))}
               </select>
             )}
-          </div>
-          <div className="field">
-            <label htmlFor="t-status">Status *</label>
-            <select
-              id="t-status"
-              value={statusId}
-              onChange={(e) => setStatusId(e.target.value)}
-              disabled={readOnly}
-              title={roTitle}
-            >
-              {pickableStatuses.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                  {s.archived ? ' (zarchiwizowany)' : ''}
-                </option>
-              ))}
-            </select>
-          </div>
+          </Field>
         </div>
         <div className="field-row">
-          <div className="field">
-            <label htmlFor="t-priority">Priorytet</label>
-            <select
-              id="t-priority"
-              value={priority}
-              onChange={(e) => setPriority(e.target.value as TaskPriority)}
-              disabled={readOnly}
-              title={roTitle}
-            >
-              {TASK_PRIORITIES.map((p) => (
-                <option key={p} value={p}>
-                  {PRIORITY_LABELS[p]}
-                </option>
-              ))}
-            </select>
-          </div>
+          <Field id="t-priority" label="Priorytet">
+            {(control) => (
+              <select
+                {...control}
+                value={priority}
+                onChange={(e) => setPriority(e.target.value as TaskPriority)}
+                disabled={readOnly}
+                title={roTitle}
+              >
+                {TASK_PRIORITIES.map((p) => (
+                  <option key={p} value={p}>
+                    {PRIORITY_LABELS[p]}
+                  </option>
+                ))}
+              </select>
+            )}
+          </Field>
           <div className="field">
             <label htmlFor="t-category">Kategoria</label>
             <select
@@ -1278,7 +1334,16 @@ function TaskEditor({
           </p>
         ) : (
           // `id` + `tabIndex` to kotwica skoku z listy blokad zapisu (IA-12).
-          <div className="assignee-picker" id="t-assignees" tabIndex={-1}>
+          // Grupa (nie pojedyncza kontrolka), więc wiązanie opisu/`aria-invalid`
+          // jest ręczne — `fieldAria` jest tu jedynym źródłem tych atrybutów.
+          <div
+            className="assignee-picker"
+            id="t-assignees"
+            tabIndex={-1}
+            role="group"
+            aria-label="Przypisane osoby"
+            {...fieldAria('t-assignees', { hasHelp: false, hasError: showError('assignees') })}
+          >
             {state.people.map((p) => {
               const checked = assigneeIds.includes(p.id);
               return (
@@ -1289,7 +1354,10 @@ function TaskEditor({
                   <input
                     type="checkbox"
                     checked={checked}
-                    onChange={() => toggleAssignee(p.id)}
+                    onChange={() => {
+                      markTouched('assignees');
+                      toggleAssignee(p.id);
+                    }}
                     disabled={readOnly}
                     title={roTitle}
                   />
@@ -1303,6 +1371,11 @@ function TaskEditor({
               );
             })}
           </div>
+        )}
+        {showError('assignees') && (
+          <p className="field-error" id="t-assignees-error">
+            {blockerById.get('assignees')?.message}
+          </p>
         )}
         {assignedPeople.length > 0 && (
           <div className="sold-hours">
@@ -1752,36 +1825,53 @@ function TaskEditor({
       <div className="editor-section">
         <h2>Okres</h2>
         <div className="field-row">
-          <div className="field">
-            <label htmlFor="t-start">Data startu</label>
-            <input
-              id="t-start"
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              disabled={readOnly}
-              title={roTitle}
-            />
-            {isValidDateStr(startDate) && (
-              <p className="field-hint">{formatShortWithWeekday(startDate)}</p>
+          {/* Błąd okresu opisuje OBA pola jednym akapitem (`t-period-error`).
+              Błąd pojedynczej daty oznacza swoje pole, a błąd ZAKRESU
+              (`reversed`/`too-long`) oba — żadna data nie jest sama zła. */}
+          <Field
+            id="t-start"
+            label="Data startu"
+            help={isValidDateStr(startDate) ? formatShortWithWeekday(startDate) : undefined}
+            invalid={periodErrorVisible && periodTargets.start}
+            {...(periodErrorVisible ? { describedByExtra: 't-period-error' } : {})}
+          >
+            {(control) => (
+              <input
+                {...control}
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                onBlur={() => markTouched('period')}
+                disabled={readOnly}
+                title={roTitle}
+              />
             )}
-          </div>
-          <div className="field">
-            <label htmlFor="t-end">Data końca</label>
-            <input
-              id="t-end"
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              disabled={readOnly}
-              title={roTitle}
-            />
-            {isValidDateStr(endDate) && (
-              <p className="field-hint">{formatShortWithWeekday(endDate)}</p>
+          </Field>
+          <Field
+            id="t-end"
+            label="Data końca"
+            help={isValidDateStr(endDate) ? formatShortWithWeekday(endDate) : undefined}
+            invalid={periodErrorVisible && periodTargets.end}
+            {...(periodErrorVisible ? { describedByExtra: 't-period-error' } : {})}
+          >
+            {(control) => (
+              <input
+                {...control}
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                onBlur={() => markTouched('period')}
+                disabled={readOnly}
+                title={roTitle}
+              />
             )}
-          </div>
+          </Field>
         </div>
-        {perErr && <p className="field-error">{PERIOD_ERROR_LABELS[perErr]}</p>}
+        {periodErrorVisible && perErr && (
+          <p className="field-error" id="t-period-error">
+            {PERIOD_ERROR_LABELS[perErr]}
+          </p>
+        )}
         {periodValid && (
           <p className="field-hint">
             Liczba dni w okresie: {periodDays}.
@@ -1837,7 +1927,19 @@ function TaskEditor({
       </div>
       )}
 
-      {/* e) Discussion (existing tasks only) */}
+        {/* Domyślny przycisk formularza. Bez niego Enter w polu tekstowym NIE
+            wysyła formularza z wieloma polami (HTML: implicit submission wymaga
+            przycisku wysyłki). Ukryty — prawdziwe akcje stoją w sticky stopce
+            POZA formularzem, żeby nie zagnieżdżać ich w nim. */}
+        {!readOnly && (
+          <button type="submit" hidden aria-hidden tabIndex={-1}>
+            Zapisz zadanie
+          </button>
+        )}
+      </form>
+
+      {/* e) Discussion (existing tasks only) — POZA formularzem: CommentsPanel ma
+          własny `<form>`. */}
       {existing && (
         <div className="editor-section">
           <h2>Dyskusja</h2>
@@ -1846,16 +1948,23 @@ function TaskEditor({
       )}
 
       {/* f) Save / Cancel — sticky: zawsze widoczne bez przewijania */}
-      {projectError && state.projects.length > 0 && (
-        <p className="field-error">Wybierz projekt dla tego zadania.</p>
-      )}
       <div className="editor-actions editor-actions-sticky">
         {/* IA-12 — powody, przez które zapis nie przejdzie, stoją PRZY przycisku
             (przyczyna bywa kilka tysięcy pikseli wyżej). Każdy powód z kotwicą
             jest klikalny i przenosi do swojego pola. */}
         {!readOnly && blockers.length > 0 && (saveAttempted || (isEdit && dirty)) && (
           <div className="save-blockers" role="alert">
-            <p className="save-blockers-title">Nie można zapisać:</p>
+            {/* JEDYNY `role="alert"` w modalu: liczone podsumowanie („popraw 2
+                pola: Tytuł, Okres."). Etykiety idą z `SaveBlocker.fieldLabel`,
+                więc nie ma drugiej, ręcznie utrzymywanej listy nazw pól. */}
+            <p className="save-blockers-title">
+              {saveErrorSummary(
+                'Nie można zapisać zadania',
+                blockers
+                  .map((b) => b.fieldLabel)
+                  .filter((label): label is string => label !== null),
+              )}
+            </p>
             <ul className="save-blockers-list">
               {blockers.map((b) => (
                 <li key={b.id}>

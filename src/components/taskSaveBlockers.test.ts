@@ -1,8 +1,13 @@
 // Testy czystej listy blokad zapisu zadania (IA-12). Bez Reacta i bez store'u —
 // wejściem są gotowe wyniki bramek, wyjściem lista powodów + kotwic fokusa.
 import { describe, expect, it } from 'vitest';
-import { collectTaskSaveBlockers, type SaveBlockerInput } from './taskSaveBlockers';
-import { MAX_TASK_PERIOD_DAYS } from '../utils/dates';
+import {
+  collectTaskSaveBlockers,
+  periodInvalidTargets,
+  type SaveBlockerInput,
+} from './taskSaveBlockers';
+import { saveErrorSummary } from './fieldContract';
+import { MAX_TASK_PERIOD_DAYS, type PeriodError } from '../utils/dates';
 
 const OK: SaveBlockerInput = {
   title: 'Zadanie',
@@ -102,6 +107,42 @@ describe('collectTaskSaveBlockers', () => {
     ]);
   });
 
+  it('każda nazwana przyczyna nosi etykietę pola, „other” nie', () => {
+    const named = collectTaskSaveBlockers({
+      ...OK,
+      title: '',
+      projectValid: false,
+      statusValid: false,
+      period: 'reversed',
+      assigneesValid: false,
+    });
+    expect(named.map((b) => b.fieldLabel)).toEqual([
+      'Tytuł',
+      'Projekt',
+      'Status',
+      'Okres',
+      'Osoby',
+    ]);
+
+    const other = collectTaskSaveBlockers({ ...OK, draftValid: false });
+    expect(other[0].fieldLabel).toBeNull();
+  });
+
+  it('brak projektu w bazie ma tę samą etykietę co zły wybór', () => {
+    const noneAtAll = collectTaskSaveBlockers({ ...OK, projectValid: false, hasProjects: false });
+    expect(noneAtAll[0].fieldLabel).toBe('Projekt');
+  });
+
+  it('etykiety pól składają się w liczone podsumowanie zapisu', () => {
+    const blockers = collectTaskSaveBlockers({ ...OK, title: '', period: 'too-long' });
+    const labels = blockers
+      .map((b) => b.fieldLabel)
+      .filter((label): label is string => label !== null);
+    expect(saveErrorSummary('Nie można zapisać zadania', labels)).toBe(
+      'Nie można zapisać zadania — popraw 2 pola: Tytuł, Okres.',
+    );
+  });
+
   it('każdy powód jest niepustym polskim zdaniem', () => {
     const blockers = collectTaskSaveBlockers({
       ...OK,
@@ -114,6 +155,35 @@ describe('collectTaskSaveBlockers', () => {
     for (const b of blockers) {
       expect(b.message.trim().length).toBeGreaterThan(0);
       expect(b.message.endsWith('.')).toBe(true);
+    }
+  });
+});
+
+describe('periodInvalidTargets', () => {
+  it('błąd pojedynczej daty oznacza TYLKO jej pole', () => {
+    expect(periodInvalidTargets('missing-start')).toEqual({ start: true, end: false });
+    expect(periodInvalidTargets('invalid-start')).toEqual({ start: true, end: false });
+    expect(periodInvalidTargets('missing-end')).toEqual({ start: false, end: true });
+    expect(periodInvalidTargets('invalid-end')).toEqual({ start: false, end: true });
+  });
+
+  it('błąd ZAKRESU oznacza oba pola (żadna data nie jest sama zła)', () => {
+    expect(periodInvalidTargets('reversed')).toEqual({ start: true, end: true });
+    expect(periodInvalidTargets('too-long')).toEqual({ start: true, end: true });
+  });
+
+  it('każdy wariant błędu oznacza co najmniej jedno pole', () => {
+    const all: PeriodError[] = [
+      'missing-start',
+      'invalid-start',
+      'missing-end',
+      'invalid-end',
+      'reversed',
+      'too-long',
+    ];
+    for (const error of all) {
+      const targets = periodInvalidTargets(error);
+      expect(targets.start || targets.end).toBe(true);
     }
   });
 });
