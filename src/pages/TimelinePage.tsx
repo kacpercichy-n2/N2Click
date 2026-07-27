@@ -26,6 +26,7 @@ import {
 import { Coin } from '../components/Coin';
 import { personColor } from '../utils/colors';
 import { formatDuration } from '../utils/time';
+import { useTouchDragGate } from '../utils/useTouchDragGate';
 import {
   addDaysStr,
   diffDays,
@@ -86,16 +87,36 @@ function Bar({
     null,
   );
   const moved = useRef(false);
+  // Bramka dotyku: na palcu przeciąganie startuje dopiero po przytrzymaniu.
+  const gate = useTouchDragGate();
 
-  const begin = (mode: DragMode) => (e: React.PointerEvent) => {
-    e.stopPropagation();
+  // `init` jest zbierany SYNCHRONICZNIE w handlerze — na dotyku przeciąganie
+  // startuje dopiero po przytrzymaniu, a wtedy zdarzenie Reacta jest już puste.
+  const startDrag = (
+    mode: DragMode,
+    init: { target: HTMLElement; pointerId: number; clientX: number },
+  ) => {
     try {
-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      init.target.setPointerCapture(init.pointerId);
     } catch {
       // No active pointer (synthetic events) — dragging still works within the bar.
     }
     moved.current = false;
-    setDrag({ mode, originX: e.clientX, delta: 0 });
+    setDrag({ mode, originX: init.clientX, delta: 0 });
+  };
+
+  const begin = (mode: DragMode) => (e: React.PointerEvent) => {
+    e.stopPropagation();
+    // Reset przed bramką: dotknięcie bez przeciągnięcia ma otwierać encję.
+    moved.current = false;
+    const init = {
+      target: e.target as HTMLElement,
+      pointerId: e.pointerId,
+      clientX: e.clientX,
+    };
+    // Dotyk: bez przytrzymania gest zostaje przewijaniem osi czasu.
+    if (gate.arm(e.pointerType, e.clientX, e.clientY, () => startDrag(mode, init))) return;
+    startDrag(mode, init);
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
@@ -182,6 +203,8 @@ function MilestoneMark({
   onCommit: (deltaDays: number) => void;
 }) {
   const [drag, setDrag] = useState<{ originX: number; delta: number } | null>(null);
+  // Bramka dotyku: na palcu przeciąganie startuje dopiero po przytrzymaniu.
+  const gate = useTouchDragGate();
   return (
     <span
       className={[
@@ -201,12 +224,21 @@ function MilestoneMark({
         editable
           ? (e) => {
               e.stopPropagation();
-              try {
-                (e.target as HTMLElement).setPointerCapture(e.pointerId);
-              } catch {
-                // No active pointer (synthetic events) — see Bar.begin.
-              }
-              setDrag({ originX: e.clientX, delta: 0 });
+              const target = e.target as HTMLElement;
+              const pointerId = e.pointerId;
+              const clientX = e.clientX;
+              // `init` zebrany synchronicznie — patrz Bar.begin.
+              const startDrag = () => {
+                try {
+                  target.setPointerCapture(pointerId);
+                } catch {
+                  // No active pointer (synthetic events) — see Bar.begin.
+                }
+                setDrag({ originX: clientX, delta: 0 });
+              };
+              // Dotyk: bez przytrzymania gest zostaje przewijaniem osi czasu.
+              if (gate.arm(e.pointerType, e.clientX, e.clientY, startDrag)) return;
+              startDrag();
             }
           : undefined
       }

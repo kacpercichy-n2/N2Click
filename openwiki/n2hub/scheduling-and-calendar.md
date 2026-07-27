@@ -5,6 +5,8 @@
 - `src/components/WeekView.tsx` owns timed-grid interaction and bin-card UI.
 - `src/utils/time.ts` owns pure time calculations, collision checks, packing,
   free-slot search and quarter-hour math.
+- `src/utils/touchDrag.ts` (pure state machine) + `src/utils/useTouchDragGate.ts`
+  (React wrapper) own the touch long-press gate in FRONT of every drag entry.
 - `src/store/AppStore.tsx` applies scheduling mutations atomically.
 - `src/pages/WorkloadPage.tsx` owns workload reassignment UI.
 
@@ -26,6 +28,29 @@
   manual).
 - Bin drag is window-owned: preserve its pointer-up/cancel/blur/Escape/visibility
   cleanup, synchronous refs and rendered-column hit-testing.
+- Touch drag gate (2026-07-27, invariant 7): on `pointerType` touch/pen the four
+  drag entries (WeekView `TimedBlock.begin`, `BinCard.begin`, TimelinePage
+  `Bar.begin`, `MilestoneMark`) do NOT start a drag on `pointerdown` — they call
+  `useTouchDragGate().arm(...)`, which starts a drag only after `TOUCH_HOLD_MS`
+  (350 ms) of near-stillness (`TOUCH_HOLD_SLOP_PX` = 10 px); drift past the slop,
+  `pointerup` or `pointercancel` aborts and the page scrolls. A late timer must
+  never engage after an abort. Mouse is untouched: `arm` returns false without
+  registering a timer or listener, so the drag layer runs byte-identically. Each
+  `begin` captures its `init` (element/pointerId/client coords) SYNCHRONOUSLY —
+  the deferred `startDrag` may not read the React event — and resets
+  `moved.current` before the gate so a tap that never engages still opens the
+  entity. On engage the gate holds a non-passive `touchmove` preventDefault lock
+  for the life of the gesture, because `@media (pointer: coarse)` relaxes
+  `.week-block`/`.week-bin-block`/`.timeline-bar`/`.timeline-milestone` to
+  `touch-action: pan-x pan-y` (both axes: `.week-days-viewport` scrolls both) and
+  `touch-action` cannot be tightened mid-gesture. The SAME engaged-only lock also
+  suppresses the browser's own long-press: a capture-phase `contextmenu` listener
+  on `document` (`preventDefault` + `stopPropagation`, so React's delegated
+  `onContextMenu` never fires on a live drag), plus `user-select`/
+  `-webkit-touch-callout: none` on the coarse-pointer selectors. A short press
+  that never engages keeps today's context menu. Coarse pointers also hide
+  `.week-block-handle` (6 px, untargetable), so touch gets move-only; `.bar-handle`
+  is unchanged.
 - Automatic placement uses a real free-slot search and rejects when no slot fits;
   it must not clamp into an overlap near midnight.
 - Free-slot search rejects non-finite, non-positive, off-grid and over-day
@@ -64,6 +89,7 @@ availability/overload calculations, drag lifecycle and time utilities.
 
 ## Relevant tests and checks
 
-`src/utils/time.test.ts`, `src/store/blockActions.test.ts`,
+`src/utils/time.test.ts`, `src/utils/touchDrag.test.ts`,
+`src/store/blockActions.test.ts`,
 `scripts/browser-check-bin-drag.mjs`, `browser-check-bin-split.mjs`, and
 `browser-check-placement.mjs`.

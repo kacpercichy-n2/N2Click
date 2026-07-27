@@ -14,6 +14,7 @@ import { useOpenTask } from './TaskModal';
 import { useOpenEvent } from './EventModal';
 import { personColor } from '../utils/colors';
 import { clearLiveSyncHold, setLiveSyncHold } from '../utils/liveSyncGate';
+import { useTouchDragGate } from '../utils/useTouchDragGate';
 import {
   MAX_TASK_PERIOD_DAYS,
   inclusiveDayCount,
@@ -225,6 +226,8 @@ function TimedBlockImpl({
   // previous projection (or no-op), even though the preview already moved.
   const dragRef = useRef<DragState | null>(null);
   const moved = useRef(false);
+  // Bramka dotyku: na palcu przeciąganie startuje dopiero po przytrzymaniu.
+  const gate = useTouchDragGate();
   // Frame throttle: a pointermove writes the projection into `dragRef`
   // synchronously (so finish() can read the newest drop) but only flushes it to
   // React state / the parent merge affordance once per animation frame. `rafRef`
@@ -320,13 +323,18 @@ function TimedBlockImpl({
     return () => clearLiveSyncHold(holdKey);
   }, [dragging, holdKey]);
 
-  const begin = (mode: DragMode) => (e: React.PointerEvent) => {
-    if (e.button !== 0) return; // right/middle button → let the context menu open
-    e.stopPropagation();
-    const el = e.currentTarget as HTMLElement;
+  // Deferred drag start. `init` is captured SYNCHRONOUSLY in the handler because
+  // React nulls `e.currentTarget` after dispatch — the touch path runs this only
+  // after the long press elapses (see useTouchDragGate), so it may never read the
+  // event again.
+  const startDrag = (
+    mode: DragMode,
+    init: { el: HTMLElement; pointerId: number; clientX: number; clientY: number },
+  ) => {
+    const { el, pointerId, clientX, clientY } = init;
     try {
-      el.setPointerCapture(e.pointerId);
-      captureRef.current = { el, pointerId: e.pointerId };
+      el.setPointerCapture(pointerId);
+      captureRef.current = { el, pointerId };
     } catch {
       // No active pointer (synthetic events) — dragging still works within the block.
       captureRef.current = null;
@@ -338,18 +346,18 @@ function TimedBlockImpl({
     // the pointer; width/height keep its size out of flow. For the top/bottom
     // resize handles currentTarget is the handle span, but the ghost only renders
     // for a move drag over the bin, so those captured values are never used.
-    const blockRect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const blockRect = el.getBoundingClientRect();
     // Capture the grow allowance ONCE at drag start (state won't change mid-drag).
     // Always a number now: bin hours + headroom (0 for null-estimate tasks).
     const maxHours = baseHours + growAllowanceHours(state, entry.id);
     const nextDrag: DragState = {
       mode,
-      originX: e.clientX,
-      originY: e.clientY,
-      clientX: e.clientX,
-      clientY: e.clientY,
-      grabX: e.clientX - blockRect.left,
-      grabY: e.clientY - blockRect.top,
+      originX: clientX,
+      originY: clientY,
+      clientX,
+      clientY,
+      grabX: clientX - blockRect.left,
+      grabY: clientY - blockRect.top,
       width: blockRect.width,
       height: blockRect.height,
       colWidth,
@@ -365,6 +373,24 @@ function TimedBlockImpl({
     };
     dragRef.current = nextDrag;
     setDrag(nextDrag);
+  };
+
+  const begin = (mode: DragMode) => (e: React.PointerEvent) => {
+    if (e.button !== 0) return; // right/middle button → let the context menu open
+    e.stopPropagation();
+    // Reset przed bramką: dotknięcie bez przeciągnięcia ma otwierać zadanie,
+    // więc `moved` nie może zostać z poprzedniego gestu, gdy drag nie wystartuje.
+    moved.current = false;
+    const init = {
+      el: e.currentTarget as HTMLElement,
+      pointerId: e.pointerId,
+      clientX: e.clientX,
+      clientY: e.clientY,
+    };
+    // Dotyk: przeciąganie startuje dopiero po przytrzymaniu, żeby przewijanie
+    // palcem po bloku nie przesuwało pracy. Mysz przechodzi tędy bez zmian.
+    if (gate.arm(e.pointerType, e.clientX, e.clientY, () => startDrag(mode, init))) return;
+    startDrag(mode, init);
   };
 
   // Synchronous projection: compute the newest drop from the pointer event and
@@ -770,6 +796,8 @@ function BinCardImpl({
   const dragRef = useRef<BinDragState | null>(null);
   const moved = useRef(false);
   const cardRef = useRef<HTMLDivElement | null>(null);
+  // Bramka dotyku: na palcu przeciąganie startuje dopiero po przytrzymaniu.
+  const gate = useTouchDragGate();
   // Bin drags intentionally do not depend on element pointer capture. A valid
   // drop unmounts the source card, and browsers may also lose/reject capture at
   // viewport boundaries. Window listeners keep ownership of the gesture until
@@ -948,21 +976,26 @@ function BinCardImpl({
     announceCalendarPractice('bin-drop');
   };
 
-  const begin = (e: React.PointerEvent) => {
-    if (e.button !== 0) return; // right button → context menu
-    e.stopPropagation();
-    removeWindowListeners();
-    moved.current = false;
+  // Deferred drag start — `init` is captured SYNCHRONOUSLY in the handler,
+  // because on touch this runs only after the long press elapses and the React
+  // event is no longer readable then (see useTouchDragGate).
+  const startDrag = (init: {
+    pointerId: number;
+    pointerType: string;
+    clientX: number;
+    clientY: number;
+  }) => {
+    const { pointerId, pointerType, clientX, clientY } = init;
     // Capture the card geometry once so the fixed ghost keeps its size and stays
     // aligned under the cursor (the in-pane original stays put and dims).
     const rect = cardRef.current?.getBoundingClientRect();
     const nextDrag: BinDragState = {
-      originX: e.clientX,
-      originY: e.clientY,
-      clientX: e.clientX,
-      clientY: e.clientY,
-      grabX: rect ? e.clientX - rect.left : 0,
-      grabY: rect ? e.clientY - rect.top : 0,
+      originX: clientX,
+      originY: clientY,
+      clientX,
+      clientY,
+      grabX: rect ? clientX - rect.left : 0,
+      grabY: rect ? clientY - rect.top : 0,
       width: rect ? rect.width : 0,
       colIndex: -1,
       startMin: 0,
@@ -973,8 +1006,6 @@ function BinCardImpl({
     dragRef.current = nextDrag;
     setDrag(nextDrag);
 
-    const pointerId = e.pointerId;
-    const pointerType = e.pointerType;
     const listeners: BinDragListeners = {
       pointerId,
       move: (event) => {
@@ -1015,6 +1046,25 @@ function BinCardImpl({
     window.addEventListener('blur', listeners.blur);
     window.addEventListener('keydown', listeners.keydown);
     document.addEventListener('visibilitychange', listeners.visibilityChange);
+  };
+
+  const begin = (e: React.PointerEvent) => {
+    if (e.button !== 0) return; // right button → context menu
+    e.stopPropagation();
+    removeWindowListeners();
+    // Reset przed bramką: dotknięcie bez przeciągnięcia ma otwierać zadanie,
+    // więc `moved` nie może zostać z poprzedniego gestu, gdy drag nie wystartuje.
+    moved.current = false;
+    const init = {
+      pointerId: e.pointerId,
+      pointerType: e.pointerType,
+      clientX: e.clientX,
+      clientY: e.clientY,
+    };
+    // Dotyk: przeciąganie startuje dopiero po przytrzymaniu, żeby przewijanie
+    // palcem po karcie nie wyrzucało jej z zasobnika. Mysz idzie tędy bez zmian.
+    if (gate.arm(e.pointerType, e.clientX, e.clientY, () => startDrag(init))) return;
+    startDrag(init);
   };
 
   // In-pane original stays mounted for click/context-menu semantics and dims

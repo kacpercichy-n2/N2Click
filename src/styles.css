@@ -3338,6 +3338,37 @@ option {
   transform: translateX(-50%) scale(1.3);
 }
 
+/* ---------- Dotyk: przewijanie ma pierwszeństwo przed przeciąganiem ----------
+   Na wskaźniku precyzyjnym (mysz) elementy przeciągalne zostają przy
+   `touch-action: none` — drag startuje natychmiast, jak dotąd. Na wskaźniku
+   zgrubnym (palec) `touch-action` wraca do panoramowania w OBU osiach, bo
+   `.week-days-viewport` przewija się i w pionie, i w poziomie: dotknięcie bloku
+   ma przewijać kalendarz, a nie przesuwać pracę co 15 minut. Przeciąganie
+   uzbraja się dopiero po PRZYTRZYMANIU (patrz src/utils/touchDrag.ts); od tej
+   chwili gest blokuje natywne przewijanie przez `touchmove` w
+   useTouchDragGate.ts, bo `touch-action` jest już zatrzaśnięte na czas gestu.
+   Skoro `touch-action` już nie blokuje gestu, przeglądarka próbuje na TYM SAMYM
+   przytrzymaniu zaznaczyć tekst i pokazać dymek („callout”) — dlatego zaznaczanie
+   i callout są tu wyłączone; samo menu kontekstowe tłumi bramka dopiero po
+   uzbrojeniu, więc krótkie dotknięcie zachowuje dotychczasowe zachowanie.
+   Uchwyty zmiany czasu bloku (6 px przy ~30 px wysokości bloku) są palcem
+   nietrafialne, więc na dotyku znikają — zostaje przeniesienie bloku. Uchwyty
+   paska osi czasu (`.bar-handle`, poziome, inna geometria) zostają bez zmian. */
+@media (pointer: coarse) {
+  .week-block,
+  .week-bin-block,
+  .timeline-bar,
+  .timeline-milestone {
+    touch-action: pan-x pan-y;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+  .week-block-handle {
+    display: none;
+  }
+}
+
 /* ---------- Workload dashboard ---------- */
 
 .workload-table th,
