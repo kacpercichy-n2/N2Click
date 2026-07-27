@@ -382,9 +382,19 @@ async function run() {
         .first();
       const stillPresent = (await oversizedCard.count()) > 0;
       result.oversizedCardStillShows30h = stillPresent;
-      result.oversizedHintContainsSchedule = stillPresent
-        ? ((await oversizedCard.getAttribute('title')) || '').includes('Zaplanuj część')
-        : false;
+      // Podpowiedź nie jest już natywnym `title` (hover-only, niedostępny na
+      // dotyku) — `Tooltip` trzyma ją w ZAWSZE zamontowanym, ukrytym opisie
+      // wskazywanym przez `aria-describedby`, więc czytamy tekst stamtąd.
+      const oversizedHint = stillPresent
+        ? await oversizedCard.evaluate((el) =>
+            (el.getAttribute('aria-describedby') || '')
+              .split(/\s+/)
+              .filter(Boolean)
+              .map((id) => document.getElementById(id)?.textContent || '')
+              .join(' '),
+          )
+        : '';
+      result.oversizedHintContainsSchedule = oversizedHint.includes('Zaplanuj część');
       result.notes.push(
         `oversized card still shows 30h=${stillPresent} ` +
           `hint contains "Zaplanuj część"=${result.oversizedHintContainsSchedule}`,

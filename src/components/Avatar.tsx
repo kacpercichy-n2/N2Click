@@ -33,7 +33,7 @@ export function Avatar({
       overflow: 'hidden',
     };
     return (
-      <span className="avatar avatar-photo" style={style} title={person.name} aria-hidden>
+      <span className="avatar avatar-photo" style={style} aria-hidden>
         <img src={resolvedPhoto} alt="" />
       </span>
     );
@@ -46,7 +46,7 @@ export function Avatar({
     border: person.avatar ? `2px solid ${personColor(person.id)}` : 'none',
   };
   return (
-    <span className="avatar" style={style} title={person.name} aria-hidden>
+    <span className="avatar" style={style} aria-hidden>
       {person.avatar || initials.toUpperCase() || '?'}
     </span>
   );

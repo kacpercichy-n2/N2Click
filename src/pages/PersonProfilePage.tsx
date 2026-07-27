@@ -56,6 +56,9 @@ import {
   toggleWorkDay,
 } from '../components/personFields';
 
+/** `id` wspólnego, ukrytego powodu blokady pól profilu. */
+const NO_PERM_ID = 'pp-no-perm';
+
 export function PersonProfilePage() {
   const { id } = useParams();
   const { state } = useStore();
@@ -90,6 +93,10 @@ function PersonProfile({ personId }: { personId: string }) {
     ? editableProfileFields(actor, person, { peopleCount })
     : new Set<ProfileField>();
   const allow = (f: ProfileField) => fields.has(f);
+  // Brak uprawnień do pola: JEDEN ukryty opis na stronę zamiast kilkunastu
+  // natywnych `title` (niewidocznych na dotyku, dublowanych przy każdej
+  // kontrolce). Zablokowane pola wskazują go przez `aria-describedby`.
+  const noPermDesc = (f: ProfileField) => (allow(f) ? undefined : NO_PERM_ID);
   const canEdit = fields.size > 0;
   const canUploadPhoto = person
     ? canUploadAvatarPhoto(actor, person, auth.mode, { peopleCount })
@@ -209,6 +216,9 @@ function PersonProfile({ personId }: { personId: string }) {
       {canEdit && editing && (
         <div className="editor-section">
           <h2>Edytuj profil</h2>
+          <span id={NO_PERM_ID} className="sr-only">
+            {NO_PERM_TITLE} do edycji tego pola.
+          </span>
           <div className="field-row">
             <div className="field">
               <label htmlFor="pp-first">Imię *</label>
@@ -217,7 +227,7 @@ function PersonProfile({ personId }: { personId: string }) {
                 value={draft.firstName}
                 onChange={(e) => set('firstName', e.target.value)}
                 disabled={!allow('firstName')}
-                title={allow('firstName') ? undefined : NO_PERM_TITLE}
+                aria-describedby={noPermDesc('firstName')}
               />
             </div>
             <div className="field">
@@ -227,7 +237,7 @@ function PersonProfile({ personId }: { personId: string }) {
                 value={draft.lastName}
                 onChange={(e) => set('lastName', e.target.value)}
                 disabled={!allow('lastName')}
-                title={allow('lastName') ? undefined : NO_PERM_TITLE}
+                aria-describedby={noPermDesc('lastName')}
               />
             </div>
             <div className="field">
@@ -251,7 +261,7 @@ function PersonProfile({ personId }: { personId: string }) {
                   }));
                 }}
                 disabled={!allow('roleTitle')}
-                title={allow('roleTitle') ? undefined : NO_PERM_TITLE}
+                aria-describedby={noPermDesc('roleTitle')}
               >
                 <option value="">—</option>
                 {jobTitleSelectOptions(state.jobTitles, state.departments, draft.role).map((t) => (
@@ -268,7 +278,7 @@ function PersonProfile({ personId }: { personId: string }) {
                 value={draft.departmentId}
                 onChange={(e) => set('departmentId', e.target.value)}
                 disabled={!allow('departmentId')}
-                title={allow('departmentId') ? undefined : NO_PERM_TITLE}
+                aria-describedby={noPermDesc('departmentId')}
               >
                 <option value="">—</option>
                 {state.departments.map((d) => (
@@ -285,7 +295,7 @@ function PersonProfile({ personId }: { personId: string }) {
                 value={draft.companyId}
                 onChange={(e) => set('companyId', e.target.value)}
                 disabled={!allow('companyId')}
-                title={allow('companyId') ? undefined : NO_PERM_TITLE}
+                aria-describedby={noPermDesc('companyId')}
               >
                 <option value="">—</option>
                 {state.companies.map((c) => (
@@ -305,7 +315,7 @@ function PersonProfile({ personId }: { personId: string }) {
                 value={draft.email}
                 onChange={(e) => set('email', e.target.value)}
                 disabled={!allow('email')}
-                title={allow('email') ? undefined : NO_PERM_TITLE}
+                aria-describedby={noPermDesc('email')}
               />
             </div>
             <div className="field">
@@ -316,7 +326,7 @@ function PersonProfile({ personId }: { personId: string }) {
                 onChange={(e) => set('phone', e.target.value)}
                 placeholder="opcjonalnie"
                 disabled={!allow('phone')}
-                title={allow('phone') ? undefined : NO_PERM_TITLE}
+                aria-describedby={noPermDesc('phone')}
               />
             </div>
             <div className="field field-narrow">
@@ -328,7 +338,7 @@ function PersonProfile({ personId }: { personId: string }) {
                 maxLength={4}
                 placeholder="🙂"
                 disabled={!allow('avatarEmoji')}
-                title={allow('avatarEmoji') ? undefined : NO_PERM_TITLE}
+                aria-describedby={noPermDesc('avatarEmoji')}
               />
             </div>
             <div className="field">
@@ -339,19 +349,17 @@ function PersonProfile({ personId }: { personId: string }) {
                 value={draft.birthDate}
                 onChange={(e) => set('birthDate', e.target.value)}
                 disabled={!allow('birthDate')}
-                title={allow('birthDate') ? undefined : NO_PERM_TITLE}
+                aria-describedby={noPermDesc('birthDate')}
               />
             </div>
             <div className="field">
-              <label
-                className="checkbox-field"
-                title={allow('emailNotifications') ? undefined : NO_PERM_TITLE}
-              >
+              <label className="checkbox-field">
                 <input
                   type="checkbox"
                   checked={draft.emailNotifications === true}
                   onChange={(e) => set('emailNotifications', e.target.checked)}
                   disabled={!allow('emailNotifications')}
+                  aria-describedby={noPermDesc('emailNotifications')}
                 />
                 <span>Powiadomienia mailowe</span>
               </label>
@@ -367,7 +375,7 @@ function PersonProfile({ personId }: { personId: string }) {
                 value={draft.capacity}
                 onChange={(e) => set('capacity', Number(e.target.value) || DEFAULT_CAPACITY)}
                 disabled={!allow('capacity')}
-                title={allow('capacity') ? undefined : NO_PERM_TITLE}
+                aria-describedby={noPermDesc('capacity')}
               />
             </div>
             <div className="field field-narrow">
@@ -377,7 +385,7 @@ function PersonProfile({ personId }: { personId: string }) {
                 value={draft.accessRole}
                 onChange={(e) => set('accessRole', e.target.value as AccessRole)}
                 disabled={!allow('accessRole')}
-                title={allow('accessRole') ? undefined : NO_PERM_TITLE}
+                aria-describedby={noPermDesc('accessRole')}
               >
                 {(Object.keys(ROLE_LABELS) as AccessRole[]).map((r) => (
                   <option key={r} value={r}>
@@ -395,10 +403,10 @@ function PersonProfile({ personId }: { personId: string }) {
                   <label
                     key={c.iso}
                     className={`weekday-chip${draft.workDays.includes(c.iso) ? ' on' : ''}`}
-                    title={allow('workDays') ? undefined : NO_PERM_TITLE}
                   >
                     <input
                       type="checkbox"
+                      aria-describedby={noPermDesc('workDays')}
                       checked={draft.workDays.includes(c.iso)}
                       disabled={!allow('workDays')}
                       onChange={() => set('workDays', toggleWorkDay(draft.workDays, c.iso))}
@@ -418,7 +426,7 @@ function PersonProfile({ personId }: { personId: string }) {
                   if (error) setError('');
                 }}
                 disabled={!allow('workHours')}
-                title={allow('workHours') ? undefined : NO_PERM_TITLE}
+                aria-describedby={noPermDesc('workHours')}
               >
                 {START_MINUTE_OPTIONS.map((m) => (
                   <option key={m} value={m}>
@@ -437,7 +445,7 @@ function PersonProfile({ personId }: { personId: string }) {
                   if (error) setError('');
                 }}
                 disabled={!allow('workHours')}
-                title={allow('workHours') ? undefined : NO_PERM_TITLE}
+                aria-describedby={noPermDesc('workHours')}
               >
                 {END_MINUTE_OPTIONS.map((m) => (
                   <option key={m} value={m}>
@@ -453,7 +461,7 @@ function PersonProfile({ personId }: { personId: string }) {
                 value={draft.supervisorId}
                 onChange={(e) => set('supervisorId', e.target.value)}
                 disabled={!allow('supervisorId')}
-                title={allow('supervisorId') ? undefined : NO_PERM_TITLE}
+                aria-describedby={noPermDesc('supervisorId')}
               >
                 <option value="">—</option>
                 {supervisorOptions.map((p) => (

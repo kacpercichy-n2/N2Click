@@ -24,6 +24,7 @@ import {
   tasksOfProject,
 } from '../store/selectors';
 import { Coin } from '../components/Coin';
+import { Tooltip } from '../components/Tooltip';
 import { personColor } from '../utils/colors';
 import { formatDuration } from '../utils/time';
 import { useTouchDragGate } from '../utils/useTouchDragGate';
@@ -60,7 +61,8 @@ interface BarProps {
   dayW: number; // px per day (zoom level)
   color: string;
   className: string;
-  title: string;
+  /** Treść dymka (dawny natywny `title`): nazwa, zakres dat, konflikty. */
+  tooltip: string;
   resizable: boolean;
   editable: boolean; // false ⇒ static bar (click opens, but no drag/resize)
   onCommit: (mode: DragMode, deltaDays: number) => void;
@@ -77,7 +79,7 @@ function Bar({
   dayW,
   color,
   className,
-  title,
+  tooltip,
   resizable,
   editable,
   onCommit,
@@ -151,13 +153,22 @@ function Bar({
   // Cull bars fully outside the range.
   if (left + width < 0 || left > totalDays * dayW) return null;
 
+  // `Tooltip` klonuje TEN SAM `<div>` (żadnego opakowania — pasek jest
+  // pozycjonowany absolutnie), dokłada wyłącznie obserwatorów i chowa dymek na
+  // `pointerdown`, więc podczas przeciągania/rozciągania nic nie wisi nad osią.
+  const hint = editable
+    ? `${tooltip} Przeciągnij, aby przesunąć${
+        resizable ? '; przeciągnij krawędź, aby zmienić zakres dat' : ''
+      }.`
+    : tooltip;
+
   return (
+    <Tooltip text={hint}>
     <div
       className={[className, drag ? 'dragging' : '', editable ? '' : 'static']
         .filter(Boolean)
         .join(' ')}
       style={{ left, width, borderColor: color }}
-      title={title}
       onPointerDown={editable ? begin('move') : undefined}
       onPointerMove={editable ? onPointerMove : undefined}
       onPointerUp={editable ? onPointerUp : undefined}
@@ -187,6 +198,7 @@ function Bar({
         />
       ))}
     </div>
+    </Tooltip>
   );
 }
 
@@ -207,7 +219,11 @@ function MilestoneMark({
   const [drag, setDrag] = useState<{ originX: number; delta: number } | null>(null);
   // Bramka dotyku: na palcu przeciąganie startuje dopiero po przytrzymaniu.
   const gate = useTouchDragGate();
+  const hint = editable
+    ? `◆ ${milestone.name} — ${formatShort(milestone.date)} (przeciągnij, aby przesunąć)`
+    : `◆ ${milestone.name} — ${formatShort(milestone.date)}`;
   return (
+    <Tooltip text={hint}>
     <span
       className={[
         'timeline-milestone',
@@ -217,11 +233,6 @@ function MilestoneMark({
         .filter(Boolean)
         .join(' ')}
       style={{ left: (dayIdx + (drag?.delta ?? 0)) * dayW + dayW / 2 }}
-      title={
-        editable
-          ? `◆ ${milestone.name} — ${formatShort(milestone.date)} (przeciągnij, aby przesunąć)`
-          : `◆ ${milestone.name} — ${formatShort(milestone.date)}`
-      }
       onPointerDown={
         editable
           ? (e) => {
@@ -266,6 +277,7 @@ function MilestoneMark({
     >
       ◆
     </span>
+    </Tooltip>
   );
 }
 
@@ -688,15 +700,19 @@ export function TimelinePage() {
                     <div key={p.id} className="timeline-project">
                       <div className="timeline-row">
                         <div className="timeline-label">
-                          <button
-                            type="button"
-                            className="timeline-label-btn"
-                            onClick={() => navigate(`/projects/${p.id}`)}
-                            title={p.name}
-                          >
-                            <Coin paid={p.paid} size={14} />
-                            <span className="timeline-label-text">{p.name}</span>
-                          </button>
+                          {/* Etykieta bywa przycięta wielokropkiem — dymek jest
+                              CZYSTO WIZUALNY, bo ten sam tekst jest już nazwą
+                              dostępną przycisku. */}
+                          <Tooltip text={p.name} visualOnly>
+                            <button
+                              type="button"
+                              className="timeline-label-btn"
+                              onClick={() => navigate(`/projects/${p.id}`)}
+                            >
+                              <Coin paid={p.paid} size={14} />
+                              <span className="timeline-label-text">{p.name}</span>
+                            </button>
+                          </Tooltip>
                         </div>
                         <div className="timeline-track">
                           <DayStripes days={days} todayIdx={todayIdx} dayW={dayW} columns={dayCols} />
@@ -709,7 +725,7 @@ export function TimelinePage() {
                             className={
                               overdue ? 'timeline-bar project overdue' : 'timeline-bar project'
                             }
-                            title={`${p.name}: ${formatShort(p.startDate)} – ${formatShort(p.endDate)}${overdue ? ' (po terminie)' : ''}`}
+                            tooltip={`${p.name}: ${formatShort(p.startDate)} – ${formatShort(p.endDate)}${overdue ? ' (po terminie)' : ''}`}
                             resizable
                             editable={canManageProjects}
                             onCommit={commitProject(p)}
@@ -737,9 +753,9 @@ export function TimelinePage() {
                       </div>
                       {tasks.map(({ task: t, conflictOffsets }) => (
                         <div key={t.id} className="timeline-row timeline-task-row">
-                          <div className="timeline-label timeline-task-label" title={t.title}>
-                            {t.title}
-                          </div>
+                          <Tooltip text={t.title} visualOnly>
+                            <div className="timeline-label timeline-task-label">{t.title}</div>
+                          </Tooltip>
                           <div className="timeline-track">
                             <DayStripes days={days} todayIdx={todayIdx} dayW={dayW} columns={dayCols} />
                             <Bar
@@ -749,7 +765,7 @@ export function TimelinePage() {
                               dayW={dayW}
                               color={getStatus(state, t.statusId)?.color ?? '#94a3b8'}
                               className="timeline-bar task"
-                              title={`${t.title}: ${formatShort(t.startDate)} – ${formatShort(t.endDate)}${conflictOffsets.length > 0 ? ` — ⚠ konflikty: ${conflictOffsets.length === 1 ? '1 dzień' : `${conflictOffsets.length} dni`}` : ''}`}
+                              tooltip={`${t.title}: ${formatShort(t.startDate)} – ${formatShort(t.endDate)}${conflictOffsets.length > 0 ? ` — ⚠ konflikty: ${conflictOffsets.length === 1 ? '1 dzień' : `${conflictOffsets.length} dni`}` : ''}`}
                               resizable
                               editable={canManageTasks}
                               onCommit={commitTask(t)}
@@ -783,9 +799,9 @@ export function TimelinePage() {
                   </div>
                   {tasks.map(({ task: t, hours, conflictOffsets }) => (
                     <div key={t.id} className="timeline-row timeline-task-row">
-                      <div className="timeline-label timeline-task-label" title={t.title}>
-                        {t.title}
-                      </div>
+                      <Tooltip text={t.title} visualOnly>
+                        <div className="timeline-label timeline-task-label">{t.title}</div>
+                      </Tooltip>
                       <div className="timeline-track">
                         <DayStripes days={days} todayIdx={todayIdx} dayW={dayW} columns={dayCols} />
                         <Bar
@@ -795,7 +811,7 @@ export function TimelinePage() {
                           dayW={dayW}
                           color={getStatus(state, t.statusId)?.color ?? '#94a3b8'}
                           className="timeline-bar task"
-                          title={`${t.title}: ${formatShort(t.startDate)} – ${formatShort(t.endDate)} — ${person.name}: ${formatDuration(hours)} zaplanowane`}
+                          tooltip={`${t.title}: ${formatShort(t.startDate)} – ${formatShort(t.endDate)} — ${person.name}: ${formatDuration(hours)} zaplanowane`}
                           resizable={false}
                           editable={false}
                           onCommit={() => {}}

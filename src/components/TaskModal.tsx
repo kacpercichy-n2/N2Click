@@ -68,6 +68,9 @@ import {
   type SaveBlockerId,
 } from './taskSaveBlockers';
 import { Field, focusFieldById } from './Field';
+import type { FieldControlProps } from './Field';
+import { mergeDescribedBy } from './tooltipShell';
+import { DisabledHint } from './Tooltip';
 import { fieldAria, saveErrorSummary } from './fieldContract';
 import {
   bypassNavGuardOnce,
@@ -473,7 +476,23 @@ function TaskEditor({
   const confirm = useConfirm();
   const canManage = useCan()('tasks.manage');
   const readOnly = !canManage;
-  const roTitle = readOnly ? NO_PERM_TITLE : undefined;
+  // Brak uprawnień: JEDEN ukryty opis na modal zamiast kilkunastu natywnych
+  // `title` (te są niewidoczne na dotyku, nieostylowane i w czytniku ekranu
+  // doklejają się do KAŻDEJ kontrolki osobno). Kontrolki tylko-do-odczytu
+  // wskazują go przez `aria-describedby`.
+  const roDescId = 'task-ro-reason';
+  /** Zapis/publikacja bez ani jednego projektu jest niemożliwa — powód musi być
+   *  czytelny także wtedy, gdy przycisk jest wyłączony natywnie. */
+  const noProjectReason = state.projects.length === 0 ? 'Najpierw utwórz projekt' : null;
+  /** WIDOCZNA podpowiedź o godzinie startu opisuje pola godziny w siatce —
+   *  dawny `title` na każdym polu z osobna był tą samą treścią, tyle że
+   *  niewidoczną na dotyku. */
+  const startHintId = 'task-alloc-start-hint';
+  const roDesc = readOnly ? roDescId : undefined;
+  const roDescWith = (control: FieldControlProps): string | undefined =>
+    readOnly
+      ? mergeDescribedBy(control['aria-describedby'], roDescId)
+      : control['aria-describedby'];
   const existing = taskId ? state.tasks.find((t) => t.id === taskId) : undefined;
   const isEdit = Boolean(existing);
   // Szkic: NOWE zadanie otwarte Z WIDOKU PROJEKTU (initialProjectId ustawione)
@@ -1160,6 +1179,11 @@ function TaskEditor({
 
   return (
     <div className="editor task-editor">
+      {readOnly && (
+        <span id={roDescId} className="sr-only">
+          {NO_PERM_TITLE} do edycji zadań.
+        </span>
+      )}
       {/* Formularz obejmuje sekcje OD „Szczegóły" DO „Zasobnik". „Dyskusja" i
           sticky pasek akcji zostają POZA nim: CommentsPanel ma własny
           `<form>` (zagnieżdżenie jest nielegalne w HTML i „Skomentuj"
@@ -1190,7 +1214,7 @@ function TaskEditor({
               className={showError('title') ? 'invalid' : undefined}
               placeholder="Co trzeba zrobić?"
               disabled={readOnly}
-              title={roTitle}
+              aria-describedby={roDescWith(control)}
             />
           )}
         </Field>
@@ -1203,7 +1227,7 @@ function TaskEditor({
               rows={3}
               placeholder="Opcjonalne szczegóły"
               disabled={readOnly}
-              title={roTitle}
+              aria-describedby={roDescWith(control)}
             />
           )}
         </Field>
@@ -1232,7 +1256,7 @@ function TaskEditor({
                   onChange={(e) => setProjectId(e.target.value)}
                   onBlur={() => markTouched('project')}
                   disabled={readOnly}
-                  title={roTitle}
+                  aria-describedby={roDescWith(control)}
                 >
                   {state.projects.map((p) => (
                     <option key={p.id} value={p.id}>
@@ -1258,7 +1282,7 @@ function TaskEditor({
                 onChange={(e) => setStatusId(e.target.value)}
                 onBlur={() => markTouched('status')}
                 disabled={readOnly}
-                title={roTitle}
+                aria-describedby={roDescWith(control)}
               >
                 {pickableStatuses.map((s) => (
                   <option key={s.id} value={s.id}>
@@ -1278,7 +1302,7 @@ function TaskEditor({
                 value={priority}
                 onChange={(e) => setPriority(e.target.value as TaskPriority)}
                 disabled={readOnly}
-                title={roTitle}
+                aria-describedby={roDescWith(control)}
               >
                 {TASK_PRIORITIES.map((p) => (
                   <option key={p} value={p}>
@@ -1295,7 +1319,7 @@ function TaskEditor({
               value={workCategoryId}
               onChange={(e) => setWorkCategoryId(e.target.value)}
               disabled={readOnly}
-              title={roTitle}
+              aria-describedby={roDesc}
             >
               <option value="">Brak kategorii</option>
               {state.workCategories.map((c) => (
@@ -1312,7 +1336,7 @@ function TaskEditor({
               value={departmentId}
               onChange={(e) => setDepartmentId(e.target.value)}
               disabled={readOnly}
-              title={roTitle}
+              aria-describedby={roDesc}
             >
               <option value="">Bez działu</option>
               {state.departments.map((d) => (
@@ -1359,7 +1383,7 @@ function TaskEditor({
                       toggleAssignee(p.id);
                     }}
                     disabled={readOnly}
-                    title={roTitle}
+                    aria-describedby={roDesc}
                   />
                   <span
                     className="person-dot"
@@ -1409,7 +1433,7 @@ function TaskEditor({
                     placeholder="0"
                     aria-label={`Godziny dla ${p.name}`}
                     disabled={readOnly}
-                    title={roTitle}
+                    aria-describedby={roDesc}
                   />
                   {isDraft ? (
                     <span className="sold-hours-meta muted">
@@ -1523,7 +1547,7 @@ function TaskEditor({
         {/* Podpowiedź dotyczy pola godziny startu, a siatka pokazuje je tylko w
             trybie edycji — w podglądzie bez uprawnień byłaby myląca. */}
         {!readOnly && (
-          <p className="field-hint">
+          <p className="field-hint" id={startHintId}>
             Godzina startu jest opcjonalna — puste pole planuje blok w pierwszym wolnym oknie dnia.
           </p>
         )}
@@ -1552,6 +1576,7 @@ function TaskEditor({
               onFillWeekdays={fillWeekdays}
               onClearPerson={clearPerson}
               readOnly={readOnly}
+              startHintId={readOnly ? undefined : startHintId}
             />
           </>
         )}
@@ -1575,7 +1600,7 @@ function TaskEditor({
                   checked={item.done}
                   onChange={() => toggleChecklistItem(item.id)}
                   disabled={readOnly}
-                  title={roTitle}
+                  aria-describedby={roDesc}
                   aria-label={`Oznacz „${item.text}” jako ukończone`}
                 />
                 <span className="checklist-text">{item.text}</span>
@@ -1661,7 +1686,7 @@ function TaskEditor({
                       })
                     }
                     disabled={readOnly}
-                    title={roTitle}
+                    aria-describedby={roDesc}
                     aria-label={`Oznacz blok „${blockRowLabel(entry)}” jako wykonany`}
                   />
                   <span className="checklist-text">{blockRowLabel(entry)}</span>
@@ -1700,7 +1725,7 @@ function TaskEditor({
                       className={active ? 'recur-day-chip active' : 'recur-day-chip'}
                       aria-pressed={active}
                       disabled={readOnly}
-                      title={roTitle}
+                      aria-describedby={roDesc}
                       onClick={() => toggleRecurDay(iso)}
                     >
                       {label}
@@ -1722,7 +1747,7 @@ function TaskEditor({
                     setRecurStart(e.target.value);
                   }}
                   disabled={readOnly}
-                  title={roTitle}
+                  aria-describedby={roDesc}
                 />
               </div>
               <div className="field">
@@ -1735,7 +1760,7 @@ function TaskEditor({
                     setRecurDurMin(Number(e.target.value));
                   }}
                   disabled={readOnly}
-                  title={roTitle}
+                  aria-describedby={roDesc}
                 >
                   {RECUR_DURATION_OPTIONS.map((min) => (
                     <option key={min} value={min}>
@@ -1756,7 +1781,7 @@ function TaskEditor({
                     setRecurUntil(e.target.value);
                   }}
                   disabled={readOnly}
-                  title={roTitle}
+                  aria-describedby={roDesc}
                 />
               </div>
             </div>
@@ -1765,17 +1790,18 @@ function TaskEditor({
             )}
             {!readOnly && (
               <div className="recur-actions">
-                <button
-                  type="button"
-                  className="btn primary"
-                  onClick={applyRecurrence}
-                  disabled={recurApplyError !== null}
-                  // Nietknięta sekcja nie pokazuje czerwonego błędu, więc powód
-                  // wyłączenia przycisku niesie tooltip (AT-07).
-                  title={recurApplyError ?? undefined}
-                >
-                  Zastosuj cykliczność
-                </button>
+                {/* Nietknięta sekcja nie pokazuje czerwonego błędu, więc powód
+                    wyłączenia przycisku niesie dymek + ukryty opis (AT-07). */}
+                <DisabledHint reason={recurApplyError} id="task-recur-blocked">
+                  <button
+                    type="button"
+                    className="btn primary"
+                    onClick={applyRecurrence}
+                    disabled={recurApplyError !== null}
+                  >
+                    Zastosuj cykliczność
+                  </button>
+                </DisabledHint>
                 {liveRule && (
                   <button type="button" className="btn danger-ghost" onClick={clearRecurrence}>
                     Usuń cykliczność
@@ -1843,7 +1869,7 @@ function TaskEditor({
                 onChange={(e) => setStartDate(e.target.value)}
                 onBlur={() => markTouched('period')}
                 disabled={readOnly}
-                title={roTitle}
+                aria-describedby={roDescWith(control)}
               />
             )}
           </Field>
@@ -1862,7 +1888,7 @@ function TaskEditor({
                 onChange={(e) => setEndDate(e.target.value)}
                 onBlur={() => markTouched('period')}
                 disabled={readOnly}
-                title={roTitle}
+                aria-describedby={roDescWith(control)}
               />
             )}
           </Field>
@@ -1993,35 +2019,38 @@ function TaskEditor({
           (isDraft ? (
             <>
               {/* Szkic: rozdzielone akcje — zapis szkicu vs publikacja. */}
-              <button
-                type="button"
-                className="btn"
-                onClick={handleSave}
-                disabled={state.projects.length === 0}
-                title={state.projects.length === 0 ? 'Najpierw utwórz projekt' : undefined}
-              >
-                {isEdit ? 'Zapisz szkic' : 'Utwórz szkic'}
-              </button>
+              <DisabledHint reason={noProjectReason} id="task-no-project-draft">
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={handleSave}
+                  disabled={state.projects.length === 0}
+                >
+                  {isEdit ? 'Zapisz szkic' : 'Utwórz szkic'}
+                </button>
+              </DisabledHint>
+              <DisabledHint reason={noProjectReason} id="task-no-project-publish">
+                <button
+                  type="button"
+                  className="btn primary"
+                  onClick={isEdit ? handlePublishExisting : handleCreateAndPublish}
+                  disabled={state.projects.length === 0}
+                >
+                  {isEdit ? 'Opublikuj' : 'Utwórz i opublikuj'}
+                </button>
+              </DisabledHint>
+            </>
+          ) : (
+            <DisabledHint reason={noProjectReason} id="task-no-project-save">
               <button
                 type="button"
                 className="btn primary"
-                onClick={isEdit ? handlePublishExisting : handleCreateAndPublish}
+                onClick={handleSave}
                 disabled={state.projects.length === 0}
-                title={state.projects.length === 0 ? 'Najpierw utwórz projekt' : undefined}
               >
-                {isEdit ? 'Opublikuj' : 'Utwórz i opublikuj'}
+                {isEdit ? 'Zapisz i zamknij' : 'Utwórz zadanie'}
               </button>
-            </>
-          ) : (
-            <button
-              type="button"
-              className="btn primary"
-              onClick={handleSave}
-              disabled={state.projects.length === 0}
-              title={state.projects.length === 0 ? 'Najpierw utwórz projekt' : undefined}
-            >
-              {isEdit ? 'Zapisz i zamknij' : 'Utwórz zadanie'}
-            </button>
+            </DisabledHint>
           ))}
         <button type="button" className="btn ghost" onClick={onCancel}>
           {readOnly || !dirty ? 'Zamknij' : 'Anuluj'}

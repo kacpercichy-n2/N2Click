@@ -171,6 +171,31 @@
   „Szczegóły” DO „Zasobnik” WYŁĄCZNIE — „Dyskusja” (własny `<form>` w
   `CommentsPanel`, zagnieżdżenie byłoby nielegalnym HTML-em) i sticky pasek
   akcji zostają POZA formularzem.
+- Dymki podpowiedzi są WSPÓLNE i zastąpiły natywny `title` w CAŁEJ aplikacji —
+  łącznie z kalendarzem i osią czasu (warunki brzegowe powierzchni przeciągania
+  opisuje `scheduling-and-calendar.md`); w `src` nie ma już ANI JEDNEGO atrybutu
+  `title`:
+  czysta logika w `src/components/tooltipShell.ts` (zwłoka GRUPOWA 500 ms /
+  0 ms dla ciepłej grupy z oknem łaski 500 ms, `resolveTooltipTrigger` — dotyk
+  i rysik NIGDY nie pokazują, `:focus-visible` pokazuje natychmiast,
+  `pointerdown`/Escape chowają, `tooltipDescribes` + `buildTooltipText` +
+  `mergeDescribedBy`; testy `tooltipShell.test.ts` w node), cienka warstwa DOM
+  w `src/components/Tooltip.tsx`: `cloneElement` BEZ opakowania dziecka,
+  obserwatorzy nigdy nie wołają `preventDefault`/`stopPropagation` (doktryna
+  `useOverlay.ts`), karta portalowana przez `OverlayLayer` +
+  `resolveOverlayPosition` (`bottom-start`, offset 6, `--n2-z-tooltip` = 1300),
+  chowana przy scrollu/resize/Escape (bez konsumowania klawisza). Karta jest
+  `aria-hidden`; `aria-describedby` dostaje ZAWSZE zamontowany `.sr-only` w
+  portalu i TYLKO wtedy, gdy tekst nie zawiera się w nazwie dostępnej (`visualOnly`
+  wymusza wariant czysto wizualny). `DisabledHint` (tamże) obsługuje kontrolki
+  wyłączone NATYWNIE — te połykają zdarzenia wskaźnika, więc dymek wisi na
+  `.tooltip-holder`, a powód idzie osobnym ukrytym opisem. Blokady pól
+  (TaskModal, PersonProfilePage, ProjectDetailPage, AllocationGrid) mają JEDEN
+  ukryty powód na widok + `aria-describedby`, bez dymka. `IconButton` nie ma już
+  propsu `title`: `tooltip` (domyślnie = `label`, `null` = brak), `shortcut`,
+  `size` = `sm|md` (`data-size`), `pressed`/`expanded`, oraz MIĘKKIE
+  `disabled`/`busy` (`aria-disabled`/`aria-busy`, przycisk zostaje w cyklu Tab,
+  klik pomijany) i pole trafienia ≥ 44 px przez `.icon-btn::after`.
 - `src/utils/dirtyRegistry.ts` and `src/utils/useSaveStatus.ts` support shared
   unsaved-edit and save-state behavior. The registry also holds the opt-in
   router navigation guard (scopes `task-modal`/`project-detail` plus a one-shot

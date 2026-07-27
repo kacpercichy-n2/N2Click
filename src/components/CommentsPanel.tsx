@@ -11,6 +11,7 @@ import {
   getPerson,
 } from '../store/selectors';
 import { Avatar } from './Avatar';
+import { Tooltip } from './Tooltip';
 import { formatTimestamp } from '../utils/dates';
 import { applyMention, filterMentionPeople, mentionQueryAt } from './mentionAutocomplete';
 
@@ -260,15 +261,11 @@ export function CommentsPanel({ entityType, entityId, inputRows = 2 }: Props) {
             <div className="comment-form-actions">
               <div className="mention-chips">
                 {state.people.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    className="link-btn"
-                    onClick={() => insertMention(p)}
-                    title={`Oznacz ${p.name}`}
-                  >
-                    @{p.firstName}
-                  </button>
+                  <Tooltip key={p.id} text={`Oznacz ${p.name}`}>
+                    <button type="button" className="link-btn" onClick={() => insertMention(p)}>
+                      @{p.firstName}
+                    </button>
+                  </Tooltip>
                 ))}
               </div>
               <button type="submit" className="btn primary" disabled={!body.trim()}>

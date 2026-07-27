@@ -311,14 +311,17 @@ export function KanbanPage() {
           ))}
 
           {board.archived.length > 0 && (
-            <div
-              className="kanban-col archived-col"
-              title="Zadania w zarchiwizowanych statusach — przeciągnij kartę do aktywnej kolumny, aby przywrócić."
-            >
+            <div className="kanban-col archived-col">
               <div className="kanban-col-head">
                 <span className="kanban-col-name">Zarchiwizowane</span>
                 <span className="kanban-col-count">{board.archived.length}</span>
               </div>
+              {/* Instrukcja była dotąd hover-only (`title`) — na dotyku nie
+                  istniała. Teraz jest po prostu WIDOCZNA. */}
+              <p className="kanban-col-note">
+                Zadania w zarchiwizowanych statusach — przeciągnij kartę do aktywnej kolumny, aby
+                przywrócić.
+              </p>
               <div className="kanban-col-body">{board.archived.map((t) => renderCard(t))}</div>
             </div>
           )}
@@ -330,8 +333,13 @@ export function KanbanPage() {
                 onChange={(e) => setQuickStatus(e.target.value)}
                 placeholder="/Nazwa nowego statusu"
                 aria-label="Szybkie dodanie statusu"
-                title='Wpisz "/Nazwa statusu" i naciśnij Enter (tylko admin)'
+                aria-describedby="kanban-quick-status-hint"
               />
+              {/* Wzorzec pokazuje placeholder, więc pełna instrukcja zostaje
+                  ukrytym opisem zamiast hover-only `title`. */}
+              <span id="kanban-quick-status-hint" className="sr-only">
+                Wpisz „/Nazwa statusu” i naciśnij Enter (tylko administrator).
+              </span>
               <button type="submit" className="btn soft" disabled={!quickStatus.trim()}>
                 Dodaj
               </button>

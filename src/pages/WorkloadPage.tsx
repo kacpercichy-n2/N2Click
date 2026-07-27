@@ -34,6 +34,7 @@ import {
   weekRangeLabel,
 } from '../utils/dates';
 import { findFreeStart, formatDuration, hoursToMinutes } from '../utils/time';
+import { DisabledHint } from '../components/Tooltip';
 
 /** Actions for one block inside the resolution panel. */
 function BlockRow({
@@ -101,15 +102,19 @@ function BlockRow({
                 );
               })}
             </select>
-            <button
-              type="button"
-              className="btn ghost small"
-              onClick={() => target && targetFits && onReassign(entry.id, target)}
-              disabled={!targetFits}
-              title={targetFits ? undefined : 'Brak wolnego przedziału czasu w tym dniu u wybranej osoby.'}
+            <DisabledHint
+              reason={targetFits ? null : 'Brak wolnego przedziału czasu w tym dniu u wybranej osoby.'}
+              id={`wl-move-${entry.id}`}
             >
-              <ArrowRightLeft size={14} /> Przenieś
-            </button>
+              <button
+                type="button"
+                className="btn ghost small"
+                onClick={() => target && targetFits && onReassign(entry.id, target)}
+                disabled={!targetFits}
+              >
+                <ArrowRightLeft size={14} /> Przenieś
+              </button>
+            </DisabledHint>
           </div>
         )}
         <button
@@ -411,7 +416,6 @@ export function WorkloadPage() {
                           ]
                             .filter(Boolean)
                             .join(' ')}
-                          title={over ? `${p.name}: ${formatDuration(h)} > ${formatDuration(avail)} dostępności` : undefined}
                           role={clickable ? 'button' : undefined}
                           tabIndex={clickable ? 0 : undefined}
                           aria-expanded={clickable ? isSel : undefined}
@@ -429,6 +433,17 @@ export function WorkloadPage() {
                         >
                           {h === 0 ? '—' : formatDuration(h)}
                           {over && ' ⚠'}
+                          {/* Powód przeciążenia jako tekst UKRYTY WIZUALNIE
+                              wewnątrz komórki: dawny `title` nie istniał na
+                              dotyku. `aria-describedby` byłoby tu wskazaniem na
+                              WŁASNE dziecko (komórka bierze nazwę z treści), co
+                              dałoby podwójne ogłoszenie — dlatego opis jest po
+                              prostu częścią treści komórki. */}
+                          {over && (
+                            <span id={`wl-over-${p.id}-${d}`} className="sr-only">
+                              {p.name}: {formatDuration(h)} ponad {formatDuration(avail)} dostępności
+                            </span>
+                          )}
                         </td>
                       );
                     })}
@@ -458,11 +473,12 @@ export function WorkloadPage() {
                         {pct === null ? '⚠ brak dostępności' : danger ? `⚠ ${pct}%` : `${pct}%`}
                       </span>
                       {overloadedDays.length > 0 && (
-                        <span
-                          className="workload-warn"
-                          title={`Powyżej dostępności: ${overloadedDays.map(formatRowLabel).join(', ')}`}
-                        >
+                        <span className="workload-warn">
                           ⚠ {overloadedDays.length} {overloadedDays.length === 1 ? 'dzień' : 'dni'}
+                          <span className="sr-only">
+                            {' '}
+                            powyżej dostępności: {overloadedDays.map(formatRowLabel).join(', ')}
+                          </span>
                         </span>
                       )}
                     </td>

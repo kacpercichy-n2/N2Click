@@ -114,7 +114,17 @@ async function run() {
       const startY = blockRect.top + blockRect.height / 2;
       const visibleBlock = document.elementFromPoint(startX, startY)?.closest('.week-block');
       if (visibleBlock !== block) return null;
-      const person = block.title.match(/— (.*?): \d{1,2}:\d{2}/)?.[1];
+      // Opis bloku nie jest już natywnym `title` (hover-only, nieobecny na
+      // dotyku): `Tooltip` w WeekView.tsx trzyma tę samą treść
+      // („<zadanie> — <osoba>: HH:MM–HH:MM (…)") w ukrytym opisie w portalu,
+      // wskazywanym przez `aria-describedby` bloku.
+      const hintOf = (el) =>
+        (el.getAttribute('aria-describedby') || '')
+          .split(/\s+/)
+          .filter(Boolean)
+          .map((id) => document.getElementById(id)?.textContent || '')
+          .join(' ');
+      const person = hintOf(block).match(/— (.*?): \d{1,2}:\d{2}/)?.[1];
       const sourceColumn = block.closest('.week-day-col');
       if (!person || !(sourceColumn instanceof HTMLElement)) return null;
       const sourceIndex = Number(sourceColumn.dataset.dayIndex);
@@ -127,7 +137,7 @@ async function run() {
         for (const candidateStart of starts) {
           const candidateEnd = candidateStart + duration;
           const hasCollision = Array.from(column.querySelectorAll('.week-block')).some((other) => {
-            if (!(other instanceof HTMLElement) || other === block || !other.title.includes(`— ${person}:`)) return false;
+            if (!(other instanceof HTMLElement) || other === block || !hintOf(other).includes(`— ${person}:`)) return false;
             const otherStart = Number.parseFloat(other.style.top);
             const otherEnd = otherStart + Number.parseFloat(other.style.height);
             return candidateStart < otherEnd && candidateEnd > otherStart;

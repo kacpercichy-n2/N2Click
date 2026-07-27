@@ -15,7 +15,8 @@ import {
   hasPendingOnboardingLogin,
   loadUiPrefs,
 } from '../utils/uiPrefs';
-import { ArrowLeft, Check, CircleHelp, Compass, Sparkles } from '../components/icons';
+import { ArrowLeft, Check, CircleHelp, Compass, Sparkles, X } from '../components/icons';
+import { IconButton } from '../components/IconButton';
 import { useConfirm } from '../components/ConfirmProvider';
 import { HOME_PATH } from '../pages/homeRoute';
 import { moduleById, modulesForRole, type TourStep, type TutorialModule } from './catalog';
@@ -566,7 +567,12 @@ function TutorialCenter({
             <p className="onboarding-eyebrow">Pomoc</p>
             <h2 id="tutorial-center-title" ref={titleRef} tabIndex={-1}>Samouczki N2Hub</h2>
           </div>
-          <button type="button" className="task-modal-close" onClick={onClose} aria-label="Zamknij">×</button>
+          <IconButton
+            className="task-modal-close"
+            icon={<X size={18} aria-hidden />}
+            onClick={onClose}
+            label="Zamknij"
+          />
         </div>
         <p className="onboarding-copy">
           Wybierz temat, który chcesz poznać. Większość kroków tylko objaśnia

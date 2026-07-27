@@ -34,6 +34,7 @@ import { SaveStatus } from '../components/SaveStatus';
 import { useOpenTask } from '../components/TaskModal';
 import { useConfirm } from '../components/ConfirmProvider';
 import { buildDeleteConsequence } from '../components/confirmDialog';
+import { Tooltip } from '../components/Tooltip';
 import { ChevronRight } from '../components/icons';
 import { formatShortWithWeekday, todayStr, periodError, PERIOD_ERROR_LABELS } from '../utils/dates';
 import { formatDuration } from '../utils/time';
@@ -48,6 +49,9 @@ import {
   clearNavGuard,
   setNavGuard,
 } from '../utils/dirtyRegistry';
+
+/** `id` wspólnego, ukrytego powodu blokady pól projektu. */
+const NO_PERM_ID = 'pd-no-perm';
 
 export function ProjectDetailPage() {
   const { id } = useParams();
@@ -79,7 +83,9 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   const canManage = can('projects.manage');
   const canPaid = can('projects.paid');
   const canManageTasks = can('tasks.manage');
-  const disabledTitle = canManage ? undefined : NO_PERM_TITLE;
+  // Brak uprawnień: JEDEN ukryty opis na stronę zamiast siedmiu natywnych
+  // `title` (niewidocznych na dotyku i dublowanych przy każdym polu).
+  const disabledDesc = canManage ? undefined : NO_PERM_ID;
   const project = state.projects.find((p) => p.id === projectId);
 
   // ---- Editable draft (component remounts per project id) ----
@@ -365,6 +371,11 @@ function ProjectDetail({ projectId }: { projectId: string }) {
 
       <div className="editor-section">
         <h2>Szczegóły</h2>
+        {!canManage && (
+          <span id={NO_PERM_ID} className="sr-only">
+            {NO_PERM_TITLE} do edycji projektu.
+          </span>
+        )}
         <div className="field-row">
           <div className="field">
             <label htmlFor="pd-name">Nazwa *</label>
@@ -373,7 +384,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               value={name}
               onChange={(e) => setName(e.target.value)}
               disabled={!canManage}
-              title={disabledTitle}
+              aria-describedby={disabledDesc}
             />
           </div>
           <div className="field">
@@ -383,7 +394,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               value={clientId}
               onChange={(e) => setClientId(e.target.value)}
               disabled={!canManage}
-              title={disabledTitle}
+              aria-describedby={disabledDesc}
             >
               {state.clients.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -399,7 +410,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               value={statusId}
               onChange={(e) => setStatusId(e.target.value)}
               disabled={!canManage}
-              title={disabledTitle}
+              aria-describedby={disabledDesc}
             >
               {pickableStatuses.map((s) => (
                 <option key={s.id} value={s.id}>
@@ -419,7 +430,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
               disabled={!canManage}
-              title={disabledTitle}
+              aria-describedby={disabledDesc}
             />
           </div>
           <div className="field">
@@ -430,7 +441,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
               disabled={!canManage}
-              title={disabledTitle}
+              aria-describedby={disabledDesc}
             />
           </div>
           <div className="field">
@@ -456,7 +467,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               value={serviceTypeId}
               onChange={(e) => setServiceTypeId(e.target.value)}
               disabled={!canManage}
-              title={disabledTitle}
+              aria-describedby={disabledDesc}
             >
               <option value="">—</option>
               {state.serviceTypes.map((s) => (
@@ -475,7 +486,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             disabled={!canManage}
-            title={disabledTitle}
+            aria-describedby={disabledDesc}
           />
         </div>
         <div className="field-row payment-row">
@@ -504,14 +515,11 @@ function ProjectDetail({ projectId }: { projectId: string }) {
           {canManageTasks && (
             <div className="section-head-actions">
               {draftCount > 0 && (
-                <button
-                  type="button"
-                  className="btn primary"
-                  onClick={publishDrafts}
-                  title="Opublikuj wszystkie szkice zadań w tym projekcie"
-                >
-                  Zapisz i opublikuj ({draftCount})
-                </button>
+                <Tooltip text="Opublikuj wszystkie szkice zadań w tym projekcie">
+                  <button type="button" className="btn primary" onClick={publishDrafts}>
+                    Zapisz i opublikuj ({draftCount})
+                  </button>
+                </Tooltip>
               )}
               <button
                 type="button"
@@ -548,9 +556,9 @@ function ProjectDetail({ projectId }: { projectId: string }) {
                 >
                   <span className="task-title">{t.title}</span>
                   {t.isDraft === true && (
-                    <span className="project-badge project-badge-draft" title="Szkic — nieopublikowane">
-                      szkic
-                    </span>
+                    <Tooltip text="Szkic — nieopublikowane" visualOnly>
+                      <span className="project-badge project-badge-draft">szkic</span>
+                    </Tooltip>
                   )}
                   <StatusBadge status={getStatus(state, t.statusId)} />
                   {t.isDraft !== true && (
@@ -619,19 +627,17 @@ function ProjectDetail({ projectId }: { projectId: string }) {
                     {PROJECT_DOCUMENT_KIND_LABELS[d.kind]}
                   </span>
                   {href === null ? (
-                    <span className="document-link document-link-blocked" title={d.url}>
-                      {d.label || d.url} (niedozwolony adres)
-                    </span>
+                    <Tooltip text={d.url}>
+                      <span className="document-link document-link-blocked">
+                        {d.label || d.url} (niedozwolony adres)
+                      </span>
+                    </Tooltip>
                   ) : (
-                    <a
-                      className="document-link"
-                      href={href}
-                      target="_blank"
-                      rel="noopener"
-                      title={href}
-                    >
-                      {d.label || d.url}
-                    </a>
+                    <Tooltip text={href}>
+                      <a className="document-link" href={href} target="_blank" rel="noopener">
+                        {d.label || d.url}
+                      </a>
+                    </Tooltip>
                   )}
                   {canManage && (
                     <span className="document-row-actions">

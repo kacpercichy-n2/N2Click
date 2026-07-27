@@ -5,6 +5,7 @@
 import { Link } from 'react-router-dom';
 import type { Person } from '../types';
 import { Avatar } from '../components/Avatar';
+import { Tooltip } from '../components/Tooltip';
 import { buildOrgChart, type OrgChartNode } from './teamScope';
 
 /**
@@ -59,16 +60,18 @@ function OrgTreeNodeView({
   return (
     <li className="org-node">
       {person ? (
-        <Link to={`/people/${person.id}`} className="org-card" title={`Otwórz profil: ${person.name}`}>
-          <Avatar person={person} size={36} />
-          <span className="org-card-text">
-            <span className="org-card-name">
-              {person.name}
-              {node.inCycle && <span className="org-cycle-tag">cykl</span>}
+        <Tooltip text={`Otwórz profil: ${person.name}`}>
+          <Link to={`/people/${person.id}`} className="org-card">
+            <Avatar person={person} size={36} />
+            <span className="org-card-text">
+              <span className="org-card-name">
+                {person.name}
+                {node.inCycle && <span className="org-cycle-tag">cykl</span>}
+              </span>
+              {person.role && <span className="org-card-role">{person.role}</span>}
             </span>
-            {person.role && <span className="org-card-role">{person.role}</span>}
-          </span>
-        </Link>
+          </Link>
+        </Tooltip>
       ) : (
         <span className="org-card org-card-missing">(nieznana osoba)</span>
       )}

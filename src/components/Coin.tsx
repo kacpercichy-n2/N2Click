@@ -1,5 +1,6 @@
 // Paid / unpaid coin marker: gold = paid, bronze = unpaid. Shown on project
 // cards across every view; optionally clickable to toggle (project detail).
+import { Tooltip } from './Tooltip';
 
 interface Props {
   paid: boolean;
@@ -49,20 +50,26 @@ export function Coin({ paid, size = 18, onToggle }: Props) {
   const label = paid ? 'Projekt opłacony' : 'Projekt nieopłacony';
   if (onToggle) {
     return (
-      <button
-        type="button"
-        className="coin-btn"
-        onClick={onToggle}
-        title={`${label} — kliknij, aby oznaczyć jako ${paid ? 'nieopłacony' : 'opłacony'}`}
-        aria-label={`${label} — przełącz`}
-      >
-        <CoinSvg paid={paid} size={size} />
-      </button>
+      <Tooltip text={`${label} — kliknij, aby oznaczyć jako ${paid ? 'nieopłacony' : 'opłacony'}`}>
+        <button
+          type="button"
+          className="coin-btn"
+          onClick={onToggle}
+          aria-pressed={paid}
+          aria-label={`${label} — przełącz`}
+        >
+          <CoinSvg paid={paid} size={size} />
+        </button>
+      </Tooltip>
     );
   }
+  // Ozdoba z własną nazwą (`role="img"`): dymek tylko powtarza nazwę, więc jest
+  // czysto wizualny — żadnego `aria-describedby`.
   return (
-    <span className="coin" title={label} role="img" aria-label={label}>
-      <CoinSvg paid={paid} size={size} />
-    </span>
+    <Tooltip text={label} visualOnly>
+      <span className="coin" role="img" aria-label={label}>
+        <CoinSvg paid={paid} size={size} />
+      </span>
+    </Tooltip>
   );
 }

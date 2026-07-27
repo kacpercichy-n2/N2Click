@@ -54,6 +54,7 @@ import {
 } from './weekViewLayout';
 import { useNowTick } from '../utils/useNowTick';
 import { OverlayLayer, useOverlay } from './useOverlay';
+import { Tooltip } from './Tooltip';
 import { useConfirm } from './ConfirmProvider';
 import type { OverlayRect } from './overlayShell';
 import {
@@ -655,8 +656,19 @@ function TimedBlockImpl({
     .filter(Boolean)
     .join(' ');
 
+  // Dymek NIE zmienia DOM-u bloku: `Tooltip` klonuje to samo `<div>`, dokłada
+  // wyłącznie obserwatorów zdarzeń, a kartę i ukryty opis renderuje w portalu.
+  // `pointerdown` chowa dymek, więc podczas przeciągania nigdy nic nie wisi nad
+  // siatką (inwariant 7 — cykl życia wskaźnika bez zmian).
+  const blockHint = !editable
+    ? `${task.title} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${formatDuration(hours)}).${statusNote}`
+    : drag?.atCap
+      ? 'Limit czasu zadania — brak godzin w zasobniku'
+      : `${task.title} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${formatDuration(hours)}).${statusNote} Przeciągnij, aby przenieść; przeciągnij krawędź, aby zmienić czas trwania; kliknij prawym przyciskiem, aby wstawić blok.`;
+
   return (
     <>
+    <Tooltip text={blockHint}>
     <div
       className={className}
       data-tour="calendar.block"
@@ -670,13 +682,6 @@ function TimedBlockImpl({
       }}
       role="button"
       tabIndex={0}
-      title={
-        !editable
-          ? `${task.title} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${formatDuration(hours)}).${statusNote}`
-          : drag?.atCap
-            ? 'Limit czasu zadania — brak godzin w zasobniku'
-            : `${task.title} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${formatDuration(hours)}).${statusNote} Przeciągnij, aby przenieść; przeciągnij krawędź, aby zmienić czas trwania; kliknij prawym przyciskiem, aby wstawić blok.`
-      }
       onPointerDown={editable ? begin('move') : undefined}
       onPointerMove={editable ? onPointerMove : undefined}
       onPointerUp={editable ? finish : undefined}
@@ -703,7 +708,7 @@ function TimedBlockImpl({
         {project && <Coin paid={project.paid} size={12} />}
         {task.title}
         {entry.done === true && (
-          <span className="block-done-mark" title="Wykonane" aria-label="Wykonane">
+          <span className="block-done-mark" aria-label="Wykonane">
             ✓
           </span>
         )}
@@ -724,6 +729,7 @@ function TimedBlockImpl({
         <span className="week-block-handle bottom" onPointerDown={begin('bottom')} aria-hidden />
       )}
     </div>
+    </Tooltip>
     {/* Over-bin ghost: a fixed portal copy of the block riding under the pointer
         while a move drag is over the bin pane. The in-column block is clipped by
         the days viewport overflow and can never appear over the sibling bin, so
@@ -1128,7 +1134,7 @@ function BinCardImpl({
         {project && <Coin paid={project.paid} size={12} />}
         {task.title}
         {entry.done === true && (
-          <span className="block-done-mark" title="Wykonane" aria-label="Wykonane">
+          <span className="block-done-mark" aria-label="Wykonane">
             ✓
           </span>
         )}
@@ -1137,8 +1143,18 @@ function BinCardImpl({
     </>
   );
 
+  // Ten sam kontrakt co w `TimedBlock`: klonowany `<div>`, obserwatorzy zdarzeń,
+  // karta w portalu, `pointerdown` chowa. `ref={cardRef}` przechodzi przez
+  // `Tooltip` (scala refy), więc pomiar szerokości ducha zostaje bez zmian.
+  const cardHint = editable
+    ? unplaceable
+      ? `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.${statusNote} ${unplaceableHint}`
+      : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.${statusNote} Przeciągnij na siatkę albo użyj „Zaplanuj część”.`
+    : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.${statusNote}`;
+
   return (
     <>
+      <Tooltip text={cardHint}>
       <div
         ref={cardRef}
         className={className}
@@ -1146,13 +1162,6 @@ function BinCardImpl({
         style={{ borderLeftColor: personColor(person.id) }}
         role="button"
         tabIndex={0}
-        title={
-          editable
-            ? unplaceable
-              ? `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.${statusNote} ${unplaceableHint}`
-              : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.${statusNote} Przeciągnij na siatkę albo użyj „Zaplanuj część”.`
-            : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.${statusNote}`
-        }
         onPointerDown={editable ? begin : undefined}
         onClick={(e) => {
           e.stopPropagation();
@@ -1169,10 +1178,14 @@ function BinCardImpl({
         {content}
         {editable && canSchedule && (
           <div className="week-bin-block-actions">
+            {/* BEZ własnego dymka: przycisk siedzi WEWNĄTRZ karty, która ma już
+                swój dymek, a `pointerenter` na dziecku nie chowa dymka rodzica —
+                pokazałyby się dwie nachodzące karty. Tekst i tak był identyczny
+                z `aria-label` (podwójny odczyt), a komplet informacji
+                (zadanie, osoba, godziny w zasobniku) niesie dymek karty. */}
             <button
               type="button"
               className="week-bin-schedule-btn"
-              title={`Zaplanuj część: ${task.title} — ${person.name}, ${formatDuration(entry.plannedHours)} w zasobniku`}
               aria-label={`Zaplanuj część: ${task.title} — ${person.name}, ${formatDuration(entry.plannedHours)} w zasobniku`}
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => {
@@ -1186,6 +1199,7 @@ function BinCardImpl({
           </div>
         )}
       </div>
+      </Tooltip>
       {drag &&
         createPortal(
           <div
@@ -1275,19 +1289,18 @@ function RecurBlockImpl({ task, hue, occurrence, done, onOpen, onContextMenu }: 
   ]
     .filter(Boolean)
     .join(' ');
+  const hint = `⟳ ${title} — cykliczne: ${formatMinutes(occurrence.startMinutes)}–${formatMinutes(
+    end,
+  )} (${formatDuration(occurrence.durationMinutes / 60)})${
+    done ? ' — zrobione' : ''
+  }. Kliknij, aby otworzyć zadanie; kliknij prawym przyciskiem, aby edytować wystąpienie.`;
   return (
+    <Tooltip text={hint}>
     <div
       className={className}
       style={{ top, height, borderColor: hue }}
       role="button"
       tabIndex={0}
-      title={`⟳ ${title} — cykliczne: ${formatMinutes(occurrence.startMinutes)}–${formatMinutes(
-        end,
-      )} (${formatDuration(
-        occurrence.durationMinutes / 60,
-      )})${
-        done ? ' — zrobione' : ''
-      }. Kliknij, aby otworzyć zadanie; kliknij prawym przyciskiem, aby edytować wystąpienie.`}
       onClick={(e) => {
         e.stopPropagation();
         onOpen(task.id);
@@ -1303,7 +1316,7 @@ function RecurBlockImpl({ task, hue, occurrence, done, onOpen, onContextMenu }: 
       <span className="week-recur-title">
         ⟳ {title}
         {done && (
-          <span className="block-done-mark" title="Wykonane" aria-label="Wykonane">
+          <span className="block-done-mark" aria-label="Wykonane">
             ✓
           </span>
         )}
@@ -1312,6 +1325,7 @@ function RecurBlockImpl({ task, hue, occurrence, done, onOpen, onContextMenu }: 
         {formatMinutes(occurrence.startMinutes)}–{formatMinutes(end)}
       </span>
     </div>
+    </Tooltip>
   );
 }
 
@@ -1333,15 +1347,16 @@ function EventBlockImpl({ occ, onOpen }: EventBlockProps) {
   const top = (occ.startMinutes / 60) * HOUR_PX;
   const height = Math.max((occ.durationMinutes / 60) * HOUR_PX, MIN_BLOCK_H);
   const end = occ.startMinutes + occ.durationMinutes;
+  const hint = `📅 ${occ.event.title} — ${formatMinutes(occ.startMinutes)}–${formatMinutes(
+    end,
+  )}. Kliknij, aby otworzyć wydarzenie.`;
   return (
+    <Tooltip text={hint}>
     <div
       className="week-event-block"
       style={{ top, height }}
       role="button"
       tabIndex={0}
-      title={`📅 ${occ.event.title} — ${formatMinutes(occ.startMinutes)}–${formatMinutes(
-        end,
-      )}. Kliknij, aby otworzyć wydarzenie.`}
       onClick={(e) => {
         e.stopPropagation();
         onOpen(occ.event.id);
@@ -1358,6 +1373,7 @@ function EventBlockImpl({ occ, onOpen }: EventBlockProps) {
         {formatMinutes(occ.startMinutes)}–{formatMinutes(end)}
       </span>
     </div>
+    </Tooltip>
   );
 }
 
@@ -1951,22 +1967,22 @@ export function WeekView({ state, anchor, filter }: Props) {
                   <div className="week-col-total">
                     {day.empty ? '—' : formatDuration(day.total)}
                   </div>
+                  {/* Plakietki nagłówka są NIEINTERAKTYWNE i pokazują pełną
+                      listę imion wprost w treści — dymek tylko rozwija ją, gdy
+                      CSS ją przytnie, i dopisuje słowny powód. */}
                   {day.birthdayNames.length > 0 && (
-                    <div
-                      className="week-col-birthday"
-                      title={`Urodziny: ${day.birthdayNames.join(', ')}`}
-                    >
-                      🎂 {day.birthdayNames.join(', ')}
-                    </div>
+                    <Tooltip text={`Urodziny: ${day.birthdayNames.join(', ')}`}>
+                      <div className="week-col-birthday">
+                        🎂 {day.birthdayNames.join(', ')}
+                      </div>
+                    </Tooltip>
                   )}
                   {day.overloadNames && (
-                    <div
-                      className="week-col-overload"
-                      data-tour="calendar.overload"
-                      title={`Powyżej dostępności: ${day.overloadNames}`}
-                    >
-                      ⚠ {day.overloadNames}
-                    </div>
+                    <Tooltip text={`Powyżej dostępności: ${day.overloadNames}`}>
+                      <div className="week-col-overload" data-tour="calendar.overload">
+                        ⚠ {day.overloadNames}
+                      </div>
+                    </Tooltip>
                   )}
                 </div>
               );
@@ -2186,34 +2202,45 @@ export function WeekView({ state, anchor, filter }: Props) {
                   <div className="context-menu-sep" role="separator" />
                   {/* Split only applies to dated blocks — SPLIT_BLOCK no-ops on a
                       bin entry (one-bin-row-per-(task,person) invariant). */}
+                  {/* Powód blokady jako WIDOCZNA linijka pod pozycją menu:
+                      natywnie `disabled` przycisk połyka hover, a menu ma własny
+                      roving focus — dymek nigdy by się nie pokazał. Podpowiedź
+                      jest rodzeństwem (nie dzieckiem) przycisku, więc nazwa
+                      pozycji zostaje sama, a `aria-describedby` dokłada powód. */}
                   <button
                     type="button"
                     role="menuitem"
                     className="context-menu-item"
                     disabled={menu.entry.plannedHours < 0.5}
-                    title={
-                      menu.entry.plannedHours < 0.5
-                        ? 'Blok jest za krótki, aby go podzielić'
-                        : undefined
+                    aria-describedby={
+                      menu.entry.plannedHours < 0.5 ? 'week-split-half-hint' : undefined
                     }
                     onClick={() => doSplit(2)}
                   >
                     Podziel na pół
                   </button>
+                  {menu.entry.plannedHours < 0.5 && (
+                    <div className="context-menu-hint" id="week-split-half-hint">
+                      Blok jest za krótki, aby go podzielić
+                    </div>
+                  )}
                   <button
                     type="button"
                     role="menuitem"
                     className="context-menu-item"
                     disabled={menu.entry.plannedHours < 1}
-                    title={
-                      menu.entry.plannedHours < 1
-                        ? 'Blok jest za krótki, aby go podzielić'
-                        : undefined
+                    aria-describedby={
+                      menu.entry.plannedHours < 1 ? 'week-split-quarters-hint' : undefined
                     }
                     onClick={() => doSplit(4)}
                   >
                     Podziel na ćwiartki
                   </button>
+                  {menu.entry.plannedHours < 1 && (
+                    <div className="context-menu-hint" id="week-split-quarters-hint">
+                      Blok jest za krótki, aby go podzielić
+                    </div>
+                  )}
                 </>
               )}
               {isBinEntry(menu.entry) && (

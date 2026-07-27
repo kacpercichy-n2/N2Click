@@ -32,6 +32,7 @@ import { Avatar } from '../components/Avatar';
 import { PlanningBadge } from '../components/PlanningBadge';
 import { TodayAgendaList } from '../components/TodayAgenda';
 import { useOpenTask } from '../components/TaskModal';
+import { Tooltip } from '../components/Tooltip';
 import {
   formatRowLabel,
   formatShortWithWeekday,
@@ -129,8 +130,11 @@ function WorkloadDonut({
       </div>
       <div className="donut-caption">
         <span className="donut-label">{label}</span>
-        <span className={`donut-pct${over ? ' over' : ''}`} title={overTitle}>
+        <span className={`donut-pct${over ? ' over' : ''}`}>
           {pct === null ? '⚠ brak dostępności' : over ? `⚠ ${pct}%` : `${pct}%`}
+          {/* Powód przeciążenia był dotąd hover-only (`title`) — teraz czyta go
+              każdy czytnik ekranu, a widok pozostaje bez zmian. */}
+          {overTitle !== undefined && <span className="sr-only"> — {overTitle}</span>}
         </span>
       </div>
     </div>
@@ -316,17 +320,18 @@ export function DashboardPage() {
                         <span className="dash-row-name">{n.title}</span>
                         {n.when && <span className="dash-row-when">{n.when}</span>}
                       </button>
-                      <button
-                        type="button"
-                        className="link-btn dash-notif-read"
-                        title="Oznacz jako przeczytane"
-                        aria-label="Oznacz jako przeczytane"
-                        onClick={() =>
-                          dispatch({ type: 'MARK_NOTIFICATION_READ', notificationId: n.id })
-                        }
-                      >
-                        ✓
-                      </button>
+                      <Tooltip text="Oznacz jako przeczytane">
+                        <button
+                          type="button"
+                          className="link-btn dash-notif-read"
+                          aria-label="Oznacz jako przeczytane"
+                          onClick={() =>
+                            dispatch({ type: 'MARK_NOTIFICATION_READ', notificationId: n.id })
+                          }
+                        >
+                          ✓
+                        </button>
+                      </Tooltip>
                     </div>
                     {expanded && (
                       <div className="dash-notif-preview" id={previewId}>

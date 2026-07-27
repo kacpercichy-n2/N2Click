@@ -1,7 +1,7 @@
 // The core allocation UI: rows = each calendar day in the period, columns = one
 // per assigned person, cells = editable planned-hours inputs. Overload tinting
 // uses the person's TOTAL across all tasks for that date.
-import { memo, useMemo } from 'react';
+import { memo, useId, useMemo } from 'react';
 import type { AppData, Person } from '../types';
 import { personColor } from '../utils/colors';
 import {
@@ -11,6 +11,7 @@ import {
 } from '../utils/dates';
 import { availableHoursOnDate, hoursForPersonOnDate } from '../store/selectors';
 import { formatDuration } from '../utils/time';
+import { Tooltip } from './Tooltip';
 
 /** allocations keyed as `${personId}|${date}` -> hours. */
 export type AllocMap = Record<string, number>;
@@ -49,6 +50,9 @@ interface Props {
   onFillWeekdays: (personId: string) => void;
   onClearPerson: (personId: string) => void;
   readOnly?: boolean; // gate: disable inputs + hide fill/clear when the role can't manage tasks
+  /** `id` WIDOCZNEJ podpowiedzi o godzinie startu (renderuje ją edytor nad
+   *  siatką) — pola godziny opisują się nią zamiast dawnego `title`. */
+  startHintId?: string;
 }
 
 // Memoized: the grid runs per-cell availability/overload scans on every render,
@@ -69,7 +73,14 @@ export const AllocationGrid = memo(function AllocationGrid({
   onFillWeekdays,
   onClearPerson,
   readOnly = false,
+  startHintId,
 }: Props) {
+  // Opisy komórek (przeciążenie, ×N bloków, brak uprawnień) idą przez UKRYTE
+  // `<span>` + `aria-describedby`, a nie przez natywny `title`: na siatce
+  // liczbowej dymek zasłaniałby sąsiednie komórki, a hover-only podpowiedź i
+  // tak nie istnieje na dotyku.
+  const gridId = useId();
+  const readOnlyId = `${gridId}-ro`;
   const days = useMemo(
     () => eachDayInclusive(startDate, endDate),
     [startDate, endDate],
@@ -104,6 +115,11 @@ export const AllocationGrid = memo(function AllocationGrid({
 
   return (
     <div className="alloc-wrap">
+      {readOnly && (
+        <span id={readOnlyId} className="sr-only">
+          Brak uprawnień do edycji zadań.
+        </span>
+      )}
       <table className="alloc-grid">
         <thead>
           <tr>
@@ -120,22 +136,16 @@ export const AllocationGrid = memo(function AllocationGrid({
                 </div>
                 {!readOnly && (
                   <div className="alloc-person-actions">
-                    <button
-                      type="button"
-                      className="link-btn"
-                      onClick={() => onFillWeekdays(p.id)}
-                      title="Wypełnij dni robocze osoby jej dzienną dostępnością"
-                    >
-                      Wypełnij dni robocze
-                    </button>
-                    <button
-                      type="button"
-                      className="link-btn"
-                      onClick={() => onClearPerson(p.id)}
-                      title="Ustaw wszystkie komórki na 0"
-                    >
-                      Wyczyść
-                    </button>
+                    <Tooltip text="Wypełnij dni robocze osoby jej dzienną dostępnością">
+                      <button type="button" className="link-btn" onClick={() => onFillWeekdays(p.id)}>
+                        Wypełnij dni robocze
+                      </button>
+                    </Tooltip>
+                    <Tooltip text="Ustaw wszystkie komórki na 0">
+                      <button type="button" className="link-btn" onClick={() => onClearPerson(p.id)}>
+                        Wyczyść
+                      </button>
+                    </Tooltip>
                   </div>
                 )}
               </th>
@@ -173,14 +183,20 @@ export const AllocationGrid = memo(function AllocationGrid({
                   const multiTitle = multi
                     ? `Bloki w kalendarzu: ${count}. Edycja sumy wydłuży ostatni blok lub skróci bloki od końca; 0 usunie wszystkie.`
                     : undefined;
-                  const cellTitle =
+                  const cellNote =
                     [overloadTitle, multiTitle].filter(Boolean).join('\n') || undefined;
+                  const cellNoteId = `${gridId}-${p.id}-${d}`;
+                  const describedBy =
+                    [cellNote === undefined ? '' : cellNoteId, readOnly ? readOnlyId : '']
+                      .filter(Boolean)
+                      .join(' ') || undefined;
                   return (
-                    <td
-                      key={p.id}
-                      className={overloaded ? 'alloc-cell overload' : 'alloc-cell'}
-                      title={cellTitle}
-                    >
+                    <td key={p.id} className={overloaded ? 'alloc-cell overload' : 'alloc-cell'}>
+                      {cellNote !== undefined && (
+                        <span id={cellNoteId} className="sr-only">
+                          {cellNote}
+                        </span>
+                      )}
                       <input
                         type="number"
                         min={0}
@@ -190,7 +206,7 @@ export const AllocationGrid = memo(function AllocationGrid({
                         value={value === 0 ? '' : value}
                         placeholder="0"
                         disabled={readOnly}
-                        title={readOnly ? 'Brak uprawnień' : undefined}
+                        aria-describedby={describedBy}
                         onChange={(e) => {
                           const raw = e.target.value;
                           const n = raw === '' ? 0 : Number(raw);
@@ -206,7 +222,7 @@ export const AllocationGrid = memo(function AllocationGrid({
                           className="alloc-time-input"
                           value={pinned === undefined ? '' : hhmm(pinned)}
                           aria-label={`Godzina startu — ${p.name}, ${formatRowLabel(d)}`}
-                          title="Opcjonalna godzina startu. Puste = pierwsze wolne okno."
+                          aria-describedby={startHintId}
                           onChange={(e) =>
                             onChangeStart(
                               p.id,

@@ -22,6 +22,7 @@ import { todayStr } from '../utils/dates';
 import { useOpenTicket } from '../components/TicketModal';
 import { useConfirm } from '../components/ConfirmProvider';
 import { ChevronRight, Plus } from '../components/icons';
+import { Tooltip } from '../components/Tooltip';
 import { buildTicketsCsv, ticketsCsvFilename, type TicketExportRow } from './ticketsExport';
 
 type Mode = 'zglos' | 'zgloszone';
@@ -92,14 +93,11 @@ export function TicketsPage() {
         <h1>Zgłoszenia</h1>
         <div className="page-head-actions">
           {mode === 'zgloszone' && canManage && (
-            <button
-              type="button"
-              className="btn"
-              onClick={handleExport}
-              title="Zapisz widoczne zgłoszenia jako plik CSV"
-            >
-              Eksportuj
-            </button>
+            <Tooltip text="Zapisz widoczne zgłoszenia jako plik CSV">
+              <button type="button" className="btn" onClick={handleExport}>
+                Eksportuj
+              </button>
+            </Tooltip>
           )}
           <button type="button" className="btn primary" onClick={openNewTicket}>
             <Plus size={16} aria-hidden /> Nowe zgłoszenie

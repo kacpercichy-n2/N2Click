@@ -30,6 +30,7 @@ import { addDaysStr, formatShort, formatShortWithWeekday, todayStr } from '../ut
 import { periodError, PERIOD_ERROR_LABELS } from '../utils/dates';
 import { formatDuration } from '../utils/time';
 import { polishCount } from '../utils/polishPlural';
+import { Tooltip } from '../components/Tooltip';
 
 export type PaidFilter = 'all' | 'paid' | 'unpaid';
 
@@ -403,31 +404,33 @@ export function ProjectsPage() {
                       <ChevronRight className="card-chevron" size={16} aria-hidden />
                     </button>
                     <div className="card-actions">
-                      <button
-                        type="button"
-                        className="card-action-btn"
-                        title="Oś czasu"
-                        aria-label="Otwórz oś czasu"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigate('/timeline');
-                        }}
-                      >
-                        <GanttChart size={14} aria-hidden />
-                      </button>
-                      {canManageTasks && (
+                      <Tooltip text="Oś czasu" visualOnly>
                         <button
                           type="button"
                           className="card-action-btn"
-                          title="+ Zadanie"
-                          aria-label={`Dodaj zadanie do ${p.name}`}
+                          aria-label="Otwórz oś czasu"
                           onClick={(e) => {
                             e.stopPropagation();
-                            openNewTask(p.id);
+                            navigate('/timeline');
                           }}
                         >
-                          <Plus size={14} aria-hidden />
+                          <GanttChart size={14} aria-hidden />
                         </button>
+                      </Tooltip>
+                      {canManageTasks && (
+                        <Tooltip text="+ Zadanie" visualOnly>
+                          <button
+                            type="button"
+                            className="card-action-btn"
+                            aria-label={`Dodaj zadanie do ${p.name}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openNewTask(p.id);
+                            }}
+                          >
+                            <Plus size={14} aria-hidden />
+                          </button>
+                        </Tooltip>
                       )}
                     </div>
                   </li>

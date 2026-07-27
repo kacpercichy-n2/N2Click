@@ -169,7 +169,10 @@ async function flowTabSync(browser) {
       .filter({ hasText: projectName })
       .locator('.project-card-coin .coin');
     await coinOnB.waitFor({ timeout: 10000 });
-    const labelBefore = await coinOnB.getAttribute('title');
+    // Stan monety nie jest już natywnym `title` (hover-only, nieobecny na
+    // dotyku): `Coin` wystawia go jako `aria-label` na `span.coin[role=img]`
+    // (Coin.tsx) i jako `aria-label` na przycisku `.coin-btn`.
+    const labelBefore = await coinOnB.getAttribute('aria-label');
     ok(
       labelBefore === (initialPaid ? 'Projekt opłacony' : 'Projekt nieopłacony'),
       `pageB shows the initial paid label before any toggle (got "${labelBefore}")`,
@@ -186,7 +189,7 @@ async function flowTabSync(browser) {
 
     const expectedAfterFirstToggle = initialPaid ? 'Projekt nieopłacony' : 'Projekt opłacony';
     const refreshedOnB = await waitForTrue(async () => {
-      const label = await coinOnB.getAttribute('title').catch(() => null);
+      const label = await coinOnB.getAttribute('aria-label').catch(() => null);
       return label === expectedAfterFirstToggle;
     });
     ok(refreshedOnB, 'pageB coin flips WITHOUT a reload after pageA toggles it');
@@ -259,7 +262,7 @@ async function flowTabSync(browser) {
 
     // Store NOT silently replaced: pageB's own coin still reads the
     // PRE-conflict (post-b) label, not pageA's just-written toggle-back.
-    const labelStillPreConflict = await coinBtnOnB.getAttribute('title');
+    const labelStillPreConflict = await coinBtnOnB.getAttribute('aria-label');
     ok(
       labelStillPreConflict?.startsWith(expectedAfterFirstToggle),
       `pageB's underlying data still shows the pre-conflict coin state (got "${labelStillPreConflict}")`,
@@ -272,7 +275,7 @@ async function flowTabSync(browser) {
     ok(conflictGoneC, 'conflict banner clears after accepting the external version');
 
     const labelAfterAccept = await waitForTrue(async () => {
-      const label = await coinBtnOnB.getAttribute('title').catch(() => null);
+      const label = await coinBtnOnB.getAttribute('aria-label').catch(() => null);
       return label?.startsWith(initialPaid ? 'Projekt opłacony' : 'Projekt nieopłacony') ? label : false;
     });
     ok(!!labelAfterAccept, `pageB now matches pageA's write after accepting (got "${labelAfterAccept}")`);
@@ -312,10 +315,21 @@ async function flowTabSync(browser) {
     await pageB.screenshot({ path: `${SHOTS}/${ENGINE}-d1-conflict2.png` });
 
     const keepLocalBtn = conflictBannerB.getByRole('button', { name: 'Zostaw moją wersję (nadpisz)' });
-    const keepTitle = await keepLocalBtn.getAttribute('title');
+    // Objaśnienie przycisku nie jest już natywnym `title`: `Tooltip`
+    // (PersistenceBanner.tsx) trzyma je w ukrytym opisie wskazywanym przez
+    // `aria-describedby`.
+    const keepHint = await keepLocalBtn.evaluate((el) =>
+      (el.getAttribute('aria-describedby') || '')
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((id) => document.getElementById(id)?.textContent || '')
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim(),
+    );
     ok(
-      keepTitle === 'Zapisuje stan tej karty, nadpisując zmiany z innej karty.',
-      `keep-local button carries the exact explanatory title (got "${keepTitle}")`,
+      keepHint === 'Zapisuje stan tej karty, nadpisując zmiany z innej karty.',
+      `keep-local button carries the exact explanatory description (got "${keepHint}")`,
     );
     await keepLocalBtn.click();
     const conflictGoneD = await waitForTrue(() => conflictBannerB.isHidden());
@@ -339,7 +353,7 @@ async function flowTabSync(browser) {
     const infoBannerA = pageA.locator('.persistence-banner.persistence-banner--info[role="status"]');
     const refreshedOnA = await waitForTrue(() => infoBannerA.isVisible().catch(() => false));
     ok(refreshedOnA, 'pageA (clean) auto-refreshes and shows its own info notice');
-    const coinLabelOnA = await pageA.locator('.coin-btn').first().getAttribute('title');
+    const coinLabelOnA = await pageA.locator('.coin-btn').first().getAttribute('aria-label');
     ok(
       coinLabelOnA?.startsWith(initialPaid ? 'Projekt opłacony' : 'Projekt nieopłacony'),
       `pageA's own coin reverts to match the kept-local value (got "${coinLabelOnA}")`,

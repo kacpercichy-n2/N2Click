@@ -1,6 +1,7 @@
 // Presentational save-status badge. Renders nothing when clean.
 import type { SaveState } from '../utils/useSaveStatus';
 import { AlertTriangle, Check } from './icons';
+import { Tooltip } from './Tooltip';
 
 /** IA-12 — gdy zapis jest zablokowany, odznaka przestaje być samą etykietą:
  *  klik przenosi do pola, które go blokuje. Prop jest opcjonalny, więc
@@ -23,15 +24,16 @@ export function SaveStatus({
   // są ważniejsze niż walidacja i zostają bez zmian.
   if (status === 'dirty' && blocked) {
     return (
-      <button
-        type="button"
-        className="save-status save-status--blocked"
-        onClick={blocked.onJump}
-        title={`${blocked.message} Kliknij, aby przejść do przyczyny.`}
-      >
-        <AlertTriangle size={14} aria-hidden />
-        Nie można zapisać — pokaż przyczynę
-      </button>
+      <Tooltip text={`${blocked.message} Kliknij, aby przejść do przyczyny.`}>
+        <button
+          type="button"
+          className="save-status save-status--blocked"
+          onClick={blocked.onJump}
+        >
+          <AlertTriangle size={14} aria-hidden />
+          Nie można zapisać — pokaż przyczynę
+        </button>
+      </Tooltip>
     );
   }
   if (status === 'clean') return null;

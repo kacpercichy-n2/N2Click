@@ -421,10 +421,21 @@ async function flowPlacement(browser) {
       ok(kasiaOptText.endsWith(' — brak miejsca'), `Kasia's option ends " — brak miejsca" (got "${kasiaOptText}")`);
       await select.selectOption(kasiaId);
       ok(await przenies.isDisabled(), 'Przenieś disabled when the packed target is selected');
-      const przeniesTitle = await przenies.getAttribute('title');
+      // Powód blokady nie jest już natywnym `title` (hover-only, nieobecny na
+      // dotyku): `DisabledHint` trzyma go w ukrytym opisie wskazywanym przez
+      // `aria-describedby` na przycisku (WorkloadPage.tsx `wl-move-<id>`).
+      const przeniesHint = await przenies.evaluate((el) =>
+        (el.getAttribute('aria-describedby') || '')
+          .split(/\s+/)
+          .filter(Boolean)
+          .map((id) => document.getElementById(id)?.textContent || '')
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim(),
+      );
       ok(
-        przeniesTitle === 'Brak wolnego przedziału czasu w tym dniu u wybranej osoby.',
-        `Przenieś carries the exact no-fit title (got "${przeniesTitle}")`,
+        przeniesHint === 'Brak wolnego przedziału czasu w tym dniu u wybranej osoby.',
+        `Przenieś carries the exact no-fit reason as its description (got "${przeniesHint}")`,
       );
       await page.screenshot({ path: `${SHOTS}/${ENGINE}-c1-no-fit.png` });
 
@@ -588,10 +599,29 @@ async function flowPlacement(browser) {
       const dzisDonut = page.locator('.donut').filter({ hasText: 'Dziś' });
       await dzisDonut.waitFor({ state: 'visible', timeout: 10000 });
       const dzisPct = dzisDonut.locator('.donut-pct');
-      const dzisText = (await dzisPct.innerText()).trim();
+      // WIDOCZNA etykieta to same węzły tekstowe: powód (dawny hover-only
+      // `title`) siedzi teraz obok, w `span.sr-only` wewnątrz tej samej odznaki
+      // (DashboardPage.tsx), więc `innerText` całego elementu zawierałby oba.
+      const dzisText = (
+        await dzisPct.evaluate((el) =>
+          Array.from(el.childNodes)
+            .filter((node) => node.nodeType === Node.TEXT_NODE)
+            .map((node) => node.textContent || '')
+            .join(''),
+        )
+      ).trim();
       ok(
         dzisText === '⚠ brak dostępności',
         `Dashboard "Dziś" donut reads "⚠ brak dostępności" (got "${dzisText}")`,
+      );
+      const dzisReason = (
+        (await dzisPct.locator('span.sr-only').textContent().catch(() => '')) || ''
+      )
+        .replace(/\s+/g, ' ')
+        .trim();
+      ok(
+        dzisReason === '— Godziny zaplanowane przy zerowej dostępności',
+        `the donut exposes the zero-availability reason to assistive tech (got "${dzisReason}")`,
       );
       const dzisClass = (await dzisPct.getAttribute('class')) || '';
       ok(
@@ -613,10 +643,15 @@ async function flowPlacement(browser) {
         cellClass.split(/\s+/).includes('overload'),
         `current user's TODAY cell carries class "overload" (got "${cellClass}")`,
       );
-      const cellTitle = await todayCell.getAttribute('title');
+      // Powód przeciążenia nie jest już natywnym `title` — komórka niesie go
+      // jako tekst ukryty wizualnie (`span.sr-only` w środku `td.workload-cell`,
+      // WorkloadPage.tsx), więc czytamy go stamtąd.
+      const cellHint = ((await todayCell.locator('span.sr-only').textContent().catch(() => '')) || '')
+        .replace(/\s+/g, ' ')
+        .trim();
       ok(
-        cellTitle === `${meName}: 4h > 0h dostępności`,
-        `TODAY cell title is "${meName}: 4h > 0h dostępności" (got "${cellTitle}")`,
+        cellHint === `${meName}: 4h ponad 0h dostępności`,
+        `TODAY cell carries the overload reason "${meName}: 4h ponad 0h dostępności" (got "${cellHint}")`,
       );
       const loadPctClass = (await meRow.locator('.load-pct').getAttribute('class')) || '';
       ok(

@@ -9,6 +9,7 @@
 import { useEffect } from 'react';
 import { useStore, usePersistence } from '../store/AppStore';
 import { useConfirm } from './ConfirmProvider';
+import { Tooltip } from './Tooltip';
 import { exportRawData } from '../store/storage';
 import type { SaveFailureReason } from '../store/storage';
 
@@ -123,14 +124,11 @@ export function PersistenceBanner() {
           >
             Wczytaj wersję z innej karty
           </button>
-          <button
-            type="button"
-            className="btn ghost"
-            title="Zapisuje stan tej karty, nadpisując zmiany z innej karty."
-            onClick={keepLocal}
-          >
-            Zostaw moją wersję (nadpisz)
-          </button>
+          <Tooltip text="Zapisuje stan tej karty, nadpisując zmiany z innej karty.">
+            <button type="button" className="btn ghost" onClick={keepLocal}>
+              Zostaw moją wersję (nadpisz)
+            </button>
+          </Tooltip>
         </div>
       </div>
     );

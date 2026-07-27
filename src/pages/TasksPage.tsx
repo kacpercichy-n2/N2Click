@@ -403,7 +403,7 @@ export function TasksPage() {
                       icon={<X size={16} aria-hidden />}
                       onClick={() => handleDelete(task.id, task.title)}
                       label={`Usuń ${task.title}`}
-                      title="Usuń"
+                      tooltip="Usuń"
                     />
                   </div>
                 )}

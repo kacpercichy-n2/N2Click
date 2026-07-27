@@ -19,6 +19,7 @@ import { ExportDryRunPanel } from '../components/ExportDryRunPanel';
 import { MigrationStatusPanel } from '../components/MigrationStatusPanel';
 import { useAuth } from '../auth/SessionProvider';
 import { useOrgData } from '../supabase/OrgDataProvider';
+import { DisabledHint, Tooltip } from '../components/Tooltip';
 
 // Lavender brand default for a freshly created status (dark-legible).
 const NEW_STATUS_COLOR = '#c496ff';
@@ -106,6 +107,9 @@ export function AdminPage() {
                 ? 'Nie można zarchiwizować ostatniego aktywnego statusu.'
                 : 'Nie można zarchiwizować jedynego statusu ukończenia — najpierw oznacz inny status.'
               : undefined;
+            const doneHint = onlyDone
+              ? 'To jedyny status oznaczający ukończenie — najpierw oznacz inny status.'
+              : 'Projekty i zadania w tym statusie liczą się jako ukończone — niezależnie od kolejności w lejku.';
             const deleteDisabled = inUse || onlyActive || onlyDone;
             const deleteTitle = inUse
               ? 'Używany przez projekty lub zadania — zamiast tego zarchiwizuj'
@@ -134,26 +138,27 @@ export function AdminPage() {
               />
               <code className="muted admin-status-slug">/{s.slug}</code>
               <StatusBadge status={s} />
-              <label
-                className="admin-status-done"
-                data-tour="admin.done"
-                title={
-                  onlyDone
-                    ? 'To jedyny status oznaczający ukończenie — najpierw oznacz inny status.'
-                    : 'Projekty i zadania w tym statusie liczą się jako ukończone — niezależnie od kolejności w lejku.'
-                }
-              >
-                <input
-                  type="checkbox"
-                  checked={s.isDone}
-                  disabled={onlyDone}
-                  onChange={() =>
-                    dispatch({ type: 'SET_STATUS_DONE', statusId: s.id, isDone: !s.isDone })
-                  }
-                  aria-label={`Status „${s.name}” oznacza ukończenie`}
-                />
-                Ukończenie
-              </label>
+              {/* Znaczenie znacznika (i powód blokady) było hover-only —
+                  teraz niesie je dymek NA ETYKIECIE (wyłączony checkbox połyka
+                  zdarzenia wskaźnika) plus ukryty opis na samej kontrolce. */}
+              <span id={`admin-done-${s.id}`} className="sr-only">
+                {doneHint}
+              </span>
+              <Tooltip text={doneHint} visualOnly>
+                <label className="admin-status-done" data-tour="admin.done">
+                  <input
+                    type="checkbox"
+                    checked={s.isDone}
+                    disabled={onlyDone}
+                    onChange={() =>
+                      dispatch({ type: 'SET_STATUS_DONE', statusId: s.id, isDone: !s.isDone })
+                    }
+                    aria-label={`Status „${s.name}” oznacza ukończenie`}
+                    aria-describedby={`admin-done-${s.id}`}
+                  />
+                  Ukończenie
+                </label>
+              </Tooltip>
               <span className="admin-status-actions">
                 <button
                   type="button"
@@ -173,26 +178,28 @@ export function AdminPage() {
                 >
                   ↓
                 </button>
-                <button
-                  type="button"
-                  className="btn ghost"
-                  disabled={archiveDisabled}
-                  title={archiveTitle}
-                  onClick={() =>
-                    dispatch({ type: 'SET_STATUS_ARCHIVED', statusId: s.id, archived: !s.archived })
-                  }
-                >
-                  {s.archived ? 'Przywróć' : 'Archiwizuj'}
-                </button>
-                <button
-                  type="button"
-                  className="btn danger-ghost"
-                  disabled={deleteDisabled}
-                  title={deleteTitle}
-                  onClick={() => dispatch({ type: 'DELETE_STATUS', statusId: s.id })}
-                >
-                  Usuń
-                </button>
+                <DisabledHint reason={archiveTitle ?? null} id={`admin-archive-${s.id}`}>
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    disabled={archiveDisabled}
+                    onClick={() =>
+                      dispatch({ type: 'SET_STATUS_ARCHIVED', statusId: s.id, archived: !s.archived })
+                    }
+                  >
+                    {s.archived ? 'Przywróć' : 'Archiwizuj'}
+                  </button>
+                </DisabledHint>
+                <DisabledHint reason={deleteTitle ?? null} id={`admin-delete-${s.id}`}>
+                  <button
+                    type="button"
+                    className="btn danger-ghost"
+                    disabled={deleteDisabled}
+                    onClick={() => dispatch({ type: 'DELETE_STATUS', statusId: s.id })}
+                  >
+                    Usuń
+                  </button>
+                </DisabledHint>
               </span>
             </li>
             );

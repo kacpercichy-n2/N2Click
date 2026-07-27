@@ -167,6 +167,10 @@
   /* Okno potwierdzenia stoi PONAD wszystkim: pytają z niego także baner
      trwałości (1050) i samouczki (1100), a jego odpowiedź blokuje operację. */
   --n2-z-confirm: 1200;
+  /* Dymek podpowiedzi stoi PONAD potwierdzeniem: opisuje kontrolki także w
+     oknie potwierdzenia, a sam niczego nie blokuje (jest `aria-hidden`,
+     nieklikalny i znika przy scrollu/Escape). */
+  --n2-z-tooltip: 1300;
 
   --radius: var(--n2-radius-md);
   --radius-sm: var(--n2-radius-sm);
@@ -2815,6 +2819,7 @@ option {
 /* Okrągły przycisk ikonowy (komponent IconButton). Flex-centruje SVG w
    kwadratowym polu — koniec z glifami tekstowymi siadającymi za nisko. */
 .icon-btn {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2849,6 +2854,109 @@ option {
   background: var(--n2-danger-soft);
   border-color: transparent;
   color: var(--danger);
+}
+/* Pole trafienia ≥ 44 px BEZ zmiany wyglądu: pseudoelement należy do samego
+   przycisku, więc nie potrzebuje ani `pointer-events`, ani `z-index`. */
+.icon-btn::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(100%, 44px);
+  height: max(100%, 44px);
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+}
+/* Rozmiary: `md` (domyślny) zostaje przy 32 px — istniejące miejsca wyglądają
+   bajt w bajt tak samo. */
+.icon-btn[data-size='sm'] {
+  width: 24px;
+  height: 24px;
+}
+/* Blokada MIĘKKA (`aria-disabled`): przycisk zostaje w cyklu Tab, żeby dało
+   się odczytać powód, ale wygląda i zachowuje się jak nieaktywny. */
+.icon-btn[aria-disabled='true'] {
+  opacity: 0.55;
+  cursor: default;
+}
+.icon-btn[aria-disabled='true']:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--n2-text-soft);
+  border-color: var(--n2-border);
+}
+.icon-btn.danger[aria-disabled='true']:hover {
+  background: transparent;
+  border-color: transparent;
+  color: var(--danger);
+}
+.icon-btn[aria-disabled='true']:active {
+  transform: none;
+}
+.icon-btn[aria-busy='true'] {
+  animation: icon-btn-pulse 1.2s ease-in-out infinite;
+}
+@keyframes icon-btn-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
+/* Tekst wyłącznie dla czytników ekranu — ukryty wizualnie, ale obecny w
+   drzewie dostępności (opisy dymków, powody blokad, podpowiedzi wzorca). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------- Dymek podpowiedzi (komponent Tooltip) ---------- */
+/* Karta jest `aria-hidden` i NIEKLIKALNA — opis dla czytnika ekranu żyje w
+   osobnym `.sr-only` w tym samym portalu. */
+.tooltip {
+  position: fixed;
+  z-index: var(--n2-z-tooltip);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+  max-width: 260px;
+  padding: 4px 8px;
+  border: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-sm);
+  background: var(--n2-panel);
+  color: var(--n2-text);
+  font-size: var(--n2-type-xs);
+  line-height: 1.35;
+  box-shadow: var(--n2-shadow-soft);
+  pointer-events: none;
+}
+.tooltip-text {
+  white-space: pre-line;
+}
+.tooltip-kbd {
+  padding: 1px 5px;
+  border: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-sm);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--n2-text-soft);
+  font-family: var(--n2-font-data);
+  font-size: var(--n2-type-xs);
+  white-space: nowrap;
+}
+/* Natywnie `disabled` przycisk POŁYKA zdarzenia wskaźnika, więc dymek musi
+   wisieć na opakowaniu. Używane WYŁĄCZNIE tam, gdzie blokada musi zostać
+   natywna (AdminPage). */
+.tooltip-holder {
+  display: inline-flex;
 }
 
 .avatar {
@@ -3244,6 +3352,15 @@ option {
 }
 .kanban-col.archived-col .kanban-col-name {
   color: var(--text-muted);
+}
+/* Instrukcja kolumny archiwum: dawniej hover-only `title`, teraz widoczna
+   podpowiedź pod nagłówkiem (na dotyku `title` nie istniał w ogóle). */
+.kanban-col-note {
+  margin: 0;
+  padding: 0 12px 8px;
+  color: var(--text-muted);
+  font-size: var(--n2-type-xs);
+  line-height: 1.35;
 }
 .kanban-col-head {
   display: flex;
@@ -4644,6 +4761,14 @@ option {
 .context-menu-item:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+/* Powód blokady pozycji menu — WIDOCZNY, bo natywnie `disabled` przycisk nie
+   przyjmuje hovera ani fokusa, więc dymek nigdy by się nie pokazał. */
+.context-menu-hint {
+  padding: 0 8px 6px;
+  color: var(--text-muted);
+  font-size: var(--n2-type-xs);
+  line-height: 1.3;
 }
 .context-menu-item.danger {
   color: var(--n2-danger);

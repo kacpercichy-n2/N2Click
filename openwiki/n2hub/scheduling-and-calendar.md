@@ -61,6 +61,20 @@
   data are untouched, and off-window slots stay fully usable. The date+clock
   badge lives OUTSIDE the grid (`NowClockBadge` in the calendar toolbar row,
   `useNowTick` 30 s); the `.week-now-line` in today's column is unchanged.
+- Podpowiedzi na powierzchniach przeciągania (2026-07-28, inwariant 7): bloki
+  siatki, karty zasobnika, nakładki cykliczne/wydarzeń, plakietki nagłówka oraz
+  paski i kamienie milowe osi czasu nie mają już natywnego `title` — otacza je
+  `Tooltip` (`tooltipShell.ts`), który KLONUJE ten sam element (zero opakowań,
+  zero zmian układu), dokłada WYŁĄCZNIE obserwatorów (nigdy `preventDefault`,
+  `stopPropagation` ani przejęcia wskaźnika, zawsze woła istniejący handler) i
+  chowa dymek na `pointerdown`, więc podczas przeciągania/rozciągania nic nie
+  wisi nad siatką. Karta jest `pointer-events: none` w portalu, więc nie wpływa
+  na `elementFromPoint` ani na trafianie w wyrenderowaną kolumnę. Znaczniki
+  MonthView i plakietka „Wykonane” niosą informację `aria-label` (dymek komórki
+  miesiąca jest czysto wizualny), a powody blokady pozycji menu kontekstowego
+  („Podziel…”) są WIDOCZNĄ linijką `.context-menu-hint` + `aria-describedby`,
+  nie dymkiem. `browser-check-bin-drag.mjs` czyta podpowiedź karty zasobnika
+  przez `aria-describedby`, a nie przez atrybut `title`.
 - Automatic placement uses a real free-slot search and rejects when no slot fits;
   it must not clamp into an overlap near midnight.
 - Free-slot search rejects non-finite, non-positive, off-grid and over-day

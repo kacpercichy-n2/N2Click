@@ -54,6 +54,7 @@ import { EventModal } from './components/EventModal';
 import { GlobalSearch } from './components/GlobalSearch';
 import { useConfirm } from './components/ConfirmProvider';
 import { Avatar } from './components/Avatar';
+import { Tooltip } from './components/Tooltip';
 import {
   Settings,
   Menu,
@@ -328,19 +329,20 @@ export function App() {
             <span className="app-brand-mark" aria-hidden />
             <span className="app-brand-name">N2Hub</span>
           </div>
-          <button
-            type="button"
-            className="sidebar-toggle"
-            aria-label={collapsed ? 'Rozwiń menu' : 'Zwiń menu'}
-            title={collapsed ? 'Rozwiń menu' : 'Zwiń menu'}
-            onClick={toggleCollapsed}
-          >
-            {collapsed ? (
-              <ChevronsRight size={18} aria-hidden />
-            ) : (
-              <ChevronsLeft size={18} aria-hidden />
-            )}
-          </button>
+          <Tooltip text={collapsed ? 'Rozwiń menu' : 'Zwiń menu'}>
+            <button
+              type="button"
+              className="sidebar-toggle"
+              aria-label={collapsed ? 'Rozwiń menu' : 'Zwiń menu'}
+              onClick={toggleCollapsed}
+            >
+              {collapsed ? (
+                <ChevronsRight size={18} aria-hidden />
+              ) : (
+                <ChevronsLeft size={18} aria-hidden />
+              )}
+            </button>
+          </Tooltip>
         </div>
         <GlobalSearch />
         <nav className="app-nav" data-tour="shell.nav">
@@ -350,30 +352,35 @@ export function App() {
               const item = NAV_ITEM_BY_PATH.get(to);
               if (!item) return null;
               const [, label, Icon] = item;
-              return (
-                <NavLink
-                  key={to}
-                  to={to}
-                  className={navClass}
-                  title={label}
-                  onClick={() => setMenuOpen(false)}
-                >
+              // Rozwinięte menu POKAZUJE etykietę — dymek powtarzałby widoczny
+              // tekst. Dymek ma sens wyłącznie w zwiniętej listwie ikon.
+              const link = (
+                <NavLink key={to} to={to} className={navClass} onClick={() => setMenuOpen(false)}>
                   <Icon size={18} aria-hidden className="nav-icon" />
                   <span className="nav-label">{label}</span>
                 </NavLink>
               );
+              // Dymek jest OSOBNYM elementem listy tylko w listwie ikon — w
+              // rozwiniętym menu wraca dokładnie dotychczasowe drzewo DOM.
+              return collapsed ? (
+                <Tooltip key={to} text={label}>
+                  {link}
+                </Tooltip>
+              ) : (
+                link
+              );
             })}
           {/* Ustawienia: preferencje interfejsu (oba tryby) + zmiana hasła w
               trybie supabase. Przypięte PO liście, poza edytorem kolejności. */}
-          <NavLink
-            to="/account"
-            className={navClass}
-            title="Ustawienia"
-            onClick={() => setMenuOpen(false)}
-          >
-            <Settings size={18} aria-hidden className="nav-icon" />
-            <span className="nav-label">Ustawienia</span>
-          </NavLink>
+          {(() => {
+            const settingsLink = (
+              <NavLink to="/account" className={navClass} onClick={() => setMenuOpen(false)}>
+                <Settings size={18} aria-hidden className="nav-icon" />
+                <span className="nav-label">Ustawienia</span>
+              </NavLink>
+            );
+            return collapsed ? <Tooltip text="Ustawienia">{settingsLink}</Tooltip> : settingsLink;
+          })()}
         </nav>
         {/* S1 — stopka sidebara jest jednym blokiem przyklejonym do dołu (kryjące
             tło + gradient nad nią), żeby przewijana lista nawigacji nigdy się z
@@ -394,28 +401,30 @@ export function App() {
                   links to the user's own profile (the chevron toggle is the only
                   expand control now). */}
               {currentUser && (
-                <Link
-                  to={`/people/${currentUser.id}`}
-                  className="sidebar-user-collapsed"
-                  title={`Mój profil: ${currentUser.name}`}
-                  aria-label={`Mój profil: ${currentUser.name}`}
-                  onClick={() => setMenuOpen(false)}
-                >
-                  <Avatar person={currentUser} size={32} />
-                </Link>
-              )}
-              {/* Expanded footer row: avatar → own profile + narrower logout. */}
-              <div className="sidebar-user-row">
-                {currentUser && (
+                <Tooltip text={`Mój profil: ${currentUser.name}`}>
                   <Link
                     to={`/people/${currentUser.id}`}
-                    className="sidebar-user-avatar"
-                    title={`Mój profil: ${currentUser.name}`}
+                    className="sidebar-user-collapsed"
                     aria-label={`Mój profil: ${currentUser.name}`}
                     onClick={() => setMenuOpen(false)}
                   >
                     <Avatar person={currentUser} size={32} />
                   </Link>
+                </Tooltip>
+              )}
+              {/* Expanded footer row: avatar → own profile + narrower logout. */}
+              <div className="sidebar-user-row">
+                {currentUser && (
+                  <Tooltip text={`Mój profil: ${currentUser.name}`}>
+                    <Link
+                      to={`/people/${currentUser.id}`}
+                      className="sidebar-user-avatar"
+                      aria-label={`Mój profil: ${currentUser.name}`}
+                      onClick={() => setMenuOpen(false)}
+                    >
+                      <Avatar person={currentUser} size={32} />
+                    </Link>
+                  </Tooltip>
                 )}
                 {/* Everyone can log out (returns to the login screen). */}
                 <button

@@ -28,6 +28,7 @@ import {
   type TeamDepartmentView,
 } from './teamScope';
 import { TeamStructureTree, personForTreeNode } from './TeamStructureTree';
+import { Tooltip } from '../components/Tooltip';
 import type { Person } from '../types';
 import type { AccessRole as ProvisionAccessRole } from '../../supabase/functions/provision-account/contract';
 
@@ -166,22 +167,18 @@ function HierarchyGroups({
                   <span className="team-person-name">{p.name}</span>
                   <span className="team-person-contact">
                     {p.email && (
-                      <a
-                        className="team-person-email"
-                        href={`mailto:${p.email}`}
-                        title={`Napisz e-mail do ${p.name}`}
-                      >
-                        {p.email}
-                      </a>
+                      <Tooltip text={`Napisz e-mail do ${p.name}`}>
+                        <a className="team-person-email" href={`mailto:${p.email}`}>
+                          {p.email}
+                        </a>
+                      </Tooltip>
                     )}
                     {p.phone && (
-                      <a
-                        className="team-person-phone"
-                        href={`tel:${p.phone.replace(/\s+/g, '')}`}
-                        title={`Zadzwoń do ${p.name}`}
-                      >
-                        {p.phone}
-                      </a>
+                      <Tooltip text={`Zadzwoń do ${p.name}`}>
+                        <a className="team-person-phone" href={`tel:${p.phone.replace(/\s+/g, '')}`}>
+                          {p.phone}
+                        </a>
+                      </Tooltip>
                     )}
                   </span>
                   <span className="team-person-meta">
