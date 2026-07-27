@@ -107,6 +107,7 @@ availability/overload calculations, drag lifecycle and time utilities.
 
 `src/utils/time.test.ts`, `src/utils/touchDrag.test.ts`,
 `src/components/weekViewLayout.test.ts`,
+`src/components/overlayShell.test.ts`,
 `src/store/blockActions.test.ts`,
 `scripts/browser-check-bin-drag.mjs`, `browser-check-bin-split.mjs`, and
 `browser-check-placement.mjs`.

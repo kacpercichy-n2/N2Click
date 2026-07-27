@@ -152,6 +152,19 @@
   --weekend-bg: rgba(255, 255, 255, 0.03);
   --today: var(--n2-lavender);
 
+  /* --- Drabina nakładek (wartości DOKŁADNIE takie jak dotąd) ---
+     Tokeny opisują istniejącą kolejność; korzystają z nich na razie tylko
+     .filter-popover i .context-menu, reszta selektorów zostaje przy liczbach.
+     Szuflada mobilna zajmuje 900–903, duchy przeciągania 1000. */
+  --n2-z-popover: 40;
+  --n2-z-menu: 100;
+  --n2-z-drawer: 900;
+  --n2-z-search: 990;
+  --n2-z-modal: 1000;
+  --n2-z-banner: 1050;
+  --n2-z-toast: 1090;
+  --n2-z-onboarding: 1100;
+
   --radius: var(--n2-radius-md);
   --radius-sm: var(--n2-radius-sm);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
@@ -750,10 +763,12 @@ textarea {
   margin-bottom: var(--n2-space-6);
   /* Stays in normal flow (relative, no layout shift), but must out-stack the
      task modal so conflict/failure actions remain clickable while the modal is
-     open beneath it. Overlay ladder: context-menu 100 < gs 990/991 <
+     open beneath it. Drabinę nakładek opisują tokeny `--n2-z-*` w `:root`
+     (filter-popover 40 < context-menu 100 < drawer 900 < gs 990/991 <
      modal 1000/1001 < persistence-banner 1050 < onboarding-toast 1090 <
-     onboarding-layer 1100. Ancestors (#root, .app-shell, .app-main) create no
-     stacking context, so this resolves at the root context above the modal. */
+     onboarding-layer 1100); tu zostaje literał 1050. Ancestors (#root,
+     .app-shell, .app-main) create no stacking context, so this resolves at the
+     root context above the modal. */
   position: relative;
   z-index: 1050;
 }
@@ -4574,7 +4589,7 @@ option {
 
 .context-menu {
   position: fixed;
-  z-index: 100;
+  z-index: var(--n2-z-menu);
   min-width: 220px;
   max-width: 270px;
   background: var(--n2-panel);
@@ -4582,6 +4597,11 @@ option {
   border-radius: var(--n2-radius-md);
   box-shadow: var(--n2-shadow-soft);
   padding: 6px;
+  /* Wysokość dostępną od pozycji menu do dołu okna liczy `useOverlay`
+     (`resolveOverlayPosition`) i podaje jako `--overlay-avail` — to zastępuje
+     dawne clampy `window.innerHeight - 100/240/260`. */
+  max-height: var(--overlay-avail, 80vh);
+  overflow-y: auto;
 }
 .context-menu-title {
   font-size: var(--n2-type-xs);
@@ -5355,7 +5375,7 @@ option {
   position: absolute;
   top: calc(100% + 6px);
   left: 0;
-  z-index: 40;
+  z-index: var(--n2-z-popover);
   min-width: 260px;
   max-width: 320px;
   max-height: 70dvh;

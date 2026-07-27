@@ -155,3 +155,10 @@ scroll lock + scrollbar padding, `aria-labelledby` and the pointerdown+click
 backdrop pair for Task/Ticket/Event/Changelog; IconButton gains forwardRef.
 npm test 1630 pass, build green. Browser checks unrunnable (no playwright).
 OnboardingRoot/GlobalSearch/App drawer deferred. Wiki updated.
+
+n2hub-278 overlay shell: new pure `overlayShell.ts` (+37 tests) and thin
+`useOverlay.ts` (portal `#n2hub-overlay-root`, flip/shift, reposition on scroll,
+topmost-only Escape, pointerdown+click dismiss, menu keyboard) now back the three
+WeekView menus and FilterPanel; z-index tokens added. Domain/drag code untouched.
+npm test 1630→1667 pass, build green. Playwright missing — ad-hoc CDP smoke
+instead. No context expansion.

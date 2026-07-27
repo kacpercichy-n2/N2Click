@@ -5,11 +5,18 @@
 //
 // The component is a dumb, controlled presentation layer: every page keeps its
 // own filter useState and builds the `groups`/`chips`/`dates` props from it.
-// Choosing an option applies live (no "Zastosuj"). Closes on outside
-// mousedown, Escape, or toggling the button — mirroring the WeekView
-// context-menu pattern (no page-blocking scrim).
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+// Choosing an option applies live (no "Zastosuj"). Zamykanie żyje we WSPÓLNEJ
+// powłoce `useOverlay` (ta sama co menu kontekstowe WeekView): stos warstw dla
+// Escape (zamyka tylko wierzchnią warstwę, więc modal pod spodem zostaje),
+// para `pointerdown`+`click` na zewnątrz (ciągnięcie paska przewijania nie
+// zamyka) i klasyfikacja zdarzeń przycisku „Filtry”, żeby jego własny toggle
+// nie ścigał się z zamknięciem. Popover CELOWO nie idzie do portalu ani nie
+// jest mierzony — kotwiczy go CSS, a na wąskim ekranie wchodzi w normalny
+// przepływ (`position: static`), więc `menuKeyboard` też zostaje wyłączone
+// (to dialog z radiami, nie lista `role="menu"`).
+import { useCallback, useRef, useState, type ReactNode } from 'react';
 import { Filter, X } from './icons';
+import { useOverlay } from './useOverlay';
 
 export interface FilterGroup {
   key: string;
@@ -48,30 +55,18 @@ export function FilterPanel({
   chips: FilterChip[];
 }) {
   const [open, setOpen] = useState(false);
-  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const popRef = useRef<HTMLDivElement | null>(null);
+  const close = useCallback(() => setOpen(false), []);
 
-  // Close on Escape or a mousedown outside the button+popover wrapper.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
-    };
-    const onDown = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    window.addEventListener('keydown', onKey);
-    window.addEventListener('mousedown', onDown);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('mousedown', onDown);
-    };
-  }, [open]);
+  useOverlay({ open, onClose: close, overlayRef: popRef, triggerRef: btnRef });
 
   return (
     <div className="filter-bar">
-      <div className="filter-panel-wrap" ref={wrapRef}>
+      <div className="filter-panel-wrap">
         <button
           type="button"
+          ref={btnRef}
           className={activeCount > 0 ? 'btn soft filter-btn active' : 'btn soft filter-btn'}
           aria-expanded={open}
           aria-haspopup="dialog"
@@ -81,7 +76,7 @@ export function FilterPanel({
           {activeCount > 0 && <span className="filter-badge">{activeCount}</span>}
         </button>
         {open && (
-          <div className="filter-popover" role="dialog" aria-label="Filtry">
+          <div className="filter-popover" role="dialog" aria-label="Filtry" ref={popRef}>
             {groups.map((g) => (
               <fieldset key={g.key} className="filter-group">
                 <legend>{g.label}</legend>

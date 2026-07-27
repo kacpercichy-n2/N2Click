@@ -53,6 +53,8 @@ import {
   workWindowScrollTop,
 } from './weekViewLayout';
 import { useNowTick } from '../utils/useNowTick';
+import { OverlayLayer, useOverlay } from './useOverlay';
+import type { OverlayRect } from './overlayShell';
 import {
   DAY_MINUTES,
   HOURS_STEP,
@@ -108,10 +110,35 @@ function announceCalendarPractice(kind: 'move' | 'resize' | 'bin-drop'): void {
   window.dispatchEvent(new CustomEvent('n2hub:calendar-practice', { detail: { kind } }));
 }
 
+/**
+ * Kotwica popovera: ELEMENT (blok, kolumna dnia, przycisk) plus opcjonalne
+ * przesunięcie punktu kliknięcia w jego wnętrzu. Trzymamy element, a nie gołe
+ * `clientX/Y`, żeby `useOverlay` mógł przeliczyć pozycję przy każdym scrollu
+ * siatki — i zamknąć menu, gdy kotwica zniknie z DOM.
+ */
+interface MenuAnchor {
+  el: HTMLElement;
+  /** `null` = kotwicą jest cały prostokąt elementu (przycisk „Zaplanuj część”). */
+  point: { dx: number; dy: number } | null;
+}
+
+/** Prostokąt kotwicy dla `useOverlay`; `null` = kotwica wypadła z DOM. */
+function anchorRect(anchor: MenuAnchor | null | undefined): OverlayRect | null {
+  if (!anchor || !anchor.el.isConnected) return null;
+  const rect = anchor.el.getBoundingClientRect();
+  if (anchor.point === null) return rect;
+  return { left: rect.left + anchor.point.dx, top: rect.top + anchor.point.dy, width: 0, height: 0 };
+}
+
+/** Kotwica z punktu kliknięcia wewnątrz elementu, na którym wisi handler. */
+function pointAnchor(el: HTMLElement, clientX: number, clientY: number): MenuAnchor {
+  const rect = el.getBoundingClientRect();
+  return { el, point: { dx: clientX - rect.left, dy: clientY - rect.top } };
+}
+
 interface MenuState {
   entry: WorkloadEntry;
-  x: number;
-  y: number;
+  anchor: MenuAnchor;
   step: 'menu' | 'form' | 'schedule';
   position: 'before' | 'after';
 }
@@ -1392,8 +1419,7 @@ export function WeekView({ state, anchor, filter }: Props) {
   // the snapped 15-minute start under the cursor. Separate from the block/bin
   // `menu` above (which is keyed on a WorkloadEntry).
   const [slotMenu, setSlotMenu] = useState<{
-    x: number;
-    y: number;
+    anchor: MenuAnchor;
     date: string;
     startMinutes: number;
   } | null>(null);
@@ -1415,8 +1441,7 @@ export function WeekView({ state, anchor, filter }: Props) {
     done: boolean;
     /** Status zadania jest „zrobiony" — cała seria świeci się niezależnie. */
     seriesDone: boolean;
-    x: number;
-    y: number;
+    anchor: MenuAnchor;
     step: 'menu' | 'edit';
   } | null>(null);
   const recurMenuRef = useRef<HTMLDivElement | null>(null);
@@ -1458,70 +1483,50 @@ export function WeekView({ state, anchor, filter }: Props) {
     if (headTrackRef.current) headTrackRef.current.scrollLeft = v.scrollLeft;
   };
 
-  // Close the context menu on Escape or on any click outside it.
-  useEffect(() => {
-    if (!menu) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMenu(null);
-    };
-    const onDown = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenu(null);
-    };
-    window.addEventListener('keydown', onKey);
-    window.addEventListener('mousedown', onDown);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('mousedown', onDown);
-    };
-  }, [menu]);
+  // Wspólna powłoka wszystkich trzech menu (`useOverlay`): portal, stos warstw
+  // dla Escape, zamykanie PARĄ pointerdown+click na zewnątrz oraz — zamiast
+  // dawnego zamykania na scrollu i clampów `window.innerWidth - 240/280` —
+  // przeliczanie pozycji względem zapamiętanej kotwicy. Klawiatura menu
+  // włącza się TYLKO w krokach listy, nigdy w formularzach (pola same obsługują
+  // strzałki i pisanie). Nasłuchy są wyłącznie obserwatorami — żadna ścieżka
+  // przeciągania (inwariant 7) nie jest ruszana.
+  const closeMenu = useCallback(() => setMenu(null), []);
+  const closeSlotMenu = useCallback(() => setSlotMenu(null), []);
+  const closeRecurMenu = useCallback(() => setRecurMenu(null), []);
+  const menuAnchorRect = useCallback(() => anchorRect(menu?.anchor), [menu]);
+  const menuFocusReturn = useCallback(() => menu?.anchor.el ?? null, [menu]);
+  const slotAnchorRect = useCallback(() => anchorRect(slotMenu?.anchor), [slotMenu]);
+  const slotFocusReturn = useCallback(() => slotMenu?.anchor.el ?? null, [slotMenu]);
+  const recurAnchorRect = useCallback(() => anchorRect(recurMenu?.anchor), [recurMenu]);
+  const recurFocusReturn = useCallback(() => recurMenu?.anchor.el ?? null, [recurMenu]);
 
-  // Same close discipline for the empty-slot menu, plus scroll: it is anchored to
-  // viewport coordinates, so any grid scroll (capture:true catches the inner
-  // viewport too) must dismiss it rather than leave it floating off its slot.
-  // Listeners subscribe only while open and unsubscribe on close — no leaks.
-  useEffect(() => {
-    if (!slotMenu) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setSlotMenu(null);
-    };
-    const onDown = (e: MouseEvent) => {
-      if (slotMenuRef.current && !slotMenuRef.current.contains(e.target as Node)) {
-        setSlotMenu(null);
-      }
-    };
-    const onScroll = () => setSlotMenu(null);
-    window.addEventListener('keydown', onKey);
-    window.addEventListener('mousedown', onDown);
-    window.addEventListener('scroll', onScroll, true);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('mousedown', onDown);
-      window.removeEventListener('scroll', onScroll, true);
-    };
-  }, [slotMenu]);
-
-  // Same close discipline (Escape / outside-click / scroll) for the recurrence
-  // occurrence menu, which is anchored to viewport coordinates like slotMenu.
-  useEffect(() => {
-    if (!recurMenu) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setRecurMenu(null);
-    };
-    const onDown = (e: MouseEvent) => {
-      if (recurMenuRef.current && !recurMenuRef.current.contains(e.target as Node)) {
-        setRecurMenu(null);
-      }
-    };
-    const onScroll = () => setRecurMenu(null);
-    window.addEventListener('keydown', onKey);
-    window.addEventListener('mousedown', onDown);
-    window.addEventListener('scroll', onScroll, true);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('mousedown', onDown);
-      window.removeEventListener('scroll', onScroll, true);
-    };
-  }, [recurMenu]);
+  const menuOverlay = useOverlay({
+    open: menu !== null,
+    onClose: closeMenu,
+    overlayRef: menuRef,
+    getAnchorRect: menuAnchorRect,
+    getFocusReturn: menuFocusReturn,
+    menuKeyboard: menu?.step === 'menu',
+    // Kotwica-przycisk („Zaplanuj część”) odsuwa się o 4 px jak dawne
+    // `rect.bottom + 4`; kotwica-punkt (prawy klik) siada dokładnie w kursorze.
+    offset: menu !== null && menu.anchor.point === null ? 4 : 0,
+  });
+  const slotOverlay = useOverlay({
+    open: slotMenu !== null,
+    onClose: closeSlotMenu,
+    overlayRef: slotMenuRef,
+    getAnchorRect: slotAnchorRect,
+    getFocusReturn: slotFocusReturn,
+    menuKeyboard: true,
+  });
+  const recurOverlay = useOverlay({
+    open: recurMenu !== null,
+    onClose: closeRecurMenu,
+    overlayRef: recurMenuRef,
+    getAnchorRect: recurAnchorRect,
+    getFocusReturn: recurFocusReturn,
+    menuKeyboard: recurMenu?.step === 'menu',
+  });
 
   // Right-click on bare grid (not a block — those own their own menu and stop the
   // event) → offer "Dodaj zadanie" at the snapped start under the cursor.
@@ -1534,12 +1539,12 @@ export function WeekView({ state, anchor, filter }: Props) {
     // Same guard for the presentational event block (no pointer path of its own).
     if ((e.target as HTMLElement).closest('.week-event-block')) return;
     e.preventDefault();
-    const rect = e.currentTarget.getBoundingClientRect();
+    const column = e.currentTarget;
+    const rect = column.getBoundingClientRect();
     const startMinutes = slotStartFromOffset(e.clientY - rect.top, HOUR_PX);
     setMenu(null);
     setSlotMenu({
-      x: Math.min(e.clientX, window.innerWidth - 240),
-      y: Math.min(e.clientY, window.innerHeight - 100),
+      anchor: pointAnchor(column, e.clientX, e.clientY),
       date,
       startMinutes,
     });
@@ -1589,8 +1594,7 @@ export function WeekView({ state, anchor, filter }: Props) {
       overridden: occ.overridden,
       done: occ.done,
       seriesDone: isDoneStatus(state, task.statusId),
-      x: Math.min(e.clientX, window.innerWidth - 280),
-      y: Math.min(e.clientY, window.innerHeight - 260),
+      anchor: pointAnchor(e.currentTarget as HTMLElement, e.clientX, e.clientY),
       step: 'menu',
     });
     },
@@ -1673,8 +1677,7 @@ export function WeekView({ state, anchor, filter }: Props) {
     setInsertTaskId(entry.taskId);
     setMenu({
       entry,
-      x: Math.min(e.clientX, window.innerWidth - 280),
-      y: Math.min(e.clientY, window.innerHeight - 240),
+      anchor: pointAnchor(e.currentTarget as HTMLElement, e.clientX, e.clientY),
       step: 'menu',
       position: 'after',
     });
@@ -1736,12 +1739,10 @@ export function WeekView({ state, anchor, filter }: Props) {
   // grid-block drag re-renders WeekView; a state change re-renders cards anyway.
   const openSchedule = useCallback(
     (entry: WorkloadEntry, btn: HTMLElement) => {
-      const rect = btn.getBoundingClientRect();
       initScheduleForm(entry);
       setMenu({
         entry,
-        x: Math.min(rect.left, window.innerWidth - 280),
-        y: Math.min(rect.bottom + 4, window.innerHeight - 240),
+        anchor: { el: btn, point: null },
         step: 'schedule',
         position: 'after',
       });
@@ -2125,11 +2126,12 @@ export function WeekView({ state, anchor, filter }: Props) {
           pasek kalendarza (`NowClockBadge` w CalendarPage), bo narożna wersja
           zasłaniała bloki. Linia „teraz” w kolumnie dnia zostaje bez zmian. */}
 
+      <OverlayLayer>
       <AnimatePresence>
         {menu && (
           <motion.div
             className="context-menu"
-            style={{ left: menu.x, top: menu.y, transformOrigin: 'top left' }}
+            style={{ ...menuOverlay.style, transformOrigin: 'top left' }}
             role="menu"
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -2362,12 +2364,14 @@ export function WeekView({ state, anchor, filter }: Props) {
           </motion.div>
         )}
       </AnimatePresence>
+      </OverlayLayer>
 
+      <OverlayLayer>
       <AnimatePresence>
         {slotMenu && (
           <motion.div
             className="context-menu"
-            style={{ left: slotMenu.x, top: slotMenu.y, transformOrigin: 'top left' }}
+            style={{ ...slotOverlay.style, transformOrigin: 'top left' }}
             role="menu"
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -2399,12 +2403,14 @@ export function WeekView({ state, anchor, filter }: Props) {
           </motion.div>
         )}
       </AnimatePresence>
+      </OverlayLayer>
 
+      <OverlayLayer>
       <AnimatePresence>
         {recurMenu && (
           <motion.div
             className="context-menu"
-            style={{ left: recurMenu.x, top: recurMenu.y, transformOrigin: 'top left' }}
+            style={{ ...recurOverlay.style, transformOrigin: 'top left' }}
             role="menu"
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -2542,6 +2548,7 @@ export function WeekView({ state, anchor, filter }: Props) {
           </motion.div>
         )}
       </AnimatePresence>
+      </OverlayLayer>
     </div>
   );
 }

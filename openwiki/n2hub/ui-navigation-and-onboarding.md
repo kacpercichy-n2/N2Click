@@ -103,6 +103,26 @@
   tekstu wyprowadzone z karty nie kasuje edycji). Nazwa dialogu idzie z
   `aria-labelledby` na widoczny `<h1 class="task-modal-title">` (`useId`).
   `OnboardingRoot` i `GlobalSearch` mają własną obsługę i NIE korzystają z hooka.
+- Powłoka nakładek (popover / menu kontekstowe) jest WSPÓLNA i równoległa do
+  powłoki modali: czysta logika w `src/components/overlayShell.ts`
+  (`resolveOverlayPosition` — flip/shift + `availableHeight`;
+  `createOverlayStack` — Escape tylko dla wierzchniej warstwy;
+  `createDismissState` / `resolveDismissEvent` — zamknięcie dopiero przy PARZE
+  `pointerdown` + `click` poza nakładką, a `contextmenu` poza nakładką zamyka od
+  razu, bo prawy klik nie daje `click`; `resolveMenuNavKey` / `matchTypeahead` +
+  `overlayShell.test.ts` w node), cienka warstwa DOM w `src/components/useOverlay.ts`
+  z komponentem `OverlayLayer` portalującym do leniwie tworzonego
+  `#n2hub-overlay-root`. Stos Escape stoi PONAD modalami: nasłuch jest w fazie
+  capture i woła `stopPropagation` tylko wtedy, gdy wierzchnia nakładka
+  konsumuje klawisz, więc pierwszy Escape zamyka popover, a dopiero drugi modal.
+  Konsumenci: trzy menu kontekstowe `WeekView` (portalowane, mierzone,
+  REPOZYCJONOWANE przy scrollu zamiast zamykania, klawiatura menu — roving
+  tabindex / strzałki / Home/End / typeahead — tylko w krokach `role="menu"`)
+  oraz `FilterPanel`, który świadomie NIE jest portalowany (kotwiczenie CSS i
+  mobilny breakpoint `position: static` zostają) i bierze z hooka wyłącznie
+  stos, zamykanie i powrót fokusa, z przyciskiem „Filtry” jako triggerem.
+  Drabina `z-index` jest stokenizowana jako `--n2-z-*` w `:root`; na `var()`
+  przeszły tylko `.context-menu` i `.filter-popover`.
 - `src/utils/dirtyRegistry.ts` and `src/utils/useSaveStatus.ts` support shared
   unsaved-edit and save-state behavior. The registry also holds the opt-in
   router navigation guard (scopes `task-modal`/`project-detail` plus a one-shot
