@@ -2,7 +2,7 @@
 // sterowany parametrem `?zgloszenie=new` / `?zgloszenie=<id>`, montowany RAZ na
 // poziomie App, zamknięcie usuwa parametr i zostawia resztę URL-a nietkniętą.
 // Dzięki temu „Zgłoś” nie opuszcza bieżącej strony i da się podlinkować.
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import { useStore } from '../store/AppStore';
@@ -19,6 +19,7 @@ import {
   TICKET_PRIORITY_LABELS,
 } from '../utils/tickets';
 import { bypassNavGuardOnce, clearNavGuard, setNavGuard } from '../utils/dirtyRegistry';
+import { useModalShell } from './useModalShell';
 import { IconButton } from './IconButton';
 import { X } from './icons';
 
@@ -120,18 +121,12 @@ function TicketModalShell({ ticketParam, onClose }: ShellProps) {
     closeDeliberately();
   }, [closeDeliberately]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') requestClose();
-    };
-    window.addEventListener('keydown', onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [requestClose]);
+  // Escape, pułapka fokusa, powrót fokusa i blokada scrolla — wspólna powłoka.
+  const titleId = useId();
+  const { cardRef, cardProps, viewportProps } = useModalShell({
+    onRequestClose: requestClose,
+    labelledBy: titleId,
+  });
 
   const handleDelete = () => {
     if (!existing || !canManage) return;
@@ -156,20 +151,20 @@ function TicketModalShell({ ticketParam, onClose }: ShellProps) {
         exit={{ opacity: 0 }}
         transition={{ duration: 0.18 }}
       />
-      <div className="task-modal-viewport" onClick={requestClose}>
+      <div className="task-modal-viewport" {...viewportProps}>
         <motion.div
+          ref={cardRef}
           className="task-modal-card ticket-modal-card"
-          role="dialog"
-          aria-modal="true"
-          aria-label={heading}
-          onClick={(e) => e.stopPropagation()}
+          {...cardProps}
           initial={{ opacity: 0, scale: 0.96, y: 8 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.96, y: 8 }}
           transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
         >
           <div className="task-modal-head">
-            <h1 className="task-modal-title">{heading}</h1>
+            <h1 className="task-modal-title" id={titleId}>
+              {heading}
+            </h1>
             <div className="task-modal-head-actions">
               {existing && visible && canManage && (
                 <button type="button" className="btn danger-ghost" onClick={handleDelete}>
@@ -276,6 +271,7 @@ function TicketEditor({ existing, onDirtyChange, onSaved, onCancel }: EditorProp
         <label htmlFor="ticket-title">Nazwa zgłoszenia *</label>
         <input
           id="ticket-title"
+          data-autofocus
           value={draft.title}
           onChange={(e) => patch({ title: e.target.value }, 'title')}
           placeholder="np. Kalendarz nie zapisuje przesuniętego bloku"

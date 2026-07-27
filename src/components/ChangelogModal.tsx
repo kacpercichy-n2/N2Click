@@ -1,13 +1,16 @@
 // Popout dziennika zmian („Changelog"). Wzorzec jest ten sam co w TicketModal:
 // scrim + viewport z zamknięciem po kliknięciu w tło, klawisz Escape zamyka,
 // body dostaje `overflow: hidden`, a wejście/wyjście animuje AnimatePresence.
+// Zachowanie powłoki (fokus, pułapka Tab, blokada scrolla, para pointerdown +
+// click na tle) trzyma wspólny `useModalShell`.
 // W odróżnieniu od TicketModal nie chodzi tu o edycję danych, więc modal jest
 // sterowany zwykłym stanem (`open`/`onClose`), bez parametru w URL i strażnika
 // nawigacji.
-import { useCallback, useEffect } from 'react';
+import { useCallback, useId } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { CHANGELOG, changelogRangeLabel } from '../data/changelog';
 import type { ChangelogEntry, ChangelogItem } from '../data/changelog';
+import { useModalShell } from './useModalShell';
 import { IconButton } from './IconButton';
 import { X } from './icons';
 
@@ -43,19 +46,11 @@ export function ChangelogModal({ open, onClose }: Props) {
 
 function ChangelogModalShell({ onClose }: { onClose: () => void }) {
   const requestClose = useCallback(() => onClose(), [onClose]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') requestClose();
-    };
-    window.addEventListener('keydown', onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [requestClose]);
+  const titleId = useId();
+  const { cardRef, cardProps, viewportProps } = useModalShell({
+    onRequestClose: requestClose,
+    labelledBy: titleId,
+  });
 
   return (
     <>
@@ -66,20 +61,20 @@ function ChangelogModalShell({ onClose }: { onClose: () => void }) {
         exit={{ opacity: 0 }}
         transition={{ duration: 0.18 }}
       />
-      <div className="task-modal-viewport" onClick={requestClose}>
+      <div className="task-modal-viewport" {...viewportProps}>
         <motion.div
+          ref={cardRef}
           className="task-modal-card changelog-modal-card"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Dziennik zmian"
-          onClick={(e) => e.stopPropagation()}
+          {...cardProps}
           initial={{ opacity: 0, scale: 0.96, y: 8 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.96, y: 8 }}
           transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
         >
           <div className="task-modal-head">
-            <h1 className="task-modal-title">Co nowego</h1>
+            <h1 className="task-modal-title" id={titleId}>
+              Co nowego
+            </h1>
             <div className="task-modal-head-actions">
               <IconButton
                 className="task-modal-close"

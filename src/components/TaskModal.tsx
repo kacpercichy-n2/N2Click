@@ -2,7 +2,7 @@
 // as an overlay driven by the `?task=<id>` (or `?task=new[&project=<id>]`)
 // search params. Rendered ONCE at App level. Closing removes the task/project
 // params while keeping the rest of the URL (and the page's scroll) intact.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import { useStore, usePersistence } from '../store/AppStore';
@@ -23,6 +23,7 @@ import {
   rangeAvailabilityForPerson,
 } from '../store/selectors';
 import { PlanningBadge } from './PlanningBadge';
+import { useModalShell } from './useModalShell';
 import { IconButton } from './IconButton';
 import { X } from './icons';
 import { CommentsPanel } from './CommentsPanel';
@@ -259,19 +260,13 @@ function TaskModalShell({
     closeDeliberately();
   }, [closeDeliberately]);
 
-  // Escape closes (with guard); body scroll locked while the modal is open.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') requestClose();
-    };
-    window.addEventListener('keydown', onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [requestClose]);
+  // Escape (z pytaniem o niezapisane zmiany), pułapka fokusa, powrót fokusa po
+  // zamknięciu i blokada scrolla — wszystko we wspólnej powłoce modala.
+  const titleId = useId();
+  const { cardRef, cardProps, viewportProps } = useModalShell({
+    onRequestClose: requestClose,
+    labelledBy: titleId,
+  });
 
   const handleDelete = () => {
     if (!existing) return;
@@ -296,20 +291,20 @@ function TaskModalShell({
         exit={{ opacity: 0 }}
         transition={{ duration: 0.18 }}
       />
-      <div className="task-modal-viewport" onClick={requestClose}>
+      <div className="task-modal-viewport" {...viewportProps}>
         <motion.div
+          ref={cardRef}
           className="task-modal-card"
-          role="dialog"
-          aria-modal="true"
-          aria-label={heading}
-          onClick={(e) => e.stopPropagation()}
+          {...cardProps}
           initial={{ opacity: 0, scale: 0.96, y: 8 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.96, y: 8 }}
           transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
         >
           <div className="task-modal-head">
-            <h1 className="task-modal-title">{heading}</h1>
+            <h1 className="task-modal-title" id={titleId}>
+              {heading}
+            </h1>
             <div className="task-modal-head-actions">
               {!notFound && (
                 <SaveStatus
@@ -601,11 +596,8 @@ function TaskEditor({
 
   const [titleTouched, setTitleTouched] = useState(false);
 
-  // Focus the title input when the editor opens.
-  const titleRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    titleRef.current?.focus();
-  }, []);
+  // Pole startowe modala: `data-autofocus` na tytule (fokus ustawia powłoka
+  // `useModalShell`, żeby nie było dwóch konkurencyjnych `.focus()`).
 
   const titleError = title.trim() === '';
   const perErr = periodError(startDate, endDate, { maxDays: MAX_TASK_PERIOD_DAYS });
@@ -1125,7 +1117,7 @@ function TaskEditor({
           <label htmlFor="t-title">Tytuł *</label>
           <input
             id="t-title"
-            ref={titleRef}
+            data-autofocus
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             onBlur={() => setTitleTouched(true)}

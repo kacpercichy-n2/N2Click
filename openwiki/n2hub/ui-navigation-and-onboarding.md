@@ -90,6 +90,19 @@
   tworzy własny link i usuwa go przy zeru.
 - `src/onboarding/catalog.ts` owns copy, roles and route mapping; components
   expose stable `data-tour` anchors only.
+- Powłoka modali (TaskModal, TicketModal, EventModal, ChangelogModal) jest
+  WSPÓLNA: czysta logika w `src/components/modalShell.ts`
+  (`resolveInitialFocusIndex` / `resolveTrapAction` / `shouldCloseOnBackdrop` /
+  `scrollbarCompensation` / `createScrollLockCounter` + `modalShell.test.ts` w
+  node), cienka warstwa DOM w hooku `src/components/useModalShell.ts`. Hook daje
+  fokus startowy (`data-autofocus` → pierwszy w cyklu Tab → karta), pułapkę Tab,
+  POWRÓT fokusa na element sprzed otwarcia (każda ścieżka zamknięcia), Escape
+  wołający `onRequestClose` modala (pytanie o niezapisane zmiany zostaje w
+  modalu), blokadę scrolla ze WSPÓLNYM licznikiem + kompensacją paska oraz
+  zamknięcie tłem dopiero przy parze `pointerdown` + `click` na tle (zaznaczanie
+  tekstu wyprowadzone z karty nie kasuje edycji). Nazwa dialogu idzie z
+  `aria-labelledby` na widoczny `<h1 class="task-modal-title">` (`useId`).
+  `OnboardingRoot` i `GlobalSearch` mają własną obsługę i NIE korzystają z hooka.
 - `src/utils/dirtyRegistry.ts` and `src/utils/useSaveStatus.ts` support shared
   unsaved-edit and save-state behavior. The registry also holds the opt-in
   router navigation guard (scopes `task-modal`/`project-detail` plus a one-shot

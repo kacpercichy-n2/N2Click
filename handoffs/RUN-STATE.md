@@ -148,3 +148,10 @@ row; TaskModal start-hour hint hidden when readOnly; `startTimes` seed shares ne
 `normalizeStartMinutes` with `setCellStart` (finite + snap + clamp), so an
 off-grid pin can never silently void SAVE_TASK. saveTaskWorkload+taskSaveBlockers
 41 pass; tsc clean. No context expansion, no blocker, wiki unchanged.
+
+n2hub-277 modal shell: no ModalFrame exists; new pure `modalShell.ts` (+23 tests)
+and hook `useModalShell.ts` own focus entry/trap/return, Escape, ref-counted
+scroll lock + scrollbar padding, `aria-labelledby` and the pointerdown+click
+backdrop pair for Task/Ticket/Event/Changelog; IconButton gains forwardRef.
+npm test 1630 pass, build green. Browser checks unrunnable (no playwright).
+OnboardingRoot/GlobalSearch/App drawer deferred. Wiki updated.

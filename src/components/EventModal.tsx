@@ -4,7 +4,7 @@
 // nietkniętą. Prefill (data/godzina/osoba) przychodzi rozłącznymi parametrami
 // `wydarzenieData` / `wydarzenieStart` / `wydarzenieOsoba`, żeby nie kolidować z
 // prefillem TaskModala (`date`/`assignee`).
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import { useStore } from '../store/AppStore';
@@ -18,6 +18,7 @@ import { isoWeekday } from '../utils/recurrence';
 import { normalizeProjectDocumentUrl } from '../utils/projectDocuments';
 import { personColor } from '../utils/colors';
 import { bypassNavGuardOnce, clearNavGuard, setNavGuard } from '../utils/dirtyRegistry';
+import { useModalShell } from './useModalShell';
 import { IconButton } from './IconButton';
 import { X } from './icons';
 
@@ -151,18 +152,12 @@ function EventModalShell({ eventParam, prefill, onClose }: ShellProps) {
     closeDeliberately();
   }, [closeDeliberately]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') requestClose();
-    };
-    window.addEventListener('keydown', onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [requestClose]);
+  // Escape, pułapka fokusa, powrót fokusa i blokada scrolla — wspólna powłoka.
+  const titleId = useId();
+  const { cardRef, cardProps, viewportProps } = useModalShell({
+    onRequestClose: requestClose,
+    labelledBy: titleId,
+  });
 
   const handleDelete = () => {
     if (!existing || !canManage) return;
@@ -189,20 +184,20 @@ function EventModalShell({ eventParam, prefill, onClose }: ShellProps) {
         exit={{ opacity: 0 }}
         transition={{ duration: 0.18 }}
       />
-      <div className="task-modal-viewport" onClick={requestClose}>
+      <div className="task-modal-viewport" {...viewportProps}>
         <motion.div
+          ref={cardRef}
           className="task-modal-card ticket-modal-card"
-          role="dialog"
-          aria-modal="true"
-          aria-label={heading}
-          onClick={(e) => e.stopPropagation()}
+          {...cardProps}
           initial={{ opacity: 0, scale: 0.96, y: 8 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.96, y: 8 }}
           transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
         >
           <div className="task-modal-head">
-            <h1 className="task-modal-title">{heading}</h1>
+            <h1 className="task-modal-title" id={titleId}>
+              {heading}
+            </h1>
             <div className="task-modal-head-actions">
               {existing && canManage && (
                 <button type="button" className="btn danger-ghost" onClick={handleDelete}>
@@ -415,6 +410,7 @@ function EventEditor({
         <label htmlFor="event-title">Tytuł *</label>
         <input
           id="event-title"
+          data-autofocus
           value={title}
           onChange={(e) => {
             setTitle(e.target.value);
