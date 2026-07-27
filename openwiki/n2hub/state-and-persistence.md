@@ -189,13 +189,25 @@
   egzekwowana na TRZECH granicach — reduktor, `normalizeTaskMeta`, hydracja
   chmury): klucz `recurrence` obecny tylko przy poprawnej regule, NIGDY na szkicu
   (`isDraft === true`) i NIGDY przy niepoprawnym `startDate`; `until` tylko gdy
-  poprawny i `>= startDate`; wyjątek albo `{date, skip:true}` albo
-  `{date, startMinutes, durationMinutes}` na siatce 15 min, RÓŻNY od reguły,
-  którego `date` jest realną datą wystąpienia; `overrides` posortowane po dacie,
+  poprawny i `>= startDate`; wyjątek w JEDNEJ z CZTERECH form —
+  `{date, skip:true}`, `{date, done:true}`, `{date, startMinutes,
+  durationMinutes}` (siatka 15 min, RÓŻNE od reguły) albo `{date, done:true,
+  startMinutes, durationMinutes}` — którego `date` jest realną datą wystąpienia;
+  `skip` wygrywa i ZRZUCA `done` (pominięty dzień nie ma wystąpienia), `done`
+  kanonicznie tylko jako literalne `true` (`done:false` nigdy nie jest
+  zapisywane), a niepoprawne/równe regule przesunięcie NIE unieważnia `done`
+  (zwija się do `{date, done:true}`); `overrides` posortowane po dacie,
   brak klucza gdy pusto. Mutacje: `SET_TASK_RECURRENCE` („edytuj wszystkie" /
   utworzenie / `null` = wyczyszczenie reguły I wyjątków; zmiana reguły ZACHOWUJE
-  wyjątki i re-kanonikalizuje je) oraz `SET_RECURRENCE_OVERRIDE` („edytuj to
-  wystąpienie"; upsert/usuń po dacie, przesunięcie równe regule = usunięcie).
+  wyjątki i re-kanonikalizuje je), `SET_RECURRENCE_OVERRIDE` („edytuj to
+  wystąpienie"; upsert/usuń po dacie, przesunięcie równe regule = usunięcie,
+  `override: null` czyści CAŁY wyjątek razem z `done`, a przesunięcie ZACHOWUJE
+  istniejące `done`) oraz `SET_OCCURRENCE_DONE { taskId, date, done }`
+  (PKG-20260727: wykonanie POJEDYNCZEGO wystąpienia — nigdy nie rusza
+  `Task.statusId` ani wierszy workload; odrzuca datę z `skip` i no-opy).
+  Selektor prezentacyjny `occurrenceIsDone(state, task, occurrence)` =
+  `occurrence.done === true || isDoneStatus(state, task.statusId)` (lustro
+  `blockIsDone` — done-status zadania podświetla CAŁĄ serię).
   Każde niepoprawne wejście (nieznane id, szkic, niepoprawny start, reguła/until
   poza zakresem, `date` niebędące wystąpieniem, przesunięcie poza siatką,
   strukturalnie zły ładunek) zwraca TĘ SAMĄ referencję (inwariant 6). `SAVE_TASK`

@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { reducer, type SaveTaskPayload } from './AppStore';
 import { emptyData } from './storage';
 import { dayTotal, recurrenceOccurrencesForDate } from './selectors';
+import { expandOccurrences } from '../utils/recurrence';
 import type { AppData, Person, Project, Status, Task, TaskAssignment } from '../types';
 
 const ACTIVE: Status = { id: 'active', name: 'W toku', slug: 'w-toku', color: '#9aa7c4', order: 0, archived: false, isDone: false };
@@ -186,6 +187,117 @@ describe('SET_RECURRENCE_OVERRIDE', () => {
     expect(reducer(state, { type: 'SET_RECURRENCE_OVERRIDE', taskId: 't1', date: '2026-07-13', override: { startMinutes: 605, durationMinutes: 30 } })).toBe(state);
     // structurally wrong payload
     expect(reducer(state, { type: 'SET_RECURRENCE_OVERRIDE', taskId: 't1', date: '2026-07-13', override: {} as never })).toBe(state);
+  });
+});
+
+describe('SET_OCCURRENCE_DONE (PKG-20260727-recurring-occurrence-done)', () => {
+  const withRule = () => baseState([makeTask({ id: 't1', recurrence: { ...RULE } })]);
+  const mark = (state: AppData, date: string, done: boolean) =>
+    reducer(state, { type: 'SET_OCCURRENCE_DONE', taskId: 't1', date, done });
+
+  it('marks ONE occurrence done and leaves its siblings alone', () => {
+    const state = withRule();
+    const next = mark(state, '2026-07-13', true);
+    expect(next.tasks[0].recurrence!.overrides).toEqual([{ date: '2026-07-13', done: true }]);
+    // Sąsiednie wystąpienia serii pozostają niezrobione (inwariant: per-data).
+    const occ = expandOccurrences(next.tasks[0].recurrence!, '2026-07-06', '2026-07-06', '2026-07-27');
+    expect(occ.map((o) => o.date)).toEqual(['2026-07-06', '2026-07-13', '2026-07-20', '2026-07-27']);
+    expect(occ.map((o) => o.done)).toEqual([false, true, false, false]);
+    // NIGDY nie rusza statusu zadania (całą serię przełącza SET_TASK_STATUS).
+    expect(next.tasks[0].statusId).toBe('active');
+    // Inwariant 1: żadnych wierszy workload.
+    expect(next.workload).toEqual([]);
+  });
+
+  it('preserves an existing time-shift when marking done', () => {
+    let state = reducer(withRule(), {
+      type: 'SET_RECURRENCE_OVERRIDE', taskId: 't1', date: '2026-07-13',
+      override: { startMinutes: 600, durationMinutes: 30 },
+    });
+    state = mark(state, '2026-07-13', true);
+    expect(state.tasks[0].recurrence!.overrides).toEqual([
+      { date: '2026-07-13', done: true, startMinutes: 600, durationMinutes: 30 },
+    ]);
+  });
+
+  it('a later time-shift on a done date preserves the done flag', () => {
+    let state = mark(withRule(), '2026-07-13', true);
+    state = reducer(state, {
+      type: 'SET_RECURRENCE_OVERRIDE', taskId: 't1', date: '2026-07-13',
+      override: { startMinutes: 600, durationMinutes: 30 },
+    });
+    expect(state.tasks[0].recurrence!.overrides).toEqual([
+      { date: '2026-07-13', done: true, startMinutes: 600, durationMinutes: 30 },
+    ]);
+    // Przesunięcie RÓWNE regule zwija się do samego „done" (forma kanoniczna).
+    const back = reducer(state, {
+      type: 'SET_RECURRENCE_OVERRIDE', taskId: 't1', date: '2026-07-13',
+      override: { startMinutes: 540, durationMinutes: 60 },
+    });
+    expect(back.tasks[0].recurrence!.overrides).toEqual([{ date: '2026-07-13', done: true }]);
+  });
+
+  it('done: false removes the key; an empty override disappears entirely', () => {
+    let state = mark(withRule(), '2026-07-13', true);
+    state = mark(state, '2026-07-13', false);
+    expect('overrides' in state.tasks[0].recurrence!).toBe(false);
+  });
+
+  it('done: false keeps a time-shift override alive', () => {
+    let state = reducer(withRule(), {
+      type: 'SET_RECURRENCE_OVERRIDE', taskId: 't1', date: '2026-07-13',
+      override: { startMinutes: 600, durationMinutes: 30 },
+    });
+    state = mark(state, '2026-07-13', true);
+    state = mark(state, '2026-07-13', false);
+    expect(state.tasks[0].recurrence!.overrides).toEqual([
+      { date: '2026-07-13', startMinutes: 600, durationMinutes: 30 },
+    ]);
+  });
+
+  it('SET_RECURRENCE_OVERRIDE null („przywróć zgodnie z regułą") also clears done', () => {
+    let state = mark(withRule(), '2026-07-13', true);
+    state = reducer(state, {
+      type: 'SET_RECURRENCE_OVERRIDE', taskId: 't1', date: '2026-07-13', override: null,
+    });
+    expect('overrides' in state.tasks[0].recurrence!).toBe(false);
+  });
+
+  it('a rule change („edytuj wszystkie") preserves the done override', () => {
+    const state = mark(withRule(), '2026-07-13', true);
+    const next = reducer(state, {
+      type: 'SET_TASK_RECURRENCE', taskId: 't1',
+      recurrence: { daysOfWeek: [1], startMinutes: 600, durationMinutes: 90 },
+    });
+    expect(next.tasks[0].recurrence!.overrides).toEqual([{ date: '2026-07-13', done: true }]);
+  });
+
+  it('rejects (same reference): unknown task, no rule, non-occurrence date, skipped date', () => {
+    const state = withRule();
+    expect(reducer(state, { type: 'SET_OCCURRENCE_DONE', taskId: 'ghost', date: '2026-07-13', done: true })).toBe(state);
+    const noRule = baseState([makeTask({ id: 't1' })]);
+    expect(reducer(noRule, { type: 'SET_OCCURRENCE_DONE', taskId: 't1', date: '2026-07-13', done: true })).toBe(noRule);
+    // Wtorek nie jest datą wystąpienia.
+    expect(mark(state, '2026-07-07', true)).toBe(state);
+    // Data z wyjątkiem `skip` nie ma wystąpienia do oznaczenia.
+    const skipped = reducer(state, {
+      type: 'SET_RECURRENCE_OVERRIDE', taskId: 't1', date: '2026-07-13', override: { skip: true },
+    });
+    expect(mark(skipped, '2026-07-13', true)).toBe(skipped);
+    expect(mark(skipped, '2026-07-13', false)).toBe(skipped);
+  });
+
+  it('no-op both ways returns the SAME reference (invariant 6)', () => {
+    const done = mark(withRule(), '2026-07-13', true);
+    expect(mark(done, '2026-07-13', true)).toBe(done); // true → true
+    const clean = withRule();
+    expect(mark(clean, '2026-07-13', false)).toBe(clean); // brak flagi → false
+    // false na dacie z samym przesunięciem czasu też jest no-opem.
+    const shifted = reducer(clean, {
+      type: 'SET_RECURRENCE_OVERRIDE', taskId: 't1', date: '2026-07-13',
+      override: { startMinutes: 600, durationMinutes: 30 },
+    });
+    expect(mark(shifted, '2026-07-13', false)).toBe(shifted);
   });
 });
 

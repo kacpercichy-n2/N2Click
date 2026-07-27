@@ -71,9 +71,15 @@
   positioned by time and painted BEHIND real blocks; they never enter
   `packDayBlocks`, collisions, totals or overload and carry NO pointer/drag
   handlers — only click/keyboard opens the task and right-click opens the
-  `recurMenu`. Menu actions map only to the two reducer actions: „Pomiń ten
-  dzień"/„Edytuj to wystąpienie" → `SET_RECURRENCE_OVERRIDE`, „Edytuj wszystkie"
-  → TaskModal's „Cykliczność" section (`SET_TASK_RECURRENCE`). `openSlotMenu`
+  `recurMenu`. Menu actions map only to reducer actions: „Pomiń ten
+  dzień"/„Edytuj to wystąpienie" → `SET_RECURRENCE_OVERRIDE`, „Oznacz to
+  wystąpienie jako zrobione"/„Cofnij wykonanie tego wystąpienia" →
+  `SET_OCCURRENCE_DONE`, „Oznacz całą serię jako zrobioną (status zadania)" →
+  `SET_TASK_STATUS` (PIERWSZY `isDone` w kolejności `state.statuses`; przy już
+  zrobionej serii menu pokazuje samą podpowiedź zamiast przełącznika),
+  „Edytuj wszystkie" → TaskModal's „Cykliczność" section (`SET_TASK_RECURRENCE`).
+  A done occurrence (`occurrenceIsDone`) only adds the additive `.done` class +
+  the shared `.block-done-mark` tick — no handler or pointer path changes. `openSlotMenu`
   guards `.week-recur-block` alongside `.week-block`. MonthView shows only a
   `.month-cell-recur` ⟳ marker (no blocks/menu). The rule is edited in TaskModal
   via explicit dispatch, never through the SAVE_TASK draft/auto-save. All bin

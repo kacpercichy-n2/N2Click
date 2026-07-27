@@ -164,6 +164,88 @@ describe('normalizeRecurrence canonicalization + idempotency', () => {
     expect(twice).toEqual(once);
   });
 
+  // ---- Per-occurrence done (PKG-20260727-recurring-occurrence-done) ----
+
+  it('keeps a done-only override and round-trips it unchanged (idempotence)', () => {
+    const once = normalizeRecurrence(
+      { ...base, overrides: [{ date: '2026-07-13', done: true }] },
+      ANCHOR,
+    );
+    expect(once!.overrides).toEqual([{ date: '2026-07-13', done: true }]);
+    expect(normalizeRecurrence(once, ANCHOR)).toEqual(once);
+  });
+
+  it('keeps all FOUR canonical override shapes, sorted by date', () => {
+    const once = normalizeRecurrence(
+      {
+        ...base,
+        overrides: [
+          { date: '2026-07-27', done: true, startMinutes: 600, durationMinutes: 30 },
+          { date: '2026-07-06', skip: true },
+          { date: '2026-07-20', startMinutes: 660, durationMinutes: 45 },
+          { date: '2026-07-13', done: true },
+        ],
+      },
+      ANCHOR,
+    );
+    expect(once!.overrides).toEqual([
+      { date: '2026-07-06', skip: true },
+      { date: '2026-07-13', done: true },
+      { date: '2026-07-20', startMinutes: 660, durationMinutes: 45 },
+      { date: '2026-07-27', done: true, startMinutes: 600, durationMinutes: 30 },
+    ]);
+    expect(normalizeRecurrence(once, ANCHOR)).toEqual(once); // idempotent by value
+  });
+
+  it('drops done: false / garbage done without invalidating the rest of the override', () => {
+    const value = normalizeRecurrence(
+      {
+        ...base,
+        overrides: [
+          { date: '2026-07-13', done: false }, // nothing left => dropped
+          { date: '2026-07-20', done: 'tak', startMinutes: 600, durationMinutes: 30 }, // shift survives
+          { date: '2026-07-27', done: 1 }, // nothing left => dropped
+        ],
+      },
+      ANCHOR,
+    );
+    expect(value!.overrides).toEqual([
+      { date: '2026-07-20', startMinutes: 600, durationMinutes: 30 },
+    ]);
+  });
+
+  it('skip wins over done (a skipped day has no occurrence)', () => {
+    const value = normalizeRecurrence(
+      { ...base, overrides: [{ date: '2026-07-13', skip: true, done: true }] },
+      ANCHOR,
+    );
+    expect(value!.overrides).toEqual([{ date: '2026-07-13', skip: true }]);
+  });
+
+  it('a time-shift equal to the rule collapses to a done-only override', () => {
+    const value = normalizeRecurrence(
+      { ...base, overrides: [{ date: '2026-07-13', done: true, startMinutes: 540, durationMinutes: 60 }] },
+      ANCHOR,
+    );
+    expect(value!.overrides).toEqual([{ date: '2026-07-13', done: true }]);
+  });
+
+  it('an invalid/off-grid time pair does not nuke a valid done flag', () => {
+    const value = normalizeRecurrence(
+      { ...base, overrides: [{ date: '2026-07-13', done: true, startMinutes: 605, durationMinutes: 30 }] },
+      ANCHOR,
+    );
+    expect(value!.overrides).toEqual([{ date: '2026-07-13', done: true }]);
+  });
+
+  it('a done override on a non-occurrence date is still dropped', () => {
+    const value = normalizeRecurrence(
+      { ...base, overrides: [{ date: '2026-07-07', done: true }] }, // Tuesday
+      ANCHOR,
+    );
+    expect(value!.overrides).toBeUndefined();
+  });
+
   it('returns undefined when the rule is invalid', () => {
     expect(normalizeRecurrence({ daysOfWeek: [], startMinutes: 540, durationMinutes: 60 }, ANCHOR)).toBeUndefined();
   });
@@ -189,7 +271,7 @@ describe('expandOccurrences', () => {
   it('expands only within [from, to] inclusive with the anchor lower bound', () => {
     const occ = expandOccurrences(rule, ANCHOR, '2026-07-01', '2026-07-14');
     expect(occ.map((o) => o.date)).toEqual(['2026-07-06', '2026-07-13']);
-    expect(occ[0]).toEqual({ date: '2026-07-06', startMinutes: 540, durationMinutes: 60, overridden: false });
+    expect(occ[0]).toEqual({ date: '2026-07-06', startMinutes: 540, durationMinutes: 60, overridden: false, done: false });
   });
 
   it('respects an inclusive until upper bound', () => {
@@ -225,8 +307,43 @@ describe('expandOccurrences', () => {
       overrides: [{ date: '2026-07-13', startMinutes: 600, durationMinutes: 30 }],
     };
     const occ = expandOccurrences(shifted, ANCHOR, '2026-07-06', '2026-07-13');
-    expect(occ[1]).toEqual({ date: '2026-07-13', startMinutes: 600, durationMinutes: 30, overridden: true });
+    expect(occ[1]).toEqual({ date: '2026-07-13', startMinutes: 600, durationMinutes: 30, overridden: true, done: false });
     expect(occ[0].overridden).toBe(false);
+  });
+
+  // ---- Per-occurrence done (PKG-20260727-recurring-occurrence-done) ----
+
+  it('marks done ONLY on the flagged date, other occurrences stay un-done', () => {
+    const withDone: TaskRecurrence = {
+      ...rule,
+      overrides: [{ date: '2026-07-13', done: true }],
+    };
+    const occ = expandOccurrences(withDone, ANCHOR, '2026-07-06', '2026-07-20');
+    expect(occ.map((o) => o.date)).toEqual(['2026-07-06', '2026-07-13', '2026-07-20']);
+    expect(occ.map((o) => o.done)).toEqual([false, true, false]);
+    // Done-only override keeps the rule's times and is NOT a time-shift.
+    expect(occ[1]).toEqual({
+      date: '2026-07-13', startMinutes: 540, durationMinutes: 60, overridden: false, done: true,
+    });
+  });
+
+  it('a shifted + done occurrence carries BOTH flags', () => {
+    const both: TaskRecurrence = {
+      ...rule,
+      overrides: [{ date: '2026-07-13', done: true, startMinutes: 600, durationMinutes: 30 }],
+    };
+    const occ = expandOccurrences(both, ANCHOR, '2026-07-06', '2026-07-13');
+    expect(occ[1]).toEqual({
+      date: '2026-07-13', startMinutes: 600, durationMinutes: 30, overridden: true, done: true,
+    });
+    expect(occ[0].done).toBe(false);
+  });
+
+  it('a skipped day never yields a done occurrence', () => {
+    const skipped: TaskRecurrence = { ...rule, overrides: [{ date: '2026-07-13', skip: true }] };
+    const occ = expandOccurrences(skipped, ANCHOR, '2026-07-06', '2026-07-20');
+    expect(occ.map((o) => o.date)).toEqual(['2026-07-06', '2026-07-20']);
+    expect(occ.every((o) => o.done === false)).toBe(true);
   });
 
   it('clamps a window longer than 400 days from `from`', () => {

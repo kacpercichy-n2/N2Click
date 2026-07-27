@@ -25,6 +25,7 @@ import {
   hoursForTaskPersonOnDate,
   isDoneStatus,
   isPersonWorkday,
+  occurrenceIsDone,
   overdueTasksForPerson,
   overloadedDatesForPersonInRange,
   peopleWithBirthdayOnDate,
@@ -40,6 +41,7 @@ import {
 import { reducer } from './AppStore';
 import { emptyData } from './storage';
 import { BIN_DATE } from '../utils/time';
+import type { RecurrenceOccurrence } from '../utils/recurrence';
 import type { AppData, Person, Status, Task, TaskAssignment, WorkloadEntry } from '../types';
 
 function makeState(overrides: Partial<AppData> = {}): AppData {
@@ -177,6 +179,32 @@ describe('blockIsDone (PKG-per-block-done)', () => {
     expect(blockIsDone(state, task, a)).toBe(false);
     expect(blockIsDone(state, task, { ...a, done: false })).toBe(false);
     expect(blockIsDone(state, task, { ...a, done: true })).toBe(true);
+  });
+});
+
+describe('occurrenceIsDone (PKG-recurring-occurrence-done)', () => {
+  const ACTIVE = makeStatus({ id: 'active', isDone: false });
+  const DONE = makeStatus({ id: 'done', isDone: true });
+  const occ = (done: boolean): RecurrenceOccurrence => ({
+    date: '2026-07-13',
+    startMinutes: 540,
+    durationMinutes: 60,
+    overridden: false,
+    done,
+  });
+
+  it("the occurrence's OWN flag lights it on an active task", () => {
+    const task = makeTask({ id: 't1', statusId: 'active' });
+    const state = makeState({ statuses: [ACTIVE, DONE], tasks: [task] });
+    expect(occurrenceIsDone(state, task, occ(true))).toBe(true);
+    expect(occurrenceIsDone(state, task, occ(false))).toBe(false);
+  });
+
+  it('a done task STATUS lights an un-flagged occurrence (whole series)', () => {
+    const task = makeTask({ id: 't1', statusId: 'done' });
+    const state = makeState({ statuses: [ACTIVE, DONE], tasks: [task] });
+    expect(occurrenceIsDone(state, task, occ(false))).toBe(true);
+    expect(occurrenceIsDone(state, task, occ(true))).toBe(true);
   });
 });
 

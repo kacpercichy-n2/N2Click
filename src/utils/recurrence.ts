@@ -4,8 +4,8 @@
 //
 // A recurring task repeats on chosen ISO weekdays at a fixed time-of-day, from
 // its anchor (`task.startDate`) until an optional inclusive `until` bound.
-// Per-date OVERRIDES either skip the day or shift its time; overrides never move
-// an occurrence to a different calendar day.
+// Per-date OVERRIDES either skip the day, shift its time or mark that single
+// occurrence done; overrides never move an occurrence to a different calendar day.
 //
 // INVARIANT 1: occurrences are NEVER materialized as `WorkloadEntry` rows and
 // never feed totals/availability/overload/collision — they are presentational.
@@ -20,6 +20,12 @@ export interface RecurrenceOccurrence {
   durationMinutes: number;
   /** True when a time-shift override replaced the rule's start/duration. */
   overridden: boolean;
+  /**
+   * True when THIS date's override carries `done: true` (per-occurrence
+   * completion). Independent of `overridden` and of the task status — purely
+   * presentational (invariant 1).
+   */
+  done: boolean;
 }
 
 /** Defensive upper bound on how many days ahead expansion will ever iterate. */
@@ -98,11 +104,19 @@ export function isOccurrenceDate(
 
 /**
  * Canonical override from untrusted input for a rule + anchor; `null` when it
- * should be dropped. `{ date, skip: true }` when `skip === true`; otherwise a
- * `{ date, startMinutes, durationMinutes }` time-shift when both times are on
- * the grid, duration >= 15, start + duration <= 1440 AND the pair DIFFERS from
- * the base rule (an override equal to the rule carries no information). The
- * `date` must be a real occurrence date of the rule.
+ * should be dropped. The `date` must be a real occurrence date of the rule.
+ * FOUR canonical shapes:
+ * - `{ date, skip: true }` when `skip === true` — a skipped day has no
+ *   occurrence, so `skip` wins and a `done` flag is DROPPED;
+ * - `{ date, done: true }` — done-only (the rule's times stand);
+ * - `{ date, startMinutes, durationMinutes }` — a time-shift, kept only when
+ *   both times are on the grid, duration >= 15, start + duration <= 1440 AND
+ *   the pair DIFFERS from the base rule (an override equal to the rule carries
+ *   no information); an equal/invalid pair is simply omitted and must NOT nuke
+ *   a valid `done`;
+ * - `{ date, done: true, startMinutes, durationMinutes }` — both.
+ * `done` is canonically only the literal `true`; any other value is dropped.
+ * An override left with neither `done` nor a time-shift is dropped (`null`).
  */
 function normalizeOverride(
   raw: unknown,
@@ -119,13 +133,25 @@ function normalizeOverride(
 
   if (rec.skip === true) return { date, skip: true };
 
+  const done = rec.done === true;
+
   const { startMinutes, durationMinutes } = rec;
-  if (!isGridMinute(startMinutes)) return null;
-  if (!isGridMinute(durationMinutes) || (durationMinutes as number) < MINUTE_STEP) return null;
-  if ((startMinutes as number) + (durationMinutes as number) > DAY_MINUTES) return null;
-  // An override equal to the base rule pair carries no information — drop it.
-  if (startMinutes === rule.startMinutes && durationMinutes === rule.durationMinutes) return null;
-  return { date, startMinutes: startMinutes as number, durationMinutes: durationMinutes as number };
+  const timeShiftValid =
+    isGridMinute(startMinutes) &&
+    isGridMinute(durationMinutes) &&
+    (durationMinutes as number) >= MINUTE_STEP &&
+    (startMinutes as number) + (durationMinutes as number) <= DAY_MINUTES &&
+    // An override equal to the base rule pair carries no information.
+    !(startMinutes === rule.startMinutes && durationMinutes === rule.durationMinutes);
+
+  if (!done && !timeShiftValid) return null;
+  return {
+    date,
+    ...(done ? { done: true as const } : {}),
+    ...(timeShiftValid
+      ? { startMinutes: startMinutes as number, durationMinutes: durationMinutes as number }
+      : {}),
+  };
 }
 
 /**
@@ -163,7 +189,9 @@ export function normalizeRecurrence(
  * Expand a rule into concrete occurrences within [`from`..`to`] inclusive —
  * ONLY that window (occurrences are never materialized ahead). Applies
  * overrides: a skip removes the date, a time-shift replaces start/duration and
- * marks `overridden: true`. The iteration window is intersected with the anchor
+ * marks `overridden: true`, and a `done: true` override marks ONLY its own date
+ * `done: true` (independently of the time-shift). The iteration window is
+ * intersected with the anchor
  * (lower bound) and `until` (upper bound), and defensively clamped to at most
  * `MAX_WINDOW_DAYS` measured from `from`. `from > to`, or a window that falls
  * entirely outside the rule bounds, yields `[]`.
@@ -188,9 +216,16 @@ export function expandOccurrences(
 
   const skips = new Set<string>();
   const shifts = new Map<string, RecurrenceOverride>();
+  // Per-occurrence completion is INDEPENDENT of the time-shift branch below: a
+  // done-only override carries no time fields, so it must be collected here.
+  const doneDates = new Set<string>();
   for (const ov of rule.overrides ?? []) {
-    if (ov.skip === true) skips.add(ov.date);
-    else if (ov.startMinutes !== undefined && ov.durationMinutes !== undefined) shifts.set(ov.date, ov);
+    if (ov.skip === true) {
+      skips.add(ov.date);
+      continue;
+    }
+    if (ov.done === true) doneDates.add(ov.date);
+    if (ov.startMinutes !== undefined && ov.durationMinutes !== undefined) shifts.set(ov.date, ov);
   }
 
   const days = rule.daysOfWeek;
@@ -205,6 +240,7 @@ export function expandOccurrences(
         startMinutes: shift.startMinutes as number,
         durationMinutes: shift.durationMinutes as number,
         overridden: true,
+        done: doneDates.has(date),
       });
     } else {
       out.push({
@@ -212,6 +248,7 @@ export function expandOccurrences(
         startMinutes: rule.startMinutes,
         durationMinutes: rule.durationMinutes,
         overridden: false,
+        done: doneDates.has(date),
       });
     }
   }

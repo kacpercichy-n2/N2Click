@@ -274,6 +274,10 @@ export type Action =
       date: string;
       override: { skip: true } | { startMinutes: number; durationMinutes: number } | null;
     }
+  // Wykonanie POJEDYNCZEGO wystąpienia (flaga `done` w wyjątku danej daty).
+  // NIGDY nie zmienia `Task.statusId` (całą serię przełącza SET_TASK_STATUS) i
+  // nie tworzy wierszy workload (inwariant 1).
+  | { type: 'SET_OCCURRENCE_DONE'; taskId: string; date: string; done: boolean }
   // Publikacja szkiców: całego projektu (atomowo) lub pojedynczego zadania.
   | { type: 'PUBLISH_PROJECT_DRAFTS'; projectId: string }
   | { type: 'PUBLISH_TASK'; taskId: string }
@@ -1012,8 +1016,12 @@ function setTaskRecurrence(
  * SAMA referencja, inwariant 6): nieznane `taskId`; zadanie bez `recurrence`;
  * `date` niebędące datą wystąpienia (`isOccurrenceDate`); przesunięcie czasu
  * poza siatką / duration < 15 / start+duration > 1440; strukturalnie zły ładunek.
- * `override: null` usuwa wyjątek dla `date` (brak => no-op). Przesunięcie równe
- * regule = usunięcie wyjątku (forma kanoniczna). Upsert po dacie; wynik posortowany.
+ * `override: null` usuwa CAŁY wyjątek dla `date` — razem z flagą `done`
+ * pojedynczego wystąpienia („przywróć zgodnie z regułą"); brak wyjątku => no-op.
+ * Przesunięcie czasu ZACHOWUJE istniejące `done` tej daty; przesunięcie równe
+ * regule usuwa wyjątek, a przy zachowanym `done` zwija się do `{date, done:true}`
+ * (forma kanoniczna). Gałąź `skip` z definicji nie niesie `done` (pominięty dzień
+ * nie ma wystąpienia). Upsert po dacie; wynik posortowany.
  */
 function setRecurrenceOverride(
   state: AppData,
@@ -1048,7 +1056,12 @@ function setRecurrenceOverride(
     ) {
       return state; // poza siatką / za krótki / strukturalnie zły
     }
-    nextOverrides = [...others, { date, startMinutes, durationMinutes }];
+    // Przesunięcie czasu NIE kasuje wykonania pojedynczego wystąpienia.
+    const prevDone = existing.some((o) => o.date === date && o.done === true);
+    nextOverrides = [
+      ...others,
+      { date, ...(prevDone ? { done: true as const } : {}), startMinutes, durationMinutes },
+    ];
   }
 
   // Re-kanonikalizacja: przesunięcie równe regule odpada, wynik sortowany.
@@ -1062,6 +1075,67 @@ function setRecurrenceOverride(
     ...state,
     tasks,
     activity: withActivity(state, 'task', taskId, 'zmienił(a) wystąpienie cyklicznego zadania'),
+  };
+}
+
+/**
+ * Wykonanie POJEDYNCZEGO wystąpienia cyklicznego zadania: flaga `done` w
+ * wyjątku danej daty (wzorzec `SET_BLOCK_DONE`). NIGDY nie zmienia
+ * `Task.statusId` — całą serię przełącza `SET_TASK_STATUS` — i nie tworzy
+ * żadnych wierszy workload (inwariant 1, wystąpienia zostają prezentacyjne).
+ * Odrzuca (TA SAMA referencja, inwariant 6): nieznane `taskId`; zadanie bez
+ * `recurrence`; `date` niebędące datą wystąpienia; data z wyjątkiem
+ * `{ skip: true }` (pominięty dzień nie ma wystąpienia do oznaczenia);
+ * no-op (`done: true` na już zrobionym, `done: false` na dacie bez flagi) —
+ * strukturalnie domyka to strażnik `sameRowValue(rule, next)`.
+ * `done: true` ZACHOWUJE istniejące przesunięcie czasu; `done: false` usuwa sam
+ * klucz `done`, a wyjątek bez przesunięcia znika w całości (forma kanoniczna).
+ */
+function setOccurrenceDone(
+  state: AppData,
+  taskId: string,
+  date: string,
+  done: boolean,
+): AppData {
+  const task = state.tasks.find((t) => t.id === taskId);
+  if (!task) return state;
+  const rule = task.recurrence;
+  if (rule === undefined) return state;
+  if (!isOccurrenceDate(rule, task.startDate, date)) return state;
+
+  const existing = rule.overrides ?? [];
+  const current = existing.find((o) => o.date === date);
+  if (current?.skip === true) return state; // pominięty dzień => brak wystąpienia
+  const others = existing.filter((o) => o.date !== date);
+
+  let nextOverrides: unknown[];
+  if (done === true) {
+    const { done: _drop, ...keep } = current ?? { date };
+    nextOverrides = [...others, { ...keep, date, done: true as const }];
+  } else {
+    if (current === undefined || current.done !== true) return state; // no-op
+    const { done: _drop, ...keep } = current;
+    nextOverrides = [...others, { ...keep, date }];
+  }
+
+  // Re-kanonikalizacja: wyjątek bez `done` i bez przesunięcia odpada, sort po dacie.
+  const next = normalizeRecurrence({ ...rule, overrides: nextOverrides }, task.startDate);
+  if (!next) return state; // reguła jest już kanoniczna — strażnik dla TS
+  if (sameRowValue(rule, next)) return state; // brak zmiany wartości => no-op
+  const tasks = state.tasks.map((t) =>
+    t.id === taskId ? { ...t, recurrence: next, updatedAt: nowIso() } : t,
+  );
+  return {
+    ...state,
+    tasks,
+    activity: withActivity(
+      state,
+      'task',
+      taskId,
+      done
+        ? 'oznaczył(a) wystąpienie cyklicznego zadania jako zrobione'
+        : 'cofnął(-ęła) wykonanie wystąpienia cyklicznego zadania',
+    ),
   };
 }
 
@@ -2919,6 +2993,8 @@ export function reducer(state: AppData, action: Action): AppData {
       return setTaskRecurrence(state, action.taskId, action.recurrence);
     case 'SET_RECURRENCE_OVERRIDE':
       return setRecurrenceOverride(state, action.taskId, action.date, action.override);
+    case 'SET_OCCURRENCE_DONE':
+      return setOccurrenceDone(state, action.taskId, action.date, action.done);
     case 'PUBLISH_PROJECT_DRAFTS':
       return publishProjectDrafts(state, action.projectId);
     case 'PUBLISH_TASK':

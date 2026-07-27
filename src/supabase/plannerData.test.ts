@@ -372,6 +372,10 @@ describe('loadPlannerSnapshot', () => {
         overrides: [
           { date: '2026-07-13', skip: true },
           { date: '2026-07-15', startMinutes: 600, durationMinutes: 90 },
+          // Wykonanie pojedynczego wystąpienia (samo `done`) i wykonanie razem z
+          // przesunięciem — obie formy kanoniczne muszą przeżyć round-trip.
+          { date: '2026-07-06', done: true },
+          { date: '2026-07-20', done: true, startMinutes: 660, durationMinutes: 45 },
         ],
       },
       startDate,
@@ -416,6 +420,11 @@ describe('loadPlannerSnapshot', () => {
     expect(expandHydrated).toEqual(expandLocal);
     expect(expandLocal.map((o) => o.date)).toEqual(['2026-07-06', '2026-07-08', '2026-07-15', '2026-07-20']);
     expect(expandLocal.find((o) => o.date === '2026-07-15')).toMatchObject({ startMinutes: 600, durationMinutes: 90, overridden: true });
+    // Flaga `done` per-wystąpienie przeżywa mirror -> hydrację co do wartości.
+    expect(expandHydrated.map((o) => o.done)).toEqual([true, false, false, true]);
+    expect(expandHydrated.find((o) => o.date === '2026-07-20')).toMatchObject({
+      startMinutes: 660, durationMinutes: 45, overridden: true, done: true,
+    });
 
     // 4) MERGE autorytatywny na wartościowo identycznym wierszu => TA SAMA
     //    referencja zadania I całej kolekcji `tasks` (reconcileRows/sameRowValue).

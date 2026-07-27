@@ -39,6 +39,8 @@ import {
   getTask,
   growAllowanceHours,
   hoursForPersonOnDate,
+  isDoneStatus,
+  occurrenceIsDone,
   personCapacity,
   taskDisplayStatus,
   taskGrowAllowance,
@@ -1226,17 +1228,23 @@ interface RecurBlockProps {
   task: Task;
   hue: string;
   occurrence: RecurrenceOccurrence;
+  /** `occurrenceIsDone(state, task, occurrence)` — liczone przez rodzica (memo-friendly). */
+  done: boolean;
   // Stable parent callbacks taking the occurrence's own data (memo-friendly).
   onOpen: (taskId: string) => void;
   onContextMenu: (task: Task, occ: RecurrenceOccurrence, e: React.MouseEvent) => void;
 }
 
-function RecurBlockImpl({ task, hue, occurrence, onOpen, onContextMenu }: RecurBlockProps) {
+function RecurBlockImpl({ task, hue, occurrence, done, onOpen, onContextMenu }: RecurBlockProps) {
   const title = task.title;
   const top = (occurrence.startMinutes / 60) * HOUR_PX;
   const height = Math.max((occurrence.durationMinutes / 60) * HOUR_PX, MIN_BLOCK_H);
   const end = occurrence.startMinutes + occurrence.durationMinutes;
-  const className = ['week-recur-block', occurrence.overridden ? 'overridden' : '']
+  const className = [
+    'week-recur-block',
+    occurrence.overridden ? 'overridden' : '',
+    done ? 'done' : '',
+  ]
     .filter(Boolean)
     .join(' ');
   return (
@@ -1249,7 +1257,9 @@ function RecurBlockImpl({ task, hue, occurrence, onOpen, onContextMenu }: RecurB
         end,
       )} (${formatDuration(
         occurrence.durationMinutes / 60,
-      )}). Kliknij, aby otworzyć zadanie; kliknij prawym przyciskiem, aby edytować wystąpienie.`}
+      )})${
+        done ? ' — zrobione' : ''
+      }. Kliknij, aby otworzyć zadanie; kliknij prawym przyciskiem, aby edytować wystąpienie.`}
       onClick={(e) => {
         e.stopPropagation();
         onOpen(task.id);
@@ -1262,7 +1272,14 @@ function RecurBlockImpl({ task, hue, occurrence, onOpen, onContextMenu }: RecurB
       }}
       onContextMenu={(e) => onContextMenu(task, occurrence, e)}
     >
-      <span className="week-recur-title">⟳ {title}</span>
+      <span className="week-recur-title">
+        ⟳ {title}
+        {done && (
+          <span className="block-done-mark" title="Wykonane" aria-label="Wykonane">
+            ✓
+          </span>
+        )}
+      </span>
       <span className="week-recur-time">
         {formatMinutes(occurrence.startMinutes)}–{formatMinutes(end)}
       </span>
@@ -1385,7 +1402,8 @@ export function WeekView({ state, anchor, filter }: Props) {
   // Recurrence occurrence context menu — its own portal-free `.context-menu`
   // popover, keyed on a (taskId, date) occurrence rather than a WorkloadEntry.
   // Kept fully separate from `menu`/`slotMenu` so no pointer/drag path is touched.
-  // Actions map only to SET_RECURRENCE_OVERRIDE / opening the task.
+  // Actions map only to SET_RECURRENCE_OVERRIDE / SET_OCCURRENCE_DONE /
+  // SET_TASK_STATUS / opening the task.
   const [recurMenu, setRecurMenu] = useState<{
     taskId: string;
     title: string;
@@ -1393,6 +1411,10 @@ export function WeekView({ state, anchor, filter }: Props) {
     startMinutes: number;
     durationMinutes: number;
     overridden: boolean;
+    /** WŁASNA flaga wyjątku tej daty (bez statusu zadania). */
+    done: boolean;
+    /** Status zadania jest „zrobiony" — cała seria świeci się niezależnie. */
+    seriesDone: boolean;
     x: number;
     y: number;
     step: 'menu' | 'edit';
@@ -1546,6 +1568,9 @@ export function WeekView({ state, anchor, filter }: Props) {
   // preventDefault/stopPropagation so their native browser menu still opens.
   // Managers suppress the native menu and stop propagation so the slot menu
   // never also opens (occurrence edits mirror TaskModal's tasks.manage gate).
+  // `seriesDone` czytamy przez `isDoneStatus`, więc jedyną zależnością od stanu
+  // jest `state.statuses` — dzięki temu memo `RecurBlock` nie unieważnia się przy
+  // każdej zmianie stanu (a przy zmianie słownika statusów callback wstaje na nowo).
   const openRecurMenu = useCallback(
     (task: Task, occ: RecurrenceOccurrence, e: React.MouseEvent) => {
     if (!canManageTasks) return;
@@ -1562,12 +1587,15 @@ export function WeekView({ state, anchor, filter }: Props) {
       startMinutes: occ.startMinutes,
       durationMinutes: occ.durationMinutes,
       overridden: occ.overridden,
+      done: occ.done,
+      seriesDone: isDoneStatus(state, task.statusId),
       x: Math.min(e.clientX, window.innerWidth - 280),
       y: Math.min(e.clientY, window.innerHeight - 260),
       step: 'menu',
     });
     },
-    [canManageTasks],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- czytamy ze `state` wyłącznie `statuses`
+    [canManageTasks, state.statuses],
   );
 
   const recurSkipDay = () => {
@@ -1578,6 +1606,28 @@ export function WeekView({ state, anchor, filter }: Props) {
       date: recurMenu.date,
       override: { skip: true },
     });
+    setRecurMenu(null);
+  };
+
+  // Wykonanie POJEDYNCZEGO wystąpienia — nigdy nie rusza `Task.statusId`.
+  const recurSetOccurrenceDone = (done: boolean) => {
+    if (!recurMenu) return;
+    dispatch({
+      type: 'SET_OCCURRENCE_DONE',
+      taskId: recurMenu.taskId,
+      date: recurMenu.date,
+      done,
+    });
+    setRecurMenu(null);
+  };
+
+  // Cała seria = STATUS zadania. Bierzemy PIERWSZY status `isDone` w kolejności
+  // `state.statuses` (deterministycznie; istnienie gwarantuje inwariant ≥1 done).
+  const recurMarkSeriesDone = () => {
+    if (!recurMenu) return;
+    const doneStatus = state.statuses.find((s) => s.isDone);
+    if (!doneStatus) return;
+    dispatch({ type: 'SET_TASK_STATUS', taskId: recurMenu.taskId, statusId: doneStatus.id });
     setRecurMenu(null);
   };
 
@@ -1989,6 +2039,7 @@ export function WeekView({ state, anchor, filter }: Props) {
                       task={task}
                       hue={hue}
                       occurrence={occurrence}
+                      done={occurrenceIsDone(state, task, occurrence)}
                       onOpen={handleOpenTask}
                       onContextMenu={openRecurMenu}
                     />
@@ -2394,6 +2445,37 @@ export function WeekView({ state, anchor, filter }: Props) {
                   >
                     Pomiń ten dzień
                   </button>
+                  {/* Wykonanie: „to wystąpienie" (flaga wyjątku) vs „cała seria"
+                      (status zadania). Gdy status zadania jest już zrobiony,
+                      przełącznik per-wystąpienie NIC by nie zmienił w widoku
+                      (status wygrywa w `occurrenceIsDone`), więc zostaje sama
+                      podpowiedź — cofnięcie serii żyje w „Edytuj wszystkie". */}
+                  {recurMenu.seriesDone ? (
+                    <div className="context-menu-title">
+                      Cała seria jest zrobiona (status zadania)
+                    </div>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="context-menu-item"
+                        onClick={() => recurSetOccurrenceDone(!recurMenu.done)}
+                      >
+                        {recurMenu.done
+                          ? 'Cofnij wykonanie tego wystąpienia'
+                          : 'Oznacz to wystąpienie jako zrobione'}
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="context-menu-item"
+                        onClick={recurMarkSeriesDone}
+                      >
+                        Oznacz całą serię jako zrobioną (status zadania)
+                      </button>
+                    </>
+                  )}
                   {recurMenu.overridden && (
                     <>
                       <div className="context-menu-sep" role="separator" />

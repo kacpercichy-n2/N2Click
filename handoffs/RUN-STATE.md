@@ -105,3 +105,12 @@ loadNotificationsSnapshot returns {available} — transient skips merge, missing
 table degrades to []. (B) Edge fn claim-before-send (claimBatchIds). (D)
 findFreeStart adds one-grid-step past-end/before-start avoidTouch candidates.
 Tests added across 4 files. Full suite 1492 pass, build green.
+
+n2hub-275 recurring-occurrence-status: per-occurrence "zrobione" for recurring
+tasks. `RecurrenceOverride.done?: true` inside the existing `tasks.recurrence`
+jsonb (skip beats done, `done:false` never stored); new `SET_OCCURRENCE_DONE`
+reducer action (same-reference no-ops); `setRecurrenceOverride` preserves `done`
+on a time shift; `RecurrenceOccurrence.done` + selector `occurrenceIsDone` (own
+flag OR task done status); WeekView overlay/menu splits "to wystąpienie" from
+"cała seria". No migration, DATA_VERSION stays 7. Full suite 1571 pass, build
+green. Wiki updated (CYKLICZNOŚĆ ZADAŃ, recurring-occurrence bullet).

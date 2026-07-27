@@ -1585,11 +1585,18 @@ function TaskEditor({
                   {liveRule.overrides!.map((ov) => (
                     <li key={ov.date} className="recur-override-row">
                       <span className="recur-override-text">
+                        {/* Trzy warianty wyjątku: pominięcie, samo wykonanie
+                            (czasy z reguły — bez artefaktu „00:00, 0 h") oraz
+                            przesunięcie czasu z ewentualnym sufiksem wykonania. */}
                         {ov.skip === true
                           ? `${recurDateLabel(ov.date)} — pominięto`
-                          : `${recurDateLabel(ov.date)} — ${formatMinutes(
-                              ov.startMinutes ?? 0,
-                            )}, ${formatDuration((ov.durationMinutes ?? 0) / 60)}`}
+                          : ov.startMinutes === undefined
+                            ? `${recurDateLabel(ov.date)} — zrobione`
+                            : `${recurDateLabel(ov.date)} — ${formatMinutes(
+                                ov.startMinutes,
+                              )}, ${formatDuration((ov.durationMinutes ?? 0) / 60)}${
+                                ov.done === true ? ' · zrobione' : ''
+                              }`}
                       </span>
                       {!readOnly && (
                         <button

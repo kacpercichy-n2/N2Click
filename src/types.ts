@@ -196,13 +196,21 @@ export interface Task {
  * wystąpienia ('yyyy-MM-dd'), unikalna w obrębie `overrides` — wyjątek nigdy nie
  * przenosi wystąpienia na inny dzień, tylko przesuwa jego godzinę albo pomija
  * ten dzień. FORMA KANONICZNA (egzekwowana w reduktorze, repairze wczytania i
- * hydracji chmury): albo `{ date, skip: true }` (bez pól czasu), albo
- * `{ date, startMinutes, durationMinutes }` (przesunięcie czasu, oba pola
- * obecne). Klucz `skip` występuje wyłącznie jako literalne `true`.
+ * hydracji chmury) — CZTERY dopuszczalne kształty:
+ * `{ date, skip: true }` (bez pól czasu i BEZ `done` — pominięty dzień nie ma
+ * wystąpienia, więc `skip` wygrywa), `{ date, done: true }` (samo wykonanie,
+ * czasy z reguły), `{ date, startMinutes, durationMinutes }` (przesunięcie
+ * czasu, oba pola obecne) oraz `{ date, done: true, startMinutes,
+ * durationMinutes }`. Klucze `skip`/`done` występują wyłącznie jako literalne
+ * `true` (`done: false` NIGDY nie jest zapisywane).
  */
 export interface RecurrenceOverride {
   date: DateStr; // oryginalna data wystąpienia (yyyy-MM-dd)
   skip?: true; // pominięcie tego dnia; kanonicznie tylko literalne `true`
+  // Wykonanie POJEDYNCZEGO wystąpienia (PKG-20260727-recurring-occurrence-done);
+  // kanonicznie tylko literalne `true`. Czysto PREZENTACYJNE — nie zmienia
+  // `Task.statusId` i nie materializuje żadnych godzin (inwariant 1).
+  done?: true;
   startMinutes?: number; // przesunięcie czasu — OBA pola obecne razem
   durationMinutes?: number;
 }

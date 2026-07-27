@@ -729,6 +729,20 @@ export function blockIsDone(state: AppData, task: Task, entry: WorkloadEntry): b
   return entry.done === true || isDoneStatus(state, task.statusId);
 }
 
+/**
+ * Wystąpienie cyklicznego zadania jest zrobione, gdy jego wyjątek tak mówi LUB
+ * status zadania jest „zrobiony" (lustro {@link blockIsDone}): done-status
+ * podświetla CAŁĄ serię, a per-wystąpieniowa flaga jest niezależna i NIGDY nie
+ * zmienia `task.statusId`. Czysto prezentacyjne (inwariant 1).
+ */
+export function occurrenceIsDone(
+  state: AppData,
+  task: Task,
+  occurrence: RecurrenceOccurrence,
+): boolean {
+  return occurrence.done === true || isDoneStatus(state, task.statusId);
+}
+
 // ---- Moja praca (my-work page) ----
 
 /**
