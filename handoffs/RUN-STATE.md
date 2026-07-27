@@ -114,3 +114,37 @@ on a time shift; `RecurrenceOccurrence.done` + selector `occurrenceIsDone` (own
 flag OR task done status); WeekView overlay/menu splits "to wystąpienie" from
 "cała seria". No migration, DATA_VERSION stays 7. Full suite 1571 pass, build
 green. Wiki updated (CYKLICZNOŚĆ ZADAŃ, recurring-occurrence bullet).
+
+n2hub-276 notification-preview (PKG-20260727-notification-preview): Panel
+row click now TOGGLES an inline preview (kto/co/gdzie + komentarz) and dispatches
+nothing; opening moved to a secondary „Otwórz zadanie/projekt" button keeping
+today's mark-read. Pure `notificationEntry` gains `preview`/`openLabel`;
+`commentBody` injected from `state.comments`. Additive CSS only. Focused 32 pass,
+tsc clean. No context expansion, no blocker, wiki unchanged.
+
+n2hub-276 alloc-start-hour: optional `AllocationCell.startMinutes` (15-min grid,
+off-grid/out-of-range => same state ref). Applied as ONE post-pass after the
+SAVE_TASK pair loop, only for pairs resolving to exactly one block; no-pin
+payloads byte-identical. Grid gains `<input type="time">`; TaskModal seeds/clears
+`startTimes`. Focused suites (saveTaskWorkload/blockActions/time/taskSaveBlockers)
+214 pass; tsc clean. Blocker: none.
+
+n2hub-276 timeline-day-headers: presentation only. New pure `showDayColumns` /
+`dayHeaders` (timelineZoom.ts) + `weekdayAbbr` / `dayOfMonthLabel` (dates.ts);
+TimelinePage renders per-day header cells and `DayStripes` gains `columns` for
+gridlines; additive `.timeline-day-head` / `.timeline-daygrid` CSS. Zoom, range
+and drag math untouched. Focused timelineZoom+dates 59 pass; tsc clean. No
+context expansion. Blocker: none.
+
+n2hub-276 mention-autocomplete: new pure `src/components/mentionAutocomplete.ts`
+(`mentionQueryAt` / `filterMentionPeople` / `applyMention`) + CommentsPanel
+combobox listbox over the textarea; Enter only intercepted while open.
+`parseMentions` / `MentionBody` / chips untouched, additive CSS. Deviation: NFD
+does not decompose „ł", so normalize folds ł→l. Focused 17 pass, tsc clean.
+Wiki unchanged (page does not document comments).
+
+n2hub-276 review nits: styles.css notification comment now matches expand-only
+row; TaskModal start-hour hint hidden when readOnly; `startTimes` seed shares new
+`normalizeStartMinutes` with `setCellStart` (finite + snap + clamp), so an
+off-grid pin can never silently void SAVE_TASK. saveTaskWorkload+taskSaveBlockers
+41 pass; tsc clean. No context expansion, no blocker, wiki unchanged.

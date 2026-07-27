@@ -113,11 +113,20 @@ export function formatShort(d: DateStr): string {
   return format(parseDate(d), 'd MMM', { locale: pl });
 }
 
+/** Skrót dnia tygodnia po polsku, np. „pon”. */
+export function weekdayAbbr(d: DateStr): string {
+  return format(parseDate(d), 'EEEEEE', { locale: pl });
+}
+
+/** Numer dnia miesiąca bez zera wiodącego, np. „7”. */
+export function dayOfMonthLabel(d: DateStr): string {
+  return format(parseDate(d), 'd', { locale: pl });
+}
+
 /** Short label with the Polish weekday suffix, like "26 paź (pon)". Used on
  *  every task/project planning surface so a date always carries its weekday. */
 export function formatShortWithWeekday(d: DateStr): string {
-  const parsed = parseDate(d);
-  return `${format(parsed, 'd MMM', { locale: pl })} (${format(parsed, 'EEEEEE', { locale: pl })})`;
+  return `${format(parseDate(d), 'd MMM', { locale: pl })} (${weekdayAbbr(d)})`;
 }
 
 /**

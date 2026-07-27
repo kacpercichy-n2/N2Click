@@ -144,6 +144,11 @@ export function DashboardPage() {
   const me = currentUser(state);
   const today = todayStr();
   const [changelogOpen, setChangelogOpen] = useState(false);
+  // Rozwinięty podgląd powiadomienia (max jeden naraz). Hook MUSI stać przed
+  // wczesnym returnem dla braku działającego użytkownika (kolejność hooków).
+  // Oznaczenie wiersza jako przeczytanego usuwa go z listy — porównanie id
+  // wystarcza, żaden efekt czyszczący nie jest potrzebny.
+  const [expandedNotifId, setExpandedNotifId] = useState<string | null>(null);
   const latestChange = CHANGELOG[0];
 
   // Edge case: setup mode (no people) or no resolvable acting user → keep the
@@ -179,10 +184,16 @@ export function DashboardPage() {
     const projectId = n.payload.projectId ?? task?.projectId ?? '';
     const project = projectId ? getProject(state, projectId) : undefined;
     const actor = n.payload.actorId ? getPerson(state, n.payload.actorId) : undefined;
+    // Treść komentarza rozwiązujemy TU (store) i wstrzykujemy do czystego
+    // buildera — `notificationEntry` nigdy nie sięga do stanu.
+    const comment = n.payload.commentId
+      ? state.comments.find((c) => c.id === n.payload.commentId)
+      : undefined;
     return notificationEntry(n, {
       actorName: actor?.name ?? '',
       taskTitle: task?.title ?? '',
       projectName: project?.name ?? '',
+      commentBody: comment?.body ?? '',
     });
   });
   const shownNotifications = visibleNotifications(notifications);
@@ -265,8 +276,11 @@ export function DashboardPage() {
         animate="show"
       >
         {/* RZĄD 2 · Powiadomienia — realny feed nieprzeczytanych (max 3). Klik w
-         *  wiersz otwiera obiekt i oznacza jako przeczytane; „✓" oznacza bez
-         *  otwierania; nagłówek ma „Oznacz wszystkie". Layout karty z 249. */}
+         *  wiersz ROZWIJA podgląd (kto/co/gdzie [+ treść komentarza]) i NICZEGO
+         *  nie dispatchuje — kafelek pokazuje wyłącznie nieprzeczytane, więc
+         *  auto-oznaczanie usunęłoby wiersz w trakcie czytania. Otwarcie obiektu
+         *  (z oznaczeniem jako przeczytane) to osobny przycisk w podglądzie; „✓"
+         *  oznacza bez otwierania; nagłówek ma „Oznacz wszystkie". */}
         <motion.div className="dash-card dash-area-notifications" variants={dashCardVariants}>
           <div className="dash-card-head">
             <h2>Powiadomienia</h2>
@@ -284,27 +298,62 @@ export function DashboardPage() {
             <p className="field-hint">Brak nowych powiadomień</p>
           ) : (
             <ul className="dash-list">
-              {shownNotifications.map((n) => (
-                <li key={n.id} className="dash-notif-row">
-                  <button
-                    type="button"
-                    className="dash-row dash-notif-open"
-                    onClick={() => openNotification(n)}
-                  >
-                    <span className="dash-row-name">{n.title}</span>
-                    {n.when && <span className="dash-row-when">{n.when}</span>}
-                  </button>
-                  <button
-                    type="button"
-                    className="link-btn dash-notif-read"
-                    title="Oznacz jako przeczytane"
-                    aria-label="Oznacz jako przeczytane"
-                    onClick={() => dispatch({ type: 'MARK_NOTIFICATION_READ', notificationId: n.id })}
-                  >
-                    ✓
-                  </button>
-                </li>
-              ))}
+              {shownNotifications.map((n) => {
+                const expanded = expandedNotifId === n.id;
+                const previewId = `notif-preview-${n.id}`;
+                return (
+                  <li key={n.id}>
+                    <div className="dash-notif-row">
+                      <button
+                        type="button"
+                        className="dash-row dash-notif-open"
+                        aria-expanded={expanded}
+                        aria-controls={previewId}
+                        onClick={() =>
+                          setExpandedNotifId((id) => (id === n.id ? null : n.id))
+                        }
+                      >
+                        <span className="dash-row-name">{n.title}</span>
+                        {n.when && <span className="dash-row-when">{n.when}</span>}
+                      </button>
+                      <button
+                        type="button"
+                        className="link-btn dash-notif-read"
+                        title="Oznacz jako przeczytane"
+                        aria-label="Oznacz jako przeczytane"
+                        onClick={() =>
+                          dispatch({ type: 'MARK_NOTIFICATION_READ', notificationId: n.id })
+                        }
+                      >
+                        ✓
+                      </button>
+                    </div>
+                    {expanded && (
+                      <div className="dash-notif-preview" id={previewId}>
+                        <p className="dash-notif-line">
+                          <span className="dash-notif-label">Kto:</span> {n.preview.who}
+                        </p>
+                        <p className="dash-notif-line">
+                          <span className="dash-notif-label">Co:</span> {n.preview.what}
+                        </p>
+                        <p className="dash-notif-line">
+                          <span className="dash-notif-label">Gdzie:</span> {n.preview.where}
+                        </p>
+                        {n.preview.body && <p className="dash-notif-body">{n.preview.body}</p>}
+                        {n.openLabel && (
+                          <button
+                            type="button"
+                            className="btn ghost dash-notif-openbtn"
+                            onClick={() => openNotification(n)}
+                          >
+                            {n.openLabel}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </motion.div>

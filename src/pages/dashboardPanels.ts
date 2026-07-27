@@ -14,12 +14,27 @@ export type NotificationTarget =
   | { kind: 'task'; taskId: string }
   | { kind: 'project'; projectId: string };
 
-/** A single notification row prepared for display (Polish title + click target). */
+/** Rozwinięty podgląd wiersza powiadomienia (kto / co / gdzie [+ treść]). */
+export interface NotificationPreview {
+  who: string; // aktor albo „Ktoś”
+  what: string; // czego dotyczy (tytuł zadania / nazwa projektu)
+  where: string; // projekt albo „—”
+  /** Treść komentarza — tylko dla `project_comment`, gdy jest dostępna. */
+  body?: string;
+}
+
+/** A single notification row prepared for display (Polish title + click target).
+ *  Klik w wiersz ROZWIJA `preview` (nic nie dispatchuje — kafelek pokazuje tylko
+ *  nieprzeczytane, więc auto-oznaczanie usunęłoby wiersz w trakcie czytania);
+ *  otwarcie encji jest osobną akcją opisaną przez `openLabel`. */
 export interface NotificationEntry {
   id: string;
   title: string;
   when?: string;
   target?: NotificationTarget;
+  preview: NotificationPreview;
+  /** Etykieta akcji wtórnej; `undefined` = brak celu, przycisk ukryty. */
+  openLabel?: string;
 }
 
 /** Nazwy encji rozwiązane przez wołającego (selektory), wstrzyknięte do czystego
@@ -28,6 +43,14 @@ export interface NotificationNames {
   actorName: string;
   taskTitle: string;
   projectName: string;
+  /** Treść komentarza rozwiązana przez wołającego; '' = brak/nieznana. */
+  commentBody: string;
+}
+
+/** Etykieta akcji „otwórz” dla celu kliknięcia (brak celu => brak przycisku). */
+function openLabelFor(target: NotificationTarget | undefined): string | undefined {
+  if (!target) return undefined;
+  return target.kind === 'task' ? 'Otwórz zadanie' : 'Otwórz projekt';
 }
 
 /**
@@ -40,27 +63,53 @@ export function notificationEntry(n: Notification, names: NotificationNames): No
   const taskTitle = names.taskTitle.trim() || '—';
   const projectName = names.projectName.trim() || '—';
   const projectMeta = names.projectName.trim() || undefined;
+  const commentBody = names.commentBody.trim();
   switch (n.type) {
-    case 'task_assigned':
+    case 'task_assigned': {
+      const target: NotificationTarget | undefined = n.payload.taskId
+        ? { kind: 'task', taskId: n.payload.taskId }
+        : undefined;
       return {
         id: n.id,
         title: `${actor} przypisał(a) Ci zadanie „${taskTitle}”`,
         when: projectMeta,
-        target: n.payload.taskId ? { kind: 'task', taskId: n.payload.taskId } : undefined,
+        target,
+        preview: { who: actor, what: taskTitle, where: projectName },
+        openLabel: openLabelFor(target),
       };
-    case 'project_comment':
+    }
+    case 'project_comment': {
+      const target: NotificationTarget | undefined = n.payload.projectId
+        ? { kind: 'project', projectId: n.payload.projectId }
+        : undefined;
       return {
         id: n.id,
         title: `${actor} skomentował(a) projekt „${projectName}”`,
-        target: n.payload.projectId ? { kind: 'project', projectId: n.payload.projectId } : undefined,
+        target,
+        // Klucz `body` istnieje TYLKO gdy treść komentarza jest znana — nigdy
+        // pusty string ani jawne `undefined`.
+        preview: {
+          who: actor,
+          what: projectName,
+          where: projectName,
+          ...(commentBody ? { body: commentBody } : {}),
+        },
+        openLabel: openLabelFor(target),
       };
-    case 'bin_item':
+    }
+    case 'bin_item': {
+      const target: NotificationTarget | undefined = n.payload.taskId
+        ? { kind: 'task', taskId: n.payload.taskId }
+        : undefined;
       return {
         id: n.id,
         title: `Nowa praca w zasobniku: „${taskTitle}”`,
         when: projectMeta,
-        target: n.payload.taskId ? { kind: 'task', taskId: n.payload.taskId } : undefined,
+        target,
+        preview: { who: actor, what: taskTitle, where: projectName },
+        openLabel: openLabelFor(target),
       };
+    }
   }
 }
 

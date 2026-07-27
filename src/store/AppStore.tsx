@@ -225,6 +225,10 @@ export interface AllocationCell {
   personId: string;
   date: string;
   plannedHours: number;
+  /** OPCJONALNA przypięta godzina startu (minuty od północy, siatka 15 min).
+   *  Brak => automatyczne umiejscowienie jak dotąd (findFreeStart). Stosowana
+   *  tylko, gdy para (osoba, dzień) ma po zapisie DOKŁADNIE jeden blok. */
+  startMinutes?: number;
 }
 
 export interface SaveTaskPayload {
@@ -570,7 +574,14 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
         cell.date > draft.endDate ||
         !Number.isFinite(cell.plannedHours) ||
         cell.plannedHours < 0 ||
-        cell.plannedHours > 24,
+        cell.plannedHours > 24 ||
+        // Opcjonalna przypięta godzina startu: gdy obecna, musi być całkowitą
+        // minutą w dobie i na siatce 15 min (obrona w głąb — edytor snapuje).
+        (cell.startMinutes !== undefined &&
+          (!Number.isInteger(cell.startMinutes) ||
+            cell.startMinutes < 0 ||
+            cell.startMinutes >= DAY_MINUTES ||
+            cell.startMinutes % MINUTE_STEP !== 0)),
     ) ||
     (payload.newUnassigned ?? []).some(
       (item) => !Number.isFinite(item.hours) || item.hours < 0,
@@ -750,14 +761,19 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
 
   // Desired day total per pair (assigned people only; unassigned cells skipped).
   const cellByPair = new Map<string, { personId: string; date: string; totalQ: number }>();
+  // Opcjonalna przypięta godzina startu per para — stosowana w JEDNYM przebiegu
+  // PO rekoncyliacji (patrz niżej), więc gałęzie delty zostają nietknięte.
+  const wantStartByPair = new Map<string, number>();
   for (const c of allocations) {
     if (!assignedSet.has(c.personId)) continue;
+    const pairKey = dayKey(c.personId, c.date);
     // Snap to the 0.25h grid before quarter conversion (input step is UI-only).
-    cellByPair.set(dayKey(c.personId, c.date), {
+    cellByPair.set(pairKey, {
       personId: c.personId,
       date: c.date,
       totalQ: toQuarters(snapHours(c.plannedHours)),
     });
+    if (c.startMinutes !== undefined) wantStartByPair.set(pairKey, c.startMinutes);
   }
 
   // Union of pairs to process: existing dated pairs of STILL-ASSIGNED people
@@ -855,6 +871,35 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
     for (const b of blocks) {
       const s = survivorById.get(b.id);
       if (s) workloadForTask.push(s);
+    }
+  }
+
+  // Opcjonalna przypięta godzina startu z komórki siatki: JEDEN przebieg po
+  // wyemitowanych wpisach, wspólny dla wszystkich czterech gałęzi wyżej (przy
+  // nowej parze nadpisuje wynik findFreeStart/nextFreeStart). Stosowany TYLKO
+  // gdy para (osoba, dzień) ma po zapisie DOKŁADNIE jeden blok — dzień
+  // wielo-blokowy zachowuje swoje upakowanie (UI nie oferuje tam pola).
+  // Pin jest CLAMPOWANY do doby, nigdy odrzucany, i wolno mu tworzyć nakładkę
+  // (inwariant 3 — SAVE_TASK nie odrzuca na umiejscowieniu). Bez pinów w
+  // ładunku ten blok nie wykonuje żadnej pracy, więc wynik zostaje bajtowo
+  // identyczny z dotychczasowym.
+  if (wantStartByPair.size > 0) {
+    const emittedIndexByPair = new Map<string, number[]>();
+    workloadForTask.forEach((w, i) => {
+      const k = dayKey(w.personId, w.date);
+      const list = emittedIndexByPair.get(k);
+      if (list) list.push(i);
+      else emittedIndexByPair.set(k, [i]);
+    });
+    for (const [key, want] of wantStartByPair) {
+      const indexes = emittedIndexByPair.get(key);
+      if (!indexes || indexes.length !== 1) continue; // 0 lub ≥2 bloki — pomijamy
+      const idx = indexes[0];
+      const entry = workloadForTask[idx];
+      const start = clampBlockStart(want, hoursToMinutes(entry.plannedHours));
+      if (start === entry.startMinutes) continue;
+      workloadForTask[idx] = { ...entry, startMinutes: start };
+      touched.add(key);
     }
   }
 

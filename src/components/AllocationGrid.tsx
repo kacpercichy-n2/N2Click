@@ -15,8 +15,24 @@ import { formatDuration } from '../utils/time';
 /** allocations keyed as `${personId}|${date}` -> hours. */
 export type AllocMap = Record<string, number>;
 
+/** allocKey -> pinned start (minutes from midnight). Absent = auto placement. */
+export type AllocStartMap = Record<string, number>;
+
 export function allocKey(personId: string, date: string): string {
   return `${personId}|${date}`;
+}
+
+// "HH:MM" ↔ minutes-from-midnight for the native <input type="time" step={900}>
+// used by the optional per-cell start hour. Local to this module on purpose —
+// the same 2-line shape as TaskModal's recurrence helpers.
+function hhmm(min: number): string {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+function toMinutes(value: string): number {
+  const [h, m] = value.split(':');
+  return Number(h) * 60 + Number(m);
 }
 
 interface Props {
@@ -26,8 +42,10 @@ interface Props {
   endDate: string;
   people: Person[]; // assigned people (columns)
   allocations: AllocMap; // current in-editor values
+  startTimes: AllocStartMap; // OPCJONALNE przypięte godziny startu per komórka
   blockCounts?: Record<string, number>; // allocKey -> # of dated blocks behind the cell
   onChange: (personId: string, date: string, hours: number) => void;
+  onChangeStart: (personId: string, date: string, minutes: number | null) => void;
   onFillWeekdays: (personId: string) => void;
   onClearPerson: (personId: string) => void;
   readOnly?: boolean; // gate: disable inputs + hide fill/clear when the role can't manage tasks
@@ -44,8 +62,10 @@ export const AllocationGrid = memo(function AllocationGrid({
   endDate,
   people,
   allocations,
+  startTimes,
   blockCounts,
   onChange,
+  onChangeStart,
   onFillWeekdays,
   onClearPerson,
   readOnly = false,
@@ -132,6 +152,7 @@ export const AllocationGrid = memo(function AllocationGrid({
                   {formatRowLabel(d)}
                 </th>
                 {people.map((p) => {
+                  const key = allocKey(p.id, d);
                   const value = cellValue(p.id, d);
                   const dayTotalForPerson = baseHoursFor(p.id, d) + value;
                   // Warn against the DAY's availability (0 on the person's day
@@ -139,8 +160,13 @@ export const AllocationGrid = memo(function AllocationGrid({
                   // TaskModal allocations may exceed it (invariant 3).
                   const dayAvailable = availableHoursOnDate(state, p.id, d);
                   const overloaded = dayTotalForPerson > dayAvailable;
-                  const count = blockCounts?.[allocKey(p.id, d)] ?? 0;
+                  const count = blockCounts?.[key] ?? 0;
                   const multi = count >= 2;
+                  // Godzina startu jest opcjonalna i dotyczy tylko dnia
+                  // rozwiązywanego do JEDNEGO bloku (dzień wielo-blokowy
+                  // zachowuje swoje upakowanie — tłumaczy to badge ×N).
+                  const pinned = startTimes[key];
+                  const showStart = value > 0 && !multi && !readOnly;
                   const overloadTitle = overloaded
                     ? `${p.name}: ${formatDuration(dayTotalForPerson)} łącznie tego dnia przy ${formatDuration(dayAvailable)} dostępności`
                     : undefined;
@@ -173,6 +199,23 @@ export const AllocationGrid = memo(function AllocationGrid({
                           onChange(p.id, d, clamped);
                         }}
                       />
+                      {showStart && (
+                        <input
+                          type="time"
+                          step={900}
+                          className="alloc-time-input"
+                          value={pinned === undefined ? '' : hhmm(pinned)}
+                          aria-label={`Godzina startu — ${p.name}, ${formatRowLabel(d)}`}
+                          title="Opcjonalna godzina startu. Puste = pierwsze wolne okno."
+                          onChange={(e) =>
+                            onChangeStart(
+                              p.id,
+                              d,
+                              e.target.value === '' ? null : toMinutes(e.target.value),
+                            )
+                          }
+                        />
+                      )}
                       {multi && <span className="alloc-multi">×{count}</span>}
                     </td>
                   );

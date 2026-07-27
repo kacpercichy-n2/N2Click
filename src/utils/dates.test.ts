@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   addDaysStr,
+  dayOfMonthLabel,
   formatBirthday,
   formatShortWithWeekday,
   isBirthdayOn,
@@ -14,6 +15,7 @@ import {
   monthStart,
   PERIOD_ERROR_LABELS,
   periodError,
+  weekdayAbbr,
   type PeriodError,
 } from './dates';
 
@@ -86,6 +88,20 @@ describe('formatShortWithWeekday', () => {
   it('appends the abbreviated Polish weekday for a Sunday', () => {
     // 2026-11-01 is a Sunday.
     expect(formatShortWithWeekday('2026-11-01')).toBe('1 lis (nie)');
+  });
+});
+
+describe('weekdayAbbr / dayOfMonthLabel', () => {
+  it('abbreviates a Monday and a Sunday in Polish', () => {
+    // 2026-10-26 is a Monday, 2026-11-01 is a Sunday.
+    expect(weekdayAbbr('2026-10-26')).toBe('pon');
+    expect(weekdayAbbr('2026-11-01')).toBe('nie');
+  });
+
+  it('gives the day of month without a leading zero', () => {
+    expect(dayOfMonthLabel('2026-10-26')).toBe('26');
+    expect(dayOfMonthLabel('2026-11-01')).toBe('1');
+    expect(dayOfMonthLabel('2026-07-07')).toBe('7');
   });
 });
 

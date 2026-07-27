@@ -1,7 +1,7 @@
 // Chat/comments section for a project or task detail card, with @mentions,
 // timestamps, and the entity's activity log. Comment author = the "acting as"
 // person selected in the header.
-import { useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store/AppStore';
 import type { CommentEntityType, Person } from '../types';
 import {
@@ -12,6 +12,7 @@ import {
 } from '../store/selectors';
 import { Avatar } from './Avatar';
 import { formatTimestamp } from '../utils/dates';
+import { applyMention, filterMentionPeople, mentionQueryAt } from './mentionAutocomplete';
 
 interface Props {
   entityType: CommentEntityType;
@@ -69,6 +70,15 @@ export function CommentsPanel({ entityType, entityId, inputRows = 2 }: Props) {
   const { state, dispatch } = useStore();
   const [tab, setTab] = useState<'comments' | 'activity'>('comments');
   const [body, setBody] = useState('');
+  // --- Podpowiedzi @wzmianek (logika w ./mentionAutocomplete) ---
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  // Kursor ustawiany po wstawieniu wzmianki, dopięty w efekcie po zmianie `body`.
+  const pendingCaretRef = useRef<number | null>(null);
+  const [caret, setCaret] = useState(0);
+  // Escape/blur chowa listę; kolejna zmiana tekstu otwiera ją ponownie.
+  const [dismissed, setDismissed] = useState(false);
+  const [active, setActive] = useState(0);
+  const listId = useId();
 
   const comments = commentsFor(state, entityType, entityId);
   const activity = useMemo(
@@ -93,6 +103,57 @@ export function CommentsPanel({ entityType, entityId, inputRows = 2 }: Props) {
 
   const insertMention = (p: Person) => {
     setBody((prev) => `${prev}${prev && !prev.endsWith(' ') ? ' ' : ''}@${p.firstName} `);
+  };
+
+  const range = useMemo(
+    () => (dismissed ? null : mentionQueryAt(body, caret)),
+    [body, caret, dismissed],
+  );
+  const options = useMemo(
+    () => (range ? filterMentionPeople(state.people, range.query) : []),
+    [range, state.people],
+  );
+  const open = range !== null && options.length > 0;
+  // Czytamy zawsze przyciętą wartość — lista mogła się skrócić między renderami.
+  const activeIndex = Math.min(active, Math.max(0, options.length - 1));
+
+  useEffect(() => {
+    setActive(0);
+  }, [range?.query, options.length]);
+
+  // Po wstawieniu wzmianki wracamy fokusem do pola i ustawiamy kursor za spacją.
+  useEffect(() => {
+    const next = pendingCaretRef.current;
+    if (next === null) return;
+    pendingCaretRef.current = null;
+    taRef.current?.focus();
+    taRef.current?.setSelectionRange(next, next);
+    setCaret(next);
+  }, [body]);
+
+  const insertSuggestion = (p: Person) => {
+    if (!range) return;
+    const { text, caret: next } = applyMention(body, range, p);
+    pendingCaretRef.current = next;
+    setBody(text);
+  };
+
+  const onTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Przy zamkniętej liście nie dotykamy klawiatury: Enter dalej robi nową linię.
+    if (!open) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActive((i) => (Math.min(i, options.length - 1) + 1) % options.length);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActive((i) => (Math.min(i, options.length - 1) - 1 + options.length) % options.length);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      insertSuggestion(options[activeIndex]);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setDismissed(true);
+    }
   };
 
   return (
@@ -151,16 +212,51 @@ export function CommentsPanel({ entityType, entityId, inputRows = 2 }: Props) {
           )}
 
           <form className="comment-form" onSubmit={submit}>
-            <textarea
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              rows={inputRows}
-              placeholder={
-                me
-                  ? `Komentujesz jako ${me.name}… użyj @imię, żeby kogoś oznaczyć`
-                  : 'Napisz komentarz… (wybierz użytkownika w nagłówku, żeby go podpisać)'
-              }
-            />
+            <div className="comment-input-wrap">
+              <textarea
+                ref={taRef}
+                value={body}
+                onChange={(e) => {
+                  setBody(e.target.value);
+                  setCaret(e.currentTarget.selectionStart ?? 0);
+                  setDismissed(false);
+                }}
+                onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
+                onClick={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
+                onKeyDown={onTextareaKeyDown}
+                onBlur={() => setDismissed(true)}
+                rows={inputRows}
+                role="combobox"
+                aria-expanded={open}
+                aria-autocomplete="list"
+                aria-controls={open ? listId : undefined}
+                aria-activedescendant={open ? `${listId}-${activeIndex}` : undefined}
+                placeholder={
+                  me
+                    ? `Komentujesz jako ${me.name}… użyj @imię, żeby kogoś oznaczyć`
+                    : 'Napisz komentarz… (wybierz użytkownika w nagłówku, żeby go podpisać)'
+                }
+              />
+              {open ? (
+                <ul className="mention-autocomplete" id={listId} role="listbox" aria-label="Podpowiedzi wzmianek">
+                  {options.map((p, i) => (
+                    <li key={p.id} id={`${listId}-${i}`} role="option" aria-selected={i === activeIndex}>
+                      <button
+                        type="button"
+                        className={i === activeIndex ? 'mention-option active' : 'mention-option'}
+                        // Nie zabieramy fokusu polu — inaczej blur zamknąłby listę
+                        // zanim klik zdąży wstawić wzmiankę.
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => insertSuggestion(p)}
+                      >
+                        <strong>@{p.firstName}</strong>
+                        <span className="muted">{p.name}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
             <div className="comment-form-actions">
               <div className="mention-chips">
                 {state.people.map((p) => (

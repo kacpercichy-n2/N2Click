@@ -39,7 +39,9 @@ import {
   DEFAULT_ZOOM_LEVEL,
   canZoomIn as canZoomInLevel,
   canZoomOut as canZoomOutLevel,
+  dayHeaders,
   shiftAnchor,
+  showDayColumns,
   zoomIn as zoomInLevel,
   zoomOut as zoomOutLevel,
   zoomView,
@@ -330,6 +332,13 @@ export function TimelinePage() {
   const days = useMemo(
     () => Array.from({ length: totalDays }, (_, i) => addDaysStr(rangeStart, i)),
     [rangeStart, totalDays],
+  );
+  // Przy bliskim zbliżeniu każdy dzień dostaje własną komórkę nagłówka;
+  // przy `month` lista jest pusta i zostają etykiety tygodnia.
+  const dayCols = showDayColumns(level);
+  const headers = useMemo(
+    () => dayHeaders(level, rangeStart, totalDays),
+    [level, rangeStart, totalDays],
   );
   const today = todayStr();
   const todayIdx = diffDays(rangeStart, today);
@@ -638,19 +647,30 @@ export function TimelinePage() {
       ) : (
         <div className="timeline-scroll" data-tour="timeline.chart">
           <div className="timeline" style={{ width: 240 + totalDays * dayW }}>
-            {/* Header: week labels + day stripes */}
+            {/* Header: per-day cells at close zoom, week labels otherwise */}
             <div className="timeline-row timeline-head">
               <div className="timeline-label" />
               <div className="timeline-track">
-                {days.map((d, i) =>
-                  // Label every Monday (the range may not start on one, e.g. the
-                  // month view) plus day 0 so the first column is always labelled.
-                  weekStart(d) === d || i === 0 ? (
-                    <span key={d} className="timeline-week-label" style={{ left: i * dayW }}>
-                      {formatShort(d)}
-                    </span>
-                  ) : null,
-                )}
+                {dayCols
+                  ? headers.map((h) => (
+                      <span
+                        key={h.date}
+                        className={h.weekend ? 'timeline-day-head weekend' : 'timeline-day-head'}
+                        style={{ left: h.index * dayW, width: dayW }}
+                      >
+                        <span className="timeline-day-num">{h.dayLabel}</span>
+                        <span className="timeline-day-dow">{h.weekdayLabel}</span>
+                      </span>
+                    ))
+                  : days.map((d, i) =>
+                      // Label every Monday (the range may not start on one, e.g. the
+                      // month view) plus day 0 so the first column is always labelled.
+                      weekStart(d) === d || i === 0 ? (
+                        <span key={d} className="timeline-week-label" style={{ left: i * dayW }}>
+                          {formatShort(d)}
+                        </span>
+                      ) : null,
+                    )}
               </div>
             </div>
 
@@ -679,7 +699,7 @@ export function TimelinePage() {
                           </button>
                         </div>
                         <div className="timeline-track">
-                          <DayStripes days={days} todayIdx={todayIdx} dayW={dayW} />
+                          <DayStripes days={days} todayIdx={todayIdx} dayW={dayW} columns={dayCols} />
                           <Bar
                             startIdx={dayIdx(p.startDate)}
                             span={diffDays(p.startDate, p.endDate) + 1}
@@ -721,7 +741,7 @@ export function TimelinePage() {
                             {t.title}
                           </div>
                           <div className="timeline-track">
-                            <DayStripes days={days} todayIdx={todayIdx} dayW={dayW} />
+                            <DayStripes days={days} todayIdx={todayIdx} dayW={dayW} columns={dayCols} />
                             <Bar
                               startIdx={dayIdx(t.startDate)}
                               span={diffDays(t.startDate, t.endDate) + 1}
@@ -767,7 +787,7 @@ export function TimelinePage() {
                         {t.title}
                       </div>
                       <div className="timeline-track">
-                        <DayStripes days={days} todayIdx={todayIdx} dayW={dayW} />
+                        <DayStripes days={days} todayIdx={todayIdx} dayW={dayW} columns={dayCols} />
                         <Bar
                           startIdx={dayIdx(t.startDate)}
                           span={diffDays(t.startDate, t.endDate) + 1}
@@ -796,15 +816,18 @@ export function TimelinePage() {
   );
 }
 
-/** Weekend shading + today line, shared by every track. */
+/** Weekend shading + optional day gridlines + today line, shared by every track. */
 function DayStripes({
   days,
   todayIdx,
   dayW,
+  columns,
 }: {
   days: string[];
   todayIdx: number;
   dayW: number;
+  /** True przy bliskim zbliżeniu — rysuje pionowe linie między dniami. */
+  columns: boolean;
 }) {
   return (
     <>
@@ -818,6 +841,17 @@ function DayStripes({
           />
         ) : null,
       )}
+      {columns &&
+        days.map((d, i) =>
+          i === 0 ? null : (
+            <span
+              key={`grid-${d}`}
+              className="timeline-daygrid"
+              style={{ left: i * dayW }}
+              aria-hidden
+            />
+          ),
+        )}
       {todayIdx >= 0 && todayIdx < days.length && (
         <span
           className="timeline-today"

@@ -1346,6 +1346,21 @@ option {
 .alloc-input:focus {
   border-color: rgba(196, 150, 255, 0.72);
 }
+/* Opcjonalna godzina startu komórki — drugi, dyskretniejszy input pod polem
+   godzin. Puste pole = automatyczne umiejscowienie w pierwszym wolnym oknie. */
+.alloc-time-input {
+  width: 60px;
+  margin-top: 2px;
+  text-align: center;
+  padding: 2px 3px;
+  border: 1px solid var(--n2-border-soft, var(--n2-border));
+  border-radius: var(--n2-radius-xs);
+  background: var(--field-bg);
+  color: var(--text-muted);
+  font-family: var(--n2-font-data);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
 .alloc-cell.overload {
   background: var(--n2-danger-soft);
 }
@@ -3100,6 +3115,46 @@ option {
   gap: 8px;
   flex-wrap: wrap;
 }
+/* Podpowiedzi @wzmianek nad polem komentarza. */
+.comment-input-wrap {
+  position: relative;
+}
+.mention-autocomplete {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 4px);
+  z-index: 40;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--n2-panel);
+  border: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-md);
+  box-shadow: var(--n2-shadow-soft);
+}
+.mention-option {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--n2-radius-xs);
+  background: none;
+  text-align: left;
+  font: inherit;
+  font-size: var(--n2-type-sm);
+  color: inherit;
+  cursor: pointer;
+}
+.mention-option:hover,
+.mention-option.active {
+  background: rgba(196, 150, 255, 0.16);
+  color: var(--n2-text);
+}
 .activity-list {
   list-style: none;
   margin: 0;
@@ -3354,6 +3409,38 @@ option {
   white-space: nowrap;
   font-family: var(--n2-font-data);
 }
+/* Nagłówek jednego dnia (bliskie zbliżenia: week / twoWeeks). Szerokość jest
+   dokładnie równa `dayW`, więc kolumna nigdy nie rozjeżdża się z paskiem. */
+.timeline-day-head {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  border-left: 1px solid var(--n2-border);
+  font-family: var(--n2-font-data);
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  pointer-events: none;
+}
+.timeline-day-head.weekend .timeline-day-num,
+.timeline-day-head.weekend .timeline-day-dow {
+  color: var(--text-muted);
+}
+.timeline-day-num {
+  font-size: var(--n2-type-xs);
+  font-weight: 600;
+}
+.timeline-day-dow {
+  font-size: 0.625rem;
+  color: var(--text-muted);
+  text-transform: lowercase;
+}
 .timeline-client-row .timeline-client {
   font-size: var(--n2-type-xs);
   font-weight: 400;
@@ -3386,6 +3473,16 @@ option {
   top: 0;
   bottom: 0;
   background: rgba(255, 255, 255, 0.03);
+}
+/* Pionowa linia między dniami przy bliskim zbliżeniu. Ta sama warstwa co
+   weekend (pod `.timeline-today` z-index 1 i `.timeline-bar` z-index 2). */
+.timeline-daygrid {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--n2-border-soft);
+  pointer-events: none;
 }
 .timeline-today {
   position: absolute;
@@ -3672,8 +3769,9 @@ option {
   color: var(--n2-danger);
 }
 
-/* Powiadomienia: wiersz = klikalny obszar (otwiera obiekt) + osobny „✓" (oznacz
- * jako przeczytane bez otwierania). `dash-notif-open` reużywa stylu `.dash-row`. */
+/* Powiadomienia: wiersz = klikalny obszar (rozwija podgląd; otwarcie obiektu to
+ * osobny przycisk w podglądzie) + osobny „✓" (oznacz jako przeczytane bez
+ * rozwijania). `dash-notif-open` reużywa stylu `.dash-row`. */
 .dash-notif-row {
   display: flex;
   align-items: center;
@@ -3687,6 +3785,38 @@ option {
   flex: none;
   padding: 4px 6px;
   line-height: 1;
+}
+
+/* Rozwinięty podgląd powiadomienia (kto/co/gdzie + treść komentarza). Klik w
+ * wiersz tylko rozwija — otwarcie encji to osobny przycisk niżej. */
+.dash-notif-preview {
+  margin: 2px 0 6px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--n2-border);
+  margin-left: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: var(--n2-type-sm);
+}
+.dash-notif-line {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.dash-notif-label {
+  color: var(--text-muted);
+  margin-right: 4px;
+}
+.dash-notif-body {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+}
+.dash-notif-openbtn {
+  align-self: flex-start;
+  margin-top: 6px;
 }
 
 /* ---------- Dashboard: worker welcome page ---------- */

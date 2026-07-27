@@ -10,7 +10,9 @@ import {
   WEEK_DAY_W,
   canZoomIn,
   canZoomOut,
+  dayHeaders,
   shiftAnchor,
+  showDayColumns,
   zoomIn,
   zoomOut,
   zoomView,
@@ -114,6 +116,52 @@ describe('zoom stepping and clamping', () => {
     expect(canZoomOut('month')).toBe(false);
     expect(canZoomIn('twoWeeks')).toBe(true);
     expect(canZoomOut('twoWeeks')).toBe(true);
+  });
+});
+
+describe('showDayColumns', () => {
+  it('shows per-day columns only at the two closest levels', () => {
+    expect(showDayColumns('week')).toBe(true);
+    expect(showDayColumns('twoWeeks')).toBe(true);
+    expect(showDayColumns('month')).toBe(false);
+  });
+});
+
+describe('dayHeaders', () => {
+  it('labels every workday of a week range', () => {
+    // 2026-07-27 is a Monday.
+    const h = dayHeaders('week', '2026-07-27', 5);
+    expect(h).toHaveLength(5);
+    expect(h.map((x) => x.index)).toEqual([0, 1, 2, 3, 4]);
+    expect(h.map((x) => x.date)).toEqual([
+      '2026-07-27',
+      '2026-07-28',
+      '2026-07-29',
+      '2026-07-30',
+      '2026-07-31',
+    ]);
+    expect(h.map((x) => x.dayLabel)).toEqual(['27', '28', '29', '30', '31']);
+    // Real date-fns pl `EEEEEE` output (three letters, not the two-letter
+    // WEEKDAY_LABELS used by the month grid).
+    expect(h.map((x) => x.weekdayLabel)).toEqual(['pon', 'wto', 'śro', 'czw', 'pią']);
+    expect(h.every((x) => x.weekend === false)).toBe(true);
+  });
+
+  it('marks both weekends across a 14-day range', () => {
+    const h = dayHeaders('twoWeeks', '2026-07-27', 14);
+    expect(h).toHaveLength(14);
+    expect(h.filter((x) => x.weekend).map((x) => x.index)).toEqual([5, 6, 12, 13]);
+  });
+
+  it('drops the leading zero on single-digit days', () => {
+    const h = dayHeaders('week', '2026-07-06', 5);
+    expect(h.map((x) => x.dayLabel)).toEqual(['6', '7', '8', '9', '10']);
+  });
+
+  it('returns nothing at month zoom or for an empty range', () => {
+    expect(dayHeaders('month', '2026-07-01', 31)).toEqual([]);
+    expect(dayHeaders('week', '2026-07-27', 0)).toEqual([]);
+    expect(dayHeaders('twoWeeks', '2026-07-27', -1)).toEqual([]);
   });
 });
 

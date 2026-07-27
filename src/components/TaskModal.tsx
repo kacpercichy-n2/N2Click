@@ -26,7 +26,12 @@ import { PlanningBadge } from './PlanningBadge';
 import { IconButton } from './IconButton';
 import { X } from './icons';
 import { CommentsPanel } from './CommentsPanel';
-import { AllocationGrid, allocKey, type AllocMap } from './AllocationGrid';
+import {
+  AllocationGrid,
+  allocKey,
+  type AllocMap,
+  type AllocStartMap,
+} from './AllocationGrid';
 import { SaveStatus } from './SaveStatus';
 import { personColor } from '../utils/colors';
 import {
@@ -36,6 +41,7 @@ import {
   formatMinutes,
   isBinEntry,
   snapHours,
+  snapToStep,
 } from '../utils/time';
 import {
   eachDayInclusive,
@@ -73,6 +79,13 @@ function recurMinutesToTime(min: number): string {
   const m = min % 60;
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
+// Jedyna normalizacja przypiętej godziny startu: snap do siatki 15 min i clamp
+// do doby. Używają jej ZARÓWNO seed z zapisanego stanu, JAK I edycja pola, żeby
+// obie ścieżki nie mogły się rozjechać.
+function normalizeStartMinutes(minutes: number): number {
+  return Math.max(0, Math.min(snapToStep(minutes), DAY_MINUTES - MINUTE_STEP));
+}
+
 // 'yyyy-MM-dd' → 'dd.MM.yyyy' for the read-only override list.
 function recurDateLabel(date: string): string {
   const [y, m, d] = date.split('-');
@@ -385,6 +398,7 @@ function serializeDraft(v: {
   endDate: string;
   assigneeIds: string[];
   allocations: AllocMap;
+  startTimes: AllocStartMap;
   soldRawByPerson: Record<string, string>;
 }): string {
   return JSON.stringify({
@@ -402,6 +416,11 @@ function serializeDraft(v: {
     assigneeIds: [...v.assigneeIds].sort(),
     allocations: Object.entries(v.allocations)
       .filter(([, h]) => h > 0)
+      .sort(([a], [b]) => a.localeCompare(b)),
+    // Przypięte godziny startu — tylko dla komórek z godzinami > 0 (pin bez
+    // godzin nie jedzie w ładunku, więc nie może brudzić edytora).
+    startTimes: Object.entries(v.startTimes)
+      .filter(([key]) => (v.allocations[key] ?? 0) > 0)
       .sort(([a], [b]) => a.localeCompare(b)),
     // Godziny sprzedane per osoba — tylko aktualnie przypisani (odpięcie osoby
     // nie zostawia widma w dirty-detekcji).
@@ -508,6 +527,32 @@ function TaskEditor({
       )) {
         const key = allocKey(w.personId, w.date);
         map[key] = (map[key] ?? 0) + w.plannedHours;
+      }
+    }
+    return map;
+  });
+
+  // ---- OPCJONALNE przypięte godziny startu (allocKey -> minuty od północy).
+  // Seed tylko dla par rozwiązywanych do JEDNEGO bloku: dzień wielo-blokowy
+  // zachowuje swoje upakowanie i nie dostaje pola w siatce. ----
+  const [startTimes, setStartTimes] = useState<AllocStartMap>(() => {
+    const map: AllocStartMap = {};
+    if (existing) {
+      const byPair = new Map<string, number[]>();
+      for (const w of state.workload) {
+        if (w.taskId !== existing.id || isBinEntry(w)) continue;
+        const key = allocKey(w.personId, w.date);
+        const list = byPair.get(key);
+        if (list) list.push(w.startMinutes);
+        else byPair.set(key, [w.startMinutes]);
+      }
+      // Seed też przechodzi przez normalizację: wartość spoza siatki 15 min
+      // wróciłaby w SAVE_TASK i strażnik reducera odrzuciłby CAŁY zapis po
+      // cichu (niezmiennik 6 zwraca tę samą referencję stanu).
+      for (const [key, starts] of byPair) {
+        if (starts.length === 1 && Number.isFinite(starts[0])) {
+          map[key] = normalizeStartMinutes(starts[0]);
+        }
       }
     }
     return map;
@@ -624,6 +669,7 @@ function TaskEditor({
     endDate,
     assigneeIds,
     allocations,
+    startTimes,
     soldRawByPerson,
   });
   const snapshotRef = useRef<string | null>(null);
@@ -654,7 +700,40 @@ function TaskEditor({
       else delete next[key];
       return next;
     });
+    // Wyzerowana komórka traci też przypiętą godzinę, żeby nie wskrzesić
+    // nieaktualnego startu przy ponownym wpisaniu godzin.
+    if (snapped <= 0) {
+      setStartTimes((prev) => {
+        const key = allocKey(personId, date);
+        if (prev[key] === undefined) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    }
   }, []);
+
+  // Przypięta godzina startu komórki: `null` czyści pin (powrót do
+  // automatycznego umiejscowienia), liczba jest snapowana do siatki 15 min i
+  // clampowana do doby. NaN (nieparsowalne pole) nigdy nie trafia do stanu.
+  const setCellStart = useCallback(
+    (personId: string, date: string, minutes: number | null) => {
+      const key = allocKey(personId, date);
+      setStartTimes((prev) => {
+        if (minutes === null) {
+          if (prev[key] === undefined) return prev;
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        }
+        if (!Number.isFinite(minutes)) return prev;
+        const value = normalizeStartMinutes(minutes);
+        if (prev[key] === value) return prev;
+        return { ...prev, [key]: value };
+      });
+    },
+    [],
+  );
 
   const fillWeekdays = useCallback(
     (personId: string) => {
@@ -675,6 +754,14 @@ function TaskEditor({
   const clearPerson = useCallback(
     (personId: string) => {
       setAllocations((prev) => {
+        const next = { ...prev };
+        for (const d of eachDayInclusive(startDate, endDate)) {
+          delete next[allocKey(personId, d)];
+        }
+        return next;
+      });
+      // Wyczyszczone komórki tracą też przypięte godziny startu.
+      setStartTimes((prev) => {
         const next = { ...prev };
         for (const d of eachDayInclusive(startDate, endDate)) {
           delete next[allocKey(personId, d)];
@@ -720,6 +807,13 @@ function TaskEditor({
         }
         return next;
       });
+      setStartTimes((prev) => {
+        const next: AllocStartMap = {};
+        for (const [key, m] of Object.entries(prev)) {
+          if (!key.startsWith(`${personId}|`)) next[key] = m;
+        }
+        return next;
+      });
       setSoldRawByPerson((prev) => {
         const next = { ...prev };
         delete next[personId];
@@ -745,10 +839,17 @@ function TaskEditor({
       const [personId, date] = key.split('|');
       if (!periodDaysSet.has(date)) continue;
       if (!assigneeIds.includes(personId)) continue;
-      cells.push({ personId, date, plannedHours: hours });
+      // Spread WARUNKOWY: jawne `startMinutes: undefined` zmieniłoby kształt
+      // ładunku bez powodu (brak klucza = automatyczne umiejscowienie).
+      cells.push({
+        personId,
+        date,
+        plannedHours: hours,
+        ...(startTimes[key] !== undefined ? { startMinutes: startTimes[key] } : {}),
+      });
     }
     return cells;
-  }, [allocations, periodDaysSet, assigneeIds]);
+  }, [allocations, startTimes, periodDaysSet, assigneeIds]);
 
   const plannedTotalAll = plannedCells.reduce((s, c) => s + c.plannedHours, 0);
 
@@ -1324,6 +1425,13 @@ function TaskEditor({
       {!isDraft && (
       <div className="editor-section">
         <h2>Dzienny przydział godzin</h2>
+        {/* Podpowiedź dotyczy pola godziny startu, a siatka pokazuje je tylko w
+            trybie edycji — w podglądzie bez uprawnień byłaby myląca. */}
+        {!readOnly && (
+          <p className="field-hint">
+            Godzina startu jest opcjonalna — puste pole planuje blok w pierwszym wolnym oknie dnia.
+          </p>
+        )}
         {!periodValid ? (
           <p className="field-hint">Ustaw prawidłowy okres, aby planować godziny.</p>
         ) : assignedPeople.length === 0 ? (
@@ -1342,8 +1450,10 @@ function TaskEditor({
               endDate={endDate}
               people={assignedPeople}
               allocations={allocations}
+              startTimes={startTimes}
               blockCounts={multiBlockCounts}
               onChange={setCell}
+              onChangeStart={setCellStart}
               onFillWeekdays={fillWeekdays}
               onClearPerson={clearPerson}
               readOnly={readOnly}
