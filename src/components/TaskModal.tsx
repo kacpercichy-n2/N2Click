@@ -2,7 +2,8 @@
 // as an overlay driven by the `?task=<id>` (or `?task=new[&project=<id>]`)
 // search params. Rendered ONCE at App level. Closing removes the task/project
 // params while keeping the rest of the URL (and the page's scroll) intact.
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import { useStore, usePersistence } from '../store/AppStore';
@@ -16,6 +17,7 @@ import {
   assigneeIdsOfTask,
   availableHoursOnDate,
   binEntriesForTask,
+  commentsFor,
   getClient,
   getPerson,
   getStatus,
@@ -68,6 +70,16 @@ import {
   type SaveBlocker,
   type SaveBlockerId,
 } from './taskSaveBlockers';
+import {
+  initialTab,
+  resolveTabNavKey,
+  visibleSections,
+  visibleTabs,
+  type SectionFlags,
+  type TaskModalSectionId,
+  type TaskModalTab,
+  type TaskModalTabId,
+} from './taskModalSections';
 import { Field, focusFieldById } from './Field';
 import type { FieldControlProps } from './Field';
 import { mergeDescribedBy } from './tooltipShell';
@@ -253,6 +265,17 @@ function TaskModalShell({
   // IA-12 — powody, dla których zapis nie przejdzie. Edytor je liczy, nagłówek
   // pokazuje je na odznace zapisu (klik = skok do przyczyny).
   const [blockers, setBlockers] = useState<SaveBlocker[]>([]);
+  // Skok do przyczyny musi najpierw przełączyć zakładkę edytora (kotwice pól
+  // żyją w panelu „Zadanie"), więc handler przychodzi Z edytora razem z listą.
+  // Nagłówek nie zna stanu zakładek i znać go nie musi.
+  const jumpRef = useRef<(blocker: SaveBlocker) => void>(focusSaveBlocker);
+  const handleBlockersChange = useCallback(
+    (next: SaveBlocker[], jump: (blocker: SaveBlocker) => void) => {
+      jumpRef.current = jump;
+      setBlockers(next);
+    },
+    [],
+  );
 
   // Deliberate close: the user already confirmed (or nothing needs asking), so
   // the closing navigation must not raise the router guard a second time.
@@ -352,7 +375,7 @@ function TaskModalShell({
                     blockers.length > 0
                       ? {
                           message: blockers[0].message,
-                          onJump: () => focusSaveBlocker(blockers[0]),
+                          onJump: () => jumpRef.current(blockers[0]),
                         }
                       : undefined
                   }
@@ -393,7 +416,7 @@ function TaskModalShell({
                 onSaved={onClose}
                 onCancel={requestClose}
                 onDirtyChange={handleDirtyChange}
-                onBlockersChange={setBlockers}
+                onBlockersChange={handleBlockersChange}
                 markSaved={markSaved}
               />
             )}
@@ -413,8 +436,9 @@ interface EditorProps {
   onSaved: () => void;
   onCancel: () => void;
   onDirtyChange: (dirty: boolean) => void;
-  /** IA-12 — aktualne powody blokujące zapis (dla odznaki w nagłówku). */
-  onBlockersChange: (blockers: SaveBlocker[]) => void;
+  /** IA-12 — aktualne powody blokujące zapis (dla odznaki w nagłówku) razem ze
+   *  skokiem do przyczyny: ten przełącza zakładkę PRZED ustawieniem fokusa. */
+  onBlockersChange: (blockers: SaveBlocker[], jump: (blocker: SaveBlocker) => void) => void;
   markSaved: () => void;
 }
 
@@ -529,6 +553,32 @@ function TaskEditor({
   const [departmentId, setDepartmentId] = useState<string>(existing?.departmentId ?? '');
   const [checklist, setChecklist] = useState<ChecklistItem[]>(existing?.checklist ?? []);
   const [checklistInput, setChecklistInput] = useState('');
+
+  // ---- Zakładki + sekcje zwijane (PKG-20260728-taskmodal-structure) ----
+  // Kolejność i widoczność sekcji liczy CZYSTY `taskModalSections.ts`; tutaj
+  // zostaje wyłącznie stan wyboru zakładki i dwa przełączniki zwijania.
+  const [activeTab, setActiveTab] = useState<TaskModalTabId>(() =>
+    initialTab({ hasFocusBlock: Boolean(focusBlockId), isEdit: Boolean(existing) }),
+  );
+  // Cykliczność rozwija się sama tylko wtedy, gdy zadanie NAPRAWDĘ ma regułę.
+  const [recurOpen, setRecurOpen] = useState(() => existing?.recurrence != null);
+  // Klasyfikacja rozwija się, gdy któraś wartość jest ustawiona.
+  const [classificationOpen, setClassificationOpen] = useState(
+    () => (existing?.workCategoryId ?? '') !== '' || (existing?.departmentId ?? '') !== '',
+  );
+  const tabsBaseId = useId();
+  const tabDomId = (id: TaskModalTabId) => `${tabsBaseId}-tab-${id}`;
+  const panelDomId = (id: TaskModalTabId) => `${tabsBaseId}-panel-${id}`;
+  const recurBodyId = `${tabsBaseId}-recur-body`;
+  const classificationBodyId = `${tabsBaseId}-classification-body`;
+  const tabRefs = useRef<Partial<Record<TaskModalTabId, HTMLButtonElement | null>>>({});
+  // Skok z listy blokad zapisu: WSZYSTKIE kotwice pól (`t-title`…`t-assignees`)
+  // mieszkają w panelu „Zadanie", a ukryty panel nie przyjmuje fokusa — więc
+  // najpierw przełączamy zakładkę, a fokus ustawiamy po commicie Reacta.
+  const jumpToBlocker = useCallback((blocker: SaveBlocker) => {
+    setActiveTab('zadanie');
+    setTimeout(() => focusSaveBlocker(blocker), 0);
+  }, []);
 
   // ---- Cykliczność (recurrence) — LOCAL draft only, seeded once from the task's
   // canonical rule. Never part of TaskDraft/auto-save: apply/clear/restore
@@ -997,8 +1047,8 @@ function TaskEditor({
   const blockersRef = useRef(blockers);
   blockersRef.current = blockers;
   useEffect(() => {
-    onBlockersChange(blockersRef.current);
-  }, [blockerSignature, onBlockersChange]);
+    onBlockersChange(blockersRef.current, jumpToBlocker);
+  }, [blockerSignature, onBlockersChange, jumpToBlocker]);
 
   // Nieudana próba zapisu odsłania listę powodów przy przycisku (przed pierwszą
   // próbą pusty formularz nowego zadania nie krzyczy).
@@ -1020,7 +1070,7 @@ function TaskEditor({
       // Przycisk nigdy nie jest jednocześnie aktywny i martwy: pokazujemy powody
       // i przenosimy użytkownika do pierwszego z nich.
       setSaveAttempted(true);
-      focusSaveBlocker(blockers[0]);
+      jumpToBlocker(blockers[0]);
       return false;
     }
     setSaveAttempted(false);
@@ -1183,28 +1233,59 @@ function TaskEditor({
     });
   const blocksDoneCount = taskBlocks.filter((b) => b.done === true).length;
 
-  return (
-    <div className="editor task-editor">
-      {readOnly && (
-        <span id={roDescId} className="sr-only">
-          {NO_PERM_TITLE} do edycji zadań.
-        </span>
-      )}
-      {/* Formularz obejmuje sekcje OD „Szczegóły" DO „Zasobnik". „Dyskusja" i
-          sticky pasek akcji zostają POZA nim: CommentsPanel ma własny
-          `<form>` (zagnieżdżenie jest nielegalne w HTML i „Skomentuj"
-          zapisywałoby zadanie). */}
-      <form
-        className="task-editor-form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          handleSave();
-        }}
-        noValidate
-      >
-      {/* a) Details */}
-      <div className="editor-section">
-        <h2>Szczegóły</h2>
+  // ---- Model sekcji/zakładek — JEDYNE źródło kolejności i widoczności ----
+  const commentCount = existing ? commentsFor(state, 'task', existing.id).length : 0;
+  const sectionFlags: SectionFlags = {
+    isEdit,
+    isDraft,
+    hasValidPeriod: periodValid,
+    hasAssignees: assignedPeople.length > 0,
+    hasBlocks: taskBlocks.length > 0,
+    commentCount,
+  };
+  const sections = visibleSections(sectionFlags);
+  const tabs = visibleTabs(sectionFlags);
+  // Zakładka mogła zniknąć w trakcie edycji (np. okres przestał być poprawny w
+  // trybie tworzenia) — wtedy widok wraca na „Zadanie" bez efektu i bez skoku
+  // stanu (`activeTab` zostaje, więc powrót poprawnego okresu go przywraca).
+  const currentTab: TaskModalTabId = tabs.some((t) => t.id === activeTab) ? activeTab : 'zadanie';
+  const showTabs = tabs.length > 1;
+
+  const onTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    const next = resolveTabNavKey(
+      event.key,
+      tabs.findIndex((t) => t.id === currentTab),
+      tabs.length,
+    );
+    if (next === null) return;
+    event.preventDefault();
+    // Zaznaczenie PODĄŻA ZA FOKUSEM (wzorzec poziomego tablisty).
+    setActiveTab(tabs[next].id);
+    tabRefs.current[tabs[next].id]?.focus();
+  };
+
+  /** Wspólny nagłówek sekcji zwijanej — `aria-expanded` + `aria-controls`. */
+  const collapseToggle = (label: string, open: boolean, bodyId: string, onToggle: () => void) => (
+    <button
+      type="button"
+      className="section-toggle"
+      aria-expanded={open}
+      aria-controls={bodyId}
+      onClick={onToggle}
+    >
+      <span className="section-toggle-label">{label}</span>
+      <span className="section-toggle-mark" aria-hidden>
+        {open ? '−' : '+'}
+      </span>
+    </button>
+  );
+
+  // Treść każdej sekcji. Kolejność i widoczność NIE żyją tutaj — bierze je
+  // `visibleSections` — więc dopisanie sekcji to jeden wpis w czystym modelu.
+  const sectionContent: Record<TaskModalSectionId, ReactNode> = {
+    // 1) Kontekst — przyklejona głowa: co, gdzie, w jakim stanie.
+    context: (
+      <div className="task-context-header">
         <Field
           id="t-title"
           label="Tytuł *"
@@ -1219,19 +1300,6 @@ function TaskEditor({
               onBlur={() => markTouched('title')}
               className={showError('title') ? 'invalid' : undefined}
               placeholder="Co trzeba zrobić?"
-              disabled={readOnly}
-              aria-describedby={roDescWith(control)}
-            />
-          )}
-        </Field>
-        <Field id="t-desc" label="Opis">
-          {(control) => (
-            <textarea
-              {...control}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={3}
-              placeholder="Opcjonalne szczegóły"
               disabled={readOnly}
               aria-describedby={roDescWith(control)}
             />
@@ -1300,6 +1368,27 @@ function TaskEditor({
             )}
           </Field>
         </div>
+      </div>
+    ),
+
+    // 2) Szczegóły — opis i priorytet (kategoria/dział przeniosły się do
+    //    zwijanej „Klasyfikacji").
+    details: (
+      <div className="editor-section">
+        <h2>Szczegóły</h2>
+        <Field id="t-desc" label="Opis">
+          {(control) => (
+            <textarea
+              {...control}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={3}
+              placeholder="Opcjonalne szczegóły"
+              disabled={readOnly}
+              aria-describedby={roDescWith(control)}
+            />
+          )}
+        </Field>
         <div className="field-row">
           <Field id="t-priority" label="Priorytet">
             {(control) => (
@@ -1318,44 +1407,72 @@ function TaskEditor({
               </select>
             )}
           </Field>
-          <div className="field">
-            <label htmlFor="t-category">Kategoria</label>
-            <select
-              id="t-category"
-              value={workCategoryId}
-              onChange={(e) => setWorkCategoryId(e.target.value)}
-              disabled={readOnly}
-              aria-describedby={roDesc}
-            >
-              <option value="">Brak kategorii</option>
-              {state.workCategories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="t-department">Dział</label>
-            <select
-              id="t-department"
-              value={departmentId}
-              onChange={(e) => setDepartmentId(e.target.value)}
-              disabled={readOnly}
-              aria-describedby={roDesc}
-            >
-              <option value="">Bez działu</option>
-              {state.departments.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
-          </div>
         </div>
       </div>
+    ),
 
-      {/* c) Assignees */}
+    // 3) Okres — NAD godzinami: najpierw „kiedy", potem „ile".
+    period: (
+      <div className="editor-section">
+        <h2>Okres</h2>
+        <div className="field-row">
+          {/* Błąd okresu opisuje OBA pola jednym akapitem (`t-period-error`).
+              Błąd pojedynczej daty oznacza swoje pole, a błąd ZAKRESU
+              (`reversed`/`too-long`) oba — żadna data nie jest sama zła. */}
+          <Field
+            id="t-start"
+            label="Data startu"
+            help={isValidDateStr(startDate) ? formatShortWithWeekday(startDate) : undefined}
+            invalid={periodErrorVisible && periodTargets.start}
+            {...(periodErrorVisible ? { describedByExtra: 't-period-error' } : {})}
+          >
+            {(control) => (
+              <input
+                {...control}
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                onBlur={() => markTouched('period')}
+                disabled={readOnly}
+                aria-describedby={roDescWith(control)}
+              />
+            )}
+          </Field>
+          <Field
+            id="t-end"
+            label="Data końca"
+            help={isValidDateStr(endDate) ? formatShortWithWeekday(endDate) : undefined}
+            invalid={periodErrorVisible && periodTargets.end}
+            {...(periodErrorVisible ? { describedByExtra: 't-period-error' } : {})}
+          >
+            {(control) => (
+              <input
+                {...control}
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                onBlur={() => markTouched('period')}
+                disabled={readOnly}
+                aria-describedby={roDescWith(control)}
+              />
+            )}
+          </Field>
+        </div>
+        {periodErrorVisible && perErr && (
+          <p className="field-error" id="t-period-error">
+            {PERIOD_ERROR_LABELS[perErr]}
+          </p>
+        )}
+        {periodValid && (
+          <p className="field-hint">
+            Liczba dni w okresie: {periodDays}.
+          </p>
+        )}
+      </div>
+    ),
+
+    // 4) Osoby i ich godziny (sprzedane) + informacyjna dostępność.
+    'people-hours': (
       <div className="editor-section">
         <h2>Przypisane osoby</h2>
         {state.people.length === 0 ? (
@@ -1495,101 +1612,67 @@ function TaskEditor({
             )}
           </div>
         )}
-        {isDraft ? (
+        {isDraft && (
           <p className="field-hint task-draft-hint">
             <strong>Szkic.</strong> Godziny osób zapisują się ze szkicem i po
             publikacji trafią do zasobnika. Zadanie pozostaje szkicem, dopóki go
             nie opublikujesz.
           </p>
-        ) : (
-          <>
-            {/* Podsumowanie planowania stoi tuż pod godzinami osób, bo porównuje
-                dokładnie te liczby: co jest sprzedane vs co leży w kalendarzu. */}
-            <div className="estimate-compare">
-              <span>
-                w kalendarzu{' '}
-                <strong className={overBudget ? 'over-budget' : undefined}>
-                  {formatDuration(plannedTotalAll)}
-                </strong>
-                {binTotal > 0 && (
-                  <span className="muted"> (+ {formatDuration(binTotal)} w zasobniku)</span>
-                )}
-              </span>
-              <span className="muted">vs</span>
-              <span>
-                {normalizedEstimate != null ? (
-                  <>
-                    szacunek <strong>{formatDuration(normalizedEstimate)}</strong>
-                  </>
-                ) : (
-                  <span className="muted">brak szacunku</span>
-                )}
-              </span>
-              <PlanningBadge
-                status={planningStatusForTotals(normalizedEstimate, plannedTotalAll, binTotal)}
-              />
-            </div>
-            {legacyEstimate != null && Math.abs(legacyEstimate - soldTotal) > 1e-9 && (
-              <p className="field-hint">
-                Poprzedni ręczny szacunek: {formatDuration(legacyEstimate)} — po zapisie
-                szacunkiem stanie się suma godzin osób.
-              </p>
-            )}
-            {overBudget && (
-              <p className="estimate-over">
-                ⚠ W kalendarzu zaplanowano {formatDuration(plannedTotalAll - soldTotal)} ponad godziny
-                przypisane osobom. Zwiększ godziny osób lub ogranicz siatkę.
-              </p>
-            )}
-          </>
         )}
       </div>
+    ),
 
-      {/* d) Daily allocation grid. Szkic nie planuje godzin — siatka pojawia się
-          dopiero po publikacji zadania w projekcie. */}
-      {!isDraft && (
-      <div className="editor-section">
-        <h2>Dzienny przydział godzin</h2>
-        {/* Podpowiedź dotyczy pola godziny startu, a siatka pokazuje je tylko w
-            trybie edycji — w podglądzie bez uprawnień byłaby myląca. */}
-        {!readOnly && (
-          <p className="field-hint" id={startHintId}>
-            Godzina startu jest opcjonalna — puste pole planuje blok w pierwszym wolnym oknie dnia.
+    // 5) Scalony pasek podsumowania planowania. Zastąpił osobną sekcję
+    //    „Zasobnik (bez terminu)": liczby per osoba stoją w wierszach wyżej
+    //    („w kalendarzu X • zasobnik Y"), więc nic nie ginie.
+    summary: (
+      <div className="editor-section editor-section-summary">
+        <div className="estimate-compare">
+          <span>
+            w kalendarzu{' '}
+            <strong className={overBudget ? 'over-budget' : undefined}>
+              {formatDuration(plannedTotalAll)}
+            </strong>
+          </span>
+          <span className="muted" aria-hidden>
+            ·
+          </span>
+          <span>
+            zasobnik <strong>{formatDuration(binTotal)}</strong>
+          </span>
+          <span className="muted" aria-hidden>
+            ·
+          </span>
+          <span>
+            sprzedane <strong>{formatDuration(soldTotal)}</strong>
+          </span>
+          <PlanningBadge
+            status={planningStatusForTotals(normalizedEstimate, plannedTotalAll, binTotal)}
+          />
+        </div>
+        {binTotal > 0 && (
+          <p className="field-hint">
+            Zasobnik = godziny osoby minus godziny w kalendarzu. Bloki bez terminu
+            przeciągniesz na siatkę w widoku tygodnia kalendarza.
           </p>
         )}
-        {!periodValid ? (
-          <p className="field-hint">Ustaw prawidłowy okres, aby planować godziny.</p>
-        ) : assignedPeople.length === 0 ? (
-          <p className="field-hint">Przypisz co najmniej jedną osobę, aby planować godziny.</p>
-        ) : (
-          <>
-            {outOfRangeCount > 0 && (
-              <p className="field-notice">
-                Przy zapisie zostanie usunięta liczba wpisów poza nowym okresem: {outOfRangeCount}.
-              </p>
-            )}
-            <AllocationGrid
-              state={state}
-              currentTaskId={existing ? existing.id : null}
-              startDate={startDate}
-              endDate={endDate}
-              people={assignedPeople}
-              allocations={allocations}
-              startTimes={startTimes}
-              blockCounts={multiBlockCounts}
-              onChange={setCell}
-              onChangeStart={setCellStart}
-              onFillWeekdays={fillWeekdays}
-              onClearPerson={clearPerson}
-              readOnly={readOnly}
-              startHintId={readOnly ? undefined : startHintId}
-            />
-          </>
+        {legacyEstimate != null && Math.abs(legacyEstimate - soldTotal) > 1e-9 && (
+          <p className="field-hint">
+            Poprzedni ręczny szacunek: {formatDuration(legacyEstimate)} — po zapisie
+            szacunkiem stanie się suma godzin osób.
+          </p>
+        )}
+        {overBudget && (
+          <p className="estimate-over">
+            ⚠ W kalendarzu zaplanowano {formatDuration(plannedTotalAll - soldTotal)} ponad godziny
+            przypisane osobom. Zwiększ godziny osób lub ogranicz siatkę.
+          </p>
         )}
       </div>
-      )}
+    ),
 
-      {/* a2) Checklist */}
+    // 6) Checklista — „jak sprawdzę, że zrobione".
+    checklist: (
       <div className="editor-section">
         <h2>Checklista</h2>
         {checklist.length > 0 && (
@@ -1651,313 +1734,384 @@ function TaskEditor({
         )}
         {readOnly && checklist.length === 0 && <p className="field-hint">Brak elementów.</p>}
       </div>
+    ),
 
-      {/* a1) Wykonane bloki — per-block completion (PKG-per-block-done). One row
-          per WorkloadEntry (NOT per day): each block's portion of hours has its
-          own tick. Toggling a block dispatches SET_BLOCK_DONE and NEVER changes
-          the task status. Only for saved tasks that already have blocks. */}
-      {isEdit && taskBlocks.length > 0 && (
-        <div className="editor-section">
-          <h2>Wykonane bloki</h2>
-          <p className="checklist-count">
-            wykonano {blocksDoneCount}/{taskBlocks.length}
-          </p>
-          <p className="field-hint">
-            Każdy blok w kalendarzu można oznaczyć jako wykonany niezależnie — status
-            zadania pozostaje bez zmian.
-          </p>
-          <ul className="checklist-list block-done-list">
-            {taskBlocks.map((entry) => {
-              const focused = focusBlockId === entry.id;
-              return (
-                <li
-                  key={entry.id}
-                  ref={focused ? focusRowRef : undefined}
-                  className={[
-                    'checklist-row',
-                    entry.done === true ? 'done' : '',
-                    focused ? 'focused' : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' ')}
-                >
-                  <input
-                    type="checkbox"
-                    checked={entry.done === true}
-                    onChange={() =>
-                      dispatch({
-                        type: 'SET_BLOCK_DONE',
-                        entryId: entry.id,
-                        done: !(entry.done === true),
-                      })
-                    }
-                    disabled={readOnly}
-                    aria-describedby={roDesc}
-                    aria-label={`Oznacz blok „${blockRowLabel(entry)}” jako wykonany`}
-                  />
-                  <span className="checklist-text">{blockRowLabel(entry)}</span>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      )}
-
-      {/* a2) Cykliczność — occurrences are purely presentational (invariant 1);
-          this section only dispatches SET_TASK_RECURRENCE / SET_RECURRENCE_OVERRIDE
-          and never touches the SAVE_TASK draft or auto-save. */}
-      <div className="editor-section">
-        <h2>Cykliczność</h2>
-        {!isEdit || isDraft ? (
-          <p className="field-hint">Zapisz i opublikuj zadanie, aby ustawić cykliczność.</p>
-        ) : !isValidDateStr(startDate) ? (
-          <p className="field-hint">Ustaw datę rozpoczęcia, aby dodać cykliczność.</p>
-        ) : (
-          <>
-            <p className="field-hint">
-              Wystąpienia są tylko podglądem w kalendarzu — nie tworzą zaplanowanych
-              godzin ani nie wpływają na sumy i przeciążenie.
-            </p>
-            <div className="field">
-              <label>Dni tygodnia</label>
-              <div className="recur-weekday-picker">
-                {WEEKDAY_LABELS.map((label, i) => {
-                  const iso = i + 1;
-                  const active = recurDays.includes(iso);
-                  return (
-                    <button
-                      key={iso}
-                      type="button"
-                      className={active ? 'recur-day-chip active' : 'recur-day-chip'}
-                      aria-pressed={active}
-                      disabled={readOnly}
-                      aria-describedby={roDesc}
-                      onClick={() => toggleRecurDay(iso)}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            <div className="field-row">
-              <div className="field">
-                <label htmlFor="recur-start">Początek</label>
-                <input
-                  id="recur-start"
-                  type="time"
-                  step={900}
-                  value={recurStart}
-                  onChange={(e) => {
-                    recurEdited();
-                    setRecurStart(e.target.value);
-                  }}
-                  disabled={readOnly}
-                  aria-describedby={roDesc}
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="recur-dur">Czas trwania</label>
-                <select
-                  id="recur-dur"
-                  value={recurDurMin}
-                  onChange={(e) => {
-                    recurEdited();
-                    setRecurDurMin(Number(e.target.value));
-                  }}
-                  disabled={readOnly}
-                  aria-describedby={roDesc}
-                >
-                  {RECUR_DURATION_OPTIONS.map((min) => (
-                    <option key={min} value={min}>
-                      {formatDuration(min / 60)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
-                <label htmlFor="recur-until">Do dnia (opcjonalnie)</label>
-                <input
-                  id="recur-until"
-                  type="date"
-                  value={recurUntil}
-                  min={startDate}
-                  onChange={(e) => {
-                    recurEdited();
-                    setRecurUntil(e.target.value);
-                  }}
-                  disabled={readOnly}
-                  aria-describedby={roDesc}
-                />
-              </div>
-            </div>
-            {recurTouched && recurApplyError && (
-              <p className="field-error">{recurApplyError}</p>
-            )}
-            {!readOnly && (
-              <div className="recur-actions">
-                {/* Nietknięta sekcja nie pokazuje czerwonego błędu, więc powód
-                    wyłączenia przycisku niesie dymek + ukryty opis (AT-07). */}
-                <DisabledHint reason={recurApplyError} id="task-recur-blocked">
-                  <button
-                    type="button"
-                    className="btn primary"
-                    onClick={applyRecurrence}
-                    disabled={recurApplyError !== null}
-                  >
-                    Zastosuj cykliczność
-                  </button>
-                </DisabledHint>
-                {liveRule && (
-                  <button type="button" className="btn danger-ghost" onClick={clearRecurrence}>
-                    Usuń cykliczność
-                  </button>
-                )}
-              </div>
-            )}
-            {liveRule && (liveRule.overrides?.length ?? 0) > 0 && (
-              <div className="recur-overrides">
-                <p className="field-hint">Wyjątki:</p>
-                <ul className="recur-override-list">
-                  {liveRule.overrides!.map((ov) => (
-                    <li key={ov.date} className="recur-override-row">
-                      <span className="recur-override-text">
-                        {/* Trzy warianty wyjątku: pominięcie, samo wykonanie
-                            (czasy z reguły — bez artefaktu „00:00, 0 h") oraz
-                            przesunięcie czasu z ewentualnym sufiksem wykonania. */}
-                        {ov.skip === true
-                          ? `${recurDateLabel(ov.date)} — pominięto`
-                          : ov.startMinutes === undefined
-                            ? `${recurDateLabel(ov.date)} — zrobione`
-                            : `${recurDateLabel(ov.date)} — ${formatMinutes(
-                                ov.startMinutes,
-                              )}, ${formatDuration((ov.durationMinutes ?? 0) / 60)}${
-                                ov.done === true ? ' · zrobione' : ''
-                              }`}
-                      </span>
-                      {!readOnly && (
-                        <button
-                          type="button"
-                          className="btn ghost"
-                          onClick={() => restoreOverride(ov.date)}
-                        >
-                          Przywróć zgodnie z regułą
-                        </button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </>
+    // 7) Cykliczność — ZWINIĘTA za przełącznikiem. Wystąpienia są wyłącznie
+    //    podglądem (invariant 1); sekcja dispatchuje SET_TASK_RECURRENCE /
+    //    SET_RECURRENCE_OVERRIDE i NIGDY nie rusza draftu SAVE_TASK ani
+    //    auto-zapisu. Samo zwinięcie niczego nie wysyła — „Usuń cykliczność"
+    //    zostaje jedyną drogą kasowania reguły.
+    recurrence: (
+      <div className="editor-section editor-section-collapsible">
+        {collapseToggle('Powtarzaj to zadanie', recurOpen, recurBodyId, () =>
+          setRecurOpen((v) => !v),
         )}
-      </div>
-
-      {/* b) Period */}
-      <div className="editor-section">
-        <h2>Okres</h2>
-        <div className="field-row">
-          {/* Błąd okresu opisuje OBA pola jednym akapitem (`t-period-error`).
-              Błąd pojedynczej daty oznacza swoje pole, a błąd ZAKRESU
-              (`reversed`/`too-long`) oba — żadna data nie jest sama zła. */}
-          <Field
-            id="t-start"
-            label="Data startu"
-            help={isValidDateStr(startDate) ? formatShortWithWeekday(startDate) : undefined}
-            invalid={periodErrorVisible && periodTargets.start}
-            {...(periodErrorVisible ? { describedByExtra: 't-period-error' } : {})}
-          >
-            {(control) => (
-              <input
-                {...control}
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                onBlur={() => markTouched('period')}
-                disabled={readOnly}
-                aria-describedby={roDescWith(control)}
-              />
-            )}
-          </Field>
-          <Field
-            id="t-end"
-            label="Data końca"
-            help={isValidDateStr(endDate) ? formatShortWithWeekday(endDate) : undefined}
-            invalid={periodErrorVisible && periodTargets.end}
-            {...(periodErrorVisible ? { describedByExtra: 't-period-error' } : {})}
-          >
-            {(control) => (
-              <input
-                {...control}
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                onBlur={() => markTouched('period')}
-                disabled={readOnly}
-                aria-describedby={roDescWith(control)}
-              />
-            )}
-          </Field>
-        </div>
-        {periodErrorVisible && perErr && (
-          <p className="field-error" id="t-period-error">
-            {PERIOD_ERROR_LABELS[perErr]}
-          </p>
-        )}
-        {periodValid && (
-          <p className="field-hint">
-            Liczba dni w okresie: {periodDays}.
-          </p>
-        )}
-      </div>
-
-      {/* c2) Bin (zasobnik) — wyliczany z godzin osób, nie edytowany osobno.
-          Szkic nie planuje godzin, więc sekcja pojawia się dopiero po publikacji. */}
-      {!isDraft && (
-      <div className="editor-section">
-        <h2>Zasobnik (bez terminu)</h2>
-        {assignedPeople.length === 0 ? (
-          <p className="field-hint">
-            Przypisz osoby i nadaj im godziny — niezaplanowana część trafi tu
-            automatycznie.
-          </p>
-        ) : (
-          <>
-            {binTotal > 0 ? (
-              <div className="bin-existing">
-                {binTargets
-                  .filter((b) => b.hours > 0)
-                  .map((b) => {
-                    const person = state.people.find((p) => p.id === b.personId);
+        <div id={recurBodyId} className="section-collapse-body" hidden={!recurOpen}>
+          {!isValidDateStr(startDate) ? (
+            <p className="field-hint">Ustaw datę rozpoczęcia, aby dodać cykliczność.</p>
+          ) : (
+            <>
+              <p className="field-hint">
+                Wystąpienia są tylko podglądem w kalendarzu — nie tworzą zaplanowanych
+                godzin ani nie wpływają na sumy i przeciążenie.
+              </p>
+              <div className="field">
+                <label>Dni tygodnia</label>
+                <div className="recur-weekday-picker">
+                  {WEEKDAY_LABELS.map((label, i) => {
+                    const iso = i + 1;
+                    const active = recurDays.includes(iso);
                     return (
-                      <div key={b.personId} className="bin-existing-row">
-                        <span
-                          className="person-dot"
-                          style={{ background: personColor(b.personId) }}
-                          aria-hidden
-                        />
-                        <span className="bin-existing-name">{person?.name ?? 'Osoba'}</span>
-                        <span className="bin-chips">
-                          <span className="bin-chip readonly">{formatDuration(b.hours)}</span>
-                        </span>
-                      </div>
+                      <button
+                        key={iso}
+                        type="button"
+                        className={active ? 'recur-day-chip active' : 'recur-day-chip'}
+                        aria-pressed={active}
+                        disabled={readOnly}
+                        aria-describedby={roDesc}
+                        onClick={() => toggleRecurDay(iso)}
+                      >
+                        {label}
+                      </button>
                     );
                   })}
+                </div>
               </div>
-            ) : (
-              <p className="field-hint">
-                Wszystkie godziny osób są rozplanowane w kalendarzu — zasobnik jest
-                pusty.
+              <div className="field-row">
+                <div className="field">
+                  <label htmlFor="recur-start">Początek</label>
+                  <input
+                    id="recur-start"
+                    type="time"
+                    step={900}
+                    value={recurStart}
+                    onChange={(e) => {
+                      recurEdited();
+                      setRecurStart(e.target.value);
+                    }}
+                    disabled={readOnly}
+                    aria-describedby={roDesc}
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="recur-dur">Czas trwania</label>
+                  <select
+                    id="recur-dur"
+                    value={recurDurMin}
+                    onChange={(e) => {
+                      recurEdited();
+                      setRecurDurMin(Number(e.target.value));
+                    }}
+                    disabled={readOnly}
+                    aria-describedby={roDesc}
+                  >
+                    {RECUR_DURATION_OPTIONS.map((min) => (
+                      <option key={min} value={min}>
+                        {formatDuration(min / 60)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label htmlFor="recur-until">Do dnia (opcjonalnie)</label>
+                  <input
+                    id="recur-until"
+                    type="date"
+                    value={recurUntil}
+                    min={startDate}
+                    onChange={(e) => {
+                      recurEdited();
+                      setRecurUntil(e.target.value);
+                    }}
+                    disabled={readOnly}
+                    aria-describedby={roDesc}
+                  />
+                </div>
+              </div>
+              {recurTouched && recurApplyError && (
+                <p className="field-error">{recurApplyError}</p>
+              )}
+              {!readOnly && (
+                <div className="recur-actions">
+                  {/* Nietknięta sekcja nie pokazuje czerwonego błędu, więc powód
+                      wyłączenia przycisku niesie dymek + ukryty opis (AT-07). */}
+                  <DisabledHint reason={recurApplyError} id="task-recur-blocked">
+                    <button
+                      type="button"
+                      className="btn primary"
+                      onClick={applyRecurrence}
+                      disabled={recurApplyError !== null}
+                    >
+                      Zastosuj cykliczność
+                    </button>
+                  </DisabledHint>
+                  {liveRule && (
+                    <button type="button" className="btn danger-ghost" onClick={clearRecurrence}>
+                      Usuń cykliczność
+                    </button>
+                  )}
+                </div>
+              )}
+              {liveRule && (liveRule.overrides?.length ?? 0) > 0 && (
+                <div className="recur-overrides">
+                  <p className="field-hint">Wyjątki:</p>
+                  <ul className="recur-override-list">
+                    {liveRule.overrides!.map((ov) => (
+                      <li key={ov.date} className="recur-override-row">
+                        <span className="recur-override-text">
+                          {/* Trzy warianty wyjątku: pominięcie, samo wykonanie
+                              (czasy z reguły — bez artefaktu „00:00, 0 h") oraz
+                              przesunięcie czasu z ewentualnym sufiksem wykonania. */}
+                          {ov.skip === true
+                            ? `${recurDateLabel(ov.date)} — pominięto`
+                            : ov.startMinutes === undefined
+                              ? `${recurDateLabel(ov.date)} — zrobione`
+                              : `${recurDateLabel(ov.date)} — ${formatMinutes(
+                                  ov.startMinutes,
+                                )}, ${formatDuration((ov.durationMinutes ?? 0) / 60)}${
+                                  ov.done === true ? ' · zrobione' : ''
+                                }`}
+                        </span>
+                        {!readOnly && (
+                          <button
+                            type="button"
+                            className="btn ghost"
+                            onClick={() => restoreOverride(ov.date)}
+                          >
+                            Przywróć zgodnie z regułą
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    ),
+
+    // 8) Klasyfikacja — ZWINIĘTA: kategoria + dział (dawniej w „Szczegółach").
+    classification: (
+      <div className="editor-section editor-section-collapsible">
+        {collapseToggle('Klasyfikacja', classificationOpen, classificationBodyId, () =>
+          setClassificationOpen((v) => !v),
+        )}
+        <div
+          id={classificationBodyId}
+          className="section-collapse-body"
+          hidden={!classificationOpen}
+        >
+          <div className="field-row">
+            <div className="field">
+              <label htmlFor="t-category">Kategoria</label>
+              <select
+                id="t-category"
+                value={workCategoryId}
+                onChange={(e) => setWorkCategoryId(e.target.value)}
+                disabled={readOnly}
+                aria-describedby={roDesc}
+              >
+                <option value="">Brak kategorii</option>
+                {state.workCategories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="t-department">Dział</label>
+              <select
+                id="t-department"
+                value={departmentId}
+                onChange={(e) => setDepartmentId(e.target.value)}
+                disabled={readOnly}
+                aria-describedby={roDesc}
+              >
+                <option value="">Bez działu</option>
+                {state.departments.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+    ),
+
+    // 9) Dzienny przydział godzin (zakładka „Planowanie").
+    allocation: (
+      <div className="editor-section">
+        <h2>Dzienny przydział godzin</h2>
+        {/* Podpowiedź dotyczy pola godziny startu, a siatka pokazuje je tylko w
+            trybie edycji — w podglądzie bez uprawnień byłaby myląca. */}
+        {!readOnly && (
+          <p className="field-hint" id={startHintId}>
+            Godzina startu jest opcjonalna — puste pole planuje blok w pierwszym wolnym oknie dnia.
+          </p>
+        )}
+        {!periodValid ? (
+          <p className="field-hint">Ustaw prawidłowy okres, aby planować godziny.</p>
+        ) : assignedPeople.length === 0 ? (
+          <p className="field-hint">Przypisz co najmniej jedną osobę, aby planować godziny.</p>
+        ) : (
+          <>
+            {outOfRangeCount > 0 && (
+              <p className="field-notice">
+                Przy zapisie zostanie usunięta liczba wpisów poza nowym okresem: {outOfRangeCount}.
               </p>
             )}
-            <p className="field-hint">
-              Zasobnik = godziny osoby minus godziny w kalendarzu. Bloki bez
-              terminu przeciągniesz na siatkę w widoku tygodnia kalendarza.
-            </p>
+            <AllocationGrid
+              state={state}
+              currentTaskId={existing ? existing.id : null}
+              startDate={startDate}
+              endDate={endDate}
+              people={assignedPeople}
+              allocations={allocations}
+              startTimes={startTimes}
+              blockCounts={multiBlockCounts}
+              onChange={setCell}
+              onChangeStart={setCellStart}
+              onFillWeekdays={fillWeekdays}
+              onClearPerson={clearPerson}
+              readOnly={readOnly}
+              startHintId={readOnly ? undefined : startHintId}
+            />
           </>
         )}
       </div>
+    ),
+
+    // 10) Wykonane bloki — per-block completion (PKG-per-block-done). One row
+    //     per WorkloadEntry (NOT per day): each block's portion of hours has its
+    //     own tick. Toggling a block dispatches SET_BLOCK_DONE and NEVER changes
+    //     the task status.
+    'done-blocks': (
+      <div className="editor-section">
+        <h2>Wykonane bloki</h2>
+        <p className="checklist-count">
+          wykonano {blocksDoneCount}/{taskBlocks.length}
+        </p>
+        <p className="field-hint">
+          Każdy blok w kalendarzu można oznaczyć jako wykonany niezależnie — status
+          zadania pozostaje bez zmian.
+        </p>
+        <ul className="checklist-list block-done-list">
+          {taskBlocks.map((entry) => {
+            const focused = focusBlockId === entry.id;
+            return (
+              <li
+                key={entry.id}
+                ref={focused ? focusRowRef : undefined}
+                className={[
+                  'checklist-row',
+                  entry.done === true ? 'done' : '',
+                  focused ? 'focused' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+              >
+                <input
+                  type="checkbox"
+                  checked={entry.done === true}
+                  onChange={() =>
+                    dispatch({
+                      type: 'SET_BLOCK_DONE',
+                      entryId: entry.id,
+                      done: !(entry.done === true),
+                    })
+                  }
+                  disabled={readOnly}
+                  aria-describedby={roDesc}
+                  aria-label={`Oznacz blok „${blockRowLabel(entry)}” jako wykonany`}
+                />
+                <span className="checklist-text">{blockRowLabel(entry)}</span>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    ),
+
+    // 11) Dyskusja — POZA formularzem zadania (CommentsPanel ma własny `<form>`).
+    //     `existing` to strażnik TYPU (widoczność liczy model: `isEdit`).
+    discussion: existing ? (
+      <div className="editor-section">
+        <CommentsPanel entityType="task" entityId={existing.id} />
+      </div>
+    ) : null,
+  };
+
+  /** Panel zakładki. Sekcje idą WYŁĄCZNIE z modelu — bez własnej kolejności. */
+  const renderPanel = (tab: TaskModalTab) => (
+    <div
+      key={tab.id}
+      className={`task-tabpanel task-tabpanel-${tab.id}`}
+      hidden={currentTab !== tab.id}
+      {...(showTabs
+        ? { role: 'tabpanel', id: panelDomId(tab.id), 'aria-labelledby': tabDomId(tab.id) }
+        : {})}
+    >
+      {sections
+        .filter((section) => section.tab === tab.id)
+        .map((section) => (
+          <Fragment key={section.id}>{sectionContent[section.id]}</Fragment>
+        ))}
+    </div>
+  );
+
+  return (
+    <div className="editor task-editor">
+      {readOnly && (
+        <span id={roDescId} className="sr-only">
+          {NO_PERM_TITLE} do edycji zadań.
+        </span>
       )}
+      {/* Pasek zakładek renderuje się DOPIERO przy drugiej widocznej zakładce —
+          nowe zadanie bez okresu ma jedną i nie pokazuje pustego przełącznika.
+          Zaznaczenie podąża za fokusem (`resolveTabNavKey`). */}
+      {showTabs && (
+        <div className="task-editor-tabs" role="tablist" aria-label="Sekcje zadania">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              id={tabDomId(tab.id)}
+              ref={(el) => {
+                tabRefs.current[tab.id] = el;
+              }}
+              className={
+                tab.id === currentTab ? 'task-editor-tab active' : 'task-editor-tab'
+              }
+              aria-selected={tab.id === currentTab}
+              aria-controls={panelDomId(tab.id)}
+              tabIndex={tab.id === currentTab ? 0 : -1}
+              onClick={() => setActiveTab(tab.id)}
+              onKeyDown={onTabKeyDown}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      )}
+      {/* Formularz obejmuje panele „Zadanie" i „Planowanie". „Dyskusja" i sticky
+          pasek akcji zostają POZA nim: CommentsPanel ma własny `<form>`
+          (zagnieżdżenie jest nielegalne w HTML i „Skomentuj" zapisywałoby
+          zadanie). */}
+      <form
+        className="task-editor-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          handleSave();
+        }}
+        noValidate
+      >
+        {tabs.filter((tab) => tab.id !== 'dyskusja').map(renderPanel)}
 
         {/* Domyślny przycisk formularza. Bez niego Enter w polu tekstowym NIE
             wysyła formularza z wieloma polami (HTML: implicit submission wymaga
@@ -1970,14 +2124,10 @@ function TaskEditor({
         )}
       </form>
 
-      {/* e) Discussion (existing tasks only) — POZA formularzem: CommentsPanel ma
-          własny `<form>`. */}
-      {existing && (
-        <div className="editor-section">
-          <h2>Dyskusja</h2>
-          <CommentsPanel entityType="task" entityId={existing.id} />
-        </div>
-      )}
+      {/* Dyskusja jest SIOSTRĄ formularza, nigdy jego dzieckiem: CommentsPanel
+          ma własny `<form>`, a zagnieżdżenie jest nielegalne w HTML i
+          „Skomentuj" zapisywałoby zadanie. */}
+      {tabs.filter((tab) => tab.id === 'dyskusja').map(renderPanel)}
 
       {/* f) Save / Cancel — sticky: zawsze widoczne bez przewijania */}
       <div className="editor-actions editor-actions-sticky">
@@ -2006,7 +2156,7 @@ function TaskEditor({
                     <button
                       type="button"
                       className="link-btn"
-                      onClick={() => focusSaveBlocker(b)}
+                      onClick={() => jumpToBlocker(b)}
                     >
                       {b.message}
                     </button>

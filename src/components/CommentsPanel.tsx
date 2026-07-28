@@ -182,36 +182,8 @@ export function CommentsPanel({ entityType, entityId, inputRows = 2 }: Props) {
 
       {tab === 'comments' ? (
         <>
-          {comments.length === 0 ? (
-            <p className="muted comments-empty">Brak komentarzy.</p>
-          ) : (
-            <ul className="comment-list">
-              {comments.map((c) => {
-                const author = getPerson(state, c.authorId);
-                return (
-                  <li key={c.id} className="comment-item">
-                    {author ? (
-                      <Avatar person={author} size={28} />
-                    ) : (
-                      <span className="avatar avatar-unknown">?</span>
-                    )}
-                    <div className="comment-main">
-                      <div className="comment-head">
-                        <strong>{author?.name ?? 'Ktoś'}</strong>
-                        <span className="muted comment-time">
-                          {formatTimestamp(c.createdAt)}
-                        </span>
-                      </div>
-                      <div className="comment-body">
-                        <MentionBody body={c.body} people={state.people} />
-                      </div>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-
+          {/* IA-17 — pole nowego komentarza stoi NAD wątkiem: pisanie nie
+              wymaga przewinięcia przez całą historię. */}
           <form className="comment-form" onSubmit={submit}>
             <div className="comment-input-wrap">
               <textarea
@@ -273,6 +245,36 @@ export function CommentsPanel({ entityType, entityId, inputRows = 2 }: Props) {
               </button>
             </div>
           </form>
+
+          {comments.length === 0 ? (
+            <p className="muted comments-empty">Brak komentarzy.</p>
+          ) : (
+            <ul className="comment-list">
+              {comments.map((c) => {
+                const author = getPerson(state, c.authorId);
+                return (
+                  <li key={c.id} className="comment-item">
+                    {author ? (
+                      <Avatar person={author} size={28} />
+                    ) : (
+                      <span className="avatar avatar-unknown">?</span>
+                    )}
+                    <div className="comment-main">
+                      <div className="comment-head">
+                        <strong>{author?.name ?? 'Ktoś'}</strong>
+                        <span className="muted comment-time">
+                          {formatTimestamp(c.createdAt)}
+                        </span>
+                      </div>
+                      <div className="comment-body">
+                        <MentionBody body={c.body} people={state.people} />
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </>
       ) : activity.length === 0 ? (
         <p className="muted comments-empty">Brak aktywności.</p>

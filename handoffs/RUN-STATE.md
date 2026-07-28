@@ -78,3 +78,13 @@ MonthView jako APG grid, CalendarPage (`onShiftMonth`/`onShiftYear`), TaskModal
 (ten sam tekst), `dayMonthLabel`, CSS, wiki. Enter zapisuje edycję, bez niej
 otwiera zadanie. `npm test` 78 plików / 1789 pass (było 75/1747); build green.
 Zero zmian w ścieżkach wskaźnika. Kontekst bez rozszerzeń.
+
+## Developer result (PKG-20260728-taskmodal-structure)
+
+Changed: nowe `taskModalSections.ts`/`.test.ts`, TaskModal renderuje sekcje z
+modelu (zakładki Zadanie/Planowanie/Dyskusja, przyklejony kontekst, Okres nad
+godzinami, scalone podsumowanie zamiast „Zasobnika", zwijane Cykliczność/
+Klasyfikacja), CommentsPanel (pole nad wątkiem), CSS, locator zakładki w
+`browser-check-savetask-multiblock.mjs`. `npm test` 80/1823 pass (było 79/1803),
+build green. Kontekst bez rozszerzeń; skrypt multiblock czerwony PRZED zmianą
+(„Zapisz i zamknij" nie istnieje w `src`).

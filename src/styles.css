@@ -1002,6 +1002,94 @@ textarea {
   border-color: var(--n2-border-strong);
   border-left: 3px solid var(--n2-lavender);
 }
+
+/* ---- Zakładki edytora zadania (PKG-20260728-taskmodal-structure) ----------
+   Pasek stoi NAD formularzem, panele chowają się atrybutem `hidden` (zostają
+   zamontowane, więc siatka alokacji nie traci stanu ani nie przelicza się od
+   nowa). */
+.task-editor-tabs {
+  display: flex;
+  gap: var(--n2-space-1);
+  margin-bottom: var(--n2-space-4);
+  padding: 3px;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-pill);
+  background: var(--n2-panel-soft);
+  overflow-x: auto;
+}
+.task-editor-tab {
+  flex: 0 0 auto;
+  border: none;
+  background: none;
+  color: var(--n2-text-soft);
+  font: inherit;
+  font-size: var(--n2-type-sm);
+  font-weight: 500;
+  padding: 7px 16px;
+  border-radius: var(--n2-radius-pill);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--n2-transition), color var(--n2-transition);
+}
+.task-editor-tab:hover {
+  color: var(--n2-text);
+  background: rgba(255, 255, 255, 0.05);
+}
+.task-editor-tab[aria-selected='true'] {
+  background: rgba(196, 150, 255, 0.16);
+  color: var(--n2-text);
+}
+/* Przyklejona głowa kontekstu: tytuł, projekt, status zostają widoczne przy
+   przewijaniu panelu „Zadanie". Tło musi być KRYJĄCE (treść przewija się pod
+   spodem), a warstwa niżej niż sticky stopka akcji (z-index 5). */
+.task-context-header {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: var(--n2-panel);
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-lg);
+  padding: var(--n2-space-5) var(--n2-space-6);
+  margin-bottom: var(--n2-space-4);
+  box-shadow: var(--shadow-sm);
+}
+/* Sekcje zwijane („Powtarzaj to zadanie", „Klasyfikacja"): kontrolowany przycisk
+   z `aria-expanded`, nie `<details>` — w środku siedzą przyciski. */
+.editor-section-collapsible {
+  padding: var(--n2-space-2) var(--n2-space-6) var(--n2-space-4);
+}
+.section-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--n2-space-3);
+  width: 100%;
+  border: none;
+  background: none;
+  color: var(--n2-text);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  padding: var(--n2-space-3) 0;
+  cursor: pointer;
+}
+.section-toggle:hover .section-toggle-label {
+  color: var(--n2-lavender);
+}
+.section-toggle-mark {
+  color: var(--n2-text-soft);
+  font-size: var(--n2-type-lg);
+  line-height: 1;
+}
+/* Scalony pasek podsumowania planowania — węższy niż zwykła sekcja. */
+.editor-section-summary {
+  padding: var(--n2-space-4) var(--n2-space-6);
+}
+.editor-section-summary .estimate-compare {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
 .field {
   display: flex;
   flex-direction: column;
@@ -1134,9 +1222,12 @@ option {
   margin: 0 0 12px;
 }
 
+/* Trzy liczby obok siebie („w kalendarzu · zasobnik · sprzedane") + odznaka
+   planowania — na wąskim ekranie pasek się zawija zamiast wypychać kartę. */
 .estimate-compare {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   margin-top: 6px;
   padding-top: 12px;
@@ -1195,30 +1286,11 @@ option {
   margin-top: 8px;
 }
 
-/* ---------- Bin (zasobnik) editor section ---------- */
+/* ---------- Bin (zasobnik) editor section ----------
+   Sekcja „Zasobnik (bez terminu)" ZNIKŁA z TaskModala (scalona w pasek
+   podsumowania planowania), więc jej reguły `.bin-existing*` / `.bin-chip*`
+   zostały usunięte razem z markupem. */
 
-.bin-existing {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-.bin-existing-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.bin-existing-name {
-  font-size: var(--n2-type-sm);
-  font-weight: 500;
-  color: var(--text);
-}
-.bin-chips {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
 .bin-add-row {
   display: flex;
   flex-wrap: wrap;
@@ -1238,35 +1310,6 @@ option {
   gap: 8px;
   margin-top: 10px;
 }
-.bin-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--n2-border);
-  border-radius: var(--n2-radius-pill);
-  padding: 5px 10px;
-  font-size: var(--n2-type-sm);
-  font-weight: 500;
-  background: rgba(196, 150, 255, 0.14);
-}
-.bin-chip.readonly {
-  background: rgba(255, 255, 255, 0.045);
-  font-family: var(--n2-font-data);
-  font-variant-numeric: tabular-nums;
-}
-.bin-chip-remove {
-  border: none;
-  background: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 15px;
-  line-height: 1;
-  padding: 0 0 0 2px;
-}
-.bin-chip-remove:hover {
-  color: var(--n2-danger);
-}
-
 /* ---------- Allocation grid (data table) ---------- */
 
 .alloc-wrap {
@@ -3290,6 +3333,10 @@ option {
   background: rgba(196, 150, 255, 0.16);
   border-radius: var(--n2-radius-pill);
   padding: 0 6px;
+}
+/* IA-17 — pole nowego komentarza stoi NAD wątkiem, więc odstęp idzie pod nim. */
+.comment-form {
+  margin-bottom: var(--n2-space-4);
 }
 .comment-form textarea {
   width: 100%;

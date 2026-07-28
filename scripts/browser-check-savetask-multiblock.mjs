@@ -125,6 +125,11 @@ async function flowMultiBlockSave(browser) {
     const openModal = async () => {
       await page.goto(`${BASE}/tasks?task=${seedInfo.taskId}`, { waitUntil: 'networkidle' });
       await modal.waitFor({ timeout: 10000 });
+      // PKG-20260728-taskmodal-structure: siatka alokacji siedzi teraz w
+      // zakładce „Planowanie" (panele chowa atrybut `hidden`), więc przed
+      // szukaniem `.alloc-grid` trzeba tę zakładkę wybrać.
+      const planningTab = modal.getByRole('tab', { name: 'Planowanie' });
+      if (await planningTab.count()) await planningTab.click();
     };
     const cell = () =>
       modal
