@@ -3835,9 +3835,40 @@ a.toggle-btn {
 .kanban-card:active {
   cursor: grabbing;
 }
-/* Karta w locie: przygaszona, żeby było widać, co wisi na wskaźniku. */
+/* Karta źródłowa w trakcie przeciągania = PUSTE GNIAZDO. Zostaje na swoim
+   miejscu w kolumnie (żadnego przepływu), ale ma się czytać jako ślad po
+   wyjętej karcie, a nie jako karta wciąż obecną: przygaszona treść, przerywany
+   obrys, bez tła i bez cienia. Sama `opacity` tego nie dawała — karta wyglądała
+   po prostu na wyblakłą. Parą dla tej reguły jest `.kanban-drag-ghost`: klasa
+   wchodzi dokładnie wtedy, gdy w powietrzu jest klon. */
 .kanban-card.dragging {
-  opacity: 0.55;
+  opacity: 0.4;
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--n2-border-strong);
+  box-shadow: none;
+}
+/* Klon karty niesiony wskaźnikiem — jedyna kompensacja natywnego drag image,
+   którego Pointer Events (w odróżnieniu od HTML5 DnD) nie rysują. Pozycję nadaje
+   `transform: translate3d(...)` pisany raz na klatkę, więc `left/top` zostają na
+   zerze i nic się nie przelicza w układzie. Szerokość podaje JS ze zmierzonej
+   karty źródłowej — wymiary i typografia karty zostają 1:1, bez `scale`.
+   `pointer-events: none` jest NOŚNE: klon leci dokładnie pod wskaźnikiem, więc
+   inaczej przechwytywałby zdarzenia i psuł pomiar kolumn (`targetAt`).
+   Wysokość na drabinie nakładek: 1000, jak pozostałe duchy przeciągania
+   (`.week-bin-ghost`) — patrz komentarz przy tokenach `--n2-z-*`. */
+.kanban-drag-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 1000;
+  pointer-events: none;
+  transition: none;
+  /* Uniesienie: nieprzezroczyste tło (klon nie ma prześwitywać kolumnami) plus
+     wyraźniejszy cień i obrys. Przechył ~2° dokłada `ghostTransform`. */
+  background: var(--n2-panel);
+  border-color: var(--n2-border-strong);
+  box-shadow: var(--n2-shadow-violet, 0 8px 24px rgba(0, 0, 0, 0.4));
 }
 /* Karta podniesiona z klawiatury — jedyny widoczny ślad trybu przenoszenia
    poza wskaźnikiem kolumny docelowej. */

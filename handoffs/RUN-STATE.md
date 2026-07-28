@@ -55,3 +55,18 @@ strict`; 11 files `motion.*`→`m.*`; Kanban `layout` dropped (no CSS swap —
 `whileHover` owns transform); `vite.config.ts` react/motion/supabase chunks,
 `cssCodeSplit:false`, `optimizeDeps lucide-react`. Entry gzip 355.80→120.40 kB,
 one CSS asset. `npm test` 2003/2003, build green. Wiki bullet updated.
+
+## Developer result (n2hub-302 kanban drag ghost)
+
+New pure `src/pages/kanbanDragGhost.ts` (+ 15 tests): grab offset, clone
+position, `translate3d`+tilt transform, click-slop visibility. `KanbanPage`
+renders an `aria-hidden` clone in `OverlayLayer`, positioned in the EXISTING
+rAF frame; `.dragging` now a dashed empty slot. `endDrag` clears the clone on
+every exit path. `npm test` 2138/2138, build green. No browser check —
+playwright still absent.
+
+Follow-up: dead export `ghostVisible` removed (never imported by KanbanPage —
+`movedRef` latch owns visibility, and a component-side call would need a new
+`viaHoldRef` + manual sticky-OR). Its 4 tests folded into `exceedsClickSlop`,
+now the sole latch input, with the touch/`viaHold` path documented in module +
+test comments. File 15→14 tests. `npm test` 2137/2137, build green.

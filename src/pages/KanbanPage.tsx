@@ -15,9 +15,15 @@
 //    palcem przed czasem po prostu przewija tablicę;
 // 2. klawiatura — uchwyt przenoszenia na karcie + czysty automat `kanbanMove.ts`;
 // 3. menu karty („Przenieś do statusu") na wspólnej powłoce `useOverlay`.
-// Cykl życia wskaźnika (inwariant 7): przechwycenie, rAF i nasłuchy okna są
-// sprzątane na KAŻDEJ ścieżce — upuszczenie, `pointercancel`, Escape, blur okna,
-// ukrycie karty przeglądarki i odmontowanie w trakcie gestu.
+// Cykl życia wskaźnika (inwariant 7): przechwycenie, rAF, KLON karty i nasłuchy
+// okna są sprzątane na KAŻDEJ ścieżce — upuszczenie, `pointercancel`, Escape,
+// blur okna, ukrycie karty przeglądarki i odmontowanie w trakcie gestu.
+//
+// Obraz przeciągania rysujemy SAMI, bo Pointer Events — inaczej niż porzucone
+// HTML5 DnD — nie mają natywnego drag image: klon karty w warstwie nakładek
+// (`OverlayLayer`, geometria w czystym `kanbanDragGhost.ts`) plus karta
+// źródłowa zamieniona w puste gniazdo. Wspólny wskaźnik upuszczenia
+// (`.kanban-drop-indicator`) zostaje bez zmian — klon go nie zastępuje.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, m } from 'motion/react';
 import { useStore } from '../store/AppStore';
@@ -42,6 +48,14 @@ import { useOpenTask } from '../components/TaskModal';
 import { clientProjectPath } from '../utils/entityPath';
 import { useTouchDragGate } from '../utils/useTouchDragGate';
 import { buildKanbanColumns, buildTaskAssigneeIds } from './kanbanBoard';
+import {
+  exceedsClickSlop,
+  ghostGrab,
+  ghostPosition,
+  ghostTransform,
+  type GhostGrab,
+  type GhostPosition,
+} from './kanbanDragGhost';
 import {
   cancelAnnouncement,
   dropAnnouncement,
@@ -92,6 +106,16 @@ interface ColumnBand {
 interface PointerDrag {
   taskId: string;
   sourceStatusId: string;
+}
+
+/**
+ * Klon karty niesiony wskaźnikiem. Do RENDERU wystarczy, KTÓRĄ kartę rysujemy i
+ * jak szeroko (szerokość zmierzona na źródle, żeby wymiary się nie zmieniły);
+ * pozycja jedzie osobno, przez `transform` pisany raz na klatkę.
+ */
+interface GhostCard {
+  taskId: string;
+  width: number;
 }
 
 export function KanbanPage() {
@@ -220,6 +244,20 @@ export function KanbanPage() {
   const movedRef = useRef(false);
   const rafRef = useRef(0);
 
+  // Klon karty. Stan Reactowy trzyma wyłącznie ISTNIENIE klona (zmienia się raz
+  // na gest), a jego POZYCJĘ pisze bezpośrednio na węzeł ta sama klatka rAF, co
+  // wskaźnik kolumny: klon to jeden dekoracyjny węzeł w portalu, więc stan
+  // pozycji przerysowywałby co klatkę WSZYSTKIE karty tablicy (tego samego
+  // kosztu run 282 pozbył się, wyrzucając projekcję `layout`).
+  const [ghost, setGhost] = useState<GhostCard | null>(null);
+  const ghostElRef = useRef<HTMLDivElement>(null);
+  const ghostCardRef = useRef<GhostCard | null>(null);
+  const grabRef = useRef<GhostGrab | null>(null);
+  const pointRef = useRef({ x: 0, y: 0 });
+  // Ostatnia zastosowana pozycja klona — render czyta ją, żeby świeżo
+  // zamontowany węzeł od razu stanął we właściwym miejscu (bez klatki w rogu).
+  const ghostPosRef = useRef<GhostPosition>({ left: 0, top: 0 });
+
   const cancelRaf = () => {
     if (rafRef.current !== 0) {
       cancelAnimationFrame(rafRef.current);
@@ -245,8 +283,13 @@ export function KanbanPage() {
     dragRef.current = null;
     targetRef.current = null;
     bandsRef.current = [];
+    // Klon znika TĄ SAMĄ ścieżką co reszta gestu — upuszczenie, `pointercancel`,
+    // Escape, blur okna i ukrycie karty przeglądarki wołają `endDrag()`.
+    ghostCardRef.current = null;
+    grabRef.current = null;
     setDrag(null);
     setDragOver(null);
+    setGhost(null);
   };
 
   // Odmontowanie w trakcie gestu (nawigacja, zmiana filtrów) nie może zostawić
@@ -344,8 +387,21 @@ export function KanbanPage() {
     // palca nie może otworzyć zadania; mysz decyduje dopiero progiem ruchu.
     movedRef.current = viaHold;
     originRef.current = { x: init.clientX, y: init.clientY };
+    pointRef.current = { x: init.clientX, y: init.clientY };
     targetRef.current = null;
     measureColumns();
+    // Geometria klona mierzona RAZ, z żywego węzła karty (na dotyku ta funkcja
+    // odpala się dopiero po bramce, więc czytamy `init.el`, a nie `currentTarget`
+    // zdarzenia, które React już wyzerował). Dalej wystarczy punkt wskaźnika:
+    // przewinięcie strony w trakcie gestu nie rusza ani offsetu, ani szerokości.
+    const rect = init.el.getBoundingClientRect();
+    grabRef.current = ghostGrab(rect, { x: init.clientX, y: init.clientY });
+    ghostPosRef.current = { left: rect.left, top: rect.top };
+    ghostCardRef.current = { taskId: init.taskId, width: rect.width };
+    // Dotyk: klon wchodzi NATYCHMIAST po bramce, w spoczynkowej pozycji karty,
+    // jeszcze przed pierwszym `pointermove`. Mysz czeka na próg `CLICK_SLOP_PX`,
+    // żeby zwykłe kliknięcie otwierające zadanie nie mrugnęło klonem.
+    setGhost(viaHold ? ghostCardRef.current : null);
     const next: PointerDrag = { taskId: init.taskId, sourceStatusId: init.sourceStatusId };
     dragRef.current = next;
     setDrag(next);
@@ -381,20 +437,31 @@ export function KanbanPage() {
       endDrag();
       return;
     }
-    if (!movedRef.current) {
-      const origin = originRef.current;
-      if (Math.hypot(e.clientX - origin.x, e.clientY - origin.y) > CLICK_SLOP_PX) {
-        movedRef.current = true;
-      }
+    const point = { x: e.clientX, y: e.clientY };
+    if (!movedRef.current && exceedsClickSlop(originRef.current, point, CLICK_SLOP_PX)) {
+      movedRef.current = true;
     }
     // Najświeższy cel siedzi w refie, żeby `pointerup` w tej samej klatce widział
     // aktualną projekcję; do Reacta oddajemy go RAZ na klatkę (koalescencja).
-    targetRef.current = targetAt(e.clientX, e.clientY);
+    targetRef.current = targetAt(point.x, point.y);
+    pointRef.current = point;
     if (rafRef.current !== 0) return;
     rafRef.current = requestAnimationFrame(() => {
       rafRef.current = 0;
       if (dragRef.current === null) return;
       setDragOver(targetRef.current);
+      // TA SAMA klatka niesie klon: bez drugiego rAF-a i bez animowania
+      // `left/top`. Pozycję piszemy wprost na węzeł, a gdy klon dopiero ma się
+      // zamontować (mysz po przekroczeniu progu), render odczyta ją z refa.
+      const grab = grabRef.current;
+      if (grab !== null) {
+        ghostPosRef.current = ghostPosition(grab, pointRef.current);
+        const element = ghostElRef.current;
+        if (element !== null) element.style.transform = ghostTransform(ghostPosRef.current);
+      }
+      // Ten sam obiekt wraca z aktualizacji funkcyjnej, więc gdy klon już jest,
+      // React wychodzi bez przerysowania tablicy.
+      if (movedRef.current) setGhost((prev) => prev ?? ghostCardRef.current);
     });
   };
 
@@ -679,12 +746,47 @@ export function KanbanPage() {
     setPersonFilter(next);
   };
 
-  const renderCard = (t: Task) => {
+  /**
+   * Treść karty BEZ klastra akcji — wspólna dla karty w kolumnie i dla klona.
+   * Wspólna, żeby klon nie mógł się rozjechać z oryginałem wymiarami ani
+   * typografią; klaster akcji zostaje poza nią, bo niesie `id` uchwytu
+   * przenoszenia (klon nie może go duplikować).
+   */
+  const cardContent = (t: Task) => {
     const project = lookups.projects.get(t.projectId);
     const client = project ? lookups.clients.get(project.clientId) : undefined;
     const assigneeIds = lookups.assignees.get(t.id) ?? [];
     const shown = assigneeIds.slice(0, MAX_AVATARS);
     const overflow = assigneeIds.length - shown.length;
+    return (
+      <>
+        <div className="kanban-card-top">
+          <span className="kanban-card-title">{t.title}</span>
+        </div>
+        {/* Ścieżka adresowa idzie WSZĘDZIE tą samą regułą (SY-06): najpierw
+            klient, potem projekt, separator `›`. Zmienia się wyłącznie treść i
+            kolejność tekstu — układ i wymiary karty zostają bez zmian. */}
+        <div className="kanban-card-client">
+          {clientProjectPath(client?.name, project?.name ?? 'Bez projektu')}
+        </div>
+        <div className="kanban-card-badges">
+          <PriorityBadge priority={t.priority} />
+          <span className="kanban-card-meta">{formatShortWithWeekday(t.endDate)}</span>
+        </div>
+        {assigneeIds.length > 0 && (
+          <div className="kanban-card-people">
+            {shown.map((id) => {
+              const person = lookups.people.get(id);
+              return person ? <Avatar key={id} person={person} size={22} /> : null;
+            })}
+            {overflow > 0 && <span className="kanban-card-more">+{overflow}</span>}
+          </div>
+        )}
+      </>
+    );
+  };
+
+  const renderCard = (t: Task) => {
     const moving = move !== null && move.taskId === t.id;
     return (
       // Bez `layout`: projekcja FLIP mierzyła KAŻDĄ kartę tablicy przy każdym
@@ -701,7 +803,12 @@ export function KanbanPage() {
         transition={{ duration: 0.18, ease: 'easeOut' }}
         className={[
           'kanban-card',
-          drag?.taskId === t.id ? 'dragging' : '',
+          // Puste gniazdo dokładnie wtedy, gdy w powietrzu jest klon: karta
+          // zostaje na swoim miejscu (żadnego przepływu), ale przestaje się
+          // czytać jako obecna. Warunek idzie po `ghost`, a nie po `drag`, bo
+          // gest myszą jest przeciąganiem dopiero po progu ruchu — inaczej
+          // każde kliknięcie karty mrugałoby gniazdem.
+          ghost?.taskId === t.id ? 'dragging' : '',
           moving ? 'moving' : '',
         ]
           .filter(Boolean)
@@ -752,31 +859,13 @@ export function KanbanPage() {
             />
           </div>
         )}
-        <div className="kanban-card-top">
-          <span className="kanban-card-title">{t.title}</span>
-        </div>
-        {/* Ścieżka adresowa idzie WSZĘDZIE tą samą regułą (SY-06): najpierw
-            klient, potem projekt, separator `›`. Zmienia się wyłącznie treść i
-            kolejność tekstu — układ i wymiary karty zostają bez zmian. */}
-        <div className="kanban-card-client">
-          {clientProjectPath(client?.name, project?.name ?? 'Bez projektu')}
-        </div>
-        <div className="kanban-card-badges">
-          <PriorityBadge priority={t.priority} />
-          <span className="kanban-card-meta">{formatShortWithWeekday(t.endDate)}</span>
-        </div>
-        {assigneeIds.length > 0 && (
-          <div className="kanban-card-people">
-            {shown.map((id) => {
-              const person = lookups.people.get(id);
-              return person ? <Avatar key={id} person={person} size={22} /> : null;
-            })}
-            {overflow > 0 && <span className="kanban-card-more">+{overflow}</span>}
-          </div>
-        )}
+        {cardContent(t)}
       </m.div>
     );
   };
+
+  /** Zadanie rysowane w klonie; znika razem z klonem na każdej ścieżce wyjścia. */
+  const ghostTask = ghost === null ? undefined : lookups.tasks.get(ghost.taskId);
 
   /** Karty kolumny z kreską wskaźnika wstawioną na wyliczonym indeksie. */
   const renderColumnBody = (tasks: Task[], dropIndex: number | null) => {
@@ -910,6 +999,25 @@ export function KanbanPage() {
           )}
         </div>
       )}
+
+      {/* Klon karty w locie — kompensacja natywnego drag image, którego Pointer
+          Events nie rysują. Ten sam portal co menu (warstwa nad wszystkim), ale
+          element jest CZYSTO DEKORACYJNY: `aria-hidden`, bez klastra akcji i bez
+          żadnego `id`, więc nie duplikuje uchwytu przenoszenia ani opisów.
+          Pozycję startową bierzemy z refa (spoczynkowe miejsce karty), kolejne
+          pisze wprost na węzeł klatka rAF z `onDragMove`. */}
+      <OverlayLayer>
+        {ghost !== null && ghostTask !== undefined && (
+          <div
+            ref={ghostElRef}
+            className="kanban-card kanban-drag-ghost"
+            aria-hidden="true"
+            style={{ width: ghost.width, transform: ghostTransform(ghostPosRef.current) }}
+          >
+            {cardContent(ghostTask)}
+          </div>
+        )}
+      </OverlayLayer>
 
       {/* Menu karty na WSPÓLNEJ powłoce nakładek (portal, stos Escape, zamykanie
           parą pointerdown+click, klawiatura `role="menu"`). */}
