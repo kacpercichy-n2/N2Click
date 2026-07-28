@@ -91,6 +91,29 @@
   „Powiadomienia” (`readAt === ''`, odbiorca = zalogowany); 0 => przywrócenie
   oryginalnej karty. `index.html` nie deklaruje `<link rel="icon">` — host
   tworzy własny link i usuwa go przy zeru.
+- Tablica Kanban (`src/pages/KanbanPage.tsx`) ma TRZY równoprawne ścieżki
+  przenoszenia karty, wszystkie kończące się jedyną akcją `SET_TASK_STATUS`
+  (żadnego nowego reduktora, pola w `AppData` ani zapisanej kolejności w
+  kolumnie): przeciąganie na Pointer Events (natywne HTML5 DnD —
+  `draggable`/`dataTransfer` — ZNIKŁO; dotyk/pióro wchodzi przez wspólną bramkę
+  `useTouchDragGate`, więc ruch palcem przed przytrzymaniem przewija tablicę),
+  tryb przenoszenia z klawiatury na uchwycie karty oraz pozycja „Przenieś do
+  statusu” w menu karty (powłoka `useOverlay`, dwa kroki `role="menu"`, bieżący
+  status wyłączony). Uchwyt i wyzwalacz menu to absolutnie pozycjonowany klaster
+  ujawniany hoverem/fokusem — na `pointer: coarse` widoczny stale, bo bez niego
+  dotyk nie ma ścieżki poza przeciąganiem. Automat trybu klawiaturowego jest
+  czysty (`src/pages/kanbanMove.ts` + `kanbanMove.test.ts` w node): zdarzenie bez
+  skutku zwraca TĘ SAMĄ referencję stanu, `move` NIE zawija się na krawędziach
+  pasa kolumn, `drop` na kolumnie źródłowej nie wysyła nic. Tryb wybiera
+  KOLUMNĘ, nie pozycję — „pozycja N z M” jest WYLICZANA z wyeksportowanego
+  `compareTasks` (`kanbanBoard.ts`), bo kolejność w kolumnie pozostaje pochodna
+  z `(orderIndex, startDate, id)`. Cel upuszczenia liczy się ze ZMIERZONYCH
+  prostokątów kolumn (`data-status-id` + `getBoundingClientRect`), nigdy z
+  `elementFromPoint` (przechwycenie wskaźnika kieruje zdarzenia na kartę);
+  kolumna archiwum nie ma `data-status-id`, więc jest źródłem, a nie celem.
+  Jeden region `role="status"` na stronie ogłasza podniesienie, zmianę celu,
+  upuszczenie i anulowanie; ten sam wskaźnik (`.kanban-col.drag-over` +
+  `.kanban-drop-indicator`) obsługuje oba tryby.
 - `src/onboarding/catalog.ts` owns copy, roles and route mapping; components
   expose stable `data-tour` anchors only.
 - Powłoka modali (TaskModal, TicketModal, EventModal, ChangelogModal) jest
@@ -148,7 +171,8 @@
   konsumuje klawisz, więc pierwszy Escape zamyka popover, a dopiero drugi modal.
   Konsumenci: trzy menu kontekstowe `WeekView` (portalowane, mierzone,
   REPOZYCJONOWANE przy scrollu zamiast zamykania, klawiatura menu — roving
-  tabindex / strzałki / Home/End / typeahead — tylko w krokach `role="menu"`)
+  tabindex / strzałki / Home/End / typeahead — tylko w krokach `role="menu"`),
+  dwukrokowe menu karty Kanban (patrz niżej)
   oraz `FilterPanel`, który świadomie NIE jest portalowany (kotwiczenie CSS i
   mobilny breakpoint `position: static` zostają) i bierze z hooka wyłącznie
   stos, zamykanie i powrót fokusa, z przyciskiem „Filtry” jako triggerem.

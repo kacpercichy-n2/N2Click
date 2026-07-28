@@ -3405,10 +3405,67 @@ option {
   box-shadow: var(--shadow-sm);
   padding: 10px 12px;
   cursor: grab;
+  /* Kotwica dla klastra akcji; w spoczynku nic nie zmienia w wyglądzie karty. */
+  position: relative;
   transition: border-color var(--n2-transition), background var(--n2-transition);
 }
 .kanban-card:active {
   cursor: grabbing;
+}
+/* Karta w locie: przygaszona, żeby było widać, co wisi na wskaźniku. */
+.kanban-card.dragging {
+  opacity: 0.55;
+}
+/* Karta podniesiona z klawiatury — jedyny widoczny ślad trybu przenoszenia
+   poza wskaźnikiem kolumny docelowej. */
+.kanban-card.moving {
+  border-color: var(--n2-lavender);
+  box-shadow: 0 0 0 1px var(--n2-lavender);
+}
+/* Klaster akcji (uchwyt przenoszenia + menu karty): ABSOLUTNIE pozycjonowany,
+   więc treść i gęstość karty zostają 1:1 jak przed zmianą. W spoczynku jest
+   niewidoczny i przezroczysty dla wskaźnika. */
+.kanban-card-actions {
+  position: absolute;
+  /* Wyrównanie do paddingu karty jest tu NOŚNE, nie kosmetyczne: pole trafienia
+     `.icon-btn::after` ma 44 px, więc przycisk wciśnięty w sam róg wystawałby
+     ponad kartę i na dotyku (gdzie klaster jest widoczny stale) łapałby
+     dotknięcia karty leżącej WYŻEJ w kolumnie. */
+  top: 10px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--n2-transition);
+}
+.kanban-card:hover .kanban-card-actions,
+.kanban-card:focus-within .kanban-card-actions,
+.kanban-card.moving .kanban-card-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* Na dotyku NIE MA hovera, a bez klastra nie istnieje żadna ścieżka przeniesienia
+   karty poza przeciąganiem (menu „Przenieś do statusu" wisi właśnie tutaj) —
+   dlatego na wskaźniku zgrubnym klaster jest widoczny stale. */
+@media (pointer: coarse) {
+  .kanban-card-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+.kanban-card-grip {
+  cursor: grab;
+}
+/* Wspólny wskaźnik miejsca docelowego: ta sama kreska dla przeciągania
+   wskaźnikiem i dla trybu klawiaturowego. Wysokość liczy się do odstępu
+   `.kanban-col-body`, więc karty nie skaczą. */
+.kanban-drop-indicator {
+  height: 2px;
+  border-radius: var(--n2-radius-pill);
+  background: var(--n2-lavender);
+  box-shadow: 0 0 6px rgba(196, 150, 255, 0.6);
 }
 .kanban-card:hover {
   border-color: var(--n2-border-strong);

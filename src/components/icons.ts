@@ -45,4 +45,7 @@ export {
   Inbox,
   Megaphone,
   ShieldCheck,
+  // Karta Kanban: uchwyt przenoszenia (chwyt) i wyzwalacz menu karty.
+  GripVertical,
+  MoreVertical,
 } from 'lucide-react';

@@ -61,3 +61,11 @@ semantics, tab sync, onboarding) — now reads `aria-describedby` → descriptio
 text or `aria-label`. WorkloadPage overload cell dropped its self-referencing
 `aria-describedby` (name came from the same child). `node --check` clean; tests
 1726 pass, build green. No script reads a `title` attribute.
+
+## Developer result (PKG-20260728-kanban-touch-keyboard)
+
+Changed: `KanbanPage.tsx` (HTML5 DnD → Pointer Events + `useTouchDragGate`,
+uchwyt klawiaturowy, menu `useOverlay`, region `role="status"`), nowe
+`kanbanMove.ts`/`.test.ts`, `compareTasks` wyeksportowany z `kanbanBoard.ts`,
+`icons.ts`, Kanban CSS, wiki. Focused 40 pass; `tsc --noEmit` clean;
+`npm test` 75 files / 1747 pass; build green. Kontekst bez rozszerzeń.
