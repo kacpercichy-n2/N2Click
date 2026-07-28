@@ -181,7 +181,8 @@
 
   /* --- Drabina nakładek (wartości DOKŁADNIE takie jak dotąd) ---
      Tokeny opisują istniejącą kolejność; korzystają z nich na razie tylko
-     .filter-popover i .context-menu, reszta selektorów zostaje przy liczbach.
+     .filter-popover, .context-menu i paleta wyszukiwania (.gs-scrim/.gs-viewport),
+     reszta selektorów zostaje przy liczbach.
      Szuflada mobilna zajmuje 900–903, duchy przeciągania 1000. */
   --n2-z-popover: 40;
   --n2-z-menu: 100;
@@ -6524,18 +6525,21 @@ html[data-modal-backdrop='snapshot'] #root {
   letter-spacing: 0.04em;
 }
 
+/* Paleta idzie przez `OverlayLayer` (portal na `<body>`), więc `fixed` liczy
+   się od viewportu, a nie od sidebara z `backdrop-filter`. Scrim jest czystym
+   przyciemnieniem — pełnoekranowy ŻYWY `backdrop-filter` łamie kontrakt
+   prymitywów renderowania (patrz frontend-performance-and-primitives.md). */
 .gs-scrim {
   position: fixed;
   inset: 0;
-  z-index: 990;
-  background: rgba(4, 3, 8, 0.66);
-  backdrop-filter: blur(6px);
+  z-index: var(--n2-z-search);
+  background: rgba(4, 3, 8, 0.72);
   pointer-events: none;
 }
 .gs-viewport {
   position: fixed;
   inset: 0;
-  z-index: 991;
+  z-index: calc(var(--n2-z-search) + 1);
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -6543,8 +6547,7 @@ html[data-modal-backdrop='snapshot'] #root {
   overflow-y: auto;
 }
 .gs-panel {
-  width: 94vw;
-  max-width: 620px;
+  width: min(680px, 92vw);
   display: flex;
   flex-direction: column;
   background: var(--n2-surface-strong);
@@ -6552,6 +6555,15 @@ html[data-modal-backdrop='snapshot'] #root {
   border-radius: var(--n2-radius-md);
   box-shadow: var(--n2-shadow-soft);
   overflow: hidden;
+}
+/* Telefon: paleta na niemal całą szerokość, mniejszy odstęp od góry. */
+@media (max-width: 760px) {
+  .gs-viewport {
+    padding: var(--n2-space-4) var(--n2-space-2) var(--n2-space-4);
+  }
+  .gs-panel {
+    width: 100%;
+  }
 }
 .gs-input-row {
   display: flex;

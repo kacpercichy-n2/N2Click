@@ -1,8 +1,11 @@
 // Global search palette (Ctrl/Cmd+K, `/`, or the sidebar trigger). Opens an
 // overlay that searches projects, tasks, clients and people via the pure
 // `searchAll` selector, with a flat keyboard-navigable result list. Rendered
-// once at App level; the overlay is fixed-positioned so its DOM location does
-// not matter. Selecting a result jumps to the entity and closes the palette.
+// once at App level; the overlay goes through `OverlayLayer` (portal to
+// `document.body`), because the sidebar's `backdrop-filter` + `overflow` would
+// otherwise turn `position: fixed` into a sidebar-local containing block and
+// confine the palette to the left panel. Selecting a result jumps to the
+// entity and closes the palette.
 //
 // Rozszerzenia palety (PKG-global-search-palette):
 // - JEDNA płaska lista wierszy budowana z grup (`buildGroups`), więc szybkie
@@ -56,6 +59,7 @@ import { formatShortWithWeekday } from '../utils/dates';
 import { polishCount } from '../utils/polishPlural';
 import { announce } from '../utils/liveRegion';
 import { useOpenTask } from './TaskModal';
+import { OverlayLayer } from './useOverlay';
 
 /** Ile wierszy pokazuje rozwinięta grupa (drugi i ostatni krok — bez paginacji). */
 const EXPANDED_SEARCH_LIMIT = 40;
@@ -141,9 +145,13 @@ export function GlobalSearch() {
         <span className="search-trigger-label">Szukaj…</span>
         <kbd className="search-trigger-kbd">Ctrl K</kbd>
       </button>
-      <AnimatePresence>
-        {open && <SearchOverlay key="global-search" onClose={() => setOpen(false)} />}
-      </AnimatePresence>
+      {/* Portal PRZED AnimatePresence (kontrakt `OverlayLayer`): węzeł portalu
+          żyje po zamknięciu, więc animacja wyjścia dogrywa się do końca. */}
+      <OverlayLayer>
+        <AnimatePresence>
+          {open && <SearchOverlay key="global-search" onClose={() => setOpen(false)} />}
+        </AnimatePresence>
+      </OverlayLayer>
     </>
   );
 }
@@ -335,13 +343,17 @@ function SearchOverlay({ onClose }: { onClose: () => void }) {
     if (listRef.current) listRef.current.scrollTop = 0;
   }, [query]);
 
-  // Autofocus the input + lock body scroll while the palette is open.
+  // Autofocus the input + lock body scroll while the palette is open. On close
+  // focus RETURNS to the pre-open element (the trigger / Ctrl+K source) — the
+  // portalled input unmounts, so without this the focus would drop to <body>.
   useEffect(() => {
+    const prevFocus = document.activeElement;
     inputRef.current?.focus();
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = prevOverflow;
+      if (prevFocus instanceof HTMLElement && prevFocus.isConnected) prevFocus.focus();
     };
   }, []);
 
