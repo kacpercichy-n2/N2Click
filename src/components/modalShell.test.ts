@@ -115,6 +115,16 @@ describe('shouldCloseOnBackdrop', () => {
     expect(shouldCloseOnBackdrop(true, false)).toBe(false);
     expect(shouldCloseOnBackdrop(false, false)).toBe(false);
   });
+
+  it('domyślnie kanał tła jest włączony (pytania: tło = anulowanie)', () => {
+    expect(shouldCloseOnBackdrop(true, true, true)).toBe(true);
+  });
+
+  it('`enabled: false` (modale z formularzem) ignoruje nawet pełną parę', () => {
+    expect(shouldCloseOnBackdrop(true, true, false)).toBe(false);
+    expect(shouldCloseOnBackdrop(false, true, false)).toBe(false);
+    expect(shouldCloseOnBackdrop(true, false, false)).toBe(false);
+  });
 });
 
 describe('scrollbarCompensation', () => {

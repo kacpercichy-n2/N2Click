@@ -249,7 +249,7 @@ function TaskModalShell({
     return () => clearNavGuard(key);
   }, []);
   const { saveError } = usePersistence();
-  const { status, markSaved } = useSaveStatus(dirty, saveError !== null);
+  const { status, savedAtLabel, markSaved } = useSaveStatus(dirty, saveError !== null);
   // IA-12 — powody, dla których zapis nie przejdzie. Edytor je liczy, nagłówek
   // pokazuje je na odznace zapisu (klik = skok do przyczyny).
   const [blockers, setBlockers] = useState<SaveBlocker[]>([]);
@@ -289,6 +289,9 @@ function TaskModalShell({
   const { cardRef, cardProps, viewportProps } = useModalShell({
     onRequestClose: requestClose,
     labelledBy: titleId,
+    // Modal z formularzem: klik obok karty NIGDY nie zamyka (Escape i przyciski
+    // zostają — ze strażnikiem niezapisanych zmian).
+    closeOnBackdrop: false,
   });
 
   const handleDelete = async () => {
@@ -343,6 +346,8 @@ function TaskModalShell({
               {!notFound && (
                 <SaveStatus
                   status={status}
+                  savedAtLabel={savedAtLabel}
+                  announceId="save:task-modal"
                   blocked={
                     blockers.length > 0
                       ? {
@@ -2011,11 +2016,9 @@ function TaskEditor({
             </ul>
           </div>
         )}
-        {!readOnly && isEdit && (
-          <span className="field-hint autosave-hint" role="status">
-            Zmiany zapisują się automatycznie.
-          </span>
-        )}
+        {/* Statyczny hint „Zmiany zapisują się automatycznie.” ZNIKŁ: stan zapisu
+            niesie trzystanowy wskaźnik w nagłówku (SY-15/16), a stopka mówi
+            wyłącznie o akcjach. */}
         {!readOnly &&
           (isDraft ? (
             <>
@@ -2049,12 +2052,16 @@ function TaskEditor({
                 onClick={handleSave}
                 disabled={state.projects.length === 0}
               >
-                {isEdit ? 'Zapisz i zamknij' : 'Utwórz zadanie'}
+                {/* Edycja jest auto-zapisywana, więc główny przycisk KOŃCZY pracę
+                    („Gotowe”), a nie zapisuje po raz drugi — ten sam handler. */}
+                {isEdit ? 'Gotowe' : 'Utwórz zadanie'}
               </button>
             </DisabledHint>
           ))}
+        {/* W trybie edycji NIE ma „Anuluj”: nie da się anulować czegoś, co już
+            zostało zapisane w tle. Zostaje uczciwe „Zamknij”. */}
         <button type="button" className="btn ghost" onClick={onCancel}>
-          {readOnly || !dirty ? 'Zamknij' : 'Anuluj'}
+          {readOnly || isEdit || !dirty ? 'Zamknij' : 'Anuluj'}
         </button>
       </div>
     </div>

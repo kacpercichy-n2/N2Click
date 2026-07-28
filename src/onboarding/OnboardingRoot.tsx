@@ -19,6 +19,7 @@ import { ArrowLeft, Check, CircleHelp, Compass, Sparkles, X } from '../component
 import { IconButton } from '../components/IconButton';
 import { useConfirm } from '../components/ConfirmProvider';
 import { HOME_PATH } from '../pages/homeRoute';
+import { announce } from '../utils/liveRegion';
 import { moduleById, modulesForRole, type TourStep, type TutorialModule } from './catalog';
 
 type TourState = { moduleId: TutorialModuleId; stepIndex: number } | null;
@@ -255,6 +256,9 @@ export function OnboardingRoot({
 
   useEffect(() => {
     if (!notice) return;
+    // Toast montuje się razem ze swoim tekstem, więc czytnik ekranu bierze go z
+    // trwałego kanału powłoki; sam toast zostaje czysto wizualny.
+    announce({ id: 'onboarding', text: notice, tone: 'polite' });
     const timer = window.setTimeout(() => setNotice(''), 4500);
     return () => window.clearTimeout(timer);
   }, [notice]);
@@ -473,7 +477,7 @@ export function OnboardingRoot({
           onNever={() => dismissHint(true)}
         />
       )}
-      {notice && <div className="onboarding-toast" role="status" aria-live="polite">{notice}</div>}
+      {notice && <div className="onboarding-toast">{notice}</div>}
     </>,
     document.body,
   );

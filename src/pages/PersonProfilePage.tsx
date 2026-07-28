@@ -17,6 +17,7 @@ import {
   uploadAvatar,
 } from '../supabase/avatarStorage';
 import { validateAvatarFile } from '../supabase/avatarFile';
+import { announce } from '../utils/liveRegion';
 import {
   availableHoursInRange,
   getDepartment,
@@ -588,6 +589,8 @@ function PersonProfile({ personId }: { personId: string }) {
   );
 }
 
+const PHOTO_LOADING_MSG = 'Ładowanie zdjęcia…';
+
 /**
  * "Zdjęcie profilowe" — private-bucket avatar photo (Supabase mode only). The
  * parent renders this ONLY when `canUploadAvatarPhoto` is true, so it never
@@ -613,6 +616,17 @@ function AvatarPhotoSection({
   const [busy, setBusy] = useState(false);
 
   const email = person.email;
+
+  // Komunikaty sekcji montują się razem ze swoim tekstem, więc ogłasza je
+  // trwały kanał powłoki (błędy zostają przy `role="alert"`).
+  useEffect(() => {
+    if (phase !== 'loading') return;
+    announce({ id: 'person-profile', text: PHOTO_LOADING_MSG, tone: 'polite' });
+  }, [phase]);
+  useEffect(() => {
+    if (notice === '') return;
+    announce({ id: 'person-profile', text: notice, tone: 'polite' });
+  }, [notice]);
 
   useEffect(() => {
     let cancelled = false;
@@ -703,11 +717,7 @@ function AvatarPhotoSection({
   return (
     <div className="editor-section">
       <h2>Zdjęcie profilowe</h2>
-      {phase === 'loading' && (
-        <p className="field-hint" role="status">
-          Ładowanie zdjęcia…
-        </p>
-      )}
+      {phase === 'loading' && <p className="field-hint">{PHOTO_LOADING_MSG}</p>}
       {phase === 'error' && (
         <p className="field-error" role="alert">
           {error || 'Nie udało się wczytać zdjęcia.'}
@@ -748,11 +758,7 @@ function AvatarPhotoSection({
                 {error}
               </p>
             )}
-            {notice && (
-              <p className="field-hint" role="status">
-                {notice}
-              </p>
-            )}
+            {notice && <p className="field-hint">{notice}</p>}
             <p className="field-hint">
               Zdjęcie zapisuje się automatycznie po wybraniu pliku — bez
               osobnego przycisku „Zapisz”. Będzie widoczne w całej aplikacji.

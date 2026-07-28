@@ -10,6 +10,7 @@
 // feeds each open form's dirtiness into the shared tab-conflict registry so an
 // external same-browser tab write can tell a clean tab from a dirty one.
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { format } from 'date-fns';
 import { setDirtyFlag, clearDirtyFlag } from './dirtyRegistry';
 
 export type SaveState = 'clean' | 'dirty' | 'saving' | 'saved' | 'error';
@@ -17,11 +18,18 @@ export type SaveState = 'clean' | 'dirty' | 'saving' | 'saved' | 'error';
 const SAVING_MS = 350;
 const SAVED_MS = 2000;
 
+/** Etykieta ostatniego udanego zapisu („20:51”). Czysta — testowalna w node. */
+export function formatSavedAt(now: Date): string {
+  return format(now, 'HH:mm');
+}
+
 export function useSaveStatus(
   dirty: boolean,
   persistFailed = false,
 ): {
   status: SaveState;
+  /** Godzina OSTATNIEGO udanego zapisu; `null` dopóki żaden nie zaszedł. */
+  savedAtLabel: string | null;
   markSaved: () => void;
 } {
   // A transient override ('saving' | 'saved') sits on top of the rest state
@@ -29,6 +37,16 @@ export function useSaveStatus(
   const [transient, setTransient] = useState<'saving' | 'saved' | null>(null);
   const savingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Znacznik „Zapisano HH:mm” — stawiany w momencie przejścia na 'saved' i już
+  // NIGDY nie czyszczony (wskaźnik po pierwszym zapisie przestaje znikać).
+  const [savedAtLabel, setSavedAtLabel] = useState<string | null>(null);
+  // Nieudany zapis NIGDY nie może wyprodukować „Zapisano”: `markSaved` biegnie
+  // optymistycznie przy dispatchu, więc etykietę stawiamy dopiero po 350 ms i
+  // tylko wtedy, gdy zapis do pamięci NAPRAWDĘ nie zgłosił błędu.
+  const persistFailedRef = useRef(persistFailed);
+  useEffect(() => {
+    persistFailedRef.current = persistFailed;
+  }, [persistFailed]);
 
   const clearTimers = useCallback(() => {
     if (savingTimer.current !== null) clearTimeout(savingTimer.current);
@@ -42,6 +60,7 @@ export function useSaveStatus(
     setTransient('saving');
     savingTimer.current = setTimeout(() => {
       setTransient('saved');
+      if (!persistFailedRef.current) setSavedAtLabel(formatSavedAt(new Date()));
       savedTimer.current = setTimeout(() => setTransient(null), SAVED_MS);
     }, SAVING_MS);
   }, [clearTimers]);
@@ -77,5 +96,5 @@ export function useSaveStatus(
   const status: SaveState = persistFailed
     ? 'error'
     : transient ?? (dirty ? 'dirty' : 'clean');
-  return { status, markSaved };
+  return { status, savedAtLabel, markSaved };
 }

@@ -4,12 +4,31 @@
 // Priorytet: błąd hydracji > błąd przejściowy zapisu > porzucone (brak
 // uprawnień) > gotowe z pustą kolejką (odśwież). Wszystkie napisy po polsku;
 // nigdy nie pokazujemy surowego komunikatu SDK.
+import { useEffect } from 'react';
 import { useCloudSync } from '../supabase/CloudSyncProvider';
+import { announce } from '../utils/liveRegion';
 import { STALE_HINT_MSG, SYNC_ERROR_MSG, SYNC_PERMISSION_MSG } from '../supabase/cloudMirror';
+
+const HYDRATING_MSG = 'Wczytywanie danych z serwera…';
 
 export function CloudSyncBanner() {
   const { status, pendingCount, error, live, dropped, retry, refresh, dismissDropped } =
     useCloudSync();
+
+  // Warianty informacyjne montują się razem ze swoim tekstem, więc ogłasza je
+  // trwały kanał powłoki (warianty błędu/konfliktu zostają przy `role="alert"`).
+  const infoMessage =
+    status === 'error' || error !== null || dropped.length > 0
+      ? null
+      : status === 'hydrating'
+        ? HYDRATING_MSG
+        : status === 'ready' && !live && pendingCount === 0
+          ? STALE_HINT_MSG
+          : null;
+  useEffect(() => {
+    if (infoMessage === null) return;
+    announce({ id: 'cloud-sync', text: infoMessage, tone: 'polite' });
+  }, [infoMessage]);
 
   // Błąd hydracji: dane lokalne pozostają w pełni używalne.
   if (status === 'error') {
@@ -64,9 +83,9 @@ export function CloudSyncBanner() {
   // Hydracja w toku — subtelny komunikat, aplikacja renderuje dane lokalne.
   if (status === 'hydrating') {
     return (
-      <div className="persistence-banner persistence-banner--info" role="status">
+      <div className="persistence-banner persistence-banner--info">
         <div className="persistence-banner-text">
-          <p>Wczytywanie danych z serwera…</p>
+          <p>{HYDRATING_MSG}</p>
         </div>
       </div>
     );
@@ -82,7 +101,7 @@ export function CloudSyncBanner() {
   // ręczne odświeżenie (last-write-wins).
   if (status === 'ready' && pendingCount === 0) {
     return (
-      <div className="persistence-banner persistence-banner--info" role="status">
+      <div className="persistence-banner persistence-banner--info">
         <div className="persistence-banner-text">
           <p>{STALE_HINT_MSG}</p>
         </div>

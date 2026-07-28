@@ -120,7 +120,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
       serviceTypeId !== project.serviceTypeId
     : false;
   const { saveError, external } = usePersistence();
-  const { status, markSaved } = useSaveStatus(dirty, saveError !== null);
+  const { status, savedAtLabel, markSaved } = useSaveStatus(dirty, saveError !== null);
 
   // Register the dirty draft with the router navigation guard so leaving the
   // page (sidebar links, Back/Forward, any route change) asks first. Explicit
@@ -337,7 +337,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
           <StatusBadge status={currentStatus} />
         </h1>
         <div className="page-head-actions">
-          <SaveStatus status={status} />
+          <SaveStatus status={status} savedAtLabel={savedAtLabel} announceId="save:project" />
           <button
             type="button"
             className="btn ghost"
@@ -499,9 +499,8 @@ function ProjectDetail({ projectId }: { projectId: string }) {
         {error && <p className="field-error">{error}</p>}
         {(dirty || status !== 'clean') && (
           <div className="editor-actions editor-actions-sticky">
-            <span className="field-hint autosave-hint" role="status">
-              Zmiany zapisują się automatycznie.
-            </span>
+            {/* Bez hintu o auto-zapisie: stan niesie wskaźnik w nagłówku strony.
+                „Zapisz teraz” zostaje jako JAWNY flush, nie jako „Anuluj”. */}
             <button type="button" className="btn primary" onClick={save} disabled={!dirty}>
               Zapisz teraz
             </button>

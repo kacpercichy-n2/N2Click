@@ -3,7 +3,7 @@
 // archiwizacja i usuwanie (kaskadowe — patrz DELETE_CLIENT w reduktorze).
 // Uprawnienie `clients.manage` steruje edycją; podgląd ma każdy, kto widzi
 // nawigację (jak Projekty).
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { usePersistence, useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
@@ -24,6 +24,12 @@ import {
   type ClientFormDraft,
 } from './clientContactForm';
 import { useAutoSave } from '../utils/useAutoSave';
+import { useSaveStatus } from '../utils/useSaveStatus';
+import { SaveStatus } from '../components/SaveStatus';
+import { announce } from '../utils/liveRegion';
+
+/** Powód milczenia auto-zapisu — widoczny hint, ogłaszany wspólnym kanałem. */
+const AUTOSAVE_PAUSED_TEXT = 'Auto-zapis wstrzymany do czasu uzupełnienia wymaganych pól.';
 
 type DraftUpdater = (updater: (d: ClientFormDraft) => ClientFormDraft) => void;
 
@@ -186,7 +192,7 @@ function ClientFormFields({
 
 export function ClientsPage() {
   const { state, dispatch } = useStore();
-  const { external } = usePersistence();
+  const { external, saveError } = usePersistence();
   const canManage = useCan()('clients.manage');
   const confirm = useConfirm();
 
@@ -234,11 +240,6 @@ export function ClientsPage() {
     setEditDraft(draftOf(c));
   };
 
-  const commitEdit = () => {
-    if (editingId === '' || clientDraftError(editDraft) !== '') return;
-    dispatch({ type: 'SAVE_CLIENT', clientId: editingId, ...draftToActionPayload(editDraft) });
-  };
-
   // Auto-zapis edycji: TYLKO draft spełniający regułę formularza (nazwa + pełna
   // główna osoba kontaktowa + poprawne dodatkowe osoby) zapisuje się w tle po
   // pauzie w pisaniu. Reguła formularza jest STRICTLY silniejsza od bramki
@@ -248,6 +249,19 @@ export function ClientsPage() {
   const editedClient = state.clients.find((c) => c.id === editingId);
   const editDirty =
     editedClient !== undefined && normalizedDraft(draftOf(editedClient)) !== normalizedDraft(editDraft);
+  // Ten sam trzystanowy wskaźnik co w TaskModal/ProjectDetailPage. `saveError`
+  // (nieudany zapis do pamięci) trwale wygrywa z „Zapisano” — inwariant.
+  const { status: editStatus, savedAtLabel, markSaved } = useSaveStatus(
+    editDirty,
+    saveError !== null,
+  );
+
+  const commitEdit = () => {
+    if (editingId === '' || clientDraftError(editDraft) !== '') return;
+    dispatch({ type: 'SAVE_CLIENT', clientId: editingId, ...draftToActionPayload(editDraft) });
+    markSaved();
+  };
+
   useAutoSave({
     // Jawny konflikt kart wstrzymuje auto-zapis (decyzja należy do banera).
     enabled: canManage && editingId !== '' && external !== 'conflict',
@@ -261,6 +275,12 @@ export function ClientsPage() {
   // niepoprawnym drafcie, więc powód musi być widoczny od razu. Znika sam, gdy
   // użytkownik uzupełni brakujące pole.
   const editError = editingId === '' ? '' : clientDraftError(editDraft);
+  // Wstrzymany auto-zapis to zwykły, widoczny hint (bez własnego regionu live) —
+  // ogłasza go wspólny kanał powłoki.
+  useEffect(() => {
+    if (editError === '') return;
+    announce({ id: 'save:client-paused', text: AUTOSAVE_PAUSED_TEXT, tone: 'polite' });
+  }, [editError]);
 
   const submitEdit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -378,11 +398,15 @@ export function ClientsPage() {
                       </p>
                     )}
                     <div className="form-actions">
-                      <span className="field-hint autosave-hint" role="status">
-                        {editError
-                          ? 'Auto-zapis wstrzymany do czasu uzupełnienia wymaganych pól.'
-                          : 'Zmiany zapisują się automatycznie.'}
-                      </span>
+                      {editError ? (
+                        <span className="field-hint autosave-hint">{AUTOSAVE_PAUSED_TEXT}</span>
+                      ) : (
+                        <SaveStatus
+                          status={editStatus}
+                          savedAtLabel={savedAtLabel}
+                          announceId="save:client"
+                        />
+                      )}
                       <button type="submit" className="btn primary">
                         Zamknij
                       </button>

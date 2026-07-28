@@ -82,6 +82,13 @@ export interface ModalShellOptions {
    * `overlayShell.ts`.
    */
   stacked?: boolean;
+  /**
+   * Czy klik w tło (para `pointerdown` + `click`) zamyka dialog. Domyślnie
+   * `true` — pytania (potwierdzenie, changelog) traktują tło jak anulowanie.
+   * Modale z FORMULARZEM przekazują `false`: przypadkowy klik obok karty nie
+   * może porzucić edycji, zamknięcie idzie przyciskiem albo Escape.
+   */
+  closeOnBackdrop?: boolean;
 }
 
 export interface ModalShell {
@@ -105,6 +112,7 @@ export function useModalShell({
   describedBy,
   role = 'dialog',
   stacked = false,
+  closeOnBackdrop = true,
 }: ModalShellOptions): ModalShell {
   const cardRef = useRef<HTMLDivElement>(null);
   // Nasłuchy rejestrują się RAZ, a bieżące zamknięcie czytają z refa — inaczej
@@ -185,19 +193,22 @@ export function useModalShell({
     };
   }, []);
 
-  // Tło zamyka dopiero, gdy `pointerdown` I `click` trafiły w tło. Dzięki temu
-  // zaznaczanie tekstu wyprowadzone z karty na tło nie kasuje edycji.
+  // Tło zamyka dopiero, gdy `pointerdown` I `click` trafiły w tło — a przy
+  // `closeOnBackdrop: false` nie zamyka nigdy (modale z formularzem).
   const armedRef = useRef(false);
   const onPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     armedRef.current = event.target === event.currentTarget;
   }, []);
-  const onClick = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
-    const armed = armedRef.current;
-    armedRef.current = false;
-    if (shouldCloseOnBackdrop(armed, event.target === event.currentTarget)) {
-      closeRef.current();
-    }
-  }, []);
+  const onClick = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      const armed = armedRef.current;
+      armedRef.current = false;
+      if (shouldCloseOnBackdrop(armed, event.target === event.currentTarget, closeOnBackdrop)) {
+        closeRef.current();
+      }
+    },
+    [closeOnBackdrop],
+  );
 
   return {
     cardRef,

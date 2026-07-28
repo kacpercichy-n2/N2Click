@@ -47,6 +47,7 @@ import { unreadNotificationCountFor } from './utils/tabBadge';
 import { useTabBadge } from './utils/useTabBadge';
 import { SampleBanner } from './components/SampleBanner';
 import { PersistenceBanner } from './components/PersistenceBanner';
+import { LiveRegionHost } from './components/LiveRegionHost';
 import { CloudSyncBanner } from './components/CloudSyncBanner';
 import { TaskModal } from './components/TaskModal';
 import { TicketModal } from './components/TicketModal';
@@ -446,6 +447,10 @@ export function App() {
         aria-hidden={mobileNav && menuOpen ? true : undefined}
         {...openMobileMainProps}
       >
+        {/* Trwałe regiony ogłoszeń (polite + assertive) — montowane PRZED
+            banerami, żeby istniały w DOM zanim pojawi się pierwszy komunikat.
+            Ekran logowania jest poza tą powłoką i ma własną obsługę. */}
+        <LiveRegionHost />
         {/* Persistence banner shows on every routed page (not the login screen —
             no edits happen there and a clean tab auto-refreshes silently). */}
         <PersistenceBanner />

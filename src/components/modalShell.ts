@@ -97,11 +97,18 @@ export function shouldHandleTrapKey(event: TrapKeyEvent): boolean {
  * niego `click` trafiły w tło. Zaznaczanie tekstu zaczęte w karcie i skończone
  * na tle daje `click` na kontenerze (wspólny przodek), więc bez pary
  * niszczyłoby niezapisane zmiany.
+ *
+ * `enabled === false` wyłącza ścieżkę tła CAŁKOWICIE: modale z formularzem
+ * (Task/Event/Ticket) zamykają się wyłącznie przyciskiem albo Escape ze
+ * strażnikiem brudnego stanu. Domyślne `true` zostawia pytania (potwierdzenie,
+ * changelog) przy dotychczasowym zachowaniu — tło = anulowanie pytania.
  */
 export function shouldCloseOnBackdrop(
   pointerDownOnBackdrop: boolean,
   clickOnBackdrop: boolean,
+  enabled = true,
 ): boolean {
+  if (!enabled) return false;
   return pointerDownOnBackdrop && clickOnBackdrop;
 }
 

@@ -3,8 +3,9 @@
 // czystego modułu walidacji (src/auth/passwordChange.ts) i `changePassword` z
 // kontekstu sesji. Trasa `/account` działa w OBU trybach; sekcja „Zmiana hasła”
 // renderuje się wyłącznie dla realnego konta Supabase. Nigdy nie pokazujemy haseł.
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useAuth } from '../auth/SessionProvider';
+import { announce } from '../utils/liveRegion';
 import { validateNewPassword } from '../auth/passwordChange';
 import { useStore } from '../store/AppStore';
 import { useOrgData } from '../supabase/OrgDataProvider';
@@ -125,6 +126,8 @@ function InterfaceSection() {
   );
 }
 
+const PASSWORD_CHANGED_MSG = 'Hasło zostało zmienione.';
+
 /** Sekcja „Zmiana hasła” (tryb supabase). */
 function PasswordSection({
   changePassword,
@@ -136,6 +139,13 @@ function PasswordSection({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  // Potwierdzenie montuje się razem ze swoim tekstem — ogłasza je trwały kanał
+  // powłoki, a sam akapit jest już zwykłym hintem.
+  useEffect(() => {
+    if (!success) return;
+    announce({ id: 'account', text: PASSWORD_CHANGED_MSG, tone: 'polite' });
+  }, [success]);
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -197,11 +207,7 @@ function PasswordSection({
           />
         </label>
         {error && <p className="field-error">{error}</p>}
-        {success && (
-          <p className="field-hint" role="status">
-            Hasło zostało zmienione.
-          </p>
-        )}
+        {success && <p className="field-hint">{PASSWORD_CHANGED_MSG}</p>}
         <button type="submit" className="btn primary" disabled={busy}>
           {busy ? 'Zapisywanie…' : 'Zmień hasło'}
         </button>

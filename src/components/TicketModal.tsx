@@ -143,6 +143,8 @@ function TicketModalShell({ ticketParam, onClose }: ShellProps) {
   const { cardRef, cardProps, viewportProps } = useModalShell({
     onRequestClose: requestClose,
     labelledBy: titleId,
+    // Modal z formularzem: tło nie zamyka (Escape i przyciski bez zmian).
+    closeOnBackdrop: false,
   });
 
   const handleDelete = async () => {

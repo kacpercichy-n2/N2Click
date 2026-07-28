@@ -10,8 +10,12 @@ import { useEffect } from 'react';
 import { useStore, usePersistence } from '../store/AppStore';
 import { useConfirm } from './ConfirmProvider';
 import { Tooltip } from './Tooltip';
+import { announce } from '../utils/liveRegion';
 import { exportRawData } from '../store/storage';
 import type { SaveFailureReason } from '../store/storage';
+
+/** Informacja o odświeżeniu z innej karty — jedyny łagodny stan tego banera. */
+const REFRESHED_MSG = 'Dane odświeżono — wczytano zmiany zapisane w innej karcie.';
 
 const FAILURE_FIRST_SENTENCE: Record<SaveFailureReason, string> = {
   quota: 'Nie udało się zapisać danych — brak miejsca w pamięci przeglądarki.',
@@ -45,6 +49,14 @@ export function PersistenceBanner() {
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [saveError]);
+
+  // Baner „odświeżono” montuje się RAZEM ze swoim komunikatem, więc własny
+  // `role="status"` bywa niesłyszalny — ogłoszenie idzie trwałym kanałem
+  // powłoki. Warianty błędu i konfliktu zostają przy `role="alert"`.
+  useEffect(() => {
+    if (saveError !== null || external !== 'refreshed') return;
+    announce({ id: 'persistence', text: REFRESHED_MSG, tone: 'polite' });
+  }, [saveError, external]);
 
   // Export the IN-MEMORY state — that is the point: after a failed write the
   // stored copy is stale. Fall back to the raw stored copy only when the state
@@ -136,12 +148,9 @@ export function PersistenceBanner() {
 
   if (external === 'refreshed') {
     return (
-      <div
-        className="persistence-banner persistence-banner--info"
-        role="status"
-      >
+      <div className="persistence-banner persistence-banner--info">
         <div className="persistence-banner-text">
-          <p>Dane odświeżono — wczytano zmiany zapisane w innej karcie.</p>
+          <p>{REFRESHED_MSG}</p>
         </div>
         <div className="persistence-banner-actions">
           <button

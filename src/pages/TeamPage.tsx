@@ -29,6 +29,7 @@ import {
 } from './teamScope';
 import { TeamStructureTree, personForTreeNode } from './TeamStructureTree';
 import { Tooltip } from '../components/Tooltip';
+import { announce } from '../utils/liveRegion';
 import type { Person } from '../types';
 import type { AccessRole as ProvisionAccessRole } from '../../supabase/functions/provision-account/contract';
 
@@ -389,6 +390,13 @@ function ProvisionSection() {
     };
   }, [open, lists.status]);
 
+  // Potwierdzenie założenia konta montuje się razem ze swoim tekstem — ogłasza
+  // je trwały kanał powłoki, sam akapit jest zwykłym hintem.
+  useEffect(() => {
+    if (success === null) return;
+    announce({ id: 'team-provision', text: success, tone: 'polite' });
+  }, [success]);
+
   const set = <K extends keyof ProvisionFormState>(key: K, value: ProvisionFormState[K]) => {
     setForm((f) => ({ ...f, [key]: value }));
     setError(null);
@@ -443,11 +451,7 @@ function ProvisionSection() {
       <h2>Zakładanie konta</h2>
       {!open ? (
         <>
-          {success && (
-            <p className="field-hint" role="status">
-              {success}
-            </p>
-          )}
+          {success && <p className="field-hint">{success}</p>}
           <p className="field-hint">
             Utwórz konto nowego członka zespołu. Konto otrzyma bazowe hasło
             startowe, które użytkownik musi zmienić przy pierwszym logowaniu.
