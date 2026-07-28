@@ -1713,16 +1713,37 @@ option {
   flex-wrap: wrap;
   margin-bottom: 10px;
 }
+/* Dwie grupy paska kalendarza. Lewa jest ZWARTA (tytuł · widok · zegar tuż
+   obok siebie), prawa dosuwa się do krawędzi przez `margin-left: auto` na
+   lewej — dzięki temu wolna przestrzeń zostaje w ŚRODKU paska, a nie między
+   tytułem a plakietką. `margin` zamiast `justify-content` na `.cal-toolbar`,
+   bo ta klasa jest współdzielona z Obciążeniem i Osią czasu. */
+.cal-toolbar-lead,
+.cal-toolbar-trail {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.cal-toolbar-lead {
+  gap: var(--n2-space-2);
+  margin-right: auto;
+}
+.cal-toolbar-trail {
+  gap: var(--n2-space-3);
+}
 .cal-title {
   margin: 0;
   font-size: var(--n2-type-xl, 1.25rem);
   line-height: 1.2;
   white-space: nowrap;
 }
-/* FilterBar wewnątrz paska nie dokłada już własnego wiersza ani odstępu. */
+/* FilterBar wewnątrz paska nie dokłada już własnego wiersza ani odstępu.
+   Nie rozpycha się też na całą wolną szerokość (dawne `flex: 1 1 auto`):
+   „Filtry” mają stać BEZPOŚREDNIO na lewo od nawigacji okresu. */
 .cal-toolbar .filter-toolbar {
   margin-bottom: 0;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
 }
 .cal-view-toggle,
@@ -1732,9 +1753,9 @@ option {
   gap: 8px;
 }
 /* Plakietka data + zegar HH:mm — dawniej absolutny narożnik NAD siatką
-   (zasłaniał bloki), teraz zwykły element na końcu paska sterowania. */
+   (zasłaniał bloki), potem koniec paska sterowania (`margin-left: auto`
+   odrywał ją od tytułu). Teraz trzeci element ZWARTEJ lewej grupy paska. */
 .cal-now-badge {
-  margin-left: auto;
   display: inline-flex;
   align-items: baseline;
   gap: 8px;
@@ -2311,11 +2332,12 @@ a.toggle-btn {
    prezentacyjne). W spoczynku niewidoczny I nietrafialny, więc `elementFromPoint`,
    bramka dotyku i cały cykl życia wskaźnika zostają bez zmian (inwariant 7);
    pokazuje się przy hoverze kafelka, przy fokusie z klawiatury, gdy blok JEST
-   wykonany, oraz zawsze na dotyku (tam hover nie istnieje). */
+   wykonany, oraz zawsze na dotyku (tam hover nie istnieje).
+   Róg: PRAWY DOLNY (run 299) — `top` liczy `doneTickTopPx` w TS, więc nad dolną
+   krawędzią zostaje 8 px na uchwyt zmiany rozmiaru i ✓ go nie przykrywa. */
 .week-block-done-btn {
   position: absolute;
   z-index: 3;
-  margin-top: 2px;
   width: 20px;
   height: 20px;
   display: flex;
@@ -2375,13 +2397,37 @@ a.toggle-btn {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* Per-block completion tick on a calendar/bin block (PKG-per-block-done). */
+/* Per-block completion tick on a calendar/bin block (PKG-per-block-done).
+   Wariant bazowy (karta zasobnika) zostaje W WIERSZU tytułu — karta jest niska
+   i nie ma pustego dołu. */
 .block-done-mark {
   flex: none;
   margin-left: auto;
   color: var(--n2-success, #b9ff4d);
   font-weight: 700;
   line-height: 1;
+}
+/* Wariant narożny (kafelki kalendarza: blok bez prawa edycji i wystąpienie
+   cykliczne): PRAWY DOLNY róg, ten sam co interaktywny `.week-block-done-btn`.
+   `bottom: 8px` = 6 px uchwytu zmiany rozmiaru + 2 px luzu (lustro
+   DONE_TICK_BOTTOM_PX). Znacznik jest bierny — `pointer-events: none`, więc
+   nie wchodzi w `elementFromPoint` ani w cykl życia wskaźnika (inwariant 7). */
+.block-done-mark.corner {
+  position: absolute;
+  right: 6px;
+  bottom: 8px;
+  margin-left: 0;
+  pointer-events: none;
+}
+/* Na najniższym kafelku (50 px) ostatni wiersz treści sięga dołu, więc godziny
+   ustępują miejsca ✓ zamiast chować się pod nim. Rezerwa wchodzi TYLKO gdy
+   znacznik naprawdę stoi na kafelku (`entry.done`), a nie przy samym statusie
+   „zrobione” zadania. */
+.week-block.has-done-tick .week-block-meta {
+  padding-right: 22px;
+}
+.week-recur-block.done .week-recur-time {
+  padding-right: 22px;
 }
 .week-block-time {
   font-size: var(--n2-type-xs);
@@ -2462,9 +2508,7 @@ a.toggle-btn {
 .week-recur-block.done:hover {
   opacity: 0.9;
 }
-.week-recur-block .block-done-mark {
-  margin-left: 4px;
-}
+/* (Znacznik ✓ wystąpienia stoi teraz w narożniku — patrz `.block-done-mark.corner`.) */
 .week-recur-title {
   font-size: var(--n2-type-xs);
   font-weight: 600;

@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   AXIS_LABEL_LEAD_PX,
+  DONE_TICK_BOTTOM_PX,
+  DONE_TICK_SIZE_PX,
   WORK_END_HOUR,
   WORK_START_HOUR,
   dayBodyHeightPx,
+  doneTickTopPx,
   isOffHour,
   workWindowBottomPx,
   workWindowCssVars,
@@ -14,6 +17,11 @@ import {
 // HOUR_PX używany przez WeekView (84px = 1 h). Testy trzymają się tej samej
 // geometrii co siatka, żeby zmiana stałej okna roboczego była widoczna od razu.
 const HOUR_PX = 84;
+// Minimalna wysokość kafelka w WeekView (MIN_BLOCK_H) — najciaśniejszy przypadek
+// dla znacznika ✓ w prawym dolnym rogu.
+const MIN_BLOCK_H = 50;
+// Wysokość uchwytu zmiany rozmiaru (`.week-block-handle`) w CSS.
+const HANDLE_H = 6;
 
 describe('okno robocze widoku tygodnia', () => {
   it('domyślnie obejmuje godziny agencji 9–17', () => {
@@ -66,6 +74,37 @@ describe('okno robocze widoku tygodnia', () => {
     expect(isOffHour(17)).toBe(true);
     expect(isOffHour(23)).toBe(true);
     expect(isOffHour(Number.NaN)).toBe(true);
+  });
+
+  it('kładzie ✓ w prawym DOLNYM rogu kafelka, nie w górnym', () => {
+    const top = 3 * HOUR_PX;
+    const height = 2 * HOUR_PX;
+    const tick = doneTickTopPx(top, height);
+    // Bliżej dołu kafelka niż jego góry — to jest cała istota zmiany.
+    expect(tick).toBeGreaterThan(top);
+    expect(tick).toBe(top + height - DONE_TICK_SIZE_PX - DONE_TICK_BOTTOM_PX);
+    expect(tick + DONE_TICK_SIZE_PX).toBeLessThan(top + height);
+  });
+
+  it('zostawia dolny uchwyt zmiany rozmiaru w całości odsłonięty', () => {
+    const top = 0;
+    const height = MIN_BLOCK_H;
+    const tickBottom = doneTickTopPx(top, height) + DONE_TICK_SIZE_PX;
+    // Dolna krawędź ✓ kończy się NAD pasem uchwytu (ostatnie 6 px kafelka).
+    expect(tickBottom).toBeLessThanOrEqual(top + height - HANDLE_H);
+    expect(DONE_TICK_BOTTOM_PX).toBeGreaterThanOrEqual(HANDLE_H);
+  });
+
+  it('trzyma ✓ wewnątrz kafelka nawet przy skrajnie niskim bloku', () => {
+    expect(doneTickTopPx(100, MIN_BLOCK_H)).toBe(122);
+    expect(doneTickTopPx(100, 10)).toBe(100);
+    expect(doneTickTopPx(100, 0)).toBe(100);
+  });
+
+  it('nie produkuje NaN przy niepoprawnej geometrii', () => {
+    expect(doneTickTopPx(Number.NaN, 100)).toBe(0);
+    expect(doneTickTopPx(40, Number.NaN)).toBe(40);
+    expect(doneTickTopPx(40, Number.POSITIVE_INFINITY)).toBe(40);
   });
 
   it('podaje granice okna jako zmienne CSS w pikselach', () => {

@@ -289,46 +289,58 @@ export function CalendarPage() {
           (page-head / cal-toolbar / filter-toolbar) — złożenie ich oddaje ~90px
           wysokości samemu kalendarzowi (zgłoszenie zespołu). Zmiana jest czysto
           układowa: żadne zachowanie filtrowania ani nawigacji się nie zmienia,
-          a kotwica onboardingu `calendar.toolbar` zostaje na tym wierszu. */}
+          a kotwica onboardingu `calendar.toolbar` zostaje na tym wierszu.
+
+          Pasek ma DWIE grupy i nic pomiędzy nimi: przy lewej krawędzi zwarta
+          trójka (tytuł · przełącznik widoku · plakietka daty/zegara), przy
+          prawej „Filtry” i skrajnie po prawej nawigacja okresu. Wolna
+          przestrzeń zostaje w ŚRODKU — wcześniej plakietka odjeżdżała na
+          prawo (`margin-left: auto`) i wisiała w oderwaniu od tytułu. */}
       <div className="cal-toolbar" data-tour="calendar.toolbar">
-        <h1 className="cal-title">Kalendarz</h1>
+        <div className="cal-toolbar-lead">
+          <h1 className="cal-title">Kalendarz</h1>
 
-        <div className="cal-view-toggle" role="group" aria-label="Widok kalendarza">
-          <button
-            type="button"
-            className={view === 'week' ? 'toggle-btn active' : 'toggle-btn'}
-            onClick={() => setView('week')}
-          >
-            Tydzień
-          </button>
-          <button
-            type="button"
-            className={view === 'month' ? 'toggle-btn active' : 'toggle-btn'}
-            onClick={() => setView('month')}
-          >
-            Miesiąc
-          </button>
+          <div className="cal-view-toggle" role="group" aria-label="Widok kalendarza">
+            <button
+              type="button"
+              className={view === 'week' ? 'toggle-btn active' : 'toggle-btn'}
+              onClick={() => setView('week')}
+            >
+              Tydzień
+            </button>
+            <button
+              type="button"
+              className={view === 'month' ? 'toggle-btn active' : 'toggle-btn'}
+              onClick={() => setView('month')}
+            >
+              Miesiąc
+            </button>
+          </div>
+
+          <NowClockBadge />
         </div>
 
-        <div className="cal-nav">
-          <button type="button" className="nav-btn" onClick={prev} aria-label="Poprzedni">
-            ‹
-          </button>
-          <button type="button" className="btn ghost" onClick={goToday}>
-            Dzisiaj
-          </button>
-          <button type="button" className="nav-btn" onClick={next} aria-label="Następny">
-            ›
-          </button>
-          {/* Widoczny nagłówek okresu jest JEDNOCZEŚNIE ogłoszeniem zmiany
-              (PageUp/PageDown w siatce miesiąca nie przestawia fokusu poza
-              komórkę) i nazwą dostępną siatki (`aria-labelledby`). */}
-          {rangeLabel}
+        <div className="cal-toolbar-trail">
+          {filterBar}
+
+          <div className="cal-nav">
+            {/* Widoczny nagłówek okresu jest JEDNOCZEŚNIE ogłoszeniem zmiany
+                (PageUp/PageDown w siatce miesiąca nie przestawia fokusu poza
+                komórkę) i nazwą dostępną siatki (`aria-labelledby`). Stoi PRZED
+                strzałkami, żeby sama nawigacja („‹ Dzisiaj ›”) kończyła się na
+                skrajnie prawej krawędzi interfejsu. */}
+            {rangeLabel}
+            <button type="button" className="nav-btn" onClick={prev} aria-label="Poprzedni">
+              ‹
+            </button>
+            <button type="button" className="btn ghost" onClick={goToday}>
+              Dzisiaj
+            </button>
+            <button type="button" className="nav-btn" onClick={next} aria-label="Następny">
+              ›
+            </button>
+          </div>
         </div>
-
-        {filterBar}
-
-        <NowClockBadge />
       </div>
 
       {view === 'week' ? (

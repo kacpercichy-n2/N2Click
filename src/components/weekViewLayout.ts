@@ -70,3 +70,33 @@ export function workWindowCssVars(hourPx: number): Record<string, string> {
 export function dayBodyHeightPx(hourPx: number): number {
   return safePx(DAY_HOURS * hourPx);
 }
+
+// ---- Znacznik ✓ ukończenia na kafelku ----
+// Też PREZENTACJA (inwariant 1 + 7): liczy wyłącznie piksele rogu, w którym
+// stoi ✓. Wcześniej ✓ siedziało w prawym GÓRNYM rogu i nachodziło na tytuł —
+// teraz idzie do prawego DOLNEGO rogu, gdzie kafelek jest zwykle pusty.
+
+/** Bok kwadratowego ✓ (lustro `width`/`height` w `.week-block-done-btn`). */
+export const DONE_TICK_SIZE_PX = 20;
+
+/**
+ * Prześwit między ✓ a dolną krawędzią kafelka: 6 px uchwytu zmiany rozmiaru
+ * (`.week-block-handle.bottom`) + 2 px luzu. Dzięki niemu ✓ NIE leży na
+ * uchwycie, więc chwyt za dolną krawędź zostaje w całości trafialny
+ * (inwariant 7 — żadna ścieżka wskaźnika przeciągania się nie zmienia).
+ * Ta sama wartość stoi w `.block-done-mark.corner` (`bottom`) w CSS.
+ */
+export const DONE_TICK_BOTTOM_PX = 8;
+
+/**
+ * `top` przycisku ✓ (rodzeństwa kafelka, liczonego od góry kolumny dnia) dla
+ * kafelka o danym `top`/`height`. Na najniższym kafelku (MIN_BLOCK_H = 50 px)
+ * zostaje 22 px nad ✓, więc znacznik nigdy nie wychodzi ponad własny kafelek —
+ * stąd dolna bariera `blockTop`. Niepoprawna geometria daje `blockTop`, nie NaN.
+ */
+export function doneTickTopPx(blockTop: number, blockHeight: number): number {
+  if (!Number.isFinite(blockTop)) return 0;
+  if (!Number.isFinite(blockHeight)) return blockTop;
+  const rested = blockTop + blockHeight - DONE_TICK_SIZE_PX - DONE_TICK_BOTTOM_PX;
+  return Math.max(blockTop, rested);
+}

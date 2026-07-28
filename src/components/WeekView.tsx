@@ -54,6 +54,7 @@ import {
 } from '../store/selectors';
 import { buildWeekModel, personDateKey } from './weekViewModel';
 import {
+  doneTickTopPx,
   isOffHour,
   workWindowCssVars,
   workWindowScrollTop,
@@ -966,6 +967,11 @@ function TimedBlockImpl({
   const className = [
     'week-block',
     done ? 'done' : '',
+    // ✓ w prawym DOLNYM rogu stoi na kafelku tylko wtedy, gdy TEN blok jest
+    // odhaczony (`entry.done`, nie szerszy status zadania). Klasa rezerwuje mu
+    // miejsce w ostatnim wierszu treści, żeby na najniższych kafelkach nie
+    // przykrywał godzin — patrz `.week-block.has-done-tick .week-block-meta`.
+    entry.done === true ? 'has-done-tick' : '',
     status === 'overdue' && !done ? 'overdue' : '',
     editable ? '' : 'readonly',
     drag ? 'dragging' : '',
@@ -1057,14 +1063,6 @@ function TimedBlockImpl({
       <span className="week-block-title">
         {project && <Coin paid={project.paid} size={12} />}
         {task.title}
-        {/* Blok bez prawa edycji zostaje przy BIERNYM znaczniku: widz nadal widzi
-            ✓, ale nie dostaje przycisku, którego i tak nie wolno mu użyć.
-            Edytowalny blok ma zamiast tego przycisk-rodzeństwo (IA-08). */}
-        {!editable && entry.done === true && (
-          <span className="block-done-mark" aria-label="Wykonane">
-            ✓
-          </span>
-        )}
       </span>
       <span className="week-block-time">
         {formatMinutes(start)}–{formatMinutes(end)}
@@ -1078,6 +1076,16 @@ function TimedBlockImpl({
         {person.name}
         <span className="week-block-hours">{formatDuration(hours)}</span>
       </span>
+      {/* Blok bez prawa edycji zostaje przy BIERNYM znaczniku: widz nadal widzi
+          ✓, ale nie dostaje przycisku, którego i tak nie wolno mu użyć.
+          Edytowalny blok ma zamiast tego przycisk-rodzeństwo (IA-08). Znacznik
+          stoi w prawym DOLNYM rogu kafelka (`corner`) — dokładnie tam, gdzie
+          rysuje się przycisk — bo w górnym nachodził na tytuł. */}
+      {!editable && entry.done === true && (
+        <span className="block-done-mark corner" aria-label="Wykonane">
+          ✓
+        </span>
+      )}
       {editable && (
         <span className="week-block-handle bottom" onPointerDown={begin('bottom')} aria-hidden />
       )}
@@ -1132,11 +1140,14 @@ function TimedBlockImpl({
           hovered ? 'week-block-done-btn hovered' : 'week-block-done-btn'
         }
         style={{
-          top,
-          // Prawy górny róg kafelka: lewa krawędź kolumny + jej szerokość,
-          // a `translateX(-100%)` cofa przycisk o jego własną szerokość. W
-          // widoku dnia kafelek sięga prawej krawędzi kolumny (minus 3 px), więc
-          // ✓ liczy się od niej, a nie od podziału na kolumny.
+          // Prawy DOLNY róg kafelka. W pionie: dół kafelka minus wysokość ✓ i
+          // prześwit na uchwyt zmiany rozmiaru (`doneTickTopPx`) — górny róg
+          // nachodził na tytuł, a dół kafelka jest zwykle pusty. W poziomie bez
+          // zmian: lewa krawędź kolumny + jej szerokość, a `translateX(-100%)`
+          // cofa przycisk o jego własną szerokość. W widoku dnia kafelek sięga
+          // prawej krawędzi kolumny (minus 3 px), więc ✓ liczy się od niej, a
+          // nie od podziału na kolumny.
+          top: doneTickTopPx(top, height),
           left: stack ? 'calc(100% - 3px)' : `calc(${((col + 1) / cols) * 100}% - 2px)`,
           transform: tx
             ? `translateX(${tx}px) translateX(-100%)`
@@ -1761,17 +1772,17 @@ function RecurBlockImpl({ task, hue, occurrence, done, onOpen, onContextMenu }: 
       }}
       onContextMenu={(e) => onContextMenu(task, occurrence, e)}
     >
-      <span className="week-recur-title">
-        ⟳ {title}
-        {done && (
-          <span className="block-done-mark" aria-label="Wykonane">
-            ✓
-          </span>
-        )}
-      </span>
+      <span className="week-recur-title">⟳ {title}</span>
       <span className="week-recur-time">
         {formatMinutes(occurrence.startMinutes)}–{formatMinutes(end)}
       </span>
+      {/* ✓ w prawym DOLNYM rogu kafelka — ten sam róg, co na zwykłym bloku.
+          W górnym rogu znacznik wchodził w tytuł wystąpienia. */}
+      {done && (
+        <span className="block-done-mark corner" aria-label="Wykonane">
+          ✓
+        </span>
+      )}
     </div>
     </Tooltip>
   );

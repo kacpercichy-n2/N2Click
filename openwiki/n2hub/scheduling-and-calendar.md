@@ -98,6 +98,16 @@
   data are untouched, and off-window slots stay fully usable. The date+clock
   badge lives OUTSIDE the grid (`NowClockBadge` in the calendar toolbar row,
   `useNowTick` 30 s); the `.week-now-line` in today's column is unchanged.
+- Znacznik ✓ ukończenia na kafelku (2026-07-28, inwariant 7) stoi w PRAWYM
+  DOLNYM rogu — zarówno interaktywny przycisk (`.week-block-done-btn`), jak i
+  bierne znaczniki (`.block-done-mark.corner` na kafelku bez prawa edycji i na
+  wystąpieniu cyklicznym). Pion liczy `doneTickTopPx` w `weekViewLayout.ts`
+  (`weekViewLayout.test.ts`), a `DONE_TICK_BOTTOM_PX = 8` (6 px uchwytu
+  `.week-block-handle.bottom` + 2 px luzu) ma swoje lustro w CSS jako
+  `bottom: 8px` — zmiana jednej wartości wymaga zmiany drugiej. Dolny uchwyt
+  zmiany rozmiaru zostaje w całości trafialny, a znaczniki bierne są
+  `pointer-events: none`, więc `elementFromPoint` i cykl życia wskaźnika
+  zostają bez zmian.
 - Podpowiedzi na powierzchniach przeciągania (2026-07-28, inwariant 7): bloki
   siatki, karty zasobnika, nakładki cykliczne/wydarzeń, plakietki nagłówka oraz
   paski i kamienie milowe osi czasu nie mają już natywnego `title` — otacza je
