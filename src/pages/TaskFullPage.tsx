@@ -6,7 +6,7 @@
 // samą glue-logikę wokół niego (stan brudny → strażnik nawigacji, wskaźnik
 // zapisu, odznaka powodów blokujących zapis, usuwanie przez wspólny
 // `useDeleteTaskConfirm`). Auto-zapis przychodzi „za darmo" razem z edytorem.
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useStore, usePersistence } from '../store/AppStore';
 import { useCan } from '../store/useCan';
@@ -55,6 +55,17 @@ function TaskFullView({ taskId, title }: { taskId: string; title: string }) {
   // SYNCHRONICZNA (nie w efekcie): zapis czyści brudność i nawiguje w jednym
   // handlerze, a strażnik czyta rejestr dokładnie w trakcie tej nawigacji.
   const [dirty, setDirty] = useState(false);
+
+  // Otwarcie karty ZAWSZE zaczyna na górze treści. Router nie zeruje pozycji
+  // przewinięcia przy zmianie trasy, więc wejście z przewiniętej listy zadań
+  // (albo z modala linkiem „Otwórz pełny widok") lądowało w środku, a nawet na
+  // samym dole formularza. Efekt układu — zerowanie leci PRZED malowaniem, więc
+  // nie widać skoku. Strona nie obsługuje deep-linku do bloku (nie przekazuje
+  // `focusBlockId` do edytora), więc nie ma tu wyjątku od reguły.
+  useLayoutEffect(() => {
+    window.scrollTo({ top: 0, left: 0 });
+  }, [taskId]);
+
   const navGuardKey = useRef<object>({});
   const handleDirtyChange = useCallback((next: boolean) => {
     setDirty(next);

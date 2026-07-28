@@ -12,7 +12,7 @@
 export type TaskModalTabId = 'zadanie' | 'planowanie' | 'dyskusja';
 
 export type TaskModalSectionId =
-  /** Przyklejona głowa: tytuł, projekt, status. */
+  /** Głowa kontekstu: tytuł, projekt, status. Statyczna — przewija się z treścią. */
   | 'context'
   /** Szczegóły: opis, priorytet. */
   | 'details'
@@ -143,6 +143,17 @@ export function visibleTabs(flags: SectionFlags): TaskModalTab[] {
  */
 export function initialTab(args: { hasFocusBlock: boolean; isEdit: boolean }): TaskModalTabId {
   return args.hasFocusBlock && args.isEdit ? 'planowanie' : 'zadanie';
+}
+
+/**
+ * Czy otwarcie karty ma ustawić widok na SAMEJ GÓRZE treści (ta sama decyzja
+ * dla modala i dla `/tasks/:id`). Zwykłe otwarcie — tak: użytkownik ma zacząć
+ * od tytułu, a nie od środka siatki przydziału. JAWNY deep-link do bloku
+ * (`?task=<id>&block=<id>`) — nie: tam poprosił o konkretny wiersz i to on
+ * wygrywa, więc `scrollIntoView` podświetlanego wiersza zostaje nietknięte.
+ */
+export function opensAtTop(args: { hasFocusBlock: boolean }): boolean {
+  return !args.hasFocusBlock;
 }
 
 /**

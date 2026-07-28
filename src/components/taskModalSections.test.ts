@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   initialTab,
+  opensAtTop,
   resolveTabNavKey,
   visibleSections,
   visibleTabs,
@@ -119,6 +120,21 @@ describe('visibleSections', () => {
     expect(collapsible).toEqual(['recurrence', 'classification', 'done-blocks']);
   });
 
+  it('kontekst jest PIERWSZĄ sekcją w każdym trybie — pole startowe leży na górze', () => {
+    // Kontrakt fokusa startowego: `data-autofocus` siedzi na `t-title` w sekcji
+    // „context", a powłoka modala fokusuje je z `preventScroll`. Gdyby kontekst
+    // przestał być pierwszy, fokus startowy wskazywałby pole POD zgięciem i
+    // otwarcie znowu przewijałoby kartę w dół.
+    for (const flags of [
+      EDIT,
+      { ...EDIT, isEdit: false, hasBlocks: false },
+      { ...EDIT, isDraft: true },
+      { ...EDIT, hasValidPeriod: false, isEdit: false, hasBlocks: false },
+    ]) {
+      expect(visibleSections(flags)[0].id).toBe('context');
+    }
+  });
+
   it('każda sekcja należy do zakładki zgodnej z układem paneli', () => {
     const byId = new Map(visibleSections(EDIT).map((s) => [s.id, s.tab] as const));
     expect(byId.get('context')).toBe('zadanie');
@@ -168,6 +184,26 @@ describe('initialTab', () => {
     expect(initialTab({ hasFocusBlock: false, isEdit: true })).toBe('zadanie');
     expect(initialTab({ hasFocusBlock: true, isEdit: false })).toBe('zadanie');
     expect(initialTab({ hasFocusBlock: false, isEdit: false })).toBe('zadanie');
+  });
+});
+
+describe('opensAtTop', () => {
+  it('zwykłe otwarcie przewija na samą górę treści', () => {
+    expect(opensAtTop({ hasFocusBlock: false })).toBe(true);
+  });
+
+  it('jawny deep-link do bloku zachowuje skok do celu', () => {
+    expect(opensAtTop({ hasFocusBlock: true })).toBe(false);
+  });
+
+  it('deep-link, który wybiera „Planowanie", jest DOKŁADNIE tym samym wejściem', () => {
+    // Jedna bramka rządzi obiema decyzjami: zakładką startową i pozycją
+    // przewinięcia. Rozjazd tych dwóch znaczyłby „otwórz Planowanie, ale
+    // przewiń na górę Zadania" — czyli skok do bloku bez skoku do bloku.
+    for (const hasFocusBlock of [true, false]) {
+      const startsOnPlanning = initialTab({ hasFocusBlock, isEdit: true }) === 'planowanie';
+      expect(opensAtTop({ hasFocusBlock })).toBe(!startsOnPlanning);
+    }
   });
 });
 

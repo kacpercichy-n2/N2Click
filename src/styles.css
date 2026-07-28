@@ -1142,6 +1142,18 @@ textarea {
   white-space: nowrap;
   transition: background var(--n2-transition), color var(--n2-transition);
 }
+/* Zakładki stoją POŚRODKU paska, nie przy lewej krawędzi. Centrowanie robią
+   marginesy `auto` na skrajnych zakładkach, a NIE `justify-content: center`:
+   pasek jest scrollportem (`overflow-x: auto`), a przy przepełnieniu wolna
+   przestrzeń jest ujemna — wtedy marginesy schodzą do zera i pierwsza zakładka
+   zostaje osiągalna, zamiast uciec poza lewą krawędź (klasyczna pułapka
+   wyśrodkowanego flexa w kontenerze przewijanym). */
+.task-editor-tab:first-child {
+  margin-inline-start: auto;
+}
+.task-editor-tab:last-child {
+  margin-inline-end: auto;
+}
 .task-editor-tab:hover {
   color: var(--n2-text);
   background: rgba(255, 255, 255, 0.05);
@@ -1150,13 +1162,11 @@ textarea {
   background: rgba(196, 150, 255, 0.16);
   color: var(--n2-text);
 }
-/* Przyklejona głowa kontekstu: tytuł, projekt, status zostają widoczne przy
-   przewijaniu panelu „Zadanie". Tło musi być KRYJĄCE (treść przewija się pod
-   spodem), a warstwa niżej niż sticky stopka akcji (z-index 5). */
+/* Głowa kontekstu (tytuł, projekt, status) jest STATYCZNA i przewija się razem
+   z resztą treści. Wersja przyklejona (`position: sticky; top: 0`) zajmowała
+   przy przewijaniu kilkaset pikseli nad panelem i zasłaniała pola pod spodem —
+   nagłówek karty modala i pasek zakładek wystarczają za stałą orientację. */
 .task-context-header {
-  position: sticky;
-  top: 0;
-  z-index: 4;
   background: var(--n2-panel);
   border: 1px solid var(--n2-border);
   border-radius: var(--n2-radius-lg);

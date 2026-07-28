@@ -79,12 +79,18 @@ export function tabbableElementsIn(container: HTMLElement): HTMLElement[] {
  * Wejście fokusa w kontener: pierwsze `data-autofocus`, potem pierwszy element
  * w cyklu Tab, a przy dialogu bez kontrolek — sam kontener (musi mieć
  * `tabIndex={-1}`). Ta sama decyzja (`resolveInitialFocusIndex`), co w modalu.
+ *
+ * Fokus startowy jest ZAWSZE `preventScroll` (tak samo jak `focusFieldById`):
+ * świeżo otwarta karta stoi na górze treści i to fokus miałby ją stamtąd
+ * ściągnąć, a nie odwrotnie. Pole startowe i tak leży u góry, więc nie ma czego
+ * dosuwać; jawne skoki do celu (deep-link do bloku, lista blokad zapisu) robią
+ * własne `scrollIntoView` i ta zmiana ich nie dotyka.
  */
 export function focusInitialIn(container: HTMLElement): void {
   const { elements, described } = focusCandidates(container);
   const index = resolveInitialFocusIndex(described);
-  if (index === null) container.focus();
-  else elements[index].focus();
+  if (index === null) container.focus({ preventScroll: true });
+  else elements[index].focus({ preventScroll: true });
 }
 
 /**

@@ -2,7 +2,16 @@
 // as an overlay driven by the `?task=<id>` (or `?task=new[&project=<id>]`)
 // search params. Rendered ONCE at App level. Closing removes the task/project
 // params while keeping the rest of the URL (and the page's scroll) intact.
-import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import type { ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { AnimatePresence, m } from 'motion/react';
@@ -82,6 +91,7 @@ import {
 } from './taskSaveBlockers';
 import {
   initialTab,
+  opensAtTop,
   resolveTabNavKey,
   visibleSections,
   visibleTabs,
@@ -369,6 +379,19 @@ function TaskModalShell({
     if (await deleteTask()) closeDeliberately();
   };
 
+  // Otwarcie karty ZAWSZE zaczyna na górze treści. Sam montaż daje `scrollTop`
+  // 0, ale `.task-modal-body` PRZEŻYWA zmianę `?task=` (remontuje się tylko
+  // `TaskEditor`, przez `key`), więc przejście na inne zadanie przy przewiniętym
+  // modalu wpadało w środek nowego formularza. Efekt układu (przed malowaniem)
+  // — żeby nie było widocznego skoku. Deep-link do bloku jest wyłączony z tej
+  // reguły: tam wygrywa `scrollIntoView` podświetlanego wiersza.
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!opensAtTop({ hasFocusBlock: blockParam !== null })) return;
+    const body = bodyRef.current;
+    if (body !== null) body.scrollTop = 0;
+  }, [taskParam, blockParam]);
+
   const heading = notFound ? 'Nie znaleziono zadania' : isNew ? 'Nowe zadanie' : 'Edytuj zadanie';
 
   return (
@@ -446,7 +469,7 @@ function TaskModalShell({
               />
             </div>
           </div>
-          <div className="task-modal-body">
+          <div className="task-modal-body" ref={bodyRef}>
             {notFound ? (
               <div className="empty-state">
                 <p className="empty-title">Nie znaleziono zadania</p>
