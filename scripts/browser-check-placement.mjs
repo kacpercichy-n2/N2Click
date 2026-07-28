@@ -41,11 +41,12 @@
 //         1. Dashboard "Dziś" donut caption reads the literal "⚠ brak
 //            dostępności" with the danger class .donut-pct.over (catches
 //            loadPercent regressing to a calm 0% for booked>0 on 0h available).
-//         2. WorkloadPage: Kasia's TODAY cell has class `overload` and title
-//            "Kasia Kowalska: 4h > 0h dostępności", and her week load bar shows
-//            the danger state while other days stay calm (catches a non-workday
-//            being treated as 8h, or the single-overbooked-day bar rule being
-//            dropped).
+//         2. WorkloadPage: Kasia's TODAY cell has class `overload` and carries
+//            the exact hidden reason, the SEPARATE per-person flag
+//            (.workload-over-flag) shows next to her name, and the week load bar
+//            stays on the utilization scale (no .tone-over) with no leftover
+//            "⚠ N dni" caption (catches a non-workday being treated as 8h, and
+//            catches the two signals being merged back into one — OP-21).
 //         3. TimelinePage people mode: the conflict marker (.timeline-conflict)
 //            appears on Kasia's row for the task and NOT on co-assignee Marek's
 //            row for the same task (catches conflict markers regressing to
@@ -411,7 +412,9 @@ async function flowPlacement(browser) {
       const cell = olaRow.locator('td.workload-cell').nth(dayIndex);
       await cell.click();
 
-      const panel = page.locator('.wr-panel');
+      // Kliknięcie komórki otwiera POPOVER na warstwie nakładek (`useOverlay`),
+      // a nie dawny wiersz rozwijany w tabeli (`.wr-panel` w `tr.workload-detail-row`).
+      const panel = page.locator('.wr-popover');
       await panel.waitFor({ state: 'visible', timeout: 5000 });
       const select = panel.locator('select[aria-label="Przypisz do osoby"]');
       const przenies = panel.locator('.wr-reassign button', { hasText: 'Przenieś' });
@@ -630,9 +633,10 @@ async function flowPlacement(browser) {
       );
       await page.screenshot({ path: `${SHOTS}/${ENGINE}-f1-dashboard-donut.png` });
 
-      // 2. WorkloadPage → current user's TODAY cell overload + exact title, and a
-      //    danger week load bar while other days stay calm. Catches a non-workday
-      //    treated as 8h, or the single-overbooked-day bar rule being dropped.
+      // 2. WorkloadPage → current user's TODAY cell overload + exact title, and the
+      //    SEPARATE per-person overload flag next to the name. Catches a non-workday
+      //    treated as 8h, or the two signals being merged back into the load bar
+      //    (OP-21: the bar encodes utilization ONLY, `loadTone`).
       await page.locator('a.app-nav-link[href="/workload"]').click();
       await page.locator('.workload-table').waitFor({ timeout: 10000 });
       const meRow = page.locator('tr').filter({ hasText: meName }).first();
@@ -653,10 +657,27 @@ async function flowPlacement(browser) {
         cellHint === `${meName}: 4h ponad 0h dostępności`,
         `TODAY cell carries the overload reason "${meName}: 4h ponad 0h dostępności" (got "${cellHint}")`,
       );
-      const loadPctClass = (await meRow.locator('.load-pct').getAttribute('class')) || '';
+      const overFlag = meRow.locator('.workload-over-flag');
       ok(
-        loadPctClass.split(/\s+/).includes('over'),
-        `the week load bar renders the danger state (.load-pct.over) despite calm other days (got "${loadPctClass}")`,
+        (await overFlag.count()) === 1,
+        `the overloaded day raises the SEPARATE per-person flag next to the name (got ${await overFlag.count()})`,
+      );
+      const overFlagLabel = ((await overFlag.getAttribute('aria-label')) || '').trim();
+      ok(
+        overFlagLabel.startsWith('Przekroczona dostępność:'),
+        `the flag names the overloaded days for assistive tech (got "${overFlagLabel}")`,
+      );
+      // Pasek obciążenia liczy WYŁĄCZNIE wykorzystanie tygodnia: przy jednym
+      // przeciążonym dniu wolnym i spokojnej reszcie NIE wolno mu być czerwony.
+      const loadBarFillClass =
+        (await meRow.locator('.load-bar-fill').getAttribute('class')) || '';
+      ok(
+        !loadBarFillClass.split(/\s+/).includes('tone-over'),
+        `the week load bar stays on the utilization scale, not the day-overload signal (got "${loadBarFillClass}")`,
+      );
+      ok(
+        (await meRow.locator('.workload-warn').count()) === 0,
+        'the duplicated "⚠ N dni" caption is gone (the red cell + the name flag carry it)',
       );
       await page.screenshot({ path: `${SHOTS}/${ENGINE}-f2-workload-cell.png` });
 

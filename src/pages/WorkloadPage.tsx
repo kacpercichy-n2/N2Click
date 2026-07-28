@@ -1,8 +1,14 @@
 // Workload dashboard: per-person assigned vs available hours for a week, with
 // per-day breakdown, overload warnings, and filters by department / client /
 // service type.
-import { Fragment, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+//
+// DWA ROZDZIELONE SYGNAŁY (OP-21): pasek obciążenia koduje WYŁĄCZNIE
+// wykorzystanie (`loadTone`, jedna monotoniczna skala), a „któryś dzień ponad
+// dostępnością” to osobna ikona przy nazwisku. Wcześniej jedno `danger`
+// sterowało obydwoma, więc 75% bywało czerwone obok fioletowego 84%, a tekst
+// „⚠ 1 dzień” powtarzał to, co i tak mówiła czerwona komórka.
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import type { AppData } from '../types';
@@ -14,17 +20,28 @@ import {
   blocksForPersonDate,
   getClient,
   getDepartment,
-  getProject,
+  getPerson,
   getServiceType,
-  getTask,
   hoursForPersonOnDate,
   isPersonWorkday,
   loadPercent,
+  loadTone,
+  workloadCellDetail,
+  type WorkloadCellBlock,
 } from '../store/selectors';
 import { Avatar } from '../components/Avatar';
 import { useOpenTask } from '../components/TaskModal';
 import { FilterPanel, type FilterChip, type FilterGroup } from '../components/FilterPanel';
-import { ArrowRightLeft, ChevronLeft, ChevronRight, X } from '../components/icons';
+import { OverlayLayer, useOverlay } from '../components/useOverlay';
+import { calendarDayTarget } from '../components/bottomNav';
+import {
+  AlertTriangle,
+  ArrowRightLeft,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  X,
+} from '../components/icons';
 import {
   formatRowLabel,
   isWeekend,
@@ -36,10 +53,10 @@ import {
 import { findFreeStart, formatDuration, hoursToMinutes } from '../utils/time';
 import { DisabledHint } from '../components/Tooltip';
 
-/** Actions for one block inside the resolution panel. */
+/** Actions for one block inside the resolution popover. */
 function BlockRow({
   state,
-  entry,
+  block,
   personId,
   date,
   canReassign,
@@ -49,7 +66,7 @@ function BlockRow({
   onMove,
 }: {
   state: AppData;
-  entry: WorkloadEntry;
+  block: WorkloadCellBlock;
   personId: string;
   date: string;
   canReassign: boolean;
@@ -58,9 +75,7 @@ function BlockRow({
   onOpenTask: (taskId: string) => void;
   onMove: (taskId: string, dayDelta: number) => void;
 }) {
-  const task = getTask(state, entry.taskId);
-  const project = task ? getProject(state, task.projectId) : undefined;
-  const client = project ? getClient(state, project.clientId) : undefined;
+  const entry: WorkloadEntry = block.entry;
   const others = state.people.filter((p) => p.id !== personId);
   const [target, setTarget] = useState(() => others[0]?.id ?? '');
   // Mirror REASSIGN_ENTRY's dated predicate: the target day must have a
@@ -74,13 +89,20 @@ function BlockRow({
   return (
     <li className="wr-block">
       <div className="wr-block-info">
-        <span className="wr-block-task">{task?.title ?? 'Zadanie'}</span>
+        <span className="wr-block-task">{block.taskTitle}</span>
         <span className="wr-block-project muted">
-          {project?.name ?? '—'}
-          {client ? ` · ${client.name}` : ''}
+          {block.projectName === '' ? '—' : block.projectName}
+          {block.clientName === '' ? '' : ` · ${block.clientName}`}
         </span>
       </div>
-      <span className="wr-block-hours">{formatDuration(entry.plannedHours)}</span>
+      {/* Godziny bloku: zakres z zegara + długość. Bez zakresu popover nie
+          odpowiadał na pytanie „kiedy dokładnie”, więc i tak trzeba było iść do
+          kalendarza. */}
+      <span className="wr-block-hours">
+        <span className="wr-block-time">{block.timeRange}</span>
+        {' · '}
+        {formatDuration(block.plannedHours)}
+      </span>
       <div className="wr-block-actions">
         {canReassign && others.length > 0 && (
           <div className="wr-reassign">
@@ -151,6 +173,7 @@ function BlockRow({
 export function WorkloadPage() {
   const { state, dispatch } = useStore();
   const { openTask } = useOpenTask();
+  const navigate = useNavigate();
   const can = useCan();
   const canReassign = can('workload.reassign');
   const canMoveTask = can('tasks.manage');
@@ -188,23 +211,70 @@ export function WorkloadPage() {
   const [selected, setSelected] = useState<{ personId: string; date: string } | null>(
     null,
   );
+  // Kotwicą popovera jest KLIKNIĘTA komórka — trzymamy sam element, bo tabela
+  // przewija się poziomo (`.alloc-wrap`) i pozycja musi jechać razem z nią.
+  // Ten sam ref jest `triggerRef` powłoki: drugie kliknięcie w tę samą komórkę
+  // zamyka popover (zamiast zamknąć + otworzyć na nowo), a fokus wraca na nią.
+  const anchorRef = useRef<HTMLTableCellElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const closePopover = useCallback(() => setSelected(null), []);
+  const getAnchorRect = useCallback(() => {
+    const element = anchorRef.current;
+    return element === null || !element.isConnected ? null : element.getBoundingClientRect();
+  }, []);
+  const overlay = useOverlay({
+    open: selected !== null,
+    onClose: closePopover,
+    overlayRef: popoverRef,
+    getAnchorRect,
+    triggerRef: anchorRef,
+    // Komórka wyjechała poza widoczny obszar (przewinięta tabela) — popover
+    // przyklejony do krawędzi nie opisywałby już żadnego dnia.
+    closeOnAnchorOutOfView: true,
+    offset: 4,
+  });
 
   const days = weekDays(anchor);
   const daySet = new Set(days);
 
-  // Close the panel once the selected person/day has no blocks left (e.g. after
-  // reassigning the last one or shifting the task off this day).
-  const selectedBlocks = selected
-    ? blocksForPersonDate(state, selected.personId, selected.date)
-    : [];
-  useEffect(() => {
-    if (selected && selectedBlocks.length === 0) setSelected(null);
-  }, [selected, selectedBlocks.length]);
+  // Pełna treść popovera (nagłówek + lista bloków) idzie z JEDNEGO selektora,
+  // więc bilans „6h / 8h” zawsze zgadza się z listą pod nim.
+  const detail = selected
+    ? workloadCellDetail(state, selected.personId, selected.date)
+    : null;
+  const selectedPerson = selected ? getPerson(state, selected.personId) : undefined;
 
-  const toggleCell = (personId: string, date: string) => {
+  // Close the popover once the selected person/day has no blocks left (e.g.
+  // after reassigning the last one or shifting the task off this day).
+  const selectedBlockCount = detail?.blocks.length ?? 0;
+  useEffect(() => {
+    if (selected && selectedBlockCount === 0) setSelected(null);
+  }, [selected, selectedBlockCount]);
+
+  const toggleCell = (personId: string, date: string, cell: HTMLTableCellElement) => {
+    anchorRef.current = cell;
     setSelected((cur) =>
       cur && cur.personId === personId && cur.date === date ? null : { personId, date },
     );
+  };
+
+  // „Otwórz w kalendarzu”: ten sam deep-link dnia, co pasek tygodnia na Panelu
+  // (`calendarDayTarget`), plus ZAPAMIĘTANY filtr osób kalendarza — czyli
+  // dokładnie te dwa istniejące mechanizmy, żaden nowy parametr trasy.
+  const openInCalendar = (personId: string, date: string) => {
+    dispatch({
+      type: 'SET_LAST_FILTER',
+      view: 'calendar',
+      filter: {
+        criteria: DEFAULT_FILTER_CRITERIA,
+        personIds: [personId],
+        departmentId: '',
+        serviceTypeId: '',
+        planning: '',
+      },
+    });
+    setSelected(null);
+    navigate(calendarDayTarget(date));
   };
 
   // Entry passes the client/service filters when its task's project matches.
@@ -370,19 +440,17 @@ export function WorkloadPage() {
               {people.map((p) => {
                 const assigned = days.reduce((s, d) => s + hoursFor(p.id, d), 0);
                 const available = availableHoursInRange(state, p.id, days);
-                // null ⇒ hours booked against zero availability — a danger
-                // state, rendered as a full red bar, never as a calm 0%. Any
-                // single overbooked day also keeps the week's bar dangerous,
-                // so a booked day off can't average away (same rule as the
-                // dashboard donut).
+                // null ⇒ hours booked against zero availability — szczyt skali
+                // wykorzystania, nigdy spokojne 0%. Przeciążone POJEDYNCZE dni
+                // NIE wchodzą już do koloru paska — mają własną ikonę przy
+                // nazwisku, bo to inna informacja niż „ile tygodnia zajęte”.
                 const pct = loadPercent(assigned, available);
+                const tone = loadTone(pct);
                 const overloadedDays = days.filter(
                   (d) => hoursFor(p.id, d) > availableHoursOnDate(state, p.id, d),
                 );
-                const danger = pct === null || pct > 100 || overloadedDays.length > 0;
                 return (
-                  <Fragment key={p.id}>
-                  <tr>
+                  <tr key={p.id}>
                     <th scope="row" className="workload-person">
                       <Link to={`/people/${p.id}`} className="workload-person-link">
                         <Avatar person={p} size={26} />
@@ -393,6 +461,22 @@ export function WorkloadPage() {
                           </span>
                         </span>
                       </Link>
+                      {/* OSOBNY sygnał „dzień ponad dostępnością” — poza paskiem
+                          i poza linkiem do profilu (nie zaśmieca jego nazwy).
+                          Ikona, nie tekst „⚠ 1 dzień”: liczbę i tak widać w
+                          czerwonych komórkach obok, a pełna lista dni siedzi w
+                          nazwie dostępnej. */}
+                      {overloadedDays.length > 0 && (
+                        <span
+                          className="workload-over-flag"
+                          role="img"
+                          aria-label={`Przekroczona dostępność: ${overloadedDays
+                            .map(formatRowLabel)
+                            .join(', ')}`}
+                        >
+                          <AlertTriangle size={14} aria-hidden />
+                        </span>
+                      )}
                     </th>
                     {days.map((d) => {
                       const h = hoursFor(p.id, d);
@@ -418,14 +502,17 @@ export function WorkloadPage() {
                             .join(' ')}
                           role={clickable ? 'button' : undefined}
                           tabIndex={clickable ? 0 : undefined}
+                          aria-haspopup={clickable ? 'dialog' : undefined}
                           aria-expanded={clickable ? isSel : undefined}
-                          onClick={clickable ? () => toggleCell(p.id, d) : undefined}
+                          onClick={
+                            clickable ? (e) => toggleCell(p.id, d, e.currentTarget) : undefined
+                          }
                           onKeyDown={
                             clickable
                               ? (e) => {
                                   if (e.key === 'Enter' || e.key === ' ') {
                                     e.preventDefault();
-                                    toggleCell(p.id, d);
+                                    toggleCell(p.id, d, e.currentTarget);
                                   }
                                 }
                               : undefined
@@ -450,6 +537,8 @@ export function WorkloadPage() {
                     <td className="workload-sum">{formatDuration(assigned)}</td>
                     <td className="workload-sum muted">{formatDuration(available)}</td>
                     <td className="workload-load">
+                      {/* Pasek mówi TYLKO o wykorzystaniu tygodnia — jedna
+                          skala, jedna nazwa dostępna. */}
                       <div
                         className="load-bar"
                         data-tour="workload.load"
@@ -457,91 +546,23 @@ export function WorkloadPage() {
                         aria-label={
                           pct === null
                             ? 'Godziny zaplanowane przy zerowej dostępności'
-                            : `${pct}% dostępnych godzin${
-                                overloadedDays.length > 0
-                                  ? ', przekroczona dostępność w niektóre dni'
-                                  : ''
-                              }`
+                            : `${pct}% dostępnych godzin`
                         }
                       >
                         <div
-                          className={danger ? 'load-bar-fill over' : 'load-bar-fill'}
+                          className={`load-bar-fill tone-${tone}`}
                           style={{ width: `${pct === null ? 100 : Math.min(pct, 100)}%` }}
                         />
                       </div>
-                      <span className={danger ? 'load-pct over' : 'load-pct'}>
-                        {pct === null ? '⚠ brak dostępności' : danger ? `⚠ ${pct}%` : `${pct}%`}
+                      <span className={tone === 'over' ? 'load-pct over' : 'load-pct'}>
+                        {pct === null
+                          ? '⚠ brak dostępności'
+                          : tone === 'over'
+                            ? `⚠ ${pct}%`
+                            : `${pct}%`}
                       </span>
-                      {overloadedDays.length > 0 && (
-                        <span className="workload-warn">
-                          ⚠ {overloadedDays.length} {overloadedDays.length === 1 ? 'dzień' : 'dni'}
-                          <span className="sr-only">
-                            {' '}
-                            powyżej dostępności: {overloadedDays.map(formatRowLabel).join(', ')}
-                          </span>
-                        </span>
-                      )}
                     </td>
                   </tr>
-                  {selected && selected.personId === p.id && (() => {
-                    const date = selected.date;
-                    const blocks = blocksForPersonDate(state, p.id, date);
-                    const dayTotal = hoursForPersonOnDate(state, p.id, date);
-                    const dayAvailable = availableHoursOnDate(state, p.id, date);
-                    const over = dayTotal > dayAvailable;
-                    const filtersActive = Boolean(clientFilter || serviceFilter);
-                    return (
-                      <tr className="workload-detail-row">
-                        <td colSpan={days.length + 4}>
-                          <div className="wr-panel">
-                            <div className="wr-head">
-                              <span
-                                className={over ? 'wr-title over' : 'wr-title'}
-                              >
-                                „{p.name} — {formatRowLabel(date)}: {formatDuration(dayTotal)}
-                                {' / '}
-                                {formatDuration(dayAvailable)}”
-                              </span>
-                              <button
-                                type="button"
-                                className="wr-close"
-                                aria-label="Zamknij"
-                                onClick={() => setSelected(null)}
-                              >
-                                <X size={16} />
-                              </button>
-                            </div>
-                            {filtersActive && (
-                              <p className="wr-hint muted">
-                                Wszystkie bloki tego dnia, niezależnie od filtrów.
-                              </p>
-                            )}
-                            <ul className="wr-blocks">
-                              {blocks.map((entry) => (
-                                <BlockRow
-                                  key={entry.id}
-                                  state={state}
-                                  entry={entry}
-                                  personId={p.id}
-                                  date={date}
-                                  canReassign={canReassign}
-                                  canMoveTask={canMoveTask}
-                                  onReassign={(entryId, toPersonId) =>
-                                    dispatch({ type: 'REASSIGN_ENTRY', entryId, toPersonId })
-                                  }
-                                  onOpenTask={openTask}
-                                  onMove={(taskId, dayDelta) =>
-                                    dispatch({ type: 'MOVE_TASK', taskId, dayDelta })
-                                  }
-                                />
-                              ))}
-                            </ul>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })()}
-                  </Fragment>
                 );
               })}
             </tbody>
@@ -552,6 +573,72 @@ export function WorkloadPage() {
         Dostępne = dzienna dostępność × dni robocze osoby. Filtry klienta i typu usługi
         zawężają godziny uwzględniane w podsumowaniu.
       </p>
+
+      {/* Popover komórki: JEDNA instancja na stronę, kotwiczona przy klikniętej
+          komórce przez wspólną powłokę nakładek (`useOverlay` — pozycja z
+          flipem, stos Escape, zamknięcie kliknięciem poza, powrót fokusa).
+          Wcześniej był to wiersz rozwijany pod osobą, który rozpychał tabelę i
+          nie stał obok dnia, o który pytał. */}
+      {selected !== null && detail !== null && selectedPerson !== undefined && (
+        <OverlayLayer>
+          <div
+            className="wr-popover"
+            style={overlay.style}
+            role="dialog"
+            aria-label={`Bloki: ${selectedPerson.name}, ${formatRowLabel(selected.date)}`}
+            ref={popoverRef}
+          >
+            <div className="wr-head">
+              <span className={detail.overbooked ? 'wr-title over' : 'wr-title'}>
+                {selectedPerson.name} — {formatRowLabel(selected.date)}:{' '}
+                {formatDuration(detail.bookedHours)} / {formatDuration(detail.availableHours)}
+              </span>
+              <button
+                type="button"
+                className="wr-close"
+                aria-label="Zamknij"
+                onClick={closePopover}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            {(clientFilter !== '' || serviceFilter !== '') && (
+              <p className="wr-hint muted">
+                Wszystkie bloki tego dnia, niezależnie od filtrów.
+              </p>
+            )}
+            <ul className="wr-blocks">
+              {detail.blocks.map((block) => (
+                <BlockRow
+                  key={block.entry.id}
+                  state={state}
+                  block={block}
+                  personId={selected.personId}
+                  date={selected.date}
+                  canReassign={canReassign}
+                  canMoveTask={canMoveTask}
+                  onReassign={(entryId, toPersonId) =>
+                    dispatch({ type: 'REASSIGN_ENTRY', entryId, toPersonId })
+                  }
+                  onOpenTask={openTask}
+                  onMove={(taskId, dayDelta) =>
+                    dispatch({ type: 'MOVE_TASK', taskId, dayDelta })
+                  }
+                />
+              ))}
+            </ul>
+            <div className="wr-foot">
+              <button
+                type="button"
+                className="btn ghost small"
+                onClick={() => openInCalendar(selected.personId, selected.date)}
+              >
+                <CalendarDays size={14} /> Otwórz w kalendarzu
+              </button>
+            </div>
+          </div>
+        </OverlayLayer>
+      )}
     </section>
   );
 }

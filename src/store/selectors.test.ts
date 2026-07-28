@@ -9,6 +9,7 @@ import {
   availableHoursInRange,
   availableHoursOnDate,
   blockIsDone,
+  blocksForPersonDate,
   binHoursForTaskPerson,
   binTaskRowsForPerson,
   buildSearchResultMeta,
@@ -21,6 +22,9 @@ import {
   getStatus,
   projectsOfClient,
   loadPercent,
+  loadTone,
+  workloadCellBlocks,
+  workloadCellDetail,
   rangeAvailabilityForPerson,
   growAllowanceHours,
   hoursForTaskPersonOnDate,
@@ -1841,5 +1845,169 @@ describe('binTaskRowsForPerson / binHoursForTaskPerson after a partial schedule'
 
     expect(binHoursForTaskPerson(state, 't1', 'p1')).toBe(0);
     expect(binTaskRowsForPerson(state, 'p1')).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Popover komórki „osoba × dzień” (Obciążenie) + rozdzielone sygnały koloru
+// ---------------------------------------------------------------------------
+
+describe('workloadCellBlocks / workloadCellDetail', () => {
+  function cellProject(id: string, clientId: string) {
+    return {
+      id,
+      clientId,
+      name: `Projekt ${id}`,
+      description: '',
+      statusId: 'status1',
+      paid: false,
+      startDate: '2026-07-01',
+      endDate: '2026-07-31',
+      departmentId: '',
+      serviceTypeId: '',
+      documents: [],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+  }
+
+  // Środa 2026-07-08 (dzień roboczy), czwartek 2026-07-09, sobota 2026-07-11.
+  const WED = '2026-07-08';
+  const THU = '2026-07-09';
+  const SAT = '2026-07-11';
+
+  function cellState() {
+    return makeState({
+      people: [makePerson({ id: 'p1', name: 'Ala', capacity: 8 }), makePerson({ id: 'p2' })],
+      clients: [{ id: 'c1', name: 'Klient A', archived: false, notes: '' }],
+      projects: [cellProject('proj1', 'c1')],
+      tasks: [
+        makeTask({ id: 't1', title: 'Montaż filmu', projectId: 'proj1' }),
+        makeTask({ id: 't2', title: 'Korekta', projectId: 'proj1' }),
+      ],
+      workload: [
+        // ZAPISANE odwrotnie do zegara (sortIndex 0 startuje później), żeby
+        // sortowanie po godzinie było widoczne, a nie przypadkowe.
+        makeEntry({ id: 'e-late', taskId: 't1', date: WED, startMinutes: 780, plannedHours: 1.5, sortIndex: 0 }),
+        makeEntry({ id: 'e-early', taskId: 't2', date: WED, startMinutes: 540, plannedHours: 2, sortIndex: 1 }),
+        // Szumy: inny dzień, inna osoba, wpis zasobnika (date '').
+        makeEntry({ id: 'e-other-day', taskId: 't1', date: THU, startMinutes: 540, plannedHours: 3, sortIndex: 2 }),
+        makeEntry({ id: 'e-other-person', taskId: 't1', personId: 'p2', date: WED, startMinutes: 600, plannedHours: 4, sortIndex: 3 }),
+        makeEntry({ id: 'e-bin', taskId: 't1', date: BIN_DATE, startMinutes: 0, plannedHours: 5, sortIndex: 4 }),
+      ],
+    });
+  }
+
+  it('zwraca bloki tej pary (osoba, dzień) w kolejności zegara, z zakresem godzin', () => {
+    const blocks = workloadCellBlocks(cellState(), 'p1', WED);
+    expect(blocks.map((b) => b.entry.id)).toEqual(['e-early', 'e-late']);
+    expect(blocks[0]).toMatchObject({
+      taskId: 't2',
+      taskTitle: 'Korekta',
+      projectName: 'Projekt proj1',
+      clientName: 'Klient A',
+      plannedHours: 2,
+      startMinutes: 540,
+      endMinutes: 660,
+      timeRange: '9:00–11:00',
+    });
+    expect(blocks[1]).toMatchObject({
+      taskTitle: 'Montaż filmu',
+      startMinutes: 780,
+      endMinutes: 870,
+      timeRange: '13:00–14:30',
+    });
+  });
+
+  it('nie zmienia kolejności bazowego blocksForPersonDate (ta zostaje przy sortIndex)', () => {
+    const state = cellState();
+    expect(blocksForPersonDate(state, 'p1', WED).map((w) => w.id)).toEqual(['e-late', 'e-early']);
+    expect(workloadCellBlocks(state, 'p1', WED).map((b) => b.entry.id)).toEqual([
+      'e-early',
+      'e-late',
+    ]);
+  });
+
+  it('pomija wpisy zasobnika (date === "") — one nie należą do żadnego dnia', () => {
+    const state = cellState();
+    expect(workloadCellBlocks(state, 'p1', WED).some((b) => b.entry.id === 'e-bin')).toBe(false);
+    expect(workloadCellBlocks(state, 'p1', BIN_DATE)).toEqual([]);
+    expect(workloadCellDetail(state, 'p1', BIN_DATE).blocks).toEqual([]);
+  });
+
+  it('daje puste listy dla dnia bez bloków i nie miesza osób', () => {
+    const state = cellState();
+    expect(workloadCellBlocks(state, 'p1', SAT)).toEqual([]);
+    expect(workloadCellBlocks(state, 'p2', WED).map((b) => b.entry.id)).toEqual([
+      'e-other-person',
+    ]);
+  });
+
+  it('rozwiązuje brakujące zadanie/projekt/klienta na bezpieczne wartości zastępcze', () => {
+    const state = makeState({
+      people: [makePerson({ id: 'p1' })],
+      workload: [makeEntry({ id: 'e1', taskId: 'nieistnieje', date: WED })],
+    });
+    expect(workloadCellBlocks(state, 'p1', WED)[0]).toMatchObject({
+      taskTitle: 'Zadanie',
+      projectName: '',
+      clientName: '',
+    });
+  });
+
+  it('nagłówek popovera bierze bilans dnia z dayAvailabilityForPerson', () => {
+    const state = cellState();
+    const detail = workloadCellDetail(state, 'p1', WED);
+    const day = dayAvailabilityForPerson(state, 'p1', WED);
+    expect(detail).toMatchObject({
+      personId: 'p1',
+      date: WED,
+      availableHours: day.availableHours,
+      bookedHours: day.bookedHours,
+      overbooked: day.overbooked,
+    });
+    expect(detail.availableHours).toBe(8);
+    expect(detail.bookedHours).toBe(3.5);
+    expect(detail.overbooked).toBe(false);
+    // Suma godzin listy = bilans nagłówka: „6h / 8h” nigdy nie kłóci się z listą.
+    expect(detail.blocks.reduce((s, b) => s + b.plannedHours, 0)).toBe(detail.bookedHours);
+  });
+
+  it('oznacza przeciążenie, gdy dzień wolny ma zabukowane godziny', () => {
+    const state = makeState({
+      people: [makePerson({ id: 'p1', capacity: 8, workDays: [1, 2, 3, 4, 5] })],
+      tasks: [makeTask({ id: 't1', title: 'Sobota' })],
+      workload: [makeEntry({ id: 'e1', date: SAT, plannedHours: 4, startMinutes: 600 })],
+    });
+    const detail = workloadCellDetail(state, 'p1', SAT);
+    expect(detail.availableHours).toBe(0);
+    expect(detail.bookedHours).toBe(4);
+    expect(detail.overbooked).toBe(true);
+    expect(detail.blocks).toHaveLength(1);
+  });
+});
+
+describe('loadTone (jedna skala wykorzystania)', () => {
+  it('trzyma progi skali', () => {
+    expect(loadTone(0)).toBe('low');
+    expect(loadTone(49)).toBe('low');
+    expect(loadTone(50)).toBe('mid');
+    expect(loadTone(84)).toBe('mid');
+    expect(loadTone(85)).toBe('high');
+    expect(loadTone(100)).toBe('high');
+    expect(loadTone(101)).toBe('over');
+  });
+
+  it('null (godziny przy zerowej dostępności) to szczyt skali, nie spokojne 0%', () => {
+    expect(loadTone(null)).toBe('over');
+    expect(loadTone(loadPercent(0, 0))).toBe('low');
+  });
+
+  it('jest MONOTONICZNA — 75% nigdy nie wygląda groźniej niż 84% (regresja OP-21)', () => {
+    const rank: Record<string, number> = { low: 0, mid: 1, high: 2, over: 3 };
+    expect(rank[loadTone(75)]).toBeLessThanOrEqual(rank[loadTone(84)]);
+    for (let pct = 0; pct <= 150; pct++) {
+      expect(rank[loadTone(pct)]).toBeGreaterThanOrEqual(rank[loadTone(pct - 1)]);
+    }
   });
 });

@@ -20,7 +20,14 @@ import type {
   WorkloadEntry,
 } from '../types';
 import { DEFAULT_CAPACITY } from './storage';
-import { blockEndMinutes, hasCollision, hoursToMinutes, isBinEntry, rangesOverlap } from '../utils/time';
+import {
+  blockEndMinutes,
+  formatMinutes,
+  hasCollision,
+  hoursToMinutes,
+  isBinEntry,
+  rangesOverlap,
+} from '../utils/time';
 import { isBirthdayOn, isValidDateStr, parseDate } from '../utils/dates';
 import { expandOccurrences, type RecurrenceOccurrence } from '../utils/recurrence';
 import { argsKey, createKeyedCache, createRefCache, filterKey } from './selectorCache';
@@ -1458,4 +1465,112 @@ export function rangeAvailabilityForPerson(
 export function loadPercent(bookedHours: number, availableHours: number): number | null {
   if (availableHours > 0) return Math.round((bookedHours / availableHours) * 100);
   return bookedHours > 0 ? null : 0;
+}
+
+/** Progi JEDNEJ skali wykorzystania (procent zabukowanych godzin). */
+export const LOAD_TONE_MID_PCT = 50;
+export const LOAD_TONE_HIGH_PCT = 85;
+
+/**
+ * Stopień na skali WYKORZYSTANIA — jedyne wejście paska obciążenia.
+ *
+ * Kolor paska zależy WYŁĄCZNIE od `pct`, więc skala jest monotoniczna: 84%
+ * nigdy nie wygląda spokojniej niż 75%. Sygnał „któryś dzień ponad
+ * dostępnością” to OSOBNA informacja (ikona przy nazwisku, patrz
+ * {@link overloadedDatesForPersonInRange}) i nie może wracać tutaj — mieszanie
+ * ich było źródłem czerwonego 75% obok fioletowego 84%.
+ * `null` (godziny przy zerowej dostępności) to szczyt skali, nie spokojne 0%.
+ */
+export type LoadTone = 'low' | 'mid' | 'high' | 'over';
+
+export function loadTone(pct: number | null): LoadTone {
+  if (pct === null || pct > 100) return 'over';
+  if (pct >= LOAD_TONE_HIGH_PCT) return 'high';
+  if (pct >= LOAD_TONE_MID_PCT) return 'mid';
+  return 'low';
+}
+
+// ---- Komórka „osoba × dzień” w widoku Obciążenia ---------------------------
+
+/** Jeden blok dnia gotowy do wyrenderowania: co, ile, w jakich godzinach. */
+export interface WorkloadCellBlock {
+  /** Źródłowy wpis — akcje (`REASSIGN_ENTRY`) potrzebują jego `id`. */
+  entry: WorkloadEntry;
+  taskId: string;
+  taskTitle: string;
+  /** Pusty łańcuch, gdy projektu/klienta nie da się rozwiązać. */
+  projectName: string;
+  clientName: string;
+  plannedHours: number;
+  startMinutes: number;
+  endMinutes: number;
+  /** „9:00–11:00”. */
+  timeRange: string;
+}
+
+/** Pełna treść popovera komórki: nagłówek (bilans dnia) + lista bloków. */
+export interface WorkloadCellDetail {
+  personId: string;
+  date: DateStr;
+  availableHours: number;
+  bookedHours: number;
+  overbooked: boolean;
+  blocks: WorkloadCellBlock[];
+}
+
+/**
+ * Bloki jednej pary `(osoba, dzień)` w kolejności ZEGARA (potem `sortIndex`),
+ * bo popover czyta się jak plan dnia. Nadbudowa nad {@link blocksForPersonDate}
+ * — ta zostaje przy swojej kolejności `sortIndex` (używa jej reduktor i
+ * wyszukiwanie wolnego slotu). Wpisy zasobnika (`date === ''`) nie należą do
+ * żadnego dnia i wypadają z listy.
+ */
+export function workloadCellBlocks(
+  state: AppData,
+  personId: string,
+  date: DateStr,
+): WorkloadCellBlock[] {
+  return blocksForPersonDate(state, personId, date)
+    .filter((entry) => !isBinEntry(entry))
+    .slice()
+    .sort((a, b) => a.startMinutes - b.startMinutes || a.sortIndex - b.sortIndex)
+    .map((entry) => {
+      const task = getTask(state, entry.taskId);
+      const project = task === undefined ? undefined : getProject(state, task.projectId);
+      const client = project === undefined ? undefined : getClient(state, project.clientId);
+      const endMinutes = blockEnd(entry);
+      return {
+        entry,
+        taskId: entry.taskId,
+        taskTitle: task?.title ?? 'Zadanie',
+        projectName: project?.name ?? '',
+        clientName: client?.name ?? '',
+        plannedHours: entry.plannedHours,
+        startMinutes: entry.startMinutes,
+        endMinutes,
+        timeRange: `${formatMinutes(entry.startMinutes)}–${formatMinutes(endMinutes)}`,
+      };
+    });
+}
+
+/**
+ * {@link workloadCellBlocks} razem z bilansem dnia z
+ * {@link dayAvailabilityForPerson} — jedno źródło prawdy dla popovera komórki.
+ * Lista bloków jest PEŁNA (filtry klienta/typu usługi zawężają tylko sumy w
+ * tabeli), więc „6h / 8h” w nagłówku zawsze zgadza się z listą pod nim.
+ */
+export function workloadCellDetail(
+  state: AppData,
+  personId: string,
+  date: DateStr,
+): WorkloadCellDetail {
+  const day = dayAvailabilityForPerson(state, personId, date);
+  return {
+    personId,
+    date,
+    availableHours: day.availableHours,
+    bookedHours: day.bookedHours,
+    overbooked: day.overbooked,
+    blocks: workloadCellBlocks(state, personId, date),
+  };
 }

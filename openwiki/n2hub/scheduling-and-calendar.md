@@ -29,10 +29,29 @@
 - `src/utils/blockLabel.ts` (pure) owns the ONE sentence describing a work block
   (TaskModal rows + WeekView tile `aria-label`).
 - `src/store/AppStore.tsx` applies scheduling mutations atomically.
-- `src/pages/WorkloadPage.tsx` owns workload reassignment UI.
+- `src/pages/WorkloadPage.tsx` owns workload reassignment UI. Treść komórki
+  „osoba × dzień” (lista bloków + bilans dnia) NIE jest liczona na stronie —
+  daje ją czysty `workloadCellDetail`/`workloadCellBlocks` (selectors.ts,
+  nadbudowa nad `blocksForPersonDate` + `dayAvailabilityForPerson`).
 
 ## Non-negotiable behavior
 
+- Obciążenie — DWA ROZDZIELONE SYGNAŁY (2026-07-28, OP-21): pasek `.load-bar`
+  koduje WYŁĄCZNIE wykorzystanie tygodnia (`loadTone(pct)`, jedna monotoniczna
+  skala `low/mid/high/over` → klasy `.tone-*`), więc 84% nigdy nie wygląda
+  spokojniej niż 75%. „Któryś dzień ponad dostępnością” to OSOBNA ikona
+  `.workload-over-flag` przy nazwisku (pełna lista dni w `aria-label`);
+  dawnego podpisu „⚠ N dni” nie ma — powtarzał czerwoną komórkę. Kliknięcie
+  komórki (myszą albo Enter/spacją) otwiera POPOVER `.wr-popover` na wspólnej
+  powłoce nakładek (`useOverlay` + `OverlayLayer`: pozycja z flipem, stos
+  Escape, zamknięcie kliknięciem poza, powrót fokusa na komórkę; kotwicą jest
+  sama komórka, `closeOnAnchorOutOfView`), a nie rozwijany wiersz tabeli.
+  Popover niesie zadanie, zakres godzin, długość, dotychczasowe akcje
+  (`REASSIGN_ENTRY`, `MOVE_TASK`, otwarcie zadania) i „Otwórz w kalendarzu” =
+  istniejący deep-link `calendarDayTarget` + zapamiętany filtr osób kalendarza
+  (`SET_LAST_FILTER` view `calendar`), bez nowego parametru trasy. Lista bloków
+  jest PEŁNA (filtry klienta/typu usługi zawężają tylko sumy w tabeli), a pusty
+  dzień zamyka popover.
 - Time uses 15-minute steps; hours use 0.25-hour steps; a block must fit in one
   day. A task period is at most 92 days.
 - Same-person collisions block calendar drag/resize and automatic placement.
