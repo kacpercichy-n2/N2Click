@@ -277,7 +277,7 @@ export interface Person {
   // administratorami. OPCJONALNE i ADDYTYWNE: legacy payload / chmura bez
   // kolumny czytają '' na repairze (migratePerson). DATA_VERSION zostaje 7.
   companyId?: string;
-  avatar: string; // emoji; '' -> initials fallback
+  avatar: string; // legacy emoji — od runu 304 NIE jest renderowane (fallback: inicjały); pole zostaje dla zgodności danych
   capacity: number; // available hours per day (overload threshold + availability quantum)
   // App-permission tier (replaced the old `isAdmin` flag in migration v4→v5).
   accessRole: AccessRole;

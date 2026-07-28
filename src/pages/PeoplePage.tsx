@@ -1,5 +1,5 @@
 // People: employee list + add form (first/last name, job title, department,
-// avatar emoji, daily capacity). Click a person for their profile.
+// daily capacity). Click a person for their profile.
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
@@ -182,16 +182,8 @@ export function PeoplePage() {
             placeholder="opcjonalnie"
           />
         </div>
-        <div className="field field-narrow">
-          <label htmlFor="p-avatar">Avatar</label>
-          <input
-            id="p-avatar"
-            value={draft.avatar}
-            onChange={(e) => set('avatar', e.target.value)}
-            placeholder="🙂"
-            maxLength={4}
-          />
-        </div>
+        {/* Pole emoji „Avatar” usunięte (run 304) — awatar to zdjęcie profilowe
+            albo neutralne inicjały. */}
         <div className="field field-narrow">
           <label htmlFor="p-cap">Godziny/dzień</label>
           <input

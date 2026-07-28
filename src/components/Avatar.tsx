@@ -6,9 +6,9 @@ import { personColor } from '../utils/colors';
 /**
  * Person avatar: uploaded photo when available — explicit `photoUrl` prop
  * (profile page, świeżo po uploadzie) or the app-wide resolved map from
- * AvatarUrlsProvider (profiles.avatar_path) — otherwise emoji when set,
- * otherwise initials on the person's color. In local mode the maps are empty
- * and the render is byte-identical to before.
+ * AvatarUrlsProvider (profiles.avatar_path) — otherwise initials on the
+ * person's color. `person.avatar` (legacy emoji) is deliberately ignored:
+ * the neutral fallback is always initials (decyzja ownera, run 304).
  */
 export function Avatar({
   person,
@@ -41,13 +41,13 @@ export function Avatar({
   const style: React.CSSProperties = {
     width: size,
     height: size,
-    fontSize: person.avatar ? size * 0.55 : size * 0.38,
-    background: person.avatar ? 'transparent' : personColor(person.id),
-    border: person.avatar ? `2px solid ${personColor(person.id)}` : 'none',
+    fontSize: size * 0.38,
+    background: personColor(person.id),
+    border: 'none',
   };
   return (
     <span className="avatar" style={style} aria-hidden>
-      {person.avatar || initials.toUpperCase() || '?'}
+      {initials.toUpperCase() || '?'}
     </span>
   );
 }

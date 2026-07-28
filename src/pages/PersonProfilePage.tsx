@@ -424,21 +424,9 @@ function PersonProfile({ personId }: { personId: string }) {
             )}
           </div>
         </div>
+        {/* Pole emoji „Avatar” usunięte (run 304) — rubryką awatara jest podgląd
+            zdjęcia w pierwszej karcie; fallback to neutralne inicjały. */}
         <div className="field-row">
-          <div className="field field-narrow">
-            <label htmlFor="pp-avatar">Avatar</label>
-            {allow('avatarEmoji') ? (
-              <input
-                id="pp-avatar"
-                value={draft.avatar}
-                onChange={(e) => set('avatar', e.target.value)}
-                maxLength={4}
-                placeholder="🙂"
-              />
-            ) : (
-              <div className="field-readonly">{person.avatar || '—'}</div>
-            )}
-          </div>
           <div className="field">
             <label className="checkbox-field">
               <input
@@ -754,7 +742,7 @@ const PHOTO_LOADING_MSG = 'Ładowanie zdjęcia…';
  * tryb Supabase). Rodzic montuje ten komponent WYŁĄCZNIE gdy
  * `canUploadAvatarPhoto` jest true, więc w trybie lokalnym nigdy się nie montuje
  * (i nie dotyka klienta Supabase). Pobranie zawsze przez signed URL; błędy
- * degradują do inicjałów/emoji, nigdy nie blokują. Świeżo wgrane zdjęcie zasila
+ * degradują do inicjałów, nigdy nie blokują. Świeżo wgrane zdjęcie zasila
  * awatar pierwszej karty przez lokalny stan `photoUrl`.
  */
 function ProfilePhotoAvatar({

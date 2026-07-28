@@ -6,7 +6,7 @@
 // avatarStorage) i udostępnia mapy profil-id / e-mail -> URL. Komponent
 // Avatar sięga po nie bez propsów, więc zdjęcie działa w każdym miejscu UI
 // (panel, zespół, komentarze, kalendarz). W trybie lokalnym i bez zdjęć:
-// puste mapy — render identyczny jak przed zmianą (emoji/inicjały).
+// puste mapy — render identyczny jak przed zmianą (inicjały).
 import {
   createContext,
   useContext,
