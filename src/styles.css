@@ -158,6 +158,9 @@
      Szuflada mobilna zajmuje 900–903, duchy przeciągania 1000. */
   --n2-z-popover: 40;
   --n2-z-menu: 100;
+  /* Dolny pasek zakładek (telefon) stoi POD arkuszami (900), wyszukiwarką (990)
+     i modalami (1000) — arkusz „Więcej” ma go zasłaniać, nie odwrotnie. */
+  --n2-z-bottom-nav: 880;
   --n2-z-drawer: 900;
   --n2-z-search: 990;
   --n2-z-modal: 1000;
@@ -176,6 +179,12 @@
      oknie potwierdzenia, a sam niczego nie blokuje (jest `aria-hidden`,
      nieklikalny i znika przy scrollu/Escape). */
   --n2-z-tooltip: 1300;
+
+  /* Wysokość dolnego paska zakładek (bez wcięcia bezpiecznego obszaru) —
+     czytają ją też pływające kontrolki kalendarza, żeby nie chować się pod nim. */
+  --n2-bottom-nav-h: 56px;
+  /* Wcięcie kolejnej karty w kaskadzie bloków widoku dnia. */
+  --n2-day-stack-inset: 28px;
 
   --radius: var(--n2-radius-md);
   --radius-sm: var(--n2-radius-sm);
@@ -6073,35 +6082,21 @@ option {
   cursor: not-allowed;
 }
 
-/* ---------- Mobile nav ---------- */
-
-/* The top bar (brand + hamburger) and the scrim only exist on small screens. */
+/* ---------- Powłoka telefonu: górny pasek + dolny pasek zakładek ----------
+   Szuflada, jej scrim i hamburger ZNIKŁY razem ze stanem `menuOpen` w App:
+   poniżej 760 px nawigację niesie dolny pasek pięciu zakładek, a sidebar nie
+   renderuje się wcale. Oba elementy poniżej istnieją w DOM WYŁĄCZNIE na
+   telefonie — bazowe `display: none` chroni jedynie przed jedną klatką po
+   zmianie rozmiaru okna, zanim `matchMedia` dojedzie do Reacta. */
 .app-topbar {
   display: none;
 }
-.app-drawer-scrim {
+.app-bottom-nav {
   display: none;
-}
-.app-hamburger {
-  display: inline-grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  flex: none;
-  border: 1px solid var(--n2-border);
-  border-radius: var(--n2-radius-md);
-  background: var(--n2-surface);
-  color: var(--n2-text);
-  cursor: pointer;
-  transition: background var(--n2-transition), border-color var(--n2-transition);
-}
-.app-hamburger:hover {
-  border-color: var(--n2-border-strong);
-  background: rgba(196, 150, 255, 0.1);
 }
 
 @media (max-width: 760px) {
-  /* Show the top bar; it stays above the drawer so the hamburger/X toggles. */
+  /* Górny pasek: tytuł trasy + JEDNA akcja kontekstowa (wyszukiwarka). */
   .app-topbar {
     display: flex;
     align-items: center;
@@ -6109,46 +6104,411 @@ option {
     gap: var(--n2-space-3);
     position: sticky;
     top: 0;
-    z-index: 903;
+    z-index: var(--n2-z-bottom-nav);
     margin: calc(var(--n2-space-4) * -1) calc(var(--n2-space-4) * -1) 0;
     padding: var(--n2-space-3) var(--n2-space-4);
     background: var(--n2-surface);
     border-bottom: 1px solid var(--n2-border);
     backdrop-filter: var(--n2-blur-glass);
   }
-  .app-topbar .app-brand {
-    min-height: 0;
+  .app-topbar-title {
+    margin: 0;
+    min-width: 0;
+    font-size: var(--n2-type-lg);
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-
-  /* The sidebar becomes an off-canvas slide-in drawer. */
-  .app-sidebar {
-    position: fixed;
-    inset: 0 auto 0 0;
-    z-index: 901;
-    width: min(300px, 84vw);
-    max-height: none;
-    border-radius: 0 var(--n2-radius-xl) var(--n2-radius-xl) 0;
-    padding-top: 76px; /* clear the fixed top bar */
-    transform: translateX(-102%);
-    transition: transform 220ms ease;
-    overflow-y: auto;
+  /* W pasku zostaje sam wyzwalacz wyszukiwarki: pełne pole („Szukaj…” + Ctrl K)
+     zjadłoby całą szerokość, a skrótu klawiaturowego i tak nie ma na telefonie. */
+  .app-topbar .search-trigger {
+    width: auto;
+    margin-bottom: 0;
+    padding: 10px;
   }
-  .app-sidebar.open {
-    transform: none;
-  }
-  /* The brand already lives in the top bar — hide the drawer's copy. */
-  .app-sidebar .app-brand {
+  .app-topbar .search-trigger-label,
+  .app-topbar .search-trigger-kbd {
     display: none;
   }
 
-  .app-drawer-scrim {
-    display: block;
+  /* Dolny pasek pięciu zakładek. Wysokość niesie token + bezpieczny obszar
+     iOS-a, więc pasek nigdy nie ląduje pod paskiem gestów. */
+  .app-bottom-nav {
+    display: flex;
     position: fixed;
-    inset: 0;
-    z-index: 900;
-    background: rgba(10, 6, 20, 0.6);
-    backdrop-filter: blur(2px);
+    inset: auto 0 0 0;
+    z-index: var(--n2-z-bottom-nav);
+    height: calc(var(--n2-bottom-nav-h) + env(safe-area-inset-bottom));
+    padding-bottom: env(safe-area-inset-bottom);
+    background: var(--n2-surface);
+    border-top: 1px solid var(--n2-border);
+    backdrop-filter: var(--n2-blur-glass);
   }
+  .app-bottom-nav-item {
+    flex: 1 1 0;
+    min-width: 0;
+    /* Pole trafienia ≥ 44 px w obu osiach (56 px wysokości paska). */
+    min-height: 44px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    border: none;
+    background: transparent;
+    color: var(--n2-text-faint);
+    font: inherit;
+    font-size: var(--n2-type-xs);
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .app-bottom-nav-item:hover {
+    text-decoration: none;
+  }
+  .app-bottom-nav-item.active {
+    color: var(--n2-lavender);
+  }
+  .app-bottom-nav-label {
+    line-height: 1;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Treść nie może chować się pod paskiem. */
+  .app-main {
+    padding-bottom: calc(
+      var(--n2-bottom-nav-h) + env(safe-area-inset-bottom) + var(--n2-space-3)
+    );
+  }
+}
+
+/* ---------- Arkusze od dołu (telefon) ----------
+   Wspólny szkielet dla arkusza „Więcej”, szybkiego skoku kalendarza i arkusza
+   zasobnika. Wszystkie te klasy renderują się WYŁĄCZNIE na telefonie (bramka w
+   TS), więc nie potrzebują media query — na desktopie nie istnieją w DOM. */
+.app-sheet-scrim {
+  position: fixed;
+  inset: 0;
+  /* Tuż pod arkuszami, nad dolnym paskiem — klik w scrim zamyka arkusz przez
+     `useOverlay` (para pointerdown+click), bez własnego handlera. */
+  z-index: calc(var(--n2-z-drawer) - 1);
+  background: rgba(10, 6, 20, 0.6);
+  backdrop-filter: blur(2px);
+}
+.app-sheet-handle {
+  flex: none;
+  width: 36px;
+  height: 4px;
+  margin: 0 auto var(--n2-space-2);
+  border-radius: var(--n2-radius-pill);
+  background: var(--n2-border-strong);
+}
+.app-more-sheet,
+.cal-jump-sheet {
+  position: fixed;
+  inset: auto 0 0 0;
+  z-index: var(--n2-z-drawer);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 85dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--n2-space-3) var(--n2-space-4)
+    calc(env(safe-area-inset-bottom) + var(--n2-space-4));
+  background: var(--n2-surface);
+  border-top: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-xl) var(--n2-radius-xl) 0 0;
+  box-shadow: var(--n2-shadow-lg, 0 -12px 32px rgba(0, 0, 0, 0.45));
+}
+.app-more-item {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-3);
+  min-height: 48px;
+  padding: 0 var(--n2-space-3);
+  border: none;
+  border-radius: var(--n2-radius-md);
+  background: transparent;
+  color: var(--n2-text);
+  font: inherit;
+  font-size: var(--n2-type-sm);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.app-more-item:hover {
+  background: rgba(196, 150, 255, 0.1);
+  text-decoration: none;
+}
+.cal-jump-sheet {
+  gap: var(--n2-space-4);
+}
+.cal-jump-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--n2-type-sm);
+  color: var(--n2-text-soft);
+}
+.cal-jump-field input {
+  min-height: 44px;
+}
+
+/* ---------- Kalendarz jako widok dnia (telefon) ----------
+   Wszystkie selektory poniżej wiszą na klasach, które istnieją WYŁĄCZNIE przy
+   `mode === 'day'` / `phone === true` (`.day-mode`, `.week-day-strip`,
+   `.week-bin-sheet`, `.cal-toolbar-phone`, `.cal-today-pill`), więc desktop nie
+   widzi z nich ani jednej reguły. */
+
+/* Jedna pełnoszerokościowa kolumna zamiast siedmiu — przebija bazowe
+   `repeat(7, …)` i `width: max(calc(100%/5*7), 672px)`, więc znika poziome
+   przewijanie siatki i przycięcie dnia do półtorej kolumny. */
+.week-cal.day-mode .week-days-grid {
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+}
+/* Nad siatką stoi już tylko pasek dat i rząd 56 px, a pod nią dolny pasek
+   zakładek — stąd inna rezerwa wysokości niż w wierszu tygodnia. */
+.week-cal.day-mode .week-main {
+  max-height: max(50dvh, calc(100dvh - 300px));
+}
+
+/* Pasek 7 dat: nawigacja, nie zakres siatki. Przewijalny, z przyciąganiem do
+   pozycji, każdy element ≥ 44 px. */
+.week-day-strip {
+  display: flex;
+  gap: 6px;
+  padding: 4px 0 8px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+}
+.week-day-strip::-webkit-scrollbar {
+  display: none;
+}
+.week-day-strip-item {
+  flex: 1 0 auto;
+  min-width: 44px;
+  min-height: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  scroll-snap-align: center;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-md);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--n2-text-soft);
+  font: inherit;
+  cursor: pointer;
+}
+.week-day-strip-weekday {
+  font-size: var(--n2-type-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+.week-day-strip-date {
+  font-family: var(--n2-font-data);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.week-day-strip-item.weekend {
+  background: var(--card-bg-2);
+}
+.week-day-strip-item.today .week-day-strip-date {
+  color: var(--today);
+}
+.week-day-strip-item.active {
+  border-color: var(--n2-border-strong);
+  background: rgba(196, 150, 255, 0.18);
+  color: var(--n2-text);
+}
+
+/* Podsumowanie dnia pod paskiem dat (suma, urodziny, przeciążenie). */
+.week-day-summary {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--n2-space-2);
+  padding: 0 2px 6px;
+}
+.week-day-summary .week-col-total,
+.week-day-summary .week-col-birthday,
+.week-day-summary .week-col-overload {
+  margin-top: 0;
+}
+.week-day-summary .week-col-birthday {
+  white-space: normal;
+}
+
+/* Kaskada bloków: karty pełnej szerokości nachodzą na siebie z wcięciem, więc
+   cień lewej krawędzi jest jedynym sygnałem, że pod spodem jest kolejna. */
+.week-block.stacked {
+  box-shadow: -3px 0 8px rgba(4, 3, 8, 0.45);
+}
+
+/* Wyzwalacz zasobnika pływa nad dolnym paskiem zakładek. */
+.week-bin-trigger {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--n2-bottom-nav-h) + env(safe-area-inset-bottom) + 12px);
+  transform: translateX(-50%);
+  z-index: var(--n2-z-bottom-nav);
+  min-height: 44px;
+  padding: 0 var(--n2-space-5);
+  border: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-pill);
+  background: var(--n2-surface);
+  color: var(--n2-text);
+  font: inherit;
+  font-size: var(--n2-type-sm);
+  font-weight: 600;
+  box-shadow: var(--n2-shadow-soft);
+  cursor: pointer;
+}
+
+/* Arkusz zasobnika. `closed` to `display: none` — BRAK prostokąta, więc test
+   „nad zasobnikiem” (`getBoundingClientRect` na `.week-bin-pane`) poprawnie
+   wychodzi na fałsz. `peek` i `open` różnią się WYSOKOŚCIĄ, nigdy
+   `transform: translateY`: prostokąt panelu JEST strefą upuszczenia, więc
+   przesunięty arkusz meldowałby strefę poza ekranem. */
+.week-bin-sheet {
+  position: fixed;
+  inset: auto 0 0 0;
+  z-index: var(--n2-z-drawer);
+  display: flex;
+  flex-direction: column;
+  max-height: 85dvh;
+  overscroll-behavior: contain;
+  padding: var(--n2-space-3) var(--n2-space-3)
+    calc(env(safe-area-inset-bottom) + var(--n2-space-2));
+  background: var(--n2-surface);
+  border-top: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-xl) var(--n2-radius-xl) 0 0;
+  box-shadow: var(--n2-shadow-lg, 0 -12px 32px rgba(0, 0, 0, 0.45));
+}
+.week-bin-sheet.closed {
+  display: none;
+}
+.week-bin-sheet.peek {
+  height: 120px;
+}
+.week-bin-sheet.open {
+  height: 85dvh;
+}
+.week-bin-sheet-handle {
+  flex: none;
+  width: 36px;
+  height: 4px;
+  margin: 0 auto var(--n2-space-2);
+  border-radius: var(--n2-radius-pill);
+  background: var(--n2-border-strong);
+}
+/* W arkuszu nagłówek i panel są zwykłymi wierszami kolumny, a nie kolumną obok
+   siatki — stąd zdjęcie stałych szerokości z wariantu tygodniowego. */
+.week-bin-sheet .week-bin-head {
+  flex: none;
+  width: auto;
+  display: flex;
+  align-items: baseline;
+  gap: var(--n2-space-2);
+  border: none;
+  background: transparent;
+  padding: 0 var(--n2-space-2) var(--n2-space-2);
+}
+.week-bin-sheet .week-bin-head .week-col-total {
+  margin-top: 0;
+  margin-left: auto;
+}
+.week-bin-sheet .week-bin-pane {
+  flex: 1 1 auto;
+  width: auto;
+  min-height: 0;
+  border-left: none;
+  background: transparent;
+}
+
+/* ---------- Telefonowy rząd sterowania kalendarza ---------- */
+
+.cal-toolbar.cal-toolbar-phone {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--n2-space-2);
+  height: var(--n2-bottom-nav-h);
+  margin-bottom: 6px;
+}
+.cal-toolbar-phone .nav-btn {
+  flex: none;
+  width: 44px;
+  height: 44px;
+}
+/* Przycisk zakresu wypełnia środek rzędu i otwiera szybki skok. */
+.cal-range-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 var(--n2-space-3);
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-pill);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--n2-text);
+  font: inherit;
+  cursor: pointer;
+  overflow: hidden;
+}
+.cal-range-btn .cal-range-label {
+  margin-left: 0;
+  white-space: nowrap;
+}
+.cal-toolbar-phone .filter-toolbar {
+  flex: none;
+  margin-bottom: 0;
+}
+/* Aktywne chipy osób nie mieszczą się w rzędzie 56 px — wybór osób i tak żyje
+   w popoverze „Filtry”, więc chipy chowamy TYLKO na tym rzędzie. */
+.cal-toolbar-phone .filter-toolbar-people {
+  display: none;
+}
+/* Popover filtrów: bez tego mobilne `position: static` rozepchnęłoby rząd
+   56 px na kilka linii. Reguła jest zawężona do telefonowego rzędu kalendarza,
+   więc mobilne filtry na innych stronach zostają bez zmian. */
+.cal-toolbar-phone .filter-popover {
+  position: fixed;
+  left: 8px;
+  right: 8px;
+  top: auto;
+  bottom: calc(var(--n2-bottom-nav-h) + env(safe-area-inset-bottom) + 8px);
+  width: auto;
+  max-height: 70dvh;
+  overflow: auto;
+  z-index: var(--n2-z-drawer);
+}
+
+/* Pływająca pigułka „Dzisiaj” — widoczna tylko wtedy, gdy widoczny zakres nie
+   zawiera dzisiejszego dnia (decyduje `todayPillVisible`). */
+.cal-today-pill {
+  position: fixed;
+  right: var(--n2-space-4);
+  bottom: calc(var(--n2-bottom-nav-h) + env(safe-area-inset-bottom) + 12px);
+  z-index: var(--n2-z-bottom-nav);
+  min-height: 44px;
+  padding: 0 var(--n2-space-4);
+  border: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-pill);
+  background: var(--n2-lavender);
+  color: var(--n2-bg, #0a0614);
+  font: inherit;
+  font-weight: 600;
+  box-shadow: var(--n2-shadow-soft);
+  cursor: pointer;
 }
 
 /* ---------- Card affordances ---------- */

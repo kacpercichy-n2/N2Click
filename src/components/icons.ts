@@ -51,4 +51,7 @@ export {
   // Wspólny wyzwalacz menu „⋯" (OverflowMenu) — poziomy wariant, bo stoi w
   // paskach akcji (nagłówek modala, nagłówek kolumny osoby w siatce).
   MoreHorizontal,
+  // Zakładka „Zasobnik" w dolnym pasku telefonu (deep-link do kalendarza z
+  // otwartym arkuszem bloków bez terminu).
+  Archive,
 } from 'lucide-react';

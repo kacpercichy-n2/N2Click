@@ -2,7 +2,19 @@
 
 ## Boundaries
 
-- `src/components/WeekView.tsx` owns timed-grid interaction and bin-card UI.
+- `src/components/WeekView.tsx` owns timed-grid interaction and bin-card UI, w
+  DWÓCH trybach renderowania za jednym propem `mode` (`'week'` domyślnie,
+  `'day'` na telefonie ≤760 px). Różnicę niesie WYŁĄCZNIE długość tablicy
+  `days` — stała `DAY_COLS` zniknęła na rzecz `days.length`. Tryb dnia dokłada
+  tylko warstwę prezentacji: pasek 7 dat i pigułkę „Dzisiaj” (czysty
+  `dayStrip.ts`), kaskadę nakładających się kart zamiast wąskich kolumn (czysty
+  `dayStack.ts`, prop `stack`; `undefined` = dotychczasowa arytmetyka kolumn co
+  do bajta) oraz zasobnik jako arkusz od dołu (`binRef` ZOSTAJE na
+  `.week-bin-pane`; stany `closed`/`peek`/`open` różnią się WYSOKOŚCIĄ, nigdy
+  `translateY`). Sygnał „trwa przeciąganie” dla auto-peeku płynie z ISTNIEJĄCEGO
+  efektu `[dragging]` (`onDragActiveChange` obok `setLiveSyncHold`) i wychodzi
+  natychmiast poza trybem dnia — żaden handler wskaźnika się nie zmienia
+  (inwariant 7).
 - `src/components/weekViewLayout.ts` (pure) owns the PRESENTATIONAL working
   window: `WORK_START_HOUR`/`WORK_END_HOUR` (9–17), the default scroll offset and
   the px bounds fed to CSS as `--week-work-top`/`--week-work-bottom`.

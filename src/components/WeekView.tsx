@@ -6,6 +6,7 @@
 // still opens "Dodaj przed / Dodaj po" to ripple-insert a new block.
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import type { AppData, Person, Project, Task, WorkloadEntry } from '../types';
 import { useStore } from '../store/AppStore';
@@ -17,6 +18,7 @@ import { clearLiveSyncHold, setLiveSyncHold } from '../utils/liveSyncGate';
 import { useTouchDragGate } from '../utils/useTouchDragGate';
 import {
   MAX_TASK_PERIOD_DAYS,
+  dayOfMonthLabel,
   inclusiveDayCount,
   isTodayStr,
   isValidDateStr,
@@ -24,7 +26,11 @@ import {
   parseDate,
   todayStr,
   weekDays,
+  weekdayAbbr,
 } from '../utils/dates';
+import { dayStripEntries } from './dayStrip';
+import { stackDayBlocks, type StackSlot } from './dayStack';
+import { BIN_SHEET_PARAM } from './bottomNav';
 import { format } from 'date-fns';
 import { pl } from 'date-fns/locale/pl';
 import {
@@ -104,6 +110,15 @@ interface Props {
   state: AppData;
   anchor: string; // any date within the week to render
   filter: Set<string>;
+  /**
+   * `'day'` (telefon) renderuje JEDEN pełnoszerokościowy dzień — kotwicę —
+   * zamiast siedmiu kolumn. To GAŁĄŹ RENDEROWANIA, nie osobny komponent: cały
+   * model przeciągania, kolizji, scalania i zasobnika zostaje ten sam, a różnicę
+   * niesie DŁUGOŚĆ tablicy `days` (patrz `days` niżej).
+   */
+  mode?: 'week' | 'day';
+  /** Wybór dnia z paska dat (tylko `mode === 'day'`). */
+  onPickDay?: (date: string) => void;
 }
 
 // ---- Grid geometry ----
@@ -121,7 +136,10 @@ const MIN_BLOCK_H = 50;
 // WORK_START_HOUR / WORK_END_HOUR — stąd bierze się i domyślne przewinięcie
 // siatki, i przygaszenie slotów poza oknem. Same sloty pozostają w pełni
 // funkcjonalne (bez zmian w snapowaniu, kolizjach, dragu i danych).
-const DAY_COLS = 7; // the days grid holds 7 columns (no axis inside)
+// Liczbę kolumn dnia niesie WYŁĄCZNIE `days.length` (7 w tygodniu, 1 w widoku
+// dnia) — dawna stała `DAY_COLS = 7` zniknęła, żeby arytmetyka kolumny nie
+// mogła rozjechać się z tym, co faktycznie wyrenderowano. W trybie tygodnia
+// wynik jest identyczny co do bajta.
 // Duration choices for a recurrence occurrence override: 0:15…8:00 on the
 // 15-minute grid (minutes). Labeled via formatDuration in the menu.
 const RECUR_DURATION_OPTIONS = Array.from({ length: 32 }, (_, i) => (i + 1) * MINUTE_STEP);
@@ -260,6 +278,19 @@ interface BlockProps {
   // (region `aria-live` żyje w rodzicu, bo blok bywa odmontowany zaraz po
   // zapisie). Stabilna referencja z `useCallback` — memo trzyma.
   announce: (message: string) => void;
+  /**
+   * Pozycja w kaskadzie kart widoku dnia. `undefined` (desktop) = dzisiejsze
+   * pozycjonowanie kolumnowe co do bajta; ustawione = pełna szerokość z
+   * wcięciem. Geometria CZASU (`top`/`height`) nie zależy od tego propsu.
+   */
+  stack?: StackSlot;
+  /**
+   * Obserwator „trwa przeciąganie”, wołany z ISTNIEJĄCEGO efektu `[dragging]`
+   * (obok `setLiveSyncHold`) — nigdy z handlerów wskaźnika. Rodzic wychodzi z
+   * niego natychmiast poza trybem dnia, więc na desktopie żaden dodatkowy
+   * `setState` nie wystrzeli w trakcie gestu (inwariant 7).
+   */
+  onDragActiveChange?: (active: boolean) => void;
 }
 
 function TimedBlockImpl({
@@ -284,6 +315,8 @@ function TimedBlockImpl({
   onOpen,
   onContextMenu,
   announce,
+  stack,
+  onDragActiveChange,
 }: BlockProps) {
   const { dispatch } = useStore();
   const [drag, setDrag] = useState<DragState | null>(null);
@@ -385,10 +418,20 @@ function TimedBlockImpl({
   // blok razem z przechwyceniem wskaźnika. Sprzątanie zdejmuje blokadę także
   // przy odmontowaniu w trakcie przeciągania.
   const holdKey = useRef({}).current;
+  // Ten sam efekt niesie DRUGIEGO obserwatora: sygnał „trwa przeciąganie” dla
+  // arkusza zasobnika (auto-peek w widoku dnia). To OBSERWATOR, nie uczestnik
+  // gestu — żadnego `preventDefault`, przechwycenia wskaźnika ani nasłuchu w
+  // fazie gestu nie przybywa (inwariant 7). Sprzątanie zgłasza koniec także
+  // przy odmontowaniu W TRAKCIE przeciągania (upuszczenie do zasobnika
+  // odmontowuje ten blok), żeby licznik w rodzicu nigdy nie utknął na 1.
   useEffect(() => {
     setLiveSyncHold(holdKey, dragging);
-    return () => clearLiveSyncHold(holdKey);
-  }, [dragging, holdKey]);
+    onDragActiveChange?.(dragging);
+    return () => {
+      clearLiveSyncHold(holdKey);
+      if (dragging) onDragActiveChange?.(false);
+    };
+  }, [dragging, holdKey, onDragActiveChange]);
 
   // Deferred drag start. `init` is captured SYNCHRONOUSLY in the handler because
   // React nulls `e.currentTarget` after dispatch — the touch path runs this only
@@ -408,7 +451,7 @@ function TimedBlockImpl({
     }
     moved.current = false;
     const rect = gridRef.current?.getBoundingClientRect();
-    const colWidth = rect ? rect.width / DAY_COLS : 0;
+    const colWidth = rect ? rect.width / days.length : 0;
     // Block geometry for the over-bin ghost: grab offset keeps it aligned under
     // the pointer; width/height keep its size out of flow. For the top/bottom
     // resize handles currentTarget is the handle span, but the ghost only renders
@@ -493,7 +536,7 @@ function TimedBlockImpl({
       projStart = clampBlockStart(baseStart + deltaMin, dur);
       const dx = e.clientX - activeDrag.originX;
       const dayDelta = activeDrag.colWidth > 0 ? Math.round(dx / activeDrag.colWidth) : 0;
-      projDayIndex = Math.max(0, Math.min(DAY_COLS - 1, dayIndex + dayDelta));
+      projDayIndex = Math.max(0, Math.min(days.length - 1, dayIndex + dayDelta));
       // The bin panel sits outside the days grid; a pointer inside its rect
       // targets the bin instead of a calendar day.
       const binRect = binRef.current?.getBoundingClientRect();
@@ -672,7 +715,7 @@ function TimedBlockImpl({
     baseStart,
     baseHours,
     baseDayIndex: dayIndex,
-    dayCount: DAY_COLS,
+    dayCount: days.length,
     maxHours: kbMaxHours.current,
     // Ten sam indeks per (osoba, data), z którego czyta kolizje przeciąganie.
     blocksOnDay: (i) =>
@@ -823,7 +866,7 @@ function TimedBlockImpl({
       // Wejście w tryb: te same wielkości, które łapie `startDrag`.
       kbMaxHours.current = baseHours + growAllowanceHours(state, entry.id);
       const rect = gridRef.current?.getBoundingClientRect();
-      setKbColWidth(rect ? rect.width / DAY_COLS : 0);
+      setKbColWidth(rect ? rect.width / days.length : 0);
     }
     const ctx = kbContext();
     const next = blockKeyboardReducer(active, event, ctx);
@@ -882,6 +925,23 @@ function TimedBlockImpl({
   const top = (start / 60) * HOUR_PX;
   const height = Math.max(MIN_BLOCK_H, hours * HOUR_PX);
 
+  // Pozioma geometria kafelka. Bez `stack` (desktop, tryb tygodnia) zostaje
+  // DOKŁADNIE dotychczasowa arytmetyka kolumn z `packDayBlocks`. Ze `stack`
+  // (widok dnia) każdy blok jest pełnej szerokości i tylko wcina się od lewej,
+  // bo dzielenie 390 px na równoległe kolumny dawało paski nie do trafienia
+  // palcem. `top`/`height`/`transform` są WSPÓLNE dla obu gałęzi — geometria
+  // czasu musi zostać zgodna z osią, bo przeciąganie liczy minuty z `dy`.
+  const horizontal = stack
+    ? {
+        left: `calc(var(--n2-day-stack-inset) * ${stack.insetSteps})`,
+        width: `calc(100% - var(--n2-day-stack-inset) * ${stack.insetSteps} - 3px)`,
+        zIndex: stack.stackIndex + 1,
+      }
+    : {
+        left: `calc(${(col / cols) * 100}% + 1px)`,
+        width: `calc(${100 / cols}% - 3px)`,
+      };
+
   const showMergeTarget = !drag && isMergeTarget;
   // Status zadania jest czysto prezentacyjny: zielony odcień dla zakończonych,
   // czerwony akcent po terminie. Kolor osoby zostaje na lewej krawędzi (styl
@@ -909,6 +969,10 @@ function TimedBlockImpl({
     drag?.willMergeEdge === 'bottom' ? 'merge-bottom' : '',
     showMergeTarget ? 'will-merge-target' : '',
     isFused ? 'fused' : '',
+    // Klasy kaskady istnieją WYŁĄCZNIE w widoku dnia; bez `stack` obie są puste,
+    // więc łańcuch klas na desktopie zostaje znak w znak taki sam.
+    stack ? 'stacked' : '',
+    stack && stack.stackIndex === 0 && stack.stackSize > 1 ? 'stack-lead' : '',
   ]
     .filter(Boolean)
     .join(' ');
@@ -945,8 +1009,7 @@ function TimedBlockImpl({
       style={{
         top,
         height,
-        left: `calc(${(col / cols) * 100}% + 1px)`,
-        width: `calc(${100 / cols}% - 3px)`,
+        ...horizontal,
         transform: tx ? `translateX(${tx}px)` : undefined,
         borderLeftColor: personColor(person.id),
       }}
@@ -1022,7 +1085,11 @@ function TimedBlockImpl({
         className="week-block-bin-btn"
         style={{
           top,
-          left: `calc(${(col / cols) * 100}% + 1px)`,
+          // Rodzeństwo kafelka musi stać nad JEGO lewą krawędzią, więc w widoku
+          // dnia idzie za wcięciem kaskady, a poza nim za kolumną (bez zmian).
+          left: stack
+            ? `calc(var(--n2-day-stack-inset) * ${stack.insetSteps})`
+            : `calc(${(col / cols) * 100}% + 1px)`,
           transform: tx ? `translateX(${tx}px)` : undefined,
         }}
         aria-label={`Przenieś do zasobnika: ${blockAriaLabel}`}
@@ -1056,8 +1123,10 @@ function TimedBlockImpl({
         style={{
           top,
           // Prawy górny róg kafelka: lewa krawędź kolumny + jej szerokość,
-          // a `translateX(-100%)` cofa przycisk o jego własną szerokość.
-          left: `calc(${((col + 1) / cols) * 100}% - 2px)`,
+          // a `translateX(-100%)` cofa przycisk o jego własną szerokość. W
+          // widoku dnia kafelek sięga prawej krawędzi kolumny (minus 3 px), więc
+          // ✓ liczy się od niej, a nie od podziału na kolumny.
+          left: stack ? 'calc(100% - 3px)' : `calc(${((col + 1) / cols) * 100}% - 2px)`,
           transform: tx
             ? `translateX(${tx}px) translateX(-100%)`
             : 'translateX(-100%)',
@@ -1171,6 +1240,8 @@ interface BinCardProps {
   onOpen: (taskId: string, entryId: string) => void;
   onContextMenu: (entry: WorkloadEntry, e: React.MouseEvent) => void;
   onSchedule: (entry: WorkloadEntry, anchor: HTMLElement) => void;
+  /** Jak w `BlockProps`: obserwator „trwa przeciąganie” dla arkusza zasobnika. */
+  onDragActiveChange?: (active: boolean) => void;
 }
 
 function BinCardImpl({
@@ -1187,6 +1258,7 @@ function BinCardImpl({
   onOpen,
   onContextMenu,
   onSchedule,
+  onDragActiveChange,
 }: BinCardProps) {
   const { dispatch } = useStore();
   const [drag, setDrag] = useState<BinDragState | null>(null);
@@ -1243,13 +1315,19 @@ function BinCardImpl({
     };
   }, []);
 
-  // Jak w TimedBlock: odświeżenie w tle czeka na koniec przeciągania z zasobnika.
+  // Jak w TimedBlock: odświeżenie w tle czeka na koniec przeciągania z zasobnika,
+  // a ten sam efekt niesie obserwatora „trwa przeciąganie” dla arkusza (patrz
+  // komentarz przy `TimedBlock` — obserwator, nie uczestnik gestu).
   const holdKey = useRef({}).current;
   const dragging = drag !== null;
   useEffect(() => {
     setLiveSyncHold(holdKey, dragging);
-    return () => clearLiveSyncHold(holdKey);
-  }, [dragging, holdKey]);
+    onDragActiveChange?.(dragging);
+    return () => {
+      clearLiveSyncHold(holdKey);
+      if (dragging) onDragActiveChange?.(false);
+    };
+  }, [dragging, holdKey, onDragActiveChange]);
 
   const projectPointer = (clientX: number, clientY: number): BinDragState | null => {
     const activeDrag = dragRef.current;
@@ -1307,7 +1385,7 @@ function BinCardImpl({
         grid.contains(dayColumn) &&
         Number.isInteger(hitIndex) &&
         hitIndex >= 0 &&
-        hitIndex < DAY_COLS;
+        hitIndex < days.length;
       colIndex = valid ? hitIndex : -1;
 
       const dur = entry.plannedHours * 60;
@@ -1733,7 +1811,7 @@ function EventBlockImpl({ occ, onOpen }: EventBlockProps) {
 
 const EventBlock = memo(EventBlockImpl);
 
-export function WeekView({ state, anchor, filter }: Props) {
+export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Props) {
   const { openTask, openNewTask } = useOpenTask();
   const { openEvent, openNewEvent } = useOpenEvent();
   const { dispatch } = useStore();
@@ -1754,9 +1832,14 @@ export function WeekView({ state, anchor, filter }: Props) {
   const canEditEntry = (personId: string): boolean =>
     canEditAny ||
     (canEditOwn && personId === state.currentUserId && state.currentUserId !== '');
-  // Memoize the 7-day array so its reference is stable across drag re-renders —
+  // Memoize the days array so its reference is stable across drag re-renders —
   // otherwise a fresh `days` array would invalidate every memoized block's props.
-  const days = useMemo(() => weekDays(anchor), [anchor]);
+  // W trybie dnia jest to JEDNA data (kotwica); `buildWeekModel` przyjmuje
+  // dowolną długość, a cała arytmetyka kolumn czyta `days.length`.
+  const days = useMemo(
+    () => (mode === 'day' ? [anchor] : weekDays(anchor)),
+    [mode, anchor],
+  );
 
   // The precomputed week index: one pass per (state, days, filter) instead of a
   // scan-per-block-per-render. Stable while a drag only flips local/merge state,
@@ -1784,6 +1867,86 @@ export function WeekView({ state, anchor, filter }: Props) {
   const axisPaneRef = useRef<HTMLDivElement | null>(null); // .week-axis-pane (vertical scroll synced)
   const headTrackRef = useRef<HTMLDivElement | null>(null); // .week-head-track (horizontal scroll synced)
   const binRef = useRef<HTMLDivElement | null>(null); // .week-bin-pane (grid→bin drop target)
+
+  // ---- Widok dnia: pasek dat, kaskada bloków i arkusz zasobnika ----
+  // Wszystko poniżej jest MARTWE w trybie tygodnia (desktop): stan startowy się
+  // nie zmienia, efekty wychodzą pierwszą linijką, a JSX renderuje dokładnie
+  // dotychczasowe drzewo.
+  const stripRef = useRef<HTMLDivElement | null>(null);
+  const [binSheet, setBinSheet] = useState<'closed' | 'peek' | 'open'>('closed');
+  const binSheetRef = useRef<HTMLDivElement | null>(null);
+  const binTriggerRef = useRef<HTMLButtonElement | null>(null);
+  // Czy JAKIŚ blok/karta zasobnika jest właśnie przeciągany. Ref jest
+  // synchronicznym źródłem prawdy dla `onClose` arkusza (nakładka nie może
+  // zamknąć strefy upuszczenia w środku gestu), a stan gasi nasłuchy nakładki
+  // na czas przeciągania — Escape musi wtedy trafić do ścieżki anulowania
+  // przeciągania, a `useOverlay` zjadłby go w fazie capture (inwariant 7).
+  const dragActiveRef = useRef(false);
+  const [dragActive, setDragActive] = useState(false);
+  // Licznik, bo montowania/odmontowania bloków w trakcie gestu bywają
+  // nakładające się (upuszczenie do zasobnika odmontowuje źródło).
+  const dragCountRef = useRef(0);
+  const binSheetBeforeDragRef = useRef<'closed' | 'peek' | 'open'>('closed');
+  const modeRef = useRef(mode);
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
+  const handleDragActiveChange = useCallback((active: boolean) => {
+    // BRAMKA IDENTYCZNOŚCI: poza trybem dnia callback nie robi NIC — na
+    // desktopie w trakcie przeciągania nie leci żaden dodatkowy `setState`.
+    if (modeRef.current !== 'day') return;
+    dragCountRef.current = Math.max(0, dragCountRef.current + (active ? 1 : -1));
+    const next = dragCountRef.current > 0;
+    if (next === dragActiveRef.current) return;
+    dragActiveRef.current = next;
+    setDragActive(next);
+    setBinSheet((prev) => {
+      if (next) {
+        binSheetBeforeDragRef.current = prev;
+        // Na czas gestu arkusz ZAWSZE schodzi do `peek` — także wtedy, gdy był
+        // otwarty. Otwarty zajmuje 85dvh i zasłania siatkę, a mimo to zapasowy
+        // test kolumn w `projectPointer` (prostokąty `.week-day-col`) trafiłby w
+        // kolumnę POD arkuszem: upuszczenie zaplanowałoby blok w slocie, którego
+        // użytkownik nie widzi. Peek robi WYSOKOŚĆ (CSS), nigdy `translateY` —
+        // prostokąt panelu jest strefą upuszczenia, więc musi odpowiadać temu,
+        // co widać. Poprzedni stan wraca po zakończeniu gestu.
+        return 'peek';
+      }
+      return binSheetBeforeDragRef.current;
+    });
+  }, []);
+
+  const closeBinSheet = useCallback(() => {
+    if (dragActiveRef.current) return;
+    setBinSheet('closed');
+  }, []);
+  useOverlay({
+    open: mode === 'day' && binSheet === 'open' && !dragActive,
+    onClose: closeBinSheet,
+    overlayRef: binSheetRef,
+    triggerRef: binTriggerRef,
+  });
+
+  // Deep-link zakładki „Zasobnik” (`/calendar?zasobnik=1`): otwórz arkusz i
+  // ZDEJMIJ parametr (`replace`), żeby cofnięcie nie otwierało go ponownie.
+  // Pozostałe parametry (`task`/`wydarzenie`/`zgloszenie`) zostają nietknięte.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const binParam = searchParams.get(BIN_SHEET_PARAM);
+  useEffect(() => {
+    if (mode !== 'day' || binParam !== '1') return;
+    setBinSheet('open');
+    const next = new URLSearchParams(searchParams);
+    next.delete(BIN_SHEET_PARAM);
+    setSearchParams(next, { replace: true });
+  }, [mode, binParam, searchParams, setSearchParams]);
+
+  // Pasek dat: po zmianie kotwicy dosuń aktywny dzień do środka.
+  useEffect(() => {
+    if (mode !== 'day') return;
+    const active = stripRef.current?.querySelector<HTMLElement>('.week-day-strip-item.active');
+    active?.scrollIntoView({ inline: 'center', block: 'nearest' });
+  }, [mode, anchor]);
 
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [hoursRaw, setHoursRaw] = useState('1');
@@ -2172,6 +2335,23 @@ export function WeekView({ state, anchor, filter }: Props) {
   // Bin (zasobnik) content — precomputed in the week model (per-person, filtered).
   const binGrandTotal = model.binGrandTotal;
 
+  // Kaskada bloków widoku dnia: `id → StackSlot`, liczona raz na zmianę modelu.
+  // W trybie tygodnia `null`, więc każdy `TimedBlock` dostaje `stack={undefined}`
+  // i pozycjonuje się DOKŁADNIE tak jak dotąd (kolumny z `packDayBlocks`).
+  const dayStacks = useMemo(() => {
+    if (mode !== 'day') return null;
+    const day = model.days[0];
+    if (!day) return null;
+    const slots = stackDayBlocks(
+      day.blocks.map((b) => ({
+        id: b.block.id,
+        startMinutes: b.block.startMinutes,
+        durationMinutes: hoursToMinutes(b.block.plannedHours),
+      })),
+    );
+    return new Map(slots.map((slot) => [slot.id, slot]));
+  }, [mode, model]);
+
   // Overload preview for the insert form.
   const menuPerson = menu ? getPerson(state, menu.entry.personId) : undefined;
   // Task picker options for the insert form. Users who can manage tasks pick any
@@ -2298,8 +2478,72 @@ export function WeekView({ state, anchor, filter }: Props) {
 
   const hours = Array.from({ length: 24 }, (_, h) => h);
 
+  // Nagłówek i panel zasobnika wyciągnięte do zmiennych, bo w trybie dnia lądują
+  // w arkuszu od dołu zamiast w wierszu nagłówka i pasie treści. To TEN SAM
+  // element w obu trybach — `binRef` zostaje na `.week-bin-pane`, więc prostokąt
+  // testu `overBin` i cała ścieżka upuszczenia do zasobnika są bez zmian.
+  const binHead = (
+    <div className="week-bin-head">
+      <div className="week-bin-head-title">Zasobnik</div>
+      <div className="week-bin-head-sub">bez terminu</div>
+      <div className="week-col-total">
+        {binGrandTotal > 0 ? formatDuration(binGrandTotal) : '—'}
+      </div>
+    </div>
+  );
+
+  const binPane = (
+    <div className="week-bin-pane" ref={binRef} data-tour="calendar.bin">
+      <div className="week-bin-col">
+        {model.bin.length === 0 ? (
+          <p className="week-bin-empty">Brak bloków bez terminu</p>
+        ) : (
+          model.bin.map(({ person: p, total, entries }) => {
+            return (
+              <div key={`bin-${p.id}`} className="week-bin-group">
+                <div className="week-bin-group-head">
+                  <span
+                    className="person-dot"
+                    style={{ background: personColor(p.id) }}
+                    aria-hidden
+                  />
+                  {p.name}
+                  <span className="week-bin-group-total">{formatDuration(total)}</span>
+                </div>
+                {entries.map(({ entry: e, task, project }) => (
+                  <BinCard
+                    key={e.id}
+                    state={state}
+                    entry={e}
+                    task={task}
+                    person={p}
+                    project={project}
+                    days={days}
+                    gridRef={gridRef}
+                    viewportRef={viewportRef}
+                    blocksByPersonDate={model.blocksByPersonDate}
+                    editable={canEditEntry(p.id)}
+                    onOpen={handleOpenTask}
+                    onContextMenu={openMenu}
+                    onSchedule={openSchedule}
+                    onDragActiveChange={handleDragActiveChange}
+                  />
+                ))}
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+
+  const today = todayStr();
+
   return (
-    <div className="week-cal" data-tour="calendar.week">
+    <div
+      className={mode === 'day' ? 'week-cal day-mode' : 'week-cal'}
+      data-tour="calendar.week"
+    >
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {announcement}
       </div>
@@ -2310,8 +2554,59 @@ export function WeekView({ state, anchor, filter }: Props) {
         Strzałki w lewo i w prawo przenoszą blok o dzień. Enter zapisuje zmianę, Escape ją cofa.
         Bez rozpoczętej zmiany Enter otwiera zadanie.
       </span>
+      {/* Widok dnia: zamiast nagłówka siedmiu kolumn stoi przewijany pasek 7 dat
+          wyśrodkowany na kotwicy (nawigacja, nie zakres siatki). */}
+      {mode === 'day' && (
+        <div className="week-day-strip" ref={stripRef}>
+          {dayStripEntries(anchor, today).map((entry) => (
+            <button
+              key={`strip-${entry.date}`}
+              type="button"
+              className={[
+                'week-day-strip-item',
+                entry.active ? 'active' : '',
+                entry.today ? 'today' : '',
+                entry.weekend ? 'weekend' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              aria-current={entry.active ? 'date' : undefined}
+              onClick={() => onPickDay?.(entry.date)}
+            >
+              <span className="week-day-strip-weekday">{weekdayAbbr(entry.date)}</span>
+              <span className="week-day-strip-date">{dayOfMonthLabel(entry.date)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Podsumowanie dnia zastępuje nagłówek kolumny, którego w trybie dnia nie
+          ma: suma godzin, urodziny i — co ważniejsze — ostrzeżenie o przekroczonej
+          dostępności razem z kotwicą onboardingu `calendar.overload`. Bez tego
+          telefon straciłby jedyne ostrzeżenie o przeciążeniu (inwariant 3).
+          Bez dymków: dotyk i tak nigdy ich nie pokazuje, a treść jest w całości
+          widoczna. */}
+      {mode === 'day' && model.days[0] && (
+        <div className="week-day-summary">
+          <span className="week-col-total">
+            {model.days[0].empty ? '—' : formatDuration(model.days[0].total)}
+          </span>
+          {model.days[0].birthdayNames.length > 0 && (
+            <span className="week-col-birthday">
+              🎂 {model.days[0].birthdayNames.join(', ')}
+            </span>
+          )}
+          {model.days[0].overloadNames && (
+            <span className="week-col-overload" data-tour="calendar.overload">
+              ⚠ {model.days[0].overloadNames}
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Header row: corner + horizontally-synced day headers + bin header.
           Not scrollable itself; its track mirrors the days viewport scrollLeft. */}
+      {mode === 'week' && (
       <div className="week-head-row">
         <div className="week-corner" />
         <div className="week-head-track" ref={headTrackRef}>
@@ -2360,14 +2655,9 @@ export function WeekView({ state, anchor, filter }: Props) {
             })}
           </div>
         </div>
-        <div className="week-bin-head">
-          <div className="week-bin-head-title">Zasobnik</div>
-          <div className="week-bin-head-sub">bez terminu</div>
-          <div className="week-col-total">
-            {binGrandTotal > 0 ? formatDuration(binGrandTotal) : '—'}
-          </div>
-        </div>
+        {binHead}
       </div>
+      )}
 
       {/* Body: fixed axis pane | scrollable days viewport | always-visible bin. */}
       <div className="week-main">
@@ -2470,6 +2760,8 @@ export function WeekView({ state, anchor, filter }: Props) {
                       onOpen={handleOpenTask}
                       onContextMenu={openMenu}
                       announce={announce}
+                      stack={dayStacks?.get(e.id)}
+                      onDragActiveChange={handleDragActiveChange}
                     />
                   ))}
                 </div>
@@ -2479,54 +2771,46 @@ export function WeekView({ state, anchor, filter }: Props) {
         </div>
 
         {/* Bin pane: always visible, own vertical scroll, outside the days scroller. */}
-        <div className="week-bin-pane" ref={binRef} data-tour="calendar.bin">
-          <div className="week-bin-col">
-            {model.bin.length === 0 ? (
-              <p className="week-bin-empty">Brak bloków bez terminu</p>
-            ) : (
-              model.bin.map(({ person: p, total, entries }) => {
-                return (
-                  <div key={`bin-${p.id}`} className="week-bin-group">
-                    <div className="week-bin-group-head">
-                      <span
-                        className="person-dot"
-                        style={{ background: personColor(p.id) }}
-                        aria-hidden
-                      />
-                      {p.name}
-                      <span className="week-bin-group-total">
-                        {formatDuration(total)}
-                      </span>
-                    </div>
-                    {entries.map(({ entry: e, task, project }) => (
-                      <BinCard
-                        key={e.id}
-                        state={state}
-                        entry={e}
-                        task={task}
-                        person={p}
-                        project={project}
-                        days={days}
-                        gridRef={gridRef}
-                        viewportRef={viewportRef}
-                        blocksByPersonDate={model.blocksByPersonDate}
-                        editable={canEditEntry(p.id)}
-                        onOpen={handleOpenTask}
-                        onContextMenu={openMenu}
-                        onSchedule={openSchedule}
-                      />
-                    ))}
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
+        {mode === 'week' && binPane}
       </div>
 
       {/* Plakietka „data + zegar HH:mm” przeniesiona POZA siatkę — renderuje ją
           pasek kalendarza (`NowClockBadge` w CalendarPage), bo narożna wersja
           zasłaniała bloki. Linia „teraz” w kolumnie dnia zostaje bez zmian. */}
+
+      {/* Widok dnia: zasobnik jako arkusz od dołu. Wyzwalacz pływa nad dolnym
+          paskiem zakładek; sam arkusz trzyma TEN SAM `.week-bin-pane`, więc
+          strefa upuszczenia to nadal jego prostokąt. Stan `closed` to
+          `display: none` (brak prostokąta → `overBin === false`, poprawnie),
+          `peek` i `open` różnią się WYSOKOŚCIĄ, nigdy przesunięciem. */}
+      {mode === 'day' && (
+        <>
+          <button
+            type="button"
+            ref={binTriggerRef}
+            className="week-bin-trigger"
+            aria-expanded={binSheet === 'open'}
+            onClick={() => setBinSheet((s) => (s === 'open' ? 'closed' : 'open'))}
+          >
+            {`Zasobnik · ${formatDuration(binGrandTotal)}`}
+          </button>
+          {/* Nazwa jak w pozostałych arkuszach powłoki (`aria-label`, po polsku):
+              „Więcej” niesie `role="menu"`, szybki skok i ten arkusz —
+              `role="dialog"`. Sam atrybut nie dotyka nakładki: `useOverlay`
+              steruje się WYŁĄCZNIE opcją `open`, więc rozbrojenie nasłuchów na
+              czas przeciągania zostaje bez zmian. */}
+          <div
+            className={`week-bin-sheet ${binSheet}`}
+            ref={binSheetRef}
+            role="dialog"
+            aria-label="Zasobnik"
+          >
+            <div className="week-bin-sheet-handle" aria-hidden />
+            {binHead}
+            {binPane}
+          </div>
+        </>
+      )}
 
       <OverlayLayer>
       <AnimatePresence>

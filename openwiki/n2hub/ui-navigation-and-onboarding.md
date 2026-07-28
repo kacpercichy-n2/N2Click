@@ -175,7 +175,13 @@
   dwukrokowe menu karty Kanban (patrz niżej)
   oraz `FilterPanel`, który świadomie NIE jest portalowany (kotwiczenie CSS i
   mobilny breakpoint `position: static` zostają) i bierze z hooka wyłącznie
-  stos, zamykanie i powrót fokusa, z przyciskiem „Filtry” jako triggerem.
+  stos, zamykanie i powrót fokusa, z przyciskiem „Filtry” jako triggerem. Na
+  telefonie na tej samej powłoce (wariant nieporcjonowany, bez
+  `getAnchorRect`) stoją też trzy arkusze od dołu: „Więcej” w `App.tsx`
+  (`role="menu"`), szybki skok kalendarza w `CalendarPage` (`role="dialog"`) i
+  arkusz zasobnika w `WeekView`; ten ostatni jest ROZBRAJANY na czas
+  przeciągania (`open: … && !dragActive`), bo capture'owy Escape powłoki
+  zjadłby anulowanie przeciągania (inwariant 7).
   Drabina `z-index` jest stokenizowana jako `--n2-z-*` w `:root`; na `var()`
   przeszły tylko `.context-menu` i `.filter-popover`.
 - Kontrakt pola formularza jest WSPÓLNY i równoległy do powłoki modali/nakładek:
@@ -242,7 +248,16 @@
   into it — its Zasobnik and Alerty cards are now Panel tiles (grid areas `bin`
   and `alerts`), keeping `data-tour="home.bin"`/`home.alerts`. Legacy `/my-work`
   redirects to `HOME_PATH`; login, `/` and the onboarding `@home` token all
-  resolve there. On mobile, a closed drawer is inert, and an open drawer contains
+  resolve there. Poniżej 760 px powłoka nie ma szuflady ani hamburgera:
+  nawigację niesie `.app-bottom-nav` — pięć zakładek (Panel, Kalendarz,
+  Zadania, Zasobnik jako deep-link `/calendar?zasobnik=1`, „Więcej”) o
+  wysokości `--n2-bottom-nav-h` + `env(safe-area-inset-bottom)`, ze stanem
+  aktywnym z czystej reguły `activeTabPath` (`src/components/bottomNav.ts`).
+  Sidebar renderuje się WYŁĄCZNIE powyżej tego breakpointu (wspólny hook
+  `src/utils/useMediaQuery.ts`), a górny pasek telefonu niesie tytuł trasy
+  (`topBarTitle`) i JEDYNY zamontowany `GlobalSearch`. Arkusz „Więcej” to
+  nakładka `useOverlay` (`role="menu"`): bez pułapki fokusa i bez `inert` w
+  tle — Escape i klik poza zamykają, fokus wraca na wyzwalacz.
   keyboard focus until it closes and restores focus to its trigger.
 
 ## Start here for

@@ -58,13 +58,24 @@ import { Avatar } from './components/Avatar';
 import { Tooltip } from './components/Tooltip';
 import {
   Settings,
-  Menu,
-  X,
+  Archive,
+  CalendarDays,
+  LayoutDashboard,
+  ListChecks,
+  MoreHorizontal,
   ChevronsLeft,
   ChevronsRight,
   CircleHelp,
 } from './components/icons';
 import { NAV_ITEMS, orderNavPaths } from './components/navItems';
+import {
+  BIN_TAB_TARGET,
+  activeTabPath,
+  moreNavPaths,
+  topBarTitle,
+} from './components/bottomNav';
+import { OverlayLayer, useOverlay } from './components/useOverlay';
+import { MOBILE_NAV_QUERY, useMediaQuery } from './utils/useMediaQuery';
 import { loadUiPrefs, updateUiPrefs } from './utils/uiPrefs';
 import {
   consumeNavGuardBypass,
@@ -74,42 +85,40 @@ import {
 import { OnboardingRoot } from './onboarding/OnboardingRoot';
 
 const NAV_ITEM_BY_PATH = new Map(NAV_ITEMS.map((item) => [item[0], item]));
+/** Etykiety tras dla tytułu górnego paska telefonu (jedno źródło: NAV_ITEMS). */
+const NAV_LABELS: ReadonlyMap<string, string> = new Map(
+  NAV_ITEMS.map(([to, label]) => [to, label]),
+);
 
-const MOBILE_NAV_QUERY = '(max-width: 760px)';
-const DRAWER_FOCUSABLE = [
-  'a[href]',
-  'button:not([disabled])',
-  'input:not([disabled])',
-  'select:not([disabled])',
-  'textarea:not([disabled])',
-  '[tabindex]:not([tabindex="-1"])',
-].join(',');
-
-function visibleDrawerControls(drawer: HTMLElement | null): HTMLElement[] {
-  if (!drawer) return [];
-  return Array.from(drawer.querySelectorAll<HTMLElement>(DRAWER_FOCUSABLE)).filter(
-    (element) =>
-      element.getAttribute('aria-hidden') !== 'true' &&
-      element.getClientRects().length > 0 &&
-      window.getComputedStyle(element).visibility !== 'hidden',
-  );
-}
+/**
+ * Trzy zakładki-trasy dolnego paska. Ikony powtarzają te z `NAV_ITEMS`, ale
+ * kolejność i skład zakładek są WŁASNĄ decyzją paska (nie podlegają edytorowi
+ * kolejności menu — ten rządzi wyłącznie listą w arkuszu „Więcej”).
+ */
+const BOTTOM_TABS: Array<[string, string, typeof LayoutDashboard]> = [
+  ['/dashboard', 'Panel', LayoutDashboard],
+  ['/calendar', 'Kalendarz', CalendarDays],
+  ['/tasks', 'Zadania', ListChecks],
+];
 
 export function App() {
   const { state, dispatch } = useStore();
   const auth = useAuth();
   const org = useOrgData();
   const location = useLocation();
-  const [menuOpen, setMenuOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => loadUiPrefs().sidebarCollapsed);
   // Device-local sidebar order (paths). The Ustawienia editor persists it and
   // fires 'n2hub:nav-order-changed'; the effect below reloads it into state so
   // the sidebar reorders in the same tab without a reload (house pattern — see
   // 'n2hub:open-tutorials').
   const [navOrder, setNavOrder] = useState(() => loadUiPrefs().navOrder);
-  const [mobileNav, setMobileNav] = useState(() => window.matchMedia(MOBILE_NAV_QUERY).matches);
-  const hamburgerRef = useRef<HTMLButtonElement>(null);
-  const drawerRef = useRef<HTMLElement>(null);
+  // Telefon (≤760 px): dolny pasek zakładek zamiast szuflady. Wspólny hook, z
+  // którego korzysta też CalendarPage — jeden breakpoint na całą aplikację.
+  const mobileNav = useMediaQuery(MOBILE_NAV_QUERY);
+  // Arkusz „Więcej”: reszta tras + Ustawienia, Pomoc, profil i wylogowanie.
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreBtnRef = useRef<HTMLButtonElement | null>(null);
+  const moreSheetRef = useRef<HTMLDivElement | null>(null);
 
   const toggleCollapsed = () => {
     setCollapsed((v) => {
@@ -161,6 +170,14 @@ export function App() {
   const teamRole = effectiveAccessRole(currentUser, org.state, { mode: auth.mode });
   const teamUser = currentUser && teamRole ? { ...currentUser, accessRole: teamRole } : currentUser;
   const canTeam = canViewTeam(teamUser);
+  // Kolejność menu (device-local) PO bramkach uprawnień — jedno źródło dla
+  // sidebara (desktop) i arkusza „Więcej” (telefon).
+  const navPaths = orderNavPaths(
+    NAV_ITEMS.map(([to]) => to),
+    navOrder,
+  ).filter((to) => (to !== '/admin' || canAdmin) && (to !== '/team' || canTeam));
+  /** Która zakładka dolnego paska ma stan aktywny (`null` = np. „Więcej”). */
+  const activeTab = activeTabPath(location.pathname);
   // Session gate: with people present and nobody resolving to a current user,
   // only the login screen renders (no sidebar, no routes). Zero people = setup
   // mode (no lockout — mirrors the admin gate). `currentUserId` persists, so a
@@ -180,14 +197,6 @@ export function App() {
     dispatch({ type: 'LOGOUT' });
   }, [auth, dispatch]);
 
-  useEffect(() => {
-    const media = window.matchMedia(MOBILE_NAV_QUERY);
-    const sync = () => setMobileNav(media.matches);
-    sync();
-    media.addEventListener('change', sync);
-    return () => media.removeEventListener('change', sync);
-  }, []);
-
   // Reload the saved menu order whenever the Ustawienia editor changes it.
   useEffect(() => {
     const reload = () => setNavOrder(loadUiPrefs().navOrder);
@@ -195,63 +204,23 @@ export function App() {
     return () => window.removeEventListener('n2hub:nav-order-changed', reload);
   }, []);
 
-  // Close the mobile drawer whenever the route changes.
+  // Arkusz „Więcej” zamyka się po zmianie trasy (pozycja w nim nawiguje).
   useEffect(() => {
-    setMenuOpen(false);
+    setMoreOpen(false);
   }, [location.pathname]);
 
-  // While the drawer is open: lock body scroll, focus the first nav link, and
-  // close on Escape. Cleanup restores everything (same pattern as TaskModal).
-  useEffect(() => {
-    if (!menuOpen) return;
-    const drawer = drawerRef.current;
-    const firstLink = drawer?.querySelector<HTMLElement>('.app-nav-link');
-    firstLink?.focus();
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        setMenuOpen(false);
-        return;
-      }
-      if (e.key !== 'Tab' || !mobileNav) return;
-      const controls = visibleDrawerControls(drawer);
-      if (controls.length === 0) {
-        e.preventDefault();
-        return;
-      }
-      const first = controls[0];
-      const last = controls[controls.length - 1];
-      const active = document.activeElement;
-      if (e.shiftKey && (active === first || !drawer?.contains(active))) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && (active === last || !drawer?.contains(active))) {
-        e.preventDefault();
-        first.focus();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => {
-      document.body.style.overflow = prevOverflow;
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [menuOpen, mobileNav]);
-
-  // Return focus to the hamburger after closing (only when it was open).
-  const wasOpen = useRef(false);
-  useEffect(() => {
-    if (menuOpen) {
-      wasOpen.current = true;
-    } else if (wasOpen.current) {
-      wasOpen.current = false;
-      hamburgerRef.current?.focus();
-    }
-  }, [menuOpen]);
-
-  const closedMobileDrawerProps = mobileNav && !menuOpen ? { inert: '' } : {};
-  const openMobileMainProps = mobileNav && menuOpen ? { inert: '' } : {};
+  // Escape, klik poza i powrót fokusa na przycisk „Więcej” bierzemy ze WSPÓLNEJ
+  // powłoki nakładek — w wariancie NIEPOZYCJONOWANYM (bez `getAnchorRect`, jak
+  // FilterPanel): arkusz kotwiczy CSS przy dolnej krawędzi, więc mierzenie
+  // popovera byłoby tu tylko szumem.
+  const closeMore = useCallback(() => setMoreOpen(false), []);
+  useOverlay({
+    open: moreOpen,
+    onClose: closeMore,
+    overlayRef: moreSheetRef,
+    triggerRef: moreBtnRef,
+    menuKeyboard: true,
+  });
 
   // Supabase mode: a real Supabase Auth session gates the ENTIRE shell. Nothing
   // below renders without a valid session AND a matched local profile. This is a
@@ -291,40 +260,24 @@ export function App() {
 
   return (
     <div className={collapsed ? 'app-shell sidebar-collapsed' : 'app-shell'}>
-      <header className="app-topbar">
-        <div className="app-brand">
-          <span className="app-brand-mark" aria-hidden />
-          <span className="app-brand-name">N2Hub</span>
-        </div>
-        <button
-          ref={hamburgerRef}
-          type="button"
-          className="app-hamburger"
-          data-tour="shell.nav"
-          aria-label={menuOpen ? 'Zamknij menu' : 'Otwórz menu'}
-          aria-expanded={menuOpen}
-          aria-controls="app-drawer"
-          onClick={() => setMenuOpen((v) => !v)}
-        >
-          {menuOpen ? <X size={22} aria-hidden /> : <Menu size={22} aria-hidden />}
-        </button>
-      </header>
-
-      {menuOpen && (
-        <div
-          className="app-drawer-scrim"
-          aria-hidden
-          onClick={() => setMenuOpen(false)}
-        />
+      {/* Telefon: górny pasek niesie TYTUŁ TRASY (szuflada i hamburger już nie
+          istnieją) i JEDNĄ akcję kontekstową — wyszukiwarkę. Powyżej 760 px nie
+          renderuje się wcale; dotąd był tylko ukrywany `display: none`. */}
+      {mobileNav && (
+        <header className="app-topbar">
+          <h2 className="app-topbar-title">{topBarTitle(location.pathname, NAV_LABELS)}</h2>
+          {/* JEDYNY montaż `GlobalSearch` na telefonie — dwa egzemplarze to dwa
+              nasłuchy Ctrl+K, które przełączałyby paletę tam i z powrotem. */}
+          <GlobalSearch />
+        </header>
       )}
 
-      <aside
-        id="app-drawer"
-        ref={drawerRef}
-        className={menuOpen ? 'app-sidebar open' : 'app-sidebar'}
-        aria-hidden={mobileNav && !menuOpen ? true : undefined}
-        {...closedMobileDrawerProps}
-      >
+      {/* Sidebar jest teraz WYŁĄCZNIE desktopowy: poniżej 760 px nawigację
+          niesie dolny pasek, więc szuflada, jej scrim i pułapka Tab zniknęły
+          razem ze stanem `menuOpen`. `id` zostaje jako stabilny uchwyt paska
+          bocznego (czyta go też przeglądarkowy check klawiatury). */}
+      {!mobileNav && (
+      <aside id="app-drawer" className="app-sidebar">
         <div className="app-brand-row">
           <div className="app-brand">
             <span className="app-brand-mark" aria-hidden />
@@ -347,16 +300,14 @@ export function App() {
         </div>
         <GlobalSearch />
         <nav className="app-nav" data-tour="shell.nav">
-          {orderNavPaths(NAV_ITEMS.map(([to]) => to), navOrder)
-            .filter((to) => (to !== '/admin' || canAdmin) && (to !== '/team' || canTeam))
-            .map((to) => {
+          {navPaths.map((to) => {
               const item = NAV_ITEM_BY_PATH.get(to);
               if (!item) return null;
               const [, label, Icon] = item;
               // Rozwinięte menu POKAZUJE etykietę — dymek powtarzałby widoczny
               // tekst. Dymek ma sens wyłącznie w zwiniętej listwie ikon.
               const link = (
-                <NavLink key={to} to={to} className={navClass} onClick={() => setMenuOpen(false)}>
+                <NavLink key={to} to={to} className={navClass}>
                   <Icon size={18} aria-hidden className="nav-icon" />
                   <span className="nav-label">{label}</span>
                 </NavLink>
@@ -375,7 +326,7 @@ export function App() {
               trybie supabase. Przypięte PO liście, poza edytorem kolejności. */}
           {(() => {
             const settingsLink = (
-              <NavLink to="/account" className={navClass} onClick={() => setMenuOpen(false)}>
+              <NavLink to="/account" className={navClass}>
                 <Settings size={18} aria-hidden className="nav-icon" />
                 <span className="nav-label">Ustawienia</span>
               </NavLink>
@@ -407,7 +358,6 @@ export function App() {
                     to={`/people/${currentUser.id}`}
                     className="sidebar-user-collapsed"
                     aria-label={`Mój profil: ${currentUser.name}`}
-                    onClick={() => setMenuOpen(false)}
                   >
                     <Avatar person={currentUser} size={32} />
                   </Link>
@@ -421,7 +371,6 @@ export function App() {
                       to={`/people/${currentUser.id}`}
                       className="sidebar-user-avatar"
                       aria-label={`Mój profil: ${currentUser.name}`}
-                      onClick={() => setMenuOpen(false)}
                     >
                       <Avatar person={currentUser} size={32} />
                     </Link>
@@ -440,13 +389,9 @@ export function App() {
           )}
         </div>
       </aside>
+      )}
 
-      <main
-        className="app-main"
-        data-tour="shell.main"
-        aria-hidden={mobileNav && menuOpen ? true : undefined}
-        {...openMobileMainProps}
-      >
+      <main className="app-main" data-tour="shell.main">
         {/* Trwałe regiony ogłoszeń (polite + assertive) — montowane PRZED
             banerami, żeby istniały w DOM zanim pojawi się pierwszy komunikat.
             Ekran logowania jest poza tą powłoką i ma własną obsługę. */}
@@ -505,6 +450,111 @@ export function App() {
           </Routes>
         </motion.div>
       </main>
+
+      {/* Telefon: dolny pasek pięciu zakładek. Trzy trasy + deep-link zasobnika
+          + arkusz „Więcej”. Kotwica onboardingu `shell.nav` przenosi się tu z
+          hamburgera — na telefonie to JEST nawigacja aplikacji. */}
+      {mobileNav && (
+        <nav className="app-bottom-nav" data-tour="shell.nav">
+          {BOTTOM_TABS.map(([to, label, Icon]) => {
+            const active = to === activeTab;
+            return (
+              // Stan aktywny liczy WSPÓLNA, testowana reguła `activeTabPath`, a
+              // nie `isActive` z NavLinka: dzięki temu klasa i `aria-current`
+              // zawsze mówią to samo, a zakładka „Zasobnik” (deep-link do tej
+              // samej trasy `/calendar`) nigdy nie zapala się razem z
+              // „Kalendarzem”.
+              <NavLink
+                key={to}
+                to={to}
+                className={() => (active ? 'app-bottom-nav-item active' : 'app-bottom-nav-item')}
+                aria-current={active ? 'page' : undefined}
+              >
+                <Icon size={20} aria-hidden />
+                <span className="app-bottom-nav-label">{label}</span>
+              </NavLink>
+            );
+          })}
+          {/* Zwykły `Link`, nie `NavLink`: prowadzi na `/calendar`, więc stan
+              aktywny podświetlałby dwie zakładki naraz. */}
+          <Link to={BIN_TAB_TARGET} className="app-bottom-nav-item">
+            <Archive size={20} aria-hidden />
+            <span className="app-bottom-nav-label">Zasobnik</span>
+          </Link>
+          <button
+            type="button"
+            ref={moreBtnRef}
+            className={moreOpen ? 'app-bottom-nav-item active' : 'app-bottom-nav-item'}
+            data-tour="shell.help"
+            aria-expanded={moreOpen}
+            aria-haspopup="menu"
+            onClick={() => setMoreOpen((v) => !v)}
+          >
+            <MoreHorizontal size={20} aria-hidden />
+            <span className="app-bottom-nav-label">Więcej</span>
+          </button>
+        </nav>
+      )}
+
+      {mobileNav && moreOpen && (
+        <OverlayLayer>
+          {/* Scrim nie ma własnego handlera — zamknięcie „kliknięciem poza”
+              obsługuje `useOverlay` (para pointerdown+click), tak jak w każdej
+              innej nakładce aplikacji. */}
+          <div className="app-sheet-scrim" aria-hidden />
+          <div className="app-more-sheet" role="menu" aria-label="Więcej" ref={moreSheetRef}>
+            <div className="app-sheet-handle" aria-hidden />
+            {moreNavPaths(navPaths).map((to) => {
+              const item = NAV_ITEM_BY_PATH.get(to);
+              if (!item) return null;
+              const [, label, Icon] = item;
+              return (
+                <Link key={to} to={to} role="menuitem" className="app-more-item">
+                  <Icon size={18} aria-hidden />
+                  <span>{label}</span>
+                </Link>
+              );
+            })}
+            <Link to="/account" role="menuitem" className="app-more-item">
+              <Settings size={18} aria-hidden />
+              <span>Ustawienia</span>
+            </Link>
+            <button
+              type="button"
+              role="menuitem"
+              className="app-more-item"
+              onClick={() => {
+                setMoreOpen(false);
+                window.dispatchEvent(new Event('n2hub:open-tutorials'));
+              }}
+            >
+              <CircleHelp size={18} aria-hidden />
+              <span>Pomoc i samouczki</span>
+            </button>
+            {currentUser && (
+              <Link
+                to={`/people/${currentUser.id}`}
+                role="menuitem"
+                className="app-more-item"
+              >
+                <Avatar person={currentUser} size={22} />
+                <span>Mój profil</span>
+              </Link>
+            )}
+            <button
+              type="button"
+              role="menuitem"
+              className="app-more-item"
+              onClick={() => {
+                setMoreOpen(false);
+                void handleLogout();
+              }}
+            >
+              <span>Wyloguj</span>
+            </button>
+          </div>
+        </OverlayLayer>
+      )}
 
       {/* The task popout modal lives once, above every page. */}
       <TaskModal />

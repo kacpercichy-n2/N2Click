@@ -51,3 +51,20 @@ Context expanded only to `styles.css` z-index ladder: the ⋯ popover portals to
 body, so it needed `--n2-z-menu-over-modal`. Blocker: browser checks could NOT
 run — `playwright` is not installed (`ERR_MODULE_NOT_FOUND`); multiblock row
 targeting pre-adjusted to `tr[data-date]`, unverified.
+
+## Developer result (2026-07-28, PKG-20260728-mobile-nav-day-view)
+
+Bottom tab bar, phone day view, bin sheet, 56 px control row + 4 new modules
+landed. `npm test` 1883 pass (+38 new), `npm run build` green. Desktop
+untouched: `stack === undefined`, `days.length === 7`. Deviations: day-summary
+row keeps the `calendar.overload` anchor; `role="status"` moved inside
+`.cal-range-btn`. `browser-check-ui-keyboard.mjs` retargeted onto the bottom nav
++ „Więcej" sheet — unexecuted (no dev server).
+
+## Wiki sync (2026-07-28, PKG-20260728-mobile-nav-day-view review)
+
+Applied reviewer-authored replacement text verbatim to
+`ui-navigation-and-onboarding.md` (mobile shell bullet + overlay consumers
+list) and `scheduling-and-calendar.md` (`WeekView` bullet, day mode) and
+`testing-and-automation.md` (`browser-check-ui-keyboard.mjs` bullet).
+`src/` untouched, no tests run (docs-only).
