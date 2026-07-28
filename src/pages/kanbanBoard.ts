@@ -45,8 +45,13 @@ export function buildTaskAssigneeIds(state: AppData): Map<string, string[]> {
   return map;
 }
 
-/** Total, deterministic display order inside a column. */
-function compareTasks(a: Task, b: Task): number {
+/**
+ * Total, deterministic display order inside a column. EXPORTED because the
+ * keyboard move mode (`kanbanMove.ts`) has to answer „na którym miejscu ta karta
+ * wyląduje w kolumnie celu" — and the sort key `(orderIndex, startDate, id)` may
+ * live in exactly ONE place (CLAUDE.md: never duplicate derived-read logic).
+ */
+export function compareTasks(a: Task, b: Task): number {
   return (
     a.orderIndex - b.orderIndex ||
     a.startDate.localeCompare(b.startDate) ||

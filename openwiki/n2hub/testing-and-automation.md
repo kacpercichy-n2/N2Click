@@ -45,11 +45,17 @@ release matrix (`run-browser-regression.mjs`). Run each on demand (Chromium and
 WebKit) only when its covered behavior changes:
 
 - `browser-check-date-hardening.mjs`: invalid/corrupt-date handling — inline
-  Polish errors, no blank screen or uncaught `RangeError`, malformed JSON stays
-  byte-identical and exportable until reset, repairable payloads load repaired,
-  and the render-throw recovery screen resets cleanly.
-- `browser-check-ui-keyboard.mjs`: worker role landing, mobile drawer
-  inertness/focus containment and Space activation for week blocks and bin cards.
+  Polish errors (the reversed-period assertion drives an explicit `.blur()` on
+  the date input first, since inline field errors are blur/save-gated), no
+  blank screen or uncaught `RangeError`, malformed JSON stays byte-identical
+  and exportable until reset, repairable payloads load repaired, and the
+  render-throw recovery screen resets cleanly.
+- `browser-check-ui-keyboard.mjs`: worker role landing, powłoka telefonu
+  (pięć zakładek `.app-bottom-nav` z dokładnie jednym `aria-current`, JEDEN
+  `GlobalSearch` = działający Ctrl+K, arkusz „Więcej” na `useOverlay`: brak
+  kradzieży fokusa, roving tabindex, zawijanie strzałkami, Escape + powrót
+  fokusa, tło CELOWO bez `inert`) i Space activation for week blocks and bin
+  cards. Szuflada mobilna nie istnieje od PKG-20260728-mobile-nav-day-view.
 - `browser-check-savetask-multiblock.mjs`: `SAVE_TASK` reconciles per-person/day
   allocation-grid cells by delta — an unchanged save leaves multi-block days
   byte-identical, and cell edits touch only the blocks their new total implies.

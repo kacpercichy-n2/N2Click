@@ -72,13 +72,26 @@ export function changelogRangeLabel(dateFrom: DateStr, dateTo: DateStr): string 
 }
 
 /**
- * Czy zakres obejmuje jeden dzień (dateFrom === dateTo, obie daty poprawne).
- * Pozwala dobrać poprawny polski przyimek: „w dniu" (jeden dzień) vs
- * „w dniach" (zakres). Niepoprawne daty => false.
+ * Czy NAJNOWSZY wpis jest jeszcze nieprzeczytany na tym urządzeniu (AT-17).
+ * `seenId` to identyfikator ostatnio potwierdzonego wpisu (urządzeniowa
+ * preferencja UI, patrz utils/uiPrefs). Brak wpisu => nie ma czego pokazywać;
+ * inny `seenId` niż bieżący (także starszy) => wpis jest nowy.
  */
-export function isSameDayRange(dateFrom: DateStr, dateTo: DateStr): boolean {
-  if (!isValidDateStr(dateFrom) || !isValidDateStr(dateTo)) return false;
-  return dateFrom === dateTo;
+export function changelogUnread(
+  latest: ChangelogEntry | undefined,
+  seenId: string | undefined,
+): boolean {
+  if (!latest) return false;
+  return latest.id !== seenId;
+}
+
+/**
+ * Jedno CTA paska „Nowości" — „Nowości 20–21.07". Strzałkę dokłada widok.
+ * Bez czytelnej daty zostaje sama „Nowości", nigdy pusty przycisk.
+ */
+export function changelogCtaLabel(entry: ChangelogEntry): string {
+  const range = changelogRangeLabel(entry.dateFrom, entry.dateTo);
+  return range ? `Nowości ${range}` : 'Nowości';
 }
 
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */

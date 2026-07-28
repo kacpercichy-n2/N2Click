@@ -121,13 +121,18 @@ async function flowTaskModal(browser) {
     await page.goto(`${BASE}/tasks?task=${task.id}`, { waitUntil: 'networkidle' });
     const modal = page.locator('.task-modal-card[role="dialog"]');
     await modal.waitFor({ timeout: 10000 });
-    // Empty start date → missing-start error, live.
+    // Empty start date → missing-start error. Widoczność błędu okresu jest teraz
+    // bramkowana opuszczeniem pola albo próbą zapisu (kontrakt pola formularza),
+    // więc po wpisaniu ZDEJMUJEMY fokus — samo pisanie celowo nie czerwieni pola.
     await page.fill('#t-start', '');
+    await page.locator('#t-start').evaluate((el) => el.blur());
     let errText = (await modal.locator('.field-error').first().textContent().catch(() => '')) || '';
     ok(errText.includes('Podaj datę startu'), `flow2: empty start shows Polish error (got "${errText}")`);
-    // Reversed period → reversed error.
+    // Reversed period → reversed error (wypełnienie drugiego pola samo opuszcza
+    // pierwsze, więc błąd zakresu jest już odsłonięty).
     await page.fill('#t-start', '2026-07-20');
     await page.fill('#t-end', '2026-07-10');
+    await page.locator('#t-end').evaluate((el) => el.blur());
     errText = (await modal.locator('.field-error').first().textContent().catch(() => '')) || '';
     ok(errText.includes('Data końca musi być'), `flow2: reversed period shows Polish error (got "${errText}")`);
     const modalText = (await modal.textContent()) || '';

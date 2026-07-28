@@ -953,6 +953,46 @@ describe('MERGE_CLOUD_ENTITIES — bezszwowe odświeżanie (referencje)', () => 
     expect(nextChanged.tasks[0].recurrence!.overrides).toEqual([{ date: '2026-07-20', skip: true }]);
   });
 
+  it('wyjątek z flagą `done` jest zwykłą wartością wiersza: identyczny => ta sama referencja, zmiana => nowy obiekt', () => {
+    const rec = {
+      daysOfWeek: [1],
+      startMinutes: 540,
+      durationMinutes: 60,
+      overrides: [
+        { date: '2026-07-13', done: true as const },
+        { date: '2026-07-20', done: true as const, startMinutes: 600, durationMinutes: 30 },
+      ],
+    };
+    const state: AppData = {
+      ...mirroredState(),
+      tasks: [
+        makeTask({ id: T1, projectId: 'proj-1', recurrence: rec }),
+        makeTask({ id: T2, projectId: 'proj-1' }),
+      ],
+    };
+    // Wartościowo identyczna cykliczność (świeże obiekty) => wiersz i kolekcja bez zmian.
+    const next = merge(state, mirrorPayload(state));
+    expect(next.tasks[0]).toBe(state.tasks[0]);
+    expect(next.tasks).toBe(state.tasks);
+
+    // Zmiana samej flagi `done` po stronie chmury MUSI dać nowy obiekt wiersza.
+    const changed = mirrorPayload(state);
+    changed.tasks[0] = {
+      ...changed.tasks[0],
+      recurrence: { ...rec, overrides: [{ date: '2026-07-20', done: true as const, startMinutes: 600, durationMinutes: 30 }] },
+    };
+    const nextChanged = merge(state, changed);
+    expect(nextChanged.tasks[0]).not.toBe(state.tasks[0]);
+    expect(nextChanged.tasks[0].recurrence!.overrides).toEqual([
+      { date: '2026-07-20', done: true, startMinutes: 600, durationMinutes: 30 },
+    ]);
+
+    // Niepoprawny ładunek nadal fail-close: TA SAMA referencja stanu (inwariant 6).
+    const broken = mirrorPayload(state);
+    (broken as unknown as { tasks: unknown }).tasks = 'nope';
+    expect(merge(state, broken)).toBe(state);
+  });
+
   it('zagnieżdżone tablice (checklist, mentionIds) porównywane wartościowo, nie referencyjnie', () => {
     const state = mirroredState();
     // Identyczna wartościowo checklist w świeżej tablicy => wiersz bez zmian.

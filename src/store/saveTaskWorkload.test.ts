@@ -492,6 +492,155 @@ describe('SAVE_TASK new-pair placement (PKG-20260713b-placement-tests)', () => {
 
 // ---- binTotals: absolutny cel zasobnika per osoba (przepływ „godziny
 // sprzedane”: suma osoby = szacunek; cel = sprzedane − kalendarz) -----------
+// ---------------------------------------------------------------------------
+// OPCJONALNA przypięta godzina startu komórki (PKG-20260727-alloc-start-hour):
+// `AllocationCell.startMinutes` nadpisuje automatyczne umiejscowienie w JEDNYM
+// przebiegu po rekoncyliacji — wyłącznie dla par rozwiązywanych do DOKŁADNIE
+// jednego bloku. Brak pola => zachowanie bajtowo identyczne z dotychczasowym.
+// ---------------------------------------------------------------------------
+describe('AllocationCell.startMinutes', () => {
+  it('nowa para z pinem: blok powstaje o przypiętej godzinie, nawet gdy slot jest zajęty przez inne zadanie', () => {
+    // 10:00–12:00 zajęte przez inne zadanie — findFreeStart wybrałby 12:00,
+    // ale pin wygrywa (inwariant 3 — nakładka z edytora jest dozwolona).
+    const otherTaskBlock = makeEntry({ id: 'other1', taskId: 'tOther', personId: 'p1', date: D3, startMinutes: 600, plannedHours: 2, sortIndex: 0 });
+    const state = makeState({
+      tasks: [TASK, makeTask({ id: 'tOther' })],
+      assignments: [{ id: 'a1', taskId: 't1', personId: 'p1' }],
+      workload: [otherTaskBlock],
+    });
+
+    const next = reducer(state, {
+      type: 'SAVE_TASK',
+      payload: payloadFor({
+        allocations: [{ personId: 'p1', date: D3, plannedHours: 2, startMinutes: 600 }],
+      }),
+    });
+
+    const newRow = next.workload.find((w) => w.taskId === 't1' && w.date === D3)!;
+    expect(newRow.startMinutes).toBe(600);
+    expect(newRow.plannedHours).toBe(2);
+    // Bez pinu ta sama komórka wylądowałaby w wolnym oknie (720), nie na 600.
+    const auto = reducer(state, {
+      type: 'SAVE_TASK',
+      payload: payloadFor({
+        allocations: [{ personId: 'p1', date: D3, plannedHours: 2 }],
+      }),
+    });
+    expect(auto.workload.find((w) => w.taskId === 't1' && w.date === D3)!.startMinutes).toBe(720);
+  });
+
+  it('nowa para BEZ pinu: umiejscowienie bez zmian (08:00 na pustym dniu)', () => {
+    const { state } = baselineState();
+    const next = reducer(state, {
+      type: 'SAVE_TASK',
+      payload: payloadFor({
+        allocations: [
+          { personId: 'p1', date: D, plannedHours: 5 },
+          { personId: 'p1', date: D2, plannedHours: 2 },
+          { personId: 'p1', date: D3, plannedHours: 2 },
+        ],
+      }),
+    });
+    const d3 = next.workload.filter((w) => w.taskId === 't1' && w.date === D3);
+    expect(d3).toHaveLength(1);
+    expect(d3[0].startMinutes).toBe(480);
+  });
+
+  it('same godziny + NOWY pin na parze jedno-blokowej: blok zachowuje id, dostaje nowy start, tablica workload to NOWA referencja', () => {
+    const { state, e3 } = baselineState();
+    const next = reducer(state, {
+      type: 'SAVE_TASK',
+      payload: payloadFor({
+        allocations: [
+          { personId: 'p1', date: D, plannedHours: 5 },
+          { personId: 'p1', date: D2, plannedHours: 2, startMinutes: 615 },
+        ],
+      }),
+    });
+    const moved = next.workload.find((w) => w.id === 'e3')!;
+    expect(moved.startMinutes).toBe(615);
+    expect(moved.plannedHours).toBe(2);
+    expect(moved.id).toBe(e3.id);
+    expect(next.workload).not.toBe(state.workload);
+  });
+
+  it('same godziny + NIEZMIENIONY pin: blok zostaje bajtowo identyczny (ta sama referencja wpisu)', () => {
+    const { state, e3 } = baselineState();
+    const next = reducer(state, {
+      type: 'SAVE_TASK',
+      payload: payloadFor({
+        allocations: [
+          { personId: 'p1', date: D, plannedHours: 5 },
+          { personId: 'p1', date: D2, plannedHours: 2, startMinutes: 480 },
+        ],
+      }),
+    });
+    expect(next.workload.find((w) => w.id === 'e3')).toBe(e3);
+  });
+
+  it('wzrost na parze jedno-blokowej z pinem: blok kończy się na pinie, clampowany do doby (23:00 + 4h => 20:00)', () => {
+    const { state } = baselineState();
+    const next = reducer(state, {
+      type: 'SAVE_TASK',
+      payload: payloadFor({
+        allocations: [
+          { personId: 'p1', date: D, plannedHours: 5 },
+          { personId: 'p1', date: D2, plannedHours: 4, startMinutes: 1380 },
+        ],
+      }),
+    });
+    const grown = next.workload.find((w) => w.id === 'e3')!;
+    expect(grown.plannedHours).toBe(4);
+    expect(grown.startMinutes).toBe(1200); // clampBlockStart(1380, 240)
+  });
+
+  it('skrócenie do jednego bloku z pinem: ocalały blok startuje na pinie', () => {
+    const { state } = baselineState();
+    const next = reducer(state, {
+      type: 'SAVE_TASK',
+      payload: payloadFor({
+        allocations: [
+          { personId: 'p1', date: D, plannedHours: 1.5, startMinutes: 900 },
+          { personId: 'p1', date: D2, plannedHours: 2 },
+        ],
+      }),
+    });
+    expect(next.workload.find((w) => w.id === 'e2')).toBeUndefined();
+    const survivor = next.workload.find((w) => w.id === 'e1')!;
+    expect(survivor.plannedHours).toBe(1.5);
+    expect(survivor.startMinutes).toBe(900);
+  });
+
+  it('para z DWOMA blokami + pin: oba bloki zachowują swoje starty (przebieg pomija pary wielo-blokowe)', () => {
+    const { state, e1, e2 } = baselineState();
+    const next = reducer(state, {
+      type: 'SAVE_TASK',
+      payload: payloadFor({
+        allocations: [
+          { personId: 'p1', date: D, plannedHours: 5, startMinutes: 60 },
+          { personId: 'p1', date: D2, plannedHours: 2 },
+        ],
+      }),
+    });
+    expect(next.workload.find((w) => w.id === 'e1')!.startMinutes).toBe(e1.startMinutes);
+    expect(next.workload.find((w) => w.id === 'e2')!.startMinutes).toBe(e2.startMinutes);
+  });
+
+  it('niepoprawny startMinutes odrzuca cały zapis (TA SAMA referencja stanu)', () => {
+    for (const startMinutes of [607, -15, 1440, 12.5]) {
+      const { state } = baselineState();
+      expect(
+        reducer(state, {
+          type: 'SAVE_TASK',
+          payload: payloadFor({
+            allocations: [{ personId: 'p1', date: D2, plannedHours: 2, startMinutes }],
+          }),
+        }),
+      ).toBe(state);
+    }
+  });
+});
+
 describe('SAVE_TASK binTotals — absolutny cel zasobnika', () => {
   const keepAlloc = [
     { personId: 'p1', date: D, plannedHours: 5 },

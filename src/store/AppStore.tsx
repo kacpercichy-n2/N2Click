@@ -7,9 +7,9 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useReducer,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from 'react';
 import type {
@@ -59,6 +59,7 @@ import {
   type SaveFailureReason,
 } from './storage';
 import { anyDirty } from '../utils/dirtyRegistry';
+import { createExternalStore, shallowEqual, type ExternalStore } from './externalStore';
 import { createPersistCoalescer, PERSIST_COALESCE_MS } from './persistCoalescer';
 import { shouldSkipLocalPersist } from './persistGate';
 import {
@@ -227,6 +228,10 @@ export interface AllocationCell {
   personId: string;
   date: string;
   plannedHours: number;
+  /** OPCJONALNA przypięta godzina startu (minuty od północy, siatka 15 min).
+   *  Brak => automatyczne umiejscowienie jak dotąd (findFreeStart). Stosowana
+   *  tylko, gdy para (osoba, dzień) ma po zapisie DOKŁADNIE jeden blok. */
+  startMinutes?: number;
 }
 
 export interface SaveTaskPayload {
@@ -276,6 +281,10 @@ export type Action =
       date: string;
       override: { skip: true } | { startMinutes: number; durationMinutes: number } | null;
     }
+  // Wykonanie POJEDYNCZEGO wystąpienia (flaga `done` w wyjątku danej daty).
+  // NIGDY nie zmienia `Task.statusId` (całą serię przełącza SET_TASK_STATUS) i
+  // nie tworzy wierszy workload (inwariant 1).
+  | { type: 'SET_OCCURRENCE_DONE'; taskId: string; date: string; done: boolean }
   // Publikacja szkiców: całego projektu (atomowo) lub pojedynczego zadania.
   | { type: 'PUBLISH_PROJECT_DRAFTS'; projectId: string }
   | { type: 'PUBLISH_TASK'; taskId: string }
@@ -570,7 +579,14 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
         cell.date > draft.endDate ||
         !Number.isFinite(cell.plannedHours) ||
         cell.plannedHours < 0 ||
-        cell.plannedHours > 24,
+        cell.plannedHours > 24 ||
+        // Opcjonalna przypięta godzina startu: gdy obecna, musi być całkowitą
+        // minutą w dobie i na siatce 15 min (obrona w głąb — edytor snapuje).
+        (cell.startMinutes !== undefined &&
+          (!Number.isInteger(cell.startMinutes) ||
+            cell.startMinutes < 0 ||
+            cell.startMinutes >= DAY_MINUTES ||
+            cell.startMinutes % MINUTE_STEP !== 0)),
     ) ||
     (payload.newUnassigned ?? []).some(
       (item) => !Number.isFinite(item.hours) || item.hours < 0,
@@ -753,14 +769,19 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
 
   // Desired day total per pair (assigned people only; unassigned cells skipped).
   const cellByPair = new Map<string, { personId: string; date: string; totalQ: number }>();
+  // Opcjonalna przypięta godzina startu per para — stosowana w JEDNYM przebiegu
+  // PO rekoncyliacji (patrz niżej), więc gałęzie delty zostają nietknięte.
+  const wantStartByPair = new Map<string, number>();
   for (const c of allocations) {
     if (!assignedSet.has(c.personId)) continue;
+    const pairKey = dayKey(c.personId, c.date);
     // Snap to the 0.25h grid before quarter conversion (input step is UI-only).
-    cellByPair.set(dayKey(c.personId, c.date), {
+    cellByPair.set(pairKey, {
       personId: c.personId,
       date: c.date,
       totalQ: toQuarters(snapHours(c.plannedHours)),
     });
+    if (c.startMinutes !== undefined) wantStartByPair.set(pairKey, c.startMinutes);
   }
 
   // Union of pairs to process: existing dated pairs of STILL-ASSIGNED people
@@ -858,6 +879,35 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
     for (const b of blocks) {
       const s = survivorById.get(b.id);
       if (s) workloadForTask.push(s);
+    }
+  }
+
+  // Opcjonalna przypięta godzina startu z komórki siatki: JEDEN przebieg po
+  // wyemitowanych wpisach, wspólny dla wszystkich czterech gałęzi wyżej (przy
+  // nowej parze nadpisuje wynik findFreeStart/nextFreeStart). Stosowany TYLKO
+  // gdy para (osoba, dzień) ma po zapisie DOKŁADNIE jeden blok — dzień
+  // wielo-blokowy zachowuje swoje upakowanie (UI nie oferuje tam pola).
+  // Pin jest CLAMPOWANY do doby, nigdy odrzucany, i wolno mu tworzyć nakładkę
+  // (inwariant 3 — SAVE_TASK nie odrzuca na umiejscowieniu). Bez pinów w
+  // ładunku ten blok nie wykonuje żadnej pracy, więc wynik zostaje bajtowo
+  // identyczny z dotychczasowym.
+  if (wantStartByPair.size > 0) {
+    const emittedIndexByPair = new Map<string, number[]>();
+    workloadForTask.forEach((w, i) => {
+      const k = dayKey(w.personId, w.date);
+      const list = emittedIndexByPair.get(k);
+      if (list) list.push(i);
+      else emittedIndexByPair.set(k, [i]);
+    });
+    for (const [key, want] of wantStartByPair) {
+      const indexes = emittedIndexByPair.get(key);
+      if (!indexes || indexes.length !== 1) continue; // 0 lub ≥2 bloki — pomijamy
+      const idx = indexes[0];
+      const entry = workloadForTask[idx];
+      const start = clampBlockStart(want, hoursToMinutes(entry.plannedHours));
+      if (start === entry.startMinutes) continue;
+      workloadForTask[idx] = { ...entry, startMinutes: start };
+      touched.add(key);
     }
   }
 
@@ -1019,8 +1069,12 @@ function setTaskRecurrence(
  * SAMA referencja, inwariant 6): nieznane `taskId`; zadanie bez `recurrence`;
  * `date` niebędące datą wystąpienia (`isOccurrenceDate`); przesunięcie czasu
  * poza siatką / duration < 15 / start+duration > 1440; strukturalnie zły ładunek.
- * `override: null` usuwa wyjątek dla `date` (brak => no-op). Przesunięcie równe
- * regule = usunięcie wyjątku (forma kanoniczna). Upsert po dacie; wynik posortowany.
+ * `override: null` usuwa CAŁY wyjątek dla `date` — razem z flagą `done`
+ * pojedynczego wystąpienia („przywróć zgodnie z regułą"); brak wyjątku => no-op.
+ * Przesunięcie czasu ZACHOWUJE istniejące `done` tej daty; przesunięcie równe
+ * regule usuwa wyjątek, a przy zachowanym `done` zwija się do `{date, done:true}`
+ * (forma kanoniczna). Gałąź `skip` z definicji nie niesie `done` (pominięty dzień
+ * nie ma wystąpienia). Upsert po dacie; wynik posortowany.
  */
 function setRecurrenceOverride(
   state: AppData,
@@ -1055,7 +1109,12 @@ function setRecurrenceOverride(
     ) {
       return state; // poza siatką / za krótki / strukturalnie zły
     }
-    nextOverrides = [...others, { date, startMinutes, durationMinutes }];
+    // Przesunięcie czasu NIE kasuje wykonania pojedynczego wystąpienia.
+    const prevDone = existing.some((o) => o.date === date && o.done === true);
+    nextOverrides = [
+      ...others,
+      { date, ...(prevDone ? { done: true as const } : {}), startMinutes, durationMinutes },
+    ];
   }
 
   // Re-kanonikalizacja: przesunięcie równe regule odpada, wynik sortowany.
@@ -1069,6 +1128,67 @@ function setRecurrenceOverride(
     ...state,
     tasks,
     activity: withActivity(state, 'task', taskId, 'zmienił(a) wystąpienie cyklicznego zadania'),
+  };
+}
+
+/**
+ * Wykonanie POJEDYNCZEGO wystąpienia cyklicznego zadania: flaga `done` w
+ * wyjątku danej daty (wzorzec `SET_BLOCK_DONE`). NIGDY nie zmienia
+ * `Task.statusId` — całą serię przełącza `SET_TASK_STATUS` — i nie tworzy
+ * żadnych wierszy workload (inwariant 1, wystąpienia zostają prezentacyjne).
+ * Odrzuca (TA SAMA referencja, inwariant 6): nieznane `taskId`; zadanie bez
+ * `recurrence`; `date` niebędące datą wystąpienia; data z wyjątkiem
+ * `{ skip: true }` (pominięty dzień nie ma wystąpienia do oznaczenia);
+ * no-op (`done: true` na już zrobionym, `done: false` na dacie bez flagi) —
+ * strukturalnie domyka to strażnik `sameRowValue(rule, next)`.
+ * `done: true` ZACHOWUJE istniejące przesunięcie czasu; `done: false` usuwa sam
+ * klucz `done`, a wyjątek bez przesunięcia znika w całości (forma kanoniczna).
+ */
+function setOccurrenceDone(
+  state: AppData,
+  taskId: string,
+  date: string,
+  done: boolean,
+): AppData {
+  const task = state.tasks.find((t) => t.id === taskId);
+  if (!task) return state;
+  const rule = task.recurrence;
+  if (rule === undefined) return state;
+  if (!isOccurrenceDate(rule, task.startDate, date)) return state;
+
+  const existing = rule.overrides ?? [];
+  const current = existing.find((o) => o.date === date);
+  if (current?.skip === true) return state; // pominięty dzień => brak wystąpienia
+  const others = existing.filter((o) => o.date !== date);
+
+  let nextOverrides: unknown[];
+  if (done === true) {
+    const { done: _drop, ...keep } = current ?? { date };
+    nextOverrides = [...others, { ...keep, date, done: true as const }];
+  } else {
+    if (current === undefined || current.done !== true) return state; // no-op
+    const { done: _drop, ...keep } = current;
+    nextOverrides = [...others, { ...keep, date }];
+  }
+
+  // Re-kanonikalizacja: wyjątek bez `done` i bez przesunięcia odpada, sort po dacie.
+  const next = normalizeRecurrence({ ...rule, overrides: nextOverrides }, task.startDate);
+  if (!next) return state; // reguła jest już kanoniczna — strażnik dla TS
+  if (sameRowValue(rule, next)) return state; // brak zmiany wartości => no-op
+  const tasks = state.tasks.map((t) =>
+    t.id === taskId ? { ...t, recurrence: next, updatedAt: nowIso() } : t,
+  );
+  return {
+    ...state,
+    tasks,
+    activity: withActivity(
+      state,
+      'task',
+      taskId,
+      done
+        ? 'oznaczył(a) wystąpienie cyklicznego zadania jako zrobione'
+        : 'cofnął(-ęła) wykonanie wystąpienia cyklicznego zadania',
+    ),
   };
 }
 
@@ -2976,6 +3096,8 @@ export function reducer(state: AppData, action: Action): AppData {
       return setTaskRecurrence(state, action.taskId, action.recurrence);
     case 'SET_RECURRENCE_OVERRIDE':
       return setRecurrenceOverride(state, action.taskId, action.date, action.override);
+    case 'SET_OCCURRENCE_DONE':
+      return setOccurrenceDone(state, action.taskId, action.date, action.done);
     case 'PUBLISH_PROJECT_DRAFTS':
       return publishProjectDrafts(state, action.projectId);
     case 'PUBLISH_TASK':
@@ -3909,7 +4031,26 @@ interface StoreValue {
   lastActionRef: React.MutableRefObject<Action['type'] | null>;
 }
 
-const StoreContext = createContext<StoreValue | null>(null);
+/**
+ * The NEVER-CHANGING half of the store: everything a consumer can use without
+ * re-rendering per action. Its value object is created ONCE per provider
+ * instance, so a dispatch-only consumer (`useDispatch`) re-renders zero times
+ * when an action lands.
+ */
+export interface StoreApi {
+  dispatch: React.Dispatch<Action>;
+  lastActionRef: React.MutableRefObject<Action['type'] | null>;
+  /** The state committed RIGHT NOW — for event handlers, never for render. */
+  getState(): AppData;
+  /** Notified once per reference-changing dispatch. Returns an unsubscribe. */
+  subscribe(listener: () => void): () => void;
+}
+
+// This is a SPLIT of the ONE store context into its changing half (the state)
+// and its constant half (the api) — NOT provider multiplication. `useStore()`
+// recomposes both, so every unmigrated consumer keeps its exact behaviour.
+const StateContext = createContext<AppData | null>(null);
+const StoreApiContext = createContext<StoreApi | null>(null);
 
 // ---- Persistence meta-state (honest save outcome + same-browser tab safety) --
 // This lives OUTSIDE the reducer: it is meta-state about the persist layer, and
@@ -3943,15 +4084,29 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     initialLoadRef.current = result;
   }
   const initialLoad = initialLoadRef.current;
-  const [state, rawDispatch] = useReducer(reducer, initialLoad.data);
+
+  // ONE external store per provider instance (created lazily in a ref — never a
+  // module singleton, so a StrictMode remount or a second test render starts
+  // clean). It runs the SAME `reducer` synchronously; everything downstream
+  // (`[state]` persist effect, colour registration, contexts, conflict flow)
+  // still sees exactly one committed state per change.
+  // Documented trade-off: React's dev-only double-invoke of the reducer (a
+  // `useReducer` purity check) no longer happens.
+  const storeRef = useRef<ExternalStore<AppData, Action> | null>(null);
+  if (storeRef.current === null) {
+    storeRef.current = createExternalStore<AppData, Action>(reducer, initialLoad.data);
+  }
+  const store = storeRef.current;
+  const state = useSyncExternalStore(store.subscribe, store.getState, store.getState);
 
   // Track the last dispatched action type so the cloud mirror can suppress its
   // own hydration and local-only transitions. A thin wrapper keeps useStore()'s
-  // signature and every existing consumer untouched.
+  // signature and every existing consumer untouched: `lastActionRef` is still
+  // set BEFORE the reducer runs.
   const lastActionRef = useRef<Action['type'] | null>(null);
   const dispatch = useCallback<React.Dispatch<Action>>((action) => {
     lastActionRef.current = action.type;
-    rawDispatch(action);
+    store.dispatch(action);
   }, []);
 
   const [saveError, setSaveError] = useState<SaveFailureReason | null>(null);
@@ -4138,7 +4293,18 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     setExternal((prev) => (prev === 'refreshed' ? 'none' : prev));
   }, []);
 
-  const value = useMemo(() => ({ state, dispatch, lastActionRef }), [state, dispatch]);
+  // Stable api surface: `dispatch` is `useCallback([])`-stable and the store's
+  // own `getState`/`subscribe` are fixed for its lifetime, so `storeApi` is
+  // referentially CONSTANT — a dispatch-only consumer never re-renders.
+  const storeApi = useMemo<StoreApi>(
+    () => ({
+      dispatch,
+      lastActionRef,
+      getState: store.getState,
+      subscribe: store.subscribe,
+    }),
+    [dispatch, store],
+  );
 
   const persistence = useMemo<PersistenceValue>(
     () => ({
@@ -4158,16 +4324,96 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   if (loadError) throw loadError;
 
   return (
-    <StoreContext.Provider value={value}>
-      <PersistenceContext.Provider value={persistence}>{children}</PersistenceContext.Provider>
-    </StoreContext.Provider>
+    <StoreApiContext.Provider value={storeApi}>
+      <StateContext.Provider value={state}>
+        <PersistenceContext.Provider value={persistence}>{children}</PersistenceContext.Provider>
+      </StateContext.Provider>
+    </StoreApiContext.Provider>
   );
 }
 
+/**
+ * Compatibility façade: recomposes both halves of the split context, so it still
+ * re-renders on every action and every existing consumer behaves identically.
+ * New code should prefer `useDispatch()` (no re-render) or `useSelector()`.
+ */
 export function useStore(): StoreValue {
-  const ctx = useContext(StoreContext);
-  if (!ctx) throw new Error('useStore must be used within AppStoreProvider');
-  return ctx;
+  const api = useContext(StoreApiContext);
+  const state = useContext(StateContext);
+  const value = useMemo(
+    () =>
+      api && state
+        ? { state, dispatch: api.dispatch, lastActionRef: api.lastActionRef }
+        : null,
+    [api, state],
+  );
+  if (!value) throw new Error('useStore must be used within AppStoreProvider');
+  return value;
+}
+
+/** Dispatch only — referentially constant, so it NEVER re-renders on an action. */
+export function useDispatch(): React.Dispatch<Action> {
+  const api = useContext(StoreApiContext);
+  if (!api) throw new Error('useDispatch must be used within AppStoreProvider');
+  return api.dispatch;
+}
+
+/** The constant api object (dispatch + lastActionRef + getState + subscribe). */
+export function useStoreApi(): StoreApi {
+  const api = useContext(StoreApiContext);
+  if (!api) throw new Error('useStoreApi must be used within AppStoreProvider');
+  return api;
+}
+
+// The equality helper used by list/slice selections. Defined in the React-free
+// externalStore module (so it is unit-testable in the node environment) and
+// re-exported here, next to useSelector, which is where callers reach for it.
+export { shallowEqual };
+
+/**
+ * Subscribe to a SLICE of the store. The component re-renders only when the
+ * selection fails `isEqual` — the default `Object.is` is right for primitives
+ * and for cached selectors (per-revision stable references); pass
+ * {@link shallowEqual} for object/array selections.
+ *
+ * Deliberately built on React 18's own `useSyncExternalStore` (no
+ * `use-sync-external-store/with-selector` dependency): `selector`/`isEqual` live
+ * in refs, and the stable `getSnapshot` returns the PREVIOUS result whenever the
+ * new one is equal, so React sees a stable snapshot and skips the render.
+ */
+export function useSelector<T>(
+  selector: (state: AppData) => T,
+  isEqual: (a: T, b: T) => boolean = Object.is,
+): T {
+  const api = useContext(StoreApiContext);
+  const apiRef = useRef(api);
+  apiRef.current = api;
+  const selectorRef = useRef(selector);
+  selectorRef.current = selector;
+  const isEqualRef = useRef(isEqual);
+  isEqualRef.current = isEqual;
+  const cacheRef = useRef<{ filled: boolean; value: T }>({
+    filled: false,
+    value: undefined as unknown as T,
+  });
+
+  const subscribe = useCallback((listener: () => void) => {
+    const current = apiRef.current;
+    if (!current) return () => {};
+    return current.subscribe(listener);
+  }, []);
+
+  const getSnapshot = useCallback((): T => {
+    const current = apiRef.current;
+    if (!current) throw new Error('useSelector must be used within AppStoreProvider');
+    const next = selectorRef.current(current.getState());
+    const cache = cacheRef.current;
+    if (cache.filled && isEqualRef.current(cache.value, next)) return cache.value;
+    cacheRef.current = { filled: true, value: next };
+    return next;
+  }, []);
+
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
 export function usePersistence(): PersistenceValue {

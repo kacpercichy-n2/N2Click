@@ -1,11 +1,13 @@
 // Shared saved-filter preset UI for the Projects and Tasks pages.
 // Renders chips for the stored presets of `page` (apply on click, ✕ deletes),
 // plus a "Zapisz filtr" control that snapshots the current criteria as a preset.
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useStore } from '../store/AppStore';
 import type { FilterPage, SavedFilterCriteria } from '../types';
 import { DEFAULT_FILTER_CRITERIA } from '../store/storage';
+import { useConfirm } from './ConfirmProvider';
 import { Bookmark, Check, X } from './icons';
+import { DisabledHint, Tooltip } from './Tooltip';
 
 // Single source of truth lives in storage.ts; re-exported under the name the
 // import sites (ProjectsPage/TasksPage) already use.
@@ -36,14 +38,24 @@ export function FilterPresets({
   onApply: (criteria: SavedFilterCriteria) => void;
 }) {
   const { state, dispatch } = useStore();
+  const confirm = useConfirm();
+  const uid = useId();
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState('');
 
   const presets = state.savedFilters.filter((f) => f.page === page);
   const canSave = isCriteriaActive(criteria);
 
-  const remove = (filterId: string, filterName: string) => {
-    if (window.confirm(`Usunąć zapisany filtr „${filterName}”?`)) {
+  // Preset to zapisane kryteria, nie dane planu — jednoklikowe pytanie bez
+  // wyliczania skutków i bez `requireAck`.
+  const remove = async (filterId: string, filterName: string) => {
+    if (
+      await confirm({
+        title: `Usunąć zapisany filtr „${filterName}”?`,
+        confirmLabel: 'Usuń filtr',
+        tone: 'danger',
+      })
+    ) {
       dispatch({ type: 'DELETE_FILTER_PRESET', filterId });
     }
   };
@@ -60,15 +72,16 @@ export function FilterPresets({
     <div className="filter-presets">
       {presets.map((f) => (
         <span key={f.id} className="preset-chip">
-          <button
-            type="button"
-            className="preset-chip-apply"
-            onClick={() => onApply(f.criteria)}
-            title="Zastosuj zapisany filtr"
-          >
-            <Bookmark size={13} />
-            {f.name}
-          </button>
+          <Tooltip text="Zastosuj zapisany filtr">
+            <button
+              type="button"
+              className="preset-chip-apply"
+              onClick={() => onApply(f.criteria)}
+            >
+              <Bookmark size={13} />
+              {f.name}
+            </button>
+          </Tooltip>
           <button
             type="button"
             className="preset-chip-del"
@@ -116,15 +129,28 @@ export function FilterPresets({
           </button>
         </span>
       ) : (
-        <button
-          type="button"
-          className="btn ghost small preset-save-btn"
-          onClick={() => setNaming(true)}
-          disabled={!canSave}
-          title={canSave ? 'Zapisz bieżące filtry jako preset' : 'Ustaw jakiś filtr, aby go zapisać'}
-        >
-          <Bookmark size={14} /> Zapisz filtr
-        </button>
+        // Wyłączony przycisk POŁYKA zdarzenia wskaźnika, więc powód blokady
+        // niesie `DisabledHint` (opakowanie + ukryty opis); sprawny przycisk
+        // dostaje zwykły dymek.
+        (() => {
+          const saveBtn = (
+            <button
+              type="button"
+              className="btn ghost small preset-save-btn"
+              onClick={() => setNaming(true)}
+              disabled={!canSave}
+            >
+              <Bookmark size={14} /> Zapisz filtr
+            </button>
+          );
+          return canSave ? (
+            <Tooltip text="Zapisz bieżące filtry jako preset">{saveBtn}</Tooltip>
+          ) : (
+            <DisabledHint reason="Ustaw jakiś filtr, aby go zapisać" id={`${uid}-save-blocked`}>
+              {saveBtn}
+            </DisabledHint>
+          );
+        })()
       )}
     </div>
   );

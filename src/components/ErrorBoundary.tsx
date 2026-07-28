@@ -50,6 +50,19 @@ export class ErrorBoundary extends Component<Props, State> {
   };
 
   // Reset only behind an explicit confirm — never automatic.
+  //
+  // JEDYNE miejsce w aplikacji, które ŚWIADOMIE zostaje przy natywnym
+  // `window.confirm` zamiast wspólnego `useConfirm()`:
+  //  * ten ekran renderuje się dopiero, GDY drzewo pod spodem już się wysypało,
+  //    więc pytanie o zerowanie danych nie może zależeć od tego samego Reacta
+  //    (kontekst dostawcy potwierdzeń, `motion`, powłoka modala);
+  //  * ta sama klasa jest zamontowana DWA razy (w `main.tsx` NAD dostawcą i w
+  //    trasie pod nim), więc w górnej pozycji kontekstu po prostu nie ma;
+  //  * klasy nie mogą używać hooków, a `contextType`/Consumer wprowadzałby
+  //    zależność, którą awaria właśnie unieważniła.
+  // Ekran awarii ma działać wtedy, kiedy nie działa nic innego — patrz też
+  // `scripts/browser-check-date-hardening.mjs` (flow4/flow5 sterują tym
+  // natywnym dialogiem).
   private handleReset = (): void => {
     if (
       window.confirm(

@@ -8,8 +8,14 @@
 // Polish; styling uses existing --n2-* semantic tokens; no animation.
 import { useEffect } from 'react';
 import { useStore, usePersistence } from '../store/AppStore';
+import { useConfirm } from './ConfirmProvider';
+import { Tooltip } from './Tooltip';
+import { announce } from '../utils/liveRegion';
 import { exportRawData } from '../store/storage';
 import type { SaveFailureReason } from '../store/storage';
+
+/** Informacja o odświeżeniu z innej karty — jedyny łagodny stan tego banera. */
+const REFRESHED_MSG = 'Dane odświeżono — wczytano zmiany zapisane w innej karcie.';
 
 const FAILURE_FIRST_SENTENCE: Record<SaveFailureReason, string> = {
   quota: 'Nie udało się zapisać danych — brak miejsca w pamięci przeglądarki.',
@@ -22,6 +28,7 @@ const FAILURE_FIRST_SENTENCE: Record<SaveFailureReason, string> = {
 
 export function PersistenceBanner() {
   const { state } = useStore();
+  const confirm = useConfirm();
   const {
     saveError,
     external,
@@ -42,6 +49,14 @@ export function PersistenceBanner() {
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [saveError]);
+
+  // Baner „odświeżono” montuje się RAZEM ze swoim komunikatem, więc własny
+  // `role="status"` bywa niesłyszalny — ogłoszenie idzie trwałym kanałem
+  // powłoki. Warianty błędu i konfliktu zostają przy `role="alert"`.
+  useEffect(() => {
+    if (saveError !== null || external !== 'refreshed') return;
+    announce({ id: 'persistence', text: REFRESHED_MSG, tone: 'polite' });
+  }, [saveError, external]);
 
   // Export the IN-MEMORY state — that is the point: after a failed write the
   // stored copy is stale. Fall back to the raw stored copy only when the state
@@ -105,25 +120,27 @@ export function PersistenceBanner() {
             type="button"
             className="btn primary"
             onClick={() => {
-              if (
-                window.confirm(
-                  'Wczytać dane zapisane przez inną kartę? Niezapisane zmiany w tej karcie zostaną utracone.',
-                )
-              ) {
-                acceptExternal();
-              }
+              // Baner renderuje się WEWNĄTRZ App, więc dostawca potwierdzeń
+              // (montowany w `main.tsx` nad wszystkim) jest jego przodkiem.
+              void confirm({
+                title: 'Wczytać dane zapisane przez inną kartę?',
+                consequences: 'Niezapisane zmiany w tej karcie zostaną utracone.',
+                confirmLabel: 'Wczytaj wersję z innej karty',
+                tone: 'danger',
+                // Bez `requireAck`: to konflikt niezapisanych zmian, nie
+                // kasowanie zapisanych danych.
+              }).then((ok) => {
+                if (ok) acceptExternal();
+              });
             }}
           >
             Wczytaj wersję z innej karty
           </button>
-          <button
-            type="button"
-            className="btn ghost"
-            title="Zapisuje stan tej karty, nadpisując zmiany z innej karty."
-            onClick={keepLocal}
-          >
-            Zostaw moją wersję (nadpisz)
-          </button>
+          <Tooltip text="Zapisuje stan tej karty, nadpisując zmiany z innej karty.">
+            <button type="button" className="btn ghost" onClick={keepLocal}>
+              Zostaw moją wersję (nadpisz)
+            </button>
+          </Tooltip>
         </div>
       </div>
     );
@@ -131,12 +148,9 @@ export function PersistenceBanner() {
 
   if (external === 'refreshed') {
     return (
-      <div
-        className="persistence-banner persistence-banner--info"
-        role="status"
-      >
+      <div className="persistence-banner persistence-banner--info">
         <div className="persistence-banner-text">
-          <p>Dane odświeżono — wczytano zmiany zapisane w innej karcie.</p>
+          <p>{REFRESHED_MSG}</p>
         </div>
         <div className="persistence-banner-actions">
           <button

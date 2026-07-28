@@ -1,6 +1,8 @@
-// Etykieta zakresu dat wpisu dziennika zmian.
+// Etykieta zakresu dat wpisu dziennika zmian + reguły paska „Nowości" na Panelu:
+// czy najnowszy wpis jest jeszcze nieprzeczytany i jak brzmi jedyne CTA.
 import { describe, expect, it } from 'vitest';
-import { changelogRangeLabel, isSameDayRange } from './changelog';
+import { changelogCtaLabel, changelogRangeLabel, changelogUnread } from './changelog';
+import type { ChangelogEntry } from './changelog';
 
 describe('changelogRangeLabel', () => {
   it('pokazuje jedną datę dla tego samego dnia', () => {
@@ -25,17 +27,51 @@ describe('changelogRangeLabel', () => {
   });
 });
 
-describe('isSameDayRange', () => {
-  it('true, gdy obie daty są takie same i poprawne', () => {
-    expect(isSameDayRange('2026-07-21', '2026-07-21')).toBe(true);
+describe('changelogUnread', () => {
+  const entry = (id: string): ChangelogEntry => ({
+    id,
+    dateFrom: '2026-07-20',
+    dateTo: '2026-07-21',
+    summary: 'Podsumowanie.',
+    items: [],
   });
 
-  it('false dla zakresu wielodniowego', () => {
-    expect(isSameDayRange('2026-07-20', '2026-07-21')).toBe(false);
+  it('nic nie potwierdzone => wpis jest nowy', () => {
+    expect(changelogUnread(entry('a'), undefined)).toBe(true);
   });
 
-  it('false dla niepoprawnych dat', () => {
-    expect(isSameDayRange('', '')).toBe(false);
-    expect(isSameDayRange('2026-13-01', '2026-13-01')).toBe(false);
+  it('potwierdzony TEN wpis => pasek znika', () => {
+    expect(changelogUnread(entry('a'), 'a')).toBe(false);
+  });
+
+  it('potwierdzony STARSZY wpis => nowy wpis znów jest nowy', () => {
+    expect(changelogUnread(entry('b'), 'a')).toBe(true);
+  });
+
+  it('pusty dziennik => nie ma czego pokazywać', () => {
+    expect(changelogUnread(undefined, undefined)).toBe(false);
+    expect(changelogUnread(undefined, 'a')).toBe(false);
+  });
+});
+
+describe('changelogCtaLabel', () => {
+  const withRange = (dateFrom: string, dateTo: string): ChangelogEntry => ({
+    id: 'x',
+    dateFrom,
+    dateTo,
+    summary: '',
+    items: [],
+  });
+
+  it('jedno CTA z zakresem dat', () => {
+    expect(changelogCtaLabel(withRange('2026-07-20', '2026-07-21'))).toBe('Nowości 20–21.07');
+  });
+
+  it('pojedynczy dzień', () => {
+    expect(changelogCtaLabel(withRange('2026-07-23', '2026-07-23'))).toBe('Nowości 23.07');
+  });
+
+  it('niepoprawne daty => samo „Nowości" (nigdy pusty przycisk)', () => {
+    expect(changelogCtaLabel(withRange('', ''))).toBe('Nowości');
   });
 });

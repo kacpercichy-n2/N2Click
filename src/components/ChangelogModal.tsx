@@ -1,10 +1,13 @@
 // Popout dziennika zmian („Changelog"). Wzorzec jest ten sam co w TicketModal:
 // scrim + viewport z zamknięciem po kliknięciu w tło, klawisz Escape zamyka,
 // body dostaje `overflow: hidden`, a wejście/wyjście animuje AnimatePresence.
+// Zachowanie powłoki (fokus, pułapka Tab, blokada scrolla, zamknięcie po kliku
+// w tło) trzyma wspólny `ModalFrame`.
 // W odróżnieniu od TicketModal nie chodzi tu o edycję danych, więc modal jest
 // sterowany zwykłym stanem (`open`/`onClose`), bez parametru w URL i strażnika
 // nawigacji.
 import { useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { AnimatePresence } from 'motion/react';
 import { CHANGELOG, changelogRangeLabel } from '../data/changelog';
 import type { ChangelogEntry, ChangelogItem } from '../data/changelog';
@@ -68,6 +71,12 @@ function ChangelogModalShell({ onClose }: { onClose: () => void }) {
             <ChangelogEntryBlock key={entry.id} entry={entry} />
           ))}
         </div>
+        {/* Panel ma już tylko JEDNO CTA („Nowości …"), więc pełna strona
+         *  historii jest linkowana stąd — inaczej trasa `/changelog`
+         *  zostałaby bez wejścia z aplikacji. */}
+        <Link to="/changelog" className="link-btn changelog-modal-full" onClick={requestClose}>
+          Zobacz pełną historię →
+        </Link>
       </div>
     </ModalFrame>
   );

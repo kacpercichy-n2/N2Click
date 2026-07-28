@@ -2,14 +2,18 @@
 // modułu walidacji (src/auth/passwordChange.ts) i `changePassword` z kontekstu
 // sesji. Dostępny wyłącznie dla realnego konta Supabase — w trybie lokalnym
 // trasa przekierowuje na `/` (patrz App.tsx). Nigdy nie wyświetlamy haseł.
-import { useState, type FormEvent } from 'react';
+// Potwierdzenie zmiany hasła ogłasza trwały kanał powłoki (liveRegion).
+import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../auth/SessionProvider';
+import { announce } from '../utils/liveRegion';
 import { validateNewPassword } from '../auth/passwordChange';
 import { useStore } from '../store/AppStore';
 import { useOrgData } from '../supabase/OrgDataProvider';
 import type { CloudProfile } from '../supabase/referenceData';
 import { NavOrderEditor } from '../components/NavOrderEditor';
+
+const PASSWORD_CHANGED_MSG = 'Hasło zostało zmienione.';
 
 export function AccountPage() {
   const { changePassword, mode } = useAuth();
@@ -20,6 +24,13 @@ export function AccountPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  // Potwierdzenie montuje się razem ze swoim tekstem — ogłasza je trwały kanał
+  // powłoki, a sam akapit jest już zwykłym hintem.
+  useEffect(() => {
+    if (!success) return;
+    announce({ id: 'account', text: PASSWORD_CHANGED_MSG, tone: 'polite' });
+  }, [success]);
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -99,11 +110,7 @@ export function AccountPage() {
             />
           </label>
           {error && <p className="field-error">{error}</p>}
-          {success && (
-            <p className="field-hint" role="status">
-              Hasło zostało zmienione.
-            </p>
-          )}
+          {success && <p className="field-hint">{PASSWORD_CHANGED_MSG}</p>}
           <button type="submit" className="btn primary" disabled={busy}>
             {busy ? 'Zapisywanie…' : 'Zmień hasło'}
           </button>

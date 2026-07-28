@@ -34,7 +34,13 @@ export function anyDirty(): boolean {
 // navigation: the task modal lives on the `?task=` search param, while the
 // project editor lives on the pathname.
 
-export type NavGuardScope = 'task-modal' | 'project-detail' | 'ticket-modal' | 'event-modal';
+export type NavGuardScope =
+  | 'task-modal'
+  | 'project-detail'
+  | 'ticket-modal'
+  | 'event-modal'
+  /** Pełna strona zadania `/tasks/:id` — żyje na ŚCIEŻCE, jak edytor projektu. */
+  | 'task-page';
 
 const navGuards = new Map<object, NavGuardScope>();
 
@@ -58,8 +64,9 @@ export function dirtyNavScopes(): ReadonlySet<NavGuardScope> {
  * Pure decision: would navigating `current` → `next` discard the edits held by
  * `scopes`? A dirty task modal dies when the `task` search param changes; a
  * dirty ticket modal dies when the `zgloszenie` search param changes; a dirty
- * project editor dies when the pathname changes (same-path search-param
- * changes, e.g. opening the task modal over it, keep it mounted).
+ * project editor — and the dirty full task page — die when the pathname changes
+ * (same-path search-param changes, e.g. opening the task/event modal over the
+ * page, keep it mounted).
  */
 export function navGuardBlocks(
   scopes: ReadonlySet<NavGuardScope>,
@@ -77,7 +84,8 @@ export function navGuardBlocks(
     (scopes.has('task-modal') && taskChanged) ||
     (scopes.has('ticket-modal') && ticketChanged) ||
     (scopes.has('event-modal') && wydarzenieChanged) ||
-    (scopes.has('project-detail') && pathChanged)
+    (scopes.has('project-detail') && pathChanged) ||
+    (scopes.has('task-page') && pathChanged)
   );
 }
 

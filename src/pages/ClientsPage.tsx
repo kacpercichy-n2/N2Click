@@ -3,12 +3,17 @@
 // archiwizacja i usuwanie (kaskadowe — patrz DELETE_CLIENT w reduktorze).
 // Uprawnienie `clients.manage` steruje edycją; podgląd ma każdy, kto widzi
 // nawigację (jak Projekty).
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { usePersistence, useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import type { Client } from '../types';
+import { projectPlannedTotal, projectsOfClient, tasksOfProject } from '../store/selectors';
 import { ChevronRight, Plus, Trash2 } from '../components/icons';
+import { useConfirm } from '../components/ConfirmProvider';
+import { buildDeleteConsequence } from '../components/confirmDialog';
+import { polishCount } from '../utils/polishPlural';
+import { ARCHIVED_SUFFIX } from '../utils/archivedLabel';
 import {
   clientDraftError,
   draftOf,
@@ -20,14 +25,12 @@ import {
   type ClientFormDraft,
 } from './clientContactForm';
 import { useAutoSave } from '../utils/useAutoSave';
+import { useSaveStatus } from '../utils/useSaveStatus';
+import { SaveStatus } from '../components/SaveStatus';
+import { announce } from '../utils/liveRegion';
 
-function polishCount(n: number, one: string, few: string, many: string): string {
-  const mod10 = n % 10;
-  const mod100 = n % 100;
-  if (n === 1) return one;
-  if (mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14)) return few;
-  return many;
-}
+/** Powód milczenia auto-zapisu — widoczny hint, ogłaszany wspólnym kanałem. */
+const AUTOSAVE_PAUSED_TEXT = 'Auto-zapis wstrzymany do czasu uzupełnienia wymaganych pól.';
 
 type DraftUpdater = (updater: (d: ClientFormDraft) => ClientFormDraft) => void;
 
@@ -190,8 +193,9 @@ function ClientFormFields({
 
 export function ClientsPage() {
   const { state, dispatch } = useStore();
-  const { external } = usePersistence();
+  const { external, saveError } = usePersistence();
   const canManage = useCan()('clients.manage');
+  const confirm = useConfirm();
 
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState<ClientFormDraft>(emptyDraft);
@@ -237,11 +241,6 @@ export function ClientsPage() {
     setEditDraft(draftOf(c));
   };
 
-  const commitEdit = () => {
-    if (editingId === '' || clientDraftError(editDraft) !== '') return;
-    dispatch({ type: 'SAVE_CLIENT', clientId: editingId, ...draftToActionPayload(editDraft) });
-  };
-
   // Auto-zapis edycji: TYLKO draft spełniający regułę formularza (nazwa + pełna
   // główna osoba kontaktowa + poprawne dodatkowe osoby) zapisuje się w tle po
   // pauzie w pisaniu. Reguła formularza jest STRICTLY silniejsza od bramki
@@ -251,6 +250,19 @@ export function ClientsPage() {
   const editedClient = state.clients.find((c) => c.id === editingId);
   const editDirty =
     editedClient !== undefined && normalizedDraft(draftOf(editedClient)) !== normalizedDraft(editDraft);
+  // Ten sam trzystanowy wskaźnik co w TaskModal/ProjectDetailPage. `saveError`
+  // (nieudany zapis do pamięci) trwale wygrywa z „Zapisano” — inwariant.
+  const { status: editStatus, savedAtLabel, markSaved } = useSaveStatus(
+    editDirty,
+    saveError !== null,
+  );
+
+  const commitEdit = () => {
+    if (editingId === '' || clientDraftError(editDraft) !== '') return;
+    dispatch({ type: 'SAVE_CLIENT', clientId: editingId, ...draftToActionPayload(editDraft) });
+    markSaved();
+  };
+
   useAutoSave({
     // Jawny konflikt kart wstrzymuje auto-zapis (decyzja należy do banera).
     enabled: canManage && editingId !== '' && external !== 'conflict',
@@ -264,6 +276,12 @@ export function ClientsPage() {
   // niepoprawnym drafcie, więc powód musi być widoczny od razu. Znika sam, gdy
   // użytkownik uzupełni brakujące pole.
   const editError = editingId === '' ? '' : clientDraftError(editDraft);
+  // Wstrzymany auto-zapis to zwykły, widoczny hint (bez własnego regionu live) —
+  // ogłasza go wspólny kanał powłoki.
+  useEffect(() => {
+    if (editError === '') return;
+    announce({ id: 'save:client-paused', text: AUTOSAVE_PAUSED_TEXT, tone: 'polite' });
+  }, [editError]);
 
   const submitEdit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -272,13 +290,27 @@ export function ClientsPage() {
     setEditingId('');
   };
 
-  const remove = (c: Client) => {
-    const count = projectCounts.get(c.id) ?? 0;
-    const cascade =
-      count > 0
-        ? ` Usunie to także ${count} ${polishCount(count, 'projekt', 'projekty', 'projektów')} tego klienta wraz z zadaniami i godzinami.`
-        : '';
-    if (window.confirm(`Usunąć klienta „${c.name}”?${cascade}`)) {
+  const remove = async (c: Client) => {
+    // Liczba projektów zostaje z `projectCounts` (bez zmian); zadania i godziny
+    // dokładamy z istniejących selektorów, żeby kaskada była nazwana wprost.
+    const projects = projectCounts.get(c.id) ?? 0;
+    const clientProjects = projectsOfClient(state, c.id);
+    const tasks = clientProjects.reduce((n, p) => n + tasksOfProject(state, p.id).length, 0);
+    const plannedHours = clientProjects.reduce(
+      (h, p) => h + projectPlannedTotal(state, p.id),
+      0,
+    );
+    const consequences = buildDeleteConsequence({ projects, tasks, plannedHours });
+    if (
+      await confirm({
+        title: `Usunąć klienta „${c.name}”?`,
+        consequences,
+        confirmLabel: 'Usuń klienta',
+        tone: 'danger',
+        // Kaskada niszczy prawdziwe dane planu — świadome potwierdzenie.
+        requireAck: consequences !== '',
+      })
+    ) {
       dispatch({ type: 'DELETE_CLIENT', clientId: c.id });
     }
   };
@@ -367,11 +399,15 @@ export function ClientsPage() {
                       </p>
                     )}
                     <div className="form-actions">
-                      <span className="field-hint autosave-hint" role="status">
-                        {editError
-                          ? 'Auto-zapis wstrzymany do czasu uzupełnienia wymaganych pól.'
-                          : 'Zmiany zapisują się automatycznie.'}
-                      </span>
+                      {editError ? (
+                        <span className="field-hint autosave-hint">{AUTOSAVE_PAUSED_TEXT}</span>
+                      ) : (
+                        <SaveStatus
+                          status={editStatus}
+                          savedAtLabel={savedAtLabel}
+                          announceId="save:client"
+                        />
+                      )}
                       <button type="submit" className="btn primary">
                         Zamknij
                       </button>
@@ -389,7 +425,7 @@ export function ClientsPage() {
                       >
                         <ChevronRight size={16} className="client-card-chevron" aria-hidden />
                         <strong>{c.name}</strong>
-                        {c.archived && <span className="muted"> (zarchiwizowany)</span>}
+                        {c.archived && <span className="muted">{ARCHIVED_SUFFIX}</span>}
                         {extraCount > 0 && (
                           <span className="client-contact-badge">
                             +{extraCount}{' '}

@@ -223,20 +223,33 @@ async function flowStatusSemantics(browser) {
     await page.goto(`${BASE}/admin`, { waitUntil: 'networkidle' });
     const gotoweRow = statusRow(page, 'Gotowe');
     const gotoweCheckbox = gotoweRow.locator('input[type="checkbox"]');
-    const gotoweCheckboxLabel = gotoweRow.locator('label.admin-status-done');
+    // Powody i objaśnienia nie są już natywnym `title` (hover-only, nieobecny
+    // na dotyku): tekst siedzi w ukrytym opisie wskazywanym przez
+    // `aria-describedby` samej kontrolki (AdminPage.tsx: `admin-done-<id>`
+    // przy checkboksie „Ukończenie", `admin-archive-<id>` przy „Archiwizuj").
+    const describedText = (locator) =>
+      locator.evaluate((el) =>
+        (el.getAttribute('aria-describedby') || '')
+          .split(/\s+/)
+          .filter(Boolean)
+          .map((id) => document.getElementById(id)?.textContent || '')
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim(),
+      );
     const gotoweArchiveBtn2 = gotoweRow.getByRole('button', { name: 'Archiwizuj' });
 
     ok(await gotoweCheckbox.isDisabled(), 'e: Gotowe Ukończenie checkbox is disabled (only done status)');
-    const checkboxTitle = await gotoweCheckboxLabel.getAttribute('title');
+    const checkboxHint = await describedText(gotoweCheckbox);
     ok(
-      checkboxTitle === 'To jedyny status oznaczający ukończenie — najpierw oznacz inny status.',
-      `e: Gotowe checkbox title matches the guard copy (got "${checkboxTitle}")`,
+      checkboxHint === 'To jedyny status oznaczający ukończenie — najpierw oznacz inny status.',
+      `e: Gotowe checkbox description matches the guard copy (got "${checkboxHint}")`,
     );
     ok(await gotoweArchiveBtn2.isDisabled(), 'e: Gotowe archive button is disabled (only done status)');
-    const archiveTitle = await gotoweArchiveBtn2.getAttribute('title');
+    const archiveHint = await describedText(gotoweArchiveBtn2);
     ok(
-      archiveTitle === 'Nie można zarchiwizować jedynego statusu ukończenia — najpierw oznacz inny status.',
-      `e: Gotowe archive title matches the guard copy (got "${archiveTitle}")`,
+      archiveHint === 'Nie można zarchiwizować jedynego statusu ukończenia — najpierw oznacz inny status.',
+      `e: Gotowe archive description matches the guard copy (got "${archiveHint}")`,
     );
     await page.screenshot({ path: `${SHOTS}/${ENGINE}-e-admin-guard.png` });
 

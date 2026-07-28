@@ -74,22 +74,24 @@ async function run() {
       hasText: 'Kalendarz: planowanie zaawansowane',
     });
     const advancedStart = advanced.getByRole('button', { name: 'Uruchom' });
-    let confirmationPromise = page.waitForEvent('dialog');
-    let startClick = advancedStart.click();
-    let confirmation = await confirmationPromise;
+    // The disclosure is no longer a native `window.confirm`: it is the shared
+    // in-app `role="alertdialog"` from ConfirmProvider, so it is driven with
+    // ordinary locators instead of `page.waitForEvent('dialog')`.
+    const confirmDialog = page.locator('.confirm-card[role="alertdialog"]');
+    await advancedStart.click();
+    await confirmDialog.waitFor({ state: 'visible', timeout: 3000 }).catch(() => {});
     check(
-      confirmation.type() === 'confirm' && confirmation.message().includes('Zmiany zostaną zapisane w planie'),
+      (await confirmDialog.textContent())?.includes('Zmiany zostaną zapisane w planie') ?? false,
       'advanced live practice requires an explicit real-plan confirmation',
     );
-    await confirmation.dismiss();
-    await startClick;
+    await confirmDialog.getByRole('button', { name: 'Anuluj' }).click();
+    await confirmDialog.waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {});
     check(await center.isVisible().catch(() => false), 'cancelling the confirmation keeps the tutorial centre open');
 
-    confirmationPromise = page.waitForEvent('dialog');
-    startClick = advancedStart.click();
-    confirmation = await confirmationPromise;
-    await confirmation.accept();
-    await startClick;
+    await advancedStart.click();
+    await confirmDialog.waitFor({ state: 'visible', timeout: 3000 }).catch(() => {});
+    await confirmDialog.getByRole('button', { name: 'Uruchom samouczek' }).click();
+    await confirmDialog.waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {});
     await page.locator('.week-block[data-tour="calendar.block"]').first().waitFor({ timeout: 5000 });
     await coachmark.waitFor({ state: 'visible', timeout: 3000 }).catch(() => {});
     const practice = coachmark.locator('.onboarding-practice');
@@ -112,7 +114,17 @@ async function run() {
       const startY = blockRect.top + blockRect.height / 2;
       const visibleBlock = document.elementFromPoint(startX, startY)?.closest('.week-block');
       if (visibleBlock !== block) return null;
-      const person = block.title.match(/— (.*?): \d{1,2}:\d{2}/)?.[1];
+      // Opis bloku nie jest już natywnym `title` (hover-only, nieobecny na
+      // dotyku): `Tooltip` w WeekView.tsx trzyma tę samą treść
+      // („<zadanie> — <osoba>: HH:MM–HH:MM (…)") w ukrytym opisie w portalu,
+      // wskazywanym przez `aria-describedby` bloku.
+      const hintOf = (el) =>
+        (el.getAttribute('aria-describedby') || '')
+          .split(/\s+/)
+          .filter(Boolean)
+          .map((id) => document.getElementById(id)?.textContent || '')
+          .join(' ');
+      const person = hintOf(block).match(/— (.*?): \d{1,2}:\d{2}/)?.[1];
       const sourceColumn = block.closest('.week-day-col');
       if (!person || !(sourceColumn instanceof HTMLElement)) return null;
       const sourceIndex = Number(sourceColumn.dataset.dayIndex);
@@ -125,7 +137,7 @@ async function run() {
         for (const candidateStart of starts) {
           const candidateEnd = candidateStart + duration;
           const hasCollision = Array.from(column.querySelectorAll('.week-block')).some((other) => {
-            if (!(other instanceof HTMLElement) || other === block || !other.title.includes(`— ${person}:`)) return false;
+            if (!(other instanceof HTMLElement) || other === block || !hintOf(other).includes(`— ${person}:`)) return false;
             const otherStart = Number.parseFloat(other.style.top);
             const otherEnd = otherStart + Number.parseFloat(other.style.height);
             return candidateStart < otherEnd && candidateEnd > otherStart;

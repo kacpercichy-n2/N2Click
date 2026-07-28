@@ -4,7 +4,18 @@
 // pattern). All date math delegates to src/utils/dates.ts (Monday-start weeks,
 // 'yyyy-MM-dd' strings) — never duplicated here.
 import type { DateStr } from '../types';
-import { diffDays, monthEnd, monthStart, shiftMonth, shiftWeek, weekStart } from '../utils/dates';
+import {
+  addDaysStr,
+  dayOfMonthLabel,
+  diffDays,
+  isWeekend,
+  monthEnd,
+  monthStart,
+  shiftMonth,
+  shiftWeek,
+  weekStart,
+  weekdayAbbr,
+} from '../utils/dates';
 
 /** The three fixed zoom levels. Nothing wider than a calendar month. */
 export type ZoomLevel = 'week' | 'twoWeeks' | 'month';
@@ -88,4 +99,45 @@ export function canZoomIn(level: ZoomLevel): boolean {
 /** True while a further zoom-out step is possible (not already at `month`). */
 export function canZoomOut(level: ZoomLevel): boolean {
   return ZOOM_ORDER.indexOf(level) > 0;
+}
+
+// ---- Nagłówki dni (tylko przy bliskim zbliżeniu) ----
+
+/** Jedna komórka nagłówka dnia przy bliskim zbliżeniu. */
+export interface TimelineDayHeader {
+  date: DateStr;
+  /** Offset kolumny w dniach od `rangeStart` (mnożysz przez `dayW`). */
+  index: number;
+  /** Numer dnia miesiąca, np. „7”. */
+  dayLabel: string;
+  /** Skrót dnia tygodnia, np. „pon”. */
+  weekdayLabel: string;
+  weekend: boolean;
+}
+
+/** Czy poziom pokazuje kolumny dni (nagłówki + linie): week i twoWeeks.
+ *  `month` (30 px/dzień) zostaje przy etykietach tygodnia — dwuwierszowy
+ *  nagłówek byłby tam nieczytelny. */
+export function showDayColumns(level: ZoomLevel): boolean {
+  return level === 'week' || level === 'twoWeeks';
+}
+
+/** Nagłówki dni dla widocznego zakresu. Pusta tablica, gdy poziom ich nie
+ *  pokazuje albo `totalDays <= 0`. */
+export function dayHeaders(
+  level: ZoomLevel,
+  rangeStart: DateStr,
+  totalDays: number,
+): TimelineDayHeader[] {
+  if (!showDayColumns(level) || totalDays <= 0) return [];
+  return Array.from({ length: totalDays }, (_, index) => {
+    const date = addDaysStr(rangeStart, index);
+    return {
+      date,
+      index,
+      dayLabel: dayOfMonthLabel(date),
+      weekdayLabel: weekdayAbbr(date),
+      weekend: isWeekend(date),
+    };
+  });
 }

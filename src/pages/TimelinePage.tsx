@@ -24,12 +24,15 @@ import {
   tasksOfProject,
 } from '../store/selectors';
 import { Coin } from '../components/Coin';
+import { Tooltip } from '../components/Tooltip';
 import { personColor } from '../utils/colors';
 import { formatDuration } from '../utils/time';
+import { useTouchDragGate } from '../utils/useTouchDragGate';
 import {
   addDaysStr,
   diffDays,
   formatShort,
+  formatShortWithWeekday,
   isWeekend,
   todayStr,
   weekStart,
@@ -38,7 +41,9 @@ import {
   DEFAULT_ZOOM_LEVEL,
   canZoomIn as canZoomInLevel,
   canZoomOut as canZoomOutLevel,
+  dayHeaders,
   shiftAnchor,
+  showDayColumns,
   zoomIn as zoomInLevel,
   zoomOut as zoomOutLevel,
   zoomView,
@@ -57,7 +62,8 @@ interface BarProps {
   dayW: number; // px per day (zoom level)
   color: string;
   className: string;
-  title: string;
+  /** Treść dymka (dawny natywny `title`): nazwa, zakres dat, konflikty. */
+  tooltip: string;
   resizable: boolean;
   editable: boolean; // false ⇒ static bar (click opens, but no drag/resize)
   onCommit: (mode: DragMode, deltaDays: number) => void;
@@ -74,7 +80,7 @@ function Bar({
   dayW,
   color,
   className,
-  title,
+  tooltip,
   resizable,
   editable,
   onCommit,
@@ -86,16 +92,36 @@ function Bar({
     null,
   );
   const moved = useRef(false);
+  // Bramka dotyku: na palcu przeciąganie startuje dopiero po przytrzymaniu.
+  const gate = useTouchDragGate();
 
-  const begin = (mode: DragMode) => (e: React.PointerEvent) => {
-    e.stopPropagation();
+  // `init` jest zbierany SYNCHRONICZNIE w handlerze — na dotyku przeciąganie
+  // startuje dopiero po przytrzymaniu, a wtedy zdarzenie Reacta jest już puste.
+  const startDrag = (
+    mode: DragMode,
+    init: { target: HTMLElement; pointerId: number; clientX: number },
+  ) => {
     try {
-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      init.target.setPointerCapture(init.pointerId);
     } catch {
       // No active pointer (synthetic events) — dragging still works within the bar.
     }
     moved.current = false;
-    setDrag({ mode, originX: e.clientX, delta: 0 });
+    setDrag({ mode, originX: init.clientX, delta: 0 });
+  };
+
+  const begin = (mode: DragMode) => (e: React.PointerEvent) => {
+    e.stopPropagation();
+    // Reset przed bramką: dotknięcie bez przeciągnięcia ma otwierać encję.
+    moved.current = false;
+    const init = {
+      target: e.target as HTMLElement,
+      pointerId: e.pointerId,
+      clientX: e.clientX,
+    };
+    // Dotyk: bez przytrzymania gest zostaje przewijaniem osi czasu.
+    if (gate.arm(e.pointerType, e.clientX, e.clientY, () => startDrag(mode, init))) return;
+    startDrag(mode, init);
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
@@ -128,13 +154,22 @@ function Bar({
   // Cull bars fully outside the range.
   if (left + width < 0 || left > totalDays * dayW) return null;
 
+  // `Tooltip` klonuje TEN SAM `<div>` (żadnego opakowania — pasek jest
+  // pozycjonowany absolutnie), dokłada wyłącznie obserwatorów i chowa dymek na
+  // `pointerdown`, więc podczas przeciągania/rozciągania nic nie wisi nad osią.
+  const hint = editable
+    ? `${tooltip} Przeciągnij, aby przesunąć${
+        resizable ? '; przeciągnij krawędź, aby zmienić zakres dat' : ''
+      }.`
+    : tooltip;
+
   return (
+    <Tooltip text={hint}>
     <div
       className={[className, drag ? 'dragging' : '', editable ? '' : 'static']
         .filter(Boolean)
         .join(' ')}
       style={{ left, width, borderColor: color }}
-      title={title}
       onPointerDown={editable ? begin('move') : undefined}
       onPointerMove={editable ? onPointerMove : undefined}
       onPointerUp={editable ? onPointerUp : undefined}
@@ -164,6 +199,7 @@ function Bar({
         />
       ))}
     </div>
+    </Tooltip>
   );
 }
 
@@ -182,7 +218,13 @@ function MilestoneMark({
   onCommit: (deltaDays: number) => void;
 }) {
   const [drag, setDrag] = useState<{ originX: number; delta: number } | null>(null);
+  // Bramka dotyku: na palcu przeciąganie startuje dopiero po przytrzymaniu.
+  const gate = useTouchDragGate();
+  const hint = editable
+    ? `◆ ${milestone.name} — ${formatShortWithWeekday(milestone.date)} (przeciągnij, aby przesunąć)`
+    : `◆ ${milestone.name} — ${formatShortWithWeekday(milestone.date)}`;
   return (
+    <Tooltip text={hint}>
     <span
       className={[
         'timeline-milestone',
@@ -192,21 +234,25 @@ function MilestoneMark({
         .filter(Boolean)
         .join(' ')}
       style={{ left: (dayIdx + (drag?.delta ?? 0)) * dayW + dayW / 2 }}
-      title={
-        editable
-          ? `◆ ${milestone.name} — ${formatShort(milestone.date)} (przeciągnij, aby przesunąć)`
-          : `◆ ${milestone.name} — ${formatShort(milestone.date)}`
-      }
       onPointerDown={
         editable
           ? (e) => {
               e.stopPropagation();
-              try {
-                (e.target as HTMLElement).setPointerCapture(e.pointerId);
-              } catch {
-                // No active pointer (synthetic events) — see Bar.begin.
-              }
-              setDrag({ originX: e.clientX, delta: 0 });
+              const target = e.target as HTMLElement;
+              const pointerId = e.pointerId;
+              const clientX = e.clientX;
+              // `init` zebrany synchronicznie — patrz Bar.begin.
+              const startDrag = () => {
+                try {
+                  target.setPointerCapture(pointerId);
+                } catch {
+                  // No active pointer (synthetic events) — see Bar.begin.
+                }
+                setDrag({ originX: clientX, delta: 0 });
+              };
+              // Dotyk: bez przytrzymania gest zostaje przewijaniem osi czasu.
+              if (gate.arm(e.pointerType, e.clientX, e.clientY, startDrag)) return;
+              startDrag();
             }
           : undefined
       }
@@ -232,6 +278,7 @@ function MilestoneMark({
     >
       ◆
     </span>
+    </Tooltip>
   );
 }
 
@@ -298,6 +345,13 @@ export function TimelinePage() {
   const days = useMemo(
     () => Array.from({ length: totalDays }, (_, i) => addDaysStr(rangeStart, i)),
     [rangeStart, totalDays],
+  );
+  // Przy bliskim zbliżeniu każdy dzień dostaje własną komórkę nagłówka;
+  // przy `month` lista jest pusta i zostają etykiety tygodnia.
+  const dayCols = showDayColumns(level);
+  const headers = useMemo(
+    () => dayHeaders(level, rangeStart, totalDays),
+    [level, rangeStart, totalDays],
   );
   const today = todayStr();
   const todayIdx = diffDays(rangeStart, today);
@@ -608,19 +662,30 @@ export function TimelinePage() {
       ) : (
         <div className="timeline-scroll" data-tour="timeline.chart">
           <div className="timeline" style={{ width: 240 + totalDays * dayW }}>
-            {/* Header: week labels + day stripes */}
+            {/* Header: per-day cells at close zoom, week labels otherwise */}
             <div className="timeline-row timeline-head">
               <div className="timeline-label" />
               <div className="timeline-track">
-                {days.map((d, i) =>
-                  // Label every Monday (the range may not start on one, e.g. the
-                  // month view) plus day 0 so the first column is always labelled.
-                  weekStart(d) === d || i === 0 ? (
-                    <span key={d} className="timeline-week-label" style={{ left: i * dayW }}>
-                      {formatShort(d)}
-                    </span>
-                  ) : null,
-                )}
+                {dayCols
+                  ? headers.map((h) => (
+                      <span
+                        key={h.date}
+                        className={h.weekend ? 'timeline-day-head weekend' : 'timeline-day-head'}
+                        style={{ left: h.index * dayW, width: dayW }}
+                      >
+                        <span className="timeline-day-num">{h.dayLabel}</span>
+                        <span className="timeline-day-dow">{h.weekdayLabel}</span>
+                      </span>
+                    ))
+                  : days.map((d, i) =>
+                      // Label every Monday (the range may not start on one, e.g. the
+                      // month view) plus day 0 so the first column is always labelled.
+                      weekStart(d) === d || i === 0 ? (
+                        <span key={d} className="timeline-week-label" style={{ left: i * dayW }}>
+                          {formatShort(d)}
+                        </span>
+                      ) : null,
+                    )}
               </div>
             </div>
 
@@ -638,18 +703,22 @@ export function TimelinePage() {
                     <div key={p.id} className="timeline-project">
                       <div className="timeline-row">
                         <div className="timeline-label">
-                          <button
-                            type="button"
-                            className="timeline-label-btn"
-                            onClick={() => navigate(`/projects/${p.id}`)}
-                            title={p.name}
-                          >
-                            <Coin paid={p.paid} size={14} />
-                            <span className="timeline-label-text">{p.name}</span>
-                          </button>
+                          {/* Etykieta bywa przycięta wielokropkiem — dymek jest
+                              CZYSTO WIZUALNY, bo ten sam tekst jest już nazwą
+                              dostępną przycisku. */}
+                          <Tooltip text={p.name} visualOnly>
+                            <button
+                              type="button"
+                              className="timeline-label-btn"
+                              onClick={() => navigate(`/projects/${p.id}`)}
+                            >
+                              <Coin paid={p.paid} size={14} />
+                              <span className="timeline-label-text">{p.name}</span>
+                            </button>
+                          </Tooltip>
                         </div>
                         <div className="timeline-track">
-                          <DayStripes days={days} todayIdx={todayIdx} dayW={dayW} />
+                          <DayStripes days={days} todayIdx={todayIdx} dayW={dayW} columns={dayCols} />
                           <Bar
                             startIdx={dayIdx(p.startDate)}
                             span={diffDays(p.startDate, p.endDate) + 1}
@@ -659,7 +728,7 @@ export function TimelinePage() {
                             className={
                               overdue ? 'timeline-bar project overdue' : 'timeline-bar project'
                             }
-                            title={`${p.name}: ${formatShort(p.startDate)} – ${formatShort(p.endDate)}${overdue ? ' (po terminie)' : ''}`}
+                            tooltip={`${p.name}: ${formatShortWithWeekday(p.startDate)} – ${formatShortWithWeekday(p.endDate)}${overdue ? ' (po terminie)' : ''}`}
                             resizable
                             editable={canManageProjects}
                             onCommit={commitProject(p)}
@@ -687,11 +756,11 @@ export function TimelinePage() {
                       </div>
                       {tasks.map(({ task: t, conflictOffsets }) => (
                         <div key={t.id} className="timeline-row timeline-task-row">
-                          <div className="timeline-label timeline-task-label" title={t.title}>
-                            {t.title}
-                          </div>
+                          <Tooltip text={t.title} visualOnly>
+                            <div className="timeline-label timeline-task-label">{t.title}</div>
+                          </Tooltip>
                           <div className="timeline-track">
-                            <DayStripes days={days} todayIdx={todayIdx} dayW={dayW} />
+                            <DayStripes days={days} todayIdx={todayIdx} dayW={dayW} columns={dayCols} />
                             <Bar
                               startIdx={dayIdx(t.startDate)}
                               span={diffDays(t.startDate, t.endDate) + 1}
@@ -699,7 +768,7 @@ export function TimelinePage() {
                               dayW={dayW}
                               color={getStatus(state, t.statusId)?.color ?? '#94a3b8'}
                               className="timeline-bar task"
-                              title={`${t.title}: ${formatShort(t.startDate)} – ${formatShort(t.endDate)}${conflictOffsets.length > 0 ? ` — ⚠ konflikty: ${conflictOffsets.length === 1 ? '1 dzień' : `${conflictOffsets.length} dni`}` : ''}`}
+                              tooltip={`${t.title}: ${formatShortWithWeekday(t.startDate)} – ${formatShortWithWeekday(t.endDate)}${conflictOffsets.length > 0 ? ` — ⚠ konflikty: ${conflictOffsets.length === 1 ? '1 dzień' : `${conflictOffsets.length} dni`}` : ''}`}
                               resizable
                               editable={canManageTasks}
                               onCommit={commitTask(t)}
@@ -733,11 +802,11 @@ export function TimelinePage() {
                   </div>
                   {tasks.map(({ task: t, hours, conflictOffsets }) => (
                     <div key={t.id} className="timeline-row timeline-task-row">
-                      <div className="timeline-label timeline-task-label" title={t.title}>
-                        {t.title}
-                      </div>
+                      <Tooltip text={t.title} visualOnly>
+                        <div className="timeline-label timeline-task-label">{t.title}</div>
+                      </Tooltip>
                       <div className="timeline-track">
-                        <DayStripes days={days} todayIdx={todayIdx} dayW={dayW} />
+                        <DayStripes days={days} todayIdx={todayIdx} dayW={dayW} columns={dayCols} />
                         <Bar
                           startIdx={dayIdx(t.startDate)}
                           span={diffDays(t.startDate, t.endDate) + 1}
@@ -745,7 +814,7 @@ export function TimelinePage() {
                           dayW={dayW}
                           color={getStatus(state, t.statusId)?.color ?? '#94a3b8'}
                           className="timeline-bar task"
-                          title={`${t.title}: ${formatShort(t.startDate)} – ${formatShort(t.endDate)} — ${person.name}: ${formatDuration(hours)} zaplanowane`}
+                          tooltip={`${t.title}: ${formatShortWithWeekday(t.startDate)} – ${formatShortWithWeekday(t.endDate)} — ${person.name}: ${formatDuration(hours)} zaplanowane`}
                           resizable={false}
                           editable={false}
                           onCommit={() => {}}
@@ -766,15 +835,18 @@ export function TimelinePage() {
   );
 }
 
-/** Weekend shading + today line, shared by every track. */
+/** Weekend shading + optional day gridlines + today line, shared by every track. */
 function DayStripes({
   days,
   todayIdx,
   dayW,
+  columns,
 }: {
   days: string[];
   todayIdx: number;
   dayW: number;
+  /** True przy bliskim zbliżeniu — rysuje pionowe linie między dniami. */
+  columns: boolean;
 }) {
   return (
     <>
@@ -788,6 +860,17 @@ function DayStripes({
           />
         ) : null,
       )}
+      {columns &&
+        days.map((d, i) =>
+          i === 0 ? null : (
+            <span
+              key={`grid-${d}`}
+              className="timeline-daygrid"
+              style={{ left: i * dayW }}
+              aria-hidden
+            />
+          ),
+        )}
       {todayIdx >= 0 && todayIdx < days.length && (
         <span
           className="timeline-today"

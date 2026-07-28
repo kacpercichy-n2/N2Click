@@ -1,5 +1,5 @@
 import type { Person } from '../types';
-import { personColor } from '../utils/colors';
+import { personColor, tintVar } from '../utils/colors';
 import { X } from './icons';
 
 interface Props {
@@ -27,13 +27,12 @@ export function PersonFilter({ people, selected, onToggle, onAll }: Props) {
           <button
             key={p.id}
             type="button"
-            className={active ? 'filter-chip active' : 'filter-chip'}
+            className={active ? 'filter-chip active person-tint' : 'filter-chip'}
             onClick={() => onToggle(p.id)}
-            style={
-              active
-                ? { borderColor: personColor(p.id), background: `${personColor(p.id)}22` }
-                : undefined
-            }
+            // Barwa osoby idzie do CSS JEDNĄ zmienną (`--person`); obramowanie
+            // i tło liczy arkusz przez `color-mix`, więc odcień nie zależy od
+            // tego, czy kolor jest 6-znakowym hexem (patrz `tintVar`).
+            style={active ? tintVar('--person', personColor(p.id)) : undefined}
           >
             <span
               className="person-dot"
@@ -86,10 +85,10 @@ export function ActivePersonChips({
         <button
           key={p.id}
           type="button"
-          className="person-active-chip"
+          className="person-active-chip person-tint"
           onClick={() => onRemove(p.id)}
           aria-label={`Usuń filtr osoby ${p.name}`}
-          style={{ borderColor: personColor(p.id), background: `${personColor(p.id)}22` }}
+          style={tintVar('--person', personColor(p.id))}
         >
           <span className="person-dot" style={{ background: personColor(p.id) }} aria-hidden />
           <span className="person-active-chip-name">{p.name}</span>

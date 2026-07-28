@@ -4,13 +4,8 @@
 // the task modal. Extracted verbatim from DashboardPage — same class names and
 // behavior — so both surfaces stay in sync.
 import { Link } from 'react-router-dom';
-import { useStore } from '../store/AppStore';
-import {
-  getClient,
-  getProject,
-  getStatus,
-  todayAgendaForPerson,
-} from '../store/selectors';
+import { shallowEqual, useSelector } from '../store/AppStore';
+import { todayAgendaForPerson } from '../store/selectors';
 import { StatusBadge } from './StatusBadge';
 import { useOpenTask } from './TaskModal';
 import { formatShortWithWeekday } from '../utils/dates';
@@ -18,9 +13,20 @@ import { formatMinutes } from '../utils/time';
 import type { DateStr } from '../types';
 
 export function TodayAgendaList({ personId, date }: { personId: string; date: DateStr }) {
-  const { state } = useStore();
+  // Slice subscription: the agenda plus exactly the four collections the rows
+  // label themselves from. The per-row lookups below run against these slices
+  // and are `.find(...)` — byte-identical to getProject/getClient/getStatus.
+  const { agenda, tasks, projects, clients, statuses } = useSelector(
+    (s) => ({
+      agenda: todayAgendaForPerson(s, personId, date),
+      tasks: s.tasks,
+      projects: s.projects,
+      clients: s.clients,
+      statuses: s.statuses,
+    }),
+    shallowEqual,
+  );
   const { openTask } = useOpenTask();
-  const agenda = todayAgendaForPerson(state, personId, date);
 
   if (agenda.timed.length === 0 && agenda.dateless.length === 0) {
     return (
@@ -37,10 +43,12 @@ export function TodayAgendaList({ personId, date }: { personId: string; date: Da
   return (
     <ul className="dash-list agenda-list">
       {agenda.timed.map((w) => {
-        const task = state.tasks.find((t) => t.id === w.taskId);
+        const task = tasks.find((t) => t.id === w.taskId);
         if (!task) return null;
-        const project = getProject(state, task.projectId);
-        const client = project ? getClient(state, project.clientId) : undefined;
+        const project = projects.find((p) => p.id === task.projectId);
+        const client = project
+          ? clients.find((c) => c.id === project.clientId)
+          : undefined;
         const startM = w.startMinutes;
         const endM = startM + w.plannedHours * 60;
         return (
@@ -54,7 +62,7 @@ export function TodayAgendaList({ personId, date }: { personId: string; date: Da
                 {project?.name ?? '—'}
                 {client ? ` → ${client.name}` : ''}
               </span>
-              <StatusBadge status={getStatus(state, task.statusId)} />
+              <StatusBadge status={statuses.find((s) => s.id === task.statusId)} />
             </button>
           </li>
         );

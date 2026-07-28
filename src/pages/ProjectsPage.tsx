@@ -30,23 +30,17 @@ import { useOpenTask } from '../components/TaskModal';
 import { ChevronRight, GanttChart, Plus } from '../components/icons';
 import { sortProjectGroups } from './projectSort';
 import type { SavedFilterCriteria } from '../types';
-import { addDaysStr, formatShort, formatShortWithWeekday, todayStr } from '../utils/dates';
+import { addDaysStr, formatShortWithWeekday, todayStr } from '../utils/dates';
 import { periodError, PERIOD_ERROR_LABELS } from '../utils/dates';
 import { formatDuration } from '../utils/time';
+import { listCounterLabel, polishCount } from '../utils/polishPlural';
+import { Tooltip } from '../components/Tooltip';
 
 export type PaidFilter = 'all' | 'paid' | 'unpaid';
 
 function rangeLabel(start: string, end: string): string {
   if (start === end) return formatShortWithWeekday(start);
   return `${formatShortWithWeekday(start)} – ${formatShortWithWeekday(end)}`;
-}
-
-function polishCount(n: number, one: string, few: string, many: string): string {
-  const mod10 = n % 10;
-  const mod100 = n % 100;
-  if (n === 1) return one;
-  if (mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14)) return few;
-  return many;
 }
 
 export function ProjectsPage() {
@@ -236,8 +230,8 @@ export function ProjectsPage() {
       label: `Spółka: ${getCompany(state, companyFilter)?.name ?? '—'}`,
       onRemove: () => setCompanyFilter(''),
     });
-  if (from) chips.push({ key: 'from', label: `Od: ${formatShort(from)}`, onRemove: () => setFrom('') });
-  if (to) chips.push({ key: 'to', label: `Do: ${formatShort(to)}`, onRemove: () => setTo('') });
+  if (from) chips.push({ key: 'from', label: `Od: ${formatShortWithWeekday(from)}`, onRemove: () => setFrom('') });
+  if (to) chips.push({ key: 'to', label: `Do: ${formatShortWithWeekday(to)}`, onRemove: () => setTo('') });
 
   // Group by client, then sort for presentation only: groups alphabetical by
   // client name, projects alphabetical within each group, „Bez klienta" last
@@ -375,22 +369,42 @@ export function ProjectsPage() {
           activeCount,
           onClearAll: () => applyPreset(DEFAULT_CRITERIA),
           chips,
+          // Ta sama liczba, co w liczniku obok paska — na telefonie pokazuje ją
+          // przycisk „Pokaż N” w lepkiej stopce arkusza filtrów.
+          resultCount: filtered.length,
         }}
         presets={<FilterPresets page="projects" criteria={criteria} onApply={applyPreset} />}
         trailing={
           <span className="filter-count muted">
-            {filtered.length} z {state.projects.length}{' '}
-            {polishCount(state.projects.length, 'projekt', 'projekty', 'projektów')}
+            {listCounterLabel(filtered.length, state.projects.length, 'projektów')}
           </span>
         }
       />
 
       {groups.length === 0 ? (
+        // SY-33 — jeden szablon pustki: „Brak <bytów>” + JEDNO zdanie o
+        // przyczynie + akcja. Przy aktywnym filtrze zdanie zaczyna się od tego
+        // faktu, a akcją jest wyczyszczenie filtrów, nie zakładanie projektu.
         <div className="empty-state">
           <p className="empty-title">Brak projektów</p>
-          <p className="empty-hint">
-            Dodaj projekt pod klientem, a potem utwórz zadania i zaplanuj godziny.
-          </p>
+          {activeCount > 0 ? (
+            <>
+              <p className="empty-hint">
+                Filtry nie przepuszczają żadnego z {state.projects.length} projektów.
+              </p>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => applyPreset(DEFAULT_CRITERIA)}
+              >
+                Wyczyść filtry
+              </button>
+            </>
+          ) : (
+            <p className="empty-hint">
+              Dodaj projekt pod klientem, a potem utwórz zadania i zaplanuj godziny.
+            </p>
+          )}
         </div>
       ) : (
         groups.map((g) => (
@@ -438,31 +452,33 @@ export function ProjectsPage() {
                       <ChevronRight className="card-chevron" size={16} aria-hidden />
                     </button>
                     <div className="card-actions">
-                      <button
-                        type="button"
-                        className="card-action-btn"
-                        title="Oś czasu"
-                        aria-label="Otwórz oś czasu"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigate('/timeline');
-                        }}
-                      >
-                        <GanttChart size={14} aria-hidden />
-                      </button>
-                      {canManageTasks && (
+                      <Tooltip text="Oś czasu" visualOnly>
                         <button
                           type="button"
                           className="card-action-btn"
-                          title="+ Zadanie"
-                          aria-label={`Dodaj zadanie do ${p.name}`}
+                          aria-label="Otwórz oś czasu"
                           onClick={(e) => {
                             e.stopPropagation();
-                            openNewTask(p.id);
+                            navigate('/timeline');
                           }}
                         >
-                          <Plus size={14} aria-hidden />
+                          <GanttChart size={14} aria-hidden />
                         </button>
+                      </Tooltip>
+                      {canManageTasks && (
+                        <Tooltip text="+ Zadanie" visualOnly>
+                          <button
+                            type="button"
+                            className="card-action-btn"
+                            aria-label={`Dodaj zadanie do ${p.name}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openNewTask(p.id);
+                            }}
+                          >
+                            <Plus size={14} aria-hidden />
+                          </button>
+                        </Tooltip>
                       )}
                     </div>
                   </li>

@@ -6,16 +6,19 @@
 // still opens "Dodaj przed / Dodaj po" to ripple-insert a new block.
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AnimatePresence, motion } from 'motion/react';
+import { useSearchParams } from 'react-router-dom';
+import { AnimatePresence, m } from 'motion/react';
 import type { AppData, Person, Project, Task, WorkloadEntry } from '../types';
-import { useStore } from '../store/AppStore';
+import { useDispatch, useStoreApi } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import { useOpenTask } from './TaskModal';
 import { useOpenEvent } from './EventModal';
 import { personColor } from '../utils/colors';
 import { clearLiveSyncHold, setLiveSyncHold } from '../utils/liveSyncGate';
+import { useTouchDragGate } from '../utils/useTouchDragGate';
 import {
   MAX_TASK_PERIOD_DAYS,
+  dayOfMonthLabel,
   inclusiveDayCount,
   isTodayStr,
   isValidDateStr,
@@ -23,7 +26,11 @@ import {
   parseDate,
   todayStr,
   weekDays,
+  weekdayAbbr,
 } from '../utils/dates';
+import { dayStripEntries } from './dayStrip';
+import { stackDayBlocks, type StackSlot } from './dayStack';
+import { BIN_SHEET_PARAM } from './bottomNav';
 import { format } from 'date-fns';
 import { pl } from 'date-fns/locale/pl';
 import {
@@ -38,12 +45,24 @@ import {
   getTask,
   growAllowanceHours,
   hoursForPersonOnDate,
+  isDoneStatus,
+  occurrenceIsDone,
   personCapacity,
   taskDisplayStatus,
   taskGrowAllowance,
   taskIdsOfPerson,
 } from '../store/selectors';
 import { buildWeekModel, personDateKey } from './weekViewModel';
+import {
+  isOffHour,
+  workWindowCssVars,
+  workWindowScrollTop,
+} from './weekViewLayout';
+import { useNowTick } from '../utils/useNowTick';
+import { OverlayLayer, useOverlay } from './useOverlay';
+import { Tooltip } from './Tooltip';
+import { useConfirm } from './ConfirmProvider';
+import type { OverlayRect } from './overlayShell';
 import {
   DAY_MINUTES,
   HOURS_STEP,
@@ -66,12 +85,40 @@ import {
   snapToStep,
 } from '../utils/time';
 import type { RecurrenceOccurrence } from '../utils/recurrence';
+import { blockLabel } from '../utils/blockLabel';
+import {
+  blockCapAnnouncement,
+  blockCollisionAnnouncement,
+  blockCommitAnnouncement,
+  blockEditAnnouncement,
+  blockKeyboardCommit,
+  blockKeyboardReducer,
+  blockRejectedAnnouncement,
+  blockRevertAnnouncement,
+  blockTargetAnnouncement,
+  blockToBinAnnouncement,
+  blockUnchangedAnnouncement,
+  findBlockConflict,
+  type BlockGeometry,
+  type BlockKeyboardContext,
+  type BlockKeyboardEvent,
+  type BlockKeyboardState,
+} from './calendarBlockKeyboard';
 import { Coin } from './Coin';
 
 interface Props {
   state: AppData;
   anchor: string; // any date within the week to render
   filter: Set<string>;
+  /**
+   * `'day'` (telefon) renderuje JEDEN pełnoszerokościowy dzień — kotwicę —
+   * zamiast siedmiu kolumn. To GAŁĄŹ RENDEROWANIA, nie osobny komponent: cały
+   * model przeciągania, kolizji, scalania i zasobnika zostaje ten sam, a różnicę
+   * niesie DŁUGOŚĆ tablicy `days` (patrz `days` niżej).
+   */
+  mode?: 'week' | 'day';
+  /** Wybór dnia z paska dat (tylko `mode === 'day'`). */
+  onPickDay?: (date: string) => void;
 }
 
 // ---- Grid geometry ----
@@ -85,21 +132,55 @@ const DAY_BODY_H = 24 * HOUR_PX; // 2016px full-day column height
 // + 8px), nawet jeśli wizualnie zachodzą na kolejny kwadrans siatki —
 // geometria dragu/resize liczy się z pozycji kursora, nie z wysokości bloku.
 const MIN_BLOCK_H = 50;
-const SCROLL_TO_MIN = 8 * 60; // open scrolled to 08:00
-const DAY_COLS = 7; // the days grid holds 7 columns (no axis inside)
+// Okno godzin agencji (9:00–17:00) mieszka w `weekViewLayout.ts` jako
+// WORK_START_HOUR / WORK_END_HOUR — stąd bierze się i domyślne przewinięcie
+// siatki, i przygaszenie slotów poza oknem. Same sloty pozostają w pełni
+// funkcjonalne (bez zmian w snapowaniu, kolizjach, dragu i danych).
+// Liczbę kolumn dnia niesie WYŁĄCZNIE `days.length` (7 w tygodniu, 1 w widoku
+// dnia) — dawna stała `DAY_COLS = 7` zniknęła, żeby arytmetyka kolumny nie
+// mogła rozjechać się z tym, co faktycznie wyrenderowano. W trybie tygodnia
+// wynik jest identyczny co do bajta.
 // Duration choices for a recurrence occurrence override: 0:15…8:00 on the
 // 15-minute grid (minutes). Labeled via formatDuration in the menu.
 const RECUR_DURATION_OPTIONS = Array.from({ length: 32 }, (_, i) => (i + 1) * MINUTE_STEP);
+
+/** `id` wspólnej podpowiedzi klawiaturowej dla wszystkich edytowalnych bloków. */
+const WEEK_BLOCK_KB_HINT_ID = 'week-block-kb-hint';
 
 /** Announces a successful real calendar action to the optional guided practice. */
 function announceCalendarPractice(kind: 'move' | 'resize' | 'bin-drop'): void {
   window.dispatchEvent(new CustomEvent('n2hub:calendar-practice', { detail: { kind } }));
 }
 
+/**
+ * Kotwica popovera: ELEMENT (blok, kolumna dnia, przycisk) plus opcjonalne
+ * przesunięcie punktu kliknięcia w jego wnętrzu. Trzymamy element, a nie gołe
+ * `clientX/Y`, żeby `useOverlay` mógł przeliczyć pozycję przy każdym scrollu
+ * siatki — i zamknąć menu, gdy kotwica zniknie z DOM.
+ */
+interface MenuAnchor {
+  el: HTMLElement;
+  /** `null` = kotwicą jest cały prostokąt elementu (przycisk „Zaplanuj część”). */
+  point: { dx: number; dy: number } | null;
+}
+
+/** Prostokąt kotwicy dla `useOverlay`; `null` = kotwica wypadła z DOM. */
+function anchorRect(anchor: MenuAnchor | null | undefined): OverlayRect | null {
+  if (!anchor || !anchor.el.isConnected) return null;
+  const rect = anchor.el.getBoundingClientRect();
+  if (anchor.point === null) return rect;
+  return { left: rect.left + anchor.point.dx, top: rect.top + anchor.point.dy, width: 0, height: 0 };
+}
+
+/** Kotwica z punktu kliknięcia wewnątrz elementu, na którym wisi handler. */
+function pointAnchor(el: HTMLElement, clientX: number, clientY: number): MenuAnchor {
+  const rect = el.getBoundingClientRect();
+  return { el, point: { dx: clientX - rect.left, dy: clientY - rect.top } };
+}
+
 interface MenuState {
   entry: WorkloadEntry;
-  x: number;
-  y: number;
+  anchor: MenuAnchor;
   step: 'menu' | 'form' | 'schedule';
   position: 'before' | 'after';
 }
@@ -160,11 +241,18 @@ interface DragState {
 }
 
 interface BlockProps {
-  state: AppData;
   entry: WorkloadEntry;
   task: Task;
   person: Person;
   project?: Project;
+  /**
+   * `taskDisplayStatus(state, task, todayStr())`, computed by the parent (like
+   * `RecurBlock.done`). Passing the PRIMITIVE instead of the whole `state` is
+   * what makes `React.memo` hold when an action does not touch this block's row.
+   */
+  status: 'done' | 'overdue' | 'open';
+  /** `blockIsDone(state, task, entry)` — same reason as `status`. */
+  done: boolean;
   dayIndex: number;
   days: string[];
   col: number;
@@ -193,14 +281,32 @@ interface BlockProps {
   // holds. They take the block's own data instead of a per-render closure.
   onOpen: (taskId: string, entryId: string) => void;
   onContextMenu: (entry: WorkloadEntry, e: React.MouseEvent) => void;
+  // Jedyny kanał, którym czytnik ekranu wie, co robi klawiaturowa edycja
+  // (region `aria-live` żyje w rodzicu, bo blok bywa odmontowany zaraz po
+  // zapisie). Stabilna referencja z `useCallback` — memo trzyma.
+  announce: (message: string) => void;
+  /**
+   * Pozycja w kaskadzie kart widoku dnia. `undefined` (desktop) = dzisiejsze
+   * pozycjonowanie kolumnowe co do bajta; ustawione = pełna szerokość z
+   * wcięciem. Geometria CZASU (`top`/`height`) nie zależy od tego propsu.
+   */
+  stack?: StackSlot;
+  /**
+   * Obserwator „trwa przeciąganie”, wołany z ISTNIEJĄCEGO efektu `[dragging]`
+   * (obok `setLiveSyncHold`) — nigdy z handlerów wskaźnika. Rodzic wychodzi z
+   * niego natychmiast poza trybem dnia, więc na desktopie żaden dodatkowy
+   * `setState` nie wystrzeli w trakcie gestu (inwariant 7).
+   */
+  onDragActiveChange?: (active: boolean) => void;
 }
 
 function TimedBlockImpl({
-  state,
   entry,
   task,
   person,
   project,
+  status,
+  done,
   dayIndex,
   days,
   col,
@@ -216,8 +322,16 @@ function TimedBlockImpl({
   editable,
   onOpen,
   onContextMenu,
+  announce,
+  stack,
+  onDragActiveChange,
 }: BlockProps) {
-  const { dispatch } = useStore();
+  const dispatch = useDispatch();
+  // EVENT-TIME state reads only (grow allowance at drag/keyboard entry, the
+  // collision-announcement title). Previously these read the current render's
+  // `state` prop, which IS the committed state at event time — so the values are
+  // identical, but the block no longer re-renders just to keep that prop fresh.
+  const { getState } = useStoreApi();
   const [drag, setDrag] = useState<DragState | null>(null);
   // React state drives the preview, while this ref is the synchronous source of
   // truth for pointer handlers. A final pointermove and pointerup can arrive in
@@ -225,6 +339,8 @@ function TimedBlockImpl({
   // previous projection (or no-op), even though the preview already moved.
   const dragRef = useRef<DragState | null>(null);
   const moved = useRef(false);
+  // Bramka dotyku: na palcu przeciąganie startuje dopiero po przytrzymaniu.
+  const gate = useTouchDragGate();
   // Frame throttle: a pointermove writes the projection into `dragRef`
   // synchronously (so finish() can read the newest drop) but only flushes it to
   // React state / the parent merge affordance once per animation frame. `rafRef`
@@ -315,41 +431,56 @@ function TimedBlockImpl({
   // blok razem z przechwyceniem wskaźnika. Sprzątanie zdejmuje blokadę także
   // przy odmontowaniu w trakcie przeciągania.
   const holdKey = useRef({}).current;
+  // Ten sam efekt niesie DRUGIEGO obserwatora: sygnał „trwa przeciąganie” dla
+  // arkusza zasobnika (auto-peek w widoku dnia). To OBSERWATOR, nie uczestnik
+  // gestu — żadnego `preventDefault`, przechwycenia wskaźnika ani nasłuchu w
+  // fazie gestu nie przybywa (inwariant 7). Sprzątanie zgłasza koniec także
+  // przy odmontowaniu W TRAKCIE przeciągania (upuszczenie do zasobnika
+  // odmontowuje ten blok), żeby licznik w rodzicu nigdy nie utknął na 1.
   useEffect(() => {
     setLiveSyncHold(holdKey, dragging);
-    return () => clearLiveSyncHold(holdKey);
-  }, [dragging, holdKey]);
+    onDragActiveChange?.(dragging);
+    return () => {
+      clearLiveSyncHold(holdKey);
+      if (dragging) onDragActiveChange?.(false);
+    };
+  }, [dragging, holdKey, onDragActiveChange]);
 
-  const begin = (mode: DragMode) => (e: React.PointerEvent) => {
-    if (e.button !== 0) return; // right/middle button → let the context menu open
-    e.stopPropagation();
-    const el = e.currentTarget as HTMLElement;
+  // Deferred drag start. `init` is captured SYNCHRONOUSLY in the handler because
+  // React nulls `e.currentTarget` after dispatch — the touch path runs this only
+  // after the long press elapses (see useTouchDragGate), so it may never read the
+  // event again.
+  const startDrag = (
+    mode: DragMode,
+    init: { el: HTMLElement; pointerId: number; clientX: number; clientY: number },
+  ) => {
+    const { el, pointerId, clientX, clientY } = init;
     try {
-      el.setPointerCapture(e.pointerId);
-      captureRef.current = { el, pointerId: e.pointerId };
+      el.setPointerCapture(pointerId);
+      captureRef.current = { el, pointerId };
     } catch {
       // No active pointer (synthetic events) — dragging still works within the block.
       captureRef.current = null;
     }
     moved.current = false;
     const rect = gridRef.current?.getBoundingClientRect();
-    const colWidth = rect ? rect.width / DAY_COLS : 0;
+    const colWidth = rect ? rect.width / days.length : 0;
     // Block geometry for the over-bin ghost: grab offset keeps it aligned under
     // the pointer; width/height keep its size out of flow. For the top/bottom
     // resize handles currentTarget is the handle span, but the ghost only renders
     // for a move drag over the bin, so those captured values are never used.
-    const blockRect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const blockRect = el.getBoundingClientRect();
     // Capture the grow allowance ONCE at drag start (state won't change mid-drag).
     // Always a number now: bin hours + headroom (0 for null-estimate tasks).
-    const maxHours = baseHours + growAllowanceHours(state, entry.id);
+    const maxHours = baseHours + growAllowanceHours(getState(), entry.id);
     const nextDrag: DragState = {
       mode,
-      originX: e.clientX,
-      originY: e.clientY,
-      clientX: e.clientX,
-      clientY: e.clientY,
-      grabX: e.clientX - blockRect.left,
-      grabY: e.clientY - blockRect.top,
+      originX: clientX,
+      originY: clientY,
+      clientX,
+      clientY,
+      grabX: clientX - blockRect.left,
+      grabY: clientY - blockRect.top,
       width: blockRect.width,
       height: blockRect.height,
       colWidth,
@@ -365,6 +496,24 @@ function TimedBlockImpl({
     };
     dragRef.current = nextDrag;
     setDrag(nextDrag);
+  };
+
+  const begin = (mode: DragMode) => (e: React.PointerEvent) => {
+    if (e.button !== 0) return; // right/middle button → let the context menu open
+    e.stopPropagation();
+    // Reset przed bramką: dotknięcie bez przeciągnięcia ma otwierać zadanie,
+    // więc `moved` nie może zostać z poprzedniego gestu, gdy drag nie wystartuje.
+    moved.current = false;
+    const init = {
+      el: e.currentTarget as HTMLElement,
+      pointerId: e.pointerId,
+      clientX: e.clientX,
+      clientY: e.clientY,
+    };
+    // Dotyk: przeciąganie startuje dopiero po przytrzymaniu, żeby przewijanie
+    // palcem po bloku nie przesuwało pracy. Mysz przechodzi tędy bez zmian.
+    if (gate.arm(e.pointerType, e.clientX, e.clientY, () => startDrag(mode, init))) return;
+    startDrag(mode, init);
   };
 
   // Synchronous projection: compute the newest drop from the pointer event and
@@ -400,7 +549,7 @@ function TimedBlockImpl({
       projStart = clampBlockStart(baseStart + deltaMin, dur);
       const dx = e.clientX - activeDrag.originX;
       const dayDelta = activeDrag.colWidth > 0 ? Math.round(dx / activeDrag.colWidth) : 0;
-      projDayIndex = Math.max(0, Math.min(DAY_COLS - 1, dayIndex + dayDelta));
+      projDayIndex = Math.max(0, Math.min(days.length - 1, dayIndex + dayDelta));
       // The bin panel sits outside the days grid; a pointer inside its rect
       // targets the bin instead of a calendar day.
       const binRect = binRef.current?.getBoundingClientRect();
@@ -553,24 +702,266 @@ function TimedBlockImpl({
     announceCalendarPractice(finalDrag.mode === 'move' ? 'move' : 'resize');
   };
 
-  const start = drag ? drag.projStart : baseStart;
-  const hours = drag ? drag.projHours : baseHours;
+  // ---- Klawiaturowa edycja bloku (DODATKOWE wejście do tego samego modelu) ----
+  // Wszystko powyżej — begin/startDrag/projectMove/finish/cancelDrag, bramka
+  // dotyku i przechwycenie wskaźnika — zostaje NIETKNIĘTE (inwariant 7). Poniżej
+  // żyje druga droga do TEJ SAMEJ projekcji: wystawiony stan (jak `dragRef`),
+  // te same granice z `utils/time.ts` i te same wysyłki `SET_BLOCK_TIME` /
+  // `MOVE_BLOCK_TO_BIN`. Cała decyzyjność siedzi w czystym
+  // `calendarBlockKeyboard.ts`; tutaj zostaje tłumaczenie klawisza na zdarzenie,
+  // pomiar kolumny i wysyłka.
+  const [kb, setKb] = useState<BlockKeyboardState | null>(null);
+  // Ref jak przy przeciąganiu: `blur` odmontowanego bloku (zapis scalający dwa
+  // bloki) niesie propsy STAREGO renderu, a handler musi widzieć żywy stan.
+  const kbRef = useRef<BlockKeyboardState | null>(null);
+  const applyKb = (next: BlockKeyboardState | null) => {
+    kbRef.current = next;
+    setKb(next);
+  };
+  // Sufit rozciągania i szerokość kolumny mierzymy RAZ, przy wejściu w tryb —
+  // dokładnie tam, gdzie robi to `startDrag`.
+  const kbMaxHours = useRef(Infinity);
+  const [kbColWidth, setKbColWidth] = useState(0);
+
+  const kbContext = (): BlockKeyboardContext => ({
+    entryId: entry.id,
+    baseStart,
+    baseHours,
+    baseDayIndex: dayIndex,
+    dayCount: days.length,
+    maxHours: kbMaxHours.current,
+    // Ten sam indeks per (osoba, data), z którego czyta kolizje przeciąganie.
+    blocksOnDay: (i) =>
+      (blocksByPersonDate.get(personDateKey(person.id, days[i])) ?? []).map((w) => ({
+        id: w.id,
+        startMinutes: w.startMinutes,
+        plannedHours: w.plannedHours,
+        title: getTask(getState(), w.taskId)?.title ?? '',
+      })),
+  });
+
+  const kbGeometry = (s: {
+    projStart: number;
+    projHours: number;
+    projDayIndex: number;
+  }): BlockGeometry => ({
+    date: days[s.projDayIndex] ?? entry.date,
+    startMinutes: s.projStart,
+    plannedHours: s.projHours,
+  });
+
+  /** Winowajca kolizji dla bieżącej projekcji (do zdania, nie do decyzji). */
+  const kbConflict = (s: BlockKeyboardState, ctx: BlockKeyboardContext) =>
+    findBlockConflict(
+      ctx.blocksOnDay(s.projDayIndex),
+      s.projStart,
+      hoursToMinutes(s.projHours),
+      entry.id,
+    );
+
+  const announceKb = (s: BlockKeyboardState, ctx: BlockKeyboardContext, first: boolean) => {
+    const target = kbGeometry(s);
+    if (s.colliding) {
+      const conflict = kbConflict(s, ctx);
+      announce(
+        conflict === null
+          ? blockTargetAnnouncement(target)
+          : blockCollisionAnnouncement(target, conflict.title, conflict),
+      );
+      return;
+    }
+    if (s.atCap) {
+      announce(blockCapAnnouncement());
+      return;
+    }
+    announce(first ? blockEditAnnouncement(task.title, target) : blockTargetAnnouncement(target));
+  };
+
+  /**
+   * Zatwierdzenie wystawionej edycji — TĄ SAMĄ ścieżką co upuszczenie: ładunek
+   * `SET_BLOCK_TIME` o tym samym kształcie, po tych samych granicach (snap,
+   * clamp doby, kolizja, limit budżetu). Kolizja NIE jest wysyłana (inwariant 3),
+   * ale zawsze zostaje ogłoszona — edycja nigdy nie ginie po cichu.
+   */
+  const commitKb = (active: BlockKeyboardState) => {
+    const ctx = kbContext();
+    const intent = blockKeyboardCommit(active, ctx);
+    applyKb(null);
+    if (intent === null) {
+      if (active.colliding) {
+        const conflict = kbConflict(active, ctx);
+        announce(
+          conflict === null
+            ? blockUnchangedAnnouncement(task.title)
+            : blockRejectedAnnouncement(conflict.title, conflict),
+        );
+        return;
+      }
+      announce(blockUnchangedAnnouncement(task.title));
+      return;
+    }
+    const date = days[intent.dayIndex];
+    dispatch({
+      type: 'SET_BLOCK_TIME',
+      entryId: intent.entryId,
+      date,
+      startMinutes: intent.startMinutes,
+      plannedHours: intent.plannedHours,
+    });
+    announceCalendarPractice(intent.plannedHours !== baseHours ? 'resize' : 'move');
+    announce(blockCommitAnnouncement(task.title, kbGeometry(active)));
+  };
+
+  const revertKb = () => {
+    applyKb(null);
+    announce(
+      blockRevertAnnouncement(task.title, {
+        date: entry.date,
+        startMinutes: baseStart,
+        plannedHours: baseHours,
+      }),
+    );
+  };
+
+  const moveKbToBin = () => {
+    // Wystawiona edycja przestaje mieć znaczenie: blok traci datę i godzinę.
+    applyKb(null);
+    dispatch({ type: 'MOVE_BLOCK_TO_BIN', entryId: entry.id });
+    announceCalendarPractice('bin-drop');
+    announce(blockToBinAnnouncement(task.title));
+  };
+
+  const onBlockKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    // Trwający gest wskaźnika jest właścicielem projekcji — klawiatura nie
+    // dokłada się do niego (Escape w trakcie przeciągania obsługuje nasłuch okna
+    // założony przez ścieżkę wskaźnika). Sam ODCZYT refa, zero zmian tamtej drogi.
+    if (dragRef.current !== null) return;
+    const active = kbRef.current;
+    // Kolizja znaczeń Entera rozstrzygnięta JAWNIE: dopóki nic nie jest
+    // wystawione, Enter/spacja otwierają zadanie (zachowanie sprzed zmiany);
+    // w trakcie edycji ZATWIERDZAJĄ ją. Enter nie może znaczyć dwóch rzeczy
+    // naraz, a otwarcie modala porzuciłoby wystawioną zmianę bez śladu.
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      if (active === null) {
+        onOpen(task.id, entry.id);
+        return;
+      }
+      commitKb(active);
+      return;
+    }
+    if (!editable) return;
+    if (e.key === 'Escape') {
+      if (active === null) return; // bez trybu Escape należy do nakładek
+      e.preventDefault();
+      e.stopPropagation();
+      revertKb();
+      return;
+    }
+    const event: BlockKeyboardEvent | null =
+      e.key === 'ArrowUp'
+        ? e.shiftKey
+          ? { type: 'resize', deltaMinutes: -MINUTE_STEP }
+          : { type: 'move', deltaMinutes: -MINUTE_STEP }
+        : e.key === 'ArrowDown'
+          ? e.shiftKey
+            ? { type: 'resize', deltaMinutes: MINUTE_STEP }
+            : { type: 'move', deltaMinutes: MINUTE_STEP }
+          : e.key === 'ArrowLeft'
+            ? { type: 'day', delta: -1 }
+            : e.key === 'ArrowRight'
+              ? { type: 'day', delta: 1 }
+              : null;
+    if (event === null) return;
+    e.preventDefault();
+    if (active === null) {
+      // Wejście w tryb: te same wielkości, które łapie `startDrag`.
+      kbMaxHours.current = baseHours + growAllowanceHours(getState(), entry.id);
+      const rect = gridRef.current?.getBoundingClientRect();
+      setKbColWidth(rect ? rect.width / days.length : 0);
+    }
+    const ctx = kbContext();
+    const next = blockKeyboardReducer(active, event, ctx);
+    if (next === null || next === active) return; // krawędź — nic do ogłoszenia
+    applyKb(next);
+    announceKb(next, ctx, active === null);
+  };
+
+  // Kafelek i jego akcja „Przenieś do zasobnika” są RODZEŃSTWEM (patrz render),
+  // ale dla fokusu tworzą JEDNĄ całość — stąd oba refy i wspólny test poniżej.
+  const blockRef = useRef<HTMLDivElement | null>(null);
+  const binBtnRef = useRef<HTMLButtonElement | null>(null);
+  // IA-08 — ✓ jest TRZECIM elementem tej samej całości fokusowej (kafelek +
+  // akcja zasobnika + oznaczenie wykonania). Bez tego przejście Tabem z kafelka
+  // na ✓ zatwierdzałoby wystawioną edycję klawiaturową, o którą nikt nie prosił.
+  const doneBtnRef = useRef<HTMLButtonElement | null>(null);
+  /** Czy fokus wylądował wewnątrz trójki kafelek + akcja zasobnika + ✓? */
+  const kbFocusStays = (target: EventTarget | null): boolean => {
+    const node = target as Node | null;
+    if (node === null) return false;
+    return (
+      (blockRef.current?.contains(node) ?? false) ||
+      (binBtnRef.current?.contains(node) ?? false) ||
+      (doneBtnRef.current?.contains(node) ?? false)
+    );
+  };
+  // Hover kafelka ujawnia ✓. Obserwatory (żadnego `preventDefault`,
+  // `stopPropagation` ani przejęcia wskaźnika) — doktryna `useOverlay`/`Tooltip`,
+  // więc cykl życia wskaźnika przeciągania zostaje bez zmian (inwariant 7).
+  const [hovered, setHovered] = useState(false);
+
+  /**
+   * Wyjście fokusa POZA parę kafelek + akcja zasobnika ZATWIERDZA wystawioną
+   * edycję (o ile wolno ją wysłać): użytkownik zobaczył blok w nowym miejscu,
+   * więc ciche cofnięcie byłoby kłamstwem. Kolizja i tak nie przechodzi —
+   * `commitKb` ją odrzuca i ogłasza. Przejście Tabem NA akcję zasobnika NIE
+   * zapisuje: zaraz poleci `MOVE_BLOCK_TO_BIN`, a pośredni `SET_BLOCK_TIME`
+   * utrwalałby stan, o który nikt nie prosił (i mrugał banerem „Zapisano”).
+   */
+  const onKbFocusOut = (e: React.FocusEvent) => {
+    const active = kbRef.current;
+    if (active === null) return;
+    if (kbFocusStays(e.relatedTarget)) return;
+    commitKb(active);
+  };
+
+  // Podgląd: przeciąganie ma pierwszeństwo (jest gestem trwającym), a gdy go
+  // nie ma, kafelek rysuje się z wystawionej projekcji klawiatury.
+  const staged = drag ?? kb;
+  const start = staged ? staged.projStart : baseStart;
+  const hours = staged ? staged.projHours : baseHours;
   const end = blockEndMinutes(start, hours);
-  const dayShift = drag ? drag.projDayIndex - dayIndex : 0;
-  const tx = drag && dayShift !== 0 ? dayShift * drag.colWidth : 0;
+  const dayShift = staged ? staged.projDayIndex - dayIndex : 0;
+  const tx = dayShift !== 0 ? dayShift * (drag ? drag.colWidth : kbColWidth) : 0;
 
   const top = (start / 60) * HOUR_PX;
   const height = Math.max(MIN_BLOCK_H, hours * HOUR_PX);
 
+  // Pozioma geometria kafelka. Bez `stack` (desktop, tryb tygodnia) zostaje
+  // DOKŁADNIE dotychczasowa arytmetyka kolumn z `packDayBlocks`. Ze `stack`
+  // (widok dnia) każdy blok jest pełnej szerokości i tylko wcina się od lewej,
+  // bo dzielenie 390 px na równoległe kolumny dawało paski nie do trafienia
+  // palcem. `top`/`height`/`transform` są WSPÓLNE dla obu gałęzi — geometria
+  // czasu musi zostać zgodna z osią, bo przeciąganie liczy minuty z `dy`.
+  const horizontal = stack
+    ? {
+        left: `calc(var(--n2-day-stack-inset) * ${stack.insetSteps})`,
+        width: `calc(100% - var(--n2-day-stack-inset) * ${stack.insetSteps} - 3px)`,
+        zIndex: stack.stackIndex + 1,
+      }
+    : {
+        left: `calc(${(col / cols) * 100}% + 1px)`,
+        width: `calc(${100 / cols}% - 3px)`,
+      };
+
   const showMergeTarget = !drag && isMergeTarget;
-  // Status zadania jest czysto prezentacyjny: zielony odcień dla zakończonych,
-  // czerwony akcent po terminie. Kolor osoby zostaje na lewej krawędzi (styl
-  // inline), a klasy dragu/kolizji są w CSS PÓŹNIEJ, więc nadal wygrywają.
-  const status = taskDisplayStatus(state, task, todayStr());
-  // Per-block completion is INDEPENDENT of the task status: a block is done when
-  // it carries its own flag OR the task status is done. Two blocks on the same
-  // day render independent done state.
-  const done = blockIsDone(state, task, entry);
+  // `status` / `done` arrive as PROPS (computed by the parent from
+  // `taskDisplayStatus` / `blockIsDone`). Status zadania jest czysto
+  // prezentacyjny: zielony odcień dla zakończonych, czerwony akcent po terminie.
+  // Kolor osoby zostaje na lewej krawędzi (styl inline), a klasy dragu/kolizji są
+  // w CSS PÓŹNIEJ, więc nadal wygrywają. Per-block completion stays INDEPENDENT
+  // of the task status — two blocks on the same day render independent done state.
   const statusNote = statusNoteFor(status, task.endDate);
   const className = [
     'week-block',
@@ -578,40 +969,69 @@ function TimedBlockImpl({
     status === 'overdue' && !done ? 'overdue' : '',
     editable ? '' : 'readonly',
     drag ? 'dragging' : '',
-    drag?.colliding ? 'colliding' : '',
+    // Wystawiona edycja z klawiatury nosi TE SAME klasy stanu co przeciąganie
+    // (czerwona kolizja, ostrzeżenie o limicie) plus własną obwódkę trybu.
+    !drag && kb ? 'kb-editing' : '',
+    (staged?.colliding ?? false) ? 'colliding' : '',
     drag?.overBin ? 'to-bin' : '',
-    drag?.atCap ? 'at-cap' : '',
+    (staged?.atCap ?? false) ? 'at-cap' : '',
     drag?.willMergeWithId ? 'will-merge' : '',
     drag?.willMergeEdge === 'top' ? 'merge-top' : '',
     drag?.willMergeEdge === 'bottom' ? 'merge-bottom' : '',
     showMergeTarget ? 'will-merge-target' : '',
     isFused ? 'fused' : '',
+    // Klasy kaskady istnieją WYŁĄCZNIE w widoku dnia; bez `stack` obie są puste,
+    // więc łańcuch klas na desktopie zostaje znak w znak taki sam.
+    stack ? 'stacked' : '',
+    stack && stack.stackIndex === 0 && stack.stackSize > 1 ? 'stack-lead' : '',
   ]
     .filter(Boolean)
     .join(' ');
 
+  // Dymek NIE zmienia DOM-u bloku: `Tooltip` klonuje to samo `<div>`, dokłada
+  // wyłącznie obserwatorów zdarzeń, a kartę i ukryty opis renderuje w portalu.
+  // `pointerdown` chowa dymek, więc podczas przeciągania nigdy nic nie wisi nad
+  // siatką (inwariant 7 — cykl życia wskaźnika bez zmian).
+  const blockHint = !editable
+    ? `${task.title} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${formatDuration(hours)}).${statusNote}`
+    : drag?.atCap
+      ? 'Limit czasu zadania — brak godzin w zasobniku'
+      : `${task.title} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${formatDuration(hours)}).${statusNote} Przeciągnij, aby przenieść; przeciągnij krawędź, aby zmienić czas trwania; kliknij prawym przyciskiem, aby wstawić blok.`;
+
+  // Pełne zdanie o bloku dla czytnika ekranu — z tego samego budowniczego, co
+  // wiersze bloków w TaskModal, tyle że z tytułem zadania. Data jedzie z
+  // WYSTAWIONEJ projekcji, więc etykieta nie kłamie w trakcie edycji.
+  const blockAriaLabel = blockLabel({
+    taskTitle: task.title,
+    personName: person.name,
+    date: days[dayIndex + dayShift] ?? entry.date,
+    startMinutes: start,
+    plannedHours: hours,
+    done: entry.done === true,
+  });
+
   return (
     <>
+    <Tooltip text={blockHint}>
     <div
+      ref={blockRef}
       className={className}
       data-tour="calendar.block"
       style={{
         top,
         height,
-        left: `calc(${(col / cols) * 100}% + 1px)`,
-        width: `calc(${100 / cols}% - 3px)`,
+        ...horizontal,
         transform: tx ? `translateX(${tx}px)` : undefined,
         borderLeftColor: personColor(person.id),
       }}
       role="button"
       tabIndex={0}
-      title={
-        !editable
-          ? `${task.title} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${formatDuration(hours)}).${statusNote}`
-          : drag?.atCap
-            ? 'Limit czasu zadania — brak godzin w zasobniku'
-            : `${task.title} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${formatDuration(hours)}).${statusNote} Przeciągnij, aby przenieść; przeciągnij krawędź, aby zmienić czas trwania; kliknij prawym przyciskiem, aby wstawić blok.`
-      }
+      // Nazwa dostępna niesie PEŁNE zdanie o bloku (wspólny `blockLabel`, ten
+      // sam, co wiersze w TaskModal) i podąża za wystawioną projekcją, więc
+      // czytnik ekranu opisuje to, co widać. Dzieci `role="button"` są
+      // prezentacyjne, więc bez tego kafelek czytał się jako sklejka napisów.
+      aria-label={blockAriaLabel}
+      aria-describedby={editable ? WEEK_BLOCK_KB_HINT_ID : undefined}
       onPointerDown={editable ? begin('move') : undefined}
       onPointerMove={editable ? onPointerMove : undefined}
       onPointerUp={editable ? finish : undefined}
@@ -623,13 +1043,13 @@ function TimedBlockImpl({
         e.stopPropagation();
         if (!moved.current) onOpen(task.id, entry.id);
       }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onOpen(task.id, entry.id);
-        }
-      }}
+      onKeyDown={onBlockKeyDown}
+      onBlur={editable ? onKbFocusOut : undefined}
       onContextMenu={editable ? (e) => onContextMenu(entry, e) : undefined}
+      // Same obserwatory hoveru (patrz `hovered`): nic nie konsumują, więc
+      // `Tooltip` klonujący ten element nadal dostaje swoje zdarzenia.
+      onPointerEnter={editable ? () => setHovered(true) : undefined}
+      onPointerLeave={editable ? () => setHovered(false) : undefined}
     >
       {editable && (
         <span className="week-block-handle top" onPointerDown={begin('top')} aria-hidden />
@@ -637,8 +1057,11 @@ function TimedBlockImpl({
       <span className="week-block-title">
         {project && <Coin paid={project.paid} size={12} />}
         {task.title}
-        {entry.done === true && (
-          <span className="block-done-mark" title="Wykonane" aria-label="Wykonane">
+        {/* Blok bez prawa edycji zostaje przy BIERNYM znaczniku: widz nadal widzi
+            ✓, ale nie dostaje przycisku, którego i tak nie wolno mu użyć.
+            Edytowalny blok ma zamiast tego przycisk-rodzeństwo (IA-08). */}
+        {!editable && entry.done === true && (
+          <span className="block-done-mark" aria-label="Wykonane">
             ✓
           </span>
         )}
@@ -659,6 +1082,88 @@ function TimedBlockImpl({
         <span className="week-block-handle bottom" onPointerDown={begin('bottom')} aria-hidden />
       )}
     </div>
+    </Tooltip>
+    {/* Klawiaturowy odpowiednik upuszczenia bloku nad zasobnikiem. Stoi OBOK
+        kafelka, nie w nim: dzieci `role="button"` są prezentacyjne, więc
+        zagnieżdżony przycisk nie zostałby ogłoszony. Widoczny dopiero przy
+        fokusie (`.week-block-bin-btn`), więc mysz nigdy go nie dostaje — żadna
+        ścieżka wskaźnika ani trafianie w wyrenderowaną kolumnę się nie zmienia
+        (inwariant 7). Wysyła DOKŁADNIE tę samą akcję co upuszczenie. */}
+    {editable && (
+      <button
+        type="button"
+        ref={binBtnRef}
+        className="week-block-bin-btn"
+        style={{
+          top,
+          // Rodzeństwo kafelka musi stać nad JEGO lewą krawędzią, więc w widoku
+          // dnia idzie za wcięciem kaskady, a poza nim za kolumną (bez zmian).
+          left: stack
+            ? `calc(var(--n2-day-stack-inset) * ${stack.insetSteps})`
+            : `calc(${(col / cols) * 100}% + 1px)`,
+          transform: tx ? `translateX(${tx}px)` : undefined,
+        }}
+        aria-label={`Przenieś do zasobnika: ${blockAriaLabel}`}
+        // Fokus opuszczający PARĘ (kafelek + ta akcja) domyka wystawioną edycję
+        // tym samym kontraktem co blur kafelka — inaczej zmiana wisiałaby
+        // wystawiona, gdy użytkownik odejdzie Tabem stąd.
+        onBlur={onKbFocusOut}
+        onClick={(e) => {
+          e.stopPropagation();
+          moveKbToBin();
+        }}
+      >
+        Przenieś do zasobnika
+      </button>
+    )}
+    {/* IA-08 — oznaczenie wykonania PROSTO z kalendarza. Ta sama doktryna, co
+        akcja zasobnika: RODZEŃSTWO kafelka, nie jego dziecko (dzieci
+        `role="button"` są prezentacyjne, więc zagnieżdżony przycisk nie
+        zostałby ogłoszony). `pointerdown` zatrzymuje się TU i nigdy nie
+        schodzi do `begin(...)`, więc ✓ nie może rozpocząć przeciągania,
+        rozciągania ani obsługi slotu — cykl życia wskaźnika bez zmian
+        (inwariant 7). Akcja jest DOKŁADNIE ta sama, co w liście „Wykonane
+        bloki" w TaskModal. */}
+    {editable && (
+      <button
+        type="button"
+        ref={doneBtnRef}
+        className={
+          hovered ? 'week-block-done-btn hovered' : 'week-block-done-btn'
+        }
+        style={{
+          top,
+          // Prawy górny róg kafelka: lewa krawędź kolumny + jej szerokość,
+          // a `translateX(-100%)` cofa przycisk o jego własną szerokość. W
+          // widoku dnia kafelek sięga prawej krawędzi kolumny (minus 3 px), więc
+          // ✓ liczy się od niej, a nie od podziału na kolumny.
+          left: stack ? 'calc(100% - 3px)' : `calc(${((col + 1) / cols) * 100}% - 2px)`,
+          transform: tx
+            ? `translateX(${tx}px) translateX(-100%)`
+            : 'translateX(-100%)',
+        }}
+        aria-pressed={entry.done === true}
+        aria-label={
+          entry.done === true
+            ? `Cofnij wykonanie — ${blockAriaLabel}`
+            : `Oznacz jako wykonane — ${blockAriaLabel}`
+        }
+        onPointerDown={(e) => e.stopPropagation()}
+        // Wyjście fokusa domyka wystawioną edycję tym samym kontraktem, co
+        // kafelek i akcja zasobnika.
+        onBlur={onKbFocusOut}
+        onClick={(e) => {
+          e.stopPropagation();
+          dispatch({
+            type: 'SET_BLOCK_DONE',
+            entryId: entry.id,
+            done: !(entry.done === true),
+          });
+        }}
+      >
+        <span aria-hidden>✓</span>
+      </button>
+    )}
     {/* Over-bin ghost: a fixed portal copy of the block riding under the pointer
         while a move drag is over the bin pane. The in-column block is clipped by
         the days viewport overflow and can never appear over the sibling bin, so
@@ -695,10 +1200,12 @@ function TimedBlockImpl({
 }
 
 // Memo boundary: with all incoming props referentially stable during a drag
-// (`state`, `days` and `blocksByPersonDate` come from the parent's memoized
-// model; callbacks are useCallback-stable; the merge/fuse affordances arrive as
-// per-block booleans), changing the merge target re-renders only the OLD and NEW
-// target blocks plus the dragged one — not every block on the grid.
+// (`days` and `blocksByPersonDate` come from the parent's memoized model;
+// callbacks are useCallback-stable; the merge/fuse affordances and the
+// presentational `status`/`done` arrive as per-block primitives — the whole
+// `state` object is deliberately NOT a prop), changing the merge target
+// re-renders only the OLD and NEW target blocks plus the dragged one, and an
+// action that does not touch this row leaves the block alone entirely.
 const TimedBlock = memo(TimedBlockImpl);
 
 // ---- Bin card: a dateless block that drags OUT of the bin onto the grid ----
@@ -730,11 +1237,14 @@ interface BinDragListeners {
 }
 
 interface BinCardProps {
-  state: AppData;
   entry: WorkloadEntry;
   task: Task;
   person: Person;
   project?: Project;
+  /** `taskDisplayStatus(state, task, todayStr())` — parent-computed (see BlockProps). */
+  status: 'done' | 'overdue' | 'open';
+  /** `blockIsDone(state, task, entry)` — parent-computed (see BlockProps). */
+  done: boolean;
   days: string[];
   gridRef: React.RefObject<HTMLDivElement | null>;
   viewportRef: React.RefObject<HTMLDivElement | null>;
@@ -746,14 +1256,17 @@ interface BinCardProps {
   onOpen: (taskId: string, entryId: string) => void;
   onContextMenu: (entry: WorkloadEntry, e: React.MouseEvent) => void;
   onSchedule: (entry: WorkloadEntry, anchor: HTMLElement) => void;
+  /** Jak w `BlockProps`: obserwator „trwa przeciąganie” dla arkusza zasobnika. */
+  onDragActiveChange?: (active: boolean) => void;
 }
 
 function BinCardImpl({
-  state,
   entry,
   task,
   person,
   project,
+  status,
+  done,
   days,
   gridRef,
   viewportRef,
@@ -762,14 +1275,17 @@ function BinCardImpl({
   onOpen,
   onContextMenu,
   onSchedule,
+  onDragActiveChange,
 }: BinCardProps) {
-  const { dispatch } = useStore();
+  const dispatch = useDispatch();
   const [drag, setDrag] = useState<BinDragState | null>(null);
   // See TimedBlock.dragRef: the drop must commit the newest pointer projection,
   // even when pointermove and pointerup are delivered before React re-renders.
   const dragRef = useRef<BinDragState | null>(null);
   const moved = useRef(false);
   const cardRef = useRef<HTMLDivElement | null>(null);
+  // Bramka dotyku: na palcu przeciąganie startuje dopiero po przytrzymaniu.
+  const gate = useTouchDragGate();
   // Bin drags intentionally do not depend on element pointer capture. A valid
   // drop unmounts the source card, and browsers may also lose/reject capture at
   // viewport boundaries. Window listeners keep ownership of the gesture until
@@ -816,13 +1332,19 @@ function BinCardImpl({
     };
   }, []);
 
-  // Jak w TimedBlock: odświeżenie w tle czeka na koniec przeciągania z zasobnika.
+  // Jak w TimedBlock: odświeżenie w tle czeka na koniec przeciągania z zasobnika,
+  // a ten sam efekt niesie obserwatora „trwa przeciąganie” dla arkusza (patrz
+  // komentarz przy `TimedBlock` — obserwator, nie uczestnik gestu).
   const holdKey = useRef({}).current;
   const dragging = drag !== null;
   useEffect(() => {
     setLiveSyncHold(holdKey, dragging);
-    return () => clearLiveSyncHold(holdKey);
-  }, [dragging, holdKey]);
+    onDragActiveChange?.(dragging);
+    return () => {
+      clearLiveSyncHold(holdKey);
+      if (dragging) onDragActiveChange?.(false);
+    };
+  }, [dragging, holdKey, onDragActiveChange]);
 
   const projectPointer = (clientX: number, clientY: number): BinDragState | null => {
     const activeDrag = dragRef.current;
@@ -880,7 +1402,7 @@ function BinCardImpl({
         grid.contains(dayColumn) &&
         Number.isInteger(hitIndex) &&
         hitIndex >= 0 &&
-        hitIndex < DAY_COLS;
+        hitIndex < days.length;
       colIndex = valid ? hitIndex : -1;
 
       const dur = entry.plannedHours * 60;
@@ -948,21 +1470,26 @@ function BinCardImpl({
     announceCalendarPractice('bin-drop');
   };
 
-  const begin = (e: React.PointerEvent) => {
-    if (e.button !== 0) return; // right button → context menu
-    e.stopPropagation();
-    removeWindowListeners();
-    moved.current = false;
+  // Deferred drag start — `init` is captured SYNCHRONOUSLY in the handler,
+  // because on touch this runs only after the long press elapses and the React
+  // event is no longer readable then (see useTouchDragGate).
+  const startDrag = (init: {
+    pointerId: number;
+    pointerType: string;
+    clientX: number;
+    clientY: number;
+  }) => {
+    const { pointerId, pointerType, clientX, clientY } = init;
     // Capture the card geometry once so the fixed ghost keeps its size and stays
     // aligned under the cursor (the in-pane original stays put and dims).
     const rect = cardRef.current?.getBoundingClientRect();
     const nextDrag: BinDragState = {
-      originX: e.clientX,
-      originY: e.clientY,
-      clientX: e.clientX,
-      clientY: e.clientY,
-      grabX: rect ? e.clientX - rect.left : 0,
-      grabY: rect ? e.clientY - rect.top : 0,
+      originX: clientX,
+      originY: clientY,
+      clientX,
+      clientY,
+      grabX: rect ? clientX - rect.left : 0,
+      grabY: rect ? clientY - rect.top : 0,
       width: rect ? rect.width : 0,
       colIndex: -1,
       startMin: 0,
@@ -973,8 +1500,6 @@ function BinCardImpl({
     dragRef.current = nextDrag;
     setDrag(nextDrag);
 
-    const pointerId = e.pointerId;
-    const pointerType = e.pointerType;
     const listeners: BinDragListeners = {
       pointerId,
       move: (event) => {
@@ -1017,11 +1542,29 @@ function BinCardImpl({
     document.addEventListener('visibilitychange', listeners.visibilityChange);
   };
 
+  const begin = (e: React.PointerEvent) => {
+    if (e.button !== 0) return; // right button → context menu
+    e.stopPropagation();
+    removeWindowListeners();
+    // Reset przed bramką: dotknięcie bez przeciągnięcia ma otwierać zadanie,
+    // więc `moved` nie może zostać z poprzedniego gestu, gdy drag nie wystartuje.
+    moved.current = false;
+    const init = {
+      pointerId: e.pointerId,
+      pointerType: e.pointerType,
+      clientX: e.clientX,
+      clientY: e.clientY,
+    };
+    // Dotyk: przeciąganie startuje dopiero po przytrzymaniu, żeby przewijanie
+    // palcem po karcie nie wyrzucało jej z zasobnika. Mysz idzie tędy bez zmian.
+    if (gate.arm(e.pointerType, e.clientX, e.clientY, () => startDrag(init))) return;
+    startDrag(init);
+  };
+
   // In-pane original stays mounted for click/context-menu semantics and dims
   // while window listeners own the drag. The visible card following the
   // pointer is a fixed portal ghost, so the bin pane cannot clip it.
-  const status = taskDisplayStatus(state, task, todayStr());
-  const done = blockIsDone(state, task, entry);
+  // `status` / `done` arrive as PROPS — see BlockProps.
   const statusNote = statusNoteFor(status, task.endDate);
   const className = [
     'week-bin-block',
@@ -1039,7 +1582,7 @@ function BinCardImpl({
         {project && <Coin paid={project.paid} size={12} />}
         {task.title}
         {entry.done === true && (
-          <span className="block-done-mark" title="Wykonane" aria-label="Wykonane">
+          <span className="block-done-mark" aria-label="Wykonane">
             ✓
           </span>
         )}
@@ -1048,8 +1591,18 @@ function BinCardImpl({
     </>
   );
 
+  // Ten sam kontrakt co w `TimedBlock`: klonowany `<div>`, obserwatorzy zdarzeń,
+  // karta w portalu, `pointerdown` chowa. `ref={cardRef}` przechodzi przez
+  // `Tooltip` (scala refy), więc pomiar szerokości ducha zostaje bez zmian.
+  const cardHint = editable
+    ? unplaceable
+      ? `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.${statusNote} ${unplaceableHint}`
+      : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.${statusNote} Przeciągnij na siatkę albo użyj „Zaplanuj część”.`
+    : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.${statusNote}`;
+
   return (
     <>
+      <Tooltip text={cardHint}>
       <div
         ref={cardRef}
         className={className}
@@ -1057,13 +1610,6 @@ function BinCardImpl({
         style={{ borderLeftColor: personColor(person.id) }}
         role="button"
         tabIndex={0}
-        title={
-          editable
-            ? unplaceable
-              ? `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.${statusNote} ${unplaceableHint}`
-              : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.${statusNote} Przeciągnij na siatkę albo użyj „Zaplanuj część”.`
-            : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.${statusNote}`
-        }
         onPointerDown={editable ? begin : undefined}
         onClick={(e) => {
           e.stopPropagation();
@@ -1080,10 +1626,14 @@ function BinCardImpl({
         {content}
         {editable && canSchedule && (
           <div className="week-bin-block-actions">
+            {/* BEZ własnego dymka: przycisk siedzi WEWNĄTRZ karty, która ma już
+                swój dymek, a `pointerenter` na dziecku nie chowa dymka rodzica —
+                pokazałyby się dwie nachodzące karty. Tekst i tak był identyczny
+                z `aria-label` (podwójny odczyt), a komplet informacji
+                (zadanie, osoba, godziny w zasobniku) niesie dymek karty. */}
             <button
               type="button"
               className="week-bin-schedule-btn"
-              title={`Zaplanuj część: ${task.title} — ${person.name}, ${formatDuration(entry.plannedHours)} w zasobniku`}
               aria-label={`Zaplanuj część: ${task.title} — ${person.name}, ${formatDuration(entry.plannedHours)} w zasobniku`}
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => {
@@ -1097,6 +1647,7 @@ function BinCardImpl({
           </div>
         )}
       </div>
+      </Tooltip>
       {drag &&
         createPortal(
           <div
@@ -1167,30 +1718,37 @@ interface RecurBlockProps {
   task: Task;
   hue: string;
   occurrence: RecurrenceOccurrence;
+  /** `occurrenceIsDone(state, task, occurrence)` — liczone przez rodzica (memo-friendly). */
+  done: boolean;
   // Stable parent callbacks taking the occurrence's own data (memo-friendly).
   onOpen: (taskId: string) => void;
   onContextMenu: (task: Task, occ: RecurrenceOccurrence, e: React.MouseEvent) => void;
 }
 
-function RecurBlockImpl({ task, hue, occurrence, onOpen, onContextMenu }: RecurBlockProps) {
+function RecurBlockImpl({ task, hue, occurrence, done, onOpen, onContextMenu }: RecurBlockProps) {
   const title = task.title;
   const top = (occurrence.startMinutes / 60) * HOUR_PX;
   const height = Math.max((occurrence.durationMinutes / 60) * HOUR_PX, MIN_BLOCK_H);
   const end = occurrence.startMinutes + occurrence.durationMinutes;
-  const className = ['week-recur-block', occurrence.overridden ? 'overridden' : '']
+  const className = [
+    'week-recur-block',
+    occurrence.overridden ? 'overridden' : '',
+    done ? 'done' : '',
+  ]
     .filter(Boolean)
     .join(' ');
+  const hint = `⟳ ${title} — cykliczne: ${formatMinutes(occurrence.startMinutes)}–${formatMinutes(
+    end,
+  )} (${formatDuration(occurrence.durationMinutes / 60)})${
+    done ? ' — zrobione' : ''
+  }. Kliknij, aby otworzyć zadanie; kliknij prawym przyciskiem, aby edytować wystąpienie.`;
   return (
+    <Tooltip text={hint}>
     <div
       className={className}
       style={{ top, height, borderColor: hue }}
       role="button"
       tabIndex={0}
-      title={`⟳ ${title} — cykliczne: ${formatMinutes(occurrence.startMinutes)}–${formatMinutes(
-        end,
-      )} (${formatDuration(
-        occurrence.durationMinutes / 60,
-      )}). Kliknij, aby otworzyć zadanie; kliknij prawym przyciskiem, aby edytować wystąpienie.`}
       onClick={(e) => {
         e.stopPropagation();
         onOpen(task.id);
@@ -1203,11 +1761,19 @@ function RecurBlockImpl({ task, hue, occurrence, onOpen, onContextMenu }: RecurB
       }}
       onContextMenu={(e) => onContextMenu(task, occurrence, e)}
     >
-      <span className="week-recur-title">⟳ {title}</span>
+      <span className="week-recur-title">
+        ⟳ {title}
+        {done && (
+          <span className="block-done-mark" aria-label="Wykonane">
+            ✓
+          </span>
+        )}
+      </span>
       <span className="week-recur-time">
         {formatMinutes(occurrence.startMinutes)}–{formatMinutes(end)}
       </span>
     </div>
+    </Tooltip>
   );
 }
 
@@ -1229,15 +1795,16 @@ function EventBlockImpl({ occ, onOpen }: EventBlockProps) {
   const top = (occ.startMinutes / 60) * HOUR_PX;
   const height = Math.max((occ.durationMinutes / 60) * HOUR_PX, MIN_BLOCK_H);
   const end = occ.startMinutes + occ.durationMinutes;
+  const hint = `📅 ${occ.event.title} — ${formatMinutes(occ.startMinutes)}–${formatMinutes(
+    end,
+  )}. Kliknij, aby otworzyć wydarzenie.`;
   return (
+    <Tooltip text={hint}>
     <div
       className="week-event-block"
       style={{ top, height }}
       role="button"
       tabIndex={0}
-      title={`📅 ${occ.event.title} — ${formatMinutes(occ.startMinutes)}–${formatMinutes(
-        end,
-      )}. Kliknij, aby otworzyć wydarzenie.`}
       onClick={(e) => {
         e.stopPropagation();
         onOpen(occ.event.id);
@@ -1254,15 +1821,17 @@ function EventBlockImpl({ occ, onOpen }: EventBlockProps) {
         {formatMinutes(occ.startMinutes)}–{formatMinutes(end)}
       </span>
     </div>
+    </Tooltip>
   );
 }
 
 const EventBlock = memo(EventBlockImpl);
 
-export function WeekView({ state, anchor, filter }: Props) {
+export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Props) {
   const { openTask, openNewTask } = useOpenTask();
   const { openEvent, openNewEvent } = useOpenEvent();
-  const { dispatch } = useStore();
+  const dispatch = useDispatch();
+  const confirm = useConfirm();
   const can = useCan();
   const canEditAny = can('blocks.editAny');
   const canEditOwn = can('blocks.editOwn');
@@ -1279,14 +1848,23 @@ export function WeekView({ state, anchor, filter }: Props) {
   const canEditEntry = (personId: string): boolean =>
     canEditAny ||
     (canEditOwn && personId === state.currentUserId && state.currentUserId !== '');
-  // Memoize the 7-day array so its reference is stable across drag re-renders —
+  // Memoize the days array so its reference is stable across drag re-renders —
   // otherwise a fresh `days` array would invalidate every memoized block's props.
-  const days = useMemo(() => weekDays(anchor), [anchor]);
+  // W trybie dnia jest to JEDNA data (kotwica); `buildWeekModel` przyjmuje
+  // dowolną długość, a cała arytmetyka kolumn czyta `days.length`.
+  const days = useMemo(
+    () => (mode === 'day' ? [anchor] : weekDays(anchor)),
+    [mode, anchor],
+  );
 
   // The precomputed week index: one pass per (state, days, filter) instead of a
   // scan-per-block-per-render. Stable while a drag only flips local/merge state,
   // so the memoized leaves below keep their props and skip re-rendering.
   const model = useMemo(() => buildWeekModel(state, days, filter), [state, days, filter]);
+
+  // Hoisted so both the bin pane and the day columns compute their leaves'
+  // `status` prop from ONE value (was `todayStr()` inside each memoized leaf).
+  const today = todayStr();
 
   // Stable open handlers so the memoized leaves keep referentially-equal props.
   // They stay identical across drag re-renders (openTask/openEvent only change on
@@ -1297,11 +1875,98 @@ export function WeekView({ state, anchor, filter }: Props) {
   );
   const handleOpenEvent = useCallback((eventId: string) => openEvent(eventId), [openEvent]);
 
+  // Jeden region ogłoszeń na kalendarz: wejście w klawiaturową edycję bloku,
+  // każdy kolejny cel, kolizja, limit, zapis i cofnięcie — jedyny kanał, którym
+  // czytnik ekranu wie, co się dzieje (czerwona obwódka nic nie mówi).
+  // `useCallback`, bo memoizowane bloki dostają tę funkcję w propsach.
+  const [announcement, setAnnouncement] = useState('');
+  const announce = useCallback((message: string) => setAnnouncement(message), []);
+
   const gridRef = useRef<HTMLDivElement | null>(null); // .week-days-grid (7 columns, 0:00 at top)
   const viewportRef = useRef<HTMLDivElement | null>(null); // .week-days-viewport (both scrollbars)
   const axisPaneRef = useRef<HTMLDivElement | null>(null); // .week-axis-pane (vertical scroll synced)
   const headTrackRef = useRef<HTMLDivElement | null>(null); // .week-head-track (horizontal scroll synced)
   const binRef = useRef<HTMLDivElement | null>(null); // .week-bin-pane (grid→bin drop target)
+
+  // ---- Widok dnia: pasek dat, kaskada bloków i arkusz zasobnika ----
+  // Wszystko poniżej jest MARTWE w trybie tygodnia (desktop): stan startowy się
+  // nie zmienia, efekty wychodzą pierwszą linijką, a JSX renderuje dokładnie
+  // dotychczasowe drzewo.
+  const stripRef = useRef<HTMLDivElement | null>(null);
+  const [binSheet, setBinSheet] = useState<'closed' | 'peek' | 'open'>('closed');
+  const binSheetRef = useRef<HTMLDivElement | null>(null);
+  const binTriggerRef = useRef<HTMLButtonElement | null>(null);
+  // Czy JAKIŚ blok/karta zasobnika jest właśnie przeciągany. Ref jest
+  // synchronicznym źródłem prawdy dla `onClose` arkusza (nakładka nie może
+  // zamknąć strefy upuszczenia w środku gestu), a stan gasi nasłuchy nakładki
+  // na czas przeciągania — Escape musi wtedy trafić do ścieżki anulowania
+  // przeciągania, a `useOverlay` zjadłby go w fazie capture (inwariant 7).
+  const dragActiveRef = useRef(false);
+  const [dragActive, setDragActive] = useState(false);
+  // Licznik, bo montowania/odmontowania bloków w trakcie gestu bywają
+  // nakładające się (upuszczenie do zasobnika odmontowuje źródło).
+  const dragCountRef = useRef(0);
+  const binSheetBeforeDragRef = useRef<'closed' | 'peek' | 'open'>('closed');
+  const modeRef = useRef(mode);
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
+  const handleDragActiveChange = useCallback((active: boolean) => {
+    // BRAMKA IDENTYCZNOŚCI: poza trybem dnia callback nie robi NIC — na
+    // desktopie w trakcie przeciągania nie leci żaden dodatkowy `setState`.
+    if (modeRef.current !== 'day') return;
+    dragCountRef.current = Math.max(0, dragCountRef.current + (active ? 1 : -1));
+    const next = dragCountRef.current > 0;
+    if (next === dragActiveRef.current) return;
+    dragActiveRef.current = next;
+    setDragActive(next);
+    setBinSheet((prev) => {
+      if (next) {
+        binSheetBeforeDragRef.current = prev;
+        // Na czas gestu arkusz ZAWSZE schodzi do `peek` — także wtedy, gdy był
+        // otwarty. Otwarty zajmuje 85dvh i zasłania siatkę, a mimo to zapasowy
+        // test kolumn w `projectPointer` (prostokąty `.week-day-col`) trafiłby w
+        // kolumnę POD arkuszem: upuszczenie zaplanowałoby blok w slocie, którego
+        // użytkownik nie widzi. Peek robi WYSOKOŚĆ (CSS), nigdy `translateY` —
+        // prostokąt panelu jest strefą upuszczenia, więc musi odpowiadać temu,
+        // co widać. Poprzedni stan wraca po zakończeniu gestu.
+        return 'peek';
+      }
+      return binSheetBeforeDragRef.current;
+    });
+  }, []);
+
+  const closeBinSheet = useCallback(() => {
+    if (dragActiveRef.current) return;
+    setBinSheet('closed');
+  }, []);
+  useOverlay({
+    open: mode === 'day' && binSheet === 'open' && !dragActive,
+    onClose: closeBinSheet,
+    overlayRef: binSheetRef,
+    triggerRef: binTriggerRef,
+  });
+
+  // Deep-link zakładki „Zasobnik” (`/calendar?zasobnik=1`): otwórz arkusz i
+  // ZDEJMIJ parametr (`replace`), żeby cofnięcie nie otwierało go ponownie.
+  // Pozostałe parametry (`task`/`wydarzenie`/`zgloszenie`) zostają nietknięte.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const binParam = searchParams.get(BIN_SHEET_PARAM);
+  useEffect(() => {
+    if (mode !== 'day' || binParam !== '1') return;
+    setBinSheet('open');
+    const next = new URLSearchParams(searchParams);
+    next.delete(BIN_SHEET_PARAM);
+    setSearchParams(next, { replace: true });
+  }, [mode, binParam, searchParams, setSearchParams]);
+
+  // Pasek dat: po zmianie kotwicy dosuń aktywny dzień do środka.
+  useEffect(() => {
+    if (mode !== 'day') return;
+    const active = stripRef.current?.querySelector<HTMLElement>('.week-day-strip-item.active');
+    active?.scrollIntoView({ inline: 'center', block: 'nearest' });
+  }, [mode, anchor]);
 
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [hoursRaw, setHoursRaw] = useState('1');
@@ -1316,8 +1981,7 @@ export function WeekView({ state, anchor, filter }: Props) {
   // the snapped 15-minute start under the cursor. Separate from the block/bin
   // `menu` above (which is keyed on a WorkloadEntry).
   const [slotMenu, setSlotMenu] = useState<{
-    x: number;
-    y: number;
+    anchor: MenuAnchor;
     date: string;
     startMinutes: number;
   } | null>(null);
@@ -1326,7 +1990,8 @@ export function WeekView({ state, anchor, filter }: Props) {
   // Recurrence occurrence context menu — its own portal-free `.context-menu`
   // popover, keyed on a (taskId, date) occurrence rather than a WorkloadEntry.
   // Kept fully separate from `menu`/`slotMenu` so no pointer/drag path is touched.
-  // Actions map only to SET_RECURRENCE_OVERRIDE / opening the task.
+  // Actions map only to SET_RECURRENCE_OVERRIDE / SET_OCCURRENCE_DONE /
+  // SET_TASK_STATUS / opening the task.
   const [recurMenu, setRecurMenu] = useState<{
     taskId: string;
     title: string;
@@ -1334,8 +1999,11 @@ export function WeekView({ state, anchor, filter }: Props) {
     startMinutes: number;
     durationMinutes: number;
     overridden: boolean;
-    x: number;
-    y: number;
+    /** WŁASNA flaga wyjątku tej daty (bez statusu zadania). */
+    done: boolean;
+    /** Status zadania jest „zrobiony" — cała seria świeci się niezależnie. */
+    seriesDone: boolean;
+    anchor: MenuAnchor;
     step: 'menu' | 'edit';
   } | null>(null);
   const recurMenuRef = useRef<HTMLDivElement | null>(null);
@@ -1356,19 +2024,16 @@ export function WeekView({ state, anchor, filter }: Props) {
     return () => clearTimeout(t);
   }, [fusedId]);
 
-  // Open the grid scrolled to ~07:00 (once, on mount).
+  // Otwórz siatkę przewiniętą na początek okna roboczego (9:00), raz na mount.
   useEffect(() => {
-    if (viewportRef.current) viewportRef.current.scrollTop = (SCROLL_TO_MIN / 60) * HOUR_PX;
+    if (viewportRef.current) viewportRef.current.scrollTop = workWindowScrollTop(HOUR_PX);
   }, []);
 
-  // Zegar „teraz”: napędza linię bieżącej godziny w dzisiejszej kolumnie oraz
-  // narożną etykietę daty/zegara. Odświeżany co 30 s, żeby wskazanie nigdy nie
-  // odstawało o więcej niż pół minuty; czysto prezentacyjny (invariant 7).
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(new Date()), 30_000);
-    return () => window.clearInterval(id);
-  }, []);
+  // Zegar „teraz”: napędza linię bieżącej godziny w dzisiejszej kolumnie.
+  // Odświeżany co 30 s, żeby wskazanie nigdy nie odstawało o więcej niż pół
+  // minuty; czysto prezentacyjny (invariant 7). Plakietka daty/zegara żyje
+  // teraz w pasku kalendarza (NowClockBadge), poza siatką.
+  const now = useNowTick();
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
   // Keep the fixed axis pane (vertical) and header track (horizontal) in step
@@ -1380,70 +2045,50 @@ export function WeekView({ state, anchor, filter }: Props) {
     if (headTrackRef.current) headTrackRef.current.scrollLeft = v.scrollLeft;
   };
 
-  // Close the context menu on Escape or on any click outside it.
-  useEffect(() => {
-    if (!menu) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMenu(null);
-    };
-    const onDown = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenu(null);
-    };
-    window.addEventListener('keydown', onKey);
-    window.addEventListener('mousedown', onDown);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('mousedown', onDown);
-    };
-  }, [menu]);
+  // Wspólna powłoka wszystkich trzech menu (`useOverlay`): portal, stos warstw
+  // dla Escape, zamykanie PARĄ pointerdown+click na zewnątrz oraz — zamiast
+  // dawnego zamykania na scrollu i clampów `window.innerWidth - 240/280` —
+  // przeliczanie pozycji względem zapamiętanej kotwicy. Klawiatura menu
+  // włącza się TYLKO w krokach listy, nigdy w formularzach (pola same obsługują
+  // strzałki i pisanie). Nasłuchy są wyłącznie obserwatorami — żadna ścieżka
+  // przeciągania (inwariant 7) nie jest ruszana.
+  const closeMenu = useCallback(() => setMenu(null), []);
+  const closeSlotMenu = useCallback(() => setSlotMenu(null), []);
+  const closeRecurMenu = useCallback(() => setRecurMenu(null), []);
+  const menuAnchorRect = useCallback(() => anchorRect(menu?.anchor), [menu]);
+  const menuFocusReturn = useCallback(() => menu?.anchor.el ?? null, [menu]);
+  const slotAnchorRect = useCallback(() => anchorRect(slotMenu?.anchor), [slotMenu]);
+  const slotFocusReturn = useCallback(() => slotMenu?.anchor.el ?? null, [slotMenu]);
+  const recurAnchorRect = useCallback(() => anchorRect(recurMenu?.anchor), [recurMenu]);
+  const recurFocusReturn = useCallback(() => recurMenu?.anchor.el ?? null, [recurMenu]);
 
-  // Same close discipline for the empty-slot menu, plus scroll: it is anchored to
-  // viewport coordinates, so any grid scroll (capture:true catches the inner
-  // viewport too) must dismiss it rather than leave it floating off its slot.
-  // Listeners subscribe only while open and unsubscribe on close — no leaks.
-  useEffect(() => {
-    if (!slotMenu) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setSlotMenu(null);
-    };
-    const onDown = (e: MouseEvent) => {
-      if (slotMenuRef.current && !slotMenuRef.current.contains(e.target as Node)) {
-        setSlotMenu(null);
-      }
-    };
-    const onScroll = () => setSlotMenu(null);
-    window.addEventListener('keydown', onKey);
-    window.addEventListener('mousedown', onDown);
-    window.addEventListener('scroll', onScroll, true);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('mousedown', onDown);
-      window.removeEventListener('scroll', onScroll, true);
-    };
-  }, [slotMenu]);
-
-  // Same close discipline (Escape / outside-click / scroll) for the recurrence
-  // occurrence menu, which is anchored to viewport coordinates like slotMenu.
-  useEffect(() => {
-    if (!recurMenu) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setRecurMenu(null);
-    };
-    const onDown = (e: MouseEvent) => {
-      if (recurMenuRef.current && !recurMenuRef.current.contains(e.target as Node)) {
-        setRecurMenu(null);
-      }
-    };
-    const onScroll = () => setRecurMenu(null);
-    window.addEventListener('keydown', onKey);
-    window.addEventListener('mousedown', onDown);
-    window.addEventListener('scroll', onScroll, true);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('mousedown', onDown);
-      window.removeEventListener('scroll', onScroll, true);
-    };
-  }, [recurMenu]);
+  const menuOverlay = useOverlay({
+    open: menu !== null,
+    onClose: closeMenu,
+    overlayRef: menuRef,
+    getAnchorRect: menuAnchorRect,
+    getFocusReturn: menuFocusReturn,
+    menuKeyboard: menu?.step === 'menu',
+    // Kotwica-przycisk („Zaplanuj część”) odsuwa się o 4 px jak dawne
+    // `rect.bottom + 4`; kotwica-punkt (prawy klik) siada dokładnie w kursorze.
+    offset: menu !== null && menu.anchor.point === null ? 4 : 0,
+  });
+  const slotOverlay = useOverlay({
+    open: slotMenu !== null,
+    onClose: closeSlotMenu,
+    overlayRef: slotMenuRef,
+    getAnchorRect: slotAnchorRect,
+    getFocusReturn: slotFocusReturn,
+    menuKeyboard: true,
+  });
+  const recurOverlay = useOverlay({
+    open: recurMenu !== null,
+    onClose: closeRecurMenu,
+    overlayRef: recurMenuRef,
+    getAnchorRect: recurAnchorRect,
+    getFocusReturn: recurFocusReturn,
+    menuKeyboard: recurMenu?.step === 'menu',
+  });
 
   // Right-click on bare grid (not a block — those own their own menu and stop the
   // event) → offer "Dodaj zadanie" at the snapped start under the cursor.
@@ -1456,12 +2101,12 @@ export function WeekView({ state, anchor, filter }: Props) {
     // Same guard for the presentational event block (no pointer path of its own).
     if ((e.target as HTMLElement).closest('.week-event-block')) return;
     e.preventDefault();
-    const rect = e.currentTarget.getBoundingClientRect();
+    const column = e.currentTarget;
+    const rect = column.getBoundingClientRect();
     const startMinutes = slotStartFromOffset(e.clientY - rect.top, HOUR_PX);
     setMenu(null);
     setSlotMenu({
-      x: Math.min(e.clientX, window.innerWidth - 240),
-      y: Math.min(e.clientY, window.innerHeight - 100),
+      anchor: pointAnchor(column, e.clientX, e.clientY),
       date,
       startMinutes,
     });
@@ -1490,6 +2135,9 @@ export function WeekView({ state, anchor, filter }: Props) {
   // preventDefault/stopPropagation so their native browser menu still opens.
   // Managers suppress the native menu and stop propagation so the slot menu
   // never also opens (occurrence edits mirror TaskModal's tasks.manage gate).
+  // `seriesDone` czytamy przez `isDoneStatus`, więc jedyną zależnością od stanu
+  // jest `state.statuses` — dzięki temu memo `RecurBlock` nie unieważnia się przy
+  // każdej zmianie stanu (a przy zmianie słownika statusów callback wstaje na nowo).
   const openRecurMenu = useCallback(
     (task: Task, occ: RecurrenceOccurrence, e: React.MouseEvent) => {
     if (!canManageTasks) return;
@@ -1506,12 +2154,14 @@ export function WeekView({ state, anchor, filter }: Props) {
       startMinutes: occ.startMinutes,
       durationMinutes: occ.durationMinutes,
       overridden: occ.overridden,
-      x: Math.min(e.clientX, window.innerWidth - 280),
-      y: Math.min(e.clientY, window.innerHeight - 260),
+      done: occ.done,
+      seriesDone: isDoneStatus(state, task.statusId),
+      anchor: pointAnchor(e.currentTarget as HTMLElement, e.clientX, e.clientY),
       step: 'menu',
     });
     },
-    [canManageTasks],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- czytamy ze `state` wyłącznie `statuses`
+    [canManageTasks, state.statuses],
   );
 
   const recurSkipDay = () => {
@@ -1522,6 +2172,28 @@ export function WeekView({ state, anchor, filter }: Props) {
       date: recurMenu.date,
       override: { skip: true },
     });
+    setRecurMenu(null);
+  };
+
+  // Wykonanie POJEDYNCZEGO wystąpienia — nigdy nie rusza `Task.statusId`.
+  const recurSetOccurrenceDone = (done: boolean) => {
+    if (!recurMenu) return;
+    dispatch({
+      type: 'SET_OCCURRENCE_DONE',
+      taskId: recurMenu.taskId,
+      date: recurMenu.date,
+      done,
+    });
+    setRecurMenu(null);
+  };
+
+  // Cała seria = STATUS zadania. Bierzemy PIERWSZY status `isDone` w kolejności
+  // `state.statuses` (deterministycznie; istnienie gwarantuje inwariant ≥1 done).
+  const recurMarkSeriesDone = () => {
+    if (!recurMenu) return;
+    const doneStatus = state.statuses.find((s) => s.isDone);
+    if (!doneStatus) return;
+    dispatch({ type: 'SET_TASK_STATUS', taskId: recurMenu.taskId, statusId: doneStatus.id });
     setRecurMenu(null);
   };
 
@@ -1567,8 +2239,7 @@ export function WeekView({ state, anchor, filter }: Props) {
     setInsertTaskId(entry.taskId);
     setMenu({
       entry,
-      x: Math.min(e.clientX, window.innerWidth - 280),
-      y: Math.min(e.clientY, window.innerHeight - 240),
+      anchor: pointAnchor(e.currentTarget as HTMLElement, e.clientX, e.clientY),
       step: 'menu',
       position: 'after',
     });
@@ -1609,12 +2280,24 @@ export function WeekView({ state, anchor, filter }: Props) {
     setMenu(null);
   };
 
-  const doDelete = () => {
+  const doDelete = async () => {
     if (!menu) return;
-    if (window.confirm(`Usunąć blok ${formatDuration(menu.entry.plannedHours)} z zasobnika?`)) {
-      dispatch({ type: 'DELETE_BLOCK', entryId: menu.entry.id });
-    }
+    // Wpis bierzemy PRZED pytaniem, a menu zamykamy od razu: nakładka z
+    // cyklem życia wskaźnika nie może przeżyć `await` (inwariant 7). Sam
+    // efekt (`DELETE_BLOCK` z tym samym `entryId`) zostaje bez zmian.
+    const entry = menu.entry;
     setMenu(null);
+    if (
+      await confirm({
+        // Tytuł NAZYWA już cały skutek (tyle godzin znika z zasobnika), więc
+        // osobne zdanie o konsekwencjach byłoby powtórzeniem.
+        title: `Usunąć blok ${formatDuration(entry.plannedHours)} z zasobnika?`,
+        confirmLabel: 'Usuń blok',
+        tone: 'danger',
+      })
+    ) {
+      dispatch({ type: 'DELETE_BLOCK', entryId: entry.id });
+    }
   };
 
   // ---- "Zaplanuj część" (partial bin scheduling) ----
@@ -1640,12 +2323,10 @@ export function WeekView({ state, anchor, filter }: Props) {
   // grid-block drag re-renders WeekView; a state change re-renders cards anyway.
   const openSchedule = useCallback(
     (entry: WorkloadEntry, btn: HTMLElement) => {
-      const rect = btn.getBoundingClientRect();
       initScheduleForm(entry);
       setMenu({
         entry,
-        x: Math.min(rect.left, window.innerWidth - 280),
-        y: Math.min(rect.bottom + 4, window.innerHeight - 240),
+        anchor: { el: btn, point: null },
         step: 'schedule',
         position: 'after',
       });
@@ -1683,6 +2364,23 @@ export function WeekView({ state, anchor, filter }: Props) {
 
   // Bin (zasobnik) content — precomputed in the week model (per-person, filtered).
   const binGrandTotal = model.binGrandTotal;
+
+  // Kaskada bloków widoku dnia: `id → StackSlot`, liczona raz na zmianę modelu.
+  // W trybie tygodnia `null`, więc każdy `TimedBlock` dostaje `stack={undefined}`
+  // i pozycjonuje się DOKŁADNIE tak jak dotąd (kolumny z `packDayBlocks`).
+  const dayStacks = useMemo(() => {
+    if (mode !== 'day') return null;
+    const day = model.days[0];
+    if (!day) return null;
+    const slots = stackDayBlocks(
+      day.blocks.map((b) => ({
+        id: b.block.id,
+        startMinutes: b.block.startMinutes,
+        durationMinutes: hoursToMinutes(b.block.plannedHours),
+      })),
+    );
+    return new Map(slots.map((slot) => [slot.id, slot]));
+  }, [mode, model]);
 
   // Overload preview for the insert form.
   const menuPerson = menu ? getPerson(state, menu.entry.personId) : undefined;
@@ -1814,10 +2512,134 @@ export function WeekView({ state, anchor, filter }: Props) {
 
   const hours = Array.from({ length: 24 }, (_, h) => h);
 
+  // Nagłówek i panel zasobnika wyciągnięte do zmiennych, bo w trybie dnia lądują
+  // w arkuszu od dołu zamiast w wierszu nagłówka i pasie treści. To TEN SAM
+  // element w obu trybach — `binRef` zostaje na `.week-bin-pane`, więc prostokąt
+  // testu `overBin` i cała ścieżka upuszczenia do zasobnika są bez zmian.
+  const binHead = (
+    <div className="week-bin-head">
+      <div className="week-bin-head-title">Zasobnik</div>
+      <div className="week-bin-head-sub">bez terminu</div>
+      <div className="week-col-total">
+        {binGrandTotal > 0 ? formatDuration(binGrandTotal) : '—'}
+      </div>
+    </div>
+  );
+
+  const binPane = (
+    <div className="week-bin-pane" ref={binRef} data-tour="calendar.bin">
+      <div className="week-bin-col">
+        {model.bin.length === 0 ? (
+          <p className="week-bin-empty">Brak bloków bez terminu</p>
+        ) : (
+          model.bin.map(({ person: p, total, entries }) => {
+            return (
+              <div key={`bin-${p.id}`} className="week-bin-group">
+                <div className="week-bin-group-head">
+                  <span
+                    className="person-dot"
+                    style={{ background: personColor(p.id) }}
+                    aria-hidden
+                  />
+                  {p.name}
+                  <span className="week-bin-group-total">{formatDuration(total)}</span>
+                </div>
+                {entries.map(({ entry: e, task, project }) => (
+                  <BinCard
+                    key={e.id}
+                    entry={e}
+                    task={task}
+                    person={p}
+                    project={project}
+                    status={taskDisplayStatus(state, task, today)}
+                    done={blockIsDone(state, task, e)}
+                    days={days}
+                    gridRef={gridRef}
+                    viewportRef={viewportRef}
+                    blocksByPersonDate={model.blocksByPersonDate}
+                    editable={canEditEntry(p.id)}
+                    onOpen={handleOpenTask}
+                    onContextMenu={openMenu}
+                    onSchedule={openSchedule}
+                    onDragActiveChange={handleDragActiveChange}
+                  />
+                ))}
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+
   return (
-    <div className="week-cal" data-tour="calendar.week">
+    <div
+      className={mode === 'day' ? 'week-cal day-mode' : 'week-cal'}
+      data-tour="calendar.week"
+    >
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {announcement}
+      </div>
+      {/* Wspólny opis klawiatury dla każdego edytowalnego bloku (`aria-describedby`
+          — `Tooltip` dokłada do niego swój opis, nie podmienia go). */}
+      <span id={WEEK_BLOCK_KB_HINT_ID} className="sr-only">
+        Strzałki w górę i w dół przesuwają blok co 15 minut, z Shiftem zmieniają czas trwania.
+        Strzałki w lewo i w prawo przenoszą blok o dzień. Enter zapisuje zmianę, Escape ją cofa.
+        Bez rozpoczętej zmiany Enter otwiera zadanie.
+      </span>
+      {/* Widok dnia: zamiast nagłówka siedmiu kolumn stoi przewijany pasek 7 dat
+          wyśrodkowany na kotwicy (nawigacja, nie zakres siatki). */}
+      {mode === 'day' && (
+        <div className="week-day-strip" ref={stripRef}>
+          {dayStripEntries(anchor, today).map((entry) => (
+            <button
+              key={`strip-${entry.date}`}
+              type="button"
+              className={[
+                'week-day-strip-item',
+                entry.active ? 'active' : '',
+                entry.today ? 'today' : '',
+                entry.weekend ? 'weekend' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              aria-current={entry.active ? 'date' : undefined}
+              onClick={() => onPickDay?.(entry.date)}
+            >
+              <span className="week-day-strip-weekday">{weekdayAbbr(entry.date)}</span>
+              <span className="week-day-strip-date">{dayOfMonthLabel(entry.date)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Podsumowanie dnia zastępuje nagłówek kolumny, którego w trybie dnia nie
+          ma: suma godzin, urodziny i — co ważniejsze — ostrzeżenie o przekroczonej
+          dostępności razem z kotwicą onboardingu `calendar.overload`. Bez tego
+          telefon straciłby jedyne ostrzeżenie o przeciążeniu (inwariant 3).
+          Bez dymków: dotyk i tak nigdy ich nie pokazuje, a treść jest w całości
+          widoczna. */}
+      {mode === 'day' && model.days[0] && (
+        <div className="week-day-summary">
+          <span className="week-col-total">
+            {model.days[0].empty ? '—' : formatDuration(model.days[0].total)}
+          </span>
+          {model.days[0].birthdayNames.length > 0 && (
+            <span className="week-col-birthday">
+              🎂 {model.days[0].birthdayNames.join(', ')}
+            </span>
+          )}
+          {model.days[0].overloadNames && (
+            <span className="week-col-overload" data-tour="calendar.overload">
+              ⚠ {model.days[0].overloadNames}
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Header row: corner + horizontally-synced day headers + bin header.
           Not scrollable itself; its track mirrors the days viewport scrollLeft. */}
+      {mode === 'week' && (
       <div className="week-head-row">
         <div className="week-corner" />
         <div className="week-head-track" ref={headTrackRef}>
@@ -1844,43 +2666,42 @@ export function WeekView({ state, anchor, filter }: Props) {
                   <div className="week-col-total">
                     {day.empty ? '—' : formatDuration(day.total)}
                   </div>
+                  {/* Plakietki nagłówka są NIEINTERAKTYWNE i pokazują pełną
+                      listę imion wprost w treści — dymek tylko rozwija ją, gdy
+                      CSS ją przytnie, i dopisuje słowny powód. */}
                   {day.birthdayNames.length > 0 && (
-                    <div
-                      className="week-col-birthday"
-                      title={`Urodziny: ${day.birthdayNames.join(', ')}`}
-                    >
-                      🎂 {day.birthdayNames.join(', ')}
-                    </div>
+                    <Tooltip text={`Urodziny: ${day.birthdayNames.join(', ')}`}>
+                      <div className="week-col-birthday">
+                        🎂 {day.birthdayNames.join(', ')}
+                      </div>
+                    </Tooltip>
                   )}
                   {day.overloadNames && (
-                    <div
-                      className="week-col-overload"
-                      data-tour="calendar.overload"
-                      title={`Powyżej dostępności: ${day.overloadNames}`}
-                    >
-                      ⚠ {day.overloadNames}
-                    </div>
+                    <Tooltip text={`Powyżej dostępności: ${day.overloadNames}`}>
+                      <div className="week-col-overload" data-tour="calendar.overload">
+                        ⚠ {day.overloadNames}
+                      </div>
+                    </Tooltip>
                   )}
                 </div>
               );
             })}
           </div>
         </div>
-        <div className="week-bin-head">
-          <div className="week-bin-head-title">Zasobnik</div>
-          <div className="week-bin-head-sub">bez terminu</div>
-          <div className="week-col-total">
-            {binGrandTotal > 0 ? formatDuration(binGrandTotal) : '—'}
-          </div>
-        </div>
+        {binHead}
       </div>
+      )}
 
       {/* Body: fixed axis pane | scrollable days viewport | always-visible bin. */}
       <div className="week-main">
         <div className="week-axis-pane" ref={axisPaneRef}>
           <div className="week-axis" style={{ height: DAY_BODY_H }}>
             {hours.map((h) => (
-              <span key={h} className="week-axis-label" style={{ top: h * HOUR_PX }}>
+              <span
+                key={h}
+                className={isOffHour(h) ? 'week-axis-label off-hours' : 'week-axis-label'}
+                style={{ top: h * HOUR_PX }}
+              >
                 {h}:00
               </span>
             ))}
@@ -1888,7 +2709,15 @@ export function WeekView({ state, anchor, filter }: Props) {
         </div>
 
         <div className="week-days-viewport" ref={viewportRef} onScroll={onViewportScroll}>
-          <div className="week-days-grid" ref={gridRef} style={{ height: DAY_BODY_H }}>
+          {/* Granice okna roboczego jadą do CSS jako zmienne w px — warstwa
+              `linear-gradient` w `.week-day-col` przygasza sloty poza 9–17.
+              Samo TŁO: żadnych nowych węzłów DOM, więc hit-testing kolumn,
+              drag i kolizje pozostają bajt w bajt te same (inwariant 7). */}
+          <div
+            className="week-days-grid"
+            ref={gridRef}
+            style={{ height: DAY_BODY_H, ...workWindowCssVars(HOUR_PX) }}
+          >
             {model.days.map((day, dayIndex) => {
               const d = day.date;
               return (
@@ -1935,6 +2764,7 @@ export function WeekView({ state, anchor, filter }: Props) {
                       task={task}
                       hue={hue}
                       occurrence={occurrence}
+                      done={occurrenceIsDone(state, task, occurrence)}
                       onOpen={handleOpenTask}
                       onContextMenu={openRecurMenu}
                     />
@@ -1942,11 +2772,12 @@ export function WeekView({ state, anchor, filter }: Props) {
                   {day.blocks.map(({ block: e, col, cols, task, person, project }) => (
                     <TimedBlock
                       key={e.id}
-                      state={state}
                       entry={e}
                       task={task}
                       person={person}
                       project={project}
+                      status={taskDisplayStatus(state, task, today)}
+                      done={blockIsDone(state, task, e)}
                       dayIndex={dayIndex}
                       days={days}
                       col={col}
@@ -1962,6 +2793,9 @@ export function WeekView({ state, anchor, filter }: Props) {
                       editable={canEditEntry(e.personId)}
                       onOpen={handleOpenTask}
                       onContextMenu={openMenu}
+                      announce={announce}
+                      stack={dayStacks?.get(e.id)}
+                      onDragActiveChange={handleDragActiveChange}
                     />
                   ))}
                 </div>
@@ -1971,65 +2805,53 @@ export function WeekView({ state, anchor, filter }: Props) {
         </div>
 
         {/* Bin pane: always visible, own vertical scroll, outside the days scroller. */}
-        <div className="week-bin-pane" ref={binRef} data-tour="calendar.bin">
-          <div className="week-bin-col">
-            {model.bin.length === 0 ? (
-              <p className="week-bin-empty">Brak bloków bez terminu</p>
-            ) : (
-              model.bin.map(({ person: p, total, entries }) => {
-                return (
-                  <div key={`bin-${p.id}`} className="week-bin-group">
-                    <div className="week-bin-group-head">
-                      <span
-                        className="person-dot"
-                        style={{ background: personColor(p.id) }}
-                        aria-hidden
-                      />
-                      {p.name}
-                      <span className="week-bin-group-total">
-                        {formatDuration(total)}
-                      </span>
-                    </div>
-                    {entries.map(({ entry: e, task, project }) => (
-                      <BinCard
-                        key={e.id}
-                        state={state}
-                        entry={e}
-                        task={task}
-                        person={p}
-                        project={project}
-                        days={days}
-                        gridRef={gridRef}
-                        viewportRef={viewportRef}
-                        blocksByPersonDate={model.blocksByPersonDate}
-                        editable={canEditEntry(p.id)}
-                        onOpen={handleOpenTask}
-                        onContextMenu={openMenu}
-                        onSchedule={openSchedule}
-                      />
-                    ))}
-                  </div>
-                );
-              })
-            )}
+        {mode === 'week' && binPane}
+      </div>
+
+      {/* Plakietka „data + zegar HH:mm” przeniesiona POZA siatkę — renderuje ją
+          pasek kalendarza (`NowClockBadge` w CalendarPage), bo narożna wersja
+          zasłaniała bloki. Linia „teraz” w kolumnie dnia zostaje bez zmian. */}
+
+      {/* Widok dnia: zasobnik jako arkusz od dołu. Wyzwalacz pływa nad dolnym
+          paskiem zakładek; sam arkusz trzyma TEN SAM `.week-bin-pane`, więc
+          strefa upuszczenia to nadal jego prostokąt. Stan `closed` to
+          `display: none` (brak prostokąta → `overBin === false`, poprawnie),
+          `peek` i `open` różnią się WYSOKOŚCIĄ, nigdy przesunięciem. */}
+      {mode === 'day' && (
+        <>
+          <button
+            type="button"
+            ref={binTriggerRef}
+            className="week-bin-trigger"
+            aria-expanded={binSheet === 'open'}
+            onClick={() => setBinSheet((s) => (s === 'open' ? 'closed' : 'open'))}
+          >
+            {`Zasobnik · ${formatDuration(binGrandTotal)}`}
+          </button>
+          {/* Nazwa jak w pozostałych arkuszach powłoki (`aria-label`, po polsku):
+              „Więcej” niesie `role="menu"`, szybki skok i ten arkusz —
+              `role="dialog"`. Sam atrybut nie dotyka nakładki: `useOverlay`
+              steruje się WYŁĄCZNIE opcją `open`, więc rozbrojenie nasłuchów na
+              czas przeciągania zostaje bez zmian. */}
+          <div
+            className={`week-bin-sheet ${binSheet}`}
+            ref={binSheetRef}
+            role="dialog"
+            aria-label="Zasobnik"
+          >
+            <div className="week-bin-sheet-handle" aria-hidden />
+            {binHead}
+            {binPane}
           </div>
-        </div>
-      </div>
+        </>
+      )}
 
-      {/* Narożna plakietka: dzisiejsza data (z dniem tygodnia) + zegar HH:mm.
-          pointer-events: none w CSS — nie może przechwycić dragu bloków. */}
-      <div className="week-now-badge">
-        <span className="week-now-badge-date">
-          {format(now, 'EEEE, d MMMM', { locale: pl })}
-        </span>
-        <span className="week-now-badge-time">{format(now, 'HH:mm')}</span>
-      </div>
-
+      <OverlayLayer>
       <AnimatePresence>
         {menu && (
-          <motion.div
+          <m.div
             className="context-menu"
-            style={{ left: menu.x, top: menu.y, transformOrigin: 'top left' }}
+            style={{ ...menuOverlay.style, transformOrigin: 'top left' }}
             role="menu"
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -2038,7 +2860,7 @@ export function WeekView({ state, anchor, filter }: Props) {
           >
             {/* menuRef wraps the ENTIRE popover (every step branch) so the
                 outside-click check still covers all buttons/fields. It lives on a
-                plain inner div, NOT on the AnimatePresence child (motion.div),
+                plain inner div, NOT on the AnimatePresence child (m.div),
                 because motion's PopChild reads children.props.ref and React 18.3
                 warns on that. .context-menu is block flow, so this wrapper is
                 layout-neutral. */}
@@ -2070,34 +2892,45 @@ export function WeekView({ state, anchor, filter }: Props) {
                   <div className="context-menu-sep" role="separator" />
                   {/* Split only applies to dated blocks — SPLIT_BLOCK no-ops on a
                       bin entry (one-bin-row-per-(task,person) invariant). */}
+                  {/* Powód blokady jako WIDOCZNA linijka pod pozycją menu:
+                      natywnie `disabled` przycisk połyka hover, a menu ma własny
+                      roving focus — dymek nigdy by się nie pokazał. Podpowiedź
+                      jest rodzeństwem (nie dzieckiem) przycisku, więc nazwa
+                      pozycji zostaje sama, a `aria-describedby` dokłada powód. */}
                   <button
                     type="button"
                     role="menuitem"
                     className="context-menu-item"
                     disabled={menu.entry.plannedHours < 0.5}
-                    title={
-                      menu.entry.plannedHours < 0.5
-                        ? 'Blok jest za krótki, aby go podzielić'
-                        : undefined
+                    aria-describedby={
+                      menu.entry.plannedHours < 0.5 ? 'week-split-half-hint' : undefined
                     }
                     onClick={() => doSplit(2)}
                   >
                     Podziel na pół
                   </button>
+                  {menu.entry.plannedHours < 0.5 && (
+                    <div className="context-menu-hint" id="week-split-half-hint">
+                      Blok jest za krótki, aby go podzielić
+                    </div>
+                  )}
                   <button
                     type="button"
                     role="menuitem"
                     className="context-menu-item"
                     disabled={menu.entry.plannedHours < 1}
-                    title={
-                      menu.entry.plannedHours < 1
-                        ? 'Blok jest za krótki, aby go podzielić'
-                        : undefined
+                    aria-describedby={
+                      menu.entry.plannedHours < 1 ? 'week-split-quarters-hint' : undefined
                     }
                     onClick={() => doSplit(4)}
                   >
                     Podziel na ćwiartki
                   </button>
+                  {menu.entry.plannedHours < 1 && (
+                    <div className="context-menu-hint" id="week-split-quarters-hint">
+                      Blok jest za krótki, aby go podzielić
+                    </div>
+                  )}
                   <div className="context-menu-sep" role="separator" />
                   {/* Per-block „wykonane” shortcut — same SET_BLOCK_DONE as the
                       TaskModal checkbox, task status untouched. */}
@@ -2270,15 +3103,17 @@ export function WeekView({ state, anchor, filter }: Props) {
             </div>
           )}
             </div>
-          </motion.div>
+          </m.div>
         )}
       </AnimatePresence>
+      </OverlayLayer>
 
+      <OverlayLayer>
       <AnimatePresence>
         {slotMenu && (
-          <motion.div
+          <m.div
             className="context-menu"
-            style={{ left: slotMenu.x, top: slotMenu.y, transformOrigin: 'top left' }}
+            style={{ ...slotOverlay.style, transformOrigin: 'top left' }}
             role="menu"
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -2307,15 +3142,17 @@ export function WeekView({ state, anchor, filter }: Props) {
                 </button>
               )}
             </div>
-          </motion.div>
+          </m.div>
         )}
       </AnimatePresence>
+      </OverlayLayer>
 
+      <OverlayLayer>
       <AnimatePresence>
         {recurMenu && (
-          <motion.div
+          <m.div
             className="context-menu"
-            style={{ left: recurMenu.x, top: recurMenu.y, transformOrigin: 'top left' }}
+            style={{ ...recurOverlay.style, transformOrigin: 'top left' }}
             role="menu"
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -2356,6 +3193,37 @@ export function WeekView({ state, anchor, filter }: Props) {
                   >
                     Pomiń ten dzień
                   </button>
+                  {/* Wykonanie: „to wystąpienie" (flaga wyjątku) vs „cała seria"
+                      (status zadania). Gdy status zadania jest już zrobiony,
+                      przełącznik per-wystąpienie NIC by nie zmienił w widoku
+                      (status wygrywa w `occurrenceIsDone`), więc zostaje sama
+                      podpowiedź — cofnięcie serii żyje w „Edytuj wszystkie". */}
+                  {recurMenu.seriesDone ? (
+                    <div className="context-menu-title">
+                      Cała seria jest zrobiona (status zadania)
+                    </div>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="context-menu-item"
+                        onClick={() => recurSetOccurrenceDone(!recurMenu.done)}
+                      >
+                        {recurMenu.done
+                          ? 'Cofnij wykonanie tego wystąpienia'
+                          : 'Oznacz to wystąpienie jako zrobione'}
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="context-menu-item"
+                        onClick={recurMarkSeriesDone}
+                      >
+                        Oznacz całą serię jako zrobioną (status zadania)
+                      </button>
+                    </>
+                  )}
                   {recurMenu.overridden && (
                     <>
                       <div className="context-menu-sep" role="separator" />
@@ -2419,9 +3287,10 @@ export function WeekView({ state, anchor, filter }: Props) {
                 </div>
               )}
             </div>
-          </motion.div>
+          </m.div>
         )}
       </AnimatePresence>
+      </OverlayLayer>
     </div>
   );
 }

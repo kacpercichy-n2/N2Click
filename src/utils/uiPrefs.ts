@@ -44,6 +44,12 @@ export type UiPrefs = {
   // Per-user (per-browser) sidebar nav order: realUserId → route paths. Only a
   // permutation of the default NAV order; self-repairing on read (see navOrder).
   navOrderByUser: Record<string, string[]>;
+  // Device-local sidebar menu order (nav paths). Absent = default order; see
+  // src/components/navItems.ts `orderNavPaths`.
+  navOrder?: string[];
+  // Id ostatnio potwierdzonego wpisu dziennika zmian. Absent = nic nie
+  // przeczytane, więc pasek „Nowości" na Panelu jest widoczny.
+  changelogSeenId?: string;
 };
 
 const DEFAULT_PREFS: UiPrefs = {
@@ -134,6 +140,16 @@ export function loadUiPrefs(): UiPrefs {
             )
           : {},
     };
+    // navOrder: keep the key only when the raw value is an array; drop any
+    // non-string entries. A missing/malformed value omits the key entirely.
+    if (Array.isArray(parsed?.navOrder)) {
+      prefs.navOrder = parsed.navOrder.filter((p): p is string => typeof p === 'string');
+    }
+    // changelogSeenId: klucz istnieje tylko dla niepustego stringa — cokolwiek
+    // innego czytamy jak „nic nie przeczytane".
+    if (typeof parsed?.changelogSeenId === 'string' && parsed.changelogSeenId) {
+      prefs.changelogSeenId = parsed.changelogSeenId;
+    }
     return prefs;
   } catch {
     return { ...DEFAULT_PREFS };

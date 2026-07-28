@@ -6,7 +6,11 @@
    kept as aliases pointing at --n2-* so component rules stay small.
    ============================================================ */
 
-@import url("https://fonts.googleapis.com/css2?family=Fragment+Mono:ital@0;1&family=Inter:wght@400;500;600;700&family=Orbitron:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap");
+/* Kroje pisma — te same cztery co wcześniej, ale hostowane u siebie zamiast
+   pobierane z Google Fonts. Szczegóły doboru wag i podzbiorów: `fonts.css`.
+   Vite wkleja ten arkusz do jednego pliku produkcyjnego, więc CSS to nadal
+   jedno żądanie. */
+@import "./fonts.css";
 
 :root {
   color-scheme: dark;
@@ -38,6 +42,9 @@
      lawendowa paleta zadań/cykliczności. */
   --event-accent: var(--n2-info);
   --event-accent-soft: var(--n2-info-soft);
+  /* Przygaszenie slotów kalendarza poza oknem godzin agencji (9:00–17:00).
+     Wyłącznie prezentacja — te sloty działają normalnie. */
+  --week-offhours-tint: rgba(0, 0, 0, 0.34);
   --n2-warning: #ffc857;
   --n2-warning-soft: rgba(255, 200, 87, 0.16);
   --n2-danger: #ff4f72;
@@ -55,7 +62,17 @@
   --n2-text: #fbf8ff;
   --n2-text-soft: rgba(251, 248, 255, 0.72);
   --n2-text-muted: rgba(251, 248, 255, 0.5);
-  --n2-text-faint: rgba(251, 248, 255, 0.34);
+  /* NAJSŁABSZY kolor, jakim wolno pisać TEKST. 0,46 daje 4,51:1 na `--card-bg`
+     i 4,41:1 na samym `--n2-bg`, więc przechodzi WCAG AA (4,5:1) na każdej
+     powierzchni, na której faktycznie leżą jego reguły — a są to niemal wyłącznie
+     11 px (`--n2-type-xs`): oś godzin kalendarza, puste stany, podpowiedzi
+     w polach, dolna nawigacja telefonu. Poprzednie 0,34 dawało 2,94:1 i nie
+     przechodziło ŻADNEGO progu. Reguła na czystym tle strony potrzebowałaby 0,48. */
+  --n2-text-faint: rgba(251, 248, 255, 0.46);
+  /* WYŁĄCZNIE stany zablokowane/nieaktywne oraz ikony ≥ 16 px (chevrony,
+     kropki obecności). Nigdy pod tekst — celowo jest poniżej progu
+     kontrastu, bo komunikuje „to nie jest teraz do czytania”. */
+  --n2-text-disabled: rgba(251, 248, 255, 0.3);
   --n2-text-inverse: #08070a;
 
   --n2-border: rgba(255, 255, 255, 0.1);
@@ -105,7 +122,20 @@
     0 0 0 1px rgba(196, 150, 255, 0.72);
 
   --n2-blur-glass: blur(22px) saturate(132%);
-  --n2-transition: 180ms ease;
+
+  /* --- Ruch (W08): opt-in, nie opt-out ---------------------------------
+     `--n2-motion` jest MNOŻNIKIEM każdego czasu trwania w tym pliku i
+     domyślnie wynosi 0 — bez animacji. Realne czasy włącza dopiero
+     `@media (prefers-reduced-motion: no-preference)` niżej.
+     Dlaczego nie dawny globalny reset `* { animation-duration: .01ms }`:
+     skracanie czasu NIE zatrzymuje animacji (leci dalej, tylko szybciej),
+     nie dotyka animacji sterowanych z JS i zostawia `transitionend`
+     strzelające w losowych momentach. `calc(180ms * 0)` = `0s`, więc
+     przejścia naprawdę się nie uruchamiają.
+     Każdy czas trwania w tym pliku MUSI być zapisany jako
+     `calc(<czas> * var(--n2-motion))`. */
+  --n2-motion: 0;
+  --n2-transition: calc(180ms * var(--n2-motion)) ease;
 
   --n2-gradient-page:
     radial-gradient(circle at 18% 10%, rgba(112, 0, 255, 0.36), transparent 28%),
@@ -149,12 +179,58 @@
   --weekend-bg: rgba(255, 255, 255, 0.03);
   --today: var(--n2-lavender);
 
+  /* --- Drabina nakładek (wartości DOKŁADNIE takie jak dotąd) ---
+     Tokeny opisują istniejącą kolejność; korzystają z nich na razie tylko
+     .filter-popover i .context-menu, reszta selektorów zostaje przy liczbach.
+     Szuflada mobilna zajmuje 900–903, duchy przeciągania 1000. */
+  --n2-z-popover: 40;
+  --n2-z-menu: 100;
+  /* Dolny pasek zakładek (telefon) stoi POD arkuszami (900), wyszukiwarką (990)
+     i modalami (1000) — arkusz „Więcej” ma go zasłaniać, nie odwrotnie. */
+  --n2-z-bottom-nav: 880;
+  --n2-z-drawer: 900;
+  --n2-z-search: 990;
+  --n2-z-modal: 1000;
+  --n2-z-banner: 1050;
+  --n2-z-toast: 1090;
+  --n2-z-onboarding: 1100;
+  /* Menu „⋯" (`OverflowMenu`) bywa otwierane WEWNĄTRZ modala (1000/1001), a
+     portaluje się do korzenia nakładek na `<body>` — przy zwykłym 100 chowałoby
+     się pod kartą modala. Stoi więc nad modalem i banerami, ale POD samouczkiem
+     (1100), potwierdzeniem (1200) i dymkiem (1300). */
+  --n2-z-menu-over-modal: 1095;
+  /* Okno potwierdzenia stoi PONAD wszystkim: pytają z niego także baner
+     trwałości (1050) i samouczki (1100), a jego odpowiedź blokuje operację. */
+  --n2-z-confirm: 1200;
+  /* Dymek podpowiedzi stoi PONAD potwierdzeniem: opisuje kontrolki także w
+     oknie potwierdzenia, a sam niczego nie blokuje (jest `aria-hidden`,
+     nieklikalny i znika przy scrollu/Escape). */
+  --n2-z-tooltip: 1300;
+
+  /* Wysokość dolnego paska zakładek (bez wcięcia bezpiecznego obszaru) —
+     czytają ją też pływające kontrolki kalendarza, żeby nie chować się pod nim. */
+  --n2-bottom-nav-h: 56px;
+  /* Wcięcie kolejnej karty w kaskadzie bloków widoku dnia. */
+  --n2-day-stack-inset: 28px;
+
   --radius: var(--n2-radius-md);
   --radius-sm: var(--n2-radius-sm);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow: var(--n2-shadow-soft);
 
   --font: var(--n2-font-sans);
+}
+
+/* JEDYNE miejsce, w którym ruch jest włączany (W08). Brak deklarowanej
+   preferencji „no-preference" — a więc też każdy przypadek, w którym
+   przeglądarka nie zna tego media query — zostaje przy `--n2-motion: 0`.
+   Silnik `motion` dostaje tę samą informację przez `MotionConfig
+   reducedMotion="user"` w `main.tsx`, więc animacje z JS nie wymagają tu
+   żadnej reguły. */
+@media (prefers-reduced-motion: no-preference) {
+  :root {
+    --n2-motion: 1;
+  }
 }
 
 * {
@@ -180,6 +256,15 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   text-rendering: geometricPrecision;
+}
+
+/* MO-16 — na telefonie pociągnięcie w dół nad górną krawędzią nie może
+   przeładować aplikacji (pull-to-refresh gubi niezapisany stan formularza).
+   Poziomy overscroll zostaje: gest „wstecz" przeglądarki działa dalej. */
+@media (max-width: 760px) {
+  html {
+    overscroll-behavior-y: none;
+  }
 }
 
 h1 {
@@ -247,6 +332,8 @@ textarea {
   box-shadow: var(--n2-shadow-soft);
   backdrop-filter: var(--n2-blur-glass);
   overflow-y: auto;
+  /* MO-16 — dojechanie do końca szuflady nie może przewijać strony pod spodem. */
+  overscroll-behavior: contain;
 }
 
 .app-brand {
@@ -285,6 +372,7 @@ textarea {
      viewports the layout is unchanged. */
   min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--n2-border-strong) transparent;
 }
@@ -303,7 +391,10 @@ textarea {
 .app-nav-link {
   display: flex;
   align-items: center;
-  min-height: 44px;
+  /* S1 — 38 px zamiast 44 px skraca listę o ~6 px na pozycję, więc na typowym
+     ekranie mieści się jej znacznie więcej bez przewijania. Widok mobilny
+     (≤1180 px) wraca do 44 px — tam liczy się cel dotykowy. */
+  min-height: 38px;
   padding: 0 var(--n2-space-4);
   border: 1px solid transparent;
   border-radius: var(--n2-radius-pill);
@@ -361,6 +452,32 @@ textarea {
   color: var(--n2-text);
 }
 
+/* S1 — stopka sidebara („Pomoc i samouczki” + blok użytkownika) trzyma się dołu
+   i NIGDY nie miesza się z listą nawigacji: kryjące tło (lista ma tylko
+   półprzezroczyste `--n2-surface`, więc przewijane pozycje prześwitywały) oraz
+   `sticky`, gdy to sam sidebar zaczyna się przewijać. Gradient nad stopką jest
+   sygnałem „jest tego więcej” — nakładkowe paski przewijania macOS same z
+   siebie niczego nie pokazują. */
+.sidebar-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-6);
+  background: var(--n2-panel);
+}
+.sidebar-footer::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 12px;
+  background: linear-gradient(to top, var(--n2-panel), rgba(32, 32, 36, 0));
+  pointer-events: none;
+}
 /* Wrapper pins the user footer to the bottom of the sidebar. */
 .sidebar-user {
   margin-top: auto;
@@ -649,6 +766,18 @@ textarea {
 .btn.danger-ghost:hover {
   background: var(--n2-danger-soft);
 }
+/* Pełna czerwień jest ZAREZERWOWANA dla przycisku wykonującego operację
+   niszczącą (potwierdzenie w oknie `alertdialog`) — nigdy dla „Anuluj”. */
+.btn.danger {
+  background: var(--danger);
+  border-color: transparent;
+  color: var(--n2-text-inverse);
+  box-shadow: 0 14px 38px rgba(255, 79, 114, 0.22);
+}
+.btn.danger:hover {
+  background: var(--danger);
+  filter: brightness(1.08);
+}
 .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -706,10 +835,12 @@ textarea {
   margin-bottom: var(--n2-space-6);
   /* Stays in normal flow (relative, no layout shift), but must out-stack the
      task modal so conflict/failure actions remain clickable while the modal is
-     open beneath it. Overlay ladder: context-menu 100 < gs 990/991 <
+     open beneath it. Drabinę nakładek opisują tokeny `--n2-z-*` w `:root`
+     (filter-popover 40 < context-menu 100 < drawer 900 < gs 990/991 <
      modal 1000/1001 < persistence-banner 1050 < onboarding-toast 1090 <
-     onboarding-layer 1100. Ancestors (#root, .app-shell, .app-main) create no
-     stacking context, so this resolves at the root context above the modal. */
+     onboarding-layer 1100); tu zostaje literał 1050. Ancestors (#root,
+     .app-shell, .app-main) create no stacking context, so this resolves at the
+     root context above the modal. */
   position: relative;
   z-index: 1050;
 }
@@ -811,6 +942,8 @@ textarea {
 .task-card {
   display: flex;
   align-items: stretch;
+  /* Kotwica dla paska priorytetu (`::before`). */
+  position: relative;
   background: var(--card-bg);
   border: 1px solid var(--n2-border);
   border-radius: var(--n2-radius-md);
@@ -823,6 +956,9 @@ textarea {
 }
 .task-card-main {
   flex: 1;
+  /* Bez tego `flex: 1` startuje od `min-width: auto`, więc karta rozciągała się
+     do `min-content` treści i `overflow: hidden` obcinał daty/godziny (MO-17). */
+  min-width: 0;
   text-align: left;
   background: none;
   border: none;
@@ -837,13 +973,31 @@ textarea {
 .task-card-top {
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 6px 10px;
 }
 .task-title {
   font-size: var(--n2-type-md);
   font-weight: 600;
   color: var(--text);
 }
+/* ---- Ścieżka adresowa „Klient › Projekt” (SY-06) --------------------------
+   JEDNA reguła dla całej aplikacji: kolejność klient → projekt (tekst składa
+   `clientProjectPath` w `src/utils/entityPath.ts`), zwykły tekst 12 px, bez
+   wersalików, bez monospace, bez ramki i tła. Plakietka `.project-badge`
+   zostaje WYŁĄCZNIE przy typach usług, działach, dokumentach i szkicach —
+   tam niesie kategorię, a nie adres.
+   `.task-card-m-project` (telefon) to skracający wariant tej samej reguły. */
+.entity-path {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--text-muted);
+}
+
 .project-badge {
   display: inline-flex;
   align-items: center;
@@ -896,6 +1050,65 @@ textarea {
   font-family: var(--n2-font-data);
   font-variant-numeric: tabular-nums;
 }
+
+/* ---- Priorytet jako pasek, nie pigułka (SY-03) ----------------------------
+   Jeden typ danych = jeden kształt: obrysowana pigułka to EDYTOWALNY status,
+   a stały atrybut zadania niesie 3-pikselowy pasek przy lewej krawędzi karty.
+   Malujemy wyłącznie „Wysoki” i „Pilny” — „Niski”/„Normalny” nie są alarmem,
+   więc w wierszu nie mają akcentu (etykietę tekstową niesie `.sr-only`). */
+.task-card[data-priority='high']::before,
+.task-card[data-priority='urgent']::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--n2-warning);
+  pointer-events: none;
+}
+.task-card[data-priority='urgent']::before {
+  background: var(--n2-danger);
+}
+
+/* ---- Rozplanowanie godzin jako pasek postępu (AT-16) ----------------------
+   Zastąpił pigułkę `.planning-badge` w wierszach list (ta zostaje w
+   TaskModalu). Szerokość liczy `utils/planningProgress.ts` (przycięta do
+   100 %); brak szacunku = brak paska.
+
+   REGUŁA KOLORU: pasek NIE MA koloru poniżej 100 %. `none`, `under` i `full`
+   zostają neutralne (`--text-muted` z reguły bazowej) — zielony pasek na
+   każdym rozplanowanym zadaniu byłby tym samym szumem, co pigułka
+   „częściowo” na 7 z 10 kart, tylko w innym kształcie. JEDYNY stan kolorowy
+   to `over` (>100 %), czyli jedyny prawdziwy alarm w tym wierszu.
+   Tony `under`/`full` żyją dalej w `data-tone` (i w module TS) jako
+   semantyka dla czytnika ekranu i przyszłych użyć — nie jako farba. */
+.planning-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.planning-progress-bar {
+  flex: none;
+  width: 56px;
+  height: 4px;
+  border-radius: var(--n2-radius-pill);
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+.planning-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--text-muted);
+}
+.planning-progress-bar[data-tone='over'] {
+  background: var(--n2-danger-soft);
+}
+.planning-progress-bar[data-tone='over'] .planning-progress-fill {
+  background: var(--n2-danger);
+}
 .task-delete {
   align-self: center;
   margin-right: 8px;
@@ -919,6 +1132,94 @@ textarea {
 .editor-section-discussion {
   border-color: var(--n2-border-strong);
   border-left: 3px solid var(--n2-lavender);
+}
+
+/* ---- Zakładki edytora zadania (PKG-20260728-taskmodal-structure) ----------
+   Pasek stoi NAD formularzem, panele chowają się atrybutem `hidden` (zostają
+   zamontowane, więc siatka alokacji nie traci stanu ani nie przelicza się od
+   nowa). */
+.task-editor-tabs {
+  display: flex;
+  gap: var(--n2-space-1);
+  margin-bottom: var(--n2-space-4);
+  padding: 3px;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-pill);
+  background: var(--n2-panel-soft);
+  overflow-x: auto;
+}
+.task-editor-tab {
+  flex: 0 0 auto;
+  border: none;
+  background: none;
+  color: var(--n2-text-soft);
+  font: inherit;
+  font-size: var(--n2-type-sm);
+  font-weight: 500;
+  padding: 7px 16px;
+  border-radius: var(--n2-radius-pill);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--n2-transition), color var(--n2-transition);
+}
+.task-editor-tab:hover {
+  color: var(--n2-text);
+  background: rgba(255, 255, 255, 0.05);
+}
+.task-editor-tab[aria-selected='true'] {
+  background: rgba(196, 150, 255, 0.16);
+  color: var(--n2-text);
+}
+/* Przyklejona głowa kontekstu: tytuł, projekt, status zostają widoczne przy
+   przewijaniu panelu „Zadanie". Tło musi być KRYJĄCE (treść przewija się pod
+   spodem), a warstwa niżej niż sticky stopka akcji (z-index 5). */
+.task-context-header {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: var(--n2-panel);
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-lg);
+  padding: var(--n2-space-5) var(--n2-space-6);
+  margin-bottom: var(--n2-space-4);
+  box-shadow: var(--shadow-sm);
+}
+/* Sekcje zwijane („Powtarzaj to zadanie", „Klasyfikacja"): kontrolowany przycisk
+   z `aria-expanded`, nie `<details>` — w środku siedzą przyciski. */
+.editor-section-collapsible {
+  padding: var(--n2-space-2) var(--n2-space-6) var(--n2-space-4);
+}
+.section-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--n2-space-3);
+  width: 100%;
+  border: none;
+  background: none;
+  color: var(--n2-text);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  padding: var(--n2-space-3) 0;
+  cursor: pointer;
+}
+.section-toggle:hover .section-toggle-label {
+  color: var(--n2-lavender);
+}
+.section-toggle-mark {
+  color: var(--n2-text-soft);
+  font-size: var(--n2-type-lg);
+  line-height: 1;
+}
+/* Scalony pasek podsumowania planowania — węższy niż zwykła sekcja. */
+.editor-section-summary {
+  padding: var(--n2-space-4) var(--n2-space-6);
+}
+.editor-section-summary .estimate-compare {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
 }
 .field {
   display: flex;
@@ -1002,6 +1303,19 @@ option {
   color: var(--n2-text);
   background: var(--n2-panel);
 }
+/* MO-05 — iOS Safari sam przybliża stronę, gdy fokusowane pole ma mniej niż
+   16px. Poniżej 760px podnosimy każde pole edycyjne do 16px i do wysokości
+   kciuka (48px). ŚWIADOMIE bez `maximum-scale` w meta viewport — to zablokowałoby
+   zoom dostępnościowy. Checkboxy, radia, kolor i plik pomijamy: `min-height`
+   rozdąłby je do kwadratu 48px. */
+@media (max-width: 760px) {
+  input:not([type='checkbox']):not([type='radio']):not([type='color']):not([type='file']):not([type='range']),
+  textarea,
+  select {
+    font-size: 16px;
+    min-height: 48px;
+  }
+}
 .field-error {
   color: var(--danger);
   font-size: var(--n2-type-xs);
@@ -1039,9 +1353,12 @@ option {
   margin: 0 0 12px;
 }
 
+/* Trzy liczby obok siebie („w kalendarzu · zasobnik · sprzedane") + odznaka
+   planowania — na wąskim ekranie pasek się zawija zamiast wypychać kartę. */
 .estimate-compare {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   margin-top: 6px;
   padding-top: 12px;
@@ -1100,30 +1417,11 @@ option {
   margin-top: 8px;
 }
 
-/* ---------- Bin (zasobnik) editor section ---------- */
+/* ---------- Bin (zasobnik) editor section ----------
+   Sekcja „Zasobnik (bez terminu)" ZNIKŁA z TaskModala (scalona w pasek
+   podsumowania planowania), więc jej reguły `.bin-existing*` / `.bin-chip*`
+   zostały usunięte razem z markupem. */
 
-.bin-existing {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-.bin-existing-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.bin-existing-name {
-  font-size: var(--n2-type-sm);
-  font-weight: 500;
-  color: var(--text);
-}
-.bin-chips {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
 .bin-add-row {
   display: flex;
   flex-wrap: wrap;
@@ -1143,39 +1441,11 @@ option {
   gap: 8px;
   margin-top: 10px;
 }
-.bin-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--n2-border);
-  border-radius: var(--n2-radius-pill);
-  padding: 5px 10px;
-  font-size: var(--n2-type-sm);
-  font-weight: 500;
-  background: rgba(196, 150, 255, 0.14);
-}
-.bin-chip.readonly {
-  background: rgba(255, 255, 255, 0.045);
-  font-family: var(--n2-font-data);
-  font-variant-numeric: tabular-nums;
-}
-.bin-chip-remove {
-  border: none;
-  background: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 15px;
-  line-height: 1;
-  padding: 0 0 0 2px;
-}
-.bin-chip-remove:hover {
-  color: var(--n2-danger);
-}
-
 /* ---------- Allocation grid (data table) ---------- */
 
 .alloc-wrap {
   overflow-x: auto;
+  overscroll-behavior: contain;
   border: 1px solid var(--n2-border);
   border-radius: var(--n2-radius-lg);
   background: var(--card-bg);
@@ -1254,6 +1524,31 @@ option {
 .alloc-cell {
   padding: 2px;
   position: relative;
+  /* AT-05 — krawędź w kolorze osoby dostaje TYLKO komórka z wartością, ale
+     ramka istnieje ZAWSZE (przezroczysta), więc wpisanie godzin nie przesuwa
+     kolumn ani o piksel. */
+  border-left: 3px solid transparent;
+}
+/* AT-05 — pas zwiniętych, pustych dni. Jeden wiersz zamiast kilkudziesięciu
+   identycznych, pustych. */
+.alloc-collapsed td {
+  padding: 4px 8px;
+  text-align: left;
+  background: var(--n2-surface-muted, rgba(255, 255, 255, 0.03));
+}
+.alloc-collapsed-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--n2-type-xs);
+  padding: 4px 2px;
+  min-height: 32px;
+  cursor: pointer;
+}
+.alloc-collapsed-btn:hover {
+  color: var(--n2-text);
+  text-decoration: underline;
 }
 /* Muted marker on cells backed by ≥2 calendar blocks (editing the sum reshapes
    several blocks — see the cell title). Non-interactive; sits over the input. */
@@ -1283,6 +1578,21 @@ option {
 }
 .alloc-input:focus {
   border-color: rgba(196, 150, 255, 0.72);
+}
+/* Opcjonalna godzina startu komórki — drugi, dyskretniejszy input pod polem
+   godzin. Puste pole = automatyczne umiejscowienie w pierwszym wolnym oknie. */
+.alloc-time-input {
+  width: 60px;
+  margin-top: 2px;
+  text-align: center;
+  padding: 2px 3px;
+  border: 1px solid var(--n2-border-soft, var(--n2-border));
+  border-radius: var(--n2-radius-xs);
+  background: var(--field-bg);
+  color: var(--text-muted);
+  font-family: var(--n2-font-data);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
 }
 .alloc-cell.overload {
   background: var(--n2-danger-soft);
@@ -1340,6 +1650,7 @@ option {
 .person-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 14px;
   background: var(--card-bg);
   border: 1px solid var(--n2-border);
@@ -1352,6 +1663,9 @@ option {
 }
 .person-row-main {
   flex: 1;
+  /* Nazwisko + e-mail muszą móc się zwinąć; inaczej `min-content` wiersza
+     dopychał „przypisano …h" i „Usuń" poza ekran telefonu (MO-17). */
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -1368,6 +1682,7 @@ option {
 }
 .person-row-sub {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   color: var(--text-muted);
   font-size: var(--n2-type-sm);
@@ -1386,19 +1701,58 @@ option {
 
 /* ---------- Calendar toolbar ---------- */
 
+/* JEDEN wiersz sterowania nad siatką: tytuł + widok + nawigacja + „Filtry”
+   + zegar. Zastąpił trzy wiersze (page-head / cal-toolbar / filter-toolbar),
+   dzięki czemu sam kalendarz jest wyższy. `align-items: center` trzyma
+   wszystkie kontrolki w jednej linii bazowej; przy wąskim ekranie wiersz
+   zawija się tak jak wcześniej. */
 .cal-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--n2-space-4);
   flex-wrap: wrap;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
+}
+.cal-title {
+  margin: 0;
+  font-size: var(--n2-type-xl, 1.25rem);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+/* FilterBar wewnątrz paska nie dokłada już własnego wiersza ani odstępu. */
+.cal-toolbar .filter-toolbar {
+  margin-bottom: 0;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .cal-view-toggle,
 .cal-nav {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+/* Plakietka data + zegar HH:mm — dawniej absolutny narożnik NAD siatką
+   (zasłaniał bloki), teraz zwykły element na końcu paska sterowania. */
+.cal-now-badge {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 10px;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-pill);
+  background: rgba(255, 255, 255, 0.045);
+  white-space: nowrap;
+}
+.cal-now-badge-date {
+  font-size: var(--n2-type-xs);
+  color: var(--text-faint);
+}
+.cal-now-badge-time {
+  font-family: var(--n2-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--n2-type-sm);
+  color: var(--text);
 }
 .toggle-btn {
   border: 1px solid var(--n2-border);
@@ -1477,6 +1831,18 @@ a.toggle-btn {
   color: var(--text);
   border-color: var(--n2-border-strong);
   background: rgba(196, 150, 255, 0.16);
+}
+
+/* Chip zabarwiony kolorem OSOBY. Tak samo jak `.status-badge`: JS podaje jedną
+   zmienną `--person`, odcień liczy `color-mix`, więc działa każda notacja
+   koloru, nie tylko 6-znakowy hex. 13,333% == dawne `22` (34/255).
+   Klasa (a nie sam `var()` z fallbackiem) jest po to, żeby chip „Wszyscy"
+   i chip „+N" — które koloru osoby nie mają — zostały przy dotychczasowym
+   lawendowym/szarym tle. */
+.filter-chip.person-tint,
+.person-active-chip.person-tint {
+  border-color: var(--person, var(--n2-border));
+  background: color-mix(in oklab, var(--person, transparent) 13.333%, transparent);
 }
 
 /* Compact chips for the ACTIVE person selection shown in the filter bar row.
@@ -1604,7 +1970,13 @@ a.toggle-btn {
 /* Body row: fixed axis pane | scrollable days viewport | always-visible bin. */
 .week-main {
   display: flex;
-  max-height: 70vh;
+  /* `dvh` — chowający się pasek adresu iOS zmieniał `vh` w trakcie przewijania
+     i wysokość siatki godzin skakała (MO-15). Na desktopie bez różnicy.
+     Po scaleniu wierszy sterowania nad kalendarzem siatka zabiera odzyskaną
+     przestrzeń: `calc(100dvh - 168px)` to padding powłoki + jeden pasek
+     kontrolek + nagłówek dni; 70dvh zostaje jako dolna granica dla niskich
+     okien, żeby widok nigdy nie zrobił się niższy niż dotychczas. */
+  max-height: max(70dvh, calc(100dvh - 168px));
 }
 /* Fixed hour axis — outside the horizontal scroller, opaque, vertical-synced. */
 .week-axis-pane {
@@ -1625,6 +1997,8 @@ a.toggle-btn {
   flex: 1 1 auto;
   min-width: 0;
   overflow: auto;
+  /* MO-16 — przewijanie kolumn dni nie przenosi się na dokument. */
+  overscroll-behavior: contain;
   scrollbar-gutter: stable;
   /* Drag gestures cross block text; text-selection would hijack the next drag. */
   -webkit-user-select: none;
@@ -1642,6 +2016,7 @@ a.toggle-btn {
   width: 200px;
   overflow-y: auto;
   overflow-x: hidden;
+  overscroll-behavior: contain;
   border-left: 1px solid var(--n2-border-strong);
   background: var(--card-bg-2);
   -webkit-user-select: none;
@@ -1656,6 +2031,10 @@ a.toggle-btn {
   font-family: var(--n2-font-mono);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+/* Godziny poza oknem roboczym (9–17) — przygaszone tak jak sloty siatki. */
+.week-axis-label.off-hours {
+  opacity: 0.45;
 }
 
 /* Day columns: hour + half-hour lines drawn as a background */
@@ -1679,6 +2058,21 @@ a.toggle-btn {
       rgba(255, 255, 255, 0.03) 1px,
       transparent 1px,
       transparent 21px
+    ),
+    /* Okno godzin agencji: wszystko poza 9:00–17:00 dostaje przygaszające
+       przyciemnienie. Granice `--week-work-top` / `--week-work-bottom` ustawia
+       inline `.week-days-grid` z WORK_START_HOUR / WORK_END_HOUR (TS jest
+       jedynym źródłem prawdy). Warstwa jest NA SAMYM DOLE stosu teł, więc
+       linie godzin i kwadransów zostają czytelne, a sloty poza oknem działają
+       normalnie — to wyłącznie tło, bez węzłów DOM i bez hit-testingu. */
+    linear-gradient(
+      to bottom,
+      var(--week-offhours-tint) 0,
+      var(--week-offhours-tint) var(--week-work-top, 0px),
+      transparent var(--week-work-top, 0px),
+      transparent var(--week-work-bottom, 100%),
+      var(--week-offhours-tint) var(--week-work-bottom, 100%),
+      var(--week-offhours-tint) 100%
     );
 }
 .week-day-col.weekend {
@@ -1733,34 +2127,8 @@ a.toggle-btn {
   background: var(--n2-danger);
 }
 
-/* Narożna plakietka daty/zegara: przyklejona do lewego dolnego rogu widoku
-   kalendarza (.week-cal jest position: relative, overflow: hidden). */
-.week-now-badge {
-  position: absolute;
-  left: 8px;
-  bottom: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding: 6px 10px;
-  border: 1px solid var(--n2-border);
-  border-radius: var(--n2-radius-xs);
-  background: rgba(20, 18, 26, 0.92);
-  pointer-events: none;
-  z-index: 40;
-}
-.week-now-badge-date {
-  font-size: var(--n2-type-xs);
-  color: var(--text-faint);
-  white-space: nowrap;
-}
-.week-now-badge-time {
-  font-family: var(--n2-font-mono);
-  font-variant-numeric: tabular-nums;
-  font-size: var(--n2-type-md);
-  color: var(--text);
-  line-height: 1.1;
-}
+/* Plakietka daty/zegara nie wisi już nad siatką — mieszka w pasku sterowania
+   kalendarza jako `.cal-now-badge` (sekcja „Calendar toolbar”). */
 
 /* Absolutely-positioned timed blocks */
 .week-block {
@@ -1876,7 +2244,7 @@ a.toggle-btn {
 }
 /* Fuse animation after a merge drop: quick squash + lavender glow fade-out. */
 .week-block.fused {
-  animation: week-block-fuse 280ms ease-out;
+  animation: week-block-fuse calc(280ms * var(--n2-motion)) ease-out;
   z-index: 20;
 }
 @keyframes week-block-fuse {
@@ -1891,6 +2259,94 @@ a.toggle-btn {
   100% {
     transform: scaleY(1);
     box-shadow: 0 0 0 0 rgba(196, 150, 255, 0);
+  }
+}
+/* Klawiaturowa edycja bloku: wystawiona projekcja wygląda jak podniesiony blok
+   (ten sam cień co `.dragging`), ale przerywana obwódka mówi, że zmiana jeszcze
+   NIE jest zapisana. Klasy `.colliding` i `.at-cap` stoją w pliku wyżej/niżej
+   dokładnie tak, jak przy przeciąganiu, więc kolizja nadal wygrywa kolorem. */
+.week-block.kb-editing {
+  z-index: 30;
+  border-style: dashed;
+  /* Pierścień fokusa jedzie razem z cieniem — inaczej ta reguła (klasa+klasa)
+     przebiłaby globalne `:focus-visible` i edytowany blok straciłby wskazanie. */
+  box-shadow: var(--n2-shadow-focus), var(--n2-shadow-violet, 0 8px 24px rgba(0, 0, 0, 0.4));
+}
+/* Akcja „Do zasobnika” jest RODZEŃSTWEM bloku (dzieci `role="button"` są
+   prezentacyjne) i pokazuje się WYŁĄCZNIE przy fokusie — mysz jej nie widzi,
+   więc nie wchodzi w drogę przeciąganiu ani trafianiu w kolumnę dnia. */
+.week-block-bin-btn {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+  /* `clip` chowa tylko malowanie — bez tego przycisk zostawałby trafialnym
+     pikselem w rogu bloku i mógłby wejść w drogę `elementFromPoint`. Fokus i
+     aktywacja z klawiatury działają mimo `pointer-events: none`. */
+  pointer-events: none;
+}
+.week-block-bin-btn:focus {
+  pointer-events: auto;
+  width: auto;
+  height: auto;
+  margin: 0;
+  overflow: visible;
+  clip: auto;
+  z-index: 40;
+  padding: 2px 6px;
+  border: 1px solid var(--n2-lavender);
+  border-radius: var(--n2-radius-xs);
+  background: var(--card-bg);
+  color: inherit;
+  font-family: inherit;
+  font-size: var(--n2-type-xs);
+  cursor: pointer;
+}
+/* IA-08 — ✓ na kafelku. Też RODZEŃSTWO bloku (dzieci `role="button"` są
+   prezentacyjne). W spoczynku niewidoczny I nietrafialny, więc `elementFromPoint`,
+   bramka dotyku i cały cykl życia wskaźnika zostają bez zmian (inwariant 7);
+   pokazuje się przy hoverze kafelka, przy fokusie z klawiatury, gdy blok JEST
+   wykonany, oraz zawsze na dotyku (tam hover nie istnieje). */
+.week-block-done-btn {
+  position: absolute;
+  z-index: 3;
+  margin-top: 2px;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-pill);
+  background: var(--card-bg);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+}
+.week-block-done-btn.hovered,
+.week-block-done-btn:focus-visible,
+.week-block-done-btn[aria-pressed='true'] {
+  opacity: 1;
+  pointer-events: auto;
+}
+.week-block-done-btn[aria-pressed='true'] {
+  color: var(--n2-success, #b9ff4d);
+  border-color: var(--n2-success, #b9ff4d);
+}
+@media (pointer: coarse) {
+  /* Bez hoveru dotyk nie miałby jak odsłonić ✓. */
+  .week-block-done-btn {
+    opacity: 1;
+    pointer-events: auto;
   }
 }
 .week-block-handle {
@@ -1988,6 +2444,26 @@ a.toggle-btn {
 }
 .week-recur-block.overridden {
   border-style: dotted;
+}
+/* Wystąpienie oznaczone jako ZROBIONE (per-occurrence done): zielony odcień
+   pasków w duchu `.week-block.done` + wygaszenie. Ramkę zostawiamy — jej kolor
+   niesie osoba w stylu inline. Dodatek czysto wizualny: brak zmian układu,
+   handlerów i ścieżek wskaźnika (inwariant 7). */
+.week-recur-block.done {
+  opacity: 0.65;
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(185, 255, 77, 0.18) 0,
+    rgba(185, 255, 77, 0.18) 6px,
+    rgba(185, 255, 77, 0.06) 6px,
+    rgba(185, 255, 77, 0.06) 12px
+  );
+}
+.week-recur-block.done:hover {
+  opacity: 0.9;
+}
+.week-recur-block .block-done-mark {
+  margin-left: 4px;
 }
 .week-recur-title {
   font-size: var(--n2-type-xs);
@@ -2230,6 +2706,14 @@ a.toggle-btn {
   grid-template-columns: repeat(7, 1fr);
   gap: 6px;
 }
+/* Wiersz tygodnia i komórka istnieją WYŁĄCZNIE dla drzewa dostępności (APG
+   wymaga `row` i `gridcell` wokół interaktywnego dnia) — `display: contents`
+   zostawia układ CSS dokładnie takim, jakim był przy płaskiej liście
+   przycisków: to nadal `.month-cell` jest elementem siatki. */
+.month-week-row,
+.month-cell-slot {
+  display: contents;
+}
 .month-cell {
   position: relative;
   aspect-ratio: 1 / 0.86;
@@ -2427,14 +2911,23 @@ a.toggle-btn {
 
 /* ---------- Status badge / coin / avatar / tags ---------- */
 
+/* Barwa statusu wchodzi z JS JEDNĄ zmienną `--status` (dowolna poprawna
+   notacja CSS: `#c9f`, `#c496ff`, `rgb(…)`, `oklch(…)`), a odcień tła liczy
+   CSS przez `color-mix`. Wcześniej tło sklejał JS jako `${color}1a`, co dawało
+   poprawny kolor WYŁĄCZNIE dla 6-znakowego hexa — dla `rgb(…)` albo `#c9f`
+   z panelu administratora powstawał śmieć i tło cicho znikało.
+   10,196% == dawne `1a` (26/255), więc dla 6-znakowego hexa wygląd nie
+   zmienia się. Fallback (brak/pusty kolor) trzyma neutralny wygląd plakietki. */
 .status-badge {
   display: inline-block;
   font-size: var(--n2-type-xs);
   font-weight: 600;
-  border: 1px solid;
+  border: 1px solid var(--status, var(--n2-border-strong));
   border-radius: var(--n2-radius-pill);
   padding: 2px 10px;
   white-space: nowrap;
+  color: var(--status, var(--n2-text));
+  background: color-mix(in oklab, var(--status, transparent) 10.196%, transparent);
 }
 
 /* Derived task planning-status pill (see taskPlanningStatus selector). */
@@ -2508,13 +3001,23 @@ a.toggle-btn {
   flex-direction: column;
   gap: 6px;
 }
+/* AT-13 — pole wyboru miało ~13 px (domyślny rozmiar przeglądarki), więc na
+   dotyku trafiało się w nie z trudem. 20 px + klikalna etykieta + wiersz
+   ≥ 40 px daje cel zgodny z resztą aplikacji. */
 .checklist-row {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-height: 40px;
 }
 .checklist-row input[type='checkbox'] {
   flex: none;
+  width: 20px;
+  height: 20px;
+}
+/* Etykieta jest `<label htmlFor>`, więc klik w tekst przełącza pole wyboru. */
+.checklist-row .checklist-text {
+  cursor: pointer;
 }
 .checklist-text {
   flex: 1 1 auto;
@@ -2608,12 +3111,19 @@ a.toggle-btn {
   font-variant-numeric: tabular-nums;
 }
 
-/* Task-card checklist progress + category label. */
+/* Task-card checklist progress + category label. Postęp listy kontrolnej to
+   WZÓR GLIFÓW („◍◍◌ 2/3”, `utils/checklistGlyphs.ts`) zamiast kolorowej
+   pigułki z ikoną — same glify są `aria-hidden`, liczby niesie tekst obok. */
 .task-checklist-progress {
   display: inline-flex;
   align-items: center;
   gap: 3px;
   margin-left: 8px;
+}
+.task-checklist-glyphs {
+  letter-spacing: 0.06em;
+  /* Glify są ozdobą, więc mogą być słabsze niż liczby obok. */
+  color: var(--n2-text-faint);
 }
 .task-category {
   font-size: var(--n2-type-xs);
@@ -2646,6 +3156,7 @@ a.toggle-btn {
 /* Okrągły przycisk ikonowy (komponent IconButton). Flex-centruje SVG w
    kwadratowym polu — koniec z glifami tekstowymi siadającymi za nisko. */
 .icon-btn {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2680,6 +3191,109 @@ a.toggle-btn {
   background: var(--n2-danger-soft);
   border-color: transparent;
   color: var(--danger);
+}
+/* Pole trafienia ≥ 44 px BEZ zmiany wyglądu: pseudoelement należy do samego
+   przycisku, więc nie potrzebuje ani `pointer-events`, ani `z-index`. */
+.icon-btn::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(100%, 44px);
+  height: max(100%, 44px);
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+}
+/* Rozmiary: `md` (domyślny) zostaje przy 32 px — istniejące miejsca wyglądają
+   bajt w bajt tak samo. */
+.icon-btn[data-size='sm'] {
+  width: 24px;
+  height: 24px;
+}
+/* Blokada MIĘKKA (`aria-disabled`): przycisk zostaje w cyklu Tab, żeby dało
+   się odczytać powód, ale wygląda i zachowuje się jak nieaktywny. */
+.icon-btn[aria-disabled='true'] {
+  opacity: 0.55;
+  cursor: default;
+}
+.icon-btn[aria-disabled='true']:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--n2-text-soft);
+  border-color: var(--n2-border);
+}
+.icon-btn.danger[aria-disabled='true']:hover {
+  background: transparent;
+  border-color: transparent;
+  color: var(--danger);
+}
+.icon-btn[aria-disabled='true']:active {
+  transform: none;
+}
+.icon-btn[aria-busy='true'] {
+  animation: icon-btn-pulse calc(1.2s * var(--n2-motion)) ease-in-out infinite;
+}
+@keyframes icon-btn-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
+/* Tekst wyłącznie dla czytników ekranu — ukryty wizualnie, ale obecny w
+   drzewie dostępności (opisy dymków, powody blokad, podpowiedzi wzorca). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------- Dymek podpowiedzi (komponent Tooltip) ---------- */
+/* Karta jest `aria-hidden` i NIEKLIKALNA — opis dla czytnika ekranu żyje w
+   osobnym `.sr-only` w tym samym portalu. */
+.tooltip {
+  position: fixed;
+  z-index: var(--n2-z-tooltip);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+  max-width: 260px;
+  padding: 4px 8px;
+  border: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-sm);
+  background: var(--n2-panel);
+  color: var(--n2-text);
+  font-size: var(--n2-type-xs);
+  line-height: 1.35;
+  box-shadow: var(--n2-shadow-soft);
+  pointer-events: none;
+}
+.tooltip-text {
+  white-space: pre-line;
+}
+.tooltip-kbd {
+  padding: 1px 5px;
+  border: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-sm);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--n2-text-soft);
+  font-family: var(--n2-font-data);
+  font-size: var(--n2-type-xs);
+  white-space: nowrap;
+}
+/* Natywnie `disabled` przycisk POŁYKA zdarzenia wskaźnika, więc dymek musi
+   wisieć na opakowaniu. Używane WYŁĄCZNIE tam, gdzie blokada musi zostać
+   natywna (AdminPage). */
+.tooltip-holder {
+  display: inline-flex;
 }
 
 .avatar {
@@ -2950,9 +3564,23 @@ a.toggle-btn {
   border-radius: var(--n2-radius-lg);
   padding: var(--n2-space-5);
 }
-.comments-tabs {
+/* AT-10 — nagłówek dyskusji zastąpił dwuzakładkowy `role="tablist"`: tytuł
+   widoku + menu „⋯" (albo powrót z historii zmian). Wszystkie cele trafienia
+   mają ≥ 32 px (IconButton `md` = 32 px, przycisk powrotu przez `min-height`). */
+.comments-head {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin-bottom: 12px;
+}
+.comments-title {
+  margin: 0;
+  font-size: var(--n2-type-md);
+  font-weight: 600;
+}
+.comments-back {
+  min-height: 32px;
 }
 .comments-empty {
   margin: 4px 0 12px;
@@ -2994,6 +3622,10 @@ a.toggle-btn {
   border-radius: var(--n2-radius-pill);
   padding: 0 6px;
 }
+/* IA-17 — pole nowego komentarza stoi NAD wątkiem, więc odstęp idzie pod nim. */
+.comment-form {
+  margin-bottom: var(--n2-space-4);
+}
 .comment-form textarea {
   width: 100%;
 }
@@ -3009,6 +3641,46 @@ a.toggle-btn {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+/* Podpowiedzi @wzmianek nad polem komentarza. */
+.comment-input-wrap {
+  position: relative;
+}
+.mention-autocomplete {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 4px);
+  z-index: 40;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--n2-panel);
+  border: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-md);
+  box-shadow: var(--n2-shadow-soft);
+}
+.mention-option {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--n2-radius-xs);
+  background: none;
+  text-align: left;
+  font: inherit;
+  font-size: var(--n2-type-sm);
+  color: inherit;
+  cursor: pointer;
+}
+.mention-option:hover,
+.mention-option.active {
+  background: rgba(196, 150, 255, 0.16);
+  color: var(--n2-text);
 }
 .activity-list {
   list-style: none;
@@ -3070,6 +3742,15 @@ a.toggle-btn {
 .kanban-col.archived-col .kanban-col-name {
   color: var(--text-muted);
 }
+/* Instrukcja kolumny archiwum: dawniej hover-only `title`, teraz widoczna
+   podpowiedź pod nagłówkiem (na dotyku `title` nie istniał w ogóle). */
+.kanban-col-note {
+  margin: 0;
+  padding: 0 12px 8px;
+  color: var(--text-muted);
+  font-size: var(--n2-type-xs);
+  line-height: 1.35;
+}
 .kanban-col-head {
   display: flex;
   align-items: center;
@@ -3113,10 +3794,67 @@ a.toggle-btn {
   box-shadow: var(--shadow-sm);
   padding: 10px 12px;
   cursor: grab;
+  /* Kotwica dla klastra akcji; w spoczynku nic nie zmienia w wyglądzie karty. */
+  position: relative;
   transition: border-color var(--n2-transition), background var(--n2-transition);
 }
 .kanban-card:active {
   cursor: grabbing;
+}
+/* Karta w locie: przygaszona, żeby było widać, co wisi na wskaźniku. */
+.kanban-card.dragging {
+  opacity: 0.55;
+}
+/* Karta podniesiona z klawiatury — jedyny widoczny ślad trybu przenoszenia
+   poza wskaźnikiem kolumny docelowej. */
+.kanban-card.moving {
+  border-color: var(--n2-lavender);
+  box-shadow: 0 0 0 1px var(--n2-lavender);
+}
+/* Klaster akcji (uchwyt przenoszenia + menu karty): ABSOLUTNIE pozycjonowany,
+   więc treść i gęstość karty zostają 1:1 jak przed zmianą. W spoczynku jest
+   niewidoczny i przezroczysty dla wskaźnika. */
+.kanban-card-actions {
+  position: absolute;
+  /* Wyrównanie do paddingu karty jest tu NOŚNE, nie kosmetyczne: pole trafienia
+     `.icon-btn::after` ma 44 px, więc przycisk wciśnięty w sam róg wystawałby
+     ponad kartę i na dotyku (gdzie klaster jest widoczny stale) łapałby
+     dotknięcia karty leżącej WYŻEJ w kolumnie. */
+  top: 10px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--n2-transition);
+}
+.kanban-card:hover .kanban-card-actions,
+.kanban-card:focus-within .kanban-card-actions,
+.kanban-card.moving .kanban-card-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* Na dotyku NIE MA hovera, a bez klastra nie istnieje żadna ścieżka przeniesienia
+   karty poza przeciąganiem (menu „Przenieś do statusu" wisi właśnie tutaj) —
+   dlatego na wskaźniku zgrubnym klaster jest widoczny stale. */
+@media (pointer: coarse) {
+  .kanban-card-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+.kanban-card-grip {
+  cursor: grab;
+}
+/* Wspólny wskaźnik miejsca docelowego: ta sama kreska dla przeciągania
+   wskaźnikiem i dla trybu klawiaturowego. Wysokość liczy się do odstępu
+   `.kanban-col-body`, więc karty nie skaczą. */
+.kanban-drop-indicator {
+  height: 2px;
+  border-radius: var(--n2-radius-pill);
+  background: var(--n2-lavender);
+  box-shadow: 0 0 6px rgba(196, 150, 255, 0.6);
 }
 .kanban-card:hover {
   border-color: var(--n2-border-strong);
@@ -3185,6 +3923,7 @@ a.toggle-btn {
 
 .timeline-scroll {
   overflow-x: auto;
+  overscroll-behavior: contain;
   border: 1px solid var(--n2-border);
   border-radius: var(--n2-radius-lg);
   background: var(--card-bg);
@@ -3263,6 +4002,38 @@ a.toggle-btn {
   white-space: nowrap;
   font-family: var(--n2-font-data);
 }
+/* Nagłówek jednego dnia (bliskie zbliżenia: week / twoWeeks). Szerokość jest
+   dokładnie równa `dayW`, więc kolumna nigdy nie rozjeżdża się z paskiem. */
+.timeline-day-head {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  border-left: 1px solid var(--n2-border);
+  font-family: var(--n2-font-data);
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  pointer-events: none;
+}
+.timeline-day-head.weekend .timeline-day-num,
+.timeline-day-head.weekend .timeline-day-dow {
+  color: var(--text-muted);
+}
+.timeline-day-num {
+  font-size: var(--n2-type-xs);
+  font-weight: 600;
+}
+.timeline-day-dow {
+  font-size: 0.625rem;
+  color: var(--text-muted);
+  text-transform: lowercase;
+}
 .timeline-client-row .timeline-client {
   font-size: var(--n2-type-xs);
   font-weight: 400;
@@ -3295,6 +4066,16 @@ a.toggle-btn {
   top: 0;
   bottom: 0;
   background: rgba(255, 255, 255, 0.03);
+}
+/* Pionowa linia między dniami przy bliskim zbliżeniu. Ta sama warstwa co
+   weekend (pod `.timeline-today` z-index 1 i `.timeline-bar` z-index 2). */
+.timeline-daygrid {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--n2-border-soft);
+  pointer-events: none;
 }
 .timeline-today {
   position: absolute;
@@ -3376,6 +4157,37 @@ a.toggle-btn {
   transform: translateX(-50%) scale(1.3);
 }
 
+/* ---------- Dotyk: przewijanie ma pierwszeństwo przed przeciąganiem ----------
+   Na wskaźniku precyzyjnym (mysz) elementy przeciągalne zostają przy
+   `touch-action: none` — drag startuje natychmiast, jak dotąd. Na wskaźniku
+   zgrubnym (palec) `touch-action` wraca do panoramowania w OBU osiach, bo
+   `.week-days-viewport` przewija się i w pionie, i w poziomie: dotknięcie bloku
+   ma przewijać kalendarz, a nie przesuwać pracę co 15 minut. Przeciąganie
+   uzbraja się dopiero po PRZYTRZYMANIU (patrz src/utils/touchDrag.ts); od tej
+   chwili gest blokuje natywne przewijanie przez `touchmove` w
+   useTouchDragGate.ts, bo `touch-action` jest już zatrzaśnięte na czas gestu.
+   Skoro `touch-action` już nie blokuje gestu, przeglądarka próbuje na TYM SAMYM
+   przytrzymaniu zaznaczyć tekst i pokazać dymek („callout”) — dlatego zaznaczanie
+   i callout są tu wyłączone; samo menu kontekstowe tłumi bramka dopiero po
+   uzbrojeniu, więc krótkie dotknięcie zachowuje dotychczasowe zachowanie.
+   Uchwyty zmiany czasu bloku (6 px przy ~30 px wysokości bloku) są palcem
+   nietrafialne, więc na dotyku znikają — zostaje przeniesienie bloku. Uchwyty
+   paska osi czasu (`.bar-handle`, poziome, inna geometria) zostają bez zmian. */
+@media (pointer: coarse) {
+  .week-block,
+  .week-bin-block,
+  .timeline-bar,
+  .timeline-milestone {
+    touch-action: pan-x pan-y;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+  .week-block-handle {
+    display: none;
+  }
+}
+
 /* ---------- Workload dashboard ---------- */
 
 .workload-table th,
@@ -3385,11 +4197,14 @@ a.toggle-btn {
 .workload-person {
   text-align: left;
 }
+/* `inline-flex`, a nie `flex`: obok linku stoi jeszcze ikona przeciążonego dnia
+   (`.workload-over-flag`), a blokowy link zepchnąłby ją do nowej linii. */
 .workload-person-link {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 9px;
   color: inherit;
+  vertical-align: middle;
 }
 .workload-person-link:hover {
   text-decoration: none;
@@ -3442,13 +4257,27 @@ a.toggle-btn {
   overflow: hidden;
   margin-right: 7px;
 }
+/* JEDNA skala wykorzystania (`loadTone`): im wyższy procent, tym cieplejszy
+   kolor — niski i średni na fiolecie marki, wysoki na ostrzeżeniu, powyżej
+   100% (albo godziny przy zerowej dostępności) na czerwieni. Sygnał „któryś
+   dzień ponad dostępnością” NIE wchodzi tu z powrotem; ma własną ikonę
+   `.workload-over-flag` przy nazwisku. Reguła bazowa jest zarazem stopniem
+   `tone-mid` (50–84%), dlatego nie ma dla niego osobnego selektora. */
 .load-bar-fill {
   height: 100%;
   border-radius: inherit;
   background: linear-gradient(90deg, var(--n2-lavender), var(--n2-violet-soft));
   box-shadow: 0 0 18px rgba(196, 150, 255, 0.5);
 }
-.load-bar-fill.over {
+.load-bar-fill.tone-low {
+  background: var(--n2-lavender);
+  box-shadow: 0 0 14px rgba(196, 150, 255, 0.35);
+}
+.load-bar-fill.tone-high {
+  background: var(--n2-warning);
+  box-shadow: 0 0 18px rgba(255, 200, 87, 0.45);
+}
+.load-bar-fill.tone-over {
   background: var(--n2-danger);
   box-shadow: 0 0 18px rgba(255, 79, 114, 0.5);
 }
@@ -3460,10 +4289,14 @@ a.toggle-btn {
   color: var(--n2-danger);
   font-weight: 700;
 }
-.workload-warn {
-  display: block;
-  font-size: var(--n2-type-xs);
+/* Ikona „w tym tygodniu jest dzień ponad dostępnością” — stoi przy nazwisku,
+   osobno od paska wykorzystania. */
+.workload-over-flag {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
   color: var(--n2-danger);
+  vertical-align: middle;
 }
 
 /* ---------- Dashboard ---------- */
@@ -3479,6 +4312,9 @@ a.toggle-btn {
   border-radius: var(--n2-radius-lg);
   padding: var(--n2-space-6);
   box-shadow: var(--shadow-sm);
+  /* Kafel to element siatki — bez `min-width: 0` jego `min-content` (pigułki,
+     `nowrap`, pierścienie) rozpycha ścieżkę zamiast się zwężać (MO-17). */
+  min-width: 0;
 }
 .dash-pipeline {
   list-style: none;
@@ -3514,6 +4350,7 @@ a.toggle-btn {
   align-items: center;
   gap: 8px;
   width: 100%;
+  min-width: 0;
   background: none;
   border: none;
   font: inherit;
@@ -3547,8 +4384,9 @@ a.toggle-btn {
   color: var(--n2-danger);
 }
 
-/* Powiadomienia: wiersz = klikalny obszar (otwiera obiekt) + osobny „✓" (oznacz
- * jako przeczytane bez otwierania). `dash-notif-open` reużywa stylu `.dash-row`. */
+/* Powiadomienia: wiersz = klikalny obszar (rozwija podgląd; otwarcie obiektu to
+ * osobny przycisk w podglądzie) + osobny „✓" (oznacz jako przeczytane bez
+ * rozwijania). `dash-notif-open` reużywa stylu `.dash-row`. */
 .dash-notif-row {
   display: flex;
   align-items: center;
@@ -3562,6 +4400,38 @@ a.toggle-btn {
   flex: none;
   padding: 4px 6px;
   line-height: 1;
+}
+
+/* Rozwinięty podgląd powiadomienia (kto/co/gdzie + treść komentarza). Klik w
+ * wiersz tylko rozwija — otwarcie encji to osobny przycisk niżej. */
+.dash-notif-preview {
+  margin: 2px 0 6px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--n2-border);
+  margin-left: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: var(--n2-type-sm);
+}
+.dash-notif-line {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.dash-notif-label {
+  color: var(--text-muted);
+  margin-right: 4px;
+}
+.dash-notif-body {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+}
+.dash-notif-openbtn {
+  align-self: flex-start;
+  margin-top: 6px;
 }
 
 /* ---------- Dashboard: worker welcome page ---------- */
@@ -3578,16 +4448,18 @@ a.toggle-btn {
 }
 
 /* Explicit 2-column layout (wide, ~2fr | 1fr):
- *   RZĄD 2 · powiadomienia | obciążenie
- *   RZĄD 3 · zadania       | zespół
- *   RZĄD 4 · tydzień (full width)
- *   RZĄD 5 · zasobnik | alerty (kafle scalone z dawnej „Moja praca")
- * The changelog bar sits ABOVE the grid, not inside it. */
+ *   RZĄD 1 · zadania na dziś | obciążenie
+ *   RZĄD 2 · powiadomienia   | zespół
+ *   RZĄD 3 · tydzień (full width)
+ *   RZĄD 4 · zasobnik | alerty (kafle scalone z dawnej „Moja praca")
+ * „Zadania na dziś" są PIERWSZYM elementem treści (AT-17); jednolinijkowe CTA
+ * dziennika zmian siedzi nad siatką, nie w niej. Kolejność w DOM-ie jest ta
+ * sama, więc jednokolumnowy fallback (≤1180 px) czyta się identycznie. */
 .dash-welcome-grid {
   grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
   grid-template-areas:
-    'notifications workload'
-    'today team'
+    'today workload'
+    'notifications team'
     'week week'
     'bin alerts';
   align-items: stretch;
@@ -3613,18 +4485,36 @@ a.toggle-btn {
 .dash-area-alerts {
   grid-area: alerts;
 }
-/* Row 3 cards share a stretched grid row; flex column lets the team roster's
- * internal scroll work within the shared height. */
+/* Kafle dzielące rząd z sąsiadem: flex column pozwala rosterowi zespołu
+ * przewijać się wewnątrz wspólnej wysokości rzędu. */
 .dash-area-today,
 .dash-area-team {
   display: flex;
   flex-direction: column;
 }
+/* OP-01/TY-33 — kafelek PUSTY (Powiadomienia, Alerty) kurczy się do belki
+ * ~40 px i NIE rozciąga się do wysokości rzędu: `align-self: start` bije
+ * `align-items: stretch` siatki, więc odzyskana wysokość idzie do „Zadania na
+ * dziś"/„Twój tydzień", a „Zasobnik" wchodzi nad zgięcie. Kafelek Z TREŚCIĄ
+ * renderuje się bez zmian (ta klasa go nie dotyczy). */
+.dash-card.dash-card-bar {
+  align-self: start;
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  padding: var(--n2-space-2) var(--n2-space-5);
+}
+.dash-card-bar-title {
+  margin: 0;
+  font-size: var(--n2-type-sm);
+  font-weight: 600;
+  color: var(--text-muted);
+}
 /* Single column on narrow: drop the areas and flow by DOM order
  * (powiadomienia, obciążenie, zadania, zespół, tydzień). */
 @media (max-width: 1180px) {
   .dash-welcome-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     grid-template-areas: none;
   }
   .dash-area-notifications,
@@ -3727,6 +4617,20 @@ a.toggle-btn {
 .agenda-dateless .dash-row-name {
   font-weight: 500;
 }
+/* Na telefonie stała szerokość godziny i „max-width: 40%" na meta zjadały całą
+   nazwę; obie wartości luzujemy, a wiersz może się zawinąć (MO-17). */
+@media (max-width: 760px) {
+  .agenda-list .dash-row {
+    flex-wrap: wrap;
+    gap: 4px 10px;
+  }
+  .agenda-time {
+    min-width: 0;
+  }
+  .agenda-meta {
+    max-width: 100%;
+  }
+}
 
 /* ---------- Zasobnik + Alerty (Panel tiles, dawniej „Moja praca") ---------- */
 
@@ -3740,6 +4644,18 @@ a.toggle-btn {
 
 .dash-card-foot {
   margin-top: 8px;
+}
+/* AT-19 — CTA planowania to prawdziwy przycisk akcentowy (`.btn` ma min-height
+   40 px, czyli ponad wymagane 36), a nie 11-pikselowy link. Etykieta bywa długa
+   („Zaplanuj 2h — <tytuł>"), więc może się zawinąć zamiast rozpychać kafelek. */
+.dash-plan-cta {
+  max-width: 100%;
+  height: auto;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  line-height: 1.25;
+  text-align: center;
+  text-decoration: none;
 }
 
 .my-work-alerts {
@@ -3843,7 +4759,8 @@ a.toggle-btn {
   background: var(--n2-warning);
 }
 .presence-offline {
-  background: var(--n2-text-faint);
+  /* Kropka „poza siecią" to stan nieaktywny, nie tekst — `disabled`. */
+  background: var(--n2-text-disabled);
 }
 
 .chat-popup {
@@ -3898,7 +4815,7 @@ a.toggle-btn {
   background: var(--n2-warning);
 }
 .chat-popup-presence.presence-offline::before {
-  background: var(--n2-text-faint);
+  background: var(--n2-text-disabled);
 }
 .chat-popup-close {
   background: none;
@@ -3960,8 +4877,12 @@ a.toggle-btn {
     right: 0;
     bottom: 0;
     width: auto;
-    max-height: 70vh;
+    max-height: 70dvh;
     border-radius: var(--n2-radius-md) var(--n2-radius-md) 0 0;
+  }
+  /* Dokowany do dołu — pole wiadomości musi ominąć pasek gestu (MO-14). */
+  .chat-popup-input {
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
   }
 }
 
@@ -4022,10 +4943,12 @@ a.toggle-btn {
   font-family: var(--n2-font-data);
 }
 
-/* (d) Week strip */
+/* (d) Week strip — pięć kolumn dni roboczych + wąska kolumna weekendu z dwiema
+   belkami 24 px (AT-19). Dzięki temu wpisy dni roboczych mają dość miejsca, żeby
+   ZAWINĄĆ się do dwóch linii zamiast się urywać. */
 .week-strip {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr)) minmax(96px, 0.55fr);
   gap: 6px;
 }
 .week-strip-day {
@@ -4077,25 +5000,180 @@ a.toggle-btn {
   flex-direction: column;
   gap: 3px;
 }
+/* AT-19: wpis zawija się do DWÓCH linii zamiast urywać się wielokropkiem w
+   połowie tytułu. Trzecia linia jest ucinana (`line-clamp`), żeby wysokość
+   paska tygodnia pozostała przewidywalna. */
 .week-strip-blocks li {
   font-size: var(--n2-type-xs);
   line-height: 1.3;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .week-strip-time {
   font-family: var(--n2-font-data);
   color: var(--n2-lavender);
   font-weight: 600;
 }
+/* „+N więcej" prowadzi do TEGO dnia w kalendarzu (`?dzien=`), więc jest linkiem,
+   nie martwym tekstem. */
 .week-strip-more {
+  display: inline-block;
   color: var(--text-muted);
   font-style: italic;
+  text-decoration: underline;
 }
+.week-strip-more:hover {
+  color: var(--n2-lavender);
+}
+
+/* Weekend: dwie belki 24 px w jednej wąskiej kolumnie zamiast dwóch pełnych
+   kolumn dnia — sobota i niedziela zwykle nic nie niosą, a zjadały 2/7
+   szerokości paska. Klik prowadzi do dnia w kalendarzu. */
+.week-strip-weekend {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.week-strip-wknd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--n2-border-soft);
+  border-radius: var(--n2-radius-sm);
+  color: var(--text-muted);
+  font-size: var(--n2-type-xs);
+  text-decoration: none;
+}
+.week-strip-wknd:hover {
+  border-color: var(--n2-border-strong);
+  color: var(--text);
+}
+.week-strip-wknd.is-today {
+  border-color: var(--n2-border-strong);
+  color: var(--text);
+}
+.week-strip-wknd-day {
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.week-strip-wknd-hours {
+  font-family: var(--n2-font-data);
+  font-weight: 600;
+}
+/* ≤760 px Panel renderuje stos `.dash-m-*` (pigułki tygodnia), więc pasek
+   tygodnia nie ma tam wariantu — jego najwęższy realny kontekst to
+   jednokolumnowa siatka desktopu (≤1180 px). */
+
+/* (e) Panel na telefonie — stos zamiast siatki (MO-18).
+ *  Wszystko poniżej żyje WYŁĄCZNIE w tym media query i pod klasami `.dash-m-*`,
+ *  których desktop w ogóle nie renderuje (branch `isMobile` w DashboardPage) —
+ *  siatka desktopowa nie może się stąd zmienić. Kolejność kafelków i ich pustka
+ *  są w JS (`mobileDashboardOrder`), nie w CSS `order`. */
 @media (max-width: 760px) {
-  .week-strip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .dash-m-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  /* Ciaśniejszy kafelek — na 390 px marginesy zjadały treść. */
+  .dash-m-stack .dash-card {
+    padding: var(--n2-space-4);
+  }
+
+  /* Obciążenie: jedna linia zamiast dwóch pierścieni. */
+  .dash-m-workload-line {
+    margin: 6px 0 0;
+    font-family: var(--n2-font-data);
+    font-size: var(--n2-type-sm);
+    font-weight: 600;
+  }
+  .dash-m-workload-line.over {
+    color: var(--n2-danger);
+  }
+
+  /* Tydzień: siedem pigułek zamiast siedmiu kolumn z blokami. */
+  .dash-m-week-pills {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 4px;
+  }
+  .dash-m-pill {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    min-height: 56px;
+    min-width: 0;
+    padding: 6px 2px;
+    background: var(--n2-surface-muted);
+    border: 1px solid var(--n2-border-soft);
+    border-radius: var(--n2-radius-sm);
+  }
+  .dash-m-pill.is-today {
+    border-color: var(--n2-border-strong);
+    box-shadow: inset 0 0 0 1px var(--n2-border-strong);
+  }
+  .dash-m-pill-dow {
+    font-size: var(--n2-type-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--text-muted);
+  }
+  .dash-m-pill-num {
+    font-family: var(--n2-font-data);
+    font-weight: 700;
+    font-size: var(--n2-type-sm);
+  }
+  .dash-m-pill.is-today .dash-m-pill-num {
+    color: var(--n2-lavender);
+  }
+  /* „6h 15m" nie mieści się w kolumnie 1/7 na 390 px — przycinamy zamiast
+     rozpychać siatkę pigułek. */
+  .dash-m-pill-hours {
+    font-family: var(--n2-font-data);
+    font-size: var(--n2-type-xs);
+    color: var(--n2-lavender);
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Zespół: zwinięty nagłówek-przycisk na pełną szerokość kafelka. */
+  .dash-m-team-title {
+    margin: 0;
+  }
+  .dash-m-team-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    min-height: 44px;
+    padding: 0;
+    background: none;
+    border: none;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .dash-m-team-chev {
+    color: var(--text-muted);
+  }
+  /* Rozwinięta lista zajmuje tyle, ile trzeba — bez wewnętrznego scrolla,
+     który na telefonie łapie gest przewijania strony. */
+  .dash-m-team .chat-people {
+    max-height: none;
+    overflow-y: visible;
+    margin-top: 8px;
   }
 }
 
@@ -4234,7 +5312,9 @@ a.toggle-btn {
   font-weight: 600;
   cursor: pointer;
   user-select: none;
-  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+  transition: border-color calc(0.15s * var(--n2-motion)) ease,
+    background calc(0.15s * var(--n2-motion)) ease,
+    color calc(0.15s * var(--n2-motion)) ease;
 }
 .weekday-chip:hover {
   border-color: var(--n2-border-strong);
@@ -4415,7 +5495,7 @@ a.toggle-btn {
 
 .context-menu {
   position: fixed;
-  z-index: 100;
+  z-index: var(--n2-z-menu);
   min-width: 220px;
   max-width: 270px;
   background: var(--n2-panel);
@@ -4423,6 +5503,16 @@ a.toggle-btn {
   border-radius: var(--n2-radius-md);
   box-shadow: var(--n2-shadow-soft);
   padding: 6px;
+  /* Wysokość dostępną od pozycji menu do dołu okna liczy `useOverlay`
+     (`resolveOverlayPosition`) i podaje jako `--overlay-avail` — to zastępuje
+     dawne clampy `window.innerHeight - 100/240/260`. */
+  max-height: var(--overlay-avail, 80vh);
+  overflow-y: auto;
+}
+/* Wariant menu „⋯": ta sama karta, wyżej na drabinie (patrz token). */
+.context-menu.overflow-menu {
+  z-index: var(--n2-z-menu-over-modal);
+  min-width: 200px;
 }
 .context-menu-title {
   font-size: var(--n2-type-xs);
@@ -4450,6 +5540,14 @@ a.toggle-btn {
 .context-menu-item:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+/* Powód blokady pozycji menu — WIDOCZNY, bo natywnie `disabled` przycisk nie
+   przyjmuje hovera ani fokusa, więc dymek nigdy by się nie pokazał. */
+.context-menu-hint {
+  padding: 0 8px 6px;
+  color: var(--text-muted);
+  font-size: var(--n2-type-xs);
+  line-height: 1.3;
 }
 .context-menu-item.danger {
   color: var(--n2-danger);
@@ -4534,7 +5632,9 @@ html[data-modal-backdrop='snapshot'] #root {
 .task-modal-card {
   width: 94vw;
   max-width: 980px;
-  max-height: 88vh;
+  /* `dvh`, nie `vh` — pasek adresu iOS chowa się przy przewijaniu i karta
+     „podskakiwała" o jego wysokość (MO-15). Na desktopie 1dvh == 1vh. */
+  max-height: 88dvh;
   display: flex;
   flex-direction: column;
   background: var(--n2-panel);
@@ -4592,6 +5692,29 @@ html[data-modal-backdrop='snapshot'] #root {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* Fokus przeniesiony na pole (np. przez listę blokad zapisu) nie może wylądować
+     pod przyklejonym paskiem akcji — 96 px to jego wysokość z zapasem. */
+  scroll-padding-bottom: 96px;
+}
+/* S2 — dolny padding modala tworzył pas ~24 px POD przyklejonym paskiem akcji,
+   przez który przewijana treść była widoczna i ucięta. Gdy pasek istnieje,
+   padding schodzi do zera i pasek siada równo na dole karty; odstęp nad nim
+   daje własny `margin-top` paska. Modale bez paska (wydarzenie, zgłoszenie,
+   changelog) zachowują pełny padding. */
+.task-modal-body:has(.editor-actions-sticky) {
+  padding-bottom: 0;
+}
+/* S3 — `thead` siatki przydziału jest `sticky`, ale jej kontener przewijał się
+   tylko w poziomie, więc nagłówek uciekał z ekranu razem z tabelą. Własne
+   przewijanie pionowe robi z `.alloc-wrap` prawdziwy scrollport tego `sticky`
+   (zmiana ograniczona do modala — widok Obciążenia zostaje bez zmian). */
+.task-modal-body .alloc-wrap {
+  max-height: 60vh;
+  overflow: auto;
+  /* Dojechanie palcem do końca siatki ma przewijać dalej treść modala (tło i
+     tak jest zablokowane, dopóki modal jest otwarty) — inaczej gest grzązłby
+     w tabeli. */
+  overscroll-behavior: auto;
 }
 /* Editor lives inside the scrollable modal body — drop the page-level max-width. */
 .task-modal-body .editor {
@@ -4600,12 +5723,210 @@ html[data-modal-backdrop='snapshot'] #root {
 .task-modal-body .editor-section:last-of-type {
   margin-bottom: 0;
 }
+/* Sekcje edytora zadania siedzą w `<form class="task-editor-form">` (semantyka +
+   Enter = zapis), więc ostatnia sekcja WEWNĄTRZ formularza zaczęła łapać regułę
+   powyżej i zjadała odstęp przed „Dyskusją". Klasa opakowania zawęża naprawę
+   dokładnie do tego przypadku. */
+.task-editor-form .editor-section:last-of-type {
+  margin-bottom: var(--n2-space-4);
+}
+
+/* ---------- Mobilna lista dni przydziału (AllocationDayList) ----------
+   Reguły stoją POZA `@media`, bo komponent montuje się wyłącznie na telefonie
+   (`useMediaQuery(MOBILE_NAV_QUERY)` w TaskModal) — żadna z nich nie dotyka
+   selektorów tabeli `.alloc-*`, więc desktop zostaje bez zmian. Pola dotykowe
+   mają ≥ 44 px, a szerokości są elastyczne: przy 390 px nic nie wychodzi poza
+   ekran i nie ma przewijania w poziomie. */
+.alloc-daylist {
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-2);
+}
+.alloc-daylist-people {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.alloc-daylist-person {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-md);
+  background: var(--field-bg);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--n2-type-sm);
+  cursor: pointer;
+}
+.alloc-daylist-person.active {
+  color: var(--text);
+  border-color: var(--n2-border-strong);
+  background: rgba(255, 255, 255, 0.06);
+}
+.alloc-daylist-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.alloc-daylist-active {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-family: var(--n2-font-data);
+  font-variant-numeric: tabular-nums;
+}
+.alloc-daylist-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+.alloc-daylist-days {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-lg);
+  background: var(--card-bg);
+  overflow: hidden;
+}
+.alloc-daylist-day + .alloc-daylist-day {
+  border-top: 1px solid var(--n2-border-soft);
+}
+.alloc-daylist-day.weekend {
+  background: var(--weekend-bg);
+}
+.alloc-daylist-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 12px;
+  /* Krawędź istnieje ZAWSZE (przezroczysta), więc wpisanie godzin nie przesuwa
+     wiersza — ta sama zasada, co w komórce tabeli. */
+  border: none;
+  border-left: 3px solid transparent;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--n2-type-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.alloc-daylist-day.has-value .alloc-daylist-row {
+  border-left-color: var(--n2-lavender);
+}
+.alloc-daylist-date {
+  font-family: var(--n2-font-data);
+  font-variant-numeric: tabular-nums;
+}
+.alloc-daylist-total {
+  color: var(--text-muted);
+  font-family: var(--n2-font-data);
+  font-variant-numeric: tabular-nums;
+}
+.alloc-daylist-day.has-value .alloc-daylist-total {
+  color: var(--n2-lavender);
+  font-weight: 600;
+}
+.alloc-daylist-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 12px 12px;
+}
+.alloc-daylist-stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.alloc-daylist-step {
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-md);
+  background: var(--field-bg);
+  color: var(--text);
+  font-size: var(--n2-type-md);
+  line-height: 1;
+  cursor: pointer;
+}
+.alloc-daylist-step:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.alloc-daylist-hours {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 44px;
+  padding: 0 8px;
+  text-align: center;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-xs);
+  background: var(--field-bg);
+  color: var(--text);
+  font-family: var(--n2-font-data);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--n2-type-md);
+}
+/* Przeciążenie jest OSTRZEŻENIEM (inwariant 3): barwi pole i dokłada zdanie,
+   nigdy nie blokuje wpisania ani zapisu. */
+.alloc-daylist-stepper.overload .alloc-daylist-hours {
+  border-color: var(--overload-border);
+  color: var(--n2-danger);
+}
+.alloc-daylist-multi {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--n2-surface-muted);
+  color: var(--text-muted);
+  font-size: var(--n2-type-xs);
+  font-variant-numeric: tabular-nums;
+}
+.alloc-daylist-start {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: var(--n2-type-sm);
+}
+.alloc-daylist-time {
+  min-height: 44px;
+  padding: 0 8px;
+  border: 1px solid var(--n2-border-soft, var(--n2-border));
+  border-radius: var(--n2-radius-xs);
+  background: var(--field-bg);
+  color: var(--text);
+  font-family: var(--n2-font-data);
+  font-variant-numeric: tabular-nums;
+}
+.alloc-daylist-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--n2-type-xs);
+}
+.alloc-daylist-note.overload {
+  color: var(--n2-danger);
+}
 
 @media (max-width: 760px) {
   .task-modal-card {
     width: 100vw;
     max-width: none;
-    max-height: 94vh;
+    /* `--n2-kb-inset` ustawia `useModalShell` z `visualViewport` — karta
+       kończy się NAD klawiaturą, więc lepki pasek zapisu zostaje widoczny.
+       Bez klawiatury zmienna nie istnieje i zostaje czyste 94dvh (MO-22). */
+    max-height: calc(94dvh - var(--n2-kb-inset, 0px));
     border-radius: var(--n2-radius-md);
   }
   .task-modal-head {
@@ -4616,11 +5937,97 @@ html[data-modal-backdrop='snapshot'] #root {
   }
 }
 
+/* ---------- Okno potwierdzenia (alertdialog) ---------- */
+
+/* Dziedziczy szkielet po powłoce modala (`.task-modal-scrim` /
+   `.task-modal-viewport` / `.task-modal-card`); tutaj zostaje tylko to, co je
+   różni: pozycja na drabinie `--n2-z-*`, wąska karta i wyśrodkowanie. */
+.confirm-scrim {
+  z-index: var(--n2-z-confirm);
+  backdrop-filter: blur(3px);
+}
+.confirm-viewport {
+  z-index: calc(var(--n2-z-confirm) + 1);
+  align-items: center;
+}
+.confirm-card {
+  width: min(92vw, 460px);
+  max-width: 460px;
+  /* Wejście karty robi CSS, a nie `motion` — dostawca stoi ponad
+     `MotionConfig`. Preferencję ruchu i tak respektuje, bo czas trwania idzie
+     przez mnożnik `--n2-motion` (0 = animacja się nie uruchamia). */
+  animation: confirm-card-in calc(160ms * var(--n2-motion)) cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes confirm-card-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+}
+.confirm-body {
+  padding: var(--n2-space-6) var(--n2-space-6) var(--n2-space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-3);
+}
+.confirm-title {
+  font-size: var(--n2-type-md);
+  line-height: 1.35;
+}
+.confirm-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-2);
+}
+.confirm-text p {
+  margin: 0;
+  font-size: var(--n2-type-sm);
+  color: var(--n2-text-soft);
+}
+.confirm-consequences.danger {
+  color: var(--danger);
+}
+.confirm-ack {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--n2-space-2);
+  font-size: var(--n2-type-sm);
+  color: var(--n2-text-soft);
+  cursor: pointer;
+}
+.confirm-ack input {
+  margin-top: 2px;
+  flex: 0 0 auto;
+}
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--n2-space-2);
+  padding: var(--n2-space-4) var(--n2-space-6);
+  border-top: 1px solid var(--n2-border);
+  background: var(--n2-panel-soft);
+}
+
+@media (max-width: 760px) {
+  .confirm-card {
+    width: 94vw;
+  }
+  .confirm-body {
+    padding: var(--n2-space-5) var(--n2-space-4) var(--n2-space-4);
+  }
+  .confirm-actions {
+    padding: var(--n2-space-3) var(--n2-space-4);
+  }
+}
+
 /* ---------- Responsive ---------- */
 
 @media (max-width: 1180px) {
+  /* `minmax(0, 1fr)`, nie `1fr` — domyślne `auto` minimum daje ścieżce podłogę
+     `min-content`, więc jeden szeroki kafel rozpychał całą powłokę i tworzył
+     poziomy scroll dokumentu na telefonie (MO-17). */
   .app-shell {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   /* The collapse toggle + collapsed avatar are desktop-only; the 1-column
      strip and mobile drawer ignore the stored pref entirely. */
@@ -4639,9 +6046,21 @@ html[data-modal-backdrop='snapshot'] #root {
   }
   .app-nav-link {
     justify-content: center;
+    /* Poza desktopem wracamy do 44 px — minimalny cel dotykowy. */
+    min-height: 44px;
   }
   .sidebar-user {
     margin-top: 0;
+  }
+  /* Pasek/szuflada nie ma własnego przewijania listy, więc stopka jest zwykłym
+     blokiem (bez sticky i bez gradientu). */
+  .sidebar-footer {
+    position: static;
+    margin-top: 0;
+    background: transparent;
+  }
+  .sidebar-footer::before {
+    display: none;
   }
 }
 
@@ -4665,6 +6084,12 @@ html[data-modal-backdrop='snapshot'] #root {
   }
   .cal-toolbar {
     justify-content: flex-start;
+    gap: var(--n2-space-3);
+  }
+  /* Wąski ekran: w plakietce zostaje sam zegar, pełna data zabierałaby cały
+     wiersz sterowania (dłuższe polskie nazwy dni/miesięcy). */
+  .cal-now-badge-date {
+    display: none;
   }
   .profile-week {
     grid-template-columns: repeat(2, 1fr);
@@ -4754,17 +6179,6 @@ html[data-modal-backdrop='snapshot'] #root {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    scroll-behavior: auto !important;
-    transition-duration: 0.01ms !important;
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-  }
-}
-
 /* ---------- Icons ---------- */
 .app-nav-link {
   gap: var(--n2-space-3);
@@ -4773,7 +6187,7 @@ html[data-modal-backdrop='snapshot'] #root {
   flex: 0 0 auto;
 }
 .app-nav-link .nav-icon {
-  transition: transform 180ms ease;
+  transition: transform var(--n2-transition);
 }
 .app-nav-link:hover .nav-icon {
   transform: translateX(2px) scale(1.08);
@@ -4783,7 +6197,7 @@ html[data-modal-backdrop='snapshot'] #root {
 }
 
 .icon-spin {
-  animation: icon-spin 900ms linear infinite;
+  animation: icon-spin calc(900ms * var(--n2-motion)) linear infinite;
 }
 @keyframes icon-spin {
   from {
@@ -4795,7 +6209,7 @@ html[data-modal-backdrop='snapshot'] #root {
 }
 
 .icon-pop {
-  animation: icon-pop 260ms ease;
+  animation: icon-pop calc(260ms * var(--n2-motion)) ease;
 }
 @keyframes icon-pop {
   0% {
@@ -4884,12 +6298,21 @@ html[data-modal-backdrop='snapshot'] #root {
 .workload-cell.selected {
   box-shadow: inset 0 0 0 1px var(--n2-lavender);
 }
-.workload-detail-row > td {
-  padding: 0;
-  background: var(--n2-surface-muted);
-}
-.wr-panel {
+/* Popover komórki „osoba × dzień”. Pozycję (`left`/`top`) i wysokość dostępną
+   do dołu okna (`--overlay-avail`) liczy `useOverlay` — tu zostaje sama karta.
+   Był to kiedyś wiersz rozwijany w tabeli (`.workload-detail-row`), który
+   rozpychał siatkę i stał daleko od dnia, o który pytał. */
+.wr-popover {
+  position: fixed;
+  z-index: var(--n2-z-menu);
+  width: min(360px, calc(100vw - 16px));
+  max-height: var(--overlay-avail, 70vh);
+  overflow-y: auto;
   padding: var(--n2-space-3) 14px;
+  background: var(--n2-panel);
+  border: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-md);
+  box-shadow: var(--n2-shadow-soft);
   white-space: normal;
 }
 .wr-head {
@@ -4933,11 +6356,12 @@ html[data-modal-backdrop='snapshot'] #root {
   flex-direction: column;
   gap: 8px;
 }
+/* W wąskim popoverze blok układa się w kolumnę: opis, godziny, akcje. */
 .wr-block {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
   padding: 10px 12px;
   border: 1px solid var(--n2-border-soft);
   border-radius: var(--n2-radius-sm);
@@ -4946,8 +6370,7 @@ html[data-modal-backdrop='snapshot'] #root {
 .wr-block-info {
   display: flex;
   flex-direction: column;
-  min-width: 160px;
-  flex: 1 1 200px;
+  min-width: 0;
 }
 .wr-block-task {
   font-weight: 600;
@@ -4960,6 +6383,18 @@ html[data-modal-backdrop='snapshot'] #root {
   font-variant-numeric: tabular-nums;
   font-weight: 700;
 }
+/* Zakres z zegara („9:00–11:00”) — odpowiedź na „kiedy dokładnie”, bez skoku
+   do kalendarza. */
+.wr-block-time {
+  color: var(--n2-lavender);
+}
+.wr-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--n2-border-soft);
+}
 .wr-block-actions {
   display: flex;
   align-items: center;
@@ -4968,9 +6403,16 @@ html[data-modal-backdrop='snapshot'] #root {
 }
 .wr-reassign,
 .wr-move {
-  display: inline-flex;
+  display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
+}
+/* Lista osób bywa długa („Marek — 6h/8h tego dnia — brak miejsca”), a popover
+   jest wąski: `min-width: 0` pozwala jej się skurczyć zamiast rozpychać kartę. */
+.wr-reassign select {
+  flex: 1 1 140px;
+  min-width: 0;
 }
 .wr-move-label {
   font-size: var(--n2-type-xs);
@@ -5100,7 +6542,9 @@ html[data-modal-backdrop='snapshot'] #root {
   font-size: var(--n2-type-xs);
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--n2-text-faint);
+  /* Nagłówek grupy wyników to element nawigacji po liście, nie ozdoba —
+     11 px + versaliki + rozstrzelenie liter, więc idzie na `muted`. */
+  color: var(--n2-text-muted);
 }
 .gs-row {
   display: flex;
@@ -5149,7 +6593,23 @@ html[data-modal-backdrop='snapshot'] #root {
 }
 .gs-row-chevron {
   flex-shrink: 0;
-  color: var(--n2-text-faint);
+  /* Ikona 16 px, czysta ozdoba (`aria-hidden`) — `disabled`, nie `faint`. */
+  color: var(--n2-text-disabled);
+}
+/* Ikona wiersza szybkiej akcji / „Pokaż więcej”. */
+.gs-row-icon {
+  flex-shrink: 0;
+  color: var(--n2-lavender);
+}
+/* Podświetlenie dopasowanego fragmentu — akcent koloru, bez żółtego tła. */
+.gs-mark {
+  background: transparent;
+  color: var(--n2-lavender);
+  font-weight: 700;
+}
+.gs-row-more .gs-row-title {
+  color: var(--n2-text-muted);
+  font-weight: 500;
 }
 
 /* ---------- Filter panel (button + popover + chips) ---------- */
@@ -5185,15 +6645,18 @@ html[data-modal-backdrop='snapshot'] #root {
   font-weight: 600;
   line-height: 1;
 }
+/* Popover idzie do PORTALU na `<body>` i dostaje `left`/`top` z `useOverlay`,
+   więc `position: fixed` (żaden przewijany rodzic go już nie przycina).
+   `--anchor-width` to szerokość przycisku „Filtry”, `--overlay-avail` — miejsce
+   od popovera do dolnej krawędzi okna; obie zmienne wystawia hook. */
 .filter-popover {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  z-index: 40;
-  min-width: 260px;
+  position: fixed;
+  z-index: var(--n2-z-popover);
+  min-width: max(260px, var(--anchor-width, 260px));
   max-width: 320px;
-  max-height: 70vh;
+  max-height: min(70dvh, var(--overlay-avail, 70dvh));
   overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: var(--n2-space-4);
@@ -5215,7 +6678,9 @@ html[data-modal-backdrop='snapshot'] #root {
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
-  color: var(--n2-text-faint);
+  /* `<legend>` jest nazwą dostępną całej grupy filtrów — musi być czytelny,
+     nie tylko obecny. */
+  color: var(--n2-text-muted);
 }
 .filter-options {
   display: flex;
@@ -5226,6 +6691,7 @@ html[data-modal-backdrop='snapshot'] #root {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-height: 28px;
   padding: 4px 6px;
   border-radius: var(--n2-radius-sm);
   cursor: pointer;
@@ -5235,7 +6701,12 @@ html[data-modal-backdrop='snapshot'] #root {
 .filter-option:hover {
   background: rgba(196, 150, 255, 0.1);
 }
+/* Radio ma STAŁE 16 px — bez tego przeglądarki dają 13 px i lista opcji gubi
+   rytm, a przy długiej etykiecie kontrolka potrafi się skurczyć. */
 .filter-option input {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
   accent-color: var(--n2-violet);
 }
 .filter-dates {
@@ -5284,16 +6755,55 @@ html[data-modal-backdrop='snapshot'] #root {
   color: var(--n2-danger);
 }
 
-@media (max-width: 760px) {
-  .filter-popover {
-    position: static;
-    width: 100%;
-    max-width: none;
-    margin-top: 6px;
-  }
-  .filter-panel-wrap {
-    width: 100%;
-  }
+/* ---------- Arkusz filtrów (telefon) ----------
+   Ten sam panel co popover, tylko w obudowie arkusza od dołu — klasa
+   `.filter-sheet` renderuje się WYŁĄCZNIE poniżej 760 px (bramka
+   `useMediaQuery` w TS), więc reguły nie potrzebują media query, dokładnie jak
+   `.app-more-sheet` / `.week-bin-sheet`. Uchwyt i scrim biorę ze wspólnego
+   szkieletu arkuszy (`.app-sheet-handle`, `.app-sheet-scrim`). */
+.filter-sheet {
+  position: fixed;
+  inset: auto 0 0 0;
+  z-index: var(--n2-z-drawer);
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-4);
+  max-height: 85dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--n2-space-3) var(--n2-space-4) 0;
+  background: var(--n2-surface);
+  border-top: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-xl) var(--n2-radius-xl) 0 0;
+  box-shadow: var(--n2-shadow-lg, 0 -12px 32px rgba(0, 0, 0, 0.45));
+}
+/* Lepka stopka „Wyczyść · Pokaż N”: zostaje na ekranie przy przewijaniu
+   długiej listy filtrów, dlatego dolne dopełnienie arkusza (razem z bezpiecznym
+   obszarem) siedzi TUTAJ, a nie na kontenerze. */
+.filter-sheet .filter-popover-foot {
+  position: sticky;
+  bottom: 0;
+  justify-content: space-between;
+  gap: var(--n2-space-3);
+  margin-top: auto;
+  padding: var(--n2-space-3) 0 calc(env(safe-area-inset-bottom) + var(--n2-space-3));
+  background: var(--n2-surface);
+}
+.filter-sheet .filter-popover-foot .btn {
+  flex: 1 1 0;
+  justify-content: center;
+  min-height: 48px;
+}
+/* Cele dotykowe w arkuszu (TY-07): opcje, chipy osób i pola dat. */
+.filter-sheet .filter-option {
+  min-height: 48px;
+  padding: 4px var(--n2-space-2);
+}
+.filter-sheet .filter-chip {
+  min-height: 44px;
+}
+.filter-sheet .filter-date input {
+  min-height: 44px;
 }
 
 /* ---------- Filter presets ---------- */
@@ -5397,35 +6907,21 @@ html[data-modal-backdrop='snapshot'] #root {
   cursor: not-allowed;
 }
 
-/* ---------- Mobile nav ---------- */
-
-/* The top bar (brand + hamburger) and the scrim only exist on small screens. */
+/* ---------- Powłoka telefonu: górny pasek + dolny pasek zakładek ----------
+   Szuflada, jej scrim i hamburger ZNIKŁY razem ze stanem `menuOpen` w App:
+   poniżej 760 px nawigację niesie dolny pasek pięciu zakładek, a sidebar nie
+   renderuje się wcale. Oba elementy poniżej istnieją w DOM WYŁĄCZNIE na
+   telefonie — bazowe `display: none` chroni jedynie przed jedną klatką po
+   zmianie rozmiaru okna, zanim `matchMedia` dojedzie do Reacta. */
 .app-topbar {
   display: none;
 }
-.app-drawer-scrim {
+.app-bottom-nav {
   display: none;
-}
-.app-hamburger {
-  display: inline-grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  flex: none;
-  border: 1px solid var(--n2-border);
-  border-radius: var(--n2-radius-md);
-  background: var(--n2-surface);
-  color: var(--n2-text);
-  cursor: pointer;
-  transition: background var(--n2-transition), border-color var(--n2-transition);
-}
-.app-hamburger:hover {
-  border-color: var(--n2-border-strong);
-  background: rgba(196, 150, 255, 0.1);
 }
 
 @media (max-width: 760px) {
-  /* Show the top bar; it stays above the drawer so the hamburger/X toggles. */
+  /* Górny pasek: tytuł trasy + JEDNA akcja kontekstowa (wyszukiwarka). */
   .app-topbar {
     display: flex;
     align-items: center;
@@ -5433,46 +6929,401 @@ html[data-modal-backdrop='snapshot'] #root {
     gap: var(--n2-space-3);
     position: sticky;
     top: 0;
-    z-index: 903;
+    z-index: var(--n2-z-bottom-nav);
     margin: calc(var(--n2-space-4) * -1) calc(var(--n2-space-4) * -1) 0;
     padding: var(--n2-space-3) var(--n2-space-4);
     background: var(--n2-surface);
     border-bottom: 1px solid var(--n2-border);
     backdrop-filter: var(--n2-blur-glass);
   }
-  .app-topbar .app-brand {
-    min-height: 0;
+  .app-topbar-title {
+    margin: 0;
+    min-width: 0;
+    font-size: var(--n2-type-lg);
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-
-  /* The sidebar becomes an off-canvas slide-in drawer. */
-  .app-sidebar {
-    position: fixed;
-    inset: 0 auto 0 0;
-    z-index: 901;
-    width: min(300px, 84vw);
-    max-height: none;
-    border-radius: 0 var(--n2-radius-xl) var(--n2-radius-xl) 0;
-    padding-top: 76px; /* clear the fixed top bar */
-    transform: translateX(-102%);
-    transition: transform 220ms ease;
-    overflow-y: auto;
+  /* W pasku zostaje sam wyzwalacz wyszukiwarki: pełne pole („Szukaj…” + Ctrl K)
+     zjadłoby całą szerokość, a skrótu klawiaturowego i tak nie ma na telefonie. */
+  .app-topbar .search-trigger {
+    width: auto;
+    margin-bottom: 0;
+    padding: 10px;
   }
-  .app-sidebar.open {
-    transform: none;
-  }
-  /* The brand already lives in the top bar — hide the drawer's copy. */
-  .app-sidebar .app-brand {
+  .app-topbar .search-trigger-label,
+  .app-topbar .search-trigger-kbd {
     display: none;
   }
 
-  .app-drawer-scrim {
-    display: block;
+  /* Dolny pasek pięciu zakładek. Wysokość niesie token + bezpieczny obszar
+     iOS-a, więc pasek nigdy nie ląduje pod paskiem gestów. */
+  .app-bottom-nav {
+    display: flex;
     position: fixed;
-    inset: 0;
-    z-index: 900;
-    background: rgba(10, 6, 20, 0.6);
-    backdrop-filter: blur(2px);
+    inset: auto 0 0 0;
+    z-index: var(--n2-z-bottom-nav);
+    height: calc(var(--n2-bottom-nav-h) + env(safe-area-inset-bottom));
+    padding-bottom: env(safe-area-inset-bottom);
+    background: var(--n2-surface);
+    border-top: 1px solid var(--n2-border);
+    backdrop-filter: var(--n2-blur-glass);
   }
+  .app-bottom-nav-item {
+    flex: 1 1 0;
+    min-width: 0;
+    /* Pole trafienia ≥ 44 px w obu osiach (56 px wysokości paska). */
+    min-height: 44px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    border: none;
+    background: transparent;
+    color: var(--n2-text-faint);
+    font: inherit;
+    font-size: var(--n2-type-xs);
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .app-bottom-nav-item:hover {
+    text-decoration: none;
+  }
+  .app-bottom-nav-item.active {
+    color: var(--n2-lavender);
+  }
+  .app-bottom-nav-label {
+    line-height: 1;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Treść nie może chować się pod paskiem. */
+  .app-main {
+    padding-bottom: calc(
+      var(--n2-bottom-nav-h) + env(safe-area-inset-bottom) + var(--n2-space-3)
+    );
+  }
+}
+
+/* ---------- Arkusze od dołu (telefon) ----------
+   Wspólny szkielet dla arkusza „Więcej”, szybkiego skoku kalendarza i arkusza
+   zasobnika. Wszystkie te klasy renderują się WYŁĄCZNIE na telefonie (bramka w
+   TS), więc nie potrzebują media query — na desktopie nie istnieją w DOM. */
+.app-sheet-scrim {
+  position: fixed;
+  inset: 0;
+  /* Tuż pod arkuszami, nad dolnym paskiem — klik w scrim zamyka arkusz przez
+     `useOverlay` (para pointerdown+click), bez własnego handlera. */
+  z-index: calc(var(--n2-z-drawer) - 1);
+  background: rgba(10, 6, 20, 0.6);
+  backdrop-filter: blur(2px);
+}
+.app-sheet-handle {
+  flex: none;
+  width: 36px;
+  height: 4px;
+  margin: 0 auto var(--n2-space-2);
+  border-radius: var(--n2-radius-pill);
+  background: var(--n2-border-strong);
+}
+.app-more-sheet,
+.cal-jump-sheet,
+.task-details-sheet {
+  position: fixed;
+  inset: auto 0 0 0;
+  z-index: var(--n2-z-drawer);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 85dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--n2-space-3) var(--n2-space-4)
+    calc(env(safe-area-inset-bottom) + var(--n2-space-4));
+  background: var(--n2-surface);
+  border-top: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-xl) var(--n2-radius-xl) 0 0;
+  box-shadow: var(--n2-shadow-lg, 0 -12px 32px rgba(0, 0, 0, 0.45));
+}
+.app-more-item {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-3);
+  min-height: 48px;
+  padding: 0 var(--n2-space-3);
+  border: none;
+  border-radius: var(--n2-radius-md);
+  background: transparent;
+  color: var(--n2-text);
+  font: inherit;
+  font-size: var(--n2-type-sm);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.app-more-item:hover {
+  background: rgba(196, 150, 255, 0.1);
+  text-decoration: none;
+}
+.cal-jump-sheet {
+  gap: var(--n2-space-4);
+}
+.cal-jump-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--n2-type-sm);
+  color: var(--n2-text-soft);
+}
+.cal-jump-field input {
+  min-height: 44px;
+}
+
+/* ---------- Kalendarz jako widok dnia (telefon) ----------
+   Wszystkie selektory poniżej wiszą na klasach, które istnieją WYŁĄCZNIE przy
+   `mode === 'day'` / `phone === true` (`.day-mode`, `.week-day-strip`,
+   `.week-bin-sheet`, `.cal-toolbar-phone`, `.cal-today-pill`), więc desktop nie
+   widzi z nich ani jednej reguły. */
+
+/* Jedna pełnoszerokościowa kolumna zamiast siedmiu — przebija bazowe
+   `repeat(7, …)` i `width: max(calc(100%/5*7), 672px)`, więc znika poziome
+   przewijanie siatki i przycięcie dnia do półtorej kolumny. */
+.week-cal.day-mode .week-days-grid {
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+}
+/* Nad siatką stoi już tylko pasek dat i rząd 56 px, a pod nią dolny pasek
+   zakładek — stąd inna rezerwa wysokości niż w wierszu tygodnia. */
+.week-cal.day-mode .week-main {
+  max-height: max(50dvh, calc(100dvh - 300px));
+}
+
+/* Pasek 7 dat: nawigacja, nie zakres siatki. Przewijalny, z przyciąganiem do
+   pozycji, każdy element ≥ 44 px. */
+.week-day-strip {
+  display: flex;
+  gap: 6px;
+  padding: 4px 0 8px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+}
+.week-day-strip::-webkit-scrollbar {
+  display: none;
+}
+.week-day-strip-item {
+  flex: 1 0 auto;
+  min-width: 44px;
+  min-height: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  scroll-snap-align: center;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-md);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--n2-text-soft);
+  font: inherit;
+  cursor: pointer;
+}
+.week-day-strip-weekday {
+  font-size: var(--n2-type-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+.week-day-strip-date {
+  font-family: var(--n2-font-data);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.week-day-strip-item.weekend {
+  background: var(--card-bg-2);
+}
+.week-day-strip-item.today .week-day-strip-date {
+  color: var(--today);
+}
+.week-day-strip-item.active {
+  border-color: var(--n2-border-strong);
+  background: rgba(196, 150, 255, 0.18);
+  color: var(--n2-text);
+}
+
+/* Podsumowanie dnia pod paskiem dat (suma, urodziny, przeciążenie). */
+.week-day-summary {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--n2-space-2);
+  padding: 0 2px 6px;
+}
+.week-day-summary .week-col-total,
+.week-day-summary .week-col-birthday,
+.week-day-summary .week-col-overload {
+  margin-top: 0;
+}
+.week-day-summary .week-col-birthday {
+  white-space: normal;
+}
+
+/* Kaskada bloków: karty pełnej szerokości nachodzą na siebie z wcięciem, więc
+   cień lewej krawędzi jest jedynym sygnałem, że pod spodem jest kolejna. */
+.week-block.stacked {
+  box-shadow: -3px 0 8px rgba(4, 3, 8, 0.45);
+}
+
+/* Wyzwalacz zasobnika pływa nad dolnym paskiem zakładek. */
+.week-bin-trigger {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--n2-bottom-nav-h) + env(safe-area-inset-bottom) + 12px);
+  transform: translateX(-50%);
+  z-index: var(--n2-z-bottom-nav);
+  min-height: 44px;
+  padding: 0 var(--n2-space-5);
+  border: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-pill);
+  background: var(--n2-surface);
+  color: var(--n2-text);
+  font: inherit;
+  font-size: var(--n2-type-sm);
+  font-weight: 600;
+  box-shadow: var(--n2-shadow-soft);
+  cursor: pointer;
+}
+
+/* Arkusz zasobnika. `closed` to `display: none` — BRAK prostokąta, więc test
+   „nad zasobnikiem” (`getBoundingClientRect` na `.week-bin-pane`) poprawnie
+   wychodzi na fałsz. `peek` i `open` różnią się WYSOKOŚCIĄ, nigdy
+   `transform: translateY`: prostokąt panelu JEST strefą upuszczenia, więc
+   przesunięty arkusz meldowałby strefę poza ekranem. */
+.week-bin-sheet {
+  position: fixed;
+  inset: auto 0 0 0;
+  z-index: var(--n2-z-drawer);
+  display: flex;
+  flex-direction: column;
+  max-height: 85dvh;
+  overscroll-behavior: contain;
+  padding: var(--n2-space-3) var(--n2-space-3)
+    calc(env(safe-area-inset-bottom) + var(--n2-space-2));
+  background: var(--n2-surface);
+  border-top: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-xl) var(--n2-radius-xl) 0 0;
+  box-shadow: var(--n2-shadow-lg, 0 -12px 32px rgba(0, 0, 0, 0.45));
+}
+.week-bin-sheet.closed {
+  display: none;
+}
+.week-bin-sheet.peek {
+  height: 120px;
+}
+.week-bin-sheet.open {
+  height: 85dvh;
+}
+.week-bin-sheet-handle {
+  flex: none;
+  width: 36px;
+  height: 4px;
+  margin: 0 auto var(--n2-space-2);
+  border-radius: var(--n2-radius-pill);
+  background: var(--n2-border-strong);
+}
+/* W arkuszu nagłówek i panel są zwykłymi wierszami kolumny, a nie kolumną obok
+   siatki — stąd zdjęcie stałych szerokości z wariantu tygodniowego. */
+.week-bin-sheet .week-bin-head {
+  flex: none;
+  width: auto;
+  display: flex;
+  align-items: baseline;
+  gap: var(--n2-space-2);
+  border: none;
+  background: transparent;
+  padding: 0 var(--n2-space-2) var(--n2-space-2);
+}
+.week-bin-sheet .week-bin-head .week-col-total {
+  margin-top: 0;
+  margin-left: auto;
+}
+.week-bin-sheet .week-bin-pane {
+  flex: 1 1 auto;
+  width: auto;
+  min-height: 0;
+  border-left: none;
+  background: transparent;
+}
+
+/* ---------- Telefonowy rząd sterowania kalendarza ---------- */
+
+.cal-toolbar.cal-toolbar-phone {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--n2-space-2);
+  height: var(--n2-bottom-nav-h);
+  margin-bottom: 6px;
+}
+.cal-toolbar-phone .nav-btn {
+  flex: none;
+  width: 44px;
+  height: 44px;
+}
+/* Przycisk zakresu wypełnia środek rzędu i otwiera szybki skok. */
+.cal-range-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 var(--n2-space-3);
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-pill);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--n2-text);
+  font: inherit;
+  cursor: pointer;
+  overflow: hidden;
+}
+.cal-range-btn .cal-range-label {
+  margin-left: 0;
+  white-space: nowrap;
+}
+.cal-toolbar-phone .filter-toolbar {
+  flex: none;
+  margin-bottom: 0;
+}
+/* Aktywne chipy osób nie mieszczą się w rzędzie 56 px — wybór osób i tak żyje
+   w popoverze „Filtry”, więc chipy chowamy TYLKO na tym rzędzie. */
+.cal-toolbar-phone .filter-toolbar-people {
+  display: none;
+}
+/* Obejścia dla dawnego mobilnego `position: static` popovera filtrów już tu nie
+   ma: na telefonie panel jest ARKUSZEM od dołu w portalu (`.filter-sheet`), więc
+   nie rozpycha rzędu 56 px z definicji. */
+
+/* Pływająca pigułka „Dzisiaj” — widoczna tylko wtedy, gdy widoczny zakres nie
+   zawiera dzisiejszego dnia (decyduje `todayPillVisible`). */
+.cal-today-pill {
+  position: fixed;
+  right: var(--n2-space-4);
+  bottom: calc(var(--n2-bottom-nav-h) + env(safe-area-inset-bottom) + 12px);
+  z-index: var(--n2-z-bottom-nav);
+  min-height: 44px;
+  padding: 0 var(--n2-space-4);
+  border: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-pill);
+  background: var(--n2-lavender);
+  color: var(--n2-bg, #0a0614);
+  font: inherit;
+  font-weight: 600;
+  box-shadow: var(--n2-shadow-soft);
+  cursor: pointer;
 }
 
 /* ---------- Card affordances ---------- */
@@ -5518,7 +7369,8 @@ html[data-modal-backdrop='snapshot'] #root {
    element, slides toward the pointer on hover/keyboard focus. */
 .card-chevron {
   flex: none;
-  color: var(--n2-text-faint);
+  /* Ikona 16 px, czysta ozdoba (`aria-hidden`) — `disabled`, nie `faint`. */
+  color: var(--n2-text-disabled);
   transition: color var(--n2-transition), transform var(--n2-transition);
 }
 .task-card-main,
@@ -5599,6 +7451,127 @@ html[data-modal-backdrop='snapshot'] #root {
     opacity: 1;
     pointer-events: auto;
   }
+}
+
+/* ---------- Telefonowa karta zadania + arkusz szczegółów (lista „Zadania”) ----------
+   Wszystkie klasy `.task-card-m-*` i `.task-details-*` renderują się WYŁĄCZNIE
+   w telefonowej gałęzi `TasksPage` (bramka `useMediaQuery(MOBILE_NAV_QUERY)`),
+   więc nie potrzebują media query — powyżej 760 px nie istnieją w DOM, a
+   desktopowe reguły `.task-card*` zostają nietknięte.
+   Karta ma TRZY rzędy (tytuł ≤ 2 wiersze → ścieżka projektu → metadane) i
+   ~96 px wysokości przy 390 px szerokości; chevron (afordancja hoveru) znika,
+   bo jego 40 px to na telefonie miejsce dla tytułu. */
+.task-card-m-main {
+  /* Skrót ZDEJMUJE desktopowe `padding-right: 40px` (miejsce po chevronie). */
+  padding: 10px 12px;
+  gap: 3px;
+}
+.task-card-m-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 15px;
+  line-height: 1.25;
+  font-weight: 600;
+  color: var(--text);
+  /* Bardzo długie słowo (nazwa pliku/URL) łamie się zamiast rozpychać kartę. */
+  overflow-wrap: anywhere;
+}
+.task-card-m-project {
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.task-card-m-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 20px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+/* Status jest KROPKĄ (kolor statusu w atrybucie `style`); nazwę niesie
+   sąsiedni `.sr-only`, pełna pigułka żyje w arkuszu szczegółów. */
+.task-card-m-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--n2-radius-pill);
+}
+.task-card-m-hours {
+  font-family: var(--n2-font-data);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.task-card-m-avatars {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+.task-card-m-more {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+/* Akcje karty wracają do NORMALNEGO przepływu: na dotyku nie ma hoveru, więc
+   zamiast pływać nad tytułem stoją jako kolumna po prawej stronie karty. */
+.task-card-m-actions {
+  position: static;
+  align-self: center;
+  gap: 8px;
+  padding-right: 8px;
+  opacity: 1;
+  pointer-events: auto;
+}
+/* Arkusz szczegółów dziedziczy szkielet `.app-more-sheet`/`.cal-jump-sheet`
+   (pozycja, `env(safe-area-inset-bottom)`, zaokrąglenie) — tu zostaje wyłącznie
+   układ treści. */
+.task-details-sheet {
+  gap: var(--n2-space-3);
+}
+.task-details-title {
+  margin: 0;
+  font-size: var(--n2-type-md);
+  font-weight: 600;
+  color: var(--text);
+}
+.task-details-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.task-details-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--n2-type-sm);
+}
+.task-details-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--n2-space-4);
+}
+.task-details-row dt {
+  flex: none;
+}
+.task-details-row dd {
+  margin: 0;
+  text-align: right;
+  font-family: var(--n2-font-data);
+  font-variant-numeric: tabular-nums;
+}
+.task-details-open {
+  justify-content: center;
+  min-height: 44px;
 }
 
 /* Root error-boundary fallback: centered recovery card on the dark background. */
@@ -5983,9 +7956,6 @@ html[data-modal-backdrop='snapshot'] #root {
   .onboarding-toast { right: 12px; bottom: 12px; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .onboarding-layer *, .sidebar-help { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
-}
 
 @media (max-width: 760px) {
   .crash-card {
@@ -6218,7 +8188,7 @@ html[data-modal-backdrop='snapshot'] #root {
 }
 .client-card-chevron {
   flex: 0 0 auto;
-  transition: transform 0.15s ease;
+  transition: transform calc(0.15s * var(--n2-motion)) ease;
   color: var(--n2-text-muted, #7a8699);
 }
 .client-card-toggle.expanded .client-card-chevron {
@@ -6315,13 +8285,67 @@ html[data-modal-backdrop='snapshot'] #root {
   box-shadow: 0 -10px 18px -14px rgba(0, 0, 0, 0.7);
   border-top: 1px solid var(--n2-border);
   padding: var(--n2-space-3) 0;
+  /* MO-14 — na iPhonie „Zapisz i zamknij" wpadał pod pasek gestu domowego.
+     `max()` sprawia, że przy zerowym inset (desktop) padding jest bez zmian. */
+  padding-bottom: max(var(--n2-space-3), env(safe-area-inset-bottom));
   margin-top: var(--n2-space-4);
   display: flex;
   align-items: center;
+  /* Lista blokad zapisu (IA-12) zajmuje całą szerokość i spycha przyciski do
+     kolejnego wiersza — dlatego pasek musi umieć się zawijać. */
+  flex-wrap: wrap;
   gap: var(--n2-space-3);
+}
+/* Delikatny gradient nad paskiem: sygnał, że treść przewija się pod nim. */
+.editor-actions-sticky::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 14px;
+  background: linear-gradient(to top, var(--n2-panel), rgba(32, 32, 36, 0));
+  pointer-events: none;
 }
 .autosave-hint {
   margin: 0 auto 0 0;
+}
+
+/* ---- IA-12: powody blokujące zapis, przy samym przycisku ---------------- */
+.save-blockers {
+  flex: 1 1 100%;
+  padding: var(--n2-space-2) var(--n2-space-3);
+  border: 1px solid var(--n2-danger);
+  border-radius: var(--n2-radius-xs);
+  background: var(--n2-danger-soft);
+  font-size: var(--n2-type-sm);
+}
+.save-blockers-title {
+  margin: 0 0 4px;
+  color: var(--n2-text);
+  font-weight: 600;
+}
+.save-blockers-list {
+  margin: 0;
+  padding-left: var(--n2-space-5);
+  color: var(--n2-text-soft);
+}
+.save-blockers-list li {
+  margin: 2px 0;
+}
+.save-blockers-list .link-btn {
+  text-align: left;
+}
+/* Odznaka zapisu jako przycisk skoku do przyczyny (ten sam wygląd co ostrzeżenie). */
+.save-status--blocked {
+  border: 1px solid var(--n2-danger);
+  background: var(--n2-danger-soft);
+  color: var(--n2-danger);
+  cursor: pointer;
+}
+.save-status--blocked:hover,
+.save-status--blocked:focus-visible {
+  background: rgba(255, 79, 114, 0.26);
 }
 
 /* ---- Godziny sprzedane per osoba (TaskModal) --------------------------- */
@@ -6455,7 +8479,7 @@ html[data-modal-backdrop='snapshot'] #root {
   text-decoration-color: currentColor;
 }
 .ticket-chevron {
-  transition: transform 0.15s ease;
+  transition: transform calc(0.15s * var(--n2-motion)) ease;
 }
 .ticket-chevron.open {
   transform: rotate(90deg);
@@ -6470,55 +8494,23 @@ html[data-modal-backdrop='snapshot'] #root {
   white-space: pre-wrap;
 }
 
-/* Dziennik zmian („Co nowego") — slim pasek na Panelu + popout. Pasek reużywa
-   tokenów lawendowych, popout rodziny `.task-modal-*` (patrz ChangelogModal). */
-.changelog-bar {
+/* Dziennik zmian („Co nowego") — JEDNA linia z JEDNYM CTA nad Panelem + popout
+   (AT-17). Pasek nie ma już akcentowej ramki ani tła: to najcichszy element
+   strony, widoczny tylko dopóki najnowszy wpis jest nieprzeczytany. Popout
+   zostaje w rodzinie `.task-modal-*` (patrz ChangelogModal). */
+.changelog-line {
   display: flex;
-  align-items: center;
-  gap: var(--n2-space-3);
-  margin-bottom: var(--n2-space-5);
-  padding: 10px var(--n2-space-4);
-  border: 1px solid rgba(196, 150, 255, 0.35);
-  border-radius: var(--n2-radius-pill);
-  background: linear-gradient(
-    90deg,
-    rgba(196, 150, 255, 0.16),
-    rgba(196, 150, 255, 0.05)
-  );
+  margin-bottom: var(--n2-space-4);
 }
-.changelog-bar-icon {
-  flex: none;
-  color: var(--n2-lavender);
-}
-.changelog-bar-text {
-  flex: 1 1 auto;
-  min-width: 0;
+.changelog-line-cta {
+  margin: 0;
   font-size: var(--n2-type-sm);
-  color: var(--n2-text-soft);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
-.changelog-bar-text strong {
-  color: var(--n2-text);
-}
-.changelog-bar-summary {
-  margin-left: var(--n2-space-2);
-  color: var(--n2-text-muted);
-}
-.changelog-bar-actions {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--n2-space-2);
-}
-.changelog-bar-btn {
-  flex: none;
-}
-@media (max-width: 640px) {
-  .changelog-bar-summary {
-    display: none;
-  }
+/* Link do pełnej historii pod listą wpisów w popoucie. */
+.changelog-modal-full {
+  display: inline-block;
+  margin-top: var(--n2-space-4);
+  font-size: var(--n2-type-sm);
 }
 
 /* Strona /changelog — pełna historia; wpisy reużywają stylów .changelog-* z popoutu. */

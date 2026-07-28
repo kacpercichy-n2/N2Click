@@ -6,10 +6,14 @@
 // nigdy nie pokazujemy surowego komunikatu SDK.
 import { useEffect, useState } from 'react';
 import { useCloudSync } from '../supabase/CloudSyncProvider';
+import { announce } from '../utils/liveRegion';
 import { STALE_HINT_MSG, SYNC_ERROR_MSG, SYNC_PERMISSION_MSG } from '../supabase/cloudMirror';
 
 /** Karencja braku kanału Realtime, zanim pokażemy baner „dane nieaktualne”. */
 const STALE_GRACE_MS = 30_000;
+
+/** Komunikat hydracji — montowany razem z banerem informacyjnym. */
+const HYDRATING_MSG = 'Wczytywanie danych z serwera…';
 
 /**
  * True dopiero, gdy warunek utrzymuje się NIEPRZERWANIE przez `ms`. Każdy
@@ -35,6 +39,21 @@ export function CloudSyncBanner() {
     useCloudSync();
   // Hook przed wczesnymi returnami (stała lista hooków między renderami).
   const staleForLong = useSustained(status === 'ready' && !live, STALE_GRACE_MS);
+
+  // Warianty informacyjne montują się razem ze swoim tekstem, więc ogłasza je
+  // trwały kanał powłoki (warianty błędu/konfliktu zostają przy `role="alert"`).
+  const infoMessage =
+    status === 'error' || error !== null || dropped.length > 0
+      ? null
+      : status === 'hydrating'
+        ? HYDRATING_MSG
+        : status === 'ready' && staleForLong && pendingCount === 0
+          ? STALE_HINT_MSG
+          : null;
+  useEffect(() => {
+    if (infoMessage === null) return;
+    announce({ id: 'cloud-sync', text: infoMessage, tone: 'polite' });
+  }, [infoMessage]);
 
   // Błąd hydracji: dane lokalne pozostają w pełni używalne.
   if (status === 'error') {
@@ -89,9 +108,9 @@ export function CloudSyncBanner() {
   // Hydracja w toku — subtelny komunikat, aplikacja renderuje dane lokalne.
   if (status === 'hydrating') {
     return (
-      <div className="persistence-banner persistence-banner--info" role="status">
+      <div className="persistence-banner persistence-banner--info">
         <div className="persistence-banner-text">
-          <p>Wczytywanie danych z serwera…</p>
+          <p>{HYDRATING_MSG}</p>
         </div>
       </div>
     );
@@ -108,7 +127,7 @@ export function CloudSyncBanner() {
   // Krótkie zerwania łata resubscribe + dociągnięcie w CloudSyncProvider.
   if (status === 'ready' && pendingCount === 0 && staleForLong) {
     return (
-      <div className="persistence-banner persistence-banner--info" role="status">
+      <div className="persistence-banner persistence-banner--info">
         <div className="persistence-banner-text">
           <p>{STALE_HINT_MSG}</p>
         </div>

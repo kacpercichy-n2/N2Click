@@ -6,8 +6,10 @@ import { useStore } from '../store/AppStore';
 import { useAuth } from '../auth/SessionProvider';
 import { useCan } from '../store/useCan';
 import type { PersonDraft } from '../store/AppStore';
-import { getDepartment, personTotalHours } from '../store/selectors';
+import { getDepartment, personTotalHours, taskIdsOfPerson } from '../store/selectors';
 import { Avatar } from '../components/Avatar';
+import { useConfirm } from '../components/ConfirmProvider';
+import { buildDeleteConsequence } from '../components/confirmDialog';
 import { ChevronRight } from '../components/icons';
 import { DEFAULT_CAPACITY, defaultWorkEndMinutes } from '../store/storage';
 import { formatDuration, formatMinutes } from '../utils/time';
@@ -51,6 +53,7 @@ export function PeoplePage() {
   const cloudAccounts = auth.mode === 'supabase';
   const canManageRaw = useCan()('people.manage');
   const canManage = canManageRaw && !cloudAccounts;
+  const confirm = useConfirm();
   const [draft, setDraft] = useState<PersonDraft>(emptyDraft);
   const [error, setError] = useState('');
 
@@ -72,11 +75,21 @@ export function PeoplePage() {
     setError('');
   };
 
-  const remove = (personId: string, personName: string) => {
+  const remove = async (personId: string, personName: string) => {
+    // Skutki liczymy z istniejących selektorów: przypisania osoby i jej suma
+    // godzin (godziny żyją wyłącznie w `WorkloadEntry` — inwariant 1).
+    const consequences = buildDeleteConsequence({
+      assignments: taskIdsOfPerson(state, personId).length,
+      plannedHours: personTotalHours(state, personId),
+    });
     if (
-      window.confirm(
-        `Usunąć ${personName}? Wszystkie przypisania i zaplanowane godziny tej osoby zostaną usunięte.`,
-      )
+      await confirm({
+        title: `Usunąć ${personName}?`,
+        consequences,
+        confirmLabel: 'Usuń osobę',
+        tone: 'danger',
+        requireAck: consequences !== '',
+      })
     ) {
       dispatch({ type: 'DELETE_PERSON', personId });
     }
@@ -259,8 +272,10 @@ export function PeoplePage() {
             ))}
           </select>
         </div>
+        {/* SY-29 — podpowiedź cytuje ETYKIETĘ pola („Godziny/dzień”), a nie
+            nazwę pojęcia („dostępność”), której na formularzu nie widać. */}
         <p className="field-hint people-form-hint">
-          Limit dzienny liczony jest z pola dostępności.
+          Limit dzienny liczony jest z pola „Godziny/dzień”.
         </p>
         <button type="submit" className="btn primary">
           Dodaj osobę

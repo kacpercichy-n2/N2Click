@@ -5,6 +5,37 @@
 - `src/types.ts` owns persisted model types.
 - `src/store/AppStore.tsx` is the sole reducer and mutation boundary.
 - `src/store/selectors.ts` owns derived reads; pages must not duplicate them.
+- WYDAJNOŚĆ ODCZYTU (2026-07-28): selektory są PAMIĘTANE po REFERENCJI, nie po
+  wartości. `src/store/selectorCache.ts` (czysty, bez Reacta) daje trzy prymitywy
+  — `createRefCache` (WeakMap po referencji kolekcji), `createKeyedCache`
+  (WeakMap po referencji `AppData` + klucz-string) oraz `argsKey`/`filterKey`
+  (`undefined` ≡ pusty zbiór). W `selectors.ts` mieszkają PRYWATNE indeksy
+  per-rewizja, kluczowane NAJWĘŻSZĄ tablicą kolekcji (`tasks`/`people`/
+  `projects`/`clients`/`statuses`+done-set/słowniki; `workload` → po dacie, po
+  (osoba, data), po zadaniu, zasobnik po osobie; `assignments` → po zadaniu i po
+  osobie), więc akcja dotykająca innej kolekcji NIE wychładza indeksu. Poprawność
+  stoi na inwariancie 6 i na reference-preserving merge: ta sama referencja stanu
+  ⇒ ta sama treść, a zmieniona kolekcja to ZAWSZE nowa tablica (reduktor nie
+  mutuje w miejscu). Wyniki są BAJTOWO identyczne (kolejność elementów też — kubły
+  trzymają kolejność tablicy źródłowej, a selektory sortujące sortują KOPIĘ), ale
+  są WSPÓŁDZIELONYMI referencjami: żaden konsument nie może ich mutować
+  (`.sort(`/`.push(` na wyniku selektora jest zakazane — `packDayBlocks` kopiuje).
+- GRANICA SUBSKRYPCJI (2026-07-28): `AppStoreProvider` trzyma JEDEN sklep
+  zewnętrzny (`src/store/externalStore.ts`, `createExternalStore` — instancja per
+  provider, nigdy singleton modułu) czytany przez `useSyncExternalStore`; dispatch
+  odrzucony przez reduktor (ta sama referencja, inwariant 6) NIE powiadamia nikogo.
+  Kontekst sklepu jest ROZDZIELONY (to nie jest mnożenie providerów): `StateContext`
+  (zmienny stan) i `StoreApiContext` (obiekt STAŁY: `dispatch`, `lastActionRef`,
+  `getState`, `subscribe`). `useStore()` składa oba i zachowuje dokładną sygnaturę
+  `{ state, dispatch, lastActionRef }`, więc niezmigrowani konsumenci zachowują się
+  bez zmian; nowe wejścia to `useDispatch()` (zero re-renderów), `useStoreApi()`
+  (odczyt stanu W HANDLERZE, nie w renderze) i `useSelector(selector, isEqual)`
+  z `shallowEqual` (React 18 wbudowany `useSyncExternalStore`, ZERO nowych zależności).
+  Zmigrowane tym przejściem: `useCan`, `TodayAgenda`, `SampleBanner` i trzy
+  dispatch-only miejsca `WeekView` (reszta stron świadomie zostaje na `useStore()`).
+  Udokumentowany kompromis: znika deweloperskie podwójne wołanie reduktora, które
+  robił `useReducer`. Potok zapisu (skip-first/StrictMode, bramka wycofania,
+  koalescencja, konflikt zakładek) biegnie jak dotąd — raz na zatwierdzony stan.
 - `src/store/storage.ts` owns localStorage, migrations, validation/repair on
   load, save outcomes and the same-browser revision envelope.
 - In supabase mode the CLOUD IS AUTHORITATIVE. A diff-based cloud mirror
@@ -199,13 +230,25 @@
   egzekwowana na TRZECH granicach — reduktor, `normalizeTaskMeta`, hydracja
   chmury): klucz `recurrence` obecny tylko przy poprawnej regule, NIGDY na szkicu
   (`isDraft === true`) i NIGDY przy niepoprawnym `startDate`; `until` tylko gdy
-  poprawny i `>= startDate`; wyjątek albo `{date, skip:true}` albo
-  `{date, startMinutes, durationMinutes}` na siatce 15 min, RÓŻNY od reguły,
-  którego `date` jest realną datą wystąpienia; `overrides` posortowane po dacie,
+  poprawny i `>= startDate`; wyjątek w JEDNEJ z CZTERECH form —
+  `{date, skip:true}`, `{date, done:true}`, `{date, startMinutes,
+  durationMinutes}` (siatka 15 min, RÓŻNE od reguły) albo `{date, done:true,
+  startMinutes, durationMinutes}` — którego `date` jest realną datą wystąpienia;
+  `skip` wygrywa i ZRZUCA `done` (pominięty dzień nie ma wystąpienia), `done`
+  kanonicznie tylko jako literalne `true` (`done:false` nigdy nie jest
+  zapisywane), a niepoprawne/równe regule przesunięcie NIE unieważnia `done`
+  (zwija się do `{date, done:true}`); `overrides` posortowane po dacie,
   brak klucza gdy pusto. Mutacje: `SET_TASK_RECURRENCE` („edytuj wszystkie" /
   utworzenie / `null` = wyczyszczenie reguły I wyjątków; zmiana reguły ZACHOWUJE
-  wyjątki i re-kanonikalizuje je) oraz `SET_RECURRENCE_OVERRIDE` („edytuj to
-  wystąpienie"; upsert/usuń po dacie, przesunięcie równe regule = usunięcie).
+  wyjątki i re-kanonikalizuje je), `SET_RECURRENCE_OVERRIDE` („edytuj to
+  wystąpienie"; upsert/usuń po dacie, przesunięcie równe regule = usunięcie,
+  `override: null` czyści CAŁY wyjątek razem z `done`, a przesunięcie ZACHOWUJE
+  istniejące `done`) oraz `SET_OCCURRENCE_DONE { taskId, date, done }`
+  (PKG-20260727: wykonanie POJEDYNCZEGO wystąpienia — nigdy nie rusza
+  `Task.statusId` ani wierszy workload; odrzuca datę z `skip` i no-opy).
+  Selektor prezentacyjny `occurrenceIsDone(state, task, occurrence)` =
+  `occurrence.done === true || isDoneStatus(state, task.statusId)` (lustro
+  `blockIsDone` — done-status zadania podświetla CAŁĄ serię).
   Każde niepoprawne wejście (nieznane id, szkic, niepoprawny start, reguła/until
   poza zakresem, `date` niebędące wystąpieniem, przesunięcie poza siatką,
   strukturalnie zły ładunek) zwraca TĘ SAMĄ referencję (inwariant 6). `SAVE_TASK`
@@ -466,6 +509,9 @@
 
 ## Relevant tests
 
+`src/store/selectorCache.test.ts` (cache hit/miss, invariant-6 interplay,
+parytet z naiwnym `.filter`/`.sort`), `externalStore.test.ts` (notify tylko przy
+zmianie referencji, bezpieczne wypisanie w trakcie powiadamiania, `shallowEqual`),
 `src/store/activityAttribution.test.ts`, `blockActions.test.ts`,
 `commandValidation.test.ts`, `cloudMerge.test.ts`,
 `saveTaskWorkload.test.ts`,

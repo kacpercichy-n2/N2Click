@@ -16,6 +16,7 @@ import {
 } from '../utils/projectDocuments';
 import {
   activeStatuses,
+  assigneeIdsOfTask,
   assigneesOfTask,
   departmentsOfProject,
   getStatus,
@@ -26,14 +27,18 @@ import {
 } from '../store/selectors';
 import { Coin } from '../components/Coin';
 import { StatusBadge } from '../components/StatusBadge';
-import { PlanningBadge } from '../components/PlanningBadge';
+import { PlanningProgress } from '../components/PlanningProgress';
 import { PersonChip } from '../components/PersonChip';
 import { CommentsPanel } from '../components/CommentsPanel';
 import { SaveStatus } from '../components/SaveStatus';
 import { useOpenTask } from '../components/TaskModal';
+import { useConfirm } from '../components/ConfirmProvider';
+import { buildDeleteConsequence } from '../components/confirmDialog';
+import { Tooltip } from '../components/Tooltip';
 import { ChevronRight } from '../components/icons';
 import { formatShortWithWeekday, todayStr, periodError, PERIOD_ERROR_LABELS } from '../utils/dates';
 import { formatDuration } from '../utils/time';
+import { archivedSuffix } from '../utils/archivedLabel';
 import { useSaveStatus } from '../utils/useSaveStatus';
 import { useAutoSave } from '../utils/useAutoSave';
 import {
@@ -45,6 +50,9 @@ import {
   clearNavGuard,
   setNavGuard,
 } from '../utils/dirtyRegistry';
+
+/** `id` wspólnego, ukrytego powodu blokady pól projektu. */
+const NO_PERM_ID = 'pd-no-perm';
 
 export function ProjectDetailPage() {
   const { id } = useParams();
@@ -71,11 +79,14 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   const navigate = useNavigate();
   const { openTask, openNewTask } = useOpenTask();
   const { state, dispatch } = useStore();
+  const confirm = useConfirm();
   const can = useCan();
   const canManage = can('projects.manage');
   const canPaid = can('projects.paid');
   const canManageTasks = can('tasks.manage');
-  const disabledTitle = canManage ? undefined : NO_PERM_TITLE;
+  // Brak uprawnień: JEDEN ukryty opis na stronę zamiast siedmiu natywnych
+  // `title` (niewidocznych na dotyku i dublowanych przy każdym polu).
+  const disabledDesc = canManage ? undefined : NO_PERM_ID;
   const project = state.projects.find((p) => p.id === projectId);
 
   // ---- Editable draft (component remounts per project id) ----
@@ -114,7 +125,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
       companyId !== (project.companyId ?? '')
     : false;
   const { saveError, external } = usePersistence();
-  const { status, markSaved } = useSaveStatus(dirty, saveError !== null);
+  const { status, savedAtLabel, markSaved } = useSaveStatus(dirty, saveError !== null);
 
   // Register the dirty draft with the router navigation guard so leaving the
   // page (sidebar links, Back/Forward, any route change) asks first. Explicit
@@ -211,16 +222,23 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   // Szkice zadań tego projektu — widoczne tylko tutaj, publikowane atomowo jedną
   // akcją (inwariant 6). „Zapisz i opublikuj” przełącza wszystkie naraz.
   const draftCount = tasks.filter((t) => t.isDraft === true).length;
-  const publishDrafts = () => {
+  const publishDrafts = async () => {
     if (draftCount === 0) return;
     const label =
       draftCount === 1
         ? 'Opublikować 1 szkic zadania?'
         : `Opublikować ${draftCount} szkiców zadań?`;
-    if (!window.confirm(`${label} Staną się widoczne w planowaniu (kalendarz, zasobnik, Moja praca).`)) {
+    // Publikacja nie NISZCZY danych — zwykłe potwierdzenie, bez czerwieni.
+    if (
+      !(await confirm({
+        title: label,
+        description: 'Staną się widoczne w planowaniu (kalendarz, zasobnik, Moja praca).',
+        confirmLabel: 'Opublikuj',
+      }))
+    ) {
       return;
     }
-    dispatch({ type: 'PUBLISH_PROJECT_DRAFTS', projectId: project.id });
+    dispatch({ type: 'PUBLISH_PROJECT_DRAFTS', projectId });
   };
   const derivedDepartments = departmentsOfProject(state, project.id);
   const statuses = activeStatuses(state);
@@ -232,15 +250,29 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   const togglePaid = () =>
     dispatch({ type: 'SET_PROJECT_PAID', projectId: project.id, paid: !project.paid });
 
-  const remove = () => {
+  const remove = async () => {
+    // `projectId` (prop) jest stabilny przez cały `await` — komponent remontuje
+    // się per id projektu. Liczniki z istniejących selektorów (godziny
+    // derywowane z `WorkloadEntry` — inwariant 1).
+    const consequences = buildDeleteConsequence({
+      tasks: tasks.length,
+      assignments: tasks.reduce((n, t) => n + assigneeIdsOfTask(state, t.id).length, 0),
+      plannedHours: projectPlannedTotal(state, projectId),
+    });
     if (
-      window.confirm(
-        `Usunąć projekt „${project.name}”? To usunie ${tasks.length} zadań, przypisania, zaplanowane godziny, kamienie milowe i komentarze.`,
-      )
+      await confirm({
+        title: `Usunąć projekt „${project.name}”?`,
+        description: 'Znikną też kamienie milowe i komentarze projektu.',
+        consequences,
+        confirmLabel: 'Usuń projekt',
+        tone: 'danger',
+        requireAck: consequences !== '',
+      })
     ) {
-      dispatch({ type: 'DELETE_PROJECT', projectId: project.id });
+      dispatch({ type: 'DELETE_PROJECT', projectId });
       // The guard registry still holds the (now moot) dirty draft until the
-      // next effect pass — this navigation was deliberately confirmed.
+      // next effect pass — this navigation was deliberately confirmed. Bypass i
+      // nawigacja zostają NIEROZDZIELNĄ parą, tak jak przed zmianą.
       bypassNavGuardOnce();
       navigate('/projects');
     }
@@ -284,12 +316,22 @@ function ProjectDetail({ projectId }: { projectId: string }) {
     resetDocForm();
   };
 
-  const removeDocument = (doc: ProjectDocument) => {
-    if (!window.confirm(`Usunąć dokument „${doc.label || doc.url}”?`)) return;
+  const removeDocument = async (doc: ProjectDocument) => {
+    // Dokument to sam ODNOŚNIK (żadnych plików), więc nie ma skutków do
+    // wyliczenia — jednoklikowe pytanie.
+    if (
+      !(await confirm({
+        title: `Usunąć dokument „${doc.label || doc.url}”?`,
+        confirmLabel: 'Usuń dokument',
+        tone: 'danger',
+      }))
+    ) {
+      return;
+    }
     if (docEditId === doc.id) resetDocForm();
     dispatch({
       type: 'DELETE_PROJECT_DOCUMENT',
-      projectId: project.id,
+      projectId,
       documentId: doc.id,
     });
   };
@@ -303,18 +345,24 @@ function ProjectDetail({ projectId }: { projectId: string }) {
           <StatusBadge status={currentStatus} />
         </h1>
         <div className="page-head-actions">
-          <SaveStatus status={status} />
+          <SaveStatus status={status} savedAtLabel={savedAtLabel} announceId="save:project" />
           <button
             type="button"
             className="btn ghost"
-            onClick={() => {
+            onClick={async () => {
               if (
                 dirty &&
-                !window.confirm('Masz niezapisane zmiany. Opuścić bez zapisywania?')
+                !(await confirm({
+                  title: 'Masz niezapisane zmiany.',
+                  description: 'Opuścić bez zapisywania?',
+                  confirmLabel: 'Opuść bez zapisywania',
+                  cancelLabel: 'Wróć do edycji',
+                }))
               ) {
                 return;
               }
               // Already confirmed (or clean) — don't let the router guard ask again.
+              // Bypass i nawigacja są wołane RAZEM, bez `await` pomiędzy.
               bypassNavGuardOnce();
               navigate('/projects');
             }}
@@ -331,6 +379,11 @@ function ProjectDetail({ projectId }: { projectId: string }) {
 
       <div className="editor-section">
         <h2>Szczegóły</h2>
+        {!canManage && (
+          <span id={NO_PERM_ID} className="sr-only">
+            {NO_PERM_TITLE} do edycji projektu.
+          </span>
+        )}
         <div className="field-row">
           <div className="field">
             <label htmlFor="pd-name">Nazwa *</label>
@@ -339,7 +392,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               value={name}
               onChange={(e) => setName(e.target.value)}
               disabled={!canManage}
-              title={disabledTitle}
+              aria-describedby={disabledDesc}
             />
           </div>
           <div className="field">
@@ -349,7 +402,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               value={clientId}
               onChange={(e) => setClientId(e.target.value)}
               disabled={!canManage}
-              title={disabledTitle}
+              aria-describedby={disabledDesc}
             >
               {state.clients.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -365,12 +418,12 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               value={statusId}
               onChange={(e) => setStatusId(e.target.value)}
               disabled={!canManage}
-              title={disabledTitle}
+              aria-describedby={disabledDesc}
             >
               {pickableStatuses.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
-                  {s.archived ? ' (zarchiwizowany)' : ''}
+                  {archivedSuffix(s.archived)}
                 </option>
               ))}
             </select>
@@ -385,7 +438,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
               disabled={!canManage}
-              title={disabledTitle}
+              aria-describedby={disabledDesc}
             />
           </div>
           <div className="field">
@@ -396,7 +449,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
               disabled={!canManage}
-              title={disabledTitle}
+              aria-describedby={disabledDesc}
             />
           </div>
           <div className="field">
@@ -422,7 +475,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               value={serviceTypeId}
               onChange={(e) => setServiceTypeId(e.target.value)}
               disabled={!canManage}
-              title={disabledTitle}
+              aria-describedby={disabledDesc}
             >
               <option value="">—</option>
               {state.serviceTypes.map((s) => (
@@ -439,7 +492,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               value={companyId}
               onChange={(e) => setCompanyId(e.target.value)}
               disabled={!canManage}
-              title={disabledTitle}
+              aria-describedby={disabledDesc}
             >
               <option value="">—</option>
               {state.companies.map((c) => (
@@ -458,7 +511,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             disabled={!canManage}
-            title={disabledTitle}
+            aria-describedby={disabledDesc}
           />
         </div>
         <div className="field-row payment-row">
@@ -471,9 +524,8 @@ function ProjectDetail({ projectId }: { projectId: string }) {
         {error && <p className="field-error">{error}</p>}
         {(dirty || status !== 'clean') && (
           <div className="editor-actions editor-actions-sticky">
-            <span className="field-hint autosave-hint" role="status">
-              Zmiany zapisują się automatycznie.
-            </span>
+            {/* Bez hintu o auto-zapisie: stan niesie wskaźnik w nagłówku strony.
+                „Zapisz teraz” zostaje jako JAWNY flush, nie jako „Anuluj”. */}
             <button type="button" className="btn primary" onClick={save} disabled={!dirty}>
               Zapisz teraz
             </button>
@@ -487,14 +539,11 @@ function ProjectDetail({ projectId }: { projectId: string }) {
           {canManageTasks && (
             <div className="section-head-actions">
               {draftCount > 0 && (
-                <button
-                  type="button"
-                  className="btn primary"
-                  onClick={publishDrafts}
-                  title="Opublikuj wszystkie szkice zadań w tym projekcie"
-                >
-                  Zapisz i opublikuj ({draftCount})
-                </button>
+                <Tooltip text="Opublikuj wszystkie szkice zadań w tym projekcie">
+                  <button type="button" className="btn primary" onClick={publishDrafts}>
+                    Zapisz i opublikuj ({draftCount})
+                  </button>
+                </Tooltip>
               )}
               <button
                 type="button"
@@ -531,13 +580,21 @@ function ProjectDetail({ projectId }: { projectId: string }) {
                 >
                   <span className="task-title">{t.title}</span>
                   {t.isDraft === true && (
-                    <span className="project-badge project-badge-draft" title="Szkic — nieopublikowane">
-                      szkic
-                    </span>
+                    <Tooltip text="Szkic — nieopublikowane" visualOnly>
+                      <span className="project-badge project-badge-draft">szkic</span>
+                    </Tooltip>
                   )}
                   <StatusBadge status={getStatus(state, t.statusId)} />
+                  {/* Ta sama reguła co na liście zadań: stan rozplanowania to
+                      pasek, nie pigułka. Godziny wiersz pokazuje obok, więc
+                      pasek idzie bez własnego tekstu. */}
                   {t.isDraft !== true && (
-                    <PlanningBadge status={taskPlanningStatus(state, t.id)} />
+                    <PlanningProgress
+                      planned={taskPlannedTotal(state, t.id)}
+                      estimate={t.estimatedHours ?? null}
+                      status={taskPlanningStatus(state, t.id)}
+                      showHours={false}
+                    />
                   )}
                   <span className="muted">
                     {formatShortWithWeekday(t.startDate)} – {formatShortWithWeekday(t.endDate)} ·{' '}
@@ -602,19 +659,17 @@ function ProjectDetail({ projectId }: { projectId: string }) {
                     {PROJECT_DOCUMENT_KIND_LABELS[d.kind]}
                   </span>
                   {href === null ? (
-                    <span className="document-link document-link-blocked" title={d.url}>
-                      {d.label || d.url} (niedozwolony adres)
-                    </span>
+                    <Tooltip text={d.url}>
+                      <span className="document-link document-link-blocked">
+                        {d.label || d.url} (niedozwolony adres)
+                      </span>
+                    </Tooltip>
                   ) : (
-                    <a
-                      className="document-link"
-                      href={href}
-                      target="_blank"
-                      rel="noopener"
-                      title={href}
-                    >
-                      {d.label || d.url}
-                    </a>
+                    <Tooltip text={href}>
+                      <a className="document-link" href={href} target="_blank" rel="noopener">
+                        {d.label || d.url}
+                      </a>
+                    </Tooltip>
                   )}
                   {canManage && (
                     <span className="document-row-actions">

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, m } from 'motion/react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { Person } from '../types';
 import {
@@ -15,8 +15,11 @@ import {
   hasPendingOnboardingLogin,
   loadUiPrefs,
 } from '../utils/uiPrefs';
-import { ArrowLeft, Check, CircleHelp, Compass, Sparkles } from '../components/icons';
+import { ArrowLeft, Check, CircleHelp, Compass, Sparkles, X } from '../components/icons';
+import { IconButton } from '../components/IconButton';
+import { useConfirm } from '../components/ConfirmProvider';
 import { HOME_PATH } from '../pages/homeRoute';
+import { announce } from '../utils/liveRegion';
 import { moduleById, modulesForRole, type TourStep, type TutorialModule } from './catalog';
 
 type TourState = { moduleId: TutorialModuleId; stepIndex: number } | null;
@@ -253,6 +256,9 @@ export function OnboardingRoot({
 
   useEffect(() => {
     if (!notice) return;
+    // Toast montuje się razem ze swoim tekstem, więc czytnik ekranu bierze go z
+    // trwałego kanału powłoki; sam toast zostaje czysto wizualny.
+    announce({ id: 'onboarding', text: notice, tone: 'polite' });
     const timer = window.setTimeout(() => setNotice(''), 4500);
     return () => window.clearTimeout(timer);
   }, [notice]);
@@ -471,7 +477,7 @@ export function OnboardingRoot({
           onNever={() => dismissHint(true)}
         />
       )}
-      {notice && <div className="onboarding-toast" role="status" aria-live="polite">{notice}</div>}
+      {notice && <div className="onboarding-toast">{notice}</div>}
     </>,
     document.body,
   );
@@ -493,9 +499,9 @@ function IntroDialog({
   const titleRef = useRef<HTMLHeadingElement>(null);
   useEffect(() => titleRef.current?.focus(), [index]);
   return (
-    <motion.div className="onboarding-layer" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+    <m.div className="onboarding-layer" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <div className="onboarding-scrim" />
-      <motion.section
+      <m.section
         className="onboarding-intro"
         role="dialog"
         aria-modal="true"
@@ -522,8 +528,8 @@ function IntroDialog({
             {last ? 'Pokaż mi aplikację' : 'Dalej'}
           </button>
         </div>
-      </motion.section>
-    </motion.div>
+      </m.section>
+    </m.div>
   );
 }
 
@@ -545,11 +551,12 @@ function TutorialCenter({
   onReset: () => void;
 }) {
   const titleRef = useRef<HTMLHeadingElement>(null);
+  const confirm = useConfirm();
   useEffect(() => titleRef.current?.focus(), []);
   return (
-    <motion.div className="onboarding-layer" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+    <m.div className="onboarding-layer" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <button type="button" className="onboarding-scrim" aria-label="Zamknij pomoc i samouczki" onClick={onClose} />
-      <motion.section
+      <m.section
         className="tutorial-center"
         role="dialog"
         aria-modal="true"
@@ -564,7 +571,12 @@ function TutorialCenter({
             <p className="onboarding-eyebrow">Pomoc</p>
             <h2 id="tutorial-center-title" ref={titleRef} tabIndex={-1}>Samouczki N2Hub</h2>
           </div>
-          <button type="button" className="task-modal-close" onClick={onClose} aria-label="Zamknij">×</button>
+          <IconButton
+            className="task-modal-close"
+            icon={<X size={18} aria-hidden />}
+            onClick={onClose}
+            label="Zamknij"
+          />
         </div>
         <p className="onboarding-copy">
           Wybierz temat, który chcesz poznać. Większość kroków tylko objaśnia
@@ -577,7 +589,14 @@ function TutorialCenter({
             type="button"
             className="btn ghost"
             onClick={() => {
-              if (window.confirm('Zresetować postęp samouczków dla tego użytkownika?')) onReset();
+              void confirm({
+                title: 'Zresetować postęp samouczków dla tego użytkownika?',
+                consequences: 'Ukończone i rozpoczęte samouczki wrócą do stanu początkowego.',
+                confirmLabel: 'Zresetuj postęp',
+                tone: 'danger',
+              }).then((ok) => {
+                if (ok) onReset();
+              });
             }}
           >
             Zresetuj postęp
@@ -600,12 +619,18 @@ function TutorialCenter({
                 <button
                   type="button"
                   className="btn soft"
-                  onClick={() => {
+                  onClick={async () => {
+                    // Jawne ujawnienie ćwiczeń na żywo (wiki: onboarding NIE
+                    // rusza danych bez tego pytania). Treść zdania o skutkach
+                    // zostaje bez zmian.
                     if (
                       module.id === 'calendar-advanced' &&
-                      !window.confirm(
-                        'Ćwiczenia na żywo przesuwają, wydłużają i planują prawdziwe bloki czasu. Zmiany zostaną zapisane w planie. Uruchomić samouczek?',
-                      )
+                      !(await confirm({
+                        title: 'Uruchomić samouczek zaawansowanego kalendarza?',
+                        consequences:
+                          'Ćwiczenia na żywo przesuwają, wydłużają i planują prawdziwe bloki czasu. Zmiany zostaną zapisane w planie.',
+                        confirmLabel: 'Uruchom samouczek',
+                      }))
                     ) {
                       return;
                     }
@@ -618,8 +643,8 @@ function TutorialCenter({
             );
           })}
         </ul>
-      </motion.section>
-    </motion.div>
+      </m.section>
+    </m.div>
   );
 }
 
@@ -649,7 +674,7 @@ function Coachmark({
   const last = index === module.steps.length - 1;
   const popupStyle = popupPosition(rect, Boolean(step.practice));
   return (
-    <motion.div className={step.practice ? 'onboarding-layer onboarding-tour-layer is-practice' : 'onboarding-layer onboarding-tour-layer'} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+    <m.div className={step.practice ? 'onboarding-layer onboarding-tour-layer is-practice' : 'onboarding-layer onboarding-tour-layer'} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       {!step.practice && <div className={rect ? 'onboarding-scrim onboarding-tour-scrim' : 'onboarding-scrim'} />}
       {rect && (
         <div
@@ -658,7 +683,7 @@ function Coachmark({
           style={{ top: rect.top - 8, left: rect.left - 8, width: rect.width + 16, height: rect.height + 16 }}
         />
       )}
-      <motion.section
+      <m.section
         className={rect ? 'onboarding-coachmark' : 'onboarding-coachmark centered'}
         style={popupStyle}
         role="dialog"
@@ -689,8 +714,8 @@ function Coachmark({
           {index > 0 && <button type="button" className="btn ghost" onClick={onBack}><ArrowLeft size={16} aria-hidden /> Wstecz</button>}
           <button type="button" className="btn primary" onClick={onNext} disabled={Boolean(step.practice) && !practiceDone} data-onboarding-primary>{last ? 'Zakończ' : 'Dalej'}</button>
         </div>
-      </motion.section>
-    </motion.div>
+      </m.section>
+    </m.div>
   );
 }
 

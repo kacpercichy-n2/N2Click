@@ -1,4 +1,6 @@
 import type { Status } from '../types';
+import { archivedAttr, archivedSuffix } from '../utils/archivedLabel';
+import { tintVar } from '../utils/colors';
 
 /** Small colored pipeline-status pill. */
 export function StatusBadge({ status }: { status: Status | undefined }) {
@@ -6,10 +8,14 @@ export function StatusBadge({ status }: { status: Status | undefined }) {
   return (
     <span
       className="status-badge"
-      style={{ borderColor: status.color, color: status.color, background: `${status.color}1a` }}
+      // Kolor idzie do CSS JEDNĄ zmienną; obramowanie i tło (`color-mix`) liczy
+      // arkusz, więc kolor z panelu administratora działa w każdej notacji CSS,
+      // a nie tylko jako 6-znakowy hex (patrz `tintVar`).
+      style={tintVar('--status', status.color)}
+      data-archived={archivedAttr(status.archived)}
     >
       {status.name}
-      {status.archived ? ' (archived)' : ''}
+      {archivedSuffix(status.archived)}
     </span>
   );
 }

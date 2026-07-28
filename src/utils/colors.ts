@@ -1,3 +1,5 @@
+import type { CSSProperties } from 'react';
+
 // Deterministic person colours. A fixed palette of visually distinct hues,
 // re-picked for the N2 Media DARK theme. Constraints for this palette:
 //   1. Every colour must read clearly on dark glass surfaces (--n2-surface),
@@ -53,4 +55,30 @@ export function personColor(id: string): string {
   const idx = order.get(id);
   if (idx !== undefined) return PALETTE[idx];
   return PALETTE[hashString(id) % PALETTE.length];
+}
+
+/** Custom properties the stylesheet reads to derive entity tints. */
+export type TintVarName = '--status' | '--person';
+
+/**
+ * Inline style that hands ONE colour to CSS as a custom property. Every tint
+ * derived from it (badge background, chip fill) is computed in the stylesheet
+ * with `color-mix(in oklab, var(--status) 10.196%, transparent)`, so ANY valid
+ * CSS colour notation works: `#c496ff`, `#c9f`, `rgb(196 150 255)`,
+ * `oklch(…)`, a named colour.
+ *
+ * This replaces the old `${color}1a` / `${color}22` hex-alpha concatenation,
+ * which produced a valid colour ONLY for 6-digit hex. Status colours come from
+ * the admin panel and are free-form text, so `rgb(196,150,255)1a` or `#c9f22`
+ * silently became an invalid declaration and the tint disappeared.
+ *
+ * A missing or blank colour yields an EMPTY style, so the CSS fallback
+ * (`var(--status, …)`) applies instead of an invalid custom property. The value
+ * is passed through verbatim (React sets custom properties via the CSSOM, which
+ * cannot escape the declaration) — validation is the admin panel's job.
+ */
+export function tintVar(name: TintVarName, color: string | null | undefined): CSSProperties {
+  const value = typeof color === 'string' ? color.trim() : '';
+  if (!value) return {};
+  return { [name]: value } as CSSProperties;
 }

@@ -2,9 +2,49 @@
 <html lang="pl">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- `viewport-fit=cover` udostępnia `env(safe-area-inset-*)` przyklejonym
+         paskom (MO-14). Bez `maximum-scale`/`user-scalable` — zoom zostaje. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#050406" />
+    <!-- Krój pierwszego ekranu (`--n2-font-sans`) startuje razem z arkuszem,
+         a nie dopiero po jego sparsowaniu. Cztery pliki, bo interfejs jest
+         polski: `latin` + `latin-ext` w wadze 400 (tekst) i 600 (nagłówki,
+         etykiety — najczęstsza waga w arkuszu). `crossorigin` jest wymagane:
+         przeglądarka pobiera fonty w trybie CORS anonymous nawet z własnego
+         serwera i bez niego preload nie zostałby użyty. Vite podmienia te
+         ścieżki na zahaszowane pliki z `assets/`. -->
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      crossorigin
+      href="/node_modules/@fontsource/plus-jakarta-sans/files/plus-jakarta-sans-latin-400-normal.woff2"
+    />
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      crossorigin
+      href="/node_modules/@fontsource/plus-jakarta-sans/files/plus-jakarta-sans-latin-ext-400-normal.woff2"
+    />
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      crossorigin
+      href="/node_modules/@fontsource/plus-jakarta-sans/files/plus-jakarta-sans-latin-600-normal.woff2"
+    />
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      crossorigin
+      href="/node_modules/@fontsource/plus-jakarta-sans/files/plus-jakarta-sans-latin-ext-600-normal.woff2"
+    />
     <title>N2Hub Planer</title>
   </head>
   <body>

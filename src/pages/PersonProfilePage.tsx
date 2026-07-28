@@ -22,6 +22,7 @@ import {
   uploadAvatar,
 } from '../supabase/avatarStorage';
 import { validateAvatarFile } from '../supabase/avatarFile';
+import { announce } from '../utils/liveRegion';
 import {
   availableHoursInRange,
   getDepartment,
@@ -34,7 +35,7 @@ import {
   taskPlannedTotalForPerson,
   wouldCreateSupervisorCycle,
 } from '../store/selectors';
-import { can } from '../store/permissions';
+import { can, NO_PERM_TITLE } from '../store/permissions';
 import { hashPassword } from '../utils/password';
 import { jobTitleSelectOptions } from '../utils/roleTitles';
 import type { Person } from '../types';
@@ -44,6 +45,7 @@ import { Coin } from '../components/Coin';
 import { StatusBadge } from '../components/StatusBadge';
 import { DEFAULT_CAPACITY, defaultWorkEndMinutes } from '../store/storage';
 import { useOpenTask } from '../components/TaskModal';
+import { useConfirm } from '../components/ConfirmProvider';
 import {
   formatBirthday,
   formatRowLabel,
@@ -60,6 +62,9 @@ import {
   formatWorkDays,
   toggleWorkDay,
 } from '../components/personFields';
+
+/** `id` wspólnego, ukrytego powodu blokady pól profilu. */
+const NO_PERM_ID = 'pp-no-perm';
 
 export function PersonProfilePage() {
   const { id } = useParams();
@@ -95,6 +100,10 @@ function PersonProfile({ personId }: { personId: string }) {
     ? editableProfileFields(actor, person, { peopleCount })
     : new Set<ProfileField>();
   const allow = (f: ProfileField) => fields.has(f);
+  // Brak uprawnień do pola: JEDEN ukryty opis na stronę zamiast kilkunastu
+  // natywnych `title` (niewidocznych na dotyku, dublowanych przy każdej
+  // kontrolce). Zablokowane pola wskazują go przez `aria-describedby`.
+  const noPermDesc = (f: ProfileField) => (allow(f) ? undefined : NO_PERM_ID);
   const canEdit = fields.size > 0;
   const canUploadPhoto = person
     ? canUploadAvatarPhoto(actor, person, auth.mode, { peopleCount })
@@ -357,6 +366,9 @@ function PersonProfile({ personId }: { personId: string }) {
           „pelne", a draft.accessRole przenosi zapisaną wartość bez zmian. */}
       <div className="editor-section">
         <h2>Szczegóły</h2>
+        <span id={NO_PERM_ID} className="sr-only">
+          {NO_PERM_TITLE} do edycji tego pola.
+        </span>
         <div className="field-row">
           <div className="field">
             <label htmlFor="pp-email">E-mail</label>
@@ -434,6 +446,7 @@ function PersonProfile({ personId }: { personId: string }) {
                 checked={draft.emailNotifications === true}
                 onChange={(e) => set('emailNotifications', e.target.checked)}
                 disabled={!allow('emailNotifications')}
+                aria-describedby={noPermDesc('emailNotifications')}
               />
               <span>Powiadomienia mailowe</span>
             </label>
@@ -734,6 +747,8 @@ function PersonProfile({ personId }: { personId: string }) {
   );
 }
 
+const PHOTO_LOADING_MSG = 'Ładowanie zdjęcia…';
+
 /**
  * Awatar w pierwszej karcie z bąbelkiem ołówka do zmiany zdjęcia (private-bucket,
  * tryb Supabase). Rodzic montuje ten komponent WYŁĄCZNIE gdy
@@ -762,6 +777,17 @@ function ProfilePhotoAvatar({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const email = person.email;
+
+  // Komunikaty sekcji montują się razem ze swoim tekstem, więc ogłasza je
+  // trwały kanał powłoki (błędy zostają przy `role="alert"`).
+  useEffect(() => {
+    if (phase !== 'loading') return;
+    announce({ id: 'person-profile', text: PHOTO_LOADING_MSG, tone: 'polite' });
+  }, [phase]);
+  useEffect(() => {
+    if (notice === '') return;
+    announce({ id: 'person-profile', text: notice, tone: 'polite' });
+  }, [notice]);
 
   useEffect(() => {
     let cancelled = false;
@@ -873,11 +899,7 @@ function ProfilePhotoAvatar({
           style={{ display: 'none' }}
         />
       </div>
-      {phase === 'loading' && (
-        <p className="field-hint" role="status">
-          Ładowanie zdjęcia…
-        </p>
-      )}
+      {phase === 'loading' && <p className="field-hint">{PHOTO_LOADING_MSG}</p>}
       {phase === 'error' && (
         <p className="field-error" role="alert">
           {error || 'Nie udało się wczytać zdjęcia.'}
@@ -907,11 +929,7 @@ function ProfilePhotoAvatar({
               {error}
             </p>
           )}
-          {notice && (
-            <p className="field-hint" role="status">
-              {notice}
-            </p>
-          )}
+          {notice && <p className="field-hint">{notice}</p>}
         </div>
       )}
     </div>
@@ -928,6 +946,7 @@ function ProfilePhotoAvatar({
  */
 function PasswordSection({ person }: { person: Person }) {
   const { state, dispatch } = useStore();
+  const askConfirm = useConfirm();
   const currentUser = state.people.find((p) => p.id === state.currentUserId);
   const opts = { peopleCount: state.people.length };
   const canManage = can(currentUser, 'people.manage', opts);
@@ -966,8 +985,17 @@ function PasswordSection({ person }: { person: Person }) {
     }
   };
 
-  const clear = () => {
-    if (!window.confirm(`Usunąć hasło osoby ${person.name}? Będzie mogła logować się bez hasła.`)) {
+  const clear = async () => {
+    // `askConfirm`, a nie `confirm` — lokalny stan pola „powtórz hasło” już
+    // zajmuje tę nazwę w tym komponencie.
+    if (
+      !(await askConfirm({
+        title: `Usunąć hasło osoby ${person.name}?`,
+        consequences: 'Będzie mogła logować się bez hasła.',
+        confirmLabel: 'Usuń hasło',
+        tone: 'danger',
+      }))
+    ) {
       return;
     }
     dispatch({ type: 'SET_PASSWORD', personId: person.id, passwordHash: '' });
