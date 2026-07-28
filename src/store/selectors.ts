@@ -15,6 +15,7 @@ import type {
   ServiceType,
   Status,
   Task,
+  TaskAssignment,
   WorkCategory,
   WorkloadEntry,
 } from '../types';
@@ -22,48 +23,136 @@ import { DEFAULT_CAPACITY } from './storage';
 import { blockEndMinutes, hasCollision, hoursToMinutes, isBinEntry, rangesOverlap } from '../utils/time';
 import { isBirthdayOn, isValidDateStr, parseDate } from '../utils/dates';
 import { expandOccurrences, type RecurrenceOccurrence } from '../utils/recurrence';
+import { argsKey, createKeyedCache, createRefCache, filterKey } from './selectorCache';
+
+// ---- Per-revision indexes (module-private) --------------------------------
+//
+// Each index is keyed by the NARROWEST collection array it derives from, so an
+// action that only touches an unrelated collection keeps it warm. That is sound
+// because the reducer and the cloud merge always REPLACE a changed array and
+// PRESERVE an unchanged one (they never mutate in place) — see selectorCache.ts.
+// Every index preserves the source array's ORDER, so the selectors below stay
+// byte-identical to the `.filter(...)`/`.find(...)` implementations they replace.
+
+/** Shared empty results, so a miss still returns a STABLE reference. */
+const EMPTY_ENTRIES: WorkloadEntry[] = [];
+const EMPTY_IDS: string[] = [];
+
+/** First occurrence wins — mirrors `.find(...)` exactly, even with a stray duplicate id. */
+function byIdMap<T extends { id: string }>(rows: readonly T[]): Map<string, T> {
+  const map = new Map<string, T>();
+  for (const row of rows) if (!map.has(row.id)) map.set(row.id, row);
+  return map;
+}
+
+/** Append `row` to the bucket at `key`, keeping source array order. */
+function bucket<T>(map: Map<string, T[]>, key: string, row: T): void {
+  const list = map.get(key);
+  if (list) list.push(row);
+  else map.set(key, [row]);
+}
+
+const tasksById = createRefCache((rows: Task[]) => byIdMap(rows));
+const peopleById = createRefCache((rows: Person[]) => byIdMap(rows));
+const projectsById = createRefCache((rows: Project[]) => byIdMap(rows));
+const clientsById = createRefCache((rows: Client[]) => byIdMap(rows));
+const departmentsById = createRefCache((rows: Department[]) => byIdMap(rows));
+const serviceTypesById = createRefCache((rows: ServiceType[]) => byIdMap(rows));
+const workCategoriesById = createRefCache((rows: WorkCategory[]) => byIdMap(rows));
+
+interface StatusIndex {
+  byId: Map<string, Status>;
+  /** Ids of every `isDone` status, ARCHIVED INCLUDED (invariant 5). */
+  doneIds: Set<string>;
+}
+
+const statusIndex = createRefCache(
+  (rows: Status[]): StatusIndex => ({
+    byId: byIdMap(rows),
+    doneIds: new Set(rows.filter((s) => s.isDone).map((s) => s.id)),
+  }),
+);
+
+interface WorkloadIndex {
+  /** Rows bucketed by `date` (bin rows land under `''`, exactly like a `.filter`). */
+  byDate: Map<string, WorkloadEntry[]>;
+  /** Rows bucketed by `argsKey(personId, date)` — dated AND bin (date `''`). */
+  byPersonDate: Map<string, WorkloadEntry[]>;
+  byTaskId: Map<string, WorkloadEntry[]>;
+  /** Bin rows (`isBinEntry`) bucketed by `personId`. */
+  binByPersonId: Map<string, WorkloadEntry[]>;
+}
+
+const workloadIndex = createRefCache((rows: WorkloadEntry[]): WorkloadIndex => {
+  const byDate = new Map<string, WorkloadEntry[]>();
+  const byPersonDate = new Map<string, WorkloadEntry[]>();
+  const byTaskId = new Map<string, WorkloadEntry[]>();
+  const binByPersonId = new Map<string, WorkloadEntry[]>();
+  for (const w of rows) {
+    bucket(byDate, w.date, w);
+    bucket(byPersonDate, argsKey(w.personId, w.date), w);
+    bucket(byTaskId, w.taskId, w);
+    if (isBinEntry(w)) bucket(binByPersonId, w.personId, w);
+  }
+  return { byDate, byPersonDate, byTaskId, binByPersonId };
+});
+
+interface AssignmentIndex {
+  personIdsByTaskId: Map<string, string[]>;
+  taskIdsByPersonId: Map<string, string[]>;
+}
+
+const assignmentIndex = createRefCache((rows: TaskAssignment[]): AssignmentIndex => {
+  const personIdsByTaskId = new Map<string, string[]>();
+  const taskIdsByPersonId = new Map<string, string[]>();
+  for (const a of rows) {
+    bucket(personIdsByTaskId, a.taskId, a.personId);
+    bucket(taskIdsByPersonId, a.personId, a.taskId);
+  }
+  return { personIdsByTaskId, taskIdsByPersonId };
+});
 
 // ---- Basic lookups ----
 
 export function getTask(state: AppData, taskId: string): Task | undefined {
-  return state.tasks.find((t) => t.id === taskId);
+  return tasksById(state.tasks).get(taskId);
 }
 
 export function getPerson(state: AppData, personId: string): Person | undefined {
-  return state.people.find((p) => p.id === personId);
+  return peopleById(state.people).get(personId);
 }
 
 export function getProject(state: AppData, projectId: string): Project | undefined {
-  return state.projects.find((p) => p.id === projectId);
+  return projectsById(state.projects).get(projectId);
 }
 
 export function getClient(state: AppData, clientId: string): Client | undefined {
-  return state.clients.find((c) => c.id === clientId);
+  return clientsById(state.clients).get(clientId);
 }
 
 export function getStatus(state: AppData, statusId: string): Status | undefined {
-  return state.statuses.find((s) => s.id === statusId);
+  return statusIndex(state.statuses).byId.get(statusId);
 }
 
 export function getDepartment(
   state: AppData,
   departmentId: string,
 ): Department | undefined {
-  return state.departments.find((d) => d.id === departmentId);
+  return departmentsById(state.departments).get(departmentId);
 }
 
 export function getServiceType(
   state: AppData,
   serviceTypeId: string,
 ): ServiceType | undefined {
-  return state.serviceTypes.find((s) => s.id === serviceTypeId);
+  return serviceTypesById(state.serviceTypes).get(serviceTypeId);
 }
 
 export function getWorkCategory(
   state: AppData,
   workCategoryId: string,
 ): WorkCategory | undefined {
-  return state.workCategories.find((c) => c.id === workCategoryId);
+  return workCategoriesById(state.workCategories).get(workCategoryId);
 }
 
 // ---- Statuses ----
@@ -86,14 +175,17 @@ export function allStatusesOrdered(state: AppData): Status[] {
  * position, so reordering or archiving statuses never changes which work counts
  * as done. Single source of the done-status rule reused by the agenda, the
  * "Moja praca" selectors, and the timeline overdue tint.
+ *
+ * Index-backed: the returned Set is CACHED per `state.statuses` revision and is
+ * never mutated by any caller (every consumer only reads `.has`).
  */
 export function doneStatusIds(state: AppData): Set<string> {
-  return new Set(state.statuses.filter((s) => s.isDone).map((s) => s.id));
+  return statusIndex(state.statuses).doneIds;
 }
 
 /** Whether a given status id is a done status (archived done statuses count). */
 export function isDoneStatus(state: AppData, statusId: string): boolean {
-  return state.statuses.some((s) => s.id === statusId && s.isDone);
+  return statusIndex(state.statuses).doneIds.has(statusId);
 }
 
 // ---- Clients & projects ----
@@ -193,11 +285,13 @@ export function peopleIdsOfProject(state: AppData, projectId: string): string[] 
 
 // ---- Assignments ----
 
-/** Person ids assigned to a task. */
+/**
+ * Person ids assigned to a task. Index-backed (bucket order = `state.assignments`
+ * order, exactly like the previous `.filter().map()`); the returned array is a
+ * SHARED cached bucket — never mutate it.
+ */
 export function assigneeIdsOfTask(state: AppData, taskId: string): string[] {
-  return state.assignments
-    .filter((a) => a.taskId === taskId)
-    .map((a) => a.personId);
+  return assignmentIndex(state.assignments).personIdsByTaskId.get(taskId) ?? EMPTY_IDS;
 }
 
 /** Person objects assigned to a task (in people-list order). */
@@ -206,11 +300,9 @@ export function assigneesOfTask(state: AppData, taskId: string): Person[] {
   return state.people.filter((p) => ids.has(p.id));
 }
 
-/** Task ids a person is assigned to. */
+/** Task ids a person is assigned to. Index-backed; shared cached bucket (see above). */
 export function taskIdsOfPerson(state: AppData, personId: string): string[] {
-  return state.assignments
-    .filter((a) => a.personId === personId)
-    .map((a) => a.taskId);
+  return assignmentIndex(state.assignments).taskIdsByPersonId.get(personId) ?? EMPTY_IDS;
 }
 
 /** Distinct projects a person works on (via task assignments). */
@@ -226,10 +318,29 @@ export function projectsOfPerson(state: AppData, personId: string): Project[] {
 
 // ---- Workload ----
 
-/** All workload entries for a task. */
+/** All workload entries for a task. Index-backed; shared cached bucket. */
 export function entriesForTask(state: AppData, taskId: string): WorkloadEntry[] {
-  return state.workload.filter((w) => w.taskId === taskId);
+  return workloadIndex(state.workload).byTaskId.get(taskId) ?? EMPTY_ENTRIES;
 }
+
+// Keyed caches parse their arguments back OUT of the cache key, so the key
+// provably determines the result (ids are UUIDs and dates are `yyyy-MM-dd`, so
+// the `' '` separator of `argsKey` is unambiguous).
+const EMPTY_FILTER: Set<string> = new Set<string>();
+
+/**
+ * Rebuild a person filter from a {@link filterKey} string. Only `.has` is ever
+ * called on a filter, so a rebuilt Set behaves identically to the caller's one;
+ * `''` (undefined ≡ empty) rebuilds to the shared empty Set.
+ */
+function personFilterFromKey(key: string): Set<string> {
+  return key === '' ? EMPTY_FILTER : new Set(key.split(','));
+}
+
+const entriesForTaskPersonCache = createKeyedCache<WorkloadEntry[]>((state, key) => {
+  const [taskId, personId] = key.split(' ');
+  return entriesForTask(state, taskId).filter((w) => w.personId === personId);
+});
 
 /** Entries for a task belonging to one person. */
 export function entriesForTaskPerson(
@@ -237,9 +348,7 @@ export function entriesForTaskPerson(
   taskId: string,
   personId: string,
 ): WorkloadEntry[] {
-  return state.workload.filter(
-    (w) => w.taskId === taskId && w.personId === personId,
-  );
+  return entriesForTaskPersonCache(state, argsKey(taskId, personId));
 }
 
 /** Task total planned hours (derived, never stored). */
@@ -271,15 +380,22 @@ export function hoursForTaskPersonOnDate(
     .reduce((sum, w) => sum + w.plannedHours, 0);
 }
 
+/** Rows of one `(person, date)` pair in `state.workload` order (shared bucket). */
+function personDateEntries(state: AppData, key: string): WorkloadEntry[] {
+  return workloadIndex(state.workload).byPersonDate.get(key) ?? EMPTY_ENTRIES;
+}
+
+const hoursForPersonOnDateCache = createKeyedCache<number>((state, key) =>
+  personDateEntries(state, key).reduce((sum, w) => sum + w.plannedHours, 0),
+);
+
 /** A person's TOTAL planned hours across ALL tasks on a date. */
 export function hoursForPersonOnDate(
   state: AppData,
   personId: string,
   date: DateStr,
 ): number {
-  return state.workload
-    .filter((w) => w.personId === personId && w.date === date)
-    .reduce((sum, w) => sum + w.plannedHours, 0);
+  return hoursForPersonOnDateCache(state, argsKey(personId, date));
 }
 
 /** A person's total planned hours across every task and date. */
@@ -289,15 +405,18 @@ export function personTotalHours(state: AppData, personId: string): number {
     .reduce((sum, w) => sum + w.plannedHours, 0);
 }
 
+const blocksForPersonDateCache = createKeyedCache<WorkloadEntry[]>((state, key) =>
+  // Sort a COPY: the index bucket is shared and must keep source array order.
+  [...personDateEntries(state, key)].sort((a, b) => a.sortIndex - b.sortIndex),
+);
+
 /** A person's ordered time blocks on one date (the per-day schedule). */
 export function blocksForPersonDate(
   state: AppData,
   personId: string,
   date: DateStr,
 ): WorkloadEntry[] {
-  return state.workload
-    .filter((w) => w.personId === personId && w.date === date)
-    .sort((a, b) => a.sortIndex - b.sortIndex);
+  return blocksForPersonDateCache(state, argsKey(personId, date));
 }
 
 /** End minute (from midnight) of a block. */
@@ -323,18 +442,28 @@ export function blockCollides(
   return hasCollision(blocks, startMinutes, hoursToMinutes(plannedHours), excludeEntryId);
 }
 
+const entriesForDateCache = createKeyedCache<WorkloadEntry[]>((state, key) => {
+  const [date, fk] = key.split(' ');
+  // Bucket order IS `state.workload` order, so the result matches the old
+  // `.filter(...)` element for element.
+  const onDate = workloadIndex(state.workload).byDate.get(date) ?? EMPTY_ENTRIES;
+  if (fk === '') return onDate;
+  const filter = personFilterFromKey(fk);
+  return onDate.filter((w) => filter.has(w.personId));
+});
+
 /** All entries on a single date (optionally restricted to a set of people). */
 export function entriesForDate(
   state: AppData,
   date: DateStr,
   personFilter?: Set<string>,
 ): WorkloadEntry[] {
-  return state.workload.filter(
-    (w) =>
-      w.date === date &&
-      (!personFilter || personFilter.size === 0 || personFilter.has(w.personId)),
-  );
+  return entriesForDateCache(state, argsKey(date, filterKey(personFilter)));
 }
+
+const dayTotalCache = createKeyedCache<number>((state, key) =>
+  entriesForDateCache(state, key).reduce((sum, w) => sum + w.plannedHours, 0),
+);
 
 /** Total hours on a date for the filtered people. */
 export function dayTotal(
@@ -342,11 +471,27 @@ export function dayTotal(
   date: DateStr,
   personFilter?: Set<string>,
 ): number {
-  return entriesForDate(state, date, personFilter).reduce(
-    (sum, w) => sum + w.plannedHours,
-    0,
-  );
+  return dayTotalCache(state, argsKey(date, filterKey(personFilter)));
 }
+
+const recurrenceOccurrencesForDateCache = createKeyedCache<
+  Array<{ task: Task; occurrence: RecurrenceOccurrence }>
+>((state, key) => {
+  const [date, fk] = key.split(' ');
+  const out: Array<{ task: Task; occurrence: RecurrenceOccurrence }> = [];
+  const personFilter = personFilterFromKey(fk);
+  const filterActive = personFilter.size > 0;
+  for (const task of state.tasks) {
+    if (task.recurrence === undefined || !isPublishedTask(task)) continue;
+    if (filterActive) {
+      const assignees = assigneeIdsOfTask(state, task.id);
+      if (!assignees.some((id) => personFilter.has(id))) continue;
+    }
+    const occurrences = expandOccurrences(task.recurrence, task.startDate, date, date);
+    for (const occurrence of occurrences) out.push({ task, occurrence });
+  }
+  return out;
+});
 
 /**
  * Wystąpienia cyklicznych OPUBLIKOWANYCH zadań na dany dzień — WYŁĄCZNIE
@@ -361,18 +506,7 @@ export function recurrenceOccurrencesForDate(
   date: DateStr,
   personFilter?: Set<string>,
 ): Array<{ task: Task; occurrence: RecurrenceOccurrence }> {
-  const out: Array<{ task: Task; occurrence: RecurrenceOccurrence }> = [];
-  const filterActive = personFilter !== undefined && personFilter.size > 0;
-  for (const task of state.tasks) {
-    if (task.recurrence === undefined || !isPublishedTask(task)) continue;
-    if (filterActive) {
-      const assignees = assigneeIdsOfTask(state, task.id);
-      if (!assignees.some((id) => personFilter!.has(id))) continue;
-    }
-    const occurrences = expandOccurrences(task.recurrence, task.startDate, date, date);
-    for (const occurrence of occurrences) out.push({ task, occurrence });
-  }
-  return out;
+  return recurrenceOccurrencesForDateCache(state, argsKey(date, filterKey(personFilter)));
 }
 
 /** Jedno wystąpienie wydarzenia na konkretny dzień (czysto prezentacyjne). */
@@ -382,25 +516,15 @@ export interface CalendarEventOccurrence {
   durationMinutes: number;
 }
 
-/**
- * Wydarzenia kalendarza na dany dzień — WYŁĄCZNIE prezentacyjne (inwariant 1:
- * nigdy nie zasilają sum/przeciążenia/kolizji ani `dayTotal`). Jednorazowe gdy
- * `event.date === date`; cykliczne rozwijane przez `expandOccurrences` (honoruje
- * overrides). Semantyka filtra osób: pusty/brak = wszystko; niepusty = przecięcie
- * z `attendeeIds` LUB wydarzenie ogólnofirmowe (`attendeeIds.length === 0` widać
- * zawsze).
- */
-export function calendarEventsForDate(
-  state: AppData,
-  date: DateStr,
-  personFilter?: Set<string>,
-): CalendarEventOccurrence[] {
+const calendarEventsForDateCache = createKeyedCache<CalendarEventOccurrence[]>((state, key) => {
+  const [date, fk] = key.split(' ');
   const out: CalendarEventOccurrence[] = [];
-  const filterActive = personFilter !== undefined && personFilter.size > 0;
+  const personFilter = personFilterFromKey(fk);
+  const filterActive = personFilter.size > 0;
   for (const event of state.events) {
     if (filterActive) {
       const companyWide = event.attendeeIds.length === 0;
-      if (!companyWide && !event.attendeeIds.some((id) => personFilter!.has(id))) continue;
+      if (!companyWide && !event.attendeeIds.some((id) => personFilter.has(id))) continue;
     }
     if (event.recurrence === undefined) {
       if (event.date === date) {
@@ -418,6 +542,22 @@ export function calendarEventsForDate(
     }
   }
   return out;
+});
+
+/**
+ * Wydarzenia kalendarza na dany dzień — WYŁĄCZNIE prezentacyjne (inwariant 1:
+ * nigdy nie zasilają sum/przeciążenia/kolizji ani `dayTotal`). Jednorazowe gdy
+ * `event.date === date`; cykliczne rozwijane przez `expandOccurrences` (honoruje
+ * overrides). Semantyka filtra osób: pusty/brak = wszystko; niepusty = przecięcie
+ * z `attendeeIds` LUB wydarzenie ogólnofirmowe (`attendeeIds.length === 0` widać
+ * zawsze).
+ */
+export function calendarEventsForDate(
+  state: AppData,
+  date: DateStr,
+  personFilter?: Set<string>,
+): CalendarEventOccurrence[] {
+  return calendarEventsForDateCache(state, argsKey(date, filterKey(personFilter)));
 }
 
 /**
@@ -459,15 +599,18 @@ export function mergeCoversEventOrRecurrence(
  *   by title. Tasks merely *spanning* `date` stay out — otherwise a multi-day
  *   task without calendar blocks would show up in the agenda every single day.
  * There is intentionally no priority field — ordering is derived here only.
+ * Cached per `(state, personId, date)` — the returned object and both of its
+ * lists keep a STABLE reference for one state revision.
  */
-export function todayAgendaForPerson(
-  state: AppData,
-  personId: string,
-  date: DateStr,
-): { timed: WorkloadEntry[]; dateless: Task[] } {
-  const timed = state.workload
-    .filter((w) => w.personId === personId && w.date === date)
-    .sort((a, b) => a.startMinutes - b.startMinutes || a.sortIndex - b.sortIndex);
+const todayAgendaForPersonCache = createKeyedCache<{
+  timed: WorkloadEntry[];
+  dateless: Task[];
+}>((state, key) => {
+  const [personId, date] = key.split(' ');
+  // Sort a COPY of the (person, date) index bucket — it is shared.
+  const timed = [...personDateEntries(state, key)].sort(
+    (a, b) => a.startMinutes - b.startMinutes || a.sortIndex - b.sortIndex,
+  );
 
   const doneIds = doneStatusIds(state);
   const timedTaskIds = new Set(timed.map((w) => w.taskId));
@@ -485,6 +628,14 @@ export function todayAgendaForPerson(
     .sort((a, b) => a.title.localeCompare(b.title)); // endDate === date dla wszystkich
 
   return { timed, dateless };
+});
+
+export function todayAgendaForPerson(
+  state: AppData,
+  personId: string,
+  date: DateStr,
+): { timed: WorkloadEntry[]; dateless: Task[] } {
+  return todayAgendaForPersonCache(state, argsKey(personId, date));
 }
 
 /**
@@ -510,11 +661,16 @@ export function weekBlocksForPerson(
 
 // ---- Bin (zasobnik) — dateless unassigned entries ----
 
+const binEntriesForPersonCache = createKeyedCache<WorkloadEntry[]>((state, personId) =>
+  // Sort a COPY: `binByPersonId` buckets are shared, source-ordered indexes.
+  [...(workloadIndex(state.workload).binByPersonId.get(personId) ?? EMPTY_ENTRIES)].sort(
+    (a, b) => a.sortIndex - b.sortIndex,
+  ),
+);
+
 /** A person's bin entries (date === ''), ordered by their bin sortIndex. */
 export function binEntriesForPerson(state: AppData, personId: string): WorkloadEntry[] {
-  return state.workload
-    .filter((w) => w.personId === personId && isBinEntry(w))
-    .sort((a, b) => a.sortIndex - b.sortIndex);
+  return binEntriesForPersonCache(state, personId);
 }
 
 /** A task's bin entries (any person). */
@@ -522,9 +678,13 @@ export function binEntriesForTask(state: AppData, taskId: string): WorkloadEntry
   return state.workload.filter((w) => w.taskId === taskId && isBinEntry(w));
 }
 
+const binTotalForPersonCache = createKeyedCache<number>((state, personId) =>
+  binEntriesForPerson(state, personId).reduce((sum, w) => sum + w.plannedHours, 0),
+);
+
 /** Summed hours a person has sitting in their bin. */
 export function binTotalForPerson(state: AppData, personId: string): number {
-  return binEntriesForPerson(state, personId).reduce((sum, w) => sum + w.plannedHours, 0);
+  return binTotalForPersonCache(state, personId);
 }
 
 /**
@@ -750,11 +910,8 @@ export function occurrenceIsDone(
  * in a done status. Sorted by `endDate` ascending, then title. Pure — pass
  * `today` (no `Date.now`).
  */
-export function overdueTasksForPerson(
-  state: AppData,
-  personId: string,
-  today: DateStr,
-): Task[] {
+const overdueTasksForPersonCache = createKeyedCache<Task[]>((state, key) => {
+  const [personId, today] = key.split(' ');
   const doneIds = doneStatusIds(state);
   const assignedTaskIds = new Set(taskIdsOfPerson(state, personId));
   return state.tasks
@@ -766,6 +923,14 @@ export function overdueTasksForPerson(
         !doneIds.has(t.statusId),
     )
     .sort((a, b) => a.endDate.localeCompare(b.endDate) || a.title.localeCompare(b.title));
+});
+
+export function overdueTasksForPerson(
+  state: AppData,
+  personId: string,
+  today: DateStr,
+): Task[] {
+  return overdueTasksForPersonCache(state, argsKey(personId, today));
 }
 
 /**
@@ -787,7 +952,7 @@ export function overloadedDatesForPersonInRange(
  * workload rows (neither dated nor bin) — i.e. nothing planned yet. Sorted by
  * `endDate` ascending, then title. Pure.
  */
-export function unplannedTasksForPerson(state: AppData, personId: string): Task[] {
+const unplannedTasksForPersonCache = createKeyedCache<Task[]>((state, personId) => {
   const doneIds = doneStatusIds(state);
   const assignedTaskIds = new Set(taskIdsOfPerson(state, personId));
   const plannedTaskIds = new Set(
@@ -802,6 +967,10 @@ export function unplannedTasksForPerson(state: AppData, personId: string): Task[
         !plannedTaskIds.has(t.id),
     )
     .sort((a, b) => a.endDate.localeCompare(b.endDate) || a.title.localeCompare(b.title));
+});
+
+export function unplannedTasksForPerson(state: AppData, personId: string): Task[] {
+  return unplannedTasksForPersonCache(state, personId);
 }
 
 /**
@@ -810,24 +979,30 @@ export function unplannedTasksForPerson(state: AppData, personId: string): Task[
  * bin row per task+person). Rows keep the bin `sortIndex` order of each task's
  * first entry. Entries whose task no longer resolves are silently skipped. Pure.
  */
+const binTaskRowsForPersonCache = createKeyedCache<Array<{ task: Task; hours: number }>>(
+  (state, personId) => {
+    const rows: Array<{ task: Task; hours: number }> = [];
+    const indexByTask = new Map<string, number>();
+    for (const entry of binEntriesForPerson(state, personId)) {
+      const existing = indexByTask.get(entry.taskId);
+      if (existing !== undefined) {
+        rows[existing].hours += entry.plannedHours;
+        continue;
+      }
+      const task = getTask(state, entry.taskId);
+      if (!task) continue; // stale bin row — skip
+      indexByTask.set(entry.taskId, rows.length);
+      rows.push({ task, hours: entry.plannedHours });
+    }
+    return rows;
+  },
+);
+
 export function binTaskRowsForPerson(
   state: AppData,
   personId: string,
 ): Array<{ task: Task; hours: number }> {
-  const rows: Array<{ task: Task; hours: number }> = [];
-  const indexByTask = new Map<string, number>();
-  for (const entry of binEntriesForPerson(state, personId)) {
-    const existing = indexByTask.get(entry.taskId);
-    if (existing !== undefined) {
-      rows[existing].hours += entry.plannedHours;
-      continue;
-    }
-    const task = getTask(state, entry.taskId);
-    if (!task) continue; // stale bin row — skip
-    indexByTask.set(entry.taskId, rows.length);
-    rows.push({ task, hours: entry.plannedHours });
-  }
-  return rows;
+  return binTaskRowsForPersonCache(state, personId);
 }
 
 // ---- Capacity & overload ----
@@ -840,19 +1015,25 @@ export function personCapacity(state: AppData, personId: string): number {
   return p && p.capacity > 0 ? p.capacity : DEFAULT_CAPACITY;
 }
 
+const overloadedPeopleOnDateCache = createKeyedCache<string[]>((state, key) => {
+  const [date, fk] = key.split(' ');
+  const personFilter = personFilterFromKey(fk);
+  const relevant =
+    personFilter.size > 0
+      ? state.people.filter((p) => personFilter.has(p.id))
+      : state.people;
+  return relevant
+    .filter((p) => dayAvailabilityForPerson(state, p.id, date).overbooked)
+    .map((p) => p.id);
+});
+
 /** People (ids) overbooked on the date (booked > that day's availability), within the filter. */
 export function overloadedPeopleOnDate(
   state: AppData,
   date: DateStr,
   personFilter?: Set<string>,
 ): string[] {
-  const relevant =
-    personFilter && personFilter.size > 0
-      ? state.people.filter((p) => personFilter.has(p.id))
-      : state.people;
-  return relevant
-    .filter((p) => dayAvailabilityForPerson(state, p.id, date).overbooked)
-    .map((p) => p.id);
+  return overloadedPeopleOnDateCache(state, argsKey(date, filterKey(personFilter)));
 }
 
 /**
@@ -861,8 +1042,12 @@ export function overloadedPeopleOnDate(
  * (urodziny nie zależą od filtra pracy). Kolejność jak w `state.people`
  * (stabilna). Rok urodzenia bez znaczenia; patrz {@link isBirthdayOn}.
  */
+const peopleWithBirthdayOnDateCache = createKeyedCache<Person[]>((state, date) =>
+  state.people.filter((p) => isBirthdayOn(p.birthDate, date)),
+);
+
 export function peopleWithBirthdayOnDate(state: AppData, date: DateStr): Person[] {
-  return state.people.filter((p) => isBirthdayOn(p.birthDate, date));
+  return peopleWithBirthdayOnDateCache(state, date);
 }
 
 /**
@@ -1118,8 +1303,8 @@ export function currentUser(state: AppData): Person | undefined {
  * tie-break po `id` dla stabilnej kolejności). Panel pokazuje pierwsze
  * `MAX_NOTIFICATIONS` (patrz `visibleNotifications`).
  */
-export function unreadNotificationsForPerson(state: AppData, personId: string): Notification[] {
-  return state.notifications
+const unreadNotificationsForPersonCache = createKeyedCache<Notification[]>((state, personId) =>
+  state.notifications
     .filter((n) => n.recipientId === personId && n.readAt === '')
     .sort((a, b) =>
       a.createdAt < b.createdAt
@@ -1131,7 +1316,11 @@ export function unreadNotificationsForPerson(state: AppData, personId: string): 
             : a.id > b.id
               ? -1
               : 0,
-    );
+    ),
+);
+
+export function unreadNotificationsForPerson(state: AppData, personId: string): Notification[] {
+  return unreadNotificationsForPersonCache(state, personId);
 }
 
 /**

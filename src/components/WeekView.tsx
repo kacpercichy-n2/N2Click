@@ -9,7 +9,7 @@ import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import type { AppData, Person, Project, Task, WorkloadEntry } from '../types';
-import { useStore } from '../store/AppStore';
+import { useDispatch, useStoreApi } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import { useOpenTask } from './TaskModal';
 import { useOpenEvent } from './EventModal';
@@ -241,11 +241,18 @@ interface DragState {
 }
 
 interface BlockProps {
-  state: AppData;
   entry: WorkloadEntry;
   task: Task;
   person: Person;
   project?: Project;
+  /**
+   * `taskDisplayStatus(state, task, todayStr())`, computed by the parent (like
+   * `RecurBlock.done`). Passing the PRIMITIVE instead of the whole `state` is
+   * what makes `React.memo` hold when an action does not touch this block's row.
+   */
+  status: 'done' | 'overdue' | 'open';
+  /** `blockIsDone(state, task, entry)` — same reason as `status`. */
+  done: boolean;
   dayIndex: number;
   days: string[];
   col: number;
@@ -294,11 +301,12 @@ interface BlockProps {
 }
 
 function TimedBlockImpl({
-  state,
   entry,
   task,
   person,
   project,
+  status,
+  done,
   dayIndex,
   days,
   col,
@@ -318,7 +326,12 @@ function TimedBlockImpl({
   stack,
   onDragActiveChange,
 }: BlockProps) {
-  const { dispatch } = useStore();
+  const dispatch = useDispatch();
+  // EVENT-TIME state reads only (grow allowance at drag/keyboard entry, the
+  // collision-announcement title). Previously these read the current render's
+  // `state` prop, which IS the committed state at event time — so the values are
+  // identical, but the block no longer re-renders just to keep that prop fresh.
+  const { getState } = useStoreApi();
   const [drag, setDrag] = useState<DragState | null>(null);
   // React state drives the preview, while this ref is the synchronous source of
   // truth for pointer handlers. A final pointermove and pointerup can arrive in
@@ -459,7 +472,7 @@ function TimedBlockImpl({
     const blockRect = el.getBoundingClientRect();
     // Capture the grow allowance ONCE at drag start (state won't change mid-drag).
     // Always a number now: bin hours + headroom (0 for null-estimate tasks).
-    const maxHours = baseHours + growAllowanceHours(state, entry.id);
+    const maxHours = baseHours + growAllowanceHours(getState(), entry.id);
     const nextDrag: DragState = {
       mode,
       originX: clientX,
@@ -723,7 +736,7 @@ function TimedBlockImpl({
         id: w.id,
         startMinutes: w.startMinutes,
         plannedHours: w.plannedHours,
-        title: getTask(state, w.taskId)?.title ?? '',
+        title: getTask(getState(), w.taskId)?.title ?? '',
       })),
   });
 
@@ -864,7 +877,7 @@ function TimedBlockImpl({
     e.preventDefault();
     if (active === null) {
       // Wejście w tryb: te same wielkości, które łapie `startDrag`.
-      kbMaxHours.current = baseHours + growAllowanceHours(state, entry.id);
+      kbMaxHours.current = baseHours + growAllowanceHours(getState(), entry.id);
       const rect = gridRef.current?.getBoundingClientRect();
       setKbColWidth(rect ? rect.width / days.length : 0);
     }
@@ -943,14 +956,12 @@ function TimedBlockImpl({
       };
 
   const showMergeTarget = !drag && isMergeTarget;
-  // Status zadania jest czysto prezentacyjny: zielony odcień dla zakończonych,
-  // czerwony akcent po terminie. Kolor osoby zostaje na lewej krawędzi (styl
-  // inline), a klasy dragu/kolizji są w CSS PÓŹNIEJ, więc nadal wygrywają.
-  const status = taskDisplayStatus(state, task, todayStr());
-  // Per-block completion is INDEPENDENT of the task status: a block is done when
-  // it carries its own flag OR the task status is done. Two blocks on the same
-  // day render independent done state.
-  const done = blockIsDone(state, task, entry);
+  // `status` / `done` arrive as PROPS (computed by the parent from
+  // `taskDisplayStatus` / `blockIsDone`). Status zadania jest czysto
+  // prezentacyjny: zielony odcień dla zakończonych, czerwony akcent po terminie.
+  // Kolor osoby zostaje na lewej krawędzi (styl inline), a klasy dragu/kolizji są
+  // w CSS PÓŹNIEJ, więc nadal wygrywają. Per-block completion stays INDEPENDENT
+  // of the task status — two blocks on the same day render independent done state.
   const statusNote = statusNoteFor(status, task.endDate);
   const className = [
     'week-block',
@@ -1189,10 +1200,12 @@ function TimedBlockImpl({
 }
 
 // Memo boundary: with all incoming props referentially stable during a drag
-// (`state`, `days` and `blocksByPersonDate` come from the parent's memoized
-// model; callbacks are useCallback-stable; the merge/fuse affordances arrive as
-// per-block booleans), changing the merge target re-renders only the OLD and NEW
-// target blocks plus the dragged one — not every block on the grid.
+// (`days` and `blocksByPersonDate` come from the parent's memoized model;
+// callbacks are useCallback-stable; the merge/fuse affordances and the
+// presentational `status`/`done` arrive as per-block primitives — the whole
+// `state` object is deliberately NOT a prop), changing the merge target
+// re-renders only the OLD and NEW target blocks plus the dragged one, and an
+// action that does not touch this row leaves the block alone entirely.
 const TimedBlock = memo(TimedBlockImpl);
 
 // ---- Bin card: a dateless block that drags OUT of the bin onto the grid ----
@@ -1224,11 +1237,14 @@ interface BinDragListeners {
 }
 
 interface BinCardProps {
-  state: AppData;
   entry: WorkloadEntry;
   task: Task;
   person: Person;
   project?: Project;
+  /** `taskDisplayStatus(state, task, todayStr())` — parent-computed (see BlockProps). */
+  status: 'done' | 'overdue' | 'open';
+  /** `blockIsDone(state, task, entry)` — parent-computed (see BlockProps). */
+  done: boolean;
   days: string[];
   gridRef: React.RefObject<HTMLDivElement | null>;
   viewportRef: React.RefObject<HTMLDivElement | null>;
@@ -1245,11 +1261,12 @@ interface BinCardProps {
 }
 
 function BinCardImpl({
-  state,
   entry,
   task,
   person,
   project,
+  status,
+  done,
   days,
   gridRef,
   viewportRef,
@@ -1260,7 +1277,7 @@ function BinCardImpl({
   onSchedule,
   onDragActiveChange,
 }: BinCardProps) {
-  const { dispatch } = useStore();
+  const dispatch = useDispatch();
   const [drag, setDrag] = useState<BinDragState | null>(null);
   // See TimedBlock.dragRef: the drop must commit the newest pointer projection,
   // even when pointermove and pointerup are delivered before React re-renders.
@@ -1547,8 +1564,7 @@ function BinCardImpl({
   // In-pane original stays mounted for click/context-menu semantics and dims
   // while window listeners own the drag. The visible card following the
   // pointer is a fixed portal ghost, so the bin pane cannot clip it.
-  const status = taskDisplayStatus(state, task, todayStr());
-  const done = blockIsDone(state, task, entry);
+  // `status` / `done` arrive as PROPS — see BlockProps.
   const statusNote = statusNoteFor(status, task.endDate);
   const className = [
     'week-bin-block',
@@ -1814,7 +1830,7 @@ const EventBlock = memo(EventBlockImpl);
 export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Props) {
   const { openTask, openNewTask } = useOpenTask();
   const { openEvent, openNewEvent } = useOpenEvent();
-  const { dispatch } = useStore();
+  const dispatch = useDispatch();
   const confirm = useConfirm();
   const can = useCan();
   const canEditAny = can('blocks.editAny');
@@ -1845,6 +1861,10 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
   // scan-per-block-per-render. Stable while a drag only flips local/merge state,
   // so the memoized leaves below keep their props and skip re-rendering.
   const model = useMemo(() => buildWeekModel(state, days, filter), [state, days, filter]);
+
+  // Hoisted so both the bin pane and the day columns compute their leaves'
+  // `status` prop from ONE value (was `todayStr()` inside each memoized leaf).
+  const today = todayStr();
 
   // Stable open handlers so the memoized leaves keep referentially-equal props.
   // They stay identical across drag re-renders (openTask/openEvent only change on
@@ -2513,11 +2533,12 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                 {entries.map(({ entry: e, task, project }) => (
                   <BinCard
                     key={e.id}
-                    state={state}
                     entry={e}
                     task={task}
                     person={p}
                     project={project}
+                    status={taskDisplayStatus(state, task, today)}
+                    done={blockIsDone(state, task, e)}
                     days={days}
                     gridRef={gridRef}
                     viewportRef={viewportRef}
@@ -2536,8 +2557,6 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
       </div>
     </div>
   );
-
-  const today = todayStr();
 
   return (
     <div
@@ -2739,11 +2758,12 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                   {day.blocks.map(({ block: e, col, cols, task, person, project }) => (
                     <TimedBlock
                       key={e.id}
-                      state={state}
                       entry={e}
                       task={task}
                       person={person}
                       project={project}
+                      status={taskDisplayStatus(state, task, today)}
+                      done={blockIsDone(state, task, e)}
                       dayIndex={dayIndex}
                       days={days}
                       col={col}

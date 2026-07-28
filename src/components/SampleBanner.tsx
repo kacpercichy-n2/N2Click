@@ -4,7 +4,7 @@
 // zostałyby i tak wymiecione przy najbliższej hydracji (i nigdy nie są
 // mirrorowane), więc oferowanie ich byłoby myleniem użytkownika.
 import { useEffect } from 'react';
-import { useStore } from '../store/AppStore';
+import { shallowEqual, useDispatch, useSelector } from '../store/AppStore';
 import { buildSampleData } from '../store/seed';
 import { useAuth } from '../auth/SessionProvider';
 import { announce } from '../utils/liveRegion';
@@ -12,14 +12,19 @@ import { announce } from '../utils/liveRegion';
 const SAMPLE_MSG = 'Brak danych — wczytaj przykładowe zadania i osoby, żeby poznać planer.';
 
 export function SampleBanner() {
-  const { state, dispatch } = useStore();
+  // Two booleans is the whole read — the banner sits in the app shell, so it must
+  // not re-render on every action just to answer "are we still non-empty?".
+  const { isEmpty, dismissed } = useSelector(
+    (s) => ({
+      isEmpty: s.tasks.length === 0 && s.people.length === 0 && s.workload.length === 0,
+      dismissed: s.sampleBannerDismissed,
+    }),
+    shallowEqual,
+  );
+  const dispatch = useDispatch();
   const auth = useAuth();
 
-  const isEmpty =
-    state.tasks.length === 0 &&
-    state.people.length === 0 &&
-    state.workload.length === 0;
-  const visible = auth.mode !== 'supabase' && isEmpty && !state.sampleBannerDismissed;
+  const visible = auth.mode !== 'supabase' && isEmpty && !dismissed;
 
   // Baner pojawia się razem ze swoim tekstem, więc własny `role="status"` bywa
   // niesłyszalny — ogłasza go trwały kanał powłoki.

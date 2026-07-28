@@ -1,79 +1,48 @@
-# Run state — 20260728-052657-n2hub-288 mobile modal + panel
+# Run state — 20260728-064406-n2hub-291 store performance
 
 ## Goal
 
-Four mobile (<760 px) fixes: allocation grid becomes a day list in TaskModal
-(MO-03/04), visualViewport keyboard inset for modal sheets (MO-22), three-row
-task card + details sheet on TasksPage (MO-10), purpose-ordered Panel stack
-with empty tiles removed (MO-18). Desktop bit-identical everywhere; no reducer
-changes; no new runtime deps.
+Store render performance in mandatory order: (W02) reference-keyed selector
+cache + per-revision indexes in `selectors.ts`, (W01a) split the store context
+into StateContext + stable StoreApiContext, (W01b) external store +
+`useSelector`/`useSyncExternalStore` with a short named migration list (useCan,
+TodayAgenda, SampleBanner, WeekView dispatch-only sites), (W01c) drop the whole
+`state` prop from memoized `TimedBlock`/`BinCard` (RecurBlock already narrow).
+Reducer semantics byte-identical; no new deps; retirement mode untouched.
 
 ## Packages (execution order)
 
-1. `handoffs/packages/PKG-20260728-alloc-day-list.md` — developer, ready,
-   risk medium, Codex required. New pure `allocationDayList.ts` (+ tests) +
-   `AllocationDayList.tsx`; TaskModal conditional render; commits via existing
-   `setCell`/`setCellStart` only.
-2. `handoffs/packages/PKG-20260728-keyboard-inset.md` — developer, ready,
-   risk medium, Codex required. Pure `keyboardInset.ts` (+ tests); wiring in
-   shared `useModalShell` (`--n2-kb-inset` on the card); one CSS line in the
-   760 px modal block. Run after (1) — same styles.css block.
-3. `handoffs/packages/PKG-20260728-task-card-mobile.md` — developer, ready,
-   risk medium, Codex conditional. Mobile card branch in TasksPage + new
-   bottom details sheet on `useOverlay`; pure `taskCardMobile.ts` (+ tests).
-4. `handoffs/packages/PKG-20260728-panel-mobile-order.md` — developer, ready,
-   risk medium, Codex conditional. Pure `mobileDashboardOrder` +
-   `workloadSummaryLine` in `dashboardPanels.ts` (+ tests); DashboardPage
-   mobile stack via conditional rendering.
+1. `handoffs/PKG-20260728-store-performance.md` — developer, ready, risk high,
+   Codex required. ONE package with four ordered, individually verifiable steps
+   (order is load-bearing; tests inseparable, so no test-writer split).
 
 ## Changed boundaries (planned)
 
-TaskModal allocation section (mobile twin of AllocationGrid), shared modal
-shell gains a keyboard-inset effect, TasksPage gains a mobile card + one
-sheet, DashboardPage gains a mobile branch. All new logic in pure `.ts`
-siblings tested in node.
+`src/store/selectorCache.ts` + `src/store/externalStore.ts` (new, pure),
+`selectors.ts` hot-selector rewiring (named list only), `AppStore.tsx` provider
+region (contexts, external store, useSelector/useDispatch/useStoreApi; reducer
+body untouched), `useCan.ts`, `TodayAgenda.tsx`, `SampleBanner.tsx`,
+`WeekView.tsx` leaf props. Invariant-6 evidence: 191 `return state;` sites +
+`mergeCloudEntities` same-reference rejects make WeakMap keying sound.
 
 ## Verification
 
-Focused per package (vitest files named inside each), then scheduler-owned
-`npm test` + `npm run build`. No browser scripts — no covered pointer/drag
-paths change.
+Per step `npx vitest run src/store`; focused set named in the package; browser
+`browser-check-bin-drag.mjs` + `browser-check-placement.mjs` after W01c; then
+scheduler-owned full `npm test && npm run build` (no `test:scheduler` script).
+
+## Developer result (W02 → W01a → W01b → W01c, all four applied)
+
+New `selectorCache.ts`/`externalStore.ts` (+ tests), `selectors.ts` indexes,
+`AppStore.tsx` StateContext/StoreApiContext + useSelector, `useCan`/
+`TodayAgenda`/`SampleBanner`/`WeekView` migrated, `state` prop dropped from
+`BlockProps`/`BinCardProps`. Per-step `vitest run src/store` green; final
+`npm test` 2003 pass / 0 fail, `npm run build` green, zero existing test files
+edited. Blocker: browser checks unrunnable — playwright is not installed.
 
 ## Open questions
 
-None blocking — all product decisions settled in the packages.
-
-## Log — PKG-20260728-task-card-mobile (done)
-
-Boundaries: TasksPage mobile card branch + one `useOverlay` details sheet; new
-pure `src/pages/taskCardMobile.ts` (+ test); additive `.task-card-m-*` /
-`.task-details-*` CSS, `.task-details-sheet` joined the sheet skeleton
-selector. `npx vitest run taskCardMobile + overlayShell` 49 pass;
-`npm run build` pass. Desktop JSX/CSS untouched. Context as declared.
-Deviation: no chevron on the mobile card. Next: reviewer.
-
-## Worker log
-
-- Pkg 4 (keyboard inset): done. New `src/components/keyboardInset.ts` (+ test,
-  80 px threshold), one added effect in `useModalShell.ts` (gated on
-  `visualViewport` + `MOBILE_NAV_QUERY`), one `max-height` line in the ≤760 px
-  modal block. `npx vitest run keyboardInset + modalShell + overlayShell` 73
-  pass; `npm run build` pass. Wiki: modal-shell bullet updated. Next: reviewer.
-- Pkg 1 (alloc day list): done. New `allocationDayListView.ts` (+ test),
-  `AllocationDayList.tsx`, TaskModal conditional render, additive
-  `.alloc-daylist*` CSS above the 760 px modal block. Deviation: model renamed
-  to `…View.ts` — `allocationDayList.ts` vs `AllocationDayList.tsx` collides on
-  case-insensitive macOS (TS1149). `npx vitest run` 55/55 pass; `tsc --noEmit`
-  and `npm run build` clean.
-- Pkg PKG-20260728-panel-mobile-order (done): `mobileDashboardOrder` +
-  `workloadSummaryLine` in `dashboardPanels.ts` (+ tests), `isMobile` stack
-  branch in `DashboardPage.tsx`, `.dash-m-*` CSS inside the ≤760 px block.
-  Desktop tiles now come from shared render functions (same DOM).
-  `npx vitest run src/pages/dashboardPanels.test.ts` 27 pass; `npm run build`
-  pass. Context as declared. Next: reviewer.
-- N2Hub-289 (FilterPanel portal + arkusz): done. `FilterPanel` portalowany —
-  desktop mierzony popover (`closeOnAnchorOutOfView`, `--anchor-width`),
-  telefon `.filter-sheet` ze scrimem i lepką stopką `resultCount`. Nowe
-  `isAnchorOutOfView` (+5 testów), `useModalShell` wystawia
-  `focusInitialIn`/`tabbableElementsIn`/`useBodyScrollLock`. `npm test`
-  1944/1944, `npm run build` pass. Wiki: powłoka nakładek zaktualizowana.
+None blocking. Deferred (recorded, not routed): migrating DashboardPage /
+CalendarPage / App shell to useSelector; removing the WeekView/MonthView
+`state` prop. Wiki: `state-and-persistence.md` will need a selector-cache +
+context-split bullet if green — final reviewer owns that call.

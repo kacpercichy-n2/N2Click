@@ -7,9 +7,9 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useReducer,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from 'react';
 import type {
@@ -59,6 +59,7 @@ import {
   type SaveFailureReason,
 } from './storage';
 import { anyDirty } from '../utils/dirtyRegistry';
+import { createExternalStore, shallowEqual, type ExternalStore } from './externalStore';
 import { createPersistCoalescer, PERSIST_COALESCE_MS } from './persistCoalescer';
 import { shouldSkipLocalPersist } from './persistGate';
 import {
@@ -3947,7 +3948,26 @@ interface StoreValue {
   lastActionRef: React.MutableRefObject<Action['type'] | null>;
 }
 
-const StoreContext = createContext<StoreValue | null>(null);
+/**
+ * The NEVER-CHANGING half of the store: everything a consumer can use without
+ * re-rendering per action. Its value object is created ONCE per provider
+ * instance, so a dispatch-only consumer (`useDispatch`) re-renders zero times
+ * when an action lands.
+ */
+export interface StoreApi {
+  dispatch: React.Dispatch<Action>;
+  lastActionRef: React.MutableRefObject<Action['type'] | null>;
+  /** The state committed RIGHT NOW — for event handlers, never for render. */
+  getState(): AppData;
+  /** Notified once per reference-changing dispatch. Returns an unsubscribe. */
+  subscribe(listener: () => void): () => void;
+}
+
+// This is a SPLIT of the ONE store context into its changing half (the state)
+// and its constant half (the api) — NOT provider multiplication. `useStore()`
+// recomposes both, so every unmigrated consumer keeps its exact behaviour.
+const StateContext = createContext<AppData | null>(null);
+const StoreApiContext = createContext<StoreApi | null>(null);
 
 // ---- Persistence meta-state (honest save outcome + same-browser tab safety) --
 // This lives OUTSIDE the reducer: it is meta-state about the persist layer, and
@@ -3981,15 +4001,29 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     initialLoadRef.current = result;
   }
   const initialLoad = initialLoadRef.current;
-  const [state, rawDispatch] = useReducer(reducer, initialLoad.data);
+
+  // ONE external store per provider instance (created lazily in a ref — never a
+  // module singleton, so a StrictMode remount or a second test render starts
+  // clean). It runs the SAME `reducer` synchronously; everything downstream
+  // (`[state]` persist effect, colour registration, contexts, conflict flow)
+  // still sees exactly one committed state per change.
+  // Documented trade-off: React's dev-only double-invoke of the reducer (a
+  // `useReducer` purity check) no longer happens.
+  const storeRef = useRef<ExternalStore<AppData, Action> | null>(null);
+  if (storeRef.current === null) {
+    storeRef.current = createExternalStore<AppData, Action>(reducer, initialLoad.data);
+  }
+  const store = storeRef.current;
+  const state = useSyncExternalStore(store.subscribe, store.getState, store.getState);
 
   // Track the last dispatched action type so the cloud mirror can suppress its
   // own hydration and local-only transitions. A thin wrapper keeps useStore()'s
-  // signature and every existing consumer untouched.
+  // signature and every existing consumer untouched: `lastActionRef` is still
+  // set BEFORE the reducer runs.
   const lastActionRef = useRef<Action['type'] | null>(null);
   const dispatch = useCallback<React.Dispatch<Action>>((action) => {
     lastActionRef.current = action.type;
-    rawDispatch(action);
+    store.dispatch(action);
   }, []);
 
   const [saveError, setSaveError] = useState<SaveFailureReason | null>(null);
@@ -4176,7 +4210,18 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     setExternal((prev) => (prev === 'refreshed' ? 'none' : prev));
   }, []);
 
-  const value = useMemo(() => ({ state, dispatch, lastActionRef }), [state, dispatch]);
+  // Stable api surface: `dispatch` is `useCallback([])`-stable and the store's
+  // own `getState`/`subscribe` are fixed for its lifetime, so `storeApi` is
+  // referentially CONSTANT — a dispatch-only consumer never re-renders.
+  const storeApi = useMemo<StoreApi>(
+    () => ({
+      dispatch,
+      lastActionRef,
+      getState: store.getState,
+      subscribe: store.subscribe,
+    }),
+    [dispatch, store],
+  );
 
   const persistence = useMemo<PersistenceValue>(
     () => ({
@@ -4196,16 +4241,96 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   if (loadError) throw loadError;
 
   return (
-    <StoreContext.Provider value={value}>
-      <PersistenceContext.Provider value={persistence}>{children}</PersistenceContext.Provider>
-    </StoreContext.Provider>
+    <StoreApiContext.Provider value={storeApi}>
+      <StateContext.Provider value={state}>
+        <PersistenceContext.Provider value={persistence}>{children}</PersistenceContext.Provider>
+      </StateContext.Provider>
+    </StoreApiContext.Provider>
   );
 }
 
+/**
+ * Compatibility façade: recomposes both halves of the split context, so it still
+ * re-renders on every action and every existing consumer behaves identically.
+ * New code should prefer `useDispatch()` (no re-render) or `useSelector()`.
+ */
 export function useStore(): StoreValue {
-  const ctx = useContext(StoreContext);
-  if (!ctx) throw new Error('useStore must be used within AppStoreProvider');
-  return ctx;
+  const api = useContext(StoreApiContext);
+  const state = useContext(StateContext);
+  const value = useMemo(
+    () =>
+      api && state
+        ? { state, dispatch: api.dispatch, lastActionRef: api.lastActionRef }
+        : null,
+    [api, state],
+  );
+  if (!value) throw new Error('useStore must be used within AppStoreProvider');
+  return value;
+}
+
+/** Dispatch only — referentially constant, so it NEVER re-renders on an action. */
+export function useDispatch(): React.Dispatch<Action> {
+  const api = useContext(StoreApiContext);
+  if (!api) throw new Error('useDispatch must be used within AppStoreProvider');
+  return api.dispatch;
+}
+
+/** The constant api object (dispatch + lastActionRef + getState + subscribe). */
+export function useStoreApi(): StoreApi {
+  const api = useContext(StoreApiContext);
+  if (!api) throw new Error('useStoreApi must be used within AppStoreProvider');
+  return api;
+}
+
+// The equality helper used by list/slice selections. Defined in the React-free
+// externalStore module (so it is unit-testable in the node environment) and
+// re-exported here, next to useSelector, which is where callers reach for it.
+export { shallowEqual };
+
+/**
+ * Subscribe to a SLICE of the store. The component re-renders only when the
+ * selection fails `isEqual` — the default `Object.is` is right for primitives
+ * and for cached selectors (per-revision stable references); pass
+ * {@link shallowEqual} for object/array selections.
+ *
+ * Deliberately built on React 18's own `useSyncExternalStore` (no
+ * `use-sync-external-store/with-selector` dependency): `selector`/`isEqual` live
+ * in refs, and the stable `getSnapshot` returns the PREVIOUS result whenever the
+ * new one is equal, so React sees a stable snapshot and skips the render.
+ */
+export function useSelector<T>(
+  selector: (state: AppData) => T,
+  isEqual: (a: T, b: T) => boolean = Object.is,
+): T {
+  const api = useContext(StoreApiContext);
+  const apiRef = useRef(api);
+  apiRef.current = api;
+  const selectorRef = useRef(selector);
+  selectorRef.current = selector;
+  const isEqualRef = useRef(isEqual);
+  isEqualRef.current = isEqual;
+  const cacheRef = useRef<{ filled: boolean; value: T }>({
+    filled: false,
+    value: undefined as unknown as T,
+  });
+
+  const subscribe = useCallback((listener: () => void) => {
+    const current = apiRef.current;
+    if (!current) return () => {};
+    return current.subscribe(listener);
+  }, []);
+
+  const getSnapshot = useCallback((): T => {
+    const current = apiRef.current;
+    if (!current) throw new Error('useSelector must be used within AppStoreProvider');
+    const next = selectorRef.current(current.getState());
+    const cache = cacheRef.current;
+    if (cache.filled && isEqualRef.current(cache.value, next)) return cache.value;
+    cacheRef.current = { filled: true, value: next };
+    return next;
+  }, []);
+
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
 export function usePersistence(): PersistenceValue {

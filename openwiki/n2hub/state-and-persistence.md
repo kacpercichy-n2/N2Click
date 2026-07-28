@@ -5,6 +5,37 @@
 - `src/types.ts` owns persisted model types.
 - `src/store/AppStore.tsx` is the sole reducer and mutation boundary.
 - `src/store/selectors.ts` owns derived reads; pages must not duplicate them.
+- WYDAJNOŚĆ ODCZYTU (2026-07-28): selektory są PAMIĘTANE po REFERENCJI, nie po
+  wartości. `src/store/selectorCache.ts` (czysty, bez Reacta) daje trzy prymitywy
+  — `createRefCache` (WeakMap po referencji kolekcji), `createKeyedCache`
+  (WeakMap po referencji `AppData` + klucz-string) oraz `argsKey`/`filterKey`
+  (`undefined` ≡ pusty zbiór). W `selectors.ts` mieszkają PRYWATNE indeksy
+  per-rewizja, kluczowane NAJWĘŻSZĄ tablicą kolekcji (`tasks`/`people`/
+  `projects`/`clients`/`statuses`+done-set/słowniki; `workload` → po dacie, po
+  (osoba, data), po zadaniu, zasobnik po osobie; `assignments` → po zadaniu i po
+  osobie), więc akcja dotykająca innej kolekcji NIE wychładza indeksu. Poprawność
+  stoi na inwariancie 6 i na reference-preserving merge: ta sama referencja stanu
+  ⇒ ta sama treść, a zmieniona kolekcja to ZAWSZE nowa tablica (reduktor nie
+  mutuje w miejscu). Wyniki są BAJTOWO identyczne (kolejność elementów też — kubły
+  trzymają kolejność tablicy źródłowej, a selektory sortujące sortują KOPIĘ), ale
+  są WSPÓŁDZIELONYMI referencjami: żaden konsument nie może ich mutować
+  (`.sort(`/`.push(` na wyniku selektora jest zakazane — `packDayBlocks` kopiuje).
+- GRANICA SUBSKRYPCJI (2026-07-28): `AppStoreProvider` trzyma JEDEN sklep
+  zewnętrzny (`src/store/externalStore.ts`, `createExternalStore` — instancja per
+  provider, nigdy singleton modułu) czytany przez `useSyncExternalStore`; dispatch
+  odrzucony przez reduktor (ta sama referencja, inwariant 6) NIE powiadamia nikogo.
+  Kontekst sklepu jest ROZDZIELONY (to nie jest mnożenie providerów): `StateContext`
+  (zmienny stan) i `StoreApiContext` (obiekt STAŁY: `dispatch`, `lastActionRef`,
+  `getState`, `subscribe`). `useStore()` składa oba i zachowuje dokładną sygnaturę
+  `{ state, dispatch, lastActionRef }`, więc niezmigrowani konsumenci zachowują się
+  bez zmian; nowe wejścia to `useDispatch()` (zero re-renderów), `useStoreApi()`
+  (odczyt stanu W HANDLERZE, nie w renderze) i `useSelector(selector, isEqual)`
+  z `shallowEqual` (React 18 wbudowany `useSyncExternalStore`, ZERO nowych zależności).
+  Zmigrowane tym przejściem: `useCan`, `TodayAgenda`, `SampleBanner` i trzy
+  dispatch-only miejsca `WeekView` (reszta stron świadomie zostaje na `useStore()`).
+  Udokumentowany kompromis: znika deweloperskie podwójne wołanie reduktora, które
+  robił `useReducer`. Potok zapisu (skip-first/StrictMode, bramka wycofania,
+  koalescencja, konflikt zakładek) biegnie jak dotąd — raz na zatwierdzony stan.
 - `src/store/storage.ts` owns localStorage, migrations, validation/repair on
   load, save outcomes and the same-browser revision envelope.
 - In supabase mode the CLOUD IS AUTHORITATIVE. A diff-based cloud mirror
@@ -418,6 +449,9 @@
 
 ## Relevant tests
 
+`src/store/selectorCache.test.ts` (cache hit/miss, invariant-6 interplay,
+parytet z naiwnym `.filter`/`.sort`), `externalStore.test.ts` (notify tylko przy
+zmianie referencji, bezpieczne wypisanie w trakcie powiadamiania, `shallowEqual`),
 `src/store/activityAttribution.test.ts`, `blockActions.test.ts`,
 `commandValidation.test.ts`, `cloudMerge.test.ts`,
 `saveTaskWorkload.test.ts`,
