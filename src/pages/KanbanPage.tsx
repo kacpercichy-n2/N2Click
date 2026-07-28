@@ -32,6 +32,7 @@ import { IconButton } from '../components/IconButton';
 import { GripVertical, MoreVertical } from '../components/icons';
 import { OverlayLayer, useOverlay } from '../components/useOverlay';
 import { useOpenTask } from '../components/TaskModal';
+import { clientProjectPath } from '../utils/entityPath';
 import { useTouchDragGate } from '../utils/useTouchDragGate';
 import { buildKanbanColumns, buildTaskAssigneeIds } from './kanbanBoard';
 import {
@@ -726,9 +727,11 @@ export function KanbanPage() {
         <div className="kanban-card-top">
           <span className="kanban-card-title">{t.title}</span>
         </div>
+        {/* Ścieżka adresowa idzie WSZĘDZIE tą samą regułą (SY-06): najpierw
+            klient, potem projekt, separator `›`. Zmienia się wyłącznie treść i
+            kolejność tekstu — układ i wymiary karty zostają bez zmian. */}
         <div className="kanban-card-client">
-          {project?.name ?? 'Bez projektu'}
-          {client ? ` · ${client.name}` : ''}
+          {clientProjectPath(client?.name, project?.name ?? 'Bez projektu')}
         </div>
         <div className="kanban-card-badges">
           <PriorityBadge priority={t.priority} />

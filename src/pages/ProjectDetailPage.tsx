@@ -27,7 +27,7 @@ import {
 } from '../store/selectors';
 import { Coin } from '../components/Coin';
 import { StatusBadge } from '../components/StatusBadge';
-import { PlanningBadge } from '../components/PlanningBadge';
+import { PlanningProgress } from '../components/PlanningProgress';
 import { PersonChip } from '../components/PersonChip';
 import { CommentsPanel } from '../components/CommentsPanel';
 import { SaveStatus } from '../components/SaveStatus';
@@ -561,8 +561,16 @@ function ProjectDetail({ projectId }: { projectId: string }) {
                     </Tooltip>
                   )}
                   <StatusBadge status={getStatus(state, t.statusId)} />
+                  {/* Ta sama reguła co na liście zadań: stan rozplanowania to
+                      pasek, nie pigułka. Godziny wiersz pokazuje obok, więc
+                      pasek idzie bez własnego tekstu. */}
                   {t.isDraft !== true && (
-                    <PlanningBadge status={taskPlanningStatus(state, t.id)} />
+                    <PlanningProgress
+                      planned={taskPlannedTotal(state, t.id)}
+                      estimate={t.estimatedHours ?? null}
+                      status={taskPlanningStatus(state, t.id)}
+                      showHours={false}
+                    />
                   )}
                   <span className="muted">
                     {formatShortWithWeekday(t.startDate)} – {formatShortWithWeekday(t.endDate)} ·{' '}

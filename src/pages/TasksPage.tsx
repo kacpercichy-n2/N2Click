@@ -21,7 +21,7 @@ import { PRIORITY_LABELS, TASK_PRIORITIES } from '../utils/priority';
 import { FilterPresets, DEFAULT_CRITERIA } from '../components/FilterPresets';
 import { type FilterChip, type FilterGroup } from '../components/FilterPanel';
 import { FilterBar } from '../components/FilterBar';
-import { ChevronRight, Check, MoreHorizontal, Plus, X } from '../components/icons';
+import { ChevronRight, MoreHorizontal, Plus, X } from '../components/icons';
 import { IconButton } from '../components/IconButton';
 import { useConfirm } from '../components/ConfirmProvider';
 import { buildDeleteConsequence } from '../components/confirmDialog';
@@ -30,11 +30,13 @@ import { PersonChip } from '../components/PersonChip';
 import { Avatar } from '../components/Avatar';
 import { OverlayLayer, useOverlay } from '../components/useOverlay';
 import { MOBILE_NAV_QUERY, useMediaQuery } from '../utils/useMediaQuery';
-import { taskCardPath, visibleAssignees } from './taskCardMobile';
+import { visibleAssignees } from './taskCardMobile';
 import { StatusBadge } from '../components/StatusBadge';
-import { PlanningBadge } from '../components/PlanningBadge';
+import { PlanningProgress } from '../components/PlanningProgress';
 import { PriorityBadge } from '../components/PriorityBadge';
 import { Coin } from '../components/Coin';
+import { clientProjectPath } from '../utils/entityPath';
+import { checklistGlyphs } from '../utils/checklistGlyphs';
 import { formatDuration } from '../utils/time';
 
 function rangeLabel(start: string, end: string): string {
@@ -337,6 +339,7 @@ export function TasksPage() {
   const detailsCategory = detailsTask
     ? getWorkCategory(state, detailsTask.workCategoryId)
     : undefined;
+  const detailsPlanned = detailsTask ? taskPlannedTotal(state, detailsTask.id) : 0;
 
   const openFromDetails = (taskId: string) => {
     setDetailsTaskId(null);
@@ -401,7 +404,14 @@ export function TasksPage() {
             const project = getProject(state, task.projectId);
             const client = project ? getClient(state, project.clientId) : undefined;
             const category = getWorkCategory(state, task.workCategoryId);
-            const checklistDone = task.checklist.filter((c) => c.done).length;
+            const checklist = checklistGlyphs(
+              task.checklist.filter((c) => c.done).length,
+              task.checklist.length,
+            );
+            // Priorytet nie jest już pigułką w wierszu (SY-03): akcent niesie
+            // pasek 3 px przy lewej krawędzi karty (`data-priority` + `::before`
+            // na `.task-card`), a etykietę tekstową — `.sr-only` w treści karty.
+            // Atrybut ustawiamy zawsze; CSS maluje WYŁĄCZNIE `high` i `urgent`.
             if (isMobileNav) {
               // Telefonowa karta: tytuł (max 2 wiersze) → ścieżka projektu →
               // rząd metadanych. Pigułki (status, planowanie, priorytet,
@@ -410,15 +420,21 @@ export function TasksPage() {
               const status = getStatus(state, task.statusId);
               const avatars = visibleAssignees(assignees);
               return (
-                <li key={task.id} className="task-card">
+                <li key={task.id} className="task-card" data-priority={task.priority}>
                   <button
                     type="button"
                     className="task-card-main task-card-m-main"
                     onClick={() => openTask(task.id)}
                   >
                     <span className="task-card-m-title">{task.title}</span>
+                    {task.priority !== 'normal' && (
+                      <span className="sr-only">Priorytet: {PRIORITY_LABELS[task.priority]}</span>
+                    )}
+                    {/* `.task-card-m-project` to skracający wariant tej samej
+                        reguły ścieżki co `.entity-path` (12 px, zwykły tekst) —
+                        ma dodatkowo wielokropek, więc nie dokładamy klasy. */}
                     <span className="task-card-m-project">
-                      {taskCardPath(client?.name, project?.name)}
+                      {clientProjectPath(client?.name, project?.name)}
                     </span>
                     <span className="task-card-m-meta">
                       <span
@@ -480,23 +496,26 @@ export function TasksPage() {
               );
             }
             return (
-              <li key={task.id} className="task-card">
+              <li key={task.id} className="task-card" data-priority={task.priority}>
                 <button
                   type="button"
                   className="task-card-main"
                   onClick={() => openTask(task.id)}
                 >
+                  {/* Maks. dwa akcenty kolorystyczne w wierszu: obrysowana
+                      pigułka = edytowalny status, reszta to zwykły tekst albo
+                      pasek. Priorytet i stan rozplanowania zeszły z pigułek. */}
                   <div className="task-card-top">
                     <span className="task-title">{task.title}</span>
                     <StatusBadge status={getStatus(state, task.statusId)} />
-                    <PlanningBadge status={taskPlanningStatus(state, task.id)} />
-                    {task.priority !== 'normal' && <PriorityBadge priority={task.priority} />}
+                    {task.priority !== 'normal' && (
+                      <span className="sr-only">Priorytet: {PRIORITY_LABELS[task.priority]}</span>
+                    )}
                     {category && <span className="muted task-category">{category.name}</span>}
                     {project && (
-                      <span className="project-badge">
+                      <span className="entity-path">
                         <Coin paid={project.paid} size={13} />
-                        {client ? `${client.name} / ` : ''}
-                        {project.name}
+                        {clientProjectPath(client?.name, project.name)}
                       </span>
                     )}
                   </div>
@@ -509,13 +528,18 @@ export function TasksPage() {
                     )}
                   </div>
                   <div className="task-card-hours">
-                    <strong>zaplanowano {formatDuration(planned)}</strong>
-                    {task.estimatedHours != null && (
-                      <span className="muted"> / szac. {formatDuration(task.estimatedHours)}</span>
-                    )}
-                    {task.checklist.length > 0 && (
+                    <PlanningProgress
+                      planned={planned}
+                      estimate={task.estimatedHours ?? null}
+                      status={taskPlanningStatus(state, task.id)}
+                    />
+                    {checklist && (
                       <span className="muted task-checklist-progress">
-                        <Check size={13} aria-hidden /> {checklistDone}/{task.checklist.length}
+                        <span className="task-checklist-glyphs" aria-hidden>
+                          {checklist.pattern}
+                        </span>{' '}
+                        {checklist.text}
+                        <span className="sr-only"> — {checklist.label}</span>
                       </span>
                     )}
                   </div>
@@ -555,18 +579,19 @@ export function TasksPage() {
           >
             <div className="app-sheet-handle" aria-hidden />
             <p className="task-details-title">{detailsTask.title}</p>
+            {/* Arkusz jest powierzchnią SZCZEGÓŁÓW (odpowiednik modala), więc
+                pigułka priorytetu tu zostaje; stan rozplanowania schodzi na
+                pasek przy wierszu „Zaplanowano”, tak jak na liście. */}
             <div className="task-details-badges">
               <StatusBadge status={getStatus(state, detailsTask.statusId)} />
-              <PlanningBadge status={taskPlanningStatus(state, detailsTask.id)} />
               {detailsTask.priority !== 'normal' && (
                 <PriorityBadge priority={detailsTask.priority} />
               )}
               {detailsCategory && <span className="muted task-category">{detailsCategory.name}</span>}
               {detailsProject && (
-                <span className="project-badge">
+                <span className="entity-path">
                   <Coin paid={detailsProject.paid} size={13} />
-                  {detailsClient ? `${detailsClient.name} / ` : ''}
-                  {detailsProject.name}
+                  {clientProjectPath(detailsClient?.name, detailsProject.name)}
                 </span>
               )}
             </div>
@@ -577,7 +602,15 @@ export function TasksPage() {
               </div>
               <div className="task-details-row">
                 <dt className="muted">Zaplanowano</dt>
-                <dd>{formatDuration(taskPlannedTotal(state, detailsTask.id))}</dd>
+                <dd>
+                  {formatDuration(detailsPlanned)}{' '}
+                  <PlanningProgress
+                    planned={detailsPlanned}
+                    estimate={detailsTask.estimatedHours ?? null}
+                    status={taskPlanningStatus(state, detailsTask.id)}
+                    showHours={false}
+                  />
+                </dd>
               </div>
               {detailsTask.estimatedHours != null && (
                 <div className="task-details-row">

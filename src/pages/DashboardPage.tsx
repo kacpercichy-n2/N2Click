@@ -39,6 +39,7 @@ import {
   overdueTasksForPerson,
   overloadedDatesForPersonInRange,
   rangeAvailabilityForPerson,
+  taskPlannedTotal,
   taskPlanningStatus,
   todayAgendaForPerson,
   unplannedTasksForPerson,
@@ -46,7 +47,7 @@ import {
   weekBlocksForPerson,
 } from '../store/selectors';
 import { Avatar } from '../components/Avatar';
-import { PlanningBadge } from '../components/PlanningBadge';
+import { PlanningProgress } from '../components/PlanningProgress';
 import { TodayAgendaList } from '../components/TodayAgenda';
 import { useOpenTask } from '../components/TaskModal';
 import { Tooltip } from '../components/Tooltip';
@@ -451,7 +452,14 @@ export function DashboardPage() {
               <button type="button" className="dash-row" onClick={() => openTask(task.id)}>
                 <span className="dash-row-name">{task.title}</span>
                 <span className="agenda-meta">{taskMeta(task)}</span>
-                <PlanningBadge status={taskPlanningStatus(state, task.id)} />
+                {/* Stan rozplanowania jako pasek, nie pigułka — ta sama reguła
+                    co na liście zadań i karcie projektu. */}
+                <PlanningProgress
+                  planned={taskPlannedTotal(state, task.id)}
+                  estimate={task.estimatedHours ?? null}
+                  status={taskPlanningStatus(state, task.id)}
+                  showHours={false}
+                />
                 <span className="my-work-hours">{formatDuration(hours)}</span>
               </button>
             </li>

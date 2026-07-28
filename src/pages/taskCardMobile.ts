@@ -1,12 +1,14 @@
 // Czyste pomocniki telefonowej karty zadania (lista „Zadania”). Bez Reacta,
-// bez store'a — wejściem są gotowe listy i nazwy, więc całość testuje się w
+// bez store'a — wejściem są gotowe listy, więc całość testuje się w
 // środowisku `node` (wzorzec `dashboardPanels.ts` / `taskModalSections.ts`).
 //
-// Reguły zakodowane tutaj:
-// - trzyrzędowa karta ma miejsce na KILKA awatarów, nie na wszystkie: pokazuje
-//   pierwsze `MAX_CARD_AVATARS` osób, a resztę zwija do plakietki „+N”,
-// - ścieżka projektu na karcie to ZWYKŁY tekst „Klient / Projekt”, nigdy
-//   monospace'owa plakietka `.project-badge` (to ona rozpychała kartę).
+// Reguła zakodowana tutaj: trzyrzędowa karta ma miejsce na KILKA awatarów, nie
+// na wszystkie — pokazuje pierwsze `MAX_CARD_AVATARS` osób, a resztę zwija do
+// plakietki „+N”.
+//
+// Ścieżka adresowa karty przeniosła się do `src/utils/entityPath.ts`
+// (`clientProjectPath`, separator `›`) — jest teraz WSPÓLNA dla listy zadań,
+// arkusza szczegółów i Kanbana, więc nie ma tu jej lokalnej kopii.
 
 /** Ile awatarów mieści się w rzędzie metadanych, zanim wchodzi „+N”. */
 export const MAX_CARD_AVATARS = 3;
@@ -30,29 +32,4 @@ export function visibleAssignees<T>(
     shown: people.slice(0, limit),
     extra: Math.max(0, people.length - limit),
   };
-}
-
-/** Nazwa jest „obecna” tylko wtedy, gdy niesie treść — puste pole to brak. */
-function present(name: string | undefined): string {
-  return (name ?? '').trim();
-}
-
-/**
- * Ścieżka projektu w jednym wierszu karty:
- * - klient i projekt → „Klient / Projekt”,
- * - sam projekt (osierocony / nieznany klient) → „Projekt”,
- * - sam klient (w praktyce niemożliwe — klienta czytamy przez projekt — ale
- *   degradujemy miękko) → „Klient”,
- * - nic → „—”.
- */
-export function taskCardPath(
-  clientName: string | undefined,
-  projectName: string | undefined,
-): string {
-  const client = present(clientName);
-  const project = present(projectName);
-  if (client !== '' && project !== '') return `${client} / ${project}`;
-  if (project !== '') return project;
-  if (client !== '') return client;
-  return '—';
 }

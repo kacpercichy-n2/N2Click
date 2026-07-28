@@ -139,6 +139,34 @@
   Jeden region `role="status"` na stronie ogłasza podniesienie, zmianę celu,
   upuszczenie i anulowanie; ten sam wskaźnik (`.kanban-col.drag-over` +
   `.kanban-drop-indicator`) obsługuje oba tryby.
+- DIETA PIGUŁEK W WIERSZU LISTY (SY-03/SY-06, 2026-07-28): jeden typ danych =
+  jeden kształt. OBRYSOWANA pigułka to WYŁĄCZNIE edytowalny status
+  (`StatusBadge`); atrybut stały niesie akcent niekolorowy, a wartość wyliczona
+  jest zwykłym tekstem albo paskiem. Dlatego w wierszach list (`TasksPage`,
+  `ProjectDetailPage`, `DashboardPage`) NIE MA już `PlanningBadge` ani
+  `PriorityBadge`: priorytet to `data-priority` na `.task-card` + pasek 3 px
+  (`::before`, malowany tylko dla `high`/`urgent`; etykietę niesie `.sr-only`),
+  a stan rozplanowania to `src/components/PlanningProgress.tsx` na czystym
+  `src/utils/planningProgress.ts` (`planningProgress`/`planningProgressLabel` +
+  test w node: brak szacunku ⇒ `ratio: null` i BRAK paska, szerokość przycięta
+  do 100 %, `PROGRESS_EPS` = 1e-9 zdejmuje dryf 0,1 + 0,2). Pasek NIE MA koloru
+  poniżej 100 %: tony `none`/`under`/`full` zostają neutralne (`--text-muted`),
+  a JEDYNY stan kolorowy w CSS to `over` (`--n2-danger` + `--n2-danger-soft` na
+  torze) — zielony pasek na każdym rozplanowanym zadaniu byłby tym samym
+  szumem, co pigułka „częściowo”. Tony `under`/`full` żyją dalej w module TS i
+  w atrybucie `data-tone` jako semantyka, nie jako farba.
+  To WARSTWA PREZENTACJI — `planningStatusForTotals` /
+  `taskPlanningStatus` zostają jedynym źródłem stanu i idą do paska osobnym
+  propsem `status`, żeby niuans zasobnika został w `.sr-only`. Pigułka
+  `.planning-badge` żyje dalej WYŁĄCZNIE w TaskModalu (tam są szczegóły).
+  Postęp listy kontrolnej to wzór glifów (`src/utils/checklistGlyphs.ts`,
+  `◍◍◌ 2/3`, limit 5 glifów, glify `aria-hidden`). Ścieżka adresowa ma JEDNO
+  źródło prawdy — `clientProjectPath` w `src/utils/entityPath.ts` (dawne
+  `taskCardPath`): kolejność Klient → Projekt, separator `›`, klasa
+  `.entity-path` (12 px, bez wersalików, bez monospace, bez ramki/tła) w liście
+  zadań, arkuszu szczegółów i na Kanbanie (tam zmienia się TYLKO treść i
+  kolejność tekstu `.kanban-card-client` — wymiary kart i awatary bez zmian).
+  `.project-badge` zostaje przy typach usług, działach, dokumentach i szkicach.
 - `src/onboarding/catalog.ts` owns copy, roles and route mapping; components
   expose stable `data-tour` anchors only.
 - Powłoka modali (TaskModal, TicketModal, EventModal, ChangelogModal) jest

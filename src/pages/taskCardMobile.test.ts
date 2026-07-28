@@ -1,7 +1,9 @@
-// Testy czystych pomocników telefonowej karty zadania: limit awatarów („+N”)
-// i ścieżka „Klient / Projekt”. Bez Reacta i bez localStorage.
+// Testy czystych pomocników telefonowej karty zadania: limit awatarów („+N”).
+// Ścieżka adresowa („Klient › Projekt”) wyprowadziła się do
+// `src/utils/entityPath.ts` — jej testy stoją obok tamtego modułu.
+// Bez Reacta i bez localStorage.
 import { describe, expect, it } from 'vitest';
-import { MAX_CARD_AVATARS, taskCardPath, visibleAssignees } from './taskCardMobile';
+import { MAX_CARD_AVATARS, visibleAssignees } from './taskCardMobile';
 
 function people(n: number): string[] {
   return Array.from({ length: n }, (_, i) => `osoba-${i}`);
@@ -43,28 +45,5 @@ describe('visibleAssignees', () => {
     const list = people(5);
     visibleAssignees(list);
     expect(list).toHaveLength(5);
-  });
-});
-
-describe('taskCardPath', () => {
-  it('klient i projekt dają „Klient / Projekt”', () => {
-    expect(taskCardPath('Nowa Era', 'Strona WWW')).toBe('Nowa Era / Strona WWW');
-  });
-
-  it('sam projekt renderuje się bez separatora', () => {
-    expect(taskCardPath(undefined, 'Strona WWW')).toBe('Strona WWW');
-  });
-
-  it('sam klient degraduje się do nazwy klienta', () => {
-    expect(taskCardPath('Nowa Era', undefined)).toBe('Nowa Era');
-  });
-
-  it('brak obu daje myślnik', () => {
-    expect(taskCardPath(undefined, undefined)).toBe('—');
-  });
-
-  it('puste i białe nazwy liczą się jako brak', () => {
-    expect(taskCardPath('', '')).toBe('—');
-    expect(taskCardPath('   ', 'Strona WWW')).toBe('Strona WWW');
   });
 });

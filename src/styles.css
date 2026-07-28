@@ -942,6 +942,8 @@ textarea {
 .task-card {
   display: flex;
   align-items: stretch;
+  /* Kotwica dla paska priorytetu (`::before`). */
+  position: relative;
   background: var(--card-bg);
   border: 1px solid var(--n2-border);
   border-radius: var(--n2-radius-md);
@@ -979,6 +981,23 @@ textarea {
   font-weight: 600;
   color: var(--text);
 }
+/* ---- Ścieżka adresowa „Klient › Projekt” (SY-06) --------------------------
+   JEDNA reguła dla całej aplikacji: kolejność klient → projekt (tekst składa
+   `clientProjectPath` w `src/utils/entityPath.ts`), zwykły tekst 12 px, bez
+   wersalików, bez monospace, bez ramki i tła. Plakietka `.project-badge`
+   zostaje WYŁĄCZNIE przy typach usług, działach, dokumentach i szkicach —
+   tam niesie kategorię, a nie adres.
+   `.task-card-m-project` (telefon) to skracający wariant tej samej reguły. */
+.entity-path {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--text-muted);
+}
+
 .project-badge {
   display: inline-flex;
   align-items: center;
@@ -1030,6 +1049,65 @@ textarea {
   font-size: var(--n2-type-sm);
   font-family: var(--n2-font-data);
   font-variant-numeric: tabular-nums;
+}
+
+/* ---- Priorytet jako pasek, nie pigułka (SY-03) ----------------------------
+   Jeden typ danych = jeden kształt: obrysowana pigułka to EDYTOWALNY status,
+   a stały atrybut zadania niesie 3-pikselowy pasek przy lewej krawędzi karty.
+   Malujemy wyłącznie „Wysoki” i „Pilny” — „Niski”/„Normalny” nie są alarmem,
+   więc w wierszu nie mają akcentu (etykietę tekstową niesie `.sr-only`). */
+.task-card[data-priority='high']::before,
+.task-card[data-priority='urgent']::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--n2-warning);
+  pointer-events: none;
+}
+.task-card[data-priority='urgent']::before {
+  background: var(--n2-danger);
+}
+
+/* ---- Rozplanowanie godzin jako pasek postępu (AT-16) ----------------------
+   Zastąpił pigułkę `.planning-badge` w wierszach list (ta zostaje w
+   TaskModalu). Szerokość liczy `utils/planningProgress.ts` (przycięta do
+   100 %); brak szacunku = brak paska.
+
+   REGUŁA KOLORU: pasek NIE MA koloru poniżej 100 %. `none`, `under` i `full`
+   zostają neutralne (`--text-muted` z reguły bazowej) — zielony pasek na
+   każdym rozplanowanym zadaniu byłby tym samym szumem, co pigułka
+   „częściowo” na 7 z 10 kart, tylko w innym kształcie. JEDYNY stan kolorowy
+   to `over` (>100 %), czyli jedyny prawdziwy alarm w tym wierszu.
+   Tony `under`/`full` żyją dalej w `data-tone` (i w module TS) jako
+   semantyka dla czytnika ekranu i przyszłych użyć — nie jako farba. */
+.planning-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.planning-progress-bar {
+  flex: none;
+  width: 56px;
+  height: 4px;
+  border-radius: var(--n2-radius-pill);
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+.planning-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--text-muted);
+}
+.planning-progress-bar[data-tone='over'] {
+  background: var(--n2-danger-soft);
+}
+.planning-progress-bar[data-tone='over'] .planning-progress-fill {
+  background: var(--n2-danger);
 }
 .task-delete {
   align-self: center;
@@ -3029,12 +3107,19 @@ option {
   font-variant-numeric: tabular-nums;
 }
 
-/* Task-card checklist progress + category label. */
+/* Task-card checklist progress + category label. Postęp listy kontrolnej to
+   WZÓR GLIFÓW („◍◍◌ 2/3”, `utils/checklistGlyphs.ts`) zamiast kolorowej
+   pigułki z ikoną — same glify są `aria-hidden`, liczby niesie tekst obok. */
 .task-checklist-progress {
   display: inline-flex;
   align-items: center;
   gap: 3px;
   margin-left: 8px;
+}
+.task-checklist-glyphs {
+  letter-spacing: 0.06em;
+  /* Glify są ozdobą, więc mogą być słabsze niż liczby obok. */
+  color: var(--n2-text-faint);
 }
 .task-category {
   font-size: var(--n2-type-xs);
