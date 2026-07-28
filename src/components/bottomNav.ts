@@ -16,6 +16,18 @@ export const BIN_SHEET_PARAM = 'zasobnik';
  */
 export const BIN_TAB_TARGET = `/calendar?${BIN_SHEET_PARAM}=1`;
 
+/** Nazwa parametru URL ustawiającego kotwicę (dzień) kalendarza. */
+export const CALENDAR_DAY_PARAM = 'dzien';
+
+/**
+ * Deep-link do konkretnego dnia w kalendarzu („+2 więcej" w pasku tygodnia na
+ * Panelu). Parametr konsumuje i czyści `CalendarPage` (`replace: true`), więc
+ * dzień jest tylko impulsem startowym, nie drugim źródłem prawdy o kotwicy.
+ */
+export function calendarDayTarget(date: string): string {
+  return `/calendar?${CALENDAR_DAY_PARAM}=${date}`;
+}
+
 /**
  * Czy `pathname` leży w gałęzi trasy `base`. Porównanie jest SEGMENTOWE:
  * `/tasks` łapie `/tasks` i `/tasks/42`, ale nie `/tasksy`. Zwykłe

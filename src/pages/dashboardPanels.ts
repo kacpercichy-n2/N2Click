@@ -7,6 +7,9 @@
 //   feeds it `unreadNotificationsForPerson` mapped through `notificationEntry`.
 // - The Zespół header shows a counter only when there is at least one coworker:
 //   `Zespół` with 0, `Zespół (N)` otherwise.
+// - A collapsible tile (Powiadomienia, Alerty) with nothing to show renders as a
+//   one-line bar instead of a full card (`dashTileView`); the Zasobnik CTA names
+//   the actual work to plan (`binPlanCtaLabel`).
 // - Below the phone breakpoint the Panel is a purpose-ordered STACK, not the
 //   desktop grid: `mobileDashboardOrder` owns both the order and the emptiness
 //   rule (a tile whose whole content would be an empty-state sentence is not
@@ -132,6 +135,62 @@ export function visibleNotifications(
 /** Zespół header label: bare when empty, counted otherwise. */
 export function teamHeaderLabel(coworkerCount: number): string {
   return coworkerCount > 0 ? `Zespół (${coworkerCount})` : 'Zespół';
+}
+
+/** Kafelki, które PUSTE zwijają się do belki zamiast zajmować cały rząd. */
+export type CollapsibleTileId = 'notifications' | 'alerts';
+
+/** Jak wyrenderować kafelek zwijalny: pełna karta czy jednolinijkowa belka. */
+export interface DashTileView {
+  /** true = belka (~40 px, `align-self: start`), false = karta jak dotąd. */
+  collapsed: boolean;
+  /** Nagłówek: sam tytuł dla karty, tytuł + stan dla belki. */
+  label: string;
+}
+
+/** Tytuł kafelka (pełna karta) i tekst belki (kafelek pusty). */
+const COLLAPSIBLE_TILE_LABELS: Record<CollapsibleTileId, { title: string; empty: string }> = {
+  notifications: { title: 'Powiadomienia', empty: 'Powiadomienia — brak nowych' },
+  alerts: { title: 'Alerty', empty: 'Alerty — czysto ✓' },
+};
+
+/**
+ * Decyzja „karta czy belka" dla kafelka zwijalnego (OP-01/TY-33). Pusty kafelek
+ * na desktopie nie znika (rząd siatki musi mieć obie kolumny), tylko kurczy się
+ * do jednej linii — odzyskana wysokość idzie do „Zadania na dziś"/„Twój tydzień",
+ * dzięki czemu „Zasobnik" wchodzi nad zgięcie. Z treścią kafelek renderuje się
+ * dokładnie jak dotąd. Na telefonie pusty kafelek nadal NIE trafia do DOM-u
+ * (`mobileDashboardOrder`), więc ta funkcja obsługuje tam wyłącznie `collapsed:
+ * false`.
+ */
+export function dashTileView(id: CollapsibleTileId, hasContent: boolean): DashTileView {
+  const labels = COLLAPSIBLE_TILE_LABELS[id];
+  return hasContent
+    ? { collapsed: false, label: labels.title }
+    : { collapsed: true, label: labels.empty };
+}
+
+/** Najdłuższy tytuł zadania wpuszczony do etykiety CTA (dalej → wielokropek). */
+const CTA_TITLE_MAX = 40;
+
+/** Pierwszy wiersz zasobnika, z którego bierze się konkretne CTA planowania. */
+export interface BinCtaRow {
+  title: string;
+  hours: number;
+}
+
+/**
+ * Etykieta przycisku planowania w kafelku „Zasobnik" (AT-19): zamiast ogólnego
+ * „Zaplanuj w kalendarzu" konkret — „Zaplanuj 2h — Montaż". Bez wiersza (pusty
+ * zasobnik) albo bez sensownych godzin/tytułu wraca ogólna etykieta, żeby
+ * przycisk nigdy nie kłamał o pracy do rozplanowania.
+ */
+export function binPlanCtaLabel(row?: BinCtaRow): string {
+  const title = row?.title.trim() ?? '';
+  const hours = row?.hours ?? 0;
+  if (!title || !(hours > 0)) return 'Zaplanuj w kalendarzu';
+  const short = title.length > CTA_TITLE_MAX ? `${title.slice(0, CTA_TITLE_MAX - 1)}…` : title;
+  return `Zaplanuj ${formatDuration(hours)} — ${short}`;
 }
 
 /** Every Panel tile that can appear in the phone stack. */

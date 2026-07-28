@@ -319,7 +319,17 @@
   `mobileDashboardOrder` (`src/pages/dashboardPanels.ts`), kafelek, którego cała
   treść byłaby pustym stanem, NIE istnieje w DOM-ie — więc kotwica `data-tour`
   takiego kafelka też nie (Obciążenie jako jedna linia i Tydzień jako siedem
-  pigułek są zawsze). Siatka desktopowa bez zmian. Poniżej 760 px powłoka nie
+  pigułek są zawsze). Na desktopie rzędy siatki to kolejno `today workload`,
+  `notifications team`, `week`, `bin alerts` — „Zadania na dziś" są PIERWSZYM
+  elementem treści. Pusty kafelek Powiadomień/Alertów nie znika, tylko kurczy
+  się do belki ~40 px (`dashTileView` + `.dash-card-bar`, `align-self: start`)
+  i ZACHOWUJE swoją kotwicę `data-tour`. Nad siatką stoi najwyżej jedna linia
+  dziennika zmian z jednym CTA („Nowości 20–21.07 →"), widoczna tylko dopóki
+  `changelogUnread` (potwierdzenie trzyma urządzeniowe `changelogSeenId` w
+  `utils/uiPrefs.ts`, nie stan aplikacji). Pasek tygodnia ma pięć kolumn dni
+  roboczych i wąską kolumnę weekendu (dwie belki 24 px); „+N więcej" oraz belki
+  weekendu prowadzą do dnia przez `calendarDayTarget` → `/calendar?dzien=…`,
+  który `CalendarPage` konsumuje i czyści (`replace`). Poniżej 760 px powłoka nie
   ma szuflady ani hamburgera:
   nawigację niesie `.app-bottom-nav` — pięć zakładek (Panel, Kalendarz,
   Zadania, Zasobnik jako deep-link `/calendar?zasobnik=1`, „Więcej”) o

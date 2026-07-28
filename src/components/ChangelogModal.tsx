@@ -7,6 +7,7 @@
 // sterowany zwykłym stanem (`open`/`onClose`), bez parametru w URL i strażnika
 // nawigacji.
 import { useCallback, useId } from 'react';
+import { Link } from 'react-router-dom';
 import { AnimatePresence, m } from 'motion/react';
 import { CHANGELOG, changelogRangeLabel } from '../data/changelog';
 import type { ChangelogEntry, ChangelogItem } from '../data/changelog';
@@ -90,6 +91,12 @@ function ChangelogModalShell({ onClose }: { onClose: () => void }) {
                 <ChangelogEntryBlock key={entry.id} entry={entry} />
               ))}
             </div>
+            {/* Panel ma już tylko JEDNO CTA („Nowości …"), więc pełna strona
+             *  historii jest linkowana stąd — inaczej trasa `/changelog`
+             *  zostałaby bez wejścia z aplikacji. */}
+            <Link to="/changelog" className="link-btn changelog-modal-full" onClick={requestClose}>
+              Zobacz pełną historię →
+            </Link>
           </div>
         </m.div>
       </div>

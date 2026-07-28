@@ -5,6 +5,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_NOTIFICATIONS,
+  binPlanCtaLabel,
+  dashTileView,
   mobileDashboardOrder,
   notificationEntry,
   teamHeaderLabel,
@@ -149,6 +151,70 @@ describe('teamHeaderLabel', () => {
 
   it('counts many coworkers', () => {
     expect(teamHeaderLabel(7)).toBe('Zespół (7)');
+  });
+});
+
+describe('dashTileView (kafelek pusty => belka)', () => {
+  it('Powiadomienia z treścią: pełna karta, sam tytuł', () => {
+    expect(dashTileView('notifications', true)).toEqual({
+      collapsed: false,
+      label: 'Powiadomienia',
+    });
+  });
+
+  it('Powiadomienia bez treści: belka z opisem stanu', () => {
+    expect(dashTileView('notifications', false)).toEqual({
+      collapsed: true,
+      label: 'Powiadomienia — brak nowych',
+    });
+  });
+
+  it('Alerty z treścią: pełna karta, sam tytuł', () => {
+    expect(dashTileView('alerts', true)).toEqual({ collapsed: false, label: 'Alerty' });
+  });
+
+  it('Alerty bez treści: belka „czysto ✓"', () => {
+    expect(dashTileView('alerts', false)).toEqual({ collapsed: true, label: 'Alerty — czysto ✓' });
+  });
+
+  it('zwinięcie zależy WYŁĄCZNIE od braku treści, nie od kafelka', () => {
+    for (const id of ['notifications', 'alerts'] as const) {
+      expect(dashTileView(id, true).collapsed).toBe(false);
+      expect(dashTileView(id, false).collapsed).toBe(true);
+      expect(dashTileView(id, false).label).not.toBe(dashTileView(id, true).label);
+    }
+  });
+});
+
+describe('binPlanCtaLabel', () => {
+  it('bez wiersza (pusty zasobnik) => etykieta ogólna', () => {
+    expect(binPlanCtaLabel()).toBe('Zaplanuj w kalendarzu');
+  });
+
+  it('konkret: godziny + tytuł zadania', () => {
+    expect(binPlanCtaLabel({ title: 'Montaż', hours: 2 })).toBe('Zaplanuj 2h — Montaż');
+  });
+
+  it('godziny formatuje wspólny helper (kwadranse)', () => {
+    expect(binPlanCtaLabel({ title: 'Retusz', hours: 1.25 })).toBe('Zaplanuj 1h 15m — Retusz');
+  });
+
+  it('pusty tytuł albo zerowe godziny => etykieta ogólna (CTA nie kłamie)', () => {
+    expect(binPlanCtaLabel({ title: '   ', hours: 2 })).toBe('Zaplanuj w kalendarzu');
+    expect(binPlanCtaLabel({ title: 'Montaż', hours: 0 })).toBe('Zaplanuj w kalendarzu');
+    expect(binPlanCtaLabel({ title: 'Montaż', hours: -1 })).toBe('Zaplanuj w kalendarzu');
+  });
+
+  it('bardzo długi tytuł skraca się wielokropkiem', () => {
+    const label = binPlanCtaLabel({ title: 'A'.repeat(60), hours: 3 });
+    expect(label.startsWith('Zaplanuj 3h — ')).toBe(true);
+    expect(label.endsWith('…')).toBe(true);
+    expect(label).toBe(`Zaplanuj 3h — ${'A'.repeat(39)}…`);
+  });
+
+  it('tytuł na granicy długości zostaje nietknięty', () => {
+    const title = 'B'.repeat(40);
+    expect(binPlanCtaLabel({ title, hours: 1 })).toBe(`Zaplanuj 1h — ${title}`);
   });
 });
 

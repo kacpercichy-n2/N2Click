@@ -1,10 +1,19 @@
 // Panel — the logged-in worker's morning page. A 2-column grid (see
-// `.dash-welcome-grid`): notifications slot + compact workload donuts, then
-// today's tasks + the real team roster, then a full-width week strip, then the
-// Zasobnik (unscheduled work) + Alerty tiles merged in from the former „Moja
-// praca" page. All reads go through selectors; nothing here mutates or persists.
-// Powiadomienia is a UI slot only (no data source yet — it receives an empty
-// list).
+// `.dash-welcome-grid`): today's tasks + compact workload donuts, then the
+// notifications slot + the real team roster, then a full-width week strip, then
+// the Zasobnik (unscheduled work) + Alerty tiles merged in from the former „Moja
+// praca" page. All reads go through selectors; nothing here mutates or persists
+// planner data (jedyny zapis to urządzeniowa preferencja UI: potwierdzony wpis
+// dziennika zmian).
+//
+// Trzy reguły „ciszy" Panelu (OP-01/AT-17/AT-19):
+// - PUSTE Powiadomienia/Alerty kurczą się do belki ~40 px (`dashTileView`) i nie
+//   rozciągają rzędu (`align-self: start`); z treścią renderują się jak dotąd.
+// - Dziennik zmian to JEDNA linia z JEDNYM CTA, widoczna tylko dopóki najnowszy
+//   wpis jest nieprzeczytany na tym urządzeniu; „Zadania na dziś" są pierwszym
+//   elementem treści.
+// - CTA zasobnika jest przyciskiem akcentowym z konkretem („Zaplanuj 2h — …"),
+//   a w pasku tygodnia weekend to dwie belki 24 px i „+N więcej" prowadzi do dnia.
 //
 // Poniżej `MOBILE_NAV_QUERY` ta sama treść układa się w STOS „po co tu jestem”
 // (`dash-m-stack`): kolejność i pustka kafelków pochodzą z czystego
@@ -15,10 +24,10 @@
 import { Fragment, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { m, useReducedMotion } from 'motion/react';
-import { Megaphone } from '../components/icons';
 import { useStore } from '../store/AppStore';
-import { CHANGELOG, changelogRangeLabel, isSameDayRange } from '../data/changelog';
+import { CHANGELOG, changelogCtaLabel, changelogUnread } from '../data/changelog';
 import { ChangelogModal } from '../components/ChangelogModal';
+import { calendarDayTarget } from '../components/bottomNav';
 import {
   binTaskRowsForPerson,
   currentUser,
@@ -54,13 +63,17 @@ import {
 } from '../utils/dates';
 import { formatMinutes, formatDuration } from '../utils/time';
 import { MOBILE_NAV_QUERY, useMediaQuery } from '../utils/useMediaQuery';
+import { loadUiPrefs, updateUiPrefs } from '../utils/uiPrefs';
 import type { Task } from '../types';
 import {
+  binPlanCtaLabel,
+  dashTileView,
   mobileDashboardOrder,
   notificationEntry,
   teamHeaderLabel,
   visibleNotifications,
   workloadSummaryLine,
+  type CollapsibleTileId,
   type DashTileId,
   type NotificationEntry,
   type WorkloadSegment,
@@ -185,6 +198,12 @@ export function DashboardPage() {
   const me = currentUser(state);
   const today = todayStr();
   const [changelogOpen, setChangelogOpen] = useState(false);
+  // Który wpis dziennika zmian jest już potwierdzony NA TYM URZĄDZENIU — pasek
+  // „Nowości" znika po otwarciu popoutu i nie wraca aż do kolejnego wpisu
+  // (AT-17). To preferencja UI (uiPrefs), nie dane aplikacji.
+  const [changelogSeenId, setChangelogSeenId] = useState<string | undefined>(
+    () => loadUiPrefs().changelogSeenId,
+  );
   // Rozwinięty podgląd powiadomienia (max jeden naraz). Hook MUSI stać przed
   // wczesnym returnem dla braku działającego użytkownika (kolejność hooków).
   // Oznaczenie wiersza jako przeczytanego usuwa go z listy — porównanie id
@@ -247,6 +266,15 @@ export function DashboardPage() {
   });
   const shownNotifications = visibleNotifications(notifications);
 
+  // Otwarcie popoutu JEST potwierdzeniem wpisu — zapisujemy je urządzeniowo,
+  // więc pasek „Nowości" nie wraca po przeładowaniu.
+  const openChangelog = (): void => {
+    setChangelogOpen(true);
+    if (!latestChange) return;
+    setChangelogSeenId(latestChange.id);
+    updateUiPrefs({ changelogSeenId: latestChange.id });
+  };
+
   const openNotification = (entry: NotificationEntry): void => {
     dispatch({ type: 'MARK_NOTIFICATION_READ', notificationId: entry.id });
     const target = entry.target;
@@ -257,6 +285,11 @@ export function DashboardPage() {
   // Workload donuts (today + this week) — both read the authoritative
   // availability selectors so a booked zero-availability day stays dangerous.
   const week = weekDays(today);
+  // Pasek tygodnia (desktop): dni robocze mają pełne kolumny, weekend schodzi do
+  // dwóch belek 24 px (AT-19). Podział idzie przez `isWeekend`, nie przez indeks,
+  // więc zmiana pierwszego dnia tygodnia niczego tu nie psuje.
+  const weekdays = week.filter((d) => !isWeekend(d));
+  const weekendDays = week.filter(isWeekend);
   const todayAvail = dayAvailabilityForPerson(state, me.id, today);
   const weekAvail = rangeAvailabilityForPerson(state, me.id, week);
 
@@ -285,23 +318,45 @@ export function DashboardPage() {
   // `className`, więc zmiana mobilna nie może po cichu przestawić desktopu.
   // Kotwice `data-tour` (onboarding, src/onboarding/catalog.ts) siedzą wewnątrz.
 
-  const renderNotificationsTile = (className: string) => (
-    <m.div className={className} variants={dashCardVariants}>
-      <div className="dash-card-head">
-        <h2>Powiadomienia</h2>
-        {unreadNotifications.length > 0 && (
-          <button
-            type="button"
-            className="link-btn"
-            onClick={() => dispatch({ type: 'MARK_ALL_NOTIFICATIONS_READ' })}
-          >
-            Oznacz wszystkie
-          </button>
-        )}
-      </div>
-      {shownNotifications.length === 0 ? (
-        <p className="field-hint">Brak nowych powiadomień</p>
-      ) : (
+  /** Pusty kafelek zwijalny: belka ~40 px zamiast karty na cały rząd (OP-01).
+   *  Kotwica `data-tour` zostaje tu TAKA SAMA jak w wersji pełnej — onboarding
+   *  szuka jej niezależnie od tego, czy kafelek ma treść. */
+  const renderCollapsedTile = (
+    className: string,
+    id: CollapsibleTileId,
+    label: string,
+    tour?: string,
+  ) => (
+    <m.div
+      className={`${className} dash-card-bar`}
+      variants={dashCardVariants}
+      data-tour={tour}
+      data-tile={id}
+    >
+      <h2 className="dash-card-bar-title">{label}</h2>
+    </m.div>
+  );
+
+  const notificationsView = dashTileView('notifications', shownNotifications.length > 0);
+  const alertsView = dashTileView('alerts', !noAlerts);
+
+  const renderNotificationsTile = (className: string) =>
+    notificationsView.collapsed ? (
+      renderCollapsedTile(className, 'notifications', notificationsView.label)
+    ) : (
+      <m.div className={className} variants={dashCardVariants}>
+        <div className="dash-card-head">
+          <h2>{notificationsView.label}</h2>
+          {unreadNotifications.length > 0 && (
+            <button
+              type="button"
+              className="link-btn"
+              onClick={() => dispatch({ type: 'MARK_ALL_NOTIFICATIONS_READ' })}
+            >
+              Oznacz wszystkie
+            </button>
+          )}
+        </div>
         <ul className="dash-list">
           {shownNotifications.map((n) => {
             const expanded = expandedNotifId === n.id;
@@ -359,9 +414,8 @@ export function DashboardPage() {
             );
           })}
         </ul>
-      )}
-    </m.div>
-  );
+      </m.div>
+    );
 
   const renderTodayTile = (className: string) => (
     <m.div className={className} variants={dashCardVariants} data-tour="home.today">
@@ -404,20 +458,26 @@ export function DashboardPage() {
           ))}
         </ul>
       )}
+      {/* AT-19: prawdziwy przycisk akcentowy (≥36 px) z KONKRETEM — „Zaplanuj 2h
+       *  — <tytuł>" dla pierwszego wiersza zasobnika; przy pustym zasobniku
+       *  zostaje etykieta ogólna. Cel („/calendar") bez zmian. */}
       <div className="dash-card-foot">
-        <Link to="/calendar" className="link-btn">
-          Zaplanuj w kalendarzu →
+        <Link to="/calendar" className="btn primary dash-plan-cta">
+          {binPlanCtaLabel(
+            binRows[0] ? { title: binRows[0].task.title, hours: binRows[0].hours } : undefined,
+          )}{' '}
+          →
         </Link>
       </div>
     </m.div>
   );
 
-  const renderAlertsTile = (className: string) => (
-    <m.div className={className} variants={dashCardVariants} data-tour="home.alerts">
-      <h2>Alerty</h2>
-      {noAlerts ? (
-        <p className="muted">Brak alertów.</p>
-      ) : (
+  const renderAlertsTile = (className: string) =>
+    alertsView.collapsed ? (
+      renderCollapsedTile(className, 'alerts', alertsView.label, 'home.alerts')
+    ) : (
+      <m.div className={className} variants={dashCardVariants} data-tour="home.alerts">
+        <h2>{alertsView.label}</h2>
         <div className="my-work-alerts">
           {overdue.length > 0 && (
             <div className="my-work-alert-group">
@@ -483,9 +543,8 @@ export function DashboardPage() {
             </div>
           )}
         </div>
-      )}
-    </m.div>
-  );
+      </m.div>
+    );
 
   // ——— Stos telefonu ————————————————————————————————————————————————
   // Flagi liczone TYLKO na telefonie (desktop nie płaci za selektor agendy).
@@ -610,33 +669,15 @@ export function DashboardPage() {
         <p className="dash-date">{formatRowLabel(today)}</p>
       </div>
 
-      {latestChange && (
-        <m.div
-          className="changelog-bar"
-          initial={{ opacity: 0, y: -6 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.24, ease: 'easeOut' }}
-        >
-          <Megaphone size={18} className="changelog-bar-icon" aria-hidden />
-          <span className="changelog-bar-text">
-            Zmiany i fixy wprowadzone{' '}
-            {isSameDayRange(latestChange.dateFrom, latestChange.dateTo) ? 'w dniu' : 'w dniach'}{' '}
-            <strong>{changelogRangeLabel(latestChange.dateFrom, latestChange.dateTo)}</strong>
-            <span className="changelog-bar-summary">{latestChange.summary}</span>
-          </span>
-          <span className="changelog-bar-actions">
-            <button
-              type="button"
-              className="btn ghost changelog-bar-btn"
-              onClick={() => setChangelogOpen(true)}
-            >
-              Czytaj całość
-            </button>
-            <Link to="/changelog" className="btn ghost changelog-bar-btn">
-              Zobacz pełną historię
-            </Link>
-          </span>
-        </m.div>
+      {/* Dziennik zmian: JEDNA linia, JEDNO CTA, bez akcentowej ramki — i tylko
+       *  dopóki najnowszy wpis jest nieprzeczytany na tym urządzeniu (AT-17).
+       *  Pierwszym elementem treści Panelu jest „Zadania na dziś", nie to. */}
+      {latestChange && changelogUnread(latestChange, changelogSeenId) && (
+        <div className="changelog-line">
+          <button type="button" className="link-btn changelog-line-cta" onClick={openChangelog}>
+            {changelogCtaLabel(latestChange)} →
+          </button>
+        </div>
       )}
 
       <ChangelogModal open={changelogOpen} onClose={() => setChangelogOpen(false)} />
@@ -666,15 +707,12 @@ export function DashboardPage() {
         initial="hidden"
         animate="show"
       >
-        {/* RZĄD 2 · Powiadomienia — realny feed nieprzeczytanych (max 3). Klik w
-         *  wiersz ROZWIJA podgląd (kto/co/gdzie [+ treść komentarza]) i NICZEGO
-         *  nie dispatchuje — kafelek pokazuje wyłącznie nieprzeczytane, więc
-         *  auto-oznaczanie usunęłoby wiersz w trakcie czytania. Otwarcie obiektu
-         *  (z oznaczeniem jako przeczytane) to osobny przycisk w podglądzie; „✓"
-         *  oznacza bez otwierania; nagłówek ma „Oznacz wszystkie". */}
-        {renderNotificationsTile('dash-card dash-area-notifications')}
+        {/* RZĄD 1 · Zadania na dziś — PIERWSZY element treści Panelu (AT-17).
+         *  Keep data-tour="home.today" (onboarding queries it,
+         *  src/onboarding/catalog.ts). */}
+        {renderTodayTile('dash-card dash-area-today')}
 
-        {/* RZĄD 2 · Workload summary (compact, narrow column) */}
+        {/* RZĄD 1 · Workload summary (compact, narrow column) */}
         <m.div className="dash-card dash-area-workload" variants={dashCardVariants}>
           <h2>Obciążenie</h2>
           <div className="donut-row">
@@ -693,11 +731,16 @@ export function DashboardPage() {
           </div>
         </m.div>
 
-        {/* RZĄD 3 · Today's tasks — keep data-tour="home.today" (onboarding
-         *  queries it, src/onboarding/catalog.ts). */}
-        {renderTodayTile('dash-card dash-area-today')}
+        {/* RZĄD 2 · Powiadomienia — realny feed nieprzeczytanych (max 3). Klik w
+         *  wiersz ROZWIJA podgląd (kto/co/gdzie [+ treść komentarza]) i NICZEGO
+         *  nie dispatchuje — kafelek pokazuje wyłącznie nieprzeczytane, więc
+         *  auto-oznaczanie usunęłoby wiersz w trakcie czytania. Otwarcie obiektu
+         *  (z oznaczeniem jako przeczytane) to osobny przycisk w podglądzie; „✓"
+         *  oznacza bez otwierania; nagłówek ma „Oznacz wszystkie". PUSTY kafelek
+         *  kurczy się do belki (OP-01), nie zajmuje całego rzędu. */}
+        {renderNotificationsTile('dash-card dash-area-notifications')}
 
-        {/* RZĄD 3 · Team roster — realne dane zespołu, bez atrap czatu/obecności.
+        {/* RZĄD 2 · Team roster — realne dane zespołu, bez atrap czatu/obecności.
          *  Keep data-tour="home.workload" on this card. Max 4 rows visible; the
          *  rest scroll inside the tile (see `.chat-people`). */}
         <m.div
@@ -715,7 +758,10 @@ export function DashboardPage() {
           )}
         </m.div>
 
-        {/* RZĄD 4 · Week strip (full width) */}
+        {/* RZĄD 3 · Week strip (full width). AT-19: dni robocze dostają całą
+         *  szerokość (wpisy ZAWIJAJĄ się do dwóch linii zamiast się urywać),
+         *  a weekend kurczy się do dwóch belek 24 px w wąskiej kolumnie obok.
+         *  „+N więcej" prowadzi do TEGO dnia w kalendarzu. */}
         <m.div className="dash-card dash-area-week" variants={dashCardVariants}>
           <div className="dash-card-head">
             <h2>Twój tydzień</h2>
@@ -724,15 +770,11 @@ export function DashboardPage() {
             </Link>
           </div>
           <div className="week-strip">
-            {week.map((d) => {
+            {weekdays.map((d) => {
               const blocks = weekMap.get(d) ?? [];
               const shown = blocks.slice(0, MAX_DAY_BLOCKS);
               const extra = blocks.length - shown.length;
-              const classes = [
-                'week-strip-day',
-                isTodayStr(d) ? 'is-today' : '',
-                isWeekend(d) ? 'is-weekend' : '',
-              ]
+              const classes = ['week-strip-day', isTodayStr(d) ? 'is-today' : '']
                 .filter(Boolean)
                 .join(' ');
               return (
@@ -754,23 +796,51 @@ export function DashboardPage() {
                           </li>
                         );
                       })}
-                      {extra > 0 && <li className="week-strip-more">+{extra} więcej</li>}
+                      {extra > 0 && (
+                        <li>
+                          <Link to={calendarDayTarget(d)} className="week-strip-more">
+                            +{extra} więcej
+                          </Link>
+                        </li>
+                      )}
                     </ul>
                   )}
                 </div>
               );
             })}
+            {weekendDays.length > 0 && (
+              <div className="week-strip-weekend">
+                {weekendDays.map((d) => {
+                  const hours = (weekMap.get(d) ?? []).reduce((sum, w) => sum + w.plannedHours, 0);
+                  return (
+                    <Link
+                      key={d}
+                      to={calendarDayTarget(d)}
+                      className={`week-strip-wknd${isTodayStr(d) ? ' is-today' : ''}`}
+                    >
+                      <span className="week-strip-wknd-day">
+                        {weekdayHeader(d)} {dayNumber(d)}
+                      </span>
+                      <span className="week-strip-wknd-hours">
+                        {hours > 0 ? formatDuration(hours) : '—'}
+                      </span>
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </m.div>
 
-        {/* RZĄD 5 · Zasobnik (nierozplanowane) — task-level rows for hours
+        {/* RZĄD 4 · Zasobnik (nierozplanowane) — task-level rows for hours
          *  assigned to me but without a day/time. Keep data-tour="home.bin"
          *  (onboarding queries it, src/onboarding/catalog.ts). Clicking a row
          *  opens the task modal; the planning badge stays. */}
         {renderBinTile('dash-card dash-area-bin')}
 
-        {/* RZĄD 5 · Alerty — overdue tasks, over-capacity days and work with no
-         *  plan. Keep data-tour="home.alerts" (onboarding queries it). */}
+        {/* RZĄD 4 · Alerty — overdue tasks, over-capacity days and work with no
+         *  plan. Keep data-tour="home.alerts" (onboarding queries it, także na
+         *  zwiniętej belce). */}
         {renderAlertsTile('dash-card dash-area-alerts')}
       </m.div>
       )}

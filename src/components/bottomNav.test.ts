@@ -5,7 +5,9 @@ import {
   BIN_SHEET_PARAM,
   BIN_TAB_TARGET,
   BOTTOM_NAV_PRIMARY,
+  CALENDAR_DAY_PARAM,
   activeTabPath,
+  calendarDayTarget,
   moreNavPaths,
   topBarTitle,
 } from './bottomNav';
@@ -21,6 +23,10 @@ describe('stałe zakładek', () => {
 
   it('deep-link zasobnika używa zadeklarowanego parametru', () => {
     expect(BIN_TAB_TARGET).toBe(`/calendar?${BIN_SHEET_PARAM}=1`);
+  });
+
+  it('deep-link dnia („+N więcej" w pasku tygodnia) celuje w kalendarz', () => {
+    expect(calendarDayTarget('2026-07-25')).toBe(`/calendar?${CALENDAR_DAY_PARAM}=2026-07-25`);
   });
 });
 

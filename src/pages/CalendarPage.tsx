@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
 import { DEFAULT_FILTER_CRITERIA } from '../store/storage';
 import { FilterBar } from '../components/FilterBar';
@@ -7,6 +8,7 @@ import { WeekView } from '../components/WeekView';
 import { MonthView } from '../components/MonthView';
 import { todayPillVisible } from '../components/dayStrip';
 import { OverlayLayer, useOverlay } from '../components/useOverlay';
+import { CALENDAR_DAY_PARAM } from '../components/bottomNav';
 import { MOBILE_NAV_QUERY, useMediaQuery } from '../utils/useMediaQuery';
 import {
   addDaysStr,
@@ -31,6 +33,19 @@ export function CalendarPage() {
   const { state, dispatch } = useStore();
   const [view, setView] = useState<ViewMode>('week');
   const [anchor, setAnchor] = useState<string>(() => todayStr());
+  // Deep-link dnia (`/calendar?dzien=2026-07-25`) — używa go „+N więcej" w pasku
+  // tygodnia na Panelu. Parametr USTAWIA kotwicę raz i znika (`replace`), więc
+  // cofnięcie nie przywraca dnia, a dalsza nawigacja ‹ › zostaje w rękach
+  // zwykłego stanu (jedno źródło prawdy o kotwicy). Niepoprawna data = brak akcji.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const dayParam = searchParams.get(CALENDAR_DAY_PARAM);
+  useEffect(() => {
+    if (dayParam === null) return;
+    if (isValidDateStr(dayParam)) setAnchor(dayParam);
+    const next = new URLSearchParams(searchParams);
+    next.delete(CALENDAR_DAY_PARAM);
+    setSearchParams(next, { replace: true });
+  }, [dayParam, searchParams, setSearchParams]);
   // Telefon (≤760 px): widok „Tydzień” renderuje JEDEN dzień, a pasek sterowania
   // schodzi do jednego rzędu 56 px. Ten sam hook, co powłoka aplikacji.
   const phone = useMediaQuery(MOBILE_NAV_QUERY);
