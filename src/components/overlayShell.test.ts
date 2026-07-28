@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createDismissState,
   createOverlayStack,
+  isAnchorOutOfView,
   matchTypeahead,
   resolveDismissEvent,
   resolveMenuNavKey,
@@ -129,6 +130,39 @@ describe('resolveOverlayPosition — availableHeight', () => {
       { width: 100, height: 10 },
     );
     expect(out.availableHeight).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('isAnchorOutOfView', () => {
+  const BTN = { left: 100, top: 100, width: 120, height: 32 };
+
+  it('kotwica w środku okna jest widoczna', () => {
+    expect(isAnchorOutOfView(BTN, VIEWPORT)).toBe(false);
+  });
+
+  it('kotwica wyscrollowana ponad górną krawędź wypada z widoku', () => {
+    // Dolna krawędź na 0 px — przycisk zniknął pod nagłówkiem.
+    expect(isAnchorOutOfView({ ...BTN, top: -32 }, VIEWPORT)).toBe(true);
+    // Jeden piksel jeszcze widać, więc popover zostaje otwarty.
+    expect(isAnchorOutOfView({ ...BTN, top: -31 }, VIEWPORT)).toBe(false);
+  });
+
+  it('kotwica pod dolną krawędzią wypada z widoku', () => {
+    expect(isAnchorOutOfView({ ...BTN, top: 800 }, VIEWPORT)).toBe(true);
+    expect(isAnchorOutOfView({ ...BTN, top: 799 }, VIEWPORT)).toBe(false);
+  });
+
+  it('liczy też oś poziomą (przewijana siatka)', () => {
+    expect(isAnchorOutOfView({ ...BTN, left: -120 }, VIEWPORT)).toBe(true);
+    expect(isAnchorOutOfView({ ...BTN, left: 1000 }, VIEWPORT)).toBe(true);
+    expect(isAnchorOutOfView({ ...BTN, left: -119 }, VIEWPORT)).toBe(false);
+    expect(isAnchorOutOfView({ ...BTN, left: 999 }, VIEWPORT)).toBe(false);
+  });
+
+  it('margines zawęża widoczny obszar', () => {
+    const nearlyGone = { ...BTN, top: -28 }; // widoczne 4 px
+    expect(isAnchorOutOfView(nearlyGone, VIEWPORT)).toBe(false);
+    expect(isAnchorOutOfView(nearlyGone, VIEWPORT, 8)).toBe(true);
   });
 });
 

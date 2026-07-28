@@ -376,6 +376,9 @@ export function TasksPage() {
               activeCount,
               onClearAll: clearFilters,
               chips,
+              // Ta sama liczba, co w liczniku obok paska — na telefonie pokazuje
+              // ją przycisk „Pokaż N” w lepkiej stopce arkusza filtrów.
+              resultCount: tasks.length,
             }}
             presets={<FilterPresets page="tasks" criteria={criteria} onApply={applyPreset} />}
             trailing={

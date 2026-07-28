@@ -39,7 +39,7 @@ export function CalendarPage() {
   const jumpBtnRef = useRef<HTMLButtonElement | null>(null);
   const jumpSheetRef = useRef<HTMLDivElement | null>(null);
   const closeJump = useCallback(() => setJumpOpen(false), []);
-  // Ten sam wariant powłoki co FilterPanel/arkusz „Więcej”: bez `getAnchorRect`
+  // Ten sam wariant powłoki co arkusz „Więcej”/arkusz filtrów: bez `getAnchorRect`
   // (arkusz kotwiczy CSS przy dolnej krawędzi), ze stosem Escape, zamykaniem
   // kliknięciem poza i powrotem fokusa na przycisk zakresu.
   useOverlay({

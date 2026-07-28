@@ -179,7 +179,9 @@
   `createOverlayStack` — Escape tylko dla wierzchniej warstwy;
   `createDismissState` / `resolveDismissEvent` — zamknięcie dopiero przy PARZE
   `pointerdown` + `click` poza nakładką, a `contextmenu` poza nakładką zamyka od
-  razu, bo prawy klik nie daje `click`; `resolveMenuNavKey` / `matchTypeahead` +
+  razu, bo prawy klik nie daje `click`; `isAnchorOutOfView` — kotwica całkiem
+  poza oknem, opcja `closeOnAnchorOutOfView` (domyślnie WYŁĄCZONA, żeby menu
+  kontekstowe dalej się repozycjonowały); `resolveMenuNavKey` / `matchTypeahead` +
   `overlayShell.test.ts` w node), cienka warstwa DOM w `src/components/useOverlay.ts`
   z komponentem `OverlayLayer` portalującym do leniwie tworzonego
   `#n2hub-overlay-root`. Stos Escape stoi PONAD modalami: nasłuch jest w fazie
@@ -189,10 +191,16 @@
   REPOZYCJONOWANE przy scrollu zamiast zamykania, klawiatura menu — roving
   tabindex / strzałki / Home/End / typeahead — tylko w krokach `role="menu"`),
   dwukrokowe menu karty Kanban (patrz niżej)
-  oraz `FilterPanel`, który świadomie NIE jest portalowany (kotwiczenie CSS i
-  mobilny breakpoint `position: static` zostają) i bierze z hooka wyłącznie
-  stos, zamykanie i powrót fokusa, z przyciskiem „Filtry” jako triggerem. Na
-  telefonie na tej samej powłoce (wariant nieporcjonowany, bez
+  oraz `FilterPanel` (`src/components/FilterPanel.tsx`), portalowany w OBU
+  wariantach, z przyciskiem „Filtry” jako triggerem: na desktopie mierzony
+  popover (`bottom-start`, offset 6, `closeOnAnchorOutOfView`, minimalna
+  szerokość z `--anchor-width`), a poniżej 760 px (`useMediaQuery`) arkusz od
+  dołu ze scrimem, lepką stopką „Wyczyść · Pokaż N” (opcjonalny `resultCount`,
+  podpięty na Projektach i Zadaniach) i blokadą scrolla tła ze WSPÓLNEGO
+  licznika modali (`useBodyScrollLock`). Fokus wchodzi do panelu i krąży w nim —
+  decyzje bierze `modalShell.ts` (`focusInitialIn` / `tabbableElementsIn` +
+  `resolveTrapAction`), powrót fokusa robi `useOverlay`. Na telefonie na tej
+  samej powłoce (wariant niepozycjonowany, bez
   `getAnchorRect`) stoją też cztery arkusze od dołu: „Więcej” w `App.tsx`
   (`role="menu"`), szybki skok kalendarza w `CalendarPage` (`role="dialog"`),
   arkusz szczegółów zadania w `TasksPage` (`role="dialog"`, JEDNA instancja na
@@ -201,7 +209,8 @@
   przeciągania (`open: … && !dragActive`), bo capture'owy Escape powłoki
   zjadłby anulowanie przeciągania (inwariant 7).
   Drabina `z-index` jest stokenizowana jako `--n2-z-*` w `:root`; na `var()`
-  przeszły tylko `.context-menu` i `.filter-popover`.
+  przeszły m.in. `.context-menu`, `.filter-popover` i arkusze od dołu
+  (`--n2-z-drawer`, w tym `.filter-sheet`).
 - Kontrakt pola formularza jest WSPÓLNY i równoległy do powłoki modali/nakładek:
   czysta logika w `src/components/fieldContract.ts` (`fieldIds` / `fieldAria` /
   `firstInvalidKey` / `saveErrorSummary` + `fieldContract.test.ts` w node),

@@ -115,6 +115,29 @@ export function resolveOverlayPosition(
   };
 }
 
+/**
+ * Czy kotwica wyjechała CAŁKOWICIE poza widoczny obszar (w którejkolwiek osi).
+ * Popover pozycjonowany przy takiej kotwicy wisiałby przyklejony do krawędzi
+ * okna bez żadnego związku z przyciskiem, więc warstwa DOM-owa może go wtedy —
+ * NA ŻYCZENIE (`closeOnAnchorOutOfView`) — zamknąć. `margin` zawęża widoczny
+ * obszar tak samo jak w `resolveOverlayPosition` (domyślnie 0 px, czyli samo
+ * okno). Kotwica, która wystaje choćby jednym pikselem, wciąż jest widoczna.
+ */
+export function isAnchorOutOfView(
+  anchor: OverlayRect,
+  viewport: OverlayViewport,
+  margin = 0,
+): boolean {
+  const right = anchor.left + anchor.width;
+  const bottom = anchor.top + anchor.height;
+  return (
+    bottom <= margin ||
+    right <= margin ||
+    anchor.top >= viewport.height - margin ||
+    anchor.left >= viewport.width - margin
+  );
+}
+
 /** Stos otwartych warstw — decyduje, kto konsumuje Escape. */
 export interface OverlayStack {
   /** Dokłada `id` na wierzch; ponowne `push` PRZENOSI istniejące na wierzch. */

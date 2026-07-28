@@ -71,3 +71,9 @@ Deviation: no chevron on the mobile card. Next: reviewer.
   Desktop tiles now come from shared render functions (same DOM).
   `npx vitest run src/pages/dashboardPanels.test.ts` 27 pass; `npm run build`
   pass. Context as declared. Next: reviewer.
+- N2Hub-289 (FilterPanel portal + arkusz): done. `FilterPanel` portalowany —
+  desktop mierzony popover (`closeOnAnchorOutOfView`, `--anchor-width`),
+  telefon `.filter-sheet` ze scrimem i lepką stopką `resultCount`. Nowe
+  `isAnchorOutOfView` (+5 testów), `useModalShell` wystawia
+  `focusInitialIn`/`tabbableElementsIn`/`useBodyScrollLock`. `npm test`
+  1944/1944, `npm run build` pass. Wiki: powłoka nakładek zaktualizowana.

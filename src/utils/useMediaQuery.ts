@@ -11,9 +11,15 @@ export const MOBILE_NAV_QUERY = '(max-width: 760px)';
  * Zachowanie 1:1 z dawnym efektem w `App.tsx`: stan startowy prosto z
  * `matches` (żadnego mignięcia układu desktopowego na telefonie),
  * `addEventListener('change')` i sprzątanie przy odmontowaniu.
+ *
+ * Bez `window` (render serwerowy w testach kompozycji, środowisko `node`)
+ * start jest `false`, czyli układ desktopowy — efekt i tak nigdy tam nie leci,
+ * a w przeglądarce pierwsza wartość zostaje bez zmian.
  */
 export function useMediaQuery(query: string): boolean {
-  const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
+  const [matches, setMatches] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia(query).matches,
+  );
   useEffect(() => {
     const media = window.matchMedia(query);
     const sync = () => setMatches(media.matches);

@@ -64,9 +64,53 @@ function focusCandidates(card: HTMLElement): { elements: HTMLElement[]; describe
   return { elements, described: elements.map(describeCandidate) };
 }
 
-function tabbableElements(card: HTMLElement): HTMLElement[] {
-  const { elements, described } = focusCandidates(card);
+/**
+ * Elementy w cyklu Tab wewnątrz kontenera, w kolejności DOM. Wystawione, bo tej
+ * samej listy potrzebuje pułapka fokusa arkusza/popovera filtrów — powłoka
+ * nakładek (`useOverlay`) nie jest modalem, ale jej panel siedzi w PORTALU na
+ * końcu `<body>`, więc Tab musi krążyć w nim tak samo jak w karcie modala.
+ */
+export function tabbableElementsIn(container: HTMLElement): HTMLElement[] {
+  const { elements, described } = focusCandidates(container);
   return tabbableIndexes(described).map((index) => elements[index]);
+}
+
+/**
+ * Wejście fokusa w kontener: pierwsze `data-autofocus`, potem pierwszy element
+ * w cyklu Tab, a przy dialogu bez kontrolek — sam kontener (musi mieć
+ * `tabIndex={-1}`). Ta sama decyzja (`resolveInitialFocusIndex`), co w modalu.
+ */
+export function focusInitialIn(container: HTMLElement): void {
+  const { elements, described } = focusCandidates(container);
+  const index = resolveInitialFocusIndex(described);
+  if (index === null) container.focus();
+  else elements[index].focus();
+}
+
+/**
+ * Blokada scrolla tła na WSPÓLNYM liczniku (ten sam moduł, ten sam zapamiętany
+ * styl `body`), więc arkusz filtrów otwarty nad modalem nie przywróci
+ * przewijania spod niego. `active === false` nie bierze blokady.
+ */
+export function useBodyScrollLock(active = true): void {
+  useEffect(() => {
+    if (!active) return;
+    if (scrollLock.acquire()) {
+      const body = document.body;
+      bodyStyleBeforeLock = { overflow: body.style.overflow, paddingRight: body.style.paddingRight };
+      const gap = scrollbarCompensation(window.innerWidth, document.documentElement.clientWidth);
+      body.style.overflow = 'hidden';
+      if (gap > 0) body.style.paddingRight = `${gap}px`;
+    }
+    return () => {
+      if (!scrollLock.release()) return;
+      const previous = bodyStyleBeforeLock;
+      bodyStyleBeforeLock = null;
+      if (previous === null) return;
+      document.body.style.overflow = previous.overflow;
+      document.body.style.paddingRight = previous.paddingRight;
+    };
+  }, [active]);
 }
 
 export interface ModalShellOptions {
@@ -144,10 +188,7 @@ export function useModalShell({
     if (card === null) return;
     const active = document.activeElement;
     if (active instanceof HTMLElement && card.contains(active)) return;
-    const { elements, described } = focusCandidates(card);
-    const index = resolveInitialFocusIndex(described);
-    if (index === null) card.focus();
-    else elements[index].focus();
+    focusInitialIn(card);
   }, []);
 
   // Escape zamyka, Tab krąży w karcie. W trybie `stacked` nasłuch stoi w fazie
@@ -165,7 +206,7 @@ export function useModalShell({
       const card = cardRef.current;
       if (card === null) return;
       if (stacked) event.stopPropagation();
-      const elements = tabbableElements(card);
+      const elements = tabbableElementsIn(card);
       const active = document.activeElement;
       const currentIndex = active instanceof HTMLElement ? elements.indexOf(active) : -1;
       const action = resolveTrapAction(currentIndex, elements.length, event.shiftKey);
@@ -178,24 +219,8 @@ export function useModalShell({
     return () => window.removeEventListener('keydown', onKey, stacked);
   }, [stacked]);
 
-  // Blokada scrolla + kompensacja znikającego paska przewijania.
-  useEffect(() => {
-    if (scrollLock.acquire()) {
-      const body = document.body;
-      bodyStyleBeforeLock = { overflow: body.style.overflow, paddingRight: body.style.paddingRight };
-      const gap = scrollbarCompensation(window.innerWidth, document.documentElement.clientWidth);
-      body.style.overflow = 'hidden';
-      if (gap > 0) body.style.paddingRight = `${gap}px`;
-    }
-    return () => {
-      if (!scrollLock.release()) return;
-      const previous = bodyStyleBeforeLock;
-      bodyStyleBeforeLock = null;
-      if (previous === null) return;
-      document.body.style.overflow = previous.overflow;
-      document.body.style.paddingRight = previous.paddingRight;
-    };
-  }, []);
+  // Blokada scrolla + kompensacja znikającego paska przewijania (wspólny licznik).
+  useBodyScrollLock();
 
   // Wcięcie klawiatury ekranowej — TYLKO telefon. Klawiatura nie zmienia
   // `window.innerHeight`, więc bez tego karta sięgałaby POD nią i lepki pasek

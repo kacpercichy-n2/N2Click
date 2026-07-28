@@ -211,8 +211,8 @@ export function App() {
 
   // Escape, klik poza i powrót fokusa na przycisk „Więcej” bierzemy ze WSPÓLNEJ
   // powłoki nakładek — w wariancie NIEPOZYCJONOWANYM (bez `getAnchorRect`, jak
-  // FilterPanel): arkusz kotwiczy CSS przy dolnej krawędzi, więc mierzenie
-  // popovera byłoby tu tylko szumem.
+  // arkusz filtrów na telefonie): arkusz kotwiczy CSS przy dolnej krawędzi, więc
+  // mierzenie popovera byłoby tu tylko szumem.
   const closeMore = useCallback(() => setMoreOpen(false), []);
   useOverlay({
     open: moreOpen,

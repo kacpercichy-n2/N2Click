@@ -341,6 +341,9 @@ export function ProjectsPage() {
           activeCount,
           onClearAll: () => applyPreset(DEFAULT_CRITERIA),
           chips,
+          // Ta sama liczba, co w liczniku obok paska — na telefonie pokazuje ją
+          // przycisk „Pokaż N” w lepkiej stopce arkusza filtrów.
+          resultCount: filtered.length,
         }}
         presets={<FilterPresets page="projects" criteria={criteria} onApply={applyPreset} />}
         trailing={

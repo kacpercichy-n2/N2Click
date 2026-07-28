@@ -6166,14 +6166,16 @@ option {
   font-weight: 600;
   line-height: 1;
 }
+/* Popover idzie do PORTALU na `<body>` i dostaje `left`/`top` z `useOverlay`,
+   więc `position: fixed` (żaden przewijany rodzic go już nie przycina).
+   `--anchor-width` to szerokość przycisku „Filtry”, `--overlay-avail` — miejsce
+   od popovera do dolnej krawędzi okna; obie zmienne wystawia hook. */
 .filter-popover {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
+  position: fixed;
   z-index: var(--n2-z-popover);
-  min-width: 260px;
+  min-width: max(260px, var(--anchor-width, 260px));
   max-width: 320px;
-  max-height: 70dvh;
+  max-height: min(70dvh, var(--overlay-avail, 70dvh));
   overflow-y: auto;
   overscroll-behavior: contain;
   display: flex;
@@ -6208,6 +6210,7 @@ option {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-height: 28px;
   padding: 4px 6px;
   border-radius: var(--n2-radius-sm);
   cursor: pointer;
@@ -6217,7 +6220,12 @@ option {
 .filter-option:hover {
   background: rgba(196, 150, 255, 0.1);
 }
+/* Radio ma STAŁE 16 px — bez tego przeglądarki dają 13 px i lista opcji gubi
+   rytm, a przy długiej etykiecie kontrolka potrafi się skurczyć. */
 .filter-option input {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
   accent-color: var(--n2-violet);
 }
 .filter-dates {
@@ -6266,16 +6274,55 @@ option {
   color: var(--n2-danger);
 }
 
-@media (max-width: 760px) {
-  .filter-popover {
-    position: static;
-    width: 100%;
-    max-width: none;
-    margin-top: 6px;
-  }
-  .filter-panel-wrap {
-    width: 100%;
-  }
+/* ---------- Arkusz filtrów (telefon) ----------
+   Ten sam panel co popover, tylko w obudowie arkusza od dołu — klasa
+   `.filter-sheet` renderuje się WYŁĄCZNIE poniżej 760 px (bramka
+   `useMediaQuery` w TS), więc reguły nie potrzebują media query, dokładnie jak
+   `.app-more-sheet` / `.week-bin-sheet`. Uchwyt i scrim biorę ze wspólnego
+   szkieletu arkuszy (`.app-sheet-handle`, `.app-sheet-scrim`). */
+.filter-sheet {
+  position: fixed;
+  inset: auto 0 0 0;
+  z-index: var(--n2-z-drawer);
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-4);
+  max-height: 85dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--n2-space-3) var(--n2-space-4) 0;
+  background: var(--n2-surface);
+  border-top: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-xl) var(--n2-radius-xl) 0 0;
+  box-shadow: var(--n2-shadow-lg, 0 -12px 32px rgba(0, 0, 0, 0.45));
+}
+/* Lepka stopka „Wyczyść · Pokaż N”: zostaje na ekranie przy przewijaniu
+   długiej listy filtrów, dlatego dolne dopełnienie arkusza (razem z bezpiecznym
+   obszarem) siedzi TUTAJ, a nie na kontenerze. */
+.filter-sheet .filter-popover-foot {
+  position: sticky;
+  bottom: 0;
+  justify-content: space-between;
+  gap: var(--n2-space-3);
+  margin-top: auto;
+  padding: var(--n2-space-3) 0 calc(env(safe-area-inset-bottom) + var(--n2-space-3));
+  background: var(--n2-surface);
+}
+.filter-sheet .filter-popover-foot .btn {
+  flex: 1 1 0;
+  justify-content: center;
+  min-height: 48px;
+}
+/* Cele dotykowe w arkuszu (TY-07): opcje, chipy osób i pola dat. */
+.filter-sheet .filter-option {
+  min-height: 48px;
+  padding: 4px var(--n2-space-2);
+}
+.filter-sheet .filter-chip {
+  min-height: 44px;
+}
+.filter-sheet .filter-date input {
+  min-height: 44px;
 }
 
 /* ---------- Filter presets ---------- */
@@ -6775,20 +6822,9 @@ option {
 .cal-toolbar-phone .filter-toolbar-people {
   display: none;
 }
-/* Popover filtrów: bez tego mobilne `position: static` rozepchnęłoby rząd
-   56 px na kilka linii. Reguła jest zawężona do telefonowego rzędu kalendarza,
-   więc mobilne filtry na innych stronach zostają bez zmian. */
-.cal-toolbar-phone .filter-popover {
-  position: fixed;
-  left: 8px;
-  right: 8px;
-  top: auto;
-  bottom: calc(var(--n2-bottom-nav-h) + env(safe-area-inset-bottom) + 8px);
-  width: auto;
-  max-height: 70dvh;
-  overflow: auto;
-  z-index: var(--n2-z-drawer);
-}
+/* Obejścia dla dawnego mobilnego `position: static` popovera filtrów już tu nie
+   ma: na telefonie panel jest ARKUSZEM od dołu w portalu (`.filter-sheet`), więc
+   nie rozpycha rzędu 56 px z definicji. */
 
 /* Pływająca pigułka „Dzisiaj” — widoczna tylko wtedy, gdy widoczny zakres nie
    zawiera dzisiejszego dnia (decyduje `todayPillVisible`). */

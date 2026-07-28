@@ -28,6 +28,7 @@ import { createPortal } from 'react-dom';
 import {
   createDismissState,
   createOverlayStack,
+  isAnchorOutOfView,
   matchTypeahead,
   resolveDismissEvent,
   resolveMenuNavKey,
@@ -74,10 +75,18 @@ export interface UseOverlayOptions {
   overlayRef: RefObject<HTMLElement>;
   /**
    * Prostokąt kotwicy w koordynatach viewportu; `null` = kotwica wypadła z DOM
-   * (hook zamyka popover). POMINIĘCIE wyłącza mierzone pozycjonowanie —
-   * FilterPanel kotwiczy popover CSS-em i zostaje w normalnym przepływie.
+   * (hook zamyka popover). POMINIĘCIE wyłącza mierzone pozycjonowanie — tak
+   * robią arkusze od dołu (telefonowe „Więcej”, szybki skok kalendarza, arkusz
+   * filtrów), które kotwiczy CSS przy dolnej krawędzi okna.
    */
   getAnchorRect?: () => OverlayRect | null;
+  /**
+   * Zamknij popover, gdy kotwica wyjedzie CAŁKOWICIE poza widoczny obszar
+   * (przewinięta strona albo siatka). Domyślnie `false`, więc menu kontekstowe
+   * kalendarza i pozostali konsumenci zachowują dzisiejsze zachowanie —
+   * przeliczenie pozycji zamiast zamknięcia. Działa tylko z `getAnchorRect`.
+   */
+  closeOnAnchorOutOfView?: boolean;
   /** Przycisk otwierający (opcjonalny) — jego zdarzenia nie zamykają popovera. */
   triggerRef?: RefObject<HTMLElement>;
   /** Klawiatura listy `role="menuitem"`. Wyłączona w krokach formularzy. */
@@ -90,7 +99,11 @@ export interface UseOverlayOptions {
 }
 
 export interface Overlay {
-  /** Styl pozycjonowanego elementu (`left`/`top` + `--overlay-avail`). */
+  /**
+   * Styl pozycjonowanego elementu: `left`/`top`, `--overlay-avail` (wysokość do
+   * dolnej krawędzi okna) i `--anchor-width` (szerokość kotwicy — popover może
+   * z niej zrobić swoją minimalną szerokość).
+   */
   style: CSSProperties | undefined;
 }
 
@@ -163,6 +176,7 @@ export function useOverlay(options: UseOverlayOptions): Overlay {
     offset: options.offset,
     margin: options.margin,
   });
+  const closeOutOfViewRef = useRef(options.closeOnAnchorOutOfView ?? false);
   // Ostatnia kotwica ZAPAMIĘTANA W CZASIE OTWARCIA — po zamknięciu `menu` jest
   // już `null`, a fokus ma wrócić na element, z którego menu wyszło.
   const focusTargetRef = useRef<HTMLElement | null>(null);
@@ -174,6 +188,7 @@ export function useOverlay(options: UseOverlayOptions): Overlay {
       offset: options.offset,
       margin: options.margin,
     };
+    closeOutOfViewRef.current = options.closeOnAnchorOutOfView ?? false;
     if (open) focusTargetRef.current = options.getFocusReturn?.() ?? null;
   });
 
@@ -184,6 +199,10 @@ export function useOverlay(options: UseOverlayOptions): Overlay {
   }
 
   const [position, setPosition] = useState<OverlayPosition | null>(null);
+  // Szerokość kotwicy jedzie osobno od pozycji: `resolveOverlayPosition` jej nie
+  // potrzebuje (to czysta decyzja o miejscu), a popover wystawia ją w CSS jako
+  // `--anchor-width` i może z niej zrobić minimalną szerokość.
+  const [anchorWidth, setAnchorWidth] = useState(0);
 
   const measure = useCallback(() => {
     const getAnchorRect = anchorRectRef.current;
@@ -193,15 +212,18 @@ export function useOverlay(options: UseOverlayOptions): Overlay {
       closeRef.current();
       return;
     }
+    const viewport = { width: window.innerWidth, height: window.innerHeight };
+    // Kotwica wyscrollowana poza okno: popover przyklejony do krawędzi nie
+    // opisywałby już żadnego przycisku — konsument może kazać go wtedy zamknąć.
+    if (closeOutOfViewRef.current && isAnchorOutOfView(anchor, viewport)) {
+      closeRef.current();
+      return;
+    }
     const element = overlayRef.current;
     const size = element === null ? { width: 0, height: 0 } : measureBox(element);
-    const next = resolveOverlayPosition(
-      anchor,
-      size,
-      { width: window.innerWidth, height: window.innerHeight },
-      posOptsRef.current,
-    );
+    const next = resolveOverlayPosition(anchor, size, viewport, posOptsRef.current);
     setPosition((prev) => (samePosition(prev, next) ? prev : next));
+    setAnchorWidth((prev) => (prev === anchor.width ? prev : anchor.width));
   }, [overlayRef]);
 
   // Pomiar po KAŻDYM renderze przy otwartym popoverze (zmiana kotwicy, kroku
@@ -368,8 +390,9 @@ export function useOverlay(options: UseOverlayOptions): Overlay {
       left: position.left,
       top: position.top,
       ['--overlay-avail']: `${position.availableHeight}px`,
+      ['--anchor-width']: `${anchorWidth}px`,
     } as CSSProperties;
-  }, [positioned, position]);
+  }, [positioned, position, anchorWidth]);
 
   return { style };
 }
