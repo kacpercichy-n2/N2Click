@@ -689,7 +689,19 @@ export function DashboardPage() {
     <section className="page">
       <div className="page-head dash-greeting">
         <h1>Dzień dobry, {me.firstName}</h1>
-        <p className="dash-date">{formatRowLabel(today)}</p>
+        {/* Prawy górny róg: data + STAŁE wejście do historii zmian. Belka
+         *  „Nowości" niżej znika po potwierdzeniu wpisu, więc bez tego
+         *  przycisku nie dałoby się wrócić do starszych paczek. */}
+        <div className="dash-head-meta">
+          <p className="dash-date">{formatRowLabel(today)}</p>
+          <button
+            type="button"
+            className="link-btn dash-changelog-btn"
+            onClick={openChangelog}
+          >
+            Zobacz zmiany
+          </button>
+        </div>
       </div>
 
       {/* Dziennik zmian: JEDNA linia, JEDNO CTA, bez akcentowej ramki — i tylko

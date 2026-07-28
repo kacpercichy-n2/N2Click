@@ -52,30 +52,26 @@ decision in the task report.
 
 ## Shared modal contract
 
-All application modals use `ModalFrame` and preserve:
+Application modals share one shell (`ModalFrame` for lightweight popouts such
+as the changelog and quick-add; `useModalShell` for the form modals: task,
+event, ticket) and preserve:
 
-- portal to `document.body`;
-- a single modal stack and topmost Escape handling;
-- body scroll lock and an inert application root;
+- a single modal stack and topmost Escape handling (ModalFrame additionally
+  portals to `document.body` and sets the application root inert);
+- body scroll lock;
 - one scrolling element: `.task-modal-body`;
 - a fixed transparent viewport and an opaque modal card;
-- only `transform`/`opacity` animation on the card; no scale animation;
-- no full-viewport live `backdrop-filter`, root `filter` or translucent blend
-  against the live application.
+- only `transform`/`opacity` animation on the card.
 
-The frosted background is a bounded, one-time snapshot:
-
-1. capture the current viewport at no more than 1440×900;
-2. bake 3.5px-equivalent blur, saturation and dimming into a canvas;
-3. show the opaque bitmap under the portal;
-4. set `#root` to `visibility:hidden` after the bitmap is ready;
-5. fall back to the existing opaque gradient if capture fails;
-6. release the canvas and restore root/body state after the last modal closes.
-
-Do not scale the snapshot to hide blur edges. The captured view must keep the
-same geometry before, during and after modal display. `html2canvas` is loaded
-dynamically and is subject to documented CSS/CORS limitations; the fallback is
-part of the contract, not an exceptional afterthought.
+The backdrop is a plain semi-transparent scrim (`.task-modal-scrim`,
+`rgba(4, 3, 8, 0.68)`, `pointer-events: none`) over the LIVE application.
+This is an explicit owner decision (2026-07-28): the interface must stay
+visible — undimmed detail and all — behind the changelog, project and task
+modals. Do not reintroduce a full-viewport live `backdrop-filter`, a root
+`filter`, or a rasterized page snapshot (the `html2canvas` bitmap backdrop
+from 2026-07-22 was reverted and the dependency removed). Modal scrolling
+stays composited because the only scroller is `.task-modal-body` inside the
+opaque card — the scrim never needs repainting during that scroll.
 
 ## Rendering rules
 

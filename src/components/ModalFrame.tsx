@@ -1,10 +1,6 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { motion } from 'motion/react';
-import {
-  mountModalBackdropSnapshot,
-  unmountModalBackdropSnapshot,
-} from './modalBackdropSnapshot';
 
 interface ModalFrameProps {
   ariaLabel: string;
@@ -35,7 +31,6 @@ function mountModal(close: ModalStackEntry) {
     rootInertBeforeModal = root?.inert ?? false;
     document.body.style.overflow = 'hidden';
     if (root) root.inert = true;
-    mountModalBackdropSnapshot();
   }
   bodyLockCount += 1;
 }
@@ -51,7 +46,6 @@ function unmountModal(close: ModalStackEntry) {
     const root = document.getElementById('root');
     document.body.style.overflow = bodyOverflowBeforeModal;
     if (root) root.inert = rootInertBeforeModal;
-    unmountModalBackdropSnapshot();
   }
 }
 
@@ -81,21 +75,33 @@ export function ModalFrame({
     : 'task-modal-card';
 
   return createPortal(
-    <div className="task-modal-viewport" onClick={onRequestClose}>
+    <>
+      {/* Półprzezroczysty scrim — żywy interfejs zostaje widoczny pod spodem
+          (decyzja ownera: bez rozmycia i bez podmiany tła na bitmapę). */}
       <motion.div
-        className={cardClasses}
-        role="dialog"
-        aria-modal="true"
-        aria-label={ariaLabel}
-        onClick={(event) => event.stopPropagation()}
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: 8 }}
-        transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-      >
-        {children}
-      </motion.div>
-    </div>,
+        className="task-modal-scrim"
+        aria-hidden="true"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.18 }}
+      />
+      <div className="task-modal-viewport" onClick={onRequestClose}>
+        <motion.div
+          className={cardClasses}
+          role="dialog"
+          aria-modal="true"
+          aria-label={ariaLabel}
+          onClick={(event) => event.stopPropagation()}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 8 }}
+          transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+        >
+          {children}
+        </motion.div>
+      </div>
+    </>,
     document.body,
   );
 }

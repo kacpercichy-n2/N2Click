@@ -71,9 +71,9 @@ function ChangelogModalShell({ onClose }: { onClose: () => void }) {
             <ChangelogEntryBlock key={entry.id} entry={entry} />
           ))}
         </div>
-        {/* Panel ma już tylko JEDNO CTA („Nowości …"), więc pełna strona
-         *  historii jest linkowana stąd — inaczej trasa `/changelog`
-         *  zostałaby bez wejścia z aplikacji. */}
+        {/* Jedyne wejście do trasy `/changelog` — Panel otwiera popout
+         *  (belka „Nowości" i stały przycisk „Zobacz zmiany"), a pełną
+         *  stronę historii linkujemy stąd. */}
         <Link to="/changelog" className="link-btn changelog-modal-full" onClick={requestClose}>
           Zobacz pełną historię →
         </Link>
