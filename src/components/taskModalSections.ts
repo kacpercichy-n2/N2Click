@@ -37,7 +37,7 @@ export type TaskModalSectionId =
 export interface TaskModalSection {
   id: TaskModalSectionId;
   tab: TaskModalTabId;
-  /** `true` tylko dla „Cykliczność" i „Klasyfikacja". */
+  /** `true` dla „Cykliczność", „Klasyfikacja" i „Wykonane bloki". */
   collapsible: boolean;
 }
 
@@ -74,7 +74,9 @@ const ALL_SECTIONS: readonly TaskModalSection[] = [
   { id: 'recurrence', tab: 'zadanie', collapsible: true },
   { id: 'classification', tab: 'zadanie', collapsible: true },
   { id: 'allocation', tab: 'planowanie', collapsible: false },
-  { id: 'done-blocks', tab: 'planowanie', collapsible: false },
+  // IA-08 — lista bloków jest teraz ZWINIĘTA: ✓ na kafelku kalendarza jest
+  // szybszą drogą, a rozwijana lista zostaje dla przeglądu i klawiatury.
+  { id: 'done-blocks', tab: 'planowanie', collapsible: true },
   { id: 'discussion', tab: 'dyskusja', collapsible: false },
 ];
 

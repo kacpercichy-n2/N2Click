@@ -7,7 +7,6 @@ import {
   Routes,
   useBlocker,
   useLocation,
-  useParams,
   useSearchParams,
 } from 'react-router-dom';
 import { motion } from 'motion/react';
@@ -20,6 +19,7 @@ import { ClientsPage } from './pages/ClientsPage';
 import { KanbanPage } from './pages/KanbanPage';
 import { TimelinePage } from './pages/TimelinePage';
 import { TasksPage } from './pages/TasksPage';
+import { TaskFullPage } from './pages/TaskFullPage';
 import { CalendarPage } from './pages/CalendarPage';
 import { PeoplePage } from './pages/PeoplePage';
 import { PersonProfilePage } from './pages/PersonProfilePage';
@@ -476,9 +476,11 @@ export function App() {
             <Route path="/kanban" element={<KanbanPage />} />
             <Route path="/timeline" element={<TimelinePage />} />
             <Route path="/tasks" element={<TasksPage />} />
-            {/* Old page-form routes now redirect into the modal (deep-link compatible). */}
+            {/* Tworzenie zostaje w modalu (deep-link zgodny wstecz); konkretne
+                zadanie ma PEŁNĄ stronę (IA-15). Statyczny segment `new` wygrywa
+                z `:id`, więc `id === 'new'` jest nieosiągalne. */}
             <Route path="/tasks/new" element={<NewTaskRedirect />} />
-            <Route path="/tasks/:id" element={<TaskRedirect />} />
+            <Route path="/tasks/:id" element={<TaskFullPage />} />
             <Route path="/calendar" element={<CalendarPage />} />
             {/* Wydarzenia: widoczne dla każdej roli (zarządzanie gated przez events.manage). */}
             <Route path="/wydarzenia" element={<EventsPage />} />
@@ -592,12 +594,6 @@ function NewTaskRedirect() {
     ? `?task=new&project=${encodeURIComponent(project)}`
     : '?task=new';
   return <Navigate to={`/tasks${search}`} replace />;
-}
-
-/** `/tasks/<id>` → `/tasks?task=<id>`. */
-function TaskRedirect() {
-  const { id } = useParams();
-  return <Navigate to={`/tasks?task=${encodeURIComponent(id ?? '')}`} replace />;
 }
 
 function navClass({ isActive }: { isActive: boolean }): string {

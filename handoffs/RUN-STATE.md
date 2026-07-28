@@ -1,90 +1,53 @@
-# Run state — 20260728-010300-n2hub-281 tooltip + IconButton
+# Run state — 20260728-034631-n2hub-286 taskmodal details
 
 ## Goal
 
-Replace native `title` tooltips (111 attribute sites in 25 tsx files — the
-prompt's "95" is stale) with an owned Tooltip primitive (group delay 500 ms /
-warm-instant, hover + focus-visible, Escape, touch degradation, shortcut hint,
-safe aria contract) and upgrade IconButton (44 px halo, aria-disabled/busy,
-aria-pressed/expanded, data-size, `title` prop removed → `tooltip`). Raw `×`
-lives in OnboardingRoot:569, not "QuickAddModal" (does not exist).
+Six owner-approved TaskModal/calendar UX fixes (AT-05 grid grouping, AT-13
+checkboxes + Wyczyść undo, AT-08 delete out of header, AT-10 comments/activity,
+IA-08 calendar ✓ tick, IA-15 full task page) plus ONE shared ⋯ overflow-menu
+primitive on `useOverlay`/`OverlayLayer`.
 
 ## Packages
 
-- `handoffs/PKG-20260728-tooltip-primitive-iconbutton.md` — developer, ready.
-  Pure `tooltipShell.ts` (+tests, node env), thin `Tooltip.tsx` reusing
-  `OverlayLayer`/`resolveOverlayPosition` only, IconButton v2, OnboardingRoot
-  close swap, migration of all non-calendar files per settled per-site table
-  (~87 sites, cases A/B/Bv/C/D).
-- `handoffs/PKG-20260728-title-migration-calendar.md` — developer, ready,
-  depends on the first, risk high. WeekView (12) / MonthView (4) /
-  TimelinePage (8) with declared context expansion to
-  `scheduling-and-calendar.md` (invariant 7): observer-only handlers,
-  hide-on-pointerdown, context-menu disabled reasons become visible hints.
+- `handoffs/PKG-20260728-taskmodal-details.md` — developer, ready, risk high,
+  Codex review required. Single package (TaskModal.tsx on 5 of 6 items);
+  internal order: OverflowMenu primitive → AT-08 → AT-10 → AT-13 → AT-05 →
+  IA-08 → IA-15.
 
 ## Changed boundaries (planned)
 
-New `src/components/tooltipShell.ts` + `Tooltip.tsx`; `IconButton.tsx` API;
-`.icon-btn` CSS + `--n2-z-tooltip`; `title=` removed repo-wide.
+New `src/components/OverflowMenu.tsx` (+ IconButton `haspopup` prop), new pure
+`src/components/allocationGridView.ts`, `taskModalSections.ts` done-blocks
+collapsible, WeekView TimedBlock gains a sibling ✓ button (invariant 7:
+observers + stopPropagation only), `/tasks/:id` becomes `TaskFullPage`
+(exported `TaskEditor`, new dirtyRegistry scope `'task-page'`, new
+`src/pages/taskPageRoute.ts`). CommentsPanel loses its tablist (also affects
+ProjectDetailPage — accepted).
 
 ## Verification
 
-Per package: tooltipShell + components vitest, focused weekView/timeline
-suites unmodified, `npm run build`; scheduler owns full `npm test` + build (no
-fixed count assumed; last known 1710). Browser bin-drag/placement checks if
-playwright available.
+Focused: allocationGridView / taskModalSections / dirtyRegistry / taskPageRoute
+tests, then `npm test` + `npm run build`. Browser:
+`browser-check-ui-keyboard.mjs` and `browser-check-savetask-multiblock.mjs`
+(Chromium + WebKit). Scheduler owns the final gate.
 
 ## Open questions
 
-None routed as blocking; watch overlapping 44 px halos in dense rows (report,
-not redesign).
+None blocking — all product decisions settled in the package (undo lives in
+editor draft state, no reducer action; activity becomes „Historia zmian” menu
+entry; full-page save/cancel navigate to `/tasks`).
 
-## Developer result (PKG-…-tooltip-primitive-iconbutton)
+## Wiki
 
-Changed: new `tooltipShell.ts`/`.test.ts`/`Tooltip.tsx` (+`DisabledHint`),
-IconButton v2, `styles.css` (`--n2-z-tooltip`, `.sr-only`, `.tooltip*`, halo),
-OnboardingRoot close, 21 migration files — zero non-calendar `title=` left.
-Focused `src/components` 186 pass; full `npm test` 1726 pass; `npm run build`
-green. Deviations: PersonDot prop dropped (no consumers), nav gear tooltip only
-when collapsed, shared `DisabledHint` for natively-disabled buttons.
+Likely stale after landing: `ui-navigation-and-onboarding.md` (overlay-shell
+consumers list, `/tasks/:id` route, CommentsPanel) and
+`scheduling-and-calendar.md` (block ✓ affordance). Final reviewer adjudicates.
 
-## Developer result (PKG-…-title-migration-calendar)
+## Developer result (2026-07-28)
 
-Changed: WeekView/MonthView/TimelinePage (Tooltip observers, `.context-menu-hint`,
-Bar `title`→`tooltip`), `browser-check-bin-drag` reads `aria-describedby`, both
-wiki pages. `title=` in `src`: zero. `npm test` 74 files / 1726 pass; build green.
-Playwright missing → no browser check. Blocker: `browser-check-placement` still
-asserts WorkloadPage `title`s removed by package 1.
-
-Follow-up: browser harness ported off `title` in 4 scripts (placement, status
-semantics, tab sync, onboarding) — now reads `aria-describedby` → description
-text or `aria-label`. WorkloadPage overload cell dropped its self-referencing
-`aria-describedby` (name came from the same child). `node --check` clean; tests
-1726 pass, build green. No script reads a `title` attribute.
-
-## Developer result (PKG-20260728-kanban-touch-keyboard)
-
-Changed: `KanbanPage.tsx` (HTML5 DnD → Pointer Events + `useTouchDragGate`,
-uchwyt klawiaturowy, menu `useOverlay`, region `role="status"`), nowe
-`kanbanMove.ts`/`.test.ts`, `compareTasks` wyeksportowany z `kanbanBoard.ts`,
-`icons.ts`, Kanban CSS, wiki. Focused 40 pass; `tsc --noEmit` clean;
-`npm test` 75 files / 1747 pass; build green. Kontekst bez rozszerzeń.
-
-## Developer result (PKG-20260728-calendar-blocks-keyboard)
-
-Changed: nowe `calendarBlockKeyboard.ts`, `monthGrid.ts`, `utils/blockLabel.ts`
-(+ testy), WeekView (klawiaturowa edycja bloku, `aria-live`, akcja zasobnika),
-MonthView jako APG grid, CalendarPage (`onShiftMonth`/`onShiftYear`), TaskModal
-(ten sam tekst), `dayMonthLabel`, CSS, wiki. Enter zapisuje edycję, bez niej
-otwiera zadanie. `npm test` 78 plików / 1789 pass (było 75/1747); build green.
-Zero zmian w ścieżkach wskaźnika. Kontekst bez rozszerzeń.
-
-## Developer result (PKG-20260728-taskmodal-structure)
-
-Changed: nowe `taskModalSections.ts`/`.test.ts`, TaskModal renderuje sekcje z
-modelu (zakładki Zadanie/Planowanie/Dyskusja, przyklejony kontekst, Okres nad
-godzinami, scalone podsumowanie zamiast „Zasobnika", zwijane Cykliczność/
-Klasyfikacja), CommentsPanel (pole nad wątkiem), CSS, locator zakładki w
-`browser-check-savetask-multiblock.mjs`. `npm test` 80/1823 pass (było 79/1803),
-build green. Kontekst bez rozszerzeń; skrypt multiblock czerwony PRZED zmianą
-(„Zapisz i zamknij" nie istnieje w `src`).
+All seven items landed. `npm test` 1845 pass, `npm run build` green; focused
+[allocationGridView/taskModalSections/dirtyRegistry/taskPageRoute] 57 pass.
+Context expanded only to `styles.css` z-index ladder: the ⋯ popover portals to
+body, so it needed `--n2-z-menu-over-modal`. Blocker: browser checks could NOT
+run — `playwright` is not installed (`ERR_MODULE_NOT_FOUND`); multiblock row
+targeting pre-adjusted to `tr[data-date]`, unverified.

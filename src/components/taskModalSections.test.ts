@@ -110,11 +110,13 @@ describe('visibleSections', () => {
     ]);
   });
 
-  it('zwijalne są WYŁĄCZNIE cykliczność i klasyfikacja', () => {
+  it('zwijalne są WYŁĄCZNIE cykliczność, klasyfikacja i wykonane bloki', () => {
     const collapsible = visibleSections(EDIT)
       .filter((s) => s.collapsible)
       .map((s) => s.id);
-    expect(collapsible).toEqual(['recurrence', 'classification']);
+    // IA-08 dołożyło „Wykonane bloki": ✓ stoi teraz na kafelku kalendarza,
+    // więc lista nie musi być rozwinięta domyślnie.
+    expect(collapsible).toEqual(['recurrence', 'classification', 'done-blocks']);
   });
 
   it('każda sekcja należy do zakładki zgodnej z układem paneli', () => {

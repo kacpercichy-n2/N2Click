@@ -128,7 +128,7 @@ describe('navigation guard registry', () => {
 
 describe('navGuardBlocks', () => {
   const at = (pathname: string, search = '') => ({ pathname, search });
-  const scopes = (...s: Array<'task-modal' | 'project-detail'>) => new Set(s);
+  const scopes = (...s: Array<'task-modal' | 'project-detail' | 'task-page'>) => new Set(s);
 
   it('never blocks when nothing is dirty (clean navigation stays immediate)', () => {
     expect(
@@ -195,6 +195,24 @@ describe('navGuardBlocks', () => {
         at('/projects/p1'),
         at('/projects/p1', '?task=new&project=p1'),
       ),
+    ).toBe(false);
+  });
+
+  // IA-15 — pełna strona zadania (`/tasks/:id`) żyje na ŚCIEŻCE, tak jak edytor
+  // projektu: modal zadania/wydarzenia otwarty NAD nią (zmiana samych parametrów
+  // wyszukiwania) nie odmontowuje jej, więc nie ma o co pytać.
+  it('dirty full task page blocks pathname changes only', () => {
+    expect(navGuardBlocks(scopes('task-page'), at('/tasks/t1'), at('/tasks'))).toBe(true);
+    expect(navGuardBlocks(scopes('task-page'), at('/tasks/t1'), at('/tasks/t2'))).toBe(true);
+    expect(
+      navGuardBlocks(
+        scopes('task-page'),
+        at('/tasks/t1'),
+        at('/tasks/t1', '?wydarzenie=e1'),
+      ),
+    ).toBe(false);
+    expect(
+      navGuardBlocks(scopes('task-page'), at('/tasks/t1'), at('/tasks/t1', '?task=t9')),
     ).toBe(false);
   });
 

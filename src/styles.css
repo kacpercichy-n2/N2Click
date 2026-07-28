@@ -164,6 +164,11 @@
   --n2-z-banner: 1050;
   --n2-z-toast: 1090;
   --n2-z-onboarding: 1100;
+  /* Menu „⋯" (`OverflowMenu`) bywa otwierane WEWNĄTRZ modala (1000/1001), a
+     portaluje się do korzenia nakładek na `<body>` — przy zwykłym 100 chowałoby
+     się pod kartą modala. Stoi więc nad modalem i banerami, ale POD samouczkiem
+     (1100), potwierdzeniem (1200) i dymkiem (1300). */
+  --n2-z-menu-over-modal: 1095;
   /* Okno potwierdzenia stoi PONAD wszystkim: pytają z niego także baner
      trwałości (1050) i samouczki (1100), a jego odpowiedź blokuje operację. */
   --n2-z-confirm: 1200;
@@ -1393,6 +1398,31 @@ option {
 .alloc-cell {
   padding: 2px;
   position: relative;
+  /* AT-05 — krawędź w kolorze osoby dostaje TYLKO komórka z wartością, ale
+     ramka istnieje ZAWSZE (przezroczysta), więc wpisanie godzin nie przesuwa
+     kolumn ani o piksel. */
+  border-left: 3px solid transparent;
+}
+/* AT-05 — pas zwiniętych, pustych dni. Jeden wiersz zamiast kilkudziesięciu
+   identycznych, pustych. */
+.alloc-collapsed td {
+  padding: 4px 8px;
+  text-align: left;
+  background: var(--n2-surface-muted, rgba(255, 255, 255, 0.03));
+}
+.alloc-collapsed-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--n2-type-xs);
+  padding: 4px 2px;
+  min-height: 32px;
+  cursor: pointer;
+}
+.alloc-collapsed-btn:hover {
+  color: var(--n2-text);
+  text-decoration: underline;
 }
 /* Muted marker on cells backed by ≥2 calendar blocks (editing the sum reshapes
    several blocks — see the cell title). Non-interactive; sits over the input. */
@@ -2135,6 +2165,48 @@ option {
   font-size: var(--n2-type-xs);
   cursor: pointer;
 }
+/* IA-08 — ✓ na kafelku. Też RODZEŃSTWO bloku (dzieci `role="button"` są
+   prezentacyjne). W spoczynku niewidoczny I nietrafialny, więc `elementFromPoint`,
+   bramka dotyku i cały cykl życia wskaźnika zostają bez zmian (inwariant 7);
+   pokazuje się przy hoverze kafelka, przy fokusie z klawiatury, gdy blok JEST
+   wykonany, oraz zawsze na dotyku (tam hover nie istnieje). */
+.week-block-done-btn {
+  position: absolute;
+  z-index: 3;
+  margin-top: 2px;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-pill);
+  background: var(--card-bg);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+}
+.week-block-done-btn.hovered,
+.week-block-done-btn:focus-visible,
+.week-block-done-btn[aria-pressed='true'] {
+  opacity: 1;
+  pointer-events: auto;
+}
+.week-block-done-btn[aria-pressed='true'] {
+  color: var(--n2-success, #b9ff4d);
+  border-color: var(--n2-success, #b9ff4d);
+}
+@media (pointer: coarse) {
+  /* Bez hoveru dotyk nie miałby jak odsłonić ✓. */
+  .week-block-done-btn {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
 .week-block-handle {
   position: absolute;
   left: 0;
@@ -2778,13 +2850,23 @@ option {
   flex-direction: column;
   gap: 6px;
 }
+/* AT-13 — pole wyboru miało ~13 px (domyślny rozmiar przeglądarki), więc na
+   dotyku trafiało się w nie z trudem. 20 px + klikalna etykieta + wiersz
+   ≥ 40 px daje cel zgodny z resztą aplikacji. */
 .checklist-row {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-height: 40px;
 }
 .checklist-row input[type='checkbox'] {
   flex: none;
+  width: 20px;
+  height: 20px;
+}
+/* Etykieta jest `<label htmlFor>`, więc klik w tekst przełącza pole wyboru. */
+.checklist-row .checklist-text {
+  cursor: pointer;
 }
 .checklist-text {
   flex: 1 1 auto;
@@ -3290,9 +3372,23 @@ option {
   border-radius: var(--n2-radius-lg);
   padding: var(--n2-space-5);
 }
-.comments-tabs {
+/* AT-10 — nagłówek dyskusji zastąpił dwuzakładkowy `role="tablist"`: tytuł
+   widoku + menu „⋯" (albo powrót z historii zmian). Wszystkie cele trafienia
+   mają ≥ 32 px (IconButton `md` = 32 px, przycisk powrotu przez `min-height`). */
+.comments-head {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin-bottom: 12px;
+}
+.comments-title {
+  margin: 0;
+  font-size: var(--n2-type-md);
+  font-weight: 600;
+}
+.comments-back {
+  min-height: 32px;
 }
 .comments-empty {
   margin: 4px 0 12px;
@@ -4892,6 +4988,11 @@ option {
      dawne clampy `window.innerHeight - 100/240/260`. */
   max-height: var(--overlay-avail, 80vh);
   overflow-y: auto;
+}
+/* Wariant menu „⋯": ta sama karta, wyżej na drabinie (patrz token). */
+.context-menu.overflow-menu {
+  z-index: var(--n2-z-menu-over-modal);
+  min-width: 200px;
 }
 .context-menu-title {
   font-size: var(--n2-type-xs);

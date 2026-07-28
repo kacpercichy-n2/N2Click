@@ -42,6 +42,8 @@ interface Props {
   pressed?: boolean;
   /** Otwieracz warstwy: `aria-expanded`. */
   expanded?: boolean;
+  /** Rodzaj warstwy pod przyciskiem: `aria-haspopup` (menu ⋯, okno dialogowe). */
+  haspopup?: 'menu' | 'dialog';
 }
 
 export const IconButton = forwardRef<HTMLButtonElement, Props>(function IconButton(
@@ -59,6 +61,7 @@ export const IconButton = forwardRef<HTMLButtonElement, Props>(function IconButt
     busy = false,
     pressed,
     expanded,
+    haspopup,
   },
   ref,
 ): ReactElement {
@@ -84,6 +87,7 @@ export const IconButton = forwardRef<HTMLButtonElement, Props>(function IconButt
       aria-busy={busy ? true : undefined}
       aria-pressed={pressed}
       aria-expanded={expanded}
+      aria-haspopup={haspopup}
     >
       {icon}
     </button>

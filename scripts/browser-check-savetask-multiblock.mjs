@@ -64,7 +64,7 @@ const readStore = (page) =>
 
 // Injects a duplicate WorkloadEntry right after the FIRST dated (non-bin) row
 // found in the sample data — deterministic, no drag simulation required.
-// Returns both rows plus the grid coordinates (dayIndex/colIndex) needed to
+// Returns both rows plus the grid coordinates (date/colIndex) needed to
 // locate the AllocationGrid cell.
 async function seedMultiBlock(page) {
   return page.evaluate((key) => {
@@ -115,9 +115,6 @@ async function flowMultiBlockSave(browser) {
       ok(false, `seed: ${seedInfo.reason}`);
       return;
     }
-    const dayIndex = Math.round(
-      (new Date(seedInfo.date) - new Date(seedInfo.taskStartDate)) / 86400000,
-    );
     const totalAfterDup = seedInfo.original.plannedHours + seedInfo.dup.plannedHours;
     await page.reload({ waitUntil: 'networkidle' });
 
@@ -131,10 +128,14 @@ async function flowMultiBlockSave(browser) {
       const planningTab = modal.getByRole('tab', { name: 'Planowanie' });
       if (await planningTab.count()) await planningTab.click();
     };
+    // PKG-20260728-taskmodal-details (AT-05): pasy pustych dni zwijają się do
+    // JEDNEGO wiersza, więc `nth(<numer dnia okresu>)` przestało wskazywać ten
+    // dzień. Wiersz dnia nosi teraz `data-date`, więc celujemy w DATĘ — dzień z
+    // godzinami nigdy nie jest zwinięty (zwijają się wyłącznie dni puste).
+    // Asercje poniżej są bez zmian.
     const cell = () =>
       modal
-        .locator('.alloc-grid tbody tr')
-        .nth(dayIndex)
+        .locator(`.alloc-grid tbody tr[data-date="${seedInfo.date}"]`)
         .locator('td.alloc-cell')
         .nth(seedInfo.colIndex);
 

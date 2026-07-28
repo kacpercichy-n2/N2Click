@@ -30,6 +30,7 @@ import { useModalShell } from './useModalShell';
 import { useConfirm } from './ConfirmProvider';
 import { buildDeleteConsequence } from './confirmDialog';
 import { IconButton } from './IconButton';
+import { OverflowMenu } from './OverflowMenu';
 import { X } from './icons';
 import { CommentsPanel } from './CommentsPanel';
 import {
@@ -38,6 +39,11 @@ import {
   type AllocMap,
   type AllocStartMap,
 } from './AllocationGrid';
+import {
+  restorePersonColumn,
+  snapshotPersonColumn,
+  type PersonColumnSnapshot,
+} from './allocationGridView';
 import { SaveStatus } from './SaveStatus';
 import { personColor } from '../utils/colors';
 import {
@@ -90,6 +96,7 @@ import {
   clearNavGuard,
   setNavGuard,
 } from '../utils/dirtyRegistry';
+import { taskFullViewPath } from '../pages/taskPageRoute';
 
 // ---- Recurrence („Cykliczność") local helpers ----
 // Duration choices for a recurrence rule: 0:15…8:00 on the 15-minute grid.
@@ -218,6 +225,42 @@ export function TaskModal() {
   );
 }
 
+/**
+ * JEDEN przepływ usuwania zadania dla modala i pełnej strony `/tasks/:id`
+ * (IA-15). Wcześniej mieszkał w ciele `TaskModalShell`; wyjęty tutaj, żeby
+ * strona nie dorobiła się drugiej, rozjeżdżającej się kopii pytania.
+ * Zwraca `true`, gdy zadanie NAPRAWDĘ zostało usunięte — nawigacja po
+ * usunięciu należy do wywołującego (modal się zamyka, strona wraca na listę).
+ */
+export function useDeleteTaskConfirm(taskId: string | null): () => Promise<boolean> {
+  const { state, dispatch } = useStore();
+  const confirm = useConfirm();
+  return useCallback(async () => {
+    const task = taskId === null ? undefined : state.tasks.find((t) => t.id === taskId);
+    if (!task) return false;
+    // Prawdziwe liczby z selektorów zamiast ogólnika; godziny są derywowane z
+    // `WorkloadEntry` (inwariant 1). Cel zapamiętany PRZED `await`.
+    const id = task.id;
+    const consequences = buildDeleteConsequence({
+      assignments: assigneeIdsOfTask(state, id).length,
+      plannedHours: taskPlannedTotal(state, id),
+    });
+    if (
+      await confirm({
+        title: `Usunąć „${task.title}”?`,
+        consequences,
+        confirmLabel: 'Usuń zadanie',
+        tone: 'danger',
+        requireAck: consequences !== '',
+      })
+    ) {
+      dispatch({ type: 'DELETE_TASK', taskId: id });
+      return true;
+    }
+    return false;
+  }, [state, dispatch, confirm, taskId]);
+}
+
 interface ShellProps {
   taskParam: string;
   projectParam: string | null;
@@ -235,7 +278,7 @@ function TaskModalShell({
   blockParam,
   onClose,
 }: ShellProps) {
-  const { state, dispatch } = useStore();
+  const { state } = useStore();
   const confirm = useConfirm();
   const canManageTasks = useCan()('tasks.manage');
   const isNew = taskParam === 'new';
@@ -317,27 +360,9 @@ function TaskModalShell({
     closeOnBackdrop: false,
   });
 
+  const deleteTask = useDeleteTaskConfirm(existing ? existing.id : null);
   const handleDelete = async () => {
-    if (!existing) return;
-    // Prawdziwe liczby z selektorów zamiast ogólnika; godziny są derywowane z
-    // `WorkloadEntry` (inwariant 1). Cel zapamiętany PRZED `await`.
-    const taskId = existing.id;
-    const consequences = buildDeleteConsequence({
-      assignments: assigneeIdsOfTask(state, taskId).length,
-      plannedHours: taskPlannedTotal(state, taskId),
-    });
-    if (
-      await confirm({
-        title: `Usunąć „${existing.title}”?`,
-        consequences,
-        confirmLabel: 'Usuń zadanie',
-        tone: 'danger',
-        requireAck: consequences !== '',
-      })
-    ) {
-      dispatch({ type: 'DELETE_TASK', taskId });
-      closeDeliberately();
-    }
+    if (await deleteTask()) closeDeliberately();
   };
 
   const heading = notFound ? 'Nie znaleziono zadania' : isNew ? 'Nowe zadanie' : 'Edytuj zadanie';
@@ -381,10 +406,33 @@ function TaskModalShell({
                   }
                 />
               )}
+              {/* IA-15 — wyjście z ciasnego modala do pełnej strony zadania.
+                  Zwykły `<Link>`: nawigacja zmienia ŚCIEŻKĘ, więc parametr
+                  `?task=` znika sam, a przy niezapisanych zmianach pyta
+                  strażnik routera (zakres `task-modal`). */}
+              {existing && (
+                <Link className="link-btn" to={taskFullViewPath(existing.id)}>
+                  Otwórz pełny widok ↗
+                </Link>
+              )}
+              {/* AT-08 — akcja niszcząca zeszła z nagłówka do menu „⋯": czerwony
+                  przycisk stał tuż obok „Zamknij" i był pierwszą rzeczą, w którą
+                  wpadało oko. Sam przepływ potwierdzenia (skutki + `requireAck`)
+                  jest BEZ ZMIAN. */}
               {existing && canManageTasks && (
-                <button type="button" className="btn danger-ghost" onClick={handleDelete}>
-                  Usuń
-                </button>
+                <OverflowMenu
+                  label="Więcej działań"
+                  items={[
+                    {
+                      id: 'delete',
+                      label: 'Usuń zadanie',
+                      danger: true,
+                      onSelect: () => {
+                        void handleDelete();
+                      },
+                    },
+                  ]}
+                />
               )}
               <IconButton
                 className="task-modal-close"
@@ -427,7 +475,7 @@ function TaskModalShell({
   );
 }
 
-interface EditorProps {
+export interface EditorProps {
   taskId: string | null;
   initialProjectId?: string;
   initialDate?: string;
@@ -488,8 +536,12 @@ function serializeDraft(v: {
   });
 }
 
-/** The full task editor form (moved out of the old TaskEditorPage). */
-function TaskEditor({
+/**
+ * The full task editor form (moved out of the old TaskEditorPage). Eksportowany
+ * (IA-15), bo pełna strona `/tasks/:id` renderuje DOKŁADNIE ten sam edytor —
+ * bez kopii, bez przenoszenia pliku.
+ */
+export function TaskEditor({
   taskId,
   initialProjectId,
   initialDate,
@@ -566,11 +618,16 @@ function TaskEditor({
   const [classificationOpen, setClassificationOpen] = useState(
     () => (existing?.workCategoryId ?? '') !== '' || (existing?.departmentId ?? '') !== '',
   );
+  // IA-08 — „Wykonane bloki" startuje zwinięte; wejście z konkretnego bloku
+  // (`?task=<id>&block=<id>`) rozwija sekcję, bo inaczej podświetlany wiersz
+  // byłby ukryty i `scrollIntoView` nie miałoby do czego skoczyć.
+  const [doneBlocksOpen, setDoneBlocksOpen] = useState(() => Boolean(focusBlockId));
   const tabsBaseId = useId();
   const tabDomId = (id: TaskModalTabId) => `${tabsBaseId}-tab-${id}`;
   const panelDomId = (id: TaskModalTabId) => `${tabsBaseId}-panel-${id}`;
   const recurBodyId = `${tabsBaseId}-recur-body`;
   const classificationBodyId = `${tabsBaseId}-classification-body`;
+  const doneBlocksBodyId = `${tabsBaseId}-done-blocks-body`;
   const tabRefs = useRef<Partial<Record<TaskModalTabId, HTMLButtonElement | null>>>({});
   // Skok z listy blokad zapisu: WSZYSTKIE kotwice pól (`t-title`…`t-assignees`)
   // mieszkają w panelu „Zadanie", a ukryty panel nie przyjmuje fokusa — więc
@@ -786,10 +843,34 @@ function TaskEditor({
 
   // ---- Handlers ----
 
+  // AT-13 — „Cofnij" po „Wyczyść kolumnę". Migawka żyje w STANIE EDYTORA, a nie
+  // w store: przydziały są szkicem, a SAVE_TASK i tak uzgadnia je delta po
+  // delcie, więc akcja cofania w reduktorze byłaby w złej warstwie (i mogłaby
+  // wskrzesić bloki, których użytkownik już nie ma na ekranie).
+  const [clearUndo, setClearUndo] = useState<{
+    personId: string;
+    snapshot: PersonColumnSnapshot;
+  } | null>(null);
+  const clearUndoRef = useRef(clearUndo);
+  clearUndoRef.current = clearUndo;
+  // Bieżące mapy czytane przez ref, żeby `clearPerson`/`undoClear` zostały
+  // stabilne (kontrakt memoizacji siatki) mimo czytania stanu.
+  const allocationsRef = useRef(allocations);
+  allocationsRef.current = allocations;
+  const startTimesRef = useRef(startTimes);
+  startTimesRef.current = startTimes;
+  // Każda ręczna edycja siatki (`setCell`/`fillWeekdays`) unieważnia migawkę:
+  // „Cofnij" po dziesięciu wpisach cofałoby też te wpisy, a tego nikt się nie
+  // spodziewa. Zmiana okresu przestawia zestaw dni, więc też ją unieważnia.
+  useEffect(() => {
+    setClearUndo(null);
+  }, [startDate, endDate]);
+
   // Stable handlers (useCallback) so the memoized AllocationGrid — which runs
   // per-cell availability/overload scans — is not re-rendered/rescanned when the
   // user types in an unrelated editor field.
   const setCell = useCallback((personId: string, date: string, hours: number) => {
+    setClearUndo(null);
     // Snap to the 0.25 grid the store persists on. The grid cell input is
     // controlled directly by this numeric map (no separate raw-string field to
     // hold in-flight keystrokes), so snapping here — the setter that writes the
@@ -841,6 +922,7 @@ function TaskEditor({
 
   const fillWeekdays = useCallback(
     (personId: string) => {
+      setClearUndo(null);
       setAllocations((prev) => {
         const next = { ...prev };
         for (const d of eachDayInclusive(startDate, endDate)) {
@@ -857,6 +939,16 @@ function TaskEditor({
 
   const clearPerson = useCallback(
     (personId: string) => {
+      // Migawka SPRZED kasowania — kolejne „Wyczyść" po prostu ją zastępuje.
+      setClearUndo({
+        personId,
+        snapshot: snapshotPersonColumn(
+          allocationsRef.current,
+          startTimesRef.current,
+          eachDayInclusive(startDate, endDate),
+          personId,
+        ),
+      });
       setAllocations((prev) => {
         const next = { ...prev };
         for (const d of eachDayInclusive(startDate, endDate)) {
@@ -875,6 +967,20 @@ function TaskEditor({
     },
     [startDate, endDate],
   );
+
+  /** Przywrócenie godzin I przypiętych startów wyczyszczonej kolumny. */
+  const undoClear = useCallback((personId: string) => {
+    const pending = clearUndoRef.current;
+    if (pending === null || pending.personId !== personId) return;
+    const restored = restorePersonColumn(
+      allocationsRef.current,
+      startTimesRef.current,
+      pending.snapshot,
+    );
+    setAllocations(restored.allocations);
+    setStartTimes(restored.startTimes);
+    setClearUndo(null);
+  }, []);
 
   const toggleAssignee = async (personId: string) => {
     const isAssigned = assigneeIds.includes(personId);
@@ -926,6 +1032,8 @@ function TaskEditor({
         delete next[personId];
         return next;
       });
+      // Odpięta osoba nie ma już kolumny, więc nie ma czego cofać.
+      setClearUndo((current) => (current?.personId === personId ? null : current));
     } else {
       setAssigneeIds((prev) => [...prev, personId]);
     }
@@ -1684,7 +1792,12 @@ function TaskEditor({
           <ul className="checklist-list">
             {checklist.map((item) => (
               <li key={item.id} className={item.done ? 'checklist-row done' : 'checklist-row'}>
+                {/* AT-13 — `id` + `<label htmlFor>`: klik w treść pozycji
+                    przełącza pole wyboru, więc cel trafienia to cały tekst, a
+                    nie 20-pikselowy kwadrat. Przycisk „Usuń" zostaje POZA
+                    etykietą, żeby nie przełączał pozycji przy okazji. */}
                 <input
+                  id={`chk-${item.id}`}
                   type="checkbox"
                   checked={item.done}
                   onChange={() => toggleChecklistItem(item.id)}
@@ -1692,7 +1805,9 @@ function TaskEditor({
                   aria-describedby={roDesc}
                   aria-label={`Oznacz „${item.text}” jako ukończone`}
                 />
-                <span className="checklist-text">{item.text}</span>
+                <label className="checklist-text" htmlFor={`chk-${item.id}`}>
+                  {item.text}
+                </label>
                 {!readOnly && (
                   <button
                     type="button"
@@ -1978,6 +2093,8 @@ function TaskEditor({
               onChangeStart={setCellStart}
               onFillWeekdays={fillWeekdays}
               onClearPerson={clearPerson}
+              undoPersonId={clearUndo === null ? null : clearUndo.personId}
+              onUndoClear={undoClear}
               readOnly={readOnly}
               startHintId={readOnly ? undefined : startHintId}
             />
@@ -1991,11 +2108,18 @@ function TaskEditor({
     //     own tick. Toggling a block dispatches SET_BLOCK_DONE and NEVER changes
     //     the task status.
     'done-blocks': (
-      <div className="editor-section">
-        <h2>Wykonane bloki</h2>
-        <p className="checklist-count">
-          wykonano {blocksDoneCount}/{taskBlocks.length}
-        </p>
+      <div className="editor-section editor-section-collapsible">
+        {/* IA-08 — sekcja jest ZWINIĘTA: ✓ na kafelku kalendarza jest szybszą
+            drogą do tej samej akcji `SET_BLOCK_DONE`. Wejście z konkretnego
+            bloku (`?task=<id>&block=<id>`) rozwija ją SAMO, bo inaczej nie dałoby
+            się przewinąć do podświetlanego wiersza. */}
+        {collapseToggle(
+          `Wykonane bloki (wykonano ${blocksDoneCount}/${taskBlocks.length})`,
+          doneBlocksOpen,
+          doneBlocksBodyId,
+          () => setDoneBlocksOpen((v) => !v),
+        )}
+        <div id={doneBlocksBodyId} className="section-collapse-body" hidden={!doneBlocksOpen}>
         <p className="field-hint">
           Każdy blok w kalendarzu można oznaczyć jako wykonany niezależnie — status
           zadania pozostaje bez zmian.
@@ -2016,6 +2140,7 @@ function TaskEditor({
                   .join(' ')}
               >
                 <input
+                  id={`blk-${entry.id}`}
                   type="checkbox"
                   checked={entry.done === true}
                   onChange={() =>
@@ -2029,11 +2154,14 @@ function TaskEditor({
                   aria-describedby={roDesc}
                   aria-label={`Oznacz blok „${blockRowLabel(entry)}” jako wykonany`}
                 />
-                <span className="checklist-text">{blockRowLabel(entry)}</span>
+                <label className="checklist-text" htmlFor={`blk-${entry.id}`}>
+                  {blockRowLabel(entry)}
+                </label>
               </li>
             );
           })}
         </ul>
+        </div>
       </div>
     ),
 

@@ -11,6 +11,7 @@ import {
   getPerson,
 } from '../store/selectors';
 import { Avatar } from './Avatar';
+import { OverflowMenu } from './OverflowMenu';
 import { Tooltip } from './Tooltip';
 import { formatTimestamp } from '../utils/dates';
 import { applyMention, filterMentionPeople, mentionQueryAt } from './mentionAutocomplete';
@@ -69,7 +70,10 @@ function MentionBody({ body, people }: { body: string; people: Person[] }) {
 
 export function CommentsPanel({ entityType, entityId, inputRows = 2 }: Props) {
   const { state, dispatch } = useStore();
-  const [tab, setTab] = useState<'comments' | 'activity'>('comments');
+  // AT-10 — „Aktywność" przestała być RÓWNORZĘDNĄ zakładką: dyskusja ma jeden
+  // główny widok (komentarze), a historia zmian jest drugorzędnym widokiem
+  // otwieranym z menu „⋯" i zamykanym przyciskiem powrotu.
+  const [view, setView] = useState<'comments' | 'activity'>('comments');
   const [body, setBody] = useState('');
   // --- Podpowiedzi @wzmianek (logika w ./mentionAutocomplete) ---
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -159,28 +163,34 @@ export function CommentsPanel({ entityType, entityId, inputRows = 2 }: Props) {
 
   return (
     <div className="comments-panel">
-      <div className="comments-tabs" role="tablist">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'comments'}
-          className={tab === 'comments' ? 'toggle-btn active' : 'toggle-btn'}
-          onClick={() => setTab('comments')}
-        >
-          Komentarze ({comments.length})
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'activity'}
-          className={tab === 'activity' ? 'toggle-btn active' : 'toggle-btn'}
-          onClick={() => setTab('activity')}
-        >
-          Aktywność ({activity.length})
-        </button>
-      </div>
+      {view === 'comments' ? (
+        <div className="comments-head">
+          <h3 className="comments-title">Komentarze ({comments.length})</h3>
+          <OverflowMenu
+            label="Więcej opcji dyskusji"
+            items={[
+              {
+                id: 'activity',
+                label: `Historia zmian (${activity.length})`,
+                onSelect: () => setView('activity'),
+              },
+            ]}
+          />
+        </div>
+      ) : (
+        <div className="comments-head">
+          <h3 className="comments-title">Historia zmian ({activity.length})</h3>
+          <button
+            type="button"
+            className="btn ghost comments-back"
+            onClick={() => setView('comments')}
+          >
+            ← Wróć do komentarzy
+          </button>
+        </div>
+      )}
 
-      {tab === 'comments' ? (
+      {view === 'comments' ? (
         <>
           {/* IA-17 — pole nowego komentarza stoi NAD wątkiem: pisanie nie
               wymaga przewinięcia przez całą historię. */}

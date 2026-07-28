@@ -836,14 +836,24 @@ function TimedBlockImpl({
   // ale dla fokusu tworzą JEDNĄ całość — stąd oba refy i wspólny test poniżej.
   const blockRef = useRef<HTMLDivElement | null>(null);
   const binBtnRef = useRef<HTMLButtonElement | null>(null);
-  /** Czy fokus wylądował wewnątrz pary kafelek + akcja zasobnika? */
+  // IA-08 — ✓ jest TRZECIM elementem tej samej całości fokusowej (kafelek +
+  // akcja zasobnika + oznaczenie wykonania). Bez tego przejście Tabem z kafelka
+  // na ✓ zatwierdzałoby wystawioną edycję klawiaturową, o którą nikt nie prosił.
+  const doneBtnRef = useRef<HTMLButtonElement | null>(null);
+  /** Czy fokus wylądował wewnątrz trójki kafelek + akcja zasobnika + ✓? */
   const kbFocusStays = (target: EventTarget | null): boolean => {
     const node = target as Node | null;
     if (node === null) return false;
     return (
-      (blockRef.current?.contains(node) ?? false) || (binBtnRef.current?.contains(node) ?? false)
+      (blockRef.current?.contains(node) ?? false) ||
+      (binBtnRef.current?.contains(node) ?? false) ||
+      (doneBtnRef.current?.contains(node) ?? false)
     );
   };
+  // Hover kafelka ujawnia ✓. Obserwatory (żadnego `preventDefault`,
+  // `stopPropagation` ani przejęcia wskaźnika) — doktryna `useOverlay`/`Tooltip`,
+  // więc cykl życia wskaźnika przeciągania zostaje bez zmian (inwariant 7).
+  const [hovered, setHovered] = useState(false);
 
   /**
    * Wyjście fokusa POZA parę kafelek + akcja zasobnika ZATWIERDZA wystawioną
@@ -962,6 +972,10 @@ function TimedBlockImpl({
       onKeyDown={onBlockKeyDown}
       onBlur={editable ? onKbFocusOut : undefined}
       onContextMenu={editable ? (e) => onContextMenu(entry, e) : undefined}
+      // Same obserwatory hoveru (patrz `hovered`): nic nie konsumują, więc
+      // `Tooltip` klonujący ten element nadal dostaje swoje zdarzenia.
+      onPointerEnter={editable ? () => setHovered(true) : undefined}
+      onPointerLeave={editable ? () => setHovered(false) : undefined}
     >
       {editable && (
         <span className="week-block-handle top" onPointerDown={begin('top')} aria-hidden />
@@ -969,7 +983,10 @@ function TimedBlockImpl({
       <span className="week-block-title">
         {project && <Coin paid={project.paid} size={12} />}
         {task.title}
-        {entry.done === true && (
+        {/* Blok bez prawa edycji zostaje przy BIERNYM znaczniku: widz nadal widzi
+            ✓, ale nie dostaje przycisku, którego i tak nie wolno mu użyć.
+            Edytowalny blok ma zamiast tego przycisk-rodzeństwo (IA-08). */}
+        {!editable && entry.done === true && (
           <span className="block-done-mark" aria-label="Wykonane">
             ✓
           </span>
@@ -1019,6 +1036,52 @@ function TimedBlockImpl({
         }}
       >
         Przenieś do zasobnika
+      </button>
+    )}
+    {/* IA-08 — oznaczenie wykonania PROSTO z kalendarza. Ta sama doktryna, co
+        akcja zasobnika: RODZEŃSTWO kafelka, nie jego dziecko (dzieci
+        `role="button"` są prezentacyjne, więc zagnieżdżony przycisk nie
+        zostałby ogłoszony). `pointerdown` zatrzymuje się TU i nigdy nie
+        schodzi do `begin(...)`, więc ✓ nie może rozpocząć przeciągania,
+        rozciągania ani obsługi slotu — cykl życia wskaźnika bez zmian
+        (inwariant 7). Akcja jest DOKŁADNIE ta sama, co w liście „Wykonane
+        bloki" w TaskModal. */}
+    {editable && (
+      <button
+        type="button"
+        ref={doneBtnRef}
+        className={
+          hovered ? 'week-block-done-btn hovered' : 'week-block-done-btn'
+        }
+        style={{
+          top,
+          // Prawy górny róg kafelka: lewa krawędź kolumny + jej szerokość,
+          // a `translateX(-100%)` cofa przycisk o jego własną szerokość.
+          left: `calc(${((col + 1) / cols) * 100}% - 2px)`,
+          transform: tx
+            ? `translateX(${tx}px) translateX(-100%)`
+            : 'translateX(-100%)',
+        }}
+        aria-pressed={entry.done === true}
+        aria-label={
+          entry.done === true
+            ? `Cofnij wykonanie — ${blockAriaLabel}`
+            : `Oznacz jako wykonane — ${blockAriaLabel}`
+        }
+        onPointerDown={(e) => e.stopPropagation()}
+        // Wyjście fokusa domyka wystawioną edycję tym samym kontraktem, co
+        // kafelek i akcja zasobnika.
+        onBlur={onKbFocusOut}
+        onClick={(e) => {
+          e.stopPropagation();
+          dispatch({
+            type: 'SET_BLOCK_DONE',
+            entryId: entry.id,
+            done: !(entry.done === true),
+          });
+        }}
+      >
+        <span aria-hidden>✓</span>
       </button>
     )}
     {/* Over-bin ghost: a fixed portal copy of the block riding under the pointer

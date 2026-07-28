@@ -48,4 +48,7 @@ export {
   // Karta Kanban: uchwyt przenoszenia (chwyt) i wyzwalacz menu karty.
   GripVertical,
   MoreVertical,
+  // Wspólny wyzwalacz menu „⋯" (OverflowMenu) — poziomy wariant, bo stoi w
+  // paskach akcji (nagłówek modala, nagłówek kolumny osoby w siatce).
+  MoreHorizontal,
 } from 'lucide-react';
