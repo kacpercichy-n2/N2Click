@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import {
   Link,
   NavLink,
@@ -9,26 +9,33 @@ import {
   useLocation,
   useSearchParams,
 } from 'react-router-dom';
-import { motion } from 'motion/react';
+import { m } from 'motion/react';
 import { useStore } from './store/AppStore';
-import { DashboardPage } from './pages/DashboardPage';
-import { ChangelogPage } from './pages/ChangelogPage';
-import { ProjectsPage } from './pages/ProjectsPage';
-import { ProjectDetailPage } from './pages/ProjectDetailPage';
-import { ClientsPage } from './pages/ClientsPage';
-import { KanbanPage } from './pages/KanbanPage';
-import { TimelinePage } from './pages/TimelinePage';
-import { TasksPage } from './pages/TasksPage';
-import { TaskFullPage } from './pages/TaskFullPage';
-import { CalendarPage } from './pages/CalendarPage';
-import { PeoplePage } from './pages/PeoplePage';
-import { PersonProfilePage } from './pages/PersonProfilePage';
-import { WorkloadPage } from './pages/WorkloadPage';
-import { AdminPage } from './pages/AdminPage';
-import { TicketsPage } from './pages/TicketsPage';
-import { EventsPage } from './pages/EventsPage';
-import { AccountPage } from './pages/AccountPage';
-import { TeamPage } from './pages/TeamPage';
+// Wszystkie strony tras są LENIWE — jedna mapa `routeChunks.ts` daje i te
+// komponenty, i `prefetchRoute` podgrzewający ten sam chunk na hoverze pozycji
+// menu. `LoginPage` zostaje zwykłym importem: renderuje się przed powłoką i
+// przed granicą `<Suspense>`.
+import {
+  AccountPage,
+  AdminPage,
+  CalendarPage,
+  ChangelogPage,
+  ClientsPage,
+  DashboardPage,
+  EventsPage,
+  KanbanPage,
+  PeoplePage,
+  PersonProfilePage,
+  ProjectDetailPage,
+  ProjectsPage,
+  TaskFullPage,
+  TasksPage,
+  TeamPage,
+  TicketsPage,
+  TimelinePage,
+  WorkloadPage,
+  prefetchRoute,
+} from './pages/routeChunks';
 import { canViewTeam } from './pages/teamScope';
 import { LoginPage } from './pages/LoginPage';
 import { HOME_PATH } from './pages/homeRoute';
@@ -307,7 +314,13 @@ export function App() {
               // Rozwinięte menu POKAZUJE etykietę — dymek powtarzałby widoczny
               // tekst. Dymek ma sens wyłącznie w zwiniętej listwie ikon.
               const link = (
-                <NavLink key={to} to={to} className={navClass}>
+                <NavLink
+                  key={to}
+                  to={to}
+                  className={navClass}
+                  onPointerEnter={() => prefetchRoute(to)}
+                  onFocus={() => prefetchRoute(to)}
+                >
                   <Icon size={18} aria-hidden className="nav-icon" />
                   <span className="nav-label">{label}</span>
                 </NavLink>
@@ -326,7 +339,12 @@ export function App() {
               trybie supabase. Przypięte PO liście, poza edytorem kolejności. */}
           {(() => {
             const settingsLink = (
-              <NavLink to="/account" className={navClass}>
+              <NavLink
+                to="/account"
+                className={navClass}
+                onPointerEnter={() => prefetchRoute('/account')}
+                onFocus={() => prefetchRoute('/account')}
+              >
                 <Settings size={18} aria-hidden className="nav-icon" />
                 <span className="nav-label">Ustawienia</span>
               </NavLink>
@@ -358,6 +376,8 @@ export function App() {
                     to={`/people/${currentUser.id}`}
                     className="sidebar-user-collapsed"
                     aria-label={`Mój profil: ${currentUser.name}`}
+                    onPointerEnter={() => prefetchRoute('/people/:id')}
+                    onFocus={() => prefetchRoute('/people/:id')}
                   >
                     <Avatar person={currentUser} size={32} />
                   </Link>
@@ -371,6 +391,8 @@ export function App() {
                       to={`/people/${currentUser.id}`}
                       className="sidebar-user-avatar"
                       aria-label={`Mój profil: ${currentUser.name}`}
+                      onPointerEnter={() => prefetchRoute('/people/:id')}
+                      onFocus={() => prefetchRoute('/people/:id')}
                     >
                       <Avatar person={currentUser} size={32} />
                     </Link>
@@ -402,53 +424,61 @@ export function App() {
         {/* Cloud sync status (supabase mode only; renders null in local mode). */}
         <CloudSyncBanner />
         <SampleBanner />
-        <motion.div
+        <m.div
           key={location.pathname}
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.18, ease: 'easeOut' }}
         >
-          <Routes>
-            <Route path="/" element={<HomeRedirect />} />
-            <Route path="/dashboard" element={<DashboardPage />} />
-            {/* Changelog: pełna historia wpisów z src/data/changelog.ts, dostępna dla każdej roli. */}
-            <Route path="/changelog" element={<ChangelogPage />} />
-            {/* „Moja praca" scalona w „Panel"; stary link/zakładka nie pęka. */}
-            <Route path="/my-work" element={<Navigate to={HOME_PATH} replace />} />
-            <Route path="/projects" element={<ProjectsPage />} />
-            <Route path="/projects/:id" element={<ProjectDetailPage />} />
-            <Route path="/clients" element={<ClientsPage />} />
-            <Route path="/kanban" element={<KanbanPage />} />
-            <Route path="/timeline" element={<TimelinePage />} />
-            <Route path="/tasks" element={<TasksPage />} />
-            {/* Tworzenie zostaje w modalu (deep-link zgodny wstecz); konkretne
-                zadanie ma PEŁNĄ stronę (IA-15). Statyczny segment `new` wygrywa
-                z `:id`, więc `id === 'new'` jest nieosiągalne. */}
-            <Route path="/tasks/new" element={<NewTaskRedirect />} />
-            <Route path="/tasks/:id" element={<TaskFullPage />} />
-            <Route path="/calendar" element={<CalendarPage />} />
-            {/* Wydarzenia: widoczne dla każdej roli (zarządzanie gated przez events.manage). */}
-            <Route path="/wydarzenia" element={<EventsPage />} />
-            <Route path="/people" element={<PeoplePage />} />
-            <Route path="/people/:id" element={<PersonProfilePage />} />
-            <Route path="/workload" element={<WorkloadPage />} />
-            {/* Zgłoszenia: widoczne dla każdej roli (zakres wierszy filtruje strona). */}
-            <Route path="/zgloszenia" element={<TicketsPage />} />
-            <Route
-              path="/admin"
-              element={canAdmin ? <AdminPage /> : <Navigate to="/dashboard" replace />}
-            />
-            {/* Team area: role-gated (worker redirected). TeamPage also guards. */}
-            <Route
-              path="/team"
-              element={canTeam ? <TeamPage /> : <Navigate to="/dashboard" replace />}
-            />
-            {/* Ustawienia: dostępne w OBU trybach (tryb lokalny widzi tylko
-                sekcję „Interfejs”). */}
-            <Route path="/account" element={<AccountPage />} />
-            <Route path="*" element={<HomeRedirect />} />
-          </Routes>
-        </motion.div>
+          {/* Granica leniwych tras stoi WEWNĄTRZ powłoki i wszystkich dostawców
+              (store, sesja, dane organizacji, sync, avatary, potwierdzenia,
+              MotionConfig/LazyMotion) oraz wewnątrz ErrorBoundary z `main.tsx`.
+              Zawieszenie trasy wymienia więc wyłącznie treść `main` — sidebar,
+              dolny pasek, banery, modale i strażnik `useBlocker` zostają
+              zamontowane. */}
+          <Suspense fallback={<RouteFallback />}>
+            <Routes>
+              <Route path="/" element={<HomeRedirect />} />
+              <Route path="/dashboard" element={<DashboardPage />} />
+              {/* Changelog: pełna historia wpisów z src/data/changelog.ts, dostępna dla każdej roli. */}
+              <Route path="/changelog" element={<ChangelogPage />} />
+              {/* „Moja praca" scalona w „Panel"; stary link/zakładka nie pęka. */}
+              <Route path="/my-work" element={<Navigate to={HOME_PATH} replace />} />
+              <Route path="/projects" element={<ProjectsPage />} />
+              <Route path="/projects/:id" element={<ProjectDetailPage />} />
+              <Route path="/clients" element={<ClientsPage />} />
+              <Route path="/kanban" element={<KanbanPage />} />
+              <Route path="/timeline" element={<TimelinePage />} />
+              <Route path="/tasks" element={<TasksPage />} />
+              {/* Tworzenie zostaje w modalu (deep-link zgodny wstecz); konkretne
+                  zadanie ma PEŁNĄ stronę (IA-15). Statyczny segment `new` wygrywa
+                  z `:id`, więc `id === 'new'` jest nieosiągalne. */}
+              <Route path="/tasks/new" element={<NewTaskRedirect />} />
+              <Route path="/tasks/:id" element={<TaskFullPage />} />
+              <Route path="/calendar" element={<CalendarPage />} />
+              {/* Wydarzenia: widoczne dla każdej roli (zarządzanie gated przez events.manage). */}
+              <Route path="/wydarzenia" element={<EventsPage />} />
+              <Route path="/people" element={<PeoplePage />} />
+              <Route path="/people/:id" element={<PersonProfilePage />} />
+              <Route path="/workload" element={<WorkloadPage />} />
+              {/* Zgłoszenia: widoczne dla każdej roli (zakres wierszy filtruje strona). */}
+              <Route path="/zgloszenia" element={<TicketsPage />} />
+              <Route
+                path="/admin"
+                element={canAdmin ? <AdminPage /> : <Navigate to="/dashboard" replace />}
+              />
+              {/* Team area: role-gated (worker redirected). TeamPage also guards. */}
+              <Route
+                path="/team"
+                element={canTeam ? <TeamPage /> : <Navigate to="/dashboard" replace />}
+              />
+              {/* Ustawienia: dostępne w OBU trybach (tryb lokalny widzi tylko
+                  sekcję „Interfejs”). */}
+              <Route path="/account" element={<AccountPage />} />
+              <Route path="*" element={<HomeRedirect />} />
+            </Routes>
+          </Suspense>
+        </m.div>
       </main>
 
       {/* Telefon: dolny pasek pięciu zakładek. Trzy trasy + deep-link zasobnika
@@ -469,6 +499,8 @@ export function App() {
                 to={to}
                 className={() => (active ? 'app-bottom-nav-item active' : 'app-bottom-nav-item')}
                 aria-current={active ? 'page' : undefined}
+                onPointerEnter={() => prefetchRoute(to)}
+                onFocus={() => prefetchRoute(to)}
               >
                 <Icon size={20} aria-hidden />
                 <span className="app-bottom-nav-label">{label}</span>
@@ -477,7 +509,12 @@ export function App() {
           })}
           {/* Zwykły `Link`, nie `NavLink`: prowadzi na `/calendar`, więc stan
               aktywny podświetlałby dwie zakładki naraz. */}
-          <Link to={BIN_TAB_TARGET} className="app-bottom-nav-item">
+          <Link
+            to={BIN_TAB_TARGET}
+            className="app-bottom-nav-item"
+            onPointerEnter={() => prefetchRoute('/calendar')}
+            onFocus={() => prefetchRoute('/calendar')}
+          >
             <Archive size={20} aria-hidden />
             <span className="app-bottom-nav-label">Zasobnik</span>
           </Link>
@@ -509,13 +546,26 @@ export function App() {
               if (!item) return null;
               const [, label, Icon] = item;
               return (
-                <Link key={to} to={to} role="menuitem" className="app-more-item">
+                <Link
+                  key={to}
+                  to={to}
+                  role="menuitem"
+                  className="app-more-item"
+                  onPointerEnter={() => prefetchRoute(to)}
+                  onFocus={() => prefetchRoute(to)}
+                >
                   <Icon size={18} aria-hidden />
                   <span>{label}</span>
                 </Link>
               );
             })}
-            <Link to="/account" role="menuitem" className="app-more-item">
+            <Link
+              to="/account"
+              role="menuitem"
+              className="app-more-item"
+              onPointerEnter={() => prefetchRoute('/account')}
+              onFocus={() => prefetchRoute('/account')}
+            >
               <Settings size={18} aria-hidden />
               <span>Ustawienia</span>
             </Link>
@@ -536,6 +586,8 @@ export function App() {
                 to={`/people/${currentUser.id}`}
                 role="menuitem"
                 className="app-more-item"
+                onPointerEnter={() => prefetchRoute('/people/:id')}
+                onFocus={() => prefetchRoute('/people/:id')}
               >
                 <Avatar person={currentUser} size={22} />
                 <span>Mój profil</span>
@@ -564,6 +616,20 @@ export function App() {
       <EventModal />
       <DirtyNavigationGuard />
       <OnboardingRoot owner={currentUser} viewer={currentUser} />
+    </div>
+  );
+}
+
+/**
+ * Zastępnik treści trasy na czas dociągania jej chunku. Świadomie NIE wprowadza
+ * nowego języka wizualnego: to ten sam pusty stan (`empty-state`/`empty-title`),
+ * którego używają strony, więc nie przybywa ani jednej klasy CSS. Region
+ * `role="status"` ogłasza ładowanie czytnikom ekranu.
+ */
+function RouteFallback() {
+  return (
+    <div className="empty-state" role="status">
+      <p className="empty-title">Wczytywanie…</p>
     </div>
   );
 }

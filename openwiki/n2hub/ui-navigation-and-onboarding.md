@@ -4,7 +4,26 @@
 
 - `src/App.tsx` owns routing, shell-level overlays and current-user navigation.
   `src/main.tsx` hosts the data router (`createBrowserRouter`) that App's
-  `useBlocker` dirty-navigation guard requires.
+  `useBlocker` dirty-navigation guard requires. WSZYSTKIE strony tras są LENIWE
+  (`React.lazy`): jedyne źródło mapy `ścieżka → () => import(...)` to
+  `src/pages/routeChunks.ts`, z którego bierze się i komponent trasy, i
+  `prefetchRoute` podgrzewający TEN SAM chunk na `onPointerEnter`/`onFocus`
+  pozycji nawigacji (sidebar, dolny pasek, arkusz „Więcej”, „Zasobnik” →
+  `/calendar`, awatar profilu → `/people/:id`). Granica `<Suspense>` stoi
+  WEWNĄTRZ powłoki i dostawców (zastępnik = istniejący `empty-state` z
+  „Wczytywanie…”), więc zawieszenie trasy nie odmontowuje sidebara, dolnego
+  paska, modali ani strażnika `useBlocker`. `LoginPage` i `auth/AuthScreens`
+  zostają ZWYKŁYMI importami — renderują się przed powłoką i przed tą granicą.
+  Silnik animacji ładuje `<LazyMotion features={domAnimation} strict>` w
+  `main.tsx` (obok `MotionConfig`); cała aplikacja renderuje `m.*`, `motion.*`
+  nie ma nigdzie, a `strict` to wymusza. Dlatego karty Kanbana nie mają już
+  propsu `layout` (projekcja FLIP jest poza `domAnimation`; `transition:
+  transform` w CSS też NIE, bo tym samym transformem steruje `whileHover`).
+  `vite.config.ts` wydziela ręcznie DOKŁADNIE trzy paczki vendorów — `react`
+  (razem z `react-dom`/`scheduler`/`react-router*`/`@remix-run/router`, żeby nie
+  rozjechać środowiska Reacta), `motion` (+ `framer-motion`/`motion-dom`/
+  `motion-utils`) i `supabase` — oraz trzyma `build.cssCodeSplit: false`, bo
+  `styles.css` MUSI zostać jednym arkuszem.
 - `src/auth/` owns the login gate. Mode is decided once at startup (local vs
   Supabase). Local mode (no/invalid Supabase config) keeps the demo person-picker
   `src/pages/LoginPage.tsx` and the `currentUserId` gate. Supabase mode gates the

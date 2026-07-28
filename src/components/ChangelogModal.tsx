@@ -7,7 +7,7 @@
 // sterowany zwykłym stanem (`open`/`onClose`), bez parametru w URL i strażnika
 // nawigacji.
 import { useCallback, useId } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, m } from 'motion/react';
 import { CHANGELOG, changelogRangeLabel } from '../data/changelog';
 import type { ChangelogEntry, ChangelogItem } from '../data/changelog';
 import { useModalShell } from './useModalShell';
@@ -54,7 +54,7 @@ function ChangelogModalShell({ onClose }: { onClose: () => void }) {
 
   return (
     <>
-      <motion.div
+      <m.div
         className="task-modal-scrim"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -62,7 +62,7 @@ function ChangelogModalShell({ onClose }: { onClose: () => void }) {
         transition={{ duration: 0.18 }}
       />
       <div className="task-modal-viewport" {...viewportProps}>
-        <motion.div
+        <m.div
           ref={cardRef}
           className="task-modal-card changelog-modal-card"
           {...cardProps}
@@ -91,7 +91,7 @@ function ChangelogModalShell({ onClose }: { onClose: () => void }) {
               ))}
             </div>
           </div>
-        </motion.div>
+        </m.div>
       </div>
     </>
   );

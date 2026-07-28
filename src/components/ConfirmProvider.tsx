@@ -141,9 +141,9 @@ function ConfirmDialog({ entry, onSettle }: DialogProps) {
     <>
       <div className="task-modal-scrim confirm-scrim" />
       <div className="task-modal-viewport confirm-viewport" {...viewportProps}>
-        {/* Świadomie ZWYKŁY `div`, nie `motion.div`: dostawca stoi PONAD
-            `MotionConfig reducedMotion="user"` (które opakowuje tylko router),
-            więc wejście karty robi animacja CSS — globalna reguła
+        {/* Świadomie ZWYKŁY `div`, nie `m.div`: dostawca stoi PONAD
+            `MotionConfig reducedMotion="user"` i `LazyMotion` (opakowują tylko
+            router), więc wejście karty robi animacja CSS — globalna reguła
             `prefers-reduced-motion` w `styles.css` wycisza ją bez wyjątków. */}
         <div ref={cardRef} className="task-modal-card confirm-card" {...cardProps}>
           <div className="confirm-body">

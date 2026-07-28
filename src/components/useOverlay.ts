@@ -130,7 +130,7 @@ function isTextEntry(element: HTMLElement): boolean {
 
 /**
  * Element, który faktycznie dostaje `left/top` — bywa RODZICEM refa: przy
- * `AnimatePresence` ref nie może siedzieć na `motion.div`, więc menu
+ * `AnimatePresence` ref nie może siedzieć na `m.div`, więc menu
  * kalendarza trzyma go na wewnętrznym, zwykłym `<div>`. `offsetParent` równy
  * rodzicowi znaczy, że to rodzic jest elementem pozycjonowanym.
  */

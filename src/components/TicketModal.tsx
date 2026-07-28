@@ -4,7 +4,7 @@
 // Dzięki temu „Zgłoś” nie opuszcza bieżącej strony i da się podlinkować.
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, m } from 'motion/react';
 import { useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import type { TicketDraft } from '../store/AppStore';
@@ -172,7 +172,7 @@ function TicketModalShell({ ticketParam, onClose }: ShellProps) {
 
   return (
     <>
-      <motion.div
+      <m.div
         className="task-modal-scrim"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -180,7 +180,7 @@ function TicketModalShell({ ticketParam, onClose }: ShellProps) {
         transition={{ duration: 0.18 }}
       />
       <div className="task-modal-viewport" {...viewportProps}>
-        <motion.div
+        <m.div
           ref={cardRef}
           className="task-modal-card ticket-modal-card"
           {...cardProps}
@@ -228,7 +228,7 @@ function TicketModalShell({ ticketParam, onClose }: ShellProps) {
               />
             )}
           </div>
-        </motion.div>
+        </m.div>
       </div>
     </>
   );

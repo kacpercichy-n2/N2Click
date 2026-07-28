@@ -19,7 +19,7 @@
 // sprzątane na KAŻDEJ ścieżce — upuszczenie, `pointercancel`, Escape, blur okna,
 // ukrycie karty przeglądarki i odmontowanie w trakcie gestu.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, m } from 'motion/react';
 import { useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import { activeStatuses, getClient, getProject } from '../store/selectors';
@@ -658,9 +658,16 @@ export function KanbanPage() {
     const overflow = assigneeIds.length - shown.length;
     const moving = move !== null && move.taskId === t.id;
     return (
-      <motion.div
+      // Bez `layout`: projekcja FLIP mierzyła KAŻDĄ kartę tablicy przy każdym
+      // renderze (a przy przeciąganiu — co klatkę), a jej jedyny efekt to
+      // przesuwanie kart po zmianie kolumny. Nie zastępujemy jej też CSS-owym
+      // `transition: transform` na `.kanban-card`: tym samym `transform`
+      // steruje `whileHover` z motion, więc przejście CSS biłoby się z
+      // animacją silnika. Trzy ścieżki przenoszenia (wskaźnik, klawiatura,
+      // menu) nie zależały od projekcji — kończą się tym samym
+      // `SET_TASK_STATUS`.
+      <m.div
         key={t.id}
-        layout
         whileHover={{ y: -2 }}
         transition={{ duration: 0.18, ease: 'easeOut' }}
         className={[
@@ -736,7 +743,7 @@ export function KanbanPage() {
             {overflow > 0 && <span className="kanban-card-more">+{overflow}</span>}
           </div>
         )}
-      </motion.div>
+      </m.div>
     );
   };
 
@@ -878,7 +885,7 @@ export function KanbanPage() {
       <OverlayLayer>
         <AnimatePresence>
           {menu !== null && (
-            <motion.div
+            <m.div
               className="context-menu"
               style={{ ...menuOverlay.style, transformOrigin: 'top left' }}
               role="menu"
@@ -920,7 +927,7 @@ export function KanbanPage() {
                   </>
                 )}
               </div>
-            </motion.div>
+            </m.div>
           )}
         </AnimatePresence>
       </OverlayLayer>

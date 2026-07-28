@@ -7,7 +7,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, m } from 'motion/react';
 import type { AppData, Person, Project, Task, WorkloadEntry } from '../types';
 import { useDispatch, useStoreApi } from '../store/AppStore';
 import { useCan } from '../store/useCan';
@@ -2835,7 +2835,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
       <OverlayLayer>
       <AnimatePresence>
         {menu && (
-          <motion.div
+          <m.div
             className="context-menu"
             style={{ ...menuOverlay.style, transformOrigin: 'top left' }}
             role="menu"
@@ -2846,7 +2846,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
           >
             {/* menuRef wraps the ENTIRE popover (every step branch) so the
                 outside-click check still covers all buttons/fields. It lives on a
-                plain inner div, NOT on the AnimatePresence child (motion.div),
+                plain inner div, NOT on the AnimatePresence child (m.div),
                 because motion's PopChild reads children.props.ref and React 18.3
                 warns on that. .context-menu is block flow, so this wrapper is
                 layout-neutral. */}
@@ -3078,7 +3078,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
             </div>
           )}
             </div>
-          </motion.div>
+          </m.div>
         )}
       </AnimatePresence>
       </OverlayLayer>
@@ -3086,7 +3086,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
       <OverlayLayer>
       <AnimatePresence>
         {slotMenu && (
-          <motion.div
+          <m.div
             className="context-menu"
             style={{ ...slotOverlay.style, transformOrigin: 'top left' }}
             role="menu"
@@ -3117,7 +3117,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                 </button>
               )}
             </div>
-          </motion.div>
+          </m.div>
         )}
       </AnimatePresence>
       </OverlayLayer>
@@ -3125,7 +3125,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
       <OverlayLayer>
       <AnimatePresence>
         {recurMenu && (
-          <motion.div
+          <m.div
             className="context-menu"
             style={{ ...recurOverlay.style, transformOrigin: 'top left' }}
             role="menu"
@@ -3262,7 +3262,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                 </div>
               )}
             </div>
-          </motion.div>
+          </m.div>
         )}
       </AnimatePresence>
       </OverlayLayer>

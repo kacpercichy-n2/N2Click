@@ -11,7 +11,7 @@
 // ANI JEDNEJ własnej reguły a11y, więc nie ma też czego testować osobno.
 import { useCallback, useRef, useState } from 'react';
 import type { ReactElement } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, m } from 'motion/react';
 import { IconButton } from './IconButton';
 import { MoreHorizontal } from './icons';
 import { OverlayLayer, useOverlay } from './useOverlay';
@@ -46,7 +46,7 @@ export function OverflowMenu({
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   // Ref siedzi na WEWNĘTRZNYM, zwykłym `<div>` (wzorzec `positionedBox`):
-  // przy `AnimatePresence` nie może stać na `motion.div`.
+  // przy `AnimatePresence` nie może stać na `m.div`.
   const menuRef = useRef<HTMLDivElement>(null);
 
   const close = useCallback(() => setOpen(false), []);
@@ -82,7 +82,7 @@ export function OverflowMenu({
       <OverlayLayer>
         <AnimatePresence>
           {open && (
-            <motion.div
+            <m.div
               // Ta sama karta, co menu kontekstowe kalendarza/Kanbana; wariant
               // różni się WYŁĄCZNIE miejscem na drabinie `z-index` (menu bywa
               // otwierane w modalu, a portal siedzi na `<body>`).
@@ -116,7 +116,7 @@ export function OverflowMenu({
                   </button>
                 ))}
               </div>
-            </motion.div>
+            </m.div>
           )}
         </AnimatePresence>
       </OverlayLayer>

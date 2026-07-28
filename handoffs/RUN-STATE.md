@@ -46,3 +46,12 @@ None blocking. Deferred (recorded, not routed): migrating DashboardPage /
 CalendarPage / App shell to useSelector; removing the WeekView/MonthView
 `state` prop. Wiki: `state-and-persistence.md` will need a selector-cache +
 context-split bullet if green — final reviewer owns that call.
+
+## Developer result (PKG-20260728-code-splitting-lazymotion)
+
+New `src/pages/routeChunks.ts` (lazy routes + `prefetchRoute`); `App.tsx`
+Suspense inside providers + hover prefetch; `main.tsx` `LazyMotion domAnimation
+strict`; 11 files `motion.*`→`m.*`; Kanban `layout` dropped (no CSS swap —
+`whileHover` owns transform); `vite.config.ts` react/motion/supabase chunks,
+`cssCodeSplit:false`, `optimizeDeps lucide-react`. Entry gzip 355.80→120.40 kB,
+one CSS asset. `npm test` 2003/2003, build green. Wiki bullet updated.

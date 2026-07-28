@@ -23,7 +23,7 @@ import {
   useState,
 } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, m } from 'motion/react';
 import { useStore } from '../store/AppStore';
 import {
   DEFAULT_SEARCH_LIMIT,
@@ -461,7 +461,7 @@ function SearchOverlay({ onClose }: { onClose: () => void }) {
 
   return (
     <>
-      <motion.div
+      <m.div
         className="gs-scrim"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -469,7 +469,7 @@ function SearchOverlay({ onClose }: { onClose: () => void }) {
         transition={{ duration: 0.16 }}
       />
       <div className="gs-viewport" onClick={onClose}>
-        <motion.div
+        <m.div
           className="gs-panel"
           role="dialog"
           aria-modal="true"
@@ -525,7 +525,7 @@ function SearchOverlay({ onClose }: { onClose: () => void }) {
               ))
             )}
           </div>
-        </motion.div>
+        </m.div>
       </div>
     </>
   );

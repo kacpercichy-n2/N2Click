@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { RouterProvider, createBrowserRouter } from 'react-router-dom';
-import { MotionConfig } from 'motion/react';
+import { LazyMotion, MotionConfig, domAnimation } from 'motion/react';
 import { AppStoreProvider } from './store/AppStore';
 import { SessionProvider } from './auth/SessionProvider';
 import { OrgDataProvider } from './supabase/OrgDataProvider';
@@ -75,7 +75,16 @@ createRoot(rootEl).render(
                 <AvatarUrlsProvider>
                   {/* Respect OS "reduce motion" for every animation in the app. */}
                   <MotionConfig reducedMotion="user">
-                    <RouterProvider router={router} future={{ v7_startTransition: true }} />
+                    {/* JEDYNE miejsce, w którym ładujemy silnik animacji. Cała
+                        aplikacja renderuje `m.*` (nigdy `motion.*`), więc do
+                        drzewa wchodzi lekki `domAnimation` (animacje, warianty,
+                        wyjścia `AnimatePresence`, gesty hover/tap/focus) zamiast
+                        pełnego pakietu z projekcją layoutu i przeciąganiem.
+                        `strict` pilnuje tej umowy: każde `motion.*` rzuci błąd
+                        zamiast po cichu dociągnąć pełny silnik. */}
+                    <LazyMotion features={domAnimation} strict>
+                      <RouterProvider router={router} future={{ v7_startTransition: true }} />
+                    </LazyMotion>
                   </MotionConfig>
                 </AvatarUrlsProvider>
               </CloudSyncProvider>

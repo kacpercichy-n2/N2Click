@@ -14,7 +14,7 @@
 // Siatka desktopowa jest nietknięta.
 import { Fragment, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { motion } from 'motion/react';
+import { m } from 'motion/react';
 import { Megaphone } from '../components/icons';
 import { useStore } from '../store/AppStore';
 import { CHANGELOG, changelogRangeLabel, isSameDayRange } from '../data/changelog';
@@ -276,7 +276,7 @@ export function DashboardPage() {
   // Kotwice `data-tour` (onboarding, src/onboarding/catalog.ts) siedzą wewnątrz.
 
   const renderNotificationsTile = (className: string) => (
-    <motion.div className={className} variants={dashCardVariants}>
+    <m.div className={className} variants={dashCardVariants}>
       <div className="dash-card-head">
         <h2>Powiadomienia</h2>
         {unreadNotifications.length > 0 && (
@@ -350,14 +350,14 @@ export function DashboardPage() {
           })}
         </ul>
       )}
-    </motion.div>
+    </m.div>
   );
 
   const renderTodayTile = (className: string) => (
-    <motion.div className={className} variants={dashCardVariants} data-tour="home.today">
+    <m.div className={className} variants={dashCardVariants} data-tour="home.today">
       <h2>Zadania na dziś</h2>
       <TodayAgendaList personId={me.id} date={today} />
-    </motion.div>
+    </m.div>
   );
 
   /** Sama lista zespołu; `id` istnieje wyłącznie na telefonie (aria-controls). */
@@ -376,7 +376,7 @@ export function DashboardPage() {
   );
 
   const renderBinTile = (className: string) => (
-    <motion.div className={className} variants={dashCardVariants} data-tour="home.bin">
+    <m.div className={className} variants={dashCardVariants} data-tour="home.bin">
       <h2>Zasobnik (nierozplanowane)</h2>
       {binRows.length === 0 ? (
         <p className="muted">Zasobnik jest pusty.</p>
@@ -399,11 +399,11 @@ export function DashboardPage() {
           Zaplanuj w kalendarzu →
         </Link>
       </div>
-    </motion.div>
+    </m.div>
   );
 
   const renderAlertsTile = (className: string) => (
-    <motion.div className={className} variants={dashCardVariants} data-tour="home.alerts">
+    <m.div className={className} variants={dashCardVariants} data-tour="home.alerts">
       <h2>Alerty</h2>
       {noAlerts ? (
         <p className="muted">Brak alertów.</p>
@@ -474,7 +474,7 @@ export function DashboardPage() {
           )}
         </div>
       )}
-    </motion.div>
+    </m.div>
   );
 
   // ——— Stos telefonu ————————————————————————————————————————————————
@@ -523,7 +523,7 @@ export function DashboardPage() {
         // Jedna linia zamiast dwóch pierścieni — na telefonie liczy się fakt
         // „ile z ilu", nie wykres.
         return (
-          <motion.div className="dash-card dash-m-workload" variants={dashCardVariants}>
+          <m.div className="dash-card dash-m-workload" variants={dashCardVariants}>
             <h2>Obciążenie</h2>
             <p
               className={`dash-m-workload-line${
@@ -532,13 +532,13 @@ export function DashboardPage() {
             >
               {workloadSummaryLine(todaySegment, weekSegment)}
             </p>
-          </motion.div>
+          </m.div>
         );
       case 'week':
         // Siedem pigułek: dzień + suma godzin (bez zera). Pigułki są czysto
         // informacyjne — nawigację niesie link „Otwórz kalendarz".
         return (
-          <motion.div className="dash-card dash-m-week" variants={dashCardVariants}>
+          <m.div className="dash-card dash-m-week" variants={dashCardVariants}>
             <div className="dash-card-head">
               <h2>Twój tydzień</h2>
               <Link to="/calendar" className="link-btn">
@@ -562,13 +562,13 @@ export function DashboardPage() {
                 );
               })}
             </div>
-          </motion.div>
+          </m.div>
         );
       case 'team':
         // Zwinięty domyślnie; `data-tour="home.workload"` zostaje na karcie
         // zespołu (tak jak na desktopie — onboarding tego szuka).
         return (
-          <motion.div
+          <m.div
             className="dash-card dash-m-team"
             variants={dashCardVariants}
             data-tour="home.workload"
@@ -588,7 +588,7 @@ export function DashboardPage() {
               </button>
             </h2>
             {teamOpen && renderTeamRoster('dash-m-team-roster')}
-          </motion.div>
+          </m.div>
         );
     }
   };
@@ -601,7 +601,7 @@ export function DashboardPage() {
       </div>
 
       {latestChange && (
-        <motion.div
+        <m.div
           className="changelog-bar"
           initial={{ opacity: 0, y: -6 }}
           animate={{ opacity: 1, y: 0 }}
@@ -626,7 +626,7 @@ export function DashboardPage() {
               Zobacz pełną historię
             </Link>
           </span>
-        </motion.div>
+        </m.div>
       )}
 
       <ChangelogModal open={changelogOpen} onClose={() => setChangelogOpen(false)} />
@@ -634,7 +634,7 @@ export function DashboardPage() {
       {/* Telefon: stos kafelków w kolejności z `mobileDashboardOrder`; puste
        *  kafelki NIE trafiają do DOM-u. Poza tym ta sama treść co niżej. */}
       {isMobile && (
-        <motion.div
+        <m.div
           className="dash-m-stack"
           variants={dashGridVariants}
           initial="hidden"
@@ -643,14 +643,14 @@ export function DashboardPage() {
           {mobileTiles.map((id) => (
             <Fragment key={id}>{renderMobileTile(id)}</Fragment>
           ))}
-        </motion.div>
+        </m.div>
       )}
 
       {/* Desktop: siatka BEZ ZMIAN. Wcięcie zostawione celowo, żeby diff
        *  pokazywał wyłącznie opakowanie warunkiem i podmianę kafelków na
        *  wywołania tych samych funkcji (ten sam DOM). */}
       {!isMobile && (
-      <motion.div
+      <m.div
         className="dash-grid dash-welcome-grid"
         variants={dashGridVariants}
         initial="hidden"
@@ -665,7 +665,7 @@ export function DashboardPage() {
         {renderNotificationsTile('dash-card dash-area-notifications')}
 
         {/* RZĄD 2 · Workload summary (compact, narrow column) */}
-        <motion.div className="dash-card dash-area-workload" variants={dashCardVariants}>
+        <m.div className="dash-card dash-area-workload" variants={dashCardVariants}>
           <h2>Obciążenie</h2>
           <div className="donut-row">
             <WorkloadDonut
@@ -681,7 +681,7 @@ export function DashboardPage() {
               overbookedDates={weekAvail.overbookedDates}
             />
           </div>
-        </motion.div>
+        </m.div>
 
         {/* RZĄD 3 · Today's tasks — keep data-tour="home.today" (onboarding
          *  queries it, src/onboarding/catalog.ts). */}
@@ -690,7 +690,7 @@ export function DashboardPage() {
         {/* RZĄD 3 · Team roster — realne dane zespołu, bez atrap czatu/obecności.
          *  Keep data-tour="home.workload" on this card. Max 4 rows visible; the
          *  rest scroll inside the tile (see `.chat-people`). */}
-        <motion.div
+        <m.div
           className="dash-card dash-area-team"
           variants={dashCardVariants}
           data-tour="home.workload"
@@ -703,10 +703,10 @@ export function DashboardPage() {
           ) : (
             renderTeamRoster()
           )}
-        </motion.div>
+        </m.div>
 
         {/* RZĄD 4 · Week strip (full width) */}
-        <motion.div className="dash-card dash-area-week" variants={dashCardVariants}>
+        <m.div className="dash-card dash-area-week" variants={dashCardVariants}>
           <div className="dash-card-head">
             <h2>Twój tydzień</h2>
             <Link to="/calendar" className="link-btn">
@@ -751,7 +751,7 @@ export function DashboardPage() {
               );
             })}
           </div>
-        </motion.div>
+        </m.div>
 
         {/* RZĄD 5 · Zasobnik (nierozplanowane) — task-level rows for hours
          *  assigned to me but without a day/time. Keep data-tour="home.bin"
@@ -762,7 +762,7 @@ export function DashboardPage() {
         {/* RZĄD 5 · Alerty — overdue tasks, over-capacity days and work with no
          *  plan. Keep data-tour="home.alerts" (onboarding queries it). */}
         {renderAlertsTile('dash-card dash-area-alerts')}
-      </motion.div>
+      </m.div>
       )}
     </section>
   );

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, m } from 'motion/react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { Person } from '../types';
 import {
@@ -499,9 +499,9 @@ function IntroDialog({
   const titleRef = useRef<HTMLHeadingElement>(null);
   useEffect(() => titleRef.current?.focus(), [index]);
   return (
-    <motion.div className="onboarding-layer" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+    <m.div className="onboarding-layer" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <div className="onboarding-scrim" />
-      <motion.section
+      <m.section
         className="onboarding-intro"
         role="dialog"
         aria-modal="true"
@@ -528,8 +528,8 @@ function IntroDialog({
             {last ? 'Pokaż mi aplikację' : 'Dalej'}
           </button>
         </div>
-      </motion.section>
-    </motion.div>
+      </m.section>
+    </m.div>
   );
 }
 
@@ -554,9 +554,9 @@ function TutorialCenter({
   const confirm = useConfirm();
   useEffect(() => titleRef.current?.focus(), []);
   return (
-    <motion.div className="onboarding-layer" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+    <m.div className="onboarding-layer" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <button type="button" className="onboarding-scrim" aria-label="Zamknij pomoc i samouczki" onClick={onClose} />
-      <motion.section
+      <m.section
         className="tutorial-center"
         role="dialog"
         aria-modal="true"
@@ -643,8 +643,8 @@ function TutorialCenter({
             );
           })}
         </ul>
-      </motion.section>
-    </motion.div>
+      </m.section>
+    </m.div>
   );
 }
 
@@ -674,7 +674,7 @@ function Coachmark({
   const last = index === module.steps.length - 1;
   const popupStyle = popupPosition(rect, Boolean(step.practice));
   return (
-    <motion.div className={step.practice ? 'onboarding-layer onboarding-tour-layer is-practice' : 'onboarding-layer onboarding-tour-layer'} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+    <m.div className={step.practice ? 'onboarding-layer onboarding-tour-layer is-practice' : 'onboarding-layer onboarding-tour-layer'} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       {!step.practice && <div className={rect ? 'onboarding-scrim onboarding-tour-scrim' : 'onboarding-scrim'} />}
       {rect && (
         <div
@@ -683,7 +683,7 @@ function Coachmark({
           style={{ top: rect.top - 8, left: rect.left - 8, width: rect.width + 16, height: rect.height + 16 }}
         />
       )}
-      <motion.section
+      <m.section
         className={rect ? 'onboarding-coachmark' : 'onboarding-coachmark centered'}
         style={popupStyle}
         role="dialog"
@@ -714,8 +714,8 @@ function Coachmark({
           {index > 0 && <button type="button" className="btn ghost" onClick={onBack}><ArrowLeft size={16} aria-hidden /> Wstecz</button>}
           <button type="button" className="btn primary" onClick={onNext} disabled={Boolean(step.practice) && !practiceDone} data-onboarding-primary>{last ? 'Zakończ' : 'Dalej'}</button>
         </div>
-      </motion.section>
-    </motion.div>
+      </m.section>
+    </m.div>
   );
 }
 

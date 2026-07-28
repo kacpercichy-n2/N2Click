@@ -5,7 +5,7 @@
 import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, m } from 'motion/react';
 import { useStore, usePersistence } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import { NO_PERM_TITLE } from '../store/permissions';
@@ -371,7 +371,7 @@ function TaskModalShell({
 
   return (
     <>
-      <motion.div
+      <m.div
         className="task-modal-scrim"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -379,7 +379,7 @@ function TaskModalShell({
         transition={{ duration: 0.18 }}
       />
       <div className="task-modal-viewport" {...viewportProps}>
-        <motion.div
+        <m.div
           ref={cardRef}
           className="task-modal-card"
           {...cardProps}
@@ -471,7 +471,7 @@ function TaskModalShell({
               />
             )}
           </div>
-        </motion.div>
+        </m.div>
       </div>
     </>
   );
