@@ -97,6 +97,135 @@ export function changelogCtaLabel(entry: ChangelogEntry): string {
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-07-28-wielka-paczka-ux-mobile-wydajnosc',
+    dateFrom: '2026-07-27',
+    dateTo: '2026-07-28',
+    summary:
+      'Największa paczka zmian do tej pory: aplikacja działa wygodnie na telefonie, kalendarz nie gubi już planu przy przewijaniu palcem, zadania cykliczne można odhaczać pojedynczo, modal zadania ma nowy przejrzysty układ, a całość ładuje się wyraźnie szybciej.',
+    items: [
+      {
+        area: 'Kalendarz',
+        feature: 'Koniec przypadkowego przesuwania bloków palcem',
+        description:
+          'Na telefonie i tablecie przewijanie kalendarza palcem po bloku pracy już go nie przesuwa. Żeby przeciągnąć blok, przytrzymaj go chwilę (ok. pół sekundy) — dopiero wtedy „odklei się” i pojedzie z palcem. Zwykłe dotknięcie normalnie otwiera zadanie.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Widok godzin roboczych 9–17',
+        description:
+          'Kalendarz otwiera się wycentrowany na godzinach pracy — sloty przed 9 i po 17 są przygaszone, ale nadal w pełni działają. Zegar przeniósł się z rogu siatki na pasek sterowania, a trzy rzędy kontrolek scaliły się w jeden — siatka jest przez to wyraźnie wyższa.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Odhaczanie pojedynczego wystąpienia zadania cyklicznego',
+        description:
+          'W menu wystąpienia zadania cyklicznego znajdziesz teraz osobno „Oznacz to wystąpienie jako zrobione” i „Oznacz całą serię”. Odhaczone wystąpienie dostaje ✓ na kaflu, a reszta serii zostaje bez zmian.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Odhaczanie bloku wprost z kafla i obsługa klawiaturą',
+        description:
+          'Blok pracy odhaczysz jednym kliknięciem ✓ bez otwierania zadania. Bloki można też przesuwać klawiaturą: strzałki zmieniają godzinę i dzień, Enter zatwierdza, Escape cofa — z komunikatami o kolizjach.',
+      },
+      {
+        area: 'Zadania',
+        feature: 'Nowy układ okna zadania',
+        description:
+          'Okno zadania podzielone jest na zakładki Zadanie | Planowanie | Dyskusja, z przyklejonym u góry tytułem i statusem. Okres zadania jest teraz NAD siatką godzin (bo to on decyduje, które dni widać), pole komentarza jest nad wątkiem, a rzadko używane sekcje (Cykliczność, Klasyfikacja) są zwinięte. Każde zadanie ma też pełną stronę pod własnym adresem — link „Otwórz pełny widok ↗”.',
+      },
+      {
+        area: 'Zadania',
+        feature: 'Wygodniejsza siatka godzin',
+        description:
+          'Ciągi pustych dni w siatce zwijają się do jednej linii („14 pustych dni — pokaż”), zera pokazują się jako „—”, a „Wyczyść kolumnę” ma przycisk „Cofnij”. Enter w polach formularza zapisuje zadanie, a zablokowany zapis tłumaczy się listą klikalnych powodów i wskazuje pierwsze błędne pole.',
+      },
+      {
+        area: 'Zadania',
+        feature: '@-wzmianki w komentarzach i planowanie z godziną startu',
+        description:
+          'W komentarzach napisz „@”, aby podpowiedziała się lista osób (działa też bez polskich znaków). Planując pracę z zakładki Zadania, możesz opcjonalnie wpisać godzinę startu — puste pole działa jak dotąd, automatycznie.',
+      },
+      {
+        area: 'Zadania',
+        feature: 'Czytelniejsze listy zadań',
+        description:
+          'Wiersz zadania ma teraz maksymalnie dwa kolorowe akcenty: priorytet to dyskretny pasek przy krawędzi (tylko Pilny/Wysoki), stan rozplanowania to cienki pasek postępu, checklista to „◍◍◌ 2/3”, a klient i projekt są wszędzie zapisane jednolicie jako „Klient › Projekt”.',
+      },
+      {
+        area: 'Kanban',
+        feature: 'Kanban na dotyku i klawiaturze',
+        description:
+          'Karty Kanbanu przeciągniesz palcem (przytrzymaj chwilę, żeby podnieść) albo przeniesiesz bez myszy: Spacja podnosi kartę, strzałki wybierają kolumnę, Enter upuszcza. Jest też menu „Przenieś do statusu →” dla pojedynczego kliknięcia.',
+      },
+      {
+        area: 'Panel',
+        feature: 'Podgląd powiadomienia zamiast edytora',
+        description:
+          'Klik w powiadomienie na Panelu rozwija podgląd „Kto / Co / Gdzie” zamiast od razu otwierać okno edycji — do zadania przejdziesz jawnym przyciskiem „Otwórz zadanie”.',
+      },
+      {
+        area: 'Panel',
+        feature: 'Porządek na Panelu',
+        description:
+          'Puste kafle (np. „Alerty — czysto ✓”) zwijają się do wąskich belek, a odzyskane miejsce dostają „Zadania na dziś” i „Twój tydzień”. Pasek nowości to jedna cicha linia, która znika po przeczytaniu. Zasobnik podpowiada konkretny przycisk „Zaplanuj 2h — nazwa zadania →”.',
+      },
+      {
+        area: 'Obciążenie',
+        feature: 'Szczegóły dnia w dymku',
+        description:
+          'Klik w komórkę dnia otwiera dymek z listą bloków („8:00–14:00 — nazwa”), akcjami (przypisz innej osobie, przesuń ±1 dzień) i przyciskiem „Otwórz w kalendarzu”. Kolor paska % ma teraz logiczną skalę, a przekroczenie dostępności to osobna ikona ⚠ przy nazwisku.',
+      },
+      {
+        area: 'Wyszukiwarka',
+        feature: 'Szybkie akcje i ostatnio otwarte',
+        description:
+          'Paleta (Ctrl/Cmd+K) obsługuje „Szybkie akcje” (wpisz „>”, np. Nowe zadanie), pokazuje ostatnio otwarte przy pustym polu, podświetla dopasowania (również bez polskich znaków — „zolty” trafi „Żółty”) i doładowuje więcej wyników bez zamykania.',
+      },
+      {
+        area: 'Telefon',
+        feature: 'Nowa nawigacja i kalendarz dzienny',
+        description:
+          'Na telefonie aplikacja ma dolny pasek pięciu zakładek (Panel · Kalendarz · Zadania · Zasobnik · Więcej) zamiast menu-hamburgera. Kalendarz pokazuje jeden dzień z paskiem 7 dat u góry, a zasobnik jest arkuszem wysuwanym od dołu, który sam się uchyla podczas przeciągania.',
+      },
+      {
+        area: 'Telefon',
+        feature: 'Formularze i Panel skrojone pod ekran telefonu',
+        description:
+          'Siatka godzin w zadaniu to na telefonie lista dni z przyciskami −/+ (co 15 min) — koniec przewijania na boki. Okno unika klawiatury ekranowej, pola nie powodują przybliżania ekranu na iPhonie, a Panel układa się w priorytetowy stos: najpierw zadania na dziś, potem alerty i zasobnik.',
+      },
+      {
+        area: 'Ogólne',
+        feature: 'Bezpieczniejsze potwierdzenia',
+        description:
+          'Zamiast surowych okienek przeglądarki pytania „czy na pewno?” pokazują teraz realne skutki z liczbami (np. „To usunie 3 przypisania i 12 zaplanowanych godzin”), a najgroźniejsze operacje wymagają dodatkowego zaznaczenia świadomej zgody.',
+      },
+      {
+        area: 'Ogólne',
+        feature: 'Status zapisu zawsze widoczny',
+        description:
+          'Wskaźnik zapisu ma trzy czytelne stany: „• Niezapisane” → „Zapisywanie…” → „✓ Zapisano 20:51” i nie znika po chwili. Kliknięcie tła nie zamyka już okien z formularzem, więc nie stracisz wpisanych zmian.',
+      },
+      {
+        area: 'Ogólne',
+        feature: 'Aplikacja ładuje się szybciej',
+        description:
+          'Pierwsze wejście pobiera o dwie trzecie mniej kodu (ekrany doładowują się w tle w miarę potrzeby), a czcionki są serwowane z naszej domeny zamiast z Google — szybszy start i żadnych zapytań do zewnętrznych serwerów.',
+      },
+      {
+        area: 'Ogólne',
+        feature: 'Licznik nieprzeczytanych na karcie przeglądarki',
+        description:
+          'Liczba nieprzeczytanych powiadomień jest widoczna w tytule karty przeglądarki — wystarczy zerknąć na pasek kart, żeby wiedzieć, czy coś czeka.',
+      },
+      {
+        area: 'Ogólne',
+        feature: 'Dostępność i spójne teksty',
+        description:
+          'Wszystkie dymki podpowiedzi, okna i menu działają z klawiatury i czytników ekranu, przygaszone teksty mają wyższy kontrast, preferencja „ogranicz animacje” naprawdę wyłącza animacje, daty mają wszędzie te same formaty, a liczniki poprawną polską odmianę („1 z 2 projektów”).',
+      },
+    ],
+  },
+  {
     id: '2026-07-23-powiadomienia-kalendarz-filtry',
     dateFrom: '2026-07-23',
     dateTo: '2026-07-23',
