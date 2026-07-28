@@ -1,70 +1,73 @@
-# Run state — 20260728-034631-n2hub-286 taskmodal details
+# Run state — 20260728-052657-n2hub-288 mobile modal + panel
 
 ## Goal
 
-Six owner-approved TaskModal/calendar UX fixes (AT-05 grid grouping, AT-13
-checkboxes + Wyczyść undo, AT-08 delete out of header, AT-10 comments/activity,
-IA-08 calendar ✓ tick, IA-15 full task page) plus ONE shared ⋯ overflow-menu
-primitive on `useOverlay`/`OverlayLayer`.
+Four mobile (<760 px) fixes: allocation grid becomes a day list in TaskModal
+(MO-03/04), visualViewport keyboard inset for modal sheets (MO-22), three-row
+task card + details sheet on TasksPage (MO-10), purpose-ordered Panel stack
+with empty tiles removed (MO-18). Desktop bit-identical everywhere; no reducer
+changes; no new runtime deps.
 
-## Packages
+## Packages (execution order)
 
-- `handoffs/PKG-20260728-taskmodal-details.md` — developer, ready, risk high,
-  Codex review required. Single package (TaskModal.tsx on 5 of 6 items);
-  internal order: OverflowMenu primitive → AT-08 → AT-10 → AT-13 → AT-05 →
-  IA-08 → IA-15.
+1. `handoffs/packages/PKG-20260728-alloc-day-list.md` — developer, ready,
+   risk medium, Codex required. New pure `allocationDayList.ts` (+ tests) +
+   `AllocationDayList.tsx`; TaskModal conditional render; commits via existing
+   `setCell`/`setCellStart` only.
+2. `handoffs/packages/PKG-20260728-keyboard-inset.md` — developer, ready,
+   risk medium, Codex required. Pure `keyboardInset.ts` (+ tests); wiring in
+   shared `useModalShell` (`--n2-kb-inset` on the card); one CSS line in the
+   760 px modal block. Run after (1) — same styles.css block.
+3. `handoffs/packages/PKG-20260728-task-card-mobile.md` — developer, ready,
+   risk medium, Codex conditional. Mobile card branch in TasksPage + new
+   bottom details sheet on `useOverlay`; pure `taskCardMobile.ts` (+ tests).
+4. `handoffs/packages/PKG-20260728-panel-mobile-order.md` — developer, ready,
+   risk medium, Codex conditional. Pure `mobileDashboardOrder` +
+   `workloadSummaryLine` in `dashboardPanels.ts` (+ tests); DashboardPage
+   mobile stack via conditional rendering.
 
 ## Changed boundaries (planned)
 
-New `src/components/OverflowMenu.tsx` (+ IconButton `haspopup` prop), new pure
-`src/components/allocationGridView.ts`, `taskModalSections.ts` done-blocks
-collapsible, WeekView TimedBlock gains a sibling ✓ button (invariant 7:
-observers + stopPropagation only), `/tasks/:id` becomes `TaskFullPage`
-(exported `TaskEditor`, new dirtyRegistry scope `'task-page'`, new
-`src/pages/taskPageRoute.ts`). CommentsPanel loses its tablist (also affects
-ProjectDetailPage — accepted).
+TaskModal allocation section (mobile twin of AllocationGrid), shared modal
+shell gains a keyboard-inset effect, TasksPage gains a mobile card + one
+sheet, DashboardPage gains a mobile branch. All new logic in pure `.ts`
+siblings tested in node.
 
 ## Verification
 
-Focused: allocationGridView / taskModalSections / dirtyRegistry / taskPageRoute
-tests, then `npm test` + `npm run build`. Browser:
-`browser-check-ui-keyboard.mjs` and `browser-check-savetask-multiblock.mjs`
-(Chromium + WebKit). Scheduler owns the final gate.
+Focused per package (vitest files named inside each), then scheduler-owned
+`npm test` + `npm run build`. No browser scripts — no covered pointer/drag
+paths change.
 
 ## Open questions
 
-None blocking — all product decisions settled in the package (undo lives in
-editor draft state, no reducer action; activity becomes „Historia zmian” menu
-entry; full-page save/cancel navigate to `/tasks`).
+None blocking — all product decisions settled in the packages.
 
-## Wiki
+## Log — PKG-20260728-task-card-mobile (done)
 
-Likely stale after landing: `ui-navigation-and-onboarding.md` (overlay-shell
-consumers list, `/tasks/:id` route, CommentsPanel) and
-`scheduling-and-calendar.md` (block ✓ affordance). Final reviewer adjudicates.
+Boundaries: TasksPage mobile card branch + one `useOverlay` details sheet; new
+pure `src/pages/taskCardMobile.ts` (+ test); additive `.task-card-m-*` /
+`.task-details-*` CSS, `.task-details-sheet` joined the sheet skeleton
+selector. `npx vitest run taskCardMobile + overlayShell` 49 pass;
+`npm run build` pass. Desktop JSX/CSS untouched. Context as declared.
+Deviation: no chevron on the mobile card. Next: reviewer.
 
-## Developer result (2026-07-28)
+## Worker log
 
-All seven items landed. `npm test` 1845 pass, `npm run build` green; focused
-[allocationGridView/taskModalSections/dirtyRegistry/taskPageRoute] 57 pass.
-Context expanded only to `styles.css` z-index ladder: the ⋯ popover portals to
-body, so it needed `--n2-z-menu-over-modal`. Blocker: browser checks could NOT
-run — `playwright` is not installed (`ERR_MODULE_NOT_FOUND`); multiblock row
-targeting pre-adjusted to `tr[data-date]`, unverified.
-
-## Developer result (2026-07-28, PKG-20260728-mobile-nav-day-view)
-
-Bottom tab bar, phone day view, bin sheet, 56 px control row + 4 new modules
-landed. `npm test` 1883 pass (+38 new), `npm run build` green. Desktop
-untouched: `stack === undefined`, `days.length === 7`. Deviations: day-summary
-row keeps the `calendar.overload` anchor; `role="status"` moved inside
-`.cal-range-btn`. `browser-check-ui-keyboard.mjs` retargeted onto the bottom nav
-+ „Więcej" sheet — unexecuted (no dev server).
-
-## Wiki sync (2026-07-28, PKG-20260728-mobile-nav-day-view review)
-
-Applied reviewer-authored replacement text verbatim to
-`ui-navigation-and-onboarding.md` (mobile shell bullet + overlay consumers
-list) and `scheduling-and-calendar.md` (`WeekView` bullet, day mode) and
-`testing-and-automation.md` (`browser-check-ui-keyboard.mjs` bullet).
-`src/` untouched, no tests run (docs-only).
+- Pkg 4 (keyboard inset): done. New `src/components/keyboardInset.ts` (+ test,
+  80 px threshold), one added effect in `useModalShell.ts` (gated on
+  `visualViewport` + `MOBILE_NAV_QUERY`), one `max-height` line in the ≤760 px
+  modal block. `npx vitest run keyboardInset + modalShell + overlayShell` 73
+  pass; `npm run build` pass. Wiki: modal-shell bullet updated. Next: reviewer.
+- Pkg 1 (alloc day list): done. New `allocationDayListView.ts` (+ test),
+  `AllocationDayList.tsx`, TaskModal conditional render, additive
+  `.alloc-daylist*` CSS above the 760 px modal block. Deviation: model renamed
+  to `…View.ts` — `allocationDayList.ts` vs `AllocationDayList.tsx` collides on
+  case-insensitive macOS (TS1149). `npx vitest run` 55/55 pass; `tsc --noEmit`
+  and `npm run build` clean.
+- Pkg PKG-20260728-panel-mobile-order (done): `mobileDashboardOrder` +
+  `workloadSummaryLine` in `dashboardPanels.ts` (+ tests), `isMobile` stack
+  branch in `DashboardPage.tsx`, `.dash-m-*` CSS inside the ≤760 px block.
+  Desktop tiles now come from shared render functions (same DOM).
+  `npx vitest run src/pages/dashboardPanels.test.ts` 27 pass; `npm run build`
+  pass. Context as declared. Next: reviewer.

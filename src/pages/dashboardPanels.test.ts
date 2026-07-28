@@ -1,12 +1,16 @@
 // Unit tests for the pure Panel helper module (dashboardPanels): the
-// notification visibility cap (max 3) and the Zespół header counter label.
+// notification visibility cap (max 3), the Zespół header counter label and the
+// phone stack model (tile order + emptiness rule, compact workload line).
 // Pure — no React, no localStorage.
 import { describe, expect, it } from 'vitest';
 import {
   MAX_NOTIFICATIONS,
+  mobileDashboardOrder,
   notificationEntry,
   teamHeaderLabel,
   visibleNotifications,
+  workloadSummaryLine,
+  type MobileDashFlags,
   type NotificationEntry,
 } from './dashboardPanels';
 import type { Notification } from '../types';
@@ -145,5 +149,122 @@ describe('teamHeaderLabel', () => {
 
   it('counts many coworkers', () => {
     expect(teamHeaderLabel(7)).toBe('Zespół (7)');
+  });
+});
+
+describe('mobileDashboardOrder', () => {
+  const noFlags: MobileDashFlags = {
+    hasToday: false,
+    hasAlerts: false,
+    hasNotifications: false,
+    hasBin: false,
+    hasCoworkers: false,
+  };
+  const allFlags: MobileDashFlags = {
+    hasToday: true,
+    hasAlerts: true,
+    hasNotifications: true,
+    hasBin: true,
+    hasCoworkers: true,
+  };
+
+  it('renders every tile in the purpose order when everything has content', () => {
+    expect(mobileDashboardOrder(allFlags)).toEqual([
+      'today',
+      'alerts',
+      'notifications',
+      'workload',
+      'bin',
+      'week',
+      'team',
+    ]);
+  });
+
+  it('keeps only obciążenie + tydzień when every tile would be an empty state', () => {
+    expect(mobileDashboardOrder(noFlags)).toEqual(['workload', 'week']);
+  });
+
+  it('adds Zadania na dziś in front of the always-on tiles', () => {
+    expect(mobileDashboardOrder({ ...noFlags, hasToday: true })).toEqual([
+      'today',
+      'workload',
+      'week',
+    ]);
+  });
+
+  it('slots Alerty before the workload line', () => {
+    expect(mobileDashboardOrder({ ...noFlags, hasAlerts: true })).toEqual([
+      'alerts',
+      'workload',
+      'week',
+    ]);
+  });
+
+  it('slots Powiadomienia before the workload line', () => {
+    expect(mobileDashboardOrder({ ...noFlags, hasNotifications: true })).toEqual([
+      'notifications',
+      'workload',
+      'week',
+    ]);
+  });
+
+  it('slots Zasobnik between the workload line and the week', () => {
+    expect(mobileDashboardOrder({ ...noFlags, hasBin: true })).toEqual([
+      'workload',
+      'bin',
+      'week',
+    ]);
+  });
+
+  it('puts Zespół last', () => {
+    expect(mobileDashboardOrder({ ...noFlags, hasCoworkers: true })).toEqual([
+      'workload',
+      'week',
+      'team',
+    ]);
+  });
+
+  it('keeps attention tiles in the Alerty → Powiadomienia order', () => {
+    expect(mobileDashboardOrder({ ...allFlags, hasToday: false, hasBin: false })).toEqual([
+      'alerts',
+      'notifications',
+      'workload',
+      'week',
+      'team',
+    ]);
+  });
+});
+
+describe('workloadSummaryLine', () => {
+  const calm = { booked: 4, available: 8, over: false };
+
+  it('joins both segments with a middle dot', () => {
+    expect(workloadSummaryLine(calm, { booked: 22, available: 40, over: false })).toBe(
+      'Dziś 4h / 8h · Ten tydzień 22h / 40h',
+    );
+  });
+
+  it('marks only the overloaded day', () => {
+    expect(
+      workloadSummaryLine({ booked: 9, available: 8, over: true }, { booked: 22, available: 40, over: false }),
+    ).toBe('⚠ Dziś 9h / 8h · Ten tydzień 22h / 40h');
+  });
+
+  it('marks only the overloaded week', () => {
+    expect(workloadSummaryLine(calm, { booked: 44, available: 40, over: true })).toBe(
+      'Dziś 4h / 8h · ⚠ Ten tydzień 44h / 40h',
+    );
+  });
+
+  it('marks both segments when both are overloaded', () => {
+    expect(
+      workloadSummaryLine({ booked: 4, available: 0, over: true }, { booked: 44, available: 40, over: true }),
+    ).toBe('⚠ Dziś 4h / 0h · ⚠ Ten tydzień 44h / 40h');
+  });
+
+  it('formats partial hours with the shared duration helper', () => {
+    expect(workloadSummaryLine({ booked: 2.75, available: 8, over: false }, calm)).toBe(
+      'Dziś 2h 45m / 8h · Ten tydzień 4h / 8h',
+    );
   });
 });

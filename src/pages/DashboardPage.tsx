@@ -5,7 +5,14 @@
 // praca" page. All reads go through selectors; nothing here mutates or persists.
 // Powiadomienia is a UI slot only (no data source yet — it receives an empty
 // list).
-import { useState } from 'react';
+//
+// Poniżej `MOBILE_NAV_QUERY` ta sama treść układa się w STOS „po co tu jestem”
+// (`dash-m-stack`): kolejność i pustka kafelków pochodzą z czystego
+// `mobileDashboardOrder`, dwa pierścienie zastępuje jedna linia
+// (`workloadSummaryLine`), a tydzień siedem pigułek. Kafelek bez treści nie
+// istnieje wtedy w DOM-ie — dlatego renderowanie warunkowe, nie CSS `order`.
+// Siatka desktopowa jest nietknięta.
+import { Fragment, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { Megaphone } from '../components/icons';
@@ -24,6 +31,7 @@ import {
   overloadedDatesForPersonInRange,
   rangeAvailabilityForPerson,
   taskPlanningStatus,
+  todayAgendaForPerson,
   unplannedTasksForPerson,
   unreadNotificationsForPerson,
   weekBlocksForPerson,
@@ -45,12 +53,17 @@ import {
   dayNumber,
 } from '../utils/dates';
 import { formatMinutes, formatDuration } from '../utils/time';
+import { MOBILE_NAV_QUERY, useMediaQuery } from '../utils/useMediaQuery';
 import type { Task } from '../types';
 import {
+  mobileDashboardOrder,
   notificationEntry,
   teamHeaderLabel,
   visibleNotifications,
+  workloadSummaryLine,
+  type DashTileId,
   type NotificationEntry,
+  type WorkloadSegment,
 } from './dashboardPanels';
 
 // Staggered entrance for the dashboard cards.
@@ -64,6 +77,23 @@ const dashCardVariants = {
 } as const;
 
 const MAX_DAY_BLOCKS = 4;
+
+/** Stan „niebezpieczny” obciążenia — JEDNA reguła dla pierścieni (desktop) i dla
+ *  linii podsumowania (telefon), żeby oba widoki nigdy nie rozjechały się co do
+ *  ostrzeżenia: przekroczenie sumy, JAKIKOLWIEK przeciążony dzień w zakresie
+ *  albo godziny przy zerowej dostępności (`loadPercent` → null; ten przypadek
+ *  zawiera się już w pierwszym warunku, jest tu wypisany dla czytelności). */
+function isOverloaded(
+  booked: number,
+  available: number,
+  overbookedDates: readonly string[],
+): boolean {
+  return (
+    booked > available ||
+    overbookedDates.length > 0 ||
+    (loadPercent(booked, available) === null && booked > 0)
+  );
+}
 
 /** An SVG ring showing booked vs available hours. Never divides by zero.
  * Hours booked against ZERO availability (`loadPercent` → null) render as a
@@ -85,7 +115,7 @@ function WorkloadDonut({
   const stroke = 12;
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
-  const over = booked > available || overbookedDates.length > 0;
+  const over = isOverloaded(booked, available, overbookedDates);
   const ratio = available > 0 ? Math.min(booked / available, 1) : over ? 1 : 0;
   const pct = loadPercent(booked, available);
   const fill = over ? 'var(--n2-danger)' : 'var(--n2-lavender)';
@@ -153,6 +183,11 @@ export function DashboardPage() {
   // Oznaczenie wiersza jako przeczytanego usuwa go z listy — porównanie id
   // wystarcza, żaden efekt czyszczący nie jest potrzebny.
   const [expandedNotifId, setExpandedNotifId] = useState<string | null>(null);
+  // Telefon: stos zamiast siatki. Oba hooki MUSZĄ stać przed wczesnym returnem
+  // dla braku użytkownika (kolejność hooków). Zespół startuje zwinięty — na
+  // telefonie to najrzadziej potrzebny kafelek.
+  const isMobile = useMediaQuery(MOBILE_NAV_QUERY);
+  const [teamOpen, setTeamOpen] = useState(false);
   const latestChange = CHANGELOG[0];
 
   // Edge case: setup mode (no people) or no resolvable acting user → keep the
@@ -235,6 +270,329 @@ export function DashboardPage() {
     return `${project?.name ?? '—'}${client ? ` → ${client.name}` : ''}`;
   };
 
+  // ——— Kafelki wspólne dla obu układów ———————————————————————————————
+  // JEDNO źródło JSX-a dla siatki (desktop) i stosu (telefon); różni je tylko
+  // `className`, więc zmiana mobilna nie może po cichu przestawić desktopu.
+  // Kotwice `data-tour` (onboarding, src/onboarding/catalog.ts) siedzą wewnątrz.
+
+  const renderNotificationsTile = (className: string) => (
+    <motion.div className={className} variants={dashCardVariants}>
+      <div className="dash-card-head">
+        <h2>Powiadomienia</h2>
+        {unreadNotifications.length > 0 && (
+          <button
+            type="button"
+            className="link-btn"
+            onClick={() => dispatch({ type: 'MARK_ALL_NOTIFICATIONS_READ' })}
+          >
+            Oznacz wszystkie
+          </button>
+        )}
+      </div>
+      {shownNotifications.length === 0 ? (
+        <p className="field-hint">Brak nowych powiadomień</p>
+      ) : (
+        <ul className="dash-list">
+          {shownNotifications.map((n) => {
+            const expanded = expandedNotifId === n.id;
+            const previewId = `notif-preview-${n.id}`;
+            return (
+              <li key={n.id}>
+                <div className="dash-notif-row">
+                  <button
+                    type="button"
+                    className="dash-row dash-notif-open"
+                    aria-expanded={expanded}
+                    aria-controls={previewId}
+                    onClick={() => setExpandedNotifId((id) => (id === n.id ? null : n.id))}
+                  >
+                    <span className="dash-row-name">{n.title}</span>
+                    {n.when && <span className="dash-row-when">{n.when}</span>}
+                  </button>
+                  <Tooltip text="Oznacz jako przeczytane">
+                    <button
+                      type="button"
+                      className="link-btn dash-notif-read"
+                      aria-label="Oznacz jako przeczytane"
+                      onClick={() =>
+                        dispatch({ type: 'MARK_NOTIFICATION_READ', notificationId: n.id })
+                      }
+                    >
+                      ✓
+                    </button>
+                  </Tooltip>
+                </div>
+                {expanded && (
+                  <div className="dash-notif-preview" id={previewId}>
+                    <p className="dash-notif-line">
+                      <span className="dash-notif-label">Kto:</span> {n.preview.who}
+                    </p>
+                    <p className="dash-notif-line">
+                      <span className="dash-notif-label">Co:</span> {n.preview.what}
+                    </p>
+                    <p className="dash-notif-line">
+                      <span className="dash-notif-label">Gdzie:</span> {n.preview.where}
+                    </p>
+                    {n.preview.body && <p className="dash-notif-body">{n.preview.body}</p>}
+                    {n.openLabel && (
+                      <button
+                        type="button"
+                        className="btn ghost dash-notif-openbtn"
+                        onClick={() => openNotification(n)}
+                      >
+                        {n.openLabel}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </motion.div>
+  );
+
+  const renderTodayTile = (className: string) => (
+    <motion.div className={className} variants={dashCardVariants} data-tour="home.today">
+      <h2>Zadania na dziś</h2>
+      <TodayAgendaList personId={me.id} date={today} />
+    </motion.div>
+  );
+
+  /** Sama lista zespołu; `id` istnieje wyłącznie na telefonie (aria-controls). */
+  const renderTeamRoster = (id?: string) => (
+    <ul className="chat-people" id={id}>
+      {coworkers.map((p) => (
+        <li key={p.id} className="chat-person">
+          <Avatar person={p} size={32} />
+          <span className="chat-person-text">
+            <span className="chat-person-name">{p.name}</span>
+            {p.role && <span className="chat-person-role">{p.role}</span>}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+
+  const renderBinTile = (className: string) => (
+    <motion.div className={className} variants={dashCardVariants} data-tour="home.bin">
+      <h2>Zasobnik (nierozplanowane)</h2>
+      {binRows.length === 0 ? (
+        <p className="muted">Zasobnik jest pusty.</p>
+      ) : (
+        <ul className="dash-list agenda-list">
+          {binRows.map(({ task, hours }) => (
+            <li key={task.id}>
+              <button type="button" className="dash-row" onClick={() => openTask(task.id)}>
+                <span className="dash-row-name">{task.title}</span>
+                <span className="agenda-meta">{taskMeta(task)}</span>
+                <PlanningBadge status={taskPlanningStatus(state, task.id)} />
+                <span className="my-work-hours">{formatDuration(hours)}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="dash-card-foot">
+        <Link to="/calendar" className="link-btn">
+          Zaplanuj w kalendarzu →
+        </Link>
+      </div>
+    </motion.div>
+  );
+
+  const renderAlertsTile = (className: string) => (
+    <motion.div className={className} variants={dashCardVariants} data-tour="home.alerts">
+      <h2>Alerty</h2>
+      {noAlerts ? (
+        <p className="muted">Brak alertów.</p>
+      ) : (
+        <div className="my-work-alerts">
+          {overdue.length > 0 && (
+            <div className="my-work-alert-group">
+              <h3 className="my-work-alert-title">Po terminie</h3>
+              <ul className="dash-list agenda-list">
+                {overdue.map((task) => (
+                  <li key={task.id}>
+                    <button
+                      type="button"
+                      className="dash-row my-work-alert-row"
+                      onClick={() => openTask(task.id)}
+                    >
+                      <span className="dash-row-name">{task.title}</span>
+                      <span className="agenda-meta">do {formatShortWithWeekday(task.endDate)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {overloadedDates.length > 0 && (
+            <div className="my-work-alert-group">
+              <h3 className="my-work-alert-title">Przeciążone dni</h3>
+              <ul className="dash-list agenda-list">
+                {overloadedDates.map((date) => {
+                  // That DAY's availability (0 on a day off), not raw
+                  // capacity — a booked day off must read "4h / 0h".
+                  const day = dayAvailabilityForPerson(state, me.id, date);
+                  return (
+                    <li key={date}>
+                      <div className="dash-row my-work-alert-row is-static">
+                        <span className="dash-row-name">{formatRowLabel(date)}</span>
+                        <span className="agenda-meta">
+                          zaplanowano {formatDuration(day.bookedHours)} /{' '}
+                          {formatDuration(day.availableHours)}
+                        </span>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+
+          {unplanned.length > 0 && (
+            <div className="my-work-alert-group">
+              <h3 className="my-work-alert-title">Bez planu</h3>
+              <ul className="dash-list agenda-list">
+                {unplanned.map((task) => (
+                  <li key={task.id}>
+                    <button
+                      type="button"
+                      className="dash-row my-work-alert-row"
+                      onClick={() => openTask(task.id)}
+                    >
+                      <span className="dash-row-name">{task.title}</span>
+                      <span className="agenda-meta">{taskMeta(task)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+    </motion.div>
+  );
+
+  // ——— Stos telefonu ————————————————————————————————————————————————
+  // Flagi liczone TYLKO na telefonie (desktop nie płaci za selektor agendy).
+  // `todayAgendaForPerson` to dokładnie to, czym karmi się `TodayAgendaList`,
+  // więc „pusty kafelek" znaczy tu to samo, co pusty stan w kafelku.
+  const mobileAgenda = isMobile ? todayAgendaForPerson(state, me.id, today) : null;
+  const mobileTiles: DashTileId[] = isMobile
+    ? mobileDashboardOrder({
+        hasToday: (mobileAgenda?.timed.length ?? 0) + (mobileAgenda?.dateless.length ?? 0) > 0,
+        hasAlerts: !noAlerts,
+        hasNotifications: shownNotifications.length > 0,
+        hasBin: binRows.length > 0,
+        hasCoworkers: coworkers.length > 0,
+      })
+    : [];
+
+  // Godziny do linii podsumowania biorą się z TYCH SAMYCH selektorów co
+  // pierścienie — żadnej nowej wartości nigdzie nie zapisujemy (niezmiennik 1).
+  const todaySegment: WorkloadSegment = {
+    booked: todayAvail.bookedHours,
+    available: todayAvail.availableHours,
+    over: isOverloaded(
+      todayAvail.bookedHours,
+      todayAvail.availableHours,
+      todayAvail.overbooked ? [today] : [],
+    ),
+  };
+  const weekSegment: WorkloadSegment = {
+    booked: weekAvail.bookedHours,
+    available: weekAvail.availableHours,
+    over: isOverloaded(weekAvail.bookedHours, weekAvail.availableHours, weekAvail.overbookedDates),
+  };
+
+  const renderMobileTile = (id: DashTileId) => {
+    switch (id) {
+      case 'today':
+        return renderTodayTile('dash-card');
+      case 'alerts':
+        return renderAlertsTile('dash-card');
+      case 'notifications':
+        return renderNotificationsTile('dash-card');
+      case 'bin':
+        return renderBinTile('dash-card');
+      case 'workload':
+        // Jedna linia zamiast dwóch pierścieni — na telefonie liczy się fakt
+        // „ile z ilu", nie wykres.
+        return (
+          <motion.div className="dash-card dash-m-workload" variants={dashCardVariants}>
+            <h2>Obciążenie</h2>
+            <p
+              className={`dash-m-workload-line${
+                todaySegment.over || weekSegment.over ? ' over' : ''
+              }`}
+            >
+              {workloadSummaryLine(todaySegment, weekSegment)}
+            </p>
+          </motion.div>
+        );
+      case 'week':
+        // Siedem pigułek: dzień + suma godzin (bez zera). Pigułki są czysto
+        // informacyjne — nawigację niesie link „Otwórz kalendarz".
+        return (
+          <motion.div className="dash-card dash-m-week" variants={dashCardVariants}>
+            <div className="dash-card-head">
+              <h2>Twój tydzień</h2>
+              <Link to="/calendar" className="link-btn">
+                Otwórz kalendarz →
+              </Link>
+            </div>
+            <div className="dash-m-week-pills">
+              {week.map((d) => {
+                const hours = (weekMap.get(d) ?? []).reduce((sum, w) => sum + w.plannedHours, 0);
+                return (
+                  <div
+                    key={d}
+                    className={`dash-m-pill${isTodayStr(d) ? ' is-today' : ''}`}
+                  >
+                    <span className="dash-m-pill-dow">{weekdayHeader(d)}</span>
+                    <span className="dash-m-pill-num">{dayNumber(d)}</span>
+                    {hours > 0 && (
+                      <span className="dash-m-pill-hours">{formatDuration(hours)}</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </motion.div>
+        );
+      case 'team':
+        // Zwinięty domyślnie; `data-tour="home.workload"` zostaje na karcie
+        // zespołu (tak jak na desktopie — onboarding tego szuka).
+        return (
+          <motion.div
+            className="dash-card dash-m-team"
+            variants={dashCardVariants}
+            data-tour="home.workload"
+          >
+            <h2 className="dash-m-team-title">
+              <button
+                type="button"
+                className="dash-m-team-toggle"
+                aria-expanded={teamOpen}
+                aria-controls="dash-m-team-roster"
+                onClick={() => setTeamOpen((open) => !open)}
+              >
+                <span>{teamHeaderLabel(coworkers.length)}</span>
+                <span className="dash-m-team-chev" aria-hidden>
+                  {teamOpen ? '▾' : '▸'}
+                </span>
+              </button>
+            </h2>
+            {teamOpen && renderTeamRoster('dash-m-team-roster')}
+          </motion.div>
+        );
+    }
+  };
+
   return (
     <section className="page">
       <div className="page-head dash-greeting">
@@ -273,6 +631,25 @@ export function DashboardPage() {
 
       <ChangelogModal open={changelogOpen} onClose={() => setChangelogOpen(false)} />
 
+      {/* Telefon: stos kafelków w kolejności z `mobileDashboardOrder`; puste
+       *  kafelki NIE trafiają do DOM-u. Poza tym ta sama treść co niżej. */}
+      {isMobile && (
+        <motion.div
+          className="dash-m-stack"
+          variants={dashGridVariants}
+          initial="hidden"
+          animate="show"
+        >
+          {mobileTiles.map((id) => (
+            <Fragment key={id}>{renderMobileTile(id)}</Fragment>
+          ))}
+        </motion.div>
+      )}
+
+      {/* Desktop: siatka BEZ ZMIAN. Wcięcie zostawione celowo, żeby diff
+       *  pokazywał wyłącznie opakowanie warunkiem i podmianę kafelków na
+       *  wywołania tych samych funkcji (ten sam DOM). */}
+      {!isMobile && (
       <motion.div
         className="dash-grid dash-welcome-grid"
         variants={dashGridVariants}
@@ -285,83 +662,7 @@ export function DashboardPage() {
          *  auto-oznaczanie usunęłoby wiersz w trakcie czytania. Otwarcie obiektu
          *  (z oznaczeniem jako przeczytane) to osobny przycisk w podglądzie; „✓"
          *  oznacza bez otwierania; nagłówek ma „Oznacz wszystkie". */}
-        <motion.div className="dash-card dash-area-notifications" variants={dashCardVariants}>
-          <div className="dash-card-head">
-            <h2>Powiadomienia</h2>
-            {unreadNotifications.length > 0 && (
-              <button
-                type="button"
-                className="link-btn"
-                onClick={() => dispatch({ type: 'MARK_ALL_NOTIFICATIONS_READ' })}
-              >
-                Oznacz wszystkie
-              </button>
-            )}
-          </div>
-          {shownNotifications.length === 0 ? (
-            <p className="field-hint">Brak nowych powiadomień</p>
-          ) : (
-            <ul className="dash-list">
-              {shownNotifications.map((n) => {
-                const expanded = expandedNotifId === n.id;
-                const previewId = `notif-preview-${n.id}`;
-                return (
-                  <li key={n.id}>
-                    <div className="dash-notif-row">
-                      <button
-                        type="button"
-                        className="dash-row dash-notif-open"
-                        aria-expanded={expanded}
-                        aria-controls={previewId}
-                        onClick={() =>
-                          setExpandedNotifId((id) => (id === n.id ? null : n.id))
-                        }
-                      >
-                        <span className="dash-row-name">{n.title}</span>
-                        {n.when && <span className="dash-row-when">{n.when}</span>}
-                      </button>
-                      <Tooltip text="Oznacz jako przeczytane">
-                        <button
-                          type="button"
-                          className="link-btn dash-notif-read"
-                          aria-label="Oznacz jako przeczytane"
-                          onClick={() =>
-                            dispatch({ type: 'MARK_NOTIFICATION_READ', notificationId: n.id })
-                          }
-                        >
-                          ✓
-                        </button>
-                      </Tooltip>
-                    </div>
-                    {expanded && (
-                      <div className="dash-notif-preview" id={previewId}>
-                        <p className="dash-notif-line">
-                          <span className="dash-notif-label">Kto:</span> {n.preview.who}
-                        </p>
-                        <p className="dash-notif-line">
-                          <span className="dash-notif-label">Co:</span> {n.preview.what}
-                        </p>
-                        <p className="dash-notif-line">
-                          <span className="dash-notif-label">Gdzie:</span> {n.preview.where}
-                        </p>
-                        {n.preview.body && <p className="dash-notif-body">{n.preview.body}</p>}
-                        {n.openLabel && (
-                          <button
-                            type="button"
-                            className="btn ghost dash-notif-openbtn"
-                            onClick={() => openNotification(n)}
-                          >
-                            {n.openLabel}
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </motion.div>
+        {renderNotificationsTile('dash-card dash-area-notifications')}
 
         {/* RZĄD 2 · Workload summary (compact, narrow column) */}
         <motion.div className="dash-card dash-area-workload" variants={dashCardVariants}>
@@ -384,14 +685,7 @@ export function DashboardPage() {
 
         {/* RZĄD 3 · Today's tasks — keep data-tour="home.today" (onboarding
          *  queries it, src/onboarding/catalog.ts). */}
-        <motion.div
-          className="dash-card dash-area-today"
-          variants={dashCardVariants}
-          data-tour="home.today"
-        >
-          <h2>Zadania na dziś</h2>
-          <TodayAgendaList personId={me.id} date={today} />
-        </motion.div>
+        {renderTodayTile('dash-card dash-area-today')}
 
         {/* RZĄD 3 · Team roster — realne dane zespołu, bez atrap czatu/obecności.
          *  Keep data-tour="home.workload" on this card. Max 4 rows visible; the
@@ -407,17 +701,7 @@ export function DashboardPage() {
           {coworkers.length === 0 ? (
             <p className="field-hint">Brak innych osób w zespole.</p>
           ) : (
-            <ul className="chat-people">
-              {coworkers.map((p) => (
-                <li key={p.id} className="chat-person">
-                  <Avatar person={p} size={32} />
-                  <span className="chat-person-text">
-                    <span className="chat-person-name">{p.name}</span>
-                    {p.role && <span className="chat-person-role">{p.role}</span>}
-                  </span>
-                </li>
-              ))}
-            </ul>
+            renderTeamRoster()
           )}
         </motion.div>
 
@@ -473,118 +757,13 @@ export function DashboardPage() {
          *  assigned to me but without a day/time. Keep data-tour="home.bin"
          *  (onboarding queries it, src/onboarding/catalog.ts). Clicking a row
          *  opens the task modal; the planning badge stays. */}
-        <motion.div
-          className="dash-card dash-area-bin"
-          variants={dashCardVariants}
-          data-tour="home.bin"
-        >
-          <h2>Zasobnik (nierozplanowane)</h2>
-          {binRows.length === 0 ? (
-            <p className="muted">Zasobnik jest pusty.</p>
-          ) : (
-            <ul className="dash-list agenda-list">
-              {binRows.map(({ task, hours }) => (
-                <li key={task.id}>
-                  <button
-                    type="button"
-                    className="dash-row"
-                    onClick={() => openTask(task.id)}
-                  >
-                    <span className="dash-row-name">{task.title}</span>
-                    <span className="agenda-meta">{taskMeta(task)}</span>
-                    <PlanningBadge status={taskPlanningStatus(state, task.id)} />
-                    <span className="my-work-hours">{formatDuration(hours)}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-          <div className="dash-card-foot">
-            <Link to="/calendar" className="link-btn">
-              Zaplanuj w kalendarzu →
-            </Link>
-          </div>
-        </motion.div>
+        {renderBinTile('dash-card dash-area-bin')}
 
         {/* RZĄD 5 · Alerty — overdue tasks, over-capacity days and work with no
          *  plan. Keep data-tour="home.alerts" (onboarding queries it). */}
-        <motion.div
-          className="dash-card dash-area-alerts"
-          variants={dashCardVariants}
-          data-tour="home.alerts"
-        >
-          <h2>Alerty</h2>
-          {noAlerts ? (
-            <p className="muted">Brak alertów.</p>
-          ) : (
-            <div className="my-work-alerts">
-              {overdue.length > 0 && (
-                <div className="my-work-alert-group">
-                  <h3 className="my-work-alert-title">Po terminie</h3>
-                  <ul className="dash-list agenda-list">
-                    {overdue.map((task) => (
-                      <li key={task.id}>
-                        <button
-                          type="button"
-                          className="dash-row my-work-alert-row"
-                          onClick={() => openTask(task.id)}
-                        >
-                          <span className="dash-row-name">{task.title}</span>
-                          <span className="agenda-meta">do {formatShortWithWeekday(task.endDate)}</span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {overloadedDates.length > 0 && (
-                <div className="my-work-alert-group">
-                  <h3 className="my-work-alert-title">Przeciążone dni</h3>
-                  <ul className="dash-list agenda-list">
-                    {overloadedDates.map((date) => {
-                      // That DAY's availability (0 on a day off), not raw
-                      // capacity — a booked day off must read "4h / 0h".
-                      const day = dayAvailabilityForPerson(state, me.id, date);
-                      return (
-                        <li key={date}>
-                          <div className="dash-row my-work-alert-row is-static">
-                            <span className="dash-row-name">{formatRowLabel(date)}</span>
-                            <span className="agenda-meta">
-                              zaplanowano {formatDuration(day.bookedHours)} /{' '}
-                              {formatDuration(day.availableHours)}
-                            </span>
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              )}
-
-              {unplanned.length > 0 && (
-                <div className="my-work-alert-group">
-                  <h3 className="my-work-alert-title">Bez planu</h3>
-                  <ul className="dash-list agenda-list">
-                    {unplanned.map((task) => (
-                      <li key={task.id}>
-                        <button
-                          type="button"
-                          className="dash-row my-work-alert-row"
-                          onClick={() => openTask(task.id)}
-                        >
-                          <span className="dash-row-name">{task.title}</span>
-                          <span className="agenda-meta">{taskMeta(task)}</span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
-        </motion.div>
+        {renderAlertsTile('dash-card dash-area-alerts')}
       </motion.div>
+      )}
     </section>
   );
 }

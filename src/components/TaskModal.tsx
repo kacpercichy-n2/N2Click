@@ -39,11 +39,13 @@ import {
   type AllocMap,
   type AllocStartMap,
 } from './AllocationGrid';
+import { AllocationDayList } from './AllocationDayList';
 import {
   restorePersonColumn,
   snapshotPersonColumn,
   type PersonColumnSnapshot,
 } from './allocationGridView';
+import { MOBILE_NAV_QUERY, useMediaQuery } from '../utils/useMediaQuery';
 import { SaveStatus } from './SaveStatus';
 import { personColor } from '../utils/colors';
 import {
@@ -558,6 +560,10 @@ export function TaskEditor({
   const confirm = useConfirm();
   const canManage = useCan()('tasks.manage');
   const readOnly = !canManage;
+  // Telefon (≤ 760 px) dostaje pionową LISTĘ dni zamiast 480-pikselowej tabeli
+  // przydziału — ten sam breakpoint, co dolny pasek zakładek i widok dnia.
+  // Hook stoi wśród pozostałych, PRZED jakimkolwiek wcześniejszym wyjściem.
+  const isMobileNav = useMediaQuery(MOBILE_NAV_QUERY);
   // Brak uprawnień: JEDEN ukryty opis na modal zamiast kilkunastu natywnych
   // `title` (te są niewidoczne na dotyku, nieostylowane i w czytniku ekranu
   // doklejają się do KAŻDEJ kontrolki osobno). Kontrolki tylko-do-odczytu
@@ -2080,6 +2086,30 @@ export function TaskEditor({
                 Przy zapisie zostanie usunięta liczba wpisów poza nowym okresem: {outOfRangeCount}.
               </p>
             )}
+            {/* Ta sama edycja w dwóch postaciach: tabela na desktopie, lista dni
+                na telefonie. Oba warianty dostają TE SAME (memoizowane) propsy i
+                zapisują przez TE SAME handlery — druga ścieżka mutacji nie
+                powstaje (inwariant 1). */}
+            {isMobileNav ? (
+              <AllocationDayList
+                state={state}
+                currentTaskId={existing ? existing.id : null}
+                startDate={startDate}
+                endDate={endDate}
+                people={assignedPeople}
+                allocations={allocations}
+                startTimes={startTimes}
+                blockCounts={multiBlockCounts}
+                onChange={setCell}
+                onChangeStart={setCellStart}
+                onFillWeekdays={fillWeekdays}
+                onClearPerson={clearPerson}
+                undoPersonId={clearUndo === null ? null : clearUndo.personId}
+                onUndoClear={undoClear}
+                readOnly={readOnly}
+                startHintId={readOnly ? undefined : startHintId}
+              />
+            ) : (
             <AllocationGrid
               state={state}
               currentTaskId={existing ? existing.id : null}
@@ -2098,6 +2128,7 @@ export function TaskEditor({
               readOnly={readOnly}
               startHintId={readOnly ? undefined : startHintId}
             />
+            )}
           </>
         )}
       </div>

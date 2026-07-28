@@ -7,8 +7,12 @@
 // drogą — Escape, tło, przycisk, nawigacja) i blokadę scrolla ze wspólnym
 // licznikiem. Escape woła `onRequestClose`, więc semantyka zamknięcia (pytanie
 // o niezapisane zmiany, `bypassNavGuardOnce`) zostaje po stronie modala.
+// Piąta sprawa dochodzi TYLKO na telefonie: wcięcie klawiatury ekranowej z
+// `visualViewport` (czysta arytmetyka w `keyboardInset.ts`).
 import { useCallback, useEffect, useRef } from 'react';
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, RefObject } from 'react';
+import { MOBILE_NAV_QUERY } from '../utils/useMediaQuery';
+import { resolveKeyboardInset, shouldScrollFieldIntoView } from './keyboardInset';
 import {
   createScrollLockCounter,
   resolveInitialFocusIndex,
@@ -190,6 +194,67 @@ export function useModalShell({
       if (previous === null) return;
       document.body.style.overflow = previous.overflow;
       document.body.style.paddingRight = previous.paddingRight;
+    };
+  }, []);
+
+  // Wcięcie klawiatury ekranowej — TYLKO telefon. Klawiatura nie zmienia
+  // `window.innerHeight`, więc bez tego karta sięgałaby POD nią i lepki pasek
+  // zapisu znikał z ekranu (MO-22). Wysokość klawiatury ląduje w zmiennej
+  // `--n2-kb-inset` na karcie, którą konsumuje WYŁĄCZNIE reguła w bloku
+  // `@media (max-width: 760px)`. Efekt nic nie robi bez `visualViewport`
+  // (jsdom/node) ani powyżej breakpointu, więc desktop zostaje bit w bit taki
+  // sam. Dokłada wyłącznie nasłuchy: nigdy nie woła `preventDefault` /
+  // `stopPropagation` i nigdy nie przenosi fokusa — kontrakt pułapki fokusa,
+  // Escape i blokady scrolla zostaje nietknięty.
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const card = cardRef.current;
+    if (!viewport || card === null) return;
+    const isMobile = () => window.matchMedia(MOBILE_NAV_QUERY).matches;
+    if (!isMobile()) return;
+
+    let inset = 0;
+    const applyInset = (next: number) => {
+      inset = next;
+      if (next === 0) card.style.removeProperty('--n2-kb-inset');
+      else card.style.setProperty('--n2-kb-inset', `${next}px`);
+    };
+    // Dosunięcie pola do widoku robimy `block: 'nearest'` — pole już widoczne
+    // zostaje na miejscu, więc karta nie skacze przy każdym zdarzeniu.
+    const scrollActiveIntoView = () => {
+      const active = document.activeElement;
+      if (!(active instanceof HTMLElement)) return;
+      if (!shouldScrollFieldIntoView(inset, card.contains(active))) return;
+      active.scrollIntoView({ block: 'nearest' });
+    };
+    const sync = () => {
+      // Obrót ekranu w trakcie otwartego modala potrafi wyprowadzić okno ponad
+      // breakpoint — wtedy zdejmujemy wcięcie zamiast je liczyć.
+      if (!isMobile()) {
+        applyInset(0);
+        return;
+      }
+      applyInset(
+        resolveKeyboardInset({
+          innerHeight: window.innerHeight,
+          viewportHeight: viewport.height,
+          offsetTop: viewport.offsetTop,
+        }),
+      );
+      scrollActiveIntoView();
+    };
+
+    sync();
+    viewport.addEventListener('resize', sync);
+    viewport.addEventListener('scroll', sync);
+    // Pole sfokusowane przy JUŻ otwartej klawiaturze nie generuje zdarzenia
+    // widoku, więc dosuwamy je osobno.
+    card.addEventListener('focusin', scrollActiveIntoView);
+    return () => {
+      viewport.removeEventListener('resize', sync);
+      viewport.removeEventListener('scroll', sync);
+      card.removeEventListener('focusin', scrollActiveIntoView);
+      card.style.removeProperty('--n2-kb-inset');
     };
   }, []);
 

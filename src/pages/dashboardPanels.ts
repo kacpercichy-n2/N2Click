@@ -7,7 +7,13 @@
 //   feeds it `unreadNotificationsForPerson` mapped through `notificationEntry`.
 // - The Zespół header shows a counter only when there is at least one coworker:
 //   `Zespół` with 0, `Zespół (N)` otherwise.
+// - Below the phone breakpoint the Panel is a purpose-ordered STACK, not the
+//   desktop grid: `mobileDashboardOrder` owns both the order and the emptiness
+//   rule (a tile whose whole content would be an empty-state sentence is not
+//   rendered at all), `workloadSummaryLine` replaces the two donuts with one
+//   line. Desktop composition is untouched by this module.
 import type { Notification } from '../types';
+import { formatDuration } from '../utils/time';
 
 /** Dokąd prowadzi klik w powiadomienie: zadanie (modal) albo projekt (route). */
 export type NotificationTarget =
@@ -126,4 +132,79 @@ export function visibleNotifications(
 /** Zespół header label: bare when empty, counted otherwise. */
 export function teamHeaderLabel(coworkerCount: number): string {
   return coworkerCount > 0 ? `Zespół (${coworkerCount})` : 'Zespół';
+}
+
+/** Every Panel tile that can appear in the phone stack. */
+export type DashTileId =
+  | 'today'
+  | 'alerts'
+  | 'notifications'
+  | 'workload'
+  | 'bin'
+  | 'week'
+  | 'team';
+
+/** Czy dany kafelek ma cokolwiek do pokazania (liczone przez stronę z selektorów). */
+export interface MobileDashFlags {
+  hasToday: boolean;
+  hasAlerts: boolean;
+  hasNotifications: boolean;
+  hasBin: boolean;
+  hasCoworkers: boolean;
+}
+
+/** Kolejność „po co tu jestem”: najpierw dziś, potem to, co wymaga uwagi,
+ *  potem obraz obciążenia, praca do rozplanowania, tydzień i na końcu zespół. */
+const MOBILE_TILE_ORDER: readonly DashTileId[] = [
+  'today',
+  'alerts',
+  'notifications',
+  'workload',
+  'bin',
+  'week',
+  'team',
+];
+
+/**
+ * Kafelki telefonu w kolejności renderowania. Kafelek, którego CAŁA treść byłaby
+ * tylko zdaniem pustego stanu („Brak alertów”, „Zasobnik jest pusty”…), znika z
+ * DOM-u zamiast spychać treść w dół — dlatego to lista, nie CSS `order`.
+ * `workload` i `week` nie mają pustego stanu (zawsze niosą liczby / siedem dni),
+ * więc renderują się zawsze.
+ */
+export function mobileDashboardOrder(flags: MobileDashFlags): DashTileId[] {
+  const shows: Record<DashTileId, boolean> = {
+    today: flags.hasToday,
+    alerts: flags.hasAlerts,
+    notifications: flags.hasNotifications,
+    workload: true,
+    bin: flags.hasBin,
+    week: true,
+    team: flags.hasCoworkers,
+  };
+  return MOBILE_TILE_ORDER.filter((id) => shows[id]);
+}
+
+/** Jeden odcinek linii obciążenia: zabukowane / dostępne + stan przeciążenia. */
+export interface WorkloadSegment {
+  booked: number;
+  available: number;
+  /** Ta sama semantyka niebezpieczeństwa co w pierścieniach (patrz DashboardPage). */
+  over: boolean;
+}
+
+/** „Dziś 4h / 8h” — z prefiksem „⚠ ”, gdy odcinek jest przeciążony. */
+function segmentLabel(label: string, seg: WorkloadSegment): string {
+  const prefix = seg.over ? '⚠ ' : '';
+  return `${prefix}${label} ${formatDuration(seg.booked)} / ${formatDuration(seg.available)}`;
+}
+
+/**
+ * Jedna linia zastępująca dwa pierścienie na telefonie:
+ * „Dziś 4h / 8h · Ten tydzień 22h / 40h”. Godziny nadal pochodzą wyłącznie z
+ * wyliczeń wołającego (selektory nad `WorkloadEntry`) — ten moduł nic nie liczy
+ * ani nie przechowuje, tylko formatuje.
+ */
+export function workloadSummaryLine(today: WorkloadSegment, week: WorkloadSegment): string {
+  return `${segmentLabel('Dziś', today)} · ${segmentLabel('Ten tydzień', week)}`;
 }

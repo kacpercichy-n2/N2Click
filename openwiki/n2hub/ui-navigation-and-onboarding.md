@@ -54,7 +54,13 @@
   modelem czasowym (patrz kontrakt pola niżej): pierwsza walidacja na blur albo
   przy próbie zapisu, potem żywa rewalidacja tylko dla pól, które już raz
   pokazały błąd; sekcja „Cykliczność” rządzi się tą samą zasadą względem
-  własnej edycji.
+  własnej edycji. Poniżej 760 px sekcja „Dzienny przydział godzin” renderuje
+  BLIŹNIAKA PREZENTACYJNEGO tabeli: `src/components/AllocationDayList.tsx`
+  (pionowa lista dni, przełącznik osoby, stepper ±0,25 h) na czystym
+  `allocationDayListView.ts` (+ test w node). Wybór formy to jeden warunek w
+  TaskModal (`useMediaQuery(MOBILE_NAV_QUERY)`); `AllocationGrid` i jej CSS
+  zostają bez zmian, a lista zapisuje WYŁĄCZNIE przez te same
+  `setCell`/`setCellStart` — druga ścieżka mutacji nie istnieje (inwariant 1).
 - Profile edit matrix (`src/pages/profileEditPolicy.ts`) gains an ADMIN-ONLY
   „Spółka” field (`companyId` in `ALL_FIELDS` only — nie self, nie manager),
   rendered as a select in PersonProfilePage next to „Dział”; parity with the
@@ -129,6 +135,16 @@
   tekstu wyprowadzone z karty nie kasuje edycji). Nazwa dialogu idzie z
   `aria-labelledby` na widoczny `<h1 class="task-modal-title">` (`useId`).
   `OnboardingRoot` i `GlobalSearch` mają własną obsługę i NIE korzystają z hooka.
+  Na TELEFONIE hook dokłada wcięcie klawiatury ekranowej: czysta arytmetyka w
+  `src/components/keyboardInset.ts` (`resolveKeyboardInset` — próg
+  `KEYBOARD_INSET_MIN_PX` = 80 px odsiewa drganie paska adresu od klawiatury;
+  `shouldScrollFieldIntoView` + `keyboardInset.test.ts` w node), nasłuch
+  `visualViewport` (`resize`/`scroll`) i `focusin` karty w hooku. Wysokość
+  klawiatury idzie w zmienną `--n2-kb-inset` na karcie, konsumowaną WYŁĄCZNIE
+  przez `max-height: calc(94dvh - var(--n2-kb-inset, 0px))` w bloku
+  `@media (max-width: 760px)` — lepki pasek zapisu zostaje nad klawiaturą.
+  Efekt nie startuje bez `visualViewport` ani powyżej breakpointu
+  (`MOBILE_NAV_QUERY`), więc desktop renderuje się bit w bit tak samo.
 - Potwierdzenia są WSPÓLNE i NIE używają `window.confirm`: czysta logika w
   `src/components/confirmDialog.ts` (kolejka FIFO `enqueueConfirm` /
   `resolveConfirm` — drugie pytanie czeka na rozstrzygnięcie pierwszego,
@@ -177,8 +193,10 @@
   mobilny breakpoint `position: static` zostają) i bierze z hooka wyłącznie
   stos, zamykanie i powrót fokusa, z przyciskiem „Filtry” jako triggerem. Na
   telefonie na tej samej powłoce (wariant nieporcjonowany, bez
-  `getAnchorRect`) stoją też trzy arkusze od dołu: „Więcej” w `App.tsx`
-  (`role="menu"`), szybki skok kalendarza w `CalendarPage` (`role="dialog"`) i
+  `getAnchorRect`) stoją też cztery arkusze od dołu: „Więcej” w `App.tsx`
+  (`role="menu"`), szybki skok kalendarza w `CalendarPage` (`role="dialog"`),
+  arkusz szczegółów zadania w `TasksPage` (`role="dialog"`, JEDNA instancja na
+  stronę, `triggerRef` wskazuje przycisk WYBRANEJ karty) oraz
   arkusz zasobnika w `WeekView`; ten ostatni jest ROZBRAJANY na czas
   przeciągania (`open: … && !dragActive`), bo capture'owy Escape powłoki
   zjadłby anulowanie przeciągania (inwariant 7).
@@ -248,7 +266,13 @@
   into it — its Zasobnik and Alerty cards are now Panel tiles (grid areas `bin`
   and `alerts`), keeping `data-tour="home.bin"`/`home.alerts`. Legacy `/my-work`
   redirects to `HOME_PATH`; login, `/` and the onboarding `@home` token all
-  resolve there. Poniżej 760 px powłoka nie ma szuflady ani hamburgera:
+  resolve there. Poniżej `MOBILE_NAV_QUERY` Panel renderuje ZAMIAST siatki stos
+  `.dash-m-stack`: kolejność i pustka kafelków pochodzą z czystego
+  `mobileDashboardOrder` (`src/pages/dashboardPanels.ts`), kafelek, którego cała
+  treść byłaby pustym stanem, NIE istnieje w DOM-ie — więc kotwica `data-tour`
+  takiego kafelka też nie (Obciążenie jako jedna linia i Tydzień jako siedem
+  pigułek są zawsze). Siatka desktopowa bez zmian. Poniżej 760 px powłoka nie
+  ma szuflady ani hamburgera:
   nawigację niesie `.app-bottom-nav` — pięć zakładek (Panel, Kalendarz,
   Zadania, Zasobnik jako deep-link `/calendar?zasobnik=1`, „Więcej”) o
   wysokości `--n2-bottom-nav-h` + `env(safe-area-inset-bottom)`, ze stanem

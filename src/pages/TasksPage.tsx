@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import { useOpenTask } from '../components/TaskModal';
@@ -21,12 +21,16 @@ import { PRIORITY_LABELS, TASK_PRIORITIES } from '../utils/priority';
 import { FilterPresets, DEFAULT_CRITERIA } from '../components/FilterPresets';
 import { type FilterChip, type FilterGroup } from '../components/FilterPanel';
 import { FilterBar } from '../components/FilterBar';
-import { ChevronRight, Check, Plus, X } from '../components/icons';
+import { ChevronRight, Check, MoreHorizontal, Plus, X } from '../components/icons';
 import { IconButton } from '../components/IconButton';
 import { useConfirm } from '../components/ConfirmProvider';
 import { buildDeleteConsequence } from '../components/confirmDialog';
 import { formatShort, formatShortWithWeekday } from '../utils/dates';
 import { PersonChip } from '../components/PersonChip';
+import { Avatar } from '../components/Avatar';
+import { OverlayLayer, useOverlay } from '../components/useOverlay';
+import { MOBILE_NAV_QUERY, useMediaQuery } from '../utils/useMediaQuery';
+import { taskCardPath, visibleAssignees } from './taskCardMobile';
 import { StatusBadge } from '../components/StatusBadge';
 import { PlanningBadge } from '../components/PlanningBadge';
 import { PriorityBadge } from '../components/PriorityBadge';
@@ -44,6 +48,35 @@ export function TasksPage() {
   const canManageTasks = useCan()('tasks.manage');
   const confirm = useConfirm();
   const statuses = activeStatuses(state);
+  // Telefon (≤760 px): karta zadania ma TRZY rzędy, a pigułki, które się na niej
+  // nie mieszczą, przenoszą się do arkusza szczegółów. Ten sam hook i ten sam
+  // breakpoint, co powłoka aplikacji i kalendarz.
+  const isMobileNav = useMediaQuery(MOBILE_NAV_QUERY);
+  const [detailsTaskId, setDetailsTaskId] = useState<string | null>(null);
+  const detailsSheetRef = useRef<HTMLDivElement | null>(null);
+  // Wyzwalacz jest PER KARTA, a arkusz JEDEN na stronę — ref pokazuje na
+  // przycisk aktualnie wybranej karty (zapisywany w callbacku ref tylko przez
+  // tę kartę), więc powłoka ma dokąd wrócić z fokusem po zamknięciu.
+  const detailsTriggerRef = useRef<HTMLButtonElement | null>(null);
+  // Zadanie mogło zniknąć (usunięcie) — wtedy `undefined` zamyka arkusz przez
+  // powłokę zamiast zostawiać pustą warstwę.
+  const detailsTask =
+    detailsTaskId === null ? undefined : state.tasks.find((t) => t.id === detailsTaskId);
+  const closeDetails = useCallback(() => setDetailsTaskId(null), []);
+  // Ten sam wariant powłoki co arkusz „Więcej” i szybki skok kalendarza: bez
+  // `getAnchorRect` (arkusz kotwiczy CSS przy dolnej krawędzi), ze stosem
+  // Escape, zamykaniem kliknięciem poza i powrotem fokusa na wyzwalacz.
+  useOverlay({
+    open: isMobileNav && detailsTask !== undefined,
+    onClose: closeDetails,
+    overlayRef: detailsSheetRef,
+    triggerRef: detailsTriggerRef,
+  });
+  // Przejście na desktop kasuje wybór — inaczej powrót do szerokości telefonu
+  // otworzyłby arkusz sam z siebie.
+  useEffect(() => {
+    if (!isMobileNav) setDetailsTaskId(null);
+  }, [isMobileNav]);
 
   // Stan filtrów jest ZAPAMIĘTANY w store (`lastFilters.tasks`) — przetrwa
   // nawigację i przeładowanie. Każdy setter wysyła pełny, znormalizowany snapshot
@@ -297,6 +330,19 @@ export function TasksPage() {
     }
   };
 
+  // Treść arkusza szczegółów — te same selektory, co karta desktopowa, tylko
+  // policzone raz dla WYBRANEGO zadania (arkusz jest jeden na stronę).
+  const detailsProject = detailsTask ? getProject(state, detailsTask.projectId) : undefined;
+  const detailsClient = detailsProject ? getClient(state, detailsProject.clientId) : undefined;
+  const detailsCategory = detailsTask
+    ? getWorkCategory(state, detailsTask.workCategoryId)
+    : undefined;
+
+  const openFromDetails = (taskId: string) => {
+    setDetailsTaskId(null);
+    openTask(taskId);
+  };
+
   return (
     <section className="page">
       <div className="page-head">
@@ -353,6 +399,83 @@ export function TasksPage() {
             const client = project ? getClient(state, project.clientId) : undefined;
             const category = getWorkCategory(state, task.workCategoryId);
             const checklistDone = task.checklist.filter((c) => c.done).length;
+            if (isMobileNav) {
+              // Telefonowa karta: tytuł (max 2 wiersze) → ścieżka projektu →
+              // rząd metadanych. Pigułki (status, planowanie, priorytet,
+              // kategoria, plakietka projektu, zakres, lista kontrolna) żyją w
+              // arkuszu szczegółów — to one rozpychały kartę do 4 wierszy.
+              const status = getStatus(state, task.statusId);
+              const avatars = visibleAssignees(assignees);
+              return (
+                <li key={task.id} className="task-card">
+                  <button
+                    type="button"
+                    className="task-card-main task-card-m-main"
+                    onClick={() => openTask(task.id)}
+                  >
+                    <span className="task-card-m-title">{task.title}</span>
+                    <span className="task-card-m-project">
+                      {taskCardPath(client?.name, project?.name)}
+                    </span>
+                    <span className="task-card-m-meta">
+                      <span
+                        className="task-card-m-dot"
+                        style={{ background: status?.color }}
+                        aria-hidden
+                      />
+                      <span className="sr-only">Status: {status?.name ?? '—'}</span>
+                      <span className="task-card-m-hours">
+                        zaplanowano {formatDuration(planned)}
+                      </span>
+                      {/* Awatary są ozdobą (`aria-hidden` w `Avatar`), więc
+                          przypisania niesie osobny tekst dla czytnika. */}
+                      <span className="sr-only">
+                        {assignees.length === 0
+                          ? 'Brak przypisanych osób'
+                          : `Przypisani: ${assignees.map((p) => p.name).join(', ')}`}
+                      </span>
+                      <span className="task-card-m-avatars">
+                        {avatars.shown.map((p) => (
+                          <Avatar key={p.id} person={p} size={20} />
+                        ))}
+                        {avatars.extra > 0 && (
+                          <span className="task-card-m-more" aria-hidden>
+                            +{avatars.extra}
+                          </span>
+                        )}
+                      </span>
+                    </span>
+                  </button>
+                  {/* Wyzwalacz arkusza jest RODZEŃSTWEM karty-przycisku —
+                      zagnieżdżony `<button>` to nielegalny HTML. */}
+                  <div className="card-actions task-card-m-actions">
+                    <IconButton
+                      ref={(node) => {
+                        if (node !== null && detailsTaskId === task.id)
+                          detailsTriggerRef.current = node;
+                      }}
+                      icon={<MoreHorizontal size={16} aria-hidden />}
+                      onClick={() => setDetailsTaskId(task.id)}
+                      label={`Szczegóły zadania: ${task.title}`}
+                      tooltip="Szczegóły zadania"
+                      haspopup="dialog"
+                      expanded={detailsTaskId === task.id}
+                    />
+                    {canManageTasks && (
+                      // Bez `.task-delete` (margines dla wariantu desktopowego)
+                      // — na telefonie odstępy trzyma `.task-card-m-actions`.
+                      <IconButton
+                        variant="danger"
+                        icon={<X size={16} aria-hidden />}
+                        onClick={() => handleDelete(task.id, task.title)}
+                        label={`Usuń ${task.title}`}
+                        tooltip="Usuń"
+                      />
+                    )}
+                  </div>
+                </li>
+              );
+            }
             return (
               <li key={task.id} className="task-card">
                 <button
@@ -413,6 +536,71 @@ export function TasksPage() {
             </ul>
           )}
         </>
+      )}
+
+      {/* Arkusz szczegółów: JEDNA instancja na stronę, montowana tylko na
+          telefonie. Scrim nie ma własnego handlera — zamknięcie „kliknięciem
+          poza” i Escape obsługuje `useOverlay`, on też oddaje fokus wyzwalaczowi. */}
+      {isMobileNav && detailsTask && (
+        <OverlayLayer>
+          <div className="app-sheet-scrim" aria-hidden />
+          <div
+            className="task-details-sheet"
+            role="dialog"
+            aria-label={`Szczegóły zadania: ${detailsTask.title}`}
+            ref={detailsSheetRef}
+          >
+            <div className="app-sheet-handle" aria-hidden />
+            <p className="task-details-title">{detailsTask.title}</p>
+            <div className="task-details-badges">
+              <StatusBadge status={getStatus(state, detailsTask.statusId)} />
+              <PlanningBadge status={taskPlanningStatus(state, detailsTask.id)} />
+              {detailsTask.priority !== 'normal' && (
+                <PriorityBadge priority={detailsTask.priority} />
+              )}
+              {detailsCategory && <span className="muted task-category">{detailsCategory.name}</span>}
+              {detailsProject && (
+                <span className="project-badge">
+                  <Coin paid={detailsProject.paid} size={13} />
+                  {detailsClient ? `${detailsClient.name} / ` : ''}
+                  {detailsProject.name}
+                </span>
+              )}
+            </div>
+            <dl className="task-details-rows">
+              <div className="task-details-row">
+                <dt className="muted">Okres</dt>
+                <dd>{rangeLabel(detailsTask.startDate, detailsTask.endDate)}</dd>
+              </div>
+              <div className="task-details-row">
+                <dt className="muted">Zaplanowano</dt>
+                <dd>{formatDuration(taskPlannedTotal(state, detailsTask.id))}</dd>
+              </div>
+              {detailsTask.estimatedHours != null && (
+                <div className="task-details-row">
+                  <dt className="muted">Szacowane</dt>
+                  <dd>{formatDuration(detailsTask.estimatedHours)}</dd>
+                </div>
+              )}
+              {detailsTask.checklist.length > 0 && (
+                <div className="task-details-row">
+                  <dt className="muted">Lista kontrolna</dt>
+                  <dd>
+                    {detailsTask.checklist.filter((c) => c.done).length}/
+                    {detailsTask.checklist.length}
+                  </dd>
+                </div>
+              )}
+            </dl>
+            <button
+              type="button"
+              className="btn primary task-details-open"
+              onClick={() => openFromDetails(detailsTask.id)}
+            >
+              Otwórz zadanie
+            </button>
+          </div>
+        </OverlayLayer>
       )}
     </section>
   );
