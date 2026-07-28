@@ -6,7 +6,11 @@
    kept as aliases pointing at --n2-* so component rules stay small.
    ============================================================ */
 
-@import url("https://fonts.googleapis.com/css2?family=Fragment+Mono:ital@0;1&family=Inter:wght@400;500;600;700&family=Orbitron:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap");
+/* Kroje pisma — te same cztery co wcześniej, ale hostowane u siebie zamiast
+   pobierane z Google Fonts. Szczegóły doboru wag i podzbiorów: `fonts.css`.
+   Vite wkleja ten arkusz do jednego pliku produkcyjnego, więc CSS to nadal
+   jedno żądanie. */
+@import "./fonts.css";
 
 :root {
   color-scheme: dark;
