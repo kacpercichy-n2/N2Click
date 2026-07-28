@@ -452,32 +452,12 @@ textarea {
   color: var(--n2-text);
 }
 
-/* S1 — stopka sidebara („Pomoc i samouczki” + blok użytkownika) trzyma się dołu
-   i NIGDY nie miesza się z listą nawigacji: kryjące tło (lista ma tylko
-   półprzezroczyste `--n2-surface`, więc przewijane pozycje prześwitywały) oraz
-   `sticky`, gdy to sam sidebar zaczyna się przewijać. Gradient nad stopką jest
-   sygnałem „jest tego więcej” — nakładkowe paski przewijania macOS same z
-   siebie niczego nie pokazują. */
-.sidebar-footer {
-  position: sticky;
-  bottom: 0;
-  z-index: 2;
-  margin-top: auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--n2-space-6);
-  background: var(--n2-panel);
-}
-.sidebar-footer::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 100%;
-  height: 12px;
-  background: linear-gradient(to top, var(--n2-panel), rgba(32, 32, 36, 0));
-  pointer-events: none;
-}
+/* UWAGA: `.sidebar-footer` opisuje JEDNA reguła — jeden wiersz (Zgłoszenia +
+   okrągła pomoc) w sekcji onboardingu niżej w pliku. Druga, kolumnowa wersja
+   (`sticky` + kryjące tło `--n2-panel` + gradient) przyszła z równoległej
+   gałęzi i po scaleniu nakładała się na tę pierwszą: zostawała po niej
+   `flex-direction: column`, więc przyciski kurczyły się do szerokości treści,
+   a pod nimi świeciło obce tło. Nie dodawaj tu drugiej reguły. */
 /* Wrapper pins the user footer to the bottom of the sidebar. */
 .sidebar-user {
   margin-top: auto;
@@ -6095,16 +6075,6 @@ html[data-modal-backdrop='snapshot'] #root {
   }
   .sidebar-user {
     margin-top: 0;
-  }
-  /* Pasek/szuflada nie ma własnego przewijania listy, więc stopka jest zwykłym
-     blokiem (bez sticky i bez gradientu). */
-  .sidebar-footer {
-    position: static;
-    margin-top: 0;
-    background: transparent;
-  }
-  .sidebar-footer::before {
-    display: none;
   }
 }
 

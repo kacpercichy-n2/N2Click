@@ -370,10 +370,10 @@ export function App() {
               );
             })}
         </nav>
-        {/* S1 — stopka sidebara jest jednym blokiem przyklejonym do dołu (kryjące
-            tło + gradient nad nią), żeby przewijana lista nawigacji nigdy się z
-            nią nie zlewała. Przypięte Zgłoszenia (widoczne dla każdej roli, poza
-            edytorem kolejności) siedzą nad przyciskiem pomocy. */}
+        {/* Stopka paska: JEDEN wiersz — przypięte Zgłoszenia (widoczne dla każdej
+            roli, poza edytowalną listą menu) obok okrągłego przycisku pomocy.
+            Blok użytkownika jest osobnym rodzeństwem przyklejonym do dołu przez
+            `margin-top: auto`, a nie kolejnym piętrem tej stopki. */}
         <div className="sidebar-footer">
           <NavLink
             to="/zgloszenia"
@@ -385,25 +385,44 @@ export function App() {
             <Inbox size={18} aria-hidden className="nav-icon" />
             <span className="nav-label">Zgłoszenia</span>
           </NavLink>
+          {/* Przycisk tylko z ikoną — nazwa idzie przez `aria-label`, a dymek
+              przez natywny `title` (tak samo w trybie rozwiniętym i zwiniętym). */}
           <button
             type="button"
             className="sidebar-help"
             data-tour="shell.help"
+            aria-label="Pomoc i samouczki"
+            title="Pomoc i samouczki"
             onClick={() => window.dispatchEvent(new Event('n2hub:open-tutorials'))}
           >
             <CircleHelp size={18} aria-hidden />
-            <span className="nav-label">Pomoc i samouczki</span>
           </button>
-          {state.people.length > 0 && (
-            <div className="sidebar-user">
-              {/* Collapsed avatar shortcut (CSS-shown only >1180px + collapsed):
-                  links to the user's own profile (the chevron toggle is the only
-                  expand control now). */}
+        </div>
+        {state.people.length > 0 && (
+          <div className="sidebar-user">
+            {/* Collapsed avatar shortcut (CSS-shown only >1180px + collapsed):
+                links to the user's own profile (the chevron toggle is the only
+                expand control now). */}
+            {currentUser && (
+              <Tooltip text={`Mój profil: ${currentUser.name}`}>
+                <Link
+                  to={`/people/${currentUser.id}`}
+                  className="sidebar-user-collapsed"
+                  aria-label={`Mój profil: ${currentUser.name}`}
+                  onPointerEnter={() => prefetchRoute('/people/:id')}
+                  onFocus={() => prefetchRoute('/people/:id')}
+                >
+                  <Avatar person={currentUser} size={32} />
+                </Link>
+              </Tooltip>
+            )}
+            {/* Expanded footer row: avatar → own profile + narrower logout. */}
+            <div className="sidebar-user-row">
               {currentUser && (
                 <Tooltip text={`Mój profil: ${currentUser.name}`}>
                   <Link
                     to={`/people/${currentUser.id}`}
-                    className="sidebar-user-collapsed"
+                    className="sidebar-user-avatar"
                     aria-label={`Mój profil: ${currentUser.name}`}
                     onPointerEnter={() => prefetchRoute('/people/:id')}
                     onFocus={() => prefetchRoute('/people/:id')}
@@ -412,33 +431,17 @@ export function App() {
                   </Link>
                 </Tooltip>
               )}
-              {/* Expanded footer row: avatar → own profile + narrower logout. */}
-              <div className="sidebar-user-row">
-                {currentUser && (
-                  <Tooltip text={`Mój profil: ${currentUser.name}`}>
-                    <Link
-                      to={`/people/${currentUser.id}`}
-                      className="sidebar-user-avatar"
-                      aria-label={`Mój profil: ${currentUser.name}`}
-                      onPointerEnter={() => prefetchRoute('/people/:id')}
-                      onFocus={() => prefetchRoute('/people/:id')}
-                    >
-                      <Avatar person={currentUser} size={32} />
-                    </Link>
-                  </Tooltip>
-                )}
-                {/* Everyone can log out (returns to the login screen). */}
-                <button
-                  type="button"
-                  className="btn ghost logout-btn"
-                  onClick={() => void handleLogout()}
-                >
-                  Wyloguj
-                </button>
-              </div>
+              {/* Everyone can log out (returns to the login screen). */}
+              <button
+                type="button"
+                className="btn ghost logout-btn"
+                onClick={() => void handleLogout()}
+              >
+                Wyloguj
+              </button>
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </aside>
       )}
 
