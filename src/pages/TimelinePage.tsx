@@ -32,6 +32,7 @@ import {
   addDaysStr,
   diffDays,
   formatShort,
+  formatShortWithWeekday,
   isWeekend,
   todayStr,
   weekStart,
@@ -220,8 +221,8 @@ function MilestoneMark({
   // Bramka dotyku: na palcu przeciąganie startuje dopiero po przytrzymaniu.
   const gate = useTouchDragGate();
   const hint = editable
-    ? `◆ ${milestone.name} — ${formatShort(milestone.date)} (przeciągnij, aby przesunąć)`
-    : `◆ ${milestone.name} — ${formatShort(milestone.date)}`;
+    ? `◆ ${milestone.name} — ${formatShortWithWeekday(milestone.date)} (przeciągnij, aby przesunąć)`
+    : `◆ ${milestone.name} — ${formatShortWithWeekday(milestone.date)}`;
   return (
     <Tooltip text={hint}>
     <span
@@ -725,7 +726,7 @@ export function TimelinePage() {
                             className={
                               overdue ? 'timeline-bar project overdue' : 'timeline-bar project'
                             }
-                            tooltip={`${p.name}: ${formatShort(p.startDate)} – ${formatShort(p.endDate)}${overdue ? ' (po terminie)' : ''}`}
+                            tooltip={`${p.name}: ${formatShortWithWeekday(p.startDate)} – ${formatShortWithWeekday(p.endDate)}${overdue ? ' (po terminie)' : ''}`}
                             resizable
                             editable={canManageProjects}
                             onCommit={commitProject(p)}
@@ -765,7 +766,7 @@ export function TimelinePage() {
                               dayW={dayW}
                               color={getStatus(state, t.statusId)?.color ?? '#94a3b8'}
                               className="timeline-bar task"
-                              tooltip={`${t.title}: ${formatShort(t.startDate)} – ${formatShort(t.endDate)}${conflictOffsets.length > 0 ? ` — ⚠ konflikty: ${conflictOffsets.length === 1 ? '1 dzień' : `${conflictOffsets.length} dni`}` : ''}`}
+                              tooltip={`${t.title}: ${formatShortWithWeekday(t.startDate)} – ${formatShortWithWeekday(t.endDate)}${conflictOffsets.length > 0 ? ` — ⚠ konflikty: ${conflictOffsets.length === 1 ? '1 dzień' : `${conflictOffsets.length} dni`}` : ''}`}
                               resizable
                               editable={canManageTasks}
                               onCommit={commitTask(t)}
@@ -811,7 +812,7 @@ export function TimelinePage() {
                           dayW={dayW}
                           color={getStatus(state, t.statusId)?.color ?? '#94a3b8'}
                           className="timeline-bar task"
-                          tooltip={`${t.title}: ${formatShort(t.startDate)} – ${formatShort(t.endDate)} — ${person.name}: ${formatDuration(hours)} zaplanowane`}
+                          tooltip={`${t.title}: ${formatShortWithWeekday(t.startDate)} – ${formatShortWithWeekday(t.endDate)} — ${person.name}: ${formatDuration(hours)} zaplanowane`}
                           resizable={false}
                           editable={false}
                           onCommit={() => {}}

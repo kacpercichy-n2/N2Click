@@ -26,10 +26,10 @@ import { useOpenTask } from '../components/TaskModal';
 import { ChevronRight, GanttChart, Plus } from '../components/icons';
 import { sortProjectGroups } from './projectSort';
 import type { SavedFilterCriteria } from '../types';
-import { addDaysStr, formatShort, formatShortWithWeekday, todayStr } from '../utils/dates';
+import { addDaysStr, formatShortWithWeekday, todayStr } from '../utils/dates';
 import { periodError, PERIOD_ERROR_LABELS } from '../utils/dates';
 import { formatDuration } from '../utils/time';
-import { polishCount } from '../utils/polishPlural';
+import { listCounterLabel, polishCount } from '../utils/polishPlural';
 import { Tooltip } from '../components/Tooltip';
 
 export type PaidFilter = 'all' | 'paid' | 'unpaid';
@@ -204,8 +204,8 @@ export function ProjectsPage() {
       label: `Status: ${getStatus(state, statusFilter)?.name ?? '—'}`,
       onRemove: () => setStatusFilter(''),
     });
-  if (from) chips.push({ key: 'from', label: `Od: ${formatShort(from)}`, onRemove: () => setFrom('') });
-  if (to) chips.push({ key: 'to', label: `Do: ${formatShort(to)}`, onRemove: () => setTo('') });
+  if (from) chips.push({ key: 'from', label: `Od: ${formatShortWithWeekday(from)}`, onRemove: () => setFrom('') });
+  if (to) chips.push({ key: 'to', label: `Do: ${formatShortWithWeekday(to)}`, onRemove: () => setTo('') });
 
   // Group by client, then sort for presentation only: groups alphabetical by
   // client name, projects alphabetical within each group, „Bez klienta" last
@@ -348,18 +348,35 @@ export function ProjectsPage() {
         presets={<FilterPresets page="projects" criteria={criteria} onApply={applyPreset} />}
         trailing={
           <span className="filter-count muted">
-            {filtered.length} z {state.projects.length}{' '}
-            {polishCount(state.projects.length, 'projekt', 'projekty', 'projektów')}
+            {listCounterLabel(filtered.length, state.projects.length, 'projektów')}
           </span>
         }
       />
 
       {groups.length === 0 ? (
+        // SY-33 — jeden szablon pustki: „Brak <bytów>” + JEDNO zdanie o
+        // przyczynie + akcja. Przy aktywnym filtrze zdanie zaczyna się od tego
+        // faktu, a akcją jest wyczyszczenie filtrów, nie zakładanie projektu.
         <div className="empty-state">
           <p className="empty-title">Brak projektów</p>
-          <p className="empty-hint">
-            Dodaj projekt pod klientem, a potem utwórz zadania i zaplanuj godziny.
-          </p>
+          {activeCount > 0 ? (
+            <>
+              <p className="empty-hint">
+                Filtry nie przepuszczają żadnego z {state.projects.length} projektów.
+              </p>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => applyPreset(DEFAULT_CRITERIA)}
+              >
+                Wyczyść filtry
+              </button>
+            </>
+          ) : (
+            <p className="empty-hint">
+              Dodaj projekt pod klientem, a potem utwórz zadania i zaplanuj godziny.
+            </p>
+          )}
         </div>
       ) : (
         groups.map((g) => (

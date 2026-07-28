@@ -5,9 +5,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   addDaysStr,
+  DATE_FMT,
   dayOfMonthLabel,
   formatBirthday,
   formatShortWithWeekday,
+  formatTimestamp,
   isBirthdayOn,
   isValidDateStr,
   MAX_TASK_PERIOD_DAYS,
@@ -15,6 +17,7 @@ import {
   monthStart,
   PERIOD_ERROR_LABELS,
   periodError,
+  toDateStr,
   weekdayAbbr,
   type PeriodError,
 } from './dates';
@@ -76,6 +79,38 @@ describe('periodError', () => {
 
   it('returns null when start === end (a single-day period)', () => {
     expect(periodError('2026-07-12', '2026-07-12')).toBeNull();
+  });
+});
+
+// SY-08 — na ekranie wolno pokazać datę TYLKO w jednym z trzech formatów.
+// Ten blok przybija każdy z nich do konkretnego napisu, żeby kolejny widok nie
+// dorobił siódmego wariantu, i pilnuje, że surowy ISO nie jest żadnym z nich.
+describe('trzy dozwolone formaty daty (SY-08)', () => {
+  // 2026-07-20 to poniedziałek — jeden dzień dla wszystkich trzech formatów.
+  const DAY = '2026-07-20';
+
+  it('1) data treści: „20 lip (pon)”', () => {
+    expect(formatShortWithWeekday(DAY)).toBe('20 lip (pon)');
+  });
+
+  it('2) znacznik czasu: „20 lip 2026, 14:05”', () => {
+    // ISO bez strefy => czas LOKALNY, więc asercja nie zależy od TZ maszyny.
+    expect(formatTimestamp('2026-07-20T14:05:00')).toBe('20 lip 2026, 14:05');
+  });
+
+  it('3) pole formularza: natywne „yyyy-MM-dd”', () => {
+    expect(DATE_FMT).toBe('yyyy-MM-dd');
+    expect(toDateStr(new Date(2026, 6, 20))).toBe(DAY);
+  });
+
+  it('żaden format ekranowy nie jest surowym ISO', () => {
+    expect(formatShortWithWeekday(DAY)).not.toBe(DAY);
+    expect(formatTimestamp('2026-07-20T14:05:00')).not.toContain(DAY);
+  });
+
+  it('znacznik czasu zeruje godzinę do dwóch cyfr i nie gubi minut', () => {
+    expect(formatTimestamp('2026-07-20T09:00:00')).toBe('20 lip 2026, 09:00');
+    expect(formatTimestamp('2026-01-05T23:59:00')).toBe('5 sty 2026, 23:59');
   });
 });
 

@@ -59,6 +59,7 @@ import {
   snapToStep,
 } from '../utils/time';
 import { blockLabel } from '../utils/blockLabel';
+import { blocksProgressLabel, itemsProgressLabel } from '../utils/progressLabel';
 import {
   eachDayInclusive,
   inclusiveDayCount,
@@ -1790,10 +1791,9 @@ export function TaskEditor({
     checklist: (
       <div className="editor-section">
         <h2>Checklista</h2>
+        {/* SY-20 — jeden wzór postępu, bez czasownika. */}
         {checklist.length > 0 && (
-          <p className="checklist-count">
-            ukończono {checklistDone}/{checklist.length}
-          </p>
+          <p className="checklist-count">{itemsProgressLabel(checklistDone, checklist.length)}</p>
         )}
         {checklist.length > 0 && (
           <ul className="checklist-list">
@@ -2146,7 +2146,7 @@ export function TaskEditor({
             bloku (`?task=<id>&block=<id>`) rozwija ją SAMO, bo inaczej nie dałoby
             się przewinąć do podświetlanego wiersza. */}
         {collapseToggle(
-          `Wykonane bloki (wykonano ${blocksDoneCount}/${taskBlocks.length})`,
+          `Wykonane bloki (${blocksProgressLabel(blocksDoneCount, taskBlocks.length)})`,
           doneBlocksOpen,
           doneBlocksBodyId,
           () => setDoneBlocksOpen((v) => !v),

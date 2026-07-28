@@ -12,17 +12,17 @@ describe('checklistGlyphs', () => {
   it('nic odhaczonego rysuje same puste glify', () => {
     expect(checklistGlyphs(0, 3)).toEqual({
       pattern: '◌◌◌',
-      text: '0/3',
-      label: 'Lista kontrolna: 0 z 3',
+      text: '0/3 pozycji',
+      label: 'Lista kontrolna: 0/3 pozycji',
     });
   });
 
-  it('2 z 3 daje „◍◍◌ 2/3”', () => {
+  it('2 z 3 daje „◍◍◌ 2/3 pozycji”', () => {
     const out = checklistGlyphs(2, 3);
     expect(out).toEqual({
       pattern: '◍◍◌',
-      text: '2/3',
-      label: 'Lista kontrolna: 2 z 3',
+      text: '2/3 pozycji',
+      label: 'Lista kontrolna: 2/3 pozycji',
     });
   });
 
@@ -39,7 +39,7 @@ describe('checklistGlyphs — długa lista', () => {
   it('nigdy nie rysuje więcej niż limit glifów', () => {
     const out = checklistGlyphs(20, 40);
     expect(out?.pattern).toHaveLength(CHECKLIST_GLYPH_LIMIT);
-    expect(out?.text).toBe('20/40');
+    expect(out?.text).toBe('20/40 pozycji');
   });
 
   it('jedna odhaczona pozycja z 40 pokazuje JEDEN pełny glif (nie zero)', () => {
@@ -60,18 +60,18 @@ describe('checklistGlyphs — wejścia śmieciowe', () => {
   it('odhaczonych nie może być więcej niż wszystkich', () => {
     expect(checklistGlyphs(9, 3)).toEqual({
       pattern: '◍◍◍',
-      text: '3/3',
-      label: 'Lista kontrolna: 3 z 3',
+      text: '3/3 pozycji',
+      label: 'Lista kontrolna: 3/3 pozycji',
     });
   });
 
   it('ujemne i NaN degradują do zera', () => {
-    expect(checklistGlyphs(-2, 3)?.text).toBe('0/3');
-    expect(checklistGlyphs(Number.NaN, 3)?.text).toBe('0/3');
+    expect(checklistGlyphs(-2, 3)?.text).toBe('0/3 pozycji');
+    expect(checklistGlyphs(Number.NaN, 3)?.text).toBe('0/3 pozycji');
     expect(checklistGlyphs(1, Number.NaN)).toBeNull();
   });
 
   it('ułamki są obcinane w dół', () => {
-    expect(checklistGlyphs(1.9, 3.9)?.text).toBe('1/3');
+    expect(checklistGlyphs(1.9, 3.9)?.text).toBe('1/3 pozycji');
   });
 });

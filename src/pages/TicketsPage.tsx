@@ -18,7 +18,8 @@ import {
   TICKET_STATUSES,
   TICKET_STATUS_LABELS,
 } from '../utils/tickets';
-import { todayStr } from '../utils/dates';
+import { formatTimestamp, todayStr } from '../utils/dates';
+import { listCounterLabel } from '../utils/polishPlural';
 import { useOpenTicket } from '../components/TicketModal';
 import { useConfirm } from '../components/ConfirmProvider';
 import { ChevronRight, Plus } from '../components/icons';
@@ -43,18 +44,35 @@ export function TicketsPage() {
   const nameOfReporter = (reporterId: string): string =>
     state.people.find((p) => p.id === reporterId)?.name ?? 'nieznany';
 
+  // Zakres widoczności BEZ filtrów — mianownik licznika „<widoczne> z
+  // <wszystkich>” (SY-19). Filtry zawężają to, co użytkownik i tak MOŻE
+  // zobaczyć, więc porównujemy do zakresu, a nie do wszystkich zgłoszeń.
+  const scoped = useMemo(
+    () =>
+      canManage
+        ? state.tickets
+        : state.tickets.filter((t) => me !== undefined && t.reporterId === me.id),
+    [state.tickets, canManage, me],
+  );
+
+  const filtersActive = statusFilter !== '' || kindFilter !== '';
+
+  const clearFilters = () => {
+    setStatusFilter('');
+    setKindFilter('');
+  };
+
   // Zakres + filtry + sort od najnowszych. Jedno źródło dla tabeli i eksportu,
   // więc „Eksportuj” zawsze zapisuje DOKŁADNIE to, co widać.
-  const visible = useMemo(() => {
-    const scoped = canManage
-      ? state.tickets
-      : state.tickets.filter((t) => me !== undefined && t.reporterId === me.id);
-    return scoped
-      .filter((t) => (statusFilter === '' || t.status === statusFilter))
-      .filter((t) => (kindFilter === '' || t.kind === kindFilter))
-      .slice()
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  }, [state.tickets, canManage, me, statusFilter, kindFilter]);
+  const visible = useMemo(
+    () =>
+      scoped
+        .filter((t) => statusFilter === '' || t.status === statusFilter)
+        .filter((t) => kindFilter === '' || t.kind === kindFilter)
+        .slice()
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    [scoped, statusFilter, kindFilter],
+  );
 
   const handleExport = () => {
     const rows: TicketExportRow[] = visible.map((ticket) => ({
@@ -171,19 +189,40 @@ export function TicketsPage() {
                 ))}
               </select>
             </label>
+            {/* SY-19 — ten sam wzór licznika co listy zadań i projektów, na
+                końcu paska filtrów. */}
             <span className="ticket-count">
-              {visible.length} {visible.length === 1 ? 'zgłoszenie' : 'zgłoszeń'}
+              {listCounterLabel(visible.length, scoped.length, 'zgłoszeń')}
             </span>
           </div>
 
           {visible.length === 0 ? (
+            // SY-33 — jeden szablon pustki. Przy aktywnym filtrze zdanie
+            // zaczyna się od tego faktu i akcją jest „Wyczyść filtry”; bez
+            // filtrów mówimy o prawdziwej przyczynie i drodze dalej.
             <div className="empty-state">
               <p className="empty-title">Brak zgłoszeń</p>
-              <p className="empty-hint">
-                {canManage
-                  ? 'Nikt jeszcze nic nie zgłosił albo filtry nic nie przepuszczają.'
-                  : 'Nie masz jeszcze żadnych zgłoszeń. Użyj przycisku „Zgłoś”.'}
-              </p>
+              {filtersActive ? (
+                <>
+                  <p className="empty-hint">
+                    Filtry nie przepuszczają żadnego z {scoped.length} zgłoszeń.
+                  </p>
+                  <button type="button" className="btn" onClick={clearFilters}>
+                    Wyczyść filtry
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p className="empty-hint">
+                    {canManage
+                      ? 'Nikt jeszcze nic nie zgłosił.'
+                      : 'Nie masz jeszcze żadnych zgłoszeń.'}
+                  </p>
+                  <button type="button" className="btn primary" onClick={openNewTicket}>
+                    Nowe zgłoszenie
+                  </button>
+                </>
+              )}
             </div>
           ) : (
             <div className="ticket-table-wrap">
@@ -257,7 +296,8 @@ export function TicketsPage() {
                           )}
                         </td>
                         <td>{nameOfReporter(t.reporterId)}</td>
-                        <td>{t.createdAt.slice(0, 10)}</td>
+                        {/* SY-08 — znacznik czasu, nigdy surowy ISO. */}
+                        <td>{formatTimestamp(t.createdAt)}</td>
                         {canManage && (
                           <td>
                             <button

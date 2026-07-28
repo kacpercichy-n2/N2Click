@@ -1,7 +1,8 @@
-// Wzór glifów listy kontrolnej („◍◍◌ 2/3”) zamiast kolorowej pigułki z ikoną.
+// Wzór glifów listy kontrolnej („◍◍◌ 2/3 pozycji”) zamiast kolorowej pigułki.
 // Czysty moduł: wejściem są dwie liczby, wyjściem gotowy wzór, tekst i etykieta
 // dla czytnika ekranu. Same glify są ozdobą (`aria-hidden` po stronie widoku) —
-// liczby niesie tekst obok.
+// liczby niesie tekst obok, w tym samym wzorze co modal i podgląd (SY-20).
+import { itemsProgressLabel } from './progressLabel';
 
 /** Ile glifów wolno narysować. Dłuższa lista jest SKALOWANA do tylu pozycji —
  * 40 kółek w wierszu listy to nie informacja, tylko szum. */
@@ -14,9 +15,9 @@ export const GLYPH_TODO = '◌';
 export interface ChecklistGlyphs {
   /** Sam wzór, np. „◍◍◌”. */
   pattern: string;
-  /** Czytelny licznik, np. „2/3”. */
+  /** Czytelny licznik we WSPÓLNYM wzorze postępu (SY-20), np. „2/3 pozycji”. */
   text: string;
-  /** Pełne zdanie dla czytnika ekranu, np. „Lista kontrolna: 2 z 3”. */
+  /** Pełne zdanie dla czytnika ekranu, np. „Lista kontrolna: 2/3 pozycji”. */
   label: string;
 }
 
@@ -54,9 +55,10 @@ export function checklistGlyphs(
     filled = Math.min(slots, Math.max(0, filled));
   }
 
+  const text = itemsProgressLabel(doneCount, all);
   return {
     pattern: GLYPH_DONE.repeat(filled) + GLYPH_TODO.repeat(slots - filled),
-    text: `${doneCount}/${all}`,
-    label: `Lista kontrolna: ${doneCount} z ${all}`,
+    text,
+    label: `Lista kontrolna: ${text}`,
   };
 }

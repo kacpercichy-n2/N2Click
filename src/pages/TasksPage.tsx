@@ -25,7 +25,7 @@ import { ChevronRight, MoreHorizontal, Plus, X } from '../components/icons';
 import { IconButton } from '../components/IconButton';
 import { useConfirm } from '../components/ConfirmProvider';
 import { buildDeleteConsequence } from '../components/confirmDialog';
-import { formatShort, formatShortWithWeekday } from '../utils/dates';
+import { formatShortWithWeekday } from '../utils/dates';
 import { PersonChip } from '../components/PersonChip';
 import { Avatar } from '../components/Avatar';
 import { OverlayLayer, useOverlay } from '../components/useOverlay';
@@ -37,6 +37,8 @@ import { PriorityBadge } from '../components/PriorityBadge';
 import { Coin } from '../components/Coin';
 import { clientProjectPath } from '../utils/entityPath';
 import { checklistGlyphs } from '../utils/checklistGlyphs';
+import { itemsProgressLabel } from '../utils/progressLabel';
+import { listCounterLabel } from '../utils/polishPlural';
 import { formatDuration } from '../utils/time';
 
 function rangeLabel(start: string, end: string): string {
@@ -307,8 +309,8 @@ export function TasksPage() {
       label: `Kategoria: ${getWorkCategory(state, categoryFilter)?.name ?? '—'}`,
       onRemove: () => setCategoryFilter(''),
     });
-  if (from) chips.push({ key: 'from', label: `Od: ${formatShort(from)}`, onRemove: () => setFrom('') });
-  if (to) chips.push({ key: 'to', label: `Do: ${formatShort(to)}`, onRemove: () => setTo('') });
+  if (from) chips.push({ key: 'from', label: `Od: ${formatShortWithWeekday(from)}`, onRemove: () => setFrom('') });
+  if (to) chips.push({ key: 'to', label: `Do: ${formatShortWithWeekday(to)}`, onRemove: () => setTo('') });
 
   const handleDelete = async (taskId: string, title: string) => {
     // Zamiast ogólnikowego „to usunie przypisania i godziny” podajemy PRAWDZIWE
@@ -386,15 +388,22 @@ export function TasksPage() {
             presets={<FilterPresets page="tasks" criteria={criteria} onApply={applyPreset} />}
             trailing={
               <span className="filter-count muted">
-                {tasks.length} z {allTasks.length} zadań
+                {listCounterLabel(tasks.length, allTasks.length, 'zadań')}
               </span>
             }
           />
 
           {tasks.length === 0 ? (
+            // SY-33 — ten sam szablon pustki co reszta list: „Brak <bytów>” +
+            // JEDNO zdanie o przyczynie (tu: filtry) + akcja „Wyczyść filtry”.
             <div className="empty-state">
-              <p className="empty-title">Brak pasujących zadań</p>
-              <p className="empty-hint">Zmień lub wyczyść filtry, aby zobaczyć zadania.</p>
+              <p className="empty-title">Brak zadań</p>
+              <p className="empty-hint">
+                Filtry nie przepuszczają żadnego z {allTasks.length} zadań.
+              </p>
+              <button type="button" className="btn" onClick={clearFilters}>
+                Wyczyść filtry
+              </button>
             </div>
           ) : (
             <ul className="task-list" data-tour="tasks.list">
@@ -622,8 +631,10 @@ export function TasksPage() {
                 <div className="task-details-row">
                   <dt className="muted">Lista kontrolna</dt>
                   <dd>
-                    {detailsTask.checklist.filter((c) => c.done).length}/
-                    {detailsTask.checklist.length}
+                    {itemsProgressLabel(
+                      detailsTask.checklist.filter((c) => c.done).length,
+                      detailsTask.checklist.length,
+                    )}
                   </dd>
                 </div>
               )}

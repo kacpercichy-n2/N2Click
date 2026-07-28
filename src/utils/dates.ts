@@ -1,6 +1,25 @@
 // Date helpers. All persisted dates are 'yyyy-MM-dd' calendar strings.
 // We parse them at LOCAL noon to avoid any timezone/DST edge cases, and format
 // back with date-fns. Week math is Monday-start throughout.
+//
+// ---- TRZY DOZWOLONE FORMATY DATY NA EKRANIE (SY-08) ----
+// Każda data widoczna dla użytkownika przechodzi przez JEDEN z tych trzech
+// formatów. Surowe `yyyy-MM-dd` NIE renderuje się nigdzie poza polem formularza.
+//
+//   1. Data treści  — `formatShortWithWeekday`  → „20 lip (pon)”
+//      Każda samodzielna data w karcie, wierszu listy, chipie filtra, dymku i
+//      zdaniu. Zawsze niesie skrót dnia tygodnia.
+//   2. Znacznik czasu — `formatTimestamp`       → „20 lip 2026, 14:05”
+//      Momenty z historii (`createdAt`/`updatedAt`): komentarze, aktywność,
+//      zgłoszenia. Rok i godzina, bo dotyczą przeszłości.
+//   3. Pole formularza — natywne `<input type="date">`, wartość `DATE_FMT`
+//      (`yyyy-MM-dd`). Formatowanie robi przeglądarka w locale systemu.
+//
+// Poza tą trójką zostają WYŁĄCZNIE prymitywy osi/siatki — nie samodzielne daty
+// treści, tylko etykiety kolumn i wierszy gęstych tabel (`formatShort`,
+// `formatRowLabel`, `weekRangeLabel`, `monthLabel`) oraz `dayMonthLabel`
+// (zdanie dla czytnika ekranu) i `formatBirthday` (data urodzenia — rok bez
+// dnia tygodnia). Nowy widok powinien sięgać po jeden z trzech formatów wyżej.
 import {
   addDays,
   addMonths,
@@ -108,7 +127,9 @@ export function diffDays(a: DateStr, b: DateStr): number {
   return differenceInCalendarDays(parseDate(b), parseDate(a));
 }
 
-/** Short label like "3 Aug". */
+/** Short label like "3 Aug". PRYMITYW OSI — etykieta linijki osi czasu i cegła
+ *  dla `weekRangeLabel`. Samodzielna data treści idzie przez
+ *  `formatShortWithWeekday` (patrz nagłówek pliku). */
 export function formatShort(d: DateStr): string {
   return format(parseDate(d), 'd MMM', { locale: pl });
 }
@@ -129,8 +150,9 @@ export function dayMonthLabel(d: DateStr): string {
   return format(parseDate(d), 'd MMMM', { locale: pl });
 }
 
-/** Short label with the Polish weekday suffix, like "26 paź (pon)". Used on
- *  every task/project planning surface so a date always carries its weekday. */
+/** FORMAT 1 — DATA TREŚCI. Skrót z polskim dniem tygodnia, np. „26 paź (pon)”.
+ *  Jedyny format samodzielnej daty widocznej w kartach, listach, chipach
+ *  filtrów i dymkach (patrz nagłówek pliku). */
 export function formatShortWithWeekday(d: DateStr): string {
   return `${format(parseDate(d), 'd MMM', { locale: pl })} (${weekdayAbbr(d)})`;
 }
@@ -144,7 +166,8 @@ export function formatBirthday(birthDate: string): string {
   return format(parseDate(birthDate), 'd MMMM yyyy', { locale: pl });
 }
 
-/** Timestamp label like "3 Aug 2026, 14:05" from an ISO string. */
+/** FORMAT 2 — ZNACZNIK CZASU. Etykieta momentu z historii, np.
+ *  „3 sie 2026, 14:05”, z pola ISO (`createdAt`/`updatedAt`). */
 export function formatTimestamp(iso: string): string {
   return format(new Date(iso), 'd MMM yyyy, HH:mm', { locale: pl });
 }
@@ -188,7 +211,8 @@ export function isTodayStr(d: DateStr): boolean {
   return dfIsSameDay(parseDate(d), new Date());
 }
 
-/** Row label like "Mon 03.08". */
+/** Row label like "Mon 03.08". PRYMITYW SIATKI — nagłówek wiersza gęstej
+ *  tabeli (`font-variant-numeric: tabular-nums`), nie samodzielna data treści. */
 export function formatRowLabel(d: DateStr): string {
   return format(parseDate(d), 'EEE dd.MM', { locale: pl });
 }

@@ -294,8 +294,10 @@ export function PeoplePage() {
             ))}
           </select>
         </div>
+        {/* SY-29 — podpowiedź cytuje ETYKIETĘ pola („Godziny/dzień”), a nie
+            nazwę pojęcia („dostępność”), której na formularzu nie widać. */}
         <p className="field-hint people-form-hint">
-          Limit dzienny liczony jest z pola dostępności.
+          Limit dzienny liczony jest z pola „Godziny/dzień”.
         </p>
         <button type="submit" className="btn primary">
           Dodaj osobę

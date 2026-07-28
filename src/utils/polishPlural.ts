@@ -40,3 +40,20 @@ export function polishAmount(
     : forms.fraction;
   return `${formatPolishNumber(n)} ${noun}`;
 }
+
+/**
+ * JEDEN wzór licznika listy (SY-19): „<widoczne> z <wszystkich> <bytów>”, np.
+ * „3 z 21 zadań”. Stoi na końcu paska filtrów każdej listy, która pokazuje
+ * licznik.
+ *
+ * Rzeczownik podaje się w DOPEŁNIACZU LICZBY MNOGIEJ i jest STAŁY — bierze go
+ * przyimek „z”, nie liczebnik, więc poprawne jest „z 2 projektów”, a nie
+ * „z 2 projekty”. Dlatego `polishCount` tu NIE wchodzi.
+ */
+export function listCounterLabel(
+  visible: number,
+  total: number,
+  genitivePlural: string,
+): string {
+  return `${visible} z ${total} ${genitivePlural}`;
+}

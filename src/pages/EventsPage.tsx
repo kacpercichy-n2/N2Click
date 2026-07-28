@@ -6,7 +6,7 @@ import { useMemo, useState } from 'react';
 import { useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import type { CalendarEvent } from '../types';
-import { todayStr, WEEKDAY_LABELS } from '../utils/dates';
+import { formatShortWithWeekday, todayStr, WEEKDAY_LABELS } from '../utils/dates';
 import { formatMinutes } from '../utils/time';
 import { normalizeProjectDocumentUrl } from '../utils/projectDocuments';
 import { useOpenEvent } from '../components/EventModal';
@@ -103,7 +103,8 @@ export function EventsPage() {
                   onClick={() => openEvent(e.id)}
                 >
                   <span className="event-row-when">
-                    <span className="event-row-date">{e.date}</span>
+                    {/* SY-08 — data treści, nigdy surowe `yyyy-MM-dd`. */}
+                    <span className="event-row-date">{formatShortWithWeekday(e.date)}</span>
                     <span className="event-row-time">
                       {formatMinutes(e.startMinutes)}–{formatMinutes(end)}
                     </span>
