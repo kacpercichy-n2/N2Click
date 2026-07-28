@@ -10,6 +10,12 @@
   free-slot search and quarter-hour math.
 - `src/utils/touchDrag.ts` (pure state machine) + `src/utils/useTouchDragGate.ts`
   (React wrapper) own the touch long-press gate in FRONT of every drag entry.
+- `src/components/calendarBlockKeyboard.ts` (pure state machine + polskie
+  komunikaty) owns the KEYBOARD entry into the block-edit model.
+- `src/components/monthGrid.ts` (pure) owns MonthView grid navigation math and
+  the Polish accessible name of a day cell.
+- `src/utils/blockLabel.ts` (pure) owns the ONE sentence describing a work block
+  (TaskModal rows + WeekView tile `aria-label`).
 - `src/store/AppStore.tsx` applies scheduling mutations atomically.
 - `src/pages/WorkloadPage.tsx` owns workload reassignment UI.
 
@@ -80,6 +86,37 @@
 - Free-slot search rejects non-finite, non-positive, off-grid and over-day
   durations. Keyboard-activatable week blocks and bin cards respond to both
   Enter and Space without changing their pointer lifecycle.
+- Klawiatura na bloku siatki (2026-07-28, inwariant 7) jest DODATKOWYM WEJŚCIEM
+  do modelu przeciągania, nigdy równoległym uproszczeniem: ↑/↓ przesuwa start
+  o 15 min, Shift+↑/↓ zmienia długość, ←/→ przenosi o dzień, Escape cofa CAŁĄ
+  wystawioną edycję bez wysyłki, a Enter/spacja ZATWIERDZA ją (bez rozpoczętej
+  edycji Enter/spacja nadal otwierają zadanie). Projekcja jest wystawiona jak
+  `dragRef` i idzie przez te same granice (`snapToStep`, `clampBlockStart`,
+  doba, `hasCollision`, sufit `baseHours + growAllowanceHours`) do TEJ SAMEJ
+  akcji `SET_BLOCK_TIME`; kolizja blokuje zapis (inwariant 3). Wyjście fokusa
+  zatwierdza (edycja nie ginie po cichu). Decyzyjność siedzi w czystym
+  `calendarBlockKeyboard.ts`, a `.week-block` nosi wtedy `kb-editing` obok
+  istniejących `colliding`/`at-cap`. Akcja „Przenieś do zasobnika”
+  (`MOVE_BLOCK_TO_BIN`) jest RODZEŃSTWEM kafelka (dzieci `role="button"` są
+  prezentacyjne), widoczna dopiero przy fokusie i `pointer-events: none` poza
+  nim, więc `elementFromPoint`, bramka dotyku i cały cykl życia wskaźnika
+  (`begin`/`startDrag`/`projectMove`/`finish`/`cancelDrag`) zostają bez zmian.
+  Kafelek niesie pełne zdanie `aria-label` z `blockLabel`, a WeekView ma jeden
+  region `sr-only role="status" aria-live="polite"` — kolizja jest ZDANIEM
+  („Koliduje z „Montaż filmu” 12:00–13:00”), nie samą czerwoną obwódką.
+  Klawiaturowy zapis NIE odpala animacji scalenia (`setFusedId`) — reduktor
+  scala tak samo, animacja zostaje przy przeciąganiu.
+- MonthView (2026-07-28) jest siatką APG: `role="grid"` na `.month-grid-wrap`,
+  wiersz `columnheader` z dniami tygodnia, `.month-grid` jako `rowgroup` i
+  wiersze `.month-week-row` (`display: contents` — układ CSS bez zmian).
+  Wędrujący `tabindex` trzyma DATĘ (jedna komórka fokusowalna), strzałki chodzą
+  po dniach/tygodniach bez zawijania, Home/End po wierszu (z Ctrl po siatce),
+  PageUp/PageDown = ±1 miesiąc, z Shiftem ±1 rok — i te dwa ostatnie przestawiają
+  kotwicę `CalendarPage` (`onShiftMonth`/`onShiftYear`), która nie dubluje
+  matematyki dat. Widoczna etykieta okresu (`.cal-range-label`) jest naraz
+  `aria-live` i nazwą siatki. Nazwa komórki („30 lipca, 6 zaplanowanych godzin,
+  2 osoby”) pochodzi z `monthCellName`, więc znaczniki 🎂/⟳/📅 są `aria-hidden` —
+  ich treść wchodzi do nazwy i nie czyta się dwa razy.
 - Recurring-task occurrences are PRESENTATIONAL ONLY (invariant 1): WeekView
   renders them as additive `.week-recur-block` overlays (dashed/striped, ⟳),
   positioned by time and painted BEHIND real blocks; they never enter
@@ -120,6 +157,9 @@ availability/overload calculations, drag lifecycle and time utilities.
 ## Relevant tests and checks
 
 `src/utils/time.test.ts`, `src/utils/touchDrag.test.ts`,
+`src/utils/blockLabel.test.ts`,
+`src/components/calendarBlockKeyboard.test.ts`,
+`src/components/monthGrid.test.ts`,
 `src/components/weekViewLayout.test.ts`,
 `src/components/overlayShell.test.ts`,
 `src/store/blockActions.test.ts`,

@@ -79,6 +79,25 @@ import {
   snapToStep,
 } from '../utils/time';
 import type { RecurrenceOccurrence } from '../utils/recurrence';
+import { blockLabel } from '../utils/blockLabel';
+import {
+  blockCapAnnouncement,
+  blockCollisionAnnouncement,
+  blockCommitAnnouncement,
+  blockEditAnnouncement,
+  blockKeyboardCommit,
+  blockKeyboardReducer,
+  blockRejectedAnnouncement,
+  blockRevertAnnouncement,
+  blockTargetAnnouncement,
+  blockToBinAnnouncement,
+  blockUnchangedAnnouncement,
+  findBlockConflict,
+  type BlockGeometry,
+  type BlockKeyboardContext,
+  type BlockKeyboardEvent,
+  type BlockKeyboardState,
+} from './calendarBlockKeyboard';
 import { Coin } from './Coin';
 
 interface Props {
@@ -106,6 +125,9 @@ const DAY_COLS = 7; // the days grid holds 7 columns (no axis inside)
 // Duration choices for a recurrence occurrence override: 0:15…8:00 on the
 // 15-minute grid (minutes). Labeled via formatDuration in the menu.
 const RECUR_DURATION_OPTIONS = Array.from({ length: 32 }, (_, i) => (i + 1) * MINUTE_STEP);
+
+/** `id` wspólnej podpowiedzi klawiaturowej dla wszystkich edytowalnych bloków. */
+const WEEK_BLOCK_KB_HINT_ID = 'week-block-kb-hint';
 
 /** Announces a successful real calendar action to the optional guided practice. */
 function announceCalendarPractice(kind: 'move' | 'resize' | 'bin-drop'): void {
@@ -234,6 +256,10 @@ interface BlockProps {
   // holds. They take the block's own data instead of a per-render closure.
   onOpen: (taskId: string, entryId: string) => void;
   onContextMenu: (entry: WorkloadEntry, e: React.MouseEvent) => void;
+  // Jedyny kanał, którym czytnik ekranu wie, co robi klawiaturowa edycja
+  // (region `aria-live` żyje w rodzicu, bo blok bywa odmontowany zaraz po
+  // zapisie). Stabilna referencja z `useCallback` — memo trzyma.
+  announce: (message: string) => void;
 }
 
 function TimedBlockImpl({
@@ -257,6 +283,7 @@ function TimedBlockImpl({
   editable,
   onOpen,
   onContextMenu,
+  announce,
 }: BlockProps) {
   const { dispatch } = useStore();
   const [drag, setDrag] = useState<DragState | null>(null);
@@ -619,11 +646,228 @@ function TimedBlockImpl({
     announceCalendarPractice(finalDrag.mode === 'move' ? 'move' : 'resize');
   };
 
-  const start = drag ? drag.projStart : baseStart;
-  const hours = drag ? drag.projHours : baseHours;
+  // ---- Klawiaturowa edycja bloku (DODATKOWE wejście do tego samego modelu) ----
+  // Wszystko powyżej — begin/startDrag/projectMove/finish/cancelDrag, bramka
+  // dotyku i przechwycenie wskaźnika — zostaje NIETKNIĘTE (inwariant 7). Poniżej
+  // żyje druga droga do TEJ SAMEJ projekcji: wystawiony stan (jak `dragRef`),
+  // te same granice z `utils/time.ts` i te same wysyłki `SET_BLOCK_TIME` /
+  // `MOVE_BLOCK_TO_BIN`. Cała decyzyjność siedzi w czystym
+  // `calendarBlockKeyboard.ts`; tutaj zostaje tłumaczenie klawisza na zdarzenie,
+  // pomiar kolumny i wysyłka.
+  const [kb, setKb] = useState<BlockKeyboardState | null>(null);
+  // Ref jak przy przeciąganiu: `blur` odmontowanego bloku (zapis scalający dwa
+  // bloki) niesie propsy STAREGO renderu, a handler musi widzieć żywy stan.
+  const kbRef = useRef<BlockKeyboardState | null>(null);
+  const applyKb = (next: BlockKeyboardState | null) => {
+    kbRef.current = next;
+    setKb(next);
+  };
+  // Sufit rozciągania i szerokość kolumny mierzymy RAZ, przy wejściu w tryb —
+  // dokładnie tam, gdzie robi to `startDrag`.
+  const kbMaxHours = useRef(Infinity);
+  const [kbColWidth, setKbColWidth] = useState(0);
+
+  const kbContext = (): BlockKeyboardContext => ({
+    entryId: entry.id,
+    baseStart,
+    baseHours,
+    baseDayIndex: dayIndex,
+    dayCount: DAY_COLS,
+    maxHours: kbMaxHours.current,
+    // Ten sam indeks per (osoba, data), z którego czyta kolizje przeciąganie.
+    blocksOnDay: (i) =>
+      (blocksByPersonDate.get(personDateKey(person.id, days[i])) ?? []).map((w) => ({
+        id: w.id,
+        startMinutes: w.startMinutes,
+        plannedHours: w.plannedHours,
+        title: getTask(state, w.taskId)?.title ?? '',
+      })),
+  });
+
+  const kbGeometry = (s: {
+    projStart: number;
+    projHours: number;
+    projDayIndex: number;
+  }): BlockGeometry => ({
+    date: days[s.projDayIndex] ?? entry.date,
+    startMinutes: s.projStart,
+    plannedHours: s.projHours,
+  });
+
+  /** Winowajca kolizji dla bieżącej projekcji (do zdania, nie do decyzji). */
+  const kbConflict = (s: BlockKeyboardState, ctx: BlockKeyboardContext) =>
+    findBlockConflict(
+      ctx.blocksOnDay(s.projDayIndex),
+      s.projStart,
+      hoursToMinutes(s.projHours),
+      entry.id,
+    );
+
+  const announceKb = (s: BlockKeyboardState, ctx: BlockKeyboardContext, first: boolean) => {
+    const target = kbGeometry(s);
+    if (s.colliding) {
+      const conflict = kbConflict(s, ctx);
+      announce(
+        conflict === null
+          ? blockTargetAnnouncement(target)
+          : blockCollisionAnnouncement(target, conflict.title, conflict),
+      );
+      return;
+    }
+    if (s.atCap) {
+      announce(blockCapAnnouncement());
+      return;
+    }
+    announce(first ? blockEditAnnouncement(task.title, target) : blockTargetAnnouncement(target));
+  };
+
+  /**
+   * Zatwierdzenie wystawionej edycji — TĄ SAMĄ ścieżką co upuszczenie: ładunek
+   * `SET_BLOCK_TIME` o tym samym kształcie, po tych samych granicach (snap,
+   * clamp doby, kolizja, limit budżetu). Kolizja NIE jest wysyłana (inwariant 3),
+   * ale zawsze zostaje ogłoszona — edycja nigdy nie ginie po cichu.
+   */
+  const commitKb = (active: BlockKeyboardState) => {
+    const ctx = kbContext();
+    const intent = blockKeyboardCommit(active, ctx);
+    applyKb(null);
+    if (intent === null) {
+      if (active.colliding) {
+        const conflict = kbConflict(active, ctx);
+        announce(
+          conflict === null
+            ? blockUnchangedAnnouncement(task.title)
+            : blockRejectedAnnouncement(conflict.title, conflict),
+        );
+        return;
+      }
+      announce(blockUnchangedAnnouncement(task.title));
+      return;
+    }
+    const date = days[intent.dayIndex];
+    dispatch({
+      type: 'SET_BLOCK_TIME',
+      entryId: intent.entryId,
+      date,
+      startMinutes: intent.startMinutes,
+      plannedHours: intent.plannedHours,
+    });
+    announceCalendarPractice(intent.plannedHours !== baseHours ? 'resize' : 'move');
+    announce(blockCommitAnnouncement(task.title, kbGeometry(active)));
+  };
+
+  const revertKb = () => {
+    applyKb(null);
+    announce(
+      blockRevertAnnouncement(task.title, {
+        date: entry.date,
+        startMinutes: baseStart,
+        plannedHours: baseHours,
+      }),
+    );
+  };
+
+  const moveKbToBin = () => {
+    // Wystawiona edycja przestaje mieć znaczenie: blok traci datę i godzinę.
+    applyKb(null);
+    dispatch({ type: 'MOVE_BLOCK_TO_BIN', entryId: entry.id });
+    announceCalendarPractice('bin-drop');
+    announce(blockToBinAnnouncement(task.title));
+  };
+
+  const onBlockKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    // Trwający gest wskaźnika jest właścicielem projekcji — klawiatura nie
+    // dokłada się do niego (Escape w trakcie przeciągania obsługuje nasłuch okna
+    // założony przez ścieżkę wskaźnika). Sam ODCZYT refa, zero zmian tamtej drogi.
+    if (dragRef.current !== null) return;
+    const active = kbRef.current;
+    // Kolizja znaczeń Entera rozstrzygnięta JAWNIE: dopóki nic nie jest
+    // wystawione, Enter/spacja otwierają zadanie (zachowanie sprzed zmiany);
+    // w trakcie edycji ZATWIERDZAJĄ ją. Enter nie może znaczyć dwóch rzeczy
+    // naraz, a otwarcie modala porzuciłoby wystawioną zmianę bez śladu.
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      if (active === null) {
+        onOpen(task.id, entry.id);
+        return;
+      }
+      commitKb(active);
+      return;
+    }
+    if (!editable) return;
+    if (e.key === 'Escape') {
+      if (active === null) return; // bez trybu Escape należy do nakładek
+      e.preventDefault();
+      e.stopPropagation();
+      revertKb();
+      return;
+    }
+    const event: BlockKeyboardEvent | null =
+      e.key === 'ArrowUp'
+        ? e.shiftKey
+          ? { type: 'resize', deltaMinutes: -MINUTE_STEP }
+          : { type: 'move', deltaMinutes: -MINUTE_STEP }
+        : e.key === 'ArrowDown'
+          ? e.shiftKey
+            ? { type: 'resize', deltaMinutes: MINUTE_STEP }
+            : { type: 'move', deltaMinutes: MINUTE_STEP }
+          : e.key === 'ArrowLeft'
+            ? { type: 'day', delta: -1 }
+            : e.key === 'ArrowRight'
+              ? { type: 'day', delta: 1 }
+              : null;
+    if (event === null) return;
+    e.preventDefault();
+    if (active === null) {
+      // Wejście w tryb: te same wielkości, które łapie `startDrag`.
+      kbMaxHours.current = baseHours + growAllowanceHours(state, entry.id);
+      const rect = gridRef.current?.getBoundingClientRect();
+      setKbColWidth(rect ? rect.width / DAY_COLS : 0);
+    }
+    const ctx = kbContext();
+    const next = blockKeyboardReducer(active, event, ctx);
+    if (next === null || next === active) return; // krawędź — nic do ogłoszenia
+    applyKb(next);
+    announceKb(next, ctx, active === null);
+  };
+
+  // Kafelek i jego akcja „Przenieś do zasobnika” są RODZEŃSTWEM (patrz render),
+  // ale dla fokusu tworzą JEDNĄ całość — stąd oba refy i wspólny test poniżej.
+  const blockRef = useRef<HTMLDivElement | null>(null);
+  const binBtnRef = useRef<HTMLButtonElement | null>(null);
+  /** Czy fokus wylądował wewnątrz pary kafelek + akcja zasobnika? */
+  const kbFocusStays = (target: EventTarget | null): boolean => {
+    const node = target as Node | null;
+    if (node === null) return false;
+    return (
+      (blockRef.current?.contains(node) ?? false) || (binBtnRef.current?.contains(node) ?? false)
+    );
+  };
+
+  /**
+   * Wyjście fokusa POZA parę kafelek + akcja zasobnika ZATWIERDZA wystawioną
+   * edycję (o ile wolno ją wysłać): użytkownik zobaczył blok w nowym miejscu,
+   * więc ciche cofnięcie byłoby kłamstwem. Kolizja i tak nie przechodzi —
+   * `commitKb` ją odrzuca i ogłasza. Przejście Tabem NA akcję zasobnika NIE
+   * zapisuje: zaraz poleci `MOVE_BLOCK_TO_BIN`, a pośredni `SET_BLOCK_TIME`
+   * utrwalałby stan, o który nikt nie prosił (i mrugał banerem „Zapisano”).
+   */
+  const onKbFocusOut = (e: React.FocusEvent) => {
+    const active = kbRef.current;
+    if (active === null) return;
+    if (kbFocusStays(e.relatedTarget)) return;
+    commitKb(active);
+  };
+
+  // Podgląd: przeciąganie ma pierwszeństwo (jest gestem trwającym), a gdy go
+  // nie ma, kafelek rysuje się z wystawionej projekcji klawiatury.
+  const staged = drag ?? kb;
+  const start = staged ? staged.projStart : baseStart;
+  const hours = staged ? staged.projHours : baseHours;
   const end = blockEndMinutes(start, hours);
-  const dayShift = drag ? drag.projDayIndex - dayIndex : 0;
-  const tx = drag && dayShift !== 0 ? dayShift * drag.colWidth : 0;
+  const dayShift = staged ? staged.projDayIndex - dayIndex : 0;
+  const tx = dayShift !== 0 ? dayShift * (drag ? drag.colWidth : kbColWidth) : 0;
 
   const top = (start / 60) * HOUR_PX;
   const height = Math.max(MIN_BLOCK_H, hours * HOUR_PX);
@@ -644,9 +888,12 @@ function TimedBlockImpl({
     status === 'overdue' && !done ? 'overdue' : '',
     editable ? '' : 'readonly',
     drag ? 'dragging' : '',
-    drag?.colliding ? 'colliding' : '',
+    // Wystawiona edycja z klawiatury nosi TE SAME klasy stanu co przeciąganie
+    // (czerwona kolizja, ostrzeżenie o limicie) plus własną obwódkę trybu.
+    !drag && kb ? 'kb-editing' : '',
+    (staged?.colliding ?? false) ? 'colliding' : '',
     drag?.overBin ? 'to-bin' : '',
-    drag?.atCap ? 'at-cap' : '',
+    (staged?.atCap ?? false) ? 'at-cap' : '',
     drag?.willMergeWithId ? 'will-merge' : '',
     drag?.willMergeEdge === 'top' ? 'merge-top' : '',
     drag?.willMergeEdge === 'bottom' ? 'merge-bottom' : '',
@@ -666,10 +913,23 @@ function TimedBlockImpl({
       ? 'Limit czasu zadania — brak godzin w zasobniku'
       : `${task.title} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${formatDuration(hours)}).${statusNote} Przeciągnij, aby przenieść; przeciągnij krawędź, aby zmienić czas trwania; kliknij prawym przyciskiem, aby wstawić blok.`;
 
+  // Pełne zdanie o bloku dla czytnika ekranu — z tego samego budowniczego, co
+  // wiersze bloków w TaskModal, tyle że z tytułem zadania. Data jedzie z
+  // WYSTAWIONEJ projekcji, więc etykieta nie kłamie w trakcie edycji.
+  const blockAriaLabel = blockLabel({
+    taskTitle: task.title,
+    personName: person.name,
+    date: days[dayIndex + dayShift] ?? entry.date,
+    startMinutes: start,
+    plannedHours: hours,
+    done: entry.done === true,
+  });
+
   return (
     <>
     <Tooltip text={blockHint}>
     <div
+      ref={blockRef}
       className={className}
       data-tour="calendar.block"
       style={{
@@ -682,6 +942,12 @@ function TimedBlockImpl({
       }}
       role="button"
       tabIndex={0}
+      // Nazwa dostępna niesie PEŁNE zdanie o bloku (wspólny `blockLabel`, ten
+      // sam, co wiersze w TaskModal) i podąża za wystawioną projekcją, więc
+      // czytnik ekranu opisuje to, co widać. Dzieci `role="button"` są
+      // prezentacyjne, więc bez tego kafelek czytał się jako sklejka napisów.
+      aria-label={blockAriaLabel}
+      aria-describedby={editable ? WEEK_BLOCK_KB_HINT_ID : undefined}
       onPointerDown={editable ? begin('move') : undefined}
       onPointerMove={editable ? onPointerMove : undefined}
       onPointerUp={editable ? finish : undefined}
@@ -693,12 +959,8 @@ function TimedBlockImpl({
         e.stopPropagation();
         if (!moved.current) onOpen(task.id, entry.id);
       }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onOpen(task.id, entry.id);
-        }
-      }}
+      onKeyDown={onBlockKeyDown}
+      onBlur={editable ? onKbFocusOut : undefined}
       onContextMenu={editable ? (e) => onContextMenu(entry, e) : undefined}
     >
       {editable && (
@@ -730,6 +992,35 @@ function TimedBlockImpl({
       )}
     </div>
     </Tooltip>
+    {/* Klawiaturowy odpowiednik upuszczenia bloku nad zasobnikiem. Stoi OBOK
+        kafelka, nie w nim: dzieci `role="button"` są prezentacyjne, więc
+        zagnieżdżony przycisk nie zostałby ogłoszony. Widoczny dopiero przy
+        fokusie (`.week-block-bin-btn`), więc mysz nigdy go nie dostaje — żadna
+        ścieżka wskaźnika ani trafianie w wyrenderowaną kolumnę się nie zmienia
+        (inwariant 7). Wysyła DOKŁADNIE tę samą akcję co upuszczenie. */}
+    {editable && (
+      <button
+        type="button"
+        ref={binBtnRef}
+        className="week-block-bin-btn"
+        style={{
+          top,
+          left: `calc(${(col / cols) * 100}% + 1px)`,
+          transform: tx ? `translateX(${tx}px)` : undefined,
+        }}
+        aria-label={`Przenieś do zasobnika: ${blockAriaLabel}`}
+        // Fokus opuszczający PARĘ (kafelek + ta akcja) domyka wystawioną edycję
+        // tym samym kontraktem co blur kafelka — inaczej zmiana wisiałaby
+        // wystawiona, gdy użytkownik odejdzie Tabem stąd.
+        onBlur={onKbFocusOut}
+        onClick={(e) => {
+          e.stopPropagation();
+          moveKbToBin();
+        }}
+      >
+        Przenieś do zasobnika
+      </button>
+    )}
     {/* Over-bin ghost: a fixed portal copy of the block riding under the pointer
         while a move drag is over the bin pane. The in-column block is clipped by
         the days viewport overflow and can never appear over the sibling bin, so
@@ -1418,6 +1709,13 @@ export function WeekView({ state, anchor, filter }: Props) {
   );
   const handleOpenEvent = useCallback((eventId: string) => openEvent(eventId), [openEvent]);
 
+  // Jeden region ogłoszeń na kalendarz: wejście w klawiaturową edycję bloku,
+  // każdy kolejny cel, kolizja, limit, zapis i cofnięcie — jedyny kanał, którym
+  // czytnik ekranu wie, co się dzieje (czerwona obwódka nic nie mówi).
+  // `useCallback`, bo memoizowane bloki dostają tę funkcję w propsach.
+  const [announcement, setAnnouncement] = useState('');
+  const announce = useCallback((message: string) => setAnnouncement(message), []);
+
   const gridRef = useRef<HTMLDivElement | null>(null); // .week-days-grid (7 columns, 0:00 at top)
   const viewportRef = useRef<HTMLDivElement | null>(null); // .week-days-viewport (both scrollbars)
   const axisPaneRef = useRef<HTMLDivElement | null>(null); // .week-axis-pane (vertical scroll synced)
@@ -1939,6 +2237,16 @@ export function WeekView({ state, anchor, filter }: Props) {
 
   return (
     <div className="week-cal" data-tour="calendar.week">
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {announcement}
+      </div>
+      {/* Wspólny opis klawiatury dla każdego edytowalnego bloku (`aria-describedby`
+          — `Tooltip` dokłada do niego swój opis, nie podmienia go). */}
+      <span id={WEEK_BLOCK_KB_HINT_ID} className="sr-only">
+        Strzałki w górę i w dół przesuwają blok co 15 minut, z Shiftem zmieniają czas trwania.
+        Strzałki w lewo i w prawo przenoszą blok o dzień. Enter zapisuje zmianę, Escape ją cofa.
+        Bez rozpoczętej zmiany Enter otwiera zadanie.
+      </span>
       {/* Header row: corner + horizontally-synced day headers + bin header.
           Not scrollable itself; its track mirrors the days viewport scrollLeft. */}
       <div className="week-head-row">
@@ -2098,6 +2406,7 @@ export function WeekView({ state, anchor, filter }: Props) {
                       editable={canEditEntry(e.personId)}
                       onOpen={handleOpenTask}
                       onContextMenu={openMenu}
+                      announce={announce}
                     />
                   ))}
                 </div>

@@ -47,6 +47,7 @@ import {
   snapHours,
   snapToStep,
 } from '../utils/time';
+import { blockLabel } from '../utils/blockLabel';
 import {
   eachDayInclusive,
   inclusiveDayCount,
@@ -1164,17 +1165,17 @@ function TaskEditor({
     }
   }, [focusBlockId, taskBlocks.length]);
 
-  const blockRowLabel = (entry: (typeof taskBlocks)[number]): string => {
-    const person = getPerson(state, entry.personId);
-    const who = person ? `${person.name} — ` : '';
-    if (isBinEntry(entry)) {
-      return `${who}zasobnik (bez terminu), ${formatDuration(entry.plannedHours)}`;
-    }
-    const end = entry.startMinutes + entry.plannedHours * 60;
-    return `${who}${formatShortWithWeekday(entry.date)}, ${formatMinutes(
-      entry.startMinutes,
-    )}–${formatMinutes(end)} (${formatDuration(entry.plannedHours)})`;
-  };
+  // Zdanie opisujące blok mieszka teraz w czystym `utils/blockLabel.ts` —
+  // kalendarz używa go jako nazwy dostępnej kafelka (z tytułem zadania), a tu
+  // zostaje DOKŁADNIE ten sam tekst, co wcześniej (bez tytułu: nagłówek modala
+  // już go niesie).
+  const blockRowLabel = (entry: (typeof taskBlocks)[number]): string =>
+    blockLabel({
+      personName: getPerson(state, entry.personId)?.name,
+      date: entry.date,
+      startMinutes: entry.startMinutes,
+      plannedHours: entry.plannedHours,
+    });
   const blocksDoneCount = taskBlocks.filter((b) => b.done === true).length;
 
   return (

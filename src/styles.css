@@ -2046,6 +2046,52 @@ option {
     box-shadow: 0 0 0 0 rgba(196, 150, 255, 0);
   }
 }
+/* Klawiaturowa edycja bloku: wystawiona projekcja wygląda jak podniesiony blok
+   (ten sam cień co `.dragging`), ale przerywana obwódka mówi, że zmiana jeszcze
+   NIE jest zapisana. Klasy `.colliding` i `.at-cap` stoją w pliku wyżej/niżej
+   dokładnie tak, jak przy przeciąganiu, więc kolizja nadal wygrywa kolorem. */
+.week-block.kb-editing {
+  z-index: 30;
+  border-style: dashed;
+  /* Pierścień fokusa jedzie razem z cieniem — inaczej ta reguła (klasa+klasa)
+     przebiłaby globalne `:focus-visible` i edytowany blok straciłby wskazanie. */
+  box-shadow: var(--n2-shadow-focus), var(--n2-shadow-violet, 0 8px 24px rgba(0, 0, 0, 0.4));
+}
+/* Akcja „Do zasobnika” jest RODZEŃSTWEM bloku (dzieci `role="button"` są
+   prezentacyjne) i pokazuje się WYŁĄCZNIE przy fokusie — mysz jej nie widzi,
+   więc nie wchodzi w drogę przeciąganiu ani trafianiu w kolumnę dnia. */
+.week-block-bin-btn {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+  /* `clip` chowa tylko malowanie — bez tego przycisk zostawałby trafialnym
+     pikselem w rogu bloku i mógłby wejść w drogę `elementFromPoint`. Fokus i
+     aktywacja z klawiatury działają mimo `pointer-events: none`. */
+  pointer-events: none;
+}
+.week-block-bin-btn:focus {
+  pointer-events: auto;
+  width: auto;
+  height: auto;
+  margin: 0;
+  overflow: visible;
+  clip: auto;
+  z-index: 40;
+  padding: 2px 6px;
+  border: 1px solid var(--n2-lavender);
+  border-radius: var(--n2-radius-xs);
+  background: var(--card-bg);
+  color: inherit;
+  font-family: inherit;
+  font-size: var(--n2-type-xs);
+  cursor: pointer;
+}
 .week-block-handle {
   position: absolute;
   left: 0;
@@ -2402,6 +2448,14 @@ option {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
   gap: 6px;
+}
+/* Wiersz tygodnia i komórka istnieją WYŁĄCZNIE dla drzewa dostępności (APG
+   wymaga `row` i `gridcell` wokół interaktywnego dnia) — `display: contents`
+   zostawia układ CSS dokładnie takim, jakim był przy płaskiej liście
+   przycisków: to nadal `.month-cell` jest elementem siatki. */
+.month-week-row,
+.month-cell-slot {
+  display: contents;
 }
 .month-cell {
   position: relative;

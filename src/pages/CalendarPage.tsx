@@ -18,6 +18,9 @@ type ViewMode = 'week' | 'month';
 // Stabilna pusta lista chipów osób (referencja) na czas braku zapamiętanego filtra.
 const EMPTY_PERSON_IDS: string[] = [];
 
+/** `id` widocznej etykiety okresu — nazwa dostępna siatki miesiąca. */
+const CAL_RANGE_LABEL_ID = 'cal-range-label';
+
 export function CalendarPage() {
   const { state, dispatch } = useStore();
   const [view, setView] = useState<ViewMode>('week');
@@ -55,6 +58,12 @@ export function CalendarPage() {
   const next = () =>
     setAnchor((a) => (view === 'week' ? shiftWeek(a, 1) : shiftMonth(a, 1)));
   const goToday = () => setAnchor(todayStr());
+
+  // Klawiatura siatki miesiąca (PageUp/PageDown, z Shiftem rok) przestawia TĘ
+  // SAMĄ kotwicę, co przyciski ‹ ›. Rok liczymy jako 12 miesięcy tym samym
+  // `shiftMonth`, żeby matematyka dat nie rozjechała się między widokiem a stroną.
+  const shiftAnchorMonth = (delta: number) => setAnchor((a) => shiftMonth(a, delta));
+  const shiftAnchorYear = (delta: number) => setAnchor((a) => shiftMonth(a, delta * 12));
 
   const label = view === 'week' ? weekRangeLabel(anchor) : monthLabel(anchor);
 
@@ -101,7 +110,18 @@ export function CalendarPage() {
           <button type="button" className="nav-btn" onClick={next} aria-label="Następny">
             ›
           </button>
-          <span className="cal-range-label">{label}</span>
+          {/* Widoczny nagłówek okresu jest JEDNOCZEŚNIE ogłoszeniem zmiany
+              (PageUp/PageDown w siatce miesiąca nie przestawia fokusu poza
+              komórkę) i nazwą dostępną siatki (`aria-labelledby`). */}
+          <span
+            className="cal-range-label"
+            id={CAL_RANGE_LABEL_ID}
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            {label}
+          </span>
         </div>
 
         {state.people.length > 0 && (
@@ -132,6 +152,9 @@ export function CalendarPage() {
           anchor={anchor}
           filter={filter}
           onPickDay={pickDay}
+          onShiftMonth={shiftAnchorMonth}
+          onShiftYear={shiftAnchorYear}
+          labelId={CAL_RANGE_LABEL_ID}
         />
       )}
     </section>

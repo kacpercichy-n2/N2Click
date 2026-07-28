@@ -69,3 +69,12 @@ uchwyt klawiaturowy, menu `useOverlay`, region `role="status"`), nowe
 `kanbanMove.ts`/`.test.ts`, `compareTasks` wyeksportowany z `kanbanBoard.ts`,
 `icons.ts`, Kanban CSS, wiki. Focused 40 pass; `tsc --noEmit` clean;
 `npm test` 75 files / 1747 pass; build green. Kontekst bez rozszerzeń.
+
+## Developer result (PKG-20260728-calendar-blocks-keyboard)
+
+Changed: nowe `calendarBlockKeyboard.ts`, `monthGrid.ts`, `utils/blockLabel.ts`
+(+ testy), WeekView (klawiaturowa edycja bloku, `aria-live`, akcja zasobnika),
+MonthView jako APG grid, CalendarPage (`onShiftMonth`/`onShiftYear`), TaskModal
+(ten sam tekst), `dayMonthLabel`, CSS, wiki. Enter zapisuje edycję, bez niej
+otwiera zadanie. `npm test` 78 plików / 1789 pass (było 75/1747); build green.
+Zero zmian w ścieżkach wskaźnika. Kontekst bez rozszerzeń.

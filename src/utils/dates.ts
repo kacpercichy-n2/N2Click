@@ -123,6 +123,12 @@ export function dayOfMonthLabel(d: DateStr): string {
   return format(parseDate(d), 'd', { locale: pl });
 }
 
+/** Dzień z nazwą miesiąca w dopełniaczu, np. „30 lipca”. Do zdań czytanych na
+ *  głos (nazwa dostępna komórki miesiąca), gdzie skrót „30 lip” brzmi źle. */
+export function dayMonthLabel(d: DateStr): string {
+  return format(parseDate(d), 'd MMMM', { locale: pl });
+}
+
 /** Short label with the Polish weekday suffix, like "26 paź (pon)". Used on
  *  every task/project planning surface so a date always carries its weekday. */
 export function formatShortWithWeekday(d: DateStr): string {
