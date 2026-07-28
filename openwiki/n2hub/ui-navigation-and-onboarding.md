@@ -253,6 +253,26 @@
   `size` = `sm|md` (`data-size`), `pressed`/`expanded`, oraz MIĘKKIE
   `disabled`/`busy` (`aria-disabled`/`aria-busy`, przycisk zostaje w cyklu Tab,
   klik pomijany) i pole trafienia ≥ 44 px przez `.icon-btn::after`.
+- PALETA WYSZUKIWANIA (2026-07-28): `GlobalSearch.tsx` renderuje JEDNĄ płaską
+  listę wierszy (`role="option"` + `aria-activedescendant`, input
+  `role="combobox"` + `aria-autocomplete="list"` — wolne wyszukiwanie, NIE
+  zamknięta lista wyboru), złożoną z grup: „Szybkie akcje” (prefiks `>` =
+  wyłącznie akcje; bez prefiksu od 2 znaków, `QUICK_ACTIONS_MIN_TERM`),
+  „Ostatnio otwarte” przy pustej frazie, wyniki `searchAll` i wiersz „Pokaż
+  więcej” per grupa. Czysta logika mieszka w
+  `src/components/globalSearchModel.ts` (`quickActionCatalog` — WYŁĄCZNIE
+  istniejące czynności: nowe zadanie + nawigacja z `NAV_ITEMS`, bramki
+  `/admin`/`/team` jak w menu; `filterQuickActions`/`inlineQuickActions`,
+  `highlightSegments` — podświetlenie liczone na tekście znormalizowanym tym
+  samym `normalizeSearchText` co selektor, `resultsAnnouncement` — „12 wyników
+  w 3 grupach” przez `announce` (kanał polite), `recentPaletteRefs` — pamięć
+  SESJI palety (moduł, zero nowej trwałości) + dziennik `state.activity`);
+  testy `globalSearchModel.test.ts` w node. `searchAll` dostaje JAWNY limit per
+  grupa (`SearchLimits`, `DEFAULT_SEARCH_LIMIT` = 8, rozwinięta grupa 40) i
+  przerywa skan po przekroczeniu limitu, a `SearchResults.hasMore` mówi, czy
+  grupa została ucięta. Klawiatura przewija aktywny wiersz
+  (`scrollIntoView({ block: 'nearest' })`) i BLOKUJE `onMouseEnter` do
+  pierwszego realnego `mousemove` (mysz nie kradnie zaznaczenia).
 - `src/utils/dirtyRegistry.ts` and `src/utils/useSaveStatus.ts` support shared
   unsaved-edit and save-state behavior. The registry also holds the opt-in
   router navigation guard (scopes `task-modal`/`project-detail` plus a one-shot

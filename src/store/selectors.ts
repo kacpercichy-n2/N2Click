@@ -929,15 +929,27 @@ export function activityFor(
 
 // ---- Global search ----
 
+export type SearchGroupKey = 'projects' | 'tasks' | 'clients' | 'people';
+
+/** Czy grupa została UCIĘTA przez limit (jest co najmniej jeden wynik więcej). */
+export type SearchHasMore = Record<SearchGroupKey, boolean>;
+
 export interface SearchResults {
   projects: Project[];
   tasks: Task[];
   clients: Client[];
   people: Person[];
+  hasMore: SearchHasMore;
 }
 
+/** Limit wspólny dla wszystkich grup albo per-grupa (paleta rozwija jedną grupę). */
+export type SearchLimits = number | Partial<Record<SearchGroupKey, number>>;
+
+/** Ile wierszy per grupa pokazuje paleta, zanim zaproponuje „Pokaż więcej”. */
+export const DEFAULT_SEARCH_LIMIT = 8;
+
 /** Lowercase + strip diacritics so `zolty` matches `Żółty` (ł/Ł are not decomposed by NFD). */
-function normalize(s: string): string {
+export function normalizeSearchText(s: string): string {
   return s
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
@@ -946,7 +958,43 @@ function normalize(s: string): string {
     .toLowerCase();
 }
 
+const normalize = normalizeSearchText;
+
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Efektywny limit jednej grupy. Brak wartości => `DEFAULT_SEARCH_LIMIT`,
+ * `Infinity` => bez limitu, wartość ujemna => 0 (grupa schowana, ale `hasMore`
+ * nadal mówi prawdę), NaN/nieskończoność ujemna => domyślny limit (zły wsad nie
+ * zmienia zachowania).
+ */
+function groupLimit(limits: SearchLimits | undefined, key: SearchGroupKey): number {
+  const raw = typeof limits === 'number' ? limits : limits?.[key];
+  if (raw === undefined) return DEFAULT_SEARCH_LIMIT;
+  if (raw === Number.POSITIVE_INFINITY) return raw;
+  if (!Number.isFinite(raw)) return DEFAULT_SEARCH_LIMIT;
+  return raw < 0 ? 0 : Math.floor(raw);
+}
+
+/**
+ * Zbiera co najwyżej `limit` dopasowań i PRZERYWA skan na pierwszym nadmiarowym
+ * trafieniu — dzięki temu wciśnięcie jednej litery nie przemiata całej kolekcji
+ * (dawniej: `filter(...).slice(0, limit)`). Kolejność i zawartość wyniku są
+ * identyczne jak przy filtrze z odcięciem; `hasMore` mówi, czy coś odpadło.
+ */
+function collectLimited<T>(
+  rows: readonly T[],
+  match: (row: T) => boolean,
+  limit: number,
+): { rows: T[]; hasMore: boolean } {
+  const out: T[] = [];
+  for (const row of rows) {
+    if (!match(row)) continue;
+    if (out.length >= limit) return { rows: out, hasMore: true };
+    out.push(row);
+  }
+  return { rows: out, hasMore: false };
+}
 
 /**
  * Search projects, tasks, clients and people by a free-text query. Matches
@@ -958,9 +1006,15 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 export function searchAll(
   state: AppData,
   query: string,
-  limitPerGroup = 8,
+  limits: SearchLimits = DEFAULT_SEARCH_LIMIT,
 ): SearchResults {
-  const empty: SearchResults = { projects: [], tasks: [], clients: [], people: [] };
+  const empty: SearchResults = {
+    projects: [],
+    tasks: [],
+    clients: [],
+    people: [],
+    hasMore: { projects: false, tasks: false, clients: false, people: false },
+  };
   const raw = query.trim();
   if (raw === '') return empty;
 
@@ -977,36 +1031,52 @@ export function searchAll(
   const inPeriod = (start: DateStr, end: DateStr): boolean =>
     dateQuery !== null && start <= dateQuery && dateQuery <= end;
 
-  const projects = state.projects.filter(
+  const projects = collectLimited(
+    state.projects,
     (p) =>
       normalize(p.name).includes(q) ||
       normalize(p.description).includes(q) ||
       matchedStatusIds.has(p.statusId) ||
       inPeriod(p.startDate, p.endDate),
+    groupLimit(limits, 'projects'),
   );
 
-  const tasks = state.tasks.filter(
+  const tasks = collectLimited(
+    state.tasks,
     (t) =>
       normalize(t.title).includes(q) ||
       normalize(t.description).includes(q) ||
       matchedStatusIds.has(t.statusId) ||
       inPeriod(t.startDate, t.endDate),
+    groupLimit(limits, 'tasks'),
   );
 
-  const clients = state.clients.filter((c) => normalize(c.name).includes(q));
+  const clients = collectLimited(
+    state.clients,
+    (c) => normalize(c.name).includes(q),
+    groupLimit(limits, 'clients'),
+  );
 
-  const people = state.people.filter(
+  const people = collectLimited(
+    state.people,
     (p) =>
       normalize(p.name).includes(q) ||
       normalize(p.email).includes(q) ||
       normalize(p.role).includes(q),
+    groupLimit(limits, 'people'),
   );
 
   return {
-    projects: projects.slice(0, limitPerGroup),
-    tasks: tasks.slice(0, limitPerGroup),
-    clients: clients.slice(0, limitPerGroup),
-    people: people.slice(0, limitPerGroup),
+    projects: projects.rows,
+    tasks: tasks.rows,
+    clients: clients.rows,
+    people: people.rows,
+    hasMore: {
+      projects: projects.hasMore,
+      tasks: tasks.hasMore,
+      clients: clients.hasMore,
+      people: people.hasMore,
+    },
   };
 }
 

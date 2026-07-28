@@ -5,6 +5,7 @@
 // fixture style of blockActions.test.ts / storage.test.ts.
 import { describe, expect, it } from 'vitest';
 import {
+  DEFAULT_SEARCH_LIMIT,
   availableHoursInRange,
   availableHoursOnDate,
   blockIsDone,
@@ -321,6 +322,79 @@ describe('searchAll strict date query', () => {
     });
     expect(searchAll(state, '2026-02-31').projects).toEqual([]);
     expect(searchAll(state, '2026-02-31').tasks).toEqual([]);
+  });
+});
+
+describe('searchAll — limit per grupa i hasMore', () => {
+  const manyTasks = Array.from({ length: 12 }, (_, i) =>
+    makeTask({ id: `t${i}`, title: `Zadanie ${i}` }),
+  );
+  const state = makeState({
+    tasks: manyTasks,
+    people: [
+      makePerson({ id: 'p1', name: 'Ala Szukana' }),
+      makePerson({ id: 'p2', name: 'Bo Szukany' }),
+    ],
+  });
+
+  it('domyślny limit tnie grupę do DEFAULT_SEARCH_LIMIT i ustawia hasMore', () => {
+    const res = searchAll(state, 'zadanie');
+    expect(res.tasks).toHaveLength(DEFAULT_SEARCH_LIMIT);
+    expect(res.tasks.map((t) => t.id)).toEqual(
+      manyTasks.slice(0, DEFAULT_SEARCH_LIMIT).map((t) => t.id),
+    );
+    expect(res.hasMore.tasks).toBe(true);
+    // Grupy, które się zmieściły, nie kłamią o obcięciu.
+    expect(res.hasMore.projects).toBe(false);
+    expect(res.hasMore.clients).toBe(false);
+    expect(res.hasMore.people).toBe(false);
+  });
+
+  it('jawny limit liczbowy obowiązuje wszystkie grupy', () => {
+    const res = searchAll(state, 'sz', 1);
+    expect(res.people).toHaveLength(1);
+    expect(res.hasMore.people).toBe(true);
+  });
+
+  it('limit per grupa podnosi tylko wskazaną grupę', () => {
+    const res = searchAll(state, 'zadanie', { tasks: 40 });
+    expect(res.tasks).toHaveLength(12);
+    expect(res.hasMore.tasks).toBe(false);
+  });
+
+  it('wynik z limitem jest identyczny z pełnym wynikiem uciętym do limitu', () => {
+    const full = searchAll(state, 'zadanie', Number.POSITIVE_INFINITY);
+    expect(full.tasks).toHaveLength(12);
+    expect(full.hasMore.tasks).toBe(false);
+    expect(searchAll(state, 'zadanie', 5).tasks.map((t) => t.id)).toEqual(
+      full.tasks.slice(0, 5).map((t) => t.id),
+    );
+  });
+
+  it('limit 0 chowa wiersze, ale hasMore nadal mówi prawdę; limit ujemny działa tak samo', () => {
+    for (const limit of [0, -3]) {
+      const res = searchAll(state, 'zadanie', limit);
+      expect(res.tasks).toEqual([]);
+      expect(res.hasMore.tasks).toBe(true);
+      expect(res.hasMore.clients).toBe(false);
+    }
+  });
+
+  it('limit NaN spada na wartość domyślną (zły wsad nie zmienia zachowania)', () => {
+    const res = searchAll(state, 'zadanie', Number.NaN);
+    expect(res.tasks).toHaveLength(DEFAULT_SEARCH_LIMIT);
+    expect(res.hasMore.tasks).toBe(true);
+  });
+
+  it('pusta fraza zwraca puste grupy bez obcięcia', () => {
+    const res = searchAll(state, '   ');
+    expect(res.tasks).toEqual([]);
+    expect(res.hasMore).toEqual({
+      projects: false,
+      tasks: false,
+      clients: false,
+      people: false,
+    });
   });
 });
 

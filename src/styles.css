@@ -6132,6 +6132,21 @@ option {
   flex-shrink: 0;
   color: var(--n2-text-faint);
 }
+/* Ikona wiersza szybkiej akcji / „Pokaż więcej”. */
+.gs-row-icon {
+  flex-shrink: 0;
+  color: var(--n2-lavender);
+}
+/* Podświetlenie dopasowanego fragmentu — akcent koloru, bez żółtego tła. */
+.gs-mark {
+  background: transparent;
+  color: var(--n2-lavender);
+  font-weight: 700;
+}
+.gs-row-more .gs-row-title {
+  color: var(--n2-text-muted);
+  font-weight: 500;
+}
 
 /* ---------- Filter panel (button + popover + chips) ---------- */
 
