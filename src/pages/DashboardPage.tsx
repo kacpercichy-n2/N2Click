@@ -14,7 +14,7 @@
 // Siatka desktopowa jest nietknięta.
 import { Fragment, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { m } from 'motion/react';
+import { m, useReducedMotion } from 'motion/react';
 import { Megaphone } from '../components/icons';
 import { useStore } from '../store/AppStore';
 import { CHANGELOG, changelogRangeLabel, isSameDayRange } from '../data/changelog';
@@ -70,6 +70,13 @@ import {
 const dashGridVariants = {
   hidden: {},
   show: { transition: { staggerChildren: 0.04 } },
+};
+// „Ograniczony ruch”: `MotionConfig reducedMotion="user"` (main.tsx) sam pomija
+// przesunięcia (`y`), ale NIE zdejmuje kaskady — kafelki nadal wchodziłyby
+// jeden po drugim. Przy tej preferencji cała siatka pojawia się naraz.
+const dashGridVariantsStill = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0 } },
 };
 const dashCardVariants = {
   hidden: { opacity: 0, y: 10 },
@@ -187,6 +194,9 @@ export function DashboardPage() {
   // dla braku użytkownika (kolejność hooków). Zespół startuje zwinięty — na
   // telefonie to najrzadziej potrzebny kafelek.
   const isMobile = useMediaQuery(MOBILE_NAV_QUERY);
+  // Hook przed wczesnym returnem (kolejność hooków), jak dwa powyżej.
+  const reduceMotion = useReducedMotion();
+  const gridVariants = reduceMotion ? dashGridVariantsStill : dashGridVariants;
   const [teamOpen, setTeamOpen] = useState(false);
   const latestChange = CHANGELOG[0];
 
@@ -636,7 +646,7 @@ export function DashboardPage() {
       {isMobile && (
         <m.div
           className="dash-m-stack"
-          variants={dashGridVariants}
+          variants={gridVariants}
           initial="hidden"
           animate="show"
         >
@@ -652,7 +662,7 @@ export function DashboardPage() {
       {!isMobile && (
       <m.div
         className="dash-grid dash-welcome-grid"
-        variants={dashGridVariants}
+        variants={gridVariants}
         initial="hidden"
         animate="show"
       >

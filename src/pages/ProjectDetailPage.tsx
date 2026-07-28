@@ -38,6 +38,7 @@ import { Tooltip } from '../components/Tooltip';
 import { ChevronRight } from '../components/icons';
 import { formatShortWithWeekday, todayStr, periodError, PERIOD_ERROR_LABELS } from '../utils/dates';
 import { formatDuration } from '../utils/time';
+import { archivedSuffix } from '../utils/archivedLabel';
 import { useSaveStatus } from '../utils/useSaveStatus';
 import { useAutoSave } from '../utils/useAutoSave';
 import {
@@ -415,7 +416,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               {pickableStatuses.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
-                  {s.archived ? ' (zarchiwizowany)' : ''}
+                  {archivedSuffix(s.archived)}
                 </option>
               ))}
             </select>

@@ -61,8 +61,29 @@ describe('PersonFilter — "Wszyscy" semantics', () => {
       }),
     );
     expect(html).toContain('<button type="button" class="filter-chip">Wszyscy');
-    // The selected person's chip is active (styled inline with their colour).
-    expect(html).toMatch(/class="filter-chip active"[^>]*style="[^"]*"[^>]*>.*Ala/);
+    // The selected person's chip is active and tinted: the colour reaches CSS as
+    // the single `--person` custom property (the tint itself is a color-mix() in
+    // styles.css), never as a concatenated `${color}22` background.
+    expect(html).toMatch(
+      /class="filter-chip active person-tint"[^>]*style="--person:[^"]*"[^>]*>.*Ala/,
+    );
+    // The dot keeps a solid `background` (no alpha involved); what must be gone
+    // is the concatenated `${color}22` tint on the chip itself.
+    expect(html).not.toMatch(/#[0-9a-f]{6}22/i);
+  });
+
+  it('leaves the "Wszyscy" chip untinted (no --person, no inline style)', () => {
+    const html = renderToStaticMarkup(
+      h(PersonFilter, {
+        people,
+        selected: new Set<string>(),
+        onToggle: () => {},
+        onAll: () => {},
+      }),
+    );
+    // "Wszyscy" has no person colour, so it must NOT get `person-tint` — that
+    // class replaces the chip background with a color-mix of `--person`.
+    expect(html).toContain('<button type="button" class="filter-chip active">Wszyscy');
   });
 });
 

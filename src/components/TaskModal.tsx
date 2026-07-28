@@ -12,6 +12,7 @@ import { NO_PERM_TITLE } from '../store/permissions';
 import type { AllocationCell, TaskDraft } from '../store/AppStore';
 import type { ChecklistItem, TaskPriority } from '../types';
 import { PRIORITY_LABELS, TASK_PRIORITIES } from '../utils/priority';
+import { archivedSuffix } from '../utils/archivedLabel';
 import {
   activeStatuses,
   assigneeIdsOfTask,
@@ -1475,7 +1476,7 @@ export function TaskEditor({
                 {pickableStatuses.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name}
-                    {s.archived ? ' (zarchiwizowany)' : ''}
+                    {archivedSuffix(s.archived)}
                   </option>
                 ))}
               </select>

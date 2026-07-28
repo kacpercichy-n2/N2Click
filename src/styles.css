@@ -62,7 +62,17 @@
   --n2-text: #fbf8ff;
   --n2-text-soft: rgba(251, 248, 255, 0.72);
   --n2-text-muted: rgba(251, 248, 255, 0.5);
-  --n2-text-faint: rgba(251, 248, 255, 0.34);
+  /* NAJSŁABSZY kolor, jakim wolno pisać TEKST. 0,46 daje 4,51:1 na `--card-bg`
+     i 4,41:1 na samym `--n2-bg`, więc przechodzi WCAG AA (4,5:1) na każdej
+     powierzchni, na której faktycznie leżą jego reguły — a są to niemal wyłącznie
+     11 px (`--n2-type-xs`): oś godzin kalendarza, puste stany, podpowiedzi
+     w polach, dolna nawigacja telefonu. Poprzednie 0,34 dawało 2,94:1 i nie
+     przechodziło ŻADNEGO progu. Reguła na czystym tle strony potrzebowałaby 0,48. */
+  --n2-text-faint: rgba(251, 248, 255, 0.46);
+  /* WYŁĄCZNIE stany zablokowane/nieaktywne oraz ikony ≥ 16 px (chevrony,
+     kropki obecności). Nigdy pod tekst — celowo jest poniżej progu
+     kontrastu, bo komunikuje „to nie jest teraz do czytania”. */
+  --n2-text-disabled: rgba(251, 248, 255, 0.3);
   --n2-text-inverse: #08070a;
 
   --n2-border: rgba(255, 255, 255, 0.1);
@@ -112,7 +122,20 @@
     0 0 0 1px rgba(196, 150, 255, 0.72);
 
   --n2-blur-glass: blur(22px) saturate(132%);
-  --n2-transition: 180ms ease;
+
+  /* --- Ruch (W08): opt-in, nie opt-out ---------------------------------
+     `--n2-motion` jest MNOŻNIKIEM każdego czasu trwania w tym pliku i
+     domyślnie wynosi 0 — bez animacji. Realne czasy włącza dopiero
+     `@media (prefers-reduced-motion: no-preference)` niżej.
+     Dlaczego nie dawny globalny reset `* { animation-duration: .01ms }`:
+     skracanie czasu NIE zatrzymuje animacji (leci dalej, tylko szybciej),
+     nie dotyka animacji sterowanych z JS i zostawia `transitionend`
+     strzelające w losowych momentach. `calc(180ms * 0)` = `0s`, więc
+     przejścia naprawdę się nie uruchamiają.
+     Każdy czas trwania w tym pliku MUSI być zapisany jako
+     `calc(<czas> * var(--n2-motion))`. */
+  --n2-motion: 0;
+  --n2-transition: calc(180ms * var(--n2-motion)) ease;
 
   --n2-gradient-page:
     radial-gradient(circle at 18% 10%, rgba(112, 0, 255, 0.36), transparent 28%),
@@ -196,6 +219,18 @@
   --shadow: var(--n2-shadow-soft);
 
   --font: var(--n2-font-sans);
+}
+
+/* JEDYNE miejsce, w którym ruch jest włączany (W08). Brak deklarowanej
+   preferencji „no-preference" — a więc też każdy przypadek, w którym
+   przeglądarka nie zna tego media query — zostaje przy `--n2-motion: 0`.
+   Silnik `motion` dostaje tę samą informację przez `MotionConfig
+   reducedMotion="user"` w `main.tsx`, więc animacje z JS nie wymagają tu
+   żadnej reguły. */
+@media (prefers-reduced-motion: no-preference) {
+  :root {
+    --n2-motion: 1;
+  }
 }
 
 * {
@@ -1716,6 +1751,18 @@ option {
   background: rgba(196, 150, 255, 0.16);
 }
 
+/* Chip zabarwiony kolorem OSOBY. Tak samo jak `.status-badge`: JS podaje jedną
+   zmienną `--person`, odcień liczy `color-mix`, więc działa każda notacja
+   koloru, nie tylko 6-znakowy hex. 13,333% == dawne `22` (34/255).
+   Klasa (a nie sam `var()` z fallbackiem) jest po to, żeby chip „Wszyscy"
+   i chip „+N" — które koloru osoby nie mają — zostały przy dotychczasowym
+   lawendowym/szarym tle. */
+.filter-chip.person-tint,
+.person-active-chip.person-tint {
+  border-color: var(--person, var(--n2-border));
+  background: color-mix(in oklab, var(--person, transparent) 13.333%, transparent);
+}
+
 /* Compact chips for the ACTIVE person selection shown in the filter bar row.
    Visually a filter-chip with a colour dot and an inline remove affordance. */
 .person-active-chips {
@@ -2115,7 +2162,7 @@ option {
 }
 /* Fuse animation after a merge drop: quick squash + lavender glow fade-out. */
 .week-block.fused {
-  animation: week-block-fuse 280ms ease-out;
+  animation: week-block-fuse calc(280ms * var(--n2-motion)) ease-out;
   z-index: 20;
 }
 @keyframes week-block-fuse {
@@ -2782,14 +2829,23 @@ option {
 
 /* ---------- Status badge / coin / avatar / tags ---------- */
 
+/* Barwa statusu wchodzi z JS JEDNĄ zmienną `--status` (dowolna poprawna
+   notacja CSS: `#c9f`, `#c496ff`, `rgb(…)`, `oklch(…)`), a odcień tła liczy
+   CSS przez `color-mix`. Wcześniej tło sklejał JS jako `${color}1a`, co dawało
+   poprawny kolor WYŁĄCZNIE dla 6-znakowego hexa — dla `rgb(…)` albo `#c9f`
+   z panelu administratora powstawał śmieć i tło cicho znikało.
+   10,196% == dawne `1a` (26/255), więc dla 6-znakowego hexa wygląd nie
+   zmienia się. Fallback (brak/pusty kolor) trzyma neutralny wygląd plakietki. */
 .status-badge {
   display: inline-block;
   font-size: var(--n2-type-xs);
   font-weight: 600;
-  border: 1px solid;
+  border: 1px solid var(--status, var(--n2-border-strong));
   border-radius: var(--n2-radius-pill);
   padding: 2px 10px;
   white-space: nowrap;
+  color: var(--status, var(--n2-text));
+  background: color-mix(in oklab, var(--status, transparent) 10.196%, transparent);
 }
 
 /* Derived task planning-status pill (see taskPlanningStatus selector). */
@@ -3085,7 +3141,7 @@ option {
   transform: none;
 }
 .icon-btn[aria-busy='true'] {
-  animation: icon-btn-pulse 1.2s ease-in-out infinite;
+  animation: icon-btn-pulse calc(1.2s * var(--n2-motion)) ease-in-out infinite;
 }
 @keyframes icon-btn-pulse {
   0%,
@@ -4491,7 +4547,8 @@ option {
   background: var(--n2-warning);
 }
 .presence-offline {
-  background: var(--n2-text-faint);
+  /* Kropka „poza siecią" to stan nieaktywny, nie tekst — `disabled`. */
+  background: var(--n2-text-disabled);
 }
 
 .chat-popup {
@@ -4546,7 +4603,7 @@ option {
   background: var(--n2-warning);
 }
 .chat-popup-presence.presence-offline::before {
-  background: var(--n2-text-faint);
+  background: var(--n2-text-disabled);
 }
 .chat-popup-close {
   background: none;
@@ -4992,7 +5049,9 @@ option {
   font-weight: 600;
   cursor: pointer;
   user-select: none;
-  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+  transition: border-color calc(0.15s * var(--n2-motion)) ease,
+    background calc(0.15s * var(--n2-motion)) ease,
+    color calc(0.15s * var(--n2-motion)) ease;
 }
 .weekday-chip:hover {
   border-color: var(--n2-border-strong);
@@ -5534,9 +5593,9 @@ option {
   width: min(92vw, 460px);
   max-width: 460px;
   /* Wejście karty robi CSS, a nie `motion` — dostawca stoi ponad
-     `MotionConfig`, a globalna reguła `prefers-reduced-motion` (niżej w tym
-     pliku) i tak skraca każdą animację do 0,01 ms. */
-  animation: confirm-card-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+     `MotionConfig`. Preferencję ruchu i tak respektuje, bo czas trwania idzie
+     przez mnożnik `--n2-motion` (0 = animacja się nie uruchamia). */
+  animation: confirm-card-in calc(160ms * var(--n2-motion)) cubic-bezier(0.16, 1, 0.3, 1);
 }
 @keyframes confirm-card-in {
   from {
@@ -5739,17 +5798,6 @@ option {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    scroll-behavior: auto !important;
-    transition-duration: 0.01ms !important;
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-  }
-}
-
 /* ---------- Icons ---------- */
 .app-nav-link {
   gap: var(--n2-space-3);
@@ -5758,7 +5806,7 @@ option {
   flex: 0 0 auto;
 }
 .app-nav-link .nav-icon {
-  transition: transform 180ms ease;
+  transition: transform var(--n2-transition);
 }
 .app-nav-link:hover .nav-icon {
   transform: translateX(2px) scale(1.08);
@@ -5768,7 +5816,7 @@ option {
 }
 
 .icon-spin {
-  animation: icon-spin 900ms linear infinite;
+  animation: icon-spin calc(900ms * var(--n2-motion)) linear infinite;
 }
 @keyframes icon-spin {
   from {
@@ -5780,7 +5828,7 @@ option {
 }
 
 .icon-pop {
-  animation: icon-pop 260ms ease;
+  animation: icon-pop calc(260ms * var(--n2-motion)) ease;
 }
 @keyframes icon-pop {
   0% {
@@ -6085,7 +6133,9 @@ option {
   font-size: var(--n2-type-xs);
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--n2-text-faint);
+  /* Nagłówek grupy wyników to element nawigacji po liście, nie ozdoba —
+     11 px + versaliki + rozstrzelenie liter, więc idzie na `muted`. */
+  color: var(--n2-text-muted);
 }
 .gs-row {
   display: flex;
@@ -6134,7 +6184,8 @@ option {
 }
 .gs-row-chevron {
   flex-shrink: 0;
-  color: var(--n2-text-faint);
+  /* Ikona 16 px, czysta ozdoba (`aria-hidden`) — `disabled`, nie `faint`. */
+  color: var(--n2-text-disabled);
 }
 /* Ikona wiersza szybkiej akcji / „Pokaż więcej”. */
 .gs-row-icon {
@@ -6218,7 +6269,9 @@ option {
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
-  color: var(--n2-text-faint);
+  /* `<legend>` jest nazwą dostępną całej grupy filtrów — musi być czytelny,
+     nie tylko obecny. */
+  color: var(--n2-text-muted);
 }
 .filter-options {
   display: flex;
@@ -6907,7 +6960,8 @@ option {
    element, slides toward the pointer on hover/keyboard focus. */
 .card-chevron {
   flex: none;
-  color: var(--n2-text-faint);
+  /* Ikona 16 px, czysta ozdoba (`aria-hidden`) — `disabled`, nie `faint`. */
+  color: var(--n2-text-disabled);
   transition: color var(--n2-transition), transform var(--n2-transition);
 }
 .task-card-main,
@@ -7458,9 +7512,6 @@ option {
   .onboarding-toast { right: 12px; bottom: 12px; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .onboarding-layer *, .sidebar-help { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
-}
 
 @media (max-width: 760px) {
   .crash-card {
@@ -7693,7 +7744,7 @@ option {
 }
 .client-card-chevron {
   flex: 0 0 auto;
-  transition: transform 0.15s ease;
+  transition: transform calc(0.15s * var(--n2-motion)) ease;
   color: var(--n2-text-muted, #7a8699);
 }
 .client-card-toggle.expanded .client-card-chevron {
@@ -7968,7 +8019,7 @@ option {
   text-decoration-color: currentColor;
 }
 .ticket-chevron {
-  transition: transform 0.15s ease;
+  transition: transform calc(0.15s * var(--n2-motion)) ease;
 }
 .ticket-chevron.open {
   transform: rotate(90deg);

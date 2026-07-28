@@ -13,6 +13,7 @@ import { ChevronRight, Plus, Trash2 } from '../components/icons';
 import { useConfirm } from '../components/ConfirmProvider';
 import { buildDeleteConsequence } from '../components/confirmDialog';
 import { polishCount } from '../utils/polishPlural';
+import { ARCHIVED_SUFFIX } from '../utils/archivedLabel';
 import {
   clientDraftError,
   draftOf,
@@ -424,7 +425,7 @@ export function ClientsPage() {
                       >
                         <ChevronRight size={16} className="client-card-chevron" aria-hidden />
                         <strong>{c.name}</strong>
-                        {c.archived && <span className="muted"> (zarchiwizowany)</span>}
+                        {c.archived && <span className="muted">{ARCHIVED_SUFFIX}</span>}
                         {extraCount > 0 && (
                           <span className="client-contact-badge">
                             +{extraCount}{' '}
