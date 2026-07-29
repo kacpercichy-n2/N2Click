@@ -41,7 +41,20 @@
   Zespół widoczny dla wszystkich, rola `ograniczone` ogranicza tylko edycję) —
   bramki `canTeam`/`canViewTeam` zostają w kodzie jako strażnik braku
   tożsamości. The „Zespół” nav link stays highlighted on `/people`,
-  `/people/:id` and `/team`.
+  `/people/:id` and `/team`. Od 2026-07-29 `/team` startuje na widoku
+  „Struktura" (`TeamStructureTree`); płaska lista działów jest drugim, jawnie
+  wybieranym widokiem i nadal jedynym miejscem edycji przełożonego.
+  Schemat rysuje się na płótnie, nie w zagnieżdżonych listach: pozycje kart i
+  krawędzie liczy czysty `src/pages/orgChartLayout.ts` (`ORG_METRICS` to jedno
+  źródło wymiarów, wchodzą do DOM stylem inline), a łączniki to ścieżki w
+  jednym SVG pod kartami. WIERSZ OSOBY WYNIKA Z RANGI STANOWISKA
+  (`orgRoleRank` + `titleRow`), nie z głębokości w drzewie: zarząd stoi na
+  skrajach tuż pod korzeniem, `Menadżer/Kierownik` wiersz niżej, reszta na
+  dole — więc specjalista raportujący wprost do zarządu ma krawędź `skip`
+  poprowadzoną pustą kolumną przełożonego. Węzeł `aside` (główna księgowa)
+  stoi obok kaskady i świadomie NIE ma krawędzi. Jedyny zapis DOM-owy tego
+  widoku to wyśrodkowanie `scrollLeft` kontenera po zamontowaniu — korzeń musi
+  być w kadrze na wąskim ekranie.
 - `src/auth/` owns the login gate. Mode is decided once at startup (local vs
   Supabase). Local mode (no/invalid Supabase config) keeps the demo person-picker
   `src/pages/LoginPage.tsx` and the `currentUserId` gate. Supabase mode gates the

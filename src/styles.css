@@ -8123,53 +8123,104 @@ a.toggle-btn {
   box-shadow: var(--shadow-sm);
   overflow-x: auto;
 }
-.org-tree,
-.org-children {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--n2-space-2);
+/* Schemat organizacyjny rysowany na płótnie: karty są pozycjonowane wynikiem
+   `layoutOrgChart` (wiersz zależy od RANGI STANOWISKA, nie od zagnieżdżenia),
+   a łączniki to ścieżki w jednym SVG pod kartami. Zagnieżdżone listy z
+   obramowaniami odpadły, bo nie potrafią poprowadzić linii MIJAJĄCEJ wiersz
+   (specjalista raportujący wprost do zarządu).
+   Rozmiary kart i odstępy żyją w `ORG_METRICS` (orgChartLayout.ts) i wchodzą
+   tu stylem inline — CSS nie może ich nadpisać, bo pozycje sąsiadów są już
+   policzone dokładnie na tych wymiarach. */
+.org-chart {
+  position: relative;
+  margin: 0 auto;
 }
-/* Wcięcie i pionowa linia łącząca podwładnych z przełożonym. */
-.org-children {
-  margin: var(--n2-space-2) 0 0 18px;
-  padding-left: 16px;
-  border-left: 1px solid var(--n2-border);
+.org-edges {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
 }
-.org-node {
-  min-width: max-content;
+.org-edge {
+  fill: none;
+  stroke: var(--n2-border-strong);
+  stroke-width: 1;
+  stroke-linecap: round;
 }
 .org-card {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--n2-space-3);
-  padding: 6px 10px;
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  /* Górny padding robi miejsce awatarowi wychodzącemu ponad kartę. */
+  padding: 30px var(--n2-space-4) var(--n2-space-4);
   border: 1px solid var(--n2-border);
-  border-radius: var(--n2-radius-md);
-  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--n2-radius-sm);
+  background: var(--card-bg);
+  box-shadow: var(--shadow-sm);
   text-decoration: none;
   color: var(--n2-text);
+  transition:
+    border-color var(--n2-transition),
+    background var(--n2-transition);
+}
+.org-card-lead {
+  border-color: var(--n2-border-strong);
+  box-shadow:
+    var(--shadow-sm),
+    0 18px 44px rgba(112, 0, 255, 0.18);
+}
+/* Wsparcie „na uboczu" (główna księgowa): stoi obok kaskady i świadomie nie
+   ma narysowanej podległości — stąd wyciszona ramka zamiast łącznika. */
+.org-card-aside {
+  border-style: dashed;
 }
 .org-card:hover {
   border-color: var(--n2-border-strong);
-  background: rgba(196, 150, 255, 0.1);
+  background: var(--card-bg-hover);
 }
+/* Awatar wyśrodkowany nad kartą. Wystaje o `ORG_METRICS.avatarRise`, a łącznik
+   kończy się dokładnie na jego górnej krawędzi (patrz `orgEdgePath`) — dlatego
+   ta wartość musi zgadzać się z metryką układu. Tło nieprzezroczyste, bo
+   bąbelek nachodzi na obramowanie karty. */
+.org-card-avatar {
+  position: absolute;
+  top: -26px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  padding: 3px;
+  border-radius: var(--n2-radius-pill);
+  background: var(--n2-bg-raised);
+  box-shadow: 0 0 0 1px var(--n2-border);
+}
+/* Przycinamy TEKST, nie kartę — awatar celowo wychodzi ponad jej krawędź. */
 .org-card-text {
   display: flex;
   flex-direction: column;
-  line-height: 1.2;
+  gap: 2px;
+  line-height: 1.25;
+  min-width: 0;
+  overflow: hidden;
 }
 .org-card-name {
-  font-weight: 600;
+  font-weight: 700;
+  font-size: var(--n2-type-md);
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--n2-space-2);
 }
 .org-card-role {
-  font-size: 0.85rem;
-  color: var(--text-muted);
+  font-size: var(--n2-type-sm);
+  color: var(--primary);
+  /* Nietypowo długie stanowisko przycinamy, zamiast rozpychać kartę: jej
+     wysokość jest częścią policzonego układu. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .org-cycle-tag {
   font-size: 0.7rem;

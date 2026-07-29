@@ -61,7 +61,9 @@ export function TeamPage() {
   const auth = useAuth();
   const org = useOrgData();
   const me = currentUserSel(state);
-  const [view, setView] = useState<TeamView>('list');
+  // Wejście na /team pokazuje od razu drzewo struktury — lista działów jest
+  // drugim, jawnie wybieranym widokiem (decyzja ownera, 2026-07-29).
+  const [view, setView] = useState<TeamView>('structure');
 
   // Efektywna rola: w trybie supabase (samodzielnie, snapshot gotowy) rola z
   // chmury; w przeciwnym razie rola lokalna. Bramka nawigacji/trasy jest UX-owa.
@@ -89,19 +91,19 @@ export function TeamPage() {
         <div className="cal-view-toggle" role="group" aria-label="Widok zespołu">
           <button
             type="button"
-            className={`toggle-btn${view === 'list' ? ' active' : ''}`}
-            aria-pressed={view === 'list'}
-            onClick={() => setView('list')}
-          >
-            Lista
-          </button>
-          <button
-            type="button"
             className={`toggle-btn${view === 'structure' ? ' active' : ''}`}
             aria-pressed={view === 'structure'}
             onClick={() => setView('structure')}
           >
             Struktura
+          </button>
+          <button
+            type="button"
+            className={`toggle-btn${view === 'list' ? ' active' : ''}`}
+            aria-pressed={view === 'list'}
+            onClick={() => setView('list')}
+          >
+            Lista
           </button>
         </div>
       </div>

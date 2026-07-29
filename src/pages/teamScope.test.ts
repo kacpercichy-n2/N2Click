@@ -10,6 +10,7 @@ import {
   buildTeamHierarchy,
   canViewTeam,
   emptyProvisionForm,
+  orgRoleRank,
   teamAccessForUser,
   type OrgChartInput,
   type OrgChartNode,
@@ -334,5 +335,35 @@ describe('kompletność mapowania ról', () => {
       const access = teamAccessForUser(person({ accessRole: role }));
       expect(typeof access.visible).toBe('boolean');
     }
+  });
+});
+
+describe('orgRoleRank — ranga węzła w układzie schematu', () => {
+  it('rozpoznaje zarząd po samym skrócie', () => {
+    expect(orgRoleRank('CEO')).toBe('chief');
+    expect(orgRoleRank('CTO')).toBe('chief');
+    expect(orgRoleRank('COO')).toBe('chief');
+  });
+
+  it('rozpoznaje zarząd po skrócie z rozwinięciem', () => {
+    expect(orgRoleRank('CTO – Chief Technology Officer')).toBe('chief');
+    expect(orgRoleRank('COO - Chief Operating Officer')).toBe('chief');
+    expect(orgRoleRank('  cfo — Chief Financial Officer ')).toBe('chief');
+  });
+
+  it('główna księgowa to wsparcie obok linii', () => {
+    expect(orgRoleRank('Główna księgowa')).toBe('aside');
+    expect(orgRoleRank('główny księgowy')).toBe('aside');
+  });
+
+  it('reszta stanowisk to zwykła linia', () => {
+    expect(orgRoleRank('Menadżer Produkcji')).toBe('line');
+    expect(orgRoleRank('Specjalista Produkcja')).toBe('line');
+    expect(orgRoleRank('')).toBe('line');
+  });
+
+  it('nie myli skrótu zarządu z innym trzyliterowym początkiem', () => {
+    expect(orgRoleRank('CRM Specjalista')).toBe('line');
+    expect(orgRoleRank('CAD Operator')).toBe('line');
   });
 });

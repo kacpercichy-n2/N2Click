@@ -177,6 +177,34 @@ export interface OrgChart {
   hasCycle: boolean;
 }
 
+/**
+ * Ranga węzła W UKŁADZIE schematu (nie w danych — podległość zostaje płaska,
+ * wszyscy raportują do CEO):
+ * - `chief`  — zarząd: rysowany W POŁOWIE DROGI, po bokach pnia przełożonego,
+ *              o poziom wyżej niż reszta rodzeństwa;
+ * - `aside`  — funkcja wsparcia (księgowość): ten sam rząd co zarząd, ale
+ *              odsunięta i BEZ łącznika;
+ * - `line`   — linia operacyjna: zwykły rząd pod pniem.
+ */
+export type OrgRank = 'chief' | 'aside' | 'line';
+
+/** Skróty zarządu rozpoznawane na początku stanowiska („CTO – Chief…”). */
+const CHIEF_TITLES = ['CEO', 'CTO', 'COO', 'CFO', 'CIO', 'CMO', 'CPO', 'CSO'];
+
+/**
+ * Ranga układu wyprowadzona ze STANOWISKA. Czysta i tolerancyjna: rozpoznaje
+ * zarówno sam skrót („CTO”), jak i skrót z rozwinięciem („CTO – Chief
+ * Technology Officer”), oraz „Główna księgowa” / „Główny księgowy”. Wszystko
+ * inne to zwykła linia — nieznane stanowisko NIGDY nie znika z układu.
+ */
+export function orgRoleRank(roleTitle: string): OrgRank {
+  const title = roleTitle.trim();
+  const head = title.split(/[\s–—-]/, 1)[0]?.toUpperCase() ?? '';
+  if (CHIEF_TITLES.includes(head)) return 'chief';
+  if (/^głów(?:na|ny)\b/i.test(title)) return 'aside';
+  return 'line';
+}
+
 /** Minimalne wejście selektora drzewa — niezależne od Reacta i modelu Person. */
 export interface OrgChartInput {
   id: string;

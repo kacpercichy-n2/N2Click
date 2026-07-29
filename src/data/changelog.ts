@@ -104,6 +104,12 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Listy wyboru w całej aplikacji są posortowane alfabetycznie, w zadaniu można od razu wybrać klienta, a cała aplikacja dostała drobny lifting odstępów — plakietki, przyciski i tabele mają więcej powietrza. Do tego paczka poprawek z poniedziałku: duch przeciągania na Kanbanie, pełnoekranowa wyszukiwarka i żywe tło pod oknami.',
     items: [
       {
+        area: 'Zespół',
+        feature: 'Struktura zespołu jako schemat organizacyjny',
+        description:
+          'Zakładka „Struktura zespołu” otwiera się od razu na schemacie, a sam schemat wygląda jak firmowy org chart: karty ze zdjęciem lub inicjałami, ułożone kaskadowo i połączone liniami z przełożonym. Wiersz zależy od stanowiska — zarząd stoi po bokach tuż pod prezesem, menedżerowie rząd niżej, a specjaliści na dole, nawet jeśli raportują wprost do zarządu (ich podległość rysuje wtedy linia poprowadzona bokiem). Główna księgowa stoi obok kaskady, bo nie jest częścią linii decyzyjnej. Lista działów została jako drugi widok pod przyciskiem „Lista”.',
+      },
+      {
         area: 'Ogólne',
         feature: 'Listy wyboru posortowane A–Z',
         description:
