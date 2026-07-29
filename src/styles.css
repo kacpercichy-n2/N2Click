@@ -8159,6 +8159,8 @@ a.toggle-btn {
   border-radius: var(--n2-radius-sm);
   background: var(--card-bg);
   box-shadow: var(--shadow-sm);
+  /* Nazwisko i stanowisko wyśrodkowane w tej samej osi co awatar. */
+  text-align: center;
   text-decoration: none;
   color: var(--n2-text);
   transition:
@@ -8199,6 +8201,7 @@ a.toggle-btn {
 .org-card-text {
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 2px;
   line-height: 1.25;
   min-width: 0;
@@ -8210,6 +8213,7 @@ a.toggle-btn {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: center;
   gap: var(--n2-space-2);
 }
 .org-card-role {
