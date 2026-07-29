@@ -52,6 +52,7 @@ import {
 } from '../utils/dates';
 import { findFreeStart, formatDuration, hoursToMinutes } from '../utils/time';
 import { DisabledHint } from '../components/Tooltip';
+import { sortByNamePl } from '../utils/collation';
 
 /** Actions for one block inside the resolution popover. */
 function BlockRow({
@@ -315,7 +316,7 @@ export function WorkloadPage() {
       onChange: setClientFilter,
       options: [
         { value: '', label: 'Wszyscy klienci' },
-        ...state.clients.map((c) => ({ value: c.id, label: c.name })),
+        ...sortByNamePl(state.clients).map((c) => ({ value: c.id, label: c.name })),
       ],
     },
     {

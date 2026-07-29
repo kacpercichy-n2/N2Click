@@ -35,6 +35,7 @@ import { periodError, PERIOD_ERROR_LABELS } from '../utils/dates';
 import { formatDuration } from '../utils/time';
 import { listCounterLabel, polishCount } from '../utils/polishPlural';
 import { Tooltip } from '../components/Tooltip';
+import { sortByNamePl } from '../utils/collation';
 
 export type PaidFilter = 'all' | 'paid' | 'unpaid';
 
@@ -159,7 +160,7 @@ export function ProjectsPage() {
       onChange: setClientFilter,
       options: [
         { value: '', label: 'Wszyscy klienci' },
-        ...state.clients.map((c) => ({ value: c.id, label: c.name })),
+        ...sortByNamePl(state.clients).map((c) => ({ value: c.id, label: c.name })),
       ],
     },
     {

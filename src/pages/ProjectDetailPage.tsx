@@ -41,6 +41,7 @@ import { formatDuration } from '../utils/time';
 import { archivedSuffix } from '../utils/archivedLabel';
 import { useSaveStatus } from '../utils/useSaveStatus';
 import { useAutoSave } from '../utils/useAutoSave';
+import { sortByNamePl } from '../utils/collation';
 import {
   isValidProjectDocumentDraft,
   isValidProjectDraft,
@@ -404,7 +405,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               disabled={!canManage}
               aria-describedby={disabledDesc}
             >
-              {state.clients.map((c) => (
+              {sortByNamePl(state.clients).map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
                 </option>

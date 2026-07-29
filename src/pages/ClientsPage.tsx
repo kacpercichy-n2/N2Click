@@ -28,6 +28,7 @@ import { useAutoSave } from '../utils/useAutoSave';
 import { useSaveStatus } from '../utils/useSaveStatus';
 import { SaveStatus } from '../components/SaveStatus';
 import { announce } from '../utils/liveRegion';
+import { comparePl } from '../utils/collation';
 
 /** Powód milczenia auto-zapisu — widoczny hint, ogłaszany wspólnym kanałem. */
 const AUTOSAVE_PAUSED_TEXT = 'Auto-zapis wstrzymany do czasu uzupełnienia wymaganych pól.';
@@ -218,7 +219,7 @@ export function ClientsPage() {
     () =>
       [...state.clients]
         .filter((c) => showArchived || !c.archived)
-        .sort((a, b) => a.name.localeCompare(b.name, 'pl')),
+        .sort((a, b) => comparePl(a.name, b.name)),
     [state.clients, showArchived],
   );
   const archivedCount = state.clients.filter((c) => c.archived).length;

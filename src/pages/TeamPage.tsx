@@ -31,6 +31,7 @@ import { TeamStructureTree, personForTreeNode } from './TeamStructureTree';
 import { TeamTabs } from './TeamTabs';
 import { Tooltip } from '../components/Tooltip';
 import { announce } from '../utils/liveRegion';
+import { sortByNamePl } from '../utils/collation';
 import type { Person } from '../types';
 import type { AccessRole as ProvisionAccessRole } from '../../supabase/functions/provision-account/contract';
 
@@ -310,9 +311,7 @@ function CloudTeamHierarchy({ view }: { view: TeamView }) {
   // `app.protect_profile_privileges` egzekwują to samo po stronie serwera.
   const supervisorEdit: SupervisorEdit | undefined = isCloudAdmin
     ? {
-        options: profiles
-          .map((p) => ({ id: p.id, name: cloudProfileName(p) }))
-          .sort((a, b) => a.name.localeCompare(b.name)),
+        options: sortByNamePl(profiles.map((p) => ({ id: p.id, name: cloudProfileName(p) }))),
         valueById: new Map(profiles.map((p) => [p.id, p.supervisorId ?? ''])),
         busyId,
         onChange: (personId, supervisorId) => {

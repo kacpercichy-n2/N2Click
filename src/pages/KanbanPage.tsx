@@ -69,6 +69,7 @@ import {
 } from './kanbanMove';
 import { type PaidFilter } from './ProjectsPage';
 import { formatShortWithWeekday } from '../utils/dates';
+import { sortByNamePl } from '../utils/collation';
 import type { SavedFilterCriteria, Task } from '../types';
 
 // Stała pusta lista chipów osób — stabilna referencja, gdy widok nie ma jeszcze
@@ -162,10 +163,7 @@ export function KanbanPage() {
   const setCompanyFilter = (v: string) => commit({ criteria: { ...criteria, companyId: v } });
   const setPersonFilter = (next: Set<string>) => commit({ personIds: [...next] });
 
-  const sortedProjects = useMemo(
-    () => [...state.projects].sort((a, b) => a.name.localeCompare(b.name)),
-    [state.projects],
-  );
+  const sortedProjects = useMemo(() => sortByNamePl(state.projects), [state.projects]);
 
   const board = useMemo(() => {
     // buildKanbanColumns pozostaje NIEZMIENIONE (inwariant): filtry projektu i
@@ -679,7 +677,7 @@ export function KanbanPage() {
       onChange: setClientFilter,
       options: [
         { value: '', label: 'Wszyscy klienci' },
-        ...state.clients.map((c) => ({ value: c.id, label: c.name })),
+        ...sortByNamePl(state.clients).map((c) => ({ value: c.id, label: c.name })),
       ],
     },
     {

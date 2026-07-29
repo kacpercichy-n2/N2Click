@@ -39,6 +39,7 @@ import { PlanningProgress } from '../components/PlanningProgress';
 import { PriorityBadge } from '../components/PriorityBadge';
 import { Coin } from '../components/Coin';
 import { clientProjectPath } from '../utils/entityPath';
+import { sortByNamePl } from '../utils/collation';
 import { checklistGlyphs } from '../utils/checklistGlyphs';
 import { itemsProgressLabel } from '../utils/progressLabel';
 import { listCounterLabel } from '../utils/polishPlural';
@@ -187,11 +188,8 @@ export function TasksPage() {
     ],
   );
 
-  // Projekty do wyboru w filtrze „Projekt”, posortowane po nazwie.
-  const sortedProjects = useMemo(
-    () => [...state.projects].sort((a, b) => a.name.localeCompare(b.name)),
-    [state.projects],
-  );
+  // Projekty do wyboru w filtrze „Projekt”, posortowane po nazwie (kolacja pl).
+  const sortedProjects = useMemo(() => sortByNamePl(state.projects), [state.projects]);
 
   const applyPreset = (c: SavedFilterCriteria) => commit(c, planningFilter);
 
@@ -205,7 +203,7 @@ export function TasksPage() {
       onChange: setClientFilter,
       options: [
         { value: '', label: 'Wszyscy klienci' },
-        ...state.clients.map((c) => ({ value: c.id, label: c.name })),
+        ...sortByNamePl(state.clients).map((c) => ({ value: c.id, label: c.name })),
       ],
     },
     {

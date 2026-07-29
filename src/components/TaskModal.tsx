@@ -28,7 +28,6 @@ import {
   availableHoursOnDate,
   binEntriesForTask,
   commentsFor,
-  getClient,
   getPerson,
   getStatus,
   planningStatusForTotals,
@@ -56,6 +55,12 @@ import {
   type PersonColumnSnapshot,
 } from './allocationGridView';
 import { MOBILE_NAV_QUERY, useMediaQuery } from '../utils/useMediaQuery';
+import {
+  clientPickerOptions,
+  effectiveProjectClientId,
+  projectsForClient,
+} from './taskClientPicker';
+import { sortByNamePl } from '../utils/collation';
 import { SaveStatus } from './SaveStatus';
 import { personColor } from '../utils/colors';
 import {
@@ -625,9 +630,40 @@ export function TaskEditor({
   // ---- Details ----
   const [title, setTitle] = useState(existing?.title ?? '');
   const [description, setDescription] = useState(existing?.description ?? '');
+  // Klient + Projekt: dropdown „Klient" stoi PRZED „Projekt" i zawęża jego
+  // listę. Zadanie NIE ma własnego clientId (klient wynika z projektu), więc
+  // „przepisanie" klienta = wybór projektu u innego klienta; sam wybór klienta
+  // niczego nie zapisuje. Stan startowy wynika z projektu zadania (fallback:
+  // pierwszy projekt alfabetycznie — listy sortuje kolacja pl).
   const [projectId, setProjectId] = useState(
-    existing?.projectId ?? initialProjectId ?? state.projects[0]?.id ?? '',
+    () => existing?.projectId ?? initialProjectId ?? sortByNamePl(state.projects)[0]?.id ?? '',
   );
+  const [pickedClientId, setPickedClientId] = useState(() => {
+    const seededId =
+      existing?.projectId ?? initialProjectId ?? sortByNamePl(state.projects)[0]?.id ?? '';
+    const seeded = state.projects.find((p) => p.id === seededId);
+    return seeded
+      ? effectiveProjectClientId(seeded, new Set(state.clients.map((c) => c.id)))
+      : '';
+  });
+  const clientOptions = useMemo(
+    () => clientPickerOptions(state.clients, state.projects),
+    [state.clients, state.projects],
+  );
+  const clientProjects = useMemo(
+    () => projectsForClient(state.projects, state.clients, pickedClientId),
+    [state.projects, state.clients, pickedClientId],
+  );
+  /** Zmiana klienta zawęża listę projektów; projekt spoza nowego klienta
+   *  przeskakuje na pierwszy (alfabetycznie) projekt tego klienta, a '' gdy
+   *  klient nie ma projektów (zapis blokuje istniejący strażnik projektu). */
+  const changePickedClient = (nextClientId: string) => {
+    setPickedClientId(nextClientId);
+    const inClient = projectsForClient(state.projects, state.clients, nextClientId);
+    if (!inClient.some((p) => p.id === projectId)) {
+      setProjectId(inClient[0]?.id ?? '');
+    }
+  };
   const [statusId, setStatusId] = useState(
     existing?.statusId ?? statuses[0]?.id ?? state.statuses[0]?.id ?? '',
   );
@@ -1445,13 +1481,32 @@ export function TaskEditor({
           )}
         </Field>
         <div className="field-row">
+          {state.projects.length > 0 && state.clients.length > 0 && (
+            <Field id="t-client" label="Klient">
+              {(control) => (
+                <select
+                  {...control}
+                  value={pickedClientId}
+                  onChange={(e) => changePickedClient(e.target.value)}
+                  disabled={readOnly}
+                  aria-describedby={roDescWith(control)}
+                >
+                  {clientOptions.map((c) => (
+                    <option key={c.id || 'bez-klienta'} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </Field>
+          )}
           <Field
             id="t-project"
             label="Projekt *"
             // Pusta baza projektów ma własną podpowiedź („najpierw utwórz
             // projekt"), więc inline'owy błąd wyboru jej nie dubluje.
             error={
-              showError('project') && state.projects.length > 0
+              showError('project') && state.projects.length > 0 && clientProjects.length > 0
                 ? 'Wybierz projekt dla tego zadania.'
                 : undefined
             }
@@ -1462,6 +1517,11 @@ export function TaskEditor({
                   Nie ma jeszcze projektów — najpierw <Link to="/projects">utwórz projekt</Link>.
                   Każde zadanie musi należeć do projektu.
                 </p>
+              ) : clientProjects.length === 0 ? (
+                <p className="field-hint">
+                  Ten klient nie ma jeszcze projektów — wybierz innego klienta albo{' '}
+                  <Link to="/projects">utwórz projekt</Link>.
+                </p>
               ) : (
                 <select
                   {...control}
@@ -1471,12 +1531,9 @@ export function TaskEditor({
                   disabled={readOnly}
                   aria-describedby={roDescWith(control)}
                 >
-                  {state.projects.map((p) => (
+                  {clientProjects.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
-                      {getClient(state, p.clientId)
-                        ? ` — ${getClient(state, p.clientId)?.name}`
-                        : ''}
                     </option>
                   ))}
                 </select>

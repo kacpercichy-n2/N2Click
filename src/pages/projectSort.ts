@@ -4,6 +4,8 @@
 // klienta" group (empty clientId) always sorts last. Returns a sorted copy —
 // never mutates the input, the store order or persistence.
 
+import { comparePl } from '../utils/collation';
+
 /** A client group as rendered on the Projects page. */
 export interface ProjectGroup<P extends { name: string }> {
   clientId: string;
@@ -17,12 +19,12 @@ export function sortProjectGroups<P extends { name: string }>(
   return groups
     .map((g) => ({
       ...g,
-      projects: [...g.projects].sort((a, b) => a.name.localeCompare(b.name, 'pl')),
+      projects: [...g.projects].sort((a, b) => comparePl(a.name, b.name)),
     }))
     .sort((a, b) => {
       // "Bez klienta" (clientId === '') always last, regardless of its label.
       if (!a.clientId && b.clientId) return 1;
       if (a.clientId && !b.clientId) return -1;
-      return a.clientName.localeCompare(b.clientName, 'pl');
+      return comparePl(a.clientName, b.clientName);
     });
 }

@@ -28,6 +28,7 @@ import { Tooltip } from '../components/Tooltip';
 import { personColor } from '../utils/colors';
 import { formatDuration } from '../utils/time';
 import { useTouchDragGate } from '../utils/useTouchDragGate';
+import { sortByNamePl } from '../utils/collation';
 import {
   addDaysStr,
   diffDays,
@@ -504,10 +505,9 @@ export function TimelinePage() {
 
   // Filtry (domyślnie zwinięty popover): Klient + Projekt jako grupy radio, Osoby
   // jako multi-select przez `extra`. Lista projektów zawężona do wybranego klienta.
-  const projectOptions = state.projects
-    .filter((p) => !clientFilter || p.clientId === clientFilter)
-    .slice()
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const projectOptions = sortByNamePl(
+    state.projects.filter((p) => !clientFilter || p.clientId === clientFilter),
+  );
   const selectedProject = state.projects.find((p) => p.id === projectFilter);
   const selectedClient = state.clients.find((c) => c.id === clientFilter);
   const filterGroups: FilterGroup[] = [
@@ -518,7 +518,7 @@ export function TimelinePage() {
       onChange: setClientFilter,
       options: [
         { value: '', label: 'Wszyscy klienci' },
-        ...state.clients.map((c) => ({ value: c.id, label: c.name })),
+        ...sortByNamePl(state.clients).map((c) => ({ value: c.id, label: c.name })),
       ],
     },
     {

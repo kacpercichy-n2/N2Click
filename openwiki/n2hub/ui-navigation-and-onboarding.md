@@ -97,7 +97,14 @@
   keep their positions), persists via `updateNavOrderForUser` and fires a
   `n2hub:nav-order-changed` window event so App re-orders the live sidebar.
 - `src/pages/` owns route-specific screens; `src/components/TaskModal.tsx` owns
-  task editing and its allocation grid. Powody blokujące zapis zadania są czyste
+  task editing and its allocation grid. Nagłówek kontekstu ma dropdown „Klient"
+  PRZED „Projekt" (czysta logika: `src/components/taskClientPicker.ts` + test w
+  node) — zadanie NIE ma własnego `clientId`, wybór klienta tylko zawęża listę
+  projektów („Bez klienta" zbiera projekty bez/z usuniętym klientem, ostatnia
+  pozycja), a „przepisanie" klienta = wybór projektu u innego klienta. Wszystkie
+  listy i dropdowny nazw (klienci, projekty, osoby) sortuje JEDYNE źródło
+  polskiej kolacji `src/utils/collation.ts` (`comparePl`/`sortByNamePl`,
+  locale 'pl') — nie dopisuj lokalnych `localeCompare` bez locale. Powody blokujące zapis zadania są czyste
   i testowane osobno (`src/components/taskSaveBlockers.ts`,
   `collectTaskSaveBlockers` + `taskSaveBlockers.test.ts`): `formValid` = pusta
   lista, a nieudany zapis MUSI dać skutek — skacze do pierwszego złego pola

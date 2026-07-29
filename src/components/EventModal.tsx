@@ -23,6 +23,7 @@ import { useConfirm } from './ConfirmProvider';
 import { Field, focusFieldById } from './Field';
 import { firstInvalidKey, saveErrorSummary } from './fieldContract';
 import { IconButton } from './IconButton';
+import { sortByNamePl } from '../utils/collation';
 import { X } from './icons';
 
 /** Parametr URL-a niosący modal wydarzenia (polski, jak reszta tras). */
@@ -397,10 +398,7 @@ function EventEditor({
     markDirty();
   };
 
-  const sortedPeople = useMemo(
-    () => [...state.people].sort((a, b) => a.name.localeCompare(b.name)),
-    [state.people],
-  );
+  const sortedPeople = useMemo(() => sortByNamePl(state.people), [state.people]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
