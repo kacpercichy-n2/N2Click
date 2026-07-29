@@ -97,6 +97,69 @@ export function changelogCtaLabel(entry: ChangelogEntry): string {
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-07-29-sortowanie-klient-w-zadaniu-odstepy',
+    dateFrom: '2026-07-28',
+    dateTo: '2026-07-29',
+    summary:
+      'Listy wyboru w całej aplikacji są posortowane alfabetycznie, w zadaniu można od razu wybrać klienta, a cała aplikacja dostała drobny lifting odstępów — plakietki, przyciski i tabele mają więcej powietrza. Do tego paczka poprawek z poniedziałku: duch przeciągania na Kanbanie, pełnoekranowa wyszukiwarka i żywe tło pod oknami.',
+    items: [
+      {
+        area: 'Ogólne',
+        feature: 'Listy wyboru posortowane A–Z',
+        description:
+          'Wszystkie rozwijane listy klientów, projektów i osób (filtry, formularze, karta zadania) są teraz posortowane alfabetycznie — z poprawną kolejnością polskich znaków (Ł, Ś, Ż…). Koniec szukania klienta w losowej kolejności.',
+      },
+      {
+        area: 'Zadania',
+        feature: 'Wybór klienta w karcie zadania',
+        description:
+          'Karta zadania ma nowe pole „Klient” przed polem „Projekt”. Wybór klienta zawęża listę projektów tylko do jego projektów, więc przypisanie zadania — także przeniesienie go do innego klienta — to dwa kliknięcia zamiast szukania po wszystkich projektach.',
+      },
+      {
+        area: 'Ogólne',
+        feature: 'Więcej powietrza w całej aplikacji',
+        description:
+          'Po audycie odstępów wyrównaliśmy je do wspólnej siatki: plakietki statusu i priorytetu, przyciski drugorzędne, pole wyszukiwania, wiersze list na Panelu, chipy filtrów i tabele godzin (Obciążenie, przydział w zadaniu) nie są już ściśnięte. Aplikacja wygląda spójniej i lżej.',
+      },
+      {
+        area: 'Kanban',
+        feature: 'Karta widocznie „leci” z kursorem',
+        description:
+          'Podczas przeciągania karty na tablicy znów widać jej ducha podążającego za kursorem lub palcem — wcześniej karta tylko blakła w miejscu i łatwo było zgubić, co się właściwie przenosi.',
+      },
+      {
+        area: 'Wyszukiwarka',
+        feature: 'Wyszukiwarka na pełnym ekranie',
+        description:
+          'Paleta wyszukiwania (Ctrl+K) otwiera się nad całą aplikacją. Wcześniej przez usterkę potrafiła przyciąć się do lewego panelu bocznego.',
+      },
+      {
+        area: 'Zadania',
+        feature: 'Karta zadania otwiera się od początku',
+        description:
+          'Okno zadania zawsze startuje przewinięte na górę — nagłówek i zakładki są od razu widoczne, bez ręcznego przewijania w górę po otwarciu.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Czytelniejszy pasek sterowania',
+        description:
+          'Plakietka z datą i zegarem nie odjeżdża już na prawy skraj paska, a znacznik ukończenia ✓ na kafelku dnia stoi we właściwym miejscu.',
+      },
+      {
+        area: 'Konto',
+        feature: 'Awatary z emoji wróciły',
+        description:
+          'Profil znów pokazuje wybraną emotkę jako awatar, a w formularzu profilu można ją ustawić. Inicjały pozostają automatycznym zastępnikiem.',
+      },
+      {
+        area: 'Ogólne',
+        feature: 'Żywe tło pod oknami i przywrócona stopka menu',
+        description:
+          'Okna (dziennik zmian, szybkie dodawanie) mają z powrotem żywe, przyciemnione tło zamiast „zamrożonego” zrzutu ekranu, a na dole menu bocznego znów stoją obok siebie „Zgłoszenia” i przycisk pomocy.',
+      },
+    ],
+  },
+  {
     id: '2026-07-28-wielka-paczka-ux-mobile-wydajnosc',
     dateFrom: '2026-07-27',
     dateTo: '2026-07-28',

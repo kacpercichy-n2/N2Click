@@ -481,7 +481,7 @@ textarea {
   display: flex;
   align-items: center;
   gap: var(--n2-space-2);
-  padding-top: var(--n2-space-4);
+  padding: var(--n2-space-4) var(--n2-space-2) 0;
   border-top: 1px solid var(--n2-border);
 }
 .sidebar-user-avatar {
@@ -673,11 +673,11 @@ textarea {
 .empty-title {
   font-size: var(--n2-type-lg);
   font-weight: 600;
-  margin: 0 0 6px;
+  margin: 0 0 8px;
 }
 .empty-hint {
   color: var(--text-muted);
-  margin: 0 0 18px;
+  margin: 0 0 20px;
 }
 
 .muted {
@@ -1123,7 +1123,7 @@ textarea {
   display: flex;
   gap: var(--n2-space-1);
   margin-bottom: var(--n2-space-4);
-  padding: 3px;
+  padding: 4px;
   border: 1px solid var(--n2-border);
   border-radius: var(--n2-radius-pill);
   background: var(--n2-panel-soft);
@@ -1137,7 +1137,7 @@ textarea {
   font: inherit;
   font-size: var(--n2-type-sm);
   font-weight: 500;
-  padding: 7px 16px;
+  padding: 8px 16px;
   border-radius: var(--n2-radius-pill);
   cursor: pointer;
   white-space: nowrap;
@@ -1451,7 +1451,7 @@ option {
 .alloc-grid td {
   border-bottom: 1px solid var(--n2-border-soft);
   border-right: 1px solid var(--n2-border-soft);
-  padding: 6px 8px;
+  padding: 8px;
   text-align: center;
 }
 .alloc-grid thead th {
@@ -1823,11 +1823,11 @@ a.toggle-btn {
 .filter-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   border: 1px solid var(--n2-border);
   background: rgba(255, 255, 255, 0.045);
   border-radius: var(--n2-radius-pill);
-  padding: 6px 13px;
+  padding: 6px 16px;
   cursor: pointer;
   font-size: var(--n2-type-sm);
   font-weight: 500;
@@ -2959,7 +2959,7 @@ a.toggle-btn {
   font-weight: 600;
   border: 1px solid var(--status, var(--n2-border-strong));
   border-radius: var(--n2-radius-pill);
-  padding: 2px 10px;
+  padding: 4px 12px;
   white-space: nowrap;
   color: var(--status, var(--n2-text));
   background: color-mix(in oklab, var(--status, transparent) 10.196%, transparent);
@@ -3003,7 +3003,7 @@ a.toggle-btn {
   font-weight: 600;
   border: 1px solid;
   border-radius: var(--n2-radius-pill);
-  padding: 2px 10px;
+  padding: 4px 12px;
   white-space: nowrap;
 }
 .priority-low {
@@ -4259,6 +4259,7 @@ a.toggle-btn {
 .workload-table th,
 .workload-table td {
   white-space: nowrap;
+  padding: 8px 12px;
 }
 .workload-person {
   text-align: left;
@@ -4405,7 +4406,7 @@ a.toggle-btn {
 }
 .dash-list {
   list-style: none;
-  margin: 0 0 10px;
+  margin: 0 0 12px;
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -4422,7 +4423,7 @@ a.toggle-btn {
   font: inherit;
   color: inherit;
   text-align: left;
-  padding: 6px 8px;
+  padding: 8px;
   border-radius: var(--n2-radius-sm);
   cursor: pointer;
   text-decoration: none;
@@ -4503,7 +4504,7 @@ a.toggle-btn {
 /* ---------- Dashboard: worker welcome page ---------- */
 
 .dash-greeting h1 {
-  margin-bottom: 2px;
+  margin-bottom: 4px;
 }
 .dash-date {
   margin: 0;
@@ -5075,7 +5076,7 @@ a.toggle-btn {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 8px;
 }
 /* AT-19: wpis zawija się do DWÓCH linii zamiast urywać się wielokropkiem w
    połowie tytułu. Trzecia linia jest ucinana (`line-clamp`), żeby wysokość
@@ -6474,7 +6475,7 @@ a.toggle-btn {
   font-size: var(--n2-type-xs);
 }
 .btn.ghost.small {
-  padding: 5px 10px;
+  padding: 8px 12px;
   font-size: var(--n2-type-xs);
   display: inline-flex;
   align-items: center;
@@ -6489,7 +6490,7 @@ a.toggle-btn {
   gap: var(--n2-space-2);
   width: 100%;
   margin-bottom: var(--n2-space-4);
-  padding: 9px 12px;
+  padding: 12px;
   border: 1px solid var(--n2-border);
   border-radius: var(--n2-radius-pill);
   background: rgba(255, 255, 255, 0.05);
@@ -6515,7 +6516,7 @@ a.toggle-btn {
 }
 .search-trigger-kbd {
   flex-shrink: 0;
-  padding: 2px 7px;
+  padding: 4px 8px;
   border: 1px solid var(--n2-border);
   border-radius: var(--n2-radius-xs);
   background: rgba(255, 255, 255, 0.05);
@@ -6704,7 +6705,7 @@ a.toggle-btn {
   place-items: center;
   min-width: 18px;
   height: 18px;
-  padding: 0 5px;
+  padding: 0 8px;
   border-radius: var(--n2-radius-pill);
   background: var(--n2-violet);
   color: #fff;
@@ -6893,7 +6894,7 @@ a.toggle-btn {
   align-items: center;
   flex-wrap: wrap;
   gap: var(--n2-space-4);
-  margin-bottom: 14px;
+  margin-bottom: var(--n2-space-4);
 }
 .filter-toolbar-people,
 .filter-toolbar-presets {
@@ -7452,7 +7453,7 @@ a.toggle-btn {
   padding-right: 32px;
 }
 .dash-row {
-  padding-right: 26px;
+  padding-right: 28px;
 }
 .task-card-main .card-chevron,
 .project-task-main .card-chevron,
@@ -8189,7 +8190,7 @@ a.toggle-btn {
 .client-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 .client-card {
   display: flex;
@@ -8214,7 +8215,7 @@ a.toggle-btn {
   display: flex;
   gap: var(--n2-space-4);
   flex-wrap: wrap;
-  margin-top: 2px;
+  margin-top: 4px;
   font-size: 0.9em;
 }
 .client-card-notes {
