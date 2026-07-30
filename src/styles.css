@@ -159,6 +159,18 @@
   --card-bg-hover: rgba(255, 255, 255, 0.07);
   --field-bg: rgba(255, 255, 255, 0.055);
 
+  /* --- Oś czasu: przyklejona kolumna etykiet ---
+     Ta kolumna MUSI być kryjąca — paski przesuwają się poziomo pod nią — więc
+     nie może użyć półprzezroczystego `--card-bg` jak reszta powierzchni. Płaski
+     grafit (`--n2-bg-elevated`, #171719) wycinał w fioletowej poświacie strony
+     czarny prostokąt, który odcinał się od panelu. Ta wartość to ten sam poziom
+     jasności podbity w stronę `--n2-violet`, żeby kolumna czytała się jako
+     część powierzchni, a nie jako obca płyta. Grupy (klient / osoba) dostają
+     lawendowe podbicie zamiast białego, żeby nie schodziły w szarość. */
+  --timeline-label-bg: #1c1329;
+  --timeline-group-bg: rgba(196, 150, 255, 0.07);
+  --timeline-group-track-bg: rgba(196, 150, 255, 0.045);
+
   /* --- Legacy aliases: old local vars → N2 tokens (minimise churn) --- */
   --bg: var(--n2-bg);
   --surface: var(--card-bg);
@@ -4007,7 +4019,7 @@ a.toggle-btn {
   flex: 0 0 240px;
   padding: 6px 10px;
   border-right: 1px solid var(--n2-border-soft);
-  background: var(--n2-bg-elevated);
+  background: var(--timeline-label-bg);
   position: sticky;
   left: 0;
   z-index: 3;
@@ -4107,19 +4119,19 @@ a.toggle-btn {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--timeline-group-bg);
 }
 .timeline-client-row .timeline-track {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--timeline-group-track-bg);
   min-height: 26px;
 }
 .timeline-person-row .timeline-person-label {
   gap: 8px;
   font-weight: 600;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--timeline-group-bg);
 }
 .timeline-person-row .timeline-track {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--timeline-group-track-bg);
 }
 .timeline-person-dot {
   flex: 0 0 auto;
