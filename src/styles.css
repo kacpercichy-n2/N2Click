@@ -1448,7 +1448,12 @@ option {
 
 .alloc-wrap {
   overflow-x: auto;
-  overscroll-behavior: contain;
+  /* TYLKO oś X — ten sam powód co w `.timeline-scroll`: `overflow-x: auto`
+     robi z `overflow-y` `auto`, więc skrócone `contain` połykało kółko myszy
+     nad siatką i strona nie dawała się przewinąć. Wersja modalowa
+     (`.task-modal-body .alloc-wrap`) i tak nadpisuje to na `auto`, więc jej ta
+     zmiana nie dotyczy. */
+  overscroll-behavior-x: contain;
   border: 1px solid var(--n2-border);
   border-radius: var(--n2-radius-lg);
   background: var(--card-bg);
@@ -4001,7 +4006,15 @@ a.toggle-btn {
 
 .timeline-scroll {
   overflow-x: auto;
-  overscroll-behavior: contain;
+  /* TYLKO oś X. `overflow-x: auto` sprawia, że `overflow-y` liczy się jako
+     `auto` (spec: `visible` na jednej osi staje się `auto`, gdy druga nie jest
+     `visible`), więc panel jest kontenerem przewijania także w pionie — mimo
+     że nie ma tam czego przewijać. Skrócone `overscroll-behavior: contain`
+     obejmowało wtedy oś Y i POŁYKAŁO kółko myszy: panel wypełnia większość
+     ekranu, więc strona nie dawała się przewinąć góra-dół. Wersja `-x`
+     zachowuje pierwotny cel (poziomy overscroll nie ucieka do gestu „wstecz”
+     przeglądarki) i przepuszcza pion do strony. */
+  overscroll-behavior-x: contain;
   border: 1px solid var(--n2-border);
   border-radius: var(--n2-radius-lg);
   background: var(--card-bg);
