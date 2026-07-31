@@ -54,6 +54,11 @@ import {
   snapshotPersonColumn,
   type PersonColumnSnapshot,
 } from './allocationGridView';
+import {
+  assigneeHasNoHours,
+  withAssigneeHoursDefault,
+  withAssigneeHoursDefaults,
+} from './assigneeHours';
 import { MOBILE_NAV_QUERY, useMediaQuery } from '../utils/useMediaQuery';
 import {
   clientPickerOptions,
@@ -820,6 +825,12 @@ export function TaskEditor({
         const t = totals.get(pid) ?? 0;
         map[pid] = t > 0 ? String(t) : '';
       }
+    } else {
+      // Nowe zadanie z osobą podpowiedzianą przez filtr kalendarza: to też jest
+      // przypisanie, więc startuje z minimalnym krokiem (15 min), nie z zerem —
+      // inaczej zapis nie utworzyłby żadnego wiersza `WorkloadEntry` i zadanie
+      // nie pokazałoby się ani w kalendarzu, ani w zasobniku osoby.
+      return withAssigneeHoursDefaults(map, assigneeIds);
     }
     return map;
   });
@@ -1103,6 +1114,12 @@ export function TaskEditor({
       setClearUndo((current) => (current?.personId === personId ? null : current));
     } else {
       setAssigneeIds((prev) => [...prev, personId]);
+      // Świeżo przypisana osoba dostaje bazowo MINIMALNY krok planowania
+      // (15 min). Zero nie tworzyłoby żadnego wiersza `WorkloadEntry`, więc
+      // zapomniane godziny znaczyłyby zadanie niewidoczne i w kalendarzu,
+      // i w zasobniku. Wpisana już wartość (np. powrót do osoby, która ma
+      // godziny na tym zadaniu) zostaje nietknięta.
+      setSoldRawByPerson((prev) => withAssigneeHoursDefault(prev, personId));
     }
   };
 
@@ -1732,6 +1749,11 @@ export function TaskEditor({
               const dated = datedByPerson.get(p.id) ?? 0;
               const bin = Math.max(0, snapHours(sold - dated));
               const clamped = dated > sold + 1e-9;
+              // Osoba bez ani jednej godziny nie dostanie wiersza `WorkloadEntry`,
+              // więc zadanie nie pojawi się u niej ani w kalendarzu, ani
+              // w zasobniku. Domyślne 15 min chroni przed zapomnieniem; tu
+              // zostaje świadome wyzerowanie i dane sprzed tej zmiany.
+              const noHours = assigneeHasNoHours(sold, dated);
               return (
                 <div key={p.id} className="sold-hours-row">
                   <span
@@ -1766,6 +1788,13 @@ export function TaskEditor({
                   {clamped && (
                     <span className="field-error sold-hours-warn">
                       w kalendarzu więcej niż godziny osoby
+                    </span>
+                  )}
+                  {noHours && (
+                    <span className="field-error sold-hours-warn">
+                      {isDraft
+                        ? 'bez godzin, po publikacji nie trafi do zasobnika'
+                        : 'bez godzin, zadanie nie trafi do zasobnika tej osoby'}
                     </span>
                   )}
                 </div>

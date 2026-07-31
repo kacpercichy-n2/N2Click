@@ -70,6 +70,17 @@
   growing a cell consumes the bin. TaskModal auto-saves valid edited drafts
   (debounced ~0.9 s; paused during an explicit tab conflict; creation stays
   manual).
+- Osoba przypisana bez godzin (2026-07-31): przypisanie samo w sobie NIE tworzy
+  żadnego `WorkloadEntry`, więc para (zadanie, osoba) z zerem godzin nie ma ani
+  bloku w kalendarzu, ani wiersza w zasobniku i znika z planowania. Dlatego
+  świeżo zaznaczona osoba dostaje bazowo `DEFAULT_ASSIGNEE_HOURS`
+  (`assigneeHours.ts` = `HOURS_STEP`, 15 min) w polu godzin sprzedanych —
+  zarówno przez checkbox, jak i przy osobie podpowiedzianej filtrem kalendarza
+  dla NOWEGO zadania. Wartość już wpisana (w tym świadome „0” i godziny
+  istniejącego zadania) zostaje nietknięta, a stan „ani sprzedanych, ani
+  w kalendarzu” (`assigneeHasNoHours`) zapala WIDOCZNE ostrzeżenie w wierszu
+  osoby zamiast cichej pustki. Reduktor bez zmian: `binTotals` nadal usuwa
+  wiersz przy celu 0 (to zwykły przypadek „wszystko już w kalendarzu”).
 - Bin drag is window-owned: preserve its pointer-up/cancel/blur/Escape/visibility
   cleanup, synchronous refs and rendered-column hit-testing.
 - Touch drag gate (2026-07-27, invariant 7): on `pointerType` touch/pen the four
@@ -236,6 +247,7 @@ availability/overload calculations, drag lifecycle and time utilities.
 `src/utils/time.test.ts`, `src/utils/touchDrag.test.ts`,
 `src/utils/blockLabel.test.ts`, `src/utils/eventConflictMessage.test.ts`,
 `src/store/eventActions.test.ts` (progi kolizji terminu),
+`src/components/assigneeHours.test.ts` (domyślne 15 min osoby przypisanej),
 `src/components/weekViewModel.test.ts` (pokrycie `eventBusyByPersonDate`),
 `src/components/calendarBlockKeyboard.test.ts`,
 `src/components/monthGrid.test.ts`,
