@@ -9,15 +9,22 @@
   `public` (puste, nic tam nie tworzyć). Enum `access_role` żyje w `core`.
 - Klient wybiera schemat na połączeniu: `createClient(..., { db: { schema:
   'n2click' } })` w `src/supabase/client.ts`; realtime w `CloudSyncProvider`
-  filtruje `schema: 'n2click'`. Nazwy tabel w kodzie się nie zmieniają.
+  nasłuchuje DWÓCH schematów — `n2click` i `core` — bo `profiles`/`companies`
+  są w publikacji jako tabele bazowe, a widok-mostek nie emituje zdarzeń.
+  Nazwy tabel w kodzie się nie zmieniają.
 - `core` NIE jest wystawiony w PostgREST — appka czyta/pisze tożsamość przez
   widoki-mostki `n2click.profiles`, `n2click.companies` (security_invoker,
   auto-updatable, wspierają nawet upsert ON CONFLICT) oraz `n2click.app_access`
-  (tylko service_role). Exposed schemas (Dashboard): `n2click`, `clarity`,
-  `blogoapp` — bez `core` i bez `public`.
+  (tylko service_role). Exposed schemas (Dashboard, USTAWIONE 2026-07-31):
+  `graphql_public`, `n2click`, `clarity`, `blogoapp` — bez `core` i bez
+  `public`. `graphql_public` to platformowy domyślny endpoint GraphQL, nie
+  schemat aplikacji. W panelu „Exposed tables" tabele `n2click` świecą się
+  na pomarańczowo („custom grants") — to nasze zawężone granty z migracji,
+  NIE klikać ich, bo kliknięcie nadpisuje je szerokimi domyślnymi.
 - Dostępu do appki NIE daje samo konto: wpis `core.app_access(user_id, app,
-  role, company_id)` → claimy `app_roles`/`app_company` w JWT (hook włączany w
-  Dashboardzie) → każda polityka RLS n2click/core wymaga
+  role, company_id)` → claimy `app_roles`/`app_company` w JWT (hook Custom
+  Access Token → `core.custom_access_token`, WŁĄCZONY 2026-07-31) → każda
+  polityka RLS n2click/core wymaga
   `core.has_app('n2click')` (wyjątek: bingo_lines/bingo_marks — gra anon).
   Trigger `on_auth_user_created` tworzy profil w `core` przy signupie, ale ZERO
   wpisów w `app_access`.
