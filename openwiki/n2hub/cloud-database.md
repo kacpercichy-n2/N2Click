@@ -48,6 +48,11 @@
 
 ## Tables and relations
 
+UWAGA CZYTELNIKU: wszystkie tabele domenowe opisane niżej żyją od 2026-07-31 w
+schemacie `n2click`, a `profiles`/`companies` w `core` (w `n2click` są jako
+widoki-mostki). Gdzie w tekście pada `public.<tabela>` w kontekście
+`EXPECTED_POLICIES`, to HISTORYCZNY klucz testu — nie lokalizacja tabeli.
+
 - `departments` — dictionary. `profiles.department_id`,
   `projects.department_id` → `on delete set null`.
 - `profiles` — 1:1 with `auth.users` (same id, `on delete cascade`). Fields:
@@ -83,7 +88,7 @@
   `'[]'`, CHECK `jsonb_typeof(contacts) = 'array'`: DODATKOWE osoby kontaktowe
   (`{id, firstName, lastName, phone, email}`), osadzone jak `projects.documents`
   (20260721010000). Świadomie BEZ tabeli: widoczność osób ≡ widoczność klienta,
-  RLS dziedziczy z wiersza `public.clients` — ZERO nowych polityk, `clients` już
+  RLS dziedziczy z wiersza `n2click.clients` — ZERO nowych polityk, `clients` już
   w publikacji realtime (bez zmian). Główna osoba zostaje w kolumnach
   `contact_*` — kolumna trzyma tylko dodatkowe. Mirror `clientRow.contacts =
   c.contacts ?? []`; hydracja `plannerData` sanityzuje przez
@@ -152,7 +157,7 @@
   (offline + natychmiastowy stan); hydracja `plannerData` czyta `row.created_by`
   przez `personOf` (niemapowalny/NULL => brak klucza). Selektor
   `notificationsForPerson` używa `task.createdBy`, fallback: activity log.
-  UWAGA: dormant `public.notifications` + `profiles.email_notifications` +
+  UWAGA: dormant `n2click.notifications` + `profiles.email_notifications` +
   `notifications.emailed_at` NIE są podpięte — feed jest kliencko-pochodny
   (świadoma decyzja; e-mail poza zakresem). Patrz pamięć
   „dormant-cloud-notifications-infra".
@@ -162,7 +167,7 @@
   `{ daysOfWeek:[1..7], startMinutes, durationMinutes, until?, overrides? }`;
   wyjątki niosą TYLKO daty/minuty — żadnych id profili, więc bez mapowania id.
   Świadomie BEZ osobnej tabeli: widoczność ma być identyczna z widocznością
-  zadania, więc RLS dziedziczy się z wiersza `public.tasks` — ZERO nowych polityk,
+  zadania, więc RLS dziedziczy się z wiersza `n2click.tasks` — ZERO nowych polityk,
   bez zmian w publikacji realtime. Klient mirroruje ją jak zwykłe pole
   (`cloudMirror.taskRow.recurrence = t.recurrence ?? null`), a hydracja
   `plannerData` kanonikalizuje przez `normalizeRecurrence` WYŁĄCZNIE dla wierszy
@@ -173,7 +178,7 @@
   (`{id, kind: oferta|wycena|brief|link, label, url}`). Kolumna osadzona jak
   `tasks.checklist` — świadomie BEZ tabeli `project_documents`: widoczność ma
   być identyczna z widocznością projektu, więc RLS dziedziczy się z wiersza
-  `public.projects` i migracja nie dodaje ani jednej polityki. To WYŁĄCZNIE
+  `n2click.projects` i migracja nie dodaje ani jednej polityki. To WYŁĄCZNIE
   adresy — Supabase Storage nie jest tu używany (żadnych plików). Wiersze są
   współdzielone, więc `url` musi mieć schemat `http:`/`https:` — klient wymusza
   to przy zapisie, przy wczytaniu i przy renderowaniu `href`
@@ -222,7 +227,7 @@
   `events.manage` pozostaje UX-em po stronie klienta (jak cały system uprawnień).
   Tabela JEST w publikacji `supabase_realtime` (idempotentny blok `do $$ …
   exception when duplicate_object`) — kalendarze odświeżają się live. Mirror:
-  dziesiąta rodzina (`eventRow` + diff po id → `public.events`, attendee mapowany
+  dziesiąta rodzina (`eventRow` + diff po id → `n2click.events`, attendee mapowany
   per-id, niemapowalny odpada); hydracja filtruje dangling uczestnika per-wiersz.
   Rejestr: plik w liście migracji + `public.events` w `EXPECTED_POLICIES`
   (`migrations.test.ts`).
