@@ -1332,6 +1332,14 @@ option {
   font-size: var(--n2-type-sm);
   margin: 0;
 }
+/* Kolizja terminu wydarzenia OGÓLNOFIRMOWEGO: ostrzeżenie, nie błąd — zapis
+   przechodzi, więc kolor jest ostrzegawczy (`--n2-warning`), nigdy `--danger`,
+   który w tym modalu znaczy „zapis zablokowany". */
+.event-conflict-warn {
+  color: var(--n2-warning);
+  font-size: var(--n2-type-xs);
+  margin: 0;
+}
 /* Timeline: the drag hint and the "Filtry" popover share one row; the hint
    takes remaining width so the filter button hugs the right edge. */
 .timeline-hint-row {

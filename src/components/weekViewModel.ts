@@ -68,6 +68,19 @@ export interface WeekDayModel {
   blocks: ResolvedBlock[];
 }
 
+/**
+ * Jeden przedział zajętości PREZENTACYJNEJ jednej osoby w jednym dniu.
+ * `kind` rozdziela dwóch konsumentów (patrz {@link buildEventBusyByPersonDate}),
+ * `title` pozwala NAZWAĆ winowajcę w komunikacie zamiast mówić „inna praca".
+ */
+export interface BusyInterval {
+  start: number;
+  end: number;
+  kind: 'event' | 'recurrence';
+  /** Tytuł wydarzenia / zadania cyklicznego; '' gdy nieznany. */
+  title: string;
+}
+
 /** One person's bin (zasobnik) group. */
 export interface BinPersonModel {
   person: Person;
@@ -89,15 +102,15 @@ export interface WeekModel {
   blocksByPersonDate: Map<string, WorkloadEntry[]>;
   /**
    * Per-(person, date) union of that person's calendar-event occurrences and
-   * recurring-task occurrences (presentational occupancy), as `{start, end}`
+   * recurring-task occurrences (presentational occupancy), as `{start, end, kind}`
    * minute intervals. Filter-INDEPENDENT and person-scoped (built via a
-   * single-person Set, exactly like a per-person occupancy). Built ONLY for
-   * (person, date) pairs that have at least one dated block — the only pairs
-   * where an adjacency merge can happen. Keyed by {@link personDateKey}. The
-   * will-merge affordance uses it to mirror the reducer's merge guard (a fused
-   * block must never silently swallow a meeting) without a per-drag-frame scan.
+   * single-person Set, exactly like a per-person occupancy). Keyed by
+   * {@link personDateKey}. Two consumers, two subsets: the will-merge affordance
+   * reads EVERY kind (mirroring the reducer's merge guard), the drop gate reads
+   * only `kind: 'event'` (a block must not land on a meeting; recurring
+   * occurrences stay presentational). See {@link buildEventBusyByPersonDate}.
    */
-  eventBusyByPersonDate: Map<string, Array<{ start: number; end: number }>>;
+  eventBusyByPersonDate: Map<string, BusyInterval[]>;
 }
 
 /** Stable composite key for {@link WeekModel.blocksByPersonDate}. */
@@ -129,33 +142,56 @@ export function buildBlocksByPersonDate(
 
 /**
  * Build the per-(person, date) presentational-occupancy index (calendar events +
- * recurring-task occurrences) for the given days, but ONLY for (person, date)
- * pairs that already appear in {@link buildBlocksByPersonDate} (the only pairs
- * where a merge can occur). Person-scoped via a single-person Set — each entry
- * therefore also includes company-wide events and recurring tasks the person is
- * assigned to, exactly this person's occupancy. Pure; used to mirror the reducer
- * merge guard in the will-merge affordance without a per-drag-frame global scan.
+ * recurring-task occurrences) for the given days. Person-scoped via a
+ * single-person Set — each entry therefore also includes company-wide events and
+ * recurring tasks the person is assigned to, exactly this person's occupancy.
+ *
+ * Each interval carries its `kind`, because the two consumers need DIFFERENT
+ * subsets and must not be collapsed:
+ *  - straż scalania (will-merge affordance) czyta WSZYSTKIE rodzaje — scalenie nie
+ *    może po cichu połknąć ani spotkania, ani wystąpienia cyklicznego,
+ *  - bramka „blok nie wchodzi na spotkanie" czyta WYŁĄCZNIE `kind: 'event'`,
+ *    bo wystąpienia cykliczne zostają czysto prezentacyjne (inwariant 1) i nigdy
+ *    nie blokują przeciągania.
+ *
+ * POKRYCIE: wcześniej indeks obejmował tylko pary z co najmniej jednym blokiem
+ * (jedyne, gdzie może zajść scalenie). Bramka upuszczania potrzebuje TAKŻE par
+ * bez bloku — dzień, w którym osoba ma samo spotkanie, jest legalnym celem
+ * upuszczenia. Klucze budujemy więc z właścicieli wierszy `state.workload`
+ * (dowolnych: dziennych i zasobnikowych) × `days`: cel upuszczenia to zawsze
+ * właściciel przenoszonego wpisu, więc ten zbiór jest zupełny i nadal wąski —
+ * nie jest to iloczyn wszystkich osób przez wszystkie dni.
  */
 export function buildEventBusyByPersonDate(
   state: AppData,
-  blocksByPersonDate: Map<string, WorkloadEntry[]>,
-): Map<string, Array<{ start: number; end: number }>> {
-  const map = new Map<string, Array<{ start: number; end: number }>>();
-  for (const [key, list] of blocksByPersonDate) {
-    if (list.length === 0) continue;
-    const { personId, date } = list[0];
+  days: DateStr[],
+): Map<string, BusyInterval[]> {
+  const map = new Map<string, BusyInterval[]>();
+  const owners = new Set<string>();
+  for (const w of state.workload) owners.add(w.personId);
+
+  for (const personId of owners) {
     const forPerson = new Set([personId]);
-    const busy: Array<{ start: number; end: number }> = [];
-    for (const occ of calendarEventsForDate(state, date, forPerson)) {
-      busy.push({ start: occ.startMinutes, end: occ.startMinutes + occ.durationMinutes });
+    for (const date of days) {
+      const busy: BusyInterval[] = [];
+      for (const occ of calendarEventsForDate(state, date, forPerson)) {
+        busy.push({
+          start: occ.startMinutes,
+          end: occ.startMinutes + occ.durationMinutes,
+          kind: 'event',
+          title: occ.event.title,
+        });
+      }
+      for (const { task, occurrence } of recurrenceOccurrencesForDate(state, date, forPerson)) {
+        busy.push({
+          start: occurrence.startMinutes,
+          end: occurrence.startMinutes + occurrence.durationMinutes,
+          kind: 'recurrence',
+          title: task.title,
+        });
+      }
+      if (busy.length > 0) map.set(personDateKey(personId, date), busy);
     }
-    for (const { occurrence } of recurrenceOccurrencesForDate(state, date, forPerson)) {
-      busy.push({
-        start: occurrence.startMinutes,
-        end: occurrence.startMinutes + occurrence.durationMinutes,
-      });
-    }
-    if (busy.length > 0) map.set(key, busy);
   }
   return map;
 }
@@ -244,6 +280,6 @@ export function buildWeekModel(
     bin,
     binGrandTotal,
     blocksByPersonDate,
-    eventBusyByPersonDate: buildEventBusyByPersonDate(state, blocksByPersonDate),
+    eventBusyByPersonDate: buildEventBusyByPersonDate(state, days),
   };
 }

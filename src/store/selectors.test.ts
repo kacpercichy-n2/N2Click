@@ -42,6 +42,9 @@ import {
   todayAgendaForPerson,
   unplannedTasksForPerson,
   weekBlocksForPerson,
+  scheduleConflictsForRange,
+  eventDraftConflicts,
+  blockCollidesWithEvent,
 } from './selectors';
 import { reducer } from './AppStore';
 import { emptyData } from './storage';
@@ -2022,5 +2025,175 @@ describe('loadTone (jedna skala wykorzystania)', () => {
     for (let pct = 0; pct <= 150; pct++) {
       expect(rank[loadTone(pct)]).toBeGreaterThanOrEqual(rank[loadTone(pct - 1)]);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// scheduleConflictsForRange — TREŚĆ konfliktu, nie tylko fakt jego istnienia.
+//
+// Komunikat użytkownika składa się z pól tego wyniku (kto, co, kiedy), więc same
+// testy brzmienia w `eventConflictMessage.test.ts` nie wystarczą — działają na
+// ręcznie tworzonych obiektach i nie złapałyby złego tytułu czy złej osoby tutaj.
+// ---------------------------------------------------------------------------
+
+function makeCalendarEvent(
+  overrides: Partial<import('../types').CalendarEvent> & { id: string },
+): import('../types').CalendarEvent {
+  return {
+    title: 'Spotkanie',
+    description: '',
+    location: '',
+    meetingUrl: '',
+    date: '2026-07-08',
+    startMinutes: 600,
+    durationMinutes: 60,
+    attendeeIds: [],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+describe('scheduleConflictsForRange', () => {
+  const base = () =>
+    makeState({
+      people: [
+        makePerson({ id: 'p1', name: 'Ola Nowak' }),
+        makePerson({ id: 'p2', name: 'Marek Wiśniewski' }),
+      ],
+      tasks: [makeTask({ id: 't1', title: 'Regresja QA' })],
+      // blok p1: 10:00-12:00
+      workload: [
+        makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', startMinutes: 600, plannedHours: 2 }),
+      ],
+    });
+
+  it('opisuje kolidujący blok osobą, tytułem zadania i zakresem', () => {
+    const out = scheduleConflictsForRange(base(), ['p1'], '2026-07-08', 630, 60);
+    expect(out).toEqual([
+      {
+        kind: 'block',
+        personId: 'p1',
+        personName: 'Ola Nowak',
+        title: 'Regresja QA',
+        startMinutes: 600,
+        durationMinutes: 120,
+      },
+    ]);
+  });
+
+  it('styk krawędzi nie jest kolizją', () => {
+    // blok 600-720; zakres 720-780 tylko się styka
+    expect(scheduleConflictsForRange(base(), ['p1'], '2026-07-08', 720, 60)).toEqual([]);
+    // i z drugiej strony: 540-600
+    expect(scheduleConflictsForRange(base(), ['p1'], '2026-07-08', 540, 60)).toEqual([]);
+  });
+
+  it('sprawdza tylko WSKAZANE osoby', () => {
+    expect(scheduleConflictsForRange(base(), ['p2'], '2026-07-08', 630, 60)).toEqual([]);
+  });
+
+  it('deduplikuje powtórzone id osoby', () => {
+    const out = scheduleConflictsForRange(base(), ['p1', 'p1', 'p1'], '2026-07-08', 630, 60);
+    expect(out).toHaveLength(1);
+  });
+
+  it('znosi nieznane id osoby bez wyjątku', () => {
+    expect(scheduleConflictsForRange(base(), ['brak'], '2026-07-08', 630, 60)).toEqual([]);
+  });
+
+  it('pomija blok wskazany przez excludeEntryId', () => {
+    const out = scheduleConflictsForRange(base(), ['p1'], '2026-07-08', 630, 60, {
+      excludeEntryId: 'e1',
+    });
+    expect(out).toEqual([]);
+  });
+
+  it('opisuje kolidujące wydarzenie i pomija wskazane excludeEventId', () => {
+    const state = makeState({
+      people: [makePerson({ id: 'p1', name: 'Ola Nowak' })],
+      events: [makeCalendarEvent({ id: 'ev1', title: 'Przegląd', attendeeIds: ['p1'] })],
+    });
+    const out = scheduleConflictsForRange(state, ['p1'], '2026-07-08', 630, 60);
+    expect(out).toEqual([
+      {
+        kind: 'event',
+        personId: 'p1',
+        personName: 'Ola Nowak',
+        title: 'Przegląd',
+        startMinutes: 600,
+        durationMinutes: 60,
+      },
+    ]);
+    expect(
+      scheduleConflictsForRange(state, ['p1'], '2026-07-08', 630, 60, { excludeEventId: 'ev1' }),
+    ).toEqual([]);
+  });
+});
+
+describe('eventDraftConflicts — próg zależny od uczestników', () => {
+  const busyState = () =>
+    makeState({
+      people: [makePerson({ id: 'p1', name: 'Ola' }), makePerson({ id: 'p2', name: 'Marek' })],
+      tasks: [makeTask({ id: 't1', title: 'Regresja QA' })],
+      workload: [
+        makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', startMinutes: 600, plannedHours: 2 }),
+      ],
+    });
+
+  it('uczestnik imienny => kolizja BLOKUJE, nic w ostrzeżeniach', () => {
+    const r = eventDraftConflicts(busyState(), {
+      date: '2026-07-08',
+      startMinutes: 630,
+      durationMinutes: 60,
+      attendeeIds: ['p1'],
+    });
+    expect(r.blocking).toHaveLength(1);
+    expect(r.warning).toHaveLength(0);
+  });
+
+  it('ogólnofirmowe => kolizja tylko OSTRZEGA i liczona jest po wszystkich', () => {
+    const r = eventDraftConflicts(busyState(), {
+      date: '2026-07-08',
+      startMinutes: 630,
+      durationMinutes: 60,
+      attendeeIds: [],
+    });
+    expect(r.blocking).toHaveLength(0);
+    expect(r.warning).toHaveLength(1);
+    expect(r.warning[0].personId).toBe('p1');
+  });
+});
+
+describe('blockCollidesWithEvent', () => {
+  const state = () =>
+    makeState({
+      people: [makePerson({ id: 'p1' })],
+      events: [makeCalendarEvent({ id: 'ev1', attendeeIds: ['p1'] })], // 600-660
+    });
+
+  it('wykrywa nachodzenie na wydarzenie osoby', () => {
+    expect(blockCollidesWithEvent(state(), 'p1', '2026-07-08', 630, 1)).toBe(true);
+  });
+
+  it('styk krawędzi nie koliduje', () => {
+    expect(blockCollidesWithEvent(state(), 'p1', '2026-07-08', 660, 1)).toBe(false);
+    expect(blockCollidesWithEvent(state(), 'p1', '2026-07-08', 540, 1)).toBe(false);
+  });
+
+  // Wystąpienia cykliczne zostają czysto prezentacyjne — nie blokują przeciągania.
+  it('NIE blokuje na wystąpieniu zadania cyklicznego', () => {
+    const s = makeState({
+      people: [makePerson({ id: 'p1' })],
+      tasks: [
+        makeTask({
+          id: 't1',
+          startDate: '2026-07-08',
+          recurrence: { daysOfWeek: [3], startMinutes: 600, durationMinutes: 60 },
+        }),
+      ],
+      assignments: [makeAssignment({ id: 'a1', taskId: 't1', personId: 'p1' })],
+    });
+    expect(blockCollidesWithEvent(s, 'p1', '2026-07-08', 630, 1)).toBe(false);
   });
 });

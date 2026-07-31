@@ -89,7 +89,12 @@ import {
   isTicketStatus,
 } from '../utils/tickets';
 import { isNotificationType } from '../utils/notifications';
-import { mergeCoversEventOrRecurrence, wouldCreateSupervisorCycle } from './selectors';
+import {
+  blockCollidesWithEvent,
+  eventDraftConflicts,
+  mergeCoversEventOrRecurrence,
+  wouldCreateSupervisorCycle,
+} from './selectors';
 import { isOccurrenceDate, normalizeRecurrence } from '../utils/recurrence';
 import { ROLE_LABELS } from './permissions';
 import { registerPersonOrder } from '../utils/colors';
@@ -1733,6 +1738,15 @@ function setBlockTime(
     (w) => w.personId === entry.personId && w.date === date && w.id !== entryId,
   );
   if (hasCollision(sameDayOthers, startMinutes, dur)) return state;
+
+  // Kierunek „zadanie → wydarzenie": blok nie może wejść na SPOTKANIE tej osoby.
+  // Wydarzenia przestały być czysto prezentacyjne WYŁĄCZNIE w tym jednym
+  // wymiarze — nadal nie wchodzą do sum, `dayTotal` ani przeciążenia, więc
+  // inwariant 1 zostaje. Wystąpienia zadań cyklicznych świadomie NIE blokują
+  // (patrz `blockCollidesWithEvent`).
+  if (blockCollidesWithEvent(state, entry.personId, date, startMinutes, plannedHours)) {
+    return state;
+  }
 
   const task = state.tasks.find((t) => t.id === entry.taskId);
   if (!task) return state;
@@ -3944,6 +3958,10 @@ export function reducer(state: AppData, action: Action): AppData {
     case 'ADD_EVENT': {
       const normalized = normalizeEventDraft(state, action.draft);
       if (normalized === null) return state;
+      // Kolizja z czasem IMIENNEGO uczestnika odrzuca zapis (inwariant 6: ta sama
+      // referencja stanu). Ogólnofirmowe przechodzą — `eventDraftConflicts`
+      // zwraca wtedy same ostrzeżenia, które pokazuje EventModal.
+      if (eventDraftConflicts(state, normalized).blocking.length > 0) return state;
       const stamp = nowIso();
       return {
         ...state,
@@ -3970,6 +3988,11 @@ export function reducer(state: AppData, action: Action): AppData {
       if (!state.events.some((e) => e.id === action.eventId)) return state;
       const normalized = normalizeEventDraft(state, action.draft);
       if (normalized === null) return state;
+      // Jak w ADD_EVENT, ale edytowane wydarzenie nie może kolidować SAMO ZE
+      // SOBĄ — inaczej samo otwarcie i zapis bez zmian byłoby odrzucone.
+      if (eventDraftConflicts(state, normalized, action.eventId).blocking.length > 0) {
+        return state;
+      }
       return {
         ...state,
         events: state.events.map((e) => {

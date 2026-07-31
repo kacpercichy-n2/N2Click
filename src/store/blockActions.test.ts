@@ -1228,28 +1228,58 @@ describe('SET_BLOCK_TIME adjacent-block merge', () => {
     ...overrides,
   });
 
-  it('does NOT merge exactly-adjacent same-task blocks when a calendar EVENT lies inside the fused span — the two blocks stay split (the drop still moved the block)', () => {
+  // ZMIANA REGUŁY: od wprowadzenia kolizji zadanie↔wydarzenie blok NIE MOŻE
+  // wylądować na spotkaniu tej osoby, więc to upuszczenie jest odrzucane JUŻ NA
+  // WEJŚCIU — wcześniej niż straż scalania. Poprzednia wersja tego testu
+  // sprawdzała stary kontrakt („upuszczenie przechodzi, tylko bez scalenia").
+  //
+  // Konsekwencja warta zapamiętania: dla WYDARZEŃ straż scalania jest teraz
+  // nieosiągalna tą ścieżką. Dwa stykające się bloki szczelnie wypełniają
+  // scalony przedział, więc wydarzenie leżące „wewnątrz" niego z konieczności
+  // nachodzi na jeden z bloków. Straż zostaje żywa dla wystąpień CYKLICZNYCH
+  // (test poniżej) — te świadomie nie blokują upuszczania.
+  it('rejects the drop entirely when the moved block would land on a calendar EVENT (same state reference)', () => {
     const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 480, plannedHours: 2, sortIndex: 0 }); // 480-600
     const e2 = makeEntry({ id: 'e2', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 100, plannedHours: 2, sortIndex: 1 }); // elsewhere
     const state = makeState({
       tasks: [makeTask({ id: 't1' })],
       workload: [e1, e2],
-      events: [makeEvent({ id: 'ev1', startMinutes: 600, durationMinutes: 60 })], // 600-660, inside fused 480-720
+      events: [makeEvent({ id: 'ev1', startMinutes: 600, durationMinutes: 60 })], // 600-660
     });
 
     const next = reducer(state, {
       type: 'SET_BLOCK_TIME',
       entryId: 'e2',
       date: '2026-07-08',
-      startMinutes: 600, // touches e1's end (600) — would fuse into 480-720 over the meeting
+      startMinutes: 600, // 600-720 wchodzi na spotkanie 600-660
       plannedHours: 2,
     });
 
-    expect(next.workload).toHaveLength(2); // NOT merged
-    expect(next.workload.find((w) => w.id === 'e1')!.plannedHours).toBe(2);
-    expect(next.workload.find((w) => w.id === 'e2')!.startMinutes).toBe(600); // the drop still applied
-    const activityMsg = next.activity[next.activity.length - 1].message;
-    expect(activityMsg).not.toContain('połączono sąsiednie bloki');
+    expect(next).toBe(state); // inwariant 6 — odrzucenie zachowuje referencję
+    expect(next.workload.find((w) => w.id === 'e2')!.startMinutes).toBe(100);
+  });
+
+  // Styk krawędzi nie jest kolizją: blok kończący się dokładnie tam, gdzie
+  // zaczyna się spotkanie, przechodzi. Bez tego blokada byłaby o 15 minut za
+  // szeroka i nie dałoby się zaplanować pracy „do" spotkania.
+  it('allows a drop that ENDS exactly where a calendar event starts', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-08', startMinutes: 100, plannedHours: 1, sortIndex: 0 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      workload: [e1],
+      events: [makeEvent({ id: 'ev1', startMinutes: 600, durationMinutes: 60 })], // 600-660
+    });
+
+    const next = reducer(state, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'e1',
+      date: '2026-07-08',
+      startMinutes: 540, // 540-600 styka się z 600, nie nachodzi
+      plannedHours: 1,
+    });
+
+    expect(next).not.toBe(state);
+    expect(next.workload.find((w) => w.id === 'e1')!.startMinutes).toBe(540);
   });
 
   it('does NOT merge exactly-adjacent same-task blocks when a recurring TASK occurrence lies inside the fused span', () => {

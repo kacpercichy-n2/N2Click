@@ -1,0 +1,139 @@
+// Komunikaty kolizji terminu wydarzenia. Czysty moduł, więc testujemy samo
+// BRZMIENIE — bez Reacta, bez DOM-u, bez store'u.
+import { describe, expect, it } from 'vitest';
+import {
+  type ConflictLike,
+  eventConflictBlockingMessage,
+  eventConflictWarningMessage,
+  extraConflictsPhrase,
+  peopleCountPhrase,
+} from './eventConflictMessage';
+
+function conflict(overrides: Partial<ConflictLike> = {}): ConflictLike {
+  return {
+    kind: 'block',
+    personId: 'p1',
+    personName: 'Ola Nowak',
+    title: 'Regresja QA',
+    startMinutes: 630, // 10:30
+    durationMinutes: 90, // do 12:00
+    ...overrides,
+  };
+}
+
+describe('peopleCountPhrase — odmiana przez liczebnik', () => {
+  it('używa liczby pojedynczej dla 1', () => {
+    expect(peopleCountPhrase(1)).toBe('1 osoba ma');
+  });
+
+  it('używa formy mnogiej „osoby mają" dla 2, 3 i 4', () => {
+    expect(peopleCountPhrase(2)).toBe('2 osoby mają');
+    expect(peopleCountPhrase(3)).toBe('3 osoby mają');
+    expect(peopleCountPhrase(4)).toBe('4 osoby mają');
+  });
+
+  it('używa formy „osób ma" od 5 w górę', () => {
+    expect(peopleCountPhrase(5)).toBe('5 osób ma');
+    expect(peopleCountPhrase(9)).toBe('9 osób ma');
+  });
+
+  // Nastki są wyjątkiem: 12 to NIE „12 osoby mają".
+  it('traktuje nastki jako formę dopełniaczową', () => {
+    expect(peopleCountPhrase(11)).toBe('11 osób ma');
+    expect(peopleCountPhrase(12)).toBe('12 osób ma');
+    expect(peopleCountPhrase(13)).toBe('13 osób ma');
+    expect(peopleCountPhrase(14)).toBe('14 osób ma');
+  });
+
+  // Setki wracają do zwykłej reguły: 22 to „22 osoby mają".
+  it('wraca do formy mnogiej powyżej nastek', () => {
+    expect(peopleCountPhrase(21)).toBe('21 osób ma');
+    expect(peopleCountPhrase(22)).toBe('22 osoby mają');
+    expect(peopleCountPhrase(25)).toBe('25 osób ma');
+  });
+});
+
+describe('extraConflictsPhrase — odmiana „kolejna kolizja"', () => {
+  it('odmienia przez liczebnik razem z wyjątkiem nastek', () => {
+    expect(extraConflictsPhrase(1)).toBe('1 kolejna kolizja');
+    expect(extraConflictsPhrase(3)).toBe('3 kolejne kolizje');
+    expect(extraConflictsPhrase(7)).toBe('7 kolejnych kolizji');
+    expect(extraConflictsPhrase(12)).toBe('12 kolejnych kolizji');
+    expect(extraConflictsPhrase(21)).toBe('21 kolejnych kolizji');
+    expect(extraConflictsPhrase(22)).toBe('22 kolejne kolizje');
+  });
+});
+
+describe('eventConflictBlockingMessage', () => {
+  it('zwraca puste zdanie dla braku kolizji (wywołujący nie pokazuje nic)', () => {
+    expect(eventConflictBlockingMessage([])).toBe('');
+  });
+
+  it('nazywa osobę, rodzaj, tytuł i zakres godzin', () => {
+    expect(eventConflictBlockingMessage([conflict()])).toBe(
+      'Nie da się ustawić wydarzenia w tych godzinach. Ola Nowak ma już zadanie „Regresja QA" 10:30-12:00.',
+    );
+  });
+
+  it('rozróżnia rodzaj kolidującej pozycji', () => {
+    expect(eventConflictBlockingMessage([conflict({ kind: 'event', title: 'Standup' })])).toContain(
+      'ma już wydarzenie „Standup"',
+    );
+    expect(
+      eventConflictBlockingMessage([conflict({ kind: 'recurrence', title: 'Przegląd' })]),
+    ).toContain('ma już zadanie cykliczne „Przegląd"');
+  });
+
+  it('wymienia dwie kolizje z nazwy, a resztę zbiera licznikiem', () => {
+    const many = [
+      conflict({ personName: 'Ola Nowak' }),
+      conflict({ personName: 'Marek Wiśniewski' }),
+      conflict({ personName: 'Kasia Kowalska' }),
+      conflict({ personName: 'Jan Nowak' }),
+    ];
+    const msg = eventConflictBlockingMessage(many);
+    expect(msg).toContain('Ola Nowak');
+    expect(msg).toContain('Marek Wiśniewski');
+    expect(msg).not.toContain('Kasia Kowalska');
+    expect(msg).toContain('(i 2 kolejne kolizje)');
+  });
+
+  // Łagodna degradacja: brak nazwy/tytułu nie może dać „ ma już  ".
+  it('znosi brak nazwy osoby i brak tytułu', () => {
+    expect(eventConflictBlockingMessage([conflict({ personName: '', title: '' })])).toBe(
+      'Nie da się ustawić wydarzenia w tych godzinach. Ta osoba ma już zadanie 10:30-12:00.',
+    );
+  });
+
+  // Zakresy godzin piszemy łącznikiem — myślnik i półpauza są zabronione
+  // w tekstach widocznych dla użytkownika.
+  it('nie używa myślnika ani półpauzy', () => {
+    const msg = eventConflictBlockingMessage([conflict()]);
+    expect(msg).not.toContain('—');
+    expect(msg).not.toContain('–');
+  });
+});
+
+describe('eventConflictWarningMessage', () => {
+  it('zwraca puste zdanie dla braku kolizji', () => {
+    expect(eventConflictWarningMessage([])).toBe('');
+  });
+
+  it('liczy RÓŻNE osoby, nie kolizje', () => {
+    const sameTwice = [
+      conflict({ personId: 'p1', title: 'Zadanie A' }),
+      conflict({ personId: 'p1', title: 'Zadanie B' }),
+      conflict({ personId: 'p1', kind: 'event', title: 'Spotkanie C' }),
+    ];
+    expect(eventConflictWarningMessage(sameTwice)).toBe(
+      'Wydarzenie ogólnofirmowe: 1 osoba ma już coś zaplanowane w tych godzinach.',
+    );
+  });
+
+  it('odmienia komunikat przez liczbę zajętych osób', () => {
+    const three = ['p1', 'p2', 'p3'].map((personId) => conflict({ personId }));
+    expect(eventConflictWarningMessage(three)).toBe(
+      'Wydarzenie ogólnofirmowe: 3 osoby mają już coś zaplanowane w tych godzinach.',
+    );
+  });
+});

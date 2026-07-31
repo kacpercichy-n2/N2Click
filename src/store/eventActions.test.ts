@@ -8,7 +8,7 @@ import { reducer, type EventDraft } from './AppStore';
 import { emptyData } from './storage';
 import { calendarEventsForDate, dayTotal } from './selectors';
 import { isValidEventDraft } from './commandValidation';
-import type { AppData, CalendarEvent, Person } from '../types';
+import type { AppData, CalendarEvent, Person, Task, WorkloadEntry } from '../types';
 
 const PA = '11111111-1111-4111-8111-111111111111';
 const PB = '22222222-2222-4222-8222-222222222222';
@@ -246,5 +246,143 @@ describe('calendarEventsForDate', () => {
   it('wydarzenia NIE zwiększają dayTotal (inwariant 1)', () => {
     const state = baseState([event({ date: MON, startMinutes: 600, durationMinutes: 120 })]);
     expect(dayTotal(state, MON)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Kolizja terminu (kierunek „wydarzenie -> zajęty czas osoby").
+//
+// Próg jest RÓŻNY zależnie od listy uczestników i to jest sedno tych testów:
+// uczestnik IMIENNY blokuje zapis, wydarzenie OGÓLNOFIRMOWE przechodzi (inaczej
+// spotkania całofirmowego nie dałoby się wstawić w godzinach pracy). Odrzucenie
+// zawsze zwraca TĘ SAMĄ referencję stanu (inwariant 6).
+// ---------------------------------------------------------------------------
+
+const TASK_ID = '44444444-4444-4444-8444-444444444444';
+
+function taskFor(): Task {
+  return {
+    id: TASK_ID,
+    projectId: 'proj1',
+    statusId: 'status1',
+    title: 'Regresja QA',
+    description: '',
+    startDate: MON,
+    endDate: MON,
+    estimatedHours: null,
+    priority: 'normal',
+    workCategoryId: '',
+    departmentId: '',
+    checklist: [],
+    orderIndex: 0,
+    createdAt: '2026-07-01T08:00:00.000Z',
+    updatedAt: '2026-07-01T08:00:00.000Z',
+  };
+}
+
+/** Blok osoby `personId` w dniu `MON`, 10:00-11:00 (600-660). */
+function blockFor(personId: string): WorkloadEntry {
+  return {
+    id: '55555555-5555-4555-8555-555555555555',
+    taskId: TASK_ID,
+    personId,
+    date: MON,
+    plannedHours: 1,
+    startMinutes: 600,
+    sortIndex: 0,
+  };
+}
+
+function stateWithBlock(personId: string, events: CalendarEvent[] = []): AppData {
+  return { ...baseState(events), tasks: [taskFor()], workload: [blockFor(personId)] };
+}
+
+describe('ADD_EVENT — kolizja terminu', () => {
+  it('ODRZUCA wydarzenie nachodzące na blok imiennego uczestnika (ta sama referencja)', () => {
+    const state = stateWithBlock(PA);
+    // Blok PA: 600-660. Wydarzenie 630-690 nachodzi.
+    const next = reducer(state, {
+      type: 'ADD_EVENT',
+      draft: draft({ attendeeIds: [PA], startMinutes: 630, durationMinutes: 60 }),
+    });
+    expect(next).toBe(state);
+    expect(next.events).toHaveLength(0);
+  });
+
+  it('PRZEPUSZCZA wydarzenie, gdy zajęta jest INNA osoba niż uczestnik', () => {
+    const state = stateWithBlock(PB); // zajęty jest PB
+    const next = reducer(state, {
+      type: 'ADD_EVENT',
+      draft: draft({ attendeeIds: [PA], startMinutes: 630, durationMinutes: 60 }),
+    });
+    expect(next.events).toHaveLength(1);
+  });
+
+  it('PRZEPUSZCZA wydarzenie stykające się krawędzią z blokiem', () => {
+    const state = stateWithBlock(PA); // blok 600-660
+    const next = reducer(state, {
+      type: 'ADD_EVENT',
+      draft: draft({ attendeeIds: [PA], startMinutes: 660, durationMinutes: 60 }), // 660-720
+    });
+    expect(next.events).toHaveLength(1);
+  });
+
+  it('PRZEPUSZCZA wydarzenie OGÓLNOFIRMOWE, nawet gdy wszyscy są zajęci', () => {
+    const state = stateWithBlock(PA);
+    const next = reducer(state, {
+      type: 'ADD_EVENT',
+      draft: draft({ attendeeIds: [], startMinutes: 630, durationMinutes: 60 }),
+    });
+    expect(next.events).toHaveLength(1);
+  });
+
+  it('ODRZUCA wydarzenie nachodzące na INNE wydarzenie tego uczestnika', () => {
+    const existing = event({ id: 'ev-existing', date: MON, startMinutes: 600, durationMinutes: 60, attendeeIds: [PA] });
+    const state = baseState([existing]);
+    const next = reducer(state, {
+      type: 'ADD_EVENT',
+      draft: draft({ attendeeIds: [PA], startMinutes: 630, durationMinutes: 60 }),
+    });
+    expect(next).toBe(state);
+    expect(next.events).toHaveLength(1);
+  });
+
+  // Wydarzenie ogólnofirmowe ZAJMUJE każdą osobę, więc imienne wydarzenie na tych
+  // samych godzinach musi zostać odrzucone.
+  it('ODRZUCA imienne wydarzenie nachodzące na wydarzenie OGÓLNOFIRMOWE', () => {
+    const allHands = event({ id: 'ev-all', date: MON, startMinutes: 600, durationMinutes: 60, attendeeIds: [] });
+    const state = baseState([allHands]);
+    const next = reducer(state, {
+      type: 'ADD_EVENT',
+      draft: draft({ attendeeIds: [PA], startMinutes: 630, durationMinutes: 60 }),
+    });
+    expect(next).toBe(state);
+  });
+});
+
+describe('SAVE_EVENT — kolizja terminu', () => {
+  it('NIE traktuje edytowanego wydarzenia jako kolizji z samym sobą', () => {
+    const existing = event({ id: 'ev-self', date: MON, startMinutes: 600, durationMinutes: 60, attendeeIds: [PA] });
+    const state = baseState([existing]);
+    // Zapis tych samych godzin ze zmienionym tytułem musi przejść.
+    const next = reducer(state, {
+      type: 'SAVE_EVENT',
+      eventId: 'ev-self',
+      draft: draft({ title: 'Nowy tytuł', attendeeIds: [PA], startMinutes: 600, durationMinutes: 60 }),
+    });
+    expect(next).not.toBe(state);
+    expect(next.events[0].title).toBe('Nowy tytuł');
+  });
+
+  it('ODRZUCA przesunięcie edytowanego wydarzenia na blok uczestnika', () => {
+    const existing = event({ id: 'ev-self', date: MON, startMinutes: 60, durationMinutes: 60, attendeeIds: [PA] });
+    const state = { ...stateWithBlock(PA), events: [existing] };
+    const next = reducer(state, {
+      type: 'SAVE_EVENT',
+      eventId: 'ev-self',
+      draft: draft({ attendeeIds: [PA], startMinutes: 630, durationMinutes: 60 }), // na blok 600-660
+    });
+    expect(next).toBe(state);
+    expect(next.events[0].startMinutes).toBe(60);
   });
 });

@@ -611,6 +611,14 @@ export function calendarEventsForDate(
  * kolidują z blokami — ale scalenie (funkcja intencjonalna) NIE MOŻE po cichu
  * połknąć spotkania, wokół którego użytkownik rozdzielił dwa bloki. Stykająca
  * się krawędź nie jest przykryciem (rangesOverlap traktuje styk jako brak kolizji).
+ *
+ * UWAGA po wprowadzeniu kolizji zadanie↔wydarzenie: połowa WYDARZENIOWA tej
+ * straży jest przez `SET_BLOCK_TIME` praktycznie nieosiągalna — dwa stykające się
+ * bloki szczelnie wypełniają scalony przedział, więc wydarzenie leżące w środku
+ * nachodzi na jeden z nich i `blockCollidesWithEvent` odrzuca upuszczenie
+ * wcześniej. Zostaje tu celowo jako obrona w głąb i dla ewentualnych przyszłych
+ * ścieżek scalania. Połowa CYKLICZNA jest nadal w pełni żywa: wystąpienia zadań
+ * cyklicznych nie blokują upuszczania.
  */
 export function mergeCoversEventOrRecurrence(
   state: AppData,
@@ -627,6 +635,181 @@ export function mergeCoversEventOrRecurrence(
   }
   for (const { occurrence } of recurrenceOccurrencesForDate(state, date, forPerson)) {
     if (rangesOverlap(mergedStart, mergedEnd, occurrence.startMinutes, occurrence.startMinutes + occurrence.durationMinutes)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Co dokładnie zajmuje czas osoby w kolidującym zakresie. */
+export type ScheduleConflictKind = 'block' | 'event' | 'recurrence';
+
+/**
+ * Jedna kolidująca pozycja. Nośnik KOMUNIKATU (kto, co, kiedy), nie decyzji —
+ * o blokowaniu rozstrzyga wywołujący, bo próg jest różny dla wydarzenia
+ * imiennego i ogólnofirmowego (patrz {@link eventDraftConflicts}).
+ */
+export interface ScheduleConflict {
+  kind: ScheduleConflictKind;
+  personId: string;
+  /** Nazwa osoby; '' gdy osoba zniknęła ze stanu (łagodna degradacja). */
+  personName: string;
+  /** Tytuł zadania albo wydarzenia; '' gdy źródło zniknęło. */
+  title: string;
+  startMinutes: number;
+  durationMinutes: number;
+}
+
+/**
+ * Wszystko, co zajmuje czas WSKAZANYCH osób w [startMinutes, +durationMinutes)
+ * danego dnia: realne bloki kalendarza (`WorkloadEntry`), wydarzenia oraz
+ * wystąpienia zadań cyklicznych. Czysta funkcja odczytu — nie liczy godzin ani
+ * przeciążenia, więc inwariant 1 zostaje nietknięty (godziny nadal żyją tylko
+ * w `WorkloadEntry`).
+ *
+ * Stykająca się krawędź NIE jest kolizją (`rangesOverlap`), więc blok 9:00–10:00
+ * i spotkanie 10:00–11:00 przechodzą — dokładnie jak w modelu przeciągania.
+ *
+ * `personIds` jest deduplikowane; nieznane id po prostu nie wnosi konfliktów.
+ */
+export function scheduleConflictsForRange(
+  state: AppData,
+  personIds: readonly string[],
+  date: DateStr,
+  startMinutes: number,
+  durationMinutes: number,
+  opts?: {
+    /** Wydarzenie edytowane — nie może kolidować samo ze sobą. */
+    excludeEventId?: string;
+    /** Blok przenoszony — nie może kolidować sam ze sobą. */
+    excludeEntryId?: string;
+  },
+): ScheduleConflict[] {
+  const end = startMinutes + durationMinutes;
+  const out: ScheduleConflict[] = [];
+  const seenPeople = new Set<string>();
+
+  for (const personId of personIds) {
+    if (seenPeople.has(personId)) continue;
+    seenPeople.add(personId);
+    const personName = getPerson(state, personId)?.name ?? '';
+    const forPerson = new Set([personId]);
+
+    for (const block of blocksForPersonDate(state, personId, date)) {
+      if (opts?.excludeEntryId !== undefined && block.id === opts.excludeEntryId) continue;
+      const blockEndMin = blockEndMinutes(block.startMinutes, block.plannedHours);
+      if (!rangesOverlap(startMinutes, end, block.startMinutes, blockEndMin)) continue;
+      out.push({
+        kind: 'block',
+        personId,
+        personName,
+        title: getTask(state, block.taskId)?.title ?? '',
+        startMinutes: block.startMinutes,
+        durationMinutes: blockEndMin - block.startMinutes,
+      });
+    }
+
+    for (const occ of calendarEventsForDate(state, date, forPerson)) {
+      if (opts?.excludeEventId !== undefined && occ.event.id === opts.excludeEventId) continue;
+      if (!rangesOverlap(startMinutes, end, occ.startMinutes, occ.startMinutes + occ.durationMinutes)) {
+        continue;
+      }
+      out.push({
+        kind: 'event',
+        personId,
+        personName,
+        title: occ.event.title,
+        startMinutes: occ.startMinutes,
+        durationMinutes: occ.durationMinutes,
+      });
+    }
+
+    for (const { task, occurrence } of recurrenceOccurrencesForDate(state, date, forPerson)) {
+      if (!rangesOverlap(startMinutes, end, occurrence.startMinutes, occurrence.startMinutes + occurrence.durationMinutes)) {
+        continue;
+      }
+      out.push({
+        kind: 'recurrence',
+        personId,
+        personName,
+        title: task.title,
+        startMinutes: occurrence.startMinutes,
+        durationMinutes: occurrence.durationMinutes,
+      });
+    }
+  }
+
+  return out;
+}
+
+/** Wynik kontroli draftu wydarzenia: co blokuje zapis, a co tylko informuje. */
+export interface EventConflictReport {
+  /** Niepuste => zapis MUSI zostać odrzucony (reduktor + bramka UI). */
+  blocking: ScheduleConflict[];
+  /** Wyłącznie informacyjne — zapis przechodzi. */
+  warning: ScheduleConflict[];
+}
+
+/**
+ * Kolizje draftu wydarzenia, z PROGIEM zależnym od listy uczestników:
+ *
+ * - Uczestnicy IMIENNI (`attendeeIds` niepuste) => kolizja BLOKUJE zapis. Wiemy
+ *   konkretnie, kogo zajmujemy, więc „nie da się ustawić w tych godzinach" jest
+ *   uczciwe i wykonalne.
+ * - Wydarzenie OGÓLNOFIRMOWE (`attendeeIds` puste) => kolizja tylko OSTRZEGA.
+ *   Twarda blokada liczona po wszystkich osobach czyniłaby spotkanie całofirmowe
+ *   praktycznie niemożliwym do wstawienia w godzinach pracy: wystarczyłaby jedna
+ *   zajęta osoba z kilkunastu.
+ *
+ * ZAKRES DATY: sprawdzana jest WYŁĄCZNIE data kotwicy draftu. Dla wydarzenia
+ * cyklicznego pozostałe wystąpienia nie są kontrolowane — kontrola wszystkich
+ * przyszłych wystąpień blokowałaby niemal każdą regułę i wymagałaby horyzontu,
+ * którego model nie ma.
+ */
+export function eventDraftConflicts(
+  state: AppData,
+  draft: {
+    date: DateStr;
+    startMinutes: number;
+    durationMinutes: number;
+    attendeeIds: readonly string[];
+  },
+  excludeEventId?: string,
+): EventConflictReport {
+  const companyWide = draft.attendeeIds.length === 0;
+  const personIds = companyWide ? state.people.map((p) => p.id) : draft.attendeeIds;
+  const conflicts = scheduleConflictsForRange(
+    state,
+    personIds,
+    draft.date,
+    draft.startMinutes,
+    draft.durationMinutes,
+    excludeEventId !== undefined ? { excludeEventId } : undefined,
+  );
+  return companyWide
+    ? { blocking: [], warning: conflicts }
+    : { blocking: conflicts, warning: [] };
+}
+
+/**
+ * Czy blok [startMinutes, +plannedHours) tej osoby wchodziłby na jej WYDARZENIE
+ * tego dnia? Strażnik kierunku „zadanie → wydarzenie" w kalendarzu.
+ *
+ * Świadomie NIE obejmuje wystąpień zadań cyklicznych: te zostają czysto
+ * prezentacyjne (inwariant 1) i nigdy nie wchodzą do modelu przeciągania.
+ * Wchodzą natomiast do {@link scheduleConflictsForRange}, bo tam służą tylko do
+ * OPISANIA konfliktu przy zapisie wydarzenia, a nie do blokowania przeciągania.
+ */
+export function blockCollidesWithEvent(
+  state: AppData,
+  personId: string,
+  date: DateStr,
+  startMinutes: number,
+  plannedHours: number,
+): boolean {
+  const end = blockEndMinutes(startMinutes, plannedHours);
+  for (const occ of calendarEventsForDate(state, date, new Set([personId]))) {
+    if (rangesOverlap(startMinutes, end, occ.startMinutes, occ.startMinutes + occ.durationMinutes)) {
       return true;
     }
   }

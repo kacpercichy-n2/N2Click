@@ -11,6 +11,11 @@ import { useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import type { EventDraft } from '../store/AppStore';
 import { isValidEventDraft } from '../store/commandValidation';
+import { eventDraftConflicts } from '../store/selectors';
+import {
+  eventConflictBlockingMessage,
+  eventConflictWarningMessage,
+} from '../utils/eventConflictMessage';
 import type { CalendarEvent } from '../types';
 import { addDaysStr, isValidDateStr, todayStr, WEEKDAY_LABELS } from '../utils/dates';
 import { MINUTE_STEP } from '../utils/time';
@@ -400,6 +405,24 @@ function EventEditor({
 
   const sortedPeople = useMemo(() => sortByNamePl(state.people), [state.people]);
 
+  // Żywe, NIEBLOKUJĄCE ostrzeżenie dla wydarzenia OGÓLNOFIRMOWEGO (brak imiennych
+  // uczestników). Kolizje imienne mają twardą bramkę na zapisie, więc nie ma po co
+  // ich tu dublować — a spotkanie całofirmowe wolno zapisać i chcemy tylko wiedzieć,
+  // ilu osób dotknie. Liczone WYŁĄCZNIE dla sensownej daty i zakresu godzin, żeby
+  // podpowiedź nie migała w trakcie pisania w polach czasu.
+  const conflictWarning = useMemo(() => {
+    if (attendeeIds.length > 0 || !isValidDateStr(date)) return '';
+    const from = snapToGrid(timeToMinutes(startTime));
+    const to = snapToGrid(timeToMinutes(endTime));
+    if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return '';
+    const report = eventDraftConflicts(
+      state,
+      { date, startMinutes: from, durationMinutes: to - from, attendeeIds },
+      existing?.id,
+    );
+    return eventConflictWarningMessage(report.warning);
+  }, [state, date, startTime, endTime, attendeeIds, existing?.id]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (readOnly) return;
@@ -478,6 +501,18 @@ function EventEditor({
           ? 'Nie udało się zapisać. Sprawdź cykliczność — „Do" nie może być wcześniejsze niż pierwsze wystąpienie wydarzenia.'
           : 'Nie udało się zapisać wydarzenia. Sprawdź wprowadzone dane.',
       });
+      return;
+    }
+
+    // Kolizja terminu — LUSTRO bramki reduktora (`ADD_EVENT`/`SAVE_EVENT` zwracają
+    // tę samą referencję stanu). Bez tego zapis „zniknąłby po cichu": modal by się
+    // zamknął, a wydarzenia by nie było. Blokują wyłącznie kolizje uczestników
+    // IMIENNYCH; ogólnofirmowe wracają jako `warning` i lecą do żywej podpowiedzi
+    // niżej, nie tutaj.
+    const conflicts = eventDraftConflicts(state, draft, existing?.id);
+    if (conflicts.blocking.length > 0) {
+      setErrors({ form: eventConflictBlockingMessage(conflicts.blocking) });
+      focusFieldById('event-start');
       return;
     }
     setErrors({});
@@ -588,6 +623,13 @@ function EventEditor({
       {errors.time && (
         <p className="field-error" id="event-time-error">
           {errors.time}
+        </p>
+      )}
+      {/* Ostrzeżenie, NIE błąd: zapis przechodzi. `role="status"` (nie `alert`),
+          żeby czytnik ekranu nie przerywał pisania w polach czasu. */}
+      {conflictWarning !== '' && (
+        <p className="event-conflict-warn" role="status">
+          ⚠ {conflictWarning}
         </p>
       )}
 

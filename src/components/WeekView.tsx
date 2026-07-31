@@ -36,6 +36,7 @@ import { pl } from 'date-fns/locale/pl';
 import {
   availableHoursOnDate,
   blockCollides,
+  blockCollidesWithEvent,
   blocksForPersonDate,
   blockIsDone,
   type CalendarEventOccurrence,
@@ -52,7 +53,7 @@ import {
   taskGrowAllowance,
   taskIdsOfPerson,
 } from '../store/selectors';
-import { buildWeekModel, personDateKey } from './weekViewModel';
+import { buildWeekModel, type BusyInterval, personDateKey } from './weekViewModel';
 import {
   doneTickTopPx,
   isOffHour,
@@ -241,6 +242,23 @@ interface DragState {
   willMergeEdge: 'top' | 'bottom' | null; // which edge touches the neighbor
 }
 
+/**
+ * Czy zakres [start, end) wchodzi na WYDARZENIE tej osoby tego dnia?
+ *
+ * Wystąpienia zadań cyklicznych są tu POMIJANE (`kind === 'event'`): zostają
+ * czysto prezentacyjne i nigdy nie blokują przeciągania (inwariant 1). Straż
+ * scalania czyta ten sam indeks BEZ tego filtra, bo scalenie nie może połknąć
+ * żadnego z dwóch rodzajów. Lustro reduktorowego `blockCollidesWithEvent`.
+ */
+function overlapsEvent(
+  busy: BusyInterval[] | undefined,
+  start: number,
+  end: number,
+): boolean {
+  if (busy === undefined) return false;
+  return busy.some((b) => b.kind === 'event' && rangesOverlap(start, end, b.start, b.end));
+}
+
 interface BlockProps {
   entry: WorkloadEntry;
   task: Task;
@@ -267,8 +285,9 @@ interface BlockProps {
   // Per-(person, date) presentational-occupancy index (calendar events + recurring
   // occurrences) from the memoized model. Lets the will-merge affordance mirror the
   // reducer's merge guard — a fused block must never silently swallow a meeting —
-  // without a per-drag-frame global scan. Stable reference (memo-safe).
-  eventBusyByPersonDate: Map<string, Array<{ start: number; end: number }>>;
+  // without a per-drag-frame global scan, AND lets the drop gate reject a block
+  // landing on a meeting (`kind: 'event'` only). Stable reference (memo-safe).
+  eventBusyByPersonDate: Map<string, BusyInterval[]>;
   // Per-block boolean (not the raw id): only the OLD and NEW merge target flip,
   // so changing the merge target during a drag re-renders just those two blocks
   // plus the dragged one, not every block.
@@ -598,9 +617,15 @@ function TimedBlockImpl({
     // identical to `blockCollides` (per-person, filter-independent).
     const projDate = days[projDayIndex];
     const dayBlocks = blocksByPersonDate.get(personDateKey(person.id, projDate)) ?? [];
+    const projBusy = eventBusyByPersonDate.get(personDateKey(person.id, projDate));
+    // Dwa powody kolizji, jedna flaga: inny blok tej osoby ALBO jej spotkanie.
+    // Oba odrzuca ta sama bramka reduktora (`setBlockTime`), więc podświetlenie
+    // musi zapalać się w obu przypadkach — inaczej upuszczenie wyglądałoby na
+    // dozwolone i po cichu nic by nie zrobiło.
     const colliding = overBin
       ? false
-      : hasCollision(dayBlocks, projStart, hoursToMinutes(projHours), entry.id);
+      : hasCollision(dayBlocks, projStart, hoursToMinutes(projHours), entry.id) ||
+        overlapsEvent(projBusy, projStart, blockEndMinutes(projStart, projHours));
 
     // Will-merge affordance: mirror the reducer's merge predicate exactly — same
     // task, same person, same date, exact adjacency (touching edge), no collision,
@@ -627,7 +652,9 @@ function TimedBlockImpl({
           projEnd,
           blockEndMinutes(neighbor.startMinutes, neighbor.plannedHours),
         );
-        const busy = eventBusyByPersonDate.get(personDateKey(person.id, projDate)) ?? [];
+        // BEZ filtra rodzaju: scalenie nie może połknąć ani spotkania, ani
+        // wystąpienia cyklicznego (to jest cały sens straży).
+        const busy = projBusy ?? [];
         const covers = busy.some((b) => rangesOverlap(mergedStart, mergedEnd, b.start, b.end));
         if (!covers) {
           willMergeWithId = neighbor.id;
@@ -732,13 +759,35 @@ function TimedBlockImpl({
     dayCount: days.length,
     maxHours: kbMaxHours.current,
     // Ten sam indeks per (osoba, data), z którego czyta kolizje przeciąganie.
-    blocksOnDay: (i) =>
-      (blocksByPersonDate.get(personDateKey(person.id, days[i])) ?? []).map((w) => ({
+    //
+    // WYDARZENIA wchodzą tu jako PSEUDO-SĄSIEDZI, a nie jako osobna gałąź w
+    // automacie stanu: dzięki temu czysty `calendarBlockKeyboard.ts` zostaje bez
+    // zmian, a i tak dostajemy jedno i drugie — `colliding` zapala się na
+    // spotkaniu (więc `blockKeyboardCommit` nie wyśle akcji, inwariant 3), a
+    // `findBlockConflict` zwraca je jako winowajcę, więc ogłoszenie nazywa
+    // spotkanie z tytułu zamiast mówić o nieistniejącym bloku. Syntetyczne `id`
+    // z prefiksem nigdy nie zrówna się z `entry.id` (te pochodzą z `uid()`).
+    // Wystąpienia cykliczne świadomie POMIJAMY — nie blokują przeciągania.
+    blocksOnDay: (i) => {
+      const date = days[i];
+      const blocks = (blocksByPersonDate.get(personDateKey(person.id, date)) ?? []).map((w) => ({
         id: w.id,
         startMinutes: w.startMinutes,
         plannedHours: w.plannedHours,
         title: getTask(getState(), w.taskId)?.title ?? '',
-      })),
+      }));
+      const busy = eventBusyByPersonDate.get(personDateKey(person.id, date)) ?? [];
+      for (const [idx, b] of busy.entries()) {
+        if (b.kind !== 'event') continue;
+        blocks.push({
+          id: `event:${date}:${idx}`,
+          startMinutes: b.start,
+          plannedHours: (b.end - b.start) / 60,
+          title: b.title ?? '',
+        });
+      }
+      return blocks;
+    },
   });
 
   const kbGeometry = (s: {
@@ -1262,6 +1311,9 @@ interface BinCardProps {
   // Per-(person, date) collision index (see BlockProps); replaces the per-frame
   // `blockCollides` workload scan while a bin card drags over the grid.
   blocksByPersonDate: Map<string, WorkloadEntry[]>;
+  // Zajętość prezentacyjna (see BlockProps). Karta zasobnika potrzebuje jej z tego
+  // samego powodu co blok: upuszczenie na SPOTKANIE tej osoby odrzuca reduktor.
+  eventBusyByPersonDate: Map<string, BusyInterval[]>;
   editable: boolean;
   // Stable parent callbacks taking the card's own data (memo-friendly).
   onOpen: (taskId: string, entryId: string) => void;
@@ -1282,6 +1334,7 @@ function BinCardImpl({
   gridRef,
   viewportRef,
   blocksByPersonDate,
+  eventBusyByPersonDate,
   editable,
   onOpen,
   onContextMenu,
@@ -1429,10 +1482,16 @@ function BinCardImpl({
       const dayBlocks = valid
         ? blocksByPersonDate.get(personDateKey(person.id, days[colIndex])) ?? []
         : [];
+      // Jak przy przeciąganiu bloku: kolizją jest też SPOTKANIE tej osoby, bo
+      // `setBlockTime` odrzuci takie upuszczenie.
+      const dayBusy = valid
+        ? eventBusyByPersonDate.get(personDateKey(person.id, days[colIndex]))
+        : undefined;
       colliding = unplaceable
         ? true
         : valid
-          ? hasCollision(dayBlocks, startMin, hoursToMinutes(entry.plannedHours))
+          ? hasCollision(dayBlocks, startMin, hoursToMinutes(entry.plannedHours)) ||
+            overlapsEvent(dayBusy, startMin, startMin + hoursToMinutes(entry.plannedHours))
           : false;
     }
 
@@ -2500,6 +2559,13 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
     } else if (blockCollides(state, menu.entry.personId, schedDate, schedStartMin, schedHours)) {
       schedWarning = '⚠ Koliduje z innym blokiem tej osoby w tym dniu.';
       schedDisabled = true;
+    } else if (
+      blockCollidesWithEvent(state, menu.entry.personId, schedDate, schedStartMin, schedHours)
+    ) {
+      // Osobny komunikat od kolizji blok-blok: użytkownik ma wiedzieć, że blokuje
+      // go SPOTKANIE, nie inne zadanie — inaczej szukałby bloku, którego nie ma.
+      schedWarning = '⚠ Koliduje z wydarzeniem tej osoby w tym dniu.';
+      schedDisabled = true;
     } else if (schedTask) {
       const startDate = schedDate < schedTask.startDate ? schedDate : schedTask.startDate;
       const endDate = schedDate > schedTask.endDate ? schedDate : schedTask.endDate;
@@ -2568,6 +2634,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                     gridRef={gridRef}
                     viewportRef={viewportRef}
                     blocksByPersonDate={model.blocksByPersonDate}
+                    eventBusyByPersonDate={model.eventBusyByPersonDate}
                     editable={canEditEntry(p.id)}
                     onOpen={handleOpenTask}
                     onContextMenu={openMenu}

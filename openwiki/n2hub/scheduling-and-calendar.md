@@ -20,6 +20,9 @@
   the px bounds fed to CSS as `--week-work-top`/`--week-work-bottom`.
 - `src/utils/time.ts` owns pure time calculations, collision checks, packing,
   free-slot search and quarter-hour math.
+- `src/utils/eventConflictMessage.ts` (pure, zero importu store'u) owns POLSKIE
+  komunikaty kolizji terminu wraz z odmianą przez liczebnik („1 osoba ma",
+  „22 osoby mają", „21 osób ma"). Zakresy godzin łącznikiem, nigdy półpauzą.
 - `src/utils/touchDrag.ts` (pure state machine) + `src/utils/useTouchDragGate.ts`
   (React wrapper) own the touch long-press gate in FRONT of every drag entry.
 - `src/components/calendarBlockKeyboard.ts` (pure state machine + polskie
@@ -56,6 +59,7 @@
   day. A task period is at most 92 days.
 - Same-person collisions block calendar drag/resize and automatic placement.
   Intentional TaskModal allocation edits may overlap and render side-by-side.
+  Od 2026-07-30 „kolizja" obejmuje też WYDARZENIE tej osoby — patrz niżej.
 - Bin work uses exactly one row per `(taskId, personId)`. `SCHEDULE_BIN_PART`
   keeps that row identity, decrements it atomically and removes it only at zero.
 - Sold-hours model (2026-07-17): TaskModal edits per-person TOTAL hours
@@ -176,12 +180,44 @@
   `.month-cell-recur` ⟳ marker (no blocks/menu). The rule is edited in TaskModal
   via explicit dispatch, never through the SAVE_TASK draft/auto-save. All bin
   drag, pointer lifecycle and rendered-column hit-testing paths are untouched.
-- Calendar events / meetings (2026-07-21) are PRESENTATIONAL ONLY (invariant 1):
+- Kolizja termin↔termin (2026-07-30, ZMIANA reguły z 2026-07-21): wydarzenia
+  WCHODZĄ do kolizji — ale WYŁĄCZNIE do nich. Nadal nie zasilają `packDayBlocks`,
+  sum, `dayTotal` ani przeciążenia, więc inwariant 1 (godziny żyją tylko
+  w `WorkloadEntry`) zostaje nietknięty. Dwa kierunki, dwa progi:
+  - „wydarzenie → zajęty czas": `eventDraftConflicts` (selectors.ts) liczy kolizje
+    draftu z blokami, wydarzeniami I wystąpieniami cyklicznymi wskazanych osób.
+    Uczestnicy IMIENNI => `blocking`, `ADD_EVENT`/`SAVE_EVENT` odrzucają zapis tą
+    samą referencją stanu (inwariant 6), a EventModal pokazuje zdanie z
+    `eventConflictBlockingMessage`. Wydarzenie OGÓLNOFIRMOWE (`attendeeIds` puste)
+    => `warning`: zapis PRZECHODZI, a modal pokazuje żywą, ostrzegawczą linię
+    `.event-conflict-warn` z licznikiem osób. Twarda blokada liczona po wszystkich
+    czyniłaby spotkanie całofirmowe niewstawialnym w godzinach pracy.
+    ZAKRES: sprawdzana jest wyłącznie data kotwicy draftu — pozostałe wystąpienia
+    reguły cyklicznej NIE są kontrolowane.
+  - „zadanie → wydarzenie": `blockCollidesWithEvent` blokuje blok wchodzący na
+    SPOTKANIE tej osoby. Autorytatywnie w `setBlockTime`; w UI zapala `colliding`
+    przy przeciąganiu bloku i karty zasobnika, daje osobny komunikat w menu
+    „Zaplanuj część" („⚠ Koliduje z wydarzeniem tej osoby w tym dniu.") i wchodzi
+    do ścieżki klawiaturowej jako PSEUDO-SĄSIAD w `blocksOnDay` (czysty
+    `calendarBlockKeyboard.ts` bez zmian, a `findBlockConflict` nazywa spotkanie).
+    Wystąpienia cyklicznych zadań świadomie NIE blokują tego kierunku.
+  - Styk krawędzi nie jest kolizją w żadnym z kierunków (`rangesOverlap`).
+  - `eventBusyByPersonDate` niesie teraz `kind` i `title`, a POKRYCIE poszerzyło
+    się z „par z co najmniej jednym blokiem" na „właściciele wierszy
+    `state.workload` × renderowane dni" — dzień z samym spotkaniem jest legalnym
+    celem upuszczenia. Straż scalania czyta WSZYSTKIE rodzaje, bramka upuszczania
+    tylko `kind: 'event'`.
+  - Skutek uboczny wart pamięci: wydarzeniowa połowa
+    `mergeCoversEventOrRecurrence` jest przez `SET_BLOCK_TIME` praktycznie
+    nieosiągalna (dwa stykające się bloki szczelnie wypełniają scalony przedział,
+    więc wydarzenie w środku nachodzi na jeden z nich i upuszczenie pada
+    wcześniej). Połowa cykliczna zostaje w pełni żywa.
+- Calendar events / meetings (2026-07-21) are otherwise PRESENTATIONAL (invariant 1):
   WeekView renders each `calendarEventsForDate` occurrence as an additive
   `.week-event-block` overlay (solid cyan border + left bar, `--event-accent`,
   📅), positioned by `startMinutes`, height ∝ `durationMinutes`, painted BEHIND
   real task blocks (tree order, `z-index: 0`); events never enter `packDayBlocks`,
-  collisions, totals, `dayTotal` or overload and carry NO pointer/drag handlers —
+  totals, `dayTotal` or overload and carry NO pointer/drag handlers —
   only click/keyboard opens `EventModal` (`?wydarzenie=<id>`). `openSlotMenu`
   guards `.week-event-block` alongside `.week-recur-block`/`.week-block`, and its
   gate widens to `canManageTasks || canManageEvents`: the slot menu shows „+ Dodaj
@@ -198,7 +234,9 @@ availability/overload calculations, drag lifecycle and time utilities.
 ## Relevant tests and checks
 
 `src/utils/time.test.ts`, `src/utils/touchDrag.test.ts`,
-`src/utils/blockLabel.test.ts`,
+`src/utils/blockLabel.test.ts`, `src/utils/eventConflictMessage.test.ts`,
+`src/store/eventActions.test.ts` (progi kolizji terminu),
+`src/components/weekViewModel.test.ts` (pokrycie `eventBusyByPersonDate`),
 `src/components/calendarBlockKeyboard.test.ts`,
 `src/components/monthGrid.test.ts`,
 `src/components/weekViewLayout.test.ts`,
