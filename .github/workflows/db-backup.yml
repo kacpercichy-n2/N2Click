@@ -1,0 +1,51 @@
+# Nocne backupy per schemat (handoff n2hub-db-restructure, sekcja 9).
+# Restore w Supabase jest all-or-nothing, więc trzymamy osobne dumpy
+# core/n2click/clarity/blogoapp jako artefakty GitHuba (retencja 30 dni).
+#
+# WYMAGANY sekret repo: SUPABASE_DB_URL — connection string Session poolera
+# (IPv4) z Dashboardu: Settings -> Database -> Connection string. Bez sekretu
+# job kończy się czytelnym błędem i niczego nie dumpuje.
+name: db-backup
+
+on:
+  schedule:
+    - cron: '15 2 * * *' # codziennie 02:15 UTC
+  workflow_dispatch: {}
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sprawdź sekret
+        run: |
+          if [ -z "${{ secrets.SUPABASE_DB_URL }}" ]; then
+            echo '::error::Brak sekretu SUPABASE_DB_URL (Session pooler z Dashboardu).'
+            exit 1
+          fi
+
+      - name: Zainstaluj klienta Postgres 17
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y -qq postgresql-client-17
+
+      - name: Dump per schemat
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          stamp="$(date -u +%Y%m%d-%H%M%S)"
+          mkdir -p dumps
+          for schema in core n2click clarity blogoapp; do
+            pg_dump "$DB_URL" --schema="$schema" --no-owner --no-privileges \
+              --file="dumps/${stamp}-${schema}.sql"
+            echo "OK: ${schema} ($(wc -c < "dumps/${stamp}-${schema}.sql") bajtów)"
+          done
+
+      - name: Wyślij artefakty
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-dumps-${{ github.run_id }}
+          path: dumps/
+          retention-days: 30

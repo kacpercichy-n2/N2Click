@@ -23,7 +23,14 @@ export function getSupabaseClient(): SupabaseClient {
     const { url, publishableKey } = resolveSupabaseConfig(
       import.meta.env as unknown as Record<string, string | undefined>,
     );
-    client = createClient(url, publishableKey);
+    // Dane N2Click żyją w schemacie `n2click` (schema-per-app); `profiles` i
+    // `companies` są widokami-mostkami do `core` w tym samym schemacie.
+    // Rzutowanie: repo nie ma wygenerowanych typów bazy (wszystko `any`), a
+    // parametr schematu w typie `SupabaseClient` domyślnie zakłada `public` —
+    // zmiana samego parametru wymusiłaby przetypowanie każdego konsumenta.
+    client = createClient(url, publishableKey, {
+      db: { schema: 'n2click' },
+    }) as unknown as SupabaseClient;
     return client;
   } catch (error) {
     if (import.meta.env.DEV) {

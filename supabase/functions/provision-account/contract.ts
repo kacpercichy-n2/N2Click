@@ -46,7 +46,7 @@ export const PROVISIONING_MESSAGES = {
   serverError: 'Błąd serwera. Spróbuj ponownie później.',
 } as const;
 
-/** Dozwolone role dostępu (odzwierciedla enum `public.access_role` w migracji rdzenia). */
+/** Dozwolone role dostępu (odzwierciedla enum `core.access_role` w bazie). */
 export const ACCESS_ROLES = ['administrator', 'manager', 'worker'] as const;
 export type AccessRole = (typeof ACCESS_ROLES)[number];
 

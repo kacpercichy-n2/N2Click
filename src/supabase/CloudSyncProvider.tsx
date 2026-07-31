@@ -367,7 +367,13 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       if (disposed) return;
       const channel = client
         .channel(`planner-live-${userId}`)
-        .on('postgres_changes', { event: '*', schema: 'public' }, () => {
+        .on('postgres_changes', { event: '*', schema: 'n2click' }, () => {
+          liveSyncRef.current();
+        })
+        // Tożsamość (profiles/companies) żyje w schemacie `core` — publikacja
+        // realtime wskazuje tabele bazowe, nie widoki-mostki, więc bez tego
+        // drugiego filtra zmiany profili/spółek nie wyzwalałyby live-syncu.
+        .on('postgres_changes', { event: '*', schema: 'core' }, () => {
           liveSyncRef.current();
         });
       current = channel;

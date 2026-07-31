@@ -1,5 +1,29 @@
 # Cloud database (Supabase)
 
+## Schema-per-app (2026-07-31, handoff n2hub-db-restructure)
+
+- Jeden projekt Supabase hostuje wiele aplikacji rozdzielonych SCHEMATAMI:
+  `core` (tożsamość: `profiles`, `companies`, `app_access` + hook JWT
+  `core.custom_access_token`), `n2click` (20 tabel domenowych + bingo),
+  `clarity` i `blogoapp` (puste, przygotowane pod migracje innych appek),
+  `public` (puste, nic tam nie tworzyć). Enum `access_role` żyje w `core`.
+- Klient wybiera schemat na połączeniu: `createClient(..., { db: { schema:
+  'n2click' } })` w `src/supabase/client.ts`; realtime w `CloudSyncProvider`
+  filtruje `schema: 'n2click'`. Nazwy tabel w kodzie się nie zmieniają.
+- `core` NIE jest wystawiony w PostgREST — appka czyta/pisze tożsamość przez
+  widoki-mostki `n2click.profiles`, `n2click.companies` (security_invoker,
+  auto-updatable, wspierają nawet upsert ON CONFLICT) oraz `n2click.app_access`
+  (tylko service_role). Exposed schemas (Dashboard): `n2click`, `clarity`,
+  `blogoapp` — bez `core` i bez `public`.
+- Dostępu do appki NIE daje samo konto: wpis `core.app_access(user_id, app,
+  role, company_id)` → claimy `app_roles`/`app_company` w JWT (hook włączany w
+  Dashboardzie) → każda polityka RLS n2click/core wymaga
+  `core.has_app('n2click')` (wyjątek: bingo_lines/bingo_marks — gra anon).
+  Trigger `on_auth_user_created` tworzy profil w `core` przy signupie, ale ZERO
+  wpisów w `app_access`.
+- Funkcje pomocnicze `app.*` odwołują się do `core.*`/`n2click.*` — nowa
+  funkcja definer NIE może używać `public.*`.
+
 ## Boundaries
 
 - Hosted project: `rclcndcgxbpndpmuemww` (region-default, production alias
@@ -39,8 +63,11 @@
   `supervisor_id` → `profiles.id` (przełożony; nullable, `on delete set null`,
   no self-reference; only administrators may change it — enforced by the
   `app.protect_profile_privileges` trigger, same as `access_role`,
-  `department_id` and `company_id`). There is NO auto-provisioning trigger on `auth.users`:
-  profiles are created by the provisioning Edge Function or operator SQL.
+  `department_id` and `company_id`). Od 20260731082129 trigger
+  `on_auth_user_created` (→ `core.handle_new_user`) tworzy SZKIELET profilu w
+  `core.profiles` przy każdym signupie (bez wpisu w `core.app_access`);
+  Edge Function `provision-account` robi UPSERT pełnych danych po utworzeniu
+  konta i nadaje `app_access(app='n2click')` ze spółką wywołującego admina.
 - `clients` also carries contact columns (`contact_name`, `contact_email`,
   `contact_phone`, `notes`; 20260718090000) and the published tables are in the
   `supabase_realtime` publication (20260718091000) — RLS applies to Realtime
@@ -270,6 +297,10 @@
 
 - New tables/columns arrive ONLY via a new forward-only migration file +
   registry insert + `migrations.test.ts` list update; never edit applied files.
+  Nowe tabele N2Click tworzy się w schemacie `n2click` (współdzielona tożsamość
+  wyłącznie w `core`); klucze `EXPECTED_POLICIES` w `migrations.test.ts` zostają
+  `public.*` HISTORYCZNIE — test parsuje statyczny tekst starych migracji, nie
+  żywą bazę.
 - Every new table: enable RLS in the same file, `revoke all ... from anon`,
   policies `to authenticated` with `with check`, no
   `force row level security` (definer-helper recursion).

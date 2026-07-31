@@ -83,8 +83,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
     console.error('provision-account: brak SUPABASE_URL lub SUPABASE_SERVICE_ROLE_KEY');
     return errorResponse(500, PROVISIONING_MESSAGES.serverConfig);
   }
+  // Schemat n2click jest jedynym wystawionym w PostgREST punktem wejścia tej
+  // funkcji; `profiles` i `app_access` to widoki-mostki do `core`.
   const serviceClient = createClient(supabaseUrl, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
+    db: { schema: 'n2click' },
   });
 
   // 3. Tożsamość wywołującego z JWT.
@@ -95,9 +98,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const callerId = userData.user.id;
 
   // 4. Profil wywołującego + autoryzacja (service role omija RLS — świadomie).
+  // `company_id` wywołującego jest źródłem spółki dla profilu i wpisu
+  // `core.app_access` nowego konta.
   const { data: callerProfile, error: callerProfileError } = await serviceClient
     .from('profiles')
-    .select('access_role')
+    .select('access_role, company_id')
     .eq('id', callerId)
     .maybeSingle();
   if (callerProfileError) {
@@ -108,6 +113,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
   if (!authorized.ok) {
     return errorResponse(authorized.status, authorized.message);
   }
+  const callerCompanyId =
+    (callerProfile as { company_id?: string | null } | null)?.company_id ?? null;
 
   // 5. Parsowanie i walidacja ciała.
   let rawBody: unknown;
@@ -190,17 +197,29 @@ Deno.serve(async (req: Request): Promise<Response> => {
     newUserId = data.user.id;
   }
 
-  // 9. Wstawienie wiersza profilu (must_change_password zawsze true).
-  const { error: insertError } = await serviceClient.from('profiles').insert({
-    id: newUserId,
-    first_name: request.firstName,
-    last_name: request.lastName,
-    email: request.email,
-    role_title: request.roleTitle,
-    access_role: request.accessRole,
-    department_id: request.departmentId,
-    must_change_password: true,
-  });
+  // 9. Wiersz profilu (must_change_password zawsze true). UPSERT, nie INSERT:
+  // trigger `core.handle_new_user` na auth.users tworzy szkielet profilu przy
+  // każdym signupie — tu nadpisujemy go pełnymi danymi z żądania.
+  const { error: insertError } = await serviceClient
+    .from('profiles')
+    .upsert(
+      {
+        id: newUserId,
+        first_name: request.firstName,
+        last_name: request.lastName,
+        email: request.email,
+        role_title: request.roleTitle,
+        access_role: request.accessRole,
+        department_id: request.departmentId,
+        // Spółka wywołującego admina — MUSI trafić także do profilu, bo
+        // app.current_company_id()/project_in_company_scope czytają profil,
+        // a trigger protect_profile_privileges blokuje późniejszą samodzielną
+        // korektę przez nie-admina.
+        company_id: callerCompanyId,
+        must_change_password: true,
+      },
+      { onConflict: 'id' },
+    );
 
   if (insertError) {
     // Best-effort rollback użytkownika Auth, by nie zostawić sieroty bez profilu.
@@ -211,6 +230,33 @@ Deno.serve(async (req: Request): Promise<Response> => {
     }
     console.error('provision-account: insert profilu nie powiódł się', insertError.code ?? '');
     return errorResponse(500, PROVISIONING_MESSAGES.serverError);
+  }
+
+  // 9b. Przyzwolenie dostępu do N2Click (model globalnego konta: sam profil
+  // nie daje dostępu do żadnej appki). Spółka dziedziczona po wywołującym
+  // administratorze; brak spółki wywołującego => wpis nada admin później.
+  if (callerCompanyId) {
+    const accessRoleMap: Record<string, string> = {
+      administrator: 'admin',
+      manager: 'manager',
+      worker: 'member',
+    };
+    const { error: accessError } = await serviceClient
+      .from('app_access')
+      .upsert(
+        {
+          user_id: newUserId,
+          app: 'n2click',
+          role: accessRoleMap[request.accessRole] ?? 'member',
+          company_id: callerCompanyId,
+        },
+        { onConflict: 'user_id,app' },
+      );
+    if (accessError) {
+      console.error('provision-account: zapis app_access nie powiódł się', accessError.code ?? '');
+      // Konto i profil istnieją; brak przyzwolenia = konto nie widzi appki.
+      // Świadomie nie wycofujemy — admin może nadać dostęp ręcznie.
+    }
   }
 
   // 10. Sukces — nigdy nie zwracamy hasła.

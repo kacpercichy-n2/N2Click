@@ -142,6 +142,21 @@ describe('konwencja plików migracji', () => {
       '20260723122820_tasks_created_by_default_backfill.sql',
       '20260723130000_notifications_emailed_at.sql',
       '20260723131000_profiles_email_notifications.sql',
+      // Przebudowa schema-per-app (2026-07-31, handoff n2hub-db-restructure):
+      // tożsamość w `core`, domena N2Click w `n2click`, puste `clarity`/`blogoapp`.
+      '20260731081544_schema_per_app_foundation.sql',
+      '20260731081626_move_identity_to_core.sql',
+      '20260731081703_core_app_access.sql',
+      '20260731081748_core_jwt_hook_and_claim_helpers.sql',
+      '20260731081831_move_n2click_tables.sql',
+      '20260731081921_rewrite_app_helpers_for_new_schemas.sql',
+      '20260731082129_signup_trigger_seed_access_bridge_views.sql',
+      '20260731082207_rls_gating_has_app.sql',
+      '20260731082805_app_access_bridge_view.sql',
+      '20260731083226_pin_search_path_claim_helpers.sql',
+      '20260731083246_app_access_company_idx.sql',
+      '20260731084109_company_scope_via_relations.sql',
+      '20260731084136_tidy_grants_core_defaults.sql',
     ]);
   });
 
