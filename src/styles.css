@@ -208,6 +208,19 @@
      .filter-popover, .context-menu i paleta wyszukiwania (.gs-scrim/.gs-viewport),
      reszta selektorów zostaje przy liczbach.
      Szuflada mobilna zajmuje 900–903, duchy przeciągania 1000. */
+  /* Wygaszenie krawędzi przewijania kolumny treści: stoi NAD treścią strony
+     (także nad lepkimi elementami wewnątrz widoków, np. `z-index: 3` etykiet
+     osi czasu), ale POD paskiem akcji edytora i pod każdą nakładką — popoverem,
+     menu, arkuszami, paletą, modalami i banerami. */
+  --n2-z-scroll-fade: 20;
+  /* Lepki pasek akcji edytora (`.editor-actions-sticky`). Na `/projects/:id` nie
+     ma nad sobą żadnego przodka z przewijaniem, więc przykleja się do DOKUMENTU
+     — dokładnie tam, gdzie stoi dolne wygaszenie. Jest KLIKALNY i kryjący, więc
+     musi być NAD wygaszeniem (20) i POD najniższą nakładką (popover 40), żeby
+     filtry, menu i modale nadal go zasłaniały. W TaskModalu ten sam pasek siedzi
+     w kontekście układania karty modala (viewport `fixed`, 1000), więc wartość
+     działa tam tylko wewnątrz modala. */
+  --n2-z-sticky-actions: 30;
   --n2-z-popover: 40;
   --n2-z-menu: 100;
   /* Dolny pasek zakładek (telefon) stoi POD arkuszami (900), wyszukiwarką (990)
@@ -237,6 +250,10 @@
   --n2-bottom-nav-h: 56px;
   /* Wcięcie kolejnej karty w kaskadzie bloków widoku dnia. */
   --n2-day-stack-inset: 28px;
+  /* Wysokość paska wygaszającego krawędź przewijania. Równa dopełnieniu powłoki
+     (`--n2-space-6`), więc przy pozycji 0 pasek mieści się dokładnie nad
+     pierwszym elementem treści. */
+  --n2-scroll-fade-h: 24px;
 
   --radius: var(--n2-radius-md);
   --radius-sm: var(--n2-radius-sm);
@@ -454,6 +471,45 @@ textarea {
   display: block;
   min-width: 0;
   width: 100%;
+}
+
+/* ---- Miękkie wygaszenie krawędzi przewijania -------------------------------
+   Karty nie mają być ucinane na górnej i dolnej krawędzi okna, tylko miękko
+   znikać. Scrollportem jest DOKUMENT (`.app-main` się nie przewija, sidebar
+   jest `sticky`, `window.scrollTo` w TaskFullPage na tym stoi), więc zwykła
+   `mask-image` na `.app-main` nie nadążałaby za przewijaniem — maska jest
+   przypięta do elementu, a nie do okna. Zamiast tego dwa PASKI `sticky`
+   wewnątrz kolumny treści: dostają TO SAMO tło co `body` razem z
+   `background-attachment: fixed`, więc rysują dokładnie te piksele tła, które
+   i tak są w tym miejscu okna, a `mask-image` wygasza je w głąb strony.
+   Efekt: treść wtapia się w tło, a scrollport, przywracanie pozycji i
+   `position: sticky` wewnątrz widoków zostają nietknięte.
+
+   Ujemne marginesy zdejmują paskom udział w układzie: górny leży W CAŁOŚCI nad
+   pierwszym elementem treści (czyli w dopełnieniu powłoki), a dolny pod
+   ostatnim, więc przy pozycji 0 i na końcu strony nie przygaszają niczego.
+   Elementy renderują się WYŁĄCZNIE na desktopie (bramka w TS): na telefonie
+   górę zasłania kryjący `.app-topbar`, a dół `.app-bottom-nav`. */
+.app-scroll-fade {
+  position: sticky;
+  z-index: var(--n2-z-scroll-fade);
+  height: var(--n2-scroll-fade-h);
+  /* Pasek NIGDY nie przechwytuje kliknięć w treść pod spodem. */
+  pointer-events: none;
+  background: var(--n2-gradient-page);
+  background-attachment: fixed;
+}
+.app-scroll-fade-top {
+  top: 0;
+  margin-top: calc(var(--n2-scroll-fade-h) * -1);
+  -webkit-mask-image: linear-gradient(to bottom, #000, transparent);
+  mask-image: linear-gradient(to bottom, #000, transparent);
+}
+.app-scroll-fade-bottom {
+  bottom: 0;
+  margin-bottom: calc(var(--n2-scroll-fade-h) * -1);
+  -webkit-mask-image: linear-gradient(to top, #000, transparent);
+  mask-image: linear-gradient(to top, #000, transparent);
 }
 
 /* Brand row now holds the brand + the collapse toggle. */
@@ -8512,12 +8568,13 @@ a.toggle-btn {
   flex-direction: column;
   gap: 12px;
 }
+/* Karta klienta jest KOLUMNĄ: nagłówek (nazwa + pigułka licznika po lewej,
+   akcje po prawej), pod nim dane kontaktowe i rozwinięte szczegóły na pełnej
+   szerokości. */
 .client-card {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--n2-space-4);
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: var(--n2-space-2);
   background: var(--card-bg);
   border: 1px solid var(--n2-border);
   border-radius: var(--n2-radius-lg);
@@ -8527,9 +8584,55 @@ a.toggle-btn {
 .client-card.archived {
   opacity: 0.6;
 }
-.client-card-main {
+.client-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--n2-space-4);
+  flex-wrap: wrap;
+}
+.client-card-title {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+  flex-wrap: wrap;
   min-width: 0;
-  flex: 1 1 320px;
+  flex: 1 1 260px;
+}
+.client-card-title strong {
+  font-size: 1.02em;
+}
+/* Pigułka licznika projektów: jedyny kolorowy akcent nagłówka i zarazem link do
+   listy projektów klienta. */
+.client-project-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border: 1px solid rgba(196, 150, 255, 0.32);
+  border-radius: var(--n2-radius-pill);
+  background: rgba(196, 150, 255, 0.16);
+  color: var(--n2-lavender);
+  font-size: 0.78em;
+  font-weight: 600;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.client-project-chip:hover {
+  border-color: rgba(196, 150, 255, 0.5);
+  background: rgba(196, 150, 255, 0.24);
+  text-decoration: none;
+}
+/* Tekstowe CTA rozwijające szczegóły — bez ramki, żeby nie konkurowało z
+   pigułką i przyciskami ikonowymi obok. */
+.client-details-cta.btn.ghost.small {
+  border-color: transparent;
+  color: var(--n2-lavender);
+  white-space: nowrap;
+}
+.client-details-cta.btn.ghost.small:hover {
+  border-color: transparent;
+  background: rgba(196, 150, 255, 0.12);
+  color: var(--n2-text);
 }
 .client-card-meta {
   display: flex;
@@ -8548,6 +8651,7 @@ a.toggle-btn {
   gap: var(--n2-space-2);
   align-items: center;
   flex-wrap: wrap;
+  flex: 0 0 auto;
 }
 .client-card .client-edit {
   flex: 1 1 100%;
@@ -8555,32 +8659,6 @@ a.toggle-btn {
   border: none;
   padding: 0;
   box-shadow: none;
-}
-
-/* Rozwijana karta klienta: nagłówek-przełącznik + sekcja szczegółów. */
-.client-card-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--n2-space-2);
-  background: none;
-  border: none;
-  padding: 0;
-  margin: 0;
-  cursor: pointer;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-}
-.client-card-toggle strong {
-  font-size: 1.02em;
-}
-.client-card-chevron {
-  flex: 0 0 auto;
-  transition: transform calc(0.15s * var(--n2-motion)) ease;
-  color: var(--n2-text-muted, #7a8699);
-}
-.client-card-toggle.expanded .client-card-chevron {
-  transform: rotate(90deg);
 }
 .client-contact-badge {
   font-size: 0.78em;
@@ -8624,6 +8702,17 @@ a.toggle-btn {
 .client-contact-list li > span:first-child {
   font-weight: 600;
 }
+/* Telefon: nazwa z pigułką zajmuje cały wiersz, akcje schodzą pod nią i
+   trzymają się prawej krawędzi karty (kciuk sięga tam najłatwiej). */
+@media (max-width: 760px) {
+  .client-card-head {
+    align-items: flex-start;
+  }
+  .client-card-actions {
+    flex: 1 1 100%;
+    justify-content: flex-end;
+  }
+}
 
 /* Formularz osób kontaktowych: grupy pól + akcje wierszy. */
 .client-contact-group {
@@ -8666,7 +8755,10 @@ a.toggle-btn {
 .editor-actions-sticky {
   position: sticky;
   bottom: 0;
-  z-index: 5;
+  /* Na `/projects/:id` pasek przykleja się do DOKUMENTU (brak przodka z
+     przewijaniem), czyli dokładnie tam, gdzie stoi `.app-scroll-fade-bottom` —
+     dawne `5` chowało jego krawędź i „Zapisz teraz" pod wygaszeniem. */
+  z-index: var(--n2-z-sticky-actions);
   /* Treść przewija się POD paskiem — tło musi być w pełni kryjące
      (--card-bg to półprzezroczysty rgba i prześwitywał). */
   background: var(--n2-panel);

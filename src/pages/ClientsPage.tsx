@@ -9,7 +9,8 @@ import { usePersistence, useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import type { Client } from '../types';
 import { projectPlannedTotal, projectsOfClient, tasksOfProject } from '../store/selectors';
-import { ChevronRight, Plus, Trash2 } from '../components/icons';
+import { Archive, ArchiveRestore, Pencil, Plus, Trash2 } from '../components/icons';
+import { IconButton } from '../components/IconButton';
 import { useConfirm } from '../components/ConfirmProvider';
 import { buildDeleteConsequence } from '../components/confirmDialog';
 import { polishCount } from '../utils/polishPlural';
@@ -316,6 +317,29 @@ export function ClientsPage() {
     }
   };
 
+  // Archiwizacja pyta, ODARCHIWIZOWANIE nie: „Przywróć” tylko cofa ukrycie i nie
+  // ma żadnego skutku, o który trzeba by pytać. Treść pytania opisuje DOKŁADNIE
+  // to, co robi `SET_CLIENT_ARCHIVED` w reduktorze (przełącza flagę `archived`)
+  // plus jedyne dwa miejsca, które tę flagę czytają: filtr listy Klientów i lista
+  // wyboru klienta w formularzu nowego projektu (`ProjectsPage`). Kaskady nie ma
+  // — projekty, zadania i godziny zostają nietknięte.
+  const toggleArchived = async (c: Client) => {
+    if (
+      !c.archived &&
+      !(await confirm({
+        title: `Zarchiwizować klienta „${c.name}”?`,
+        description:
+          'Klient zniknie z listy Klienci (pokażesz go przełącznikiem „Pokaż zarchiwizowanych”) i nie da się go wybrać przy zakładaniu nowego projektu.',
+        consequences:
+          'Projekty, zadania i zaplanowane godziny zostają bez zmian. Archiwizację cofniesz w każdej chwili przyciskiem „Przywróć klienta”.',
+        confirmLabel: 'Archiwizuj klienta',
+      }))
+    ) {
+      return;
+    }
+    dispatch({ type: 'SET_CLIENT_ARCHIVED', clientId: c.id, archived: !c.archived });
+  };
+
   const toggleExpanded = (id: string) => setExpandedId((cur) => (cur === id ? '' : id));
 
   return (
@@ -384,11 +408,6 @@ export function ClientsPage() {
             const expanded = expandedId === c.id;
             const extraCount = c.contacts?.length ?? 0;
             const detailsId = `client-details-${c.id}`;
-            const handleMainClick = (e: React.MouseEvent) => {
-              const target = e.target as HTMLElement;
-              if (target.closest('a') || target.closest('button')) return;
-              toggleExpanded(c.id);
-            };
             return (
               <div key={c.id} className={c.archived ? 'client-card archived' : 'client-card'}>
                 {editing ? (
@@ -416,17 +435,18 @@ export function ClientsPage() {
                   </form>
                 ) : (
                   <>
-                    <div className="client-card-main" onClick={handleMainClick}>
-                      <button
-                        type="button"
-                        className={expanded ? 'client-card-toggle expanded' : 'client-card-toggle'}
-                        aria-expanded={expanded}
-                        aria-controls={detailsId}
-                        onClick={() => toggleExpanded(c.id)}
-                      >
-                        <ChevronRight size={16} className="client-card-chevron" aria-hidden />
+                    {/* Nagłówek: nazwa + pigułka licznika projektów po lewej,
+                        akcje po prawej. Rozwinięciem szczegółów steruje WYŁĄCZNIE
+                        tekstowy przycisk „Zobacz szczegóły" (dawny chevron
+                        zniknął, a razem z nim klikalne tło karty — dwie ścieżki
+                        do tego samego stanu myliły się z pigułką-linkiem). */}
+                    <div className="client-card-head">
+                      <div className="client-card-title">
                         <strong>{c.name}</strong>
                         {c.archived && <span className="muted">{ARCHIVED_SUFFIX}</span>}
+                        <Link className="client-project-chip" to={`/projects?client=${c.id}`}>
+                          {count} {polishCount(count, 'projekt', 'projekty', 'projektów')}
+                        </Link>
                         {extraCount > 0 && (
                           <span className="client-contact-badge">
                             +{extraCount}{' '}
@@ -438,83 +458,85 @@ export function ClientsPage() {
                             )}
                           </span>
                         )}
-                      </button>
-                      <div className="client-card-meta muted">
-                        {c.contactName && <span>{c.contactName}</span>}
-                        {c.contactEmail && (
-                          <a href={`mailto:${c.contactEmail}`}>{c.contactEmail}</a>
-                        )}
-                        {c.contactPhone && (
-                          <a href={`tel:${c.contactPhone}`}>{c.contactPhone}</a>
-                        )}
-                        {!c.contactName && !c.contactEmail && !c.contactPhone && (
-                          <span>Brak danych kontaktowych</span>
+                      </div>
+                      <div className="client-card-actions">
+                        <button
+                          type="button"
+                          className="btn ghost small client-details-cta"
+                          aria-expanded={expanded}
+                          aria-controls={detailsId}
+                          onClick={() => toggleExpanded(c.id)}
+                        >
+                          {expanded ? 'Zwiń szczegóły' : 'Zobacz szczegóły'}
+                        </button>
+                        {canManage && (
+                          <>
+                            <IconButton
+                              label="Edytuj klienta"
+                              icon={<Pencil size={16} aria-hidden />}
+                              onClick={() => startEdit(c)}
+                            />
+                            <IconButton
+                              label={c.archived ? 'Przywróć klienta' : 'Archiwizuj klienta'}
+                              icon={
+                                c.archived ? (
+                                  <ArchiveRestore size={16} aria-hidden />
+                                ) : (
+                                  <Archive size={16} aria-hidden />
+                                )
+                              }
+                              onClick={() => void toggleArchived(c)}
+                            />
+                            {/* Usuwanie ZOSTAJE (kaskada + własne potwierdzenie) —
+                                wspólny wzorzec aplikacji: czerwony Trash2. */}
+                            <IconButton
+                              label="Usuń klienta"
+                              variant="danger"
+                              icon={<Trash2 size={16} aria-hidden />}
+                              onClick={() => void remove(c)}
+                            />
+                          </>
                         )}
                       </div>
-                      {expanded && (
-                        <div className="client-card-details" id={detailsId}>
-                          {!c.notes && extraCount === 0 ? (
-                            <p className="muted">Brak dodatkowych informacji</p>
-                          ) : (
-                            <>
-                              {c.notes && (
-                                <div className="client-detail-section">
-                                  <h4>Opis</h4>
-                                  <p className="client-card-notes">{c.notes}</p>
-                                </div>
-                              )}
-                              {extraCount > 0 && (
-                                <div className="client-detail-section">
-                                  <h4>Dodatkowe osoby kontaktowe</h4>
-                                  <ul className="client-contact-list">
-                                    {c.contacts!.map((k) => (
-                                      <li key={k.id}>
-                                        <span>{joinContactName(k.firstName, k.lastName)}</span>
-                                        {k.phone && <a href={`tel:${k.phone}`}>{k.phone}</a>}
-                                        {k.email && <a href={`mailto:${k.email}`}>{k.email}</a>}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              )}
-                            </>
-                          )}
-                        </div>
+                    </div>
+                    <div className="client-card-meta muted">
+                      {c.contactName && <span>{c.contactName}</span>}
+                      {c.contactEmail && <a href={`mailto:${c.contactEmail}`}>{c.contactEmail}</a>}
+                      {c.contactPhone && <a href={`tel:${c.contactPhone}`}>{c.contactPhone}</a>}
+                      {!c.contactName && !c.contactEmail && !c.contactPhone && (
+                        <span>Brak danych kontaktowych</span>
                       )}
                     </div>
-                    <div className="client-card-actions">
-                      <Link className="btn ghost small" to={`/projects?client=${c.id}`}>
-                        {count} {polishCount(count, 'projekt', 'projekty', 'projektów')}{' '}
-                        <ChevronRight size={14} aria-hidden />
-                      </Link>
-                      {canManage && (
-                        <>
-                          <button type="button" className="btn ghost small" onClick={() => startEdit(c)}>
-                            Edytuj
-                          </button>
-                          <button
-                            type="button"
-                            className="btn ghost small"
-                            onClick={() =>
-                              dispatch({
-                                type: 'SET_CLIENT_ARCHIVED',
-                                clientId: c.id,
-                                archived: !c.archived,
-                              })
-                            }
-                          >
-                            {c.archived ? 'Przywróć' : 'Archiwizuj'}
-                          </button>
-                          <button
-                            type="button"
-                            className="btn danger-ghost small"
-                            onClick={() => remove(c)}
-                          >
-                            Usuń
-                          </button>
-                        </>
-                      )}
-                    </div>
+                    {expanded && (
+                      <div className="client-card-details" id={detailsId}>
+                        {!c.notes && extraCount === 0 ? (
+                          <p className="muted">Brak dodatkowych informacji</p>
+                        ) : (
+                          <>
+                            {c.notes && (
+                              <div className="client-detail-section">
+                                <h4>Opis</h4>
+                                <p className="client-card-notes">{c.notes}</p>
+                              </div>
+                            )}
+                            {extraCount > 0 && (
+                              <div className="client-detail-section">
+                                <h4>Dodatkowe osoby kontaktowe</h4>
+                                <ul className="client-contact-list">
+                                  {c.contacts!.map((k) => (
+                                    <li key={k.id}>
+                                      <span>{joinContactName(k.firstName, k.lastName)}</span>
+                                      {k.phone && <a href={`tel:${k.phone}`}>{k.phone}</a>}
+                                      {k.email && <a href={`mailto:${k.email}`}>{k.email}</a>}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
                   </>
                 )}
               </div>

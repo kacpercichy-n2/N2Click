@@ -52,8 +52,10 @@ export {
   // paskach akcji (nagłówek modala, nagłówek kolumny osoby w siatce).
   MoreHorizontal,
   // Zakładka „Zasobnik" w dolnym pasku telefonu (deep-link do kalendarza z
-  // otwartym arkuszem bloków bez terminu).
+  // otwartym arkuszem bloków bez terminu) oraz akcja „Archiwizuj" na karcie
+  // klienta; `ArchiveRestore` to jej odwrotność („Przywróć").
   Archive,
+  ArchiveRestore,
   // Urlop: blok w kalendarzu, wskaźnik zamiast wykrzyknika przeciążenia i
   // wejście „Dodaj urlop". `Palmtree` to przestarzały alias tej samej ikony.
   TreePalm,

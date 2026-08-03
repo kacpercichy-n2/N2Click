@@ -24,6 +24,35 @@
   rozjechać środowiska Reacta), `motion` (+ `framer-motion`/`motion-dom`/
   `motion-utils`) i `supabase` — oraz trzyma `build.cssCodeSplit: false`, bo
   `styles.css` MUSI zostać jednym arkuszem.
+- MIĘKKA KRAWĘDŹ PRZEWIJANIA (2026-08-03): `main.app-main` ma DWOJE dodatkowych
+  dzieci — `.app-scroll-fade-top` jako PIERWSZE i `.app-scroll-fade-bottom` jako
+  OSTATNIE (oba `!mobileNav`, `aria-hidden`, `pointer-events: none`). To paski
+  `position: sticky` z tłem `--n2-gradient-page`, `background-attachment: fixed`
+  i maską alfa, więc rysują dokładnie te piksele tła, które i tak są w tym
+  miejscu OKNA, a treść wtapia się w nie zamiast być ucinana. Scrollportem
+  zostaje DOKUMENT (`.app-main` się nie przewija — na tym stoi `window.scrollTo`
+  w `TaskFullPage` i przywracanie pozycji), dlatego maska na samym `.app-main`
+  by nie zadziałała. Ujemne marginesy (`--n2-scroll-fade-h` = 24 px = dopełnienie
+  powłoki) sadzają paski w dopełnieniu, więc przy pozycji 0 i na końcu strony nie
+  przygaszają niczego; kolejność dzieci jest częścią kontraktu.
+  `--n2-z-scroll-fade` = 20 stoi NAD zwykłą treścią widoków (także nad lepkimi
+  etykietami osi czasu, `z-index: 3`), ale POD lepkim paskiem akcji edytora
+  (`--n2-z-sticky-actions` = 30 na `.editor-actions-sticky`, który na
+  `/projects/:id` przykleja się do DOKUMENTU i musi zostać ostry oraz klikalny)
+  i POD każdą nakładką, począwszy od popovera (40). Wygaszenie NIGDY nie może
+  zakryć kontrolki — nowy element przyklejony do dokumentu w kolumnie treści
+  dostaje `--n2-z-sticky-actions`, a nie własną liczbę. Na telefonie pasków nie
+  ma — górę zasłania kryjący `.app-topbar`, dół `.app-bottom-nav`.
+- KARTA KLIENTA (`/clients`, 2026-08-03) nie ma już chevrona ani klikalnego tła:
+  nagłówek to nazwa + pigułka-link `.client-project-chip` („6 projektów" →
+  `/projects?client=<id>`) po lewej i akcje po prawej. Rozwinięciem szczegółów
+  steruje WYŁĄCZNIE tekstowe CTA „Zobacz szczegóły"/„Zwiń szczegóły", które
+  przejęło `aria-expanded` + `aria-controls`; edycja, archiwizacja i usuwanie to
+  `IconButton` (`Pencil`, `Archive`/`ArchiveRestore`, czerwony `Trash2`) za
+  bramką `clients.manage`. Archiwizacja pyta wspólnym `useConfirm()` i mówi
+  PRAWDĘ o skutkach (reduktor tylko przełącza flagę `archived`; czytają ją filtr
+  listy Klientów i lista wyboru klienta w formularzu nowego projektu — projekty,
+  zadania i godziny zostają), „Przywróć" nie pyta.
 - The sidebar nav (`NAV` in `App.tsx`) is a fixed ordered list — Panel, Moja
   praca, Klienci, Projekty, Zadania, Kanban, Kalendarz, Oś czasu, Obciążenie,
   Zespół — ending with two gated entries: Konto (supabase mode only) and

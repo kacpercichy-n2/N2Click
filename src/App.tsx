@@ -460,6 +460,12 @@ export function App() {
       )}
 
       <main className="app-main" data-tour="shell.main">
+        {/* Miękkie wygaszenie GÓRNEJ krawędzi przewijania: pasek `sticky` z tłem
+            strony i maską alfa, dzięki któremu karty wtapiają się w tło zamiast
+            być ucinane. MUSI być PIERWSZYM dzieckiem `main` (ujemny margines
+            górny sadza go nad treścią). Reguły w `styles.css`; na telefonie nie
+            renderujemy go wcale — tam górę zasłania kryjący `.app-topbar`. */}
+        {!mobileNav && <div className="app-scroll-fade app-scroll-fade-top" aria-hidden />}
         {/* Trwałe regiony ogłoszeń (polite + assertive) — montowane PRZED
             banerami, żeby istniały w DOM zanim pojawi się pierwszy komunikat.
             Ekran logowania jest poza tą powłoką i ma własną obsługę. */}
@@ -531,6 +537,9 @@ export function App() {
             </Routes>
           </Suspense>
         </m.div>
+        {/* Bliźniak dolnej krawędzi — OSTATNIE dziecko `main` (ujemny margines
+            dolny sadza go pod treścią, więc na końcu strony nic nie przygasza). */}
+        {!mobileNav && <div className="app-scroll-fade app-scroll-fade-bottom" aria-hidden />}
       </main>
 
       {/* Telefon: dolny pasek pięciu zakładek. Trzy trasy + deep-link zasobnika

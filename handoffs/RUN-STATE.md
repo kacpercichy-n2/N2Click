@@ -104,3 +104,15 @@ werdykcie także `ProjectsPage.tsx` — dzieliła `.task-card-main`),
 `background-attachment: fixed` osobną deklaracją (skrót przyklejał tylko
 ostatnią warstwę). `npm test` 119/2663 zielone, build zielony. Wiki: UI +
 frontend-performance.
+
+## Developer result (20260803-213841-n2hub-323)
+
+`ClientsPage.tsx`: nagłówek karty bez chevrona (nazwa + pigułka-link projektów,
+CTA „Zobacz szczegóły" z `aria-expanded`/`aria-controls`, `IconButton` edycja/
+archiwum/usuwanie, archiwizacja przez `useConfirm()`), `icons.ts`
+`ArchiveRestore`, `App.tsx` + `styles.css`: dwa paski `sticky` w `.app-main`
+(tło strony + maska, `--n2-z-scroll-fade`) miękko wygaszające krawędzie
+przewijania; dokument zostaje scrollportem. Po recenzji: `.editor-actions-sticky`
+na `--n2-z-sticky-actions` (30) — na `/projects/:id` przykleja się do dokumentu,
+więc wygaszenie (20) kryło mu krawędź i „Zapisz teraz". `npm test` 119/2663
+zielone, build zielony. Wiki: UI.
