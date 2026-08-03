@@ -5644,21 +5644,10 @@ a.toggle-btn {
   /* Domyślny stretch: kafelki w rzędzie mają RÓWNĄ wysokość, więc siatka
      wypełnia się optycznie bez postrzępionych dolnych krawędzi. */
 }
-/* Strona idzie na PEŁNĄ szerokość; kolumny skokowo 1 → 2 → 4, bo cztery
-   kafelki danych dzielą się równo tylko przez te liczby (auto-fit robiło
-   3+1 z dziurą w drugim rzędzie). */
+/* Strona idzie na pełną szerokość, ZAWSZE dwa kafelki w wierszu od 900px
+   (decyzja z komentarzy toolbara 04.08: bez rzędu 4 kafelków). */
 @media (min-width: 900px) {
   .account-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-@media (min-width: 1500px) {
-  .account-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-  /* Strefa HR ma dwa kafelki — na szerokim ekranie dzielą pełną szerokość
-     na pół, w rytmie siatki wyżej. */
-  .account-grid-hr {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -5666,6 +5655,17 @@ a.toggle-btn {
   /* Odstęp niesie `gap` siatki, nie margines karty. */
   margin-bottom: 0;
   min-width: 0;
+  /* Kolumna flex: treść kafelka może wypełnić pełną (rozciągniętą) wysokość
+     karty — sąsiad w rzędzie nie zostaje z martwą pustką na dole. */
+  display: flex;
+  flex-direction: column;
+}
+/* W kafelkach danych lista faktów dostaje całą wolną wysokość, a wiersze
+   rozkładają się od góry do dołu (komentarz toolbara: „żeby wypełniały
+   przestrzeń w pełni"). Strefa HR ma własny, gęstszy rytm — bez rozciągania. */
+.account-grid:not(.account-grid-hr) .account-facts {
+  flex: 1;
+  align-content: space-between;
 }
 .account-tile h2 {
   display: flex;
@@ -5686,7 +5686,11 @@ a.toggle-btn {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  gap: 16px;
+  gap: 4px 16px;
+  /* Długa wartość (np. e-mail) nie jest ucinana ani łamana w środku słowa:
+     spada do WŁASNEJ linii pod etykietą i dostaje pełną szerokość wiersza
+     (komentarz toolbara: ucięty adres e-mail). */
+  flex-wrap: wrap;
 }
 .account-facts dt {
   color: var(--n2-text-soft);
@@ -5694,17 +5698,23 @@ a.toggle-btn {
   flex: none;
 }
 .account-facts dd {
-  margin: 0;
+  margin: 0 0 0 auto;
   text-align: right;
   overflow-wrap: anywhere;
   min-width: 0;
 }
 .account-tile .weekday-chips {
   margin-bottom: 12px;
+  /* Siedem chipów ZAWSZE w jednej linii jako równe segmenty pełnej szerokości
+     kafelka (komentarz toolbara: samotna „Nd" w drugiej linii). */
+  flex-wrap: nowrap;
 }
 /* Chipy dni roboczych w podglądzie są czysto wizualne — bez kursora i hovera. */
 .weekday-chip.readonly {
   cursor: default;
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 6px 0;
 }
 .weekday-chip.readonly:hover {
   border-color: var(--n2-border);
@@ -5736,7 +5746,10 @@ a.toggle-btn {
   font-size: var(--n2-type-sm);
 }
 .account-tile-actions {
-  margin-top: 14px;
+  /* `auto` dobija akcje do dołu kafelka — przy rozciągniętych kartach
+     przyciski obu kafelków HR stoją na wspólnej linii. */
+  margin-top: auto;
+  padding-top: 14px;
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
