@@ -102,6 +102,14 @@
   --n2-space-12: 48px;
   --n2-space-16: 64px;
 
+  /* JEDNA wysokość kontrolek paska sterowania: przełącznik segmentowy
+     (`.toggle-btn`), przycisk „Filtry”, chip osoby, plakietka zegara i
+     kwadratowe strzałki `.nav-btn`. Wcześniej każda z tych kontrolek liczyła
+     swoją wysokość sama (36 px strzałki, 40 px `.btn`, ~38 px zakładka,
+     ~30 px chip), więc pasek kalendarza schodkował. Telefonowy rząd 56 px ma
+     własne, większe cele dotykowe i tego tokenu NIE używa. */
+  --n2-control-h: 36px;
+
   --n2-type-xs: 0.6875rem;
   --n2-type-sm: 0.8125rem;
   --n2-type-md: 0.9375rem;
@@ -1832,43 +1840,78 @@ option {
   flex: 0 1 auto;
   min-width: 0;
 }
-.cal-view-toggle,
+/* Kontrolki paska trzymają JEDNĄ wysokość (`--n2-control-h`) zamiast trzech
+   osobnych liczb: „Filtry”/„Dzisiaj” (`.btn` ma globalnie 40 px), chip osoby
+   (~30 px) i przełącznik widoku schodkowały wiersz. Wyłączony jest z tego
+   telefonowy rząd 56 px — tam kontrolki celowo są większymi celami dotyku. */
+.cal-toolbar:not(.cal-toolbar-phone) .btn,
+.cal-toolbar:not(.cal-toolbar-phone) .person-active-chip {
+  min-height: var(--n2-control-h);
+}
+/* Nawigacja okresu to trzy OSOBNE kontrolki (‹ · „Dzisiaj” · ›) plus etykieta
+   zakresu, więc odstęp między nimi zostaje. */
 .cal-nav {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+/* JEDEN wzorzec przełącznika segmentowego w całej aplikacji: segmenty są
+   SKLEJONE, bez odstępu — krawędź między nimi robi obramowanie sąsiada
+   (`.toggle-btn + .toggle-btn` zdejmuje lewą krawędź, żeby nie podwoić linii).
+   Wcześniej `.cal-view-toggle` dzieliło regułę z `.cal-nav` i dostawało
+   `gap: 8px`, więc zaokrąglenia `first-child`/`last-child` wisiały w powietrzu,
+   a ten sam przełącznik wyglądał inaczej niż `.ticket-mode-toggle`. */
+.cal-view-toggle,
+.ticket-mode-toggle {
+  display: flex;
+  align-items: center;
 }
 /* Plakietka data + zegar HH:mm — dawniej absolutny narożnik NAD siatką
    (zasłaniał bloki), potem koniec paska sterowania (`margin-left: auto`
    odrywał ją od tytułu). Teraz trzeci element ZWARTEJ lewej grupy paska. */
 .cal-now-badge {
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
-  padding: 5px 10px;
+  min-height: var(--n2-control-h);
+  padding: 0 var(--n2-space-3);
   border: 1px solid var(--n2-border);
   border-radius: var(--n2-radius-pill);
   background: rgba(255, 255, 255, 0.045);
   white-space: nowrap;
 }
+/* Data i godzina stoją na TEJ SAMEJ skali co reszta paska (`--n2-type-sm`).
+   Wcześniej data była o stopień mniejsza (`--n2-type-xs`), a godzina — mono
+   przy większym optycznie kroju — wychodziła przed szereg. Plakietka niczego
+   nie uruchamia, więc zostaje przy wadze 500, lżejszej niż kontrolki (600). */
 .cal-now-badge-date {
-  font-size: var(--n2-type-xs);
+  font-size: var(--n2-type-sm);
+  font-weight: 500;
   color: var(--text-faint);
 }
 .cal-now-badge-time {
   font-family: var(--n2-font-mono);
   font-variant-numeric: tabular-nums;
   font-size: var(--n2-type-sm);
+  font-weight: 500;
   color: var(--text);
 }
+/* Segment przełącznika. Wysokość bierze ze wspólnego tokenu paska, a nie z
+   pionowego paddingu, żeby zakładka, „Filtry” i strzałki miały jedną linię. */
 .toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--n2-control-h);
   border: 1px solid var(--n2-border);
   background: rgba(255, 255, 255, 0.045);
-  padding: 8px 16px;
+  padding: 0 var(--n2-space-4);
   cursor: pointer;
   font-family: inherit;
   font-size: var(--n2-type-sm);
-  font-weight: 500;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
   color: var(--text-muted);
 }
 /* Wariant linkowy (TeamTabs): bez podkreślenia globalnego a:hover w każdym stanie. */
@@ -1880,6 +1923,11 @@ a.toggle-btn {
 }
 .toggle-btn:last-child {
   border-radius: 0 var(--n2-radius-pill) var(--n2-radius-pill) 0;
+}
+/* Wspólna krawędź sklejonych segmentów: KAŻDY kolejny segment zdejmuje swoją
+   lewą linię (dawniej robił to tylko `:last-child`, więc przełącznik z trzema
+   segmentami dostawał w środku podwójną krawędź). */
+.toggle-btn + .toggle-btn {
   border-left: none;
 }
 .toggle-btn.active {
@@ -1887,22 +1935,50 @@ a.toggle-btn {
   color: var(--n2-text);
   border-color: var(--n2-border-strong);
 }
+/* Kwadratowy przycisk nawigacji: ‹ › w pagerach, ↑ ↓ przy zmianie kolejności,
+   ikony lupy na Osi czasu. Treść musi stać w GEOMETRYCZNYM środku kwadratu,
+   więc przycisk jest kontenerem flex bez własnego paddingu (domyślny padding
+   `<button>` przeglądarki zostawiał glif odrobinę z boku, a samo `line-height`
+   nie centrowało go w pionie).
+
+   Sama siatka flex nie wystarcza: metryki fontu ustawiają linię bazową niżej
+   niż środek kratki, więc guillemety ‹ › wychodziły ~1,5 px pod środkiem
+   przycisku (to ta regresja, która już wracała). Dolny padding zabiera tę
+   różnicę — treść wyśrodkowana w niższym boksie przesuwa się w górę o połowę
+   jego wartości. Konteksty, w których przycisk niesie strzałkę ↑ ↓ albo ikonę
+   SVG (jedne i drugie są już symetryczne względem środka), zerują tę korektę
+   w regule niżej. */
 .nav-btn {
-  width: 36px;
-  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--n2-control-h);
+  height: var(--n2-control-h);
   border: 1px solid var(--n2-border);
   background: rgba(255, 255, 255, 0.045);
   border-radius: var(--n2-radius-sm);
   cursor: pointer;
+  padding: 0 0 3px;
   font-size: 18px;
   line-height: 1;
   color: var(--text);
+}
+.admin-status-actions .nav-btn,
+.nav-order-controls .nav-btn,
+.project-task-reorder .nav-btn,
+.timeline-zoom .nav-btn {
+  padding: 0;
 }
 .nav-btn:hover {
   background: rgba(196, 150, 255, 0.12);
   border-color: var(--n2-border-strong);
 }
+/* Etykieta zakresu jest kontrolką paska tej samej rangi co zakładki i „Filtry”,
+   więc trzyma tę samą skalę (`--n2-type-sm`), a nie domyślne 15 px tekstu.
+   Telefonowy przycisk zakresu ma własny rozmiar przy `.cal-range-btn`. */
 .cal-range-label {
+  font-size: var(--n2-type-sm);
   font-weight: 600;
   margin-left: 6px;
 }
@@ -6488,11 +6564,9 @@ a.toggle-btn {
   gap: var(--n2-space-1);
   align-items: center;
 }
-.timeline-zoom .nav-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
+/* Centrowanie treści przycisku robi już wspólna reguła `.nav-btn`; tutaj
+   zostaje wyłącznie kursor stanu zablokowanego (korektę optyczną glifu zdejmuje
+   reguła obok `.nav-btn` — te przyciski niosą ikony SVG). */
 .timeline-zoom .nav-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
@@ -7353,6 +7427,12 @@ a.toggle-btn {
 .cal-jump-field input {
   min-height: 44px;
 }
+/* Segmenty „Dzień/Miesiąc” w arkuszu szybkiego skoku są celem DOTYKU, nie
+   kontrolką belki desktopowej — dostają 44 px jak pole daty obok, zamiast
+   wspólnych 36 px paska. */
+.cal-jump-sheet .toggle-btn {
+  min-height: 44px;
+}
 
 /* ---------- Kalendarz jako widok dnia (telefon) ----------
    Wszystkie selektory poniżej wiszą na klasach, które istnieją WYŁĄCZNIE przy
@@ -7561,8 +7641,12 @@ a.toggle-btn {
   cursor: pointer;
   overflow: hidden;
 }
+/* Na telefonie etykieta zakresu jest GŁÓWNYM napisem rzędu 56 px, nie jedną
+   z kontrolek belki desktopowej — zostaje przy 15 px, mimo że `.cal-range-label`
+   zeszła globalnie do skali paska. */
 .cal-range-btn .cal-range-label {
   margin-left: 0;
+  font-size: var(--n2-type-md);
   white-space: nowrap;
 }
 .cal-toolbar-phone .filter-toolbar {
@@ -8731,12 +8815,13 @@ a.toggle-btn {
 }
 
 /* ---------- Zgłoszenia (zakładka „Zgłoszenia”) ---------- */
-/* Przełącznik trybów reużywa `.toggle-btn` z paska kalendarza; poniżej tylko
-   układ listy, tabeli i rozwijanego opisu. Modal korzysta z rodziny
-   `.task-modal-*` — `.ticket-modal-card` to jej jedyny modyfikator (węższa
-   karta, formularz nie potrzebuje siatki alokacji). */
+/* Przełącznik trybów reużywa `.toggle-btn` z paska kalendarza, a układ
+   sklejonych segmentów dzieli teraz jedną regułę z `.cal-view-toggle`
+   (sekcja „Calendar toolbar”) — tutaj zostaje wyłącznie odstęp pod nim.
+   Modal korzysta z rodziny `.task-modal-*` — `.ticket-modal-card` to jej
+   jedyny modyfikator (węższa karta, formularz nie potrzebuje siatki
+   alokacji). */
 .ticket-mode-toggle {
-  display: flex;
   margin-bottom: var(--n2-space-4);
 }
 /* Dwa kroki skali szerokości modali formularzowych (opis całej skali stoi przy

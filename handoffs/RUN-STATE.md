@@ -85,3 +85,12 @@ readAssetFile, uid-kolizja) dla obecnej architektury. Brak luk, brak zmian w
 testach. Sweep a-g: PASS wszystkie (RLS 6/6, brak Mantine/nowych libów, brak
 base64, brak dashy). `npm test` 119/2663 zielone, build zielony. Wiki
 unchanged (oba źródła aktualne).
+
+## Developer result (20260803-210302-n2hub-321)
+
+Tylko `src/styles.css`. Nowy token `--n2-control-h: 36px` scala wysokości
+kontrolek belki (`.toggle-btn`, `.nav-btn`, `.cal-toolbar .btn`, chip osoby,
+plakietka zegara). `.nav-btn` centruje glif flexem plus korekta 1,5 px,
+zerowana przy strzałkach i ikonach. `.cal-view-toggle` odłączone od `.cal-nav`
+i sklejone wspólnie z `.ticket-mode-toggle`. Bez zmian w JSX. `npm test`
+119/2663 zielone, `npm run build` zielony. Wiki unchanged.
