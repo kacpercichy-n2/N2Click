@@ -283,16 +283,29 @@
   (`::before`, malowany tylko dla `high`/`urgent`; etykietę niesie `.sr-only`),
   a stan rozplanowania to `src/components/PlanningProgress.tsx` na czystym
   `src/utils/planningProgress.ts` (`planningProgress`/`planningProgressLabel` +
-  test w node: brak szacunku ⇒ `ratio: null` i BRAK paska, szerokość przycięta
-  do 100 %, `PROGRESS_EPS` = 1e-9 zdejmuje dryf 0,1 + 0,2). Pasek NIE MA koloru
-  poniżej 100 %: tony `none`/`under`/`full` zostają neutralne (`--text-muted`),
-  a JEDYNY stan kolorowy w CSS to `over` (`--n2-danger` + `--n2-danger-soft` na
-  torze) — zielony pasek na każdym rozplanowanym zadaniu byłby tym samym
-  szumem, co pigułka „częściowo”. Tony `under`/`full` żyją dalej w module TS i
-  w atrybucie `data-tone` jako semantyka, nie jako farba.
+  test w node; `PROGRESS_EPS` = 1e-9 zdejmuje dryf 0,1 + 0,2). Od 2026-08-03
+  komponent NIE RYSUJE już cienkiego paska postępu — w CAŁEJ aplikacji (lista
+  zadań, karta projektu, Panel, arkusz szczegółów) zostaje sam tekst
+  „zaplanowano X / szac. Y" (`showHours`) plus etykieta `.sr-only`. Tor miał
+  stałą szerokość 56 px, więc na każdej karcie wyglądał tak samo i nie niósł
+  nic ponad liczby stojące obok; razem z nim zniknęły klasy toru/wypełnienia i
+  jedyna kolorowa reguła `over`. `percent`/`tone` zostają w module TS (jest
+  jednostkowo testowany, tony to nadal semantyka), po prostu nie mają dziś
+  konsumenta w DOM-ie; przy `showHours={false}` komponent renderuje WYŁĄCZNIE
+  treść dla czytnika ekranu i celowo nie jest usuwany z wierszy.
   To WARSTWA PREZENTACJI — `planningStatusForTotals` /
-  `taskPlanningStatus` zostają jedynym źródłem stanu i idą do paska osobnym
-  propsem `status`, żeby niuans zasobnika został w `.sr-only`. Pigułka
+  `taskPlanningStatus` zostają jedynym źródłem stanu i idą osobnym propsem
+  `status`, żeby niuans zasobnika został w `.sr-only`.
+  KARTY LISTY `.task-card` — i na `/tasks`, i na `/projects` — nie mają już
+  strzałki `.card-chevron`: cała karta jest klikalna i podświetlana hoverem.
+  Razem z JSX-em znikło z `styles.css` przypięcie i rezerwa `padding-right`
+  dla `.task-card-main`, więc chevron NIE MOŻE tam wrócić bez własnych reguł.
+  Ikona żyje dalej na wierszach zadań w karcie projektu
+  (`.project-task-main`, przypięta absolutnie) i na wierszach osób
+  (`.person-row`, w zwykłym przepływie, sam efekt hoveru).
+  Usuwanie zadania idzie wspólnym wzorcem aplikacji: czerwony
+  `Trash2` w `IconButton variant="danger"` — jak na Klientach i w Content
+  planie — w OBU wariantach karty (desktop i telefon). Pigułka
   `.planning-badge` żyje dalej WYŁĄCZNIE w TaskModalu (tam są szczegóły).
   Postęp listy kontrolnej to wzór glifów (`src/utils/checklistGlyphs.ts`,
   `◍◍◌ 2/3`, limit 5 glifów, glify `aria-hidden`). Ścieżka adresowa ma JEDNO

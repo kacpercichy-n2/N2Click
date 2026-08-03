@@ -94,3 +94,13 @@ plakietka zegara). `.nav-btn` centruje glif flexem plus korekta 1,5 px,
 zerowana przy strzałkach i ikonach. `.cal-view-toggle` odłączone od `.cal-nav`
 i sklejone wspólnie z `.ticket-mode-toggle`. Bez zmian w JSX. `npm test`
 119/2663 zielone, `npm run build` zielony. Wiki unchanged.
+
+## Developer result (20260803-212145-n2hub-322)
+
+`PlanningProgress.tsx` bez paska (zostaje tekst godzin + `.sr-only`, util
+nietknięty), `TasksPage.tsx` usuwanie na `Trash2`, bez `.card-chevron` (po
+werdykcie także `ProjectsPage.tsx` — dzieliła `.task-card-main`),
+`styles.css`: martwe reguły toru i chevronu karty (z rezerwą 40 px) oraz
+`background-attachment: fixed` osobną deklaracją (skrót przyklejał tylko
+ostatnią warstwę). `npm test` 119/2663 zielone, build zielony. Wiki: UI +
+frontend-performance.

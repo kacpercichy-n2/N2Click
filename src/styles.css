@@ -276,7 +276,14 @@ html {
 body {
   font-family: var(--font);
   color: var(--text);
-  background: var(--n2-gradient-page) fixed;
+  background: var(--n2-gradient-page);
+  /* `fixed` MUSI stać osobno. W skrócie `background` wartość przyklejenia
+     wchodzi tylko do OSTATNIEJ warstwy, więc trzy poświaty radialne dostawały
+     `scroll` i skalowały się względem CAŁEJ wysokości dokumentu — na długich
+     stronach (lista zadań) dawało to jaśniejszy fiolet w środku ekranu.
+     Pojedyncza wartość w osobnej deklaracji obejmuje wszystkie warstwy, więc
+     tło jest identyczne na każdej trasie, niezależnie od długości strony. */
+  background-attachment: fixed;
   font-size: var(--n2-type-md);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -1076,43 +1083,18 @@ textarea {
   background: var(--n2-danger);
 }
 
-/* ---- Rozplanowanie godzin jako pasek postępu (AT-16) ----------------------
-   Zastąpił pigułkę `.planning-badge` w wierszach list (ta zostaje w
-   TaskModalu). Szerokość liczy `utils/planningProgress.ts` (przycięta do
-   100 %); brak szacunku = brak paska.
-
-   REGUŁA KOLORU: pasek NIE MA koloru poniżej 100 %. `none`, `under` i `full`
-   zostają neutralne (`--text-muted` z reguły bazowej) — zielony pasek na
-   każdym rozplanowanym zadaniu byłby tym samym szumem, co pigułka
-   „częściowo” na 7 z 10 kart, tylko w innym kształcie. JEDYNY stan kolorowy
-   to `over` (>100 %), czyli jedyny prawdziwy alarm w tym wierszu.
-   Tony `under`/`full` żyją dalej w `data-tone` (i w module TS) jako
-   semantyka dla czytnika ekranu i przyszłych użyć — nie jako farba. */
+/* ---- Rozplanowanie godzin w wierszu listy (AT-16) -------------------------
+   Zastąpiło pigułkę `.planning-badge` w wierszach list (ta zostaje w
+   TaskModalu). Od 2026-08-03 zostają WYŁĄCZNIE liczby: cienki pasek postępu
+   (tor + wypełnienie, tony `data-tone`) został usunięty, bo miał stałą
+   szerokość i na każdej karcie wyglądał tak samo — obok stoi ta sama
+   informacja słowami. Etykieta procentowa żyje dalej jako
+   `.sr-only` (patrz `components/PlanningProgress.tsx`). */
 .planning-progress {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
-}
-.planning-progress-bar {
-  flex: none;
-  width: 56px;
-  height: 4px;
-  border-radius: var(--n2-radius-pill);
-  background: rgba(255, 255, 255, 0.1);
-  overflow: hidden;
-}
-.planning-progress-fill {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--text-muted);
-}
-.planning-progress-bar[data-tone='over'] {
-  background: var(--n2-danger-soft);
-}
-.planning-progress-bar[data-tone='over'] .planning-progress-fill {
-  background: var(--n2-danger);
 }
 .task-delete {
   align-self: center;
@@ -7728,13 +7710,12 @@ a.toggle-btn {
   color: var(--n2-text-disabled);
   transition: color var(--n2-transition), transform var(--n2-transition);
 }
-.task-card-main,
+/* Karta zadania (`.task-card-main`) NIE MA już strzałki — cała karta jest
+   klikalna i podświetlana hoverem, więc chevron nic nie wnosił. Razem z nim
+   znika rezerwa `padding-right` i kotwica pozycjonowania. */
 .project-task-row .project-task-main,
 .dash-row {
   position: relative;
-}
-.task-card-main {
-  padding-right: 40px;
 }
 .project-task-main {
   padding-right: 32px;
@@ -7742,7 +7723,6 @@ a.toggle-btn {
 .dash-row {
   padding-right: 28px;
 }
-.task-card-main .card-chevron,
 .project-task-main .card-chevron,
 .dash-row .card-chevron {
   position: absolute;
@@ -7750,8 +7730,6 @@ a.toggle-btn {
   right: 12px;
   margin-top: -8px;
 }
-.task-card:hover .card-chevron,
-.task-card:focus-within .card-chevron,
 .project-task-row:hover .card-chevron,
 .project-task-row:focus-within .card-chevron,
 .person-row:hover .card-chevron,

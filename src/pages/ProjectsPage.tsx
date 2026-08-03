@@ -27,7 +27,7 @@ import { FilterPresets, DEFAULT_CRITERIA } from '../components/FilterPresets';
 import { type FilterChip, type FilterGroup } from '../components/FilterPanel';
 import { FilterBar } from '../components/FilterBar';
 import { useOpenTask } from '../components/TaskModal';
-import { ChevronRight, GanttChart, Plus } from '../components/icons';
+import { GanttChart, Plus } from '../components/icons';
 import { sortProjectGroups } from './projectSort';
 import type { SavedFilterCriteria } from '../types';
 import { addDaysStr, formatShortWithWeekday, todayStr } from '../utils/dates';
@@ -450,7 +450,6 @@ export function ProjectsPage() {
                           · {teamSize} {polishCount(teamSize, 'osoba', 'osoby', 'osób')}
                         </span>
                       </div>
-                      <ChevronRight className="card-chevron" size={16} aria-hidden />
                     </button>
                     <div className="card-actions">
                       <Tooltip text="Oś czasu" visualOnly>

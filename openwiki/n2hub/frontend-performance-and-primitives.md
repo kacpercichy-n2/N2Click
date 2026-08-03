@@ -86,6 +86,12 @@ opaque card — the scrim never needs repainting during that scroll.
   pagination only after a trace shows content paint/layout is the bottleneck.
 - Preserve keyboard, focus restoration, `aria-modal`, inertness and fallback
   behavior while optimizing visuals.
+- The page gradient (`--n2-gradient-page`, four layers) is pinned by a SEPARATE
+  `background-attachment: fixed` declaration on `body`, never by `fixed` inside
+  the `background` shorthand. In the shorthand that keyword reaches only the
+  LAST layer, so the three radial glows scrolled and sized themselves against
+  full document height — long routes such as `/tasks` then showed a lighter
+  violet wash than short ones.
 
 ## Verification
 
