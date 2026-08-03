@@ -1477,12 +1477,14 @@ function BinCardImpl({
       colIndex = valid ? hitIndex : -1;
 
       const dur = entry.plannedHours * 60;
-      // Anchor the drop to the ghost card's TOP edge (clientY − grabY), NOT the
-      // cursor: the visible ghost's top sits at `clientY − grabY`, so mapping the
-      // cursor would land the block `grabY` px below where the card points. The
-      // column (X) stays cursor-based; only this vertical slot uses the card top.
-      const anchorY = clientY - activeDrag.grabY;
-      startMin = dropStartFromAnchor(anchorY - gridRect.top, HOUR_PX, dur);
+      // Anchor the drop to the CURSOR, not the ghost card's top edge. The card
+      // is a small proxy (~75 px ≈ 53 min at grid scale), so the old top-edge
+      // anchor landed the block up to `grabY` px ABOVE where the user pointed —
+      // and since meetings/vacations entered the collision (2026-07-30 /
+      // 2026-08-03) such an offset drop often hit occupied time and was
+      // silently rejected. The slot under the pointer IS the block's start;
+      // the in-column `.week-drop-preview` band remains the source of truth.
+      startMin = dropStartFromAnchor(clientY - gridRect.top, HOUR_PX, dur);
       // Collision from the precomputed index (identical to the old
       // `blockCollides`: this person's dated blocks on the target day; a bin row
       // has no dated presence, so there is no self to exclude).

@@ -83,6 +83,15 @@
   wiersz przy celu 0 (to zwykły przypadek „wszystko już w kalendarzu”).
 - Bin drag is window-owned: preserve its pointer-up/cancel/blur/Escape/visibility
   cleanup, synchronous refs and rendered-column hit-testing.
+- Upuszczenie karty zasobnika kotwiczy się do KURSORA (2026-08-03): start bloku
+  to slot pod wskaźnikiem (`dropStartFromAnchor(clientY - gridRect.top, …)`),
+  NIE górna krawędź ducha karty. Poprzednia kotwica (fix n2hub-253) lądowała
+  blok do ~53 min POWYŻEJ celu (wysokość karty ≈ 75 px w skali 84 px/h), co po
+  wejściu spotkań (2026-07-30) i urlopów (2026-08-03) do kolizji kończyło się
+  cichym odrzuceniem tuż pod istniejącym blokiem — najczęstszym realnym celem.
+  Duch karty nadal trzyma punkt chwytu (czysta prezentacja); prawdą o lądowaniu
+  jest pasek `.week-drop-preview`. Scalanie przez styk krawędzi liczy się z tego
+  samego startu, więc kursor na krawędzi bloku tej samej pary = merge.
 - Touch drag gate (2026-07-27, invariant 7): on `pointerType` touch/pen the four
   drag entries (WeekView `TimedBlock.begin`, `BinCard.begin`, TimelinePage
   `Bar.begin`, `MilestoneMark`) do NOT start a drag on `pointerdown` — they call
