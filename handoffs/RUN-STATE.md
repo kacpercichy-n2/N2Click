@@ -77,3 +77,11 @@ Nowe granice: `diffContentPlanToCloudOps` + routing `CloudOp.schema` w
 Realtime ŚWIADOMIE pominięty. `npm test` 119 plików / 2663 testy zielone,
 `npm run build` zielony. Wiki: cloud-database + state-and-persistence.
 Ograniczenie: marka o id-slugu (utworzona lokalnie) nie jedzie do chmury.
+
+## Test-writer result (R9, 20260803-204922-n2hub-319)
+
+Zweryfikowano 8 case'ów defects: wszystkie przeportowane albo N/A (login mock,
+readAssetFile, uid-kolizja) dla obecnej architektury. Brak luk, brak zmian w
+testach. Sweep a-g: PASS wszystkie (RLS 6/6, brak Mantine/nowych libów, brak
+base64, brak dashy). `npm test` 119/2663 zielone, build zielony. Wiki
+unchanged (oba źródła aktualne).
