@@ -70,3 +70,12 @@ Follow-up: dead export `ghostVisible` removed (never imported by KanbanPage —
 `viaHoldRef` + manual sticky-OR). Its 4 tests folded into `exceedsClickSlop`,
 now the sole latch input, with the touch/`viaHold` path documented in module +
 test comments. File 15→14 tests. `npm test` 2137/2137, build green.
+
+## Developer result (n2hub-306 powiadomienia przeczytane per wpis)
+
+`Person.notificationsReadIds` (addytywne, DATA_VERSION 7) obok watermarka: nowa
+akcja `MARK_NOTIFICATION_ENTRY_READ`, pruning w `MARK_NOTIFICATIONS_SEEN`, unia
+fail-closed w `applyCloudPeople`, tick `.dash-notif-tick` w kafelku, badge karty
+przez `unreadNotificationCountForPerson` (usunięty `unreadNotificationCountFor`),
+migracja `20260803100000_profiles_notifications_read_ids.sql` NIE zaaplikowana.
+`npm test` 2243/2243, build green. Dwie strony wiki zaktualizowane.

@@ -1826,7 +1826,9 @@ export interface PersonNotification {
   taskId: string; // task to open in the modal; '' for a project-scoped mention
   title: string; // ready-to-render Polish sentence
   createdAt: string; // ISO timestamp of the source event (for sort + display)
-  read: boolean; // createdAt <= recipient's notificationsSeenAt watermark
+  // Przeczytane: createdAt <= watermark `notificationsSeenAt` LUB id wpisu jest
+  // w zbiorze `notificationsReadIds` odbiorcy (oznaczenie per wpis).
+  read: boolean;
 }
 
 /** How many of a derived feed are still unread. Pure over the returned list. */
@@ -1877,10 +1879,15 @@ export function notificationsForPerson(
     const ms = new Date(createdAt).getTime();
     return !Number.isNaN(ms) && ms >= cutoffMs;
   };
-  // Watermark „przeczytane": zdarzenie z createdAt <= seenAt jest przeczytane.
-  const seenMs = new Date(getPerson(state, personId)?.notificationsSeenAt ?? '').getTime();
-  const isRead = (createdAt: string): boolean =>
-    !Number.isNaN(seenMs) && new Date(createdAt).getTime() <= seenMs;
+  // Przeczytane z DWÓCH źródeł, w sumie (OR):
+  //   * watermark `notificationsSeenAt` — zdarzenie z createdAt <= seenAt
+  //     (oznaczenie ZBIORCZE, kompatybilność wsteczna dla starszych zapisów),
+  //   * zbiór `notificationsReadIds` — pojedyncze wpisy oznaczone tickiem.
+  const recipient = getPerson(state, personId);
+  const seenMs = new Date(recipient?.notificationsSeenAt ?? '').getTime();
+  const readIds = new Set(recipient?.notificationsReadIds ?? []);
+  const isRead = (createdAt: string, id: string): boolean =>
+    (!Number.isNaN(seenMs) && new Date(createdAt).getTime() <= seenMs) || readIds.has(id);
   const out: PersonNotification[] = [];
 
   // 1. @-wzmianki: ktoś inny wspomniał tę osobę w komentarzu.
@@ -1902,7 +1909,7 @@ export function notificationsForPerson(
       taskId,
       title: `${author.name} wspomniał(a) Cię w komentarzu — ${label}`,
       createdAt: c.createdAt,
-      read: isRead(c.createdAt),
+      read: isRead(c.createdAt, `mention:${c.id}`),
     });
   }
 
@@ -1937,9 +1944,23 @@ export function notificationsForPerson(
       taskId: task.id,
       title: `${actor.name} przypisał(a) Ci zadanie — ${task.title}`,
       createdAt: assignedAt,
-      read: isRead(assignedAt),
+      read: isRead(assignedAt, `assignment:${a.id}`),
     });
   }
 
   return out.sort((x, y) => new Date(y.createdAt).getTime() - new Date(x.createdAt).getTime());
+}
+
+/**
+ * Ile wpisów feedu jednej osoby jest nieprzeczytanych. JEDNO źródło licznika dla
+ * kafelka Panelu i badge'a karty przeglądarki (App.tsx) — obie liczby muszą
+ * pochodzić z tego samego, pochodnego feedu. Brak osoby (wylogowanie) => 0.
+ */
+export function unreadNotificationCountForPerson(
+  state: AppData,
+  personId: string,
+  nowIso: string,
+): number {
+  if (!personId) return 0;
+  return unreadNotificationCount(notificationsForPerson(state, personId, nowIso));
 }

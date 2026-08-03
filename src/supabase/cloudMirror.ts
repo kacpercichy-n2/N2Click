@@ -859,6 +859,9 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
           birth_date: p.birthDate === '' ? null : p.birthDate,
           // Watermark „przeczytane": ISO albo NULL (brak = wszystko nieprzeczytane).
           notifications_seen_at: p.notificationsSeenAt ? p.notificationsSeenAt : null,
+          // Przeczytane per wpis: kolumna jest `not null default '{}'`, więc brak
+          // klucza lustruje się jako pusta tablica (nigdy NULL).
+          notifications_read_ids: p.notificationsReadIds ?? [],
           email_notifications: p.emailNotifications ?? false,
         },
         sourceId: p.id,

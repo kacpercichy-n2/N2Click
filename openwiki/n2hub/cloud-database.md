@@ -72,6 +72,16 @@ widoki-mostki). Gdzie w tekście pada `public.<tabela>` w kontekście
   `protect_profile_privileges`. Scalenie `applyCloudPeople` bierze PÓŹNIEJSZY z
   lokalnego i chmurowego znacznika — watermark jest MONOTONICZNY, przeczytane
   nie cofa się przy wyścigu urządzeń),
+  `notifications_read_ids` (20260803100000_profiles_notifications_read_ids —
+  `text[] not null default '{}'`: przeczytane PER WPIS pochodnego feedu, id
+  postaci `mention:<commentId>` / `assignment:<assignmentId>`. Wpis jest
+  przeczytany gdy `created_at <= notifications_seen_at` LUB jego id jest w tej
+  tablicy. Scalenie robi UNIĘ lokalnego i chmurowego zbioru — monotonicznie, jak
+  watermark; zbiorcze „Oznacz jako przeczytane" bije watermark i CZYŚCI tablicę.
+  Poza `protect_profile_privileges`, bez zmian RLS. UWAGA: `n2click.profiles` to
+  widok `select *` zamrożony przy tworzeniu, więc migracja ODTWARZA go
+  (`create or replace view`, granty zachowane) — inaczej PostgREST nie wystawi
+  nowej kolumny),
   `supervisor_id` → `profiles.id` (przełożony; nullable, `on delete set null`,
   no self-reference; only administrators may change it — enforced by the
   `app.protect_profile_privileges` trigger, same as `access_role`,

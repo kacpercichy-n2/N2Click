@@ -184,6 +184,26 @@ function coerceArray<T>(value: unknown, fallback: T[]): T[] {
  *   PRESENT ⇒ sanitized (empty allowed).
  * Idempotent: an already-current person round-trips unchanged (`isAdmin` is dropped).
  */
+/** Defensywny limit długości zbioru „przeczytane per wpis" w jednym zapisie.
+ *  Feed patrzy 14 dni wstecz, więc realny zbiór jest o rzędy wielkości mniejszy;
+ *  cap chroni wyłącznie przed spuchniętym/uszkodzonym zapisem. */
+const MAX_READ_IDS = 500;
+
+/** Sanityzacja `notificationsReadIds`: niepuste stringi, dedupe, cap; brak
+ *  wartości / nie-tablica / pusty wynik => `undefined` (klucz nieobecny). */
+function sanitizeReadIds(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const id of value) {
+    if (typeof id !== 'string' || id === '' || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+    if (out.length === MAX_READ_IDS) break;
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 function migratePerson(raw: Record<string, unknown>): Person {
   const capacity =
     typeof raw.capacity === 'number' && raw.capacity > 0 ? raw.capacity : DEFAULT_CAPACITY;
@@ -198,6 +218,11 @@ function migratePerson(raw: Record<string, unknown>): Person {
   const seenRaw = str(raw.notificationsSeenAt);
   const notificationsSeenAt =
     seenRaw !== '' && !Number.isNaN(new Date(seenRaw).getTime()) ? seenRaw : undefined;
+  // Przeczytane per wpis: ADDYTYWNE, opcjonalne. Brak pola / nie-tablica =>
+  // klucz nieobecny; z tablicy zostają NIEPUSTE stringi (dedupe, kolejność
+  // wejścia), defensywny cap MAX_READ_IDS; pusty wynik => klucz nieobecny.
+  // Nigdy nie rzuca — czysty zapis round-tripuje bez echo-write.
+  const notificationsReadIds = sanitizeReadIds(raw.notificationsReadIds);
   return {
     id: str(raw.id),
     firstName: str(raw.firstName),
@@ -222,6 +247,7 @@ function migratePerson(raw: Record<string, unknown>): Person {
     supervisorId: str(raw.supervisorId),
     birthDate,
     ...(notificationsSeenAt !== undefined ? { notificationsSeenAt } : {}),
+    ...(notificationsReadIds !== undefined ? { notificationsReadIds } : {}),
     // Opt-in mailowy (ADDYTYWNE, opcjonalne): brak / nie-boolean => false.
     emailNotifications: raw.emailNotifications === true,
   };

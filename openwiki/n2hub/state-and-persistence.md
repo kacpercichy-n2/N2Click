@@ -358,7 +358,35 @@
   Nowy dział/spółka są namierzane po znormalizowanej nazwie w efekcie i dopiero
   wtedy wybierane w drafcie (id nadaje reduktor); stanowisko (wolny tekst)
   ustawiane od razu.
-- POWIADOMIENIA IN-APP (2026-07-23): kolekcja `notifications` w `AppData`
+- POWIADOMIENIA — DWA SYSTEMY, nie mylić. (1) PRODUKCYJNY feed Panelu jest
+  POCHODNY: `notificationsForPerson` w `src/store/selectors.ts` składa go z
+  `comments`, `assignments` i dziennika aktywności w oknie
+  `NOTIFICATION_WINDOW_DAYS` (14), id wpisu = `mention:<commentId>` /
+  `assignment:<assignmentId>`; kafelek pokazuje max 3 (`visibleNotifications`).
+  (2) Kolekcja `notifications` w `AppData` (niżej) jest UŚPIONA — nic w UI jej
+  dziś nie czyta.
+- PRZECZYTANE FEEDU: STAN TRWAŁY, DWA ŹRÓDŁA (2026-08-03, per wpis). Wpis jest
+  przeczytany gdy `createdAt <= Person.notificationsSeenAt` (watermark, oznaczenie
+  ZBIORCZE i kompatybilność wsteczna) LUB jego id należy do
+  `Person.notificationsReadIds` (tick per wpis). Oba pola są OPCJONALNE i
+  ADDYTYWNE (`DATA_VERSION` zostaje 7), z kluczem obecnym WYŁĄCZNIE gdy niosą
+  wartość — egzekwują to `migratePerson`, reduktor i merge chmurowy.
+  `MARK_NOTIFICATION_ENTRY_READ` dokłada JEDNO id (kolejność wstawień, bez
+  duplikatów; brak/nieznany użytkownik, pusty lub nie-stringowy `entryId`, id
+  spoza feedu i wpis już przeczytany => TA SAMA referencja, inwariant 6).
+  `MARK_NOTIFICATIONS_SEEN` bije watermark na „teraz" i CZYŚCI zbiór (pruning —
+  watermark wyraża wtedy ten sam stan). Żadna z akcji nie pisze do dziennika
+  aktywności. Przeczytany wpis NIE znika z kafelka: traci kropkę i tick, zostaje
+  wyszarzony. Licznik kafelka i badge karty przeglądarki (`App.tsx`) liczą z
+  JEDNEGO źródła — `unreadNotificationCountForPerson`; `src/utils/tabBadge.ts`
+  trzyma już tylko etykiety i maszynę favicony. Chmura: kolumny
+  `profiles.notifications_seen_at` (max-merge) i `profiles.notifications_read_ids`
+  (UNIA lokalnego i chmurowego zbioru w `applyCloudPeople`, monotoniczna, bez
+  pruningu; nie-tablica lub nie-string w wierszu => fail-closed dla całego
+  payloadu). Testy: `src/store/notifications.test.ts`, bloki w
+  `storage.test.ts` / `cloudMerge.test.ts` / `referenceData.test.ts` /
+  `cloudMirror.test.ts`.
+- POWIADOMIENIA IN-APP (2026-07-23, UŚPIONE): kolekcja `notifications` w `AppData`
   (`Notification` w `src/types.ts`; `type` ∈ task_assigned/project_comment/
   bin_item, `payload` = taskId/projectId/commentId/actorId, `readAt` '' =
   nieprzeczytane). Cloud-authoritative i ADDYTYWNA (`DATA_VERSION` zostaje 7):

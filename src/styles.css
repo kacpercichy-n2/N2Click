@@ -4485,8 +4485,8 @@ a.toggle-btn {
 }
 
 /* Powiadomienia: wiersz = klikalny obszar (rozwija podgląd; otwarcie obiektu to
- * osobny przycisk w podglądzie) + osobny „✓" (oznacz jako przeczytane bez
- * rozwijania). `dash-notif-open` reużywa stylu `.dash-row`. */
+ * osobny przycisk w podglądzie) + osobny „✓" (oznacza TEN wpis jako przeczytany,
+ * bez rozwijania). `dash-notif-open` reużywa stylu `.dash-row`. */
 .dash-notif-row {
   display: flex;
   align-items: center;
@@ -4496,10 +4496,34 @@ a.toggle-btn {
   flex: 1;
   min-width: 0;
 }
-.dash-notif-read {
+/* „✓" per wpis: RODZEŃSTWO przycisku rozwijania (nigdy zagnieżdżenie). Widoczny
+ * kwadrat 24 px, a `::after` rozciąga obszar dotyku poza obrys — wiersze listy
+ * stoją ciasno, więc powiększamy hit-area zamiast wysokości wiersza. Ikona
+ * znika po przeczytaniu (wpis zostaje, wyszarzony). */
+.dash-notif-tick {
+  position: relative;
   flex: none;
-  padding: 4px 6px;
-  line-height: 1;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--n2-radius-pill);
+  border: 1px solid var(--n2-border-strong);
+  background: var(--n2-glass-strong);
+  color: var(--n2-text-soft);
+  cursor: pointer;
+  transition: color var(--n2-transition), background var(--n2-transition),
+    border-color var(--n2-transition);
+}
+.dash-notif-tick::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+}
+.dash-notif-tick:hover,
+.dash-notif-tick:focus-visible {
+  color: var(--n2-lavender);
+  border-color: var(--n2-lavender);
 }
 
 /* Rozwinięty podgląd powiadomienia (kto/co/gdzie + treść komentarza). Klik w

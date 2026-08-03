@@ -48,6 +48,9 @@ import {
   weekBlocksForPerson,
 } from '../store/selectors';
 import { Avatar } from '../components/Avatar';
+// Ikony idą przez centralny moduł (patrz components/icons.ts), nigdy wprost
+// z `lucide-react`.
+import { Check } from '../components/icons';
 import { PlanningProgress } from '../components/PlanningProgress';
 import { TodayAgendaList } from '../components/TodayAgenda';
 import { useOpenTask } from '../components/TaskModal';
@@ -207,9 +210,9 @@ export function DashboardPage() {
   );
   // Rozwinięty podgląd powiadomienia (max jeden naraz). Hook MUSI stać przed
   // wczesnym returnem dla braku działającego użytkownika (kolejność hooków).
-  // Wiersze pochodnego feedu nie znikają po przeczytaniu (zmienia się tylko
-  // styl), więc porównanie id wystarcza — żaden efekt czyszczący nie jest
-  // potrzebny.
+  // Wiersze pochodnego feedu nie znikają po przeczytaniu — ani po ticku per
+  // wpis, ani po oznaczeniu zbiorczym (zmienia się tylko styl) — więc
+  // porównanie id wystarcza, żaden efekt czyszczący nie jest potrzebny.
   const [expandedNotifId, setExpandedNotifId] = useState<string | null>(null);
   // Telefon: stos zamiast siatki. Oba hooki MUSZĄ stać przed wczesnym returnem
   // dla braku użytkownika (kolejność hooków). Zespół startuje zwinięty — na
@@ -245,15 +248,22 @@ export function DashboardPage() {
   const coworkers = state.people.filter((p) => p.id !== me.id);
 
   // Powiadomienia — derived feed (selectors.notificationsForPerson): @-wzmianki
-  // i przypisania zadań od innych osób z ostatniego okna. Pochodne, nietrwałe;
+  // i przypisania zadań od innych osób z ostatniego okna. Same wpisy są pochodne;
   // `now` wstrzykiwany, by selektor był czysty. Cap (max 3) w `visibleNotifications`.
-  // Stan „przeczytane" to watermark osoby (MARK_NOTIFICATIONS_SEEN — oznacza
-  // całość); wiersz kafelka ROZWIJA podgląd (kto/co/gdzie), a otwarcie encji
-  // jest osobną akcją „Otwórz zadanie/projekt" w podglądzie.
+  // Stan „przeczytane" jest TRWAŁY i ma dwa źródła (OR): watermark osoby
+  // (MARK_NOTIFICATIONS_SEEN — oznacza całość) oraz zbiór id oznaczonych
+  // pojedynczo (MARK_NOTIFICATION_ENTRY_READ — tick przy wierszu). Wiersz
+  // kafelka ROZWIJA podgląd (kto/co/gdzie), a otwarcie encji jest osobną akcją
+  // „Otwórz zadanie/projekt" w podglądzie.
   const personNotifications = notificationsForPerson(state, me.id, new Date().toISOString());
   const unreadCount = unreadNotificationCount(personNotifications);
   const markNotificationsSeen = () => {
     if (unreadCount > 0) dispatch({ type: 'MARK_NOTIFICATIONS_SEEN' });
+  };
+  /** Oznacza POJEDYNCZY wpis; reduktor sam odrzuca id spoza feedu i już
+   *  przeczytane, więc wołający nie musi niczego pilnować. */
+  const markNotificationEntryRead = (entryId: string) => {
+    dispatch({ type: 'MARK_NOTIFICATION_ENTRY_READ', entryId });
   };
   // Mapowanie na wpis wyświetlany (NotificationEntry + `read`): tytuł jest
   // gotowym polskim zdaniem z selektora; nazwy do podglądu rozwiązujemy TU
@@ -297,10 +307,10 @@ export function DashboardPage() {
     updateUiPrefs({ changelogSeenId: latestChange.id });
   };
 
-  // Otwarcie encji z podglądu: feed jest pochodny (watermark), więc „przeczytane"
-  // oznacza się w całości; potem zadanie w modalu albo projekt przez route.
-  const openNotification = (entry: NotificationEntry): void => {
-    markNotificationsSeen();
+  // Otwarcie encji z podglądu oznacza jako przeczytany WYŁĄCZNIE ten wpis
+  // (nigdy całego feedu); potem zadanie w modalu albo projekt przez route.
+  const openNotification = (entry: NotificationEntry & { read: boolean }): void => {
+    if (!entry.read) markNotificationEntryRead(entry.id);
     const target = entry.target;
     if (target?.kind === 'task') openTask(target.taskId);
     else if (target?.kind === 'project') navigate(`/projects/${target.projectId}`);
@@ -402,6 +412,21 @@ export function DashboardPage() {
                     <span className="dash-row-name">{n.title}</span>
                     {n.when && <span className="dash-row-when">{n.when}</span>}
                   </button>
+                  {/* Tick oznacza POJEDYNCZY wpis. Jest RODZEŃSTWEM przycisku
+                      rozwijania (nigdy zagnieżdżeniem), więc klik nie rozwija
+                      podglądu. Wpis przeczytany ticka nie ma — pozostaje na
+                      liście, tylko wyszarzony. */}
+                  {!n.read && (
+                    <button
+                      type="button"
+                      className="dash-notif-tick"
+                      aria-label="Oznacz jako przeczytane"
+                      title="Oznacz jako przeczytane"
+                      onClick={() => markNotificationEntryRead(n.id)}
+                    >
+                      <Check size={16} aria-hidden="true" />
+                    </button>
+                  )}
                 </div>
                 {expanded && (
                   <div className="dash-notif-preview" id={previewId}>
@@ -768,9 +793,11 @@ export function DashboardPage() {
 
         {/* RZĄD 2 · Powiadomienia — pochodny feed (@-wzmianki + przypisania,
          *  max 3, kropka + badge dla nieprzeczytanych). Klik w wiersz ROZWIJA
-         *  podgląd (kto/co/gdzie) i NICZEGO nie dispatchuje; otwarcie obiektu
-         *  (z oznaczeniem watermarku „przeczytane") to osobny przycisk „Otwórz
-         *  zadanie/projekt" w podglądzie; nagłówek ma „Oznacz jako przeczytane".
+         *  podgląd (kto/co/gdzie) i NICZEGO nie dispatchuje; tick obok wiersza
+         *  oznacza TEN JEDEN wpis; otwarcie obiektu (też oznacza tylko ten wpis)
+         *  to osobny przycisk „Otwórz zadanie/projekt" w podglądzie; nagłówek ma
+         *  zbiorcze „Oznacz jako przeczytane" (watermark). Przeczytane wpisy
+         *  zostają na liście — wyszarzone, bez kropki i bez ticka.
          *  PUSTY kafelek kurczy się do belki (OP-01), nie zajmuje całego rzędu. */}
         {renderNotificationsTile('dash-card dash-area-notifications')}
 

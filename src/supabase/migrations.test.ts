@@ -157,6 +157,9 @@ describe('konwencja plików migracji', () => {
       '20260731083246_app_access_company_idx.sql',
       '20260731084109_company_scope_via_relations.sql',
       '20260731084136_tidy_grants_core_defaults.sql',
+      // Przeczytane per wpis feedu powiadomień (kolumna na core.profiles +
+      // odtworzenie widoku-mostka n2click.profiles). Bez nowych polityk RLS.
+      '20260803100000_profiles_notifications_read_ids.sql',
     ]);
   });
 

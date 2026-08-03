@@ -783,6 +783,120 @@ describe('MERGE_CLOUD_PEOPLE', () => {
     expect('notificationsSeenAt' in n4.people[0]).toBe(false);
   });
 
+  it('przeczytane per wpis: UNIA lokalnego i chmurowego zbioru (monotoniczna, bez pruningu)', () => {
+    const state: AppData = {
+      ...baseState(),
+      people: [
+        {
+          ...person(P1),
+          email: 'kacper@x.pl',
+          notificationsReadIds: ['mention:c1', 'assignment:a1'],
+        },
+      ],
+    };
+    const next = reducer(state, {
+      type: 'MERGE_CLOUD_PEOPLE',
+      payload: [
+        cloudRow({
+          id: UUID_K,
+          email: 'kacper@x.pl',
+          // Duplikat lokalnego + id tylko-chmurowe; kolejność: lokalne, potem chmurowe.
+          notificationsReadIds: ['assignment:a1', 'mention:c9'],
+        }),
+      ],
+    });
+    expect(next.people[0].notificationsReadIds).toEqual([
+      'mention:c1',
+      'assignment:a1',
+      'mention:c9',
+    ]);
+    // Chmura BEZ zbioru nie kasuje lokalnych oznaczeń (unia jest monotoniczna).
+    const kept = reducer(next, {
+      type: 'MERGE_CLOUD_PEOPLE',
+      payload: [cloudRow({ id: UUID_K, email: 'kacper@x.pl' })],
+    });
+    expect(kept.people[0].notificationsReadIds).toEqual([
+      'mention:c1',
+      'assignment:a1',
+      'mention:c9',
+    ]);
+  });
+
+  it('przeczytane per wpis: wynik wartościowo równy zachowuje referencję osoby', () => {
+    const local = { ...person(P1), email: 'kacper@x.pl', notificationsReadIds: ['mention:c1'] };
+    const state: AppData = { ...baseState(), people: [local] };
+    // Wiersz chmury powtarza WARTOŚCI osoby lokalnej (fixture: A B / pelne), więc
+    // jedyną osią porównania zostaje zbiór „przeczytane".
+    const payload = [
+      cloudRow({
+        id: UUID_K,
+        email: 'kacper@x.pl',
+        firstName: 'A',
+        lastName: 'B',
+        accessRole: 'pelne',
+        notificationsReadIds: ['mention:c1'],
+      }),
+    ];
+    const next = reducer(state, { type: 'MERGE_CLOUD_PEOPLE', payload });
+    expect(next).toBe(state);
+    expect(next.people[0]).toBe(local);
+  });
+
+  it('przeczytane per wpis: nowa osoba niesie zbiór z chmury; brak/pusty => klucz nieobecny', () => {
+    const empty: AppData = { ...baseState(), people: [] };
+    const withIds = reducer(empty, {
+      type: 'MERGE_CLOUD_PEOPLE',
+      payload: [
+        cloudRow({ id: UUID_Z, email: 'zuza@x.pl', notificationsReadIds: ['mention:c1', '', 'mention:c1'] }),
+      ],
+    });
+    expect(withIds.people[0].notificationsReadIds).toEqual(['mention:c1']); // dedupe + puste out
+
+    const bare = reducer(empty, {
+      type: 'MERGE_CLOUD_PEOPLE',
+      payload: [cloudRow({ id: UUID_Z, email: 'zuza@x.pl', notificationsReadIds: [] })],
+    });
+    expect('notificationsReadIds' in bare.people[0]).toBe(false);
+
+    // Obie strony bez zbioru przy aktualizacji istniejącej osoby => klucz nieobecny.
+    const localState: AppData = {
+      ...baseState(),
+      people: [{ ...person(P1), email: 'kacper@x.pl' }],
+    };
+    const updated = reducer(localState, {
+      type: 'MERGE_CLOUD_PEOPLE',
+      payload: [cloudRow({ id: UUID_K, email: 'kacper@x.pl', firstName: 'Kacper', role: 'X' })],
+    });
+    expect('notificationsReadIds' in updated.people[0]).toBe(false);
+  });
+
+  it('przeczytane per wpis: FAIL-CLOSED na nie-tablicy i nie-stringach (inwariant 6)', () => {
+    const state: AppData = {
+      ...baseState(),
+      people: [{ ...person(P1), email: 'kacper@x.pl', notificationsReadIds: ['mention:c1'] }],
+    };
+    const bad = [
+      cloudRow({
+        id: UUID_K,
+        email: 'kacper@x.pl',
+        notificationsReadIds: 'mention:c1' as unknown as string[],
+      }),
+      cloudRow({
+        id: UUID_K,
+        email: 'kacper@x.pl',
+        notificationsReadIds: ['mention:c1', 7] as unknown as string[],
+      }),
+      cloudRow({
+        id: UUID_K,
+        email: 'kacper@x.pl',
+        notificationsReadIds: [null] as unknown as string[],
+      }),
+    ];
+    for (const row of bad) {
+      expect(reducer(state, { type: 'MERGE_CLOUD_PEOPLE', payload: [row] })).toBe(state);
+    }
+  });
+
   it('niepoprawny payload => oryginalna referencja stanu (invariant 6)', () => {
     const state = baseState();
     const bad = [

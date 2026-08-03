@@ -1,12 +1,12 @@
-// Testy czystej logiki badge'a karty przeglądarki: etykiety, tytuł, licznik
-// ze stanu (własne nieprzeczytane vs cudze/przeczytane) oraz maszyna stanu
-// apply/restore na fałszywym hoście (bez DOM — środowisko node).
+// Testy czystej logiki badge'a karty przeglądarki: etykiety, tytuł oraz maszyna
+// stanu apply/restore na fałszywym hoście (bez DOM — środowisko node). LICZNIK
+// nieprzeczytanych nie mieszka już tutaj — bierze go pochodny feed Panelu
+// (`unreadNotificationCountForPerson`, testy w store/notifications.test.ts).
 import { describe, expect, it } from 'vitest';
 import {
   createTabBadgeApplier,
   titleWithBadge,
   unreadBadgeLabel,
-  unreadNotificationCountFor,
   type TabBadgeHost,
 } from './tabBadge';
 
@@ -41,30 +41,6 @@ describe('titleWithBadge', () => {
   it('powyżej 9 => prefiks 9+', () => {
     expect(titleWithBadge('N2Hub Planer', 10)).toBe('(9+) N2Hub Planer');
     expect(titleWithBadge('N2Hub Planer', 99)).toBe('(9+) N2Hub Planer');
-  });
-});
-
-describe('unreadNotificationCountFor', () => {
-  const rows = [
-    { recipientId: 'me', readAt: '' },
-    { recipientId: 'me', readAt: '' },
-    { recipientId: 'me', readAt: '2026-07-20T10:00:00.000Z' },
-    { recipientId: 'other', readAt: '' },
-  ];
-
-  it('liczy wyłącznie własne nieprzeczytane (cudze i przeczytane pomija)', () => {
-    expect(unreadNotificationCountFor(rows, 'me')).toBe(2);
-    expect(unreadNotificationCountFor(rows, 'other')).toBe(1);
-  });
-
-  it('brak zalogowanej osoby => 0', () => {
-    expect(unreadNotificationCountFor(rows, undefined)).toBe(0);
-    expect(unreadNotificationCountFor(rows, null)).toBe(0);
-    expect(unreadNotificationCountFor(rows, '')).toBe(0);
-  });
-
-  it('pusta kolekcja => 0', () => {
-    expect(unreadNotificationCountFor([], 'me')).toBe(0);
   });
 });
 

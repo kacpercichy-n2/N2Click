@@ -1,9 +1,11 @@
 // Badge karty przeglądarki (favicon + tytuł) dla nieprzeczytanych powiadomień.
-// Logika etykiet, licznika i maszyna stanu apply/restore są CZYSTE i testowane
-// w środowisku node (patrz tabBadge.test.ts) — DOM i canvas żyją wyłącznie w
+// Logika etykiet i maszyna stanu apply/restore są CZYSTE i testowane w
+// środowisku node (patrz tabBadge.test.ts) — DOM i canvas żyją wyłącznie w
 // cienkiej warstwie `createDomTabBadgeHost` / `drawBadgeFaviconDataUrl`,
 // wpinanej przez hook `useTabBadge`. Zero zmian w bazie/syncu/reducerach.
-import type { Notification } from '../types';
+// LICZNIK nie mieszka tutaj: bierzemy go z pochodnego feedu Panelu
+// (`unreadNotificationCountForPerson` w store/selectors.ts), żeby badge karty i
+// kafelek „Powiadomienia” liczyły z JEDNEGO źródła.
 
 /** Etykieta kropki: 0 (lub wartość niepoprawna) => brak badge'a, 1–9 => cyfra,
  *  powyżej => `9+` (czytelne także przy 16×16). */
@@ -16,23 +18,6 @@ export function unreadBadgeLabel(count: number): string {
 export function titleWithBadge(baseTitle: string, count: number): string {
   const label = unreadBadgeLabel(count);
   return label === '' ? baseTitle : `(${label}) ${baseTitle}`;
-}
-
-/**
- * Licznik nieprzeczytanych powiadomień odbiorcy — te same kryteria co karta
- * „Powiadomienia” na Panelu (`unreadNotificationsForPerson`): odbiorca =
- * wskazana osoba, `readAt === ''`. Brak osoby (wylogowanie) => 0.
- */
-export function unreadNotificationCountFor(
-  notifications: ReadonlyArray<Pick<Notification, 'recipientId' | 'readAt'>>,
-  personId: string | null | undefined,
-): number {
-  if (!personId) return 0;
-  let count = 0;
-  for (const n of notifications) {
-    if (n.recipientId === personId && n.readAt === '') count += 1;
-  }
-  return count;
 }
 
 /** Granica DOM dla appliera — w testach podmieniana na fałszywkę. */

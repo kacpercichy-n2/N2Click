@@ -93,6 +93,7 @@ import {
   blockCollidesWithEvent,
   eventDraftConflicts,
   mergeCoversEventOrRecurrence,
+  notificationsForPerson,
   wouldCreateSupervisorCycle,
 } from './selectors';
 import { isOccurrenceDate, normalizeRecurrence } from '../utils/recurrence';
@@ -306,8 +307,13 @@ export type Action =
   | { type: 'MOVE_MILESTONE'; milestoneId: string; date: string }
   | { type: 'DELETE_MILESTONE'; milestoneId: string }
   | { type: 'ADD_COMMENT'; entityType: CommentEntityType; entityId: string; body: string; mentionIds: string[] }
-  // Oznacza feed powiadomień zalogowanej osoby jako przeczytany do teraz.
+  // Oznacza feed powiadomień zalogowanej osoby jako przeczytany do teraz
+  // (watermark) i czyści zbiór pojedynczych oznaczeń — ten sam stan wyraża
+  // wtedy sam znacznik.
   | { type: 'MARK_NOTIFICATIONS_SEEN' }
+  // Oznacza JEDEN wpis pochodnego feedu jako przeczytany ('mention:<commentId>'
+  // / 'assignment:<assignmentId>'); id spoza feedu albo już przeczytane => no-op.
+  | { type: 'MARK_NOTIFICATION_ENTRY_READ'; entryId: string }
   // Zgłoszenia zespołu („Zgłoszenia”). Kolekcja addytywna, bez powiązań kaskadowych.
   | { type: 'ADD_TICKET'; draft: TicketDraft }
   | { type: 'SAVE_TICKET'; ticketId: string; draft: TicketDraft }
@@ -2418,6 +2424,12 @@ function isValidCloudPersonRow(r: CloudPersonMergeRow): boolean {
   if (typeof r.supervisorEmail !== 'string') return false;
   if (typeof r.birthDate !== 'string') return false;
   if (r.notificationsSeenAt !== undefined && typeof r.notificationsSeenAt !== 'string') return false;
+  // Przeczytane per wpis: brak pola albo tablica SAMYCH stringów; cokolwiek
+  // innego psuje cały payload (fail-closed, jak reszta wiersza).
+  if (r.notificationsReadIds !== undefined) {
+    if (!Array.isArray(r.notificationsReadIds)) return false;
+    if (r.notificationsReadIds.some((id) => typeof id !== 'string')) return false;
+  }
   if (r.emailNotifications !== undefined && typeof r.emailNotifications !== 'boolean') return false;
   if (!Number.isFinite(r.capacity) || r.capacity < 0 || r.capacity > 24) return false;
   if (!Array.isArray(r.workDays)) return false;
@@ -2463,6 +2475,25 @@ function cloudPersonFields(row: CloudPersonMergeRow): Omit<
 
 const sameWorkDays = (a: number[], b: number[]): boolean =>
   a.length === b.length && a.every((v, i) => v === b[i]);
+
+/** Porównanie list stringów po wartości i kolejności (zbiór „przeczytane"). */
+const sameStringList = (a: readonly string[], b: readonly string[]): boolean =>
+  a.length === b.length && a.every((v, i) => v === b[i]);
+
+/** UNIA zbiorów „przeczytane per wpis": najpierw lokalne (w swojej kolejności),
+ *  potem id tylko-chmurowe w kolejności payloadu; puste stringi i duplikaty
+ *  odpadają. Monotoniczna — parytet z max-mergem watermarku, więc wyścig dwóch
+ *  urządzeń nigdy nie cofa przeczytanego. Merge NIE robi pruningu. */
+function unionReadIds(local: readonly string[] = [], cloud: readonly string[] = []): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const id of [...local, ...cloud]) {
+    if (typeof id !== 'string' || id === '' || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
 
 /** Późniejszy z dwóch znaczników „przeczytane" (ISO); '' = brak (−∞). Watermark
  *  jest MONOTONICZNY — scalenie lokalne↔chmura nigdy nie cofa przeczytanego. */
@@ -2522,6 +2553,9 @@ function applyCloudPeople(
     // odporny na wyścig dwóch urządzeń). Klucz kanonicznie obecny tylko gdy niepusty.
     const mergedSeen = laterIso(person.notificationsSeenAt ?? '', row.notificationsSeenAt ?? '');
     const seenChanged = (person.notificationsSeenAt ?? '') !== mergedSeen;
+    // Przeczytane per wpis: UNIA lokalnego i chmurowego zbioru (monotoniczna).
+    const mergedReadIds = unionReadIds(person.notificationsReadIds, row.notificationsReadIds);
+    const readIdsChanged = !sameStringList(person.notificationsReadIds ?? [], mergedReadIds);
     const same =
       person.firstName === fields.firstName &&
       person.lastName === fields.lastName &&
@@ -2539,15 +2573,20 @@ function applyCloudPeople(
       person.birthDate === fields.birthDate &&
       (person.emailNotifications ?? false) === fields.emailNotifications &&
       sameWorkDays(person.workDays, fields.workDays) &&
-      !seenChanged;
+      !seenChanged &&
+      !readIdsChanged;
     if (same) {
       updatedPeople.push(person);
     } else {
       changed = true;
+      // Klucz `notificationsReadIds` kanonicznie obecny TYLKO gdy unia niepusta
+      // (unia nie kurczy się, więc pusta oznacza brak po obu stronach).
+      const { notificationsReadIds: _drop, ...base } = person;
       updatedPeople.push({
-        ...person,
+        ...base,
         ...fields,
         ...(mergedSeen !== '' ? { notificationsSeenAt: mergedSeen } : {}),
+        ...(mergedReadIds.length > 0 ? { notificationsReadIds: mergedReadIds } : {}),
       });
     }
   }
@@ -2558,12 +2597,14 @@ function applyCloudPeople(
   for (const [key, row] of rowByEmail) {
     if (matched.has(key)) continue;
     if (existingIds.has(row.id)) continue; // kolizja id — fail-safe, pomiń
+    const rowReadIds = unionReadIds([], row.notificationsReadIds);
     appended.push({
       id: row.id,
       ...cloudPersonFields(row),
       passwordHash: '',
       supervisorId: '',
       ...(row.notificationsSeenAt ? { notificationsSeenAt: row.notificationsSeenAt } : {}),
+      ...(rowReadIds.length > 0 ? { notificationsReadIds: rowReadIds } : {}),
     });
     existingIds.add(row.id);
   }
@@ -3378,13 +3419,38 @@ export function reducer(state: AppData, action: Action): AppData {
       // Stempluje „przeczytane do teraz" na zalogowanej osobie. Bez aktywnego
       // użytkownika lub gdy jego id nie istnieje — TA SAMA referencja (inwariant
       // 6). Czytanie powiadomień nie jest zdarzeniem dziennika (brak activity).
+      // Watermark pokrywa wszystkie dotychczasowe wpisy, więc zbiór pojedynczych
+      // oznaczeń jest tu zbędny — CZYŚCIMY go (pruning, forma kanoniczna).
       const meId = state.currentUserId;
       if (!meId || !state.people.some((p) => p.id === meId)) return state;
       const seenAt = nowIso();
       return {
         ...state,
+        people: state.people.map((p) => {
+          if (p.id !== meId) return p;
+          const { notificationsReadIds: _pruned, ...rest } = p;
+          return { ...rest, notificationsSeenAt: seenAt };
+        }),
+      };
+    }
+    case 'MARK_NOTIFICATION_ENTRY_READ': {
+      // Oznacza POJEDYNCZY wpis pochodnego feedu. Guardy (=> ta sama referencja,
+      // inwariant 6): brak/nieznany użytkownik, pusty lub nie-stringowy `entryId`,
+      // id spoza aktualnego feedu, wpis już przeczytany (watermark albo zbiór).
+      // Bez wpisu w dzienniku aktywności — parytet z MARK_NOTIFICATIONS_SEEN.
+      const meId = state.currentUserId;
+      if (!meId) return state;
+      const me = state.people.find((p) => p.id === meId);
+      if (!me) return state;
+      const entryId = action.entryId;
+      if (typeof entryId !== 'string' || entryId === '') return state;
+      const entry = notificationsForPerson(state, meId, nowIso()).find((n) => n.id === entryId);
+      if (!entry || entry.read) return state;
+      const readIds = [...(me.notificationsReadIds ?? []), entryId];
+      return {
+        ...state,
         people: state.people.map((p) =>
-          p.id === meId ? { ...p, notificationsSeenAt: seenAt } : p,
+          p.id === meId ? { ...p, notificationsReadIds: readIds } : p,
         ),
       };
     }

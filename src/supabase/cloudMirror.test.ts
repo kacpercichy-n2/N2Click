@@ -721,4 +721,28 @@ describe('diffToCloudOps — słowniki i profile (przewód zapisu paneli admina)
     // Nowa osoba nie generuje op-a (konto tworzy provisioning) — jest diagnostyka.
     expect(diagnostics.length).toBeGreaterThan(0);
   });
+
+  it('wiersz update profilu niesie notifications_read_ids (brak klucza => pusta tablica)', () => {
+    const prev = localFixture();
+    // Bez klucza: kolumna jest `not null default '{}'`, więc lustro wysyła [].
+    const bare: AppData = {
+      ...prev,
+      people: [{ ...prev.people[0], role: 'Projektant' }, prev.people[1]],
+    };
+    const bareOp = diffToCloudOps(prev, bare, maps()).ops.find((o) => o.table === 'profiles')!;
+    expect(bareOp.row).toMatchObject({ notifications_read_ids: [] });
+
+    // Z kluczem: tablica idzie dosłownie.
+    const withIds: AppData = {
+      ...prev,
+      people: [
+        { ...prev.people[0], notificationsReadIds: ['mention:c1', 'assignment:a1'] },
+        prev.people[1],
+      ],
+    };
+    const idsOp = diffToCloudOps(prev, withIds, maps()).ops.find((o) => o.table === 'profiles')!;
+    expect(idsOp.row).toMatchObject({
+      notifications_read_ids: ['mention:c1', 'assignment:a1'],
+    });
+  });
 });

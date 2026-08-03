@@ -300,4 +300,49 @@ describe('buildCloudPeoplePayload', () => {
     expect(rows.find((r) => r.id === 'u1')?.companyId).toBe('company-uuid');
     expect(rows.find((r) => r.id === 'u2')?.companyId).toBe('');
   });
+
+  it('przenosi zbiór „przeczytane per wpis" do wiersza scalenia (brak => undefined)', () => {
+    const rows = buildCloudPeoplePayload([
+      profile({ id: 'u1', email: 'a@x.pl', notificationsReadIds: ['mention:c1', 'assignment:a1'] }),
+      profile({ id: 'u2', email: 'b@x.pl' }),
+    ]);
+    expect(rows.find((r) => r.id === 'u1')?.notificationsReadIds).toEqual([
+      'mention:c1',
+      'assignment:a1',
+    ]);
+    expect(rows.find((r) => r.id === 'u2')?.notificationsReadIds).toBeUndefined();
+  });
+});
+
+describe('toCloudProfile — notifications_read_ids', () => {
+  async function profileOf(row: Record<string, unknown>): Promise<CloudProfile> {
+    const db = new FakeReferenceDb().seed('profiles', [profileRow({ id: U_ADMIN, ...row })]);
+    const res = await loadOrgSnapshot(db, U_ADMIN);
+    if (!res.ok) throw new Error('snapshot');
+    return res.snapshot.profile!;
+  }
+
+  it('text[] mapuje się na niepuste stringi (dedupe, kolejność wejścia)', async () => {
+    const p = await profileOf({
+      notifications_read_ids: ['mention:c1', 'mention:c1', '', 'assignment:a1'],
+    });
+    expect(p.notificationsReadIds).toEqual(['mention:c1', 'assignment:a1']);
+  });
+
+  it('brak kolumny / nie-tablica / pusta tablica / śmieci => undefined (klucz nieobecny)', async () => {
+    expect((await profileOf({})).notificationsReadIds).toBeUndefined();
+    expect((await profileOf({ notifications_read_ids: null })).notificationsReadIds).toBeUndefined();
+    expect((await profileOf({ notifications_read_ids: [] })).notificationsReadIds).toBeUndefined();
+    expect(
+      (await profileOf({ notifications_read_ids: 'mention:c1' })).notificationsReadIds,
+    ).toBeUndefined();
+    expect((await profileOf({ notifications_read_ids: [7, null] })).notificationsReadIds).toBeUndefined();
+  });
+
+  it('defensywny cap 500', async () => {
+    const ids = Array.from({ length: 600 }, (_, i) => `mention:c${i}`);
+    const p = await profileOf({ notifications_read_ids: ids });
+    expect(p.notificationsReadIds).toHaveLength(500);
+    expect(p.notificationsReadIds?.[499]).toBe('mention:c499');
+  });
 });

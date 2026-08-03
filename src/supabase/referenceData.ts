@@ -59,6 +59,9 @@ export interface CloudProfile {
    *  kanoniczny ISO (Z) albo '' gdy brak/null. OPCJONALNE — `toCloudProfile`
    *  zawsze ustawia, ale starsze fixture'y/literały mogą pomijać. */
   notificationsSeenAt?: string;
+  /** Przeczytane per wpis (profiles.notifications_read_ids): id pochodnego feedu.
+   *  Brak kolumny / nie-tablica => `undefined` (klucz kanonicznie nieobecny). */
+  notificationsReadIds?: string[];
   /** Opt-in mailowy (profiles.email_notifications); brak => false. */
   emailNotifications?: boolean;
 }
@@ -149,8 +152,28 @@ function toCloudProfile(row: Record<string, unknown>): CloudProfile {
     // Postgres `timestamptz` przychodzi z PostgREST w wariantach offsetu; NORMALIZUJ
     // do kanonicznego ISO (Z), by porównania watermarku były jednorodne. NULL/śmieci => ''.
     notificationsSeenAt: toIsoOrEmpty(row.notifications_seen_at),
+    // text[] z PostgREST przychodzi jako tablica stringów; brak kolumny (starsza
+    // baza) / śmieci => undefined, czyli klucz kanonicznie nieobecny.
+    notificationsReadIds: toReadIds(row.notifications_read_ids),
     emailNotifications: bool(row.email_notifications),
   };
+}
+
+/** Defensywny limit — lustro `MAX_READ_IDS` ze `storage.ts`. */
+const MAX_READ_IDS = 500;
+
+/** `text[]` → niepuste stringi, dedupe, cap; nie-tablica/pusto => undefined. */
+function toReadIds(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const id of value) {
+    if (typeof id !== 'string' || id === '' || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+    if (out.length === MAX_READ_IDS) break;
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 /** Parsowalny znacznik czasu -> kanoniczny ISO (Z); wszystko inne -> ''. */
@@ -203,7 +226,7 @@ export async function loadOrgSnapshot(db: ReferenceDb, userId: string): Promise<
   ] = await Promise.all([
     db.select(
       'profiles',
-      'id, first_name, last_name, email, role_title, access_role, department_id, company_id, supervisor_id, phone, avatar, avatar_path, capacity, work_days, work_start_minutes, work_end_minutes, birth_date, notifications_seen_at, email_notifications',
+      'id, first_name, last_name, email, role_title, access_role, department_id, company_id, supervisor_id, phone, avatar, avatar_path, capacity, work_days, work_start_minutes, work_end_minutes, birth_date, notifications_seen_at, notifications_read_ids, email_notifications',
     ),
     db.select('departments', 'id, name'),
     db.select('statuses', 'id, name, slug, color, sort_order, archived, is_done'),
@@ -316,6 +339,9 @@ export interface CloudPersonMergeRow {
   /** Watermark „przeczytane" powiadomień (kanoniczny ISO); '' gdy brak.
    *  OPCJONALNE — starsze payloady/fixture'y bez pola czyta się jako ''. */
   notificationsSeenAt?: string;
+  /** Przeczytane per wpis (id pochodnego feedu); brak => zbiór pusty.
+   *  Scalenie robi UNIĘ z lokalnym zbiorem, nigdy podmianę. */
+  notificationsReadIds?: string[];
   /** Opt-in mailowy; brak => false. */
   emailNotifications?: boolean;
 }
@@ -350,6 +376,7 @@ export function buildCloudPeoplePayload(profiles: CloudProfile[]): CloudPersonMe
       supervisorEmail: (p.supervisorId ? emailById.get(p.supervisorId) : '') ?? '',
       birthDate: p.birthDate,
       notificationsSeenAt: p.notificationsSeenAt,
+      notificationsReadIds: p.notificationsReadIds,
       emailNotifications: p.emailNotifications === true,
     });
   }

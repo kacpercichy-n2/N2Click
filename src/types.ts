@@ -308,6 +308,14 @@ export interface Person {
   // nieprzeczytane). Klucz obecny WYŁĄCZNIE gdy niesie poprawny ISO —
   // egzekwowane w `migratePerson` i reduktorze.
   notificationsSeenAt?: string;
+  // Przeczytane per wpis: id pochodnego feedu ('mention:<commentId>' |
+  // 'assignment:<assignmentId>'). Wpis jest przeczytany gdy createdAt <=
+  // notificationsSeenAt LUB jego id jest w tym zbiorze. OPCJONALNE i ADDYTYWNE
+  // (DATA_VERSION zostaje 7); klucz obecny WYŁĄCZNIE gdy zbiór niepusty —
+  // egzekwowane w migratePerson, reduktorze i merge chmurowym. Kolejność =
+  // kolejność wstawień (deterministyczna unia przy merge). Synchronizowane z
+  // profiles.notifications_read_ids (unia, monotonicznie).
+  notificationsReadIds?: string[];
   // Opt-in na dublowanie powiadomień in-app mailem (kolumna
   // `profiles.email_notifications`, czytana przez Edge Function
   // `send-notification-emails`). OPCJONALNE i ADDYTYWNE: brak / legacy => false

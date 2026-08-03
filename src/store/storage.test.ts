@@ -585,6 +585,119 @@ describe('loadData migration v4 -> v5', () => {
     expect('notificationsSeenAt' in byId('garbage')).toBe(false);
   });
 
+  it('notificationsReadIds: tablica stringów przechodzi (dedupe), śmieci/pusto => klucz nieobecny', () => {
+    const person = (extra: Record<string, unknown>): Record<string, unknown> => ({
+      id: 'p1',
+      firstName: 'Ala',
+      lastName: '',
+      name: 'Ala',
+      email: '',
+      phone: '',
+      role: '',
+      departmentId: '',
+      companyId: '',
+      avatar: '',
+      capacity: 8,
+      accessRole: 'administrator',
+      passwordHash: '',
+      workDays: [1, 2, 3, 4, 5],
+      workStartMinutes: 480,
+      workEndMinutes: 960,
+      supervisorId: '',
+      ...extra,
+    });
+    const payload = {
+      ...emptyData(),
+      version: 7,
+      people: [
+        person({ id: 'miss' }), // brak pola
+        person({ id: 'ok', notificationsReadIds: ['mention:c1', 'assignment:a1'] }),
+        // Duplikaty, puste i nie-stringi odpadają; kolejność wejścia zostaje.
+        person({
+          id: 'dirty',
+          notificationsReadIds: ['mention:c1', 'mention:c1', '', 7, null, 'assignment:a1'],
+        }),
+        person({ id: 'empty', notificationsReadIds: [] }),
+        person({ id: 'notarray', notificationsReadIds: 'mention:c1' }),
+        person({ id: 'garbage', notificationsReadIds: 99 }),
+      ],
+    };
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+    const byId = (id: string) => data.people.find((p) => p.id === id)!;
+    expect(byId('ok').notificationsReadIds).toEqual(['mention:c1', 'assignment:a1']);
+    expect(byId('dirty').notificationsReadIds).toEqual(['mention:c1', 'assignment:a1']);
+    expect('notificationsReadIds' in byId('miss')).toBe(false);
+    expect('notificationsReadIds' in byId('empty')).toBe(false);
+    expect('notificationsReadIds' in byId('notarray')).toBe(false);
+    expect('notificationsReadIds' in byId('garbage')).toBe(false);
+  });
+
+  it('notificationsReadIds: starszy zapis BEZ pola wczytuje się bez echo-write (pole addytywne)', () => {
+    const legacyPerson = {
+      id: 'p1',
+      firstName: 'Ala',
+      lastName: '',
+      name: 'Ala',
+      email: '',
+      phone: '',
+      role: '',
+      departmentId: '',
+      companyId: '',
+      avatar: '',
+      capacity: 8,
+      accessRole: 'pelne',
+      passwordHash: '',
+      workDays: [1, 2, 3, 4, 5],
+      workStartMinutes: 480,
+      workEndMinutes: 960,
+      supervisorId: '',
+      birthDate: '',
+      emailNotifications: false,
+    };
+    const payload = { ...emptyData(), version: 7, people: [legacyPerson] };
+    const result = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () =>
+      loadDataResult(),
+    );
+    expect(result.ok && result.needsWriteback).toBe(false);
+    if (!result.ok) return;
+    expect('notificationsReadIds' in result.data.people[0]).toBe(false);
+  });
+
+  it('notificationsReadIds: defensywny cap 500 (pierwsze 500 w kolejności)', () => {
+    const ids = Array.from({ length: 600 }, (_, i) => `mention:c${i}`);
+    const payload = {
+      ...emptyData(),
+      version: 7,
+      people: [
+        {
+          id: 'p1',
+          firstName: 'Ala',
+          lastName: '',
+          name: 'Ala',
+          email: '',
+          phone: '',
+          role: '',
+          departmentId: '',
+          companyId: '',
+          avatar: '',
+          capacity: 8,
+          accessRole: 'administrator',
+          passwordHash: '',
+          workDays: [1, 2, 3, 4, 5],
+          workStartMinutes: 480,
+          workEndMinutes: 960,
+          supervisorId: '',
+          notificationsReadIds: ids,
+        },
+      ],
+    };
+    const data = withLocalStorage({ [STORAGE_KEY]: JSON.stringify(payload) }, () => loadData());
+    const readIds = data.people[0].notificationsReadIds!;
+    expect(readIds).toHaveLength(500);
+    expect(readIds[0]).toBe('mention:c0');
+    expect(readIds[499]).toBe('mention:c499');
+  });
+
   it('companyId: brakujące => "", string przechodzi, nie-string => "" (repair migratePerson na każdym wczytaniu)', () => {
     const person = (extra: Record<string, unknown>): Record<string, unknown> => ({
       id: 'p1',

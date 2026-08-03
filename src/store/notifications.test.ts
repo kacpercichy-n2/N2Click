@@ -7,6 +7,7 @@ import {
   NOTIFICATION_WINDOW_DAYS,
   notificationsForPerson,
   unreadNotificationCount,
+  unreadNotificationCountForPerson,
 } from './selectors';
 import { reducer } from './AppStore';
 import { emptyData } from './storage';
@@ -313,6 +314,71 @@ describe('notificationsForPerson — read/unread', () => {
     const out = notificationsForPerson(s, 'zuzia', NOW); // comment at 09:00 > 08:00 seen
     expect(out[0].read).toBe(false);
   });
+
+  it('read = watermark LUB zbiór per wpis (OR); id spoza zbioru zostaje nieprzeczytane', () => {
+    const s = state({
+      tasks: [task('t1', { title: 'Wycena' })],
+      comments: [
+        comment({ id: 'c1', entityId: 't1', mentionIds: ['zuzia'], createdAt: RECENT }),
+        comment({ id: 'c2', entityId: 't1', mentionIds: ['zuzia'], createdAt: RECENT }),
+      ],
+    });
+    // Sam zbiór, BEZ watermarku: przeczytany jest dokładnie wskazany wpis.
+    s.people = s.people.map((p) =>
+      p.id === 'zuzia' ? { ...p, notificationsReadIds: ['mention:c1'] } : p,
+    );
+    const out = notificationsForPerson(s, 'zuzia', NOW);
+    expect(out.find((n) => n.id === 'mention:c1')?.read).toBe(true);
+    expect(out.find((n) => n.id === 'mention:c2')?.read).toBe(false);
+    expect(unreadNotificationCount(out)).toBe(1);
+  });
+
+  it('kompat wsteczna: sam watermark (bez zbioru) czyta wszystko sprzed znacznika', () => {
+    const s = feedState();
+    s.people = s.people.map((p) =>
+      p.id === 'zuzia' ? { ...p, notificationsSeenAt: NOW } : p,
+    );
+    const out = notificationsForPerson(s, 'zuzia', NOW);
+    expect(out[0].read).toBe(true);
+    expect('notificationsReadIds' in s.people[0]).toBe(false);
+  });
+
+  it('id przypisania trafia do zbioru pod kluczem assignment:<assignmentId>', () => {
+    const s = state({
+      tasks: [task('t1')],
+      assignments: [assignment('a1', 't1', 'zuzia')],
+      activity: [created('t1', 'dominik')],
+    });
+    s.people = s.people.map((p) =>
+      p.id === 'zuzia' ? { ...p, notificationsReadIds: ['assignment:a1'] } : p,
+    );
+    expect(notificationsForPerson(s, 'zuzia', NOW)[0].read).toBe(true);
+  });
+});
+
+describe('unreadNotificationCountForPerson', () => {
+  it('liczy z tego samego feedu co kafelek (jedno źródło dla badge’a karty)', () => {
+    const s = state({
+      tasks: [task('t1')],
+      comments: [comment({ id: 'c1', entityId: 't1', mentionIds: ['zuzia'], createdAt: RECENT })],
+    });
+    expect(unreadNotificationCountForPerson(s, 'zuzia', NOW)).toBe(
+      unreadNotificationCount(notificationsForPerson(s, 'zuzia', NOW)),
+    );
+    expect(unreadNotificationCountForPerson(s, 'zuzia', NOW)).toBe(1);
+  });
+
+  it('pusty personId (wylogowanie) => 0', () => {
+    const s = state({
+      tasks: [task('t1')],
+      comments: [comment({ id: 'c1', entityId: 't1', mentionIds: ['zuzia'], createdAt: RECENT })],
+    });
+    expect(unreadNotificationCountForPerson(s, '', NOW)).toBe(0);
+  });
+
+  it('nieznana osoba => 0 (pusty feed)', () => {
+    expect(unreadNotificationCountForPerson(state({}), 'ghost', NOW)).toBe(0);
+  });
 });
 
 describe('MARK_NOTIFICATIONS_SEEN reducer', () => {
@@ -346,5 +412,139 @@ describe('MARK_NOTIFICATIONS_SEEN reducer', () => {
     const after = reducer(before, { type: 'MARK_NOTIFICATIONS_SEEN' });
     // Watermark = teraz (po RECENT), więc feed jest przeczytany.
     expect(unreadNotificationCount(notificationsForPerson(after, 'zuzia', NOW))).toBe(0);
+  });
+
+  it('czyści zbiór per wpis (pruning) — watermark wyraża ten sam stan', () => {
+    const before = state({
+      currentUserId: 'zuzia',
+      people: [
+        { ...person('zuzia', 'Zuzia'), notificationsReadIds: ['mention:c1', 'assignment:a1'] },
+        person('dominik', 'Dominik'),
+      ],
+    });
+    const after = reducer(before, { type: 'MARK_NOTIFICATIONS_SEEN' });
+    const zuzia = after.people.find((p) => p.id === 'zuzia')!;
+    expect('notificationsReadIds' in zuzia).toBe(false); // klucz kanonicznie nieobecny
+    expect(zuzia.notificationsSeenAt).toBeTruthy();
+  });
+});
+
+// ---- MARK_NOTIFICATION_ENTRY_READ (oznaczenie POJEDYNCZEGO wpisu) -----------
+//
+// Reduktor waliduje `entryId` względem feedu liczonego dla ZEGARA RZECZYWISTEGO
+// (nowIso()), więc zdarzenia źródłowe muszą leżeć w oknie względem `Date.now()`
+// — stąd znaczniki liczone od teraz, a nie stałe `RECENT`/`NOW`.
+const liveNow = (): string => new Date().toISOString();
+const hoursAgo = (h: number): string => new Date(Date.now() - h * 60 * 60 * 1000).toISOString();
+
+describe('MARK_NOTIFICATION_ENTRY_READ reducer', () => {
+  /** Dwa wpisy feedu dla Zuzi (mention:c1, mention:c2) w oknie od „teraz". */
+  function liveState(overrides: Partial<AppData> = {}): AppData {
+    return state({
+      currentUserId: 'zuzia',
+      tasks: [task('t1', { title: 'Wycena' })],
+      comments: [
+        comment({ id: 'c1', entityId: 't1', mentionIds: ['zuzia'], createdAt: hoursAgo(2) }),
+        comment({ id: 'c2', entityId: 't1', mentionIds: ['zuzia'], createdAt: hoursAgo(1) }),
+      ],
+      ...overrides,
+    });
+  }
+
+  it('oznacza WYŁĄCZNIE wskazany wpis; licznik spada o 1, wpis zostaje w feedzie', () => {
+    const before = liveState();
+    expect(unreadNotificationCountForPerson(before, 'zuzia', liveNow())).toBe(2);
+
+    const after = reducer(before, { type: 'MARK_NOTIFICATION_ENTRY_READ', entryId: 'mention:c1' });
+    expect(after).not.toBe(before);
+    const zuzia = after.people.find((p) => p.id === 'zuzia')!;
+    expect(zuzia.notificationsReadIds).toEqual(['mention:c1']);
+    expect(zuzia.notificationsSeenAt).toBeUndefined(); // watermark NIE rusza się
+
+    const feed = notificationsForPerson(after, 'zuzia', liveNow());
+    expect(feed).toHaveLength(2); // przeczytany wpis NIE znika
+    expect(feed.find((n) => n.id === 'mention:c1')?.read).toBe(true);
+    expect(feed.find((n) => n.id === 'mention:c2')?.read).toBe(false);
+    expect(unreadNotificationCountForPerson(after, 'zuzia', liveNow())).toBe(1);
+  });
+
+  it('kolejne oznaczenia dopisują się w kolejności wstawień (bez duplikatów)', () => {
+    const one = reducer(liveState(), { type: 'MARK_NOTIFICATION_ENTRY_READ', entryId: 'mention:c2' });
+    const two = reducer(one, { type: 'MARK_NOTIFICATION_ENTRY_READ', entryId: 'mention:c1' });
+    expect(two.people.find((p) => p.id === 'zuzia')!.notificationsReadIds).toEqual([
+      'mention:c2',
+      'mention:c1',
+    ]);
+  });
+
+  it('nie dotyka innych osób ani dziennika aktywności', () => {
+    const before = liveState();
+    const after = reducer(before, { type: 'MARK_NOTIFICATION_ENTRY_READ', entryId: 'mention:c1' });
+    expect(after.people.find((p) => p.id === 'dominik')).toBe(
+      before.people.find((p) => p.id === 'dominik'),
+    );
+    expect(after.activity).toBe(before.activity);
+    expect(after.comments).toBe(before.comments);
+  });
+
+  it('inwariant 6: brak użytkownika / nieznane id sesji => TA SAMA referencja', () => {
+    const noUser = liveState({ currentUserId: '' });
+    expect(reducer(noUser, { type: 'MARK_NOTIFICATION_ENTRY_READ', entryId: 'mention:c1' })).toBe(
+      noUser,
+    );
+    const ghost = liveState({ currentUserId: 'ghost' });
+    expect(reducer(ghost, { type: 'MARK_NOTIFICATION_ENTRY_READ', entryId: 'mention:c1' })).toBe(
+      ghost,
+    );
+  });
+
+  it('inwariant 6: pusty / nie-stringowy entryId => TA SAMA referencja', () => {
+    const base = liveState();
+    expect(reducer(base, { type: 'MARK_NOTIFICATION_ENTRY_READ', entryId: '' })).toBe(base);
+    expect(
+      reducer(base, {
+        type: 'MARK_NOTIFICATION_ENTRY_READ',
+        entryId: 42 as unknown as string,
+      }),
+    ).toBe(base);
+  });
+
+  it('inwariant 6: id spoza feedu (nieznane, cudze, poza oknem) => TA SAMA referencja', () => {
+    const base = liveState();
+    expect(reducer(base, { type: 'MARK_NOTIFICATION_ENTRY_READ', entryId: 'mention:ghost' })).toBe(
+      base,
+    );
+    // Wpis istnieje, ale należy do innej osoby (feed liczy się dla zalogowanego).
+    const others = liveState({
+      comments: [
+        comment({ id: 'cX', entityId: 't1', authorId: 'zuzia', mentionIds: ['dominik'], createdAt: hoursAgo(1) }),
+      ],
+    });
+    expect(reducer(others, { type: 'MARK_NOTIFICATION_ENTRY_READ', entryId: 'mention:cX' })).toBe(
+      others,
+    );
+    // Zdarzenie starsze niż okno feedu nie ma wpisu, więc nie da się go oznaczyć.
+    const stale = liveState({
+      comments: [
+        comment({ id: 'cOld', entityId: 't1', mentionIds: ['zuzia'], createdAt: hoursAgo(24 * 30) }),
+      ],
+    });
+    expect(reducer(stale, { type: 'MARK_NOTIFICATION_ENTRY_READ', entryId: 'mention:cOld' })).toBe(
+      stale,
+    );
+  });
+
+  it('inwariant 6: wpis już przeczytany (zbiór albo watermark) => TA SAMA referencja', () => {
+    const once = reducer(liveState(), {
+      type: 'MARK_NOTIFICATION_ENTRY_READ',
+      entryId: 'mention:c1',
+    });
+    expect(reducer(once, { type: 'MARK_NOTIFICATION_ENTRY_READ', entryId: 'mention:c1' })).toBe(once);
+
+    // Przeczytany watermarkiem — zbiór nie puchnie o nadmiarowy wpis.
+    const watermarked = reducer(liveState(), { type: 'MARK_NOTIFICATIONS_SEEN' });
+    expect(
+      reducer(watermarked, { type: 'MARK_NOTIFICATION_ENTRY_READ', entryId: 'mention:c1' }),
+    ).toBe(watermarked);
   });
 });
