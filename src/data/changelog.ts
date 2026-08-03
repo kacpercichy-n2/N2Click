@@ -97,6 +97,45 @@ export function changelogCtaLabel(entry: ChangelogEntry): string {
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-08-03-urlopy-cyklicznosc-powiadomienia',
+    dateFrom: '2026-08-03',
+    dateTo: '2026-08-03',
+    summary:
+      'Kalendarz zna urlopy: dodasz sobie urlop z zakresem dat, a w te dni nikt nie zaplanuje Ci pracy. Do tego cykliczność co 2–8 tygodni, powiadomienia odhaczane pojedynczo, szersze okna na dużych monitorach i poprawka prześwitującego nagłówka tabeli planowania.',
+    items: [
+      {
+        area: 'Kalendarz',
+        feature: 'Urlopy w kalendarzu',
+        description:
+          'Nowy rodzaj wydarzenia „Urlop” — dodajesz go sobie z zakresem od–do (także wielodniowy), a na kalendarzu pojawia się czerwony blok z palemką w Twoich godzinach pracy. W dni urlopu nie da się zaplanować pracy: przeciąganie bloków, „Zaplanuj część” i automatyczne rozmieszczanie są blokowane z komunikatem „Ta osoba ma w tym dniu urlop.”. W Obciążeniu, na profilu osoby i w nagłówku dnia zamiast wykrzyknika przeciążenia stoi wtedy palemka.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Powtarzanie co 2–8 tygodni',
+        description:
+          'Cykliczne zadania i wydarzenia mogą powtarzać się co kilka tygodni, nie tylko co tydzień. W edytorze cykliczności doszło pole „Powtarzaj” z wyborem 1–8 tygodni, a lista wydarzeń dopisuje np. „(co 2 tygodnie)” przy nazwie.',
+      },
+      {
+        area: 'Panel',
+        feature: 'Powiadomienia odhaczane pojedynczo',
+        description:
+          'Każde powiadomienie ma teraz własny znacznik „Oznacz jako przeczytane” — przeczytany wpis zostaje na liście wyszarzony zamiast znikać, a otwarcie zadania lub komentarza z podglądu odhacza tylko ten jeden wpis. Licznik na kafelku i cyferka na karcie przeglądarki pokazują odtąd to samo: wyłącznie nieprzeczytane. Zbiorcze „Oznacz jako przeczytane” działa jak dotąd.',
+      },
+      {
+        area: 'Ogólne',
+        feature: 'Okna lepiej wykorzystują duże ekrany',
+        description:
+          'Karty zadania, wydarzenia, zgłoszenia i dziennika zmian rosną na szerokich monitorach zamiast stać wąską kolumną na środku, a pola opisu i dyskusji powiększają się razem z wpisywaną treścią. Na laptopach i telefonach wszystko wygląda dokładnie tak jak dotychczas.',
+      },
+      {
+        area: 'Zadania',
+        feature: 'Nagłówek tabeli planowania już nie prześwituje',
+        description:
+          'Przy przewijaniu siatki przydziału godzin w karcie zadania wiersze nie prześwitują już pod przyklejonym nagłówkiem — nagłówek dostał kryjące tło i wyraźną dolną krawędź.',
+      },
+    ],
+  },
+  {
     id: '2026-07-29-sortowanie-klient-w-zadaniu-odstepy',
     dateFrom: '2026-07-28',
     dateTo: '2026-07-29',
