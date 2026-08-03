@@ -48,3 +48,11 @@ trzech granic) i `selectors.splitOverloadedDaysByVacation` (czysty podział
 wskaźnika, D8). Wynik: `npm test` 107 plików / 2337 testów zielone,
 `npm run build` zielony. Migracja NIE zaaplikowana. Wiki zaktualizowane
 (scheduling-and-calendar, state-and-persistence, cloud-database). Brak blokerów.
+
+## Developer log (n2hub-310)
+
+Granice: `styles.css` (skala szerokości modali `clamp()`, nowy blok pól
+tekstowych `field-sizing: content` od 761 px) i jedna klasa w `EventModal.tsx`
+(`event-modal-card`). Dolne granice `clamp()` = poprzednie stałe, więc mobile i
+ekrany < ~1300 px bez zmian. `npm test` 107/2337 zielone, `npm run build`
+zielony. Playwright niezainstalowany, browser check nie uruchamiany.

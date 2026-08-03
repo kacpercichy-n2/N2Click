@@ -276,7 +276,7 @@ function EventModalShell({ eventParam, prefill, onClose }: ShellProps) {
       <div className="task-modal-viewport" {...viewportProps}>
         <m.div
           ref={cardRef}
-          className="task-modal-card ticket-modal-card"
+          className="task-modal-card event-modal-card"
           {...cardProps}
           initial={{ opacity: 0, scale: 0.96, y: 8 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}

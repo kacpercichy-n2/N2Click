@@ -1323,6 +1323,57 @@ option {
     min-height: 48px;
   }
 }
+
+/* ---- Duże, rosnące pola opisu i dyskusji ----------------------------------
+   Problem: `rows={3}` robiło z opisu pasek na ~1/10 wysokości karty, nawet gdy
+   pod nim stało pół ekranu wolnego miejsca, a dłuższy tekst czytało się przez
+   trzywierszowe okienko.
+
+   Rozwiązanie jest CSS-owe i BEZ autosize'u w JS — żadnych nowych refów,
+   handlerów `onInput` ani mierzenia `scrollHeight`:
+   - `field-sizing: content` każe polu wyznaczać wysokość z TREŚCI zamiast z
+     `rows`;
+   - `min-height` daje sensowny start (i jest jedyną wysokością, jaką widzą
+     przeglądarki bez `field-sizing`);
+   - `max-height` + `overflow-y: auto` zamykają wzrost w granicach karty:
+     dalej pole przewija się w środku, zamiast rozpychać modal.
+
+   Źródła (reguła „porównaj dwa pierwotne źródła"):
+   1. MDN „field-sizing" — `content` ignoruje domyślny rozmiar kontrolki, więc
+      `rows`/`cols` przestają działać; przy ograniczonej szerokości pole rośnie
+      w WYSOKOŚĆ, a po dobiciu do granicy pokazuje pasek przewijania. MDN wprost
+      odradza stałe `width`/`height` i zaleca parę `min-*`/`max-*` — dokładnie
+      to, co robimy (szerokość zostaje przy 100%, wysokość jest widełkami).
+   2. CSS Form Control Styling Level 1, §7.1 `field-sizing` (drafts.csswg.org/
+      css-forms-1) — normatywnie: przy `content` UA wyznacza rozmiar wewnętrzny
+      z treści i pomija domyślny rozmiar języka hosta; przy ustalonej szerokości
+      wysokość zależy od liczby wierszy treści.
+   Radix, Base UI ani shadcn/ui nie mają prymitywu „autosize textarea" (ich
+   `Textarea` to zwykłe pole ze stylami), więc nie było wzorca do skopiowania.
+
+   Zapas dla starszych przeglądarek (BCD: Chrome 123+, Firefox 152+,
+   Safari 26.2+): `min-height` daje im TEN SAM start co przeglądarkom ze
+   wsparciem, `rows` w JSX zostaje nietknięte jako trzecia warstwa, a globalne
+   `resize: vertical` pozwala powiększyć pole ręcznie.
+
+   Zakres celowo od 761 px w górę: telefon zostaje przy `rows` i 48-pikselowym
+   minimum z MO-05, bez zmiany zachowania. */
+@media (min-width: 761px) {
+  .task-modal-body textarea,
+  .editor-section textarea,
+  .project-create textarea {
+    field-sizing: content;
+    min-height: 10rem;
+    max-height: 40vh;
+    overflow-y: auto;
+  }
+  /* Pole nowego komentarza startuje niżej niż opis: to szybka wypowiedź, a nad
+     nim wisi lista podpowiedzi @wzmianek. Rośnie tak samo. */
+  .comment-form textarea {
+    min-height: 7rem;
+    max-height: 34vh;
+  }
+}
 .field-error {
   color: var(--danger);
   font-size: var(--n2-type-xs);
@@ -5821,9 +5872,31 @@ a.toggle-btn {
   overscroll-behavior: contain;
   isolation: isolate;
 }
+/* ---- Skala szerokości karty modala ----------------------------------------
+   Karta ma JEDNĄ deklarację `width` (94vw) i różni się między modalami wyłącznie
+   sufitem `max-width` — żadnych osobnych szerokości rozsianych po plikach.
+   Sufit nie jest stałą, tylko `clamp(dotychczasowa stała, udział ekranu,
+   maksimum)`: dolna granica każdego kroku to poprzednia wartość, więc do ok.
+   1300 px układ jest identyczny jak przed zmianą, a dopiero na dużym monitorze
+   karta rośnie, zamiast stać wąskim paskiem pośrodku pustego ekranu. Górna
+   granica pilnuje czytelnej długości wiersza, więc na 4K karta nie rozlewa się
+   od krawędzi do krawędzi. Kroki skali:
+
+     .task-modal-card       zadanie          980 →  1360 px
+     .event-modal-card      wydarzenie       720 →  1160 px
+     .ticket-modal-card     zgłoszenie       720 →   960 px
+     .changelog-modal-card  dziennik zmian   760 →   940 px
+     .quick-add-card        szybkie dodanie      420 px (bez skalowania)
+     .confirm-card          potwierdzenie        460 px (bez skalowania)
+
+   Dwa ostatnie kroki zostają MAŁE świadomie: alertdialog i pole na jedną nazwę
+   nie mają czym wypełnić szerokiego ekranu, a rozdęte okno potwierdzenia gubi
+   swoją rolę „krótkiego pytania". Nadpisania stoją w sekcjach swoich modali,
+   czyli PO mobilnym `@media` niżej — dzięki temu kaskada zachowuje się tak samo
+   jak przed zmianą. */
 .task-modal-card {
   width: 94vw;
-  max-width: 980px;
+  max-width: clamp(980px, 76vw, 1360px);
   /* `dvh`, nie `vh` — pasek adresu iOS chowa się przy przewijaniu i karta
      „podskakiwała" o jego wysokość (MO-15). Na desktopie 1dvh == 1vh. */
   max-height: 88dvh;
@@ -6142,6 +6215,10 @@ a.toggle-btn {
   z-index: calc(var(--n2-z-confirm) + 1);
   align-items: center;
 }
+/* Wąska karta z WŁASNYM `width`: alertdialog nie skaluje się z ekranem (skala
+   przy `.task-modal-card`) i nie łapie pełnoekranowego `width: 100vw` z
+   mobilnego `@media` — krótkie pytanie zostaje krótkim pytaniem na każdym
+   ekranie. */
 .confirm-card {
   width: min(92vw, 460px);
   max-width: 460px;
@@ -8656,17 +8733,28 @@ a.toggle-btn {
 /* ---------- Zgłoszenia (zakładka „Zgłoszenia”) ---------- */
 /* Przełącznik trybów reużywa `.toggle-btn` z paska kalendarza; poniżej tylko
    układ listy, tabeli i rozwijanego opisu. Modal korzysta z rodziny
-   `.task-modal-*` — `.ticket-modal-card` to jedyny modyfikator (węższa karta,
-   formularz nie potrzebuje siatki alokacji). */
+   `.task-modal-*` — `.ticket-modal-card` to jej jedyny modyfikator (węższa
+   karta, formularz nie potrzebuje siatki alokacji). */
 .ticket-mode-toggle {
   display: flex;
   margin-bottom: var(--n2-space-4);
 }
+/* Dwa kroki skali szerokości modali formularzowych (opis całej skali stoi przy
+   `.task-modal-card`). Zgłoszenie to krótki formularz, więc rośnie najmniej;
+   wydarzenie ma daty, godziny, miejsce i cykliczność w wierszach `.field-row`,
+   którym szerokość realnie pomaga — dlatego dostało własny, wyższy sufit
+   zamiast dzielić go ze zgłoszeniem. Oba kroki stoją tutaj, czyli PO mobilnym
+   `@media` z `max-width: none`; przeniesienie ich wyżej odebrałoby im sufit na
+   wąskich ekranach. */
 .ticket-modal-card {
-  max-width: 720px;
+  max-width: clamp(720px, 52vw, 960px);
+}
+.event-modal-card {
+  max-width: clamp(720px, 64vw, 1160px);
 }
 /* Modal „szybkiego dodania” wpisu słownika (QuickAddModal) — jedno pole nazwy,
-   więc karta jest wyraźnie węższa niż formularze zgłoszeń/zadań. */
+   więc karta jest wyraźnie węższa niż formularze zgłoszeń/zadań i CELOWO nie
+   skaluje się z ekranem: na 4K byłby to kilometrowy input na jedno słowo. */
 .quick-add-card {
   max-width: 420px;
 }
@@ -8775,8 +8863,11 @@ a.toggle-btn {
   font-size: var(--n2-type-sm);
 }
 
+/* Popout dziennika zmian to powierzchnia do CZYTANIA, nie formularz — rośnie
+   najwolniej ze wszystkich kroków skali, żeby wiersz tekstu został w czytelnej
+   długości nawet na szerokim monitorze. */
 .changelog-modal-card {
-  max-width: 760px;
+  max-width: clamp(760px, 48vw, 940px);
 }
 .changelog-list {
   display: flex;
