@@ -4,7 +4,7 @@
 // (same day or cross-day) and edge-drag to resize on a 15-min grid; a same-person
 // time overlap shows a danger tint and the drop reverts. Right-clicking a block
 // still opens "Dodaj przed / Dodaj po" to ripple-insert a new block.
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { AnimatePresence, m } from 'motion/react';
@@ -40,6 +40,7 @@ import {
   blockCollidesWithEvent,
   blocksForPersonDate,
   blockIsDone,
+  calendarEventsForDate,
   type CalendarEventOccurrence,
   getClient,
   getPerson,
@@ -248,10 +249,11 @@ interface DragState {
  * Czy zakres [start, end) wchodzi na WYDARZENIE albo URLOP tej osoby tego dnia?
  *
  * Wystąpienia zadań cyklicznych są tu POMIJANE: zostają czysto prezentacyjne i
- * nigdy nie blokują przeciągania (inwariant 1). Straż scalania czyta ten sam
- * indeks BEZ tego filtra, bo scalenie nie może połknąć żadnego z rodzajów.
- * Lustro reduktorowego `blockCollidesWithEvent` (urlop wchodzi tam automatycznie
- * jako wystąpienie 0-1440).
+ * nigdy nie blokują przeciągania (inwariant 1). Wydarzenia OGÓLNOFIRMOWE też
+ * (2026-08-03): blokada dotyczy tylko osób imiennie przypisanych. Straż
+ * scalania czyta ten sam indeks BEZ tych filtrów, bo scalenie nie może połknąć
+ * żadnego z rodzajów. Lustro reduktorowego `blockCollidesWithEvent` (urlop
+ * wchodzi tam automatycznie jako wystąpienie 0-1440).
  */
 function overlapsEvent(
   busy: BusyInterval[] | undefined,
@@ -260,7 +262,62 @@ function overlapsEvent(
 ): boolean {
   if (busy === undefined) return false;
   return busy.some(
-    (b) => b.kind !== 'recurrence' && rangesOverlap(start, end, b.start, b.end),
+    (b) =>
+      b.kind !== 'recurrence' &&
+      b.companyWide !== true &&
+      rangesOverlap(start, end, b.start, b.end),
+  );
+}
+
+/**
+ * Powód odrzuconego upuszczenia — jedno polskie zdanie do dymku i regionu
+ * `aria-live`. Priorytet: urlop (blokuje całą dobę, a jego kafel rysuje się
+ * tylko w oknie pracy — bez zdania wyglądałby na „puste pole") → spotkanie →
+ * blok. Czysta funkcja na tych samych indeksach, z których czyta bramka.
+ */
+function dropRejectReason(
+  personName: string,
+  busy: BusyInterval[] | undefined,
+  dayBlocks: WorkloadEntry[],
+  taskTitle: (taskId: string) => string,
+  start: number,
+  end: number,
+  excludeEntryId?: string,
+): string {
+  const hits = (busy ?? []).filter(
+    (b) =>
+      b.kind !== 'recurrence' &&
+      b.companyWide !== true &&
+      rangesOverlap(start, end, b.start, b.end),
+  );
+  const urlop = hits.find((b) => b.kind === 'urlop');
+  if (urlop) return `${personName} ma w tym dniu urlop.`;
+  if (hits.length > 0) {
+    return hits[0].title
+      ? `Koliduje ze spotkaniem „${hits[0].title}”.`
+      : 'Koliduje ze spotkaniem tej osoby.';
+  }
+  const block = dayBlocks.find(
+    (w) =>
+      w.id !== excludeEntryId &&
+      rangesOverlap(start, end, w.startMinutes, blockEndMinutes(w.startMinutes, w.plannedHours)),
+  );
+  if (block) {
+    const title = taskTitle(block.taskId);
+    return title ? `Koliduje z blokiem „${title}”.` : 'Koliduje z innym blokiem tej osoby.';
+  }
+  return 'Nie można tu upuścić — ten czas jest zajęty.';
+}
+
+/** Dymek odrzuconego upuszczenia: mały, ulotny, czysto wizualny (portal do
+ *  body, `pointer-events: none`; czytnikowi ekranu to samo zdanie ogłasza
+ *  region `role="status"`). Znika sam — rodzic czyści stan po timeoucie. */
+function DropRejectNotice({ x, y, text }: { x: number; y: number; text: string }) {
+  return createPortal(
+    <div className="week-drop-notice" style={{ left: x, top: y }} aria-hidden>
+      {text}
+    </div>,
+    document.body,
   );
 }
 
@@ -390,6 +447,23 @@ function TimedBlockImpl({
     if (rafRef.current !== null) return; // a frame is already queued; it reads the newest ref
     rafRef.current = requestAnimationFrame(flushDrag);
   };
+  // Dymek odrzuconego upuszczenia: lokalny stan + timeout (blok zostaje
+  // zamontowany po odrzuceniu, więc nic nie wisi po odmontowaniu — cleanup niżej).
+  const [rejectNotice, setRejectNotice] = useState<{ x: number; y: number; text: string } | null>(
+    null,
+  );
+  const rejectTimer = useRef<number | null>(null);
+  const showReject = (x: number, y: number, text: string) => {
+    if (rejectTimer.current !== null) window.clearTimeout(rejectTimer.current);
+    setRejectNotice({ x, y, text });
+    announce(text);
+    rejectTimer.current = window.setTimeout(() => setRejectNotice(null), 2600);
+  };
+  useEffect(() => {
+    return () => {
+      if (rejectTimer.current !== null) window.clearTimeout(rejectTimer.current);
+    };
+  }, []);
   // Pointer-capture bookkeeping — released before any dispatch (a drop-to-bin
   // unmounts this block; releasing after would wedge document-wide pointer
   // delivery, matching the bin-card freeze fix).
@@ -713,7 +787,26 @@ function TimedBlockImpl({
       announceCalendarPractice('move');
       return;
     }
-    if (colliding) return; // invalid drop → snap back (re-render restores it)
+    if (colliding) {
+      // Snap back (re-render restores the block) + POWÓD widocznym dymkiem:
+      // sama czerwień nie mówi, że pod „pustym" polem siedzi urlop albo
+      // spotkanie (urlop rysuje się tylko w oknie pracy, a blokuje dobę).
+      const rejDate = days[projDayIndex];
+      showReject(
+        e.clientX,
+        e.clientY,
+        dropRejectReason(
+          person.name,
+          eventBusyByPersonDate.get(personDateKey(person.id, rejDate)),
+          blocksByPersonDate.get(personDateKey(person.id, rejDate)) ?? [],
+          (taskId) => getTask(getState(), taskId)?.title ?? '',
+          projStart,
+          blockEndMinutes(projStart, projHours),
+          entry.id,
+        ),
+      );
+      return;
+    }
     // Merge drop: the reducer keeps the EARLIER-starting block's id. Remember it
     // so the surviving block plays the fuse animation after it re-renders. The
     // neighbor is looked up from the same per-(person, date) index.
@@ -785,7 +878,9 @@ function TimedBlockImpl({
       }));
       const busy = eventBusyByPersonDate.get(personDateKey(person.id, date)) ?? [];
       for (const [idx, b] of busy.entries()) {
-        if (b.kind === 'recurrence') continue;
+        // Ogólnofirmowe nie blokują (jak w `overlapsEvent` i reduktorze) —
+        // pseudo-sąsiad zapalałby kolizję, której zapis wcale by nie odrzucił.
+        if (b.kind === 'recurrence' || b.companyWide === true) continue;
         blocks.push({
           id: `${b.kind}:${date}:${idx}`,
           startMinutes: b.start,
@@ -1262,6 +1357,7 @@ function TimedBlockImpl({
         </div>,
         document.body,
       )}
+    {rejectNotice && <DropRejectNotice {...rejectNotice} />}
     </>
   );
 }
@@ -1328,6 +1424,9 @@ interface BinCardProps {
   onSchedule: (entry: WorkloadEntry, anchor: HTMLElement) => void;
   /** Jak w `BlockProps`: obserwator „trwa przeciąganie” dla arkusza zasobnika. */
   onDragActiveChange?: (active: boolean) => void;
+  /** Jak w `BlockProps`: kanał `aria-live` rodzica (dymek odrzucenia ogłasza
+   *  swoje zdanie także czytnikowi ekranu). Stabilna referencja — memo trzyma. */
+  announce: (message: string) => void;
 }
 
 function BinCardImpl({
@@ -1347,9 +1446,28 @@ function BinCardImpl({
   onContextMenu,
   onSchedule,
   onDragActiveChange,
+  announce,
 }: BinCardProps) {
   const dispatch = useDispatch();
+  const { getState } = useStoreApi();
   const [drag, setDrag] = useState<BinDragState | null>(null);
+  // Dymek odrzuconego upuszczenia — jak w TimedBlock (karta zostaje po
+  // odrzuceniu; udane upuszczenie ją odmontowuje, więc cleanup timeoutu niżej).
+  const [rejectNotice, setRejectNotice] = useState<{ x: number; y: number; text: string } | null>(
+    null,
+  );
+  const rejectTimer = useRef<number | null>(null);
+  const showReject = (x: number, y: number, text: string) => {
+    if (rejectTimer.current !== null) window.clearTimeout(rejectTimer.current);
+    setRejectNotice({ x, y, text });
+    announce(text);
+    rejectTimer.current = window.setTimeout(() => setRejectNotice(null), 2600);
+  };
+  useEffect(() => {
+    return () => {
+      if (rejectTimer.current !== null) window.clearTimeout(rejectTimer.current);
+    };
+  }, []);
   // See TimedBlock.dragRef: the drop must commit the newest pointer projection,
   // even when pointermove and pointerup are delivered before React re-renders.
   const dragRef = useRef<BinDragState | null>(null);
@@ -1538,7 +1656,27 @@ function BinCardImpl({
     dragRef.current = null;
     setDrag(null);
     if (!moved.current) return; // plain click → onClick opens the task
-    if (!finalDrag.valid || finalDrag.colliding) return; // snap back to bin
+    if (!finalDrag.valid) return; // poza siatką → cichy powrót do zasobnika
+    if (finalDrag.colliding) {
+      // Snap back + widoczny POWÓD (wiersz nieplanowalny / urlop / spotkanie /
+      // blok) — sama czerwień nie tłumaczy odbicia na pozornie pustym polu.
+      const rejDate = days[finalDrag.colIndex];
+      showReject(
+        clientX,
+        clientY,
+        unplaceable
+          ? unplaceableHint
+          : dropRejectReason(
+              person.name,
+              eventBusyByPersonDate.get(personDateKey(person.id, rejDate)),
+              blocksByPersonDate.get(personDateKey(person.id, rejDate)) ?? [],
+              (taskId) => getTask(getState(), taskId)?.title ?? '',
+              finalDrag.startMin,
+              finalDrag.startMin + hoursToMinutes(entry.plannedHours),
+            ),
+      );
+      return;
+    }
     dispatch({
       type: 'SET_BLOCK_TIME',
       entryId: entry.id,
@@ -1779,6 +1917,7 @@ function BinCardImpl({
             column,
           );
         })()}
+      {rejectNotice && <DropRejectNotice {...rejectNotice} />}
     </>
   );
 }
@@ -2202,8 +2341,13 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
     // Defense-in-depth: an occurrence overlay already stops its own contextmenu,
     // but never let a right-click on it fall through to the slot menu.
     if ((e.target as HTMLElement).closest('.week-recur-block')) return;
-    // Same guard for the presentational event block (no pointer path of its own).
-    if ((e.target as HTMLElement).closest('.week-event-block')) return;
+    // Same guard for the presentational event block (no pointer path of its own)
+    // — z WYJĄTKIEM kafla urlopu: zalewa okno pracy CAŁEJ kolumny na pełną
+    // szerokość, więc bez wyjątku prawy klik „+ Dodaj zadanie" umierałby na
+    // 8 godzin dnia, gdy ktokolwiek widoczny ma urlop (lewy klik zostaje
+    // wejściem w urlop).
+    const eventBlock = (e.target as HTMLElement).closest('.week-event-block');
+    if (eventBlock && !eventBlock.classList.contains('urlop')) return;
     e.preventDefault();
     const column = e.currentTarget;
     const rect = column.getBoundingClientRect();
@@ -2216,11 +2360,12 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
     });
   };
 
-  // Open task creation prefilled with the clicked day; when the week is filtered
-  // to exactly one person, preselect them as the sole assignee.
-  const addTaskInSlot = () => {
+  // Open task creation prefilled with the clicked day. `forPersonId` comes from
+  // the per-person menu items (filtered week); without it fall back to the old
+  // rule — preselect only when the filter is exactly one person.
+  const addTaskInSlot = (forPersonId?: string) => {
     if (!slotMenu) return;
-    const personId = filter.size === 1 ? [...filter][0] : undefined;
+    const personId = forPersonId ?? (filter.size === 1 ? [...filter][0] : undefined);
     openNewTask(undefined, { date: slotMenu.date, personId });
     setSlotMenu(null);
   };
@@ -2405,6 +2550,16 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
   };
 
   // ---- "Zaplanuj część" (partial bin scheduling) ----
+  // Zajętości wydarzeniowe osoby jako PSEUDO-BLOKI dla podpowiedzi startu —
+  // wyłącznie propozycja UI (reduktor dalej sam autorytatywnie odrzuca):
+  // spotkania imienne i urlop wchodzą, ogólnofirmowe nie (nie blokują zapisu).
+  // Bez nich formularz podpowiadał godzinę wpadającą w spotkanie, zapis był
+  // odrzucany i użytkownik musiał zgadywać wolny slot ręcznie.
+  const eventPseudoBlocks = (personId: string, date: string) =>
+    calendarEventsForDate(state, date, new Set([personId]))
+      .filter((occ) => occ.event.attendeeIds.length > 0)
+      .map((occ) => ({ startMinutes: occ.startMinutes, plannedHours: occ.durationMinutes / 60 }));
+
   // Seed the form's three fields: today, capacity-/remainder-bounded hours, and a
   // nextFreeStart-derived start for that person on that day.
   const initScheduleForm = (entry: WorkloadEntry) => {
@@ -2416,10 +2571,11 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
     );
     const blocks = blocksForPersonDate(state, entry.personId, date);
     const sameTask = blocks.filter((b) => b.taskId === entry.taskId);
+    const occupied = [...blocks, ...eventPseudoBlocks(entry.personId, date)];
     const dur = hoursToMinutes(defHours);
     setSchedDate(date);
     setSchedHoursRaw(String(defHours));
-    setSchedStart(minutesToTimeStr(findFreeStart(blocks, dur, sameTask) ?? nextFreeStart(blocks, dur)));
+    setSchedStart(minutesToTimeStr(findFreeStart(occupied, dur, sameTask) ?? nextFreeStart(occupied, dur)));
   };
 
   // Entry point A: the card button. Anchor the menu to the button rect. Stable
@@ -2448,7 +2604,8 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
     const dur = hoursToMinutes(Number.isNaN(raw) ? 0.25 : snapHours(Math.min(24, raw)));
     const blocks = blocksForPersonDate(state, menu.entry.personId, value);
     const sameTask = blocks.filter((b) => b.taskId === menu.entry.taskId);
-    setSchedStart(minutesToTimeStr(findFreeStart(blocks, dur, sameTask) ?? nextFreeStart(blocks, dur)));
+    const occupied = [...blocks, ...eventPseudoBlocks(menu.entry.personId, value)];
+    setSchedStart(minutesToTimeStr(findFreeStart(occupied, dur, sameTask) ?? nextFreeStart(occupied, dur)));
   };
 
   const confirmSchedule = () => {
@@ -2679,6 +2836,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                     onContextMenu={openMenu}
                     onSchedule={openSchedule}
                     onDragActiveChange={handleDragActiveChange}
+                    announce={announce}
                   />
                 ))}
               </div>
@@ -3260,16 +3418,48 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
             transition={{ duration: 0.12, ease: 'easeOut' }}
           >
             <div ref={slotMenuRef}>
-              {canManageTasks && (
+              {/* Tydzień przefiltrowany do konkretnych osób: pozycja „Dodaj
+                  zadanie" PER OSOBA, a urlopowicz jest wyszarzony z widoczną
+                  linijką powodu (wzorzec „Podziel…"). Bez filtra zostaje jedna
+                  ogólna pozycja — lista wszystkich osób byłaby menu-ścianą. */}
+              {canManageTasks && filter.size === 0 && (
                 <button
                   type="button"
                   role="menuitem"
                   className="context-menu-item"
-                  onClick={addTaskInSlot}
+                  onClick={() => addTaskInSlot()}
                 >
                   + Dodaj zadanie ({formatMinutes(slotMenu.startMinutes)})
                 </button>
               )}
+              {canManageTasks &&
+                filter.size > 0 &&
+                state.people
+                  .filter((p) => filter.has(p.id))
+                  .map((p) => {
+                    const vacation = personVacationOnDate(state, p.id, slotMenu.date);
+                    const hintId = `slot-vacation-${p.id}`;
+                    return (
+                      <Fragment key={p.id}>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="context-menu-item"
+                          disabled={vacation !== null}
+                          aria-describedby={vacation !== null ? hintId : undefined}
+                          onClick={() => addTaskInSlot(p.id)}
+                        >
+                          + Dodaj zadanie ({formatMinutes(slotMenu.startMinutes)}) —{' '}
+                          {p.firstName || p.name}
+                        </button>
+                        {vacation !== null && (
+                          <div className="context-menu-hint" id={hintId}>
+                            {p.firstName || p.name} ma w tym dniu urlop.
+                          </div>
+                        )}
+                      </Fragment>
+                    );
+                  })}
               {canManageEvents && (
                 <button
                   type="button"

@@ -884,6 +884,12 @@ export function eventDraftConflicts(
  * prezentacyjne (inwariant 1) i nigdy nie wchodzą do modelu przeciągania.
  * Wchodzą natomiast do {@link scheduleConflictsForRange}, bo tam służą tylko do
  * OPISANIA konfliktu przy zapisie wydarzenia, a nie do blokowania przeciągania.
+ *
+ * Wydarzenie OGÓLNOFIRMOWE (`attendeeIds` puste) NIE blokuje NIKOGO
+ * (2026-08-03): blokada dotyczy wyłącznie osób imiennie przypisanych do
+ * wydarzenia — symetrycznie do progu przy zapisie takiego wydarzenia
+ * ({@link eventDraftConflicts}: ogólnofirmowe tylko ostrzega). Urlop ma zawsze
+ * dokładnie jednego uczestnika, więc ten filtr nigdy go nie pomija.
  */
 export function blockCollidesWithEvent(
   state: AppData,
@@ -894,6 +900,7 @@ export function blockCollidesWithEvent(
 ): boolean {
   const end = blockEndMinutes(startMinutes, plannedHours);
   for (const occ of calendarEventsForDate(state, date, new Set([personId]))) {
+    if (occ.event.attendeeIds.length === 0) continue;
     if (rangesOverlap(startMinutes, end, occ.startMinutes, occ.startMinutes + occ.durationMinutes)) {
       return true;
     }

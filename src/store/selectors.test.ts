@@ -2183,6 +2183,17 @@ describe('blockCollidesWithEvent', () => {
     expect(blockCollidesWithEvent(state(), 'p1', '2026-07-08', 540, 1)).toBe(false);
   });
 
+  // Blokada dotyczy WYŁĄCZNIE osób imiennie przypisanych do wydarzenia —
+  // ogólnofirmowe nie blokuje nikomu planowania (symetria z progiem przy
+  // zapisie: eventDraftConflicts dla ogólnofirmowego tylko ostrzega).
+  it('NIE blokuje na wydarzeniu OGÓLNOFIRMOWYM (puste attendeeIds)', () => {
+    const s = makeState({
+      people: [makePerson({ id: 'p1' })],
+      events: [makeCalendarEvent({ id: 'ev1', attendeeIds: [] })], // 600-660
+    });
+    expect(blockCollidesWithEvent(s, 'p1', '2026-07-08', 630, 1)).toBe(false);
+  });
+
   // Wystąpienia cykliczne zostają czysto prezentacyjne — nie blokują przeciągania.
   it('NIE blokuje na wystąpieniu zadania cyklicznego', () => {
     const s = makeState({

@@ -93,6 +93,13 @@ export interface BusyInterval {
   kind: 'event' | 'urlop' | 'recurrence';
   /** Tytuł wydarzenia / urlopu / zadania cyklicznego; '' gdy nieznany. */
   title: string;
+  /**
+   * Wydarzenie ogólnofirmowe (`attendeeIds` puste). Bramka upuszczania je
+   * POMIJA — blokada dotyczy tylko osób imiennie przypisanych (lustro
+   * `blockCollidesWithEvent`) — ale straż scalania czyta dalej WSZYSTKIE
+   * przedziały, więc flaga zostaje obok `kind`, nie zamiast niego.
+   */
+  companyWide?: boolean;
 }
 
 /** One person's bin (zasobnik) group. */
@@ -197,6 +204,7 @@ export function buildEventBusyByPersonDate(
           // dobę, więc żadna godzina nie jest legalnym celem.
           kind: occ.event.kind === 'urlop' ? 'urlop' : 'event',
           title: occ.event.title,
+          companyWide: occ.event.attendeeIds.length === 0,
         });
       }
       for (const { task, occurrence } of recurrenceOccurrencesForDate(state, date, forPerson)) {

@@ -221,6 +221,32 @@
     do ścieżki klawiaturowej jako PSEUDO-SĄSIAD w `blocksOnDay` (czysty
     `calendarBlockKeyboard.ts` bez zmian, a `findBlockConflict` nazywa spotkanie).
     Wystąpienia cyklicznych zadań świadomie NIE blokują tego kierunku.
+    Od 2026-08-03 (decyzja usera) blokada dotyczy WYŁĄCZNIE osób imiennie
+    przypisanych: wydarzenie OGÓLNOFIRMOWE (`attendeeIds` puste) nie blokuje
+    NIKOMU planowania — `blockCollidesWithEvent` je pomija, `BusyInterval` niesie
+    flagę `companyWide` (bramka upuszczania `overlapsEvent` i pseudo-sąsiedzi
+    klawiatury ją filtrują; straż scalania czyta dalej WSZYSTKIE przedziały).
+    Symetria z progiem przy zapisie (ogólnofirmowe tylko ostrzega).
+  - ODRZUCONE upuszczenie ma widoczny POWÓD (2026-08-03): oba modele
+    przeciągania (blok i karta zasobnika) pokazują przy punkcie zwolnienia
+    ulotny dymek `.week-drop-notice` (czysta prezentacja: portal do body,
+    `pointer-events: none`, timeout ~2,6 s) ze zdaniem z `dropRejectReason`
+    (priorytet: urlop → spotkanie → blok; urlop blokuje dobę, a rysuje się
+    tylko w oknie pracy, więc bez zdania odbicie na „pustym" polu było
+    niezrozumiałe). To samo zdanie idzie kanałem `announce` do regionu
+    `role="status"`. Cykl życia wskaźnika bez zmian (inwariant 7).
+  - „Zaplanuj część" PODPOWIADA start omijający zajętości wydarzeniowe:
+    `findFreeStart`/`nextFreeStart` dostają obok bloków PSEUDO-BLOKI z
+    `calendarEventsForDate` (spotkania imienne + urlop; ogólnofirmowe nie —
+    nie blokują zapisu). To wyłącznie propozycja UI — decyzja zostaje w
+    strażach reduktora.
+  - Menu slotu (prawy klik): kafel URLOPU nie zjada już prawego kliku —
+    strażnik `openSlotMenu` przepuszcza `.week-event-block.urlop` (lewy klik
+    dalej otwiera urlop; spotkania zostają wykluczone jak dotąd). Przy
+    AKTYWNYM filtrze osób pozycja „+ Dodaj zadanie" renderuje się PER OSOBA
+    („… — {imię}", prefill `openNewTask` tą osobą), a urlopowicz dnia jest
+    `disabled` z widoczną linijką `.context-menu-hint` („{imię} ma w tym dniu
+    urlop."); bez filtra zostaje jedna ogólna pozycja.
   - Styk krawędzi nie jest kolizją w żadnym z kierunków (`rangesOverlap`).
   - `eventBusyByPersonDate` niesie teraz `kind` i `title`, a POKRYCIE poszerzyło
     się z „par z co najmniej jednym blokiem" na „właściciele wierszy

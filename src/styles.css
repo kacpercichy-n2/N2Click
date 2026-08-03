@@ -2221,6 +2221,34 @@ a.toggle-btn {
   border-color: var(--n2-danger);
   background: var(--n2-danger-soft, rgba(255, 79, 114, 0.16));
 }
+/* Dymek odrzuconego upuszczenia: ulotny powód odbicia (urlop / spotkanie /
+   blok) przy punkcie zwolnienia wskaźnika. Czysto wizualny (portal do body,
+   `pointer-events: none`; czytnik dostaje to samo zdanie regionem
+   `role="status"`), znika po timeoucie komponentu. Sama animacja to opacity —
+   przy `prefers-reduced-motion` po prostu pojawia się bez przejścia. */
+.week-drop-notice {
+  position: fixed;
+  transform: translate(-50%, calc(-100% - 12px));
+  max-width: 280px;
+  padding: 6px 10px;
+  border: 1px solid var(--n2-danger);
+  border-radius: var(--n2-radius-sm);
+  background: var(--n2-graphite);
+  color: var(--n2-text);
+  font-size: var(--n2-type-xs);
+  line-height: 1.4;
+  pointer-events: none;
+  z-index: var(--n2-z-tooltip);
+  animation: week-drop-notice-in calc(0.15s * var(--n2-motion)) ease-out;
+}
+@keyframes week-drop-notice-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
 
 /* Linia „teraz” w dzisiejszej kolumnie: nad statycznymi blokami (z-index 10),
    pod przeciąganym blokiem (.dragging ma 30). pointer-events: none — czysto
