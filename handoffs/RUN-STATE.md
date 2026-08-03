@@ -125,3 +125,12 @@ zielone, build zielony. Wiki: UI.
 `dashboardPanels.ts`: alerts `empty: null` (nigdy belka) — test zwijania
 zaktualizowany świadomie. `styles.css`: badge + `.dash-alerts-empty-card`.
 `npm test` 119/2669 zielone, build zielony. Wiki: UI.
+
+## Developer result (20260803-222602-n2hub-325)
+
+`AccountPage.tsx`: karty owinięte w `.account-grid` (sam wrapper, warunki i
+logika bez zmian). `styles.css`: siatka 2 kolumn z zerowanym `margin-bottom`
+kart i zwinięciem do 1 kolumny w `max-width: 760px` (breakpoint z pliku),
+`.cloud-profile` dt/dd z `overflow-wrap: anywhere` (długi e-mail zawija się),
+`.page > .people-form-hint` z odstępem nad listą osób. `npm test` 119/2669
+zielone, build zielony. Wiki: bez zmian (brak nowej granicy ani inwariantu).

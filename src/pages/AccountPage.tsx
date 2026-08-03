@@ -60,64 +60,68 @@ export function AccountPage() {
         <h1>Konto</h1>
       </div>
 
-      {currentUserId && (
+      {/* Wrapper czysto layoutowy: karty konta układają się po dwie w wierszu
+          (`.account-grid`), warunki i logika sekcji zostają bez zmian. */}
+      <div className="account-grid">
+        {currentUserId && (
+          <div className="editor-section">
+            <h2>Profil</h2>
+            <p className="field-hint">
+              <Link to={`/people/${currentUserId}`} className="profile-link">
+                Mój profil
+              </Link>
+            </p>
+          </div>
+        )}
+
+        {mode === 'supabase' && <CloudProfileSection />}
+
         <div className="editor-section">
-          <h2>Profil</h2>
+          <h2>Zmiana hasła</h2>
           <p className="field-hint">
-            <Link to={`/people/${currentUserId}`} className="profile-link">
-              Mój profil
-            </Link>
+            Ustaw nowe hasło do swojego konta. Hasło musi mieć co najmniej 8 znaków.
           </p>
+          <form className="login-password" onSubmit={(e) => void onSubmit(e)}>
+            <label className="field">
+              <span>Nowe hasło</span>
+              <input
+                type="password"
+                value={password}
+                autoComplete="new-password"
+                disabled={busy}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  setSuccess(false);
+                }}
+                className={error ? 'invalid' : undefined}
+                aria-invalid={error ? true : undefined}
+              />
+            </label>
+            <label className="field">
+              <span>Powtórz nowe hasło</span>
+              <input
+                type="password"
+                value={confirm}
+                autoComplete="new-password"
+                disabled={busy}
+                onChange={(e) => {
+                  setConfirm(e.target.value);
+                  setSuccess(false);
+                }}
+                className={error ? 'invalid' : undefined}
+                aria-invalid={error ? true : undefined}
+              />
+            </label>
+            {error && <p className="field-error">{error}</p>}
+            {success && <p className="field-hint">{PASSWORD_CHANGED_MSG}</p>}
+            <button type="submit" className="btn primary" disabled={busy}>
+              {busy ? 'Zapisywanie…' : 'Zmień hasło'}
+            </button>
+          </form>
         </div>
-      )}
 
-      {mode === 'supabase' && <CloudProfileSection />}
-
-      <div className="editor-section">
-        <h2>Zmiana hasła</h2>
-        <p className="field-hint">
-          Ustaw nowe hasło do swojego konta. Hasło musi mieć co najmniej 8 znaków.
-        </p>
-        <form className="login-password" onSubmit={(e) => void onSubmit(e)}>
-          <label className="field">
-            <span>Nowe hasło</span>
-            <input
-              type="password"
-              value={password}
-              autoComplete="new-password"
-              disabled={busy}
-              onChange={(e) => {
-                setPassword(e.target.value);
-                setSuccess(false);
-              }}
-              className={error ? 'invalid' : undefined}
-              aria-invalid={error ? true : undefined}
-            />
-          </label>
-          <label className="field">
-            <span>Powtórz nowe hasło</span>
-            <input
-              type="password"
-              value={confirm}
-              autoComplete="new-password"
-              disabled={busy}
-              onChange={(e) => {
-                setConfirm(e.target.value);
-                setSuccess(false);
-              }}
-              className={error ? 'invalid' : undefined}
-              aria-invalid={error ? true : undefined}
-            />
-          </label>
-          {error && <p className="field-error">{error}</p>}
-          {success && <p className="field-hint">{PASSWORD_CHANGED_MSG}</p>}
-          <button type="submit" className="btn primary" disabled={busy}>
-            {busy ? 'Zapisywanie…' : 'Zmień hasło'}
-          </button>
-        </form>
+        <NavOrderEditor />
       </div>
-
-      <NavOrderEditor />
     </section>
   );
 }

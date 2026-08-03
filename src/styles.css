@@ -5757,6 +5757,12 @@ a.toggle-btn {
   flex-basis: 100%;
   margin: 0;
 }
+/* Ten sam hint stoi też bezpośrednio w `.page` (tryb chmurowy, nad listą osób),
+   gdzie bazowe `margin: 0` sklejałoby go z listą. Odstęp dokładamy wyłącznie
+   dla wariantu spoza formularza, żeby nie ruszać wersji w `.person-form`. */
+.page > .people-form-hint {
+  margin: 0 0 var(--n2-space-5);
+}
 
 /* Read-only profile facts */
 .profile-facts {
@@ -5787,6 +5793,50 @@ a.toggle-btn {
 }
 .profile-fact-links {
   font-weight: 500;
+}
+
+/* ---------- Konto (/account) ---------- */
+
+/* Karty konta stoją po dwie w wierszu. Grid domyślnie rozciąga itemy, więc obie
+   karty w wierszu mają tę samą wysokość niezależnie od zawartości; część kart
+   jest warunkowa (profil lokalny, profil w chmurze) i siatka radzi sobie z tym
+   sama. */
+.account-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--n2-space-4);
+  align-items: stretch;
+}
+/* Bazowy `.editor-section` ma własny `margin-bottom`; w siatce odstęp daje już
+   `gap`, więc margines trzeba wyzerować, inaczej wiersze rozjeżdżają się o
+   podwójną wartość. */
+.account-grid > .editor-section {
+  margin-bottom: 0;
+  height: auto;
+  display: flex;
+  flex-direction: column;
+}
+.cloud-profile {
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+.cloud-profile dt {
+  font-size: var(--n2-type-sm);
+  color: var(--text-muted);
+}
+/* `overflow-wrap: anywhere` — długi e-mail zawija się w całości zamiast wylewać
+   poza kartę; bez ellipsis, więc nic nie ginie i tooltip jest zbędny. */
+.cloud-profile dd {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+@media (max-width: 760px) {
+  .account-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Zintegrowany panel profilu: pierwsza karta „dane podstawowe" + read-only pola */
