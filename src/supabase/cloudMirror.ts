@@ -19,6 +19,11 @@ import type {
   CalendarEvent,
   Client,
   Comment,
+  ContentPlanBrand,
+  ContentPlanChannel,
+  ContentPlanComment,
+  ContentPlanHistoryEntry,
+  ContentPlanPost,
   Milestone,
   Project,
   Status,
@@ -27,8 +32,9 @@ import type {
   WorkloadEntry,
 } from '../types';
 import { normalizeEmail } from '../auth/profile';
+import { splitContentPlanTags } from '../contentplan/domain';
 import type { OrgSnapshot } from './referenceData';
-import type { PlannerDb } from './plannerData';
+import { isMissingCloudTable, type PlannerDb } from './plannerData';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (id: string): boolean => UUID_RE.test(id);
@@ -146,7 +152,17 @@ export type CloudOp = {
   onConflict?: string; // dla złożonego upsertu przypisań (task_id,profile_id)
   sourceId: string; // lokalny id / klucz pary — do debugowania i suppresji
   label: string; // polska etykieta do bannera
+  /**
+   * Schemat inny niż domyślny (`n2click`) — dziś wyłącznie
+   * {@link CONTENT_PLAN_SCHEMA}. Op z tym znacznikiem MUSI trafić do adaptera
+   * przypiętego na `client.schema(...)` (patrz `applyCloudOps`); brak adaptera
+   * = cichy drop, nigdy zapis do domyślnego schematu.
+   */
+  schema?: string;
 };
+
+/** Schemat modułu Content Plan (osobny od `n2click`, migracja 20260803160000). */
+export const CONTENT_PLAN_SCHEMA = 'contentplan';
 
 export interface DiffResult {
   ops: CloudOp[];
@@ -876,6 +892,276 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
   return { ops, diagnostics };
 }
 
+// ---- Content Plan (schemat `contentplan`) ------------------------------------
+//
+// Rodzina diff MODUŁU, świadomie ODDZIELNA od `diffToCloudOps`: tabele żyją w
+// innym schemacie (migracja 20260803160000), więc ich operacje muszą pójść przez
+// adapter `client.schema('contentplan')`. Każdy op niesie `schema`, dzięki czemu
+// jedna kolejka lustra obsługuje obie rodziny bez mieszania schematów.
+//
+// GRANICE:
+//   * Marka i publikacja o id spoza formatu UUID (marka utworzona lokalnie nosi
+//     SLUG z `uniqueBrandId`) zostaje TYLKO w tej przeglądarce — kolumny `id` są
+//     `uuid`. Publikacja wskazująca taką markę też odpada (FK), z diagnostyką.
+//   * `comments`/`post_history` są DOPISYWALNE (brak grantu UPDATE/DELETE):
+//     lustrujemy wyłącznie NOWE wiersze, kasowanie zostawiamy kaskadzie FK.
+//   * Kanały, komentarze i historia usuniętej publikacji (oraz publikacje
+//     usuniętej marki) NIE dostają własnych `remove` — sprząta je kaskada.
+//   * Tagi: lokalny string <-> `text[]` przez `splitContentPlanTags`.
+
+const CP_DIAG = {
+  nonUuid: 'Wiersz Content Planu ma identyfikator spoza formatu UUID — zostaje tylko w tej przeglądarce.',
+  unknownBrand: 'Publikacja wskazuje markę bez odpowiednika w chmurze — zostaje tylko w tej przeglądarce.',
+} as const;
+
+/** Znacznik czasu ISO do kolumny `timestamptz`: '' => klucz pomijany (kolumna ma
+ *  default `now()`, a pusty string wywróciłby wstawienie na typie). */
+function timestampColumn(column: string, value: string): Record<string, string> {
+  return value === '' ? {} : { [column]: value };
+}
+
+function cpBrandRow(b: ContentPlanBrand): Record<string, unknown> {
+  return {
+    id: b.id,
+    name: b.name,
+    industry: b.industry,
+    contact: b.contact,
+    accent: b.accent,
+    platforms: b.platforms,
+    topics: b.topics,
+    formats: b.formats,
+    // `n2click_client_id` CELOWO pominięte: model lokalny go nie zna, a upsert
+    // aktualizuje wyłącznie kolumny z ładunku — powiązanie ustawione w bazie
+    // przeżywa każdy zapis marki. `updated_at` należy do triggera.
+    ...timestampColumn('created_at', b.createdAt),
+  };
+}
+
+function cpPostRow(p: ContentPlanPost): Record<string, unknown> {
+  return {
+    id: p.id,
+    brand_id: p.brandId,
+    date: p.date,
+    title: p.title,
+    topic: p.topic,
+    format: p.format,
+    status: p.status,
+    visibility: p.visibility,
+    base_tags: splitContentPlanTags(p.baseTags),
+    ...timestampColumn('created_at', p.createdAt),
+  };
+}
+
+function cpChannelRow(c: ContentPlanChannel, postId: string): Record<string, unknown> {
+  const media = c.media;
+  return {
+    id: c.id,
+    post_id: postId,
+    platform_id: c.platformId,
+    copy: c.copy,
+    tags: splitContentPlanTags(c.tags),
+    override_tags: c.overrideTags,
+    // Forma kanoniczna kanału: brak klucza ≡ grupa główna => kolumna NULL.
+    description_group_id: c.descriptionGroupId ?? null,
+    // Media to WYŁĄCZNIE referencja do pliku Drive (nigdy base64): brak pliku =>
+    // wszystkie kolumny NULL (CHECK wymaga źródła przy `media_file_id`).
+    media_source: media ? media.source : null,
+    media_file_id: media ? media.fileId : null,
+    media_width: media?.width ?? null,
+    media_height: media?.height ?? null,
+    media_type: media ? media.type : null,
+  };
+}
+
+function cpCommentRow(
+  c: ContentPlanComment,
+  postId: string,
+  commentIds: Set<string>,
+): Record<string, unknown> {
+  // Rodzic spoza tej publikacji (albo o id spoza UUID) traci powiązanie zamiast
+  // wywracać wstawienie na FK — komentarz wraca do wątku głównego, jak w repair.
+  const parentId = c.parentId !== undefined && commentIds.has(c.parentId) ? c.parentId : null;
+  return {
+    id: c.id,
+    post_id: postId,
+    author: c.author,
+    body: c.body,
+    parent_id: parentId,
+    ...timestampColumn('at', c.at),
+  };
+}
+
+function cpHistoryRow(h: ContentPlanHistoryEntry, postId: string): Record<string, unknown> {
+  return {
+    id: h.id,
+    post_id: postId,
+    label: h.label,
+    ...timestampColumn('at', h.at),
+  };
+}
+
+interface CpRowEntry {
+  row: Record<string, unknown>;
+  label: string;
+  /** Id rodzica (marka dla publikacji, publikacja dla wierszy zależnych) — do
+   *  pominięcia `remove`, który i tak załatwia kaskada FK. */
+  parentId: string;
+}
+
+interface CpRowSets {
+  brands: Map<string, CpRowEntry>;
+  posts: Map<string, CpRowEntry>;
+  channels: Map<string, CpRowEntry>;
+  comments: Map<string, CpRowEntry>;
+  history: Map<string, CpRowEntry>;
+}
+
+/** Wiersze chmury dla stanu modułu. `diagnostics === null` dla stanu POPRZEDNIEGO
+ *  (ten sam odrzut jest już opisany dla stanu następnego — bez dublowania not). */
+function contentPlanRowSets(data: AppData, diagnostics: string[] | null): CpRowSets {
+  const sets: CpRowSets = {
+    brands: new Map(),
+    posts: new Map(),
+    channels: new Map(),
+    comments: new Map(),
+    history: new Map(),
+  };
+  for (const brand of data.contentPlanBrands) {
+    if (!isUuid(brand.id)) {
+      diagnostics?.push(CP_DIAG.nonUuid);
+      continue;
+    }
+    sets.brands.set(brand.id, {
+      row: cpBrandRow(brand),
+      label: `Marka „${brand.name}”`,
+      parentId: '',
+    });
+  }
+  for (const post of data.contentPlanPosts) {
+    if (!isUuid(post.id)) {
+      diagnostics?.push(CP_DIAG.nonUuid);
+      continue;
+    }
+    if (!sets.brands.has(post.brandId)) {
+      diagnostics?.push(CP_DIAG.unknownBrand);
+      continue;
+    }
+    sets.posts.set(post.id, {
+      row: cpPostRow(post),
+      label: `Publikacja „${post.title}”`,
+      parentId: post.brandId,
+    });
+    for (const channel of post.channels) {
+      if (!isUuid(channel.id)) {
+        diagnostics?.push(CP_DIAG.nonUuid);
+        continue;
+      }
+      sets.channels.set(channel.id, {
+        row: cpChannelRow(channel, post.id),
+        label: 'Kanał publikacji',
+        parentId: post.id,
+      });
+    }
+    const commentIds = new Set(post.comments.filter((c) => isUuid(c.id)).map((c) => c.id));
+    for (const comment of post.comments) {
+      if (!isUuid(comment.id)) {
+        diagnostics?.push(CP_DIAG.nonUuid);
+        continue;
+      }
+      sets.comments.set(comment.id, {
+        row: cpCommentRow(comment, post.id, commentIds),
+        label: 'Komentarz publikacji',
+        parentId: post.id,
+      });
+    }
+    for (const entry of post.history) {
+      if (!isUuid(entry.id)) {
+        diagnostics?.push(CP_DIAG.nonUuid);
+        continue;
+      }
+      sets.history.set(entry.id, {
+        row: cpHistoryRow(entry, post.id),
+        label: 'Wpis historii publikacji',
+        parentId: post.id,
+      });
+    }
+  }
+  return sets;
+}
+
+const sameCpRow = (a: Record<string, unknown>, b: Record<string, unknown>): boolean =>
+  JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * Diff modułu Content Plan na operacje zapisu w kolejności zależności: marki ->
+ * publikacje -> kanały -> komentarze -> historia. Marki/publikacje/kanały:
+ * upsert dodanych i zmienionych, remove usuniętych (z pominięciem wierszy, które
+ * sprząta kaskada FK). Komentarze i historia: DOPISYWALNE (tylko nowe id).
+ * Odrzucona komenda (ta sama referencja stanu) nie daje różnicy, więc zero
+ * operacji — inwariant 6 jak w `diffToCloudOps`.
+ */
+export function diffContentPlanToCloudOps(prev: AppData, next: AppData): DiffResult {
+  const diagnostics: string[] = [];
+  const before = contentPlanRowSets(prev, null);
+  const after = contentPlanRowSets(next, diagnostics);
+  const ops: CloudOp[] = [];
+
+  const push = (op: Omit<CloudOp, 'schema'>): void => {
+    ops.push({ ...op, schema: CONTENT_PLAN_SCHEMA });
+  };
+
+  // 1) Marki ----
+  for (const id of before.brands.keys()) {
+    if (after.brands.has(id)) continue;
+    push({ kind: 'remove', table: 'brands', match: { id }, sourceId: id, label: 'Marka (usunięcie)' });
+  }
+  for (const [id, entry] of after.brands) {
+    const previous = before.brands.get(id);
+    if (previous && sameCpRow(previous.row, entry.row)) continue;
+    push({ kind: 'upsert', table: 'brands', row: entry.row, sourceId: id, label: entry.label });
+  }
+
+  // 2) Publikacje ---- (remove pomijamy, gdy zniknęła cała marka — kaskada)
+  for (const [id, entry] of before.posts) {
+    if (after.posts.has(id) || !after.brands.has(entry.parentId)) continue;
+    push({ kind: 'remove', table: 'posts', match: { id }, sourceId: id, label: 'Publikacja (usunięcie)' });
+  }
+  for (const [id, entry] of after.posts) {
+    const previous = before.posts.get(id);
+    if (previous && sameCpRow(previous.row, entry.row)) continue;
+    push({ kind: 'upsert', table: 'posts', row: entry.row, sourceId: id, label: entry.label });
+  }
+
+  // 3) Kanały ---- (remove tylko dla ŻYJĄCEJ publikacji — reszta idzie kaskadą)
+  for (const [id, entry] of before.channels) {
+    if (after.channels.has(id) || !after.posts.has(entry.parentId)) continue;
+    push({
+      kind: 'remove',
+      table: 'post_channels',
+      match: { id },
+      sourceId: id,
+      label: 'Kanał publikacji (usunięcie)',
+    });
+  }
+  for (const [id, entry] of after.channels) {
+    const previous = before.channels.get(id);
+    if (previous && sameCpRow(previous.row, entry.row)) continue;
+    push({ kind: 'upsert', table: 'post_channels', row: entry.row, sourceId: id, label: entry.label });
+  }
+
+  // 4) Komentarze i 5) historia ---- (append-only: wyłącznie nowe id)
+  for (const [id, entry] of after.comments) {
+    if (before.comments.has(id)) continue;
+    push({ kind: 'upsert', table: 'comments', row: entry.row, sourceId: id, label: entry.label });
+  }
+  for (const [id, entry] of after.history) {
+    if (before.history.has(id)) continue;
+    push({ kind: 'upsert', table: 'post_history', row: entry.row, sourceId: id, label: entry.label });
+  }
+
+  return { ops, diagnostics };
+}
+
 // ---- Wykonanie operacji ------------------------------------------------------
 
 export interface ApplyOpsResult {
@@ -896,23 +1182,46 @@ export interface ApplyOpsResult {
  * albo dowolny inny błąd PORZUCA op po cichu (log tylko w DEV) i KONTYNUUJE.
  * Taki drop NIGDY nie zatrzymuje syncu innych encji (transient by zamroził całą
  * kolejkę na czele) ani nie trafia do `dropped` (żadnego banera dla użytkownika).
+ *
+ * SCHEMATY: op z `schema` (Content Plan) idzie do adaptera z `schemaDbs`. Brak
+ * adaptera => cichy drop (NIGDY zapis do domyślnego schematu). Brak schematu lub
+ * tabeli po stronie serwera (migracja niezaaplikowana, schemat niewystawiony w
+ * Data API) też jest cichym dropem: jako 'transient' JEDEN taki op zamroziłby
+ * całą kolejkę planera na czele.
  */
-export async function applyCloudOps(db: PlannerDb, ops: CloudOp[]): Promise<ApplyOpsResult> {
+export async function applyCloudOps(
+  db: PlannerDb,
+  ops: CloudOp[],
+  schemaDbs?: Record<string, PlannerDb>,
+): Promise<ApplyOpsResult> {
   let done = 0;
   const dropped: Array<{ label: string; message: string }> = [];
   for (let i = 0; i < ops.length; i++) {
     const op = ops[i];
+    const target = op.schema === undefined ? db : schemaDbs?.[op.schema];
+    if (target === undefined) {
+      if (import.meta.env.DEV) {
+        console.debug('[cloud] Pominięto zapis bez adaptera schematu:', op.schema, op.label);
+      }
+      continue;
+    }
     const res =
       op.kind === 'upsert'
-        ? await db.upsert(op.table, op.row ?? {}, op.onConflict)
+        ? await target.upsert(op.table, op.row ?? {}, op.onConflict)
         : op.kind === 'update'
-          ? await db.update(op.table, op.row ?? {}, op.match ?? {})
-          : await db.remove(op.table, op.match ?? {});
+          ? await target.update(op.table, op.row ?? {}, op.match ?? {})
+          : await target.remove(op.table, op.match ?? {});
     if (res.error) {
       if (op.table === 'notifications') {
         // Best-effort: cichy drop (dowolny błąd), bez zatrzymania i bez banera.
         if (import.meta.env.DEV) {
           console.debug('[cloud] Pominięto zapis powiadomienia (best-effort):', op.label, res.error.message);
+        }
+        continue;
+      }
+      if (op.schema !== undefined && isMissingCloudTable(res.error.message)) {
+        if (import.meta.env.DEV) {
+          console.debug('[cloud] Pominięto zapis — brak schematu/tabeli:', op.schema, op.table);
         }
         continue;
       }

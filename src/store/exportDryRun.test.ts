@@ -413,3 +413,58 @@ describe('buildDryRunReport — workload + milestones (retirement migration)', (
     expect(wlBlockers.map((b) => b.entityId).sort()).toEqual(['w-bin2', 'w-offgrid'].sort());
   });
 });
+
+// Content Plan mieszka w OSOBNYM schemacie `contentplan` i synchronizuje się
+// własną rodziną diff — symulacja migracji ma o nim mówić, ale nie liczyć go
+// jako tabelę docelową tej migracji ani jako kolekcję bez odpowiednika.
+describe('buildDryRunReport — wiersz modułu Content Plan', () => {
+  const brand = (id: string) => ({
+    id,
+    name: 'Tetra Wave',
+    industry: '',
+    contact: '',
+    accent: '',
+    platforms: [],
+    topics: [],
+    formats: [],
+    createdAt: '2026-08-01T10:00:00.000Z',
+    updatedAt: '2026-08-01T10:00:00.000Z',
+  });
+  const post = (id: string, brandId: string) => ({
+    id,
+    brandId,
+    date: '2026-08-04',
+    title: 'Premiera',
+    topic: '',
+    format: '',
+    status: 'Zaplanowane' as const,
+    visibility: 'draft' as const,
+    baseTags: '',
+    channels: [],
+    comments: [],
+    history: [],
+    createdAt: '2026-08-01T10:00:00.000Z',
+    updatedAt: '2026-08-01T10:00:00.000Z',
+  });
+
+  it('raportuje marki i publikacje jednym wierszem mapowania, nie jako brak odpowiednika', () => {
+    const data: AppData = {
+      ...emptyData(),
+      contentPlanBrands: [brand('marka-1')],
+      contentPlanPosts: [post('post-1', 'marka-1'), post('post-2', 'marka-1')],
+    };
+    const report = buildDryRunReport(data);
+    const row = report.idMappings.find((m) => m.entity.startsWith('Content Plan'));
+    expect(row).toBeDefined();
+    expect(row!.count).toBe(3); // 1 marka + 2 publikacje
+    expect(report.unsupported.collections.map((c) => c.name)).not.toContain('Content Plan');
+    // Wiersz osób pozostaje pierwszy (kolejność raportu bez regresji).
+    expect(report.idMappings[0].entity).toBe('Osoby → profiles');
+  });
+
+  it('pusty moduł raportuje zero, a nie znika z raportu', () => {
+    const report = buildDryRunReport(emptyData());
+    const row = report.idMappings.find((m) => m.entity.startsWith('Content Plan'));
+    expect(row!.count).toBe(0);
+  });
+});

@@ -436,12 +436,14 @@
 - CONTENT PLAN — DOMENA I STORE (2026-08-03, faza R2 modułu): dwie kolekcje w
   `AppData` — `contentPlanBrands` i `contentPlanPosts` (`ContentPlanBrand` /
   `ContentPlanPost` + `ContentPlanPlatform`/`Channel`/`Media`/`Comment`/
-  `HistoryEntry`/`Status`/`Visibility` w `src/types.ts`). Kolekcje ADDYTYWNE i
-  na razie LOKALNE ONLY: `DATA_VERSION` zostaje 7, `emptyData()`/seed dają `[]`,
-  wczytanie ma `coerceArray(parsedRest.contentPlan*, …)` + pass
-  `repairContentPlan` (biegnie po `repairNotifications` na wyniku OBU ścieżek),
-  a OBA klucze są w `persistGate.NON_MIRRORED_KEYS` — dopóki nie ma lustra
-  chmury, zapis lokalny jest ich JEDYNĄ trwałością. CZYSTA DOMENA żyje w
+  `HistoryEntry`/`Status`/`Visibility` w `src/types.ts`). Kolekcje ADDYTYWNE:
+  `DATA_VERSION` zostaje 7, `emptyData()`/seed dają `[]`, wczytanie ma
+  `coerceArray(parsedRest.contentPlan*, …)` + pass `repairContentPlan` (biegnie
+  po `repairNotifications` na wyniku OBU ścieżek). Od fazy R8 (2026-08-03) mają
+  lustro i hydrację w OSOBNYM schemacie `contentplan` (patrz cloud-database),
+  ale OBA klucze ŚWIADOMIE zostają w `persistGate.NON_MIRRORED_KEYS`: schemat
+  bywa niewystawiony w Data API, więc zapis lokalny musi iść zawsze (bezpieczny
+  kierunek). CZYSTA DOMENA żyje w
   `src/contentplan/domain.ts` (bez Reacta i store): 7 polskich statusów
   (`CONTENT_PLAN_STATUSES` wyprowadzone z `Record<ContentPlanStatus, true>` —
   brak wartości = błąd kompilacji), `MAIN_DESCRIPTION_GROUP`, `brandSlug`/
@@ -468,9 +470,14 @@
   publikacja. Selektory: `contentPlanPostsForMonth` (marka+miesiąc, sort stabilny
   po dacie) i `contentPlanMonthStats` (widoczność + licznik każdego z 7 statusów),
   oba przez `createKeyedCache`. Osierocony `brandId` na wczytaniu ZOSTAJE (parytet
-  z `reporterId` zgłoszeń). Testy: `src/contentplan/domain.test.ts`,
+  z `reporterId` zgłoszeń). HYDRACJA: `MERGE_CLOUD_CONTENT_PLAN` (ładunek
+  `{brands, posts}` z `loadContentPlanSnapshot`) PODMIENIA obie kolekcje
+  autorytatywnie, reference-preserving przez `reconcileRows`; strukturalnie zły
+  wiersz => TA SAMA referencja stanu (inwariant 6), a akcja jest w `SUPPRESSED`
+  (scalenie nie wraca do chmury jako diff). Testy: `src/contentplan/domain.test.ts`,
   `src/store/contentPlanActions.test.ts`, `contentPlanStorage.test.ts`,
-  `contentPlanSelectors.test.ts`.
+  `contentPlanSelectors.test.ts`, `cloudMerge.test.ts` (blok
+  MERGE_CLOUD_CONTENT_PLAN).
 - `Client` carries a PRIMARY contact (contactName/contactEmail/contactPhone) plus
   a description in `notes` (columns from 20260718090000_clients_contact_fields,
   '' or missing = none), edited on the `/clients` page via

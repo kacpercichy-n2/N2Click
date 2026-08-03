@@ -243,6 +243,30 @@ export function groupTags(post: ContentPlanPost, group: ContentPlanDescriptionGr
   return first?.overrideTags ? first.tags : post.baseTags;
 }
 
+// ---- Tagi: string lokalny <-> lista wierszy ---------------------------------
+//
+// Lokalnie tagi publikacji i wariantu to JEDEN string (tak wpisuje je człowiek
+// w edytorze), a kolumny `posts.base_tags` / `post_channels.tags` oraz seed TWS
+// trzymają JEDEN tag na element `text[]`. Rozdzielnikiem są białe znaki, więc
+// obie konwersje są wzajemnie odwrotne dla formy kanonicznej (pojedyncze spacje).
+
+/** Tagi jako lista wierszy bazy: puste elementy odpadają. */
+export function splitContentPlanTags(value: string): string[] {
+  return value.split(/\s+/).filter((tag) => tag !== '');
+}
+
+/** Tagi z kolumny `text[]` jako lokalny string. Wartość spoza tablicy => ''. */
+export function joinContentPlanTags(value: unknown): string {
+  if (!Array.isArray(value)) return '';
+  const tags: string[] = [];
+  for (const raw of value) {
+    if (typeof raw !== 'string') continue;
+    const trimmed = raw.trim();
+    if (trimmed !== '') tags.push(trimmed);
+  }
+  return tags.join(' ');
+}
+
 // ---- Prezentacja: proporcje mediów -----------------------------------------
 
 export function gcd(a: number, b: number): number {

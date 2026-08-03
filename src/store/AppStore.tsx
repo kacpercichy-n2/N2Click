@@ -20,6 +20,7 @@ import type {
   CalendarEvent,
   ChecklistItem,
   ClientContact,
+  ContentPlanBrand,
   ContentPlanComment,
   ContentPlanHistoryEntry,
   ContentPlanPost,
@@ -95,6 +96,8 @@ import { isNotificationType } from '../utils/notifications';
 import {
   contentPlanUid,
   isContentPlanReviewDecision,
+  isContentPlanStatus,
+  isContentPlanVisibility,
   isMonthKey,
   isPostInMonth,
   normalizeContentPlanBrandDraft,
@@ -445,7 +448,11 @@ export type Action =
   // (inwariant 6).
   | { type: 'MARK_NOTIFICATION_READ'; notificationId: string }
   | { type: 'MARK_ALL_NOTIFICATIONS_READ' }
-  | { type: 'MERGE_CLOUD_NOTIFICATIONS'; payload: CloudNotificationsPayload };
+  | { type: 'MERGE_CLOUD_NOTIFICATIONS'; payload: CloudNotificationsPayload }
+  // AUTORYTATYWNA hydracja modułu Content Plan z jego WŁASNEGO schematu
+  // (`contentplan`): obie kolekcje lustrzane są podmieniane ładunkiem. Niepoprawny
+  // ładunek => TA SAMA referencja stanu (inwariant 6).
+  | { type: 'MERGE_CLOUD_CONTENT_PLAN'; payload: CloudContentPlanPayload };
 
 function uid(): string {
   return crypto.randomUUID();
@@ -2848,6 +2855,86 @@ function mergeCloudNotifications(state: AppData, payload: CloudNotificationsPayl
   return merged === state.notifications ? state : { ...state, notifications: merged };
 }
 
+// ---- Content Plan: hydracja z chmury ----
+
+/** Ładunek MERGE_CLOUD_CONTENT_PLAN (`loadContentPlanSnapshot`). */
+export interface CloudContentPlanPayload {
+  brands: ContentPlanBrand[];
+  posts: ContentPlanPost[];
+}
+
+const isStringList = (v: unknown): boolean =>
+  Array.isArray(v) && v.every((item) => typeof item === 'string');
+
+/** Strukturalna walidacja wiersza marki (fail-closed jak reszta hydracji). */
+function isValidContentPlanBrandRow(v: unknown): v is ContentPlanBrand {
+  if (!isObjWithId(v)) return false;
+  const b = v as unknown as Record<string, unknown>;
+  return (
+    typeof b.name === 'string' &&
+    b.name.trim() !== '' &&
+    typeof b.industry === 'string' &&
+    typeof b.contact === 'string' &&
+    typeof b.accent === 'string' &&
+    Array.isArray(b.platforms) &&
+    isStringList(b.topics) &&
+    isStringList(b.formats) &&
+    typeof b.createdAt === 'string' &&
+    typeof b.updatedAt === 'string'
+  );
+}
+
+/** Strukturalna walidacja wiersza publikacji. `brandId` wskazujący markę spoza
+ *  ładunku jest DOPUSZCZALNY (parytet z sanitizerem wczytania: osierocona
+ *  publikacja nie ma widoku, ale nie kasuje się przy hydracji). */
+function isValidContentPlanPostRow(v: unknown): v is ContentPlanPost {
+  if (!isObjWithId(v)) return false;
+  const p = v as unknown as Record<string, unknown>;
+  return (
+    typeof p.brandId === 'string' &&
+    p.brandId !== '' &&
+    typeof p.date === 'string' &&
+    isValidDateStr(p.date) &&
+    typeof p.title === 'string' &&
+    p.title.trim() !== '' &&
+    typeof p.topic === 'string' &&
+    typeof p.format === 'string' &&
+    isContentPlanStatus(p.status) &&
+    isContentPlanVisibility(p.visibility) &&
+    typeof p.baseTags === 'string' &&
+    Array.isArray(p.channels) &&
+    p.channels.every(isObjWithId) &&
+    Array.isArray(p.comments) &&
+    p.comments.every(isObjWithId) &&
+    Array.isArray(p.history) &&
+    p.history.every(isObjWithId) &&
+    typeof p.createdAt === 'string' &&
+    typeof p.updatedAt === 'string'
+  );
+}
+
+/**
+ * AUTORYTATYWNA hydracja modułu Content Plan: ładunek PODMIENIA obie kolekcje
+ * (reference-preserving jak pozostałe rodziny — wiersz bajtowo równy zachowuje
+ * referencję, kolekcja bez zmian zostaje tą samą tablicą, więc odświeżenie w tle
+ * nie miga kalendarzem). Fail-closed (inwariant 6): ładunek spoza obiektu,
+ * `brands`/`posts` poza tablicą albo JAKIKOLWIEK strukturalnie zły wiersz =>
+ * ORYGINALNA referencja stanu.
+ */
+function mergeCloudContentPlan(state: AppData, payload: CloudContentPlanPayload): AppData {
+  if (typeof payload !== 'object' || payload === null) return state;
+  const { brands, posts } = payload;
+  if (!Array.isArray(brands) || !Array.isArray(posts)) return state;
+  if (!brands.every(isValidContentPlanBrandRow)) return state;
+  if (!posts.every(isValidContentPlanPostRow)) return state;
+  const mergedBrands = reconcileRows(state.contentPlanBrands, brands);
+  const mergedPosts = reconcileRows(state.contentPlanPosts, posts);
+  if (mergedBrands === state.contentPlanBrands && mergedPosts === state.contentPlanPosts) {
+    return state;
+  }
+  return { ...state, contentPlanBrands: mergedBrands, contentPlanPosts: mergedPosts };
+}
+
 /**
  * Oznaczenie JEDNEGO powiadomienia jako przeczytane (`read_at`). Nieznane id albo
  * już przeczytane => TA SAMA referencja (inwariant 6). Kolumna `read_at`
@@ -4390,6 +4477,8 @@ export function reducer(state: AppData, action: Action): AppData {
       return markAllNotificationsRead(state);
     case 'MERGE_CLOUD_NOTIFICATIONS':
       return mergeCloudNotifications(state, action.payload);
+    case 'MERGE_CLOUD_CONTENT_PLAN':
+      return mergeCloudContentPlan(state, action.payload);
     default:
       return state;
   }

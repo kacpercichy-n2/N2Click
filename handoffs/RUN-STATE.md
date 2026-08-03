@@ -67,3 +67,13 @@ chunku `/content-plan`) i `src/contentplan/driveFolders.ts` (schemat
 posta dostał sekcję mediów (`setChannelMedia`), `.env.example` dwie zmienne
 Google. `npm test` 119 plików / 2634 testy zielone, `npm run build` zielony.
 Wiki `/content-plan` zaktualizowane. Blokad brak.
+
+## Developer result (R8, 20260803-202156-n2hub-318)
+
+Nowe granice: `diffContentPlanToCloudOps` + routing `CloudOp.schema` w
+`applyCloudOps` (cloudMirror), `createSupabaseContentPlanDb` +
+`loadContentPlanSnapshot` (plannerData), akcja `MERGE_CLOUD_CONTENT_PLAN`
+(AppStore), podpięcie w `CloudSyncProvider`, wiersz modułu w `exportDryRun`.
+Realtime ŚWIADOMIE pominięty. `npm test` 119 plików / 2663 testy zielone,
+`npm run build` zielony. Wiki: cloud-database + state-and-persistence.
+Ograniczenie: marka o id-slugu (utworzona lokalnie) nie jedzie do chmury.

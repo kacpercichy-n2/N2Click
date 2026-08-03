@@ -5,12 +5,21 @@
 import { describe, expect, it } from 'vitest';
 import { emptyData } from '../store/storage';
 import { reducer } from '../store/AppStore';
-import type { AppData, Person, Project, Task } from '../types';
+import type {
+  AppData,
+  ContentPlanBrand,
+  ContentPlanChannel,
+  ContentPlanPost,
+  Person,
+  Project,
+  Task,
+} from '../types';
 import type { CloudProfile, OrgSnapshot } from './referenceData';
 import type { CloudWriteError, PlannerDb } from './plannerData';
 import {
   applyCloudOps,
   buildCloudIdMaps,
+  diffContentPlanToCloudOps,
   diffToCloudOps,
   type CloudIdMaps,
   type CloudOp,
@@ -527,6 +536,207 @@ describe('diffToCloudOps — wydarzenia kalendarza', () => {
   });
 });
 
+// ---- Content Plan (osobny schemat) -------------------------------------------
+
+describe('diffContentPlanToCloudOps — moduł Content Plan', () => {
+  const BRAND = uuid('cp-brand');
+  const POST = uuid('cp-post');
+  const CH = uuid('cp-channel');
+  const CM = uuid('cp-comment');
+  const HI = uuid('cp-history');
+  const STAMP = '2026-08-01T10:00:00.000Z';
+
+  const makeChannel = (o: Partial<ContentPlanChannel> = {}): ContentPlanChannel => ({
+    id: CH,
+    platformId: 'instagram',
+    copy: 'Opis publikacji',
+    tags: '',
+    overrideTags: false,
+    ...o,
+  });
+  const makeBrand = (o: Partial<ContentPlanBrand> = {}): ContentPlanBrand => ({
+    id: BRAND,
+    name: 'Tetra Wave',
+    industry: 'Technologia',
+    contact: '@tetrawave',
+    accent: '#0aa',
+    platforms: [{ id: 'instagram', name: 'Instagram', color: '#e13' }],
+    topics: ['Edukacja'],
+    formats: ['Rolka'],
+    createdAt: STAMP,
+    updatedAt: STAMP,
+    ...o,
+  });
+  const makePost = (o: Partial<ContentPlanPost> = {}): ContentPlanPost => ({
+    id: POST,
+    brandId: BRAND,
+    date: '2026-08-04',
+    title: 'Premiera',
+    topic: 'Edukacja',
+    format: 'Rolka',
+    status: 'Zaplanowane',
+    visibility: 'draft',
+    baseTags: '#tetra #wave',
+    channels: [makeChannel()],
+    comments: [],
+    history: [],
+    createdAt: STAMP,
+    updatedAt: STAMP,
+    ...o,
+  });
+  const cpState = (brands: ContentPlanBrand[], posts: ContentPlanPost[]): AppData => ({
+    ...localFixture(),
+    contentPlanBrands: brands,
+    contentPlanPosts: posts,
+  });
+
+  it('nowa marka i publikacja: upserty w schemacie contentplan (tagi jako text[])', () => {
+    const { ops, diagnostics } = diffContentPlanToCloudOps(
+      cpState([], []),
+      cpState([makeBrand()], [makePost()]),
+    );
+    expect(diagnostics).toEqual([]);
+    expect(ops.every((o) => o.schema === 'contentplan')).toBe(true);
+    // Kolejność zależności: marka przed publikacją, publikacja przed kanałem.
+    expect(ops.map((o) => o.table)).toEqual(['brands', 'posts', 'post_channels']);
+    expect(ops[0].row).toMatchObject({
+      id: BRAND,
+      name: 'Tetra Wave',
+      platforms: [{ id: 'instagram', name: 'Instagram', color: '#e13' }],
+      topics: ['Edukacja'],
+      formats: ['Rolka'],
+      created_at: STAMP,
+    });
+    // `n2click_client_id` nigdy nie jedzie w ładunku (upsert nie zeruje kolumny).
+    expect(Object.keys(ops[0].row ?? {})).not.toContain('n2click_client_id');
+    expect(ops[1].row).toMatchObject({
+      id: POST,
+      brand_id: BRAND,
+      date: '2026-08-04',
+      status: 'Zaplanowane',
+      visibility: 'draft',
+      base_tags: ['#tetra', '#wave'],
+    });
+    expect(ops[2].row).toMatchObject({
+      id: CH,
+      post_id: POST,
+      platform_id: 'instagram',
+      tags: [],
+      override_tags: false,
+      description_group_id: null,
+      media_source: null,
+      media_file_id: null,
+    });
+  });
+
+  it('kanał z plikiem Dysku i wariantem opisu mapuje kolumny mediów', () => {
+    const channel = makeChannel({
+      descriptionGroupId: 'wariant-1',
+      tags: '#osobne #tagi',
+      overrideTags: true,
+      media: { source: 'gdrive', fileId: 'file-1', width: 1080, height: 1350, type: 'image' },
+    });
+    const { ops } = diffContentPlanToCloudOps(
+      cpState([makeBrand()], [makePost({ channels: [] })]),
+      cpState([makeBrand()], [makePost({ channels: [channel] })]),
+    );
+    const up = ops.find((o) => o.table === 'post_channels');
+    expect(up!.row).toMatchObject({
+      description_group_id: 'wariant-1',
+      tags: ['#osobne', '#tagi'],
+      override_tags: true,
+      media_source: 'gdrive',
+      media_file_id: 'file-1',
+      media_width: 1080,
+      media_height: 1350,
+      media_type: 'image',
+    });
+  });
+
+  it('stan bez zmian nie emituje żadnej operacji', () => {
+    const state = cpState([makeBrand()], [makePost()]);
+    expect(diffContentPlanToCloudOps(state, state).ops).toEqual([]);
+  });
+
+  it('marka o identyfikatorze spoza UUID (slug) zostaje lokalnie razem z publikacją', () => {
+    const brand = makeBrand({ id: 'tetra-wave' });
+    const post = makePost({ brandId: 'tetra-wave' });
+    const { ops, diagnostics } = diffContentPlanToCloudOps(
+      cpState([], []),
+      cpState([brand], [post]),
+    );
+    expect(ops).toEqual([]);
+    expect(diagnostics.length).toBe(2); // marka + publikacja bez marki w chmurze
+  });
+
+  it('usunięcie publikacji emituje remove; usunięcie marki zostawia kaskadzie resztę', () => {
+    const full = cpState([makeBrand()], [makePost()]);
+    const withoutPost = diffContentPlanToCloudOps(full, cpState([makeBrand()], []));
+    expect(withoutPost.ops.map((o) => ({ table: o.table, kind: o.kind, match: o.match }))).toEqual([
+      { table: 'posts', kind: 'remove', match: { id: POST } },
+    ]);
+    const withoutBrand = diffContentPlanToCloudOps(full, cpState([], []));
+    // Kaskada FK sprząta publikacje i kanały — leci wyłącznie remove marki.
+    expect(withoutBrand.ops.map((o) => o.table)).toEqual(['brands']);
+    expect(withoutBrand.ops[0].match).toEqual({ id: BRAND });
+  });
+
+  it('kanał usunięty z żyjącej publikacji dostaje własny remove', () => {
+    const { ops } = diffContentPlanToCloudOps(
+      cpState([makeBrand()], [makePost()]),
+      cpState([makeBrand()], [makePost({ channels: [] })]),
+    );
+    expect(ops.map((o) => ({ table: o.table, kind: o.kind }))).toEqual([
+      { table: 'post_channels', kind: 'remove' },
+    ]);
+  });
+
+  it('komentarze i historia są DOPISYWALNE: tylko nowe id, żadnych zmian ani usunięć', () => {
+    const comment = { id: CM, author: 'Klient', body: 'Uwaga', at: STAMP };
+    const entry = { id: HI, label: 'Utworzono slot publikacji', at: STAMP };
+    const added = diffContentPlanToCloudOps(
+      cpState([makeBrand()], [makePost()]),
+      cpState([makeBrand()], [makePost({ comments: [comment], history: [entry] })]),
+    );
+    expect(added.ops.map((o) => o.table)).toEqual(['comments', 'post_history']);
+    expect(added.ops[0].row).toMatchObject({ id: CM, post_id: POST, body: 'Uwaga', parent_id: null });
+    expect(added.ops[1].row).toMatchObject({ id: HI, post_id: POST, label: 'Utworzono slot publikacji' });
+
+    // Edycja i usunięcie istniejącego wiersza nie mają odpowiednika w chmurze.
+    const edited = diffContentPlanToCloudOps(
+      cpState([makeBrand()], [makePost({ comments: [comment] })]),
+      cpState([makeBrand()], [makePost({ comments: [{ ...comment, body: 'Inna treść' }] })]),
+    );
+    expect(edited.ops).toEqual([]);
+    const removed = diffContentPlanToCloudOps(
+      cpState([makeBrand()], [makePost({ comments: [comment] })]),
+      cpState([makeBrand()], [makePost({ comments: [] })]),
+    );
+    expect(removed.ops).toEqual([]);
+  });
+
+  it('odpowiedź wskazuje rodzica tylko wtedy, gdy rodzic jest w tej publikacji', () => {
+    const parent = { id: CM, author: 'Klient', body: 'Uwaga', at: STAMP };
+    const reply = { id: uuid('cp-reply'), author: 'Zespół', body: 'Odpowiedź', at: STAMP, parentId: CM };
+    const orphan = { id: uuid('cp-orphan'), author: 'Zespół', body: 'Sierota', at: STAMP, parentId: uuid('cp-obcy') };
+    const { ops } = diffContentPlanToCloudOps(
+      cpState([makeBrand()], [makePost()]),
+      cpState([makeBrand()], [makePost({ comments: [parent, reply, orphan] })]),
+    );
+    const rows = ops.filter((o) => o.table === 'comments').map((o) => o.row);
+    expect(rows[1]).toMatchObject({ parent_id: CM });
+    expect(rows[2]).toMatchObject({ parent_id: null });
+  });
+
+  it('pusty znacznik czasu nie trafia do kolumny timestamptz', () => {
+    const { ops } = diffContentPlanToCloudOps(
+      cpState([], []),
+      cpState([makeBrand({ createdAt: '' })], []),
+    );
+    expect(Object.keys(ops[0].row ?? {})).not.toContain('created_at');
+  });
+});
+
 // ---- applyCloudOps -----------------------------------------------------------
 
 class FakePlannerDb implements PlannerDb {
@@ -648,6 +858,66 @@ describe('applyCloudOps', () => {
     expect(result.dropped).toHaveLength(0);
     expect(result.done).toBe(1);
     expect(db.calls).toHaveLength(2);
+  });
+
+  // Content Plan żyje w osobnym schemacie: op z `schema` MUSI trafić do swojego
+  // adaptera, a brak schematu/tabeli po stronie serwera nie może zatkać kolejki.
+  const cpOp = (id: string, table = 'brands'): CloudOp => ({
+    kind: 'upsert',
+    table,
+    row: { id },
+    sourceId: id,
+    label: `Marka „${id}”`,
+    schema: 'contentplan',
+  });
+
+  it('kieruje op modułu do adaptera schematu, a planera do domyślnego', async () => {
+    const planner = new FakePlannerDb();
+    const contentPlan = new FakePlannerDb();
+    const result = await applyCloudOps(planner, [op('one'), cpOp('b1')], {
+      contentplan: contentPlan,
+    });
+    expect(result.done).toBe(2);
+    expect(planner.calls).toEqual([{ op: 'upsert', table: 'clients' }]);
+    expect(contentPlan.calls).toEqual([{ op: 'upsert', table: 'brands' }]);
+  });
+
+  it('brak adaptera schematu => cichy drop (nigdy zapis do domyślnego schematu)', async () => {
+    const planner = new FakePlannerDb();
+    const result = await applyCloudOps(planner, [cpOp('b1'), op('one')]);
+    expect(planner.calls).toEqual([{ op: 'upsert', table: 'clients' }]);
+    expect(result.done).toBe(1);
+    expect(result.dropped).toHaveLength(0);
+    expect(result.error).toBeNull();
+  });
+
+  it('brak schematu/tabeli modułu (PGRST205) => cichy drop bez zatrzymania kolejki', async () => {
+    const planner = new FakePlannerDb();
+    const contentPlan = new FakePlannerDb();
+    contentPlan.upsertErr = () => ({
+      kind: 'transient',
+      message: "Could not find the table 'contentplan.brands' in the schema cache (PGRST205)",
+    });
+    const result = await applyCloudOps(planner, [cpOp('b1'), op('one')], {
+      contentplan: contentPlan,
+    });
+    expect(result.error).toBeNull();
+    expect(result.remaining).toHaveLength(0);
+    expect(result.dropped).toHaveLength(0);
+    expect(result.done).toBe(1); // op planera przeszedł mimo martwego schematu
+  });
+
+  it('realny błąd przejściowy modułu nadal zatrzymuje kolejkę', async () => {
+    const planner = new FakePlannerDb();
+    const contentPlan = new FakePlannerDb();
+    contentPlan.upsertErr = () => ({ kind: 'transient', message: 'fetch failed' });
+    const result = await applyCloudOps(planner, [cpOp('b1'), op('one')], {
+      contentplan: contentPlan,
+    });
+    expect(result.error).toBe(
+      'Nie udało się zapisać zmian na serwerze. Dane pozostały w tej przeglądarce.',
+    );
+    expect(result.remaining.map((o) => o.sourceId)).toEqual(['b1', 'one']);
   });
 
   it('a notification drop never masks a later planner-entity transient stop (regression guard)', async () => {

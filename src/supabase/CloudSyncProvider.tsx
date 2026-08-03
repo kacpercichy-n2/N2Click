@@ -26,7 +26,9 @@ import { useAuth } from '../auth/SessionProvider';
 import { useOrgData } from './OrgDataProvider';
 import { getSupabaseClient } from './client';
 import {
+  createSupabaseContentPlanDb,
   createSupabasePlannerDb,
+  loadContentPlanSnapshot,
   loadNotificationsSnapshot,
   loadPlannerSnapshot,
   readRetirementSetting,
@@ -35,7 +37,9 @@ import {
 import {
   applyCloudOps,
   buildCloudIdMaps,
+  diffContentPlanToCloudOps,
   diffToCloudOps,
+  CONTENT_PLAN_SCHEMA,
   type CloudIdMaps,
   type CloudOp,
 } from './cloudMirror';
@@ -88,6 +92,9 @@ const SUPPRESSED = new Set([
   // Hydracja powiadomień odbiorcy jest autorytatywna (cloud->local): `read_at`
   // z chmury nie może wracać jako mirror-update, więc tłumimy to przejście.
   'MERGE_CLOUD_NOTIFICATIONS',
+  // Hydracja modułu Content Plan (schemat `contentplan`) jest autorytatywna —
+  // scalone wiersze nie mogą wrócić do chmury jako świeży diff.
+  'MERGE_CLOUD_CONTENT_PLAN',
   'REPLACE_FROM_STORAGE',
   'LOAD_SAMPLE',
   'RESET_ALL',
@@ -119,6 +126,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   const processingRef = useRef(false);
   const hydratedUserRef = useRef<string | null>(null);
   const dbRef = useRef<PlannerDb | null>(null);
+  const contentPlanDbRef = useRef<PlannerDb | null>(null);
   const mapsRef = useRef<CloudIdMaps | null>(null);
   const statusRef = useRef<CloudSyncStatus>('idle');
   statusRef.current = status;
@@ -159,6 +167,16 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     return dbRef.current;
   }, []);
 
+  // Ten sam KLIENT, inny schemat: moduł Content Plan mieszka w `contentplan`,
+  // więc jego odczyty i zapisy idą przez osobny adapter (żadnego drugiego
+  // `createClient` — patrz `createSupabaseContentPlanDb`).
+  const getContentPlanDb = useCallback((): PlannerDb => {
+    if (!contentPlanDbRef.current) {
+      contentPlanDbRef.current = createSupabaseContentPlanDb(getSupabaseClient());
+    }
+    return contentPlanDbRef.current;
+  }, []);
+
   const setPending = useCallback((n: number) => {
     pendingRef.current = n;
     setPendingCount(n);
@@ -176,7 +194,9 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       while (queueRef.current.length > 0) {
         const ops = queueRef.current;
         queueRef.current = [];
-        const result = await applyCloudOps(getDb(), ops);
+        const result = await applyCloudOps(getDb(), ops, {
+          [CONTENT_PLAN_SCHEMA]: getContentPlanDb(),
+        });
         if (!mountedRef.current) return;
         if (result.dropped.length > 0) {
           setDropped((prev) => [...prev, ...result.dropped]);
@@ -203,7 +223,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     } finally {
       processingRef.current = false;
     }
-  }, [getDb, setPending]);
+  }, [getDb, getContentPlanDb, setPending]);
 
   const runHydration = useCallback(
     async (overrideSnap?: OrgSnapshot, opts?: { background?: boolean }) => {
@@ -256,6 +276,17 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
             payload: { notifications: notifResult.notifications },
           });
         }
+        // Content Plan: OSOBNY schemat i osobny, degradujący się loader — brak
+        // schematu/tabel (migracja niezaaplikowana) => `available` z pustymi
+        // kolekcjami, błąd PRZEJŚCIOWY => brak dispatchu (zostaje poprzedni stan).
+        // Nie wpływa na status ani na resztę syncu.
+        const contentPlanResult = await loadContentPlanSnapshot(getContentPlanDb());
+        if (mountedRef.current && contentPlanResult.available) {
+          dispatch({
+            type: 'MERGE_CLOUD_CONTENT_PLAN',
+            payload: { brands: contentPlanResult.brands, posts: contentPlanResult.posts },
+          });
+        }
         setStatus('ready');
         // Odświeżenie w tle nie przechodzi przez krawędź 'hydrating'→'ready',
         // więc efekt na krawędzi statusu nie odpali: świeżą kopię do odzysku
@@ -278,7 +309,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
         refreshingFromReadyRef.current = false;
       }
     },
-    [auth.mode, userId, org.state, dispatch, getDb, processQueue],
+    [auth.mode, userId, org.state, dispatch, getDb, getContentPlanDb, processQueue],
   );
 
   // Pełna żywa synchronizacja: cichy refetch snapshotu organizacji (zespół,
@@ -504,12 +535,16 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       return;
     }
     const { ops } = diffToCloudOps(prevRef.current, state, maps);
+    // Content Plan: rodzina diff w OSOBNYM schemacie. Operacje jadą tą samą
+    // kolejką (kolejność bez znaczenia — moduł nie ma FK do tabel planera),
+    // a `applyCloudOps` kieruje je do adaptera `contentplan` po polu `schema`.
+    const contentPlanOps = diffContentPlanToCloudOps(prevRef.current, state).ops;
     // Zdarzenia powiadomień: liczone z TEGO SAMEGO diffa, wstawiane W IMIENIU
     // działającego użytkownika DLA innych odbiorców (recipient===self pomijany).
     // Kolejność bez znaczenia — `notifications` nie ma FK do zadań/projektów.
     const notifRows = userId ? notificationInsertsFromDiff(prevRef.current, state, maps, userId) : [];
     prevRef.current = state;
-    if (ops.length === 0 && notifRows.length === 0) return;
+    if (ops.length === 0 && contentPlanOps.length === 0 && notifRows.length === 0) return;
     const notifOps: CloudOp[] = notifRows.map((row, i) => ({
       kind: 'upsert',
       table: 'notifications',
@@ -517,7 +552,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       sourceId: `notif:${row.recipient_id}:${row.type}:${i}`,
       label: 'Powiadomienie',
     }));
-    queueRef.current.push(...ops, ...notifOps);
+    queueRef.current.push(...ops, ...contentPlanOps, ...notifOps);
     setPending(queueRef.current.length);
     void processQueue();
   }, [state, active, userId, lastActionRef, processQueue, setPending]);

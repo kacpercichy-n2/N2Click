@@ -20,6 +20,8 @@ import type {
   Client,
   Comment,
   CommentEntityType,
+  ContentPlanBrand,
+  ContentPlanPost,
   Milestone,
   Notification,
   Project,
@@ -29,6 +31,11 @@ import type {
   WorkloadEntry,
 } from '../types';
 import { isNotificationType, sanitizeNotificationPayload } from '../utils/notifications';
+import {
+  joinContentPlanTags,
+  sanitizeContentPlanBrands,
+  sanitizeContentPlanPosts,
+} from '../contentplan/domain';
 import { isValidDateStr, periodError, MAX_TASK_PERIOD_DAYS } from '../utils/dates';
 import { normalizeRecurrence } from '../utils/recurrence';
 import { normalizeProjectDocumentUrl } from '../utils/projectDocuments';
@@ -175,6 +182,24 @@ export function createSupabasePlannerDb(client: SupabaseClient): PlannerDb {
     },
   };
 }
+
+/**
+ * Ta sama granica bazy, ale przypięta do schematu modułu Content Plan
+ * (`contentplan`, migracja 20260803160000). GŁÓWNY klient zostaje na `n2click` —
+ * `client.schema(...)` przepina wyłącznie zapytania tego adaptera, więc NIE
+ * powstaje drugi `createClient` (ta sama decyzja co w `contentplan/driveFolders`).
+ */
+export function createSupabaseContentPlanDb(client: SupabaseClient): PlannerDb {
+  // `schema()` zwraca klienta PostgREST z tym samym `from()`, którego używa
+  // adapter planera — stąd rzutowanie zamiast duplikowania całego adaptera.
+  return createSupabasePlannerDb(
+    client.schema(CONTENT_PLAN_SCHEMA_NAME) as unknown as SupabaseClient,
+  );
+}
+
+/** Nazwa schematu modułu. Trzymana lokalnie, żeby `plannerData` nie importowało
+ *  wartości z `cloudMirror` (tamten kierunek importu jest już runtime'owy). */
+const CONTENT_PLAN_SCHEMA_NAME = 'contentplan';
 
 // ---- Snapshot planera (hydracja) --------------------------------------------
 
@@ -796,6 +821,16 @@ export type NotificationsSnapshotResult =
 const MISSING_TABLE_RE = /does not exist|PGRST205|could not find the table|schema cache|42P01/i;
 
 /**
+ * Czy komunikat błędu oznacza BRAK tabeli/schematu po stronie serwera (migracja
+ * niezaaplikowana albo schemat niewystawiony w Data API). Taki błąd jest TRWAŁY:
+ * odczyt degraduje się do pustej kolekcji, a zapis jest cicho porzucany
+ * (`applyCloudOps`) zamiast blokować kolejkę jako 'transient'.
+ */
+export function isMissingCloudTable(message: string): boolean {
+  return MISSING_TABLE_RE.test(message);
+}
+
+/**
  * Wczytuje własne powiadomienia zalogowanego odbiorcy (RLS zawęża SELECT do
  * `recipient_id = auth.uid()`). ŚWIADOMIE ODDZIELNIE od `loadPlannerSnapshot`:
  * `read_at`/tabela `notifications` jest rozszerzeniem addytywnym, a migracja może
@@ -824,7 +859,7 @@ export async function loadNotificationsSnapshot(
   }
   if (res.error) {
     // Brak tabeli => degradacja do [] (podmiana). Inny błąd => przejściowe.
-    return MISSING_TABLE_RE.test(res.error)
+    return isMissingCloudTable(res.error)
       ? { available: true, notifications: [] }
       : { available: false };
   }
@@ -856,6 +891,179 @@ export async function loadNotificationsSnapshot(
     });
   }
   return { available: true, notifications };
+}
+
+// ---- Content Plan (osobny schemat, degradujący się loader) -------------------
+
+/**
+ * Wynik hydracji modułu Content Plan. `available: true` => wołający PODMIENIA
+ * obie kolekcje autorytatywnie (dane albo PUSTO, gdy schemat/tabele jeszcze nie
+ * istnieją). `available: false` => błąd PRZEJŚCIOWY: wołający NIE dispatchuje
+ * scalenia i zostawia poprzedni stan (kalendarz nie miga pustką).
+ */
+export type ContentPlanSnapshotResult =
+  | { available: true; brands: ContentPlanBrand[]; posts: ContentPlanPost[] }
+  | { available: false };
+
+/** Media kanału z kolumn wiersza; klucz istnieje wyłącznie przy pliku Drive.
+ *  Sanityzacja domeny i tak odrzuci niepełny kształt (bez base64, zawsze). */
+function contentPlanMediaOf(row: Record<string, unknown>): Record<string, unknown> | undefined {
+  const fileId = str(row.media_file_id).trim();
+  if (str(row.media_source) !== 'gdrive' || fileId === '') return undefined;
+  const width = row.media_width;
+  const height = row.media_height;
+  return {
+    source: 'gdrive',
+    fileId,
+    ...(typeof width === 'number' && Number.isInteger(width) && width > 0 ? { width } : {}),
+    ...(typeof height === 'number' && Number.isInteger(height) && height > 0 ? { height } : {}),
+    type: row.media_type,
+  };
+}
+
+/** Grupowanie wierszy zależnych po `post_id` z DETERMINISTYCZNĄ kolejnością
+ *  (kolumna sortująca, potem id) — selecty nie mają ORDER BY, a Postgres zwraca
+ *  kolejność sterty. */
+function groupByPost(
+  rows: Array<Record<string, unknown>>,
+  orderColumn: string,
+): Map<string, Array<Record<string, unknown>>> {
+  const byPost = new Map<string, Array<Record<string, unknown>>>();
+  for (const row of rows) {
+    const postId = str(row.post_id);
+    if (postId === '') continue;
+    const bucket = byPost.get(postId);
+    if (bucket) bucket.push(row);
+    else byPost.set(postId, [row]);
+  }
+  for (const bucket of byPost.values()) {
+    bucket.sort(
+      (a, b) => cmp(str(a[orderColumn]), str(b[orderColumn])) || cmp(str(a.id), str(b.id)),
+    );
+  }
+  return byPost;
+}
+
+/**
+ * Wczytuje marki i publikacje modułu Content Plan z jego WŁASNEGO schematu
+ * (adapter `createSupabaseContentPlanDb`). Kanały, komentarze i historia
+ * mieszkają w osobnych tabelach — składamy je z powrotem w zagnieżdżony kształt
+ * lokalny i przepuszczamy przez ŁAGODNE sanitizery domeny (`sanitizeContentPlan*`),
+ * więc pojedynczy uszkodzony wiersz nie wywraca całej hydracji.
+ *
+ * ROZRÓŻNIENIE BŁĘDÓW jak w `loadNotificationsSnapshot`: brak schematu/tabel
+ * (42P01/PGRST205 — migracja niezaaplikowana albo `contentplan` niewystawiony w
+ * Data API) degraduje się TRWALE do pustych kolekcji z `available: true`; każdy
+ * inny błąd i wyjątek => `available: false` (poprzedni stan zostaje).
+ */
+export async function loadContentPlanSnapshot(
+  db: Pick<PlannerDb, 'select'>,
+): Promise<ContentPlanSnapshotResult> {
+  let results: Array<Awaited<ReturnType<PlannerDb['select']>>>;
+  try {
+    results = await Promise.all([
+      db.select(
+        'brands',
+        'id, name, industry, contact, accent, platforms, topics, formats, created_at, updated_at',
+      ),
+      db.select(
+        'posts',
+        'id, brand_id, date, title, topic, format, status, visibility, base_tags, created_at, updated_at',
+      ),
+      db.select(
+        'post_channels',
+        'id, post_id, platform_id, copy, tags, override_tags, description_group_id, media_source, media_file_id, media_width, media_height, media_type, created_at',
+      ),
+      db.select('comments', 'id, post_id, author, body, at, parent_id'),
+      db.select('post_history', 'id, post_id, label, at'),
+    ]);
+  } catch {
+    return { available: false };
+  }
+  const errors = results
+    .map((res) => res.error)
+    .filter((error): error is string => typeof error === 'string' && error !== '');
+  if (errors.length > 0) {
+    // Wszystkie błędy to brak schematu/tabel => moduł po prostu nie ma jeszcze
+    // domu w chmurze (trwałe []). Cokolwiek innego => przejściowe.
+    return errors.every(isMissingCloudTable)
+      ? { available: true, brands: [], posts: [] }
+      : { available: false };
+  }
+  const [brandsRes, postsRes, channelsRes, commentsRes, historyRes] = results;
+
+  const channelsByPost = groupByPost(channelsRes.rows, 'created_at');
+  const commentsByPost = groupByPost(commentsRes.rows, 'at');
+  const historyByPost = groupByPost(historyRes.rows, 'at');
+
+  const brands = sanitizeContentPlanBrands(
+    brandsRes.rows.map((row) => ({
+      id: str(row.id),
+      name: str(row.name),
+      industry: str(row.industry),
+      contact: str(row.contact),
+      accent: str(row.accent),
+      platforms: row.platforms,
+      topics: row.topics,
+      formats: row.formats,
+      createdAt: str(row.created_at),
+      updatedAt: str(row.updated_at) || str(row.created_at),
+    })),
+  );
+
+  const posts = sanitizeContentPlanPosts(
+    postsRes.rows.map((row) => {
+      const postId = str(row.id);
+      return {
+        id: postId,
+        brandId: str(row.brand_id),
+        date: sqlDateToLocal(row.date),
+        title: str(row.title),
+        topic: str(row.topic),
+        format: str(row.format),
+        status: row.status,
+        visibility: row.visibility,
+        baseTags: joinContentPlanTags(row.base_tags),
+        channels: (channelsByPost.get(postId) ?? []).map((channel) => {
+          // Forma kanoniczna kanału: NULL / 'main' => BRAK klucza grupy.
+          const groupId = str(channel.description_group_id).trim();
+          const media = contentPlanMediaOf(channel);
+          return {
+            id: str(channel.id),
+            platformId: str(channel.platform_id),
+            copy: str(channel.copy),
+            tags: joinContentPlanTags(channel.tags),
+            overrideTags: channel.override_tags === true,
+            ...(groupId !== '' ? { descriptionGroupId: groupId } : {}),
+            ...(media !== undefined ? { media } : {}),
+          };
+        }),
+        comments: (commentsByPost.get(postId) ?? []).map((comment) => {
+          const parentId = str(comment.parent_id).trim();
+          return {
+            id: str(comment.id),
+            author: str(comment.author),
+            body: str(comment.body),
+            at: str(comment.at),
+            ...(parentId !== '' ? { parentId } : {}),
+          };
+        }),
+        history: (historyByPost.get(postId) ?? []).map((entry) => ({
+          id: str(entry.id),
+          label: str(entry.label),
+          at: str(entry.at),
+        })),
+        createdAt: str(row.created_at),
+        updatedAt: str(row.updated_at) || str(row.created_at),
+      };
+    }),
+  );
+
+  return {
+    available: true,
+    brands: sortStable(brands, (b) => b.name),
+    posts: sortStable(posts, (p) => p.date),
+  };
 }
 
 // ---- Flaga wycofania zapisów lokalnych (app_settings) ------------------------

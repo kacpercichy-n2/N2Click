@@ -11,7 +11,9 @@ import type { CloudProfile, OrgSnapshot } from './referenceData';
 import { buildCloudIdMaps, diffToCloudOps, type CloudIdMaps } from './cloudMirror';
 import {
   classifyWriteError,
+  createSupabaseContentPlanDb,
   createSupabasePlannerDb,
+  loadContentPlanSnapshot,
   loadPlannerSnapshot,
   PLANNER_SNAPSHOT_ERROR,
   readRetirementSetting,
@@ -857,5 +859,202 @@ describe('retirement flag accessors', () => {
     db.failUpsert = true;
     const res = await writeRetirementSetting(db, false, 'x');
     expect(res.error).toEqual({ kind: 'transient', message: 'net' });
+  });
+});
+
+// ---- Content Plan (osobny schemat `contentplan`) -----------------------------
+
+// Własny fake: potrzebujemy komunikatów błędu per tabela (brak schematu vs błąd
+// przejściowy), czego `FakeSelectDb` (jedno „boom") nie różnicuje.
+class FakeContentPlanDb {
+  rows = new Map<string, Row[]>();
+  errors = new Map<string, string>();
+  throwOnSelect = false;
+  seed(table: string, rows: Row[]) {
+    this.rows.set(table, rows);
+    return this;
+  }
+  fail(table: string, message: string) {
+    this.errors.set(table, message);
+    return this;
+  }
+  async select(table: string) {
+    if (this.throwOnSelect) throw new Error('offline');
+    const error = this.errors.get(table);
+    if (error !== undefined) return { rows: [] as Row[], error };
+    return { rows: this.rows.get(table) ?? [], error: null };
+  }
+}
+
+const CP_BRAND = uuid('cp-brand');
+const CP_POST = uuid('cp-post');
+const CP_STAMP = '2026-08-01T10:00:00.000Z';
+
+function seededContentPlanDb(): FakeContentPlanDb {
+  return new FakeContentPlanDb()
+    .seed('brands', [
+      {
+        id: CP_BRAND, name: 'Tetra Wave', industry: 'Technologia', contact: '@tetrawave',
+        accent: '#0aa', platforms: [{ id: 'instagram', name: 'Instagram', color: '#e13' }],
+        topics: ['Edukacja'], formats: ['Rolka'], created_at: CP_STAMP, updated_at: CP_STAMP,
+      },
+    ])
+    .seed('posts', [
+      {
+        id: CP_POST, brand_id: CP_BRAND, date: '2026-08-04', title: 'Premiera', topic: 'Edukacja',
+        format: 'Rolka', status: 'Zaplanowane', visibility: 'draft',
+        base_tags: ['#tetra', '#wave'], created_at: CP_STAMP, updated_at: CP_STAMP,
+      },
+    ])
+    .seed('post_channels', [
+      {
+        id: uuid('cp-ch-b'), post_id: CP_POST, platform_id: 'facebook', copy: 'Wariant',
+        tags: ['#osobne'], override_tags: true, description_group_id: 'wariant-1',
+        media_source: null, media_file_id: null, media_width: null, media_height: null,
+        media_type: null, created_at: '2026-08-01T12:00:00.000Z',
+      },
+      {
+        id: uuid('cp-ch-a'), post_id: CP_POST, platform_id: 'instagram', copy: 'Główny',
+        tags: [], override_tags: false, description_group_id: null, media_source: 'gdrive',
+        media_file_id: 'file-1', media_width: 1080, media_height: 1350, media_type: 'image',
+        created_at: '2026-08-01T11:00:00.000Z',
+      },
+    ])
+    .seed('comments', [
+      { id: uuid('cp-cm'), post_id: CP_POST, author: 'Klient', body: 'Uwaga', at: CP_STAMP, parent_id: null },
+    ])
+    .seed('post_history', [
+      { id: uuid('cp-hi'), post_id: CP_POST, label: 'Utworzono slot publikacji', at: CP_STAMP },
+    ]);
+}
+
+describe('loadContentPlanSnapshot — hydracja modułu', () => {
+  it('składa zagnieżdżony kształt lokalny z pięciu tabel schematu', async () => {
+    const res = await loadContentPlanSnapshot(seededContentPlanDb());
+    expect(res.available).toBe(true);
+    if (!res.available) return;
+    expect(res.brands).toEqual([
+      {
+        id: CP_BRAND, name: 'Tetra Wave', industry: 'Technologia', contact: '@tetrawave',
+        accent: '#0aa', platforms: [{ id: 'instagram', name: 'Instagram', color: '#e13' }],
+        topics: ['Edukacja'], formats: ['Rolka'], createdAt: CP_STAMP, updatedAt: CP_STAMP,
+      },
+    ]);
+    const [post] = res.posts;
+    expect(post).toMatchObject({
+      id: CP_POST,
+      brandId: CP_BRAND,
+      date: '2026-08-04',
+      status: 'Zaplanowane',
+      visibility: 'draft',
+      baseTags: '#tetra #wave', // text[] -> jeden string
+    });
+    // Kolejność kanałów deterministyczna (created_at, potem id) — selecty nie
+    // mają ORDER BY, a Postgres zwraca kolejność sterty.
+    expect(post.channels.map((c) => c.platformId)).toEqual(['instagram', 'facebook']);
+    expect(post.channels[0]).toMatchObject({
+      copy: 'Główny',
+      tags: '',
+      overrideTags: false,
+      media: { source: 'gdrive', fileId: 'file-1', width: 1080, height: 1350, type: 'image' },
+    });
+    // Forma kanoniczna: grupa główna to BRAK klucza, wariant niesie swoje id.
+    expect(post.channels[0].descriptionGroupId).toBeUndefined();
+    expect(post.channels[1]).toMatchObject({ descriptionGroupId: 'wariant-1', tags: '#osobne' });
+    expect(post.comments).toEqual([
+      { id: expect.any(String), author: 'Klient', body: 'Uwaga', at: CP_STAMP },
+    ]);
+    expect(post.history[0].label).toBe('Utworzono slot publikacji');
+  });
+
+  it('ładunek hydracji przechodzi przez MERGE_CLOUD_CONTENT_PLAN (round-trip)', async () => {
+    const res = await loadContentPlanSnapshot(seededContentPlanDb());
+    if (!res.available) throw new Error('oczekiwano available');
+    const next = reducer(emptyData(), {
+      type: 'MERGE_CLOUD_CONTENT_PLAN',
+      payload: { brands: res.brands, posts: res.posts },
+    });
+    expect(next.contentPlanBrands.map((b) => b.id)).toEqual([CP_BRAND]);
+    expect(next.contentPlanPosts.map((p) => p.id)).toEqual([CP_POST]);
+  });
+
+  it('brak schematu/tabel (42P01) => available z pustymi kolekcjami (trwała degradacja)', async () => {
+    const db = new FakeContentPlanDb();
+    for (const table of ['brands', 'posts', 'post_channels', 'comments', 'post_history']) {
+      db.fail(table, 'relation "contentplan.brands" does not exist (42P01)');
+    }
+    await expect(loadContentPlanSnapshot(db)).resolves.toEqual({
+      available: true,
+      brands: [],
+      posts: [],
+    });
+  });
+
+  it('brak tabeli w cache PostgREST (PGRST205) => available z pustymi kolekcjami', async () => {
+    const db = new FakeContentPlanDb();
+    for (const table of ['brands', 'posts', 'post_channels', 'comments', 'post_history']) {
+      db.fail(table, "Could not find the table 'contentplan.brands' in the schema cache (PGRST205)");
+    }
+    const res = await loadContentPlanSnapshot(db);
+    expect(res).toEqual({ available: true, brands: [], posts: [] });
+  });
+
+  it('błąd PRZEJŚCIOWY => available:false (wołający zostawia poprzedni stan)', async () => {
+    const db = seededContentPlanDb().fail('posts', 'fetch failed');
+    await expect(loadContentPlanSnapshot(db)).resolves.toEqual({ available: false });
+  });
+
+  it('brak tabeli RAZEM z błędem przejściowym => available:false (nie zeruje modułu)', async () => {
+    const db = seededContentPlanDb()
+      .fail('comments', 'relation does not exist (42P01)')
+      .fail('posts', 'fetch failed');
+    await expect(loadContentPlanSnapshot(db)).resolves.toEqual({ available: false });
+  });
+
+  it('wyjątek selectu => available:false', async () => {
+    const db = seededContentPlanDb();
+    db.throwOnSelect = true;
+    await expect(loadContentPlanSnapshot(db)).resolves.toEqual({ available: false });
+  });
+
+  it('uszkodzony wiersz odpada, reszta hydracji zostaje (sanityzacja domeny)', async () => {
+    const ok = uuid('cp-post-ok');
+    const db = seededContentPlanDb().seed('posts', [
+      { id: uuid('cp-post-bad'), brand_id: CP_BRAND, date: '2026-08-04', title: '  ', status: 'Zaplanowane', visibility: 'draft', base_tags: [] },
+      { id: ok, brand_id: CP_BRAND, date: '2026-08-05', title: 'Druga', status: 'nieznany', visibility: 'kosmos', base_tags: null, created_at: CP_STAMP, updated_at: CP_STAMP },
+      { id: uuid('cp-post-nodate'), brand_id: CP_BRAND, date: null, title: 'Bez daty', status: 'Zaplanowane', visibility: 'draft', base_tags: [] },
+    ]);
+    const res = await loadContentPlanSnapshot(db);
+    if (!res.available) throw new Error('oczekiwano available');
+    expect(res.posts.map((p) => p.id)).toEqual([ok]);
+    // Nieznany status/widoczność spadają na wartości domyślne, zamiast wywracać
+    // wczytanie; `base_tags` spoza tablicy czytamy jako brak tagów.
+    expect(res.posts[0]).toMatchObject({
+      status: 'W trakcie tworzenia',
+      visibility: 'draft',
+      baseTags: '',
+    });
+  });
+});
+
+describe('createSupabaseContentPlanDb — adapter schematu', () => {
+  it('przepina zapytania na schemat contentplan (bez drugiego createClient)', async () => {
+    const schemas: string[] = [];
+    const tables: string[] = [];
+    const client = {
+      schema(name: string) {
+        schemas.push(name);
+        return {
+          from(table: string) {
+            tables.push(table);
+            return { upsert: async () => ({ error: null }) };
+          },
+        };
+      },
+    } as unknown as Parameters<typeof createSupabaseContentPlanDb>[0];
+    const db = createSupabaseContentPlanDb(client);
+    await expect(db.upsert('brands', { id: 'x' })).resolves.toEqual({ error: null });
+    expect(schemas).toEqual(['contentplan']);
+    expect(tables).toEqual(['brands']);
   });
 });
