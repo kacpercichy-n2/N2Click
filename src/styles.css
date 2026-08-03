@@ -4812,7 +4812,32 @@ a.toggle-btn {
   gap: var(--n2-space-3);
 }
 .dash-changelog-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--n2-space-2);
   font-size: var(--n2-type-sm);
+}
+/* Ikona historii przy etykiecie — dekoracyjna, w skali tekstu przycisku. */
+.dash-changelog-btn svg {
+  flex: none;
+  opacity: 0.85;
+}
+/* Licznik nieprzeczytanych paczek zmian. Ta sama pigułka co `.dash-badge`
+   w nagłówku Powiadomień — bez własnego marginesu, bo odstęp niesie `gap`. */
+.dash-changelog-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--n2-radius-pill);
+  background: var(--primary);
+  color: var(--n2-night);
+  font-size: var(--n2-type-xs);
+  font-family: var(--n2-font-data);
+  font-weight: 700;
+  line-height: 1;
 }
 
 /* Explicit 2-column layout (wide, ~2fr | 1fr):
@@ -4877,6 +4902,23 @@ a.toggle-btn {
   font-size: var(--n2-type-sm);
   font-weight: 600;
   color: var(--text-muted);
+}
+/* n2hub-324 — PUSTE Alerty zostają pełną kartą (belka zostawiała dziurę obok
+ * „Zasobnika" w rzędzie 4). Karta rozciąga się na wysokość rzędu
+ * (`align-items: stretch` siatki), a pusty stan wypełnia i centruje resztę
+ * wysokości pod nagłówkiem. Kafelek Z TREŚCIĄ tych klas nie dostaje. */
+.dash-card.dash-alerts-empty-card {
+  display: flex;
+  flex-direction: column;
+}
+.dash-alerts-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: var(--n2-space-4) 0;
+  color: var(--text-muted);
+  text-align: center;
 }
 /* Single column on narrow: drop the areas and flow by DOM order
  * (powiadomienia, obciążenie, zadania, zespół, tydzień). */

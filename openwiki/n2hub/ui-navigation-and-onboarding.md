@@ -530,12 +530,18 @@
   takiego kafelka też nie (Obciążenie jako jedna linia i Tydzień jako siedem
   pigułek są zawsze). Na desktopie rzędy siatki to kolejno `today workload`,
   `notifications team`, `week`, `bin alerts` — „Zadania na dziś" są PIERWSZYM
-  elementem treści. Pusty kafelek Powiadomień/Alertów nie znika, tylko kurczy
+  elementem treści. Pusty kafelek Powiadomień nie znika, tylko kurczy
   się do belki ~40 px (`dashTileView` + `.dash-card-bar`, `align-self: start`)
-  i ZACHOWUJE swoją kotwicę `data-tour`. Nad siatką stoi najwyżej jedna linia
-  dziennika zmian z jednym CTA („Nowości 20–21.07 →"), widoczna tylko dopóki
-  `changelogUnread` (potwierdzenie trzyma urządzeniowe `changelogSeenId` w
-  `utils/uiPrefs.ts`, nie stan aplikacji). Pasek tygodnia ma pięć kolumn dni
+  i ZACHOWUJE swoją kotwicę `data-tour`. Alerty są wyjątkiem od tej reguły
+  (`empty: null` w `dashTileView`): dzielą rząd z „Zasobnikiem", więc puste
+  zostają PEŁNĄ kartą z wyśrodkowanym pustym stanem
+  (`.dash-alerts-empty-card`), żeby rząd nie miał dziury. Nad siatką stoi
+  najwyżej jedna linia dziennika zmian z jednym CTA („Nowości 20–21.07 →"),
+  widoczna tylko dopóki `changelogUnread`; ten sam urządzeniowy
+  `changelogSeenId` (`utils/uiPrefs.ts`, nie stan aplikacji) karmi licznik
+  nieprzeczytanych paczek na stałym przycisku „Zobacz zmiany"
+  (`changelogUnreadCount` + `.dash-changelog-badge`), zerowany otwarciem
+  popoutu. Pasek tygodnia ma pięć kolumn dni
   roboczych i wąską kolumnę weekendu (dwie belki 24 px); „+N więcej" oraz belki
   weekendu prowadzą do dnia przez `calendarDayTarget` → `/calendar?dzien=…`,
   który `CalendarPage` konsumuje i czyści (`replace`). Poniżej 760 px powłoka nie

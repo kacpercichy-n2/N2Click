@@ -116,3 +116,12 @@ przewijania; dokument zostaje scrollportem. Po recenzji: `.editor-actions-sticky
 na `--n2-z-sticky-actions` (30) — na `/projects/:id` przykleja się do dokumentu,
 więc wygaszenie (20) kryło mu krawędź i „Zapisz teraz". `npm test` 119/2663
 zielone, build zielony. Wiki: UI.
+
+## Developer result (20260803-221312-n2hub-324)
+
+`changelog.ts` + testy: `changelogUnreadCount`. `DashboardPage.tsx`: przycisk
+„Zobacz zmiany" z ikoną `History` i plakietką licznika (ten sam
+`changelogSeenId`), puste Alerty jako pełna karta z pustym stanem.
+`dashboardPanels.ts`: alerts `empty: null` (nigdy belka) — test zwijania
+zaktualizowany świadomie. `styles.css`: badge + `.dash-alerts-empty-card`.
+`npm test` 119/2669 zielone, build zielony. Wiki: UI.

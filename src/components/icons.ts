@@ -75,7 +75,8 @@ export {
   // (Picker), obok wyboru plików dla poszczególnych platform.
   FolderOpen,
   // Edytor publikacji „Content planu": sekcja komentarzy, wątek odpowiedzi,
-  // dziennik zmian publikacji oraz słowniki marki w edytorze marki.
+  // dziennik zmian publikacji oraz słowniki marki w edytorze marki. `History`
+  // stoi też przy przycisku „Zobacz zmiany" na Panelu (ten sam sens: historia).
   MessageSquare,
   CornerDownRight,
   History,

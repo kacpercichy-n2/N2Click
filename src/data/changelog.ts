@@ -86,6 +86,20 @@ export function changelogUnread(
 }
 
 /**
+ * Ile wpisów jest NOWSZYCH niż ostatnio potwierdzony (`seenId`) — licznik na
+ * przycisku „Zobacz zmiany". Liczymy wpisy od początku tablicy (najnowsze) do
+ * pierwszego wystąpienia `seenId`. Brak `seenId` albo id spoza dziennika (np. po
+ * usunięciu wpisu) => wszystko jest nieprzeczytane; pusty dziennik => 0.
+ */
+export function changelogUnreadCount(
+  entries: readonly ChangelogEntry[],
+  seenId: string | undefined,
+): number {
+  const seenAt = seenId ? entries.findIndex((entry) => entry.id === seenId) : -1;
+  return seenAt === -1 ? entries.length : seenAt;
+}
+
+/**
  * Jedno CTA paska „Nowości" — „Nowości 20–21.07". Strzałkę dokłada widok.
  * Bez czytelnej daty zostaje sama „Nowości", nigdy pusty przycisk.
  */

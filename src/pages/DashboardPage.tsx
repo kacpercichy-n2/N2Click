@@ -8,8 +8,10 @@
 // dziennika zmian).
 //
 // Trzy reguły „ciszy" Panelu (OP-01/AT-17/AT-19):
-// - PUSTE Powiadomienia/Alerty kurczą się do belki ~40 px (`dashTileView`) i nie
+// - PUSTE Powiadomienia kurczą się do belki ~40 px (`dashTileView`) i nie
 //   rozciągają rzędu (`align-self: start`); z treścią renderują się jak dotąd.
+//   Alerty są wyjątkiem: dzielą rząd z „Zasobnikiem", więc puste zostają pełną
+//   kartą z pustym stanem, żeby siatka nie skakała (n2hub-324).
 // - Dziennik zmian to JEDNA linia z JEDNYM CTA, widoczna tylko dopóki najnowszy
 //   wpis jest nieprzeczytany na tym urządzeniu; „Zadania na dziś" są pierwszym
 //   elementem treści.
@@ -26,7 +28,12 @@ import { Fragment, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { m, useReducedMotion } from 'motion/react';
 import { useStore } from '../store/AppStore';
-import { CHANGELOG, changelogCtaLabel, changelogUnread } from '../data/changelog';
+import {
+  CHANGELOG,
+  changelogCtaLabel,
+  changelogUnread,
+  changelogUnreadCount,
+} from '../data/changelog';
 import { ChangelogModal } from '../components/ChangelogModal';
 import { calendarDayTarget } from '../components/bottomNav';
 import {
@@ -50,7 +57,7 @@ import {
 import { Avatar } from '../components/Avatar';
 // Ikony idą przez centralny moduł (patrz components/icons.ts), nigdy wprost
 // z `lucide-react`.
-import { Check } from '../components/icons';
+import { Check, History } from '../components/icons';
 import { PlanningProgress } from '../components/PlanningProgress';
 import { TodayAgendaList } from '../components/TodayAgenda';
 import { useOpenTask } from '../components/TaskModal';
@@ -66,6 +73,7 @@ import {
   dayNumber,
 } from '../utils/dates';
 import { formatMinutes, formatDuration } from '../utils/time';
+import { polishCount } from '../utils/polishPlural';
 import { formatTimestamp } from '../utils/dates';
 import { MOBILE_NAV_QUERY, useMediaQuery } from '../utils/useMediaQuery';
 import { loadUiPrefs, updateUiPrefs } from '../utils/uiPrefs';
@@ -223,6 +231,10 @@ export function DashboardPage() {
   const gridVariants = reduceMotion ? dashGridVariantsStill : dashGridVariants;
   const [teamOpen, setTeamOpen] = useState(false);
   const latestChange = CHANGELOG[0];
+  // Licznik na przycisku „Zobacz zmiany": ile paczek doszło od ostatniego
+  // potwierdzenia. Ten sam `changelogSeenId` co pasek „Nowości", więc otwarcie
+  // popoutu (`openChangelog`) zeruje oba naraz.
+  const unreadChanges = changelogUnreadCount(CHANGELOG, changelogSeenId);
 
   // Edge case: setup mode (no people) or no resolvable acting user → keep the
   // original welcome empty-state exactly.
@@ -520,9 +532,22 @@ export function DashboardPage() {
     </m.div>
   );
 
+  /** Alerty NIE kurczą się do belki (n2hub-324): w rzędzie „Zasobnik | Alerty"
+   *  belka zostawiała pustą połowę rzędu. Pusty kafelek zostaje pełną kartą z
+   *  wyśrodkowanym pustym stanem, więc siatka trzyma tę samą wysokość. Na
+   *  telefonie pusty kafelek nadal nie trafia do DOM-u (`mobileDashboardOrder`),
+   *  więc ta gałąź dotyczy praktycznie tylko desktopu. */
   const renderAlertsTile = (className: string) =>
-    alertsView.collapsed ? (
-      renderCollapsedTile(className, 'alerts', alertsView.label, 'home.alerts')
+    noAlerts ? (
+      <m.div
+        className={`${className} dash-alerts-empty-card`}
+        variants={dashCardVariants}
+        data-tour="home.alerts"
+        data-tile="alerts"
+      >
+        <h2>{alertsView.label}</h2>
+        <p className="dash-alerts-empty">Brak alertów. Wszystko pod kontrolą.</p>
+      </m.div>
     ) : (
       <m.div className={className} variants={dashCardVariants} data-tour="home.alerts">
         <h2>{alertsView.label}</h2>
@@ -716,15 +741,27 @@ export function DashboardPage() {
         <h1>Dzień dobry, {me.firstName}</h1>
         {/* Prawy górny róg: data + STAŁE wejście do historii zmian. Belka
          *  „Nowości" niżej znika po potwierdzeniu wpisu, więc bez tego
-         *  przycisku nie dałoby się wrócić do starszych paczek. */}
+         *  przycisku nie dałoby się wrócić do starszych paczek. Ikona jest
+         *  dekoracyjna (etykieta tekstowa zostaje), a plakietka pokazuje, ile
+         *  paczek doszło od ostatniego otwarcia — i znika po jego otwarciu. */}
         <div className="dash-head-meta">
           <p className="dash-date">{formatRowLabel(today)}</p>
-          <button
-            type="button"
-            className="link-btn dash-changelog-btn"
-            onClick={openChangelog}
-          >
+          <button type="button" className="link-btn dash-changelog-btn" onClick={openChangelog}>
+            <History size={16} aria-hidden />
             Zobacz zmiany
+            {unreadChanges > 0 && (
+              <span
+                className="dash-changelog-badge"
+                aria-label={`${unreadChanges} ${polishCount(
+                  unreadChanges,
+                  'nowy wpis',
+                  'nowe wpisy',
+                  'nowych wpisów',
+                )}`}
+              >
+                {unreadChanges}
+              </span>
+            )}
           </button>
         </div>
       </div>
