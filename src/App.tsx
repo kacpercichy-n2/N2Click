@@ -214,9 +214,7 @@ export function App() {
   // uporządkowaniu, więc zapisany porządek nigdy nie odsłoni pozycji gated.
   const navPaths = orderedNav
     .map(([to]) => to)
-    .filter(
-      (to) => (to !== '/admin' || canAdmin) && (to !== '/account' || auth.mode === 'supabase'),
-    );
+    .filter((to) => to !== '/admin' || canAdmin);
 
   // Logout: in Supabase mode end the real Auth session first (its SIGNED_OUT
   // event returns us to the login screen), then clear the local acting identity.
@@ -407,13 +405,13 @@ export function App() {
                 links to the user's own profile (the chevron toggle is the only
                 expand control now). */}
             {currentUser && (
-              <Tooltip text={`Mój profil: ${currentUser.name}`}>
+              <Tooltip text={`Moje konto: ${currentUser.name}`}>
                 <Link
-                  to={`/people/${currentUser.id}`}
+                  to="/account"
                   className="sidebar-user-collapsed"
-                  aria-label={`Mój profil: ${currentUser.name}`}
-                  onPointerEnter={() => prefetchRoute('/people/:id')}
-                  onFocus={() => prefetchRoute('/people/:id')}
+                  aria-label={`Moje konto: ${currentUser.name}`}
+                  onPointerEnter={() => prefetchRoute('/account')}
+                  onFocus={() => prefetchRoute('/account')}
                 >
                   <Avatar person={currentUser} size={32} />
                 </Link>
@@ -422,13 +420,13 @@ export function App() {
             {/* Expanded footer row: avatar → own profile + narrower logout. */}
             <div className="sidebar-user-row">
               {currentUser && (
-                <Tooltip text={`Mój profil: ${currentUser.name}`}>
+                <Tooltip text={`Moje konto: ${currentUser.name}`}>
                   <Link
-                    to={`/people/${currentUser.id}`}
+                    to="/account"
                     className="sidebar-user-avatar"
-                    aria-label={`Mój profil: ${currentUser.name}`}
-                    onPointerEnter={() => prefetchRoute('/people/:id')}
-                    onFocus={() => prefetchRoute('/people/:id')}
+                    aria-label={`Moje konto: ${currentUser.name}`}
+                    onPointerEnter={() => prefetchRoute('/account')}
+                    onFocus={() => prefetchRoute('/account')}
                   >
                     <Avatar person={currentUser} size={32} />
                   </Link>
@@ -507,8 +505,8 @@ export function App() {
                 path="/team"
                 element={canTeam ? <TeamPage /> : <Navigate to="/dashboard" replace />}
               />
-              {/* Ustawienia: dostępne w OBU trybach (tryb lokalny widzi tylko
-                  sekcję „Interfejs”). */}
+              {/* Konto: pełny profil zalogowanego użytkownika, w OBU trybach.
+                  /people/<własne id> przekierowuje tu (PersonProfilePage). */}
               <Route path="/account" element={<AccountPage />} />
               <Route path="*" element={<HomeRedirect />} />
             </Routes>
@@ -618,18 +616,8 @@ export function App() {
               <CircleHelp size={18} aria-hidden />
               <span>Pomoc i samouczki</span>
             </button>
-            {currentUser && (
-              <Link
-                to={`/people/${currentUser.id}`}
-                role="menuitem"
-                className="app-more-item"
-                onPointerEnter={() => prefetchRoute('/people/:id')}
-                onFocus={() => prefetchRoute('/people/:id')}
-              >
-                <Avatar person={currentUser} size={22} />
-                <span>Mój profil</span>
-              </Link>
-            )}
+            {/* Wiersz „Mój profil” zniknął — pozycja „Konto” w liście menu wyżej
+                prowadzi do tego samego pełnego profilu (jeden adres: /account). */}
             <button
               type="button"
               role="menuitem"

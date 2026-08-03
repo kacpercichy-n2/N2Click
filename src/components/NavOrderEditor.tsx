@@ -7,7 +7,6 @@
 // `n2hub:nav-order-changed`, which App listens for to re-order the live sidebar.
 import { useMemo, useState } from 'react';
 import { useStore } from '../store/AppStore';
-import { useAuth } from '../auth/SessionProvider';
 import { can } from '../store/permissions';
 import { NAV, type NavItem } from './navItems';
 import { applyNavOrder } from '../utils/navOrder';
@@ -17,7 +16,6 @@ const DEFAULT_PATHS = NAV.map(([to]) => to);
 
 export function NavOrderEditor() {
   const { state } = useStore();
-  const { mode } = useAuth();
   const [version, setVersion] = useState(0);
 
   // Impersonacja usunięta (run 257) — currentUserId JEST realnym użytkownikiem.
@@ -39,9 +37,7 @@ export function NavOrderEditor() {
       const item = NAV.find(([to]) => to === path);
       return item ? [item] : [];
     })
-    .filter(
-      ([to]) => (to !== '/admin' || canAdmin) && (to !== '/account' || mode === 'supabase'),
-    );
+    .filter(([to]) => to !== '/admin' || canAdmin);
 
   if (!userId || visibleItems.length === 0) return null;
 

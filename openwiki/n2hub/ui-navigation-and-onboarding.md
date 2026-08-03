@@ -9,7 +9,7 @@
   `src/pages/routeChunks.ts`, z którego bierze się i komponent trasy, i
   `prefetchRoute` podgrzewający TEN SAM chunk na `onPointerEnter`/`onFocus`
   pozycji nawigacji (sidebar, dolny pasek, arkusz „Więcej”, „Zasobnik” →
-  `/calendar`, awatar profilu → `/people/:id`). Granica `<Suspense>` stoi
+  `/calendar`, awatar profilu → `/account`). Granica `<Suspense>` stoi
   WEWNĄTRZ powłoki i dostawców (zastępnik = istniejący `empty-state` z
   „Wczytywanie…”), więc zawieszenie trasy nie odmontowuje sidebara, dolnego
   paska, modali ani strażnika `useBlocker`. `LoginPage` i `auth/AuthScreens`
@@ -26,7 +26,7 @@
   `styles.css` MUSI zostać jednym arkuszem.
 - The sidebar nav (`NAV` in `App.tsx`) is a fixed ordered list — Panel, Moja
   praca, Klienci, Projekty, Zadania, Kanban, Kalendarz, Oś czasu, Obciążenie,
-  Zespół — ending with two gated entries: Konto (supabase mode only) and
+  Zespół, Konto (BOTH modes since 2026-08-03) — ending with one gated entry:
   Ustawienia (renamed from „Administracja”; route stays `/admin`, permission
   `admin.panel`). `/zgloszenia` and `/team` are NOT in this list. Below the nav
   a pinned `.sidebar-footer` row holds the „Zgłoszenia” NavLink (visible to
@@ -69,16 +69,23 @@
   truth for profile fields incl. access role/capacity/work days/supervisor;
   local-only people are never deleted and local departmentId/passwordHash are
   kept. The blocked screen remains only for the edge case of
-  a session without a cloud profile row. The `/account` „Ustawienia” panel + nav
-  link (gear icon; Administracja uses `ShieldCheck`) is available in BOTH modes —
-  it always shows the „Interfejs” section (device-local sidebar menu-order editor,
-  `UiPrefs.navOrder`, pure `orderNavPaths` in `src/components/navItems.ts`, reactive
-  via the `'n2hub:nav-order-changed'` window event) and, in Supabase mode only, the
-  self-service password change. Impersonation („Występuj jako”) was removed
-  entirely (UI switcher/banner, `IMPERSONATE`/`STOP_IMPERSONATION`,
-  `AppData.impersonatorId`, `users.impersonate`); the sidebar footer avatar now
-  links to the user's own profile (`/people/<own id>`). Identity association is by
-  email only (planner data references local
+  a session without a cloud profile row. Od 2026-08-03 `/account` („Konto”,
+  ikona `CircleUser`, OBA tryby) to PEŁNY profil zalogowanego użytkownika:
+  `AccountPage` renderuje `PersonProfile` (eksport z `PersonProfilePage`) z
+  propsem `accountView` (bez przycisku „Wróć”; hasło własne w trybie Supabase
+  zmienia `src/components/CloudPasswordSection.tsx` — realne konto przez
+  `changePassword` z sesji — a lokalny `PasswordSection` zostaje dla trybu
+  lokalnego i cudzych profili z `people.manage`). Własny profil ma JEDEN adres:
+  `PersonProfilePage` przekierowuje `/people/<własne id>` → `/account`
+  (`Navigate replace`), więc lista zespołu, wyszukiwarka i stare linki lądują w
+  zakładce Konto. Dawne sekcje Konta — link „Mój profil”, „Profil w chmurze”
+  (duplikat danych profilu) i „Kolejność menu” — nie istnieją; edytor
+  kolejności żyje wyłącznie w Ustawieniach. Impersonation („Występuj jako”) was
+  removed entirely (UI switcher/banner, `IMPERSONATE`/`STOP_IMPERSONATION`,
+  `AppData.impersonatorId`, `users.impersonate`); the sidebar footer avatar
+  („Moje konto: …”) links to `/account`, and the mobile „Więcej” sheet has no
+  separate „Mój profil” row (the „Konto” nav item covers it). Identity
+  association is by email only (planner data references local
   person ids). In Supabase mode the authenticated profile, department, access role
   and team visibility are READ from Supabase (RLS output is authoritative) via
   `src/supabase/OrgDataProvider.tsx` + pure `src/supabase/referenceData.ts`
@@ -102,10 +109,10 @@
   (`applyNavOrder`/`moveNavPath`, pure + unit-tested) is self-repairing: unknown
   or duplicate stored paths are dropped and missing defaults appended in default
   order, so no migration is ever needed. App applies the order BEFORE the gate
-  filter (`canAdmin`, supabase-only Konto), so a stored order can never reveal a
-  gated item. `src/components/NavOrderEditor.tsx` (section „Kolejność menu")
-  mounts on both the Konto page (`/account`, every cloud user) and Ustawienia
-  (`/admin`); it lists the user's VISIBLE items, moves a visible item by swapping
+  filter (`canAdmin`; Konto is ungated since 2026-08-03), so a stored order can
+  never reveal a gated item. `src/components/NavOrderEditor.tsx` (section
+  „Kolejność menu") mounts ONLY on Ustawienia (`/admin`) — moved off the Konto
+  page 2026-08-03; it lists the user's VISIBLE items, moves a visible item by swapping
   with its nearest visible neighbour in the FULL stored order (hidden gated items
   keep their positions), persists via `updateNavOrderForUser` and fires a
   `n2hub:nav-order-changed` window event so App re-orders the live sidebar.

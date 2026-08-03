@@ -22,7 +22,7 @@ import {
   Users,
   Gauge,
   Settings,
-  KeyRound,
+  CircleUser,
 } from './icons';
 
 export type NavItem = [string, string, LucideIcon];
@@ -38,8 +38,8 @@ export const NAV: NavItem[] = [
   ['/timeline', 'Oś czasu', GanttChart],
   ['/workload', 'Obciążenie', Gauge],
   ['/people', 'Zespół', Users],
-  // Konto istnieje tylko dla realnego konta Supabase (tryb lokalny nie zna
-  // tego pojęcia) — filtr w App ukrywa je w trybie lokalnym.
-  ['/account', 'Konto', KeyRound],
+  // Konto = pełny profil zalogowanego użytkownika (dostępne w OBU trybach);
+  // własny adres /people/:id przekierowuje tu (PersonProfilePage).
+  ['/account', 'Konto', CircleUser],
   ['/admin', 'Ustawienia', Settings],
 ];

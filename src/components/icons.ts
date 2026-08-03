@@ -40,7 +40,8 @@ export {
   Compass,
   Sparkles,
   ArrowLeft,
-  KeyRound,
+  // Zakładka „Konto" — pełny profil zalogowanego użytkownika.
+  CircleUser,
   Network,
   Inbox,
   Megaphone,

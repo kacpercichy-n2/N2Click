@@ -6,7 +6,7 @@
 // 2026-07-22: widoczność steruje się filtrowaniem, nie rolą — dawna bramka
 // canViewProfileDetails z runu 256 celowo NIE została przeniesiona).
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
 import type { PersonDraft } from '../store/AppStore';
 import { useAuth } from '../auth/SessionProvider';
@@ -41,6 +41,7 @@ import { hashPassword } from '../utils/password';
 import { jobTitleSelectOptions } from '../utils/roleTitles';
 import type { Person } from '../types';
 import { Avatar } from '../components/Avatar';
+import { CloudPasswordSection } from '../components/CloudPasswordSection';
 import { QuickAddModal, NEW_OPTION_VALUE } from '../components/QuickAddModal';
 import { Coin } from '../components/Coin';
 import { TreePalm } from '../components/icons';
@@ -71,6 +72,11 @@ const NO_PERM_ID = 'pp-no-perm';
 export function PersonProfilePage() {
   const { id } = useParams();
   const { state } = useStore();
+  // Własny profil ma JEDEN adres — zakładkę Konto. Każde wejście na
+  // /people/<własne id> (lista zespołu, wyszukiwarka, stare linki) ląduje tam.
+  if (id && id === state.currentUserId) {
+    return <Navigate to="/account" replace />;
+  }
   const person = state.people.find((p) => p.id === id);
   if (!person) {
     return (
@@ -87,7 +93,18 @@ export function PersonProfilePage() {
   return <PersonProfile key={person.id} personId={person.id} />;
 }
 
-function PersonProfile({ personId }: { personId: string }) {
+/**
+ * Zintegrowany panel profilu. `accountView` = zakładka Konto (własny profil):
+ * bez przycisku „Wróć" do zespołu, a hasło w trybie Supabase zmienia się przez
+ * realne konto (CloudPasswordSection), nie przez lokalny hash.
+ */
+export function PersonProfile({
+  personId,
+  accountView = false,
+}: {
+  personId: string;
+  accountView?: boolean;
+}) {
   const navigate = useNavigate();
   const { openTask } = useOpenTask();
   const { state, dispatch } = useStore();
@@ -233,11 +250,13 @@ function PersonProfile({ personId }: { personId: string }) {
             </span>
           </span>
         </h1>
-        <div className="page-head-actions">
-          <Link to="/people" className="btn ghost">
-            Wróć
-          </Link>
-        </div>
+        {!accountView && (
+          <div className="page-head-actions">
+            <Link to="/people" className="btn ghost">
+              Wróć
+            </Link>
+          </div>
+        )}
       </div>
 
       {/* Pierwsza karta: dane podstawowe (awatar + imię/nazwisko/stanowisko/dział/spółka). */}
@@ -587,7 +606,14 @@ function PersonProfile({ personId }: { personId: string }) {
         )}
       </div>
 
-      <PasswordSection person={person} />
+      {/* Hasło zintegrowane z danymi konta: własny profil w trybie Supabase
+          zmienia hasło realnego konta; poza tym zostaje lokalny hash
+          (PasswordSection sam się chowa bez uprawnień). */}
+      {isOwn && auth.mode === 'supabase' ? (
+        <CloudPasswordSection />
+      ) : (
+        <PasswordSection person={person} />
+      )}
 
       <div className="editor-section">
         <h2>Ten tydzień</h2>
