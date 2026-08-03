@@ -62,9 +62,29 @@
   przewijaczem 31 kolumn z własnymi scrollerami — tutaj dni zawijają się w
   responsywną siatkę (klasy `cp-*` w `styles.css`, kolor platformy przez
   `tintVar('--cp-platform')`), a jedynym właścicielem przewijania zostaje
-  strona. Karta tylko ZAZNACZA publikację (`aria-pressed`), edytora nie otwiera
-  — inspektor i administracja marek wchodzą kolejną fazą, a bez ani jednej
-  marki strona pokazuje pusty stan. Encje modułu NIE są zarejestrowane w
+  strona. Klik w tytuł karty OTWIERA edytor publikacji
+  (`src/components/ContentPlanPostModal.tsx`, `?publikacja=<id>`; podświetlenie
+  karty pokazuje, która publikacja jest otwarta), a marki i ich słowniki mają
+  własny modal (`ContentPlanBrandModal.tsx`, `?marka=new|<id>`, wejścia z
+  toolbaru i z pustego stanu). Oba modale są montowane WEWNĄTRZ strony, nie na
+  poziomie App (moduł jest bramkowany rolą i jednostronicowy, więc reużywa jej
+  samo-guard zamiast dokładać czwarty globalny mount), stoją na wspólnej
+  powłoce `useModalShell` z `closeOnBackdrop: false`, a zamknięcie usuwa
+  WYŁĄCZNIE własny parametr — pager `?m=` zostaje nietknięty. Model edycji to
+  DRAFT + JAWNY zapis: cała logika draftu i słowników siedzi w czystych
+  `components/contentPlanPostEditor.ts` i `components/contentPlanBrandEditor.ts`
+  (+ testy w node), zapis to JEDEN `SAVE_CP_POST` z etykietą historii z
+  `saveHistoryLabel`, a przed dispatchem stoi LUSTRO bramki reduktora
+  (`normalize*Draft`) — odrzucony draft nie zamyka modala i nie czyści dirty.
+  Komentarze i decyzja klienta działają na ŻYWEJ encji (`ADD_CP_COMMENT` /
+  `REVIEW_CP_POST`, tylko `visibility: 'published'`; na szkicu sekcje pokazują
+  hint, nigdy martwy przycisk dispatchujący no-op), media zostają TYLKO do
+  odczytu, a guard integralności słowników (`dictionaryIntegrityIssue`) blokuje
+  usunięcie pozycji używanej przez publikacje marki (reduktor celowo zostaje
+  liberalny). Strażnik nawigacji ma dwa własne zakresy —
+  `contentplan-post-modal` i `contentplan-brand-modal` — blokujące zmianę
+  własnego parametru ALBO ścieżki; sam pager `?m=` nigdy nie pyta.
+  `PUBLISH_CP_MONTH` nadal nie ma UI. Encje modułu NIE są zarejestrowane w
   `searchAll`/palecie (paleta ma tylko szybką akcję nawigacyjną za
   `canContentPlan`). Bramka UX, nie granica bezpieczeństwa — zakres wymusza RLS
   schematu `contentplan`.
@@ -421,9 +441,13 @@
   pierwszego realnego `mousemove` (mysz nie kradnie zaznaczenia).
 - `src/utils/dirtyRegistry.ts` and `src/utils/useSaveStatus.ts` support shared
   unsaved-edit and save-state behavior. The registry also holds the opt-in
-  router navigation guard (scopes `task-modal`/`project-detail` plus a one-shot
-  bypass) that App's `DirtyNavigationGuard` consults; only those two surfaces
-  register, so other routes and forms never gain a global blocker.
+  router navigation guard (scopes `task-modal`, `project-detail`,
+  `ticket-modal`, `event-modal`, `task-page`, `contentplan-post-modal`,
+  `contentplan-brand-modal`, plus a one-shot bypass) that App's
+  `DirtyNavigationGuard` consults; only those surfaces register, so other routes
+  and forms never gain a global blocker. Each scope reacts to the navigation
+  that would actually discard it: its own search param, the pathname, or (for
+  the page-mounted Content Plan modals) either one.
 
 ## Rules that change work
 

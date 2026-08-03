@@ -9259,6 +9259,278 @@ a.toggle-btn {
   background: rgba(196, 150, 255, 0.12);
 }
 
+/* ---------- Content plan — edytor publikacji i edytor marki ----------
+   Oba modale są KONSUMENTAMI wspólnej powłoki (`.task-modal-*`, `.field`,
+   `.btn`, `.empty-state`): poniżej stoją wyłącznie klasy, których powłoka nie
+   ma — siatka pól, warianty opisu, wiersz mediów, wątek komentarzy i historia.
+   Karty wchodzą w tę samą skalę szerokości, co pozostałe modale formularzowe
+   (opis skali stoi przy `.task-modal-card`). */
+.cp-post-modal-card {
+  max-width: clamp(720px, 64vw, 1160px);
+}
+.cp-brand-modal-card {
+  max-width: clamp(720px, 52vw, 960px);
+}
+.cp-post-form,
+.cp-brand-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-5);
+}
+.cp-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-3);
+}
+.cp-section-title {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+  margin: 0;
+  font-size: var(--n2-type-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--n2-text-muted);
+}
+.cp-post-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0 var(--n2-space-4);
+}
+/* Przyciski marki stoją w pasku narzędzi obok selektu, więc muszą siedzieć na
+   linii bazowej kontrolki, a nie etykiety pola. */
+.cp-brand-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--n2-space-2);
+  margin-bottom: var(--n2-space-1);
+}
+
+/* Pigułka kanału: przełącznik, nie status — kolor idzie JEDNĄ zmienną
+   (`tintVar`), tak jak w kalendarzu modułu. */
+.cp-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--n2-space-2);
+}
+.cp-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 14px;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-pill);
+  background: none;
+  font: inherit;
+  font-size: var(--n2-type-sm);
+  color: var(--n2-text-soft);
+  cursor: pointer;
+}
+.cp-pill[aria-pressed='true'] {
+  border-color: var(--cp-platform, var(--n2-border-strong));
+  background: color-mix(in oklab, var(--cp-platform, var(--n2-lavender)) 16%, transparent);
+  color: var(--n2-text);
+}
+.cp-pill:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+
+.cp-split {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: var(--n2-space-3);
+}
+.cp-split .field {
+  min-width: 220px;
+  margin-bottom: 0;
+}
+
+.cp-desc-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-2);
+  padding: var(--n2-space-4);
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-md);
+  background: var(--n2-surface-muted);
+}
+.cp-desc-group[data-main='true'] {
+  border-color: var(--n2-border-strong);
+}
+.cp-desc-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--n2-space-3);
+}
+.cp-desc-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cp-desc-copy span {
+  font-size: var(--n2-type-xs);
+  color: var(--n2-text-muted);
+}
+.cp-desc-platforms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+}
+
+/* Pliki są TYLKO do odczytu: miniatura trzyma samą proporcję (`aspect-ratio`
+   inline), bo referencja do Dysku wchodzi osobną fazą. */
+.cp-media-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cp-media-row {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-3);
+  font-size: var(--n2-type-sm);
+  color: var(--n2-text-soft);
+}
+.cp-media-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  max-height: 44px;
+  border: 1px dashed var(--n2-border);
+  border-radius: var(--n2-radius-xs);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--n2-text-faint);
+}
+.cp-media-file {
+  overflow-wrap: anywhere;
+}
+.cp-media-file[data-empty='true'] {
+  color: var(--n2-text-faint);
+}
+.cp-ratio-badge {
+  padding: 1px 8px;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-pill);
+  font-family: var(--n2-font-data);
+  font-size: var(--n2-type-xs);
+  color: var(--n2-text-muted);
+}
+
+.cp-review {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--n2-space-2);
+}
+.cp-comment-form {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: var(--n2-space-3);
+}
+.cp-comment-form .field {
+  flex: 1 1 260px;
+  margin-bottom: 0;
+}
+.cp-thread-list,
+.cp-replies {
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cp-replies {
+  margin-top: var(--n2-space-2);
+  padding-left: var(--n2-space-4);
+  border-left: 1px solid var(--n2-border);
+}
+.cp-comment {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--n2-space-3);
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-sm);
+  background: var(--card-bg);
+}
+.cp-comment-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--n2-space-3);
+  margin: 0;
+  font-size: var(--n2-type-xs);
+  color: var(--n2-text-muted);
+}
+.cp-comment-context {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  font-size: var(--n2-type-xs);
+  color: var(--n2-text-muted);
+}
+.cp-comment-body {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--n2-type-sm);
+  color: var(--n2-text-soft);
+}
+.cp-reply {
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-2);
+  margin-top: var(--n2-space-2);
+}
+.cp-reply-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--n2-space-2);
+}
+
+.cp-history {
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cp-history-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--n2-space-3);
+  padding-bottom: var(--n2-space-2);
+  border-bottom: 1px solid var(--n2-border);
+  font-size: var(--n2-type-sm);
+  color: var(--n2-text-soft);
+}
+.cp-history-item span {
+  flex: none;
+  font-family: var(--n2-font-data);
+  font-size: var(--n2-type-xs);
+  color: var(--n2-text-muted);
+}
+/* Natywny próbnik koloru ignoruje wysokość pola tekstowego, więc dostaje
+   własny, przewidywalny prostokąt. */
+.cp-color-input {
+  width: 64px;
+  height: 34px;
+  padding: 2px;
+}
+
 @media (max-width: 760px) {
   .cp-grid {
     grid-template-columns: 1fr;
@@ -9268,6 +9540,13 @@ a.toggle-btn {
   }
   .cp-brand-field {
     max-width: none;
+    width: 100%;
+  }
+  .cp-post-grid {
+    grid-template-columns: 1fr;
+  }
+  .cp-split .field,
+  .cp-comment-form .field {
     width: 100%;
   }
 }

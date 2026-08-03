@@ -69,4 +69,10 @@ export {
   Eye,
   EyeOff,
   FileImage,
+  // Edytor publikacji „Content planu": sekcja komentarzy, wątek odpowiedzi,
+  // dziennik zmian publikacji oraz słowniki marki w edytorze marki.
+  MessageSquare,
+  CornerDownRight,
+  History,
+  Settings2,
 } from 'lucide-react';

@@ -40,7 +40,13 @@ export type NavGuardScope =
   | 'ticket-modal'
   | 'event-modal'
   /** Pełna strona zadania `/tasks/:id` — żyje na ŚCIEŻCE, jak edytor projektu. */
-  | 'task-page';
+  | 'task-page'
+  // Modale Content Planu są montowane WEWNĄTRZ strony `/content-plan`, więc giną
+  // od dwóch rzeczy naraz: zmiany własnego parametru ORAZ opuszczenia trasy.
+  // Pager miesięcy (`?m=`) zostaje przy tym poza grą — przewijanie miesiąca pod
+  // otwartym modalem nie porzuca edycji.
+  | 'contentplan-post-modal'
+  | 'contentplan-brand-modal';
 
 const navGuards = new Map<object, NavGuardScope>();
 
@@ -80,12 +86,16 @@ export function navGuardBlocks(
   const taskChanged = currentParams.get('task') !== nextParams.get('task');
   const ticketChanged = currentParams.get('zgloszenie') !== nextParams.get('zgloszenie');
   const wydarzenieChanged = currentParams.get('wydarzenie') !== nextParams.get('wydarzenie');
+  const publikacjaChanged = currentParams.get('publikacja') !== nextParams.get('publikacja');
+  const markaChanged = currentParams.get('marka') !== nextParams.get('marka');
   return (
     (scopes.has('task-modal') && taskChanged) ||
     (scopes.has('ticket-modal') && ticketChanged) ||
     (scopes.has('event-modal') && wydarzenieChanged) ||
     (scopes.has('project-detail') && pathChanged) ||
-    (scopes.has('task-page') && pathChanged)
+    (scopes.has('task-page') && pathChanged) ||
+    (scopes.has('contentplan-post-modal') && (publikacjaChanged || pathChanged)) ||
+    (scopes.has('contentplan-brand-modal') && (markaChanged || pathChanged))
   );
 }
 

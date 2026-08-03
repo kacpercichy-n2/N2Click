@@ -1,20 +1,26 @@
 // Moduł „Content plan" — kalendarz miesiąca publikacji: wybór marki, przegląd
 // miesiąca (liczniki + rozkład kanałów) i siatka dni z kartami publikacji.
-// Edytor publikacji i zarządzanie markami wchodzą kolejną fazą; karta tylko
-// ZAZNACZA publikację (podświetlenie), nigdy nie otwiera edycji.
+// Klik w tytuł karty OTWIERA edytor publikacji (`?publikacja=<id>`), a marki i
+// ich słowniki mają własny modal (`?marka=new|<id>`).
 //
 // Cała logika „dane → co widać" siedzi w czystym `contentPlanCalendar.ts`
 // (grupowanie po dniach, liczniki, model karty, ładunki kopiuj/wklej), a stan
 // pagera w `contentPlanRoute.ts` — tutaj zostaje sam render i wysyłka akcji.
 // Jedyną granicą zapisu jest reduktor (`SAVE_CP_POST` / `DELETE_CP_POST`).
 //
+// ŚWIADOMA RÓŻNICA wobec TaskModal/EventModal/TicketModal: oba modale modułu są
+// montowane TUTAJ, a nie na poziomie App. Moduł jest bramkowany rolą i
+// jednostronicowy, więc montaż w stronie reużywa jej samo-guard i nie dokłada
+// czwartego globalnego mountu. Zamknięcie usuwa WYŁĄCZNIE własny parametr —
+// pager miesięcy (`?m=`) zostaje nietknięty.
+//
 // Bramka: strona pilnuje się SAMA (wzorzec `AdminPage`/`TeamPage`), więc wejście
 // z paska adresu przez użytkownika bez roli kończy się przekierowaniem na Panel,
 // nawet gdyby pozycja menu wyciekła. To bramka UX, nie granica bezpieczeństwa —
 // realny zakres wymusza serwer (RLS schematu `contentplan`).
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
-import { m, useReducedMotion } from 'motion/react';
+import { AnimatePresence, m, useReducedMotion } from 'motion/react';
 import { useContentPlanAccess } from '../contentplan/useContentPlanAccess';
 import { monthKeyDays } from '../contentplan/domain';
 import { MONTH_PARAM, monthPagerFromParam, resolveMonthParam } from './contentPlanRoute';
@@ -35,6 +41,14 @@ import { useConfirm } from '../components/ConfirmProvider';
 import { Field } from '../components/Field';
 import { IconButton } from '../components/IconButton';
 import {
+  CONTENT_PLAN_POST_PARAM,
+  ContentPlanPostModal,
+} from '../components/ContentPlanPostModal';
+import {
+  CONTENT_PLAN_BRAND_PARAM,
+  ContentPlanBrandModal,
+} from '../components/ContentPlanBrandModal';
+import {
   ClipboardPaste,
   Copy,
   Eye,
@@ -42,6 +56,7 @@ import {
   FileImage,
   LayoutDashboard,
   ListChecks,
+  Pencil,
   Plus,
   Trash2,
 } from '../components/icons';
@@ -70,11 +85,34 @@ export function ContentPlanPage() {
   const pager = monthPagerFromParam(params.get(MONTH_PARAM), today);
   const currentMonth = resolveMonthParam(null, today);
 
-  // Marka jest wyborem SESJI widoku (nie adresem): pager miesięcy zostaje
-  // jedynym stanem w URL, tak jak zdefiniowała to poprzednia faza.
+  // Marka jest wyborem SESJI widoku (nie adresem): w URL stoją WYŁĄCZNIE pager
+  // miesięcy i otwarte modale.
   const [requestedBrandId, setRequestedBrandId] = useState('');
-  const [selectedPostId, setSelectedPostId] = useState('');
   const [copiedPost, setCopiedPost] = useState<ContentPlanPost | null>(null);
+  const openPostId = params.get(CONTENT_PLAN_POST_PARAM);
+  const openBrandParam = params.get(CONTENT_PLAN_BRAND_PARAM);
+
+  // Otwarcie/zamknięcie rusza WYŁĄCZNIE własny parametr — pager `?m=` i drugi
+  // modal zostają nietknięte (strażnik nawigacji nie ma o co pytać).
+  const setModalParam = useCallback(
+    (name: string, value: string | null) => {
+      setParams((prev) => {
+        const next = new URLSearchParams(prev);
+        if (value === null) next.delete(name);
+        else next.set(name, value);
+        return next;
+      });
+    },
+    [setParams],
+  );
+  const closePost = useCallback(
+    () => setModalParam(CONTENT_PLAN_POST_PARAM, null),
+    [setModalParam],
+  );
+  const closeBrand = useCallback(
+    () => setModalParam(CONTENT_PLAN_BRAND_PARAM, null),
+    [setModalParam],
+  );
 
   const brands = state.contentPlanBrands;
   const brandOptions = useMemo(() => contentPlanBrandOptions(brands), [brands]);
@@ -121,13 +159,14 @@ export function ContentPlanPage() {
     });
     if (!confirmed) return;
     dispatch({ type: 'DELETE_CP_POST', postId: post.id });
-    if (selectedPostId === post.id) setSelectedPostId('');
+    if (openPostId === post.id) closePost();
     if (copiedPost?.id === post.id) setCopiedPost(null);
   };
 
   const renderCard = (activeBrand: ContentPlanBrand, post: ContentPlanPost) => {
     const view = contentPlanCardView(activeBrand, post);
-    const selected = post.id === selectedPostId;
+    // Podświetlenie karty pokazuje, KTÓRA publikacja jest otwarta w edytorze.
+    const selected = post.id === openPostId;
     const published = post.visibility === 'published';
     return (
       <article key={post.id} className="cp-card" data-selected={selected ? 'true' : undefined}>
@@ -170,13 +209,13 @@ export function ContentPlanPage() {
           </div>
         </div>
 
-        {/* Zaznaczenie to WYŁĄCZNIE podświetlenie karty (przełącznik), a nie
-            wejście w edycję — edytor publikacji wchodzi kolejną fazą. */}
+        {/* Tytuł karty OTWIERA edytor publikacji. Powłoka modala odda fokus tu
+            po zamknięciu, więc karta zostaje punktem powrotu. */}
         <button
           type="button"
           className="cp-card-title"
-          aria-pressed={selected}
-          onClick={() => setSelectedPostId(selected ? '' : post.id)}
+          aria-haspopup="dialog"
+          onClick={() => setModalParam(CONTENT_PLAN_POST_PARAM, post.id)}
         >
           {post.title}
         </button>
@@ -253,9 +292,17 @@ export function ContentPlanPage() {
         <div className="empty-state">
           <p className="empty-title">Brak marek w module.</p>
           <p className="empty-hint">
-            Kalendarz publikacji planuje się dla konkretnej marki. Zarządzanie markami i ich
-            słownikami pojawi się w kolejnym kroku wdrożenia modułu.
+            Kalendarz publikacji planuje się dla konkretnej marki. Dodaj pierwszą markę razem z
+            jej platformami, tematami i typami publikacji.
           </p>
+          <button
+            type="button"
+            className="btn primary"
+            aria-haspopup="dialog"
+            onClick={() => setModalParam(CONTENT_PLAN_BRAND_PARAM, 'new')}
+          >
+            Dodaj markę
+          </button>
         </div>
       ) : (
         <m.div
@@ -270,10 +317,7 @@ export function ContentPlanPage() {
                 <select
                   {...control}
                   value={brandId}
-                  onChange={(e) => {
-                    setRequestedBrandId(e.target.value);
-                    setSelectedPostId('');
-                  }}
+                  onChange={(e) => setRequestedBrandId(e.target.value)}
                 >
                   {brandOptions.map((option) => (
                     <option key={option.id} value={option.id}>
@@ -283,6 +327,24 @@ export function ContentPlanPage() {
                 </select>
               )}
             </Field>
+            <div className="cp-brand-actions">
+              <button
+                type="button"
+                className="btn ghost"
+                aria-haspopup="dialog"
+                onClick={() => setModalParam(CONTENT_PLAN_BRAND_PARAM, brandId)}
+              >
+                <Pencil size={15} aria-hidden /> Edytuj markę
+              </button>
+              <button
+                type="button"
+                className="btn ghost"
+                aria-haspopup="dialog"
+                onClick={() => setModalParam(CONTENT_PLAN_BRAND_PARAM, 'new')}
+              >
+                <Plus size={15} aria-hidden /> Dodaj markę
+              </button>
+            </div>
             {copiedPost !== null && (
               <p className="cp-clipboard" role="status">
                 <ClipboardPaste size={14} aria-hidden />W schowku: „{copiedPost.title}”. Wybierz
@@ -385,6 +447,28 @@ export function ContentPlanPage() {
           </m.div>
         </m.div>
       )}
+
+      {/* Modale modułu: montowane W STRONIE (patrz nagłówek pliku), każdy w
+          osobnym `AnimatePresence`, żeby zamknięcie jednego nie animowało
+          drugiego. Nieznane id obsługuje sam modal (karta „Nie znaleziono"). */}
+      <AnimatePresence>
+        {openPostId !== null && (
+          <ContentPlanPostModal
+            key={`cp-post-${openPostId}`}
+            postId={openPostId}
+            onClose={closePost}
+          />
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {openBrandParam !== null && (
+          <ContentPlanBrandModal
+            key={`cp-brand-${openBrandParam}`}
+            brandParam={openBrandParam}
+            onClose={closeBrand}
+          />
+        )}
+      </AnimatePresence>
     </section>
   );
 }
