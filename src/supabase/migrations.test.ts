@@ -182,6 +182,10 @@ describe('konwencja plików migracji', () => {
       '20260803160100_contentplan_rls_policies.sql',
       '20260803160200_contentplan_my_access_view.sql',
       '20260803160300_contentplan_seed_app_access.sql',
+      // Content Plan (faza R6): jednorazowy import danych live Tetra Wave —
+      // SAME wiersze (brands/posts/post_channels), zero zmian schematu i RLS.
+      // Plik jest generowany przez `scripts/contentplan-seed-tws.mjs`.
+      '20260803170000_contentplan_seed_tws.sql',
     ]);
   });
 

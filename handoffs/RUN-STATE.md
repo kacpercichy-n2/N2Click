@@ -48,3 +48,13 @@ dwa scope'y w `dirtyRegistry`, blok `cp-` w `styles.css`, cztery ikony.
 Reduktor, domena i selektory nietknięte. `npm test`: 116 plików / 2567 testów
 zielone; `npm run build` zielony. Wiki `/content-plan` zaktualizowane.
 Blokad brak.
+
+## Developer result (R6, 20260803-193729-n2hub-316)
+
+Import live TWS: nowy mapper `scripts/contentplan-seed-tws-mapper.mjs` (+`.d.mts`),
+skrypt I/O `scripts/contentplan-seed-tws.mjs`, test
+`src/contentplan/twsSeedImport.test.ts`, migracja
+`supabase/migrations/20260803170000_contentplan_seed_tws.sql` (1 marka / 23 posty
+/ 55 kanałów) i wpis w `migrations.test.ts`. Dwa uruchomienia = identyczny plik.
+`npm test` 117/2591 zielone, `npm run build` zielony. Nic nie aplikowano do bazy.
+Wiki bez zmian.
