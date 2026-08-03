@@ -74,3 +74,12 @@ Granice: `navItems.ts` + `icons.ts` (CalendarRange), `routeChunks.ts`,
 `contentplan/useContentPlanAccess.ts`. Rozszerzenie kontekstu: `GlobalSearch`
 i `NavOrderEditor` musiały dostać tę samą bramkę, bo obie czytają `NAV`.
 `npm test` 113/2494 zielone, `npm run build` zielony. Wiki: patrz raport.
+
+## Developer log (n2hub-314)
+
+Granice: `ContentPlanPage.tsx` (kalendarz miesiąca), nowe
+`pages/contentPlanCalendar.ts` + test, `styles.css` (blok `cp-*`),
+`icons.ts` (5 ikon), `utils/colors.ts` (`--cp-platform`). `npm test`
+114/2516 zielone (+22), `npm run build` zielony. GlobalSearch: encje modułu
+ODROCZONE (nowa grupa = przebudowa modelu + brak bramki roli w `searchAll`).
+Playwright niezainstalowany — brak podglądu w przeglądarce.

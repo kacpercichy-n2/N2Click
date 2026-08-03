@@ -61,4 +61,12 @@ export {
   // dzień jak `CalendarDays` czy godzina jak `CalendarClock`) odróżnia pozycję od
   // Kalendarza i Wydarzeń, które stoją w menu obok.
   CalendarRange,
+  // Kalendarz „Content planu": kopiowanie i wklejanie slotu publikacji między
+  // dniami, widoczność publikacji dla klienta (szkic vs udostępnione) oraz
+  // zastępnik miniatury pliku z Drive.
+  Copy,
+  ClipboardPaste,
+  Eye,
+  EyeOff,
+  FileImage,
 } from 'lucide-react';

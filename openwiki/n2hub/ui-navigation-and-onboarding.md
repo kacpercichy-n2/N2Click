@@ -49,10 +49,25 @@
   CZTERECH miejscach, które muszą mówić to samo: filtr `navPaths` + `<Route>` w
   `App.tsx`, `quickActionCatalog` w palecie (opcja `canContentPlan`, domyślnie
   `false`), `NavOrderEditor` i samo-guard strony (`<Navigate to={HOME_PATH}>`,
-  wzorzec `/admin`). Stan strony to sam pager miesięcy w URL (`?m=YYYY-MM`,
-  czysty `src/pages/contentPlanRoute.ts` nad `contentplan/domain.ts`); reszta
-  (siatka, edytor) wchodzi kolejnymi fazami. Bramka UX, nie granica
-  bezpieczeństwa — zakres wymusza RLS schematu `contentplan`.
+  wzorzec `/admin`). W URL stoi WYŁĄCZNIE pager miesięcy (`?m=YYYY-MM`, czysty
+  `src/pages/contentPlanRoute.ts` nad `contentplan/domain.ts`); wybór marki,
+  zaznaczona karta i schowek kopiuj/wklej to stan SESJI widoku. Kalendarz
+  miesiąca (port `CalendarGrid`/`PostCard`/`MonthStats` z aplikacji źródłowej,
+  zero Mantine) stoi na czystym `src/pages/contentPlanCalendar.ts` (+ test w
+  node): rozłożenie publikacji na dni, liczniki nagłówka, model karty i DRAFTY
+  kopiuj/wklej. Zapis idzie WYŁĄCZNIE przez reduktor (`SAVE_CP_POST` z
+  `postId: null` — także wklejenie, a kopia zawsze startuje jako szkic w
+  statusie roboczym i ze świeżymi id kanałów), usuwanie przez wspólny
+  `useConfirm()`. ŚWIADOMA RÓŻNICA WOBEC ŹRÓDŁA: tam siatka była poziomym
+  przewijaczem 31 kolumn z własnymi scrollerami — tutaj dni zawijają się w
+  responsywną siatkę (klasy `cp-*` w `styles.css`, kolor platformy przez
+  `tintVar('--cp-platform')`), a jedynym właścicielem przewijania zostaje
+  strona. Karta tylko ZAZNACZA publikację (`aria-pressed`), edytora nie otwiera
+  — inspektor i administracja marek wchodzą kolejną fazą, a bez ani jednej
+  marki strona pokazuje pusty stan. Encje modułu NIE są zarejestrowane w
+  `searchAll`/palecie (paleta ma tylko szybką akcję nawigacyjną za
+  `canContentPlan`). Bramka UX, nie granica bezpieczeństwa — zakres wymusza RLS
+  schematu `contentplan`.
 - `/team` (Struktura zespołu) is reached via the shared `src/pages/TeamTabs.tsx`
   tab bar (Pracownicy → `/people`, Struktura zespołu → `/team`) rendered on both
   the Zespół (`/people`) and `/team` pages, not from its own nav item. Od

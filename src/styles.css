@@ -8937,3 +8937,337 @@ a.toggle-btn {
   font-size: var(--n2-type-sm);
   line-height: 1.5;
 }
+
+/* ---------- Content plan — kalendarz miesiąca ----------
+   Port widoków CalendarGrid / PostCard / MonthStats z aplikacji źródłowej na
+   prymitywy N2Hub (zero Mantine). ŚWIADOMA RÓŻNICA WOBEC ŹRÓDŁA: tam siatka
+   była poziomym przewijaczem 31 kolumn, z których KAŻDA miała własny scroller.
+   Tutaj dni zawijają się w responsywną siatkę, a jedynym właścicielem
+   przewijania zostaje strona — zagnieżdżone scrollery są wprost zabronione
+   przez `frontend-performance-and-primitives.md`. */
+.cp-layout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-5);
+}
+.cp-toolbar {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: var(--n2-space-3) var(--n2-space-4);
+}
+.cp-brand-field {
+  min-width: 220px;
+  max-width: 320px;
+  margin-bottom: 0;
+}
+/* Schowek kopiuj/wklej: pasek stanu, nie kontrolka — pigułka bez obrysu, żeby
+   nie czytała się jak edytowalny status (dieta pigułek). */
+.cp-clipboard {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: var(--n2-radius-pill);
+  background: var(--n2-surface-muted);
+  color: var(--n2-text-soft);
+  font-size: var(--n2-type-sm);
+}
+
+.cp-overview {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--n2-space-4) var(--n2-space-5);
+  padding: var(--n2-space-5);
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-md);
+  background: var(--card-bg);
+}
+.cp-overview-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 180px;
+}
+.cp-overview-copy strong {
+  font-size: var(--n2-type-lg);
+}
+.cp-eyebrow {
+  font-size: var(--n2-type-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--n2-text-muted);
+}
+.cp-overview-hint {
+  font-size: var(--n2-type-sm);
+  color: var(--n2-text-soft);
+}
+.cp-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--n2-space-3);
+}
+.cp-metric {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-3);
+  padding: var(--n2-space-3) var(--n2-space-4);
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-sm);
+  background: var(--n2-surface-muted);
+  color: var(--n2-text-muted);
+}
+.cp-metric div {
+  display: flex;
+  flex-direction: column;
+}
+.cp-metric strong {
+  font-family: var(--n2-font-data);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--n2-type-lg);
+  color: var(--n2-text);
+}
+.cp-metric span {
+  font-size: var(--n2-type-xs);
+  color: var(--n2-text-muted);
+}
+.cp-metric-primary {
+  border-color: var(--n2-border-strong);
+  background: rgba(196, 150, 255, 0.12);
+  color: var(--n2-lavender);
+}
+.cp-channels {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--n2-space-2) var(--n2-space-4);
+  width: 100%;
+  margin: 0;
+  font-size: var(--n2-type-sm);
+  color: var(--n2-text-soft);
+}
+.cp-channels-label {
+  font-size: var(--n2-type-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--n2-text-muted);
+}
+.cp-channel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.cp-channel b {
+  font-family: var(--n2-font-data);
+  font-variant-numeric: tabular-nums;
+}
+/* Kolor platformy wchodzi JEDNĄ zmienną (`tintVar`), tak jak `--status`
+   i `--person` — arkusz liczy z niej kropkę i wypełnienie pigułki. */
+.cp-channel-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--n2-radius-pill);
+  background: var(--cp-platform, var(--n2-lavender));
+}
+
+.cp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: var(--n2-space-3);
+}
+.cp-day {
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-2);
+  min-height: 132px;
+  padding: var(--n2-space-3);
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-md);
+  background: var(--n2-surface-muted);
+}
+.cp-day[data-weekend='true'] {
+  background: rgba(255, 255, 255, 0.02);
+}
+.cp-day[data-today='true'] {
+  border-color: var(--n2-border-strong);
+}
+.cp-day-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--n2-space-2);
+}
+.cp-day-when {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.cp-day-when strong {
+  font-family: var(--n2-font-data);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--n2-type-md);
+}
+.cp-day-when span {
+  font-size: var(--n2-type-xs);
+  color: var(--n2-text-muted);
+}
+.cp-day-posts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-2);
+}
+
+.cp-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--n2-space-3);
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-sm);
+  background: var(--card-bg);
+  transition:
+    border-color calc(160ms * var(--n2-motion)) ease,
+    background calc(160ms * var(--n2-motion)) ease;
+}
+.cp-card[data-selected='true'] {
+  border-color: var(--n2-border-strong);
+  background: rgba(196, 150, 255, 0.1);
+}
+/* Miniatura jest ZASTĘPNIKIEM: pliki z Dysku wchodzą osobną fazą, więc kadr
+   trzyma tylko proporcję (`aspect-ratio` inline) i nazywa rodzaj pliku. */
+.cp-card-media {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  max-height: 170px;
+  border: 1px dashed var(--n2-border);
+  border-radius: var(--n2-radius-xs);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--n2-text-faint);
+}
+.cp-card-media-label {
+  font-size: var(--n2-type-xs);
+}
+.cp-ratio {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  padding: 1px 8px;
+  border-radius: var(--n2-radius-pill);
+  background: rgba(0, 0, 0, 0.55);
+  font-family: var(--n2-font-data);
+  font-size: var(--n2-type-xs);
+  color: var(--n2-text-soft);
+}
+.cp-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--n2-space-2);
+}
+.cp-visibility {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--n2-type-xs);
+  color: var(--n2-text-muted);
+}
+.cp-visibility[data-published='true'] {
+  color: var(--n2-info);
+}
+.cp-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.cp-card-title {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  color: var(--n2-text);
+  cursor: pointer;
+  transition: color calc(140ms * var(--n2-motion)) ease;
+}
+.cp-card-title:hover {
+  color: var(--n2-lavender);
+}
+.cp-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--n2-space-2);
+  margin: 0;
+  font-size: var(--n2-type-xs);
+  color: var(--n2-text-muted);
+}
+.cp-card-meta span:not(:first-child)::before {
+  content: '· ';
+}
+.cp-platforms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+}
+.cp-platform {
+  padding: 1px 8px;
+  border-radius: var(--n2-radius-pill);
+  background: color-mix(in oklab, var(--cp-platform, var(--n2-lavender)) 16%, transparent);
+  font-size: var(--n2-type-xs);
+  color: var(--n2-text-soft);
+}
+.cp-card-copy {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  margin: 0;
+  font-size: var(--n2-type-sm);
+  color: var(--n2-text-soft);
+}
+.cp-card-tags {
+  margin: 0;
+  font-size: var(--n2-type-xs);
+  color: var(--n2-text-faint);
+}
+.cp-paste {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: var(--n2-space-2);
+  border: 1px dashed var(--n2-border-strong);
+  border-radius: var(--n2-radius-sm);
+  background: none;
+  font: inherit;
+  font-size: var(--n2-type-sm);
+  color: var(--n2-lavender);
+  cursor: pointer;
+  transition: background calc(160ms * var(--n2-motion)) ease;
+}
+.cp-paste:hover {
+  background: rgba(196, 150, 255, 0.12);
+}
+
+@media (max-width: 760px) {
+  .cp-grid {
+    grid-template-columns: 1fr;
+  }
+  .cp-day {
+    min-height: 0;
+  }
+  .cp-brand-field {
+    max-width: none;
+    width: 100%;
+  }
+}

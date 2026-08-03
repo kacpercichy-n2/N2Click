@@ -57,8 +57,9 @@ export function personColor(id: string): string {
   return PALETTE[hashString(id) % PALETTE.length];
 }
 
-/** Custom properties the stylesheet reads to derive entity tints. */
-export type TintVarName = '--status' | '--person';
+/** Custom properties the stylesheet reads to derive entity tints.
+ *  `--cp-platform` niesie kolor platformy marki w module „Content plan". */
+export type TintVarName = '--status' | '--person' | '--cp-platform';
 
 /**
  * Inline style that hands ONE colour to CSS as a custom property. Every tint
