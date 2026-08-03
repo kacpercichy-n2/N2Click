@@ -21,6 +21,7 @@ import {
   CalendarPage,
   ChangelogPage,
   ClientsPage,
+  ContentPlanPage,
   DashboardPage,
   EventsPage,
   KanbanPage,
@@ -37,6 +38,7 @@ import {
   prefetchRoute,
 } from './pages/routeChunks';
 import { canViewTeam } from './pages/teamScope';
+import { useContentPlanAccess } from './contentplan/useContentPlanAccess';
 import { LoginPage } from './pages/LoginPage';
 import { HOME_PATH } from './pages/homeRoute';
 import { useAuth } from './auth/SessionProvider';
@@ -183,6 +185,12 @@ export function App() {
   const teamRole = effectiveAccessRole(currentUser, org.state, { mode: auth.mode });
   const teamUser = currentUser && teamRole ? { ...currentUser, accessRole: teamRole } : currentUser;
   const canTeam = canViewTeam(teamUser);
+  // Moduł „Content plan": decyzja operatora 2026-08-03 — widzą go WYŁĄCZNIE
+  // administratorzy (rola chmury ze snapshotu, nigdy z JWT). Jedno wyliczenie
+  // dla menu, palety, edytora kolejności i trasy — patrz
+  // `contentplan/useContentPlanAccess.ts` nad czystym `pages/contentPlanScope.ts`.
+  // Bramka UX, nie granica bezpieczeństwa (zakres wymusza RLS).
+  const canContentPlan = useContentPlanAccess();
   /** Która zakładka dolnego paska ma stan aktywny (`null` = np. „Więcej”). */
   const activeTab = activeTabPath(location.pathname);
   // Session gate: with people present and nobody resolving to a current user,
@@ -215,7 +223,10 @@ export function App() {
   const navPaths = orderedNav
     .map(([to]) => to)
     .filter(
-      (to) => (to !== '/admin' || canAdmin) && (to !== '/account' || auth.mode === 'supabase'),
+      (to) =>
+        (to !== '/admin' || canAdmin) &&
+        (to !== '/account' || auth.mode === 'supabase') &&
+        (to !== '/content-plan' || canContentPlan),
     );
 
   // Logout: in Supabase mode end the real Auth session first (its SIGNED_OUT
@@ -493,6 +504,12 @@ export function App() {
               <Route path="/calendar" element={<CalendarPage />} />
               {/* Wydarzenia: widoczne dla każdej roli (zarządzanie gated przez events.manage). */}
               <Route path="/wydarzenia" element={<EventsPage />} />
+              {/* Content plan: bramkowany rolą (tylko administratorzy). Strona
+                  pilnuje się dodatkowo sama — jak /admin i /team. */}
+              <Route
+                path="/content-plan"
+                element={canContentPlan ? <ContentPlanPage /> : <Navigate to="/dashboard" replace />}
+              />
               <Route path="/people" element={<PeoplePage />} />
               <Route path="/people/:id" element={<PersonProfilePage />} />
               <Route path="/workload" element={<WorkloadPage />} />

@@ -34,6 +34,25 @@
   keeps the `.sidebar-help` class and `shell.help` tour anchor (dispatches
   `n2hub:open-tutorials`); the footer lives inside `#app-drawer`, so the mobile
   focus trap covers it. Collapsed rail stacks the footer to two 44px circles.
+- `/content-plan` („Content plan", ikona `CalendarRange`, w `NAV` po
+  `/wydarzenia`, `src/pages/ContentPlanPage.tsx`) to TRZECIA bramkowana pozycja
+  menu. Decyzja operatora 2026-08-03: moduł widzą WYŁĄCZNIE administratorzy.
+  Kryterium jest czyste (`src/pages/contentPlanScope.ts`: `contentPlanViewer` +
+  `canViewContentPlan(user, moduleAccess)`, stała `CONTENT_PLAN_ROLES`) i
+  świadomie NIE używa `effectiveAccessRole` — tamta mapuje chmurowego
+  `manager` na `pelne`, a tu menedżer musi odpaść. Rola idzie ze snapshotu
+  `OrgDataProvider` (`profile.cloudRole`), w trybie lokalnym/ładowaniu/błędzie
+  z lokalnej `accessRole` (`pelne`→administrator, `ograniczone`→worker).
+  `moduleAccess` (grant `contentplan.my_access`) jest przyjmowany, ale jeszcze
+  nieczytany — zmiana kryterium to zmiana JEDNEJ funkcji. Jedno wyliczenie na
+  aplikację daje hook `src/contentplan/useContentPlanAccess.ts`, wpięty w
+  CZTERECH miejscach, które muszą mówić to samo: filtr `navPaths` + `<Route>` w
+  `App.tsx`, `quickActionCatalog` w palecie (opcja `canContentPlan`, domyślnie
+  `false`), `NavOrderEditor` i samo-guard strony (`<Navigate to={HOME_PATH}>`,
+  wzorzec `/admin`). Stan strony to sam pager miesięcy w URL (`?m=YYYY-MM`,
+  czysty `src/pages/contentPlanRoute.ts` nad `contentplan/domain.ts`); reszta
+  (siatka, edytor) wchodzi kolejnymi fazami. Bramka UX, nie granica
+  bezpieczeństwa — zakres wymusza RLS schematu `contentplan`.
 - `/team` (Struktura zespołu) is reached via the shared `src/pages/TeamTabs.tsx`
   tab bar (Pracownicy → `/people`, Struktura zespołu → `/team`) rendered on both
   the Zespół (`/people`) and `/team` pages, not from its own nav item. Od

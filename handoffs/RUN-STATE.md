@@ -65,3 +65,12 @@ slice'y w `types.ts`, `emptyData`/`coerceArray`/`repairContentPlan` w
 `persistGate` (kolekcje NON_MIRRORED — brak domu w chmurze do R8). `npm test`
 111 plików / 2476 testów zielone (+139), `npm run build` zielony. Wiki:
 `state-and-persistence.md` zaktualizowane. Bez blokerów.
+
+## Developer log (n2hub-313)
+
+Granice: `navItems.ts` + `icons.ts` (CalendarRange), `routeChunks.ts`,
+`App.tsx` (filtr navPaths + trasa), nowe `pages/contentPlanScope.ts`,
+`pages/contentPlanRoute.ts`, `pages/ContentPlanPage.tsx`,
+`contentplan/useContentPlanAccess.ts`. Rozszerzenie kontekstu: `GlobalSearch`
+i `NavOrderEditor` musiały dostać tę samą bramkę, bo obie czytają `NAV`.
+`npm test` 113/2494 zielone, `npm run build` zielony. Wiki: patrz raport.

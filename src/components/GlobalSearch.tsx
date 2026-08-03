@@ -60,6 +60,7 @@ import { polishCount } from '../utils/polishPlural';
 import { announce } from '../utils/liveRegion';
 import { useOpenTask } from './TaskModal';
 import { OverlayLayer } from './useOverlay';
+import { useContentPlanAccess } from '../contentplan/useContentPlanAccess';
 
 /** Ile wierszy pokazuje rozwinięta grupa (drugi i ostatni krok — bez paginacji). */
 const EXPANDED_SEARCH_LIMIT = 40;
@@ -220,15 +221,18 @@ function SearchOverlay({ onClose }: { onClose: () => void }) {
   const meta = useMemo(() => buildSearchResultMeta(state), [state]);
 
   // Szybkie akcje: WYŁĄCZNIE to, co aplikacja już potrafi (nowe zadanie +
-  // nawigacja). Bramki `/admin` i `/team` lustrzane do menu — UX, nie ochrona.
+  // nawigacja). Bramki `/admin`, `/team` i `/content-plan` lustrzane do menu —
+  // UX, nie ochrona.
   const me = currentUserSelector(state);
+  const canContentPlan = useContentPlanAccess();
   const catalog = useMemo(
     () =>
       quickActionCatalog({
         canAdmin: can(me, 'admin.panel', { peopleCount: state.people.length }),
         canTeam: canViewTeam(me),
+        canContentPlan,
       }),
-    [me, state.people.length],
+    [me, state.people.length, canContentPlan],
   );
 
   const trimmed = deferredQuery.trim();

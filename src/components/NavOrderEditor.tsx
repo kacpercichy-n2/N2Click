@@ -12,6 +12,7 @@ import { can } from '../store/permissions';
 import { NAV, type NavItem } from './navItems';
 import { applyNavOrder } from '../utils/navOrder';
 import { loadUiPrefs, navOrderForUser, updateNavOrderForUser } from '../utils/uiPrefs';
+import { useContentPlanAccess } from '../contentplan/useContentPlanAccess';
 
 const DEFAULT_PATHS = NAV.map(([to]) => to);
 
@@ -24,6 +25,9 @@ export function NavOrderEditor() {
   const userId = state.currentUserId;
   const currentUser = state.people.find((p) => p.id === state.currentUserId);
   const canAdmin = can(currentUser, 'admin.panel', { peopleCount: state.people.length });
+  // Ta sama bramka co w sidebarze: pozycji ukrytej w menu nie ma po co
+  // przestawiać (i nie wolno jej stąd odsłaniać).
+  const canContentPlan = useContentPlanAccess();
 
   // Full effective order (all default paths, self-repairing), then the visible
   // subset under the SAME gates the sidebar applies.
@@ -40,7 +44,10 @@ export function NavOrderEditor() {
       return item ? [item] : [];
     })
     .filter(
-      ([to]) => (to !== '/admin' || canAdmin) && (to !== '/account' || mode === 'supabase'),
+      ([to]) =>
+        (to !== '/admin' || canAdmin) &&
+        (to !== '/account' || mode === 'supabase') &&
+        (to !== '/content-plan' || canContentPlan),
     );
 
   if (!userId || visibleItems.length === 0) return null;

@@ -57,4 +57,8 @@ export {
   // Urlop: blok w kalendarzu, wskaźnik zamiast wykrzyknika przeciążenia i
   // wejście „Dodaj urlop". `Palmtree` to przestarzały alias tej samej ikony.
   TreePalm,
+  // Moduł „Content plan": kalendarz miesiąca publikacji. Zakres (a nie pojedynczy
+  // dzień jak `CalendarDays` czy godzina jak `CalendarClock`) odróżnia pozycję od
+  // Kalendarza i Wydarzeń, które stoją w menu obok.
+  CalendarRange,
 } from 'lucide-react';
