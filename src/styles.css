@@ -5637,19 +5637,28 @@ a.toggle-btn {
    Skondensowany podgląd profilu w kafelkach: wartości domyślnie tylko do
    odczytu („Edytuj dane" przełącza na formularz PersonProfile). Kafelki to
    zwykłe `.editor-section` w siatce — jeden słownik kart w całej aplikacji. */
-.account-page {
-  max-width: 1120px;
-}
 .account-grid {
   display: grid;
   grid-template-columns: 1fr;
   gap: var(--n2-space-4);
-  align-items: start;
+  /* Domyślny stretch: kafelki w rzędzie mają RÓWNĄ wysokość, więc siatka
+     wypełnia się optycznie bez postrzępionych dolnych krawędzi. */
 }
-/* Dwie kolumny od ~900px: cztery kafelki danych układają się w spokojne 2×2
-   (auto-fit robiło 3+1 z dziurą w drugim rzędzie). */
+/* Strona idzie na PEŁNĄ szerokość; kolumny skokowo 1 → 2 → 4, bo cztery
+   kafelki danych dzielą się równo tylko przez te liczby (auto-fit robiło
+   3+1 z dziurą w drugim rzędzie). */
 @media (min-width: 900px) {
   .account-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (min-width: 1500px) {
+  .account-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  /* Strefa HR ma dwa kafelki — na szerokim ekranie dzielą pełną szerokość
+     na pół, w rytmie siatki wyżej. */
+  .account-grid-hr {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

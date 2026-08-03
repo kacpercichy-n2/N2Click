@@ -217,7 +217,7 @@ function AccountDashboard({ person, onEdit }: { person: Person; onEdit: () => vo
         <h2>Strefa HR</h2>
         <span className="account-soon">W przygotowaniu</span>
       </div>
-      <div className="account-grid">
+      <div className="account-grid account-grid-hr">
         <div className="editor-section account-tile">
           <h2>
             <TreePalm size={16} aria-hidden className="account-tile-icon" /> Urlop
