@@ -20,6 +20,7 @@ import {
   postIssueLabels,
   postIssuesByField,
   saveHistoryLabel,
+  setChannelMedia,
   setGroupCopy,
   setGroupTags,
   splitDescriptionForPlatform,
@@ -424,5 +425,45 @@ describe('channelMediaView', () => {
     expect(view.hasFile).toBe(true);
     expect(view.ratioLabel).toBe('4:5');
     expect(view.aspectRatio).toBe('1080 / 1350');
+  });
+});
+
+describe('setChannelMedia', () => {
+  const media = { source: 'gdrive', fileId: 'drive-1', type: 'image' } as const;
+
+  it('podpina plik WYŁĄCZNIE do wskazanego kanału', () => {
+    const draft = buildPostDraft(post());
+    const next = setChannelMedia(draft, 'c2', media);
+
+    expect(next.channels[0].media).toBeUndefined();
+    expect(next.channels[1].media).toEqual(media);
+    expect(next).not.toBe(draft);
+    expect(draft.channels[1].media).toBeUndefined();
+  });
+
+  it('null USUWA klucz media (forma kanoniczna kanału bez pliku)', () => {
+    const withMedia = setChannelMedia(buildPostDraft(post()), 'c1', media);
+    const cleared = setChannelMedia(withMedia, 'c1', null);
+
+    expect(Object.prototype.hasOwnProperty.call(cleared.channels[0], 'media')).toBe(false);
+    expect(normalizeContentPlanPostDraft(cleared, [brand()])).not.toBeNull();
+  });
+
+  it('nieznany kanał, ten sam plik i ponowne czyszczenie zwracają TĘ SAMĄ referencję', () => {
+    const draft = buildPostDraft(post());
+    expect(setChannelMedia(draft, 'brak', media)).toBe(draft);
+    expect(setChannelMedia(draft, 'c1', null)).toBe(draft);
+
+    const withMedia = setChannelMedia(draft, 'c1', media);
+    expect(setChannelMedia(withMedia, 'c1', { ...media })).toBe(withMedia);
+    expect(setChannelMedia(withMedia, 'c1', { ...media, width: 1080, height: 1350 })).not.toBe(
+      withMedia,
+    );
+  });
+
+  it('zmiana pliku wchodzi do etykiety historii zapisu', () => {
+    const source = post();
+    const draft = setChannelMedia(buildPostDraft(source), 'c1', media);
+    expect(saveHistoryLabel(source, draft, brand())).toBe('Zmieniono: media');
   });
 });

@@ -69,6 +69,9 @@ export {
   Eye,
   EyeOff,
   FileImage,
+  // Edytor publikacji „Content planu": wskazanie folderu marki na Dysku Google
+  // (Picker), obok wyboru plików dla poszczególnych platform.
+  FolderOpen,
   // Edytor publikacji „Content planu": sekcja komentarzy, wątek odpowiedzi,
   // dziennik zmian publikacji oraz słowniki marki w edytorze marki.
   MessageSquare,

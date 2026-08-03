@@ -16,8 +16,11 @@
 // - Zapis: WYŁĄCZNIE reduktor. Przed dispatchem stoi LUSTRO jego bramki
 //   (`normalizeContentPlanPostDraft`) — odrzucony draft zostawia modal otwarty
 //   i NIE czyści dirty, bo nieudany zapis nie może wyglądać jak sukces.
-// - Media są tylko do ODCZYTU (referencja do pliku na Dysku): żadnego inputu
-//   pliku ani base64 (wchodzi osobną fazą).
+// - Media wskazuje Picker Dysku Google (`contentplan/google.ts`): do draftu
+//   wchodzi WYŁĄCZNIE referencja `{ source: 'gdrive', fileId, ... }`. Żadnego
+//   inputu pliku, uploadu ani base64 — plik zostaje na Dysku. Sam wybór jest
+//   asynchroniczny, więc stan draftu zmienia go przez `setChannelMedia` na
+//   AKTUALNEJ referencji (`draftRef`), nie na tej z chwili kliknięcia.
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { m } from 'motion/react';
 import { useStore } from '../store/AppStore';
@@ -26,11 +29,24 @@ import {
   CONTENT_PLAN_STATUSES,
   formatCommentDate,
   MAIN_DESCRIPTION_GROUP,
+  monthKeyOf,
   normalizeContentPlanPostDraft,
   validatePostForPublication,
   type ContentPlanPostDraft,
   type ContentPlanReviewDecision,
 } from '../contentplan/domain';
+import {
+  driveErrorMessage,
+  driveThumbUrl,
+  driveViewUrl,
+  googleDriveDisabledReason,
+  mediaFromPickerSelection,
+  pickerParentId,
+  pickFolderFromDrive,
+  pickFromDrive,
+  shareFilePublic,
+} from '../contentplan/google';
+import { loadDriveFolder, rememberDriveFolder } from '../contentplan/driveFolders';
 import {
   buildPostDraft,
   canTogglePlatformOff,
@@ -47,6 +63,7 @@ import {
   postIssuesByField,
   postTagsFieldId,
   saveHistoryLabel,
+  setChannelMedia,
   setGroupCopy,
   setGroupTags,
   splitDescriptionForPlatform,
@@ -60,11 +77,13 @@ import { useConfirm } from './ConfirmProvider';
 import { Field, focusFieldById } from './Field';
 import { saveErrorSummary } from './fieldContract';
 import { IconButton } from './IconButton';
+import { DisabledHint } from './Tooltip';
 import { tintVar } from '../utils/colors';
 import {
   Check,
   CornerDownRight,
   FileImage,
+  FolderOpen,
   History,
   ListChecks,
   Megaphone,
@@ -78,6 +97,9 @@ export const CONTENT_PLAN_POST_PARAM = 'publikacja';
 
 /** Autor decyzji i komentarzy, gdy sesja nie wskazuje osoby. */
 const FALLBACK_AUTHOR = 'Zespół N2';
+
+/** Znacznik „otwarte okno wyboru FOLDERU" (kanały używają własnych id). */
+const FOLDER_BUSY_KEY = 'folder';
 
 interface ModalProps {
   postId: string;
@@ -256,6 +278,10 @@ function ContentPlanPostEditor({
   const [commentBody, setCommentBody] = useState('');
   const [replyTargetId, setReplyTargetId] = useState('');
   const [replyBody, setReplyBody] = useState('');
+  // Otwarte okno Google: id kanału albo `FOLDER_BUSY_KEY` (`null` = bezczynne).
+  const [driveBusy, setDriveBusy] = useState<string | null>(null);
+  const [driveError, setDriveError] = useState<string | null>(null);
+  const [driveNotice, setDriveNotice] = useState<string | null>(null);
 
   // Decyzje i komentarze podpisuje zalogowana osoba; brak sesji => nazwa zespołu
   // (reduktor odrzuca pustego autora).
@@ -276,6 +302,79 @@ function ContentPlanPostEditor({
     setErrors((current) =>
       current.form === undefined && !hasPostErrors(current) ? current : computePostErrors(next),
     );
+  };
+
+  // Wybór pliku jest ASYNCHRONICZNY (okno Google), więc zapis media musi trafić
+  // w draft AKTUALNY w chwili powrotu z Pickera, nie w ten z chwili kliknięcia.
+  const draftRef = useRef(draft);
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+
+  // Miesiąc publikacji jest kluczem pamięci folderów marki (pusty = zła data).
+  const monthKey = monthKeyOf(draft.date);
+  const driveReason = googleDriveDisabledReason();
+
+  const pickFolderParent = async (): Promise<string | null> =>
+    monthKey === '' ? null : await loadDriveFolder(brand.id, monthKey);
+
+  const pickChannelMedia = async (channelId: string) => {
+    setDriveBusy(channelId);
+    setDriveError(null);
+    setDriveNotice(null);
+    try {
+      const parentId = await pickFolderParent();
+      const documents = await pickFromDrive(parentId !== null ? { parentId } : {});
+      if (documents === null) return; // anulowane w oknie Google
+      const media = mediaFromPickerSelection(documents);
+      if (media === null) {
+        setDriveNotice('Nie wybrano pliku, który da się podpiąć do publikacji.');
+        return;
+      }
+      const next = setChannelMedia(draftRef.current, channelId, media);
+      if (next !== draftRef.current) update(next);
+      if (documents.length > 1) {
+        setDriveNotice(
+          `Wybrano plików: ${documents.length}. Podpięty jest pierwszy, pozostałe dodaj przy innych platformach.`,
+        );
+      }
+      // Pamięć folderu i publiczny link to WYGODA: obie operacje są
+      // best-effort i nigdy nie blokują edycji.
+      const parent = pickerParentId(documents);
+      if (parent !== null && monthKey !== '') {
+        void rememberDriveFolder(brand.id, monthKey, parent);
+      }
+      void shareFilePublic(media.fileId);
+    } catch (error) {
+      setDriveError(driveErrorMessage(error));
+    } finally {
+      setDriveBusy(null);
+    }
+  };
+
+  const pickBrandFolder = async () => {
+    setDriveBusy(FOLDER_BUSY_KEY);
+    setDriveError(null);
+    setDriveNotice(null);
+    try {
+      const parentId = await pickFolderParent();
+      const folder = await pickFolderFromDrive(parentId !== null ? { parentId } : {});
+      if (folder === null) return;
+      if (monthKey === '') {
+        setDriveError('Ustaw poprawną datę publikacji, zanim zapamiętasz folder marki.');
+        return;
+      }
+      await rememberDriveFolder(brand.id, monthKey, folder.id);
+      setDriveNotice(
+        folder.name === ''
+          ? 'Zapamiętano folder marki dla tego miesiąca.'
+          : `Zapamiętano folder „${folder.name}” dla tego miesiąca.`,
+      );
+    } catch (error) {
+      setDriveError(driveErrorMessage(error));
+    } finally {
+      setDriveBusy(null);
+    }
   };
 
   const groups = draftDescriptionGroups(draft);
@@ -689,33 +788,108 @@ function ContentPlanPostEditor({
                 )}
               </Field>
 
-              {/* Pliki są TYLKO do odczytu: referencja do Dysku wchodzi osobną
-                  fazą, tutaj kadr trzyma samą proporcję. */}
-              <ul className="cp-media-list">
-                {group.channels.map((channel) => {
-                  const media = channelMediaView(brand, channel, draft.format);
-                  return (
-                    <li key={channel.id} className="cp-media-row">
-                      <span
-                        className="cp-media-thumb"
-                        style={{ aspectRatio: media.aspectRatio }}
-                        aria-hidden
-                      >
-                        <FileImage size={14} />
-                      </span>
-                      <strong>{media.platformName}</strong>
-                      <span className="cp-media-file" data-empty={media.hasFile ? undefined : 'true'}>
-                        {media.fileLabel}
-                      </span>
-                      {media.ratioLabel !== null && (
-                        <span className="cp-ratio-badge">{media.ratioLabel}</span>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
             </section>
           ))}
+        </section>
+
+        {/* Media stoją w JEDNEJ sekcji (a nie w grupach opisów): plik jest
+            własnością KANAŁU, a grupa opisu tylko dzieli treść, więc ta sama
+            platforma nie powtarzałaby się w dwóch listach. */}
+        <section className="cp-section">
+          <h2 className="cp-section-title">
+            <FileImage size={16} aria-hidden /> Media z Dysku Google
+          </h2>
+          <div className="cp-media-toolbar">
+            <DisabledHint reason={driveReason} id="cp-post-drive-folder-hint">
+              <button
+                type="button"
+                className="btn ghost"
+                disabled={driveReason !== null || driveBusy !== null}
+                onClick={() => {
+                  void pickBrandFolder();
+                }}
+              >
+                <FolderOpen size={14} aria-hidden /> Wskaż folder marki
+              </button>
+            </DisabledHint>
+            <p className="field-hint">
+              Wybór plików startuje w folderze zapamiętanym dla marki i miesiąca publikacji. Pliki
+              zostają na Dysku, w publikacji zapisujemy sam identyfikator.
+            </p>
+          </div>
+
+          {draft.channels.length === 0 ? (
+            <p className="field-hint">Dodaj platformę, żeby podpiąć do niej plik z Dysku.</p>
+          ) : (
+            <ul className="cp-media-list">
+              {draft.channels.map((channel) => {
+                const media = channelMediaView(brand, channel, draft.format);
+                const fileId = channel.media?.fileId ?? '';
+                return (
+                  <li key={channel.id} className="cp-media-row">
+                    <span
+                      className="cp-media-thumb"
+                      style={{ aspectRatio: media.aspectRatio }}
+                      data-file={media.hasFile ? 'true' : undefined}
+                      aria-hidden
+                    >
+                      {media.hasFile ? (
+                        <img src={driveThumbUrl(fileId, 160)} alt="" loading="lazy" />
+                      ) : (
+                        <FileImage size={14} />
+                      )}
+                    </span>
+                    <strong>{media.platformName}</strong>
+                    <span className="cp-media-file" data-empty={media.hasFile ? undefined : 'true'}>
+                      {media.fileLabel}
+                    </span>
+                    {media.ratioLabel !== null && (
+                      <span className="cp-ratio-badge">{media.ratioLabel}</span>
+                    )}
+                    <span className="cp-media-actions">
+                      <DisabledHint reason={driveReason} id={`cp-post-drive-${channel.id}-hint`}>
+                        <button
+                          type="button"
+                          className="btn ghost"
+                          disabled={driveReason !== null || driveBusy !== null}
+                          onClick={() => {
+                            void pickChannelMedia(channel.id);
+                          }}
+                        >
+                          {media.hasFile ? 'Zmień plik' : 'Wybierz z Dysku'}
+                        </button>
+                      </DisabledHint>
+                      {media.hasFile && (
+                        <>
+                          <a
+                            className="link-btn"
+                            href={driveViewUrl(fileId)}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Otwórz na Dysku
+                          </a>
+                          <button
+                            type="button"
+                            className="link-btn"
+                            onClick={() => update(setChannelMedia(draft, channel.id, null))}
+                          >
+                            Usuń plik
+                          </button>
+                        </>
+                      )}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {driveNotice !== null && <p className="field-hint">{driveNotice}</p>}
+          {driveError !== null && (
+            <p className="field-error" role="alert">
+              {driveError}
+            </p>
+          )}
         </section>
 
         {summary !== null && (

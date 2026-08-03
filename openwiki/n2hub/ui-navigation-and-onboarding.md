@@ -78,12 +78,28 @@
   (`normalize*Draft`) — odrzucony draft nie zamyka modala i nie czyści dirty.
   Komentarze i decyzja klienta działają na ŻYWEJ encji (`ADD_CP_COMMENT` /
   `REVIEW_CP_POST`, tylko `visibility: 'published'`; na szkicu sekcje pokazują
-  hint, nigdy martwy przycisk dispatchujący no-op), media zostają TYLKO do
-  odczytu, a guard integralności słowników (`dictionaryIntegrityIssue`) blokuje
+  hint, nigdy martwy przycisk dispatchujący no-op), a guard integralności
+  słowników (`dictionaryIntegrityIssue`) blokuje
   usunięcie pozycji używanej przez publikacje marki (reduktor celowo zostaje
   liberalny). Strażnik nawigacji ma dwa własne zakresy —
   `contentplan-post-modal` i `contentplan-brand-modal` — blokujące zmianę
   własnego parametru ALBO ścieżki; sam pager `?m=` nigdy nie pyta.
+  MEDIA (od 2026-08-03) wskazuje Google Picker: edytor ma WŁASNĄ sekcję „Media
+  z Dysku Google" (jeden wiersz na KANAŁ, nie na grupę opisu) z wyborem pliku,
+  podmianą, usunięciem, linkiem na Dysk i miniaturą `driveThumbUrl`. Integracja
+  siedzi w `src/contentplan/google.ts` (GIS token flow z cache 60 s przed
+  wygaśnięciem, `pickFromDrive`/`pickFolderFromDrive`, best-effort
+  `shareFilePublic`; skrypty `gsi/client` i `api.js` ładowane LENIWIE, więc żyją
+  wyłącznie w chunku trasy), a pamięć folderu marki i miesiąca w
+  `src/contentplan/driveFolders.ts` (`contentplan.drive_folders` przez
+  `client.schema('contentplan')`, fallback localStorage
+  `n2click.contentplan.driveFolders`, brak tabeli/błąd degraduje się CICHO).
+  Konfiguracja jest MIĘKKA: bez `VITE_GOOGLE_CLIENT_ID`/`VITE_GOOGLE_API_KEY`
+  przyciski są `disabled` z `DisabledHint` i polskim powodem, reszta modułu
+  działa. Do draftu wchodzi WYŁĄCZNIE referencja `{ source: 'gdrive', fileId }`
+  przez czysty `setChannelMedia` (zapis nadal tylko `SAVE_CP_POST`; zmiana pliku
+  ma własną pozycję „media" w etykiecie historii). Testy w node:
+  `src/contentplan/google.test.ts`, `src/contentplan/driveFolders.test.ts`.
   `PUBLISH_CP_MONTH` nadal nie ma UI. Encje modułu NIE są zarejestrowane w
   `searchAll`/palecie (paleta ma tylko szybką akcję nawigacyjną za
   `canContentPlan`). Bramka UX, nie granica bezpieczeństwa — zakres wymusza RLS

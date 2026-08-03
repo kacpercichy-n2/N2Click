@@ -58,3 +58,12 @@ skrypt I/O `scripts/contentplan-seed-tws.mjs`, test
 / 55 kanałów) i wpis w `migrations.test.ts`. Dwa uruchomienia = identyczny plik.
 `npm test` 117/2591 zielone, `npm run build` zielony. Nic nie aplikowano do bazy.
 Wiki bez zmian.
+
+## Developer result (R7, 20260803-195851-n2hub-317)
+
+Nowe granice: `src/contentplan/google.ts` (GIS + Picker, leniwe skrypty tylko w
+chunku `/content-plan`) i `src/contentplan/driveFolders.ts` (schemat
+`contentplan` + fallback localStorage, cicha degradacja missing-table). Edytor
+posta dostał sekcję mediów (`setChannelMedia`), `.env.example` dwie zmienne
+Google. `npm test` 119 plików / 2634 testy zielone, `npm run build` zielony.
+Wiki `/content-plan` zaktualizowane. Blokad brak.

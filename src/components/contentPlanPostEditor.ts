@@ -16,6 +16,7 @@ import type {
   ContentPlanBrand,
   ContentPlanChannel,
   ContentPlanComment,
+  ContentPlanMedia,
   ContentPlanPost,
 } from '../types';
 import {
@@ -260,10 +261,11 @@ export function setGroupTags(
   };
 }
 
-// ---- Media kanału (TYLKO odczyt) -------------------------------------------
+// ---- Media kanału ----------------------------------------------------------
 
-/** Wiersz mediów kanału. Pliki wchodzą osobną fazą (Dysk Google), więc tutaj
- *  jest wyłącznie odczyt referencji: nazwa platformy, `fileId` i proporcja. */
+/** Wiersz mediów kanału: nazwa platformy, `fileId` pliku na Dysku i proporcja.
+ *  Sam wybór pliku robi Picker (`contentplan/google.ts`), a stan draftu zmienia
+ *  wyłącznie {@link setChannelMedia}. */
 export interface ContentPlanChannelMediaView {
   platformName: string;
   platformColor: string;
@@ -288,6 +290,45 @@ export function channelMediaView(
     ratioLabel: mediaRatioLabel(channel),
     aspectRatio: mediaAspectRatio(channel, format),
   };
+}
+
+/**
+ * Podpięcie albo odpięcie pliku Dysku na kanale draftu. `null` USUWA klucz
+ * `media` (forma kanoniczna: brak klucza ≡ brak pliku). Nieznany kanał ORAZ
+ * wybór, który niczego nie zmienia (ten sam plik, dwukrotne usunięcie), zwracają
+ * TĘ SAMĄ referencję draftu — modal milczy zamiast podnosić flagę zmian.
+ */
+export function setChannelMedia(
+  draft: ContentPlanPostDraft,
+  channelId: string,
+  media: ContentPlanMedia | null,
+): ContentPlanPostDraft {
+  const current = draft.channels.find((channel) => channel.id === channelId);
+  if (current === undefined) return draft;
+  if (media === null && current.media === undefined) return draft;
+  if (media !== null && sameMedia(current.media, media)) return draft;
+  return {
+    ...draft,
+    channels: draft.channels.map((channel) => {
+      if (channel.id !== channelId) return channel;
+      if (media === null) {
+        const next: ContentPlanChannel = { ...channel };
+        delete next.media;
+        return next;
+      }
+      return { ...channel, media };
+    }),
+  };
+}
+
+function sameMedia(a: ContentPlanMedia | undefined, b: ContentPlanMedia): boolean {
+  return (
+    a !== undefined &&
+    a.fileId === b.fileId &&
+    a.type === b.type &&
+    a.width === b.width &&
+    a.height === b.height
+  );
 }
 
 // ---- Komentarze wątkowane --------------------------------------------------
@@ -374,6 +415,15 @@ export function saveHistoryLabel(
     beforePlatforms.size !== draftPlatforms.size ||
     [...draftPlatforms].some((id) => !beforePlatforms.has(id));
   if (platformsChanged) parts.push('platformy');
+
+  // Media są referencją do pliku na Dysku, więc porównujemy `fileId` per kanał
+  // (kanał dołożony/usunięty niesie już pozycja „platformy").
+  const beforeMedia = new Map(before.channels.map((channel) => [channel.id, channel.media?.fileId]));
+  const mediaChanged = draft.channels.some(
+    (channel) =>
+      beforeMedia.has(channel.id) && beforeMedia.get(channel.id) !== channel.media?.fileId,
+  );
+  if (mediaChanged) parts.push('media');
 
   const beforeGroups = getDescriptionGroups(before);
   const draftGroups = draftDescriptionGroups(draft);
