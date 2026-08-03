@@ -82,6 +82,19 @@ const EXPECTED_POLICIES: Record<string, string[]> = {
   // imieniu działającego użytkownika, wstawiając wiersze dla innych odbiorców).
   // Bez DELETE — powiadomień nie kasujemy z klienta.
   'public.notifications': ['select', 'insert', 'update'],
+  // Moduł Content Plan (20260803160100, schemat `contentplan` — klucze podane
+  // z prawdziwym schematem, inaczej niż historyczne `public.*` rdzenia):
+  // pełne CRUD dla zespołu (`admin`/`editor`), a komentarze i historia zmian są
+  // DOPISYWALNE (select + insert, jak `public.comments`/`activity_events`) —
+  // usuwanie idzie kaskadą FK z posta. Dodatkowe polityki `*_select_client`
+  // (przyszła rola `client`: tylko `visibility='published'` przypisanej marki)
+  // nie wnoszą nowych komend, więc lista poniżej ich nie powtarza.
+  'contentplan.brands': ['select', 'insert', 'update', 'delete'],
+  'contentplan.posts': ['select', 'insert', 'update', 'delete'],
+  'contentplan.post_channels': ['select', 'insert', 'update', 'delete'],
+  'contentplan.comments': ['select', 'insert'],
+  'contentplan.post_history': ['select', 'insert'],
+  'contentplan.drive_folders': ['select', 'insert', 'update', 'delete'],
 };
 
 interface ParsedPolicy {
@@ -163,6 +176,12 @@ describe('konwencja plików migracji', () => {
       // Wydarzenia urlopowe: kolumny `kind`/`end_date` na n2click.events
       // (addytywne, bez zmian RLS — `EXPECTED_POLICIES` zostaje bez zmian).
       '20260803120000_events_vacation.sql',
+      // Moduł Content Plan (faza R1): własny schemat `contentplan` — tabele
+      // + RLS, polityki, widok-mostek `my_access`, seed grantów w app_access.
+      '20260803160000_contentplan_schema_and_tables.sql',
+      '20260803160100_contentplan_rls_policies.sql',
+      '20260803160200_contentplan_my_access_view.sql',
+      '20260803160300_contentplan_seed_app_access.sql',
     ]);
   });
 
