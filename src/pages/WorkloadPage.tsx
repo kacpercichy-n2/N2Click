@@ -26,6 +26,8 @@ import {
   isPersonWorkday,
   loadPercent,
   loadTone,
+  personVacationOnDate,
+  splitOverloadedDaysByVacation,
   workloadCellDetail,
   type WorkloadCellBlock,
 } from '../store/selectors';
@@ -40,6 +42,7 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
+  TreePalm,
   X,
 } from '../components/icons';
 import {
@@ -82,9 +85,12 @@ function BlockRow({
   // Mirror REASSIGN_ENTRY's dated predicate: the target day must have a
   // collision-free slot for this block. Disable the move the reducer would
   // silently reject and flag each no-fit option.
+  // Osoba na urlopie NIE przyjmuje bloku — reduktor odrzuca taki `REASSIGN_ENTRY`
+  // tą samą referencją, więc przycisk musi być wyłączony z własnym powodem.
   const durMin = hoursToMinutes(entry.plannedHours);
+  const targetOnVacation = target !== '' && personVacationOnDate(state, target, date) !== null;
   const targetFits = target
-    ? findFreeStart(blocksForPersonDate(state, target, date), durMin) !== null
+    ? !targetOnVacation && findFreeStart(blocksForPersonDate(state, target, date), durMin) !== null
     : true;
 
   return (
@@ -116,17 +122,26 @@ function BlockRow({
                 const avail = availableHoursOnDate(state, p.id, date);
                 const cur = hoursForPersonOnDate(state, p.id, date);
                 const over = cur + entry.plannedHours > avail;
-                const fits = findFreeStart(blocksForPersonDate(state, p.id, date), durMin) !== null;
+                const onVacation = personVacationOnDate(state, p.id, date) !== null;
+                const fits =
+                  !onVacation &&
+                  findFreeStart(blocksForPersonDate(state, p.id, date), durMin) !== null;
                 return (
                   <option key={p.id} value={p.id}>
                     {p.name} — {formatDuration(cur)}/{formatDuration(avail)} tego dnia{over ? ' ⚠' : ''}
-                    {fits ? '' : ' — brak miejsca'}
+                    {onVacation ? ' — urlop' : fits ? '' : ' — brak miejsca'}
                   </option>
                 );
               })}
             </select>
             <DisabledHint
-              reason={targetFits ? null : 'Brak wolnego przedziału czasu w tym dniu u wybranej osoby.'}
+              reason={
+                targetFits
+                  ? null
+                  : targetOnVacation
+                    ? 'Ta osoba ma w tym dniu urlop.'
+                    : 'Brak wolnego przedziału czasu w tym dniu u wybranej osoby.'
+              }
               id={`wl-move-${entry.id}`}
             >
               <button
@@ -450,6 +465,10 @@ export function WorkloadPage() {
                 const overloadedDays = days.filter(
                   (d) => hoursFor(p.id, d) > availableHoursOnDate(state, p.id, d),
                 );
+                // Dzień urlopowy dostaje PALMĘ zamiast wykrzyknika (D8) — praca
+                // zaplanowana przed zgłoszeniem urlopu zostaje, ale sygnalizuje
+                // ją inny znak niż zwykłe przeciążenie. Podział w selektorze.
+                const flagDays = splitOverloadedDaysByVacation(state, p.id, overloadedDays);
                 return (
                   <tr key={p.id}>
                     <th scope="row" className="workload-person">
@@ -467,15 +486,26 @@ export function WorkloadPage() {
                           Ikona, nie tekst „⚠ 1 dzień”: liczbę i tak widać w
                           czerwonych komórkach obok, a pełna lista dni siedzi w
                           nazwie dostępnej. */}
-                      {overloadedDays.length > 0 && (
+                      {flagDays.overload.length > 0 && (
                         <span
                           className="workload-over-flag"
                           role="img"
-                          aria-label={`Przekroczona dostępność: ${overloadedDays
+                          aria-label={`Przekroczona dostępność: ${flagDays.overload
                             .map(formatRowLabel)
                             .join(', ')}`}
                         >
                           <AlertTriangle size={14} aria-hidden />
+                        </span>
+                      )}
+                      {flagDays.vacation.length > 0 && (
+                        <span
+                          className="workload-vacation-flag"
+                          role="img"
+                          aria-label={`Urlop: ${flagDays.vacation
+                            .map(formatRowLabel)
+                            .join(', ')}`}
+                        >
+                          <TreePalm size={14} aria-hidden />
                         </span>
                       )}
                     </th>
@@ -483,6 +513,8 @@ export function WorkloadPage() {
                       const h = hoursFor(p.id, d);
                       const avail = availableHoursOnDate(state, p.id, d);
                       const over = h > avail;
+                      const onVacation =
+                        over && personVacationOnDate(state, p.id, d) !== null;
                       const clickable = h > 0;
                       const isSel =
                         selected?.personId === p.id && selected?.date === d;
@@ -520,7 +552,17 @@ export function WorkloadPage() {
                           }
                         >
                           {h === 0 ? '—' : formatDuration(h)}
-                          {over && ' ⚠'}
+                          {/* Palma ZASTĘPUJE wykrzyknik w dzień urlopu tej
+                              osoby; w pozostałe dni znak jest bez zmian. */}
+                          {over &&
+                            (onVacation ? (
+                              <span className="workload-vacation-flag" aria-hidden>
+                                {' '}
+                                <TreePalm size={12} />
+                              </span>
+                            ) : (
+                              ' ⚠'
+                            ))}
                           {/* Powód przeciążenia jako tekst UKRYTY WIZUALNIE
                               wewnątrz komórki: dawny `title` nie istniał na
                               dotyku. `aria-describedby` byłoby tu wskazaniem na
@@ -530,6 +572,7 @@ export function WorkloadPage() {
                           {over && (
                             <span id={`wl-over-${p.id}-${d}`} className="sr-only">
                               {p.name}: {formatDuration(h)} ponad {formatDuration(avail)} dostępności
+                              {onVacation ? ' (urlop w tym dniu)' : ''}
                             </span>
                           )}
                         </td>

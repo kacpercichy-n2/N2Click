@@ -10,15 +10,22 @@ import { AnimatePresence, m } from 'motion/react';
 import { useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import type { EventDraft } from '../store/AppStore';
-import { isValidEventDraft } from '../store/commandValidation';
+import { isValidEventDraft, MAX_VACATION_DAYS } from '../store/commandValidation';
 import { eventDraftConflicts } from '../store/selectors';
 import {
   eventConflictBlockingMessage,
   eventConflictWarningMessage,
+  vacationDraftWarningMessage,
 } from '../utils/eventConflictMessage';
 import type { CalendarEvent } from '../types';
-import { addDaysStr, isValidDateStr, todayStr, WEEKDAY_LABELS } from '../utils/dates';
-import { MINUTE_STEP } from '../utils/time';
+import {
+  addDaysStr,
+  inclusiveDayCount,
+  isValidDateStr,
+  todayStr,
+  WEEKDAY_LABELS,
+} from '../utils/dates';
+import { DAY_MINUTES, MINUTE_STEP } from '../utils/time';
 import { INTERVAL_WEEKS_OPTIONS, intervalWeeksLabel, isoWeekday } from '../utils/recurrence';
 import { normalizeProjectDocumentUrl } from '../utils/projectDocuments';
 import { personColor } from '../utils/colors';
@@ -36,6 +43,12 @@ const EVENT_PARAM = 'wydarzenie';
 const PREFILL_DATE = 'wydarzenieData';
 const PREFILL_START = 'wydarzenieStart';
 const PREFILL_OSOBA = 'wydarzenieOsoba';
+/** Rodzaj tworzonego wydarzenia: `urlop` przełącza modal w tryb urlopu. */
+const PREFILL_RODZAJ = 'wydarzenieRodzaj';
+
+/** Stały tytuł urlopu — modal nie zbiera nazwy, a lista/kalendarz mają czym
+ *  nazwać wiersz (reduktor nadal wymaga niepustego tytułu). */
+const VACATION_TITLE = 'Urlop';
 
 /** "HH:MM" <-> minuty od północy (siatka 15 min). */
 function timeToMinutes(value: string): number {
@@ -64,13 +77,19 @@ export function useOpenEvent() {
       params.delete(PREFILL_DATE);
       params.delete(PREFILL_START);
       params.delete(PREFILL_OSOBA);
+      params.delete(PREFILL_RODZAJ);
       navigate({ pathname: location.pathname, search: params.toString() });
     },
     [navigate, location.pathname, location.search],
   );
 
   const openNewEvent = useCallback(
-    (prefill?: { date?: string; startMinutes?: number; personId?: string }) => {
+    (prefill?: {
+      date?: string;
+      startMinutes?: number;
+      personId?: string;
+      kind?: 'urlop';
+    }) => {
       const params = new URLSearchParams(location.search);
       params.set(EVENT_PARAM, 'new');
       if (prefill?.date) params.set(PREFILL_DATE, prefill.date);
@@ -80,6 +99,8 @@ export function useOpenEvent() {
       } else params.delete(PREFILL_START);
       if (prefill?.personId) params.set(PREFILL_OSOBA, prefill.personId);
       else params.delete(PREFILL_OSOBA);
+      if (prefill?.kind) params.set(PREFILL_RODZAJ, prefill.kind);
+      else params.delete(PREFILL_RODZAJ);
       navigate({ pathname: location.pathname, search: params.toString() });
     },
     [navigate, location.pathname, location.search],
@@ -95,6 +116,7 @@ export function EventModal() {
   const prefillDate = searchParams.get(PREFILL_DATE);
   const prefillStart = searchParams.get(PREFILL_START);
   const prefillOsoba = searchParams.get(PREFILL_OSOBA);
+  const prefillRodzaj = searchParams.get(PREFILL_RODZAJ);
 
   const close = useCallback(() => {
     setSearchParams(
@@ -104,6 +126,7 @@ export function EventModal() {
         next.delete(PREFILL_DATE);
         next.delete(PREFILL_START);
         next.delete(PREFILL_OSOBA);
+        next.delete(PREFILL_RODZAJ);
         return next;
       },
       { replace: false },
@@ -116,7 +139,12 @@ export function EventModal() {
         <EventModalShell
           key="event-modal"
           eventParam={eventParam}
-          prefill={{ date: prefillDate, start: prefillStart, osoba: prefillOsoba }}
+          prefill={{
+            date: prefillDate,
+            start: prefillStart,
+            osoba: prefillOsoba,
+            rodzaj: prefillRodzaj,
+          }}
           onClose={close}
         />
       )}
@@ -124,9 +152,16 @@ export function EventModal() {
   );
 }
 
+interface EventPrefill {
+  date: string | null;
+  start: string | null;
+  osoba: string | null;
+  rodzaj: string | null;
+}
+
 interface ShellProps {
   eventParam: string;
-  prefill: { date: string | null; start: string | null; osoba: string | null };
+  prefill: EventPrefill;
   onClose: () => void;
 }
 
@@ -134,10 +169,22 @@ function EventModalShell({ eventParam, prefill, onClose }: ShellProps) {
   const { state, dispatch } = useStore();
   const confirm = useConfirm();
   const can = useCan();
-  const canManage = can('events.manage');
   const isNew = eventParam === 'new';
   const existing = isNew ? undefined : state.events.find((e) => e.id === eventParam);
   const notFound = !isNew && existing === undefined;
+  // Tryb urlopu: nowy z parametru rodzaju albo istniejąca encja z `kind`.
+  const isVacation = isNew ? prefill.rodzaj === 'urlop' : existing?.kind === 'urlop';
+  // Bramka edycji (D10): spotkaniami rządzi `events.manage`, a WŁASNY urlop
+  // edytuje i usuwa jego właściciel (jedyny uczestnik == zalogowany), nawet bez
+  // tego uprawnienia. Pozostali widzą tryb tylko do odczytu.
+  const ownsVacation =
+    isVacation &&
+    state.currentUserId !== '' &&
+    (isNew
+      ? can('events.vacationSelf')
+      : existing?.attendeeIds.length === 1 &&
+        existing.attendeeIds[0] === state.currentUserId);
+  const canManage = can('events.manage') || ownsVacation;
 
   const dirtyRef = useRef(false);
   const navGuardKey = useRef<object>({});
@@ -193,8 +240,8 @@ function EventModalShell({ eventParam, prefill, onClose }: ShellProps) {
     const eventId = existing.id;
     if (
       await confirm({
-        title: `Usunąć wydarzenie „${existing.title}”?`,
-        confirmLabel: 'Usuń wydarzenie',
+        title: isVacation ? 'Usunąć ten urlop?' : `Usunąć wydarzenie „${existing.title}”?`,
+        confirmLabel: isVacation ? 'Usuń urlop' : 'Usuń wydarzenie',
         tone: 'danger',
       })
     ) {
@@ -205,11 +252,17 @@ function EventModalShell({ eventParam, prefill, onClose }: ShellProps) {
 
   const heading = notFound
     ? 'Nie znaleziono wydarzenia'
-    : isNew
-      ? 'Nowe wydarzenie'
-      : canManage
-        ? 'Edytuj wydarzenie'
-        : 'Wydarzenie';
+    : isVacation
+      ? isNew
+        ? 'Nowy urlop'
+        : canManage
+          ? 'Edytuj urlop'
+          : 'Urlop'
+      : isNew
+        ? 'Nowe wydarzenie'
+        : canManage
+          ? 'Edytuj wydarzenie'
+          : 'Wydarzenie';
 
   return (
     <>
@@ -264,6 +317,7 @@ function EventModalShell({ eventParam, prefill, onClose }: ShellProps) {
                 key={eventParam}
                 existing={existing}
                 canManage={canManage}
+                isVacation={isVacation}
                 prefill={prefill}
                 onDirtyChange={handleDirtyChange}
                 onSaved={closeDeliberately}
@@ -280,7 +334,9 @@ function EventModalShell({ eventParam, prefill, onClose }: ShellProps) {
 interface EditorProps {
   existing: CalendarEvent | undefined;
   canManage: boolean;
-  prefill: { date: string | null; start: string | null; osoba: string | null };
+  /** Tryb urlopu (D9): inny zestaw pól, stały tytuł i zakres dat zamiast godzin. */
+  isVacation: boolean;
+  prefill: EventPrefill;
   onDirtyChange: (dirty: boolean) => void;
   onSaved: () => void;
   onCancel: () => void;
@@ -289,6 +345,7 @@ interface EditorProps {
 interface FieldErrors {
   title?: string;
   date?: string;
+  endDate?: string;
   time?: string;
   meetingUrl?: string;
   form?: string;
@@ -306,6 +363,13 @@ const EVENT_FIELDS: ReadonlyArray<{ key: keyof FieldErrors; domId: string; label
   { key: 'meetingUrl', domId: 'event-url', label: 'Link do spotkania' },
 ];
 const EVENT_FIELD_KEYS = EVENT_FIELDS.map((f) => f.key);
+
+/** Pola trybu urlopu — ten sam kontrakt „pierwsze złe pole", inny zestaw. */
+const VACATION_FIELDS: ReadonlyArray<{ key: keyof FieldErrors; domId: string; label: string }> = [
+  { key: 'date', domId: 'event-date', label: 'Od' },
+  { key: 'endDate', domId: 'event-end-date', label: 'Do' },
+];
+const VACATION_FIELD_KEYS = VACATION_FIELDS.map((f) => f.key);
 
 /** Zaokrągla minuty do najbliższej wielokrotności siatki 15 min (ręcznie
  *  wpisany czas jak 09:10 trafia na 09:15 — `step={900}` sam tego nie wymusza). */
@@ -335,10 +399,23 @@ function meetingUrlRule(value: string): string | undefined {
     ? 'Adres musi zaczynać się od http(s):// .'
     : undefined;
 }
+/** Koniec zakresu urlopu: pusty = jeden dzień; inaczej data >= „Od" i zakres do
+ *  {@link MAX_VACATION_DAYS} dni (lustro reguły reduktora, jedno źródło prawdy). */
+function vacationEndDateRule(value: string, startDate: string): string | undefined {
+  if (value.trim() === '') return undefined;
+  if (!isValidDateStr(value)) return 'Podaj poprawną datę.';
+  if (!isValidDateStr(startDate)) return undefined; // błąd należy do pola „Od"
+  if (value < startDate) return 'Koniec urlopu nie może być wcześniejszy niż początek.';
+  if (inclusiveDayCount(startDate, value) > MAX_VACATION_DAYS) {
+    return `Urlop może obejmować najwyżej ${MAX_VACATION_DAYS} dni.`;
+  }
+  return undefined;
+}
 
 function EventEditor({
   existing,
   canManage,
+  isVacation,
   prefill,
   onDirtyChange,
   onSaved,
@@ -358,11 +435,15 @@ function EventEditor({
   const seedEnd = existing
     ? existing.startMinutes + existing.durationMinutes
     : Math.min(seedStart + 60, 1440);
-  const seedAttendees =
-    existing?.attendeeIds ?? (prefill.osoba ? [prefill.osoba] : []);
+  // Urlop jest zawsze WŁASNY: uczestnika narzuca sesja, a nie wybór z listy
+  // (self-only jest bramką UX; reduktor sprawdza tylko strukturę).
+  const seedAttendees = isVacation
+    ? existing?.attendeeIds ?? (state.currentUserId ? [state.currentUserId] : [])
+    : existing?.attendeeIds ?? (prefill.osoba ? [prefill.osoba] : []);
 
   const [title, setTitle] = useState(existing?.title ?? '');
   const [date, setDate] = useState(seedDate);
+  const [endDate, setEndDate] = useState(existing?.endDate ?? '');
   const [startTime, setStartTime] = useState(minutesToTime(seedStart));
   const [endTime, setEndTime] = useState(minutesToTime(seedEnd));
   const [attendeeIds, setAttendeeIds] = useState<string[]>(seedAttendees);
@@ -414,6 +495,7 @@ function EventEditor({
   // ilu osób dotknie. Liczone WYŁĄCZNIE dla sensownej daty i zakresu godzin, żeby
   // podpowiedź nie migała w trakcie pisania w polach czasu.
   const conflictWarning = useMemo(() => {
+    if (isVacation) return '';
     if (attendeeIds.length > 0 || !isValidDateStr(date)) return '';
     const from = snapToGrid(timeToMinutes(startTime));
     const to = snapToGrid(timeToMinutes(endTime));
@@ -424,11 +506,80 @@ function EventEditor({
       existing?.id,
     );
     return eventConflictWarningMessage(report.warning);
-  }, [state, date, startTime, endTime, attendeeIds, existing?.id]);
+  }, [isVacation, state, date, startTime, endTime, attendeeIds, existing?.id]);
+
+  // Żywe ostrzeżenie URLOPU: zapis zawsze przechodzi (próg D4), więc liczy się
+  // tylko rozmiar pracy do przeplanowania w CAŁYM zakresie dat. Liczone
+  // wyłącznie dla poprawnego zakresu, żeby nie migało w trakcie pisania daty.
+  const vacationWarning = useMemo(() => {
+    if (!isVacation || !isValidDateStr(date) || attendeeIds.length !== 1) return '';
+    if (vacationEndDateRule(endDate, date) !== undefined) return '';
+    const last = endDate.trim() === '' || endDate === date ? undefined : endDate;
+    const report = eventDraftConflicts(
+      state,
+      {
+        date,
+        startMinutes: 0,
+        durationMinutes: DAY_MINUTES,
+        attendeeIds,
+        kind: 'urlop',
+        ...(last ? { endDate: last } : {}),
+      },
+      existing?.id,
+    );
+    return vacationDraftWarningMessage(report.warning);
+  }, [isVacation, state, date, endDate, attendeeIds, existing?.id]);
+
+  /** Zapis URLOPU: własna, krótka ścieżka (dwa pola + opis). Reguła zakresu jest
+   *  lustrem reduktora, więc odrzucony draft nie zamyka modala po cichu. */
+  const submitVacation = () => {
+    const next: FieldErrors = {};
+    next.date = dateRule(date);
+    next.endDate = vacationEndDateRule(endDate, date);
+    if (attendeeIds.length !== 1) {
+      next.form = 'Urlop musi mieć dokładnie jedną osobę. Zaloguj się ponownie.';
+    }
+    if (Object.values(next).some((v) => v !== undefined)) {
+      setErrors(next);
+      const firstKey = firstInvalidKey(VACATION_FIELD_KEYS, next);
+      const domId = VACATION_FIELDS.find((f) => f.key === firstKey)?.domId;
+      if (domId) focusFieldById(domId);
+      return;
+    }
+
+    const draft: EventDraft = {
+      title: VACATION_TITLE,
+      description,
+      location: '',
+      meetingUrl: '',
+      date,
+      // Czasy niesie forma kanoniczna (pełna doba) — modal ich nie zbiera.
+      startMinutes: 0,
+      durationMinutes: DAY_MINUTES,
+      attendeeIds,
+      recurrence: null,
+      kind: 'urlop',
+      endDate: endDate.trim() === '' ? null : endDate,
+    };
+
+    if (!isValidEventDraft(state, draft)) {
+      setErrors({ form: 'Nie udało się zapisać urlopu. Sprawdź zakres dat.' });
+      return;
+    }
+    setErrors({});
+    onDirtyChange(false);
+    if (existing) dispatch({ type: 'SAVE_EVENT', eventId: existing.id, draft });
+    else dispatch({ type: 'ADD_EVENT', draft });
+    onSaved();
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (readOnly) return;
+    if (isVacation) {
+      submitVacation();
+      return;
+    }
     const next: FieldErrors = {};
     next.title = titleRule(title);
     next.date = dateRule(date);
@@ -532,12 +683,116 @@ function EventEditor({
 
   // JEDNO ogłaszane podsumowanie na modal: komunikat odrzuconego draftu ma
   // pierwszeństwo (mówi więcej), inaczej liczona lista złych pól.
-  const summaryLabels = EVENT_FIELDS.filter((f) => errors[f.key] !== undefined).map((f) => f.label);
+  const summaryFields = isVacation ? VACATION_FIELDS : EVENT_FIELDS;
+  const summaryLabels = summaryFields
+    .filter((f) => errors[f.key] !== undefined)
+    .map((f) => f.label);
   const summary =
     errors.form ??
     (summaryLabels.length > 0
-      ? saveErrorSummary('Nie można zapisać wydarzenia', summaryLabels)
+      ? saveErrorSummary(
+          isVacation ? 'Nie można zapisać urlopu' : 'Nie można zapisać wydarzenia',
+          summaryLabels,
+        )
       : null);
+
+  // ---- Tryb urlopu: Od / Do / Opis + nieedytowalny wiersz osoby ----
+  if (isVacation) {
+    const owner = state.people.find((p) => p.id === (attendeeIds[0] ?? ''));
+    const isSelf = owner !== undefined && owner.id === state.currentUserId;
+    return (
+      <form className="ticket-form" onSubmit={handleSubmit} noValidate>
+        <div className="field">
+          <label>Osoba</label>
+          <p className="field-hint">
+            {owner ? `${owner.name}${isSelf ? ' (Ty)' : ''}` : 'Nieznana osoba'}
+          </p>
+        </div>
+
+        <div className="field-row">
+          <Field id="event-date" label="Od *" error={errors.date}>
+            {(control) => (
+              <input
+                {...control}
+                data-autofocus
+                type="date"
+                value={date}
+                onChange={(e) => {
+                  setDate(e.target.value);
+                  markDirty();
+                  recheckIfErroring('date', () => dateRule(e.target.value));
+                  recheckIfErroring('endDate', () =>
+                    vacationEndDateRule(endDate, e.target.value),
+                  );
+                }}
+                onBlur={(e) => setFieldError('date', dateRule(e.target.value))}
+                disabled={readOnly}
+              />
+            )}
+          </Field>
+          <Field id="event-end-date" label="Do" error={errors.endDate}>
+            {(control) => (
+              <input
+                {...control}
+                type="date"
+                value={endDate}
+                min={date}
+                onChange={(e) => {
+                  setEndDate(e.target.value);
+                  markDirty();
+                  recheckIfErroring('endDate', () =>
+                    vacationEndDateRule(e.target.value, date),
+                  );
+                }}
+                onBlur={(e) => setFieldError('endDate', vacationEndDateRule(e.target.value, date))}
+                disabled={readOnly}
+              />
+            )}
+          </Field>
+        </div>
+        <p className="field-hint">Puste „Do" oznacza urlop jednodniowy. Zajmuje cały dzień.</p>
+
+        {/* Ostrzeżenie, NIE błąd: urlop zapisuje się mimo zaplanowanej pracy. */}
+        {vacationWarning !== '' && (
+          <p className="event-conflict-warn" role="status">
+            ⚠ {vacationWarning}
+          </p>
+        )}
+
+        <Field id="event-desc" label="Opis">
+          {(control) => (
+            <textarea
+              {...control}
+              value={description}
+              onChange={(e) => {
+                setDescription(e.target.value);
+                markDirty();
+              }}
+              rows={3}
+              disabled={readOnly}
+            />
+          )}
+        </Field>
+
+        {summary && (
+          <p className="field-error" role="alert">
+            {summary}
+          </p>
+        )}
+
+        <div className="form-actions">
+          {canManage && (
+            <button type="submit" className="btn primary">
+              {existing ? 'Zapisz zmiany' : 'Dodaj urlop'}
+            </button>
+          )}
+          <button type="button" className="btn ghost" onClick={onCancel}>
+            {canManage ? 'Anuluj' : 'Zamknij'}
+          </button>
+        </div>
+      </form>
+    );
+  }
 
   return (
     <form className="ticket-form" onSubmit={handleSubmit} noValidate>

@@ -71,6 +71,37 @@ export function dayBodyHeightPx(hourPx: number): number {
   return safePx(DAY_HOURS * hourPx);
 }
 
+// ---- Okno renderu bloku urlopu ----
+// Urlop jest przechowywany jako wydarzenie PEŁNODNIOWE (0/1440), bo tylko takie
+// czasy dają pełnodniową kolizję bez żadnej równoległej mechaniki. Rysowanie go
+// przez całą dobę zalałoby jednak kolumnę, więc RENDER świadomie ignoruje
+// zapisane czasy i używa godzin pracy z profilu osoby. To wyłącznie prezentacja
+// (inwariant 1 + 7): nic tutaj nie wchodzi do kolizji ani sum.
+
+/** Godziny pracy potrzebne do wyznaczenia okna — strukturalny podzbiór `Person`,
+ *  żeby ten moduł został wolny od importów store'u. */
+export interface VacationWindowPerson {
+  workStartMinutes: number;
+  workEndMinutes: number;
+}
+
+/**
+ * Okno renderu bloku urlopu: godziny pracy z profilu, gdy oba końce są skończone
+ * i tworzą sensowny przedział `0 <= start < end <= 1440`. Zdegenerowane okno
+ * (brak osoby, start >= koniec, wartości nieskończone) spada na 9:00-17:00 —
+ * ten sam zakres, co prezentacyjne okno robocze siatki.
+ */
+export function vacationRenderWindow(
+  person: VacationWindowPerson | undefined | null,
+): { start: number; end: number } {
+  const fallback = { start: WORK_START_HOUR * 60, end: WORK_END_HOUR * 60 };
+  if (!person) return fallback;
+  const { workStartMinutes: start, workEndMinutes: end } = person;
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return fallback;
+  if (start < 0 || start >= end || end > DAY_HOURS * 60) return fallback;
+  return { start, end };
+}
+
 // ---- Znacznik ✓ ukończenia na kafelku ----
 // Też PREZENTACJA (inwariant 1 + 7): liczy wyłącznie piksele rogu, w którym
 // stoi ✓. Wcześniej ✓ siedziało w prawym GÓRNYM rogu i nachodziło na tytuł —

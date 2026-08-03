@@ -2494,3 +2494,162 @@ describe('INSERT_BLOCK collision guard (block spanning the insert point)', () =>
     expect(next.workload.find((w) => w.id === 'aBlk')!.startMinutes).toBe(480); // untouched
   });
 });
+
+// ---------------------------------------------------------------------------
+// URLOP jako TWARDA blokada przypisania czasu (PKG-20260803-wydarzenia-urlopowe,
+// D6). Trzy ścieżki, trzy mechanizmy: `SET_BLOCK_TIME` (i przez kompozycję
+// `SCHEDULE_BIN_PART`) dziedziczy blokadę z `blockCollidesWithEvent`, bo urlop
+// jest wystąpieniem 0-1440; `INSERT_BLOCK` i datowany `REASSIGN_ENTRY` mają
+// JAWNĄ straż `personVacationOnDate`. Każde odrzucenie zwraca TĘ SAMĄ
+// referencję stanu (inwariant 6).
+// ---------------------------------------------------------------------------
+
+describe('urlop blokuje przypisanie czasu', () => {
+  const MON = '2026-07-06';
+  const WED = '2026-07-08';
+  const FRI = '2026-07-10';
+
+  /** Urlop p1 od poniedziałku do piątku (środa jest dniem ŚRODKOWYM zakresu). */
+  const vacation = (personId = 'p1'): CalendarEvent => ({
+    id: 'urlop1',
+    title: 'Urlop',
+    description: '',
+    location: '',
+    meetingUrl: '',
+    date: MON,
+    endDate: FRI,
+    kind: 'urlop',
+    startMinutes: 0,
+    durationMinutes: 1440,
+    attendeeIds: [personId],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  });
+
+  it('SET_BLOCK_TIME w ŚRODKOWY dzień zakresu => ta sama referencja', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-13', startMinutes: 480, plannedHours: 2 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', startDate: MON, endDate: '2026-07-13' })],
+      people: [makePerson({ id: 'p1' })],
+      workload: [e1],
+      events: [vacation()],
+    });
+
+    expect(
+      reducer(state, {
+        type: 'SET_BLOCK_TIME',
+        entryId: 'e1',
+        date: WED,
+        startMinutes: 480,
+        plannedHours: 2,
+      }),
+    ).toBe(state);
+  });
+
+  it('SET_BLOCK_TIME POZA oknem godzin pracy (18:00) też jest odrzucane — kolizja jest pełnodniowa', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-13', startMinutes: 480, plannedHours: 1 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', startDate: MON, endDate: '2026-07-13' })],
+      people: [makePerson({ id: 'p1' })],
+      workload: [e1],
+      events: [vacation()],
+    });
+
+    expect(
+      reducer(state, {
+        type: 'SET_BLOCK_TIME',
+        entryId: 'e1',
+        date: WED,
+        startMinutes: 1080, // 18:00 — daleko poza 8:00-16:00 z profilu
+        plannedHours: 1,
+      }),
+    ).toBe(state);
+  });
+
+  it('SET_BLOCK_TIME w dzień POZA zakresem urlopu nadal przechodzi (blokada nie jest zbyt szeroka)', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: '2026-07-13', startMinutes: 480, plannedHours: 2 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', startDate: MON, endDate: '2026-07-14' })],
+      people: [makePerson({ id: 'p1' })],
+      workload: [e1],
+      events: [vacation()],
+    });
+
+    const next = reducer(state, {
+      type: 'SET_BLOCK_TIME',
+      entryId: 'e1',
+      date: '2026-07-14', // dzień po końcu urlopu
+      startMinutes: 480,
+      plannedHours: 2,
+    });
+    expect(next).not.toBe(state);
+    expect(next.workload.find((w) => w.id === 'e1')!.date).toBe('2026-07-14');
+  });
+
+  it('SCHEDULE_BIN_PART na dzień urlopowy => ta sama referencja', () => {
+    const bin1 = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 8 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', startDate: MON, endDate: FRI })],
+      people: [makePerson({ id: 'p1' })],
+      workload: [bin1],
+      events: [vacation()],
+    });
+
+    expect(
+      reducer(state, {
+        type: 'SCHEDULE_BIN_PART',
+        entryId: 'bin1',
+        date: WED,
+        startMinutes: 480,
+        hours: 2,
+      }),
+    ).toBe(state);
+  });
+
+  it('INSERT_BLOCK obok bloku stojącego w dniu urlopowym => ta sama referencja', () => {
+    // Blok referencyjny stoi w dniu urlopu (praca zaplanowana PRZED zgłoszeniem
+    // urlopu zostaje — patrz inwariant 3), ale dołożenie kolejnego jest odcięte.
+    const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: WED, startMinutes: 480, plannedHours: 2 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: 10 })],
+      people: [makePerson({ id: 'p1' })],
+      workload: [ref],
+      events: [vacation()],
+    });
+
+    expect(
+      reducer(state, {
+        type: 'INSERT_BLOCK',
+        payload: { refEntryId: 'ref1', position: 'after', taskId: 't2', hours: 1 },
+      }),
+    ).toBe(state);
+  });
+
+  it('REASSIGN_ENTRY na osobę z urlopem w tym dniu => ta sama referencja', () => {
+    const e1 = makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: WED, startMinutes: 480, plannedHours: 2 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      people: [makePerson({ id: 'p1' }), makePerson({ id: 'p2' })],
+      assignments: [{ id: 'a1', taskId: 't1', personId: 'p1' }],
+      workload: [e1],
+      events: [vacation('p2')], // to p2 jest na urlopie
+    });
+
+    expect(reducer(state, { type: 'REASSIGN_ENTRY', entryId: 'e1', toPersonId: 'p2' })).toBe(state);
+  });
+
+  it('REASSIGN_ENTRY wiersza ZASOBNIKA na osobę z urlopem PRZECHODZI (zasobnik nie ma daty)', () => {
+    const bin1 = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 2 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      people: [makePerson({ id: 'p1' }), makePerson({ id: 'p2' })],
+      assignments: [{ id: 'a1', taskId: 't1', personId: 'p1' }],
+      workload: [bin1],
+      events: [vacation('p2')],
+    });
+
+    const next = reducer(state, { type: 'REASSIGN_ENTRY', entryId: 'bin1', toPersonId: 'p2' });
+    expect(next).not.toBe(state);
+    expect(next.workload.find((w) => w.id === 'bin1')!.personId).toBe('p2');
+  });
+});

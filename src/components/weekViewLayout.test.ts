@@ -8,6 +8,7 @@ import {
   dayBodyHeightPx,
   doneTickTopPx,
   isOffHour,
+  vacationRenderWindow,
   workWindowBottomPx,
   workWindowCssVars,
   workWindowScrollTop,
@@ -115,6 +116,43 @@ describe('okno robocze widoku tygodnia', () => {
     expect(workWindowCssVars(0)).toEqual({
       '--week-work-top': '0px',
       '--week-work-bottom': '0px',
+    });
+  });
+});
+
+// Okno renderu bloku urlopu (D7). Urlop jest przechowywany jako pełna doba
+// (0/1440) — to daje pełnodniową kolizję — ale RENDERUJE się w godzinach pracy
+// osoby, więc nie zalewa kolumny. Zdegenerowany profil spada na 9:00-17:00.
+describe('vacationRenderWindow', () => {
+  it('używa godzin pracy z profilu, gdy tworzą sensowny przedział', () => {
+    expect(vacationRenderWindow({ workStartMinutes: 480, workEndMinutes: 960 })).toEqual({
+      start: 480,
+      end: 960,
+    });
+  });
+
+  it('spada na 9:00-17:00 dla braku osoby', () => {
+    const fallback = { start: WORK_START_HOUR * 60, end: WORK_END_HOUR * 60 };
+    expect(fallback).toEqual({ start: 540, end: 1020 });
+    expect(vacationRenderWindow(undefined)).toEqual(fallback);
+    expect(vacationRenderWindow(null)).toEqual(fallback);
+  });
+
+  it.each([
+    ['start === koniec', { workStartMinutes: 600, workEndMinutes: 600 }],
+    ['start > koniec', { workStartMinutes: 900, workEndMinutes: 600 }],
+    ['ujemny start', { workStartMinutes: -60, workEndMinutes: 600 }],
+    ['koniec poza dobą', { workStartMinutes: 480, workEndMinutes: 2000 }],
+    ['NaN', { workStartMinutes: Number.NaN, workEndMinutes: 960 }],
+    ['Infinity', { workStartMinutes: 480, workEndMinutes: Number.POSITIVE_INFINITY }],
+  ])('spada na 9:00-17:00 przy zdegenerowanym oknie (%s)', (_label, person) => {
+    expect(vacationRenderWindow(person)).toEqual({ start: 540, end: 1020 });
+  });
+
+  it('dopuszcza okno dokładnie na granicy doby', () => {
+    expect(vacationRenderWindow({ workStartMinutes: 0, workEndMinutes: 1440 })).toEqual({
+      start: 0,
+      end: 1440,
     });
   });
 });

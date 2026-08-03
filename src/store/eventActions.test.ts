@@ -386,3 +386,175 @@ describe('SAVE_EVENT — kolizja terminu', () => {
     expect(next.events[0].startMinutes).toBe(60);
   });
 });
+
+// ---------------------------------------------------------------------------
+// URLOP (2026-08-03) — ten sam byt `CalendarEvent` z dyskryminatorem
+// `kind: 'urlop'`. Sedno tych testów to FORMA KANONICZNA (czasy 0/1440, klucz
+// `endDate` tylko przy zakresie > 1 dnia, brak cykliczności, dokładnie jeden
+// uczestnik) oraz PRÓG kolizji: przy zapisie urlopu konflikt jest wyłącznie
+// ostrzeżeniem, w kierunku odwrotnym twardo blokuje.
+// ---------------------------------------------------------------------------
+
+const TUE = '2026-07-07';
+const FRI = '2026-07-10';
+
+function vacationDraft(overrides: Partial<EventDraft> = {}): EventDraft {
+  return draft({
+    title: 'Urlop',
+    description: '',
+    location: '',
+    meetingUrl: '',
+    date: MON,
+    // Modal i tak ich nie zbiera — reduktor je NADPISUJE.
+    startMinutes: 540,
+    durationMinutes: 60,
+    attendeeIds: [PA],
+    recurrence: null,
+    kind: 'urlop',
+    endDate: null,
+    ...overrides,
+  });
+}
+
+describe('ADD_EVENT — urlop', () => {
+  it('zapisuje formę kanoniczną: czasy 0/1440, brak `endDate` przy jednym dniu', () => {
+    const state = baseState();
+    const next = reducer(state, { type: 'ADD_EVENT', draft: vacationDraft() });
+    expect(next).not.toBe(state);
+    const e = next.events[0];
+    expect(e.kind).toBe('urlop');
+    expect(e.startMinutes).toBe(0);
+    expect(e.durationMinutes).toBe(1440);
+    expect(e.attendeeIds).toEqual([PA]);
+    expect('endDate' in e).toBe(false);
+    expect('recurrence' in e).toBe(false);
+  });
+
+  it('zakres wielodniowy zachowuje `endDate`, a `endDate === date` ZDEJMUJE klucz', () => {
+    const state = baseState();
+    const wide = reducer(state, {
+      type: 'ADD_EVENT',
+      draft: vacationDraft({ endDate: FRI }),
+    });
+    expect(wide.events[0].endDate).toBe(FRI);
+
+    const oneDay = reducer(state, {
+      type: 'ADD_EVENT',
+      draft: vacationDraft({ endDate: MON }),
+    });
+    expect('endDate' in oneDay.events[0]).toBe(false);
+  });
+
+  it('zeruje lokalizację i adres spotkania (urlop ich nie ma)', () => {
+    const state = baseState();
+    const next = reducer(state, {
+      type: 'ADD_EVENT',
+      draft: vacationDraft({ location: 'Sala A', meetingUrl: 'https://meet.example.test/x' }),
+    });
+    expect(next.events[0].location).toBe('');
+    expect(next.events[0].meetingUrl).toBe('');
+  });
+
+  it.each([
+    ['cykliczność', vacationDraft({ recurrence: { daysOfWeek: [1], startMinutes: 0, durationMinutes: 1440 } })],
+    ['`endDate` przed datą', vacationDraft({ date: FRI, endDate: MON })],
+    ['`endDate` ponad 92 dni', vacationDraft({ date: MON, endDate: '2026-12-31' })],
+    ['`endDate` śmieciowe', vacationDraft({ endDate: 'kiedyś' })],
+    ['zero uczestników', vacationDraft({ attendeeIds: [] })],
+    ['dwóch uczestników', vacationDraft({ attendeeIds: [PA, PB] })],
+    ['uczestnik spoza zespołu', vacationDraft({ attendeeIds: ['ghost'] })],
+    ['zła data', vacationDraft({ date: 'not-a-date' })],
+  ])('odrzuca (%s) tą samą referencją stanu', (_label, bad) => {
+    const state = baseState();
+    expect(reducer(state, { type: 'ADD_EVENT', draft: bad })).toBe(state);
+  });
+
+  it('SPOTKANIE z kluczem `endDate` jest odrzucane (dyskryminator nie wchodzi bokiem)', () => {
+    const state = baseState();
+    expect(reducer(state, { type: 'ADD_EVENT', draft: draft({ endDate: FRI }) })).toBe(state);
+  });
+
+  it('zapisuje się MIMO istniejącego bloku w zakresie (próg ostrzeżenia, nie blokady)', () => {
+    const state = { ...stateWithBlock(PA), events: [] };
+    const next = reducer(state, {
+      type: 'ADD_EVENT',
+      draft: vacationDraft({ date: MON, endDate: FRI }),
+    });
+    expect(next).not.toBe(state);
+    expect(next.events).toHaveLength(1);
+    // Blok zostaje na miejscu — urlop go nie kasuje (inwariant 1).
+    expect(next.workload).toHaveLength(1);
+  });
+
+  it('SPOTKANIE z imiennym uczestnikiem w jego dzień urlopu jest ODRZUCANE (kierunek odwrotny twardy)', () => {
+    const withVacation = reducer(baseState(), {
+      type: 'ADD_EVENT',
+      draft: vacationDraft({ date: MON, endDate: FRI }),
+    });
+    const next = reducer(withVacation, {
+      type: 'ADD_EVENT',
+      // Środkowy dzień zakresu.
+      draft: draft({ date: TUE, attendeeIds: [PA], startMinutes: 600, durationMinutes: 60 }),
+    });
+    expect(next).toBe(withVacation);
+  });
+});
+
+describe('SAVE_EVENT — urlop', () => {
+  it('zmiana zakresu zachowuje kanoniczne czasy i createdAt', () => {
+    const added = reducer(baseState(), { type: 'ADD_EVENT', draft: vacationDraft() });
+    const id = added.events[0].id;
+    const next = reducer(added, {
+      type: 'SAVE_EVENT',
+      eventId: id,
+      draft: vacationDraft({ endDate: FRI }),
+    });
+    expect(next.events[0].endDate).toBe(FRI);
+    expect(next.events[0].startMinutes).toBe(0);
+    expect(next.events[0].durationMinutes).toBe(1440);
+    expect(next.events[0].createdAt).toBe(added.events[0].createdAt);
+  });
+
+  it('NIE koliduje sam ze sobą (zapis bez zmian przechodzi)', () => {
+    const added = reducer(baseState(), { type: 'ADD_EVENT', draft: vacationDraft({ endDate: FRI }) });
+    const id = added.events[0].id;
+    const next = reducer(added, {
+      type: 'SAVE_EVENT',
+      eventId: id,
+      draft: vacationDraft({ endDate: FRI, description: 'Wyjazd' }),
+    });
+    expect(next).not.toBe(added);
+    expect(next.events[0].description).toBe('Wyjazd');
+  });
+});
+
+describe('calendarEventsForDate — urlop wielodniowy', () => {
+  function stateWithVacation(from: string, to: string | null): AppData {
+    return reducer(baseState(), {
+      type: 'ADD_EVENT',
+      draft: vacationDraft({ date: from, endDate: to }),
+    });
+  }
+
+  it('zwraca wystąpienie dla KAŻDEGO dnia zakresu włącznie i dla żadnego poza nim', () => {
+    const state = stateWithVacation(TUE, '2026-07-09'); // wt..czw
+    expect(calendarEventsForDate(state, MON)).toHaveLength(0);
+    for (const d of [TUE, WED, '2026-07-09']) {
+      expect(calendarEventsForDate(state, d)).toHaveLength(1);
+    }
+    expect(calendarEventsForDate(state, FRI)).toHaveLength(0);
+  });
+
+  it('wystąpienie niesie czasy 0/1440 i nie zwiększa dayTotal (inwariant 1)', () => {
+    const state = stateWithVacation(MON, null);
+    const [occ] = calendarEventsForDate(state, MON);
+    expect(occ.startMinutes).toBe(0);
+    expect(occ.durationMinutes).toBe(1440);
+    expect(dayTotal(state, MON)).toBe(0);
+  });
+
+  it('urlop pokazuje się także w dzień wolny osoby (sobota poza `workDays`)', () => {
+    const state = stateWithVacation(FRI, '2026-07-11'); // pt..nd
+    expect(calendarEventsForDate(state, '2026-07-11')).toHaveLength(1); // sobota
+  });
+});

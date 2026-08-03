@@ -21,7 +21,7 @@ import {
 } from '../utils/projectDocuments';
 import { isTicketKind, isTicketPriority, isTicketStatus } from '../utils/tickets';
 import { TASK_PRIORITIES } from '../utils/priority';
-import { isValidDateStr } from '../utils/dates';
+import { inclusiveDayCount, isValidDateStr } from '../utils/dates';
 import { DAY_MINUTES, MINUTE_STEP } from '../utils/time';
 import { isoWeekday, normalizeRecurrence } from '../utils/recurrence';
 import type {
@@ -288,6 +288,38 @@ export function canonicalEventRecurrence(
   return rule;
 }
 
+/**
+ * Najdłuższy zakres urlopu w dniach (włącznie) — LUSTRO limitu okresu zadania
+ * (`MAX_TASK_PERIOD_DAYS`). Trzymane tutaj, bo forma kanoniczna urlopu jest
+ * egzekwowana na trzech granicach (reduktor, `repairEvents`, hydracja chmury) i
+ * wszystkie trzy czytają tę jedną stałą.
+ */
+export const MAX_VACATION_DAYS = 92;
+
+/** Czasy urlopu są kanonicznie WYMUSZONE: pełna doba, więc kolizja z każdym
+ *  blokiem tej osoby wychodzi z istniejących ścieżek interwałowych. */
+const VACATION_START_MINUTES = 0;
+const VACATION_DURATION_MINUTES = DAY_MINUTES;
+
+/**
+ * Forma kanoniczna zakresu urlopu: klucz `endDate` istnieje TYLKO gdy jest
+ * poprawną datą PÓŹNIEJSZĄ niż kotwica i zakres mieści się w
+ * {@link MAX_VACATION_DAYS}. `undefined` = urlop jednodniowy (brak klucza),
+ * `null` = wartość niepoprawna (reduktor odrzuca draft, repair/hydracja
+ * ZDEJMUJĄ klucz). Jeden przepis dla wszystkich trzech granic.
+ */
+export function canonicalVacationEndDate(
+  raw: unknown,
+  date: string,
+): string | undefined | null {
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  if (typeof raw !== 'string' || !isValidDateStr(raw)) return null;
+  if (raw < date) return null;
+  if (raw === date) return undefined; // jednodniowy => brak klucza
+  if (inclusiveDayCount(date, raw) > MAX_VACATION_DAYS) return null;
+  return raw;
+}
+
 /** Znormalizowany draft wydarzenia gotowy do zapisania przez reduktor. */
 export interface NormalizedEventDraft {
   title: string;
@@ -299,6 +331,10 @@ export interface NormalizedEventDraft {
   durationMinutes: number;
   attendeeIds: string[];
   recurrence?: TaskRecurrence;
+  /** Obecne WYŁĄCZNIE dla urlopu (dyskryminator D1). */
+  kind?: 'urlop';
+  /** Obecne WYŁĄCZNIE dla urlopu dłuższego niż jeden dzień. */
+  endDate?: string;
 }
 
 /**
@@ -310,19 +346,48 @@ export interface NormalizedEventDraft {
  * istniejących w `people`, `meetingUrl` niepusty odrzucony przez schemat,
  * cykliczność zażądana lecz niekanoniczna (brak dnia kotwicy albo strukturalnie
  * zła).
+ *
+ * URLOP (`kind: 'urlop'`) ma własną gałąź formy kanonicznej (D2/D3): czasy są
+ * KOERCJONOWANE do pełnej doby, `recurrence` jest ZABRONIONE, uczestnik musi
+ * być DOKŁADNIE jeden i istniejący, a `endDate` przechodzi przez
+ * {@link canonicalVacationEndDate}. Spotkanie z kluczem `kind`/`endDate` jest
+ * odrzucane — dyskryminator nie może wjechać na zwykłe wydarzenie bocznymi
+ * drzwiami.
  */
 export function normalizeEventDraft(
   state: AppData,
   draft: EventDraft,
 ): NormalizedEventDraft | null {
+  const isVacation = draft.kind === 'urlop';
+  if (draft.kind !== undefined && draft.kind !== null && !isVacation) return null;
+
   const title = draft.title.trim();
   if (title === '') return null;
   if (!isValidDateStr(draft.date)) return null;
-  if (!isValidStartMinutes(draft.startMinutes)) return null;
-  if (!isValidDurationMinutes(draft.durationMinutes)) return null;
-  if (draft.startMinutes + draft.durationMinutes > DAY_MINUTES) return null;
+
+  // Czasy: urlop je NARZUCA (0/1440), spotkanie waliduje jak dotąd.
+  const startMinutes = isVacation ? VACATION_START_MINUTES : draft.startMinutes;
+  const durationMinutes = isVacation ? VACATION_DURATION_MINUTES : draft.durationMinutes;
+  if (!isVacation) {
+    if (!isValidStartMinutes(startMinutes)) return null;
+    if (!isValidDurationMinutes(durationMinutes)) return null;
+    if (startMinutes + durationMinutes > DAY_MINUTES) return null;
+  }
+
+  // Zakres dat: klucz istnieje wyłącznie przy urlopie dłuższym niż jeden dzień.
+  let endDate: string | undefined;
+  if (isVacation) {
+    const canonical = canonicalVacationEndDate(draft.endDate, draft.date);
+    if (canonical === null) return null;
+    endDate = canonical;
+  } else if (draft.endDate !== undefined && draft.endDate !== null && draft.endDate !== '') {
+    return null; // spotkanie nie ma zakresu dat
+  }
 
   if (!Array.isArray(draft.attendeeIds)) return null;
+  // Urlop jest zawsze CZYJŚ — dokładnie jeden istniejący uczestnik. Reduktor
+  // egzekwuje STRUKTURĘ, nie tożsamość (self-only jest bramką UX w modalu).
+  if (isVacation && draft.attendeeIds.length !== 1) return null;
   const attendeeIds: string[] = [];
   const seen = new Set<string>();
   for (const id of draft.attendeeIds) {
@@ -333,8 +398,10 @@ export function normalizeEventDraft(
     attendeeIds.push(id);
   }
 
+  // Urlop nie zbiera adresu ani lokalizacji (modal ich nie pokazuje) — forma
+  // kanoniczna zeruje oba pola zamiast odrzucać draft.
   let meetingUrl = '';
-  if (draft.meetingUrl.trim() !== '') {
+  if (!isVacation && draft.meetingUrl.trim() !== '') {
     const normalized = normalizeProjectDocumentUrl(draft.meetingUrl);
     if (normalized === null) return null;
     meetingUrl = normalized;
@@ -342,11 +409,12 @@ export function normalizeEventDraft(
 
   let recurrence: TaskRecurrence | undefined;
   if (draft.recurrence !== null && draft.recurrence !== undefined) {
+    if (isVacation) return null; // cykliczny urlop jest ZABRONIONY (D3)
     recurrence = canonicalEventRecurrence(
       draft.recurrence,
       draft.date,
-      draft.startMinutes,
-      draft.durationMinutes,
+      startMinutes,
+      durationMinutes,
     );
     if (recurrence === undefined) return null; // zażądano cykliczności, ale zła
   }
@@ -354,13 +422,15 @@ export function normalizeEventDraft(
   return {
     title,
     description: draft.description.trim(),
-    location: draft.location.trim(),
+    location: isVacation ? '' : draft.location.trim(),
     meetingUrl,
     date: draft.date,
-    startMinutes: draft.startMinutes,
-    durationMinutes: draft.durationMinutes,
+    startMinutes,
+    durationMinutes,
     attendeeIds,
     ...(recurrence ? { recurrence } : {}),
+    ...(isVacation ? { kind: 'urlop' as const } : {}),
+    ...(endDate !== undefined ? { endDate } : {}),
   };
 }
 

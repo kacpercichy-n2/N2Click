@@ -2724,6 +2724,113 @@ describe('repairEvents', () => {
     expect(twice.events).toEqual(once.events);
   });
 
+  // URLOP: forma kanoniczna na granicy WCZYTANIA (trzecia obok reduktora i
+  // hydracji chmury). Czasy są wymuszone, cykliczność zdejmowana, a zły zakres
+  // dat degraduje się do urlopu jednodniowego — nigdy nie wyrzuca wiersza.
+  it('wymusza czasy 0/1440 dla urlopu, cokolwiek stoi w zapisie', () => {
+    const data = withEvents([
+      {
+        id: 'u1',
+        title: 'Urlop',
+        kind: 'urlop',
+        date: MON,
+        startMinutes: 547,
+        durationMinutes: 30,
+        attendeeIds: ['a'],
+      },
+    ]);
+    const e = repairEvents(data).events[0];
+    expect(e.kind).toBe('urlop');
+    expect(e.startMinutes).toBe(0);
+    expect(e.durationMinutes).toBe(1440);
+  });
+
+  it('ZDEJMUJE cykliczność urlopu (cykliczny urlop nie istnieje)', () => {
+    const data = withEvents([
+      {
+        id: 'u1',
+        title: 'Urlop',
+        kind: 'urlop',
+        date: MON,
+        startMinutes: 0,
+        durationMinutes: 1440,
+        attendeeIds: ['a'],
+        recurrence: { daysOfWeek: [1, 3], startMinutes: 0, durationMinutes: 1440 },
+      },
+    ]);
+    expect('recurrence' in repairEvents(data).events[0]).toBe(false);
+  });
+
+  it.each([
+    ['przed kotwicą', '2026-07-01'],
+    ['równe kotwicy', MON],
+    ['ponad 92 dni', '2026-12-31'],
+    ['śmieciowe', 'kiedyś'],
+    ['nie-string', 7],
+  ])('zdejmuje `endDate` urlopu (%s), zachowując wiersz', (_label, endDate) => {
+    const data = withEvents([
+      {
+        id: 'u1',
+        title: 'Urlop',
+        kind: 'urlop',
+        date: MON,
+        startMinutes: 0,
+        durationMinutes: 1440,
+        attendeeIds: ['a'],
+        endDate,
+      },
+    ]);
+    const events = repairEvents(data).events;
+    expect(events).toHaveLength(1);
+    expect('endDate' in events[0]).toBe(false);
+  });
+
+  it('zachowuje poprawny zakres urlopu i NIE wyrzuca wiersza o złej liczbie uczestników', () => {
+    const data = withEvents([
+      {
+        id: 'u1',
+        title: 'Urlop',
+        kind: 'urlop',
+        date: MON,
+        startMinutes: 0,
+        durationMinutes: 1440,
+        attendeeIds: [], // łagodna degradacja, jak przy danglingu
+        endDate: '2026-07-10',
+      },
+    ]);
+    const e = repairEvents(data).events[0];
+    expect(e.endDate).toBe('2026-07-10');
+    expect(e.attendeeIds).toEqual([]);
+  });
+
+  it('nieznana wartość `kind` degraduje wiersz do SPOTKANIA (klucz zdjęty)', () => {
+    const data = withEvents([
+      { id: 'e1', title: 'X', kind: 'wakacje', date: MON, startMinutes: 540, durationMinutes: 60 },
+    ]);
+    const e = repairEvents(data).events[0];
+    expect('kind' in e).toBe(false);
+    expect(e.startMinutes).toBe(540);
+  });
+
+  it('legacy SPOTKANIE bez `kind`/`endDate` wychodzi bez tych kluczy (brak echo-write)', () => {
+    const data = withEvents([
+      {
+        id: 'e1',
+        title: 'X',
+        date: MON,
+        startMinutes: 540,
+        durationMinutes: 60,
+        attendeeIds: [],
+        createdAt: '',
+        updatedAt: '',
+      },
+    ]);
+    const out = repairEvents(data);
+    expect('kind' in out.events[0]).toBe(false);
+    expect('endDate' in out.events[0]).toBe(false);
+    expect(repairEvents(out).events).toEqual(out.events);
+  });
+
   it('legacy payload bez pola events ładuje się z [] przez pełną ścieżkę wczytania', () => {
     const legacy: Record<string, unknown> = { ...emptyData() };
     delete legacy.events;

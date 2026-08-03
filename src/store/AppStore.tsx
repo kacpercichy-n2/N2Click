@@ -94,6 +94,7 @@ import {
   eventDraftConflicts,
   mergeCoversEventOrRecurrence,
   notificationsForPerson,
+  personVacationOnDate,
   wouldCreateSupervisorCycle,
 } from './selectors';
 import { isOccurrenceDate, normalizeRecurrence } from '../utils/recurrence';
@@ -183,7 +184,9 @@ export interface TicketDraft {
 
 /** Draft wydarzenia kalendarza (modal „Wydarzenia”). Pola modelu bez
  *  id/createdAt/updatedAt. `recurrence` niesie surową regułę z UI albo `null`
- *  (jednorazowe) — reduktor kanonikalizuje ją przez `normalizeEventDraft`. */
+ *  (jednorazowe) — reduktor kanonikalizuje ją przez `normalizeEventDraft`.
+ *  `kind: 'urlop'` przełącza draft w tryb urlopu: czasy są wtedy narzucane
+ *  (0/1440), `endDate` niesie koniec zakresu, a cykliczność jest zabroniona. */
 export interface EventDraft {
   title: string;
   description: string;
@@ -194,6 +197,8 @@ export interface EventDraft {
   durationMinutes: number;
   attendeeIds: string[];
   recurrence: unknown | null;
+  kind?: 'urlop';
+  endDate?: string | null;
 }
 
 export interface PersonDraft {
@@ -1472,6 +1477,10 @@ function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
   // Szkic nie materializuje godzin (inwariant 1 + 4): żadna ścieżka kalendarza
   // nie może wstawić bloku dla nieopublikowanego zadania. Ta sama referencja.
   if (task.isDraft === true) return state;
+  // URLOP jest twardą blokadą przypisania czasu (D6). Ripple-insert nie idzie
+  // przez `setBlockTime`, więc pełnodniowe wystąpienie musi mieć tu JAWNĄ straż;
+  // celowo tylko urlop, żeby zachowanie wobec zwykłych spotkań się nie zmieniło.
+  if (personVacationOnDate(state, ref.personId, ref.date) !== null) return state;
 
   // Snap to the 0.25h grid on write (input `step` is UI-only).
   const hours = snapHours(payload.hours);
@@ -1647,6 +1656,9 @@ function reassignEntry(state: AppData, entryId: string, toPersonId: string): App
   if (isBinEntry(entry)) {
     startMinutes = 0;
   } else {
+    // Osoba na urlopie nie przyjmuje datowanego bloku (D6) — jawna straż, bo ta
+    // ścieżka nie przechodzi przez `setBlockTime`. Ta sama referencja stanu.
+    if (personVacationOnDate(state, toPersonId, date) !== null) return state;
     const free = findFreeStart(
       without.filter((w) => w.personId === toPersonId && w.date === date),
       hoursToMinutes(plannedHours),
@@ -3073,6 +3085,17 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
       }
       if (e.startMinutes + e.durationMinutes > DAY_MINUTES) return state;
       if (!Array.isArray(e.attendeeIds)) return state;
+      // `kind`/`endDate` są OPCJONALNE i ADDYTYWNE: brak klucza przechodzi,
+      // wartość spoza formy kanonicznej to zły wiersz => fail-closed jak reszta
+      // pól. Hydracja (`plannerData`) kanonikalizuje je łagodnie WCZEŚNIEJ, więc
+      // tutaj może dojechać już tylko realnie zniekształcony ładunek.
+      const rec = e as unknown as Record<string, unknown>;
+      if (rec.kind !== undefined && rec.kind !== 'urlop') return state;
+      if (rec.endDate !== undefined) {
+        if (rec.kind !== 'urlop') return state;
+        if (typeof rec.endDate !== 'string' || !isValidDateStr(rec.endDate)) return state;
+        if (rec.endDate <= e.date) return state;
+      }
     }
     const filtered = payload.events.map((e) => {
       const attendeeIds = e.attendeeIds.filter(
@@ -4044,6 +4067,8 @@ export function reducer(state: AppData, action: Action): AppData {
             durationMinutes: normalized.durationMinutes,
             attendeeIds: normalized.attendeeIds,
             ...(normalized.recurrence ? { recurrence: normalized.recurrence } : {}),
+            ...(normalized.kind ? { kind: normalized.kind } : {}),
+            ...(normalized.endDate ? { endDate: normalized.endDate } : {}),
             createdAt: stamp,
             updatedAt: stamp,
           },
@@ -4074,6 +4099,8 @@ export function reducer(state: AppData, action: Action): AppData {
             durationMinutes: normalized.durationMinutes,
             attendeeIds: normalized.attendeeIds,
             ...(normalized.recurrence ? { recurrence: normalized.recurrence } : {}),
+            ...(normalized.kind ? { kind: normalized.kind } : {}),
+            ...(normalized.endDate ? { endDate: normalized.endDate } : {}),
             createdAt: e.createdAt,
             updatedAt: nowIso(),
           };

@@ -54,4 +54,7 @@ export {
   // Zakładka „Zasobnik" w dolnym pasku telefonu (deep-link do kalendarza z
   // otwartym arkuszem bloków bez terminu).
   Archive,
+  // Urlop: blok w kalendarzu, wskaźnik zamiast wykrzyknika przeciążenia i
+  // wejście „Dodaj urlop". `Palmtree` to przestarzały alias tej samej ikony.
+  TreePalm,
 } from 'lucide-react';

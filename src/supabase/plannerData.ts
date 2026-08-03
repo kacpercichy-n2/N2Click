@@ -32,7 +32,11 @@ import { isNotificationType, sanitizeNotificationPayload } from '../utils/notifi
 import { isValidDateStr, periodError, MAX_TASK_PERIOD_DAYS } from '../utils/dates';
 import { normalizeRecurrence } from '../utils/recurrence';
 import { normalizeProjectDocumentUrl } from '../utils/projectDocuments';
-import { canonicalEventRecurrence, sanitizeClientContacts } from '../store/commandValidation';
+import {
+  canonicalEventRecurrence,
+  canonicalVacationEndDate,
+  sanitizeClientContacts,
+} from '../store/commandValidation';
 import {
   DEFAULT_TICKET_KIND,
   DEFAULT_TICKET_PRIORITY,
@@ -367,7 +371,7 @@ export async function loadPlannerSnapshot(
     ),
     db.select(
       'events',
-      'id, title, description, location, meeting_url, event_date, start_minutes, duration_minutes, attendee_ids, recurrence, created_at, updated_at',
+      'id, title, description, location, meeting_url, event_date, start_minutes, duration_minutes, attendee_ids, recurrence, kind, end_date, created_at, updated_at',
     ),
   ]);
 
@@ -677,7 +681,10 @@ export async function loadPlannerSnapshot(
   // dedupe; `meeting_url` przez schemat http(s); `recurrence` w formie
   // kanonicznej wydarzenia — czasy reguły = czasy wydarzenia, dzień kotwicy w
   // `daysOfWeek`; brak/śmieci => brak klucza. Wiersz bez tytułu albo z niepoprawną
-  // datą jest WYKLUCZANY — mergeCloudEntities i tak fail-closuje na złej dacie.)
+  // datą jest WYKLUCZANY — mergeCloudEntities i tak fail-closuje na złej dacie.
+  // `kind`/`end_date` czytamy ŁAGODNIE per-pole (parytet z `intervalWeeks`):
+  // nieznany rodzaj => spotkanie, złe `end_date` => brak klucza. NIGDY nie
+  // wywracamy całego ładunku — hydracja musi przetrwać kolumnę sprzed migracji.)
   const events: CalendarEvent[] = [];
   for (const row of eventsRes.rows) {
     const title = str(row.title);
@@ -690,12 +697,21 @@ export async function loadPlannerSnapshot(
       diagnostics.push(`Wydarzenie „${title}” pominięto — nieprawidłowa data.`);
       continue;
     }
+    const isVacation = row.kind === 'urlop';
     const startRaw = row.start_minutes;
     const durRaw = row.duration_minutes;
-    const startMinutes =
-      typeof startRaw === 'number' && Number.isFinite(startRaw) ? startRaw : 0;
-    const durationMinutes =
-      typeof durRaw === 'number' && Number.isFinite(durRaw) ? durRaw : MINUTE_STEP;
+    // Urlop ma czasy KANONICZNE (pełna doba) niezależnie od tego, co stoi w
+    // kolumnach — dokładnie jak w reduktorze i `repairEvents`.
+    const startMinutes = isVacation
+      ? 0
+      : typeof startRaw === 'number' && Number.isFinite(startRaw)
+        ? startRaw
+        : 0;
+    const durationMinutes = isVacation
+      ? DAY_MINUTES
+      : typeof durRaw === 'number' && Number.isFinite(durRaw)
+        ? durRaw
+        : MINUTE_STEP;
     const attendeeSource = Array.isArray(row.attendee_ids) ? (row.attendee_ids as unknown[]) : [];
     const attendeeIds: string[] = [];
     const seenAttendees = new Set<string>();
@@ -705,23 +721,25 @@ export async function loadPlannerSnapshot(
       seenAttendees.add(personId);
       attendeeIds.push(personId);
     }
-    const recurrence = canonicalEventRecurrence(
-      row.recurrence,
-      date,
-      startMinutes,
-      durationMinutes,
-    );
+    const recurrence = isVacation
+      ? undefined
+      : canonicalEventRecurrence(row.recurrence, date, startMinutes, durationMinutes);
+    const endDate = isVacation
+      ? canonicalVacationEndDate(sqlDateToLocal(row.end_date), date) ?? undefined
+      : undefined;
     events.push({
       id: str(row.id),
       title,
       description: str(row.description),
-      location: str(row.location),
-      meetingUrl: normalizeProjectDocumentUrl(str(row.meeting_url)) ?? '',
+      location: isVacation ? '' : str(row.location),
+      meetingUrl: isVacation ? '' : normalizeProjectDocumentUrl(str(row.meeting_url)) ?? '',
       date,
       startMinutes,
       durationMinutes,
       attendeeIds,
       ...(recurrence ? { recurrence } : {}),
+      ...(isVacation ? { kind: 'urlop' as const } : {}),
+      ...(endDate ? { endDate } : {}),
       createdAt: str(row.created_at),
       updatedAt: str(row.updated_at) || str(row.created_at),
     });

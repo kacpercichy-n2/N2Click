@@ -341,7 +341,8 @@ function ticketRow(
  * Mapuje wydarzenie kalendarza na wiersz tabeli `events`. `id` musi być UUID;
  * `attendee_ids` mapowane per-id jak w `draftHoursRow` — wpis o niemapowalnym
  * personId ODPADA (bez zerowania całego wiersza). Kolumny snake_case; recurrence
- * zapisywane dosłownie (obiekt kanoniczny) albo null.
+ * zapisywane dosłownie (obiekt kanoniczny) albo null. `kind`/`end_date` piszemy
+ * ZAWSZE (kolumna ma default 'meeting'), więc brak lokalnego klucza = spotkanie.
  */
 function eventRow(
   e: CalendarEvent,
@@ -373,6 +374,8 @@ function eventRow(
     duration_minutes: e.durationMinutes,
     attendee_ids: attendeeIds,
     recurrence: e.recurrence ?? null,
+    kind: e.kind ?? 'meeting',
+    end_date: e.endDate ?? null,
     created_at: e.createdAt,
     updated_at: e.updatedAt,
   };

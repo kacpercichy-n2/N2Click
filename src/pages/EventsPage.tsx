@@ -11,7 +11,7 @@ import { formatMinutes } from '../utils/time';
 import { normalizeProjectDocumentUrl } from '../utils/projectDocuments';
 import { intervalWeeksLabel } from '../utils/recurrence';
 import { useOpenEvent } from '../components/EventModal';
-import { Plus } from '../components/icons';
+import { Plus, TreePalm } from '../components/icons';
 
 type Mode = 'nadchodzace' | 'minione';
 
@@ -32,6 +32,9 @@ export function EventsPage() {
   const { state } = useStore();
   const can = useCan();
   const canManage = can('events.manage');
+  // Własny urlop zgłasza KAŻDY zalogowany (D9) — spotkaniami dalej rządzi
+  // `events.manage`.
+  const canAddVacation = can('events.vacationSelf') && state.currentUserId !== '';
   const { openEvent, openNewEvent } = useOpenEvent();
   const [mode, setMode] = useState<Mode>('nadchodzace');
 
@@ -42,8 +45,10 @@ export function EventsPage() {
 
   const visible = useMemo(() => {
     const upcoming = mode === 'nadchodzace';
+    // Trwający urlop wielodniowy jest NADCHODZĄCY do ostatniego dnia zakresu —
+    // inaczej zniknąłby z listy w środku własnego trwania.
     const scoped = state.events.filter((e) =>
-      upcoming ? e.date >= today : e.date < today,
+      upcoming ? (e.endDate ?? e.date) >= today : (e.endDate ?? e.date) < today,
     );
     const byDateTime = (a: CalendarEvent, b: CalendarEvent): number =>
       a.date === b.date ? a.startMinutes - b.startMinutes : a.date < b.date ? -1 : 1;
@@ -55,6 +60,15 @@ export function EventsPage() {
       <div className="page-head">
         <h1>Wydarzenia</h1>
         <div className="page-head-actions">
+          {canAddVacation && (
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={() => openNewEvent({ kind: 'urlop' })}
+            >
+              <TreePalm size={16} aria-hidden /> Dodaj urlop
+            </button>
+          )}
           {canManage && (
             <button type="button" className="btn primary" onClick={() => openNewEvent()}>
               <Plus size={16} aria-hidden /> Dodaj wydarzenie
@@ -98,6 +112,7 @@ export function EventsPage() {
           {visible.map((e) => {
             const end = e.startMinutes + e.durationMinutes;
             const recurLabel = recurrenceLabel(e);
+            const isVacation = e.kind === 'urlop';
             const joinHref =
               e.meetingUrl.trim() !== '' ? normalizeProjectDocumentUrl(e.meetingUrl) : null;
             return (
@@ -108,14 +123,32 @@ export function EventsPage() {
                   onClick={() => openEvent(e.id)}
                 >
                   <span className="event-row-when">
-                    {/* SY-08 — data treści, nigdy surowe `yyyy-MM-dd`. */}
-                    <span className="event-row-date">{formatShortWithWeekday(e.date)}</span>
+                    {/* SY-08 — data treści, nigdy surowe `yyyy-MM-dd`.
+                        Urlop niesie ZAKRES dat i „Cały dzień" zamiast godzin
+                        (0:00-24:00 nic by nie mówiło). */}
+                    <span className="event-row-date">
+                      {formatShortWithWeekday(e.date)}
+                      {isVacation && e.endDate ? ` - ${formatShortWithWeekday(e.endDate)}` : ''}
+                    </span>
                     <span className="event-row-time">
-                      {formatMinutes(e.startMinutes)}–{formatMinutes(end)}
+                      {isVacation ? (
+                        'Cały dzień'
+                      ) : (
+                        <>
+                          {formatMinutes(e.startMinutes)}–{formatMinutes(end)}
+                        </>
+                      )}
                     </span>
                   </span>
                   <span className="event-row-body">
-                    <span className="event-row-title">{e.title}</span>
+                    <span className="event-row-title">
+                      {isVacation && (
+                        <>
+                          <TreePalm size={14} aria-hidden />{' '}
+                        </>
+                      )}
+                      {e.title}
+                    </span>
                     <span className="event-row-meta">
                       {e.attendeeIds.length > 0
                         ? e.attendeeIds.map(nameOf).join(', ')

@@ -17,7 +17,7 @@ import { formatMinutes } from './time';
  * `ScheduleConflict` jest z tym zgodny.
  */
 export interface ConflictLike {
-  kind: 'block' | 'event' | 'recurrence';
+  kind: 'block' | 'event' | 'urlop' | 'recurrence';
   /** Nazwa osoby; '' = nieznana. */
   personName: string;
   /** Tytuł zadania/wydarzenia; '' = nieznany. */
@@ -34,6 +34,7 @@ const MAX_LISTED = 2;
 const KIND_NOUN: Record<ConflictLike['kind'], string> = {
   block: 'zadanie',
   event: 'wydarzenie',
+  urlop: 'urlop',
   recurrence: 'zadanie cykliczne',
 };
 
@@ -69,9 +70,15 @@ export function extraConflictsPhrase(count: number): string {
   return `${abs} kolejnych kolizji`;
 }
 
-/** „Ola Nowak ma już zadanie „Regresja QA" 10:30-12:00". */
+/**
+ * „Ola Nowak ma już zadanie „Regresja QA" 10:30-12:00".
+ *
+ * URLOP jest wyjątkiem BEZ zakresu godzin: jest pełnodniowy, więc „0:00-24:00"
+ * niosłoby zero informacji i wyglądało jak błąd danych.
+ */
 function describeOne(c: ConflictLike): string {
   const who = c.personName.trim() === '' ? 'Ta osoba' : c.personName.trim();
+  if (c.kind === 'urlop') return `${who} ma w tym dniu urlop`;
   const noun = KIND_NOUN[c.kind];
   const from = formatMinutes(c.startMinutes);
   const to = formatMinutes(c.startMinutes + c.durationMinutes);
@@ -101,4 +108,30 @@ export function eventConflictWarningMessage(conflicts: readonly ConflictLike[]):
   if (conflicts.length === 0) return '';
   const people = new Set(conflicts.map((c) => c.personId));
   return `Wydarzenie ogólnofirmowe: ${peopleCountPhrase(people.size)} już coś zaplanowane w tych godzinach.`;
+}
+
+/**
+ * Odmiana „zaplanowana pozycja" przez liczebnik — ta sama reguła co wyżej:
+ * 1 zaplanowana pozycja / 2,3,4 zaplanowane pozycje / 5+ zaplanowanych pozycji.
+ */
+export function plannedItemsPhrase(count: number): string {
+  const abs = Math.abs(Math.trunc(count));
+  const last = abs % 10;
+  const lastTwo = abs % 100;
+  if (abs === 1) return '1 zaplanowana pozycja';
+  if (last >= 2 && last <= 4 && (lastTwo < 12 || lastTwo > 14)) {
+    return `${abs} zaplanowane pozycje`;
+  }
+  return `${abs} zaplanowanych pozycji`;
+}
+
+/**
+ * Komunikat OSTRZEGAJĄCY przy zapisie URLOPU (próg D4 — zapis zawsze
+ * przechodzi). Urlop dotyczy jednej osoby, więc liczy się rozmiar pracy do
+ * przeplanowania, a nie liczba osób: najpierw rejestrujesz urlop, potem
+ * porządkujesz kalendarz.
+ */
+export function vacationDraftWarningMessage(conflicts: readonly ConflictLike[]): string {
+  if (conflicts.length === 0) return '';
+  return `W tym okresie masz już ${plannedItemsPhrase(conflicts.length)}. Urlop zapisze się mimo to, pamiętaj o przeplanowaniu.`;
 }

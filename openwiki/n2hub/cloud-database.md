@@ -244,6 +244,18 @@ widoki-mostki). Gdzie w tekście pada `public.<tabela>` w kontekście
   per-id, niemapowalny odpada); hydracja filtruje dangling uczestnika per-wiersz.
   Rejestr: plik w liście migracji + `public.events` w `EXPECTED_POLICIES`
   (`migrations.test.ts`).
+- `events.kind` / `events.end_date` (20260803120000, WYDARZENIA URLOPOWE) —
+  `kind text not null default 'meeting'` z CHECK `in ('meeting','urlop')` oraz
+  `end_date date` z CHECK `end_date is null or end_date >= event_date`, obie na
+  `n2click.events`. Urlop to wydarzenie PEŁNODNIOWE (`start_minutes` 0,
+  `duration_minutes` 1440 — mieści się w istniejących CHECK-ach), `end_date` =
+  koniec zakresu (NULL = jeden dzień). ZERO zmian RLS i publikacji realtime.
+  Mirror pisze oba pola ZAWSZE (`kind: e.kind ?? 'meeting'`,
+  `end_date: e.endDate ?? null`); hydracja jest ŁAGODNA per-pole (nieznany
+  `kind` ⇒ spotkanie, złe `end_date` ⇒ brak klucza, NIGDY fail-close ładunku —
+  parytet z `intervalWeeks`), a `mergeCloudEntities` fail-closuje tylko na
+  strukturalnie złym polu. Migracja NIE jest zaaplikowana — to krok operatora
+  PRZED wdrożeniem klienta (select hydracji nazywa kolumny wprost).
 - `projects.company_id` (20260722120000, spółka WYKONAWCZA projektu) — FK →
   `companies.id`, `on delete set null`, nullable; ZERO zmian polityk RLS i
   publikacji realtime (projects już tam jest). Mirror: `cloudMirror.projectRow`

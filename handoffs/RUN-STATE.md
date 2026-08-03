@@ -1,94 +1,50 @@
-# Run state — 20260728-064406-n2hub-291 store performance
+# Run state — 20260803-105323-n2hub-309 wydarzenia urlopowe
 
 ## Goal
 
-Store render performance in mandatory order: (W02) reference-keyed selector
-cache + per-revision indexes in `selectors.ts`, (W01a) split the store context
-into StateContext + stable StoreApiContext, (W01b) external store +
-`useSelector`/`useSyncExternalStore` with a short named migration list (useCan,
-TodayAgenda, SampleBanner, WeekView dispatch-only sites), (W01c) drop the whole
-`state` prop from memoized `TimedBlock`/`BinCard` (RecurBlock already narrow).
-Reducer semantics byte-identical; no new deps; retirement mode untouched.
+Rodzaj wydarzenia „urlop" na istniejącym `CalendarEvent`: zakres od–do (klucz
+`endDate`, kanonicznie tylko dla urlopu), tylko własny urlop, pełnodniowa
+zajętość (czasy kanoniczne 0/1440) twardo blokująca przypisania przez ISTNIEJĄCY
+mechanizm kolizji z commita ca0a9b6 (2026-07-30), czerwony blok `TreePalm` w
+oknie godzin pracy z profilu (fallback 9:00–17:00), palma zamiast wykrzyknika
+przeciążenia w dni urlopowe.
 
-## Packages (execution order)
+## Packages
 
-1. `handoffs/PKG-20260728-store-performance.md` — developer, ready, risk high,
-   Codex required. ONE package with four ordered, individually verifiable steps
-   (order is load-bearing; tests inseparable, so no test-writer split).
+1. `handoffs/scheduler-reviews/n2hub-309-architect-package.md`
+   (PKG-20260803-wydarzenia-urlopowe) — tier developer, ready, risk medium,
+   Codex required. Jeden pakiet (testy nierozdzielne).
 
 ## Changed boundaries (planned)
 
-`src/store/selectorCache.ts` + `src/store/externalStore.ts` (new, pure),
-`selectors.ts` hot-selector rewiring (named list only), `AppStore.tsx` provider
-region (contexts, external store, useSelector/useDispatch/useStoreApi; reducer
-body untouched), `useCan.ts`, `TodayAgenda.tsx`, `SampleBanner.tsx`,
-`WeekView.tsx` leaf props. Invariant-6 evidence: 191 `return state;` sites +
-`mergeCloudEntities` same-reference rejects make WeakMap keying sound.
+`types.ts` (`kind?`/`endDate?`), `commandValidation.normalizeEventDraft`,
+`storage.repairEvents`, `selectors.ts` (rozwinięcie wielodniowe w
+`calendarEventsForDate`, `ScheduleConflictKind:'urlop'`, nowy
+`personVacationOnDate`, `eventDraftConflicts` z progiem warning dla urlopu),
+`AppStore` (straż urlopu w `insertBlock`/`reassignEntry`; `setBlockTime`
+dziedziczy), `weekViewModel` (`BusyInterval:'urlop'`, `vacationNames`),
+`weekViewLayout.vacationRenderWindow`, WeekView/MonthView/EventsPage/
+EventModal/WorkloadPage/PersonProfilePage, `permissions` (`events.vacationSelf`),
+cloudMirror/plannerData/cloudMerge + JEDNA nieaplikowana migracja
+`20260803120000_events_vacation.sql` (n2click.events: kind, end_date).
 
 ## Verification
 
-Per step `npx vitest run src/store`; focused set named in the package; browser
-`browser-check-bin-drag.mjs` + `browser-check-placement.mjs` after W01c; then
-scheduler-owned full `npm test && npm run build` (no `test:scheduler` script).
-
-## Developer result (W02 → W01a → W01b → W01c, all four applied)
-
-New `selectorCache.ts`/`externalStore.ts` (+ tests), `selectors.ts` indexes,
-`AppStore.tsx` StateContext/StoreApiContext + useSelector, `useCan`/
-`TodayAgenda`/`SampleBanner`/`WeekView` migrated, `state` prop dropped from
-`BlockProps`/`BinCardProps`. Per-step `vitest run src/store` green; final
-`npm test` 2003 pass / 0 fail, `npm run build` green, zero existing test files
-edited. Blocker: browser checks unrunnable — playwright is not installed.
+Focused vitest z pakietu, potem pełne `npm test` + `npm run build`
+(scheduler-owned). Browser: none — zero zmian ścieżek pointer/drag.
 
 ## Open questions
 
-None blocking. Deferred (recorded, not routed): migrating DashboardPage /
-CalendarPage / App shell to useSelector; removing the WeekView/MonthView
-`state` prop. Wiki: `state-and-persistence.md` will need a selector-cache +
-context-split bullet if green — final reviewer owns that call.
+Brak blokujących. Świadome decyzje D1–D12 w pakiecie (m.in. zapis urlopu nad
+istniejącym planem = warning, nie blocking; TaskModal/SAVE_TASK nieblokowane —
+inwariant 3). Wiki: `scheduling-and-calendar.md` i `state-and-persistence.md`
+będą wymagały wpisu o urlopie po zielonym runie — decyzja finalnego recenzenta.
 
-## Developer result (PKG-20260728-code-splitting-lazymotion)
+## Developer log (n2hub-309)
 
-New `src/pages/routeChunks.ts` (lazy routes + `prefetchRoute`); `App.tsx`
-Suspense inside providers + hover prefetch; `main.tsx` `LazyMotion domAnimation
-strict`; 11 files `motion.*`→`m.*`; Kanban `layout` dropped (no CSS swap —
-`whileHover` owns transform); `vite.config.ts` react/motion/supabase chunks,
-`cssCodeSplit:false`, `optimizeDeps lucide-react`. Entry gzip 355.80→120.40 kB,
-one CSS asset. `npm test` 2003/2003, build green. Wiki bullet updated.
-
-## Developer result (n2hub-302 kanban drag ghost)
-
-New pure `src/pages/kanbanDragGhost.ts` (+ 15 tests): grab offset, clone
-position, `translate3d`+tilt transform, click-slop visibility. `KanbanPage`
-renders an `aria-hidden` clone in `OverlayLayer`, positioned in the EXISTING
-rAF frame; `.dragging` now a dashed empty slot. `endDrag` clears the clone on
-every exit path. `npm test` 2138/2138, build green. No browser check —
-playwright still absent.
-
-Follow-up: dead export `ghostVisible` removed (never imported by KanbanPage —
-`movedRef` latch owns visibility, and a component-side call would need a new
-`viaHoldRef` + manual sticky-OR). Its 4 tests folded into `exceedsClickSlop`,
-now the sole latch input, with the touch/`viaHold` path documented in module +
-test comments. File 15→14 tests. `npm test` 2137/2137, build green.
-
-## Developer result (n2hub-306 powiadomienia przeczytane per wpis)
-
-`Person.notificationsReadIds` (addytywne, DATA_VERSION 7) obok watermarka: nowa
-akcja `MARK_NOTIFICATION_ENTRY_READ`, pruning w `MARK_NOTIFICATIONS_SEEN`, unia
-fail-closed w `applyCloudPeople`, tick `.dash-notif-tick` w kafelku, badge karty
-przez `unreadNotificationCountForPerson` (usunięty `unreadNotificationCountFor`),
-migracja `20260803100000_profiles_notifications_read_ids.sql` NIE zaaplikowana.
-`npm test` 2243/2243, build green. Dwie strony wiki zaktualizowane.
-
-## Developer result (n2hub-308 cykliczność co X tygodni)
-
-`TaskRecurrence.intervalWeeks?` (addytywne, DATA_VERSION 7; klucz tylko dla 2-8,
-zła wartość = 1 i NIGDY nie odrzuca reguły). Bramka tygodnia w
-`isOccurrenceDate` + `expandOccurrences` liczona od tygodnia ISO kotwicy; select
-„Powtarzaj" w TaskModal i EventModal. Chmura bez migracji (jsonb niesie klucz).
-`npm test` 2254/2254, build green. Dwie strony wiki zaktualizowane.
-
-Follow-up: badge „Cykliczne" na EventsPage dopisuje interwał („pon (co 2
-tygodnie)"); dla 1 etykieta bez zmian. Helper strony jest prywatny i nie ma
-testu, więc pokryta została odmiana `intervalWeeksLabel`. `npm test` 2256/2256,
-build green.
+Wykonano pakiet w całości. Granice zmienione zgodnie z listą wyżej; dodatkowo
+`commandValidation.canonicalVacationEndDate` (jedno źródło reguły zakresu dla
+trzech granic) i `selectors.splitOverloadedDaysByVacation` (czysty podział
+wskaźnika, D8). Wynik: `npm test` 107 plików / 2337 testów zielone,
+`npm run build` zielony. Migracja NIE zaaplikowana. Wiki zaktualizowane
+(scheduling-and-calendar, state-and-persistence, cloud-database). Brak blokerów.

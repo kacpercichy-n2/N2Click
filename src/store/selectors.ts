@@ -30,9 +30,10 @@ import {
   isBinEntry,
   rangesOverlap,
 } from '../utils/time';
-import { isBirthdayOn, isValidDateStr, parseDate } from '../utils/dates';
+import { addDaysStr, isBirthdayOn, isValidDateStr, parseDate } from '../utils/dates';
 import { expandOccurrences, type RecurrenceOccurrence } from '../utils/recurrence';
 import { argsKey, createKeyedCache, createRefCache, filterKey } from './selectorCache';
+import { MAX_VACATION_DAYS } from './commandValidation';
 
 // ---- Per-revision indexes (module-private) --------------------------------
 //
@@ -570,6 +571,20 @@ const calendarEventsForDateCache = createKeyedCache<CalendarEventOccurrence[]>((
       const companyWide = event.attendeeIds.length === 0;
       if (!companyWide && !event.attendeeIds.some((id) => personFilter.has(id))) continue;
     }
+    // Urlop rozwija się na CAŁY zakres dat (porównanie stringów yyyy-MM-dd jest
+    // porządkiem chronologicznym). Bez filtrowania po `workDays` — pokazujemy
+    // każdy dzień zakresu, także wolny. Wystąpienie niesie zapisane czasy
+    // 0/1440, więc pełnodniowa kolizja wychodzi z istniejących ścieżek.
+    if (event.kind === 'urlop') {
+      if (event.date <= date && date <= (event.endDate ?? event.date)) {
+        out.push({
+          event,
+          startMinutes: event.startMinutes,
+          durationMinutes: event.durationMinutes,
+        });
+      }
+      continue;
+    }
     if (event.recurrence === undefined) {
       if (event.date === date) {
         out.push({
@@ -602,6 +617,45 @@ export function calendarEventsForDate(
   personFilter?: Set<string>,
 ): CalendarEventOccurrence[] {
   return calendarEventsForDateCache(state, argsKey(date, filterKey(personFilter)));
+}
+
+/**
+ * Urlop TEJ osoby w TYM dniu (albo `null`). Czyta dokładnie ten sam indeks, co
+ * kolizja — dzięki temu jawne straże reduktora (`INSERT_BLOCK`,
+ * `REASSIGN_ENTRY`) i bramki UI nie mogą rozjechać się z
+ * {@link blockCollidesWithEvent}, który łapie urlop automatycznie jako
+ * wystąpienie 0-1440. Zwraca ENCJĘ, żeby komunikat mógł nazwać zakres dat.
+ */
+export function personVacationOnDate(
+  state: AppData,
+  personId: string,
+  date: DateStr,
+): CalendarEvent | null {
+  if (personId === '' || !isValidDateStr(date)) return null;
+  for (const occ of calendarEventsForDate(state, date, new Set([personId]))) {
+    if (occ.event.kind === 'urlop') return occ.event;
+  }
+  return null;
+}
+
+/**
+ * Dzieli dni PRZECIĄŻONE osoby na urlopowe i nieurlopowe (D8). Czysty helper,
+ * bo tę samą decyzję podejmują trzy powierzchnie wskaźnika (tabela obciążenia,
+ * flaga przy nazwisku, pasek tygodnia w profilu): w dzień urlopu wykrzyknik
+ * zastępuje palma, w pozostałe dni nic się nie zmienia.
+ */
+export function splitOverloadedDaysByVacation(
+  state: AppData,
+  personId: string,
+  overloadedDays: readonly DateStr[],
+): { vacation: DateStr[]; overload: DateStr[] } {
+  const vacation: DateStr[] = [];
+  const overload: DateStr[] = [];
+  for (const date of overloadedDays) {
+    if (personVacationOnDate(state, personId, date) !== null) vacation.push(date);
+    else overload.push(date);
+  }
+  return { vacation, overload };
 }
 
 /**
@@ -642,7 +696,7 @@ export function mergeCoversEventOrRecurrence(
 }
 
 /** Co dokładnie zajmuje czas osoby w kolidującym zakresie. */
-export type ScheduleConflictKind = 'block' | 'event' | 'recurrence';
+export type ScheduleConflictKind = 'block' | 'event' | 'urlop' | 'recurrence';
 
 /**
  * Jedna kolidująca pozycja. Nośnik KOMUNIKATU (kto, co, kiedy), nie decyzji —
@@ -715,7 +769,7 @@ export function scheduleConflictsForRange(
         continue;
       }
       out.push({
-        kind: 'event',
+        kind: occ.event.kind === 'urlop' ? 'urlop' : 'event',
         personId,
         personName,
         title: occ.event.title,
@@ -765,6 +819,12 @@ export interface EventConflictReport {
  * cyklicznego pozostałe wystąpienia nie są kontrolowane — kontrola wszystkich
  * przyszłych wystąpień blokowałaby niemal każdą regułę i wymagałaby horyzontu,
  * którego model nie ma.
+ *
+ * URLOP jest TRZECIM progiem (D4): liczy kolizje KAŻDEGO dnia zakresu
+ * `date..endDate`, ale zawsze jako `warning`. Twarda blokada po wszystkich
+ * dniach czyniłaby dłuższy urlop niewstawialnym — najpierw rejestruje się
+ * urlop, potem przeplanowuje pracę. Kierunek odwrotny (spotkanie w czyjś dzień
+ * urlopu) zostaje twardy i wychodzi sam z pełnodniowego wystąpienia.
  */
 export function eventDraftConflicts(
   state: AppData,
@@ -773,9 +833,34 @@ export function eventDraftConflicts(
     startMinutes: number;
     durationMinutes: number;
     attendeeIds: readonly string[];
+    kind?: 'urlop';
+    /** `null` (kształt draftu z modala) czyta się jak brak zakresu. */
+    endDate?: DateStr | null;
   },
   excludeEventId?: string,
 ): EventConflictReport {
+  const opts = excludeEventId !== undefined ? { excludeEventId } : undefined;
+
+  if (draft.kind === 'urlop') {
+    const warning: ScheduleConflict[] = [];
+    const last = draft.endDate ?? draft.date;
+    // Cap 92 dni (forma kanoniczna) ogranicza tę pętlę; strażnik `guard` chroni
+    // przed niekanonicznym draftem z UI, zanim normalizacja go odrzuci.
+    for (let date = draft.date, guard = 0; date <= last && guard <= MAX_VACATION_DAYS; date = addDaysStr(date, 1), guard++) {
+      warning.push(
+        ...scheduleConflictsForRange(
+          state,
+          draft.attendeeIds,
+          date,
+          draft.startMinutes,
+          draft.durationMinutes,
+          opts,
+        ),
+      );
+    }
+    return { blocking: [], warning };
+  }
+
   const companyWide = draft.attendeeIds.length === 0;
   const personIds = companyWide ? state.people.map((p) => p.id) : draft.attendeeIds;
   const conflicts = scheduleConflictsForRange(
@@ -784,7 +869,7 @@ export function eventDraftConflicts(
     draft.date,
     draft.startMinutes,
     draft.durationMinutes,
-    excludeEventId !== undefined ? { excludeEventId } : undefined,
+    opts,
   );
   return companyWide
     ? { blocking: [], warning: conflicts }

@@ -540,6 +540,51 @@ describe('MERGE_CLOUD_ENTITIES — wydarzenia kalendarza', () => {
     expect(next.events).toHaveLength(1);
     expect(next.events[0].attendeeIds).toEqual([P1, P2]);
   });
+
+  // URLOP: pola `kind`/`endDate` są OPCJONALNE i ADDYTYWNE. Poprawny urlop
+  // przechodzi (czasy 0/1440 mieszczą się w istniejącej walidacji doby), a
+  // strukturalnie zły wiersz fail-closuje jak każda inna zła wartość.
+  it('przyjmuje poprawny urlop z zakresem dat', () => {
+    const state = baseState();
+    const next = merge(state, {
+      ...emptyPayload(),
+      events: [
+        makeEvent({
+          id: 'u1',
+          title: 'Urlop',
+          kind: 'urlop',
+          startMinutes: 0,
+          durationMinutes: 1440,
+          endDate: '2026-07-10',
+          attendeeIds: [P1],
+        }),
+      ],
+    });
+    expect(next.events).toHaveLength(1);
+    expect(next.events[0].kind).toBe('urlop');
+    expect(next.events[0].endDate).toBe('2026-07-10');
+  });
+
+  it('wiersz BEZ `kind`/`endDate` przechodzi jak dotąd', () => {
+    const state = baseState();
+    const next = merge(state, { ...emptyPayload(), events: [makeEvent({ id: 'e1' })] });
+    expect('kind' in next.events[0]).toBe(false);
+    expect('endDate' in next.events[0]).toBe(false);
+  });
+
+  it.each([
+    ['nieznany kind', { kind: 'wakacje' }],
+    ['endDate bez kind urlop', { endDate: '2026-07-10' }],
+    ['endDate przed datą', { kind: 'urlop', startMinutes: 0, durationMinutes: 1440, endDate: '2026-07-01' }],
+    ['endDate nie-string', { kind: 'urlop', startMinutes: 0, durationMinutes: 1440, endDate: 7 }],
+  ])('fail-closed na strukturalnie złym polu (%s)', (_label, over) => {
+    const state: AppData = { ...emptyData(), events: [] };
+    const payload = {
+      ...emptyPayload(),
+      events: [makeEvent({ id: 'e1', ...(over as Partial<CalendarEvent>) })],
+    };
+    expect(merge(state, payload)).toBe(state);
+  });
 });
 
 describe('MERGE_CLOUD_ENTITIES — dodatkowe osoby kontaktowe klienta', () => {

@@ -47,6 +47,7 @@ import {
 } from '../utils/time';
 import {
   canonicalEventRecurrence,
+  canonicalVacationEndDate,
   isFilterViewKey,
   sanitizeClientContacts,
   sanitizeLastViewFilter,
@@ -1163,6 +1164,11 @@ export function repairTickets(data: AppData): AppData {
  * 5. `recurrence` przez formę kanoniczną wydarzenia (czasy reguły = czasy
  *    wydarzenia, dzień kotwicy w `daysOfWeek`); rozjazd/brak dnia kotwicy =>
  *    USUNIĘCIE klucza (wydarzenie jednorazowe).
+ * 6. URLOP (`kind === 'urlop'`): czasy WYMUSZONE na 0/1440, `recurrence`
+ *    ZDJĘTE (cykliczny urlop nie istnieje), `endDate` przez
+ *    `canonicalVacationEndDate` (zły/przed kotwicą/ponad 92 dni => brak klucza).
+ *    Zła liczba uczestników NIE wyrzuca wiersza — łagodna degradacja jak przy
+ *    danglingu. Nieznana wartość `kind` => spotkanie (klucz zdjęty).
  */
 export function repairEvents(data: AppData): AppData {
   const str = (v: unknown): string => (typeof v === 'string' ? v : '');
@@ -1176,21 +1182,28 @@ export function repairEvents(data: AppData): AppData {
     const date = str(e.date);
     if (id === '' || title === '' || !isValidDateStr(date)) continue;
 
-    // Czasy: nie-finite start => odrzuć; inaczej snap-w-dół + clamp.
-    const rawStart = e.startMinutes;
-    if (typeof rawStart !== 'number' || !Number.isFinite(rawStart)) continue;
-    let startMinutes = Math.floor(rawStart / MINUTE_STEP) * MINUTE_STEP;
-    if (startMinutes < 0) startMinutes = 0;
-    if (startMinutes > DAY_MINUTES - MINUTE_STEP) startMinutes = DAY_MINUTES - MINUTE_STEP;
+    const isVacation = e.kind === 'urlop';
 
-    const rawDur = e.durationMinutes;
-    if (typeof rawDur !== 'number' || !Number.isFinite(rawDur)) continue;
-    let durationMinutes = Math.floor(rawDur / MINUTE_STEP) * MINUTE_STEP;
-    if (durationMinutes < MINUTE_STEP) durationMinutes = MINUTE_STEP;
-    const maxDur = DAY_MINUTES - startMinutes;
-    if (durationMinutes > maxDur) durationMinutes = maxDur;
+    // Czasy: urlop je NARZUCA (pełna doba), spotkanie snapuje w dół + clamp;
+    // nie-finite start/czas spotkania => wiersz ODPADA.
+    let startMinutes = 0;
+    let durationMinutes = DAY_MINUTES;
+    if (!isVacation) {
+      const rawStart = e.startMinutes;
+      if (typeof rawStart !== 'number' || !Number.isFinite(rawStart)) continue;
+      startMinutes = Math.floor(rawStart / MINUTE_STEP) * MINUTE_STEP;
+      if (startMinutes < 0) startMinutes = 0;
+      if (startMinutes > DAY_MINUTES - MINUTE_STEP) startMinutes = DAY_MINUTES - MINUTE_STEP;
 
-    const meetingUrl = normalizeProjectDocumentUrl(str(e.meetingUrl)) ?? '';
+      const rawDur = e.durationMinutes;
+      if (typeof rawDur !== 'number' || !Number.isFinite(rawDur)) continue;
+      durationMinutes = Math.floor(rawDur / MINUTE_STEP) * MINUTE_STEP;
+      if (durationMinutes < MINUTE_STEP) durationMinutes = MINUTE_STEP;
+      const maxDur = DAY_MINUTES - startMinutes;
+      if (durationMinutes > maxDur) durationMinutes = maxDur;
+    }
+
+    const meetingUrl = isVacation ? '' : normalizeProjectDocumentUrl(str(e.meetingUrl)) ?? '';
 
     const attendeeSource = Array.isArray(e.attendeeIds) ? (e.attendeeIds as unknown[]) : [];
     const attendeeIds: string[] = [];
@@ -1201,19 +1214,25 @@ export function repairEvents(data: AppData): AppData {
       attendeeIds.push(a);
     }
 
-    const recurrence = canonicalEventRecurrence(e.recurrence, date, startMinutes, durationMinutes);
+    // Cykliczny urlop nie istnieje — klucz reguły zdejmujemy bez pytania.
+    const recurrence = isVacation
+      ? undefined
+      : canonicalEventRecurrence(e.recurrence, date, startMinutes, durationMinutes);
+    const endDate = isVacation ? canonicalVacationEndDate(e.endDate, date) : undefined;
 
     events.push({
       id,
       title,
       description: str(e.description),
-      location: str(e.location),
+      location: isVacation ? '' : str(e.location),
       meetingUrl,
       date,
       startMinutes,
       durationMinutes,
       attendeeIds,
       ...(recurrence ? { recurrence } : {}),
+      ...(isVacation ? { kind: 'urlop' as const } : {}),
+      ...(endDate ? { endDate } : {}),
       createdAt: str(e.createdAt),
       updatedAt: str(e.updatedAt),
     });

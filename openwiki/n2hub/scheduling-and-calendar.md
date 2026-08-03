@@ -218,6 +218,28 @@
     `state.workload` × renderowane dni" — dzień z samym spotkaniem jest legalnym
     celem upuszczenia. Straż scalania czyta WSZYSTKIE rodzaje, bramka upuszczania
     tylko `kind: 'event'`.
+  - URLOP (2026-08-03) wchodzi tą samą drogą: to `CalendarEvent` z
+    `kind: 'urlop'` i zakresem `date..endDate`, zapisany jako PEŁNA DOBA
+    (0/1440), więc pełnodniowa blokada wypada z istniejących ścieżek —
+    `blockCollidesWithEvent` (a przez nie `SET_BLOCK_TIME`, `SCHEDULE_BIN_PART`,
+    klawiatura i „Zaplanuj część"), `scheduleConflictsForRange` (rodzaj
+    `'urlop'`, opis BEZ zakresu godzin) i `eventBusyByPersonDate` (`kind:
+    'urlop'`; bramka upuszczania czyta teraz `'event' | 'urlop'`). DWIE ścieżki
+    dostają JAWNĄ straż `personVacationOnDate`, bo nie idą przez `setBlockTime`:
+    `INSERT_BLOCK` i datowany `REASSIGN_ENTRY` (zasobnikowy przechodzi — nie ma
+    daty). PRÓG przy ZAPISIE urlopu jest odwrotny niż przy spotkaniu imiennym:
+    kolizje z całego zakresu dat są WYŁĄCZNIE `warning` (`eventDraftConflicts`
+    iteruje po dniach), bo urlop nad zaplanowanym tygodniem musi być
+    zapisywalny; kierunek odwrotny (spotkanie w czyjś dzień urlopu) zostaje
+    twardo `blocking`. RENDER świadomie IGNORUJE zapisane czasy: blok
+    `.week-event-block.urlop` stoi w oknie `vacationRenderWindow(person)`
+    (godziny pracy z profilu, fallback 9:00-17:00 w `weekViewLayout.ts`), więc
+    pokazuje MNIEJ, niż faktycznie zajmuje. Wskaźnik: tam gdzie dzień kryje
+    urlop osoby, PALMA zastępuje wykrzyknik przeciążenia na czterech
+    powierzchniach (komórka i flaga WorkloadPage, pasek tygodnia
+    PersonProfilePage, `WeekDayModel.vacationNames` w nagłówku dnia — imiona są
+    wtedy wyłączone z `overloadNames`). Godziny zaplanowane PRZED zgłoszeniem
+    urlopu zostają (inwariant 3: świadome edycje alokacji nie są blokowane).
   - Skutek uboczny wart pamięci: wydarzeniowa połowa
     `mergeCoversEventOrRecurrence` jest przez `SET_BLOCK_TIME` praktycznie
     nieosiągalna (dwa stykające się bloki szczelnie wypełniają scalony przedział,
@@ -246,7 +268,7 @@ availability/overload calculations, drag lifecycle and time utilities.
 
 `src/utils/time.test.ts`, `src/utils/touchDrag.test.ts`,
 `src/utils/blockLabel.test.ts`, `src/utils/eventConflictMessage.test.ts`,
-`src/store/eventActions.test.ts` (progi kolizji terminu),
+`src/store/eventActions.test.ts` (progi kolizji terminu, forma kanoniczna urlopu),
 `src/components/assigneeHours.test.ts` (domyślne 15 min osoby przypisanej),
 `src/components/weekViewModel.test.ts` (pokrycie `eventBusyByPersonDate`),
 `src/components/calendarBlockKeyboard.test.ts`,

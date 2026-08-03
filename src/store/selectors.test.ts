@@ -45,6 +45,8 @@ import {
   scheduleConflictsForRange,
   eventDraftConflicts,
   blockCollidesWithEvent,
+  personVacationOnDate,
+  splitOverloadedDaysByVacation,
 } from './selectors';
 import { reducer } from './AppStore';
 import { emptyData } from './storage';
@@ -2195,5 +2197,131 @@ describe('blockCollidesWithEvent', () => {
       assignments: [makeAssignment({ id: 'a1', taskId: 't1', personId: 'p1' })],
     });
     expect(blockCollidesWithEvent(s, 'p1', '2026-07-08', 630, 1)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// URLOP w selektorach: pełnodniowe wystąpienie w zakresie dat, nazwany rodzaj
+// konfliktu, próg wyłącznie ostrzegawczy przy zapisie urlopu oraz czysty
+// podział dni przeciążonych (palma zamiast wykrzyknika).
+// ---------------------------------------------------------------------------
+
+describe('urlop — selektory', () => {
+  const MON = '2026-07-06';
+  const WED = '2026-07-08';
+  const FRI = '2026-07-10';
+
+  const vacationEvent = (overrides: Partial<import('../types').CalendarEvent> = {}) =>
+    makeCalendarEvent({
+      id: 'urlop1',
+      title: 'Urlop',
+      kind: 'urlop',
+      date: MON,
+      endDate: FRI,
+      startMinutes: 0,
+      durationMinutes: 1440,
+      attendeeIds: ['p1'],
+      ...overrides,
+    });
+
+  const stateWithVacation = (overrides: Partial<AppData> = {}) =>
+    makeState({
+      people: [makePerson({ id: 'p1', name: 'Ola Nowak' }), makePerson({ id: 'p2', name: 'Marek' })],
+      events: [vacationEvent()],
+      ...overrides,
+    });
+
+  it('personVacationOnDate zwraca encję w każdym dniu zakresu i null poza nim', () => {
+    const state = stateWithVacation();
+    expect(personVacationOnDate(state, 'p1', MON)?.id).toBe('urlop1');
+    expect(personVacationOnDate(state, 'p1', WED)?.id).toBe('urlop1');
+    expect(personVacationOnDate(state, 'p1', FRI)?.id).toBe('urlop1');
+    expect(personVacationOnDate(state, 'p1', '2026-07-11')).toBeNull();
+    expect(personVacationOnDate(state, 'p1', '2026-07-05')).toBeNull();
+  });
+
+  it('personVacationOnDate dotyczy TYLKO uczestnika urlopu', () => {
+    expect(personVacationOnDate(stateWithVacation(), 'p2', WED)).toBeNull();
+  });
+
+  it('personVacationOnDate znosi nieznaną osobę i złą datę', () => {
+    const state = stateWithVacation();
+    expect(personVacationOnDate(state, '', WED)).toBeNull();
+    expect(personVacationOnDate(state, 'p1', 'not-a-date')).toBeNull();
+  });
+
+  it('blockCollidesWithEvent blokuje KAŻDĄ godzinę dnia urlopowego (także 18:00)', () => {
+    const state = stateWithVacation();
+    expect(blockCollidesWithEvent(state, 'p1', WED, 1080, 1)).toBe(true);
+    expect(blockCollidesWithEvent(state, 'p1', WED, 0, 0.25)).toBe(true);
+    expect(blockCollidesWithEvent(state, 'p2', WED, 1080, 1)).toBe(false);
+  });
+
+  it('scheduleConflictsForRange nazywa urlop własnym rodzajem', () => {
+    const out = scheduleConflictsForRange(stateWithVacation(), ['p1'], WED, 600, 60);
+    expect(out).toEqual([
+      {
+        kind: 'urlop',
+        personId: 'p1',
+        personName: 'Ola Nowak',
+        title: 'Urlop',
+        startMinutes: 0,
+        durationMinutes: 1440,
+      },
+    ]);
+  });
+
+  it('eventDraftConflicts dla draftu urlopu liczy KAŻDY dzień zakresu i tylko OSTRZEGA', () => {
+    const state = stateWithVacation({
+      events: [],
+      tasks: [makeTask({ id: 't1', title: 'Regresja QA' })],
+      workload: [
+        makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: MON, startMinutes: 600, plannedHours: 2 }),
+        makeEntry({ id: 'e2', taskId: 't1', personId: 'p1', date: WED, startMinutes: 600, plannedHours: 2 }),
+        // Poza zakresem — nie może wejść do raportu.
+        makeEntry({ id: 'e3', taskId: 't1', personId: 'p1', date: '2026-07-13', startMinutes: 600, plannedHours: 2 }),
+      ],
+    });
+    const r = eventDraftConflicts(state, {
+      date: MON,
+      startMinutes: 0,
+      durationMinutes: 1440,
+      attendeeIds: ['p1'],
+      kind: 'urlop',
+      endDate: FRI,
+    });
+    expect(r.blocking).toHaveLength(0);
+    expect(r.warning.map((c) => c.title)).toEqual(['Regresja QA', 'Regresja QA']);
+  });
+
+  it('eventDraftConflicts dla urlopu JEDNODNIOWEGO patrzy tylko na jego dzień', () => {
+    const state = stateWithVacation({
+      events: [],
+      tasks: [makeTask({ id: 't1', title: 'Regresja QA' })],
+      workload: [
+        makeEntry({ id: 'e2', taskId: 't1', personId: 'p1', date: WED, startMinutes: 600, plannedHours: 2 }),
+      ],
+    });
+    const r = eventDraftConflicts(state, {
+      date: MON,
+      startMinutes: 0,
+      durationMinutes: 1440,
+      attendeeIds: ['p1'],
+      kind: 'urlop',
+    });
+    expect(r.warning).toHaveLength(0);
+  });
+
+  it('splitOverloadedDaysByVacation rozdziela dni urlopowe od pozostałych, zachowując kolejność', () => {
+    const state = stateWithVacation();
+    const out = splitOverloadedDaysByVacation(state, 'p1', [MON, WED, '2026-07-13']);
+    expect(out.vacation).toEqual([MON, WED]);
+    expect(out.overload).toEqual(['2026-07-13']);
+  });
+
+  it('splitOverloadedDaysByVacation dla osoby bez urlopu zostawia wszystko po stronie przeciążenia', () => {
+    const out = splitOverloadedDaysByVacation(stateWithVacation(), 'p2', [MON, WED]);
+    expect(out.vacation).toEqual([]);
+    expect(out.overload).toEqual([MON, WED]);
   });
 });

@@ -32,7 +32,8 @@ export type PermAction =
   | 'comments.add' // post comments
   | 'tickets.create' // złożenie zgłoszenia („Zgłoszenia” → „Zgłoś”) — KAŻDA rola
   | 'tickets.manage' // wgląd we wszystkie zgłoszenia, zmiana statusu, usuwanie, eksport
-  | 'events.manage'; // tworzenie/edycja/usuwanie wydarzeń kalendarza (spotkań)
+  | 'events.manage' // tworzenie/edycja/usuwanie wydarzeń kalendarza (spotkań)
+  | 'events.vacationSelf'; // zgłoszenie WŁASNEGO urlopu — KAŻDA rola
 
 /**
  * Per-role allow-set. Absence ⇒ denied. Everyone may VIEW every page but /admin.
@@ -56,12 +57,14 @@ const MATRIX: Record<AccessRole, ReadonlySet<PermAction>> = {
     'tickets.create',
     'tickets.manage',
     'events.manage',
+    'events.vacationSelf',
   ]),
   ograniczone: new Set<PermAction>([
     'blocks.editOwn',
     'profile.editOwn',
     'comments.add',
     'tickets.create',
+    'events.vacationSelf',
   ]),
 };
 

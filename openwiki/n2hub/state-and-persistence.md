@@ -297,6 +297,26 @@
   uczestników = ogólnofirmowe, widoczne zawsze). Testy: `eventActions.test.ts`,
   rozszerzenia w `storage.test.ts`/`cloudMerge.test.ts`/`cloudMirror.test.ts`/
   `plannerData.test.ts`/`migrations.test.ts`.
+- URLOP (2026-08-03): TEN SAM byt `CalendarEvent` z dyskryminatorem
+  `kind?: 'urlop'` + `endDate?: DateStr` (oba OPCJONALNE i ADDYTYWNE —
+  `DATA_VERSION` zostaje 7; BRAK klucza `kind` = spotkanie, `kind: 'meeting'`
+  NIGDY nie jest zapisywane lokalnie). FORMA KANONICZNA na TRZECH granicach
+  (reduktor przez `normalizeEventDraft`, `repairEvents`, hydracja chmury):
+  czasy WYMUSZONE na `startMinutes: 0`/`durationMinutes: 1440` (stąd
+  pełnodniowa kolizja BEZ żadnej równoległej mechaniki), `endDate` obecne tylko
+  gdy `> date` i zakres ≤ `MAX_VACATION_DAYS` (92, `canonicalVacationEndDate`
+  w `commandValidation.ts`), `recurrence` ZABRONIONE (reduktor odrzuca,
+  repair/hydracja zdejmują), `meetingUrl`/`location` puste, DOKŁADNIE jeden
+  istniejący uczestnik w reduktorze (repair NIE wyrzuca wiersza za złą liczbę —
+  łagodna degradacja jak dangling). Spotkanie z kluczem `kind`/`endDate` =>
+  odrzut draftu. Uprawnienie `events.vacationSelf` (OBIE role) otwiera „Dodaj
+  urlop"; self-only jest bramką UX modala, reduktor sprawdza STRUKTURĘ, nie
+  tożsamość. Selektory: `calendarEventsForDate` rozwija urlop na KAŻDY dzień
+  `date..endDate` (także wolny), `personVacationOnDate` i
+  `splitOverloadedDaysByVacation` (podział wskaźnika) w `selectors.ts`. Testy:
+  bloki „urlop" w `eventActions.test.ts`/`blockActions.test.ts`/
+  `selectors.test.ts`/`storage.test.ts`/`cloudMerge.test.ts`/
+  `weekViewModel.test.ts`/`weekViewLayout.test.ts`/`eventConflictMessage.test.ts`.
 - WYKONANE BLOKI (2026-07-21): `WorkloadEntry.done?: boolean` (OPCJONALNE,
   ADDYTYWNE — brak/`false` = niewykonany; `DATA_VERSION` zostaje na 7). Per-BLOK
   (WorkloadEntry.id), NIE per-dzień: dwa bloki tego samego dnia (ta sama data,

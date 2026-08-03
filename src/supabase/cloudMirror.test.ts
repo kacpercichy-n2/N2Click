@@ -476,6 +476,46 @@ describe('diffToCloudOps — wydarzenia kalendarza', () => {
     expect(diagnostics.length).toBeGreaterThan(0); // niemapowalny uczestnik
   });
 
+  // `kind`/`end_date` piszemy ZAWSZE: kolumna ma default 'meeting', więc brak
+  // lokalnego klucza musi wyjść jako spotkanie bez zakresu dat.
+  it('spotkanie mapuje kind meeting i end_date null', () => {
+    const m = maps();
+    const prev: AppData = { ...localFixture(), events: [] };
+    const next: AppData = { ...localFixture(), events: [makeEvent()] };
+    const up = diffToCloudOps(prev, next, m).ops.find(
+      (o) => o.table === 'events' && o.kind === 'upsert',
+    );
+    expect(up!.row).toMatchObject({ kind: 'meeting', end_date: null });
+  });
+
+  it('urlop mapuje kind urlop, pełną dobę i end_date zakresu', () => {
+    const m = maps();
+    const prev: AppData = { ...localFixture(), events: [] };
+    const next: AppData = {
+      ...localFixture(),
+      events: [
+        makeEvent({
+          title: 'Urlop',
+          kind: 'urlop',
+          startMinutes: 0,
+          durationMinutes: 1440,
+          endDate: '2026-07-10',
+          attendeeIds: [PA],
+        }),
+      ],
+    };
+    const up = diffToCloudOps(prev, next, m).ops.find(
+      (o) => o.table === 'events' && o.kind === 'upsert',
+    );
+    expect(up!.row).toMatchObject({
+      kind: 'urlop',
+      end_date: '2026-07-10',
+      start_minutes: 0,
+      duration_minutes: 1440,
+      attendee_ids: [CLOUD_PA],
+    });
+  });
+
   it('emituje remove dla usuniętego wydarzenia (id UUID)', () => {
     const m = maps();
     const prev: AppData = { ...localFixture(), events: [makeEvent()] };

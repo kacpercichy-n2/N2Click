@@ -23,12 +23,14 @@ import {
   calendarEventsForDate,
   dayTotal,
   entriesForDate,
+  getPerson,
   overloadedPeopleOnDate,
   peopleWithBirthdayOnDate,
   recurrenceOccurrencesForDate,
 } from '../store/selectors';
 import { personColor } from '../utils/colors';
 import { formatDuration } from '../utils/time';
+import { TreePalm } from './icons';
 import { Tooltip } from './Tooltip';
 import { monthCellName, monthFocusIndex, monthGridCommand, monthGridRows } from './monthGrid';
 
@@ -132,16 +134,29 @@ export function MonthView({
 
     // Wydarzenia na dany dzień — TYLKO prezentacyjny znacznik 📅
     // (MonthView nie renderuje pojedynczych bloków); sumy/kropki bez zmian.
+    // Urlopy mają WŁASNY znacznik palmy zamiast 📅: to nie jest spotkanie, tylko
+    // nieobecność, i tak też czyta się w nazwie komórki.
+    const dayEvents = calendarEventsForDate(state, d, filter);
     const eventTitles = Array.from(
-      new Set(calendarEventsForDate(state, d, filter).map((oc) => oc.event.title)),
+      new Set(dayEvents.filter((oc) => oc.event.kind !== 'urlop').map((oc) => oc.event.title)),
+    );
+    const vacationNames = Array.from(
+      new Set(
+        dayEvents
+          .filter((oc) => oc.event.kind === 'urlop')
+          .map((oc) => getPerson(state, oc.event.attendeeIds[0] ?? '')?.name ?? '')
+          .filter((n) => n !== ''),
+      ),
     );
     // Przesuwaj kolejne znaczniki inline o 18 px, żeby się nie nakładały.
     const eventMarkerRight =
       3 + 18 * ((birthdayNames.length > 0 ? 1 : 0) + (recurTitles.length > 0 ? 1 : 0));
+    const vacationMarkerRight = eventMarkerRight + (eventTitles.length > 0 ? 18 : 0);
 
     const birthdayLabel = birthdayNames.length > 0 ? `Urodziny: ${birthdayNames.join(', ')}` : '';
     const recurLabel = recurTitles.length > 0 ? `Cykliczne: ${recurTitles.join(', ')}` : '';
     const eventLabel = eventTitles.length > 0 ? `Wydarzenia: ${eventTitles.join(', ')}` : '';
+    const vacationLabel = vacationNames.length > 0 ? `Urlop: ${vacationNames.join(', ')}` : '';
 
     // Dymek komórki ZBIERA to, co dotąd wisiało na pojedynczych znacznikach:
     // same znaczniki są nieinteraktywne (nie da się na nie najechać sensownie w
@@ -154,6 +169,7 @@ export function MonthView({
       birthdayLabel,
       recurLabel,
       eventLabel,
+      vacationLabel,
     ]
       .filter(Boolean)
       .join('\n');
@@ -168,7 +184,7 @@ export function MonthView({
       today,
       outOfMonth: !inMonth,
       overloaded,
-      markers: [birthdayLabel, recurLabel, eventLabel],
+      markers: [birthdayLabel, recurLabel, eventLabel, vacationLabel],
     });
 
     return {
@@ -184,10 +200,13 @@ export function MonthView({
       birthdayNames,
       recurTitles,
       eventTitles,
+      vacationNames,
       birthdayLabel,
       recurLabel,
       eventLabel,
+      vacationLabel,
       eventMarkerRight,
+      vacationMarkerRight,
       cellHint,
       name,
     };
@@ -263,6 +282,19 @@ export function MonthView({
                       aria-hidden
                     >
                       📅
+                    </span>
+                  )}
+                  {cell.vacationNames.length > 0 && (
+                    <span
+                      className="month-cell-vacation"
+                      style={
+                        cell.vacationMarkerRight > 3
+                          ? { right: cell.vacationMarkerRight }
+                          : undefined
+                      }
+                      aria-hidden
+                    >
+                      <TreePalm size={12} />
                     </span>
                   )}
                   {cell.total > 0 && (

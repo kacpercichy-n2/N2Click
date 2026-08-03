@@ -30,6 +30,7 @@ import {
   hoursForPersonOnDate,
   personCapacity,
   personTotalHours,
+  personVacationOnDate,
   projectsOfPerson,
   taskIdsOfPerson,
   taskPlannedTotalForPerson,
@@ -42,6 +43,7 @@ import type { Person } from '../types';
 import { Avatar } from '../components/Avatar';
 import { QuickAddModal, NEW_OPTION_VALUE } from '../components/QuickAddModal';
 import { Coin } from '../components/Coin';
+import { TreePalm } from '../components/icons';
 import { StatusBadge } from '../components/StatusBadge';
 import { DEFAULT_CAPACITY, defaultWorkEndMinutes } from '../store/storage';
 import { useOpenTask } from '../components/TaskModal';
@@ -598,6 +600,9 @@ function PersonProfile({ personId }: { personId: string }) {
           {week.map((d) => {
             const h = hoursForPersonOnDate(state, person.id, d);
             const over = h > capacity;
+            // Palma ZAMIAST wykrzyknika w dzień urlopu (D8) — ten sam podział, co
+            // w tabeli obciążenia; pozostałe dni bez zmian.
+            const onVacation = over && personVacationOnDate(state, person.id, d) !== null;
             return (
               <div
                 key={d}
@@ -612,7 +617,15 @@ function PersonProfile({ personId }: { personId: string }) {
                 <span className="profile-day-label">{formatRowLabel(d)}</span>
                 <span className="profile-day-hours">
                   {h === 0 ? '—' : formatDuration(h)}
-                  {over && ' ⚠'}
+                  {over &&
+                    (onVacation ? (
+                      <span className="workload-vacation-flag" role="img" aria-label="Urlop">
+                        {' '}
+                        <TreePalm size={12} aria-hidden />
+                      </span>
+                    ) : (
+                      ' ⚠'
+                    ))}
                 </span>
               </div>
             );

@@ -26,8 +26,10 @@ import {
   getTask,
   overloadedPeopleOnDate,
   peopleWithBirthdayOnDate,
+  personVacationOnDate,
   recurrenceOccurrencesForDate,
 } from '../store/selectors';
+import { vacationRenderWindow } from './weekViewLayout';
 import { isBinEntry, packDayBlocks } from '../utils/time';
 import { personColor } from '../utils/colors';
 import type { RecurrenceOccurrence } from '../utils/recurrence';
@@ -56,12 +58,24 @@ export interface WeekDayModel {
   total: number;
   /** True when no filtered entries fall on this day. */
   empty: boolean;
-  /** Comma-joined names of overbooked people on this day (already filtered). */
+  /**
+   * Comma-joined names of overbooked people on this day (already filtered).
+   * Osoby, których ten dzień kryje URLOP, są stąd WYŁĄCZONE — dla nich
+   * wykrzyknik zastępuje palma (D8, patrz {@link WeekDayModel.vacationNames}).
+   */
   overloadNames: string;
+  /** Przeciążone osoby, które mają tego dnia URLOP (palma zamiast wykrzyknika). */
+  vacationNames: string[];
   /** Names with a birthday on this day (whole team, filter-independent). */
   birthdayNames: string[];
   /** Presentational calendar-event occurrences on this day. */
   events: CalendarEventOccurrence[];
+  /**
+   * Okno renderu bloku urlopu per WYSTĄPIENIE (klucz = id wydarzenia): godziny
+   * pracy uczestnika z fallbackiem 9:00-17:00. Rozwiązane tutaj, bo `EventBlock`
+   * jest memoizowany i nie powinien sięgać do `state` po osobę.
+   */
+  vacationWindows: Map<string, { start: number; end: number }>;
   /** Presentational recurring-task occurrences on this day, hue resolved. */
   recurrences: ResolvedRecurrence[];
   /** Real task blocks, packed into columns, task/person/project resolved. */
@@ -76,8 +90,8 @@ export interface WeekDayModel {
 export interface BusyInterval {
   start: number;
   end: number;
-  kind: 'event' | 'recurrence';
-  /** Tytuł wydarzenia / zadania cyklicznego; '' gdy nieznany. */
+  kind: 'event' | 'urlop' | 'recurrence';
+  /** Tytuł wydarzenia / urlopu / zadania cyklicznego; '' gdy nieznany. */
   title: string;
 }
 
@@ -178,7 +192,10 @@ export function buildEventBusyByPersonDate(
         busy.push({
           start: occ.startMinutes,
           end: occ.startMinutes + occ.durationMinutes,
-          kind: 'event',
+          // Urlop niesie własny rodzaj: bramka upuszczania traktuje go tak samo
+          // jak spotkanie (blok nie wchodzi), a przedział 0-1440 zabiera całą
+          // dobę, więc żadna godzina nie jest legalnym celem.
+          kind: occ.event.kind === 'urlop' ? 'urlop' : 'event',
           title: occ.event.title,
         });
       }
@@ -211,16 +228,34 @@ export function buildWeekModel(
     const entries = entriesForDate(state, date, filter);
     const total = entries.reduce((sum, w) => sum + w.plannedHours, 0);
 
-    const overloadNames = overloadedPeopleOnDate(state, date, filter)
-      .map((id) => getPerson(state, id)?.name)
-      .filter((n): n is string => Boolean(n))
-      .join(', ');
+    // Podział przeciążonych na urlopowych i pozostałych (D8): w dzień urlopu
+    // wykrzyknik zastępuje palma, więc te same imiona nie mogą stać w obu
+    // plakietkach. Decyzja siedzi w selektorze, żeby dało się ją przetestować
+    // bez DOM-u.
+    const overloaded: string[] = [];
+    const vacationNames: string[] = [];
+    for (const id of overloadedPeopleOnDate(state, date, filter)) {
+      const name = getPerson(state, id)?.name;
+      if (!name) continue;
+      if (personVacationOnDate(state, id, date) !== null) vacationNames.push(name);
+      else overloaded.push(name);
+    }
+    const overloadNames = overloaded.join(', ');
 
     const birthdayNames = peopleWithBirthdayOnDate(state, date)
       .map((p) => p.name)
       .filter((n): n is string => Boolean(n));
 
     const events = calendarEventsForDate(state, date, filter);
+
+    // Okno renderu urlopu: godziny pracy JEGO uczestnika (urlop ma kanonicznie
+    // dokładnie jednego), fallback 9:00-17:00 dla zdegenerowanego profilu.
+    const vacationWindows = new Map<string, { start: number; end: number }>();
+    for (const occ of events) {
+      if (occ.event.kind !== 'urlop') continue;
+      const owner = getPerson(state, occ.event.attendeeIds[0] ?? '');
+      vacationWindows.set(occ.event.id, vacationRenderWindow(owner));
+    }
 
     // Presentational recurrence overlay: same selector/order as the JSX, hue
     // resolved once here (was `personColor(assigneeIdsOfTask(...)[0])` inline).
@@ -248,8 +283,10 @@ export function buildWeekModel(
       total,
       empty: entries.length === 0,
       overloadNames,
+      vacationNames,
       birthdayNames,
       events,
+      vacationWindows,
       recurrences,
       blocks,
     };

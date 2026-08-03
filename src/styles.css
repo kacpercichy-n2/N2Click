@@ -42,6 +42,10 @@
      lawendowa paleta zadań/cykliczności. */
   --event-accent: var(--n2-info);
   --event-accent-soft: var(--n2-info-soft);
+  /* Urlop: czerwień z istniejącej palety `danger` — nieobecność ma czytać się
+     inaczej niż spotkanie i od razu jako „tu nie planujemy”. */
+  --vacation-accent: var(--n2-danger);
+  --vacation-accent-soft: var(--n2-danger-soft);
   /* Przygaszenie slotów kalendarza poza oknem godzin agencji (9:00–17:00).
      Wyłącznie prezentacja — te sloty działają normalnie. */
   --week-offhours-tint: rgba(0, 0, 0, 0.34);
@@ -2007,6 +2011,17 @@ a.toggle-btn {
   color: var(--n2-danger);
   font-weight: 600;
 }
+/* Plakietka urlopu w nagłówku dnia — palma zamiast wykrzyknika przeciążenia
+   (te same imiona nigdy nie stoją w obu plakietkach naraz). */
+.week-col-vacation {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: var(--n2-type-xs);
+  color: var(--vacation-accent);
+  font-weight: 600;
+}
 
 /* Znacznik urodzin w nagłówku dnia — czysto prezentacyjny (🎂 + imiona). */
 .week-col-birthday {
@@ -2594,6 +2609,20 @@ a.toggle-btn {
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
 }
+/* Urlop: ten sam blok prezentacyjny, czerwony akcent. Wysokość liczy okno
+   godzin pracy osoby (`vacationRenderWindow`), a nie zapisana pełna doba —
+   kolizja i tak obejmuje cały dzień. */
+.week-event-block.urlop {
+  border-color: var(--vacation-accent);
+  border-left-color: var(--vacation-accent);
+  background: var(--vacation-accent-soft);
+}
+.week-event-block.urlop .week-event-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--vacation-accent);
+}
 
 /* ---------- Bin column (Zasobnik: dateless blocks) ---------- */
 
@@ -2862,6 +2891,17 @@ a.toggle-btn {
   right: 3px;
   font-size: 11px;
   line-height: 1;
+  pointer-events: none;
+}
+/* Znacznik urlopu w komórce miesiąca — palma zamiast 📅 (to nieobecność, nie
+   spotkanie). Czysto prezentacyjny, treść jest w nazwie komórki. */
+.month-cell-vacation {
+  position: absolute;
+  display: inline-flex;
+  top: 2px;
+  right: 3px;
+  line-height: 1;
+  color: var(--vacation-accent);
   pointer-events: none;
 }
 
@@ -4412,6 +4452,19 @@ a.toggle-btn {
   margin-left: 6px;
   color: var(--n2-danger);
   vertical-align: middle;
+}
+/* Palma ZAMIAST wykrzyknika w dzień urlopu — ta sama geometria, inny znak i
+   inny kolor, żeby „przeciążenie” i „nieobecność” nie wyglądały tak samo. */
+.workload-vacation-flag {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  color: var(--vacation-accent);
+  vertical-align: middle;
+}
+.workload-cell .workload-vacation-flag,
+.profile-day-hours .workload-vacation-flag {
+  margin-left: 2px;
 }
 
 /* ---------- Dashboard ---------- */
@@ -7307,7 +7360,8 @@ a.toggle-btn {
 }
 .week-day-summary .week-col-total,
 .week-day-summary .week-col-birthday,
-.week-day-summary .week-col-overload {
+.week-day-summary .week-col-overload,
+.week-day-summary .week-col-vacation {
   margin-top: 0;
 }
 .week-day-summary .week-col-birthday {

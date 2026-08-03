@@ -32,7 +32,8 @@ function makePerson(accessRole: AccessRole, overrides: Partial<Person> = {}): Pe
 
 // Pełna matryca po kolapsie ról (2026-07-22) — jedna komórka na (rola, akcja).
 // `pelne` = dawny zbiór administratora (wszystko), `ograniczone` = dawny zbiór
-// pracownika (tylko blocks.editOwn, profile.editOwn, comments.add, tickets.create).
+// pracownika (blocks.editOwn, profile.editOwn, comments.add, tickets.create)
+// plus events.vacationSelf — własny urlop zgłasza każdy.
 const MATRIX: Record<AccessRole, Record<PermAction, boolean>> = {
   pelne: {
     'projects.manage': true,
@@ -49,6 +50,9 @@ const MATRIX: Record<AccessRole, Record<PermAction, boolean>> = {
     'tickets.create': true,
     'tickets.manage': true,
     'events.manage': true,
+    // Własny urlop zgłasza KAŻDA rola (2026-08-03) — bramka wejścia „Dodaj
+    // urlop", niezależna od zarządzania spotkaniami.
+    'events.vacationSelf': true,
   },
   ograniczone: {
     'projects.manage': false,
@@ -65,6 +69,7 @@ const MATRIX: Record<AccessRole, Record<PermAction, boolean>> = {
     'tickets.create': true,
     'tickets.manage': false,
     'events.manage': false,
+    'events.vacationSelf': true,
   },
 };
 

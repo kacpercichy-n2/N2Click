@@ -661,6 +661,85 @@ describe('loadPlannerSnapshot', () => {
     expect(e.recurrence).toEqual({ daysOfWeek: [1, 3], startMinutes: 540, durationMinutes: 60 });
   });
 
+  // URLOP z chmury: hydracja jest ŁAGODNA per-pole (parytet z `intervalWeeks`).
+  // Nieznany rodzaj degraduje wiersz do spotkania, złe `end_date` znika, a
+  // czasy urlopu są kanoniczne niezależnie od kolumn — NIGDY nie wywracamy
+  // całego ładunku, bo baza sprzed migracji też musi się wczytać.
+  const vacationRow = (over: Record<string, unknown> = {}) => ({
+    id: uuid('ev-urlop'),
+    title: 'Urlop',
+    description: '',
+    location: 'Sala A',
+    meeting_url: 'https://meet.example.test/x',
+    event_date: '2026-07-06',
+    start_minutes: 540,
+    duration_minutes: 60,
+    attendee_ids: [CLOUD_PA],
+    recurrence: { daysOfWeek: [1], startMinutes: 540, durationMinutes: 60 },
+    kind: 'urlop',
+    end_date: '2026-07-10',
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-02-01T00:00:00.000Z',
+    ...over,
+  });
+
+  it('hydratuje urlop w formie kanonicznej (czasy 0/1440, bez reguły, bez lokalizacji)', async () => {
+    const db = new FakeSelectDb().seed('events', [vacationRow()]);
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const e = result.payload.events![0];
+    expect(e).toMatchObject({
+      kind: 'urlop',
+      endDate: '2026-07-10',
+      startMinutes: 0,
+      durationMinutes: 1440,
+      location: '',
+      meetingUrl: '',
+      attendeeIds: [PA],
+    });
+    expect('recurrence' in e).toBe(false);
+  });
+
+  it.each([
+    ['end_date przed datą', { end_date: '2026-07-01' }],
+    ['end_date równe dacie', { end_date: '2026-07-06' }],
+    ['end_date null', { end_date: null }],
+    ['end_date śmieciowe', { end_date: 'kiedyś' }],
+  ])('zdejmuje `endDate` (%s), zachowując wiersz', async (_label, over) => {
+    const db = new FakeSelectDb().seed('events', [vacationRow(over)]);
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.payload.events).toHaveLength(1);
+    expect('endDate' in result.payload.events![0]).toBe(false);
+  });
+
+  it('nieznany `kind` hydratuje się jako SPOTKANIE (brak klucza, czasy z kolumn)', async () => {
+    const db = new FakeSelectDb().seed('events', [
+      vacationRow({ kind: 'wakacje', end_date: null, recurrence: null }),
+    ]);
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const e = result.payload.events![0];
+    expect('kind' in e).toBe(false);
+    expect(e.startMinutes).toBe(540);
+    expect(e.durationMinutes).toBe(60);
+  });
+
+  it('brak kolumn `kind`/`end_date` (baza sprzed migracji) => spotkanie, bez fail-close', async () => {
+    const row = vacationRow();
+    delete (row as Record<string, unknown>).kind;
+    delete (row as Record<string, unknown>).end_date;
+    const db = new FakeSelectDb().seed('events', [row]);
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.payload.events).toHaveLength(1);
+    expect('kind' in result.payload.events![0]).toBe(false);
+  });
+
   it('błąd selecta events => fail-closed z polskim komunikatem', async () => {
     const db = new FakeSelectDb().fail('events');
     const result = await loadPlannerSnapshot(db, maps(), localFixture());

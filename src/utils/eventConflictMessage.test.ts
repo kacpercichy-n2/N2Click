@@ -7,6 +7,8 @@ import {
   eventConflictWarningMessage,
   extraConflictsPhrase,
   peopleCountPhrase,
+  plannedItemsPhrase,
+  vacationDraftWarningMessage,
 } from './eventConflictMessage';
 
 function conflict(overrides: Partial<ConflictLike> = {}): ConflictLike {
@@ -134,6 +136,46 @@ describe('eventConflictWarningMessage', () => {
     const three = ['p1', 'p2', 'p3'].map((personId) => conflict({ personId }));
     expect(eventConflictWarningMessage(three)).toBe(
       'Wydarzenie ogólnofirmowe: 3 osoby mają już coś zaplanowane w tych godzinach.',
+    );
+  });
+});
+
+// URLOP: pełnodniowy, więc jego opis NIE niesie zakresu godzin („0:00-24:00"
+// nic by nie mówiło), a ostrzeżenie przy zapisie liczy pracę do przeplanowania.
+describe('urlop w komunikatach', () => {
+  const vacation = (overrides: Partial<ConflictLike> = {}) =>
+    conflict({ kind: 'urlop', title: 'Urlop', startMinutes: 0, durationMinutes: 1440, ...overrides });
+
+  it('opisuje urlop bez zakresu godzin', () => {
+    expect(eventConflictBlockingMessage([vacation()])).toBe(
+      'Nie da się ustawić wydarzenia w tych godzinach. Ola Nowak ma w tym dniu urlop.',
+    );
+  });
+
+  it('bez nazwiska mówi „Ta osoba"', () => {
+    expect(eventConflictBlockingMessage([vacation({ personName: '  ' })])).toBe(
+      'Nie da się ustawić wydarzenia w tych godzinach. Ta osoba ma w tym dniu urlop.',
+    );
+  });
+
+  it('miesza się z innymi rodzajami bez zmiany ich brzmienia', () => {
+    expect(eventConflictBlockingMessage([conflict(), vacation()])).toBe(
+      'Nie da się ustawić wydarzenia w tych godzinach. Ola Nowak ma już zadanie „Regresja QA" 10:30-12:00; Ola Nowak ma w tym dniu urlop.',
+    );
+  });
+
+  it('plannedItemsPhrase odmienia się jak reszta liczebników', () => {
+    expect(plannedItemsPhrase(1)).toBe('1 zaplanowana pozycja');
+    expect(plannedItemsPhrase(3)).toBe('3 zaplanowane pozycje');
+    expect(plannedItemsPhrase(5)).toBe('5 zaplanowanych pozycji');
+    expect(plannedItemsPhrase(12)).toBe('12 zaplanowanych pozycji');
+    expect(plannedItemsPhrase(22)).toBe('22 zaplanowane pozycje');
+  });
+
+  it('ostrzeżenie zapisu urlopu jest puste bez kolizji i liczy POZYCJE, nie osoby', () => {
+    expect(vacationDraftWarningMessage([])).toBe('');
+    expect(vacationDraftWarningMessage([conflict(), conflict({ title: 'Inne' })])).toBe(
+      'W tym okresie masz już 2 zaplanowane pozycje. Urlop zapisze się mimo to, pamiętaj o przeplanowaniu.',
     );
   });
 });

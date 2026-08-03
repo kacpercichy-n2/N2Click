@@ -160,6 +160,9 @@ describe('konwencja plików migracji', () => {
       // Przeczytane per wpis feedu powiadomień (kolumna na core.profiles +
       // odtworzenie widoku-mostka n2click.profiles). Bez nowych polityk RLS.
       '20260803100000_profiles_notifications_read_ids.sql',
+      // Wydarzenia urlopowe: kolumny `kind`/`end_date` na n2click.events
+      // (addytywne, bez zmian RLS — `EXPECTED_POLICIES` zostaje bez zmian).
+      '20260803120000_events_vacation.sql',
     ]);
   });
 

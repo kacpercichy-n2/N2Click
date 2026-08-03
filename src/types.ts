@@ -444,6 +444,11 @@ export interface Ticket {
  * `rule.durationMinutes === durationMinutes` (czas wydarzenia JEST czasem
  * reguły), a `daysOfWeek` ZAWSZE zawiera `isoWeekday(date)` (baza widoczna).
  * OPCJONALNE i ADDYTYWNE (`DATA_VERSION` zostaje 7).
+ *
+ * URLOP (2026-08-03) jest tym samym bytem z dyskryminatorem `kind: 'urlop'`:
+ * pełnodniowa zajętość jednej osoby w zakresie dat `date..endDate`. Dzięki
+ * czasom 0/1440 wchodzi do ISTNIEJĄCEJ kolizji bez żadnej równoległej
+ * mechaniki; render świadomie ignoruje te czasy (okno godzin pracy z profilu).
  */
 export interface CalendarEvent {
   id: string;
@@ -456,6 +461,15 @@ export interface CalendarEvent {
   durationMinutes: number; // 15..1440, wielokrotność 15; start+dur <= 1440
   attendeeIds: string[]; // ids z people, zdeduplikowane; [] = ogólnofirmowe
   recurrence?: TaskRecurrence; // REUŻYTY typ; brak klucza = jednorazowe
+  /** Dyskryminator rodzaju. BRAK klucza = spotkanie (kanoniczny minimalizm —
+   *  `kind: 'meeting'` nigdy nie jest zapisywane lokalnie). Urlop ma zawsze
+   *  `startMinutes: 0`, `durationMinutes: 1440` i DOKŁADNIE jednego uczestnika,
+   *  a `recurrence` jest dla niego ZABRONIONE. */
+  kind?: 'urlop';
+  /** Ostatni dzień zakresu urlopu (włącznie). Klucz obecny WYŁĄCZNIE gdy
+   *  `kind === 'urlop'` i `endDate > date`; zakres `date..endDate` ma najwyżej
+   *  `MAX_VACATION_DAYS` dni (lustro limitu okresu zadania). */
+  endDate?: DateStr;
   createdAt: string; // ISO timestamp
   updatedAt: string; // ISO timestamp; odświeżany przy każdym zapisie
 }

@@ -13,6 +13,7 @@ import { useDispatch, useStoreApi } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import { useOpenTask } from './TaskModal';
 import { useOpenEvent } from './EventModal';
+import { TreePalm } from './icons';
 import { personColor } from '../utils/colors';
 import { clearLiveSyncHold, setLiveSyncHold } from '../utils/liveSyncGate';
 import { useTouchDragGate } from '../utils/useTouchDragGate';
@@ -49,6 +50,7 @@ import {
   isDoneStatus,
   occurrenceIsDone,
   personCapacity,
+  personVacationOnDate,
   taskDisplayStatus,
   taskGrowAllowance,
   taskIdsOfPerson,
@@ -243,12 +245,13 @@ interface DragState {
 }
 
 /**
- * Czy zakres [start, end) wchodzi na WYDARZENIE tej osoby tego dnia?
+ * Czy zakres [start, end) wchodzi na WYDARZENIE albo URLOP tej osoby tego dnia?
  *
- * Wystąpienia zadań cyklicznych są tu POMIJANE (`kind === 'event'`): zostają
- * czysto prezentacyjne i nigdy nie blokują przeciągania (inwariant 1). Straż
- * scalania czyta ten sam indeks BEZ tego filtra, bo scalenie nie może połknąć
- * żadnego z dwóch rodzajów. Lustro reduktorowego `blockCollidesWithEvent`.
+ * Wystąpienia zadań cyklicznych są tu POMIJANE: zostają czysto prezentacyjne i
+ * nigdy nie blokują przeciągania (inwariant 1). Straż scalania czyta ten sam
+ * indeks BEZ tego filtra, bo scalenie nie może połknąć żadnego z rodzajów.
+ * Lustro reduktorowego `blockCollidesWithEvent` (urlop wchodzi tam automatycznie
+ * jako wystąpienie 0-1440).
  */
 function overlapsEvent(
   busy: BusyInterval[] | undefined,
@@ -256,7 +259,9 @@ function overlapsEvent(
   end: number,
 ): boolean {
   if (busy === undefined) return false;
-  return busy.some((b) => b.kind === 'event' && rangesOverlap(start, end, b.start, b.end));
+  return busy.some(
+    (b) => b.kind !== 'recurrence' && rangesOverlap(start, end, b.start, b.end),
+  );
 }
 
 interface BlockProps {
@@ -767,6 +772,8 @@ function TimedBlockImpl({
     // `findBlockConflict` zwraca je jako winowajcę, więc ogłoszenie nazywa
     // spotkanie z tytułu zamiast mówić o nieistniejącym bloku. Syntetyczne `id`
     // z prefiksem nigdy nie zrówna się z `entry.id` (te pochodzą z `uid()`).
+    // URLOP wchodzi tą samą drogą jako pseudo-sąsiad „Urlop" na pełną dobę,
+    // więc klawiatura nie przestawi bloku na żadną godzinę dnia urlopowego.
     // Wystąpienia cykliczne świadomie POMIJAMY — nie blokują przeciągania.
     blocksOnDay: (i) => {
       const date = days[i];
@@ -778,9 +785,9 @@ function TimedBlockImpl({
       }));
       const busy = eventBusyByPersonDate.get(personDateKey(person.id, date)) ?? [];
       for (const [idx, b] of busy.entries()) {
-        if (b.kind !== 'event') continue;
+        if (b.kind === 'recurrence') continue;
         blocks.push({
-          id: `event:${date}:${idx}`,
+          id: `${b.kind}:${date}:${idx}`,
           startMinutes: b.start,
           plannedHours: (b.end - b.start) / 60,
           title: b.title ?? '',
@@ -1857,24 +1864,38 @@ const RecurBlock = memo(RecurBlockImpl);
 // never opens the slot menu on top of it.
 interface EventBlockProps {
   occ: CalendarEventOccurrence;
+  /** Okno renderu urlopu (godziny pracy uczestnika) — tylko dla `kind: 'urlop'`. */
+  vacationWindow?: { start: number; end: number };
+  /** Imię osoby na urlopie (podpowiedź/nazwa dostępna); '' gdy nieznana. */
+  vacationOwner?: string;
   // Stable parent callback taking the event id (memo-friendly).
   onOpen: (eventId: string) => void;
 }
 
-function EventBlockImpl({ occ, onOpen }: EventBlockProps) {
-  const top = (occ.startMinutes / 60) * HOUR_PX;
-  const height = Math.max((occ.durationMinutes / 60) * HOUR_PX, MIN_BLOCK_H);
-  const end = occ.startMinutes + occ.durationMinutes;
-  const hint = `📅 ${occ.event.title} — ${formatMinutes(occ.startMinutes)}–${formatMinutes(
-    end,
-  )}. Kliknij, aby otworzyć wydarzenie.`;
+function EventBlockImpl({ occ, vacationWindow, vacationOwner, onOpen }: EventBlockProps) {
+  // Urlop jest zapisany jako pełna doba (0/1440), ale RENDERUJE się w oknie
+  // godzin pracy osoby — inaczej zalałby całą kolumnę. Sama kolizja nadal idzie
+  // z zapisanych czasów, więc blok POKAZUJE mniej, niż faktycznie zajmuje.
+  const isVacation = occ.event.kind === 'urlop';
+  const startMinutes = isVacation && vacationWindow ? vacationWindow.start : occ.startMinutes;
+  const endMinutes =
+    isVacation && vacationWindow ? vacationWindow.end : occ.startMinutes + occ.durationMinutes;
+  const top = (startMinutes / 60) * HOUR_PX;
+  const height = Math.max(((endMinutes - startMinutes) / 60) * HOUR_PX, MIN_BLOCK_H);
+  const who = (vacationOwner ?? '').trim();
+  const hint = isVacation
+    ? `Urlop${who === '' ? '' : `: ${who}`}. Cały dzień. Kliknij, aby otworzyć.`
+    : `📅 ${occ.event.title} — ${formatMinutes(occ.startMinutes)}–${formatMinutes(
+        endMinutes,
+      )}. Kliknij, aby otworzyć wydarzenie.`;
   return (
     <Tooltip text={hint}>
     <div
-      className="week-event-block"
+      className={isVacation ? 'week-event-block urlop' : 'week-event-block'}
       style={{ top, height }}
       role="button"
       tabIndex={0}
+      aria-label={isVacation ? hint : undefined}
       onClick={(e) => {
         e.stopPropagation();
         onOpen(occ.event.id);
@@ -1886,10 +1907,21 @@ function EventBlockImpl({ occ, onOpen }: EventBlockProps) {
         }
       }}
     >
-      <span className="week-event-title">📅 {occ.event.title}</span>
-      <span className="week-event-time">
-        {formatMinutes(occ.startMinutes)}–{formatMinutes(end)}
-      </span>
+      {isVacation ? (
+        <>
+          <span className="week-event-title">
+            <TreePalm size={13} aria-hidden /> Urlop
+          </span>
+          <span className="week-event-time">{who === '' ? 'Cały dzień' : who}</span>
+        </>
+      ) : (
+        <>
+          <span className="week-event-title">📅 {occ.event.title}</span>
+          <span className="week-event-time">
+            {formatMinutes(occ.startMinutes)}–{formatMinutes(endMinutes)}
+          </span>
+        </>
+      )}
     </div>
     </Tooltip>
   );
@@ -2559,6 +2591,11 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
     } else if (blockCollides(state, menu.entry.personId, schedDate, schedStartMin, schedHours)) {
       schedWarning = '⚠ Koliduje z innym blokiem tej osoby w tym dniu.';
       schedDisabled = true;
+    } else if (personVacationOnDate(state, menu.entry.personId, schedDate) !== null) {
+      // Urlop przed ogólnym komunikatem o wydarzeniu: „koliduje z wydarzeniem"
+      // kazałoby szukać spotkania w kalendarzu, a blokuje CAŁY dzień wolny.
+      schedWarning = '⚠ Ta osoba ma w tym dniu urlop.';
+      schedDisabled = true;
     } else if (
       blockCollidesWithEvent(state, menu.entry.personId, schedDate, schedStartMin, schedHours)
     ) {
@@ -2712,6 +2749,13 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
               ⚠ {model.days[0].overloadNames}
             </span>
           )}
+          {/* Palma ZAMIAST wykrzyknika: te imiona są już wyłączone z
+              `overloadNames`, więc nikt nie pojawia się dwa razy. */}
+          {model.days[0].vacationNames.length > 0 && (
+            <span className="week-col-vacation">
+              <TreePalm size={13} aria-hidden /> {model.days[0].vacationNames.join(', ')}
+            </span>
+          )}
         </div>
       )}
 
@@ -2758,6 +2802,15 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                     <Tooltip text={`Powyżej dostępności: ${day.overloadNames}`}>
                       <div className="week-col-overload" data-tour="calendar.overload">
                         ⚠ {day.overloadNames}
+                      </div>
+                    </Tooltip>
+                  )}
+                  {/* Palma ZAMIAST wykrzyknika w dzień urlopu — imiona są już
+                      wyłączone z `overloadNames`, więc nic się nie dubluje. */}
+                  {day.vacationNames.length > 0 && (
+                    <Tooltip text={`Urlop: ${day.vacationNames.join(', ')}`}>
+                      <div className="week-col-vacation">
+                        <TreePalm size={13} aria-hidden /> {day.vacationNames.join(', ')}
                       </div>
                     </Tooltip>
                   )}
@@ -2829,6 +2882,12 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                     <EventBlock
                       key={`event-${occ.event.id}-${d}`}
                       occ={occ}
+                      vacationWindow={day.vacationWindows.get(occ.event.id)}
+                      vacationOwner={
+                        occ.event.kind === 'urlop'
+                          ? getPerson(state, occ.event.attendeeIds[0] ?? '')?.name ?? ''
+                          : undefined
+                      }
                       onOpen={handleOpenEvent}
                     />
                   ))}
