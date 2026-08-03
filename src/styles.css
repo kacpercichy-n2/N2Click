@@ -1480,9 +1480,19 @@ option {
   text-align: center;
 }
 .alloc-grid thead th {
-  background: rgba(255, 255, 255, 0.04);
+  /* Nagłówek jest `sticky`, więc tło MUSI być kryjące — dawne
+     rgba(255,255,255,0.04) przepuszczało przewijane wiersze pod etykiety
+     kolumn. `--n2-panel-soft` to ta sama jasność, jaką i tak daje złożenie
+     `--card-bg` (4% bieli) na `--n2-panel` karty modala, więc kolor się nie
+     zmienia — znika tylko prześwit. Przy `border-collapse: collapse` krawędzie
+     komórek nie jadą ze sticky nagłówkiem (Chrome), stąd dolna krawędź jako
+     wewnętrzny box-shadow. */
+  background: var(--n2-panel-soft);
+  box-shadow: inset 0 -1px 0 var(--n2-border);
   position: sticky;
   top: 0;
+  /* Nad sticky-left etykietami dni z tbody, które są później w DOM. */
+  z-index: 2;
   vertical-align: top;
   color: var(--n2-text-muted);
   font-family: var(--n2-font-mono);
@@ -1490,6 +1500,11 @@ option {
   text-transform: uppercase;
   letter-spacing: 0.02em;
   font-size: var(--n2-type-xs);
+}
+/* Narożnik (sticky top+left) — kryjące już sąsiednie th nie mogą go
+   przykrywać przy przewijaniu w poziomie. */
+.alloc-grid thead .alloc-day-col {
+  z-index: 3;
 }
 .alloc-day-col,
 .alloc-day-label {
