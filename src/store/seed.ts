@@ -706,6 +706,10 @@ export function buildSampleData(): AppData {
     tickets: [],
     // Dane demonstracyjne nie zawierają powiadomień — Panel startuje z pustym slotem.
     notifications: [],
+    // Dane demonstracyjne nie zawierają treści modułu Content Plan — marki i
+    // publikacje wprowadza się w samym module.
+    contentPlanBrands: [],
+    contentPlanPosts: [],
     currentUserId: kasia.id,
     sampleBannerDismissed: true,
     savedFilters: [],

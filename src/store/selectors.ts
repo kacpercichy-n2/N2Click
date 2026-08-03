@@ -7,6 +7,8 @@ import type {
   Comment,
   CommentEntityType,
   Company,
+  ContentPlanPost,
+  ContentPlanStatus,
   DateStr,
   Department,
   Milestone,
@@ -34,6 +36,7 @@ import { addDaysStr, isBirthdayOn, isValidDateStr, parseDate } from '../utils/da
 import { expandOccurrences, type RecurrenceOccurrence } from '../utils/recurrence';
 import { argsKey, createKeyedCache, createRefCache, filterKey } from './selectorCache';
 import { MAX_VACATION_DAYS } from './commandValidation';
+import { CONTENT_PLAN_STATUSES, isMonthKey, isPostInMonth } from '../contentplan/domain';
 
 // ---- Per-revision indexes (module-private) --------------------------------
 //
@@ -47,6 +50,7 @@ import { MAX_VACATION_DAYS } from './commandValidation';
 /** Shared empty results, so a miss still returns a STABLE reference. */
 const EMPTY_ENTRIES: WorkloadEntry[] = [];
 const EMPTY_IDS: string[] = [];
+const EMPTY_CP_POSTS: ContentPlanPost[] = [];
 
 /** First occurrence wins — mirrors `.find(...)` exactly, even with a stray duplicate id. */
 function byIdMap<T extends { id: string }>(rows: readonly T[]): Map<string, T> {
@@ -2048,4 +2052,64 @@ export function unreadNotificationCountForPerson(
 ): number {
   if (!personId) return 0;
   return unreadNotificationCount(notificationsForPerson(state, personId, nowIso));
+}
+
+// ---- Content Plan ----------------------------------------------------------
+//
+// Dwa odczyty pochodne modułu, oba PAMIĘTANE po referencji stanu (jak reszta
+// selektorów z argumentami — patrz selectorCache.ts). Wynik jest WSPÓŁDZIELONĄ
+// referencją: konsument nie może go mutować (żadnego `.sort(`/`.push(`).
+
+const contentPlanPostsForMonthCache = createKeyedCache<ContentPlanPost[]>((state, key) => {
+  const [brandId, monthKey] = key.split(' ');
+  if (brandId === '' || !isMonthKey(monthKey)) return EMPTY_CP_POSTS;
+  const rows = state.contentPlanPosts.filter(
+    (post) => post.brandId === brandId && isPostInMonth(post, monthKey),
+  );
+  if (rows.length === 0) return EMPTY_CP_POSTS;
+  // Sortowanie po dacie jest STABILNE, więc publikacje z tego samego dnia
+  // zachowują kolejność kolekcji (kalendarz i lista pokazują ten sam porządek).
+  return rows.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+});
+
+/** Publikacje jednej marki w jednym miesiącu ('yyyy-MM'), rosnąco po dacie.
+ *  Nieznana marka / niepoprawny klucz miesiąca => stabilna pusta lista. */
+export function contentPlanPostsForMonth(
+  state: AppData,
+  brandId: string,
+  monthKey: string,
+): ContentPlanPost[] {
+  return contentPlanPostsForMonthCache(state, argsKey(brandId, monthKey));
+}
+
+/** Liczniki miesiąca dla nagłówka kalendarza modułu. */
+export interface ContentPlanMonthStats {
+  total: number;
+  published: number; // widoczne dla klienta
+  drafts: number; // total - published
+  /** Licznik per status — KAŻDY z siedmiu statusów ma tu klucz (także zerowy). */
+  byStatus: Record<ContentPlanStatus, number>;
+}
+
+const contentPlanMonthStatsCache = createKeyedCache<ContentPlanMonthStats>((state, key) => {
+  const [brandId, monthKey] = key.split(' ');
+  const byStatus = Object.fromEntries(
+    CONTENT_PLAN_STATUSES.map((status) => [status, 0]),
+  ) as Record<ContentPlanStatus, number>;
+  const posts = contentPlanPostsForMonth(state, brandId, monthKey);
+  let published = 0;
+  for (const post of posts) {
+    byStatus[post.status] += 1;
+    if (post.visibility === 'published') published += 1;
+  }
+  return { total: posts.length, published, drafts: posts.length - published, byStatus };
+});
+
+/** Statystyki miesiąca marki: sumy widoczności + licznik każdego z 7 statusów. */
+export function contentPlanMonthStats(
+  state: AppData,
+  brandId: string,
+  monthKey: string,
+): ContentPlanMonthStats {
+  return contentPlanMonthStatsCache(state, argsKey(brandId, monthKey));
 }

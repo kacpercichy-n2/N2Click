@@ -46,6 +46,11 @@ const NON_MIRRORED_KEYS: Array<keyof AppData> = [
   // dotykające WYŁĄCZNIE ich NIE może być zaklasyfikowane jako „tylko lustrzane”,
   // bo zapis lokalny jest ich JEDYNĄ trwałością.
   'lastFilters',
+  // Content Plan: kolekcje NIE MAJĄ jeszcze domu w chmurze (lustro i hydracja
+  // wchodzą osobną fazą). Do tego czasu zapis lokalny jest ich JEDYNĄ
+  // trwałością, więc zmiana samego modułu NIGDY nie może pominąć `saveData`.
+  'contentPlanBrands',
+  'contentPlanPosts',
 ];
 
 // Runtime flaga zdrowia lustra chmury — prawdziwa TYLKO gdy status === 'ready',

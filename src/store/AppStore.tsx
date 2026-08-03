@@ -20,6 +20,9 @@ import type {
   CalendarEvent,
   ChecklistItem,
   ClientContact,
+  ContentPlanComment,
+  ContentPlanHistoryEntry,
+  ContentPlanPost,
   CommentEntityType,
   Company,
   Department,
@@ -89,6 +92,20 @@ import {
   isTicketStatus,
 } from '../utils/tickets';
 import { isNotificationType } from '../utils/notifications';
+import {
+  contentPlanUid,
+  isContentPlanReviewDecision,
+  isMonthKey,
+  isPostInMonth,
+  normalizeContentPlanBrandDraft,
+  normalizeContentPlanPostDraft,
+  reviewHistoryLabel,
+  uniqueBrandId,
+  validatePostForPublication,
+  type ContentPlanBrandDraft,
+  type ContentPlanPostDraft,
+  type ContentPlanReviewDecision,
+} from '../contentplan/domain';
 import {
   blockCollidesWithEvent,
   eventDraftConflicts,
@@ -327,6 +344,37 @@ export type Action =
   | { type: 'ADD_EVENT'; draft: EventDraft }
   | { type: 'SAVE_EVENT'; eventId: string; draft: EventDraft }
   | { type: 'DELETE_EVENT'; eventId: string }
+  // Content Plan — marki i publikacje modułu. Kolekcje ADDYTYWNE; jedyna kaskada
+  // to DELETE_CP_BRAND (marka zabiera swoje publikacje). Cała walidacja i
+  // normalizacja żyje w `src/contentplan/domain.ts`; każdy niepoprawny ładunek
+  // zwraca TĘ SAMĄ referencję stanu (inwariant 6).
+  | { type: 'SAVE_CP_BRAND'; brandId: string | null; draft: ContentPlanBrandDraft }
+  | { type: 'DELETE_CP_BRAND'; brandId: string }
+  | {
+      type: 'SAVE_CP_POST';
+      postId: string | null; // null => utworzenie
+      draft: ContentPlanPostDraft;
+      /** Etykieta wpisu historii; pusta/brak => domyślna polska etykieta. */
+      historyLabel?: string;
+    }
+  | { type: 'DELETE_CP_POST'; postId: string }
+  // Decyzja klienta na UDOSTĘPNIONEJ publikacji (Akceptacja / Uwagi).
+  | {
+      type: 'REVIEW_CP_POST';
+      postId: string;
+      decision: ContentPlanReviewDecision;
+      author: string;
+    }
+  // Udostępnienie CAŁEGO miesiąca marki — atomowe: jedna niekompletna
+  // publikacja blokuje operację (ta sama referencja stanu).
+  | { type: 'PUBLISH_CP_MONTH'; brandId: string; monthKey: string }
+  | {
+      type: 'ADD_CP_COMMENT';
+      postId: string;
+      author: string;
+      body: string;
+      parentId?: string;
+    }
   | { type: 'ADD_PERSON'; person: PersonDraft }
   | { type: 'UPDATE_PERSON'; personId: string; person: PersonDraft }
   | { type: 'DELETE_PERSON'; personId: string }
@@ -4111,6 +4159,216 @@ export function reducer(state: AppData, action: Action): AppData {
     case 'DELETE_EVENT': {
       if (!state.events.some((e) => e.id === action.eventId)) return state;
       return { ...state, events: state.events.filter((e) => e.id !== action.eventId) };
+    }
+    // ---- Content Plan (marki i publikacje modułu) ----
+    // Walidacja i normalizacja żyją w `src/contentplan/domain.ts`
+    // (`normalizeContentPlanBrandDraft` / `normalizeContentPlanPostDraft`):
+    // pusta nazwa/tytuł, nieznana marka, zła data, status/widoczność spoza
+    // zbioru, zły kanał, base64 zamiast referencji do Drive albo próba
+    // udostępnienia niekompletnej publikacji => TA SAMA referencja stanu
+    // (inwariant 6). Kolekcje są samodzielne — bez wpisów dziennika aktywności
+    // (parytet z ticketami i wydarzeniami); własną historię niesie publikacja.
+    case 'SAVE_CP_BRAND': {
+      const normalized = normalizeContentPlanBrandDraft(action.draft);
+      if (normalized === null) return state;
+      const stamp = nowIso();
+      if (action.brandId === null) {
+        return {
+          ...state,
+          contentPlanBrands: [
+            ...state.contentPlanBrands,
+            {
+              id: uniqueBrandId(normalized.name, state.contentPlanBrands),
+              ...normalized,
+              createdAt: stamp,
+              updatedAt: stamp,
+            },
+          ],
+        };
+      }
+      const brandId = action.brandId;
+      if (!state.contentPlanBrands.some((b) => b.id === brandId)) return state;
+      return {
+        ...state,
+        contentPlanBrands: state.contentPlanBrands.map((b) =>
+          // Id marki NIE zmienia się z nazwą: publikacje wskazują je po wartości.
+          b.id === brandId ? { ...b, ...normalized, updatedAt: stamp } : b,
+        ),
+      };
+    }
+    case 'DELETE_CP_BRAND': {
+      if (!state.contentPlanBrands.some((b) => b.id === action.brandId)) return state;
+      // Jedyna kaskada modułu: publikacje bez marki nie mają gdzie się pokazać.
+      return {
+        ...state,
+        contentPlanBrands: state.contentPlanBrands.filter((b) => b.id !== action.brandId),
+        contentPlanPosts: state.contentPlanPosts.filter((p) => p.brandId !== action.brandId),
+      };
+    }
+    case 'SAVE_CP_POST': {
+      const normalized = normalizeContentPlanPostDraft(action.draft, state.contentPlanBrands);
+      if (normalized === null) return state;
+      const stamp = nowIso();
+      const label = (action.historyLabel ?? '').trim();
+      if (action.postId === null) {
+        const entry: ContentPlanHistoryEntry = {
+          id: contentPlanUid(),
+          label: label === '' ? 'Utworzono slot publikacji' : label,
+          at: stamp,
+        };
+        return {
+          ...state,
+          contentPlanPosts: [
+            ...state.contentPlanPosts,
+            {
+              id: contentPlanUid(),
+              ...normalized,
+              comments: [],
+              history: [entry],
+              createdAt: stamp,
+              updatedAt: stamp,
+            },
+          ],
+        };
+      }
+      const postId = action.postId;
+      if (!state.contentPlanPosts.some((p) => p.id === postId)) return state;
+      return {
+        ...state,
+        contentPlanPosts: state.contentPlanPosts.map((p) => {
+          if (p.id !== postId) return p;
+          const entry: ContentPlanHistoryEntry = {
+            id: contentPlanUid(),
+            label: label === '' ? 'Zaktualizowano publikację' : label,
+            at: stamp,
+          };
+          const next: ContentPlanPost = {
+            id: p.id,
+            ...normalized,
+            // Komentarze i historia mają własne akcje — zapis ich nie przepisuje.
+            comments: p.comments,
+            history: [entry, ...p.history],
+            createdAt: p.createdAt,
+            updatedAt: stamp,
+          };
+          return next;
+        }),
+      };
+    }
+    case 'DELETE_CP_POST': {
+      if (!state.contentPlanPosts.some((p) => p.id === action.postId)) return state;
+      return {
+        ...state,
+        contentPlanPosts: state.contentPlanPosts.filter((p) => p.id !== action.postId),
+      };
+    }
+    case 'REVIEW_CP_POST': {
+      const post = state.contentPlanPosts.find((p) => p.id === action.postId);
+      if (!post) return state;
+      if (!isContentPlanReviewDecision(action.decision)) return state;
+      // Decyzja dotyczy WYŁĄCZNIE udostępnionej publikacji (parytet ze źródłem:
+      // szkic nie jest jeszcze widoczny dla klienta).
+      if (post.visibility !== 'published') return state;
+      const author = (action.author ?? '').trim();
+      if (author === '') return state;
+      const stamp = nowIso();
+      return {
+        ...state,
+        contentPlanPosts: state.contentPlanPosts.map((p) =>
+          p.id === action.postId
+            ? {
+                ...p,
+                status: action.decision,
+                history: [
+                  {
+                    id: contentPlanUid(),
+                    label: reviewHistoryLabel(author, action.decision),
+                    at: stamp,
+                  },
+                  ...p.history,
+                ],
+                updatedAt: stamp,
+              }
+            : p,
+        ),
+      };
+    }
+    case 'PUBLISH_CP_MONTH': {
+      if (!isMonthKey(action.monthKey)) return state;
+      if (!state.contentPlanBrands.some((b) => b.id === action.brandId)) return state;
+      const inMonth = state.contentPlanPosts.filter(
+        (p) => p.brandId === action.brandId && isPostInMonth(p, action.monthKey),
+      );
+      // Pusty miesiąc nie jest „udostępniony” — nie ma czego zmienić.
+      if (inMonth.length === 0) return state;
+      // ATOMOWO: jedna niekompletna publikacja blokuje cały miesiąc.
+      if (inMonth.some((p) => validatePostForPublication(p).length > 0)) return state;
+      const pending = inMonth.filter((p) => p.visibility !== 'published');
+      if (pending.length === 0) return state; // wszystko już udostępnione => no-op
+      const pendingIds = new Set(pending.map((p) => p.id));
+      const stamp = nowIso();
+      return {
+        ...state,
+        contentPlanPosts: state.contentPlanPosts.map((p) =>
+          pendingIds.has(p.id)
+            ? {
+                ...p,
+                visibility: 'published' as const,
+                history: [
+                  {
+                    id: contentPlanUid(),
+                    label: 'Udostępniono miesiąc klientowi',
+                    at: stamp,
+                  },
+                  ...p.history,
+                ],
+                updatedAt: stamp,
+              }
+            : p,
+        ),
+      };
+    }
+    case 'ADD_CP_COMMENT': {
+      const post = state.contentPlanPosts.find((p) => p.id === action.postId);
+      if (!post) return state;
+      // Komentarze zbieramy na UDOSTĘPNIONEJ publikacji (parytet ze źródłem).
+      if (post.visibility !== 'published') return state;
+      const author = (action.author ?? '').trim();
+      const body = (action.body ?? '').trim();
+      if (author === '' || body === '') return state;
+      const parentId = (action.parentId ?? '').trim();
+      // Odpowiedź musi wskazywać komentarz TEJ publikacji — inaczej wątek by się
+      // rozjechał i treść zniknęłaby z widoku.
+      if (action.parentId !== undefined && parentId === '') return state;
+      if (parentId !== '' && !post.comments.some((c) => c.id === parentId)) return state;
+      const stamp = nowIso();
+      const comment: ContentPlanComment = {
+        id: contentPlanUid(),
+        author,
+        body,
+        at: stamp,
+        ...(parentId !== '' ? { parentId } : {}),
+      };
+      return {
+        ...state,
+        contentPlanPosts: state.contentPlanPosts.map((p) =>
+          p.id === action.postId
+            ? {
+                ...p,
+                comments: [comment, ...p.comments],
+                history: [
+                  {
+                    id: contentPlanUid(),
+                    label: `${author}: dodał(a) ${parentId !== '' ? 'odpowiedź' : 'komentarz'}`,
+                    at: stamp,
+                  },
+                  ...p.history,
+                ],
+                updatedAt: stamp,
+              }
+            : p,
+        ),
+      };
     }
     case 'LOAD_SAMPLE':
       return { ...action.data, sampleBannerDismissed: true };

@@ -56,3 +56,12 @@ tekstowych `field-sizing: content` od 761 px) i jedna klasa w `EventModal.tsx`
 (`event-modal-card`). Dolne granice `clamp()` = poprzednie stałe, więc mobile i
 ekrany < ~1300 px bez zmian. `npm test` 107/2337 zielone, `npm run build`
 zielony. Playwright niezainstalowany, browser check nie uruchamiany.
+
+## Developer log (n2hub-312)
+
+Granice: nowy `src/contentplan/domain.ts` (czysta domena + drafty), typy i dwa
+slice'y w `types.ts`, `emptyData`/`coerceArray`/`repairContentPlan` w
+`storage.ts`, 7 akcji `*_CP_*` w `AppStore.tsx`, 2 selektory, `seed.ts`,
+`persistGate` (kolekcje NON_MIRRORED — brak domu w chmurze do R8). `npm test`
+111 plików / 2476 testów zielone (+139), `npm run build` zielony. Wiki:
+`state-and-persistence.md` zaktualizowane. Bez blokerów.
