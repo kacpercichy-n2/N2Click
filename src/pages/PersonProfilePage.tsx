@@ -41,7 +41,6 @@ import { hashPassword } from '../utils/password';
 import { jobTitleSelectOptions } from '../utils/roleTitles';
 import type { Person } from '../types';
 import { Avatar } from '../components/Avatar';
-import { CloudPasswordSection } from '../components/CloudPasswordSection';
 import { QuickAddModal, NEW_OPTION_VALUE } from '../components/QuickAddModal';
 import { Coin } from '../components/Coin';
 import { TreePalm } from '../components/icons';
@@ -94,16 +93,19 @@ export function PersonProfilePage() {
 }
 
 /**
- * Zintegrowany panel profilu. `accountView` = zakładka Konto (własny profil):
- * bez przycisku „Wróć" do zespołu, a hasło w trybie Supabase zmienia się przez
- * realne konto (CloudPasswordSection), nie przez lokalny hash.
+ * Zintegrowany panel profilu. `accountView` = TRYB EDYCJI zakładki Konto
+ * (własny profil): bez „Wróć", bez sekcji Hasło/Ten tydzień/Projekty/Zadania
+ * (dashboard konta w AccountPage pokazuje je po swojemu), z przyciskiem
+ * „Anuluj" i wyjściem po udanym zapisie (`onExit`).
  */
 export function PersonProfile({
   personId,
   accountView = false,
+  onExit,
 }: {
   personId: string;
   accountView?: boolean;
+  onExit?: () => void;
 }) {
   const navigate = useNavigate();
   const { openTask } = useOpenTask();
@@ -209,6 +211,8 @@ export function PersonProfile({
     }
     setError('');
     dispatch({ type: 'UPDATE_PERSON', personId: person.id, person: merged });
+    // Tryb edycji konta: udany zapis wraca do podglądu (dashboardu).
+    onExit?.();
   };
 
   // Supervisor candidates: everyone except this person and anyone whose
@@ -602,19 +606,21 @@ export function PersonProfile({
             >
               Zapisz profil
             </button>
+            {onExit && (
+              <button type="button" className="btn ghost" onClick={onExit}>
+                Anuluj
+              </button>
+            )}
           </div>
         )}
       </div>
 
-      {/* Hasło zintegrowane z danymi konta: własny profil w trybie Supabase
-          zmienia hasło realnego konta; poza tym zostaje lokalny hash
-          (PasswordSection sam się chowa bez uprawnień). */}
-      {isOwn && auth.mode === 'supabase' ? (
-        <CloudPasswordSection />
-      ) : (
-        <PasswordSection person={person} />
-      )}
+      {/* Widok konta ma własny kafelek hasła (dashboard w AccountPage);
+          tu sekcja Hasło zostaje dla cudzych profili (lokalny hash). */}
+      {!accountView && <PasswordSection person={person} />}
 
+      {!accountView && (
+      <>
       <div className="editor-section">
         <h2>Ten tydzień</h2>
         <p>
@@ -711,6 +717,8 @@ export function PersonProfile({
           </ul>
         )}
       </div>
+      </>
+      )}
 
       {quickAdd === 'jobTitle' && (
         <QuickAddModal
@@ -971,7 +979,18 @@ function ProfilePhotoAvatar({
  * `Usuń hasło` — the documented recovery path so a passwordless person can
  * always log in.
  */
-function PasswordSection({ person }: { person: Person }) {
+/**
+ * Hasło LOKALNE (hash w localStorage). `embedded` = sam formularz bez karty
+ * `.editor-section` i nagłówka — osadzany w kafelku „Konto i bezpieczeństwo"
+ * dashboardu konta w trybie lokalnym (zagnieżdżanie kart jest zabronione).
+ */
+export function PasswordSection({
+  person,
+  embedded = false,
+}: {
+  person: Person;
+  embedded?: boolean;
+}) {
   const { state, dispatch } = useStore();
   const askConfirm = useConfirm();
   const currentUser = state.people.find((p) => p.id === state.currentUserId);
@@ -1032,9 +1051,8 @@ function PasswordSection({ person }: { person: Person }) {
     setNotice('Hasło usunięte.');
   };
 
-  return (
-    <div className="editor-section">
-      <h2>Hasło</h2>
+  const body = (
+    <>
       <p className="field-hint">
         {hasHash ? 'Ta osoba ma ustawione hasło.' : 'Ta osoba loguje się bez hasła.'}
       </p>
@@ -1076,6 +1094,14 @@ function PasswordSection({ person }: { person: Person }) {
           </button>
         )}
       </div>
+    </>
+  );
+
+  if (embedded) return body;
+  return (
+    <div className="editor-section">
+      <h2>Hasło</h2>
+      {body}
     </div>
   );
 }

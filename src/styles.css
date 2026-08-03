@@ -5633,6 +5633,146 @@ a.toggle-btn {
   font-weight: 500;
 }
 
+/* ── Dashboard konta (/account) ─────────────────────────────────────────────
+   Skondensowany podgląd profilu w kafelkach: wartości domyślnie tylko do
+   odczytu („Edytuj dane" przełącza na formularz PersonProfile). Kafelki to
+   zwykłe `.editor-section` w siatce — jeden słownik kart w całej aplikacji. */
+.account-page {
+  max-width: 1120px;
+}
+.account-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--n2-space-4);
+  align-items: start;
+}
+/* Dwie kolumny od ~900px: cztery kafelki danych układają się w spokojne 2×2
+   (auto-fit robiło 3+1 z dziurą w drugim rzędzie). */
+@media (min-width: 900px) {
+  .account-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.account-grid > .editor-section {
+  /* Odstęp niesie `gap` siatki, nie margines karty. */
+  margin-bottom: 0;
+  min-width: 0;
+}
+.account-tile h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.account-tile-icon {
+  color: var(--n2-lavender);
+  flex: none;
+}
+/* Wiersze faktów: etykieta po lewej, wartość po prawej — gęsto, bez ramek. */
+.account-facts {
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+.account-facts > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+}
+.account-facts dt {
+  color: var(--n2-text-soft);
+  font-size: var(--n2-type-sm);
+  flex: none;
+}
+.account-facts dd {
+  margin: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.account-tile .weekday-chips {
+  margin-bottom: 12px;
+}
+/* Chipy dni roboczych w podglądzie są czysto wizualne — bez kursora i hovera. */
+.weekday-chip.readonly {
+  cursor: default;
+}
+.weekday-chip.readonly:hover {
+  border-color: var(--n2-border);
+}
+.weekday-chip.readonly.on:hover {
+  border-color: var(--n2-border-strong);
+}
+.account-subhead {
+  margin: 14px 0 6px;
+  font-size: var(--n2-type-xs);
+  font-family: var(--n2-font-mono);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.account-row-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.account-row-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-size: var(--n2-type-sm);
+}
+.account-tile-actions {
+  margin-top: 14px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.account-hr-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: var(--n2-space-6) 0 var(--n2-space-4);
+}
+.account-hr-head h2 {
+  margin: 0;
+}
+/* Pigułka „W przygotowaniu / Wkrótce" — informacja, nie akcent. */
+.account-soon {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid var(--n2-border);
+  border-radius: 999px;
+  font-size: var(--n2-type-xs);
+  color: var(--n2-text-soft);
+  white-space: nowrap;
+  flex: none;
+}
+/* Pasek zużycia limitu urlopu: tor neutralny, wypełnienie lawendowe. */
+.account-meter {
+  height: 4px;
+  margin-top: 8px;
+  border-radius: 999px;
+  background: var(--n2-surface-muted);
+  overflow: hidden;
+}
+.account-meter-fill {
+  display: block;
+  height: 100%;
+  background: var(--n2-lavender);
+  border-radius: inherit;
+}
+.account-pass {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--n2-border-soft);
+}
+
 /* Zintegrowany panel profilu: pierwsza karta „dane podstawowe" + read-only pola */
 .profile-basics-main {
   display: flex;

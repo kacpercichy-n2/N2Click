@@ -70,12 +70,26 @@
   local-only people are never deleted and local departmentId/passwordHash are
   kept. The blocked screen remains only for the edge case of
   a session without a cloud profile row. Od 2026-08-03 `/account` („Konto”,
-  ikona `CircleUser`, OBA tryby) to PEŁNY profil zalogowanego użytkownika:
-  `AccountPage` renderuje `PersonProfile` (eksport z `PersonProfilePage`) z
-  propsem `accountView` (bez przycisku „Wróć”; hasło własne w trybie Supabase
-  zmienia `src/components/CloudPasswordSection.tsx` — realne konto przez
-  `changePassword` z sesji — a lokalny `PasswordSection` zostaje dla trybu
-  lokalnego i cudzych profili z `people.manage`). Własny profil ma JEDEN adres:
+  ikona `CircleUser`, OBA tryby) to profil zalogowanego użytkownika w formie
+  DASHBOARDU tylko do odczytu (`AccountPage`): kafelki `.account-grid`
+  (2×2 od 900px; karty to zwykłe `.editor-section`) — Dane kontaktowe, Czas
+  pracy, Organizacja, Konto i bezpieczeństwo (status powiadomień + „Zmień
+  hasło” jako rozwinięcie `aria-expanded` z osadzonym formularzem: w trybie
+  Supabase `CloudPasswordSection` — realne konto przez `changePassword` z
+  sesji — w lokalnym `PasswordSection embedded`; oba komponenty mają wariant
+  `embedded` bez karty, bo kart się nie zagnieżdża) — oraz zamarkowana
+  „Strefa HR” (pigułka „W przygotowaniu”): kafelek Urlop (pozostałe dni z
+  DOMYŚLNEGO limitu 26, zużycie liczone z realnych wydarzeń `kind: 'urlop'`
+  przez czysty `src/pages/accountHr.ts` + test — dni robocze osoby wewnątrz
+  roku; lista nadchodzących urlopów) i kafelek Dokumenty i wnioski (stała
+  lista, pigułki „Wkrótce”); przyciski „Złóż wniosek urlopowy” / „Złóż
+  zapotrzebowanie” są `disabled` z powodem przez `DisabledHint`. Edycja to
+  JAWNY stan: przycisk „Edytuj dane” przełącza na `PersonProfile`
+  (eksport z `PersonProfilePage`) z propsem `accountView` — bez „Wróć”, BEZ
+  sekcji Hasło/Ten tydzień/Projekty/Zadania (są ukryte w accountView), z
+  przyciskiem „Anuluj” i wyjściem po udanym zapisie (`onExit`). Cudze profile
+  na `/people/:id` renderują się jak dotąd w całości (z tygodniem, projektami,
+  zadaniami i sekcją lokalnego hasła). Własny profil ma JEDEN adres:
   `PersonProfilePage` przekierowuje `/people/<własne id>` → `/account`
   (`Navigate replace`), więc lista zespołu, wyszukiwarka i stare linki lądują w
   zakładce Konto. Dawne sekcje Konta — link „Mój profil”, „Profil w chmurze”

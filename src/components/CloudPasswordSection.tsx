@@ -11,7 +11,11 @@ import { validateNewPassword } from '../auth/passwordChange';
 
 const PASSWORD_CHANGED_MSG = 'Hasło zostało zmienione.';
 
-export function CloudPasswordSection() {
+/**
+ * `embedded` = renderuje sam formularz (bez karty `.editor-section` i nagłówka)
+ * — do osadzenia wewnątrz kafelka konta; zagnieżdżanie kart jest zabronione.
+ */
+export function CloudPasswordSection({ embedded = false }: { embedded?: boolean }) {
   const { changePassword } = useAuth();
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -48,9 +52,8 @@ export function CloudPasswordSection() {
     setSuccess(true);
   };
 
-  return (
-    <div className="editor-section">
-      <h2>Zmiana hasła</h2>
+  const body = (
+    <>
       <p className="field-hint">
         Ustaw nowe hasło do swojego konta. Hasło musi mieć co najmniej 8 znaków.
       </p>
@@ -91,6 +94,14 @@ export function CloudPasswordSection() {
           {busy ? 'Zapisywanie…' : 'Zmień hasło'}
         </button>
       </form>
+    </>
+  );
+
+  if (embedded) return body;
+  return (
+    <div className="editor-section">
+      <h2>Zmiana hasła</h2>
+      {body}
     </div>
   );
 }
