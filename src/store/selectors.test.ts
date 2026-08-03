@@ -2165,6 +2165,71 @@ describe('eventDraftConflicts — próg zależny od uczestników', () => {
     expect(r.warning).toHaveLength(1);
     expect(r.warning[0].personId).toBe('p1');
   });
+
+  // SERIA CYKLICZNA (2026-08-04): kolizja w pojedynczym tygodniu nie może
+  // blokować serii na pół roku — symulacja wystąpień zwraca ostrzeżenia z DATĄ.
+  describe('draft cykliczny — symulacja wystąpień zamiast blokady', () => {
+    // 2026-07-08 to środa (isoWeekday 3) — blok Oli 10:00-12:00 tylko tam.
+    const weeklyRule = { daysOfWeek: [3], startMinutes: 630, durationMinutes: 60 };
+
+    it('kolizja jednego wystąpienia => ZERO blokad, ostrzeżenie z datą', () => {
+      const r = eventDraftConflicts(busyState(), {
+        date: '2026-07-08',
+        startMinutes: 630,
+        durationMinutes: 60,
+        attendeeIds: ['p1'],
+        recurrence: weeklyRule,
+      });
+      expect(r.blocking).toHaveLength(0);
+      expect(r.warning).toHaveLength(1);
+      expect(r.warning[0]).toMatchObject({
+        kind: 'block',
+        personName: 'Ola',
+        title: 'Regresja QA',
+        date: '2026-07-08',
+      });
+    });
+
+    it('wystąpienia bez kolizji nie wnoszą ostrzeżeń (wolna przyszłość przechodzi czysto)', () => {
+      const r = eventDraftConflicts(busyState(), {
+        // Kotwica TYDZIEŃ PO bloku Oli — żadne wystąpienie nie koliduje.
+        date: '2026-07-15',
+        startMinutes: 630,
+        durationMinutes: 60,
+        attendeeIds: ['p1'],
+        recurrence: weeklyRule,
+      });
+      expect(r.blocking).toHaveLength(0);
+      expect(r.warning).toHaveLength(0);
+    });
+
+    it('`until` reguły przycina symulację', () => {
+      // Blok Oli 08.07; until dzień wcześniej => zero wystąpień z kolizją.
+      const r = eventDraftConflicts(busyState(), {
+        date: '2026-07-01',
+        startMinutes: 630,
+        durationMinutes: 60,
+        attendeeIds: ['p1'],
+        recurrence: { ...weeklyRule, until: '2026-07-07' },
+      });
+      expect(r.blocking).toHaveLength(0);
+      expect(r.warning).toHaveLength(0);
+    });
+
+    it('co 2 tygodnie omija kolizję z martwego tygodnia', () => {
+      // Kotwica 01.07 (środa); interwał 2 tyg. => wystąpienia 01.07, 15.07…
+      // Blok Oli 08.07 wypada w tygodniu MARTWYM — nie ma ostrzeżenia.
+      const r = eventDraftConflicts(busyState(), {
+        date: '2026-07-01',
+        startMinutes: 630,
+        durationMinutes: 60,
+        attendeeIds: ['p1'],
+        recurrence: { ...weeklyRule, intervalWeeks: 2 },
+      });
+      expect(r.blocking).toHaveLength(0);
+      expect(r.warning).toHaveLength(0);
+    });
+  });
 });
 
 describe('blockCollidesWithEvent', () => {

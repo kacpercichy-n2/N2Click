@@ -15,6 +15,7 @@ import { eventDraftConflicts } from '../store/selectors';
 import {
   eventConflictBlockingMessage,
   eventConflictWarningMessage,
+  recurringConflictWarningMessage,
   vacationDraftWarningMessage,
 } from '../utils/eventConflictMessage';
 import type { CalendarEvent } from '../types';
@@ -489,24 +490,62 @@ function EventEditor({
 
   const sortedPeople = useMemo(() => sortByNamePl(state.people), [state.people]);
 
-  // Żywe, NIEBLOKUJĄCE ostrzeżenie dla wydarzenia OGÓLNOFIRMOWEGO (brak imiennych
-  // uczestników). Kolizje imienne mają twardą bramkę na zapisie, więc nie ma po co
-  // ich tu dublować — a spotkanie całofirmowe wolno zapisać i chcemy tylko wiedzieć,
-  // ilu osób dotknie. Liczone WYŁĄCZNIE dla sensownej daty i zakresu godzin, żeby
-  // podpowiedź nie migała w trakcie pisania w polach czasu.
+  // Żywe, NIEBLOKUJĄCE ostrzeżenia kolizji. Dwa przypadki bez twardej bramki:
+  //  - wydarzenie OGÓLNOFIRMOWE (brak imiennych uczestników) — wolno je zapisać,
+  //    chcemy tylko wiedzieć, ilu osób dotknie;
+  //  - SERIA CYKLICZNA z imiennymi uczestnikami (2026-08-04) — zajęty pojedynczy
+  //    tydzień nie blokuje serii, więc symulacja wystąpień wymienia TERMINY
+  //    kolizji („pon 10 sie: Jarek ma w tym dniu urlop") zamiast odrzucać zapis.
+  // Jednorazowe wydarzenie z imiennymi uczestnikami zachowuje twardą bramkę na
+  // zapisie, więc nie dublujemy go tutaj. Liczone WYŁĄCZNIE dla sensownej daty
+  // i zakresu godzin, żeby podpowiedź nie migała w trakcie pisania w polach.
   const conflictWarning = useMemo(() => {
-    if (isVacation) return '';
-    if (attendeeIds.length > 0 || !isValidDateStr(date)) return '';
+    if (isVacation || !isValidDateStr(date)) return '';
     const from = snapToGrid(timeToMinutes(startTime));
     const to = snapToGrid(timeToMinutes(endTime));
     if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return '';
+    if (recurring && attendeeIds.length > 0) {
+      const daysOfWeek = Array.from(new Set(recurDays)).sort((a, b) => a - b);
+      if (daysOfWeek.length === 0) return '';
+      const report = eventDraftConflicts(
+        state,
+        {
+          date,
+          startMinutes: from,
+          durationMinutes: to - from,
+          attendeeIds,
+          recurrence: {
+            daysOfWeek,
+            startMinutes: from,
+            durationMinutes: to - from,
+            ...(recurInterval > 1 ? { intervalWeeks: recurInterval } : {}),
+            ...(until.trim() !== '' ? { until } : {}),
+          },
+        },
+        existing?.id,
+      );
+      return recurringConflictWarningMessage(report.warning);
+    }
+    if (attendeeIds.length > 0) return '';
     const report = eventDraftConflicts(
       state,
       { date, startMinutes: from, durationMinutes: to - from, attendeeIds },
       existing?.id,
     );
     return eventConflictWarningMessage(report.warning);
-  }, [isVacation, state, date, startTime, endTime, attendeeIds, existing?.id]);
+  }, [
+    isVacation,
+    state,
+    date,
+    startTime,
+    endTime,
+    attendeeIds,
+    recurring,
+    recurDays,
+    recurInterval,
+    until,
+    existing?.id,
+  ]);
 
   // Żywe ostrzeżenie URLOPU: zapis zawsze przechodzi (próg D4), więc liczy się
   // tylko rozmiar pracy do przeplanowania w CAŁYM zakresie dat. Liczone
@@ -664,7 +703,10 @@ function EventEditor({
     // zamknął, a wydarzenia by nie było. Blokują wyłącznie kolizje uczestników
     // IMIENNYCH; ogólnofirmowe wracają jako `warning` i lecą do żywej podpowiedzi
     // niżej, nie tutaj.
-    const conflicts = eventDraftConflicts(state, draft, existing?.id);
+    // `EventDraft.recurrence` jest celowo luźne (`unknown | null` — surówka
+    // przed normalizacją reduktora); bramka kolizji dostaje lokalną, ściśle
+    // typowaną regułę zbudowaną wyżej.
+    const conflicts = eventDraftConflicts(state, { ...draft, recurrence }, existing?.id);
     if (conflicts.blocking.length > 0) {
       setErrors({ form: eventConflictBlockingMessage(conflicts.blocking) });
       focusFieldById('event-start');

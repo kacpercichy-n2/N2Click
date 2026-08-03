@@ -8,6 +8,7 @@ import {
   extraConflictsPhrase,
   peopleCountPhrase,
   plannedItemsPhrase,
+  recurringConflictWarningMessage,
   vacationDraftWarningMessage,
 } from './eventConflictMessage';
 
@@ -177,5 +178,34 @@ describe('urlop w komunikatach', () => {
     expect(vacationDraftWarningMessage([conflict(), conflict({ title: 'Inne' })])).toBe(
       'W tym okresie masz już 2 zaplanowane pozycje. Urlop zapisze się mimo to, pamiętaj o przeplanowaniu.',
     );
+  });
+});
+
+describe('recurringConflictWarningMessage — seria cykliczna', () => {
+  it('puste kolizje => pusty komunikat', () => {
+    expect(recurringConflictWarningMessage([])).toBe('');
+  });
+
+  it('wymienia terminy z datą i mówi, że zapis przechodzi', () => {
+    expect(
+      recurringConflictWarningMessage([
+        conflict({ kind: 'urlop', personName: 'Jarek Nowak', date: '2026-07-08' }),
+      ]),
+    ).toBe(
+      'Seria koliduje w pojedynczych terminach: 8 lip (śro): Jarek Nowak ma w tym dniu urlop. Wydarzenie zapisze się mimo to.',
+    );
+  });
+
+  it('powyżej trzech kolizji zbiera resztę licznikiem', () => {
+    const four = [
+      conflict({ date: '2026-07-08' }),
+      conflict({ date: '2026-07-15' }),
+      conflict({ date: '2026-07-22' }),
+      conflict({ date: '2026-07-29' }),
+    ];
+    const msg = recurringConflictWarningMessage(four);
+    expect(msg).toContain('8 lip (śro): Ola Nowak ma już zadanie „Regresja QA" 10:30-12:00');
+    expect(msg).toContain('(i 1 kolejna kolizja)');
+    expect(msg).not.toContain('29 lip');
   });
 });

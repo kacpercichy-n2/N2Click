@@ -18,6 +18,7 @@ import type {
   Status,
   Task,
   TaskAssignment,
+  TaskRecurrence,
   WorkCategory,
   WorkloadEntry,
 } from '../types';
@@ -712,6 +713,10 @@ export interface ScheduleConflict {
   title: string;
   startMinutes: number;
   durationMinutes: number;
+  /** Dzień kolizji — obecny TYLKO w ścieżce symulacji serii cyklicznej
+   *  ({@link eventDraftConflicts}), gdzie kolizje z różnych wystąpień muszą
+   *  dać się wymienić z datą. Jednodniowe ścieżki go nie ustawiają. */
+  date?: DateStr;
 }
 
 /**
@@ -826,6 +831,13 @@ export interface EventConflictReport {
  * urlop, potem przeplanowuje pracę. Kierunek odwrotny (spotkanie w czyjś dzień
  * urlopu) zostaje twardy i wychodzi sam z pełnodniowego wystąpienia.
  */
+/**
+ * Horyzont symulacji kolizji serii cyklicznej: pół roku od kotwicy draftu.
+ * `until` reguły krótszy niż horyzont przycina go naturalnie
+ * (expandOccurrences); dłuższe serie ostrzegają o pierwszym półroczu.
+ */
+export const RECURRING_CONFLICT_HORIZON_DAYS = 183;
+
 export function eventDraftConflicts(
   state: AppData,
   draft: {
@@ -836,10 +848,41 @@ export function eventDraftConflicts(
     kind?: 'urlop';
     /** `null` (kształt draftu z modala) czyta się jak brak zakresu. */
     endDate?: DateStr | null;
+    /** Reguła cykliczności draftu; `null`/brak = wydarzenie jednorazowe. */
+    recurrence?: TaskRecurrence | null;
   },
   excludeEventId?: string,
 ): EventConflictReport {
   const opts = excludeEventId !== undefined ? { excludeEventId } : undefined;
+
+  // WYDARZENIE CYKLICZNE (2026-08-04, decyzja usera): kolizje NIE blokują
+  // zapisu — pojedynczy zajęty tydzień (np. czyjś urlop) nie może
+  // uniemożliwić serii planowanej na pół roku. Zamiast tego SYMULUJEMY
+  // wystąpienia w horyzoncie {@link RECURRING_CONFLICT_HORIZON_DAYS}
+  // (`until` reguły przycina go naturalnie w expandOccurrences) i zwracamy
+  // wszystkie kolizje jako OSTRZEŻENIA z datą wystąpienia, żeby modal mógł
+  // wymienić: „koliduje w tym i tym terminie z zadaniem tej osoby".
+  // Ogólnofirmowe cykliczne liczy się po wszystkich osobach — jak dotąd próg
+  // był i pozostaje wyłącznie ostrzegawczy.
+  if (draft.kind !== 'urlop' && draft.recurrence != null) {
+    const companyWide = draft.attendeeIds.length === 0;
+    const personIds = companyWide ? state.people.map((p) => p.id) : draft.attendeeIds;
+    const horizonEnd = addDaysStr(draft.date, RECURRING_CONFLICT_HORIZON_DAYS);
+    const warning: ScheduleConflict[] = [];
+    for (const occ of expandOccurrences(draft.recurrence, draft.date, draft.date, horizonEnd)) {
+      for (const c of scheduleConflictsForRange(
+        state,
+        personIds,
+        occ.date,
+        occ.startMinutes,
+        occ.durationMinutes,
+        opts,
+      )) {
+        warning.push({ ...c, date: occ.date });
+      }
+    }
+    return { blocking: [], warning };
+  }
 
   if (draft.kind === 'urlop') {
     const warning: ScheduleConflict[] = [];

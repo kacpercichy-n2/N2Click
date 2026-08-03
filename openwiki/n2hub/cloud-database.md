@@ -30,6 +30,21 @@
   wpisów w `app_access`.
 - Funkcje pomocnicze `app.*` odwołują się do `core.*`/`n2click.*` — nowa
   funkcja definer NIE może używać `public.*`.
+- CZŁONKOSTWO APPKI FILTRUJE WIDOK PROFILI (20260803150000 + poprawka
+  20260803151000): `n2click.profiles` pokazuje zalogowanym WYŁĄCZNIE profile z
+  wpisem `core.app_access(app='n2click')` — placeholderowe konta blogoapp
+  (Ala Adminowa, Olek Logistyk, Jan Kierowca, Karol Szofer; przypisane
+  migracją do spółki „Błogość Catering") przestały wyciekać do huba przez
+  `MERGE_CLOUD_PEOPLE`. Członkostwo sprawdza definer `core.app_member(uid,
+  app)` (security definer, pinned search_path, grant dla authenticated +
+  service_role) — NIE goły EXISTS na `core.app_access`, bo widok jest
+  `security_invoker`, a `authenticated` celowo nie ma grantów do `core`
+  (pierwsza wersja migracji wywalała hydrację „permission denied"). Gałąź
+  `auth.uid() is null` przepuszcza ścieżki serwisowe: provision-account
+  upsertuje profil PRZEZ widok zanim nada `app_access` (krok 9 przed 9b).
+  UWAGA: lokalne wiersze `Person` scalone przed tą migracją NIE znikają same
+  (local-only people are never deleted) — placeholdery trzeba raz usunąć w
+  Zespole per przeglądarka; chmura już ich nie dosypie.
 
 ## Boundaries
 

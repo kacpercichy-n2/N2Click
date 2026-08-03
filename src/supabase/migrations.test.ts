@@ -163,6 +163,8 @@ describe('konwencja plików migracji', () => {
       // Wydarzenia urlopowe: kolumny `kind`/`end_date` na n2click.events
       // (addytywne, bez zmian RLS — `EXPECTED_POLICIES` zostaje bez zmian).
       '20260803120000_events_vacation.sql',
+      '20260803150000_n2click_profiles_only_app_members.sql',
+      '20260803151000_profiles_view_app_member_helper.sql',
     ]);
   });
 

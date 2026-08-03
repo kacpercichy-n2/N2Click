@@ -10,6 +10,7 @@
 // są zabronione w tekstach widocznych dla użytkownika.
 
 import { formatMinutes } from './time';
+import { formatShortWithWeekday } from './dates';
 
 /**
  * Minimalny, STRUKTURALNY kształt kolizji. Celowo nie importujemy
@@ -26,6 +27,9 @@ export interface ConflictLike {
   durationMinutes: number;
   /** Do policzenia RÓŻNYCH osób w ostrzeżeniu. */
   personId: string;
+  /** Dzień kolizji (yyyy-MM-dd) — obecny w symulacji serii cyklicznej, gdzie
+   *  kolizje z różnych wystąpień trzeba wymienić z datą. */
+  date?: string;
 }
 
 /** Ile kolizji wymieniamy z nazwy, zanim przejdziemy na „i N więcej". */
@@ -108,6 +112,28 @@ export function eventConflictWarningMessage(conflicts: readonly ConflictLike[]):
   if (conflicts.length === 0) return '';
   const people = new Set(conflicts.map((c) => c.personId));
   return `Wydarzenie ogólnofirmowe: ${peopleCountPhrase(people.size)} już coś zaplanowane w tych godzinach.`;
+}
+
+/** Ile kolizji serii wymieniamy z datą — seria bywa dłuższa niż jednorazowe,
+ *  więcej niż {@link MAX_LISTED}, żeby dwa pierwsze terminy nie zjadły całej
+ *  informacji przy urlopie rozciągniętym na kilka wystąpień. */
+const MAX_LISTED_RECURRING = 3;
+
+/**
+ * Komunikat OSTRZEGAJĄCY dla serii CYKLICZNEJ (zapis zawsze przechodzi —
+ * decyzja 2026-08-04: zajęty pojedynczy tydzień nie może blokować serii na pół
+ * roku). Wymienia terminy kolizji z datą: „pon 10 sie: Jarek ma w tym dniu
+ * urlop"; resztę zbiera licznikiem.
+ */
+export function recurringConflictWarningMessage(conflicts: readonly ConflictLike[]): string {
+  if (conflicts.length === 0) return '';
+  const listed = conflicts
+    .slice(0, MAX_LISTED_RECURRING)
+    .map((c) => (c.date ? `${formatShortWithWeekday(c.date)}: ${describeOne(c)}` : describeOne(c)))
+    .join('; ');
+  const rest = conflicts.length - Math.min(conflicts.length, MAX_LISTED_RECURRING);
+  const tail = rest > 0 ? ` (i ${extraConflictsPhrase(rest)})` : '';
+  return `Seria koliduje w pojedynczych terminach: ${listed}${tail}. Wydarzenie zapisze się mimo to.`;
 }
 
 /**

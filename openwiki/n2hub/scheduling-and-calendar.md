@@ -212,8 +212,15 @@
     => `warning`: zapis PRZECHODZI, a modal pokazuje żywą, ostrzegawczą linię
     `.event-conflict-warn` z licznikiem osób. Twarda blokada liczona po wszystkich
     czyniłaby spotkanie całofirmowe niewstawialnym w godzinach pracy.
-    ZAKRES: sprawdzana jest wyłącznie data kotwicy draftu — pozostałe wystąpienia
-    reguły cyklicznej NIE są kontrolowane.
+    ZAKRES: dla wydarzenia JEDNORAZOWEGO sprawdzana jest data draftu. SERIA
+    CYKLICZNA (2026-08-04, decyzja usera) NIE jest blokowana przez kolizje —
+    czyjś urlop w jednym tygodniu nie może uniemożliwić serii na pół roku.
+    `eventDraftConflicts` SYMULUJE wtedy wystąpienia w horyzoncie
+    `RECURRING_CONFLICT_HORIZON_DAYS` (183 dni; `until` przycina go naturalnie)
+    i zwraca WSZYSTKIE kolizje jako `warning` z polem `date`; modal pokazuje
+    żywą listę terminów (`recurringConflictWarningMessage`: „8 lip (śro): Jarek
+    ma w tym dniu urlop… Wydarzenie zapisze się mimo to."), a reduktor — to
+    samo źródło prawdy — przepuszcza zapis.
   - „zadanie → wydarzenie": `blockCollidesWithEvent` blokuje blok wchodzący na
     SPOTKANIE tej osoby. Autorytatywnie w `setBlockTime`; w UI zapala `colliding`
     przy przeciąganiu bloku i karty zasobnika, daje osobny komunikat w menu
