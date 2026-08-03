@@ -90,6 +90,7 @@ import {
   formatShortWithWeekday,
   WEEKDAY_LABELS,
 } from '../utils/dates';
+import { INTERVAL_WEEKS_OPTIONS, intervalWeeksLabel } from '../utils/recurrence';
 import { useSaveStatus } from '../utils/useSaveStatus';
 import { useAutoSave } from '../utils/useAutoSave';
 import { hasEntity, isValidTaskDraft } from '../store/commandValidation';
@@ -719,6 +720,9 @@ export function TaskEditor({
     seedRule ? recurMinutesToTime(seedRule.startMinutes) : '09:00',
   );
   const [recurDurMin, setRecurDurMin] = useState(seedRule?.durationMinutes ?? 60);
+  // Interwał „co X tygodni": brak klucza w regule ≡ 1 (co tydzień). Wartość 1
+  // NIE trafia z powrotem do modelu (forma kanoniczna zdejmuje ten klucz).
+  const [recurInterval, setRecurInterval] = useState(seedRule?.intervalWeeks ?? 1);
   const [recurUntil, setRecurUntil] = useState(seedRule?.until ?? '');
   // AT-07 — walidacja cykliczności startuje dopiero, gdy użytkownik ruszy tę
   // sekcję. Zadanie bez reguły otwierało się z czerwonym „Wybierz przynajmniej
@@ -1371,6 +1375,7 @@ export function TaskEditor({
         daysOfWeek: recurDays,
         startMinutes: recurStartMin,
         durationMinutes: recurDurMin,
+        ...(recurInterval > 1 ? { intervalWeeks: recurInterval } : {}),
         ...(recurUntil !== '' ? { until: recurUntil } : {}),
       },
     });
@@ -2007,6 +2012,25 @@ export function TaskEditor({
                     );
                   })}
                 </div>
+              </div>
+              <div className="field">
+                <label htmlFor="recur-interval">Powtarzaj</label>
+                <select
+                  id="recur-interval"
+                  value={recurInterval}
+                  onChange={(e) => {
+                    recurEdited();
+                    setRecurInterval(Number(e.target.value));
+                  }}
+                  disabled={readOnly}
+                  aria-describedby={roDesc}
+                >
+                  {INTERVAL_WEEKS_OPTIONS.map((weeks) => (
+                    <option key={weeks} value={weeks}>
+                      {intervalWeeksLabel(weeks)}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="field-row">
                 <div className="field">

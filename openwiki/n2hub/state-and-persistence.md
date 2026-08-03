@@ -230,7 +230,13 @@
   egzekwowana na TRZECH granicach — reduktor, `normalizeTaskMeta`, hydracja
   chmury): klucz `recurrence` obecny tylko przy poprawnej regule, NIGDY na szkicu
   (`isDraft === true`) i NIGDY przy niepoprawnym `startDate`; `until` tylko gdy
-  poprawny i `>= startDate`; wyjątek w JEDNEJ z CZTERECH form —
+  poprawny i `>= startDate`; `intervalWeeks` („co X tygodni", 2026-08-03) tylko
+  gdy całkowity 2..8 — brak klucza ≡ 1 = co tydzień, a KAŻDA zła wartość
+  (null, 1, 0, 9, 1.5, '2') spada na 1 i NIGDY nie unieważnia reguły (wymóg
+  hydracji chmury). Tydzień aktywny liczy się od tygodnia ISO (pon) KOTWICY, nie
+  od okna rozwijania — `isOccurrenceDate` i `expandOccurrences` dzielą tę samą
+  bramkę, więc wyjątek z martwego tygodnia odpada na normalizacji; wyjątek w
+  JEDNEJ z CZTERECH form —
   `{date, skip:true}`, `{date, done:true}`, `{date, startMinutes,
   durationMinutes}` (siatka 15 min, RÓŻNE od reguły) albo `{date, done:true,
   startMinutes, durationMinutes}` — którego `date` jest realną datą wystąpienia;

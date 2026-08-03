@@ -19,7 +19,7 @@ import {
 import type { CalendarEvent } from '../types';
 import { addDaysStr, isValidDateStr, todayStr, WEEKDAY_LABELS } from '../utils/dates';
 import { MINUTE_STEP } from '../utils/time';
-import { isoWeekday } from '../utils/recurrence';
+import { INTERVAL_WEEKS_OPTIONS, intervalWeeksLabel, isoWeekday } from '../utils/recurrence';
 import { normalizeProjectDocumentUrl } from '../utils/projectDocuments';
 import { personColor } from '../utils/colors';
 import { bypassNavGuardOnce, clearNavGuard, setNavGuard } from '../utils/dirtyRegistry';
@@ -371,6 +371,9 @@ function EventEditor({
   const [description, setDescription] = useState(existing?.description ?? '');
   const [recurring, setRecurring] = useState(existing?.recurrence !== undefined);
   const [recurDays, setRecurDays] = useState<number[]>(existing?.recurrence?.daysOfWeek ?? []);
+  // Interwał „co X tygodni": brak klucza w regule ≡ 1 (co tydzień). Wartość 1
+  // NIE trafia z powrotem do modelu (forma kanoniczna zdejmuje ten klucz).
+  const [recurInterval, setRecurInterval] = useState(existing?.recurrence?.intervalWeeks ?? 1);
   const [until, setUntil] = useState(existing?.recurrence?.until ?? '');
   const [errors, setErrors] = useState<FieldErrors>({});
 
@@ -473,6 +476,7 @@ function EventEditor({
           daysOfWeek,
           startMinutes,
           durationMinutes,
+          ...(recurInterval > 1 ? { intervalWeeks: recurInterval } : {}),
           ...(until.trim() !== '' ? { until } : {}),
         }
       : null;
@@ -765,6 +769,25 @@ function EventEditor({
                 );
               })}
             </div>
+            <Field id="event-interval" label="Powtarzaj">
+              {(control) => (
+                <select
+                  {...control}
+                  value={recurInterval}
+                  onChange={(e) => {
+                    setRecurInterval(Number(e.target.value));
+                    markDirty();
+                  }}
+                  disabled={readOnly}
+                >
+                  {INTERVAL_WEEKS_OPTIONS.map((weeks) => (
+                    <option key={weeks} value={weeks}>
+                      {intervalWeeksLabel(weeks)}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </Field>
             <Field id="event-until" label="Do (opcjonalnie)">
               {(control) => (
                 <input

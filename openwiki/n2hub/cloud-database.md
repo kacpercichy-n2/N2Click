@@ -174,7 +174,10 @@ widoki-mostki). Gdzie w tekście pada `public.<tabela>` w kontekście
 - `tasks.recurrence` (20260721170000_task_recurrence) — jsonb nullable
   (NULL/legacy = brak reguły): cykliczność zadania (RRULE-lite) + per-datowe
   wyjątki, osadzona jak `tasks.checklist`/`tasks.draft_hours`. Kształt kanoniczny:
-  `{ daysOfWeek:[1..7], startMinutes, durationMinutes, until?, overrides? }`;
+  `{ daysOfWeek:[1..7], startMinutes, durationMinutes, intervalWeeks?, until?,
+  overrides? }` (`intervalWeeks` = „co X tygodni", klucz TYLKO dla całkowitych
+  2..8, brak ≡ 1; zła wartość w kolumnie NIGDY nie unieważnia reguły — hydracja
+  czyta ją jako cotygodniową);
   wyjątki niosą TYLKO daty/minuty — żadnych id profili, więc bez mapowania id.
   Świadomie BEZ osobnej tabeli: widoczność ma być identyczna z widocznością
   zadania, więc RLS dziedziczy się z wiersza `n2click.tasks` — ZERO nowych polityk,

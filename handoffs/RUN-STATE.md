@@ -79,3 +79,16 @@ fail-closed w `applyCloudPeople`, tick `.dash-notif-tick` w kafelku, badge karty
 przez `unreadNotificationCountForPerson` (usunięty `unreadNotificationCountFor`),
 migracja `20260803100000_profiles_notifications_read_ids.sql` NIE zaaplikowana.
 `npm test` 2243/2243, build green. Dwie strony wiki zaktualizowane.
+
+## Developer result (n2hub-308 cykliczność co X tygodni)
+
+`TaskRecurrence.intervalWeeks?` (addytywne, DATA_VERSION 7; klucz tylko dla 2-8,
+zła wartość = 1 i NIGDY nie odrzuca reguły). Bramka tygodnia w
+`isOccurrenceDate` + `expandOccurrences` liczona od tygodnia ISO kotwicy; select
+„Powtarzaj" w TaskModal i EventModal. Chmura bez migracji (jsonb niesie klucz).
+`npm test` 2254/2254, build green. Dwie strony wiki zaktualizowane.
+
+Follow-up: badge „Cykliczne" na EventsPage dopisuje interwał („pon (co 2
+tygodnie)"); dla 1 etykieta bez zmian. Helper strony jest prywatny i nie ma
+testu, więc pokryta została odmiana `intervalWeeksLabel`. `npm test` 2256/2256,
+build green.

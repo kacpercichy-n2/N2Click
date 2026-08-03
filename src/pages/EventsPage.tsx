@@ -9,18 +9,23 @@ import type { CalendarEvent } from '../types';
 import { formatShortWithWeekday, todayStr, WEEKDAY_LABELS } from '../utils/dates';
 import { formatMinutes } from '../utils/time';
 import { normalizeProjectDocumentUrl } from '../utils/projectDocuments';
+import { intervalWeeksLabel } from '../utils/recurrence';
 import { useOpenEvent } from '../components/EventModal';
 import { Plus } from '../components/icons';
 
 type Mode = 'nadchodzace' | 'minione';
 
-/** Krótkie polskie etykiety dni tygodnia dla badge'a cykliczności („pon, śr”). */
+/** Krótkie polskie etykiety dni tygodnia dla badge'a cykliczności („pon, śr”).
+ *  Interwał dopisujemy TYLKO gdy reguła go niesie (klucz kanonicznie istnieje
+ *  wyłącznie dla 2..8), więc „co tydzień” zostaje etykietą bez dopisku. */
 function recurrenceLabel(event: CalendarEvent): string | null {
   if (event.recurrence === undefined) return null;
   const days = event.recurrence.daysOfWeek
     .map((iso) => WEEKDAY_LABELS[iso - 1]?.toLowerCase() ?? '')
     .filter((s) => s !== '');
-  return `Cykliczne: ${days.join(', ')}`;
+  const interval = event.recurrence.intervalWeeks;
+  const suffix = interval !== undefined && interval > 1 ? ` (${intervalWeeksLabel(interval)})` : '';
+  return `Cykliczne: ${days.join(', ')}${suffix}`;
 }
 
 export function EventsPage() {

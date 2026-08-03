@@ -247,6 +247,13 @@ export interface TaskRecurrence {
   daysOfWeek: number[]; // ISO 1 (pon) … 7 (nd); zdeduplikowane, rosnąco, niepuste
   startMinutes: number; // 0..1425, wielokrotność 15
   durationMinutes: number; // 15..1440, wielokrotność 15; start + duration <= 1440
+  // Interwał tygodniowy „co X tygodni" liczony od tygodnia ISO (pon–nd) kotwicy.
+  // FORMA KANONICZNA: klucz obecny WYŁĄCZNIE dla całkowitej wartości 2..8;
+  // brak klucza ≡ 1 (co tydzień), więc każdy zapis sprzed pola i każda zła
+  // wartość z chmury czytają się jako cotygodniowa reguła (nigdy nie unieważnia
+  // całej reguły — patrz `normalizeRecurrenceRule`). OPCJONALNE i ADDYTYWNE
+  // (`DATA_VERSION` zostaje na 7).
+  intervalWeeks?: number;
   until?: DateStr; // włączna granica; brak klucza = otwarta
   overrides?: RecurrenceOverride[]; // brak klucza gdy pusto; sort po dacie rosnąco
 }

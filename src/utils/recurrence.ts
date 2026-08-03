@@ -3,14 +3,23 @@
 // only date + time utilities — so a future events feature can reuse it as-is.
 //
 // A recurring task repeats on chosen ISO weekdays at a fixed time-of-day, from
-// its anchor (`task.startDate`) until an optional inclusive `until` bound.
+// its anchor (`task.startDate`) until an optional inclusive `until` bound, every
+// `intervalWeeks` weeks (absent = 1 = every week). The interval is counted from
+// the ISO WEEK (Monday start) of the anchor, never from the expansion window.
 // Per-date OVERRIDES either skip the day, shift its time or mark that single
 // occurrence done; overrides never move an occurrence to a different calendar day.
 //
 // INVARIANT 1: occurrences are NEVER materialized as `WorkloadEntry` rows and
 // never feed totals/availability/overload/collision — they are presentational.
 import type { DateStr, TaskRecurrence, RecurrenceOverride } from '../types';
-import { addDaysStr, diffDays, eachDayInclusive, isValidDateStr, parseDate } from './dates';
+import {
+  addDaysStr,
+  diffDays,
+  eachDayInclusive,
+  isValidDateStr,
+  parseDate,
+  weekStart,
+} from './dates';
 import { DAY_MINUTES, MINUTE_STEP } from './time';
 
 /** One concrete occurrence of a recurring task within an expansion window. */
@@ -38,6 +47,59 @@ export function isoWeekday(date: DateStr): number {
   return day === 0 ? 7 : day;
 }
 
+/** Najmniejszy i największy dozwolony interwał tygodniowy („co X tygodni"). */
+export const MIN_INTERVAL_WEEKS = 1;
+export const MAX_INTERVAL_WEEKS = 8;
+
+/** Wartości selecta „Powtarzaj" w edytorach zadania i wydarzenia (1..8). */
+export const INTERVAL_WEEKS_OPTIONS: readonly number[] = Array.from(
+  { length: MAX_INTERVAL_WEEKS - MIN_INTERVAL_WEEKS + 1 },
+  (_, i) => i + MIN_INTERVAL_WEEKS,
+);
+
+/**
+ * Polska etykieta interwału z poprawną odmianą: 1 => „co tydzień”,
+ * 2..4 => „co 2 tygodnie”, 5..8 => „co 5 tygodni”. JEDYNY dom tej odmiany —
+ * oba edytory czytają stąd.
+ */
+export function intervalWeeksLabel(weeks: number): string {
+  if (weeks === 1) return 'co tydzień';
+  if (weeks >= 2 && weeks <= 4) return `co ${weeks} tygodnie`;
+  return `co ${weeks} tygodni`;
+}
+
+/**
+ * Interwał tygodniowy reguły. Forma kanoniczna trzyma klucz WYŁĄCZNIE dla
+ * całkowitych 2..8, więc brak klucza i KAŻDA inna wartość (null, 1, ułamek,
+ * string, 0, 9) czytają się jako 1 = co tydzień. Nigdy nie unieważnia reguły:
+ * zły `intervalWeeks` z chmury/legacy nie może zabrać zadaniu cykliczności.
+ */
+function intervalWeeksOf(raw: unknown): number {
+  if (
+    typeof raw === 'number' &&
+    Number.isInteger(raw) &&
+    raw >= MIN_INTERVAL_WEEKS &&
+    raw <= MAX_INTERVAL_WEEKS
+  ) {
+    return raw;
+  }
+  return 1;
+}
+
+/**
+ * Czy `date` wypada w AKTYWNYM tygodniu reguły. Tydzień kotwiczenia to tydzień
+ * ISO (poniedziałek jako start) daty `anchorStart`, więc parzystość liczy się od
+ * KOTWICY, nie od początku okna rozwijania — okno może zacząć się w tygodniu
+ * „martwym". Dzień tygodnia sprawdza wołający.
+ */
+function isActiveWeek(interval: number, anchorMonday: DateStr, date: DateStr): boolean {
+  if (interval <= 1) return true;
+  // Oba końce to poniedziałki albo `date >= anchorMonday`, więc dzielenie
+  // całkowite nigdy nie schodzi poniżej zera dla realnego wystąpienia.
+  const weekIndex = Math.floor(diffDays(anchorMonday, date) / 7);
+  return weekIndex % interval === 0;
+}
+
 /** True when `m` is a finite integer on the 15-minute grid within [0, 1440]. */
 function isGridMinute(m: unknown): m is number {
   return typeof m === 'number' && Number.isInteger(m) && m >= 0 && m <= DAY_MINUTES && m % MINUTE_STEP === 0;
@@ -49,7 +111,9 @@ function isGridMinute(m: unknown): m is number {
  * empty or holds a value outside integer 1..7; times are off-grid/non-finite;
  * duration < 15; start + duration > 1440; `until` is present but not a real
  * 'yyyy-MM-dd' >= `anchorStart`. An absent/empty `until` means open-ended.
- * Dedupes and ascending-sorts `daysOfWeek`.
+ * Dedupes and ascending-sorts `daysOfWeek`. `intervalWeeks` NEVER rejects the
+ * rule: only an integer 2..8 is kept, anything else (absent, 1, 0, 9, 1.5,
+ * '2', null) collapses to weekly and drops the key.
  */
 export function normalizeRecurrenceRule(
   raw: unknown,
@@ -77,6 +141,11 @@ export function normalizeRecurrenceRule(
     durationMinutes: durationMinutes as number,
   };
 
+  // Interwał tygodniowy: klucz TYLKO dla 2..8; 1 i każda zła wartość spadają na
+  // „co tydzień" i NIE odrzucają reguły (wymóg walidacji ładunku chmurowego).
+  const intervalWeeks = intervalWeeksOf(rec.intervalWeeks);
+  if (intervalWeeks > 1) rule.intervalWeeks = intervalWeeks;
+
   const rawUntil = rec.until;
   if (rawUntil !== undefined && rawUntil !== null && rawUntil !== '') {
     if (typeof rawUntil !== 'string' || !isValidDateStr(rawUntil) || rawUntil < anchorStart) {
@@ -88,8 +157,9 @@ export function normalizeRecurrenceRule(
 }
 
 /**
- * True when `date` lands on the rule's weekday pattern within its bounds —
- * ignores overrides and skips (a skipped day is still an occurrence date).
+ * True when `date` lands on the rule's weekday pattern AND in an active week of
+ * its `intervalWeeks` cycle, within its bounds — ignores overrides and skips
+ * (a skipped day is still an occurrence date).
  */
 export function isOccurrenceDate(
   rule: TaskRecurrence,
@@ -99,7 +169,8 @@ export function isOccurrenceDate(
   if (!isValidDateStr(date) || !isValidDateStr(anchorStart)) return false;
   if (date < anchorStart) return false;
   if (rule.until !== undefined && date > rule.until) return false;
-  return rule.daysOfWeek.includes(isoWeekday(date));
+  if (!rule.daysOfWeek.includes(isoWeekday(date))) return false;
+  return isActiveWeek(intervalWeeksOf(rule.intervalWeeks), weekStart(anchorStart), date);
 }
 
 /**
@@ -229,9 +300,14 @@ export function expandOccurrences(
   }
 
   const days = rule.daysOfWeek;
+  // Interwał „co X tygodni" liczy się od tygodnia ISO KOTWICY, nie od `from` —
+  // okno rozwijania może zaczynać się w tygodniu martwym.
+  const interval = intervalWeeksOf(rule.intervalWeeks);
+  const anchorMonday = weekStart(anchorStart);
   const out: RecurrenceOccurrence[] = [];
   for (const date of eachDayInclusive(lower, upper)) {
     if (!days.includes(isoWeekday(date))) continue;
+    if (!isActiveWeek(interval, anchorMonday, date)) continue;
     if (skips.has(date)) continue;
     const shift = shifts.get(date);
     if (shift) {

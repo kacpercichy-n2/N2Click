@@ -481,6 +481,47 @@ describe('loadPlannerSnapshot', () => {
     expect(merged.tasks).toBe(state.tasks);
   });
 
+  // Interwał „co X tygodni" (PKG-20260803-interval-weeks): kolumna jsonb niesie
+  // klucz dosłownie, hydracja go zachowuje (2..8), a wystąpienia po round-tripie
+  // pomijają te same martwe tygodnie.
+  it('round-trip zachowuje intervalWeeks i martwe tygodnie', async () => {
+    const startDate = '2026-07-06'; // poniedziałek
+    const recurrence = normalizeRecurrence(
+      { daysOfWeek: [1], startMinutes: 540, durationMinutes: 60, intervalWeeks: 2 },
+      startDate,
+    );
+    expect(recurrence!.intervalWeeks).toBe(2);
+    const localTask: Task = {
+      id: TK, projectId: PR, statusId: S1, title: 'Co 2 tygodnie', description: '',
+      startDate, endDate: '2026-08-03', estimatedHours: null, priority: 'normal',
+      workCategoryId: '', departmentId: '', checklist: [], orderIndex: 0, isDraft: false,
+      recurrence,
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    const ops = diffToCloudOps(
+      { ...localFixture(), tasks: [] },
+      { ...localFixture(), tasks: [localTask] },
+      maps(),
+    ).ops;
+    const taskRow = ops.find((o) => o.table === 'tasks' && o.kind === 'upsert')!.row!;
+    expect(taskRow.recurrence).toEqual(recurrence);
+
+    const db = new FakeSelectDb()
+      .seed('projects', [
+        { id: PR, client_id: null, name: 'P', description: '', status_id: S1, paid: false, start_date: startDate, end_date: '2026-08-03', department_id: null, service_type_id: null, created_at: '', updated_at: '' },
+      ])
+      .seed('tasks', [taskRow]);
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const hydrated = result.payload.tasks.find((t) => t.id === TK)!;
+    expect(hydrated.recurrence).toEqual(recurrence); // idempotentnie
+    expect(
+      expandOccurrences(hydrated.recurrence!, hydrated.startDate, startDate, '2026-08-03').map((o) => o.date),
+    ).toEqual(['2026-07-06', '2026-07-20', '2026-08-03']);
+  });
+
   it('excludes a project with null dates and a task over the 92-day cap', async () => {
     const db = new FakeSelectDb()
       .seed('projects', [

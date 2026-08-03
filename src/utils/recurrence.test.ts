@@ -2,7 +2,9 @@
 // Weekday mapping, window expansion, overrides, canonicalization + idempotency.
 import { describe, expect, it } from 'vitest';
 import {
+  INTERVAL_WEEKS_OPTIONS,
   expandOccurrences,
+  intervalWeeksLabel,
   isOccurrenceDate,
   isoWeekday,
   normalizeRecurrence,
@@ -20,6 +22,22 @@ describe('isoWeekday', () => {
     expect(isoWeekday('2026-07-07')).toBe(2); // Tue
     expect(isoWeekday('2026-07-11')).toBe(6); // Sat
     expect(isoWeekday('2026-07-12')).toBe(7); // Sun
+  });
+});
+
+// Odmiana etykiety interwału ma JEDEN dom (`intervalWeeksLabel`) — czytają ją
+// oba edytory i badge „Cykliczne" na stronie Wydarzeń.
+describe('intervalWeeksLabel', () => {
+  it('odmienia „tydzień/tygodnie/tygodni” zgodnie z liczbą', () => {
+    expect(intervalWeeksLabel(1)).toBe('co tydzień');
+    expect(intervalWeeksLabel(2)).toBe('co 2 tygodnie');
+    expect(intervalWeeksLabel(4)).toBe('co 4 tygodnie');
+    expect(intervalWeeksLabel(5)).toBe('co 5 tygodni');
+    expect(intervalWeeksLabel(8)).toBe('co 8 tygodni');
+  });
+
+  it('daje selectowi dokładnie osiem opcji 1..8', () => {
+    expect([...INTERVAL_WEEKS_OPTIONS]).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
   });
 });
 
@@ -66,6 +84,37 @@ describe('normalizeRecurrenceRule', () => {
     expect('until' in openEnded!).toBe(false);
     expect(normalizeRecurrenceRule({ daysOfWeek: [1], startMinutes: 540, durationMinutes: 60, until: '2026-07-05' }, ANCHOR)).toBeNull();
     expect(normalizeRecurrenceRule({ daysOfWeek: [1], startMinutes: 540, durationMinutes: 60, until: 'garbage' }, ANCHOR)).toBeNull();
+  });
+
+  // ---- Interwał tygodniowy „co X tygodni" (PKG-20260803-interval-weeks) ----
+
+  it('keeps an integer intervalWeeks 2..8 and drops the key for 1', () => {
+    const every3 = normalizeRecurrenceRule(
+      { daysOfWeek: [1], startMinutes: 540, durationMinutes: 60, intervalWeeks: 3 },
+      ANCHOR,
+    );
+    expect(every3!.intervalWeeks).toBe(3);
+    const weekly = normalizeRecurrenceRule(
+      { daysOfWeek: [1], startMinutes: 540, durationMinutes: 60, intervalWeeks: 1 },
+      ANCHOR,
+    );
+    expect('intervalWeeks' in weekly!).toBe(false);
+    const max = normalizeRecurrenceRule(
+      { daysOfWeek: [1], startMinutes: 540, durationMinutes: 60, intervalWeeks: 8 },
+      ANCHOR,
+    );
+    expect(max!.intervalWeeks).toBe(8);
+  });
+
+  it('NEVER rejects the rule over a bad intervalWeeks — it collapses to weekly', () => {
+    for (const bad of [0, 9, 1.5, '2', null, Number.NaN, -2, true, {}]) {
+      const rule = normalizeRecurrenceRule(
+        { daysOfWeek: [1], startMinutes: 540, durationMinutes: 60, intervalWeeks: bad },
+        ANCHOR,
+      );
+      expect(rule).not.toBeNull();
+      expect('intervalWeeks' in rule!).toBe(false);
+    }
   });
 
   it('rejects when the anchor is not a real date', () => {
@@ -246,6 +295,36 @@ describe('normalizeRecurrence canonicalization + idempotency', () => {
     expect(value!.overrides).toBeUndefined();
   });
 
+  // ---- Interwał tygodniowy „co X tygodni" (PKG-20260803-interval-weeks) ----
+
+  it('round-trips intervalWeeks and stays idempotent by value', () => {
+    const once = normalizeRecurrence(
+      {
+        ...base,
+        intervalWeeks: 2,
+        overrides: [{ date: '2026-07-20', skip: true }],
+      },
+      ANCHOR,
+    );
+    expect(once).toEqual({ ...base, intervalWeeks: 2, overrides: [{ date: '2026-07-20', skip: true }] });
+    expect(normalizeRecurrence(once, ANCHOR)).toEqual(once);
+  });
+
+  it('drops an override that fell into a dead week of the interval', () => {
+    const value = normalizeRecurrence(
+      // 2026-07-13 is a Monday in the SKIPPED week of a 2-week rule anchored 07-06.
+      { ...base, intervalWeeks: 2, overrides: [{ date: '2026-07-13', skip: true }] },
+      ANCHOR,
+    );
+    expect(value!.overrides).toBeUndefined();
+    // The same override survives on an ACTIVE week.
+    const kept = normalizeRecurrence(
+      { ...base, intervalWeeks: 2, overrides: [{ date: '2026-07-20', skip: true }] },
+      ANCHOR,
+    );
+    expect(kept!.overrides).toEqual([{ date: '2026-07-20', skip: true }]);
+  });
+
   it('returns undefined when the rule is invalid', () => {
     expect(normalizeRecurrence({ daysOfWeek: [], startMinutes: 540, durationMinutes: 60 }, ANCHOR)).toBeUndefined();
   });
@@ -262,6 +341,14 @@ describe('isOccurrenceDate', () => {
     expect(isOccurrenceDate(rule, ANCHOR, '2026-06-29')).toBe(false); // before anchor
     expect(isOccurrenceDate(rule, ANCHOR, '2026-07-27')).toBe(false); // after until
     expect(isOccurrenceDate(rule, ANCHOR, 'garbage')).toBe(false);
+  });
+
+  it('honours the weekly interval (dead weeks are not occurrence dates)', () => {
+    const biweekly: TaskRecurrence = { daysOfWeek: [1], startMinutes: 540, durationMinutes: 60, intervalWeeks: 2 };
+    expect(isOccurrenceDate(biweekly, ANCHOR, '2026-07-06')).toBe(true); // week 0
+    expect(isOccurrenceDate(biweekly, ANCHOR, '2026-07-13')).toBe(false); // week 1 (dead)
+    expect(isOccurrenceDate(biweekly, ANCHOR, '2026-07-20')).toBe(true); // week 2
+    expect(isOccurrenceDate(biweekly, ANCHOR, '2026-07-27')).toBe(false); // week 3 (dead)
   });
 });
 
@@ -344,6 +431,58 @@ describe('expandOccurrences', () => {
     const occ = expandOccurrences(skipped, ANCHOR, '2026-07-06', '2026-07-20');
     expect(occ.map((o) => o.date)).toEqual(['2026-07-06', '2026-07-20']);
     expect(occ.every((o) => o.done === false)).toBe(true);
+  });
+
+  // ---- Interwał tygodniowy „co X tygodni" (PKG-20260803-interval-weeks) ----
+
+  it('expands every week when the key is absent (backward compatibility)', () => {
+    const occ = expandOccurrences(rule, ANCHOR, '2026-07-06', '2026-08-03');
+    expect(occ.map((o) => o.date)).toEqual([
+      '2026-07-06', '2026-07-13', '2026-07-20', '2026-07-27', '2026-08-03',
+    ]);
+    // intervalWeeks: 1 must be byte-identical to the absent key.
+    const weekly: TaskRecurrence = { ...rule, intervalWeeks: 1 };
+    expect(expandOccurrences(weekly, ANCHOR, '2026-07-06', '2026-08-03')).toEqual(occ);
+  });
+
+  it('skips dead weeks for a 2-week interval', () => {
+    const biweekly: TaskRecurrence = { ...rule, intervalWeeks: 2 };
+    const occ = expandOccurrences(biweekly, ANCHOR, '2026-07-06', '2026-08-03');
+    expect(occ.map((o) => o.date)).toEqual(['2026-07-06', '2026-07-20', '2026-08-03']);
+  });
+
+  it('skips dead weeks for a 4-week interval', () => {
+    const monthly: TaskRecurrence = { ...rule, intervalWeeks: 4 };
+    const occ = expandOccurrences(monthly, ANCHOR, '2026-07-06', '2026-09-01');
+    expect(occ.map((o) => o.date)).toEqual(['2026-07-06', '2026-08-03', '2026-08-31']);
+  });
+
+  it('counts the interval from the ANCHOR week, not from the window start', () => {
+    const biweekly: TaskRecurrence = { ...rule, intervalWeeks: 2 };
+    // Window opens INSIDE a dead week (2026-07-13 is the skipped Monday).
+    const occ = expandOccurrences(biweekly, ANCHOR, '2026-07-13', '2026-08-03');
+    expect(occ.map((o) => o.date)).toEqual(['2026-07-20', '2026-08-03']);
+  });
+
+  it('anchors mid-week: a weekday BEFORE the anchor waits for the next active week', () => {
+    // Anchor 2026-07-09 is a Thursday; the rule also fires on Mondays. The Monday
+    // of the anchor's ISO week (07-06) is before the anchor, and the next Monday
+    // (07-13) sits in the dead week — so the first Monday is 07-20.
+    const thursdayAnchor = '2026-07-09';
+    const biweekly: TaskRecurrence = {
+      daysOfWeek: [1, 4],
+      startMinutes: 540,
+      durationMinutes: 60,
+      intervalWeeks: 2,
+    };
+    const occ = expandOccurrences(biweekly, thursdayAnchor, '2026-07-01', '2026-08-06');
+    expect(occ.map((o) => o.date)).toEqual([
+      '2026-07-09', // Thu, anchor week (active)
+      '2026-07-20', // Mon, week +2
+      '2026-07-23', // Thu, week +2
+      '2026-08-03', // Mon, week +4
+      '2026-08-06', // Thu, week +4
+    ]);
   });
 
   it('clamps a window longer than 400 days from `from`', () => {
