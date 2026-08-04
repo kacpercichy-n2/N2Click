@@ -9359,7 +9359,9 @@ a.toggle-btn {
      kolumny traciły wewnętrzne scrollery, a tablica (overflow hidden)
      połykała scroll (zgłoszenie 2026-08-04). Wysokość MUSI być twarda. */
   flex: none;
-  height: calc(100dvh - 132px);
+  /* 48px = zmierzony chrome powłoki wokół sceny (24px padding góra + 24px
+     dół); wcześniejsze 132px zostawiało pas tła pod panelem. */
+  height: calc(100dvh - 48px);
   min-height: 480px;
   overflow: hidden;
   border: 1px solid var(--n2-border);
