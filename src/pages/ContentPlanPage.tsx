@@ -58,6 +58,27 @@ import { dayMonthLabel, todayStr } from '../utils/dates';
 
 const WEEKDAYS = ['pon', 'wt', 'śr', 'czw', 'pt', 'sob', 'nd'];
 
+/**
+ * Płynny scroll tablicy do zadanej pozycji. Chromium potrafi PRZERWAĆ płynny
+ * `scrollTo` na kontenerze ze `scroll-snap-type: mandatory` i przyciągnąć z
+ * powrotem do bieżącego punktu (pomiar 2026-08-04: paging stał w miejscu),
+ * więc na czas animacji zdejmujemy snap i przywracamy go po `scrollend`
+ * (z zapasowym timeoutem, gdyby zdarzenie nie doleciało).
+ */
+function smoothBoardScroll(el: HTMLElement, left: number): void {
+  el.style.scrollSnapType = 'none';
+  let restored = false;
+  const restore = () => {
+    if (restored) return;
+    restored = true;
+    el.style.scrollSnapType = '';
+    el.removeEventListener('scrollend', restore);
+  };
+  el.addEventListener('scrollend', restore);
+  window.setTimeout(restore, 900);
+  el.scrollTo({ left, behavior: 'smooth' });
+}
+
 export function ContentPlanPage() {
   const canView = useContentPlanAccess();
   const { state, dispatch } = useStore();
@@ -139,7 +160,8 @@ export function ContentPlanPage() {
   const gotoWeek = useCallback((index: number, smooth = true) => {
     const el = boardRef.current;
     if (!el) return;
-    el.scrollTo({ left: index * el.clientWidth, behavior: smooth ? 'smooth' : 'auto' });
+    if (smooth) smoothBoardScroll(el, index * el.clientWidth);
+    else el.scrollTo({ left: index * el.clientWidth });
   }, []);
 
   // Po wejściu i po powrocie z rejestru tablica staje na aktywnym tygodniu.
@@ -155,10 +177,42 @@ export function ContentPlanPage() {
     if (index !== activeIdx) setActiveIdx(Math.min(weeks.length - 1, Math.max(0, index)));
   };
 
-  // ŚWIADOMA RÓŻNICA wobec źródła (decyzja usera 2026-08-04): pionowy scroll
-  // NIE przewija osi tygodni — pion należy wyłącznie do list postów w
-  // kolumnach (natywny overflow-y). Tygodnie zmienia pasek osi, „Dziś"
-  // i poziomy gest trackpada (natywny scroll-snap tablicy).
+  // Scroll nad tablicą (decyzja usera 2026-08-04, druga iteracja): gest pionowy
+  // NAJPIERW przewija listę postów kolumny pod kursorem (natywnie); paging
+  // tygodni przejmuje go dopiero, gdy kolumna nie ma już czego przewinąć w tym
+  // kierunku albo kursor stoi poza listą. Gest poziomy zawsze obsługuje
+  // natywny scroll-snap tablicy.
+  useEffect(() => {
+    const el = boardRef.current;
+    if (!el || mode !== 'board') return;
+    let acc = 0;
+    let cooldown = false;
+    const onWheel = (event: WheelEvent) => {
+      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+      const columnScroller = (event.target as HTMLElement | null)?.closest?.('.cp-col-posts');
+      if (columnScroller instanceof HTMLElement) {
+        const canScrollDown =
+          event.deltaY > 0 &&
+          columnScroller.scrollTop + columnScroller.clientHeight < columnScroller.scrollHeight - 1;
+        const canScrollUp = event.deltaY < 0 && columnScroller.scrollTop > 0;
+        if (canScrollDown || canScrollUp) return;
+      }
+      event.preventDefault();
+      if (cooldown) return;
+      acc += event.deltaY;
+      if (Math.abs(acc) < 40) return;
+      const dir = acc > 0 ? 1 : -1;
+      acc = 0;
+      cooldown = true;
+      window.setTimeout(() => {
+        cooldown = false;
+      }, 420);
+      const index = Math.round(el.scrollLeft / el.clientWidth) + dir;
+      smoothBoardScroll(el, Math.min(weeks.length - 1, Math.max(0, index)) * el.clientWidth);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [mode, weeks.length]);
 
   // Aktywna pigułka tygodnia zawsze widoczna na pasku osi.
   useEffect(() => {
