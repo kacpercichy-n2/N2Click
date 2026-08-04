@@ -98,11 +98,14 @@ export function classifyWriteError(code: string | null, message: string): CloudW
 // ---- Granica bazy (wstrzykiwana) --------------------------------------------
 
 export interface PlannerDb extends Pick<ImportDb, 'select'> {
-  /** UPSERT jednego wiersza (idempotentny przy dublowaniu z dwóch kart). */
+  /** UPSERT jednego wiersza (idempotentny przy dublowaniu z dwóch kart).
+   *  `ignoreDuplicates` przełącza na `ON CONFLICT DO NOTHING` — jedyny wariant
+   *  dopuszczalny na tabelach append-only, gdzie rola ma wyłącznie INSERT. */
   upsert(
     table: string,
     row: Record<string, unknown>,
     onConflict?: string,
+    ignoreDuplicates?: boolean,
   ): Promise<{ error: CloudWriteError | null }>;
   /** UPDATE istniejącego wiersza pasującego do `match`. RLS wycisza UPDATE do
    *  0 wierszy zamiast rzucić błędem — 0 trafień klasyfikujemy jako
@@ -127,9 +130,16 @@ export function createSupabasePlannerDb(client: SupabaseClient): PlannerDb {
   const importDb = createSupabaseImportDb(client);
   return {
     select: importDb.select,
-    async upsert(table, row, onConflict) {
+    async upsert(table, row, onConflict, ignoreDuplicates) {
       try {
-        const query = client.from(table).upsert(row, onConflict ? { onConflict } : undefined);
+        const options =
+          onConflict || ignoreDuplicates
+            ? {
+                ...(onConflict ? { onConflict } : {}),
+                ...(ignoreDuplicates ? { ignoreDuplicates: true } : {}),
+              }
+            : undefined;
+        const query = client.from(table).upsert(row, options);
         const { error } = await query;
         if (error) {
           const code = (error as { code?: string }).code ?? null;

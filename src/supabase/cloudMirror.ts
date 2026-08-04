@@ -150,6 +150,14 @@ export type CloudOp = {
   row?: Record<string, unknown>;
   match?: Record<string, string>; // cel dla 'update' i 'remove'
   onConflict?: string; // dla złożonego upsertu przypisań (task_id,profile_id)
+  /**
+   * Upsert w trybie `ON CONFLICT DO NOTHING` (PostgREST
+   * `resolution=ignore-duplicates`) — dla tabel APPEND-ONLY (`contentplan`:
+   * komentarze, historia), gdzie rola kliencka ma wyłącznie grant INSERT.
+   * Zwykły upsert kompiluje się do `ON CONFLICT DO UPDATE` i odbija się od
+   * braku grantu UPDATE, zanim jakikolwiek konflikt w ogóle wystąpi.
+   */
+  ignoreDuplicates?: true;
   sourceId: string; // lokalny id / klucz pary — do debugowania i suppresji
   label: string; // polska etykieta do bannera
   /**
@@ -1149,14 +1157,29 @@ export function diffContentPlanToCloudOps(prev: AppData, next: AppData): DiffRes
     push({ kind: 'upsert', table: 'post_channels', row: entry.row, sourceId: id, label: entry.label });
   }
 
-  // 4) Komentarze i 5) historia ---- (append-only: wyłącznie nowe id)
+  // 4) Komentarze i 5) historia ---- (append-only: wyłącznie nowe id;
+  // `ignoreDuplicates`, bo rola kliencka ma na tych tabelach TYLKO INSERT)
   for (const [id, entry] of after.comments) {
     if (before.comments.has(id)) continue;
-    push({ kind: 'upsert', table: 'comments', row: entry.row, sourceId: id, label: entry.label });
+    push({
+      kind: 'upsert',
+      table: 'comments',
+      row: entry.row,
+      ignoreDuplicates: true,
+      sourceId: id,
+      label: entry.label,
+    });
   }
   for (const [id, entry] of after.history) {
     if (before.history.has(id)) continue;
-    push({ kind: 'upsert', table: 'post_history', row: entry.row, sourceId: id, label: entry.label });
+    push({
+      kind: 'upsert',
+      table: 'post_history',
+      row: entry.row,
+      ignoreDuplicates: true,
+      sourceId: id,
+      label: entry.label,
+    });
   }
 
   return { ops, diagnostics };
@@ -1207,7 +1230,7 @@ export async function applyCloudOps(
     }
     const res =
       op.kind === 'upsert'
-        ? await target.upsert(op.table, op.row ?? {}, op.onConflict)
+        ? await target.upsert(op.table, op.row ?? {}, op.onConflict, op.ignoreDuplicates)
         : op.kind === 'update'
           ? await target.update(op.table, op.row ?? {}, op.match ?? {})
           : await target.remove(op.table, op.match ?? {});

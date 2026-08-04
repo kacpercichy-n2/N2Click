@@ -169,7 +169,7 @@ export function ContentPlanPostModal({ postId, onClose }: ModalProps) {
       <div className="task-modal-viewport" {...viewportProps}>
         <m.div
           ref={cardRef}
-          className="task-modal-card cp-post-modal-card"
+          className="task-modal-card cp-post-modal-card cp-glass-modal"
           {...cardProps}
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
