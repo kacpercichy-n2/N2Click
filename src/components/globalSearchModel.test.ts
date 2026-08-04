@@ -100,6 +100,22 @@ describe('quickActionCatalog — tylko istniejące czynności aplikacji', () => 
     // Pozostałe trasy zostają niezależnie od bramek.
     expect(paths({ canAdmin: false, canTeam: false })).toContain('/calendar');
   });
+
+  it('bramkuje /content-plan tak jak menu, a bez podanej bramki go nie proponuje', () => {
+    const paths = (opts: { canAdmin: boolean; canTeam: boolean; canContentPlan?: boolean }) =>
+      quickActionCatalog(opts)
+        .map((a) => (a.run.kind === 'navigate' ? a.run.path : ''))
+        .filter(Boolean);
+
+    expect(paths({ canAdmin: true, canTeam: true, canContentPlan: true })).toContain(
+      '/content-plan',
+    );
+    expect(paths({ canAdmin: true, canTeam: true, canContentPlan: false })).not.toContain(
+      '/content-plan',
+    );
+    // Domyślnie ukryty: wywołujący, który nie zna roli, nie odsłania modułu.
+    expect(paths({ canAdmin: true, canTeam: true })).not.toContain('/content-plan');
+  });
 });
 
 describe('filterQuickActions', () => {

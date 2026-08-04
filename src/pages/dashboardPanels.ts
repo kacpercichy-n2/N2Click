@@ -8,9 +8,10 @@
 //   owns the display cap plus pure row builders, so it stays a generic slice.
 // - The Zespół header shows a counter only when there is at least one coworker:
 //   `Zespół` with 0, `Zespół (N)` otherwise.
-// - A collapsible tile (Powiadomienia, Alerty) with nothing to show renders as a
-//   one-line bar instead of a full card (`dashTileView`); the Zasobnik CTA names
-//   the actual work to plan (`binPlanCtaLabel`).
+// - Puste Powiadomienia renderują się jako jednolinijkowa belka zamiast pełnej
+//   karty (`dashTileView`); Alerty są wyjątkiem i zawsze zostają pełną kartą,
+//   bo dzielą rząd siatki z „Zasobnikiem". CTA zasobnika nazywa konkretną pracę
+//   do rozplanowania (`binPlanCtaLabel`).
 // - Below the phone breakpoint the Panel is a purpose-ordered STACK, not the
 //   desktop grid: `mobileDashboardOrder` owns both the order and the emptiness
 //   rule (a tile whose whole content would be an empty-state sentence is not
@@ -149,24 +150,29 @@ export interface DashTileView {
   label: string;
 }
 
-/** Tytuł kafelka (pełna karta) i tekst belki (kafelek pusty). */
-const COLLAPSIBLE_TILE_LABELS: Record<CollapsibleTileId, { title: string; empty: string }> = {
+/** Tytuł kafelka (pełna karta) i tekst belki (kafelek pusty). `empty: null`
+ *  znaczy „ten kafelek nigdy nie kurczy się do belki" — pustkę pokazuje wtedy
+ *  pusty stan wewnątrz pełnej karty. */
+const COLLAPSIBLE_TILE_LABELS: Record<CollapsibleTileId, { title: string; empty: string | null }> = {
   notifications: { title: 'Powiadomienia', empty: 'Powiadomienia — brak nowych' },
-  alerts: { title: 'Alerty', empty: 'Alerty — czysto ✓' },
+  // Alerty stoją w rzędzie 4 siatki obok „Zasobnika": belka zostawiała tam
+  // dziurę na pół rzędu, więc pusty kafelek trzyma pełną wysokość karty.
+  alerts: { title: 'Alerty', empty: null },
 };
 
 /**
- * Decyzja „karta czy belka" dla kafelka zwijalnego (OP-01/TY-33). Pusty kafelek
- * na desktopie nie znika (rząd siatki musi mieć obie kolumny), tylko kurczy się
- * do jednej linii — odzyskana wysokość idzie do „Zadania na dziś"/„Twój tydzień",
- * dzięki czemu „Zasobnik" wchodzi nad zgięcie. Z treścią kafelek renderuje się
- * dokładnie jak dotąd. Na telefonie pusty kafelek nadal NIE trafia do DOM-u
- * (`mobileDashboardOrder`), więc ta funkcja obsługuje tam wyłącznie `collapsed:
- * false`.
+ * Decyzja „karta czy belka" dla kafelka zwijalnego (OP-01/TY-33). Puste
+ * Powiadomienia na desktopie nie znikają (rząd siatki musi mieć obie kolumny),
+ * tylko kurczą się do jednej linii — odzyskana wysokość idzie do „Zadania na
+ * dziś"/„Twój tydzień", dzięki czemu „Zasobnik" wchodzi nad zgięcie. Alerty są
+ * wyjątkiem (`empty: null`): zawsze pełna karta, żeby rząd „Zasobnik | Alerty"
+ * nie skakał. Z treścią kafelek renderuje się dokładnie jak dotąd. Na telefonie
+ * pusty kafelek nadal NIE trafia do DOM-u (`mobileDashboardOrder`), więc ta
+ * funkcja obsługuje tam wyłącznie `collapsed: false`.
  */
 export function dashTileView(id: CollapsibleTileId, hasContent: boolean): DashTileView {
   const labels = COLLAPSIBLE_TILE_LABELS[id];
-  return hasContent
+  return hasContent || labels.empty === null
     ? { collapsed: false, label: labels.title }
     : { collapsed: true, label: labels.empty };
 }

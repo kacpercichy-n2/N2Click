@@ -7,21 +7,27 @@
 // `n2hub:nav-order-changed`, which App listens for to re-order the live sidebar.
 import { useMemo, useState } from 'react';
 import { useStore } from '../store/AppStore';
+import { useAuth } from '../auth/SessionProvider';
 import { can } from '../store/permissions';
 import { NAV, type NavItem } from './navItems';
 import { applyNavOrder } from '../utils/navOrder';
 import { loadUiPrefs, navOrderForUser, updateNavOrderForUser } from '../utils/uiPrefs';
+import { useContentPlanAccess } from '../contentplan/useContentPlanAccess';
 
 const DEFAULT_PATHS = NAV.map(([to]) => to);
 
 export function NavOrderEditor() {
   const { state } = useStore();
+  const { mode } = useAuth();
   const [version, setVersion] = useState(0);
 
   // Impersonacja usunięta (run 257) — currentUserId JEST realnym użytkownikiem.
   const userId = state.currentUserId;
   const currentUser = state.people.find((p) => p.id === state.currentUserId);
   const canAdmin = can(currentUser, 'admin.panel', { peopleCount: state.people.length });
+  // Ta sama bramka co w sidebarze: pozycji ukrytej w menu nie ma po co
+  // przestawiać (i nie wolno jej stąd odsłaniać).
+  const canContentPlan = useContentPlanAccess();
 
   // Full effective order (all default paths, self-repairing), then the visible
   // subset under the SAME gates the sidebar applies.
@@ -37,7 +43,12 @@ export function NavOrderEditor() {
       const item = NAV.find(([to]) => to === path);
       return item ? [item] : [];
     })
-    .filter(([to]) => to !== '/admin' || canAdmin);
+    .filter(
+      ([to]) =>
+        (to !== '/admin' || canAdmin) &&
+        (to !== '/account' || mode === 'supabase') &&
+        (to !== '/content-plan' || canContentPlan),
+    );
 
   if (!userId || visibleItems.length === 0) return null;
 

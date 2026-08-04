@@ -328,6 +328,40 @@ widoki-mostki). Gdzie w tekście pada `public.<tabela>` w kontekście
   selekcji/treści testowana w repo (`src/supabase/notificationEmails.test.ts`:
   opt-out + no-op bez sekretów). Rejestr: oba pliki w liście `migrations.test.ts`
   (ALTER-y, bez nowych polityk).
+- SCHEMAT `contentplan` (20260803160000 + polityki 160100, widok 160200, seedy
+  160300/170000) — moduł Content Plan „żyje z boku”, jak blogoapp/bingo: tabele
+  `brands`, `posts`, `post_channels`, `comments`, `post_history`,
+  `drive_folders`; RLS na każdej, granty tylko na używane verby (`comments` i
+  `post_history` BEZ update/delete = dopisywalne), `brands.n2click_client_id`
+  bez FK między schematami. KROK OPERATORA: `contentplan` musi być w Exposed
+  schemas (Dashboard) — bez tego PostgREST odpowiada PGRST205 i moduł działa
+  wyłącznie lokalnie.
+  KLIENT (faza R8, 2026-08-03): główny `createClient` zostaje przypięty do
+  `n2click`, a moduł dostaje DRUGI ADAPTER na tym samym kliencie —
+  `createSupabaseContentPlanDb` = `createSupabasePlannerDb(client.schema('contentplan'))`
+  (żadnego drugiego `createClient`; ta sama decyzja co `contentplan/driveFolders`).
+  Lustro: `diffContentPlanToCloudOps` (osobna rodzina, bez `CloudIdMaps` — moduł
+  nie mapuje osób) emituje opsy ze znacznikiem `schema: 'contentplan'`, a
+  `applyCloudOps(db, ops, { contentplan: cpDb })` kieruje je do właściwego
+  adaptera (brak adaptera => cichy drop, NIGDY zapis do `n2click`). Kolejność:
+  marki → publikacje → kanały → komentarze → historia; komentarze i historia są
+  DOPISYWALNE (tylko nowe id), a wiersze zależne od usuniętej publikacji/marki
+  sprząta kaskada FK (zero własnych `remove`). Id `uuid`: marka utworzona
+  lokalnie nosi SLUG (`uniqueBrandId`), więc NIE jedzie do chmury (diagnostyka)
+  razem ze swoimi publikacjami — dopiero hydracja daje jej id chmury. Tagi:
+  lokalny string ↔ `text[]` przez `splitContentPlanTags`/`joinContentPlanTags`.
+  Hydracja: `loadContentPlanSnapshot` (osobny, degradujący się loader) składa
+  pięć tabel w zagnieżdżony kształt lokalny i przepuszcza go przez łagodne
+  `sanitizeContentPlan*`; brak schematu/tabel (42P01/PGRST205) => `available`
+  z PUSTYMI kolekcjami (podmiana autorytatywna), błąd przejściowy => `available:
+  false` (poprzedni stan zostaje). Zapis w martwym schemacie jest cicho
+  porzucany (`isMissingCloudTable`), żeby JEDEN taki op nie zamroził kolejki
+  planera. REALTIME: świadomie POMINIĘTY w tej fazie — kanał słucha wyłącznie
+  `n2click` i `core`; subskrypcja modułu musiałaby literalnie podać schemat
+  `contentplan` (`db.schema` nie jest dziedziczone). Rejestr: pliki migracji w
+  `migrations.test.ts`; testy klienta: `cloudMirror.test.ts` (rodzina diff +
+  routing schematu w `applyCloudOps`), `plannerData.test.ts`
+  (`loadContentPlanSnapshot` + degradacja + adapter).
 - Access model: administrator = everything; manager = own department
   (profiles incl. UPDATE of non-admin members, memberships/assignments
   restricted to own-department people) — and since 20260720170000 the manager

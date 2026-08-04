@@ -7,6 +7,7 @@
 // Pure — no React, no Supabase.
 import { describe, expect, it } from 'vitest';
 import { reducer } from './AppStore';
+import type { CloudContentPlanPayload } from './AppStore';
 import { emptyData } from './storage';
 import type { CloudMergePayload } from '../supabase/plannerData';
 import type {
@@ -15,6 +16,8 @@ import type {
   CalendarEvent,
   Client,
   Comment,
+  ContentPlanBrand,
+  ContentPlanPost,
   Milestone,
   Project,
   Task,
@@ -1229,5 +1232,115 @@ describe('MERGE_CLOUD_ENTITIES — bezszwowe odświeżanie (referencje)', () => 
     // Zadanie wskazujące nieistniejący projekt — fail-closed dla całej hydracji.
     payload.tasks[0] = { ...payload.tasks[0], projectId: 'brak-takiego' };
     expect(merge(state, payload)).toBe(state);
+  });
+});
+
+// ---- MERGE_CLOUD_CONTENT_PLAN (moduł Content Plan, schemat `contentplan`) ----
+
+const CP_STAMP = '2026-08-01T10:00:00.000Z';
+
+const cpBrand = (o: Partial<ContentPlanBrand> & { id: string }): ContentPlanBrand => ({
+  name: 'Tetra Wave',
+  industry: '',
+  contact: '',
+  accent: '',
+  platforms: [{ id: 'instagram', name: 'Instagram', color: '#e13' }],
+  topics: ['Edukacja'],
+  formats: ['Rolka'],
+  createdAt: CP_STAMP,
+  updatedAt: CP_STAMP,
+  ...o,
+});
+
+const cpPost = (o: Partial<ContentPlanPost> & { id: string }): ContentPlanPost => ({
+  brandId: 'brand-1',
+  date: '2026-08-04',
+  title: 'Premiera',
+  topic: 'Edukacja',
+  format: 'Rolka',
+  status: 'Zaplanowane',
+  visibility: 'draft',
+  baseTags: '#tetra',
+  channels: [{ id: 'ch-1', platformId: 'instagram', copy: 'Opis', tags: '', overrideTags: false }],
+  comments: [],
+  history: [],
+  createdAt: CP_STAMP,
+  updatedAt: CP_STAMP,
+  ...o,
+});
+
+const cpState = (): AppData => ({
+  ...emptyData(),
+  contentPlanBrands: [cpBrand({ id: 'brand-1' }), cpBrand({ id: 'brand-lokalna', name: 'Lokalna' })],
+  contentPlanPosts: [cpPost({ id: 'post-1' }), cpPost({ id: 'post-lokalny' })],
+});
+
+const mergeCp = (state: AppData, payload: CloudContentPlanPayload): AppData =>
+  reducer(state, { type: 'MERGE_CLOUD_CONTENT_PLAN', payload });
+
+describe('MERGE_CLOUD_CONTENT_PLAN — hydracja modułu', () => {
+  it('podmienia obie kolekcje autorytatywnie (wiersz spoza chmury odpada)', () => {
+    const state = cpState();
+    const next = mergeCp(state, {
+      brands: [cpBrand({ id: 'brand-1', name: 'Tetra Wave Solutions' })],
+      posts: [cpPost({ id: 'post-1' }), cpPost({ id: 'post-2', date: '2026-08-06' })],
+    });
+    expect(next.contentPlanBrands.map((b) => b.name)).toEqual(['Tetra Wave Solutions']);
+    // Znany wiersz trzyma pozycję i referencję, nowy dochodzi na koniec.
+    expect(next.contentPlanPosts.map((p) => p.id)).toEqual(['post-1', 'post-2']);
+    expect(next.contentPlanPosts[0]).toBe(state.contentPlanPosts[0]);
+  });
+
+  it('ładunek bez zmian zwraca TĘ SAMĄ referencję stanu (brak migotania)', () => {
+    const state = cpState();
+    const next = mergeCp(state, {
+      brands: [...state.contentPlanBrands].reverse(),
+      posts: state.contentPlanPosts.map((p) => ({ ...p })),
+    });
+    expect(next).toBe(state);
+  });
+
+  it('publikacja wskazująca markę spoza ładunku JEST dopuszczalna (parytet z repair)', () => {
+    const state = cpState();
+    const next = mergeCp(state, {
+      brands: [cpBrand({ id: 'brand-1' })],
+      posts: [cpPost({ id: 'post-1', brandId: 'marka-widmo' })],
+    });
+    expect(next.contentPlanPosts[0].brandId).toBe('marka-widmo');
+  });
+
+  it('inwariant 6: strukturalnie zły ładunek zwraca ORYGINALNĄ referencję stanu', () => {
+    const state = cpState();
+    const good = { brands: [cpBrand({ id: 'brand-1' })], posts: [cpPost({ id: 'post-1' })] };
+    const bad: Array<CloudContentPlanPayload> = [
+      null as unknown as CloudContentPlanPayload,
+      { brands: 'nie tablica' as unknown as ContentPlanBrand[], posts: [] },
+      { brands: [], posts: {} as unknown as ContentPlanPost[] },
+      { ...good, brands: [{ ...cpBrand({ id: 'brand-1' }), name: '   ' }] },
+      { ...good, brands: [{ ...cpBrand({ id: '' }) }] },
+      { ...good, brands: [{ ...cpBrand({ id: 'brand-1' }), topics: [1] as unknown as string[] }] },
+      { ...good, brands: [{ ...cpBrand({ id: 'brand-1' }), platforms: null as unknown as [] }] },
+      { ...good, posts: [{ ...cpPost({ id: 'post-1' }), date: '2026-13-40' }] },
+      { ...good, posts: [{ ...cpPost({ id: 'post-1' }), status: 'Nieznany' as ContentPlanPost['status'] }] },
+      { ...good, posts: [{ ...cpPost({ id: 'post-1' }), visibility: 'kosmos' as ContentPlanPost['visibility'] }] },
+      { ...good, posts: [{ ...cpPost({ id: 'post-1' }), title: '  ' }] },
+      { ...good, posts: [{ ...cpPost({ id: 'post-1' }), baseTags: ['#a'] as unknown as string }] },
+      { ...good, posts: [{ ...cpPost({ id: 'post-1' }), channels: [{ platformId: 'x' } as unknown as ContentPlanPost['channels'][number]] }] },
+      { ...good, posts: [{ ...cpPost({ id: 'post-1' }), history: null as unknown as [] }] },
+    ];
+    for (const payload of bad) {
+      expect(mergeCp(state, payload)).toBe(state);
+    }
+    // Kontrola pozytywna: poprawny ładunek nadal scala.
+    expect(mergeCp(state, good)).not.toBe(state);
+  });
+
+  it('nie rusza kolekcji planera ani osób', () => {
+    const state = { ...cpState(), projects: [makeProject({ id: 'proj-1' })] };
+    const next = mergeCp(state, { brands: [], posts: [] });
+    expect(next.projects).toBe(state.projects);
+    expect(next.people).toBe(state.people);
+    expect(next.contentPlanBrands).toEqual([]);
+    expect(next.contentPlanPosts).toEqual([]);
   });
 });

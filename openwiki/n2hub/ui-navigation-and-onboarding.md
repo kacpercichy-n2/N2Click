@@ -24,6 +24,35 @@
   rozjechać środowiska Reacta), `motion` (+ `framer-motion`/`motion-dom`/
   `motion-utils`) i `supabase` — oraz trzyma `build.cssCodeSplit: false`, bo
   `styles.css` MUSI zostać jednym arkuszem.
+- MIĘKKA KRAWĘDŹ PRZEWIJANIA (2026-08-03): `main.app-main` ma DWOJE dodatkowych
+  dzieci — `.app-scroll-fade-top` jako PIERWSZE i `.app-scroll-fade-bottom` jako
+  OSTATNIE (oba `!mobileNav`, `aria-hidden`, `pointer-events: none`). To paski
+  `position: sticky` z tłem `--n2-gradient-page`, `background-attachment: fixed`
+  i maską alfa, więc rysują dokładnie te piksele tła, które i tak są w tym
+  miejscu OKNA, a treść wtapia się w nie zamiast być ucinana. Scrollportem
+  zostaje DOKUMENT (`.app-main` się nie przewija — na tym stoi `window.scrollTo`
+  w `TaskFullPage` i przywracanie pozycji), dlatego maska na samym `.app-main`
+  by nie zadziałała. Ujemne marginesy (`--n2-scroll-fade-h` = 24 px = dopełnienie
+  powłoki) sadzają paski w dopełnieniu, więc przy pozycji 0 i na końcu strony nie
+  przygaszają niczego; kolejność dzieci jest częścią kontraktu.
+  `--n2-z-scroll-fade` = 20 stoi NAD zwykłą treścią widoków (także nad lepkimi
+  etykietami osi czasu, `z-index: 3`), ale POD lepkim paskiem akcji edytora
+  (`--n2-z-sticky-actions` = 30 na `.editor-actions-sticky`, który na
+  `/projects/:id` przykleja się do DOKUMENTU i musi zostać ostry oraz klikalny)
+  i POD każdą nakładką, począwszy od popovera (40). Wygaszenie NIGDY nie może
+  zakryć kontrolki — nowy element przyklejony do dokumentu w kolumnie treści
+  dostaje `--n2-z-sticky-actions`, a nie własną liczbę. Na telefonie pasków nie
+  ma — górę zasłania kryjący `.app-topbar`, dół `.app-bottom-nav`.
+- KARTA KLIENTA (`/clients`, 2026-08-03) nie ma już chevrona ani klikalnego tła:
+  nagłówek to nazwa + pigułka-link `.client-project-chip` („6 projektów" →
+  `/projects?client=<id>`) po lewej i akcje po prawej. Rozwinięciem szczegółów
+  steruje WYŁĄCZNIE tekstowe CTA „Zobacz szczegóły"/„Zwiń szczegóły", które
+  przejęło `aria-expanded` + `aria-controls`; edycja, archiwizacja i usuwanie to
+  `IconButton` (`Pencil`, `Archive`/`ArchiveRestore`, czerwony `Trash2`) za
+  bramką `clients.manage`. Archiwizacja pyta wspólnym `useConfirm()` i mówi
+  PRAWDĘ o skutkach (reduktor tylko przełącza flagę `archived`; czytają ją filtr
+  listy Klientów i lista wyboru klienta w formularzu nowego projektu — projekty,
+  zadania i godziny zostają), „Przywróć" nie pyta.
 - The sidebar nav (`NAV` in `App.tsx`) is a fixed ordered list — Panel, Moja
   praca, Klienci, Projekty, Zadania, Kanban, Kalendarz, Oś czasu, Obciążenie,
   Zespół, Konto (BOTH modes since 2026-08-03) — ending with one gated entry:
@@ -34,6 +63,76 @@
   keeps the `.sidebar-help` class and `shell.help` tour anchor (dispatches
   `n2hub:open-tutorials`); the footer lives inside `#app-drawer`, so the mobile
   focus trap covers it. Collapsed rail stacks the footer to two 44px circles.
+- `/content-plan` („Content plan", ikona `CalendarRange`, w `NAV` po
+  `/wydarzenia`, `src/pages/ContentPlanPage.tsx`) to TRZECIA bramkowana pozycja
+  menu. Decyzja operatora 2026-08-03: moduł widzą WYŁĄCZNIE administratorzy.
+  Kryterium jest czyste (`src/pages/contentPlanScope.ts`: `contentPlanViewer` +
+  `canViewContentPlan(user, moduleAccess)`, stała `CONTENT_PLAN_ROLES`) i
+  świadomie NIE używa `effectiveAccessRole` — tamta mapuje chmurowego
+  `manager` na `pelne`, a tu menedżer musi odpaść. Rola idzie ze snapshotu
+  `OrgDataProvider` (`profile.cloudRole`), w trybie lokalnym/ładowaniu/błędzie
+  z lokalnej `accessRole` (`pelne`→administrator, `ograniczone`→worker).
+  `moduleAccess` (grant `contentplan.my_access`) jest przyjmowany, ale jeszcze
+  nieczytany — zmiana kryterium to zmiana JEDNEJ funkcji. Jedno wyliczenie na
+  aplikację daje hook `src/contentplan/useContentPlanAccess.ts`, wpięty w
+  CZTERECH miejscach, które muszą mówić to samo: filtr `navPaths` + `<Route>` w
+  `App.tsx`, `quickActionCatalog` w palecie (opcja `canContentPlan`, domyślnie
+  `false`), `NavOrderEditor` i samo-guard strony (`<Navigate to={HOME_PATH}>`,
+  wzorzec `/admin`). W URL stoi WYŁĄCZNIE pager miesięcy (`?m=YYYY-MM`, czysty
+  `src/pages/contentPlanRoute.ts` nad `contentplan/domain.ts`); wybór marki,
+  zaznaczona karta i schowek kopiuj/wklej to stan SESJI widoku. Kalendarz
+  miesiąca (port `CalendarGrid`/`PostCard`/`MonthStats` z aplikacji źródłowej,
+  zero Mantine) stoi na czystym `src/pages/contentPlanCalendar.ts` (+ test w
+  node): rozłożenie publikacji na dni, liczniki nagłówka, model karty i DRAFTY
+  kopiuj/wklej. Zapis idzie WYŁĄCZNIE przez reduktor (`SAVE_CP_POST` z
+  `postId: null` — także wklejenie, a kopia zawsze startuje jako szkic w
+  statusie roboczym i ze świeżymi id kanałów), usuwanie przez wspólny
+  `useConfirm()`. ŚWIADOMA RÓŻNICA WOBEC ŹRÓDŁA: tam siatka była poziomym
+  przewijaczem 31 kolumn z własnymi scrollerami — tutaj dni zawijają się w
+  responsywną siatkę (klasy `cp-*` w `styles.css`, kolor platformy przez
+  `tintVar('--cp-platform')`), a jedynym właścicielem przewijania zostaje
+  strona. Klik w tytuł karty OTWIERA edytor publikacji
+  (`src/components/ContentPlanPostModal.tsx`, `?publikacja=<id>`; podświetlenie
+  karty pokazuje, która publikacja jest otwarta), a marki i ich słowniki mają
+  własny modal (`ContentPlanBrandModal.tsx`, `?marka=new|<id>`, wejścia z
+  toolbaru i z pustego stanu). Oba modale są montowane WEWNĄTRZ strony, nie na
+  poziomie App (moduł jest bramkowany rolą i jednostronicowy, więc reużywa jej
+  samo-guard zamiast dokładać czwarty globalny mount), stoją na wspólnej
+  powłoce `useModalShell` z `closeOnBackdrop: false`, a zamknięcie usuwa
+  WYŁĄCZNIE własny parametr — pager `?m=` zostaje nietknięty. Model edycji to
+  DRAFT + JAWNY zapis: cała logika draftu i słowników siedzi w czystych
+  `components/contentPlanPostEditor.ts` i `components/contentPlanBrandEditor.ts`
+  (+ testy w node), zapis to JEDEN `SAVE_CP_POST` z etykietą historii z
+  `saveHistoryLabel`, a przed dispatchem stoi LUSTRO bramki reduktora
+  (`normalize*Draft`) — odrzucony draft nie zamyka modala i nie czyści dirty.
+  Komentarze i decyzja klienta działają na ŻYWEJ encji (`ADD_CP_COMMENT` /
+  `REVIEW_CP_POST`, tylko `visibility: 'published'`; na szkicu sekcje pokazują
+  hint, nigdy martwy przycisk dispatchujący no-op), a guard integralności
+  słowników (`dictionaryIntegrityIssue`) blokuje
+  usunięcie pozycji używanej przez publikacje marki (reduktor celowo zostaje
+  liberalny). Strażnik nawigacji ma dwa własne zakresy —
+  `contentplan-post-modal` i `contentplan-brand-modal` — blokujące zmianę
+  własnego parametru ALBO ścieżki; sam pager `?m=` nigdy nie pyta.
+  MEDIA (od 2026-08-03) wskazuje Google Picker: edytor ma WŁASNĄ sekcję „Media
+  z Dysku Google" (jeden wiersz na KANAŁ, nie na grupę opisu) z wyborem pliku,
+  podmianą, usunięciem, linkiem na Dysk i miniaturą `driveThumbUrl`. Integracja
+  siedzi w `src/contentplan/google.ts` (GIS token flow z cache 60 s przed
+  wygaśnięciem, `pickFromDrive`/`pickFolderFromDrive`, best-effort
+  `shareFilePublic`; skrypty `gsi/client` i `api.js` ładowane LENIWIE, więc żyją
+  wyłącznie w chunku trasy), a pamięć folderu marki i miesiąca w
+  `src/contentplan/driveFolders.ts` (`contentplan.drive_folders` przez
+  `client.schema('contentplan')`, fallback localStorage
+  `n2click.contentplan.driveFolders`, brak tabeli/błąd degraduje się CICHO).
+  Konfiguracja jest MIĘKKA: bez `VITE_GOOGLE_CLIENT_ID`/`VITE_GOOGLE_API_KEY`
+  przyciski są `disabled` z `DisabledHint` i polskim powodem, reszta modułu
+  działa. Do draftu wchodzi WYŁĄCZNIE referencja `{ source: 'gdrive', fileId }`
+  przez czysty `setChannelMedia` (zapis nadal tylko `SAVE_CP_POST`; zmiana pliku
+  ma własną pozycję „media" w etykiecie historii). Testy w node:
+  `src/contentplan/google.test.ts`, `src/contentplan/driveFolders.test.ts`.
+  `PUBLISH_CP_MONTH` nadal nie ma UI. Encje modułu NIE są zarejestrowane w
+  `searchAll`/palecie (paleta ma tylko szybką akcję nawigacyjną za
+  `canContentPlan`). Bramka UX, nie granica bezpieczeństwa — zakres wymusza RLS
+  schematu `contentplan`.
 - `/team` (Struktura zespołu) is reached via the shared `src/pages/TeamTabs.tsx`
   tab bar (Pracownicy → `/people`, Struktura zespołu → `/team`) rendered on both
   the Zespół (`/people`) and `/team` pages, not from its own nav item. Od
@@ -234,16 +333,29 @@
   (`::before`, malowany tylko dla `high`/`urgent`; etykietę niesie `.sr-only`),
   a stan rozplanowania to `src/components/PlanningProgress.tsx` na czystym
   `src/utils/planningProgress.ts` (`planningProgress`/`planningProgressLabel` +
-  test w node: brak szacunku ⇒ `ratio: null` i BRAK paska, szerokość przycięta
-  do 100 %, `PROGRESS_EPS` = 1e-9 zdejmuje dryf 0,1 + 0,2). Pasek NIE MA koloru
-  poniżej 100 %: tony `none`/`under`/`full` zostają neutralne (`--text-muted`),
-  a JEDYNY stan kolorowy w CSS to `over` (`--n2-danger` + `--n2-danger-soft` na
-  torze) — zielony pasek na każdym rozplanowanym zadaniu byłby tym samym
-  szumem, co pigułka „częściowo”. Tony `under`/`full` żyją dalej w module TS i
-  w atrybucie `data-tone` jako semantyka, nie jako farba.
+  test w node; `PROGRESS_EPS` = 1e-9 zdejmuje dryf 0,1 + 0,2). Od 2026-08-03
+  komponent NIE RYSUJE już cienkiego paska postępu — w CAŁEJ aplikacji (lista
+  zadań, karta projektu, Panel, arkusz szczegółów) zostaje sam tekst
+  „zaplanowano X / szac. Y" (`showHours`) plus etykieta `.sr-only`. Tor miał
+  stałą szerokość 56 px, więc na każdej karcie wyglądał tak samo i nie niósł
+  nic ponad liczby stojące obok; razem z nim zniknęły klasy toru/wypełnienia i
+  jedyna kolorowa reguła `over`. `percent`/`tone` zostają w module TS (jest
+  jednostkowo testowany, tony to nadal semantyka), po prostu nie mają dziś
+  konsumenta w DOM-ie; przy `showHours={false}` komponent renderuje WYŁĄCZNIE
+  treść dla czytnika ekranu i celowo nie jest usuwany z wierszy.
   To WARSTWA PREZENTACJI — `planningStatusForTotals` /
-  `taskPlanningStatus` zostają jedynym źródłem stanu i idą do paska osobnym
-  propsem `status`, żeby niuans zasobnika został w `.sr-only`. Pigułka
+  `taskPlanningStatus` zostają jedynym źródłem stanu i idą osobnym propsem
+  `status`, żeby niuans zasobnika został w `.sr-only`.
+  KARTY LISTY `.task-card` — i na `/tasks`, i na `/projects` — nie mają już
+  strzałki `.card-chevron`: cała karta jest klikalna i podświetlana hoverem.
+  Razem z JSX-em znikło z `styles.css` przypięcie i rezerwa `padding-right`
+  dla `.task-card-main`, więc chevron NIE MOŻE tam wrócić bez własnych reguł.
+  Ikona żyje dalej na wierszach zadań w karcie projektu
+  (`.project-task-main`, przypięta absolutnie) i na wierszach osób
+  (`.person-row`, w zwykłym przepływie, sam efekt hoveru).
+  Usuwanie zadania idzie wspólnym wzorcem aplikacji: czerwony
+  `Trash2` w `IconButton variant="danger"` — jak na Klientach i w Content
+  planie — w OBU wariantach karty (desktop i telefon). Pigułka
   `.planning-badge` żyje dalej WYŁĄCZNIE w TaskModalu (tam są szczegóły).
   Postęp listy kontrolnej to wzór glifów (`src/utils/checklistGlyphs.ts`,
   `◍◍◌ 2/3`, limit 5 glifów, glify `aria-hidden`). Ścieżka adresowa ma JEDNO
@@ -408,9 +520,13 @@
   pierwszego realnego `mousemove` (mysz nie kradnie zaznaczenia).
 - `src/utils/dirtyRegistry.ts` and `src/utils/useSaveStatus.ts` support shared
   unsaved-edit and save-state behavior. The registry also holds the opt-in
-  router navigation guard (scopes `task-modal`/`project-detail` plus a one-shot
-  bypass) that App's `DirtyNavigationGuard` consults; only those two surfaces
-  register, so other routes and forms never gain a global blocker.
+  router navigation guard (scopes `task-modal`, `project-detail`,
+  `ticket-modal`, `event-modal`, `task-page`, `contentplan-post-modal`,
+  `contentplan-brand-modal`, plus a one-shot bypass) that App's
+  `DirtyNavigationGuard` consults; only those surfaces register, so other routes
+  and forms never gain a global blocker. Each scope reacts to the navigation
+  that would actually discard it: its own search param, the pathname, or (for
+  the page-mounted Content Plan modals) either one.
 
 ## Rules that change work
 
@@ -435,12 +551,18 @@
   takiego kafelka też nie (Obciążenie jako jedna linia i Tydzień jako siedem
   pigułek są zawsze). Na desktopie rzędy siatki to kolejno `today workload`,
   `notifications team`, `week`, `bin alerts` — „Zadania na dziś" są PIERWSZYM
-  elementem treści. Pusty kafelek Powiadomień/Alertów nie znika, tylko kurczy
+  elementem treści. Pusty kafelek Powiadomień nie znika, tylko kurczy
   się do belki ~40 px (`dashTileView` + `.dash-card-bar`, `align-self: start`)
-  i ZACHOWUJE swoją kotwicę `data-tour`. Nad siatką stoi najwyżej jedna linia
-  dziennika zmian z jednym CTA („Nowości 20–21.07 →"), widoczna tylko dopóki
-  `changelogUnread` (potwierdzenie trzyma urządzeniowe `changelogSeenId` w
-  `utils/uiPrefs.ts`, nie stan aplikacji). Pasek tygodnia ma pięć kolumn dni
+  i ZACHOWUJE swoją kotwicę `data-tour`. Alerty są wyjątkiem od tej reguły
+  (`empty: null` w `dashTileView`): dzielą rząd z „Zasobnikiem", więc puste
+  zostają PEŁNĄ kartą z wyśrodkowanym pustym stanem
+  (`.dash-alerts-empty-card`), żeby rząd nie miał dziury. Nad siatką stoi
+  najwyżej jedna linia dziennika zmian z jednym CTA („Nowości 20–21.07 →"),
+  widoczna tylko dopóki `changelogUnread`; ten sam urządzeniowy
+  `changelogSeenId` (`utils/uiPrefs.ts`, nie stan aplikacji) karmi licznik
+  nieprzeczytanych paczek na stałym przycisku „Zobacz zmiany"
+  (`changelogUnreadCount` + `.dash-changelog-badge`), zerowany otwarciem
+  popoutu. Pasek tygodnia ma pięć kolumn dni
   roboczych i wąską kolumnę weekendu (dwie belki 24 px); „+N więcej" oraz belki
   weekendu prowadzą do dnia przez `calendarDayTarget` → `/calendar?dzien=…`,
   który `CalendarPage` konsumuje i czyści (`replace`). Poniżej 760 px powłoka nie

@@ -1,7 +1,13 @@
 // Etykieta zakresu dat wpisu dziennika zmian + reguły paska „Nowości" na Panelu:
-// czy najnowszy wpis jest jeszcze nieprzeczytany i jak brzmi jedyne CTA.
+// czy najnowszy wpis jest jeszcze nieprzeczytany, ile wpisów czeka na liczniku
+// przycisku „Zobacz zmiany" i jak brzmi jedyne CTA.
 import { describe, expect, it } from 'vitest';
-import { changelogCtaLabel, changelogRangeLabel, changelogUnread } from './changelog';
+import {
+  changelogCtaLabel,
+  changelogRangeLabel,
+  changelogUnread,
+  changelogUnreadCount,
+} from './changelog';
 import type { ChangelogEntry } from './changelog';
 
 describe('changelogRangeLabel', () => {
@@ -51,6 +57,46 @@ describe('changelogUnread', () => {
   it('pusty dziennik => nie ma czego pokazywać', () => {
     expect(changelogUnread(undefined, undefined)).toBe(false);
     expect(changelogUnread(undefined, 'a')).toBe(false);
+  });
+});
+
+describe('changelogUnreadCount', () => {
+  const entry = (id: string): ChangelogEntry => ({
+    id,
+    dateFrom: '2026-07-20',
+    dateTo: '2026-07-21',
+    summary: 'Podsumowanie.',
+    items: [],
+  });
+  // Najnowszy wpis NA GÓRZE, dokładnie jak w CHANGELOG.
+  const entries = [entry('c'), entry('b'), entry('a')];
+
+  it('nic nie potwierdzone => wszystkie wpisy nieprzeczytane', () => {
+    expect(changelogUnreadCount(entries, undefined)).toBe(3);
+  });
+
+  it('potwierdzony NAJNOWSZY wpis => licznik znika', () => {
+    expect(changelogUnreadCount(entries, 'c')).toBe(0);
+  });
+
+  it('potwierdzony STARSZY wpis => tylko wpisy przed nim', () => {
+    expect(changelogUnreadCount(entries, 'b')).toBe(1);
+    expect(changelogUnreadCount(entries, 'a')).toBe(2);
+  });
+
+  it('id spoza dziennika => wszystko nieprzeczytane', () => {
+    expect(changelogUnreadCount(entries, 'usuniety-wpis')).toBe(3);
+  });
+
+  it('pusty dziennik => 0', () => {
+    expect(changelogUnreadCount([], undefined)).toBe(0);
+    expect(changelogUnreadCount([], 'c')).toBe(0);
+  });
+
+  it('„oznacz jako przeczytane": seenId = id najnowszego wpisu => 0', () => {
+    const latest = entries[0];
+    expect(changelogUnreadCount(entries, undefined)).toBeGreaterThan(0);
+    expect(changelogUnreadCount(entries, latest.id)).toBe(0);
   });
 });
 

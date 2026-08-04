@@ -46,6 +46,14 @@ const NON_MIRRORED_KEYS: Array<keyof AppData> = [
   // dotykające WYŁĄCZNIE ich NIE może być zaklasyfikowane jako „tylko lustrzane”,
   // bo zapis lokalny jest ich JEDYNĄ trwałością.
   'lastFilters',
+  // Content Plan: od 2026-08-03 kolekcje MAJĄ lustro i hydrację, ale w OSOBNYM
+  // schemacie (`contentplan`), którego środowisko może jeszcze nie wystawiać w
+  // Data API — wtedy zapisy modułu są cicho porzucane. ŚWIADOMIE zostają więc po
+  // stronie niezlustrzanej (bezpieczny kierunek: zmiana samego modułu NIGDY nie
+  // pomija `saveData`). Przeniesienie ich do MIRRORED_KEYS wymaga potwierdzenia,
+  // że schemat jest wystawiony na produkcji.
+  'contentPlanBrands',
+  'contentPlanPosts',
 ];
 
 // Runtime flaga zdrowia lustra chmury — prawdziwa TYLKO gdy status === 'ready',

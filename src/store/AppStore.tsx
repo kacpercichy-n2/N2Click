@@ -20,6 +20,10 @@ import type {
   CalendarEvent,
   ChecklistItem,
   ClientContact,
+  ContentPlanBrand,
+  ContentPlanComment,
+  ContentPlanHistoryEntry,
+  ContentPlanPost,
   CommentEntityType,
   Company,
   Department,
@@ -89,6 +93,22 @@ import {
   isTicketStatus,
 } from '../utils/tickets';
 import { isNotificationType } from '../utils/notifications';
+import {
+  contentPlanUid,
+  isContentPlanReviewDecision,
+  isContentPlanStatus,
+  isContentPlanVisibility,
+  isMonthKey,
+  isPostInMonth,
+  normalizeContentPlanBrandDraft,
+  normalizeContentPlanPostDraft,
+  reviewHistoryLabel,
+  uniqueBrandId,
+  validatePostForPublication,
+  type ContentPlanBrandDraft,
+  type ContentPlanPostDraft,
+  type ContentPlanReviewDecision,
+} from '../contentplan/domain';
 import {
   blockCollidesWithEvent,
   eventDraftConflicts,
@@ -327,6 +347,37 @@ export type Action =
   | { type: 'ADD_EVENT'; draft: EventDraft }
   | { type: 'SAVE_EVENT'; eventId: string; draft: EventDraft }
   | { type: 'DELETE_EVENT'; eventId: string }
+  // Content Plan — marki i publikacje modułu. Kolekcje ADDYTYWNE; jedyna kaskada
+  // to DELETE_CP_BRAND (marka zabiera swoje publikacje). Cała walidacja i
+  // normalizacja żyje w `src/contentplan/domain.ts`; każdy niepoprawny ładunek
+  // zwraca TĘ SAMĄ referencję stanu (inwariant 6).
+  | { type: 'SAVE_CP_BRAND'; brandId: string | null; draft: ContentPlanBrandDraft }
+  | { type: 'DELETE_CP_BRAND'; brandId: string }
+  | {
+      type: 'SAVE_CP_POST';
+      postId: string | null; // null => utworzenie
+      draft: ContentPlanPostDraft;
+      /** Etykieta wpisu historii; pusta/brak => domyślna polska etykieta. */
+      historyLabel?: string;
+    }
+  | { type: 'DELETE_CP_POST'; postId: string }
+  // Decyzja klienta na UDOSTĘPNIONEJ publikacji (Akceptacja / Uwagi).
+  | {
+      type: 'REVIEW_CP_POST';
+      postId: string;
+      decision: ContentPlanReviewDecision;
+      author: string;
+    }
+  // Udostępnienie CAŁEGO miesiąca marki — atomowe: jedna niekompletna
+  // publikacja blokuje operację (ta sama referencja stanu).
+  | { type: 'PUBLISH_CP_MONTH'; brandId: string; monthKey: string }
+  | {
+      type: 'ADD_CP_COMMENT';
+      postId: string;
+      author: string;
+      body: string;
+      parentId?: string;
+    }
   | { type: 'ADD_PERSON'; person: PersonDraft }
   | { type: 'UPDATE_PERSON'; personId: string; person: PersonDraft }
   | { type: 'DELETE_PERSON'; personId: string }
@@ -397,7 +448,11 @@ export type Action =
   // (inwariant 6).
   | { type: 'MARK_NOTIFICATION_READ'; notificationId: string }
   | { type: 'MARK_ALL_NOTIFICATIONS_READ' }
-  | { type: 'MERGE_CLOUD_NOTIFICATIONS'; payload: CloudNotificationsPayload };
+  | { type: 'MERGE_CLOUD_NOTIFICATIONS'; payload: CloudNotificationsPayload }
+  // AUTORYTATYWNA hydracja modułu Content Plan z jego WŁASNEGO schematu
+  // (`contentplan`): obie kolekcje lustrzane są podmieniane ładunkiem. Niepoprawny
+  // ładunek => TA SAMA referencja stanu (inwariant 6).
+  | { type: 'MERGE_CLOUD_CONTENT_PLAN'; payload: CloudContentPlanPayload };
 
 function uid(): string {
   return crypto.randomUUID();
@@ -2800,6 +2855,86 @@ function mergeCloudNotifications(state: AppData, payload: CloudNotificationsPayl
   return merged === state.notifications ? state : { ...state, notifications: merged };
 }
 
+// ---- Content Plan: hydracja z chmury ----
+
+/** Ładunek MERGE_CLOUD_CONTENT_PLAN (`loadContentPlanSnapshot`). */
+export interface CloudContentPlanPayload {
+  brands: ContentPlanBrand[];
+  posts: ContentPlanPost[];
+}
+
+const isStringList = (v: unknown): boolean =>
+  Array.isArray(v) && v.every((item) => typeof item === 'string');
+
+/** Strukturalna walidacja wiersza marki (fail-closed jak reszta hydracji). */
+function isValidContentPlanBrandRow(v: unknown): v is ContentPlanBrand {
+  if (!isObjWithId(v)) return false;
+  const b = v as unknown as Record<string, unknown>;
+  return (
+    typeof b.name === 'string' &&
+    b.name.trim() !== '' &&
+    typeof b.industry === 'string' &&
+    typeof b.contact === 'string' &&
+    typeof b.accent === 'string' &&
+    Array.isArray(b.platforms) &&
+    isStringList(b.topics) &&
+    isStringList(b.formats) &&
+    typeof b.createdAt === 'string' &&
+    typeof b.updatedAt === 'string'
+  );
+}
+
+/** Strukturalna walidacja wiersza publikacji. `brandId` wskazujący markę spoza
+ *  ładunku jest DOPUSZCZALNY (parytet z sanitizerem wczytania: osierocona
+ *  publikacja nie ma widoku, ale nie kasuje się przy hydracji). */
+function isValidContentPlanPostRow(v: unknown): v is ContentPlanPost {
+  if (!isObjWithId(v)) return false;
+  const p = v as unknown as Record<string, unknown>;
+  return (
+    typeof p.brandId === 'string' &&
+    p.brandId !== '' &&
+    typeof p.date === 'string' &&
+    isValidDateStr(p.date) &&
+    typeof p.title === 'string' &&
+    p.title.trim() !== '' &&
+    typeof p.topic === 'string' &&
+    typeof p.format === 'string' &&
+    isContentPlanStatus(p.status) &&
+    isContentPlanVisibility(p.visibility) &&
+    typeof p.baseTags === 'string' &&
+    Array.isArray(p.channels) &&
+    p.channels.every(isObjWithId) &&
+    Array.isArray(p.comments) &&
+    p.comments.every(isObjWithId) &&
+    Array.isArray(p.history) &&
+    p.history.every(isObjWithId) &&
+    typeof p.createdAt === 'string' &&
+    typeof p.updatedAt === 'string'
+  );
+}
+
+/**
+ * AUTORYTATYWNA hydracja modułu Content Plan: ładunek PODMIENIA obie kolekcje
+ * (reference-preserving jak pozostałe rodziny — wiersz bajtowo równy zachowuje
+ * referencję, kolekcja bez zmian zostaje tą samą tablicą, więc odświeżenie w tle
+ * nie miga kalendarzem). Fail-closed (inwariant 6): ładunek spoza obiektu,
+ * `brands`/`posts` poza tablicą albo JAKIKOLWIEK strukturalnie zły wiersz =>
+ * ORYGINALNA referencja stanu.
+ */
+function mergeCloudContentPlan(state: AppData, payload: CloudContentPlanPayload): AppData {
+  if (typeof payload !== 'object' || payload === null) return state;
+  const { brands, posts } = payload;
+  if (!Array.isArray(brands) || !Array.isArray(posts)) return state;
+  if (!brands.every(isValidContentPlanBrandRow)) return state;
+  if (!posts.every(isValidContentPlanPostRow)) return state;
+  const mergedBrands = reconcileRows(state.contentPlanBrands, brands);
+  const mergedPosts = reconcileRows(state.contentPlanPosts, posts);
+  if (mergedBrands === state.contentPlanBrands && mergedPosts === state.contentPlanPosts) {
+    return state;
+  }
+  return { ...state, contentPlanBrands: mergedBrands, contentPlanPosts: mergedPosts };
+}
+
 /**
  * Oznaczenie JEDNEGO powiadomienia jako przeczytane (`read_at`). Nieznane id albo
  * już przeczytane => TA SAMA referencja (inwariant 6). Kolumna `read_at`
@@ -4112,6 +4247,216 @@ export function reducer(state: AppData, action: Action): AppData {
       if (!state.events.some((e) => e.id === action.eventId)) return state;
       return { ...state, events: state.events.filter((e) => e.id !== action.eventId) };
     }
+    // ---- Content Plan (marki i publikacje modułu) ----
+    // Walidacja i normalizacja żyją w `src/contentplan/domain.ts`
+    // (`normalizeContentPlanBrandDraft` / `normalizeContentPlanPostDraft`):
+    // pusta nazwa/tytuł, nieznana marka, zła data, status/widoczność spoza
+    // zbioru, zły kanał, base64 zamiast referencji do Drive albo próba
+    // udostępnienia niekompletnej publikacji => TA SAMA referencja stanu
+    // (inwariant 6). Kolekcje są samodzielne — bez wpisów dziennika aktywności
+    // (parytet z ticketami i wydarzeniami); własną historię niesie publikacja.
+    case 'SAVE_CP_BRAND': {
+      const normalized = normalizeContentPlanBrandDraft(action.draft);
+      if (normalized === null) return state;
+      const stamp = nowIso();
+      if (action.brandId === null) {
+        return {
+          ...state,
+          contentPlanBrands: [
+            ...state.contentPlanBrands,
+            {
+              id: uniqueBrandId(normalized.name, state.contentPlanBrands),
+              ...normalized,
+              createdAt: stamp,
+              updatedAt: stamp,
+            },
+          ],
+        };
+      }
+      const brandId = action.brandId;
+      if (!state.contentPlanBrands.some((b) => b.id === brandId)) return state;
+      return {
+        ...state,
+        contentPlanBrands: state.contentPlanBrands.map((b) =>
+          // Id marki NIE zmienia się z nazwą: publikacje wskazują je po wartości.
+          b.id === brandId ? { ...b, ...normalized, updatedAt: stamp } : b,
+        ),
+      };
+    }
+    case 'DELETE_CP_BRAND': {
+      if (!state.contentPlanBrands.some((b) => b.id === action.brandId)) return state;
+      // Jedyna kaskada modułu: publikacje bez marki nie mają gdzie się pokazać.
+      return {
+        ...state,
+        contentPlanBrands: state.contentPlanBrands.filter((b) => b.id !== action.brandId),
+        contentPlanPosts: state.contentPlanPosts.filter((p) => p.brandId !== action.brandId),
+      };
+    }
+    case 'SAVE_CP_POST': {
+      const normalized = normalizeContentPlanPostDraft(action.draft, state.contentPlanBrands);
+      if (normalized === null) return state;
+      const stamp = nowIso();
+      const label = (action.historyLabel ?? '').trim();
+      if (action.postId === null) {
+        const entry: ContentPlanHistoryEntry = {
+          id: contentPlanUid(),
+          label: label === '' ? 'Utworzono slot publikacji' : label,
+          at: stamp,
+        };
+        return {
+          ...state,
+          contentPlanPosts: [
+            ...state.contentPlanPosts,
+            {
+              id: contentPlanUid(),
+              ...normalized,
+              comments: [],
+              history: [entry],
+              createdAt: stamp,
+              updatedAt: stamp,
+            },
+          ],
+        };
+      }
+      const postId = action.postId;
+      if (!state.contentPlanPosts.some((p) => p.id === postId)) return state;
+      return {
+        ...state,
+        contentPlanPosts: state.contentPlanPosts.map((p) => {
+          if (p.id !== postId) return p;
+          const entry: ContentPlanHistoryEntry = {
+            id: contentPlanUid(),
+            label: label === '' ? 'Zaktualizowano publikację' : label,
+            at: stamp,
+          };
+          const next: ContentPlanPost = {
+            id: p.id,
+            ...normalized,
+            // Komentarze i historia mają własne akcje — zapis ich nie przepisuje.
+            comments: p.comments,
+            history: [entry, ...p.history],
+            createdAt: p.createdAt,
+            updatedAt: stamp,
+          };
+          return next;
+        }),
+      };
+    }
+    case 'DELETE_CP_POST': {
+      if (!state.contentPlanPosts.some((p) => p.id === action.postId)) return state;
+      return {
+        ...state,
+        contentPlanPosts: state.contentPlanPosts.filter((p) => p.id !== action.postId),
+      };
+    }
+    case 'REVIEW_CP_POST': {
+      const post = state.contentPlanPosts.find((p) => p.id === action.postId);
+      if (!post) return state;
+      if (!isContentPlanReviewDecision(action.decision)) return state;
+      // Decyzja dotyczy WYŁĄCZNIE udostępnionej publikacji (parytet ze źródłem:
+      // szkic nie jest jeszcze widoczny dla klienta).
+      if (post.visibility !== 'published') return state;
+      const author = (action.author ?? '').trim();
+      if (author === '') return state;
+      const stamp = nowIso();
+      return {
+        ...state,
+        contentPlanPosts: state.contentPlanPosts.map((p) =>
+          p.id === action.postId
+            ? {
+                ...p,
+                status: action.decision,
+                history: [
+                  {
+                    id: contentPlanUid(),
+                    label: reviewHistoryLabel(author, action.decision),
+                    at: stamp,
+                  },
+                  ...p.history,
+                ],
+                updatedAt: stamp,
+              }
+            : p,
+        ),
+      };
+    }
+    case 'PUBLISH_CP_MONTH': {
+      if (!isMonthKey(action.monthKey)) return state;
+      if (!state.contentPlanBrands.some((b) => b.id === action.brandId)) return state;
+      const inMonth = state.contentPlanPosts.filter(
+        (p) => p.brandId === action.brandId && isPostInMonth(p, action.monthKey),
+      );
+      // Pusty miesiąc nie jest „udostępniony” — nie ma czego zmienić.
+      if (inMonth.length === 0) return state;
+      // ATOMOWO: jedna niekompletna publikacja blokuje cały miesiąc.
+      if (inMonth.some((p) => validatePostForPublication(p).length > 0)) return state;
+      const pending = inMonth.filter((p) => p.visibility !== 'published');
+      if (pending.length === 0) return state; // wszystko już udostępnione => no-op
+      const pendingIds = new Set(pending.map((p) => p.id));
+      const stamp = nowIso();
+      return {
+        ...state,
+        contentPlanPosts: state.contentPlanPosts.map((p) =>
+          pendingIds.has(p.id)
+            ? {
+                ...p,
+                visibility: 'published' as const,
+                history: [
+                  {
+                    id: contentPlanUid(),
+                    label: 'Udostępniono miesiąc klientowi',
+                    at: stamp,
+                  },
+                  ...p.history,
+                ],
+                updatedAt: stamp,
+              }
+            : p,
+        ),
+      };
+    }
+    case 'ADD_CP_COMMENT': {
+      const post = state.contentPlanPosts.find((p) => p.id === action.postId);
+      if (!post) return state;
+      // Komentarze zbieramy na UDOSTĘPNIONEJ publikacji (parytet ze źródłem).
+      if (post.visibility !== 'published') return state;
+      const author = (action.author ?? '').trim();
+      const body = (action.body ?? '').trim();
+      if (author === '' || body === '') return state;
+      const parentId = (action.parentId ?? '').trim();
+      // Odpowiedź musi wskazywać komentarz TEJ publikacji — inaczej wątek by się
+      // rozjechał i treść zniknęłaby z widoku.
+      if (action.parentId !== undefined && parentId === '') return state;
+      if (parentId !== '' && !post.comments.some((c) => c.id === parentId)) return state;
+      const stamp = nowIso();
+      const comment: ContentPlanComment = {
+        id: contentPlanUid(),
+        author,
+        body,
+        at: stamp,
+        ...(parentId !== '' ? { parentId } : {}),
+      };
+      return {
+        ...state,
+        contentPlanPosts: state.contentPlanPosts.map((p) =>
+          p.id === action.postId
+            ? {
+                ...p,
+                comments: [comment, ...p.comments],
+                history: [
+                  {
+                    id: contentPlanUid(),
+                    label: `${author}: dodał(a) ${parentId !== '' ? 'odpowiedź' : 'komentarz'}`,
+                    at: stamp,
+                  },
+                  ...p.history,
+                ],
+                updatedAt: stamp,
+              }
+            : p,
+        ),
+      };
+    }
     case 'LOAD_SAMPLE':
       return { ...action.data, sampleBannerDismissed: true };
     case 'DISMISS_SAMPLE_BANNER':
@@ -4132,6 +4477,8 @@ export function reducer(state: AppData, action: Action): AppData {
       return markAllNotificationsRead(state);
     case 'MERGE_CLOUD_NOTIFICATIONS':
       return mergeCloudNotifications(state, action.payload);
+    case 'MERGE_CLOUD_CONTENT_PLAN':
+      return mergeCloudContentPlan(state, action.payload);
     default:
       return state;
   }

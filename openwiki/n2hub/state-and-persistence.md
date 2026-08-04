@@ -433,6 +433,51 @@
   payloadu). W chmurze tabela `public.notifications` (patrz cloud-database).
   Testy: `src/utils/notifications.test.ts`, `src/supabase/notifications.test.ts`,
   `src/store/notifications.test.ts`, rozszerzenia w `dashboardPanels.test.ts`.
+- CONTENT PLAN — DOMENA I STORE (2026-08-03, faza R2 modułu): dwie kolekcje w
+  `AppData` — `contentPlanBrands` i `contentPlanPosts` (`ContentPlanBrand` /
+  `ContentPlanPost` + `ContentPlanPlatform`/`Channel`/`Media`/`Comment`/
+  `HistoryEntry`/`Status`/`Visibility` w `src/types.ts`). Kolekcje ADDYTYWNE:
+  `DATA_VERSION` zostaje 7, `emptyData()`/seed dają `[]`, wczytanie ma
+  `coerceArray(parsedRest.contentPlan*, …)` + pass `repairContentPlan` (biegnie
+  po `repairNotifications` na wyniku OBU ścieżek). Od fazy R8 (2026-08-03) mają
+  lustro i hydrację w OSOBNYM schemacie `contentplan` (patrz cloud-database),
+  ale OBA klucze ŚWIADOMIE zostają w `persistGate.NON_MIRRORED_KEYS`: schemat
+  bywa niewystawiony w Data API, więc zapis lokalny musi iść zawsze (bezpieczny
+  kierunek). CZYSTA DOMENA żyje w
+  `src/contentplan/domain.ts` (bez Reacta i store): 7 polskich statusów
+  (`CONTENT_PLAN_STATUSES` wyprowadzone z `Record<ContentPlanStatus, true>` —
+  brak wartości = błąd kompilacji), `MAIN_DESCRIPTION_GROUP`, `brandSlug`/
+  `uniqueBrandId`, helpery KLUCZA MIESIĄCA `'yyyy-MM'` (`isMonthKey`,
+  `monthKeyOf`, `shiftMonthKey`, `monthKeyLabel`, `monthKeyDays` — wszystkie
+  stoją na `utils/dates.ts`, ZERO drugiej implementacji dat), grupy opisów/tagi
+  (`getDescriptionGroups`, `groupTags`), proporcje mediów, `flattenCommentReplies`
+  (odporne na cykl), `validatePostForPublication` i `makeEmptyPost`. DWA POZIOMY
+  SUROWOŚCI: `normalizeContentPlan*Draft` (STRICT, `null` => reduktor zwraca TĘ
+  SAMĄ referencję) i `sanitizeContentPlan*` (ŁAGODNE, per-wiersz, idempotentne).
+  MEDIA to WYŁĄCZNIE `{ source:'gdrive', fileId, width?, height?, type }` —
+  base64 z aplikacji źródłowej (`assetPreview`/`assetName`, limit 4 MB) nie ma
+  jak wejść ani reduktorem, ani przez ręcznie podmieniony localStorage (repair
+  zdejmuje klucz). Mutacje: `SAVE_CP_BRAND` (`brandId: null` = utworzenie, id ze
+  sluga i NIE idzie za nazwą), `DELETE_CP_BRAND` (JEDYNA kaskada modułu — zabiera
+  publikacje marki), `SAVE_CP_POST` (`postId: null` = utworzenie; edycja zachowuje
+  `comments`/`createdAt` i dokłada wpis historii na początek), `DELETE_CP_POST`,
+  `REVIEW_CP_POST` (Akceptacja/Uwagi, TYLKO na `visibility: 'published'`),
+  `PUBLISH_CP_MONTH` (ATOMOWO: jedna niekompletna publikacja albo pusty miesiąc
+  blokują całość; wszystko już udostępnione => no-op) i `ADD_CP_COMMENT`
+  (published-only, rodzic musi być komentarzem TEJ publikacji). Każde niepoprawne
+  wejście zwraca TĘ SAMĄ referencję (inwariant 6); moduł NIE pisze do dziennika
+  aktywności (parytet z ticketami/wydarzeniami) — własną historię niesie
+  publikacja. Selektory: `contentPlanPostsForMonth` (marka+miesiąc, sort stabilny
+  po dacie) i `contentPlanMonthStats` (widoczność + licznik każdego z 7 statusów),
+  oba przez `createKeyedCache`. Osierocony `brandId` na wczytaniu ZOSTAJE (parytet
+  z `reporterId` zgłoszeń). HYDRACJA: `MERGE_CLOUD_CONTENT_PLAN` (ładunek
+  `{brands, posts}` z `loadContentPlanSnapshot`) PODMIENIA obie kolekcje
+  autorytatywnie, reference-preserving przez `reconcileRows`; strukturalnie zły
+  wiersz => TA SAMA referencja stanu (inwariant 6), a akcja jest w `SUPPRESSED`
+  (scalenie nie wraca do chmury jako diff). Testy: `src/contentplan/domain.test.ts`,
+  `src/store/contentPlanActions.test.ts`, `contentPlanStorage.test.ts`,
+  `contentPlanSelectors.test.ts`, `cloudMerge.test.ts` (blok
+  MERGE_CLOUD_CONTENT_PLAN).
 - `Client` carries a PRIMARY contact (contactName/contactEmail/contactPhone) plus
   a description in `notes` (columns from 20260718090000_clients_contact_fields,
   '' or missing = none), edited on the `/clients` page via
@@ -573,7 +618,10 @@ zmianie referencji, bezpieczne wypisanie w trakcie powiadamiania, `shallowEqual`
 `dateGuards.test.ts`, `taskMeta.test.ts`, `persistGate.test.ts` (retirement
 gate), `ticketActions.test.ts` + `ticketsStorage.test.ts` (zgłoszenia: reduktor,
 repair, uprawnienia), `draftTasks.test.ts` (szkice: saveTask pomija workload,
-PUBLISH_*, wykluczenia selektorów/kanban). Cloud mirror: `src/supabase/cloudMirror.test.ts`, `plannerData.test.ts`,
+PUBLISH_*, wykluczenia selektorów/kanban), `src/contentplan/domain.test.ts` +
+`contentPlanActions.test.ts` / `contentPlanStorage.test.ts` /
+`contentPlanSelectors.test.ts` (Content Plan: domena, inwariant 6, repair,
+selektory). Cloud mirror: `src/supabase/cloudMirror.test.ts`, `plannerData.test.ts`,
 `migrationStatus.test.ts` (coverage + handshake), `migrations.test.ts`.
 Bezszwowe odświeżanie w tle: `cloudMerge.test.ts` (blok „referencje”) +
 `src/utils/liveSyncGate.test.ts`.

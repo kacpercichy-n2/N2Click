@@ -19,6 +19,7 @@ import {
   ListChecks,
   CalendarDays,
   CalendarClock,
+  CalendarRange,
   Users,
   Gauge,
   Settings,
@@ -35,6 +36,10 @@ export const NAV: NavItem[] = [
   ['/kanban', 'Kanban', Columns3],
   ['/calendar', 'Kalendarz', CalendarDays],
   ['/wydarzenia', 'Wydarzenia', CalendarClock],
+  // Content plan stoi przy pozycjach kalendarzowych, bo jego jednostką jest
+  // miesiąc publikacji. Bramka roli (tylko administratorzy) siedzi w App.tsx,
+  // nie tutaj — patrz src/pages/contentPlanScope.ts.
+  ['/content-plan', 'Content plan', CalendarRange],
   ['/timeline', 'Oś czasu', GanttChart],
   ['/workload', 'Obciążenie', Gauge],
   ['/people', 'Zespół', Users],

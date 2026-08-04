@@ -24,7 +24,7 @@ import { PRIORITY_LABELS, TASK_PRIORITIES } from '../utils/priority';
 import { FilterPresets, DEFAULT_CRITERIA } from '../components/FilterPresets';
 import { type FilterChip, type FilterGroup } from '../components/FilterPanel';
 import { FilterBar } from '../components/FilterBar';
-import { ChevronRight, MoreHorizontal, Plus, X } from '../components/icons';
+import { MoreHorizontal, Plus, Trash2 } from '../components/icons';
 import { IconButton } from '../components/IconButton';
 import { useConfirm } from '../components/ConfirmProvider';
 import { buildDeleteConsequence } from '../components/confirmDialog';
@@ -524,7 +524,7 @@ export function TasksPage() {
                       // — na telefonie odstępy trzyma `.task-card-m-actions`.
                       <IconButton
                         variant="danger"
-                        icon={<X size={16} aria-hidden />}
+                        icon={<Trash2 size={16} aria-hidden />}
                         onClick={() => handleDelete(task.id, task.title)}
                         label={`Usuń ${task.title}`}
                         tooltip="Usuń"
@@ -582,14 +582,13 @@ export function TasksPage() {
                       </span>
                     )}
                   </div>
-                  <ChevronRight className="card-chevron" size={16} aria-hidden />
                 </button>
                 {canManageTasks && (
                   <div className="card-actions">
                     <IconButton
                       className="task-delete"
                       variant="danger"
-                      icon={<X size={16} aria-hidden />}
+                      icon={<Trash2 size={16} aria-hidden />}
                       onClick={() => handleDelete(task.id, task.title)}
                       label={`Usuń ${task.title}`}
                       tooltip="Usuń"

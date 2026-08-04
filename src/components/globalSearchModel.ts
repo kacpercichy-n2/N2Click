@@ -68,12 +68,15 @@ const NAV_EXTRA_KEYWORDS: Record<string, string[]> = {
 
 /**
  * Katalog akcji. Nawigacja bierze etykiety z `NAV` (jedno źródło z
- * sidebarem), a bramkowane trasy `/admin` i `/team` wypadają tak samo jak w
- * menu — to bramka UX, nie granica bezpieczeństwa (trasa i tak przekierowuje).
+ * sidebarem), a bramkowane trasy `/admin`, `/team` i `/content-plan` wypadają
+ * tak samo jak w menu — to bramka UX, nie granica bezpieczeństwa (trasa i tak
+ * przekierowuje). `canContentPlan` jest OPCJONALNE i domyślnie `false`:
+ * wywołujący, który nie zna roli, nie może przypadkiem odsłonić modułu.
  */
 export function quickActionCatalog(opts: {
   canAdmin: boolean;
   canTeam: boolean;
+  canContentPlan?: boolean;
 }): QuickAction[] {
   const targets: Array<[string, string]> = [
     ...NAV.map(([path, label]): [string, string] => [path, label]),
@@ -81,7 +84,10 @@ export function quickActionCatalog(opts: {
   ];
   const navigation: QuickAction[] = targets
     .filter(
-      ([path]) => (path !== '/admin' || opts.canAdmin) && (path !== '/team' || opts.canTeam),
+      ([path]) =>
+        (path !== '/admin' || opts.canAdmin) &&
+        (path !== '/team' || opts.canTeam) &&
+        (path !== '/content-plan' || opts.canContentPlan === true),
     )
     .map(([path, label]) => ({
       id: `nav:${path}`,

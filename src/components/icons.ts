@@ -53,9 +53,33 @@ export {
   // paskach akcji (nagłówek modala, nagłówek kolumny osoby w siatce).
   MoreHorizontal,
   // Zakładka „Zasobnik" w dolnym pasku telefonu (deep-link do kalendarza z
-  // otwartym arkuszem bloków bez terminu).
+  // otwartym arkuszem bloków bez terminu) oraz akcja „Archiwizuj" na karcie
+  // klienta; `ArchiveRestore` to jej odwrotność („Przywróć").
   Archive,
+  ArchiveRestore,
   // Urlop: blok w kalendarzu, wskaźnik zamiast wykrzyknika przeciążenia i
   // wejście „Dodaj urlop". `Palmtree` to przestarzały alias tej samej ikony.
   TreePalm,
+  // Moduł „Content plan": kalendarz miesiąca publikacji. Zakres (a nie pojedynczy
+  // dzień jak `CalendarDays` czy godzina jak `CalendarClock`) odróżnia pozycję od
+  // Kalendarza i Wydarzeń, które stoją w menu obok.
+  CalendarRange,
+  // Kalendarz „Content planu": kopiowanie i wklejanie slotu publikacji między
+  // dniami, widoczność publikacji dla klienta (szkic vs udostępnione) oraz
+  // zastępnik miniatury pliku z Drive.
+  Copy,
+  ClipboardPaste,
+  Eye,
+  EyeOff,
+  FileImage,
+  // Edytor publikacji „Content planu": wskazanie folderu marki na Dysku Google
+  // (Picker), obok wyboru plików dla poszczególnych platform.
+  FolderOpen,
+  // Edytor publikacji „Content planu": sekcja komentarzy, wątek odpowiedzi,
+  // dziennik zmian publikacji oraz słowniki marki w edytorze marki. `History`
+  // stoi też przy przycisku „Zobacz zmiany" na Panelu (ten sam sens: historia).
+  MessageSquare,
+  CornerDownRight,
+  History,
+  Settings2,
 } from 'lucide-react';

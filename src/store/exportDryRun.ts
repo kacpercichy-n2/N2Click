@@ -221,6 +221,18 @@ export function buildDryRunReport(data: AppData): DryRunReport {
         'zostać przeniesione bez zmian.',
       count: data.departments.length + data.projects.length + data.tasks.length,
     },
+    // Content Plan mieszka w OSOBNYM schemacie `contentplan` (marki, publikacje,
+    // kanały, komentarze, historia) i synchronizuje się na bieżąco własną rodziną
+    // diff — ta migracja go nie dotyczy. Wiersz jest tu po to, żeby symulacja nie
+    // milczała o kolekcjach, które widać w kopii zapasowej.
+    {
+      entity: 'Content Plan (schemat contentplan)',
+      description:
+        'Marki i publikacje modułu synchronizują się osobno, poza tą migracją. ' +
+        'Marka o identyfikatorze spoza formatu UUID (utworzona w tej przeglądarce) ' +
+        'zostaje wyłącznie lokalnie, razem ze swoimi publikacjami.',
+      count: data.contentPlanBrands.length + data.contentPlanPosts.length,
+    },
   ];
 
   const roleCounts = new Map<AccessRole, number>();

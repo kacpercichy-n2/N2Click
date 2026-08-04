@@ -10,6 +10,7 @@
 // keys (`{}`) so tests can never collide on identity, and cleans up any flag it
 // sets via `afterEach` so no test leaks a dirty flag into the next.
 import { afterEach, describe, expect, it } from 'vitest';
+import type { NavGuardScope } from './dirtyRegistry';
 import {
   anyDirty,
   bypassNavGuardOnce,
@@ -213,6 +214,75 @@ describe('navGuardBlocks', () => {
     ).toBe(false);
     expect(
       navGuardBlocks(scopes('task-page'), at('/tasks/t1'), at('/tasks/t1', '?task=t9')),
+    ).toBe(false);
+  });
+
+  // R5 — modale Content Planu są montowane WEWNĄTRZ strony `/content-plan`, więc
+  // giną od zmiany własnego parametru ORAZ od opuszczenia trasy. Pager miesięcy
+  // (`?m=`) jest trzecim parametrem tej samej strony i NIE może o nic pytać.
+  it('dirty Content Plan post modal blocks its own param and pathname changes', () => {
+    const cp = new Set<NavGuardScope>(['contentplan-post-modal']);
+    // Zamknięcie edytora (parametr znika).
+    expect(
+      navGuardBlocks(cp, at('/content-plan', '?publikacja=p1'), at('/content-plan')),
+    ).toBe(true);
+    // Wstecz/Dalej na inną publikację.
+    expect(
+      navGuardBlocks(
+        cp,
+        at('/content-plan', '?publikacja=p1'),
+        at('/content-plan', '?publikacja=p2'),
+      ),
+    ).toBe(true);
+    // Wyjście z modułu (modal jest montowany w stronie, więc ginie ze stroną).
+    expect(navGuardBlocks(cp, at('/content-plan', '?publikacja=p1'), at('/dashboard'))).toBe(
+      true,
+    );
+    // Przewinięcie miesiąca pod otwartym edytorem NIE porzuca edycji.
+    expect(
+      navGuardBlocks(
+        cp,
+        at('/content-plan', '?publikacja=p1&m=2026-08'),
+        at('/content-plan', '?publikacja=p1&m=2026-09'),
+      ),
+    ).toBe(false);
+    // Otwarcie modala marki obok też nie (inny parametr, ta sama strona).
+    expect(
+      navGuardBlocks(
+        cp,
+        at('/content-plan', '?publikacja=p1'),
+        at('/content-plan', '?publikacja=p1&marka=new'),
+      ),
+    ).toBe(false);
+  });
+
+  it('dirty Content Plan brand modal reacts to ?marka= only, never to the pager', () => {
+    const cp = new Set<NavGuardScope>(['contentplan-brand-modal']);
+    expect(navGuardBlocks(cp, at('/content-plan', '?marka=new'), at('/content-plan'))).toBe(
+      true,
+    );
+    expect(
+      navGuardBlocks(
+        cp,
+        at('/content-plan', '?marka=tetra'),
+        at('/content-plan', '?marka=new'),
+      ),
+    ).toBe(true);
+    expect(navGuardBlocks(cp, at('/content-plan', '?marka=new'), at('/people'))).toBe(true);
+    expect(
+      navGuardBlocks(
+        cp,
+        at('/content-plan', '?marka=new&m=2026-08'),
+        at('/content-plan', '?marka=new&m=2026-07'),
+      ),
+    ).toBe(false);
+    // Edytor publikacji otwarty obok brudnego edytora marki nie pyta.
+    expect(
+      navGuardBlocks(
+        cp,
+        at('/content-plan', '?marka=new'),
+        at('/content-plan', '?marka=new&publikacja=p1'),
+      ),
     ).toBe(false);
   });
 

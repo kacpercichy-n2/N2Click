@@ -507,6 +507,119 @@ export interface Notification {
   createdAt: string; // ISO timestamp
 }
 
+// ---- Content Plan (moduł planowania publikacji) ----------------------------
+//
+// Model przeniesiony z zewnętrznej aplikacji „Content plan” (Brand / ContentItem
+// / ChannelPost / Comment / ChangeEventLog). JEDNA świadoma zmiana względem
+// źródła: media kanału to WYŁĄCZNIE referencja do Google Drive
+// ({@link ContentPlanMedia}) — żaden base64 (dawne `assetPreview`/`assetName`)
+// nie wchodzi do stanu ani do zapisu, więc znika też limit 4 MB.
+//
+// Obie kolekcje (`contentPlanBrands`, `contentPlanPosts`) są ADDYTYWNE:
+// `DATA_VERSION` zostaje 7, `emptyData()` daje `[]`, a starszy zapis wchodzi
+// przez sanitizer wczytania (`repairContentPlan` w storage.ts). Czysta domena
+// (walidacja, normalizacja, helpery miesiąca i grup opisów) żyje w
+// `src/contentplan/domain.ts`.
+
+/** Platforma (kanał) marki — słownik per marka, nie globalny. */
+export interface ContentPlanPlatform {
+  id: string; // slug, np. 'instagram'
+  name: string; // etykieta widoczna w UI
+  color: string; // kolor akcentu chipa/karty
+}
+
+/** Marka obsługiwana w module. Słowniki (`platforms`/`topics`/`formats`) są
+ *  lokalne dla marki — post odwołuje się do nich wartościami. */
+export interface ContentPlanBrand {
+  id: string; // slug z nazwy (uniqueBrandId), stabilny po utworzeniu
+  name: string; // wymagana, niepusta po trim
+  industry: string; // '' gdy nie podano
+  contact: string; // '' gdy nie podano
+  accent: string; // kolor marki; '' gdy nie podano
+  platforms: ContentPlanPlatform[];
+  topics: string[]; // słownik tematów; wartości unikalne, niepuste
+  formats: string[]; // słownik formatów; wartości unikalne, niepuste
+  createdAt: string; // ISO timestamp
+  updatedAt: string; // ISO timestamp; odświeżany przy każdym zapisie
+}
+
+/**
+ * Media kanału — WYŁĄCZNIE referencja do pliku na Google Drive. Nic nie
+ * przechodzi przez naszą infrastrukturę i NIGDY nie ma tu base64 (to jedyna
+ * zamierzona różnica względem aplikacji źródłowej). `width`/`height` są
+ * OPCJONALNE: klucz istnieje tylko przy dodatnim, całkowitym wymiarze.
+ */
+export interface ContentPlanMedia {
+  source: 'gdrive';
+  fileId: string; // niepuste id pliku Drive
+  width?: number;
+  height?: number;
+  type: 'image' | 'video';
+}
+
+/**
+ * Jeden kanał publikacji (post na konkretnej platformie). Warianty opisu
+ * grupuje `descriptionGroupId`: BRAK klucza ≡ grupa główna
+ * (`MAIN_DESCRIPTION_GROUP`) — forma kanoniczna, klucz nigdy nie niesie 'main'.
+ */
+export interface ContentPlanChannel {
+  id: string;
+  platformId: string; // wartość ze słownika marki; dangling => fallback renderu
+  copy: string; // treść opisu; '' dopuszczalne w szkicu
+  tags: string; // tagi wariantu; znaczące tylko przy `overrideTags`
+  overrideTags: boolean; // true => `tags` nadpisuje `baseTags` posta
+  descriptionGroupId?: string; // brak klucza = grupa główna
+  media?: ContentPlanMedia; // brak klucza = brak podpiętego pliku
+}
+
+/** Komentarz do publikacji (wątkowany przez `parentId`). */
+export interface ContentPlanComment {
+  id: string;
+  author: string; // nazwa autora (klient albo zespół)
+  body: string; // wymagane, niepuste po trim
+  at: string; // ISO timestamp
+  parentId?: string; // brak klucza = wątek główny
+}
+
+/** Wpis historii zmian publikacji (dziennik modułu, nie `AppData.activity`). */
+export interface ContentPlanHistoryEntry {
+  id: string;
+  label: string; // wymagane, niepuste po trim
+  at: string; // ISO timestamp
+}
+
+/** Siedem statusów publikacji — wartość JEST etykietą (po polsku). Kolejność i
+ *  zbiór trzyma `CONTENT_PLAN_STATUSES` w `src/contentplan/domain.ts`. */
+export type ContentPlanStatus =
+  | 'Do akceptacji'
+  | 'Uwagi'
+  | 'Akceptacja'
+  | 'Zaplanowane'
+  | 'W trakcie tworzenia'
+  | 'Wdrażane poprawki'
+  | 'Opublikowano';
+
+/** Widoczność publikacji: `draft` = tylko zespół, `published` = udostępniona. */
+export type ContentPlanVisibility = 'draft' | 'published';
+
+/** Jedna publikacja w kalendarzu marki (odpowiednik `ContentItem` ze źródła). */
+export interface ContentPlanPost {
+  id: string;
+  brandId: string; // id marki; dangling ZACHOWywany na wczytaniu (jak reporterId)
+  date: DateStr; // 'yyyy-MM-dd'
+  title: string; // wymagany, niepusty po trim
+  topic: string; // wartość ze słownika marki; '' gdy nie wybrano
+  format: string; // wartość ze słownika marki; '' gdy nie wybrano
+  status: ContentPlanStatus;
+  visibility: ContentPlanVisibility;
+  baseTags: string; // tagi główne dziedziczone przez warianty
+  channels: ContentPlanChannel[];
+  comments: ContentPlanComment[];
+  history: ContentPlanHistoryEntry[];
+  createdAt: string; // ISO timestamp
+  updatedAt: string; // ISO timestamp; odświeżany przy każdym zapisie
+}
+
 export type FilterPage = 'projects' | 'tasks' | 'kanban';
 
 export interface SavedFilterCriteria {
@@ -577,6 +690,10 @@ export interface AppData {
   // Powiadomienia in-app dla ZALOGOWANEGO odbiorcy (cloud-authoritative,
   // hydrowane z chmury; addytywne, DATA_VERSION zostaje 7).
   notifications: Notification[];
+  // Content Plan — marki i publikacje modułu. Kolekcje ADDYTYWNE (DATA_VERSION
+  // zostaje 7), sanityzowane na każdym wczytaniu przez `repairContentPlan`.
+  contentPlanBrands: ContentPlanBrand[];
+  contentPlanPosts: ContentPlanPost[];
   currentUserId: string; // "acting as" person; '' when unset
   sampleBannerDismissed: boolean;
   savedFilters: SavedFilter[]; // named filter presets for Projects/Tasks/Kanban pages

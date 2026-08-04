@@ -53,6 +53,10 @@ import {
   sanitizeLastViewFilter,
 } from './commandValidation';
 import { isNotificationType, sanitizeNotificationPayload } from '../utils/notifications';
+import {
+  sanitizeContentPlanBrands,
+  sanitizeContentPlanPosts,
+} from '../contentplan/domain';
 
 const STORAGE_KEY = 'n2hub.data.v1';
 const LEGACY_STORAGE_KEYS = ['n2ub.data.v1', 'n2click.data.v1'];
@@ -149,6 +153,8 @@ export function emptyData(): AppData {
     tickets: [],
     events: [],
     notifications: [],
+    contentPlanBrands: [],
+    contentPlanPosts: [],
     currentUserId: '',
     sampleBannerDismissed: false,
     savedFilters: [],
@@ -1298,6 +1304,34 @@ export function repairNotifications(data: AppData): AppData {
 }
 
 /**
+ * Idempotentny repair OBU kolekcji modułu Content Plan (`contentPlanBrands`,
+ * `contentPlanPosts`). Kolekcje są ADDYTYWNE (bez podbicia DATA_VERSION), więc
+ * każdy starszy zapis wchodzi tu jako `[]` z emptyData i przechodzi bez zmian.
+ *
+ * Cała logika wierszy żyje w `src/contentplan/domain.ts`
+ * (`sanitizeContentPlanBrands` / `sanitizeContentPlanPosts`) — ten pass tylko
+ * spina ją z granicą localStorage. Zasady w skrócie:
+ * 1. Marka bez `id`/nazwy oraz publikacja bez `id`/`brandId`/tytułu albo z
+ *    niepoprawną `date` są ODRZUCANE; duplikat `id` odpada (pierwszy wygrywa).
+ * 2. `brandId` wskazujący nieistniejącą markę jest ZACHOWYWANY (parytet z
+ *    `reporterId` zgłoszeń) — repair nie kaskaduje między kolekcjami.
+ * 3. Nieznany status/widoczność publikacji spadają na wartości domyślne.
+ * 4. MEDIA: przechodzi wyłącznie kształt `{ source: 'gdrive', fileId, type }`
+ *    (+ opcjonalne dodatnie wymiary). Każdy inny kształt — w szczególności
+ *    zaszłościowy base64 z aplikacji źródłowej — jest ZDEJMOWANY z kanału, więc
+ *    nie da się go wprowadzić do stanu przez ręcznie podmieniony localStorage.
+ *
+ * Idempotentny po wartości: drugi przebieg na własnym wyniku nic nie zmienia.
+ */
+export function repairContentPlan(data: AppData): AppData {
+  return {
+    ...data,
+    contentPlanBrands: sanitizeContentPlanBrands(data.contentPlanBrands),
+    contentPlanPosts: sanitizeContentPlanPosts(data.contentPlanPosts),
+  };
+}
+
+/**
  * Idempotent normalize pass for stable completion semantics. Runs on EVERY load
  * — same philosophy as normalizeTaskMeta / normalizeDates — so a payload with a
  * missing or malformed `isDone` (e.g. a v6 payload predating the flag, or one
@@ -1698,6 +1732,8 @@ function readData(recordRevision: boolean): InternalLoadResult {
         tickets: coerceArray(parsedRest.tickets, defaults.tickets),
         events: coerceArray(parsedRest.events, defaults.events),
         notifications: coerceArray(parsedRest.notifications, defaults.notifications),
+        contentPlanBrands: coerceArray(parsedRest.contentPlanBrands, defaults.contentPlanBrands),
+        contentPlanPosts: coerceArray(parsedRest.contentPlanPosts, defaults.contentPlanPosts),
         savedFilters: coerceArray(parsedRest.savedFilters, defaults.savedFilters),
         // `lastFilters` to obiekt (mapa widok→filtr), nie tablica: obecną-ale-
         // niebędącą-obiektem wartość (np. tablica/`null`) koerujemy do `{}` tutaj,
@@ -1740,6 +1776,9 @@ function readData(recordRevision: boolean): InternalLoadResult {
     // Powiadomienia in-app: pole ADDYTYWNE, repair biegnie na WYNIKU obu ścieżek
     // (zapis bez `notifications` wychodzi stąd z pustą listą).
     data = repairNotifications(data);
+    // Content Plan: kolekcje ADDYTYWNE, repair biegnie na WYNIKU obu ścieżek
+    // (zapis bez `contentPlan*` wychodzi stąd z pustymi listami).
+    data = repairContentPlan(data);
 
     const { revision: _revision, ...storedData } = parsed;
     return {

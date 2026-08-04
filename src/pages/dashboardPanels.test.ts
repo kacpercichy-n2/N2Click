@@ -154,7 +154,7 @@ describe('teamHeaderLabel', () => {
   });
 });
 
-describe('dashTileView (kafelek pusty => belka)', () => {
+describe('dashTileView (puste Powiadomienia => belka, Alerty => zawsze karta)', () => {
   it('Powiadomienia z treścią: pełna karta, sam tytuł', () => {
     expect(dashTileView('notifications', true)).toEqual({
       collapsed: false,
@@ -173,16 +173,21 @@ describe('dashTileView (kafelek pusty => belka)', () => {
     expect(dashTileView('alerts', true)).toEqual({ collapsed: false, label: 'Alerty' });
   });
 
-  it('Alerty bez treści: belka „czysto ✓"', () => {
-    expect(dashTileView('alerts', false)).toEqual({ collapsed: true, label: 'Alerty — czysto ✓' });
+  // Zmiana świadoma (n2hub-324): pusty kafelek Alertów dzieli rząd siatki z
+  // „Zasobnikiem", więc belka zostawiała tam dziurę. Teraz zostaje pełną kartą
+  // z pustym stanem w środku, a nagłówek jest ten sam co z treścią.
+  it('Alerty bez treści: nadal pełna karta z tym samym tytułem', () => {
+    expect(dashTileView('alerts', false)).toEqual({ collapsed: false, label: 'Alerty' });
   });
 
-  it('zwinięcie zależy WYŁĄCZNIE od braku treści, nie od kafelka', () => {
-    for (const id of ['notifications', 'alerts'] as const) {
-      expect(dashTileView(id, true).collapsed).toBe(false);
-      expect(dashTileView(id, false).collapsed).toBe(true);
-      expect(dashTileView(id, false).label).not.toBe(dashTileView(id, true).label);
-    }
+  it('zwija się tylko kafelek, który ma tekst belki', () => {
+    expect(dashTileView('notifications', true).collapsed).toBe(false);
+    expect(dashTileView('notifications', false).collapsed).toBe(true);
+    expect(dashTileView('notifications', false).label).not.toBe(
+      dashTileView('notifications', true).label,
+    );
+    expect(dashTileView('alerts', true).collapsed).toBe(false);
+    expect(dashTileView('alerts', false).collapsed).toBe(false);
   });
 });
 

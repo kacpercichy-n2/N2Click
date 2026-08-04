@@ -28,6 +28,8 @@ const ROUTE_LOADERS = {
   '/tasks/:id': () => import('./TaskFullPage').then((m) => ({ default: m.TaskFullPage })),
   '/calendar': () => import('./CalendarPage').then((m) => ({ default: m.CalendarPage })),
   '/wydarzenia': () => import('./EventsPage').then((m) => ({ default: m.EventsPage })),
+  '/content-plan': () =>
+    import('./ContentPlanPage').then((m) => ({ default: m.ContentPlanPage })),
   '/people': () => import('./PeoplePage').then((m) => ({ default: m.PeoplePage })),
   '/people/:id': () =>
     import('./PersonProfilePage').then((m) => ({ default: m.PersonProfilePage })),
@@ -63,6 +65,7 @@ export const TasksPage = lazy(ROUTE_LOADERS['/tasks']);
 export const TaskFullPage = lazy(ROUTE_LOADERS['/tasks/:id']);
 export const CalendarPage = lazy(ROUTE_LOADERS['/calendar']);
 export const EventsPage = lazy(ROUTE_LOADERS['/wydarzenia']);
+export const ContentPlanPage = lazy(ROUTE_LOADERS['/content-plan']);
 export const PeoplePage = lazy(ROUTE_LOADERS['/people']);
 export const PersonProfilePage = lazy(ROUTE_LOADERS['/people/:id']);
 export const WorkloadPage = lazy(ROUTE_LOADERS['/workload']);
