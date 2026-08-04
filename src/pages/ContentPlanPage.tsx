@@ -243,6 +243,7 @@ export function ContentPlanPage() {
           media={withMedia?.media}
           className="cp-card-media"
           aspectRatio={view.aspectRatio}
+          adaptive
         />
         <span className="cp-card-body">
           <span className="cp-card-top">

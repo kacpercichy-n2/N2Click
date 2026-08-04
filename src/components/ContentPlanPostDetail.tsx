@@ -114,6 +114,7 @@ export function ContentPlanPostDetail({
           media={withMedia?.media}
           className="cp-pd-media"
           aspectRatio={mediaAspectRatio(withMedia, post.format)}
+          adaptive
         />
 
         {post.channels.length > 1 && (

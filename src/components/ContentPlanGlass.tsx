@@ -133,10 +133,16 @@ export function CpMediaThumb({
   media,
   className = '',
   aspectRatio,
+  adaptive = false,
 }: {
   media: ContentPlanMedia | undefined;
   className?: string;
   aspectRatio?: string;
+  /** Kafel przejmuje NATURALNE proporcje załadowanej grafiki (obraz w toku
+   *  dokumentu, pełna szerokość) — `aspectRatio` działa wtedy tylko jako
+   *  placeholder do momentu załadowania. Port trybu `adaptive` ze źródła:
+   *  posty 4:5 i 3:4 same układają się bez pasów po bokach. */
+  adaptive?: boolean;
 }) {
   const src =
     media !== undefined
@@ -157,7 +163,21 @@ export function CpMediaThumb({
             referrerPolicy="no-referrer"
             className="cp-thumb-blur"
           />
-          <img src={src} alt="" loading="lazy" referrerPolicy="no-referrer" className="cp-thumb-img" />
+          <img
+            src={src}
+            alt=""
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            className={adaptive ? 'cp-thumb-img-flow' : 'cp-thumb-img'}
+            onLoad={
+              adaptive
+                ? (event) => {
+                    const box = event.currentTarget.parentElement;
+                    if (box !== null) box.style.aspectRatio = 'auto';
+                  }
+                : undefined
+            }
+          />
         </>
       )}
       {media?.type === 'video' && (

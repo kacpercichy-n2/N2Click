@@ -9944,6 +9944,15 @@ a.toggle-btn {
   object-fit: contain;
   z-index: 1;
 }
+/* Tryb adaptive: obraz w toku dokumentu — kafel przyjmuje jego naturalne
+   proporcje po załadowaniu (onLoad zdejmuje placeholderowe aspect-ratio). */
+.cp-thumb-img-flow {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: auto;
+  z-index: 1;
+}
 .cp-thumb-play {
   position: absolute;
   inset: 0;
