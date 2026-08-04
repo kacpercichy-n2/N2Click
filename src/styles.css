@@ -9372,12 +9372,9 @@ a.toggle-btn {
     radial-gradient(45vw 45vw at 15% -10%, rgba(112, 0, 255, 0.28), transparent 60%),
     radial-gradient(40vw 40vw at 95% 5%, rgba(196, 150, 255, 0.2), transparent 55%),
     radial-gradient(50vw 40vw at 55% 115%, rgba(60, 0, 94, 0.4), transparent 60%);
-  animation: cp-drift calc(18s * var(--n2-motion)) ease-in-out infinite alternate;
-}
-@keyframes cp-drift {
-  to {
-    transform: translate(-2%, 2%) scale(1.06);
-  }
+  /* ŚWIADOMIE BEZ animacji dryfu ze źródła: wieczna animacja transformu pod
+     dziesiątkami półprzezroczystych warstw wymuszała ciągłą pracę GPU (freeze
+     renderera potwierdzony 2026-08-04 na urządzeniu zgłaszającym problem). */
 }
 /* Nad aurorę wychodzą tylko layoutowe dzieci sceny — overlaye panelu i modali
    zostają `position: fixed` poza tym kontekstem. */
@@ -9619,8 +9616,7 @@ a.toggle-btn {
   padding: 7px 13px;
   border: 1px solid var(--n2-border);
   border-radius: var(--n2-radius-pill);
-  background: rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(12px);
+  background: rgba(38, 34, 46, 0.85);
   color: var(--n2-text-muted);
   cursor: pointer;
   transition:
@@ -9704,17 +9700,22 @@ a.toggle-btn {
   gap: 10px;
   padding: 4px 22px 20px;
   min-height: 0;
+  /* Tygodnie poza kadrem nie liczą layoutu ani paintu — oś ma kilkanaście
+     tygodni po 7 kolumn i bez tego KAŻDY renderował się bez przerwy. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 100%;
 }
 .cp-col {
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: var(--cp-card-bg);
+  /* Nieco bardziej kryjące tło ZAMIAST backdrop-filter ze źródła: ~100 żywych
+     powierzchni blur nad sceną zamrażało renderer (pomiar 2026-08-04). */
+  background: rgba(20, 17, 26, 0.55);
   border: 1px solid var(--n2-border-soft);
   border-radius: var(--n2-radius-md);
   padding: 10px;
-  backdrop-filter: blur(16px);
   overflow: hidden;
 }
 .cp-col.today {
@@ -9943,8 +9944,7 @@ a.toggle-btn {
   width: 2.2em;
   height: 2.2em;
   border-radius: 50%;
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(2px);
+  background: rgba(0, 0, 0, 0.55);
   display: flex;
   align-items: center;
   justify-content: center;

@@ -21,7 +21,7 @@
 //   inputu pliku, uploadu ani base64 — plik zostaje na Dysku. Sam wybór jest
 //   asynchroniczny, więc stan draftu zmienia go przez `setChannelMedia` na
 //   AKTUALNEJ referencji (`draftRef`), nie na tej z chwili kliknięcia.
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { m } from 'motion/react';
 import { useStore } from '../store/AppStore';
 import type { ContentPlanBrand, ContentPlanComment, ContentPlanPost } from '../types';
@@ -29,12 +29,14 @@ import {
   CONTENT_PLAN_STATUSES,
   formatCommentDate,
   MAIN_DESCRIPTION_GROUP,
+  makeEmptyPost,
   monthKeyOf,
   normalizeContentPlanPostDraft,
   validatePostForPublication,
   type ContentPlanPostDraft,
   type ContentPlanReviewDecision,
 } from '../contentplan/domain';
+import { isValidDateStr } from '../utils/dates';
 import {
   driveErrorMessage,
   driveThumbUrl,
@@ -95,6 +97,16 @@ import {
 /** Parametr URL niosący edytor publikacji (polski, jak reszta tras). */
 export const CONTENT_PLAN_POST_PARAM = 'publikacja';
 
+/**
+ * Wartość parametru dla NOWEJ publikacji: `new:<brandId>:<yyyy-MM-dd>` (slug
+ * marki nie zawiera dwukropka). Parytet z aplikacją źródłową: kliknięcie
+ * „+ Nowa publikacja" / „+" na dniu otwiera edytor z pustym szkicem, a encja
+ * powstaje DOPIERO przy zapisie — anulowanie niczego nie zostawia w planie.
+ */
+export function contentPlanNewPostParam(brandId: string, date: string): string {
+  return `new:${brandId}:${date}`;
+}
+
 /** Autor decyzji i komentarzy, gdy sesja nie wskazuje osoby. */
 const FALLBACK_AUTHOR = 'Zespół N2';
 
@@ -109,8 +121,29 @@ interface ModalProps {
 export function ContentPlanPostModal({ postId, onClose }: ModalProps) {
   const { state } = useStore();
   const confirm = useConfirm();
-  const post = state.contentPlanPosts.find((row) => row.id === postId);
-  const brand = state.contentPlanBrands.find((row) => row.id === post?.brandId);
+  // Tryb tworzenia (`new:<brandId>:<data>`): encji NIE ma w store — edytor
+  // dostaje syntetyczny pusty szkic (memoizowany, żeby id kanałów nie
+  // rotowały między renderami), a zapis idzie z `postId: null`.
+  const newParts = postId.startsWith('new:') ? postId.slice(4).split(':') : null;
+  const isNew = newParts !== null;
+  const newBrand = isNew
+    ? state.contentPlanBrands.find((row) => row.id === newParts[0])
+    : undefined;
+  const newDate = isNew ? (newParts[1] ?? '') : '';
+  const syntheticPost = useMemo(
+    () =>
+      newBrand !== undefined && isValidDateStr(newDate)
+        ? makeEmptyPost(newBrand, newDate)
+        : undefined,
+    [newBrand, newDate],
+  );
+  const storedPost = isNew
+    ? undefined
+    : state.contentPlanPosts.find((row) => row.id === postId);
+  const post = isNew ? syntheticPost : storedPost;
+  const brand = isNew
+    ? newBrand
+    : state.contentPlanBrands.find((row) => row.id === storedPost?.brandId);
   const notFound = post === undefined || brand === undefined;
 
   const dirtyRef = useRef(false);
@@ -178,7 +211,7 @@ export function ContentPlanPostModal({ postId, onClose }: ModalProps) {
         >
           <div className="task-modal-head">
             <h1 className="task-modal-title" id={titleId}>
-              {notFound ? 'Nie znaleziono publikacji' : 'Edytuj publikację'}
+              {notFound ? 'Nie znaleziono publikacji' : isNew ? 'Nowa publikacja' : 'Edytuj publikację'}
             </h1>
             <div className="task-modal-head-actions">
               <IconButton
@@ -207,6 +240,7 @@ export function ContentPlanPostModal({ postId, onClose }: ModalProps) {
                 key={postId}
                 post={post}
                 brand={brand}
+                isNew={isNew}
                 onDirtyChange={handleDirtyChange}
                 onSaved={closeDeliberately}
                 onCancel={() => {
@@ -224,6 +258,9 @@ export function ContentPlanPostModal({ postId, onClose }: ModalProps) {
 interface EditorProps {
   post: ContentPlanPost;
   brand: ContentPlanBrand;
+  /** Tryb tworzenia: `post` jest syntetycznym szkicem spoza store — zapis
+   *  tworzy encję (`postId: null`), a sekcje żywej encji są ukryte. */
+  isNew: boolean;
   onDirtyChange: (dirty: boolean) => void;
   onSaved: () => void;
   onCancel: () => void;
@@ -266,6 +303,7 @@ function hasPostErrors(errors: PostFieldErrors): boolean {
 function ContentPlanPostEditor({
   post,
   brand,
+  isNew,
   onDirtyChange,
   onSaved,
   onCancel,
@@ -413,12 +451,14 @@ function ContentPlanPostEditor({
       return;
     }
 
-    const label = saveHistoryLabel(post, draft, brand);
+    // Tworzenie: reduktor sam dopisuje wpis „Utworzono slot publikacji" —
+    // etykieta diffu porównywałaby draft z syntetycznym szkicem, nie z encją.
+    const label = isNew ? '' : saveHistoryLabel(post, draft, brand);
     setErrors({});
     onDirtyChange(false);
     dispatch({
       type: 'SAVE_CP_POST',
-      postId: post.id,
+      postId: isNew ? null : post.id,
       draft,
       ...(label !== '' ? { historyLabel: label } : {}),
     });
@@ -900,23 +940,29 @@ function ContentPlanPostEditor({
 
         <div className="form-actions">
           <button type="submit" className="btn primary">
-            Zapisz zmiany
+            {isNew ? 'Utwórz publikację' : 'Zapisz zmiany'}
           </button>
           <button type="button" className="btn ghost" onClick={onCancel}>
             Anuluj
           </button>
-          <button
-            type="button"
-            className="btn danger-ghost"
-            onClick={() => {
-              void handleDelete();
-            }}
-          >
-            Usuń publikację
-          </button>
+          {!isNew && (
+            <button
+              type="button"
+              className="btn danger-ghost"
+              onClick={() => {
+                void handleDelete();
+              }}
+            >
+              Usuń publikację
+            </button>
+          )}
         </div>
       </form>
 
+      {/* Sekcje ŻYWEJ encji (decyzja, komentarze, historia) nie istnieją przed
+          pierwszym zapisem — akcje reduktora adresują publikację po id. */}
+      {!isNew && (
+      <>
       <section className="cp-section">
         <h2 className="cp-section-title">
           <Check size={16} aria-hidden /> Decyzja klienta
@@ -1015,6 +1061,8 @@ function ContentPlanPostEditor({
           </ol>
         )}
       </section>
+      </>
+      )}
     </>
   );
 }

@@ -35,7 +35,6 @@ import { MONTH_PARAM, resolveMonthParam } from './contentPlanRoute';
 import {
   contentPlanBrandOptions,
   contentPlanCardView,
-  contentPlanEmptyDraft,
   contentPlanPasteDraft,
 } from './contentPlanCalendar';
 import { HOME_PATH } from './homeRoute';
@@ -44,6 +43,7 @@ import { useConfirm } from '../components/ConfirmProvider';
 import {
   CONTENT_PLAN_POST_PARAM,
   ContentPlanPostModal,
+  contentPlanNewPostParam,
 } from '../components/ContentPlanPostModal';
 import {
   CONTENT_PLAN_BRAND_PARAM,
@@ -165,6 +165,17 @@ export function ContentPlanPage() {
     let cooldown = false;
     const onWheel = (event: WheelEvent) => {
       if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+      // Kółko nad kolumną z przepełnioną listą postów scrolluje TĘ kolumnę
+      // (natywnie); paging tygodni przejmuje gest dopiero, gdy kolumna nie ma
+      // już czego przewinąć w tym kierunku.
+      const columnScroller = (event.target as HTMLElement | null)?.closest?.('.cp-col-posts');
+      if (columnScroller instanceof HTMLElement) {
+        const canScrollDown =
+          event.deltaY > 0 &&
+          columnScroller.scrollTop + columnScroller.clientHeight < columnScroller.scrollHeight - 1;
+        const canScrollUp = event.deltaY < 0 && columnScroller.scrollTop > 0;
+        if (canScrollDown || canScrollUp) return;
+      }
       event.preventDefault();
       if (cooldown) return;
       acc += event.deltaY;
@@ -211,9 +222,11 @@ export function ContentPlanPage() {
 
   const brandFor = (post: ContentPlanPost) => brands.find((row) => row.id === post.brandId);
 
+  // Parytet ze źródłem: „+" otwiera EDYTOR z pustym szkicem — encja powstaje
+  // dopiero przy zapisie, anulowanie niczego nie zostawia w planie.
   const addPost = (date: string) => {
     if (activeBrand === undefined) return;
-    dispatch({ type: 'SAVE_CP_POST', postId: null, draft: contentPlanEmptyDraft(activeBrand, date) });
+    setModalParam(CONTENT_PLAN_POST_PARAM, contentPlanNewPostParam(activeBrand.id, date));
   };
 
   const pastePost = (date: string) => {
