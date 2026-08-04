@@ -186,6 +186,10 @@ describe('konwencja plików migracji', () => {
       // SAME wiersze (brands/posts/post_channels), zero zmian schematu i RLS.
       // Plik jest generowany przez `scripts/contentplan-seed-tws.mjs`.
       '20260803170000_contentplan_seed_tws.sql',
+      // Przywrócenie filtra core.app_member na widoku n2click.profiles —
+      // 20260803100000 (aplikowana później niż n2click_profiles_only_app_members,
+      // która istnieje tylko w żywej bazie) odtworzyła widok bez filtra.
+      '20260804090000_restore_n2click_profiles_app_member_filter.sql',
     ]);
   });
 
