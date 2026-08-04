@@ -191,6 +191,7 @@ export function ContentPlanPostModal({ postId, onClose }: ModalProps) {
   }, [closeDeliberately, confirm]);
 
   const titleId = useId();
+  const formId = useId();
   const { cardRef, cardProps, viewportProps } = useModalShell({
     onRequestClose: requestClose,
     labelledBy: titleId,
@@ -222,6 +223,24 @@ export function ContentPlanPostModal({ postId, onClose }: ModalProps) {
               {notFound ? 'Nie znaleziono publikacji' : isNew ? 'Nowa publikacja' : 'Edytuj publikację'}
             </h1>
             <div className="task-modal-head-actions">
+              {/* Zapis stoi w NAGŁÓWKU (parytet ze źródłem — odzyskany wiersz):
+                  przycisk celuje w formularz edytora atrybutem `form`. */}
+              {!notFound && (
+                <>
+                  <button type="submit" form={formId} className="btn primary">
+                    {isNew ? 'Utwórz publikację' : 'Zapisz zmiany'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    onClick={() => {
+                      void requestClose();
+                    }}
+                  >
+                    Anuluj
+                  </button>
+                </>
+              )}
               <IconButton
                 className="task-modal-close"
                 icon={<X size={18} aria-hidden />}
@@ -248,12 +267,10 @@ export function ContentPlanPostModal({ postId, onClose }: ModalProps) {
                 key={postId}
                 post={post}
                 brand={brand}
+                formId={formId}
                 isNew={isNew}
                 onDirtyChange={handleDirtyChange}
                 onSaved={closeDeliberately}
-                onCancel={() => {
-                  void requestClose();
-                }}
               />
             )}
           </div>
@@ -266,12 +283,13 @@ export function ContentPlanPostModal({ postId, onClose }: ModalProps) {
 interface EditorProps {
   post: ContentPlanPost;
   brand: ContentPlanBrand;
+  /** Id formularza — przyciski zapisu stoją w NAGŁÓWKU modala (atrybut `form`). */
+  formId: string;
   /** Tryb tworzenia: `post` jest syntetycznym szkicem spoza store — zapis
    *  tworzy encję (`postId: null`), a sekcje żywej encji są ukryte. */
   isNew: boolean;
   onDirtyChange: (dirty: boolean) => void;
   onSaved: () => void;
-  onCancel: () => void;
 }
 
 interface PostFieldErrors {
@@ -410,10 +428,10 @@ function CpPhonePreview({
 function ContentPlanPostEditor({
   post,
   brand,
+  formId,
   isNew,
   onDirtyChange,
   onSaved,
-  onCancel,
 }: EditorProps) {
   const { state, dispatch } = useStore();
   const confirm = useConfirm();
@@ -683,31 +701,7 @@ function ContentPlanPostEditor({
     // (plan | treść | podgląd), każda z własnym scrollerem. Wszystkie kontrolki
     // stoją w JEDNYM formularzu — dawny wewnętrzny formularz komentarza jest
     // divem z przyciskiem type="button" (zagnieżdżony <form> to nielegalny HTML).
-    <form className="cp-post-form cp-pe-form" onSubmit={handleSubmit} noValidate>
-      <div className="cp-pe-actions">
-        {summary !== null && (
-          <p className="field-error" role="alert">
-            {summary}
-          </p>
-        )}
-        <button type="submit" className="btn primary">
-          {isNew ? 'Utwórz publikację' : 'Zapisz zmiany'}
-        </button>
-        <button type="button" className="btn ghost" onClick={onCancel}>
-          Anuluj
-        </button>
-        {!isNew && (
-          <button
-            type="button"
-            className="btn danger-ghost"
-            onClick={() => {
-              void handleDelete();
-            }}
-          >
-            Usuń publikację
-          </button>
-        )}
-      </div>
+    <form id={formId} className="cp-post-form cp-pe-form" onSubmit={handleSubmit} noValidate>
       <div className="cp-pe-body">
         <div className="cp-pe-col cp-pe-col-plan">
         <section className="cp-section">
@@ -953,9 +947,25 @@ function ContentPlanPostEditor({
             </p>
           )}
         </section>
+          {!isNew && (
+            <button
+              type="button"
+              className="btn danger-ghost cp-pe-delete"
+              onClick={() => {
+                void handleDelete();
+              }}
+            >
+              Usuń publikację
+            </button>
+          )}
         </div>
 
         <div className="cp-pe-col cp-pe-col-copy">
+          {summary !== null && (
+            <p className="field-error" role="alert">
+              {summary}
+            </p>
+          )}
 
         <section className="cp-section">
           <h2 className="cp-section-title">

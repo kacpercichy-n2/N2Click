@@ -9354,9 +9354,13 @@ a.toggle-btn {
   position: relative;
   display: flex;
   flex-direction: column;
-  flex: 1;
-  min-height: 0;
+  /* ŚWIADOMIE bez `flex: 1`: rodzic (.cp-page) ma auto-wysokość, więc
+     flex-basis 0 unieważniałby `height` i scena rosłaby z zawartością —
+     kolumny traciły wewnętrzne scrollery, a tablica (overflow hidden)
+     połykała scroll (zgłoszenie 2026-08-04). Wysokość MUSI być twarda. */
+  flex: none;
   height: calc(100dvh - 132px);
+  min-height: 480px;
   overflow: hidden;
   border: 1px solid var(--n2-border);
   border-radius: var(--n2-radius-lg);
@@ -9700,10 +9704,10 @@ a.toggle-btn {
   gap: 10px;
   padding: 4px 22px 20px;
   min-height: 0;
-  /* Tygodnie poza kadrem nie liczą layoutu ani paintu — oś ma kilkanaście
-     tygodni po 7 kolumn i bez tego KAŻDY renderował się bez przerwy. */
-  content-visibility: auto;
-  contain-intrinsic-size: auto 100%;
+  /* ŚWIADOMIE BEZ `content-visibility: auto`: w Chromium blokuje scroll
+     kółkiem w zagnieżdżonych scrollerach kolumn (potwierdzone pomiarem
+     2026-08-04: 0 px z cv, 400 px bez). Koszt renderu tygodni poza kadrem
+     jest akceptowalny po zdjęciu backdrop-filter z kolumn. */
 }
 .cp-col {
   display: flex;
@@ -9925,9 +9929,10 @@ a.toggle-btn {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  filter: blur(20px) saturate(1.15);
-  transform: scale(1.2);
-  opacity: 0.55;
+  /* ŚWIADOMIE BEZ `filter: blur()` ze źródła: kilkadziesiąt rozmywanych
+     obrazów naraz kładło compositor (klatki po kilkaset ms — pomiar
+     2026-08-04). Przyciemniony cover daje ten sam efekt wypełnienia. */
+  opacity: 0.3;
 }
 .cp-thumb-img {
   position: absolute;
@@ -10892,14 +10897,14 @@ a.toggle-btn {
 .cp-glass-modal .field textarea {
   border: 1px solid var(--n2-border);
   border-radius: var(--n2-radius-sm);
-  background: rgba(255, 255, 255, 0.055);
+  background-color: rgba(255, 255, 255, 0.055);
   color: var(--n2-text);
 }
 .cp-glass-modal .field input:focus,
 .cp-glass-modal .field select:focus,
 .cp-glass-modal .field textarea:focus {
   border-color: rgba(196, 150, 255, 0.72);
-  background: rgba(255, 255, 255, 0.08);
+  background-color: rgba(255, 255, 255, 0.08);
 }
 .cp-glass-modal .btn {
   border-radius: var(--n2-radius-pill);
@@ -11167,4 +11172,40 @@ a.toggle-btn {
   .cp-pe-col-plan {
     width: auto;
   }
+}
+
+/* ---------- Content plan — chevrony selectów (port ze źródła) ----------
+   Natywna strzałka selecta jest nieczytelna na ciemnym szkle; własny chevron
+   idzie background-image, więc KAŻDA reguła tła na tych selectach musi używać
+   longhandu `background-color` (shorthand zdjąłby strzałkę — stąd korekta
+   reguł `.cp-glass-modal` wyżej). */
+.cp-glass-modal .field select,
+.cp-glass-modal select,
+.cp-scene select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 36px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b9b3c9' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 13px center;
+  background-size: 13px;
+}
+/* Globalny `select:focus` używa shorthandu `background:` — przywracamy kolor
+   longhandem, żeby fokus nie zdejmował chevronu. */
+.cp-glass-modal .field select:focus,
+.cp-glass-modal select:focus,
+.cp-scene select:focus {
+  background: none;
+  background-color: rgba(255, 255, 255, 0.08);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b9b3c9' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 13px center;
+  background-size: 13px;
+}
+
+/* Usuwanie publikacji mieszka na dole kolumny planu (pasek akcji wchłonął
+   nagłówek modala — odzyskany wiersz). */
+.cp-pe-delete {
+  margin-top: auto;
+  align-self: flex-start;
 }
