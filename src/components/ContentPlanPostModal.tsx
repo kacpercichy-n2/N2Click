@@ -30,12 +30,20 @@ import {
   formatCommentDate,
   MAIN_DESCRIPTION_GROUP,
   makeEmptyPost,
+  mediaAspectRatio,
   monthKeyOf,
   normalizeContentPlanPostDraft,
+  platformFor,
+  splitContentPlanTags,
   validatePostForPublication,
   type ContentPlanPostDraft,
   type ContentPlanReviewDecision,
 } from '../contentplan/domain';
+import {
+  CONTENT_PLAN_STATUS_META,
+  CONTENT_PLAN_STATUS_STEPS,
+} from '../contentplan/glassView';
+import { CpMediaThumb, CpPlatformChip } from './ContentPlanGlass';
 import { isValidDateStr } from '../utils/dates';
 import {
   driveErrorMessage,
@@ -298,6 +306,105 @@ function computePostErrors(draft: ContentPlanPostDraft): PostFieldErrors {
 
 function hasPostErrors(errors: PostFieldErrors): boolean {
   return firstPostIssueField(errors) !== null;
+}
+
+/**
+ * Kolumna podglądu „jak na telefonie" (port 1:1 kolumny trzeciej edytora
+ * Studio): avatar + handle marki, media kanału w proporcji formatu, treść
+ * aktywnego kanału z tagami i linia statusu z etapem workflow. CZYSTY render
+ * draftu — podgląd żyje razem z edycją, zanim cokolwiek trafi do store.
+ */
+function CpPhonePreview({
+  brand,
+  draft,
+}: {
+  brand: ContentPlanBrand;
+  draft: ContentPlanPostDraft;
+}) {
+  const [previewChannelId, setPreviewChannelId] = useState('');
+  const channel = draft.channels.find((row) => row.id === previewChannelId) ?? draft.channels[0];
+  const platform = channel !== undefined ? platformFor(brand, channel.platformId) : undefined;
+  const tags = splitContentPlanTags(
+    channel !== undefined && channel.overrideTags ? channel.tags : draft.baseTags,
+  );
+  const handle = brand.contact !== '' ? brand.contact : brand.name;
+  const meta = CONTENT_PLAN_STATUS_META[draft.status];
+  return (
+    <div className="cp-phone-wrap">
+      {draft.channels.length > 1 && (
+        <div className="cp-phone-tabs" role="tablist" aria-label="Platforma podglądu">
+          {draft.channels.map((row) => {
+            const rowPlatform = platformFor(brand, row.platformId);
+            if (!rowPlatform) return null;
+            const on = row.id === channel?.id;
+            return (
+              <button
+                key={row.id}
+                type="button"
+                role="tab"
+                aria-selected={on}
+                className={`cp-phone-tab${on ? ' on' : ''}`}
+                onClick={() => setPreviewChannelId(row.id)}
+              >
+                <CpPlatformChip platform={rowPlatform} size={15} />
+              </button>
+            );
+          })}
+        </div>
+      )}
+      <div className="cp-phone">
+        <div className="cp-phone-head">
+          <span
+            className="cp-phone-avatar"
+            style={{ background: brand.accent || 'var(--n2-lavender)' }}
+            aria-hidden
+          >
+            {brand.name.slice(0, 2).toLocaleUpperCase('pl-PL')}
+          </span>
+          <div>
+            <b>{handle}</b>
+            <span>{platform !== undefined ? platform.name : 'Brak platformy'}</span>
+          </div>
+        </div>
+        {channel?.media !== undefined ? (
+          <CpMediaThumb
+            media={channel.media}
+            className="cp-phone-media"
+            aspectRatio={mediaAspectRatio(channel, draft.format)}
+          />
+        ) : (
+          <div
+            className="cp-phone-media empty"
+            style={{ aspectRatio: mediaAspectRatio(undefined, draft.format) }}
+          >
+            brak media
+          </div>
+        )}
+        <div className="cp-phone-caption">
+          <b>{handle}</b>{' '}
+          {channel !== undefined && channel.copy.trim() !== '' ? (
+            channel.copy
+          ) : (
+            <span className="cp-phone-placeholder">tu pojawi się treść…</span>
+          )}
+          {tags.length > 0 && (
+            <span className="cp-phone-tags">
+              {' '}
+              {tags.slice(0, 6).join(' ')}
+              {tags.length > 6 ? ' …' : ''}
+            </span>
+          )}
+        </div>
+      </div>
+      <p className="cp-phone-note">
+        Podgląd na żywo — tak zobaczy tę publikację klient przy akceptacji.
+      </p>
+      <div className="cp-phone-status">
+        <i style={{ background: meta.color }} aria-hidden />
+        {draft.status} · etap {meta.step}/{CONTENT_PLAN_STATUS_STEPS}
+      </div>
+    </div>
+  );
 }
 
 function ContentPlanPostEditor({
@@ -572,10 +679,37 @@ function ContentPlanPostEditor({
   );
 
   return (
-    <>
-      {/* Formularz obejmuje WYŁĄCZNIE edytowalne pola publikacji: komentarze mają
-          własny `<form>`, a zagnieżdżenie formularzy jest nielegalnym HTML-em. */}
-      <form className="cp-post-form" onSubmit={handleSubmit} noValidate>
+    // Układ „Studio" 1:1 ze źródłem: pasek akcji u góry i trzy kolumny
+    // (plan | treść | podgląd), każda z własnym scrollerem. Wszystkie kontrolki
+    // stoją w JEDNYM formularzu — dawny wewnętrzny formularz komentarza jest
+    // divem z przyciskiem type="button" (zagnieżdżony <form> to nielegalny HTML).
+    <form className="cp-post-form cp-pe-form" onSubmit={handleSubmit} noValidate>
+      <div className="cp-pe-actions">
+        {summary !== null && (
+          <p className="field-error" role="alert">
+            {summary}
+          </p>
+        )}
+        <button type="submit" className="btn primary">
+          {isNew ? 'Utwórz publikację' : 'Zapisz zmiany'}
+        </button>
+        <button type="button" className="btn ghost" onClick={onCancel}>
+          Anuluj
+        </button>
+        {!isNew && (
+          <button
+            type="button"
+            className="btn danger-ghost"
+            onClick={() => {
+              void handleDelete();
+            }}
+          >
+            Usuń publikację
+          </button>
+        )}
+      </div>
+      <div className="cp-pe-body">
+        <div className="cp-pe-col cp-pe-col-plan">
         <section className="cp-section">
           <h2 className="cp-section-title">
             <ListChecks size={16} aria-hidden /> Specyfikacja
@@ -720,6 +854,109 @@ function ContentPlanPostEditor({
           {errors.channels !== undefined && <p className="field-error">{errors.channels}</p>}
         </section>
 
+        {/* Media stoją w JEDNEJ sekcji (a nie w grupach opisów): plik jest
+            własnością KANAŁU, a grupa opisu tylko dzieli treść, więc ta sama
+            platforma nie powtarzałaby się w dwóch listach. */}
+        <section className="cp-section">
+          <h2 className="cp-section-title">
+            <FileImage size={16} aria-hidden /> Media z Dysku Google
+          </h2>
+          <div className="cp-media-toolbar">
+            <DisabledHint reason={driveReason} id="cp-post-drive-folder-hint">
+              <button
+                type="button"
+                className="btn ghost"
+                disabled={driveReason !== null || driveBusy !== null}
+                onClick={() => {
+                  void pickBrandFolder();
+                }}
+              >
+                <FolderOpen size={14} aria-hidden /> Wskaż folder marki
+              </button>
+            </DisabledHint>
+            <p className="field-hint">
+              Wybór plików startuje w folderze zapamiętanym dla marki i miesiąca publikacji. Pliki
+              zostają na Dysku, w publikacji zapisujemy sam identyfikator.
+            </p>
+          </div>
+
+          {draft.channels.length === 0 ? (
+            <p className="field-hint">Dodaj platformę, żeby podpiąć do niej plik z Dysku.</p>
+          ) : (
+            <ul className="cp-media-list">
+              {draft.channels.map((channel) => {
+                const media = channelMediaView(brand, channel, draft.format);
+                const fileId = channel.media?.fileId ?? '';
+                return (
+                  <li key={channel.id} className="cp-media-row">
+                    <span
+                      className="cp-media-thumb"
+                      style={{ aspectRatio: media.aspectRatio }}
+                      data-file={media.hasFile ? 'true' : undefined}
+                      aria-hidden
+                    >
+                      {media.hasFile ? (
+                        <img src={driveThumbUrl(fileId, 160)} alt="" loading="lazy" />
+                      ) : (
+                        <FileImage size={14} />
+                      )}
+                    </span>
+                    <strong>{media.platformName}</strong>
+                    <span className="cp-media-file" data-empty={media.hasFile ? undefined : 'true'}>
+                      {media.fileLabel}
+                    </span>
+                    {media.ratioLabel !== null && (
+                      <span className="cp-ratio-badge">{media.ratioLabel}</span>
+                    )}
+                    <span className="cp-media-actions">
+                      <DisabledHint reason={driveReason} id={`cp-post-drive-${channel.id}-hint`}>
+                        <button
+                          type="button"
+                          className="btn ghost"
+                          disabled={driveReason !== null || driveBusy !== null}
+                          onClick={() => {
+                            void pickChannelMedia(channel.id);
+                          }}
+                        >
+                          {media.hasFile ? 'Zmień plik' : 'Wybierz z Dysku'}
+                        </button>
+                      </DisabledHint>
+                      {media.hasFile && (
+                        <>
+                          <a
+                            className="link-btn"
+                            href={driveViewUrl(fileId)}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Otwórz na Dysku
+                          </a>
+                          <button
+                            type="button"
+                            className="link-btn"
+                            onClick={() => update(setChannelMedia(draft, channel.id, null))}
+                          >
+                            Usuń plik
+                          </button>
+                        </>
+                      )}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {driveNotice !== null && <p className="field-hint">{driveNotice}</p>}
+          {driveError !== null && (
+            <p className="field-error" role="alert">
+              {driveError}
+            </p>
+          )}
+        </section>
+        </div>
+
+        <div className="cp-pe-col cp-pe-col-copy">
+
         <section className="cp-section">
           <h2 className="cp-section-title">
             <Pencil size={16} aria-hidden /> Opisy
@@ -832,132 +1069,9 @@ function ContentPlanPostEditor({
           ))}
         </section>
 
-        {/* Media stoją w JEDNEJ sekcji (a nie w grupach opisów): plik jest
-            własnością KANAŁU, a grupa opisu tylko dzieli treść, więc ta sama
-            platforma nie powtarzałaby się w dwóch listach. */}
-        <section className="cp-section">
-          <h2 className="cp-section-title">
-            <FileImage size={16} aria-hidden /> Media z Dysku Google
-          </h2>
-          <div className="cp-media-toolbar">
-            <DisabledHint reason={driveReason} id="cp-post-drive-folder-hint">
-              <button
-                type="button"
-                className="btn ghost"
-                disabled={driveReason !== null || driveBusy !== null}
-                onClick={() => {
-                  void pickBrandFolder();
-                }}
-              >
-                <FolderOpen size={14} aria-hidden /> Wskaż folder marki
-              </button>
-            </DisabledHint>
-            <p className="field-hint">
-              Wybór plików startuje w folderze zapamiętanym dla marki i miesiąca publikacji. Pliki
-              zostają na Dysku, w publikacji zapisujemy sam identyfikator.
-            </p>
-          </div>
 
-          {draft.channels.length === 0 ? (
-            <p className="field-hint">Dodaj platformę, żeby podpiąć do niej plik z Dysku.</p>
-          ) : (
-            <ul className="cp-media-list">
-              {draft.channels.map((channel) => {
-                const media = channelMediaView(brand, channel, draft.format);
-                const fileId = channel.media?.fileId ?? '';
-                return (
-                  <li key={channel.id} className="cp-media-row">
-                    <span
-                      className="cp-media-thumb"
-                      style={{ aspectRatio: media.aspectRatio }}
-                      data-file={media.hasFile ? 'true' : undefined}
-                      aria-hidden
-                    >
-                      {media.hasFile ? (
-                        <img src={driveThumbUrl(fileId, 160)} alt="" loading="lazy" />
-                      ) : (
-                        <FileImage size={14} />
-                      )}
-                    </span>
-                    <strong>{media.platformName}</strong>
-                    <span className="cp-media-file" data-empty={media.hasFile ? undefined : 'true'}>
-                      {media.fileLabel}
-                    </span>
-                    {media.ratioLabel !== null && (
-                      <span className="cp-ratio-badge">{media.ratioLabel}</span>
-                    )}
-                    <span className="cp-media-actions">
-                      <DisabledHint reason={driveReason} id={`cp-post-drive-${channel.id}-hint`}>
-                        <button
-                          type="button"
-                          className="btn ghost"
-                          disabled={driveReason !== null || driveBusy !== null}
-                          onClick={() => {
-                            void pickChannelMedia(channel.id);
-                          }}
-                        >
-                          {media.hasFile ? 'Zmień plik' : 'Wybierz z Dysku'}
-                        </button>
-                      </DisabledHint>
-                      {media.hasFile && (
-                        <>
-                          <a
-                            className="link-btn"
-                            href={driveViewUrl(fileId)}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            Otwórz na Dysku
-                          </a>
-                          <button
-                            type="button"
-                            className="link-btn"
-                            onClick={() => update(setChannelMedia(draft, channel.id, null))}
-                          >
-                            Usuń plik
-                          </button>
-                        </>
-                      )}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-          {driveNotice !== null && <p className="field-hint">{driveNotice}</p>}
-          {driveError !== null && (
-            <p className="field-error" role="alert">
-              {driveError}
-            </p>
-          )}
-        </section>
 
-        {summary !== null && (
-          <p className="field-error" role="alert">
-            {summary}
-          </p>
-        )}
 
-        <div className="form-actions">
-          <button type="submit" className="btn primary">
-            {isNew ? 'Utwórz publikację' : 'Zapisz zmiany'}
-          </button>
-          <button type="button" className="btn ghost" onClick={onCancel}>
-            Anuluj
-          </button>
-          {!isNew && (
-            <button
-              type="button"
-              className="btn danger-ghost"
-              onClick={() => {
-                void handleDelete();
-              }}
-            >
-              Usuń publikację
-            </button>
-          )}
-        </div>
-      </form>
 
       {/* Sekcje ŻYWEJ encji (decyzja, komentarze, historia) nie istnieją przed
           pierwszym zapisem — akcje reduktora adresują publikację po id. */}
@@ -994,13 +1108,7 @@ function ContentPlanPostEditor({
         </h2>
         {published ? (
           <>
-            <form
-              className="cp-comment-form"
-              onSubmit={(event) => {
-                event.preventDefault();
-                addComment(commentBody);
-              }}
-            >
+            <div className="cp-comment-form">
               <Field id="cp-post-comment" label="Nowy komentarz">
                 {(control) => (
                   <textarea
@@ -1012,10 +1120,15 @@ function ContentPlanPostEditor({
                   />
                 )}
               </Field>
-              <button type="submit" className="btn" disabled={commentBody.trim() === ''}>
+              <button
+                type="button"
+                className="btn"
+                disabled={commentBody.trim() === ''}
+                onClick={() => addComment(commentBody)}
+              >
                 Dodaj komentarz
               </button>
-            </form>
+            </div>
             {threads.length === 0 ? (
               <p className="field-hint">Brak komentarzy. Dodaj pierwszą uwagę do tej publikacji.</p>
             ) : (
@@ -1063,6 +1176,12 @@ function ContentPlanPostEditor({
       </section>
       </>
       )}
-    </>
+        </div>
+
+        <div className="cp-pe-col cp-pe-col-preview">
+          <CpPhonePreview brand={brand} draft={draft} />
+        </div>
+      </div>
+    </form>
   );
 }

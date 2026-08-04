@@ -10535,8 +10535,22 @@ a.toggle-btn {
    ma — siatka pól, warianty opisu, wiersz mediów, wątek komentarzy i historia.
    Karty wchodzą w tę samą skalę szerokości, co pozostałe modale formularzowe
    (opis skali stoi przy `.task-modal-card`). */
+/* Karta edytora publikacji w układzie „Studio": stała wysokość, kolumny mają
+   własne scrollery (patrz `.cp-pe-body` niżej — wyjątek zapisany przy scenie). */
 .cp-post-modal-card {
-  max-width: clamp(720px, 64vw, 1160px);
+  max-width: min(1240px, calc(100vw - 44px));
+  width: 100%;
+  height: min(860px, 100%);
+  display: flex;
+  flex-direction: column;
+}
+.cp-post-modal-card .task-modal-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
 }
 .cp-brand-modal-card {
   max-width: clamp(720px, 52vw, 960px);
@@ -10955,4 +10969,202 @@ a.toggle-btn {
 }
 .cp-glass-modal .link-btn {
   color: var(--n2-lavender);
+}
+
+/* ---------- Content plan — edytor „Studio" (pasek akcji + trzy kolumny) ----------
+   Port 1:1 układu edytora z aplikacji źródłowej: plan | treść | podgląd.
+   Kolumny mają WŁASNE scrollery (ten sam zapisany wyjątek co scena tablicy). */
+.cp-pe-form {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.cp-pe-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--n2-border-soft);
+  background: var(--n2-panel-soft);
+  flex-shrink: 0;
+}
+.cp-pe-actions .field-error {
+  margin: 0 auto 0 0;
+}
+.cp-pe-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+.cp-pe-col {
+  overflow-y: auto;
+  min-height: 0;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-5);
+}
+.cp-pe-col-plan {
+  width: 340px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--n2-border-soft);
+  background: rgba(255, 255, 255, 0.028);
+}
+.cp-pe-col-plan .cp-post-grid {
+  grid-template-columns: 1fr;
+}
+.cp-pe-col-copy {
+  flex: 1;
+  min-width: 0;
+}
+.cp-pe-col-preview {
+  width: 315px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--n2-border-soft);
+  background: rgba(255, 255, 255, 0.028);
+}
+
+/* Podgląd „jak na telefonie" */
+.cp-phone-wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  gap: 12px;
+}
+.cp-phone-tabs {
+  display: flex;
+  gap: 5px;
+}
+.cp-phone-tab {
+  padding: 6px;
+  border-radius: var(--n2-radius-xs);
+  border: 1px solid var(--n2-border);
+  background: none;
+  cursor: pointer;
+  opacity: 0.5;
+  transition:
+    opacity var(--n2-transition),
+    border-color var(--n2-transition);
+}
+.cp-phone-tab.on {
+  opacity: 1;
+  border-color: var(--n2-border-strong);
+  background: rgba(196, 150, 255, 0.16);
+}
+.cp-phone {
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid var(--n2-border);
+  background: #0a090e;
+  box-shadow: var(--n2-shadow-soft);
+  flex-shrink: 0;
+}
+.cp-phone-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 12px;
+}
+.cp-phone-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.cp-phone-head b {
+  display: block;
+  font-size: 12.5px;
+}
+.cp-phone-head span {
+  font-size: 10.5px;
+  color: var(--n2-text-muted);
+}
+.cp-phone-media {
+  width: 100%;
+  border-radius: 0;
+}
+.cp-phone-media.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: repeating-linear-gradient(45deg, #17161c, #17161c 12px, #1d1c23 12px, #1d1c23 24px);
+  color: var(--n2-text-faint);
+  font-size: 12px;
+  font-weight: 600;
+}
+.cp-phone-caption {
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.cp-phone-caption > b {
+  margin-right: 4px;
+}
+.cp-phone-placeholder {
+  color: var(--n2-text-faint);
+  font-style: italic;
+}
+.cp-phone-tags {
+  color: var(--n2-lavender);
+}
+.cp-phone-note {
+  font-size: 11px;
+  color: var(--n2-text-muted);
+  line-height: 1.5;
+  margin: 0;
+}
+.cp-phone-status {
+  margin-top: auto;
+  padding-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--n2-text-soft);
+}
+.cp-phone-status i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+@media (max-width: 1080px) {
+  .cp-pe-col-preview {
+    display: none;
+  }
+}
+@media (max-width: 900px) {
+  .cp-post-modal-card {
+    height: auto;
+  }
+  .cp-post-modal-card .task-modal-body {
+    overflow-y: auto;
+  }
+  .cp-pe-body {
+    flex-direction: column;
+    overflow: visible;
+  }
+  .cp-pe-col {
+    overflow: visible;
+    width: auto;
+    border-right: none;
+    border-left: none;
+  }
+  .cp-pe-col-plan {
+    width: auto;
+  }
 }

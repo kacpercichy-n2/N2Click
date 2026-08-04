@@ -155,46 +155,10 @@ export function ContentPlanPage() {
     if (index !== activeIdx) setActiveIdx(Math.min(weeks.length - 1, Math.max(0, index)));
   };
 
-  // Pionowy scroll myszki nad tablicą = przewijanie osi tydzień za tygodniem
-  // (paging) — port 1:1 ze źródła; poziomy gest trackpada obsługuje natywny
-  // scroll-snap.
-  useEffect(() => {
-    const el = boardRef.current;
-    if (!el || mode !== 'board') return;
-    let acc = 0;
-    let cooldown = false;
-    const onWheel = (event: WheelEvent) => {
-      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
-      // Kółko nad kolumną z przepełnioną listą postów scrolluje TĘ kolumnę
-      // (natywnie); paging tygodni przejmuje gest dopiero, gdy kolumna nie ma
-      // już czego przewinąć w tym kierunku.
-      const columnScroller = (event.target as HTMLElement | null)?.closest?.('.cp-col-posts');
-      if (columnScroller instanceof HTMLElement) {
-        const canScrollDown =
-          event.deltaY > 0 &&
-          columnScroller.scrollTop + columnScroller.clientHeight < columnScroller.scrollHeight - 1;
-        const canScrollUp = event.deltaY < 0 && columnScroller.scrollTop > 0;
-        if (canScrollDown || canScrollUp) return;
-      }
-      event.preventDefault();
-      if (cooldown) return;
-      acc += event.deltaY;
-      if (Math.abs(acc) < 40) return;
-      const dir = acc > 0 ? 1 : -1;
-      acc = 0;
-      cooldown = true;
-      window.setTimeout(() => {
-        cooldown = false;
-      }, 420);
-      const index = Math.round(el.scrollLeft / el.clientWidth) + dir;
-      el.scrollTo({
-        left: Math.min(weeks.length - 1, Math.max(0, index)) * el.clientWidth,
-        behavior: 'smooth',
-      });
-    };
-    el.addEventListener('wheel', onWheel, { passive: false });
-    return () => el.removeEventListener('wheel', onWheel);
-  }, [mode, weeks.length]);
+  // ŚWIADOMA RÓŻNICA wobec źródła (decyzja usera 2026-08-04): pionowy scroll
+  // NIE przewija osi tygodni — pion należy wyłącznie do list postów w
+  // kolumnach (natywny overflow-y). Tygodnie zmienia pasek osi, „Dziś"
+  // i poziomy gest trackpada (natywny scroll-snap tablicy).
 
   // Aktywna pigułka tygodnia zawsze widoczna na pasku osi.
   useEffect(() => {
