@@ -90,6 +90,9 @@ const EXPECTED_POLICIES: Record<string, string[]> = {
   // (przyszła rola `client`: tylko `visibility='published'` przypisanej marki)
   // nie wnoszą nowych komend, więc lista poniżej ich nie powtarza.
   'contentplan.brands': ['select', 'insert', 'update', 'delete'],
+  // Portal klienta (20260804120000): przypięcia marka-konto wymienia się przez
+  // delete+insert (łącznik, jak project_members) — celowo bez UPDATE.
+  'contentplan.brand_members': ['select', 'insert', 'delete'],
   'contentplan.posts': ['select', 'insert', 'update', 'delete'],
   'contentplan.post_channels': ['select', 'insert', 'update', 'delete'],
   'contentplan.comments': ['select', 'insert'],
@@ -192,6 +195,10 @@ describe('konwencja plików migracji', () => {
       // do żywej bazy 20260803100000 trafiła PÓŹNIEJ niż
       // n2click_profiles_only_app_members i odtworzyła widok bez filtra.
       '20260804090000_restore_n2click_profiles_app_member_filter.sql',
+      // Portal klienta: przypięcia marek do kont (brand_members), predykaty
+      // roli client przepisane na członkostwo i RPC client_review — jedyna
+      // ścieżka zapisu klienta (Akceptacja/Uwagi na opublikowanym poście).
+      '20260804120000_contentplan_brand_members_client_review.sql',
     ]);
   });
 
