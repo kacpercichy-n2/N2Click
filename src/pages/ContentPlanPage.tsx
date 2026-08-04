@@ -1,45 +1,46 @@
-// Moduł „Content plan" — kalendarz miesiąca publikacji: wybór marki, przegląd
-// miesiąca (liczniki + rozkład kanałów) i siatka dni z kartami publikacji.
-// Klik w tytuł karty OTWIERA edytor publikacji (`?publikacja=<id>`), a marki i
-// ich słowniki mają własny modal (`?marka=new|<id>`).
+// Moduł „Content plan" — skórka „Glass" przeniesiona 1:1 z aplikacji źródłowej
+// `Content plan/planner` (decyzja operatora 2026-08-04: wygląd i układ mają być
+// nieodróżnialne od lokalnego plannera): pozioma tablica tygodni ze
+// scroll-snapem, pasek osi czasu, chipy marek, legenda statusów, tryb
+// kompaktowy „Rejestr" i wysuwany panel szczegółów publikacji.
 //
-// Cała logika „dane → co widać" siedzi w czystym `contentPlanCalendar.ts`
-// (grupowanie po dniach, liczniki, model karty, ładunki kopiuj/wklej), a stan
-// pagera w `contentPlanRoute.ts` — tutaj zostaje sam render i wysyłka akcji.
-// Jedyną granicą zapisu jest reduktor (`SAVE_CP_POST` / `DELETE_CP_POST`).
+// DANE zostają w architekturze Huba: slice'y AppStore (`contentPlanBrands` /
+// `contentPlanPosts`), zapis wyłącznie przez reduktor (`SAVE_CP_POST` /
+// `DELETE_CP_POST`), edycja przez istniejące modale (`?publikacja=`, `?marka=`).
+// Czysta logika osi tygodni i grupowań: `contentplan/glassView.ts`.
 //
-// ŚWIADOMA RÓŻNICA wobec TaskModal/EventModal/TicketModal: oba modale modułu są
-// montowane TUTAJ, a nie na poziomie App. Moduł jest bramkowany rolą i
-// jednostronicowy, więc montaż w stronie reużywa jej samo-guard i nie dokłada
-// czwartego globalnego mountu. Zamknięcie usuwa WYŁĄCZNIE własny parametr —
-// pager miesięcy (`?m=`) zostaje nietknięty.
+// ŚWIADOMA RÓŻNICA wobec reszty Huba (zapisana też przy stylach `.cp-scene`):
+// tablica ma scroller poziomy, a kolumny dni własne scrollery pionowe — to
+// rdzeń układu źródłowego, przeniesiony na wyraźne żądanie operatora mimo
+// ogólnej zasady „jeden właściciel przewijania na stronę".
 //
-// Bramka: strona pilnuje się SAMA (wzorzec `AdminPage`/`TeamPage`), więc wejście
-// z paska adresu przez użytkownika bez roli kończy się przekierowaniem na Panel,
-// nawet gdyby pozycja menu wyciekła. To bramka UX, nie granica bezpieczeństwa —
-// realny zakres wymusza serwer (RLS schematu `contentplan`).
-import { useCallback, useMemo, useState } from 'react';
+// Bramka: strona pilnuje się SAMA (wzorzec `AdminPage`) — bramka UX, nie
+// granica bezpieczeństwa; realny zakres wymusza RLS schematu `contentplan`.
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
-import { AnimatePresence, m, useReducedMotion } from 'motion/react';
+import { AnimatePresence } from 'motion/react';
 import { useContentPlanAccess } from '../contentplan/useContentPlanAccess';
-import { monthKeyDays } from '../contentplan/domain';
-import { MONTH_PARAM, monthPagerFromParam, resolveMonthParam } from './contentPlanRoute';
+import { monthKeyLabel, monthKeyOf } from '../contentplan/domain';
+import {
+  CONTENT_PLAN_STATUSES,
+} from '../contentplan/domain';
+import {
+  CONTENT_PLAN_STATUS_META,
+  contentPlanPostsByDate,
+  contentPlanStatusCounts,
+  contentPlanWeekAxis,
+  weekIndexOf,
+} from '../contentplan/glassView';
+import { MONTH_PARAM, resolveMonthParam } from './contentPlanRoute';
 import {
   contentPlanBrandOptions,
   contentPlanCardView,
-  contentPlanDaysWithPosts,
-  contentPlanDecisionMetric,
   contentPlanEmptyDraft,
   contentPlanPasteDraft,
-  contentPlanPlatformBreakdown,
-  resolveContentPlanBrandId,
 } from './contentPlanCalendar';
 import { HOME_PATH } from './homeRoute';
 import { useStore } from '../store/AppStore';
-import { contentPlanMonthStats, contentPlanPostsForMonth } from '../store/selectors';
 import { useConfirm } from '../components/ConfirmProvider';
-import { Field } from '../components/Field';
-import { IconButton } from '../components/IconButton';
 import {
   CONTENT_PLAN_POST_PARAM,
   ContentPlanPostModal,
@@ -48,52 +49,33 @@ import {
   CONTENT_PLAN_BRAND_PARAM,
   ContentPlanBrandModal,
 } from '../components/ContentPlanBrandModal';
-import {
-  ClipboardPaste,
-  Copy,
-  Eye,
-  EyeOff,
-  FileImage,
-  LayoutDashboard,
-  ListChecks,
-  Pencil,
-  Plus,
-  Trash2,
-} from '../components/icons';
-import type { ContentPlanBrand, ContentPlanPost } from '../types';
-import { dayMonthLabel, isTodayStr, isWeekend, todayStr } from '../utils/dates';
-import { tintVar } from '../utils/colors';
+import { CpMediaThumb, CpPlatformChip } from '../components/ContentPlanGlass';
+import { ContentPlanPostDetail } from '../components/ContentPlanPostDetail';
+import { ContentPlanRegister } from '../components/ContentPlanRegister';
+import { ClipboardPaste, Pencil } from '../components/icons';
+import type { ContentPlanBrand, ContentPlanPost, ContentPlanStatus } from '../types';
+import { dayMonthLabel, todayStr } from '../utils/dates';
 
-// Wejście widoku jest subtelne i dotyczy DWÓCH bloków (przegląd, siatka), a nie
-// 31 kolumn dni — kaskada po dniach zamieniłaby otwarcie miesiąca w falę.
-const cpSectionsVariants = { hidden: {}, show: { transition: { staggerChildren: 0.04 } } };
-const cpSectionsVariantsStill = { hidden: {}, show: { transition: { staggerChildren: 0 } } };
-const cpBlockVariants = {
-  hidden: { opacity: 0, y: 8 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.18, ease: 'easeOut' } },
-} as const;
+const WEEKDAYS = ['pon', 'wt', 'śr', 'czw', 'pt', 'sob', 'nd'];
 
 export function ContentPlanPage() {
   const canView = useContentPlanAccess();
   const { state, dispatch } = useStore();
   const confirm = useConfirm();
-  const reduceMotion = useReducedMotion();
   const [params, setParams] = useSearchParams();
   const today = todayStr();
-  // Cała arytmetyka miesiąca (walidacja parametru, etykieta, sąsiedzi) siedzi w
-  // czystym `contentPlanRoute.ts` — tutaj zostaje sam render.
-  const pager = monthPagerFromParam(params.get(MONTH_PARAM), today);
-  const currentMonth = resolveMonthParam(null, today);
 
-  // Marka jest wyborem SESJI widoku (nie adresem): w URL stoją WYŁĄCZNIE pager
-  // miesięcy i otwarte modale.
-  const [requestedBrandId, setRequestedBrandId] = useState('');
+  // Filtr marki jest wyborem SESJI widoku (parytet ze źródłem: chipy klientów);
+  // '' = wszystkie marki. W URL stoją WYŁĄCZNIE miesiąc i otwarte modale.
+  const [brandFilter, setBrandFilter] = useState('');
+  const [mode, setMode] = useState<'board' | 'register'>('board');
+  const [statusFilter, setStatusFilter] = useState<ContentPlanStatus | null>(null);
+  const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
   const [copiedPost, setCopiedPost] = useState<ContentPlanPost | null>(null);
+
   const openPostId = params.get(CONTENT_PLAN_POST_PARAM);
   const openBrandParam = params.get(CONTENT_PLAN_BRAND_PARAM);
 
-  // Otwarcie/zamknięcie rusza WYŁĄCZNIE własny parametr — pager `?m=` i drugi
-  // modal zostają nietknięte (strażnik nawigacji nie ma o co pytać).
   const setModalParam = useCallback(
     (name: string, value: string | null) => {
       setParams((prev) => {
@@ -116,36 +98,132 @@ export function ContentPlanPage() {
 
   const brands = state.contentPlanBrands;
   const brandOptions = useMemo(() => contentPlanBrandOptions(brands), [brands]);
-  const brandId = resolveContentPlanBrandId(brands, requestedBrandId);
-  const brand = brands.find((row) => row.id === brandId);
-  const posts = contentPlanPostsForMonth(state, brandId, pager.key);
-  const stats = contentPlanMonthStats(state, brandId, pager.key);
-  const days = useMemo(() => monthKeyDays(pager.key), [pager.key]);
-  const grid = useMemo(() => contentPlanDaysWithPosts(days, posts), [days, posts]);
-  const decision = contentPlanDecisionMetric(stats);
-  const channels = brand ? contentPlanPlatformBreakdown(brand, posts) : [];
-  const sectionsVariants = reduceMotion ? cpSectionsVariantsStill : cpSectionsVariants;
+  const activeBrand: ContentPlanBrand | undefined =
+    brands.find((row) => row.id === brandFilter) ?? brands[0];
+
+  // Filtr po marce to prezentacja chipów (oś tygodni potrzebuje WSZYSTKICH
+  // miesięcy naraz, więc selektor miesięczny tu nie pasuje).
+  const filteredPosts = useMemo(
+    () =>
+      brandFilter === ''
+        ? state.contentPlanPosts
+        : state.contentPlanPosts.filter((post) => post.brandId === brandFilter),
+    [state.contentPlanPosts, brandFilter],
+  );
+  const weeks = useMemo(() => contentPlanWeekAxis(filteredPosts, today), [filteredPosts, today]);
+  const byDate = useMemo(() => contentPlanPostsByDate(filteredPosts), [filteredPosts]);
+  const statusCounts = useMemo(() => contentPlanStatusCounts(filteredPosts), [filteredPosts]);
+  const registerPosts = useMemo(
+    () =>
+      statusFilter === null
+        ? filteredPosts
+        : filteredPosts.filter((post) => post.status === statusFilter),
+    [filteredPosts, statusFilter],
+  );
+
+  const todayWeekIdx = weekIndexOf(weeks, today);
+  // Start: tydzień z „dziś" albo — przy głębokim linku ?m= — pierwszy tydzień
+  // żądanego miesiąca. Późniejsze zmiany osi (filtr marki) korygowane niżej.
+  const initialMonth = resolveMonthParam(params.get(MONTH_PARAM), today);
+  const [activeIdx, setActiveIdx] = useState(() =>
+    initialMonth === monthKeyOf(today)
+      ? todayWeekIdx
+      : weekIndexOf(weeks, `${initialMonth}-08`),
+  );
+  const boardRef = useRef<HTMLDivElement | null>(null);
+  const stripRef = useRef<HTMLDivElement | null>(null);
+  const clampedIdx = Math.min(weeks.length - 1, Math.max(0, activeIdx));
+  const active = weeks[clampedIdx];
+  const monthLabelText = active !== undefined ? monthKeyLabel(active.monthKey) : '';
+
+  const gotoWeek = useCallback((index: number, smooth = true) => {
+    const el = boardRef.current;
+    if (!el) return;
+    el.scrollTo({ left: index * el.clientWidth, behavior: smooth ? 'smooth' : 'auto' });
+  }, []);
+
+  // Po wejściu i po powrocie z rejestru tablica staje na aktywnym tygodniu.
+  useEffect(() => {
+    if (mode === 'board') gotoWeek(clampedIdx, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- celowo tylko przy zmianie trybu
+  }, [mode, gotoWeek]);
+
+  const onBoardScroll = () => {
+    const el = boardRef.current;
+    if (!el || el.clientWidth === 0) return;
+    const index = Math.round(el.scrollLeft / el.clientWidth);
+    if (index !== activeIdx) setActiveIdx(Math.min(weeks.length - 1, Math.max(0, index)));
+  };
+
+  // Pionowy scroll myszki nad tablicą = przewijanie osi tydzień za tygodniem
+  // (paging) — port 1:1 ze źródła; poziomy gest trackpada obsługuje natywny
+  // scroll-snap.
+  useEffect(() => {
+    const el = boardRef.current;
+    if (!el || mode !== 'board') return;
+    let acc = 0;
+    let cooldown = false;
+    const onWheel = (event: WheelEvent) => {
+      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+      event.preventDefault();
+      if (cooldown) return;
+      acc += event.deltaY;
+      if (Math.abs(acc) < 40) return;
+      const dir = acc > 0 ? 1 : -1;
+      acc = 0;
+      cooldown = true;
+      window.setTimeout(() => {
+        cooldown = false;
+      }, 420);
+      const index = Math.round(el.scrollLeft / el.clientWidth) + dir;
+      el.scrollTo({
+        left: Math.min(weeks.length - 1, Math.max(0, index)) * el.clientWidth,
+        behavior: 'smooth',
+      });
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [mode, weeks.length]);
+
+  // Aktywna pigułka tygodnia zawsze widoczna na pasku osi.
+  useEffect(() => {
+    stripRef.current
+      ?.querySelector('.cp-week-btn.on')
+      ?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+  }, [clampedIdx, mode]);
+
+  // Pager `?m=` podąża za dominującym miesiącem aktywnego tygodnia (replace —
+  // przewijanie osi nie zasypuje historii przeglądarki).
+  useEffect(() => {
+    if (active === undefined) return;
+    if (params.get(MONTH_PARAM) === active.monthKey) return;
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set(MONTH_PARAM, active.monthKey);
+        return next;
+      },
+      { replace: true },
+    );
+  }, [active, params, setParams]);
 
   if (!canView) return <Navigate to={HOME_PATH} replace />;
 
-  const goToMonth = (key: string) => {
-    const next = new URLSearchParams(params);
-    next.set(MONTH_PARAM, key);
-    // `replace`: przewijanie miesięcy nie ma zasypywać historii przeglądarki
-    // (Wstecz wraca tam, skąd użytkownik wszedł na moduł).
-    setParams(next, { replace: true });
-  };
+  const brandFor = (post: ContentPlanPost) => brands.find((row) => row.id === post.brandId);
 
-  const addPost = (activeBrand: ContentPlanBrand, date: string) => {
+  const addPost = (date: string) => {
+    if (activeBrand === undefined) return;
     dispatch({ type: 'SAVE_CP_POST', postId: null, draft: contentPlanEmptyDraft(activeBrand, date) });
   };
 
-  const pastePost = (activeBrand: ContentPlanBrand, date: string) => {
-    if (!copiedPost) return;
+  const pastePost = (date: string) => {
+    if (copiedPost === null) return;
+    const target = brandFor(copiedPost) ?? activeBrand;
+    if (target === undefined) return;
     dispatch({
       type: 'SAVE_CP_POST',
       postId: null,
-      draft: contentPlanPasteDraft(copiedPost, activeBrand, date),
+      draft: contentPlanPasteDraft(copiedPost, target, date),
       historyLabel: 'Skopiowano publikację do nowego dnia',
     });
   };
@@ -160,304 +238,339 @@ export function ContentPlanPage() {
     if (!confirmed) return;
     dispatch({ type: 'DELETE_CP_POST', postId: post.id });
     if (openPostId === post.id) closePost();
+    if (selectedPostId === post.id) setSelectedPostId(null);
     if (copiedPost?.id === post.id) setCopiedPost(null);
   };
 
-  const renderCard = (activeBrand: ContentPlanBrand, post: ContentPlanPost) => {
-    const view = contentPlanCardView(activeBrand, post);
-    // Podświetlenie karty pokazuje, KTÓRA publikacja jest otwarta w edytorze.
-    const selected = post.id === openPostId;
-    const published = post.visibility === 'published';
+  const selectedPost =
+    selectedPostId !== null
+      ? state.contentPlanPosts.find((post) => post.id === selectedPostId)
+      : undefined;
+  const selectedBrand = selectedPost !== undefined ? brandFor(selectedPost) : undefined;
+
+  const renderCard = (post: ContentPlanPost) => {
+    const brand = brandFor(post);
+    if (brand === undefined) return null;
+    const view = contentPlanCardView(brand, post);
+    const statusMeta = CONTENT_PLAN_STATUS_META[post.status];
+    const withMedia = post.channels.find((channel) => channel.media !== undefined);
     return (
-      <article key={post.id} className="cp-card" data-selected={selected ? 'true' : undefined}>
-        <div className="cp-card-media" style={{ aspectRatio: view.aspectRatio }}>
-          <FileImage size={20} aria-hidden />
-          <span className="cp-card-media-label">
-            {view.mediaFileId === ''
-              ? 'Brak pliku'
-              : view.isVideo
-                ? 'Plik wideo z Dysku'
-                : 'Plik graficzny z Dysku'}
+      <button
+        key={post.id}
+        type="button"
+        className="cp-card"
+        style={{ '--glow': statusMeta.color } as React.CSSProperties}
+        onClick={() => setSelectedPostId(post.id)}
+      >
+        <CpMediaThumb
+          media={withMedia?.media}
+          className="cp-card-media"
+          aspectRatio={view.aspectRatio}
+        />
+        <span className="cp-card-body">
+          <span className="cp-card-top">
+            <span className="cp-card-topic">{post.topic === '' ? 'publikacja' : post.topic}</span>
+            <span className="cp-card-status" style={{ color: statusMeta.color }}>
+              {post.status}
+            </span>
           </span>
-          {view.ratioLabel !== null && <span className="cp-ratio">{view.ratioLabel}</span>}
-        </div>
-
-        <div className="cp-card-head">
-          <span className="cp-visibility" data-published={published ? 'true' : undefined}>
-            {published ? <Eye size={12} aria-hidden /> : <EyeOff size={12} aria-hidden />}
-            {published ? 'Udostępniona' : 'Robocza'}
-          </span>
-          <div className="cp-card-actions">
-            <IconButton
-              size="sm"
-              label={`Kopiuj publikację ${post.title}`}
-              tooltip="Kopiuj"
-              icon={<Copy size={14} aria-hidden />}
-              pressed={copiedPost?.id === post.id}
-              onClick={() => setCopiedPost(post)}
-            />
-            <IconButton
-              size="sm"
-              variant="danger"
-              label={`Usuń publikację ${post.title}`}
-              tooltip="Usuń"
-              icon={<Trash2 size={14} aria-hidden />}
-              onClick={() => {
-                void deletePost(post);
-              }}
-            />
-          </div>
-        </div>
-
-        {/* Tytuł karty OTWIERA edytor publikacji. Powłoka modala odda fokus tu
-            po zamknięciu, więc karta zostaje punktem powrotu. */}
-        <button
-          type="button"
-          className="cp-card-title"
-          aria-haspopup="dialog"
-          onClick={() => setModalParam(CONTENT_PLAN_POST_PARAM, post.id)}
-        >
-          {post.title}
-        </button>
-
-        <p className="cp-card-meta">
-          <span>{post.topic === '' ? 'Bez tematu' : post.topic}</span>
-          <span>{post.format === '' ? 'Bez formatu' : post.format}</span>
-          <span>{post.status}</span>
-        </p>
-
-        {view.platforms.length > 0 && (
-          // Nazwa listy idzie WIDOCZNĄ treścią dla czytnika (`sr-only`), a nie
-          // `aria-label` na akapicie — na elemencie bez roli etykieta bywa
-          // pomijana przez czytniki ekranu.
-          <p className="cp-platforms">
-            <span className="sr-only">Platformy: </span>
-            {view.platforms.map((platform) => (
+          <span className="cp-card-title">{post.title}</span>
+          <span className="cp-card-platforms">
+            {brandFilter === '' && (
               <span
-                key={platform.id}
-                className="cp-platform"
-                style={tintVar('--cp-platform', platform.color)}
+                className="cp-card-brand"
+                style={{ background: brand.accent || 'var(--n2-lavender)' }}
+                title={brand.name}
               >
-                {platform.name}
+                {brand.name.slice(0, 2).toLocaleUpperCase('pl-PL')}
               </span>
+            )}
+            {view.platforms.map((platform) => (
+              <CpPlatformChip key={platform.id} platform={platform} size={17} />
             ))}
-          </p>
-        )}
-
-        <p className="cp-card-copy">
-          {view.primaryCopy === '' ? 'Brak opisu publikacji.' : view.primaryCopy}
-        </p>
-
-        {view.hasTags && <p className="cp-card-tags">Z tagami</p>}
-      </article>
+            <span className="cp-card-type">{post.format === '' ? '' : post.format}</span>
+          </span>
+        </span>
+      </button>
     );
   };
 
   return (
-    <section className="page">
-      <div className="page-head">
-        <h1>Content plan</h1>
-        <div className="page-head-actions">
-          <div className="cal-nav">
-            <span className="cal-range-label">{pager.label}</span>
-            <button
-              type="button"
-              className="nav-btn"
-              aria-label="Poprzedni miesiąc"
-              onClick={() => goToMonth(pager.prev)}
-            >
-              ‹
-            </button>
-            <button
-              type="button"
-              className="btn ghost"
-              disabled={pager.key === currentMonth}
-              onClick={() => goToMonth(currentMonth)}
-            >
-              Bieżący miesiąc
-            </button>
-            <button
-              type="button"
-              className="nav-btn"
-              aria-label="Następny miesiąc"
-              onClick={() => goToMonth(pager.next)}
-            >
-              ›
-            </button>
-          </div>
-        </div>
-      </div>
+    <section className="page cp-page">
+      <div className="cp-scene">
+        <div className="cp-aurora" aria-hidden />
 
-      {brand === undefined ? (
-        <div className="empty-state">
-          <p className="empty-title">Brak marek w module.</p>
-          <p className="empty-hint">
-            Kalendarz publikacji planuje się dla konkretnej marki. Dodaj pierwszą markę razem z
-            jej platformami, tematami i typami publikacji.
-          </p>
-          <button
-            type="button"
-            className="btn primary"
-            aria-haspopup="dialog"
-            onClick={() => setModalParam(CONTENT_PLAN_BRAND_PARAM, 'new')}
-          >
-            Dodaj markę
-          </button>
-        </div>
-      ) : (
-        <m.div
-          className="cp-layout"
-          variants={sectionsVariants}
-          initial="hidden"
-          animate="show"
-        >
-          <m.div className="cp-toolbar" variants={cpBlockVariants}>
-            <Field id="cp-brand" label="Marka" className="cp-brand-field">
-              {(control) => (
-                <select
-                  {...control}
-                  value={brandId}
-                  onChange={(e) => setRequestedBrandId(e.target.value)}
-                >
-                  {brandOptions.map((option) => (
-                    <option key={option.id} value={option.id}>
-                      {option.name}
-                    </option>
-                  ))}
-                </select>
+        <header className="cp-head">
+          <div className="cp-headline">
+            <h1 className="cp-month">{monthLabelText}</h1>
+            <div className="cp-legend">
+              {CONTENT_PLAN_STATUSES.filter((status) => (statusCounts.get(status) ?? 0) > 0).map(
+                (status) => (
+                  <span key={status} className="cp-legend-item">
+                    <i
+                      style={{
+                        background: CONTENT_PLAN_STATUS_META[status].color,
+                        boxShadow: `0 0 8px ${CONTENT_PLAN_STATUS_META[status].color}`,
+                      }}
+                      aria-hidden
+                    />
+                    {status}
+                  </span>
+                ),
               )}
-            </Field>
-            <div className="cp-brand-actions">
+            </div>
+          </div>
+          <div className="cp-tools">
+            <div className="cp-brand-chips">
               <button
                 type="button"
-                className="btn ghost"
-                aria-haspopup="dialog"
-                onClick={() => setModalParam(CONTENT_PLAN_BRAND_PARAM, brandId)}
+                className={`cp-chip${brandFilter === '' ? ' on' : ''}`}
+                onClick={() => setBrandFilter('')}
               >
-                <Pencil size={15} aria-hidden /> Edytuj markę
+                Wszystkie marki
               </button>
+              {brandOptions.map((option) => {
+                const brand = brands.find((row) => row.id === option.id);
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    className={`cp-chip${brandFilter === option.id ? ' on' : ''}`}
+                    onClick={() => setBrandFilter(option.id)}
+                  >
+                    <span
+                      className="cp-chip-logo"
+                      style={{ background: brand?.accent || 'var(--n2-lavender)' }}
+                      aria-hidden
+                    >
+                      {option.name.slice(0, 2).toLocaleUpperCase('pl-PL')}
+                    </span>
+                    {option.name}
+                  </button>
+                );
+              })}
+              {brandFilter !== '' && (
+                <button
+                  type="button"
+                  className="cp-chip cp-chip-edit"
+                  aria-haspopup="dialog"
+                  onClick={() => setModalParam(CONTENT_PLAN_BRAND_PARAM, brandFilter)}
+                >
+                  <Pencil size={12} aria-hidden /> Edytuj markę
+                </button>
+              )}
               <button
                 type="button"
-                className="btn ghost"
+                className="cp-chip cp-chip-add"
                 aria-haspopup="dialog"
                 onClick={() => setModalParam(CONTENT_PLAN_BRAND_PARAM, 'new')}
               >
-                <Plus size={15} aria-hidden /> Dodaj markę
+                + Nowa marka
               </button>
             </div>
-            {copiedPost !== null && (
-              <p className="cp-clipboard" role="status">
-                <ClipboardPaste size={14} aria-hidden />W schowku: „{copiedPost.title}”. Wybierz
-                dzień, w którym wkleić kopię.
-                <button type="button" className="link-btn" onClick={() => setCopiedPost(null)}>
-                  Wyczyść schowek
+            <div className="cp-tools-right">
+              <div className="cp-mode" role="tablist" aria-label="Tryb widoku">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === 'board'}
+                  className={`cp-mode-btn${mode === 'board' ? ' on' : ''}`}
+                  onClick={() => setMode('board')}
+                >
+                  ▦ Tablica
                 </button>
-              </p>
-            )}
-          </m.div>
-
-          <m.section
-            className="cp-overview"
-            variants={cpBlockVariants}
-            aria-label={`Podsumowanie planu: ${pager.label}`}
-          >
-            <div className="cp-overview-copy">
-              <span className="cp-eyebrow">Przegląd miesiąca</span>
-              <strong>{pager.label}</strong>
-              <span className="cp-overview-hint">Stan pracy zespołu i gotowość do publikacji</span>
-            </div>
-            <div className="cp-metrics">
-              <div className="cp-metric cp-metric-primary">
-                <LayoutDashboard size={18} aria-hidden />
-                <div>
-                  <strong>{stats.total}</strong>
-                  <span>wszystkie publikacje</span>
-                </div>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === 'register'}
+                  className={`cp-mode-btn${mode === 'register' ? ' on' : ''}`}
+                  onClick={() => setMode('register')}
+                >
+                  ☰ Rejestr
+                </button>
               </div>
-              <div className="cp-metric">
-                <Eye size={17} aria-hidden />
-                <div>
-                  <strong>{stats.published}</strong>
-                  <span>udostępnione</span>
-                </div>
-              </div>
-              <div className="cp-metric">
-                <ListChecks size={17} aria-hidden />
-                <div>
-                  <strong>{decision.value}</strong>
-                  <span>{decision.label}</span>
-                </div>
-              </div>
-            </div>
-            {channels.length > 0 && (
-              <p className="cp-channels">
-                <span className="cp-channels-label">Kanały</span>
-                {channels.map(({ platform, count }) => (
-                  <span
-                    key={platform.id}
-                    className="cp-channel"
-                    style={tintVar('--cp-platform', platform.color)}
-                  >
-                    <i className="cp-channel-dot" aria-hidden />
-                    {platform.name} <b>{count}</b>
-                  </span>
-                ))}
-              </p>
-            )}
-          </m.section>
-
-          <m.div className="cp-grid" variants={cpBlockVariants}>
-            {/* Dzień jest ZWYKŁYM kontenerem, nie `<section aria-label>`: 31
-                nazwanych sekcji zrobiłoby z miesiąca 31 punktów orientacyjnych.
-                Datę niesie widoczna treść nagłówka i nazwa przycisku dodawania. */}
-            {grid.map((day) => (
-              <div
-                key={day.date}
-                className="cp-day"
-                data-today={isTodayStr(day.date) ? 'true' : undefined}
-                data-weekend={isWeekend(day.date) ? 'true' : undefined}
+              <button
+                type="button"
+                className="cp-newpost"
+                disabled={activeBrand === undefined}
+                onClick={() => addPost(today)}
               >
-                <div className="cp-day-head">
-                  <span className="cp-day-when">
-                    <strong>{day.day}</strong>
-                    <span>{day.weekday}</span>
-                  </span>
-                  <IconButton
-                    size="sm"
-                    label={`Dodaj publikację: ${dayMonthLabel(day.date)}`}
-                    tooltip="Dodaj publikację"
-                    icon={<Plus size={16} aria-hidden />}
-                    onClick={() => addPost(brand, day.date)}
-                  />
-                </div>
-                <div className="cp-day-posts">
-                  {day.posts.map((post) => renderCard(brand, post))}
-                  {copiedPost !== null && (
-                    <button
-                      type="button"
-                      className="cp-paste"
-                      onClick={() => pastePost(brand, day.date)}
-                    >
-                      <ClipboardPaste size={14} aria-hidden /> Wklej kopię
-                    </button>
-                  )}
-                </div>
+                + Nowa publikacja
+              </button>
+            </div>
+          </div>
+        </header>
+
+        {brands.length === 0 ? (
+          <div className="cp-scene-empty">
+            <p className="empty-title">Brak marek w module.</p>
+            <p className="empty-hint">
+              Plan publikacji układa się dla konkretnej marki. Dodaj pierwszą markę razem z jej
+              platformami, tematami i typami publikacji.
+            </p>
+            <button
+              type="button"
+              className="btn primary"
+              aria-haspopup="dialog"
+              onClick={() => setModalParam(CONTENT_PLAN_BRAND_PARAM, 'new')}
+            >
+              Dodaj markę
+            </button>
+          </div>
+        ) : mode === 'board' ? (
+          <>
+            <nav className="cp-strip" aria-label="Oś czasu w tygodniach">
+              <button
+                type="button"
+                className="cp-strip-nav"
+                onClick={() => gotoWeek(Math.max(0, clampedIdx - 1))}
+                aria-label="Poprzedni tydzień"
+              >
+                ‹
+              </button>
+              <div className="cp-strip-scroll" ref={stripRef}>
+                {weeks.map((week, index) => {
+                  const count = week.days.reduce(
+                    (sum, day) => sum + (byDate.get(day.date)?.length ?? 0),
+                    0,
+                  );
+                  const newMonth = index === 0 || week.monthKey !== weeks[index - 1].monthKey;
+                  return (
+                    <span key={week.start} className="cp-strip-cell">
+                      {newMonth && (
+                        <span className="cp-strip-month">
+                          {monthKeyLabel(week.monthKey).slice(0, 3)}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        className={`cp-week-btn${index === clampedIdx ? ' on' : ''}${index === todayWeekIdx ? ' now' : ''}`}
+                        onClick={() => gotoWeek(index)}
+                      >
+                        <span className="cp-week-range">{week.rangeLabel}</span>
+                        {count > 0 && <span className="cp-week-count">{count}</span>}
+                      </button>
+                    </span>
+                  );
+                })}
               </div>
-            ))}
-          </m.div>
-        </m.div>
+              <button
+                type="button"
+                className="cp-strip-nav"
+                onClick={() => gotoWeek(Math.min(weeks.length - 1, clampedIdx + 1))}
+                aria-label="Następny tydzień"
+              >
+                ›
+              </button>
+              <button type="button" className="cp-strip-today" onClick={() => gotoWeek(todayWeekIdx)}>
+                Dziś
+              </button>
+            </nav>
+
+            <div className="cp-board" ref={boardRef} onScroll={onBoardScroll}>
+              {weeks.map((week) => (
+                <section key={week.start} className="cp-week" aria-label={`Tydzień ${week.rangeLabel}`}>
+                  {week.days.map((day, dayIndex) => {
+                    const dayPosts = byDate.get(day.date) ?? [];
+                    const isToday = day.date === today;
+                    const isPast = day.date < today;
+                    return (
+                      <section
+                        key={day.date}
+                        className={`cp-col${isToday ? ' today' : ''}${isPast ? ' past' : ''}`}
+                      >
+                        <div className="cp-col-head">
+                          <span className="cp-col-dow">{WEEKDAYS[dayIndex]}</span>
+                          <span className="cp-col-day">{day.day}</span>
+                          {isToday && <span className="cp-col-today">dziś</span>}
+                          <button
+                            type="button"
+                            className="cp-col-add"
+                            aria-label={`Dodaj publikację: ${dayMonthLabel(day.date)}`}
+                            onClick={() => addPost(day.date)}
+                          >
+                            +
+                          </button>
+                        </div>
+                        <div className="cp-col-posts">
+                          {dayPosts.length === 0 && copiedPost === null && (
+                            <div className="cp-col-empty" aria-hidden>
+                              ·
+                            </div>
+                          )}
+                          {dayPosts.map((post) => renderCard(post))}
+                          {copiedPost !== null && (
+                            <button
+                              type="button"
+                              className="cp-paste"
+                              onClick={() => pastePost(day.date)}
+                            >
+                              <ClipboardPaste size={13} aria-hidden /> Wklej „{copiedPost.title}”
+                            </button>
+                          )}
+                        </div>
+                      </section>
+                    );
+                  })}
+                </section>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="cp-register">
+            <div className="cp-flags">
+              <button
+                type="button"
+                className={`cp-flag${statusFilter === null ? ' on' : ''}`}
+                onClick={() => setStatusFilter(null)}
+              >
+                wszystkie <b>{filteredPosts.length}</b>
+              </button>
+              {CONTENT_PLAN_STATUSES.map((status) => {
+                const count = statusCounts.get(status) ?? 0;
+                if (count === 0) return null;
+                return (
+                  <button
+                    key={status}
+                    type="button"
+                    className={`cp-flag${statusFilter === status ? ' on' : ''}`}
+                    style={{ '--sc': CONTENT_PLAN_STATUS_META[status].color } as React.CSSProperties}
+                    onClick={() => setStatusFilter(statusFilter === status ? null : status)}
+                  >
+                    {status.toLocaleLowerCase('pl-PL')} <b>{count}</b>
+                  </button>
+                );
+              })}
+            </div>
+            <ContentPlanRegister
+              brands={brands}
+              posts={registerPosts}
+              showBrand={brandFilter === ''}
+              onEdit={(post) => setModalParam(CONTENT_PLAN_POST_PARAM, post.id)}
+            />
+          </div>
+        )}
+      </div>
+
+      {selectedPost !== undefined && selectedBrand !== undefined && openPostId === null && (
+        <ContentPlanPostDetail
+          brand={selectedBrand}
+          post={selectedPost}
+          copied={copiedPost?.id === selectedPost.id}
+          onClose={() => setSelectedPostId(null)}
+          onEdit={() => setModalParam(CONTENT_PLAN_POST_PARAM, selectedPost.id)}
+          onCopy={() => setCopiedPost(selectedPost)}
+          onDelete={() => {
+            void deletePost(selectedPost);
+          }}
+        />
       )}
 
-      {/* Modale modułu: montowane W STRONIE (patrz nagłówek pliku), każdy w
-          osobnym `AnimatePresence`, żeby zamknięcie jednego nie animowało
-          drugiego. Nieznane id obsługuje sam modal (karta „Nie znaleziono"). */}
+      {/* Modale modułu: montowane W STRONIE (samo-guard strony reużyty), każdy w
+          osobnym `AnimatePresence`. Nieznane id obsługuje sam modal. */}
       <AnimatePresence>
         {openPostId !== null && (
-          <ContentPlanPostModal
-            key={`cp-post-${openPostId}`}
-            postId={openPostId}
-            onClose={closePost}
-          />
+          <ContentPlanPostModal key={`cp-post-${openPostId}`} postId={openPostId} onClose={closePost} />
         )}
       </AnimatePresence>
       <AnimatePresence>

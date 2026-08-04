@@ -87,13 +87,20 @@
   kopiuj/wklej. Zapis idzie WYŁĄCZNIE przez reduktor (`SAVE_CP_POST` z
   `postId: null` — także wklejenie, a kopia zawsze startuje jako szkic w
   statusie roboczym i ze świeżymi id kanałów), usuwanie przez wspólny
-  `useConfirm()`. ŚWIADOMA RÓŻNICA WOBEC ŹRÓDŁA: tam siatka była poziomym
-  przewijaczem 31 kolumn z własnymi scrollerami — tutaj dni zawijają się w
-  responsywną siatkę (klasy `cp-*` w `styles.css`, kolor platformy przez
-  `tintVar('--cp-platform')`), a jedynym właścicielem przewijania zostaje
-  strona. Klik w tytuł karty OTWIERA edytor publikacji
-  (`src/components/ContentPlanPostModal.tsx`, `?publikacja=<id>`; podświetlenie
-  karty pokazuje, która publikacja jest otwarta), a marki i ich słowniki mają
+  `useConfirm()`. WYGLĄD (od 2026-08-04, decyzja operatora): skórka „Glass"
+  przeniesiona 1:1 z aplikacji źródłowej `Content plan/planner` — scena
+  `.cp-scene` z aurorą, pozioma tablica tygodni ze scroll-snapem i paging
+  kółkiem, pasek osi czasu, chipy marek („Wszystkie marki" + per marka),
+  legenda statusów, tryb „Rejestr" (tabela z tygodniami-separatorami,
+  `src/components/ContentPlanRegister.tsx`) i wysuwany panel szczegółów
+  (`ContentPlanPostDetail.tsx`). Czysta logika osi/statusów:
+  `src/contentplan/glassView.ts`; prymitywy (glify platform inline SVG,
+  miniatura Drive, pigułka statusu): `components/ContentPlanGlass.tsx`.
+  ŚWIADOMY WYJĄTEK od zasady „jeden właściciel przewijania": tablica ma
+  scroller poziomy, a kolumny dni własne pionowe — to rdzeń układu źródłowego
+  (zapisane też przy stylach `.cp-scene`). Klik w KARTĘ otwiera panel
+  szczegółów; edytor publikacji otwiera się z panelu i z rejestru
+  (`src/components/ContentPlanPostModal.tsx`, `?publikacja=<id>`), a marki i ich słowniki mają
   własny modal (`ContentPlanBrandModal.tsx`, `?marka=new|<id>`, wejścia z
   toolbaru i z pustego stanu). Oba modale są montowane WEWNĄTRZ strony, nie na
   poziomie App (moduł jest bramkowany rolą i jednostronicowy, więc reużywa jej

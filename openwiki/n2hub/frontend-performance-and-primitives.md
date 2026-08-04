@@ -76,6 +76,10 @@ opaque card — the scrim never needs repainting during that scroll.
 ## Rendering rules
 
 - Prefer a single owner for scrolling; remove nested viewport scrollers.
+  ONE deliberate exception (operator decision 2026-08-04): the Content plan
+  „Glass" board (`.cp-board` in `styles.css`) is a horizontal scroll-snap axis
+  whose day columns own their vertical scroll — a 1:1 port of the source
+  planner layout. Keep the exception contained to `.cp-scene`.
 - Animate `transform` and `opacity`; do not animate blur, filter, layout or
   large shadows without an explicit trace.
 - Do not add permanent `will-change` or `translateZ(0)` as folklore. Confirm a
