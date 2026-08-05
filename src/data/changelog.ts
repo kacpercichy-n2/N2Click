@@ -111,6 +111,21 @@ export function changelogCtaLabel(entry: ChangelogEntry): string {
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-08-05-szybkie-przeciaganie-bez-cofania',
+    dateFrom: '2026-08-05',
+    dateTo: '2026-08-05',
+    summary:
+      'Szybko przeciągane karty w kalendarzu nie odskakują już na poprzednie miejsce: odświeżanie danych w tle czeka, aż zmiana zdąży się zapisać.',
+    items: [
+      {
+        area: 'Kalendarz',
+        feature: 'Pewne upuszczanie przy szybkich ruchach',
+        description:
+          'Przy dynamicznym przerzucaniu kart ciche odświeżenie danych z serwera potrafiło wygrać wyścig z zapisem i odkładało kartę na stare miejsce. Teraz aplikacja tuż przed takim odświeżeniem sprawdza, czy nie trwa przeciąganie albo świeży zapis, i w razie potrzeby chwilę czeka. Karta zostaje tam, gdzie ją upuścisz, bez przytrzymywania jej nad celem.',
+      },
+    ],
+  },
+  {
     id: '2026-08-05-kafelki-krotkich-blokow',
     dateFrom: '2026-08-05',
     dateTo: '2026-08-05',

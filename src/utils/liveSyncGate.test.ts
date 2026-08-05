@@ -1,6 +1,11 @@
 // Rejestr wstrzymań odświeżania w tle. Czysty — bez Reacta i bez storage.
 import { beforeEach, describe, expect, it } from 'vitest';
-import { anyLiveSyncHold, clearLiveSyncHold, setLiveSyncHold } from './liveSyncGate';
+import {
+  anyLiveSyncHold,
+  clearLiveSyncHold,
+  setLiveSyncHold,
+  shouldDeferBackgroundMerge,
+} from './liveSyncGate';
 
 const a = {};
 const b = {};
@@ -45,5 +50,37 @@ describe('liveSyncGate', () => {
     setLiveSyncHold(a, true);
     setLiveSyncHold(a, false);
     expect(anyLiveSyncHold()).toBe(false);
+  });
+});
+
+describe('shouldDeferBackgroundMerge', () => {
+  const clean = { held: false, processing: false, queuedOps: 0, mirrorPending: false };
+
+  it('czysty świat: scalenie w tle wolno zastosować', () => {
+    expect(shouldDeferBackgroundMerge(clean)).toBe(false);
+  });
+
+  it('aktywna blokada przeciągania odracza scalenie', () => {
+    expect(shouldDeferBackgroundMerge({ ...clean, held: true })).toBe(true);
+  });
+
+  it('drenaż kolejki w toku odracza scalenie', () => {
+    expect(shouldDeferBackgroundMerge({ ...clean, processing: true })).toBe(true);
+  });
+
+  it('operacje czekające na wypchnięcie odraczają scalenie', () => {
+    expect(shouldDeferBackgroundMerge({ ...clean, queuedOps: 1 })).toBe(true);
+  });
+
+  it('stan wyprzedzający lustro (świeży drop przed diffem) odracza scalenie', () => {
+    // Okno „szybkiego chwyć–puść”: SET_BLOCK_TIME jest już w reduktorze, ale
+    // efekt lustra jeszcze nie zdążył zdiffować stanu do kolejki.
+    expect(shouldDeferBackgroundMerge({ ...clean, mirrorPending: true })).toBe(true);
+  });
+
+  it('kilka powodów naraz nadal odracza (bez wzajemnego znoszenia)', () => {
+    expect(
+      shouldDeferBackgroundMerge({ held: true, processing: true, queuedOps: 3, mirrorPending: true }),
+    ).toBe(true);
   });
 });

@@ -568,7 +568,16 @@
   (c) `src/utils/liveSyncGate.ts` lets a stability-sensitive interaction
   (calendar/bin drag) HOLD the background refresh — it is deferred by
   rescheduling, never dropped, so a merge can never yank the dragged row or
-  unmount a component holding pointer capture (invariant 7).
+  unmount a component holding pointer capture (invariant 7). Od 2026-08-05 ta
+  decyzja to czysty `shouldDeferBackgroundMerge` (hold ∨ drenaż kolejki ∨
+  niewypchnięte operacje ∨ stan wyprzedzający lustro `prevRef !== state`)
+  sprawdzany NIE tylko przy starcie `performLiveSync`, ale PONOWNIE po każdym
+  `await` (fetch org, fetch snapshotu planera) tuż przed dispatchem
+  `MERGE_CLOUD_ENTITIES` w tle. Powód: szybkie chwyć–puść karty (< ~0,5 s)
+  mieściło się w całości w oknie fetcha uruchomionego echem poprzedniego
+  zapisu — snapshot sprzed upuszczenia autorytatywnie cofał kartę na bazową
+  pozycję (a przy zbiegu z tłumionym merge też gubił diff lustra). Hydracja
+  startowa, ręczny „Odśwież” i retry (background=false) świadomie nie pytają.
 - `SAVE_TASK` reconciles workload by identity-preserving deltas. Do not replace
   all workload rows when editing a task.
 - `saveData` reports success or a classified failure. Failed persistence must

@@ -19,7 +19,7 @@ import {
 } from 'react';
 import { usePersistence, useStore } from '../store/AppStore';
 import { setCloudMirrorHealthy } from '../store/persistGate';
-import { anyLiveSyncHold } from '../utils/liveSyncGate';
+import { anyLiveSyncHold, shouldDeferBackgroundMerge } from '../utils/liveSyncGate';
 import { reconnectDelayMs } from '../utils/liveChannel';
 import { writeCloudRetirementMarker } from '../store/storage';
 import { useAuth } from '../auth/SessionProvider';
@@ -225,6 +225,21 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     }
   }, [getDb, getContentPlanDb, setPending]);
 
+  // Migawka „czy wolno TERAZ zastosować scalenie w tle”. Czyta wyłącznie żywe
+  // refy, więc każde wywołanie widzi bieżący świat — wołana ponownie po każdym
+  // `await` w ścieżce żywej synchronizacji, bo szybki gest przeciągania mieści
+  // się w całości w oknie fetcha snapshotu (patrz shouldDeferBackgroundMerge).
+  const backgroundMergeDeferred = useCallback(
+    () =>
+      shouldDeferBackgroundMerge({
+        held: anyLiveSyncHold(),
+        processing: processingRef.current,
+        queuedOps: queueRef.current.length,
+        mirrorPending: prevRef.current !== stateRef.current,
+      }),
+    [],
+  );
+
   const runHydration = useCallback(
     async (overrideSnap?: OrgSnapshot, opts?: { background?: boolean }) => {
       const snap =
@@ -256,6 +271,18 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
         }
         if (import.meta.env.DEV && result.diagnostics.length > 0) {
           console.warn('[cloud] Hydracja pominęła wiersze:', result.diagnostics);
+        }
+        // Ostatnia bramka przed scaleniem W TLE: fetch snapshotu trwał setki ms
+        // i świat mógł się zmienić — nowy gest przeciągania, świeża lokalna
+        // edycja (jeszcze przed diffem lustra) albo drenaż kolejki. Snapshot
+        // jest wtedy STARSZY od stanu lokalnego; jego dispatch cofnąłby
+        // upuszczoną przed chwilą kartę na bazową pozycję. Odraczamy tym samym
+        // debounce'em — kolejny przebieg zobaczy już wypchnięte zmiany.
+        // Hydracja startowa, ręczny „Odśwież” i ponowienie po błędzie
+        // (background=false) świadomie NIE pytają — jak przy blokadach.
+        if (background && backgroundMergeDeferred()) {
+          liveSyncRef.current();
+          return;
         }
         // Autorytatywna hydracja: profile chmury jadą w TYM SAMYM ładunku, żeby
         // reduktor scalił zespół PRZED walidacją encji (osoby bez lokalnej pary
@@ -309,7 +336,16 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
         refreshingFromReadyRef.current = false;
       }
     },
-    [auth.mode, userId, org.state, dispatch, getDb, getContentPlanDb, processQueue],
+    [
+      auth.mode,
+      userId,
+      org.state,
+      dispatch,
+      getDb,
+      getContentPlanDb,
+      processQueue,
+      backgroundMergeDeferred,
+    ],
   );
 
   // Pełna żywa synchronizacja: cichy refetch snapshotu organizacji (zespół,
@@ -326,17 +362,25 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       return;
     }
     // Trwa interakcja wrażliwa na stabilność (przeciąganie bloku kalendarza lub
-    // zasobnika): scalenie podmieniłoby wiersz pod kursorem albo odmontowało
-    // komponent trzymający pointer capture. Odraczamy przez PRZEPLANOWANIE tym
-    // samym debounce'em — nic nie ginie, dosynchronizuje się po puszczeniu.
-    if (anyLiveSyncHold()) {
+    // zasobnika) albo stan wyprzedza lustro: scalenie podmieniłoby wiersz pod
+    // kursorem, odmontowało komponent trzymający pointer capture albo cofnęło
+    // niezmirrorowaną edycję. Odraczamy przez PRZEPLANOWANIE tym samym
+    // debounce'em — nic nie ginie, dosynchronizuje się po puszczeniu.
+    if (backgroundMergeDeferred()) {
       liveSyncRef.current();
       return;
     }
     const snap = await orgRefreshRef.current();
     if (!mountedRef.current) return;
+    // Fetch organizacji trwał — bramka raz jeszcze, zanim ruszy hydracja
+    // planera (drugi, dłuższy fetch). Szybkie chwyć–puść karty zasobnika
+    // potrafi zacząć się i skończyć w tym oknie.
+    if (backgroundMergeDeferred()) {
+      liveSyncRef.current();
+      return;
+    }
     await runHydration(snap ?? undefined, { background: true });
-  }, [active, runHydration]);
+  }, [active, runHydration, backgroundMergeDeferred]);
 
   const scheduleLiveSync = useCallback(() => {
     if (liveSyncTimerRef.current !== null) clearTimeout(liveSyncTimerRef.current);

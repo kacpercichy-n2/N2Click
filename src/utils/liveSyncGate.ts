@@ -28,3 +28,28 @@ export function clearLiveSyncHold(key: object): void {
 export function anyLiveSyncHold(): boolean {
   return holds.size > 0;
 }
+
+/**
+ * Decyzja: czy autorytatywne scalenie W TLE trzeba ODROCZYĆ (przeplanować tym
+ * samym debounce'em), bo świat zmienił się od chwili zaplanowania synca.
+ *
+ * Sprawdzana DWUKROTNIE: przed startem pobierania snapshotu ORAZ ponownie po
+ * każdym `await`, tuż przed dispatchem scalenia. Blokada wstrzymań jest
+ * migawką z momentu wywołania — szybkie przeciągnięcie karty (chwyć–puść w pół
+ * sekundy) potrafi w całości zmieścić się w oknie fetcha, więc kontrola tylko
+ * na starcie przepuszczała snapshot sprzed upuszczenia i karta wracała na
+ * bazową pozycję.
+ *
+ * `mirrorPending` = stan wyprzedza lustro (prevRef !== state): lokalna edycja
+ * jest już w reduktorze, ale jej diff nie trafił jeszcze do kolejki. Scalenie
+ * w tym oknie nadpisałoby ją wizualnie, a przy zbiegu z tłumioną akcją
+ * scalenia (reset bazy diffa) — trwale.
+ */
+export function shouldDeferBackgroundMerge(world: {
+  held: boolean;
+  processing: boolean;
+  queuedOps: number;
+  mirrorPending: boolean;
+}): boolean {
+  return world.held || world.processing || world.queuedOps > 0 || world.mirrorPending;
+}
