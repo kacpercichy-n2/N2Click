@@ -39,6 +39,20 @@
 
 ## Non-negotiable behavior
 
+- UTAJNIONA TREŚĆ (2026-08-05). Kalendarz ZAWSZE pokazuje, że blok istnieje
+  (czas, osoba, godziny) — maskuje się wyłącznie treść: kafelki
+  (`TimedBlock`/`BinCard`/`RecurBlock`/`EventBlock`) dostają z rodzica
+  PRYMITYW `displayTitle` (z `taskDisplayTitle`/`eventDisplayTitle`,
+  `src/store/confidentiality.ts`) zamiast czytać `task.title` — jak `status`/
+  `done`, żeby `React.memo` trzymał. Komunikaty liczone w czasie zdarzenia
+  (kolizje, ogłoszenia klawiatury, dymek odrzucenia) idą przez
+  `eventTimeTaskTitle(getState(), …)`; tytuły pseudo-sąsiadów w
+  `weekViewModel.buildEventBusyByPersonDate` też są maskowane. Czyste moduły
+  `blockLabel`/`calendarBlockKeyboard`/`monthGrid` pozostają store-free —
+  maska wchodzi na ich GRANICY. Urlop (`kind: 'urlop'`) nigdy nie niesie
+  `isConfidential` (tytuł i tak jest stałe „Urlop"). Żadna ścieżka wskaźnika
+  ani cykl życia przeciągania nie zależy od maski (inwariant 7 nietknięty).
+
 - Obciążenie — DWA ROZDZIELONE SYGNAŁY (2026-07-28, OP-21): pasek `.load-bar`
   koduje WYŁĄCZNIE wykorzystanie tygodnia (`loadTone(pct)`, jedna monotoniczna
   skala `low/mid/high/over` → klasy `.tone-*`), więc 84% nigdy nie wygląda

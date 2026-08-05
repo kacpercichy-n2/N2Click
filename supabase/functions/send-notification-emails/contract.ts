@@ -44,6 +44,13 @@ export interface NameLookups {
   actors: Record<string, string>;
   tasks: Record<string, string>;
   projects: Record<string, string>;
+  /** Id projektów z `is_confidential = true` (kolumna 20260805120000). Wpis w
+   *  `projects` niesie wtedy nadal PRAWDZIWĄ nazwę — o maskowaniu per typ
+   *  powiadomienia decyduje `notificationLine`: `project_comment` (wzmianki —
+   *  odbiorca może nie mieć wglądu) maskuje, `task_assigned`/`bin_item`
+   *  (odbiorca jest wykonawcą, wyjątek wglądu) nie. OPCJONALNE — brak pola =
+   *  zachowanie sprzed zmiany. */
+  confidentialProjectIds?: string[];
 }
 
 /** Zbiór powiadomień jednego odbiorcy gotowy do wysłania jednego maila. */
@@ -183,8 +190,14 @@ export function notificationLine(n: NotificationRecord, names: NameLookups): str
     }
     case 'project_comment': {
       const actor = actorName(names, n.payload.actorId);
-      const project = projectName(names, n.payload.projectId);
-      return `${actor} skomentował(a) projekt „${project}”`;
+      // Utajniona treść: odbiorca wzmianki może nie mieć wglądu w projekt,
+      // a mail wychodzi poza aplikację — nazwa utajnionego projektu nigdy nie
+      // trafia do treści `project_comment`.
+      const masked =
+        n.payload.projectId !== undefined &&
+        (names.confidentialProjectIds ?? []).includes(n.payload.projectId);
+      const project = masked ? 'utajniony' : `„${projectName(names, n.payload.projectId)}”`;
+      return `${actor} skomentował(a) projekt ${project}`;
     }
     case 'bin_item': {
       const task = taskTitle(names, n.payload.taskId);

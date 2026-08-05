@@ -314,6 +314,38 @@ describe('loadPlannerSnapshot', () => {
     expect(result.payload.tasks.find((t) => t.id === TK2)!.isDraft).toBe(false);
   });
 
+  it('hydrates is_confidential w formie kanonicznej (klucz tylko przy true; urlop nigdy)', async () => {
+    const TK2 = uuid('task-two');
+    const EV = uuid('event-conf');
+    const EV2 = uuid('event-vacation');
+    const db = new FakeSelectDb()
+      .seed('projects', [
+        {
+          id: PR, client_id: null, name: 'P', description: '', status_id: S1, paid: false,
+          start_date: '2026-07-06', end_date: '2026-07-12', department_id: null, service_type_id: null,
+          is_confidential: true, created_at: '', updated_at: '',
+        },
+      ])
+      .seed('tasks', [
+        { id: TK, project_id: PR, status_id: S1, title: 'Tajne', description: '', start_date: '2026-07-06', end_date: '2026-07-08', estimated_hours: null, priority: 'normal', work_category_id: null, checklist: [], order_index: 0, is_confidential: true, created_at: '', updated_at: '' },
+        { id: TK2, project_id: PR, status_id: S1, title: 'Bez kolumny', description: '', start_date: '2026-07-06', end_date: '2026-07-08', estimated_hours: null, priority: 'normal', work_category_id: null, checklist: [], order_index: 0, is_confidential: false, created_at: '', updated_at: '' },
+      ])
+      .seed('events', [
+        { id: EV, title: 'Tajne spotkanie', description: '', location: '', meeting_url: '', event_date: '2026-07-07', start_minutes: 600, duration_minutes: 60, attendee_ids: [], recurrence: null, kind: 'meeting', end_date: null, is_confidential: true, created_at: '', updated_at: '' },
+        { id: EV2, title: 'Urlop', description: '', location: '', meeting_url: '', event_date: '2026-07-07', start_minutes: 0, duration_minutes: 1440, attendee_ids: [CLOUD_PA], recurrence: null, kind: 'urlop', end_date: null, is_confidential: true, created_at: '', updated_at: '' },
+      ]);
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.payload.projects[0].isConfidential).toBe(true);
+    expect(result.payload.tasks.find((t) => t.id === TK)!.isConfidential).toBe(true);
+    expect('isConfidential' in result.payload.tasks.find((t) => t.id === TK2)!).toBe(false);
+    const events = result.payload.events ?? [];
+    expect(events.find((e) => e.id === EV)!.isConfidential).toBe(true);
+    // Urlop nigdy nie niesie klucza, nawet gdy kolumna kłamie.
+    expect('isConfidential' in events.find((e) => e.id === EV2)!).toBe(false);
+  });
+
   it('hydrates draft_hours only for is_draft rows: profil odwrócony, snap, dedup; publikowany wiersz z draft_hours ignoruje pole', async () => {
     const TK2 = uuid('task-two');
     const db = new FakeSelectDb()

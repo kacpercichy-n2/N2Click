@@ -55,6 +55,11 @@ export interface SectionFlags {
   hasBlocks: boolean;
   /** Liczba komentarzy — wchodzi do etykiety zakładki „Dyskusja". */
   commentCount: number;
+  /** Treść zamaskowana dla widza (utajnione zadanie bez wglądu —
+   *  `isTaskContentMasked`). Zostają WYŁĄCZNIE fakty planistyczne: okres,
+   *  osoby i godziny, podsumowanie, przydział i wykonane bloki. Treść
+   *  (tytuł/opis/checklista/cykliczność/klasyfikacja/dyskusja) znika. */
+  contentMasked: boolean;
 }
 
 export interface TaskModalTab {
@@ -91,6 +96,15 @@ const TAB_LABELS: Record<TaskModalTabId, string> = {
 
 /** Bramka pojedynczej sekcji. Jedyne miejsce z warunkami widoczności. */
 function isSectionVisible(id: TaskModalSectionId, flags: SectionFlags): boolean {
+  // Maska utajnienia wygrywa ze wszystkim: sekcje treści znikają w całości,
+  // zostają wyłącznie fakty planistyczne (poniższe zwykłe bramki dalej
+  // obowiązują — np. szkic nadal nie pokazuje podsumowania).
+  if (
+    flags.contentMasked &&
+    !['period', 'people-hours', 'summary', 'allocation', 'done-blocks'].includes(id)
+  ) {
+    return false;
+  }
   switch (id) {
     case 'context':
     case 'details':

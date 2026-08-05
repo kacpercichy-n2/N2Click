@@ -67,6 +67,7 @@ import {
   type KanbanMoveColumn,
   type KanbanMoveState,
 } from './kanbanMove';
+import { projectDisplayName, taskDisplayTitle } from '../store/confidentiality';
 import { type PaidFilter } from './ProjectsPage';
 import { formatShortWithWeekday } from '../utils/dates';
 import { sortByNamePl } from '../utils/collation';
@@ -472,7 +473,7 @@ export function KanbanPage() {
     // Poza kolumną, na kolumnie źródłowej albo bez zadania → żadnej wysyłki.
     if (target === null || target === active.sourceStatusId || task === undefined) return;
     dispatch({ type: 'SET_TASK_STATUS', taskId: active.taskId, statusId: target });
-    setAnnouncement(dropAnnouncement(task.title, columnName(target)));
+    setAnnouncement(dropAnnouncement(taskDisplayTitle(state, task), columnName(target)));
   };
 
   // ---------------- Tryb przenoszenia z klawiatury ----------------
@@ -495,14 +496,14 @@ export function KanbanPage() {
     const position = kanbanDropPosition(column, task);
     setAnnouncement(
       kind === 'pickup'
-        ? pickupAnnouncement(task.title, column.name, position)
+        ? pickupAnnouncement(taskDisplayTitle(state, task), column.name, position)
         : targetAnnouncement(column.name, position),
     );
   };
 
   const cancelMove = (active: KanbanMoveState, task: Task, refocus: boolean) => {
     applyMove(kanbanMoveReducer(active, { type: 'cancel' }, moveColumns));
-    setAnnouncement(cancelAnnouncement(task.title, columnName(active.sourceStatusId)));
+    setAnnouncement(cancelAnnouncement(taskDisplayTitle(state, task), columnName(active.sourceStatusId)));
     // Escape oddaje fokus uchwytowi; wyjście Tabem NIE — inaczej odbijalibyśmy
     // fokus użytkownikowi w drodze do następnego elementu.
     if (refocus) refocusRef.current = moveHandleId(task.id);
@@ -514,11 +515,11 @@ export function KanbanPage() {
     refocusRef.current = moveHandleId(task.id);
     if (intent === null) {
       // Cel = źródło (albo cel wypadł z tablicy): no-opa do store'u nie wysyłamy.
-      setAnnouncement(cancelAnnouncement(task.title, columnName(active.sourceStatusId)));
+      setAnnouncement(cancelAnnouncement(taskDisplayTitle(state, task), columnName(active.sourceStatusId)));
       return;
     }
     dispatch({ type: 'SET_TASK_STATUS', taskId: intent.taskId, statusId: intent.statusId });
-    setAnnouncement(dropAnnouncement(task.title, columnName(intent.statusId)));
+    setAnnouncement(dropAnnouncement(taskDisplayTitle(state, task), columnName(intent.statusId)));
   };
 
   const onHandleKey = (e: React.KeyboardEvent<HTMLButtonElement>, task: Task) => {
@@ -630,7 +631,7 @@ export function KanbanPage() {
     setMenu(null);
     if (menuTask === undefined || menuTask.statusId === statusId) return;
     dispatch({ type: 'SET_TASK_STATUS', taskId: menuTask.id, statusId });
-    setAnnouncement(dropAnnouncement(menuTask.title, columnName(statusId)));
+    setAnnouncement(dropAnnouncement(taskDisplayTitle(state, menuTask), columnName(statusId)));
     // Karta przemontowuje się do innej kolumny, więc powrót fokusa z powłoki
     // trafiłby w martwy węzeł — oddajemy fokus uchwytowi tej samej karty.
     refocusRef.current = moveHandleId(menuTask.id);
@@ -759,13 +760,13 @@ export function KanbanPage() {
     return (
       <>
         <div className="kanban-card-top">
-          <span className="kanban-card-title">{t.title}</span>
+          <span className="kanban-card-title">{taskDisplayTitle(state, t)}</span>
         </div>
         {/* Ścieżka adresowa idzie WSZĘDZIE tą samą regułą (SY-06): najpierw
             klient, potem projekt, separator `›`. Zmienia się wyłącznie treść i
             kolejność tekstu — układ i wymiary karty zostają bez zmian. */}
         <div className="kanban-card-client">
-          {clientProjectPath(client?.name, project?.name ?? 'Bez projektu')}
+          {clientProjectPath(client?.name, project ? projectDisplayName(state, project) : 'Bez projektu')}
         </div>
         <div className="kanban-card-badges">
           <PriorityBadge priority={t.priority} />
@@ -838,7 +839,7 @@ export function KanbanPage() {
               type="button"
               className="icon-btn kanban-card-grip"
               data-size="sm"
-              aria-label={`Przenieś zadanie: ${t.title}`}
+              aria-label={`Przenieś zadanie: ${taskDisplayTitle(state, t)}`}
               aria-pressed={moving}
               aria-describedby={MOVE_HINT_ID}
               onKeyDown={(e) => onHandleKey(e, t)}
@@ -849,7 +850,7 @@ export function KanbanPage() {
             <IconButton
               ref={setTriggerRef(t.id)}
               size="sm"
-              label={`Menu zadania: ${t.title}`}
+              label={`Menu zadania: ${taskDisplayTitle(state, t)}`}
               tooltip="Menu zadania"
               icon={<MoreVertical size={14} aria-hidden />}
               expanded={menu?.taskId === t.id}

@@ -19,6 +19,7 @@ const EDIT: SectionFlags = {
   hasAssignees: true,
   hasBlocks: true,
   commentCount: 0,
+  contentMasked: false,
 };
 
 /** Nowe zadanie: jeszcze nie istnieje, więc brak bloków i komentarzy. */
@@ -29,6 +30,7 @@ const CREATE: SectionFlags = {
   hasAssignees: false,
   hasBlocks: false,
   commentCount: 0,
+  contentMasked: false,
 };
 
 const ids = (flags: SectionFlags): TaskModalSectionId[] =>
@@ -108,6 +110,34 @@ describe('visibleSections', () => {
       'classification',
       'done-blocks',
       'discussion',
+    ]);
+  });
+
+  it('maska utajnienia zostawia wyłącznie fakty planistyczne', () => {
+    // Treść (kontekst, opis, checklista, cykliczność, klasyfikacja, dyskusja)
+    // znika w całości; zostają okres, osoby, podsumowanie, przydział i bloki.
+    expect(ids({ ...EDIT, contentMasked: true })).toEqual([
+      'period',
+      'people-hours',
+      'summary',
+      'allocation',
+      'done-blocks',
+    ]);
+  });
+
+  it('maska utajnienia komponuje się ze zwykłymi bramkami (szkic bez podsumowania)', () => {
+    expect(ids({ ...EDIT, contentMasked: true, isDraft: true })).toEqual([
+      'period',
+      'people-hours',
+      'done-blocks',
+    ]);
+    expect(ids({ ...EDIT, contentMasked: true, hasBlocks: false })).not.toContain('done-blocks');
+  });
+
+  it('maska utajnienia chowa zakładkę „Dyskusja"', () => {
+    expect(visibleTabs({ ...EDIT, contentMasked: true }).map((t) => t.id)).toEqual([
+      'zadanie',
+      'planowanie',
     ]);
   });
 

@@ -30,6 +30,7 @@ import {
   recurrenceOccurrencesForDate,
 } from '../store/selectors';
 import { vacationRenderWindow } from './weekViewLayout';
+import { eventDisplayTitle, taskDisplayTitle } from '../store/confidentiality';
 import { isBinEntry, packDayBlocks } from '../utils/time';
 import { personColor } from '../utils/colors';
 import type { RecurrenceOccurrence } from '../utils/recurrence';
@@ -203,7 +204,9 @@ export function buildEventBusyByPersonDate(
           // jak spotkanie (blok nie wchodzi), a przedział 0-1440 zabiera całą
           // dobę, więc żadna godzina nie jest legalnym celem.
           kind: occ.event.kind === 'urlop' ? 'urlop' : 'event',
-          title: occ.event.title,
+          // Utajniona treść: winowajca kolizji nazywa się etykietą maskującą
+          // („Wydarzenie #N"), nigdy prawdziwym tytułem, gdy widz nie ma wglądu.
+          title: eventDisplayTitle(state, occ.event),
           companyWide: occ.event.attendeeIds.length === 0,
         });
       }
@@ -212,7 +215,7 @@ export function buildEventBusyByPersonDate(
           start: occurrence.startMinutes,
           end: occurrence.startMinutes + occurrence.durationMinutes,
           kind: 'recurrence',
-          title: task.title,
+          title: taskDisplayTitle(state, task),
         });
       }
       if (busy.length > 0) map.set(personDateKey(personId, date), busy);

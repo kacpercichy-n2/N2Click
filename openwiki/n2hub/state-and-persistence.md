@@ -540,6 +540,30 @@
 
 - Persisted dates are `yyyy-MM-dd`; use `src/utils/dates.ts`. `''` is allowed
   only for the bin (`BIN_DATE`) workload sentinel.
+- UTAJNIONA TREŚĆ (2026-08-05). `Task`/`Project`/`CalendarEvent` niosą
+  opcjonalne `isConfidential?: true` (forma kanoniczna: klucz wyłącznie jako
+  literalne `true`, NIGDY na urlopie; egzekwowane w reduktorze,
+  `normalizeTaskMeta`/`repairEvents`/`repairProjectDocuments` i hydracji
+  chmury; `DATA_VERSION` zostaje 7). Reguły wglądu żyją w JEDNYM miejscu —
+  `src/store/confidentiality.ts`: zarząd = dział o nazwie „Zarząd" (exact po
+  trim/lower pl) LUB stanowisko z head-tokenem CEO/COO/CTO; wyjątki — wykonawca
+  przypisany do zadania i jawny uczestnik wydarzenia (`attendeeIds: []` nie
+  daje wyjątku); zadanie DZIEDZICZY maskę z utajnionego projektu (tytuły zadań
+  są treścią projektu). `accessRole`/admin nie ma głosu — administratorzy też
+  widzą maskę. STORE ZAWSZE TRZYMA PRAWDZIWE DANE — maskowanie jest wyłącznie
+  prezentacyjne (display-helpery `taskDisplayTitle`/`projectDisplayName`/
+  `eventDisplayTitle` + `isTaskContentMasked` itd.), bo `cloudMirror` diffuje
+  stan i zapisałby maskę do chmury. Wartość `isConfidential` z draftów
+  SAVE_TASK/SAVE_PROJECT/ADD_EVENT/SAVE_EVENT jest honorowana wyłącznie, gdy
+  `isBoardMember(state)`; inaczej reduktor zachowuje stan encji. Selektory
+  `searchAll` (match tylko po etykiecie maskującej/statusie/dacie dla
+  nie-widza) i `workloadCellBlocks`/`notificationsForPerson` maskują
+  centralnie. Dziennik aktywności: DELETE_TASK/DELETE_PROJECT i komunikat
+  wstawienia bloku piszą rzeczownik ogólny („usunął(a) utajnione zadanie") —
+  nigdy „#N" (numeracja się przesuwa, wpis jest niemutowalny); wpisy sprzed
+  utajnienia zostają z prawdziwym tytułem (świadome ograniczenie). To bramka
+  KLIENCKA (jak `events.manage`) — devtools/API odczyta treść; user świadomie
+  wybrał ten poziom.
 - Status completion comes from `Status.isDone`, never status order. At least one
   active and one done status must survive all status mutations.
 - Task/project writes preserve existing valid behavior. Reducer commands that

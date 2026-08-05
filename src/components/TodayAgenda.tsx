@@ -4,8 +4,9 @@
 // the task modal. Extracted verbatim from DashboardPage — same class names and
 // behavior — so both surfaces stay in sync.
 import { Link } from 'react-router-dom';
-import { shallowEqual, useSelector } from '../store/AppStore';
+import { shallowEqual, useSelector, useStoreApi } from '../store/AppStore';
 import { todayAgendaForPerson } from '../store/selectors';
+import { projectDisplayName, taskDisplayTitle } from '../store/confidentiality';
 import { StatusBadge } from './StatusBadge';
 import { useOpenTask } from './TaskModal';
 import { formatShortWithWeekday } from '../utils/dates';
@@ -23,9 +24,17 @@ export function TodayAgendaList({ personId, date }: { personId: string; date: Da
       projects: s.projects,
       clients: s.clients,
       statuses: s.statuses,
+      // Wejścia maski utajnienia (display-helpery niżej czytają PEŁNY stan przez
+      // getState()) — subskrypcja tych wycinków gwarantuje świeży re-render, gdy
+      // zmieni się zarząd/przypisania/zalogowany, bez rozszerzania propsów wierszy.
+      people: s.people,
+      departments: s.departments,
+      assignments: s.assignments,
+      currentUserId: s.currentUserId,
     }),
     shallowEqual,
   );
+  const { getState } = useStoreApi();
   const { openTask } = useOpenTask();
 
   if (agenda.timed.length === 0 && agenda.dateless.length === 0) {
@@ -57,9 +66,9 @@ export function TodayAgendaList({ personId, date }: { personId: string; date: Da
               <span className="agenda-time">
                 {formatMinutes(startM)}–{formatMinutes(endM)}
               </span>
-              <span className="dash-row-name">{task.title}</span>
+              <span className="dash-row-name">{taskDisplayTitle(getState(), task)}</span>
               <span className="agenda-meta">
-                {project?.name ?? '—'}
+                {project ? projectDisplayName(getState(), project) : '—'}
                 {client ? ` → ${client.name}` : ''}
               </span>
               <StatusBadge status={statuses.find((s) => s.id === task.statusId)} />
@@ -75,7 +84,7 @@ export function TodayAgendaList({ personId, date }: { personId: string; date: Da
             onClick={() => openTask(task.id)}
           >
             <span className="agenda-time muted">bez godziny</span>
-            <span className="dash-row-name">{task.title}</span>
+            <span className="dash-row-name">{taskDisplayTitle(getState(), task)}</span>
             <span className="agenda-meta muted">do {formatShortWithWeekday(task.endDate)}</span>
           </button>
         </li>

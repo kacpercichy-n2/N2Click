@@ -28,6 +28,7 @@ import {
   peopleWithBirthdayOnDate,
   recurrenceOccurrencesForDate,
 } from '../store/selectors';
+import { eventDisplayTitle, taskDisplayTitle } from '../store/confidentiality';
 import { personColor } from '../utils/colors';
 import { formatDuration } from '../utils/time';
 import { TreePalm } from './icons';
@@ -129,7 +130,8 @@ export function MonthView({
     // Cykliczne zadania na dany dzień — TYLKO prezentacyjny znacznik ⟳
     // (MonthView nie renderuje pojedynczych bloków); sumy/kropki bez zmian.
     const recurTitles = Array.from(
-      new Set(recurrenceOccurrencesForDate(state, d, filter).map((r) => r.task.title)),
+      // Utajniona treść: dymek/aria komórki nazywa zadanie etykietą maskującą.
+      new Set(recurrenceOccurrencesForDate(state, d, filter).map((r) => taskDisplayTitle(state, r.task))),
     );
 
     // Wydarzenia na dany dzień — TYLKO prezentacyjny znacznik 📅
@@ -138,7 +140,9 @@ export function MonthView({
     // nieobecność, i tak też czyta się w nazwie komórki.
     const dayEvents = calendarEventsForDate(state, d, filter);
     const eventTitles = Array.from(
-      new Set(dayEvents.filter((oc) => oc.event.kind !== 'urlop').map((oc) => oc.event.title)),
+      new Set(
+        dayEvents.filter((oc) => oc.event.kind !== 'urlop').map((oc) => eventDisplayTitle(state, oc.event)),
+      ),
     );
     const vacationNames = Array.from(
       new Set(

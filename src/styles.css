@@ -1465,6 +1465,20 @@ option {
   margin: 0 0 12px;
 }
 
+/* Utajniona treść (zarząd): bursztynowa plansza informacyjna w maskowanych
+   modalach zadania/projektu/wydarzenia. Informacja, nie błąd — pełny amber
+   akcent na ramce, ale tekst w normalnym kolorze (czytelność dłuższego zdania,
+   wzorzec .onboarding-note). */
+.confidential-notice {
+  color: var(--n2-text);
+  background: var(--n2-warning-soft);
+  border: 1px solid var(--n2-warning);
+  border-radius: var(--n2-radius-sm);
+  padding: 10px 12px;
+  font-size: var(--n2-type-sm);
+  margin: 0 0 16px;
+}
+
 /* Trzy liczby obok siebie („w kalendarzu · zasobnik · sprzedane") + odznaka
    planowania — na wąskim ekranie pasek się zawija zamiast wypychać kartę. */
 .estimate-compare {

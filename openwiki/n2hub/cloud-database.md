@@ -378,6 +378,19 @@ widoki-mostki). Gdzie w tekście pada `public.<tabela>` w kontekście
   must pass the admin-only INSERT policy even when it resolves to an update,
   which rejected every non-admin self-edit. `PlannerDb.update` classifies an
   RLS-silenced 0-row UPDATE as `permission` (no false „Zapisano”).
+- UTAJNIONA TREŚĆ (migracja `20260805120000_confidential_content`): addytywna
+  kolumna `is_confidential boolean not null default false` na
+  `n2click.tasks`/`projects`/`events`. ZERO zmian RLS i żadnych widoków —
+  maskowanie jest WYŁĄCZNIE kliencką bramką prezentacyjną
+  (`src/store/confidentiality.ts`), jak `events.manage`; serwer zwraca pełne
+  wiersze każdemu zalogowanemu (świadoma decyzja produktowa 2026-08-05).
+  Hydracja (`plannerData.ts`) czyta klucz-tylko-gdy-`true` (urlop NIGDY nie
+  niesie klucza), mirror (`cloudMirror.ts`) pisze zawsze boolean. Migracja
+  musi wejść na bazę PRZED deployem klienta (jawne listy kolumn selectów).
+  Edge Function `send-notification-emails` dobiera `is_confidential` projektów
+  i maskuje nazwę w linii `project_comment` („skomentował(a) projekt
+  utajniony") — typy z odbiorcą-wykonawcą (`task_assigned`/`bin_item`)
+  zachowują prawdziwe nazwy (wyjątek wglądu wykonawcy).
 
 ## Rules that change work
 

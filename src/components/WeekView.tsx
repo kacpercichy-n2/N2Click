@@ -56,6 +56,7 @@ import {
   taskGrowAllowance,
   taskIdsOfPerson,
 } from '../store/selectors';
+import { eventDisplayTitle, taskDisplayTitle } from '../store/confidentiality';
 import { buildWeekModel, type BusyInterval, personDateKey } from './weekViewModel';
 import {
   doneTickTopPx,
@@ -336,9 +337,20 @@ function DropRejectNotice({ x, y, text }: { x: number; y: number; text: string }
   );
 }
 
+/** Tytuł zadania do komunikatów liczonych W CZASIE ZDARZENIA (kolizje,
+ *  ogłoszenia) — zawsze przez maskę utajnienia, nigdy surowe `task.title`. */
+function eventTimeTaskTitle(state: AppData, taskId: string): string {
+  const task = getTask(state, taskId);
+  return task === undefined ? '' : taskDisplayTitle(state, task);
+}
+
 interface BlockProps {
   entry: WorkloadEntry;
   task: Task;
+  /** Tytuł do pokazania: prawdziwy dla widza z wglądem, „Zadanie #N" dla
+   *  pozostałych (utajniona treść). PRYMITYW liczony w rodzicu — jak `status`,
+   *  żeby `React.memo` trzymał. Kafelek nigdy nie czyta `task.title` wprost. */
+  displayTitle: string;
   person: Person;
   project?: Project;
   /**
@@ -400,6 +412,7 @@ interface BlockProps {
 function TimedBlockImpl({
   entry,
   task,
+  displayTitle,
   person,
   project,
   status,
@@ -814,7 +827,7 @@ function TimedBlockImpl({
           person.name,
           eventBusyByPersonDate.get(personDateKey(person.id, rejDate)),
           blocksByPersonDate.get(personDateKey(person.id, rejDate)) ?? [],
-          (taskId) => getTask(getState(), taskId)?.title ?? '',
+          (taskId) => eventTimeTaskTitle(getState(), taskId),
           projStart,
           blockEndMinutes(projStart, projHours),
           entry.id,
@@ -889,7 +902,7 @@ function TimedBlockImpl({
         id: w.id,
         startMinutes: w.startMinutes,
         plannedHours: w.plannedHours,
-        title: getTask(getState(), w.taskId)?.title ?? '',
+        title: eventTimeTaskTitle(getState(), w.taskId),
       }));
       const busy = eventBusyByPersonDate.get(personDateKey(person.id, date)) ?? [];
       for (const [idx, b] of busy.entries()) {
@@ -941,7 +954,7 @@ function TimedBlockImpl({
       announce(blockCapAnnouncement());
       return;
     }
-    announce(first ? blockEditAnnouncement(task.title, target) : blockTargetAnnouncement(target));
+    announce(first ? blockEditAnnouncement(displayTitle, target) : blockTargetAnnouncement(target));
   };
 
   /**
@@ -959,12 +972,12 @@ function TimedBlockImpl({
         const conflict = kbConflict(active, ctx);
         announce(
           conflict === null
-            ? blockUnchangedAnnouncement(task.title)
+            ? blockUnchangedAnnouncement(displayTitle)
             : blockRejectedAnnouncement(conflict.title, conflict),
         );
         return;
       }
-      announce(blockUnchangedAnnouncement(task.title));
+      announce(blockUnchangedAnnouncement(displayTitle));
       return;
     }
     const date = days[intent.dayIndex];
@@ -976,13 +989,13 @@ function TimedBlockImpl({
       plannedHours: intent.plannedHours,
     });
     announceCalendarPractice(intent.plannedHours !== baseHours ? 'resize' : 'move');
-    announce(blockCommitAnnouncement(task.title, kbGeometry(active)));
+    announce(blockCommitAnnouncement(displayTitle, kbGeometry(active)));
   };
 
   const revertKb = () => {
     applyKb(null);
     announce(
-      blockRevertAnnouncement(task.title, {
+      blockRevertAnnouncement(displayTitle, {
         date: entry.date,
         startMinutes: baseStart,
         plannedHours: baseHours,
@@ -995,7 +1008,7 @@ function TimedBlockImpl({
     applyKb(null);
     dispatch({ type: 'MOVE_BLOCK_TO_BIN', entryId: entry.id });
     announceCalendarPractice('bin-drop');
-    announce(blockToBinAnnouncement(task.title));
+    announce(blockToBinAnnouncement(displayTitle));
   };
 
   const onBlockKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -1167,16 +1180,16 @@ function TimedBlockImpl({
   // `pointerdown` chowa dymek, więc podczas przeciągania nigdy nic nie wisi nad
   // siatką (inwariant 7 — cykl życia wskaźnika bez zmian).
   const blockHint = !editable
-    ? `${task.title} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${formatDuration(hours)}).${statusNote}`
+    ? `${displayTitle} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${formatDuration(hours)}).${statusNote}`
     : drag?.atCap
       ? 'Limit czasu zadania — brak godzin w zasobniku'
-      : `${task.title} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${formatDuration(hours)}).${statusNote} Przeciągnij, aby przenieść; przeciągnij krawędź, aby zmienić czas trwania; kliknij prawym przyciskiem, aby wstawić blok.`;
+      : `${displayTitle} — ${person.name}: ${formatMinutes(start)}–${formatMinutes(end)} (${formatDuration(hours)}).${statusNote} Przeciągnij, aby przenieść; przeciągnij krawędź, aby zmienić czas trwania; kliknij prawym przyciskiem, aby wstawić blok.`;
 
   // Pełne zdanie o bloku dla czytnika ekranu — z tego samego budowniczego, co
   // wiersze bloków w TaskModal, tyle że z tytułem zadania. Data jedzie z
   // WYSTAWIONEJ projekcji, więc etykieta nie kłamie w trakcie edycji.
   const blockAriaLabel = blockLabel({
-    taskTitle: task.title,
+    taskTitle: displayTitle,
     personName: person.name,
     date: days[dayIndex + dayShift] ?? entry.date,
     startMinutes: start,
@@ -1233,7 +1246,7 @@ function TimedBlockImpl({
         {/* Tekst we WŁASNYM spanie, bo goły tekst we fleksie nie umie się
             elipsować — `text-overflow` działa tylko na elemencie z overflow,
             więc bez spana tytuł ucinał się twardo na krawędzi paddingu. */}
-        <span className="week-block-title-text">{task.title}</span>
+        <span className="week-block-title-text">{displayTitle}</span>
       </span>
       <span className="week-block-time">
         {formatMinutes(start)}–{formatMinutes(end)}
@@ -1373,7 +1386,7 @@ function TimedBlockImpl({
         >
           <span className="week-block-title">
             {project && <Coin paid={project.paid} size={12} />}
-            {task.title}
+            {displayTitle}
           </span>
           <span className="week-block-time">
             {formatMinutes(start)}–{formatMinutes(end)}
@@ -1426,6 +1439,8 @@ interface BinDragListeners {
 interface BinCardProps {
   entry: WorkloadEntry;
   task: Task;
+  /** Tytuł do pokazania (maska utajnienia) — prymityw z rodzica, jak `status`. */
+  displayTitle: string;
   person: Person;
   project?: Project;
   /** `taskDisplayStatus(state, task, todayStr())` — parent-computed (see BlockProps). */
@@ -1456,6 +1471,7 @@ interface BinCardProps {
 function BinCardImpl({
   entry,
   task,
+  displayTitle,
   person,
   project,
   status,
@@ -1694,7 +1710,7 @@ function BinCardImpl({
               person.name,
               eventBusyByPersonDate.get(personDateKey(person.id, rejDate)),
               blocksByPersonDate.get(personDateKey(person.id, rejDate)) ?? [],
-              (taskId) => getTask(getState(), taskId)?.title ?? '',
+              (taskId) => eventTimeTaskTitle(getState(), taskId),
               finalDrag.startMin,
               finalDrag.startMin + hoursToMinutes(entry.plannedHours),
             ),
@@ -1821,7 +1837,7 @@ function BinCardImpl({
     <>
       <span className="week-bin-block-title">
         {project && <Coin paid={project.paid} size={12} />}
-        {task.title}
+        {displayTitle}
         {entry.done === true && (
           <span className="block-done-mark" aria-label="Wykonane">
             ✓
@@ -1837,9 +1853,9 @@ function BinCardImpl({
   // `Tooltip` (scala refy), więc pomiar szerokości ducha zostaje bez zmian.
   const cardHint = editable
     ? unplaceable
-      ? `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.${statusNote} ${unplaceableHint}`
-      : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.${statusNote} Przeciągnij na siatkę albo użyj „Zaplanuj część”.`
-    : `${task.title} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.${statusNote}`;
+      ? `${displayTitle} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.${statusNote} ${unplaceableHint}`
+      : `${displayTitle} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.${statusNote} Przeciągnij na siatkę albo użyj „Zaplanuj część”.`
+    : `${displayTitle} — ${person.name}: ${formatDuration(entry.plannedHours)} bez terminu.${statusNote}`;
 
   return (
     <>
@@ -1875,7 +1891,7 @@ function BinCardImpl({
             <button
               type="button"
               className="week-bin-schedule-btn"
-              aria-label={`Zaplanuj część: ${task.title} — ${person.name}, ${formatDuration(entry.plannedHours)} w zasobniku`}
+              aria-label={`Zaplanuj część: ${displayTitle} — ${person.name}, ${formatDuration(entry.plannedHours)} w zasobniku`}
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
@@ -1958,6 +1974,8 @@ const BinCard = memo(BinCardImpl);
 // menu — no pointer lifecycle whatsoever.
 interface RecurBlockProps {
   task: Task;
+  /** Tytuł do pokazania (maska utajnienia) — prymityw z rodzica. */
+  displayTitle: string;
   hue: string;
   occurrence: RecurrenceOccurrence;
   /** `occurrenceIsDone(state, task, occurrence)` — liczone przez rodzica (memo-friendly). */
@@ -1967,8 +1985,8 @@ interface RecurBlockProps {
   onContextMenu: (task: Task, occ: RecurrenceOccurrence, e: React.MouseEvent) => void;
 }
 
-function RecurBlockImpl({ task, hue, occurrence, done, onOpen, onContextMenu }: RecurBlockProps) {
-  const title = task.title;
+function RecurBlockImpl({ task, displayTitle, hue, occurrence, done, onOpen, onContextMenu }: RecurBlockProps) {
+  const title = displayTitle;
   const top = (occurrence.startMinutes / 60) * HOUR_PX;
   const height = Math.max((occurrence.durationMinutes / 60) * HOUR_PX, MIN_BLOCK_H);
   const end = occurrence.startMinutes + occurrence.durationMinutes;
@@ -2031,6 +2049,8 @@ const RecurBlock = memo(RecurBlockImpl);
 // never opens the slot menu on top of it.
 interface EventBlockProps {
   occ: CalendarEventOccurrence;
+  /** Tytuł do pokazania (maska utajnienia) — prymityw z rodzica. */
+  displayTitle: string;
   /** Okno renderu urlopu (godziny pracy uczestnika) — tylko dla `kind: 'urlop'`. */
   vacationWindow?: { start: number; end: number };
   /** Imię osoby na urlopie (podpowiedź/nazwa dostępna); '' gdy nieznana. */
@@ -2039,7 +2059,7 @@ interface EventBlockProps {
   onOpen: (eventId: string) => void;
 }
 
-function EventBlockImpl({ occ, vacationWindow, vacationOwner, onOpen }: EventBlockProps) {
+function EventBlockImpl({ occ, displayTitle, vacationWindow, vacationOwner, onOpen }: EventBlockProps) {
   // Urlop jest zapisany jako pełna doba (0/1440), ale RENDERUJE się w oknie
   // godzin pracy osoby — inaczej zalałby całą kolumnę. Sama kolizja nadal idzie
   // z zapisanych czasów, więc blok POKAZUJE mniej, niż faktycznie zajmuje.
@@ -2052,7 +2072,7 @@ function EventBlockImpl({ occ, vacationWindow, vacationOwner, onOpen }: EventBlo
   const who = (vacationOwner ?? '').trim();
   const hint = isVacation
     ? `Urlop${who === '' ? '' : `: ${who}`}. Cały dzień. Kliknij, aby otworzyć.`
-    : `📅 ${occ.event.title} — ${formatMinutes(occ.startMinutes)}–${formatMinutes(
+    : `📅 ${displayTitle} — ${formatMinutes(occ.startMinutes)}–${formatMinutes(
         endMinutes,
       )}. Kliknij, aby otworzyć wydarzenie.`;
   return (
@@ -2090,7 +2110,7 @@ function EventBlockImpl({ occ, vacationWindow, vacationOwner, onOpen }: EventBlo
         </>
       ) : (
         <>
-          <span className="week-event-title">📅 {occ.event.title}</span>
+          <span className="week-event-title">📅 {displayTitle}</span>
           <span className="week-event-time">
             {formatMinutes(occ.startMinutes)}–{formatMinutes(endMinutes)}
           </span>
@@ -2431,7 +2451,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
     setRecurEditDurMin(occ.durationMinutes);
     setRecurMenu({
       taskId: task.id,
-      title: task.title,
+      title: taskDisplayTitle(state, task),
       date: occ.date,
       startMinutes: occ.startMinutes,
       durationMinutes: occ.durationMinutes,
@@ -2855,6 +2875,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                     key={e.id}
                     entry={e}
                     task={task}
+                    displayTitle={taskDisplayTitle(state, task)}
                     person={p}
                     project={project}
                     status={taskDisplayStatus(state, task, today)}
@@ -3075,6 +3096,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                     <EventBlock
                       key={`event-${occ.event.id}-${d}`}
                       occ={occ}
+                      displayTitle={eventDisplayTitle(state, occ.event)}
                       vacationWindow={day.vacationWindows.get(occ.event.id)}
                       vacationOwner={
                         occ.event.kind === 'urlop'
@@ -3092,6 +3114,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                     <RecurBlock
                       key={`recur-${task.id}-${occurrence.date}`}
                       task={task}
+                      displayTitle={taskDisplayTitle(state, task)}
                       hue={hue}
                       occurrence={occurrence}
                       done={occurrenceIsDone(state, task, occurrence)}
@@ -3104,6 +3127,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                       key={e.id}
                       entry={e}
                       task={task}
+                      displayTitle={taskDisplayTitle(state, task)}
                       person={person}
                       project={project}
                       status={taskDisplayStatus(state, task, today)}
@@ -3198,7 +3222,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
             {menu.step === 'menu' ? (
             <>
               <div className="context-menu-title">
-                {getTask(state, menu.entry.taskId)?.title} — {menuPerson?.name},{' '}
+                {eventTimeTaskTitle(state, menu.entry.taskId)} — {menuPerson?.name},{' '}
                 {formatDuration(menu.entry.plannedHours)}
               </div>
               {!isBinEntry(menu.entry) && (
@@ -3307,7 +3331,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
           ) : menu.step === 'schedule' ? (
             <div className="context-insert-form context-schedule-form">
               <div className="context-menu-title">
-                Zaplanuj część — {schedTask?.title} ({menuPerson?.name})
+                Zaplanuj część — {schedTask ? taskDisplayTitle(state, schedTask) : ''} ({menuPerson?.name})
               </div>
               <p className="context-menu-sub">
                 W zasobniku: {formatDuration(menu.entry.plannedHours)}
@@ -3381,7 +3405,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                     const client = proj ? getClient(state, proj.clientId) : undefined;
                     return (
                       <option key={t.id} value={t.id}>
-                        {t.title}
+                        {taskDisplayTitle(state, t)}
                         {client ? ` (${client.name})` : ''}
                       </option>
                     );

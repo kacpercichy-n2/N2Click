@@ -135,7 +135,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
       ? db.from('tasks').select('id, title').in('id', taskIds)
       : Promise.resolve({ data: [], error: null }),
     projectIds.length > 0
-      ? db.from('projects').select('id, name').in('id', projectIds)
+      ? db.from('projects').select('id, name, is_confidential').in('id', projectIds)
       : Promise.resolve({ data: [], error: null }),
   ]);
   if (profilesRes.error || tasksRes.error || projectsRes.error) {
@@ -162,6 +162,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
   for (const pr of projectsRes.data ?? []) {
     names.projects[String(pr.id)] = typeof pr.name === 'string' ? pr.name : '';
+    // Utajniona treść: `notificationLine` maskuje nazwę w `project_comment`
+    // (odbiorca wzmianki może nie mieć wglądu); typy z odbiorcą-wykonawcą
+    // zachowują prawdziwą nazwę.
+    if (pr.is_confidential === true) {
+      (names.confidentialProjectIds ??= []).push(String(pr.id));
+    }
   }
 
   // 5. Grupowanie per odbiorca (opt-out / brak adresu => pominięte).

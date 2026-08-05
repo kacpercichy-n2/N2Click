@@ -23,6 +23,7 @@ import {
   milestonesOfProject,
   tasksOfProject,
 } from '../store/selectors';
+import { projectDisplayName, taskDisplayTitle } from '../store/confidentiality';
 import { Coin } from '../components/Coin';
 import { Tooltip } from '../components/Tooltip';
 import { personColor } from '../utils/colors';
@@ -528,7 +529,7 @@ export function TimelinePage() {
       onChange: setProjectFilter,
       options: [
         { value: '', label: 'Wszystkie projekty' },
-        ...projectOptions.map((p) => ({ value: p.id, label: p.name })),
+        ...projectOptions.map((p) => ({ value: p.id, label: projectDisplayName(state, p) })),
       ],
     },
   ];
@@ -698,6 +699,8 @@ export function TimelinePage() {
                 </div>
                 {g.projects.map(({ project: p, tasks }) => {
                   const status = getStatus(state, p.statusId);
+                  // Utajniona treść: wszystkie napisy wiersza przez display-helper.
+                  const pName = projectDisplayName(state, p);
                   const overdue = p.endDate < today && !doneIds.has(p.statusId);
                   return (
                     <div key={p.id} className="timeline-project">
@@ -706,14 +709,14 @@ export function TimelinePage() {
                           {/* Etykieta bywa przycięta wielokropkiem — dymek jest
                               CZYSTO WIZUALNY, bo ten sam tekst jest już nazwą
                               dostępną przycisku. */}
-                          <Tooltip text={p.name} visualOnly>
+                          <Tooltip text={pName} visualOnly>
                             <button
                               type="button"
                               className="timeline-label-btn"
                               onClick={() => navigate(`/projects/${p.id}`)}
                             >
                               <Coin paid={p.paid} size={14} />
-                              <span className="timeline-label-text">{p.name}</span>
+                              <span className="timeline-label-text">{pName}</span>
                             </button>
                           </Tooltip>
                         </div>
@@ -728,13 +731,13 @@ export function TimelinePage() {
                             className={
                               overdue ? 'timeline-bar project overdue' : 'timeline-bar project'
                             }
-                            tooltip={`${p.name}: ${formatShortWithWeekday(p.startDate)} – ${formatShortWithWeekday(p.endDate)}${overdue ? ' (po terminie)' : ''}`}
+                            tooltip={`${pName}: ${formatShortWithWeekday(p.startDate)} – ${formatShortWithWeekday(p.endDate)}${overdue ? ' (po terminie)' : ''}`}
                             resizable
                             editable={canManageProjects}
                             onCommit={commitProject(p)}
                             onOpen={() => navigate(`/projects/${p.id}`)}
                           >
-                            {p.name}
+                            {pName}
                           </Bar>
                           {milestonesOfProject(state, p.id).map((m) => (
                             <MilestoneMark
@@ -756,8 +759,8 @@ export function TimelinePage() {
                       </div>
                       {tasks.map(({ task: t, conflictOffsets }) => (
                         <div key={t.id} className="timeline-row timeline-task-row">
-                          <Tooltip text={t.title} visualOnly>
-                            <div className="timeline-label timeline-task-label">{t.title}</div>
+                          <Tooltip text={taskDisplayTitle(state, t)} visualOnly>
+                            <div className="timeline-label timeline-task-label">{taskDisplayTitle(state, t)}</div>
                           </Tooltip>
                           <div className="timeline-track">
                             <DayStripes days={days} todayIdx={todayIdx} dayW={dayW} columns={dayCols} />
@@ -768,14 +771,14 @@ export function TimelinePage() {
                               dayW={dayW}
                               color={getStatus(state, t.statusId)?.color ?? '#94a3b8'}
                               className="timeline-bar task"
-                              tooltip={`${t.title}: ${formatShortWithWeekday(t.startDate)} – ${formatShortWithWeekday(t.endDate)}${conflictOffsets.length > 0 ? ` — ⚠ konflikty: ${conflictOffsets.length === 1 ? '1 dzień' : `${conflictOffsets.length} dni`}` : ''}`}
+                              tooltip={`${taskDisplayTitle(state, t)}: ${formatShortWithWeekday(t.startDate)} – ${formatShortWithWeekday(t.endDate)}${conflictOffsets.length > 0 ? ` — ⚠ konflikty: ${conflictOffsets.length === 1 ? '1 dzień' : `${conflictOffsets.length} dni`}` : ''}`}
                               resizable
                               editable={canManageTasks}
                               onCommit={commitTask(t)}
                               onOpen={() => openTask(t.id)}
                               conflictOffsets={conflictOffsets}
                             >
-                              {t.title}
+                              {taskDisplayTitle(state, t)}
                             </Bar>
                           </div>
                         </div>
@@ -802,8 +805,8 @@ export function TimelinePage() {
                   </div>
                   {tasks.map(({ task: t, hours, conflictOffsets }) => (
                     <div key={t.id} className="timeline-row timeline-task-row">
-                      <Tooltip text={t.title} visualOnly>
-                        <div className="timeline-label timeline-task-label">{t.title}</div>
+                      <Tooltip text={taskDisplayTitle(state, t)} visualOnly>
+                        <div className="timeline-label timeline-task-label">{taskDisplayTitle(state, t)}</div>
                       </Tooltip>
                       <div className="timeline-track">
                         <DayStripes days={days} todayIdx={todayIdx} dayW={dayW} columns={dayCols} />
@@ -814,14 +817,14 @@ export function TimelinePage() {
                           dayW={dayW}
                           color={getStatus(state, t.statusId)?.color ?? '#94a3b8'}
                           className="timeline-bar task"
-                          tooltip={`${t.title}: ${formatShortWithWeekday(t.startDate)} – ${formatShortWithWeekday(t.endDate)} — ${person.name}: ${formatDuration(hours)} zaplanowane`}
+                          tooltip={`${taskDisplayTitle(state, t)}: ${formatShortWithWeekday(t.startDate)} – ${formatShortWithWeekday(t.endDate)} — ${person.name}: ${formatDuration(hours)} zaplanowane`}
                           resizable={false}
                           editable={false}
                           onCommit={() => {}}
                           onOpen={() => openTask(t.id)}
                           conflictOffsets={conflictOffsets}
                         >
-                          {t.title}
+                          {taskDisplayTitle(state, t)}
                         </Bar>
                       </div>
                     </div>

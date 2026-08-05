@@ -9,6 +9,7 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { AnimatePresence, m } from 'motion/react';
 import { useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
+import { isBoardMember, isEventContentMasked, maskedEventLabel } from '../store/confidentiality';
 import type { EventDraft } from '../store/AppStore';
 import { isValidEventDraft, MAX_VACATION_DAYS } from '../store/commandValidation';
 import { eventDraftConflicts } from '../store/selectors';
@@ -185,7 +186,11 @@ function EventModalShell({ eventParam, prefill, onClose }: ShellProps) {
       ? can('events.vacationSelf')
       : existing?.attendeeIds.length === 1 &&
         existing.attendeeIds[0] === state.currentUserId);
-  const canManage = can('events.manage') || ownsVacation;
+  // Utajniona treść bez wglądu widza wygrywa z `events.manage` (maska dotyczy
+  // też adminów): tryb tylko-do-odczytu z planszą i samymi faktami
+  // planistycznymi. Reguły wglądu: src/store/confidentiality.ts.
+  const masked = existing !== undefined && isEventContentMasked(state, existing);
+  const canManage = (can('events.manage') || ownsVacation) && !masked;
 
   const dirtyRef = useRef(false);
   const navGuardKey = useRef<object>({});
@@ -253,17 +258,19 @@ function EventModalShell({ eventParam, prefill, onClose }: ShellProps) {
 
   const heading = notFound
     ? 'Nie znaleziono wydarzenia'
-    : isVacation
-      ? isNew
-        ? 'Nowy urlop'
-        : canManage
-          ? 'Edytuj urlop'
-          : 'Urlop'
-      : isNew
-        ? 'Nowe wydarzenie'
-        : canManage
-          ? 'Edytuj wydarzenie'
-          : 'Wydarzenie';
+    : masked
+      ? maskedEventLabel(state, existing.id)
+      : isVacation
+        ? isNew
+          ? 'Nowy urlop'
+          : canManage
+            ? 'Edytuj urlop'
+            : 'Urlop'
+        : isNew
+          ? 'Nowe wydarzenie'
+          : canManage
+            ? 'Edytuj wydarzenie'
+            : 'Wydarzenie';
 
   return (
     <>
@@ -318,6 +325,7 @@ function EventModalShell({ eventParam, prefill, onClose }: ShellProps) {
                 key={eventParam}
                 existing={existing}
                 canManage={canManage}
+                contentMasked={masked}
                 isVacation={isVacation}
                 prefill={prefill}
                 onDirtyChange={handleDirtyChange}
@@ -335,6 +343,9 @@ function EventModalShell({ eventParam, prefill, onClose }: ShellProps) {
 interface EditorProps {
   existing: CalendarEvent | undefined;
   canManage: boolean;
+  /** Utajniona treść bez wglądu widza: plansza + wyłącznie fakty planistyczne
+   *  (data, godziny, uczestnicy) w trybie tylko-do-odczytu. */
+  contentMasked: boolean;
   /** Tryb urlopu (D9): inny zestaw pól, stały tytuł i zakres dat zamiast godzin. */
   isVacation: boolean;
   prefill: EventPrefill;
@@ -416,6 +427,7 @@ function vacationEndDateRule(value: string, startDate: string): string | undefin
 function EventEditor({
   existing,
   canManage,
+  contentMasked,
   isVacation,
   prefill,
   onDirtyChange,
@@ -424,6 +436,9 @@ function EventEditor({
 }: EditorProps) {
   const { state, dispatch } = useStore();
   const readOnly = !canManage;
+  // Utajnij treść (zarząd): checkbox tylko dla zarządu i tylko dla spotkań
+  // (urlop nigdy nie niesie flagi). Reduktor ignoruje pole od innych.
+  const isBoard = isBoardMember(state);
 
   const seedDate =
     existing?.date ??
@@ -457,6 +472,7 @@ function EventEditor({
   // NIE trafia z powrotem do modelu (forma kanoniczna zdejmuje ten klucz).
   const [recurInterval, setRecurInterval] = useState(existing?.recurrence?.intervalWeeks ?? 1);
   const [until, setUntil] = useState(existing?.recurrence?.until ?? '');
+  const [confidential, setConfidential] = useState(existing?.isConfidential === true);
   const [errors, setErrors] = useState<FieldErrors>({});
 
   const markDirty = () => onDirtyChange(true);
@@ -681,6 +697,9 @@ function EventEditor({
       durationMinutes,
       attendeeIds,
       recurrence,
+      // Utajnienie idzie w draftcie tylko od zarządu — brak klucza znaczy
+      // „zachowaj stan wydarzenia" (reduktor i tak ignoruje pole od innych).
+      ...(isBoard ? { isConfidential: confidential } : {}),
     };
 
     // AUTORYTATYWNA bramka (jedno źródło prawdy z reduktorem): jeśli draft
@@ -838,24 +857,33 @@ function EventEditor({
 
   return (
     <form className="ticket-form" onSubmit={handleSubmit} noValidate>
-      <Field id="event-title" label="Tytuł *" error={errors.title}>
-        {(control) => (
-          <input
-            {...control}
-            data-autofocus
-            value={title}
-            onChange={(e) => {
-              setTitle(e.target.value);
-              markDirty();
-              recheckIfErroring('title', () => titleRule(e.target.value));
-            }}
-            onBlur={(e) => setFieldError('title', titleRule(e.target.value))}
-            placeholder="np. Spotkanie z klientem"
-            maxLength={300}
-            disabled={readOnly}
-          />
-        )}
-      </Field>
+      {/* Utajniona treść bez wglądu: bursztynowa plansza (informacja, nie błąd);
+          niżej zostają wyłącznie fakty planistyczne — data, godziny, osoby. */}
+      {contentMasked && (
+        <p className="confidential-notice" role="note">
+          Treść wydarzenia utajniona. Widoczne są tylko dane planowania: termin, godziny i osoby.
+        </p>
+      )}
+      {!contentMasked && (
+        <Field id="event-title" label="Tytuł *" error={errors.title}>
+          {(control) => (
+            <input
+              {...control}
+              data-autofocus
+              value={title}
+              onChange={(e) => {
+                setTitle(e.target.value);
+                markDirty();
+                recheckIfErroring('title', () => titleRule(e.target.value));
+              }}
+              onBlur={(e) => setFieldError('title', titleRule(e.target.value))}
+              placeholder="np. Spotkanie z klientem"
+              maxLength={300}
+              disabled={readOnly}
+            />
+          )}
+        </Field>
+      )}
 
       <div className="field-row">
         <Field id="event-date" label="Data *" error={errors.date}>
@@ -967,55 +995,86 @@ function EventEditor({
         <p className="field-hint">Bez zaznaczenia wydarzenie jest ogólnofirmowe.</p>
       </div>
 
-      <Field id="event-url" label="Link do spotkania" error={errors.meetingUrl}>
-        {(control) => (
-          <input
-            {...control}
-            value={meetingUrl}
-            onChange={(e) => {
-              setMeetingUrl(e.target.value);
-              markDirty();
-              recheckIfErroring('meetingUrl', () => meetingUrlRule(e.target.value));
-            }}
-            onBlur={(e) => setFieldError('meetingUrl', meetingUrlRule(e.target.value))}
-            placeholder="np. https://meet.example.com/spotkanie"
-            maxLength={2048}
-            disabled={readOnly}
-          />
-        )}
-      </Field>
+      {/* Utajnij treść — wyłącznie dla zarządu (reguły wglądu:
+          src/store/confidentiality.ts); bramka UX, nie zabezpieczenie. */}
+      {isBoard && !contentMasked && (
+        <div className="field">
+          <label className="checkbox-field">
+            <input
+              type="checkbox"
+              checked={confidential}
+              onChange={(e) => {
+                setConfidential(e.target.checked);
+                markDirty();
+              }}
+              disabled={readOnly}
+            />
+            <span>Utajnij treść</span>
+          </label>
+          <p className="field-hint">
+            {attendeeIds.length === 0
+              ? 'Treść zobaczy tylko zarząd. Bez wskazanych osób nikt inny nie ma wglądu.'
+              : 'Treść zobaczy tylko zarząd i wskazane osoby.'}
+          </p>
+        </div>
+      )}
 
-      <Field id="event-location" label="Biuro / lokalizacja">
-        {(control) => (
-          <input
-            {...control}
-            value={location}
-            onChange={(e) => {
-              setLocation(e.target.value);
-              markDirty();
-            }}
-            placeholder="np. Sala konferencyjna, Biuro Warszawa"
-            maxLength={300}
-            disabled={readOnly}
-          />
-        )}
-      </Field>
+      {!contentMasked && (
+        <Field id="event-url" label="Link do spotkania" error={errors.meetingUrl}>
+          {(control) => (
+            <input
+              {...control}
+              value={meetingUrl}
+              onChange={(e) => {
+                setMeetingUrl(e.target.value);
+                markDirty();
+                recheckIfErroring('meetingUrl', () => meetingUrlRule(e.target.value));
+              }}
+              onBlur={(e) => setFieldError('meetingUrl', meetingUrlRule(e.target.value))}
+              placeholder="np. https://meet.example.com/spotkanie"
+              maxLength={2048}
+              disabled={readOnly}
+            />
+          )}
+        </Field>
+      )}
 
-      <Field id="event-desc" label="Opis">
-        {(control) => (
-          <textarea
-            {...control}
-            value={description}
-            onChange={(e) => {
-              setDescription(e.target.value);
-              markDirty();
-            }}
-            rows={4}
-            disabled={readOnly}
-          />
-        )}
-      </Field>
+      {!contentMasked && (
+        <Field id="event-location" label="Biuro / lokalizacja">
+          {(control) => (
+            <input
+              {...control}
+              value={location}
+              onChange={(e) => {
+                setLocation(e.target.value);
+                markDirty();
+              }}
+              placeholder="np. Sala konferencyjna, Biuro Warszawa"
+              maxLength={300}
+              disabled={readOnly}
+            />
+          )}
+        </Field>
+      )}
 
+      {!contentMasked && (
+        <Field id="event-desc" label="Opis">
+          {(control) => (
+            <textarea
+              {...control}
+              value={description}
+              onChange={(e) => {
+                setDescription(e.target.value);
+                markDirty();
+              }}
+              rows={4}
+              disabled={readOnly}
+            />
+          )}
+        </Field>
+      )}
+
+      {!contentMasked && (
       <div className="field">
         <label>Cykliczność</label>
         <div className="event-recur-mode">
@@ -1107,6 +1166,7 @@ function EventEditor({
           </>
         )}
       </div>
+      )}
 
       {summary && (
         <p className="field-error" role="alert">

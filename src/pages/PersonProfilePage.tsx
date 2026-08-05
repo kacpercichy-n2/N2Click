@@ -36,6 +36,7 @@ import {
   taskPlannedTotalForPerson,
   wouldCreateSupervisorCycle,
 } from '../store/selectors';
+import { projectDisplayName, taskDisplayTitle } from '../store/confidentiality';
 import { can, NO_PERM_TITLE } from '../store/permissions';
 import { hashPassword } from '../utils/password';
 import { jobTitleSelectOptions } from '../utils/roleTitles';
@@ -679,7 +680,7 @@ export function PersonProfile({
                   onClick={() => navigate(`/projects/${p.id}`)}
                 >
                   <Coin paid={p.paid} size={14} />
-                  <span className="task-title">{p.name}</span>
+                  <span className="task-title">{projectDisplayName(state, p)}</span>
                   <StatusBadge status={getStatus(state, p.statusId)} />
                   <span className="muted">
                     {formatShortWithWeekday(p.startDate)} – {formatShortWithWeekday(p.endDate)}
@@ -704,7 +705,7 @@ export function PersonProfile({
                   className="project-task-main"
                   onClick={() => openTask(t.id)}
                 >
-                  <span className="task-title">{t.title}</span>
+                  <span className="task-title">{taskDisplayTitle(state, t)}</span>
                   <StatusBadge status={getStatus(state, t.statusId)} />
                   <span className="muted">
                     {formatShortWithWeekday(t.startDate)} – {formatShortWithWeekday(t.endDate)} ·{' '}

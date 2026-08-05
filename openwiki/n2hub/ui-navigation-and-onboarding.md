@@ -538,6 +538,24 @@
 ## Rules that change work
 
 - UI strings are Polish.
+- UTAJNIONA TREŚĆ (2026-08-05). Checkbox „Utajnij treść" (wzorzec
+  `.checkbox-field`) widzi WYŁĄCZNIE zarząd (`isBoardMember`,
+  `src/store/confidentiality.ts`): TaskModal (sekcja `details`), EventModal
+  (pod uczestnikami; ukryty w trybie urlopu), formularz tworzenia w
+  ProjectsPage i karta ProjectDetailPage. Wariant maskowany dla widza bez
+  wglądu: bursztynowa plansza `.confidential-notice` (tokeny `--n2-warning*`,
+  informacja — nie czerwień) + WYŁĄCZNIE fakty planistyczne. TaskModal:
+  `SectionFlags.contentMasked` w `taskModalSections.ts` zostawia
+  `period`/`people-hours`/`summary`/`allocation`/`done-blocks` (zakładka
+  „Dyskusja" znika), nagłówek = etykieta „Zadanie #N", wymuszony read-only,
+  usuwanie ukryte. EventModal: data/godziny/uczestnicy read-only, bez
+  tytułu/opisu/lokalizacji/linku, bez „Usuń" (maska WYGRYWA z
+  `events.manage` — dotyczy też adminów). ProjectDetailPage: wczesny return
+  maskowanego wariantu strony (nagłówek „Projekt #N", plansza, okres i lista
+  zadań z maskowanymi tytułami; bez opisu, dokumentów, dyskusji i edycji).
+  Wszystkie powierzchnie list/kart (Zadania, Kanban, Projekty, Timeline,
+  Obciążenie, Panel, Wydarzenia, wyszukiwarka) renderują tytuły przez
+  display-helpery — nigdy surowe `task.title`/`project.name`/`event.title`.
 - Informational onboarding must not mutate business data. The explicitly named
   advanced calendar exercise is a live-plan exception: disclose that it changes
   real data and require confirmation before starting it. Do not change calendar

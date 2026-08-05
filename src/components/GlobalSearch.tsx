@@ -34,6 +34,7 @@ import {
   currentUser as currentUserSelector,
   searchAll,
 } from '../store/selectors';
+import { projectDisplayName, taskDisplayTitle } from '../store/confidentiality';
 import type { SearchGroupKey, SearchLimits, SearchResultMeta } from '../store/selectors';
 import { can } from '../store/permissions';
 import { canViewTeam } from '../pages/teamScope';
@@ -571,6 +572,9 @@ function RowButton({
   meta: SearchResultMeta;
   query: string;
 }) {
+  // Utajniona treść: wiersz może wypłynąć przez match statusu/daty, więc render
+  // też idzie przez display-helpery (searchAll maskuje tylko matchowanie).
+  const { state } = useStore();
   switch (row.kind) {
     case 'action': {
       const Icon =
@@ -596,7 +600,7 @@ function RowButton({
         <button {...props}>
           <span className="gs-row-main">
             <span className="gs-row-title">
-              <Highlight text={row.project.name} query={query} />
+              <Highlight text={projectDisplayName(state, row.project)} query={query} />
             </span>
             <StatusBadge status={meta.statusesById.get(row.project.statusId)} />
           </span>
@@ -615,12 +619,12 @@ function RowButton({
         <button {...props}>
           <span className="gs-row-main">
             <span className="gs-row-title">
-              <Highlight text={row.task.title} query={query} />
+              <Highlight text={taskDisplayTitle(state, row.task)} query={query} />
             </span>
             <StatusBadge status={meta.statusesById.get(row.task.statusId)} />
           </span>
           <span className="gs-row-meta">
-            {project ? <Highlight text={project.name} query={query} /> : 'Bez projektu'} ·{' '}
+            {project ? <Highlight text={projectDisplayName(state, project)} query={query} /> : 'Bez projektu'} ·{' '}
             {formatShortWithWeekday(row.task.startDate)} –{' '}
             {formatShortWithWeekday(row.task.endDate)}
           </span>

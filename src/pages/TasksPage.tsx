@@ -19,6 +19,7 @@ import {
   PLANNING_STATUSES,
   type PlanningStatus,
 } from '../store/selectors';
+import { projectDisplayName, taskDisplayTitle } from '../store/confidentiality';
 import type { SavedFilterCriteria, TaskPriority } from '../types';
 import { PRIORITY_LABELS, TASK_PRIORITIES } from '../utils/priority';
 import { FilterPresets, DEFAULT_CRITERIA } from '../components/FilterPresets';
@@ -465,7 +466,7 @@ export function TasksPage() {
                     className="task-card-main task-card-m-main"
                     onClick={() => openTask(task.id)}
                   >
-                    <span className="task-card-m-title">{task.title}</span>
+                    <span className="task-card-m-title">{taskDisplayTitle(state, task)}</span>
                     {task.priority !== 'normal' && (
                       <span className="sr-only">Priorytet: {PRIORITY_LABELS[task.priority]}</span>
                     )}
@@ -473,7 +474,7 @@ export function TasksPage() {
                         reguły ścieżki co `.entity-path` (12 px, zwykły tekst) —
                         ma dodatkowo wielokropek, więc nie dokładamy klasy. */}
                     <span className="task-card-m-project">
-                      {clientProjectPath(client?.name, project?.name)}
+                      {clientProjectPath(client?.name, project ? projectDisplayName(state, project) : undefined)}
                     </span>
                     <span className="task-card-m-meta">
                       <span
@@ -514,7 +515,7 @@ export function TasksPage() {
                       }}
                       icon={<MoreHorizontal size={16} aria-hidden />}
                       onClick={() => setDetailsTaskId(task.id)}
-                      label={`Szczegóły zadania: ${task.title}`}
+                      label={`Szczegóły zadania: ${taskDisplayTitle(state, task)}`}
                       tooltip="Szczegóły zadania"
                       haspopup="dialog"
                       expanded={detailsTaskId === task.id}
@@ -525,8 +526,8 @@ export function TasksPage() {
                       <IconButton
                         variant="danger"
                         icon={<Trash2 size={16} aria-hidden />}
-                        onClick={() => handleDelete(task.id, task.title)}
-                        label={`Usuń ${task.title}`}
+                        onClick={() => handleDelete(task.id, taskDisplayTitle(state, task))}
+                        label={`Usuń ${taskDisplayTitle(state, task)}`}
                         tooltip="Usuń"
                       />
                     )}
@@ -545,7 +546,7 @@ export function TasksPage() {
                       pigułka = edytowalny status, reszta to zwykły tekst albo
                       pasek. Priorytet i stan rozplanowania zeszły z pigułek. */}
                   <div className="task-card-top">
-                    <span className="task-title">{task.title}</span>
+                    <span className="task-title">{taskDisplayTitle(state, task)}</span>
                     <StatusBadge status={getStatus(state, task.statusId)} />
                     {task.priority !== 'normal' && (
                       <span className="sr-only">Priorytet: {PRIORITY_LABELS[task.priority]}</span>
@@ -554,7 +555,7 @@ export function TasksPage() {
                     {project && (
                       <span className="entity-path">
                         <Coin paid={project.paid} size={13} />
-                        {clientProjectPath(client?.name, project.name)}
+                        {clientProjectPath(client?.name, projectDisplayName(state, project))}
                       </span>
                     )}
                   </div>
@@ -589,8 +590,8 @@ export function TasksPage() {
                       className="task-delete"
                       variant="danger"
                       icon={<Trash2 size={16} aria-hidden />}
-                      onClick={() => handleDelete(task.id, task.title)}
-                      label={`Usuń ${task.title}`}
+                      onClick={() => handleDelete(task.id, taskDisplayTitle(state, task))}
+                      label={`Usuń ${taskDisplayTitle(state, task)}`}
                       tooltip="Usuń"
                     />
                   </div>
@@ -612,11 +613,11 @@ export function TasksPage() {
           <div
             className="task-details-sheet"
             role="dialog"
-            aria-label={`Szczegóły zadania: ${detailsTask.title}`}
+            aria-label={`Szczegóły zadania: ${taskDisplayTitle(state, detailsTask)}`}
             ref={detailsSheetRef}
           >
             <div className="app-sheet-handle" aria-hidden />
-            <p className="task-details-title">{detailsTask.title}</p>
+            <p className="task-details-title">{taskDisplayTitle(state, detailsTask)}</p>
             {/* Arkusz jest powierzchnią SZCZEGÓŁÓW (odpowiednik modala), więc
                 pigułka priorytetu tu zostaje; stan rozplanowania schodzi na
                 pasek przy wierszu „Zaplanowano”, tak jak na liście. */}
@@ -629,7 +630,7 @@ export function TasksPage() {
               {detailsProject && (
                 <span className="entity-path">
                   <Coin paid={detailsProject.paid} size={13} />
-                  {clientProjectPath(detailsClient?.name, detailsProject.name)}
+                  {clientProjectPath(detailsClient?.name, projectDisplayName(state, detailsProject))}
                 </span>
               )}
             </div>

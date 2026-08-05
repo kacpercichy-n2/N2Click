@@ -18,6 +18,7 @@ import { AnimatePresence, m } from 'motion/react';
 import { useStore, usePersistence } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import { NO_PERM_TITLE } from '../store/permissions';
+import { isBoardMember, isTaskContentMasked, maskedTaskLabel } from '../store/confidentiality';
 import type { AllocationCell, TaskDraft } from '../store/AppStore';
 import type { ChecklistItem, TaskPriority } from '../types';
 import { PRIORITY_LABELS, TASK_PRIORITIES } from '../utils/priority';
@@ -403,7 +404,16 @@ function TaskModalShell({
     if (body !== null) body.scrollTop = 0;
   }, [taskParam, blockParam]);
 
-  const heading = notFound ? 'Nie znaleziono zadania' : isNew ? 'Nowe zadanie' : 'Edytuj zadanie';
+  // Utajniona treść bez wglądu: nagłówek niesie etykietę maskującą zamiast
+  // trybu edycji (edycja i tak jest wyłączona w TaskEditor).
+  const masked = existing !== undefined && isTaskContentMasked(state, existing);
+  const heading = notFound
+    ? 'Nie znaleziono zadania'
+    : masked
+      ? maskedTaskLabel(state, existing.id)
+      : isNew
+        ? 'Nowe zadanie'
+        : 'Edytuj zadanie';
 
   return (
     <>
@@ -457,7 +467,7 @@ function TaskModalShell({
                   przycisk stał tuż obok „Zamknij" i był pierwszą rzeczą, w którą
                   wpadało oko. Sam przepływ potwierdzenia (skutki + `requireAck`)
                   jest BEZ ZMIAN. */}
-              {existing && canManageTasks && (
+              {existing && canManageTasks && !masked && (
                 <OverflowMenu
                   label="Więcej działań"
                   items={[
@@ -544,6 +554,7 @@ function serializeDraft(v: {
   allocations: AllocMap;
   startTimes: AllocStartMap;
   soldRawByPerson: Record<string, string>;
+  confidential: boolean;
 }): string {
   return JSON.stringify({
     title: v.title,
@@ -553,6 +564,7 @@ function serializeDraft(v: {
     priority: v.priority,
     workCategoryId: v.workCategoryId,
     departmentId: v.departmentId,
+    confidential: v.confidential,
     // Order-sensitive: item identity + text + done state all participate in dirty.
     checklist: v.checklist.map((c) => [c.id, c.text, c.done]),
     startDate: v.startDate,
@@ -595,7 +607,14 @@ export function TaskEditor({
   const { external } = usePersistence();
   const confirm = useConfirm();
   const canManage = useCan()('tasks.manage');
-  const readOnly = !canManage;
+  const existingForMask = taskId ? state.tasks.find((t) => t.id === taskId) : undefined;
+  // Utajniona treść bez wglądu widza: edytor przechodzi w tryb tylko-do-odczytu
+  // z maską sekcji (model w taskModalSections). Zarząd i przypisani widzą pełny
+  // formularz.
+  const contentMasked =
+    existingForMask !== undefined && isTaskContentMasked(state, existingForMask);
+  const isBoard = isBoardMember(state);
+  const readOnly = !canManage || contentMasked;
   // Telefon (≤ 760 px) dostaje pionową LISTĘ dni zamiast 480-pikselowej tabeli
   // przydziału — ten sam breakpoint, co dolny pasek zakładek i widok dnia.
   // Hook stoi wśród pozostałych, PRZED jakimkolwiek wcześniejszym wyjściem.
@@ -678,6 +697,9 @@ export function TaskEditor({
   const [departmentId, setDepartmentId] = useState<string>(existing?.departmentId ?? '');
   const [checklist, setChecklist] = useState<ChecklistItem[]>(existing?.checklist ?? []);
   const [checklistInput, setChecklistInput] = useState('');
+  // Utajnij treść (zarząd): checkbox widoczny tylko dla zarządu; wartość idzie
+  // w draftcie WYŁĄCZNIE od zarządu (reduktor i tak ignoruje ją od innych).
+  const [confidential, setConfidential] = useState(existing?.isConfidential === true);
 
   // ---- Zakładki + sekcje zwijane (PKG-20260728-taskmodal-structure) ----
   // Kolejność i widoczność sekcji liczy CZYSTY `taskModalSections.ts`; tutaj
@@ -914,6 +936,7 @@ export function TaskEditor({
     allocations,
     startTimes,
     soldRawByPerson,
+    confidential,
   });
   const snapshotRef = useRef<string | null>(null);
   if (snapshotRef.current === null) snapshotRef.current = currentSerialized;
@@ -1220,6 +1243,9 @@ export function TaskEditor({
     // Sygnał tworzenia szkicu (reduktor używa go tylko przy tworzeniu; przy
     // edycji zachowuje stan zadania). Brak wpływu na walidację draftu.
     isDraft,
+    // Utajnienie: pole idzie w draftcie tylko od zarządu — brak klucza znaczy
+    // „zachowaj stan zadania", więc edycja przez nie-zarząd niczego nie zmienia.
+    ...(isBoard ? { isConfidential: confidential } : {}),
   };
   const assigneesValid = assigneeIds.every((id) => hasEntity(state, 'person', id));
   // IA-12 — jedna lista zamiast anonimowego boolean-a: te same bramki, ale z
@@ -1439,6 +1465,7 @@ export function TaskEditor({
     hasAssignees: assignedPeople.length > 0,
     hasBlocks: taskBlocks.length > 0,
     commentCount,
+    contentMasked,
   };
   const sections = visibleSections(sectionFlags);
   const tabs = visibleTabs(sectionFlags);
@@ -1626,6 +1653,24 @@ export function TaskEditor({
             )}
           </Field>
         </div>
+        {/* Utajnij treść — wyłącznie dla zarządu (reguły wglądu:
+            src/store/confidentiality.ts). Reduktor i tak ignoruje pole od
+            innych, więc checkbox to bramka UX, nie zabezpieczenie. */}
+        {isBoard && (
+          <div className="field">
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={confidential}
+                onChange={(e) => setConfidential(e.target.checked)}
+                disabled={readOnly}
+                aria-describedby={roDesc}
+              />
+              <span>Utajnij treść</span>
+            </label>
+            <p className="field-hint">Treść zobaczy tylko zarząd i osoby przypisane.</p>
+          </div>
+        )}
       </div>
     ),
 
@@ -2361,8 +2406,16 @@ export function TaskEditor({
     <div className="editor task-editor">
       {readOnly && (
         <span id={roDescId} className="sr-only">
-          {NO_PERM_TITLE} do edycji zadań.
+          {contentMasked ? 'Treść zadania utajniona.' : `${NO_PERM_TITLE} do edycji zadań.`}
         </span>
+      )}
+      {/* Utajniona treść bez wglądu: bursztynowa (nie czerwona — to informacja,
+          nie błąd) plansza nad sekcjami; niżej zostają wyłącznie fakty
+          planistyczne z modelu sekcji (`contentMasked`). */}
+      {contentMasked && (
+        <p className="confidential-notice" role="note">
+          Treść zadania utajniona. Widoczne są tylko dane planowania: terminy, godziny i osoby.
+        </p>
       )}
       {/* Pasek zakładek renderuje się DOPIERO przy drugiej widocznej zakładce —
           nowe zadanie bez okresu ma jedną i nie pokazuje pustego przełącznika.

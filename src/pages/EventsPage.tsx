@@ -4,6 +4,7 @@
 // Wydarzenia są CZYSTO PREZENTACYJNE — nie tworzą zaplanowanych godzin.
 import { useMemo, useState } from 'react';
 import { useStore } from '../store/AppStore';
+import { eventDisplayTitle, isEventContentMasked } from '../store/confidentiality';
 import { useCan } from '../store/useCan';
 import type { CalendarEvent } from '../types';
 import { formatShortWithWeekday, todayStr, WEEKDAY_LABELS } from '../utils/dates';
@@ -113,8 +114,11 @@ export function EventsPage() {
             const end = e.startMinutes + e.durationMinutes;
             const recurLabel = recurrenceLabel(e);
             const isVacation = e.kind === 'urlop';
+            // Utajniona treść: tytuł przez etykietę maskującą, lokalizacja i
+            // link spotkania znikają (termin, godziny i osoby zostają).
+            const masked = isEventContentMasked(state, e);
             const joinHref =
-              e.meetingUrl.trim() !== '' ? normalizeProjectDocumentUrl(e.meetingUrl) : null;
+              !masked && e.meetingUrl.trim() !== '' ? normalizeProjectDocumentUrl(e.meetingUrl) : null;
             return (
               <li key={e.id} className="event-row">
                 <button
@@ -147,13 +151,13 @@ export function EventsPage() {
                           <TreePalm size={14} aria-hidden />{' '}
                         </>
                       )}
-                      {e.title}
+                      {eventDisplayTitle(state, e)}
                     </span>
                     <span className="event-row-meta">
                       {e.attendeeIds.length > 0
                         ? e.attendeeIds.map(nameOf).join(', ')
                         : 'Ogólnofirmowe'}
-                      {e.location.trim() !== '' ? ` · ${e.location}` : ''}
+                      {!masked && e.location.trim() !== '' ? ` · ${e.location}` : ''}
                     </span>
                     {recurLabel && <span className="event-row-badge">{recurLabel}</span>}
                   </span>

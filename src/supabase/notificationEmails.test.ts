@@ -147,6 +147,18 @@ describe('notificationLine — polska treść per typ', () => {
     ).toBe('Nowa praca w zasobniku: „Projekt logo” (projekt „Rebranding”)');
   });
 
+  it('project_comment maskuje nazwę utajnionego projektu; typy z odbiorcą-wykonawcą nie', () => {
+    const names = { ...NAMES, confidentialProjectIds: ['proj-1'] };
+    expect(
+      notificationLine(notif({ id: 'n', type: 'project_comment', payload: { projectId: 'proj-1', actorId: 'act-1' } }), names),
+    ).toBe('Anna Nowak skomentował(a) projekt utajniony');
+    // Odbiorca `bin_item`/`task_assigned` to wykonawca (wyjątek wglądu) —
+    // prawdziwa nazwa zostaje.
+    expect(
+      notificationLine(notif({ id: 'n', type: 'bin_item', payload: { taskId: 'task-1', projectId: 'proj-1' } }), names),
+    ).toBe('Nowa praca w zasobniku: „Projekt logo” (projekt „Rebranding”)');
+  });
+
   it('braki nazw degradują się miękko (Ktoś / —)', () => {
     const empty: NameLookups = { actors: {}, tasks: {}, projects: {} };
     expect(notificationLine(notif({ id: 'n', payload: {} }), empty)).toBe(

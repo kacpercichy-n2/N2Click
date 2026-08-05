@@ -54,6 +54,7 @@ import {
   unplannedTasksForPerson,
   weekBlocksForPerson,
 } from '../store/selectors';
+import { projectDisplayName, taskDisplayTitle } from '../store/confidentiality';
 import { Avatar } from '../components/Avatar';
 // Ikony idą przez centralny moduł (patrz components/icons.ts), nigdy wprost
 // z `lucide-react`.
@@ -300,8 +301,13 @@ export function DashboardPage() {
         target,
         preview: {
           who: n.actorName,
-          what: task ? task.title : (project?.name ?? '—'),
-          where: project?.name ?? '—',
+          // Utajniona treść: podgląd przez display-helpery (maska dla nie-widza).
+          what: task
+            ? taskDisplayTitle(state, task)
+            : project
+              ? projectDisplayName(state, project)
+              : '—',
+          where: project ? projectDisplayName(state, project) : '—',
         },
         openLabel: target.kind === 'task' ? 'Otwórz zadanie' : 'Otwórz projekt',
         read: n.read,
@@ -356,7 +362,7 @@ export function DashboardPage() {
   const taskMeta = (task: Task): string => {
     const project = getProject(state, task.projectId);
     const client = project ? getClient(state, project.clientId) : undefined;
-    return `${project?.name ?? '—'}${client ? ` → ${client.name}` : ''}`;
+    return `${project ? projectDisplayName(state, project) : '—'}${client ? ` → ${client.name}` : ''}`;
   };
 
   // ——— Kafelki wspólne dla obu układów ———————————————————————————————
@@ -502,7 +508,7 @@ export function DashboardPage() {
           {binRows.map(({ task, hours }) => (
             <li key={task.id}>
               <button type="button" className="dash-row" onClick={() => openTask(task.id)}>
-                <span className="dash-row-name">{task.title}</span>
+                <span className="dash-row-name">{taskDisplayTitle(state, task)}</span>
                 <span className="agenda-meta">{taskMeta(task)}</span>
                 {/* Stan rozplanowania jako pasek, nie pigułka — ta sama reguła
                     co na liście zadań i karcie projektu. */}
@@ -524,7 +530,7 @@ export function DashboardPage() {
       <div className="dash-card-foot">
         <Link to="/calendar" className="btn primary dash-plan-cta">
           {binPlanCtaLabel(
-            binRows[0] ? { title: binRows[0].task.title, hours: binRows[0].hours } : undefined,
+            binRows[0] ? { title: taskDisplayTitle(state, binRows[0].task), hours: binRows[0].hours } : undefined,
           )}{' '}
           →
         </Link>
@@ -563,7 +569,7 @@ export function DashboardPage() {
                       className="dash-row my-work-alert-row"
                       onClick={() => openTask(task.id)}
                     >
-                      <span className="dash-row-name">{task.title}</span>
+                      <span className="dash-row-name">{taskDisplayTitle(state, task)}</span>
                       <span className="agenda-meta">do {formatShortWithWeekday(task.endDate)}</span>
                     </button>
                   </li>
@@ -607,7 +613,7 @@ export function DashboardPage() {
                       className="dash-row my-work-alert-row"
                       onClick={() => openTask(task.id)}
                     >
-                      <span className="dash-row-name">{task.title}</span>
+                      <span className="dash-row-name">{taskDisplayTitle(state, task)}</span>
                       <span className="agenda-meta">{taskMeta(task)}</span>
                     </button>
                   </li>
@@ -890,7 +896,7 @@ export function DashboardPage() {
                         return (
                           <li key={w.id}>
                             <span className="week-strip-time">{formatMinutes(w.startMinutes)}</span>{' '}
-                            {task?.title ?? '—'}
+                            {task ? taskDisplayTitle(state, task) : '—'}
                           </li>
                         );
                       })}

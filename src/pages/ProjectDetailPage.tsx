@@ -6,6 +6,12 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useStore, usePersistence } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import { NO_PERM_TITLE } from '../store/permissions';
+import {
+  isBoardMember,
+  isProjectContentMasked,
+  maskedProjectLabel,
+  taskDisplayTitle,
+} from '../store/confidentiality';
 import type { ProjectDraft } from '../store/AppStore';
 import type { ProjectDocument, ProjectDocumentKind } from '../types';
 import {
@@ -104,6 +110,10 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   // Spółka wykonawcza projektu (2026-07-22): jawne przypisanie ze słownika,
   // steruje domyślnym filtrem widoków — patrz types.Project.companyId.
   const [companyId, setCompanyId] = useState(project?.companyId ?? '');
+  // Utajnij treść (zarząd) — checkbox tylko dla zarządu; reduktor i tak
+  // ignoruje pole od innych (reguły wglądu: src/store/confidentiality.ts).
+  const isBoard = isBoardMember(state);
+  const [confidential, setConfidential] = useState(project?.isConfidential === true);
   const [error, setError] = useState('');
 
   // ---- Formularz dokumentów (jeden formularz obsługuje dodawanie i edycję) ----
@@ -123,7 +133,8 @@ function ProjectDetail({ projectId }: { projectId: string }) {
       endDate !== project.endDate ||
       departmentId !== project.departmentId ||
       serviceTypeId !== project.serviceTypeId ||
-      companyId !== (project.companyId ?? '')
+      companyId !== (project.companyId ?? '') ||
+      (isBoard && confidential !== (project.isConfidential === true))
     : false;
   const { saveError, external } = usePersistence();
   const { status, savedAtLabel, markSaved } = useSaveStatus(dirty, saveError !== null);
@@ -164,6 +175,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
       departmentId,
       serviceTypeId,
       companyId,
+      ...(isBoard ? { isConfidential: confidential } : {}),
     };
     dispatch({ type: 'SAVE_PROJECT', projectId: project.id, draft });
     // Normalize local state to exactly what was persisted so `dirty` clears
@@ -211,6 +223,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
       departmentId,
       serviceTypeId,
       companyId,
+      confidential,
     ]),
     save,
   });
@@ -218,6 +231,77 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   // Deleted mid-render (e.g. right after the delete dispatch, before the route
   // change lands): render nothing for that frame.
   if (!project) return null;
+
+  // Utajniona treść bez wglądu widza (dotyczy też adminów): zamiast karty
+  // edycji renderujemy wariant maskowany — etykieta „Projekt #N", bursztynowa
+  // plansza i wyłącznie fakty planistyczne (status, okres, zadania z
+  // zamaskowanymi tytułami). Bez opisu, dokumentów, dyskusji i edycji.
+  // Wczesny return stoi PO wszystkich hookach (stała kolejność hooków).
+  if (isProjectContentMasked(state, project)) {
+    const maskedTasks = orderedTasksOfProject(state, project.id).filter(
+      (t) => t.isDraft !== true,
+    );
+    return (
+      <section className="page editor">
+        <div className="page-head">
+          <h1 className="project-detail-title">
+            {maskedProjectLabel(state, project.id)}
+            <StatusBadge status={getStatus(state, project.statusId)} />
+          </h1>
+          <div className="page-head-actions">
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={() => navigate('/projects')}
+            >
+              Wróć
+            </button>
+          </div>
+        </div>
+        <p className="confidential-notice" role="note">
+          Treść projektu utajniona. Widoczne są tylko dane planowania: terminy, godziny i osoby.
+        </p>
+        <div className="editor-section">
+          <h2>Okres</h2>
+          <p className="field-hint">
+            {formatShortWithWeekday(project.startDate)} – {formatShortWithWeekday(project.endDate)}
+            {' · '}zaplanowano {formatDuration(projectPlannedTotal(state, project.id))}
+          </p>
+        </div>
+        <div className="editor-section">
+          <h2>Zadania</h2>
+          {maskedTasks.length === 0 ? (
+            <p className="field-hint">W tym projekcie nie ma jeszcze zadań.</p>
+          ) : (
+            <ul className="project-task-list">
+              {maskedTasks.map((t) => (
+                <li key={t.id} className="project-task-row">
+                  <button
+                    type="button"
+                    className="project-task-main"
+                    onClick={() => openTask(t.id)}
+                  >
+                    <span className="task-title">{taskDisplayTitle(state, t)}</span>
+                    <StatusBadge status={getStatus(state, t.statusId)} />
+                    <span className="muted">
+                      {formatShortWithWeekday(t.startDate)} – {formatShortWithWeekday(t.endDate)} ·{' '}
+                      {formatDuration(taskPlannedTotal(state, t.id))}
+                    </span>
+                    <span className="task-card-assignees">
+                      {assigneesOfTask(state, t.id).map((p) => (
+                        <PersonChip key={p.id} person={p} />
+                      ))}
+                    </span>
+                    <ChevronRight className="card-chevron" size={16} aria-hidden />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </section>
+    );
+  }
 
   const tasks = orderedTasksOfProject(state, project.id);
   // Szkice zadań tego projektu — widoczne tylko tutaj, publikowane atomowo jedną
@@ -522,6 +606,23 @@ function ProjectDetail({ projectId }: { projectId: string }) {
             {canPaid && ' (kliknij monetę, aby przełączyć)'}
           </span>
         </div>
+        {/* Utajnij treść — wyłącznie dla zarządu (reguły wglądu:
+            src/store/confidentiality.ts); bramka UX, nie zabezpieczenie. */}
+        {isBoard && (
+          <div className="field">
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={confidential}
+                onChange={(e) => setConfidential(e.target.checked)}
+                disabled={!canManage}
+                aria-describedby={disabledDesc}
+              />
+              <span>Utajnij treść</span>
+            </label>
+            <p className="field-hint">Treść zobaczy tylko zarząd i osoby przypisane do zadań.</p>
+          </div>
+        )}
         {error && <p className="field-error">{error}</p>}
         {(dirty || status !== 'clean') && (
           <div className="editor-actions editor-actions-sticky">
@@ -579,7 +680,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
                   className="project-task-main"
                   onClick={() => openTask(t.id)}
                 >
-                  <span className="task-title">{t.title}</span>
+                  <span className="task-title">{taskDisplayTitle(state, t)}</span>
                   {t.isDraft === true && (
                     <Tooltip text="Szkic — nieopublikowane" visualOnly>
                       <span className="project-badge project-badge-draft">szkic</span>
@@ -617,7 +718,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
                       onClick={() =>
                         dispatch({ type: 'REORDER_PROJECT_TASK', taskId: t.id, direction: -1 })
                       }
-                      aria-label={`Przesuń zadanie „${t.title}” wyżej`}
+                      aria-label={`Przesuń zadanie „${taskDisplayTitle(state, t)}” wyżej`}
                     >
                       ↑
                     </button>
@@ -628,7 +729,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
                       onClick={() =>
                         dispatch({ type: 'REORDER_PROJECT_TASK', taskId: t.id, direction: 1 })
                       }
-                      aria-label={`Przesuń zadanie „${t.title}” niżej`}
+                      aria-label={`Przesuń zadanie „${taskDisplayTitle(state, t)}” niżej`}
                     >
                       ↓
                     </button>

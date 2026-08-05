@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
+import { isBoardMember, projectDisplayName } from '../store/confidentiality';
 import type { ProjectDraft } from '../store/AppStore';
 import {
   activeStatuses,
@@ -106,6 +107,10 @@ export function ProjectsPage() {
   const [clientId, setClientId] = useState('');
   const [startDate, setStartDate] = useState(todayStr());
   const [endDate, setEndDate] = useState(addDaysStr(todayStr(), 13));
+  // Utajnij treść (zarząd) — checkbox tylko dla zarządu; reduktor i tak
+  // ignoruje pole od innych (reguły wglądu: src/store/confidentiality.ts).
+  const isBoard = isBoardMember(state);
+  const [confidential, setConfidential] = useState(false);
   const [error, setError] = useState('');
 
   // Client creation lives ONLY in the Klienci module — the form just picks one.
@@ -278,9 +283,11 @@ export function ProjectsPage() {
       serviceTypeId: '',
       // Domyślna spółka wykonawcza = spółka twórcy; zmiana w karcie projektu.
       companyId: currentUser(state)?.companyId ?? '',
+      ...(isBoard ? { isConfidential: confidential } : {}),
     };
     dispatch({ type: 'SAVE_PROJECT', projectId: null, draft });
     setName('');
+    setConfidential(false);
     setError('');
     setCreating(false);
   };
@@ -349,6 +356,19 @@ export function ProjectsPage() {
               />
             </div>
           </div>
+          {isBoard && (
+            <div className="field">
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={confidential}
+                  onChange={(e) => setConfidential(e.target.checked)}
+                />
+                <span>Utajnij treść</span>
+              </label>
+              <p className="field-hint">Treść zobaczy tylko zarząd i osoby przypisane do zadań.</p>
+            </div>
+          )}
           {error && <p className="field-error">{error}</p>}
           <div className="editor-actions">
             <button type="submit" className="btn primary">
@@ -426,7 +446,8 @@ export function ProjectsPage() {
                       onClick={() => navigate(`/projects/${p.id}`)}
                     >
                       <div className="task-card-top">
-                        <span className="task-title">{p.name}</span>
+                        {/* Utajniona treść: nie-widz dostaje etykietę „Projekt #N". */}
+                        <span className="task-title">{projectDisplayName(state, p)}</span>
                         <StatusBadge status={getStatus(state, p.statusId)} />
                         <span className="project-card-coin" data-tour="projects.coin">
                           <Coin paid={p.paid} />
@@ -470,7 +491,7 @@ export function ProjectsPage() {
                           <button
                             type="button"
                             className="card-action-btn"
-                            aria-label={`Dodaj zadanie do ${p.name}`}
+                            aria-label={`Dodaj zadanie do ${projectDisplayName(state, p)}`}
                             onClick={(e) => {
                               e.stopPropagation();
                               openNewTask(p.id);

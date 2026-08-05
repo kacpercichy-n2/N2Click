@@ -128,6 +128,15 @@ export interface Project {
   // zapisie (jak `Task.checklist`). Legacy payload bez pola dostaje [] w
   // repairze wczytania (storage.repairProjectDocuments).
   documents: ProjectDocument[];
+  // Utajniona treść (zarząd): nazwa/opis/dokumenty maskowane dla wszystkich
+  // poza zarządem i osobami przypisanymi do zadań projektu — reguły wglądu w
+  // src/store/confidentiality.ts. WYŁĄCZNIE bramka prezentacyjna po stronie
+  // klienta (jak `events.manage`) — store trzyma PRAWDZIWE dane, maskuje
+  // dopiero warstwa selektorów/renderu. FORMA KANONICZNA: klucz obecny
+  // wyłącznie jako literalne `true` — egzekwowane w reduktorze, repairze
+  // wczytania i hydracji chmury. OPCJONALNE i ADDYTYWNE (kolumna
+  // `projects.is_confidential`, DATA_VERSION zostaje 7).
+  isConfidential?: true;
   createdAt: string; // ISO timestamp
   updatedAt: string; // ISO timestamp
 }
@@ -204,6 +213,16 @@ export interface Task {
   // po prostu nie zgłasza przypisania — łagodna degradacja). Klucz obecny
   // wyłącznie gdy niesie niepuste id — egzekwowane w repairze i hydracji.
   createdBy?: string;
+  // Utajniona treść (zarząd): tytuł/opis/checklista/dyskusja maskowane dla
+  // wszystkich poza zarządem i przypisanymi wykonawcami — reguły wglądu w
+  // src/store/confidentiality.ts. WYŁĄCZNIE bramka prezentacyjna po stronie
+  // klienta (jak `events.manage`) — store trzyma PRAWDZIWE dane, maskuje
+  // dopiero warstwa selektorów/renderu (kalendarz nadal pokazuje blok, osobę
+  // i godziny). FORMA KANONICZNA: klucz obecny wyłącznie jako literalne
+  // `true` — egzekwowane w reduktorze, `normalizeTaskMeta` i hydracji chmury.
+  // OPCJONALNE i ADDYTYWNE (kolumna `tasks.is_confidential`, DATA_VERSION
+  // zostaje 7).
+  isConfidential?: true;
   createdAt: string; // ISO timestamp
   updatedAt: string; // ISO timestamp
 }
@@ -470,6 +489,15 @@ export interface CalendarEvent {
    *  `kind === 'urlop'` i `endDate > date`; zakres `date..endDate` ma najwyżej
    *  `MAX_VACATION_DAYS` dni (lustro limitu okresu zadania). */
   endDate?: DateStr;
+  /** Utajniona treść (zarząd): tytuł/opis/lokalizacja/link maskowane dla
+   *  wszystkich poza zarządem i JAWNYMI uczestnikami (`attendeeIds: []` nie
+   *  daje wyjątku) — reguły wglądu w src/store/confidentiality.ts. Bramka
+   *  wyłącznie prezentacyjna po stronie klienta; store trzyma PRAWDZIWE dane.
+   *  FORMA KANONICZNA: klucz obecny wyłącznie jako literalne `true` i NIGDY
+   *  przy `kind === 'urlop'` — egzekwowane w reduktorze, `repairEvents` i
+   *  hydracji chmury. OPCJONALNE i ADDYTYWNE (kolumna
+   *  `events.is_confidential`, DATA_VERSION zostaje 7). */
+  isConfidential?: true;
   createdAt: string; // ISO timestamp
   updatedAt: string; // ISO timestamp; odświeżany przy każdym zapisie
 }

@@ -1025,6 +1025,10 @@ export function normalizeTaskMeta(data: AppData): AppData {
     const createdBy = str(t.createdBy);
     if (createdBy !== '') base.createdBy = createdBy;
     else delete base.createdBy;
+    // Utajniona treść (`isConfidential`, forma kanoniczna): klucz obecny
+    // wyłącznie jako literalne `true` — `false` / śmieci / legacy => nieobecny.
+    if (t.isConfidential === true) base.isConfidential = true;
+    else delete base.isConfidential;
     return base;
   });
 
@@ -1104,7 +1108,12 @@ export function repairProjectDocuments(data: AppData): AppData {
     }
     // Spółka wykonawcza (pole ADDYTYWNE, opcjonalne): brak / nie-string => ''
     // na każdym wczytaniu — jak `Person.companyId` w migratePerson.
-    return { ...(raw as Project), documents, companyId: str(p.companyId) };
+    const base: Project = { ...(raw as Project), documents, companyId: str(p.companyId) };
+    // Utajniona treść (`isConfidential`, forma kanoniczna): klucz obecny
+    // wyłącznie jako literalne `true` — `false` / śmieci / legacy => nieobecny.
+    if (p.isConfidential === true) base.isConfidential = true;
+    else delete base.isConfidential;
+    return base;
   });
   return { ...data, projects };
 }
@@ -1175,6 +1184,8 @@ export function repairTickets(data: AppData): AppData {
  *    `canonicalVacationEndDate` (zły/przed kotwicą/ponad 92 dni => brak klucza).
  *    Zła liczba uczestników NIE wyrzuca wiersza — łagodna degradacja jak przy
  *    danglingu. Nieznana wartość `kind` => spotkanie (klucz zdjęty).
+ * 7. `isConfidential` przez formę kanoniczną (klucz wyłącznie jako literalne
+ *    `true`, nigdy na urlopie); `false` / śmieci / legacy => brak klucza.
  */
 export function repairEvents(data: AppData): AppData {
   const str = (v: unknown): string => (typeof v === 'string' ? v : '');
@@ -1239,6 +1250,9 @@ export function repairEvents(data: AppData): AppData {
       ...(recurrence ? { recurrence } : {}),
       ...(isVacation ? { kind: 'urlop' as const } : {}),
       ...(endDate ? { endDate } : {}),
+      // Utajniona treść (forma kanoniczna): klucz wyłącznie jako literalne
+      // `true` i NIGDY na urlopie — `false` / śmieci / legacy => nieobecny.
+      ...(!isVacation && e.isConfidential === true ? { isConfidential: true as const } : {}),
       createdAt: str(e.createdAt),
       updatedAt: str(e.updatedAt),
     });

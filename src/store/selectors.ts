@@ -36,6 +36,12 @@ import {
 import { addDaysStr, isBirthdayOn, isValidDateStr, parseDate } from '../utils/dates';
 import { expandOccurrences, type RecurrenceOccurrence } from '../utils/recurrence';
 import { argsKey, createKeyedCache, createRefCache, filterKey } from './selectorCache';
+import {
+  canViewProjectContent,
+  canViewTaskContent,
+  projectDisplayName,
+  taskDisplayTitle,
+} from './confidentiality';
 import { MAX_VACATION_DAYS } from './commandValidation';
 import { CONTENT_PLAN_STATUSES, isMonthKey, isPostInMonth } from '../contentplan/domain';
 
@@ -1585,8 +1591,13 @@ export function searchAll(
   const projects = collectLimited(
     state.projects,
     (p) =>
-      normalize(p.name).includes(q) ||
-      normalize(p.description).includes(q) ||
+      // Utajniony projekt bez wglądu widza NIGDY nie matchuje po prawdziwej
+      // nazwie/opisie (przeciek treści przez podpowiedź wyszukiwarki); zamiast
+      // tego matchuje po etykiecie maskującej („projekt #2"). Status i daty to
+      // jawne fakty planistyczne — zostają.
+      (canViewProjectContent(state, p)
+        ? normalize(p.name).includes(q) || normalize(p.description).includes(q)
+        : normalize(projectDisplayName(state, p)).includes(q)) ||
       matchedStatusIds.has(p.statusId) ||
       inPeriod(p.startDate, p.endDate),
     groupLimit(limits, 'projects'),
@@ -1598,8 +1609,11 @@ export function searchAll(
       // Szkic jest widoczny wyłącznie w widoku projektu — nie w wynikach
       // wyszukiwania (ta sama lista wykluczeń, co TasksPage/kanban/agenda).
       isPublishedTask(t) &&
-      (normalize(t.title).includes(q) ||
-        normalize(t.description).includes(q) ||
+      // Utajnione zadanie bez wglądu: match wyłącznie po etykiecie maskującej,
+      // statusie i dacie — nigdy po prawdziwym tytule/opisie (jak projekty).
+      ((canViewTaskContent(state, t)
+        ? normalize(t.title).includes(q) || normalize(t.description).includes(q)
+        : normalize(taskDisplayTitle(state, t)).includes(q)) ||
         matchedStatusIds.has(t.statusId) ||
         inPeriod(t.startDate, t.endDate)),
     groupLimit(limits, 'tasks'),
@@ -1904,8 +1918,10 @@ export function workloadCellBlocks(
       return {
         entry,
         taskId: entry.taskId,
-        taskTitle: task?.title ?? 'Zadanie',
-        projectName: project?.name ?? '',
+        // Utajniona treść: tytuł/nazwy przez display-helpery — popover komórki
+        // obciążenia pokazuje nie-widzowi etykietę „Zadanie #N", nie treść.
+        taskTitle: task === undefined ? 'Zadanie' : taskDisplayTitle(state, task),
+        projectName: project === undefined ? '' : projectDisplayName(state, project),
         clientName: client?.name ?? '',
         plannedHours: entry.plannedHours,
         startMinutes: entry.startMinutes,
@@ -1992,10 +2008,17 @@ function commentTargetLabel(
 ): { label: string; taskId: string } {
   if (entityType === 'task') {
     const task = getTask(state, entityId);
-    return { label: task ? task.title : '', taskId: task ? task.id : '' };
+    // Utajniona treść: etykieta feedu przez display-helper (maska dla nie-widza).
+    return { label: task ? taskDisplayTitle(state, task) : '', taskId: task ? task.id : '' };
   }
   const project = getProject(state, entityId);
-  return { label: project ? `projekt „${project.name}”` : '', taskId: '' };
+  if (!project) return { label: '', taskId: '' };
+  return {
+    label: canViewProjectContent(state, project)
+      ? `projekt „${project.name}”`
+      : projectDisplayName(state, project),
+    taskId: '',
+  };
 }
 
 /**
@@ -2081,7 +2104,9 @@ export function notificationsForPerson(
       entityType: 'task',
       entityId: task.id,
       taskId: task.id,
-      title: `${actor.name} przypisał(a) Ci zadanie — ${task.title}`,
+      // Odbiorca jest wykonawcą (wyjątek wglądu), więc helper i tak zwróci
+      // prawdziwy tytuł — maska zostaje dla spójności i obrony w głąb.
+      title: `${actor.name} przypisał(a) Ci zadanie — ${taskDisplayTitle(state, task)}`,
       createdAt: assignedAt,
       read: isRead(assignedAt, `assignment:${a.id}`),
     });

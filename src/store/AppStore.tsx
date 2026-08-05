@@ -118,6 +118,7 @@ import {
   wouldCreateSupervisorCycle,
 } from './selectors';
 import { isOccurrenceDate, normalizeRecurrence } from '../utils/recurrence';
+import { isBoardMember } from './confidentiality';
 import { ROLE_LABELS } from './permissions';
 import { registerPersonOrder } from '../utils/colors';
 import {
@@ -166,6 +167,11 @@ export interface TaskDraft {
   // więc formularz nie może przypadkiem opublikować ani cofnąć publikacji
   // (jedyna droga to akcje PUBLISH_*). Brak pola = zadanie opublikowane.
   isDraft?: boolean;
+  // Utajnij treść (zarząd). Obecne = żądana wartość; brak = zachowaj istniejącą
+  // (edycja) / publiczne (tworzenie). Honorowane WYŁĄCZNIE gdy bieżący
+  // użytkownik jest zarządem (isBoardMember) — inaczej reduktor ignoruje pole
+  // i zachowuje stan encji (obrona w głąb; UI i tak chowa checkbox).
+  isConfidential?: boolean;
 }
 
 export interface ProjectDraft {
@@ -180,6 +186,8 @@ export interface ProjectDraft {
   serviceTypeId: string;
   /** Spółka wykonawcza ('' = brak); nieznane id jest koercjonowane do ''. */
   companyId: string;
+  /** Utajnij treść — semantyka i bramka zarządu jak w `TaskDraft.isConfidential`. */
+  isConfidential?: boolean;
 }
 
 /** Draft odnośnika do dokumentu projektu (karta „Dokumenty”). `id` NIE jest
@@ -219,6 +227,9 @@ export interface EventDraft {
   recurrence: unknown | null;
   kind?: 'urlop';
   endDate?: string | null;
+  /** Utajnij treść — semantyka i bramka zarządu jak w `TaskDraft.isConfidential`.
+   *  Dla urlopu (`kind: 'urlop'`) zawsze ignorowane (flaga zabroniona). */
+  isConfidential?: boolean;
 }
 
 export interface PersonDraft {
@@ -687,6 +698,9 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
   const departmentId = state.departments.some((d) => d.id === draft.departmentId)
     ? draft.departmentId
     : '';
+  // Utajnianie honorujemy tylko od zarządu; poza tym draft nie ma głosu
+  // (obrona w głąb — UI chowa checkbox przed nie-zarządem).
+  const confidentialAllowed = isBoardMember(state);
 
   let tasks = state.tasks;
   let realTaskId: string;
@@ -714,6 +728,10 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
       // Autor zadania — sygnał dla feedu powiadomień. Klucz obecny tylko gdy jest
       // zalogowany użytkownik (spójnie z chmurowym DEFAULT auth.uid()).
       ...(state.currentUserId ? { createdBy: state.currentUserId } : {}),
+      // Forma kanoniczna: klucz tylko jako literalne `true`, tylko od zarządu.
+      ...(confidentialAllowed && draft.isConfidential === true
+        ? { isConfidential: true as const }
+        : {}),
       createdAt: ts,
       updatedAt: ts,
     };
@@ -760,6 +778,15 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
       };
       if (recurrence) next.recurrence = recurrence;
       else delete next.recurrence;
+      // Utajnienie: wartość z draftu tylko od zarządu; brak pola / nie-zarząd
+      // zachowuje stan zadania. Forma kanoniczna (klucz albo `true`, albo go
+      // nie ma) — wzorzec delete-key jak `recurrence` wyżej.
+      const confidential =
+        confidentialAllowed && draft.isConfidential !== undefined
+          ? draft.isConfidential === true
+          : t.isConfidential === true;
+      if (confidential) next.isConfidential = true;
+      else delete next.isConfidential;
       return next;
     });
   }
@@ -1418,12 +1445,24 @@ function saveProject(
   const companyId = state.companies.some((c) => c.id === draft.companyId)
     ? draft.companyId
     : '';
-  draft = { ...draft, companyId };
+  // Utajnienie idzie OSOBNĄ ścieżką (forma kanoniczna: klucz albo `true`, albo
+  // nieobecny), więc nie może wejść do stanu spreadem draftu jako boolean.
+  const { isConfidential: draftConfidential, ...projectFields } = { ...draft, companyId };
+  const confidentialAllowed = isBoardMember(state);
 
   if (projectId === null) {
     // `documents` nie jest częścią draftu — nowy projekt startuje bez odnośników,
     // a edycja projektu (niżej) przenosi istniejącą listę bez zmian.
-    const project: Project = { id: uid(), ...draft, documents: [], createdAt: ts, updatedAt: ts };
+    const project: Project = {
+      id: uid(),
+      ...projectFields,
+      documents: [],
+      ...(confidentialAllowed && draftConfidential === true
+        ? { isConfidential: true as const }
+        : {}),
+      createdAt: ts,
+      updatedAt: ts,
+    };
     return {
       ...state,
       projects: [...state.projects, project],
@@ -1432,9 +1471,19 @@ function saveProject(
   }
   return {
     ...state,
-    projects: state.projects.map((p) =>
-      p.id === projectId ? { ...p, ...draft, updatedAt: ts } : p,
-    ),
+    projects: state.projects.map((p) => {
+      if (p.id !== projectId) return p;
+      // Wartość z draftu tylko od zarządu; brak pola / nie-zarząd zachowuje
+      // stan projektu (wzorzec delete-key jak `recurrence` w saveTask).
+      const confidential =
+        confidentialAllowed && draftConfidential !== undefined
+          ? draftConfidential === true
+          : p.isConfidential === true;
+      const next: Project = { ...p, ...projectFields, updatedAt: ts };
+      if (confidential) next.isConfidential = true;
+      else delete next.isConfidential;
+      return next;
+    }),
     activity: withActivity(state, 'project', projectId, 'zaktualizował(a) projekt', undefined, {
       collapse: true, // auto-zapis: seria edycji = jeden wpis
     }),
@@ -1640,7 +1689,13 @@ function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
     : state.tasks;
 
   const person = state.people.find((p) => p.id === ref.personId);
-  let message = `wstawił(a) blok ${formatDuration(hours)} ${payload.position === 'before' ? 'przed' : 'po'} „${state.tasks.find((t) => t.id === ref.taskId)?.title ?? 'blok'}” dla ${person?.name ?? 'kogoś'} w dniu ${ref.date}`;
+  // Treść wpisu jest niemutowalnym stringiem widocznym dla wszystkich — tytuł
+  // utajnionego zadania nie może do niej wejść (etykieta „#N" też nie, bo
+  // numeracja się przesuwa; rzeczownik ogólny jest jedyną stabilną maską).
+  const refTask = state.tasks.find((t) => t.id === ref.taskId);
+  const refTaskLabel =
+    refTask === undefined ? 'blok' : refTask.isConfidential === true ? 'utajnione zadanie' : refTask.title;
+  let message = `wstawił(a) blok ${formatDuration(hours)} ${payload.position === 'before' ? 'przed' : 'po'} „${refTaskLabel}” dla ${person?.name ?? 'kogoś'} w dniu ${ref.date}`;
   if (takenFromBinQ > 0) {
     message += `; pobrano z zasobnika: ${formatDuration(takenFromBinQ * HOURS_STEP)}`;
   }
@@ -3300,9 +3355,14 @@ export function reducer(state: AppData, action: Action): AppData {
       const task = state.tasks.find((t) => t.id === action.taskId);
       const next = deleteTask(state, action.taskId);
       if (!task) return next;
+      // Utajnione zadanie nie zostawia tytułu w niemutowalnym wpisie dziennika.
+      const message =
+        task.isConfidential === true
+          ? 'usunął(a) utajnione zadanie'
+          : `usunął(a) zadanie „${task.title}”`;
       return {
         ...next,
-        activity: withActivity(next, 'project', task.projectId, `usunął(a) zadanie „${task.title}”`),
+        activity: withActivity(next, 'project', task.projectId, message),
       };
     }
     case 'SET_TASK_RECURRENCE':
@@ -3378,9 +3438,14 @@ export function reducer(state: AppData, action: Action): AppData {
       const project = state.projects.find((p) => p.id === action.projectId);
       const next = deleteProject(state, action.projectId);
       if (!project) return next;
+      // Utajniony projekt nie zostawia nazwy w niemutowalnym wpisie dziennika.
+      const message =
+        project.isConfidential === true
+          ? 'usunął(a) utajniony projekt'
+          : `usunął(a) projekt „${project.name}”`;
       return {
         ...next,
-        activity: withActivity(next, 'system', '', `usunął(a) projekt „${project.name}”`),
+        activity: withActivity(next, 'system', '', message),
       };
     }
     case 'SET_PROJECT_STATUS': {
@@ -4204,6 +4269,12 @@ export function reducer(state: AppData, action: Action): AppData {
             ...(normalized.recurrence ? { recurrence: normalized.recurrence } : {}),
             ...(normalized.kind ? { kind: normalized.kind } : {}),
             ...(normalized.endDate ? { endDate: normalized.endDate } : {}),
+            // Utajnienie tylko od zarządu i NIGDY na urlopie (forma kanoniczna).
+            ...(isBoardMember(state) &&
+            action.draft.isConfidential === true &&
+            normalized.kind !== 'urlop'
+              ? { isConfidential: true as const }
+              : {}),
             createdAt: stamp,
             updatedAt: stamp,
           },
@@ -4219,10 +4290,19 @@ export function reducer(state: AppData, action: Action): AppData {
       if (eventDraftConflicts(state, normalized, action.eventId).blocking.length > 0) {
         return state;
       }
+      const confidentialAllowed = isBoardMember(state);
       return {
         ...state,
         events: state.events.map((e) => {
           if (e.id !== action.eventId) return e;
+          // Utajnienie: wartość z draftu tylko od zarządu, brak pola / nie-zarząd
+          // zachowuje stan wydarzenia; urlop NIGDY nie niesie flagi.
+          const confidential =
+            normalized.kind === 'urlop'
+              ? false
+              : confidentialAllowed && action.draft.isConfidential !== undefined
+                ? action.draft.isConfidential === true
+                : e.isConfidential === true;
           const next: CalendarEvent = {
             id: e.id,
             title: normalized.title,
@@ -4236,6 +4316,7 @@ export function reducer(state: AppData, action: Action): AppData {
             ...(normalized.recurrence ? { recurrence: normalized.recurrence } : {}),
             ...(normalized.kind ? { kind: normalized.kind } : {}),
             ...(normalized.endDate ? { endDate: normalized.endDate } : {}),
+            ...(confidential ? { isConfidential: true as const } : {}),
             createdAt: e.createdAt,
             updatedAt: nowIso(),
           };

@@ -239,6 +239,25 @@ describe('diffToCloudOps — families', () => {
     expect(rowOf(TK2).is_draft).toBe(false);
   });
 
+  it('task/project upsert niesie is_confidential (true przy fladze, false przy braku klucza)', () => {
+    const m = maps();
+    const TK2 = uuid('task-two');
+    const PR2 = uuid('project-two');
+    const prev: AppData = { ...localFixture(), projects: [], tasks: [] };
+    const next: AppData = {
+      ...localFixture(),
+      projects: [makeProject({ id: PR, statusId: S1, isConfidential: true }), makeProject({ id: PR2, statusId: S1 })],
+      tasks: [makeTask({ id: TK, isConfidential: true }), makeTask({ id: TK2 })],
+    };
+    const { ops } = diffToCloudOps(prev, next, m);
+    const rowOf = (table: string, id: string) =>
+      ops.find((o) => o.table === table && o.kind === 'upsert' && o.row!.id === id)!.row!;
+    expect(rowOf('tasks', TK).is_confidential).toBe(true);
+    expect(rowOf('tasks', TK2).is_confidential).toBe(false);
+    expect(rowOf('projects', PR).is_confidential).toBe(true);
+    expect(rowOf('projects', PR2).is_confidential).toBe(false);
+  });
+
   it('task upsert mapuje draftHours na draft_hours (profil per wpis; niemapowalny odpada; brak => null)', () => {
     const m = maps();
     const TK2 = uuid('task-two');
@@ -523,6 +542,22 @@ describe('diffToCloudOps — wydarzenia kalendarza', () => {
       duration_minutes: 1440,
       attendee_ids: [CLOUD_PA],
     });
+  });
+
+  it('event upsert niesie is_confidential (true przy fladze, false przy braku klucza)', () => {
+    const m = maps();
+    const EV2 = uuid('event-2');
+    const prev: AppData = { ...localFixture(), events: [] };
+    const next: AppData = {
+      ...localFixture(),
+      events: [makeEvent({ isConfidential: true }), makeEvent({ id: EV2 })],
+    };
+    const upserts = diffToCloudOps(prev, next, m).ops.filter(
+      (o) => o.table === 'events' && o.kind === 'upsert',
+    );
+    const rowOf = (id: string) => upserts.find((o) => o.row!.id === id)!.row!;
+    expect(rowOf(EV).is_confidential).toBe(true);
+    expect(rowOf(EV2).is_confidential).toBe(false);
   });
 
   it('emituje remove dla usuniętego wydarzenia (id UUID)', () => {

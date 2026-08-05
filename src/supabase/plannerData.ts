@@ -383,12 +383,12 @@ export async function loadPlannerSnapshot(
     db.select('clients', 'id, name, archived, contact_name, contact_email, contact_phone, notes, contacts'),
     db.select(
       'projects',
-      'id, client_id, name, description, status_id, paid, start_date, end_date, department_id, service_type_id, company_id, documents, created_at, updated_at',
+      'id, client_id, name, description, status_id, paid, start_date, end_date, department_id, service_type_id, company_id, documents, is_confidential, created_at, updated_at',
     ),
     db.select('milestones', 'id, project_id, name, milestone_date'),
     db.select(
       'tasks',
-      'id, project_id, status_id, title, description, start_date, end_date, estimated_hours, priority, work_category_id, department_id, checklist, order_index, is_draft, draft_hours, recurrence, created_by, created_at, updated_at',
+      'id, project_id, status_id, title, description, start_date, end_date, estimated_hours, priority, work_category_id, department_id, checklist, order_index, is_draft, draft_hours, recurrence, created_by, is_confidential, created_at, updated_at',
     ),
     db.select('task_assignments', 'task_id, profile_id'),
     db.select(
@@ -406,7 +406,7 @@ export async function loadPlannerSnapshot(
     ),
     db.select(
       'events',
-      'id, title, description, location, meeting_url, event_date, start_minutes, duration_minutes, attendee_ids, recurrence, kind, end_date, created_at, updated_at',
+      'id, title, description, location, meeting_url, event_date, start_minutes, duration_minutes, attendee_ids, recurrence, kind, end_date, is_confidential, created_at, updated_at',
     ),
   ]);
 
@@ -475,6 +475,9 @@ export async function loadPlannerSnapshot(
       // jsonb (20260721010000_project_documents): wartość spoza tablicy (starszy
       // wiersz, brak kolumny) czytamy jako pustą listę — jak `checklist` zadania.
       documents: Array.isArray(row.documents) ? (row.documents as Project['documents']) : [],
+      // Utajniona treść (20260805120000): forma kanoniczna — klucz wyłącznie
+      // przy literalnym `true` (false/NULL/starszy wiersz => nieobecny).
+      ...(row.is_confidential === true ? { isConfidential: true as const } : {}),
       createdAt: str(row.created_at),
       updatedAt: str(row.updated_at) || str(row.created_at),
     });
@@ -568,6 +571,9 @@ export async function loadPlannerSnapshot(
       // przez `personOf` -> lokalne id; niemapowalny/NULL => brak klucza (forma
       // kanoniczna, jak w normalizeTaskMeta). Zasila feed powiadomień.
       ...(personOf(row.created_by) ? { createdBy: personOf(row.created_by) } : {}),
+      // Utajniona treść (20260805120000): forma kanoniczna — klucz wyłącznie
+      // przy literalnym `true` (false/NULL/starszy wiersz => nieobecny).
+      ...(row.is_confidential === true ? { isConfidential: true as const } : {}),
       createdAt: str(row.created_at),
       updatedAt: str(row.updated_at) || str(row.created_at),
     });
@@ -775,6 +781,9 @@ export async function loadPlannerSnapshot(
       ...(recurrence ? { recurrence } : {}),
       ...(isVacation ? { kind: 'urlop' as const } : {}),
       ...(endDate ? { endDate } : {}),
+      // Utajniona treść (20260805120000): forma kanoniczna — klucz wyłącznie
+      // przy literalnym `true` i NIGDY na urlopie (jak w repairEvents).
+      ...(!isVacation && row.is_confidential === true ? { isConfidential: true as const } : {}),
       createdAt: str(row.created_at),
       updatedAt: str(row.updated_at) || str(row.created_at),
     });

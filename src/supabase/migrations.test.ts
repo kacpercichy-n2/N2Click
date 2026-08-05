@@ -199,6 +199,10 @@ describe('konwencja plików migracji', () => {
       // roli client przepisane na członkostwo i RPC client_review — jedyna
       // ścieżka zapisu klienta (Akceptacja/Uwagi na opublikowanym poście).
       '20260804120000_contentplan_brand_members_client_review.sql',
+      // Utajniona treść (zarząd): addytywna kolumna `is_confidential` na
+      // n2click.tasks/projects/events. Maskowanie WYŁĄCZNIE po stronie klienta
+      // (src/store/confidentiality.ts) — zero zmian RLS.
+      '20260805120000_confidential_content.sql',
     ]);
   });
 

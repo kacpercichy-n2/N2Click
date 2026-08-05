@@ -249,6 +249,8 @@ function projectRow(
     // profiles.company_id), więc bez mapowania; '' => NULL.
     company_id: (p.companyId ?? '') === '' ? null : p.companyId,
     documents: p.documents,
+    // Utajniona treść (kolumna 20260805120000): brak klucza => false.
+    is_confidential: p.isConfidential === true,
     created_at: p.createdAt,
     updated_at: p.updatedAt,
   };
@@ -297,6 +299,8 @@ function taskRow(
     // kanoniczny zapisywany dosłownie. Wyjątki niosą tylko daty/minuty — bez
     // profili, więc bez mapowania id. Brak `recurrence` => null.
     recurrence: t.recurrence ?? null,
+    // Utajniona treść (kolumna 20260805120000): brak klucza => false.
+    is_confidential: t.isConfidential === true,
     created_at: t.createdAt,
     updated_at: t.updatedAt,
   };
@@ -400,6 +404,8 @@ function eventRow(
     recurrence: e.recurrence ?? null,
     kind: e.kind ?? 'meeting',
     end_date: e.endDate ?? null,
+    // Utajniona treść (kolumna 20260805120000): brak klucza => false.
+    is_confidential: e.isConfidential === true,
     created_at: e.createdAt,
     updated_at: e.updatedAt,
   };

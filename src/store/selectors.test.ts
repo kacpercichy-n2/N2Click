@@ -347,6 +347,86 @@ describe('searchAll draft exclusion', () => {
   });
 });
 
+describe('searchAll — utajniona treść', () => {
+  const confidentialState = (currentUserId: string) =>
+    makeState({
+      projects: [{
+        id: 'proj1', clientId: '', name: 'Przejęcie spółki', description: 'negocjacje', statusId: 'status1',
+        paid: false, startDate: '2026-07-01', endDate: '2026-07-31', departmentId: '',
+        serviceTypeId: '', documents: [], isConfidential: true,
+        createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+      }],
+      tasks: [makeTask({ id: 't1', title: 'Tajna strategia cenowa', description: 'poufny opis', isConfidential: true })],
+      people: [
+        makePerson({ id: 'ceo', role: 'CEO – Chief Executive Officer' }),
+        makePerson({ id: 'worker', role: 'Projektant' }),
+        makePerson({ id: 'assignee', role: 'Grafik' }),
+      ],
+      assignments: [makeAssignment({ id: 'a1', taskId: 't1', personId: 'assignee' })],
+      currentUserId,
+    });
+
+  it('nie-widz nie znajdzie utajnionej encji po prawdziwym tytule/opisie', () => {
+    const state = confidentialState('worker');
+    expect(searchAll(state, 'tajna').tasks).toEqual([]);
+    expect(searchAll(state, 'poufny').tasks).toEqual([]);
+    expect(searchAll(state, 'przejęcie').projects).toEqual([]);
+    expect(searchAll(state, 'negocjacje').projects).toEqual([]);
+  });
+
+  it('nie-widz znajdzie utajnioną encję po etykiecie maskującej', () => {
+    const state = confidentialState('worker');
+    expect(searchAll(state, 'zadanie #1').tasks.map((t) => t.id)).toEqual(['t1']);
+    expect(searchAll(state, 'projekt #1').projects.map((p) => p.id)).toEqual(['proj1']);
+  });
+
+  it('zarząd i przypisany wykonawca szukają po prawdziwej treści', () => {
+    expect(searchAll(confidentialState('ceo'), 'tajna').tasks.map((t) => t.id)).toEqual(['t1']);
+    expect(searchAll(confidentialState('assignee'), 'tajna').tasks.map((t) => t.id)).toEqual(['t1']);
+    // Przypisany do zadania widzi też projekt tego zadania.
+    expect(searchAll(confidentialState('assignee'), 'przejęcie').projects.map((p) => p.id)).toEqual(['proj1']);
+  });
+
+  it('status i data (jawne fakty planistyczne) nadal matchują utajnione encje', () => {
+    const base = confidentialState('worker');
+    const state = makeState({
+      ...base,
+      statuses: [...base.statuses, { id: 'status1', name: 'W toku', slug: 'w-toku', color: '#fff', order: 9, archived: false, isDone: false }],
+    });
+    expect(searchAll(state, 'w toku').tasks.map((t) => t.id)).toContain('t1');
+    expect(searchAll(state, '2026-07-07').tasks.map((t) => t.id)).toContain('t1');
+  });
+});
+
+describe('workloadCellBlocks — utajniona treść', () => {
+  it('maskuje taskTitle i projectName dla nie-widza, pełna treść dla zarządu', () => {
+    const base = makeState({
+      projects: [{
+        id: 'proj1', clientId: '', name: 'Przejęcie spółki', description: '', statusId: 'status1',
+        paid: false, startDate: '2026-07-01', endDate: '2026-07-31', departmentId: '',
+        serviceTypeId: '', documents: [], isConfidential: true,
+        createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+      }],
+      tasks: [makeTask({ id: 't1', title: 'Tajna strategia', isConfidential: true })],
+      people: [
+        makePerson({ id: 'ceo', role: 'CEO' }),
+        makePerson({ id: 'worker' }),
+        makePerson({ id: 'p1' }),
+      ],
+      workload: [makeEntry({ id: 'w1', taskId: 't1', personId: 'p1', date: '2026-07-07' })],
+    });
+    const asWorker = { ...base, currentUserId: 'worker' };
+    const workerBlocks = workloadCellBlocks(asWorker, 'p1', '2026-07-07');
+    expect(workerBlocks[0].taskTitle).toBe('Zadanie #1');
+    expect(workerBlocks[0].projectName).toBe('Projekt #1');
+
+    const asBoard = { ...base, currentUserId: 'ceo' };
+    const boardBlocks = workloadCellBlocks(asBoard, 'p1', '2026-07-07');
+    expect(boardBlocks[0].taskTitle).toBe('Tajna strategia');
+    expect(boardBlocks[0].projectName).toBe('Przejęcie spółki');
+  });
+});
+
 describe('searchAll — limit per grupa i hasMore', () => {
   const manyTasks = Array.from({ length: 12 }, (_, i) =>
     makeTask({ id: `t${i}`, title: `Zadanie ${i}` }),
