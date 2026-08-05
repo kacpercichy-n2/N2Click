@@ -128,15 +128,30 @@ interface Props {
 
 // ---- Grid geometry ----
 // 21px per 15 min: ~8 hours fit one viewport (e.g. 08:00–16:00), the rest
-// scrolls; 15/30-minute blocks render at 21/42px so their labels stay legible
-// instead of being clamped by MIN_BLOCK_H. Mirrored by the hour/quarter grid
-// lines in styles.css (.week-day-col) and scripts/browser-check-bin-drag.mjs.
+// scrolls. Mirrored by the hour/quarter grid lines in styles.css
+// (.week-day-col) and scripts/browser-check-bin-drag.mjs.
 const HOUR_PX = 84;
 const DAY_BODY_H = 24 * HOUR_PX; // 2016px full-day column height
-// Krótkie bloki dostają minimalną CZYTELNĄ wysokość (15 min ≥ dawne 30 min
-// + 8px), nawet jeśli wizualnie zachodzą na kolejny kwadrans siatki —
-// geometria dragu/resize liczy się z pozycji kursora, nie z wysokości bloku.
-const MIN_BLOCK_H = 50;
+// Wysokość kafelka jest ZAWSZE wierna czasowi (15 min = 21 px, 30 min = 42 px).
+// Dawne minimum 50 px czyniło blok 15 min i 30 min identycznymi — i OBA były
+// wyższe niż półgodzinna dziura siatki (42 px), więc kafelek kłamał o czasie.
+// Czytelność krótkich bloków niesie UKŁAD KOMPAKTOWY (`blockDensityClass` +
+// .h-quarter/.h-half w styles.css), nie zawyżona wysokość. MIN_BLOCK_H zostaje
+// wyłącznie jako strażnik zdegenerowanych danych i równa się kwadransowi —
+// najkrótszemu legalnemu blokowi (kroki 15-minutowe).
+const MIN_BLOCK_H = HOUR_PX / 4;
+
+/**
+ * Klasa gęstości treści kafelka liczona z WYŚWIETLANYCH godzin (projekcja
+ * dragu/klawiatury włącznie, więc układ podąża za edycją na żywo):
+ * ≤15 min (21 px) = jedna linia, ≤30 min (42 px) = dwie. Czysta prezentacja —
+ * handlery, uchwyty i geometria wskaźnika bez zmian (inwariant 7).
+ */
+function blockDensityClass(hours: number): string {
+  if (hours <= 0.25) return 'h-quarter';
+  if (hours <= 0.5) return 'h-half';
+  return '';
+}
 // Okno godzin agencji (9:00–17:00) mieszka w `weekViewLayout.ts` jako
 // WORK_START_HOUR / WORK_END_HOUR — stąd bierze się i domyślne przewinięcie
 // siatki, i przygaszenie slotów poza oknem. Same sloty pozostają w pełni
@@ -1115,8 +1130,10 @@ function TimedBlockImpl({
   // w CSS PÓŹNIEJ, więc nadal wygrywają. Per-block completion stays INDEPENDENT
   // of the task status — two blocks on the same day render independent done state.
   const statusNote = statusNoteFor(status, task.endDate);
+  const density = blockDensityClass(hours);
   const className = [
     'week-block',
+    density,
     done ? 'done' : '',
     // ✓ w prawym DOLNYM rogu stoi na kafelku tylko wtedy, gdy TEN blok jest
     // odhaczony (`entry.done`, nie szerszy status zadania). Klasa rezerwuje mu
@@ -1213,7 +1230,10 @@ function TimedBlockImpl({
       )}
       <span className="week-block-title">
         {project && <Coin paid={project.paid} size={12} />}
-        {task.title}
+        {/* Tekst we WŁASNYM spanie, bo goły tekst we fleksie nie umie się
+            elipsować — `text-overflow` działa tylko na elemencie z overflow,
+            więc bez spana tytuł ucinał się twardo na krawędzi paddingu. */}
+        <span className="week-block-title-text">{task.title}</span>
       </span>
       <span className="week-block-time">
         {formatMinutes(start)}–{formatMinutes(end)}
@@ -1298,8 +1318,12 @@ function TimedBlockImpl({
           // cofa przycisk o jego własną szerokość. W widoku dnia kafelek sięga
           // prawej krawędzi kolumny (minus 3 px), więc ✓ liczy się od niej, a
           // nie od podziału na kolumny.
-          top: doneTickTopPx(top, height),
-          left: stack ? 'calc(100% - 3px)' : `calc(${((col + 1) / cols) * 100}% - 2px)`,
+          // Na kafelkach kompaktowych ✓ stoi PRZY TYTULE (wyśrodkowany w jego
+          // wierszu), nie w dolnym rogu — tam wypadałby na wierszu godzin.
+          // W poziomie 3 px marginesu od prawej krawędzi kafelka (dawniej ✓
+          // licował się z krawędzią): -5px = -2px dawnego wyrównania - 3px.
+          top: density ? top + 2 : doneTickTopPx(top, height),
+          left: stack ? 'calc(100% - 6px)' : `calc(${((col + 1) / cols) * 100}% - 5px)`,
           transform: tx
             ? `translateX(${tx}px) translateX(-100%)`
             : 'translateX(-100%)',
@@ -1950,6 +1974,8 @@ function RecurBlockImpl({ task, hue, occurrence, done, onOpen, onContextMenu }: 
   const end = occurrence.startMinutes + occurrence.durationMinutes;
   const className = [
     'week-recur-block',
+    // Kwadransowe wystąpienie (21 px) idzie w jednej linii — jak `.week-block`.
+    occurrence.durationMinutes <= 15 ? 'h-quarter' : '',
     occurrence.overridden ? 'overridden' : '',
     done ? 'done' : '',
   ]
@@ -2032,7 +2058,14 @@ function EventBlockImpl({ occ, vacationWindow, vacationOwner, onOpen }: EventBlo
   return (
     <Tooltip text={hint}>
     <div
-      className={isVacation ? 'week-event-block urlop' : 'week-event-block'}
+      className={[
+        'week-event-block',
+        isVacation ? 'urlop' : '',
+        // Kwadransowe spotkanie (21 px) idzie w jednej linii — jak `.week-block`.
+        endMinutes - startMinutes <= 15 ? 'h-quarter' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
       style={{ top, height }}
       role="button"
       tabIndex={0}

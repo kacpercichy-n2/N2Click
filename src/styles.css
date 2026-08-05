@@ -2577,8 +2577,9 @@ a.toggle-btn {
 .week-block-done-btn {
   position: absolute;
   z-index: 3;
-  width: 20px;
-  height: 20px;
+  /* Lustro DONE_TICK_SIZE_PX (weekViewLayout.ts). */
+  width: 16px;
+  height: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2587,7 +2588,7 @@ a.toggle-btn {
   border-radius: var(--n2-radius-pill);
   background: var(--card-bg);
   color: var(--text-muted);
-  font-size: 0.75rem;
+  font-size: 0.65rem;
   line-height: 1;
   cursor: pointer;
   opacity: 0;
@@ -2636,6 +2637,15 @@ a.toggle-btn {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Tekst tytułu we własnym spanie: `text-overflow` na kontenerze FLEX nie
+   elipsuje gołego tekstu (anonimowy element flex nie ma własnego overflow),
+   więc tytuł ucinał się twardo na krawędzi paddingu zamiast pokazać „…" —
+   i przez to rezerwa `padding-right` pod ✓ nie skracała widocznego tekstu. */
+.week-block-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 /* Per-block completion tick on a calendar/bin block (PKG-per-block-done).
    Wariant bazowy (karta zasobnika) zostaje W WIERSZU tytułu — karta jest niska
    i nie ma pustego dołu. */
@@ -2658,10 +2668,11 @@ a.toggle-btn {
   margin-left: 0;
   pointer-events: none;
 }
-/* Na najniższym kafelku (50 px) ostatni wiersz treści sięga dołu, więc godziny
-   ustępują miejsca ✓ zamiast chować się pod nim. Rezerwa wchodzi TYLKO gdy
-   znacznik naprawdę stoi na kafelku (`entry.done`), a nie przy samym statusie
-   „zrobione” zadania. */
+/* Na niskich kafelkach (np. 45 min = 63 px) ostatni wiersz treści sięga dołu,
+   więc godziny ustępują miejsca ✓ zamiast chować się pod nim. Rezerwa wchodzi
+   TYLKO gdy znacznik naprawdę stoi na kafelku (`entry.done`), a nie przy samym
+   statusie „zrobione” zadania. Kwadransowy kafelek (.h-quarter) ma własną
+   rezerwę na `.week-block-time` — wiersz osoby jest tam schowany. */
 .week-block.has-done-tick .week-block-meta {
   padding-right: 22px;
 }
@@ -2674,6 +2685,13 @@ a.toggle-btn {
   font-family: var(--n2-font-data);
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
+}
+/* Odstęp tytuł → godziny ujednolicony z kafelkiem 30 min: tam środkowanie
+   rzędu siatki daje optycznie 3 px, a goły `gap: 1px` kolumny flex na
+   dłuższych blokach tylko 1 px. Kompaktowe kafelki mają własną geometrię
+   (h-quarter: jedna linia, h-half: rząd siatki), więc zostają poza regułą. */
+.week-block:not(.h-quarter):not(.h-half) .week-block-time {
+  margin-top: 2px;
 }
 .week-block-meta {
   display: flex;
@@ -2690,6 +2708,118 @@ a.toggle-btn {
   color: var(--text);
   font-family: var(--n2-font-data);
   font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Krótkie kafelki — układ kompaktowy ----------
+   Wysokość kafelka jest wierna czasowi (21 px na kwadrans, bez zawyżonego
+   minimum), więc czytelność krótkich bloków daje gęstszy układ treści:
+   .h-quarter (≤15 min, 21 px) = jedna linia „tytuł … godziny”,
+   .h-half (30 min, 42 px) = tytuł, potem godziny i osoba w jednym wierszu.
+   Klasy nadaje blockDensityClass (WeekView.tsx) z WYŚWIETLANYCH godzin, więc
+   przy przeciąganiu/rozciąganiu układ podąża za projekcją. Czysta prezentacja:
+   handlery, uchwyty i geometria wskaźnika bez zmian (inwariant 7). */
+.week-block.h-quarter {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+.week-block.h-quarter .week-block-meta {
+  display: none;
+}
+/* Jedna linia na 21 px pracuje ciasno: typografia schodzi o ~7%, a moneta
+   opłacenia projektu znika — status niesie karta zasobnika, TaskModal i dymek. */
+.week-block.h-quarter .week-block-title,
+.week-block.h-quarter .week-block-time {
+  font-size: calc(var(--n2-type-xs) * 0.93);
+}
+.week-block.h-quarter .week-block-title .coin {
+  display: none;
+}
+.week-block.h-quarter .week-block-time {
+  flex: none;
+  margin-left: auto;
+}
+/* ✓ nie ma tu „pustego dołu”: bierny znacznik centruje się w jedynej linii,
+   a przycisk `.week-block-done-btn` (rodzeństwo) trafia w ten sam prawy skraj
+   przez doneTickTopPx — jego dolna bariera trzyma go przy kafelku. */
+.week-block.h-quarter .block-done-mark.corner {
+  bottom: auto;
+  top: 50%;
+  transform: translateY(-50%);
+}
+/* Rezerwa pod ✓ wchodzi DOPIERO, gdy przycisk faktycznie widać — bazowo
+   godziny dobijają do prawej krawędzi bez stałej wyrwy w layoucie. Kompaktowy
+   kafelek nie ma pustego rogu, więc wyjeżdżający przycisk wjeżdżałby na
+   godziny (h-quarter) albo na czas trwania w wierszu osoby (h-half); tekst
+   robi mu miejsce płynnie (transition) w trzech stanach widoczności przycisku:
+   hover kafelka, blok odhaczony (has-done-tick, ✓ stoi na stałe) i fokus
+   klawiatury na samym przycisku (łańcuch `+` — rodzeństwo kafelka). Blok
+   `readonly` bez odhaczenia nie dostaje przycisku, więc i rezerwy. */
+/* Każdy stan STOI W OSOBNEJ REGULE, nigdy w liście selektorów: jeden
+   nieobsługiwany selektor (np. `:has`) unieważnia całą listę, więc sklejenie
+   go z wariantem `:hover` zabijało rezerwę w przeglądarkach bez `:has`. */
+.week-block.h-quarter .week-block-time {
+  transition: padding-right var(--n2-transition);
+}
+.week-block.h-quarter:not(.readonly):hover .week-block-time {
+  padding-right: 22px;
+}
+.week-block.h-quarter.has-done-tick .week-block-time {
+  padding-right: 22px;
+}
+.week-block.h-quarter:has(+ .week-block-bin-btn + .week-block-done-btn:focus-visible)
+  .week-block-time {
+  padding-right: 22px;
+}
+/* h-half: ✓ stoi PRZY TYTULE (top kafelka w WeekView.tsx), jak w bloku
+   kwadransowym — nie w prawym dolnym rogu, gdzie wypadał na wierszu godzin.
+   Miejsce robi TYTUŁ (elipsuje się wcześniej); wiersz „godziny · osoba ·
+   czas" zostaje nietknięty. */
+.week-block.h-half .week-block-title {
+  transition: padding-right var(--n2-transition);
+}
+.week-block.h-half:not(.readonly):hover .week-block-title {
+  padding-right: 22px;
+}
+.week-block.h-half.has-done-tick .week-block-title {
+  padding-right: 22px;
+}
+.week-block.h-half:has(+ .week-block-bin-btn + .week-block-done-btn:focus-visible)
+  .week-block-title {
+  padding-right: 22px;
+}
+/* Ogólna rezerwa dolnego rogu (`.has-done-tick .week-block-meta`) tu nie ma
+   czego chronić — ✓ nie stoi już nad godzinami. */
+.week-block.h-half.has-done-tick .week-block-meta {
+  padding-right: 0;
+}
+/* Bierny znacznik (blok bez prawa edycji) idzie w ten sam róg tytułu. */
+.week-block.h-half .block-done-mark.corner {
+  bottom: auto;
+  top: 4px;
+}
+.week-block.h-half {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-content: start;
+  /* Godziny i wiersz osoby siedzą w jednym rzędzie siatki — środkowanie w
+     pionie, inaczej godziny (niższy line-height) wiszą przy górnej krawędzi
+     rzędu i rozjeżdżają się z nazwiskiem i czasem trwania. */
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 1px;
+}
+.week-block.h-half .week-block-title {
+  grid-column: 1 / -1;
+}
+.week-block.h-half .week-block-time {
+  grid-column: 1;
+}
+.week-block.h-half .week-block-meta {
+  grid-column: 2;
+  min-width: 0;
 }
 
 /* ---------- Recurring-task occurrence overlay (presentational only) ----------
@@ -2761,6 +2891,23 @@ a.toggle-btn {
   font-family: var(--n2-font-data);
   font-variant-numeric: tabular-nums;
 }
+/* Kwadransowe wystąpienie (21 px, proporcjonalna wysokość): jedna linia —
+   lustro `.week-block.h-quarter`. ✓ centruje się w tej linii. */
+.week-recur-block.h-quarter {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+.week-recur-block.h-quarter .week-recur-time {
+  margin-left: auto;
+}
+.week-recur-block.h-quarter .block-done-mark.corner {
+  bottom: auto;
+  top: 50%;
+  transform: translateY(-50%);
+}
 
 /* ---------- Wydarzenia kalendarza (spotkania) — czysto prezentacyjne ---------- */
 /* Blok wydarzenia: SOLIDNA ramka + lewy pasek (to NIE ghost cykliczności), tło
@@ -2801,6 +2948,18 @@ a.toggle-btn {
   font-family: var(--n2-font-data);
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
+}
+/* Kwadransowe spotkanie (21 px, proporcjonalna wysokość): jedna linia —
+   lustro `.week-block.h-quarter`. */
+.week-event-block.h-quarter {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+.week-event-block.h-quarter .week-event-time {
+  margin-left: auto;
 }
 /* Urlop: ten sam blok prezentacyjny, czerwony akcent. Wysokość liczy okno
    godzin pracy osoby (`vacationRenderWindow`), a nie zapisana pełna doba —

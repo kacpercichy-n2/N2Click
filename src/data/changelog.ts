@@ -111,6 +111,39 @@ export function changelogCtaLabel(entry: ChangelogEntry): string {
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-08-05-kafelki-krotkich-blokow',
+    dateFrom: '2026-08-05',
+    dateTo: '2026-08-05',
+    summary:
+      'Kafelki w kalendarzu są wierne czasowi: blok 15 minut jest naprawdę o połowę niższy od półgodzinnego, krótkie bloki dostały zwięzły układ treści, a znacznik wykonania jest drobniejszy i nie zasłania tekstu.',
+    items: [
+      {
+        area: 'Kalendarz',
+        feature: 'Wysokość kafelka wierna czasowi',
+        description:
+          'Blok 15-minutowy nie udaje już półgodzinnego — każdy kafelek ma wysokość dokładnie proporcjonalną do czasu trwania, więc dziury i bloki na siatce można porównywać na oko. Dotyczy też wystąpień cyklicznych i spotkań.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Zwięzły układ krótkich bloków',
+        description:
+          'Kafelek 15-minutowy mieści się w jednej linii (tytuł i godziny), a półgodzinny w dwóch: tytuł na całą szerokość, pod nim godziny razem z osobą i czasem trwania w jednym, wyrównanym wierszu. Odstęp między tytułem a godzinami jest taki sam na wszystkich blokach.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Drobniejszy znacznik wykonania',
+        description:
+          'Kółko „✓” na kafelku jest mniejsze i stoi z marginesem od krawędzi. Na krótkich blokach wysuwa się przy tytule (nie nad godzinami), a tytuł grzecznie skraca się wielokropkiem, żeby zrobić mu miejsce — nic już nie zasłania godzin ani czasu trwania.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Tytuły kończą się wielokropkiem',
+        description:
+          'Za długi tytuł zadania na kafelku kończy się teraz „…” zamiast ucinać się w pół litery.',
+      },
+    ],
+  },
+  {
     id: '2026-08-03-urlopy-cyklicznosc-powiadomienia',
     dateFrom: '2026-08-03',
     dateTo: '2026-08-03',

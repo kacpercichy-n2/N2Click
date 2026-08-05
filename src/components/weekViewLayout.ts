@@ -107,8 +107,10 @@ export function vacationRenderWindow(
 // stoi ✓. Wcześniej ✓ siedziało w prawym GÓRNYM rogu i nachodziło na tytuł —
 // teraz idzie do prawego DOLNEGO rogu, gdzie kafelek jest zwykle pusty.
 
-/** Bok kwadratowego ✓ (lustro `width`/`height` w `.week-block-done-btn`). */
-export const DONE_TICK_SIZE_PX = 20;
+/** Bok kwadratowego ✓ (lustro `width`/`height` w `.week-block-done-btn`).
+ *  16 px (dawniej 20): przycisk ma być drobniejszy niż wiersz treści kafelka
+ *  i stać z marginesem od krawędzi, nie licować się z nią. */
+export const DONE_TICK_SIZE_PX = 16;
 
 /**
  * Prześwit między ✓ a dolną krawędzią kafelka: 6 px uchwytu zmiany rozmiaru
@@ -121,9 +123,10 @@ export const DONE_TICK_BOTTOM_PX = 8;
 
 /**
  * `top` przycisku ✓ (rodzeństwa kafelka, liczonego od góry kolumny dnia) dla
- * kafelka o danym `top`/`height`. Na najniższym kafelku (MIN_BLOCK_H = 50 px)
- * zostaje 22 px nad ✓, więc znacznik nigdy nie wychodzi ponad własny kafelek —
- * stąd dolna bariera `blockTop`. Niepoprawna geometria daje `blockTop`, nie NaN.
+ * kafelka o danym `top`/`height`. Dotyczy bloków ≥45 min (63 px) — kompaktowe
+ * kafelki 15/30 min (.h-quarter/.h-half) stawiają ✓ przy tytule z pominięciem
+ * tej funkcji. Dolna bariera `blockTop` trzyma znacznik wewnątrz własnego
+ * kafelka; niepoprawna geometria daje `blockTop`, nie NaN.
  */
 export function doneTickTopPx(blockTop: number, blockHeight: number): number {
   if (!Number.isFinite(blockTop)) return 0;
