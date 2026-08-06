@@ -307,7 +307,9 @@
   `App()` przed bramkami logowania. Licznik = te same dane co karta
   „Powiadomienia” (`readAt === ''`, odbiorca = zalogowany); 0 => przywrócenie
   oryginalnej karty. `index.html` nie deklaruje `<link rel="icon">` — host
-  tworzy własny link i usuwa go przy zeru. Trzeci widok tego samego licznika:
+  tworzy własny link, a przy zeru podmienia jego href na kafelek BEZ kropki
+  (usunięcie linku nie cofa ikony w Chromium — karta trzymałaby ostatnią
+  wyrenderowaną faviconę, bo fallbackowe /favicon.ico nie istnieje). Trzeci widok tego samego licznika:
   dzwonek `src/components/NotificationsBell.tsx` w wierszu marki sidebara
   (marka jest czysto typograficzna, bez okrągłego znaku) — pigułka
   nieprzeczytanych + overlay na powłoce palety (`OverlayLayer` + klasy `.gs-*`)

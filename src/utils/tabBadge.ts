@@ -70,7 +70,8 @@ export function createTabBadgeApplier(host: TabBadgeHost): TabBadgeApplier {
  * Rysuje 32×32 faviconę z czerwoną kropką w prawym górnym rogu i zwraca
  * data-URL (null, gdy canvas niedostępny). `base` to opcjonalna bazowa favicona;
  * bez niej rysujemy ciemny kafelek w motywie aplikacji (index.html nie deklaruje
- * dziś `<link rel="icon">`, więc to jest ścieżka domyślna).
+ * dziś `<link rel="icon">`, więc to jest ścieżka domyślna). PUSTA etykieta =
+ * sam podkład bez kropki — ścieżka przywracania (patrz `restoreFavicon`).
  */
 export function drawBadgeFaviconDataUrl(label: string, base?: CanvasImageSource | null): string | null {
   if (typeof document === 'undefined') return null;
@@ -100,21 +101,23 @@ export function drawBadgeFaviconDataUrl(label: string, base?: CanvasImageSource 
       ctx.fillRect(0, 0, size, size);
     }
   }
-  // Kropka zajmuje ~2/3 wysokości ikony, żeby liczba była czytelna przy 16×16.
-  const cx = 21;
-  const cy = 11;
-  ctx.beginPath();
-  ctx.arc(cx, cy, 10.5, 0, Math.PI * 2);
-  ctx.fillStyle = '#dc2626';
-  ctx.fill();
-  ctx.strokeStyle = '#050406';
-  ctx.lineWidth = 2;
-  ctx.stroke();
-  ctx.fillStyle = '#ffffff';
-  ctx.font = `bold ${label.length > 1 ? 11 : 14}px system-ui, -apple-system, sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(label, cx, cy + 1);
+  if (label !== '') {
+    // Kropka zajmuje ~2/3 wysokości ikony, żeby liczba była czytelna przy 16×16.
+    const cx = 21;
+    const cy = 11;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 10.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#dc2626';
+    ctx.fill();
+    ctx.strokeStyle = '#050406';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `bold ${label.length > 1 ? 11 : 14}px system-ui, -apple-system, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, cx, cy + 1);
+  }
   try {
     return canvas.toDataURL('image/png');
   } catch {
@@ -185,7 +188,14 @@ export function createDomTabBadgeHost(doc: Document): TabBadgeHost {
       currentLabel = '';
       if (!managed) return;
       if (createdByUs) {
-        managed.remove();
+        // Usunięcie link-elementu NIE cofa ikony w Chromium: karta trzyma
+        // ostatnią wyrenderowaną faviconę, a fallbackowe /favicon.ico nie
+        // istnieje (404) — kropka zostawała na ikonie mimo licznika 0.
+        // Zamiast usuwać, podmieniamy href na ten sam kafelek BEZ kropki;
+        // dopiero brak canvasa (null) degraduje do dawnego usunięcia linku.
+        const url = drawBadgeFaviconDataUrl('', baseImage);
+        if (url) managed.setAttribute('href', url);
+        else managed.remove();
       } else if (originalHref !== null) {
         managed.setAttribute('href', originalHref);
       }
