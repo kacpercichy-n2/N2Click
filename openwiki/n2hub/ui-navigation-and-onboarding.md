@@ -306,10 +306,13 @@
   cienka warstwa DOM/canvas tamże, hook `src/utils/useTabBadge.ts` wpięty RAZ w
   `App()` przed bramkami logowania. Licznik = te same dane co karta
   „Powiadomienia” (`readAt === ''`, odbiorca = zalogowany); 0 => przywrócenie
-  oryginalnej karty. `index.html` nie deklaruje `<link rel="icon">` — host
-  tworzy własny link, a przy zeru podmienia jego href na kafelek BEZ kropki
-  (usunięcie linku nie cofa ikony w Chromium — karta trzymałaby ostatnią
-  wyrenderowaną faviconę, bo fallbackowe /favicon.ico nie istnieje). Trzeci widok tego samego licznika:
+  oryginalnej karty. `index.html` deklaruje jawną faviconę
+  (`public/favicon.svg` — ciemny kafelek „N2"): host podmienia jej href na
+  wersję z kropką i przy zeru przywraca oryginał. Jawna ikona jest KONIECZNA —
+  Chromium trzyma w swojej bazie ostatnią wyrenderowaną faviconę strony i bez
+  świeżego linku pokazywałby kropkę dalej mimo licznika 0; ścieżka bez linku
+  w dokumencie (kafelek rysowany canvasem, przy zeru podmiana na kafelek BEZ
+  kropki zamiast usunięcia linku) zostaje jako fallback w `tabBadge.ts`. Trzeci widok tego samego licznika:
   dzwonek `src/components/NotificationsBell.tsx` w wierszu marki sidebara
   (marka jest czysto typograficzna, bez okrągłego znaku) — pigułka
   nieprzeczytanych + overlay na powłoce palety (`OverlayLayer` + klasy `.gs-*`)

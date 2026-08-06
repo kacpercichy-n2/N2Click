@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Ciemny kafelek w motywie aplikacji (#050406, jak theme-color) — ten sam
+       wygląd, który rysuje canvas badge'a karty (tabBadge.ts), więc podmiana
+       ikony z kropką i z powrotem nie zmienia tła. -->
+  <rect x="0.5" y="0.5" width="31" height="31" rx="7" fill="#050406" stroke="rgba(255,255,255,0.25)" />
+  <text x="16" y="17" text-anchor="middle" dominant-baseline="central" font-family="system-ui, -apple-system, sans-serif" font-weight="700" font-size="13" fill="#c496ff">N2</text>
+</svg>

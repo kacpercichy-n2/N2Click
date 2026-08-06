@@ -10,6 +10,11 @@
     />
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#050406" />
+    <!-- Jawna favicona (public/): bez niej Chromium trzyma w swojej bazie
+         OSTATNIĄ wyrenderowaną ikonę strony (np. kropkę badge'a powiadomień)
+         i pokazuje ją dalej mimo 404 na /favicon.ico. Badge karty (tabBadge.ts)
+         podmienia href tego linku i przy zeru przywraca oryginał. -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <!-- Krój pierwszego ekranu (`--n2-font-sans`) startuje razem z arkuszem,
          a nie dopiero po jego sparsowaniu. Cztery pliki, bo interfejs jest
          polski: `latin` + `latin-ext` w wadze 400 (tekst) i 600 (nagłówki,
