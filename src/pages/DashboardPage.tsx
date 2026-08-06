@@ -30,8 +30,6 @@ import { m, useReducedMotion } from 'motion/react';
 import { useStore } from '../store/AppStore';
 import {
   CHANGELOG,
-  changelogCtaLabel,
-  changelogUnread,
   changelogUnreadCount,
 } from '../data/changelog';
 import { ChangelogModal } from '../components/ChangelogModal';
@@ -211,9 +209,10 @@ export function DashboardPage() {
   const me = currentUser(state);
   const today = todayStr();
   const [changelogOpen, setChangelogOpen] = useState(false);
-  // Który wpis dziennika zmian jest już potwierdzony NA TYM URZĄDZENIU — pasek
-  // „Nowości" znika po otwarciu popoutu i nie wraca aż do kolejnego wpisu
-  // (AT-17). To preferencja UI (uiPrefs), nie dane aplikacji.
+  // Który wpis dziennika zmian jest już potwierdzony NA TYM URZĄDZENIU —
+  // licznik na przycisku „Changelog" zeruje się po otwarciu popoutu i nie
+  // wraca aż do kolejnego wpisu (AT-17). To preferencja UI (uiPrefs), nie
+  // dane aplikacji.
   const [changelogSeenId, setChangelogSeenId] = useState<string | undefined>(
     () => loadUiPrefs().changelogSeenId,
   );
@@ -226,9 +225,8 @@ export function DashboardPage() {
   const gridVariants = reduceMotion ? dashGridVariantsStill : dashGridVariants;
   const [teamOpen, setTeamOpen] = useState(false);
   const latestChange = CHANGELOG[0];
-  // Licznik na przycisku „Zobacz zmiany": ile paczek doszło od ostatniego
-  // potwierdzenia. Ten sam `changelogSeenId` co pasek „Nowości", więc otwarcie
-  // popoutu (`openChangelog`) zeruje oba naraz.
+  // Licznik na przycisku „Changelog": ile paczek doszło od ostatniego
+  // potwierdzenia (otwarcie popoutu zeruje go przez `changelogSeenId`).
   const unreadChanges = changelogUnreadCount(CHANGELOG, changelogSeenId);
 
   // Edge case: setup mode (no people) or no resolvable acting user → keep the
@@ -311,7 +309,7 @@ export function DashboardPage() {
   const shownNotifications = visibleNotifications(notifications);
 
   // Otwarcie popoutu JEST potwierdzeniem wpisu — zapisujemy je urządzeniowo,
-  // więc pasek „Nowości" nie wraca po przeładowaniu.
+  // więc licznik na „Changelog" nie wraca po przeładowaniu.
   const openChangelog = (): void => {
     setChangelogOpen(true);
     if (!latestChange) return;
@@ -713,16 +711,18 @@ export function DashboardPage() {
     <section className="page">
       <div className="page-head dash-greeting">
         <h1>Dzień dobry, {me.firstName}</h1>
-        {/* Prawy górny róg: data + STAŁE wejście do historii zmian. Belka
-         *  „Nowości" niżej znika po potwierdzeniu wpisu, więc bez tego
-         *  przycisku nie dałoby się wrócić do starszych paczek. Ikona jest
-         *  dekoracyjna (etykieta tekstowa zostaje), a plakietka pokazuje, ile
-         *  paczek doszło od ostatniego otwarcia — i znika po jego otwarciu. */}
+        {/* Prawy górny róg: data + JEDYNE wejście do historii zmian (dawna
+         *  belka „Nowości" pod nagłówkiem dublowała tę informację — usunięta).
+         *  Ikona jest dekoracyjna (etykieta tekstowa zostaje), a plakietka
+         *  pokazuje, ile paczek doszło od ostatniego otwarcia — i znika po
+         *  jego otwarciu. */}
         <div className="dash-head-meta">
           <p className="dash-date">{formatRowLabel(today)}</p>
           <button type="button" className="link-btn dash-changelog-btn" onClick={openChangelog}>
             <History size={16} aria-hidden />
-            Zobacz zmiany
+            {/* Etykieta w spanie, żeby `text-box: trim-both` mogło przyciąć
+                boks tekstu do wersalik–baseline (optyczne centrowanie). */}
+            <span className="dash-changelog-label">Changelog</span>
             {unreadChanges > 0 && (
               <span
                 className="dash-changelog-badge"
@@ -739,17 +739,6 @@ export function DashboardPage() {
           </button>
         </div>
       </div>
-
-      {/* Dziennik zmian: JEDNA linia, JEDNO CTA, bez akcentowej ramki — i tylko
-       *  dopóki najnowszy wpis jest nieprzeczytany na tym urządzeniu (AT-17).
-       *  Pierwszym elementem treści Panelu jest „Zadania na dziś", nie to. */}
-      {latestChange && changelogUnread(latestChange, changelogSeenId) && (
-        <div className="changelog-line">
-          <button type="button" className="link-btn changelog-line-cta" onClick={openChangelog}>
-            {changelogCtaLabel(latestChange)} →
-          </button>
-        </div>
-      )}
 
       <ChangelogModal open={changelogOpen} onClose={() => setChangelogOpen(false)} />
 

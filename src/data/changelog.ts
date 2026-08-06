@@ -72,24 +72,12 @@ export function changelogRangeLabel(dateFrom: DateStr, dateTo: DateStr): string 
 }
 
 /**
- * Czy NAJNOWSZY wpis jest jeszcze nieprzeczytany na tym urządzeniu (AT-17).
- * `seenId` to identyfikator ostatnio potwierdzonego wpisu (urządzeniowa
- * preferencja UI, patrz utils/uiPrefs). Brak wpisu => nie ma czego pokazywać;
- * inny `seenId` niż bieżący (także starszy) => wpis jest nowy.
- */
-export function changelogUnread(
-  latest: ChangelogEntry | undefined,
-  seenId: string | undefined,
-): boolean {
-  if (!latest) return false;
-  return latest.id !== seenId;
-}
-
-/**
  * Ile wpisów jest NOWSZYCH niż ostatnio potwierdzony (`seenId`) — licznik na
- * przycisku „Zobacz zmiany". Liczymy wpisy od początku tablicy (najnowsze) do
- * pierwszego wystąpienia `seenId`. Brak `seenId` albo id spoza dziennika (np. po
- * usunięciu wpisu) => wszystko jest nieprzeczytane; pusty dziennik => 0.
+ * przycisku „Changelog" (jedyne wejście do dziennika; dawna belka „Nowości"
+ * dublowała tę informację i została usunięta 2026-08-06). Liczymy wpisy od
+ * początku tablicy (najnowsze) do pierwszego wystąpienia `seenId`. Brak
+ * `seenId` albo id spoza dziennika (np. po usunięciu wpisu) => wszystko jest
+ * nieprzeczytane; pusty dziennik => 0.
  */
 export function changelogUnreadCount(
   entries: readonly ChangelogEntry[],
@@ -99,17 +87,41 @@ export function changelogUnreadCount(
   return seenAt === -1 ? entries.length : seenAt;
 }
 
-/**
- * Jedno CTA paska „Nowości" — „Nowości 20–21.07". Strzałkę dokłada widok.
- * Bez czytelnej daty zostaje sama „Nowości", nigdy pusty przycisk.
- */
-export function changelogCtaLabel(entry: ChangelogEntry): string {
-  const range = changelogRangeLabel(entry.dateFrom, entry.dateTo);
-  return range ? `Nowości ${range}` : 'Nowości';
-}
-
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    id: '2026-08-06-dzwonek-powiadomien-i-porzadki',
+    dateFrom: '2026-08-06',
+    dateTo: '2026-08-06',
+    summary:
+      'Dzwonek powiadomień w menu bocznym, kalendarz bez nakładających się kafelków i jedno wejście do dziennika zmian.',
+    items: [
+      {
+        area: 'Ogólne',
+        feature: 'Dzwonek powiadomień',
+        description:
+          'Obok przycisku zwijania menu jest dzwonek z licznikiem nieprzeczytanych powiadomień. Kliknięcie otwiera listę — a kliknięcie powiadomienia od razu otwiera zadanie lub projekt, którego dotyczy. Tak samo działa teraz kafelek Powiadomienia na Panelu.',
+      },
+      {
+        area: 'Ogólne',
+        feature: 'Nowe logo i ikona karty',
+        description:
+          'Logo N2Hub jest czysto typograficzne (bez kółka), a karta przeglądarki ma własną ikonę. Licznik na ikonie karty znika teraz poprawnie po przeczytaniu wszystkich powiadomień.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Nakładające się kafelki obok siebie',
+        description:
+          'Gdy spotkanie, zadanie cykliczne i zwykły blok wypadają w tym samym czasie, kolumna dnia dzieli się między nie — kafelki stoją obok siebie zamiast się przykrywać.',
+      },
+      {
+        area: 'Panel',
+        feature: 'Jedno wejście do dziennika zmian',
+        description:
+          'Belka „Nowości" pod powitaniem zniknęła — historię zmian otwiera wyłącznie przycisk Changelog w rogu Panelu, z licznikiem nowych wpisów.',
+      },
+    ],
+  },
   {
     id: '2026-08-05-szybkie-przeciaganie-bez-cofania',
     dateFrom: '2026-08-05',

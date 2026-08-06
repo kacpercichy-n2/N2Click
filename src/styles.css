@@ -5054,8 +5054,40 @@ a.toggle-btn {
    `flex-wrap` w `.page-head` trzyma go widocznym także ≤760 px. */
 .dash-head-meta {
   display: flex;
-  align-items: baseline;
+  /* Optyczne centrowanie (patrz dokument „Optyczne centrowanie — text-box-trim"):
+     przeglądarka centruje CONTENT AREA fontu (ascent+descent z metryk), nie
+     realne glify — a data (Fragment Mono) i etykieta (sans) mają różne, luźne
+     metryki, więc ani środek boksów, ani sama linia bazowa nie składały się
+     w jedną oś z ikoną i pigułką. `text-box: trim-both cap alphabetic` NIŻEJ
+     przycina boksy tekstów do wersalik–baseline, i dopiero wtedy zwykłe
+     `center` jest realnie optyczne (progressive enhancement — przeglądarka
+     bez wsparcia renderuje jak dotąd, wycentrowane boksy). */
+  align-items: center;
   gap: var(--n2-space-3);
+}
+/* Przycięcie half-leadingu: boks tekstu = od górnej krawędzi wersalika do
+   linii bazowej. Wspólna reguła dla obu tekstów wiersza meta. */
+.dash-date,
+.dash-changelog-label {
+  text-box: trim-both cap alphabetic;
+}
+/* Same przycięte boksy NIE wystarczą: Inter (data, cap ≈ 0,705em) i Plus
+   Jakarta (etykieta, cap ≈ 0,745em) mają różne cap-height, a centrowanie
+   dzieli różnicę na pół — linie bazowe rozjeżdżają się o (capA−capB)/2
+   (przy DPR 1 rastruje się to jako pełny piksel). Dopełnienie każdego boksu
+   od góry do wysokości H = max(cap) PARY (`--pair-cap`; jednostka `cap` =
+   cap-height WŁASNEGO fontu elementu) daje obu tekstom identyczną wysokość,
+   więc środkowanie zrównuje dolne krawędzie = wspólną linię bazową — a że
+   H = max(cap), pasmo glifów zostaje też w optycznym środku względem ikony
+   i pigułki (H = 1em opuszczałoby całą parę o (1em−max(cap))/2 ≈ 1,7 px).
+   Pełny wywód: dokument „Optyczne centrowanie", sekcja 02b. Strażnik
+   @supports: bez text-box ten padding tylko by przesuwał nieprzycięte boksy. */
+@supports (text-box: trim-both cap alphabetic) {
+  .dash-date,
+  .dash-changelog-label {
+    --pair-cap: 0.75em; /* cap-height wyższego kroju pary (Plus Jakarta) */
+    padding-top: calc(var(--pair-cap) - 1cap);
+  }
 }
 .dash-changelog-btn {
   display: inline-flex;
@@ -5066,6 +5098,7 @@ a.toggle-btn {
 /* Ikona historii przy etykiecie — dekoracyjna, w skali tekstu przycisku. */
 .dash-changelog-btn svg {
   flex: none;
+  display: block;
   opacity: 0.85;
 }
 /* Licznik nieprzeczytanych paczek zmian. Ta sama pigułka co `.dash-badge`
@@ -9443,18 +9476,10 @@ a.toggle-btn {
   white-space: pre-wrap;
 }
 
-/* Dziennik zmian („Co nowego") — JEDNA linia z JEDNYM CTA nad Panelem + popout
-   (AT-17). Pasek nie ma już akcentowej ramki ani tła: to najcichszy element
-   strony, widoczny tylko dopóki najnowszy wpis jest nieprzeczytany. Popout
-   zostaje w rodzinie `.task-modal-*` (patrz ChangelogModal). */
-.changelog-line {
-  display: flex;
-  margin-bottom: var(--n2-space-4);
-}
-.changelog-line-cta {
-  margin: 0;
-  font-size: var(--n2-type-sm);
-}
+/* Dziennik zmian („Co nowego") — popout otwierany JEDYNYM wejściem: przyciskiem
+   „Changelog" w nagłówku Panelu (dawna belka „Nowości" nad treścią dublowała
+   tę informację i została usunięta 2026-08-06). Popout zostaje w rodzinie
+   `.task-modal-*` (patrz ChangelogModal). */
 /* Link do pełnej historii pod listą wpisów w popoucie. */
 .changelog-modal-full {
   display: inline-block;
