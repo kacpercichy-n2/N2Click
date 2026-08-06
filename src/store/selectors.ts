@@ -822,9 +822,11 @@ export interface EventConflictReport {
 /**
  * Kolizje draftu wydarzenia, z PROGIEM zależnym od listy uczestników:
  *
- * - Uczestnicy IMIENNI (`attendeeIds` niepuste) => kolizja BLOKUJE zapis. Wiemy
- *   konkretnie, kogo zajmujemy, więc „nie da się ustawić w tych godzinach" jest
- *   uczciwe i wykonalne.
+ * - Uczestnicy IMIENNI (`attendeeIds` niepuste; ZMIANA 2026-08-06): kolizja
+ *   z zadaniem/wydarzeniem/wystąpieniem cyklicznym => OSTRZEŻENIE, którego
+ *   zapis wymaga POTWIERDZENIA w EventModal (dialog „Dodaj mimo kolizji");
+ *   twardo BLOKUJE wyłącznie urlop uczestnika. Poprzednio (2026-07-30) każda
+ *   kolizja imienna blokowała — realny zespół świadomie nakłada spotkania.
  * - Wydarzenie OGÓLNOFIRMOWE (`attendeeIds` puste) => kolizja tylko OSTRZEGA.
  *   Twarda blokada liczona po wszystkich osobach czyniłaby spotkanie całofirmowe
  *   praktycznie niemożliwym do wstawienia w godzinach pracy: wystarczyłaby jedna
@@ -924,9 +926,18 @@ export function eventDraftConflicts(
     draft.durationMinutes,
     opts,
   );
-  return companyWide
-    ? { blocking: [], warning: conflicts }
-    : { blocking: conflicts, warning: [] };
+  if (companyWide) return { blocking: [], warning: conflicts };
+  // IMIENNI (ZMIANA 2026-08-06, decyzja usera — poprzednio każda kolizja
+  // blokowała): kolizja z zadaniem, wydarzeniem lub wystąpieniem cyklicznym
+  // uczestnika schodzi do OSTRZEŻENIA — zapis przechodzi, ale EventModal
+  // wymaga świadomego POTWIERDZENIA w dialogu (bramka UX; reduktor przepuszcza).
+  // Twardo blokuje wyłącznie URLOP uczestnika: dzień nieobecności nie podlega
+  // negocjacji z poziomu kalendarza (symetria z progiem zapisu urlopu, gdzie
+  // kierunek „spotkanie w czyjś dzień urlopu" był i pozostaje blokujący).
+  return {
+    blocking: conflicts.filter((c) => c.kind === 'urlop'),
+    warning: conflicts.filter((c) => c.kind !== 'urlop'),
+  };
 }
 
 /**

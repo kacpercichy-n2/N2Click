@@ -120,6 +120,12 @@ export const CHANGELOG: ChangelogEntry[] = [
         description:
           'Belka „Nowości" pod powitaniem zniknęła — historię zmian otwiera wyłącznie przycisk Changelog w rogu Panelu, z licznikiem nowych wpisów.',
       },
+      {
+        area: 'Wydarzenia',
+        feature: 'Kolizja terminu nie blokuje już spotkania',
+        description:
+          'Spotkanie z wybranymi osobami, które nachodzi na ich zadania lub inne wydarzenia, można teraz zapisać — aplikacja pokaże, z czym koliduje, i poprosi o potwierdzenie „Dodaj mimo kolizji". Twardo blokuje tylko czyjś urlop.',
+      },
     ],
   },
   {

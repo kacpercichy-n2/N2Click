@@ -4247,9 +4247,11 @@ export function reducer(state: AppData, action: Action): AppData {
     case 'ADD_EVENT': {
       const normalized = normalizeEventDraft(state, action.draft);
       if (normalized === null) return state;
-      // Kolizja z czasem IMIENNEGO uczestnika odrzuca zapis (inwariant 6: ta sama
-      // referencja stanu). Ogólnofirmowe przechodzą — `eventDraftConflicts`
-      // zwraca wtedy same ostrzeżenia, które pokazuje EventModal.
+      // Od 2026-08-06 `blocking` dla imiennych niesie WYŁĄCZNIE urlop
+      // uczestnika — tylko on odrzuca zapis (inwariant 6: ta sama referencja
+      // stanu). Pozostałe kolizje wracają jako ostrzeżenia: EventModal wymaga
+      // dla nich potwierdzenia w dialogu (bramka UX), ogólnofirmowe pokazują
+      // samą żywą linię.
       if (eventDraftConflicts(state, normalized).blocking.length > 0) return state;
       const stamp = nowIso();
       return {

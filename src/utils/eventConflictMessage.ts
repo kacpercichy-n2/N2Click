@@ -2,8 +2,10 @@
 // store'u, wszystkie dane wchodzą jawnie — tak jak w `blockLabel.ts` — więc
 // testuje się bez Reacta i bez DOM-u (środowisko `node`).
 //
-// Dwa progi, dwa komunikaty (patrz `eventDraftConflicts` w selectors.ts):
-//  - uczestnicy IMIENNI => komunikat BLOKUJĄCY, mówi kto i czym jest zajęty,
+// Progi i komunikaty (patrz `eventDraftConflicts` w selectors.ts):
+//  - uczestnicy IMIENNI (od 2026-08-06): kolizja z urlopem => komunikat
+//    BLOKUJĄCY; pozostałe kolizje => żywa linia ostrzeżenia + treść DIALOGU
+//    potwierdzenia („Dodaj mimo kolizji"), oba mówią kto i czym jest zajęty,
 //  - wydarzenie OGÓLNOFIRMOWE => komunikat OSTRZEGAJĄCY, sam licznik osób.
 //
 // Zakresy godzin piszemy zwykłym łącznikiem („9:00-10:00"). Myślnik i półpauza
@@ -101,6 +103,33 @@ export function eventConflictBlockingMessage(conflicts: readonly ConflictLike[])
   const rest = conflicts.length - Math.min(conflicts.length, MAX_LISTED);
   const tail = rest > 0 ? ` (i ${extraConflictsPhrase(rest)})` : '';
   return `Nie da się ustawić wydarzenia w tych godzinach. ${listed}${tail}.`;
+}
+
+/**
+ * Kolizje imienne po ZMIANIE 2026-08-06 (zapis możliwy po potwierdzeniu):
+ *
+ * ŻYWA linia ostrzeżenia pod formularzem — wymienia kto i czym jest zajęty
+ * (jak komunikat blokujący) i zapowiada dialog potwierdzenia, żeby przycisk
+ * zapisu nie zaskakiwał.
+ */
+export function namedConflictWarningMessage(conflicts: readonly ConflictLike[]): string {
+  if (conflicts.length === 0) return '';
+  const listed = conflicts.slice(0, MAX_LISTED).map(describeOne).join('; ');
+  const rest = conflicts.length - Math.min(conflicts.length, MAX_LISTED);
+  const tail = rest > 0 ? ` (i ${extraConflictsPhrase(rest)})` : '';
+  return `Termin koliduje: ${listed}${tail}. Zapis poprosi o potwierdzenie.`;
+}
+
+/**
+ * Treść DIALOGU potwierdzenia kolizji imiennej — sama lista zajęć (tytuł
+ * dialogu niesie pytanie), bez zdania „nie da się": zapis JEST możliwy.
+ */
+export function eventConflictConfirmMessage(conflicts: readonly ConflictLike[]): string {
+  if (conflicts.length === 0) return '';
+  const listed = conflicts.slice(0, MAX_LISTED).map(describeOne).join('; ');
+  const rest = conflicts.length - Math.min(conflicts.length, MAX_LISTED);
+  const tail = rest > 0 ? ` (i ${extraConflictsPhrase(rest)})` : '';
+  return `${listed}${tail}.`;
 }
 
 /**

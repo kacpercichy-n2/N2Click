@@ -297,16 +297,23 @@ function stateWithBlock(personId: string, events: CalendarEvent[] = []): AppData
   return { ...baseState(events), tasks: [taskFor()], workload: [blockFor(personId)] };
 }
 
+// PRÓG (ZMIANA 2026-08-06, decyzja usera): kolizja imienna z blokiem,
+// wydarzeniem lub wystąpieniem cyklicznym NIE odrzuca już zapisu w reduktorze —
+// jest ostrzeżeniem, a świadome potwierdzenie wymusza EventModal (bramka UX,
+// dialog „Dodaj mimo kolizji"). Twardo blokuje wyłącznie urlop uczestnika
+// (test w sekcji urlopu niżej).
 describe('ADD_EVENT — kolizja terminu', () => {
-  it('ODRZUCA wydarzenie nachodzące na blok imiennego uczestnika (ta sama referencja)', () => {
+  it('PRZEPUSZCZA wydarzenie nachodzące na blok imiennego uczestnika (potwierdzenie jest w UI)', () => {
     const state = stateWithBlock(PA);
     // Blok PA: 600-660. Wydarzenie 630-690 nachodzi.
     const next = reducer(state, {
       type: 'ADD_EVENT',
       draft: draft({ attendeeIds: [PA], startMinutes: 630, durationMinutes: 60 }),
     });
-    expect(next).toBe(state);
-    expect(next.events).toHaveLength(0);
+    expect(next).not.toBe(state);
+    expect(next.events).toHaveLength(1);
+    // Blok zostaje na miejscu — nakładka niczego nie kasuje (inwariant 1).
+    expect(next.workload).toHaveLength(1);
   });
 
   it('PRZEPUSZCZA wydarzenie, gdy zajęta jest INNA osoba niż uczestnik', () => {
@@ -336,27 +343,26 @@ describe('ADD_EVENT — kolizja terminu', () => {
     expect(next.events).toHaveLength(1);
   });
 
-  it('ODRZUCA wydarzenie nachodzące na INNE wydarzenie tego uczestnika', () => {
+  it('PRZEPUSZCZA wydarzenie nachodzące na INNE wydarzenie tego uczestnika (kolizja = warning)', () => {
     const existing = event({ id: 'ev-existing', date: MON, startMinutes: 600, durationMinutes: 60, attendeeIds: [PA] });
     const state = baseState([existing]);
     const next = reducer(state, {
       type: 'ADD_EVENT',
       draft: draft({ attendeeIds: [PA], startMinutes: 630, durationMinutes: 60 }),
     });
-    expect(next).toBe(state);
-    expect(next.events).toHaveLength(1);
+    expect(next).not.toBe(state);
+    expect(next.events).toHaveLength(2);
   });
 
-  // Wydarzenie ogólnofirmowe ZAJMUJE każdą osobę, więc imienne wydarzenie na tych
-  // samych godzinach musi zostać odrzucone.
-  it('ODRZUCA imienne wydarzenie nachodzące na wydarzenie OGÓLNOFIRMOWE', () => {
+  it('PRZEPUSZCZA imienne wydarzenie nachodzące na wydarzenie OGÓLNOFIRMOWE (kolizja = warning)', () => {
     const allHands = event({ id: 'ev-all', date: MON, startMinutes: 600, durationMinutes: 60, attendeeIds: [] });
     const state = baseState([allHands]);
     const next = reducer(state, {
       type: 'ADD_EVENT',
       draft: draft({ attendeeIds: [PA], startMinutes: 630, durationMinutes: 60 }),
     });
-    expect(next).toBe(state);
+    expect(next).not.toBe(state);
+    expect(next.events).toHaveLength(2);
   });
 });
 
@@ -374,7 +380,7 @@ describe('SAVE_EVENT — kolizja terminu', () => {
     expect(next.events[0].title).toBe('Nowy tytuł');
   });
 
-  it('ODRZUCA przesunięcie edytowanego wydarzenia na blok uczestnika', () => {
+  it('PRZEPUSZCZA przesunięcie edytowanego wydarzenia na blok uczestnika (potwierdzenie w UI)', () => {
     const existing = event({ id: 'ev-self', date: MON, startMinutes: 60, durationMinutes: 60, attendeeIds: [PA] });
     const state = { ...stateWithBlock(PA), events: [existing] };
     const next = reducer(state, {
@@ -382,8 +388,8 @@ describe('SAVE_EVENT — kolizja terminu', () => {
       eventId: 'ev-self',
       draft: draft({ attendeeIds: [PA], startMinutes: 630, durationMinutes: 60 }), // na blok 600-660
     });
-    expect(next).toBe(state);
-    expect(next.events[0].startMinutes).toBe(60);
+    expect(next).not.toBe(state);
+    expect(next.events[0].startMinutes).toBe(630);
   });
 });
 

@@ -2223,15 +2223,50 @@ describe('eventDraftConflicts — próg zależny od uczestników', () => {
       ],
     });
 
-  it('uczestnik imienny => kolizja BLOKUJE, nic w ostrzeżeniach', () => {
+  // ZMIANA 2026-08-06 (decyzja usera): kolizja imienna z zajęciami NIE blokuje
+  // już zapisu — wraca jako ostrzeżenie, którego zapis wymaga potwierdzenia
+  // w EventModal. Twardo blokuje wyłącznie urlop uczestnika.
+  it('uczestnik imienny => kolizja z zajęciami OSTRZEGA (potwierdzenie w UI)', () => {
     const r = eventDraftConflicts(busyState(), {
       date: '2026-07-08',
       startMinutes: 630,
       durationMinutes: 60,
       attendeeIds: ['p1'],
     });
+    expect(r.blocking).toHaveLength(0);
+    expect(r.warning).toHaveLength(1);
+    expect(r.warning[0].kind).toBe('block');
+  });
+
+  it('uczestnik imienny => URLOP uczestnika BLOKUJE, zajęcia zostają w ostrzeżeniach', () => {
+    const withVacation = makeState({
+      people: [makePerson({ id: 'p1', name: 'Ola' })],
+      tasks: [makeTask({ id: 't1', title: 'Regresja QA' })],
+      workload: [
+        makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', startMinutes: 600, plannedHours: 2 }),
+      ],
+      events: [
+        makeCalendarEvent({
+          id: 'urlop1',
+          title: 'Urlop',
+          kind: 'urlop',
+          date: '2026-07-08',
+          startMinutes: 0,
+          durationMinutes: 1440,
+          attendeeIds: ['p1'],
+        }),
+      ],
+    });
+    const r = eventDraftConflicts(withVacation, {
+      date: '2026-07-08',
+      startMinutes: 630,
+      durationMinutes: 60,
+      attendeeIds: ['p1'],
+    });
     expect(r.blocking).toHaveLength(1);
-    expect(r.warning).toHaveLength(0);
+    expect(r.blocking[0].kind).toBe('urlop');
+    expect(r.warning).toHaveLength(1);
+    expect(r.warning[0].kind).toBe('block');
   });
 
   it('ogólnofirmowe => kolizja tylko OSTRZEGA i liczona jest po wszystkich', () => {

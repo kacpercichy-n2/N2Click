@@ -4,8 +4,10 @@ import { describe, expect, it } from 'vitest';
 import {
   type ConflictLike,
   eventConflictBlockingMessage,
+  eventConflictConfirmMessage,
   eventConflictWarningMessage,
   extraConflictsPhrase,
+  namedConflictWarningMessage,
   peopleCountPhrase,
   plannedItemsPhrase,
   recurringConflictWarningMessage,
@@ -207,5 +209,51 @@ describe('recurringConflictWarningMessage — seria cykliczna', () => {
     expect(msg).toContain('8 lip (śro): Ola Nowak ma już zadanie „Regresja QA" 10:30-12:00');
     expect(msg).toContain('(i 1 kolejna kolizja)');
     expect(msg).not.toContain('29 lip');
+  });
+});
+
+// Kolizje imienne po zmianie 2026-08-06: zapis możliwy po potwierdzeniu, więc
+// żywa linia zapowiada dialog, a treść dialogu jest samą listą zajęć.
+describe('namedConflictWarningMessage — imienna kolizja (żywa linia)', () => {
+  it('pusta lista => pusty tekst', () => {
+    expect(namedConflictWarningMessage([])).toBe('');
+  });
+
+  it('wymienia zajęcie i zapowiada potwierdzenie', () => {
+    expect(namedConflictWarningMessage([conflict()])).toBe(
+      'Termin koliduje: Ola Nowak ma już zadanie „Regresja QA" 10:30-12:00. Zapis poprosi o potwierdzenie.',
+    );
+  });
+
+  it('powyżej dwóch kolizji zbiera resztę licznikiem', () => {
+    const msg = namedConflictWarningMessage([
+      conflict(),
+      conflict({ kind: 'event', title: 'Brainstorm', startMinutes: 600, durationMinutes: 60 }),
+      conflict({ personName: 'Jan Kowalski' }),
+    ]);
+    expect(msg).toContain('Termin koliduje: ');
+    expect(msg).toContain('wydarzenie „Brainstorm" 10:00-11:00');
+    expect(msg).toContain('(i 1 kolejna kolizja)');
+    expect(msg).toContain('Zapis poprosi o potwierdzenie.');
+  });
+});
+
+describe('eventConflictConfirmMessage — treść dialogu potwierdzenia', () => {
+  it('pusta lista => pusty tekst', () => {
+    expect(eventConflictConfirmMessage([])).toBe('');
+  });
+
+  it('jest samą listą zajęć, bez zdania „nie da się"', () => {
+    expect(eventConflictConfirmMessage([conflict()])).toBe(
+      'Ola Nowak ma już zadanie „Regresja QA" 10:30-12:00.',
+    );
+  });
+
+  it('wydarzenie cykliczne uczestnika nazywa się zadaniem cyklicznym', () => {
+    expect(
+      eventConflictConfirmMessage([
+        conflict({ kind: 'recurrence', title: 'Przegląd tygodnia', startMinutes: 540, durationMinutes: 30 }),
+      ]),
+    ).toBe('Ola Nowak ma już zadanie cykliczne „Przegląd tygodnia" 9:00-9:30.');
   });
 });

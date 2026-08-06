@@ -237,10 +237,16 @@
   w `WorkloadEntry`) zostaje nietknięty. Dwa kierunki, dwa progi:
   - „wydarzenie → zajęty czas": `eventDraftConflicts` (selectors.ts) liczy kolizje
     draftu z blokami, wydarzeniami I wystąpieniami cyklicznymi wskazanych osób.
-    Uczestnicy IMIENNI => `blocking`, `ADD_EVENT`/`SAVE_EVENT` odrzucają zapis tą
-    samą referencją stanu (inwariant 6), a EventModal pokazuje zdanie z
-    `eventConflictBlockingMessage`. Wydarzenie OGÓLNOFIRMOWE (`attendeeIds` puste)
-    => `warning`: zapis PRZECHODZI, a modal pokazuje żywą, ostrzegawczą linię
+    Uczestnicy IMIENNI (ZMIANA 2026-08-06, decyzja usera — poprzednio każda
+    kolizja blokowała): kolizja z zajęciami => `warning`, którego zapis wymaga
+    ŚWIADOMEGO POTWIERDZENIA w EventModal (dialog ConfirmProvider „Dodaj/Zapisz
+    mimo kolizji", treść z `eventConflictConfirmMessage`; żywa linia
+    `namedConflictWarningMessage` zapowiada dialog). Reduktor PRZEPUSZCZA taki
+    zapis — bramka potwierdzenia jest wyłącznie UX-owa. `blocking` (odrzucenie
+    tą samą referencją stanu, inwariant 6, zdanie z
+    `eventConflictBlockingMessage`) niesie dla imiennych WYŁĄCZNIE urlop
+    uczestnika. Wydarzenie OGÓLNOFIRMOWE (`attendeeIds` puste)
+    => `warning`: zapis PRZECHODZI bez dialogu, a modal pokazuje żywą linię
     `.event-conflict-warn` z licznikiem osób. Twarda blokada liczona po wszystkich
     czyniłaby spotkanie całofirmowe niewstawialnym w godzinach pracy.
     ZAKRES: dla wydarzenia JEDNORAZOWEGO sprawdzana jest data draftu. SERIA

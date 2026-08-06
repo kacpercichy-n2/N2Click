@@ -15,7 +15,9 @@ import { isValidEventDraft, MAX_VACATION_DAYS } from '../store/commandValidation
 import { eventDraftConflicts } from '../store/selectors';
 import {
   eventConflictBlockingMessage,
+  eventConflictConfirmMessage,
   eventConflictWarningMessage,
+  namedConflictWarningMessage,
   recurringConflictWarningMessage,
   vacationDraftWarningMessage,
 } from '../utils/eventConflictMessage';
@@ -436,6 +438,9 @@ function EventEditor({
 }: EditorProps) {
   const { state, dispatch } = useStore();
   const readOnly = !canManage;
+  // Dialog potwierdzenia kolizji imiennej (2026-08-06) — wspólna powłoka
+  // ConfirmProvider, ta sama co strażnik zamykania w EventModalShell.
+  const confirm = useConfirm();
   // Utajnij treść (zarząd): checkbox tylko dla zarządu i tylko dla spotkań
   // (urlop nigdy nie niesie flagi). Reduktor ignoruje pole od innych.
   const isBoard = isBoardMember(state);
@@ -506,15 +511,18 @@ function EventEditor({
 
   const sortedPeople = useMemo(() => sortByNamePl(state.people), [state.people]);
 
-  // Żywe, NIEBLOKUJĄCE ostrzeżenia kolizji. Dwa przypadki bez twardej bramki:
+  // Żywe, NIEBLOKUJĄCE ostrzeżenia kolizji. Trzy przypadki bez twardej bramki:
   //  - wydarzenie OGÓLNOFIRMOWE (brak imiennych uczestników) — wolno je zapisać,
   //    chcemy tylko wiedzieć, ilu osób dotknie;
   //  - SERIA CYKLICZNA z imiennymi uczestnikami (2026-08-04) — zajęty pojedynczy
   //    tydzień nie blokuje serii, więc symulacja wystąpień wymienia TERMINY
-  //    kolizji („pon 10 sie: Jarek ma w tym dniu urlop") zamiast odrzucać zapis.
-  // Jednorazowe wydarzenie z imiennymi uczestnikami zachowuje twardą bramkę na
-  // zapisie, więc nie dublujemy go tutaj. Liczone WYŁĄCZNIE dla sensownej daty
-  // i zakresu godzin, żeby podpowiedź nie migała w trakcie pisania w polach.
+  //    kolizji („pon 10 sie: Jarek ma w tym dniu urlop") zamiast odrzucać zapis;
+  //  - JEDNORAZOWE z imiennymi uczestnikami (2026-08-06) — kolizja z zajęciami
+  //    nie blokuje już zapisu, tylko wymaga potwierdzenia w dialogu; żywa linia
+  //    wymienia zajęcia i zapowiada ten dialog. Twardo blokuje wyłącznie urlop
+  //    uczestnika (komunikat blokujący na zapisie, jak dotąd).
+  // Liczone WYŁĄCZNIE dla sensownej daty i zakresu godzin, żeby podpowiedź nie
+  // migała w trakcie pisania w polach.
   const conflictWarning = useMemo(() => {
     if (isVacation || !isValidDateStr(date)) return '';
     const from = snapToGrid(timeToMinutes(startTime));
@@ -542,12 +550,15 @@ function EventEditor({
       );
       return recurringConflictWarningMessage(report.warning);
     }
-    if (attendeeIds.length > 0) return '';
     const report = eventDraftConflicts(
       state,
       { date, startMinutes: from, durationMinutes: to - from, attendeeIds },
       existing?.id,
     );
+    // Jednorazowe z IMIENNYMI uczestnikami (2026-08-06): kolizje nie blokują
+    // już zapisu, więc żywa linia wymienia zajęcia i zapowiada dialog
+    // potwierdzenia (urlop uczestnika nadal zatrzymuje dopiero na zapisie).
+    if (attendeeIds.length > 0) return namedConflictWarningMessage(report.warning);
     return eventConflictWarningMessage(report.warning);
   }, [
     isVacation,
@@ -628,7 +639,7 @@ function EventEditor({
     onSaved();
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (readOnly) return;
     if (isVacation) {
@@ -719,9 +730,9 @@ function EventEditor({
 
     // Kolizja terminu — LUSTRO bramki reduktora (`ADD_EVENT`/`SAVE_EVENT` zwracają
     // tę samą referencję stanu). Bez tego zapis „zniknąłby po cichu": modal by się
-    // zamknął, a wydarzenia by nie było. Blokują wyłącznie kolizje uczestników
-    // IMIENNYCH; ogólnofirmowe wracają jako `warning` i lecą do żywej podpowiedzi
-    // niżej, nie tutaj.
+    // zamknął, a wydarzenia by nie było. Od 2026-08-06 `blocking` niesie dla
+    // imiennych WYŁĄCZNIE urlop uczestnika; ogólnofirmowe wracają jako `warning`
+    // i lecą do żywej podpowiedzi niżej, nie tutaj.
     // `EventDraft.recurrence` jest celowo luźne (`unknown | null` — surówka
     // przed normalizacją reduktora); bramka kolizji dostaje lokalną, ściśle
     // typowaną regułę zbudowaną wyżej.
@@ -730,6 +741,19 @@ function EventEditor({
       setErrors({ form: eventConflictBlockingMessage(conflicts.blocking) });
       focusFieldById('event-start');
       return;
+    }
+    // Kolizje IMIENNE (2026-08-06, decyzja usera): zapis JEST możliwy, ale
+    // wymaga świadomej zgody — dialog wymienia zajęcia uczestników. Seria
+    // cykliczna i wydarzenie ogólnofirmowe zostają przy samej żywej linii
+    // ostrzeżenia (ich progi bez zmian).
+    if (!recurring && attendeeIds.length > 0 && conflicts.warning.length > 0) {
+      const proceed = await confirm({
+        title: existing ? 'Zapisać wydarzenie mimo kolizji?' : 'Dodać wydarzenie mimo kolizji?',
+        description: eventConflictConfirmMessage(conflicts.warning),
+        confirmLabel: existing ? 'Zapisz mimo kolizji' : 'Dodaj mimo kolizji',
+        cancelLabel: 'Wróć do edycji',
+      });
+      if (!proceed) return;
     }
     setErrors({});
 
