@@ -45,11 +45,20 @@ export interface ResolvedBlock {
   project: Project | undefined;
 }
 
+/** Pozioma geometria kafelka: kolumna wewnątrz klastra nakładania (packDayBlocks). */
+export interface LayoutLane {
+  col: number;
+  cols: number;
+}
+
 /** A recurring-task occurrence with its display hue resolved (presentational). */
 export interface ResolvedRecurrence {
   task: Task;
   occurrence: RecurrenceOccurrence;
   hue: string;
+  /** Kolumna w WSPÓLNYM pakowaniu warstwy dnia (bloki + spotkania + cykliczne). */
+  col: number;
+  cols: number;
 }
 
 /** Everything one day column needs, precomputed. */
@@ -71,6 +80,12 @@ export interface WeekDayModel {
   birthdayNames: string[];
   /** Presentational calendar-event occurrences on this day. */
   events: CalendarEventOccurrence[];
+  /**
+   * Kolumna spotkania we WSPÓLNYM pakowaniu warstwy dnia (klucz = id
+   * wydarzenia). URLOP celowo nie ma tu wpisu — zostaje pełnoszerokim tłem
+   * doby, nie kafelkiem dzielącym kolumnę.
+   */
+  eventLanes: Map<string, LayoutLane>;
   /**
    * Okno renderu bloku urlopu per WYSTĄPIENIE (klucz = id wydarzenia): godziny
    * pracy uczestnika z fallbackiem 9:00-17:00. Rozwiązane tutaj, bo `EventBlock`
@@ -268,26 +283,70 @@ export function buildWeekModel(
       vacationWindows.set(occ.event.id, vacationRenderWindow(owner));
     }
 
+    const rawRecurrences = recurrenceOccurrencesForDate(state, date, filter);
+
+    // JEDNO pakowanie WARSTWY PREZENTACJI (2026-08-06, decyzja usera): bloki,
+    // spotkania (bez urlopu) i wystąpienia cykliczne wchodzą RAZEM do
+    // `packDayBlocks`, więc dwie rzeczy w tym samym czasie dzielą kolumnę
+    // (kafelki obok siebie) zamiast malować się jedna na drugiej. To WYŁĄCZNIE
+    // geometria (`col`/`cols`): kolizje, sumy, `dayTotal` i przeciążenie nadal
+    // nie widzą nakładek (inwariant 1), a żadna ścieżka wskaźnika się nie
+    // zmienia (inwariant 7). Urlop zostaje pełnoszerokim tłem doby.
+    type LayoutItem = { startMinutes: number; plannedHours: number } & (
+      | { kind: 'block'; entry: WorkloadEntry }
+      | { kind: 'event'; eventId: string }
+      | { kind: 'recurrence'; taskId: string }
+    );
+    const layoutItems: LayoutItem[] = [
+      ...entries.map((entry) => ({
+        kind: 'block' as const,
+        entry,
+        startMinutes: entry.startMinutes,
+        plannedHours: entry.plannedHours,
+      })),
+      ...events
+        .filter((occ) => occ.event.kind !== 'urlop')
+        .map((occ) => ({
+          kind: 'event' as const,
+          eventId: occ.event.id,
+          startMinutes: occ.startMinutes,
+          plannedHours: occ.durationMinutes / 60,
+        })),
+      ...rawRecurrences.map(({ task, occurrence }) => ({
+        kind: 'recurrence' as const,
+        taskId: task.id,
+        startMinutes: occurrence.startMinutes,
+        plannedHours: occurrence.durationMinutes / 60,
+      })),
+    ];
+    const eventLanes = new Map<string, LayoutLane>();
+    const recurLanes = new Map<string, LayoutLane>();
+    const blocks: ResolvedBlock[] = [];
+    for (const { block: item, col, cols } of packDayBlocks(layoutItems)) {
+      if (item.kind === 'event') {
+        eventLanes.set(item.eventId, { col, cols });
+        continue;
+      }
+      if (item.kind === 'recurrence') {
+        recurLanes.set(item.taskId, { col, cols });
+        continue;
+      }
+      const task = getTask(state, item.entry.taskId);
+      const person = getPerson(state, item.entry.personId);
+      if (!task || !person) continue; // matches the JSX null-skip exactly
+      const project = getProject(state, task.projectId);
+      blocks.push({ block: item.entry, col, cols, task, person, project });
+    }
+
     // Presentational recurrence overlay: same selector/order as the JSX, hue
     // resolved once here (was `personColor(assigneeIdsOfTask(...)[0])` inline).
-    const recurrences: ResolvedRecurrence[] = recurrenceOccurrencesForDate(
-      state,
-      date,
-      filter,
-    ).map(({ task, occurrence }) => ({
+    const recurrences: ResolvedRecurrence[] = rawRecurrences.map(({ task, occurrence }) => ({
       task,
       occurrence,
       hue: personColor(assigneeIdsOfTask(state, task.id)[0] ?? ''),
+      col: recurLanes.get(task.id)?.col ?? 0,
+      cols: recurLanes.get(task.id)?.cols ?? 1,
     }));
-
-    const blocks: ResolvedBlock[] = [];
-    for (const { block, col, cols } of packDayBlocks(entries)) {
-      const task = getTask(state, block.taskId);
-      const person = getPerson(state, block.personId);
-      if (!task || !person) continue; // matches the JSX null-skip exactly
-      const project = getProject(state, task.projectId);
-      blocks.push({ block, col, cols, task, person, project });
-    }
 
     return {
       date,
@@ -297,6 +356,7 @@ export function buildWeekModel(
       vacationNames,
       birthdayNames,
       events,
+      eventLanes,
       vacationWindows,
       recurrences,
       blocks,

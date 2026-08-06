@@ -202,10 +202,21 @@
   `aria-live` i nazwą siatki. Nazwa komórki („30 lipca, 6 zaplanowanych godzin,
   2 osoby”) pochodzi z `monthCellName`, więc znaczniki 🎂/⟳/📅 są `aria-hidden` —
   ich treść wchodzi do nazwy i nie czyta się dwa razy.
+- WSPÓLNE PAKOWANIE WARSTWY DNIA (2026-08-06, decyzja usera): w trybie tygodnia
+  bloki, spotkania (bez urlopu) i wystąpienia cykliczne wchodzą RAZEM do JEDNEGO
+  wywołania `packDayBlocks` w `buildWeekModel`, więc dwie rzeczy w tym samym
+  czasie dzielą kolumnę (kafelki OBOK siebie, ta sama arytmetyka
+  `left/width` co `.week-block`) zamiast malować się jedna na drugiej. To
+  WYŁĄCZNIE geometria (`col`/`cols` w `ResolvedBlock`/`ResolvedRecurrence` +
+  `WeekDayModel.eventLanes`): kolizje, sumy, `dayTotal` i przeciążenie nadal nie
+  widzą nakładek (inwariant 1), żadna ścieżka wskaźnika się nie zmienia
+  (inwariant 7). URLOP celowo nie wchodzi (pełnoszerokie tło doby), a widok dnia
+  (telefon) zostaje kaskadą `dayStack` — nakładki dostają tam `0/1`.
 - Recurring-task occurrences are PRESENTATIONAL ONLY (invariant 1): WeekView
   renders them as additive `.week-recur-block` overlays (dashed/striped, ⟳),
   positioned by time and painted BEHIND real blocks; they never enter
-  `packDayBlocks`, collisions, totals or overload and carry NO pointer/drag
+  collisions, totals or overload (into `packDayBlocks` they enter ONLY as
+  layout geometry — see „wspólne pakowanie" above) and carry NO pointer/drag
   handlers — only click/keyboard opens the task and right-click opens the
   `recurMenu`. Menu actions map only to reducer actions: „Pomiń ten
   dzień"/„Edytuj to wystąpienie" → `SET_RECURRENCE_OVERRIDE`, „Oznacz to
@@ -311,8 +322,9 @@
   WeekView renders each `calendarEventsForDate` occurrence as an additive
   `.week-event-block` overlay (solid cyan border + left bar, `--event-accent`,
   📅), positioned by `startMinutes`, height ∝ `durationMinutes`, painted BEHIND
-  real task blocks (tree order, `z-index: 0`); events never enter `packDayBlocks`,
-  totals, `dayTotal` or overload and carry NO pointer/drag handlers —
+  real task blocks (tree order, `z-index: 0`); events never enter totals,
+  `dayTotal` or overload (into `packDayBlocks` they enter ONLY as layout
+  geometry — see „wspólne pakowanie" above) and carry NO pointer/drag handlers —
   only click/keyboard opens `EventModal` (`?wydarzenie=<id>`). `openSlotMenu`
   guards `.week-event-block` alongside `.week-recur-block`/`.week-block`, and its
   gate widens to `canManageTasks || canManageEvents`: the slot menu shows „+ Dodaj

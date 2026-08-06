@@ -1969,9 +1969,10 @@ const BinCard = memo(BinCardImpl);
 // ---- Recurring-task occurrence overlay (presentational only) ----
 // A recurring task's occurrence rendered as a visually distinct, purely
 // presentational block. NO pointer/drag/resize handlers (invariant 1 + 7): it
-// never enters packDayBlocks/collision/totals and never sits on top of a real
-// block. Only click/keyboard opens the task and right-click opens the recurrence
-// menu — no pointer lifecycle whatsoever.
+// never enters collision/totals (packDayBlocks widzi je WYŁĄCZNIE jako geometrię
+// wspólnego pakowania warstwy dnia — col/cols z modelu) and never sits on top of
+// a real block. Only click/keyboard opens the task and right-click opens the
+// recurrence menu — no pointer lifecycle whatsoever.
 interface RecurBlockProps {
   task: Task;
   /** Tytuł do pokazania (maska utajnienia) — prymityw z rodzica. */
@@ -1980,15 +1981,25 @@ interface RecurBlockProps {
   occurrence: RecurrenceOccurrence;
   /** `occurrenceIsDone(state, task, occurrence)` — liczone przez rodzica (memo-friendly). */
   done: boolean;
+  /** Kolumna we WSPÓLNYM pakowaniu warstwy dnia (prymitywy — memo-friendly).
+   *  `cols > 1` = coś nakłada się w czasie, kafelki stają OBOK siebie. */
+  col: number;
+  cols: number;
   // Stable parent callbacks taking the occurrence's own data (memo-friendly).
   onOpen: (taskId: string) => void;
   onContextMenu: (task: Task, occ: RecurrenceOccurrence, e: React.MouseEvent) => void;
 }
 
-function RecurBlockImpl({ task, displayTitle, hue, occurrence, done, onOpen, onContextMenu }: RecurBlockProps) {
+function RecurBlockImpl({ task, displayTitle, hue, occurrence, done, col, cols, onOpen, onContextMenu }: RecurBlockProps) {
   const title = displayTitle;
   const top = (occurrence.startMinutes / 60) * HOUR_PX;
   const height = Math.max((occurrence.durationMinutes / 60) * HOUR_PX, MIN_BLOCK_H);
+  // TA SAMA arytmetyka kolumn co `.week-block` (packDayBlocks): przy `cols` 1
+  // wychodzi dokładnie dotychczasowe `left: 1px` / szerokość pełnej kolumny.
+  const horizontal = {
+    left: `calc(${(col / cols) * 100}% + 1px)`,
+    width: `calc(${100 / cols}% - 3px)`,
+  };
   const end = occurrence.startMinutes + occurrence.durationMinutes;
   const className = [
     'week-recur-block',
@@ -2008,7 +2019,7 @@ function RecurBlockImpl({ task, displayTitle, hue, occurrence, done, onOpen, onC
     <Tooltip text={hint}>
     <div
       className={className}
-      style={{ top, height, borderColor: hue }}
+      style={{ top, height, borderColor: hue, ...horizontal }}
       role="button"
       tabIndex={0}
       onClick={(e) => {
@@ -2043,8 +2054,9 @@ const RecurBlock = memo(RecurBlockImpl);
 
 // ---- Calendar-event block (presentational only) ----
 // A calendar event / meeting rendered as a visually distinct, purely
-// presentational block (inwariant 1 + 7): it never enters
-// packDayBlocks/collision/totals and has NO pointer/drag handlers. Only
+// presentational block (inwariant 1 + 7): it never enters collision/totals
+// (packDayBlocks widzi je WYŁĄCZNIE jako geometrię wspólnego pakowania warstwy
+// dnia — col/cols z modelu) and has NO pointer/drag handlers. Only
 // click/keyboard opens the event modal; right-click is guarded upstream so it
 // never opens the slot menu on top of it.
 interface EventBlockProps {
@@ -2055,11 +2067,15 @@ interface EventBlockProps {
   vacationWindow?: { start: number; end: number };
   /** Imię osoby na urlopie (podpowiedź/nazwa dostępna); '' gdy nieznana. */
   vacationOwner?: string;
+  /** Kolumna we WSPÓLNYM pakowaniu warstwy dnia (prymitywy — memo-friendly).
+   *  Urlop dostaje zawsze 0/1 (pełnoszerokie tło doby). */
+  col: number;
+  cols: number;
   // Stable parent callback taking the event id (memo-friendly).
   onOpen: (eventId: string) => void;
 }
 
-function EventBlockImpl({ occ, displayTitle, vacationWindow, vacationOwner, onOpen }: EventBlockProps) {
+function EventBlockImpl({ occ, displayTitle, vacationWindow, vacationOwner, col, cols, onOpen }: EventBlockProps) {
   // Urlop jest zapisany jako pełna doba (0/1440), ale RENDERUJE się w oknie
   // godzin pracy osoby — inaczej zalałby całą kolumnę. Sama kolizja nadal idzie
   // z zapisanych czasów, więc blok POKAZUJE mniej, niż faktycznie zajmuje.
@@ -2069,6 +2085,12 @@ function EventBlockImpl({ occ, displayTitle, vacationWindow, vacationOwner, onOp
     isVacation && vacationWindow ? vacationWindow.end : occ.startMinutes + occ.durationMinutes;
   const top = (startMinutes / 60) * HOUR_PX;
   const height = Math.max(((endMinutes - startMinutes) / 60) * HOUR_PX, MIN_BLOCK_H);
+  // TA SAMA arytmetyka kolumn co `.week-block` (packDayBlocks): przy `cols` 1
+  // wychodzi dokładnie dotychczasowe `left: 1px` / szerokość pełnej kolumny.
+  const horizontal = {
+    left: `calc(${(col / cols) * 100}% + 1px)`,
+    width: `calc(${100 / cols}% - 3px)`,
+  };
   const who = (vacationOwner ?? '').trim();
   const hint = isVacation
     ? `Urlop${who === '' ? '' : `: ${who}`}. Cały dzień. Kliknij, aby otworzyć.`
@@ -2086,7 +2108,7 @@ function EventBlockImpl({ occ, displayTitle, vacationWindow, vacationOwner, onOp
       ]
         .filter(Boolean)
         .join(' ')}
-      style={{ top, height }}
+      style={{ top, height, ...horizontal }}
       role="button"
       tabIndex={0}
       aria-label={isVacation ? hint : undefined}
@@ -3092,25 +3114,34 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                       they always paint behind real task blocks — same paint step,
                       tree order — without touching the `.week-block` stacking
                       context or any pointer path (inwariant 1 + 7). */}
-                  {day.events.map((occ) => (
-                    <EventBlock
-                      key={`event-${occ.event.id}-${d}`}
-                      occ={occ}
-                      displayTitle={eventDisplayTitle(state, occ.event)}
-                      vacationWindow={day.vacationWindows.get(occ.event.id)}
-                      vacationOwner={
-                        occ.event.kind === 'urlop'
-                          ? getPerson(state, occ.event.attendeeIds[0] ?? '')?.name ?? ''
-                          : undefined
-                      }
-                      onOpen={handleOpenEvent}
-                    />
-                  ))}
+                  {day.events.map((occ) => {
+                    // Wspólne pakowanie warstwy dnia dzieli kolumnę TYLKO w
+                    // trybie tygodnia — widok dnia (telefon) zostaje kaskadą
+                    // pełnej szerokości (`dayStack`), jak dotąd. Urlop nie ma
+                    // wpisu w `eventLanes` => zawsze 0/1 (tło doby).
+                    const lane = mode === 'week' ? day.eventLanes.get(occ.event.id) : undefined;
+                    return (
+                      <EventBlock
+                        key={`event-${occ.event.id}-${d}`}
+                        occ={occ}
+                        displayTitle={eventDisplayTitle(state, occ.event)}
+                        vacationWindow={day.vacationWindows.get(occ.event.id)}
+                        vacationOwner={
+                          occ.event.kind === 'urlop'
+                            ? getPerson(state, occ.event.attendeeIds[0] ?? '')?.name ?? ''
+                            : undefined
+                        }
+                        col={lane?.col ?? 0}
+                        cols={lane?.cols ?? 1}
+                        onOpen={handleOpenEvent}
+                      />
+                    );
+                  })}
                   {/* Recurring-task occurrences: additive presentational overlay
                       rendered BEFORE the real blocks so they always paint behind
                       them (same paint step, tree order) without touching the
                       `.week-block` stacking context or any pointer path. */}
-                  {day.recurrences.map(({ task, occurrence, hue }) => (
+                  {day.recurrences.map(({ task, occurrence, hue, col, cols }) => (
                     <RecurBlock
                       key={`recur-${task.id}-${occurrence.date}`}
                       task={task}
@@ -3118,6 +3149,8 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                       hue={hue}
                       occurrence={occurrence}
                       done={occurrenceIsDone(state, task, occurrence)}
+                      col={mode === 'week' ? col : 0}
+                      cols={mode === 'week' ? cols : 1}
                       onOpen={handleOpenTask}
                       onContextMenu={openRecurMenu}
                     />
