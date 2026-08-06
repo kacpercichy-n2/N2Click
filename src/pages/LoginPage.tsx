@@ -57,7 +57,6 @@ export function LoginPage() {
     <div className="login-screen">
       <div className="login-card">
         <div className="login-brand">
-          <span className="app-brand-mark" aria-hidden />
           <span className="app-brand-name">N2Hub</span>
         </div>
         <p className="login-lead">Wybierz osobę, aby się zalogować</p>

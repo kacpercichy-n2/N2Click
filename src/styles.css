@@ -392,17 +392,8 @@ textarea {
   min-height: 48px;
   font-weight: 600;
 }
-.app-brand-mark {
-  display: inline-grid;
-  place-items: center;
-  width: 42px;
-  height: 42px;
-  flex: none;
-  border: 1px solid rgba(196, 150, 255, 0.36);
-  border-radius: 50%;
-  background: var(--n2-gradient-orbit);
-  box-shadow: 0 0 30px rgba(112, 0, 255, 0.34);
-}
+/* Marka jest czysto typograficzna — dawny okrągły znak (`.app-brand-mark`)
+   usunięty; odzyskane miejsce w wierszu zajmuje dzwonek powiadomień. */
 .app-brand-name {
   font-family: var(--n2-font-display);
   font-size: var(--n2-type-lg);
@@ -512,12 +503,18 @@ textarea {
   mask-image: linear-gradient(to top, #000, transparent);
 }
 
-/* Brand row now holds the brand + the collapse toggle. */
+/* Brand row now holds the brand + the bell/collapse action pair. */
 .app-brand-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--n2-space-3);
+}
+/* Para akcji przy prawej krawędzi: dzwonek powiadomień + przycisk zwijania. */
+.app-brand-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-2);
 }
 .sidebar-toggle {
   display: inline-grid;
@@ -538,6 +535,86 @@ textarea {
   background: rgba(196, 150, 255, 0.12);
   border-color: var(--n2-border-strong);
   color: var(--n2-text);
+}
+
+/* Dzwonek powiadomień: ten sam kwadrat co `.sidebar-toggle` (osobna klasa, bo
+   toggle znika ≤1180 px, a dzwonek ma zostać także w listwie 1-kolumnowej).
+   `position: relative` kotwiczy licznik nieprzeczytanych w prawym górnym rogu. */
+.bell-trigger {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-md);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--n2-text-soft);
+  cursor: pointer;
+  transition: background var(--n2-transition), border-color var(--n2-transition),
+    color var(--n2-transition);
+}
+.bell-trigger:hover {
+  background: rgba(196, 150, 255, 0.12);
+  border-color: var(--n2-border-strong);
+  color: var(--n2-text);
+}
+/* Licznik nieprzeczytanych: ta sama lawendowa pigułka co `.dash-badge` na
+   Panelu (kolory z palety-stałych dla gwarantowanego kontrastu cyfry). */
+.bell-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--n2-radius-pill);
+  background: var(--primary);
+  color: var(--n2-night);
+  font-size: 10px;
+  font-family: var(--n2-font-data);
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Overlay powiadomień: powłoka palety wyszukiwania (`.gs-*`), węższy panel i
+   własny nagłówek zamiast pola tekstowego. */
+.notif-panel {
+  width: min(560px, 92vw);
+  outline: none;
+}
+.notif-head {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-3);
+  padding: var(--n2-space-4) var(--n2-space-5);
+  border-bottom: 1px solid var(--n2-border);
+}
+.notif-head-title {
+  margin: 0;
+  font-size: var(--n2-type-md);
+  font-weight: 600;
+}
+/* Tytuł wpisu: pełne polskie zdanie z selektora — łamie się do dwóch linii
+   zamiast ucinać elipsą po kilku słowach. */
+.notif-row-title {
+  flex: 1;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--n2-type-sm);
+  font-weight: 600;
+}
+.notif-row:hover {
+  background: var(--n2-glass-strong);
+  border-color: var(--n2-border-strong);
 }
 
 /* UWAGA: `.sidebar-footer` opisuje JEDNA reguła — jeden wiersz (Zgłoszenia +
@@ -4918,9 +4995,9 @@ a.toggle-btn {
   color: var(--n2-danger);
 }
 
-/* Powiadomienia: wiersz = klikalny obszar (rozwija podgląd; otwarcie obiektu to
- * osobny przycisk w podglądzie) + osobny „✓" (oznacza TEN wpis jako przeczytany,
- * bez rozwijania). `dash-notif-open` reużywa stylu `.dash-row`. */
+/* Powiadomienia: wiersz = klikalny obszar (otwiera OD RAZU cel wpisu i oznacza
+ * go jako przeczytany — jak lista w dzwonku sidebara) + osobny „✓" (oznacza TEN
+ * wpis bez otwierania). `dash-notif-open` reużywa stylu `.dash-row`. */
 .dash-notif-row {
   display: flex;
   align-items: center;
@@ -4958,38 +5035,6 @@ a.toggle-btn {
 .dash-notif-tick:focus-visible {
   color: var(--n2-lavender);
   border-color: var(--n2-lavender);
-}
-
-/* Rozwinięty podgląd powiadomienia (kto/co/gdzie + treść komentarza). Klik w
- * wiersz tylko rozwija — otwarcie encji to osobny przycisk niżej. */
-.dash-notif-preview {
-  margin: 2px 0 6px;
-  padding: 8px 10px;
-  border-left: 2px solid var(--n2-border);
-  margin-left: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  font-size: var(--n2-type-sm);
-}
-.dash-notif-line {
-  margin: 0;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.dash-notif-label {
-  color: var(--text-muted);
-  margin-right: 4px;
-}
-.dash-notif-body {
-  margin: 4px 0 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  color: var(--text-muted);
-}
-.dash-notif-openbtn {
-  align-self: flex-start;
-  margin-top: 6px;
 }
 
 /* ---------- Dashboard: worker welcome page ---------- */
@@ -6894,17 +6939,18 @@ a.toggle-btn {
     padding-inline: var(--n2-space-3);
     align-items: center;
   }
-  /* Stack the brand mark over the toggle, both centered in 80px. */
+  /* Zwinięta listwa 80 px: typograficzna marka znika w całości, a para akcji
+     (dzwonek + toggle) staje w pionie, wyśrodkowana. */
   .sidebar-collapsed .app-brand-row {
     flex-direction: column;
     justify-content: center;
     gap: var(--n2-space-2);
   }
   .sidebar-collapsed .app-brand {
-    justify-content: center;
-  }
-  .sidebar-collapsed .app-brand-name {
     display: none;
+  }
+  .sidebar-collapsed .app-brand-actions {
+    flex-direction: column;
   }
   /* Icon-only nav: fixed 1:1 circles, centered in the 80px rail. Active/hover
      backgrounds fill the circle (border-radius already pill on the base rule). */

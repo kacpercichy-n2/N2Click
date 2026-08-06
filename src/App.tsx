@@ -62,6 +62,7 @@ import { TaskModal } from './components/TaskModal';
 import { TicketModal } from './components/TicketModal';
 import { EventModal } from './components/EventModal';
 import { GlobalSearch } from './components/GlobalSearch';
+import { NotificationsBell } from './components/NotificationsBell';
 import { useConfirm } from './components/ConfirmProvider';
 import { Avatar } from './components/Avatar';
 import { Tooltip } from './components/Tooltip';
@@ -323,25 +324,29 @@ export function App() {
           bocznego (czyta go też przeglądarkowy check klawiatury). */}
       {!mobileNav && (
       <aside id="app-drawer" className="app-sidebar">
+        {/* Marka jest CZYSTO typograficzna (kółko-znak usunięte) — odzyskane
+            miejsce zajmuje dzwonek powiadomień, na lewo od przycisku zwijania. */}
         <div className="app-brand-row">
           <div className="app-brand">
-            <span className="app-brand-mark" aria-hidden />
             <span className="app-brand-name">N2Hub</span>
           </div>
-          <Tooltip text={collapsed ? 'Rozwiń menu' : 'Zwiń menu'}>
-            <button
-              type="button"
-              className="sidebar-toggle"
-              aria-label={collapsed ? 'Rozwiń menu' : 'Zwiń menu'}
-              onClick={toggleCollapsed}
-            >
-              {collapsed ? (
-                <ChevronsRight size={18} aria-hidden />
-              ) : (
-                <ChevronsLeft size={18} aria-hidden />
-              )}
-            </button>
-          </Tooltip>
+          <div className="app-brand-actions">
+            <NotificationsBell />
+            <Tooltip text={collapsed ? 'Rozwiń menu' : 'Zwiń menu'}>
+              <button
+                type="button"
+                className="sidebar-toggle"
+                aria-label={collapsed ? 'Rozwiń menu' : 'Zwiń menu'}
+                onClick={toggleCollapsed}
+              >
+                {collapsed ? (
+                  <ChevronsRight size={18} aria-hidden />
+                ) : (
+                  <ChevronsLeft size={18} aria-hidden />
+                )}
+              </button>
+            </Tooltip>
+          </div>
         </div>
         <GlobalSearch />
         <nav className="app-nav" data-tour="shell.nav">

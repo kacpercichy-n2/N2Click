@@ -17,6 +17,8 @@ export {
   Gauge,
   Settings,
   Search,
+  // Dzwonek powiadomień w wierszu marki sidebara (NotificationsBell).
+  Bell,
   Menu,
   X,
   ChevronRight,

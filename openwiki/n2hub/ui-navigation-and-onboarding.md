@@ -307,7 +307,13 @@
   `App()` przed bramkami logowania. Licznik = te same dane co karta
   „Powiadomienia” (`readAt === ''`, odbiorca = zalogowany); 0 => przywrócenie
   oryginalnej karty. `index.html` nie deklaruje `<link rel="icon">` — host
-  tworzy własny link i usuwa go przy zeru.
+  tworzy własny link i usuwa go przy zeru. Trzeci widok tego samego licznika:
+  dzwonek `src/components/NotificationsBell.tsx` w wierszu marki sidebara
+  (marka jest czysto typograficzna, bez okrągłego znaku) — pigułka
+  nieprzeczytanych + overlay na powłoce palety (`OverlayLayer` + klasy `.gs-*`)
+  z listą wyłącznie nieprzeczytanych wpisów; klik wiersza (tu i na kafelku
+  Panelu) oznacza wpis (`MARK_NOTIFICATION_ENTRY_READ`) i otwiera cel: zadanie
+  w modalu popout, projekt trasą.
 - Tablica Kanban (`src/pages/KanbanPage.tsx`) ma TRZY równoprawne ścieżki
   przenoszenia karty, wszystkie kończące się jedyną akcją `SET_TASK_STATUS`
   (żadnego nowego reduktora, pola w `AppData` ani zapisanej kolejności w

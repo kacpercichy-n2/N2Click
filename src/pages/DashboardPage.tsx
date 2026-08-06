@@ -217,12 +217,6 @@ export function DashboardPage() {
   const [changelogSeenId, setChangelogSeenId] = useState<string | undefined>(
     () => loadUiPrefs().changelogSeenId,
   );
-  // Rozwinięty podgląd powiadomienia (max jeden naraz). Hook MUSI stać przed
-  // wczesnym returnem dla braku działającego użytkownika (kolejność hooków).
-  // Wiersze pochodnego feedu nie znikają po przeczytaniu — ani po ticku per
-  // wpis, ani po oznaczeniu zbiorczym (zmienia się tylko styl) — więc
-  // porównanie id wystarcza, żaden efekt czyszczący nie jest potrzebny.
-  const [expandedNotifId, setExpandedNotifId] = useState<string | null>(null);
   // Telefon: stos zamiast siatki. Oba hooki MUSZĄ stać przed wczesnym returnem
   // dla braku użytkownika (kolejność hooków). Zespół startuje zwinięty — na
   // telefonie to najrzadziej potrzebny kafelek.
@@ -265,9 +259,9 @@ export function DashboardPage() {
   // `now` wstrzykiwany, by selektor był czysty. Cap (max 3) w `visibleNotifications`.
   // Stan „przeczytane" jest TRWAŁY i ma dwa źródła (OR): watermark osoby
   // (MARK_NOTIFICATIONS_SEEN — oznacza całość) oraz zbiór id oznaczonych
-  // pojedynczo (MARK_NOTIFICATION_ENTRY_READ — tick przy wierszu). Wiersz
-  // kafelka ROZWIJA podgląd (kto/co/gdzie), a otwarcie encji jest osobną akcją
-  // „Otwórz zadanie/projekt" w podglądzie.
+  // pojedynczo (MARK_NOTIFICATION_ENTRY_READ — tick przy wierszu). Klik
+  // wiersza otwiera cel wpisu i oznacza go jako przeczytany — to samo
+  // zachowanie co lista w dzwonku sidebara (NotificationsBell).
   const personNotifications = notificationsForPerson(state, me.id, new Date().toISOString());
   const unreadCount = unreadNotificationCount(personNotifications);
   const markNotificationsSeen = () => {
@@ -413,65 +407,39 @@ export function DashboardPage() {
           )}
         </div>
         <ul className="dash-list">
-          {shownNotifications.map((n) => {
-            const expanded = expandedNotifId === n.id;
-            const previewId = `notif-preview-${n.id}`;
-            return (
-              <li key={n.id}>
-                <div className="dash-notif-row">
+          {shownNotifications.map((n) => (
+            <li key={n.id}>
+              <div className="dash-notif-row">
+                {/* Klik wiersza otwiera OD RAZU cel wpisu (zadanie w modalu /
+                    projekt trasą) i oznacza go jako przeczytany — spójnie z
+                    listą w dzwonku sidebara. Rozwijany podgląd kto/co/gdzie
+                    został wycofany razem z osobną akcją „Otwórz…". */}
+                <button
+                  type="button"
+                  className={`dash-row dash-notif-open${n.read ? '' : ' is-unread'}`}
+                  onClick={() => openNotification(n)}
+                >
+                  {!n.read && <span className="dash-unread-dot" aria-hidden="true" />}
+                  <span className="dash-row-name">{n.title}</span>
+                  {n.when && <span className="dash-row-when">{n.when}</span>}
+                </button>
+                {/* Tick oznacza POJEDYNCZY wpis BEZ otwierania celu. Jest
+                    RODZEŃSTWEM przycisku wiersza (nigdy zagnieżdżeniem). Wpis
+                    przeczytany ticka nie ma — pozostaje na liście, wyszarzony. */}
+                {!n.read && (
                   <button
                     type="button"
-                    className={`dash-row dash-notif-open${n.read ? '' : ' is-unread'}`}
-                    aria-expanded={expanded}
-                    aria-controls={previewId}
-                    onClick={() => setExpandedNotifId((id) => (id === n.id ? null : n.id))}
+                    className="dash-notif-tick"
+                    aria-label="Oznacz jako przeczytane"
+                    title="Oznacz jako przeczytane"
+                    onClick={() => markNotificationEntryRead(n.id)}
                   >
-                    {!n.read && <span className="dash-unread-dot" aria-hidden="true" />}
-                    <span className="dash-row-name">{n.title}</span>
-                    {n.when && <span className="dash-row-when">{n.when}</span>}
+                    <Check size={16} aria-hidden="true" />
                   </button>
-                  {/* Tick oznacza POJEDYNCZY wpis. Jest RODZEŃSTWEM przycisku
-                      rozwijania (nigdy zagnieżdżeniem), więc klik nie rozwija
-                      podglądu. Wpis przeczytany ticka nie ma — pozostaje na
-                      liście, tylko wyszarzony. */}
-                  {!n.read && (
-                    <button
-                      type="button"
-                      className="dash-notif-tick"
-                      aria-label="Oznacz jako przeczytane"
-                      title="Oznacz jako przeczytane"
-                      onClick={() => markNotificationEntryRead(n.id)}
-                    >
-                      <Check size={16} aria-hidden="true" />
-                    </button>
-                  )}
-                </div>
-                {expanded && (
-                  <div className="dash-notif-preview" id={previewId}>
-                    <p className="dash-notif-line">
-                      <span className="dash-notif-label">Kto:</span> {n.preview.who}
-                    </p>
-                    <p className="dash-notif-line">
-                      <span className="dash-notif-label">Co:</span> {n.preview.what}
-                    </p>
-                    <p className="dash-notif-line">
-                      <span className="dash-notif-label">Gdzie:</span> {n.preview.where}
-                    </p>
-                    {n.preview.body && <p className="dash-notif-body">{n.preview.body}</p>}
-                    {n.openLabel && (
-                      <button
-                        type="button"
-                        className="btn ghost dash-notif-openbtn"
-                        onClick={() => openNotification(n)}
-                      >
-                        {n.openLabel}
-                      </button>
-                    )}
-                  </div>
                 )}
-              </li>
-            );
-          })}
+              </div>
+            </li>
+          ))}
         </ul>
       </m.div>
     );
