@@ -1148,11 +1148,13 @@ function TimedBlockImpl({
     'week-block',
     density,
     done ? 'done' : '',
-    // ✓ w prawym DOLNYM rogu stoi na kafelku tylko wtedy, gdy TEN blok jest
-    // odhaczony (`entry.done`, nie szerszy status zadania). Klasa rezerwuje mu
-    // miejsce w ostatnim wierszu treści, żeby na najniższych kafelkach nie
-    // przykrywał godzin — patrz `.week-block.has-done-tick .week-block-meta`.
-    entry.done === true ? 'has-done-tick' : '',
+    // ✓ w prawym DOLNYM rogu stoi, gdy blok jest EFEKTYWNIE wykonany —
+    // odhaczony per-blokowo LUB zadanie ma done-status (zgłoszenie 2026-08-07:
+    // zadanie utworzone od razu ze statusem „Gotowe" ma być zielone bez
+    // ręcznego odhaczania; poprzednia węższa reguła `entry.done` była
+    // świadoma, user ją odwrócił). Klasa rezerwuje ✓ miejsce w ostatnim
+    // wierszu treści — patrz `.week-block.has-done-tick .week-block-meta`.
+    done ? 'has-done-tick' : '',
     status === 'overdue' && !done ? 'overdue' : '',
     editable ? '' : 'readonly',
     drag ? 'dragging' : '',
@@ -1194,7 +1196,9 @@ function TimedBlockImpl({
     date: days[dayIndex + dayShift] ?? entry.date,
     startMinutes: start,
     plannedHours: hours,
-    done: entry.done === true,
+    // Efektywne „wykonane" (per-blok LUB done-status zadania) — etykieta mówi
+    // to, co widać na kafelku.
+    done,
   });
 
   return (
@@ -1260,12 +1264,13 @@ function TimedBlockImpl({
         {person.name}
         <span className="week-block-hours">{formatDuration(hours)}</span>
       </span>
-      {/* Blok bez prawa edycji zostaje przy BIERNYM znaczniku: widz nadal widzi
-          ✓, ale nie dostaje przycisku, którego i tak nie wolno mu użyć.
-          Edytowalny blok ma zamiast tego przycisk-rodzeństwo (IA-08). Znacznik
-          stoi w prawym DOLNYM rogu kafelka (`corner`) — dokładnie tam, gdzie
-          rysuje się przycisk — bo w górnym nachodził na tytuł. */}
-      {!editable && entry.done === true && (
+      {/* BIERNY znacznik ✓ w prawym DOLNYM rogu (`corner`): (a) blok bez prawa
+          edycji — widz widzi ✓, ale nie dostaje przycisku, którego nie wolno mu
+          użyć; (b) zadanie z done-STATUSEM (2026-08-07) — całość jest gotowa,
+          więc per-blokowy przełącznik nie ma czego przełączać (jak „już
+          zrobiona seria" w menu cyklicznych) i zamiast niego stoi znacznik.
+          Edytowalny blok AKTYWNEGO statusu ma przycisk-rodzeństwo (IA-08). */}
+      {done && (!editable || status === 'done') && (
         <span className="block-done-mark corner" aria-label="Wykonane">
           ✓
         </span>
@@ -1315,8 +1320,10 @@ function TimedBlockImpl({
         schodzi do `begin(...)`, więc ✓ nie może rozpocząć przeciągania,
         rozciągania ani obsługi slotu — cykl życia wskaźnika bez zmian
         (inwariant 7). Akcja jest DOKŁADNIE ta sama, co w liście „Wykonane
-        bloki" w TaskModal. */}
-    {editable && (
+        bloki" w TaskModal. Przy done-STATUSIE zadania przycisku NIE MA
+        (2026-08-07) — przełącznik nic by nie zmienił (status wygrywa w
+        `blockIsDone`), więc kafelek nosi bierny znacznik ✓ wewnątrz. */}
+    {editable && status !== 'done' && (
       <button
         type="button"
         ref={doneBtnRef}
@@ -1838,7 +1845,9 @@ function BinCardImpl({
       <span className="week-bin-block-title">
         {project && <Coin paid={project.paid} size={12} />}
         {displayTitle}
-        {entry.done === true && (
+        {/* Efektywne „wykonane" (per-blok LUB done-status zadania) — spójnie
+            z kafelkiem siatki (zgłoszenie 2026-08-07). */}
+        {done && (
           <span className="block-done-mark" aria-label="Wykonane">
             ✓
           </span>
@@ -2724,6 +2733,12 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
   const menuEntryDone = menu
     ? state.workload.some((w) => w.id === menu.entry.id && w.done === true)
     : false;
+  // Zadanie menu ma done-status ⇒ wszystkie jego bloki są efektywnie wykonane
+  // (blockIsDone), więc per-blokowy przełącznik nie ma czego przełączać —
+  // zamiast niego menu pokazuje samą podpowiedź (parytet z „już zrobioną
+  // serią" w menu cyklicznych; zgłoszenie 2026-08-07).
+  const menuTask = menu ? getTask(state, menu.entry.taskId) : undefined;
+  const menuTaskDone = menuTask ? isDoneStatus(state, menuTask.statusId) : false;
   // Task picker options for the insert form. Users who can manage tasks pick any
   // task; users limited to their own blocks (blocks.editOwn) may only insert for
   // tasks the block's person is ALREADY assigned to — INSERT_BLOCK auto-assigns,
@@ -3320,15 +3335,23 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                   )}
                   <div className="context-menu-sep" role="separator" />
                   {/* Per-block „wykonane” shortcut — same SET_BLOCK_DONE as the
-                      TaskModal checkbox, task status untouched. */}
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="context-menu-item"
-                    onClick={doToggleDone}
-                  >
-                    {menuEntryDone ? 'Odznacz „wykonane”' : '✓ Oznacz jako wykonane'}
-                  </button>
+                      TaskModal checkbox, task status untouched. Przy done-STATUSIE
+                      zadania pozycji nie ma — wszystko już jest wykonane, więc
+                      zamiast martwego przełącznika stoi podpowiedź. */}
+                  {menuTaskDone ? (
+                    <div className="context-menu-hint">
+                      Zadanie ma status „gotowe” — wszystkie bloki są wykonane.
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="context-menu-item"
+                      onClick={doToggleDone}
+                    >
+                      {menuEntryDone ? 'Odznacz „wykonane”' : '✓ Oznacz jako wykonane'}
+                    </button>
+                  )}
                 </>
               )}
               {isBinEntry(menu.entry) && (

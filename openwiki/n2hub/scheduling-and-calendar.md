@@ -137,7 +137,18 @@
   badge lives OUTSIDE the grid (`NowClockBadge` in the calendar toolbar row,
   `useNowTick` 30 s); the `.week-now-line` in today's column is unchanged.
 - Znacznik ✓ ukończenia na kafelku (2026-07-28, inwariant 7; ZMIANA
-  2026-08-05): na blokach ≥45 min stoi w PRAWYM DOLNYM rogu — pion liczy
+  2026-08-05; ZMIANA 2026-08-07, decyzja usera): ✓ i klasa `has-done-tick`
+  idą z EFEKTYWNEGO wykonania (`blockIsDone` = `entry.done` ∨ done-status
+  zadania) — zadanie utworzone od razu ze statusem „Gotowe" jest zielone na
+  wszystkich blokach bez ręcznego odhaczania (poprzednia węższa reguła
+  „tylko `entry.done`" była świadoma i została odwrócona). Przy done-STATUSIE
+  zadania interaktywny przycisk ✓ oraz pozycja menu „Oznacz jako wykonane"
+  ZNIKAJĄ (przełącznik nic by nie zmienił — status wygrywa): kafelek nosi
+  bierny `.block-done-mark.corner`, a menu podpowiedź `.context-menu-hint`
+  (parytet z „już zrobioną serią" cyklicznych). Karta zasobnika analogicznie
+  czyta prop `done`. Per-blokowe odhaczanie przy statusach AKTYWNYCH bez
+  zmian (decyzja z dzielonych bloków, c1d54ea6). Pozycjonowanie: na blokach
+  ≥45 min ✓ stoi w PRAWYM DOLNYM rogu — pion liczy
   `doneTickTopPx` w `weekViewLayout.ts` (`weekViewLayout.test.ts`),
   a `DONE_TICK_BOTTOM_PX = 8` (6 px uchwytu `.week-block-handle.bottom`
   + 2 px luzu) ma swoje lustro w CSS jako `bottom: 8px` — zmiana jednej

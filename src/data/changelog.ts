@@ -103,6 +103,12 @@ export const CHANGELOG: ChangelogEntry[] = [
           'Suma godzin nad każdym dniem (i w komórkach widoku miesiąca) obejmuje teraz także spotkania oraz zadania cykliczne — liczone per osoba. Urlopy celowo nie wchodzą do sumy, bo nieobecność to nie praca.',
       },
       {
+        area: 'Kalendarz',
+        feature: 'Status „gotowe” = zielone ptaszki',
+        description:
+          'Zadanie ze statusem „gotowe” — także utworzone od razu jako gotowe — pokazuje zielony ✓ na wszystkich swoich blokach w kalendarzu i zasobniku, bez ręcznego odhaczania. Odhaczanie pojedynczych bloków działa jak dotąd przy statusach aktywnych.',
+      },
+      {
         area: 'Zadania',
         feature: 'Sortowanie listy',
         description:
