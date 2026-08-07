@@ -135,6 +135,7 @@ describe('shouldSkipLocalPersist', () => {
           priority: '', workCategoryId: '', from: '', to: '',
         },
         personIds: ['x'], departmentId: '', serviceTypeId: '', planning: '',
+        sort: '',
       } } };
       expect(shouldSkipLocalPersist(prev, next)).toBe(false);
     });

@@ -274,6 +274,7 @@ describe('MERGE_CLOUD_ENTITIES — merge semantics', () => {
         departmentId: '',
         serviceTypeId: '',
         planning: '',
+        sort: '',
       },
     };
     const state: AppData = { ...baseState(), savedFilters, lastFilters };

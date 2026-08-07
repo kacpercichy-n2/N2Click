@@ -15,11 +15,16 @@ export interface ProjectGroup<P extends { name: string }> {
 
 export function sortProjectGroups<P extends { name: string }>(
   groups: ProjectGroup<P>[],
+  // Porządek projektów WEWNĄTRZ grupy (zgłoszenie 9db56d5a): domyślnie
+  // alfabetycznie po nazwie; strona może podać własny komparator (sortowanie
+  // po dacie). Kolejność grup (klienci alfabetycznie, „Bez klienta" ostatnia)
+  // jest stała niezależnie od wyboru.
+  compareProjects: (a: P, b: P) => number = (a, b) => comparePl(a.name, b.name),
 ): ProjectGroup<P>[] {
   return groups
     .map((g) => ({
       ...g,
-      projects: [...g.projects].sort((a, b) => comparePl(a.name, b.name)),
+      projects: [...g.projects].sort(compareProjects),
     }))
     .sort((a, b) => {
       // "Bez klienta" (clientId === '') always last, regardless of its label.

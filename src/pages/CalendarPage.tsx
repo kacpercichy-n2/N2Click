@@ -80,6 +80,7 @@ export function CalendarPage() {
         departmentId: '',
         serviceTypeId: '',
         planning: '',
+        sort: '',
       },
     });
 

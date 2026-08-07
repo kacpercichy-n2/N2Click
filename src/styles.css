@@ -7714,6 +7714,22 @@ a.toggle-btn {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
+  gap: 10px;
+}
+/* Select „Sortuj” w pasku filtrów (Zadania/Projekty) — kompaktowy, nie jest
+   filtrem (bez chipa i licznika aktywnych). Globalny `select` ma width: 100%,
+   więc tu zawężamy do treści. */
+.list-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--n2-type-sm);
+  white-space: nowrap;
+}
+.list-sort select {
+  width: auto;
+  padding: 5px 10px;
+  font-size: var(--n2-type-xs);
 }
 .btn.primary.small,
 .btn.small {

@@ -2612,6 +2612,7 @@ describe('AppData.lastFilters (additive at v7)', () => {
           departmentId: '',
           serviceTypeId: '',
           planning: '',
+          sort: '',
         },
       },
     };

@@ -324,6 +324,7 @@ export function TimelinePage() {
         departmentId: '',
         serviceTypeId: '',
         planning: '',
+        sort: '',
       },
     });
 

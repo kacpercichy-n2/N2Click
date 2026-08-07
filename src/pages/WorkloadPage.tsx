@@ -217,6 +217,7 @@ export function WorkloadPage() {
         departmentId: patch.departmentId ?? departmentFilter,
         serviceTypeId: patch.serviceTypeId ?? serviceFilter,
         planning: '',
+        sort: '',
       },
     });
 
@@ -287,6 +288,7 @@ export function WorkloadPage() {
         departmentId: '',
         serviceTypeId: '',
         planning: '',
+        sort: '',
       },
     });
     setSelected(null);
@@ -379,6 +381,7 @@ export function WorkloadPage() {
         departmentId: '',
         serviceTypeId: '',
         planning: '',
+        sort: '',
       },
     });
 

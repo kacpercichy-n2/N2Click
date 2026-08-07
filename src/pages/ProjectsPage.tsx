@@ -30,13 +30,19 @@ import { FilterBar } from '../components/FilterBar';
 import { useOpenTask } from '../components/TaskModal';
 import { GanttChart, Plus } from '../components/icons';
 import { sortProjectGroups } from './projectSort';
+import {
+  coerceListSort,
+  LIST_SORT_LABELS,
+  listSortComparator,
+  type ListSortValue,
+} from './listSort';
 import type { SavedFilterCriteria } from '../types';
 import { addDaysStr, formatShortWithWeekday, todayStr } from '../utils/dates';
 import { periodError, PERIOD_ERROR_LABELS } from '../utils/dates';
 import { formatDuration } from '../utils/time';
 import { listCounterLabel, polishCount } from '../utils/polishPlural';
 import { Tooltip } from '../components/Tooltip';
-import { sortByNamePl } from '../utils/collation';
+import { comparePl, sortByNamePl } from '../utils/collation';
 
 export type PaidFilter = 'all' | 'paid' | 'unpaid';
 
@@ -70,7 +76,11 @@ export function ProjectsPage() {
   const from = projectsCriteria.from;
   const to = projectsCriteria.to;
 
-  const commit = (nextCriteria: SavedFilterCriteria) =>
+  // Sortowanie projektów w grupach klienta (zgłoszenie 9db56d5a) — zapamiętane
+  // obok kryteriów w `lastFilters.projects.sort`.
+  const sortOrder = coerceListSort(rememberedProjects?.sort);
+
+  const commit = (nextCriteria: SavedFilterCriteria, nextSort: ListSortValue = sortOrder) =>
     dispatch({
       type: 'SET_LAST_FILTER',
       view: 'projects',
@@ -80,9 +90,11 @@ export function ProjectsPage() {
         departmentId: '',
         serviceTypeId: '',
         planning: '',
+        sort: nextSort,
       },
     });
 
+  const setSortOrder = (v: ListSortValue) => commit(projectsCriteria, v);
   const setPaidFilter = (v: PaidFilter) => commit({ ...projectsCriteria, paid: v });
   const setClientFilter = (v: string) => commit({ ...projectsCriteria, clientId: v });
   const setPersonFilter = (v: string) => commit({ ...projectsCriteria, personId: v });
@@ -252,8 +264,17 @@ export function ProjectsPage() {
     const orphans = filtered.filter((p) => !known.has(p.clientId));
     if (orphans.length > 0)
       out.push({ clientId: '', clientName: 'Bez klienta', projects: orphans });
-    return sortProjectGroups(out);
-  }, [filtered, state.clients]);
+    // Porządek w grupie: domyślnie nazwa (jak dotąd), opcjonalnie data —
+    // po nazwie WYŚWIETLANEJ (projekt utajniony sortuje się po masce).
+    return sortProjectGroups(
+      out,
+      listSortComparator(
+        sortOrder,
+        (a, b) => comparePl(projectDisplayName(state, a), projectDisplayName(state, b)),
+        (p) => projectDisplayName(state, p),
+      ),
+    );
+  }, [filtered, state, sortOrder]);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -396,9 +417,25 @@ export function ProjectsPage() {
         }}
         presets={<FilterPresets page="projects" criteria={criteria} onApply={applyPreset} />}
         trailing={
-          <span className="filter-count muted">
-            {listCounterLabel(filtered.length, state.projects.length, 'projektów')}
-          </span>
+          <>
+            {/* Sortowanie w grupach klienta (zgłoszenie 9db56d5a) — nie jest
+                filtrem: nie wchodzi do licznika aktywnych ani do chipsów. */}
+            <label className="list-sort">
+              <span className="muted">Sortuj</span>
+              <select
+                value={sortOrder}
+                onChange={(e) => setSortOrder(e.target.value as ListSortValue)}
+              >
+                <option value="">{LIST_SORT_LABELS.title}</option>
+                <option value="start">{LIST_SORT_LABELS.start}</option>
+                <option value="created-desc">{LIST_SORT_LABELS['created-desc']}</option>
+                <option value="created-asc">{LIST_SORT_LABELS['created-asc']}</option>
+              </select>
+            </label>
+            <span className="filter-count muted">
+              {listCounterLabel(filtered.length, state.projects.length, 'projektów')}
+            </span>
+          </>
         }
       />
 

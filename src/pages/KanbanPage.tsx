@@ -155,6 +155,7 @@ export function KanbanPage() {
         departmentId: '',
         serviceTypeId: '',
         planning: '',
+        sort: '',
       },
     });
 

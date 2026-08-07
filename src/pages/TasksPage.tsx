@@ -45,6 +45,12 @@ import { checklistGlyphs } from '../utils/checklistGlyphs';
 import { itemsProgressLabel } from '../utils/progressLabel';
 import { listCounterLabel } from '../utils/polishPlural';
 import { formatDuration } from '../utils/time';
+import {
+  coerceListSort,
+  LIST_SORT_LABELS,
+  listSortComparator,
+  type ListSortValue,
+} from './listSort';
 
 function rangeLabel(start: string, end: string): string {
   if (start === end) return formatShortWithWeekday(start);
@@ -105,8 +111,14 @@ export function TasksPage() {
   // Filtr planowania (single-select). NIE jest częścią `criteria`/presetów, ale
   // JEST zapamiętywany obok nich w `lastFilters.tasks.planning`.
   const planningFilter = (remembered?.planning ?? '') as '' | PlanningStatus;
+  // Sortowanie listy (zgłoszenie 9db56d5a) — zapamiętywane jak `planning`.
+  const sortOrder = coerceListSort(remembered?.sort);
 
-  const commit = (nextCriteria: SavedFilterCriteria, nextPlanning: '' | PlanningStatus) =>
+  const commit = (
+    nextCriteria: SavedFilterCriteria,
+    nextPlanning: '' | PlanningStatus,
+    nextSort: ListSortValue = sortOrder,
+  ) =>
     dispatch({
       type: 'SET_LAST_FILTER',
       view: 'tasks',
@@ -116,6 +128,7 @@ export function TasksPage() {
         departmentId: '',
         serviceTypeId: '',
         planning: nextPlanning,
+        sort: nextSort,
       },
     });
 
@@ -130,21 +143,31 @@ export function TasksPage() {
   const setFrom = (v: string) => commit({ ...criteria, from: v }, planningFilter);
   const setTo = (v: string) => commit({ ...criteria, to: v }, planningFilter);
   const setPlanningFilter = (v: '' | PlanningStatus) => commit(criteria, v);
+  const setSortOrder = (v: ListSortValue) => commit(criteria, planningFilter, v);
 
-  // Sort by start date, then title, for a stable predictable list.
-  // Memoized so the filtering useMemo below has a stable array dependency.
+  // Domyślny porządek (sort=''): data rozpoczęcia, potem tytuł — jak dotąd.
+  // Wybrane sortowanie (nazwa / data dodania) rozstrzyga remisy tym samym
+  // domyślnym porządkiem. Memoized so the filtering useMemo below has a stable
+  // array dependency.
   const allTasks = useMemo(
     () =>
       // Szkice zadań są widoczne wyłącznie w widoku projektu — lista „Zadania”
       // (widok planowania międzyprojektowy) pokazuje tylko opublikowane.
       [...state.tasks]
         .filter((t) => t.isDraft !== true)
-        .sort((a, b) =>
-        a.startDate === b.startDate
-          ? a.title.localeCompare(b.title)
-          : a.startDate.localeCompare(b.startDate),
-      ),
-    [state.tasks],
+        .sort(
+          listSortComparator(
+            sortOrder,
+            (a, b) =>
+              a.startDate === b.startDate
+                ? a.title.localeCompare(b.title)
+                : a.startDate.localeCompare(b.startDate),
+            // Alfabetycznie po tytule WYŚWIETLANYM — utajnione zadanie sortuje
+            // się po etykiecie maskującej, nie po prawdziwym tytule.
+            (t) => taskDisplayTitle(state, t),
+          ),
+        ),
+    [state, sortOrder],
   );
 
   const tasks = useMemo(
@@ -418,9 +441,25 @@ export function TasksPage() {
             }}
             presets={<FilterPresets page="tasks" criteria={criteria} onApply={applyPreset} />}
             trailing={
-              <span className="filter-count muted">
-                {listCounterLabel(tasks.length, allTasks.length, 'zadań')}
-              </span>
+              <>
+                {/* Sortowanie (zgłoszenie 9db56d5a) — nie jest filtrem: nie
+                    wchodzi do licznika aktywnych ani do chipsów. */}
+                <label className="list-sort">
+                  <span className="muted">Sortuj</span>
+                  <select
+                    value={sortOrder}
+                    onChange={(e) => setSortOrder(e.target.value as ListSortValue)}
+                  >
+                    <option value="">Data rozpoczęcia</option>
+                    <option value="title">{LIST_SORT_LABELS.title}</option>
+                    <option value="created-desc">{LIST_SORT_LABELS['created-desc']}</option>
+                    <option value="created-asc">{LIST_SORT_LABELS['created-asc']}</option>
+                  </select>
+                </label>
+                <span className="filter-count muted">
+                  {listCounterLabel(tasks.length, allTasks.length, 'zadań')}
+                </span>
+              </>
             }
           />
 

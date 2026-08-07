@@ -694,6 +694,9 @@ export interface LastViewFilter {
   departmentId: string; // workload-only dim; '' = all
   serviceTypeId: string; // workload-only dim; '' = all
   planning: string; // tasks-only planning filter; '' = all
+  // Sortowanie listy (zgłoszenie 9db56d5a; Zadania/Projekty): '' = domyślny
+  // porządek widoku; wartości z LIST_SORT_VALUES (src/pages/listSort.ts).
+  sort: string;
 }
 
 export interface AppData {

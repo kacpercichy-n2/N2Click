@@ -49,6 +49,7 @@ function makeFilter(overrides: Partial<LastViewFilter> = {}): LastViewFilter {
     departmentId: '',
     serviceTypeId: '',
     planning: '',
+    sort: '',
     ...overrides,
   };
 }

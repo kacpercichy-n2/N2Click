@@ -157,6 +157,20 @@
   triggerem `protect_profile_privileges`); mapowana przez
   referenceData/cloudMirror i hydrowana przez MERGE_CLOUD_PEOPLE (patrz
   cloud-database).
+- SORTOWANIE LIST (2026-08-07, zgłoszenie 9db56d5a): `LastViewFilter.sort`
+  (string, '' = domyślny porządek widoku) — zapamiętany wybór sortowania
+  Zadań i Projektów, sanityzowany w `sanitizeLastViewFilter` przeciw
+  `LIST_SORT_FILTER_VALUES` (kopia `LIST_SORT_VALUES` z
+  `src/pages/listSort.ts` — wzorzec `PLANNING_FILTER_VALUES`, dwa miejsca do
+  aktualizacji przy zmianie opcji) i porównywany w `lastViewFilterEqual`.
+  Czysty komparator `listSortComparator` (opcje: nazwa pl-kolacją po nazwie
+  WYŚWIETLANEJ — utajnione byty sortują się po masce; data rozpoczęcia; data
+  dodania ↓/↑; fallback = dotychczasowy porządek widoku rozstrzyga '' i
+  remisy). Zadania: select „Sortuj" w pasku filtrów, domyślnie startDate.
+  Projekty: sortuje projekty WEWNĄTRZ grup klienta (`sortProjectGroups`
+  przyjmuje komparator; kolejność grup stała). Pozostałe widoki wysyłają
+  `sort: ''`. Testy: `src/pages/listSort.test.ts`, rozszerzenia literałów w
+  `filterState.test.ts`/`persistGate.test.ts`/`storage.test.ts`/`cloudMerge.test.ts`.
 - FILTRY UJEDNOLICONE I TRWAŁE (2026-07-21): `SavedFilterCriteria.projectId`
   (''=wszystkie) i `AppData.lastFilters` (`Partial<Record<FilterViewKey,
   LastViewFilter>>` — ostatnio użyty filtr per widok: projects/tasks/kanban/

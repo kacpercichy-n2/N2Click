@@ -477,6 +477,18 @@ const PLANNING_FILTER_VALUES: readonly string[] = [
   'przekroczono',
 ];
 
+// Dozwolone wartości sortowania list (zgłoszenie 9db56d5a). Kopia
+// `LIST_SORT_VALUES` z src/pages/listSort.ts — ten sam wzorzec co
+// `PLANNING_FILTER_VALUES` (warstwa store nie importuje stron). Zmiana opcji
+// sortowania wymaga aktualizacji obu miejsc.
+const LIST_SORT_FILTER_VALUES: readonly string[] = [
+  '',
+  'title',
+  'start',
+  'created-desc',
+  'created-asc',
+];
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -551,12 +563,14 @@ export function sanitizeLastViewFilter(state: AppData, raw: unknown): LastViewFi
   const planning = PLANNING_FILTER_VALUES.includes(asString(obj.planning))
     ? asString(obj.planning)
     : '';
+  const sort = LIST_SORT_FILTER_VALUES.includes(asString(obj.sort)) ? asString(obj.sort) : '';
   return {
     criteria: sanitizeFilterCriteria(state, obj.criteria),
     personIds,
     departmentId: asString(obj.departmentId),
     serviceTypeId: asString(obj.serviceTypeId),
     planning,
+    sort,
   };
 }
 
@@ -575,6 +589,7 @@ export function lastViewFilterEqual(a: LastViewFilter, b: LastViewFilter): boole
   if (a.departmentId !== b.departmentId) return false;
   if (a.serviceTypeId !== b.serviceTypeId) return false;
   if (a.planning !== b.planning) return false;
+  if (a.sort !== b.sort) return false;
   if (a.personIds.length !== b.personIds.length) return false;
   for (let i = 0; i < a.personIds.length; i++) {
     if (a.personIds[i] !== b.personIds[i]) return false;
