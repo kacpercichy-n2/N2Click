@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Optyczne centrowanie — text-box-trim, cap unit, ikony</title>
+<style>
+  :root{
+    --bg:#0e0f13; --panel:#16181f; --line:#262a35; --ink:#e8eaf0;
+    --dim:#9aa1b2; --accent:#7c9cff; --bad:#ff6b6b; --good:#4ade80;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:ui-sans-serif,-apple-system,"Segoe UI",Inter,system-ui,sans-serif;
+    line-height:1.6; padding:48px 24px 96px;
+  }
+  .wrap{max-width:920px;margin:0 auto}
+  h1{font-size:28px;line-height:1.25;margin:0 0 8px;letter-spacing:-.02em}
+  .sub{color:var(--dim);margin:0 0 40px;max-width:60ch}
+  h2{font-size:17px;margin:48px 0 6px;letter-spacing:-.01em}
+  h2 .num{color:var(--accent);font-variant-numeric:tabular-nums;margin-right:8px}
+  .note{color:var(--dim);font-size:14px;margin:0 0 20px;max-width:66ch}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:28px}
+  .row{display:flex;gap:40px;flex-wrap:wrap;align-items:flex-start}
+  .case{text-align:center}
+  .case-label{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);margin-top:14px}
+  .case-label.bad{color:var(--bad)}
+  .case-label.good{color:var(--good)}
+
+  /* --- wspólny "chip" do demonstracji --- */
+  .chip{
+    display:inline-flex; align-items:center; justify-content:center;
+    background:#232735; color:#fff; border-radius:999px;
+    font-size:var(--fs,28px); font-weight:600;
+    width:var(--box,120px); height:var(--box,120px);
+    position:relative; overflow:hidden;
+  }
+  /* czerwona linia = prawdziwy geometryczny środek kontenera */
+  .guide::after{
+    content:""; position:absolute; left:0; right:0; top:50%;
+    height:1px; background:var(--bad); opacity:.85;
+  }
+
+  .trim{ text-box: trim-both cap alphabetic; }
+
+  /* 02b: dwa fonty obok siebie — demo rozjazdu baseline'ów po trimie */
+  .duo{
+    display:inline-flex; align-items:center; gap:22px;
+    background:#232735; color:#fff; border-radius:14px;
+    padding:34px 36px; font-size:44px; font-weight:600;
+    position:relative; overflow:hidden;
+  }
+  .duo .t{ text-box: trim-both cap alphabetic; }
+  .f-serif{ font-family:Georgia,serif }
+  .f-sans{ font-family:Verdana,sans-serif }
+  /* H = max(cap) pary: Verdana ≈ 0.727em (Georgia ≈ 0.692em) */
+  .capfix{ padding-top:calc(0.727em - 1cap) }
+
+  /* fallback bez text-box-trim: pseudo-elementy à la Capsize */
+  .capsize{
+    --cap-ratio:.72;      /* capHeight / unitsPerEm dla użytego fontu */
+    --asc:.9;             /* ascender / unitsPerEm */
+    --desc:.22;           /* descender / unitsPerEm */
+    line-height:1;
+  }
+  .capsize::before,.capsize::after{content:"";display:block;height:0;width:0}
+  .capsize::before{margin-bottom:calc((var(--cap-ratio) - var(--asc)) * 1em)}
+  .capsize::after{margin-top:calc(-1 * var(--desc) * 1em)}
+
+  /* ikony */
+  .icon-box{
+    display:grid; place-items:center;
+    width:96px;height:96px;border-radius:999px;background:var(--accent);color:#0e0f13;
+    position:relative;
+  }
+  .icon-box svg{display:block}          /* kluczowe: zabija inline baseline gap */
+  .icon-box.raw svg{display:inline}     /* celowo źle */
+  /* korekta = w/6 szerokości trójkąta, MINUS to, co font/ikona ma już wbudowane */
+  .fix-full svg{transform:translateX(7.64%)}  /* trójkąt centrowany wg bbox */
+  .fix-rest svg{transform:translateX(1.39%)}  /* ikona Material — reszta do centroidu */
+  .fix-over svg{transform:translateX(6.5%)}   /* moja poprzednia, błędna wartość */
+  /* celownik: pionowa oś kontenera */
+  .cross::before{content:"";position:absolute;top:8%;bottom:8%;left:50%;width:1px;
+    background:var(--bad);opacity:.9}
+
+  .controls{display:flex;gap:24px;align-items:center;flex-wrap:wrap;margin:24px 0 0;
+    padding-top:20px;border-top:1px solid var(--line);font-size:14px;color:var(--dim)}
+  input[type=range]{accent-color:var(--accent)}
+  select{background:#0e0f13;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 10px;font:inherit}
+
+  pre{background:#0b0c10;border:1px solid var(--line);border-radius:10px;padding:16px 18px;
+    overflow-x:auto;font-size:13px;line-height:1.65;margin:18px 0 0}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .tok-p{color:#7c9cff}.tok-v{color:#4ade80}.tok-c{color:#5d6478}
+  .support{font-size:13px;color:var(--dim);margin-top:14px}
+  .support b{color:var(--ink);font-weight:600}
+  a{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Optyczne centrowanie tekstu i ikon</h1>
+  <p class="sub">Czerwona linia w każdym demo to <b>prawdziwy geometryczny środek</b> kontenera.
+  Zwróć uwagę, gdzie względem niej ląduje środek liter — i jak to naprawić.</p>
+
+  <h2><span class="num">01</span>Problem: half-leading</h2>
+  <p class="note">Przeglądarka centruje <em>content area</em> fontu (ascent + descent z metryk pliku),
+  a nie realne glify. Ascent zawiera zapas na diakrytyki i overshoot, więc nawet przy
+  <code>line-height:1</code> blok liter siedzi za nisko. Im większy font-size i im „luźniejsze”
+  metryki, tym bardziej to widać.</p>
+
+  <div class="panel">
+    <div class="row">
+      <div class="case">
+        <div class="chip guide" style="line-height:1.5">Ag</div>
+        <div class="case-label bad">line-height: 1.5</div>
+      </div>
+      <div class="case">
+        <div class="chip guide" style="line-height:1">Ag</div>
+        <div class="case-label bad">line-height: 1 — dalej off</div>
+      </div>
+      <div class="case">
+        <div class="chip guide trim">Ag</div>
+        <div class="case-label good">text-box: trim-both cap alphabetic</div>
+      </div>
+    </div>
+    <div class="controls">
+      <label>font-size <input type="range" id="fs" min="14" max="56" value="28"> <span id="fsv">28px</span></label>
+      <label>font-family
+        <select id="ff">
+          <option value="ui-sans-serif,system-ui,sans-serif">system-ui</option>
+          <option value="Georgia,serif">Georgia</option>
+          <option value="'Times New Roman',serif">Times</option>
+          <option value="Verdana,sans-serif">Verdana</option>
+          <option value="ui-monospace,Menlo,monospace">mono</option>
+        </select>
+      </label>
+    </div>
+  </div>
+
+  <h2><span class="num">02</span>Rozwiązanie natywne — <code>text-box</code></h2>
+  <p class="note">Przycina half-leading do wybranych metryk fontu. <code>cap</code> = górna krawędź
+  wersalika, <code>alphabetic</code> = baseline. Efekt: równy padding = realnie równy padding.
+  Dodajesz to jako progressive enhancement — przeglądarki bez wsparcia po prostu renderują jak dziś.</p>
+  <div class="panel">
+<pre><code><span class="tok-c">/* skrót */</span>
+<span class="tok-p">.btn</span> {
+  <span class="tok-p">text-box</span>: <span class="tok-v">trim-both cap alphabetic</span>;
+  <span class="tok-p">padding</span>: <span class="tok-v">12px 20px</span>;
+}
+
+<span class="tok-c">/* longhand — to samo */</span>
+<span class="tok-p">.btn</span> {
+  <span class="tok-p">text-box-trim</span>: <span class="tok-v">trim-both</span>;
+  <span class="tok-p">text-box-edge</span>: <span class="tok-v">cap alphabetic</span>;
+}
+
+<span class="tok-c">/* tekst obok ikony w flexie — trim zdejmuje też fałszywy offset */</span>
+<span class="tok-p">.btn span</span> { <span class="tok-p">text-box</span>: <span class="tok-v">trim-both cap alphabetic</span>; }</code></pre>
+    <p class="support">Wsparcie: <b>Chrome 133+</b>, <b>Edge 132+</b>, <b>Safari 18.2+</b>,
+    <b>Firefox 154+</b> (wcześniej za flagą). Globalnie ok. <b>80%</b> i rośnie.</p>
+  </div>
+
+  <h2><span class="num">02b</span>Dwa fonty obok siebie — trim to wciąż za mało</h2>
+  <p class="note">Pułapka, w którą wpadliśmy w praktyce: data w foncie danych obok etykiety w foncie
+  interfejsu, oba z <code>text-box: trim-both cap alphabetic</code>, kontener
+  z <code>align-items: center</code> — i dalej offset. <b>Matematyka:</b> po trimie wysokość boksu
+  każdego tekstu to <em>jego własny</em> cap-height, a te różnią się między krojami
+  (np. 0.705em vs 0.745em). Centrowanie boksów o różnych wysokościach rozdziela różnicę
+  po połowie na górę i dół, więc linie bazowe rozjeżdżają się o dokładnie
+  <b><code>(cap<sub>A</sub> − cap<sub>B</sub>) / 2</code></b> — a oko czyta tekst po baseline,
+  nie po środku boksu. To błąd niezależny od monitora; DPR decyduje tylko, czy zobaczysz
+  pół piksela rozmycia, czy pełny piksel skoku.<br><br>
+  <b>Rozwiązanie:</b> dopełnij każdy przycięty boks od góry do WSPÓLNEJ wysokości H —
+  <code>padding-top: calc(H − 1cap)</code>. Jednostka <code>cap</code> to cap-height
+  <em>własnego</em> fontu elementu, więc każdy tekst dostaje inną poprawkę, ale każdy boks
+  kończy z identyczną wysokością H, której <em>dolna krawędź to baseline</em>. Centrowanie
+  boksów ≡ wyrównanie linii bazowych — dokładnie, dla dowolnej pary fontów i rozmiaru.<br><br>
+  <b>Dobór H nie jest dowolny:</b> baseline'y wyrówna KAŻDE wspólne H, ale pasmo glifów pary
+  (baseline → wersalik wyższego kroju, wysokość <code>max(cap)</code>) siedzi przy dole boksu —
+  względem sąsiadów centrowanych normalnie (ikona, badge) cała para zjeżdża o
+  <b><code>(H − max(cap)) / 2</code></b> w dół. Dla <code>H = 1em</code> to już ~0.13em
+  (≈1.7px przy 13px) — widoczne gołym okiem. Dlatego
+  <b><code>H = max(cap<sub>A</sub>, cap<sub>B</sub>)</code></b>: składnik przesunięcia zeruje się,
+  baseline'y wspólne, a pasmo glifów zostaje w optycznym środku. To jedna stała PER PARA fontów
+  (jak ratio w capsize niżej), zapisana w em — skaluje się z rozmiarem.</p>
+  <div class="panel">
+    <div class="row">
+      <div class="case">
+        <div class="duo guide"><span class="t f-serif">Alga</span><span class="t f-sans">Alga</span></div>
+        <div class="case-label bad">trim + center — baseline'y ± (capA−capB)/2</div>
+      </div>
+      <div class="case">
+        <div class="duo guide"><span class="t f-serif capfix">Alga</span><span class="t f-sans capfix">Alga</span></div>
+        <div class="case-label good">+ padding-top: calc(var(--pair-cap) − 1cap)</div>
+      </div>
+    </div>
+<pre><code><span class="tok-c">/* Teksty w RÓŻNYCH fontach obok siebie we flexie z align-items: center */</span>
+<span class="tok-p">.label-a</span>, <span class="tok-p">.label-b</span> {
+  <span class="tok-p">text-box</span>: <span class="tok-v">trim-both cap alphabetic</span>;
+}
+<span class="tok-c">/* Normalizacja do H = max(cap) pary — jedna stała per para fontów.
+   `cap` liczy się z WŁASNEGO fontu elementu, więc poprawka jest per font
+   (dla kroju o większym capie wychodzi 0). Strażnik konieczny: bez trimu
+   padding tylko przesuwa nieprzycięte boksy. */</span>
+<span class="tok-p">@supports</span> (<span class="tok-p">text-box</span>: <span class="tok-v">trim-both cap alphabetic</span>) {
+  <span class="tok-p">.label-a</span>, <span class="tok-p">.label-b</span> {
+    <span class="tok-p">--pair-cap</span>: <span class="tok-v">0.75em</span>; <span class="tok-c">/* cap-height WYŻSZEGO kroju pary */</span>
+    <span class="tok-p">padding-top</span>: <span class="tok-v">calc(var(--pair-cap) - 1cap)</span>;
+  }
+}</code></pre>
+    <p class="support">Rachunek kontrolny z wdrożenia: Inter 13px → boks po trimie 9.16px
+    (cap ≈ 0.705em); Plus Jakarta Sans 13px → 9.69px (cap ≈ 0.745em). Center bez
+    poprawki: baseline'y ±0.27px (połowa z 0.53px różnicy). Normalizacja do
+    <code>--pair-cap: 0.75em</code>: oba boksy 9.75px, baseline'y wspólne co do
+    setnych, pasmo glifów w środku boksu z błędem 0.03em·px. (Pierwsza wersja tej
+    poprawki używała H = 1em — baseline'y grały, ale cała para siedziała
+    ~1.7px pod środkiem względem ikony i badge'a. Stąd reguła H = max(cap).)
+    Wsparcie <code>cap</code>: <b>Chrome 111+</b>, <b>Safari 17+</b>,
+    <b>Firefox 97+</b> — starsze przeglądarki odrzucają całą deklarację
+    <code>calc()</code> i zostają przy czystym trimie.</p>
+  </div>
+
+  <h2><span class="num">03</span>Fallback, który działa wszędzie</h2>
+  <p class="note">Dwie drogi. (a) <b>Capsize</b> / ręczne pseudo-elementy z ujemnymi marginesami
+  liczonymi z metryk fontu. (b) <b>Nadpisanie metryk w <code>@font-face</code></b> —
+  <code>ascent-override</code> / <code>descent-override</code> / <code>line-gap-override</code>.
+  Wariant (b) jest najczystszy: naprawiasz font raz, a cały layout robi się przewidywalny.</p>
+  <div class="panel">
+    <div class="row">
+      <div class="case">
+        <div class="chip guide">Ag</div>
+        <div class="case-label bad">bez korekty</div>
+      </div>
+      <div class="case">
+        <div class="chip guide capsize">Ag</div>
+        <div class="case-label good">capsize-style ::before/::after</div>
+      </div>
+    </div>
+<pre><code><span class="tok-c">/* (a) capsize-style — ratio bierzesz z pliku fontu (unitsPerEm) */</span>
+<span class="tok-p">.trimmed</span> {
+  <span class="tok-p">--cap</span>: <span class="tok-v">.72</span>; <span class="tok-p">--asc</span>: <span class="tok-v">.90</span>; <span class="tok-p">--desc</span>: <span class="tok-v">.22</span>;
+  <span class="tok-p">line-height</span>: <span class="tok-v">1</span>;
+}
+<span class="tok-p">.trimmed::before</span> { <span class="tok-p">content</span>:<span class="tok-v">""</span>; <span class="tok-p">display</span>:<span class="tok-v">block</span>; <span class="tok-p">margin-bottom</span>: <span class="tok-v">calc((var(--cap) - var(--asc)) * 1em)</span>; }
+<span class="tok-p">.trimmed::after</span>  { <span class="tok-p">content</span>:<span class="tok-v">""</span>; <span class="tok-p">display</span>:<span class="tok-v">block</span>; <span class="tok-p">margin-top</span>: <span class="tok-v">calc(-1 * var(--desc) * 1em)</span>; }
+
+<span class="tok-c">/* (b) normalizacja metryk fontu — działa w każdej przeglądarce */</span>
+<span class="tok-p">@font-face</span> {
+  <span class="tok-p">font-family</span>: <span class="tok-v">"Inter Trimmed"</span>;
+  <span class="tok-p">src</span>: <span class="tok-v">url(inter.woff2) format("woff2")</span>;
+  <span class="tok-p">ascent-override</span>: <span class="tok-v">72%</span>;   <span class="tok-c">/* = cap height */</span>
+  <span class="tok-p">descent-override</span>: <span class="tok-v">0%</span>;    <span class="tok-c">/* = baseline  */</span>
+  <span class="tok-p">line-gap-override</span>: <span class="tok-v">0%</span>;
+}
+
+<span class="tok-c">/* (c) wyrównanie ikony do cap-height zamiast do x-height */</span>
+<span class="tok-p">.icon</span> { <span class="tok-p">vertical-align</span>: <span class="tok-v">middle</span>; <span class="tok-p">margin-block-start</span>: <span class="tok-v">calc(1ex - 1cap)</span>; }</code></pre>
+  </div>
+
+  <h2><span class="num">04</span>Ikony — trzy różne problemy</h2>
+  <p class="note">Ikona w kółku nie centruje się z trzech niezależnych powodów. Rozwiąż je po kolei,
+  bo mieszanie ich to główne źródło frustracji.</p>
+  <div class="panel">
+    <div class="row">
+      <div class="case">
+        <div class="icon-box raw">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        </div>
+        <div class="case-label bad">svg inline → baseline gap</div>
+      </div>
+      <div class="case">
+        <div class="icon-box">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        </div>
+        <div class="case-label">display:block — matematycznie OK</div>
+      </div>
+      <div class="case">
+        <div class="icon-box fix-rest">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        </div>
+        <div class="case-label good">+1.39% — reszta do centroidu</div>
+      </div>
+    </div>
+<pre><code><span class="tok-c">/* 1. SVG jest inline → dziedziczy baseline i line-height rodzica */</span>
+<span class="tok-p">.icon-box svg</span> { <span class="tok-p">display</span>: <span class="tok-v">block</span>; }
+<span class="tok-p">.icon-box</span> { <span class="tok-p">display</span>: <span class="tok-v">grid</span>; <span class="tok-p">place-items</span>: <span class="tok-v">center</span>; <span class="tok-p">line-height</span>: <span class="tok-v">0</span>; }
+
+<span class="tok-c">/* 2. niespójny viewBox w zestawie ikon — używaj setu z jedną siatką
+      (Lucide, Phosphor, Material Symbols) zamiast zbieranki z różnych źródeł */</span>
+
+<span class="tok-c">/* 3. glify asymetryczne — patrz sekcja 4b, NIE stosuj stałej wartości w ciemno */</span></code></pre>
+  </div>
+
+  <h2><span class="num">04b</span>Ile dokładnie przesunąć trójkąt — i dlaczego nie „na oko”</h2>
+  <p class="note">Dla trójkąta środkiem optycznym jest <b>centroid</b>, czyli średnia wierzchołków.
+  Przy trójkącie skierowanym w prawo z pionową lewą krawędzią centroid leży
+  <code>w/3</code> od lewej, a środek bboxa w <code>w/2</code> — różnica to dokładnie
+  <b><code>w/6</code></b>. To jest cała korekta, jeśli ikona jest centrowana wg bboxa.<br><br>
+  <b>Haczyk, na który sam się nadziałem:</b> większość zestawów ikon ma tę korektę
+  <em>już wbudowaną w path</em>. Materialowe <code>M8 5v14l11-7z</code> ma bbox 8–19, czyli środek
+  w 13.5 przy viewBoxie 0–24 — jest już przesunięte o 1.5 jednostki (6.25%). Dorzucenie
+  kolejnych 6.5% to podwójna korekta i te ~2px w prawo.</p>
+  <div class="panel">
+    <div class="row">
+      <div class="case">
+        <div class="icon-box cross fix-over">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        </div>
+        <div class="case-label bad">Material +6.5% — podwójna korekta</div>
+      </div>
+      <div class="case">
+        <div class="icon-box cross fix-rest">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        </div>
+        <div class="case-label good">Material +1.39% — poprawnie</div>
+      </div>
+      <div class="case">
+        <div class="icon-box cross">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="currentColor"><path d="M6.5 5v14l11-7z"/></svg>
+        </div>
+        <div class="case-label bad">path wg bboxa, bez korekty</div>
+      </div>
+      <div class="case">
+        <div class="icon-box cross fix-full">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="currentColor"><path d="M6.5 5v14l11-7z"/></svg>
+        </div>
+        <div class="case-label good">ten sam path +7.64% = w/6</div>
+      </div>
+    </div>
+<pre><code><span class="tok-c">/* KROK 1 — sprawdź, co ikona ma już wbudowane.
+   Weź bbox path-a i porównaj ze środkiem viewBoxa.        */</span>
+<span class="tok-c">// Material play: M8 5v14l11-7z, viewBox 0 0 24 24</span>
+<span class="tok-c">//   bbox x: 8 → 19,  środek bboxa = 13.5,  środek viewBoxa = 12</span>
+<span class="tok-c">//   wbudowana korekta = 1.5 jednostki (6.25%)</span>
+
+<span class="tok-c">/* KROK 2 — policz cel: centroid = średnia wierzchołków */</span>
+<span class="tok-c">//   (8 + 8 + 19) / 3 = 11.667  →  do 12 brakuje 0.333 = 1.39%</span>
+
+<span class="tok-c">/* KROK 3 — zastosuj RÓŻNICĘ, nie regułę w ciemno */</span>
+<span class="tok-p">.icon-play</span> { <span class="tok-p">transform</span>: <span class="tok-v">translateX(1.39%)</span>; }
+
+<span class="tok-c">/* Dla path-a centrowanego wg bboxa (M6.5 5v14l11-7z) pełna korekta:
+   w/6 = 11/6 = 1.833 jednostki = 7.64% viewBoxa                     */</span>
+<span class="tok-p">.icon-play-raw</span> { <span class="tok-p">transform</span>: <span class="tok-v">translateX(7.64%)</span>; }
+
+<span class="tok-c">/* Lepiej: przesuń viewBox zamiast transformem — zero kosztu w runtime
+   i korekta skaluje się razem z ikoną.                              */</span>
+<span class="tok-c">&lt;svg viewBox="-0.333 0 24 24"&gt;&lt;path d="M8 5v14l11-7z"/&gt;&lt;/svg&gt;</span></code></pre>
+    <p class="support">Uwaga: <code>translateX(%)</code> liczy się od szerokości elementu SVG, nie viewBoxa —
+    zgadza się tylko wtedy, gdy viewBox jest kwadratowy i wypełnia element. Przy
+    <code>preserveAspectRatio</code> innym niż domyślny przesuwaj viewBox.</p>
+  </div>
+
+  <h2><span class="num">04c</span>Wielkość ikony zmienia wnioski — trzy „środki” rozjeżdżają się z rozmiarem</h2>
+  <p class="note">Asymetryczny glif w <b>okrągłym</b> kontenerze ma trzy konkurujące definicje środka:
+  <b>środek obrysu</b> (bbox inku), <b>centroid</b> (środek ciężkości kreski) i <b>circumcenter</b>
+  (środek okręgu opisanego na końcówkach = równy prześwit do obręczy). Dla symetrycznych kształtów
+  pokrywają się; dla ptaszka, strzałki czy trójkąta — nie. I kluczowe: <b>rozjazd między nimi skaluje
+  się liniowo z rozmiarem glifu</b>, więc ta sama formuła daje inny werdykt przy innej proporcji
+  ikona/kontener.<br><br>
+  <b>Case (2026-08-07, tick powiadomień w N2Hub):</b> lucide <code>Check</code>
+  (<code>M20 6 9 17l-5-5</code>) w kółku 24&nbsp;px (content 22&nbsp;px). Końcówki (20,6), (4,12), (9,17)
+  są równoodległe (8,54 jedn.) od punktu (12,9) — circumcenter leży aż 3 jednostki nad środkiem
+  viewBoxa. Przy glifie 16&nbsp;px (~70% średnicy koła) obrys↔circumcenter różnią się o
+  <b>1,75&nbsp;px</b> — każda formuła coś poświęca: obrys → końcówka ramienia pod obręczą,
+  circumcenter → masa czyta się nisko-lewo, centroid → pomiędzy, nadal źle. Żaden offset nie był
+  „poprawny", bo <em>problemem była proporcja, nie formuła</em>. Po zmniejszeniu do 14&nbsp;px
+  (~58%) rozjazd spadł poniżej progu percepcji i zwykłe centrowanie po obrysie
+  (<code>viewBox="0 -0.5 24 24"</code>) zmierzyło 0,00/0,00&nbsp;px od wizualnego środka obręczy.</p>
+  <div class="panel">
+<pre><code><span class="tok-c">/* REGUŁA: zanim dobierzesz formułę centrowania, sprawdź STOSUNEK
+   glif/kontener. Orientacyjnie (glif = bbox inku, kontener = koło):
+     ≤ ~55%  → centruj po obrysie; rozjazd formuł &lt; progu rastra
+     55–65%  → strefa sporna; zmierz i wybierz świadomie
+     ≥ ~65%  → ŻADNA formuła nie wygląda dobrze — zmniejsz ikonę,
+               nie szukaj idealnego offsetu
+   (lucide we własnym circle-check trzyma glif na ~45% średnicy).   */</span>
+
+<span class="tok-c">/* Lekcje metodyczne do sond pomiarowych (wszystkie trzy ugryzły): */</span>
+<span class="tok-c">// 1. Mierz na REALNYM elemencie, nie na &lt;div&gt;-atrapie: &lt;button&gt; ma
+//    UA-owy padding 1px 6px, a grid przy przepełnieniu content boxu
+//    porzuca `center` i równa od lewej — cały SVG maluje się obok
+//    środka i żadna korekta glifu tego nie naprawi.</span>
+<span class="tok-c">// 2. Na ciemnym tle NIE neutralizuj kolorów pod pomiar inku — arkusz
+//    aplikacji potrafi wygrać z tłem sondy i „ink" staje się całym
+//    ciemnym boksem (fałszywe zera). Separuj obręcz i glif PO BARWIE
+//    z autentycznego renderu (fiolet ringu vs jasna kreska).</span>
+<span class="tok-c">// 3. Licz w DPR 1 i 2 oraz na pozycjach ułamkowych (Retina):
+//    różnice &lt; 0,25 px to kwantyzacja zrzutu, nie sygnał.</span></code></pre>
+  </div>
+
+  <h2><span class="num">05</span>Kolejność działań</h2>
+  <div class="panel">
+    <p class="note" style="margin:0">
+    <b>1.</b> Ustaw <code>text-box: trim-both cap alphabetic</code> globalnie na buttonach, badge'ach, chipach.<br>
+    <b>1b.</b> Teksty w <em>różnych</em> fontach obok siebie dodatkowo znormalizuj do wspólnej
+    wysokości boksu H = max(cap) pary: <code>padding-top: calc(var(--pair-cap) − 1cap)</code>
+    pod <code>@supports</code> — inaczej centrowanie rozjedzie baseline'y o
+    <code>(capA−capB)/2</code>, a H większe od max(cap) opuszcza całą parę o
+    <code>(H − max(cap))/2</code> względem ikon i badge'y (sekcja 02b).<br>
+    <b>2.</b> Dla własnego fontu dorzuć <code>ascent-override</code>/<code>descent-override</code> —
+    zamyka temat w starszych przeglądarkach i przy SSR.<br>
+    <b>3.</b> Ikony: <code>display:block</code> + flex/grid center, jeden spójny zestaw ikon.
+    Na buttonach wyzeruj UA-owy padding (<code>padding: 0</code>) — bez tego grid przy ciasnym
+    content boxie równa od lewej zamiast centrować.<br>
+    <b>3b.</b> W kołach sprawdź proporcję glif/kontener (sekcja 04c) — powyżej ~65% średnicy
+    najpierw zmniejsz ikonę; korekta offsetu nie uratuje za dużego glifu.<br>
+    <b>4.</b> Dopiero na końcu ręczne korekty optyczne dla asymetrycznych kształtów.<br>
+    <b>5.</b> Nie mieszaj: jeśli poprawiasz paddingiem, tracisz kontrolę przy zmianie fontu lub rozmiaru.
+    </p>
+  </div>
+
+</div>
+<script>
+  const fs = document.getElementById('fs'), fsv = document.getElementById('fsv'), ff = document.getElementById('ff');
+  const chips = () => document.querySelectorAll('.chip');
+  fs.addEventListener('input', () => {
+    fsv.textContent = fs.value + 'px';
+    chips().forEach(c => c.style.setProperty('--fs', fs.value + 'px'));
+  });
+  ff.addEventListener('change', () => {
+    chips().forEach(c => c.style.fontFamily = ff.value);
+  });
+</script>
+</body>
+</html>

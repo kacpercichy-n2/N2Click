@@ -90,6 +90,45 @@ export function changelogUnreadCount(
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-08-07-godziny-sortowanie-szlif',
+    dateFrom: '2026-08-07',
+    dateTo: '2026-08-07',
+    summary:
+      'Spotkania i zadania cykliczne liczą się do godzin w kalendarzu, listy zadań i projektów mają sortowanie, a drobne elementy interfejsu zostały wyrównane.',
+    items: [
+      {
+        area: 'Kalendarz',
+        feature: 'Spotkania i cykliczne w sumie godzin',
+        description:
+          'Suma godzin nad każdym dniem (i w komórkach widoku miesiąca) obejmuje teraz także spotkania oraz zadania cykliczne — liczone per osoba. Urlopy celowo nie wchodzą do sumy, bo nieobecność to nie praca.',
+      },
+      {
+        area: 'Zadania',
+        feature: 'Sortowanie listy',
+        description:
+          'Obok filtrów jest wybór „Sortuj": po dacie rozpoczęcia (jak dotąd), alfabetycznie po nazwie albo po dacie dodania. Wybór zapamiętuje się tak samo jak filtry.',
+      },
+      {
+        area: 'Projekty',
+        feature: 'Sortowanie w grupach klientów',
+        description:
+          'Projekty wewnątrz grupy klienta można ułożyć po nazwie, dacie rozpoczęcia albo dacie dodania. Kolejność samych klientów pozostaje alfabetyczna.',
+      },
+      {
+        area: 'Panel',
+        feature: 'Powiadomienia bez przeskoków',
+        description:
+          'Znacznik ✓ i kropka nieprzeczytania mają stałe miejsce w wierszu — oznaczenie powiadomienia jako przeczytane wyszarza je bez przesuwania treści. Sam ptaszek stoi teraz dokładnie na środku kółka.',
+      },
+      {
+        area: 'Ogólne',
+        feature: 'Wyrównany interfejs',
+        description:
+          'Rozwijane listy w całej aplikacji mają czytelną strzałkę z odstępem od krawędzi, wybór sortowania trzyma wysokość sąsiednich przycisków, a inicjały w awatarach siedzą w optycznym środku kółka.',
+      },
+    ],
+  },
+  {
     id: '2026-08-06-dzwonek-powiadomien-i-porzadki',
     dateFrom: '2026-08-06',
     dateTo: '2026-08-06',

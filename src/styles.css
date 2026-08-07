@@ -1417,6 +1417,28 @@ select:focus {
   background: rgba(255, 255, 255, 0.08);
   box-shadow: var(--n2-shadow-focus);
 }
+/* Chevron selectów W CAŁEJ aplikacji — ten sam wzorzec, co port Content Planu
+   (sekcja „chevrony selectów” niżej): natywna strzałka na ciemnym szkle jest
+   nieczytelna i siedzi tuż przy krawędzi kontenera, więc rysujemy własną
+   `background-image` z realnym wcięciem (right 13px). Reguły stoją PO bloku
+   `select:focus`, bo tamten shorthand `background:` zdejmowałby strzałkę —
+   fokus musi ją zadeklarować ponownie. Selecty CP mają swoje identyczne
+   reguły dalej w arkuszu (nadpisują się bez różnicy wizualnej). */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 36px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b9b3c9' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 13px center;
+  background-size: 13px;
+}
+select:focus {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b9b3c9' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 13px center;
+  background-size: 13px;
+}
 input.invalid {
   border-color: var(--danger);
 }
@@ -3696,6 +3718,9 @@ a.toggle-btn {
 }
 .coin svg,
 .coin-btn svg {
+  /* Inline svg dziedziczy linię bazową tekstu — własne, niezależne od fontu
+     przesunięcie w dół. Wzorzec `.icon-btn svg` (PKG-20260804, faza 3). */
+  display: block;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55));
 }
 .coin-btn {
@@ -3859,11 +3884,26 @@ a.toggle-btn {
   place-items: center;
   border-radius: 50%;
   color: var(--n2-text-inverse);
+  /* Alias z przyciętymi metrykami (fonts.css, PKG-20260804): content area =
+     wersalik→baseline, więc `place-items: center` centruje OPTYCZNIE.
+     Bezpieczny tu, bo inicjały są zawsze wersalikowe (Avatar.tsx:
+     `toUpperCase()`); fallback = zwykły sans (stan sprzed poprawki). */
+  font-family: 'Plus Jakarta Sans Trimmed', var(--n2-font-sans);
   font-weight: 700;
   flex: none;
   line-height: 1;
   user-select: none;
   box-shadow: 0 0 10px rgba(0, 0, 0, 0.4);
+}
+/* DWA silniki, DWA mechanizmy, jeden wynik (PKG-20260804): metric overrides
+   aliasu rozumieją Chrome i Firefox, ale NIE Safari; `text-box` rozumieją
+   Chrome i Safari 18.2+, ale nie dzisiejszy Firefox. Blokowy span z inicjałami
+   przycina się text-boxem tam, gdzie się da — razem z aliasem pokrywa to
+   wszystkie trzy silniki, a złożenie jest idempotentne (przycięty content
+   area nie ma już czego przyciąć). */
+.avatar-glyphs {
+  display: block;
+  text-box: trim-both cap alphabetic;
 }
 .avatar-photo img {
   width: 100%;
@@ -5018,6 +5058,11 @@ a.toggle-btn {
   place-items: center;
   width: 24px;
   height: 24px;
+  /* Zero, bo UA daje <button> `padding: 1px 6px` — content box malał do
+     10 px szerokości, SVG 16 px przepełniał go, a grid przy przepełnieniu
+     spada z `center` do wyrównania od LEWEJ ⇒ cała ikona malowała się 3 px
+     w prawo od środka kółka (znalezisko usera w DevTools, 2026-08-07). */
+  padding: 0;
   border-radius: var(--n2-radius-pill);
   border: 1px solid var(--n2-border-strong);
   background: var(--n2-glass-strong);
@@ -5035,6 +5080,19 @@ a.toggle-btn {
 .dash-notif-tick:focus-visible {
   color: var(--n2-lavender);
   border-color: var(--n2-lavender);
+}
+/* Przeczytany wpis: BIERNY znacznik stanu w tej samej stopie 24 px — slot
+   ticka nigdy nie znika (a37721cb), zmienia się tylko z akcji (obrys,
+   kursor) w wyszarzony stan „przeczytane". Span, nie przycisk. */
+.dash-notif-tick.is-read {
+  border-color: transparent;
+  background: transparent;
+  color: var(--n2-text-faint);
+  cursor: default;
+  pointer-events: none;
+}
+.dash-notif-tick.is-read::after {
+  content: none;
 }
 
 /* ---------- Dashboard: worker welcome page ---------- */
@@ -5275,6 +5333,11 @@ a.toggle-btn {
   height: 7px;
   border-radius: 50%;
   background: var(--primary);
+}
+/* Kropka przeczytanego wpisu ZOSTAJE w layoucie (przezroczysta) — wiersze
+   przeczytane i nieprzeczytane trzymają jedną oś treści (a37721cb). */
+.dash-unread-dot.is-read {
+  background: transparent;
 }
 .dash-area-notifications .dash-row.is-unread .dash-row-name {
   font-weight: 700;
@@ -7125,6 +7188,9 @@ a.toggle-btn {
   border: 1px solid transparent;
 }
 .save-status svg {
+  /* Jak wyżej: `display: block` zdejmuje przesunięcie linii bazowej inline
+     svg (PKG-20260804, faza 3). */
+  display: block;
   flex: 0 0 auto;
 }
 .save-status--dirty {
@@ -7716,20 +7782,29 @@ a.toggle-btn {
   align-items: center;
   gap: 10px;
 }
-/* Select „Sortuj” w pasku filtrów (Zadania/Projekty) — kompaktowy, nie jest
-   filtrem (bez chipa i licznika aktywnych). Globalny `select` ma width: 100%,
-   więc tu zawężamy do treści. */
+/* Select „Sortuj” w pasku filtrów (Zadania/Projekty) — nie jest filtrem (bez
+   chipa i licznika aktywnych), ale STOI w jednym rzędzie z „Filtry” i „Zapisz
+   filtr” (`.btn` = 40 px), więc trzyma ich wysokość, pigułkę i skalę typo —
+   rząd nie może schodkować (ta sama doktryna co `--n2-control-h` w pasku
+   kalendarza). Globalny `select` ma width: 100%, więc zawężamy do treści;
+   chevron niesie globalna reguła selectów (padding-right 36 px). */
 .list-sort {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   font-size: var(--n2-type-sm);
   white-space: nowrap;
 }
 .list-sort select {
   width: auto;
-  padding: 5px 10px;
-  font-size: var(--n2-type-xs);
+  min-height: 40px;
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-left: 14px;
+  border-radius: var(--n2-radius-pill);
+  background-color: rgba(255, 255, 255, 0.05);
+  font-size: var(--n2-type-sm);
+  font-weight: 600;
 }
 .btn.primary.small,
 .btn.small {
@@ -8326,6 +8401,10 @@ a.toggle-btn {
   place-items: center;
   width: 26px;
   height: 26px;
+  /* Jak `.dash-notif-tick`: UA-owy padding <button> (1px 6px) zwężał content
+     box poniżej ikony, a grid przy przepełnieniu równa od LEWEJ — ikona
+     malowała się na prawo od środka kółka. */
+  padding: 0;
   border-radius: var(--n2-radius-pill);
   border: 1px solid var(--n2-border-strong);
   background: var(--n2-glass-strong);

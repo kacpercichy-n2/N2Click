@@ -47,7 +47,10 @@ export function Avatar({
   };
   return (
     <span className="avatar" style={style} aria-hidden>
-      {initials.toUpperCase() || '?'}
+      {/* Blokowy span wokół inicjałów jest nośnikiem `text-box: trim-both`
+          (optyczne centrowanie w Chrome i Safari; grid/flex nie przycina
+          własnej anonimowej treści — PKG-20260804). Czysta prezentacja. */}
+      <span className="avatar-glyphs">{initials.toUpperCase() || '?'}</span>
     </span>
   );
 }

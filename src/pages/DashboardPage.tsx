@@ -417,14 +417,40 @@ export function DashboardPage() {
                   className={`dash-row dash-notif-open${n.read ? '' : ' is-unread'}`}
                   onClick={() => openNotification(n)}
                 >
-                  {!n.read && <span className="dash-unread-dot" aria-hidden="true" />}
+                  {/* Kropka renderuje się ZAWSZE (przeczytana = przezroczysta):
+                      warunkowy element przesuwał treść wierszy względem siebie
+                      (zgłoszenie a37721cb — layout shift przy odznaczeniu). */}
+                  <span
+                    className={n.read ? 'dash-unread-dot is-read' : 'dash-unread-dot'}
+                    aria-hidden="true"
+                  />
                   <span className="dash-row-name">{n.title}</span>
                   {n.when && <span className="dash-row-when">{n.when}</span>}
                 </button>
                 {/* Tick oznacza POJEDYNCZY wpis BEZ otwierania celu. Jest
-                    RODZEŃSTWEM przycisku wiersza (nigdy zagnieżdżeniem). Wpis
-                    przeczytany ticka nie ma — pozostaje na liście, wyszarzony. */}
-                {!n.read && (
+                    RODZEŃSTWEM przycisku wiersza (nigdy zagnieżdżeniem) i jego
+                    SLOT istnieje ZAWSZE (zgłoszenie a37721cb): przeczytany
+                    wpis pokazuje bierny, wyszarzony ✓ tej samej stopy zamiast
+                    znikać — kolumna czasu i treść nie robią layout shiftu. */}
+                {/* ✓ w kółku 24 px — geometria USTALONA POMIAREM (2026-08-07,
+                    seria z userem; pełny harness: sonda hue na realnym CSS,
+                    DPR 1/2, pozycje ułamkowe). (1) Kontener: `padding: 0`
+                    w CSS zdejmuje UA-owy padding <button>, który spychał SVG
+                    3 px w prawo — to był główny „offset". (2) Rozmiar 14 px:
+                    glif 16 px wypełniał ~70% koła i ŻADNA formuła centrowania
+                    nie godziła obrysu z prześwitem promieniowym (Δ1,75 px);
+                    przy 14 px konflikt spada poniżej percepcji (lucide w
+                    circle-check trzyma ~45%). (3) viewBox ymin=-0.5 centruje
+                    OBRYS inku (y 5–18 przy kresce 2) na środku kółka —
+                    konwencja lucide/Material dla ptaszka w kole; korekta
+                    zawsze w viewBoxie, nie w transformie (PKG-20260804).
+                    Zmierzone: obrys 0,00/0,00 px od wizualnego środka
+                    obręczy, centroid 0,35 px — poniżej progu rastra. */}
+                {n.read ? (
+                  <span className="dash-notif-tick is-read" aria-hidden="true">
+                    <Check size={14} viewBox="0 -0.5 24 24" aria-hidden="true" />
+                  </span>
+                ) : (
                   <button
                     type="button"
                     className="dash-notif-tick"
@@ -432,7 +458,7 @@ export function DashboardPage() {
                     title="Oznacz jako przeczytane"
                     onClick={() => markNotificationEntryRead(n.id)}
                   >
-                    <Check size={16} aria-hidden="true" />
+                    <Check size={14} viewBox="0 -0.5 24 24" aria-hidden="true" />
                   </button>
                 )}
               </div>

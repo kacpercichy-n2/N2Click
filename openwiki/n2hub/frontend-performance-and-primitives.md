@@ -96,6 +96,26 @@ opaque card — the scrim never needs repainting during that scroll.
   LAST layer, so the three radial glows scrolled and sized themselves against
   full document height — long routes such as `/tasks` then showed a lighter
   violet wash than short ones.
+- SELECTY: chevron jest GLOBALNY (2026-08-07, `styles.css` tuż po bloku
+  `select:focus`) — `appearance: none` + własna strzałka `background-image`
+  (wcięcie `right 13px`, `padding-right: 36px`), bo natywna była nieczytelna
+  na ciemnym szkle i siedziała przy krawędzi. KAŻDA reguła tła na selectach
+  musi używać longhandu `background-color` — shorthand `background:` zdejmuje
+  strzałkę (dlatego reguła fokusa deklaruje ją ponownie; selecty Content
+  Planu mają swoje historyczne kopie tych samych reguł — bez różnicy
+  wizualnej). Select „Sortuj" (`.list-sort`) w pasku filtrów Zadań/Projektów
+  trzyma wysokość rzędu `.btn` (40 px) i pigułkę — rząd kontrolek nie
+  schodkuje (doktryna `--n2-control-h` z paska kalendarza).
+- OPTYCZNE CENTROWANIE (PKG-20260804, 2026-08-07): mechanizm `.avatar` to
+  alias 'Plus Jakarta Sans Trimmed' (fonts.css, metric overrides — Chrome/
+  Firefox) + blokowy span `.avatar-glyphs` z `text-box: trim-both cap
+  alphabetic` (Chrome/Safari; `text-box` przycina WYŁĄCZNIE kontenery
+  blokowe — na grid/flex nie robi nic, stąd span). Alias wolno stosować tylko
+  na treści gwarantowanie wersalikowej (`descent-override: 0%` obcina
+  descendery). Pigułki liczbowe (`.dash-badge` itd.) są Interem — metrycznie
+  symetryczne, NIE poprawiać. Inline svg poza `display: block` dziedziczy
+  linię bazową (patrz `.icon-btn svg`); wszystkie cztery reguły svg audytu są
+  zielone. Pomiar: `browser-check-optical-centering.mjs` (testing-and-automation).
 
 ## Verification
 

@@ -40,9 +40,23 @@ server on port 5173, and runs all five checks in Chromium and WebKit.
 
 ### Targeted checks outside the release bundle
 
-Four more real browser checks exist but are intentionally excluded from the
+Five more real browser checks exist but are intentionally excluded from the
 release matrix (`run-browser-regression.mjs`). Run each on demand (Chromium and
 WebKit) only when its covered behavior changes:
+
+- `browser-check-optical-centering.mjs` (PKG-20260804, on-demand typography
+  check): measures INK position vs box centre (screenshot → canvas decode), not
+  pixel diffs. Section A gates synthetic 96 px probes per font token; the sans
+  gate replicates the SHIPPED `.avatar` mechanism — alias 'Plus Jakarta Sans
+  Trimmed' (fonts.css metric overrides; Chrome/Firefox) + block glyph span with
+  `text-box: trim-both cap alphabetic` (Chrome/Safari 18.2+) — because metric
+  overrides don't work in Safari and text-box doesn't work in today's Firefox;
+  the raw sans token is an INFO line (asymmetric by nature, never "fixed" at
+  token level). Section B measures live surfaces (first VISIBLE match;
+  per-probe `path` navigation; sample-data login click first). Companion
+  audits: `scripts/font-metrics.mjs` (woff2 metrics; `--css` emits the alias),
+  `scripts/audit-optical-centering.mjs` (static work list; svg `display:block`
+  rules are all green as of 2026-08-07).
 
 - `browser-check-date-hardening.mjs`: invalid/corrupt-date handling — inline
   Polish errors (the reversed-period assertion drives an explicit `.blur()` on
