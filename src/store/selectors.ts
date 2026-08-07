@@ -630,6 +630,58 @@ export function calendarEventsForDate(
   return calendarEventsForDateCache(state, argsKey(date, filterKey(personFilter)));
 }
 
+const calendarDayVolumeCache = createKeyedCache<number>((state, key) => {
+  const fk = key.split(' ')[1] ?? '';
+  const personFilter = personFilterFromKey(fk);
+  const filterActive = personFilter.size > 0;
+  let volume = dayTotalCache(state, key);
+  for (const occ of calendarEventsForDateCache(state, key)) {
+    if (occ.event.kind === 'urlop') continue;
+    const attendees = occ.event.attendeeIds;
+    const heads =
+      attendees.length === 0
+        ? filterActive
+          ? personFilter.size
+          : state.people.length
+        : filterActive
+          ? attendees.filter((id) => personFilter.has(id)).length
+          : attendees.length;
+    volume += (occ.durationMinutes / 60) * heads;
+  }
+  for (const { task, occurrence } of recurrenceOccurrencesForDateCache(state, key)) {
+    const assignees = assigneeIdsOfTask(state, task.id);
+    const heads = filterActive
+      ? assignees.filter((id) => personFilter.has(id)).length
+      : assignees.length;
+    volume += (occurrence.durationMinutes / 60) * heads;
+  }
+  return volume;
+});
+
+/**
+ * OBJĘTOŚĆ GODZINOWA DNIA W KALENDARZU (zgłoszenie 77d10f85, decyzja usera
+ * 2026-08-07): suma godzin WYŚWIETLANA w nagłówkach dni widoku tygodnia/dnia
+ * i w komórkach miesiąca. Liczy roboczogodziny: bloki (`dayTotal`) + spotkania
+ * i wystąpienia zadań cyklicznych × liczba OSÓB w zakresie. URLOP celowo NIE
+ * wchodzi (nieobecność to nie praca).
+ *
+ * Wagi osobowe: spotkanie imienne = uczestnicy (∩ filtr, gdy aktywny);
+ * spotkanie OGÓLNOFIRMOWE (`attendeeIds` puste) = wszyscy w zakresie (rozmiar
+ * filtra, bez filtra cały zespół); wystąpienie cykliczne = przypisani do
+ * zadania (∩ filtr) — zadanie cykliczne bez przypisanych nie wnosi godzin.
+ *
+ * To WYŁĄCZNIE pochodna suma prezentacyjna: `dayTotal`, przeciążenie, kolizje
+ * i wszystkie ścieżki planowania nadal czytają wyłącznie `WorkloadEntry`
+ * (inwariant 1 dla logiki planowania zostaje nietknięty).
+ */
+export function calendarDayVolume(
+  state: AppData,
+  date: DateStr,
+  personFilter?: Set<string>,
+): number {
+  return calendarDayVolumeCache(state, argsKey(date, filterKey(personFilter)));
+}
+
 /**
  * Urlop TEJ osoby w TYM dniu (albo `null`). Czyta dokładnie ten sam indeks, co
  * kolizja — dzięki temu jawne straże reduktora (`INSERT_BLOCK`,

@@ -18,6 +18,7 @@ import {
   assigneeIdsOfTask,
   binEntriesForPerson,
   binTotalForPerson,
+  calendarDayVolume,
   calendarEventsForDate,
   type CalendarEventOccurrence,
   entriesForDate,
@@ -64,9 +65,13 @@ export interface ResolvedRecurrence {
 /** Everything one day column needs, precomputed. */
 export interface WeekDayModel {
   date: DateStr;
-  /** Σ planned hours of the filtered dated entries on this day (was `dayTotal`). */
+  /**
+   * Objętość godzinowa dnia (zgłoszenie 77d10f85): bloki + spotkania i
+   * wystąpienia cykliczne × osoby w filtrze, bez urlopów — patrz
+   * `calendarDayVolume` w selectors.ts.
+   */
   total: number;
-  /** True when no filtered entries fall on this day. */
+  /** True when nothing volume-bearing falls on this day (`total === 0`). */
   empty: boolean;
   /**
    * Comma-joined names of overbooked people on this day (already filtered).
@@ -252,7 +257,7 @@ export function buildWeekModel(
 ): WeekModel {
   const dayModels: WeekDayModel[] = days.map((date) => {
     const entries = entriesForDate(state, date, filter);
-    const total = entries.reduce((sum, w) => sum + w.plannedHours, 0);
+    const total = calendarDayVolume(state, date, filter);
 
     // Podział przeciążonych na urlopowych i pozostałych (D8): w dzień urlopu
     // wykrzyknik zastępuje palma, więc te same imiona nie mogą stać w obu
@@ -351,7 +356,7 @@ export function buildWeekModel(
     return {
       date,
       total,
-      empty: entries.length === 0,
+      empty: total === 0,
       overloadNames,
       vacationNames,
       birthdayNames,

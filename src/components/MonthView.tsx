@@ -20,8 +20,8 @@ import {
   WEEKDAY_LABELS,
 } from '../utils/dates';
 import {
+  calendarDayVolume,
   calendarEventsForDate,
-  dayTotal,
   entriesForDate,
   getPerson,
   overloadedPeopleOnDate,
@@ -113,7 +113,9 @@ export function MonthView({
   };
 
   const cells = days.map((d) => {
-    const total = dayTotal(state, d, filter);
+    // Objętość godzinowa dnia (zgłoszenie 77d10f85): bloki + spotkania +
+    // wystąpienia cykliczne (bez urlopów) — ta sama suma, co nagłówki WeekView.
+    const total = calendarDayVolume(state, d, filter);
     const inMonth = isInMonth(d, anchor);
     const today = isTodayStr(d);
     const overloaded = overloadedPeopleOnDate(state, d, filter).length > 0;
