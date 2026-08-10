@@ -13,6 +13,7 @@ import type {
   Person,
   Project,
   Task,
+  Ticket,
 } from '../types';
 import type { CloudProfile, OrgSnapshot } from './referenceData';
 import type { CloudWriteError, PlannerDb } from './plannerData';
@@ -1089,5 +1090,43 @@ describe('diffToCloudOps — słowniki i profile (przewód zapisu paneli admina)
     expect(idsOp.row).toMatchObject({
       notifications_read_ids: ['mention:c1', 'assignment:a1'],
     });
+  });
+});
+
+describe('diffToCloudOps — zgłoszenia', () => {
+  const TICKET = uuid('ticket-one');
+  const makeTicket = (o: Partial<Ticket> & { id: string }): Ticket => ({
+    title: 'Zgłoszenie', area: '', description: 'Opis', kind: 'blad', priority: 'sredni',
+    status: 'nowe', reporterId: PB, createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z', ...o,
+  });
+
+  it('zmiana statusu ISTNIEJĄCEGO zgłoszenia emituje update (nie upsert)', () => {
+    // UPDATE, nie upsert: `INSERT ... ON CONFLICT` sprawdza politykę INSERT
+    // (reporter_id = auth.uid()), więc upsert odrzucał zmianę statusu CUDZEGO
+    // zgłoszenia przez administratora ("brak uprawnień").
+    const prev: AppData = { ...localFixture(), tickets: [makeTicket({ id: TICKET, status: 'zrobione' })] };
+    const next: AppData = { ...prev, tickets: [makeTicket({ id: TICKET, status: 'nowe' })] };
+    const { ops } = diffToCloudOps(prev, next, maps());
+    const ticketOps = ops.filter((o) => o.table === 'tickets');
+    expect(ticketOps).toHaveLength(1);
+    const op = ticketOps[0];
+    expect(op.kind).toBe('update');
+    expect(op.match).toEqual({ id: TICKET });
+    expect(op.row).not.toHaveProperty('id');
+    expect(op.row).toMatchObject({ status: 'nowe', reporter_id: CLOUD_PB });
+  });
+
+  it('NOWE zgłoszenie emituje upsert, usunięte remove', () => {
+    const prev = localFixture();
+    const next: AppData = { ...prev, tickets: [makeTicket({ id: TICKET })] };
+    const { ops } = diffToCloudOps(prev, next, maps());
+    const up = ops.find((o) => o.table === 'tickets')!;
+    expect(up.kind).toBe('upsert');
+    expect(up.row).toMatchObject({ id: TICKET, status: 'nowe', reporter_id: CLOUD_PB });
+
+    const removed = diffToCloudOps(next, prev, maps()).ops.find((o) => o.table === 'tickets')!;
+    expect(removed.kind).toBe('remove');
+    expect(removed.match).toEqual({ id: TICKET });
   });
 });

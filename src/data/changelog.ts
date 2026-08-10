@@ -90,6 +90,20 @@ export function changelogUnreadCount(
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-08-10-zgloszenia-status-fix',
+    dateFrom: '2026-08-10',
+    dateTo: '2026-08-10',
+    summary: 'Zmiana statusu zgłoszenia zapisuje się już na serwerze bez błędu o braku uprawnień.',
+    items: [
+      {
+        area: 'Zgłoszenia',
+        feature: 'Poprawka zapisu statusu',
+        description:
+          'Zmiana statusu zgłoszenia (np. odznaczenie „Zrobione”) kończyła się komunikatem „Serwer odrzucił zmianę (brak uprawnień)” i zostawała tylko w przeglądarce. Teraz zapis przechodzi normalnie i jest widoczny dla wszystkich.',
+      },
+    ],
+  },
+  {
     id: '2026-08-07-godziny-sortowanie-szlif',
     dateFrom: '2026-08-07',
     dateTo: '2026-08-07',

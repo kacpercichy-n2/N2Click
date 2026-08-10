@@ -678,9 +678,13 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
     }
   }
 
-  // 8b) Zgłoszenia ---- (diff po id: upsert dodanych/zmienionych, remove usuniętych).
-  // Kolekcja addytywna i niezależna od reszty planera; RLS przepuszcza wstawienie
-  // wyłącznie z własnym `reporter_id`, a zmianę statusu/usunięcie — administratora.
+  // 8b) Zgłoszenia ---- (diff po id: NOWE => upsert, ISTNIEJĄCE => update,
+  // remove usuniętych). Kolekcja addytywna i niezależna od reszty planera; RLS
+  // przepuszcza wstawienie wyłącznie z własnym `reporter_id`, a zmianę
+  // statusu/usunięcie — administratora. UPDATE (nie upsert) dla istniejących:
+  // `INSERT ... ON CONFLICT` wymaga przejścia polityki INSERT (reporter_id =
+  // auth.uid()) nawet gdy kończy się aktualizacją, więc upsert odrzucał każdą
+  // zmianę statusu CUDZEGO zgłoszenia przez administratora.
   {
     const prevMap = byId(prev.tickets);
     const nextMap = byId(next.tickets);
@@ -693,7 +697,13 @@ export function diffToCloudOps(prev: AppData, next: AppData, maps: CloudIdMaps):
       const before = prevMap.get(t.id);
       if (before && JSON.stringify(before) === JSON.stringify(t)) continue;
       const row = ticketRow(t, maps, diagnostics);
-      if (row) ops.push({ kind: 'upsert', table: 'tickets', row, sourceId: t.id, label: `Zgłoszenie „${t.title}”` });
+      if (!row) continue;
+      if (before) {
+        const { id: _id, ...rest } = row;
+        ops.push({ kind: 'update', table: 'tickets', match: { id: t.id }, row: rest, sourceId: t.id, label: `Zgłoszenie „${t.title}”` });
+      } else {
+        ops.push({ kind: 'upsert', table: 'tickets', row, sourceId: t.id, label: `Zgłoszenie „${t.title}”` });
+      }
     }
   }
 

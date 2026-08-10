@@ -239,7 +239,11 @@ widoki-mostki). Gdzie w tekście pada `public.<tabela>` w kontekście
   wiersze lub `app.is_administrator()`; UPDATE administrator albo zgłaszający
   dopóki status = 'nowe' (using + with check); DELETE wyłącznie administrator.
   Tabela NIE jest w publikacji realtime — zmiany zgłoszeń nie wyzwalają
-  live-syncu, lista odświeża się przy hydracji.
+  live-syncu, lista odświeża się przy hydracji. Mirror (`cloudMirror.ts` 8b):
+  NOWE zgłoszenie idzie upsertem, ISTNIEJĄCE update-em — upsert
+  (`INSERT ... ON CONFLICT`) sprawdza politykę INSERT (`reporter_id =
+  auth.uid()`) nawet przy samej aktualizacji, więc odrzucał zmianę statusu
+  cudzego zgłoszenia przez administratora (ten sam wzorzec co `profiles`).
 - `events` (20260721210000) — wydarzenia / spotkania kalendarza („Wydarzenia”),
   SAMODZIELNA tabela bez powiązań z projektami/zadaniami: `title` (CHECK 1..300),
   `description`, `location`, `meeting_url` (CHECK ≤2048), `event_date`,
