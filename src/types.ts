@@ -641,6 +641,11 @@ export interface ContentPlanPost {
   status: ContentPlanStatus;
   visibility: ContentPlanVisibility;
   baseTags: string; // tagi główne dziedziczone przez warianty
+  // Wytyczne dla grafika (zakładka DESIGN edytora, zgłoszenie 2026-08-07):
+  // treści na grafikę, opis kadru itd. WEWNĘTRZNE dla zespołu — portal klienta
+  // ich nie pokazuje. '' = brak (nigdy nie blokuje udostępnienia). Kolumna
+  // `contentplan.posts.design_brief`; legacy payload czyta '' na sanityzacji.
+  designBrief: string;
   channels: ContentPlanChannel[];
   comments: ContentPlanComment[];
   history: ContentPlanHistoryEntry[];

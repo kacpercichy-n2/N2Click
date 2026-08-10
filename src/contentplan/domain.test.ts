@@ -84,6 +84,7 @@ const testPost = (overrides: Partial<ContentPlanPost> = {}): ContentPlanPost => 
   status: 'Do akceptacji',
   visibility: 'draft',
   baseTags: '#marka #test',
+  designBrief: '',
   channels: [testChannel()],
   comments: [],
   history: [],
@@ -440,6 +441,7 @@ describe('Normalizacja draftu publikacji (STRICT)', () => {
     status: 'Zaplanowane',
     visibility: 'draft',
     baseTags: '#marka',
+    designBrief: '',
     channels: [
       { id: 'c1', platformId: 'facebook', copy: 'Opis', tags: '', overrideTags: false },
     ],

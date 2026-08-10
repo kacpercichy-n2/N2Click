@@ -12,12 +12,12 @@ import { useStore, usePersistence } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import { OverflowMenu } from '../components/OverflowMenu';
 import { SaveStatus } from '../components/SaveStatus';
-import { TaskEditor, useDeleteTaskConfirm } from '../components/TaskModal';
+import { TaskEditor, useDeleteTaskConfirm, useDuplicateTask } from '../components/TaskModal';
 import type { SaveBlocker } from '../components/taskSaveBlockers';
 import { focusFieldById } from '../components/Field';
 import { useSaveStatus } from '../utils/useSaveStatus';
 import { bypassNavGuardOnce, clearNavGuard, setNavGuard } from '../utils/dirtyRegistry';
-import { normalizeTaskRouteParam } from './taskPageRoute';
+import { normalizeTaskRouteParam, taskFullViewPath } from './taskPageRoute';
 
 /** Lista zadań — cel powrotu po zapisie, anulowaniu i usunięciu. */
 const TASKS_PATH = '/tasks';
@@ -93,6 +93,9 @@ function TaskFullView({ taskId, title }: { taskId: string; title: string }) {
   );
 
   const deleteTask = useDeleteTaskConfirm(taskId);
+  // Duplikat otwiera się od razu na SWOJEJ pełnej stronie (ta sama
+  // powierzchnia), żeby można było z miejsca modyfikować treści kopii.
+  const duplicateTask = useDuplicateTask();
   const backToList = useCallback(() => navigate(TASKS_PATH), [navigate]);
   /** Usunięcie już PYTAŁO (z listą skutków), więc strażnik nie pyta drugi raz. */
   const leaveAfterDelete = useCallback(() => {
@@ -123,6 +126,14 @@ function TaskFullView({ taskId, title }: { taskId: string; title: string }) {
             <OverflowMenu
               label="Więcej działań"
               items={[
+                {
+                  id: 'duplicate',
+                  label: 'Duplikuj zadanie',
+                  onSelect: () => {
+                    const newId = duplicateTask(taskId);
+                    if (newId !== null) navigate(taskFullViewPath(newId));
+                  },
+                },
                 {
                   id: 'delete',
                   label: 'Usuń zadanie',

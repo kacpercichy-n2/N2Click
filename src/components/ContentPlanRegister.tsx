@@ -10,7 +10,7 @@ import {
 } from '../contentplan/glassView';
 import { platformFor, splitContentPlanTags } from '../contentplan/domain';
 import { CpMediaThumb, CpPlatformGlyph } from './ContentPlanGlass';
-import { isTodayStr, todayStr } from '../utils/dates';
+import { formatShortWithWeekday, isTodayStr, todayStr } from '../utils/dates';
 import { Pencil } from './icons';
 
 export function ContentPlanRegister({
@@ -67,9 +67,9 @@ export function ContentPlanRegister({
                   className={`cp-rg-row${open ? ' open' : ''}${isPast ? ' past' : ''}${isTodayStr(post.date) ? ' today' : ''}`}
                   onClick={() => setOpenId(open ? null : post.id)}
                 >
-                  <td className="cp-rg-date">
-                    {post.date.slice(8)}.{post.date.slice(5, 7)}
-                  </td>
+                  {/* Kanoniczny format daty treści — z nazwą dnia (zgłoszenie
+                      2026-08-07), zamiast gołego „07.08". */}
+                  <td className="cp-rg-date">{formatShortWithWeekday(post.date)}</td>
                   {showBrand && (
                     <td className="cp-rg-brand">
                       <span

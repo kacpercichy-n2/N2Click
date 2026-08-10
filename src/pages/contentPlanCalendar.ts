@@ -191,6 +191,7 @@ export function contentPlanEmptyDraft(brand: ContentPlanBrand, date: string): Co
     status: post.status,
     visibility: post.visibility,
     baseTags: post.baseTags,
+    designBrief: post.designBrief,
     channels: post.channels,
   };
 }
@@ -242,6 +243,8 @@ export function contentPlanPasteDraft(
     status: DEFAULT_CONTENT_PLAN_STATUS,
     visibility: 'draft',
     baseTags: source.baseTags,
+    // Wytyczne dla grafika jadą z kopią — to część treści publikacji.
+    designBrief: source.designBrief,
     channels,
   };
 }

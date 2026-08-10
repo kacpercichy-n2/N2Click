@@ -1147,6 +1147,13 @@ function TimedBlockImpl({
   const className = [
     'week-block',
     density,
+    // 45-minutowy kafelek (63 px): OSOBNA klasa, celowo POZA `density`, bo
+    // density steruje też pozycją ✓/przycisku (kompaktowe kładą go przy
+    // tytule). `h-threeq` niesie WYŁĄCZNIE rezerwę 22 px pod ✓ w wierszu
+    // godzin — na wyższych blokach ostatni wiersz treści kończy się nad ✓,
+    // więc rezerwa tam tylko psuła wyrównanie „1h" do prawej krawędzi
+    // względem sąsiadów (zgłoszenie 2026-08-10).
+    !density && hours <= 0.75 ? 'h-threeq' : '',
     done ? 'done' : '',
     // ✓ w prawym DOLNYM rogu stoi, gdy blok jest EFEKTYWNIE wykonany —
     // odhaczony per-blokowo LUB zadanie ma done-status (zgłoszenie 2026-08-07:
@@ -1261,7 +1268,12 @@ function TimedBlockImpl({
           style={{ background: personColor(person.id) }}
           aria-hidden
         />
-        {person.name}
+        {/* Nazwisko we WŁASNYM spanie (jak tytuł): goły tekst we fleksie nie
+            umie się elipsować, a `overflow: hidden` wiersza PRZYCINAŁ wtedy
+            etykietę godzin — na wąskim viewporcie „1h 15m" wyglądało jak „1h"
+            (zgłoszenie 2026-08-10, kalendarz Dominika). Teraz ustępuje
+            nazwisko, godziny nigdy. */}
+        <span className="week-block-person">{person.name}</span>
         <span className="week-block-hours">{formatDuration(hours)}</span>
       </span>
       {/* BIERNY znacznik ✓ w prawym DOLNYM rogu (`corner`): (a) blok bez prawa

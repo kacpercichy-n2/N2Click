@@ -32,6 +32,7 @@ const post = (overrides: Partial<ContentPlanPost> = {}): ContentPlanPost => ({
   status: 'Zaplanowane',
   visibility: 'draft',
   baseTags: '',
+  designBrief: '',
   channels: [{ id: 'c1', platformId: 'facebook', copy: 'Opis', tags: '', overrideTags: false }],
   comments: [],
   history: [],

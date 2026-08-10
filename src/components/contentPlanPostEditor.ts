@@ -50,6 +50,7 @@ export function buildPostDraft(post: ContentPlanPost): ContentPlanPostDraft {
     status: post.status,
     visibility: post.visibility,
     baseTags: post.baseTags,
+    designBrief: post.designBrief,
     channels: post.channels.map((channel) => ({ ...channel })),
   };
 }

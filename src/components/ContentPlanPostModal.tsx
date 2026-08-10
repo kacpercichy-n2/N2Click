@@ -37,14 +37,13 @@ import {
   splitContentPlanTags,
   validatePostForPublication,
   type ContentPlanPostDraft,
-  type ContentPlanReviewDecision,
 } from '../contentplan/domain';
 import {
   CONTENT_PLAN_STATUS_META,
   CONTENT_PLAN_STATUS_STEPS,
 } from '../contentplan/glassView';
 import { CpMediaThumb, CpPlatformChip } from './ContentPlanGlass';
-import { isValidDateStr } from '../utils/dates';
+import { formatShortWithWeekday, isValidDateStr } from '../utils/dates';
 import {
   driveErrorMessage,
   driveThumbUrl,
@@ -90,7 +89,6 @@ import { IconButton } from './IconButton';
 import { DisabledHint } from './Tooltip';
 import { tintVar } from '../utils/colors';
 import {
-  Check,
   CornerDownRight,
   FileImage,
   FolderOpen,
@@ -437,6 +435,11 @@ function ContentPlanPostEditor({
   const confirm = useConfirm();
   const [draft, setDraft] = useState<ContentPlanPostDraft>(() => buildPostDraft(post));
   const [errors, setErrors] = useState<PostFieldErrors>({});
+  // Środkowa kolumna: POST (opisy publikacji) / DESIGN (wytyczne dla grafika) —
+  // jeden przełącznik podmienia dostępne pola tekstowe (zgłoszenie 2026-08-07).
+  // Publikacja z wpisanymi wytycznymi otwiera się na POST tak samo — treść
+  // posta zostaje pierwszym widokiem edycji.
+  const [copyMode, setCopyMode] = useState<'post' | 'design'>('post');
   const [splitPlatformId, setSplitPlatformId] = useState('');
   const [commentBody, setCommentBody] = useState('');
   const [replyTargetId, setReplyTargetId] = useState('');
@@ -563,9 +566,12 @@ function ContentPlanPostEditor({
     const next = computePostErrors(draft);
     if (hasPostErrors(next)) {
       setErrors(next);
-      // Nieudany zapis MUSI mieć skutek: fokus na PIERWSZYM złym polu.
+      // Nieudany zapis MUSI mieć skutek: fokus na PIERWSZYM złym polu. Pola
+      // opisów żyją w widoku POST — otwarta zakładka DESIGN by go ukryła,
+      // więc skok najpierw wraca na POST (fokus po commicie renderu).
+      setCopyMode('post');
       const field = firstPostIssueField(next) ?? 'title';
-      focusFieldById(postIssueFocusId(field, draft));
+      requestAnimationFrame(() => focusFieldById(postIssueFocusId(field, draft)));
       return;
     }
 
@@ -601,13 +607,6 @@ function ContentPlanPostEditor({
     onDirtyChange(false);
     dispatch({ type: 'DELETE_CP_POST', postId: post.id });
     onSaved();
-  };
-
-  const review = (decision: ContentPlanReviewDecision) => {
-    dispatch({ type: 'REVIEW_CP_POST', postId: post.id, decision, author: signature });
-    // Draft nie może pokazywać przeterminowanego statusu, ale to NIE jest zmiana
-    // użytkownika — flaga niezapisanych zmian zostaje nietknięta.
-    setDraft((current) => ({ ...current, status: decision }));
   };
 
   const addComment = (body: string, parentId?: string) => {
@@ -709,7 +708,13 @@ function ContentPlanPostEditor({
             <ListChecks size={16} aria-hidden /> Specyfikacja
           </h2>
           <div className="cp-post-grid">
-            <Field id={POST_FIELD_IDS.date} label="Data">
+            {/* Nazwa dnia NA ŻYWO przy dacie (zgłoszenie 2026-08-07) — natywne
+                pole nie niesie dnia tygodnia, więc podpis liczy go z draftu. */}
+            <Field
+              id={POST_FIELD_IDS.date}
+              label="Data"
+              {...(isValidDateStr(draft.date) ? { help: formatShortWithWeekday(draft.date) } : {})}
+            >
               {(control) => (
                 <input
                   {...control}
@@ -967,6 +972,57 @@ function ContentPlanPostEditor({
             </p>
           )}
 
+        {/* POST / DESIGN — przełącznik treści środkowej kolumny (te same style
+            co przełącznik Tablica/Rejestr strony). Pola nieaktywnego widoku są
+            odmontowane, ale ich wartości żyją w drafcie, więc nic nie ginie. */}
+        <div className="cp-mode cp-copy-mode" role="tablist" aria-label="Rodzaj treści">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={copyMode === 'post'}
+            className={`cp-mode-btn${copyMode === 'post' ? ' on' : ''}`}
+            onClick={() => setCopyMode('post')}
+          >
+            POST
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={copyMode === 'design'}
+            className={`cp-mode-btn${copyMode === 'design' ? ' on' : ''}`}
+            onClick={() => setCopyMode('design')}
+          >
+            DESIGN
+            {draft.designBrief.trim() !== '' && (
+              <i className="cp-copy-mode-dot" aria-label="Wytyczne uzupełnione" />
+            )}
+          </button>
+        </div>
+
+        {copyMode === 'design' && (
+          <section className="cp-section">
+            <h2 className="cp-section-title">
+              <FileImage size={16} aria-hidden /> Wytyczne dla grafika
+            </h2>
+            <Field
+              id="cp-post-design-brief"
+              label="Design"
+              help="Treści na grafikę, opis kadru, kolory, CTA — wszystko, czego grafik potrzebuje do tej publikacji."
+            >
+              {(control) => (
+                <textarea
+                  {...control}
+                  rows={14}
+                  value={draft.designBrief}
+                  placeholder="Np. nagłówek na grafice, tekst na slajdach, moodboard, format eksportu…"
+                  onChange={(e) => update({ ...draft, designBrief: e.target.value })}
+                />
+              )}
+            </Field>
+          </section>
+        )}
+
+        {copyMode === 'post' && (
         <section className="cp-section">
           <h2 className="cp-section-title">
             <Pencil size={16} aria-hidden /> Opisy
@@ -1078,40 +1134,17 @@ function ContentPlanPostEditor({
             </section>
           ))}
         </section>
+        )}
 
 
-
-
-
-      {/* Sekcje ŻYWEJ encji (decyzja, komentarze, historia) nie istnieją przed
-          pierwszym zapisem — akcje reduktora adresują publikację po id. */}
+      {/* Sekcje ŻYWEJ encji (komentarze, historia) nie istnieją przed
+          pierwszym zapisem — akcje reduktora adresują publikację po id.
+          Sekcja „Decyzja klienta" WYLECIAŁA z edytora (decyzja usera
+          2026-08-10): decyzję podejmuje klient w swoim portalu, zespół nie
+          klika jej z tego miejsca. Akcja REVIEW_CP_POST zostaje w reduktorze
+          (portal / decyzje klienta wchodzą tamtędy). */}
       {!isNew && (
       <>
-      <section className="cp-section">
-        <h2 className="cp-section-title">
-          <Check size={16} aria-hidden /> Decyzja klienta
-        </h2>
-        {published ? (
-          <>
-            <div className="cp-review">
-              <button type="button" className="btn" onClick={() => review('Akceptacja')}>
-                Akceptuję
-              </button>
-              <button type="button" className="btn" onClick={() => review('Uwagi')}>
-                Zgłoś uwagi
-              </button>
-            </div>
-            <p className="field-hint">
-              Decyzję rejestruje zespół w imieniu klienta. Trafia do statusu i historii zmian.
-            </p>
-          </>
-        ) : (
-          <p className="field-hint">
-            Decyzja klienta będzie dostępna po udostępnieniu publikacji klientowi.
-          </p>
-        )}
-      </section>
-
       <section className="cp-section">
         <h2 className="cp-section-title">
           <MessageSquare size={16} aria-hidden /> Komentarze

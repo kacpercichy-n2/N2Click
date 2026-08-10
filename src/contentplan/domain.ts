@@ -398,6 +398,7 @@ export function makeEmptyPost(brand: ContentPlanBrand, date: string): ContentPla
     status: DEFAULT_CONTENT_PLAN_STATUS,
     visibility: 'draft',
     baseTags: '',
+    designBrief: '',
     channels: firstPlatform
       ? [
           {
@@ -441,6 +442,7 @@ export interface ContentPlanPostDraft {
   status: ContentPlanStatus;
   visibility: ContentPlanVisibility;
   baseTags: string;
+  designBrief: string; // wytyczne dla grafika; '' = brak
   channels: ContentPlanChannel[];
 }
 
@@ -719,6 +721,7 @@ export interface NormalizedPostDraft {
   status: ContentPlanStatus;
   visibility: ContentPlanVisibility;
   baseTags: string;
+  designBrief: string;
   channels: ContentPlanChannel[];
 }
 
@@ -744,7 +747,7 @@ export function normalizeContentPlanPostDraft(
   if (title === '') return null;
   if (!isContentPlanStatus(draft.status)) return null;
   if (!isContentPlanVisibility(draft.visibility)) return null;
-  for (const key of ['topic', 'format', 'baseTags'] as const) {
+  for (const key of ['topic', 'format', 'baseTags', 'designBrief'] as const) {
     if (draft[key] !== undefined && typeof draft[key] !== 'string') return null;
   }
   const channels = normalizeContentPlanChannels(draft.channels);
@@ -758,6 +761,9 @@ export function normalizeContentPlanPostDraft(
     status: draft.status,
     visibility: draft.visibility,
     baseTags: str(draft.baseTags),
+    // Wytyczne dla grafika: wolny tekst jak `copy` kanału (bez trim), nigdy
+    // nie wchodzi do bramki udostępnienia.
+    designBrief: str(draft.designBrief),
     channels,
   };
   if (normalized.visibility === 'published' && validatePostForPublication(normalized).length > 0) {
@@ -833,6 +839,7 @@ export function sanitizeContentPlanPosts(value: unknown): ContentPlanPost[] {
       status: isContentPlanStatus(raw.status) ? raw.status : DEFAULT_CONTENT_PLAN_STATUS,
       visibility: isContentPlanVisibility(raw.visibility) ? raw.visibility : 'draft',
       baseTags: str(raw.baseTags),
+      designBrief: str(raw.designBrief),
       channels: sanitizeChannels(raw.channels),
       comments: sanitizeComments(raw.comments),
       history: sanitizeHistory(raw.history),

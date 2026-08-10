@@ -48,6 +48,7 @@ function post(overrides: Partial<ContentPlanPost> = {}): ContentPlanPost {
     status: 'Zaplanowane',
     visibility: 'draft',
     baseTags: '',
+    designBrief: '',
     channels: [{ id: 'c1', platformId: 'facebook', copy: 'Opis', tags: '', overrideTags: false }],
     comments: [],
     history: [],
@@ -165,6 +166,7 @@ describe('contentPlanCardView', () => {
       brand(),
       post({
         baseTags: '#tetra',
+        designBrief: '',
         channels: [
           { id: 'c1', platformId: 'facebook', copy: '   ', tags: '', overrideTags: false },
           { id: 'c2', platformId: 'facebook', copy: 'Drugi opis', tags: '', overrideTags: false },
@@ -262,6 +264,7 @@ describe('drafty kalendarza', () => {
         status: 'Opublikowano',
         visibility: 'published',
         baseTags: '#tetra',
+        designBrief: '',
         channels: [
           { id: 'c1', platformId: 'facebook', copy: 'Opis FB', tags: '', overrideTags: false },
           { id: 'c2', platformId: 'instagram', copy: 'Opis IG', tags: '#ig', overrideTags: true },

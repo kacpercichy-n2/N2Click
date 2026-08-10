@@ -40,6 +40,7 @@ function post(overrides: Partial<ContentPlanPost> = {}): ContentPlanPost {
     status: 'Zaplanowane',
     visibility: 'draft',
     baseTags: '#tetra',
+    designBrief: '',
     channels: [
       { id: 'c1', platformId: 'facebook', copy: 'Opis kanału', tags: '', overrideTags: false },
     ],
@@ -81,6 +82,7 @@ function postDraft(overrides: Partial<ContentPlanPostDraft> = {}): ContentPlanPo
     status: 'Zaplanowane',
     visibility: 'draft',
     baseTags: '#tetra',
+    designBrief: '',
     channels: [
       { id: 'c1', platformId: 'facebook', copy: 'Opis kanału', tags: '', overrideTags: false },
     ],

@@ -118,6 +118,7 @@ import {
   wouldCreateSupervisorCycle,
 } from './selectors';
 import { isOccurrenceDate, normalizeRecurrence } from '../utils/recurrence';
+import { copyTitle } from '../utils/taskCopyName';
 import { isBoardMember } from './confidentiality';
 import { ROLE_LABELS } from './permissions';
 import { registerPersonOrder } from '../utils/colors';
@@ -301,6 +302,10 @@ export interface InsertBlockPayload {
 export type Action =
   | { type: 'SAVE_TASK'; payload: SaveTaskPayload }
   | { type: 'DELETE_TASK'; taskId: string }
+  // Duplikat zadania — kopia treści + przypisań, godziny osób jako świeże
+  // wiersze zasobnika (bez umiejscowienia w kalendarzu). `newTaskId` od
+  // wywołującego, żeby UI mogło od razu otworzyć kopię.
+  | { type: 'DUPLICATE_TASK'; taskId: string; newTaskId: string }
   | { type: 'MOVE_TASK'; taskId: string; dayDelta: number }
   | { type: 'SET_TASK_DATES'; taskId: string; startDate: string; endDate: string }
   | { type: 'SET_TASK_STATUS'; taskId: string; statusId: string }
@@ -1103,6 +1108,118 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
       // Auto-zapis zapisuje często: kolejne identyczne „zaktualizował(a)” tego
       // samego aktora scala się w jeden wpis (świeży znacznik czasu).
       { collapse: !created },
+    ),
+  };
+}
+
+/**
+ * Duplikat zadania („Duplikuj zadanie”, zgłoszenie 2026-08-06). Kopiuje treść
+ * zadania (tytuł z dopiskiem „ - kopia( N)” — `copyTitle`, unikalność w obrębie
+ * PROJEKTU), przypisania osób oraz SUMĘ godzin każdej osoby (kalendarz +
+ * zasobnik źródła) jako JEDEN świeży wiersz zasobnika na osobę — kopia nigdy
+ * nie klonuje umiejscowienia w kalendarzu, więc nie może stworzyć kolizji
+ * (inwariant 3) i respektuje jeden-wiersz-zasobnika-na-parę (inwariant 4).
+ * Szkic kopiuje się jako szkic (z `draftHours`, bez workload — inwariant 1).
+ * Reguła cykliczności przechodzi BEZ per-datowych wyjątków (`overrides` —
+ * pominięcia/wykonania należą do źródła). Dziennik, komentarze i wykonanie
+ * bloków zostają przy źródle. `newTaskId` przychodzi od wywołującego (żeby UI
+ * mogło otworzyć kopię); nieznane `taskId` albo kolizja `newTaskId` => TA SAMA
+ * referencja stanu (inwariant 6).
+ */
+function duplicateTask(state: AppData, taskId: string, newTaskId: string): AppData {
+  const source = state.tasks.find((t) => t.id === taskId);
+  if (!source) return state;
+  if (newTaskId === '' || state.tasks.some((t) => t.id === newTaskId)) return state;
+  const ts = nowIso();
+
+  // Unikalność dopisku liczona w obrębie projektu — tam nazwy pracują obok
+  // siebie na listach; identyczne tytuły w INNYCH projektach nie blokują.
+  const projectTitles = state.tasks
+    .filter((t) => t.projectId === source.projectId)
+    .map((t) => t.title);
+
+  const copy: Task = {
+    id: newTaskId,
+    projectId: source.projectId,
+    statusId: source.statusId,
+    title: copyTitle(projectTitles, source.title),
+    description: source.description,
+    startDate: source.startDate,
+    endDate: source.endDate,
+    estimatedHours: source.estimatedHours,
+    priority: source.priority,
+    workCategoryId: source.workCategoryId,
+    departmentId: source.departmentId,
+    // Świeże id pozycji checklisty — stan odhaczenia jedzie ze źródłem.
+    checklist: source.checklist.map((item) => ({ ...item, id: uid() })),
+    orderIndex: maxOrderIndexOfProject(state, source.projectId) + 1,
+    isDraft: source.isDraft === true,
+    ...(source.isDraft === true && source.draftHours !== undefined
+      ? { draftHours: source.draftHours.map((d) => ({ ...d })) }
+      : {}),
+    ...(source.recurrence !== undefined
+      ? {
+          recurrence: {
+            daysOfWeek: [...source.recurrence.daysOfWeek],
+            startMinutes: source.recurrence.startMinutes,
+            durationMinutes: source.recurrence.durationMinutes,
+            ...(source.recurrence.intervalWeeks !== undefined
+              ? { intervalWeeks: source.recurrence.intervalWeeks }
+              : {}),
+            ...(source.recurrence.until !== undefined ? { until: source.recurrence.until } : {}),
+          },
+        }
+      : {}),
+    ...(source.isConfidential === true ? { isConfidential: true as const } : {}),
+    // Autorem KOPII jest duplikujący, nie autor źródła.
+    ...(state.currentUserId ? { createdBy: state.currentUserId } : {}),
+    createdAt: ts,
+    updatedAt: ts,
+  };
+
+  const assignments: TaskAssignment[] = state.assignments
+    .filter((a) => a.taskId === taskId)
+    .map((a) => ({ id: uid(), taskId: newTaskId, personId: a.personId }));
+
+  // Suma godzin źródła per osoba (kalendarz + zasobnik) → jeden wiersz
+  // zasobnika kopii. Kwadranse (inwariant 2) przez arytmetykę na ćwiartkach.
+  const workload = [...state.workload];
+  if (copy.isDraft !== true) {
+    const totalQByPerson = new Map<string, number>();
+    for (const w of state.workload) {
+      if (w.taskId !== taskId) continue;
+      totalQByPerson.set(
+        w.personId,
+        (totalQByPerson.get(w.personId) ?? 0) + Math.round(w.plannedHours / HOURS_STEP),
+      );
+    }
+    for (const a of assignments) {
+      const q = totalQByPerson.get(a.personId) ?? 0;
+      if (q <= 0) continue;
+      workload.push({
+        id: uid(),
+        taskId: newTaskId,
+        personId: a.personId,
+        date: BIN_DATE,
+        plannedHours: q * HOURS_STEP,
+        startMinutes: 0,
+        sortIndex: nextSortIndex(workload, a.personId, BIN_DATE),
+      });
+    }
+  }
+
+  return {
+    ...state,
+    tasks: [...state.tasks, copy],
+    assignments: [...state.assignments, ...assignments],
+    workload,
+    activity: withActivity(
+      state,
+      'task',
+      newTaskId,
+      source.isConfidential === true
+        ? 'utworzył(a) kopię utajnionego zadania'
+        : `utworzył(a) kopię zadania „${source.title}”`,
     ),
   };
 }
@@ -3365,6 +3482,8 @@ export function reducer(state: AppData, action: Action): AppData {
         activity: withActivity(next, 'project', task.projectId, message),
       };
     }
+    case 'DUPLICATE_TASK':
+      return duplicateTask(state, action.taskId, action.newTaskId);
     case 'SET_TASK_RECURRENCE':
       return setTaskRecurrence(state, action.taskId, action.recurrence);
     case 'SET_RECURRENCE_OVERRIDE':

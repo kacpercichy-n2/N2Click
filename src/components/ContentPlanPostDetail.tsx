@@ -42,6 +42,11 @@ export function ContentPlanPostDetail({
 }) {
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const [activeChannelId, setActiveChannelId] = useState(post.channels[0]?.id ?? '');
+  // POST / DESIGN — podgląd treści albo wytycznych dla grafika (zgłoszenie
+  // 2026-08-07). Przełącznik pojawia się DOPIERO, gdy wytyczne istnieją —
+  // publikacja bez nich wygląda jak dotąd.
+  const [contentView, setContentView] = useState<'post' | 'design'>('post');
+  const hasDesignBrief = post.designBrief.trim() !== '';
   const activeChannel =
     post.channels.find((channel) => channel.id === activeChannelId) ?? post.channels[0];
 
@@ -158,13 +163,43 @@ export function ContentPlanPostDetail({
           </div>
         )}
 
-        <div className="cp-pd-copy">
-          {activeChannel !== undefined && activeChannel.copy.trim() !== ''
-            ? activeChannel.copy
-            : 'Brak opisu publikacji.'}
-        </div>
+        {hasDesignBrief && (
+          <div className="cp-mode cp-pd-content-mode" role="tablist" aria-label="Rodzaj treści">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={contentView === 'post'}
+              className={`cp-mode-btn${contentView === 'post' ? ' on' : ''}`}
+              onClick={() => setContentView('post')}
+            >
+              POST
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={contentView === 'design'}
+              className={`cp-mode-btn${contentView === 'design' ? ' on' : ''}`}
+              onClick={() => setContentView('design')}
+            >
+              DESIGN
+            </button>
+          </div>
+        )}
 
-        {tags.length > 0 && (
+        {contentView === 'design' && hasDesignBrief ? (
+          <div className="cp-pd-copy cp-pd-design">
+            <span className="cp-pd-design-lbl">Wytyczne dla grafika</span>
+            {post.designBrief}
+          </div>
+        ) : (
+          <div className="cp-pd-copy">
+            {activeChannel !== undefined && activeChannel.copy.trim() !== ''
+              ? activeChannel.copy
+              : 'Brak opisu publikacji.'}
+          </div>
+        )}
+
+        {contentView === 'post' && tags.length > 0 && (
           <div className="cp-pd-tags">
             {tags.map((tag) => (
               <span key={tag} className="cp-pd-tag">

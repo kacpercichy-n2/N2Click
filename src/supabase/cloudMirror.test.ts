@@ -613,6 +613,7 @@ describe('diffContentPlanToCloudOps — moduł Content Plan', () => {
     status: 'Zaplanowane',
     visibility: 'draft',
     baseTags: '#tetra #wave',
+    designBrief: '',
     channels: [makeChannel()],
     comments: [],
     history: [],

@@ -287,6 +287,28 @@ export function useDeleteTaskConfirm(taskId: string | null): () => Promise<boole
   }, [state, dispatch, confirm, taskId]);
 }
 
+/**
+ * JEDEN przepływ duplikowania zadania dla modala i pełnej strony `/tasks/:id`
+ * (zgłoszenie 2026-08-06) — lustro wzorca `useDeleteTaskConfirm`. Generuje id
+ * kopii PO STRONIE UI (reduktor go waliduje), żeby wywołujący mógł od razu
+ * otworzyć kopię do edycji. Zwraca id kopii albo `null` (nieznane zadanie).
+ */
+export function useDuplicateTask(): (taskId: string) => string | null {
+  const { state, dispatch } = useStore();
+  // `taskId` przychodzi w wywołaniu (nie w hooku), żeby lista zadań mogła użyć
+  // JEDNEJ instancji dla wszystkich kafelków (hooka nie wolno wołać w pętli).
+  return useCallback(
+    (taskId: string) => {
+      const task = state.tasks.find((t) => t.id === taskId);
+      if (!task) return null;
+      const newTaskId = crypto.randomUUID();
+      dispatch({ type: 'DUPLICATE_TASK', taskId: task.id, newTaskId });
+      return newTaskId;
+    },
+    [state, dispatch],
+  );
+}
+
 interface ShellProps {
   taskParam: string;
   projectParam: string | null;
@@ -391,6 +413,16 @@ function TaskModalShell({
     if (await deleteTask()) closeDeliberately();
   };
 
+  // Duplikat otwiera się od razu w TYM SAMYM modalu (zmiana `?task=` remontuje
+  // edytor przez `key`), żeby można było z miejsca modyfikować treści kopii.
+  const duplicateTask = useDuplicateTask();
+  const { openTask } = useOpenTask();
+  const handleDuplicate = () => {
+    if (!existing) return;
+    const newId = duplicateTask(existing.id);
+    if (newId !== null) openTask(newId);
+  };
+
   // Otwarcie karty ZAWSZE zaczyna na górze treści. Sam montaż daje `scrollTop`
   // 0, ale `.task-modal-body` PRZEŻYWA zmianę `?task=` (remontuje się tylko
   // `TaskEditor`, przez `key`), więc przejście na inne zadanie przy przewiniętym
@@ -471,6 +503,11 @@ function TaskModalShell({
                 <OverflowMenu
                   label="Więcej działań"
                   items={[
+                    {
+                      id: 'duplicate',
+                      label: 'Duplikuj zadanie',
+                      onSelect: handleDuplicate,
+                    },
                     {
                       id: 'delete',
                       label: 'Usuń zadanie',
@@ -694,7 +731,16 @@ export function TaskEditor({
   );
   const [priority, setPriority] = useState<TaskPriority>(existing?.priority ?? 'normal');
   const [workCategoryId, setWorkCategoryId] = useState<string>(existing?.workCategoryId ?? '');
-  const [departmentId, setDepartmentId] = useState<string>(existing?.departmentId ?? '');
+  const [departmentId, setDepartmentId] = useState<string>(() => {
+    if (existing) return existing.departmentId;
+    // Nowe zadanie z osobą podpowiedzianą filtrem kalendarza dziedziczy jej
+    // dział od razu (ten sam sygnał, co auto-dział w toggleAssignee).
+    if (initialPersonId) {
+      const person = state.people.find((p) => p.id === initialPersonId);
+      if (person !== undefined && person.departmentId !== '') return person.departmentId;
+    }
+    return '';
+  });
   const [checklist, setChecklist] = useState<ChecklistItem[]>(existing?.checklist ?? []);
   const [checklistInput, setChecklistInput] = useState('');
   // Utajnij treść (zarząd): checkbox widoczny tylko dla zarządu; wartość idzie
@@ -1147,6 +1193,15 @@ export function TaskEditor({
       // i w zasobniku. Wpisana już wartość (np. powrót do osoby, która ma
       // godziny na tym zadaniu) zostaje nietknięta.
       setSoldRawByPerson((prev) => withAssigneeHoursDefault(prev, personId));
+      // Dział zadania dopisuje się SAM z profilu zaznaczonej osoby (zgłoszenie
+      // 2026-08-07) — ale wyłącznie w puste pole: raz wybrany (ręcznie albo
+      // przez wcześniejszą osobę) dział nigdy nie jest nadpisywany, bo zadanie
+      // niesie JEDEN dział, a wybór usera jest świadomy. Odpięcie osoby
+      // celowo niczego nie cofa (dział mógł być już zaakceptowany).
+      const person = state.people.find((p) => p.id === personId);
+      if (person !== undefined && person.departmentId !== '') {
+        setDepartmentId((prev) => (prev === '' ? person.departmentId : prev));
+      }
     }
   };
 

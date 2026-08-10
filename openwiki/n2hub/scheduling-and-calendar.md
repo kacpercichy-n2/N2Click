@@ -158,7 +158,12 @@
   WYŚWIETLANYCH godzin) i stawiają ✓ PRZY TYTULE (`top + 2`, z pominięciem
   `doneTickTopPx`), a rezerwę miejsca robi tekst przez `padding-right` na
   hoverze/`has-done-tick` — każdy stan w OSOBNEJ regule CSS (lista z `:has`
-  unieważniłaby całość). `DONE_TICK_SIZE_PX = 16` z 3 px marginesu od prawej
+  unieważniłaby całość). Rezerwa 22 px pod ✓ w wierszu godzin (`.has-done-tick
+  .week-block-meta`) jest od 2026-08-10 ZAWĘŻONA do bloków 45 min (klasa
+  `.h-threeq`, celowo POZA `density` — density steruje też pozycją ✓): na
+  blokach ≥1h ostatni wiersz treści kończy się nad ✓, a bezwarunkowa rezerwa
+  psuła wyrównanie „1h" do prawej krawędzi względem kafelków 30 min.
+  `DONE_TICK_SIZE_PX = 16` z 3 px marginesu od prawej
   krawędzi. Tytuł elipsuje się w spanie `.week-block-title-text` (goły tekst
   we fleksie nie umie się elipsować). Dolny uchwyt zmiany rozmiaru zostaje
   w całości trafialny, a znaczniki bierne są `pointer-events: none`, więc

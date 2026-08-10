@@ -18,7 +18,7 @@
 // granica bezpieczeństwa; realny zakres wymusza RLS schematu `contentplan`.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
-import { AnimatePresence } from 'motion/react';
+import { AnimatePresence, m } from 'motion/react';
 import { useContentPlanAccess } from '../contentplan/useContentPlanAccess';
 import { monthKeyLabel, monthKeyOf } from '../contentplan/domain';
 import {
@@ -50,13 +50,31 @@ import {
   ContentPlanBrandModal,
 } from '../components/ContentPlanBrandModal';
 import { CpMediaThumb, CpPlatformChip } from '../components/ContentPlanGlass';
+import { OverlayLayer, useOverlay } from '../components/useOverlay';
+import type { OverlayRect } from '../components/overlayShell';
 import { ContentPlanPostDetail } from '../components/ContentPlanPostDetail';
 import { ContentPlanRegister } from '../components/ContentPlanRegister';
 import { ClipboardPaste, Pencil } from '../components/icons';
 import type { ContentPlanBrand, ContentPlanPost, ContentPlanStatus } from '../types';
-import { dayMonthLabel, todayStr } from '../utils/dates';
+import { dayMonthLabel, formatShortWithWeekday, todayStr } from '../utils/dates';
 
 const WEEKDAYS = ['pon', 'wt', 'śr', 'czw', 'pt', 'sob', 'nd'];
+
+/**
+ * Kotwica menu prawego kliku na dniu tablicy — wzorzec `WeekView` (element +
+ * punkt kliknięcia), żeby `useOverlay` przeliczał pozycję przy scrollu tablicy
+ * i zamknął menu, gdy kolumna wypadnie z DOM (paging tygodni).
+ */
+interface DayMenuAnchor {
+  el: HTMLElement;
+  point: { dx: number; dy: number };
+}
+
+function dayMenuAnchorRect(anchor: DayMenuAnchor | null | undefined): OverlayRect | null {
+  if (!anchor || !anchor.el.isConnected) return null;
+  const rect = anchor.el.getBoundingClientRect();
+  return { left: rect.left + anchor.point.dx, top: rect.top + anchor.point.dy, width: 0, height: 0 };
+}
 
 /**
  * Płynny scroll tablicy do zadanej pozycji. Chromium potrafi PRZERWAĆ płynny
@@ -93,6 +111,33 @@ export function ContentPlanPage() {
   const [statusFilter, setStatusFilter] = useState<ContentPlanStatus | null>(null);
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
   const [copiedPost, setCopiedPost] = useState<ContentPlanPost | null>(null);
+  // Prawy klik na dniu tablicy → menu „dodaj / wklej" (zgłoszenie 2026-08-07:
+  // klik w dzień ma pozwalać planować, jak menu slotu kalendarza zadań).
+  const [dayMenu, setDayMenu] = useState<{ anchor: DayMenuAnchor; date: string } | null>(null);
+  const dayMenuRef = useRef<HTMLDivElement | null>(null);
+  const closeDayMenu = useCallback(() => setDayMenu(null), []);
+  const dayMenuAnchor = useCallback(() => dayMenuAnchorRect(dayMenu?.anchor), [dayMenu]);
+  const dayMenuFocusReturn = useCallback(() => dayMenu?.anchor.el ?? null, [dayMenu]);
+  const dayMenuOverlay = useOverlay({
+    open: dayMenu !== null,
+    onClose: closeDayMenu,
+    overlayRef: dayMenuRef,
+    getAnchorRect: dayMenuAnchor,
+    getFocusReturn: dayMenuFocusReturn,
+    menuKeyboard: true,
+  });
+  const openDayMenu = (date: string, e: React.MouseEvent<HTMLElement>) => {
+    // Prawy klik na KARCIE publikacji zostawia natywne menu (karta ma własny
+    // lewy klik = podgląd); menu dnia dotyczy wolnej przestrzeni kolumny.
+    if ((e.target as HTMLElement).closest('.cp-card')) return;
+    e.preventDefault();
+    const el = e.currentTarget;
+    const rect = el.getBoundingClientRect();
+    setDayMenu({
+      anchor: { el, point: { dx: e.clientX - rect.left, dy: e.clientY - rect.top } },
+      date,
+    });
+  };
 
   const openPostId = params.get(CONTENT_PLAN_POST_PARAM);
   const openBrandParam = params.get(CONTENT_PLAN_BRAND_PARAM);
@@ -510,6 +555,7 @@ export function ContentPlanPage() {
                       <section
                         key={day.date}
                         className={`cp-col${isToday ? ' today' : ''}${isPast ? ' past' : ''}`}
+                        onContextMenu={(e) => openDayMenu(day.date, e)}
                       >
                         <div className="cp-col-head">
                           <span className="cp-col-dow">{WEEKDAYS[dayIndex]}</span>
@@ -597,6 +643,55 @@ export function ContentPlanPage() {
           }}
         />
       )}
+
+      {/* Menu prawego kliku na dniu tablicy — ta sama powłoka `useOverlay` i
+          klasy `.context-menu`, co menu slotu kalendarza zadań. */}
+      <OverlayLayer>
+        <AnimatePresence>
+          {dayMenu && (
+            <m.div
+              className="context-menu"
+              style={{ ...dayMenuOverlay.style, transformOrigin: 'top left' }}
+              role="menu"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.12, ease: 'easeOut' }}
+            >
+              <div ref={dayMenuRef}>
+                <div className="context-menu-title">{formatShortWithWeekday(dayMenu.date)}</div>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="context-menu-item"
+                  disabled={activeBrand === undefined}
+                  onClick={() => {
+                    const date = dayMenu.date;
+                    setDayMenu(null);
+                    addPost(date);
+                  }}
+                >
+                  + Nowa publikacja
+                </button>
+                {copiedPost !== null && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="context-menu-item"
+                    onClick={() => {
+                      const date = dayMenu.date;
+                      setDayMenu(null);
+                      pastePost(date);
+                    }}
+                  >
+                    <ClipboardPaste size={13} aria-hidden /> Wklej „{copiedPost.title}”
+                  </button>
+                )}
+              </div>
+            </m.div>
+          )}
+        </AnimatePresence>
+      </OverlayLayer>
 
       {/* Modale modułu: montowane W STRONIE (samo-guard strony reużyty), każdy w
           osobnym `AnimatePresence`. Nieznane id obsługuje sam modal. */}

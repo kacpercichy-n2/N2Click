@@ -53,6 +53,7 @@ function post(overrides: Partial<ContentPlanPost> = {}): ContentPlanPost {
     status: 'Zaplanowane',
     visibility: 'draft',
     baseTags: '',
+    designBrief: '',
     channels: [{ id: 'c1', platformId: 'instagram', copy: 'Opis', tags: '', overrideTags: false }],
     comments: [],
     history: [],

@@ -2781,12 +2781,13 @@ a.toggle-btn {
   margin-left: 0;
   pointer-events: none;
 }
-/* Na niskich kafelkach (np. 45 min = 63 px) ostatni wiersz treści sięga dołu,
-   więc godziny ustępują miejsca ✓ zamiast chować się pod nim. Rezerwa wchodzi
-   TYLKO gdy znacznik naprawdę stoi na kafelku (`entry.done`), a nie przy samym
-   statusie „zrobione” zadania. Kwadransowy kafelek (.h-quarter) ma własną
-   rezerwę na `.week-block-time` — wiersz osoby jest tam schowany. */
-.week-block.has-done-tick .week-block-meta {
+/* Na 45-minutowym kafelku (63 px, klasa .h-threeq z WeekView) ostatni wiersz
+   treści sięga dołu, więc godziny ustępują miejsca ✓ zamiast chować się pod
+   nim. Rezerwa wchodzi TYLKO tam — na blokach ≥1h wiersz godzin kończy się nad
+   ✓, a bezwarunkowe 22 px odsuwało „1h" od prawej krawędzi względem sąsiadów
+   (misalignment, zgłoszenie 2026-08-10). Kwadransowy kafelek (.h-quarter) ma
+   własną rezerwę na `.week-block-time` — wiersz osoby jest tam schowany. */
+.week-block.h-threeq.has-done-tick .week-block-meta {
   padding-right: 22px;
 }
 .week-recur-block.done .week-recur-time {
@@ -2815,8 +2816,19 @@ a.toggle-btn {
   white-space: nowrap;
   overflow: hidden;
 }
+/* Wąska kolumna NIGDY nie przycina etykiety godzin: `overflow: hidden` wiersza
+   ucinał „1h 15m" do „1h" (fałszywy czas — zgłoszenie 2026-08-10). Miejsca
+   ustępuje NAZWISKO (elipsa), godziny są nieściśliwe. */
+.week-block-person {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .week-block-hours {
   margin-left: auto;
+  flex-shrink: 0;
   font-weight: 600;
   color: var(--text);
   font-family: var(--n2-font-data);
@@ -2903,11 +2915,8 @@ a.toggle-btn {
   .week-block-title {
   padding-right: 22px;
 }
-/* Ogólna rezerwa dolnego rogu (`.has-done-tick .week-block-meta`) tu nie ma
-   czego chronić — ✓ nie stoi już nad godzinami. */
-.week-block.h-half.has-done-tick .week-block-meta {
-  padding-right: 0;
-}
+/* Rezerwa dolnego rogu jest zawężona do `.h-threeq` (patrz wyżej), więc
+   h-half nie potrzebuje już kontr-reguły zerującej. */
 /* Bierny znacznik (blok bez prawa edycji) idzie w ten sam róg tytułu. */
 .week-block.h-half .block-done-mark.corner {
   bottom: auto;
@@ -9862,6 +9871,38 @@ a.toggle-btn {
   background: var(--cp-accent-16);
   color: var(--n2-text);
 }
+/* POST / DESIGN — przełącznik treści środkowej kolumny edytora publikacji
+   (reużywa pigułki .cp-mode). Segmenty dzielą szerokość po równo, a kropka
+   przy DESIGN sygnalizuje uzupełnione wytyczne bez otwierania zakładki. */
+.cp-copy-mode {
+  margin-bottom: 14px;
+}
+.cp-copy-mode .cp-mode-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  letter-spacing: 0.06em;
+}
+/* Aktywna zakładka POST/DESIGN świeci PEŁNYM fioletem (jak `.cp-newpost`),
+   nie ledwo widocznym `--cp-accent-16` — decyzja usera 2026-08-10: ma być
+   jasne, w którym widoku się jest. Dotyczy edytora ORAZ side panelu. */
+.cp-copy-mode .cp-mode-btn.on,
+.cp-pd-content-mode .cp-mode-btn.on {
+  background: var(--n2-lavender);
+  color: var(--n2-text-inverse);
+}
+.cp-copy-mode-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--n2-lavender);
+}
+/* Na aktywnym (fioletowym) segmencie kropka musi kontrastować z tłem. */
+.cp-mode-btn.on .cp-copy-mode-dot {
+  background: var(--n2-text-inverse);
+}
 .cp-newpost {
   min-height: 36px;
   padding: 0 18px;
@@ -10770,6 +10811,27 @@ a.toggle-btn {
   color: var(--n2-text-soft);
   white-space: pre-wrap;
 }
+/* POST / DESIGN w podglądzie: pigułka nad treścią (widoczna tylko, gdy
+   publikacja MA wytyczne) + wyróżniony blok wytycznych dla grafika. */
+.cp-pd-content-mode {
+  margin-bottom: 10px;
+  align-self: flex-start;
+}
+.cp-pd-design {
+  padding: 10px 12px;
+  border: 1px dashed var(--n2-border);
+  border-radius: var(--n2-radius);
+  background: rgba(255, 255, 255, 0.03);
+}
+.cp-pd-design-lbl {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--n2-text-dim);
+}
 .cp-pd-tags {
   display: flex;
   flex-wrap: wrap;
@@ -11097,14 +11159,16 @@ a.toggle-btn {
   flex-wrap: wrap;
   gap: var(--n2-space-2);
 }
+/* „Dodaj komentarz" stoi POD boxem, nie obok (decyzja usera 2026-08-10) —
+   kolumna zamiast dawnego wiersza z przyciskiem doklejonym z prawej. */
 .cp-comment-form {
   display: flex;
-  align-items: flex-end;
-  flex-wrap: wrap;
-  gap: var(--n2-space-3);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--n2-space-2);
 }
 .cp-comment-form .field {
-  flex: 1 1 260px;
+  width: 100%;
   margin-bottom: 0;
 }
 .cp-thread-list,

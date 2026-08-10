@@ -203,6 +203,9 @@ describe('konwencja plików migracji', () => {
       // n2click.tasks/projects/events. Maskowanie WYŁĄCZNIE po stronie klienta
       // (src/store/confidentiality.ts) — zero zmian RLS.
       '20260805120000_confidential_content.sql',
+      // Wytyczne dla grafika (zakładka DESIGN edytora publikacji): addytywna
+      // kolumna `design_brief` na contentplan.posts, default ''.
+      '20260810120000_contentplan_design_brief.sql',
     ]);
   });
 

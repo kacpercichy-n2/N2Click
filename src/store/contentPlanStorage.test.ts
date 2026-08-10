@@ -198,6 +198,7 @@ describe('ścieżka wczytania', () => {
           status: 'Zaplanowane',
           visibility: 'draft',
           baseTags: '#marka',
+          designBrief: '',
           channels: [
             {
               id: 'c1',

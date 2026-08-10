@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store/AppStore';
 import { useCan } from '../store/useCan';
-import { useOpenTask } from '../components/TaskModal';
+import { useDuplicateTask, useOpenTask } from '../components/TaskModal';
+import { OverflowMenu } from '../components/OverflowMenu';
 import {
   activeStatuses,
   assigneeIdsOfTask,
@@ -60,6 +61,8 @@ function rangeLabel(start: string, end: string): string {
 export function TasksPage() {
   const { state, dispatch } = useStore();
   const { openTask, openNewTask } = useOpenTask();
+  // JEDNA instancja dla wszystkich kafelków — id zadania idzie w wywołaniu.
+  const duplicateTask = useDuplicateTask();
   const canManageTasks = useCan()('tasks.manage');
   const confirm = useConfirm();
   const statuses = activeStatuses(state);
@@ -623,15 +626,32 @@ export function TasksPage() {
                     )}
                   </div>
                 </button>
+                {/* ⋯ na kafelku (decyzja usera 2026-08-10): te same działania,
+                    co menu w modalu i na pełnej stronie — duplikat otwiera
+                    kopię od razu do edycji, usuwanie zachowuje dotychczasowe
+                    pytanie ze skutkami. */}
                 {canManageTasks && (
                   <div className="card-actions">
-                    <IconButton
-                      className="task-delete"
-                      variant="danger"
-                      icon={<Trash2 size={16} aria-hidden />}
-                      onClick={() => handleDelete(task.id, taskDisplayTitle(state, task))}
-                      label={`Usuń ${taskDisplayTitle(state, task)}`}
-                      tooltip="Usuń"
+                    <OverflowMenu
+                      label={`Więcej działań: ${taskDisplayTitle(state, task)}`}
+                      items={[
+                        {
+                          id: 'duplicate',
+                          label: 'Duplikuj zadanie',
+                          onSelect: () => {
+                            const newId = duplicateTask(task.id);
+                            if (newId !== null) openTask(newId);
+                          },
+                        },
+                        {
+                          id: 'delete',
+                          label: 'Usuń zadanie',
+                          danger: true,
+                          onSelect: () => {
+                            void handleDelete(task.id, taskDisplayTitle(state, task));
+                          },
+                        },
+                      ]}
                     />
                   </div>
                 )}

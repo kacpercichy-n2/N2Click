@@ -987,7 +987,7 @@ export async function loadContentPlanSnapshot(
       ),
       db.select(
         'posts',
-        'id, brand_id, date, title, topic, format, status, visibility, base_tags, created_at, updated_at',
+        'id, brand_id, date, title, topic, format, status, visibility, base_tags, design_brief, created_at, updated_at',
       ),
       db.select(
         'post_channels',
@@ -1043,6 +1043,7 @@ export async function loadContentPlanSnapshot(
         status: row.status,
         visibility: row.visibility,
         baseTags: joinContentPlanTags(row.base_tags),
+        designBrief: str(row.design_brief),
         channels: (channelsByPost.get(postId) ?? []).map((channel) => {
           // Forma kanoniczna kanału: NULL / 'main' => BRAK klucza grupy.
           const groupId = str(channel.description_group_id).trim();

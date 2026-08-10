@@ -440,6 +440,7 @@ describe('buildDryRunReport — wiersz modułu Content Plan', () => {
     status: 'Zaplanowane' as const,
     visibility: 'draft' as const,
     baseTags: '',
+    designBrief: '',
     channels: [],
     comments: [],
     history: [],

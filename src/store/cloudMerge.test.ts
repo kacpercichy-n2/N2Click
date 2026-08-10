@@ -1262,6 +1262,7 @@ const cpPost = (o: Partial<ContentPlanPost> & { id: string }): ContentPlanPost =
   status: 'Zaplanowane',
   visibility: 'draft',
   baseTags: '#tetra',
+  designBrief: '',
   channels: [{ id: 'ch-1', platformId: 'instagram', copy: 'Opis', tags: '', overrideTags: false }],
   comments: [],
   history: [],

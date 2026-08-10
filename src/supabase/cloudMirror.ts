@@ -972,6 +972,7 @@ function cpPostRow(p: ContentPlanPost): Record<string, unknown> {
     status: p.status,
     visibility: p.visibility,
     base_tags: splitContentPlanTags(p.baseTags),
+    design_brief: p.designBrief,
     ...timestampColumn('created_at', p.createdAt),
   };
 }

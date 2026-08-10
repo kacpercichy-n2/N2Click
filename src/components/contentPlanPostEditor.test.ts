@@ -68,6 +68,7 @@ function post(overrides: Partial<ContentPlanPost> = {}): ContentPlanPost {
     status: 'Zaplanowane',
     visibility: 'draft',
     baseTags: '#marka',
+    designBrief: '',
     channels: [
       { id: 'c1', platformId: 'facebook', copy: 'Opis główny', tags: '', overrideTags: false },
       { id: 'c2', platformId: 'instagram', copy: 'Opis główny', tags: '', overrideTags: false },
@@ -103,6 +104,7 @@ describe('buildPostDraft', () => {
       status: 'Zaplanowane',
       visibility: 'draft',
       baseTags: '#marka',
+      designBrief: '',
       channels: source.channels,
     });
     expect(draft.channels[0]).not.toBe(source.channels[0]);
