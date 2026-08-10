@@ -90,6 +90,45 @@ export function changelogUnreadCount(
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-08-10-duplikowanie-contentplan-godziny',
+    dateFrom: '2026-08-10',
+    dateTo: '2026-08-10',
+    summary:
+      'Duplikowanie zadań, automatyczny dział z przypisanych osób, zakładka DESIGN w content planie i poprawki wyświetlania godzin w kalendarzu.',
+    items: [
+      {
+        area: 'Zadania',
+        feature: 'Duplikowanie zadań',
+        description:
+          'W menu „⋯” (na kafelku listy, w oknie zadania i na pełnej stronie) jest nowa pozycja „Duplikuj zadanie”. Kopia przejmuje treść, osoby i ich godziny (trafiają do zasobnika, bez terminu w kalendarzu), a nazwa dostaje dopisek „- kopia”, „- kopia 2” itd. Kopia otwiera się od razu do edycji.',
+      },
+      {
+        area: 'Zadania',
+        feature: 'Dział wybiera się sam',
+        description:
+          'Po zaznaczeniu osoby w zadaniu jej dział z profilu wpisuje się automatycznie w pole „Dział” — o ile było puste. Ręcznie wybrany dział nigdy nie jest nadpisywany.',
+      },
+      {
+        area: 'Content plan',
+        feature: 'Zakładka POST / DESIGN',
+        description:
+          'W edytorze publikacji środkowa kolumna ma przełącznik POST / DESIGN: POST to opisy publikacji jak dotąd, a DESIGN to nowe pole „Wytyczne dla grafika” (treści na grafikę, kadr, CTA). Aktywna zakładka świeci na fioletowo, a wytyczne widać też w podglądzie publikacji. Sekcja „Decyzja klienta” zniknęła z edytora — decyzje podejmuje klient w swoim portalu.',
+      },
+      {
+        area: 'Content plan',
+        feature: 'Nazwy dni i szybkie dodawanie',
+        description:
+          'Rejestr pokazuje datę z dniem tygodnia (np. „7 sie (pt)”), dzień tygodnia widać też przy polu daty w edytorze. Prawy klik na dniu tablicy otwiera menu „+ Nowa publikacja” / „Wklej”. Przycisk „Dodaj komentarz” stoi teraz pod polem komentarza.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Pełna etykieta czasu bloku',
+        description:
+          'Na wąskich kolumnach etykieta „1h 15m” była przycinana i wyglądała jak „1h” — teraz przy braku miejsca skraca się nazwisko, a czas zawsze jest pełny. Etykiety godzin są też równo wyrównane do prawej krawędzi na wszystkich blokach.',
+      },
+    ],
+  },
+  {
     id: '2026-08-10-zgloszenia-status-fix',
     dateFrom: '2026-08-10',
     dateTo: '2026-08-10',
