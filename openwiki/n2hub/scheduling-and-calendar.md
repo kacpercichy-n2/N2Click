@@ -93,7 +93,20 @@
   RangeError z `format(Invalid Date)`). TaskModal auto-saves valid edited drafts
   (debounced ~0.9 s; paused during an explicit tab conflict; creation stays
   manual).
-- Osoba przypisana bez godzin (2026-07-31): przypisanie samo w sobie NIE tworzy
+- NIEOBECNOŚĆ PER WYSTĄPIENIE (2026-08-11): wydarzenie CYKLICZNE niesie
+  `absences?: EventAbsence[]` ({date, personId}; forma kanoniczna w
+  `normalizeEventAbsences` — tylko realne dni wystąpień żywej reguły,
+  dedup+sort, pusto = klucz znika; wspólna dla reduktora, `repairEvents` i
+  hydracji). `TOGGLE_EVENT_ATTENDANCE` (WeekView: prawy klik na kaflu
+  wystąpienia → menu, decyzja OSOBISTA działającego użytkownika, bez bramki
+  `events.manage`; imienne tylko dla uczestnika, ogólnofirmowe dla każdego).
+  Nieobecność ZWALNIA slot osoby w: `blockCollidesWithEvent`,
+  `scheduleConflictsForRange`, `mergeCoversEventOrRecurrence`,
+  `buildEventBusyByPersonDate` i odejmuje głowę w `calendarDayVolume`;
+  render = kafel-duch (`.week-event-block.absent`). `SAVE_EVENT`
+  re-kanonikalizuje nieobecności względem nowej reguły (zdjęcie cykliczności =
+  klucz znika). Chmura: kolumna `n2click.events.absences` (jsonb, migracja
+  20260811160000), personId mapowane profil↔osoba jak `attendee_ids`.
   żadnego `WorkloadEntry`, więc para (zadanie, osoba) z zerem godzin nie ma ani
   bloku w kalendarzu, ani wiersza w zasobniku i znika z planowania. Dlatego
   świeżo zaznaczona osoba dostaje bazowo `DEFAULT_ASSIGNEE_HOURS`

@@ -469,6 +469,12 @@ export interface Ticket {
  * czasom 0/1440 wchodzi do ISTNIEJĄCEJ kolizji bez żadnej równoległej
  * mechaniki; render świadomie ignoruje te czasy (okno godzin pracy z profilu).
  */
+/** Nieobecność JEDNEJ osoby w JEDNYM wystąpieniu wydarzenia cyklicznego. */
+export interface EventAbsence {
+  date: DateStr; // dzień wystąpienia reguły
+  personId: string;
+}
+
 export interface CalendarEvent {
   id: string;
   title: string; // wymagane (trim niepusty)
@@ -480,6 +486,18 @@ export interface CalendarEvent {
   durationMinutes: number; // 15..1440, wielokrotność 15; start+dur <= 1440
   attendeeIds: string[]; // ids z people, zdeduplikowane; [] = ogólnofirmowe
   recurrence?: TaskRecurrence; // REUŻYTY typ; brak klucza = jednorazowe
+  /**
+   * Nieobecności per (wystąpienie, osoba): „nie biorę udziału w TYM
+   * wystąpieniu” wydarzenia CYKLICZNEGO. Osoba nieobecna nie koliduje z
+   * blokami w tym slocie i nie wnosi godzin do objętości dnia; kafel u niej
+   * renderuje się jako wyszarzony duch (żeby dało się wrócić tym samym menu).
+   * FORMA KANONICZNA: klucz obecny wyłącznie przy niepustej liście, dozwolony
+   * TYLKO gdy `recurrence` istnieje (i nigdy na urlopie); wpisy z datą będącą
+   * realnym dniem wystąpienia reguły, zdeduplikowane po (date, personId),
+   * posortowane po dacie, potem osobie. Egzekwowane w reduktorze,
+   * `repairEvents` i hydracji chmury (kolumna `events.absences`).
+   */
+  absences?: EventAbsence[];
   /** Dyskryminator rodzaju. BRAK klucza = spotkanie (kanoniczny minimalizm —
    *  `kind: 'meeting'` nigdy nie jest zapisywane lokalnie). Urlop ma zawsze
    *  `startMinutes: 0`, `durationMinutes: 1440` i DOKŁADNIE jednego uczestnika,

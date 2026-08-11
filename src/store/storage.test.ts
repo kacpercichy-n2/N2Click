@@ -2660,6 +2660,42 @@ describe('repairEvents', () => {
     expect(repairEvents(data).events).toEqual([]);
   });
 
+  it('kanonikalizuje nieobecności: tylko dni wystąpień żywej reguły, dedup+sort; bez reguły klucz znika', () => {
+    const recurrence = { daysOfWeek: [1], startMinutes: 540, durationMinutes: 60 };
+    const data = withEvents([
+      {
+        id: 'e1',
+        title: 'Cykliczne',
+        date: MON,
+        startMinutes: 540,
+        durationMinutes: 60,
+        recurrence,
+        absences: [
+          { date: '2026-07-13', personId: 'p2' },
+          { date: MON, personId: 'p1' },
+          { date: MON, personId: 'p1' }, // duplikat
+          { date: '2026-07-07', personId: 'p1' }, // wtorek — poza regułą
+          { date: MON, personId: '' }, // pusta osoba
+          'śmieć',
+        ],
+      },
+      {
+        id: 'e2',
+        title: 'Jednorazowe',
+        date: MON,
+        startMinutes: 540,
+        durationMinutes: 60,
+        absences: [{ date: MON, personId: 'p1' }],
+      },
+    ]);
+    const events = repairEvents(data).events;
+    expect(events[0].absences).toEqual([
+      { date: MON, personId: 'p1' },
+      { date: '2026-07-13', personId: 'p2' },
+    ]);
+    expect('absences' in events[1]).toBe(false);
+  });
+
   it('deduplikuje uczestników i zachowuje dangling id', () => {
     const data = withEvents([
       {

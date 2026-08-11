@@ -11,7 +11,7 @@
 //
 // INVARIANT 1: occurrences are NEVER materialized as `WorkloadEntry` rows and
 // never feed totals/availability/overload/collision — they are presentational.
-import type { DateStr, TaskRecurrence, RecurrenceOverride } from '../types';
+import type { DateStr, EventAbsence, TaskRecurrence, RecurrenceOverride } from '../types';
 import {
   addDaysStr,
   diffDays,
@@ -254,6 +254,43 @@ export function normalizeRecurrence(
   }
 
   return overrides.length > 0 ? { ...rule, overrides } : rule;
+}
+
+/**
+ * Kanoniczna lista nieobecności per (wystąpienie, osoba) wydarzenia
+ * CYKLICZNEGO z niezaufanego wejścia. Wpis przeżywa, gdy: jest obiektem z
+ * niepustym stringowym `personId` i `date` będącą realnym dniem wystąpienia
+ * reguły (`isOccurrenceDate` — pominięty dzień nadal jest wystąpieniem, więc
+ * skip nie kasuje nieobecności). Dedup po (date, personId) — pierwszy wygrywa;
+ * sort po dacie, potem osobie. Pusto => `undefined` (klucz kanonicznie
+ * nieobecny). Współdzielone przez reduktor, repair storage i hydrację chmury —
+ * idempotentne po wartości.
+ */
+export function normalizeEventAbsences(
+  raw: unknown,
+  rule: TaskRecurrence,
+  anchorStart: DateStr,
+): EventAbsence[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: Array<{ date: DateStr; personId: string }> = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) continue;
+    const rec = item as Record<string, unknown>;
+    const date = rec.date;
+    const personId = rec.personId;
+    if (typeof date !== 'string' || typeof personId !== 'string' || personId === '') continue;
+    if (!isOccurrenceDate(rule, anchorStart, date)) continue;
+    const key = `${date} ${personId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ date, personId });
+  }
+  if (out.length === 0) return undefined;
+  out.sort((a, b) =>
+    a.date < b.date ? -1 : a.date > b.date ? 1 : a.personId < b.personId ? -1 : a.personId > b.personId ? 1 : 0,
+  );
+  return out;
 }
 
 /**

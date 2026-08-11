@@ -37,7 +37,7 @@ import {
   sanitizeContentPlanPosts,
 } from '../contentplan/domain';
 import { isValidDateStr, periodError, MAX_TASK_PERIOD_DAYS } from '../utils/dates';
-import { normalizeRecurrence } from '../utils/recurrence';
+import { normalizeEventAbsences, normalizeRecurrence } from '../utils/recurrence';
 import { normalizeProjectDocumentUrl } from '../utils/projectDocuments';
 import {
   canonicalEventRecurrence,
@@ -768,6 +768,21 @@ export async function loadPlannerSnapshot(
     const endDate = isVacation
       ? canonicalVacationEndDate(sqlDateToLocal(row.end_date), date) ?? undefined
       : undefined;
+    // Nieobecności per wystąpienie (kolumna `absences`, ŁAGODNIE per-pole jak
+    // `kind`/`end_date` — hydracja musi przetrwać kolumnę sprzed migracji):
+    // personId to profil chmury → reverse na osobę lokalną ('' odpada), po
+    // czym pełna kanonizacja względem żywej reguły.
+    const absences = recurrence
+      ? normalizeEventAbsences(
+          (Array.isArray(row.absences) ? (row.absences as unknown[]) : []).map((item) => {
+            if (typeof item !== 'object' || item === null) return null;
+            const rec = item as Record<string, unknown>;
+            return { date: str(rec.date), personId: personOf(rec.personId) };
+          }),
+          recurrence,
+          date,
+        )
+      : undefined;
     events.push({
       id: str(row.id),
       title,
@@ -779,6 +794,7 @@ export async function loadPlannerSnapshot(
       durationMinutes,
       attendeeIds,
       ...(recurrence ? { recurrence } : {}),
+      ...(absences ? { absences } : {}),
       ...(isVacation ? { kind: 'urlop' as const } : {}),
       ...(endDate ? { endDate } : {}),
       // Utajniona treść (20260805120000): forma kanoniczna — klucz wyłącznie

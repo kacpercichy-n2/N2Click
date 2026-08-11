@@ -27,6 +27,7 @@ import {
   getTask,
   overloadedPeopleOnDate,
   peopleWithBirthdayOnDate,
+  personAbsentFromEventOccurrence,
   personVacationOnDate,
   recurrenceOccurrencesForDate,
 } from '../store/selectors';
@@ -217,6 +218,10 @@ export function buildEventBusyByPersonDate(
     for (const date of days) {
       const busy: BusyInterval[] = [];
       for (const occ of calendarEventsForDate(state, date, forPerson)) {
+        // Nieobecność w tym wystąpieniu: slot tej osoby jest wolny — ani
+        // bramka upuszczania, ani straż scalania nie widzą tego przedziału
+        // (lustro filtrów w blockCollidesWithEvent / mergeCoversEventOrRecurrence).
+        if (personAbsentFromEventOccurrence(occ.event, date, personId)) continue;
         busy.push({
           start: occ.startMinutes,
           end: occ.startMinutes + occ.durationMinutes,

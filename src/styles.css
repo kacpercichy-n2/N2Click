@@ -3057,6 +3057,18 @@ a.toggle-btn {
 .week-event-block:hover {
   filter: brightness(1.08);
 }
+/* Nieobecność DZIAŁAJĄCEGO użytkownika w tym wystąpieniu: kafel-duch —
+   slot zwolniony (kolizje/godziny go nie widzą), ale kafel zostaje widoczny,
+   żeby dało się wrócić do udziału tym samym menu (prawy klik). */
+.week-event-block.absent {
+  opacity: 0.45;
+  border-style: dashed;
+  background: transparent;
+}
+.week-event-block.absent .week-event-title {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
 .week-event-title {
   font-size: var(--n2-type-xs);
   font-weight: 600;

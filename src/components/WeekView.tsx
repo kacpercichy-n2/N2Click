@@ -50,6 +50,7 @@ import {
   hoursForPersonOnDate,
   isDoneStatus,
   occurrenceIsDone,
+  personAbsentFromEventOccurrence,
   personCapacity,
   personVacationOnDate,
   taskDisplayStatus,
@@ -2094,9 +2095,15 @@ interface EventBlockProps {
   cols: number;
   // Stable parent callback taking the event id (memo-friendly).
   onOpen: (eventId: string) => void;
+  /** Dzień renderowanego wystąpienia (kolumna) — cel menu nieobecności. */
+  occDate: string;
+  /** Działający użytkownik zgłosił nieobecność w TYM wystąpieniu (kafel-duch). */
+  absentForViewer: boolean;
+  /** Menu wystąpienia (tylko wydarzenia cykliczne) — stabilny callback rodzica. */
+  onOccContextMenu?: (eventId: string, date: string, e: React.MouseEvent) => void;
 }
 
-function EventBlockImpl({ occ, displayTitle, vacationWindow, vacationOwner, col, cols, onOpen }: EventBlockProps) {
+function EventBlockImpl({ occ, displayTitle, vacationWindow, vacationOwner, col, cols, onOpen, occDate, absentForViewer, onOccContextMenu }: EventBlockProps) {
   // Urlop jest zapisany jako pełna doba (0/1440), ale RENDERUJE się w oknie
   // godzin pracy osoby — inaczej zalałby całą kolumnę. Sama kolizja nadal idzie
   // z zapisanych czasów, więc blok POKAZUJE mniej, niż faktycznie zajmuje.
@@ -2117,13 +2124,16 @@ function EventBlockImpl({ occ, displayTitle, vacationWindow, vacationOwner, col,
     ? `Urlop${who === '' ? '' : `: ${who}`}. Cały dzień. Kliknij, aby otworzyć.`
     : `📅 ${displayTitle} — ${formatMinutes(occ.startMinutes)}–${formatMinutes(
         endMinutes,
-      )}. Kliknij, aby otworzyć wydarzenie.`;
+      )}. ${absentForViewer ? 'Nie uczestniczysz w tym wystąpieniu. ' : ''}Kliknij, aby otworzyć wydarzenie.`;
   return (
     <Tooltip text={hint}>
     <div
       className={[
         'week-event-block',
         isVacation ? 'urlop' : '',
+        // Nieobecność działającego użytkownika: kafel-duch (slot zwolniony,
+        // ale widoczny — powrót do udziału tym samym menu).
+        absentForViewer ? 'absent' : '',
         // Kwadransowe spotkanie (21 px) idzie w jednej linii — jak `.week-block`.
         endMinutes - startMinutes <= 15 ? 'h-quarter' : '',
       ]
@@ -2137,6 +2147,9 @@ function EventBlockImpl({ occ, displayTitle, vacationWindow, vacationOwner, col,
         e.stopPropagation();
         onOpen(occ.event.id);
       }}
+      onContextMenu={
+        onOccContextMenu ? (e) => onOccContextMenu(occ.event.id, occDate, e) : undefined
+      }
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
@@ -2349,6 +2362,20 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
   const [recurEditStart, setRecurEditStart] = useState('09:00');
   const [recurEditDurMin, setRecurEditDurMin] = useState(60);
 
+  // Menu wystąpienia wydarzenia cyklicznego (nieobecność działającego
+  // użytkownika w JEDNYM wystąpieniu — patrz TOGGLE_EVENT_ATTENDANCE).
+  const [eventMenu, setEventMenu] = useState<{
+    eventId: string;
+    title: string;
+    date: string;
+    /** Działający użytkownik jest już nieobecny w tym wystąpieniu. */
+    absent: boolean;
+    /** Jest kogo przełączać: uczestnik imienny albo spotkanie ogólnofirmowe. */
+    canToggle: boolean;
+    anchor: MenuAnchor;
+  } | null>(null);
+  const eventMenuRef = useRef<HTMLDivElement | null>(null);
+
   // Transient cross-block drag state (a dragged block and its merge neighbor live
   // in different day-column component instances). mergeTargetId = the neighbor a
   // drop would fuse into; fusedId = the surviving block that plays the fuse anim.
@@ -2400,6 +2427,9 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
   const slotFocusReturn = useCallback(() => slotMenu?.anchor.el ?? null, [slotMenu]);
   const recurAnchorRect = useCallback(() => anchorRect(recurMenu?.anchor), [recurMenu]);
   const recurFocusReturn = useCallback(() => recurMenu?.anchor.el ?? null, [recurMenu]);
+  const closeEventMenu = useCallback(() => setEventMenu(null), []);
+  const eventAnchorRect = useCallback(() => anchorRect(eventMenu?.anchor), [eventMenu]);
+  const eventFocusReturn = useCallback(() => eventMenu?.anchor.el ?? null, [eventMenu]);
 
   const menuOverlay = useOverlay({
     open: menu !== null,
@@ -2427,6 +2457,14 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
     getAnchorRect: recurAnchorRect,
     getFocusReturn: recurFocusReturn,
     menuKeyboard: recurMenu?.step === 'menu',
+  });
+  const eventOverlay = useOverlay({
+    open: eventMenu !== null,
+    onClose: closeEventMenu,
+    overlayRef: eventMenuRef,
+    getAnchorRect: eventAnchorRect,
+    getFocusReturn: eventFocusReturn,
+    menuKeyboard: true,
   });
 
   // Right-click on bare grid (not a block — those own their own menu and stop the
@@ -2508,6 +2546,46 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
     // eslint-disable-next-line react-hooks/exhaustive-deps -- czytamy ze `state` wyłącznie `statuses`
     [canManageTasks, state.statuses],
   );
+
+  // Prawy klik na kaflu wystąpienia wydarzenia CYKLICZNEGO → menu nieobecności.
+  // Bez bramki uprawnień: nieobecność jest decyzją OSOBISTĄ działającego
+  // użytkownika o własnym udziale (żaden `events.manage` nie jest potrzebny);
+  // brak zalogowanej tożsamości = menu tylko z wejściem w wydarzenie.
+  const openEventOccMenu = useCallback(
+    (eventId: string, date: string, e: React.MouseEvent) => {
+      const event = state.events.find((ev) => ev.id === eventId);
+      if (!event || event.recurrence === undefined || event.kind === 'urlop') return;
+      e.preventDefault();
+      e.stopPropagation();
+      setMenu(null);
+      setSlotMenu(null);
+      setRecurMenu(null);
+      const viewer = state.currentUserId;
+      const canToggle =
+        viewer !== '' && (event.attendeeIds.length === 0 || event.attendeeIds.includes(viewer));
+      setEventMenu({
+        eventId,
+        title: eventDisplayTitle(state, event),
+        date,
+        absent: personAbsentFromEventOccurrence(event, date, viewer),
+        canToggle,
+        anchor: pointAnchor(e.currentTarget as HTMLElement, e.clientX, e.clientY),
+      });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- menu czyta stan wyłącznie w chwili kliknięcia; zależności zawężone jak w openRecurMenu
+    [state.events, state.currentUserId],
+  );
+
+  const eventToggleAttendance = () => {
+    if (!eventMenu) return;
+    dispatch({
+      type: 'TOGGLE_EVENT_ATTENDANCE',
+      eventId: eventMenu.eventId,
+      date: eventMenu.date,
+      personId: state.currentUserId,
+    });
+    setEventMenu(null);
+  };
 
   const recurSkipDay = () => {
     if (!recurMenu) return;
@@ -3161,6 +3239,16 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                         col={lane?.col ?? 0}
                         cols={lane?.cols ?? 1}
                         onOpen={handleOpenEvent}
+                        occDate={d}
+                        absentForViewer={
+                          state.currentUserId !== '' &&
+                          personAbsentFromEventOccurrence(occ.event, d, state.currentUserId)
+                        }
+                        onOccContextMenu={
+                          occ.event.kind !== 'urlop' && occ.event.recurrence !== undefined
+                            ? openEventOccMenu
+                            : undefined
+                        }
                       />
                     );
                   })}
@@ -3740,6 +3828,57 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                   </div>
                 </div>
               )}
+            </div>
+          </m.div>
+        )}
+      </AnimatePresence>
+      </OverlayLayer>
+
+      {/* Menu wystąpienia wydarzenia CYKLICZNEGO: nieobecność per (dzień,
+          działający użytkownik) + wejście w edycję wydarzenia. Ta sama powłoka
+          useOverlay co pozostałe menu (inwariant 7 — zero ścieżek pointer/drag). */}
+      <OverlayLayer>
+      <AnimatePresence>
+        {eventMenu && (
+          <m.div
+            className="context-menu"
+            style={{ ...eventOverlay.style, transformOrigin: 'top left' }}
+            role="menu"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            transition={{ duration: 0.12, ease: 'easeOut' }}
+          >
+            <div ref={eventMenuRef}>
+              <div className="context-menu-title">
+                📅 {eventMenu.title} —{' '}
+                {format(parseDate(eventMenu.date), 'd MMM yyyy', { locale: pl })}
+              </div>
+              {eventMenu.canToggle ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="context-menu-item"
+                  onClick={eventToggleAttendance}
+                >
+                  {eventMenu.absent
+                    ? 'Wracam do udziału w tym wystąpieniu'
+                    : 'Nie biorę udziału w tym wystąpieniu'}
+                </button>
+              ) : (
+                <div className="context-menu-title">Nie jesteś na liście uczestników</div>
+              )}
+              <button
+                type="button"
+                role="menuitem"
+                className="context-menu-item"
+                onClick={() => {
+                  handleOpenEvent(eventMenu.eventId);
+                  setEventMenu(null);
+                }}
+              >
+                Otwórz wydarzenie
+              </button>
             </div>
           </m.div>
         )}

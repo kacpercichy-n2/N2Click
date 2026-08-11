@@ -565,6 +565,21 @@ export function recurrenceOccurrencesForDate(
   return recurrenceOccurrencesForDateCache(state, argsKey(date, filterKey(personFilter)));
 }
 
+/**
+ * Czy osoba zgłosiła nieobecność w wystąpieniu wydarzenia tego dnia?
+ * Czysta funkcja na encji — wspólna dla kolizji, objętości dnia, occupancy
+ * widoku tygodnia i renderu (kafel-duch). Urlop i jednorazowe spotkania nie
+ * niosą `absences` (forma kanoniczna), więc zwracają false z definicji.
+ */
+export function personAbsentFromEventOccurrence(
+  event: CalendarEvent,
+  date: DateStr,
+  personId: string,
+): boolean {
+  if (event.absences === undefined || personId === '') return false;
+  return event.absences.some((a) => a.date === date && a.personId === personId);
+}
+
 /** Jedno wystąpienie wydarzenia na konkretny dzień (czysto prezentacyjne). */
 export interface CalendarEventOccurrence {
   event: CalendarEvent;
@@ -631,7 +646,7 @@ export function calendarEventsForDate(
 }
 
 const calendarDayVolumeCache = createKeyedCache<number>((state, key) => {
-  const fk = key.split(' ')[1] ?? '';
+  const [date, fk = ''] = key.split(' ');
   const personFilter = personFilterFromKey(fk);
   const filterActive = personFilter.size > 0;
   let volume = dayTotalCache(state, key);
@@ -646,7 +661,20 @@ const calendarDayVolumeCache = createKeyedCache<number>((state, key) => {
         : filterActive
           ? attendees.filter((id) => personFilter.has(id)).length
           : attendees.length;
-    volume += (occ.durationMinutes / 60) * heads;
+    // Nieobecni w TYM wystąpieniu nie wnoszą godzin — liczymy tylko osoby,
+    // które weszły do `heads` (uczestnik/zespół ∩ filtr, gdy aktywny).
+    let absent = 0;
+    for (const a of occ.event.absences ?? []) {
+      if (a.date !== date) continue;
+      const inScope =
+        attendees.length === 0
+          ? filterActive
+            ? personFilter.has(a.personId)
+            : state.people.some((p) => p.id === a.personId)
+          : attendees.includes(a.personId) && (!filterActive || personFilter.has(a.personId));
+      if (inScope) absent += 1;
+    }
+    volume += (occ.durationMinutes / 60) * Math.max(0, heads - absent);
   }
   for (const { task, occurrence } of recurrenceOccurrencesForDateCache(state, key)) {
     const assignees = assigneeIdsOfTask(state, task.id);
@@ -746,6 +774,8 @@ export function mergeCoversEventOrRecurrence(
 ): boolean {
   const forPerson = new Set([personId]);
   for (const occ of calendarEventsForDate(state, date, forPerson)) {
+    // Nieobecność zwalnia slot — scalenie nad takim wystąpieniem jest legalne.
+    if (personAbsentFromEventOccurrence(occ.event, date, personId)) continue;
     if (rangesOverlap(mergedStart, mergedEnd, occ.startMinutes, occ.startMinutes + occ.durationMinutes)) {
       return true;
     }
@@ -832,6 +862,8 @@ export function scheduleConflictsForRange(
 
     for (const occ of calendarEventsForDate(state, date, forPerson)) {
       if (opts?.excludeEventId !== undefined && occ.event.id === opts.excludeEventId) continue;
+      // Osoba nieobecna w tym wystąpieniu nie jest przez nie zajęta.
+      if (personAbsentFromEventOccurrence(occ.event, date, personId)) continue;
       if (!rangesOverlap(startMinutes, end, occ.startMinutes, occ.startMinutes + occ.durationMinutes)) {
         continue;
       }
@@ -1017,6 +1049,8 @@ export function blockCollidesWithEvent(
   const end = blockEndMinutes(startMinutes, plannedHours);
   for (const occ of calendarEventsForDate(state, date, new Set([personId]))) {
     if (occ.event.attendeeIds.length === 0) continue;
+    // Nieobecność w TYM wystąpieniu zwalnia slot tej osoby (sedno funkcji).
+    if (personAbsentFromEventOccurrence(occ.event, date, personId)) continue;
     if (rangesOverlap(startMinutes, end, occ.startMinutes, occ.startMinutes + occ.durationMinutes)) {
       return true;
     }

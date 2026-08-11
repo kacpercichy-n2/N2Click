@@ -214,6 +214,9 @@ describe('konwencja plików migracji', () => {
       // istniejący wiersz portalowego klienta (role='client') przeżywa rundę
       // awans+degradacja administratora. Tylko funkcja, zero zmian danych.
       '20260811150000_contentplan_admin_grant_preserves_client.sql',
+      // Nieobecność per (wystąpienie, osoba) wydarzenia cyklicznego: addytywna
+      // kolumna jsonb `absences` na n2click.events, zero zmian RLS.
+      '20260811160000_events_absences.sql',
     ]);
   });
 

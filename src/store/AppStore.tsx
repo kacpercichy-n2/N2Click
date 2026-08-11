@@ -117,7 +117,7 @@ import {
   personVacationOnDate,
   wouldCreateSupervisorCycle,
 } from './selectors';
-import { isOccurrenceDate, normalizeRecurrence } from '../utils/recurrence';
+import { isOccurrenceDate, normalizeEventAbsences, normalizeRecurrence } from '../utils/recurrence';
 import { copyTitle } from '../utils/taskCopyName';
 import { isBoardMember } from './confidentiality';
 import { ROLE_LABELS } from './permissions';
@@ -363,6 +363,9 @@ export type Action =
   | { type: 'ADD_EVENT'; draft: EventDraft }
   | { type: 'SAVE_EVENT'; eventId: string; draft: EventDraft }
   | { type: 'DELETE_EVENT'; eventId: string }
+  // Nieobecność per (wystąpienie, osoba) wydarzenia CYKLICZNEGO: toggle —
+  // obecny wpis znika (powrót do udziału), brak wpisu powstaje.
+  | { type: 'TOGGLE_EVENT_ATTENDANCE'; eventId: string; date: string; personId: string }
   // Content Plan — marki i publikacje modułu. Kolekcje ADDYTYWNE; jedyna kaskada
   // to DELETE_CP_BRAND (marka zabiera swoje publikacje). Cała walidacja i
   // normalizacja żyje w `src/contentplan/domain.ts`; każdy niepoprawny ładunek
@@ -3494,12 +3497,30 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
         if (typeof rec.endDate !== 'string' || !isValidDateStr(rec.endDate)) return state;
         if (rec.endDate <= e.date) return state;
       }
+      // Nieobecności per wystąpienie: OPCJONALNE i ADDYTYWNE — hydracja
+      // kanonikalizuje wcześniej (normalizeEventAbsences), tu tylko strażnik
+      // struktury jak dla kind/endDate.
+      if (rec.absences !== undefined && !Array.isArray(rec.absences)) return state;
     }
     const filtered = payload.events.map((e) => {
       const attendeeIds = e.attendeeIds.filter(
         (id, i, arr) => personIds.has(id) && arr.indexOf(id) === i,
       );
-      return attendeeIds.length === e.attendeeIds.length ? e : { ...e, attendeeIds };
+      // Nieobecności osób spoza finalnego zespołu odpadają (parytet z filtrem
+      // attendeeIds — walidacja widzi już scalony zespół). Forma kanoniczna:
+      // pusta lista = klucz znika.
+      const absencesFiltered = e.absences?.filter((a) => personIds.has(a.personId));
+      const absencesChanged =
+        e.absences !== undefined && absencesFiltered!.length !== e.absences.length;
+      if (attendeeIds.length === e.attendeeIds.length && !absencesChanged) return e;
+      const { absences: _dropAbsences, ...rest } = e;
+      return {
+        ...rest,
+        attendeeIds,
+        ...(absencesFiltered !== undefined && absencesFiltered.length > 0
+          ? { absences: absencesFiltered }
+          : {}),
+      };
     });
     mergedEvents = reconcileRows(state.events, filtered);
   }
@@ -4515,6 +4536,13 @@ export function reducer(state: AppData, action: Action): AppData {
               : confidentialAllowed && action.draft.isConfidential !== undefined
                 ? action.draft.isConfidential === true
                 : e.isConfidential === true;
+          // Nieobecności przeżywają edycję, RE-KANONIKALIZOWANE względem nowej
+          // reguły/kotwicy (zmiana dni tygodnia/until wycina wpisy spoza
+          // wystąpień); zdjęcie cykliczności lub urlop = klucz znika.
+          const absences =
+            normalized.kind === 'urlop' || normalized.recurrence === undefined
+              ? undefined
+              : normalizeEventAbsences(e.absences, normalized.recurrence, normalized.date);
           const next: CalendarEvent = {
             id: e.id,
             title: normalized.title,
@@ -4526,6 +4554,7 @@ export function reducer(state: AppData, action: Action): AppData {
             durationMinutes: normalized.durationMinutes,
             attendeeIds: normalized.attendeeIds,
             ...(normalized.recurrence ? { recurrence: normalized.recurrence } : {}),
+            ...(absences ? { absences } : {}),
             ...(normalized.kind ? { kind: normalized.kind } : {}),
             ...(normalized.endDate ? { endDate: normalized.endDate } : {}),
             ...(confidential ? { isConfidential: true as const } : {}),
@@ -4539,6 +4568,43 @@ export function reducer(state: AppData, action: Action): AppData {
     case 'DELETE_EVENT': {
       if (!state.events.some((e) => e.id === action.eventId)) return state;
       return { ...state, events: state.events.filter((e) => e.id !== action.eventId) };
+    }
+    case 'TOGGLE_EVENT_ATTENDANCE': {
+      // Nieobecność ma sens WYŁĄCZNIE dla wystąpienia wydarzenia cyklicznego
+      // (jednorazowe spotkanie = wypisz się z uczestników; urlop nie ma
+      // cykliczności kanonicznie). Nieprawidłowa komenda => ta sama referencja
+      // (inwariant 6).
+      const event = state.events.find((e) => e.id === action.eventId);
+      if (event === undefined || event.kind === 'urlop' || event.recurrence === undefined) {
+        return state;
+      }
+      if (action.personId === '' || !state.people.some((p) => p.id === action.personId)) {
+        return state;
+      }
+      // Imienne spotkanie: nieobecność tylko dla uczestnika. Ogólnofirmowe
+      // (`attendeeIds` puste) — dla każdej osoby zespołu.
+      if (event.attendeeIds.length > 0 && !event.attendeeIds.includes(action.personId)) {
+        return state;
+      }
+      if (!isValidDateStr(action.date) || !isOccurrenceDate(event.recurrence, event.date, action.date)) {
+        return state;
+      }
+      const existing = event.absences ?? [];
+      const isAbsent = existing.some(
+        (a) => a.date === action.date && a.personId === action.personId,
+      );
+      const nextRaw = isAbsent
+        ? existing.filter((a) => !(a.date === action.date && a.personId === action.personId))
+        : [...existing, { date: action.date, personId: action.personId }];
+      const absences = normalizeEventAbsences(nextRaw, event.recurrence, event.date);
+      return {
+        ...state,
+        events: state.events.map((e) => {
+          if (e.id !== action.eventId) return e;
+          const { absences: _prev, ...rest } = e;
+          return { ...rest, ...(absences ? { absences } : {}), updatedAt: nowIso() };
+        }),
+      };
     }
     // ---- Content Plan (marki i publikacje modułu) ----
     // Walidacja i normalizacja żyją w `src/contentplan/domain.ts`

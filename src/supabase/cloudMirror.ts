@@ -391,6 +391,19 @@ function eventRow(
     }
     attendeeIds.push(profileId);
   }
+  // Nieobecności per wystąpienie: personId mapowane na profil chmury jak
+  // attendee_ids (wpis bez konta serwera zostaje lokalny — diagnostyka).
+  const absences: Array<{ date: string; personId: string }> = [];
+  for (const a of e.absences ?? []) {
+    const profileId =
+      maps.people.get(a.personId) ??
+      (maps.cloudProfileIds.has(a.personId) ? a.personId : undefined);
+    if (profileId === undefined) {
+      diagnostics.push(DIAG.unmappablePerson);
+      continue;
+    }
+    absences.push({ date: a.date, personId: profileId });
+  }
   return {
     id: e.id,
     title: e.title,
@@ -401,6 +414,7 @@ function eventRow(
     start_minutes: e.startMinutes,
     duration_minutes: e.durationMinutes,
     attendee_ids: attendeeIds,
+    absences,
     recurrence: e.recurrence ?? null,
     kind: e.kind ?? 'meeting',
     end_date: e.endDate ?? null,

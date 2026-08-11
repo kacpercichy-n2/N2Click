@@ -2374,6 +2374,26 @@ describe('blockCollidesWithEvent', () => {
     expect(blockCollidesWithEvent(s, 'p1', '2026-07-08', 630, 1)).toBe(false);
   });
 
+  // Nieobecność per wystąpienie (2026-08-11): „nie biorę udziału w TYM
+  // wystąpieniu" zwalnia slot tej osoby — kolizja go nie widzi, ale INNY dzień
+  // tej samej serii i INNA osoba kolidują jak dotąd.
+  it('nieobecność w wystąpieniu zwalnia slot; inny dzień i inna osoba nadal kolidują', () => {
+    // 2026-07-08 to środa (ISO 3); seria śr, wystąpienia 08.07 i 15.07.
+    const recurring = makeCalendarEvent({
+      id: 'ev1',
+      attendeeIds: ['p1', 'p2'],
+      recurrence: { daysOfWeek: [3], startMinutes: 600, durationMinutes: 60 },
+      absences: [{ date: '2026-07-08', personId: 'p1' }],
+    });
+    const s = makeState({
+      people: [makePerson({ id: 'p1' }), makePerson({ id: 'p2' })],
+      events: [recurring],
+    });
+    expect(blockCollidesWithEvent(s, 'p1', '2026-07-08', 630, 1)).toBe(false);
+    expect(blockCollidesWithEvent(s, 'p1', '2026-07-15', 630, 1)).toBe(true);
+    expect(blockCollidesWithEvent(s, 'p2', '2026-07-08', 630, 1)).toBe(true);
+  });
+
   // Wystąpienia cykliczne zostają czysto prezentacyjne — nie blokują przeciągania.
   it('NIE blokuje na wystąpieniu zadania cyklicznego', () => {
     const s = makeState({

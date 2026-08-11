@@ -144,3 +144,44 @@ describe('calendarDayVolume', () => {
     expect(calendarDayVolume(state, MON)).toBe(0);
   });
 });
+
+// ---- Nieobecność per wystąpienie (2026-08-11) -------------------------------
+
+describe('calendarDayVolume — nieobecności wystąpień cyklicznych', () => {
+  const RECUR = { daysOfWeek: [1], startMinutes: 600, durationMinutes: 60 };
+
+  it('nieobecny uczestnik imiennego spotkania nie wnosi godzin (tylko w dniu nieobecności)', () => {
+    const s = baseState({
+      events: [
+        makeEvent({
+          id: 'ev1',
+          attendeeIds: ['p1', 'p2'],
+          recurrence: RECUR,
+          absences: [{ date: MON, personId: 'p1' }],
+        }),
+      ],
+    });
+    // MON: tylko p2 → 1h; kolejny poniedziałek: oboje → 2h.
+    expect(calendarDayVolume(s, MON)).toBe(1);
+    expect(calendarDayVolume(s, '2026-07-13')).toBe(2);
+  });
+
+  it('ogólnofirmowe: nieobecny członek zespołu odejmuje swoją roboczogodzinę (też pod filtrem)', () => {
+    const s = baseState({
+      events: [
+        makeEvent({
+          id: 'ev1',
+          attendeeIds: [],
+          recurrence: RECUR,
+          absences: [{ date: MON, personId: 'p2' }],
+        }),
+      ],
+    });
+    // Zespół 3 osoby, p2 nieobecna → 2h.
+    expect(calendarDayVolume(s, MON)).toBe(2);
+    // Filtr {p2}: jedyna osoba w zakresie jest nieobecna → 0h.
+    expect(calendarDayVolume(s, MON, new Set(['p2']))).toBe(0);
+    // Filtr {p1}: nieobecność p2 poza zakresem — 1h bez zmian.
+    expect(calendarDayVolume(s, MON, new Set(['p1']))).toBe(1);
+  });
+});

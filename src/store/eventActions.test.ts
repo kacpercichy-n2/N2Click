@@ -564,3 +564,132 @@ describe('calendarEventsForDate — urlop wielodniowy', () => {
     expect(calendarEventsForDate(state, '2026-07-11')).toHaveLength(1); // sobota
   });
 });
+
+// ---- TOGGLE_EVENT_ATTENDANCE (nieobecność per wystąpienie) ------------------
+
+describe('TOGGLE_EVENT_ATTENDANCE', () => {
+  const RECUR = { daysOfWeek: [1, 3], startMinutes: 600, durationMinutes: 30 };
+  const recurring = () => event({ recurrence: RECUR, attendeeIds: [PA, PB] });
+
+  it('dodaje nieobecność i zdejmuje ją ponownym toggle (forma kanoniczna)', () => {
+    const state = baseState([recurring()]);
+    const eventId = state.events[0].id;
+    const marked = reducer(state, {
+      type: 'TOGGLE_EVENT_ATTENDANCE',
+      eventId,
+      date: WED,
+      personId: PA,
+    });
+    expect(marked.events[0].absences).toEqual([{ date: WED, personId: PA }]);
+    const cleared = reducer(marked, {
+      type: 'TOGGLE_EVENT_ATTENDANCE',
+      eventId,
+      date: WED,
+      personId: PA,
+    });
+    expect(cleared.events[0].absences).toBeUndefined();
+    expect('absences' in cleared.events[0]).toBe(false);
+  });
+
+  it('sortuje wpisy po dacie, potem osobie (idempotencja loadera)', () => {
+    let state = baseState([recurring()]);
+    const eventId = state.events[0].id;
+    for (const [date, personId] of [
+      [WED, PB],
+      [MON, PA],
+      [WED, PA],
+    ] as const) {
+      state = reducer(state, { type: 'TOGGLE_EVENT_ATTENDANCE', eventId, date, personId });
+    }
+    expect(state.events[0].absences).toEqual([
+      { date: MON, personId: PA },
+      { date: WED, personId: PA },
+      { date: WED, personId: PB },
+    ]);
+  });
+
+  it('odrzuca (ta sama referencja): nieznane wydarzenie, jednorazowe, urlop, zły dzień, nie-uczestnik, nieznana osoba', () => {
+    const oneOff = event({ id: '44444444-4444-4444-8444-444444444444' });
+    const vacation = event({
+      id: '55555555-5555-4555-8555-555555555555',
+      kind: 'urlop',
+      startMinutes: 0,
+      durationMinutes: 1440,
+      attendeeIds: [PA],
+    });
+    const state = baseState([recurring(), oneOff, vacation]);
+    const eventId = state.events[0].id;
+    const cases = [
+      { type: 'TOGGLE_EVENT_ATTENDANCE', eventId: 'ghost', date: WED, personId: PA },
+      { type: 'TOGGLE_EVENT_ATTENDANCE', eventId: oneOff.id, date: MON, personId: PA },
+      { type: 'TOGGLE_EVENT_ATTENDANCE', eventId: vacation.id, date: MON, personId: PA },
+      // 2026-07-07 to wtorek — poza daysOfWeek [1,3].
+      { type: 'TOGGLE_EVENT_ATTENDANCE', eventId, date: '2026-07-07', personId: PA },
+      { type: 'TOGGLE_EVENT_ATTENDANCE', eventId, date: 'zła-data', personId: PA },
+      { type: 'TOGGLE_EVENT_ATTENDANCE', eventId, date: WED, personId: '' },
+      { type: 'TOGGLE_EVENT_ATTENDANCE', eventId, date: WED, personId: 'ghost-person' },
+    ] as const;
+    for (const action of cases) {
+      expect(reducer(state, action)).toBe(state);
+    }
+  });
+
+  it('imienne spotkanie odrzuca osobę spoza uczestników; ogólnofirmowe przyjmuje każdego z zespołu', () => {
+    const named = event({ attendeeIds: [PB], recurrence: RECUR });
+    const companyWide = event({
+      id: '66666666-6666-4666-8666-666666666666',
+      attendeeIds: [],
+      recurrence: RECUR,
+    });
+    const state = baseState([named, companyWide]);
+    expect(
+      reducer(state, { type: 'TOGGLE_EVENT_ATTENDANCE', eventId: named.id, date: WED, personId: PA }),
+    ).toBe(state);
+    const next = reducer(state, {
+      type: 'TOGGLE_EVENT_ATTENDANCE',
+      eventId: companyWide.id,
+      date: WED,
+      personId: PA,
+    });
+    expect(next.events.find((e) => e.id === companyWide.id)?.absences).toEqual([
+      { date: WED, personId: PA },
+    ]);
+  });
+
+  it('SAVE_EVENT zachowuje nieobecności i re-kanonikalizuje względem nowej reguły', () => {
+    const state = baseState([recurring()]);
+    const eventId = state.events[0].id;
+    const marked = reducer(state, {
+      type: 'TOGGLE_EVENT_ATTENDANCE',
+      eventId,
+      date: WED,
+      personId: PA,
+    });
+    // Zapis bez zmiany reguły: nieobecność przeżywa.
+    const savedSame = reducer(marked, {
+      type: 'SAVE_EVENT',
+      eventId,
+      draft: draft({ startMinutes: 600, durationMinutes: 30, attendeeIds: [PA, PB], recurrence: RECUR }),
+    });
+    expect(savedSame.events[0].absences).toEqual([{ date: WED, personId: PA }]);
+    // Zwężenie reguły do samych poniedziałków: środowa nieobecność odpada.
+    const savedNarrow = reducer(marked, {
+      type: 'SAVE_EVENT',
+      eventId,
+      draft: draft({
+        startMinutes: 600,
+        durationMinutes: 30,
+        attendeeIds: [PA, PB],
+        recurrence: { ...RECUR, daysOfWeek: [1] },
+      }),
+    });
+    expect(savedNarrow.events[0].absences).toBeUndefined();
+    // Zdjęcie cykliczności: klucz znika w całości.
+    const savedOneOff = reducer(marked, {
+      type: 'SAVE_EVENT',
+      eventId,
+      draft: draft({ startMinutes: 600, durationMinutes: 30, attendeeIds: [PA, PB], recurrence: null }),
+    });
+    expect('absences' in savedOneOff.events[0]).toBe(false);
+  });
+});
