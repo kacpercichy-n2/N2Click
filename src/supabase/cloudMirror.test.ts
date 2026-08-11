@@ -822,6 +822,31 @@ describe('applyCloudOps', () => {
     expect(db.calls).toHaveLength(2);
   });
 
+  it('remove/update bez filtra jest ODRZUCANE, nigdy nie wykonywane (ochrona przed masową zmianą)', async () => {
+    const db = new FakePlannerDb();
+    const unfilteredRemove: CloudOp = {
+      kind: 'remove',
+      table: 'tasks',
+      match: {},
+      sourceId: 'x1',
+      label: 'Zadanie X',
+    };
+    const unfilteredUpdate: CloudOp = {
+      kind: 'update',
+      table: 'projects',
+      row: { name: 'zmienione' },
+      sourceId: 'x2',
+      label: 'Projekt X',
+    };
+    const result = await applyCloudOps(db, [unfilteredRemove, unfilteredUpdate, op('ok')]);
+    // Żadna niefiltrowana operacja nie dotknęła adaptera; poprawny upsert przeszedł.
+    expect(db.calls).toEqual([{ op: 'upsert', table: 'clients' }]);
+    expect(result.done).toBe(1);
+    expect(result.error).toBeNull();
+    expect(result.dropped).toHaveLength(2);
+    expect(result.dropped[0].message).toContain('bez filtra');
+  });
+
   it('shouldAbort przerywa MIĘDZY operacjami: reszta wsadu nie jest wysyłana', async () => {
     const db = new FakePlannerDb();
     // Tranzycja sesji „w trakcie wsadu”: pierwsza operacja przechodzi,

@@ -94,18 +94,30 @@ export function useCloudSync(): CloudSyncValue {
 }
 
 /**
- * Minimalna walidacja kształtu operacji odtworzonej z trwałego outboxu (klucz
- * per konto w storage.ts) — dysk jest modyfikowalny, więc nic spoza tego
- * kształtu nie wraca do kolejki. Pola opcjonalne weryfikuje applyCloudOps.
+ * Walidacja kształtu operacji odtworzonej z trwałego outboxu (klucz per konto
+ * w storage.ts) — dysk jest MODYFIKOWALNY po stronie klienta, więc nic spoza
+ * tego kształtu nie wraca do kolejki. Kluczowe: `update`/`remove` MUSZĄ nieść
+ * niepusty `match` ze stringowymi wartościami — op bez filtra wykonałby
+ * UPDATE/DELETE na całej tabeli w zasięgu RLS użytkownika (drugą, twardą
+ * strażą jest applyCloudOps, który odrzuca niefiltrowane operacje także na
+ * świeżej ścieżce).
  */
 function isCloudOpLike(v: unknown): v is CloudOp {
   if (typeof v !== 'object' || v === null) return false;
-  const op = v as { kind?: unknown; table?: unknown };
-  return (
-    (op.kind === 'upsert' || op.kind === 'update' || op.kind === 'remove') &&
-    typeof op.table === 'string' &&
-    op.table.length > 0
-  );
+  const op = v as { kind?: unknown; table?: unknown; row?: unknown; match?: unknown };
+  if (typeof op.table !== 'string' || op.table.length === 0) return false;
+  if (op.kind === 'upsert') {
+    return typeof op.row === 'object' && op.row !== null && !Array.isArray(op.row);
+  }
+  if (op.kind === 'update' || op.kind === 'remove') {
+    if (typeof op.match !== 'object' || op.match === null || Array.isArray(op.match)) return false;
+    const entries = Object.entries(op.match as Record<string, unknown>);
+    return (
+      entries.length > 0 &&
+      entries.every(([, value]) => typeof value === 'string' && value.length > 0)
+    );
+  }
+  return false;
 }
 
 // Transitions the mirror must NEVER propagate to the cloud: our own hydration,

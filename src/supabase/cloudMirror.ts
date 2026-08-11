@@ -1257,6 +1257,18 @@ export async function applyCloudOps(
       return { done, dropped, remaining: ops.slice(i), error: null, aborted: true };
     }
     const op = ops[i];
+    // TWARDA STRAŻ: update/remove bez filtra to operacja na CAŁEJ tabeli w
+    // zasięgu RLS wywołującego (dla admina — wszystko). Żaden legalny diff
+    // lustra nie produkuje pustego `match`; taki op może przyjść wyłącznie z
+    // błędu albo ze zmanipulowanego trwałego outboxu (localStorage jest
+    // modyfikowalny) — odrzucamy zamiast wykonywać, nigdy nie wysyłamy.
+    if (op.kind !== 'upsert' && Object.keys(op.match ?? {}).length === 0) {
+      dropped.push({
+        label: op.label,
+        message: 'Operacja bez filtra odrzucona (ochrona przed masową zmianą danych).',
+      });
+      continue;
+    }
     const target = op.schema === undefined ? db : schemaDbs?.[op.schema];
     if (target === undefined) {
       if (import.meta.env.DEV) {

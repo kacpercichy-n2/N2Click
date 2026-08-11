@@ -210,6 +210,10 @@ describe('konwencja plików migracji', () => {
       // core.app_access (n2click role update; contentplan grant/revoke tylko
       // wierszy role='admin') + backfill dryfu. Zero nowych tabel i polityk.
       '20260811130000_profiles_access_role_sync_app_access.sql',
+      // Korekta grantu contentplan: `do nothing` zamiast nadpisania —
+      // istniejący wiersz portalowego klienta (role='client') przeżywa rundę
+      // awans+degradacja administratora. Tylko funkcja, zero zmian danych.
+      '20260811150000_contentplan_admin_grant_preserves_client.sql',
     ]);
   });
 
