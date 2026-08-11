@@ -9,10 +9,7 @@
 //
 // `fetch` i `env` są wstrzykiwane, dzięki czemu moduł jest testowalny w node.
 import { resolveSupabaseConfig } from './config';
-import {
-  DEFAULT_INITIAL_PASSWORD,
-  type ProvisionAccountRequest,
-} from '../../supabase/functions/provision-account/contract';
+import { type ProvisionAccountRequest } from '../../supabase/functions/provision-account/contract';
 
 export type ProvisionResult = { ok: true; message: string } | { ok: false; message: string };
 
@@ -27,10 +24,23 @@ export interface ProvisionDeps {
 
 /** Polskie komunikaty klienta — nigdy surowy tekst SDK ani wartości sekretów. */
 export const PROVISION_CLIENT_MESSAGES = {
-  success: `Konto zostało utworzone. Hasło startowe: ${DEFAULT_INITIAL_PASSWORD} — użytkownik musi je zmienić przy pierwszym logowaniu.`,
+  // Hasło startowe generuje serwer (AUTH-02) i zwraca raz w odpowiedzi —
+  // komunikat sukcesu skleja je funkcja niżej.
+  successWithoutPassword:
+    'Konto zostało utworzone. Użytkownik musi ustawić hasło przy pierwszym logowaniu.',
   network: 'Nie udało się połączyć z serwerem. Sprawdź połączenie i spróbuj ponownie.',
   generic: 'Nie udało się utworzyć konta. Spróbuj ponownie później.',
 } as const;
+
+/**
+ * Komunikat sukcesu z jednorazowym hasłem startowym z odpowiedzi serwera.
+ * To JEDYNE miejsce, w którym hasło pojawia się w UI — administrator przekazuje
+ * je nowej osobie poza aplikacją; nie jest nigdzie zapisywane ani logowane.
+ */
+export function provisionSuccessMessage(initialPassword: string | null): string {
+  if (initialPassword === null) return PROVISION_CLIENT_MESSAGES.successWithoutPassword;
+  return `Konto zostało utworzone. Hasło startowe: ${initialPassword} — użytkownik musi je zmienić przy pierwszym logowaniu.`;
+}
 
 /** Wyciąga polski komunikat błędu z ciała odpowiedzi (`{ error: string }`). */
 function extractServerMessage(body: unknown): string | null {
@@ -43,12 +53,13 @@ function extractServerMessage(body: unknown): string | null {
 }
 
 /**
- * Wysyła żądanie provisioningu do Edge Function. Tryb hasła: bazowe hasło
- * startowe (`DEFAULT_INITIAL_PASSWORD`), które serwer oznacza jako wymagające
- * zmiany przy pierwszym logowaniu — administrator przekazuje je nowej osobie
- * poza aplikacją. Sukces (2xx) → polski komunikat sukcesu; błąd → polski komunikat
- * serwera (serwer zwraca polskie komunikaty dla 400/401/403/409/5xx) lub ogólny;
- * błąd sieci → osobny komunikat. Nigdy nie zwraca surowej odpowiedzi SDK.
+ * Wysyła żądanie provisioningu do Edge Function. Tryb hasła: serwer generuje
+ * losowe hasło startowe per konto (AUTH-02) i zwraca je RAZ w odpowiedzi 201 —
+ * komunikat sukcesu przekazuje je administratorowi, który komunikuje je nowej
+ * osobie poza aplikacją. Sukces (2xx) → polski komunikat sukcesu; błąd →
+ * polski komunikat serwera (serwer zwraca polskie komunikaty dla
+ * 400/401/403/409/5xx) lub ogólny; błąd sieci → osobny komunikat. Nigdy nie
+ * zwraca surowej odpowiedzi SDK.
  */
 export async function provisionAccount(
   request: ProvisionAccountRequest,
@@ -80,7 +91,13 @@ export async function provisionAccount(
   }
 
   if (response.ok) {
-    return { ok: true, message: PROVISION_CLIENT_MESSAGES.success };
+    const initialPassword =
+      typeof body === 'object' &&
+      body !== null &&
+      typeof (body as Record<string, unknown>).initialPassword === 'string'
+        ? ((body as Record<string, unknown>).initialPassword as string)
+        : null;
+    return { ok: true, message: provisionSuccessMessage(initialPassword) };
   }
 
   return { ok: false, message: extractServerMessage(body) ?? PROVISION_CLIENT_MESSAGES.generic };

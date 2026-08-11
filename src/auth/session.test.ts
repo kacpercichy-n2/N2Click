@@ -330,4 +330,68 @@ describe('detectAuthMode', () => {
       }),
     ).toBe('local');
   });
+
+  it('prod build with missing config is fail-closed (misconfigured, never local)', () => {
+    expect(detectAuthMode({}, { prod: true })).toBe('misconfigured');
+  });
+
+  it('prod build with invalid config is fail-closed (misconfigured, never local)', () => {
+    expect(
+      detectAuthMode(
+        {
+          VITE_SUPABASE_URL: 'https://project.supabase.co',
+          VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_secret_danger',
+        },
+        { prod: true },
+      ),
+    ).toBe('misconfigured');
+  });
+
+  it('prod build with valid config stays supabase', () => {
+    expect(
+      detectAuthMode(
+        {
+          VITE_SUPABASE_URL: 'https://project.supabase.co',
+          VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_abc123',
+        },
+        { prod: true },
+      ),
+    ).toBe('supabase');
+  });
+
+  it('explicit VITE_AUTH_MODE=local alone suffices in dev', () => {
+    expect(detectAuthMode({ VITE_AUTH_MODE: 'local' }, { prod: false })).toBe('local');
+    expect(detectAuthMode({ VITE_AUTH_MODE: ' local ' })).toBe('local');
+  });
+
+  it('prod build honors local opt-in only with the explicit local-qa build mode', () => {
+    expect(detectAuthMode({ VITE_AUTH_MODE: 'local', MODE: 'local-qa' }, { prod: true })).toBe(
+      'local',
+    );
+    // Sama zmienna w środowisku deployu (domyślny MODE=production) NIE otwiera
+    // trybu lokalnego — fail-closed.
+    expect(detectAuthMode({ VITE_AUTH_MODE: 'local', MODE: 'production' }, { prod: true })).toBe(
+      'misconfigured',
+    );
+    expect(detectAuthMode({ VITE_AUTH_MODE: 'local' }, { prod: true })).toBe('misconfigured');
+  });
+
+  it('stray VITE_AUTH_MODE=local on a valid prod deploy stays supabase', () => {
+    expect(
+      detectAuthMode(
+        {
+          VITE_AUTH_MODE: 'local',
+          MODE: 'production',
+          VITE_SUPABASE_URL: 'https://project.supabase.co',
+          VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_abc123',
+        },
+        { prod: true },
+      ),
+    ).toBe('supabase');
+  });
+
+  it('unknown VITE_AUTH_MODE values are ignored (normal detection applies)', () => {
+    expect(detectAuthMode({ VITE_AUTH_MODE: 'demo' }, { prod: true })).toBe('misconfigured');
+    expect(detectAuthMode({ VITE_AUTH_MODE: '' }, { prod: false })).toBe('local');
+  });
 });

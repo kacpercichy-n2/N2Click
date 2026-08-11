@@ -81,7 +81,16 @@
   kept, 0 removes the row); `task.estimatedHours` is the SUM of per-person
   hours, and the bin is derived (sold − calendar). Zeroing/shrinking a grid
   cell RETURNS hours to the person's bin (the sold total is the contract);
-  growing a cell consumes the bin. TaskModal auto-saves valid edited drafts
+  growing a cell consumes the bin. Od 2026-08-11 (CAL-01) także `SET_TASK_DATES`
+  (resize na Timeline) trzyma ten kontrakt: datowane bloki wypadające z nowego
+  okresu NIE znikają — ich godziny są sumowane per osoba i scalane do wiersza
+  zasobnika pary (task, person) (istniejący bin absorbuje sumę z zachowaniem
+  id; brakujący powstaje z pierwszego usuwanego wpisu osoby). Inwariant 4 bez
+  zmian. Dodatkowo `MOVE_TASK`/`SET_TASK_DATES` re-kanonikalizują `recurrence`
+  względem nowej kotwicy (CAL-03): move przesuwa `until` o deltę, resize działa
+  jak SAVE_TASK — reduktor nigdy nie wypuszcza stanu, który loader odrzuci po
+  reloadzie. `MOVE_TASK` odrzuca deltę > 3650 dni (inwariant 6 zamiast
+  RangeError z `format(Invalid Date)`). TaskModal auto-saves valid edited drafts
   (debounced ~0.9 s; paused during an explicit tab conflict; creation stays
   manual).
 - Osoba przypisana bez godzin (2026-07-31): przypisanie samo w sobie NIE tworzy

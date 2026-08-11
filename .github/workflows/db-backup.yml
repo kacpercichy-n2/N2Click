@@ -1,6 +1,7 @@
 # Nocne backupy per schemat (handoff n2hub-db-restructure, sekcja 9).
 # Restore w Supabase jest all-or-nothing, więc trzymamy osobne dumpy
-# core/n2click/clarity/blogoapp jako artefakty GitHuba (retencja 30 dni).
+# core/n2click/clarity/blogoapp/contentplan jako artefakty GitHuba (retencja
+# 30 dni). Nowy schemat aplikacji = nowy wpis na liście niżej.
 #
 # WYMAGANY sekret repo: SUPABASE_DB_URL — connection string Session poolera
 # (IPv4) z Dashboardu: Settings -> Database -> Connection string. Bez sekretu
@@ -37,7 +38,7 @@ jobs:
           set -euo pipefail
           stamp="$(date -u +%Y%m%d-%H%M%S)"
           mkdir -p dumps
-          for schema in core n2click clarity blogoapp; do
+          for schema in core n2click clarity blogoapp contentplan; do
             pg_dump "$DB_URL" --schema="$schema" --no-owner --no-privileges \
               --file="dumps/${stamp}-${schema}.sql"
             echo "OK: ${schema} ($(wc -c < "dumps/${stamp}-${schema}.sql") bajtów)"

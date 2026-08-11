@@ -47,6 +47,21 @@ function errorResponse(status: number, message: string): Response {
   return json(status, { error: message });
 }
 
+/**
+ * Losowe hasło tymczasowe (AUTH-02): 16 znaków z alfabetu bez mylących glifów
+ * (0/O, 1/l/I), ~94 bity entropii z `crypto.getRandomValues` — daleko ponad
+ * MIN_PASSWORD_LENGTH. Drobny modulo-bias (256 % 57) jest bez znaczenia dla
+ * hasła jednorazowego wymuszająco zmienianego przy pierwszym logowaniu.
+ */
+function generateTemporaryPassword(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  let out = '';
+  for (const byte of bytes) out += alphabet[byte % alphabet.length];
+  return out;
+}
+
 /** Mapuje błędy SDK „e-mail już istnieje” na 409 (bez surowego tekstu SDK). */
 function isAlreadyRegistered(message: string | undefined): boolean {
   const m = (message ?? '').toLowerCase();
@@ -169,12 +184,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
     }
   }
 
-  // 8. Utworzenie użytkownika Auth.
+  // 8. Utworzenie użytkownika Auth. Hasło tymczasowe jest GENEROWANE tutaj
+  // (AUTH-02): losowe per konto, nigdy z żądania klienta, zwracane raz w 201.
   let newUserId: string;
+  let temporaryPassword: string | null = null;
   if (request.initialPassword.mode === 'temporary-password') {
+    temporaryPassword = generateTemporaryPassword();
     const { data, error } = await serviceClient.auth.admin.createUser({
       email: request.email,
-      password: request.initialPassword.password,
+      password: temporaryPassword,
       email_confirm: true,
     });
     if (error || !data?.user) {
@@ -259,12 +277,16 @@ Deno.serve(async (req: Request): Promise<Response> => {
     }
   }
 
-  // 10. Sukces — nigdy nie zwracamy hasła.
+  // 10. Sukces. Wygenerowane hasło tymczasowe wraca RAZ, wyłącznie w tej
+  // odpowiedzi (TLS, autoryzowany administrator) — to jedyna droga przekazania
+  // go nowej osobie; nie jest nigdzie logowane ani przechowywane poza Auth.
+  // `must_change_password: true` wymusza zmianę przy pierwszym logowaniu.
   return json(201, {
     userId: newUserId,
     email: request.email,
     accessRole: request.accessRole,
     mustChangePassword: true,
     initialPasswordMode: request.initialPassword.mode,
+    ...(temporaryPassword !== null ? { initialPassword: temporaryPassword } : {}),
   });
 });

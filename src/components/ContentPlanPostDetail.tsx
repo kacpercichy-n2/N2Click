@@ -123,7 +123,7 @@ export function ContentPlanPostDetail({
         />
 
         {post.channels.length > 1 && (
-          <div className="cp-pd-tabs" role="tablist" aria-label="Kanały publikacji">
+          <div className="cp-pd-tabs" role="group" aria-label="Kanały publikacji">
             {post.channels.map((channel) => {
               const platform = platformFor(brand, channel.platformId);
               if (!platform) return null;
@@ -133,8 +133,7 @@ export function ContentPlanPostDetail({
                 <button
                   key={channel.id}
                   type="button"
-                  role="tab"
-                  aria-selected={on}
+                  aria-pressed={on}
                   className={`cp-pd-tab${on ? ' on' : ''}`}
                   onClick={() => setActiveChannelId(channel.id)}
                 >
@@ -164,11 +163,10 @@ export function ContentPlanPostDetail({
         )}
 
         {hasDesignBrief && (
-          <div className="cp-mode cp-pd-content-mode" role="tablist" aria-label="Rodzaj treści">
+          <div className="cp-mode cp-pd-content-mode" role="group" aria-label="Rodzaj treści">
             <button
               type="button"
-              role="tab"
-              aria-selected={contentView === 'post'}
+              aria-pressed={contentView === 'post'}
               className={`cp-mode-btn${contentView === 'post' ? ' on' : ''}`}
               onClick={() => setContentView('post')}
             >
@@ -176,8 +174,7 @@ export function ContentPlanPostDetail({
             </button>
             <button
               type="button"
-              role="tab"
-              aria-selected={contentView === 'design'}
+              aria-pressed={contentView === 'design'}
               className={`cp-mode-btn${contentView === 'design' ? ' on' : ''}`}
               onClick={() => setContentView('design')}
             >

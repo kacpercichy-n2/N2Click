@@ -81,10 +81,26 @@ export function ContentPlanRegister({
                     </td>
                   )}
                   <td className="cp-rg-title">
-                    <span className="cp-rg-tree" aria-hidden>
-                      {open ? '▾' : '▸'}
-                    </span>{' '}
-                    {post.title}
+                    {/* Natywny button (nie semantyka na <tr>): rozwijanie musi
+                        być osiągalne z klawiatury (Tab + Enter/Space) i nieść
+                        aria-expanded; klik w resztę wiersza dalej działa
+                        myszą (onClick na <tr>), stopPropagation chroni przed
+                        podwójnym toggle. */}
+                    <button
+                      type="button"
+                      className="cp-rg-title-btn"
+                      aria-expanded={open}
+                      {...(open ? { 'aria-controls': `cp-rg-expand-${post.id}` } : {})}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setOpenId(open ? null : post.id);
+                      }}
+                    >
+                      <span className="cp-rg-tree" aria-hidden>
+                        {open ? '▾' : '▸'}
+                      </span>{' '}
+                      {post.title}
+                    </button>
                   </td>
                   <td className="cp-rg-plats">
                     {brand !== undefined &&
@@ -110,7 +126,7 @@ export function ContentPlanRegister({
               ];
               if (open) {
                 rows.push(
-                  <tr key={`${post.id}-x`} className="cp-rg-expand">
+                  <tr key={`${post.id}-x`} id={`cp-rg-expand-${post.id}`} className="cp-rg-expand">
                     <td colSpan={cols}>
                       <div className="cp-rg-expand-box">
                         <CpMediaThumb media={withMedia?.media} className="cp-rg-thumb" />

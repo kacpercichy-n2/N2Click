@@ -822,6 +822,36 @@ describe('applyCloudOps', () => {
     expect(db.calls).toHaveLength(2);
   });
 
+  it('shouldAbort przerywa MIĘDZY operacjami: reszta wsadu nie jest wysyłana', async () => {
+    const db = new FakePlannerDb();
+    // Tranzycja sesji „w trakcie wsadu”: pierwsza operacja przechodzi,
+    // potem sonda zgłasza abort — druga i trzecia NIE mogą trafić do sieci.
+    let sent = 0;
+    db.upsertErr = () => {
+      sent += 1;
+      return null;
+    };
+    const ops = [op('one'), op('two'), op('three')];
+    const result = await applyCloudOps(db, ops, undefined, {
+      shouldAbort: () => sent >= 1,
+    });
+    expect(result.aborted).toBe(true);
+    expect(result.error).toBeNull();
+    expect(result.done).toBe(1);
+    expect(db.calls).toHaveLength(1);
+    expect(result.remaining.map((o) => o.sourceId)).toEqual(['two', 'three']);
+  });
+
+  it('shouldAbort=false nie zmienia niczego (pełny wsad przechodzi)', async () => {
+    const db = new FakePlannerDb();
+    const result = await applyCloudOps(db, [op('one'), op('two')], undefined, {
+      shouldAbort: () => false,
+    });
+    expect(result.aborted).toBeUndefined();
+    expect(result.done).toBe(2);
+    expect(result.remaining).toHaveLength(0);
+  });
+
   it('routes an update op to db.update and drops it on permission', async () => {
     const db = new FakePlannerDb();
     db.updateErr = () => ({ kind: 'permission', message: 'row-level security' });

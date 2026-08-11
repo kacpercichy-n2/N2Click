@@ -18,6 +18,8 @@ import { Bell } from './icons';
 import { Tooltip } from './Tooltip';
 import { useOpenTask } from './TaskModal';
 import { OverlayLayer, useOverlay } from './useOverlay';
+import { resolveTrapAction, shouldHandleTrapKey } from './modalShell';
+import { tabbableElementsIn } from './useModalShell';
 
 /** App-level single mount (sidebar): trigger z licznikiem + overlay z listą. */
 export function NotificationsBell() {
@@ -44,6 +46,23 @@ export function NotificationsBell() {
   useEffect(() => {
     if (open) panelRef.current?.focus();
   }, [open]);
+
+  // Pułapka Tab dla dialogu aria-modal (useOverlay daje Escape/klik-poza/powrót
+  // fokusa, ale nie trap) — wspólne helpery modala, wzorzec jak FilterPanel:
+  // Tab/Shift+Tab krąży po wierszach panelu zamiast wypadać w tło.
+  const onPanelKeyDown = (e: React.KeyboardEvent) => {
+    if (!shouldHandleTrapKey(e)) return;
+    const panel = panelRef.current;
+    if (!panel) return;
+    const elements = tabbableElementsIn(panel);
+    const active = document.activeElement;
+    const currentIndex = active instanceof HTMLElement ? elements.indexOf(active) : -1;
+    const action = resolveTrapAction(currentIndex, elements.length, e.shiftKey);
+    if (action.type === 'none') return;
+    e.preventDefault();
+    if (action.type === 'card') panel.focus();
+    else elements[action.index].focus();
+  };
 
   const openNotification = (n: PersonNotification): void => {
     dispatch({ type: 'MARK_NOTIFICATION_ENTRY_READ', entryId: n.id });
@@ -98,6 +117,7 @@ export function NotificationsBell() {
                   aria-modal="true"
                   aria-label="Powiadomienia"
                   tabIndex={-1}
+                  onKeyDown={onPanelKeyDown}
                   initial={{ opacity: 0, scale: 0.97, y: 8 }}
                   animate={{ opacity: 1, scale: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.97, y: 8 }}

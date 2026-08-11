@@ -182,7 +182,12 @@ function Bar({
       role="button"
       tabIndex={0}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') onOpen();
+        // Kontrakt natywnego buttona: Enter I Spacja aktywują; preventDefault
+        // na Spacji blokuje scroll strony (role="button" tego nie daje za darmo).
+        if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+          e.preventDefault();
+          onOpen();
+        }
       }}
     >
       {resizable && editable && (

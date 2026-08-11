@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   PROVISION_CLIENT_MESSAGES,
   provisionAccount,
+  provisionSuccessMessage,
   type ProvisionDeps,
 } from './provisioning';
 import { PROVISIONING_MESSAGES } from '../../supabase/functions/provision-account/contract';
@@ -67,10 +68,22 @@ describe('provisionAccount — żądanie', () => {
 });
 
 describe('provisionAccount — odpowiedzi', () => {
-  it('sukces (201) → polski komunikat sukcesu', async () => {
+  it('sukces (201) z hasłem serwera → komunikat zawiera jednorazowe hasło', async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(201, { userId: 'u1', email: 'jan@firma.pl', initialPassword: 'Xy7kQm2pLr9tWz4v' }),
+    );
+    const result = await provisionAccount(REQUEST, deps(fetchMock as unknown as typeof fetch));
+    expect(result).toEqual({ ok: true, message: provisionSuccessMessage('Xy7kQm2pLr9tWz4v') });
+    expect(result.message).toContain('Xy7kQm2pLr9tWz4v');
+  });
+
+  it('sukces (201) bez hasła w odpowiedzi → komunikat bez hasła (tryb invite / stary serwer)', async () => {
     const fetchMock = vi.fn(async () => jsonResponse(201, { userId: 'u1', email: 'jan@firma.pl' }));
     const result = await provisionAccount(REQUEST, deps(fetchMock as unknown as typeof fetch));
-    expect(result).toEqual({ ok: true, message: PROVISION_CLIENT_MESSAGES.success });
+    expect(result).toEqual({
+      ok: true,
+      message: PROVISION_CLIENT_MESSAGES.successWithoutPassword,
+    });
   });
 
   it('409 → polski komunikat serwera „konto już istnieje"', async () => {

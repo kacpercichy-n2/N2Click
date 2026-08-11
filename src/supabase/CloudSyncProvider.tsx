@@ -21,10 +21,19 @@ import { usePersistence, useStore } from '../store/AppStore';
 import { setCloudMirrorHealthy } from '../store/persistGate';
 import { anyLiveSyncHold, shouldDeferBackgroundMerge } from '../utils/liveSyncGate';
 import { reconnectDelayMs } from '../utils/liveChannel';
-import { writeCloudRetirementMarker } from '../store/storage';
+import {
+  clearCloudOutbox,
+  loadData,
+  quarantineDataForAccountSwitch,
+  readCloudOutbox,
+  readDataOwner,
+  writeCloudOutbox,
+  writeCloudRetirementMarker,
+  writeDataOwner,
+} from '../store/storage';
 import { useAuth } from '../auth/SessionProvider';
 import { useOrgData } from './OrgDataProvider';
-import { getSupabaseClient } from './client';
+import { createPinnedRestClient, getSupabaseClient } from './client';
 import {
   createSupabaseContentPlanDb,
   createSupabasePlannerDb,
@@ -40,6 +49,7 @@ import {
   diffContentPlanToCloudOps,
   diffToCloudOps,
   CONTENT_PLAN_SCHEMA,
+  SYNC_ERROR_MSG,
   type CloudIdMaps,
   type CloudOp,
 } from './cloudMirror';
@@ -81,6 +91,21 @@ export function useCloudSync(): CloudSyncValue {
   const ctx = useContext(CloudSyncContext);
   if (!ctx) throw new Error('useCloudSync must be used within CloudSyncProvider');
   return ctx;
+}
+
+/**
+ * Minimalna walidacja kształtu operacji odtworzonej z trwałego outboxu (klucz
+ * per konto w storage.ts) — dysk jest modyfikowalny, więc nic spoza tego
+ * kształtu nie wraca do kolejki. Pola opcjonalne weryfikuje applyCloudOps.
+ */
+function isCloudOpLike(v: unknown): v is CloudOp {
+  if (typeof v !== 'object' || v === null) return false;
+  const op = v as { kind?: unknown; table?: unknown };
+  return (
+    (op.kind === 'upsert' || op.kind === 'update' || op.kind === 'remove') &&
+    typeof op.table === 'string' &&
+    op.table.length > 0
+  );
 }
 
 // Transitions the mirror must NEVER propagate to the cloud: our own hydration,
@@ -125,6 +150,28 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   const queueRef = useRef<CloudOp[]>([]);
   const processingRef = useRef(false);
   const hydratedUserRef = useRef<string | null>(null);
+  // Żywy identyfikator konta dla persystencji outboxu (patrz persistOutbox).
+  const userIdRef = useRef<string | null>(null);
+  // EPOKA SESJI: podbijana przy każdej tranzycji konta (wylogowanie, zmiana
+  // konta). Drenaż łapie epokę na starcie i porównuje po każdym `await` oraz
+  // przed każdą operacją wsadu (sonda `shouldAbort` w applyCloudOps) —
+  // w odróżnieniu od porównania po userId zamyka też relogin TEGO SAMEGO
+  // konta w trakcie wiszącego batcha (userId równy, ale kolejka i outbox
+  // zostały świadomie skasowane przy wylogowaniu — batch nie ma prawa ich
+  // wskrzesić przez requeue).
+  //
+  // ŹRÓDŁEM bumpa jest nasłuch SDK (`onAuthStateChange` niżej), nie efekty
+  // Reacta: sesja singletona klienta zmienia się na poziomie SDK ZANIM React
+  // wyrenderuje i odpali efekty, więc bump w efekcie przychodziłby za późno —
+  // wsad zdążyłby wysłać kolejne operacje tokenem nowej sesji. Efekty nadal
+  // bumpują dodatkowo (pas i szelki; wielokrotny bump jest nieszkodliwy —
+  // każda różnica epok znaczy abort).
+  const sessionEpochRef = useRef(0);
+  // Ostatnia tożsamość widziana na poziomie SDK — bump tylko przy REALNEJ
+  // zmianie użytkownika (TOKEN_REFRESHED tego samego konta nie może przerywać
+  // wsadu: abort jest bez requeue, a operacje czekałyby na dysku do
+  // następnego logowania).
+  const sdkUserRef = useRef<string | null>(null);
   const dbRef = useRef<PlannerDb | null>(null);
   const contentPlanDbRef = useRef<PlannerDb | null>(null);
   const mapsRef = useRef<CloudIdMaps | null>(null);
@@ -159,6 +206,17 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     auth.mode === 'supabase' && auth.state.status === 'signedIn'
       ? auth.state.session?.user?.id ?? null
       : null;
+  userIdRef.current = userId;
+  // Token dostępu Z RENDERU (spójny z userIdRef i właścicielem kolejki z tego
+  // samego commitu): drenaż przypina go do całego przebiegu — patrz
+  // createPinnedAuthClient. W oknie TOCTOU (SDK ma już sesję B, React jeszcze
+  // renderuje A) ref trzyma token A — dokładnie ten, którym operacje A mają
+  // prawo wyjść.
+  const accessTokenRef = useRef<string | null>(null);
+  accessTokenRef.current =
+    auth.mode === 'supabase' && auth.state.status === 'signedIn'
+      ? auth.state.session?.access_token ?? null
+      : null;
   const snapshot = org.state.status === 'ready' ? org.state.snapshot : null;
   const active = auth.mode === 'supabase' && userId !== null && snapshot !== null;
 
@@ -182,28 +240,125 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     setPendingCount(n);
   }, []);
 
+  // DATA-01: trwały outbox. Każda mutacja kolejki jest odbijana na dysk (per
+  // konto), żeby reload po błędzie przejściowym nie gubił niedopchniętych
+  // operacji. Zapis pustej kolejki usuwa klucz. Refy zamiast domknięć — funkcja
+  // jest wołana z processQueue i efektów o różnych zależnościach.
+  //
+  // Wsad W LOCIE (inFlightRef): processQueue zdejmuje operacje z queueRef na
+  // czas `await applyCloudOps`. Gdyby persistOutbox odpalił się w tym oknie
+  // (świeży push z lustra podczas await), zapisałby dysk BEZ wsadu w locie —
+  // crash w trakcie apply straciłby go bezpowrotnie. Dlatego dysk zawsze
+  // dostaje sumę: wsad w locie + kolejka. Replay potwierdzonego wsadu jest
+  // bezpieczny (upserty/idempotencja).
+  // WŁAŚCICIEL kolejki: konto, dla którego operacje zostały zakolejkowane.
+  // Zapis na dysk następuje WYŁĄCZNIE, gdy właściciel == bieżące konto — wsad
+  // w locie konta A po wylogowaniu / zmianie na B nie może zostać dopisany do
+  // outboxu B (replay wykonałby cudze operacje) ani wskrzesić klucza, który
+  // logout właśnie wyczyścił.
+  const inFlightRef = useRef<CloudOp[]>([]);
+  const queueOwnerRef = useRef<string | null>(null);
+  const persistOutbox = useCallback(() => {
+    const owner = queueOwnerRef.current;
+    if (owner === null || owner !== userIdRef.current) return;
+    writeCloudOutbox(owner, [...inFlightRef.current, ...queueRef.current] as unknown[]);
+  }, []);
+
+
   // Wykonuje kolejkę operacji sekwencyjnie (serializacja jedną pętlą). Na błędzie
   // przejściowym zatrzymuje się i zostawia resztę w kolejce (retry wznawia).
   // W trybie wycofanym: świeży zapis lokalny (kopia do odzysku) przy DRENAŻU
   // kolejki do zera (stan potwierdzony w chmurze) oraz NATYCHMIAST przy błędzie
   // przejściowym (praca zagrożona trafia na dysk, zanim można ją zgubić).
+  // Pinowane adaptery CACHE'OWANE per token (nie per przebieg drenażu).
+  // Pin to goły PostgREST bez GoTrue (patrz createPinnedRestClient — pełny
+  // klient wieszał globalnego słuchacza i wyciekał po rotacji/wylogowaniu),
+  // więc porzucona para adapterów jest zwykłym obiektem do GC. Cache i tak
+  // trzyma jedną żywą parę (token rotuje ~co godzinę); logout/zmiana konta
+  // zeruje referencję.
+  const pinnedRef = useRef<{ token: string; db: PlannerDb; contentPlan: PlannerDb } | null>(
+    null,
+  );
+  const getPinnedAdapters = useCallback((accessToken: string) => {
+    const cached = pinnedRef.current;
+    if (cached !== null && cached.token === accessToken) return cached;
+    const client = createPinnedRestClient(accessToken);
+    const next = {
+      token: accessToken,
+      db: createSupabasePlannerDb(client),
+      contentPlan: createSupabaseContentPlanDb(client),
+    };
+    pinnedRef.current = next;
+    return next;
+  }, []);
+
   const processQueue = useCallback(async () => {
     if (processingRef.current) return;
+    // Strażnik WŁASNOŚCI na wejściu: nigdy nie drenuj kolejki, która nie
+    // należy do bieżącego konta (okno między zmianą konta a efektem izolacji,
+    // który ją wyczyści) — dotyczy każdego miejsca wywołania, obecnego
+    // i przyszłego.
+    if (queueRef.current.length > 0 && queueOwnerRef.current !== userIdRef.current) return;
+    // Strażnik tokenu PRZED wzięciem flagi przetwarzania — wyjście po jej
+    // ustawieniu, a przed `try/finally`, zostawiłoby `processingRef = true`
+    // na zawsze i zakleszczyło każdą przyszłą synchronizację.
+    const accessToken = accessTokenRef.current;
+    if (accessToken === null) return;
     processingRef.current = true;
+    // Epoka sesji, w której drenujemy. Każda tranzycja konta w oknie `await`
+    // (wylogowanie, zmiana konta, relogin tego samego konta) = przerwij bez
+    // requeue i bez zapisu — logout/switch już wyczyścił kolejkę i dysk,
+    // a batch nie ma prawa niczego wskrzesić.
+    const epoch = sessionEpochRef.current;
+    // PIN TOKENU: cały przebieg drenażu wysyła operacje klientem z zamrożonym
+    // nagłówkiem Authorization (token z tego samego commitu renderu, co
+    // właściciel kolejki). Singleton czyta bieżącą sesję wewnątrz każdego
+    // wywołania SDK — już PO sondzie epoki — więc bez pinu podmiana konta
+    // w tym oknie wysłałaby operacje konta A tokenem konta B. Z pinem
+    // najgorszy przypadek to operacja właściciela jego własnym, jeszcze
+    // ważnym tokenem; wygasły token = zwykły błąd przejściowy i retry.
+    const { db: pinnedDb, contentPlan: pinnedContentPlanDb } = getPinnedAdapters(accessToken);
     try {
       while (queueRef.current.length > 0) {
         const ops = queueRef.current;
         queueRef.current = [];
-        const result = await applyCloudOps(getDb(), ops, {
-          [CONTENT_PLAN_SCHEMA]: getContentPlanDb(),
-        });
+        inFlightRef.current = ops;
+        let result;
+        try {
+          result = await applyCloudOps(
+            pinnedDb,
+            ops,
+            { [CONTENT_PLAN_SCHEMA]: pinnedContentPlanDb },
+            // Tranzycja sesji w TRAKCIE wsadu przerywa wysyłkę między
+            // operacjami (pin tokenu domyka resztę okna wewnątrz operacji).
+            { shouldAbort: () => sessionEpochRef.current !== epoch },
+          );
+        } catch {
+          inFlightRef.current = [];
+          if (sessionEpochRef.current !== epoch) return;
+          // Nieoczekiwany wyjątek adaptera (poza kontraktem result.error):
+          // wsad wraca do kolejki i na dysk — nigdy nie znika z pamięci
+          // z pustym queueRef.
+          queueRef.current = [...ops, ...queueRef.current];
+          setPending(queueRef.current.length);
+          persistOutbox();
+          setError(SYNC_ERROR_MSG);
+          if (retiredRef.current) retryPersistRef.current();
+          return;
+        }
+        inFlightRef.current = [];
+        // Wsad przerwany tranzycją sesji: pozostałe operacje należały do
+        // poprzedniej sesji — bez requeue, bez zapisu, bez błędu.
+        if (result.aborted === true) return;
         if (!mountedRef.current) return;
+        if (sessionEpochRef.current !== epoch) return;
         if (result.dropped.length > 0) {
           setDropped((prev) => [...prev, ...result.dropped]);
         }
         if (result.error) {
           queueRef.current = [...result.remaining, ...queueRef.current];
           setPending(queueRef.current.length);
+          persistOutbox();
           setError(result.error);
           // Błąd przejściowy: flaga zdrowia opadnie (efekt), zapisy per-akcyjne
           // wznawiają się; zagrożoną pracę zapisujemy TERAZ lokalnie.
@@ -212,6 +367,10 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
         }
         setError(null);
         setPending(queueRef.current.length);
+        // Wsad potwierdzony w chmurze: dysk odbija pozostałą kolejkę (zero =>
+        // klucz znika). Zapis DOPIERO po potwierdzeniu — awaria w trakcie
+        // apply zostawia wsad na dysku, a replay jest bezpieczny (upserty).
+        persistOutbox();
       }
       // Kolejka opróżniona bez błędu: kopia do odzysku = stan potwierdzony chmurą.
       if (retiredRef.current) retryPersistRef.current();
@@ -222,8 +381,28 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       }
     } finally {
       processingRef.current = false;
+      // W `finally`, bo strażniki zmiany konta wychodzą z pętli przez `return`
+      // — kod ZA blokiem try/finally nie wykonuje się na tych ścieżkach, a to
+      // właśnie one zostawiają kolejkę z operacjami NOWEGO użytkownika (jego
+      // push odbił się od `processingRef` bez drenażu). Przeprocesuj od nowa
+      // pod właściwym właścicielem; rekurencja kończy się, bo nowy przebieg
+      // czyta bieżące konto (processingRef jest już false).
+      //
+      // Warunek WŁASNOŚCI kolejki (`queueOwnerRef === userIdRef`) jest tu
+      // krytyczny: kontynuacja wiszącego `await` to mikrotask, który potrafi
+      // wykonać się PO renderze ze zmienionym kontem, ale PRZED efektem
+      // izolacji kont czyszczącym kolejkę — bez tego warunku re-trigger
+      // wysłałby nieopróżnioną kolejkę konta A w sesji konta B. Kolejka
+      // z ownerem == bieżące konto to z konstrukcji operacje tego konta.
+      if (
+        sessionEpochRef.current !== epoch &&
+        queueRef.current.length > 0 &&
+        queueOwnerRef.current === userIdRef.current
+      ) {
+        void processQueue();
+      }
     }
-  }, [getDb, getContentPlanDb, setPending]);
+  }, [setPending, persistOutbox, getPinnedAdapters]);
 
   // Migawka „czy wolno TERAZ zastosować scalenie w tle”. Czyta wyłącznie żywe
   // refy, więc każde wywołanie widzi bieżący świat — wołana ponownie po każdym
@@ -498,6 +677,63 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   }, [getDb]);
   syncRetirementRef.current = () => void syncRetirementMarker();
 
+  // Nasłuch SDK — jedyne miejsce, które widzi tranzycję tożsamości
+  // SYNCHRONICZNIE z podmianą sesji w singletonie klienta (bez czekania na
+  // render/efekty Reacta). Bump epoki natychmiast unieważnia trwający drenaż:
+  // sonda `shouldAbort` zatrzyma wsad przed następną operacją.
+  useEffect(() => {
+    if (auth.mode !== 'supabase') return;
+    const { data } = getSupabaseClient().auth.onAuthStateChange((_event, session) => {
+      const uid = session?.user?.id ?? null;
+      if (sdkUserRef.current !== uid) {
+        sdkUserRef.current = uid;
+        sessionEpochRef.current += 1;
+      }
+    });
+    return () => data.subscription.unsubscribe();
+  }, [auth.mode]);
+
+  // IZOLACJA KONT (SEC): raz na zalogowany identyfikator, ZANIM cokolwiek
+  // wyrenderuje się z cudzych danych (ten provider jest dzieckiem
+  // SessionProvider, więc jego efekty biegną PRZED asocjacją tożsamości w
+  // rodzicu). Gdy zapisany cache należy do INNEGO konta Auth: payload idzie do
+  // kwarantanny, a stan w pamięci wraca do pustego baseline'u (RESET_ALL jest
+  // na liście SUPPRESSED — lustro nie generuje z tego diffu). Autorytatywna
+  // hydracja niżej zaraz zapełni stan danymi właściwego konta. Pierwsze
+  // logowanie po aktualizacji (brak markera) adoptuje istniejący cache.
+  const ownerCheckedForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (auth.mode !== 'supabase' || userId === null) return;
+    if (ownerCheckedForRef.current === userId) return;
+    const previousChecked = ownerCheckedForRef.current;
+    ownerCheckedForRef.current = userId;
+    // BEZPOŚREDNIA zmiana konta w tej karcie (bez przejścia przez signedOut —
+    // czyszczenie kolejki w efekcie hydracji wisi na `userId === null` i tu
+    // nie zadziała): kolejka i wsad w locie należą do POPRZEDNIEGO konta i nie
+    // mogą zostać wysłane w sesji nowego (re-trigger drenażu po przerwaniu
+    // zrobiłby to automatycznie z operacjami, które nigdy nie weszły w apply).
+    if (previousChecked !== null && previousChecked !== userId) {
+      sessionEpochRef.current += 1;
+      queueRef.current = [];
+      inFlightRef.current = [];
+      queueOwnerRef.current = null;
+      pinnedRef.current = null;
+      setPending(0);
+    }
+    const owner = readDataOwner();
+    if (owner !== null && owner !== userId) {
+      quarantineDataForAccountSwitch();
+      // Outbox poprzedniego konta nie może zostać odtworzony ani dopchnięty
+      // w imieniu nowego użytkownika (klucz i tak jest per konto — to pas
+      // i szelki przy zmianie tożsamości). Wsad w locie poprzedniego konta
+      // też znika — persistOutbox pisze sumę in-flight + kolejka.
+      clearCloudOutbox();
+      inFlightRef.current = [];
+      dispatch({ type: 'RESET_ALL', data: loadData() });
+    }
+    writeDataOwner(userId);
+  }, [auth.mode, userId, dispatch, setPending]);
+
   // Hydracja: raz na zalogowany identyfikator, gdy snapshot organizacji jest
   // gotowy. Reset przy wylogowaniu / trybie lokalnym (żaden klient nie powstaje).
   useEffect(() => {
@@ -511,6 +747,18 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       if (userId === null && queueRef.current.length > 0) {
         queueRef.current = [];
       }
+      // Wylogowanie kasuje też trwały outbox — parytet z kolejką w pamięci
+      // (przetrwanie przeładowania tak, przeżycie jawnego wylogowania nie).
+      // Zerowany właściciel odcina spóźniony persist z drenażu, a czyszczony
+      // wsad w locie nie może zostać doklejony do outboxu następnego konta
+      // (persistOutbox zapisuje sumę in-flight + kolejka).
+      if (userId === null) {
+        sessionEpochRef.current += 1;
+        queueOwnerRef.current = null;
+        inFlightRef.current = [];
+        pinnedRef.current = null;
+        clearCloudOutbox();
+      }
       if (statusRef.current !== 'idle') {
         setStatus('idle');
         setError(null);
@@ -521,8 +769,25 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     }
     if (hydratedUserRef.current === userId) return;
     hydratedUserRef.current = userId;
-    void runHydration();
-  }, [active, userId, runHydration, setPending]);
+    // DATA-01: przed autorytatywną hydracją odtwórz i WYPCHNIJ trwały outbox
+    // tej samej osoby (niedopchnięte operacje z poprzedniej sesji). Dzięki temu
+    // założenie scalenia „raz na login z pustą kolejką push" znów jest
+    // prawdziwe: lokalnie nowsza praca jest w chmurze, ZANIM chmura nadpisze
+    // stan. Błąd drenażu nie blokuje hydracji — operacje zostają na dysku,
+    // retry() wznowi, a wiersze wrócą do stanu przy kolejnym scaleniu.
+    if (queueRef.current.length === 0) {
+      const restored = readCloudOutbox(userId).filter(isCloudOpLike);
+      if (restored.length > 0) {
+        queueRef.current = restored;
+        queueOwnerRef.current = userId;
+        setPending(restored.length);
+      }
+    }
+    void (async () => {
+      if (queueRef.current.length > 0) await processQueue();
+      await runHydration();
+    })();
+  }, [active, userId, runHydration, setPending, processQueue]);
 
   // Flaga zdrowia lustra dla bramki zapisu lokalnego: prawdziwa TYLKO gdy aktywne,
   // status 'ready' i brak błędu (przejściowego/hydracji). Każda degradacja => false
@@ -597,7 +862,9 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       label: 'Powiadomienie',
     }));
     queueRef.current.push(...ops, ...contentPlanOps, ...notifOps);
+    queueOwnerRef.current = userId;
     setPending(queueRef.current.length);
+    persistOutbox();
     void processQueue();
   }, [state, active, userId, lastActionRef, processQueue, setPending]);
 

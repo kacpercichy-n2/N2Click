@@ -39,17 +39,21 @@ async function run() {
     await page.goto(BASE, { waitUntil: 'networkidle' });
     await page.getByRole('button', { name: 'Wczytaj przykładowe dane' }).click();
 
+    // Jeden wspólny home dla KAŻDEJ roli (od 2026-07-22, run 258): login ląduje
+    // na /dashboard, „/my-work" jest tylko legacy redirectem, a osoby na
+    // liście logowania są podpisane STANOWISKIEM z seeda (np. „Projektantka"),
+    // nie poziomem uprawnień — stare etykiety PRACOWNIK/ADMINISTRATOR nie
+    // istnieją w UI.
     await page.getByRole('button', { name: 'Wyloguj' }).click();
-    await page.getByRole('button').filter({ hasText: 'PRACOWNIK' }).click();
-    await page.waitForURL('**/my-work');
-    check(new URL(page.url()).pathname === '/my-work', 'pracownik logs in to /my-work');
+    await page.getByRole('button').filter({ hasText: 'Projektantka' }).first().click();
+    await page.waitForURL('**/dashboard');
+    check(new URL(page.url()).pathname === '/dashboard', 'login lands on the shared /dashboard home');
     await clearPendingIntro(page);
 
-    await page.getByRole('button', { name: 'Wyloguj' }).click();
-    await page.getByRole('button').filter({ hasText: 'ADMINISTRATOR' }).first().click();
+    // Legacy trasa /my-work przekierowuje na wspólny home.
+    await page.goto(`${BASE}/my-work`, { waitUntil: 'networkidle' });
     await page.waitForURL('**/dashboard');
-    check(new URL(page.url()).pathname === '/dashboard', 'non-worker logs in to /dashboard');
-    await clearPendingIntro(page);
+    check(new URL(page.url()).pathname === '/dashboard', 'legacy /my-work redirects to /dashboard');
 
     await page.setViewportSize({ width: 375, height: 812 });
     // `#app-drawer` is now the DESKTOP sidebar only (kept as its stable handle);

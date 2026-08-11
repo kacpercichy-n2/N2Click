@@ -67,8 +67,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
     console.error('send-notification-emails: brak SUPABASE_URL lub SUPABASE_SERVICE_ROLE_KEY');
     return json(500, { error: 'Błąd serwera: nieprawidłowa konfiguracja serwera.' });
   }
+  // Po migracji schema-per-app (2026-07-31) tabele żyją w `n2click`
+  // (`notifications`, `tasks`, `projects`; `profiles` jako widok-mostek do
+  // `core.profiles`). Bez jawnego schematu klient odpytuje `public`, który jest
+  // pusty i niewystawiony — pierwsze zapytanie kończy się błędem.
   const db = createClient(supabaseUrl, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
+    db: { schema: 'n2click' },
   });
 
   // 3. Wybór wsadu niewysłanych powiadomień (najstarsze pierwsze) — tylko id.

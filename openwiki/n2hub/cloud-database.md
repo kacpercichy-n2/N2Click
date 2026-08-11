@@ -28,6 +28,19 @@
   `core.has_app('n2click')` (wyjątek: bingo_lines/bingo_marks — gra anon).
   Trigger `on_auth_user_created` tworzy profil w `core` przy signupie, ale ZERO
   wpisów w `app_access`.
+- SYNCHRONIZACJA ROLI (2026-08-11, AUTH-03): ŁAŃCUCH dwóch triggerów
+  (20260811130000_profiles_access_role_sync_app_access):
+  `profiles_access_role_sync` na `core.profiles` mapuje zmianę `access_role`
+  na rolę n2click w ISTNIEJĄCYM wierszu `core.app_access`
+  (administrator→admin, manager→manager, reszta→member; członkostwa nie
+  tworzy), a `app_access_n2click_sync_contentplan` na `core.app_access`
+  (INSERT/UPDATE wierszy n2click — obejmuje też świeży provisioning, którego
+  wiersz n2click powstaje po upsercie profilu) trzyma decyzję „Content Plan
+  tylko dla administratorów”: rola `admin` nadaje wiersz contentplan
+  `role='admin'`, inna usuwa wyłącznie `role='admin'` (portalowe
+  `role='client'` nietknięte). Claimy JWT odświeżają się dopiero z następnym
+  tokenem/loginem — degradacja NIE jest natychmiastowa. Migracja zawiera
+  backfill dryfu.
 - Funkcje pomocnicze `app.*` odwołują się do `core.*`/`n2click.*` — nowa
   funkcja definer NIE może używać `public.*`.
 - CZŁONKOSTWO APPKI FILTRUJE WIDOK PROFILI (20260803150000 + poprawka
@@ -52,7 +65,14 @@
   `n2click.vercel.app`). Frontend reaches it only through
   `src/supabase/client.ts` (lazy singleton) with `VITE_SUPABASE_URL` +
   `VITE_SUPABASE_PUBLISHABLE_KEY`; missing/invalid env falls back to local mode
-  (`src/auth/mode.ts` `detectAuthMode`, silent by design).
+  in dev only (`src/auth/mode.ts` `detectAuthMode`, silent by design). A
+  production build is fail-closed: missing/invalid config yields
+  `misconfigured` and `App.tsx` blocks the whole app with `AuthConfigError`
+  instead of opening the one-click local CRM. The operator opt-in that forces
+  local mode in a production build is DOUBLE: `VITE_AUTH_MODE=local` plus an
+  explicit `vite build --mode local-qa` (visual QA builds,
+  `scripts/run-browser-regression.mjs`); a stray env var alone on a hosted
+  deploy (default MODE=production) changes nothing.
 - Schema truth lives in `supabase/migrations/` (forward-only,
   `YYYYMMDDHHMMSS_opis.sql`, applied files are immutable). Applied versions are
   recorded in `supabase_migrations.schema_migrations` on the hosted project.

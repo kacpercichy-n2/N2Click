@@ -271,7 +271,7 @@ async function flowBinSplit(browser) {
 
       await confirmBtn.click();
       await form.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
-      await page.waitForTimeout(250);
+      await page.waitForTimeout(1200); // > PERSIST_COALESCE_MS (1000 ms) — odczyt storage dopiero po flushu koalescera
       // 16:00 touches the existing day1 08:00–16:00 block for this same
       // (task, person, date) — the reducer's adjacency merge (decision 6)
       // fuses them into ONE 14h block instead of adding a second, so the
@@ -348,7 +348,7 @@ async function flowBinSplit(browser) {
       await godzinyInput.focus();
       await page.keyboard.press('Enter');
       await form.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
-      await page.waitForTimeout(250);
+      await page.waitForTimeout(1200); // > PERSIST_COALESCE_MS — patrz wyżej
       // day4 is next calendar week (outside the currently-rendered 7-day grid
       // for "today"), so the new block won't show as a `.week-block` in this
       // view — verify the dated row directly via localStorage instead.

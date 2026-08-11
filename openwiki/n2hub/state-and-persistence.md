@@ -538,7 +538,75 @@
   write/read/remove → backup downloaded), the org flag `local_writes_retired`
   lands in `public.app_settings` and a per-browser cache marker on the dedicated
   key `n2hub.cloudMigration.v1` (via `storage.ts` helpers, OUTSIDE the planner
-  key; `clearData()` never touches it). `src/store/persistGate.ts`
+  key; `clearData()` never touches it).
+- PERSISTENT OUTBOX (2026-08-11, DATA): the mirror queue survives reloads on
+  the dedicated key `n2hub.cloudOutbox.v1` (per auth user id; storage.ts
+  helpers `readCloudOutbox`/`writeCloudOutbox`/`clearCloudOutbox`). Every queue
+  mutation is mirrored to disk (push, post-batch confirm, transient-error
+  requeue); a batch is only removed from disk AFTER the cloud confirms it, so a
+  crash mid-apply replays the batch (safe — ops are upserts/idempotent). The
+  in-flight batch is tracked separately (`inFlightRef`) and every disk write is
+  the SUM in-flight + queue — a mirror push landing during `await applyCloudOps`
+  can never overwrite the disk without the batch being applied; an unexpected
+  adapter throw requeues the batch instead of dropping it. Writes are gated by
+  the queue OWNER (`queueOwnerRef`, set on enqueue/restore, nulled on
+  sign-out): a stale drain finishing after logout/account switch can neither
+  reassign the previous account's batch to the new account nor resurrect the
+  key the sign-out just cleared. `processQueue` captures a SESSION EPOCH
+  (`sessionEpochRef`, bumped PRIMARILY by a direct SDK `onAuthStateChange`
+  listener — synchronous with the singleton client's session swap, BEFORE
+  React renders or runs effects, and only on a REAL user-identity change so a
+  TOKEN_REFRESHED of the same account never aborts a batch; the React
+  effects bump additionally as belt-and-braces) and aborts
+  without requeue whenever the epoch changed mid-await — unlike a userId
+  comparison this also covers a same-account re-login spanning a pending
+  batch (sign-out deliberately dropped the queue; the stale batch must not
+  resurrect it). The epoch also aborts INSIDE a running batch:
+  `applyCloudOps` takes a `shouldAbort` probe checked before EVERY op — ops go
+  sequentially over the singleton client whose auth session can change
+  underneath, so without the mid-batch stop the remaining ops of the previous
+  session would be sent with the new session's token (result carries
+  `aborted: true`; the consumer stops without requeue, persist or error).
+  The residual TOCTOU inside a single op (the SDK reads the token AFTER the
+  probe) is closed by TOKEN PINNING: each drain run builds a client with a
+  frozen Authorization header (`createPinnedRestClient`, token captured in
+  the same render commit as the queue owner), so an op can only ever go out
+  with its owner's token — an expired pin is an ordinary transient error and
+  the retry re-pins fresh. The pin is a BARE `PostgrestClient` (explicit
+  dependency, versioned with supabase-js) — a full `createClient` constructs
+  GoTrue, which hangs a window `visibilitychange` listener and therefore
+  LEAKS every abandoned instance on token rotation/sign-out; PostgREST with
+  plain headers has no global hooks, so a dropped adapter pair is ordinary
+  GC. Pinned adapters are cached per token (cleared on sign-out/switch), and
+  the token guard sits BEFORE `processingRef` is taken — an early return
+  after taking the flag would deadlock all future syncs. It then re-triggers itself ONLY when the queue is owned by
+  the now-current account — a resolved `await` continuation is a microtask
+  that can run after the account-flip render but BEFORE the isolation effect
+  clears the queue, so without the ownership condition the re-trigger would
+  drain the previous account's leftover queue in the new session. Sign-out and account
+  switch also clear `inFlightRef` — a batch stuck in a pending `await` can
+  never be folded into the next account's disk write. A DIRECT account switch
+  in the same tab (no signedOut transition, so the `userId === null` queue
+  cleanup never fires) is caught by the account-isolation effect
+  (`ownerCheckedForRef` remembers the previous account): it clears the queue,
+  the in-flight batch and the owner, so the previous account's undelivered ops
+  are never sent in the new account's session. On
+  sign-in CloudSyncProvider restores the same account's outbox (shape-validated
+  via `isCloudOpLike`) and DRAINS it before authoritative hydration, keeping
+  the merge's "empty push queue" assumption true after a reload. Explicit
+  sign-out and account switch clear the outbox (parity with the in-memory
+  queue).
+- ACCOUNT ISOLATION (2026-08-11, SEC): the planner cache has an OWNER marker on
+  the dedicated key `n2hub.dataOwner.v1` (auth user id, supabase mode). Once per
+  sign-in, BEFORE hydration and before the parent SessionProvider associates the
+  identity, `CloudSyncProvider` compares the marker with the signed-in user: a
+  MISMATCH moves the raw payload to `n2hub.data.quarantine.v1` (one, latest),
+  clears the planner key (`quarantineDataForAccountSwitch`) and dispatches
+  `RESET_ALL` with the clean empty load, so another account on a shared browser
+  never renders the previous account's data. First sign-in after the upgrade
+  (no marker) adopts the existing cache. The cloud-retirement marker survives
+  quarantine (org decision, not an account one). UX/data-integrity gate only —
+  localStorage stays client-mutable; authorization lives server-side. `src/store/persistGate.ts`
   (`shouldSkipLocalPersist`) then lets a mirrored-only state transition skip the
   per-action `saveData` ONLY while the cache marker is enabled, Supabase env is
   configured and the mirror is verified-healthy right now

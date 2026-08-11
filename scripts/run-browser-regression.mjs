@@ -79,9 +79,9 @@ async function probe(url) {
   }
 }
 
-function runToCompletion(command, args, label) {
+function runToCompletion(command, args, label, options = {}) {
   return new Promise((resolve) => {
-    const child = spawn(command, args, { stdio: 'inherit' });
+    const child = spawn(command, args, { stdio: 'inherit', ...options });
     child.on('error', (error) => {
       console.error(`[${label}] failed to spawn: ${error.message}`);
       resolve(1);
@@ -122,10 +122,24 @@ async function main() {
     process.exit(1);
   }
 
-  // Build unless explicitly skipped.
+  // Build unless explicitly skipped. Hermetic local-mode build: every check in
+  // the matrix clicks the local sample-data seed, which never renders in
+  // supabase mode — so the build must not inherit a developer's .env.local
+  // (process env overrides Vite .env files). VITE_AUTH_MODE=local PLUS the
+  // explicit `--mode local-qa` build is the double opt-in that keeps local
+  // mode working in a production build (otherwise fail-closed on missing
+  // Supabase config; a hosted deploy builds in default MODE=production, so a
+  // stray env var alone can never open the local CRM).
   if (!skipBuild) {
-    console.log('> building production bundle (npm run build)…');
-    const buildCode = await runToCompletion('npm', ['run', 'build'], 'build');
+    console.log('> building production bundle (npm run build -- --mode local-qa, hermetic local mode)…');
+    const buildCode = await runToCompletion('npm', ['run', 'build', '--', '--mode', 'local-qa'], 'build', {
+      env: {
+        ...process.env,
+        VITE_AUTH_MODE: 'local',
+        VITE_SUPABASE_URL: '',
+        VITE_SUPABASE_PUBLISHABLE_KEY: '',
+      },
+    });
     if (buildCode !== 0) {
       console.error(`Build failed (exit ${buildCode}).`);
       process.exit(buildCode || 1);

@@ -1,11 +1,14 @@
 // Cienka integracja maszyny sesji (src/auth/session.ts) z Reactem.
 //
 // Tryb ustalany JEST raz przy starcie, leniwie (jak src/supabase/client.ts):
-// brak/niepoprawna konfiguracja Supabase => tryb lokalny i aplikacja zachowuje
-// się dokładnie jak dotąd (bez tworzenia klienta Supabase, bez efektów ubocznych
-// importu). W trybie Supabase tworzymy sterownik sesji na bazie prawdziwego
-// `supabase.auth` i kojarzymy zalogowanego użytkownika z lokalnym profilem
-// WYŁĄCZNIE po tożsamości (patrz src/auth/profile.ts).
+// brak/niepoprawna konfiguracja Supabase => w dev tryb lokalny (aplikacja
+// zachowuje się jak dotąd, bez klienta Supabase), a w buildzie produkcyjnym
+// `misconfigured` — App.tsx blokuje wtedy całą aplikację ekranem błędu
+// konfiguracji. Jawny `VITE_AUTH_MODE=local` wymusza tryb lokalny także w
+// buildzie produkcyjnym (wizualny build QA / release matrix). W trybie Supabase
+// tworzymy sterownik sesji na bazie prawdziwego `supabase.auth` i kojarzymy
+// zalogowanego użytkownika z lokalnym profilem WYŁĄCZNIE po tożsamości
+// (patrz src/auth/profile.ts).
 import {
   createContext,
   useCallback,
@@ -70,11 +73,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const { state: storeState, dispatch } = useStore();
 
   // Tryb ustalany raz — `import.meta.env` czytamy tylko tutaj (nie w czystych
-  // modułach), więc testy node pozostają niezależne od Vite.
+  // modułach), więc testy node pozostają niezależne od Vite. W buildzie
+  // produkcyjnym brak/błędna konfiguracja NIE spada do trybu lokalnego —
+  // `misconfigured` blokuje całą aplikację (bramka w App.tsx, przed
+  // `needsLogin`).
   const modeRef = useRef<AuthMode>();
   if (modeRef.current === undefined) {
     modeRef.current = detectAuthMode(
       import.meta.env as unknown as Record<string, string | undefined>,
+      { prod: import.meta.env.PROD },
     );
   }
   const mode = modeRef.current;

@@ -6,6 +6,7 @@ import { reducer, type PersonDraft, type TaskDraft } from './AppStore';
 import { emptyData } from './storage';
 import { BIN_DATE, hasCollision, hoursToMinutes } from '../utils/time';
 import { addDaysStr, MAX_TASK_PERIOD_DAYS } from '../utils/dates';
+import { normalizeRecurrence } from '../utils/recurrence';
 import type { AppData, CalendarEvent, Person, Project, Status, Task, WorkloadEntry } from '../types';
 
 // Reference entities the SAVE_TASK drafts point at (projectId 'proj1' /
@@ -802,6 +803,99 @@ describe('MOVE_TASK bin behavior', () => {
   });
 });
 
+describe('MOVE_TASK recurrence integrity (CAL-03)', () => {
+  const recurrence = { daysOfWeek: [1, 3], startMinutes: 480, durationMinutes: 120 };
+
+  it('shifts recurrence.until by the same delta (rule survives the move)', () => {
+    const state = makeState({
+      tasks: [
+        makeTask({
+          id: 't1',
+          startDate: '2026-07-06',
+          endDate: '2026-07-08',
+          recurrence: { ...recurrence, until: '2026-07-10' },
+        }),
+      ],
+    });
+    const next = reducer(state, { type: 'MOVE_TASK', taskId: 't1', dayDelta: 7 });
+    const task = next.tasks[0];
+    expect(task.startDate).toBe('2026-07-13');
+    expect(task.recurrence).toBeDefined();
+    expect(task.recurrence!.until).toBe('2026-07-17');
+  });
+
+  it('emits a canonical rule the loader will not reject (live state === post-reload state)', () => {
+    const state = makeState({
+      tasks: [
+        makeTask({
+          id: 't1',
+          startDate: '2026-07-06',
+          endDate: '2026-07-08',
+          recurrence: { ...recurrence, until: '2026-07-10' },
+        }),
+      ],
+    });
+    const next = reducer(state, { type: 'MOVE_TASK', taskId: 't1', dayDelta: -7 });
+    const task = next.tasks[0];
+    // Idempotencja względem loadera: normalizacja wyniku nic nie zmienia.
+    expect(normalizeRecurrence(task.recurrence, task.startDate)).toEqual(task.recurrence);
+  });
+
+  it('rejects an extreme delta with the same state reference (invariant 6)', () => {
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+    });
+    expect(reducer(state, { type: 'MOVE_TASK', taskId: 't1', dayDelta: 1e15 })).toBe(state);
+    expect(reducer(state, { type: 'MOVE_TASK', taskId: 't1', dayDelta: -99999 })).toBe(state);
+  });
+});
+
+describe('SET_TASK_DATES recurrence integrity (CAL-03)', () => {
+  const recurrence = { daysOfWeek: [1, 3], startMinutes: 480, durationMinutes: 120 };
+
+  it('re-canonicalizes against the new anchor; rule survives when until stays ahead', () => {
+    const state = makeState({
+      tasks: [
+        makeTask({
+          id: 't1',
+          startDate: '2026-07-06',
+          endDate: '2026-07-08',
+          recurrence: { ...recurrence, until: '2026-07-20' },
+        }),
+      ],
+    });
+    const next = reducer(state, {
+      type: 'SET_TASK_DATES',
+      taskId: 't1',
+      startDate: '2026-07-08',
+      endDate: '2026-07-10',
+    });
+    expect(next.tasks[0].recurrence).toEqual({ ...recurrence, until: '2026-07-20' });
+  });
+
+  it('drops the rule IMMEDIATELY when the new start passes until (no reload divergence)', () => {
+    const state = makeState({
+      tasks: [
+        makeTask({
+          id: 't1',
+          startDate: '2026-07-06',
+          endDate: '2026-07-08',
+          recurrence: { ...recurrence, until: '2026-07-10' },
+        }),
+      ],
+    });
+    const next = reducer(state, {
+      type: 'SET_TASK_DATES',
+      taskId: 't1',
+      startDate: '2026-07-13',
+      endDate: '2026-07-15',
+    });
+    // Reguła znika od razu (kanonicznie), nie dopiero po reloadzie.
+    expect(next.tasks[0].recurrence).toBeUndefined();
+    expect('recurrence' in next.tasks[0]).toBe(false);
+  });
+});
+
 describe('SET_TASK_DATES bin behavior', () => {
   it('drops out-of-period dated entries but keeps the bin entry', () => {
     const inPeriod = makeEntry({ id: 'e1', taskId: 't1', date: '2026-07-07', sortIndex: 0 });
@@ -822,6 +916,78 @@ describe('SET_TASK_DATES bin behavior', () => {
     expect(next.workload.find((w) => w.id === 'e2')).toBeUndefined();
     expect(next.workload.find((w) => w.id === 'e1')).toBeDefined();
     expect(next.workload.find((w) => w.id === 'bin1')).toBeDefined();
+  });
+});
+
+describe('SET_TASK_DATES hour conservation (CAL-01)', () => {
+  const taskTotal = (workload: WorkloadEntry[], taskId: string) =>
+    workload.filter((w) => w.taskId === taskId).reduce((sum, w) => sum + w.plannedHours, 0);
+
+  it('folds dropped hours into the EXISTING bin row (id survives, sum conserved)', () => {
+    const inPeriod = makeEntry({ id: 'e1', date: '2026-07-07', plannedHours: 3, sortIndex: 0 });
+    const dropped = makeEntry({ id: 'e2', date: '2026-07-08', plannedHours: 2, sortIndex: 0 });
+    const bin = makeEntry({ id: 'bin1', date: BIN_DATE, startMinutes: 0, plannedHours: 2, sortIndex: 0 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', startDate: '2026-07-06', endDate: '2026-07-08' })],
+      workload: [inPeriod, dropped, bin],
+    });
+    const next = reducer(state, {
+      type: 'SET_TASK_DATES',
+      taskId: 't1',
+      startDate: '2026-07-06',
+      endDate: '2026-07-07',
+    });
+    const nextBin = next.workload.find((w) => w.id === 'bin1')!;
+    expect(nextBin.plannedHours).toBe(4); // 2 (bin) + 2 (dropped)
+    expect(taskTotal(next.workload, 't1')).toBe(taskTotal(state.workload, 't1'));
+    // Nadal jeden wiersz binu dla pary (task, person) — inwariant 4.
+    expect(
+      next.workload.filter((w) => w.taskId === 't1' && w.personId === 'p1' && w.date === BIN_DATE),
+    ).toHaveLength(1);
+  });
+
+  it('creates ONE bin row per person when the pair has none (summed per person)', () => {
+    const droppedA1 = makeEntry({ id: 'a1', personId: 'p1', date: '2026-07-08', plannedHours: 2, sortIndex: 0 });
+    const droppedA2 = makeEntry({ id: 'a2', personId: 'p1', date: '2026-07-08', plannedHours: 1.5, startMinutes: 600, sortIndex: 1 });
+    const droppedB = makeEntry({ id: 'b1', personId: 'p2', date: '2026-07-08', plannedHours: 4, sortIndex: 0 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', startDate: '2026-07-06', endDate: '2026-07-08' })],
+      workload: [droppedA1, droppedA2, droppedB],
+    });
+    const next = reducer(state, {
+      type: 'SET_TASK_DATES',
+      taskId: 't1',
+      startDate: '2026-07-06',
+      endDate: '2026-07-07',
+    });
+    const binsP1 = next.workload.filter(
+      (w) => w.taskId === 't1' && w.personId === 'p1' && w.date === BIN_DATE,
+    );
+    const binsP2 = next.workload.filter(
+      (w) => w.taskId === 't1' && w.personId === 'p2' && w.date === BIN_DATE,
+    );
+    expect(binsP1).toHaveLength(1);
+    expect(binsP2).toHaveLength(1);
+    expect(binsP1[0].plannedHours).toBe(3.5);
+    expect(binsP1[0].startMinutes).toBe(0);
+    expect(binsP2[0].plannedHours).toBe(4);
+    expect(taskTotal(next.workload, 't1')).toBe(taskTotal(state.workload, 't1'));
+  });
+
+  it('a resize that drops nothing keeps workload rows untouched', () => {
+    const inPeriod = makeEntry({ id: 'e1', date: '2026-07-07', plannedHours: 3, sortIndex: 0 });
+    const state = makeState({
+      tasks: [makeTask({ id: 't1', startDate: '2026-07-06', endDate: '2026-07-08' })],
+      workload: [inPeriod],
+    });
+    const next = reducer(state, {
+      type: 'SET_TASK_DATES',
+      taskId: 't1',
+      startDate: '2026-07-06',
+      endDate: '2026-07-07',
+    });
+    expect(next.workload.find((w) => w.id === 'e1')).toEqual(inPeriod);
+    expect(next.workload.filter((w) => w.date === BIN_DATE)).toHaveLength(0);
   });
 });
 

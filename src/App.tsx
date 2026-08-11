@@ -46,6 +46,7 @@ import { useOrgData } from './supabase/OrgDataProvider';
 import { buildCloudPeoplePayload, effectiveAccessRole } from './supabase/referenceData';
 import {
   AuthBlocked,
+  AuthConfigError,
   AuthLoading,
   ForcedPasswordChange,
   SupabaseLoginPage,
@@ -267,6 +268,12 @@ export function App() {
     triggerRef: moreBtnRef,
     menuKeyboard: true,
   });
+
+  // Produkcja bez poprawnej konfiguracji Supabase: fail-closed. Bez tej bramki
+  // `needsLogin` niżej otworzyłoby lokalny CRM jednoklikowym wyborem osoby.
+  if (auth.mode === 'misconfigured') {
+    return <AuthConfigError />;
+  }
 
   // Supabase mode: a real Supabase Auth session gates the ENTIRE shell. Nothing
   // below renders without a valid session AND a matched local profile. This is a

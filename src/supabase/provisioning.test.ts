@@ -139,28 +139,21 @@ describe('parseProvisionRequest — initialPassword', () => {
     expect(result).toEqual({ ok: false, message: PROVISIONING_MESSAGES.initialPasswordInvalid });
   });
 
-  it('odrzuca hasło tymczasowe krótsze niż 8 znaków bez ujawniania wartości', () => {
-    const secret = 'abc';
-    const result = parseProvisionRequest(
-      baseInput({ initialPassword: { mode: 'temporary-password', password: secret } }),
-      NO_DOMAINS,
-    );
-    expect(result).toEqual({ ok: false, message: PROVISIONING_MESSAGES.passwordTooShort });
-    if (!result.ok) expect(result.message).not.toContain(secret);
-  });
-
   it('akceptuje tryb invite', () => {
     expect(parseOk(baseInput()).initialPassword).toEqual({ mode: 'invite' });
   });
 
-  it('akceptuje poprawne hasło tymczasowe', () => {
+  it('akceptuje tryb temporary-password bez hasła (generuje je serwer — AUTH-02)', () => {
+    const value = parseOk(baseInput({ initialPassword: { mode: 'temporary-password' } }));
+    expect(value.initialPassword).toEqual({ mode: 'temporary-password' });
+  });
+
+  it('ignoruje hasło przysłane przez starszego klienta (nigdy nie trafia do kontraktu)', () => {
     const value = parseOk(
-      baseInput({ initialPassword: { mode: 'temporary-password', password: 'trudneHaslo1' } }),
+      baseInput({ initialPassword: { mode: 'temporary-password', password: 'N2Media2026!' } }),
     );
-    expect(value.initialPassword).toEqual({
-      mode: 'temporary-password',
-      password: 'trudneHaslo1',
-    });
+    expect(value.initialPassword).toEqual({ mode: 'temporary-password' });
+    expect('password' in value.initialPassword).toBe(false);
   });
 });
 
@@ -258,7 +251,8 @@ describe('parseProvisionRequest — pełny, zaszumiony ładunek', () => {
       departmentId: UUID_A,
       managerProfileId: UUID_B,
       accessRole: 'worker',
-      initialPassword: { mode: 'temporary-password', password: 'haslo123!' },
+      // Hasło klienta jest ignorowane — generuje je serwer (AUTH-02).
+      initialPassword: { mode: 'temporary-password' },
     });
   });
 });

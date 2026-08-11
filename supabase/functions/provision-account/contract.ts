@@ -62,17 +62,17 @@ const FIRST_NAME_MAX = 100;
 const LAST_NAME_MAX = 100;
 const ROLE_TITLE_MAX = 200;
 
-/** Tryb hasła początkowego: zaproszenie e-mail albo hasło tymczasowe. */
-export type InitialPassword =
-  | { mode: 'invite' }
-  | { mode: 'temporary-password'; password: string };
-
 /**
- * Bazowe hasło startowe nadawane każdemu nowo zakładanemu kontu z UI. Serwer
- * zawsze ustawia `must_change_password: true`, więc użytkownik musi je zmienić
- * przy pierwszym logowaniu — to hasło jednorazowe, nie sekret długoterminowy.
+ * Tryb hasła początkowego: zaproszenie e-mail albo hasło tymczasowe.
+ *
+ * AUTH-02 (audyt 2026-08-10): hasło tymczasowe generuje WYŁĄCZNIE serwer
+ * (losowe, per konto) i zwraca je RAZ w odpowiedzi 201 autoryzowanemu
+ * administratorowi. Klient nie przysyła żadnego hasła — wcześniejsza wspólna
+ * stała (`DEFAULT_INITIAL_PASSWORD`) trafiała do bundla przeglądarki i była
+ * identyczna dla każdego konta, co pozwalało uprzedzić pierwszy login
+ * właściciela znając sam e-mail.
  */
-export const DEFAULT_INITIAL_PASSWORD = 'N2Media2026!';
+export type InitialPassword = { mode: 'invite' } | { mode: 'temporary-password' };
 
 /** Znormalizowany, zwalidowany kontrakt żądania provisioningu. */
 export interface ProvisionAccountRequest {
@@ -238,10 +238,10 @@ function parseInitialPassword(
     return { ok: true, value: { mode: 'invite' } };
   }
   if (mode === 'temporary-password') {
-    // Uwaga: nigdy nie umieszczamy wartości hasła w komunikatach błędów.
-    if (typeof value.password !== 'string') return fail(PROVISIONING_MESSAGES.passwordTooShort);
-    if (value.password.length < MIN_PASSWORD_LENGTH) return fail(PROVISIONING_MESSAGES.passwordTooShort);
-    return { ok: true, value: { mode: 'temporary-password', password: value.password } };
+    // Hasło generuje serwer; ewentualne pole `password` od starszego klienta
+    // jest ŚWIADOMIE ignorowane (kompatybilność rolloutu) — nigdy nie używamy
+    // wartości przysłanej z przeglądarki.
+    return { ok: true, value: { mode: 'temporary-password' } };
   }
   return fail(PROVISIONING_MESSAGES.initialPasswordInvalid);
 }

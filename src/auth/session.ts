@@ -19,6 +19,12 @@ export interface AuthUser {
 /** Minimalny kształt sesji Supabase używany przez planer. */
 export interface AuthSession {
   user: AuthUser;
+  /**
+   * Token dostępu bieżącej sesji (obiekty sesji płyną wprost z SDK, które go
+   * zawsze niesie; pole opcjonalne, bo to minimalny kontrakt strukturalny).
+   * Konsument: pin tokenu wsadu lustra chmury (CloudSyncProvider).
+   */
+  access_token?: string;
 }
 
 /** Kształt błędu zgodny ze strukturą `AuthError` z SDK (pola opcjonalne). */

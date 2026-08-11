@@ -64,7 +64,9 @@ WebKit) only when its covered behavior changes:
   blank screen or uncaught `RangeError`, malformed JSON stays byte-identical
   and exportable until reset, repairable payloads load repaired, and the
   render-throw recovery screen resets cleanly.
-- `browser-check-ui-keyboard.mjs`: worker role landing, powłoka telefonu
+- `browser-check-ui-keyboard.mjs`: wspólny home `/dashboard` dla każdej roli +
+  legacy redirect `/my-work` (etykiety PRACOWNIK/ADMINISTRATOR nie istnieją w
+  UI od 2026-07-22 — lista logowania pokazuje stanowiska), powłoka telefonu
   (pięć zakładek `.app-bottom-nav` z dokładnie jednym `aria-current`, JEDEN
   `GlobalSearch` = działający Ctrl+K, arkusz „Więcej” na `useOverlay`: brak
   kradzieży fokusa, roving tabindex, zawijanie strzałkami, Escape + powrót

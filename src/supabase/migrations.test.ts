@@ -206,6 +206,10 @@ describe('konwencja plików migracji', () => {
       // Wytyczne dla grafika (zakładka DESIGN edytora publikacji): addytywna
       // kolumna `design_brief` na contentplan.posts, default ''.
       '20260810120000_contentplan_design_brief.sql',
+      // AUTH-03: trigger synchronizujący core.profiles.access_role →
+      // core.app_access (n2click role update; contentplan grant/revoke tylko
+      // wierszy role='admin') + backfill dryfu. Zero nowych tabel i polityk.
+      '20260811130000_profiles_access_role_sync_app_access.sql',
     ]);
   });
 

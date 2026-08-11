@@ -191,6 +191,13 @@ describe('evaluateImportGate', () => {
     });
   });
 
+  it('rejects misconfigured mode (gate przepuszcza wyłącznie supabase)', () => {
+    expect(evaluateImportGate({ ...base, authMode: 'misconfigured' })).toEqual({
+      allowed: false,
+      reason: 'Import wymaga trybu Supabase.',
+    });
+  });
+
   it('rejects signed-out', () => {
     expect(evaluateImportGate({ ...base, signedIn: false })).toEqual({
       allowed: false,

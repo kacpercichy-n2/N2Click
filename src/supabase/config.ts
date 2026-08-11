@@ -2,8 +2,11 @@
 // i bez odczytu `import.meta.env`. Funkcja przyjmuje wstrzyknięty rekord zmiennych
 // środowiskowych, dzięki czemu jest w pełni testowalna w środowisku node.
 //
-// Moduł jest uśpioną infrastrukturą: aplikacja korzysta wyłącznie z localStorage
-// (patrz src/store/storage.ts) i nie importuje jeszcze klienta Supabase.
+// Werdykt tej walidacji decyduje o trybie uwierzytelniania (src/auth/mode.ts):
+// błąd tutaj oznacza w dev tryb lokalny, a w buildzie produkcyjnym twardą
+// blokadę aplikacji (`misconfigured`) — dlatego odrzucamy też wartości, które
+// przeszłyby ten test, ale wywróciłyby `createClient` dopiero w runtime
+// (zły format URL, placeholdery z .env.example, nieznany format klucza).
 
 export interface SupabaseConfig {
   url: string;
@@ -49,6 +52,41 @@ function looksLikeSecretKey(key: string): boolean {
   return false;
 }
 
+// Placeholdery z .env.example — skopiowane bez uzupełnienia to nadal brak
+// konfiguracji, nie konfiguracja.
+const PLACEHOLDER_URL = 'https://twoj-projekt.supabase.co';
+const PLACEHOLDER_KEY = 'sb_publishable_twoj_klucz';
+
+/** Adres musi być parsowalnym URL-em http(s) — inne wartości wywracają `createClient`. */
+function isValidHttpUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
+/** Znane formaty klucza klienckiego: `sb_publishable_...` albo starszy JWT `anon`. */
+function looksLikePublishableKey(key: string): boolean {
+  if (key.startsWith('sb_publishable_')) {
+    return key.length > 'sb_publishable_'.length;
+  }
+  // Starszy kliencki klucz to JWT roli `anon`: trzy niepuste segmenty, payload
+  // musi być poprawnym JSON-em z dokładnie `role: "anon"` (service_role odpada
+  // na wcześniejszej straży, a żadna inna rola nie jest kluczem klienckim).
+  const parts = key.split('.');
+  if (parts.length !== 3 || parts.some((part) => part.length === 0)) return false;
+  const payload = decodeBase64Url(parts[1]);
+  if (payload === undefined) return false;
+  try {
+    const parsed = JSON.parse(payload) as { role?: unknown };
+    return parsed.role === 'anon';
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Waliduje rekord zmiennych środowiskowych i zwraca konfigurację Supabase.
  * Rzuca czytelnym błędem, gdy którakolwiek zmienna jest pusta lub gdy klucz
@@ -69,11 +107,25 @@ export function resolveSupabaseConfig(env: Record<string, string | undefined>): 
     );
   }
 
+  if (url === PLACEHOLDER_URL || !isValidHttpUrl(url!)) {
+    throw new Error(
+      `${URL_VAR} nie jest poprawnym adresem http(s) projektu Supabase ` +
+        `(otrzymano wartość niepoprawną lub placeholder z .env.example).`,
+    );
+  }
+
   if (looksLikeSecretKey(publishableKey!)) {
     throw new Error(
       `${KEY_VAR} wygląda na klucz sekretny/service_role. ` +
         `W kodzie przeglądarki używaj wyłącznie klucza publishable — ` +
         `klucze sekretne nigdy nie trafiają do frontendu.`,
+    );
+  }
+
+  if (publishableKey === PLACEHOLDER_KEY || !looksLikePublishableKey(publishableKey!)) {
+    throw new Error(
+      `${KEY_VAR} nie wygląda na klucz kliencki Supabase ` +
+        `(oczekiwano sb_publishable_... albo starszego klucza anon w formacie JWT).`,
     );
   }
 

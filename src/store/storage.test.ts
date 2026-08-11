@@ -8,7 +8,10 @@ import {
   DATA_VERSION,
   DEFAULT_FILTER_CRITERIA,
   classifyStorageError,
+  clearCloudOutbox,
   clearData,
+  readCloudOutbox,
+  writeCloudOutbox,
   ensureStartMinutes,
   emptyData,
   getLastWrittenRaw,
@@ -18,6 +21,9 @@ import {
   loadData,
   loadDataResult,
   normalizeDates,
+  quarantineDataForAccountSwitch,
+  readDataOwner,
+  writeDataOwner,
   normalizeStatusFlags,
   normalizeTaskMeta,
   normalizeWorkloadHours,
@@ -2898,5 +2904,118 @@ describe('repairClients', () => {
     if (!result.ok) return;
     expect(result.needsWriteback).toBe(false);
     expect('contacts' in result.data.clients[0]).toBe(false);
+  });
+});
+
+// ---- Właściciel danych i kwarantanna przy zmianie konta (SEC) ---------------
+// Klucze prywatne w storage.ts — zduplikowane tu świadomie, jak STORAGE_KEY.
+const DATA_OWNER_KEY = 'n2hub.dataOwner.v1';
+const QUARANTINE_KEY = 'n2hub.data.quarantine.v1';
+
+describe('data owner marker + account-switch quarantine', () => {
+  it('brak markera => null; zapis i odczyt są symetryczne', () => {
+    withLocalStorage({}, () => {
+      expect(readDataOwner()).toBe(null);
+      writeDataOwner('user-a');
+      expect(readDataOwner()).toBe('user-a');
+      writeDataOwner('user-b');
+      expect(readDataOwner()).toBe('user-b');
+    });
+  });
+
+  it('uszkodzony marker degraduje do null', () => {
+    withLocalStorage({ [DATA_OWNER_KEY]: '{nie-json' }, () => {
+      expect(readDataOwner()).toBe(null);
+    });
+    withLocalStorage({ [DATA_OWNER_KEY]: JSON.stringify({ userId: 42 }) }, () => {
+      expect(readDataOwner()).toBe(null);
+    });
+  });
+
+  it('kwarantanna przenosi payload na dedykowany klucz i czyści klucz główny', () => {
+    const payload = JSON.stringify({ ...emptyData(), revision: 3 });
+    withLocalStorage({ [STORAGE_KEY]: payload }, () => {
+      quarantineDataForAccountSwitch();
+      expect(localStorage.getItem(STORAGE_KEY)).toBe(null);
+      expect(localStorage.getItem(QUARANTINE_KEY)).toBe(payload);
+      // Po kwarantannie wczytanie to czysty pusty load — nowy użytkownik nie
+      // widzi żadnych danych poprzedniego konta.
+      const result = loadDataResult();
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.data.tasks).toEqual([]);
+      expect(result.data.people).toEqual([]);
+    });
+  });
+
+  it('kwarantanna nadpisuje poprzednią kwarantannę (trzymamy jedną, ostatnią)', () => {
+    const older = JSON.stringify({ ...emptyData(), revision: 1 });
+    const newer = JSON.stringify({ ...emptyData(), revision: 2 });
+    withLocalStorage({ [QUARANTINE_KEY]: older, [STORAGE_KEY]: newer }, () => {
+      quarantineDataForAccountSwitch();
+      expect(localStorage.getItem(QUARANTINE_KEY)).toBe(newer);
+    });
+  });
+
+  it('kwarantanna bez zapisanych danych tylko czyści (bez tworzenia klucza)', () => {
+    withLocalStorage({}, () => {
+      quarantineDataForAccountSwitch();
+      expect(localStorage.getItem(QUARANTINE_KEY)).toBe(null);
+      expect(localStorage.getItem(STORAGE_KEY)).toBe(null);
+    });
+  });
+
+  it('kwarantanna nie dotyka znacznika wycofania chmury', () => {
+    withLocalStorage({ [STORAGE_KEY]: JSON.stringify(emptyData()) }, () => {
+      writeCloudRetirementMarker({ enabled: true });
+      quarantineDataForAccountSwitch();
+      expect(readCloudRetirementMarker()).toEqual({ enabled: true });
+    });
+  });
+});
+
+// ---- Trwały outbox lustra chmury (per konto) --------------------------------
+const CLOUD_OUTBOX_KEY = 'n2hub.cloudOutbox.v1';
+
+describe('cloud outbox persistence', () => {
+  const ops = [{ kind: 'upsert', table: 'tasks', row: { id: 't1' } }];
+
+  it('zapis i odczyt dla tego samego konta są symetryczne', () => {
+    withLocalStorage({}, () => {
+      writeCloudOutbox('user-a', ops);
+      expect(readCloudOutbox('user-a')).toEqual(ops);
+    });
+  });
+
+  it('outbox innego konta czyta się jako pusty', () => {
+    withLocalStorage({}, () => {
+      writeCloudOutbox('user-a', ops);
+      expect(readCloudOutbox('user-b')).toEqual([]);
+    });
+  });
+
+  it('pusta lista usuwa klucz zamiast zostawiać śmieci', () => {
+    withLocalStorage({}, () => {
+      writeCloudOutbox('user-a', ops);
+      writeCloudOutbox('user-a', []);
+      expect(localStorage.getItem(CLOUD_OUTBOX_KEY)).toBe(null);
+    });
+  });
+
+  it('uszkodzony payload degraduje do pustej listy', () => {
+    withLocalStorage({ [CLOUD_OUTBOX_KEY]: '{zepsute' }, () => {
+      expect(readCloudOutbox('user-a')).toEqual([]);
+    });
+    withLocalStorage({ [CLOUD_OUTBOX_KEY]: JSON.stringify({ userId: 'user-a', ops: 'x' }) }, () => {
+      expect(readCloudOutbox('user-a')).toEqual([]);
+    });
+  });
+
+  it('clearCloudOutbox usuwa klucz', () => {
+    withLocalStorage({}, () => {
+      writeCloudOutbox('user-a', ops);
+      clearCloudOutbox();
+      expect(readCloudOutbox('user-a')).toEqual([]);
+    });
   });
 });

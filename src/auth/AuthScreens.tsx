@@ -59,6 +59,7 @@ export function SupabaseLoginPage() {
             onChange={(e) => setEmail(e.target.value)}
             className={error ? 'invalid' : undefined}
             aria-invalid={error ? true : undefined}
+            aria-describedby={error ? 'auth-login-error' : undefined}
           />
         </label>
         <label className="field">
@@ -71,9 +72,16 @@ export function SupabaseLoginPage() {
             onChange={(e) => setPassword(e.target.value)}
             className={error ? 'invalid' : undefined}
             aria-invalid={error ? true : undefined}
+            aria-describedby={error ? 'auth-login-error' : undefined}
           />
         </label>
-        {error && <p className="field-error">{error}</p>}
+        {/* Stabilne ID + role=alert: czytnik dostaje TREŚĆ błędu (nie tylko
+            aria-invalid pola) i ogłasza ją od razu po submit (WCAG 3.3.1/4.1.3). */}
+        {error && (
+          <p className="field-error" id="auth-login-error" role="alert">
+            {error}
+          </p>
+        )}
         <button type="submit" className="btn primary" disabled={busy}>
           {busy ? 'Logowanie…' : 'Zaloguj się'}
         </button>
@@ -131,6 +139,7 @@ export function ForcedPasswordChange({ onSignOut }: { onSignOut: () => void }) {
             onChange={(e) => setPassword(e.target.value)}
             className={error ? 'invalid' : undefined}
             aria-invalid={error ? true : undefined}
+            aria-describedby={error ? 'auth-password-change-error' : undefined}
           />
         </label>
         <label className="field">
@@ -143,9 +152,14 @@ export function ForcedPasswordChange({ onSignOut }: { onSignOut: () => void }) {
             onChange={(e) => setConfirm(e.target.value)}
             className={error ? 'invalid' : undefined}
             aria-invalid={error ? true : undefined}
+            aria-describedby={error ? 'auth-password-change-error' : undefined}
           />
         </label>
-        {error && <p className="field-error">{error}</p>}
+        {error && (
+          <p className="field-error" id="auth-password-change-error" role="alert">
+            {error}
+          </p>
+        )}
         <button type="submit" className="btn primary" disabled={busy}>
           {busy ? 'Zapisywanie…' : 'Zapisz nowe hasło'}
         </button>
@@ -153,6 +167,23 @@ export function ForcedPasswordChange({ onSignOut }: { onSignOut: () => void }) {
           Wyloguj
         </button>
       </form>
+    </AuthShell>
+  );
+}
+
+/**
+ * Build produkcyjny bez poprawnej konfiguracji Supabase (brak/błędny
+ * `VITE_SUPABASE_*`). Fail-closed: blokujemy całą aplikację zamiast otwierać
+ * lokalny CRM jednoklikowym wyborem osoby. Brak akcji — to błąd deployu,
+ * naprawialny wyłącznie po stronie konfiguracji.
+ */
+export function AuthConfigError() {
+  return (
+    <AuthShell>
+      <p className="login-lead" role="alert">
+        Błąd konfiguracji aplikacji: brak poprawnych ustawień połączenia z serwerem.
+        Skontaktuj się z administratorem.
+      </p>
     </AuthShell>
   );
 }

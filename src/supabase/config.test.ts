@@ -101,6 +101,48 @@ describe('resolveSupabaseConfig', () => {
       ).toThrow(/sekretny|service_role/i);
     });
 
+    it('odrzuca URL niebędący poprawnym adresem http(s)', () => {
+      for (const bad of ['not-a-url', 'ftp://project.supabase.co', 'project.supabase.co']) {
+        expect(() =>
+          resolveSupabaseConfig({
+            VITE_SUPABASE_URL: bad,
+            VITE_SUPABASE_PUBLISHABLE_KEY: PUBLISHABLE,
+          }),
+        ).toThrow(/VITE_SUPABASE_URL/);
+      }
+    });
+
+    it('odrzuca placeholdery z .env.example', () => {
+      expect(() =>
+        resolveSupabaseConfig({
+          VITE_SUPABASE_URL: 'https://twoj-projekt.supabase.co',
+          VITE_SUPABASE_PUBLISHABLE_KEY: PUBLISHABLE,
+        }),
+      ).toThrow(/VITE_SUPABASE_URL/);
+      expect(() =>
+        resolveSupabaseConfig({
+          VITE_SUPABASE_URL: URL,
+          VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_twoj_klucz',
+        }),
+      ).toThrow(/VITE_SUPABASE_PUBLISHABLE_KEY/);
+    });
+
+    it('odrzuca klucz w nieznanym formacie (ani sb_publishable_, ani JWT)', () => {
+      for (const bad of [
+        'dowolny-string',
+        'sb_publishable_', // pusty sufiks
+        'not.a.jwt', // trzy segmenty, ale payload nie jest base64url z JSON-em
+        'a..c', // pusty środkowy segment
+      ]) {
+        expect(() =>
+          resolveSupabaseConfig({
+            VITE_SUPABASE_URL: URL,
+            VITE_SUPABASE_PUBLISHABLE_KEY: bad,
+          }),
+        ).toThrow(/VITE_SUPABASE_PUBLISHABLE_KEY/);
+      }
+    });
+
     it('akceptuje starszy klucz JWT anon', () => {
       const header = base64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
       const payload = base64url(JSON.stringify({ role: 'anon', iss: 'supabase' }));
@@ -110,6 +152,41 @@ describe('resolveSupabaseConfig', () => {
         VITE_SUPABASE_PUBLISHABLE_KEY: jwt,
       });
       expect(config.publishableKey).toBe(jwt);
+    });
+
+    it('odrzuca JWT z rolą inną niż anon', () => {
+      const header = base64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+      for (const role of ['authenticated', 'postgres', '']) {
+        const payload = base64url(JSON.stringify({ role, iss: 'supabase' }));
+        expect(() =>
+          resolveSupabaseConfig({
+            VITE_SUPABASE_URL: URL,
+            VITE_SUPABASE_PUBLISHABLE_KEY: `${header}.${payload}.signature`,
+          }),
+        ).toThrow(/VITE_SUPABASE_PUBLISHABLE_KEY/);
+      }
+    });
+
+    it('odrzuca JWT, którego payload nie jest JSON-em (mimo substringu "role":)', () => {
+      const header = base64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+      const payload = base64url('garbage "role": "anon" garbage');
+      expect(() =>
+        resolveSupabaseConfig({
+          VITE_SUPABASE_URL: URL,
+          VITE_SUPABASE_PUBLISHABLE_KEY: `${header}.${payload}.signature`,
+        }),
+      ).toThrow(/VITE_SUPABASE_PUBLISHABLE_KEY/);
+    });
+
+    it('odrzuca JWT bez pola role w payloadzie', () => {
+      const header = base64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+      const payload = base64url(JSON.stringify({ iss: 'supabase' }));
+      expect(() =>
+        resolveSupabaseConfig({
+          VITE_SUPABASE_URL: URL,
+          VITE_SUPABASE_PUBLISHABLE_KEY: `${header}.${payload}.signature`,
+        }),
+      ).toThrow(/VITE_SUPABASE_PUBLISHABLE_KEY/);
     });
   });
 });

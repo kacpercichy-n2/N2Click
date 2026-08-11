@@ -17,6 +17,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { AppData, Person } from '../types';
 import type { DryRunReport } from '../store/exportDryRun';
+import type { AuthMode } from '../auth/mode';
 import { normalizeEmail } from '../auth/profile';
 
 // ---- Injected DB boundary ---------------------------------------------------
@@ -71,7 +72,7 @@ export const IMPORT_CONFIRMATION_WORD = 'IMPORTUJ';
 
 export interface ImportGateInput {
   isAdmin: boolean; // isAdminUser(state) from the page
-  authMode: 'local' | 'supabase'; // useAuth().mode
+  authMode: AuthMode; // useAuth().mode (gate przepuszcza wyłącznie 'supabase')
   signedIn: boolean; // useAuth().state.status === 'signedIn'
   report: DryRunReport | null; // last dry-run rendered in the panel
   confirmationText: string; // raw input value

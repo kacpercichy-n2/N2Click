@@ -157,11 +157,10 @@ export function TicketsPage() {
         </div>
       </div>
 
-      <div className="ticket-mode-toggle" role="tablist" aria-label="Tryb zgłoszeń">
+      <div className="ticket-mode-toggle" role="group" aria-label="Tryb zgłoszeń">
         <button
           type="button"
-          role="tab"
-          aria-selected={mode === 'zglos'}
+          aria-pressed={mode === 'zglos'}
           className={mode === 'zglos' ? 'toggle-btn active' : 'toggle-btn'}
           onClick={() => {
             setMode('zglos');
@@ -172,8 +171,7 @@ export function TicketsPage() {
         </button>
         <button
           type="button"
-          role="tab"
-          aria-selected={mode === 'zgloszone'}
+          aria-pressed={mode === 'zgloszone'}
           className={mode === 'zgloszone' ? 'toggle-btn active' : 'toggle-btn'}
           onClick={() => setMode('zgloszone')}
         >

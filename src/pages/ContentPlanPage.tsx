@@ -446,11 +446,10 @@ export function ContentPlanPage() {
               </button>
             </div>
             <div className="cp-tools-right">
-              <div className="cp-mode" role="tablist" aria-label="Tryb widoku">
+              <div className="cp-mode" role="group" aria-label="Tryb widoku">
                 <button
                   type="button"
-                  role="tab"
-                  aria-selected={mode === 'board'}
+                  aria-pressed={mode === 'board'}
                   className={`cp-mode-btn${mode === 'board' ? ' on' : ''}`}
                   onClick={() => setMode('board')}
                 >
@@ -458,8 +457,7 @@ export function ContentPlanPage() {
                 </button>
                 <button
                   type="button"
-                  role="tab"
-                  aria-selected={mode === 'register'}
+                  aria-pressed={mode === 'register'}
                   className={`cp-mode-btn${mode === 'register' ? ' on' : ''}`}
                   onClick={() => setMode('register')}
                 >

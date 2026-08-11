@@ -185,7 +185,7 @@ async function flowTabSync(browser) {
     const coinBtnOnA = pageA.locator('.coin-btn').first();
     await coinBtnOnA.waitFor({ timeout: 10000 });
     await coinBtnOnA.click();
-    await pageA.waitForTimeout(400); // let the persist effect settle
+    await pageA.waitForTimeout(1200); // > PERSIST_COALESCE_MS (1000 ms) — flush koalescera przed odczytem/propagacją
 
     const expectedAfterFirstToggle = initialPaid ? 'Projekt nieopłacony' : 'Projekt opłacony';
     const refreshedOnB = await waitForTrue(async () => {
@@ -245,7 +245,7 @@ async function flowTabSync(browser) {
     await nameInputB.fill(`${projectName} (B, niezapisane)`);
 
     await coinBtnOnA.click(); // toggle back to the ORIGINAL paid state
-    await pageA.waitForTimeout(400);
+    await pageA.waitForTimeout(1200); // > PERSIST_COALESCE_MS — patrz wyżej
     const revAfterCToggle = (await readStore(pageA)).revision;
     ok(revAfterCToggle > lastKnownRevision, `pageA's (c) toggle bumped the revision (${lastKnownRevision} -> ${revAfterCToggle})`);
 
@@ -306,7 +306,7 @@ async function flowTabSync(browser) {
     await nameInputB.fill(`${projectName} (B, niezapisane 2)`);
 
     await coinBtnOnA.click(); // pageA's second (d) toggle
-    await pageA.waitForTimeout(400);
+    await pageA.waitForTimeout(1200); // > PERSIST_COALESCE_MS — patrz wyżej
     const revAfterDToggle = (await readStore(pageA)).revision;
     ok(revAfterDToggle > lastKnownRevision, `pageA's (d) toggle bumped the revision (${lastKnownRevision} -> ${revAfterDToggle})`);
 

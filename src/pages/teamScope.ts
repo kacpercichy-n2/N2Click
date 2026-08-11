@@ -8,7 +8,6 @@
 import type { Department, Person } from '../types';
 import type { CloudProfile } from '../supabase/referenceData';
 import {
-  DEFAULT_INITIAL_PASSWORD,
   parseProvisionRequest,
   type AccessRole as ProvisionAccessRole,
   type ParseResult,
@@ -332,9 +331,9 @@ export function emptyProvisionForm(): ProvisionFormState {
 /**
  * Waliduje stan formularza reużywając czystego `parseProvisionRequest` z
  * kontraktu (bez duplikowania reguł). Zwraca znormalizowany ładunek żądania
- * (tryb hasła: bazowe hasło startowe wymuszające zmianę przy pierwszym
- * logowaniu) albo polski komunikat błędu. Pusty select działu/menedżera
- * mapujemy na `null`.
+ * (tryb hasła: losowe hasło startowe GENEROWANE PRZEZ SERWER, wymuszające
+ * zmianę przy pierwszym logowaniu — klient nie przysyła żadnego hasła, AUTH-02)
+ * albo polski komunikat błędu. Pusty select działu/menedżera mapujemy na `null`.
  */
 export function buildProvisionRequest(form: ProvisionFormState): ParseResult {
   return parseProvisionRequest(
@@ -346,7 +345,7 @@ export function buildProvisionRequest(form: ProvisionFormState): ParseResult {
       departmentId: form.departmentId || null,
       managerProfileId: form.managerProfileId || null,
       accessRole: form.accessRole,
-      initialPassword: { mode: 'temporary-password', password: DEFAULT_INITIAL_PASSWORD },
+      initialPassword: { mode: 'temporary-password' },
     },
     { allowedEmailDomains: [] },
   );

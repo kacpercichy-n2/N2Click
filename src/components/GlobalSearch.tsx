@@ -433,12 +433,26 @@ function SearchOverlay({ onClose }: { onClose: () => void }) {
     [navigate, openTask, onClose, runAction],
   );
 
+  // Nasłuch stoi na PANELU (bąbelkuje z inputu), nie na samym inpucie: Escape
+  // i strzałki muszą działać także wtedy, gdy fokus wylądował na klikniętym
+  // wierszu („Pokaż więcej” zostawia paletę otwartą) — wcześniej Escape po
+  // Tab/kliknięciu poza input przestawał zamykać dialog.
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
       e.preventDefault();
       // Stop the modal/drawer window-level Escape listeners from also firing.
       e.stopPropagation();
       onClose();
+      return;
+    }
+    if (e.key === 'Tab') {
+      // Wzorzec combobox (APG): opcje są POZA cyklem Tab (tabIndex=-1,
+      // nawigacja strzałkami + aria-activedescendant), a jedynym elementem
+      // cyklu w panelu jest input — Tab wraca więc do niego zamiast wypadać
+      // na BODY za dialogiem aria-modal.
+      e.preventDefault();
+      e.stopPropagation();
+      inputRef.current?.focus();
       return;
     }
     if (rows.length === 0) return;
@@ -469,6 +483,9 @@ function SearchOverlay({ onClose }: { onClose: () => void }) {
       type: 'button' as const,
       id: rowId(i),
       role: 'option',
+      // Opcje listboxa poza cyklem Tab (APG combobox) — klawiaturą porusza się
+      // po nich strzałkami z inputu, mysz klika bez zmian.
+      tabIndex: -1,
       'aria-selected': i === activeIndex,
       className: i === activeIndex ? 'gs-row active' : 'gs-row',
       onMouseEnter: () => onRowHover(i),
@@ -491,6 +508,7 @@ function SearchOverlay({ onClose }: { onClose: () => void }) {
           role="dialog"
           aria-modal="true"
           aria-label="Wyszukiwarka"
+          onKeyDown={onKeyDown}
           onClick={(e) => e.stopPropagation()}
           initial={{ opacity: 0, scale: 0.97, y: 8 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -504,7 +522,6 @@ function SearchOverlay({ onClose }: { onClose: () => void }) {
               className="gs-input"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={onKeyDown}
               placeholder="Szukaj projektów, zadań, klientów, osób… („>” = szybkie akcje)"
               role="combobox"
               aria-expanded={hasRows}

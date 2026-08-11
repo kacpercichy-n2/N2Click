@@ -1926,3 +1926,100 @@ export function clearData(): void {
   lastWrittenRaw = null;
   lastWrittenRevision = null;
 }
+
+// ---- Właściciel danych planera (izolacja kont na jednej przeglądarce) -------
+// Cache planera to JEDEN klucz localStorage. W trybie supabase dane należą do
+// konkretnego konta Auth — marker właściciela (dedykowany klucz, jak znacznik
+// wycofania wyżej) pozwala wykryć, że loguje się INNE konto, i wtedy dane
+// poprzedniego konta idą do kwarantanny zamiast do oczu nowego użytkownika.
+// To bramka UX/integralności danych, nie granica bezpieczeństwa (localStorage
+// jest modyfikowalny po stronie klienta; autoryzacja żyje na serwerze).
+
+const DATA_OWNER_KEY = 'n2hub.dataOwner.v1';
+const QUARANTINE_KEY = 'n2hub.data.quarantine.v1';
+
+/** Id konta Auth, do którego należy zapisany cache. Brak / błąd => null. */
+export function readDataOwner(): string | null {
+  try {
+    const raw = localStorage.getItem(DATA_OWNER_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    const userId = (parsed as { userId?: unknown })?.userId;
+    return typeof userId === 'string' && userId.length > 0 ? userId : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Zapis markera właściciela (na dedykowanym kluczu). Nie rzuca. */
+export function writeDataOwner(userId: string): void {
+  try {
+    localStorage.setItem(DATA_OWNER_KEY, JSON.stringify({ userId }));
+  } catch {
+    // ignore — brak markera degraduje do zachowania sprzed izolacji kont.
+  }
+}
+
+// ---- Trwały outbox lustra chmury (per konto) --------------------------------
+// Kolejka niedopchniętych operacji CloudSyncProvider żyje w pamięci karty;
+// dedykowany klucz przechowuje ją między przeładowaniami, żeby reload po
+// błędzie sieci nie gubił lokalnych edycji (autorytatywna hydracja nadpisałaby
+// stan, a operacje nigdy nie dotarłyby do chmury). Kształt operacji należy do
+// warstwy supabase (CloudOp) — storage trzyma go jako nieprzezroczyste
+// `unknown[]`, walidacja kształtu przy odczycie leży po stronie konsumenta.
+
+const CLOUD_OUTBOX_KEY = 'n2hub.cloudOutbox.v1';
+
+/** Operacje zapisane dla TEGO konta. Inne konto / brak / błąd => pusta lista. */
+export function readCloudOutbox(userId: string): unknown[] {
+  try {
+    const raw = localStorage.getItem(CLOUD_OUTBOX_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    const record = parsed as { userId?: unknown; ops?: unknown };
+    if (record?.userId !== userId || !Array.isArray(record.ops)) return [];
+    return record.ops;
+  } catch {
+    return [];
+  }
+}
+
+/** Zapis outboxu (pusta lista usuwa klucz — czysty stan bez śmieci). Nie rzuca. */
+export function writeCloudOutbox(userId: string, ops: unknown[]): void {
+  try {
+    if (ops.length === 0) {
+      localStorage.removeItem(CLOUD_OUTBOX_KEY);
+      return;
+    }
+    localStorage.setItem(CLOUD_OUTBOX_KEY, JSON.stringify({ userId, ops }));
+  } catch {
+    // ignore — brak trwałości degraduje do dotychczasowej kolejki w pamięci.
+  }
+}
+
+export function clearCloudOutbox(): void {
+  try {
+    localStorage.removeItem(CLOUD_OUTBOX_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Kwarantanna przy zmianie konta: surowy payload przenosi się na dedykowany
+ * klucz (poprzednia kwarantanna jest nadpisywana — trzymamy jedną, ostatnią),
+ * a klucz główny i legacy znikają wraz z księgowością rewizji (jak clearData).
+ * Znacznik wycofania chmury zostaje — to decyzja organizacji, nie konta.
+ */
+export function quarantineDataForAccountSwitch(): void {
+  try {
+    const raw =
+      localStorage.getItem(STORAGE_KEY) ??
+      LEGACY_STORAGE_KEYS.map((key) => localStorage.getItem(key)).find(Boolean) ??
+      null;
+    if (raw !== null) localStorage.setItem(QUARANTINE_KEY, raw);
+  } catch {
+    // ignore — nieudany odpis nie może zablokować odcięcia danych.
+  }
+  clearData();
+}

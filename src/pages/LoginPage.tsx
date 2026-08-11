@@ -105,9 +105,14 @@ export function LoginPage() {
                         }}
                         className={error ? 'invalid' : undefined}
                         aria-invalid={error ? true : undefined}
+                        aria-describedby={error ? 'local-login-error' : undefined}
                       />
                     </label>
-                    {error && <p className="field-error">{error}</p>}
+                    {error && (
+                      <p className="field-error" id="local-login-error" role="alert">
+                        {error}
+                      </p>
+                    )}
                     <button type="submit" className="btn primary" disabled={busy}>
                       Zaloguj się
                     </button>

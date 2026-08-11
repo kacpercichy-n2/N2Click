@@ -345,7 +345,7 @@ async function flowPlacement(browser) {
 
       await wstawBtn.click();
       await form.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
-      await page.waitForTimeout(250);
+      await page.waitForTimeout(1200); // > PERSIST_COALESCE_MS (1000 ms) — odczyt storage dopiero po flushu koalescera
 
       const afterA = await readStore(page);
       const marekDA = afterA.workload.filter((w) => w.personId === marekId && w.date === DA);
@@ -448,7 +448,7 @@ async function flowPlacement(browser) {
       await select.selectOption(marekId);
       ok(!(await przenies.isDisabled()), 'Przenieś enabled once a fitting target is selected');
       await przenies.click();
-      await page.waitForTimeout(250);
+      await page.waitForTimeout(1200); // > PERSIST_COALESCE_MS — patrz wyżej
 
       const afterC = await readStore(page);
       const moved = afterC.workload.find((w) => w.id === 'fixture-wl-e');
@@ -490,7 +490,7 @@ async function flowPlacement(browser) {
       ok(!(await zaplanujBtn.isDisabled()), 'Zaplanuj enabled with the collision-free default');
       await zaplanujBtn.click();
       await form.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
-      await page.waitForTimeout(250);
+      await page.waitForTimeout(1200); // > PERSIST_COALESCE_MS — patrz wyżej
 
       // The scheduled 11:00-14:00 part touches the existing 08:00-11:00 block's
       // edge for the SAME (task, person) pair, so the reducer's adjacency merge

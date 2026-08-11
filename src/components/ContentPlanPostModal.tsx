@@ -348,7 +348,7 @@ function CpPhonePreview({
   return (
     <div className="cp-phone-wrap">
       {draft.channels.length > 1 && (
-        <div className="cp-phone-tabs" role="tablist" aria-label="Platforma podglądu">
+        <div className="cp-phone-tabs" role="group" aria-label="Platforma podglądu">
           {draft.channels.map((row) => {
             const rowPlatform = platformFor(brand, row.platformId);
             if (!rowPlatform) return null;
@@ -357,8 +357,7 @@ function CpPhonePreview({
               <button
                 key={row.id}
                 type="button"
-                role="tab"
-                aria-selected={on}
+                aria-pressed={on}
                 className={`cp-phone-tab${on ? ' on' : ''}`}
                 onClick={() => setPreviewChannelId(row.id)}
               >
@@ -975,11 +974,10 @@ function ContentPlanPostEditor({
         {/* POST / DESIGN — przełącznik treści środkowej kolumny (te same style
             co przełącznik Tablica/Rejestr strony). Pola nieaktywnego widoku są
             odmontowane, ale ich wartości żyją w drafcie, więc nic nie ginie. */}
-        <div className="cp-mode cp-copy-mode" role="tablist" aria-label="Rodzaj treści">
+        <div className="cp-mode cp-copy-mode" role="group" aria-label="Rodzaj treści">
           <button
             type="button"
-            role="tab"
-            aria-selected={copyMode === 'post'}
+            aria-pressed={copyMode === 'post'}
             className={`cp-mode-btn${copyMode === 'post' ? ' on' : ''}`}
             onClick={() => setCopyMode('post')}
           >
@@ -987,8 +985,7 @@ function ContentPlanPostEditor({
           </button>
           <button
             type="button"
-            role="tab"
-            aria-selected={copyMode === 'design'}
+            aria-pressed={copyMode === 'design'}
             className={`cp-mode-btn${copyMode === 'design' ? ' on' : ''}`}
             onClick={() => setCopyMode('design')}
           >

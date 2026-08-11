@@ -1478,9 +1478,19 @@ function deleteTask(state: AppData, taskId: string): AppData {
   };
 }
 
+/**
+ * Twarda granica delty przesunięcia (dni). UI generuje najwyżej deltę rzędu
+ * szerokości viewportu / ±1; wartości poza tym progiem to uszkodzony stan albo
+ * ręczny dispatch — a `addDaysStr` na ekstremalnej dacie rzuca RangeError
+ * (`format(Invalid Date)`), łamiąc inwariant 6. Odrzucamy komendę zamiast
+ * ryzykować crash reduktora.
+ */
+const MAX_MOVE_DELTA_DAYS = 3650;
+
 /** Shift a task and ALL its time blocks by whole days (timeline drag). */
 function moveTask(state: AppData, taskId: string, dayDelta: number): AppData {
   if (!Number.isFinite(dayDelta) || !Number.isInteger(dayDelta) || dayDelta === 0) return state;
+  if (Math.abs(dayDelta) > MAX_MOVE_DELTA_DAYS) return state;
   const task = state.tasks.find((t) => t.id === taskId);
   if (!task) return state;
   const touched = new Set<string>();
@@ -1493,16 +1503,33 @@ function moveTask(state: AppData, taskId: string, dayDelta: number): AppData {
   });
   return {
     ...state,
-    tasks: state.tasks.map((t) =>
-      t.id === taskId
-        ? {
-            ...t,
-            startDate: addDaysStr(t.startDate, dayDelta),
-            endDate: addDaysStr(t.endDate, dayDelta),
-            updatedAt: nowIso(),
-          }
-        : t,
-    ),
+    tasks: state.tasks.map((t) => {
+      if (t.id !== taskId) return t;
+      const startDate = addDaysStr(t.startDate, dayDelta);
+      const next: Task = {
+        ...t,
+        startDate,
+        endDate: addDaysStr(t.endDate, dayDelta),
+        updatedAt: nowIso(),
+      };
+      // Cykliczność jedzie z zadaniem: okno `until` przesuwa się o tę samą
+      // deltę, a całość jest RE-KANONIKALIZOWANA względem nowej kotwicy —
+      // reduktor nie może wypuścić stanu, który loader (repair w storage.ts)
+      // odrzuci przy następnym odczycie (dotąd move poza `until` kasował regułę
+      // dopiero po reloadzie, cicho). Wyjątki (overrides) zostają na swoich
+      // datach wystąpień; te, które wypadną z przesuniętego okna albo fazy
+      // `intervalWeeks`, odpadają w normalizacji.
+      if (t.recurrence !== undefined) {
+        const shifted =
+          t.recurrence.until !== undefined
+            ? { ...t.recurrence, until: addDaysStr(t.recurrence.until, dayDelta) }
+            : t.recurrence;
+        const recurrence = normalizeRecurrence(shifted, startDate);
+        if (recurrence) next.recurrence = recurrence;
+        else delete next.recurrence;
+      }
+      return next;
+    }),
     workload: reindexDays(workload, touched),
     activity: withActivity(
       state,
@@ -1513,7 +1540,14 @@ function moveTask(state: AppData, taskId: string, dayDelta: number): AppData {
   };
 }
 
-/** Resize a task period (timeline). Blocks outside the new period are dropped. */
+/**
+ * Resize a task period (timeline). Blocks outside the new period are dropped
+ * from the calendar, but their hours are NOT lost: they are folded per person
+ * into the (task, person) bin row (CAL-01 — "the sold total is the contract",
+ * parity with moveBlockToBin). One-bin-row invariant holds: an existing bin
+ * row absorbs the sum (its id survives), a missing one is created from the
+ * first dropped entry of that person.
+ */
 function setTaskDates(
   state: AppData,
   taskId: string,
@@ -1524,14 +1558,67 @@ function setTaskDates(
   const task = state.tasks.find((t) => t.id === taskId);
   if (!task || (task.startDate === startDate && task.endDate === endDate)) return state;
   const inPeriod = new Set(eachDayInclusive(startDate, endDate));
+
+  // Usuwane datowane wpisy: suma kwadransów per osoba + pierwszy wpis osoby
+  // (dawca tożsamości nowego binu, gdy para (task, person) binu nie ma).
+  const droppedQuartersByPerson = new Map<string, number>();
+  const donorByPerson = new Map<string, WorkloadEntry>();
+  for (const w of state.workload) {
+    if (w.taskId !== taskId || isBinEntry(w) || inPeriod.has(w.date)) continue;
+    droppedQuartersByPerson.set(
+      w.personId,
+      (droppedQuartersByPerson.get(w.personId) ?? 0) + toQuarters(w.plannedHours),
+    );
+    if (!donorByPerson.has(w.personId)) donorByPerson.set(w.personId, w);
+  }
+
+  const touched = new Set<string>();
+  let workload = state.workload.filter(
+    (w) => w.taskId !== taskId || isBinEntry(w) || inPeriod.has(w.date),
+  );
+  for (const [personId, quarters] of droppedQuartersByPerson) {
+    if (quarters <= 0) continue;
+    touched.add(dayKey(personId, BIN_DATE));
+    const existingBin = workload.find(
+      (w) => w.taskId === taskId && w.personId === personId && isBinEntry(w),
+    );
+    if (existingBin) {
+      const sumQ = toQuarters(existingBin.plannedHours) + quarters;
+      workload = workload.map((w) =>
+        w.id === existingBin.id ? { ...w, plannedHours: sumQ * HOURS_STEP } : w,
+      );
+    } else {
+      const donor = donorByPerson.get(personId)!;
+      workload = [
+        ...workload,
+        {
+          ...donor,
+          date: BIN_DATE,
+          plannedHours: quarters * HOURS_STEP,
+          startMinutes: 0,
+          sortIndex: nextSortIndex(workload, personId, BIN_DATE),
+        },
+      ];
+    }
+  }
+
   return {
     ...state,
-    tasks: state.tasks.map((t) =>
-      t.id === taskId ? { ...t, startDate, endDate, updatedAt: nowIso() } : t,
-    ),
-    workload: state.workload.filter(
-      (w) => w.taskId !== taskId || isBinEntry(w) || inPeriod.has(w.date),
-    ),
+    tasks: state.tasks.map((t) => {
+      if (t.id !== taskId) return t;
+      const next: Task = { ...t, startDate, endDate, updatedAt: nowIso() };
+      // Zmiana startu przesuwa kotwicę reguły — re-kanonikalizacja jak w
+      // SAVE_TASK (AppStore ~755): stan na żywo musi być tym samym stanem,
+      // który przetrwa reload (loader odrzuca `until` < start, kasując CAŁĄ
+      // regułę — lepiej zrobić to jawnie teraz niż cicho po restarcie).
+      if (t.recurrence !== undefined) {
+        const recurrence = normalizeRecurrence(t.recurrence, startDate);
+        if (recurrence) next.recurrence = recurrence;
+        else delete next.recurrence;
+      }
+      return next;
+    }),
+    workload: touched.size > 0 ? reindexDays(workload, touched) : workload,
     activity: withActivity(
       state,
       'task',
@@ -3234,7 +3321,11 @@ function keepArrayIfSame<T>(prev: T[], next: T[]): T[] {
  * data on every browser), while array ORDER stays local for surviving rows
  * (see reconcileRows — Postgres heap order is unstable and must not permute
  * the UI on background refreshes). Runs once per sign-in with an empty push
- * queue, so no unsynced local edit can be lost here. When `payload.people` is
+ * queue — CloudSyncProvider restores the persistent per-account outbox
+ * (storage.ts, `n2hub.cloudOutbox.v1`) and drains it BEFORE hydrating, so a
+ * reload after a transient sync error cannot lose local edits here either (a
+ * failed drain leaves the ops on disk; rows return on the next merge after
+ * retry). When `payload.people` is
  * present, the RLS profile set is applied FIRST (same semantics as
  * MERGE_CLOUD_PEOPLE), so entity validation sees the final team.
  * Fail-closed (invariant 6): a structurally invalid payload — a non-array

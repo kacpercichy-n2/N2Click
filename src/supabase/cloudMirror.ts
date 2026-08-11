@@ -1209,6 +1209,12 @@ export interface ApplyOpsResult {
   dropped: Array<{ label: string; message: string }>;
   remaining: CloudOp[];
   error: string | null;
+  /**
+   * Przerwane przez `shouldAbort` (tranzycja sesji W TRAKCIE wsadu): pozostałe
+   * operacje NIE zostały wysłane i nie wolno ich requeue'ować — należały do
+   * poprzedniej sesji. Konsument kończy bez zapisu i bez błędu.
+   */
+  aborted?: true;
 }
 
 /**
@@ -1233,10 +1239,23 @@ export async function applyCloudOps(
   db: PlannerDb,
   ops: CloudOp[],
   schemaDbs?: Record<string, PlannerDb>,
+  opts?: {
+    /**
+     * Sprawdzane PRZED KAŻDĄ operacją (nie tylko po całym wsadzie): operacje
+     * idą sekwencyjnie po singletonie klienta, którego sesja auth może się
+     * zmienić pod spodem — po tranzycji konta dalsza wysyłka wykonywałaby
+     * operacje poprzedniej sesji tokenem nowej. `true` => natychmiastowy stop
+     * z `aborted`.
+     */
+    shouldAbort?: () => boolean;
+  },
 ): Promise<ApplyOpsResult> {
   let done = 0;
   const dropped: Array<{ label: string; message: string }> = [];
   for (let i = 0; i < ops.length; i++) {
+    if (opts?.shouldAbort?.() === true) {
+      return { done, dropped, remaining: ops.slice(i), error: null, aborted: true };
+    }
     const op = ops[i];
     const target = op.schema === undefined ? db : schemaDbs?.[op.schema];
     if (target === undefined) {

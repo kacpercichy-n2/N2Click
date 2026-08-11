@@ -78,11 +78,10 @@ export function EventsPage() {
         </div>
       </div>
 
-      <div className="ticket-mode-toggle" role="tablist" aria-label="Tryb wydarzeń">
+      <div className="ticket-mode-toggle" role="group" aria-label="Tryb wydarzeń">
         <button
           type="button"
-          role="tab"
-          aria-selected={mode === 'nadchodzace'}
+          aria-pressed={mode === 'nadchodzace'}
           className={mode === 'nadchodzace' ? 'toggle-btn active' : 'toggle-btn'}
           onClick={() => setMode('nadchodzace')}
         >
@@ -90,8 +89,7 @@ export function EventsPage() {
         </button>
         <button
           type="button"
-          role="tab"
-          aria-selected={mode === 'minione'}
+          aria-pressed={mode === 'minione'}
           className={mode === 'minione' ? 'toggle-btn active' : 'toggle-btn'}
           onClick={() => setMode('minione')}
         >
