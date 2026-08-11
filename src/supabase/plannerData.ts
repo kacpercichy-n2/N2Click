@@ -406,7 +406,7 @@ export async function loadPlannerSnapshot(
     ),
     db.select(
       'events',
-      'id, title, description, location, meeting_url, event_date, start_minutes, duration_minutes, attendee_ids, recurrence, kind, end_date, is_confidential, created_at, updated_at',
+      'id, title, description, location, meeting_url, event_date, start_minutes, duration_minutes, attendee_ids, absences, recurrence, kind, end_date, is_confidential, created_at, updated_at',
     ),
   ]);
 
