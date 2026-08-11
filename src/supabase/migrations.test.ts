@@ -217,6 +217,10 @@ describe('konwencja plików migracji', () => {
       // Nieobecność per (wystąpienie, osoba) wydarzenia cyklicznego: addytywna
       // kolumna jsonb `absences` na n2click.events, zero zmian RLS.
       '20260811160000_events_absences.sql',
+      // RSVP (jak w Google Meet): rename kolumny absences→rsvps; statusy
+      // yes/no, brak wpisu = oczekuje; wpisy legacy bez `status` czytane
+      // jako 'no' po stronie klienta. Zero zmian danych i RLS.
+      '20260811170000_events_rsvps_rename.sql',
     ]);
   });
 

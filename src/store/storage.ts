@@ -18,7 +18,7 @@ import type {
   WorkloadEntry,
 } from '../types';
 import { isValidDateStr, todayStr } from '../utils/dates';
-import { normalizeEventAbsences, normalizeRecurrence } from '../utils/recurrence';
+import { normalizeEventRsvps, normalizeRecurrence } from '../utils/recurrence';
 import { TASK_PRIORITIES } from '../utils/priority';
 import {
   DEFAULT_PROJECT_DOCUMENT_KIND,
@@ -1236,9 +1236,13 @@ export function repairEvents(data: AppData): AppData {
       ? undefined
       : canonicalEventRecurrence(e.recurrence, date, startMinutes, durationMinutes);
     const endDate = isVacation ? canonicalVacationEndDate(e.endDate, date) : undefined;
-    // Nieobecności per wystąpienie: kanoniczne wyłącznie przy żywej regule
-    // (zdjęta cykliczność / urlop => klucz znika razem z wpisami).
-    const absences = recurrence ? normalizeEventAbsences(e.absences, recurrence, date) : undefined;
+    // Odpowiedzi RSVP per wystąpienie: kanoniczne wyłącznie przy żywej regule
+    // (zdjęta cykliczność / urlop => klucz znika razem z wpisami). Zapis
+    // legacy pod kluczem `absences` (pierwsza wersja mechaniki) czyta się
+    // jako odmowy — wpis bez `status` normalizuje się do 'no'.
+    const rsvps = recurrence
+      ? normalizeEventRsvps(e.rsvps ?? e.absences, recurrence, date)
+      : undefined;
 
     events.push({
       id,
@@ -1251,7 +1255,7 @@ export function repairEvents(data: AppData): AppData {
       durationMinutes,
       attendeeIds,
       ...(recurrence ? { recurrence } : {}),
-      ...(absences ? { absences } : {}),
+      ...(rsvps ? { rsvps } : {}),
       ...(isVacation ? { kind: 'urlop' as const } : {}),
       ...(endDate ? { endDate } : {}),
       // Utajniona treść (forma kanoniczna): klucz wyłącznie jako literalne

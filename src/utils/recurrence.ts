@@ -11,7 +11,7 @@
 //
 // INVARIANT 1: occurrences are NEVER materialized as `WorkloadEntry` rows and
 // never feed totals/availability/overload/collision — they are presentational.
-import type { DateStr, EventAbsence, TaskRecurrence, RecurrenceOverride } from '../types';
+import type { DateStr, EventRsvp, TaskRecurrence, RecurrenceOverride } from '../types';
 import {
   addDaysStr,
   diffDays,
@@ -257,22 +257,23 @@ export function normalizeRecurrence(
 }
 
 /**
- * Kanoniczna lista nieobecności per (wystąpienie, osoba) wydarzenia
+ * Kanoniczna lista odpowiedzi RSVP per (wystąpienie, osoba) wydarzenia
  * CYKLICZNEGO z niezaufanego wejścia. Wpis przeżywa, gdy: jest obiektem z
- * niepustym stringowym `personId` i `date` będącą realnym dniem wystąpienia
- * reguły (`isOccurrenceDate` — pominięty dzień nadal jest wystąpieniem, więc
- * skip nie kasuje nieobecności). Dedup po (date, personId) — pierwszy wygrywa;
- * sort po dacie, potem osobie. Pusto => `undefined` (klucz kanonicznie
- * nieobecny). Współdzielone przez reduktor, repair storage i hydrację chmury —
- * idempotentne po wartości.
+ * niepustym stringowym `personId`, `date` będącą realnym dniem wystąpienia
+ * reguły (`isOccurrenceDate` — pominięty dzień nadal jest wystąpieniem) i
+ * `status` ∈ {yes, no}; wpis LEGACY bez `status` (pierwsza wersja mechaniki:
+ * gołe nieobecności) czyta się jako `no`. Dedup po (date, personId) —
+ * pierwszy wygrywa; sort po dacie, potem osobie. Pusto => `undefined` (klucz
+ * kanonicznie nieobecny). Współdzielone przez reduktor, repair storage i
+ * hydrację chmury — idempotentne po wartości.
  */
-export function normalizeEventAbsences(
+export function normalizeEventRsvps(
   raw: unknown,
   rule: TaskRecurrence,
   anchorStart: DateStr,
-): EventAbsence[] | undefined {
+): EventRsvp[] | undefined {
   if (!Array.isArray(raw)) return undefined;
-  const out: Array<{ date: DateStr; personId: string }> = [];
+  const out: EventRsvp[] = [];
   const seen = new Set<string>();
   for (const item of raw) {
     if (typeof item !== 'object' || item === null) continue;
@@ -280,11 +281,13 @@ export function normalizeEventAbsences(
     const date = rec.date;
     const personId = rec.personId;
     if (typeof date !== 'string' || typeof personId !== 'string' || personId === '') continue;
+    const status = rec.status === undefined ? 'no' : rec.status;
+    if (status !== 'yes' && status !== 'no') continue;
     if (!isOccurrenceDate(rule, anchorStart, date)) continue;
-    const key = `${date} ${personId}`;
+    const key = `${date} ${personId}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ date, personId });
+    out.push({ date, personId, status });
   }
   if (out.length === 0) return undefined;
   out.sort((a, b) =>

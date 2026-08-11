@@ -3057,7 +3057,46 @@ a.toggle-btn {
 .week-event-block:hover {
   filter: brightness(1.08);
 }
-/* Nieobecność DZIAŁAJĄCEGO użytkownika w tym wystąpieniu: kafel-duch —
+/* Lista odpowiedzi RSVP w menu wystąpienia (jak w Google Meet): wiersze
+   nieinteraktywne, status glifem i słowem. */
+.event-rsvp-list {
+  list-style: none;
+  margin: 0;
+  padding: 2px 0 6px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.event-rsvp-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 14px;
+  font-size: var(--n2-type-xs);
+  color: var(--text-muted);
+}
+.event-rsvp-glyph {
+  width: 12px;
+  text-align: center;
+  font-weight: 700;
+}
+.event-rsvp-row.yes .event-rsvp-glyph {
+  color: var(--n2-green, #77d7a5);
+}
+.event-rsvp-row.no .event-rsvp-glyph {
+  color: var(--n2-red, #ff6f7c);
+}
+.event-rsvp-name {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.event-rsvp-status {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+/* Odmowa udziału DZIAŁAJĄCEGO użytkownika w tym wystąpieniu: kafel-duch —
    slot zwolniony (kolizje/godziny go nie widzą), ale kafel zostaje widoczny,
    żeby dało się wrócić do udziału tym samym menu (prawy klik). */
 .week-event-block.absent {

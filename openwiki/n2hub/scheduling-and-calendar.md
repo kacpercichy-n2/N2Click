@@ -93,20 +93,26 @@
   RangeError z `format(Invalid Date)`). TaskModal auto-saves valid edited drafts
   (debounced ~0.9 s; paused during an explicit tab conflict; creation stays
   manual).
-- NIEOBECNOŚĆ PER WYSTĄPIENIE (2026-08-11): wydarzenie CYKLICZNE niesie
-  `absences?: EventAbsence[]` ({date, personId}; forma kanoniczna w
-  `normalizeEventAbsences` — tylko realne dni wystąpień żywej reguły,
-  dedup+sort, pusto = klucz znika; wspólna dla reduktora, `repairEvents` i
-  hydracji). `TOGGLE_EVENT_ATTENDANCE` (WeekView: prawy klik na kaflu
-  wystąpienia → menu, decyzja OSOBISTA działającego użytkownika, bez bramki
-  `events.manage`; imienne tylko dla uczestnika, ogólnofirmowe dla każdego).
-  Nieobecność ZWALNIA slot osoby w: `blockCollidesWithEvent`,
+- RSVP PER WYSTĄPIENIE (2026-08-11, jak w Google Meet): wydarzenie CYKLICZNE
+  niesie `rsvps?: EventRsvp[]` ({date, personId, status 'yes'|'no'}; BRAK
+  wpisu = „oczekuje"; forma kanoniczna w `normalizeEventRsvps` — tylko realne
+  dni wystąpień żywej reguły, dedup+sort, pusto = klucz znika, wpis legacy bez
+  `status` czyta się jako 'no'; wspólna dla reduktora, `repairEvents` i
+  hydracji). `SET_EVENT_RSVP` (yes/no/null=wyczyść; WeekView: prawy klik na
+  kaflu wystąpienia → menu z opcjami Potwierdzam/Nie biorę udziału + LISTA
+  odpowiedzi tego dnia — imienne: wszyscy uczestnicy, ogólnofirmowe: tylko
+  odpowiedzi + licznik oczekujących; decyzja OSOBISTA działającego
+  użytkownika, bez bramki `events.manage`; imienne tylko dla uczestnika,
+  ogólnofirmowe dla każdego). WYŁĄCZNIE status 'no' ZWALNIA slot osoby
+  ('yes'/oczekuje zajmują jak dotąd) w: `blockCollidesWithEvent`,
   `scheduleConflictsForRange`, `mergeCoversEventOrRecurrence`,
-  `buildEventBusyByPersonDate` i odejmuje głowę w `calendarDayVolume`;
-  render = kafel-duch (`.week-event-block.absent`). `SAVE_EVENT`
-  re-kanonikalizuje nieobecności względem nowej reguły (zdjęcie cykliczności =
-  klucz znika). Chmura: kolumna `n2click.events.absences` (jsonb, migracja
-  20260811160000), personId mapowane profil↔osoba jak `attendee_ids`.
+  `buildEventBusyByPersonDate` i odejmuje głowę w `calendarDayVolume`
+  (helpery: `personRsvpForEventOccurrence` / `personAbsentFromEventOccurrence`);
+  render odmowy = kafel-duch (`.week-event-block.absent`). `SAVE_EVENT`
+  re-kanonikalizuje odpowiedzi względem nowej reguły (zdjęcie cykliczności =
+  klucz znika). Chmura: kolumna `n2click.events.rsvps` (jsonb; 20260811160000
+  utworzyła `absences`, 20260811170000 rename na `rsvps`), personId mapowane
+  profil↔osoba jak `attendee_ids`.
   żadnego `WorkloadEntry`, więc para (zadanie, osoba) z zerem godzin nie ma ani
   bloku w kalendarzu, ani wiersza w zasobniku i znika z planowania. Dlatego
   świeżo zaznaczona osoba dostaje bazowo `DEFAULT_ASSIGNEE_HOURS`

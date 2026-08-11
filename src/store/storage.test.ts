@@ -2660,7 +2660,7 @@ describe('repairEvents', () => {
     expect(repairEvents(data).events).toEqual([]);
   });
 
-  it('kanonikalizuje nieobecności: tylko dni wystąpień żywej reguły, dedup+sort; bez reguły klucz znika', () => {
+  it('kanonikalizuje RSVP: legacy absences => status no, tylko dni wystąpień, dedup+sort; bez reguły klucz znika', () => {
     const recurrence = { daysOfWeek: [1], startMinutes: 540, durationMinutes: 60 };
     const data = withEvents([
       {
@@ -2670,12 +2670,16 @@ describe('repairEvents', () => {
         startMinutes: 540,
         durationMinutes: 60,
         recurrence,
+        // Zapis LEGACY pod kluczem `absences` (pierwsza wersja mechaniki) —
+        // wpisy bez `status` czytają się jako 'no'; nowy wpis ze statusem
+        // przechodzi wprost.
         absences: [
           { date: '2026-07-13', personId: 'p2' },
-          { date: MON, personId: 'p1' },
-          { date: MON, personId: 'p1' }, // duplikat
+          { date: MON, personId: 'p1', status: 'yes' },
+          { date: MON, personId: 'p1' }, // duplikat (przegrywa — pierwszy wygrywa)
           { date: '2026-07-07', personId: 'p1' }, // wtorek — poza regułą
           { date: MON, personId: '' }, // pusta osoba
+          { date: MON, personId: 'p3', status: 'maybe' }, // status spoza unii
           'śmieć',
         ],
       },
@@ -2689,11 +2693,11 @@ describe('repairEvents', () => {
       },
     ]);
     const events = repairEvents(data).events;
-    expect(events[0].absences).toEqual([
-      { date: MON, personId: 'p1' },
-      { date: '2026-07-13', personId: 'p2' },
+    expect(events[0].rsvps).toEqual([
+      { date: MON, personId: 'p1', status: 'yes' },
+      { date: '2026-07-13', personId: 'p2', status: 'no' },
     ]);
-    expect('absences' in events[1]).toBe(false);
+    expect('rsvps' in events[1]).toBe(false);
   });
 
   it('deduplikuje uczestników i zachowuje dangling id', () => {

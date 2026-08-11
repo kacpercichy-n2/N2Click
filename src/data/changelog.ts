@@ -94,13 +94,19 @@ export const CHANGELOG: ChangelogEntry[] = [
     dateFrom: '2026-08-11',
     dateTo: '2026-08-11',
     summary:
-      'Możesz oznaczyć, że nie bierzesz udziału w pojedynczym wystąpieniu cyklicznego spotkania — ten termin przestaje blokować Twój kalendarz.',
+      'Odpowiedzi na pojedyncze wystąpienia cyklicznych spotkań jak w Google Meet: potwierdzasz albo odmawiasz udziału, widzisz odpowiedzi innych, a odmowa zwalnia Twój kalendarz.',
     items: [
       {
         area: 'Kalendarz',
-        feature: 'Nie biorę udziału w tym wystąpieniu',
+        feature: 'Potwierdzam / nie biorę udziału',
         description:
-          'Prawy klik na kaflu cyklicznego spotkania otwiera menu z pozycją „Nie biorę udziału w tym wystąpieniu”. Ten jeden termin przestaje kolidować z Twoimi blokami (można w niego normalnie planować pracę), nie liczy się do Twoich godzin dnia, a kafel zostaje u Ciebie jako wyszarzony duch z przekreślonym tytułem — tym samym menu wrócisz do udziału. Reszta uczestników i pozostałe wystąpienia serii bez zmian.',
+          'Prawy klik na kaflu cyklicznego spotkania otwiera menu z opcjami „Potwierdzam udział” i „Nie biorę udziału” dla tego jednego terminu (klik w aktywną odpowiedź cofa ją do „oczekuje”). Odmowa sprawia, że termin przestaje kolidować z Twoimi blokami i nie liczy się do Twoich godzin dnia, a kafel zostaje u Ciebie jako wyszarzony duch z przekreślonym tytułem. Reszta uczestników i pozostałe wystąpienia serii bez zmian.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Lista odpowiedzi tego dnia',
+        description:
+          'W tym samym menu widać, kto na dany dzień potwierdził (✓), kto odmówił (✗), a kto jeszcze oczekuje — przy spotkaniu imiennym pełna lista uczestników, przy ogólnofirmowym osoby z odpowiedzią plus licznik oczekujących.',
       },
     ],
   },

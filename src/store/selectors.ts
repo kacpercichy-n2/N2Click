@@ -6,6 +6,7 @@ import type {
   Client,
   Comment,
   CommentEntityType,
+  EventRsvpStatus,
   Company,
   ContentPlanPost,
   ContentPlanStatus,
@@ -566,18 +567,31 @@ export function recurrenceOccurrencesForDate(
 }
 
 /**
- * Czy osoba zgłosiła nieobecność w wystąpieniu wydarzenia tego dnia?
- * Czysta funkcja na encji — wspólna dla kolizji, objętości dnia, occupancy
- * widoku tygodnia i renderu (kafel-duch). Urlop i jednorazowe spotkania nie
- * niosą `absences` (forma kanoniczna), więc zwracają false z definicji.
+ * Odpowiedź RSVP osoby na wystąpienie wydarzenia tego dnia: 'yes'/'no' albo
+ * 'pending' (brak wpisu — stan domyślny). Czysta funkcja na encji.
+ */
+export function personRsvpForEventOccurrence(
+  event: CalendarEvent,
+  date: DateStr,
+  personId: string,
+): EventRsvpStatus | 'pending' {
+  if (event.rsvps === undefined || personId === '') return 'pending';
+  return event.rsvps.find((r) => r.date === date && r.personId === personId)?.status ?? 'pending';
+}
+
+/**
+ * Czy osoba odrzuciła udział w wystąpieniu wydarzenia tego dnia ('no')?
+ * Wspólna dla kolizji, objętości dnia, occupancy widoku tygodnia i renderu
+ * (kafel-duch). 'yes' i 'pending' zajmują slot jak dotąd — dopiero jawna
+ * odmowa go zwalnia. Urlop i jednorazowe spotkania nie niosą `rsvps`
+ * (forma kanoniczna), więc zwracają false z definicji.
  */
 export function personAbsentFromEventOccurrence(
   event: CalendarEvent,
   date: DateStr,
   personId: string,
 ): boolean {
-  if (event.absences === undefined || personId === '') return false;
-  return event.absences.some((a) => a.date === date && a.personId === personId);
+  return personRsvpForEventOccurrence(event, date, personId) === 'no';
 }
 
 /** Jedno wystąpienie wydarzenia na konkretny dzień (czysto prezentacyjne). */
@@ -661,11 +675,12 @@ const calendarDayVolumeCache = createKeyedCache<number>((state, key) => {
         : filterActive
           ? attendees.filter((id) => personFilter.has(id)).length
           : attendees.length;
-    // Nieobecni w TYM wystąpieniu nie wnoszą godzin — liczymy tylko osoby,
+    // Odmowy ('no') w TYM wystąpieniu nie wnoszą godzin — liczymy tylko osoby,
     // które weszły do `heads` (uczestnik/zespół ∩ filtr, gdy aktywny).
+    // 'yes' i brak odpowiedzi liczą się jak dotąd.
     let absent = 0;
-    for (const a of occ.event.absences ?? []) {
-      if (a.date !== date) continue;
+    for (const a of occ.event.rsvps ?? []) {
+      if (a.date !== date || a.status !== 'no') continue;
       const inScope =
         attendees.length === 0
           ? filterActive

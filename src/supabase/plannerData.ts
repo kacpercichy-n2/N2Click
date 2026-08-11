@@ -37,7 +37,7 @@ import {
   sanitizeContentPlanPosts,
 } from '../contentplan/domain';
 import { isValidDateStr, periodError, MAX_TASK_PERIOD_DAYS } from '../utils/dates';
-import { normalizeEventAbsences, normalizeRecurrence } from '../utils/recurrence';
+import { normalizeEventRsvps, normalizeRecurrence } from '../utils/recurrence';
 import { normalizeProjectDocumentUrl } from '../utils/projectDocuments';
 import {
   canonicalEventRecurrence,
@@ -406,7 +406,7 @@ export async function loadPlannerSnapshot(
     ),
     db.select(
       'events',
-      'id, title, description, location, meeting_url, event_date, start_minutes, duration_minutes, attendee_ids, absences, recurrence, kind, end_date, is_confidential, created_at, updated_at',
+      'id, title, description, location, meeting_url, event_date, start_minutes, duration_minutes, attendee_ids, rsvps, recurrence, kind, end_date, is_confidential, created_at, updated_at',
     ),
   ]);
 
@@ -768,16 +768,17 @@ export async function loadPlannerSnapshot(
     const endDate = isVacation
       ? canonicalVacationEndDate(sqlDateToLocal(row.end_date), date) ?? undefined
       : undefined;
-    // Nieobecności per wystąpienie (kolumna `absences`, ŁAGODNIE per-pole jak
+    // Odpowiedzi RSVP per wystąpienie (kolumna `rsvps`, ŁAGODNIE per-pole jak
     // `kind`/`end_date` — hydracja musi przetrwać kolumnę sprzed migracji):
     // personId to profil chmury → reverse na osobę lokalną ('' odpada), po
-    // czym pełna kanonizacja względem żywej reguły.
-    const absences = recurrence
-      ? normalizeEventAbsences(
-          (Array.isArray(row.absences) ? (row.absences as unknown[]) : []).map((item) => {
+    // czym pełna kanonizacja względem żywej reguły (wpis legacy bez `status`
+    // czyta się jako 'no').
+    const rsvps = recurrence
+      ? normalizeEventRsvps(
+          (Array.isArray(row.rsvps) ? (row.rsvps as unknown[]) : []).map((item) => {
             if (typeof item !== 'object' || item === null) return null;
             const rec = item as Record<string, unknown>;
-            return { date: str(rec.date), personId: personOf(rec.personId) };
+            return { date: str(rec.date), personId: personOf(rec.personId), status: rec.status };
           }),
           recurrence,
           date,
@@ -794,7 +795,7 @@ export async function loadPlannerSnapshot(
       durationMinutes,
       attendeeIds,
       ...(recurrence ? { recurrence } : {}),
-      ...(absences ? { absences } : {}),
+      ...(rsvps ? { rsvps } : {}),
       ...(isVacation ? { kind: 'urlop' as const } : {}),
       ...(endDate ? { endDate } : {}),
       // Utajniona treść (20260805120000): forma kanoniczna — klucz wyłącznie

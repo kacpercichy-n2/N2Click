@@ -565,46 +565,40 @@ describe('calendarEventsForDate — urlop wielodniowy', () => {
   });
 });
 
-// ---- TOGGLE_EVENT_ATTENDANCE (nieobecność per wystąpienie) ------------------
+// ---- SET_EVENT_RSVP (odpowiedzi na wystąpienia) -----------------------------
 
-describe('TOGGLE_EVENT_ATTENDANCE', () => {
+describe('SET_EVENT_RSVP', () => {
   const RECUR = { daysOfWeek: [1, 3], startMinutes: 600, durationMinutes: 30 };
   const recurring = () => event({ recurrence: RECUR, attendeeIds: [PA, PB] });
+  const set = (
+    state: AppData,
+    eventId: string,
+    date: string,
+    personId: string,
+    status: 'yes' | 'no' | null,
+  ) => reducer(state, { type: 'SET_EVENT_RSVP', eventId, date, personId, status });
 
-  it('dodaje nieobecność i zdejmuje ją ponownym toggle (forma kanoniczna)', () => {
+  it('zapisuje yes/no, nadpisuje odpowiedź i czyści przez null (forma kanoniczna)', () => {
     const state = baseState([recurring()]);
     const eventId = state.events[0].id;
-    const marked = reducer(state, {
-      type: 'TOGGLE_EVENT_ATTENDANCE',
-      eventId,
-      date: WED,
-      personId: PA,
-    });
-    expect(marked.events[0].absences).toEqual([{ date: WED, personId: PA }]);
-    const cleared = reducer(marked, {
-      type: 'TOGGLE_EVENT_ATTENDANCE',
-      eventId,
-      date: WED,
-      personId: PA,
-    });
-    expect(cleared.events[0].absences).toBeUndefined();
-    expect('absences' in cleared.events[0]).toBe(false);
+    const yes = set(state, eventId, WED, PA, 'yes');
+    expect(yes.events[0].rsvps).toEqual([{ date: WED, personId: PA, status: 'yes' }]);
+    const flipped = set(yes, eventId, WED, PA, 'no');
+    expect(flipped.events[0].rsvps).toEqual([{ date: WED, personId: PA, status: 'no' }]);
+    const cleared = set(flipped, eventId, WED, PA, null);
+    expect('rsvps' in cleared.events[0]).toBe(false);
   });
 
   it('sortuje wpisy po dacie, potem osobie (idempotencja loadera)', () => {
     let state = baseState([recurring()]);
     const eventId = state.events[0].id;
-    for (const [date, personId] of [
-      [WED, PB],
-      [MON, PA],
-      [WED, PA],
-    ] as const) {
-      state = reducer(state, { type: 'TOGGLE_EVENT_ATTENDANCE', eventId, date, personId });
-    }
-    expect(state.events[0].absences).toEqual([
-      { date: MON, personId: PA },
-      { date: WED, personId: PA },
-      { date: WED, personId: PB },
+    state = set(state, eventId, WED, PB, 'no');
+    state = set(state, eventId, MON, PA, 'yes');
+    state = set(state, eventId, WED, PA, 'no');
+    expect(state.events[0].rsvps).toEqual([
+      { date: MON, personId: PA, status: 'yes' },
+      { date: WED, personId: PA, status: 'no' },
+      { date: WED, personId: PB, status: 'no' },
     ]);
   });
 
@@ -619,19 +613,24 @@ describe('TOGGLE_EVENT_ATTENDANCE', () => {
     });
     const state = baseState([recurring(), oneOff, vacation]);
     const eventId = state.events[0].id;
-    const cases = [
-      { type: 'TOGGLE_EVENT_ATTENDANCE', eventId: 'ghost', date: WED, personId: PA },
-      { type: 'TOGGLE_EVENT_ATTENDANCE', eventId: oneOff.id, date: MON, personId: PA },
-      { type: 'TOGGLE_EVENT_ATTENDANCE', eventId: vacation.id, date: MON, personId: PA },
-      // 2026-07-07 to wtorek — poza daysOfWeek [1,3].
-      { type: 'TOGGLE_EVENT_ATTENDANCE', eventId, date: '2026-07-07', personId: PA },
-      { type: 'TOGGLE_EVENT_ATTENDANCE', eventId, date: 'zła-data', personId: PA },
-      { type: 'TOGGLE_EVENT_ATTENDANCE', eventId, date: WED, personId: '' },
-      { type: 'TOGGLE_EVENT_ATTENDANCE', eventId, date: WED, personId: 'ghost-person' },
-    ] as const;
-    for (const action of cases) {
-      expect(reducer(state, action)).toBe(state);
-    }
+    expect(set(state, 'ghost', WED, PA, 'no')).toBe(state);
+    expect(set(state, oneOff.id, MON, PA, 'no')).toBe(state);
+    expect(set(state, vacation.id, MON, PA, 'no')).toBe(state);
+    // 2026-07-07 to wtorek — poza daysOfWeek [1,3].
+    expect(set(state, eventId, '2026-07-07', PA, 'no')).toBe(state);
+    expect(set(state, eventId, 'zła-data', PA, 'no')).toBe(state);
+    expect(set(state, eventId, WED, '', 'no')).toBe(state);
+    expect(set(state, eventId, WED, 'ghost-person', 'no')).toBe(state);
+    // Status spoza unii (obrona w głąb — np. ładunek spoza TS).
+    expect(
+      reducer(state, {
+        type: 'SET_EVENT_RSVP',
+        eventId,
+        date: WED,
+        personId: PA,
+        status: 'maybe' as unknown as 'yes',
+      }),
+    ).toBe(state);
   });
 
   it('imienne spotkanie odrzuca osobę spoza uczestników; ogólnofirmowe przyjmuje każdego z zespołu', () => {
@@ -642,37 +641,28 @@ describe('TOGGLE_EVENT_ATTENDANCE', () => {
       recurrence: RECUR,
     });
     const state = baseState([named, companyWide]);
-    expect(
-      reducer(state, { type: 'TOGGLE_EVENT_ATTENDANCE', eventId: named.id, date: WED, personId: PA }),
-    ).toBe(state);
-    const next = reducer(state, {
-      type: 'TOGGLE_EVENT_ATTENDANCE',
-      eventId: companyWide.id,
-      date: WED,
-      personId: PA,
-    });
-    expect(next.events.find((e) => e.id === companyWide.id)?.absences).toEqual([
-      { date: WED, personId: PA },
+    expect(set(state, named.id, WED, PA, 'no')).toBe(state);
+    const next = set(state, companyWide.id, WED, PA, 'yes');
+    expect(next.events.find((e) => e.id === companyWide.id)?.rsvps).toEqual([
+      { date: WED, personId: PA, status: 'yes' },
     ]);
   });
 
-  it('SAVE_EVENT zachowuje nieobecności i re-kanonikalizuje względem nowej reguły', () => {
+  it('SAVE_EVENT zachowuje odpowiedzi i re-kanonikalizuje względem nowej reguły', () => {
     const state = baseState([recurring()]);
     const eventId = state.events[0].id;
-    const marked = reducer(state, {
-      type: 'TOGGLE_EVENT_ATTENDANCE',
-      eventId,
-      date: WED,
-      personId: PA,
-    });
-    // Zapis bez zmiany reguły: nieobecność przeżywa.
+    const marked = set(set(state, eventId, WED, PA, 'no'), eventId, MON, PB, 'yes');
+    // Zapis bez zmiany reguły: odpowiedzi przeżywają.
     const savedSame = reducer(marked, {
       type: 'SAVE_EVENT',
       eventId,
       draft: draft({ startMinutes: 600, durationMinutes: 30, attendeeIds: [PA, PB], recurrence: RECUR }),
     });
-    expect(savedSame.events[0].absences).toEqual([{ date: WED, personId: PA }]);
-    // Zwężenie reguły do samych poniedziałków: środowa nieobecność odpada.
+    expect(savedSame.events[0].rsvps).toEqual([
+      { date: MON, personId: PB, status: 'yes' },
+      { date: WED, personId: PA, status: 'no' },
+    ]);
+    // Zwężenie reguły do samych poniedziałków: środowa odpowiedź odpada.
     const savedNarrow = reducer(marked, {
       type: 'SAVE_EVENT',
       eventId,
@@ -683,13 +673,13 @@ describe('TOGGLE_EVENT_ATTENDANCE', () => {
         recurrence: { ...RECUR, daysOfWeek: [1] },
       }),
     });
-    expect(savedNarrow.events[0].absences).toBeUndefined();
+    expect(savedNarrow.events[0].rsvps).toEqual([{ date: MON, personId: PB, status: 'yes' }]);
     // Zdjęcie cykliczności: klucz znika w całości.
     const savedOneOff = reducer(marked, {
       type: 'SAVE_EVENT',
       eventId,
       draft: draft({ startMinutes: 600, durationMinutes: 30, attendeeIds: [PA, PB], recurrence: null }),
     });
-    expect('absences' in savedOneOff.events[0]).toBe(false);
+    expect('rsvps' in savedOneOff.events[0]).toBe(false);
   });
 });

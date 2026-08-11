@@ -150,14 +150,14 @@ describe('calendarDayVolume', () => {
 describe('calendarDayVolume — nieobecności wystąpień cyklicznych', () => {
   const RECUR = { daysOfWeek: [1], startMinutes: 600, durationMinutes: 60 };
 
-  it('nieobecny uczestnik imiennego spotkania nie wnosi godzin (tylko w dniu nieobecności)', () => {
+  it('uczestnik z odpowiedzią „nie biorę udziału” nie wnosi godzin (tylko w dniu nieobecności)', () => {
     const s = baseState({
       events: [
         makeEvent({
           id: 'ev1',
           attendeeIds: ['p1', 'p2'],
           recurrence: RECUR,
-          absences: [{ date: MON, personId: 'p1' }],
+          rsvps: [{ date: MON, personId: 'p1', status: 'no' as const }],
         }),
       ],
     });
@@ -173,7 +173,7 @@ describe('calendarDayVolume — nieobecności wystąpień cyklicznych', () => {
           id: 'ev1',
           attendeeIds: [],
           recurrence: RECUR,
-          absences: [{ date: MON, personId: 'p2' }],
+          rsvps: [{ date: MON, personId: 'p2', status: 'no' as const }],
         }),
       ],
     });

@@ -52,6 +52,7 @@ import {
   occurrenceIsDone,
   personAbsentFromEventOccurrence,
   personCapacity,
+  personRsvpForEventOccurrence,
   personVacationOnDate,
   taskDisplayStatus,
   taskGrowAllowance,
@@ -2362,16 +2363,22 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
   const [recurEditStart, setRecurEditStart] = useState('09:00');
   const [recurEditDurMin, setRecurEditDurMin] = useState(60);
 
-  // Menu wystąpienia wydarzenia cyklicznego (nieobecność działającego
-  // użytkownika w JEDNYM wystąpieniu — patrz TOGGLE_EVENT_ATTENDANCE).
+  // Menu wystąpienia wydarzenia cyklicznego: RSVP działającego użytkownika
+  // (potwierdzam / nie biorę udziału / oczekuje) + lista odpowiedzi na TEN
+  // dzień, jak w Google Meet — patrz SET_EVENT_RSVP.
   const [eventMenu, setEventMenu] = useState<{
     eventId: string;
     title: string;
     date: string;
-    /** Działający użytkownik jest już nieobecny w tym wystąpieniu. */
-    absent: boolean;
+    /** Odpowiedź działającego użytkownika na to wystąpienie. */
+    rsvp: 'yes' | 'no' | 'pending';
     /** Jest kogo przełączać: uczestnik imienny albo spotkanie ogólnofirmowe. */
     canToggle: boolean;
+    /** Lista odpowiedzi na ten dzień (imienne: wszyscy uczestnicy;
+     *  ogólnofirmowe: tylko osoby, które odpowiedziały). */
+    responses: Array<{ name: string; status: 'yes' | 'no' | 'pending' }>;
+    /** Ogólnofirmowe: ilu członków zespołu jeszcze nie odpowiedziało. */
+    pendingHidden: number;
     anchor: MenuAnchor;
   } | null>(null);
   const eventMenuRef = useRef<HTMLDivElement | null>(null);
@@ -2547,10 +2554,11 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
     [canManageTasks, state.statuses],
   );
 
-  // Prawy klik na kaflu wystąpienia wydarzenia CYKLICZNEGO → menu nieobecności.
-  // Bez bramki uprawnień: nieobecność jest decyzją OSOBISTĄ działającego
+  // Prawy klik na kaflu wystąpienia wydarzenia CYKLICZNEGO → menu RSVP.
+  // Bez bramki uprawnień: odpowiedź jest decyzją OSOBISTĄ działającego
   // użytkownika o własnym udziale (żaden `events.manage` nie jest potrzebny);
-  // brak zalogowanej tożsamości = menu tylko z wejściem w wydarzenie.
+  // brak zalogowanej tożsamości = menu tylko z listą odpowiedzi i wejściem
+  // w wydarzenie.
   const openEventOccMenu = useCallback(
     (eventId: string, date: string, e: React.MouseEvent) => {
       const event = state.events.find((ev) => ev.id === eventId);
@@ -2563,26 +2571,51 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
       const viewer = state.currentUserId;
       const canToggle =
         viewer !== '' && (event.attendeeIds.length === 0 || event.attendeeIds.includes(viewer));
+      // Lista odpowiedzi NA TEN DZIEŃ: imienne spotkanie pokazuje wszystkich
+      // uczestników (także oczekujących); ogólnofirmowe tylko osoby, które
+      // odpowiedziały, plus licznik oczekujących (cały zespół byłby za długi).
+      const companyWide = event.attendeeIds.length === 0;
+      const responses: Array<{ name: string; status: 'yes' | 'no' | 'pending' }> = [];
+      if (companyWide) {
+        for (const r of event.rsvps ?? []) {
+          if (r.date !== date) continue;
+          const name = getPerson(state, r.personId)?.name ?? '';
+          if (name !== '') responses.push({ name, status: r.status });
+        }
+      } else {
+        for (const personId of event.attendeeIds) {
+          const name = getPerson(state, personId)?.name ?? '';
+          if (name === '') continue;
+          responses.push({ name, status: personRsvpForEventOccurrence(event, date, personId) });
+        }
+      }
+      const pendingHidden = companyWide
+        ? Math.max(0, state.people.length - responses.length)
+        : 0;
       setEventMenu({
         eventId,
         title: eventDisplayTitle(state, event),
         date,
-        absent: personAbsentFromEventOccurrence(event, date, viewer),
+        rsvp: personRsvpForEventOccurrence(event, date, viewer),
         canToggle,
+        responses,
+        pendingHidden,
         anchor: pointAnchor(e.currentTarget as HTMLElement, e.clientX, e.clientY),
       });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- menu czyta stan wyłącznie w chwili kliknięcia; zależności zawężone jak w openRecurMenu
-    [state.events, state.currentUserId],
+    [state.events, state.currentUserId, state.people],
   );
 
-  const eventToggleAttendance = () => {
+  // Klik w aktywną odpowiedź czyści ją (powrót do „oczekuje") — jak w Google.
+  const eventSetRsvp = (status: 'yes' | 'no') => {
     if (!eventMenu) return;
     dispatch({
-      type: 'TOGGLE_EVENT_ATTENDANCE',
+      type: 'SET_EVENT_RSVP',
       eventId: eventMenu.eventId,
       date: eventMenu.date,
       personId: state.currentUserId,
+      status: eventMenu.rsvp === status ? null : status,
     });
     setEventMenu(null);
   };
@@ -3855,16 +3888,27 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                 {format(parseDate(eventMenu.date), 'd MMM yyyy', { locale: pl })}
               </div>
               {eventMenu.canToggle ? (
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="context-menu-item"
-                  onClick={eventToggleAttendance}
-                >
-                  {eventMenu.absent
-                    ? 'Wracam do udziału w tym wystąpieniu'
-                    : 'Nie biorę udziału w tym wystąpieniu'}
-                </button>
+                <>
+                  {/* Klik w aktywną odpowiedź czyści ją (powrót do „oczekuje"). */}
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="context-menu-item"
+                    aria-pressed={eventMenu.rsvp === 'yes'}
+                    onClick={() => eventSetRsvp('yes')}
+                  >
+                    {eventMenu.rsvp === 'yes' ? '✓ ' : ''}Potwierdzam udział
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="context-menu-item"
+                    aria-pressed={eventMenu.rsvp === 'no'}
+                    onClick={() => eventSetRsvp('no')}
+                  >
+                    {eventMenu.rsvp === 'no' ? '✓ ' : ''}Nie biorę udziału
+                  </button>
+                </>
               ) : (
                 <div className="context-menu-title">Nie jesteś na liście uczestników</div>
               )}
@@ -3879,6 +3923,39 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
               >
                 Otwórz wydarzenie
               </button>
+              {(eventMenu.responses.length > 0 || eventMenu.pendingHidden > 0) && (
+                <>
+                  <div className="context-menu-title">Odpowiedzi tego dnia</div>
+                  <ul className="event-rsvp-list">
+                    {eventMenu.responses.map((r) => (
+                      <li key={r.name} className={`event-rsvp-row ${r.status}`}>
+                        <span className="event-rsvp-glyph" aria-hidden>
+                          {r.status === 'yes' ? '✓' : r.status === 'no' ? '✗' : '·'}
+                        </span>
+                        <span className="event-rsvp-name">{r.name}</span>
+                        <span className="event-rsvp-status">
+                          {r.status === 'yes'
+                            ? 'potwierdzone'
+                            : r.status === 'no'
+                              ? 'nie bierze udziału'
+                              : 'oczekuje'}
+                        </span>
+                      </li>
+                    ))}
+                    {eventMenu.pendingHidden > 0 && (
+                      <li className="event-rsvp-row pending">
+                        <span className="event-rsvp-glyph" aria-hidden>
+                          ·
+                        </span>
+                        <span className="event-rsvp-name">
+                          oczekuje: {eventMenu.pendingHidden}{' '}
+                          {eventMenu.pendingHidden === 1 ? 'osoba' : 'osób'}
+                        </span>
+                      </li>
+                    )}
+                  </ul>
+                </>
+              )}
             </div>
           </m.div>
         )}

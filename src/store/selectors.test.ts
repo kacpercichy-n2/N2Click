@@ -2383,7 +2383,7 @@ describe('blockCollidesWithEvent', () => {
       id: 'ev1',
       attendeeIds: ['p1', 'p2'],
       recurrence: { daysOfWeek: [3], startMinutes: 600, durationMinutes: 60 },
-      absences: [{ date: '2026-07-08', personId: 'p1' }],
+      rsvps: [{ date: '2026-07-08', personId: 'p1', status: 'no' as const }],
     });
     const s = makeState({
       people: [makePerson({ id: 'p1' }), makePerson({ id: 'p2' })],
