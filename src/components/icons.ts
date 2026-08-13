@@ -25,6 +25,11 @@ export {
   ChevronLeft,
   ChevronsLeft,
   ChevronsRight,
+  // Czat (dok bąbelków): zwijanie i rozwijanie okna rozmowy.
+  ChevronDown,
+  ChevronUp,
+  // Czat: wysłanie wiadomości (kompozytor) i bąbelek grupy bez inicjałów.
+  Send,
   Plus,
   Trash2,
   Pencil,

@@ -416,6 +416,56 @@ widoki-mostki). Gdzie w tekście pada `public.<tabela>` w kontekście
   utajniony") — typy z odbiorcą-wykonawcą (`task_assigned`/`bin_item`)
   zachowują prawdziwe nazwy (wyjątek wglądu wykonawcy).
 
+- CZAT WEWNĘTRZNY (20260813180000_chat + 20260813190000_chat_membership_hardening,
+  ZAAPLIKOWANE 2026-08-13): `n2click.conversations` (kind direct|group,
+  `direct_key` = posortowane uuid pary złączone `:` deduplikuje DM-y),
+  `conversation_members` (PK (conversation_id, user_id), `last_read_at` liczy
+  nieprzeczytane), `messages` (kasowanie MIĘKKIE przez `deleted_at`, bez polityki
+  i grantu DELETE). Tabele ŚWIADOMIE POZA publikacją `supabase_realtime` —
+  postgres_changes wyzwoliłoby pełną rehydrację plannera w CloudSyncProvider przy
+  każdej wiadomości; na żywo idzie WYŁĄCZNIE Broadcast z triggerów
+  (`chat_messages_broadcast` → topic `chat:conv:<id>`, `chat_members_broadcast` →
+  kanał osobisty `chat:user:<uuid>` przy zaproszeniu/usunięciu). Kanały prywatne
+  autoryzują polityki `chat_*` na `realtime.messages` przez
+  `app.chat_topic_member(topic)` (bezpieczny parser: zły uuid = false, nigdy
+  wyjątek); klient MUSI wołać `client.realtime.setAuth(token)` przed subscribe
+  i po rotacji tokenu. Lista rozmów: RPC `n2click.chat_overview()` (SECURITY
+  INVOKER — filtruje RLS). `chat_conversations_select` ma gałąź
+  `created_by = auth.uid()` — KONIECZNĄ, bo `.insert().select()` sprawdza SELECT
+  zanim twórca stanie się członkiem. HARDENING: `authenticated` ma UPDATE tylko
+  KOLUMNOWY (`conversation_members`: last_read_at, muted_until; `messages`:
+  body, edited_at, deleted_at) — bez tego członek mógł przepiąć własny wiersz
+  członkostwa na cudzą rozmowę (przejęcie) albo przenieść własną wiadomość do
+  cudzej rozmowy. Klient: moduł `src/chat/` (ChatProvider + chatData + chatState,
+  UI w `src/chat/ui/`), poza AppStore/localStorage; montaż w `src/main.tsx`.
+  Rejestr: oba pliki w `migrations.test.ts` + klucze `n2click.*` i
+  `realtime.messages` w `EXPECTED_POLICIES`.
+- CZAT, ZNACZNIKI I ATOMOWOŚĆ (20260813200000 + 210000 + 220000 + 230000 +
+  240000, wszystkie ZAAPLIKOWANE 2026-08-13). Klient scala warianty tej samej
+  wiadomości z dwóch źródeł (broadcast + równoległe pobrania stron) i konflikt
+  rozstrzyga po `edited_at`, więc znaczniki MUSZĄ być własnością serwera:
+  trigger `chat_messages_stamp_edit` (BEFORE UPDATE) stempluje `edited_at`
+  wyłącznie przy zmianie `body`, poza tym PRZEPISUJE stary znacznik (grant
+  kolumnowy obejmuje `edited_at`, więc bez tego klient mógłby go wyczyścić),
+  wymusza MONOTONICZNOŚĆ per wiersz (`greatest(clock_timestamp(), poprzednia
+  rewizja + 1 µs, created_at + 1 µs)` — zegar ścienny może cofnąć się po NTP)
+  i egzekwuje TERMINALNOŚĆ `deleted_at`. Trójka triggerów `*_stamp_insert`
+  (messages/conversations/conversation_members) odbiera klientowi znaczniki
+  także przy INSERT (`created_at`, `last_message_at`, `joined_at`,
+  `last_read_at`, `muted_until`) — INSERT ma grant TABELOWY, więc twórca
+  rozmowy mógł wstawiać CUDZE wiersze członkostwa z presetem `last_read_at`.
+  Inwariant do utrzymania: identyczna rewizja ≡ identyczna treść.
+  `n2click.chat_create_group(p_title, p_member_ids)` (RPC, SECURITY INVOKER)
+  tworzy grupę ATOMOWO — grupa nie ma `direct_key`, więc częściowy zapis składu
+  z osobnych żądań nie miał ścieżki naprawy (DM naprawia się sam po kluczu).
+- PUŁAPKA: `upsert` / `ON CONFLICT` na tabelach czatu jest ZAKAZANY (potwierdzone
+  eksperymentalnie 2026-08-13 na żywej bazie, ta sama rodzina błędów co przy
+  `profiles`): pod RLS `ON CONFLICT DO UPDATE` kończy się `42501` (granty są
+  KOLUMNOWE, więc UPDATE na kolumnach kluczowych nie istnieje), a `DO NOTHING`
+  wywraca się na `new row violates row-level security policy` w ścieżce
+  wstawiania spekulatywnego. Idempotencję robi się jawnie: zwykły INSERT,
+  a duplikat klucza (`23505`) traktuje się jako sukces (`chatData.insertMembers`).
+
 ## Rules that change work
 
 - New tables/columns arrive ONLY via a new forward-only migration file +

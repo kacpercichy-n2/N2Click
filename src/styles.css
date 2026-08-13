@@ -226,6 +226,11 @@
   /* Dolny pasek zakładek (telefon) stoi POD arkuszami (900), wyszukiwarką (990)
      i modalami (1000) — arkusz „Więcej” ma go zasłaniać, nie odwrotnie. */
   --n2-z-bottom-nav: 880;
+  /* Dok czatu (bąbelki + okno rozmowy + popover lupy). Pływa NAD treścią i nad
+     dolnym paskiem telefonu (na telefonie kolumna i tak stoi ponad nim
+     geometrycznie), ale POD arkuszami (900), paletą wyszukiwania (990) i
+     modalami (1000) — modal „Nowa grupa" ma zasłaniać dok, nie odwrotnie. */
+  --n2-z-chat: 890;
   --n2-z-drawer: 900;
   --n2-z-search: 990;
   --n2-z-modal: 1000;
@@ -11685,4 +11690,553 @@ a.toggle-btn {
 .cp-pe-delete {
   margin-top: auto;
   align-self: flex-start;
+}
+
+/* === Czat (bąbelki) ===
+   Wariant „chat heads": pionowa kolumna pływających awatarów w prawym dolnym
+   rogu, JEDNO okno rozmowy na lewo od niej i popover lupy nad kolumną. Cała
+   warstwa to jedna przezroczysta dla kliknięć płaszczyzna `position: fixed`
+   (`pointer-events: none`), więc dok nigdy nie blokuje interfejsu pod spodem —
+   klikalne są wyłącznie jego dzieci. Kolory, promienie i cienie wyłącznie z
+   tokenów `--n2-*`; animacje ruszają tylko `transform`/`opacity`. */
+.n2chat-dock {
+  position: fixed;
+  inset: 0;
+  z-index: var(--n2-z-chat);
+  pointer-events: none;
+}
+.n2chat-dock > * {
+  pointer-events: auto;
+}
+
+/* ---------- Kolumna bąbelków ---------- */
+.n2chat-column {
+  position: absolute;
+  right: var(--n2-space-6);
+  bottom: var(--n2-space-6);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--n2-space-3);
+}
+.n2chat-bubble {
+  position: relative;
+  /* Cel dotykowy 52 px — powyżej wymaganych 44 px w obu osiach. */
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-pill);
+  background: var(--n2-surface-strong);
+  color: var(--n2-text-soft);
+  box-shadow: var(--n2-shadow-soft);
+  cursor: pointer;
+  transition: transform var(--n2-transition), border-color var(--n2-transition),
+    color var(--n2-transition);
+}
+.n2chat-bubble:hover {
+  transform: translateY(-2px);
+  border-color: var(--n2-border-strong);
+  color: var(--n2-text);
+}
+.n2chat-bubble:focus-visible {
+  outline: none;
+  box-shadow: var(--n2-shadow-focus);
+}
+.n2chat-bubble.is-active {
+  border-color: var(--n2-lavender);
+  box-shadow: var(--n2-shadow-violet);
+}
+.n2chat-bubble-search {
+  background: var(--n2-gradient-card);
+  color: var(--n2-lavender);
+}
+/* Kropka obecności: zielona, gdy KTÓRYKOLWIEK uczestnik poza mną jest online.
+   Obwódka w kolorze tła odcina ją od awatara pod spodem. */
+.n2chat-dot {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--n2-success);
+  border: 2px solid var(--n2-bg);
+}
+/* Licznik nieprzeczytanych. Cyfra jest CIEMNA na czerwieni (6,3:1); biała
+   dawałaby 3,2:1, czyli poniżej progu dla 11 px. */
+.n2chat-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--n2-radius-pill);
+  background: var(--n2-danger);
+  color: var(--n2-night);
+  border: 2px solid var(--n2-bg);
+  font-family: var(--n2-font-data);
+  font-size: var(--n2-type-xs);
+  font-weight: 700;
+  line-height: 1;
+}
+.n2chat-badge-inline {
+  position: static;
+  border: none;
+}
+/* Kółko grupy (albo profilu spoza zasięgu RLS) — inicjały tytułu na gradiencie
+   marki zamiast zdjęcia. */
+.n2chat-avatar-group {
+  background: var(--n2-gradient-hero);
+  color: var(--n2-lavender-mist);
+}
+
+/* ---------- Okno rozmowy ---------- */
+.n2chat-window {
+  position: absolute;
+  right: calc(var(--n2-space-6) + 52px + var(--n2-space-3));
+  bottom: var(--n2-space-6);
+  width: 320px;
+  height: min(480px, 70vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--n2-surface-strong);
+  border: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-md);
+  box-shadow: var(--n2-shadow-soft);
+}
+.n2chat-window.is-collapsed {
+  height: auto;
+}
+.n2chat-window-head {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+  padding: var(--n2-space-2) var(--n2-space-3);
+  border-bottom: 1px solid var(--n2-border);
+  background: var(--n2-glass);
+}
+.n2chat-window-title-btn {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.n2chat-window-title {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--n2-type-md);
+  font-weight: 600;
+  color: var(--n2-text);
+}
+.n2chat-window-status {
+  font-size: var(--n2-type-xs);
+  color: var(--n2-text-muted);
+}
+.n2chat-window-status.is-online {
+  color: var(--n2-success);
+}
+.n2chat-icon-btn {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--n2-radius-xs);
+  background: none;
+  color: var(--n2-text-muted);
+  cursor: pointer;
+  transition: background var(--n2-transition), color var(--n2-transition);
+}
+.n2chat-icon-btn:hover {
+  background: var(--n2-glass-strong);
+  color: var(--n2-text);
+}
+
+/* JEDYNY element przewijany wewnątrz okna. */
+.n2chat-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-2);
+  padding: var(--n2-space-3);
+}
+.n2chat-older {
+  display: flex;
+  justify-content: center;
+}
+.n2chat-older-btn {
+  font-size: var(--n2-type-xs);
+}
+.n2chat-empty {
+  margin: auto 0;
+  text-align: center;
+  font-size: var(--n2-type-sm);
+  color: var(--n2-text-faint);
+}
+.n2chat-day {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-3);
+  margin: var(--n2-space-1) 0;
+  font-size: var(--n2-type-xs);
+  color: var(--n2-text-faint);
+}
+.n2chat-day::before,
+.n2chat-day::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--n2-border-soft);
+}
+.n2chat-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  max-width: 84%;
+  margin-right: auto;
+}
+.n2chat-group.is-mine {
+  align-items: flex-end;
+  margin-right: 0;
+  margin-left: auto;
+}
+.n2chat-author {
+  font-size: var(--n2-type-xs);
+  color: var(--n2-text-muted);
+  padding-left: var(--n2-space-2);
+}
+.n2chat-bubble-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: var(--n2-space-2) var(--n2-space-3);
+  border: 1px solid var(--n2-border-soft);
+  border-radius: var(--n2-radius-sm);
+  background: var(--n2-glass);
+  color: var(--n2-text);
+  font-size: var(--n2-type-sm);
+  line-height: var(--n2-line-body);
+  overflow-wrap: anywhere;
+}
+/* Moje dymki: gradient marki. Jasny koniec gradientu (`--n2-violet-soft`)
+   dawał 4,46:1 pod tekstem 13 px, więc druga barwa to ciemny `--n2-cosmos`. */
+.n2chat-group.is-mine .n2chat-bubble-msg {
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--n2-violet), var(--n2-cosmos));
+  color: var(--n2-lavender-mist);
+}
+.n2chat-bubble-msg.is-deleted .n2chat-msg-text {
+  font-style: italic;
+  color: var(--n2-text-faint);
+}
+.n2chat-msg-time {
+  align-self: flex-end;
+  font-family: var(--n2-font-data);
+  font-size: var(--n2-type-xs);
+  color: var(--n2-text-muted);
+}
+.n2chat-group.is-mine .n2chat-msg-time {
+  color: var(--n2-lavender-mist);
+}
+
+/* ---------- Kompozytor ---------- */
+.n2chat-composer {
+  border-top: 1px solid var(--n2-border);
+  padding: var(--n2-space-2) var(--n2-space-3) var(--n2-space-3);
+  background: var(--n2-glass);
+}
+.n2chat-typing {
+  margin: 0 0 var(--n2-space-1);
+  font-size: var(--n2-type-xs);
+  color: var(--n2-text-muted);
+}
+.n2chat-error {
+  margin: 0 0 var(--n2-space-1);
+  font-size: var(--n2-type-xs);
+  color: var(--n2-danger);
+}
+.n2chat-composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--n2-space-2);
+}
+.n2chat-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 36px;
+  max-height: 120px;
+  padding: var(--n2-space-2) var(--n2-space-3);
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-sm);
+  background: var(--n2-surface-muted);
+  color: var(--n2-text);
+  font: inherit;
+  font-size: var(--n2-type-sm);
+  line-height: var(--n2-line-body);
+  resize: none;
+  overflow-y: auto;
+}
+.n2chat-send {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--n2-radius-pill);
+  background: var(--n2-lavender);
+  color: var(--n2-night);
+  cursor: pointer;
+  transition: transform var(--n2-transition), background var(--n2-transition);
+}
+.n2chat-send:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: var(--n2-lavender-mist);
+}
+.n2chat-send:disabled {
+  background: var(--n2-glass-strong);
+  color: var(--n2-text-disabled);
+  cursor: default;
+}
+
+/* ---------- Popover lupy ---------- */
+.n2chat-popover {
+  position: absolute;
+  right: var(--n2-space-6);
+  bottom: calc(var(--n2-space-6) + 52px + var(--n2-space-3));
+  width: min(340px, calc(100vw - var(--n2-space-8)));
+  max-height: min(60vh, 480px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--n2-surface-strong);
+  border: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-md);
+  box-shadow: var(--n2-shadow-soft);
+}
+.n2chat-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+  padding: var(--n2-space-3);
+  border-bottom: 1px solid var(--n2-border);
+}
+.n2chat-search-icon {
+  flex: none;
+  color: var(--n2-text-muted);
+}
+.n2chat-search-input {
+  flex: 1;
+  min-width: 0;
+  padding: var(--n2-space-2) var(--n2-space-3);
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-sm);
+  background: var(--n2-surface-muted);
+  color: var(--n2-text);
+  font: inherit;
+  font-size: var(--n2-type-sm);
+}
+.n2chat-popover-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--n2-space-2);
+}
+.n2chat-section {
+  margin: var(--n2-space-2) 0 var(--n2-space-1);
+  padding: 0 var(--n2-space-2);
+  font-family: var(--n2-font-mono);
+  font-size: var(--n2-type-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--n2-text-muted);
+}
+.n2chat-row {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-3);
+  width: 100%;
+  padding: var(--n2-space-2);
+  border: none;
+  border-radius: var(--n2-radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--n2-transition);
+}
+.n2chat-row:hover:not(:disabled) {
+  background: var(--n2-glass);
+}
+.n2chat-row.is-active {
+  background: var(--n2-glass-strong);
+}
+.n2chat-row:disabled {
+  cursor: default;
+  color: var(--n2-text-disabled);
+}
+.n2chat-row-avatar {
+  position: relative;
+  flex: none;
+  display: inline-grid;
+}
+.n2chat-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.n2chat-row-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--n2-type-sm);
+  font-weight: 600;
+  color: var(--n2-text);
+}
+.n2chat-row-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--n2-type-xs);
+  color: var(--n2-text-muted);
+}
+.n2chat-row-meta {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--n2-space-1);
+}
+.n2chat-row-time {
+  font-family: var(--n2-font-data);
+  font-size: var(--n2-type-xs);
+  color: var(--n2-text-faint);
+}
+.n2chat-retry {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--n2-space-2);
+  padding: var(--n2-space-2);
+}
+/* Zastępnik listy na czas pierwszego wczytania. Puls jest wyłącznie
+   dekoracyjny i przy `--n2-motion: 0` po prostu nie startuje. */
+.n2chat-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-2);
+  padding: var(--n2-space-2);
+}
+.n2chat-skeleton span {
+  height: 34px;
+  border-radius: var(--n2-radius-sm);
+  background: var(--n2-glass);
+  animation: n2chat-skeleton-pulse calc(1400ms * var(--n2-motion)) ease-in-out infinite;
+}
+@keyframes n2chat-skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+.n2chat-popover-foot {
+  border-top: 1px solid var(--n2-border);
+  padding: var(--n2-space-2) var(--n2-space-3);
+}
+.n2chat-group-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+}
+
+/* ---------- Modal „Nowa grupa" ---------- */
+.n2chat-members {
+  border: none;
+  min-width: 0;
+  margin: 0 0 14px;
+  padding: 0;
+}
+.n2chat-members legend {
+  padding: 0 0 6px;
+  font-size: var(--n2-type-sm);
+  font-weight: 600;
+  color: var(--n2-text-soft);
+}
+.n2chat-member {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+  padding: var(--n2-space-1) 0;
+  font-size: var(--n2-type-sm);
+  cursor: pointer;
+}
+
+/* ---------- Telefon ----------
+   Kolumna wchodzi PONAD dolny pasek zakładek (jego wysokość niesie
+   `--n2-bottom-nav-h` plus bezpieczny obszar iOS-a), a okno rozmowy zajmuje
+   pełną szerokość ekranu. Otwarte okno chowa kolumnę: przy 320 px szerokości
+   bąbelki i tak leżałyby na dymkach. */
+@media (max-width: 760px) {
+  .n2chat-column {
+    right: var(--n2-space-4);
+    bottom: calc(var(--n2-bottom-nav-h) + env(safe-area-inset-bottom) + var(--n2-space-3));
+  }
+  .n2chat-dock.has-window .n2chat-column {
+    display: none;
+  }
+  .n2chat-window {
+    right: var(--n2-space-2);
+    left: var(--n2-space-2);
+    bottom: calc(var(--n2-bottom-nav-h) + env(safe-area-inset-bottom) + var(--n2-space-2));
+    width: auto;
+    height: min(70vh, 480px);
+  }
+  .n2chat-popover {
+    right: var(--n2-space-2);
+    left: var(--n2-space-2);
+    bottom: calc(
+      var(--n2-bottom-nav-h) + env(safe-area-inset-bottom) + 52px + var(--n2-space-5)
+    );
+    width: auto;
+  }
+  /* Cele dotykowe nagłówka i wysyłki rosną do wymaganych 44 px. */
+  .n2chat-icon-btn,
+  .n2chat-send {
+    width: 44px;
+    height: 44px;
+  }
 }

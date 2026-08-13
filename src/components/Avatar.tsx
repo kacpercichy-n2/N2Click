@@ -4,6 +4,19 @@ import { useAvatarUrls } from '../supabase/AvatarUrlsProvider';
 import { personColor } from '../utils/colors';
 
 /**
+ * Minimum tożsamości, jakiego potrzebuje awatar. `Person` spełnia ten kształt
+ * strukturalnie, więc `Avatar` to cienka nakładka — a konsumenci bez lokalnego
+ * `Person` (czat zna wyłącznie chmurowe profile) używają `AvatarBase` wprost,
+ * zamiast składać atrapę osoby albo kopiować markup.
+ */
+export interface AvatarIdentity {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+}
+
+/**
  * Person avatar: uploaded photo when available — explicit `photoUrl` prop
  * (profile page, świeżo po uploadzie) or the app-wide resolved map from
  * AvatarUrlsProvider (profiles.avatar_path) — otherwise initials on the
@@ -19,6 +32,19 @@ export function Avatar({
   size?: number;
   photoUrl?: string;
 }) {
+  return <AvatarBase identity={person} size={size} photoUrl={photoUrl} />;
+}
+
+export function AvatarBase({
+  identity,
+  size = 32,
+  photoUrl,
+}: {
+  identity: AvatarIdentity;
+  size?: number;
+  photoUrl?: string;
+}) {
+  const person = identity;
   const { byProfileId, byEmail } = useAvatarUrls();
   const resolvedPhoto =
     photoUrl ?? byProfileId.get(person.id) ?? byEmail.get(normalizeEmail(person.email));

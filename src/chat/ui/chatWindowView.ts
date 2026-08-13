@@ -1,0 +1,213 @@
+// Czysty model widoku okna rozmowy: grupowanie wiadomości, separatory dat,
+// tytuł/status nagłówka, wskaźnik pisania i stan kompozytora. Komponent
+// `ChatWindow.tsx` obok tylko to renderuje.
+import { polishCount } from '../../utils/polishPlural';
+import {
+  CHAT_MESSAGE_MAX_LENGTH,
+  type ChatConversation,
+  type ChatMessage,
+} from '../types';
+import {
+  conversationTitle,
+  isConversationOnline,
+  otherMemberIds,
+  personFirstName,
+  type ChatDirectory,
+} from './chatPeople';
+import { dayKey, formatClock, formatDaySeparator } from './chatTime';
+
+/** Wiadomości tego samego autora w tym oknie czasu sklejają się w jedną grupę. */
+export const MESSAGE_GROUP_WINDOW_MS = 5 * 60 * 1000;
+
+/** Tekst zastępczy miękko usuniętej wiadomości (renderowany kursywą). */
+export const DELETED_MESSAGE_TEXT = 'Wiadomość usunięta';
+
+export interface ChatMessageView {
+  id: string;
+  /** Treść albo '' dla wiadomości usuniętej (wtedy `deleted === true`). */
+  body: string;
+  deleted: boolean;
+  edited: boolean;
+  /** „14:05"; '' gdy znacznik nie do sparsowania. */
+  time: string;
+}
+
+export type ChatWindowItem =
+  | { kind: 'day'; key: string; label: string }
+  | {
+      kind: 'group';
+      key: string;
+      authorId: string;
+      authorName: string;
+      /** Autor to zalogowany użytkownik (dymek po prawej, gradient). */
+      mine: boolean;
+      /** Podpis autora nad dymkiem — tylko cudze wiadomości w grupie. */
+      showAuthor: boolean;
+      messages: ChatMessageView[];
+    };
+
+export interface WindowItemsInput {
+  messages: readonly ChatMessage[];
+  selfId: string | null;
+  directory: ChatDirectory;
+  /** Rozmowa grupowa: nad cudzym dymkiem staje imię autora. */
+  isGroup: boolean;
+  /** Dzisiejsza data 'yyyy-MM-dd' (wstrzykiwana — moduł zostaje czysty). */
+  todayStr: string;
+}
+
+function toMessageView(message: ChatMessage): ChatMessageView {
+  const deleted = message.deletedAt !== null;
+  return {
+    id: message.id,
+    body: deleted ? '' : message.body,
+    deleted,
+    edited: !deleted && message.editedAt !== null,
+    time: formatClock(message.createdAt),
+  };
+}
+
+/**
+ * Lista renderowalna: separator dnia przy każdej zmianie daty i grupy dymków
+ * jednego autora. Wejście przychodzi rosnąco (kontrakt rdzenia), więc lecimy
+ * jednym przebiegiem bez sortowania.
+ */
+export function buildWindowItems(input: WindowItemsInput): ChatWindowItem[] {
+  const items: ChatWindowItem[] = [];
+  let currentDay = '';
+  let openGroup: Extract<ChatWindowItem, { kind: 'group' }> | null = null;
+  let lastAt = 0;
+
+  for (const message of input.messages) {
+    const day = dayKey(message.createdAt);
+    const at = new Date(message.createdAt).getTime();
+    const validAt = Number.isFinite(at) ? at : 0;
+
+    if (day !== currentDay) {
+      currentDay = day;
+      openGroup = null;
+      items.push({
+        kind: 'day',
+        key: `day-${day}-${message.id}`,
+        label: formatDaySeparator(message.createdAt, input.todayStr),
+      });
+    }
+
+    const sameAuthor = openGroup !== null && openGroup.authorId === message.authorId;
+    const closeInTime = validAt - lastAt <= MESSAGE_GROUP_WINDOW_MS;
+    if (openGroup !== null && sameAuthor && closeInTime) {
+      openGroup.messages.push(toMessageView(message));
+    } else {
+      const mine = message.authorId === input.selfId;
+      openGroup = {
+        kind: 'group',
+        key: `group-${message.id}`,
+        authorId: message.authorId,
+        authorName: personFirstName(input.directory, message.authorId),
+        mine,
+        showAuthor: input.isGroup && !mine,
+        messages: [toMessageView(message)],
+      };
+      items.push(openGroup);
+    }
+    lastAt = validAt;
+  }
+
+  return items;
+}
+
+/** Tytuł nagłówka okna: nazwisko rozmówcy (DM) albo nazwa grupy. */
+export function windowTitle(
+  conversation: ChatConversation,
+  selfId: string | null,
+  directory: ChatDirectory,
+): string {
+  return conversationTitle(conversation, selfId, directory);
+}
+
+/**
+ * Podpis pod tytułem. DM: „Aktywna teraz" tylko gdy rozmówca jest online (brak
+ * obecności NIE jest twierdzeniem o kimś — kanał presence może po prostu nie
+ * dojechać, więc wtedy nie piszemy nic). Grupa zawsze niesie liczbę osób.
+ */
+export function windowSubtitle(
+  conversation: ChatConversation,
+  selfId: string | null,
+  presence: ReadonlySet<string>,
+): string {
+  const online = isConversationOnline(conversation, selfId, presence);
+  if (conversation.kind === 'direct') return online ? 'Aktywna teraz' : '';
+  const count = otherMemberIds(conversation, selfId).length + 1;
+  const people = `${count} ${polishCount(count, 'osoba', 'osoby', 'osób')}`;
+  return online ? `${people}, aktywna teraz` : people;
+}
+
+/** „Ola pisze…" / „Ola i Marek piszą…" / „Kilka osób pisze…"; '' gdy nikt. */
+export function typingLabel(
+  typingUserIds: readonly string[],
+  directory: ChatDirectory,
+): string {
+  const names = typingUserIds
+    .filter((userId) => userId !== '')
+    .map((userId) => personFirstName(directory, userId));
+  if (names.length === 0) return '';
+  if (names.length === 1) return `${names[0]} pisze…`;
+  if (names.length === 2) return `${names[0]} i ${names[1]} piszą…`;
+  return 'Kilka osób pisze…';
+}
+
+export interface ComposerState {
+  /** Treść po przycięciu — dokładnie to leci do `sendMessage`. */
+  value: string;
+  length: number;
+  canSend: boolean;
+  overLimit: boolean;
+  /** Polski komunikat pod polem; '' gdy wszystko w porządku. */
+  hint: string;
+}
+
+/** Stan kompozytora: pusty tekst i przekroczony limit blokują wysyłkę. */
+export function composerState(raw: string): ComposerState {
+  const value = raw.trim();
+  const length = raw.length;
+  const overLimit = length > CHAT_MESSAGE_MAX_LENGTH;
+  return {
+    value,
+    length,
+    canSend: value !== '' && !overLimit,
+    overLimit,
+    hint: overLimit
+      ? `Za długa wiadomość o ${length - CHAT_MESSAGE_MAX_LENGTH} ${polishCount(
+          length - CHAT_MESSAGE_MAX_LENGTH,
+          'znak',
+          'znaki',
+          'znaków',
+        )}.`
+      : '',
+  };
+}
+
+/** Enter wysyła, Shift+Enter robi nową linię (klawiatura kompozytora). */
+export function isSendKey(event: {
+  key: string;
+  shiftKey: boolean;
+  altKey?: boolean;
+  ctrlKey?: boolean;
+  metaKey?: boolean;
+  isComposing?: boolean;
+}): boolean {
+  if (event.key !== 'Enter') return false;
+  if (event.isComposing === true) return false;
+  return !event.shiftKey && event.altKey !== true && event.ctrlKey !== true && event.metaKey !== true;
+}
+
+/**
+ * Czy lista jest „przy dole". Nowa wiadomość dosuwa scroll TYLKO wtedy — kto
+ * czyta starsze, nie zostaje wyrzucony na dół w środku zdania.
+ */
+export function isNearBottom(
+  box: { scrollTop: number; scrollHeight: number; clientHeight: number },
+  slack = 80,
+): boolean {
+  return box.scrollHeight - box.scrollTop - box.clientHeight <= slack;
+}

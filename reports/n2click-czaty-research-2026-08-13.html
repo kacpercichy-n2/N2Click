@@ -1,0 +1,1390 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Czaty w N2Hub: research i rekomendacja</title>
+<style>
+/* ============ TOKENY ============ */
+:root{
+  --hr-bg:#f7f7f8; --hr-surface:#ffffff; --hr-surface-2:#eeeef0;
+  --hr-text:#1a1a1e; --hr-text-2:#55555e; --hr-border:#dcdce0;
+  --hr-accent:#6b21d6; --hr-accent-contrast:#ffffff;
+  --hr-ok:#1a7a3c; --hr-warn:#9a6700; --hr-crit:#b3261e;
+  --hr-ok-bg:#e2f3e8; --hr-warn-bg:#fbf0d8; --hr-crit-bg:#fbe3e1;
+  --hr-code-bg:#101014; --hr-code-text:#e6e6ea;
+  --hr-radius:10px; --hr-radius-s:6px;
+  --hr-shadow:0 1px 3px rgba(0,0,0,.08),0 4px 16px rgba(0,0,0,.06);
+  --z-base:0; --z-raised:10; --z-sticky:20; --z-overlay:30;
+  --hr-font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --hr-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --hr-bg:#131316; --hr-surface:#1c1c21; --hr-surface-2:#26262c;
+    --hr-text:#ececf0; --hr-text-2:#9c9ca6; --hr-border:#33333a;
+    --hr-accent:#c496ff; --hr-accent-contrast:#10101c;
+    --hr-ok:#5fc98a; --hr-warn:#e3b341; --hr-crit:#f2857d;
+    --hr-ok-bg:#12281a; --hr-warn-bg:#2b2110; --hr-crit-bg:#321a18;
+    --hr-code-bg:#0b0b0e; --hr-code-text:#dcdce2;
+    --hr-shadow:0 1px 3px rgba(0,0,0,.4),0 4px 16px rgba(0,0,0,.3);
+  }
+}
+:root[data-theme="dark"]{
+  --hr-bg:#131316; --hr-surface:#1c1c21; --hr-surface-2:#26262c;
+  --hr-text:#ececf0; --hr-text-2:#9c9ca6; --hr-border:#33333a;
+  --hr-accent:#c496ff; --hr-accent-contrast:#10101c;
+  --hr-ok:#5fc98a; --hr-warn:#e3b341; --hr-crit:#f2857d;
+  --hr-ok-bg:#12281a; --hr-warn-bg:#2b2110; --hr-crit-bg:#321a18;
+  --hr-code-bg:#0b0b0e; --hr-code-text:#dcdce2;
+  --hr-shadow:0 1px 3px rgba(0,0,0,.4),0 4px 16px rgba(0,0,0,.3);
+}
+
+/* ============ BAZA ============ */
+body{margin:0;background:var(--hr-bg);color:var(--hr-text);
+  font-family:var(--hr-font);font-size:16px;line-height:1.6;
+  -webkit-font-smoothing:antialiased;}
+.hr-report{max-width:960px;margin:0 auto;padding:32px 20px 80px;}
+.hr-report img{max-width:100%;height:auto;}
+.hr-report h1{font-size:1.9rem;line-height:1.25;margin:0 0 4px;letter-spacing:-.01em;}
+.hr-report h2{font-size:1.35rem;margin:2.2em 0 .6em;padding-top:.6em;border-top:1px solid var(--hr-border);}
+.hr-report h3{font-size:1.05rem;margin:1.6em 0 .5em;}
+.hr-report h4{font-size:.95rem;margin:1.2em 0 .4em;}
+.hr-report a{color:var(--hr-accent);}
+.hr-meta{color:var(--hr-text-2);font-size:.9rem;margin-bottom:28px;}
+.hr-report ul,.hr-report ol{padding-left:1.3em;}
+.hr-report li{margin:.25em 0;}
+.hr-eyebrow{font-size:.72rem;text-transform:uppercase;letter-spacing:.12em;
+  color:var(--hr-text-2);font-family:var(--hr-mono);}
+
+/* TL;DR */
+.hr-tldr{background:var(--hr-surface);border:1px solid var(--hr-border);
+  border-left:4px solid var(--hr-accent);border-radius:var(--hr-radius);
+  padding:16px 20px;margin:0 0 24px;box-shadow:var(--hr-shadow);}
+.hr-tldr strong{display:block;font-size:.8rem;text-transform:uppercase;
+  letter-spacing:.06em;color:var(--hr-text-2);margin-bottom:6px;}
+
+/* KPI */
+.hr-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:12px;margin:0 0 28px;}
+.hr-kpi{background:var(--hr-surface);border:1px solid var(--hr-border);
+  border-radius:var(--hr-radius);padding:14px 16px;}
+.hr-kpi .v{font-size:1.7rem;font-weight:700;line-height:1.2;font-variant-numeric:tabular-nums;}
+.hr-kpi .l{font-size:.82rem;color:var(--hr-text-2);}
+.hr-kpi.ok .v{color:var(--hr-ok);} .hr-kpi.warn .v{color:var(--hr-warn);} .hr-kpi.crit .v{color:var(--hr-crit);}
+
+/* Severity */
+.hr-sev{display:inline-block;font-size:.74rem;font-weight:700;
+  text-transform:uppercase;letter-spacing:.05em;padding:2px 8px;
+  border-radius:999px;vertical-align:middle;}
+.hr-sev.crit{background:var(--hr-crit-bg);color:var(--hr-crit);}
+.hr-sev.warn{background:var(--hr-warn-bg);color:var(--hr-warn);}
+.hr-sev.ok{background:var(--hr-ok-bg);color:var(--hr-ok);}
+.hr-sev.info{background:var(--hr-surface-2);color:var(--hr-text-2);}
+
+/* Finding */
+.hr-finding{background:var(--hr-surface);border:1px solid var(--hr-border);
+  border-radius:var(--hr-radius);margin:0 0 12px;overflow:hidden;}
+.hr-finding>summary{list-style:none;cursor:pointer;padding:14px 18px;
+  display:flex;gap:10px;align-items:baseline;font-weight:600;}
+.hr-finding>summary::-webkit-details-marker{display:none;}
+.hr-finding>summary::after{content:"+";margin-left:auto;color:var(--hr-text-2);
+  font-weight:400;font-size:1.1rem;}
+.hr-finding[open]>summary::after{content:"−";}
+.hr-finding .hr-body{padding:0 18px 16px;color:var(--hr-text);}
+.hr-finding .hr-loc{font-family:var(--hr-mono);font-size:.82rem;color:var(--hr-text-2);}
+
+/* Terminal / kod */
+.hr-term{background:var(--hr-code-bg);color:var(--hr-code-text);
+  font-family:var(--hr-mono);font-size:.8rem;line-height:1.6;
+  border-radius:var(--hr-radius-s);padding:14px 16px;overflow-x:auto;
+  white-space:pre;margin:.6em 0 1.2em;}
+.hr-term .a-red{color:#ff7b72;} .hr-term .a-green{color:#7ee787;}
+.hr-term .a-yellow{color:#e3b341;} .hr-term .a-blue{color:#79c0ff;}
+.hr-term .a-violet{color:#d2a8ff;} .hr-term .a-dim{opacity:.55;}
+.hr-report code{font-family:var(--hr-mono);font-size:.86em;
+  background:var(--hr-surface-2);padding:1px 5px;border-radius:4px;}
+.hr-term code{background:none;padding:0;}
+
+/* Tabela */
+.hr-tablewrap{overflow-x:auto;margin:.6em 0 1.4em;}
+.hr-report table{border-collapse:collapse;width:100%;font-size:.92rem;}
+.hr-report th{text-align:left;font-size:.78rem;text-transform:uppercase;
+  letter-spacing:.05em;color:var(--hr-text-2);border-bottom:2px solid var(--hr-border);
+  padding:8px 12px;}
+.hr-report td{border-bottom:1px solid var(--hr-border);padding:9px 12px;vertical-align:top;}
+.hr-report td b{font-weight:700;}
+
+/* Figury */
+.hr-report figure{margin:1em 0;}
+.hr-report figcaption{font-size:.85rem;color:var(--hr-text-2);margin-top:6px;}
+
+/* Szerokie figury z makietami. Selektor MUSI być mocniejszy niż `.hr-report figure`,
+   bo tamten skrót `margin:1em 0` zeruje margin-left i figura ucieka w lewo. */
+.hr-report figure.hr-wide{width:min(1180px,94vw);margin:1.4em 0 1.4em 50%;
+  transform:translateX(-50%);}
+
+/* Panel decyzji */
+.hr-review{margin-top:14px;padding:12px 14px;background:var(--hr-surface-2);
+  border:1px dashed var(--hr-border);border-radius:var(--hr-radius-s);}
+.hr-rev-opts{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;}
+.hr-rev-opts button{font:inherit;font-size:.82rem;font-weight:650;padding:5px 14px;cursor:pointer;
+  border:1px solid var(--hr-border);border-radius:999px;background:var(--hr-surface);color:var(--hr-text);}
+.hr-rev-opts button:focus-visible{outline:2px solid var(--hr-accent);outline-offset:2px;}
+.hr-rev-opts button[data-dec="akceptuje"][aria-pressed="true"]{background:var(--hr-ok);border-color:var(--hr-ok);color:#fff;}
+.hr-rev-opts button[data-dec="odrzucam"][aria-pressed="true"]{background:var(--hr-crit);border-color:var(--hr-crit);color:#fff;}
+.hr-rev-opts button[data-dec="omowic"][aria-pressed="true"]{background:var(--hr-warn);border-color:var(--hr-warn);color:#fff;}
+.hr-review textarea{width:100%;box-sizing:border-box;font:inherit;font-size:.86rem;min-height:40px;
+  padding:8px 10px;border:1px solid var(--hr-border);border-radius:var(--hr-radius-s);
+  background:var(--hr-surface);color:var(--hr-text);resize:vertical;}
+.hr-decyzje{background:var(--hr-surface);border:1px solid var(--hr-border);border-radius:var(--hr-radius);
+  padding:16px 18px;margin:1em 0;}
+.hr-decyzje .hr-dec-stats{display:flex;gap:14px;flex-wrap:wrap;font-size:.9rem;margin:0 0 10px;}
+.hr-decyzje pre{background:var(--hr-code-bg);color:var(--hr-code-text);font-family:var(--hr-mono);
+  font-size:.78rem;line-height:1.55;border-radius:var(--hr-radius-s);padding:14px;overflow-x:auto;
+  white-space:pre-wrap;max-height:420px;overflow-y:auto;}
+.hr-decyzje .hr-dec-actions{display:flex;gap:10px;align-items:center;margin-top:10px;}
+.hr-decyzje .hr-dec-actions button{font:inherit;font-size:.88rem;font-weight:650;padding:8px 18px;
+  cursor:pointer;border:1px solid var(--hr-accent);border-radius:999px;
+  background:var(--hr-accent);color:var(--hr-accent-contrast);}
+.hr-decyzje [role="status"]{font-size:.82rem;color:var(--hr-ok);}
+
+/* ============ RAMKA PRZEGLĄDARKI ============ */
+.hr-dev{margin:0;display:flex;flex-direction:column;align-items:center;}
+.hr-dev figcaption{margin-top:12px;font-size:.85rem;color:var(--hr-text-2);
+  line-height:1.5;text-align:left;align-self:stretch;}
+.hr-browser{--hr-br-w:100%;width:var(--hr-br-w);
+  border-radius:12px;overflow:hidden;background:#1a1a1f;
+  box-shadow:0 2px 6px rgba(0,0,0,.2),0 20px 46px rgba(0,0,0,.22);}
+.hr-br-chrome{height:34px;display:flex;align-items:center;gap:8px;
+  padding:0 12px;background:#26262c;}
+.hr-br-dots{display:flex;gap:6px;}
+.hr-br-dots i{width:10px;height:10px;border-radius:50%;background:#48484f;}
+.hr-br-url{flex:1;height:20px;border-radius:999px;background:#141418;
+  display:flex;align-items:center;padding:0 10px;
+  font-size:11px;color:#8b848a;font-family:var(--hr-mono);}
+.hr-br-screen{aspect-ratio:16/10;overflow:hidden;background:var(--app-bg,#fff);
+  color:var(--app-ink,#111);display:flex;flex-direction:column;}
+
+/* ============ MAKIETA N2HUB (tokeny z src/styles.css) ============ */
+.mk{--v:#7000ff;--vs:#8f45ff;--lav:#c496ff;--ink:#fbf8ff;
+  --soft:rgba(251,248,255,.72);--mut:rgba(251,248,255,.5);--faint:rgba(251,248,255,.4);
+  --line:rgba(255,255,255,.1);--line-s:rgba(255,255,255,.06);
+  --glass:rgba(255,255,255,.07);--glass-2:rgba(255,255,255,.11);
+  --ok:#b9ff4d;--warn:#ffc857;--info:#5bdcff;--danger:#ff4f72;
+  position:relative;display:flex;flex:1;min-height:0;width:100%;
+  background:#010101;color:var(--ink);
+  font-family:var(--hr-font);font-size:12px;line-height:1.4;overflow:hidden;}
+.mk *{box-sizing:border-box;}
+
+/* Sidebar aplikacji */
+.mk-side{width:158px;flex:none;background:#111113;border-right:1px solid var(--line-s);
+  padding:14px 10px;display:flex;flex-direction:column;gap:3px;}
+.mk-logo{font-weight:800;letter-spacing:.16em;font-size:11px;color:var(--lav);
+  padding:0 8px;margin-bottom:14px;}
+.mk-nav{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:9px;
+  color:var(--mut);font-size:11px;white-space:nowrap;}
+.mk-nav.on{background:rgba(112,0,255,.24);color:var(--ink);
+  box-shadow:inset 0 0 0 1px rgba(196,150,255,.3);font-weight:650;}
+.mk-nav i{width:12px;height:12px;border-radius:4px;background:currentColor;
+  opacity:.55;flex:none;display:block;}
+.mk-nav.on i{opacity:1;background:var(--lav);}
+.mk-side-foot{margin-top:auto;display:flex;align-items:center;gap:8px;padding:8px;
+  border-top:1px solid var(--line-s);font-size:10px;color:var(--mut);}
+
+/* Główna kolumna */
+.mk-main{flex:1;min-width:0;display:flex;flex-direction:column;}
+.mk-top{height:42px;flex:none;display:flex;align-items:center;gap:12px;
+  padding:0 16px;border-bottom:1px solid var(--line-s);background:rgba(23,23,25,.6);}
+.mk-h1{font-size:14px;font-weight:750;letter-spacing:-.01em;}
+.mk-crumb{font-size:10px;color:var(--faint);}
+.mk-search{margin-left:auto;width:170px;height:24px;border-radius:999px;
+  background:var(--glass);border:1px solid var(--line);
+  display:flex;align-items:center;padding:0 10px;font-size:10px;color:var(--faint);}
+.mk-bell{width:24px;height:24px;border-radius:50%;background:var(--glass);
+  border:1px solid var(--line);flex:none;position:relative;}
+.mk-bell::after{content:"";position:absolute;top:3px;right:3px;width:6px;height:6px;
+  border-radius:50%;background:var(--danger);}
+.mk-body{flex:1;min-height:0;padding:14px 16px;display:flex;gap:12px;overflow:hidden;}
+
+/* Awatary */
+.mk-av{border-radius:50%;flex:none;display:grid;place-items:center;
+  font-size:9px;font-weight:750;color:#08070a;letter-spacing:.02em;
+  width:26px;height:26px;background:linear-gradient(140deg,var(--vs),var(--lav));}
+.mk-av.s{width:20px;height:20px;font-size:8px;}
+.mk-av.l{width:32px;height:32px;font-size:11px;}
+.mk-av.c2{background:linear-gradient(140deg,#5bdcff,#7000ff);color:#fbf8ff;}
+.mk-av.c3{background:linear-gradient(140deg,#b9ff4d,#5bdcff);}
+.mk-av.c4{background:linear-gradient(140deg,#ffc857,#ff4f72);}
+.mk-av.c5{background:linear-gradient(140deg,#ff4f72,#7000ff);color:#fbf8ff;}
+.mk-avwrap{position:relative;flex:none;}
+.mk-pres{position:absolute;right:-1px;bottom:-1px;width:9px;height:9px;border-radius:50%;
+  background:var(--ok);border:2px solid #141418;}
+.mk-pres.away{background:var(--warn);}
+.mk-pres.off{background:#5a5a63;}
+
+/* Kanban / karty w tle */
+.mk-col{flex:1;min-width:0;background:rgba(255,255,255,.035);border:1px solid var(--line-s);
+  border-radius:14px;padding:10px;display:flex;flex-direction:column;gap:8px;}
+.mk-col-h{display:flex;align-items:center;gap:6px;font-size:10px;
+  text-transform:uppercase;letter-spacing:.08em;color:var(--mut);font-weight:700;}
+.mk-count{margin-left:auto;font-size:9px;background:var(--glass);border-radius:999px;padding:1px 6px;color:var(--soft);}
+.mk-card{background:rgba(255,255,255,.05);border:1px solid var(--line-s);
+  border-radius:11px;padding:9px 10px;display:flex;flex-direction:column;gap:6px;}
+.mk-card-t{font-size:10.5px;font-weight:600;color:var(--soft);line-height:1.3;}
+.mk-chip{display:inline-flex;align-items:center;gap:4px;font-size:8.5px;font-weight:700;
+  letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:999px;
+  background:rgba(196,150,255,.16);color:var(--lav);}
+.mk-chip.ok{background:rgba(185,255,77,.16);color:var(--ok);}
+.mk-chip.warn{background:rgba(255,200,87,.16);color:var(--warn);}
+.mk-chip.info{background:rgba(91,220,255,.14);color:var(--info);}
+.mk-row{display:flex;align-items:center;gap:6px;}
+.mk-line{height:5px;border-radius:999px;background:rgba(251,248,255,.14);}
+
+/* ============ CZAT: wspólne ============ */
+.mk-dock{position:absolute;right:60px;bottom:0;display:flex;align-items:flex-end;
+  gap:10px;z-index:5;}
+.mk-rail{position:absolute;top:0;right:0;bottom:0;width:52px;z-index:6;
+  background:rgba(20,20,24,.94);
+  border-left:1px solid var(--line-s);display:flex;flex-direction:column;
+  align-items:center;gap:10px;padding:12px 0;}
+.mk-rail-h{font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);}
+.mk-rail .mk-avwrap{cursor:default;}
+.mk-badge{position:absolute;top:-4px;right:-5px;min-width:15px;height:15px;padding:0 4px;
+  border-radius:999px;background:var(--danger);color:#fff;font-size:8.5px;font-weight:800;
+  display:grid;place-items:center;border:2px solid #141418;}
+
+.mk-win{width:268px;background:#161619;border:1px solid rgba(196,150,255,.2);
+  border-bottom:none;border-radius:14px 14px 0 0;display:flex;flex-direction:column;
+  box-shadow:0 -10px 40px rgba(0,0,0,.55),0 0 0 1px rgba(0,0,0,.4);overflow:hidden;}
+.mk-win.h{height:344px;}
+.mk-win-h{flex:none;height:38px;display:flex;align-items:center;gap:8px;padding:0 10px;
+  background:linear-gradient(180deg,rgba(112,0,255,.22),rgba(112,0,255,.06));
+  border-bottom:1px solid var(--line-s);}
+.mk-win-name{font-size:11px;font-weight:700;line-height:1.15;}
+.mk-win-sub{font-size:8.5px;color:var(--mut);}
+.mk-win-acts{margin-left:auto;display:flex;gap:8px;color:var(--mut);font-size:11px;}
+.mk-msgs{flex:1;min-height:0;padding:10px;display:flex;flex-direction:column;
+  justify-content:flex-end;gap:6px;overflow:hidden;}
+.mk-day{align-self:center;font-size:8.5px;color:var(--faint);background:var(--glass);
+  padding:2px 9px;border-radius:999px;}
+.mk-bub{max-width:80%;padding:6px 9px;border-radius:14px;font-size:10.5px;
+  line-height:1.4;background:rgba(255,255,255,.07);border:1px solid var(--line-s);
+  align-self:flex-start;border-bottom-left-radius:5px;color:var(--ink);}
+.mk-bub.me{align-self:flex-end;background:linear-gradient(140deg,var(--v),var(--vs));
+  border-color:transparent;border-bottom-left-radius:14px;border-bottom-right-radius:5px;}
+.mk-bub .who{display:block;font-size:8.5px;color:var(--lav);font-weight:700;margin-bottom:2px;}
+.mk-meta{align-self:flex-end;font-size:8px;color:var(--faint);margin-top:-3px;}
+.mk-typing{align-self:flex-start;display:flex;align-items:center;gap:4px;
+  font-size:9px;color:var(--mut);padding:4px 9px;background:var(--glass);border-radius:999px;}
+.mk-typing b{width:4px;height:4px;border-radius:50%;background:var(--lav);display:block;}
+.mk-comp{flex:none;margin:0 10px 10px;height:30px;border-radius:999px;background:var(--glass);
+  border:1px solid var(--line);display:flex;align-items:center;gap:8px;
+  padding:0 10px;font-size:10px;color:var(--faint);}
+.mk-comp .send{margin-left:auto;width:20px;height:20px;border-radius:50%;
+  background:var(--v);display:grid;place-items:center;color:#fff;font-size:9px;}
+.mk-min{width:196px;height:38px;background:#161619;border:1px solid var(--line);
+  border-bottom:none;border-radius:12px 12px 0 0;display:flex;align-items:center;
+  gap:8px;padding:0 10px;box-shadow:0 -6px 20px rgba(0,0,0,.4);}
+
+/* Szuflada */
+.mk-drawer{position:absolute;top:42px;right:0;bottom:0;width:340px;background:#141417;
+  border-left:1px solid rgba(196,150,255,.18);display:flex;flex-direction:column;
+  box-shadow:-24px 0 60px rgba(0,0,0,.5);z-index:5;}
+.mk-drawer-h{flex:none;height:42px;display:flex;align-items:center;gap:8px;
+  padding:0 12px;border-bottom:1px solid var(--line-s);font-size:12px;font-weight:750;}
+.mk-back{font-size:10px;color:var(--lav);font-weight:600;}
+.mk-conv{display:flex;align-items:center;gap:9px;padding:8px 12px;}
+.mk-conv.on{background:rgba(112,0,255,.16);
+  box-shadow:inset 2px 0 0 var(--lav);}
+.mk-conv-t{font-size:11px;font-weight:650;line-height:1.2;}
+.mk-conv-s{font-size:9.5px;color:var(--mut);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;max-width:180px;}
+.mk-conv-r{margin-left:auto;text-align:right;display:flex;flex-direction:column;
+  align-items:flex-end;gap:3px;}
+.mk-time{font-size:8.5px;color:var(--faint);}
+.mk-pill{min-width:16px;height:16px;padding:0 5px;border-radius:999px;background:var(--v);
+  color:#fff;font-size:8.5px;font-weight:800;display:grid;place-items:center;}
+
+/* Bąbelki */
+.mk-heads{position:absolute;right:14px;bottom:14px;display:flex;flex-direction:column;
+  gap:9px;z-index:6;}
+.mk-head{position:relative;}
+.mk-head .mk-av{width:38px;height:38px;font-size:12px;
+  box-shadow:0 8px 24px rgba(0,0,0,.55),0 0 0 2px rgba(196,150,255,.28);}
+
+/* Pełna strona wiadomości */
+.mk-msgpage{flex:1;min-height:0;display:flex;overflow:hidden;}
+.mk-list{width:250px;flex:none;border-right:1px solid var(--line-s);
+  display:flex;flex-direction:column;background:rgba(17,17,19,.7);}
+.mk-list-h{height:42px;flex:none;display:flex;align-items:center;gap:8px;padding:0 12px;
+  border-bottom:1px solid var(--line-s);}
+.mk-thread{flex:1;min-width:0;display:flex;flex-direction:column;}
+.mk-thread-h{height:48px;flex:none;display:flex;align-items:center;gap:10px;
+  padding:0 14px;border-bottom:1px solid var(--line-s);}
+.mk-info{width:212px;flex:none;border-left:1px solid var(--line-s);padding:14px 12px;
+  display:flex;flex-direction:column;gap:10px;background:rgba(17,17,19,.7);}
+.mk-info-h{font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--faint);
+  font-weight:700;}
+.mk-thread .mk-msgs{gap:8px;padding:14px;}
+.mk-thread .mk-bub{max-width:62%;font-size:11px;}
+.mk-thread .mk-comp{margin:0 14px 14px;height:36px;font-size:11px;}
+
+/* Panel kontekstowy przy encji */
+.mk-ctx{width:290px;flex:none;background:rgba(20,20,24,.9);border:1px solid rgba(196,150,255,.18);
+  border-radius:14px;display:flex;flex-direction:column;overflow:hidden;}
+.mk-ctx-h{flex:none;padding:10px 12px;border-bottom:1px solid var(--line-s);
+  display:flex;align-items:center;gap:8px;}
+.mk-tabs{display:flex;gap:4px;padding:8px 12px 0;}
+.mk-tab{font-size:9.5px;font-weight:650;padding:4px 9px;border-radius:999px;
+  color:var(--mut);background:var(--glass);}
+.mk-tab.on{background:rgba(112,0,255,.28);color:var(--ink);
+  box-shadow:inset 0 0 0 1px rgba(196,150,255,.32);}
+
+@media (max-width:820px){
+  .hr-report figure.hr-wide{width:100%;margin-left:0;transform:none;}
+  .mk{font-size:10px;}
+  .mk-side{width:118px;}
+  .mk-win{width:200px;}
+  .mk-drawer{width:240px;}
+}
+
+/* Print */
+@media print{
+  body{background:#fff;color:#000;}
+  .hr-finding{page-break-inside:avoid;}
+  .hr-term{white-space:pre-wrap;}
+  .hr-report figure.hr-wide{width:100%;margin-left:0;transform:none;}
+}
+</style>
+</head>
+<body>
+<div class="hr-report">
+
+<header>
+  <h1>Czaty w N2Hub: research, rekomendacja i 5 makiet</h1>
+  <p class="hr-meta">N2Click / N2Hub Planner · 2026-08-13 · research rynku open source, architektura na istniejącej bazie, makiety UI</p>
+</header>
+
+<section class="hr-tldr">
+  <strong>TL;DR</strong>
+  Nie instalujemy żadnego serwera czatu. Wszystkie sensowne rozwiązania open source (Rocket.Chat, Mattermost, Matrix, Tinode, Zulip) przynoszą <b>drugą bazę i drugą tożsamość</b>, a my mamy już Supabase z <code>core.app_access</code>, JWT z rolami i działającym Realtime w produkcji. Rekomendacja: 4 tabele w schemacie <code>n2click</code>, transport przez <b>Realtime Broadcast z bazy</b> (nie postgres_changes, powód niżej jest twardy i dotyczy naszego kodu), własne komponenty na naszych tokenach CSS. MVP z DM i historią: 3 do 4 dni. Pełny zakres z grupami, stroną wiadomości i wyszukiwaniem: 8 do 11 dni. Do wyboru masz 5 wariantów UI, rekomendowany jest wariant 1 plus 4.
+</section>
+
+<section class="hr-kpis">
+  <div class="hr-kpi ok"><div class="v">0</div><div class="l">Nowych serwerów do utrzymania</div></div>
+  <div class="hr-kpi"><div class="v">4</div><div class="l">Nowe tabele w <code>n2click</code></div></div>
+  <div class="hr-kpi"><div class="v">14</div><div class="l">Profili w bazie, realna skala czatu</div></div>
+  <div class="hr-kpi warn"><div class="v">1</div><div class="l">Mina w istniejącym kodzie (niżej)</div></div>
+  <div class="hr-kpi"><div class="v">3-4 dni</div><div class="l">MVP: DM, historia, nieprzeczytane</div></div>
+</section>
+
+<h2>01. Research: co jest na rynku i dlaczego tego nie bierzemy</h2>
+
+<p>Reguła „nie wymyślaj koła od nowa” działa tu w obie strony. Gotowy serwer czatu wygrywa, kiedy budujesz komunikator. Przegrywa, kiedy dokładasz czat do aplikacji, która <b>już ma</b> konta, role, firmy, awatary, RLS i kanał realtime. N2Hub jest w tym drugim przypadku, więc kryterium numer jeden brzmi: ile nowej tożsamości i ile nowej infrastruktury to wnosi.</p>
+
+<h3>Kategoria A: gotowe serwery czatu (self-hosted)</h3>
+
+<div class="hr-tablewrap">
+<table>
+  <thead><tr><th>Rozwiązanie</th><th>Licencja i stack</th><th>Co daje</th><th>Werdykt</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>Rocket.Chat CE</b></td>
+      <td>MIT, Node.js + MongoDB</td>
+      <td>Kompletny Slack: DM, kanały, wątki, wideo, omnichannel. Najbardziej permisywna licencja z całej stawki, 180+ uprawnień, pełny white label, embed przez iframe i REST/Realtime API.</td>
+      <td><span class="hr-sev crit">Odrzucone</span> Druga baza (MongoDB), drugi deployment, most SSO do naszego Supabase Auth, synchronizacja 14 kont w dwie strony. Ciężki stack pod czat dla kilkunastu osób.</td>
+    </tr>
+    <tr>
+      <td><b>Mattermost</b></td>
+      <td>Go + PostgreSQL, brak wieczystej darmowej edycji community od 2025</td>
+      <td>Lekki jak na tę klasę, świetne integracje DevOps, mógłby dzielić serwer Postgresa.</td>
+      <td><span class="hr-sev crit">Odrzucone</span> Dzieli silnik bazy, ale nie schemat i nie tożsamość. Nadal osobna aplikacja, osobne konta, osobne backupy. Zmiana licencjonowania to dodatkowe ryzyko.</td>
+    </tr>
+    <tr>
+      <td><b>Matrix (Synapse / Dendrite) + Element</b></td>
+      <td>Apache 2.0, Python albo Go</td>
+      <td>Federacja, E2EE, dojrzały protokół, <code>matrix-js-sdk</code> do wbudowania klienta.</td>
+      <td><span class="hr-sev crit">Odrzucone</span> Przerost formy. 4 GB+ RAM przy federacji, własny model tożsamości i pokoi, protokół, którego złożoność zapłacimy przy każdej zmianie UI.</td>
+    </tr>
+    <tr>
+      <td><b>Tinode</b></td>
+      <td>GPL-3.0, Go, wspiera PostgreSQL</td>
+      <td>Lekki, nowoczesny, ma grupy, kanały, wideo. Backend dałoby się posadzić na naszym Postgresie.</td>
+      <td><span class="hr-sev crit">Odrzucone</span> GPL-3.0 na serwerze plus osobny proces, osobne konta i własny schemat obok naszego. Sensowne jako gotowy komunikator, bezsensowne jako moduł N2Huba.</td>
+    </tr>
+    <tr>
+      <td><b>Zulip, Revolt, Let's Chat</b></td>
+      <td>Apache 2.0 / AGPL</td>
+      <td>Wątki w Zulipie są najlepsze w tej klasie.</td>
+      <td><span class="hr-sev info">Poza zakresem</span> Ten sam problem co wyżej, bez przewag, które by go zniosły.</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Kategoria B: SaaS z gotowym SDK</h3>
+
+<p>Stream Chat, Sendbird, CometChat, TalkJS, Ably Chat. Komponenty React są dopracowane i to jest realny benchmark UX, ale backend jest zamknięty, rozmowy firmowe lądują u dostawcy, a rozliczenie idzie per aktywny użytkownik. Prosiłeś o open source, więc odpada z definicji, natomiast <code>stream-chat-react</code> zostaje jako <b>wzorzec funkcjonalny</b>: stany wysyłki wiadomości, grupowanie po autorze, wirtualizacja listy, obsługa rozjazdu zegara.</p>
+
+<h3>Kategoria C: sam transport realtime</h3>
+
+<p>Centrifugo (MIT, Go), Soketi (kompatybilny z Pusherem), Socket.IO. Wszystkie dobre i wszystkie zbędne: <b>Supabase Realtime już działa w tym repo</b>. <code>src/supabase/CloudSyncProvider.tsx:635</code> trzyma kanał <code>planner-live-&lt;userId&gt;</code> i nasłuchuje zmian w schematach <code>n2click</code> oraz <code>core</code>. Dokładanie drugiego transportu to drugi WebSocket, drugi cykl życia i drugie miejsce, w którym można zapomnieć o sprzątaniu subskrypcji.</p>
+
+<h3>Kategoria D: biblioteki komponentów UI</h3>
+
+<div class="hr-tablewrap">
+<table>
+  <thead><tr><th>Biblioteka</th><th>Stan na 2026-08</th><th>Werdykt dla N2Huba</th></tr></thead>
+  <tbody>
+    <tr><td><b>@chatscope/chat-ui-kit-react</b></td><td>MIT, ok. 1,8k gwiazdek, ostatnie wydanie 2.1.1 sprzed roku</td><td><span class="hr-sev warn">Referencja</span> Wnosi własny system stylów i własny theming. Nasz CLAUDE.md zabrania frameworków UI, a cały wygląd siedzi na tokenach <code>--n2-*</code>. Bierzemy wzorce, nie zależność.</td></tr>
+    <tr><td><b>react-chat-elements</b></td><td>MIT, ok. 970 gwiazdek, ostatni commit sprzed roku, 41 otwartych zgłoszeń</td><td><span class="hr-sev crit">Odrzucone</span> Praktycznie nieutrzymywane.</td></tr>
+    <tr><td><b>Supabase UI Library, blok „Realtime Chat”</b></td><td>Aktywny, ale shadcn/ui + Tailwind</td><td><span class="hr-sev ok">Wzorzec kodu</span> Najbardziej wartościowe znalezisko: pokazuje dokładnie ten sam model transportu, który rekomenduję (Broadcast, kanał na pokój). Uwaga, blok <b>nie zapisuje wiadomości</b>, persystencję trzeba dopisać samemu. My przepisujemy logikę na plain CSS.</td></tr>
+    <tr><td><b>shadcn.io „messenger style chat”</b></td><td>Aktywny, Tailwind</td><td><span class="hr-sev info">Inspiracja wizualna</span> Do podejrzenia proporcji dymków i nagłówka okna.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Co realnie bierzemy z rynku</h3>
+<ul>
+  <li><b>Model danych</b> ze slack-clone Supabase, rozszerzony o rozmowy 1:1 i grupy (oryginał ma tylko kanały publiczne).</li>
+  <li><b>Broadcast z bazy</b> przez trigger i <code>realtime.broadcast_changes()</code>, czyli oficjalnie rekomendowany przez Supabase następca <code>postgres_changes</code>.</li>
+  <li><b>RLS na <code>realtime.messages</code></b> jako mechanizm autoryzacji kanałów prywatnych, zamiast pilnowania dostępu w kliencie.</li>
+  <li><b>Paginację kursorową</b> po <code>(created_at, id)</code>, nigdy offsetową.</li>
+  <li><b>Funkcję pomocniczą SECURITY DEFINER</b>, żeby polityka na tabeli członków nie wpadła w rekursję. Ten wzorzec mamy już u siebie: w schemacie <code>app</code> żyje 21 takich funkcji, w tym <code>app.is_project_member</code>.</li>
+</ul>
+
+<h2>02. Rekomendowana architektura</h2>
+
+<p class="hr-eyebrow">Warstwa po warstwie</p>
+
+<div class="hr-tablewrap">
+<table>
+  <thead><tr><th>Warstwa</th><th>Rozwiązanie</th><th>Dlaczego tak</th></tr></thead>
+  <tbody>
+    <tr><td>Dane</td><td>4 tabele w schemacie <code>n2click</code></td><td>Schemat aplikacji już istnieje, RLS i grant dla ról też. Zero zmian w układzie bazy.</td></tr>
+    <tr><td>Tożsamość</td><td><code>core.profiles</code> + <code>core.has_app('n2click')</code></td><td>Kto ma dostęp do appki, ten ma czat. Zero nowych kont.</td></tr>
+    <tr><td>Transport wiadomości</td><td>Realtime <b>Broadcast z bazy</b>, kanały prywatne, topic <code>chat:conv:&lt;uuid&gt;</code></td><td>Niższe opóźnienie niż postgres_changes i, co ważniejsze, nie dotyka publikacji WAL. Powód szczegółowy w znalezisku niżej.</td></tr>
+    <tr><td>Obecność</td><td>Realtime Presence na jednym kanale <code>chat:presence:&lt;companyId&gt;</code></td><td>Zielona kropka bez zapisu do bazy. Stan efemeryczny nie ma czego szukać w Postgresie.</td></tr>
+    <tr><td>„Pisze...”</td><td>Broadcast efemeryczny (<code>{ ack: false }</code>) na kanale rozmowy</td><td>Zero zapisu, zero śladu w historii.</td></tr>
+    <tr><td>Klient</td><td><code>src/chat/ChatProvider.tsx</code>, osobny od <code>AppStore</code></td><td>Czat to strumień serwerowy, a nie stan plannera. Nie wchodzi do reduktora ani do localStorage, więc nie rusza wersji danych 7 ani niezmienników plannera.</td></tr>
+    <tr><td>UI</td><td>Własne komponenty, tokeny <code>--n2-*</code>, <code>motion</code> i <code>lucide-react</code></td><td>Te same zależności, które już są w <code>package.json</code>. Zero nowych paczek.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Znaleziska techniczne</h3>
+
+<details class="hr-finding" open>
+  <summary><span class="hr-sev crit">Krytyczne</span> Czat na <code>postgres_changes</code> zamieni każdą wiadomość w pełną rehydrację plannera</summary>
+  <div class="hr-body">
+    <p class="hr-loc">src/supabase/CloudSyncProvider.tsx:635-645</p>
+    <p>Istniejący kanał nasłuchuje <code>event: '*'</code> na <b>całym schemacie</b> <code>n2click</code> i traktuje każde zdarzenie jako sygnał „coś się zmieniło”, po którym pobiera pełny snapshot danych. Jeśli tabelę <code>n2click.messages</code> dodamy do publikacji <code>supabase_realtime</code>, to każda wysłana wiadomość wywoła u <b>każdego zalogowanego użytkownika</b> pełne pobranie zadań, przydziałów, obłożenia i wydarzeń.</p>
+    <p>Sprawdziłem to na żywej bazie: publikacja <code>supabase_realtime</code> ma jawną listę 17 tabel z <code>n2click</code> plus <code>core.profiles</code> i <code>core.companies</code>. Nowa tabela nie trafia tam automatycznie.</p>
+    <p><b>Dlatego Broadcast, nie postgres_changes.</b> Trigger woła <code>realtime.broadcast_changes()</code>, która zapisuje do <code>realtime.messages</code>, a to jest osobna publikacja. Tabele czatu <b>nie wchodzą</b> do <code>supabase_realtime</code> i CloudSyncProvider nawet nie wie, że czat istnieje. To nie jest optymalizacja pod skalę, tylko warunek poprawności w tym konkretnym repo.</p>
+    <p class="hr-loc">Zasada do zapisania w wiki: tabel czatu nigdy nie dodajemy do publikacji <code>supabase_realtime</code>.</p>
+  </div>
+</details>
+
+<details class="hr-finding">
+  <summary><span class="hr-sev warn">Ostrzeżenie</span> Realtime nie dziedziczy <code>db.schema</code> z klienta</summary>
+  <div class="hr-body">
+    <p class="hr-loc">src/supabase/client.ts:30</p>
+    <p>Klient jest przypięty do <code>{ db: { schema: 'n2click' } }</code>, ale Realtime czyta WAL i dopasowuje po literalnej nazwie. Przy Broadcast to nie boli, bo topic jest zwykłym stringiem, natomiast każda polityka na <code>realtime.messages</code> i każdy filtr musi mieć schemat wypisany wprost. Ten sam błąd już nas kiedyś kosztował czas przy migracji na schema-per-app.</p>
+  </div>
+</details>
+
+<details class="hr-finding">
+  <summary><span class="hr-sev warn">Ostrzeżenie</span> Polityka RLS na tabeli członków rozmowy wpadnie w rekursję, jeśli napiszemy ją wprost</summary>
+  <div class="hr-body">
+    <p>Polityka „widzę członków rozmowy, w której jestem” pyta o tę samą tabelę, na której działa, więc Postgres zapętla się na własnych politykach. Standardowe wyjście to funkcja <code>SECURITY DEFINER</code>, która omija RLS na tabeli docelowej i przerywa cykl. U nas ten wzorzec jest już zaimplementowany 21 razy w schemacie <code>app</code>, więc dokładamy do niego jedną funkcję i nie wymyślamy nowej konwencji.</p>
+  </div>
+</details>
+
+<details class="hr-finding">
+  <summary><span class="hr-sev ok">Bez ryzyka</span> Limity i koszt: mieścimy się z zapasem dwóch rzędów wielkości</summary>
+  <div class="hr-body">
+    <p>Plan Pro daje 500 równoczesnych połączeń Realtime i 5 mln wiadomości miesięcznie, nadwyżka kosztuje 2,50 USD za milion wiadomości. W bazie jest 14 profili. Jedna karta przeglądarki to jedno połączenie WebSocket niezależnie od liczby otwartych rozmów, bo kanały są multipleksowane. Przy 14 osobach i, powiedzmy, 300 wiadomościach dziennie mówimy o rzędzie 10 tys. komunikatów miesięcznie wobec limitu 5 mln. Czat nie zmieni rachunku za Supabase.</p>
+  </div>
+</details>
+
+<h3>Schemat bazy</h3>
+
+<pre class="hr-term"><span class="a-dim">-- Migracja: supabase/migrations/2026xxxx_chat.sql
+-- Schemat n2click, bo czat jest częścią tej samej aplikacji (schema-per-app).</span>
+
+<span class="a-violet">create table</span> n2click.conversations (
+  id              uuid <span class="a-blue">primary key default</span> gen_random_uuid(),
+  kind            text <span class="a-blue">not null check</span> (kind <span class="a-blue">in</span> (<span class="a-green">'direct'</span>, <span class="a-green">'group'</span>)),
+  title           text,                       <span class="a-dim">-- tylko grupy; DM bierze nazwę z drugiej osoby</span>
+  company_id      uuid <span class="a-blue">not null references</span> core.companies(id),
+  direct_key      text <span class="a-blue">unique</span>,                <span class="a-dim">-- 'uuidA:uuidB' posortowane; gwarantuje jedną rozmowę 1:1</span>
+  context_type    text <span class="a-blue">check</span> (context_type <span class="a-blue">in</span> (<span class="a-green">'project'</span>,<span class="a-green">'client'</span>,<span class="a-green">'task'</span>)),  <span class="a-dim">-- faza 3</span>
+  context_id      uuid,
+  created_by      uuid <span class="a-blue">not null references</span> core.profiles(id),
+  created_at      timestamptz <span class="a-blue">not null default</span> now(),
+  last_message_at timestamptz <span class="a-blue">not null default</span> now()
+);
+
+<span class="a-violet">create table</span> n2click.conversation_members (
+  conversation_id uuid <span class="a-blue">not null references</span> n2click.conversations(id) <span class="a-blue">on delete cascade</span>,
+  user_id         uuid <span class="a-blue">not null references</span> core.profiles(id) <span class="a-blue">on delete cascade</span>,
+  role            text <span class="a-blue">not null default</span> <span class="a-green">'member'</span> <span class="a-blue">check</span> (role <span class="a-blue">in</span> (<span class="a-green">'owner'</span>,<span class="a-green">'member'</span>)),
+  joined_at       timestamptz <span class="a-blue">not null default</span> now(),
+  last_read_at    timestamptz <span class="a-blue">not null default</span> <span class="a-green">'epoch'</span>,   <span class="a-dim">-- licznik nieprzeczytanych liczy się z tego</span>
+  muted_until     timestamptz,
+  <span class="a-blue">primary key</span> (conversation_id, user_id)
+);
+
+<span class="a-violet">create table</span> n2click.messages (
+  id              uuid <span class="a-blue">primary key default</span> gen_random_uuid(),
+  conversation_id uuid <span class="a-blue">not null references</span> n2click.conversations(id) <span class="a-blue">on delete cascade</span>,
+  author_id       uuid <span class="a-blue">not null references</span> core.profiles(id),
+  body            text <span class="a-blue">not null check</span> (char_length(body) <span class="a-blue">between</span> 1 <span class="a-blue">and</span> 4000),
+  reply_to        uuid <span class="a-blue">references</span> n2click.messages(id) <span class="a-blue">on delete set null</span>,
+  created_at      timestamptz <span class="a-blue">not null default</span> now(),
+  edited_at       timestamptz,
+  deleted_at      timestamptz                 <span class="a-dim">-- kasowanie miękkie: „wiadomość usunięta”</span>
+);
+
+<span class="a-dim">-- Jedyny indeks, którego potrzebuje paginacja kursorowa i wczytanie okna historii.</span>
+<span class="a-violet">create index</span> messages_feed <span class="a-blue">on</span> n2click.messages (conversation_id, created_at <span class="a-blue">desc</span>, id <span class="a-blue">desc</span>);
+<span class="a-violet">create index</span> members_by_user <span class="a-blue">on</span> n2click.conversation_members (user_id, conversation_id);
+
+<span class="a-dim">-- 4. tabela pojawia się dopiero w fazie 3 (reakcje). Na MVP wystarczą trzy.</span></pre>
+
+<h4>RLS: jedna funkcja pomocnicza, cztery polityki</h4>
+
+<pre class="hr-term"><span class="a-dim">-- Przerywa rekursję: polityka na conversation_members nie może pytać o conversation_members.</span>
+<span class="a-violet">create or replace function</span> app.is_conversation_member(conv uuid)
+<span class="a-blue">returns</span> boolean <span class="a-blue">language</span> sql <span class="a-blue">stable security definer set</span> search_path = <span class="a-green">''</span> <span class="a-blue">as</span> $$
+  <span class="a-blue">select exists</span> (
+    <span class="a-blue">select</span> 1 <span class="a-blue">from</span> n2click.conversation_members cm
+    <span class="a-blue">where</span> cm.conversation_id = conv <span class="a-blue">and</span> cm.user_id = auth.uid()
+  );
+$$;
+
+<span class="a-violet">alter table</span> n2click.messages <span class="a-blue">enable row level security</span>;
+
+<span class="a-violet">create policy</span> <span class="a-green">"czytam wiadomosci ze swoich rozmow"</span> <span class="a-blue">on</span> n2click.messages
+  <span class="a-blue">for select to</span> authenticated
+  <span class="a-blue">using</span> (core.has_app(<span class="a-green">'n2click'</span>) <span class="a-blue">and</span> app.is_conversation_member(conversation_id));
+
+<span class="a-violet">create policy</span> <span class="a-green">"pisze tylko jako ja i tylko u siebie"</span> <span class="a-blue">on</span> n2click.messages
+  <span class="a-blue">for insert to</span> authenticated
+  <span class="a-blue">with check</span> (author_id = auth.uid() <span class="a-blue">and</span> app.is_conversation_member(conversation_id));
+
+<span class="a-violet">create policy</span> <span class="a-green">"edytuje i kasuje tylko swoje"</span> <span class="a-blue">on</span> n2click.messages
+  <span class="a-blue">for update to</span> authenticated
+  <span class="a-blue">using</span> (author_id = auth.uid()) <span class="a-blue">with check</span> (author_id = auth.uid());
+
+<span class="a-yellow">-- UWAGA na granty:</span> nadajemy tylko select, insert, update. <span class="a-yellow">Nigdy</span> delete ani truncate.
+<span class="a-dim">-- Truncate omija RLS w całości, a tabela przeniesiona lub utworzona bez jawnych
+-- grantów potrafi odziedziczyć uprawnienia po public. To już nas raz ugryzło.</span>
+<span class="a-violet">grant select, insert, update</span> <span class="a-blue">on</span> n2click.messages <span class="a-blue">to</span> authenticated;</pre>
+
+<h4>Realtime: trigger publikuje, RLS decyduje kto słucha</h4>
+
+<pre class="hr-term"><span class="a-dim">-- Publikacja na prywatny topic rozmowy. Tabela NIE wchodzi do supabase_realtime.</span>
+<span class="a-violet">create or replace function</span> n2click.broadcast_message() <span class="a-blue">returns</span> trigger
+<span class="a-blue">language</span> plpgsql <span class="a-blue">security definer as</span> $$
+<span class="a-blue">begin</span>
+  <span class="a-blue">perform</span> realtime.broadcast_changes(
+    <span class="a-green">'chat:conv:'</span> || <span class="a-blue">coalesce</span>(new.conversation_id, old.conversation_id)::text,
+    tg_op, tg_op, tg_table_name, tg_table_schema, new, old
+  );
+  <span class="a-blue">return null</span>;
+<span class="a-blue">end</span>; $$;
+
+<span class="a-violet">create trigger</span> messages_broadcast
+  <span class="a-blue">after insert or update on</span> n2click.messages
+  <span class="a-blue">for each row execute function</span> n2click.broadcast_message();
+
+<span class="a-dim">-- Autoryzacja kanału: klient dostanie dane tylko z rozmów, w których siedzi.
+-- Topic 'chat:conv:&lt;uuid&gt;', więc identyfikator to trzeci segment.</span>
+<span class="a-violet">create policy</span> <span class="a-green">"slucham tylko swoich rozmow"</span> <span class="a-blue">on</span> realtime.messages
+  <span class="a-blue">for select to</span> authenticated
+  <span class="a-blue">using</span> (
+    realtime.messages.extension <span class="a-blue">in</span> (<span class="a-green">'broadcast'</span>, <span class="a-green">'presence'</span>)
+    <span class="a-blue">and</span> app.is_conversation_member(
+          <span class="a-blue">nullif</span>(<span class="a-blue">split_part</span>(realtime.topic(), <span class="a-green">':'</span>, 3), <span class="a-green">''</span>)::uuid)
+  );</pre>
+
+<h4>Klient: jeden kanał na otwartą rozmowę, jeden na skrzynkę</h4>
+
+<pre class="hr-term"><span class="a-dim">// src/chat/useConversationChannel.ts (szkic)</span>
+<span class="a-blue">const</span> channel = client
+  .channel(<span class="a-green">`chat:conv:</span>${conversationId}<span class="a-green">`</span>, { config: { <span class="a-violet">private</span>: <span class="a-blue">true</span> } })
+  .on(<span class="a-green">'broadcast'</span>, { event: <span class="a-green">'INSERT'</span> }, ({ payload }) =&gt; append(payload.record))
+  .on(<span class="a-green">'broadcast'</span>, { event: <span class="a-green">'UPDATE'</span> }, ({ payload }) =&gt; patch(payload.record))
+  .on(<span class="a-green">'broadcast'</span>, { event: <span class="a-green">'typing'</span> },  ({ payload }) =&gt; showTyping(payload.userId))
+  .subscribe();
+
+<span class="a-dim">// Sprzątanie jest obowiązkowe, tak samo jak w CloudSyncProvider:645.</span>
+<span class="a-blue">return</span> () =&gt; { <span class="a-blue">void</span> client.removeChannel(channel); };
+
+<span class="a-yellow">// Trzy rzeczy, które łatwo przeoczyć:</span>
+<span class="a-dim">// 1. Kanały prywatne wymagają aktualnego tokenu w warstwie Realtime.
+//    Po zalogowaniu i po odświeżeniu sesji: client.realtime.setAuth().
+// 2. Optymistyczna wysyłka: dopisz wiadomość lokalnie z tymczasowym id,
+//    a przy echu z broadcastu deduplikuj po (author_id, created_at, body).
+// 3. Kolejność. Broadcast nie gwarantuje dostarczenia przy zerwaniu połączenia,
+//    więc po każdym re-subscribe dociągnij wiadomości nowsze niż ostatnie znane id.
+//    To jest ta sama zasada, którą stosuje blok Realtime Chat z Supabase UI.</span></pre>
+
+<h4>Nieprzeczytane, historia, wyszukiwanie</h4>
+<ul>
+  <li><b>Nieprzeczytane</b> liczymy z <code>last_read_at</code> na członkostwie, bez denormalizowanego licznika. Przy 14 osobach i tabeli, która przez pierwszy rok nie przekroczy kilkudziesięciu tysięcy wierszy, widok agregujący jest tańszy niż utrzymywanie liczników w spójności. Denormalizacja to problem na później i wtedy będzie widać, czy w ogóle nadejdzie.</li>
+  <li><b>Historia</b> to okno 50 wiadomości plus doładowanie kursorem po <code>(created_at, id)</code>. Offset odpada, bo przy dopisywaniu na górze gubi i duplikuje wiersze.</li>
+  <li><b>Wyszukiwanie</b> dopiero w fazie 3, przez <code>tsvector</code> z konfiguracją <code>simple</code> plus <code>pg_trgm</code> na potrzeby polskiej odmiany. Do tego czasu wystarczy filtr po rozmowie i osobie.</li>
+</ul>
+
+<h2>03. Pięć makiet</h2>
+
+<p>Każda makieta pokazuje <b>cały ekran</b> N2Huba w oknie przeglądarki 16:10, nie sam widżet. Kolory, promienie i typografia pochodzą z <code>src/styles.css</code>, więc to, co widzisz, da się zbudować bez jednej nowej zależności. Pod każdą makietą jest panel decyzji, a na końcu dokumentu zbiorczy prompt z Twoimi wyborami.</p>
+
+<h3>Wariant 1: dok Messenger, listwa kontaktów plus okna</h3>
+
+<figure class="hr-dev hr-wide">
+  <div class="hr-browser">
+    <div class="hr-br-chrome">
+      <div class="hr-br-dots"><i></i><i></i><i></i></div>
+      <div class="hr-br-url">n2hub.n2media.agency/kanban</div>
+    </div>
+    <div class="hr-br-screen" style="--app-bg:#010101;--app-ink:#fbf8ff">
+      <div class="mk">
+        <nav class="mk-side">
+          <div class="mk-logo">N2HUB</div>
+          <div class="mk-nav"><i></i>Pulpit</div>
+          <div class="mk-nav"><i></i>Zadania</div>
+          <div class="mk-nav on"><i></i>Kanban</div>
+          <div class="mk-nav"><i></i>Kalendarz</div>
+          <div class="mk-nav"><i></i>Obłożenie</div>
+          <div class="mk-nav"><i></i>Projekty</div>
+          <div class="mk-nav"><i></i>Klienci</div>
+          <div class="mk-nav"><i></i>Zespół</div>
+          <div class="mk-nav"><i></i>Content Plan</div>
+          <div class="mk-side-foot"><span class="mk-av s c3">KC</span>Kacper C.</div>
+        </nav>
+        <div class="mk-main">
+          <div class="mk-top">
+            <div><div class="mk-h1">Kanban</div><div class="mk-crumb">Wszystkie projekty · 145 zadań</div></div>
+            <div class="mk-search">Szukaj zadania, klienta...</div>
+            <div class="mk-bell"></div>
+            <span class="mk-av s">KC</span>
+          </div>
+          <div class="mk-body" style="padding-right:calc(52px + 8px)">
+            <div class="mk-col">
+              <div class="mk-col-h">Do zrobienia <span class="mk-count">12</span></div>
+              <div class="mk-card"><div class="mk-card-t">Sesja zdjęciowa, kadry produktowe</div><div class="mk-row"><span class="mk-chip warn">Wysoki</span><span class="mk-av s c4">MW</span></div></div>
+              <div class="mk-card"><div class="mk-card-t">Brief kampanii wrześniowej</div><div class="mk-row"><span class="mk-chip">Błogość</span><span class="mk-av s c2">OK</span></div></div>
+              <div class="mk-card"><div class="mk-card-t">Aktualizacja cennika na stronie</div><div class="mk-row"><span class="mk-chip info">TWS</span></div></div>
+            </div>
+            <div class="mk-col">
+              <div class="mk-col-h">W toku <span class="mk-count">7</span></div>
+              <div class="mk-card"><div class="mk-card-t">Montaż rolki, wersja 2</div><div class="mk-row"><span class="mk-chip ok">Dziś</span><span class="mk-av s c5">SK</span></div></div>
+              <div class="mk-card"><div class="mk-card-t">Copy do newslettera</div><div class="mk-row"><span class="mk-chip">Błogość</span><span class="mk-av s">KC</span></div></div>
+            </div>
+            <div class="mk-col">
+              <div class="mk-col-h">Do akceptacji <span class="mk-count">4</span></div>
+              <div class="mk-card"><div class="mk-card-t">Grafiki na LinkedIn, pakiet 8 szt.</div><div class="mk-row"><span class="mk-chip info">Klient</span><span class="mk-av s c3">AZ</span></div></div>
+            </div>
+            <div class="mk-col">
+              <div class="mk-col-h">Zrobione <span class="mk-count">122</span></div>
+              <div class="mk-card"><div class="mk-card-t">Raport zasięgów, lipiec</div><div class="mk-row"><span class="mk-chip ok">Gotowe</span></div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- DOK -->
+        <div class="mk-dock">
+          <div class="mk-win h">
+            <div class="mk-win-h">
+              <span class="mk-avwrap"><span class="mk-av s c2">BŁ</span></span>
+              <div><div class="mk-win-name">Projekt Błogość</div><div class="mk-win-sub">4 osoby · 2 online</div></div>
+              <div class="mk-win-acts"><span>−</span><span>✕</span></div>
+            </div>
+            <div class="mk-msgs">
+              <div class="mk-day">Dzisiaj</div>
+              <div class="mk-bub"><span class="who">Sławek K.</span>Klient prosi o przesunięcie sesji na czwartek. Damy radę?</div>
+              <div class="mk-bub"><span class="who">Ola K.</span>U mnie czwartek wolny do 14:00.</div>
+              <div class="mk-bub me">Przesuwam w kalendarzu, sprawdźcie za chwilę obłożenie.</div>
+              <div class="mk-meta">11:42 · Przeczytane</div>
+              <div class="mk-typing"><b></b><b></b><b></b> Marek pisze...</div>
+            </div>
+            <div class="mk-comp">Napisz wiadomość<span class="send">▲</span></div>
+          </div>
+          <div class="mk-win h" style="height:236px">
+            <div class="mk-win-h">
+              <span class="mk-avwrap"><span class="mk-av s c4">OK</span><span class="mk-pres"></span></span>
+              <div><div class="mk-win-name">Ola Kowalska</div><div class="mk-win-sub">Aktywna teraz</div></div>
+              <div class="mk-win-acts"><span>−</span><span>✕</span></div>
+            </div>
+            <div class="mk-msgs">
+              <div class="mk-bub">Wrzuciłam korekty do zadania „Copy do newslettera”.</div>
+              <div class="mk-bub me">Dzięki, lecę na to po standupie.</div>
+              <div class="mk-meta">11:51 · Dostarczone</div>
+            </div>
+            <div class="mk-comp">Napisz wiadomość<span class="send">▲</span></div>
+          </div>
+          <div class="mk-min">
+            <span class="mk-avwrap"><span class="mk-av s c5">MW</span><span class="mk-badge">3</span></span>
+            <span style="font-size:11px;font-weight:650">Marek W.</span>
+            <span style="margin-left:auto;color:var(--mut);font-size:11px">▲</span>
+          </div>
+        </div>
+        <div class="mk-rail">
+          <div class="mk-rail-h">CZAT</div>
+          <span class="mk-avwrap"><span class="mk-av c2">BŁ</span></span>
+          <span class="mk-avwrap"><span class="mk-av c4">OK</span><span class="mk-pres"></span></span>
+          <span class="mk-avwrap"><span class="mk-av c5">MW</span><span class="mk-pres"></span><span class="mk-badge">3</span></span>
+          <span class="mk-avwrap"><span class="mk-av c3">AZ</span><span class="mk-pres away"></span></span>
+          <span class="mk-avwrap"><span class="mk-av">SK</span><span class="mk-pres off"></span></span>
+          <span class="mk-avwrap" style="margin-top:auto"><span class="mk-av s" style="background:var(--glass-2);color:var(--lav)">+</span></span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <figcaption><b>Wariant 1.</b> Stała listwa 52 px przy prawej krawędzi z awatarami, obecnością i licznikami, a obok niej okna rozmów dosuwane od prawej do lewej. Treść aplikacji dostaje prawy margines równy listwie, więc nic się nie chowa pod dokiem. Widoczne: rozmowa grupowa projektu, rozmowa 1:1, okno zwinięte do belki z licznikiem 3, wskaźnik „pisze”, status doręczenia.</figcaption>
+</figure>
+
+<div class="hr-review" data-review data-title="Wariant 1: dok Messenger (listwa + okna)">
+  <div class="hr-rev-opts" role="group" aria-label="Twoja decyzja o wariancie 1">
+    <button type="button" data-dec="akceptuje" aria-pressed="false">✓ Akceptuję</button>
+    <button type="button" data-dec="odrzucam" aria-pressed="false">✕ Odrzucam</button>
+    <button type="button" data-dec="omowic" aria-pressed="false">? Do omówienia</button>
+  </div>
+  <textarea rows="2" placeholder="Moje uwagi (opcjonalnie)" aria-label="Uwagi do wariantu 1"></textarea>
+</div>
+
+<div class="hr-tablewrap">
+<table>
+  <thead><tr><th>Za</th><th>Przeciw</th></tr></thead>
+  <tbody><tr>
+    <td>Najbliżej tego, o co prosiłeś. Kilka rozmów naraz bez przełączania. Listwa daje stały, przewidywalny punkt wejścia i obecność widać bez klikania.</td>
+    <td>Najwięcej kodu: pozycjonowanie okien, kolejność, zwijanie, limit otwartych, zapamiętywanie stanu doku. Na telefonie i tak trzeba osobnego trybu pełnoekranowego.</td>
+  </tr></tbody>
+</table>
+</div>
+
+<h3>Wariant 2: szuflada, jedna rozmowa naraz</h3>
+
+<figure class="hr-dev hr-wide">
+  <div class="hr-browser">
+    <div class="hr-br-chrome">
+      <div class="hr-br-dots"><i></i><i></i><i></i></div>
+      <div class="hr-br-url">n2hub.n2media.agency/kalendarz</div>
+    </div>
+    <div class="hr-br-screen" style="--app-bg:#010101;--app-ink:#fbf8ff">
+      <div class="mk">
+        <nav class="mk-side">
+          <div class="mk-logo">N2HUB</div>
+          <div class="mk-nav"><i></i>Pulpit</div>
+          <div class="mk-nav"><i></i>Zadania</div>
+          <div class="mk-nav"><i></i>Kanban</div>
+          <div class="mk-nav on"><i></i>Kalendarz</div>
+          <div class="mk-nav"><i></i>Obłożenie</div>
+          <div class="mk-nav"><i></i>Projekty</div>
+          <div class="mk-nav"><i></i>Klienci</div>
+          <div class="mk-nav"><i></i>Zespół</div>
+          <div class="mk-nav"><i></i>Content Plan</div>
+          <div class="mk-side-foot"><span class="mk-av s c3">KC</span>Kacper C.</div>
+        </nav>
+        <div class="mk-main">
+          <div class="mk-top">
+            <div><div class="mk-h1">Kalendarz</div><div class="mk-crumb">Tydzień 33 · 11 do 17 sierpnia</div></div>
+            <div class="mk-search">Szukaj zadania, klienta...</div>
+            <div class="mk-bell"></div>
+            <span class="mk-av s">KC</span>
+          </div>
+          <div class="mk-body" style="padding-right:352px;flex-direction:column;gap:8px">
+            <div class="mk-row" style="gap:8px">
+              <span class="mk-chip">Pon 11</span><span class="mk-chip">Wt 12</span><span class="mk-chip ok">Śr 13</span><span class="mk-chip">Czw 14</span><span class="mk-chip">Pt 15</span>
+            </div>
+            <div style="flex:1;display:flex;gap:8px;min-height:0">
+              <div class="mk-col" style="gap:6px">
+                <div class="mk-card" style="border-left:3px solid var(--info)"><div class="mk-card-t">09:00 Standup</div></div>
+                <div class="mk-card" style="border-left:3px solid var(--v)"><div class="mk-card-t">11:00 Montaż rolki</div></div>
+              </div>
+              <div class="mk-col" style="gap:6px">
+                <div class="mk-card" style="border-left:3px solid var(--v)"><div class="mk-card-t">10:00 Copy newsletter</div></div>
+                <div class="mk-card" style="border-left:3px solid var(--danger)"><div class="mk-card-t">Urlop: Ania Z.</div></div>
+              </div>
+              <div class="mk-col" style="gap:6px">
+                <div class="mk-card" style="border-left:3px solid var(--info)"><div class="mk-card-t">13:00 Sesja Błogość</div></div>
+              </div>
+              <div class="mk-col" style="gap:6px">
+                <div class="mk-card" style="border-left:3px solid var(--v)"><div class="mk-card-t">09:30 Grafiki LI</div></div>
+                <div class="mk-card" style="border-left:3px solid var(--warn)"><div class="mk-card-t">16:00 Przegląd tygodnia</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SZUFLADA -->
+        <aside class="mk-drawer">
+          <div class="mk-drawer-h">
+            <span class="mk-back">‹ Wszystkie rozmowy</span>
+            <span style="margin-left:auto;color:var(--mut);font-size:11px">⋯ ✕</span>
+          </div>
+          <div class="mk-conv" style="border-bottom:1px solid var(--line-s);padding:10px 12px">
+            <span class="mk-avwrap"><span class="mk-av l c2">BŁ</span></span>
+            <div>
+              <div class="mk-conv-t" style="font-size:12px">Projekt Błogość</div>
+              <div class="mk-conv-s">Sławek, Ola, Marek, Ty</div>
+            </div>
+            <div class="mk-conv-r"><span class="mk-chip ok">2 online</span></div>
+          </div>
+          <div class="mk-msgs" style="gap:8px;padding:12px">
+            <div class="mk-day">Wtorek, 12 sierpnia</div>
+            <div class="mk-bub" style="max-width:86%"><span class="who">Sławek K.</span>Klient prosi o przesunięcie sesji na czwartek, mają dostawę towaru w środę.</div>
+            <div class="mk-bub me" style="max-width:86%">Sprawdzam obłożenie i wracam.</div>
+            <div class="mk-day">Dzisiaj</div>
+            <div class="mk-bub" style="max-width:86%"><span class="who">Ola K.</span>U mnie czwartek wolny do 14:00, ale potrzebuję Marka do świateł.</div>
+            <div class="mk-bub" style="max-width:86%"><span class="who">Marek W.</span>Jestem, tylko dajcie znać godzinę do 12:00.</div>
+            <div class="mk-bub me" style="max-width:86%">Przesuwam na czwartek 10:00. Zadanie w kanbanie zaktualizowane.</div>
+            <div class="mk-meta">11:42 · Przeczytane przez 3</div>
+            <div class="mk-typing"><b></b><b></b><b></b> Ola pisze...</div>
+          </div>
+          <div class="mk-comp" style="margin:0 12px 12px;height:34px">Napisz do grupy<span class="send">▲</span></div>
+        </aside>
+      </div>
+    </div>
+  </div>
+  <figcaption><b>Wariant 2.</b> Jedna szuflada 340 px przyklejona do prawej krawędzi, dwa stany: lista rozmów oraz wątek (na makiecie widać wątek, powrót do listy strzałką w nagłówku). Treść aplikacji dostaje margines równy szufladzie, więc kalendarz nie chowa się pod panelem. To najprostszy wariant do zbudowania i jedyny, który bez zmian działa na tablecie.</figcaption>
+</figure>
+
+<div class="hr-review" data-review data-title="Wariant 2: szuflada dwustanowa">
+  <div class="hr-rev-opts" role="group" aria-label="Twoja decyzja o wariancie 2">
+    <button type="button" data-dec="akceptuje" aria-pressed="false">✓ Akceptuję</button>
+    <button type="button" data-dec="odrzucam" aria-pressed="false">✕ Odrzucam</button>
+    <button type="button" data-dec="omowic" aria-pressed="false">? Do omówienia</button>
+  </div>
+  <textarea rows="2" placeholder="Moje uwagi (opcjonalnie)" aria-label="Uwagi do wariantu 2"></textarea>
+</div>
+
+<div class="hr-tablewrap">
+<table>
+  <thead><tr><th>Za</th><th>Przeciw</th></tr></thead>
+  <tbody><tr>
+    <td>Najtańszy wariant, mniej więcej połowa kodu wariantu 1. Jeden kontener, jeden stan, zero pozycjonowania okien. Ta sama szuflada działa na telefonie jako pełny ekran.</td>
+    <td>Jedna rozmowa naraz. Przy trzech równoległych wątkach dochodzi ciągłe klikanie „wstecz”, czyli dokładnie to, czego Messenger unika.</td>
+  </tr></tbody>
+</table>
+</div>
+
+<h3>Wariant 3: bąbelki, minimalna ingerencja w ekran</h3>
+
+<figure class="hr-dev hr-wide">
+  <div class="hr-browser">
+    <div class="hr-br-chrome">
+      <div class="hr-br-dots"><i></i><i></i><i></i></div>
+      <div class="hr-br-url">n2hub.n2media.agency/pulpit</div>
+    </div>
+    <div class="hr-br-screen" style="--app-bg:#010101;--app-ink:#fbf8ff">
+      <div class="mk">
+        <nav class="mk-side">
+          <div class="mk-logo">N2HUB</div>
+          <div class="mk-nav on"><i></i>Pulpit</div>
+          <div class="mk-nav"><i></i>Zadania</div>
+          <div class="mk-nav"><i></i>Kanban</div>
+          <div class="mk-nav"><i></i>Kalendarz</div>
+          <div class="mk-nav"><i></i>Obłożenie</div>
+          <div class="mk-nav"><i></i>Projekty</div>
+          <div class="mk-nav"><i></i>Klienci</div>
+          <div class="mk-nav"><i></i>Zespół</div>
+          <div class="mk-nav"><i></i>Content Plan</div>
+          <div class="mk-side-foot"><span class="mk-av s c3">KC</span>Kacper C.</div>
+        </nav>
+        <div class="mk-main">
+          <div class="mk-top">
+            <div><div class="mk-h1">Pulpit</div><div class="mk-crumb">Środa, 13 sierpnia</div></div>
+            <div class="mk-search">Szukaj zadania, klienta...</div>
+            <div class="mk-bell"></div>
+            <span class="mk-av s">KC</span>
+          </div>
+          <div class="mk-body" style="flex-direction:column;gap:12px">
+            <div style="display:flex;gap:12px">
+              <div class="mk-col" style="flex-direction:row;align-items:center;gap:10px"><div><div style="font-size:22px;font-weight:800">8</div><div style="font-size:10px;color:var(--mut)">Zadania na dziś</div></div></div>
+              <div class="mk-col" style="flex-direction:row;align-items:center;gap:10px"><div><div style="font-size:22px;font-weight:800;color:var(--warn)">3</div><div style="font-size:10px;color:var(--mut)">Po terminie</div></div></div>
+              <div class="mk-col" style="flex-direction:row;align-items:center;gap:10px"><div><div style="font-size:22px;font-weight:800;color:var(--ok)">31,5 h</div><div style="font-size:10px;color:var(--mut)">Zaplanowane w tygodniu</div></div></div>
+              <div class="mk-col" style="flex-direction:row;align-items:center;gap:10px"><div><div style="font-size:22px;font-weight:800;color:var(--info)">4</div><div style="font-size:10px;color:var(--mut)">Spotkania</div></div></div>
+            </div>
+            <div style="flex:1;display:flex;gap:12px;min-height:0">
+              <div class="mk-col">
+                <div class="mk-col-h">Agenda dnia</div>
+                <div class="mk-card"><div class="mk-card-t">09:00 Standup zespołu</div><div class="mk-row"><span class="mk-chip info">Spotkanie</span></div></div>
+                <div class="mk-card"><div class="mk-card-t">11:00 Montaż rolki, wersja 2</div><div class="mk-row"><span class="mk-chip">Błogość</span><span class="mk-chip ok">2 h</span></div></div>
+                <div class="mk-card"><div class="mk-card-t">14:00 Przegląd content planu</div><div class="mk-row"><span class="mk-chip info">TWS</span></div></div>
+              </div>
+              <div class="mk-col">
+                <div class="mk-col-h">Ostatnia aktywność</div>
+                <div class="mk-card"><div class="mk-card-t">Ola K. zmieniła status: W toku</div></div>
+                <div class="mk-card"><div class="mk-card-t">Marek W. dodał komentarz do zadania</div></div>
+                <div class="mk-card"><div class="mk-card-t">Sławek K. utworzył zgłoszenie</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- BĄBELKI -->
+        <div class="mk-heads">
+          <div class="mk-head"><span class="mk-avwrap"><span class="mk-av c5">MW</span><span class="mk-pres"></span><span class="mk-badge">3</span></span></div>
+          <div class="mk-head"><span class="mk-avwrap"><span class="mk-av c4">OK</span><span class="mk-pres"></span></span></div>
+          <div class="mk-head"><span class="mk-avwrap"><span class="mk-av c2">BŁ</span></span></div>
+          <div class="mk-head"><span class="mk-avwrap"><span class="mk-av" style="background:var(--glass-2);color:var(--lav);box-shadow:0 8px 24px rgba(0,0,0,.5)">⌕</span></span></div>
+        </div>
+        <div style="position:absolute;right:64px;bottom:14px;z-index:6">
+          <div class="mk-win h" style="height:300px;border-radius:14px;border-bottom:1px solid rgba(196,150,255,.2)">
+            <div class="mk-win-h">
+              <span class="mk-avwrap"><span class="mk-av s c5">MW</span><span class="mk-pres"></span></span>
+              <div><div class="mk-win-name">Marek Wójcik</div><div class="mk-win-sub">Aktywny teraz</div></div>
+              <div class="mk-win-acts"><span>−</span><span>✕</span></div>
+            </div>
+            <div class="mk-msgs">
+              <div class="mk-day">Dzisiaj</div>
+              <div class="mk-bub">Masz chwilę na szybki przegląd świateł do czwartku?</div>
+              <div class="mk-bub">Wrzucam listę sprzętu, którego brakuje.</div>
+              <div class="mk-bub">Statyw i dwie softboxy.</div>
+              <div class="mk-bub me">Zamawiam dziś, będzie na środę.</div>
+              <div class="mk-meta">11:58 · Przeczytane</div>
+            </div>
+            <div class="mk-comp">Napisz wiadomość<span class="send">▲</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <figcaption><b>Wariant 3.</b> Pływające bąbelki w prawym dolnym rogu, ostatnia pozycja to lupa otwierająca wyszukiwarkę rozmów. Kliknięcie bąbelka rozwija jedno okno zakotwiczone obok. Ekran aplikacji nie oddaje ani piksela na stałe, dok pojawia się dopiero, gdy jest potrzebny.</figcaption>
+</figure>
+
+<div class="hr-review" data-review data-title="Wariant 3: bąbelki (chat heads)">
+  <div class="hr-rev-opts" role="group" aria-label="Twoja decyzja o wariancie 3">
+    <button type="button" data-dec="akceptuje" aria-pressed="false">✓ Akceptuję</button>
+    <button type="button" data-dec="odrzucam" aria-pressed="false">✕ Odrzucam</button>
+    <button type="button" data-dec="omowic" aria-pressed="false">? Do omówienia</button>
+  </div>
+  <textarea rows="2" placeholder="Moje uwagi (opcjonalnie)" aria-label="Uwagi do wariantu 3"></textarea>
+</div>
+
+<div class="hr-tablewrap">
+<table>
+  <thead><tr><th>Za</th><th>Przeciw</th></tr></thead>
+  <tbody><tr>
+    <td>Zero stałego kosztu miejsca na ekranie, co ma znaczenie przy kalendarzu tygodniowym i obłożeniu, gdzie każdy piksel szerokości to jedna kolumna godzin.</td>
+    <td>Bąbelki leżą <b>na</b> treści, więc zasłaniają prawy dolny róg, czyli miejsce, w którym siedzą przyciski akcji w kilku widokach. Powyżej 6 do 8 rozmów lista bąbelków przestaje się mieścić w pionie.</td>
+  </tr></tbody>
+</table>
+</div>
+
+<h3>Wariant 4: pełna strona /wiadomosci</h3>
+
+<figure class="hr-dev hr-wide">
+  <div class="hr-browser">
+    <div class="hr-br-chrome">
+      <div class="hr-br-dots"><i></i><i></i><i></i></div>
+      <div class="hr-br-url">n2hub.n2media.agency/wiadomosci</div>
+    </div>
+    <div class="hr-br-screen" style="--app-bg:#010101;--app-ink:#fbf8ff">
+      <div class="mk">
+        <nav class="mk-side">
+          <div class="mk-logo">N2HUB</div>
+          <div class="mk-nav"><i></i>Pulpit</div>
+          <div class="mk-nav"><i></i>Zadania</div>
+          <div class="mk-nav"><i></i>Kanban</div>
+          <div class="mk-nav"><i></i>Kalendarz</div>
+          <div class="mk-nav"><i></i>Obłożenie</div>
+          <div class="mk-nav on"><i></i>Wiadomości</div>
+          <div class="mk-nav"><i></i>Projekty</div>
+          <div class="mk-nav"><i></i>Klienci</div>
+          <div class="mk-nav"><i></i>Zespół</div>
+          <div class="mk-side-foot"><span class="mk-av s c3">KC</span>Kacper C.</div>
+        </nav>
+        <div class="mk-main">
+          <div class="mk-top">
+            <div><div class="mk-h1">Wiadomości</div><div class="mk-crumb">3 nieprzeczytane rozmowy</div></div>
+            <div class="mk-search">Szukaj w wiadomościach...</div>
+            <div class="mk-bell"></div>
+            <span class="mk-av s">KC</span>
+          </div>
+          <div class="mk-msgpage">
+            <div class="mk-list">
+              <div class="mk-list-h">
+                <span style="font-size:11px;font-weight:700">Rozmowy</span>
+                <span style="margin-left:auto;font-size:10px;color:var(--lav);font-weight:650">+ Nowa</span>
+              </div>
+              <div class="mk-conv on">
+                <span class="mk-avwrap"><span class="mk-av c2">BŁ</span></span>
+                <div><div class="mk-conv-t">Projekt Błogość</div><div class="mk-conv-s">Marek: Jestem, dajcie znać...</div></div>
+                <div class="mk-conv-r"><span class="mk-time">11:44</span><span class="mk-pill">2</span></div>
+              </div>
+              <div class="mk-conv">
+                <span class="mk-avwrap"><span class="mk-av c4">OK</span><span class="mk-pres"></span></span>
+                <div><div class="mk-conv-t">Ola Kowalska</div><div class="mk-conv-s">Wrzuciłam korekty do zadania</div></div>
+                <div class="mk-conv-r"><span class="mk-time">11:51</span></div>
+              </div>
+              <div class="mk-conv">
+                <span class="mk-avwrap"><span class="mk-av c5">MW</span><span class="mk-pres"></span></span>
+                <div><div class="mk-conv-t">Marek Wójcik</div><div class="mk-conv-s">Statyw i dwie softboxy.</div></div>
+                <div class="mk-conv-r"><span class="mk-time">11:58</span><span class="mk-pill">3</span></div>
+              </div>
+              <div class="mk-conv">
+                <span class="mk-avwrap"><span class="mk-av c3">TW</span></span>
+                <div><div class="mk-conv-t">TWS, content plan</div><div class="mk-conv-s">Ania: Posty na wrzesień gotowe</div></div>
+                <div class="mk-conv-r"><span class="mk-time">10:02</span></div>
+              </div>
+              <div class="mk-conv">
+                <span class="mk-avwrap"><span class="mk-av">SK</span><span class="mk-pres off"></span></span>
+                <div><div class="mk-conv-t">Sławek Kliemann</div><div class="mk-conv-s">Ty: Wysłałem umowę</div></div>
+                <div class="mk-conv-r"><span class="mk-time">wt</span></div>
+              </div>
+              <div class="mk-conv">
+                <span class="mk-avwrap"><span class="mk-av c3">AZ</span><span class="mk-pres away"></span></span>
+                <div><div class="mk-conv-t">Ania Zielińska</div><div class="mk-conv-s">Do zobaczenia w poniedziałek</div></div>
+                <div class="mk-conv-r"><span class="mk-time">pon</span></div>
+              </div>
+            </div>
+            <div class="mk-thread">
+              <div class="mk-thread-h">
+                <span class="mk-avwrap"><span class="mk-av l c2">BŁ</span></span>
+                <div><div style="font-size:13px;font-weight:750">Projekt Błogość</div><div style="font-size:10px;color:var(--mut)">Sławek K., Ola K., Marek W., Ty</div></div>
+                <span style="margin-left:auto;color:var(--mut);font-size:12px">⌕ ⋯</span>
+              </div>
+              <div class="mk-msgs">
+                <div class="mk-day">Wtorek, 12 sierpnia</div>
+                <div class="mk-bub"><span class="who">Sławek K.</span>Klient prosi o przesunięcie sesji na czwartek, mają dostawę towaru w środę.</div>
+                <div class="mk-bub me">Sprawdzam obłożenie i wracam z odpowiedzią po standupie.</div>
+                <div class="mk-day">Dzisiaj</div>
+                <div class="mk-bub"><span class="who">Ola K.</span>U mnie czwartek wolny do 14:00, ale potrzebuję Marka do świateł.</div>
+                <div class="mk-bub"><span class="who">Marek W.</span>Jestem, tylko dajcie znać godzinę do 12:00.</div>
+                <div class="mk-bub me">Przesuwam na czwartek 10:00, zadanie w kanbanie zaktualizowane.</div>
+                <div class="mk-meta">11:42 · Przeczytane przez 3</div>
+              </div>
+              <div class="mk-comp">Napisz do grupy<span class="send">▲</span></div>
+            </div>
+            <aside class="mk-info">
+              <div class="mk-info-h">Uczestnicy</div>
+              <div class="mk-row" style="gap:7px"><span class="mk-avwrap"><span class="mk-av s">SK</span><span class="mk-pres off"></span></span><span style="font-size:10.5px">Sławek K.</span></div>
+              <div class="mk-row" style="gap:7px"><span class="mk-avwrap"><span class="mk-av s c4">OK</span><span class="mk-pres"></span></span><span style="font-size:10.5px">Ola K.</span></div>
+              <div class="mk-row" style="gap:7px"><span class="mk-avwrap"><span class="mk-av s c5">MW</span><span class="mk-pres"></span></span><span style="font-size:10.5px">Marek W.</span></div>
+              <div class="mk-row" style="gap:7px"><span class="mk-av s c3">KC</span><span style="font-size:10.5px">Ty</span></div>
+              <div class="mk-info-h" style="margin-top:6px">Powiązania</div>
+              <div class="mk-card" style="padding:7px 8px"><div class="mk-card-t">Projekt: Błogość, sierpień</div></div>
+              <div class="mk-card" style="padding:7px 8px"><div class="mk-card-t">Klient: Błogość</div></div>
+              <div class="mk-info-h" style="margin-top:6px">Przypięte</div>
+              <div class="mk-card" style="padding:7px 8px"><div class="mk-card-t">Sesja: czwartek 10:00, studio B</div></div>
+            </aside>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <figcaption><b>Wariant 4.</b> Osobna trasa <code>/wiadomosci</code> w trzech kolumnach: lista rozmów, wątek, panel informacji z uczestnikami, powiązanym projektem i przypiętymi wiadomościami. To jest miejsce na archiwum i wyszukiwanie, których nie da się sensownie zmieścić w oknie 268 px. Dok z wariantu 1 zostaje jako tryb codzienny.</figcaption>
+</figure>
+
+<div class="hr-review" data-review data-title="Wariant 4: pełna strona /wiadomosci (3 kolumny)">
+  <div class="hr-rev-opts" role="group" aria-label="Twoja decyzja o wariancie 4">
+    <button type="button" data-dec="akceptuje" aria-pressed="false">✓ Akceptuję</button>
+    <button type="button" data-dec="odrzucam" aria-pressed="false">✕ Odrzucam</button>
+    <button type="button" data-dec="omowic" aria-pressed="false">? Do omówienia</button>
+  </div>
+  <textarea rows="2" placeholder="Moje uwagi (opcjonalnie)" aria-label="Uwagi do wariantu 4"></textarea>
+</div>
+
+<div class="hr-tablewrap">
+<table>
+  <thead><tr><th>Za</th><th>Przeciw</th></tr></thead>
+  <tbody><tr>
+    <td>Jedyne miejsce, w którym mieści się wyszukiwanie, zarządzanie grupą i przegląd historii. Na telefonie działa bez żadnych sztuczek. Trasa dokłada się do istniejącego routera bez ruszania czegokolwiek innego.</td>
+    <td>Sam z siebie nie realizuje tego, o co prosiłeś: to Slack, nie Messenger. Bez doku trzeba opuścić bieżący widok, żeby odpowiedzieć na wiadomość.</td>
+  </tr></tbody>
+</table>
+</div>
+
+<h3>Wariant 5: czat kontekstowy przy projekcie</h3>
+
+<figure class="hr-dev hr-wide">
+  <div class="hr-browser">
+    <div class="hr-br-chrome">
+      <div class="hr-br-dots"><i></i><i></i><i></i></div>
+      <div class="hr-br-url">n2hub.n2media.agency/projekty/blogosc-sierpien</div>
+    </div>
+    <div class="hr-br-screen" style="--app-bg:#010101;--app-ink:#fbf8ff">
+      <div class="mk">
+        <nav class="mk-side">
+          <div class="mk-logo">N2HUB</div>
+          <div class="mk-nav"><i></i>Pulpit</div>
+          <div class="mk-nav"><i></i>Zadania</div>
+          <div class="mk-nav"><i></i>Kanban</div>
+          <div class="mk-nav"><i></i>Kalendarz</div>
+          <div class="mk-nav"><i></i>Obłożenie</div>
+          <div class="mk-nav on"><i></i>Projekty</div>
+          <div class="mk-nav"><i></i>Klienci</div>
+          <div class="mk-nav"><i></i>Zespół</div>
+          <div class="mk-nav"><i></i>Content Plan</div>
+          <div class="mk-side-foot"><span class="mk-av s c3">KC</span>Kacper C.</div>
+        </nav>
+        <div class="mk-main">
+          <div class="mk-top">
+            <div><div class="mk-h1">Błogość, sierpień</div><div class="mk-crumb">Projekty · Klient: Błogość · 12 zadań</div></div>
+            <div class="mk-search">Szukaj zadania, klienta...</div>
+            <div class="mk-bell"></div>
+            <span class="mk-av s">KC</span>
+          </div>
+          <div class="mk-tabs">
+            <span class="mk-tab">Przegląd</span>
+            <span class="mk-tab">Zadania</span>
+            <span class="mk-tab">Kamienie milowe</span>
+            <span class="mk-tab on">Rozmowa</span>
+            <span class="mk-tab">Aktywność</span>
+          </div>
+          <div class="mk-body" style="padding-right:calc(52px + 8px)">
+            <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:10px">
+              <div style="display:flex;gap:10px">
+                <div class="mk-col" style="flex-direction:row;align-items:center"><div><div style="font-size:19px;font-weight:800">12</div><div style="font-size:10px;color:var(--mut)">Zadania</div></div></div>
+                <div class="mk-col" style="flex-direction:row;align-items:center"><div><div style="font-size:19px;font-weight:800;color:var(--ok)">64 h</div><div style="font-size:10px;color:var(--mut)">Zaplanowane</div></div></div>
+                <div class="mk-col" style="flex-direction:row;align-items:center"><div><div style="font-size:19px;font-weight:800;color:var(--warn)">2</div><div style="font-size:10px;color:var(--mut)">Po terminie</div></div></div>
+              </div>
+              <div class="mk-col" style="flex:1;min-height:0">
+                <div class="mk-col-h">Zadania projektu <span class="mk-count">12</span></div>
+                <div class="mk-card"><div class="mk-card-t">Sesja zdjęciowa, kadry produktowe</div><div class="mk-row"><span class="mk-chip warn">Czw 10:00</span><span class="mk-av s c4">OK</span><span class="mk-av s c5">MW</span></div></div>
+                <div class="mk-card"><div class="mk-card-t">Montaż rolki, wersja 2</div><div class="mk-row"><span class="mk-chip ok">W toku</span><span class="mk-av s c5">MW</span></div></div>
+                <div class="mk-card"><div class="mk-card-t">Copy do newslettera</div><div class="mk-row"><span class="mk-chip">Do zrobienia</span><span class="mk-av s">KC</span></div></div>
+                <div class="mk-card"><div class="mk-card-t">Grafiki na LinkedIn, pakiet 8 szt.</div><div class="mk-row"><span class="mk-chip info">Do akceptacji</span><span class="mk-av s c3">AZ</span></div></div>
+              </div>
+            </div>
+            <div class="mk-ctx">
+              <div class="mk-ctx-h">
+                <span class="mk-avwrap"><span class="mk-av s c2">BŁ</span></span>
+                <div><div style="font-size:11px;font-weight:750">Rozmowa projektu</div><div style="font-size:9px;color:var(--mut)">4 osoby · przypięta do projektu</div></div>
+                <span style="margin-left:auto;color:var(--mut);font-size:11px">⇱</span>
+              </div>
+              <div class="mk-msgs">
+                <div class="mk-day">Dzisiaj</div>
+                <div class="mk-bub" style="background:rgba(91,220,255,.1);border-color:rgba(91,220,255,.2)"><span class="who" style="color:var(--info)">System</span>Termin zadania „Sesja zdjęciowa” zmieniony na czwartek 10:00.</div>
+                <div class="mk-bub"><span class="who">Ola K.</span>Widzę zmianę, rezerwuję studio B.</div>
+                <div class="mk-bub me">Marek dowozi światła do 9:30.</div>
+                <div class="mk-meta">11:47 · Przeczytane przez 3</div>
+              </div>
+              <div class="mk-comp">Napisz do zespołu projektu<span class="send">▲</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="mk-rail">
+          <div class="mk-rail-h">CZAT</div>
+          <span class="mk-avwrap"><span class="mk-av c2">BŁ</span></span>
+          <span class="mk-avwrap"><span class="mk-av c4">OK</span><span class="mk-pres"></span></span>
+          <span class="mk-avwrap"><span class="mk-av c5">MW</span><span class="mk-pres"></span><span class="mk-badge">3</span></span>
+          <span class="mk-avwrap"><span class="mk-av c3">AZ</span><span class="mk-pres away"></span></span>
+          <span class="mk-avwrap" style="margin-top:auto"><span class="mk-av s" style="background:var(--glass-2);color:var(--lav)">+</span></span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <figcaption><b>Wariant 5.</b> Rozmowa przypięta do encji: zakładka „Rozmowa” w widoku projektu, panel po prawej, obok listwa doku. Wpisy systemowe (zmiana terminu, zmiana statusu) wpadają do wątku jako wiadomości, więc czat i tak zwana aktywność przestają być dwiema osobnymi historiami tego samego zdarzenia. To rozszerzenie wariantu 1, a nie alternatywa dla niego.</figcaption>
+</figure>
+
+<div class="hr-review" data-review data-title="Wariant 5: czat kontekstowy przy projekcie / kliencie / zadaniu">
+  <div class="hr-rev-opts" role="group" aria-label="Twoja decyzja o wariancie 5">
+    <button type="button" data-dec="akceptuje" aria-pressed="false">✓ Akceptuję</button>
+    <button type="button" data-dec="odrzucam" aria-pressed="false">✕ Odrzucam</button>
+    <button type="button" data-dec="omowic" aria-pressed="false">? Do omówienia</button>
+  </div>
+  <textarea rows="2" placeholder="Moje uwagi (opcjonalnie)" aria-label="Uwagi do wariantu 5"></textarea>
+</div>
+
+<div class="hr-tablewrap">
+<table>
+  <thead><tr><th>Za</th><th>Przeciw</th></tr></thead>
+  <tbody><tr>
+    <td>Największa wartość merytoryczna: rozmowa siedzi tam, gdzie praca. Kolumny <code>context_type</code> i <code>context_id</code> są w schemacie od pierwszego dnia, więc to tylko UI plus jeden trigger na wpisy systemowe.</td>
+    <td>Rodzi pytanie, co z istniejącymi <code>n2click.comments</code> (16 wierszy) i <code>activity_events</code> (1306 wierszy). Trzy strumienie zdarzeń o tym samym zadaniu to gorszy stan niż dwa. Wymaga decyzji, zanim to zbudujemy, więc faza 3.</td>
+  </tr></tbody>
+</table>
+</div>
+
+<h3>Porównanie wariantów</h3>
+
+<div class="hr-tablewrap">
+<table>
+  <thead><tr><th>Kryterium</th><th>1. Dok</th><th>2. Szuflada</th><th>3. Bąbelki</th><th>4. Strona</th><th>5. Kontekst</th></tr></thead>
+  <tbody>
+    <tr><td>Kilka rozmów naraz</td><td><b>tak</b></td><td>nie</td><td>ograniczone</td><td>nie</td><td>nie</td></tr>
+    <tr><td>Zabiera miejsce na stałe</td><td>52 px</td><td>340 px</td><td><b>0</b></td><td>cały widok</td><td>290 px</td></tr>
+    <tr><td>Zasłania treść</td><td>nie</td><td>nie</td><td><b>tak</b></td><td>nie dotyczy</td><td>nie</td></tr>
+    <tr><td>Koszt budowy</td><td>wysoki</td><td><b>niski</b></td><td>średni</td><td>średni</td><td>niski, po fazie 1</td></tr>
+    <tr><td>Mobile bez osobnego trybu</td><td>nie</td><td><b>tak</b></td><td>nie</td><td><b>tak</b></td><td>nie</td></tr>
+    <tr><td>Mieści wyszukiwanie i archiwum</td><td>nie</td><td>ledwo</td><td>nie</td><td><b>tak</b></td><td>nie</td></tr>
+    <tr><td>Zgodność z „jak na Facebooku”</td><td><b>pełna</b></td><td>częściowa</td><td>częściowa</td><td>żadna</td><td>nie dotyczy</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><b>Rekomendacja: 1 plus 4.</b> Dok jako tryb codzienny i strona <code>/wiadomosci</code> jako archiwum, wyszukiwarka i widok mobilny. To dokładnie ten podział, który stosuje Messenger i Slack, i jedyny, który nie wymaga upychania wyszukiwarki w okienku 268 px. Wariant 5 dokładamy później, po decyzji o komentarzach. Wariant 2 jest planem awaryjnym, gdyby dok okazał się za drogi. Wariant 3 odradzam: prawy dolny róg jest w N2Hubie zajęty.</p>
+
+<h2>04. Plan wdrożenia</h2>
+
+<div class="hr-tablewrap">
+<table>
+  <thead><tr><th>Faza</th><th>Zakres</th><th>Efekt widoczny dla zespołu</th><th>Czas</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>0. Decyzje</b></td>
+      <td>Odpowiedzi na 5 pytań z sekcji 05. Bez nich schemat zmieni się w trakcie.</td>
+      <td>Brak, to rozmowa.</td>
+      <td>~1 h</td>
+    </tr>
+    <tr>
+      <td><b>1. MVP</b></td>
+      <td>Migracja SQL (3 tabele, RLS, trigger broadcastu, polityka na <code>realtime.messages</code>), <code>ChatProvider</code>, listwa doku, okno rozmowy, DM 1:1, historia z paginacją, licznik nieprzeczytanych, obecność.</td>
+      <td>Można pisać do siebie nawzajem z każdego widoku i widać, kto jest online.</td>
+      <td><b>3 do 4 dni</b></td>
+    </tr>
+    <tr>
+      <td><b>2. Grupy i pełna strona</b></td>
+      <td>Rozmowy grupowe, dodawanie i usuwanie uczestników, „pisze...”, potwierdzenia odczytu, trasa <code>/wiadomosci</code> (wariant 4), tryb mobilny.</td>
+      <td>Zespoły projektowe mają swoje wątki, historia jest przeglądalna.</td>
+      <td><b>2 do 3 dni</b></td>
+    </tr>
+    <tr>
+      <td><b>3. Rozszerzenia</b></td>
+      <td>Wyszukiwanie pełnotekstowe, reakcje, odpowiedzi na wiadomość, czat kontekstowy (wariant 5), wpisy systemowe, ewentualne załączniki przez Storage.</td>
+      <td>Czat zastępuje część maili i komentarzy.</td>
+      <td><b>3 do 4 dni</b></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p class="hr-eyebrow">Razem 8 do 11 dni roboczych. Faza 1 jest samodzielnie użyteczna, więc można się zatrzymać po niej i zobaczyć, czy zespół w ogóle zacznie z tego korzystać.</p>
+
+<h4>Czego ten plan celowo nie robi</h4>
+<ul>
+  <li><b>Nie rusza <code>AppStore</code> ani <code>storage.ts</code>.</b> Wersja danych zostaje 7, niezmienniki plannera się nie zmieniają, testy jednostkowe plannera nie mają prawa zmienić wyniku.</li>
+  <li><b>Nie dodaje szyfrowania end-to-end.</b> To czat firmowy w narzędziu pracy, a nie komunikator prywatny. E2EE wyklucza wyszukiwanie po stronie serwera i moderację, więc byłoby to świadome pogorszenie produktu.</li>
+  <li><b>Nie wysyła powiadomień e-mail ani push.</b> Infrastruktura <code>n2click.notifications</code> istnieje, ale jest uśpiona (0 wierszy). Czat może ją ożywić, tylko to osobny zakres i osobna decyzja.</li>
+  <li><b>Nie dopuszcza klientów z portalu Content Planu.</b> Portal ma własne konta i własny model dostępu. Czat z klientem to inny produkt niż czat wewnętrzny.</li>
+</ul>
+
+<h2>05. Pięć decyzji, których potrzebuję przed pierwszą linijką SQL</h2>
+
+<ol>
+  <li><b>Kto z kim może rozmawiać?</b> Najprostsza zasada: każdy, kto ma dostęp do <code>n2click</code> w tej samej firmie, może napisać do każdego. Alternatywa to ograniczenie do własnego działu plus członków wspólnych projektów. Zasada wpada wprost do RLS, więc zmiana po fakcie oznacza migrację polityk.</li>
+  <li><b>Czy administrator może czytać cudze rozmowy?</b> Domyślnie <b>nie</b>, także administrator. Jeśli ma być inaczej, trzeba to napisać wprost w regulaminie pracy, a nie zaszyć po cichu w polityce.</li>
+  <li><b>Retencja.</b> Trzymamy wszystko bez końca czy kasujemy po 12 albo 24 miesiącach? Ma to znaczenie dla RODO i dla rozmiaru bazy, a zadanie czyszczące przez <code>pg_cron</code> kosztuje 20 minut na starcie i dużo więcej później.</li>
+  <li><b>Czy ktoś może usunąć wysłaną wiadomość?</b> Rekomendacja: kasowanie miękkie, ślad „wiadomość usunięta” zostaje, autor może to zrobić do 15 minut po wysłaniu.</li>
+  <li><b>Wariant UI.</b> Zaznacz wybory w panelach przy makietach, prompt na dole złoży je w gotowe polecenie.</li>
+</ol>
+
+<h2>Twoje decyzje</h2>
+
+<section class="hr-decyzje">
+  <div class="hr-dec-stats" data-dec-stats aria-live="polite"></div>
+  <pre data-dec-out>Brak decyzji. Przejdź przez warianty i klikaj Akceptuję / Odrzucam / Do omówienia.</pre>
+  <div class="hr-dec-actions">
+    <button type="button" data-dec-copy>Kopiuj prompt</button>
+    <span role="status" data-dec-status></span>
+  </div>
+</section>
+
+<h2>Metodyka i źródła</h2>
+
+<p>Research: 8 zapytań do wyszukiwarki plus lektura dokumentacji Supabase Realtime (architektura, broadcast, autoryzacja, cennik). Stan repozytorium sprawdzony bezpośrednio: <code>package.json</code>, <code>src/supabase/client.ts</code>, <code>src/supabase/CloudSyncProvider.tsx</code>, tokeny w <code>src/styles.css</code>. Stan bazy sprawdzony zapytaniami tylko do odczytu na projekcie <code>rclcndcgxbpndpmuemww</code>: lista tabel w schematach <code>n2click</code> i <code>core</code>, zawartość publikacji <code>supabase_realtime</code>, lista funkcji w schematach <code>app</code> i <code>core</code>. Liczby wierszy i nazwy funkcji w raporcie pochodzą z tych zapytań, nie z pamięci.</p>
+
+<p>Diagramu architektury celowo nie rysowałem: tabela warstw plus schemat SQL niosą tę samą informację dokładniej, a rysunek dublowałby jedno i drugie.</p>
+
+<ul>
+  <li><a href="https://supabase.com/docs/guides/realtime/architecture">Realtime Architecture, Supabase Docs</a></li>
+  <li><a href="https://supabase.com/docs/guides/realtime/broadcast">Broadcast, Supabase Docs</a></li>
+  <li><a href="https://supabase.com/docs/guides/realtime/authorization">Realtime Authorization, Supabase Docs</a></li>
+  <li><a href="https://supabase.com/docs/guides/realtime/subscribing-to-database-changes">Subscribing to Database Changes, Supabase Docs</a></li>
+  <li><a href="https://supabase.com/docs/guides/realtime/pricing">Realtime Pricing, Supabase Docs</a></li>
+  <li><a href="https://supabase.com/blog/supabase-realtime-broadcast-and-presence-authorization">Supabase Realtime: Broadcast and Presence Authorization</a></li>
+  <li><a href="https://supabase.com/ui/docs/nextjs/realtime-chat">Realtime Chat block, Supabase UI Library</a></li>
+  <li><a href="https://github.com/supabase/examples-archive/tree/main/supabase-js-v1/slack-clone/nextjs-slack-clone">Slack clone example, supabase/examples-archive</a></li>
+  <li><a href="https://github.com/chatscope/chat-ui-kit-react">chatscope/chat-ui-kit-react</a></li>
+  <li><a href="https://github.com/Detaysoft/react-chat-elements">Detaysoft/react-chat-elements</a></li>
+  <li><a href="https://github.com/tinode/chat">tinode/chat</a></li>
+  <li><a href="https://www.rocket.chat/alternatives/mattermost">Rocket.Chat: porównanie z Mattermostem</a></li>
+  <li><a href="https://ossalt.com/guides/mattermost-vs-rocketchat-2026">Mattermost vs Rocket.Chat 2026, OSSAlt</a></li>
+  <li><a href="https://ethora.com/blog/best-self-hosted-chat-servers-in-2026-complete-comparison/">Best Self Hosted Chat Servers in 2026, Ethora</a></li>
+  <li><a href="https://github.com/SAMA-Communications/awesome-chat-react">awesome-chat-react, przegląd bibliotek na licencjach permisywnych</a></li>
+</ul>
+
+</div>
+
+<script>
+(() => {
+  const store = (() => { try { localStorage.setItem('__t','1'); localStorage.removeItem('__t'); return localStorage; }
+    catch { const m = {}; return { getItem: k => m[k] ?? null, setItem: (k,v) => { m[k] = v; }, __mem: true }; } })();
+  const KEY = 'hr-review:n2click-czaty:';
+  let volatile = !!store.__mem;
+  const reviews = [...document.querySelectorAll('[data-review]')];
+  const out = document.querySelector('[data-dec-out]');
+  const stats = document.querySelector('[data-dec-stats]');
+  if (!out || !reviews.length) return;
+  const LBL = { akceptuje: 'AKCEPTUJĘ (budujemy)', odrzucam: 'ODRZUCAM (pomiń)', omowic: 'DO OMÓWIENIA' };
+  const update = () => {
+    const g = { akceptuje: [], odrzucam: [], omowic: [] };
+    let none = 0;
+    for (const r of reviews) {
+      const note = r.querySelector('textarea').value.trim();
+      let dec = r.dataset.dec || '';
+      if (!dec && note) dec = 'omowic';
+      if (!dec) { none++; continue; }
+      g[dec].push('- ' + r.dataset.title + (note ? '\n  Uwagi: ' + note : ''));
+    }
+    stats.innerHTML = '<span>✓ akceptacje: <b>' + g.akceptuje.length + '</b></span>' +
+      '<span>✕ odrzucone: <b>' + g.odrzucam.length + '</b></span>' +
+      '<span>? do omówienia: <b>' + g.omowic.length + '</b></span>' +
+      '<span>bez decyzji: <b>' + none + '</b> z ' + reviews.length + '</span>' +
+      (volatile ? '<span style="color:var(--hr-warn)">⚠ Decyzje nie zapisują się trwale w tej przeglądarce: skopiuj prompt przed zamknięciem strony.</span>' : '');
+    if (!g.akceptuje.length && !g.odrzucam.length && !g.omowic.length) {
+      out.textContent = 'Brak decyzji. Przejdź przez warianty i klikaj Akceptuję / Odrzucam / Do omówienia.';
+      return;
+    }
+    let txt = 'Przejrzałem raport o czatach w N2Hub. Moje decyzje o wariantach UI:\n';
+    for (const k of ['akceptuje', 'odrzucam', 'omowic'])
+      if (g[k].length) txt += '\n' + LBL[k] + ':\n' + g[k].join('\n') + '\n';
+    if (none) txt += '\nBEZ DECYZJI: ' + none + ' pozycji (pomiń na razie).\n';
+    txt += '\nBuduj wyłącznie warianty z sekcji AKCEPTUJĘ, zgodnie z makietami i architekturą z raportu ' +
+      'reports/n2click-czaty-research-2026-08-13.html. Wariantów ODRZUCAM nie ruszaj. ' +
+      'Pozycje DO OMÓWIENIA omów ze mną, zanim cokolwiek zmienisz. ' +
+      'Zacznij od fazy 0: zadaj mi 5 pytań decyzyjnych z sekcji 05 raportu.';
+    out.textContent = txt;
+  };
+  for (const r of reviews) {
+    const key = KEY + r.dataset.title;
+    const ta = r.querySelector('textarea');
+    try { const s = JSON.parse(store.getItem(key) || '{}');
+      if (s.dec) r.dataset.dec = s.dec; if (s.note) ta.value = s.note; } catch {}
+    const btns = r.querySelectorAll('[data-dec]');
+    const paint = () => btns.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.dec === (r.dataset.dec || ''))));
+    const persist = () => { try { store.setItem(key, JSON.stringify({ dec: r.dataset.dec || '', note: ta.value })); }
+      catch { if (!volatile) { volatile = true; update(); } } };
+    btns.forEach(b => b.addEventListener('click', () => {
+      r.dataset.dec = (r.dataset.dec === b.dataset.dec) ? '' : b.dataset.dec;
+      paint(); persist(); update();
+    }));
+    ta.addEventListener('input', () => { persist(); update(); });
+    paint();
+  }
+  document.querySelector('[data-dec-copy]').addEventListener('click', async () => {
+    const st = document.querySelector('[data-dec-status]');
+    let ok = false;
+    try { await navigator.clipboard.writeText(out.textContent); ok = true; } catch {}
+    if (!ok) {
+      try { const rng = document.createRange(); rng.selectNodeContents(out);
+        const sel = getSelection(); sel.removeAllRanges(); sel.addRange(rng);
+        ok = document.execCommand('copy');
+        if (ok) sel.removeAllRanges();
+      } catch {}
+    }
+    if (ok) { st.textContent = 'Skopiowano do schowka'; setTimeout(() => st.textContent = '', 2200); }
+    else { st.textContent = 'Kopiowanie zablokowane przez przeglądarkę: tekst jest zaznaczony, użyj Cmd+C / Ctrl+C.'; }
+  });
+  update();
+})();
+</script>
+</body>
+</html>

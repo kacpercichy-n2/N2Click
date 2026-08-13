@@ -134,3 +134,33 @@ kart i zwinięciem do 1 kolumny w `max-width: 760px` (breakpoint z pliku),
 `.cloud-profile` dt/dd z `overflow-wrap: anywhere` (długi e-mail zawija się),
 `.page > .people-form-hint` z odstępem nad listą osób. `npm test` 119/2669
 zielone, build zielony. Wiki: bez zmian (brak nowej granicy ani inwariantu).
+
+## Developer result (20260813 — migracja czatu)
+
+Nowa `supabase/migrations/20260813180000_chat.sql`:
+`n2click.conversations/conversation_members/messages`, trzy helpery `app.*`,
+triggery Broadcast/bump, RPC `chat_overview`. Tabele świadomie poza
+`supabase_realtime`; polityki `chat_*` na `realtime.messages`.
+`migrations.test.ts`: lista, cztery wpisy `EXPECTED_POLICIES`, regex tabel
+z cyframi, revoke-anon dla naszych schematów. `npm test` 2831/2832 — jedyna
+porażka `contentplan/google.test.ts` (lokalny `.env.local`). Nic nie
+aplikowano na bazę.
+
+## Developer result (20260813 — rdzeń czatu)
+
+Nowy `src/chat/`: `types`, `chatData` (wstrzykiwany `ChatDb`, kursor
+`(created_at,id)`, fallback 23505), `chatState` (dedup/unread/resort),
+`ChatProvider` (`useChat`, prywatne kanały broadcast + presence,
+`realtime.setAuth`), dwa testy. `npx vitest run src/chat` 53/53; `npm test`
+2883/2884 (porażka `contentplan/google` — `.env.local`); build zielony.
+Provider niezamontowany, zero UI. Kontekst +migracja czatu (RLS członków).
+Wiki bez zmian.
+
+## Developer result (20260813 — UI czatu „bąbelki")
+
+Nowe `src/chat/ui/`: 4 czyste modele widoku z testami + 5 cienkich komponentów.
+`Avatar.tsx` wystawia `AvatarBase`, `icons.ts` +3 ikony, `styles.css` sekcja
+czatu i token `--n2-z-chat: 890`, montaż w `main.tsx` (ChatProvider w
+AvatarUrlsProvider, ChatDock obok routera). `npx vitest run src/chat` 106/106;
+`npm test` 2937/2938 (znana porażka `contentplan/google`); build zielony.
+Przeglądarka niesprawdzona (brak playwrighta). Wiki bez zmian.

@@ -98,6 +98,20 @@ const EXPECTED_POLICIES: Record<string, string[]> = {
   'contentplan.comments': ['select', 'insert'],
   'contentplan.post_history': ['select', 'insert'],
   'contentplan.drive_folders': ['select', 'insert', 'update', 'delete'],
+  // Czat wewnętrzny (20260813180000_chat, schemat `n2click` — klucze z
+  // prawdziwym schematem, jak contentplan): rozmowa jest tylko do odczytu
+  // i założenia (tytuł grupy poza MVP, `last_message_at` podbija trigger
+  // definer, rozmów się nie kasuje z klienta), członkostwo ma pełne CRUD
+  // (UPDATE = `last_read_at`/`muted_until`, DELETE = opuszczenie rozmowy),
+  // a wiadomości nie mają DELETE — kasowanie jest MIĘKKIE (`deleted_at`).
+  'n2click.conversations': ['select', 'insert'],
+  'n2click.conversation_members': ['select', 'insert', 'update', 'delete'],
+  'n2click.messages': ['select', 'insert', 'update'],
+  // Autoryzacja prywatnych kanałów Broadcast/Presence czatu: SELECT = prawo do
+  // odbierania zdarzeń topicu, INSERT = prawo do wysyłania („pisze…”, presence).
+  // Tabela jest platformowa i WSPÓLNA dla appek — polityki są permisywne, więc
+  // wpisy `chat_*` niczego cudzego nie zawężają.
+  'realtime.messages': ['select', 'insert'],
 };
 
 interface ParsedPolicy {
@@ -112,8 +126,10 @@ const policyStatements = allSql.match(/create policy[\s\S]*?;/g) ?? [];
 const policies: ParsedPolicy[] = [];
 const unparsedPolicies: string[] = [];
 for (const statement of policyStatements) {
+  // Nazwa tabeli dopuszcza CYFRY — schemat `n2click` (polityki czatu) inaczej
+  // wpadłby w `unparsedPolicies` i wyglądał jak polityka spoza konwencji.
   const head = statement.match(
-    /create policy "([^"]+)" on ([a-z_.]+) for (select|insert|update|delete|all) to ([a-z_, ]+?) (?=using|with)/,
+    /create policy "([^"]+)" on ([a-z0-9_.]+) for (select|insert|update|delete|all) to ([a-z_, ]+?) (?=using|with)/,
   );
   if (head) {
     const [, name, table, command, roles] = head;
@@ -221,6 +237,38 @@ describe('konwencja plików migracji', () => {
       // yes/no, brak wpisu = oczekuje; wpisy legacy bez `status` czytane
       // jako 'no' po stronie klienta. Zero zmian danych i RLS.
       '20260811170000_events_rsvps_rename.sql',
+      // Czat wewnętrzny: n2click.conversations / conversation_members /
+      // messages + helpery `app.*`, triggery Broadcast i RPC chat_overview.
+      // Tabele ŚWIADOMIE poza publikacją `supabase_realtime` (postgres_changes
+      // wyzwalałoby pełną rehydrację plannera) — na żywo idzie Broadcast,
+      // autoryzowany politykami `chat_*` na `realtime.messages`.
+      '20260813180000_chat.sql',
+      // Hardening czatu z przeglądu: granty kolumnowe UPDATE (członkostwa nie
+      // da się przepiąć na cudzą rozmowę, wiadomości nie da się przenieść)
+      // + kanał osobisty `chat:user:<uuid>` (nowe rozmowy docierają na żywo).
+      '20260813190000_chat_membership_hardening.sql',
+      // Stempel rewizji: każda zmiana `body` podbija `edited_at` z zegara
+      // serwera — bez tego remis rewizji był po stronie klienta
+      // nierozstrzygalny (cofnięcie edycji albo jej zignorowanie).
+      '20260813200000_chat_edit_stamp.sql',
+      // Rewizja w całości własnością serwera: klient nie ustawi ani nie
+      // wyczyści `edited_at` (przepisywany ze starego wiersza poza edycją
+      // treści), kasowanie miękkie terminalne także na serwerze.
+      '20260813210000_chat_revision_ownership.sql',
+      // Monotoniczność rewizji per wiadomość: stempel edycji nigdy nie jest
+      // <= poprzedniego znacznika, nawet przy cofniętym zegarze (NTP/failover).
+      '20260813220000_chat_revision_monotonic.sql',
+      // Stemple INSERT: klient nie wstawi wiersza z własnym created_at /
+      // edited_at / deleted_at / last_read_at / muted_until / last_message_at
+      // — wszystkie znaczniki rodzą się z zegara serwera.
+      '20260813230000_chat_insert_stamps.sql',
+      // Atomowe tworzenie grupy (RPC, security invoker): grupa nie ma
+      // direct_key, więc częściowy zapis składu nie miał ścieżki naprawy.
+      '20260813240000_chat_create_group_rpc.sql',
+      // Poufność DM: direct_key musi być kanoniczną parą zawierającą
+      // zakładającego, a członkiem rozmowy 1:1 jest wyłącznie strona pary
+      // (koniec zawłaszczania klucza cudzej pary i wyroczni istnienia).
+      '20260813250000_chat_direct_key_integrity.sql',
     ]);
   });
 
@@ -252,17 +300,21 @@ describe('deny-by-default: RLS na każdej tabeli', () => {
     expect(allSql).not.toContain('force row level security');
   });
 
-  it('rola anon traci domyślne uprawnienia do każdej tabeli w public', () => {
+  it('rola anon traci domyślne uprawnienia do każdej naszej tabeli', () => {
     // Kolejne migracje tylko-do-przodu odbierają anon dostęp we WŁASNYCH plikach,
     // więc sumujemy wszystkie klauzule `revoke ... from anon` (rdzeń + słowniki).
-    const revoked = [...allSql.matchAll(/revoke all on ([a-z_.,\s]+) from anon/g)]
+    // Schemat `n2click` ma `alter default privileges ... grant all on tables to
+    // anon`, więc świeża tabela dostaje tam ALL (z TRUNCATE, który omija RLS) —
+    // jawny revoke jest jedyną rzeczą, która ją zamyka.
+    const revoked = [...allSql.matchAll(/revoke all on ([a-z0-9_.,\s]+) from anon/g)]
       .map((m) => m[1])
       .join(' ');
     expect(revoked.length).toBeGreaterThan(0);
     for (const table of Object.keys(EXPECTED_POLICIES)) {
-      if (table.startsWith('public.')) {
-        expect(revoked).toContain(table);
-      }
+      // `storage.*` i `realtime.*` to tabele platformowe — grantów Supabase nie
+      // przestawiamy, sterujemy tam wyłącznie politykami.
+      if (table.startsWith('storage.') || table.startsWith('realtime.')) continue;
+      expect(revoked).toContain(table);
     }
   });
 });

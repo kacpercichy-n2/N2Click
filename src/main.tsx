@@ -7,6 +7,8 @@ import { SessionProvider } from './auth/SessionProvider';
 import { OrgDataProvider } from './supabase/OrgDataProvider';
 import { CloudSyncProvider } from './supabase/CloudSyncProvider';
 import { AvatarUrlsProvider } from './supabase/AvatarUrlsProvider';
+import { ChatProvider } from './chat/ChatProvider';
+import { ChatDock } from './chat/ui/ChatDock';
 import { App } from './App';
 import { ConfirmProvider } from './components/ConfirmProvider';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -73,19 +75,30 @@ createRoot(rootEl).render(
                     supabase); w trybie lokalnym mapy są puste i nic się nie
                     zmienia. Wewnątrz OrgDataProvider (czyta snapshot). */}
                 <AvatarUrlsProvider>
-                  {/* Respect OS "reduce motion" for every animation in the app. */}
-                  <MotionConfig reducedMotion="user">
-                    {/* JEDYNE miejsce, w którym ładujemy silnik animacji. Cała
-                        aplikacja renderuje `m.*` (nigdy `motion.*`), więc do
-                        drzewa wchodzi lekki `domAnimation` (animacje, warianty,
-                        wyjścia `AnimatePresence`, gesty hover/tap/focus) zamiast
-                        pełnego pakietu z projekcją layoutu i przeciąganiem.
-                        `strict` pilnuje tej umowy: każde `motion.*` rzuci błąd
-                        zamiast po cichu dociągnąć pełny silnik. */}
-                    <LazyMotion features={domAnimation} strict>
-                      <RouterProvider router={router} future={{ v7_startTransition: true }} />
-                    </LazyMotion>
-                  </MotionConfig>
+                  {/* Czat (rozmowy, obecność, Realtime). Wewnątrz
+                      AvatarUrlsProvider, bo bąbelki i dymki biorą zdjęcia z jego
+                      map, a nazwiska ze snapshotu organizacji wyżej. W trybie
+                      lokalnym provider nie tworzy ANI klienta Supabase, ANI
+                      kanału, a `ChatDock` renderuje `null`. */}
+                  <ChatProvider>
+                    {/* Respect OS "reduce motion" for every animation in the app. */}
+                    <MotionConfig reducedMotion="user">
+                      {/* JEDYNE miejsce, w którym ładujemy silnik animacji. Cała
+                          aplikacja renderuje `m.*` (nigdy `motion.*`), więc do
+                          drzewa wchodzi lekki `domAnimation` (animacje, warianty,
+                          wyjścia `AnimatePresence`, gesty hover/tap/focus) zamiast
+                          pełnego pakietu z projekcją layoutu i przeciąganiem.
+                          `strict` pilnuje tej umowy: każde `motion.*` rzuci błąd
+                          zamiast po cichu dociągnąć pełny silnik. */}
+                      <LazyMotion features={domAnimation} strict>
+                        <RouterProvider router={router} future={{ v7_startTransition: true }} />
+                        {/* Dok czatu jest `position: fixed` i nie czyta tras, więc
+                            stoi OBOK routera, a nie w powłoce strony — żadna trasa
+                            nie może go przypadkiem odmontować. */}
+                        <ChatDock />
+                      </LazyMotion>
+                    </MotionConfig>
+                  </ChatProvider>
                 </AvatarUrlsProvider>
               </CloudSyncProvider>
             </OrgDataProvider>
