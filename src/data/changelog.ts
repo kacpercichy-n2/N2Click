@@ -90,6 +90,45 @@ export function changelogUnreadCount(
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-08-17-czat-wewnetrzny',
+    dateFrom: '2026-08-13',
+    dateTo: '2026-08-17',
+    summary:
+      'Czat wewnętrzny w N2Hub: rozmowy 1:1 i grupowe w bąbelkach w prawym dolnym rogu, z GIF-ami, emoji, linkami i powiadomieniem o nowej wersji aplikacji.',
+    items: [
+      {
+        area: 'Czat',
+        feature: 'Rozmowy 1:1 i grupowe',
+        description:
+          'Przycisk czatu w prawym dolnym rogu otwiera listę rozmów i osób z zespołu. Możesz napisać do jednej osoby albo założyć grupę („Nowa grupa”). Wiadomości docierają na żywo, widać kto jest aktywny, kto właśnie pisze i ile masz nieprzeczytanych (czerwona odznaka na bąbelku i licznik w tytule karty). Enter wysyła, Shift+Enter robi nową linię.',
+      },
+      {
+        area: 'Czat',
+        feature: 'Bąbelki, minimalizacja i zamykanie',
+        description:
+          'Otwarte rozmowy wiszą jako bąbelki z awatarami w kolumnie po prawej (do pięciu, reszta w liście). Klik w bąbelek albo chevron „Minimalizuj” chowa okno, ale bąbelek zostaje; X zamyka rozmowę i zdejmuje bąbelek — wróci sam, gdy przyjdzie nowa wiadomość. Niedokończony tekst nie ginie po zminimalizowaniu.',
+      },
+      {
+        area: 'Czat',
+        feature: 'GIF-y, emoji i linki',
+        description:
+          'W polu wiadomości są przyciski emoji (własny wybór z wyszukiwarką po polsku i sekcją „Ostatnie”) oraz GIF (na start lista popularnych, dalej wyszukiwarka — z KLIPY). GIF pokazuje się jako obrazek w dymku, 1–3 emoji wyświetlają się dużym stopniem, a adresy http/https zamieniają się w klikalne linki otwierane w nowej karcie. Tekstowe emotikony jak <3, :), :D, ;), :(, xD zamieniają się przy wysyłce na prawdziwe emoji.',
+      },
+      {
+        area: 'Czat',
+        feature: 'Telefon',
+        description:
+          'Na telefonie okno rozmowy zajmuje szerokość ekranu, podnosi się nad klawiaturę, a przyciski mają wygodny rozmiar pod palec. Klawiatura pokazuje „Wyślij” zamiast nowej linii.',
+      },
+      {
+        area: 'Ogólne',
+        feature: 'Powiadomienie o nowej wersji',
+        description:
+          'Gdy w tle wyjdzie nowa wersja N2Hub, otwarta karta pokaże pasek „Dostępna jest nowa wersja” z przyciskiem „Odśwież teraz” — bez odświeżenia stara karta mogła np. nie pokazać GIF-a od kolegi.',
+      },
+    ],
+  },
+  {
     id: '2026-08-11-nieobecnosc-wystapienia-spotkania',
     dateFrom: '2026-08-11',
     dateTo: '2026-08-11',
