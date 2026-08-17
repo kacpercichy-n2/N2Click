@@ -10,10 +10,13 @@
 //     Fokus wchodzi do kompozytora, Escape zamyka okno, gdy fokus jest w środku.
 //   * Dosuwanie scrolla działa tylko wtedy, gdy użytkownik JEST przy dole —
 //     czytanie starszych wiadomości nie może być przerywane skokiem.
-//   * MINIMALIZACJA = ZAMKNIĘCIE (decyzja D1): okno nie ma stanu „zwinięte" ani
-//     chevronów. Nagłówek jest wyłącznie informacyjny (tytuł + status to zwykły
-//     blok, nie przycisk); zamyka X i Escape, a kotwicą pozostaje bąbelek w
-//     kolumnie doku — klik w niego otwiera rozmowę z powrotem.
+//   * MINIMALIZACJA = ZAMKNIĘCIE OKNA (decyzja D1): okno nie ma stanu
+//     „zwinięte". Nagłówek jest informacyjny (tytuł + status to zwykły blok,
+//     nie przycisk) i ma DWA przyciski: chevron „Minimalizuj" (i Escape)
+//     odmontowuje okno, a bąbelek zostaje w kolumnie doku jako kotwica; X
+//     „Zamknij" dodatkowo zdejmuje bąbelek z kolumny (`onDismiss` w doku) —
+//     rozmowa wraca do listy w popoverze, a bąbelek wróci sam przy nowej
+//     nieprzeczytanej wiadomości.
 //   * TREŚĆ DYMKA idzie przez czysty `chatRichText.ts` (decyzje D4/D5a/D7):
 //     linki jako DANE (nigdy `dangerouslySetInnerHTML`), sam adres GIF-a jako
 //     `<img>`, 1–3 emoji większym stopniem, nowe linie zachowane w CSS.
@@ -28,14 +31,14 @@
 //     i po zamknięciu okna, i po dopisaniu kolejnych słów.
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, m, useReducedMotion } from 'motion/react';
-import { ImagePlay, Send, Smile, X } from '../../components/icons';
+import { ChevronDown, ImagePlay, Send, Smile, X } from '../../components/icons';
 import { todayStr } from '../../utils/dates';
 import { useChat } from '../ChatProvider';
 import { CHAT_MESSAGE_MAX_LENGTH, type ChatConversation } from '../types';
 import { ChatAvatar } from './ChatAvatar';
 import { ChatEmojiPopover } from './ChatEmojiPopover';
 import { ChatGifPopover } from './ChatGifPopover';
-import { insertAtCaret, pushRecentEmoji } from './chatEmoji';
+import { insertAtCaret, pushRecentEmoji, replaceEmoticons } from './chatEmoji';
 import { klipyApiKey } from './chatGifs';
 import {
   conversationInitials,
@@ -126,6 +129,7 @@ export function ChatWindow({
   draft,
   onDraftChange,
   onDraftRestore,
+  onDismiss,
 }: {
   conversation: ChatConversation;
   directory: ChatDirectory;
@@ -135,6 +139,8 @@ export function ChatWindow({
   onDraftChange: (value: string) => void;
   /** Powrót treści po NIEUDANEJ wysyłce (pole pustoszeje już przy Enterze). */
   onDraftRestore: (failed: string) => void;
+  /** X w nagłówku: zamknięcie okna RAZEM ze zdjęciem bąbelka z kolumny doku. */
+  onDismiss: () => void;
 }) {
   const chat = useChat();
   const reduceMotion = useReducedMotion();
@@ -280,7 +286,9 @@ export function ChatWindow({
     const failed = draft;
     setSending(true);
     onDraftChange('');
-    const ok = await chat.sendMessage(composer.value);
+    // Tekstowe emotikony („<3", „:)") wychodzą jako emoji — zamiana siedzi na
+    // granicy wysyłki, więc baza i odbiorca dostają już prawdziwy znak.
+    const ok = await chat.sendMessage(replaceEmoticons(composer.value));
     // Porażka: treść wraca do doku niezależnie od tego, czy okno jeszcze żyje —
     // `ChatProvider` trzyma po odmowie sam komunikat, nie tekst wiadomości.
     if (!ok) onDraftRestore(failed);
@@ -322,7 +330,17 @@ export function ChatWindow({
           type="button"
           className="n2chat-icon-btn"
           onClick={() => chat.closeConversation()}
+          aria-label="Minimalizuj rozmowę"
+          title="Minimalizuj"
+        >
+          <ChevronDown size={18} aria-hidden />
+        </button>
+        <button
+          type="button"
+          className="n2chat-icon-btn"
+          onClick={onDismiss}
           aria-label="Zamknij rozmowę"
+          title="Zamknij"
         >
           <X size={16} aria-hidden />
         </button>
@@ -420,30 +438,35 @@ export function ChatWindow({
         )}
         {chat.error !== null && <p className="n2chat-error">{chat.error}</p>}
         <div className="n2chat-composer-row">
-          <button
-            ref={emojiTriggerRef}
-            type="button"
-            className="n2chat-icon-btn n2chat-composer-btn"
-            onClick={() => flipPicker('emoji')}
-            aria-label="Wybierz emoji"
-            aria-haspopup="dialog"
-            aria-expanded={picker === 'emoji'}
-          >
-            <Smile size={18} aria-hidden />
-          </button>
-          {gifKey !== '' && (
+          {/* Emoji i GIF stoją obok siebie BEZ odstępu w jednej grupie — dwa
+              osobne przyciski z pełnym `gap` wiersza odbierały polu treści
+              blisko 20 px na oknie 380 px. */}
+          <div className="n2chat-composer-tools">
             <button
-              ref={gifTriggerRef}
+              ref={emojiTriggerRef}
               type="button"
               className="n2chat-icon-btn n2chat-composer-btn"
-              onClick={() => flipPicker('gif')}
-              aria-label="Wybierz GIF"
+              onClick={() => flipPicker('emoji')}
+              aria-label="Wybierz emoji"
               aria-haspopup="dialog"
-              aria-expanded={picker === 'gif'}
+              aria-expanded={picker === 'emoji'}
             >
-              <ImagePlay size={18} aria-hidden />
+              <Smile size={18} aria-hidden />
             </button>
-          )}
+            {gifKey !== '' && (
+              <button
+                ref={gifTriggerRef}
+                type="button"
+                className="n2chat-icon-btn n2chat-composer-btn"
+                onClick={() => flipPicker('gif')}
+                aria-label="Wybierz GIF"
+                aria-haspopup="dialog"
+                aria-expanded={picker === 'gif'}
+              >
+                <ImagePlay size={18} aria-hidden />
+              </button>
+            )}
+          </div>
           <textarea
             ref={composerRef}
             className="n2chat-input"

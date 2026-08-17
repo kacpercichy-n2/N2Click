@@ -23,6 +23,8 @@ export {
   X,
   ChevronRight,
   ChevronLeft,
+  // Czat: „Minimalizuj" w nagłówku okna rozmowy (okno znika, bąbelek zostaje).
+  ChevronDown,
   ChevronsLeft,
   ChevronsRight,
   // Czat (dok bąbelków): bąbelek otwierający listę rozmów i osób. Lupa trafiła

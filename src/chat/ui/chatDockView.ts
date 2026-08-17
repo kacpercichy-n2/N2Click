@@ -59,7 +59,48 @@ export interface DockBubblesInput {
   openConversationId: string | null;
   /** Ostatnio otwierane rozmowy, od najświeższej (pamięć sesji doku). */
   recentIds: readonly string[];
+  /**
+   * Rozmowy zdjęte X-em: id → id OSTATNIEJ WIADOMOŚCI z chwili zdjęcia. Bąbelek
+   * zostaje schowany, dopóki ostatnia wiadomość jest ta sama — czyli WRACA przy
+   * pierwszej nowej wiadomości, a nie od licznika nieprzeczytanych (ten bywa
+   * jeszcze > 0 tuż po otwarciu, zanim `markRead` dojdzie do serwera). Id, a nie
+   * `lastMessageAt`: dwie wiadomości mogą mieć ten sam znacznik czasu, id jest
+   * unikalne z definicji.
+   */
+  dismissed?: ChatDismissed;
   max?: number;
+}
+
+/** Zdjęte X-em: id rozmowy → id ostatniej wiadomości (`null` = pusta rozmowa). */
+export type ChatDismissed = Readonly<Record<string, string | null>>;
+
+/** Rewizja rozmowy do porównania „czy przyszło coś nowego": id ostatniej wiadomości. */
+function lastMessageId(conversation: ChatConversation): string | null {
+  return conversation.lastMessage?.id ?? null;
+}
+
+/** Czy rozmowa jest zdjęta i od tamtej pory NIC nowego nie przyszło. */
+export function isDismissed(dismissed: ChatDismissed, conversation: ChatConversation): boolean {
+  return (
+    conversation.id in dismissed && dismissed[conversation.id] === lastMessageId(conversation)
+  );
+}
+
+/** Zdjęcie bąbelka X-em: zapamiętuje id ostatniej wiadomości. */
+export function dismissBubble(
+  dismissed: ChatDismissed,
+  conversation: ChatConversation,
+): ChatDismissed {
+  if (isDismissed(dismissed, conversation)) return dismissed;
+  return { ...dismissed, [conversation.id]: lastMessageId(conversation) };
+}
+
+/** Otwarcie rozmowy cofa zdjęcie (ta sama referencja, gdy nie była zdjęta). */
+export function undismissBubble(dismissed: ChatDismissed, id: string): ChatDismissed {
+  if (!(id in dismissed)) return dismissed;
+  const next = { ...dismissed };
+  delete next[id];
+  return next;
 }
 
 /**
@@ -96,6 +137,7 @@ export function buildDockBubbles(input: DockBubblesInput): ChatBubbleView[] {
   const { conversations, selfId, directory, presence, openConversationId } = input;
   const max = Math.max(1, input.max ?? MAX_DOCK_BUBBLES);
   const recent = new Set(input.recentIds);
+  const dismissed = input.dismissed ?? {};
 
   const toView = (conversation: ChatConversation): ChatBubbleView => {
     const title = conversationTitle(conversation, selfId, directory);
@@ -115,11 +157,13 @@ export function buildDockBubbles(input: DockBubblesInput): ChatBubbleView[] {
     };
   };
 
+  // Otwarta rozmowa ZAWSZE zostaje (kotwica okna); zdjęta X-em znika bez
+  // względu na nieprzeczytane, dopóki nie przyjdzie nowa wiadomość.
   const candidates = conversations.filter(
     (conversation) =>
-      conversation.unreadCount > 0 ||
-      recent.has(conversation.id) ||
-      conversation.id === openConversationId,
+      conversation.id === openConversationId ||
+      (!isDismissed(dismissed, conversation) &&
+        (conversation.unreadCount > 0 || recent.has(conversation.id))),
   );
 
   const visible = candidates.slice(0, max);
@@ -146,6 +190,16 @@ export function pushRecent(
   if (id === '') return list.slice();
   if (list[0] === id) return list.slice();
   return [id, ...list.filter((entry) => entry !== id)].slice(0, Math.max(1, max));
+}
+
+/**
+ * Zdjęcie rozmowy z „ostatnio otwieranych" (X w nagłówku okna). Razem z
+ * `dismissBubble` sprawia, że bąbelek schodzi z kolumny także przy
+ * nieprzeczytanych. Ta sama referencja, gdy wpisu nie było.
+ */
+export function removeRecent(list: readonly string[], id: string): string[] {
+  if (id === '' || !list.includes(id)) return list.slice();
+  return list.filter((entry) => entry !== id);
 }
 
 /**

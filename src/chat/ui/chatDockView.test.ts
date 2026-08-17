@@ -8,12 +8,16 @@ import {
   buildDockBubbles,
   bubbleAriaLabel,
   clearDraftFor,
+  dismissBubble,
+  isDismissed,
+  undismissBubble,
   filterConversationRows,
   filterPeople,
   formatUnreadBadge,
   normalizeQuery,
   previewText,
   pushRecent,
+  removeRecent,
   restoreFailedDraft,
   setDraftFor,
   unreadPhrase,
@@ -29,6 +33,10 @@ const people = [
   { id: MAREK, firstName: 'Marek', lastName: 'Żuraw', email: 'marek@n2.pl' },
 ];
 const directory = buildDirectory(people);
+
+function lastMsg(id: string, authorId: string): ChatConversation['lastMessage'] {
+  return { id, authorId, body: 'x', createdAt: '2026-08-17T10:00:00Z', deletedAt: null };
+}
 
 function direct(id: string, peer: string, patch: Partial<ChatConversation> = {}): ChatConversation {
   return {
@@ -120,6 +128,31 @@ describe('buildDockBubbles', () => {
     expect(bubbles.find((b) => b.conversationId === 'c7')?.active).toBe(true);
   });
 
+  it('zdjęta X-em znika mimo nieprzeczytanych i wraca przy nowej wiadomości', () => {
+    const before = direct('a', OLA, { unreadCount: 3, lastMessage: lastMsg('m1', OLA) });
+    const dismissed = dismissBubble({}, before);
+    expect(
+      buildDockBubbles({ ...base, conversations: [before], recentIds: ['a'], dismissed }),
+    ).toEqual([]);
+    const after = { ...before, lastMessage: lastMsg('m2', OLA), unreadCount: 4 };
+    expect(
+      buildDockBubbles({ ...base, conversations: [after], dismissed }).map((b) => b.conversationId),
+    ).toEqual(['a']);
+  });
+
+  it('zdjęta, ale OTWARTA rozmowa nadal ma bąbelek (kotwica okna)', () => {
+    const conversation = direct('a', OLA, { lastMessage: lastMsg('m1', OLA) });
+    const dismissed = dismissBubble({}, conversation);
+    expect(
+      buildDockBubbles({
+        ...base,
+        conversations: [conversation],
+        openConversationId: 'a',
+        dismissed,
+      }).map((b) => b.conversationId),
+    ).toEqual(['a']);
+  });
+
   it('rozmowa bez nieprzeczytanych i bez historii nie dostaje bąbelka', () => {
     expect(buildDockBubbles({ ...base, conversations: [direct('a', OLA)] })).toEqual([]);
   });
@@ -163,6 +196,42 @@ describe('pushRecent', () => {
   it('nie przekracza limitu i ignoruje puste id', () => {
     expect(pushRecent(['a', 'b', 'c', 'd', 'e'], 'f')).toEqual(['f', 'a', 'b', 'c', 'd']);
     expect(pushRecent(['a'], '')).toEqual(['a']);
+  });
+});
+
+describe('dismissBubble / undismissBubble', () => {
+  const conversation = direct('a', OLA, { lastMessage: lastMsg('m1', OLA) });
+
+  it('zapamiętuje id ostatniej wiadomości i cofa się przy otwarciu', () => {
+    const dismissed = dismissBubble({}, conversation);
+    expect(isDismissed(dismissed, conversation)).toBe(true);
+    // Nowa wiadomość o TYM SAMYM znaczniku czasu też liczy się jako nowa — klucz
+    // to id, nie `lastMessageAt`.
+    expect(isDismissed(dismissed, { ...conversation, lastMessage: lastMsg('m2', OLA) })).toBe(false);
+    expect(undismissBubble(dismissed, 'a')).toEqual({});
+  });
+
+  it('rozmowa bez wiadomości też daje się zdjąć', () => {
+    const empty = direct('b', OLA);
+    expect(isDismissed(dismissBubble({}, empty), empty)).toBe(true);
+  });
+
+  it('oddaje tę samą referencję, gdy nic się nie zmienia', () => {
+    const dismissed = dismissBubble({}, conversation);
+    expect(dismissBubble(dismissed, conversation)).toBe(dismissed);
+    expect(undismissBubble(dismissed, 'x')).toBe(dismissed);
+  });
+});
+
+describe('removeRecent', () => {
+  it('zdejmuje rozmowę z listy i zostawia resztę w kolejności', () => {
+    expect(removeRecent(['a', 'b', 'c'], 'b')).toEqual(['a', 'c']);
+    expect(removeRecent(['a'], 'a')).toEqual([]);
+  });
+
+  it('nie zmienia listy bez wpisu ani przy pustym id', () => {
+    expect(removeRecent(['a', 'b'], 'x')).toEqual(['a', 'b']);
+    expect(removeRecent(['a'], '')).toEqual(['a']);
   });
 });
 

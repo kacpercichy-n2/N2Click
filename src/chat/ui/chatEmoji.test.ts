@@ -7,6 +7,7 @@ import {
   filterEmoji,
   insertAtCaret,
   pushRecentEmoji,
+  replaceEmoticons,
 } from './chatEmoji';
 
 const ALL = EMOJI_CATEGORIES.flatMap((category) => category.emojis);
@@ -170,5 +171,38 @@ describe('insertAtCaret', () => {
   it('przycina pozycje spoza zakresu i przyjmuje NaN jako koniec', () => {
     expect(insertAtCaret('ab', -5, 99, 'X')).toEqual({ value: 'X', caret: 1 });
     expect(insertAtCaret('ab', Number.NaN, Number.NaN, 'X')).toEqual({ value: 'abX', caret: 3 });
+  });
+});
+
+describe('replaceEmoticons', () => {
+  it('zamienia samodzielne emotikony na emoji', () => {
+    expect(replaceEmoticons('<3')).toBe('❤️');
+    expect(replaceEmoticons('super :)')).toBe('super 🙂');
+    expect(replaceEmoticons(':D no i git ;)')).toBe('😀 no i git 😉');
+    expect(replaceEmoticons('dzięki :*')).toBe('dzięki 😘');
+    expect(replaceEmoticons('no nie :(')).toBe('no nie 🙁');
+    expect(replaceEmoticons('xD')).toBe('😆');
+    expect(replaceEmoticons('ok ^^')).toBe('ok 😊');
+  });
+
+  it('dłuższy wariant wygrywa z krótszym', () => {
+    expect(replaceEmoticons('</3')).toBe('💔');
+    expect(replaceEmoticons(':-)')).toBe('🙂');
+    expect(replaceEmoticons(":'(")).toBe('😢');
+  });
+
+  it('zostawia emotikon przy interpunkcji zdania i na nowej linii', () => {
+    expect(replaceEmoticons('hej :)!')).toBe('hej 🙂!');
+    expect(replaceEmoticons('linia\n:)\ndalej')).toBe('linia\n🙂\ndalej');
+    expect(replaceEmoticons(':) :) :)')).toBe('🙂 🙂 🙂');
+  });
+
+  it('nie rusza emotikonów sklejonych ze słowem ani adresów', () => {
+    expect(replaceEmoticons('https://n2.pl/x')).toBe('https://n2.pl/x');
+    expect(replaceEmoticons('a:)b')).toBe('a:)b');
+    expect(replaceEmoticons('kod<3x')).toBe('kod<3x');
+    expect(replaceEmoticons('godz. 12:30')).toBe('godz. 12:30');
+    expect(replaceEmoticons('')).toBe('');
+    expect(replaceEmoticons('zwykły tekst')).toBe('zwykły tekst');
   });
 });

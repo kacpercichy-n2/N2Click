@@ -12304,8 +12304,17 @@ a.toggle-btn {
 .n2chat-composer {
   position: relative;
 }
+/* Grupa emoji + GIF: przyciski stykają się (odstęp 0), a od pola treści dzieli
+   je jeden `gap` wiersza. Węższy przycisk (32 px) i brak odstępu w środku
+   oddają polu ~20 px na oknie 380 px; na telefonie cele rosną do 44 px. */
+.n2chat-composer-tools {
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  gap: 0;
+}
 .n2chat-composer-btn {
-  width: 36px;
+  width: 32px;
   height: 36px;
 }
 .n2chat-composer-btn[aria-expanded='true'] {

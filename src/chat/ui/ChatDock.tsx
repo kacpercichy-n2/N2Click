@@ -24,6 +24,7 @@ import { AnimatePresence, m, useReducedMotion } from 'motion/react';
 import { MessagesSquare } from '../../components/icons';
 import { useOrgData } from '../../supabase/OrgDataProvider';
 import { useChat } from '../ChatProvider';
+import type { ChatConversation } from '../types';
 import { ChatAvatar } from './ChatAvatar';
 import { ChatGroupModal } from './ChatGroupModal';
 import { ChatSearchPopover } from './ChatSearchPopover';
@@ -31,10 +32,14 @@ import { ChatWindow } from './ChatWindow';
 import { buildDirectory, type ChatPerson } from './chatPeople';
 import {
   buildDockBubbles,
+  dismissBubble,
   pushRecent,
+  removeRecent,
   restoreFailedDraft,
   setDraftFor,
+  undismissBubble,
   unreadPhrase,
+  type ChatDismissed,
   type ChatDrafts,
 } from './chatDockView';
 
@@ -61,6 +66,8 @@ function ChatDockInner() {
   const [groupOpen, setGroupOpen] = useState(false);
   /** Szkic per rozmowa; przeżywa zamknięcie okna, znika po udanej wysyłce. */
   const [drafts, setDrafts] = useState<ChatDrafts>({});
+  /** Zdjęte X-em (id → `lastMessageAt`); bąbelek wraca przy nowej wiadomości. */
+  const [dismissed, setDismissed] = useState<ChatDismissed>({});
 
   // Rezerwa 52 px + odstęp po prawej stronie treści: dok jest `position: fixed`
   // obok routera, więc bez tej klasy karty wjeżdżały POD bąbelki. Klasa siedzi
@@ -89,6 +96,9 @@ function ChatDockInner() {
   useEffect(() => {
     if (openId === null) return;
     setRecentIds((list) => pushRecent(list, openId));
+    // Otwarcie (z popovera, z bąbelka) cofa zdjęcie — po minimalizacji bąbelek
+    // ma znów zostać w kolumnie.
+    setDismissed((current) => undismissBubble(current, openId));
   }, [openId]);
 
   const bubbles = useMemo(
@@ -100,19 +110,22 @@ function ChatDockInner() {
         presence: chat.presence,
         openConversationId: openId,
         recentIds,
+        dismissed,
       }),
-    [chat.conversations, chat.selfId, directory, chat.presence, openId, recentIds],
+    [chat.conversations, chat.selfId, directory, chat.presence, openId, recentIds, dismissed],
   );
 
   const openConversation =
     chat.conversations.find((conversation) => conversation.id === openId) ?? null;
 
   /**
-   * MINIMALIZACJA = ZAMKNIĘCIE (decyzja D1). Klik w AKTYWNY bąbelek zamyka
-   * okno; bąbelek zostaje w kolumnie, bo `recentIds` pamięta rozmowę po
-   * zamknięciu (`buildDockBubbles` bierze kandydatów także z tej listy). Efekt
-   * uboczny pożądany: zamknięte okno nie oznacza cudzych wiadomości jako
-   * przeczytanych — dawny „zwinięty" nagłówek to robił.
+   * MINIMALIZACJA = ZAMKNIĘCIE OKNA (decyzja D1). Klik w AKTYWNY bąbelek (tak
+   * samo jak chevron w nagłówku) zamyka okno; bąbelek zostaje w kolumnie, bo
+   * `recentIds` pamięta rozmowę po zamknięciu (`buildDockBubbles` bierze
+   * kandydatów także z tej listy). Efekt uboczny pożądany: zamknięte okno nie
+   * oznacza cudzych wiadomości jako przeczytanych — dawny „zwinięty" nagłówek
+   * to robił. X w nagłówku idzie dalej (`dismissConversation`): zdejmuje też
+   * bąbelek z kolumny.
    */
   const selectConversation = (conversationId: string): void => {
     if (conversationId === openId) {
@@ -120,6 +133,18 @@ function ChatDockInner() {
       return;
     }
     chat.openConversation(conversationId);
+  };
+
+  /**
+   * X w nagłówku okna: okno znika i bąbelek schodzi z kolumny — także wtedy,
+   * gdy licznik nieprzeczytanych jeszcze nie zszedł do zera (`markRead` w
+   * drodze). Wraca dopiero z nową wiadomością (`isDismissed` porównuje id
+   * ostatniej wiadomości).
+   */
+  const dismissConversation = (conversation: ChatConversation): void => {
+    chat.closeConversation();
+    setRecentIds((list) => removeRecent(list, conversation.id));
+    setDismissed((current) => dismissBubble(current, conversation));
   };
 
   const totalUnread = unreadPhrase(chat.totalUnread);
@@ -139,6 +164,7 @@ function ChatDockInner() {
             onDraftRestore={(failed) =>
               setDrafts((current) => restoreFailedDraft(current, openConversation.id, failed))
             }
+            onDismiss={() => dismissConversation(openConversation)}
           />
         )}
       </AnimatePresence>

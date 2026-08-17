@@ -353,3 +353,71 @@ export function insertAtCaret(
   const to = Math.max(a, b);
   return { value: value.slice(0, from) + insert + value.slice(to), caret: from + insert.length };
 }
+
+/**
+ * Tekstowe emotikony zamieniane na emoji PRZY WYSYŁCE (`ChatWindow.send`).
+ * Zamiana idzie na granicy wysyłki, a nie przy renderze: baza dostaje prawdziwe
+ * emoji, więc odbiorca widzi to samo niezależnie od wersji, którą ma
+ * załadowaną, a wiadomość „<3" liczy się jak jedno emoji (dymek jumbo).
+ *
+ * Lista świadomie KRÓTKA — te, które ludzie piszą z pamięci. Dłuższe warianty
+ * stoją PRZED krótszymi (`</3` przed `<3`, `:-)` przed `:)`), bo wzorzec jest
+ * alternatywą i wygrywa pierwsza gałąź, która pasuje.
+ */
+const EMOTICONS: ReadonlyArray<readonly [string, string]> = [
+  ['</3', '💔'],
+  ['<3', '❤️'],
+  [":'(", '😢'],
+  [':-)', '🙂'],
+  [':)', '🙂'],
+  ['(:', '🙂'],
+  [':-D', '😀'],
+  [':D', '😀'],
+  [';-)', '😉'],
+  [';)', '😉'],
+  [':-(', '🙁'],
+  [':(', '🙁'],
+  [':-P', '😛'],
+  [':P', '😛'],
+  [':p', '😛'],
+  [';P', '😜'],
+  [';p', '😜'],
+  [':-O', '😮'],
+  [':O', '😮'],
+  [':o', '😮'],
+  [':-*', '😘'],
+  [':*', '😘'],
+  [':-|', '😐'],
+  [':|', '😐'],
+  [':-/', '😕'],
+  [':/', '😕'],
+  ['xD', '😆'],
+  ['XD', '😆'],
+  ['^^', '😊'],
+  ['-_-', '😑'],
+];
+
+const EMOTICON_MAP: ReadonlyMap<string, string> = new Map(EMOTICONS);
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\/-]/g, '\\$&');
+}
+
+/**
+ * Emotikon musi stać OSOBNO: na początku tekstu albo po białym znaku, a za nim
+ * koniec, biały znak lub interpunkcja zdania. Dzięki temu `https://x` (`:/` po
+ * literze) ani `a:)b` nie są ruszane, a „super :)" i „hej :)!" — tak.
+ */
+const EMOTICON_PATTERN = new RegExp(
+  `(^|\\s)(${EMOTICONS.map(([text]) => escapeRegExp(text)).join('|')})(?=$|\\s|[.,!?])`,
+  'g',
+);
+
+/** Zamiana samodzielnych emotikonów tekstowych na emoji; reszta bez zmian. */
+export function replaceEmoticons(text: string): string {
+  if (text === '') return text;
+  return text.replace(
+    EMOTICON_PATTERN,
+    (_match, lead: string, emoticon: string) => `${lead}${EMOTICON_MAP.get(emoticon) ?? emoticon}`,
+  );
+}

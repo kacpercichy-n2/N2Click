@@ -59,6 +59,7 @@ import { SampleBanner } from './components/SampleBanner';
 import { PersistenceBanner } from './components/PersistenceBanner';
 import { LiveRegionHost } from './components/LiveRegionHost';
 import { CloudSyncBanner } from './components/CloudSyncBanner';
+import { UpdateBanner } from './components/UpdateBanner';
 import { TaskModal } from './components/TaskModal';
 import { TicketModal } from './components/TicketModal';
 import { EventModal } from './components/EventModal';
@@ -487,6 +488,10 @@ export function App() {
         <PersistenceBanner />
         {/* Cloud sync status (supabase mode only; renders null in local mode). */}
         <CloudSyncBanner />
+        {/* Nowa publikacja przy otwartej karcie: stary pakiet nie umie pokazać
+            nowych treści czatu (GIF u odbiorcy jako surowy adres, 17.08.2026),
+            więc karta sama prosi o odświeżenie. */}
+        <UpdateBanner />
         <SampleBanner />
         <m.div
           key={location.pathname}
