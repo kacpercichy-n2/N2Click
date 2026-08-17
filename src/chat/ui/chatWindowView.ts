@@ -211,3 +211,27 @@ export function isNearBottom(
 ): boolean {
   return box.scrollHeight - box.scrollTop - box.clientHeight <= slack;
 }
+
+/** Który picker kompozytora jest otwarty; najwyżej jeden, bo dzielą miejsce. */
+export type ComposerPicker = 'none' | 'emoji' | 'gif';
+
+/** Panel, który da się otworzyć (czyli wszystko poza „żaden"). */
+export type ComposerPickerId = Exclude<ComposerPicker, 'none'>;
+
+/** Klik w przycisk kompozytora: ten sam panel gasi, inny przełącza. */
+export function togglePicker(current: ComposerPicker, which: ComposerPickerId): ComposerPicker {
+  return current === which ? 'none' : which;
+}
+
+/**
+ * Sygnał „zamknij" od powłoki popovera (Escape, klik poza). ADRESOWANY: gasi
+ * WYŁĄCZNIE panel, który nadal jest otwarty.
+ *
+ * Bez tego warunku przełączanie emoji↔GIF miało wyścig: `AnimatePresence`
+ * trzyma wychodzący panel zamontowanym na czas animacji wyjścia, więc jego
+ * `useOverlay` jeszcze żyje i pierwsze kliknięcie w NOWO otwarty panel widzi
+ * jako „na zewnątrz". Bezwarunkowe zamknięcie gasiło wtedy świeży panel.
+ */
+export function dismissPicker(current: ComposerPicker, which: ComposerPickerId): ComposerPicker {
+  return current === which ? 'none' : current;
+}

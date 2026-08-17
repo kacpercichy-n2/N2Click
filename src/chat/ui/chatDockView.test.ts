@@ -7,12 +7,15 @@ import {
   buildConversationRows,
   buildDockBubbles,
   bubbleAriaLabel,
+  clearDraftFor,
   filterConversationRows,
   filterPeople,
   formatUnreadBadge,
   normalizeQuery,
   previewText,
   pushRecent,
+  restoreFailedDraft,
+  setDraftFor,
   unreadPhrase,
 } from './chatDockView';
 
@@ -121,6 +124,19 @@ describe('buildDockBubbles', () => {
     expect(buildDockBubbles({ ...base, conversations: [direct('a', OLA)] })).toEqual([]);
   });
 
+  it('zamknięcie okna zostawia bąbelek w kolumnie (minimalizacja = zamknięcie)', () => {
+    // Po `closeConversation()` `openConversationId` jest null, ale rozmowa
+    // siedzi w `recentIds` — kotwica dla ponownego otwarcia musi zostać.
+    const bubbles = buildDockBubbles({
+      ...base,
+      conversations: [direct('a', OLA)],
+      openConversationId: null,
+      recentIds: ['a'],
+    });
+    expect(bubbles.map((b) => b.conversationId)).toEqual(['a']);
+    expect(bubbles[0].active).toBe(false);
+  });
+
   it('składa etykietę, inicjały, obecność i uuid rozmówcy dla zdjęcia', () => {
     const [bubble] = buildDockBubbles({
       ...base,
@@ -147,6 +163,63 @@ describe('pushRecent', () => {
   it('nie przekracza limitu i ignoruje puste id', () => {
     expect(pushRecent(['a', 'b', 'c', 'd', 'e'], 'f')).toEqual(['f', 'a', 'b', 'c', 'd']);
     expect(pushRecent(['a'], '')).toEqual(['a']);
+  });
+});
+
+describe('szkice kompozytora', () => {
+  it('zapisuje i podmienia szkic rozmowy', () => {
+    const one = setDraftFor({}, 'a', 'cze');
+    expect(one).toEqual({ a: 'cze' });
+    const two = setDraftFor(one, 'a', 'cześć');
+    expect(two).toEqual({ a: 'cześć' });
+    expect(setDraftFor(two, 'b', 'druga')).toEqual({ a: 'cześć', b: 'druga' });
+    // Wejście zostaje nietknięte — dok trzyma szkice w stanie Reacta.
+    expect(one).toEqual({ a: 'cze' });
+  });
+
+  it('pusta treść usuwa klucz rozmowy', () => {
+    expect(setDraftFor({ a: 'cześć', b: 'druga' }, 'a', '')).toEqual({ b: 'druga' });
+    expect(clearDraftFor({ a: 'cześć', b: 'druga' }, 'b')).toEqual({ a: 'cześć' });
+  });
+
+  it('oddaje tę samą referencję, gdy nic się nie zmienia', () => {
+    const drafts = { a: 'cześć' };
+    expect(setDraftFor(drafts, 'a', 'cześć')).toBe(drafts);
+    expect(setDraftFor(drafts, 'b', '')).toBe(drafts);
+    expect(setDraftFor(drafts, '', 'cokolwiek')).toBe(drafts);
+    expect(clearDraftFor(drafts, 'b')).toBe(drafts);
+    expect(clearDraftFor(drafts, '')).toBe(drafts);
+  });
+
+  it('szkic jednej rozmowy nie rusza pozostałych', () => {
+    const drafts = { a: 'pierwsza', b: 'druga' };
+    expect(setDraftFor(drafts, 'a', 'nowa')).toEqual({ a: 'nowa', b: 'druga' });
+    expect(clearDraftFor(drafts, 'a')).toEqual({ b: 'druga' });
+  });
+
+  it('nieudana wysyłka oddaje treść dosłownie, gdy pole jest puste', () => {
+    // Enter pustoszy pole od razu, więc w chwili porażki szkicu zwykle nie ma.
+    expect(restoreFailedDraft({}, 'a', 'cześć ')).toEqual({ a: 'cześć ' });
+    expect(restoreFailedDraft({ b: 'druga' }, 'a', 'cześć')).toEqual({ a: 'cześć', b: 'druga' });
+  });
+
+  it('nieudana wysyłka nie nadpisuje tekstu wpisanego w międzyczasie', () => {
+    // Użytkownik pisał dalej, zanim serwer odmówił: obie treści zostają, w
+    // kolejności pisania. `ChatProvider` trzyma po porażce sam komunikat, więc
+    // porzucenie nieudanego tekstu byłoby jego utratą.
+    expect(restoreFailedDraft({ a: 'druga myśl' }, 'a', 'cześć')).toEqual({
+      a: 'cześć\ndruga myśl',
+    });
+    // Szkic przepisany od zera, przypadkiem o wspólnym początku, zostaje CAŁY —
+    // odejmowanie wspólnego prefiksu zrobiłoby z „nowy plan" „wy plan".
+    expect(restoreFailedDraft({ a: 'nowy plan' }, 'a', 'no')).toEqual({ a: 'no\nnowy plan' });
+  });
+
+  it('nie ma czego oddawać — ta sama referencja', () => {
+    // GIF i pusta treść: wysyłka nie miała szkicu.
+    const drafts = { b: 'druga' };
+    expect(restoreFailedDraft(drafts, 'a', '')).toBe(drafts);
+    expect(restoreFailedDraft(drafts, '', 'cześć')).toBe(drafts);
   });
 });
 
@@ -181,6 +254,31 @@ describe('wiersze listy rozmów', () => {
     });
     expect(previewText(removed, ME, directory)).toBe('Wiadomość usunięta');
     expect(previewText(direct('a', OLA), ME, directory)).toBe('Brak wiadomości');
+  });
+
+  it('wiadomość będąca samym adresem GIF-a pokazuje się jako „GIF”', () => {
+    const gif = (authorId: string, body: string): ChatConversation =>
+      direct('a', OLA, {
+        lastMessage: { id: 'm1', authorId, body, createdAt: at(9, 0), deletedAt: null },
+      });
+
+    expect(previewText(gif(ME, 'https://static.klipy.com/abc/kot.gif'), ME, directory)).toBe(
+      'Ty: GIF',
+    );
+    expect(previewText(gif(OLA, 'https://static.klipy.com/abc/kot'), ME, directory)).toBe('GIF');
+    expect(previewText(gif(OLA, '  https://n2.pl/kot.gif  '), ME, directory)).toBe('GIF');
+
+    const group: ChatConversation = {
+      ...gif(OLA, 'https://media.giphy.com/media/x/giphy.gif'),
+      kind: 'group',
+      title: 'Projekt X',
+    };
+    expect(previewText(group, ME, directory)).toBe('Ola Kowalska: GIF');
+
+    // Adres z komentarzem to nadal zwykły tekst.
+    expect(previewText(gif(OLA, 'zobacz https://n2.pl/kot.gif'), ME, directory)).toBe(
+      'zobacz https://n2.pl/kot.gif',
+    );
   });
 
   it('składa wiersz z czasem i odznaką', () => {

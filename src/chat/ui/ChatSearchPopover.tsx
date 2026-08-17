@@ -19,6 +19,7 @@ import {
   filterConversationRows,
   filterPeople,
 } from './chatDockView';
+import { useChatKeyboardInset } from './useChatKeyboardInset';
 import { useOverlay } from '../../components/useOverlay';
 
 export function ChatSearchPopover({
@@ -43,6 +44,9 @@ export function ChatSearchPopover({
   const [pendingPersonId, setPendingPersonId] = useState('');
 
   useOverlay({ open: true, onClose, overlayRef: panelRef, triggerRef });
+  // Pole szukania dostaje `autoFocus`, więc na telefonie klawiatura wychodzi
+  // razem z panelem — bez tego wcięcia lista rozmów kończyłaby się pod nią.
+  useChatKeyboardInset(panelRef);
 
   const rows = useMemo(
     () =>

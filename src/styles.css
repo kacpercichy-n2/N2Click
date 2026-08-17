@@ -371,6 +371,17 @@ textarea {
   padding: var(--n2-space-6);
 }
 
+/* Rynna pod kolumnę bąbelków czatu (52 px + odstęp). Dok jest `position: fixed`
+   obok routera, więc bez niej karty wjeżdżały POD bąbelki. Klasę `n2chat-on`
+   wkłada na `<html>` sam dok (`ChatDock.tsx`) — powłoka nie czyta stanu czatu,
+   bo przerysowywałaby się przy każdej wiadomości. Tylko od 761 px w górę: na
+   telefonie kolumna stoi nad dolnym paskiem, nie obok treści. */
+@media (min-width: 761px) {
+  .n2chat-on .app-shell {
+    padding-right: calc(var(--n2-space-6) + 52px + var(--n2-space-3));
+  }
+}
+
 .app-sidebar {
   position: sticky;
   top: var(--n2-space-6);
@@ -11736,10 +11747,14 @@ a.toggle-btn {
   transition: transform var(--n2-transition), border-color var(--n2-transition),
     color var(--n2-transition);
 }
-.n2chat-bubble:hover {
-  transform: translateY(-2px);
-  border-color: var(--n2-border-strong);
-  color: var(--n2-text);
+/* Najechanie tylko tam, gdzie kursor naprawdę istnieje: na dotyku `:hover`
+   zostaje „przyklejony" po tapnięciu i bąbelek wisiałby uniesiony. */
+@media (hover: hover) {
+  .n2chat-bubble:hover {
+    transform: translateY(-2px);
+    border-color: var(--n2-border-strong);
+    color: var(--n2-text);
+  }
 }
 .n2chat-bubble:focus-visible {
   outline: none;
@@ -11797,13 +11812,15 @@ a.toggle-btn {
   color: var(--n2-lavender-mist);
 }
 
-/* ---------- Okno rozmowy ---------- */
+/* ---------- Okno rozmowy ----------
+   380 px, nie 320: wiersz kompozytora niesie już trzy przyciski (emoji, GIF,
+   wyślij) i przy 320 px zastępnik „Napisz wiadomość…" łamał się na dwie linie. */
 .n2chat-window {
   position: absolute;
   right: calc(var(--n2-space-6) + 52px + var(--n2-space-3));
   bottom: var(--n2-space-6);
-  width: 320px;
-  height: min(480px, 70vh);
+  width: 380px;
+  height: min(480px, 70dvh);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -11811,9 +11828,6 @@ a.toggle-btn {
   border: 1px solid var(--n2-border-strong);
   border-radius: var(--n2-radius-md);
   box-shadow: var(--n2-shadow-soft);
-}
-.n2chat-window.is-collapsed {
-  height: auto;
 }
 .n2chat-window-head {
   display: flex;
@@ -11823,20 +11837,15 @@ a.toggle-btn {
   border-bottom: 1px solid var(--n2-border);
   background: var(--n2-glass);
 }
-.n2chat-window-title-btn {
+/* Tytuł ze statusem jest blokiem INFORMACYJNYM, nie przyciskiem: okno nie ma
+   już stanu „zwinięte", więc nie ma czym przełączać (decyzja D1). */
+.n2chat-window-titles {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 2px;
-  padding: 0;
-  border: none;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
 }
 .n2chat-window-title {
   max-width: 100%;
@@ -12016,9 +12025,11 @@ a.toggle-btn {
   cursor: pointer;
   transition: transform var(--n2-transition), background var(--n2-transition);
 }
-.n2chat-send:hover:not(:disabled) {
-  transform: translateY(-1px);
-  background: var(--n2-lavender-mist);
+@media (hover: hover) {
+  .n2chat-send:hover:not(:disabled) {
+    transform: translateY(-1px);
+    background: var(--n2-lavender-mist);
+  }
 }
 .n2chat-send:disabled {
   background: var(--n2-glass-strong);
@@ -12205,14 +12216,237 @@ a.toggle-btn {
   cursor: pointer;
 }
 
+/* ---------- Treść wiadomości: nowe linie, linki, GIF-y, „jumbo" emoji ----------
+   Rozbiór treści na segmenty robi czysty `chat/ui/chatRichText.ts`; tutaj jest
+   już tylko warstwa wizualna. */
+/* Shift+Enter w kompozytorze ma dawać nową linię TAKŻE w dymku (decyzja D7).
+   Zawijanie długich adresów niesie `overflow-wrap: anywhere` z `.n2chat-bubble-msg`. */
+.n2chat-msg-text {
+  white-space: pre-wrap;
+}
+/* Wiadomość złożona z 1–3 samych emoji: znak jest wtedy CAŁĄ treścią, więc
+   dostaje stopień komunikatu, a nie zdania. */
+.n2chat-msg-text.is-jumbo {
+  font-size: 2rem;
+  line-height: 1.2;
+}
+/* Link w cudzym dymku: `--n2-lavender` na `--n2-glass` nad `--n2-surface-strong`
+   daje 6,4:1. Podkreślenie zostaje — kolor nie może być jedynym nośnikiem
+   informacji „to link". */
+.n2chat-link {
+  color: var(--n2-lavender);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+/* Mój dymek to gradient marki: lawenda zeszłaby na nim poniżej progu, więc link
+   dziedziczy kolor tekstu dymka (`--n2-lavender-mist`) i wyróżnia go grubsze
+   podkreślenie. */
+.n2chat-group.is-mine .n2chat-link {
+  color: inherit;
+  text-decoration-thickness: 2px;
+}
+.n2chat-link:focus-visible,
+.n2chat-gif-link:focus-visible {
+  outline: none;
+  border-radius: var(--n2-radius-xs);
+  box-shadow: var(--n2-shadow-focus);
+}
+/* Dymek, którego całą treścią jest GIF: obraz niesie sens, więc ramka schodzi
+   do minimum, a promień przycina obrazek. */
+.n2chat-bubble-msg.is-gif {
+  padding: var(--n2-space-1);
+}
+.n2chat-gif-link {
+  display: block;
+  overflow: hidden;
+  border-radius: var(--n2-radius-xs);
+}
+.n2chat-gif {
+  display: block;
+  max-width: 100%;
+  max-height: 220px;
+  border-radius: var(--n2-radius-xs);
+}
+/* Podpis dostawcy pod obrazkiem (regulamin KLIPY wymaga atrybucji także przy
+   udostępnionym wyniku, nie tylko w pickerze). To tekst WYMAGANY UMOWĄ, więc
+   bierze `--n2-text-soft` (7,3:1 na tle dymka), a nie przygaszone
+   `--n2-text-muted` — tamto dawało 4,39:1, czyli poniżej progu dla 11 px. Dymek jest kolumną flex, więc
+   podpis siada pod obrazem sam; ma być czytelny, ale nie ma konkurować z
+   treścią — ten sam stopień i kolor co godzina wiadomości. */
+.n2chat-gif-credit {
+  align-self: flex-start;
+  padding-left: var(--n2-space-1);
+  font-size: var(--n2-type-xs);
+  color: var(--n2-text-soft);
+}
+/* Oficjalny znak wodny KLIPY pod udostępnionym GIF-em. Wysokość ustawiona, a
+   szerokość `auto`, żeby proporcja zasobu (viewBox 389,2×133,2) rządziła sama —
+   atrybuty `width`/`height` w JSX rezerwują tylko miejsce do czasu pobrania.
+   Reguły kroju i koloru na rodzicu nie są martwe: gdy plik się nie wczyta,
+   przeglądarka pokazuje w tym miejscu tekst z `alt`. */
+.n2chat-gif-credit-mark {
+  display: block;
+  height: 15px;
+  width: auto;
+  opacity: 0.9;
+}
+/* Mój dymek to gradient marki — `--n2-text-soft` zeszłoby na nim poniżej
+   progu, więc podpis bierze kolor tekstu dymka (tak jak godzina). */
+.n2chat-group.is-mine .n2chat-gif-credit {
+  color: var(--n2-lavender-mist);
+}
+
+/* ---------- Pickery kompozytora (emoji, GIF) ----------
+   Oba panele są DZIEĆMI kompozytora wewnątrz okna rozmowy: okno ma już własną
+   warstwę (`--n2-z-chat`) i `overflow: hidden`, a element pozycjonowany
+   absolutnie maluje się nad treścią rodzeństwa — żaden nowy token z-index nie
+   jest potrzebny. Zamykanie i powrót fokusa niesie `useOverlay`. */
+.n2chat-composer {
+  position: relative;
+}
+.n2chat-composer-btn {
+  width: 36px;
+  height: 36px;
+}
+.n2chat-composer-btn[aria-expanded='true'] {
+  background: var(--n2-glass-strong);
+  color: var(--n2-lavender);
+}
+.n2chat-inpop {
+  position: absolute;
+  left: var(--n2-space-2);
+  right: var(--n2-space-2);
+  bottom: calc(100% + var(--n2-space-2));
+  max-height: 300px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--n2-surface-strong);
+  border: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-md);
+  box-shadow: var(--n2-shadow-soft);
+}
+.n2chat-inpop-head {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+  padding: var(--n2-space-2);
+  border-bottom: 1px solid var(--n2-border);
+}
+.n2chat-inpop-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 var(--n2-space-2) var(--n2-space-2);
+}
+/* Atrybucja KLIPY — wymóg UMOWNY („API Terms of Use"), nie ozdoba. Stąd trzy
+   rzeczy: `flex: none`, żeby rosnąca lista wyników nigdy jej nie ścisnęła;
+   `--n2-text-soft` zamiast `--n2-text-faint` (4,34:1 przy 11 px, poniżej
+   progu — teraz 8,6:1); i lewa strona panelu, bo tam wzrok wraca po
+   przejrzeniu siatki. */
+.n2chat-inpop-foot {
+  flex: none;
+  margin: 0;
+  padding: var(--n2-space-1) var(--n2-space-3);
+  border-top: 1px solid var(--n2-border);
+  font-size: var(--n2-type-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--n2-text-soft);
+}
+/* Oficjalne logo „Powered by KLIPY" (biała sygnatura + żółte K, wariant na
+   ciemne tło). Wysokość ustalona, szerokość z proporcji zasobu
+   (viewBox 640×107,3). Kolor i krój rodzica zostają dla tekstu z `alt`,
+   gdyby plik się nie wczytał. */
+.n2chat-klipy-mark {
+  display: block;
+  height: 20px;
+  width: auto;
+}
+.n2chat-emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(36px, 1fr));
+  gap: 2px;
+}
+.n2chat-emoji {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--n2-radius-xs);
+  background: none;
+  font-size: var(--n2-type-xl);
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--n2-transition);
+}
+@media (hover: hover) {
+  .n2chat-emoji:hover {
+    background: var(--n2-glass-strong);
+  }
+}
+.n2chat-emoji:focus-visible {
+  outline: none;
+  box-shadow: var(--n2-shadow-focus);
+}
+/* Miniatury dostawcy mają różne proporcje — bez wspólnego kadru siatka
+   schodkowałaby przy każdym doładowaniu. */
+.n2chat-gif-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--n2-space-2);
+  padding-top: var(--n2-space-2);
+}
+.n2chat-gif-tile {
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--n2-border-soft);
+  border-radius: var(--n2-radius-xs);
+  background: var(--n2-glass);
+  cursor: pointer;
+  transition: transform var(--n2-transition), border-color var(--n2-transition);
+}
+.n2chat-gif-tile img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+}
+@media (hover: hover) {
+  .n2chat-gif-tile:hover:not(:disabled) {
+    transform: translateY(-1px);
+    border-color: var(--n2-lavender);
+  }
+}
+.n2chat-gif-tile:focus-visible {
+  outline: none;
+  box-shadow: var(--n2-shadow-focus);
+}
+.n2chat-gif-tile:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
 /* ---------- Telefon ----------
    Kolumna wchodzi PONAD dolny pasek zakładek (jego wysokość niesie
    `--n2-bottom-nav-h` plus bezpieczny obszar iOS-a), a okno rozmowy zajmuje
    pełną szerokość ekranu. Otwarte okno chowa kolumnę: przy 320 px szerokości
-   bąbelki i tak leżałyby na dymkach. */
+   bąbelki i tak leżałyby na dymkach.
+
+   KLAWIATURA EKRANOWA: `--n2-kb-inset` ustawia hook `useChatKeyboardInset`
+   (czysta arytmetyka w `components/keyboardInset.ts`). Klawiatura NIE zmienia
+   `window.innerHeight`, więc bez tego panele sięgałyby pod nią i kompozytor
+   znikał z ekranu. Zmienna podnosi `bottom` i skraca pułap wysokości; przy
+   schowanej klawiaturze jest zerem, czyli wartości są dokładnie takie jak
+   dotąd. `dvh` zamiast `vh`, bo pasek adresu iOS/Android chowa się w locie. */
 @media (max-width: 760px) {
   .n2chat-column {
-    right: var(--n2-space-4);
+    /* Wycięcie ekranu w orientacji poziomej nie może wchodzić na bąbelki. */
+    right: calc(var(--n2-space-4) + env(safe-area-inset-right));
     bottom: calc(var(--n2-bottom-nav-h) + env(safe-area-inset-bottom) + var(--n2-space-3));
   }
   .n2chat-dock.has-window .n2chat-column {
@@ -12221,22 +12455,58 @@ a.toggle-btn {
   .n2chat-window {
     right: var(--n2-space-2);
     left: var(--n2-space-2);
-    bottom: calc(var(--n2-bottom-nav-h) + env(safe-area-inset-bottom) + var(--n2-space-2));
+    bottom: calc(
+      var(--n2-bottom-nav-h) + env(safe-area-inset-bottom) + var(--n2-space-2) +
+        var(--n2-kb-inset, 0px)
+    );
     width: auto;
-    height: min(70vh, 480px);
+    height: min(70dvh, 480px);
+    max-height: calc(
+      100dvh - var(--n2-kb-inset, 0px) - var(--n2-bottom-nav-h) - env(safe-area-inset-bottom) -
+        var(--n2-space-2) - var(--n2-space-2)
+    );
   }
   .n2chat-popover {
     right: var(--n2-space-2);
     left: var(--n2-space-2);
     bottom: calc(
-      var(--n2-bottom-nav-h) + env(safe-area-inset-bottom) + 52px + var(--n2-space-5)
+      var(--n2-bottom-nav-h) + env(safe-area-inset-bottom) + 52px + var(--n2-space-5) +
+        var(--n2-kb-inset, 0px)
     );
     width: auto;
+    /* `min()`, a nie samo `calc()`: dotychczasowy pułap 60vh/480 px zostaje
+       nietknięty, dochodzi tylko trzeci warunek — panel nie może sięgnąć
+       poniżej widocznej krawędzi przy otwartej klawiaturze. */
+    max-height: min(
+      60vh,
+      480px,
+      calc(
+        100dvh - var(--n2-kb-inset, 0px) - var(--n2-bottom-nav-h) - env(safe-area-inset-bottom) -
+          52px - var(--n2-space-5) - var(--n2-space-2)
+      )
+    );
   }
-  /* Cele dotykowe nagłówka i wysyłki rosną do wymaganych 44 px. */
+  /* Cele dotykowe nagłówka, wysyłki i pickerów rosną do wymaganych 44 px. */
   .n2chat-icon-btn,
-  .n2chat-send {
+  .n2chat-composer-btn,
+  .n2chat-send,
+  .n2chat-emoji {
     width: 44px;
     height: 44px;
+  }
+  .n2chat-emoji-grid {
+    grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+  }
+  /* Panel pickera nie może zjeść całego okna rozmowy razem z listą wiadomości
+     — okno na telefonie bywa niskie, zwłaszcza przy otwartej klawiaturze. */
+  .n2chat-inpop {
+    max-height: min(300px, 40dvh);
+  }
+  /* Safari iOS przybliża stronę, gdy sfokusowane pole ma mniej niż 16 px. Obie
+     klasy wygrywały specyficznością z globalną regułą `textarea/input`, więc
+     powtarzamy próg tutaj. */
+  .n2chat-input,
+  .n2chat-search-input {
+    font-size: 16px;
   }
 }

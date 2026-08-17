@@ -14,6 +14,7 @@ import {
   type ChatPerson,
 } from './chatPeople';
 import { formatListTime } from './chatTime';
+import { messageContentKind } from './chatRichText';
 
 /** Ile bąbelków rozmów mieści kolumna; reszta zostaje w popoverze lupy. */
 export const MAX_DOCK_BUBBLES = 5;
@@ -147,6 +148,57 @@ export function pushRecent(
   return [id, ...list.filter((entry) => entry !== id)].slice(0, Math.max(1, max));
 }
 
+/**
+ * Szkice kompozytora, per rozmowa. Żyją w DOKU, nie w oknie: minimalizacja to
+ * dziś zamknięcie okna (decyzja D1), więc stan lokalny `ChatWindow` znikałby
+ * razem z odmontowaniem i wpisany tekst przepadał. Pamięć sesji (`useState`
+ * doku) — świadomie NIE localStorage, bo jedyną granicą trwałości jest
+ * `store/storage.ts`, a szkic czatu nie jest danymi planera.
+ */
+export type ChatDrafts = Readonly<Record<string, string>>;
+
+/**
+ * Zapis szkicu rozmowy. Pusta treść USUWA klucz (rozmowa bez szkicu nie ma
+ * wpisu), a brak faktycznej zmiany oddaje TĘ SAMĄ referencję — dok nie
+ * przerysowuje się przy wpisaniu i skasowaniu tego samego znaku.
+ */
+export function setDraftFor(drafts: ChatDrafts, id: string, value: string): ChatDrafts {
+  if (id === '') return drafts;
+  if (value === '') return clearDraftFor(drafts, id);
+  if (drafts[id] === value) return drafts;
+  return { ...drafts, [id]: value };
+}
+
+/** Skasowanie szkicu. Ta sama referencja, gdy nie było czego kasować. */
+export function clearDraftFor(drafts: ChatDrafts, id: string): ChatDrafts {
+  if (id === '' || !(id in drafts)) return drafts;
+  const next = { ...drafts };
+  delete next[id];
+  return next;
+}
+
+/**
+ * Powrót treści po NIEUDANEJ wysyłce.
+ *
+ * Pole pustoszeje w chwili naciśnięcia Enter, a nie po odpowiedzi serwera —
+ * dzięki temu wysyłka nigdy nie musi zgadywać, co w polu jest jej tekstem, a co
+ * dopisał użytkownik. Zgadywanie po treści (kasowanie identycznego szkicu,
+ * odejmowanie wspólnego początku) albo gubiło świeże słowa, albo psuło szkic
+ * napisany od nowa, który przypadkiem zaczynał się tak samo („no" → „nowy
+ * plan").
+ *
+ * `ChatProvider` po porażce trzyma sam komunikat, nie treść, więc tekst musi
+ * wrócić TUTAJ, inaczej przepada. Gdy pole jest puste — wraca dosłownie. Gdy
+ * użytkownik zdążył coś napisać — nieudany tekst staje przed nim, oddzielony
+ * nową linią: nic nie ginie i nic nie jest przepisywane znak po znaku, a
+ * rozdzielenie tego na dwie wiadomości zostaje decyzją użytkownika.
+ */
+export function restoreFailedDraft(drafts: ChatDrafts, id: string, failed: string): ChatDrafts {
+  if (id === '' || failed === '') return drafts;
+  const current = drafts[id] ?? '';
+  return setDraftFor(drafts, id, current === '' ? failed : `${failed}\n${current}`);
+}
+
 /** Wiersz listy rozmów w popoverze lupy. */
 export interface ChatListRowView {
   conversationId: string;
@@ -174,7 +226,11 @@ export interface ConversationRowsInput {
   todayStr: string;
 }
 
-/** Podgląd ostatniej wiadomości: „Ty: …" dla siebie, imię autora w grupie. */
+/**
+ * Podgląd ostatniej wiadomości: „Ty: …" dla siebie, imię autora w grupie.
+ * Wiadomość będąca samym adresem GIF-a pokazuje się jako „GIF" — surowy URL
+ * z CDN-u dostawcy zajmowałby cały wiersz i nic nie mówił.
+ */
 export function previewText(
   conversation: ChatConversation,
   selfId: string | null,
@@ -183,7 +239,12 @@ export function previewText(
   const last = conversation.lastMessage;
   if (!last) return 'Brak wiadomości';
   const body = last.deletedAt !== null ? 'Wiadomość usunięta' : last.body.trim();
-  const text = body === '' ? 'Wiadomość usunięta' : body.replace(/\s+/g, ' ');
+  const text =
+    body === ''
+      ? 'Wiadomość usunięta'
+      : last.deletedAt === null && messageContentKind(body) === 'gif'
+        ? 'GIF'
+        : body.replace(/\s+/g, ' ');
   if (last.authorId === selfId) return `Ty: ${text}`;
   if (conversation.kind === 'group') return `${personLabel(directory, last.authorId)}: ${text}`;
   return text;

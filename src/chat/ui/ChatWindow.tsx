@@ -10,13 +10,33 @@
 //     Fokus wchodzi do kompozytora, Escape zamyka okno, gdy fokus jest w środku.
 //   * Dosuwanie scrolla działa tylko wtedy, gdy użytkownik JEST przy dole —
 //     czytanie starszych wiadomości nie może być przerywane skokiem.
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { m, useReducedMotion } from 'motion/react';
-import { ChevronDown, ChevronUp, Send, X } from '../../components/icons';
+//   * MINIMALIZACJA = ZAMKNIĘCIE (decyzja D1): okno nie ma stanu „zwinięte" ani
+//     chevronów. Nagłówek jest wyłącznie informacyjny (tytuł + status to zwykły
+//     blok, nie przycisk); zamyka X i Escape, a kotwicą pozostaje bąbelek w
+//     kolumnie doku — klik w niego otwiera rozmowę z powrotem.
+//   * TREŚĆ DYMKA idzie przez czysty `chatRichText.ts` (decyzje D4/D5a/D7):
+//     linki jako DANE (nigdy `dangerouslySetInnerHTML`), sam adres GIF-a jako
+//     `<img>`, 1–3 emoji większym stopniem, nowe linie zachowane w CSS.
+//   * Oba pickery (emoji, GIF) są dziećmi kompozytora — jeden naraz, bo dzielą
+//     to samo miejsce nad nim.
+//   * SZKIC JEST WŁASNOŚCIĄ DOKU (`draft` / `onDraftChange`). Skoro
+//     minimalizacja odmontowuje okno, stan lokalny gubiłby wpisany tekst —
+//     `ChatDock` trzyma szkice per rozmowa i oddaje je przy ponownym otwarciu.
+//     Enter pustoszy pole NATYCHMIAST, a nieudana wysyłka oddaje treść przez
+//     `onDraftRestore`. Odwrotna kolejność (kasowanie po odpowiedzi) zmuszałaby
+//     do zgadywania po treści, co w polu należy do wysyłki — a odpowiedź wraca
+//     i po zamknięciu okna, i po dopisaniu kolejnych słów.
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, m, useReducedMotion } from 'motion/react';
+import { ImagePlay, Send, Smile, X } from '../../components/icons';
 import { todayStr } from '../../utils/dates';
 import { useChat } from '../ChatProvider';
 import { CHAT_MESSAGE_MAX_LENGTH, type ChatConversation } from '../types';
 import { ChatAvatar } from './ChatAvatar';
+import { ChatEmojiPopover } from './ChatEmojiPopover';
+import { ChatGifPopover } from './ChatGifPopover';
+import { insertAtCaret, pushRecentEmoji } from './chatEmoji';
+import { klipyApiKey } from './chatGifs';
 import {
   conversationInitials,
   directPeerId,
@@ -24,38 +44,140 @@ import {
   type ChatDirectory,
 } from './chatPeople';
 import {
+  gifAttribution,
+  messageContentKind,
+  tokenizeMessage,
+  type ChatContentKind,
+} from './chatRichText';
+import {
   DELETED_MESSAGE_TEXT,
   buildWindowItems,
   composerState,
+  dismissPicker,
   isNearBottom,
   isSendKey,
+  togglePicker,
   typingLabel,
   windowSubtitle,
   windowTitle,
+  type ComposerPicker,
+  type ComposerPickerId,
 } from './chatWindowView';
+import { useChatKeyboardInset } from './useChatKeyboardInset';
 
 /** Maksymalna wysokość auto-rosnącego pola treści (potem własny scroll). */
 const COMPOSER_MAX_HEIGHT = 120;
 
+/**
+ * Treść jednego dymka. GIF i „jumbo" emoji rozpoznaje `messageContentKind`,
+ * reszta jedzie segmentami z tokenizera — link zawsze jako `<a>` z
+ * `rel="noopener noreferrer"`, nigdy jako wstrzyknięty HTML.
+ */
+function ChatMessageBody({ body, kind }: { body: string; kind: ChatContentKind }) {
+  if (kind === 'gif') {
+    const url = body.trim();
+    return (
+      <>
+        <a className="n2chat-gif-link" href={url} target="_blank" rel="noopener noreferrer">
+          <img className="n2chat-gif" src={url} loading="lazy" alt="GIF" />
+        </a>
+        {/* Atrybucja dostawcy przy UDOSTĘPNIONYM wyniku: „API Terms of Use"
+            KLIPY każe pokazać znak WSZĘDZIE, gdzie widać ich treść, nie tylko
+            w pickerze. Formuła zostaje po angielsku — tak brzmi wymagana. */}
+        {gifAttribution(url) === 'klipy' && (
+          <span className="n2chat-gif-credit">
+            <img
+              className="n2chat-gif-credit-mark"
+              src="/klipy/klipy-watermark.svg"
+              alt="Powered by KLIPY"
+              width={44}
+              height={15}
+            />
+          </span>
+        )}
+      </>
+    );
+  }
+  if (kind === 'emoji') return <span className="n2chat-msg-text is-jumbo">{body.trim()}</span>;
+  return (
+    <span className="n2chat-msg-text">
+      {tokenizeMessage(body).map((segment, index) =>
+        segment.kind === 'link' ? (
+          <a
+            key={index}
+            className="n2chat-link"
+            href={segment.href}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {segment.label}
+          </a>
+        ) : (
+          <Fragment key={index}>{segment.text}</Fragment>
+        ),
+      )}
+    </span>
+  );
+}
+
 export function ChatWindow({
   conversation,
   directory,
-  collapsed,
-  onToggleCollapse,
+  draft,
+  onDraftChange,
+  onDraftRestore,
 }: {
   conversation: ChatConversation;
   directory: ChatDirectory;
-  collapsed: boolean;
-  onToggleCollapse: () => void;
+  /** Szkic tej rozmowy z pamięci sesji doku ('' = puste pole). */
+  draft: string;
+  /** Zapis szkicu w doku ('' kasuje wpis rozmowy). */
+  onDraftChange: (value: string) => void;
+  /** Powrót treści po NIEUDANEJ wysyłce (pole pustoszeje już przy Enterze). */
+  onDraftRestore: (failed: string) => void;
 }) {
   const chat = useChat();
   const reduceMotion = useReducedMotion();
-  const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
+  const [picker, setPicker] = useState<ComposerPicker>('none');
+  /** Ostatnio użyte emoji — PAMIĘĆ SESJI okna, celowo nie localStorage (D6). */
+  const [recentEmoji, setRecentEmoji] = useState<readonly string[]>([]);
+  const windowRef = useRef<HTMLElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const emojiTriggerRef = useRef<HTMLButtonElement>(null);
+  const gifTriggerRef = useRef<HTMLButtonElement>(null);
+  const mountedRef = useRef(false);
   /** Czy lista była przy dole PRZED dojściem nowej wiadomości. */
   const stickRef = useRef(true);
+  /** Karetka do przywrócenia po wstawieniu emoji (`null` = nic nie czeka). */
+  const caretRef = useRef<number | null>(null);
+  /** Klucz KLIPY czytamy RAZ — brak klucza chowa przycisk GIF (D5b). */
+  const gifKey = useMemo(
+    () => klipyApiKey(import.meta.env as unknown as Record<string, unknown>),
+    [],
+  );
+
+  // Obie decyzje o panelach są CZYSTE (`chatWindowView.ts`): klik w przycisk
+  // przełącza, a sygnał zamknięcia z powłoki jest ADRESOWANY — spóźniony sygnał
+  // od panelu, który już wychodzi, nie może zgasić świeżo otwartego sąsiada.
+  const closePicker = (which: ComposerPickerId): void => {
+    setPicker((current) => dismissPicker(current, which));
+  };
+  const flipPicker = (which: ComposerPickerId): void => {
+    setPicker((current) => togglePicker(current, which));
+  };
+
+  // Klawiatura ekranowa telefonu: okno podnosi się i skraca, żeby kompozytor
+  // nie schował się pod nią. Na desktopie hook nie robi nic.
+  useChatKeyboardInset(windowRef);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const title = windowTitle(conversation, chat.selfId, directory);
   const subtitle = windowSubtitle(conversation, chat.selfId, chat.presence);
@@ -74,47 +196,105 @@ export function ChatWindow({
   const typing = typingLabel(chat.typingUserIds, directory);
   const composer = composerState(draft);
 
-  // Nowa rozmowa => szkic i pozycja scrolla zaczynają od zera.
+  // Nowa rozmowa => otwarty picker i pozycja scrolla zaczynają od zera. Szkicu
+  // NIE zerujemy: należy do doku i jest już wybrany po rozmowie.
   useEffect(() => {
-    setDraft('');
+    setPicker('none');
     stickRef.current = true;
   }, [conversation.id]);
 
-  // Fokus wchodzi do kompozytora przy otwarciu i po rozwinięciu okna.
+  // Fokus wchodzi do kompozytora przy otwarciu okna.
   useEffect(() => {
-    if (!collapsed) composerRef.current?.focus();
-  }, [conversation.id, collapsed]);
+    composerRef.current?.focus();
+  }, [conversation.id]);
 
   // Dosunięcie do dołu PRZED malowaniem — bez migotania listy.
   useLayoutEffect(() => {
     const box = listRef.current;
-    if (box === null || collapsed || !stickRef.current) return;
+    if (box === null || !stickRef.current) return;
     box.scrollTop = box.scrollHeight;
-  }, [items, collapsed]);
+  }, [items]);
 
   const resizeComposer = (element: HTMLTextAreaElement): void => {
     element.style.height = 'auto';
     element.style.height = `${Math.min(element.scrollHeight, COMPOSER_MAX_HEIGHT)}px`;
   };
 
+  // Wysokość pola nadąża za KAŻDĄ zmianą szkicu, bo szkic nie zmienia się już
+  // tylko od pisania: wraca z doku przy ponownym otwarciu rozmowy (`rows={1}`
+  // dałoby jeden wiersz i ucięcie tekstu do własnego scrolla), wchodzi w niego
+  // emoji, a udana wysyłka zwija pole z powrotem. Efekt UKŁADU, więc wysokość
+  // jest gotowa przed malowaniem, a jedno miejsce liczy ją dla wszystkich dróg.
+  useLayoutEffect(() => {
+    const element = composerRef.current;
+    if (element !== null) resizeComposer(element);
+  }, [conversation.id, draft]);
+
+  // Karetka po wstawieniu emoji. Ustawiamy ją PO renderze z nową treścią —
+  // wcześniej pole ma jeszcze starą wartość i `setSelectionRange` trafiłby w
+  // nieistniejącą pozycję.
+  useLayoutEffect(() => {
+    const caret = caretRef.current;
+    if (caret === null) return;
+    caretRef.current = null;
+    const element = composerRef.current;
+    if (element === null) return;
+    element.focus();
+    element.setSelectionRange(caret, caret);
+  }, [draft]);
+
+  /** Emoji z pickera wchodzi w pozycję kursora; panel zostaje otwarty. */
+  const insertEmoji = (char: string): void => {
+    const element = composerRef.current;
+    const start = element?.selectionStart ?? draft.length;
+    const end = element?.selectionEnd ?? draft.length;
+    const next = insertAtCaret(draft, start, end, char);
+    if (next.value.length > CHAT_MESSAGE_MAX_LENGTH) return;
+    caretRef.current = next.caret;
+    onDraftChange(next.value);
+    setRecentEmoji((list) => pushRecentEmoji(list, char));
+  };
+
+  /** Wysłanie GIF-a: adres jest CAŁĄ treścią wiadomości, szkic zostaje nietknięty. */
+  const sendGif = async (url: string): Promise<boolean> => {
+    const ok = await chat.sendMessage(url);
+    if (!ok) return false;
+    // Odmontowanie wyłącza wyłącznie aktualizacje UI. Wynik `true` musi dojść
+    // do pickera także po zamknięciu okna, żeby udana wysyłka nadal zgłosiła
+    // KLIPY `gifs/share` (callback pickera żyje do końca Promise).
+    if (mountedRef.current) {
+      stickRef.current = true;
+      setPicker('none');
+      composerRef.current?.focus();
+    }
+    return true;
+  };
+
   const send = async (): Promise<void> => {
     if (!composer.canSend || sending) return;
+    // Pole pustoszeje OD RAZU, a nie po odpowiedzi serwera. To jedyny wariant,
+    // w którym późniejsze sprzątanie nie musi zgadywać, co w polu jest tekstem
+    // tej wysyłki, a co dopisał użytkownik: wszystko, co pojawi się od tej
+    // chwili, jest już jego. Zapisujemy SUROWĄ treść (nie przyciętą
+    // `composer.value`), żeby porażka oddała dokładnie to, co było widać.
+    const failed = draft;
     setSending(true);
+    onDraftChange('');
     const ok = await chat.sendMessage(composer.value);
+    // Porażka: treść wraca do doku niezależnie od tego, czy okno jeszcze żyje —
+    // `ChatProvider` trzyma po odmowie sam komunikat, nie tekst wiadomości.
+    if (!ok) onDraftRestore(failed);
+    if (!mountedRef.current) return;
     setSending(false);
     if (!ok) return;
-    setDraft('');
     stickRef.current = true;
-    const element = composerRef.current;
-    if (element !== null) {
-      element.style.height = 'auto';
-      element.focus();
-    }
+    composerRef.current?.focus();
   };
 
   return (
     <m.section
-      className={`n2chat-window${collapsed ? ' is-collapsed' : ''}`}
+      ref={windowRef}
+      className="n2chat-window"
       aria-label={`Rozmowa: ${title}`}
       initial={{ opacity: 0, y: reduceMotion ? 0 : 12 }}
       animate={{ opacity: 1, y: 0 }}
@@ -132,25 +312,12 @@ export function ChatWindow({
           size={32}
           isGroup={conversation.kind === 'group'}
         />
-        <button
-          type="button"
-          className="n2chat-window-title-btn"
-          onClick={onToggleCollapse}
-          aria-expanded={!collapsed}
-        >
+        <div className="n2chat-window-titles">
           <span className="n2chat-window-title">{title}</span>
           {subtitle !== '' && (
             <span className={`n2chat-window-status${online ? ' is-online' : ''}`}>{subtitle}</span>
           )}
-        </button>
-        <button
-          type="button"
-          className="n2chat-icon-btn"
-          onClick={onToggleCollapse}
-          aria-label={collapsed ? 'Rozwiń rozmowę' : 'Zwiń rozmowę'}
-        >
-          {collapsed ? <ChevronUp size={16} aria-hidden /> : <ChevronDown size={16} aria-hidden />}
-        </button>
+        </div>
         <button
           type="button"
           className="n2chat-icon-btn"
@@ -161,105 +328,155 @@ export function ChatWindow({
         </button>
       </header>
 
-      {!collapsed && (
-        <>
-          <div
-            className="n2chat-messages"
-            ref={listRef}
-            onScroll={() => {
-              const box = listRef.current;
-              if (box !== null) stickRef.current = isNearBottom(box);
-            }}
-          >
-            {chat.hasMore && (
-              <div className="n2chat-older">
-                <button
-                  type="button"
-                  className="btn ghost n2chat-older-btn"
-                  onClick={() => chat.loadOlder()}
-                  disabled={chat.messagesLoading}
-                >
-                  {chat.messagesLoading ? 'Wczytywanie…' : 'Starsze wiadomości'}
-                </button>
-              </div>
-            )}
-            {chat.messagesLoading && chat.messages.length === 0 && (
-              <p className="n2chat-empty">Wczytywanie wiadomości…</p>
-            )}
-            {!chat.messagesLoading && chat.messages.length === 0 && (
-              <p className="n2chat-empty">Brak wiadomości. Napisz pierwszą.</p>
-            )}
-            {items.map((item) =>
-              item.kind === 'day' ? (
-                <p key={item.key} className="n2chat-day">
-                  <span>{item.label}</span>
-                </p>
-              ) : (
-                <div
-                  key={item.key}
-                  className={`n2chat-group${item.mine ? ' is-mine' : ''}`}
-                >
-                  {item.showAuthor && <span className="n2chat-author">{item.authorName}</span>}
-                  {item.messages.map((message) => (
-                    <p
-                      key={message.id}
-                      className={`n2chat-bubble-msg${message.deleted ? ' is-deleted' : ''}`}
-                    >
-                      <span className="n2chat-msg-text">
-                        {message.deleted ? DELETED_MESSAGE_TEXT : message.body}
-                      </span>
-                      <span className="n2chat-msg-time">
-                        {message.time}
-                        {message.edited && ' (edytowana)'}
-                      </span>
-                    </p>
-                  ))}
-                </div>
-              ),
-            )}
+      <div
+        className="n2chat-messages"
+        ref={listRef}
+        onScroll={() => {
+          const box = listRef.current;
+          if (box !== null) stickRef.current = isNearBottom(box);
+        }}
+      >
+        {chat.hasMore && (
+          <div className="n2chat-older">
+            <button
+              type="button"
+              className="btn ghost n2chat-older-btn"
+              onClick={() => chat.loadOlder()}
+              disabled={chat.messagesLoading}
+            >
+              {chat.messagesLoading ? 'Wczytywanie…' : 'Starsze wiadomości'}
+            </button>
           </div>
-
-          <div className="n2chat-composer">
-            {typing !== '' && (
-              <p className="n2chat-typing" aria-live="polite">
-                {typing}
-              </p>
-            )}
-            {chat.error !== null && <p className="n2chat-error">{chat.error}</p>}
-            <div className="n2chat-composer-row">
-              <textarea
-                ref={composerRef}
-                className="n2chat-input"
-                rows={1}
-                value={draft}
-                maxLength={CHAT_MESSAGE_MAX_LENGTH}
-                placeholder="Napisz wiadomość…"
-                aria-label="Treść wiadomości"
-                onChange={(event) => {
-                  setDraft(event.target.value);
-                  resizeComposer(event.target);
-                  chat.sendTyping();
-                }}
-                onKeyDown={(event) => {
-                  if (!isSendKey(event)) return;
-                  event.preventDefault();
-                  void send();
-                }}
-              />
-              <button
-                type="button"
-                className="n2chat-send"
-                onClick={() => void send()}
-                disabled={!composer.canSend || sending}
-                aria-label="Wyślij wiadomość"
-              >
-                <Send size={16} aria-hidden />
-              </button>
+        )}
+        {chat.messagesLoading && chat.messages.length === 0 && (
+          <p className="n2chat-empty">Wczytywanie wiadomości…</p>
+        )}
+        {!chat.messagesLoading && chat.messages.length === 0 && (
+          <p className="n2chat-empty">Brak wiadomości. Napisz pierwszą.</p>
+        )}
+        {items.map((item) =>
+          item.kind === 'day' ? (
+            <p key={item.key} className="n2chat-day">
+              <span>{item.label}</span>
+            </p>
+          ) : (
+            <div key={item.key} className={`n2chat-group${item.mine ? ' is-mine' : ''}`}>
+              {item.showAuthor && <span className="n2chat-author">{item.authorName}</span>}
+              {item.messages.map((message) => {
+                const kind = message.deleted ? 'text' : messageContentKind(message.body);
+                return (
+                  <p
+                    key={message.id}
+                    className={`n2chat-bubble-msg${message.deleted ? ' is-deleted' : ''}${
+                      kind === 'gif' ? ' is-gif' : ''
+                    }`}
+                  >
+                    {message.deleted ? (
+                      <span className="n2chat-msg-text">{DELETED_MESSAGE_TEXT}</span>
+                    ) : (
+                      <ChatMessageBody body={message.body} kind={kind} />
+                    )}
+                    <span className="n2chat-msg-time">
+                      {message.time}
+                      {message.edited && ' (edytowana)'}
+                    </span>
+                  </p>
+                );
+              })}
             </div>
-            {composer.hint !== '' && <p className="n2chat-error">{composer.hint}</p>}
-          </div>
-        </>
-      )}
+          ),
+        )}
+      </div>
+
+      <div className="n2chat-composer">
+        <AnimatePresence>
+          {picker === 'emoji' && (
+            <ChatEmojiPopover
+              key="emoji"
+              recent={recentEmoji}
+              triggerRef={emojiTriggerRef}
+              onClose={() => closePicker('emoji')}
+              onPick={insertEmoji}
+            />
+          )}
+          {picker === 'gif' && gifKey !== '' && (
+            <ChatGifPopover
+              key="gif"
+              apiKey={gifKey}
+              // KLIPY wymaga STABILNEGO identyfikatora użytkownika w zapytaniu
+              // i w zgłoszeniu udostępnienia. Chmurowe `selfId` jest dokładnie
+              // takie: nieprzezroczyste uuid, to samo przez całą sesję.
+              customerId={chat.selfId ?? ''}
+              triggerRef={gifTriggerRef}
+              onClose={() => closePicker('gif')}
+              onSend={sendGif}
+            />
+          )}
+        </AnimatePresence>
+        {typing !== '' && (
+          <p className="n2chat-typing" aria-live="polite">
+            {typing}
+          </p>
+        )}
+        {chat.error !== null && <p className="n2chat-error">{chat.error}</p>}
+        <div className="n2chat-composer-row">
+          <button
+            ref={emojiTriggerRef}
+            type="button"
+            className="n2chat-icon-btn n2chat-composer-btn"
+            onClick={() => flipPicker('emoji')}
+            aria-label="Wybierz emoji"
+            aria-haspopup="dialog"
+            aria-expanded={picker === 'emoji'}
+          >
+            <Smile size={18} aria-hidden />
+          </button>
+          {gifKey !== '' && (
+            <button
+              ref={gifTriggerRef}
+              type="button"
+              className="n2chat-icon-btn n2chat-composer-btn"
+              onClick={() => flipPicker('gif')}
+              aria-label="Wybierz GIF"
+              aria-haspopup="dialog"
+              aria-expanded={picker === 'gif'}
+            >
+              <ImagePlay size={18} aria-hidden />
+            </button>
+          )}
+          <textarea
+            ref={composerRef}
+            className="n2chat-input"
+            rows={1}
+            value={draft}
+            maxLength={CHAT_MESSAGE_MAX_LENGTH}
+            placeholder="Napisz wiadomość…"
+            aria-label="Treść wiadomości"
+            // Enter WYSYŁA (`isSendKey`), więc klawiatura telefonu ma pokazać
+            // „Wyślij" zamiast domyślnego łamania wiersza.
+            enterKeyHint="send"
+            onChange={(event) => {
+              onDraftChange(event.target.value);
+              chat.sendTyping();
+            }}
+            onKeyDown={(event) => {
+              if (!isSendKey(event)) return;
+              event.preventDefault();
+              void send();
+            }}
+          />
+          <button
+            type="button"
+            className="n2chat-send"
+            onClick={() => void send()}
+            disabled={!composer.canSend || sending}
+            aria-label="Wyślij wiadomość"
+          >
+            <Send size={16} aria-hidden />
+          </button>
+        </div>
+        {composer.hint !== '' && <p className="n2chat-error">{composer.hint}</p>}
+      </div>
     </m.section>
   );
 }

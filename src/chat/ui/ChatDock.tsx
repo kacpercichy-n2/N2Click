@@ -11,11 +11,17 @@
 //   * „Ostatnio otwierane" żyją w pamięci sesji (useState). Świadomie NIE
 //     zapisujemy ich w localStorage: jedyną granicą trwałości jest
 //     `store/storage.ts`, a dok nie jest danymi planera.
+//   * SZKICE KOMPOZYTORA żyją tutaj z tego samego powodu, co „ostatnio
+//     otwierane": minimalizacja zamyka okno (D1), więc stan lokalny
+//     `ChatWindow` przepadałby razem z wpisanym tekstem. Też pamięć sesji.
 //   * Cała decyzyjność (które bąbelki, jaka etykieta, jaka odznaka) siedzi w
 //     `chatDockView.ts`; ten plik jest cienki.
+//   * Rezerwę miejsca pod kolumnę niesie klasa `n2chat-on` na `<html>`, a nie
+//     `useChat()` w `App.tsx`: powłoka przerysowywałaby się przy KAŻDEJ
+//     wiadomości i każdej zmianie obecności, choć potrzebuje jednego bitu.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, m, useReducedMotion } from 'motion/react';
-import { Search } from '../../components/icons';
+import { MessagesSquare } from '../../components/icons';
 import { useOrgData } from '../../supabase/OrgDataProvider';
 import { useChat } from '../ChatProvider';
 import { ChatAvatar } from './ChatAvatar';
@@ -23,7 +29,14 @@ import { ChatGroupModal } from './ChatGroupModal';
 import { ChatSearchPopover } from './ChatSearchPopover';
 import { ChatWindow } from './ChatWindow';
 import { buildDirectory, type ChatPerson } from './chatPeople';
-import { buildDockBubbles, pushRecent, unreadPhrase } from './chatDockView';
+import {
+  buildDockBubbles,
+  pushRecent,
+  restoreFailedDraft,
+  setDraftFor,
+  unreadPhrase,
+  type ChatDrafts,
+} from './chatDockView';
 
 const NO_PEOPLE: ChatPerson[] = [];
 
@@ -46,7 +59,17 @@ function ChatDockInner() {
   const [recentIds, setRecentIds] = useState<string[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [groupOpen, setGroupOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  /** Szkic per rozmowa; przeżywa zamknięcie okna, znika po udanej wysyłce. */
+  const [drafts, setDrafts] = useState<ChatDrafts>({});
+
+  // Rezerwa 52 px + odstęp po prawej stronie treści: dok jest `position: fixed`
+  // obok routera, więc bez tej klasy karty wjeżdżały POD bąbelki. Klasa siedzi
+  // na `<html>` i znika razem z dokiem (tryb lokalny, wylogowanie).
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.add('n2chat-on');
+    return () => root.classList.remove('n2chat-on');
+  }, []);
 
   const people = useMemo<ChatPerson[]>(
     () =>
@@ -66,7 +89,6 @@ function ChatDockInner() {
   useEffect(() => {
     if (openId === null) return;
     setRecentIds((list) => pushRecent(list, openId));
-    setCollapsed(false);
   }, [openId]);
 
   const bubbles = useMemo(
@@ -85,13 +107,19 @@ function ChatDockInner() {
   const openConversation =
     chat.conversations.find((conversation) => conversation.id === openId) ?? null;
 
+  /**
+   * MINIMALIZACJA = ZAMKNIĘCIE (decyzja D1). Klik w AKTYWNY bąbelek zamyka
+   * okno; bąbelek zostaje w kolumnie, bo `recentIds` pamięta rozmowę po
+   * zamknięciu (`buildDockBubbles` bierze kandydatów także z tej listy). Efekt
+   * uboczny pożądany: zamknięte okno nie oznacza cudzych wiadomości jako
+   * przeczytanych — dawny „zwinięty" nagłówek to robił.
+   */
   const selectConversation = (conversationId: string): void => {
     if (conversationId === openId) {
-      setCollapsed((value) => !value);
+      chat.closeConversation();
       return;
     }
     chat.openConversation(conversationId);
-    setCollapsed(false);
   };
 
   const totalUnread = unreadPhrase(chat.totalUnread);
@@ -104,8 +132,13 @@ function ChatDockInner() {
             key={openConversation.id}
             conversation={openConversation}
             directory={directory}
-            collapsed={collapsed}
-            onToggleCollapse={() => setCollapsed((value) => !value)}
+            draft={drafts[openConversation.id] ?? ''}
+            onDraftChange={(value) =>
+              setDrafts((current) => setDraftFor(current, openConversation.id, value))
+            }
+            onDraftRestore={(failed) =>
+              setDrafts((current) => restoreFailedDraft(current, openConversation.id, failed))
+            }
           />
         )}
       </AnimatePresence>
@@ -150,7 +183,7 @@ function ChatDockInner() {
           aria-expanded={searchOpen}
           onClick={() => setSearchOpen((value) => !value)}
         >
-          <Search size={20} aria-hidden />
+          <MessagesSquare size={20} aria-hidden />
         </button>
       </div>
 

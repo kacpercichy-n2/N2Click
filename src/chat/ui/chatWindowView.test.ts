@@ -5,8 +5,10 @@ import { buildDirectory } from './chatPeople';
 import {
   buildWindowItems,
   composerState,
+  dismissPicker,
   isNearBottom,
   isSendKey,
+  togglePicker,
   typingLabel,
   windowSubtitle,
   windowTitle,
@@ -207,5 +209,35 @@ describe('isNearBottom', () => {
   it('dosuwa scroll tylko przy dolnej krawędzi', () => {
     expect(isNearBottom({ scrollTop: 900, scrollHeight: 1000, clientHeight: 100 })).toBe(true);
     expect(isNearBottom({ scrollTop: 200, scrollHeight: 1000, clientHeight: 100 })).toBe(false);
+  });
+});
+
+describe('pickery kompozytora', () => {
+  it('klik w przycisk otwiera, ten sam przycisk gasi', () => {
+    expect(togglePicker('none', 'emoji')).toBe('emoji');
+    expect(togglePicker('emoji', 'emoji')).toBe('none');
+    expect(togglePicker('none', 'gif')).toBe('gif');
+    expect(togglePicker('gif', 'gif')).toBe('none');
+  });
+
+  it('klik w drugi przycisk przełącza panel, nie zamyka wszystkiego', () => {
+    expect(togglePicker('emoji', 'gif')).toBe('gif');
+    expect(togglePicker('gif', 'emoji')).toBe('emoji');
+  });
+
+  it('sygnał zamknięcia gasi TYLKO swój panel', () => {
+    expect(dismissPicker('emoji', 'emoji')).toBe('none');
+    expect(dismissPicker('gif', 'gif')).toBe('none');
+    expect(dismissPicker('none', 'emoji')).toBe('none');
+  });
+
+  it('spóźniony sygnał wychodzącego panelu nie gasi świeżo otwartego sąsiada', () => {
+    // Wyścig przy przełączaniu: `AnimatePresence` trzyma stary panel przez czas
+    // animacji wyjścia, więc jego `useOverlay` widzi klik w NOWY panel jako
+    // „na zewnątrz" i woła własne zamknięcie.
+    const afterSwitch = togglePicker('emoji', 'gif');
+    expect(afterSwitch).toBe('gif');
+    expect(dismissPicker(afterSwitch, 'emoji')).toBe('gif');
+    expect(dismissPicker(togglePicker('gif', 'emoji'), 'gif')).toBe('emoji');
   });
 });

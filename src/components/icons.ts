@@ -25,11 +25,16 @@ export {
   ChevronLeft,
   ChevronsLeft,
   ChevronsRight,
-  // Czat (dok bąbelków): zwijanie i rozwijanie okna rozmowy.
-  ChevronDown,
-  ChevronUp,
+  // Czat (dok bąbelków): bąbelek otwierający listę rozmów i osób. Lupa trafiła
+  // tam z pomyłki — wyszukiwarka jest DOPIERO w środku popovera i tam zostaje.
+  MessagesSquare,
   // Czat: wysłanie wiadomości (kompozytor) i bąbelek grupy bez inicjałów.
   Send,
+  // Czat, kompozytor: wyzwalacz pickera emoji (`Smile`) i pickera GIF-ów
+  // (`ImagePlay` — obrazek ze znakiem odtwarzania, czyli ruchoma grafika;
+  // `Image` znaczyłoby zwykłe zdjęcie, a takich czat nie wysyła).
+  Smile,
+  ImagePlay,
   Plus,
   Trash2,
   Pencil,
