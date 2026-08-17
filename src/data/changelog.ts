@@ -100,7 +100,7 @@ export const CHANGELOG: ChangelogEntry[] = [
         area: 'Czat',
         feature: 'Rozmowy 1:1 i grupowe',
         description:
-          'Przycisk czatu w prawym dolnym rogu otwiera listę rozmów i osób z zespołu. Możesz napisać do jednej osoby albo założyć grupę („Nowa grupa”). Wiadomości docierają na żywo, widać kto jest aktywny, kto właśnie pisze i ile masz nieprzeczytanych (czerwona odznaka na bąbelku i licznik w tytule karty). Enter wysyła, Shift+Enter robi nową linię.',
+          'Przycisk czatu w prawym dolnym rogu otwiera listę rozmów i osób z zespołu. Możesz napisać do jednej osoby albo założyć grupę („Nowa grupa”). Wiadomości docierają na żywo, widać kto jest aktywny, kto właśnie pisze i ile masz nieprzeczytanych (czerwona odznaka na bąbelku rozmowy i licznik na liście rozmów). Enter wysyła, Shift+Enter robi nową linię.',
       },
       {
         area: 'Czat',
