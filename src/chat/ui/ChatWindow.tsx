@@ -221,9 +221,16 @@ export function ChatWindow({
     box.scrollTop = box.scrollHeight;
   }, [items]);
 
+  // Wysokość = treść + obramowanie. Pole ma `box-sizing: border-box`, więc
+  // sam `scrollHeight` (bez 2 px ramki) dawał treść o 2 px wyższą od okna
+  // widocznego i pusty pasek przewijania w jednowierszowym polu. Własny scroll
+  // pole dostaje dopiero po dobiciu do maksimum.
   const resizeComposer = (element: HTMLTextAreaElement): void => {
     element.style.height = 'auto';
-    element.style.height = `${Math.min(element.scrollHeight, COMPOSER_MAX_HEIGHT)}px`;
+    const frame = element.offsetHeight - element.clientHeight;
+    const wanted = element.scrollHeight + frame;
+    element.style.height = `${Math.min(wanted, COMPOSER_MAX_HEIGHT)}px`;
+    element.style.overflowY = wanted > COMPOSER_MAX_HEIGHT ? 'auto' : 'hidden';
   };
 
   // Wysokość pola nadąża za KAŻDĄ zmianą szkicu, bo szkic nie zmienia się już

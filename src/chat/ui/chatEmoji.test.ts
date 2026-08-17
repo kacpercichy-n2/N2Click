@@ -191,6 +191,12 @@ describe('replaceEmoticons', () => {
     expect(replaceEmoticons(":'(")).toBe('😢');
   });
 
+  it('zamienia sklejone ciągi emotikonów', () => {
+    expect(replaceEmoticons('<3<3<3')).toBe('❤️❤️❤️');
+    expect(replaceEmoticons('dzięki :):)')).toBe('dzięki 🙂🙂');
+    expect(replaceEmoticons(':D<3')).toBe('😀❤️');
+  });
+
   it('zostawia emotikon przy interpunkcji zdania i na nowej linii', () => {
     expect(replaceEmoticons('hej :)!')).toBe('hej 🙂!');
     expect(replaceEmoticons('linia\n:)\ndalej')).toBe('linia\n🙂\ndalej');

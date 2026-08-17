@@ -403,21 +403,24 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\/-]/g, '\\$&');
 }
 
+const EMOTICON_ALTERNATION = EMOTICONS.map(([text]) => escapeRegExp(text)).join('|');
+
 /**
- * Emotikon musi stać OSOBNO: na początku tekstu albo po białym znaku, a za nim
- * koniec, biały znak lub interpunkcja zdania. Dzięki temu `https://x` (`:/` po
- * literze) ani `a:)b` nie są ruszane, a „super :)" i „hej :)!" — tak.
+ * Emotikony muszą stać OSOBNO: ciąg jednego lub kilku sklejonych (`<3<3<3`,
+ * `:):)`) na początku tekstu albo po białym znaku, a za nim koniec, biały znak
+ * lub interpunkcja zdania. Dzięki temu `https://x` (`:/` po literze) ani `a:)b`
+ * nie są ruszane, a „super :)", „hej :)!" i „<3<3" — tak.
  */
-const EMOTICON_PATTERN = new RegExp(
-  `(^|\\s)(${EMOTICONS.map(([text]) => escapeRegExp(text)).join('|')})(?=$|\\s|[.,!?])`,
-  'g',
-);
+const EMOTICON_RUN = new RegExp(`(^|\\s)((?:${EMOTICON_ALTERNATION})+)(?=$|\\s|[.,!?])`, 'g');
+/** Rozbiór ciągu na pojedyncze emotikony (dłuższe warianty pierwsze). */
+const EMOTICON_ONE = new RegExp(EMOTICON_ALTERNATION, 'g');
 
 /** Zamiana samodzielnych emotikonów tekstowych na emoji; reszta bez zmian. */
 export function replaceEmoticons(text: string): string {
   if (text === '') return text;
   return text.replace(
-    EMOTICON_PATTERN,
-    (_match, lead: string, emoticon: string) => `${lead}${EMOTICON_MAP.get(emoticon) ?? emoticon}`,
+    EMOTICON_RUN,
+    (_match, lead: string, run: string) =>
+      lead + run.replace(EMOTICON_ONE, (one) => EMOTICON_MAP.get(one) ?? one),
   );
 }

@@ -12305,16 +12305,18 @@ a.toggle-btn {
   position: relative;
 }
 /* Grupa emoji + GIF: przyciski stykają się (odstęp 0), a od pola treści dzieli
-   je jeden `gap` wiersza. Węższy przycisk (32 px) i brak odstępu w środku
-   oddają polu ~20 px na oknie 380 px; na telefonie cele rosną do 44 px. */
+   je 4 px (ujemny margines zjada połowę `gap` wiersza; odstęp pole–wyślij
+   zostaje 8 px). Węższy przycisk (30 px) i brak odstępu w środku oddają polu
+   ~24 px na oknie 380 px; na telefonie cele rosną do 44 px. */
 .n2chat-composer-tools {
   flex: none;
   display: flex;
   align-items: flex-end;
   gap: 0;
+  margin-right: calc(-1 * var(--n2-space-1));
 }
 .n2chat-composer-btn {
-  width: 32px;
+  width: 30px;
   height: 36px;
 }
 .n2chat-composer-btn[aria-expanded='true'] {
