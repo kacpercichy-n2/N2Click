@@ -3,6 +3,7 @@ import {
   EVENT_DRAG_GLOBAL_SENTENCE,
   EVENT_DRAG_SERIES_SENTENCE,
   eventBlockAriaLabel,
+  eventAppliedAnnouncement,
   eventDragConfirmCopy,
   eventDragDraftDate,
   eventDragKind,
@@ -234,6 +235,29 @@ describe('eventDragConfirmCopy', () => {
       conflictSentence: '   ',
     });
     expect(clean.consequences).toBe(EVENT_DRAG_GLOBAL_SENTENCE);
+  });
+});
+
+describe('eventAppliedAnnouncement', () => {
+  const from = { date: '2026-08-18', startMinutes: 600, durationMinutes: 60 };
+
+  it('NIGDY nie mówi „Zapisano” — reduktor commituje, zapis do pamięci może paść', () => {
+    // Inwariant z CLAUDE.md: „A failed save must never report `Zapisano`".
+    // Ogłoszenie leci w takcie dispatchu, a zapis do localStorage dopiero
+    // w efekcie — w tym momencie o sukcesie zapisu NIC nie wiadomo.
+    const moved = eventAppliedAnnouncement('Standup', from, { ...from, startMinutes: 630 });
+    const resized = eventAppliedAnnouncement('Standup', from, { ...from, durationMinutes: 90 });
+    expect(moved).not.toMatch(/Zapisano/);
+    expect(resized).not.toMatch(/Zapisano/);
+  });
+
+  it('nazywa RODZAJ zmiany i nowy termin', () => {
+    expect(eventAppliedAnnouncement('Standup', from, { ...from, startMinutes: 630 })).toBe(
+      'Przeniesiono: Standup, 18 sie (wto) 10:30-11:30.',
+    );
+    expect(eventAppliedAnnouncement('Standup', from, { ...from, durationMinutes: 90 })).toBe(
+      'Zmieniono czas trwania: Standup, 18 sie (wto) 10:00-11:30.',
+    );
   });
 });
 

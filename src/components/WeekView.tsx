@@ -59,7 +59,11 @@ import {
   taskGrowAllowance,
   taskIdsOfPerson,
 } from '../store/selectors';
-import { eventDisplayTitle, taskDisplayTitle } from '../store/confidentiality';
+import {
+  eventDisplayTitle,
+  isEventContentMasked,
+  taskDisplayTitle,
+} from '../store/confidentiality';
 import { buildWeekModel, type BusyInterval, personDateKey } from './weekViewModel';
 import {
   doneTickTopPx,
@@ -117,7 +121,7 @@ import {
   EVENT_DRAG_REDUCER_REJECT,
   eventBlockAriaLabel,
   eventCancelAnnouncement,
-  eventCommitAnnouncement,
+  eventAppliedAnnouncement,
   eventDragConfirmCopy,
   eventDragDraftDate,
   eventEditAnnouncement,
@@ -2362,6 +2366,12 @@ function EventBlockImpl({
         return;
       }
       const to = moment(proj);
+      // Termin SPRZED zmiany — wspólny dla opisu w oknie i dla ogłoszenia.
+      const fromMoment: EventMoment = {
+        date: occDate,
+        startMinutes: base.startMinutes,
+        durationMinutes: base.durationMinutes,
+      };
       const liveRecurring = live.recurrence !== undefined;
       const draftLike = {
         // Pionowa edycja WYSTĄPIENIA nie może przenieść kotwicy serii do
@@ -2402,7 +2412,7 @@ function EventBlockImpl({
       const accepted = await confirm({
         ...eventDragConfirmCopy({
           title: displayTitle,
-          from: { date: occDate, startMinutes: base.startMinutes, durationMinutes: base.durationMinutes },
+          from: fromMoment,
           to,
           recurring: liveRecurring,
           conflictSentence,
@@ -2473,7 +2483,7 @@ function EventBlockImpl({
         announce(eventRejectedAnnouncement(reason));
         return;
       }
-      announce(eventCommitAnnouncement(displayTitle, to));
+      announce(eventAppliedAnnouncement(displayTitle, fromMoment, to));
     } finally {
       requestInFlightRef.current = false;
       if (mountedRef.current) setPending(null);
@@ -3882,7 +3892,11 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                         dayIndex={dayIndex}
                         days={days}
                         gridRef={gridRef}
-                        editable={canManageEvents}
+                        // Parity with EventModal's `canManage`: a viewer who sees
+                        // only the confidential mask must not edit through the tile.
+                        editable={
+                          canManageEvents && !isEventContentMasked(state, occ.event)
+                        }
                         announce={announce}
                         onDragActiveChange={handleDragActiveChange}
                       />

@@ -405,7 +405,9 @@
     (6 px, geometria `.week-block-handle`, na `pointer: coarse` obie klasy
     znikają) zmieniają czas trwania. URLOP i widz bez prawa noszą klasę
     `.readonly`: zero handlerów, `cursor: pointer`, `touch-action: auto` — czyli
-    dokładnie dotychczasowe zachowanie.
+    dokładnie dotychczasowe zachowanie. Utajnione wydarzenie zamaskowane dla
+    bieżącego widza jest tylko do odczytu dla gestu i klawiatury dokładnie jak
+    w `EventModal`, nawet gdy widz ma `events.manage`.
   - BRAMKA: żaden gest ani klawisz nie wysyła niczego sam z siebie. Najpierw
     idzie `useConfirm()` z jawnym zdaniem, że zmiana obowiązuje GLOBALNIE
     (`EVENT_DRAG_GLOBAL_SENTENCE`), a dla serii dochodzi
@@ -433,6 +435,22 @@
     `event.date` jako kotwicę serii (data oglądanego wystąpienia nie może uciąć
     wcześniejszych terminów ani przesunąć fazy `intervalWeeks`), a symulacja
     ostrzeżeń dostaje już projektowany czas reguły.
+  - OGŁOSZENIA nigdy nie mówią „Zapisano" (2026-08-18, poprawka po przeglądzie).
+    Reduktor commituje SYNCHRONICZNIE, ale zapis do `localStorage` leci dopiero
+    w efekcie i potrafi paść (quota, tryb prywatny), a upsert w chmurze jeszcze
+    później — w takcie dispatchu o sukcesie zapisu NIC nie wiadomo. Dlatego
+    `eventAppliedAnnouncement` mówi WYŁĄCZNIE o tym, co widać na siatce
+    („Przeniesiono: …" / „Zmieniono czas trwania: …"), a słowo „Zapisano"
+    zostaje zarezerwowane dla POTWIERDZONEGO zapisu (`useSaveStatus` stawia
+    „Zapisano HH:mm" po 350 ms i tylko gdy `persistFailed` jest fałszywe —
+    inwariant „A failed save must never report `Zapisano`" z CLAUDE.md). Za
+    nieudany zapis lokalny odpowiada trwały `PersistenceBanner`, za nieudany
+    zapis w chmurze istniejący baner synchronizacji. Test pilnujący tego:
+    `eventAppliedAnnouncement` w `eventBlockDrag.test.ts`. UWAGA — dotychczasowy
+    `blockCommitAnnouncement` (blok ZADANIA, `calendarBlockKeyboard.ts`) nadal
+    ogłasza „Zapisano: …" w tym samym takcie i ma ten sam problem; NIE zmieniono
+    go razem z tą zmianą (osobny moduł, własne testy, poza zakresem zadania) —
+    do rozstrzygnięcia osobno.
   - KLAWIATURA (parytet z blokiem zadania): strzałki góra/dół = 15 min, z
     Shiftem czas trwania, lewo/prawo = dzień (tylko jednorazowe), Enter
     zatwierdza TĄ SAMĄ drogą (czyli otwiera okno potwierdzenia), Escape cofa

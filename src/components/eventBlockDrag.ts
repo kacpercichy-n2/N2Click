@@ -275,9 +275,26 @@ export function eventTargetAnnouncement(to: EventMoment): string {
   return `Cel: ${momentPhrase(to)}.`;
 }
 
-/** Zmiana poszła do store'u. */
-export function eventCommitAnnouncement(title: string, to: EventMoment): string {
-  return `Zapisano: ${title}, ${momentPhrase(to)}.`;
+/**
+ * Zmiana WESZŁA DO STANU aplikacji (reduktor ją przyjął). Świadomie NIE mówi
+ * „Zapisano": w tym projekcie to słowo jest zarezerwowane dla POTWIERDZONEGO
+ * zapisu do pamięci — `useSaveStatus` stawia etykietę „Zapisano HH:mm" dopiero
+ * po 350 ms i tylko gdy `persistFailed` jest fałszywe, bo nieudany zapis NIGDY
+ * nie może zameldować sukcesu (CLAUDE.md, „A failed save must never report
+ * `Zapisano`"). Reduktor commituje SYNCHRONICZNIE, a zapis do localStorage leci
+ * dopiero w efekcie i potrafi paść (quota, tryb prywatny) — ogłoszenie w tym
+ * takcie może więc uczciwie powiedzieć tylko, CO widać na siatce. Za nieudany
+ * zapis odpowiada trwały `PersistenceBanner` (i jego własne ogłoszenie), a za
+ * nieudany zapis w chmurze istniejący baner synchronizacji.
+ */
+export function eventAppliedAnnouncement(
+  title: string,
+  from: EventMoment,
+  to: EventMoment,
+): string {
+  const what =
+    eventDragKind(from, to) === 'move' ? 'Przeniesiono' : 'Zmieniono czas trwania';
+  return `${what}: ${title}, ${momentPhrase(to)}.`;
 }
 
 /** Użytkownik anulował w oknie potwierdzenia (albo Escape) — nic nie poszło. */
