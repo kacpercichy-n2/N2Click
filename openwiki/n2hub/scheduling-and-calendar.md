@@ -410,7 +410,9 @@
     w `EventModal`, nawet gdy widz ma `events.manage`. Odebranie uprawnienia albo
     wglądu w trakcie edycji natychmiast cofa gest i wystawioną zmianę
     klawiaturową oraz zamyka oczekujący dialog potwierdzenia przez jego
-    `AbortSignal`; żywa bramka przed wysyłką nadal blokuje zmianę.
+    `AbortSignal` — w `useLayoutEffect`, więc PRZED malowaniem ramki: utajniony
+    tytuł nie pojawia się ani na jedną klatkę po utracie wglądu; żywa bramka
+    przed wysyłką nadal blokuje zmianę.
   - BRAMKA: żaden gest ani klawisz nie wysyła niczego sam z siebie. Najpierw
     idzie `useConfirm()` z jawnym zdaniem, że zmiana obowiązuje GLOBALNIE
     (`EVENT_DRAG_GLOBAL_SENTENCE`), a dla serii dochodzi

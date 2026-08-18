@@ -4,7 +4,16 @@
 // (same day or cross-day) and edge-drag to resize on a 15-min grid; a same-person
 // time overlap shows a danger tint and the drop reverts. Right-clicking a block
 // still opens "Dodaj przed / Dodaj po" to ripple-insert a new block.
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { AnimatePresence, m } from 'motion/react';
@@ -2321,7 +2330,12 @@ function EventBlockImpl({
   // w trakcie gestu lub wystawionej edycji klawiaturowej. Obie projekcje cofamy
   // natychmiast; efekt `dragging -> false` zdejmuje live-sync hold i wysyła
   // zrównoważone `onDragActiveChange(false)` tą samą drogą co zwykłe anulowanie.
-  useEffect(() => {
+  // `useLayoutEffect`, nie `useEffect`: zwykły efekt biegnie PO malowaniu, więc
+  // ramka po odebraniu wglądu jeszcze pokazywałaby utajniony tytuł w otwartym
+  // dialogu i cofany podgląd. W fazie layoutu abort (`settle` dostawcy robi
+  // `forceRender`), `cancelDrag` i `applyKb(null)` spłukują się SYNCHRONICZNIE
+  // przed malowaniem — maska wchodzi w tej samej ramce co utrata `canDrag`.
+  useLayoutEffect(() => {
     if (canDrag) return;
     const hadPointerDrag = dragRef.current !== null;
     const hadKeyboardEdit = kbRef.current !== null;
