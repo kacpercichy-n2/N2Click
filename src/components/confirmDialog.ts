@@ -30,6 +30,8 @@ export interface ConfirmOptions {
   requireAck?: boolean;
   /** Etykieta checkboxa `requireAck`; domyślnie zdanie o nieodwracalności. */
   ackLabel?: string;
+  /** Anulowanie po stronie wołającego zamyka pytanie i rozstrzyga je jak „Anuluj”. */
+  signal?: AbortSignal;
 }
 
 export const DEFAULT_CONFIRM_LABEL = 'Potwierdź';

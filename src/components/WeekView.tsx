@@ -2253,10 +2253,13 @@ function EventBlockImpl({
   // już po nawigacji. Po odmontowaniu nie wolno ani ustawiać lokalnego stanu,
   // ani wysyłać zmiany z osieroconego dialogu.
   const mountedRef = useRef(false);
+  const confirmAbortRef = useRef<AbortController | null>(null);
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      confirmAbortRef.current?.abort();
+      confirmAbortRef.current = null;
     };
   }, []);
   // Jeden kafelek może mieć najwyżej jedno pytanie w kolejce potwierdzeń.
@@ -2322,10 +2325,17 @@ function EventBlockImpl({
     if (canDrag) return;
     const hadPointerDrag = dragRef.current !== null;
     const hadKeyboardEdit = kbRef.current !== null;
-    if (!hadPointerDrag && !hadKeyboardEdit) return;
-    cancelDrag();
+    const hadConfirmation = confirmAbortRef.current !== null;
+    if (!hadPointerDrag && !hadKeyboardEdit && !hadConfirmation) return;
+    if (hadPointerDrag) cancelDrag();
     if (hadKeyboardEdit) applyKb(null);
-    announce(eventRejectedAnnouncement(EVENT_DRAG_REVOKED));
+    // ConfirmProvider rozstrzygnie przerwane pytanie jak „Anuluj”; po `await`
+    // requestChange rozpozna odebrane prawo i poda właściwy powód zamiast
+    // zwykłego komunikatu anulowania.
+    confirmAbortRef.current?.abort();
+    if (hadPointerDrag || hadKeyboardEdit) {
+      announce(eventRejectedAnnouncement(EVENT_DRAG_REVOKED));
+    }
   }, [canDrag]);
 
   const dragging = drag !== null;
@@ -2379,6 +2389,7 @@ function EventBlockImpl({
       return;
     }
     requestInFlightRef.current = true;
+    let confirmController: AbortController | null = null;
     try {
       const eventId = occ.event.id;
       const liveState = getState();
@@ -2441,6 +2452,8 @@ function EventBlockImpl({
               : `Termin koliduje: ${eventConflictConfirmMessage(report.warning)}`;
 
       setPending({ ...proj, colWidth });
+      confirmController = new AbortController();
+      confirmAbortRef.current = confirmController;
       const accepted = await confirm({
         ...eventDragConfirmCopy({
           title: displayTitle,
@@ -2449,15 +2462,20 @@ function EventBlockImpl({
           recurring: liveRecurring,
           conflictSentence,
         }),
+        signal: confirmController.signal,
       });
       // Dialog żyje ponad WeekView. Po nawigacji jego wynik nie należy już do
-      // tego kafelka i nie może wysłać osieroconej zmiany. ConfirmProvider nie
-      // ma API programowego zamknięcia: po odebraniu uprawnień dialog zostaje do
-      // rozstrzygnięcia, ale Accept przechodzi przez poniższą żywą bramkę.
+      // tego kafelka i nie może wysłać osieroconej zmiany. Odebranie prawa
+      // przerywa sygnał i zamyka pytanie; żywe bramki niżej nadal chronią
+      // akceptację, która zdążyła rozstrzygnąć się przed efektem Reacta.
       if (!mountedRef.current) return;
       setPending(null);
       if (!accepted) {
-        announce(eventCancelAnnouncement(displayTitle));
+        announce(
+          canDragRef.current
+            ? eventCancelAnnouncement(displayTitle)
+            : eventRejectedAnnouncement(EVENT_DRAG_REVOKED),
+        );
         return;
       }
 
@@ -2539,6 +2557,7 @@ function EventBlockImpl({
       }
       announce(eventAppliedAnnouncement(displayTitle, fromMoment, to));
     } finally {
+      if (confirmAbortRef.current === confirmController) confirmAbortRef.current = null;
       requestInFlightRef.current = false;
       if (mountedRef.current) setPending(null);
     }

@@ -57,31 +57,54 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   // razy). Render wymusza osobny licznik — ref jest zawsze aktualny, także dla
   // handlera wywołanego w tym samym takcie co żądanie.
   const queueRef = useRef<ConfirmQueueState>(emptyConfirmQueue());
+  const abortCleanupRef = useRef(new Map<number, () => void>());
   const [, forceRender] = useReducer((n: number) => n + 1, 0);
-
-  const confirm = useCallback<ConfirmFn>(
-    (options) =>
-      new Promise<boolean>((resolve) => {
-        queueRef.current = enqueueConfirm(queueRef.current, options, resolve);
-        forceRender();
-      }),
-    [],
-  );
 
   const settle = useCallback((id: number, result: boolean) => {
     const { state, resolved } = resolveConfirm(queueRef.current, id);
     // Nieznane `id` = już rozstrzygnięte (podwójny klik, spóźniony handler).
     if (resolved === null) return;
+    abortCleanupRef.current.get(id)?.();
+    abortCleanupRef.current.delete(id);
     queueRef.current = state;
     forceRender();
     resolved.resolve(result);
   }, []);
+
+  const confirm = useCallback<ConfirmFn>(
+    (options) =>
+      new Promise<boolean>((resolve) => {
+        const { signal } = options;
+        if (signal?.aborted) {
+          resolve(false);
+          return;
+        }
+
+        const id = queueRef.current.nextId;
+        queueRef.current = enqueueConfirm(queueRef.current, options, resolve);
+        if (signal) {
+          const onAbort = () => settle(id, false);
+          signal.addEventListener('abort', onAbort, { once: true });
+          abortCleanupRef.current.set(id, () => signal.removeEventListener('abort', onAbort));
+          // Chroni także niestandardowe implementacje AbortSignal, które mogły
+          // zostać przerwane pomiędzy pierwszym odczytem a rejestracją listenera.
+          if (signal.aborted) {
+            settle(id, false);
+            return;
+          }
+        }
+        forceRender();
+      }),
+    [settle],
+  );
 
   // Odmontowanie dostawcy nie może zostawić wiszącego `await confirm(...)`.
   useEffect(
     () => () => {
       const { state, drained } = drainConfirms(queueRef.current);
       queueRef.current = state;
+      abortCleanupRef.current.forEach((cleanup) => cleanup());
+      abortCleanupRef.current.clear();
       drained.forEach((pending) => pending.resolve(false));
     },
     [],
