@@ -382,21 +382,75 @@
     nieosiągalna (dwa stykające się bloki szczelnie wypełniają scalony przedział,
     więc wydarzenie w środku nachodzi na jeden z nich i upuszczenie pada
     wcześniej). Połowa cykliczna zostaje w pełni żywa.
-- Calendar events / meetings (2026-07-21) are otherwise PRESENTATIONAL (invariant 1):
-  WeekView renders each `calendarEventsForDate` occurrence as an additive
-  `.week-event-block` overlay (solid cyan border + left bar, `--event-accent`,
-  📅), positioned by `startMinutes`, height ∝ `durationMinutes`, painted BEHIND
-  real task blocks (tree order, `z-index: 0`); events never enter `dayTotal`
-  or overload (into `packDayBlocks` they enter ONLY as layout geometry — see
-  „wspólne pakowanie" above; do WYŚWIETLANEJ sumy dnia wchodzą przez
-  `calendarDayVolume` — patrz „objętość godzinowa" above) and carry NO pointer/drag handlers —
-  only click/keyboard opens `EventModal` (`?wydarzenie=<id>`). `openSlotMenu`
+- Calendar events / meetings (2026-07-21) stay PRESENTATIONAL FOR PLANNING
+  (invariant 1): WeekView renders each `calendarEventsForDate` occurrence as an
+  additive `.week-event-block` overlay (solid cyan border + left bar,
+  `--event-accent`, 📅), positioned by `startMinutes`, height ∝
+  `durationMinutes`, painted BEHIND real task blocks (tree order, `z-index: 0`);
+  events never enter `dayTotal` or overload (into `packDayBlocks` they enter
+  ONLY as layout geometry — see „wspólne pakowanie" above; do WYŚWIETLANEJ sumy
+  dnia wchodzą przez `calendarDayVolume` — patrz „objętość godzinowa" above).
+  Click/keyboard still opens `EventModal` (`?wydarzenie=<id>`). `openSlotMenu`
   guards `.week-event-block` alongside `.week-recur-block`/`.week-block`, and its
   gate widens to `canManageTasks || canManageEvents`: the slot menu shows „+ Dodaj
   zadanie" at `tasks.manage` and „+ Dodaj spotkanie" at `events.manage`.
   MonthView shows only a `.month-cell-event` 📅 marker (no blocks/menu; inline
-  `right` offset avoids collision with 🎂/⟳). All bin drag, pointer lifecycle and
-  rendered-column hit-testing paths remain untouched (invariant 7).
+  `right` offset avoids collision with 🎂/⟳).
+- PRZECIĄGANIE SPOTKANIA ZA BRAMKĄ POTWIERDZENIA (2026-08-18) — dawne zdanie
+  „kafel wydarzenia nie niesie ŻADNYCH handlerów pointer/drag" JUŻ NIE OBOWIĄZUJE
+  dla spotkań. Co dokładnie się zmieniło:
+  - CO jest przeciągalne: WYŁĄCZNIE spotkanie (`event.kind !== 'urlop'`) i
+    wyłącznie przy `can('events.manage')`. Ciało kafla przenosi (pion = czas co
+    15 min, poziom = kolumna dnia), a uchwyty `.week-event-handle.top/.bottom`
+    (6 px, geometria `.week-block-handle`, na `pointer: coarse` obie klasy
+    znikają) zmieniają czas trwania. URLOP i widz bez prawa noszą klasę
+    `.readonly`: zero handlerów, `cursor: pointer`, `touch-action: auto` — czyli
+    dokładnie dotychczasowe zachowanie.
+  - BRAMKA: żaden gest ani klawisz nie wysyła niczego sam z siebie. Najpierw
+    idzie `useConfirm()` z jawnym zdaniem, że zmiana obowiązuje GLOBALNIE
+    (`EVENT_DRAG_GLOBAL_SENTENCE`), a dla serii dochodzi
+    `EVENT_DRAG_SERIES_SENTENCE`. „Zmień dla wszystkich" wysyła JEDNĄ istniejącą
+    akcję `SAVE_EVENT` (inwariant 6 — żadnej nowej akcji); „Anuluj"/Escape
+    cofają podgląd bez wysyłki. Podgląd JEST TRZYMANY na czas pytania (klasa
+    `.dragging`), więc okno opisuje to, co widać.
+  - DRAFT powstaje z ŻYWEGO wydarzenia (`getState()`) w chwili akceptacji —
+    zmienia się tylko `date`/`startMinutes`/`durationMinutes`; `isConfidential`
+    świadomie NIE jedzie w draftcie (brak pola zachowuje flagę), a
+    `recurrence`/`rsvps` re-kanonikalizuje reduktor. Odmowa reduktora poznaje
+    się po TEJ SAMEJ referencji stanu (inwariant 6) — kafel wraca na miejsce,
+    a powód idzie dymkiem `.week-drop-notice` i regionem `aria-live`.
+  - KOLIZJE: `eventDraftConflicts(getState(), draftLike, id)` liczy się PRZED
+    oknem. `blocking` (urlop uczestnika) odbija od razu, BEZ pytania, z tekstem
+    `eventConflictBlockingMessage`. `warning` wchodzi JEDNYM zdaniem do TEGO
+    SAMEGO okna (`recurringConflictWarningMessage` dla serii,
+    `eventConflictWarningMessage` dla ogólnofirmowego, `Termin koliduje: ` +
+    `eventConflictConfirmMessage` dla imiennego) — nigdy drugim dialogiem.
+  - SERIA: wydarzenie cykliczne wolno przesuwać w PIONIE i rozciągać (zmiana
+    dotyczy CAŁEJ serii — reduktor wymusza `rule.startMinutes/durationMinutes`
+    równe czasom wydarzenia), ale NIE wolno mu zmienić dnia: projekcja twardo
+    trzyma `dayIndex` bazowy, bo `canonicalEventRecurrence` odrzuca kotwicę,
+    której dzień tygodnia wypadł z `daysOfWeek`. Zapis zachowuje oryginalne
+    `event.date` jako kotwicę serii (data oglądanego wystąpienia nie może uciąć
+    wcześniejszych terminów ani przesunąć fazy `intervalWeeks`), a symulacja
+    ostrzeżeń dostaje już projektowany czas reguły.
+  - KLAWIATURA (parytet z blokiem zadania): strzałki góra/dół = 15 min, z
+    Shiftem czas trwania, lewo/prawo = dzień (tylko jednorazowe), Enter
+    zatwierdza TĄ SAMĄ drogą (czyli otwiera okno potwierdzenia), Escape cofa
+    wystawioną edycję, wyjście fokusa też ją COFA (a nie zapisuje — dialog na
+    samym Tabie byłby pułapką). Bez wystawionej edycji Enter/spacja nadal
+    otwierają `EventModal`. Opis `aria-describedby` idzie z osobnego
+    `WEEK_EVENT_KB_HINT_ID`, a nazwa dostępna (`eventBlockAriaLabel`) podąża za
+    wystawioną projekcją.
+  - CAŁA decyzyjność (projekcja, clamp, automat klawiatury, teksty okna i
+    ogłoszeń) siedzi w CZYSTYM `src/components/eventBlockDrag.ts`; WeekView
+    trzyma tylko cykl życia wskaźnika — KOPIĘ tego z `TimedBlockImpl`:
+    synchroniczny `dragRef` + rAF, `setPointerCapture` ze zwolnieniem PRZED
+    wysyłką, `useTouchDragGate().arm(...)` przed każdym wejściem, anulowanie na
+    Escape / `blur` okna / `visibilitychange` hidden / `pointercancel` / mysz z
+    `buttons === 0`, `setLiveSyncHold` + `onDragActiveChange` na czas gestu.
+    `begin` odpuszcza `e.button !== 0`, więc prawy klik nadal otwiera menu RSVP
+    wystąpienia. `TimedBlockImpl`, `BinCard`, menu slotu, przeciąganie zasobnika
+    i trafianie w wyrenderowaną kolumnę NIE zostały zmienione (inwariant 7).
 
 ## Start here for
 
@@ -413,6 +467,8 @@ availability/overload calculations, drag lifecycle and time utilities.
 `src/components/calendarBlockKeyboard.test.ts`,
 `src/components/monthGrid.test.ts`,
 `src/components/weekViewLayout.test.ts`,
+`src/components/eventBlockDrag.test.ts` (projekcja przeciągania spotkania,
+uchwyty, blokada dnia serii, treść okna potwierdzenia),
 `src/components/overlayShell.test.ts`,
 `src/store/blockActions.test.ts`,
 `scripts/browser-check-bin-drag.mjs`, `browser-check-bin-split.mjs`, and

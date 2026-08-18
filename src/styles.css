@@ -3047,10 +3047,11 @@ a.toggle-btn {
   transform: translateY(-50%);
 }
 
-/* ---------- Wydarzenia kalendarza (spotkania) — czysto prezentacyjne ---------- */
+/* ---------- Wydarzenia kalendarza (spotkania) ---------- */
 /* Blok wydarzenia: SOLIDNA ramka + lewy pasek (to NIE ghost cykliczności), tło
-   cyjanowe, z-index: 0 — zawsze POD realnymi blokami zadań. Zero handlerów
-   pointer/drag (inwariant 7); tylko click/keyboard otwiera modal. */
+   cyjanowe, z-index: 0 — spoczynkowo POD realnymi blokami zadań. Spotkanie z
+   prawem edycji dostaje interakcję w regułach poniżej; urlop i `.readonly`
+   zachowują dotychczasowy klik do modala. */
 .week-event-block {
   position: absolute;
   left: 1px;
@@ -3072,6 +3073,46 @@ a.toggle-btn {
 }
 .week-event-block:hover {
   filter: brightness(1.08);
+}
+/* Kafelek spotkania z prawem `events.manage` jest PRZECIĄGALNY (2026-08-18):
+   ciało przenosi, uchwyty krawędzi zmieniają czas trwania, a każde upuszczenie
+   pyta o zgodę na zmianę GLOBALNĄ. `touch-action: none` jak przy `.week-block`
+   — na dotyku ustępuje bramce przytrzymania (reguła `pointer: coarse` niżej).
+   Kafelek bez prawa edycji i urlop noszą `.readonly` i zostają bez zmian. */
+.week-event-block:not(.readonly) {
+  cursor: grab;
+  touch-action: none;
+}
+/* Podgląd gestu ORAZ podgląd trzymany na czas okna potwierdzenia: kafelek jest
+   podniesiony nad siatkę, ale nic jeszcze nie zapisano. */
+.week-event-block.dragging {
+  cursor: grabbing;
+  z-index: 30;
+  box-shadow: var(--n2-shadow-violet, 0 8px 24px rgba(0, 0, 0, 0.4));
+  opacity: 0.96;
+}
+/* Wystawiona edycja z klawiatury — jak `.week-block.kb-editing`: przerywana
+   obwódka mówi, że zmiana czeka na Enter (czyli na okno potwierdzenia). */
+.week-event-block.kb-editing {
+  z-index: 30;
+  border-style: dashed;
+  box-shadow: var(--n2-shadow-focus), var(--n2-shadow-violet, 0 8px 24px rgba(0, 0, 0, 0.4));
+}
+/* Uchwyty zmiany czasu trwania — ta sama geometria co `.week-block-handle`
+   (6 px przy krawędzi). Na dotyku znikają razem z nim (reguła niżej). */
+.week-event-handle {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: ns-resize;
+  z-index: 2;
+}
+.week-event-handle.top {
+  top: 0;
+}
+.week-event-handle.bottom {
+  bottom: 0;
 }
 /* Lista odpowiedzi RSVP w menu wystąpienia (jak w Google Meet): wiersze
    nieinteraktywne, status glifem i słowem. */
@@ -4888,6 +4929,7 @@ a.toggle-btn {
    paska osi czasu (`.bar-handle`, poziome, inna geometria) zostają bez zmian. */
 @media (pointer: coarse) {
   .week-block,
+  .week-event-block:not(.readonly),
   .week-bin-block,
   .timeline-bar,
   .timeline-milestone {
@@ -4896,7 +4938,8 @@ a.toggle-btn {
     user-select: none;
     -webkit-touch-callout: none;
   }
-  .week-block-handle {
+  .week-block-handle,
+  .week-event-handle {
     display: none;
   }
 }

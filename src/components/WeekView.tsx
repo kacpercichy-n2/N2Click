@@ -42,6 +42,7 @@ import {
   blockIsDone,
   calendarEventsForDate,
   type CalendarEventOccurrence,
+  eventDraftConflicts,
   getClient,
   getPerson,
   getProject,
@@ -112,6 +113,32 @@ import {
   type BlockKeyboardEvent,
   type BlockKeyboardState,
 } from './calendarBlockKeyboard';
+import {
+  EVENT_DRAG_REDUCER_REJECT,
+  eventBlockAriaLabel,
+  eventCancelAnnouncement,
+  eventCommitAnnouncement,
+  eventDragConfirmCopy,
+  eventDragDraftDate,
+  eventEditAnnouncement,
+  eventKeyboardReducer,
+  eventProjectionChanged,
+  eventRejectedAnnouncement,
+  eventRevertAnnouncement,
+  eventTargetAnnouncement,
+  projectEventDrag,
+  type EventDragBase,
+  type EventDragMode,
+  type EventKeyboardEvent,
+  type EventMoment,
+  type EventProjection,
+} from './eventBlockDrag';
+import {
+  eventConflictBlockingMessage,
+  eventConflictConfirmMessage,
+  eventConflictWarningMessage,
+  recurringConflictWarningMessage,
+} from '../utils/eventConflictMessage';
 import { Coin } from './Coin';
 
 interface Props {
@@ -169,6 +196,11 @@ const RECUR_DURATION_OPTIONS = Array.from({ length: 32 }, (_, i) => (i + 1) * MI
 
 /** `id` wspólnej podpowiedzi klawiaturowej dla wszystkich edytowalnych bloków. */
 const WEEK_BLOCK_KB_HINT_ID = 'week-block-kb-hint';
+
+/** `id` podpowiedzi klawiaturowej dla przeciągalnego kafelka WYDARZENIA.
+ *  Osobna od bloku zadania: inne są klawisze poziome (seria nie zmienia dnia)
+ *  i inny jest skutek zatwierdzenia (okno potwierdzenia zamiast zapisu). */
+const WEEK_EVENT_KB_HINT_ID = 'week-event-kb-hint';
 
 /** Announces a successful real calendar action to the optional guided practice. */
 function announceCalendarPractice(kind: 'move' | 'resize' | 'bin-drop'): void {
@@ -2075,13 +2107,32 @@ function RecurBlockImpl({ task, displayTitle, hue, occurrence, done, col, cols, 
 
 const RecurBlock = memo(RecurBlockImpl);
 
-// ---- Calendar-event block (presentational only) ----
-// A calendar event / meeting rendered as a visually distinct, purely
-// presentational block (inwariant 1 + 7): it never enters collision/totals
-// (packDayBlocks widzi je WYŁĄCZNIE jako geometrię wspólnego pakowania warstwy
-// dnia — col/cols z modelu) and has NO pointer/drag handlers. Only
-// click/keyboard opens the event modal; right-click is guarded upstream so it
-// never opens the slot menu on top of it.
+// ---- Calendar-event block (spotkanie: przeciąganie za BRAMKĄ potwierdzenia) ----
+// Wydarzenie zostaje PREZENTACYJNE dla planowania (inwariant 1: nie wchodzi do
+// sum, `dayTotal` ani przeciążenia; do `packDayBlocks` wchodzi WYŁĄCZNIE jako
+// geometria wspólnego pakowania warstwy dnia — col/cols z modelu), ale od
+// 2026-08-18 kafelek spotkania JEST przeciągalny i rozciągalny.
+//
+// Trzy rzeczy trzymają tę zmianę w ryzach:
+//  1. BRAMKA GLOBALNOŚCI — żadne upuszczenie ani zatwierdzenie z klawiatury nie
+//     wysyła niczego samo z siebie. Najpierw idzie okno `useConfirm()` mówiące
+//     wprost, że zmiana obowiązuje WSZYSTKICH (a dla serii — całą serię).
+//     Anulowanie cofa podgląd i nie wysyła NIC.
+//  2. Jedna, ISTNIEJĄCA akcja `SAVE_EVENT` (inwariant 6). Draft powstaje z
+//     ŻYWEGO wydarzenia (`getState()`) w chwili akceptacji, więc równoległa
+//     edycja tytułu czy uczestników nie zostaje cofnięta; zmieniamy wyłącznie
+//     `date`/`startMinutes`/`durationMinutes`. Odmowa reduktora = ta sama
+//     referencja stanu, więc kafelek wraca na miejsce i mówi dlaczego.
+//  3. Cykl życia wskaźnika jest KOPIĄ tego z `TimedBlockImpl` (inwariant 7):
+//     synchroniczny `dragRef` + rAF, `setPointerCapture`, zwolnienie
+//     przechwycenia PRZED wysyłką, bramka dotyku `useTouchDragGate`, anulowanie
+//     na Escape / blur / ukrycie karty / `pointercancel` / mysz bez wciśniętych
+//     przycisków. `TimedBlockImpl`, `BinCard` i menu slotu zostają NIETKNIĘTE.
+//
+// URLOP (`kind: 'urlop'`) nigdy nie jest przeciągalny: rysuje się w oknie godzin
+// pracy, a zapisany jest jako pełna doba — gest kłamałby o tym, co przesuwa.
+// Prawy klik (menu RSVP wystąpienia serii) działa jak dotąd: `begin` odpuszcza
+// wszystko poza lewym przyciskiem.
 interface EventBlockProps {
   occ: CalendarEventOccurrence;
   /** Tytuł do pokazania (maska utajnienia) — prymityw z rodzica. */
@@ -2102,18 +2153,528 @@ interface EventBlockProps {
   absentForViewer: boolean;
   /** Menu wystąpienia (tylko wydarzenia cykliczne) — stabilny callback rodzica. */
   onOccContextMenu?: (eventId: string, date: string, e: React.MouseEvent) => void;
+  /** Indeks kolumny dnia, w której stoi to wystąpienie (0 w widoku dnia). */
+  dayIndex: number;
+  /** Wyrenderowane kolumny dnia — źródło szerokości kolumny i celu poziomego. */
+  days: string[];
+  gridRef: React.RefObject<HTMLDivElement | null>;
+  /** `events.manage`. Bez niego kafelek zostaje dokładnie taki, jak dotąd. */
+  editable: boolean;
+  /** Region `aria-live` rodzica — jedyny kanał dla czytnika ekranu. */
+  announce: (message: string) => void;
+  /** Obserwator „trwa przeciąganie" (arkusz zasobnika w widoku dnia + Escape). */
+  onDragActiveChange?: (active: boolean) => void;
 }
 
-function EventBlockImpl({ occ, displayTitle, vacationWindow, vacationOwner, col, cols, onOpen, occDate, absentForViewer, onOccContextMenu }: EventBlockProps) {
+/** Projekcja wskaźnika: rzut geometrii plus punkt zaczepienia gestu. */
+interface EventDragState extends EventProjection {
+  mode: EventDragMode;
+  originX: number;
+  originY: number;
+  colWidth: number;
+}
+
+function EventBlockImpl({
+  occ,
+  displayTitle,
+  vacationWindow,
+  vacationOwner,
+  col,
+  cols,
+  onOpen,
+  occDate,
+  absentForViewer,
+  onOccContextMenu,
+  dayIndex,
+  days,
+  gridRef,
+  editable,
+  announce,
+  onDragActiveChange,
+}: EventBlockProps) {
+  const dispatch = useDispatch();
+  // Odczyty W CZASIE ZDARZENIA (żywe wydarzenie przy budowie draftu, kolizje) —
+  // nigdy w renderze, więc kafelek nie przerysowuje się po cudzej akcji.
+  const { getState } = useStoreApi();
+  const confirm = useConfirm();
+
+  const isVacation = occ.event.kind === 'urlop';
+  const recurring = occ.event.recurrence !== undefined;
+  // Urlop nigdy nie jedzie za wskaźnikiem (patrz nagłówek).
+  const canDrag = editable && !isVacation;
+
+  // Zapisana pozycja WYSTĄPIENIA — punkt odniesienia każdej projekcji.
+  const base: EventDragBase = {
+    startMinutes: occ.startMinutes,
+    durationMinutes: occ.durationMinutes,
+    dayIndex,
+  };
+  const moment = (p: EventProjection): EventMoment => ({
+    date: days[p.dayIndex] ?? occDate,
+    startMinutes: p.startMinutes,
+    durationMinutes: p.durationMinutes,
+  });
+
+  const [drag, setDrag] = useState<EventDragState | null>(null);
+  // Synchroniczne źródło prawdy dla handlerów: ostatni `pointermove` i
+  // `pointerup` bywają w jednej klatce, więc `finish()` nie może czytać stanu.
+  const dragRef = useRef<EventDragState | null>(null);
+  const moved = useRef(false);
+  const gate = useTouchDragGate();
+  const rafRef = useRef<number | null>(null);
+  const cancelRaf = () => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+  };
+  const scheduleFlush = () => {
+    if (rafRef.current !== null) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      if (dragRef.current) setDrag(dragRef.current);
+    });
+  };
+  useEffect(() => () => cancelRaf(), []);
+
+  // Podgląd TRZYMANY na czas pytania: gest się skończył, ale kafelek zostaje w
+  // docelowym miejscu, żeby okno potwierdzenia opisywało to, co widać.
+  const [pending, setPending] = useState<(EventProjection & { colWidth: number }) | null>(null);
+  // `ConfirmProvider` żyje ponad kalendarzem, więc jego obietnica może wrócić
+  // już po nawigacji. Po odmontowaniu nie wolno ani ustawiać lokalnego stanu,
+  // ani wysyłać zmiany z osieroconego dialogu.
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  // Jeden kafelek może mieć najwyżej jedno pytanie w kolejce potwierdzeń.
+  const requestInFlightRef = useRef(false);
+  // Wystawiona edycja klawiaturowa (drugie wejście do tej samej projekcji).
+  const [kb, setKb] = useState<EventProjection | null>(null);
+  const kbRef = useRef<EventProjection | null>(null);
+  const [kbColWidth, setKbColWidth] = useState(0);
+  const applyKb = (next: EventProjection | null) => {
+    kbRef.current = next;
+    setKb(next);
+  };
+
+  // Dymek odrzuconego upuszczenia — ta sama prezentacja co przy bloku zadania
+  // (wspólny `DropRejectNotice`), bez dotykania tamtego komponentu.
+  const [rejectNotice, setRejectNotice] = useState<{ x: number; y: number; text: string } | null>(
+    null,
+  );
+  const rejectTimer = useRef<number | null>(null);
+  const showReject = (x: number, y: number, text: string) => {
+    if (rejectTimer.current !== null) window.clearTimeout(rejectTimer.current);
+    setRejectNotice({ x, y, text });
+    rejectTimer.current = window.setTimeout(() => setRejectNotice(null), 2600);
+  };
+  useEffect(() => {
+    return () => {
+      if (rejectTimer.current !== null) window.clearTimeout(rejectTimer.current);
+    };
+  }, []);
+
+  const captureRef = useRef<{ el: HTMLElement; pointerId: number } | null>(null);
+  const releaseCapture = () => {
+    const c = captureRef.current;
+    if (c) {
+      try {
+        c.el.releasePointerCapture(c.pointerId);
+      } catch {
+        // Already released — ignore.
+      }
+      captureRef.current = null;
+    }
+  };
+  useEffect(
+    () => () => {
+      releaseCapture();
+      dragRef.current = null;
+    },
+    [],
+  );
+
+  const cancelDrag = () => {
+    cancelRaf();
+    releaseCapture();
+    dragRef.current = null;
+    setDrag(null);
+  };
+
+  const dragging = drag !== null;
+  useEffect(() => {
+    if (!dragging) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') cancelDrag();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') cancelDrag();
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('blur', cancelDrag);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('blur', cancelDrag);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [dragging]);
+
+  // Odświeżenie w tle (Realtime) czeka na koniec gestu — autorytatywna podmiana
+  // wydarzenia w locie przestawiłaby kafelek pod kursorem. Ten sam efekt niesie
+  // obserwatora „trwa przeciąganie" dla arkusza zasobnika i stosu nakładek.
+  const holdKey = useRef({}).current;
+  useEffect(() => {
+    setLiveSyncHold(holdKey, dragging);
+    if (dragging) onDragActiveChange?.(true);
+    return () => {
+      clearLiveSyncHold(holdKey);
+      if (dragging) onDragActiveChange?.(false);
+    };
+  }, [dragging, holdKey, onDragActiveChange]);
+
+  /**
+   * JEDNA droga do zapisu — dla upuszczenia i dla klawiatury. Kolejność jest
+   * celowa: kolizja BLOKUJĄCA (urlop uczestnika) odbija się od razu, bez
+   * pytania; wszystko inne przechodzi przez okno potwierdzenia, a dopiero jego
+   * akceptacja buduje draft z ŻYWEGO wydarzenia i wysyła `SAVE_EVENT`.
+   * `at` = punkt wskaźnika albo górna krawędź kafelka dla dymka klawiatury.
+   */
+  const requestChange = async (
+    proj: EventProjection,
+    at: { x: number; y: number } | null,
+    colWidth: number,
+  ) => {
+    if (requestInFlightRef.current) return;
+    requestInFlightRef.current = true;
+    try {
+      const eventId = occ.event.id;
+      const live = getState().events.find((e) => e.id === eventId);
+      // Wydarzenie zniknęło w tle (usunięcie, odświeżenie) — nie ma czego zapisać.
+      if (live === undefined || live.kind === 'urlop') {
+        const reason = 'Wydarzenie już nie istnieje.';
+        if (at) showReject(at.x, at.y, reason);
+        announce(eventRejectedAnnouncement(reason));
+        return;
+      }
+      const to = moment(proj);
+      const liveRecurring = live.recurrence !== undefined;
+      const draftLike = {
+        // Pionowa edycja WYSTĄPIENIA nie może przenieść kotwicy serii do
+        // aktualnie oglądanego tygodnia. Dla jednorazowego data idzie z kolumny.
+        date: eventDragDraftDate(to.date, live.date, liveRecurring),
+        startMinutes: to.startMinutes,
+        durationMinutes: to.durationMinutes,
+        attendeeIds: live.attendeeIds,
+        // `eventDraftConflicts` rozwija bezpośrednio przekazaną regułę, więc
+        // musi ona już nieść PROJEKTOWANY czas, a nie stary czas serii.
+        recurrence: live.recurrence
+          ? {
+              ...live.recurrence,
+              startMinutes: to.startMinutes,
+              durationMinutes: to.durationMinutes,
+            }
+          : null,
+      };
+      const report = eventDraftConflicts(getState(), draftLike, eventId);
+      if (report.blocking.length > 0) {
+        const reason = eventConflictBlockingMessage(report.blocking);
+        if (at) showReject(at.x, at.y, reason);
+        announce(eventRejectedAnnouncement(reason));
+        return;
+      }
+      // Kolizje NIEBLOKUJĄCE wchodzą JEDNYM zdaniem do TEGO SAMEGO okna — drugi
+      // dialog nad dialogiem byłby karą za przeciągnięcie kafelka.
+      const conflictSentence =
+        report.warning.length === 0
+          ? ''
+          : liveRecurring
+            ? recurringConflictWarningMessage(report.warning)
+            : live.attendeeIds.length === 0
+              ? eventConflictWarningMessage(report.warning)
+              : `Termin koliduje: ${eventConflictConfirmMessage(report.warning)}`;
+
+      setPending({ ...proj, colWidth });
+      const accepted = await confirm({
+        ...eventDragConfirmCopy({
+          title: displayTitle,
+          from: { date: occDate, startMinutes: base.startMinutes, durationMinutes: base.durationMinutes },
+          to,
+          recurring: liveRecurring,
+          conflictSentence,
+        }),
+      });
+      // Dialog żyje ponad WeekView. Po nawigacji jego wynik nie należy już do
+      // tego kafelka i nie może wysłać osieroconej zmiany.
+      if (!mountedRef.current) return;
+      setPending(null);
+      if (!accepted) {
+        announce(eventCancelAnnouncement(displayTitle));
+        return;
+      }
+
+      // Draft z ŻYWEGO wydarzenia (mogło zmienić tytuł/uczestników w czasie
+      // pytania). `isConfidential` świadomie POMIJAMY — brak pola zachowuje
+      // zapisaną flagę; `recurrence`/`rsvps` re-kanonikalizuje reduktor.
+      const current = getState().events.find((e) => e.id === eventId);
+      if (current === undefined || current.kind === 'urlop') {
+        const reason = 'Wydarzenie już nie istnieje.';
+        if (at) showReject(at.x, at.y, reason);
+        announce(eventRejectedAnnouncement(reason));
+        return;
+      }
+      const currentRecurring = current.recurrence !== undefined;
+      const saveDate = eventDragDraftDate(to.date, current.date, currentRecurring);
+      const before = getState();
+      dispatch({
+        type: 'SAVE_EVENT',
+        eventId,
+        draft: {
+          title: current.title,
+          description: current.description,
+          location: current.location,
+          meetingUrl: current.meetingUrl,
+          date: saveDate,
+          startMinutes: to.startMinutes,
+          durationMinutes: to.durationMinutes,
+          attendeeIds: [...current.attendeeIds],
+          recurrence: current.recurrence ?? null,
+        },
+      });
+      // Inwariant 6: odrzucona komenda zwraca TĘ SAMĄ referencję stanu. Kafelek
+      // wraca wtedy na miejsce (podgląd już zdjęty) i mówi, dlaczego.
+      if (getState() === before) {
+        const again = eventDraftConflicts(
+          getState(),
+          {
+            date: saveDate,
+            startMinutes: to.startMinutes,
+            durationMinutes: to.durationMinutes,
+            attendeeIds: current.attendeeIds,
+            recurrence: current.recurrence
+              ? {
+                  ...current.recurrence,
+                  startMinutes: to.startMinutes,
+                  durationMinutes: to.durationMinutes,
+                }
+              : null,
+          },
+          eventId,
+        );
+        const reason =
+          again.blocking.length > 0
+            ? eventConflictBlockingMessage(again.blocking)
+            : EVENT_DRAG_REDUCER_REJECT;
+        if (at) showReject(at.x, at.y, reason);
+        announce(eventRejectedAnnouncement(reason));
+        return;
+      }
+      announce(eventCommitAnnouncement(displayTitle, to));
+    } finally {
+      requestInFlightRef.current = false;
+      if (mountedRef.current) setPending(null);
+    }
+  };
+
+  const startDrag = (
+    mode: EventDragMode,
+    init: { el: HTMLElement; pointerId: number; clientX: number; clientY: number },
+  ) => {
+    const { el, pointerId, clientX, clientY } = init;
+    try {
+      el.setPointerCapture(pointerId);
+      captureRef.current = { el, pointerId };
+    } catch {
+      // No active pointer (synthetic events) — dragging still works within the block.
+      captureRef.current = null;
+    }
+    moved.current = false;
+    // Gest wskaźnika jest właścicielem projekcji — wystawiona edycja z
+    // klawiatury ustępuje mu bez zapisu.
+    applyKb(null);
+    const rect = gridRef.current?.getBoundingClientRect();
+    const next: EventDragState = {
+      ...base,
+      mode,
+      originX: clientX,
+      originY: clientY,
+      colWidth: rect ? rect.width / days.length : 0,
+    };
+    dragRef.current = next;
+    setDrag(next);
+  };
+
+  const begin = (mode: EventDragMode) => (e: React.PointerEvent) => {
+    if (e.button !== 0) return; // prawy/środkowy → menu wystąpienia bez zmian
+    if (requestInFlightRef.current) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    e.stopPropagation();
+    moved.current = false;
+    const init = {
+      el: e.currentTarget as HTMLElement,
+      pointerId: e.pointerId,
+      clientX: e.clientX,
+      clientY: e.clientY,
+    };
+    // Dotyk: przeciąganie startuje dopiero po przytrzymaniu (inwariant 7).
+    if (gate.arm(e.pointerType, e.clientX, e.clientY, () => startDrag(mode, init))) return;
+    startDrag(mode, init);
+  };
+
+  /** Synchroniczna projekcja do `dragRef`; flush do Reacta robi wołający. */
+  const projectPointer = (e: React.PointerEvent): EventDragState | null => {
+    const active = dragRef.current;
+    if (!active) return null;
+    // Mysz zwolniona POZA oknem: następny prawdziwy ruch przychodzi bez
+    // wciśniętych przycisków i bez `pointerup` — to anulowanie, nie upuszczenie.
+    // Bramka `pointermove` jest nośna: `finish()` woła tę samą projekcję ze
+    // zdarzeniem `pointerup`, którego `buttons` legalnie wynosi 0.
+    if (e.type === 'pointermove' && e.pointerType === 'mouse' && e.buttons === 0) {
+      cancelDrag();
+      return null;
+    }
+    const proj = projectEventDrag(base, {
+      mode: active.mode,
+      deltaMinutes: ((e.clientY - active.originY) / HOUR_PX) * 60,
+      dayDelta:
+        active.mode === 'move' && active.colWidth > 0
+          ? Math.round((e.clientX - active.originX) / active.colWidth)
+          : 0,
+      dayCount: days.length,
+      recurring,
+    });
+    if (eventProjectionChanged(base, proj)) moved.current = true;
+    const next: EventDragState = { ...active, ...proj };
+    dragRef.current = next;
+    return next;
+  };
+
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (projectPointer(e)) scheduleFlush();
+  };
+
+  const finish = (e: React.PointerEvent) => {
+    const finalDrag = projectPointer(e);
+    cancelRaf();
+    if (!finalDrag) return;
+    // Zwolnienie przechwycenia PRZED czymkolwiek, co może odmontować kafelek.
+    releaseCapture();
+    dragRef.current = null;
+    setDrag(null);
+    if (!moved.current) return; // dotknięcie bez ruchu = klik (otwiera modal)
+    const proj: EventProjection = {
+      startMinutes: finalDrag.startMinutes,
+      durationMinutes: finalDrag.durationMinutes,
+      dayIndex: finalDrag.dayIndex,
+    };
+    if (!eventProjectionChanged(base, proj)) return; // powrót na miejsce
+    void requestChange(proj, { x: e.clientX, y: e.clientY }, finalDrag.colWidth);
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    // Trwający gest wskaźnika jest właścicielem projekcji (Escape obsługuje
+    // nasłuch okna założony przez tamtą ścieżkę). Sam ODCZYT refa.
+    if (dragRef.current !== null) return;
+    const active = kbRef.current;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      // Bez wystawionej zmiany Enter/spacja otwierają wydarzenie — jak dotąd.
+      if (active === null) {
+        onOpen(occ.event.id);
+        return;
+      }
+      applyKb(null);
+      const rect = e.currentTarget.getBoundingClientRect();
+      void requestChange(
+        active,
+        { x: rect.left + rect.width / 2, y: rect.top },
+        kbColWidth,
+      );
+      return;
+    }
+    if (!canDrag) return;
+    if (e.key === 'Escape') {
+      if (active === null) return; // bez trybu Escape należy do nakładek
+      e.preventDefault();
+      e.stopPropagation();
+      applyKb(null);
+      announce(eventRevertAnnouncement(displayTitle, moment(base)));
+      return;
+    }
+    const event: EventKeyboardEvent | null =
+      e.key === 'ArrowUp'
+        ? e.shiftKey
+          ? { type: 'resize', deltaMinutes: -MINUTE_STEP }
+          : { type: 'move', deltaMinutes: -MINUTE_STEP }
+        : e.key === 'ArrowDown'
+          ? e.shiftKey
+            ? { type: 'resize', deltaMinutes: MINUTE_STEP }
+            : { type: 'move', deltaMinutes: MINUTE_STEP }
+          : e.key === 'ArrowLeft'
+            ? { type: 'day', delta: -1 }
+            : e.key === 'ArrowRight'
+              ? { type: 'day', delta: 1 }
+              : null;
+    if (event === null) return;
+    e.preventDefault();
+    if (active === null) {
+      // Wejście w tryb: ta sama wielkość, którą łapie `startDrag`.
+      const rect = gridRef.current?.getBoundingClientRect();
+      setKbColWidth(rect ? rect.width / days.length : 0);
+    }
+    const next = eventKeyboardReducer(active, event, {
+      base,
+      dayCount: days.length,
+      recurring,
+    });
+    if (next === null || next === active) return; // krawędź — nic do ogłoszenia
+    applyKb(next);
+    announce(
+      active === null
+        ? eventEditAnnouncement(displayTitle, moment(next))
+        : eventTargetAnnouncement(moment(next)),
+    );
+  };
+
+  /**
+   * Wyjście fokusa COFA wystawioną edycję (a nie zapisuje jej, jak przy bloku
+   * zadania): zapis wydarzenia otwiera okno potwierdzenia, a dialog wyskakujący
+   * na samym Tabie byłby pułapką. Enter zostaje jedyną drogą do pytania.
+   */
+  const onKbBlur = () => {
+    const active = kbRef.current;
+    if (active === null) return;
+    applyKb(null);
+    announce(eventRevertAnnouncement(displayTitle, moment(base)));
+  };
+
+  // Podgląd: gest > pytanie > wystawiona klawiatura. Urlop nie ma żadnego z nich.
+  const staged: (EventProjection & { colWidth: number }) | null =
+    drag ?? pending ?? (kb ? { ...kb, colWidth: kbColWidth } : null);
+
   // Urlop jest zapisany jako pełna doba (0/1440), ale RENDERUJE się w oknie
   // godzin pracy osoby — inaczej zalałby całą kolumnę. Sama kolizja nadal idzie
   // z zapisanych czasów, więc blok POKAZUJE mniej, niż faktycznie zajmuje.
-  const isVacation = occ.event.kind === 'urlop';
-  const startMinutes = isVacation && vacationWindow ? vacationWindow.start : occ.startMinutes;
+  const startMinutes =
+    isVacation && vacationWindow ? vacationWindow.start : (staged?.startMinutes ?? occ.startMinutes);
   const endMinutes =
-    isVacation && vacationWindow ? vacationWindow.end : occ.startMinutes + occ.durationMinutes;
+    isVacation && vacationWindow
+      ? vacationWindow.end
+      : staged
+        ? staged.startMinutes + staged.durationMinutes
+        : occ.startMinutes + occ.durationMinutes;
   const top = (startMinutes / 60) * HOUR_PX;
   const height = Math.max(((endMinutes - startMinutes) / 60) * HOUR_PX, MIN_BLOCK_H);
+  const dayShift = staged ? staged.dayIndex - dayIndex : 0;
+  const tx = dayShift !== 0 ? dayShift * (staged?.colWidth ?? 0) : 0;
   // TA SAMA arytmetyka kolumn co `.week-block` (packDayBlocks): przy `cols` 1
   // wychodzi dokładnie dotychczasowe `left: 1px` / szerokość pełnej kolumny.
   const horizontal = {
@@ -2121,12 +2682,16 @@ function EventBlockImpl({ occ, displayTitle, vacationWindow, vacationOwner, col,
     width: `calc(${100 / cols}% - 3px)`,
   };
   const who = (vacationOwner ?? '').trim();
+  const dragHint = canDrag
+    ? ' Przeciągnij, aby przenieść; przeciągnij krawędź, aby zmienić czas trwania. Zmiana wymaga potwierdzenia i obowiązuje wszystkich.'
+    : '';
   const hint = isVacation
     ? `Urlop${who === '' ? '' : `: ${who}`}. Cały dzień. Kliknij, aby otworzyć.`
-    : `📅 ${displayTitle} — ${formatMinutes(occ.startMinutes)}–${formatMinutes(
+    : `📅 ${displayTitle} — ${formatMinutes(startMinutes)}–${formatMinutes(
         endMinutes,
-      )}. ${absentForViewer ? 'Nie uczestniczysz w tym wystąpieniu. ' : ''}Kliknij, aby otworzyć wydarzenie.`;
+      )}. ${absentForViewer ? 'Nie uczestniczysz w tym wystąpieniu. ' : ''}Kliknij, aby otworzyć wydarzenie.${dragHint}`;
   return (
+    <>
     <Tooltip text={hint}>
     <div
       className={[
@@ -2137,27 +2702,45 @@ function EventBlockImpl({ occ, displayTitle, vacationWindow, vacationOwner, col,
         absentForViewer ? 'absent' : '',
         // Kwadransowe spotkanie (21 px) idzie w jednej linii — jak `.week-block`.
         endMinutes - startMinutes <= 15 ? 'h-quarter' : '',
+        canDrag ? '' : 'readonly',
+        // Podgląd gestu i podgląd trzymany na czas pytania wyglądają tak samo:
+        // kafelek jest PODNIESIONY, ale jeszcze nic nie zapisano.
+        drag || pending ? 'dragging' : '',
+        !drag && !pending && kb ? 'kb-editing' : '',
       ]
         .filter(Boolean)
         .join(' ')}
-      style={{ top, height, ...horizontal }}
+      style={{
+        top,
+        height,
+        ...horizontal,
+        transform: tx ? `translateX(${tx}px)` : undefined,
+      }}
       role="button"
       tabIndex={0}
-      aria-label={isVacation ? hint : undefined}
+      // Nazwa dostępna podąża za WYSTAWIONĄ projekcją, więc czytnik ekranu
+      // opisuje to, co widać (urlop zostaje przy swoim pełnodniowym zdaniu).
+      aria-label={
+        isVacation ? hint : eventBlockAriaLabel(displayTitle, moment(staged ?? base), canDrag)
+      }
+      aria-describedby={canDrag ? WEEK_EVENT_KB_HINT_ID : undefined}
+      onPointerDown={canDrag ? begin('move') : undefined}
+      onPointerMove={canDrag ? onPointerMove : undefined}
+      onPointerUp={canDrag ? finish : undefined}
+      onPointerCancel={canDrag ? cancelDrag : undefined}
       onClick={(e) => {
         e.stopPropagation();
-        onOpen(occ.event.id);
+        if (!moved.current && !requestInFlightRef.current) onOpen(occ.event.id);
       }}
       onContextMenu={
         onOccContextMenu ? (e) => onOccContextMenu(occ.event.id, occDate, e) : undefined
       }
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onOpen(occ.event.id);
-        }
-      }}
+      onKeyDown={onKeyDown}
+      onBlur={canDrag ? onKbBlur : undefined}
     >
+      {canDrag && (
+        <span className="week-event-handle top" onPointerDown={begin('top')} aria-hidden />
+      )}
       {isVacation ? (
         <>
           <span className="week-event-title">
@@ -2169,12 +2752,19 @@ function EventBlockImpl({ occ, displayTitle, vacationWindow, vacationOwner, col,
         <>
           <span className="week-event-title">📅 {displayTitle}</span>
           <span className="week-event-time">
-            {formatMinutes(occ.startMinutes)}–{formatMinutes(endMinutes)}
+            {formatMinutes(startMinutes)}–{formatMinutes(endMinutes)}
           </span>
         </>
       )}
+      {canDrag && (
+        <span className="week-event-handle bottom" onPointerDown={begin('bottom')} aria-hidden />
+      )}
     </div>
     </Tooltip>
+    {rejectNotice && (
+      <DropRejectNotice x={rejectNotice.x} y={rejectNotice.y} text={rejectNotice.text} />
+    )}
+    </>
   );
 }
 
@@ -2192,8 +2782,8 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
   // same permission the read-only TaskModal enforces, so we don't surface it to
   // users who can't create tasks.
   const canManageTasks = can('tasks.manage');
-  // Wydarzenia (spotkania) dodaje rola z `events.manage`; menu slotu i blok są
-  // czysto prezentacyjne (inwariant 7 — zero ścieżek pointer/drag).
+  // Ta sama rola dodaje spotkania i odblokowuje ich potwierdzane
+  // przeciąganie/rozciąganie; urlop pozostaje tylko do odczytu.
   const canManageEvents = can('events.manage');
   // A block is editable when the role edits anyone's blocks, or edits its own and
   // this block belongs to the logged-in user. The right-click insert flow lives
@@ -3076,6 +3666,14 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
         Strzałki w lewo i w prawo przenoszą blok o dzień. Enter zapisuje zmianę, Escape ją cofa.
         Bez rozpoczętej zmiany Enter otwiera zadanie.
       </span>
+      {/* Ta sama doktryna, osobne zdanie dla kafelka wydarzenia: seria nie
+          zmienia dnia, a zatwierdzenie otwiera okno potwierdzenia. */}
+      <span id={WEEK_EVENT_KB_HINT_ID} className="sr-only">
+        Strzałki w górę i w dół przesuwają wydarzenie co 15 minut, z Shiftem zmieniają czas
+        trwania. Strzałki w lewo i w prawo przenoszą je o dzień; wydarzenie cykliczne zostaje w
+        swoim dniu. Enter pyta o potwierdzenie zmiany dla wszystkich, Escape ją cofa. Bez
+        rozpoczętej zmiany Enter otwiera wydarzenie.
+      </span>
       {/* Widok dnia: zamiast nagłówka siedmiu kolumn stoi przewijany pasek 7 dat
           wyśrodkowany na kotwicy (nawigacja, nie zakres siatki). */}
       {mode === 'day' && (
@@ -3247,11 +3845,10 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                       aria-hidden
                     />
                   )}
-                  {/* Calendar events (spotkania): additive presentational overlay
-                      rendered BEFORE the real blocks (and before recurrences) so
-                      they always paint behind real task blocks — same paint step,
-                      tree order — without touching the `.week-block` stacking
-                      context or any pointer path (inwariant 1 + 7). */}
+                  {/* Spotkania pozostają addytywną warstwą prezentacyjną dla
+                      planowania, ale ich własny kafel obsługuje potwierdzane
+                      przeciąganie. Render przed blokami zadań zachowuje wspólne
+                      pakowanie i dotychczasową kolejność malowania. */}
                   {day.events.map((occ) => {
                     // Wspólne pakowanie warstwy dnia dzieli kolumnę TYLKO w
                     // trybie tygodnia — widok dnia (telefon) zostaje kaskadą
@@ -3282,6 +3879,12 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                             ? openEventOccMenu
                             : undefined
                         }
+                        dayIndex={dayIndex}
+                        days={days}
+                        gridRef={gridRef}
+                        editable={canManageEvents}
+                        announce={announce}
+                        onDragActiveChange={handleDragActiveChange}
                       />
                     );
                   })}
