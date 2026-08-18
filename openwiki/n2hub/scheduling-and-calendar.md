@@ -407,7 +407,10 @@
     `.readonly`: zero handlerów, `cursor: pointer`, `touch-action: auto` — czyli
     dokładnie dotychczasowe zachowanie. Utajnione wydarzenie zamaskowane dla
     bieżącego widza jest tylko do odczytu dla gestu i klawiatury dokładnie jak
-    w `EventModal`, nawet gdy widz ma `events.manage`.
+    w `EventModal`, nawet gdy widz ma `events.manage`. Odebranie uprawnienia albo
+    wglądu w trakcie edycji natychmiast cofa gest i wystawioną zmianę
+    klawiaturową; otwartego dialogu nie da się zamknąć programowo, ale jego
+    akceptacja ponownie sprawdza żywy stan i nie wysyła zmiany.
   - BRAMKA: żaden gest ani klawisz nie wysyła niczego sam z siebie. Najpierw
     idzie `useConfirm()` z jawnym zdaniem, że zmiana obowiązuje GLOBALNIE
     (`EVENT_DRAG_GLOBAL_SENTENCE`), a dla serii dochodzi

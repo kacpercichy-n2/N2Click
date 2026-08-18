@@ -316,3 +316,7 @@ export function eventRejectedAnnouncement(reason: string): string {
 /** Zapis odrzucony przez reduktor bez rozpoznanej kolizji — jedno zdanie. */
 export const EVENT_DRAG_REDUCER_REJECT =
   'Nie da się ustawić wydarzenia w tych godzinach.';
+
+/** Uprawnienie albo wgląd w utajnione wydarzenie zniknęły w trakcie edycji. */
+export const EVENT_DRAG_REVOKED =
+  'Nie masz już uprawnień do edycji tego wydarzenia.';

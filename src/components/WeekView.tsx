@@ -119,6 +119,7 @@ import {
 } from './calendarBlockKeyboard';
 import {
   EVENT_DRAG_REDUCER_REJECT,
+  EVENT_DRAG_REVOKED,
   eventBlockAriaLabel,
   eventCancelAnnouncement,
   eventAppliedAnnouncement,
@@ -2206,6 +2207,10 @@ function EventBlockImpl({
   const recurring = occ.event.recurrence !== undefined;
   // Urlop nigdy nie jedzie za wskaźnikiem (patrz nagłówek).
   const canDrag = editable && !isVacation;
+  // Handlery asynchroniczne czytają NAJNOWSZĄ granicę uprawnień, nie
+  // `canDrag` z renderu, w którym gest albo dialog wystartował.
+  const canDragRef = useRef(canDrag);
+  canDragRef.current = canDrag;
 
   // Zapisana pozycja WYSTĄPIENIA — punkt odniesienia każdej projekcji.
   const base: EventDragBase = {
@@ -2309,6 +2314,20 @@ function EventBlockImpl({
     setDrag(null);
   };
 
+  // Realtime / druga karta mogą odebrać uprawnienie albo zamaskować wydarzenie
+  // w trakcie gestu lub wystawionej edycji klawiaturowej. Obie projekcje cofamy
+  // natychmiast; efekt `dragging -> false` zdejmuje live-sync hold i wysyła
+  // zrównoważone `onDragActiveChange(false)` tą samą drogą co zwykłe anulowanie.
+  useEffect(() => {
+    if (canDrag) return;
+    const hadPointerDrag = dragRef.current !== null;
+    const hadKeyboardEdit = kbRef.current !== null;
+    if (!hadPointerDrag && !hadKeyboardEdit) return;
+    cancelDrag();
+    if (hadKeyboardEdit) applyKb(null);
+    announce(eventRejectedAnnouncement(EVENT_DRAG_REVOKED));
+  }, [canDrag]);
+
   const dragging = drag !== null;
   useEffect(() => {
     if (!dragging) return;
@@ -2354,15 +2373,28 @@ function EventBlockImpl({
     colWidth: number,
   ) => {
     if (requestInFlightRef.current) return;
+    if (!canDragRef.current) {
+      if (at) showReject(at.x, at.y, EVENT_DRAG_REVOKED);
+      announce(eventRejectedAnnouncement(EVENT_DRAG_REVOKED));
+      return;
+    }
     requestInFlightRef.current = true;
     try {
       const eventId = occ.event.id;
-      const live = getState().events.find((e) => e.id === eventId);
+      const liveState = getState();
+      const live = liveState.events.find((e) => e.id === eventId);
       // Wydarzenie zniknęło w tle (usunięcie, odświeżenie) — nie ma czego zapisać.
       if (live === undefined || live.kind === 'urlop') {
         const reason = 'Wydarzenie już nie istnieje.';
         if (at) showReject(at.x, at.y, reason);
         announce(eventRejectedAnnouncement(reason));
+        return;
+      }
+      // Sama referencja `canDrag` aktualizuje się przy renderze rodzica, ale maskę
+      // sprawdzamy dodatkowo na ŻYWYM stanie w chwili zdarzenia.
+      if (!canDragRef.current || isEventContentMasked(liveState, live)) {
+        if (at) showReject(at.x, at.y, EVENT_DRAG_REVOKED);
+        announce(eventRejectedAnnouncement(EVENT_DRAG_REVOKED));
         return;
       }
       const to = moment(proj);
@@ -2419,7 +2451,9 @@ function EventBlockImpl({
         }),
       });
       // Dialog żyje ponad WeekView. Po nawigacji jego wynik nie należy już do
-      // tego kafelka i nie może wysłać osieroconej zmiany.
+      // tego kafelka i nie może wysłać osieroconej zmiany. ConfirmProvider nie
+      // ma API programowego zamknięcia: po odebraniu uprawnień dialog zostaje do
+      // rozstrzygnięcia, ale Accept przechodzi przez poniższą żywą bramkę.
       if (!mountedRef.current) return;
       setPending(null);
       if (!accepted) {
@@ -2430,29 +2464,49 @@ function EventBlockImpl({
       // Draft z ŻYWEGO wydarzenia (mogło zmienić tytuł/uczestników w czasie
       // pytania). `isConfidential` świadomie POMIJAMY — brak pola zachowuje
       // zapisaną flagę; `recurrence`/`rsvps` re-kanonikalizuje reduktor.
-      const current = getState().events.find((e) => e.id === eventId);
+      const postConfirmState = getState();
+      const current = postConfirmState.events.find((e) => e.id === eventId);
       if (current === undefined || current.kind === 'urlop') {
         const reason = 'Wydarzenie już nie istnieje.';
         if (at) showReject(at.x, at.y, reason);
         announce(eventRejectedAnnouncement(reason));
         return;
       }
-      const currentRecurring = current.recurrence !== undefined;
-      const saveDate = eventDragDraftDate(to.date, current.date, currentRecurring);
+      if (!canDragRef.current || isEventContentMasked(postConfirmState, current)) {
+        if (at) showReject(at.x, at.y, EVENT_DRAG_REVOKED);
+        announce(eventRejectedAnnouncement(EVENT_DRAG_REVOKED));
+        return;
+      }
+
+      // OSTATNIA bramka bezpośrednio przed dispatch: stan mógł się zmienić
+      // jeszcze między rozstrzygnięciem dialogu a budową żywego draftu.
       const before = getState();
+      const dispatchCurrent = before.events.find((e) => e.id === eventId);
+      if (
+        dispatchCurrent === undefined ||
+        dispatchCurrent.kind === 'urlop' ||
+        !canDragRef.current ||
+        isEventContentMasked(before, dispatchCurrent)
+      ) {
+        if (at) showReject(at.x, at.y, EVENT_DRAG_REVOKED);
+        announce(eventRejectedAnnouncement(EVENT_DRAG_REVOKED));
+        return;
+      }
+      const currentRecurring = dispatchCurrent.recurrence !== undefined;
+      const saveDate = eventDragDraftDate(to.date, dispatchCurrent.date, currentRecurring);
       dispatch({
         type: 'SAVE_EVENT',
         eventId,
         draft: {
-          title: current.title,
-          description: current.description,
-          location: current.location,
-          meetingUrl: current.meetingUrl,
+          title: dispatchCurrent.title,
+          description: dispatchCurrent.description,
+          location: dispatchCurrent.location,
+          meetingUrl: dispatchCurrent.meetingUrl,
           date: saveDate,
           startMinutes: to.startMinutes,
           durationMinutes: to.durationMinutes,
-          attendeeIds: [...current.attendeeIds],
-          recurrence: current.recurrence ?? null,
+          attendeeIds: [...dispatchCurrent.attendeeIds],
+          recurrence: dispatchCurrent.recurrence ?? null,
         },
       });
       // Inwariant 6: odrzucona komenda zwraca TĘ SAMĄ referencję stanu. Kafelek
@@ -2464,10 +2518,10 @@ function EventBlockImpl({
             date: saveDate,
             startMinutes: to.startMinutes,
             durationMinutes: to.durationMinutes,
-            attendeeIds: current.attendeeIds,
-            recurrence: current.recurrence
+            attendeeIds: dispatchCurrent.attendeeIds,
+            recurrence: dispatchCurrent.recurrence
               ? {
-                  ...current.recurrence,
+                  ...dispatchCurrent.recurrence,
                   startMinutes: to.startMinutes,
                   durationMinutes: to.durationMinutes,
                 }
