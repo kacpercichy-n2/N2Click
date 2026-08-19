@@ -422,3 +422,58 @@ describe('SETTLE_TRACKED_DAY: przeszłość = fakty', () => {
     expect(reducer(other, { type: 'SETTLE_TRACKED_DAY', personId: 'other', date: DAY, nowMinutes: null })).toBe(other);
   });
 });
+
+describe('odwrót „wykonanie → plan” (kasowanie / poprawka wpisu)', () => {
+  const bin = (id: string, taskId: string, personId: string, hours: number): WorkloadEntry => ({
+    id, taskId, personId, date: '', plannedHours: hours, startMinutes: 0, sortIndex: 0,
+  });
+  const add = (s: AppData, start: number, end: number) =>
+    reducer(s, { type: 'ADD_TIME_ENTRY', payload: { personId: 'me', taskId: 't-design', date: DAY, startMinutes: start, endMinutes: end, source: 'manual' } });
+
+  it('wpis niesie księgowość wzrostu; skasowanie cofa blok i oddaje zasobnik', () => {
+    const s = state({ workload: [block('b1', 't-design', 'me', 600, 2), bin('bin1', 't-design', 'me', 1)] });
+    const grown = add(s, 600, 780); // 3h: blok 2h→3h, zasobnik 1h→0
+    const e = grown.timeEntries[0];
+    expect(e.planGrowth).toEqual({ blockId: 'b1', minutes: 60, fromBinMinutes: 60 });
+    const back = reducer(grown, { type: 'DELETE_TIME_ENTRY', entryId: e.id });
+    expect(back.workload.find((w) => w.id === 'b1')).toMatchObject({ plannedHours: 2, done: false });
+    expect(back.workload.find((w) => w.taskId === 't-design' && w.date === '')?.plannedHours).toBe(1);
+    expect(back.timeEntries).toHaveLength(0);
+  });
+  it('pomyłkowy wpis na kubełek: blok powstał i znika bez śladu po skasowaniu', () => {
+    const s = state();
+    const grown = reducer(s, { type: 'ADD_TIME_ENTRY', payload: { personId: 'me', taskId: 't-call-a', date: DAY, startMinutes: 900, endMinutes: 960, source: 'manual' } });
+    expect(grown.workload).toHaveLength(1);
+    const back = reducer(grown, { type: 'DELETE_TIME_ENTRY', entryId: grown.timeEntries[0].id });
+    expect(back.workload).toHaveLength(0);
+  });
+  it('poprawka skracająca wpis cofa stary wzrost i liczy nowy od zera', () => {
+    const s = state({ workload: [block('b1', 't-design', 'me', 600, 2), bin('bin1', 't-design', 'me', 1)] });
+    const grown = add(s, 600, 780); // 3h
+    const id = grown.timeEntries[0].id;
+    const shrunk = reducer(grown, { type: 'UPDATE_TIME_ENTRY', entryId: id, taskId: 't-design', startMinutes: 600, endMinutes: 720 }); // 2h
+    expect(shrunk.workload.find((w) => w.id === 'b1')).toMatchObject({ plannedHours: 2, done: true });
+    expect(shrunk.workload.find((w) => w.taskId === 't-design' && w.date === '')?.plannedHours).toBe(1);
+    expect(shrunk.timeEntries[0].planGrowth).toBeUndefined();
+    // wydłużenie z powrotem: znowu z zasobnika
+    const regrown = reducer(shrunk, { type: 'UPDATE_TIME_ENTRY', entryId: id, taskId: 't-design', startMinutes: 600, endMinutes: 750 }); // 2h 30m
+    expect(regrown.workload.find((w) => w.id === 'b1')?.plannedHours).toBe(2.5);
+    expect(regrown.workload.find((w) => w.taskId === 't-design' && w.date === '')?.plannedHours).toBe(0.5);
+    expect(regrown.timeEntries[0].planGrowth).toEqual({ blockId: 'b1', minutes: 30, fromBinMinutes: 30 });
+  });
+  it('skasowanie wpisu odznacza blok pokryty wyłącznie tym wpisem', () => {
+    const s = state({ workload: [block('b1', 't-design', 'me', 600, 1)] });
+    const done = add(s, 600, 660);
+    expect(done.workload[0].done).toBe(true);
+    const back = reducer(done, { type: 'DELETE_TIME_ENTRY', entryId: done.timeEntries[0].id });
+    expect(back.workload[0].done).toBe(false);
+  });
+  it('blok z wzrostem usunięty ręcznie: odwrót nie mintuje godzin (brak zmian w planie)', () => {
+    const s = state({ workload: [block('b1', 't-design', 'me', 600, 2), bin('bin1', 't-design', 'me', 1)] });
+    const grown = add(s, 600, 780);
+    const noBlock = { ...grown, workload: grown.workload.filter((w) => w.id !== 'b1') };
+    const back = reducer(noBlock, { type: 'DELETE_TIME_ENTRY', entryId: grown.timeEntries[0].id });
+    expect(back.workload.find((w) => w.taskId === 't-design' && w.date === '')).toBeUndefined();
+    expect(back.timeEntries).toHaveLength(0);
+  });
+});

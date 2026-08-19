@@ -90,6 +90,33 @@ export function changelogUnreadCount(
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-08-19-czas-pracy-dzien',
+    dateFrom: '2026-08-19',
+    dateTo: '2026-08-19',
+    summary:
+      'Czas pracy w Kalendarzu: nowy widok „Dzień” z planem po lewej i wykonaniem po prawej, wpisy czasu z paska, rysowania po osi i jednego kliknięcia w blok.',
+    items: [
+      {
+        area: 'Kalendarz',
+        feature: 'Widok „Dzień”: plan obok wykonania',
+        description:
+          'Przełącznik ma teraz kolejność Dzień, Tydzień, Miesiąc. W widoku dnia po lewej stoi Twój plan (bloki zadań i spotkania), po prawej to, co naprawdę poszło, na tej samej osi godzin. Kafel zadania pokazuje ile z tej porcji i z całego zadania już wykonano.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Wpis czasu: pasek, rysowanie, kółko',
+        description:
+          'Pasek u góry podpowiada zadania (najpierw te z dzisiejszego planu), wpisujesz od-do i zapisujesz. Przeciągnięcie po prawej kolumnie wstawia godziny do paska. Kółko na kaflu planu (albo „Oznacz jako wykonane” w tygodniu) dodaje wpis dokładnie w godzinach bloku. Klik w spotkanie wstawia je do paska; spotkanie nie liczy się samo. Nowe zadanie z paska wymaga projektu i zostaje w bazie jako podpowiedź.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Nadwyżka, zasobnik i „ponad sprzedane”',
+        description:
+          'Gdy wykonasz więcej niż zaplanowano, brakujące godziny schodzą z Twojego zasobnika w tym zadaniu, potem z wolnych sprzedanych godzin. Jeśli i tych brakuje, hub pyta, czy zapisać ponad sprzedane, i pokazuje to przy Twoim nazwisku w panelu. Kwadrans po końcu niewykonanego bloku jego reszta wraca do zasobnika, a kalendarz pokazuje to, co się wydarzyło. Zadanie ze sprzedanymi godzinami zamyka się samo, gdy wszystko jest wykonane. Skasowanie pomyłkowego wpisu cofa te zmiany. Wpisy na razie zapisują się tylko w tej przeglądarce.',
+      },
+    ],
+  },
+  {
     id: '2026-08-19-powiadomienia-przeczytane',
     dateFrom: '2026-08-19',
     dateTo: '2026-08-19',

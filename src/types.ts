@@ -513,6 +513,14 @@ export interface TimeEntry {
    *  pokazuje kto i ile. Klucz obecny tylko gdy > 0; zadanie bez estymaty
    *  (kubełek) nigdy nie ma przekroczenia. */
   overrunMinutes?: number;
+  /**
+   * Księgowość „wykonanie → plan" TEGO wpisu: o ile minut urósł (albo powstał)
+   * blok `blockId` i ile z tego zeszło z zasobnika osoby. Skasowanie albo
+   * poprawka wpisu ODWRACA dokładnie to (blok kurczy się / znika, zasobnik
+   * dostaje swoje minuty z powrotem), więc pomyłka nie zostawia śladu w planie.
+   * Klucz obecny tylko, gdy wpis coś dopisał do planu.
+   */
+  planGrowth?: { blockId: string; minutes: number; fromBinMinutes: number };
   createdAt: string; // ISO
 }
 

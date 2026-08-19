@@ -519,7 +519,15 @@
   `overrunSummary` per osoba i zadanie). (4) `autoCompleteTask`: zadanie ze
   sprzedanymi godzinami, w którym nic nie zostało (wszystkie bloki wykonane,
   zasobniki puste, brak wolnych sprzedanych), dostaje pierwszy status `isDone`;
-  kubełek nigdy (nie ma „wszystko zrobione"). (5) `SETTLE_TRACKED_DAY
+  kubełek nigdy (nie ma „wszystko zrobione"). ODWRÓT: wzrost planu jest
+  zaksięgowany NA WPISIE (`planGrowth {blockId, minutes, fromBinMinutes}`);
+  `DELETE_TIME_ENTRY` i `UPDATE_TIME_ENTRY` najpierw cofają go przez
+  `revertPlanGrowth` (blok kurczy się/znika, zasobnik odzyskuje swoje minuty;
+  blok usunięty ręcznie => nic, bez mintowania), potem UPDATE liczy wzrost od
+  zera na czystym stanie; `resyncBlockDone` jest DWUKIERUNKOWE (done ⇔ w pełni
+  pokryty). Poprawka godzin na TYM SAMYM zadaniu wolno także po jego zamknięciu
+  (korekta faktu, np. po auto-„Gotowe"); zmiana na inne zadanie wymaga zadania
+  przyjmującego czas. (5) `SETTLE_TRACKED_DAY
   {personId, date, nowMinutes|null}`: dla osoby śledzącej dzień (≥1 wpis)
   niewykonany blok, którego koniec minął o ≥15 min (`SETTLE_GRACE_MINUTES`),
   oddaje niepokrytą część do JEDNEGO wiersza zasobnika pary, a sam kurczy się do

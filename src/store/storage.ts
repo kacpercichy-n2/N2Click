@@ -1212,11 +1212,21 @@ export function repairTimeEntries(data: AppData): AppData {
       Number.isInteger(ovRaw) && (ovRaw as number) > 0 && (ovRaw as number) % MINUTE_STEP === 0 && (ovRaw as number) <= e0 - s0
         ? (ovRaw as number)
         : undefined;
+    const pgRaw = e.planGrowth as Record<string, unknown> | undefined;
+    const planGrowth =
+      typeof pgRaw === 'object' && pgRaw !== null &&
+      str(pgRaw.blockId) !== '' &&
+      Number.isInteger(pgRaw.minutes) && (pgRaw.minutes as number) > 0 && (pgRaw.minutes as number) % MINUTE_STEP === 0 &&
+      Number.isInteger(pgRaw.fromBinMinutes) && (pgRaw.fromBinMinutes as number) >= 0 &&
+      (pgRaw.fromBinMinutes as number) <= (pgRaw.minutes as number)
+        ? { blockId: str(pgRaw.blockId), minutes: pgRaw.minutes as number, fromBinMinutes: pgRaw.fromBinMinutes as number }
+        : undefined;
     const clean: TimeEntry = {
       id, personId, taskId, date, startMinutes: s0, endMinutes: e0, source: src,
       ...(eventId !== undefined ? { eventId } : {}),
       ...(blockId !== undefined ? { blockId } : {}),
       ...(overrunMinutes !== undefined ? { overrunMinutes } : {}),
+      ...(planGrowth !== undefined ? { planGrowth } : {}),
       createdAt: str(e.createdAt),
     };
     // Klucze poza formą kanoniczną (np. `eventId` przy ręcznym wpisie) też są zmianą.
@@ -1226,6 +1236,8 @@ export function repairTimeEntries(data: AppData): AppData {
       str(e.eventId) !== (eventId ?? '') ||
       str(e.blockId) !== (blockId ?? '') ||
       (ovRaw ?? undefined) !== overrunMinutes ||
+      (pgRaw === undefined) !== (planGrowth === undefined) ||
+      (pgRaw !== undefined && planGrowth !== undefined && JSON.stringify(pgRaw) !== JSON.stringify(planGrowth)) ||
       str(e.createdAt) !== clean.createdAt
     )
       changed = true;

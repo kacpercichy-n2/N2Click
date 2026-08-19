@@ -802,6 +802,7 @@ function materializeTracking(
   const { taskId, personId, date } = entry;
   let workload = state.workload;
   const touched = new Set<string>();
+  let grownBlockId: string | null = null;
   if (growth.growMinutes > 0) {
     const growHours = growth.growMinutes / 60;
     if (growth.fromBinMinutes > 0) {
@@ -821,50 +822,103 @@ function materializeTracking(
       .filter((w) => w.taskId === taskId && w.personId === personId && w.date === date && !isBinEntry(w))
       .sort((a, b) => a.startMinutes - b.startMinutes || a.sortIndex - b.sortIndex);
     const last = dated[dated.length - 1];
-    if (last !== undefined) {
+    const newBlock = (): WorkloadEntry => ({
+      id: uid(),
+      taskId,
+      personId,
+      date,
+      plannedHours: toQuarters(growHours) * HOURS_STEP,
+      startMinutes: entry.startMinutes,
+      sortIndex: nextSortIndex(workload, personId, date),
+      done: true,
+    });
+    if (last !== undefined && toQuarters(last.plannedHours) + toQuarters(growHours) <= toQuarters((DAY_MINUTES - last.startMinutes) / 60)) {
       const grownQ = toQuarters(last.plannedHours) + toQuarters(growHours);
-      const maxQ = toQuarters((DAY_MINUTES - last.startMinutes) / 60);
-      if (grownQ <= maxQ) {
-        workload = workload.map((w) => (w.id === last.id ? { ...w, plannedHours: grownQ * HOURS_STEP } : w));
-      } else {
-        // Blok nie mieści się w dobie: dopisujemy nowy w godzinach wpisu.
-        workload = [
-          ...workload,
-          {
-            id: uid(),
-            taskId,
-            personId,
-            date,
-            plannedHours: toQuarters(growHours) * HOURS_STEP,
-            startMinutes: entry.startMinutes,
-            sortIndex: nextSortIndex(workload, personId, date),
-            done: true,
-          },
-        ];
-      }
+      workload = workload.map((w) => (w.id === last.id ? { ...w, plannedHours: grownQ * HOURS_STEP } : w));
+      grownBlockId = last.id;
     } else {
-      workload = [
-        ...workload,
-        {
-          id: uid(),
-          taskId,
-          personId,
-          date,
-          plannedHours: toQuarters(growHours) * HOURS_STEP,
-          startMinutes: entry.startMinutes,
-          sortIndex: nextSortIndex(workload, personId, date),
-          done: true,
-        },
-      ];
+      // Brak bloku pary tego dnia albo ostatni nie mieści się w dobie: nowy blok w godzinach wpisu.
+      const created = newBlock();
+      workload = [...workload, created];
+      grownBlockId = created.id;
     }
     touched.add(dayKey(personId, date));
   }
   let next: AppData = touched.size > 0 ? { ...state, workload: reindexDays(workload, touched) } : state;
+  if (grownBlockId !== null) {
+    // Księgowość na wpisie: dokładnie tyle cofnie odwrót (kasowanie / poprawka).
+    const record = { blockId: grownBlockId, minutes: growth.growMinutes, fromBinMinutes: growth.fromBinMinutes };
+    next = {
+      ...next,
+      timeEntries: next.timeEntries.map((e) => (e.id === entry.id ? { ...e, planGrowth: record } : e)),
+    };
+  }
   next = resyncBlockDone(next, taskId, personId, date);
   return autoCompleteTask(next, taskId);
 }
 
-/** Bloki pary w pełni pokryte wykonaniem dostają `done: true` (jednokierunkowo). */
+/**
+ * ODWRÓT „wykonanie → plan" jednego wpisu (kasowanie / poprawka): blok
+ * `planGrowth.blockId` kurczy się o `minutes` (znika przy zerze), a
+ * `fromBinMinutes` wraca do JEDNEGO wiersza zasobnika pary (inwariant 4);
+ * reszta wraca do wolnych sprzedanych samą redukcją planu. Bloku już nie ma
+ * (usunięty ręcznie) => nic nie cofamy (nie mintujemy godzin z powietrza).
+ * Bez księgowości => TA SAMA referencja.
+ */
+function revertPlanGrowth(state: AppData, entry: TimeEntry): AppData {
+  const pg = entry.planGrowth;
+  if (pg === undefined) return state;
+  const block = state.workload.find((w) => w.id === pg.blockId && !isBinEntry(w));
+  if (block === undefined) return state;
+  const touched = new Set<string>([dayKey(block.personId, block.date)]);
+  const leftQ = toQuarters(block.plannedHours) - toQuarters(pg.minutes / 60);
+  let workload =
+    leftQ <= 0
+      ? state.workload.filter((w) => w.id !== block.id)
+      : state.workload.map((w) => (w.id === block.id ? { ...w, plannedHours: leftQ * HOURS_STEP } : w));
+  if (pg.fromBinMinutes > 0) {
+    const backQ = toQuarters(pg.fromBinMinutes / 60);
+    const bin = workload
+      .filter((w) => w.taskId === block.taskId && w.personId === block.personId && isBinEntry(w))
+      .sort((a, b) => a.sortIndex - b.sortIndex)[0];
+    workload =
+      bin !== undefined
+        ? workload.map((w) =>
+            w.id === bin.id ? { ...w, plannedHours: (toQuarters(w.plannedHours) + backQ) * HOURS_STEP } : w,
+          )
+        : [
+            ...workload,
+            {
+              id: uid(),
+              taskId: block.taskId,
+              personId: block.personId,
+              date: BIN_DATE,
+              plannedHours: backQ * HOURS_STEP,
+              startMinutes: 0,
+              sortIndex: nextSortIndex(workload, block.personId, BIN_DATE),
+            },
+          ];
+    touched.add(dayKey(block.personId, BIN_DATE));
+  }
+  return {
+    ...state,
+    workload: reindexDays(workload, touched),
+    timeEntries: state.timeEntries.map((e) => {
+      if (e.id !== entry.id) return e;
+      const { planGrowth: _drop, ...rest } = e;
+      return rest;
+    }),
+  };
+}
+
+/**
+ * Bloki pary: `done` = „w pełni pokryty wykonaniem" (po kolei od
+ * najwcześniejszego). DWUKIERUNKOWO: pokryty dostaje `done`, niepokryty traci
+ * — dzięki temu skasowanie wpisu nie zostawia „wykonanego" bloku bez pokrycia.
+ * (Jedyny wyjątek poza tą ścieżką: `SET_BLOCK_DONE true`, gdy godziny bloku
+ * zajmuje inny wpis — blok jest wykonany bez własnego wpisu do czasu kolejnej
+ * zmiany wpisów pary.)
+ */
 function resyncBlockDone(state: AppData, taskId: string, personId: string, date: string): AppData {
   const b = trackingBalance(state, taskId, personId, date);
   if (b.blocks.length === 0) return state;
@@ -873,9 +927,9 @@ function resyncBlockDone(state: AppData, taskId: string, personId: string, date:
   const workload = state.workload.map((w) => {
     if (w.taskId !== taskId || w.personId !== personId || w.date !== date || isBinEntry(w)) return w;
     const covered = (fill.get(w.id) ?? 0) >= hoursToMinutes(w.plannedHours);
-    if (covered && w.done !== true) {
+    if (covered !== (w.done === true)) {
       changed = true;
-      return { ...w, done: true };
+      return { ...w, done: covered };
     }
     return w;
   });
@@ -4351,7 +4405,12 @@ export function reducer(state: AppData, action: Action): AppData {
       const w = state.timeEntries.find((e) => e.id === action.entryId);
       if (w === undefined) return state;
       if (!isValidTimeRange(action.startMinutes, action.endMinutes)) return state;
-      if (!timeEntryTaskAccepts(state, action.taskId)) return state;
+      // Poprawka godzin na TYM SAMYM zadaniu jest dozwolona także po jego
+      // zamknięciu (np. auto-„Gotowe" po pełnym wykonaniu): to korekta faktu,
+      // nie nowy czas. Zmiana zadania wymaga zadania, które przyjmuje czas.
+      if (action.taskId !== w.taskId) {
+        if (!timeEntryTaskAccepts(state, action.taskId)) return state;
+      } else if (!hasEntity(state, 'task', w.taskId)) return state;
       if (
         findOverlappingEntry(state.timeEntries, w.personId, w.date, action.startMinutes, action.endMinutes, w.id) !==
         undefined
@@ -4359,11 +4418,13 @@ export function reducer(state: AppData, action: Action): AppData {
         return state;
       if (w.taskId === action.taskId && w.startMinutes === action.startMinutes && w.endMinutes === action.endMinutes)
         return state;
-      // Nadwyżka NOWEJ długości wobec planu pary (stara długość tego wpisu nie liczy się).
-      const growth = planGrowth(state, action.taskId, w.personId, w.date, action.endMinutes - action.startMinutes, w.id);
+      // ODWRÓT starego wzrostu planu tego wpisu, potem nadwyżka NOWEJ długości
+      // liczona na czystym stanie (stara długość wpisu nie liczy się).
+      const reverted = revertPlanGrowth(state, w);
+      const growth = planGrowth(reverted, action.taskId, w.personId, w.date, action.endMinutes - action.startMinutes, w.id);
       if (growth.overrunMinutes > 0 && action.acceptOverrun !== true) return state;
       // Ręczna poprawka zrywa więź ze spotkaniem/blokiem: to już nie jest wpis „prosto z kalendarza".
-      const { eventId: _dropE, blockId: _dropB, overrunMinutes: _dropO, ...rest } = w;
+      const { eventId: _dropE, blockId: _dropB, overrunMinutes: _dropO, planGrowth: _dropG, ...rest } = w;
       const next: TimeEntry = {
         ...rest,
         taskId: action.taskId,
@@ -4372,24 +4433,20 @@ export function reducer(state: AppData, action: Action): AppData {
         source: w.source === 'event' || w.source === 'block' ? 'manual' : w.source,
         ...(growth.overrunMinutes > 0 ? { overrunMinutes: growth.overrunMinutes } : {}),
       };
-      const replaced = { ...state, timeEntries: state.timeEntries.map((e) => (e.id === w.id ? next : e)) };
-      // Stary blok (jeśli był z „wykonane") traci pokrycie: zostaje wykonany tylko, gdy nadal pokryty.
+      const replaced = { ...reverted, timeEntries: reverted.timeEntries.map((e) => (e.id === w.id ? next : e)) };
       let after = materializeTracking(replaced, next, growth);
+      // Stara para (inne zadanie/dzień) traci pokrycie: jej bloki wracają do stanu „pokryte = wykonane".
       if (w.taskId !== action.taskId || w.date !== next.date) after = resyncBlockDone(after, w.taskId, w.personId, w.date);
       return after;
     }
     case 'DELETE_TIME_ENTRY': {
       const w = state.timeEntries.find((e) => e.id === action.entryId);
       if (w === undefined) return state;
-      const without = { ...state, timeEntries: state.timeEntries.filter((e) => e.id !== action.entryId) };
-      // Skasowany wpis „z bloku" odznacza swój blok; inne wpisy zostawiają bloki w spokoju.
-      if (w.source === 'block' && w.blockId !== undefined) {
-        return {
-          ...without,
-          workload: without.workload.map((b) => (b.id === w.blockId && b.done === true ? { ...b, done: false } : b)),
-        };
-      }
-      return without;
+      // Odwrót: to, co wpis dopisał do planu, wraca (blok kurczy się / znika,
+      // zasobnik odzyskuje minuty); bloki pary wracają do „wykonany = pokryty".
+      const reverted = revertPlanGrowth(state, w);
+      const without = { ...reverted, timeEntries: reverted.timeEntries.filter((e) => e.id !== action.entryId) };
+      return resyncBlockDone(without, w.taskId, w.personId, w.date);
     }
     case 'SETTLE_TRACKED_DAY':
       return settleTrackedDay(state, action.personId, action.date, action.nowMinutes);
