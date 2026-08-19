@@ -184,11 +184,12 @@ export function ChatSearchPopover({
           <Users size={16} aria-hidden />
           Nowa grupa
         </button>
+        {/* Przełącznik: widoczna etykieta STAŁA („Dźwięk"), stan niesie
+            `aria-pressed` + ikona; pełny opis w `title`. */}
         <button
           type="button"
           className="btn ghost n2chat-sound-btn"
           aria-pressed={chat.soundEnabled}
-          aria-label="Dźwięk nowych wiadomości na tym urządzeniu"
           title={
             chat.soundEnabled
               ? 'Dźwięk nowych wiadomości: włączony (to urządzenie)'
@@ -197,7 +198,7 @@ export function ChatSearchPopover({
           onClick={() => chat.setSoundEnabled(!chat.soundEnabled)}
         >
           {chat.soundEnabled ? <Volume2 size={16} aria-hidden /> : <VolumeX size={16} aria-hidden />}
-          {chat.soundEnabled ? 'Dźwięk wł.' : 'Dźwięk wył.'}
+          Dźwięk
         </button>
       </div>
     </m.div>

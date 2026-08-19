@@ -320,15 +320,14 @@ function SecurityTile({ person, mode }: { person: Person; mode: AuthMode }) {
             </dt>
             <dd>
               <label className="checkbox-field account-inline-check">
-                {/* Stała nazwa dostępna: widoczny tekst to STAN (zmienia się),
-                    nazwa kontrolki ma zostać ta sama niezależnie od wartości. */}
+                {/* Widoczna etykieta jest STAŁA (stan niesie `checked`), więc
+                    nazwa dostępna = widoczny tekst, bez osobnego aria-label. */}
                 <input
                   type="checkbox"
-                  aria-label="Dźwięk nowej wiadomości na tym urządzeniu"
                   checked={chat.soundEnabled}
                   onChange={(e) => chat.setSoundEnabled(e.target.checked)}
                 />
-                <span aria-hidden="true">{chat.soundEnabled ? 'Włączony' : 'Wyłączony'}</span>
+                <span>Włącz dźwięk</span>
               </label>
             </dd>
           </div>
