@@ -61,7 +61,7 @@ import {
   type ChatTypingEntry,
 } from './chatState';
 import { readChatSoundEnabled, writeChatSoundEnabled } from '../store/storage';
-import { armChatSound, decideChatPing, playChatPing } from './chatSound';
+import { armChatSound, decideChatPing, playChatPing, unlockChatSound } from './chatSound';
 import {
   CHAT_CATCHUP_MAX_PAGES,
   CHAT_PAGE_SIZE,
@@ -690,9 +690,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     return armChatSound();
   }, [active, soundEnabled]);
 
+  // Włączenie przychodzi z kliknięcia w przełącznik, czyli z gestu — odblokuj
+  // audio OD RAZU, żeby pierwszy ping nie czekał na kolejne kliknięcie gdzieś
+  // w aplikacji (efekt `armChatSound` zakłada nasłuchy dopiero po tym geście).
   const setSoundEnabled = useCallback((enabled: boolean): void => {
     writeChatSoundEnabled(enabled);
     setSoundEnabledState(enabled);
+    if (enabled) unlockChatSound();
   }, []);
 
   const typingIds = useMemo(() => readTypingUserIds(typing, Date.now()), [typing]);

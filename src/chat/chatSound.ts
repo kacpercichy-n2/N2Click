@@ -82,6 +82,16 @@ function audioContextCtor(): AudioContextCtor | null {
   return w.AudioContext ?? w.webkitAudioContext ?? null;
 }
 
+/**
+ * Odblokowanie z BIEŻĄCEGO gestu użytkownika (np. klik w „Dźwięk wł."): tworzy
+ * kontekst i wznawia go od razu, bez czekania na kolejny `pointerdown`. Wołać
+ * tylko z handlera zdarzenia wejściowego — poza gestem przeglądarka zostawi
+ * kontekst zawieszony i ping nadal będzie milczał.
+ */
+export function unlockChatSound(): void {
+  unlockFromGesture();
+}
+
 /** Tworzy (raz) kontekst i próbuje go wznowić. Wywoływać TYLKO z gestu. */
 function unlockFromGesture(): void {
   const Ctor = audioContextCtor();

@@ -11,6 +11,7 @@ import {
   decideChatPing,
   playChatPing,
   resetChatSoundForTests,
+  unlockChatSound,
   type ChatPingFacts,
 } from './chatSound';
 import { readChatSoundEnabled, writeChatSoundEnabled } from '../store/storage';
@@ -141,6 +142,55 @@ describe('moduł audio bez Web Audio', () => {
     const disarm = armChatSound();
     expect(typeof disarm).toBe('function');
     expect(() => disarm()).not.toThrow();
+  });
+
+  it('unlockChatSound bez Web Audio nie rzuca i nie udaje gotowości', () => {
+    expect(() => unlockChatSound()).not.toThrow();
+    expect(chatSoundReady()).toBe(false);
+  });
+
+  it('unlockChatSound z Web Audio (atrapa) odblokowuje od razu, bez kolejnego gestu', () => {
+    class FakeContext {
+      state: 'suspended' | 'running' = 'suspended';
+      currentTime = 0;
+      destination = {} as AudioDestinationNode;
+      resume(): Promise<void> {
+        this.state = 'running';
+        return Promise.resolve();
+      }
+      createGain(): GainNode {
+        const node = {
+          gain: {
+            value: 0,
+            setValueAtTime: () => undefined,
+            exponentialRampToValueAtTime: () => undefined,
+          },
+          connect: () => undefined,
+        };
+        return node as unknown as GainNode;
+      }
+      createOscillator(): OscillatorNode {
+        const node = {
+          type: 'sine',
+          frequency: { setValueAtTime: () => undefined },
+          connect: () => undefined,
+          start: () => undefined,
+          stop: () => undefined,
+        };
+        return node as unknown as OscillatorNode;
+      }
+    }
+    const g = globalThis as { window?: unknown };
+    const prev = g.window;
+    g.window = { AudioContext: FakeContext };
+    try {
+      expect(chatSoundReady()).toBe(false);
+      unlockChatSound();
+      expect(chatSoundReady()).toBe(true);
+      expect(playChatPing(0.35)).toBe(true);
+    } finally {
+      g.window = prev;
+    }
   });
 
   it('z dokumentem, ale bez Web Audio: gest nie odblokowuje, uzbrojenie jest idempotentne', () => {
