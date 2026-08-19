@@ -15,7 +15,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { AppData, DateStr, TimeEntry } from '../types';
-import { useStoreApi, type Action } from '../store/AppStore';
+import { usePersistence, useStoreApi, type Action } from '../store/AppStore';
+import { useSaveStatus } from '../utils/useSaveStatus';
 import { activeStatuses, getClient, getPerson, getProject, getTask } from '../store/selectors';
 import { projectDisplayName, taskDisplayTitle } from '../store/confidentiality';
 import {
@@ -84,13 +85,23 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
   // pada tylko wtedy, gdy reduktor naprawdę przyjął komendę (inwariant 6 zwraca
   // tę samą referencję przy odrzuceniu — nie zgadujemy z walidacji po stronie UI).
   const storeApi = useStoreApi();
+  // Utrwalenie (localStorage, zapis koalescowany) to OSOBNA prawda od stanu w
+  // pamięci: odznaka `SaveStatus` (ten sam wzorzec co TaskModal) pokazuje
+  // „Zapisywanie… / Zapisano HH:mm", a nieudany zapis trwale „Nie zapisano”.
+  // Linia statusu pod paskiem opisuje więc SKUTEK W DANYCH („Dodane…"), nigdy
+  // nie twierdzi, że coś zostało utrwalone.
+  const { saveError } = usePersistence();
+  const { status: saveState, savedAtLabel, markSaved } = useSaveStatus(false, saveError !== null);
   /** Dispatch + sprawdzenie KONKRETNEGO skutku na zatwierdzonym stanie (nie sama
-   *  zmiana referencji): `verify(after)` mówi, czy stało się to, co obiecujemy. */
+   *  zmiana referencji): `verify(after)` mówi, czy stało się to, co obiecujemy.
+   *  Udany commit uruchamia odznakę zapisu (jej wynik zależy od `saveError`). */
   const commit = (action: Action, verify: (after: AppData, before: AppData) => boolean): boolean => {
     const before = storeApi.getState();
     dispatch(action);
     const after = storeApi.getState();
-    return after !== before && verify(after, before);
+    const ok = after !== before && verify(after, before);
+    if (ok) markSaved();
+    return ok;
   };
   const personId = state.currentUserId;
   const person = getPerson(state, personId);
@@ -232,10 +243,10 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
           ),
       );
       if (!ok) {
-        say('Nie udało się zapisać poprawki: wpis już nie istnieje, zadanie nie przyjmuje czasu albo godziny nachodzą na inny wpis. Odśwież widok i spróbuj ponownie.', 'error');
+        say('Nie udało się wprowadzić poprawki: wpis już nie istnieje, zadanie nie przyjmuje czasu albo godziny nachodzą na inny wpis. Odśwież widok i spróbuj ponownie.', 'error');
         return;
       }
-      say(`Poprawione. „${t ? taskDisplayTitle(state, t) : ''}” ${formatMinutes(startMinutes)}-${formatMinutes(endMinutes)}.`, 'ok');
+      say(`Poprawione: „${t ? taskDisplayTitle(state, t) : ''}” ${formatMinutes(startMinutes)}-${formatMinutes(endMinutes)}.`, 'ok');
       resetForm();
       return;
     }
@@ -267,8 +278,8 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
     if (!added || savedEntry === undefined) {
       say(
         newTask !== undefined
-          ? 'Nie udało się założyć zadania i zapisać czasu: sprawdź projekt i tytuł. Nic nie zostało zapisane.'
-          : 'Nie udało się zapisać wpisu: zadanie nie przyjmuje już czasu (zamknięte albo usunięte) albo godziny nachodzą na inny wpis. Nic nie zostało zapisane.',
+          ? 'Nie udało się założyć zadania i dodać czasu: sprawdź projekt i tytuł. Nic się nie zmieniło.'
+          : 'Nie udało się dodać wpisu: zadanie nie przyjmuje już czasu (zamknięte albo usunięte) albo godziny nachodzą na inny wpis. Nic się nie zmieniło.',
         'error',
       );
       return;
@@ -283,12 +294,12 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
     if (newTask !== undefined) {
       const project = t ? getProject(after, t.projectId) : undefined;
       say(
-        `Powstało nowe zadanie „${t ? taskDisplayTitle(after, t) : newTask.title}” w projekcie ${project ? projectDisplayName(after, project) : ''}. Zapisane ${formatMinutesDuration(endMinutes - startMinutes)}.`,
+        `Powstało nowe zadanie „${t ? taskDisplayTitle(after, t) : newTask.title}” w projekcie ${project ? projectDisplayName(after, project) : ''}, dodane ${formatMinutesDuration(endMinutes - startMinutes)}.`,
         'ok',
       );
     } else {
       say(
-        `Zapisane. „${t ? taskDisplayTitle(after, t) : ''}” ma tego dnia ${formatMinutesDuration(today)}, razem ${formatMinutesDuration(total)}${est}.`,
+        `Dodane: „${t ? taskDisplayTitle(after, t) : ''}” ma tego dnia ${formatMinutesDuration(today)}, razem ${formatMinutesDuration(total)}${est}.`,
         'ok',
       );
     }
@@ -481,6 +492,8 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
         date={date}
         form={form}
         status={status}
+        saveState={saveState}
+        savedAtLabel={savedAtLabel}
         onChange={patch}
         onSubmit={submit}
         onCancel={resetForm}

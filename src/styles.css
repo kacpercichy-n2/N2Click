@@ -12774,15 +12774,26 @@ a.toggle-btn {
   color: var(--n2-lavender);
   font-weight: 600;
 }
+.tt-status-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.tt-status-row:has(.tt-status:not(:empty)),
+.tt-status-row:has(.save-status) {
+  margin-top: 8px;
+}
 .tt-status {
   min-height: 0;
-  margin-top: 0;
+  flex: 1 1 auto;
   font-size: var(--n2-type-sm);
   line-height: 1.45;
   color: var(--n2-text-soft);
 }
-.tt-status:not(:empty) {
-  margin-top: 8px;
+.tt-status-row .save-status {
+  flex: none;
+  white-space: nowrap;
 }
 .tt-status.error {
   color: var(--n2-danger);

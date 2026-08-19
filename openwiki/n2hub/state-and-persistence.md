@@ -483,8 +483,11 @@
   wczytaniu). UI (`DayTrackerView`) potwierdza KAŻDY zapis przez
   `useStoreApi().getState()` po dispatchu i sprawdza KONKRETNY skutek (nowy
   wpis o tych polach / wpis zaktualizowany / wpis zniknął / status zmieniony),
-  a komunikat sukcesu liczy ze stanu zatwierdzonego — „Zapisane" nigdy nie pada
-  z samej walidacji po stronie UI.
+  a komunikat liczy ze stanu zatwierdzonego. UTRWALENIE to osobna prawda: linia
+  statusu mówi o SKUTKU W DANYCH („Dodane / Poprawione / Skasowane"), a o
+  zapisie do pamięci mówi WYŁĄCZNIE odznaka `SaveStatus` (`useSaveStatus` +
+  `usePersistence().saveError`, wzorzec TaskModal): „Zapisywanie… → Zapisano
+  HH:mm", nieudany zapis trwale „Nie zapisano".
   Selektory POCHODNE w `src/store/timeTracking.ts`
   (`timeEntriesForPersonDate`, `loggedMinutesFor*`, `plannedMinutesForPersonDate`,
   `portionLoggedMinutes` — zalogowany czas zadania z dnia wypełnia porcje planu

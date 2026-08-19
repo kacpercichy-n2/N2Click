@@ -14,6 +14,8 @@ import { projectDisplayName } from '../store/confidentiality';
 import { resolveTaskByTitle, trackerSuggestions } from '../store/timeTracking';
 import { formatMinutes, snapToStep, DAY_MINUTES } from '../utils/time';
 import { formatMinutesDuration } from '../utils/timeTracking';
+import { SaveStatus } from './SaveStatus';
+import type { SaveState } from '../utils/useSaveStatus';
 
 export interface TrackerFormState {
   text: string;
@@ -47,6 +49,10 @@ interface Props {
   onCancel: () => void;
   /** Rodzic ustawia, gdy chce sfokusować pole (po rysowaniu / kliknięciu spotkania). */
   focusSignal: number;
+  /** Prawda o UTRWALENIU (localStorage) — odznaka jak w TaskModal: „Zapisywanie…” →
+   *  „Zapisano HH:mm”, a nieudany zapis „Nie zapisano”. Niezależna od linii statusu. */
+  saveState: SaveState;
+  savedAtLabel: string | null;
 }
 
 /** "9:05" / "09:05" / "905" -> minuty doby; null, gdy nie da się odczytać. */
@@ -75,6 +81,8 @@ export function TimeTrackerBar({
   onSubmit,
   onCancel,
   focusSignal,
+  saveState,
+  savedAtLabel,
 }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const listId = useId();
@@ -382,8 +390,11 @@ export function TimeTrackerBar({
         </div>
       ) : null}
 
-      <div className={`tt-status${status ? ` ${status.tone}` : ''}`} role="status" aria-live="polite">
-        {status?.text ?? ''}
+      <div className="tt-status-row">
+        <div className={`tt-status${status ? ` ${status.tone}` : ''}`} role="status" aria-live="polite">
+          {status?.text ?? ''}
+        </div>
+        <SaveStatus status={saveState} savedAtLabel={savedAtLabel} announceId="save:time-tracker" />
       </div>
     </section>
   );
