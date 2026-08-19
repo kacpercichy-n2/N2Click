@@ -188,6 +188,7 @@ export function ChatSearchPopover({
           type="button"
           className="btn ghost n2chat-sound-btn"
           aria-pressed={chat.soundEnabled}
+          aria-label="Dźwięk nowych wiadomości na tym urządzeniu"
           title={
             chat.soundEnabled
               ? 'Dźwięk nowych wiadomości: włączony (to urządzenie)'
