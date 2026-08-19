@@ -251,6 +251,20 @@ describe('kaskady: usunięcie zadania / projektu / osoby zabiera wpisy czasu', (
     const next = reducer(s, { type: 'DELETE_PROJECT', projectId: 'p-a' });
     expect(next.timeEntries.map((e) => e.id)).toEqual(['w2']);
   });
+  it('MERGE_CLOUD_PEOPLE: osoba bez konta chmury znika razem ze swoimi wpisami', () => {
+    const s = state({
+      people: [{ ...person('me', 'Ja'), email: 'ja@x.pl' }, { ...person('other', 'Ktoś'), email: 'ktos@x.pl' }],
+      timeEntries: [entry('w1', 't-design', 600, 660), entry('w2', 't-design', 600, 660, { personId: 'other' })],
+    });
+    const row = {
+      id: 'a1a1a1a1-0000-0000-0000-000000000001', email: 'ja@x.pl', firstName: 'Ja', lastName: '', role: '',
+      departmentId: '', companyId: '', phone: '', avatar: '', capacity: 8, workDays: [1, 2, 3, 4, 5],
+      workStartMinutes: 480, workEndMinutes: 960, accessRole: 'pelne' as const, supervisorEmail: '', birthDate: '',
+    };
+    const next = reducer(s, { type: 'MERGE_CLOUD_PEOPLE', payload: [row] });
+    expect(next.people.map((p) => p.id)).toEqual(['me']);
+    expect(next.timeEntries.map((e) => e.id)).toEqual(['w1']);
+  });
   it('DELETE_PERSON usuwa wpisy osoby', () => {
     const s = state({ timeEntries: [entry('w1', 't-design', 600, 660), entry('w2', 't-design', 600, 660, { personId: 'other' })] });
     const next = reducer(s, { type: 'DELETE_PERSON', personId: 'other' });

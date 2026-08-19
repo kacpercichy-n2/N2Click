@@ -3138,7 +3138,18 @@ function reconcileIdentityAfterPeopleMerge(
 function mergeCloudPeople(state: AppData, payload: CloudPersonMergeRow[]): AppData {
   const result = applyCloudPeople(state.people, payload);
   if (!result.ok || !result.changed) return state;
-  return { ...state, people: result.people, ...reconcileIdentityAfterPeopleMerge(state, result.people) };
+  // Osoba usunięta autorytatywnie (bez konta chmury) zabiera swoje wpisy czasu —
+  // parytet z kaskadą DELETE_PERSON i z MERGE_CLOUD_ENTITIES.
+  const personIds = new Set(result.people.map((p) => p.id));
+  return {
+    ...state,
+    people: result.people,
+    ...reconcileIdentityAfterPeopleMerge(state, result.people),
+    timeEntries: keepArrayIfSame(
+      state.timeEntries,
+      state.timeEntries.filter((e) => personIds.has(e.personId)),
+    ),
+  };
 }
 
 // ---- Cloud dictionaries merge (statusy + słowniki, autorytatywnie) -----------

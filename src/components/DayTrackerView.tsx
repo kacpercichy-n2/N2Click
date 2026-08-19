@@ -84,10 +84,13 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
   // pada tylko wtedy, gdy reduktor naprawdę przyjął komendę (inwariant 6 zwraca
   // tę samą referencję przy odrzuceniu — nie zgadujemy z walidacji po stronie UI).
   const storeApi = useStoreApi();
-  const commit = (action: Action): boolean => {
+  /** Dispatch + sprawdzenie KONKRETNEGO skutku na zatwierdzonym stanie (nie sama
+   *  zmiana referencji): `verify(after)` mówi, czy stało się to, co obiecujemy. */
+  const commit = (action: Action, verify: (after: AppData, before: AppData) => boolean): boolean => {
     const before = storeApi.getState();
     dispatch(action);
-    return storeApi.getState() !== before;
+    const after = storeApi.getState();
+    return after !== before && verify(after, before);
   };
   const personId = state.currentUserId;
   const person = getPerson(state, personId);
@@ -220,7 +223,14 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
         return;
       }
       const t = getTask(state, taskId);
-      const ok = commit({ type: 'UPDATE_TIME_ENTRY', entryId: form.editingId, taskId, startMinutes, endMinutes });
+      const editingId = form.editingId;
+      const ok = commit(
+        { type: 'UPDATE_TIME_ENTRY', entryId: editingId, taskId, startMinutes, endMinutes },
+        (after) =>
+          after.timeEntries.some(
+            (e) => e.id === editingId && e.taskId === taskId && e.startMinutes === startMinutes && e.endMinutes === endMinutes,
+          ),
+      );
       if (!ok) {
         say('Nie udało się zapisać poprawki: wpis już nie istnieje, zadanie nie przyjmuje czasu albo godziny nachodzą na inny wpis. Odśwież widok i spróbuj ponownie.', 'error');
         return;
@@ -230,20 +240,31 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
       return;
     }
 
-    const added = commit({
-      type: 'ADD_TIME_ENTRY',
-      payload: {
-        personId,
-        ...(taskId !== null ? { taskId } : {}),
-        ...(newTask !== undefined ? { newTask } : {}),
-        date,
-        startMinutes,
-        endMinutes,
-        source: form.eventId !== null ? 'event' : 'manual',
-        ...(form.eventId !== null ? { eventId: form.eventId } : {}),
+    let savedEntry: TimeEntry | undefined;
+    const added = commit(
+      {
+        type: 'ADD_TIME_ENTRY',
+        payload: {
+          personId,
+          ...(taskId !== null ? { taskId } : {}),
+          ...(newTask !== undefined ? { newTask } : {}),
+          date,
+          startMinutes,
+          endMinutes,
+          source: form.eventId !== null ? 'event' : 'manual',
+          ...(form.eventId !== null ? { eventId: form.eventId } : {}),
+        },
       },
-    });
-    if (!added) {
+      (after, before) => {
+        if (after.timeEntries.length !== before.timeEntries.length + 1) return false;
+        const fresh = after.timeEntries[after.timeEntries.length - 1];
+        if (fresh.personId !== personId || fresh.date !== date || fresh.startMinutes !== startMinutes || fresh.endMinutes !== endMinutes) return false;
+        if (taskId !== null && fresh.taskId !== taskId) return false;
+        savedEntry = fresh;
+        return true;
+      },
+    );
+    if (!added || savedEntry === undefined) {
       say(
         newTask !== undefined
           ? 'Nie udało się założyć zadania i zapisać czasu: sprawdź projekt i tytuł. Nic nie zostało zapisane.'
@@ -252,20 +273,22 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
       );
       return;
     }
-    const minutes = endMinutes - startMinutes;
+    // Komunikat liczymy ze stanu ZATWIERDZONEGO (po zapisie), nie z propsów renderu.
+    const after = storeApi.getState();
+    const savedTaskId = savedEntry.taskId;
+    const t = getTask(after, savedTaskId);
+    const today = loggedMinutesForTaskPersonDate(after, savedTaskId, personId, date);
+    const total = loggedMinutesForTask(after, savedTaskId);
+    const est = t === undefined || t.estimatedHours === null ? '' : ` z ${formatMinutesDuration(hoursToMinutes(t.estimatedHours))}`;
     if (newTask !== undefined) {
-      const project = getProject(state, newTask.projectId);
+      const project = t ? getProject(after, t.projectId) : undefined;
       say(
-        `Powstało nowe zadanie „${newTask.title}” w projekcie ${project ? projectDisplayName(state, project) : ''}. Zapisane ${formatMinutesDuration(minutes)}.`,
+        `Powstało nowe zadanie „${t ? taskDisplayTitle(after, t) : newTask.title}” w projekcie ${project ? projectDisplayName(after, project) : ''}. Zapisane ${formatMinutesDuration(endMinutes - startMinutes)}.`,
         'ok',
       );
-    } else if (taskId !== null) {
-      const t = getTask(state, taskId);
-      const today = loggedMinutesForTaskPersonDate(state, taskId, personId, date) + minutes;
-      const total = loggedMinutesForTask(state, taskId) + minutes;
-      const est = t?.estimatedHours === null || t === undefined ? '' : ` z ${formatMinutesDuration(hoursToMinutes(t.estimatedHours))}`;
+    } else {
       say(
-        `Zapisane. „${t ? taskDisplayTitle(state, t) : ''}” ma tego dnia ${formatMinutesDuration(today)}, razem ${formatMinutesDuration(total)}${est}.`,
+        `Zapisane. „${t ? taskDisplayTitle(after, t) : ''}” ma tego dnia ${formatMinutesDuration(today)}, razem ${formatMinutesDuration(total)}${est}.`,
         'ok',
       );
     }
@@ -293,7 +316,10 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
     setFocusSignal((n) => n + 1);
   };
   const remove = (entry: TimeEntry) => {
-    const ok = commit({ type: 'DELETE_TIME_ENTRY', entryId: entry.id });
+    const ok = commit(
+      { type: 'DELETE_TIME_ENTRY', entryId: entry.id },
+      (after) => !after.timeEntries.some((e) => e.id === entry.id),
+    );
     if (form.editingId === entry.id) resetForm();
     const t = getTask(state, entry.taskId);
     say(
@@ -312,7 +338,12 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
       : statuses.find((s) => s.isDone) ?? state.statuses.find((s) => s.isDone);
     if (target === undefined) return;
     const t = getTask(state, taskId);
-    if (!commit({ type: 'SET_TASK_STATUS', taskId, statusId: target.id })) {
+    if (
+      !commit(
+        { type: 'SET_TASK_STATUS', taskId, statusId: target.id },
+        (after) => after.tasks.some((x) => x.id === taskId && x.statusId === target.id),
+      )
+    ) {
       say('Nie udało się zmienić statusu zadania. Odśwież widok i spróbuj ponownie.', 'error');
       return;
     }
@@ -325,7 +356,11 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
   };
   const clickEvent = (item: Extract<DayPlanItem, { kind: 'event' }>) => {
     if (item.entry !== undefined) {
-      const ok = commit({ type: 'DELETE_TIME_ENTRY', entryId: item.entry.id });
+      const entryId = item.entry.id;
+      const ok = commit(
+        { type: 'DELETE_TIME_ENTRY', entryId },
+        (after) => !after.timeEntries.some((e) => e.id === entryId),
+      );
       say(
         ok
           ? `„${item.title}” nie liczy się już jako czas pracy. Te godziny są znowu wolne.`
