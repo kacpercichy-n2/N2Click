@@ -5097,8 +5097,10 @@ export type ExternalDataStatus = 'none' | 'refreshed' | 'conflict';
 export interface PersistenceValue {
   saveError: SaveFailureReason | null;
   external: ExternalDataStatus;
-  /** Re-attempt saveData(current state). */
-  retryPersist: () => void;
+  /** Re-attempt saveData(current state) NOW (synchronicznie, z pominięciem
+   *  koalescencji). Zwraca wynik zapisu, żeby powierzchnia mogła potwierdzić
+   *  utrwalenie dopiero PO faktycznym zapisie (tracker czasu). */
+  retryPersist: () => boolean;
   /** Replace local state with loadData() (UI confirms first). */
   acceptExternal: () => void;
   /** Write current state NOW, overwriting the external version. */
@@ -5297,8 +5299,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     // redundant) and write immediately, as before.
     coalescer.cancel();
     const result = saveData(stateRef.current);
+    saveErrorRef.current = result.ok ? null : result.reason;
     setSaveError(result.ok ? null : result.reason);
     if (result.ok) setExternal((prev) => (prev === 'conflict' ? 'none' : prev));
+    return result.ok;
   }, []);
 
   const acceptExternal = useCallback(() => {

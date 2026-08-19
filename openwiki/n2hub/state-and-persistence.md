@@ -487,7 +487,10 @@
   statusu mówi o SKUTKU W DANYCH („Dodane / Poprawione / Skasowane"), a o
   zapisie do pamięci mówi WYŁĄCZNIE odznaka `SaveStatus` (`useSaveStatus` +
   `usePersistence().saveError`, wzorzec TaskModal): „Zapisywanie… → Zapisano
-  HH:mm", nieudany zapis trwale „Nie zapisano".
+  HH:mm", nieudany zapis trwale „Nie zapisano". Tracker NIE czeka na
+  koalescencję: po udanym commicie prosi w efekcie (po przerenderowaniu) o
+  `retryPersist()` — natychmiastowy zapis bieżącego stanu — i dopiero jego
+  `true` uruchamia odznakę; `retryPersist` zwraca od 2026-08-19 wynik zapisu.
   Selektory POCHODNE w `src/store/timeTracking.ts`
   (`timeEntriesForPersonDate`, `loggedMinutesFor*`, `plannedMinutesForPersonDate`,
   `portionLoggedMinutes` — zalogowany czas zadania z dnia wypełnia porcje planu

@@ -90,17 +90,26 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
   // „Zapisywanie… / Zapisano HH:mm", a nieudany zapis trwale „Nie zapisano”.
   // Linia statusu pod paskiem opisuje więc SKUTEK W DANYCH („Dodane…"), nigdy
   // nie twierdzi, że coś zostało utrwalone.
-  const { saveError } = usePersistence();
+  const { saveError, retryPersist } = usePersistence();
   const { status: saveState, savedAtLabel, markSaved } = useSaveStatus(false, saveError !== null);
+  // Udany commit NIE ogłasza zapisu od razu: prosi o natychmiastowe utrwalenie
+  // w efekcie PO przerenderowaniu (wtedy provider ma już nowy stan), a odznaka
+  // „Zapisano” rusza dopiero, gdy `retryPersist()` zwróci sukces. Nieudany
+  // zapis zostawia `saveError`, więc odznaka pokazuje trwale „Nie zapisano”.
+  const [flushRequest, setFlushRequest] = useState(0);
+  useEffect(() => {
+    if (flushRequest === 0) return;
+    if (retryPersist()) markSaved();
+  }, [flushRequest, retryPersist, markSaved]);
   /** Dispatch + sprawdzenie KONKRETNEGO skutku na zatwierdzonym stanie (nie sama
    *  zmiana referencji): `verify(after)` mówi, czy stało się to, co obiecujemy.
-   *  Udany commit uruchamia odznakę zapisu (jej wynik zależy od `saveError`). */
+   *  Udany commit zamawia natychmiastowe utrwalenie (patrz wyżej). */
   const commit = (action: Action, verify: (after: AppData, before: AppData) => boolean): boolean => {
     const before = storeApi.getState();
     dispatch(action);
     const after = storeApi.getState();
     const ok = after !== before && verify(after, before);
-    if (ok) markSaved();
+    if (ok) setFlushRequest((n) => n + 1);
     return ok;
   };
   const personId = state.currentUserId;
