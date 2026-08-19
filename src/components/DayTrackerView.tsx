@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { AppData, DateStr, TimeEntry } from '../types';
-import type { Action } from '../store/AppStore';
+import { useStoreApi, type Action } from '../store/AppStore';
 import { activeStatuses, getClient, getPerson, getProject, getTask } from '../store/selectors';
 import { projectDisplayName, taskDisplayTitle } from '../store/confidentiality';
 import {
@@ -80,6 +80,15 @@ function emptyForm(date: DateStr, state: AppData, personId: string): TrackerForm
 }
 
 export function DayTrackerView({ state, dispatch, date }: Props) {
+  // `getState()` czyta stan ZATWIERDZONY tuż po dispatchu: komunikat „Zapisane”
+  // pada tylko wtedy, gdy reduktor naprawdę przyjął komendę (inwariant 6 zwraca
+  // tę samą referencję przy odrzuceniu — nie zgadujemy z walidacji po stronie UI).
+  const storeApi = useStoreApi();
+  const commit = (action: Action): boolean => {
+    const before = storeApi.getState();
+    dispatch(action);
+    return storeApi.getState() !== before;
+  };
   const personId = state.currentUserId;
   const person = getPerson(state, personId);
   const [form, setForm] = useState<TrackerFormState>(() => emptyForm(date, state, personId));
@@ -210,14 +219,18 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
         say('W poprawce wybierz istniejące zadanie z listy (nowe zadanie zakłada się nowym wpisem).', 'error');
         return;
       }
-      dispatch({ type: 'UPDATE_TIME_ENTRY', entryId: form.editingId, taskId, startMinutes, endMinutes });
       const t = getTask(state, taskId);
+      const ok = commit({ type: 'UPDATE_TIME_ENTRY', entryId: form.editingId, taskId, startMinutes, endMinutes });
+      if (!ok) {
+        say('Nie udało się zapisać poprawki: wpis już nie istnieje, zadanie nie przyjmuje czasu albo godziny nachodzą na inny wpis. Odśwież widok i spróbuj ponownie.', 'error');
+        return;
+      }
       say(`Poprawione. „${t ? taskDisplayTitle(state, t) : ''}” ${formatMinutes(startMinutes)}-${formatMinutes(endMinutes)}.`, 'ok');
       resetForm();
       return;
     }
 
-    dispatch({
+    const added = commit({
       type: 'ADD_TIME_ENTRY',
       payload: {
         personId,
@@ -230,6 +243,15 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
         ...(form.eventId !== null ? { eventId: form.eventId } : {}),
       },
     });
+    if (!added) {
+      say(
+        newTask !== undefined
+          ? 'Nie udało się założyć zadania i zapisać czasu: sprawdź projekt i tytuł. Nic nie zostało zapisane.'
+          : 'Nie udało się zapisać wpisu: zadanie nie przyjmuje już czasu (zamknięte albo usunięte) albo godziny nachodzą na inny wpis. Nic nie zostało zapisane.',
+        'error',
+      );
+      return;
+    }
     const minutes = endMinutes - startMinutes;
     if (newTask !== undefined) {
       const project = getProject(state, newTask.projectId);
@@ -271,10 +293,15 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
     setFocusSignal((n) => n + 1);
   };
   const remove = (entry: TimeEntry) => {
-    dispatch({ type: 'DELETE_TIME_ENTRY', entryId: entry.id });
+    const ok = commit({ type: 'DELETE_TIME_ENTRY', entryId: entry.id });
     if (form.editingId === entry.id) resetForm();
     const t = getTask(state, entry.taskId);
-    say(`Wpis „${t ? taskDisplayTitle(state, t) : ''}” skasowany. Liczniki przeliczone.`, 'info');
+    say(
+      ok
+        ? `Wpis „${t ? taskDisplayTitle(state, t) : ''}” skasowany. Liczniki przeliczone.`
+        : 'Tego wpisu już nie ma (skasowany w innym miejscu). Widok jest aktualny.',
+      ok ? 'info' : 'error',
+    );
   };
 
   // ---- plan: ptaszek i spotkania ----
@@ -284,8 +311,11 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
       ? statuses.find((s) => !s.isDone) ?? state.statuses.find((s) => !s.isDone)
       : statuses.find((s) => s.isDone) ?? state.statuses.find((s) => s.isDone);
     if (target === undefined) return;
-    dispatch({ type: 'SET_TASK_STATUS', taskId, statusId: target.id });
     const t = getTask(state, taskId);
+    if (!commit({ type: 'SET_TASK_STATUS', taskId, statusId: target.id })) {
+      say('Nie udało się zmienić statusu zadania. Odśwież widok i spróbuj ponownie.', 'error');
+      return;
+    }
     say(
       done
         ? `„${t ? taskDisplayTitle(state, t) : ''}” wraca do statusu „${target.name}”.`
@@ -295,8 +325,13 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
   };
   const clickEvent = (item: Extract<DayPlanItem, { kind: 'event' }>) => {
     if (item.entry !== undefined) {
-      dispatch({ type: 'DELETE_TIME_ENTRY', entryId: item.entry.id });
-      say(`„${item.title}” nie liczy się już jako czas pracy. Te godziny są znowu wolne.`, 'info');
+      const ok = commit({ type: 'DELETE_TIME_ENTRY', entryId: item.entry.id });
+      say(
+        ok
+          ? `„${item.title}” nie liczy się już jako czas pracy. Te godziny są znowu wolne.`
+          : 'Tego wpisu już nie ma. Widok jest aktualny.',
+        ok ? 'info' : 'error',
+      );
       return;
     }
     const clash = findOverlappingEntry(state.timeEntries, personId, date, item.startMinutes, item.endMinutes);

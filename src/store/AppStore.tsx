@@ -1623,6 +1623,11 @@ function deleteTask(state: AppData, taskId: string): AppData {
     tasks: state.tasks.filter((t) => t.id !== taskId),
     assignments: state.assignments.filter((a) => a.taskId !== taskId),
     workload: state.workload.filter((w) => w.taskId !== taskId),
+    // Wpisy czasu usuniętego zadania idą za nim (każda minuta musi mieć zadanie).
+    timeEntries: keepArrayIfSame(
+      state.timeEntries,
+      state.timeEntries.filter((e) => e.taskId !== taskId),
+    ),
     comments: state.comments.filter(
       (c) => !(c.entityType === 'task' && c.entityId === taskId),
     ),
@@ -1864,6 +1869,10 @@ function deleteProject(state: AppData, projectId: string): AppData {
     tasks: state.tasks.filter((t) => !taskIds.has(t.id)),
     assignments: state.assignments.filter((a) => !taskIds.has(a.taskId)),
     workload: state.workload.filter((w) => !taskIds.has(w.taskId)),
+    timeEntries: keepArrayIfSame(
+      state.timeEntries,
+      state.timeEntries.filter((e) => !taskIds.has(e.taskId)),
+    ),
     comments: state.comments.filter((c) =>
       c.entityType === 'project'
         ? c.entityId !== projectId
@@ -2671,6 +2680,10 @@ function deletePerson(state: AppData, personId: string): AppData {
       .map((p) => (p.supervisorId === personId ? { ...p, supervisorId: '' } : p)),
     assignments: state.assignments.filter((a) => a.personId !== personId),
     workload: state.workload.filter((w) => w.personId !== personId),
+    timeEntries: keepArrayIfSame(
+      state.timeEntries,
+      state.timeEntries.filter((e) => e.personId !== personId),
+    ),
     currentUserId,
   };
 }
@@ -3712,6 +3725,12 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
     activity: reconcileRows(state.activity, payload.activity),
     workload: reconcileRows(state.workload, payload.workload),
     assignments: keepArrayIfSame(state.assignments, assignments),
+    // Wpisy czasu są LOKALNE: autorytatywna chmura nie zna ich, ale gdy zabiera
+    // zadanie albo osobę, wpis traci sens — odpada (spójność jak przy DELETE_*).
+    timeEntries: keepArrayIfSame(
+      state.timeEntries,
+      state.timeEntries.filter((e) => taskIds.has(e.taskId) && personIds.has(e.personId)),
+    ),
     ...(payload.tickets !== undefined
       ? { tickets: reconcileRows(state.tickets, payload.tickets) }
       : {}),

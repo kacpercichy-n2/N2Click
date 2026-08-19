@@ -477,7 +477,12 @@
   brak osoby/zadania, szkic, zadanie ze statusem `isDone` (inwariant 5 — status
   jest jedynym znacznikiem zamknięcia), zły dzień/zakres, nachodzenie na inny
   wpis tej osoby tego dnia („jedna minuta = jedno zajęcie"). Bez wpisów w
-  dzienniku aktywności. Selektory POCHODNE w `src/store/timeTracking.ts`
+  dzienniku aktywności. KASKADY: `DELETE_TASK`/`DELETE_PROJECT`/`DELETE_PERSON`
+  i autorytatywne `MERGE_CLOUD_ENTITIES` zabierają wpisy bez żywego
+  zadania/osoby (`repairTimeEntries` robi to samo na wczytaniu). UI
+  (`DayTrackerView`) potwierdza KAŻDY zapis przez `useStoreApi().getState()`
+  po dispatchu — „Zapisane" pada tylko, gdy reduktor zmienił referencję stanu.
+  Selektory POCHODNE w `src/store/timeTracking.ts`
   (`timeEntriesForPersonDate`, `loggedMinutesFor*`, `plannedMinutesForPersonDate`,
   `portionLoggedMinutes` — zalogowany czas zadania z dnia wypełnia porcje planu
   po kolei od najwcześniejszej, `dayPlanForPerson`, `trackerSuggestions` —

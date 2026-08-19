@@ -238,7 +238,31 @@ describe('selektory trackera', () => {
   });
 });
 
+describe('kaskady: usunięcie zadania / projektu / osoby zabiera wpisy czasu', () => {
+  it('DELETE_TASK usuwa wpisy zadania, resztę zostawia tą samą referencją', () => {
+    const s = state({ timeEntries: [entry('w1', 't-design', 600, 660), entry('w2', 't-call-a', 720, 780)] });
+    const next = reducer(s, { type: 'DELETE_TASK', taskId: 't-design' });
+    expect(next.timeEntries.map((e) => e.id)).toEqual(['w2']);
+    const untouched = reducer(s, { type: 'DELETE_TASK', taskId: 't-done' });
+    expect(untouched.timeEntries).toBe(s.timeEntries);
+  });
+  it('DELETE_PROJECT usuwa wpisy wszystkich zadań projektu', () => {
+    const s = state({ timeEntries: [entry('w1', 't-design', 600, 660), entry('w2', 't-call-b', 720, 780)] });
+    const next = reducer(s, { type: 'DELETE_PROJECT', projectId: 'p-a' });
+    expect(next.timeEntries.map((e) => e.id)).toEqual(['w2']);
+  });
+  it('DELETE_PERSON usuwa wpisy osoby', () => {
+    const s = state({ timeEntries: [entry('w1', 't-design', 600, 660), entry('w2', 't-design', 600, 660, { personId: 'other' })] });
+    const next = reducer(s, { type: 'DELETE_PERSON', personId: 'other' });
+    expect(next.timeEntries.map((e) => e.id)).toEqual(['w1']);
+  });
+});
+
 describe('repairTimeEntries', () => {
+  it('odrzuca wpis bez żywego zadania albo osoby', () => {
+    const s = state({ timeEntries: [entry('w1', 't-design', 600, 660), entry('w2', 'ghost-task', 720, 780), entry('w3', 't-design', 800, 860, { personId: 'ghost' })] });
+    expect(repairTimeEntries(s).timeEntries.map((e) => e.id)).toEqual(['w1']);
+  });
   it('czysty zapis wychodzi TĄ SAMĄ referencją kolekcji', () => {
     const s = state({ timeEntries: [entry('w1', 't-design', 600, 660), entry('w2', 't-design', 720, 780, { source: 'event', eventId: 'k1' })] });
     expect(repairTimeEntries(s)).toBe(s);

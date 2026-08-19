@@ -1167,8 +1167,9 @@ export function repairTickets(data: AppData): AppData {
 /**
  * Idempotentny repair wpisów czasu pracy (kolekcja ADDYTYWNA, bez bump wersji).
  * Wiersz odpada, gdy: nie jest obiektem, brak id/personId/taskId/daty (albo data
- * nie jest 'yyyy-MM-dd'), minuty nie są całkowite na siatce 15 w dobie albo
- * start >= koniec, `source` spoza słownika. Duplikat id: zostaje pierwszy.
+ * nie jest 'yyyy-MM-dd'), zadanie albo osoba nie istnieją w danych, minuty nie
+ * są całkowite na siatce 15 w dobie albo start >= koniec, `source` spoza
+ * słownika. Duplikat id: zostaje pierwszy.
  * Nachodzące wpisy TEJ SAMEJ osoby tego samego dnia: zostaje wcześniejszy w
  * kolejności zapisu (inwariant „jedna minuta = jedno zajęcie"). `eventId`
  * przechodzi tylko jako niepusty string i tylko przy `source === 'event'`.
@@ -1179,6 +1180,10 @@ export function repairTimeEntries(data: AppData): AppData {
   const source = Array.isArray(data.timeEntries) ? data.timeEntries : [];
   const out: TimeEntry[] = [];
   const seen = new Set<string>();
+  // Wpis bez żywego zadania albo osoby (np. skasowanych w innej karcie przed
+  // zapisem) nie ma czego opisywać — odpada jak w kaskadach DELETE_*.
+  const taskIds = new Set((Array.isArray(data.tasks) ? data.tasks : []).map((t) => t.id));
+  const personIds = new Set((Array.isArray(data.people) ? data.people : []).map((p) => p.id));
   let changed = !Array.isArray(data.timeEntries);
   for (const raw of source) {
     if (typeof raw !== 'object' || raw === null) { changed = true; continue; }
@@ -1188,6 +1193,7 @@ export function repairTimeEntries(data: AppData): AppData {
     const src = e.source;
     if (
       id === '' || personId === '' || taskId === '' || !isValidDateStr(date) || seen.has(id) ||
+      !taskIds.has(taskId) || !personIds.has(personId) ||
       !Number.isInteger(start) || !Number.isInteger(end) ||
       (start as number) < 0 || (end as number) > DAY_MINUTES || (start as number) >= (end as number) ||
       (start as number) % MINUTE_STEP !== 0 || (end as number) % MINUTE_STEP !== 0 ||
