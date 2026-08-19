@@ -15,6 +15,22 @@
   efektu `[dragging]` (`onDragActiveChange` obok `setLiveSyncHold`) i wychodzi
   natychmiast poza trybem dnia — żaden handler wskaźnika się nie zmienia
   (inwariant 7).
+- `src/components/DayTrackerView.tsx` + `TimeTrackerBar.tsx` (2026-08-19) own
+  widok „Dzień" kalendarza (desktop, przełącznik Tydzień | Dzień | Miesiąc w
+  `CalendarPage`; na telefonie „Dzień" nadal znaczy `WeekView mode="day"`):
+  PLAN zalogowanej osoby (datowane bloki + spotkania, przez `dayPlanForPerson`)
+  obok WYKONANIA (`timeEntries`) na wspólnej osi godzin. Plan jest tu TYLKO DO
+  ODCZYTU — przeciąganie, zasobnik i zmiana bloków zostają w WeekView (żadna
+  ścieżka wskaźnika WeekView nie jest dotykana, inwariant 7). Jeden formularz
+  (pasek) dla trzech wejść: wpis ręczny od-do z podpowiedziami (combobox inline
+  wzorem `mention-autocomplete`), przeciągnięcie/klik po osi wykonania
+  (wypełnia godziny w pasku; gest w refie, `setPointerCapture` w try/catch),
+  klik w spotkanie (wypełnia tytuł + godziny + `eventId`; spotkanie NIGDY nie
+  liczy się samo; drugi klik na zaliczonym kasuje wpis). Ptaszek na kaflu planu
+  = `SET_TASK_STATUS` na pierwszy status `isDone` / z powrotem pierwszy aktywny.
+  Czysta arytmetyka osi i kolumn w `dayTrackerLayout.ts` (oś 7-19 rozszerzana
+  do danych, 56 px/h, siatka 15 min, kolumny dla nachodzących kafli). Klasy CSS
+  z prefiksem `tt-`. Stoper i lustro chmury: do zrobienia.
 - `src/components/weekViewLayout.ts` (pure) owns the PRESENTATIONAL working
   window: `WORK_START_HOUR`/`WORK_END_HOUR` (9–17), the default scroll offset and
   the px bounds fed to CSS as `--week-work-top`/`--week-work-bottom`.

@@ -54,6 +54,9 @@ const NON_MIRRORED_KEYS: Array<keyof AppData> = [
   // że schemat jest wystawiony na produkcji.
   'contentPlanBrands',
   'contentPlanPosts',
+  // Wpisy czasu pracy (tracker): LOKALNIE ONLY do czasu lustra chmury — zapis
+  // lokalny jest ich JEDYNĄ trwałością.
+  'timeEntries',
 ];
 
 // Runtime flaga zdrowia lustra chmury — prawdziwa TYLKO gdy status === 'ready',

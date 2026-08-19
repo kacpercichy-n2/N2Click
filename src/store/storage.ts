@@ -15,9 +15,11 @@ import type {
   Task,
   TaskPriority,
   Ticket,
+  TimeEntry,
   WorkloadEntry,
 } from '../types';
 import { isValidDateStr, todayStr } from '../utils/dates';
+import { isTimeEntrySource } from '../utils/timeTracking';
 import { normalizeEventRsvps, normalizeRecurrence } from '../utils/recurrence';
 import { TASK_PRIORITIES } from '../utils/priority';
 import {
@@ -152,6 +154,7 @@ export function emptyData(): AppData {
     activity: [],
     tickets: [],
     events: [],
+    timeEntries: [],
     notifications: [],
     contentPlanBrands: [],
     contentPlanPosts: [],
@@ -1162,6 +1165,55 @@ export function repairTickets(data: AppData): AppData {
 }
 
 /**
+ * Idempotentny repair wpisów czasu pracy (kolekcja ADDYTYWNA, bez bump wersji).
+ * Wiersz odpada, gdy: nie jest obiektem, brak id/personId/taskId/daty (albo data
+ * nie jest 'yyyy-MM-dd'), minuty nie są całkowite na siatce 15 w dobie albo
+ * start >= koniec, `source` spoza słownika. Duplikat id: zostaje pierwszy.
+ * Nachodzące wpisy TEJ SAMEJ osoby tego samego dnia: zostaje wcześniejszy w
+ * kolejności zapisu (inwariant „jedna minuta = jedno zajęcie"). `eventId`
+ * przechodzi tylko jako niepusty string i tylko przy `source === 'event'`.
+ * Czysty wynik wychodzi TĄ SAMĄ referencją kolekcji (brak echo-write).
+ */
+export function repairTimeEntries(data: AppData): AppData {
+  const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+  const source = Array.isArray(data.timeEntries) ? data.timeEntries : [];
+  const out: TimeEntry[] = [];
+  const seen = new Set<string>();
+  let changed = !Array.isArray(data.timeEntries);
+  for (const raw of source) {
+    if (typeof raw !== 'object' || raw === null) { changed = true; continue; }
+    const e = raw as unknown as Record<string, unknown>;
+    const id = str(e.id), personId = str(e.personId), taskId = str(e.taskId), date = str(e.date);
+    const start = e.startMinutes, end = e.endMinutes;
+    const src = e.source;
+    if (
+      id === '' || personId === '' || taskId === '' || !isValidDateStr(date) || seen.has(id) ||
+      !Number.isInteger(start) || !Number.isInteger(end) ||
+      (start as number) < 0 || (end as number) > DAY_MINUTES || (start as number) >= (end as number) ||
+      (start as number) % MINUTE_STEP !== 0 || (end as number) % MINUTE_STEP !== 0 ||
+      !isTimeEntrySource(src)
+    ) { changed = true; continue; }
+    const s0 = start as number, e0 = end as number;
+    if (out.some((x) => x.personId === personId && x.date === date && x.startMinutes < e0 && x.endMinutes > s0)) {
+      changed = true;
+      continue;
+    }
+    seen.add(id);
+    const eventId = src === 'event' && str(e.eventId) !== '' ? str(e.eventId) : undefined;
+    const clean: TimeEntry = {
+      id, personId, taskId, date, startMinutes: s0, endMinutes: e0, source: src,
+      ...(eventId !== undefined ? { eventId } : {}),
+      createdAt: str(e.createdAt),
+    };
+    // Klucze poza formą kanoniczną (np. `eventId` przy ręcznym wpisie) też są zmianą.
+    const keys = Object.keys(e).filter((k) => (e as Record<string, unknown>)[k] !== undefined);
+    if (keys.length !== Object.keys(clean).length || str(e.eventId) !== (eventId ?? '') || str(e.createdAt) !== clean.createdAt) changed = true;
+    out.push(clean);
+  }
+  return changed || out.length !== source.length ? { ...data, timeEntries: out } : data;
+}
+
+/**
  * Idempotentny repair kolekcji wydarzeń kalendarza. Kolekcja jest ADDYTYWNA (bez
  * podbicia DATA_VERSION), więc każdy starszy zapis wchodzi tu jako `[]` z
  * emptyData i przechodzi bez zmian.
@@ -1753,6 +1805,7 @@ function readData(recordRevision: boolean): InternalLoadResult {
         activity: coerceArray(parsedRest.activity, defaults.activity),
         tickets: coerceArray(parsedRest.tickets, defaults.tickets),
         events: coerceArray(parsedRest.events, defaults.events),
+        timeEntries: coerceArray(parsedRest.timeEntries, defaults.timeEntries),
         notifications: coerceArray(parsedRest.notifications, defaults.notifications),
         contentPlanBrands: coerceArray(parsedRest.contentPlanBrands, defaults.contentPlanBrands),
         contentPlanPosts: coerceArray(parsedRest.contentPlanPosts, defaults.contentPlanPosts),
@@ -1798,6 +1851,9 @@ function readData(recordRevision: boolean): InternalLoadResult {
     // Powiadomienia in-app: pole ADDYTYWNE, repair biegnie na WYNIKU obu ścieżek
     // (zapis bez `notifications` wychodzi stąd z pustą listą).
     data = repairNotifications(data);
+    // Wpisy czasu pracy: pole ADDYTYWNE, repair biegnie na WYNIKU obu ścieżek
+    // (zapis bez `timeEntries` wychodzi stąd z pustą listą).
+    data = repairTimeEntries(data);
     // Content Plan: kolekcje ADDYTYWNE, repair biegnie na WYNIKU obu ścieżek
     // (zapis bez `contentPlan*` wychodzi stąd z pustymi listami).
     data = repairContentPlan(data);

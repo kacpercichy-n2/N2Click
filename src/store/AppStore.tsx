@@ -48,6 +48,8 @@ import type {
   TicketStatus,
   WorkCategory,
   WorkloadEntry,
+  TimeEntry,
+  TimeEntrySource,
 } from '../types';
 import type { CloudMergePayload } from '../supabase/plannerData';
 import type { CloudPersonMergeRow } from '../supabase/referenceData';
@@ -110,9 +112,12 @@ import {
   type ContentPlanReviewDecision,
 } from '../contentplan/domain';
 import {
+  activeStatuses,
   assignmentNotificationId,
   blockCollidesWithEvent,
   eventDraftConflicts,
+  isDoneStatus,
+  isDraftTask,
   mergeCoversEventOrRecurrence,
   notificationsForPerson,
   personVacationOnDate,
@@ -148,6 +153,7 @@ import {
   planRippleInsert,
   snapHours,
 } from '../utils/time';
+import { findOverlappingEntry, isValidTimeRange } from '../utils/timeTracking';
 
 // ---- Payload shapes ----
 
@@ -293,6 +299,23 @@ export interface SaveTaskPayload {
   binTotals?: Array<{ personId: string; hours: number }>;
 }
 
+/**
+ * Wpis czasu pracy (tracker). `newTask` zakłada zadanie W TEJ SAMEJ akcji
+ * (atomowo, reużywa `saveTask`): tytuł + projekt (+ opcjonalna kategoria),
+ * okres = dzień wpisu, status = pierwszy aktywny, bez godzin planowanych
+ * (tracker nie planuje). `taskId` i `newTask` wykluczają się.
+ */
+export interface AddTimeEntryPayload {
+  personId: string;
+  taskId?: string;
+  newTask?: { title: string; projectId: string; workCategoryId?: string };
+  date: string;
+  startMinutes: number;
+  endMinutes: number;
+  source: TimeEntrySource;
+  eventId?: string;
+}
+
 export interface InsertBlockPayload {
   refEntryId: string; // the right-clicked block
   position: 'before' | 'after';
@@ -356,6 +379,13 @@ export type Action =
   // Oznacza JEDEN wpis pochodnego feedu jako przeczytany ('mention:<commentId>'
   // / 'assignment:<taskId>:<personId>'); id spoza feedu albo już przeczytane => no-op.
   | { type: 'MARK_NOTIFICATION_ENTRY_READ'; entryId: string }
+  // Tracker czasu pracy (wykonanie, osobno od planu). Straże => TA SAMA
+  // referencja (inwariant 6): brak osoby/zadania/statusu, szkic albo zadanie
+  // „zrobione", zły dzień lub zakres poza siatką 15 min, nachodzenie na inny
+  // wpis tej osoby tego dnia. Bez wpisu w dzienniku aktywności.
+  | { type: 'ADD_TIME_ENTRY'; payload: AddTimeEntryPayload }
+  | { type: 'UPDATE_TIME_ENTRY'; entryId: string; taskId: string; startMinutes: number; endMinutes: number }
+  | { type: 'DELETE_TIME_ENTRY'; entryId: string }
   // Zgłoszenia zespołu („Zgłoszenia”). Kolekcja addytywna, bez powiązań kaskadowych.
   | { type: 'ADD_TICKET'; draft: TicketDraft }
   | { type: 'SAVE_TICKET'; ticketId: string; draft: TicketDraft }
@@ -657,6 +687,73 @@ function cleanChecklist(items: ChecklistItem[]): ChecklistItem[] {
   return items
     .map((item) => ({ ...item, text: item.text.trim() }))
     .filter((item) => item.text !== '');
+}
+
+/** Czy zadanie przyjmuje czas: istnieje, nie jest szkicem i nie ma statusu „zrobione". */
+function timeEntryTaskAccepts(state: AppData, taskId: string): boolean {
+  const task = state.tasks.find((t) => t.id === taskId);
+  return task !== undefined && !isDraftTask(task) && !isDoneStatus(state, task.statusId);
+}
+
+/**
+ * ADD_TIME_ENTRY: jeden wpis wykonania. Z `newTask` najpierw powstaje zadanie
+ * (pełna walidacja `saveTask`: projekt, status, tytuł), potem wpis — oba albo
+ * żadne. Nachodzenie na inny wpis tej osoby tego dnia => TA SAMA referencja.
+ */
+function addTimeEntry(state: AppData, payload: AddTimeEntryPayload): AppData {
+  const { personId, date, startMinutes, endMinutes, source, eventId } = payload;
+  if (!hasEntity(state, 'person', personId)) return state;
+  if (!isValidDateStr(date)) return state;
+  if (!isValidTimeRange(startMinutes, endMinutes)) return state;
+  if (!['manual', 'draw', 'timer', 'event'].includes(source)) return state;
+  if (eventId !== undefined && (typeof eventId !== 'string' || eventId === '' || source !== 'event')) return state;
+  if ((payload.taskId === undefined) === (payload.newTask === undefined)) return state;
+  if (findOverlappingEntry(state.timeEntries, personId, date, startMinutes, endMinutes) !== undefined) return state;
+
+  let base = state;
+  let taskId: string;
+  if (payload.newTask !== undefined) {
+    const title = payload.newTask.title.trim();
+    const firstActive = activeStatuses(state).find((st) => !st.isDone);
+    if (title === '' || firstActive === undefined) return state;
+    const after = saveTask(state, {
+      taskId: null,
+      draft: {
+        projectId: payload.newTask.projectId,
+        statusId: firstActive.id,
+        title,
+        description: '',
+        startDate: date,
+        endDate: date,
+        estimatedHours: null,
+        priority: 'normal',
+        workCategoryId: payload.newTask.workCategoryId ?? '',
+        departmentId: '',
+        checklist: [],
+      },
+      assigneeIds: [personId],
+      allocations: [],
+    });
+    if (after === state) return state;
+    // `saveTask` dopisuje nowe zadanie NA KOŃCU kolekcji.
+    taskId = after.tasks[after.tasks.length - 1].id;
+    base = after;
+  } else {
+    taskId = payload.taskId as string;
+    if (!timeEntryTaskAccepts(state, taskId)) return state;
+  }
+  const entry: TimeEntry = {
+    id: uid(),
+    personId,
+    taskId,
+    date,
+    startMinutes,
+    endMinutes,
+    source,
+    ...(eventId !== undefined ? { eventId } : {}),
+    createdAt: nowIso(),
+  };
+  return { ...base, timeEntries: [...base.timeEntries, entry] };
 }
 
 /**
@@ -3960,6 +4057,35 @@ export function reducer(state: AppData, action: Action): AppData {
           p.id === meId ? { ...p, notificationsReadIds: readIds } : p,
         ),
       };
+    }
+    case 'ADD_TIME_ENTRY':
+      return addTimeEntry(state, action.payload);
+    case 'UPDATE_TIME_ENTRY': {
+      const w = state.timeEntries.find((e) => e.id === action.entryId);
+      if (w === undefined) return state;
+      if (!isValidTimeRange(action.startMinutes, action.endMinutes)) return state;
+      if (!timeEntryTaskAccepts(state, action.taskId)) return state;
+      if (
+        findOverlappingEntry(state.timeEntries, w.personId, w.date, action.startMinutes, action.endMinutes, w.id) !==
+        undefined
+      )
+        return state;
+      if (w.taskId === action.taskId && w.startMinutes === action.startMinutes && w.endMinutes === action.endMinutes)
+        return state;
+      // Ręczna poprawka zrywa więź ze spotkaniem: to już nie jest wpis „prosto z kalendarza".
+      const { eventId: _drop, ...rest } = w;
+      const next: TimeEntry = {
+        ...rest,
+        taskId: action.taskId,
+        startMinutes: action.startMinutes,
+        endMinutes: action.endMinutes,
+        source: w.source === 'event' ? 'manual' : w.source,
+      };
+      return { ...state, timeEntries: state.timeEntries.map((e) => (e.id === w.id ? next : e)) };
+    }
+    case 'DELETE_TIME_ENTRY': {
+      if (!state.timeEntries.some((e) => e.id === action.entryId)) return state;
+      return { ...state, timeEntries: state.timeEntries.filter((e) => e.id !== action.entryId) };
     }
     case 'ADD_PERSON': {
       if (!isValidPersonDraft(action.person)) return state;

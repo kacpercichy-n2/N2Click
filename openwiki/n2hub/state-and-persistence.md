@@ -456,6 +456,35 @@
   payloadu). W chmurze tabela `public.notifications` (patrz cloud-database).
   Testy: `src/utils/notifications.test.ts`, `src/supabase/notifications.test.ts`,
   `src/store/notifications.test.ts`, rozszerzenia w `dashboardPanels.test.ts`.
+- TRACKER CZASU PRACY (2026-08-19): kolekcja `timeEntries` w `AppData`
+  (`TimeEntry` w `src/types.ts`: personId, taskId, date, startMinutes,
+  endMinutes, source 'manual'|'draw'|'timer'|'event', opcjonalny `eventId` tylko
+  przy 'event', createdAt). To DRUGA prawda obok planu: `workload` = co miało
+  być, `timeEntries` = co naprawdę było; żaden wpis nie zmienia `WorkloadEntry`
+  (inwariant 1 nietknięty). Kolekcja ADDYTYWNA (`DATA_VERSION` zostaje 7):
+  `emptyData()`/seed `[]`, `coerceArray` + `repairTimeEntries` (biegnie po
+  `repairNotifications`; drop wiersza bez id/osoby/zadania/daty, poza siatką 15
+  min w dobie, start>=koniec, zły `source`, duplikat id; nachodzące wpisy TEJ
+  SAMEJ osoby tego dnia: zostaje wcześniejszy; czysty zapis = ta sama
+  referencja). LOKALNIE ONLY: klucz w `persistGate.NON_MIRRORED_KEYS`, brak
+  lustra/hydracji chmury (do zrobienia: tabela `n2click.time_entries`).
+  Reduktor: `ADD_TIME_ENTRY` (payload `AddTimeEntryPayload`: `taskId` ALBO
+  `newTask {title, projectId, workCategoryId?}` — nowe zadanie powstaje
+  atomowo przez `saveTask` z okresem = dzień wpisu, pierwszym aktywnym statusem,
+  bez godzin; `saveTask` dopisuje zadanie NA KOŃCU `tasks`, stąd id),
+  `UPDATE_TIME_ENTRY` (nowy zakres/zadanie; zrywa `eventId`, source 'event' →
+  'manual'), `DELETE_TIME_ENTRY`. Straże => TA SAMA referencja (inwariant 6):
+  brak osoby/zadania, szkic, zadanie ze statusem `isDone` (inwariant 5 — status
+  jest jedynym znacznikiem zamknięcia), zły dzień/zakres, nachodzenie na inny
+  wpis tej osoby tego dnia („jedna minuta = jedno zajęcie"). Bez wpisów w
+  dzienniku aktywności. Selektory POCHODNE w `src/store/timeTracking.ts`
+  (`timeEntriesForPersonDate`, `loggedMinutesFor*`, `plannedMinutesForPersonDate`,
+  `portionLoggedMinutes` — zalogowany czas zadania z dnia wypełnia porcje planu
+  po kolei od najwcześniejszej, `dayPlanForPerson`, `trackerSuggestions` —
+  dziś w planie > frecency z WŁASNYCH wpisów > tytuł, bez szkiców/zrobionych/
+  zamaskowanych, `resolveTaskByTitle` one/ambiguous/closed/none,
+  `clientTimeSummary`), czyste helpery w `src/utils/timeTracking.ts`. Testy:
+  `src/store/timeTracking.test.ts`, `src/components/dayTrackerLayout.test.ts`.
 - CONTENT PLAN — DOMENA I STORE (2026-08-03, faza R2 modułu): dwie kolekcje w
   `AppData` — `contentPlanBrands` i `contentPlanPosts` (`ContentPlanBrand` /
   `ContentPlanPost` + `ContentPlanPlatform`/`Channel`/`Media`/`Comment`/
@@ -741,7 +770,8 @@ zmianie referencji, bezpieczne wypisanie w trakcie powiadamiania, `shallowEqual`
 `selectors.test.ts`, `statusActions.test.ts`, `storage.test.ts`,
 `dateGuards.test.ts`, `taskMeta.test.ts`, `persistGate.test.ts` (retirement
 gate), `ticketActions.test.ts` + `ticketsStorage.test.ts` (zgłoszenia: reduktor,
-repair, uprawnienia), `draftTasks.test.ts` (szkice: saveTask pomija workload,
+repair, uprawnienia), `timeTracking.test.ts` (tracker czasu: reduktor,
+selektory, repair), `draftTasks.test.ts` (szkice: saveTask pomija workload,
 PUBLISH_*, wykluczenia selektorów/kanban), `src/contentplan/domain.test.ts` +
 `contentPlanActions.test.ts` / `contentPlanStorage.test.ts` /
 `contentPlanSelectors.test.ts` (Content Plan: domena, inwariant 6, repair,

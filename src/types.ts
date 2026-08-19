@@ -481,6 +481,32 @@ export interface EventRsvp {
   status: EventRsvpStatus;
 }
 
+/** Skąd wziął się wpis czasu: pasek (ręcznie od-do), rysowanie po osi, stoper,
+ *  kliknięte spotkanie z kalendarza. Wyłącznie informacyjne. */
+export type TimeEntrySource = 'manual' | 'draw' | 'timer' | 'event';
+
+/**
+ * Wpis czasu pracy — „co naprawdę było". Dwie prawdy obok siebie: plan żyje w
+ * `WorkloadEntry` (inwariant 1, godziny planowane), wykonanie tutaj. Wpis
+ * zawsze wskazuje ZADANIE (a przez nie projekt i klienta) — bez zadania nie ma
+ * rozliczenia. Inwarianty (reduktor + `repairTimeEntries`): `startMinutes` <
+ * `endMinutes`, oba wielokrotności 15 w dobie [0, 1440]; wpisy JEDNEJ osoby
+ * tego samego dnia NIE nachodzą na siebie (jedna minuta = jedno zajęcie).
+ */
+export interface TimeEntry {
+  id: string;
+  personId: string;
+  taskId: string;
+  date: DateStr;
+  startMinutes: number;
+  endMinutes: number;
+  source: TimeEntrySource;
+  /** Id wydarzenia kalendarza, z którego wpis powstał jednym kliknięciem
+   *  (cofnięcie = skasowanie wpisu). Klucz obecny tylko dla `source: 'event'`. */
+  eventId?: string;
+  createdAt: string; // ISO
+}
+
 export interface CalendarEvent {
   id: string;
   title: string; // wymagane (trim niepusty)
@@ -750,6 +776,11 @@ export interface AppData {
   activity: ActivityEvent[];
   tickets: Ticket[];
   events: CalendarEvent[];
+  // Wpisy czasu pracy (tracker): CO NAPRAWDĘ było, osobno od planu
+  // (`workload`). Kolekcja ADDYTYWNA (DATA_VERSION zostaje 7), sanityzowana na
+  // każdym wczytaniu przez `repairTimeEntries`; dziś LOKALNIE ONLY (bez lustra
+  // chmury), patrz `src/store/timeTracking.ts`.
+  timeEntries: TimeEntry[];
   // Powiadomienia in-app dla ZALOGOWANEGO odbiorcy (cloud-authoritative,
   // hydrowane z chmury; addytywne, DATA_VERSION zostaje 7).
   notifications: Notification[];

@@ -6,6 +6,7 @@ import { FilterBar } from '../components/FilterBar';
 import { NowClockBadge } from '../components/NowClockBadge';
 import { WeekView } from '../components/WeekView';
 import { MonthView } from '../components/MonthView';
+import { DayTrackerView } from '../components/DayTrackerView';
 import { todayPillVisible } from '../components/dayStrip';
 import { OverlayLayer, useOverlay } from '../components/useOverlay';
 import { CALENDAR_DAY_PARAM } from '../components/bottomNav';
@@ -21,7 +22,10 @@ import {
   weekRangeLabel,
 } from '../utils/dates';
 
-type ViewMode = 'week' | 'month';
+// 'day' = widok „Dzień": plan obok wykonania z paskiem trackera czasu
+// (`DayTrackerView`), tylko na desktopie (telefonowy „Tydzień” i tak pokazuje
+// jeden dzień planu).
+type ViewMode = 'week' | 'day' | 'month';
 
 // Stabilna pusta lista chipów osób (referencja) na czas braku zapamiętanego filtra.
 const EMPTY_PERSON_IDS: string[] = [];
@@ -100,7 +104,9 @@ export function CalendarPage() {
         ? phone
           ? addDaysStr(a, delta)
           : shiftWeek(a, delta)
-        : shiftMonth(a, delta),
+        : view === 'day'
+          ? addDaysStr(a, delta)
+          : shiftMonth(a, delta),
     );
   const prev = () => shiftRange(-1);
   const next = () => shiftRange(1);
@@ -117,7 +123,7 @@ export function CalendarPage() {
   const label =
     view === 'month'
       ? monthLabel(anchor)
-      : phone
+      : phone || view === 'day'
         ? formatShortWithWeekday(anchor)
         : weekRangeLabel(anchor);
 
@@ -190,7 +196,7 @@ export function CalendarPage() {
           {filterBar}
         </div>
 
-        {view === 'week' ? (
+        {view !== 'month' ? (
           <WeekView
             state={state}
             anchor={anchor}
@@ -234,7 +240,7 @@ export function CalendarPage() {
                     etykieta mówi „Dzień” — sam tryb (`view`) zostaje ten sam. */}
                 <button
                   type="button"
-                  className={view === 'week' ? 'toggle-btn active' : 'toggle-btn'}
+                  className={view !== 'month' ? 'toggle-btn active' : 'toggle-btn'}
                   onClick={() => {
                     setView('week');
                     setJumpOpen(false);
@@ -311,6 +317,13 @@ export function CalendarPage() {
             </button>
             <button
               type="button"
+              className={view === 'day' ? 'toggle-btn active' : 'toggle-btn'}
+              onClick={() => setView('day')}
+            >
+              Dzień
+            </button>
+            <button
+              type="button"
               className={view === 'month' ? 'toggle-btn active' : 'toggle-btn'}
               onClick={() => setView('month')}
             >
@@ -346,6 +359,8 @@ export function CalendarPage() {
 
       {view === 'week' ? (
         <WeekView state={state} anchor={anchor} filter={filter} />
+      ) : view === 'day' ? (
+        <DayTrackerView state={state} dispatch={dispatch} date={anchor} />
       ) : (
         <MonthView
           state={state}
