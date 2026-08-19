@@ -498,7 +498,35 @@
   „Nie zapisano" do czasu, aż dowolny późniejszy udany zapis (np. „Spróbuj
   ponownie" z banera pamięci, który utrwala cały stan) podniesie `persistSeq` i
   zamknie pętlę. `retryPersist` zwraca od 2026-08-19 wynik zapisu.
-  Selektory POCHODNE w `src/store/timeTracking.ts`
+  WYKONANIE ↔ PLAN (2026-08-19, reguły 1-5 ustalone z Kacprem; czysta
+  arytmetyka w `src/store/timeTrackingSync.ts`, reduktor w AppStore):
+  (1) para blok-wpis: `SET_BLOCK_DONE true` tworzy wpis 1:1 w godzinach bloku
+  (`source 'block'`, `blockId`), jeśli minuty są wolne i zadanie przyjmuje czas;
+  `false` kasuje ten wpis, o ile nadal jest 1:1 (`entryMatchesBlock`); wpis
+  ręczny w pełni pokrywający blok pary ustawia `done` (jednokierunkowo,
+  `resyncBlockDone`); skasowanie wpisu „z bloku" odznacza blok; poprawka wpisu
+  zrywa `blockId`/`eventId` (source → 'manual'). (2) nadwyżka wykonania pary
+  (zadanie, osoba, dzień) ponad plan rośnie w planie jak przy rozciąganiu
+  bloku (`planGrowth`): najpierw zasobnik osoby (wiersz maleje/znika, inwariant
+  4), potem wolne sprzedane zadania (estymata minus wszystko zaplanowane u
+  wszystkich); dopisuje się do OSTATNIEGO bloku pary tego dnia albo powstaje
+  nowy blok w godzinach wpisu (`done: true`); nakładka na inny blok osoby
+  dopuszczona (świadoma alokacja, fakt nie zamiar). Kubełek (estymata null) ma
+  pokrycie nieskończone. (3) reszta bez pokrycia = „ponad sprzedane":
+  `ADD/UPDATE_TIME_ENTRY` bez `acceptOverrun: true` => TA SAMA referencja (UI
+  pyta dialogiem `useConfirm` dokładnie wtedy, bo liczy tym samym `planGrowth`);
+  ze zgodą wpis niesie `overrunMinutes` (sprzedanych nie ruszamy; raport
+  `overrunSummary` per osoba i zadanie). (4) `autoCompleteTask`: zadanie ze
+  sprzedanymi godzinami, w którym nic nie zostało (wszystkie bloki wykonane,
+  zasobniki puste, brak wolnych sprzedanych), dostaje pierwszy status `isDone`;
+  kubełek nigdy (nie ma „wszystko zrobione"). (5) `SETTLE_TRACKED_DAY
+  {personId, date, nowMinutes|null}`: dla osoby śledzącej dzień (≥1 wpis)
+  niewykonany blok, którego koniec minął o ≥15 min (`SETTLE_GRACE_MINUTES`),
+  oddaje niepokrytą część do JEDNEGO wiersza zasobnika pary, a sam kurczy się do
+  pokrycia (wtedy `done`) albo znika; zadania „zrobione" i dni bez wpisów
+  nietknięte; dispatch z `CalendarPage` (dziś, co minutę) i `DayTrackerView`
+  (oglądany dzień, co minutę i po zmianie wpisów). Selektory POCHODNE w
+  `src/store/timeTracking.ts`
   (`timeEntriesForPersonDate`, `loggedMinutesFor*`, `plannedMinutesForPersonDate`,
   `portionLoggedMinutes` — zalogowany czas zadania z dnia wypełnia porcje planu
   po kolei od najwcześniejszej, `dayPlanForPerson`, `trackerSuggestions` —

@@ -4,7 +4,7 @@
 import type { TimeEntry, TimeEntrySource } from '../types';
 import { DAY_MINUTES, MINUTE_STEP } from './time';
 
-export const TIME_ENTRY_SOURCES: readonly TimeEntrySource[] = ['manual', 'draw', 'timer', 'event'];
+export const TIME_ENTRY_SOURCES: readonly TimeEntrySource[] = ['manual', 'draw', 'timer', 'event', 'block'];
 
 export function isTimeEntrySource(v: unknown): v is TimeEntrySource {
   return typeof v === 'string' && (TIME_ENTRY_SOURCES as readonly string[]).includes(v);

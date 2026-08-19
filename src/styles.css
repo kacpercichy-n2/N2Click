@@ -12968,9 +12968,16 @@ a.toggle-btn {
 .tt-block.done::before {
   background: var(--n2-success);
 }
-.tt-block.done .tt-item-title {
+.tt-block.task-done .tt-item-title {
   color: var(--n2-text-muted);
   text-decoration: line-through;
+}
+.tt-side-title-warn {
+  color: var(--n2-warning);
+}
+.tt-overrun-row > span:last-child {
+  color: var(--n2-warning);
+  font-weight: 600;
 }
 .tt-plan-item.short {
   padding-top: 3px;

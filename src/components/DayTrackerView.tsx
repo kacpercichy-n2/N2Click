@@ -17,11 +17,14 @@ import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { AppData, DateStr, TimeEntry } from '../types';
 import { usePersistence, useStoreApi, type Action } from '../store/AppStore';
 import { useSaveStatus } from '../utils/useSaveStatus';
-import { activeStatuses, getClient, getPerson, getProject, getTask } from '../store/selectors';
+import { getClient, getPerson, getProject, getTask } from '../store/selectors';
 import { projectDisplayName, taskDisplayTitle } from '../store/confidentiality';
+import { useConfirm } from './ConfirmProvider';
+import { planGrowth } from '../store/timeTrackingSync';
 import {
   clientTimeSummary,
   dayPlanForPerson,
+  overrunSummary,
   loggedMinutesForPersonDate,
   loggedMinutesForPersonDates,
   loggedMinutesForTask,
@@ -33,7 +36,7 @@ import {
 } from '../store/timeTracking';
 import { formatMinutes, hoursToMinutes } from '../utils/time';
 import { findOverlappingEntry, formatMinutesDuration, isValidTimeRange } from '../utils/timeTracking';
-import { isTodayStr, weekDays } from '../utils/dates';
+import { isTodayStr, todayStr, weekDays } from '../utils/dates';
 import { useNowTick } from '../utils/useNowTick';
 import { TimeTrackerBar, type TrackerFormState, type TrackerStatus } from './TimeTrackerBar';
 import {
@@ -85,6 +88,7 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
   // pada tylko wtedy, gdy reduktor naprawdę przyjął komendę (inwariant 6 zwraca
   // tę samą referencję przy odrzuceniu — nie zgadujemy z walidacji po stronie UI).
   const storeApi = useStoreApi();
+  const confirm = useConfirm();
   // Utrwalenie (localStorage, zapis koalescowany) to OSOBNA prawda od stanu w
   // pamięci: odznaka `SaveStatus` (ten sam wzorzec co TaskModal) pokazuje
   // „Zapisywanie… / Zapisano HH:mm", a nieudany zapis trwale „Nie zapisano”.
@@ -180,10 +184,25 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
   const week = useMemo(() => weekDays(date), [date]);
   const loggedWeek = loggedMinutesForPersonDates(state, personId, week);
   const clientSums = useMemo(() => clientTimeSummary(state, personId, week), [state, personId, week]);
+  const overruns = useMemo(() => overrunSummary(state, personId, week), [state, personId, week]);
   const dayNorm = person ? Math.max(60, Math.round(person.capacity * 60)) : DEFAULT_DAY_NORM_MINUTES;
 
   // ---- zapis ----
-  const submit = () => {
+  /** Pytanie o „ponad sprzedane" dokładnie wtedy, gdy reduktor by je odrzucił bez zgody. */
+  const confirmOverrun = async (taskId: string, minutes: number, excludeEntryId?: string): Promise<boolean | null> => {
+    const growth = planGrowth(state, taskId, personId, date, minutes, excludeEntryId);
+    if (growth.overrunMinutes === 0) return false;
+    const t = getTask(state, taskId);
+    const ok = await confirm({
+      title: `Przekroczysz godziny sprzedane zadania o ${formatMinutesDuration(growth.overrunMinutes)}.`,
+      description: `„${t ? taskDisplayTitle(state, t) : ''}”: zasobnik i wolne sprzedane godziny są wyczerpane.`,
+      consequences: `Te ${formatMinutesDuration(growth.overrunMinutes)} zapiszą się jako „ponad sprzedane” przy Twoim nazwisku; sprzedanych godzin zadania to nie zmienia.`,
+      confirmLabel: 'Zapisz mimo to',
+      cancelLabel: 'Wróć',
+    });
+    return ok ? true : null;
+  };
+  const submit = async () => {
     const { startMinutes, endMinutes } = form;
     if (!isValidTimeRange(startMinutes, endMinutes)) {
       say('Godzina „do” musi być późniejsza niż „od”, obie na siatce 15 minut.', 'error');
@@ -229,7 +248,7 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
       } else if (!form.creatingNew) {
         say(
           res.kind === 'closed'
-            ? `Zadanie „${res.task.title}” jest zamknięte i nie przyjmuje czasu. Otwórz je ptaszkiem na kaflu albo wybierz „+ nowe zadanie” z listy.`
+            ? `Zadanie „${res.task.title}” jest zamknięte i nie przyjmuje czasu. Zmień jego status w zadaniu albo wybierz „+ nowe zadanie” z listy.`
             : `Nie ma takiego zadania. Wybierz je z listy albo „+ nowe zadanie”, żeby je założyć.`,
           'error',
         );
@@ -254,8 +273,17 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
       }
       const t = getTask(state, taskId);
       const editingId = form.editingId;
+      const accept = await confirmOverrun(taskId, endMinutes - startMinutes, editingId);
+      if (accept === null) return; // użytkownik wrócił do poprawki
       const ok = commit(
-        { type: 'UPDATE_TIME_ENTRY', entryId: editingId, taskId, startMinutes, endMinutes },
+        {
+          type: 'UPDATE_TIME_ENTRY',
+          entryId: editingId,
+          taskId,
+          startMinutes,
+          endMinutes,
+          ...(accept ? { acceptOverrun: true } : {}),
+        },
         (after) =>
           after.timeEntries.some(
             (e) => e.id === editingId && e.taskId === taskId && e.startMinutes === startMinutes && e.endMinutes === endMinutes,
@@ -271,6 +299,8 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
     }
 
     let savedEntry: TimeEntry | undefined;
+    const accept = taskId !== null ? await confirmOverrun(taskId, endMinutes - startMinutes) : false;
+    if (accept === null) return;
     const added = commit(
       {
         type: 'ADD_TIME_ENTRY',
@@ -283,6 +313,7 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
           endMinutes,
           source: form.eventId !== null ? 'event' : 'manual',
           ...(form.eventId !== null ? { eventId: form.eventId } : {}),
+          ...(accept ? { acceptOverrun: true } : {}),
         },
       },
       (after, before) => {
@@ -317,8 +348,9 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
         'ok',
       );
     } else {
+      const ov = savedEntry.overrunMinutes ? ` Ponad sprzedane: ${formatMinutesDuration(savedEntry.overrunMinutes)}.` : '';
       say(
-        `Dodane: „${t ? taskDisplayTitle(after, t) : ''}” ma tego dnia ${formatMinutesDuration(today)}, razem ${formatMinutesDuration(total)}${est}.`,
+        `Dodane: „${t ? taskDisplayTitle(after, t) : ''}” ma tego dnia ${formatMinutesDuration(today)}, razem ${formatMinutesDuration(total)}${est}.${ov}`,
         'ok',
       );
     }
@@ -360,29 +392,32 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
     );
   };
 
-  // ---- plan: ptaszek i spotkania ----
-  const toggleDone = (taskId: string, done: boolean) => {
-    const statuses = activeStatuses(state);
-    const target = done
-      ? statuses.find((s) => !s.isDone) ?? state.statuses.find((s) => !s.isDone)
-      : statuses.find((s) => s.isDone) ?? state.statuses.find((s) => s.isDone);
-    if (target === undefined) return;
-    const t = getTask(state, taskId);
-    if (
-      !commit(
-        { type: 'SET_TASK_STATUS', taskId, statusId: target.id },
-        (after) => after.tasks.some((x) => x.id === taskId && x.statusId === target.id),
-      )
-    ) {
-      say('Nie udało się zmienić statusu zadania. Odśwież widok i spróbuj ponownie.', 'error');
+  // ---- plan: kółko = blok wykonany + wpis 1:1 (para blok-wpis) ----
+  const toggleBlockDone = (item: Extract<DayPlanItem, { kind: 'block' }>) => {
+    const blockId = item.block.id;
+    const next = !item.blockDone;
+    const ok = commit(
+      { type: 'SET_BLOCK_DONE', entryId: blockId, done: next },
+      (after) => after.workload.some((w) => w.id === blockId && (w.done === true) === next),
+    );
+    if (!ok) {
+      say('Nie udało się zmienić bloku. Odśwież widok i spróbuj ponownie.', 'error');
       return;
     }
-    say(
-      done
-        ? `„${t ? taskDisplayTitle(state, t) : ''}” wraca do statusu „${target.name}”.`
-        : `„${t ? taskDisplayTitle(state, t) : ''}” dostało status „${target.name}”. Znika z podpowiedzi i nie przyjmuje czasu.`,
-      'info',
-    );
+    const after = storeApi.getState();
+    const linked = after.timeEntries.some((e) => e.source === 'block' && e.blockId === blockId);
+    const taskNow = getTask(after, item.task.id);
+    const closed = taskNow !== undefined && taskNow.statusId !== item.task.statusId;
+    if (next) {
+      say(
+        linked
+          ? `„${item.title}” wykonane: wpis ${formatMinutes(item.startMinutes)}-${formatMinutes(item.endMinutes)} dodany do wykonania.${closed ? ' Zadanie zamknięte: wszystko wykonane.' : ''}`
+          : `„${item.title}” oznaczone jako wykonane, ale te godziny zajmuje już inny wpis, więc wpisu nie dodano.`,
+        'info',
+      );
+    } else {
+      say(`„${item.title}”: blok odznaczony, wpis z tego bloku usunięty.`, 'info');
+    }
   };
   const clickEvent = (item: Extract<DayPlanItem, { kind: 'event' }>) => {
     if (item.entry !== undefined) {
@@ -472,9 +507,16 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
     setFocusSignal((n) => n + 1);
   };
 
-  // ---- „teraz" ----
+  // ---- „teraz" + rozliczenie minionych bloków (przeszłość = fakty) ----
   const now = useNowTick(60_000);
   const nowMinutes = isTodayStr(date) ? now.getHours() * 60 + now.getMinutes() : null;
+  // Uruchamiane co minutę ORAZ po każdej zmianie wpisów dnia (pierwszy wpis
+  // czyni dzień „śledzonym" i od razu rozlicza minione bloki). Reduktor zwraca
+  // tę samą referencję, gdy nie ma nic do rozliczenia, więc bez pętli.
+  useEffect(() => {
+    if (personId === '' || date > todayStr()) return;
+    dispatch({ type: 'SETTLE_TRACKED_DAY', personId, date, nowMinutes: isTodayStr(date) ? nowMinutes : null });
+  }, [dispatch, personId, date, nowMinutes, entries]);
 
   if (person === undefined) {
     return (
@@ -565,7 +607,7 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
               return (
                 <div
                   key={item.block.id}
-                  className={`tt-plan-item tt-block${item.done ? ' done' : ''}${short ? ' short' : ''}`}
+                  className={`tt-plan-item tt-block${item.done ? ' done' : ''}${item.taskDone ? ' task-done' : ''}${short ? ' short' : ''}`}
                   style={columnStyle(item.startMinutes, item.endMinutes, slot)}
                   title={`${item.title} · ${item.clientName}${item.clientName && item.projectName ? ' · ' : ''}${item.projectName}`}
                 >
@@ -573,10 +615,15 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
                     <button
                       type="button"
                       className={`tt-tick${item.done ? ' on' : ''}`}
-                      aria-pressed={item.done}
-                      aria-label={item.done ? `Cofnij status zrobione: ${item.title}` : `Oznacz jako zrobione: ${item.title}`}
-                      title={item.done ? 'Status „zrobione”. Kliknij, żeby wrócić do aktywnego' : 'Skończone? Klik ustawia status „zrobione”: znika z podpowiedzi i nie przyjmuje czasu'}
-                      onClick={() => toggleDone(item.task.id, item.done)}
+                      aria-pressed={item.blockDone}
+                      aria-label={item.blockDone ? `Cofnij wykonanie bloku: ${item.title}` : `Oznacz blok jako wykonany: ${item.title}`}
+                      title={
+                        item.blockDone
+                          ? 'Blok wykonany (wpis 1:1 po prawej). Kliknij, żeby cofnąć'
+                          : 'Zrobione zgodnie z planem? Klik dodaje wpis 1:1 w godzinach bloku'
+                      }
+                      disabled={item.taskDone}
+                      onClick={() => toggleBlockDone(item)}
                     >
                       <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                         <path d="M5 12l5 5L20 7" />
@@ -610,9 +657,11 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
                             {item.estimateMinutes === null ? ' (bez estymaty)' : ` z ${formatMinutesDuration(item.estimateMinutes)}`}
                           </span>
                           <span className={`tt-rest${item.done || (leftPortion === 0 && leftTask === 0) ? ' ok' : ''}`}>
-                            {item.done
-                              ? '✓ zrobione'
-                              : leftPortion > 0
+                            {item.taskDone
+                              ? '✓ zadanie zrobione'
+                              : item.done
+                                ? '✓ wykonane'
+                                : leftPortion > 0
                                 ? `zostało ${formatMinutesDuration(leftPortion)}`
                                 : leftTask !== null && leftTask > 0
                                   ? `w zadaniu jeszcze ${formatMinutesDuration(leftTask)}`
@@ -732,6 +781,17 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
             <b>{formatMinutesDuration(loggedWeek)}</b>
             <small>z {formatMinutesDuration(Math.round(person.capacity * 60 * person.workDays.length))} normy</small>
           </div>
+          {overruns.length > 0 ? (
+            <>
+              <h3 className="tt-side-title tt-side-title-warn">Ponad sprzedane (tydzień)</h3>
+              {overruns.map((o) => (
+                <div className="tt-client-project tt-overrun-row" key={o.taskId}>
+                  <span title={`${o.clientName}${o.clientName && o.projectName ? ' · ' : ''}${o.projectName}`}>{o.title}</span>
+                  <span>+{formatMinutesDuration(o.overrunMinutes)}</span>
+                </div>
+              ))}
+            </>
+          ) : null}
           <h3 className="tt-side-title">Ile na kogo (tydzień)</h3>
           {clientSums.length === 0 ? (
             <p className="tt-side-empty">Nic jeszcze nie zalogowano w tym tygodniu.</p>

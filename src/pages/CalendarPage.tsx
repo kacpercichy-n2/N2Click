@@ -11,6 +11,7 @@ import { todayPillVisible } from '../components/dayStrip';
 import { OverlayLayer, useOverlay } from '../components/useOverlay';
 import { CALENDAR_DAY_PARAM } from '../components/bottomNav';
 import { MOBILE_NAV_QUERY, useMediaQuery } from '../utils/useMediaQuery';
+import { useNowTick } from '../utils/useNowTick';
 import {
   addDaysStr,
   formatShortWithWeekday,
@@ -50,6 +51,22 @@ export function CalendarPage() {
     next.delete(CALENDAR_DAY_PARAM);
     setSearchParams(next, { replace: true });
   }, [dayParam, searchParams, setSearchParams]);
+  // Tracker czasu: „przeszłość w kalendarzu = fakty”. Co minutę rozliczamy
+  // DZISIEJSZE minione bloki zalogowanej osoby (15 min po końcu bloku
+  // niepokryta część wraca do zasobnika) — także w widoku tygodnia, żeby
+  // kafelki mówiły prawdę bez wchodzenia w „Dzień”. Reduktor zwraca tę samą
+  // referencję, gdy nie ma nic do rozliczenia (dzień bez wpisów = nietknięty).
+  const nowTick = useNowTick(60_000);
+  const trackedPersonId = state.currentUserId;
+  useEffect(() => {
+    if (trackedPersonId === '') return;
+    dispatch({
+      type: 'SETTLE_TRACKED_DAY',
+      personId: trackedPersonId,
+      date: todayStr(),
+      nowMinutes: nowTick.getHours() * 60 + nowTick.getMinutes(),
+    });
+  }, [dispatch, trackedPersonId, nowTick]);
   // Telefon (≤760 px): widok „Tydzień” renderuje JEDEN dzień, a pasek sterowania
   // schodzi do jednego rzędu 56 px. Ten sam hook, co powłoka aplikacji.
   const phone = useMediaQuery(MOBILE_NAV_QUERY);
@@ -310,17 +327,17 @@ export function CalendarPage() {
           <div className="cal-view-toggle" role="group" aria-label="Widok kalendarza">
             <button
               type="button"
-              className={view === 'week' ? 'toggle-btn active' : 'toggle-btn'}
-              onClick={() => setView('week')}
-            >
-              Tydzień
-            </button>
-            <button
-              type="button"
               className={view === 'day' ? 'toggle-btn active' : 'toggle-btn'}
               onClick={() => setView('day')}
             >
               Dzień
+            </button>
+            <button
+              type="button"
+              className={view === 'week' ? 'toggle-btn active' : 'toggle-btn'}
+              onClick={() => setView('week')}
+            >
+              Tydzień
             </button>
             <button
               type="button"

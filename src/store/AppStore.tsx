@@ -154,6 +154,7 @@ import {
   snapHours,
 } from '../utils/time';
 import { findOverlappingEntry, isValidTimeRange } from '../utils/timeTracking';
+import { entryMatchesBlock, planGrowth, portionFill, trackingBalance } from './timeTrackingSync';
 
 // ---- Payload shapes ----
 
@@ -314,6 +315,13 @@ export interface AddTimeEntryPayload {
   endMinutes: number;
   source: TimeEntrySource;
   eventId?: string;
+  /**
+   * Zgoda na „ponad sprzedane": gdy wykonanie pary (zadanie, osoba, dzień)
+   * przekroczy plan, a zasobnik osoby i wolne sprzedane zadania nie pokrywają
+   * nadwyżki, reduktor ODRZUCA wpis bez tej flagi (UI pyta dialogiem, patrz
+   * `planGrowth`). Z flagą nadwyżka zapisuje się jako `overrunMinutes`.
+   */
+  acceptOverrun?: boolean;
 }
 
 export interface InsertBlockPayload {
@@ -384,8 +392,21 @@ export type Action =
   // „zrobione", zły dzień lub zakres poza siatką 15 min, nachodzenie na inny
   // wpis tej osoby tego dnia. Bez wpisu w dzienniku aktywności.
   | { type: 'ADD_TIME_ENTRY'; payload: AddTimeEntryPayload }
-  | { type: 'UPDATE_TIME_ENTRY'; entryId: string; taskId: string; startMinutes: number; endMinutes: number }
+  | {
+      type: 'UPDATE_TIME_ENTRY';
+      entryId: string;
+      taskId: string;
+      startMinutes: number;
+      endMinutes: number;
+      acceptOverrun?: boolean;
+    }
   | { type: 'DELETE_TIME_ENTRY'; entryId: string }
+  // „Przeszłość w kalendarzu = fakty": dla OSOBY i DNIA, które ona śledzi
+  // (ma tego dnia ≥1 wpis), każdy niewykonany blok, którego koniec minął
+  // o ≥15 min (`nowMinutes`; `null` = dzień miniony w całości), oddaje
+  // niepokrytą część do zasobnika (blok kurczy się do pokrycia albo znika).
+  // Bez zmian => TA SAMA referencja.
+  | { type: 'SETTLE_TRACKED_DAY'; personId: string; date: string; nowMinutes: number | null }
   // Zgłoszenia zespołu („Zgłoszenia”). Kolekcja addytywna, bez powiązań kaskadowych.
   | { type: 'ADD_TICKET'; draft: TicketDraft }
   | { type: 'SAVE_TICKET'; ticketId: string; draft: TicketDraft }
@@ -742,6 +763,8 @@ function addTimeEntry(state: AppData, payload: AddTimeEntryPayload): AppData {
     taskId = payload.taskId as string;
     if (!timeEntryTaskAccepts(state, taskId)) return state;
   }
+  const growth = planGrowth(base, taskId, personId, date, endMinutes - startMinutes);
+  if (growth.overrunMinutes > 0 && payload.acceptOverrun !== true) return state;
   const entry: TimeEntry = {
     id: uid(),
     personId,
@@ -751,9 +774,239 @@ function addTimeEntry(state: AppData, payload: AddTimeEntryPayload): AppData {
     endMinutes,
     source,
     ...(eventId !== undefined ? { eventId } : {}),
+    ...(growth.overrunMinutes > 0 ? { overrunMinutes: growth.overrunMinutes } : {}),
     createdAt: nowIso(),
   };
-  return { ...base, timeEntries: [...base.timeEntries, entry] };
+  return materializeTracking({ ...base, timeEntries: [...base.timeEntries, entry] }, entry, growth);
+}
+
+/**
+ * Wykonanie → plan (po dodaniu/poprawce wpisu `entry`, z policzonym `growth`):
+ *   1. nadwyżka ponad plan pary rośnie w planie jak przy rozciąganiu bloku:
+ *      `fromBinMinutes` schodzi z wiersza zasobnika (osoba, zadanie; wiersz
+ *      znika przy zerze, inwariant 4), reszta `growMinutes` z wolnych sprzedanych;
+ *      dopisuje się do OSTATNIEGO datowanego bloku pary tego dnia, a gdy go
+ *      nie ma — powstaje nowy blok w godzinach wpisu (wykonany). Nakładka na
+ *      inny blok tej osoby jest dopuszczona (świadoma alokacja: fakt, nie zamiar);
+ *   2. bloki pary w pełni pokryte wykonaniem (po kolei od najwcześniejszego)
+ *      dostają `done: true` (nigdy nie odznacza — to robi odznaczenie/kasowanie);
+ *   3. zadanie ze sprzedanymi godzinami, w którym nic nie zostało (wszystkie
+ *      datowane bloki wykonane, zasobniki puste), dostaje pierwszy status
+ *      `isDone` (kubełek bez estymaty nigdy — nie ma „wszystko zrobione").
+ */
+function materializeTracking(
+  state: AppData,
+  entry: TimeEntry,
+  growth: { growMinutes: number; fromBinMinutes: number },
+): AppData {
+  const { taskId, personId, date } = entry;
+  let workload = state.workload;
+  const touched = new Set<string>();
+  if (growth.growMinutes > 0) {
+    const growHours = growth.growMinutes / 60;
+    if (growth.fromBinMinutes > 0) {
+      const bin = workload
+        .filter((w) => w.taskId === taskId && w.personId === personId && isBinEntry(w))
+        .sort((a, b) => a.sortIndex - b.sortIndex)[0];
+      if (bin !== undefined) {
+        const leftQ = toQuarters(bin.plannedHours) - toQuarters(growth.fromBinMinutes / 60);
+        workload =
+          leftQ <= 0
+            ? workload.filter((w) => w.id !== bin.id)
+            : workload.map((w) => (w.id === bin.id ? { ...w, plannedHours: leftQ * HOURS_STEP } : w));
+        touched.add(dayKey(personId, BIN_DATE));
+      }
+    }
+    const dated = workload
+      .filter((w) => w.taskId === taskId && w.personId === personId && w.date === date && !isBinEntry(w))
+      .sort((a, b) => a.startMinutes - b.startMinutes || a.sortIndex - b.sortIndex);
+    const last = dated[dated.length - 1];
+    if (last !== undefined) {
+      const grownQ = toQuarters(last.plannedHours) + toQuarters(growHours);
+      const maxQ = toQuarters((DAY_MINUTES - last.startMinutes) / 60);
+      if (grownQ <= maxQ) {
+        workload = workload.map((w) => (w.id === last.id ? { ...w, plannedHours: grownQ * HOURS_STEP } : w));
+      } else {
+        // Blok nie mieści się w dobie: dopisujemy nowy w godzinach wpisu.
+        workload = [
+          ...workload,
+          {
+            id: uid(),
+            taskId,
+            personId,
+            date,
+            plannedHours: toQuarters(growHours) * HOURS_STEP,
+            startMinutes: entry.startMinutes,
+            sortIndex: nextSortIndex(workload, personId, date),
+            done: true,
+          },
+        ];
+      }
+    } else {
+      workload = [
+        ...workload,
+        {
+          id: uid(),
+          taskId,
+          personId,
+          date,
+          plannedHours: toQuarters(growHours) * HOURS_STEP,
+          startMinutes: entry.startMinutes,
+          sortIndex: nextSortIndex(workload, personId, date),
+          done: true,
+        },
+      ];
+    }
+    touched.add(dayKey(personId, date));
+  }
+  let next: AppData = touched.size > 0 ? { ...state, workload: reindexDays(workload, touched) } : state;
+  next = resyncBlockDone(next, taskId, personId, date);
+  return autoCompleteTask(next, taskId);
+}
+
+/** Bloki pary w pełni pokryte wykonaniem dostają `done: true` (jednokierunkowo). */
+function resyncBlockDone(state: AppData, taskId: string, personId: string, date: string): AppData {
+  const b = trackingBalance(state, taskId, personId, date);
+  if (b.blocks.length === 0) return state;
+  const fill = portionFill(b.blocks, b.loggedMinutes);
+  let changed = false;
+  const workload = state.workload.map((w) => {
+    if (w.taskId !== taskId || w.personId !== personId || w.date !== date || isBinEntry(w)) return w;
+    const covered = (fill.get(w.id) ?? 0) >= hoursToMinutes(w.plannedHours);
+    if (covered && w.done !== true) {
+      changed = true;
+      return { ...w, done: true };
+    }
+    return w;
+  });
+  return changed ? { ...state, workload } : state;
+}
+
+/** Zadanie z kontraktem (estymata ≠ null), w którym nie ma nic do zrobienia, staje się „zrobione". */
+function autoCompleteTask(state: AppData, taskId: string): AppData {
+  const task = state.tasks.find((t) => t.id === taskId);
+  if (task === undefined || task.estimatedHours === null || isDoneStatus(state, task.statusId)) return state;
+  const rows = state.workload.filter((w) => w.taskId === taskId);
+  if (rows.length === 0) return state;
+  if (rows.some((w) => isBinEntry(w) || w.done !== true)) return state;
+  // Wolne sprzedane godziny (nikomu nie przydzielone) to też „coś do zrobienia".
+  const plannedQ = rows.reduce((sum, w) => sum + toQuarters(w.plannedHours), 0);
+  if (plannedQ < toQuarters(task.estimatedHours)) return state;
+  const doneStatus = activeStatuses(state).find((st) => st.isDone) ?? state.statuses.find((st) => st.isDone);
+  if (doneStatus === undefined) return state;
+  return {
+    ...state,
+    tasks: state.tasks.map((t) => (t.id === taskId ? { ...t, statusId: doneStatus.id, updatedAt: nowIso() } : t)),
+    activity: withActivity(
+      state,
+      'task',
+      taskId,
+      `zadanie zamknięte automatycznie: wszystkie bloki wykonane (status „${doneStatus.name}”)`,
+    ),
+  };
+}
+
+/** „Wykonane" na bloku = wpis 1:1 w jego godzinach, jeśli te minuty są wolne. */
+function linkEntryForBlock(state: AppData, block: WorkloadEntry): AppData {
+  if (isBinEntry(block)) return state;
+  const end = block.startMinutes + hoursToMinutes(block.plannedHours);
+  if (!isValidTimeRange(block.startMinutes, end)) return state;
+  if (!timeEntryTaskAccepts(state, block.taskId)) return state;
+  if (findOverlappingEntry(state.timeEntries, block.personId, block.date, block.startMinutes, end) !== undefined) {
+    return state;
+  }
+  // Wpis z bloku nigdy nie jest nadwyżką: pokrywa dokładnie swój plan.
+  const entry: TimeEntry = {
+    id: uid(),
+    personId: block.personId,
+    taskId: block.taskId,
+    date: block.date,
+    startMinutes: block.startMinutes,
+    endMinutes: end,
+    source: 'block',
+    blockId: block.id,
+    createdAt: nowIso(),
+  };
+  return autoCompleteTask({ ...state, timeEntries: [...state.timeEntries, entry] }, block.taskId);
+}
+
+/** Odznaczenie bloku kasuje jego wpis „z bloku", o ile nadal jest 1:1 z blokiem. */
+function unlinkEntryForBlock(state: AppData, block: WorkloadEntry): AppData {
+  const linked = state.timeEntries.find(
+    (e) => e.source === 'block' && e.blockId === block.id && entryMatchesBlock(e, block),
+  );
+  if (linked === undefined) return state;
+  return { ...state, timeEntries: state.timeEntries.filter((e) => e.id !== linked.id) };
+}
+
+/**
+ * SETTLE_TRACKED_DAY: przeszłość w kalendarzu = fakty. Dla osoby, która
+ * śledzi dzień (≥1 wpis tego dnia), każdy NIEwykonany datowany blok, którego
+ * koniec minął o ≥15 min, oddaje niepokrytą część do zasobnika: blok kurczy
+ * się do pokrycia (i jest wtedy wykonany) albo znika, a minuty dochodzą do
+ * JEDNEGO wiersza zasobnika pary (inwariant 4). Zadania „zrobione" pomijane.
+ */
+const SETTLE_GRACE_MINUTES = 15;
+function settleTrackedDay(state: AppData, personId: string, date: string, nowMinutes: number | null): AppData {
+  if (!isValidDateStr(date) || !hasEntity(state, 'person', personId)) return state;
+  if (!state.timeEntries.some((e) => e.personId === personId && e.date === date)) return state;
+  const blocks = state.workload.filter(
+    (w) => w.personId === personId && w.date === date && !isBinEntry(w) && w.done !== true,
+  );
+  if (blocks.length === 0) return state;
+  let workload = state.workload;
+  const touched = new Set<string>();
+  const byTask = new Map<string, WorkloadEntry[]>();
+  for (const b of blocks) {
+    const end = b.startMinutes + hoursToMinutes(b.plannedHours);
+    if (nowMinutes !== null && end + SETTLE_GRACE_MINUTES > nowMinutes) continue;
+    const task = state.tasks.find((t) => t.id === b.taskId);
+    if (task === undefined || isDoneStatus(state, task.statusId)) continue;
+    const list = byTask.get(b.taskId);
+    if (list) list.push(b);
+    else byTask.set(b.taskId, [b]);
+  }
+  for (const [taskId, due] of byTask) {
+    const bal = trackingBalance(state, taskId, personId, date);
+    const fill = portionFill(bal.blocks, bal.loggedMinutes);
+    let returnQ = 0;
+    for (const b of due) {
+      const coveredQ = toQuarters((fill.get(b.id) ?? 0) / 60);
+      const plannedQ = toQuarters(b.plannedHours);
+      if (coveredQ >= plannedQ) continue;
+      returnQ += plannedQ - coveredQ;
+      workload =
+        coveredQ === 0
+          ? workload.filter((w) => w.id !== b.id)
+          : workload.map((w) => (w.id === b.id ? { ...w, plannedHours: coveredQ * HOURS_STEP, done: true } : w));
+      touched.add(dayKey(personId, date));
+    }
+    if (returnQ > 0) {
+      const bin = workload
+        .filter((w) => w.taskId === taskId && w.personId === personId && isBinEntry(w))
+        .sort((a, b) => a.sortIndex - b.sortIndex)[0];
+      workload =
+        bin !== undefined
+          ? workload.map((w) =>
+              w.id === bin.id ? { ...w, plannedHours: (toQuarters(w.plannedHours) + returnQ) * HOURS_STEP } : w,
+            )
+          : [
+              ...workload,
+              {
+                id: uid(),
+                taskId,
+                personId,
+                date: BIN_DATE,
+                plannedHours: returnQ * HOURS_STEP,
+                startMinutes: 0,
+                sortIndex: nextSortIndex(workload, personId, BIN_DATE),
+              },
+            ];
+      touched.add(dayKey(personId, BIN_DATE));
+    }
+  }
+  if (touched.size === 0) return state;
+  return { ...state, workload: reindexDays(workload, touched) };
 }
 
 /**
@@ -3825,7 +4078,7 @@ export function reducer(state: AppData, action: Action): AppData {
       const entry = state.workload.find((w) => w.id === action.entryId);
       if (!entry) return state;
       if ((entry.done === true) === action.done) return state;
-      return {
+      const marked: AppData = {
         ...state,
         workload: state.workload.map((w) =>
           w.id === action.entryId ? { ...w, done: action.done } : w,
@@ -3839,6 +4092,10 @@ export function reducer(state: AppData, action: Action): AppData {
             : `odznaczył/odznaczyła blok ${formatDuration(entry.plannedHours)} jako wykonany`,
         ),
       };
+      // Para blok-wpis (tracker): „wykonane" = wpis 1:1 w godzinach bloku (o ile
+      // te minuty są wolne i blok jest datowany); odznaczenie kasuje wpis z tego
+      // bloku, jeśli nikt go nie zmienił. Blok zasobnika nie ma godzin — bez wpisu.
+      return action.done ? linkEntryForBlock(marked, entry) : unlinkEntryForBlock(marked, entry);
     }
     case 'SAVE_PROJECT':
       return saveProject(state, action.projectId, action.draft);
@@ -4102,21 +4359,40 @@ export function reducer(state: AppData, action: Action): AppData {
         return state;
       if (w.taskId === action.taskId && w.startMinutes === action.startMinutes && w.endMinutes === action.endMinutes)
         return state;
-      // Ręczna poprawka zrywa więź ze spotkaniem: to już nie jest wpis „prosto z kalendarza".
-      const { eventId: _drop, ...rest } = w;
+      // Nadwyżka NOWEJ długości wobec planu pary (stara długość tego wpisu nie liczy się).
+      const growth = planGrowth(state, action.taskId, w.personId, w.date, action.endMinutes - action.startMinutes, w.id);
+      if (growth.overrunMinutes > 0 && action.acceptOverrun !== true) return state;
+      // Ręczna poprawka zrywa więź ze spotkaniem/blokiem: to już nie jest wpis „prosto z kalendarza".
+      const { eventId: _dropE, blockId: _dropB, overrunMinutes: _dropO, ...rest } = w;
       const next: TimeEntry = {
         ...rest,
         taskId: action.taskId,
         startMinutes: action.startMinutes,
         endMinutes: action.endMinutes,
-        source: w.source === 'event' ? 'manual' : w.source,
+        source: w.source === 'event' || w.source === 'block' ? 'manual' : w.source,
+        ...(growth.overrunMinutes > 0 ? { overrunMinutes: growth.overrunMinutes } : {}),
       };
-      return { ...state, timeEntries: state.timeEntries.map((e) => (e.id === w.id ? next : e)) };
+      const replaced = { ...state, timeEntries: state.timeEntries.map((e) => (e.id === w.id ? next : e)) };
+      // Stary blok (jeśli był z „wykonane") traci pokrycie: zostaje wykonany tylko, gdy nadal pokryty.
+      let after = materializeTracking(replaced, next, growth);
+      if (w.taskId !== action.taskId || w.date !== next.date) after = resyncBlockDone(after, w.taskId, w.personId, w.date);
+      return after;
     }
     case 'DELETE_TIME_ENTRY': {
-      if (!state.timeEntries.some((e) => e.id === action.entryId)) return state;
-      return { ...state, timeEntries: state.timeEntries.filter((e) => e.id !== action.entryId) };
+      const w = state.timeEntries.find((e) => e.id === action.entryId);
+      if (w === undefined) return state;
+      const without = { ...state, timeEntries: state.timeEntries.filter((e) => e.id !== action.entryId) };
+      // Skasowany wpis „z bloku" odznacza swój blok; inne wpisy zostawiają bloki w spokoju.
+      if (w.source === 'block' && w.blockId !== undefined) {
+        return {
+          ...without,
+          workload: without.workload.map((b) => (b.id === w.blockId && b.done === true ? { ...b, done: false } : b)),
+        };
+      }
+      return without;
     }
+    case 'SETTLE_TRACKED_DAY':
+      return settleTrackedDay(state, action.personId, action.date, action.nowMinutes);
     case 'ADD_PERSON': {
       if (!isValidPersonDraft(action.person)) return state;
       const id = uid();

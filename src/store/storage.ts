@@ -1206,14 +1206,29 @@ export function repairTimeEntries(data: AppData): AppData {
     }
     seen.add(id);
     const eventId = src === 'event' && str(e.eventId) !== '' ? str(e.eventId) : undefined;
+    const blockId = src === 'block' && str(e.blockId) !== '' ? str(e.blockId) : undefined;
+    const ovRaw = e.overrunMinutes;
+    const overrunMinutes =
+      Number.isInteger(ovRaw) && (ovRaw as number) > 0 && (ovRaw as number) % MINUTE_STEP === 0 && (ovRaw as number) <= e0 - s0
+        ? (ovRaw as number)
+        : undefined;
     const clean: TimeEntry = {
       id, personId, taskId, date, startMinutes: s0, endMinutes: e0, source: src,
       ...(eventId !== undefined ? { eventId } : {}),
+      ...(blockId !== undefined ? { blockId } : {}),
+      ...(overrunMinutes !== undefined ? { overrunMinutes } : {}),
       createdAt: str(e.createdAt),
     };
     // Klucze poza formą kanoniczną (np. `eventId` przy ręcznym wpisie) też są zmianą.
     const keys = Object.keys(e).filter((k) => (e as Record<string, unknown>)[k] !== undefined);
-    if (keys.length !== Object.keys(clean).length || str(e.eventId) !== (eventId ?? '') || str(e.createdAt) !== clean.createdAt) changed = true;
+    if (
+      keys.length !== Object.keys(clean).length ||
+      str(e.eventId) !== (eventId ?? '') ||
+      str(e.blockId) !== (blockId ?? '') ||
+      (ovRaw ?? undefined) !== overrunMinutes ||
+      str(e.createdAt) !== clean.createdAt
+    )
+      changed = true;
     out.push(clean);
   }
   return changed || out.length !== source.length ? { ...data, timeEntries: out } : data;

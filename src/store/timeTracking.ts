@@ -104,7 +104,11 @@ export interface DayPlanBlock {
   portionLogged: number;
   taskLogged: number; // wszystkie osoby i dni
   estimateMinutes: number | null;
+  /** Blok wykonany (per blok) LUB zadanie ze statusem „zrobione". */
   done: boolean;
+  /** Sam znacznik bloku (`WorkloadEntry.done`) — cel kółka. */
+  blockDone: boolean;
+  taskDone: boolean;
 }
 export interface DayPlanEvent {
   kind: 'event';
@@ -140,7 +144,9 @@ export function dayPlanForPerson(state: AppData, personId: string, date: DateStr
       portionLogged: portionLoggedMinutes(state, block),
       taskLogged: loggedMinutesForTask(state, task.id),
       estimateMinutes: task.estimatedHours === null ? null : hoursToMinutes(task.estimatedHours),
-      done: isDoneStatus(state, task.statusId),
+      done: block.done === true || isDoneStatus(state, task.statusId),
+      blockDone: block.done === true,
+      taskDone: isDoneStatus(state, task.statusId),
     });
   }
   const forPerson = new Set([personId]);
@@ -266,6 +272,41 @@ export function resolveTaskByTitle(state: AppData, title: string): TitleResoluti
   if (active.length > 1) return { kind: 'ambiguous', tasks: active };
   if (matches.length > 0) return { kind: 'closed', task: matches[0] };
   return { kind: 'none' };
+}
+
+// ---- „Ponad sprzedane" (kto i ile) ----
+
+export interface OverrunSummaryRow {
+  taskId: string;
+  title: string;
+  projectName: string;
+  clientName: string;
+  overrunMinutes: number;
+}
+
+/** Minuty ponad sprzedane osoby w podanych dniach, per zadanie, malejąco. */
+export function overrunSummary(state: AppData, personId: string, dates: readonly DateStr[]): OverrunSummaryRow[] {
+  const set = new Set(dates);
+  const byTask = new Map<string, number>();
+  for (const e of state.timeEntries) {
+    if (e.personId !== personId || !set.has(e.date) || !e.overrunMinutes) continue;
+    byTask.set(e.taskId, (byTask.get(e.taskId) ?? 0) + e.overrunMinutes);
+  }
+  const out: OverrunSummaryRow[] = [];
+  for (const [taskId, overrunMinutes] of byTask) {
+    const task = getTask(state, taskId);
+    if (task === undefined) continue;
+    const project = getProject(state, task.projectId);
+    const client = project === undefined ? undefined : getClient(state, project.clientId);
+    out.push({
+      taskId,
+      title: taskDisplayTitle(state, task),
+      projectName: project === undefined ? '' : projectDisplayName(state, project),
+      clientName: client?.name ?? '',
+      overrunMinutes,
+    });
+  }
+  return out.sort((a, b) => b.overrunMinutes - a.overrunMinutes || a.title.localeCompare(b.title, 'pl'));
 }
 
 // ---- „Ile na kogo" ----

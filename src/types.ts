@@ -483,7 +483,7 @@ export interface EventRsvp {
 
 /** Skąd wziął się wpis czasu: pasek (ręcznie od-do), rysowanie po osi, stoper,
  *  kliknięte spotkanie z kalendarza. Wyłącznie informacyjne. */
-export type TimeEntrySource = 'manual' | 'draw' | 'timer' | 'event';
+export type TimeEntrySource = 'manual' | 'draw' | 'timer' | 'event' | 'block';
 
 /**
  * Wpis czasu pracy — „co naprawdę było". Dwie prawdy obok siebie: plan żyje w
@@ -504,6 +504,15 @@ export interface TimeEntry {
   /** Id wydarzenia kalendarza, z którego wpis powstał jednym kliknięciem
    *  (cofnięcie = skasowanie wpisu). Klucz obecny tylko dla `source: 'event'`. */
   eventId?: string;
+  /** Id bloku planu (`WorkloadEntry`), z którego wpis powstał przez „wykonane"
+   *  (kółko / prawy klik): wpis 1:1 w godzinach bloku. Odznaczenie bloku kasuje
+   *  wpis, o ile nikt go nie zmienił. Klucz obecny tylko dla `source: 'block'`. */
+  blockId?: string;
+  /** Minuty tego wpisu PONAD godziny sprzedane zadania (po wyczerpaniu zasobnika
+   *  osoby i wolnych sprzedanych): zapisane po potwierdzeniu dialogu; raport
+   *  pokazuje kto i ile. Klucz obecny tylko gdy > 0; zadanie bez estymaty
+   *  (kubełek) nigdy nie ma przekroczenia. */
+  overrunMinutes?: number;
   createdAt: string; // ISO
 }
 

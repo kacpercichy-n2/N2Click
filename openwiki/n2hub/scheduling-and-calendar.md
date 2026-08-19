@@ -26,8 +26,15 @@
   wzorem `mention-autocomplete`), przeciągnięcie/klik po osi wykonania
   (wypełnia godziny w pasku; gest w refie, `setPointerCapture` w try/catch),
   klik w spotkanie (wypełnia tytuł + godziny + `eventId`; spotkanie NIGDY nie
-  liczy się samo; drugi klik na zaliczonym kasuje wpis). Ptaszek na kaflu planu
-  = `SET_TASK_STATUS` na pierwszy status `isDone` / z powrotem pierwszy aktywny.
+  liczy się samo; drugi klik na zaliczonym kasuje wpis). Kółko na kaflu planu
+  = `SET_BLOCK_DONE` (ten sam reduktor, co „✓ Oznacz jako wykonane" w menu
+  WeekView): blok wykonany + wpis 1:1 w jego godzinach; cofnięcie kasuje wpis.
+  Status zadania zmienia się sam przez `autoCompleteTask` (wszystko wykonane,
+  zasobnik pusty, brak wolnych sprzedanych). Przekroczenie sprzedanych godzin
+  pyta dialogiem (`useConfirm`) przed zapisem; kolejność przełącznika
+  Dzień | Tydzień | Miesiąc. Minione niewykonane bloki dnia rozlicza
+  `SETTLE_TRACKED_DAY` (15 min po końcu bloku → zasobnik), patrz
+  state-and-persistence.
   Czysta arytmetyka osi i kolumn w `dayTrackerLayout.ts` (oś 7-19 rozszerzana
   do danych, 56 px/h, siatka 15 min, kolumny dla nachodzących kafli). Klasy CSS
   z prefiksem `tt-`. Stoper i lustro chmury: do zrobienia.

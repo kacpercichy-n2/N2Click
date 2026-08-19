@@ -133,7 +133,10 @@ describe('ADD_TIME_ENTRY', () => {
     expect(created).toMatchObject({ title: 'Telefon do Yoshi', projectId: 'p-b', statusId: 'active', estimatedHours: null, createdBy: 'me' });
     expect(next.assignments.some((a) => a.taskId === created.id && a.personId === 'me')).toBe(true);
     expect(next.timeEntries[0].taskId).toBe(created.id);
-    expect(next.workload).toHaveLength(0); // tracker nie planuje
+    // Kubełek (bez estymaty): wykonanie materializuje się w planie jako wykonany blok 1:1.
+    expect(next.workload).toHaveLength(1);
+    expect(next.workload[0]).toMatchObject({ taskId: created.id, personId: 'me', date: DAY, startMinutes: 600, plannedHours: 1, done: true });
+    expect(next.tasks[next.tasks.length - 1].statusId).toBe('active'); // kubełek nigdy nie zamyka się sam
   });
   it('newTask z nieznanym projektem albo pustym tytułem => nic nie powstaje (atomowość)', () => {
     const s = state();
@@ -302,5 +305,120 @@ describe('repairTimeEntries', () => {
   it('brak kolekcji (stary zapis) => pusta lista', () => {
     const raw = { ...state(), timeEntries: undefined as unknown as TimeEntry[] };
     expect(repairTimeEntries(raw).timeEntries).toEqual([]);
+  });
+});
+
+// ---- Wykonanie ↔ plan (2026-08-19, reguły 1-5 ustalone z Kacprem) ------------
+describe('para blok-wpis: SET_BLOCK_DONE', () => {
+  const bin = (id: string, taskId: string, personId: string, hours: number): WorkloadEntry => ({
+    id, taskId, personId, date: '', plannedHours: hours, startMinutes: 0, sortIndex: 0,
+  });
+  it('„wykonane” na bloku tworzy wpis 1:1 (source block, blockId); odznaczenie go kasuje', () => {
+    const s = state({ workload: [block('b1', 't-design', 'me', 600, 2)] });
+    const done = reducer(s, { type: 'SET_BLOCK_DONE', entryId: 'b1', done: true });
+    expect(done.workload[0].done).toBe(true);
+    expect(done.timeEntries).toHaveLength(1);
+    expect(done.timeEntries[0]).toMatchObject({ taskId: 't-design', personId: 'me', date: DAY, startMinutes: 600, endMinutes: 720, source: 'block', blockId: 'b1' });
+    const undone = reducer(done, { type: 'SET_BLOCK_DONE', entryId: 'b1', done: false });
+    expect(undone.workload[0].done).toBe(false);
+    expect(undone.timeEntries).toHaveLength(0);
+  });
+  it('godziny bloku zajęte innym wpisem: blok wykonany, ale bez wpisu (nic nie nachodzi)', () => {
+    const s = state({ workload: [block('b1', 't-design', 'me', 600, 2)], timeEntries: [entry('w1', 't-call-a', 630, 690)] });
+    const done = reducer(s, { type: 'SET_BLOCK_DONE', entryId: 'b1', done: true });
+    expect(done.workload[0].done).toBe(true);
+    expect(done.timeEntries).toHaveLength(1);
+  });
+  it('ręcznie zmieniony wpis z bloku zostaje po odznaczeniu; skasowanie wpisu z bloku odznacza blok', () => {
+    const s = state({ workload: [block('b1', 't-design', 'me', 600, 2)] });
+    const done = reducer(s, { type: 'SET_BLOCK_DONE', entryId: 'b1', done: true });
+    const id = done.timeEntries[0].id;
+    const edited = reducer(done, { type: 'UPDATE_TIME_ENTRY', entryId: id, taskId: 't-design', startMinutes: 600, endMinutes: 690 });
+    expect(edited.timeEntries[0].source).toBe('manual');
+    const undone = reducer(edited, { type: 'SET_BLOCK_DONE', entryId: 'b1', done: false });
+    expect(undone.timeEntries).toHaveLength(1); // zmieniony wpis zostaje
+    const removed = reducer(done, { type: 'DELETE_TIME_ENTRY', entryId: id });
+    expect(removed.workload[0].done).toBe(false);
+  });
+  it('wpis pokrywający blok w całości oznacza blok jako wykonany', () => {
+    const s = state({ workload: [block('b1', 't-design', 'me', 600, 1), block('b2', 't-design', 'me', 840, 1, 1)] });
+    const next = reducer(s, { type: 'ADD_TIME_ENTRY', payload: { personId: 'me', taskId: 't-design', date: DAY, startMinutes: 600, endMinutes: 660, source: 'manual' } });
+    expect(next.workload.find((w) => w.id === 'b1')?.done).toBe(true);
+    expect(next.workload.find((w) => w.id === 'b2')?.done).toBeUndefined();
+  });
+  it('zadanie ze sprzedanymi godzinami zamyka się samo, gdy nic nie zostało (bloki wykonane, zasobnik pusty, brak wolnych sprzedanych)', () => {
+    // t-design: estymata 3h = blok 2h + zasobnik 1h → po wykonaniu 2h zostaje zasobnik → nie zamyka
+    const s = state({ workload: [block('b1', 't-design', 'me', 600, 2), bin('bin1', 't-design', 'me', 1)] });
+    const partial = reducer(s, { type: 'SET_BLOCK_DONE', entryId: 'b1', done: true });
+    expect(partial.tasks.find((t) => t.id === 't-design')?.statusId).toBe('active');
+    // estymata 2h = jeden blok 2h → wykonany → Gotowe
+    const s2 = state({ tasks: [task('t-design', 'p-a', 'Design strony www', { estimatedHours: 2 })], workload: [block('b1', 't-design', 'me', 600, 2)] });
+    const full = reducer(s2, { type: 'SET_BLOCK_DONE', entryId: 'b1', done: true });
+    expect(full.tasks.find((t) => t.id === 't-design')?.statusId).toBe('done');
+  });
+});
+
+describe('nadwyżka wykonania: zasobnik → wolne sprzedane → ponad sprzedane', () => {
+  const bin = (id: string, taskId: string, personId: string, hours: number): WorkloadEntry => ({
+    id, taskId, personId, date: '', plannedHours: hours, startMinutes: 0, sortIndex: 0,
+  });
+  const add = (s: AppData, start: number, end: number, accept?: boolean) =>
+    reducer(s, { type: 'ADD_TIME_ENTRY', payload: { personId: 'me', taskId: 't-design', date: DAY, startMinutes: start, endMinutes: end, source: 'manual', ...(accept ? { acceptOverrun: true } : {}) } });
+
+  it('plan 2h, wykonane 3h, zasobnik 1h: zasobnik znika, blok rośnie do 3h (jak rozciągnięcie)', () => {
+    const s = state({ workload: [block('b1', 't-design', 'me', 600, 2), bin('bin1', 't-design', 'me', 1)] });
+    const next = add(s, 600, 780);
+    expect(next.workload.find((w) => w.id === 'bin1')).toBeUndefined();
+    expect(next.workload.find((w) => w.id === 'b1')).toMatchObject({ plannedHours: 3, done: true });
+    expect(next.timeEntries[0].overrunMinutes).toBeUndefined();
+  });
+  it('zasobnik 30 min, nadwyżka 1h: 30 min z zasobnika, reszta z wolnych sprzedanych; bez pokrycia → odrzucenie bez zgody', () => {
+    // estymata 3h: blok 2h + zasobnik 0.5h → wolne sprzedane 0.5h
+    const s = state({ workload: [block('b1', 't-design', 'me', 600, 2), bin('bin1', 't-design', 'me', 0.5)] });
+    const ok = add(s, 600, 780); // 3h = 2h + 0.5 (zasobnik) + 0.5 (wolne)
+    expect(ok.workload.find((w) => w.id === 'bin1')).toBeUndefined();
+    expect(ok.workload.find((w) => w.id === 'b1')?.plannedHours).toBe(3);
+    // 3h 30m: brakuje 30 min pokrycia → bez zgody ta sama referencja
+    const rejected = add(s, 600, 810);
+    expect(rejected).toBe(s);
+    const accepted = add(s, 600, 810, true);
+    expect(accepted.timeEntries[0].overrunMinutes).toBe(30);
+    expect(accepted.workload.find((w) => w.id === 'b1')?.plannedHours).toBe(3); // sprzedanych nie ruszamy
+  });
+  it('kubełek (bez estymaty) nigdy nie przekracza: blok dopisuje się w godzinach wpisu', () => {
+    const s = state();
+    const next = reducer(s, { type: 'ADD_TIME_ENTRY', payload: { personId: 'me', taskId: 't-call-a', date: DAY, startMinutes: 900, endMinutes: 945, source: 'manual' } });
+    expect(next.workload).toHaveLength(1);
+    expect(next.workload[0]).toMatchObject({ taskId: 't-call-a', date: DAY, startMinutes: 900, plannedHours: 0.75, done: true });
+    expect(next.timeEntries[0].overrunMinutes).toBeUndefined();
+  });
+  it('poprawka wydłużająca wpis liczy nadwyżkę bez starej długości tego wpisu', () => {
+    const s = state({ workload: [block('b1', 't-design', 'me', 600, 2), bin('bin1', 't-design', 'me', 1)], timeEntries: [entry('w1', 't-design', 600, 720)] });
+    const next = reducer(s, { type: 'UPDATE_TIME_ENTRY', entryId: 'w1', taskId: 't-design', startMinutes: 600, endMinutes: 780 });
+    expect(next.workload.find((w) => w.id === 'b1')?.plannedHours).toBe(3);
+    expect(next.workload.find((w) => w.id === 'bin1')).toBeUndefined();
+  });
+});
+
+describe('SETTLE_TRACKED_DAY: przeszłość = fakty', () => {
+  it('niewykonany blok po 15 min od końca oddaje niepokrytą część do zasobnika; dzień bez wpisów nietknięty', () => {
+    const s = state({
+      workload: [block('b1', 't-design', 'me', 600, 2), block('b2', 't-call-a', 'me', 780, 1, 1)],
+      timeEntries: [entry('w1', 't-design', 600, 660)], // 1h z 2h designu
+    });
+    // 12:10 — blok designu skończył się 12:00, minęło tylko 10 min → nic
+    expect(reducer(s, { type: 'SETTLE_TRACKED_DAY', personId: 'me', date: DAY, nowMinutes: 730 })).toBe(s);
+    // 12:15 — design rozliczony: 1h pokryta zostaje (wykonana), 1h do zasobnika; call 13-14 jeszcze nie minął
+    const next = reducer(s, { type: 'SETTLE_TRACKED_DAY', personId: 'me', date: DAY, nowMinutes: 735 });
+    expect(next.workload.find((w) => w.id === 'b1')).toMatchObject({ plannedHours: 1, done: true });
+    expect(next.workload.find((w) => w.taskId === 't-design' && w.date === '')?.plannedHours).toBe(1);
+    expect(next.workload.find((w) => w.id === 'b2')).toMatchObject({ plannedHours: 1 });
+    // dzień miniony w całości (nowMinutes null): call bez wpisów znika w całości do zasobnika
+    const later = reducer(next, { type: 'SETTLE_TRACKED_DAY', personId: 'me', date: DAY, nowMinutes: null });
+    expect(later.workload.find((w) => w.id === 'b2')).toBeUndefined();
+    expect(later.workload.find((w) => w.taskId === 't-call-a' && w.date === '')?.plannedHours).toBe(1);
+    // osoba bez wpisów tego dnia: nic
+    const other = state({ workload: [block('b9', 't-design', 'other', 600, 2)] });
+    expect(reducer(other, { type: 'SETTLE_TRACKED_DAY', personId: 'other', date: DAY, nowMinutes: null })).toBe(other);
   });
 });

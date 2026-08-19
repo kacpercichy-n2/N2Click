@@ -1,0 +1,117 @@
+// Czysta arytmetyka „wykonanie → plan" trackera czasu (bez Reacta, bez mutacji).
+// Używana przez reduktor (materializacja wpisu w planie) i przez UI (podgląd
+// przekroczenia PRZED dispatchem, żeby zadać pytanie dokładnie wtedy, gdy
+// reduktor by go potrzebował). Jedna definicja liczb, dwa miejsca odczytu.
+//
+// Słownik:
+//   * plan pary (zadanie, osoba, dzień) = suma DATOWANYCH bloków tej pary,
+//   * wykonanie pary = suma wpisów tej pary tego dnia,
+//   * nadwyżka = wykonanie − plan − (już zapisane „ponad sprzedane" tego dnia),
+//   * nadwyżka rośnie w planie jak przy rozciąganiu bloku: najpierw z zasobnika
+//     osoby, potem z wolnych godzin sprzedanych zadania (estymata − wszystko
+//     zaplanowane u wszystkich), a to, na co nie ma pokrycia, to „ponad
+//     sprzedane" (wymaga potwierdzenia). Zadanie bez estymaty (kubełek) ma
+//     pokrycie nieskończone: nigdy nie przekracza, zawsze dopisuje się do planu.
+import type { AppData, TimeEntry, WorkloadEntry } from '../types';
+import { hoursToMinutes, isBinEntry } from '../utils/time';
+import { timeEntryMinutes } from '../utils/timeTracking';
+
+export interface TrackingBalance {
+  /** Datowane bloki pary tego dnia, rosnąco po starcie. */
+  blocks: WorkloadEntry[];
+  plannedMinutes: number;
+  loggedMinutes: number;
+  /** Minuty „ponad sprzedane" już zapisane na wpisach pary tego dnia (poza `excludeEntryId`). */
+  recordedOverrunMinutes: number;
+  binMinutes: number;
+  /** Wolne sprzedane godziny zadania (wszyscy, kalendarz + zasobnik); Infinity dla kubełka. */
+  headroomMinutes: number;
+}
+
+export function trackingBalance(
+  state: AppData,
+  taskId: string,
+  personId: string,
+  date: string,
+  excludeEntryId?: string,
+): TrackingBalance {
+  const task = state.tasks.find((t) => t.id === taskId);
+  const blocks = state.workload
+    .filter((w) => w.taskId === taskId && w.personId === personId && w.date === date && !isBinEntry(w))
+    .sort((a, b) => a.startMinutes - b.startMinutes || a.sortIndex - b.sortIndex);
+  const plannedMinutes = blocks.reduce((s, b) => s + hoursToMinutes(b.plannedHours), 0);
+  const entries = state.timeEntries.filter(
+    (e) => e.taskId === taskId && e.personId === personId && e.date === date && e.id !== excludeEntryId,
+  );
+  const loggedMinutes = entries.reduce((s, e) => s + timeEntryMinutes(e), 0);
+  const recordedOverrunMinutes = entries.reduce((s, e) => s + (e.overrunMinutes ?? 0), 0);
+  const binMinutes = state.workload
+    .filter((w) => w.taskId === taskId && w.personId === personId && isBinEntry(w))
+    .reduce((s, w) => s + hoursToMinutes(w.plannedHours), 0);
+  let headroomMinutes = Infinity;
+  if (task !== undefined && task.estimatedHours !== null) {
+    const allPlanned = state.workload
+      .filter((w) => w.taskId === taskId)
+      .reduce((s, w) => s + hoursToMinutes(w.plannedHours), 0);
+    headroomMinutes = Math.max(0, hoursToMinutes(task.estimatedHours) - allPlanned);
+  }
+  return { blocks, plannedMinutes, loggedMinutes, recordedOverrunMinutes, binMinutes, headroomMinutes };
+}
+
+export interface GrowthPlan {
+  /** Ile minut planu dopisać (z zasobnika + wolnych sprzedanych). */
+  growMinutes: number;
+  fromBinMinutes: number;
+  /** Ile minut zostaje „ponad sprzedane" (0 dla kubełka). */
+  overrunMinutes: number;
+}
+
+/**
+ * Jak rozliczyć `addedMinutes` nowego wykonania pary (zadanie, osoba, dzień):
+ * co dopisać do planu, a co zostaje ponad sprzedane. `excludeEntryId` przy
+ * poprawce wpisu (jego stara długość nie liczy się do „wykonania").
+ */
+export function planGrowth(
+  state: AppData,
+  taskId: string,
+  personId: string,
+  date: string,
+  addedMinutes: number,
+  excludeEntryId?: string,
+): GrowthPlan {
+  const b = trackingBalance(state, taskId, personId, date, excludeEntryId);
+  const extra = Math.max(0, b.loggedMinutes + addedMinutes - b.plannedMinutes - b.recordedOverrunMinutes);
+  const growable = b.binMinutes + b.headroomMinutes;
+  const growMinutes = Math.min(extra, growable);
+  return {
+    growMinutes: Number.isFinite(growMinutes) ? growMinutes : extra,
+    fromBinMinutes: Math.min(growMinutes, b.binMinutes),
+    overrunMinutes: Math.max(0, extra - growMinutes),
+  };
+}
+
+/**
+ * Sekwencyjne pokrycie bloków wykonaniem: zalogowane minuty pary wypełniają
+ * bloki po kolei od najwcześniejszego. Zwraca minuty przypadające na każdy blok.
+ */
+export function portionFill(blocks: readonly WorkloadEntry[], loggedMinutes: number): Map<string, number> {
+  const out = new Map<string, number>();
+  let pool = loggedMinutes;
+  for (const b of blocks) {
+    const take = Math.min(pool, hoursToMinutes(b.plannedHours));
+    out.set(b.id, take);
+    pool -= take;
+  }
+  return out;
+}
+
+/** Czy wpis powstały z bloku („wykonane") jest nadal 1:1 z tym blokiem. */
+export function entryMatchesBlock(entry: TimeEntry, block: WorkloadEntry): boolean {
+  return (
+    entry.taskId === block.taskId &&
+    entry.personId === block.personId &&
+    entry.date === block.date &&
+    entry.startMinutes === block.startMinutes &&
+    entry.endMinutes === block.startMinutes + hoursToMinutes(block.plannedHours)
+  );
+}
