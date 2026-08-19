@@ -104,9 +104,9 @@ export const CHANGELOG: ChangelogEntry[] = [
       },
       {
         area: 'Czat',
-        feature: 'Przełącznik „Dźwięk wł./wył.”',
+        feature: 'Włączanie i wyciszanie dźwięku',
         description:
-          'W stopce listy rozmów (bąbelek czatu) jest przycisk wyciszenia. Ustawienie pamięta ta przeglądarka, na innym urządzeniu dźwięk jest niezależny.',
+          'Przełącznik jest w Koncie (kafelek „Konto i bezpieczeństwo”) i jako szybki przycisk w stopce listy rozmów (bąbelek czatu). Ustawienie pamięta ta przeglądarka, na innym urządzeniu dźwięk jest niezależny.',
       },
     ],
   },

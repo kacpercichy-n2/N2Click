@@ -10,6 +10,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
 import { useAuth } from '../auth/SessionProvider';
+import { useChat } from '../chat/ChatProvider';
 import { PersonProfile, PasswordSection } from './PersonProfilePage';
 import { CloudPasswordSection } from '../components/CloudPasswordSection';
 import { Avatar } from '../components/Avatar';
@@ -294,12 +295,15 @@ function AccountDashboard({ person, onEdit }: { person: Person; onEdit: () => vo
 }
 
 /**
- * Kafelek „Konto i bezpieczeństwo": status powiadomień + zmiana hasła jako
- * jawne rozwinięcie (formularz osadzony, bez zagnieżdżonej karty). Tryb
- * Supabase zmienia hasło realnego konta, lokalny — hash w tej przeglądarce.
+ * Kafelek „Konto i bezpieczeństwo": status powiadomień, dźwięk czatu (ustawienie
+ * TEGO urządzenia, nie profilu — żyje w localStorage przez `storage.ts`, więc
+ * tylko gdy czat działa, czyli w trybie Supabase) + zmiana hasła jako jawne
+ * rozwinięcie (formularz osadzony, bez zagnieżdżonej karty). Tryb Supabase
+ * zmienia hasło realnego konta, lokalny — hash w tej przeglądarce.
  */
 function SecurityTile({ person, mode }: { person: Person; mode: AuthMode }) {
   const [passwordOpen, setPasswordOpen] = useState(false);
+  const chat = useChat();
   return (
     <div className="editor-section account-tile">
       <h2>Konto i bezpieczeństwo</h2>
@@ -308,6 +312,24 @@ function SecurityTile({ person, mode }: { person: Person; mode: AuthMode }) {
           <dt>Powiadomienia mailowe</dt>
           <dd>{person.emailNotifications === true ? 'Włączone' : 'Wyłączone'}</dd>
         </div>
+        {chat.enabled && (
+          <div>
+            <dt>
+              Dźwięk nowej wiadomości
+              <span className="muted account-device-hint"> (to urządzenie)</span>
+            </dt>
+            <dd>
+              <label className="checkbox-field account-inline-check">
+                <input
+                  type="checkbox"
+                  checked={chat.soundEnabled}
+                  onChange={(e) => chat.setSoundEnabled(e.target.checked)}
+                />
+                <span>{chat.soundEnabled ? 'Włączony' : 'Wyłączony'}</span>
+              </label>
+            </dd>
+          </div>
+        )}
         <div>
           <dt>Hasło</dt>
           <dd>

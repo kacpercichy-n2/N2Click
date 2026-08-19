@@ -6326,6 +6326,15 @@ a.toggle-btn {
   overflow-wrap: anywhere;
   min-width: 0;
 }
+/* Dźwięk czatu w kafelku konta: podpowiedź zakresu ustawienia i checkbox
+   w jednej linii z wartością (bez odstępu pola formularza). */
+.account-device-hint {
+  font-size: var(--n2-type-xs);
+}
+.account-inline-check {
+  margin: 0;
+  justify-content: flex-end;
+}
 .account-tile .weekday-chips {
   margin-bottom: 12px;
   /* Siedem chipów ZAWSZE w jednej linii jako równe segmenty pełnej szerokości
