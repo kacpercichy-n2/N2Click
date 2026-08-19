@@ -438,6 +438,14 @@ widoki-mostki). Gdzie w tekście pada `public.<tabela>` w kontekście
   członkostwa na cudzą rozmowę (przejęcie) albo przenieść własną wiadomość do
   cudzej rozmowy. Klient: moduł `src/chat/` (ChatProvider + chatData + chatState,
   UI w `src/chat/ui/`), poza AppStore/localStorage; montaż w `src/main.tsx`.
+  Wyjątek od „poza localStorage": ping dźwiękowy (`src/chat/chatSound.ts`,
+  marimba syntezowana Web Audio, bez plików) ma preferencję URZĄDZENIA
+  `n2hub.chatSound.v1` czytaną/zapisywaną przez `storage.ts`
+  (`readChatSoundEnabled` / `writeChatSoundEnabled`), poza mirrorem chmury i
+  `clearData()`. Decyzja „czy grać" to czysta `decideChatPing` (własna
+  wiadomość i otwarta widoczna rozmowa milczą, dławik 3 s, ciszej przy
+  widocznej karcie); audio dopiero po geście użytkownika (`armChatSound`).
+  Testy: `src/chat/chatSound.test.ts`.
   Rejestr: oba pliki w `migrations.test.ts` + klucze `n2click.*` i
   `realtime.messages` w `EXPECTED_POLICIES`.
 - CZAT, ZNACZNIKI I ATOMOWOŚĆ (20260813200000 + 210000 + 220000 + 230000 +

@@ -12228,13 +12228,22 @@ a.toggle-btn {
   }
 }
 .n2chat-popover-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--n2-space-2);
   border-top: 1px solid var(--n2-border);
   padding: var(--n2-space-2) var(--n2-space-3);
 }
-.n2chat-group-btn {
+.n2chat-group-btn,
+.n2chat-sound-btn {
   display: inline-flex;
   align-items: center;
   gap: var(--n2-space-2);
+}
+/* Wyciszony ping: przycisk przygaszony, ale nie „disabled" — to nadal akcja. */
+.n2chat-sound-btn[aria-pressed='false'] {
+  color: var(--n2-text-muted);
 }
 
 /* ---------- Modal „Nowa grupa" ---------- */

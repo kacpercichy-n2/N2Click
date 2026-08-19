@@ -2012,6 +2012,33 @@ export function writeCloudRetirementMarker(marker: { enabled: boolean }): void {
   }
 }
 
+// ---- Ping dźwiękowy czatu (per-przeglądarka) --------------------------------
+// Preferencja URZĄDZENIA, nie dane planera: dedykowany klucz poza kluczem danych,
+// poza mirrorem chmury i poza `clearData()`. Brak klucza = dźwięk WŁĄCZONY.
+
+const CHAT_SOUND_KEY = 'n2hub.chatSound.v1';
+
+/** Odczyt preferencji pinga czatu. Brak / błąd => `true` (domyślnie włączony). */
+export function readChatSoundEnabled(): boolean {
+  try {
+    const raw = localStorage.getItem(CHAT_SOUND_KEY);
+    if (!raw) return true;
+    const parsed: unknown = JSON.parse(raw);
+    return (parsed as { enabled?: unknown })?.enabled !== false;
+  } catch {
+    return true;
+  }
+}
+
+/** Zapis preferencji pinga czatu. Nie rzuca. */
+export function writeChatSoundEnabled(enabled: boolean): void {
+  try {
+    localStorage.setItem(CHAT_SOUND_KEY, JSON.stringify({ enabled: enabled === true }));
+  } catch {
+    // ignore — bez trwałego zapisu preferencja żyje do przeładowania karty.
+  }
+}
+
 export function clearData(): void {
   try {
     localStorage.removeItem(STORAGE_KEY);

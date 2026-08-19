@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ping czatu N2Hub</title>
+<style>
+:root{
+  color-scheme: dark;
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  --n2-night:#010101; --n2-violet:#7000ff; --n2-lavender:#c496ff; --n2-lavender-mist:#f7f0ff;
+  --n2-success:#b9ff4d; --n2-success-soft:rgba(185,255,77,.16);
+  --n2-info:#5bdcff; --n2-info-soft:rgba(91,220,255,.14);
+  --n2-warning:#ffc857; --n2-warning-soft:rgba(255,200,87,.16);
+  --n2-danger:#ff4f72; --n2-danger-soft:rgba(255,79,114,.16);
+  --bg:var(--n2-night);
+  --card-bg:rgba(255,255,255,.04); --card-bg-hover:rgba(255,255,255,.07);
+  --surface-solid:#141416;
+  --text:#fbf8ff; --text-soft:rgba(251,248,255,.72); --text-muted:rgba(251,248,255,.5);
+  --border:rgba(255,255,255,.1); --border-strong:rgba(196,150,255,.34); --border-soft:rgba(255,255,255,.06);
+  --r-xs:10px; --r-sm:14px; --r-md:20px; --r-pill:999px;
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:20px; --s6:24px; --s8:32px; --s10:40px;
+  --t-xs:.6875rem; --t-sm:.8125rem; --t-md:.9375rem; --t-lg:1.125rem; --t-xl:1.5rem;
+  --shadow-focus:0 0 0 3px rgba(196,150,255,.28), 0 0 0 1px rgba(196,150,255,.72);
+  --pre-bg:rgba(0,0,0,.35); --th-bg:rgba(255,255,255,.02);
+  --glow-1:rgba(112,0,255,.20); --glow-2:rgba(196,150,255,.10);
+  --dur:180ms; --ease:cubic-bezier(.22,.61,.36,1);
+}
+/* Motyw jasny: system bez jawnego wyboru albo jawny wybór light. Tokeny, nie komponenty. */
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){
+    color-scheme: light;
+    --n2-lavender:#6200d9; --n2-lavender-mist:#3b0087;
+    --n2-success:#3f7d00; --n2-success-soft:rgba(63,125,0,.12);
+    --n2-info:#0a6f93; --n2-info-soft:rgba(10,111,147,.12);
+    --n2-warning:#8a5a00; --n2-warning-soft:rgba(138,90,0,.14);
+    --n2-danger:#c0183a; --n2-danger-soft:rgba(192,24,58,.12);
+    --bg:#f7f5fb;
+    --card-bg:rgba(255,255,255,.7); --card-bg-hover:#ffffff;
+    --surface-solid:#ffffff;
+    --text:#16101f; --text-soft:rgba(22,16,31,.78); --text-muted:rgba(22,16,31,.58);
+    --border:rgba(22,16,31,.12); --border-strong:rgba(98,0,217,.4); --border-soft:rgba(22,16,31,.07);
+    --pre-bg:rgba(22,16,31,.05); --th-bg:rgba(22,16,31,.03);
+    --glow-1:rgba(112,0,255,.10); --glow-2:rgba(196,150,255,.16);
+    --shadow-focus:0 0 0 3px rgba(98,0,217,.22), 0 0 0 1px rgba(98,0,217,.7);
+  }
+}
+:root[data-theme="light"]{
+  color-scheme: light;
+  --n2-lavender:#6200d9; --n2-lavender-mist:#3b0087;
+  --n2-success:#3f7d00; --n2-success-soft:rgba(63,125,0,.12);
+  --n2-info:#0a6f93; --n2-info-soft:rgba(10,111,147,.12);
+  --n2-warning:#8a5a00; --n2-warning-soft:rgba(138,90,0,.14);
+  --n2-danger:#c0183a; --n2-danger-soft:rgba(192,24,58,.12);
+  --bg:#f7f5fb;
+  --card-bg:rgba(255,255,255,.7); --card-bg-hover:#ffffff;
+  --surface-solid:#ffffff;
+  --text:#16101f; --text-soft:rgba(22,16,31,.78); --text-muted:rgba(22,16,31,.58);
+  --border:rgba(22,16,31,.12); --border-strong:rgba(98,0,217,.4); --border-soft:rgba(22,16,31,.07);
+  --pre-bg:rgba(22,16,31,.05); --th-bg:rgba(22,16,31,.03);
+  --glow-1:rgba(112,0,255,.10); --glow-2:rgba(196,150,255,.16);
+  --shadow-focus:0 0 0 3px rgba(98,0,217,.22), 0 0 0 1px rgba(98,0,217,.7);
+}
+@media (prefers-reduced-motion: reduce){ :root{ --dur:1ms; } *{ transition-duration:1ms !important; animation-duration:1ms !important; } }
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:
+    radial-gradient(1100px 620px at 78% -10%, var(--glow-1), transparent 62%),
+    radial-gradient(760px 460px at 4% 0%, var(--glow-2), transparent 58%),
+    var(--bg);
+  color:var(--text); font-family:var(--font-sans); font-size:var(--t-md); line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1180px;margin:0 auto;padding:var(--s8) var(--s6) 96px}
+h1,h2,h3,h4{line-height:1.16;margin:0;text-wrap:balance}
+p{margin:0}
+a{color:var(--n2-lavender);text-underline-offset:3px}
+a:hover{color:var(--n2-lavender-mist)}
+:where(button,input,a,[tabindex],summary):focus-visible{outline:none;box-shadow:var(--shadow-focus);border-radius:var(--r-xs)}
+.mono{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+
+.eyebrow{display:inline-flex;align-items:center;gap:var(--s2);font-size:var(--t-xs);letter-spacing:.14em;text-transform:uppercase;color:var(--n2-lavender);font-family:var(--font-mono);border:1px solid var(--border-strong);border-radius:var(--r-pill);padding:5px 12px;margin-bottom:var(--s4)}
+.page-head{margin-bottom:var(--s8)}
+.page-head h1{font-size:clamp(1.8rem,3.4vw,2.7rem);letter-spacing:-.02em;max-width:24ch}
+.lede{color:var(--text-soft);max-width:68ch;margin-top:var(--s3)}
+
+section{margin-top:var(--s10)}
+section > h2{font-size:var(--t-xl);letter-spacing:-.01em;margin-bottom:var(--s2)}
+section > .sub{color:var(--text-muted);max-width:70ch;margin-bottom:var(--s5)}
+
+.reco{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:var(--s3)}
+.reco .card{border-color:var(--border-strong)}
+.card{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--r-md);padding:var(--s5)}
+.card h3{font-size:var(--t-lg);margin-bottom:var(--s2)}
+.card p{color:var(--text-soft)}
+.tag{display:inline-block;font-family:var(--font-mono);font-size:var(--t-xs);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);border:1px solid var(--border);border-radius:var(--r-pill);padding:2px 8px}
+.tag.ok{color:var(--n2-success);border-color:color-mix(in srgb, var(--n2-success) 45%, transparent);background:var(--n2-success-soft)}
+.tag.warn{color:var(--n2-warning);border-color:color-mix(in srgb, var(--n2-warning) 45%, transparent);background:var(--n2-warning-soft)}
+.tag.no{color:var(--n2-danger);border-color:color-mix(in srgb, var(--n2-danger) 45%, transparent);background:var(--n2-danger-soft)}
+.tag.info{color:var(--n2-info);border-color:color-mix(in srgb, var(--n2-info) 45%, transparent);background:var(--n2-info-soft)}
+
+/* demo */
+.demo-bar{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s3) var(--s5);background:var(--surface-solid);border:1px solid var(--border);border-radius:var(--r-sm);padding:var(--s3) var(--s4);margin-bottom:var(--s4)}
+.demo-bar label{display:flex;align-items:center;gap:var(--s2);color:var(--text-soft);font-size:var(--t-sm)}
+input[type=range]{accent-color:var(--n2-lavender);width:160px}
+button{font:inherit;cursor:pointer;border-radius:var(--r-pill);border:1px solid var(--border);background:var(--card-bg);color:var(--text);padding:8px 14px;transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease)}
+button:hover{background:var(--card-bg-hover);border-color:var(--border-strong)}
+button.primary{background:var(--n2-violet);border-color:transparent;color:#fff}
+button.primary:hover{background:#7d1aff}
+.status{font-size:var(--t-sm);color:var(--text-muted);min-height:1.4em}
+.sounds{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:var(--s3)}
+.snd{display:flex;flex-direction:column;gap:var(--s3);position:relative}
+.snd.playing{border-color:var(--n2-lavender);background:var(--card-bg-hover)}
+.snd-head{display:flex;align-items:center;justify-content:space-between;gap:var(--s2)}
+.snd-head h3{margin:0}
+.snd .meta{display:flex;flex-wrap:wrap;gap:var(--s2)}
+.snd .play{display:inline-flex;align-items:center;gap:8px;align-self:flex-start}
+.snd .play svg{width:14px;height:14px}
+.snd .why{color:var(--text-muted);font-size:var(--t-sm)}
+.pick{display:flex;align-items:center;gap:8px;font-size:var(--t-sm);color:var(--text-soft);margin-top:auto}
+.pick input{accent-color:var(--n2-lavender)}
+details{border-top:1px solid var(--border-soft);padding-top:var(--s2)}
+summary{cursor:pointer;color:var(--text-muted);font-size:var(--t-sm)}
+pre{margin:var(--s2) 0 0;background:var(--pre-bg);border:1px solid var(--border-soft);border-radius:var(--r-xs);padding:var(--s3);font-family:var(--font-mono);font-size:var(--t-xs);line-height:1.5;overflow-x:auto;color:var(--text-soft)}
+
+/* tables */
+.tbl{overflow-x:auto;border:1px solid var(--border);border-radius:var(--r-sm)}
+table{border-collapse:collapse;width:100%;min-width:720px;font-size:var(--t-sm)}
+th,td{text-align:left;vertical-align:top;padding:10px 12px;border-bottom:1px solid var(--border-soft)}
+th{font-family:var(--font-mono);font-size:var(--t-xs);letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);font-weight:500;background:var(--th-bg)}
+tr:last-child td{border-bottom:0}
+td.name{color:var(--text);font-weight:600}
+
+ol.steps{margin:0;padding-left:1.3em;display:grid;gap:var(--s2);color:var(--text-soft)}
+ol.steps li::marker{color:var(--n2-lavender);font-family:var(--font-mono)}
+ol.steps code,.crit code{font-family:var(--font-mono);font-size:.85em;background:var(--pre-bg);padding:1px 5px;border-radius:6px}
+.crit{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:var(--s3)}
+.crit .card h3{font-size:var(--t-md)}
+.crit .card p{font-size:var(--t-sm)}
+.q{display:grid;gap:var(--s3)}
+.q .card{display:grid;grid-template-columns:auto 1fr;gap:var(--s4);align-items:start}
+.q .n{font-family:var(--font-mono);color:var(--n2-lavender)}
+.q .card p{color:var(--text-soft)}
+.q .ans{color:var(--text-muted);font-size:var(--t-sm);margin-top:4px}
+.sources{font-size:var(--t-sm);color:var(--text-muted);columns:2;column-gap:var(--s6)}
+.sources li{margin-bottom:4px;break-inside:avoid}
+@media (max-width:760px){ .sources{columns:1} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="page-head">
+  <div class="eyebrow">N2Hub · czat · research 2026-08-19</div>
+  <h1>Dźwiękowy ping nowej wiadomości</h1>
+  <p class="lede">Sześć kandydatów do odsłuchu od ręki (syntezowane w przeglądarce, zero plików), porównanie gotowych bibliotek z licencjami i mechanika, żeby ping grał także przy zminimalizowanej karcie. Na końcu trzy decyzje do podjęcia przed wdrożeniem.</p>
+</header>
+
+<section>
+  <h2>Rekomendacja</h2>
+  <div class="reco">
+    <div class="card">
+      <h3>Dźwięk: „Dwuton” albo „Marimba”, generowane Web Audio</h3>
+      <p>Zero plików w repo, zero licencji do pilnowania, brzmienie nasze, a siłę i barwę da się później zmienić jedną liczbą. Oba trwają poniżej pół sekundy i nie mylą się z dźwiękami macOS ani Slacka.</p>
+    </div>
+    <div class="card">
+      <h3>Plan B: gotowy plik</h3>
+      <p>Material <span class="mono">notification_simple-01</span> (CC BY 4.0, potrzebna linijka z podziękowaniem w aplikacji) albo Kenney UI Audio (CC0, bez żadnych zobowiązań). Oba do 10 KB po konwersji na mp3/ogg.</p>
+    </div>
+    <div class="card">
+      <h3>Plan C: wygenerować własny</h3>
+      <p>Magnific ma generator SFX (ElevenLabs). 4 warianty 2-sekundowego pinga = 40 kredytów, nie wchodzi w unlimited. Sens ma dopiero, gdy żaden z sześciu poniżej się nie spodoba.</p>
+    </div>
+  </div>
+</section>
+
+<section id="demo">
+  <h2>Posłuchaj</h2>
+  <p class="sub">Pierwsze kliknięcie odblokowuje audio w przeglądarce (tak samo będzie w hubie: ping zagra dopiero po tym, jak raz klikniesz cokolwiek w aplikacji). Przycisk „Test w tle” gra wybrany dźwięk po 5 sekundach, więc możesz w tym czasie przełączyć kartę albo zminimalizować okno i sprawdzić, czy słychać.</p>
+  <div class="demo-bar">
+    <label>Głośność <input type="range" id="vol" min="0" max="100" value="35"> <span class="mono" id="volv">35%</span></label>
+    <button id="playAll">Zagraj wszystkie po kolei</button>
+    <button class="primary" id="bgTest">Test w tle (5 s)</button>
+    <span class="status" id="status"></span>
+  </div>
+  <div class="sounds" id="sounds"></div>
+</section>
+
+<section>
+  <h2>Gotowe biblioteki i ich licencje</h2>
+  <p class="sub">Sprawdzone 2026-08-19. „Bez atrybucji” znaczy: wolno użyć komercyjnie w aplikacji bez podpisu. Żadna z tych licencji nie pozwala odsprzedawać samych plików, ale nas to nie dotyczy.</p>
+  <div class="tbl">
+  <table>
+    <thead><tr><th>Źródło</th><th>Licencja</th><th>Co warto odsłuchać</th><th>Uwagi</th></tr></thead>
+    <tbody>
+      <tr><td class="name"><a href="https://archive.org/details/material-design-sound-resources">Material Design Sound Resources</a> (Google)</td><td><span class="tag warn">CC BY 4.0</span></td><td>notification_simple-01, notification_simple-02, notification_decorative-01, notification_ambient</td><td>Najbardziej „produktowe” brzmienie na liście, projektowane właśnie do powiadomień. Wymaga podziękowania (np. w Ustawieniach albo changelogu). Formaty wav/ogg/mp3/aac.</td></tr>
+      <tr><td class="name"><a href="https://kenney.nl/assets/ui-audio">Kenney UI Audio</a> i <a href="https://kenney.nl/assets/interface-sounds">Interface Sounds</a></td><td><span class="tag ok">CC0</span></td><td>confirmation_001..004, maximize_001, question_001, toggle_001</td><td>Zero zobowiązań. Brzmienie bardziej „growe”, krótkie kliki i potwierdzenia; do pinga wiadomości trzeba wybrać ostrożnie, bo część jest za sucha.</td></tr>
+      <tr><td class="name"><a href="http://raisedbeaches.com/octave/">Octave</a></td><td><span class="tag ok">Wolna, bez atrybucji</span></td><td>48 dźwięków: taps, beeps, slides</td><td>Robione pod iOS w 2013, 16 bit .aif, trzeba przekonwertować. Łagodne, miękkie, pasują do ciemnego UI.</td></tr>
+      <tr><td class="name"><a href="https://mixkit.co/free-sound-effects/notification/">Mixkit</a></td><td><span class="tag ok">Mixkit License, bez atrybucji</span></td><td>Message pop alert, Long pop, Bubble pop up alert, Interface hint notification, Positive notification, Confirmation tone</td><td>Duży wybór jednosekundowych pingów. Komercyjne użycie w aplikacji OK. Pliki wav do skompresowania.</td></tr>
+      <tr><td class="name"><a href="https://pixabay.com/sound-effects/search/notification/">Pixabay</a></td><td><span class="tag ok">Pixabay Content License</span></td><td>Szukaj: notification, ping, message pop</td><td>Tysiące plików o różnej jakości. Bez atrybucji, komercyjnie OK. Trzeba przesłuchać dużo, żeby trafić.</td></tr>
+      <tr><td class="name"><a href="https://freesound.org/browse/tags/cc0/">Freesound</a> (filtr CC0)</td><td><span class="tag ok">CC0 (po filtrze)</span></td><td>Tag: notification, chime, marimba</td><td>Pilnować filtra licencji, bo obok leżą CC BY i CC BY-NC. Jakość nierówna, bywają świetne.</td></tr>
+      <tr><td class="name"><a href="https://design.facebook.com/soundkitlicense/">Facebook / Meta Sound Kit</a></td><td><span class="tag no">Tylko prototypy</span></td><td>Odpada</td><td>Licencja zabrania użycia w produktach komercyjnych. Tak samo odpada kopiowanie dźwięków Slacka, Discorda czy Messengera.</td></tr>
+      <tr><td class="name">Magnific → generator SFX (ElevenLabs)</td><td><span class="tag info">Nasze, płatne kredytami</span></td><td>Prompt typu „soft two-note marimba notification, short, no tail”</td><td>10 kredytów za wariant 2 s, 40 za cztery. Nie wchodzi w unlimited tej sesji. Wynik jest nasz, bez atrybucji.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section>
+  <h2>Co czyni dobry ping</h2>
+  <p class="sub">Kryteria, po których powstało sześć kandydatów powyżej. Przydadzą się też przy wyborze gotowego pliku.</p>
+  <div class="crit">
+    <div class="card"><h3>200 do 600 ms</h3><p>Krótszy ginie w tle, dłuższy irytuje przy serii wiadomości. Dwa tony mieszczą się w 450 ms.</p></div>
+    <div class="card"><h3>Ton podstawowy 500 do 1500 Hz</h3><p>Przebija się przez muzykę i rozmowę bez pisku. Powyżej 2 kHz robi się „szklane” i męczące przy powtórkach.</p></div>
+    <div class="card"><h3>Miękki atak, krótki ogon</h3><p>Bez klikającego startu i bez pogłosu. Ping ma brzmieć tak samo dobrze za pierwszym i za dwudziestym razem tego dnia.</p></div>
+    <div class="card"><h3>Inny niż dźwięki systemu</h3><p>macOS „Tink”, „Glass” i Slack „Knock brush” są zajęte w głowie. Własny dwuton albo marimba od razu kojarzy się z hubem.</p></div>
+    <div class="card"><h3>Wznoszący się interwał</h3><p>Kwarta lub kwinta w górę czyta się jako „ktoś się odezwał”. Opadający lepiej pasuje do „coś poszło nie tak”.</p></div>
+    <div class="card"><h3>Mały albo żaden plik</h3><p>Synteza = 0 KB i żadnej licencji. Plik: jeden mp3/ogg do 10 KB w <code>public/sounds/</code>, dekodowany raz przy odblokowaniu audio.</p></div>
+  </div>
+</section>
+
+<section>
+  <h2>Mechanika w hubie</h2>
+  <p class="sub">Minimalny zakres, który działa przy zminimalizowanej karcie. Punkt zaczepienia już istnieje: <code>ChatProvider.handleBroadcast</code> dostaje każdy <code>INSERT</code> z Realtime.</p>
+  <ol class="steps">
+    <li><strong>Kiedy gra.</strong> Wiadomość od kogoś innego niż ja i (karta ukryta <code>document.hidden</code> LUB rozmowa nie jest otwarta w docku). Własne wiadomości i wiadomości w aktualnie otwartej, widocznej rozmowie nigdy nie pingują.</li>
+    <li><strong>Odblokowanie audio.</strong> Jeden <code>AudioContext</code> tworzony przy pierwszym <code>pointerdown</code> lub <code>keydown</code> w aplikacji, potem <code>resume()</code>. Bez tego Chrome i Safari wyciszą wszystko. W praktyce każdy użytkownik klika hub zanim ktoś do niego napisze, więc blokada nie boli.</li>
+    <li><strong>Granie w tle.</strong> Web Audio gra w ukrytej karcie, jeśli wyzwala je zdarzenie sieciowe (broadcast z Supabase), a nie timer. Nie opierać pinga na <code>setTimeout</code>, bo Chrome dławi timery w tle do jednego na minutę po 5 minutach.</li>
+    <li><strong>Dławik.</strong> Najwyżej jeden ping na 3 sekundy, reszta serii zlewa się w jeden. Przy 20 wiadomościach naraz ma być jeden dźwięk, nie karabin.</li>
+    <li><strong>Ustawienie per urządzenie.</strong> Przełącznik „Dźwięk nowych wiadomości” i głośność w menu docku czatu, zapisane w localStorage jako klucz niemirrorowany (tak jak <code>timeEntries</code>), domyślnie włączone.</li>
+    <li><strong>Sygnał wizualny obok dźwięku.</strong> Tytuł karty „(2) N2Hub” gdy karta ukryta, powrót do normalnego po powrocie. Bez tego użytkownik słyszy ping, ale nie wie, która z dziesięciu kart to hub.</li>
+    <li><strong>Etap 2, osobna decyzja.</strong> Systemowe powiadomienie (<code>Notification API</code>) z podglądem treści, gdy okno zminimalizowane. Wymaga zgody użytkownika i dodatkowej pracy na dozwolonych treściach; wtedy ping gramy sami, a baner ustawiamy <code>silent: true</code>, żeby nie dublować dźwięku.</li>
+  </ol>
+</section>
+
+<section>
+  <h2>Trzy decyzje przed wdrożeniem</h2>
+  <div class="q">
+    <div class="card"><span class="n">1</span><div><p>Który dźwięk z sześciu (albo plik z biblioteki)?</p><p class="ans">Moja propozycja: „Dwuton”. Zaznacz radio przy karcie powyżej, zapamiętam wybór w tej makiecie.</p></div></div>
+    <div class="card"><span class="n">2</span><div><p>Ping gra też, gdy karta jest widoczna, ale rozmowa zamknięta w docku?</p><p class="ans">Proponuję tak, ciszej (połowa głośności). Przy zamkniętym docku łatwo przegapić kropkę na ikonce.</p></div></div>
+    <div class="card"><span class="n">3</span><div><p>Czy od razu robimy etap 2 (systemowe powiadomienia z podglądem), czy najpierw sam ping?</p><p class="ans">Proponuję sam ping + tytuł karty. To ~2 h pracy z testami. Systemowe powiadomienia to osobne pół dnia i prośba o zgodę w przeglądarce.</p></div></div>
+  </div>
+</section>
+
+<section>
+  <h2>Źródła</h2>
+  <ul class="sources">
+    <li><a href="https://archive.org/details/material-design-sound-resources">Material Design Sound Resources, archive.org (CC BY 4.0)</a></li>
+    <li><a href="https://m2.material.io/design/sound/sound-attributes.html">Material Design: Sound attributes</a></li>
+    <li><a href="https://kenney.nl/assets/ui-audio">Kenney: UI Audio (CC0)</a></li>
+    <li><a href="https://kenney.nl/assets/interface-sounds">Kenney: Interface Sounds (CC0)</a></li>
+    <li><a href="http://raisedbeaches.com/octave/">Octave: free library of UI sounds</a></li>
+    <li><a href="https://mixkit.co/free-sound-effects/notification/">Mixkit: notification sound effects</a></li>
+    <li><a href="https://pixabay.com/sound-effects/search/notification/">Pixabay: notification sound effects</a></li>
+    <li><a href="https://freesound.org/browse/tags/cc0/">Freesound: tag CC0</a></li>
+    <li><a href="https://design.facebook.com/soundkitlicense/">Meta Sound Kit License (tylko prototypy)</a></li>
+    <li><a href="https://developer.chrome.com/blog/autoplay">Chrome: Autoplay policy</a></li>
+    <li><a href="https://developer.chrome.com/blog/web-audio-autoplay">Chrome: Web Audio, Autoplay Policy and Games</a></li>
+    <li><a href="https://www.chromium.org/audio-video/autoplay/">Chromium: Autoplay</a></li>
+  </ul>
+</section>
+
+</div>
+
+<script>
+(function(){
+  'use strict';
+  var ctx = null, master = null;
+  var vol = 0.35;
+  function ac(){
+    if(!ctx){ ctx = new (window.AudioContext || window.webkitAudioContext)(); }
+    if(ctx.state === 'suspended'){ ctx.resume(); }
+    if(!master){ master = ctx.createGain(); master.gain.value = vol; master.connect(ctx.destination); }
+    return ctx;
+  }
+  function setVol(v){ vol = v; if(master){ master.gain.setTargetAtTime(v, ac().currentTime, 0.01); } }
+
+  // Pojedynczy ton z obwiednią: miękki atak, wykładnicze wybrzmienie.
+  function tone(c, dest, o){
+    var osc = c.createOscillator();
+    osc.type = o.type || 'sine';
+    osc.frequency.setValueAtTime(o.freq, o.t0);
+    if(o.sweepTo){ osc.frequency.exponentialRampToValueAtTime(o.sweepTo, o.t0 + (o.sweepDur || 0.08)); }
+    var g = c.createGain();
+    var a = o.attack == null ? 0.006 : o.attack;
+    g.gain.setValueAtTime(0.0001, o.t0);
+    g.gain.exponentialRampToValueAtTime(o.gain, o.t0 + a);
+    g.gain.exponentialRampToValueAtTime(0.0001, o.t0 + a + o.decay);
+    var node = osc;
+    if(o.lowpass){
+      var f = c.createBiquadFilter(); f.type = 'lowpass'; f.Q.value = o.lowpassQ || 0.9;
+      f.frequency.setValueAtTime(o.lowpass[0], o.t0);
+      f.frequency.exponentialRampToValueAtTime(o.lowpass[1], o.t0 + (o.lowpassDur || 0.18));
+      osc.connect(f); node = f;
+    }
+    node.connect(g); g.connect(dest);
+    osc.start(o.t0); osc.stop(o.t0 + a + o.decay + 0.05);
+  }
+  function click(c, dest, t0, freq, gain, dur){
+    var len = Math.floor(c.sampleRate * dur);
+    var buf = c.createBuffer(1, len, c.sampleRate);
+    var d = buf.getChannelData(0);
+    for(var i=0;i<len;i++){ d[i] = (Math.random()*2-1) * (1 - i/len); }
+    var src = c.createBufferSource(); src.buffer = buf;
+    var bp = c.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value = freq; bp.Q.value = 2;
+    var g = c.createGain(); g.gain.value = gain;
+    src.connect(bp); bp.connect(g); g.connect(dest); src.start(t0);
+  }
+
+  var SOUNDS = [
+    { id:'dwuton', name:'Dwuton', dur:'450 ms', char:'Dwa miękkie tony sinusoidalne, E5 → A5 (kwarta w górę). Klasyczny „ktoś napisał”, ale z własnym interwałem.',
+      why:'Najbezpieczniejszy wybór: neutralny, czytelny, nie męczy przy powtórkach.',
+      params:'E5 659 Hz, decay 0.32 s; +130 ms: A5 880 Hz, decay 0.42 s; oktawa wyżej przy 8% głośności dla ciepła',
+      play:function(c,d,t){ tone(c,d,{freq:659.25,gain:.5,decay:.32,t0:t}); tone(c,d,{freq:1318.5,gain:.05,decay:.2,t0:t});
+        tone(c,d,{freq:880,gain:.5,decay:.42,t0:t+.13}); tone(c,d,{freq:1760,gain:.05,decay:.25,t0:t+.13}); return .6; } },
+    { id:'marimba', name:'Marimba', dur:'380 ms', char:'Dwa uderzenia pałeczką, D5 → A5. Ton podstawowy plus czwarta harmoniczna, która szybko gaśnie, jak w prawdziwej marimbie.',
+      why:'Cieplejszy i bardziej „organiczny” od dwutonu, ma swój charakter. Lepiej przebija się przez muzykę.',
+      params:'D5 587 Hz (decay 0.26) + 4× harmoniczna 2349 Hz (gain 0.12, decay 0.07); +110 ms: A5 880 Hz + 3520 Hz',
+      play:function(c,d,t){ tone(c,d,{freq:587.33,gain:.55,decay:.26,attack:.003,t0:t}); tone(c,d,{freq:2349.3,gain:.12,decay:.07,attack:.002,t0:t});
+        tone(c,d,{freq:880,gain:.5,decay:.3,attack:.003,t0:t+.11}); tone(c,d,{freq:3520,gain:.1,decay:.07,attack:.002,t0:t+.11}); return .5; } },
+    { id:'szklo', name:'Szkło', dur:'500 ms', char:'Jedno uderzenie w szklankę: trzy nieharmoniczne składowe wokół 1,7 kHz i krótki szumowy transjent na początku.',
+      why:'Elegancki, wysoki, bardzo „apple”. Ryzyko: przy wielu wiadomościach robi się kłujący.',
+      params:'1760 Hz (gain .35, decay .5), 2660 Hz (gain .14, decay .32), 4400 Hz (gain .05, decay .15), szum 8 ms przez bandpass 3 kHz',
+      play:function(c,d,t){ click(c,d,t,3000,.25,.008); tone(c,d,{freq:1760,gain:.35,decay:.5,attack:.002,t0:t}); tone(c,d,{freq:2660,gain:.14,decay:.32,attack:.002,t0:t}); tone(c,d,{freq:4400,gain:.05,decay:.15,attack:.002,t0:t}); return .6; } },
+    { id:'pluck', name:'Struna', dur:'420 ms', char:'Dwa szarpnięcia syntetycznej struny, A4 → E5. Piła przez filtr dolnoprzepustowy, który zamyka się w 180 ms.',
+      why:'Najbardziej „muzyczny” z zestawu, przyjazny. Dobrze brzmi na głośnikach laptopa, bo ma dużo środka.',
+      params:'sawtooth 440 Hz, lowpass 2800 → 350 Hz w 0.18 s, decay 0.3; +140 ms: 659 Hz',
+      play:function(c,d,t){ tone(c,d,{type:'sawtooth',freq:440,gain:.3,decay:.3,attack:.003,lowpass:[2800,350],t0:t}); tone(c,d,{type:'sawtooth',freq:659.25,gain:.28,decay:.34,attack:.003,lowpass:[3000,400],t0:t+.14}); return .55; } },
+    { id:'kropla', name:'Kropla', dur:'250 ms', char:'Pojedynczy bąbelek: sinus wjeżdża z 520 na 1100 Hz w 90 ms i od razu gaśnie.',
+      why:'Najkrótszy i najcichszy w odbiorze. Dobry, jeśli chcemy pinga prawie niezauważalnego, bardziej jako „coś drgnęło”.',
+      params:'sine 520 → 1100 Hz (sweep 0.09 s), gain .45, decay .22',
+      play:function(c,d,t){ tone(c,d,{freq:520,sweepTo:1100,sweepDur:.09,gain:.45,decay:.22,attack:.004,t0:t}); return .3; } },
+    { id:'dzwonek', name:'Dzwonek', dur:'900 ms', char:'Dzwonek FM: nośna A5, modulator w stosunku 2.4 (nieharmoniczny), indeks modulacji opada przez 0.6 s.',
+      why:'Najbardziej „uwaga!” z zestawu i najdłuższy. Nadaje się raczej na wzmiankę @ja niż na każdą wiadomość.',
+      params:'carrier 880 Hz, modulator 2112 Hz, indeks 600 → 0 w 0.6 s, decay nośnej 0.85 s',
+      play:function(c,d,t){
+        var car=c.createOscillator(); car.frequency.value=880;
+        var mod=c.createOscillator(); mod.frequency.value=880*2.4;
+        var mg=c.createGain(); mg.gain.setValueAtTime(600,t); mg.gain.exponentialRampToValueAtTime(1,t+.6);
+        mod.connect(mg); mg.connect(car.frequency);
+        var g=c.createGain(); g.gain.setValueAtTime(.0001,t); g.gain.exponentialRampToValueAtTime(.4,t+.005); g.gain.exponentialRampToValueAtTime(.0001,t+.85);
+        car.connect(g); g.connect(d); car.start(t); mod.start(t); car.stop(t+.9); mod.stop(t+.9); return 1; } }
+  ];
+
+  var grid = document.getElementById('sounds');
+  var status = document.getElementById('status');
+  var picked = localStorage.getItem('n2hub-ping-pick') || 'dwuton';
+  var playIcon = '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 2.5v11l9-5.5z"/></svg>';
+
+  SOUNDS.forEach(function(s){
+    var el = document.createElement('article'); el.className='card snd'; el.id='snd-'+s.id;
+    el.innerHTML =
+      '<div class="snd-head"><h3>'+s.name+'</h3><span class="tag">'+s.dur+'</span></div>'+
+      '<p>'+s.char+'</p>'+
+      '<p class="why">'+s.why+'</p>'+
+      '<button class="play" type="button" data-id="'+s.id+'">'+playIcon+'Zagraj</button>'+
+      '<label class="pick"><input type="radio" name="pick" value="'+s.id+'"'+(picked===s.id?' checked':'')+'> Ten biorę</label>'+
+      '<details><summary>Parametry syntezy</summary><pre>'+s.params+'</pre></details>';
+    grid.appendChild(el);
+  });
+
+  function flash(id, sec){
+    var el = document.getElementById('snd-'+id); if(!el) return;
+    el.classList.add('playing'); setTimeout(function(){ el.classList.remove('playing'); }, sec*1000);
+  }
+  function playId(id, when){
+    var s = SOUNDS.find(function(x){ return x.id===id; }); if(!s) return 0;
+    var c = ac(); var t = c.currentTime + (when||0.02);
+    var len = s.play(c, master, t); flash(id, len + (when||0)); return len;
+  }
+
+  grid.addEventListener('click', function(e){
+    var b = e.target.closest('button.play'); if(!b) return;
+    playId(b.getAttribute('data-id'));
+  });
+  grid.addEventListener('change', function(e){
+    if(e.target.name==='pick'){ picked = e.target.value; localStorage.setItem('n2hub-ping-pick', picked); status.textContent = 'Wybór zapamiętany: '+picked; }
+  });
+
+  var volEl = document.getElementById('vol'), volV = document.getElementById('volv');
+  volEl.addEventListener('input', function(){ volV.textContent = volEl.value+'%'; setVol(volEl.value/100); });
+
+  document.getElementById('playAll').addEventListener('click', function(){
+    var c = ac(); var t = 0.05;
+    SOUNDS.forEach(function(s){ var at = c.currentTime + t; var len = s.play(c, master, at); setTimeout(flash, t*1000, s.id, len); t += len + 0.7; });
+    status.textContent = 'Gram '+SOUNDS.length+' dźwięków, po kolei.';
+  });
+
+  document.getElementById('bgTest').addEventListener('click', function(){
+    ac();
+    var left = 5; status.textContent = 'Przełącz kartę. Ping „'+picked+'” za '+left+' s.';
+    var iv = setInterval(function(){
+      left -= 1;
+      if(left > 0){ status.textContent = 'Ping „'+picked+'” za '+left+' s.'; return; }
+      clearInterval(iv); playId(picked); status.textContent = 'Zagrane o '+new Date().toLocaleTimeString('pl-PL')+'. Słychać było w tle?';
+    }, 1000);
+  });
+})();
+</script>
+</body>
+</html>

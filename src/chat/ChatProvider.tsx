@@ -6,7 +6,11 @@
 // GRANICE / DECYZJE:
 //   * Czat NIE dotyka reduktora aplikacji ani localStorage. Wyłączony
 //     (`enabled === false`) provider przepuszcza dzieci i nie tworzy ANI klienta
-//     Supabase, ANI kanału — tryb lokalny działa dokładnie jak dotąd.
+//     Supabase, ANI kanału — tryb lokalny działa dokładnie jak dotąd. Jedyny
+//     wyjątek: preferencja „ping dźwiękowy" to ustawienie URZĄDZENIA czytane
+//     i zapisywane przez `store/storage.ts` (dedykowany klucz, nie dane planera).
+//   * Ping dźwiękowy (`chatSound.ts`): decyzja w `decideChatPing` przy każdym
+//     INSERT z broadcastu; audio gra tylko po geście użytkownika (autoplay).
 //   * Realtime idzie przez BROADCAST (nie `postgres_changes`): kanał prywatny
 //     `chat:conv:<id>` per rozmowa, multipleksowany po jednym sockecie. Kanały
 //     prywatne autoryzuje token warstwy realtime — `client.realtime.setAuth(...)`
@@ -56,6 +60,8 @@ import {
   typingUserIds as readTypingUserIds,
   type ChatTypingEntry,
 } from './chatState';
+import { readChatSoundEnabled, writeChatSoundEnabled } from '../store/storage';
+import { armChatSound, decideChatPing, playChatPing } from './chatSound';
 import {
   CHAT_CATCHUP_MAX_PAGES,
   CHAT_PAGE_SIZE,
@@ -103,6 +109,9 @@ export interface ChatContextValue {
   error: string | null;
   /** Ręczne odświeżenie listy rozmów (retry po błędzie). */
   refresh: () => void;
+  /** Ping dźwiękowy nowej wiadomości (preferencja URZĄDZENIA, localStorage). */
+  soundEnabled: boolean;
+  setSoundEnabled: (enabled: boolean) => void;
 }
 
 const ChatContext = createContext<ChatContextValue | null>(null);
@@ -157,6 +166,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [hasMore, setHasMore] = useState(false);
   const [typing, setTyping] = useState<ChatTypingEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [soundEnabled, setSoundEnabledState] = useState<boolean>(readChatSoundEnabled);
 
   // Żywe kopie stanu dla callbacków przypiętych do kanałów. Kanał subskrybujemy
   // RAZ na rozmowę, więc handler nie może domykać się po wartościach z renderu.
@@ -167,7 +177,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const conversationsRef = useRef<ChatConversation[]>(conversations);
   const messagesRef = useRef<ChatMessage[]>(messages);
   const hasMoreRef = useRef<boolean>(hasMore);
+  const soundEnabledRef = useRef<boolean>(soundEnabled);
+  /** Czas ostatniego pinga (dławik w `decideChatPing`). */
+  const lastPingAtRef = useRef<number | null>(null);
   selfIdRef.current = selfId;
+  soundEnabledRef.current = soundEnabled;
   tokenRef.current = accessToken;
   openIdRef.current = openConversationId;
   conversationsRef.current = conversations;
@@ -316,6 +330,23 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           applyIncomingMessage(list, message, { selfId: self, openConversationId: openId }),
         );
         setTyping((entries) => removeTyping(entries, message.authorId));
+
+        // Ping dźwiękowy: decyzja czysta, audio tylko gdy gest już odblokował
+        // kontekst. Własne wiadomości i otwarta widoczna rozmowa milczą.
+        if (self !== null) {
+          const now = Date.now();
+          const decision = decideChatPing({
+            authorId: message.authorId,
+            selfId: self,
+            conversationId: message.conversationId,
+            openConversationId: openId,
+            documentHidden: typeof document !== 'undefined' && document.hidden,
+            enabled: soundEnabledRef.current,
+            lastPingAt: lastPingAtRef.current,
+            now,
+          });
+          if (decision.play && playChatPing(decision.level)) lastPingAtRef.current = now;
+        }
       }
 
       if (message.conversationId === openId) {
@@ -652,6 +683,18 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     void refreshOverview();
   }, [refreshOverview]);
 
+  // Odblokowanie audio pierwszym gestem — tylko gdy czat działa i dźwięk jest
+  // włączony; wyłączony dźwięk nie zakłada nasłuchów ani nie tworzy kontekstu.
+  useEffect(() => {
+    if (!active || !soundEnabled) return;
+    return armChatSound();
+  }, [active, soundEnabled]);
+
+  const setSoundEnabled = useCallback((enabled: boolean): void => {
+    writeChatSoundEnabled(enabled);
+    setSoundEnabledState(enabled);
+  }, []);
+
   const typingIds = useMemo(() => readTypingUserIds(typing, Date.now()), [typing]);
   const unread = useMemo(() => sumUnread(conversations), [conversations]);
 
@@ -678,6 +721,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       sendTyping,
       error,
       refresh,
+      soundEnabled,
+      setSoundEnabled,
     }),
     [
       active,
@@ -701,6 +746,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       sendTyping,
       error,
       refresh,
+      soundEnabled,
+      setSoundEnabled,
     ],
   );
 

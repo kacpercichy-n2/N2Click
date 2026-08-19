@@ -8,7 +8,7 @@
 // panel by się zamknął i zabrał modal ze sobą.
 import { useMemo, useRef, useState, type RefObject } from 'react';
 import { m, useReducedMotion } from 'motion/react';
-import { Search, Users } from '../../components/icons';
+import { Search, Users, Volume2, VolumeX } from '../../components/icons';
 import { todayStr } from '../../utils/dates';
 import { useChat } from '../ChatProvider';
 import { ChatAvatar } from './ChatAvatar';
@@ -183,6 +183,20 @@ export function ChatSearchPopover({
         <button type="button" className="btn ghost n2chat-group-btn" onClick={onNewGroup}>
           <Users size={16} aria-hidden />
           Nowa grupa
+        </button>
+        <button
+          type="button"
+          className="btn ghost n2chat-sound-btn"
+          aria-pressed={chat.soundEnabled}
+          title={
+            chat.soundEnabled
+              ? 'Dźwięk nowych wiadomości: włączony (to urządzenie)'
+              : 'Dźwięk nowych wiadomości: wyciszony (to urządzenie)'
+          }
+          onClick={() => chat.setSoundEnabled(!chat.soundEnabled)}
+        >
+          {chat.soundEnabled ? <Volume2 size={16} aria-hidden /> : <VolumeX size={16} aria-hidden />}
+          {chat.soundEnabled ? 'Dźwięk wł.' : 'Dźwięk wył.'}
         </button>
       </div>
     </m.div>

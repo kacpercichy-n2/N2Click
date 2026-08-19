@@ -90,6 +90,27 @@ export function changelogUnreadCount(
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-08-19-czat-ping',
+    dateFrom: '2026-08-19',
+    dateTo: '2026-08-19',
+    summary:
+      'Czat daje znać dźwiękiem o nowej wiadomości, także gdy karta huba jest w tle albo zminimalizowana.',
+    items: [
+      {
+        area: 'Czat',
+        feature: 'Dźwięk nowej wiadomości',
+        description:
+          'Krótki ping (marimba) gra, gdy ktoś napisze, a karta huba jest ukryta albo rozmowa nie jest otwarta. Własne wiadomości i otwarta, widoczna rozmowa nie grają; seria wiadomości daje jeden dźwięk. Ping odzywa się dopiero po pierwszym kliknięciu w aplikację (tak działają przeglądarki).',
+      },
+      {
+        area: 'Czat',
+        feature: 'Przełącznik „Dźwięk wł./wył.”',
+        description:
+          'W stopce listy rozmów (bąbelek czatu) jest przycisk wyciszenia. Ustawienie pamięta ta przeglądarka, na innym urządzeniu dźwięk jest niezależny.',
+      },
+    ],
+  },
+  {
     id: '2026-08-19-czas-pracy-dzien',
     dateFrom: '2026-08-19',
     dateTo: '2026-08-19',

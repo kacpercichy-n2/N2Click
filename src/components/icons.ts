@@ -38,6 +38,9 @@ export {
   Smile,
   ImagePlay,
   Plus,
+  // Czat, stopka popovera: przełącznik pinga dźwiękowego (włączony / wyciszony).
+  Volume2,
+  VolumeX,
   Trash2,
   Pencil,
   Save,
