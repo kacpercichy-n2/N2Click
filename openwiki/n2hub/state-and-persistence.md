@@ -494,7 +494,10 @@
   zaległego duplikatu, który mógłby nadpisać zapis innej karty) i czeka, aż
   `persistSeq` (licznik UDANYCH zapisów, rośnie z koalescera i ścieżek
   natychmiastowych) przekroczy wartość z chwili dispatchu — dopiero wtedy
-  odznaka „Zapisano". `retryPersist` zwraca od 2026-08-19 wynik zapisu.
+  odznaka „Zapisano". Nieudany zapis NIE zdejmuje oczekiwania: odznaka mówi
+  „Nie zapisano" do czasu, aż dowolny późniejszy udany zapis (np. „Spróbuj
+  ponownie" z banera pamięci, który utrwala cały stan) podniesie `persistSeq` i
+  zamknie pętlę. `retryPersist` zwraca od 2026-08-19 wynik zapisu.
   Selektory POCHODNE w `src/store/timeTracking.ts`
   (`timeEntriesForPersonDate`, `loggedMinutesFor*`, `plannedMinutesForPersonDate`,
   `portionLoggedMinutes` — zalogowany czas zadania z dnia wypełnia porcje planu

@@ -97,16 +97,17 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
   // w koalescerze) i zapamiętuje licznik udanych zapisów. Odznaka „Zapisano”
   // rusza dopiero, gdy licznik wzrośnie; nieudany zapis zostawia `saveError`,
   // więc odznaka pokazuje trwale „Nie zapisano”.
+  // Nieudany zapis NIE zdejmuje oczekiwania: każdy późniejszy udany zapis (np.
+  // „Ponów” z banera pamięci) utrwala także naszą zmianę, więc dopiero on
+  // zamyka pętlę odznaką „Zapisano”; do tego czasu odznaka mówi „Nie zapisano”.
   const [awaitingSeq, setAwaitingSeq] = useState<number | null>(null);
   useEffect(() => {
     if (awaitingSeq === null) return;
     if (persistSeq > awaitingSeq) {
       setAwaitingSeq(null);
       markSaved();
-    } else if (saveError !== null) {
-      setAwaitingSeq(null);
     }
-  }, [awaitingSeq, persistSeq, saveError, markSaved]);
+  }, [awaitingSeq, persistSeq, markSaved]);
   /** Dispatch + sprawdzenie KONKRETNEGO skutku na zatwierdzonym stanie (nie sama
    *  zmiana referencji): `verify(after)` mówi, czy stało się to, co obiecujemy.
    *  Udany commit zamawia natychmiastowe utrwalenie (patrz wyżej). */
