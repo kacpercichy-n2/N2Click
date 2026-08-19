@@ -90,6 +90,21 @@ export function changelogUnreadCount(
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-08-19-powiadomienia-przeczytane',
+    dateFrom: '2026-08-19',
+    dateTo: '2026-08-19',
+    summary:
+      'Powiadomienia o przypisaniu zadania nie wracają już jako nieprzeczytane po edycji zadania i są wspólne dla wszystkich Twoich urządzeń.',
+    items: [
+      {
+        area: 'Panel',
+        feature: 'Oznaczenie „przeczytane” zostaje',
+        description:
+          'Wcześniej powiadomienie „X przypisał(a) Ci zadanie” potrafiło wrócić jako nieprzeczytane po każdym zapisie tego zadania (zmiana statusu, godzin, opisu). Teraz odhaczone zostaje odhaczone, a oznaczenia zrobione na telefonie widać też na komputerze i odwrotnie. Wcześniejsze odhaczenia zostają zachowane.',
+      },
+    ],
+  },
+  {
     id: '2026-08-17-czat-wewnetrzny',
     dateFrom: '2026-08-13',
     dateTo: '2026-08-17',

@@ -343,7 +343,20 @@ describe('notificationsForPerson — read/unread', () => {
     expect('notificationsReadIds' in s.people[0]).toBe(false);
   });
 
-  it('id przypisania trafia do zbioru pod kluczem assignment:<assignmentId>', () => {
+  it('id przypisania to klucz PARY assignment:<taskId>:<personId> (nie lokalny uid wiersza)', () => {
+    const s = state({
+      tasks: [task('t1')],
+      assignments: [assignment('a1', 't1', 'zuzia')],
+      activity: [created('t1', 'dominik')],
+    });
+    expect(notificationsForPerson(s, 'zuzia', NOW)[0].id).toBe('assignment:t1:zuzia');
+    s.people = s.people.map((p) =>
+      p.id === 'zuzia' ? { ...p, notificationsReadIds: ['assignment:t1:zuzia'] } : p,
+    );
+    expect(notificationsForPerson(s, 'zuzia', NOW)[0].read).toBe(true);
+  });
+
+  it('kompat wsteczna: stary klucz assignment:<TaskAssignment.id> w zbiorze nadal czyta wpis', () => {
     const s = state({
       tasks: [task('t1')],
       assignments: [assignment('a1', 't1', 'zuzia')],
@@ -351,6 +364,18 @@ describe('notificationsForPerson — read/unread', () => {
     });
     s.people = s.people.map((p) =>
       p.id === 'zuzia' ? { ...p, notificationsReadIds: ['assignment:a1'] } : p,
+    );
+    expect(notificationsForPerson(s, 'zuzia', NOW)[0].read).toBe(true);
+  });
+
+  it('inny lokalny uid tej samej pary (drugie urządzenie / hydracja) => wpis dalej przeczytany', () => {
+    const s = state({
+      tasks: [task('t1')],
+      assignments: [assignment('inny-uid', 't1', 'zuzia')],
+      activity: [created('t1', 'dominik')],
+    });
+    s.people = s.people.map((p) =>
+      p.id === 'zuzia' ? { ...p, notificationsReadIds: ['assignment:t1:zuzia'] } : p,
     );
     expect(notificationsForPerson(s, 'zuzia', NOW)[0].read).toBe(true);
   });
@@ -546,5 +571,189 @@ describe('MARK_NOTIFICATION_ENTRY_READ reducer', () => {
     expect(
       reducer(watermarked, { type: 'MARK_NOTIFICATION_ENTRY_READ', entryId: 'mention:c1' }),
     ).toBe(watermarked);
+  });
+});
+
+describe('stabilność „przeczytane" przypisania', () => {
+  it('SAVE_TASK tego samego zadania (te same osoby) NIE cofa oznaczenia jako przeczytane', () => {
+    // Reduktor czyta zegar (nowIso), więc zdarzenie musi leżeć w oknie 14 dni od TERAZ.
+    const nowIso = new Date().toISOString();
+    const recentIso = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const base = state({
+      currentUserId: 'zuzia',
+      projects: [project('proj1', 'Projekt')],
+      statuses: [
+        { id: 'status1', name: 'W toku', slug: 'w-toku', color: '#9aa7c4', order: 0, archived: false, isDone: false },
+        { id: 'done', name: 'Gotowe', slug: 'gotowe', color: '#7ee0c3', order: 1, archived: false, isDone: true },
+      ],
+      tasks: [task('t1', { createdBy: 'dominik', createdAt: recentIso })],
+      assignments: [assignment('a1', 't1', 'zuzia')],
+    });
+    const feed = notificationsForPerson(base, 'zuzia', nowIso);
+    expect(feed).toHaveLength(1);
+    const read = reducer(base, { type: 'MARK_NOTIFICATION_ENTRY_READ', entryId: feed[0].id });
+    expect(notificationsForPerson(read, 'zuzia', nowIso)[0].read).toBe(true);
+    // Edycja zadania przez modal (ci sami wykonawcy) przebudowuje wiersze przypisań.
+    const t = read.tasks[0];
+    const saved = reducer(read, {
+      type: 'SAVE_TASK',
+      payload: {
+        taskId: 't1',
+        draft: {
+          projectId: t.projectId,
+          statusId: t.statusId,
+          title: 'Zmieniony tytuł',
+          description: t.description,
+          startDate: t.startDate,
+          endDate: t.endDate,
+          estimatedHours: t.estimatedHours,
+          priority: t.priority,
+          workCategoryId: t.workCategoryId,
+          departmentId: t.departmentId,
+          checklist: t.checklist,
+        },
+        assigneeIds: ['zuzia'],
+        allocations: [],
+      },
+    });
+    expect(saved).not.toBe(read);
+    const after = notificationsForPerson(saved, 'zuzia', nowIso);
+    expect(after).toHaveLength(1);
+    expect(after[0].read).toBe(true);
+  });
+
+  it('stary klucz assignment:<uid> (zapis sprzed 2026-08-19) przeżywa SAVE_TASK — przepisany na klucz pary', () => {
+    const nowIso = new Date().toISOString();
+    const recentIso = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const base = state({
+      currentUserId: 'zuzia',
+      projects: [project('proj1', 'Projekt')],
+      statuses: [
+        { id: 'status1', name: 'W toku', slug: 'w-toku', color: '#9aa7c4', order: 0, archived: false, isDone: false },
+        { id: 'done', name: 'Gotowe', slug: 'gotowe', color: '#7ee0c3', order: 1, archived: false, isDone: true },
+      ],
+      tasks: [task('t1', { createdBy: 'dominik', createdAt: recentIso })],
+      assignments: [assignment('a1', 't1', 'zuzia')],
+    });
+    base.people = base.people.map((p) =>
+      p.id === 'zuzia' ? { ...p, notificationsReadIds: ['mention:c9', 'assignment:a1'] } : p,
+    );
+    expect(notificationsForPerson(base, 'zuzia', nowIso)[0].read).toBe(true);
+    const dominikBefore = base.people.find((p) => p.id === 'dominik');
+    const t = base.tasks[0];
+    const saved = reducer(base, {
+      type: 'SAVE_TASK',
+      payload: {
+        taskId: 't1',
+        draft: {
+          projectId: t.projectId,
+          statusId: t.statusId,
+          title: 'Zmieniony tytuł',
+          description: t.description,
+          startDate: t.startDate,
+          endDate: t.endDate,
+          estimatedHours: t.estimatedHours,
+          priority: t.priority,
+          workCategoryId: t.workCategoryId,
+          departmentId: t.departmentId,
+          checklist: t.checklist,
+        },
+        assigneeIds: ['zuzia'],
+        allocations: [],
+      },
+    });
+    expect(saved).not.toBe(base);
+    expect(notificationsForPerson(saved, 'zuzia', nowIso)[0].read).toBe(true);
+    // Stary klucz zastąpiony kluczem pary; inne klucze i kolejność bez zmian.
+    expect(saved.people.find((p) => p.id === 'zuzia')?.notificationsReadIds).toEqual([
+      'mention:c9',
+      'assignment:t1:zuzia',
+    ]);
+    // Osoba bez trafienia zachowuje referencję.
+    expect(saved.people.find((p) => p.id === 'dominik')).toBe(dominikBefore);
+  });
+
+  it('SAVE_TASK NIE dotyka cudzych profili: stary klucz innej osoby zostaje, jej wiersz tą samą referencją', () => {
+    const recentIso = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const base = state({
+      currentUserId: 'zuzia',
+      projects: [project('proj1', 'Projekt')],
+      statuses: [
+        { id: 'status1', name: 'W toku', slug: 'w-toku', color: '#9aa7c4', order: 0, archived: false, isDone: false },
+        { id: 'done', name: 'Gotowe', slug: 'gotowe', color: '#7ee0c3', order: 1, archived: false, isDone: true },
+      ],
+      tasks: [task('t1', { createdBy: 'zuzia', createdAt: recentIso })],
+      assignments: [assignment('a1', 't1', 'dominik')],
+    });
+    // Dominik ma (z chmury) stary klucz wskazujący lokalny uid „a1" — jego wiersz
+    // nie może zostać zmodyfikowany przez zapis Zuzi (poszedłby lustrem jako
+    // UPDATE cudzego profilu).
+    base.people = base.people.map((p) =>
+      p.id === 'dominik' ? { ...p, notificationsReadIds: ['assignment:a1'] } : p,
+    );
+    const dominikBefore = base.people.find((p) => p.id === 'dominik');
+    const t = base.tasks[0];
+    const saved = reducer(base, {
+      type: 'SAVE_TASK',
+      payload: {
+        taskId: 't1',
+        draft: {
+          projectId: t.projectId,
+          statusId: t.statusId,
+          title: 'Zmieniony tytuł',
+          description: t.description,
+          startDate: t.startDate,
+          endDate: t.endDate,
+          estimatedHours: t.estimatedHours,
+          priority: t.priority,
+          workCategoryId: t.workCategoryId,
+          departmentId: t.departmentId,
+          checklist: t.checklist,
+        },
+        assigneeIds: ['dominik'],
+        allocations: [],
+      },
+    });
+    expect(saved).not.toBe(base);
+    expect(saved.people).toBe(base.people);
+    expect(saved.people.find((p) => p.id === 'dominik')).toBe(dominikBefore);
+  });
+
+  it('SAVE_TASK bez starych kluczy zostawia listę osób TĄ SAMĄ referencją', () => {
+    const recentIso = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const base = state({
+      currentUserId: 'zuzia',
+      projects: [project('proj1', 'Projekt')],
+      statuses: [
+        { id: 'status1', name: 'W toku', slug: 'w-toku', color: '#9aa7c4', order: 0, archived: false, isDone: false },
+        { id: 'done', name: 'Gotowe', slug: 'gotowe', color: '#7ee0c3', order: 1, archived: false, isDone: true },
+      ],
+      tasks: [task('t1', { createdBy: 'dominik', createdAt: recentIso })],
+      assignments: [assignment('a1', 't1', 'zuzia')],
+    });
+    const t = base.tasks[0];
+    const saved = reducer(base, {
+      type: 'SAVE_TASK',
+      payload: {
+        taskId: 't1',
+        draft: {
+          projectId: t.projectId,
+          statusId: t.statusId,
+          title: 'Zmieniony tytuł',
+          description: t.description,
+          startDate: t.startDate,
+          endDate: t.endDate,
+          estimatedHours: t.estimatedHours,
+          priority: t.priority,
+          workCategoryId: t.workCategoryId,
+          departmentId: t.departmentId,
+          checklist: t.checklist,
+        },
+        assigneeIds: ['zuzia'],
+        allocations: [],
+      },
+    });
+    expect(saved).not.toBe(base);
+    expect(saved.people).toBe(base.people);
   });
 });

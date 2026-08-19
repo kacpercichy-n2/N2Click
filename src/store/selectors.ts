@@ -2082,9 +2082,21 @@ export const NOTIFICATION_WINDOW_DAYS = 14;
 
 export type NotificationKind = 'mention' | 'assignment';
 
+/** Id wpisu feedu dla przypisania: klucz PARY (taskId, personId) — stabilny
+ *  przez SAVE_TASK, hydrację chmury i między urządzeniami. */
+export function assignmentNotificationId(taskId: string, personId: string): string {
+  return `assignment:${taskId}:${personId}`;
+}
+
 /** One derived notification row for a person. Not persisted; rebuilt per render. */
 export interface PersonNotification {
-  id: string; // stable per source event: `${kind}:${sourceId}`
+  // Stabilny per ZDARZENIE źródłowe: `mention:<commentId>` (id komentarza jest
+  // kluczem głównym w chmurze) i `assignment:<taskId>:<personId>` (PARA — jedyna
+  // tożsamość przypisania: `TaskAssignment.id` to lokalny uid, przebudowywany
+  // przy każdym SAVE_TASK i inny na każdym urządzeniu, więc oznaczenie po nim
+  // wracało jako nieprzeczytane po edycji zadania i nie synchronizowało się
+  // między urządzeniami).
+  id: string;
   kind: NotificationKind;
   actorId: string; // who caused it (never the recipient, never '')
   actorName: string;
@@ -2160,8 +2172,13 @@ export function notificationsForPerson(
   const recipient = getPerson(state, personId);
   const seenMs = new Date(recipient?.notificationsSeenAt ?? '').getTime();
   const readIds = new Set(recipient?.notificationsReadIds ?? []);
-  const isRead = (createdAt: string, id: string): boolean =>
-    (!Number.isNaN(seenMs) && new Date(createdAt).getTime() <= seenMs) || readIds.has(id);
+  // `legacyId`: format sprzed 2026-08-19 (`assignment:<TaskAssignment.id>`) —
+  // zbiory zapisane pod starym kluczem (lokalnie i w chmurze) dalej liczą się
+  // jako przeczytane; nowe oznaczenia idą wyłącznie pod kluczem pary.
+  const isRead = (createdAt: string, id: string, legacyId?: string): boolean =>
+    (!Number.isNaN(seenMs) && new Date(createdAt).getTime() <= seenMs) ||
+    readIds.has(id) ||
+    (legacyId !== undefined && readIds.has(legacyId));
   const out: PersonNotification[] = [];
 
   // 1. @-wzmianki: ktoś inny wspomniał tę osobę w komentarzu.
@@ -2208,8 +2225,9 @@ export function notificationsForPerson(
     if (!withinWindow(assignedAt)) continue;
     const actor = getPerson(state, assignerId);
     if (!actor) continue;
+    const entryId = assignmentNotificationId(a.taskId, a.personId);
     out.push({
-      id: `assignment:${a.id}`,
+      id: entryId,
       kind: 'assignment',
       actorId: assignerId,
       actorName: actor.name,
@@ -2220,7 +2238,7 @@ export function notificationsForPerson(
       // prawdziwy tytuł — maska zostaje dla spójności i obrony w głąb.
       title: `${actor.name} przypisał(a) Ci zadanie — ${taskDisplayTitle(state, task)}`,
       createdAt: assignedAt,
-      read: isRead(assignedAt, `assignment:${a.id}`),
+      read: isRead(assignedAt, entryId, `assignment:${a.id}`),
     });
   }
 

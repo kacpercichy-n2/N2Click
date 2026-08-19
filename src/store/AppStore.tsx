@@ -110,6 +110,7 @@ import {
   type ContentPlanReviewDecision,
 } from '../contentplan/domain';
 import {
+  assignmentNotificationId,
   blockCollidesWithEvent,
   eventDraftConflicts,
   mergeCoversEventOrRecurrence,
@@ -353,7 +354,7 @@ export type Action =
   // wtedy sam znacznik.
   | { type: 'MARK_NOTIFICATIONS_SEEN' }
   // Oznacza JEDEN wpis pochodnego feedu jako przeczytany ('mention:<commentId>'
-  // / 'assignment:<assignmentId>'); id spoza feedu albo już przeczytane => no-op.
+  // / 'assignment:<taskId>:<personId>'); id spoza feedu albo już przeczytane => no-op.
   | { type: 'MARK_NOTIFICATION_ENTRY_READ'; entryId: string }
   // Zgłoszenia zespołu („Zgłoszenia”). Kolekcja addytywna, bez powiązań kaskadowych.
   | { type: 'ADD_TICKET'; draft: TicketDraft }
@@ -658,6 +659,41 @@ function cleanChecklist(items: ChecklistItem[]): ChecklistItem[] {
     .filter((item) => item.text !== '');
 }
 
+/**
+ * Migracja starych kluczy „przeczytane" feedu przy utracie wierszy przypisań:
+ * WYŁĄCZNIE u zalogowanej osoby (`meId`) każdy `assignment:<TaskAssignment.id>`
+ * wskazujący wiersz z `dropped` zostaje ZASTĄPIONY kluczem pary
+ * `assignment:<taskId>:<personId>` (bez duplikatów, kolejność zachowana).
+ * Tylko własny wiersz: stare klucze innych osób wskazują uid ICH przeglądarek
+ * (tu nic nie znaczą), a zmiana cudzego `Person` poszłaby lustrem jako
+ * `UPDATE profiles` cudzego profilu (RLS odrzuca / admin nadpisałby zbiór).
+ * Brak trafienia => TA SAMA referencja listy (inwariant 6 / brak echo-write).
+ */
+function upgradeLegacyAssignmentReadIds(
+  people: readonly Person[],
+  meId: string,
+  dropped: readonly TaskAssignment[],
+): Person[] {
+  if (meId === '' || dropped.length === 0) return people as Person[];
+  const me = people.find((p) => p.id === meId);
+  const ids = me?.notificationsReadIds;
+  if (!me || !ids) return people as Person[];
+  const pairKeyByLegacy = new Map<string, string>();
+  for (const a of dropped) {
+    pairKeyByLegacy.set(`assignment:${a.id}`, assignmentNotificationId(a.taskId, a.personId));
+  }
+  if (!ids.some((id) => pairKeyByLegacy.has(id))) return people as Person[];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const id of ids) {
+    const mapped = pairKeyByLegacy.get(id) ?? id;
+    if (seen.has(mapped)) continue;
+    seen.add(mapped);
+    out.push(mapped);
+  }
+  return people.map((p) => (p.id === meId ? { ...p, notificationsReadIds: out } : p));
+}
+
 function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
   const { taskId, draft, assigneeIds, allocations } = payload;
   // Reject an invalid/empty/reversed/over-cap period so no bad date is ever
@@ -824,6 +860,15 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
     taskId: realTaskId,
     personId,
   }));
+  // Wiersze przypisań tego zadania dostają NOWE uid, więc stare klucze
+  // „przeczytane" feedu (`assignment:<TaskAssignment.id>`, format sprzed
+  // 2026-08-19) straciłyby tu odniesienie — przepisujemy je na klucz pary
+  // (`assignmentNotificationId`) w tym samym przejściu (patrz helper).
+  const people = upgradeLegacyAssignmentReadIds(
+    state.people,
+    state.currentUserId,
+    state.assignments.filter((a) => a.taskId === realTaskId),
+  );
 
   if (resultIsDraft) {
     // Szkic: godziny NIE materializują się w workload (inwariant 1 + 4).
@@ -843,6 +888,7 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
     });
     return {
       ...state,
+      people,
       tasks: draftTasks,
       assignments: [...assignmentsOther, ...assignmentsForTask],
       workload: state.workload,
@@ -1101,6 +1147,7 @@ function saveTask(state: AppData, payload: SaveTaskPayload): AppData {
 
   return {
     ...state,
+    people,
     tasks,
     assignments: [...assignmentsOther, ...assignmentsForTask],
     // Reindex only the touched dated pairs; untouched pairs' rows (and all bin

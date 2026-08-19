@@ -402,7 +402,16 @@
   POCHODNY: `notificationsForPerson` w `src/store/selectors.ts` składa go z
   `comments`, `assignments` i dziennika aktywności w oknie
   `NOTIFICATION_WINDOW_DAYS` (14), id wpisu = `mention:<commentId>` /
-  `assignment:<assignmentId>`; kafelek pokazuje max 3 (`visibleNotifications`).
+  `assignment:<taskId>:<personId>` (klucz PARY przez `assignmentNotificationId`
+  — od 2026-08-19; `TaskAssignment.id` to lokalny uid przebudowywany przy
+  KAŻDYM `SAVE_TASK` i inny na każdym urządzeniu, więc oznaczenie pod nim
+  wracało jako nieprzeczytane po edycji zadania i nie synchronizowało się
+  między urządzeniami; stary klucz `assignment:<TaskAssignment.id>` w zbiorze
+  nadal czyta wpis — kompat wsteczna w `isRead` — a `saveTask` w chwili
+  przebudowy wierszy przypisań przepisuje stare klucze tego zadania na klucz
+  pary przez `upgradeLegacyAssignmentReadIds` — WYŁĄCZNIE u `currentUserId`,
+  bo zmiana cudzego `Person` poszłaby lustrem jako `UPDATE profiles` cudzego
+  profilu; cudze stare klucze i tak wskazują uid innych przeglądarek); kafelek pokazuje max 3 (`visibleNotifications`).
   (2) Kolekcja `notifications` w `AppData` (niżej) jest UŚPIONA — nic w UI jej
   dziś nie czyta.
 - PRZECZYTANE FEEDU: STAN TRWAŁY, DWA ŹRÓDŁA (2026-08-03, per wpis). Wpis jest
