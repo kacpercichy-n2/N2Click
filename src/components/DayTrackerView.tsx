@@ -90,17 +90,23 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
   // „Zapisywanie… / Zapisano HH:mm", a nieudany zapis trwale „Nie zapisano”.
   // Linia statusu pod paskiem opisuje więc SKUTEK W DANYCH („Dodane…"), nigdy
   // nie twierdzi, że coś zostało utrwalone.
-  const { saveError, retryPersist } = usePersistence();
+  const { saveError, persistSeq, requestImmediatePersist } = usePersistence();
   const { status: saveState, savedAtLabel, markSaved } = useSaveStatus(false, saveError !== null);
-  // Udany commit NIE ogłasza zapisu od razu: prosi o natychmiastowe utrwalenie
-  // w efekcie PO przerenderowaniu (wtedy provider ma już nowy stan), a odznaka
-  // „Zapisano” rusza dopiero, gdy `retryPersist()` zwróci sukces. Nieudany
-  // zapis zostawia `saveError`, więc odznaka pokazuje trwale „Nie zapisano”.
-  const [flushRequest, setFlushRequest] = useState(0);
+  // Udany commit NIE ogłasza zapisu od razu: prosi provider o zapis
+  // natychmiastowy (jeden zapis w jego efekcie persist, bez zaległego duplikatu
+  // w koalescerze) i zapamiętuje licznik udanych zapisów. Odznaka „Zapisano”
+  // rusza dopiero, gdy licznik wzrośnie; nieudany zapis zostawia `saveError`,
+  // więc odznaka pokazuje trwale „Nie zapisano”.
+  const [awaitingSeq, setAwaitingSeq] = useState<number | null>(null);
   useEffect(() => {
-    if (flushRequest === 0) return;
-    if (retryPersist()) markSaved();
-  }, [flushRequest, retryPersist, markSaved]);
+    if (awaitingSeq === null) return;
+    if (persistSeq > awaitingSeq) {
+      setAwaitingSeq(null);
+      markSaved();
+    } else if (saveError !== null) {
+      setAwaitingSeq(null);
+    }
+  }, [awaitingSeq, persistSeq, saveError, markSaved]);
   /** Dispatch + sprawdzenie KONKRETNEGO skutku na zatwierdzonym stanie (nie sama
    *  zmiana referencji): `verify(after)` mówi, czy stało się to, co obiecujemy.
    *  Udany commit zamawia natychmiastowe utrwalenie (patrz wyżej). */
@@ -109,7 +115,10 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
     dispatch(action);
     const after = storeApi.getState();
     const ok = after !== before && verify(after, before);
-    if (ok) setFlushRequest((n) => n + 1);
+    if (ok) {
+      requestImmediatePersist();
+      setAwaitingSeq(persistSeq);
+    }
     return ok;
   };
   const personId = state.currentUserId;

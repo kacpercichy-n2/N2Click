@@ -488,9 +488,13 @@
   zapisie do pamięci mówi WYŁĄCZNIE odznaka `SaveStatus` (`useSaveStatus` +
   `usePersistence().saveError`, wzorzec TaskModal): „Zapisywanie… → Zapisano
   HH:mm", nieudany zapis trwale „Nie zapisano". Tracker NIE czeka na
-  koalescencję: po udanym commicie prosi w efekcie (po przerenderowaniu) o
-  `retryPersist()` — natychmiastowy zapis bieżącego stanu — i dopiero jego
-  `true` uruchamia odznakę; `retryPersist` zwraca od 2026-08-19 wynik zapisu.
+  koalescencję i NIE pisze obok niej: po udanym commicie woła
+  `usePersistence().requestImmediatePersist()` (flaga zużywana w efekcie persist
+  providera: `coalescer.schedule` + `coalescer.flush()` = JEDEN zapis, zero
+  zaległego duplikatu, który mógłby nadpisać zapis innej karty) i czeka, aż
+  `persistSeq` (licznik UDANYCH zapisów, rośnie z koalescera i ścieżek
+  natychmiastowych) przekroczy wartość z chwili dispatchu — dopiero wtedy
+  odznaka „Zapisano". `retryPersist` zwraca od 2026-08-19 wynik zapisu.
   Selektory POCHODNE w `src/store/timeTracking.ts`
   (`timeEntriesForPersonDate`, `loggedMinutesFor*`, `plannedMinutesForPersonDate`,
   `portionLoggedMinutes` — zalogowany czas zadania z dnia wypełnia porcje planu

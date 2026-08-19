@@ -5098,9 +5098,23 @@ export interface PersistenceValue {
   saveError: SaveFailureReason | null;
   external: ExternalDataStatus;
   /** Re-attempt saveData(current state) NOW (synchronicznie, z pominięciem
-   *  koalescencji). Zwraca wynik zapisu, żeby powierzchnia mogła potwierdzić
-   *  utrwalenie dopiero PO faktycznym zapisie (tracker czasu). */
+   *  koalescencji). Zwraca wynik zapisu. */
   retryPersist: () => boolean;
+  /**
+   * Licznik UDANYCH zapisów do pamięci (rośnie po każdym `saveData` z `ok`,
+   * z koalescera i ścieżek natychmiastowych). Powierzchnia, która chce
+   * potwierdzić utrwalenie KONKRETNEJ zmiany, zapamiętuje wartość przy
+   * dispatchu i czeka, aż licznik ją przekroczy (tracker czasu).
+   */
+  persistSeq: number;
+  /**
+   * Poproś, żeby NAJBLIŻSZY zapis po tym dispatchu poszedł od razu (bez okna
+   * koalescencji). Realizowany WEWNĄTRZ efektu persist providera: jeden zapis,
+   * żadnego zaległego, zduplikowanego wpisu w koalescerze (który mógłby potem
+   * po cichu nadpisać zapis innej karty). Flaga zużywa się przy najbliższym
+   * przejściu stanu.
+   */
+  requestImmediatePersist: () => void;
   /** Replace local state with loadData() (UI confirms first). */
   acceptExternal: () => void;
   /** Write current state NOW, overwriting the external version. */
@@ -5147,6 +5161,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const [saveError, setSaveError] = useState<SaveFailureReason | null>(null);
+  // Licznik udanych zapisów + jednorazowa prośba o zapis natychmiastowy (patrz
+  // PersistenceValue.persistSeq / requestImmediatePersist).
+  const [persistSeq, setPersistSeq] = useState(0);
+  const immediatePersistRef = useRef(false);
   const [external, setExternal] = useState<ExternalDataStatus>('none');
   const [loadError, setLoadError] = useState<Error | null>(null);
 
@@ -5192,6 +5210,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         saveErrorRef.current = result.ok ? null : result.reason;
         setSaveError(result.ok ? null : result.reason);
         if (result.ok) setExternal((prev) => (prev === 'conflict' ? 'none' : prev));
+        if (result.ok) setPersistSeq((n) => n + 1);
       },
       delayMs: PERSIST_COALESCE_MS,
     });
@@ -5216,6 +5235,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     if (skipPersistRef.current) {
       skipPersistRef.current = false;
       lastPersistAttemptRef.current = state;
+      immediatePersistRef.current = false;
       return;
     }
     if (lastPersistAttemptRef.current === state) return;
@@ -5227,9 +5247,16 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     // hydration/queue-drain/error/pagehide instead. Leave `saveError` unchanged
     // (no false `Zapisano`, no false error). Any degradation resumes local writes.
     if (prevAttempted !== null && shouldSkipLocalPersist(prevAttempted, state)) {
+      immediatePersistRef.current = false;
       return;
     }
     coalescer.schedule(state);
+    // Prośba o zapis natychmiastowy: TEN SAM koalescer pisze od razu i czyści
+    // swój slot — w kolejce nie zostaje żaden zaległy duplikat tego stanu.
+    if (immediatePersistRef.current) {
+      immediatePersistRef.current = false;
+      coalescer.flush();
+    }
   }, [state]);
 
   // Mount-once: force any pending coalesced save to disk before the tab is
@@ -5302,7 +5329,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     saveErrorRef.current = result.ok ? null : result.reason;
     setSaveError(result.ok ? null : result.reason);
     if (result.ok) setExternal((prev) => (prev === 'conflict' ? 'none' : prev));
+    if (result.ok) setPersistSeq((n) => n + 1);
     return result.ok;
+  }, []);
+
+  const requestImmediatePersist = useCallback(() => {
+    immediatePersistRef.current = true;
   }, []);
 
   const acceptExternal = useCallback(() => {
@@ -5326,6 +5358,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     const result = saveData(stateRef.current);
     setSaveError(result.ok ? null : result.reason);
     if (result.ok) setExternal('none');
+    if (result.ok) setPersistSeq((n) => n + 1);
   }, []);
 
   const dismissExternalNotice = useCallback(() => {
@@ -5353,8 +5386,19 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       acceptExternal,
       keepLocal,
       dismissExternalNotice,
+      persistSeq,
+      requestImmediatePersist,
     }),
-    [saveError, external, retryPersist, acceptExternal, keepLocal, dismissExternalNotice],
+    [
+      saveError,
+      external,
+      retryPersist,
+      acceptExternal,
+      keepLocal,
+      dismissExternalNotice,
+      persistSeq,
+      requestImmediatePersist,
+    ],
   );
 
   // Storage-event callbacks and explicit conflict acceptance run outside
