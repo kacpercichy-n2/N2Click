@@ -528,12 +528,20 @@
   pokryty). Poprawka godzin na TYM SAMYM zadaniu wolno także po jego zamknięciu
   (korekta faktu, np. po auto-„Gotowe"); zmiana na inne zadanie wymaga zadania
   przyjmującego czas. (5) `SETTLE_TRACKED_DAY
-  {personId, date, nowMinutes|null}`: dla osoby śledzącej dzień (≥1 wpis)
-  niewykonany blok, którego koniec minął o ≥15 min (`SETTLE_GRACE_MINUTES`),
-  oddaje niepokrytą część do JEDNEGO wiersza zasobnika pary, a sam kurczy się do
-  pokrycia (wtedy `done`) albo znika; zadania „zrobione" i dni bez wpisów
-  nietknięte; dispatch z `CalendarPage` (dziś, co minutę) i `DayTrackerView`
-  (oglądany dzień, co minutę i po zmianie wpisów). Selektory POCHODNE w
+  {personId, date, nowMinutes|null}`: niewykonany blok, którego koniec minął
+  o ≥15 min (`SETTLE_GRACE_MINUTES`), oddaje niepokrytą część do JEDNEGO
+  wiersza zasobnika pary, a sam kurczy się do pokrycia (wtedy `done`) albo
+  znika; zadania „zrobione" pomijane. `nowMinutes` PODANE = automat, działa
+  tylko na dniu śledzonym (≥1 wpis osoby); `null` = jawne rozliczenie z
+  popoutu, działa też na dniu bez wpisów; dispatch AUTOMATEM wyłącznie dla
+  DZISIAJ: z `CalendarPage` (co
+  minutę) i `DayTrackerView` (co minutę i po zmianie wpisów). Dzień MINIONY
+  (2026-08-20) nie rozlicza się sam — `DayTrackerView` pokazuje popout
+  `.tt-settle` (kandydaci z `unsettledPlanBlocks`) i dopiero „Oddaj do
+  zasobnika" wysyła `SETTLE_TRACKED_DAY {nowMinutes: null}`; alternatywa
+  „Zalicz jako wykonane" idzie przez `SET_BLOCK_DONE` per blok, a dla bloku
+  częściowo pokrytego przez `ADD_TIME_ENTRY` na samą resztę
+  (`freeRemainderRange`) — pełny wpis 1:1 zdublowałby pokrycie z puli dnia. Selektory POCHODNE w
   `src/store/timeTracking.ts`
   (`timeEntriesForPersonDate`, `loggedMinutesFor*`, `plannedMinutesForPersonDate`,
   `portionLoggedMinutes` — zalogowany czas zadania z dnia wypełnia porcje planu

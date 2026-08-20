@@ -14,10 +14,20 @@
 // „Tydzień" (inwariant 7: żadna ścieżka wskaźnika WeekView nie jest dotykana).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
-import type { AppData, DateStr, TimeEntry } from '../types';
+import type { AppData, DateStr, TimeEntry, WorkloadEntry } from '../types';
 import { usePersistence, useStoreApi, type Action } from '../store/AppStore';
 import { useSaveStatus } from '../utils/useSaveStatus';
-import { getClient, getPerson, getProject, getTask } from '../store/selectors';
+import {
+  blocksForPersonDate,
+  calendarEventsForDate,
+  getClient,
+  getPerson,
+  getProject,
+  getTask,
+  isDoneStatus,
+} from '../store/selectors';
+import { useCan } from '../store/useCan';
+import { OverlayLayer, useOverlay } from './useOverlay';
 import { projectDisplayName, taskDisplayTitle } from '../store/confidentiality';
 import { useConfirm } from './ConfirmProvider';
 import { planGrowth } from '../store/timeTrackingSync';
@@ -32,10 +42,21 @@ import {
   plannedMinutesForPersonDate,
   resolveTaskByTitle,
   timeEntriesForPersonDate,
+  unsettledPlanBlocks,
   type DayPlanItem,
 } from '../store/timeTracking';
-import { formatMinutes, hoursToMinutes } from '../utils/time';
-import { findOverlappingEntry, formatMinutesDuration, isValidTimeRange } from '../utils/timeTracking';
+import {
+  HOURS_STEP,
+  MINUTE_STEP,
+  findFreeStart,
+  formatDuration,
+  formatMinutes,
+  hoursToMinutes,
+  isBinEntry,
+  nextFreeStart,
+  snapHours,
+} from '../utils/time';
+import { findOverlappingEntry, formatMinutesDuration, freeRemainderRange, isValidTimeRange } from '../utils/timeTracking';
 import { isTodayStr, todayStr, weekDays } from '../utils/dates';
 import { useNowTick } from '../utils/useNowTick';
 import { TimeTrackerBar, type TrackerFormState, type TrackerStatus } from './TimeTrackerBar';
@@ -59,6 +80,17 @@ const DEFAULT_DAY_NORM_MINUTES = 8 * 60;
 const STATUS_TTL_MS = 7000;
 const OFF_HOURS_START = 9 * 60;
 const OFF_HOURS_END = 17 * 60;
+
+// "HH:MM" ↔ minuty od północy, z zerami dla natywnego <input type="time">.
+function timeToMinutes(value: string): number {
+  const [h, m] = value.split(':');
+  return Number(h) * 60 + Number(m);
+}
+function minutesToTimeStr(min: number): string {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
 
 function emptyForm(date: DateStr, state: AppData, personId: string): TrackerFormState {
   // Start = za ostatnim wpisem dnia (albo 9:00); dziś: nie później niż teraz.
@@ -178,6 +210,64 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
     [plan],
   );
   const axisHeight = (range.endHour - range.startHour) * TRACKER_PX_PER_HOUR;
+
+  // Tik minutowy stoi PRZED pochodnymi „miniony dzień": `today` musi być
+  // zależnością memo, żeby po północy oglądany „dzisiaj" stał się dniem
+  // minionym bez czekania na zmianę danych (re-render gwarantuje tik).
+  const now = useNowTick(60_000);
+  const nowMinutes = isTodayStr(date) ? now.getHours() * 60 + now.getMinutes() : null;
+  const today = todayStr();
+
+  // Miniony dzień: niewykonane bloki NIE znikają same — czekają w popoucie
+  // rozliczenia na decyzję (zaliczyć / oddać do zasobnika / zostawić). Bez
+  // bramki „dzień śledzony": blok dodany wstecz na pusty dzień też ma dostać
+  // pytanie (jawne rozliczenie z `nowMinutes: null` działa bez wpisów).
+  const pastDue = useMemo(
+    () => (date < today ? unsettledPlanBlocks(plan) : []),
+    [plan, date, today],
+  );
+  const settleKey = `${personId}|${date}`;
+  const [settleDismissed, setSettleDismissed] = useState<string | null>(null);
+
+  // ---- „+ Z zasobnika": planowanie na oglądany dzień (formularz, zero
+  // ścieżek wskaźnika — przeciąganie zostaje w WeekView, inwariant 7) ----
+  const can = useCan();
+  const canPlanFromBin = personId !== '' && (can('blocks.editAny') || can('blocks.editOwn'));
+  // Wiersze zasobnika zalogowanej osoby; szkice i zadania „zrobione" nie
+  // planują godzin, wiersz musi unieść co najmniej kwadrans.
+  const binRows = useMemo(() => {
+    const rows: Array<{ entry: WorkloadEntry; title: string; clientName: string }> = [];
+    for (const w of state.workload) {
+      if (w.personId !== personId || !isBinEntry(w)) continue;
+      if (!Number.isFinite(w.plannedHours) || Math.round(w.plannedHours / HOURS_STEP) < 1) continue;
+      const t = getTask(state, w.taskId);
+      if (t === undefined || t.isDraft === true || isDoneStatus(state, t.statusId)) continue;
+      const project = getProject(state, t.projectId);
+      const client = project ? getClient(state, project.clientId) : undefined;
+      rows.push({ entry: w, title: taskDisplayTitle(state, t), clientName: client?.name ?? '' });
+    }
+    return rows.sort((a, b) => a.title.localeCompare(b.title, 'pl'));
+  }, [state, personId]);
+  const [binOpen, setBinOpen] = useState(false);
+  const [binEntryId, setBinEntryId] = useState('');
+  const [binHoursRaw, setBinHoursRaw] = useState('1');
+  const [binStart, setBinStart] = useState('09:00');
+  const binPopRef = useRef<HTMLDivElement | null>(null);
+  // Dwa przyciski otwierające (nagłówek Planu i pusty stan) — kotwicą jest ten
+  // faktycznie kliknięty, zapamiętany przy otwarciu.
+  const binAnchorRef = useRef<HTMLElement | null>(null);
+  const binOverlay = useOverlay({
+    open: binOpen,
+    onClose: () => setBinOpen(false),
+    overlayRef: binPopRef,
+    getAnchorRect: () => {
+      const el = binAnchorRef.current;
+      return el !== null && el.isConnected ? el.getBoundingClientRect() : null;
+    },
+    triggerRef: binAnchorRef,
+    closeOnAnchorOutOfView: true,
+    offset: 4,
+  });
 
   const loggedToday = loggedMinutesForPersonDate(state, personId, date);
   const plannedToday = plannedMinutesForPersonDate(state, personId, date);
@@ -419,6 +509,179 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
       say(`„${item.title}”: blok odznaczony, wpis z tego bloku usunięty.`, 'info');
     }
   };
+  // ---- popout rozliczenia minionego dnia (decyzja zamiast automatu) ----
+  /** Odmiana „N bloków": 1 blok, 2-4 bloki, 5+ bloków (z wyjątkiem 12-14). */
+  const blocksNoun = (n: number): string => {
+    if (n === 1) return 'blok';
+    const d = n % 10;
+    const h = n % 100;
+    return d >= 2 && d <= 4 && (h < 12 || h > 14) ? 'bloki' : 'bloków';
+  };
+  const settlePastAsDone = () => {
+    const due = pastDue;
+    let doneCount = 0;
+    for (const item of due) {
+      if (item.portionLogged === 0) {
+        // Blok bez pokrycia: pełny wpis 1:1 w jego godzinach (o ile wolne).
+        const ok = commit(
+          { type: 'SET_BLOCK_DONE', entryId: item.block.id, done: true },
+          (after) => after.workload.some((w) => w.id === item.block.id && w.done === true),
+        );
+        if (ok) doneCount++;
+        continue;
+      }
+      // Blok CZĘŚCIOWO pokryty: pełny wpis 1:1 zdublowałby pokrytą część
+      // (pokrycie liczy się pulą zadania z dnia, nie nakładką godzin, więc
+      // godziny bloku bywają wolne mimo pokrycia). Dopisujemy WYŁĄCZNIE
+      // brakującą resztę w wolnym kawałku godzin bloku; pełne pokrycie
+      // odhacza blok samo (resyncBlockDone w ADD_TIME_ENTRY).
+      const remaining = item.plannedMinutes - item.portionLogged;
+      const free = freeRemainderRange(
+        storeApi.getState().timeEntries,
+        personId,
+        date,
+        item.startMinutes,
+        item.endMinutes,
+        remaining,
+      );
+      const ok =
+        free !== null &&
+        commit(
+          {
+            type: 'ADD_TIME_ENTRY',
+            payload: {
+              personId,
+              taskId: item.task.id,
+              date,
+              startMinutes: free[0],
+              endMinutes: free[1],
+              source: 'manual',
+            },
+          },
+          (after) => after.workload.some((w) => w.id === item.block.id && w.done === true),
+        );
+      if (ok) doneCount++;
+    }
+    if (doneCount === 0) {
+      say('Nie udało się zaliczyć bloków: ich godziny zajmują już inne wpisy. Popraw wykonanie obok i spróbuj ponownie.', 'error');
+      return;
+    }
+    say(
+      doneCount === due.length
+        ? `Zaliczone do przeszłości: ${doneCount} ${blocksNoun(doneCount)} wykonane, wykonanie uzupełnione wpisami tam, gdzie godziny były wolne.`
+        : `Zaliczone ${doneCount} z ${due.length} bloków — pozostałym godziny zajmują inne wpisy. Popraw wykonanie obok i ponów.`,
+      'ok',
+    );
+  };
+  const settlePastToBin = () => {
+    const minutes = pastDue.reduce((s, item) => s + (item.plannedMinutes - item.portionLogged), 0);
+    const ok = commit(
+      { type: 'SETTLE_TRACKED_DAY', personId, date, nowMinutes: null },
+      (after, before) => after.workload !== before.workload,
+    );
+    say(
+      ok
+        ? `Niewykonane ${formatMinutesDuration(minutes)} wróciło do zasobnika. Znajdziesz je w widoku „Tydzień”.`
+        : 'Nie było już nic do rozliczenia. Widok jest aktualny.',
+      ok ? 'info' : 'error',
+    );
+  };
+
+  // ---- „+ Z zasobnika": sugestia startu, walidacja i zapis (reduktor
+  // `SCHEDULE_BIN_PART` pozostaje autorytatywny — UI tylko podpowiada) ----
+  const suggestBinStart = (taskId: string, hours: number): string => {
+    const dur = hoursToMinutes(hours);
+    const blocks = blocksForPersonDate(state, personId, date);
+    const sameTask = blocks.filter((b) => b.taskId === taskId);
+    // Spotkania imienne i urlop jako pseudo-bloki podpowiedzi (wzór „Zaplanuj
+    // część" z WeekView); ogólnofirmowe nie blokują zapisu, więc nie wchodzą.
+    const events = calendarEventsForDate(state, date, new Set([personId]))
+      .filter((occ) => occ.event.attendeeIds.length > 0)
+      .map((occ) => ({ startMinutes: occ.startMinutes, plannedHours: occ.durationMinutes / 60 }));
+    const occupied = [...blocks, ...events];
+    return minutesToTimeStr(findFreeStart(occupied, dur, sameTask) ?? nextFreeStart(occupied, dur));
+  };
+  const defaultBinHours = (row: { entry: WorkloadEntry }): number =>
+    Math.max(
+      HOURS_STEP,
+      Math.min(
+        snapHours(row.entry.plannedHours),
+        person !== undefined && person.capacity > 0 ? snapHours(person.capacity) : 8,
+        24,
+      ),
+    );
+  const openBinAdd = (btn: HTMLElement) => {
+    const row = binRows.find((r) => r.entry.id === binEntryId) ?? binRows[0];
+    if (row === undefined) return;
+    binAnchorRef.current = btn;
+    const hours = defaultBinHours(row);
+    setBinEntryId(row.entry.id);
+    setBinHoursRaw(String(hours));
+    setBinStart(suggestBinStart(row.entry.taskId, hours));
+    setBinOpen(true);
+  };
+  const onBinTaskChange = (id: string) => {
+    setBinEntryId(id);
+    const row = binRows.find((r) => r.entry.id === id);
+    if (row === undefined) return;
+    const hours = defaultBinHours(row);
+    setBinHoursRaw(String(hours));
+    setBinStart(suggestBinStart(row.entry.taskId, hours));
+  };
+  const binRow = binRows.find((r) => r.entry.id === binEntryId);
+  const binRawHours = Number(binHoursRaw);
+  const binHours = Number.isNaN(binRawHours) ? NaN : snapHours(Math.min(24, binRawHours));
+  const binStartMin = timeToMinutes(binStart);
+  const binDurMin = Number.isNaN(binHours) ? 0 : hoursToMinutes(binHours);
+  let binWarning: string | null = null;
+  let binDisabled = binRow === undefined;
+  if (binOpen && binRow !== undefined) {
+    if (Number.isNaN(binHours) || binHours <= 0) {
+      binDisabled = true; // cicho, jak formularze WeekView
+    } else if (Math.round(binHours / HOURS_STEP) > Math.round(binRow.entry.plannedHours / HOURS_STEP)) {
+      binWarning = `⚠ W zasobniku pozostało tylko ${formatDuration(binRow.entry.plannedHours)}.`;
+      binDisabled = true;
+    } else if (!Number.isFinite(binStartMin) || binStartMin % MINUTE_STEP !== 0) {
+      binWarning = '⚠ Start musi być w krokach co 15 minut.';
+      binDisabled = true;
+    } else if (binStartMin + binDurMin > 24 * 60) {
+      binWarning = '⚠ Blok nie mieści się w dobie — wybierz wcześniejszy start albo mniej godzin.';
+      binDisabled = true;
+    }
+  }
+  const submitBinAdd = () => {
+    if (binRow === undefined || binDisabled) return;
+    const row = binRow;
+    const ok = commit(
+      { type: 'SCHEDULE_BIN_PART', entryId: row.entry.id, date, startMinutes: binStartMin, hours: binHours },
+      (after) =>
+        after.workload.some(
+          (w) =>
+            w.taskId === row.entry.taskId &&
+            w.personId === personId &&
+            w.date === date &&
+            w.startMinutes === binStartMin &&
+            !isBinEntry(w),
+        ),
+    );
+    if (!ok) {
+      say(
+        'Nie udało się dodać do planu: godziny kolidują z blokiem albo spotkaniem, albo masz w tym dniu urlop. Zmień start i spróbuj ponownie.',
+        'error',
+      );
+      return;
+    }
+    setBinOpen(false);
+    // Świeży blok minionego dnia ma od razu trafić do popoutu rozliczenia,
+    // nawet jeśli wcześniejszy popout został odłożony przyciskiem „Zostaw plan".
+    setSettleDismissed(null);
+    say(
+      `Dodane do planu: „${row.title}” ${formatMinutes(binStartMin)}-${formatMinutes(binStartMin + binDurMin)}.` +
+        (date < todayStr() ? ' Zalicz blok kółkiem na kaflu albo w popoucie rozliczenia.' : ''),
+      'ok',
+    );
+  };
+
   const clickEvent = (item: Extract<DayPlanItem, { kind: 'event' }>) => {
     if (item.entry !== undefined) {
       const entryId = item.entry.id;
@@ -507,15 +770,16 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
     setFocusSignal((n) => n + 1);
   };
 
-  // ---- „teraz" + rozliczenie minionych bloków (przeszłość = fakty) ----
-  const now = useNowTick(60_000);
-  const nowMinutes = isTodayStr(date) ? now.getHours() * 60 + now.getMinutes() : null;
-  // Uruchamiane co minutę ORAZ po każdej zmianie wpisów dnia (pierwszy wpis
-  // czyni dzień „śledzonym" i od razu rozlicza minione bloki). Reduktor zwraca
-  // tę samą referencję, gdy nie ma nic do rozliczenia, więc bez pętli.
+  // ---- rozliczenie minionych bloków (automat TYLKO dzisiaj; tik zegara i
+  // `nowMinutes` liczone wyżej, przed pochodnymi popoutu) ----
+  // Automat rozlicza wyłącznie DZISIEJSZE bloki (15 min po końcu → zasobnik).
+  // Dzień MINIONY pyta popoutem (wyżej w JSX): rzeczy ustawiane wstecz nie mogą
+  // znikać bez decyzji użytkownika. Uruchamiane co minutę ORAZ po każdej
+  // zmianie wpisów dnia (pierwszy wpis czyni dzień „śledzonym"). Reduktor
+  // zwraca tę samą referencję, gdy nie ma nic do rozliczenia, więc bez pętli.
   useEffect(() => {
-    if (personId === '' || date > todayStr()) return;
-    dispatch({ type: 'SETTLE_TRACKED_DAY', personId, date, nowMinutes: isTodayStr(date) ? nowMinutes : null });
+    if (personId === '' || nowMinutes === null) return;
+    dispatch({ type: 'SETTLE_TRACKED_DAY', personId, date, nowMinutes });
   }, [dispatch, personId, date, nowMinutes, entries]);
 
   if (person === undefined) {
@@ -561,11 +825,53 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
         focusSignal={focusSignal}
       />
 
+      {pastDue.length > 0 && settleDismissed !== settleKey ? (
+        <div className="tt-settle" role="region" aria-label="Rozliczenie minionego dnia">
+          <div className="tt-settle-text">
+            <b>
+              {pastDue.length === 1
+                ? 'Ten miniony dzień ma 1 zaplanowany blok bez wykonania.'
+                : blocksNoun(pastDue.length) === 'bloki'
+                  ? `Ten miniony dzień ma ${pastDue.length} zaplanowane bloki bez wykonania.`
+                  : `Ten miniony dzień ma ${pastDue.length} zaplanowanych bloków bez wykonania.`}
+            </b>
+            <span className="tt-settle-list">
+              {pastDue
+                .map((item) => `„${item.title}” ${formatMinutes(item.startMinutes)}-${formatMinutes(item.endMinutes)}`)
+                .join(' · ')}
+            </span>
+            <span>Zaliczyć jako wykonane (wpis 1:1 w godzinach bloku), czy oddać godziny do zasobnika?</span>
+          </div>
+          <div className="tt-settle-actions">
+            <button type="button" className="tt-settle-btn primary" onClick={settlePastAsDone}>
+              Zalicz jako wykonane
+            </button>
+            <button type="button" className="tt-settle-btn" onClick={settlePastToBin}>
+              Oddaj do zasobnika
+            </button>
+            <button type="button" className="tt-settle-btn ghost" onClick={() => setSettleDismissed(settleKey)}>
+              Zostaw plan
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="tt-body">
         <div className="tt-grid">
           <div className="tt-col-head tt-col-head-plan">
             <h2>Plan</h2>
             <span>{plannedToday > 0 ? `${formatMinutesDuration(plannedToday)} zaplanowane` : 'nic nie zaplanowano'}</span>
+            {canPlanFromBin && binRows.length > 0 ? (
+              <button
+                type="button"
+                className="tt-bin-add"
+                aria-haspopup="dialog"
+                aria-expanded={binOpen}
+                onClick={(e) => openBinAdd(e.currentTarget)}
+              >
+                + Z zasobnika
+              </button>
+            ) : null}
           </div>
           <div className="tt-axis-head" aria-hidden />
           <div className="tt-col-head tt-col-head-work">
@@ -577,6 +883,14 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
             <div className="tt-grid-bg" style={{ '--tt-hour': `${TRACKER_PX_PER_HOUR}px` } as React.CSSProperties} />
             <div className="tt-offhours" style={{ top: 0, height: Math.max(0, offTop) }} />
             <div className="tt-offhours" style={{ top: offBottomFrom, bottom: 0 }} />
+            {plan.length === 0 && canPlanFromBin && binRows.length > 0 ? (
+              <div className="tt-plan-empty">
+                <span>Nic nie zaplanowano na ten dzień.</span>
+                <button type="button" className="tt-settle-btn" onClick={(e) => openBinAdd(e.currentTarget)}>
+                  + Dodaj z zasobnika
+                </button>
+              </div>
+            ) : null}
             {plan.map((item) => {
               if (item.kind === 'event') {
                 const slot = planLayout.get(`ev-${item.event.id}-${item.startMinutes}`);
@@ -825,6 +1139,60 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
           </p>
         </aside>
       </div>
+
+      {binOpen && binRow !== undefined ? (
+        <OverlayLayer>
+          <div
+            ref={binPopRef}
+            className="tt-bin-popover"
+            style={binOverlay.style}
+            role="dialog"
+            aria-label="Dodaj do planu z zasobnika"
+          >
+            <div className="tt-bin-pop-title">Dodaj do planu z zasobnika</div>
+            <label className="tt-bin-field">
+              Zadanie
+              <select value={binEntryId} onChange={(e) => onBinTaskChange(e.target.value)}>
+                {binRows.map((r) => (
+                  <option key={r.entry.id} value={r.entry.id}>
+                    {r.title}
+                    {r.clientName !== '' ? ` · ${r.clientName}` : ''} — {formatDuration(r.entry.plannedHours)} w zasobniku
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="tt-bin-row">
+              <label className="tt-bin-field">
+                Start
+                <input type="time" step={900} value={binStart} onChange={(e) => setBinStart(e.target.value)} />
+              </label>
+              <label className="tt-bin-field">
+                Godziny
+                <input
+                  type="number"
+                  min={0.25}
+                  max={snapHours(binRow.entry.plannedHours)}
+                  step={0.25}
+                  value={binHoursRaw}
+                  onChange={(e) => setBinHoursRaw(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') submitBinAdd();
+                  }}
+                />
+              </label>
+            </div>
+            {binWarning !== null ? <p className="tt-bin-warning">{binWarning}</p> : null}
+            <div className="tt-settle-actions">
+              <button type="button" className="tt-settle-btn primary" onClick={submitBinAdd} disabled={binDisabled}>
+                Dodaj do planu
+              </button>
+              <button type="button" className="tt-settle-btn ghost" onClick={() => setBinOpen(false)}>
+                Anuluj
+              </button>
+            </div>
+          </div>
+        </OverlayLayer>
+      ) : null}
     </section>
   );
 }

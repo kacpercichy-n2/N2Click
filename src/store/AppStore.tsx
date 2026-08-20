@@ -994,16 +994,19 @@ function unlinkEntryForBlock(state: AppData, block: WorkloadEntry): AppData {
 }
 
 /**
- * SETTLE_TRACKED_DAY: przeszłość w kalendarzu = fakty. Dla osoby, która
- * śledzi dzień (≥1 wpis tego dnia), każdy NIEwykonany datowany blok, którego
- * koniec minął o ≥15 min, oddaje niepokrytą część do zasobnika: blok kurczy
- * się do pokrycia (i jest wtedy wykonany) albo znika, a minuty dochodzą do
- * JEDNEGO wiersza zasobnika pary (inwariant 4). Zadania „zrobione" pomijane.
+ * SETTLE_TRACKED_DAY: przeszłość w kalendarzu = fakty. Każdy NIEwykonany
+ * datowany blok, którego koniec minął o ≥15 min, oddaje niepokrytą część do
+ * zasobnika: blok kurczy się do pokrycia (i jest wtedy wykonany) albo znika,
+ * a minuty dochodzą do JEDNEGO wiersza zasobnika pary (inwariant 4). Zadania
+ * „zrobione" pomijane. `nowMinutes` podane = AUTOMAT (dzisiaj, co minutę) —
+ * działa wyłącznie na dniu śledzonym (≥1 wpis osoby). `nowMinutes: null` =
+ * JAWNE rozliczenie z popoutu widoku dnia — działa też na dniu bez wpisów
+ * (pusty miniony dzień z blokiem dodanym wstecz musi dać się rozliczyć).
  */
 const SETTLE_GRACE_MINUTES = 15;
 function settleTrackedDay(state: AppData, personId: string, date: string, nowMinutes: number | null): AppData {
   if (!isValidDateStr(date) || !hasEntity(state, 'person', personId)) return state;
-  if (!state.timeEntries.some((e) => e.personId === personId && e.date === date)) return state;
+  if (nowMinutes !== null && !state.timeEntries.some((e) => e.personId === personId && e.date === date)) return state;
   const blocks = state.workload.filter(
     (w) => w.personId === personId && w.date === date && !isBinEntry(w) && w.done !== true,
   );

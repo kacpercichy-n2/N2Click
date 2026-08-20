@@ -167,6 +167,17 @@ export function dayPlanForPerson(state: AppData, personId: string, date: DateStr
   return out.sort((a, b) => a.startMinutes - b.startMinutes);
 }
 
+/**
+ * Bloki planu dnia bez pełnego wykonania — kandydaci do rozliczenia w widoku
+ * „Dzień" dla dnia MINIONEGO. Blok wykonany (per blok albo statusem zadania)
+ * i blok w pełni pokryty wpisami wypadają; kolejność planu zostaje.
+ */
+export function unsettledPlanBlocks(plan: DayPlanItem[]): DayPlanBlock[] {
+  return plan.filter(
+    (p): p is DayPlanBlock => p.kind === 'block' && !p.done && p.portionLogged < p.plannedMinutes,
+  );
+}
+
 // ---- Podpowiedzi paska ----
 
 export interface TrackerSuggestion {

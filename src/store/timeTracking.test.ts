@@ -8,12 +8,14 @@ import {
   dayPlanForPerson,
   loggedMinutesForPersonDate,
   loggedMinutesForTask,
+  loggedMinutesForTaskPersonDate,
   portionLoggedMinutes,
   resolveTaskByTitle,
   timeEntriesForPersonDate,
   trackerSuggestions,
+  unsettledPlanBlocks,
 } from './timeTracking';
-import { isValidTimeRange, findOverlappingEntry, formatMinutesDuration, frecencyScore } from '../utils/timeTracking';
+import { isValidTimeRange, findOverlappingEntry, formatMinutesDuration, frecencyScore, freeRemainderRange } from '../utils/timeTracking';
 import type { AppData, Client, Person, Project, Status, Task, TimeEntry, WorkloadEntry } from '../types';
 
 const DAY = '2026-08-13';
@@ -77,6 +79,16 @@ describe('utils/timeTracking', () => {
     expect(findOverlappingEntry(es, 'me', DAY, 630, 720)?.id).toBe('w1');
     expect(findOverlappingEntry(es, 'me', DAY, 630, 720, 'w1')).toBeUndefined();
     expect(findOverlappingEntry(es, 'other', DAY, 630, 720)).toBeUndefined();
+  });
+  it('freeRemainderRange: ogon przed głową, null gdy oba kawałki zajęte', () => {
+    // blok 14:00-16:00, reszta 60 min
+    const head = [entry('w1', 't-design', 840, 900)]; // wpis na głowie → ogon wolny
+    expect(freeRemainderRange(head, 'me', DAY, 840, 960, 60)).toEqual([900, 960]);
+    const tail = [entry('w1', 't-design', 900, 960)]; // wpis na ogonie → głowa
+    expect(freeRemainderRange(tail, 'me', DAY, 840, 960, 60)).toEqual([840, 900]);
+    const mid = [entry('w1', 't-design', 870, 930)]; // środek zajmuje oba → null
+    expect(freeRemainderRange(mid, 'me', DAY, 840, 960, 60)).toBeNull();
+    expect(freeRemainderRange([], 'me', DAY, 840, 960, 60)).toEqual([900, 960]);
   });
   it('formatMinutesDuration + frecencyScore', () => {
     expect(formatMinutesDuration(90)).toBe('1h 30m');
@@ -205,6 +217,44 @@ describe('selektory trackera', () => {
     expect(plan.map((p) => p.kind)).toEqual(['event', 'block']);
     const b = plan[1] as Extract<(typeof plan)[number], { kind: 'block' }>;
     expect(b).toMatchObject({ title: 'Design strony www', clientName: 'Wodociągi Słupsk', plannedMinutes: 120, portionLogged: 60, taskLogged: 120, estimateMinutes: 180, done: false });
+  });
+  it('unsettledPlanBlocks: kandydatem tylko blok bez wykonania — pokryte, odhaczone, zrobione zadania i spotkania wypadają', () => {
+    const s = state({
+      workload: [
+        block('b1', 't-design', 'me', 600, 1),                          // w pełni pokryty wpisem
+        { ...block('b2', 't-design', 'me', 720, 1, 1), done: true },    // odhaczony per blok
+        block('b3', 't-call-a', 'me', 840, 2, 2),                       // bez wykonania → kandydat
+        block('b4', 't-done', 'me', 1020, 1, 3),                        // zadanie ze statusem „zrobione"
+      ],
+      timeEntries: [entry('w1', 't-design', 600, 660)],
+      events: [
+        { id: 'k1', title: 'Odprawa', description: '', location: '', meetingUrl: '', date: DAY, startMinutes: 540, durationMinutes: 30, attendeeIds: [], createdAt: '', updatedAt: '' },
+      ],
+    });
+    const due = unsettledPlanBlocks(dayPlanForPerson(s, 'me', DAY));
+    expect(due.map((b) => b.block.id)).toEqual(['b3']);
+    // Blok pokryty CZĘŚCIOWO zostaje kandydatem (rozliczenie odda resztę).
+    const partial = state({ workload: [block('b5', 't-design', 'me', 600, 2)], timeEntries: [entry('w1', 't-design', 600, 660)] });
+    expect(unsettledPlanBlocks(dayPlanForPerson(partial, 'me', DAY)).map((b) => b.block.id)).toEqual(['b5']);
+  });
+  it('„Zalicz jako wykonane" bloku częściowo pokrytego: wpis reszty domyka blok BEZ podwójnego liczenia', () => {
+    // Blok 14:00-16:00 (2h); pokrycie 1h przychodzi pulą z wpisu 9:00-10:00,
+    // więc godziny bloku są wolne — pełny wpis 1:1 policzyłby pokrytą część
+    // drugi raz. Ścieżka popoutu dopisuje wyłącznie resztę (ogon bloku).
+    const s = state({
+      workload: [block('b1', 't-design', 'me', 840, 2)],
+      timeEntries: [entry('w1', 't-design', 540, 600)],
+    });
+    const due = unsettledPlanBlocks(dayPlanForPerson(s, 'me', DAY));
+    expect(due.map((b) => [b.block.id, b.portionLogged])).toEqual([['b1', 60]]);
+    const range = freeRemainderRange(s.timeEntries, 'me', DAY, 840, 960, due[0].plannedMinutes - due[0].portionLogged);
+    expect(range).toEqual([900, 960]);
+    const next = reducer(s, {
+      type: 'ADD_TIME_ENTRY',
+      payload: { personId: 'me', taskId: 't-design', date: DAY, startMinutes: 900, endMinutes: 960, source: 'manual' },
+    });
+    expect(next.workload.find((w) => w.id === 'b1')?.done).toBe(true); // resyncBlockDone domyka
+    expect(loggedMinutesForTaskPersonDate(next, 't-design', 'me', DAY)).toBe(120); // dokładnie plan, zero dubla
   });
   it('podpowiedzi: bez szkiców i zrobionych; dziś w planie na górze; potem częstość × świeżość', () => {
     const s = state({
@@ -417,9 +467,14 @@ describe('SETTLE_TRACKED_DAY: przeszłość = fakty', () => {
     const later = reducer(next, { type: 'SETTLE_TRACKED_DAY', personId: 'me', date: DAY, nowMinutes: null });
     expect(later.workload.find((w) => w.id === 'b2')).toBeUndefined();
     expect(later.workload.find((w) => w.taskId === 't-call-a' && w.date === '')?.plannedHours).toBe(1);
-    // osoba bez wpisów tego dnia: nic
+    // AUTOMAT (nowMinutes podane) na dniu bez wpisów: nic — dzień nieśledzony
     const other = state({ workload: [block('b9', 't-design', 'other', 600, 2)] });
-    expect(reducer(other, { type: 'SETTLE_TRACKED_DAY', personId: 'other', date: DAY, nowMinutes: null })).toBe(other);
+    expect(reducer(other, { type: 'SETTLE_TRACKED_DAY', personId: 'other', date: DAY, nowMinutes: 1439 })).toBe(other);
+    // JAWNE rozliczenie (nowMinutes null) działa też bez wpisów: blok dodany
+    // wstecz na pusty miniony dzień wraca w całości do zasobnika
+    const explicit = reducer(other, { type: 'SETTLE_TRACKED_DAY', personId: 'other', date: DAY, nowMinutes: null });
+    expect(explicit.workload.find((w) => w.id === 'b9')).toBeUndefined();
+    expect(explicit.workload.find((w) => w.taskId === 't-design' && w.date === '')?.plannedHours).toBe(2);
   });
 });
 

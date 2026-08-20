@@ -47,6 +47,29 @@ export function findOverlappingEntry(
 
 export const timeEntryMinutes = (e: TimeEntry): number => e.endMinutes - e.startMinutes;
 
+/**
+ * Wolny zakres na wpis „reszty" bloku częściowo pokrytego: najpierw ogon
+ * (przy końcu bloku), potem głowa (od startu). Null, gdy oba kawałki zajęte —
+ * wtedy reszty nie da się dopisać bez ręcznej poprawki wpisów.
+ */
+export function freeRemainderRange(
+  entries: readonly TimeEntry[],
+  personId: string,
+  date: string,
+  blockStart: number,
+  blockEnd: number,
+  remainingMinutes: number,
+): [number, number] | null {
+  const candidates: Array<[number, number]> = [
+    [blockEnd - remainingMinutes, blockEnd],
+    [blockStart, blockStart + remainingMinutes],
+  ];
+  for (const [s, e] of candidates) {
+    if (findOverlappingEntry(entries, personId, date, s, e) === undefined) return [s, e];
+  }
+  return null;
+}
+
 /** „1h 30m" / „45m" / „2h" / „0m" — jedna forma dla kafelków, pasków i sum. */
 export function formatMinutesDuration(minutes: number): string {
   if (!Number.isFinite(minutes) || minutes <= 0) return '0m';

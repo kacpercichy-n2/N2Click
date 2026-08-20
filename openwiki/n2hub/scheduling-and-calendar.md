@@ -21,7 +21,16 @@
   PLAN zalogowanej osoby (datowane bloki + spotkania, przez `dayPlanForPerson`)
   obok WYKONANIA (`timeEntries`) na wspólnej osi godzin. Plan jest tu TYLKO DO
   ODCZYTU — przeciąganie, zasobnik i zmiana bloków zostają w WeekView (żadna
-  ścieżka wskaźnika WeekView nie jest dotykana, inwariant 7). Jeden formularz
+  ścieżka wskaźnika WeekView nie jest dotykana, inwariant 7) — z JEDNYM
+  wyjątkiem formularzowym (2026-08-20, decyzja usera): „+ Z zasobnika"
+  (przycisk w nagłówku Planu + pusty stan `.tt-plan-empty`) otwiera popover
+  `.tt-bin-popover` na wspólnej powłoce (`useOverlay`/`OverlayLayer`) z
+  wyborem wiersza zasobnika osoby (bez szkiców i „zrobionych"), startem
+  podpowiedzianym `findFreeStart`+pseudo-bloki wydarzeń (wzór „Zaplanuj
+  część") i zapisem ISTNIEJĄCĄ akcją `SCHEDULE_BIN_PART` na oglądany dzień
+  (reduktor autorytatywny; bramka `blocks.editAny || blocks.editOwn`). Zero
+  nowych ścieżek wskaźnika. Po dodaniu na dzień miniony dismiss popoutu
+  rozliczenia jest zdejmowany, żeby świeży blok od razu dostał pytanie. Jeden formularz
   (pasek) dla trzech wejść: wpis ręczny od-do z podpowiedziami (combobox inline
   wzorem `mention-autocomplete`), przeciągnięcie/klik po osi wykonania
   (wypełnia godziny w pasku; gest w refie, `setPointerCapture` w try/catch),
@@ -32,9 +41,22 @@
   Status zadania zmienia się sam przez `autoCompleteTask` (wszystko wykonane,
   zasobnik pusty, brak wolnych sprzedanych). Przekroczenie sprzedanych godzin
   pyta dialogiem (`useConfirm`) przed zapisem; kolejność przełącznika
-  Dzień | Tydzień | Miesiąc. Minione niewykonane bloki dnia rozlicza
-  `SETTLE_TRACKED_DAY` (15 min po końcu bloku → zasobnik), patrz
-  state-and-persistence.
+  Dzień | Tydzień | Miesiąc. Rozliczenie `SETTLE_TRACKED_DAY` (patrz
+  state-and-persistence) biegnie AUTOMATEM wyłącznie dla DZISIAJ (15 min po
+  końcu bloku → zasobnik). Dzień MINIONY (2026-08-20, decyzja usera — rzeczy
+  ustawiane wstecz nie mogą znikać bez pytania): niewykonane bloki
+  (`unsettledPlanBlocks`, timeTracking.ts) czekają w popoucie `.tt-settle` nad
+  siatką z trzema wyjściami — „Zalicz jako wykonane" (blok bez pokrycia:
+  `SET_BLOCK_DONE`, wpis 1:1 gdzie godziny wolne; blok CZĘŚCIOWO pokryty:
+  `ADD_TIME_ENTRY` wyłącznie na resztę w wolnym kawałku godzin bloku —
+  `freeRemainderRange`, utils/timeTracking — bo pełny wpis 1:1 zdublowałby
+  pokrycie liczone pulą dnia; `resyncBlockDone` domyka blok sam), „Oddaj do
+  zasobnika" (jawny dispatch
+  `SETTLE_TRACKED_DAY` z `nowMinutes: null`), „Zostaw plan" (dismiss per
+  osoba+dzień, stan sesyjny). Popout pokazuje się na KAŻDYM minionym dniu z
+  niewykonanym blokiem, także bez wpisów (blok dodany wstecz na pusty dzień) —
+  bramka „dzień śledzony" dotyczy w reduktorze wyłącznie automatu z podanym
+  `nowMinutes`; jawne `null` rozlicza też dzień bez wpisów.
   Czysta arytmetyka osi i kolumn w `dayTrackerLayout.ts` (oś 7-19 rozszerzana
   do danych, 56 px/h, siatka 15 min, kolumny dla nachodzących kafli). Klasy CSS
   z prefiksem `tt-`. Stoper i lustro chmury: do zrobienia.
