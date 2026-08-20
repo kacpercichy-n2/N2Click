@@ -285,6 +285,111 @@ export function resolveTaskByTitle(state: AppData, title: string): TitleResoluti
   return { kind: 'none' };
 }
 
+// ---- Wykonanie ponad plan (warstwa „nadgodzin" kalendarza) ----
+
+/**
+ * Minuty ZAPLANOWANE pary (zadanie, osoba, dzień) — datowane bloki, zasobnik
+ * nie wchodzi. Lustro `trackingBalance.plannedMinutes`, tyle że jako odczyt dla
+ * warstwy prezentacji (kalendarz), nie dla arytmetyki wzrostu planu.
+ */
+export function plannedMinutesForTaskPersonDate(
+  state: AppData,
+  taskId: string,
+  personId: string,
+  date: DateStr,
+): number {
+  return blocksForPersonDate(state, personId, date)
+    .filter((b) => b.taskId === taskId && !isBinEntry(b))
+    .reduce((s, b) => s + hoursToMinutes(b.plannedHours), 0);
+}
+
+/** Kawałek wykonania, którego NIE pokrywa plan tej pary — geometria kafelka. */
+export interface OverrunInterval {
+  personId: string;
+  taskId: string;
+  startMinutes: number;
+  endMinutes: number;
+}
+
+/**
+ * Wykonanie osoby z danego dnia NIEPOKRYTE planem, jako przedziały zegarowe.
+ *
+ * JEDNA definicja dla całej warstwy: plan pary (zadanie, osoba, dzień) wypełnia
+ * jej wpisy PO KOLEI, od najwcześniejszego (ta sama sekwencja, co
+ * `portionFill`/`portionLoggedMinutes`), a ogon, który zostaje, to godziny
+ * przepracowane ponad plan. W normalnym przebiegu równa się to sumie
+ * `overrunMinutes` wpisów pary — bo nadwyżka z pokryciem najpierw ROŚNIE w
+ * planie (`planGrowth`), więc do ogona trafia dokładnie to, co nie miało z czego
+ * urosnąć. Liczymy jednak z arytmetyki plan↔wykonanie, nie z zapisanego pola,
+ * żeby ręczne skasowanie bloku po fakcie też było widać.
+ *
+ * Czysto PREZENTACYJNE (inwariant 1): nic tu nie wchodzi do `dayTotal`,
+ * `calendarDayVolume`, kolizji ani przeciążenia.
+ */
+export function overrunIntervalsForPersonDate(
+  state: AppData,
+  personId: string,
+  date: DateStr,
+): OverrunInterval[] {
+  const byTask = new Map<string, TimeEntry[]>();
+  for (const e of state.timeEntries) {
+    if (e.personId !== personId || e.date !== date) continue;
+    const list = byTask.get(e.taskId);
+    if (list) list.push(e);
+    else byTask.set(e.taskId, [e]);
+  }
+  const out: OverrunInterval[] = [];
+  for (const [taskId, rows] of byTask) {
+    const entries = [...rows].sort(
+      (a, b) => a.startMinutes - b.startMinutes || a.id.localeCompare(b.id),
+    );
+    let covered = plannedMinutesForTaskPersonDate(state, taskId, personId, date);
+    for (const e of entries) {
+      const minutes = timeEntryMinutes(e);
+      if (covered >= minutes) {
+        covered -= minutes;
+        continue;
+      }
+      out.push({ personId, taskId, startMinutes: e.startMinutes + covered, endMinutes: e.endMinutes });
+      covered = 0;
+    }
+  }
+  return out.sort(
+    (a, b) => a.startMinutes - b.startMinutes || a.taskId.localeCompare(b.taskId),
+  );
+}
+
+/** To samo dla WSZYSTKICH osób w filtrze (pusty/brak filtra = cały zespół). */
+export function overrunIntervalsOnDate(
+  state: AppData,
+  date: DateStr,
+  personFilter?: Set<string>,
+): OverrunInterval[] {
+  const people = new Set<string>();
+  for (const e of state.timeEntries) {
+    if (e.date !== date) continue;
+    if (personFilter !== undefined && personFilter.size > 0 && !personFilter.has(e.personId)) continue;
+    people.add(e.personId);
+  }
+  const out: OverrunInterval[] = [];
+  for (const personId of people) out.push(...overrunIntervalsForPersonDate(state, personId, date));
+  return out.sort(
+    (a, b) => a.startMinutes - b.startMinutes || a.taskId.localeCompare(b.taskId),
+  );
+}
+
+/** Suma minut ponad plan w dniu (plakietka nagłówka tygodnia i komórki miesiąca). */
+export function overrunMinutesOnDate(
+  state: AppData,
+  date: DateStr,
+  personFilter?: Set<string>,
+): number {
+  return overrunIntervalsOnDate(state, date, personFilter).reduce(
+    (s, i) => s + (i.endMinutes - i.startMinutes),
+    0,
+  );
+}
+
 // ---- „Ponad sprzedane" (kto i ile) ----
 
 export interface OverrunSummaryRow {

@@ -101,13 +101,19 @@ export function monthGridRows<T>(cells: readonly T[]): T[][] {
 export interface MonthCellNameInput {
   /** Data słownie, np. „30 lipca” (`dayMonthLabel`). */
   dayLabel: string;
-  /** Zaplanowane godziny w filtrze (0 = brak pracy). */
+  /** Zaplanowane godziny w filtrze (0 = brak PLANU; patrz `overrunHours`). */
   hours: number;
   /** Liczba osób z pracą tego dnia. */
   peopleCount: number;
   today?: boolean;
   outOfMonth?: boolean;
   overloaded?: boolean;
+  /**
+   * Godziny WYKONANE ponad plan („nadgodziny”). Osobna liczba, bo `hours` to
+   * czysta objętość planu — a dzień z samym wykonaniem NIE jest dniem bez pracy
+   * i nie wolno go tak ogłosić.
+   */
+  overrunHours?: number;
   /** Gotowe zdania znaczników („Urodziny: Anna”, „Wydarzenia: Standup”). */
   markers?: readonly string[];
 }
@@ -117,6 +123,13 @@ const HOUR_FORMS = {
   few: 'zaplanowane godziny',
   many: 'zaplanowanych godzin',
   fraction: 'zaplanowanej godziny',
+};
+
+const OVERRUN_HOUR_FORMS = {
+  one: 'godzina ponad plan',
+  few: 'godziny ponad plan',
+  many: 'godzin ponad plan',
+  fraction: 'godziny ponad plan',
 };
 
 /**
@@ -129,7 +142,12 @@ export function monthCellName(input: MonthCellNameInput): string {
   const parts: string[] = [input.dayLabel];
   if (input.today === true) parts.push('dzisiaj');
   if (input.outOfMonth === true) parts.push('poza miesiącem');
-  parts.push(input.hours > 0 ? polishAmount(input.hours, HOUR_FORMS) : 'brak pracy');
+  const overrun = input.overrunHours ?? 0;
+  // „Brak pracy” TYLKO wtedy, gdy nie ma ani planu, ani wykonania ponad plan.
+  // Dzień przepracowany poza planem ogłasza swoje godziny, nigdy pustkę.
+  if (input.hours > 0) parts.push(polishAmount(input.hours, HOUR_FORMS));
+  else if (overrun === 0) parts.push('brak pracy');
+  if (overrun > 0) parts.push(polishAmount(overrun, OVERRUN_HOUR_FORMS));
   if (input.peopleCount > 0) {
     parts.push(`${input.peopleCount} ${polishCount(input.peopleCount, 'osoba', 'osoby', 'osób')}`);
   }

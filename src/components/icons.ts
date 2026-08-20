@@ -74,6 +74,10 @@ export {
   // klienta; `ArchiveRestore` to jej odwrotność („Przywróć").
   Archive,
   ArchiveRestore,
+  // Wykonanie ponad plan („nadgodziny") — kafelek w kalendarzu i plakietka
+  // nagłówka dnia. Klepsydra, nie zegar: `Clock` znaczy w tej aplikacji porę
+  // (godzina bloku, tracker), a tu chodzi o czas, który się PRZELAŁ.
+  Hourglass,
   // Urlop: blok w kalendarzu, wskaźnik zamiast wykrzyknika przeciążenia i
   // wejście „Dodaj urlop". `Palmtree` to przestarzały alias tej samej ikony.
   TreePalm,

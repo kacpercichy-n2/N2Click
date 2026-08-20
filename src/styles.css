@@ -2305,6 +2305,21 @@ a.toggle-btn {
   color: var(--n2-danger);
   font-weight: 600;
 }
+/* Plakietka „ponad plan" w nagłówku dnia: godziny WYKONANE, których plan nie
+   pokrywa (nadgodziny). Bursztyn, nie czerwień — to nie błąd, tylko fakt poza
+   budżetem, ten sam kolor co panel „Ponad sprzedane" w widoku Dzień. Suma obok
+   (`.week-col-total`) zostaje czystą objętością PLANU. */
+.week-col-overrun {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 3px;
+  font-size: var(--n2-type-xs);
+  color: var(--n2-warning);
+  font-weight: 600;
+  font-family: var(--n2-font-data);
+  font-variant-numeric: tabular-nums;
+}
 /* Plakietka urlopu w nagłówku dnia — palma zamiast wykrzyknika przeciążenia
    (te same imiona nigdy nie stoją w obu plakietkach naraz). */
 .week-col-vacation {
@@ -3047,6 +3062,97 @@ a.toggle-btn {
   transform: translateY(-50%);
 }
 
+/* ---------- Wykonanie ponad plan („nadgodziny") ----------
+   Siostra `.week-recur-block`: warstwa czysto prezentacyjna, bez uchwytów
+   przeciągania, renderowana PRZED realnymi blokami, więc plan zawsze maluje się
+   na wierzchu. Odróżnia ją bursztyn i gęstsze paski — kafelek ma mówić „to już
+   się wydarzyło poza planem", a nie „to da się zaplanować". Ramka niesie kolor
+   OSOBY w stylu inline, jak na kafelku cyklicznym. */
+.week-overrun-block {
+  position: absolute;
+  left: 1px;
+  right: 2px;
+  z-index: 0;
+  box-sizing: border-box;
+  text-align: left;
+  border: 1px dashed var(--n2-warning);
+  border-left: 3px solid var(--n2-warning);
+  border-radius: var(--n2-radius-xs);
+  background-color: rgba(255, 200, 87, 0.05);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 200, 87, 0.16) 0,
+    rgba(255, 200, 87, 0.16) 5px,
+    rgba(255, 200, 87, 0.04) 5px,
+    rgba(255, 200, 87, 0.04) 10px
+  );
+  padding: 3px 7px;
+  cursor: pointer;
+  color: var(--n2-warning);
+  opacity: 0.9;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+}
+.week-overrun-block:hover {
+  opacity: 1;
+}
+.week-overrun-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--n2-type-xs);
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.week-overrun-time {
+  font-size: var(--n2-type-xs);
+  font-family: var(--n2-font-data);
+  font-variant-numeric: tabular-nums;
+}
+.week-overrun-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: auto;
+  font-size: var(--n2-type-xs);
+  min-width: 0;
+}
+.week-overrun-label {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.week-overrun-hours {
+  margin-left: auto;
+  font-weight: 700;
+  font-family: var(--n2-font-data);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* Kwadransowy ogon (21 px): jedna linia — lustro `.week-recur-block.h-quarter`. */
+.week-overrun-block.h-quarter {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+.week-overrun-block.h-quarter .week-overrun-meta {
+  margin-top: 0;
+  margin-left: auto;
+}
+.week-overrun-block.h-quarter .week-overrun-label {
+  display: none;
+}
+
 /* ---------- Wydarzenia kalendarza (spotkania) ---------- */
 /* Blok wydarzenia: SOLIDNA ramka + lewy pasek (to NIE ghost cykliczności), tło
    cyjanowe, z-index: 0 — spoczynkowo POD realnymi blokami zadań. Spotkanie z
@@ -3444,6 +3550,21 @@ a.toggle-btn {
   color: var(--text);
   font-family: var(--n2-font-data);
   font-variant-numeric: tabular-nums;
+  /* Suma planu i „+Xh" ponad plan zostają w JEDNEJ linii — złamanie w komórce
+     40-pikselowej czytało się jak dwie osobne liczby. */
+  white-space: nowrap;
+}
+/* „+2h" ponad plan tuż za sumą planu w komórce miesiąca — ten sam bursztyn, co
+   plakietka tygodnia i panel „Ponad sprzedane" w widoku Dzień. */
+.month-cell-overrun {
+  margin-left: 4px;
+  color: var(--n2-warning);
+  font-weight: 700;
+}
+/* Ten sam znacznik, gdy stoi SAM (dzień bez planu): odstęp od sumy planu nie ma
+   od czego odstawać, więc znika. */
+.month-cell-overrun.solo {
+  margin-left: 0;
 }
 /* Znacznik urodzin w komórce miesiąca — mały 🎂 w rogu (tooltip z imionami). */
 .month-cell-birthday {

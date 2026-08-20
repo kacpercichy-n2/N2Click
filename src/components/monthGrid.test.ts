@@ -107,6 +107,30 @@ describe('monthCellName — polska nazwa dostępna komórki', () => {
     );
   });
 
+  it('dzień z samym wykonaniem NIE jest dniem bez pracy', () => {
+    // Plan 0, ale 7h przepracowane ponad plan (zadanie sprzedane co do minuty):
+    // komórka musi ogłosić te godziny, nie „brak pracy”.
+    expect(monthCellName({ dayLabel: '20 sierpnia', hours: 0, peopleCount: 0, overrunHours: 7 })).toBe(
+      '20 sierpnia, 7 godzin ponad plan',
+    );
+    expect(monthCellName({ dayLabel: '21 sierpnia', hours: 0, peopleCount: 0, overrunHours: 1 })).toBe(
+      '21 sierpnia, 1 godzina ponad plan',
+    );
+    expect(monthCellName({ dayLabel: '22 sierpnia', hours: 0, peopleCount: 0, overrunHours: 2.5 })).toBe(
+      '22 sierpnia, 2,5 godziny ponad plan',
+    );
+  });
+
+  it('plan i nadgodziny stoją obok siebie, plan pierwszy', () => {
+    expect(monthCellName({ dayLabel: '20 sierpnia', hours: 2, peopleCount: 1, overrunHours: 7 })).toBe(
+      '20 sierpnia, 2 zaplanowane godziny, 7 godzin ponad plan, 1 osoba',
+    );
+    // Zero nadgodzin nic nie dokłada — nazwa zostaje bajt w bajt dotychczasowa.
+    expect(monthCellName({ dayLabel: '4 lipca', hours: 0, peopleCount: 0, overrunHours: 0 })).toBe(
+      '4 lipca, brak pracy',
+    );
+  });
+
   it('dokłada kontekst dnia, przeciążenie i znaczniki w stałej kolejności', () => {
     expect(
       monthCellName({

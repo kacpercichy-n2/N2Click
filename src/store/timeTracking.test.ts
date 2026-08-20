@@ -14,6 +14,10 @@ import {
   timeEntriesForPersonDate,
   trackerSuggestions,
   unsettledPlanBlocks,
+  overrunIntervalsForPersonDate,
+  overrunIntervalsOnDate,
+  overrunMinutesOnDate,
+  plannedMinutesForTaskPersonDate,
 } from './timeTracking';
 import { isValidTimeRange, findOverlappingEntry, formatMinutesDuration, frecencyScore, freeRemainderRange } from '../utils/timeTracking';
 import type { AppData, Client, Person, Project, Status, Task, TimeEntry, WorkloadEntry } from '../types';
@@ -447,6 +451,70 @@ describe('nadwyżka wykonania: zasobnik → wolne sprzedane → ponad sprzedane'
     const next = reducer(s, { type: 'UPDATE_TIME_ENTRY', entryId: 'w1', taskId: 't-design', startMinutes: 600, endMinutes: 780 });
     expect(next.workload.find((w) => w.id === 'b1')?.plannedHours).toBe(3);
     expect(next.workload.find((w) => w.id === 'bin1')).toBeUndefined();
+  });
+});
+
+describe('wykonanie ponad plan: przedziały dla kalendarza', () => {
+  it('plan 1h, wykonane 8h bez pokrycia: ogon to godziny 10:00-17:00', () => {
+    // Lustro zgłoszenia z 2026-08-20: zadanie sprzedane co do minuty, więc
+    // nadwyżka nie ma z czego urosnąć w planie i zostaje ponad sprzedane.
+    const s = state({
+      workload: [block('b1', 't-design', 'me', 540, 1)],
+      timeEntries: [entry('w1', 't-design', 540, 1020, { overrunMinutes: 420 })],
+    });
+    expect(plannedMinutesForTaskPersonDate(s, 't-design', 'me', DAY)).toBe(60);
+    expect(overrunIntervalsForPersonDate(s, 'me', DAY)).toEqual([
+      { personId: 'me', taskId: 't-design', startMinutes: 600, endMinutes: 1020 },
+    ]);
+    expect(overrunMinutesOnDate(s, DAY)).toBe(420);
+  });
+  it('wykonanie w granicach planu nie daje ogona — także gdy godziny się rozjeżdżają', () => {
+    const s = state({
+      workload: [block('b1', 't-design', 'me', 540, 2)],
+      timeEntries: [entry('w1', 't-design', 840, 900)], // 1h po południu z 2h planu
+    });
+    expect(overrunIntervalsForPersonDate(s, 'me', DAY)).toEqual([]);
+    expect(overrunMinutesOnDate(s, DAY)).toBe(0);
+  });
+  it('plan wypełnia się PO KOLEI: pierwszy wpis pokryty, ogon zostaje na drugim', () => {
+    const s = state({
+      workload: [block('b1', 't-design', 'me', 540, 1)],
+      timeEntries: [entry('w1', 't-design', 540, 600), entry('w2', 't-design', 660, 780)],
+    });
+    expect(overrunIntervalsForPersonDate(s, 'me', DAY)).toEqual([
+      { personId: 'me', taskId: 't-design', startMinutes: 660, endMinutes: 780 },
+    ]);
+  });
+  it('zasobnik NIE liczy się jako pokrycie dnia (plan dnia to bloki datowane)', () => {
+    const s = state({
+      workload: [
+        block('b1', 't-design', 'me', 540, 1),
+        { id: 'bin1', taskId: 't-design', personId: 'me', date: '', plannedHours: 2, startMinutes: 0, sortIndex: 0 },
+      ],
+      timeEntries: [entry('w1', 't-design', 540, 720)],
+    });
+    expect(overrunMinutesOnDate(s, DAY)).toBe(120);
+  });
+  it('filtr osób zawęża warstwę; pusty filtr to cały zespół', () => {
+    const s = state({
+      workload: [],
+      timeEntries: [
+        entry('w1', 't-call-a', 540, 600),
+        entry('w2', 't-call-a', 600, 660, { personId: 'other' }),
+      ],
+    });
+    expect(overrunMinutesOnDate(s, DAY)).toBe(120);
+    expect(overrunMinutesOnDate(s, DAY, new Set())).toBe(120);
+    expect(overrunIntervalsOnDate(s, DAY, new Set(['other']))).toEqual([
+      { personId: 'other', taskId: 't-call-a', startMinutes: 600, endMinutes: 660 },
+    ]);
+  });
+  it('inny dzień nie wchodzi do przedziałów dnia', () => {
+    const s = state({
+      workload: [],
+      timeEntries: [entry('w1', 't-call-a', 540, 600, { date: '2026-08-14' })],
+    });
+    expect(overrunMinutesOnDate(s, DAY)).toBe(0);
   });
 });
 

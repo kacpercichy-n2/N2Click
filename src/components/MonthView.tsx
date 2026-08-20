@@ -31,6 +31,7 @@ import {
 import { eventDisplayTitle, taskDisplayTitle } from '../store/confidentiality';
 import { personColor } from '../utils/colors';
 import { formatDuration } from '../utils/time';
+import { overrunMinutesOnDate } from '../store/timeTracking';
 import { TreePalm } from './icons';
 import { Tooltip } from './Tooltip';
 import { monthCellName, monthFocusIndex, monthGridCommand, monthGridRows } from './monthGrid';
@@ -121,6 +122,13 @@ export function MonthView({
     const overloaded = overloadedPeopleOnDate(state, d, filter).length > 0;
     const step = intensityStep(total);
 
+    // Wykonanie ponad plan („nadgodziny"): godziny WYKONANE, których plan nie
+    // pokrywa. Liczba stoi OBOK sumy planu i nigdy w niej — `total` zostaje
+    // czystą objętością planu, tak samo jak w nagłówkach WeekView (inwariant 1).
+    const overrunMinutes = overrunMinutesOnDate(state, d, filter);
+    const overrunLabel =
+      overrunMinutes > 0 ? `Ponad plan: ${formatDuration(overrunMinutes / 60)}` : '';
+
     // Distinct people who have work that day (within the filter).
     const peopleIds = Array.from(new Set(entriesForDate(state, d, filter).map((e) => e.personId)));
     const shown = peopleIds.slice(0, MAX_DOTS);
@@ -171,7 +179,15 @@ export function MonthView({
     // CZYSTO WIZUALNY — inaczej wszystko czytałoby się dwa razy.
     // `.tooltip-text` ma `white-space: pre-line`, więc łamiemy \n.
     const cellHint = [
-      total > 0 ? `zaplanowano ${formatDuration(total)}` : 'Brak pracy',
+      // „Brak pracy” tylko wtedy, gdy dzień jest pusty NAPRAWDĘ: bez planu i bez
+      // wykonania ponad plan. Inaczej dymek kłamał o dniu przepracowanym poza
+      // planem (przegląd 2026-08-20).
+      total > 0
+        ? `zaplanowano ${formatDuration(total)}`
+        : overrunMinutes > 0
+          ? ''
+          : 'Brak pracy',
+      overrunLabel,
       birthdayLabel,
       recurLabel,
       eventLabel,
@@ -190,12 +206,16 @@ export function MonthView({
       today,
       outOfMonth: !inMonth,
       overloaded,
+      // Nadgodziny jadą WŁASNYM polem, nie znacznikiem: `monthCellName` musi
+      // wiedzieć, że dzień nie jest pusty, zanim powie „brak pracy”.
+      overrunHours: overrunMinutes / 60,
       markers: [birthdayLabel, recurLabel, eventLabel, vacationLabel],
     });
 
     return {
       date: d,
       total,
+      overrunMinutes,
       inMonth,
       today,
       overloaded,
@@ -303,8 +323,21 @@ export function MonthView({
                       <TreePalm size={12} />
                     </span>
                   )}
-                  {cell.total > 0 && (
-                    <span className="month-cell-hours">{formatDuration(cell.total)}</span>
+                  {/* Dzień bez planu, ale z wykonaniem ponad plan, pokazuje SAMO
+                      „+7h" — bez zastępnika w miejscu sumy planu. */}
+                  {(cell.total > 0 || cell.overrunMinutes > 0) && (
+                    <span className="month-cell-hours">
+                      {cell.total > 0 && formatDuration(cell.total)}
+                      {cell.overrunMinutes > 0 && (
+                        <span
+                          className={
+                            cell.total > 0 ? 'month-cell-overrun' : 'month-cell-overrun solo'
+                          }
+                        >
+                          +{formatDuration(cell.overrunMinutes / 60)}
+                        </span>
+                      )}
+                    </span>
                   )}
                   {cell.peopleCount > 0 && (
                     <span className="month-cell-dots">

@@ -31,6 +31,7 @@ import {
   personVacationOnDate,
   recurrenceOccurrencesForDate,
 } from '../store/selectors';
+import { overrunIntervalsOnDate, type OverrunInterval } from '../store/timeTracking';
 import { vacationRenderWindow } from './weekViewLayout';
 import { eventDisplayTitle, taskDisplayTitle } from '../store/confidentiality';
 import { isBinEntry, packDayBlocks } from '../utils/time';
@@ -59,6 +60,23 @@ export interface ResolvedRecurrence {
   occurrence: RecurrenceOccurrence;
   hue: string;
   /** Kolumna w WSPÓLNYM pakowaniu warstwy dnia (bloki + spotkania + cykliczne). */
+  col: number;
+  cols: number;
+}
+
+/**
+ * Kawałek wykonania ponad plan (warstwa „nadgodzin"), z rozwiązanym zadaniem i
+ * osobą. Czysto PREZENTACYJNY: nie wchodzi do `total`, kolizji ani przeciążenia
+ * (inwariant 1), a do `packDayBlocks` — WYŁĄCZNIE jako geometria, żeby stanął
+ * OBOK bloku planu, nie na nim.
+ */
+export interface ResolvedOverrun {
+  /** Stabilny klucz Reacta: osoba + zadanie + start przedziału. */
+  key: string;
+  task: Task;
+  person: Person;
+  interval: OverrunInterval;
+  hue: string;
   col: number;
   cols: number;
 }
@@ -100,6 +118,10 @@ export interface WeekDayModel {
   vacationWindows: Map<string, { start: number; end: number }>;
   /** Presentational recurring-task occurrences on this day, hue resolved. */
   recurrences: ResolvedRecurrence[];
+  /** Wykonanie ponad plan tego dnia (kafelki „nadgodzin"), osoby z filtra. */
+  overruns: ResolvedOverrun[];
+  /** Suma minut ponad plan tego dnia — plakietka nagłówka kolumny. */
+  overrunMinutes: number;
   /** Real task blocks, packed into columns, task/person/project resolved. */
   blocks: ResolvedBlock[];
 }
@@ -154,6 +176,11 @@ export interface WeekModel {
    * occurrences stay presentational). See {@link buildEventBusyByPersonDate}.
    */
   eventBusyByPersonDate: Map<string, BusyInterval[]>;
+}
+
+/** Stabilny klucz kafelka „ponad plan" (osoba + zadanie + start przedziału). */
+function overrunKeyOf(interval: OverrunInterval): string {
+  return `${interval.personId}\u0000${interval.taskId}\u0000${interval.startMinutes}`;
 }
 
 /** Stable composite key for {@link WeekModel.blocksByPersonDate}. */
@@ -295,6 +322,11 @@ export function buildWeekModel(
 
     const rawRecurrences = recurrenceOccurrencesForDate(state, date, filter);
 
+    // Wykonanie ponad plan: warstwa dokładnie tak addytywna, jak spotkania i
+    // cykliczne — wchodzi do wspólnego pakowania (kolumna obok bloku planu) i
+    // do NICZEGO więcej.
+    const rawOverruns = overrunIntervalsOnDate(state, date, filter);
+
     // JEDNO pakowanie WARSTWY PREZENTACJI (2026-08-06, decyzja usera): bloki,
     // spotkania (bez urlopu) i wystąpienia cykliczne wchodzą RAZEM do
     // `packDayBlocks`, więc dwie rzeczy w tym samym czasie dzielą kolumnę
@@ -306,6 +338,7 @@ export function buildWeekModel(
       | { kind: 'block'; entry: WorkloadEntry }
       | { kind: 'event'; eventId: string }
       | { kind: 'recurrence'; taskId: string }
+      | { kind: 'overrun'; overrunKey: string }
     );
     const layoutItems: LayoutItem[] = [
       ...entries.map((entry) => ({
@@ -328,9 +361,16 @@ export function buildWeekModel(
         startMinutes: occurrence.startMinutes,
         plannedHours: occurrence.durationMinutes / 60,
       })),
+      ...rawOverruns.map((interval) => ({
+        kind: 'overrun' as const,
+        overrunKey: overrunKeyOf(interval),
+        startMinutes: interval.startMinutes,
+        plannedHours: (interval.endMinutes - interval.startMinutes) / 60,
+      })),
     ];
     const eventLanes = new Map<string, LayoutLane>();
     const recurLanes = new Map<string, LayoutLane>();
+    const overrunLanes = new Map<string, LayoutLane>();
     const blocks: ResolvedBlock[] = [];
     for (const { block: item, col, cols } of packDayBlocks(layoutItems)) {
       if (item.kind === 'event') {
@@ -339,6 +379,10 @@ export function buildWeekModel(
       }
       if (item.kind === 'recurrence') {
         recurLanes.set(item.taskId, { col, cols });
+        continue;
+      }
+      if (item.kind === 'overrun') {
+        overrunLanes.set(item.overrunKey, { col, cols });
         continue;
       }
       const task = getTask(state, item.entry.taskId);
@@ -358,6 +402,30 @@ export function buildWeekModel(
       cols: recurLanes.get(task.id)?.cols ?? 1,
     }));
 
+    // Kafelki „ponad plan": zadanie/osoba rozwiązane tutaj (jak w blokach), więc
+    // memoizowany liść nie sięga do `state`. Wpis bez zadania albo bez osoby
+    // znika tak samo cicho, jak blok bez zadania.
+    const overruns: ResolvedOverrun[] = [];
+    for (const interval of rawOverruns) {
+      const task = getTask(state, interval.taskId);
+      const person = getPerson(state, interval.personId);
+      if (!task || !person) continue;
+      const key = overrunKeyOf(interval);
+      overruns.push({
+        key,
+        task,
+        person,
+        interval,
+        hue: personColor(interval.personId),
+        col: overrunLanes.get(key)?.col ?? 0,
+        cols: overrunLanes.get(key)?.cols ?? 1,
+      });
+    }
+    const overrunMinutes = overruns.reduce(
+      (s, o) => s + (o.interval.endMinutes - o.interval.startMinutes),
+      0,
+    );
+
     return {
       date,
       total,
@@ -369,6 +437,8 @@ export function buildWeekModel(
       eventLanes,
       vacationWindows,
       recurrences,
+      overruns,
+      overrunMinutes,
       blocks,
     };
   });

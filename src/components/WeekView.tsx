@@ -22,7 +22,7 @@ import { useDispatch, useStoreApi } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import { useOpenTask } from './TaskModal';
 import { useOpenEvent } from './EventModal';
-import { TreePalm } from './icons';
+import { Hourglass, TreePalm } from './icons';
 import { personColor } from '../utils/colors';
 import { clearLiveSyncHold, setLiveSyncHold } from '../utils/liveSyncGate';
 import { useTouchDragGate } from '../utils/useTouchDragGate';
@@ -2121,6 +2121,90 @@ function RecurBlockImpl({ task, displayTitle, hue, occurrence, done, col, cols, 
 
 const RecurBlock = memo(RecurBlockImpl);
 
+// ---- Kafelek „ponad plan" (wykonanie, którego nie pokrywa plan) ----
+// Warstwa PREZENTACYJNA, siostra `RecurBlock`: nie wchodzi do sum planu,
+// kolizji ani przeciążenia (inwariant 1), nie ma cyklu życia wskaźnika
+// (inwariant 7) — tylko klik/klawiatura otwiera zadanie. Do `packDayBlocks`
+// wchodzi WYŁĄCZNIE jako geometria, więc staje OBOK bloku planu.
+interface OverrunBlockProps {
+  task: Task;
+  /** Tytuł do pokazania (maska utajnienia) — prymityw z rodzica. */
+  displayTitle: string;
+  personName: string;
+  hue: string;
+  startMinutes: number;
+  endMinutes: number;
+  col: number;
+  cols: number;
+  onOpen: (taskId: string) => void;
+}
+
+function OverrunBlockImpl({
+  task,
+  displayTitle,
+  personName,
+  hue,
+  startMinutes,
+  endMinutes,
+  col,
+  cols,
+  onOpen,
+}: OverrunBlockProps) {
+  const minutes = endMinutes - startMinutes;
+  const hours = minutes / 60;
+  const top = (startMinutes / 60) * HOUR_PX;
+  const height = Math.max((minutes / 60) * HOUR_PX, MIN_BLOCK_H);
+  // TA SAMA arytmetyka kolumn co `.week-block` (packDayBlocks).
+  const horizontal = {
+    left: `calc(${(col / cols) * 100}% + 1px)`,
+    width: `calc(${100 / cols}% - 3px)`,
+  };
+  const className = ['week-overrun-block', minutes <= 15 ? 'h-quarter' : '']
+    .filter(Boolean)
+    .join(' ');
+  const hint = `${displayTitle} — ${personName}: ${formatMinutes(startMinutes)}–${formatMinutes(
+    endMinutes,
+  )} (${formatDuration(hours)}) ponad plan. Te godziny są WYKONANE, ale nie mieszczą się w zaplanowanych blokach. Plan i godziny sprzedane zostają bez zmian. Kliknij, aby otworzyć zadanie.`;
+  return (
+    <Tooltip text={hint}>
+      <div
+        className={className}
+        // Bursztyn niesie CAŁA ramka (rodzaj warstwy), a lewa krawędź kolor
+        // OSOBY — dokładnie jak na realnym bloku, więc kafelek nadal mówi „czyje".
+        style={{ top, height, borderLeftColor: hue, ...horizontal }}
+        role="button"
+        tabIndex={0}
+        aria-label={`Ponad plan: ${displayTitle}, ${personName}, ${formatMinutes(
+          startMinutes,
+        )}–${formatMinutes(endMinutes)}, ${formatDuration(hours)}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpen(task.id);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onOpen(task.id);
+          }
+        }}
+      >
+        <span className="week-overrun-title">
+          <Hourglass size={11} aria-hidden /> {displayTitle}
+        </span>
+        <span className="week-overrun-time">
+          {formatMinutes(startMinutes)}–{formatMinutes(endMinutes)}
+        </span>
+        <span className="week-overrun-meta">
+          <span className="week-overrun-label">ponad plan</span>
+          <span className="week-overrun-hours">{formatDuration(hours)}</span>
+        </span>
+      </div>
+    </Tooltip>
+  );
+}
+
+const OverrunBlock = memo(OverrunBlockImpl);
+
 // ---- Calendar-event block (spotkanie: przeciąganie za BRAMKĄ potwierdzenia) ----
 // Wydarzenie zostaje PREZENTACYJNE dla planowania (inwariant 1: nie wchodzi do
 // sum, `dayTotal` ani przeciążenia; do `packDayBlocks` wchodzi WYŁĄCZNIE jako
@@ -3808,6 +3892,11 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
           <span className="week-col-total">
             {model.days[0].empty ? '—' : formatDuration(model.days[0].total)}
           </span>
+          {model.days[0].overrunMinutes > 0 && (
+            <span className="week-col-overrun">
+              <Hourglass size={11} aria-hidden /> +{formatDuration(model.days[0].overrunMinutes / 60)} ponad plan
+            </span>
+          )}
           {model.days[0].birthdayNames.length > 0 && (
             <span className="week-col-birthday">
               🎂 {model.days[0].birthdayNames.join(', ')}
@@ -3857,6 +3946,18 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                   <div className="week-col-total">
                     {day.empty ? '—' : formatDuration(day.total)}
                   </div>
+                  {/* „Nadgodziny" dnia: godziny WYKONANE, których plan nie
+                      pokrywa. Osobna liczba obok sumy planu — `day.total`
+                      zostaje czystą objętością planu (inwariant 1). */}
+                  {day.overrunMinutes > 0 && (
+                    <Tooltip
+                      text={`Wykonano ponad plan: ${formatDuration(day.overrunMinutes / 60)}. Suma obok to sam plan.`}
+                    >
+                      <div className="week-col-overrun">
+                        <Hourglass size={11} aria-hidden /> +{formatDuration(day.overrunMinutes / 60)}
+                      </div>
+                    </Tooltip>
+                  )}
                   {/* Plakietki nagłówka są NIEINTERAKTYWNE i pokazują pełną
                       listę imion wprost w treści — dymek tylko rozwija ją, gdy
                       CSS ją przytnie, i dopisuje słowny powód. */}
@@ -4005,6 +4106,23 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                       cols={mode === 'week' ? cols : 1}
                       onOpen={handleOpenTask}
                       onContextMenu={openRecurMenu}
+                    />
+                  ))}
+                  {/* Wykonanie ponad plan: warstwa addytywna renderowana PRZED
+                      blokami, więc realny plan zawsze maluje się na wierzchu.
+                      Kolumny dzieli tylko tryb tygodnia (jak cykliczne). */}
+                  {day.overruns.map((ov) => (
+                    <OverrunBlock
+                      key={`overrun-${ov.key}`}
+                      task={ov.task}
+                      displayTitle={taskDisplayTitle(state, ov.task)}
+                      personName={ov.person.name}
+                      hue={ov.hue}
+                      startMinutes={ov.interval.startMinutes}
+                      endMinutes={ov.interval.endMinutes}
+                      col={mode === 'week' ? ov.col : 0}
+                      cols={mode === 'week' ? ov.cols : 1}
+                      onOpen={handleOpenTask}
                     />
                   ))}
                   {day.blocks.map(({ block: e, col, cols, task, person, project }) => (
