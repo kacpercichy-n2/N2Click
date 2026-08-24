@@ -422,6 +422,34 @@
     PersonProfilePage, `WeekDayModel.vacationNames` w nagłówku dnia — imiona są
     wtedy wyłączone z `overloadNames`). Godziny zaplanowane PRZED zgłoszeniem
     urlopu zostają (inwariant 3: świadome edycje alokacji nie są blokowane).
+  - URLOP GODZINOWY (2026-08-24, zgłoszenie „Urlopy"): urlop JEDNODNIOWY może
+    nieść okno od-do na siatce 15 min (odbiór nadgodzin, wyjście na część
+    dnia); zakres dat `endDate` WYMUSZA pełną dobę. Forma kanoniczna na trzech
+    granicach: reduktor waliduje okno jak spotkanie (`normalizeEventDraft`),
+    repair i hydracja koercjonują śmieci do pełnej doby
+    (`canonicalVacationTimes` w `commandValidation.ts`). Kolizje okna wychodzą
+    z istniejących ścieżek interwałowych (czasy wystąpienia są prawdą), a
+    PEŁNODNIOWE przywileje ma wyłącznie 0/1440 (`isFullDayVacation`):
+    `personVacationOnDate` zwraca TYLKO pełną dobę, więc palma, straż CAŁEGO
+    dnia, wpis „urlopowicza dnia" i blokada slot-menu godzinowego nie
+    obejmują. Samo OKNO godzinowe jest jednak tą samą twardą blokadą, tylko
+    krótszą — dwie jawne ścieżki mają własny rachunek przez
+    `personHourlyVacationIntervals`: `INSERT_BLOCK` odrzuca wstawkę, gdy nowy
+    albo PRZEPCHNIĘTY blok wylądowałby na oknie (bloki nieruszane pomijane —
+    stan zastany sprzed urlopu), a datowany `REASSIGN_ENTRY` liczy DWUETAPOWO:
+    najpierw zwykłe `findFreeStart` po samych blokach (okno kończące się późno
+    nie przesuwa bloku, gdy normalny slot jest wolny), a dopiero gdy wynik
+    wpada w okno — ponownie z oknami jako pseudo-blokami (blok ląduje poza
+    oknem albo wcale).
+    Spotkań te straże celowo nadal nie obejmują. Render: blok godzinowego stoi
+    w SWOIM oknie (weekViewModel podaje `occ.startMinutes`), pełnodniowy dalej
+    w `vacationRenderWindow`; lista Wydarzeń pokazuje okno zamiast „Cały
+    dzień", a `describeOne` w `eventConflictMessage.ts` wymienia zakres godzin.
+    Modal: checkbox „Cały dzień" (domyślnie tak); odznaczenie pokazuje pola
+    od-do i CZYŚCI zakres dat. Kafelek „Urlop" na /account
+    (`pages/accountHr.ts`): godzinowy NIE zdejmuje dnia z limitu 26 dni
+    (`VacationRange.window`, pomijany w `vacationWorkDaysInYear`), a na liście
+    nadchodzących pokazuje się z godzinami.
   - Skutek uboczny wart pamięci: wydarzeniowa połowa
     `mergeCoversEventOrRecurrence` jest przez `SET_BLOCK_TIME` praktycznie
     nieosiągalna (dwa stykające się bloki szczelnie wypełniają scalony przedział,

@@ -28,6 +28,7 @@ import {
   overloadedPeopleOnDate,
   peopleWithBirthdayOnDate,
   personAbsentFromEventOccurrence,
+  isFullDayVacation,
   personVacationOnDate,
   recurrenceOccurrencesForDate,
 } from '../store/selectors';
@@ -311,11 +312,20 @@ export function buildWeekModel(
 
     const events = calendarEventsForDate(state, date, filter);
 
-    // Okno renderu urlopu: godziny pracy JEGO uczestnika (urlop ma kanonicznie
-    // dokładnie jednego), fallback 9:00-17:00 dla zdegenerowanego profilu.
+    // Okno renderu urlopu PEŁNODNIOWEGO: godziny pracy JEGO uczestnika (urlop
+    // ma kanonicznie dokładnie jednego), fallback 9:00-17:00 dla
+    // zdegenerowanego profilu. Urlop GODZINOWY (jednodniowy, od 2026-08-24)
+    // stoi w SWOIM oknie — zapisane czasy są wtedy prawdą, nie atrapą.
     const vacationWindows = new Map<string, { start: number; end: number }>();
     for (const occ of events) {
       if (occ.event.kind !== 'urlop') continue;
+      if (!isFullDayVacation(occ.event)) {
+        vacationWindows.set(occ.event.id, {
+          start: occ.startMinutes,
+          end: occ.startMinutes + occ.durationMinutes,
+        });
+        continue;
+      }
       const owner = getPerson(state, occ.event.attendeeIds[0] ?? '');
       vacationWindows.set(occ.event.id, vacationRenderWindow(owner));
     }

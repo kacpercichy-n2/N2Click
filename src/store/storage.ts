@@ -50,6 +50,7 @@ import {
 import {
   canonicalEventRecurrence,
   canonicalVacationEndDate,
+  canonicalVacationTimes,
   isFilterViewKey,
   sanitizeClientContacts,
   sanitizeLastViewFilter,
@@ -1264,8 +1265,10 @@ export function repairTimeEntries(data: AppData): AppData {
  * 5. `recurrence` przez formę kanoniczną wydarzenia (czasy reguły = czasy
  *    wydarzenia, dzień kotwicy w `daysOfWeek`); rozjazd/brak dnia kotwicy =>
  *    USUNIĘCIE klucza (wydarzenie jednorazowe).
- * 6. URLOP (`kind === 'urlop'`): czasy WYMUSZONE na 0/1440, `recurrence`
- *    ZDJĘTE (cykliczny urlop nie istnieje), `endDate` przez
+ * 6. URLOP (`kind === 'urlop'`): czasy przez `canonicalVacationTimes`
+ *    (wielodniowy => pełna doba; jednodniowy zachowuje poprawne okno
+ *    godzinowe, śmieci => pełna doba), `recurrence` ZDJĘTE (cykliczny urlop
+ *    nie istnieje), `endDate` przez
  *    `canonicalVacationEndDate` (zły/przed kotwicą/ponad 92 dni => brak klucza).
  *    Zła liczba uczestników NIE wyrzuca wiersza — łagodna degradacja jak przy
  *    danglingu. Nieznana wartość `kind` => spotkanie (klucz zdjęty).
@@ -1285,11 +1288,22 @@ export function repairEvents(data: AppData): AppData {
     if (id === '' || title === '' || !isValidDateStr(date)) continue;
 
     const isVacation = e.kind === 'urlop';
+    // Zakres dat PRZED czasami: wielodniowość decyduje o regule czasów.
+    const vacationEndDate = isVacation ? canonicalVacationEndDate(e.endDate, date) : undefined;
 
-    // Czasy: urlop je NARZUCA (pełna doba), spotkanie snapuje w dół + clamp;
+    // Czasy: urlop wielodniowy je NARZUCA (pełna doba), jednodniowy zachowuje
+    // poprawne okno godzinowe (reszta koercjonuje do pełnej doby — patrz
+    // canonicalVacationTimes); spotkanie snapuje w dół + clamp;
     // nie-finite start/czas spotkania => wiersz ODPADA.
     let startMinutes = 0;
     let durationMinutes = DAY_MINUTES;
+    if (isVacation) {
+      ({ startMinutes, durationMinutes } = canonicalVacationTimes(
+        e.startMinutes,
+        e.durationMinutes,
+        typeof vacationEndDate === 'string',
+      ));
+    }
     if (!isVacation) {
       const rawStart = e.startMinutes;
       if (typeof rawStart !== 'number' || !Number.isFinite(rawStart)) continue;
@@ -1320,7 +1334,7 @@ export function repairEvents(data: AppData): AppData {
     const recurrence = isVacation
       ? undefined
       : canonicalEventRecurrence(e.recurrence, date, startMinutes, durationMinutes);
-    const endDate = isVacation ? canonicalVacationEndDate(e.endDate, date) : undefined;
+    const endDate = vacationEndDate;
     // Odpowiedzi RSVP per wystąpienie: kanoniczne wyłącznie przy żywej regule
     // (zdjęta cykliczność / urlop => klucz znika razem z wpisami). Zapis
     // legacy pod kluczem `absences` (pierwsza wersja mechaniki) czyta się

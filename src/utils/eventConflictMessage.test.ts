@@ -143,16 +143,23 @@ describe('eventConflictWarningMessage', () => {
   });
 });
 
-// URLOP: pełnodniowy, więc jego opis NIE niesie zakresu godzin („0:00-24:00"
-// nic by nie mówiło), a ostrzeżenie przy zapisie liczy pracę do przeplanowania.
+// URLOP pełnodniowy NIE niesie zakresu godzin („0:00-24:00" nic by nie
+// mówiło); godzinowy (jednodniowy, od 2026-08-24) wymienia swoje okno.
+// Ostrzeżenie przy zapisie liczy pracę do przeplanowania.
 describe('urlop w komunikatach', () => {
   const vacation = (overrides: Partial<ConflictLike> = {}) =>
     conflict({ kind: 'urlop', title: 'Urlop', startMinutes: 0, durationMinutes: 1440, ...overrides });
 
-  it('opisuje urlop bez zakresu godzin', () => {
+  it('opisuje urlop pełnodniowy bez zakresu godzin', () => {
     expect(eventConflictBlockingMessage([vacation()])).toBe(
       'Nie da się ustawić wydarzenia w tych godzinach. Ola Nowak ma w tym dniu urlop.',
     );
+  });
+
+  it('urlop godzinowy wymienia swoje okno', () => {
+    expect(
+      eventConflictBlockingMessage([vacation({ startMinutes: 600, durationMinutes: 120 })]),
+    ).toBe('Nie da się ustawić wydarzenia w tych godzinach. Ola Nowak ma urlop 10:00-12:00.');
   });
 
   it('bez nazwiska mówi „Ta osoba"', () => {
@@ -191,7 +198,13 @@ describe('recurringConflictWarningMessage — seria cykliczna', () => {
   it('wymienia terminy z datą i mówi, że zapis przechodzi', () => {
     expect(
       recurringConflictWarningMessage([
-        conflict({ kind: 'urlop', personName: 'Jarek Nowak', date: '2026-07-08' }),
+        conflict({
+          kind: 'urlop',
+          personName: 'Jarek Nowak',
+          date: '2026-07-08',
+          startMinutes: 0,
+          durationMinutes: 1440,
+        }),
       ]),
     ).toBe(
       'Seria koliduje w pojedynczych terminach: 8 lip (śro): Jarek Nowak ma w tym dniu urlop. Wydarzenie zapisze się mimo to.',

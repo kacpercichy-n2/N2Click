@@ -2819,3 +2819,122 @@ describe('urlop blokuje przypisanie czasu', () => {
     expect(next.workload.find((w) => w.id === 'bin1')!.personId).toBe('p2');
   });
 });
+
+// ---------------------------------------------------------------------------
+// URLOP GODZINOWY (2026-08-24): okno od-do jest tą samą twardą blokadą co
+// pełna doba, tylko krótszą. `SET_BLOCK_TIME`/`SCHEDULE_BIN_PART` łapią je
+// przez `blockCollidesWithEvent` (czasy wystąpienia są prawdą), a dwie jawne
+// ścieżki mają własny rachunek: `INSERT_BLOCK` odrzuca wstawkę, gdy nowy albo
+// PRZEPCHNIĘTY blok wylądowałby na oknie; datowany `REASSIGN_ENTRY` wnosi
+// okno do `findFreeStart` jako pseudo-blok.
+// ---------------------------------------------------------------------------
+
+describe('urlop GODZINOWY blokuje swoje okno', () => {
+  const MON = '2026-07-06';
+
+  const hourly = (startMinutes: number, durationMinutes: number, personId = 'p1'): CalendarEvent => ({
+    id: 'urlopH',
+    title: 'Urlop',
+    description: '',
+    location: '',
+    meetingUrl: '',
+    date: MON,
+    kind: 'urlop',
+    startMinutes,
+    durationMinutes,
+    attendeeIds: [personId],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  });
+
+  const insertAfterRef = (state: AppData) =>
+    reducer(state, {
+      type: 'INSERT_BLOCK',
+      payload: { refEntryId: 'ref1', position: 'after', taskId: 't2', hours: 1 },
+    });
+
+  it('INSERT_BLOCK wstawiany NA okno => ta sama referencja; poza oknem przechodzi', () => {
+    const fixture = (events: CalendarEvent[]) =>
+      makeState({
+        tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: 10 })],
+        people: [makePerson({ id: 'p1' })],
+        workload: [
+          makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: MON, startMinutes: 480, plannedHours: 1 }),
+        ],
+        events,
+      });
+    // Okno 9:00-11:00 — wstawka „po" bloku 8:00-9:00 wchodzi wprost na okno.
+    const blocked = fixture([hourly(540, 120)]);
+    expect(insertAfterRef(blocked)).toBe(blocked);
+    // Okno 13:00-15:00 — ta sama wstawka przechodzi (blokada nie jest dzienna).
+    const open = fixture([hourly(780, 120)]);
+    const next = insertAfterRef(open);
+    expect(next).not.toBe(open);
+    expect(next.workload.some((w) => w.taskId === 't2' && w.startMinutes === 540)).toBe(true);
+  });
+
+  it('INSERT_BLOCK odrzuca też blok PRZEPCHNIĘTY na okno', () => {
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', estimatedHours: 10 })],
+      people: [makePerson({ id: 'p1' })],
+      workload: [
+        makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: MON, startMinutes: 480, plannedHours: 1 }),
+        makeEntry({ id: 'e2', taskId: 't1', personId: 'p1', date: MON, startMinutes: 540, plannedHours: 1 }),
+      ],
+      // Okno 10:00-12:00: wstawka 9:00-10:00 mieści się, ale przepycha e2 na 10:00.
+      events: [hourly(600, 120)],
+    });
+    expect(insertAfterRef(state)).toBe(state);
+  });
+
+  it('REASSIGN_ENTRY datowany omija okno urlopu (pseudo-blok w findFreeStart)', () => {
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      people: [makePerson({ id: 'p1' }), makePerson({ id: 'p2' })],
+      assignments: [{ id: 'a1', taskId: 't1', personId: 'p1' }],
+      workload: [
+        makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: MON, startMinutes: 540, plannedHours: 2 }),
+      ],
+      events: [hourly(540, 120, 'p2')], // 9:00-11:00 u odbiorcy
+    });
+    const next = reducer(state, { type: 'REASSIGN_ENTRY', entryId: 'e1', toPersonId: 'p2' });
+    expect(next).not.toBe(state);
+    const moved = next.workload.find((w) => w.id === 'e1')!;
+    expect(moved.personId).toBe('p2');
+    // Blok NIE nachodzi na okno 540-660 (styk krawędzi nie jest kolizją).
+    expect(moved.startMinutes + 120 <= 540 || moved.startMinutes >= 660).toBe(true);
+  });
+
+  it('REASSIGN_ENTRY nie przesuwa bloku, gdy zwykły slot NIE wpada w okno', () => {
+    // U odbiorcy blok 8:00-10:00 i okno urlopu 15:00-17:00: normalne ułożenie
+    // („doklej po ostatnim bloku") daje 10:00 i NIE wpada w okno, więc okno
+    // nie może przepchnąć bloku za siebie (na 17:00).
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      people: [makePerson({ id: 'p1' }), makePerson({ id: 'p2' })],
+      assignments: [{ id: 'a1', taskId: 't1', personId: 'p1' }],
+      workload: [
+        makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: MON, startMinutes: 540, plannedHours: 2 }),
+        makeEntry({ id: 'e2', taskId: 't1', personId: 'p2', date: MON, startMinutes: 480, plannedHours: 2 }),
+      ],
+      events: [hourly(900, 120, 'p2')], // 15:00-17:00
+    });
+    const next = reducer(state, { type: 'REASSIGN_ENTRY', entryId: 'e1', toPersonId: 'p2' });
+    expect(next).not.toBe(state);
+    expect(next.workload.find((w) => w.id === 'e1')!.startMinutes).toBe(600);
+  });
+
+  it('REASSIGN_ENTRY bez miejsca poza oknem => ta sama referencja', () => {
+    const state = makeState({
+      tasks: [makeTask({ id: 't1' })],
+      people: [makePerson({ id: 'p1' }), makePerson({ id: 'p2' })],
+      assignments: [{ id: 'a1', taskId: 't1', personId: 'p1' }],
+      workload: [
+        makeEntry({ id: 'e1', taskId: 't1', personId: 'p1', date: MON, startMinutes: 540, plannedHours: 2 }),
+      ],
+      // 0:00-23:45 — zostaje 15 minut, blok 2h się nie mieści.
+      events: [hourly(0, 1425, 'p2')],
+    });
+    expect(reducer(state, { type: 'REASSIGN_ENTRY', entryId: 'e1', toPersonId: 'p2' })).toBe(state);
+  });
+});

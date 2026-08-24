@@ -63,6 +63,17 @@ describe('personVacationRanges', () => {
   it('pusty personId nie łapie niczego', () => {
     expect(personVacationRanges([vacation('v1', 'p1', '2026-02-02')], '')).toEqual([]);
   });
+
+  it('urlop GODZINOWY (2026-08-24) niesie okno; pełnodniowy nie ma klucza', () => {
+    const hourly = { ...vacation('v1', 'p1', '2026-02-02'), startMinutes: 540, durationMinutes: 120 };
+    expect(personVacationRanges([hourly], 'p1')).toEqual([
+      {
+        start: '2026-02-02',
+        end: '2026-02-02',
+        window: { startMinutes: 540, endMinutes: 660 },
+      },
+    ]);
+  });
 });
 
 describe('vacationWorkDaysInYear', () => {
@@ -88,6 +99,14 @@ describe('vacationWorkDaysInYear', () => {
     const ranges = [{ start: '2025-06-01', end: '2025-06-05' }];
     expect(vacationWorkDaysInYear(ranges, WEEKDAYS, 2026)).toBe(0);
   });
+
+  it('urlop GODZINOWY nie zdejmuje dnia z limitu (to nie dzień urlopu)', () => {
+    const ranges = [
+      { start: '2026-09-07', end: '2026-09-07', window: { startMinutes: 540, endMinutes: 660 } },
+      { start: '2026-09-08', end: '2026-09-08' },
+    ];
+    expect(vacationWorkDaysInYear(ranges, WEEKDAYS, 2026)).toBe(1);
+  });
 });
 
 describe('upcomingVacationRanges', () => {
@@ -100,14 +119,29 @@ describe('upcomingVacationRanges', () => {
 
   it('zwraca trwające i przyszłe, od najbliższego, z limitem', () => {
     // 2026-08-05 jest w środku drugiego zakresu — trwający zostaje.
-    expect(upcomingVacationRanges(ranges, '2026-08-05', 2)).toEqual([
+    expect(upcomingVacationRanges(ranges, '2026-08-05', 0, 2)).toEqual([
       { start: '2026-08-03', end: '2026-08-07' },
       { start: '2026-09-07', end: '2026-09-11' },
     ]);
   });
 
   it('po ostatnim urlopie lista jest pusta', () => {
-    expect(upcomingVacationRanges(ranges, '2026-11-01')).toEqual([]);
+    expect(upcomingVacationRanges(ranges, '2026-11-01', 0)).toEqual([]);
+  });
+
+  it('dzisiejszy urlop GODZINOWY trwa tylko do końca swojego okna', () => {
+    const hourly = {
+      start: '2026-08-05',
+      end: '2026-08-05',
+      window: { startMinutes: 540, endMinutes: 660 }, // 9:00-11:00
+    };
+    const fullDay = { start: '2026-08-05', end: '2026-08-05' };
+    // 10:00 — okno trwa; 12:00 — okno minęło (pełny dzień zostaje do północy).
+    expect(upcomingVacationRanges([hourly, fullDay], '2026-08-05', 600)).toEqual([
+      hourly,
+      fullDay,
+    ]);
+    expect(upcomingVacationRanges([hourly, fullDay], '2026-08-05', 720)).toEqual([fullDay]);
   });
 });
 

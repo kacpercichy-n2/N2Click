@@ -63,6 +63,7 @@ import {
   personAbsentFromEventOccurrence,
   personCapacity,
   personRsvpForEventOccurrence,
+  isFullDayVacation,
   personVacationOnDate,
   taskDisplayStatus,
   taskGrowAllowance,
@@ -2863,11 +2864,16 @@ function EventBlockImpl({
     width: `calc(${100 / cols}% - 3px)`,
   };
   const who = (vacationOwner ?? '').trim();
+  // Urlop godzinowy (jednodniowy, 2026-08-24) mówi swoim oknem; pełnodniowy
+  // zostaje przy „Cały dzień" (okno renderu to atrapa z godzin pracy).
+  const vacationSpan = isFullDayVacation(occ.event)
+    ? 'Cały dzień'
+    : `${formatMinutes(occ.startMinutes)}-${formatMinutes(occ.startMinutes + occ.durationMinutes)}`;
   const dragHint = canDrag
     ? ' Przeciągnij, aby przenieść; przeciągnij krawędź, aby zmienić czas trwania. Zmiana wymaga potwierdzenia i obowiązuje wszystkich.'
     : '';
   const hint = isVacation
-    ? `Urlop${who === '' ? '' : `: ${who}`}. Cały dzień. Kliknij, aby otworzyć.`
+    ? `Urlop${who === '' ? '' : `: ${who}`}. ${vacationSpan}. Kliknij, aby otworzyć.`
     : `📅 ${displayTitle} — ${formatMinutes(startMinutes)}–${formatMinutes(
         endMinutes,
       )}. ${absentForViewer ? 'Nie uczestniczysz w tym wystąpieniu. ' : ''}Kliknij, aby otworzyć wydarzenie.${dragHint}`;
@@ -2927,7 +2933,9 @@ function EventBlockImpl({
           <span className="week-event-title">
             <TreePalm size={13} aria-hidden /> Urlop
           </span>
-          <span className="week-event-time">{who === '' ? 'Cały dzień' : who}</span>
+          <span className="week-event-time">
+            {isFullDayVacation(occ.event) && who !== '' ? who : vacationSpan}
+          </span>
         </>
       ) : (
         <>

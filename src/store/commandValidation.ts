@@ -296,10 +296,41 @@ export function canonicalEventRecurrence(
  */
 export const MAX_VACATION_DAYS = 92;
 
-/** Czasy urlopu są kanonicznie WYMUSZONE: pełna doba, więc kolizja z każdym
- *  blokiem tej osoby wychodzi z istniejących ścieżek interwałowych. */
+/** Bazowe czasy urlopu: pełna doba. Urlop WIELODNIOWY ma je WYMUSZONE;
+ *  jednodniowy może nieść okno godzinowe (zgłoszenie 2026-08-24: odbiór
+ *  nadgodzin, urlop krótszy niż dzień roboczy) — kolizja w obu wariantach
+ *  wychodzi z istniejących ścieżek interwałowych, bo czyta zapisane czasy. */
 const VACATION_START_MINUTES = 0;
 const VACATION_DURATION_MINUTES = DAY_MINUTES;
+
+/**
+ * Łagodna forma kanoniczna CZASÓW urlopu dla repair/hydracji: urlop
+ * wielodniowy ZAWSZE dostaje pełną dobę; jednodniowy zachowuje poprawne okno
+ * siatki 15 min (start 0..1425, czas 15..1440, suma w dobie), a wszystko inne
+ * koercjonuje do pełnej doby. Reduktor jest surowszy — niepoprawne okno
+ * ODRZUCA (patrz {@link normalizeEventDraft}); tu naprawiamy, bo zapis już
+ * istnieje i nie może wywrócić wczytania.
+ */
+export function canonicalVacationTimes(
+  rawStart: unknown,
+  rawDuration: unknown,
+  multiDay: boolean,
+): { startMinutes: number; durationMinutes: number } {
+  if (
+    !multiDay &&
+    typeof rawStart === 'number' &&
+    typeof rawDuration === 'number' &&
+    isValidStartMinutes(rawStart) &&
+    isValidDurationMinutes(rawDuration) &&
+    rawStart + rawDuration <= DAY_MINUTES
+  ) {
+    return { startMinutes: rawStart, durationMinutes: rawDuration };
+  }
+  return {
+    startMinutes: VACATION_START_MINUTES,
+    durationMinutes: VACATION_DURATION_MINUTES,
+  };
+}
 
 /**
  * Forma kanoniczna zakresu urlopu: klucz `endDate` istnieje TYLKO gdy jest
@@ -347,12 +378,14 @@ export interface NormalizedEventDraft {
  * cykliczność zażądana lecz niekanoniczna (brak dnia kotwicy albo strukturalnie
  * zła).
  *
- * URLOP (`kind: 'urlop'`) ma własną gałąź formy kanonicznej (D2/D3): czasy są
- * KOERCJONOWANE do pełnej doby, `recurrence` jest ZABRONIONE, uczestnik musi
- * być DOKŁADNIE jeden i istniejący, a `endDate` przechodzi przez
- * {@link canonicalVacationEndDate}. Spotkanie z kluczem `kind`/`endDate` jest
- * odrzucane — dyskryminator nie może wjechać na zwykłe wydarzenie bocznymi
- * drzwiami.
+ * URLOP (`kind: 'urlop'`) ma własną gałąź formy kanonicznej (D2/D3):
+ * `recurrence` jest ZABRONIONE, uczestnik musi być DOKŁADNIE jeden i
+ * istniejący, a `endDate` przechodzi przez {@link canonicalVacationEndDate}.
+ * CZASY: urlop wielodniowy jest KOERCJONOWANY do pełnej doby (0/1440); urlop
+ * jednodniowy może nieść okno godzinowe (zgłoszenie 2026-08-24) walidowane jak
+ * spotkanie, a 0/1440 pozostaje kanonicznym zapisem pełnej doby. Spotkanie z
+ * kluczem `kind`/`endDate` jest odrzucane — dyskryminator nie może wjechać na
+ * zwykłe wydarzenie bocznymi drzwiami.
  */
 export function normalizeEventDraft(
   state: AppData,
@@ -365,16 +398,8 @@ export function normalizeEventDraft(
   if (title === '') return null;
   if (!isValidDateStr(draft.date)) return null;
 
-  // Czasy: urlop je NARZUCA (0/1440), spotkanie waliduje jak dotąd.
-  const startMinutes = isVacation ? VACATION_START_MINUTES : draft.startMinutes;
-  const durationMinutes = isVacation ? VACATION_DURATION_MINUTES : draft.durationMinutes;
-  if (!isVacation) {
-    if (!isValidStartMinutes(startMinutes)) return null;
-    if (!isValidDurationMinutes(durationMinutes)) return null;
-    if (startMinutes + durationMinutes > DAY_MINUTES) return null;
-  }
-
-  // Zakres dat: klucz istnieje wyłącznie przy urlopie dłuższym niż jeden dzień.
+  // Zakres dat NAJPIERW (decyduje o regule czasów): klucz istnieje wyłącznie
+  // przy urlopie dłuższym niż jeden dzień.
   let endDate: string | undefined;
   if (isVacation) {
     const canonical = canonicalVacationEndDate(draft.endDate, draft.date);
@@ -382,6 +407,22 @@ export function normalizeEventDraft(
     endDate = canonical;
   } else if (draft.endDate !== undefined && draft.endDate !== null && draft.endDate !== '') {
     return null; // spotkanie nie ma zakresu dat
+  }
+
+  // Czasy: urlop WIELODNIOWY je NARZUCA (0/1440); urlop jednodniowy przyjmuje
+  // okno godzinowe (zgłoszenie 2026-08-24) walidowane jak spotkanie, przy czym
+  // 0/1440 pozostaje kanonicznym zapisem pełnej doby. Spotkanie jak dotąd.
+  const forceFullDay =
+    isVacation &&
+    (endDate !== undefined ||
+      (draft.startMinutes === VACATION_START_MINUTES &&
+        draft.durationMinutes === VACATION_DURATION_MINUTES));
+  const startMinutes = forceFullDay ? VACATION_START_MINUTES : draft.startMinutes;
+  const durationMinutes = forceFullDay ? VACATION_DURATION_MINUTES : draft.durationMinutes;
+  if (!forceFullDay) {
+    if (!isValidStartMinutes(startMinutes)) return null;
+    if (!isValidDurationMinutes(durationMinutes)) return null;
+    if (startMinutes + durationMinutes > DAY_MINUTES) return null;
   }
 
   if (!Array.isArray(draft.attendeeIds)) return null;

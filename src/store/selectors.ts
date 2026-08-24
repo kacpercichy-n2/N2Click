@@ -28,6 +28,7 @@ import type {
 import { DEFAULT_CAPACITY, DEFAULT_FILTER_CRITERIA } from './storage';
 import {
   blockEndMinutes,
+  DAY_MINUTES,
   formatMinutes,
   hasCollision,
   hoursToMinutes,
@@ -613,8 +614,9 @@ const calendarEventsForDateCache = createKeyedCache<CalendarEventOccurrence[]>((
     }
     // Urlop rozwija się na CAŁY zakres dat (porównanie stringów yyyy-MM-dd jest
     // porządkiem chronologicznym). Bez filtrowania po `workDays` — pokazujemy
-    // każdy dzień zakresu, także wolny. Wystąpienie niesie zapisane czasy
-    // 0/1440, więc pełnodniowa kolizja wychodzi z istniejących ścieżek.
+    // każdy dzień zakresu, także wolny. Wystąpienie niesie zapisane czasy:
+    // 0/1440 (pełna doba) albo okno godzinowe urlopu jednodniowego — kolizja
+    // w obu wariantach wychodzi z istniejących ścieżek interwałowych.
     if (event.kind === 'urlop') {
       if (event.date <= date && date <= (event.endDate ?? event.date)) {
         out.push({
@@ -726,11 +728,25 @@ export function calendarDayVolume(
 }
 
 /**
- * Urlop TEJ osoby w TYM dniu (albo `null`). Czyta dokładnie ten sam indeks, co
- * kolizja — dzięki temu jawne straże reduktora (`INSERT_BLOCK`,
+ * Czy urlop zajmuje PEŁNĄ dobę (0/1440)? Urlop jednodniowy może od 2026-08-24
+ * nieść okno godzinowe — taki NIE dostaje pełnodniowych przywilejów (palma,
+ * twarde straże dnia, wpis „urlopowicza dnia"), tylko zajmuje swoje okno przez
+ * istniejące ścieżki interwałowe.
+ */
+export function isFullDayVacation(event: CalendarEvent): boolean {
+  return (
+    event.kind === 'urlop' && event.startMinutes === 0 && event.durationMinutes === DAY_MINUTES
+  );
+}
+
+/**
+ * PEŁNODNIOWY urlop TEJ osoby w TYM dniu (albo `null`). Czyta dokładnie ten sam
+ * indeks, co kolizja — dzięki temu jawne straże reduktora (`INSERT_BLOCK`,
  * `REASSIGN_ENTRY`) i bramki UI nie mogą rozjechać się z
  * {@link blockCollidesWithEvent}, który łapie urlop automatycznie jako
  * wystąpienie 0-1440. Zwraca ENCJĘ, żeby komunikat mógł nazwać zakres dat.
+ * Urlop GODZINOWY celowo nie wchodzi: nie blokuje całego dnia, a jego okno
+ * pilnują te same ścieżki interwałowe co spotkań.
  */
 export function personVacationOnDate(
   state: AppData,
@@ -739,9 +755,34 @@ export function personVacationOnDate(
 ): CalendarEvent | null {
   if (personId === '' || !isValidDateStr(date)) return null;
   for (const occ of calendarEventsForDate(state, date, new Set([personId]))) {
-    if (occ.event.kind === 'urlop') return occ.event;
+    if (isFullDayVacation(occ.event)) return occ.event;
   }
   return null;
+}
+
+/**
+ * Okna urlopów GODZINOWYCH tej osoby w tym dniu jako zajęte przedziały
+ * minutowe. Uzupełnienie {@link personVacationOnDate} dla ścieżek, które nie
+ * idą przez `blockCollidesWithEvent` (`INSERT_BLOCK`, datowany
+ * `REASSIGN_ENTRY`): pełną dobę odrzuca tam straż dnia, a okna godzinowe
+ * muszą wejść do rachunku miejsca jako pseudo-bloki — inaczej automatyczne
+ * ułożenie mogłoby położyć blok na nieobecności (przegląd 2026-08-24).
+ */
+export function personHourlyVacationIntervals(
+  state: AppData,
+  personId: string,
+  date: DateStr,
+): Array<{ startMinutes: number; endMinutes: number }> {
+  if (personId === '' || !isValidDateStr(date)) return [];
+  const out: Array<{ startMinutes: number; endMinutes: number }> = [];
+  for (const occ of calendarEventsForDate(state, date, new Set([personId]))) {
+    if (occ.event.kind !== 'urlop' || isFullDayVacation(occ.event)) continue;
+    out.push({
+      startMinutes: occ.startMinutes,
+      endMinutes: occ.startMinutes + occ.durationMinutes,
+    });
+  }
+  return out;
 }
 
 /**

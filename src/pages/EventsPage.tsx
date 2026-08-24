@@ -4,6 +4,7 @@
 // Wydarzenia są CZYSTO PREZENTACYJNE — nie tworzą zaplanowanych godzin.
 import { useMemo, useState } from 'react';
 import { useStore } from '../store/AppStore';
+import { isFullDayVacation } from '../store/selectors';
 import { eventDisplayTitle, isEventContentMasked } from '../store/confidentiality';
 import { useCan } from '../store/useCan';
 import type { CalendarEvent } from '../types';
@@ -126,14 +127,15 @@ export function EventsPage() {
                 >
                   <span className="event-row-when">
                     {/* SY-08 — data treści, nigdy surowe `yyyy-MM-dd`.
-                        Urlop niesie ZAKRES dat i „Cały dzień" zamiast godzin
-                        (0:00-24:00 nic by nie mówiło). */}
+                        Urlop pełnodniowy niesie ZAKRES dat i „Cały dzień"
+                        zamiast godzin (0:00-24:00 nic by nie mówiło); urlop
+                        godzinowy pokazuje swoje okno jak spotkanie. */}
                     <span className="event-row-date">
                       {formatShortWithWeekday(e.date)}
                       {isVacation && e.endDate ? ` - ${formatShortWithWeekday(e.endDate)}` : ''}
                     </span>
                     <span className="event-row-time">
-                      {isVacation ? (
+                      {isVacation && isFullDayVacation(e) ? (
                         'Cały dzień'
                       ) : (
                         <>

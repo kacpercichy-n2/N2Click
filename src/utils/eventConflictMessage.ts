@@ -11,7 +11,7 @@
 // Zakresy godzin piszemy zwykłym łącznikiem („9:00-10:00"). Myślnik i półpauza
 // są zabronione w tekstach widocznych dla użytkownika.
 
-import { formatMinutes } from './time';
+import { DAY_MINUTES, formatMinutes } from './time';
 import { formatShortWithWeekday } from './dates';
 
 /**
@@ -79,12 +79,20 @@ export function extraConflictsPhrase(count: number): string {
 /**
  * „Ola Nowak ma już zadanie „Regresja QA" 10:30-12:00".
  *
- * URLOP jest wyjątkiem BEZ zakresu godzin: jest pełnodniowy, więc „0:00-24:00"
- * niosłoby zero informacji i wyglądało jak błąd danych.
+ * URLOP PEŁNODNIOWY jest wyjątkiem BEZ zakresu godzin: „0:00-24:00" niosłoby
+ * zero informacji i wyglądało jak błąd danych. Urlop GODZINOWY (jednodniowy,
+ * od 2026-08-24) wymienia swoje okno jak każde inne zajęcie.
  */
 function describeOne(c: ConflictLike): string {
   const who = c.personName.trim() === '' ? 'Ta osoba' : c.personName.trim();
-  if (c.kind === 'urlop') return `${who} ma w tym dniu urlop`;
+  if (c.kind === 'urlop') {
+    if (c.startMinutes === 0 && c.durationMinutes === DAY_MINUTES) {
+      return `${who} ma w tym dniu urlop`;
+    }
+    return `${who} ma urlop ${formatMinutes(c.startMinutes)}-${formatMinutes(
+      c.startMinutes + c.durationMinutes,
+    )}`;
+  }
   const noun = KIND_NOUN[c.kind];
   const from = formatMinutes(c.startMinutes);
   const to = formatMinutes(c.startMinutes + c.durationMinutes);

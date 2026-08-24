@@ -42,6 +42,7 @@ import { normalizeProjectDocumentUrl } from '../utils/projectDocuments';
 import {
   canonicalEventRecurrence,
   canonicalVacationEndDate,
+  canonicalVacationTimes,
   sanitizeClientContacts,
 } from '../store/commandValidation';
 import {
@@ -739,17 +740,25 @@ export async function loadPlannerSnapshot(
       continue;
     }
     const isVacation = row.kind === 'urlop';
+    // Zakres dat PRZED czasami: wielodniowość decyduje o regule czasów.
+    const vacationEndDate = isVacation
+      ? canonicalVacationEndDate(sqlDateToLocal(row.end_date), date) ?? undefined
+      : undefined;
     const startRaw = row.start_minutes;
     const durRaw = row.duration_minutes;
-    // Urlop ma czasy KANONICZNE (pełna doba) niezależnie od tego, co stoi w
-    // kolumnach — dokładnie jak w reduktorze i `repairEvents`.
-    const startMinutes = isVacation
-      ? 0
+    // Czasy urlopu przez `canonicalVacationTimes` — dokładnie jak w
+    // `repairEvents`: wielodniowy zawsze pełna doba, jednodniowy zachowuje
+    // poprawne okno godzinowe, śmieci koercjonują do pełnej doby.
+    const vacationTimes = isVacation
+      ? canonicalVacationTimes(startRaw, durRaw, vacationEndDate !== undefined)
+      : null;
+    const startMinutes = vacationTimes
+      ? vacationTimes.startMinutes
       : typeof startRaw === 'number' && Number.isFinite(startRaw)
         ? startRaw
         : 0;
-    const durationMinutes = isVacation
-      ? DAY_MINUTES
+    const durationMinutes = vacationTimes
+      ? vacationTimes.durationMinutes
       : typeof durRaw === 'number' && Number.isFinite(durRaw)
         ? durRaw
         : MINUTE_STEP;
@@ -765,9 +774,7 @@ export async function loadPlannerSnapshot(
     const recurrence = isVacation
       ? undefined
       : canonicalEventRecurrence(row.recurrence, date, startMinutes, durationMinutes);
-    const endDate = isVacation
-      ? canonicalVacationEndDate(sqlDateToLocal(row.end_date), date) ?? undefined
-      : undefined;
+    const endDate = vacationEndDate;
     // Odpowiedzi RSVP per wystąpienie (kolumna `rsvps`, ŁAGODNIE per-pole jak
     // `kind`/`end_date` — hydracja musi przetrwać kolumnę sprzed migracji):
     // personId to profil chmury → reverse na osobę lokalną ('' odpada), po

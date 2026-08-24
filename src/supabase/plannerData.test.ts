@@ -735,6 +735,30 @@ describe('loadPlannerSnapshot', () => {
     expect('recurrence' in e).toBe(false);
   });
 
+  it('urlop JEDNODNIOWY zachowuje poprawne okno godzinowe (2026-08-24)', async () => {
+    const db = new FakeSelectDb().seed('events', [
+      vacationRow({ end_date: null, recurrence: null }),
+    ]);
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.payload.events![0]).toMatchObject({
+      kind: 'urlop',
+      startMinutes: 540,
+      durationMinutes: 60,
+    });
+  });
+
+  it('urlop jednodniowy ze ŚMIECIOWYMI czasami koercjonuje do 0/1440', async () => {
+    const db = new FakeSelectDb().seed('events', [
+      vacationRow({ end_date: null, recurrence: null, start_minutes: 547, duration_minutes: 7 }),
+    ]);
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.payload.events![0]).toMatchObject({ startMinutes: 0, durationMinutes: 1440 });
+  });
+
   it.each([
     ['end_date przed datą', { end_date: '2026-07-01' }],
     ['end_date równe dacie', { end_date: '2026-07-06' }],

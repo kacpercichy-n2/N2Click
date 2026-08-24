@@ -37,6 +37,8 @@ import { bypassNavGuardOnce, clearNavGuard, setNavGuard } from '../utils/dirtyRe
 import { useModalShell } from './useModalShell';
 import { useConfirm } from './ConfirmProvider';
 import { Field, focusFieldById } from './Field';
+import { DateCalendarField } from './DateCalendarField';
+import { rangeEndLimit } from './dateCalendar';
 import { firstInvalidKey, saveErrorSummary } from './fieldContract';
 import { IconButton } from './IconButton';
 import { sortByNamePl } from '../utils/collation';
@@ -378,10 +380,13 @@ const EVENT_FIELDS: ReadonlyArray<{ key: keyof FieldErrors; domId: string; label
 ];
 const EVENT_FIELD_KEYS = EVENT_FIELDS.map((f) => f.key);
 
-/** Pola trybu urlopu — ten sam kontrakt „pierwsze złe pole", inny zestaw. */
+/** Pola trybu urlopu — ten sam kontrakt „pierwsze złe pole", inny zestaw.
+ *  `time` istnieje wyłącznie w wariancie godzinowym (pola dzielą domId ze
+ *  spotkaniem — formy nigdy nie renderują się razem). */
 const VACATION_FIELDS: ReadonlyArray<{ key: keyof FieldErrors; domId: string; label: string }> = [
   { key: 'date', domId: 'event-date', label: 'Od' },
   { key: 'endDate', domId: 'event-end-date', label: 'Do' },
+  { key: 'time', domId: 'event-start', label: 'Godziny' },
 ];
 const VACATION_FIELD_KEYS = VACATION_FIELDS.map((f) => f.key);
 
@@ -448,14 +453,29 @@ function EventEditor({
   const seedDate =
     existing?.date ??
     (prefill.date && isValidDateStr(prefill.date) ? prefill.date : todayStr());
-  const seedStart =
-    existing?.startMinutes ??
-    (prefill.start !== null && Number.isFinite(Number(prefill.start))
-      ? Number(prefill.start)
-      : 540);
-  const seedEnd = existing
-    ? existing.startMinutes + existing.durationMinutes
-    : Math.min(seedStart + 60, 1440);
+  // Urlop GODZINOWY (jednodniowy, od 2026-08-24): istniejący urlop z oknem
+  // innym niż pełna doba wchodzi w tryb godzin i zasiewa pola swoim oknem.
+  // Pełnodniowy/nowy zasiewa 9:00-17:00, żeby przełączenie na godziny nie
+  // pokazywało atrapy 0:00-24:00.
+  const existingVacationHourly =
+    isVacation &&
+    existing !== undefined &&
+    !(existing.startMinutes === 0 && existing.durationMinutes === DAY_MINUTES);
+  const seedStart = isVacation
+    ? existingVacationHourly
+      ? existing.startMinutes
+      : 540
+    : existing?.startMinutes ??
+      (prefill.start !== null && Number.isFinite(Number(prefill.start))
+        ? Number(prefill.start)
+        : 540);
+  const seedEnd = isVacation
+    ? existingVacationHourly
+      ? existing.startMinutes + existing.durationMinutes
+      : 1020
+    : existing
+      ? existing.startMinutes + existing.durationMinutes
+      : Math.min(seedStart + 60, 1440);
   // Urlop jest zawsze WŁASNY: uczestnika narzuca sesja, a nie wybór z listy
   // (self-only jest bramką UX; reduktor sprawdza tylko strukturę).
   const seedAttendees = isVacation
@@ -478,6 +498,9 @@ function EventEditor({
   const [recurInterval, setRecurInterval] = useState(existing?.recurrence?.intervalWeeks ?? 1);
   const [until, setUntil] = useState(existing?.recurrence?.until ?? '');
   const [confidential, setConfidential] = useState(existing?.isConfidential === true);
+  // Tryb urlopu: pełna doba (domyślnie) albo okno godzinowe. Godziny wymuszają
+  // urlop JEDNODNIOWY, więc przełączenie na nie czyści zakres dat.
+  const [vacationFullDay, setVacationFullDay] = useState(!existingVacationHourly);
   const [errors, setErrors] = useState<FieldErrors>({});
 
   const markDirty = () => onDirtyChange(true);
@@ -579,14 +602,24 @@ function EventEditor({
   // wyłącznie dla poprawnego zakresu, żeby nie migało w trakcie pisania daty.
   const vacationWarning = useMemo(() => {
     if (!isVacation || !isValidDateStr(date) || attendeeIds.length !== 1) return '';
-    if (vacationEndDateRule(endDate, date) !== undefined) return '';
-    const last = endDate.trim() === '' || endDate === date ? undefined : endDate;
+    // Wariant godzinowy liczy kolizje wyłącznie w swoim oknie (i tylko dla
+    // sensownego zakresu, żeby linia nie migała w trakcie pisania w polach).
+    let from = 0;
+    let to = DAY_MINUTES;
+    if (!vacationFullDay) {
+      from = snapToGrid(timeToMinutes(startTime));
+      to = snapToGrid(timeToMinutes(endTime));
+      if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return '';
+    }
+    if (vacationFullDay && vacationEndDateRule(endDate, date) !== undefined) return '';
+    const last =
+      !vacationFullDay || endDate.trim() === '' || endDate === date ? undefined : endDate;
     const report = eventDraftConflicts(
       state,
       {
         date,
-        startMinutes: 0,
-        durationMinutes: DAY_MINUTES,
+        startMinutes: from,
+        durationMinutes: to - from,
         attendeeIds,
         kind: 'urlop',
         ...(last ? { endDate: last } : {}),
@@ -594,14 +627,27 @@ function EventEditor({
       existing?.id,
     );
     return vacationDraftWarningMessage(report.warning);
-  }, [isVacation, state, date, endDate, attendeeIds, existing?.id]);
+  }, [
+    isVacation,
+    state,
+    date,
+    endDate,
+    vacationFullDay,
+    startTime,
+    endTime,
+    attendeeIds,
+    existing?.id,
+  ]);
 
   /** Zapis URLOPU: własna, krótka ścieżka (dwa pola + opis). Reguła zakresu jest
    *  lustrem reduktora, więc odrzucony draft nie zamyka modala po cichu. */
   const submitVacation = () => {
     const next: FieldErrors = {};
     next.date = dateRule(date);
-    next.endDate = vacationEndDateRule(endDate, date);
+    // Wariant godzinowy jest JEDNODNIOWY (zakres dat czyszczony przy
+    // przełączeniu), więc walidujemy tylko pola aktywnego wariantu.
+    next.endDate = vacationFullDay ? vacationEndDateRule(endDate, date) : undefined;
+    next.time = vacationFullDay ? undefined : timeRule(startTime, endTime);
     if (attendeeIds.length !== 1) {
       next.form = 'Urlop musi mieć dokładnie jedną osobę. Zaloguj się ponownie.';
     }
@@ -613,19 +659,21 @@ function EventEditor({
       return;
     }
 
+    const from = vacationFullDay ? 0 : snapToGrid(timeToMinutes(startTime));
+    const to = vacationFullDay ? DAY_MINUTES : snapToGrid(timeToMinutes(endTime));
     const draft: EventDraft = {
       title: VACATION_TITLE,
       description,
       location: '',
       meetingUrl: '',
       date,
-      // Czasy niesie forma kanoniczna (pełna doba) — modal ich nie zbiera.
-      startMinutes: 0,
-      durationMinutes: DAY_MINUTES,
+      // Pełna doba = kanoniczne 0/1440; wariant godzinowy niesie okno z pól.
+      startMinutes: from,
+      durationMinutes: to - from,
       attendeeIds,
       recurrence: null,
       kind: 'urlop',
-      endDate: endDate.trim() === '' ? null : endDate,
+      endDate: vacationFullDay && endDate.trim() !== '' ? endDate : null,
     };
 
     if (!isValidEventDraft(state, draft)) {
@@ -794,48 +842,139 @@ function EventEditor({
           </p>
         </div>
 
+        {/* Kalendarz z podświetleniem zakresu (zgłoszenie 2026-08-24): oba pola
+            otwierają ten sam prymityw DateCalendarField; „Do" ogranicza wybór
+            do startu i 92 dni, a wybrany zakres rysuje się pasem w obu. */}
         <div className="field-row">
           <Field id="event-date" label="Od *" error={errors.date}>
             {(control) => (
-              <input
+              <DateCalendarField
                 {...control}
-                data-autofocus
-                type="date"
                 value={date}
-                onChange={(e) => {
-                  setDate(e.target.value);
+                rangeStart={date}
+                rangeEnd={vacationFullDay ? endDate : ''}
+                onPick={(d) => {
+                  setDate(d);
                   markDirty();
-                  recheckIfErroring('date', () => dateRule(e.target.value));
-                  recheckIfErroring('endDate', () =>
-                    vacationEndDateRule(endDate, e.target.value),
-                  );
+                  setFieldError('date', dateRule(d));
+                  recheckIfErroring('endDate', () => vacationEndDateRule(endDate, d));
                 }}
-                onBlur={(e) => setFieldError('date', dateRule(e.target.value))}
                 disabled={readOnly}
               />
             )}
           </Field>
-          <Field id="event-end-date" label="Do" error={errors.endDate}>
-            {(control) => (
-              <input
-                {...control}
-                type="date"
-                value={endDate}
-                min={date}
-                onChange={(e) => {
-                  setEndDate(e.target.value);
-                  markDirty();
-                  recheckIfErroring('endDate', () =>
-                    vacationEndDateRule(e.target.value, date),
-                  );
-                }}
-                onBlur={(e) => setFieldError('endDate', vacationEndDateRule(e.target.value, date))}
-                disabled={readOnly}
-              />
-            )}
-          </Field>
+          {vacationFullDay && (
+            <Field id="event-end-date" label="Do" error={errors.endDate}>
+              {(control) => (
+                <DateCalendarField
+                  {...control}
+                  value={endDate}
+                  min={date}
+                  max={rangeEndLimit(date, MAX_VACATION_DAYS)}
+                  rangeStart={date}
+                  rangeEnd={endDate}
+                  placeholder="Jeden dzień"
+                  onPick={(d) => {
+                    setEndDate(d);
+                    markDirty();
+                    setFieldError('endDate', vacationEndDateRule(d, date));
+                  }}
+                  onClear={() => {
+                    setEndDate('');
+                    markDirty();
+                    setFieldError('endDate', undefined);
+                  }}
+                  disabled={readOnly}
+                />
+              )}
+            </Field>
+          )}
         </div>
-        <p className="field-hint">Puste „Do" oznacza urlop jednodniowy. Zajmuje cały dzień.</p>
+
+        {/* Urlop godzinowy (zgłoszenie 2026-08-24): odbiór nadgodzin albo
+            wyjście na część dnia. Godziny wymuszają urlop JEDNODNIOWY, więc
+            przełączenie czyści zakres dat i jego ewentualny błąd. */}
+        <div className="field">
+          <label className="checkbox-field">
+            <input
+              type="checkbox"
+              checked={vacationFullDay}
+              onChange={(e) => {
+                const fullDay = e.target.checked;
+                setVacationFullDay(fullDay);
+                markDirty();
+                if (fullDay) setFieldError('time', undefined);
+                else {
+                  setEndDate('');
+                  setFieldError('endDate', undefined);
+                }
+              }}
+              disabled={readOnly}
+            />
+            <span>Cały dzień</span>
+          </label>
+          <p className="field-hint">
+            {vacationFullDay
+              ? 'Puste „Do" oznacza urlop jednodniowy. Zajmuje cały dzień.'
+              : 'Urlop godzinowy dotyczy jednego dnia i zajmuje tylko podane godziny.'}
+          </p>
+        </div>
+
+        {!vacationFullDay && (
+          <>
+            <div className="field-row">
+              <Field
+                id="event-start"
+                label="Od godziny *"
+                invalid={errors.time !== undefined}
+                {...(errors.time !== undefined ? { describedByExtra: 'event-time-error' } : {})}
+              >
+                {(control) => (
+                  <input
+                    {...control}
+                    type="time"
+                    step={900}
+                    value={startTime}
+                    onChange={(e) => {
+                      setStartTime(e.target.value);
+                      markDirty();
+                      recheckIfErroring('time', () => timeRule(e.target.value, endTime));
+                    }}
+                    onBlur={(e) => setFieldError('time', timeRule(e.target.value, endTime))}
+                    disabled={readOnly}
+                  />
+                )}
+              </Field>
+              <Field
+                id="event-end"
+                label="Do godziny *"
+                invalid={errors.time !== undefined}
+                {...(errors.time !== undefined ? { describedByExtra: 'event-time-error' } : {})}
+              >
+                {(control) => (
+                  <input
+                    {...control}
+                    type="time"
+                    step={900}
+                    value={endTime}
+                    onChange={(e) => {
+                      setEndTime(e.target.value);
+                      markDirty();
+                      recheckIfErroring('time', () => timeRule(startTime, e.target.value));
+                    }}
+                    onBlur={(e) => setFieldError('time', timeRule(startTime, e.target.value))}
+                    disabled={readOnly}
+                  />
+                )}
+              </Field>
+            </div>
+            {errors.time && (
+              <p className="field-error" id="event-time-error">
+                {errors.time}
+              </p>
+            )}
+          </>
+        )}
 
         {/* Ostrzeżenie, NIE błąd: urlop zapisuje się mimo zaplanowanej pracy. */}
         {vacationWarning !== '' && (
@@ -912,16 +1051,14 @@ function EventEditor({
       <div className="field-row">
         <Field id="event-date" label="Data *" error={errors.date}>
           {(control) => (
-            <input
+            <DateCalendarField
               {...control}
-              type="date"
               value={date}
-              onChange={(e) => {
-                setDate(e.target.value);
+              onPick={(d) => {
+                setDate(d);
                 markDirty();
-                recheckIfErroring('date', () => dateRule(e.target.value));
+                setFieldError('date', dateRule(d));
               }}
-              onBlur={(e) => setFieldError('date', dateRule(e.target.value))}
               disabled={readOnly}
             />
           )}

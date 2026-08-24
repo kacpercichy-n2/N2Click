@@ -11,6 +11,9 @@ Primary touchpoints:
 
 - `src/components/ModalFrame.tsx`
 - `src/components/modalBackdropSnapshot.ts`
+- `src/components/useOverlay.ts` (wspólna powłoka popoverów)
+- `src/components/DateCalendarField.tsx` + `dateCalendar.ts` (pole daty z
+  kalendarzem — patrz niżej)
 - `src/styles.css`
 - the component or page that consumes the primitive
 
@@ -116,6 +119,33 @@ opaque card — the scrim never needs repainting during that scroll.
   symetryczne, NIE poprawiać. Inline svg poza `display: block` dziedziczy
   linię bazową (patrz `.icon-btn svg`); wszystkie cztery reguły svg audytu są
   zielone. Pomiar: `browser-check-optical-centering.mjs` (testing-and-automation).
+
+## Date picker primitive (2026-08-24)
+
+`DateCalendarField` zastępuje natywne `<input type="date">` w formularzach
+wydarzeń (urlop Od/Do, data spotkania). Czysty view-model siatki i klawiatury
+żyje w `dateCalendar.ts` (testy w node); komponent dokłada tylko popover na
+`useOverlay` i roving tabindex. Porównanie źródeł (research-before-custom):
+React Aria Calendar/RangeCalendar (siatka `role="grid"`, strzałki ±1/±7,
+PageUp/Down ±miesiąc, Home/End, `aria-selected`) i shadcn/react-day-picker
+(klasy `range-start`/`range-middle`/`range-end` pasa zaznaczenia). Świadome
+różnice: jeden miesiąc na raz, własna powłoka `useOverlay` zamiast warstwy
+biblioteki, zero zależności. Karta `.date-cal` stoi na
+`--n2-z-menu-over-modal`, bo pola żyją w modalach formularzy; Tab jest
+zawinięty w kartę (pułapka jak FilterPanel, capture + stopPropagation — pole
+żyje w modalu z własną pułapką na `window`), komórki mają 44 px (hybrydy
+dotykają popovera) i `touch-action: manipulation`. Urządzenie DOTYKOWE
+(`(hover: none), (pointer: coarse)`, ta sama bramka co telefonowe ścieżki
+czatu) dostaje NATYWNY `<input type="date">` z tym samym kontraktem —
+systemowy picker jest tam lepszy niż własny popover; bramka jest REAKTYWNA
+(nasłuch `change` na matchMedia), bo hybryda z odpinaną klawiaturą zmienia
+primary pointer w trakcie sesji, a przełączenie wariantu RATUJE FOKUS: gdy
+był w polu albo jego popoverze (`data-owner`), wraca na nową kontrolkę o tym
+samym `id` zamiast spaść na `body`. Zakres w polu
+jest WYŁĄCZNIE podświetleniem (`rangeStart`/`rangeEnd`) — dwa pola Od/Do
+zostają osobnymi kontrolkami, więc kontrakt błędów per pole (IA-12) jest
+nietknięty. Doktryna SY-08 (utils/dates.ts) dopuszcza to pole jako wariant
+formatu 3.
 
 ## Verification
 

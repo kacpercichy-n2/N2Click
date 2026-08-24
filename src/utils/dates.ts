@@ -12,8 +12,11 @@
 //   2. Znacznik czasu — `formatTimestamp`       → „20 lip 2026, 14:05”
 //      Momenty z historii (`createdAt`/`updatedAt`): komentarze, aktywność,
 //      zgłoszenia. Rok i godzina, bo dotyczą przeszłości.
-//   3. Pole formularza — natywne `<input type="date">`, wartość `DATE_FMT`
-//      (`yyyy-MM-dd`). Formatowanie robi przeglądarka w locale systemu.
+//   3. Pole formularza — natywne `<input type="date">` (wartość `DATE_FMT`,
+//      formatowanie robi przeglądarka) ALBO własne pole `DateCalendarField`
+//      (formularze wydarzeń od 2026-08-24) — jego trigger pokazuje datę
+//      formatem 1 (`formatShortWithWeekday`), a popover to kalendarz z
+//      podświetlanym zakresem.
 //
 // Poza tą trójką zostają WYŁĄCZNIE prymitywy osi/siatki — nie samodzielne daty
 // treści, tylko etykiety kolumn i wierszy gęstych tabel (`formatShort`,

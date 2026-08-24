@@ -13605,3 +13605,185 @@ a.toggle-btn {
     position: static;
   }
 }
+
+/* ---- Pole daty z kalendarzem (DateCalendarField) ----------------------------
+   Trigger wygląda jak input formularza (te same tokeny co blok `input[...]`
+   wyżej), popover to karta na powłoce `useOverlay` — wzór `.context-menu`.
+   Stany komórek mapują klasy z `dateCalendar.ts` (selected / range-start /
+   range-middle / range-end — pas zaznaczenia jak w react-day-picker). */
+.date-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  font-family: inherit;
+  font-size: var(--n2-type-sm);
+  text-align: left;
+  color: var(--text);
+  background: var(--field-bg);
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-sm);
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: border-color var(--n2-transition), background var(--n2-transition),
+    box-shadow var(--n2-transition);
+}
+.date-field:focus-visible {
+  outline: none;
+  border-color: rgba(196, 150, 255, 0.72);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: var(--n2-shadow-focus);
+}
+.date-field svg {
+  display: block;
+  flex: none;
+  color: var(--n2-text-soft);
+}
+.date-field.placeholder .date-field-value {
+  color: var(--n2-text-faint);
+}
+.date-field[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+.date-field:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.date-cal {
+  position: fixed;
+  /* Pola daty żyją w modalach formularzy (z-modal: 1000) — karta kalendarza
+     stoi na szczeblu menu NAD modalem, jak menu „⋯" (.overflow-menu). */
+  z-index: var(--n2-z-menu-over-modal);
+  /* 7 kolumn x 44 px (minimalny cel dotykowy — hybrydy dotykają popovera)
+     + wcięcia karty. */
+  width: 328px;
+  background: var(--n2-panel);
+  border: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-md);
+  box-shadow: var(--n2-shadow-soft);
+  padding: 10px;
+  max-height: var(--overlay-avail, 80vh);
+  overflow-y: auto;
+}
+.date-cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 2px 2px 8px;
+}
+.date-cal-month {
+  font-size: var(--n2-type-sm);
+  font-weight: 700;
+  color: var(--text);
+  text-transform: capitalize;
+}
+.date-cal-nav {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  touch-action: manipulation;
+  border: none;
+  border-radius: var(--n2-radius-xs);
+  background: none;
+  color: var(--n2-text-soft);
+  cursor: pointer;
+  transition: background var(--n2-transition), color var(--n2-transition);
+}
+.date-cal-nav:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text);
+}
+.date-cal-nav svg {
+  display: block;
+}
+.date-cal-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+}
+.date-cal-dow {
+  text-align: center;
+  font-size: var(--n2-type-xs);
+  font-weight: 600;
+  color: var(--n2-text-faint);
+  padding: 4px 0 6px;
+}
+.date-cal-day {
+  height: 44px;
+  touch-action: manipulation;
+  display: grid;
+  place-items: center;
+  font-family: var(--n2-font-data);
+  font-size: var(--n2-type-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  background: none;
+  border: none;
+  border-radius: var(--n2-radius-xs);
+  cursor: pointer;
+  transition: background var(--n2-transition), color var(--n2-transition);
+}
+.date-cal-day:hover:not([aria-disabled='true']):not(.selected) {
+  background: rgba(255, 255, 255, 0.08);
+}
+.date-cal-day.outside {
+  color: var(--n2-text-faint);
+}
+.date-cal-day.today {
+  box-shadow: inset 0 0 0 1px var(--n2-border-strong);
+}
+.date-cal-day.selected {
+  background: var(--n2-lavender);
+  color: var(--n2-text-inverse);
+  font-weight: 700;
+}
+/* Pas zakresu: końce trzymają pełną pigułkę, środek jest ciągłą wstęgą. */
+.date-cal-day.range-middle {
+  background: rgba(143, 69, 255, 0.24);
+  border-radius: 0;
+}
+.date-cal-day.range-start {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.date-cal-day.range-end {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.date-cal-day[aria-disabled='true'] {
+  color: var(--n2-text-disabled);
+  cursor: default;
+}
+.date-cal-day:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px rgba(196, 150, 255, 0.72), var(--n2-shadow-focus);
+}
+.date-cal-day.today:focus-visible {
+  box-shadow: inset 0 0 0 1px rgba(196, 150, 255, 0.72), var(--n2-shadow-focus);
+}
+.date-cal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 2px 0;
+  border-top: 1px solid var(--n2-border-soft);
+}
+.date-cal-foot-btn {
+  background: none;
+  border: none;
+  color: var(--n2-lavender);
+  font-size: var(--n2-type-xs);
+  font-weight: 700;
+  cursor: pointer;
+  padding: 8px 10px;
+  touch-action: manipulation;
+  border-radius: var(--n2-radius-xs);
+  transition: background var(--n2-transition);
+}
+.date-cal-foot-btn:hover {
+  background: rgba(196, 150, 255, 0.12);
+}

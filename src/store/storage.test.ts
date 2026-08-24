@@ -2772,9 +2772,11 @@ describe('repairEvents', () => {
   });
 
   // URLOP: forma kanoniczna na granicy WCZYTANIA (trzecia obok reduktora i
-  // hydracji chmury). Czasy są wymuszone, cykliczność zdejmowana, a zły zakres
-  // dat degraduje się do urlopu jednodniowego — nigdy nie wyrzuca wiersza.
-  it('wymusza czasy 0/1440 dla urlopu, cokolwiek stoi w zapisie', () => {
+  // hydracji chmury). Urlop wielodniowy i śmieciowe czasy dostają pełną dobę,
+  // jednodniowe poprawne okno godzinowe (2026-08-24) zostaje, cykliczność jest
+  // zdejmowana, a zły zakres dat degraduje się do urlopu jednodniowego —
+  // nigdy nie wyrzuca wiersza.
+  it('koercjonuje ŚMIECIOWE czasy urlopu do 0/1440 (poza siatką 15 min)', () => {
     const data = withEvents([
       {
         id: 'u1',
@@ -2788,6 +2790,42 @@ describe('repairEvents', () => {
     ]);
     const e = repairEvents(data).events[0];
     expect(e.kind).toBe('urlop');
+    expect(e.startMinutes).toBe(0);
+    expect(e.durationMinutes).toBe(1440);
+  });
+
+  it('ZACHOWUJE poprawne okno godzinowe urlopu jednodniowego', () => {
+    const data = withEvents([
+      {
+        id: 'u1',
+        title: 'Urlop',
+        kind: 'urlop',
+        date: MON,
+        startMinutes: 540,
+        durationMinutes: 120,
+        attendeeIds: ['a'],
+      },
+    ]);
+    const e = repairEvents(data).events[0];
+    expect(e.startMinutes).toBe(540);
+    expect(e.durationMinutes).toBe(120);
+  });
+
+  it('urlop WIELODNIOWY koercjonuje okno godzinowe do pełnej doby', () => {
+    const data = withEvents([
+      {
+        id: 'u1',
+        title: 'Urlop',
+        kind: 'urlop',
+        date: MON,
+        startMinutes: 540,
+        durationMinutes: 120,
+        attendeeIds: ['a'],
+        endDate: '2026-07-10',
+      },
+    ]);
+    const e = repairEvents(data).events[0];
+    expect(e.endDate).toBe('2026-07-10');
     expect(e.startMinutes).toBe(0);
     expect(e.durationMinutes).toBe(1440);
   });

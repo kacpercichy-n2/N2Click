@@ -120,6 +120,7 @@ import {
   isDraftTask,
   mergeCoversEventOrRecurrence,
   notificationsForPerson,
+  personHourlyVacationIntervals,
   personVacationOnDate,
   wouldCreateSupervisorCycle,
 } from './selectors';
@@ -151,6 +152,7 @@ import {
   isBinEntry,
   nextFreeStart,
   planRippleInsert,
+  rangesOverlap,
   snapHours,
 } from '../utils/time';
 import { findOverlappingEntry, isValidTimeRange } from '../utils/timeTracking';
@@ -2300,6 +2302,27 @@ function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
   const moves = planRippleInsert(dayBlocks, rawStart, dur);
   if (moves === null) return state;
 
+  // URLOP GODZINOWY (2026-08-24): okno nieobecności to ta sama twarda blokada
+  // co pełna doba, tylko krótsza — ani wstawiany blok, ani żaden PRZEPCHNIĘTY
+  // nie może na nim wylądować; odrzucamy atomowo. Bloki NIERUSZANE pomijamy:
+  // praca zaplanowana przed zgłoszeniem urlopu zostaje (inwariant 3) i nie
+  // może zablokować wstawek w innych godzinach dnia. Spotkań ta straż celowo
+  // nadal nie obejmuje (parytet z pełnodniową strażą wyżej).
+  const vacationWindows = personHourlyVacationIntervals(state, ref.personId, ref.date);
+  if (vacationWindows.length > 0) {
+    const onVacationWindow = (start: number, durMin: number): boolean =>
+      vacationWindows.some((iv) =>
+        rangesOverlap(start, start + durMin, iv.startMinutes, iv.endMinutes),
+      );
+    if (onVacationWindow(rawStart, dur)) return state;
+    for (const b of dayBlocks) {
+      const pushed = moves.get(b.id);
+      if (pushed !== undefined && onVacationWindow(pushed, hoursToMinutes(b.plannedHours))) {
+        return state;
+      }
+    }
+  }
+
   // planRippleInsert only pushes blocks AT/AFTER the insert point. A same-person
   // block that STARTS BEFORE `rawStart` but ENDS AFTER it (reachable after a
   // SAVE_TASK grow-clamp overlap) is never inspected, so the inserted block would
@@ -2446,10 +2469,32 @@ function reassignEntry(state: AppData, entryId: string, toPersonId: string): App
     // Osoba na urlopie nie przyjmuje datowanego bloku (D6) — jawna straż, bo ta
     // ścieżka nie przechodzi przez `setBlockTime`. Ta sama referencja stanu.
     if (personVacationOnDate(state, toPersonId, date) !== null) return state;
-    const free = findFreeStart(
-      without.filter((w) => w.personId === toPersonId && w.date === date),
-      hoursToMinutes(plannedHours),
-    );
+    // URLOP GODZINOWY (2026-08-24): okno nieobecności to strefa ZAKAZANA, nie
+    // blok. Najpierw normalne ułożenie po samych blokach (preferencja „doklej
+    // po ostatnim" zostaje nietknięta — okno kończące się późno nie może
+    // przesuwać bloku za siebie, gdy zwykły slot jest wolny); dopiero gdy
+    // wynik wpada w okno, liczymy ponownie z oknami jako pseudo-blokami.
+    // Brak miejsca poza oknami = ta sama referencja.
+    const targetBlocks = without.filter((w) => w.personId === toPersonId && w.date === date);
+    const durMin = hoursToMinutes(plannedHours);
+    const vacationWindows = personHourlyVacationIntervals(state, toPersonId, date);
+    const hitsWindow = (start: number): boolean =>
+      vacationWindows.some((iv) =>
+        rangesOverlap(start, start + durMin, iv.startMinutes, iv.endMinutes),
+      );
+    let free = findFreeStart(targetBlocks, durMin);
+    if (free !== null && hitsWindow(free)) {
+      free = findFreeStart(
+        [
+          ...targetBlocks,
+          ...vacationWindows.map((iv) => ({
+            startMinutes: iv.startMinutes,
+            plannedHours: (iv.endMinutes - iv.startMinutes) / 60,
+          })),
+        ],
+        durMin,
+      );
+    }
     if (free === null) return state;
     startMinutes = free;
   }

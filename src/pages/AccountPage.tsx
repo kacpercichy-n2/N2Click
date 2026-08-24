@@ -19,7 +19,8 @@ import { Pencil, TreePalm, ClipboardList } from '../components/icons';
 import { getDepartment } from '../store/selectors';
 import { WEEKDAY_CHIPS } from '../components/personFields';
 import { formatMinutes, formatDuration } from '../utils/time';
-import { formatBirthday, formatShortWithWeekday, todayStr } from '../utils/dates';
+import { formatBirthday, formatShortWithWeekday, toDateStr } from '../utils/dates';
+import { useNowTick } from '../utils/useNowTick';
 import { polishCount } from '../utils/polishPlural';
 import type { AuthMode } from '../auth/mode';
 import type { Person } from '../types';
@@ -81,12 +82,20 @@ function AccountDashboard({ person, onEdit }: { person: Person; onEdit: () => vo
     : undefined;
   const subordinates = state.people.filter((p) => p.supervisorId === person.id);
 
-  const today = todayStr();
+  // Zegar prezentacyjny (takt 30 s jak linia „teraz" w WeekView): dzisiejszy
+  // urlop GODZINOWY znika z „Nadchodzących" na żywo, gdy jego okno się kończy,
+  // a data liczona z tyknięcia obsługuje też kartę otwartą przez północ.
+  const now = useNowTick();
+  const today = toDateStr(now);
   const year = Number(today.slice(0, 4));
   const vacations = personVacationRanges(state.events, person.id);
   const usedDays = vacationWorkDaysInYear(vacations, person.workDays, year);
   const remaining = remainingVacationDays(usedDays, DEFAULT_VACATION_ALLOWANCE_DAYS);
-  const upcoming = upcomingVacationRanges(vacations, today);
+  const upcoming = upcomingVacationRanges(
+    vacations,
+    today,
+    now.getHours() * 60 + now.getMinutes(),
+  );
   const usedRatio = Math.min(1, usedDays / DEFAULT_VACATION_ALLOWANCE_DAYS);
 
   return (
@@ -249,9 +258,13 @@ function AccountDashboard({ person, onEdit }: { person: Person; onEdit: () => vo
             <ul className="account-row-list">
               {upcoming.map((r) => (
                 <li key={r.start}>
-                  {r.start === r.end
-                    ? formatShortWithWeekday(r.start)
-                    : `${formatShortWithWeekday(r.start)} – ${formatShortWithWeekday(r.end)}`}
+                  {/* Urlop godzinowy (jednodniowy) pokazuje swoje okno; nie
+                      zdejmuje dnia z limitu (accountHr.vacationWorkDaysInYear). */}
+                  {r.window
+                    ? `${formatShortWithWeekday(r.start)}, ${formatMinutes(r.window.startMinutes)}-${formatMinutes(r.window.endMinutes)}`
+                    : r.start === r.end
+                      ? formatShortWithWeekday(r.start)
+                      : `${formatShortWithWeekday(r.start)} – ${formatShortWithWeekday(r.end)}`}
                 </li>
               ))}
             </ul>

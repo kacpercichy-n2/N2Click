@@ -71,12 +71,14 @@ export function dayBodyHeightPx(hourPx: number): number {
   return safePx(DAY_HOURS * hourPx);
 }
 
-// ---- Okno renderu bloku urlopu ----
-// Urlop jest przechowywany jako wydarzenie PEŁNODNIOWE (0/1440), bo tylko takie
+// ---- Okno renderu bloku urlopu PEŁNODNIOWEGO ----
+// Urlop pełnodniowy jest przechowywany jako wydarzenie 0/1440, bo tylko takie
 // czasy dają pełnodniową kolizję bez żadnej równoległej mechaniki. Rysowanie go
 // przez całą dobę zalałoby jednak kolumnę, więc RENDER świadomie ignoruje
-// zapisane czasy i używa godzin pracy z profilu osoby. To wyłącznie prezentacja
-// (inwariant 1 + 7): nic tutaj nie wchodzi do kolizji ani sum.
+// zapisane czasy i używa godzin pracy z profilu osoby. Urlop GODZINOWY
+// (jednodniowy, od 2026-08-24) tu NIE wchodzi — jego zapisane okno jest prawdą
+// i weekViewModel podaje je wprost. To wyłącznie prezentacja (inwariant 1 + 7):
+// nic tutaj nie wchodzi do kolizji ani sum.
 
 /** Godziny pracy potrzebne do wyznaczenia okna — strukturalny podzbiór `Person`,
  *  żeby ten moduł został wolny od importów store'u. */

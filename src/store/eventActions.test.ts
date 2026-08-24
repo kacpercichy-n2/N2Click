@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { reducer, type EventDraft } from './AppStore';
 import { emptyData } from './storage';
-import { calendarEventsForDate, dayTotal } from './selectors';
+import { calendarEventsForDate, dayTotal, personVacationOnDate } from './selectors';
 import { isValidEventDraft } from './commandValidation';
 import type { AppData, CalendarEvent, Person, Task, WorkloadEntry } from '../types';
 
@@ -411,9 +411,11 @@ function vacationDraft(overrides: Partial<EventDraft> = {}): EventDraft {
     location: '',
     meetingUrl: '',
     date: MON,
-    // Modal i tak ich nie zbiera — reduktor je NADPISUJE.
-    startMinutes: 540,
-    durationMinutes: 60,
+    // Pełna doba — dokładnie to wysyła modal w wariancie „Cały dzień".
+    // (Urlop jednodniowy z INNYM oknem to od 2026-08-24 urlop GODZINOWY —
+    // osobne describe niżej.)
+    startMinutes: 0,
+    durationMinutes: 1440,
     attendeeIds: [PA],
     recurrence: null,
     kind: 'urlop',
@@ -503,6 +505,91 @@ describe('ADD_EVENT — urlop', () => {
       draft: draft({ date: TUE, attendeeIds: [PA], startMinutes: 600, durationMinutes: 60 }),
     });
     expect(next).toBe(withVacation);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// URLOP GODZINOWY (zgłoszenie 2026-08-24): jednodniowy urlop z oknem od-do.
+// Zakres dat wymusza pełną dobę; okno pilnują ścieżki interwałowe, a
+// pełnodniowe przywileje (personVacationOnDate) godzinowego NIE obejmują.
+// ---------------------------------------------------------------------------
+
+describe('ADD_EVENT — urlop godzinowy', () => {
+  it('jednodniowy zachowuje okno godzinowe z draftu', () => {
+    const next = reducer(baseState(), {
+      type: 'ADD_EVENT',
+      draft: vacationDraft({ startMinutes: 540, durationMinutes: 120 }),
+    });
+    const e = next.events[0];
+    expect(e.kind).toBe('urlop');
+    expect(e.startMinutes).toBe(540);
+    expect(e.durationMinutes).toBe(120);
+    expect('endDate' in e).toBe(false);
+  });
+
+  it('zakres wielodniowy KOERCJONUJE okno do pełnej doby', () => {
+    const next = reducer(baseState(), {
+      type: 'ADD_EVENT',
+      draft: vacationDraft({ startMinutes: 540, durationMinutes: 120, endDate: FRI }),
+    });
+    expect(next.events[0].startMinutes).toBe(0);
+    expect(next.events[0].durationMinutes).toBe(1440);
+    expect(next.events[0].endDate).toBe(FRI);
+  });
+
+  it('odrzuca okno poza siatką 15 min i poza dobą (ta sama referencja)', () => {
+    const state = baseState();
+    expect(
+      reducer(state, {
+        type: 'ADD_EVENT',
+        draft: vacationDraft({ startMinutes: 537, durationMinutes: 60 }),
+      }),
+    ).toBe(state);
+    expect(
+      reducer(state, {
+        type: 'ADD_EVENT',
+        draft: vacationDraft({ startMinutes: 1380, durationMinutes: 120 }),
+      }),
+    ).toBe(state);
+  });
+
+  it('spotkanie uczestnika w OKNIE urlopu jest odrzucane, poza oknem przechodzi', () => {
+    const withVacation = reducer(baseState(), {
+      type: 'ADD_EVENT',
+      draft: vacationDraft({ startMinutes: 540, durationMinutes: 120 }), // 9:00-11:00
+    });
+    const inWindow = reducer(withVacation, {
+      type: 'ADD_EVENT',
+      draft: draft({ date: MON, attendeeIds: [PA], startMinutes: 600, durationMinutes: 60 }),
+    });
+    expect(inWindow).toBe(withVacation);
+    const outside = reducer(withVacation, {
+      type: 'ADD_EVENT',
+      draft: draft({ date: MON, attendeeIds: [PA], startMinutes: 720, durationMinutes: 60 }),
+    });
+    expect(outside).not.toBe(withVacation);
+    expect(outside.events).toHaveLength(2);
+  });
+
+  it('personVacationOnDate widzi tylko urlop PEŁNODNIOWY (godzinowy bez palmy i straży dnia)', () => {
+    const hourly = reducer(baseState(), {
+      type: 'ADD_EVENT',
+      draft: vacationDraft({ startMinutes: 540, durationMinutes: 120 }),
+    });
+    expect(personVacationOnDate(hourly, PA, MON)).toBeNull();
+    const fullDay = reducer(baseState(), { type: 'ADD_EVENT', draft: vacationDraft() });
+    expect(personVacationOnDate(fullDay, PA, MON)).not.toBeNull();
+  });
+
+  it('wystąpienie niesie okno godzinowe, a dayTotal zostaje zerowy (inwariant 1)', () => {
+    const state = reducer(baseState(), {
+      type: 'ADD_EVENT',
+      draft: vacationDraft({ startMinutes: 540, durationMinutes: 120 }),
+    });
+    const [occ] = calendarEventsForDate(state, MON);
+    expect(occ.startMinutes).toBe(540);
+    expect(occ.durationMinutes).toBe(120);
+    expect(dayTotal(state, MON)).toBe(0);
   });
 });
 

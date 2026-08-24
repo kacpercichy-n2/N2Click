@@ -465,9 +465,10 @@ export interface Ticket {
  * OPCJONALNE i ADDYTYWNE (`DATA_VERSION` zostaje 7).
  *
  * URLOP (2026-08-03) jest tym samym bytem z dyskryminatorem `kind: 'urlop'`:
- * pełnodniowa zajętość jednej osoby w zakresie dat `date..endDate`. Dzięki
- * czasom 0/1440 wchodzi do ISTNIEJĄCEJ kolizji bez żadnej równoległej
- * mechaniki; render świadomie ignoruje te czasy (okno godzin pracy z profilu).
+ * zajętość jednej osoby w zakresie dat `date..endDate` (pełna doba 0/1440)
+ * albo — od 2026-08-24 — w oknie godzinowym jednego dnia. W obu wariantach
+ * wchodzi do ISTNIEJĄCEJ kolizji bez żadnej równoległej mechaniki; render
+ * ignoruje czasy wyłącznie dla pełnej doby (okno godzin pracy z profilu).
  */
 /** Odpowiedź na zaproszenie (RSVP, jak w Google Meet): potwierdzenie albo
  *  odmowa udziału. BRAK wpisu = „oczekuje” (stan domyślny, nigdy nie jest
@@ -551,9 +552,12 @@ export interface CalendarEvent {
    */
   rsvps?: EventRsvp[];
   /** Dyskryminator rodzaju. BRAK klucza = spotkanie (kanoniczny minimalizm —
-   *  `kind: 'meeting'` nigdy nie jest zapisywane lokalnie). Urlop ma zawsze
-   *  `startMinutes: 0`, `durationMinutes: 1440` i DOKŁADNIE jednego uczestnika,
-   *  a `recurrence` jest dla niego ZABRONIONE. */
+   *  `kind: 'meeting'` nigdy nie jest zapisywane lokalnie). Urlop ma DOKŁADNIE
+   *  jednego uczestnika, a `recurrence` jest dla niego ZABRONIONE. CZASY:
+   *  wielodniowy zawsze `0/1440`; jednodniowy to `0/1440` (pełna doba) albo
+   *  okno godzinowe siatki 15 min (zgłoszenie 2026-08-24) — pełnodniowe
+   *  przywileje (palma, twarde straże dnia) ma wyłącznie `0/1440`
+   *  (`isFullDayVacation`). */
   kind?: 'urlop';
   /** Ostatni dzień zakresu urlopu (włącznie). Klucz obecny WYŁĄCZNIE gdy
    *  `kind === 'urlop'` i `endDate > date`; zakres `date..endDate` ma najwyżej
