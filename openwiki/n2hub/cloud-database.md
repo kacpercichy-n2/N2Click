@@ -465,14 +465,32 @@ widoki-mostki). Gdzie w tekście pada `public.<tabela>` w kontekście
   Inwariant do utrzymania: identyczna rewizja ≡ identyczna treść.
   `n2click.chat_create_group(p_title, p_member_ids)` (RPC, SECURITY INVOKER)
   tworzy grupę ATOMOWO — grupa nie ma `direct_key`, więc częściowy zapis składu
-  z osobnych żądań nie miał ścieżki naprawy (DM naprawia się sam po kluczu).
+  z osobnych żądań nie miał ścieżki naprawy.
+- ATOMOWY DM (20260824120000_chat_open_direct_rpc, ZAAPLIKOWANE 2026-08-24):
+  `n2click.chat_open_direct(p_other_user_id)` (RPC, SECURITY DEFINER) robi
+  znajdź-albo-załóż rozmowę pary + uzupełnia brakujące wiersze członków OBU
+  stron; klient (`chatData.openDirect`) woła wyłącznie to RPC. Powód
+  (zgłoszenie Jarka 2026-08-24): rozmowa 09b00b9e z dnia startu czatu została
+  bez członków, a stare klejenie z osobnych żądań dawało drugiej stronie pary
+  zakleszczenie — select po `direct_key` nic nie widział (RLS: członek lub
+  twórca), insert padał na 23505, naprawić mógł tylko twórca. DEFINER, bo
+  funkcja musi widzieć rozmowę mimo braku członkostwa wołającego i wstawić
+  wiersz drugiej strony; autoryzację robi ciało (zalogowanie + `has_app` +
+  adresat w `core.app_access` dla n2click + wołający stroną pary z definicji
+  klucza), triggery walidacyjne obowiązują dalej. Osierocony DM leczy się przy
+  pierwszym otwarciu z dowolnej strony. Fix 20260824130000 (ZAAPLIKOWANY
+  2026-08-24): członkowie wstawiani ZAWSZE w porządku kanonicznym pary i każdy
+  wiersz pod własnym handlerem `unique_violation` — dwa równoległe wywołania
+  z obu stron pary brały blokady unikatu na krzyż (deadlock 40P01, którego
+  handler nie łapał).
 - PUŁAPKA: `upsert` / `ON CONFLICT` na tabelach czatu jest ZAKAZANY (potwierdzone
   eksperymentalnie 2026-08-13 na żywej bazie, ta sama rodzina błędów co przy
   `profiles`): pod RLS `ON CONFLICT DO UPDATE` kończy się `42501` (granty są
   KOLUMNOWE, więc UPDATE na kolumnach kluczowych nie istnieje), a `DO NOTHING`
   wywraca się na `new row violates row-level security policy` w ścieżce
   wstawiania spekulatywnego. Idempotencję robi się jawnie: zwykły INSERT,
-  a duplikat klucza (`23505`) traktuje się jako sukces (`chatData.insertMembers`).
+  a duplikat klucza (`23505`) łapie się handlerem `unique_violation` i traktuje
+  jako sukces (wzorzec w RPC `chat_open_direct`).
 
 ## Rules that change work
 

@@ -51,14 +51,12 @@ export interface ChatDb {
   /** RPC `chat_overview()` — rozmowy zalogowanego (RLS filtruje po stronie bazy). */
   overview(): Promise<{ rows: ChatRow[]; error: ChatDbError | null }>;
   selectMessages(query: ChatMessagesQuery): Promise<{ rows: ChatRow[]; error: ChatDbError | null }>;
-  insertConversation(row: ChatRow): Promise<{ row: ChatRow | null; error: ChatDbError | null }>;
-  selectConversationByDirectKey(
-    directKey: string,
-  ): Promise<{ row: ChatRow | null; error: ChatDbError | null }>;
-  /** `ignoreDuplicates` => duplikat klucza (23505) liczy się jako sukces
-   *  (idempotentne ponowienie). Implementacja NIE używa upsertu/ON CONFLICT —
-   *  patrz komentarz w adapterze. */
-  insertMembers(rows: ChatRow[], ignoreDuplicates?: boolean): Promise<{ error: ChatDbError | null }>;
+  /** Atomowe znajdź-albo-załóż DM-u (RPC `chat_open_direct`): rozmowa pary
+   *  + komplet członków w JEDNEJ transakcji serwera. Definer widzi i leczy
+   *  także osierocony DM (rozmowa bez członków), którego RLS ukrywa przed
+   *  nie-twórcą — klejenie z osobnych żądań kończyło się tam twardym błędem
+   *  bez ścieżki naprawy (zgłoszenie 2026-08-24). */
+  openDirectAtomic(otherUserId: string): Promise<{ id: string | null; error: ChatDbError | null }>;
   /** Atomowe utworzenie grupy (RPC `chat_create_group`): rozmowa + komplet
    *  członków w JEDNEJ transakcji serwera. Grupa nie ma `direct_key`, więc
    *  częściowy zapis składu nie miałby ścieżki naprawy. */
@@ -113,58 +111,15 @@ export function createSupabaseChatDb(client: SupabaseClient): ChatDb {
         return { rows: [], error: toDbError(e, 'Błąd zapytania.') };
       }
     },
-    async insertConversation(row) {
+    async openDirectAtomic(otherUserId) {
       try {
-        const { data, error } = await client
-          .from('conversations')
-          .insert(row)
-          .select('*')
-          .maybeSingle();
-        if (error) return { row: null, error: toDbError(error, 'Błąd zapisu.') };
-        return { row: (data ?? null) as ChatRow | null, error: null };
+        const { data, error } = await client.rpc('chat_open_direct', {
+          p_other_user_id: otherUserId,
+        });
+        if (error) return { id: null, error: toDbError(error, 'Błąd zapisu.') };
+        return { id: typeof data === 'string' && data !== '' ? data : null, error: null };
       } catch (e) {
-        return { row: null, error: toDbError(e, 'Błąd zapisu.') };
-      }
-    },
-    async selectConversationByDirectKey(directKey) {
-      try {
-        const { data, error } = await client
-          .from('conversations')
-          .select('*')
-          .eq('direct_key', directKey)
-          .maybeSingle();
-        if (error) return { row: null, error: toDbError(error, 'Błąd zapytania.') };
-        return { row: (data ?? null) as ChatRow | null, error: null };
-      } catch (e) {
-        return { row: null, error: toDbError(e, 'Błąd zapytania.') };
-      }
-    },
-    async insertMembers(memberRows, ignoreDuplicates) {
-      if (memberRows.length === 0) return { error: null };
-      // ŻADNEGO upsertu/ON CONFLICT (lekcja z 2026-08-13, ta sama pułapka co
-      // przy `profiles` — patrz wiki cloud-database): po hardeningu grantów
-      // `authenticated` nie ma UPDATE na kolumnach kluczowych, więc
-      // `ON CONFLICT DO UPDATE` to pewne 42501, a `DO NOTHING` też wywraca się
-      // na RLS w ścieżce wstawiania spekulatywnego. Idempotencję robimy sami:
-      // zwykły INSERT per wiersz, a duplikat klucza (23505) traktujemy jako
-      // sukces — wiersz już jest, czyli dokładnie stan, o który nam chodziło.
-      try {
-        if (!ignoreDuplicates) {
-          const { error } = await client.from('conversation_members').insert(memberRows);
-          if (error) return { error: toDbError(error, 'Błąd zapisu.') };
-          return { error: null };
-        }
-        for (const memberRow of memberRows) {
-          const { error } = await client.from('conversation_members').insert(memberRow);
-          if (error) {
-            const mapped = toDbError(error, 'Błąd zapisu.');
-            if (isUniqueViolation(mapped)) continue;
-            return { error: mapped };
-          }
-        }
-        return { error: null };
-      } catch (e) {
-        return { error: toDbError(e, 'Błąd zapisu.') };
+        return { id: null, error: toDbError(e, 'Błąd zapisu.') };
       }
     },
     async createGroupAtomic(title, memberIds) {
@@ -324,15 +279,6 @@ export function extractBroadcastRecord(raw: unknown): ChatRow | null {
 // ---- Pomocnicze czyste funkcje ----------------------------------------------
 
 /**
- * Klucz DM: oba uuid posortowane leksykograficznie i złączone dwukropkiem.
- * Sortowanie jest tym, co czyni parę SYMETRYCZNĄ — bez niego A→B i B→A
- * utworzyłyby dwie osobne rozmowy zamiast trafić w unikat `direct_key`.
- */
-export function directKeyFor(a: string, b: string): string {
-  return [a, b].sort().join(':');
-}
-
-/**
  * Wartość do filtra PostgREST w cudzysłowie. Znaki `"`, `\`, `(`, `)` i `,`
  * rozbijają parser drzewa logicznego `or=(...)`; w uuid ani w ISO timestampie
  * nie występują, więc usunięcie ich jest no-opem na poprawnych danych i
@@ -356,12 +302,6 @@ export function buildNewerThanFilter(cursor: ChatMessageCursor): string {
   return `created_at.gt.${at},and(created_at.eq.${at},id.gt.${id})`;
 }
 
-/** 23505 (albo komunikat o unikacie) — wyścig dwóch kart o ten sam `direct_key`. */
-export function isUniqueViolation(error: ChatDbError | null): boolean {
-  if (!error) return false;
-  return error.code === '23505' || /duplicate key|unique constraint/i.test(error.message);
-}
-
 // ---- Operacje ----------------------------------------------------------------
 
 /** Rozmowy zalogowanego użytkownika, posortowane od najświeższej. */
@@ -377,11 +317,11 @@ export async function loadOverview(db: ChatDb): Promise<ChatResult<ChatConversat
 /**
  * Otwiera (albo tworzy) DM z inną osobą i zwraca id rozmowy.
  *
- * Kolejność: select po `direct_key` → insert → przy 23505 ponowny select. Sam
- * insert-first wystarczyłby logicznie, ale każde kliknięcie w istniejący DM
- * generowałoby błąd w logach serwera. Wiersze uczestników wstawiamy PO
- * utworzeniu, NAJPIERW swój — polityka RLS na `conversation_members` może
- * wymagać, żeby wstawiający był już uczestnikiem rozmowy.
+ * Jedno wywołanie RPC = jedna transakcja serwera: znajdź-albo-załóż rozmowę
+ * pary + komplet członków. Klucz pary, deduplikację i naprawę osieroconego
+ * DM-u (rozmowa bez członków, niewidoczna dla nie-twórcy przez RLS) robi
+ * definer `chat_open_direct` — klejenie z osobnych żądań zostawiało tam
+ * zakleszczenie bez ścieżki naprawy (zgłoszenie 2026-08-24).
  */
 export async function openDirect(
   db: ChatDb,
@@ -390,54 +330,9 @@ export async function openDirect(
 ): Promise<ChatResult<string>> {
   if (selfId === '' || otherUserId === '') return { ok: false, error: CHAT_MESSAGES.open };
   if (selfId === otherUserId) return { ok: false, error: CHAT_MESSAGES.selfDirect };
-  const directKey = directKeyFor(selfId, otherUserId);
-
-  const existing = await db.selectConversationByDirectKey(directKey);
-  const existingId = existing.row ? str(existing.row.id) : '';
-  if (existingId !== '') {
-    // Naprawa best-effort TYLKO dla rozmowy, którą sami założyliśmy: poprzednia
-    // próba mogła paść między insertem rozmowy a kompletem uczestników. Wiersze
-    // członków wolno dokładać wyłącznie twórcy (RLS), więc dla cudzego DM-u ten
-    // zapis byłby pewną odmową — nie wysyłamy go wcale. Ewentualny błąd
-    // ignorujemy: rozmowa istnieje i jest widoczna.
-    if (existing.row && str(existing.row.created_by) === selfId) {
-      await db.insertMembers(directMemberRows(existingId, selfId, otherUserId), true);
-    }
-    return { ok: true, value: existingId };
-  }
-
-  const created = await db.insertConversation({
-    kind: 'direct',
-    direct_key: directKey,
-    created_by: selfId,
-  });
-  if (created.error) {
-    if (!isUniqueViolation(created.error)) return { ok: false, error: CHAT_MESSAGES.open };
-    // Wyścig: ktoś (druga karta, druga strona) utworzył ten DM w międzyczasie.
-    const raced = await db.selectConversationByDirectKey(directKey);
-    const racedId = raced.row ? str(raced.row.id) : '';
-    if (racedId === '') return { ok: false, error: CHAT_MESSAGES.open };
-    return { ok: true, value: racedId };
-  }
-  const conversationId = created.row ? str(created.row.id) : '';
-  if (conversationId === '') return { ok: false, error: CHAT_MESSAGES.open };
-
-  const self = await db.insertMembers([memberRow(conversationId, selfId, 'member')], true);
-  if (self.error) return { ok: false, error: CHAT_MESSAGES.open };
-  const peer = await db.insertMembers([memberRow(conversationId, otherUserId, 'member')], true);
-  if (peer.error) return { ok: false, error: CHAT_MESSAGES.open };
-  return { ok: true, value: conversationId };
-}
-
-function memberRow(conversationId: string, userId: string, role: 'owner' | 'member'): ChatRow {
-  return { conversation_id: conversationId, user_id: userId, role };
-}
-
-function directMemberRows(conversationId: string, selfId: string, otherUserId: string): ChatRow[] {
-  return [
-    memberRow(conversationId, selfId, 'member'),
-    memberRow(conversationId, otherUserId, 'member'),
-  ];
+  const opened = await db.openDirectAtomic(otherUserId);
+  if (opened.error || opened.id === null) return { ok: false, error: CHAT_MESSAGES.open };
+  return { ok: true, value: opened.id };
 }
 
 /**

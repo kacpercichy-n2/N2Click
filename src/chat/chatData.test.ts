@@ -1,15 +1,13 @@
 // Testy czystej warstwy danych czatu na atrapie granicy bazy (`ChatDb`) — bez
 // SDK, bez żywego Supabase, bez jsdom. Pokrywają: łagodne mapowanie wierszy,
-// kursor paginacji, symetrię `direct_key`, fallback po naruszeniu unikatu,
-// wysyłkę i zapis odczytu.
+// kursor paginacji, atomowe otwarcie DM-u i grupy przez RPC, wysyłkę i zapis
+// odczytu.
 import { describe, expect, it } from 'vitest';
 import {
   buildNewerThanFilter,
   buildOlderThanFilter,
   createGroup,
-  directKeyFor,
   extractBroadcastRecord,
-  isUniqueViolation,
   loadMessagesPage,
   loadMessagesSince,
   loadOverview,
@@ -47,11 +45,9 @@ function messageRow(overrides: Partial<Record<string, unknown>> = {}): ChatRow {
 }
 
 interface FakeCall {
-  members: Array<{ rows: ChatRow[]; ignoreDuplicates: boolean }>;
   reads: Array<{ conversationId: string; userId: string; atIso: string }>;
   queries: ChatMessagesQuery[];
-  directKeys: string[];
-  conversations: ChatRow[];
+  directs: string[];
   messages: ChatRow[];
   groups: Array<{ title: string; memberIds: string[] }>;
 }
@@ -62,11 +58,8 @@ class FakeChatDb implements ChatDb {
   /** Kolejne odpowiedzi na `selectMessages` (pierwsza z brzegu, potem ostatnia). */
   messagePages: ChatRow[][] = [[]];
   messagesError: ChatDbError | null = null;
-  /** Kolejne odpowiedzi na `selectConversationByDirectKey`. */
-  directRows: Array<ChatRow | null> = [null];
-  insertedConversationRow: ChatRow | null = { id: CONV };
-  insertConversationError: ChatDbError | null = null;
-  membersError: ChatDbError | null = null;
+  openedDirectId: string | null = CONV;
+  openDirectError: ChatDbError | null = null;
   insertedMessageRow: ChatRow | null = messageRow();
   insertMessageError: ChatDbError | null = null;
   readError: ChatDbError | null = null;
@@ -74,11 +67,9 @@ class FakeChatDb implements ChatDb {
   createGroupError: ChatDbError | null = null;
 
   calls: FakeCall = {
-    members: [],
     reads: [],
     queries: [],
-    directKeys: [],
-    conversations: [],
+    directs: [],
     messages: [],
     groups: [],
   };
@@ -98,21 +89,10 @@ class FakeChatDb implements ChatDb {
     return { rows: this.next(this.messagePages, index), error: null };
   }
 
-  async insertConversation(row: ChatRow) {
-    this.calls.conversations.push(row);
-    if (this.insertConversationError) return { row: null, error: this.insertConversationError };
-    return { row: this.insertedConversationRow, error: null };
-  }
-
-  async selectConversationByDirectKey(directKey: string) {
-    const index = this.calls.directKeys.length;
-    this.calls.directKeys.push(directKey);
-    return { row: this.next(this.directRows, index), error: null };
-  }
-
-  async insertMembers(rows: ChatRow[], ignoreDuplicates?: boolean) {
-    this.calls.members.push({ rows, ignoreDuplicates: ignoreDuplicates === true });
-    return { error: this.membersError };
+  async openDirectAtomic(otherUserId: string) {
+    this.calls.directs.push(otherUserId);
+    if (this.openDirectError) return { id: null, error: this.openDirectError };
+    return { id: this.openedDirectId, error: null };
   }
 
   async createGroupAtomic(title: string, memberIds: string[]) {
@@ -330,80 +310,36 @@ describe('kursor paginacji', () => {
 
 // ---- DM i grupa --------------------------------------------------------------
 
-describe('direct_key', () => {
-  it('jest symetryczny — obie strony liczą ten sam klucz', () => {
-    expect(directKeyFor(SELF, PEER)).toBe(directKeyFor(PEER, SELF));
-    expect(directKeyFor('b', 'a')).toBe('a:b');
-  });
-
-  it('rozpoznaje naruszenie unikatu po kodzie i po komunikacie', () => {
-    expect(isUniqueViolation({ code: '23505', message: 'x' })).toBe(true);
-    expect(isUniqueViolation({ code: null, message: 'duplicate key value' })).toBe(true);
-    expect(isUniqueViolation({ code: '42501', message: 'denied' })).toBe(false);
-    expect(isUniqueViolation(null)).toBe(false);
-  });
-});
-
 describe('openDirect', () => {
-  it('zwraca istniejącą rozmowę bez tworzenia nowej', async () => {
-    const db = new FakeChatDb();
-    db.directRows = [{ id: 'conv-old', created_by: SELF }];
-    const result = await openDirect(db, SELF, PEER);
-    expect(result).toEqual({ ok: true, value: 'conv-old' });
-    expect(db.calls.conversations).toHaveLength(0);
-    expect(db.calls.directKeys[0]).toBe(directKeyFor(SELF, PEER));
-    // Naprawa best-effort kompletu uczestników (idempotentna) — tylko dla
-    // rozmowy założonej przez nas, bo tylko twórca może dokładać członków.
-    expect(db.calls.members[0].ignoreDuplicates).toBe(true);
-  });
-
-  it('nie próbuje naprawiać uczestników cudzego DM-u (pewna odmowa RLS)', async () => {
-    const db = new FakeChatDb();
-    db.directRows = [{ id: 'conv-old', created_by: PEER }];
-    const result = await openDirect(db, SELF, PEER);
-    expect(result).toEqual({ ok: true, value: 'conv-old' });
-    expect(db.calls.members).toHaveLength(0);
-  });
-
-  it('tworzy rozmowę z posortowanym direct_key i wstawia najpierw siebie', async () => {
+  it('otwiera DM JEDNYM atomowym wywołaniem RPC i zwraca id rozmowy', async () => {
     const db = new FakeChatDb();
     const result = await openDirect(db, SELF, PEER);
     expect(result).toEqual({ ok: true, value: CONV });
-    expect(db.calls.conversations[0]).toEqual({
-      kind: 'direct',
-      direct_key: directKeyFor(SELF, PEER),
-      created_by: SELF,
-    });
-    expect(db.calls.members[0].rows).toEqual([
-      { conversation_id: CONV, user_id: SELF, role: 'member' },
-    ]);
-    expect(db.calls.members[1].rows).toEqual([
-      { conversation_id: CONV, user_id: PEER, role: 'member' },
-    ]);
+    // Znajdź-albo-załóż, klucz pary i naprawę składu robi serwer — klient
+    // wysyła wyłącznie uuid adresata.
+    expect(db.calls.directs).toEqual([PEER]);
   });
 
-  it('po naruszeniu unikatu wraca po istniejącą rozmowę (wyścig dwóch kart)', async () => {
+  it('błąd RPC mapuje się na polski komunikat otwarcia', async () => {
     const db = new FakeChatDb();
-    db.directRows = [null, { id: 'conv-raced' }];
-    db.insertConversationError = { code: '23505', message: 'duplicate key' };
-    const result = await openDirect(db, SELF, PEER);
-    expect(result).toEqual({ ok: true, value: 'conv-raced' });
-    expect(db.calls.directKeys).toHaveLength(2);
-  });
-
-  it('inny błąd zapisu kończy się polskim komunikatem', async () => {
-    const db = new FakeChatDb();
-    db.insertConversationError = { code: '42501', message: 'denied' };
+    db.openDirectError = { code: '42501', message: 'denied' };
     expect(await openDirect(db, SELF, PEER)).toEqual({ ok: false, error: CHAT_MESSAGES.open });
   });
 
-  it('odmawia rozmowy z samym sobą', async () => {
+  it('brak id w odpowiedzi RPC też jest błędem otwarcia', async () => {
+    const db = new FakeChatDb();
+    db.openedDirectId = null;
+    expect(await openDirect(db, SELF, PEER)).toEqual({ ok: false, error: CHAT_MESSAGES.open });
+  });
+
+  it('odmawia rozmowy z samym sobą i pustych identyfikatorów przed wysyłką', async () => {
     const db = new FakeChatDb();
     expect(await openDirect(db, SELF, SELF)).toEqual({
       ok: false,
       error: CHAT_MESSAGES.selfDirect,
     });
-    expect(db.calls.conversations).toHaveLength(0);
+    expect(await openDirect(db, SELF, '')).toEqual({ ok: false, error: CHAT_MESSAGES.open });
+    expect(db.calls.directs).toHaveLength(0);
   });
 });
 
@@ -414,9 +350,6 @@ describe('createGroup', () => {
     expect(result).toEqual({ ok: true, value: CONV });
     // Duplikaty i sam twórca wypadają z listy PRZED wysyłką; tytuł przycięty.
     expect(db.calls.groups).toEqual([{ title: 'Projekt X', memberIds: [PEER, 'cccc'] }]);
-    // Żadnych osobnych insertów rozmowy/członków — atomowość robi serwer.
-    expect(db.calls.conversations).toHaveLength(0);
-    expect(db.calls.members).toHaveLength(0);
   });
 
   it('błąd RPC mapuje się na komunikat tworzenia grupy', async () => {
@@ -438,7 +371,7 @@ describe('createGroup', () => {
       ok: false,
       error: CHAT_MESSAGES.noMembers,
     });
-    expect(db.calls.conversations).toHaveLength(0);
+    expect(db.calls.groups).toHaveLength(0);
   });
 });
 

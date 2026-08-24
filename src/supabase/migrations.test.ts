@@ -269,6 +269,14 @@ describe('konwencja plików migracji', () => {
       // zakładającego, a członkiem rozmowy 1:1 jest wyłącznie strona pary
       // (koniec zawłaszczania klucza cudzej pary i wyroczni istnienia).
       '20260813250000_chat_direct_key_integrity.sql',
+      // Atomowe otwarcie DM-u (RPC, security definer): znajdź-albo-załóż
+      // rozmowę pary + naprawa brakujących członków obu stron — koniec
+      // zakleszczenia osieroconego DM-u dla nie-twórcy (zgłoszenie 2026-08-24).
+      '20260824120000_chat_open_direct_rpc.sql',
+      // Fix zakleszczenia z przeglądu: członkowie DM-u wstawiani w porządku
+      // kanonicznym pary (jedna kolejność blokad po obu stronach), każdy
+      // wiersz pod własnym handlerem unique_violation.
+      '20260824130000_chat_open_direct_member_lock_order.sql',
     ]);
   });
 

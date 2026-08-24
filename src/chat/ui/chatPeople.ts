@@ -73,7 +73,7 @@ export function otherMemberIds(
 
 /**
  * Rozmówca DM-u. Null dla grupy oraz dla DM-u bez drugiego uczestnika (wiersze
- * członków mogły nie dojechać — patrz naprawa best-effort w `openDirect`).
+ * członków mogły nie dojechać — leczy je serwerowe RPC `chat_open_direct`).
  */
 export function directPeerId(
   conversation: ChatConversation,
