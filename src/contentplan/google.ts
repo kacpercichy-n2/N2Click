@@ -57,13 +57,16 @@ export function resolveGoogleDriveConfig(
 }
 
 /** Zmienne środowiskowe w miejscu użycia (wzorzec `src/supabase/config.ts`):
- *  `import.meta.env` jest autorytatywne w przeglądarce, `process.env` służy za
- *  zapas w node (testy). Odczyt jest LENIWY — import modułu nigdy nie rzuca. */
+ *  w przeglądarce istnieje wyłącznie `import.meta.env`; nakładka `process.env`
+ *  (node/testy) MUSI wygrywać scalanie, bo `vi.stubEnv` zmienia `process.env`,
+ *  a NIE sięga do statycznego `import.meta.env` modułu (Vitest 4) — przy
+ *  odwrotnej kolejności testów nie dało się odciąć od lokalnego `.env.local`.
+ *  Odczyt jest LENIWY — import modułu nigdy nie rzuca. */
 function readGoogleEnv(): Record<string, string | undefined> {
   const metaEnv = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
   const processEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } })
     .process?.env;
-  return { ...processEnv, ...metaEnv };
+  return { ...metaEnv, ...processEnv };
 }
 
 /** Czy Picker ma komplet konfiguracji. Nigdy nie rzuca. */

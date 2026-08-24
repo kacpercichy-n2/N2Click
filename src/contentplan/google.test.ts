@@ -221,8 +221,17 @@ describe('miękka konfiguracja', () => {
   });
 
   it('bez zmiennych środowiskowych powód blokady jest po polsku', () => {
-    expect(isGoogleDriveConfigured()).toBe(false);
-    expect(googleDriveDisabledReason()).toBe(GOOGLE_DRIVE_MISSING_CONFIG_REASON);
+    // Lokalny `.env.local` definiuje prawdziwe zmienne Google, a Vitest wnosi
+    // je do `import.meta.env` — „brak konfiguracji" trzeba wystubować jawnie,
+    // inaczej test zależy od maszyny, na której biegnie.
+    vi.stubEnv('VITE_GOOGLE_CLIENT_ID', '');
+    vi.stubEnv('VITE_GOOGLE_API_KEY', '');
+    try {
+      expect(isGoogleDriveConfigured()).toBe(false);
+      expect(googleDriveDisabledReason()).toBe(GOOGLE_DRIVE_MISSING_CONFIG_REASON);
+    } finally {
+      vi.unstubAllEnvs();
+    }
     expect(GOOGLE_DRIVE_MISSING_CONFIG_REASON).toContain('VITE_GOOGLE_CLIENT_ID');
     expect(GOOGLE_DRIVE_MISSING_CONFIG_REASON).toContain('VITE_GOOGLE_API_KEY');
   });
