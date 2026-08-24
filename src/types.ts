@@ -380,9 +380,11 @@ export interface WorkloadEntry {
 
   // Per-block completion (PKG-20260721-per-block-done). OPTIONAL + ADDITIVE:
   // undefined/false = not done, true = this specific block's portion of hours is
-  // done. INDEPENDENT of Task.statusId — marking a block done never changes the
-  // task status, and a done task status still lights ALL its blocks
-  // (`blockIsDone`). Granularity is per WorkloadEntry.id, NOT per day: two blocks
+  // done. Mostly independent of Task.statusId — a done task status still lights
+  // ALL its blocks (`blockIsDone`) — with ONE exception: when nothing is left to
+  // do (every block done, empty bin, no free sold hours), the reducer
+  // auto-completes the non-recurring task (`autoCompleteTask`, 2026-08-24).
+  // Granularity is per WorkloadEntry.id, NOT per day: two blocks
   // on the same date carry independent `done`. DATA_VERSION stays 7 (additive,
   // like recurrence/isDraft); load repair passes it through untouched.
   done?: boolean;

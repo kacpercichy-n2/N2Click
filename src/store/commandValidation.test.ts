@@ -262,13 +262,17 @@ describe('SET_BLOCK_DONE command validation (PKG-per-block-done)', () => {
     return { ...makeState(), workload: [{ ...ENTRY, ...overrides }] };
   }
 
-  it('marks only the targeted entry done without touching the task status', () => {
-    const state = stateWithBlock();
+  it('marks only the targeted entry done; the LAST block auto-closes the task (2026-08-24)', () => {
+    // Two blocks: the first click touches only its entry, the second closes the task.
+    const state = { ...makeState(), workload: [{ ...ENTRY }, { ...ENTRY, id: 'w2', startMinutes: 720, sortIndex: 1 }] };
     const next = reducer(state, { type: 'SET_BLOCK_DONE', entryId: 'w1', done: true });
     expect(next).not.toBe(state);
     expect(next.workload[0].done).toBe(true);
+    expect(next.workload[1].done).toBeUndefined();
     expect(next.tasks.find((t) => t.id === 't1')!.statusId).toBe('s1'); // status unchanged
     expect(next.activity.length).toBe(state.activity.length + 1);
+    const closed = reducer(next, { type: 'SET_BLOCK_DONE', entryId: 'w2', done: true });
+    expect(closed.tasks.find((t) => t.id === 't1')!.statusId).toBe('s2'); // nothing left → done
   });
 
   it('invariant 6: an unknown entryId returns the SAME state reference', () => {

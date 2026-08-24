@@ -410,6 +410,39 @@ describe('para blok-wpis: SET_BLOCK_DONE', () => {
     const full = reducer(s2, { type: 'SET_BLOCK_DONE', entryId: 'b1', done: true });
     expect(full.tasks.find((t) => t.id === 't-design')?.statusId).toBe('done');
   });
+  it('zadanie bez estymaty: wszystkie bloki wykonane → Gotowe (1 blok i kilka bloków)', () => {
+    const one = state({ workload: [block('b1', 't-call-a', 'me', 600, 1)] });
+    const oneDone = reducer(one, { type: 'SET_BLOCK_DONE', entryId: 'b1', done: true });
+    expect(oneDone.tasks.find((t) => t.id === 't-call-a')?.statusId).toBe('done');
+    const many = state({ workload: [block('b1', 't-call-a', 'me', 600, 1), block('b2', 't-call-a', 'me', 840, 1, 1)] });
+    const first = reducer(many, { type: 'SET_BLOCK_DONE', entryId: 'b1', done: true });
+    expect(first.tasks.find((t) => t.id === 't-call-a')?.statusId).toBe('active');
+    const both = reducer(first, { type: 'SET_BLOCK_DONE', entryId: 'b2', done: true });
+    expect(both.tasks.find((t) => t.id === 't-call-a')?.statusId).toBe('done');
+  });
+  it('ostatni blok zamyka zadanie także bez wpisu 1:1 (godziny bloku zajęte innym wpisem)', () => {
+    const s = state({
+      tasks: [task('t-design', 'p-a', 'Design strony www', { estimatedHours: 2 }), task('t-call-a', 'p-a', 'Rozmowa z klientem', { estimatedHours: null })],
+      workload: [block('b1', 't-design', 'me', 600, 2)],
+      timeEntries: [entry('w1', 't-call-a', 630, 690)],
+    });
+    const done = reducer(s, { type: 'SET_BLOCK_DONE', entryId: 'b1', done: true });
+    expect(done.timeEntries).toHaveLength(1); // wpis 1:1 nie powstał (kolizja)
+    expect(done.tasks.find((t) => t.id === 't-design')?.statusId).toBe('done');
+  });
+  it('seria cykliczna nigdy nie zamyka się z bloków — statusem rządzi SET_TASK_STATUS', () => {
+    const recurring = task('t-call-a', 'p-a', 'Rozmowa z klientem', {
+      estimatedHours: null,
+      recurrence: { daysOfWeek: [1, 2, 3, 4, 5], startMinutes: 600, durationMinutes: 60 },
+    });
+    const s = state({
+      tasks: [task('t-design', 'p-a', 'Design strony www'), recurring],
+      workload: [block('b1', 't-call-a', 'me', 600, 1)],
+    });
+    const done = reducer(s, { type: 'SET_BLOCK_DONE', entryId: 'b1', done: true });
+    expect(done.workload[0].done).toBe(true);
+    expect(done.tasks.find((t) => t.id === 't-call-a')?.statusId).toBe('active');
+  });
 });
 
 describe('nadwyżka wykonania: zasobnik → wolne sprzedane → ponad sprzedane', () => {

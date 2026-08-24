@@ -335,7 +335,14 @@
   ADDYTYWNE — brak/`false` = niewykonany; `DATA_VERSION` zostaje na 7). Per-BLOK
   (WorkloadEntry.id), NIE per-dzień: dwa bloki tego samego dnia (ta sama data,
   różny `startMinutes`/`id`) mają niezależny stan. Status zadania
-  (`Task.statusId`) jest ROZŁĄCZNY — per-blokowe „wykonane” NIGDY go nie zmienia.
+  (`Task.statusId`) jest ROZŁĄCZNY z JEDNYM wyjątkiem (2026-08-24, zgłoszenie
+  „wykonane a gotowe”): gdy po oznaczeniu nie zostaje nic do zrobienia
+  (wszystkie bloki wykonane, zasobnik pusty, przy estymacie brak wolnych
+  sprzedanych godzin), `autoCompleteTask` przełącza zadanie na pierwszy status
+  `isDone` — także gdy wpis 1:1 nie mógł powstać (godziny zajęte) i także dla
+  zadań bez estymaty (te domyka WYŁĄCZNIE jawne `SET_BLOCK_DONE`, nigdy sam
+  wpis czasu). Zadań z `recurrence` nigdy nie domyka. Odznaczenie NIE otwiera
+  zadania z powrotem.
   Mutacja `SET_BLOCK_DONE { entryId, done }` mapuje TYLKO wiersz o `entryId`
   (wzorzec `SET_TASK_STATUS`); nieznane `entryId` albo wartość równa bieżącej
   (no-op) zwracają TĘ SAMĄ referencję (inwariant 6, walidacja

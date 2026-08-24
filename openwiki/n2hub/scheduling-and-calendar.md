@@ -39,7 +39,9 @@
   = `SET_BLOCK_DONE` (ten sam reduktor, co „✓ Oznacz jako wykonane" w menu
   WeekView): blok wykonany + wpis 1:1 w jego godzinach; cofnięcie kasuje wpis.
   Status zadania zmienia się sam przez `autoCompleteTask` (wszystko wykonane,
-  zasobnik pusty, brak wolnych sprzedanych). Przekroczenie sprzedanych godzin
+  zasobnik pusty, brak wolnych sprzedanych; od 2026-08-24 działa też bez wpisu
+  1:1 i dla zadań bez estymaty — ale bez estymaty domyka tylko jawne
+  `SET_BLOCK_DONE`, nie sam wpis czasu; serii cyklicznych nie domyka). Przekroczenie sprzedanych godzin
   pyta dialogiem (`useConfirm`) przed zapisem; kolejność przełącznika
   Dzień | Tydzień | Miesiąc. Rozliczenie `SETTLE_TRACKED_DAY` (patrz
   state-and-persistence) biegnie AUTOMATEM wyłącznie dla DZISIAJ (15 min po

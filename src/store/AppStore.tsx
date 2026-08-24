@@ -938,16 +938,25 @@ function resyncBlockDone(state: AppData, taskId: string, personId: string, date:
   return changed ? { ...state, workload } : state;
 }
 
-/** Zadanie z kontraktem (estymata ≠ null), w którym nie ma nic do zrobienia, staje się „zrobione". */
-function autoCompleteTask(state: AppData, taskId: string): AppData {
+/** Zadanie, w którym nie ma nic do zrobienia (wszystkie bloki wykonane, zasobnik
+ *  pusty, a przy estymacie brak wolnych sprzedanych godzin), staje się „zrobione".
+ *  Bez estymaty zaplanowane bloki SĄ całym zakresem, ale zamyka je wyłącznie
+ *  jawne kliknięcie „wykonane" (`closeWithoutEstimate` z SET_BLOCK_DONE) — sam
+ *  wpis czasu nie zamyka zadania bez kontraktu (np. świeżego zadania z paska
+ *  trackera). Serii cyklicznej nigdy nie zamyka — nią rządzi `SET_TASK_STATUS`. */
+function autoCompleteTask(state: AppData, taskId: string, closeWithoutEstimate = false): AppData {
   const task = state.tasks.find((t) => t.id === taskId);
-  if (task === undefined || task.estimatedHours === null || isDoneStatus(state, task.statusId)) return state;
+  if (task === undefined || task.recurrence !== undefined || isDoneStatus(state, task.statusId)) return state;
   const rows = state.workload.filter((w) => w.taskId === taskId);
   if (rows.length === 0) return state;
   if (rows.some((w) => isBinEntry(w) || w.done !== true)) return state;
-  // Wolne sprzedane godziny (nikomu nie przydzielone) to też „coś do zrobienia".
-  const plannedQ = rows.reduce((sum, w) => sum + toQuarters(w.plannedHours), 0);
-  if (plannedQ < toQuarters(task.estimatedHours)) return state;
+  if (task.estimatedHours === null) {
+    if (!closeWithoutEstimate) return state;
+  } else {
+    // Wolne sprzedane godziny (nikomu nie przydzielone) to też „coś do zrobienia".
+    const plannedQ = rows.reduce((sum, w) => sum + toQuarters(w.plannedHours), 0);
+    if (plannedQ < toQuarters(task.estimatedHours)) return state;
+  }
   const doneStatus = activeStatuses(state).find((st) => st.isDone) ?? state.statuses.find((st) => st.isDone);
   if (doneStatus === undefined) return state;
   return {
@@ -983,7 +992,7 @@ function linkEntryForBlock(state: AppData, block: WorkloadEntry): AppData {
     blockId: block.id,
     createdAt: nowIso(),
   };
-  return autoCompleteTask({ ...state, timeEntries: [...state.timeEntries, entry] }, block.taskId);
+  return { ...state, timeEntries: [...state.timeEntries, entry] };
 }
 
 /** Odznaczenie bloku kasuje jego wpis „z bloku", o ile nadal jest 1:1 z blokiem. */
@@ -4197,7 +4206,11 @@ export function reducer(state: AppData, action: Action): AppData {
       // Para blok-wpis (tracker): „wykonane" = wpis 1:1 w godzinach bloku (o ile
       // te minuty są wolne i blok jest datowany); odznaczenie kasuje wpis z tego
       // bloku, jeśli nikt go nie zmienił. Blok zasobnika nie ma godzin — bez wpisu.
-      return action.done ? linkEntryForBlock(marked, entry) : unlinkEntryForBlock(marked, entry);
+      // Domknięcie zadania sprawdzamy ZAWSZE po oznaczeniu — także gdy wpis 1:1
+      // nie mógł powstać (godziny zajęte innym wpisem), bo blok i tak jest wykonany.
+      return action.done
+        ? autoCompleteTask(linkEntryForBlock(marked, entry), entry.taskId, true)
+        : unlinkEntryForBlock(marked, entry);
     }
     case 'SAVE_PROJECT':
       return saveProject(state, action.projectId, action.draft);

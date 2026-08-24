@@ -90,6 +90,21 @@ export function changelogUnreadCount(
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-08-24-wykonane-a-gotowe',
+    dateFrom: '2026-08-24',
+    dateTo: '2026-08-24',
+    summary:
+      'Zadanie samo przechodzi na „Gotowe”, gdy oznaczysz jako wykonany jego ostatni blok — koniec z wykonanymi zadaniami wiszącymi w „po terminie”.',
+    items: [
+      {
+        area: 'Kalendarz',
+        feature: 'Wykonane bloki zamykają zadanie',
+        description:
+          'Gdy zadanie ma jeden blok i klikniesz „wykonane”, status od razu zmienia się na „Gotowe”. Przy kilku blokach zadanie zamyka się po oznaczeniu ostatniego z nich. Działa też, gdy w godzinach bloku był już inny wpis czasu, oraz dla zadań bez podanej estymaty. Zadanie się nie zamknie, dopóki coś zostaje do zrobienia: blok w zasobniku albo wolne sprzedane godziny. Zadań cyklicznych to nie dotyczy.',
+      },
+    ],
+  },
+  {
     id: '2026-08-19-czat-ping',
     dateFrom: '2026-08-19',
     dateTo: '2026-08-19',

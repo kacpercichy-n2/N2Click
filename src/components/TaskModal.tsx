@@ -1474,7 +1474,9 @@ export function TaskEditor({
   // One row per WorkloadEntry (NOT aggregated per day): a task with two blocks on
   // the same day shows two rows, each with its own tick. Dated blocks first
   // (chronological by date, then start), bin rows last. SET_BLOCK_DONE toggles a
-  // single entry — the task status is never touched.
+  // single entry; when the tick leaves nothing to do (all blocks done, empty
+  // bin, no free sold hours) the reducer auto-closes a NON-recurring task
+  // (autoCompleteTask, 2026-08-24) — unticking never reopens it.
   const taskBlocks = useMemo(() => {
     if (!existing) return [];
     return state.workload
@@ -2370,8 +2372,10 @@ export function TaskEditor({
 
     // 10) Wykonane bloki — per-block completion (PKG-per-block-done). One row
     //     per WorkloadEntry (NOT per day): each block's portion of hours has its
-    //     own tick. Toggling a block dispatches SET_BLOCK_DONE and NEVER changes
-    //     the task status.
+    //     own tick. Toggling a block dispatches SET_BLOCK_DONE; when the tick
+    //     leaves nothing to do (all blocks done, empty bin, no free sold hours)
+    //     the reducer auto-closes a NON-recurring task (autoCompleteTask,
+    //     2026-08-24). Unticking never reopens a task.
     'done-blocks': (
       <div className="editor-section editor-section-collapsible">
         {/* IA-08 — sekcja jest ZWINIĘTA: ✓ na kafelku kalendarza jest szybszą
@@ -2386,8 +2390,9 @@ export function TaskEditor({
         )}
         <div id={doneBlocksBodyId} className="section-collapse-body" hidden={!doneBlocksOpen}>
         <p className="field-hint">
-          Każdy blok w kalendarzu można oznaczyć jako wykonany niezależnie — status
-          zadania pozostaje bez zmian.
+          {existing?.recurrence !== undefined
+            ? 'Każdy blok w kalendarzu można oznaczyć jako wykonany niezależnie. Status całej serii cyklicznej zmieniasz ręcznie.'
+            : 'Każdy blok w kalendarzu można oznaczyć jako wykonany niezależnie. Gdy wykonasz ostatni i nic nie zostaje do zrobienia, zadanie samo przejdzie na „Gotowe”.'}
         </p>
         <ul className="checklist-list block-done-list">
           {taskBlocks.map((entry) => {
