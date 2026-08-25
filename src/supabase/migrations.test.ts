@@ -286,6 +286,11 @@ describe('konwencja plików migracji', () => {
       // odczytu dla klienta, zapis przez definer `chat_set_reaction`, własny
       // event `reaction` przez `realtime.send` na kanale rozmowy.
       '20260825120000_chat_reactions.sql',
+      // Motywy czatu (wspólne dla rozmowy): `conversations.theme_id`,
+      // `messages.kind`/`meta` (wiersz systemowy przez RPC, klient wstawia
+      // tylko `text`), definer `chat_set_theme` z eventem `theme_changed`,
+      // `chat_overview()` odtworzone z `theme_id`.
+      '20260825130000_chat_themes.sql',
     ]);
   });
 

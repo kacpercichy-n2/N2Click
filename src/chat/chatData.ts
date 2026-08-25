@@ -18,17 +18,21 @@ import {
   CHAT_PAGE_SIZE,
   isChatConversationKind,
   isChatMemberRole,
+  isChatMessageKind,
   type ChatConversation,
   type ChatLastMessage,
   type ChatMember,
   type ChatMessage,
   type ChatMessageCursor,
+  type ChatMessageMeta,
   type ChatMessagesPage,
   type ChatReaction,
   type ChatReactionEvent,
   type ChatReactionMap,
   type ChatResult,
+  type ChatThemeChangedEvent,
 } from './types';
+import { CHAT_THEME_ID_PATTERN } from './themes/catalog';
 
 // ---- Granica bazy (wstrzykiwana) --------------------------------------------
 
@@ -84,6 +88,8 @@ export interface ChatDb {
     messageId: string,
     emoji: string | null,
   ): Promise<{ rows: ChatRow[]; error: ChatDbError | null }>;
+  /** RPC `chat_set_theme`: motyw rozmowy (wspólny) + wiersz systemowy + event. */
+  setTheme(conversationId: string, themeId: string): Promise<{ error: ChatDbError | null }>;
 }
 
 /** Kolumny wiadomości + osadzone reakcje (FK `message_reactions.message_id`). */
@@ -202,6 +208,18 @@ export function createSupabaseChatDb(client: SupabaseClient): ChatDb {
         return { rows: [], error: toDbError(e, 'Błąd zapisu.') };
       }
     },
+    async setTheme(conversationId, themeId) {
+      try {
+        const { error } = await client.rpc('chat_set_theme', {
+          p_conversation_id: conversationId,
+          p_theme_id: themeId,
+        });
+        if (error) return { error: toDbError(error, 'Błąd zapisu.') };
+        return { error: null };
+      } catch (e) {
+        return { error: toDbError(e, 'Błąd zapisu.') };
+      }
+    },
   };
 }
 
@@ -262,9 +280,23 @@ export function toChatLastMessage(value: unknown): ChatLastMessage | null {
     id,
     authorId: str(row.author_id),
     body: str(row.body),
+    kind: isChatMessageKind(row.kind) ? row.kind : 'text',
     createdAt,
     deletedAt: nullableStr(row.deleted_at),
   };
+}
+
+/**
+ * Ładunek wiersza systemowego. Nieznany `type` albo brak pól => null — UI
+ * pokaże wtedy zapasowe `body`, zamiast wywracać listę.
+ */
+export function toChatMessageMeta(value: unknown): ChatMessageMeta | null {
+  const meta = asRecord(value);
+  if (!meta || meta.type !== 'theme_changed') return null;
+  const themeId = str(meta.themeId);
+  const actorId = str(meta.actorId);
+  if (themeId === '' || actorId === '') return null;
+  return { type: 'theme_changed', themeId, actorId };
 }
 
 /** Wiersz `chat_overview()` → rozmowa. Zły wiersz => null (pomijamy). */
@@ -281,6 +313,7 @@ export function toChatConversation(row: ChatRow): ChatConversation | null {
     members,
     createdBy: nullableStr(row.created_by),
     lastMessageAt: nullableStr(row.last_message_at),
+    themeId: str(row.theme_id),
     lastMessage: toChatLastMessage(row.last_message),
     unreadCount: count(row.unread_count),
   };
@@ -295,11 +328,14 @@ export function toChatMessage(row: unknown): ChatMessage | null {
   const authorId = str(record.author_id);
   const createdAt = str(record.created_at);
   if (id === '' || conversationId === '' || authorId === '' || createdAt === '') return null;
+  const kind = isChatMessageKind(record.kind) ? record.kind : 'text';
   return {
     id,
     conversationId,
     authorId,
     body: str(record.body),
+    kind,
+    meta: kind === 'system' ? toChatMessageMeta(record.meta) : null,
     createdAt,
     editedAt: nullableStr(record.edited_at),
     deletedAt: nullableStr(record.deleted_at),
@@ -371,6 +407,18 @@ export function toChatReactionEvent(raw: unknown): ChatReactionEvent | null {
   const emoji = typeof payload.emoji === 'string' && payload.emoji !== '' ? payload.emoji : null;
   const createdAt = str(payload.createdAt);
   return { messageId, conversationId, userId, emoji, createdAt };
+}
+
+/** Zdarzenie `theme_changed` z kanału rozmowy; zły ładunek => null. */
+export function toThemeChangedEvent(raw: unknown): ChatThemeChangedEvent | null {
+  const envelope = asRecord(raw);
+  if (!envelope) return null;
+  const payload = asRecord(envelope.payload) ?? envelope;
+  const conversationId = str(payload.conversationId);
+  const themeId = str(payload.themeId);
+  const actorId = str(payload.actorId);
+  if (conversationId === '' || themeId === '' || actorId === '') return null;
+  return { conversationId, themeId, actorId };
 }
 
 /**
@@ -639,4 +687,22 @@ export async function markRead(
   const { error } = await db.updateLastReadAt(conversationId, userId, atIso);
   if (error) return { ok: false, error: CHAT_MESSAGES.markRead };
   return { ok: true, value: atIso };
+}
+
+/**
+ * Zmienia motyw rozmowy (wspólny dla uczestników). Serwer dopisuje wiersz
+ * systemowy i rozsyła `theme_changed`; ten sam motyw jest po stronie serwera
+ * no-opem, więc nie filtrujemy go tutaj.
+ */
+export async function setTheme(
+  db: ChatDb,
+  conversationId: string,
+  themeId: string,
+): Promise<ChatResult<string>> {
+  if (conversationId === '' || !CHAT_THEME_ID_PATTERN.test(themeId)) {
+    return { ok: false, error: CHAT_MESSAGES.theme };
+  }
+  const { error } = await db.setTheme(conversationId, themeId);
+  if (error) return { ok: false, error: CHAT_MESSAGES.theme };
+  return { ok: true, value: themeId };
 }

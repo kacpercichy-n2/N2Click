@@ -35,7 +35,7 @@ const people = [
 const directory = buildDirectory(people);
 
 function lastMsg(id: string, authorId: string): ChatConversation['lastMessage'] {
-  return { id, authorId, body: 'x', createdAt: '2026-08-17T10:00:00Z', deletedAt: null };
+  return { id, authorId, body: 'x', kind: 'text', createdAt: '2026-08-17T10:00:00Z', deletedAt: null };
 }
 
 function direct(id: string, peer: string, patch: Partial<ChatConversation> = {}): ChatConversation {
@@ -48,6 +48,7 @@ function direct(id: string, peer: string, patch: Partial<ChatConversation> = {})
       { userId: peer, role: 'member', lastReadAt: null },
     ],
     createdBy: ME,
+    themeId: 'lawenda',
     lastMessageAt: null,
     lastMessage: null,
     unreadCount: 0,
@@ -298,12 +299,12 @@ describe('wiersze listy rozmów', () => {
 
   it('podgląd rozróżnia autora, grupę i wiadomość usuniętą', () => {
     const mine = direct('a', OLA, {
-      lastMessage: { id: 'm1', authorId: ME, body: 'Cześć', createdAt: at(9, 0), deletedAt: null },
+      lastMessage: { id: 'm1', authorId: ME, body: 'Cześć', kind: 'text', createdAt: at(9, 0), deletedAt: null },
     });
     expect(previewText(mine, ME, directory)).toBe('Ty: Cześć');
 
     const theirs = direct('a', OLA, {
-      lastMessage: { id: 'm1', authorId: OLA, body: 'Hej', createdAt: at(9, 0), deletedAt: null },
+      lastMessage: { id: 'm1', authorId: OLA, body: 'Hej', kind: 'text', createdAt: at(9, 0), deletedAt: null },
     });
     expect(previewText(theirs, ME, directory)).toBe('Hej');
 
@@ -319,7 +320,7 @@ describe('wiersze listy rozmów', () => {
     expect(previewText(group, ME, directory)).toBe('Ola Kowalska: Hej');
 
     const removed = direct('a', OLA, {
-      lastMessage: { id: 'm1', authorId: OLA, body: '', createdAt: at(9, 0), deletedAt: at(9, 5) },
+      lastMessage: { id: 'm1', authorId: OLA, body: '', kind: 'text', createdAt: at(9, 0), deletedAt: at(9, 5) },
     });
     expect(previewText(removed, ME, directory)).toBe('Wiadomość usunięta');
     expect(previewText(direct('a', OLA), ME, directory)).toBe('Brak wiadomości');
@@ -328,7 +329,7 @@ describe('wiersze listy rozmów', () => {
   it('wiadomość będąca samym adresem GIF-a pokazuje się jako „GIF”', () => {
     const gif = (authorId: string, body: string): ChatConversation =>
       direct('a', OLA, {
-        lastMessage: { id: 'm1', authorId, body, createdAt: at(9, 0), deletedAt: null },
+        lastMessage: { id: 'm1', authorId, body, kind: 'text', createdAt: at(9, 0), deletedAt: null },
       });
 
     expect(previewText(gif(ME, 'https://static.klipy.com/abc/kot.gif'), ME, directory)).toBe(
@@ -360,6 +361,7 @@ describe('wiersze listy rozmów', () => {
             id: 'm1',
             authorId: OLA,
             body: 'Hej',
+            kind: 'text',
             createdAt: at(14, 5),
             deletedAt: null,
           },

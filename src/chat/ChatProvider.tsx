@@ -45,11 +45,14 @@ import {
   openDirect as openDirectRow,
   sendMessage as sendMessageRow,
   setReaction as setReactionRow,
+  setTheme as setThemeRow,
   toChatMessage,
   toChatReactionEvent,
+  toThemeChangedEvent,
   type ChatDb,
 } from './chatData';
 import {
+  applyConversationTheme,
   applyIncomingMessage,
   applyMessageUpdate,
   applyReactionEvent,
@@ -123,6 +126,11 @@ export interface ChatContextValue {
    * kliknięcia w trakcie zapisu czekają jako OSTATNI zamiar.
    */
   toggleReaction: (messageId: string, emoji: string) => void;
+  /**
+   * Motyw OTWARTEJ rozmowy (wspólny dla uczestników). Optymistycznie od razu,
+   * potem RPC; wiersz systemowy i event `theme_changed` rozsyła serwer.
+   */
+  setTheme: (themeId: string) => Promise<boolean>;
   markRead: () => void;
   /** Osoby piszące w otwartej rozmowie (bez zalogowanego, z TTL). */
   typingUserIds: string[];
@@ -404,6 +412,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     setReactions((previous) => applyReactionEvent(previous, event));
   }, []);
 
+  const handleThemeChanged = useCallback((conversationId: string, raw: unknown): void => {
+    const event = toThemeChangedEvent(raw);
+    if (!event || event.conversationId !== conversationId) return;
+    setConversations((list) => applyConversationTheme(list, conversationId, event.themeId));
+  }, []);
+
   const handleTyping = useCallback((conversationId: string, raw: unknown): void => {
     // „pisze…" pokazujemy wyłącznie w otwartej rozmowie — poza nią sygnał nie ma
     // gdzie się wyrenderować, a trzymanie go tylko rozjeżdżałoby TTL.
@@ -422,6 +436,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         .on('broadcast', { event: 'typing' }, (raw: unknown) => handleTyping(conversationId, raw))
         .on('broadcast', { event: 'reaction' }, (raw: unknown) =>
           handleReaction(conversationId, raw),
+        )
+        .on('broadcast', { event: 'theme_changed' }, (raw: unknown) =>
+          handleThemeChanged(conversationId, raw),
         );
       channel.subscribe((status: string) => {
         if (status !== 'SUBSCRIBED') return;
@@ -436,7 +453,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       });
       return channel;
     },
-    [handleBroadcast, handleTyping, handleReaction, scheduleOverviewRefresh, catchUpOpenConversation],
+    [
+      handleBroadcast,
+      handleTyping,
+      handleReaction,
+      handleThemeChanged,
+      scheduleOverviewRefresh,
+      catchUpOpenConversation,
+    ],
   );
 
   // ---- Cykl życia: klient, presence, pierwsze wczytanie -----------------------
@@ -780,6 +804,26 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     return true;
   }, []);
 
+  const setTheme = useCallback(async (themeId: string): Promise<boolean> => {
+    const db = dbRef.current;
+    const conversationId = openIdRef.current;
+    if (!db || !conversationId) return false;
+    const previous =
+      conversationsRef.current.find((conversation) => conversation.id === conversationId)
+        ?.themeId ?? '';
+    setConversations((list) => applyConversationTheme(list, conversationId, themeId));
+    const result = await setThemeRow(db, conversationId, themeId);
+    if (!mountedRef.current) return result.ok;
+    if (!result.ok) {
+      setError(result.error);
+      // Cofnięcie optymistycznej zmiany; kolejne overview i tak przyniesie prawdę.
+      setConversations((list) => applyConversationTheme(list, conversationId, previous));
+      return false;
+    }
+    setError(null);
+    return true;
+  }, []);
+
   const markRead = useCallback((): void => {
     const conversationId = openIdRef.current;
     if (!conversationId) return;
@@ -841,6 +885,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       sendMessage,
       reactions,
       toggleReaction,
+      setTheme,
       markRead,
       typingUserIds: typingIds,
       sendTyping,
@@ -868,6 +913,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       sendMessage,
       reactions,
       toggleReaction,
+      setTheme,
       markRead,
       typingIds,
       sendTyping,

@@ -3,6 +3,7 @@
 // wiadomości i sygnały „pisze…". Wszystko w node, bez Reacta.
 import { describe, expect, it } from 'vitest';
 import {
+  applyConversationTheme,
   applyIncomingMessage,
   applyMessageUpdate,
   applyReactionEvent,
@@ -39,6 +40,7 @@ function conversation(overrides: Partial<ChatConversation> & { id: string }): Ch
       { userId: PEER, role: 'member', lastReadAt: null },
     ],
     lastMessageAt: null,
+    themeId: 'lawenda',
     lastMessage: null,
     unreadCount: 0,
     ...overrides,
@@ -50,6 +52,8 @@ function message(overrides: Partial<ChatMessage> & { id: string }): ChatMessage 
     conversationId: 'c1',
     authorId: PEER,
     body: 'Cześć',
+    kind: 'text',
+    meta: null,
     createdAt: T2,
     editedAt: null,
     deletedAt: null,
@@ -102,7 +106,7 @@ describe('applyIncomingMessage', () => {
       id: 'm1',
       authorId: PEER,
       body: 'Cześć',
-      createdAt: T3,
+      kind: 'text', createdAt: T3,
       deletedAt: null,
     });
   });
@@ -146,7 +150,7 @@ describe('applyIncomingMessage', () => {
       conversation({
         id: 'c1',
         lastMessageAt: T3,
-        lastMessage: { id: 'm9', authorId: PEER, body: 'Nowsza', createdAt: T3, deletedAt: null },
+        lastMessage: { id: 'm9', authorId: PEER, body: 'Nowsza', kind: 'text', createdAt: T3, deletedAt: null },
       }),
     ];
     const next = applyIncomingMessage(list, message({ id: 'm1', createdAt: T1 }), {
@@ -164,7 +168,7 @@ describe('applyMessageUpdate', () => {
     conversation({
       id: 'c1',
       lastMessageAt: T2,
-      lastMessage: { id: 'm1', authorId: PEER, body: 'Cześć', createdAt: T2, deletedAt: null },
+      lastMessage: { id: 'm1', authorId: PEER, body: 'Cześć', kind: 'text', createdAt: T2, deletedAt: null },
       unreadCount: 2,
     }),
   ];
@@ -175,7 +179,7 @@ describe('applyMessageUpdate', () => {
       id: 'm1',
       authorId: PEER,
       body: '',
-      createdAt: T2,
+      kind: 'text', createdAt: T2,
       deletedAt: T3,
     });
     // Edycja nie jest nową wiadomością — licznik zostaje.
@@ -381,5 +385,17 @@ describe('reakcje', () => {
     expect(nextReactionIntent(list, SELF, '👍')).toBeNull();
     expect(nextReactionIntent(list, SELF, '❤️')).toBe('❤️');
     expect(nextReactionIntent([], SELF, '😆')).toBe('😆');
+  });
+});
+
+describe('applyConversationTheme', () => {
+  it('podmienia motyw jednej rozmowy; ta sama wartość i obca rozmowa = ta sama referencja', () => {
+    const list = [conversation({ id: 'a' }), conversation({ id: 'b' })];
+    const next = applyConversationTheme(list, 'a', 'las');
+    expect(next).not.toBe(list);
+    expect(next[0].themeId).toBe('las');
+    expect(next[1]).toBe(list[1]);
+    expect(applyConversationTheme(next, 'a', 'las')).toBe(next);
+    expect(applyConversationTheme(next, 'nie-ma', 'las')).toBe(next);
   });
 });

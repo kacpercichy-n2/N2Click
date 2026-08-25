@@ -93,8 +93,14 @@ export const CHANGELOG: ChangelogEntry[] = [
     id: '2026-08-25-reakcje-czat',
     dateFrom: '2026-08-25',
     dateTo: '2026-08-25',
-    summary: 'Reakcje emoji na wiadomości w czacie — jak w Messengerze.',
+    summary: 'Reakcje emoji i motywy rozmów w czacie — jak w Messengerze.',
     items: [
+      {
+        area: 'Czat',
+        feature: 'Motywy rozmowy (skiny)',
+        description:
+          'Ikona palety w nagłówku rozmowy otwiera dziesięć motywów: od domyślnej Lawendy po Las, Zachód czy Miód z ilustrowanym tłem. Motyw jest wspólny dla rozmowy, każdy uczestnik może go zmienić, a w wątku pojawia się wpis „Ola ustawia motyw »Las«”. Twoje dymki mają jeden gradient płynący z przewijaniem, jak w Messengerze.',
+      },
       {
         area: 'Czat',
         feature: 'Reakcje emoji',

@@ -40,6 +40,8 @@ export {
   Plus,
   // Czat, dymek wiadomości: przycisk „Zareaguj" (hover/fokus na desktopie).
   SmilePlus,
+  // Czat, nagłówek okna: wybór motywu rozmowy (skiny).
+  Palette,
   // Czat, stopka popovera: przełącznik pinga dźwiękowego (włączony / wyciszony).
   Volume2,
   VolumeX,

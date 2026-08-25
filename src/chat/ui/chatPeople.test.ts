@@ -34,6 +34,7 @@ function conversation(patch: Partial<ChatConversation> = {}): ChatConversation {
       { userId: OLA, role: 'member', lastReadAt: null },
     ],
     createdBy: ME,
+    themeId: 'lawenda',
     lastMessageAt: null,
     lastMessage: null,
     unreadCount: 0,

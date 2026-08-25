@@ -29,6 +29,13 @@
 //     „wybierz jedno" (`picker === 'react'`, cel w `reactTargetRef`). Pigułki
 //     pod dymkiem to toggle własnej reakcji tym emoji. Stan i zapis niesie
 //     `ChatProvider.toggleReaction` (optymistycznie + RPC).
+//   * MOTYW ROZMOWY (skiny): katalog `themes/catalog.ts` → zmienne CSS na
+//     korzeniu okna (`themeCssVars`), nigdy globalnie. Picker pod nagłówkiem
+//     (`ChatThemePicker`), zapis przez `chat.setTheme`. Wiersz systemowy
+//     „X ustawia motyw »Y«" przychodzi jako `kind: 'system'` i renderuje się
+//     jako jedna wyśrodkowana linia. Moje dymki dzielą JEDEN gradient płynący
+//     ze scrollem (`useSharedBubbleGradient`); przy `prefers-reduced-motion`
+//     gradient jest statyczny per dymek.
 //   * SZKIC JEST WŁASNOŚCIĄ DOKU (`draft` / `onDraftChange`). Skoro
 //     minimalizacja odmontowuje okno, stan lokalny gubiłby wpisany tekst —
 //     `ChatDock` trzyma szkice per rozmowa i oddaje je przy ponownym otwarciu.
@@ -46,16 +53,28 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { AnimatePresence, m, useReducedMotion } from 'motion/react';
-import { ChevronDown, ImagePlay, Send, Smile, SmilePlus, X } from '../../components/icons';
+import {
+  ChevronDown,
+  ImagePlay,
+  Palette,
+  Send,
+  Smile,
+  SmilePlus,
+  X,
+} from '../../components/icons';
 import { todayStr } from '../../utils/dates';
 import { useChat } from '../ChatProvider';
-import { CHAT_MESSAGE_MAX_LENGTH, type ChatConversation } from '../types';
+import { CHAT_MESSAGE_MAX_LENGTH, CHAT_QUICK_REACTIONS, type ChatConversation } from '../types';
 import { ChatAvatar } from './ChatAvatar';
 import { ChatEmojiPopover } from './ChatEmojiPopover';
 import { ChatGifPopover } from './ChatGifPopover';
 import { ReactionBar, ReactionPills } from './ChatReactions';
+import { ChatThemePicker } from './ChatThemePicker';
 import { emojiLabel, insertAtCaret, pushRecentEmoji, replaceEmoticons } from './chatEmoji';
 import { groupReactions, ownReaction } from '../chatState';
+import { themeById } from '../themes/catalog';
+import { themeCssVars } from '../themes/themeVars';
+import { useSharedBubbleGradient } from './useSharedBubbleGradient';
 import { klipyApiKey } from './chatGifs';
 import {
   conversationInitials,
@@ -173,6 +192,9 @@ export function ChatWindow({
   const [recentEmoji, setRecentEmoji] = useState<readonly string[]>([]);
   /** Id wiadomości z otwartym paskiem reakcji; null = żaden. */
   const [reactionBarFor, setReactionBarFor] = useState<string | null>(null);
+  /** Otwarty picker motywu pod nagłówkiem. */
+  const [themeOpen, setThemeOpen] = useState(false);
+  const themeTriggerRef = useRef<HTMLButtonElement>(null);
   /** Cel pełnego pickera w trybie reakcji (`picker === 'react'`). */
   const reactTargetRef = useRef<string | null>(null);
   /** Przycisk „Zareaguj", który otworzył pasek (powrót fokusa po zamknięciu). */
@@ -218,6 +240,17 @@ export function ChatWindow({
     };
   }, []);
 
+  const theme = themeById(conversation.themeId);
+  const themeVars = useMemo(() => themeCssVars(theme), [theme]);
+  /** Pasek reakcji: emoji motywu pierwsze, reszta domyślna (7 pozycji). */
+  const quickReactions = useMemo(
+    () =>
+      [theme.quickReaction, ...CHAT_QUICK_REACTIONS.filter((e) => e !== theme.quickReaction)].slice(
+        0,
+        CHAT_QUICK_REACTIONS.length,
+      ),
+    [theme.quickReaction],
+  );
   const title = windowTitle(conversation, chat.selfId, directory);
   const subtitle = windowSubtitle(conversation, chat.selfId, chat.presence);
   const online = isConversationOnline(conversation, chat.selfId, chat.presence);
@@ -239,6 +272,7 @@ export function ChatWindow({
   // NIE zerujemy: należy do doku i jest już wybrany po rozmowie.
   useEffect(() => {
     setPicker('none');
+    setThemeOpen(false);
     setReactionBarFor(null);
     reactTargetRef.current = null;
     stickRef.current = true;
@@ -263,6 +297,10 @@ export function ChatWindow({
     if (box === null || !stickRef.current) return;
     box.scrollTop = box.scrollHeight;
   }, [items]);
+
+  // Wspólny gradient moich dymków płynący ze scrollem; pomiar po każdej zmianie
+  // listy i reakcji (pigułki zmieniają wysokość wierszy).
+  useSharedBubbleGradient(listRef, [items, chat.reactions], !reduceMotion);
 
   // Wysokość = treść + obramowanie. Pole ma `box-sizing: border-box`, więc
   // sam `scrollHeight` (bez 2 px ramki) dawał treść o 2 px wyższą od okna
@@ -410,7 +448,8 @@ export function ChatWindow({
   return (
     <m.section
       ref={windowRef}
-      className="n2chat-window"
+      className={`n2chat-window${reduceMotion ? ' has-static-gradient' : ''}`}
+      style={themeVars}
       aria-label={`Rozmowa: ${title}`}
       initial={{ opacity: 0, y: reduceMotion ? 0 : 12 }}
       animate={{ opacity: 1, y: 0 }}
@@ -435,6 +474,18 @@ export function ChatWindow({
           )}
         </div>
         <button
+          ref={themeTriggerRef}
+          type="button"
+          className="n2chat-icon-btn"
+          onClick={() => setThemeOpen((open) => !open)}
+          aria-label="Motyw rozmowy"
+          aria-haspopup="dialog"
+          aria-expanded={themeOpen}
+          title="Motyw"
+        >
+          <Palette size={17} aria-hidden />
+        </button>
+        <button
           type="button"
           className="n2chat-icon-btn"
           onClick={() => chat.closeConversation()}
@@ -453,6 +504,21 @@ export function ChatWindow({
           <X size={16} aria-hidden />
         </button>
       </header>
+
+      <AnimatePresence>
+        {themeOpen && (
+          <ChatThemePicker
+            key="themes"
+            currentId={conversation.themeId}
+            triggerRef={themeTriggerRef}
+            onClose={() => setThemeOpen(false)}
+            onPick={(picked) => {
+              setThemeOpen(false);
+              void chat.setTheme(picked.id);
+            }}
+          />
+        )}
+      </AnimatePresence>
 
       <div
         className="n2chat-messages"
@@ -484,6 +550,10 @@ export function ChatWindow({
           item.kind === 'day' ? (
             <p key={item.key} className="n2chat-day">
               <span>{item.label}</span>
+            </p>
+          ) : item.kind === 'system' ? (
+            <p key={item.key} className="n2chat-system">
+              {item.text}
             </p>
           ) : (
             <div key={item.key} className={`n2chat-group${item.mine ? ' is-mine' : ''}`}>
@@ -554,6 +624,7 @@ export function ChatWindow({
                       {barOpen && (
                         <ReactionBar
                           key="bar"
+                          quick={quickReactions}
                           own={ownReaction(reactions, chat.selfId)}
                           triggerRef={reactTriggerRef}
                           onPick={(emoji) => pickReaction(message.id, emoji)}

@@ -95,6 +95,7 @@ export function applyIncomingMessage(
           id: message.id,
           authorId: message.authorId,
           body: message.body,
+          kind: message.kind,
           createdAt: message.createdAt,
           deletedAt: message.deletedAt,
         }
@@ -396,4 +397,24 @@ export function nextReactionIntent(
   clicked: string,
 ): string | null {
   return ownReaction(list, selfId) === clicked ? null : clicked;
+}
+
+// ---- Motyw rozmowy -----------------------------------------------------------
+
+/**
+ * Zmiana motywu (event `theme_changed` albo własny zapis): podmienia `themeId`
+ * jednej rozmowy. Ta sama wartość / nieznana rozmowa => ta sama referencja.
+ */
+export function applyConversationTheme(
+  list: ChatConversation[],
+  conversationId: string,
+  themeId: string,
+): ChatConversation[] {
+  const index = list.findIndex((conversation) => conversation.id === conversationId);
+  if (index === -1) return list;
+  const conversation = list[index];
+  if (conversation.themeId === themeId) return list;
+  const nextList = list.slice();
+  nextList[index] = { ...conversation, themeId };
+  return nextList;
 }

@@ -26,12 +26,15 @@ export const MAX_VISIBLE_REACTION_PILLS = 3;
 const SPRING = { type: 'spring', stiffness: 520, damping: 30, mass: 0.6 } as const;
 
 export function ReactionBar({
+  quick = CHAT_QUICK_REACTIONS,
   own,
   triggerRef,
   onPick,
   onMore,
   onClose,
 }: {
+  /** Szybkie emoji (domyślnie 7 Messengera; okno stawia emoji motywu pierwsze). */
+  quick?: readonly string[];
   /** Aktualna własna reakcja (podświetlona w pasku); null gdy brak. */
   own: string | null;
   /** Element, który otworzył pasek (jego kliknięcia nie zamykają; powrót fokusa). */
@@ -80,7 +83,7 @@ export function ReactionBar({
       exit={{ opacity: 0, scale: reduceMotion ? 1 : 0.95, y: 0 }}
       transition={reduceMotion ? { duration: 0 } : { ...SPRING, opacity: { duration: 0.12 } }}
     >
-      {CHAT_QUICK_REACTIONS.map((emoji, index) => (
+      {quick.map((emoji, index) => (
         <button
           key={emoji}
           type="button"
