@@ -13028,7 +13028,10 @@ a.toggle-btn {
   border: none;
   border-radius: var(--n2-radius-pill);
   background: none;
-  color: var(--n2-text-muted);
+  /* NIEPRZEZROCZYSTY kolor: Chrome nakłada kanał alfa koloru tekstu na kolorowe
+     emoji, więc `--n2-text-muted` (rgba) dawał wyblakłe znaki (zgłoszenie
+     2026-08-25). Przygaszony jest tylko „+" niżej. */
+  color: var(--n2-text);
   font-size: var(--n2-type-lg);
   line-height: 1;
   cursor: pointer;
@@ -13188,11 +13191,22 @@ a.toggle-btn {
   .n2chat-react-btn {
     display: none;
   }
+  /* Wyśrodkowanie przez `translate` (osobna własność, nie `transform` — tego
+     używa animacja Motion). Na 320 px osiem celów 44 px się nie mieści, więc
+     pasek zawija się do dwóch rzędów zamiast wychodzić poza ekran. */
   .n2chat-react-bar {
     left: 50%;
+    right: auto;
+    translate: -50% 0;
+    max-width: calc(100vw - 2 * var(--n2-space-4));
+    flex-wrap: wrap;
+    justify-content: center;
+    border-radius: var(--n2-radius-md);
     transform-origin: bottom center;
   }
-  .n2chat-group.is-mine .n2chat-react-bar {
+  .n2chat-group.is-mine .n2chat-react-bar,
+  .n2chat-msg.is-tall .n2chat-react-bar,
+  .n2chat-group.is-mine .n2chat-msg.is-tall .n2chat-react-bar {
     left: 50%;
     right: auto;
     transform-origin: bottom center;
