@@ -64,6 +64,15 @@ create policy "chat_messages_insert" on n2click.messages
     and meta is null
   );
 
+-- Edycja i kasowanie miękkie zostają dla ZWYKŁYCH wiadomości autora; wiersz
+-- systemowy (autor = ten, kto zmienił motyw) nie może zostać przepisany ani
+-- skasowany z klienta (przegląd Codex 2026-08-25).
+drop policy if exists "chat_messages_update" on n2click.messages;
+create policy "chat_messages_update" on n2click.messages
+  for update to authenticated
+  using (author_id = (select auth.uid()) and kind = 'text')
+  with check (author_id = (select auth.uid()) and kind = 'text');
+
 -- -----------------------------------------------------------------------------
 -- 2. RPC `n2click.chat_set_theme`
 -- -----------------------------------------------------------------------------

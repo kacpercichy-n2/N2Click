@@ -90,16 +90,33 @@ export interface GoogleCalendarListEntry {
   hidden?: boolean;
 }
 
-/** Lista kalendarzy (tylko z prawem odczytu, bez ukrytych i usuniętych). */
+/**
+ * Lista kalendarzy (tylko z prawem odczytu, bez ukrytych i usuniętych) —
+ * WSZYSTKIE strony (`nextPageToken`), bo brakujące lokalnie kalendarze są
+ * kasowane i częściowa lista skasowałaby je niesłusznie (przegląd Codex).
+ */
 export async function fetchCalendarList(
   accessToken: string,
-): Promise<GoogleHttpResult<{ items?: GoogleCalendarListEntry[] }>> {
-  const url = new URL(`${CALENDAR_API}/users/me/calendarList`);
-  url.searchParams.set('minAccessRole', 'reader');
-  url.searchParams.set('showHidden', 'false');
-  url.searchParams.set('fields', 'items(id,summary,primary,selected,accessRole,backgroundColor,deleted,hidden)');
-  const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
-  return readJson(response);
+): Promise<GoogleHttpResult<{ items: GoogleCalendarListEntry[] }>> {
+  const items: GoogleCalendarListEntry[] = [];
+  let pageToken: string | undefined;
+  do {
+    const url = new URL(`${CALENDAR_API}/users/me/calendarList`);
+    url.searchParams.set('minAccessRole', 'reader');
+    url.searchParams.set('showHidden', 'false');
+    url.searchParams.set('maxResults', '250');
+    url.searchParams.set(
+      'fields',
+      'nextPageToken,items(id,summary,primary,selected,accessRole,backgroundColor,deleted,hidden)',
+    );
+    if (pageToken) url.searchParams.set('pageToken', pageToken);
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+    const page = await readJson<{ items?: GoogleCalendarListEntry[]; nextPageToken?: string }>(response);
+    if (!page.ok) return { ok: false, status: page.status, body: null, text: page.text };
+    items.push(...(page.body?.items ?? []));
+    pageToken = page.body?.nextPageToken;
+  } while (pageToken);
+  return { ok: true, status: 200, body: { items }, text: '' };
 }
 
 export interface EventsListPage {

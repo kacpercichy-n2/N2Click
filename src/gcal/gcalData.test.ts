@@ -140,6 +140,22 @@ describe('occurrencesByDate', () => {
     expect(map.get('2026-08-28')).toBeUndefined();
   });
 
+  it('ostatni dzień wielodniowego kończy się o `lastDayEndMinutes`, nie o północy', () => {
+    const multi: GoogleEvent = {
+      ...base,
+      id: 'multi',
+      startMinutes: 1320,
+      durationMinutes: 120,
+      endDate: '2026-08-27',
+      lastDayEndMinutes: 570,
+    };
+    const map = occurrencesByDate([multi]);
+    expect(map.get('2026-08-26')?.[0]).toMatchObject({ startMinutes: 0, durationMinutes: 1440 });
+    expect(map.get('2026-08-27')?.[0]).toMatchObject({ startMinutes: 0, durationMinutes: 570 });
+    expect(toGoogleEvent(eventRow({ last_day_end_minutes: 570 }))?.lastDayEndMinutes).toBe(570);
+    expect(toGoogleEvent(eventRow({ last_day_end_minutes: 7 }))?.lastDayEndMinutes).toBeNull();
+  });
+
   it('sortuje po starcie, potem po id', () => {
     const later: GoogleEvent = { ...base, id: 'a-later', startMinutes: 660 };
     const same: GoogleEvent = { ...base, id: 'aaa' };

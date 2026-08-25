@@ -739,11 +739,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       const state = pendingReactionsRef.current.get(messageId);
       const queued = state?.queued;
       pendingReactionsRef.current.delete(messageId);
-      if (!mountedRef.current || openIdRef.current !== conversationId) return;
+      // Zapis serwera DRENUJEMY niezależnie od otwartej rozmowy — ostatni zamiar
+      // nie może przepaść tylko dlatego, że użytkownik przełączył okno.
+      // Na `openIdRef` bramkujemy wyłącznie aktualizacje UI (przegląd Codex).
       if (queued !== undefined) {
         void runReaction(conversationId, messageId, queued);
         return;
       }
+      if (!mountedRef.current || openIdRef.current !== conversationId) return;
       if (result.ok) {
         setError(null);
         setReactions((previous) => mergeReactions(previous, { [messageId]: result.value }));
@@ -804,6 +807,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     return true;
   }, []);
 
+  /** Ostatni zamiar zmiany motywu per rozmowa (numer żądania). */
+  const themeIntentRef = useRef<Map<string, number>>(new Map());
+
   const setTheme = useCallback(async (themeId: string): Promise<boolean> => {
     const db = dbRef.current;
     const conversationId = openIdRef.current;
@@ -811,16 +817,22 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     const previous =
       conversationsRef.current.find((conversation) => conversation.id === conversationId)
         ?.themeId ?? '';
+    // Numer zamiaru: starsze żądanie nie może cofnąć nowszego wyboru ani
+    // zgłosić błędu po tym, jak nowsze już się powiodło (przegląd Codex).
+    const intent = (themeIntentRef.current.get(conversationId) ?? 0) + 1;
+    themeIntentRef.current.set(conversationId, intent);
     setConversations((list) => applyConversationTheme(list, conversationId, themeId));
     const result = await setThemeRow(db, conversationId, themeId);
     if (!mountedRef.current) return result.ok;
+    const latest = themeIntentRef.current.get(conversationId) === intent;
     if (!result.ok) {
+      if (!latest) return false;
       setError(result.error);
       // Cofnięcie optymistycznej zmiany; kolejne overview i tak przyniesie prawdę.
       setConversations((list) => applyConversationTheme(list, conversationId, previous));
       return false;
     }
-    setError(null);
+    if (latest) setError(null);
     return true;
   }, []);
 

@@ -270,9 +270,11 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
         setCalendars((list) =>
           list.map((calendar) => (calendar.id === calendarId ? { ...calendar, selected } : calendar)),
         );
+        // Widok bazy filtruje po `selected`, więc odznaczony kalendarz znika od razu.
+        await refreshEvents();
         return { ok: true };
       }),
-    [runAction],
+    [runAction, refreshEvents],
   );
 
   const setShareLevel = useCallback(

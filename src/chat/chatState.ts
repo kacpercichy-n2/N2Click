@@ -327,10 +327,15 @@ export function applyReactionEvent(current: ChatReactionMap, event: ChatReaction
   const existing = list.find((reaction) => reaction.userId === event.userId);
   if (event.emoji === null) {
     if (!existing) return current;
+    // Zdjęcie starsze niż znany wpis (spóźnione echo) nie cofa nowszej reakcji.
+    if (event.createdAt !== '' && existing.createdAt > event.createdAt) return current;
     const kept = list.filter((reaction) => reaction.userId !== event.userId);
     return { ...current, [event.messageId]: kept };
   }
   if (existing && existing.emoji === event.emoji) return current;
+  // Znaczniki z jednego zegara Postgresa: zdarzenie starsze niż znany wpis tej
+  // osoby jest spóźnionym echem i przegrywa z nowszym stanem (przegląd Codex).
+  if (existing && event.createdAt !== '' && existing.createdAt > event.createdAt) return current;
   const replaced: ChatReaction = {
     userId: event.userId,
     emoji: event.emoji,

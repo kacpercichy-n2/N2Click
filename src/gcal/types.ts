@@ -47,6 +47,8 @@ export interface GoogleEvent {
   htmlLink: string;
   date: string; // yyyy-MM-dd
   endDate: string | null; // ostatni dzień (włącznie) dla wielodniowych
+  /** Koniec ostatniego dnia (minuty) dla wielodniowych godzinowych; null = pełna doba. */
+  lastDayEndMinutes: number | null;
   startMinutes: number;
   durationMinutes: number;
   isAllDay: boolean;

@@ -220,6 +220,11 @@ Tydzień/Miesiąc obok spotkań N2Hub. Research i decyzje:
 4. Wywołanie: **cron** (`pg_cron` co 5 min → `n2click.google_calendar_sync_tick()`
    → `pg_net` POST z nagłówkiem `x-n2-cron-secret`) albo **użytkownik**
    („Synchronizuj teraz", JWT => tylko jego konto).
+   Zapis jest ATOMOWY: funkcja pobiera komplet stron z Google, a dopiero potem
+   jedno RPC `n2click.google_apply_calendar_sync` (service_role) w jednej
+   transakcji kasuje/upsertuje/przesuwa token; konto ma dzierżawę
+   `sync_lease_until`, więc cron, connect i „Synchronizuj teraz" nie biegną
+   równolegle. Obie funkcje wymagają wiersza `app_access` N2Click wywołującego.
 5. Kto co widzi: widok `n2click.google_calendar_events_visible` maskuje wiersze
    (właściciel i zaproszeni: szczegóły; reszta: „Zajęty" wg `share_level`
    konta; prywatne/poufne: tylko właściciel). Klient czyta wyłącznie ten widok.

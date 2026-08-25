@@ -355,6 +355,15 @@ describe('reakcje', () => {
     expect(applyReactionEvent(removed, event('', '👍'))).toBe(removed);
   });
 
+  it('applyReactionEvent ignoruje spóźnione echo starsze niż znany wpis tej osoby', () => {
+    const fresh = applyReactionEvent({}, event(PEER, '❤️', T2));
+    // Starsze „ustaw" i starsze „zdejmij" przegrywają z nowszym stanem.
+    expect(applyReactionEvent(fresh, event(PEER, '👍', T1))).toBe(fresh);
+    expect(applyReactionEvent(fresh, event(PEER, null, T1))).toBe(fresh);
+    // Nowsze zdjęcie działa.
+    expect(applyReactionEvent(fresh, event(PEER, null, T3)).m1).toEqual([]);
+  });
+
   it('applyReactionEvent trzyma porządek po czasie dodania', () => {
     const map = applyReactionEvent(
       applyReactionEvent({}, event(SELF, '👍', T2)),

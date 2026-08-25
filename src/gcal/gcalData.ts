@@ -226,6 +226,7 @@ export function toGoogleEvent(row: GcalRow): GoogleEvent | null {
     return null;
   }
   const endDateRaw = nullableStr(row.end_date);
+  const lastDayEnd = int(row.last_day_end_minutes);
   const attendeeIds = Array.isArray(row.attendee_profile_ids)
     ? (row.attendee_profile_ids as unknown[]).filter((v): v is string => typeof v === 'string')
     : [];
@@ -240,6 +241,8 @@ export function toGoogleEvent(row: GcalRow): GoogleEvent | null {
     htmlLink: str(row.html_link),
     date,
     endDate: endDateRaw !== null && isValidDateStr(endDateRaw) && endDateRaw > date ? endDateRaw : null,
+    lastDayEndMinutes:
+      lastDayEnd !== null && lastDayEnd >= 15 && lastDayEnd <= 1440 && lastDayEnd % 15 === 0 ? lastDayEnd : null,
     startMinutes,
     durationMinutes,
     isAllDay: bool(row.is_all_day),
@@ -253,8 +256,9 @@ export function toGoogleEvent(row: GcalRow): GoogleEvent | null {
 
 /**
  * Wystąpienia wydarzeń po dniu. Wielodniowe: pierwszy dzień od `startMinutes`
- * do północy, dni środkowe i ostatni jako pełna doba (0/1440) — jak urlop w
- * modelu N2Hub. Wynik posortowany po starcie, potem po id (stabilnie).
+ * do północy, dni środkowe jako pełna doba (0/1440), ostatni dzień do
+ * `lastDayEndMinutes` (albo pełna doba, gdy brak). Wynik posortowany po
+ * starcie, potem po id (stabilnie).
  */
 export function occurrencesByDate(
   events: readonly GoogleEvent[],
@@ -272,7 +276,9 @@ export function occurrencesByDate(
     // Twardy limit obronny: wiersz z absurdalnym `end_date` nie zapętli renderu.
     let guard = 0;
     while (day <= event.endDate && guard < 366) {
-      push({ event, date: day, startMinutes: 0, durationMinutes: 1440 });
+      const isLast = day === event.endDate;
+      const duration = isLast && event.lastDayEndMinutes !== null ? event.lastDayEndMinutes : 1440;
+      push({ event, date: day, startMinutes: 0, durationMinutes: duration });
       day = addDaysStr(day, 1);
       guard += 1;
     }

@@ -12,9 +12,12 @@ import type { GoogleEvent } from './types';
 export function GoogleEventDialog({ event, onClose }: { event: GoogleEvent; onClose: () => void }) {
   const { state } = useStore();
   const owner = getPerson(state, event.ownerProfileId)?.name ?? '';
-  const attendees = event.attendeeProfileIds
-    .map((id) => getPerson(state, id)?.name ?? '')
-    .filter((name) => name !== '');
+  // Wiersz „Zajęty" jest zamaskowany przez widok bazy; po stronie UI dokładamy
+  // pas bezpieczeństwa i nie pokazujemy uczestników niezależnie od danych.
+  const attendees =
+    event.access === 'busy'
+      ? []
+      : event.attendeeProfileIds.map((id) => getPerson(state, id)?.name ?? '').filter((name) => name !== '');
   const when = event.isAllDay
     ? event.endDate
       ? `${formatShortWithWeekday(event.date)} – ${formatShortWithWeekday(event.endDate)}, cały dzień`

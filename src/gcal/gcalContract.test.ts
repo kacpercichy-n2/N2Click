@@ -102,7 +102,24 @@ describe('czas i siatka', () => {
       start_minutes: 1320,
       duration_minutes: 120,
       end_date: '2026-08-26',
+      // Koniec dokładnie o północy => ostatni dzień to pełna doba.
+      last_day_end_minutes: null,
     });
+    const partial = map({
+      id: 'e7b',
+      start: { dateTime: '2026-08-25T22:00:00+02:00' },
+      end: { dateTime: '2026-08-27T09:20:00+02:00' },
+    });
+    expect(partial.kind === 'row' && partial.row).toMatchObject({
+      end_date: '2026-08-27',
+      last_day_end_minutes: 570,
+    });
+    const single = map({
+      id: 'e7c',
+      start: { dateTime: '2026-08-25T10:00:00+02:00' },
+      end: { dateTime: '2026-08-25T11:00:00+02:00' },
+    });
+    expect(single.kind === 'row' && single.row.last_day_end_minutes).toBeNull();
   });
 });
 

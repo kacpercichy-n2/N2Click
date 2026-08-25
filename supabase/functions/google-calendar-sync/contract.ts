@@ -69,6 +69,8 @@ export interface GoogleEventRow {
   start_minutes: number;
   duration_minutes: number;
   end_date: string | null;
+  /** Wielodniowe godzinowe: koniec OSTATNIEGO dnia (minuty, siatka 15); null = pełna doba / jednodniowe. */
+  last_day_end_minutes: number | null;
   event_type: string;
   visibility: string;
   is_busy: boolean;
@@ -214,6 +216,7 @@ export function mapGoogleEvent(input: MapEventInput): MapEventResult {
   let isAllDay = false;
   let eventDate = '';
   let endDate: string | null = null;
+  let lastDayEndMinutes: number | null = null;
   let startMinutes = 0;
   let durationMinutes = DAY_MINUTES;
   let startAt = '';
@@ -240,10 +243,15 @@ export function mapGoogleEvent(input: MapEventInput): MapEventResult {
       durationMinutes = Math.min(endMin, DAY_MINUTES) - startMinutes;
     } else {
       // Wielodniowe godzinowe: pierwszy dzień do północy, `end_date` = ostatni
-      // dzień (albo poprzedni, gdy kończy się dokładnie o północy).
+      // dzień (albo poprzedni, gdy kończy się dokładnie o północy — wtedy
+      // ostatni dzień jest pełną dobą), a `last_day_end_minutes` niesie
+      // godzinę końca ostatniego dnia, żeby UI nie malował go na całą dobę.
       durationMinutes = DAY_MINUTES - startMinutes;
-      const last = e.minutes === 0 ? shiftDate(e.date, -1) : e.date;
+      const endsAtMidnight = e.minutes === 0;
+      const last = endsAtMidnight ? shiftDate(e.date, -1) : e.date;
       endDate = last > eventDate ? last : null;
+      lastDayEndMinutes =
+        endDate !== null && !endsAtMidnight ? Math.max(STEP, Math.min(ceilToStep(e.minutes), DAY_MINUTES)) : null;
     }
   } else {
     return { kind: 'skip', reason: 'brak czasu' };
@@ -291,6 +299,7 @@ export function mapGoogleEvent(input: MapEventInput): MapEventResult {
       start_minutes: startMinutes,
       duration_minutes: durationMinutes,
       end_date: endDate,
+      last_day_end_minutes: lastDayEndMinutes,
       event_type: eventType,
       visibility,
       // Google „Wolny" (transparent) nie blokuje; całodniowe też nie, chyba że
@@ -386,6 +395,11 @@ export const GCAL_MESSAGES = {
   noRefreshToken:
     'Google nie zwróciło tokenu odświeżania. Odłącz N2Hub w ustawieniach konta Google i spróbuj ponownie.',
   forbiddenCron: 'Nieprawidłowy sekret harmonogramu.',
+  forbiddenApp: 'To konto nie ma dostępu do N2Click.',
+  syncFailed: 'Synchronizacja nie powiodła się.',
+  syncRevoked: 'Google cofnęło dostęp. Podepnij konto ponownie.',
+  syncRateLimited: 'Google ograniczyło liczbę zapytań. Spróbuj za kilka minut.',
+  syncBusy: 'Synchronizacja tego konta już trwa. Spróbuj za chwilę.',
 } as const;
 
 /**

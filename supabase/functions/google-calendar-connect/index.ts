@@ -11,7 +11,7 @@
 // Ten plik działa WYŁĄCZNIE w runtime Deno i NIE jest typowany przez tsc repo.
 // Nigdy nie logujemy kodu, tokenów ani e-maila.
 
-import { createClient } from 'npm:@supabase/supabase-js@2';
+import { createClient } from 'npm:@supabase/supabase-js@2.110.6';
 import { GCAL_MESSAGES, parseTokenExchange } from '../google-calendar-sync/contract.ts';
 import { exchangeAuthorizationCode, fetchUserEmail } from '../_shared/google.ts';
 
@@ -61,6 +61,21 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const { data: userData, error: userError } = await client.auth.getUser(jwt);
   if (userError || !userData?.user) return json(401, { error: GCAL_MESSAGES.invalidSession });
   const profileId = userData.user.id;
+
+  // Dostęp do N2Click (projekt jest wspólny dla appek): bez wiersza w
+  // `app_access` żaden użytkownik innej appki nie uruchomi wymiany kodu ani
+  // zapisu do Vault (przegląd Codex 2026-08-25).
+  const { data: access, error: accessError } = await client
+    .from('app_access')
+    .select('user_id')
+    .eq('user_id', profileId)
+    .eq('app', 'n2click')
+    .maybeSingle();
+  if (accessError) {
+    console.error('google-calendar-connect: nie udało się sprawdzić dostępu do appki');
+    return json(500, { error: GCAL_MESSAGES.serverError });
+  }
+  if (!access) return json(403, { error: GCAL_MESSAGES.forbiddenApp });
 
   let body: { code?: unknown };
   try {

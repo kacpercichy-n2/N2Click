@@ -65,6 +65,10 @@ create table if not exists n2click.google_accounts (
     check (status in ('active', 'revoked', 'error')),
   last_error text,
   last_sync_at timestamptz,
+  /** Dzierżawa syncu: cron, „Synchronizuj teraz" i connect nie mogą biec
+      równolegle na jednym koncie (wyścig o token przyrostowy i wymianę
+      wydarzeń). Zajmuje ją warunkowy UPDATE, zwalnia koniec syncu. */
+  sync_lease_until timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -110,6 +114,10 @@ create table if not exists n2click.google_calendar_events (
   start_minutes integer not null check (start_minutes between 0 and 1425 and start_minutes % 15 = 0),
   duration_minutes integer not null check (duration_minutes between 15 and 1440 and duration_minutes % 15 = 0),
   end_date date,
+  /** Wielodniowe GODZINOWE: koniec ostatniego dnia w minutach (siatka 15);
+      NULL = ostatni dzień to pełna doba (całodniowe) albo jednodniowe. */
+  last_day_end_minutes integer
+    check (last_day_end_minutes is null or (last_day_end_minutes between 15 and 1440 and last_day_end_minutes % 15 = 0)),
   event_type text not null default 'default',
   visibility text not null default 'default',
   is_busy boolean not null default true,
@@ -162,13 +170,13 @@ create policy "google_accounts_select" on n2click.google_accounts
 drop policy if exists "google_accounts_update" on n2click.google_accounts;
 create policy "google_accounts_update" on n2click.google_accounts
   for update to authenticated
-  using (profile_id = (select auth.uid()))
-  with check (profile_id = (select auth.uid()));
+  using ((select core.has_app('n2click')) and profile_id = (select auth.uid()))
+  with check ((select core.has_app('n2click')) and profile_id = (select auth.uid()));
 
 drop policy if exists "google_accounts_delete" on n2click.google_accounts;
 create policy "google_accounts_delete" on n2click.google_accounts
   for delete to authenticated
-  using (profile_id = (select auth.uid()));
+  using ((select core.has_app('n2click')) and profile_id = (select auth.uid()));
 
 -- Właściciel konta = właściciel kalendarza (definer omija RLS `google_accounts`,
 -- ale predykat i tak zawęża do `auth.uid()`).
@@ -188,18 +196,30 @@ grant execute on function app.google_account_owner(uuid) to authenticated;
 drop policy if exists "google_calendars_select" on n2click.google_calendars;
 create policy "google_calendars_select" on n2click.google_calendars
   for select to authenticated
-  using (app.google_account_owner(account_id) = (select auth.uid()));
+  using (
+    (select core.has_app('n2click'))
+    and app.google_account_owner(account_id) = (select auth.uid())
+  );
 
 drop policy if exists "google_calendars_update" on n2click.google_calendars;
 create policy "google_calendars_update" on n2click.google_calendars
   for update to authenticated
-  using (app.google_account_owner(account_id) = (select auth.uid()))
-  with check (app.google_account_owner(account_id) = (select auth.uid()));
+  using (
+    (select core.has_app('n2click'))
+    and app.google_account_owner(account_id) = (select auth.uid())
+  )
+  with check (
+    (select core.has_app('n2click'))
+    and app.google_account_owner(account_id) = (select auth.uid())
+  );
 
 drop policy if exists "google_calendar_events_select" on n2click.google_calendar_events;
 create policy "google_calendar_events_select" on n2click.google_calendar_events
   for select to authenticated
-  using (app.google_account_owner(account_id) = (select auth.uid()));
+  using (
+    (select core.has_app('n2click'))
+    and app.google_account_owner(account_id) = (select auth.uid())
+  );
 
 -- `updated_at` konta z zegara serwera przy każdej zmianie.
 create or replace function n2click.google_accounts_touch()
@@ -309,13 +329,22 @@ as
     e.end_date,
     e.start_minutes,
     e.duration_minutes,
+    e.last_day_end_minutes,
     e.is_all_day,
     e.is_busy,
-    e.attendee_profile_ids,
-    e.self_response,
+    -- Uczestnicy i własna odpowiedź TYLKO przy pełnych szczegółach: wiersz
+    -- „Zajęty" nie może zdradzać, kto siedzi na spotkaniu (przegląd Codex).
+    case
+      when a.profile_id = (select auth.uid())
+        or ((select auth.uid()) = any (e.attendee_profile_ids) and not e.is_confidential)
+        or (a.share_level = 'details' and not e.is_confidential)
+      then e.attendee_profile_ids else '{}'::uuid[]
+    end as attendee_profile_ids,
+    case when a.profile_id = (select auth.uid()) then e.self_response else null end as self_response,
     case
       when a.profile_id = (select auth.uid()) then 'owner'
       when (select auth.uid()) = any (e.attendee_profile_ids) and not e.is_confidential then 'attendee'
+      when a.share_level = 'details' and not e.is_confidential then 'attendee'
       else 'busy'
     end as access,
     case
@@ -346,6 +375,8 @@ as
     e.is_confidential
   from n2click.google_calendar_events e
   join n2click.google_accounts a on a.id = e.account_id
+  -- Odznaczony kalendarz znika z widoku od razu (wiersze sprząta następny sync).
+  join n2click.google_calendars c on c.id = e.calendar_id and c.selected
   where coalesce((select core.has_app('n2click')), false)
     and a.status <> 'revoked'
     and e.status <> 'cancelled'
@@ -365,6 +396,119 @@ comment on view n2click.google_calendar_events_visible is
 
 revoke all on n2click.google_calendar_events_visible from anon;
 grant select on n2click.google_calendar_events_visible to authenticated, service_role;
+
+-- -----------------------------------------------------------------------------
+-- 4b. Atomowe zastosowanie wyniku syncu jednego kalendarza (service_role)
+--
+-- Edge Function najpierw POBIERA WSZYSTKIE strony z Google, a dopiero potem
+-- woła tę funkcję: w JEDNEJ transakcji (pod blokadą doradczą konta) kasuje
+-- stare wiersze przy pełnym syncu, upsertuje nowe, kasuje odwołane i
+-- przesuwa `sync_token`. Błąd sieci/limitu po drodze zostawia więc tabelę
+-- nietkniętą, a token nigdy nie idzie do przodu po częściowym zapisie
+-- (przegląd Codex 2026-08-25).
+-- -----------------------------------------------------------------------------
+
+create or replace function n2click.google_apply_calendar_sync(
+  p_calendar_id uuid,
+  p_full boolean,
+  p_rows jsonb,
+  p_cancelled text[],
+  p_sync_token text,
+  p_now timestamptz
+)
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_account uuid;
+  v_count integer := 0;
+begin
+  select c.account_id into v_account from n2click.google_calendars c where c.id = p_calendar_id;
+  if v_account is null then
+    raise exception 'calendar not found' using errcode = 'P0002';
+  end if;
+  perform pg_advisory_xact_lock(hashtext('n2click.google_sync:' || v_account::text));
+
+  if p_full then
+    delete from n2click.google_calendar_events e where e.calendar_id = p_calendar_id;
+  end if;
+
+  insert into n2click.google_calendar_events (
+    calendar_id, account_id, google_event_id, ical_uid, recurring_event_id, etag, status,
+    title, description, location, meeting_url, html_link, start_at, end_at, is_all_day,
+    event_date, start_minutes, duration_minutes, end_date, last_day_end_minutes, event_type,
+    visibility, is_busy, is_confidential, attendees, attendee_profile_ids, self_response,
+    google_updated_at, synced_at
+  )
+  select
+    p_calendar_id, v_account, r.google_event_id, r.ical_uid, r.recurring_event_id, r.etag,
+    coalesce(r.status, 'confirmed'), coalesce(r.title, ''), coalesce(r.description, ''),
+    coalesce(r.location, ''), coalesce(r.meeting_url, ''), coalesce(r.html_link, ''),
+    r.start_at, r.end_at, coalesce(r.is_all_day, false), r.event_date, r.start_minutes,
+    r.duration_minutes, r.end_date, r.last_day_end_minutes, coalesce(r.event_type, 'default'),
+    coalesce(r.visibility, 'default'), coalesce(r.is_busy, true), coalesce(r.is_confidential, false),
+    coalesce(r.attendees, '[]'::jsonb), coalesce(r.attendee_profile_ids, '{}'::uuid[]),
+    r.self_response, r.google_updated_at, coalesce(r.synced_at, p_now)
+  from jsonb_to_recordset(coalesce(p_rows, '[]'::jsonb)) as r(
+    google_event_id text, ical_uid text, recurring_event_id text, etag text, status text,
+    title text, description text, location text, meeting_url text, html_link text,
+    start_at timestamptz, end_at timestamptz, is_all_day boolean, event_date date,
+    start_minutes integer, duration_minutes integer, end_date date, last_day_end_minutes integer,
+    event_type text, visibility text, is_busy boolean, is_confidential boolean,
+    attendees jsonb, attendee_profile_ids uuid[], self_response text,
+    google_updated_at timestamptz, synced_at timestamptz
+  )
+  where r.google_event_id is not null and r.google_event_id <> ''
+  on conflict (calendar_id, google_event_id) do update set
+    ical_uid = excluded.ical_uid,
+    recurring_event_id = excluded.recurring_event_id,
+    etag = excluded.etag,
+    status = excluded.status,
+    title = excluded.title,
+    description = excluded.description,
+    location = excluded.location,
+    meeting_url = excluded.meeting_url,
+    html_link = excluded.html_link,
+    start_at = excluded.start_at,
+    end_at = excluded.end_at,
+    is_all_day = excluded.is_all_day,
+    event_date = excluded.event_date,
+    start_minutes = excluded.start_minutes,
+    duration_minutes = excluded.duration_minutes,
+    end_date = excluded.end_date,
+    last_day_end_minutes = excluded.last_day_end_minutes,
+    event_type = excluded.event_type,
+    visibility = excluded.visibility,
+    is_busy = excluded.is_busy,
+    is_confidential = excluded.is_confidential,
+    attendees = excluded.attendees,
+    attendee_profile_ids = excluded.attendee_profile_ids,
+    self_response = excluded.self_response,
+    google_updated_at = excluded.google_updated_at,
+    synced_at = excluded.synced_at;
+  get diagnostics v_count = row_count;
+
+  if p_cancelled is not null and array_length(p_cancelled, 1) > 0 then
+    delete from n2click.google_calendar_events e
+    where e.calendar_id = p_calendar_id and e.google_event_id = any (p_cancelled);
+  end if;
+
+  update n2click.google_calendars c
+  set sync_token = coalesce(p_sync_token, c.sync_token),
+      last_sync_at = p_now,
+      last_full_sync_at = case when p_full then p_now else c.last_full_sync_at end
+  where c.id = p_calendar_id;
+
+  return v_count;
+end;
+$$;
+
+revoke all on function n2click.google_apply_calendar_sync(uuid, boolean, jsonb, text[], text, timestamptz)
+  from public, anon, authenticated;
+grant execute on function n2click.google_apply_calendar_sync(uuid, boolean, jsonb, text[], text, timestamptz)
+  to service_role;
 
 -- -----------------------------------------------------------------------------
 -- 5. Harmonogram: pg_cron co 5 minut -> Edge Function google-calendar-sync
