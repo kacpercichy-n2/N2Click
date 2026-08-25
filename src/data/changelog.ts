@@ -90,6 +90,26 @@ export function changelogUnreadCount(
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-08-25-kalendarz-google',
+    dateFrom: '2026-08-25',
+    dateTo: '2026-08-25',
+    summary: 'Spotkania z Twojego Kalendarza Google widać w N2Hub obok wydarzeń zespołu.',
+    items: [
+      {
+        area: 'Konto',
+        feature: 'Podpięcie Kalendarza Google',
+        description:
+          'Na stronie konta kliknij „Podepnij konto Google”, wybierz konto i zgódź się na odczyt kalendarza. Wybierasz, które kalendarze importować, i co widzi reszta zespołu: szczegóły, samo „Zajęty” albo nic. Odłączyć konto możesz w każdej chwili.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Wydarzenia z Google w Tygodniu i Miesiącu',
+        description:
+          'Spotkania z Google mają kafel z literą „G” i kreskowaną ramką, więc od razu odróżnisz je od wydarzeń N2Hub. Klik otwiera szczegóły z linkiem do Meet/Zoom/Teams i przyciskiem „Otwórz w Google Calendar”. Synchronizacja idzie w tle co 5 minut; wydarzenia prywatne widzisz tylko Ty.',
+      },
+    ],
+  },
+  {
     id: '2026-08-25-reakcje-czat',
     dateFrom: '2026-08-25',
     dateTo: '2026-08-25',

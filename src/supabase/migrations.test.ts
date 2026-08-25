@@ -111,6 +111,13 @@ const EXPECTED_POLICIES: Record<string, string[]> = {
   // w select wiadomości); każdy zapis idzie przez RPC `chat_set_reaction`
   // (security definer), więc brak polityk insert/update/delete jest celowy.
   'n2click.message_reactions': ['select'],
+  // Kalendarz Google (20260825140000): konto — odczyt/`share_level`/rozłączenie
+  // (DELETE) własnego wiersza; kalendarze — odczyt i przełącznik `selected`;
+  // wydarzenia bazowe — tylko właściciel (zespół czyta widok maskujący).
+  // INSERT i sync robią wyłącznie Edge Functions kluczem service_role.
+  'n2click.google_accounts': ['select', 'update', 'delete'],
+  'n2click.google_calendars': ['select', 'update'],
+  'n2click.google_calendar_events': ['select'],
   // Autoryzacja prywatnych kanałów Broadcast/Presence czatu: SELECT = prawo do
   // odbierania zdarzeń topicu, INSERT = prawo do wysyłania („pisze…”, presence).
   // Tabela jest platformowa i WSPÓLNA dla appek — polityki są permisywne, więc
@@ -291,6 +298,11 @@ describe('konwencja plików migracji', () => {
       // tylko `text`), definer `chat_set_theme` z eventem `theme_changed`,
       // `chat_overview()` odtworzone z `theme_id`.
       '20260825130000_chat_themes.sql',
+      // Import Kalendarza Google (tylko odczyt): google_accounts (refresh token
+      // w Vault przez definerów tylko dla service_role), google_calendars,
+      // google_calendar_events (warstwa cieniowa, nigdy `events`), widok
+      // maskujący dla zespołu, pg_cron co 5 min -> Edge Function sync.
+      '20260825140000_google_calendar.sql',
     ]);
   });
 

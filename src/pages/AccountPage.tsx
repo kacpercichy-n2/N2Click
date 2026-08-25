@@ -10,6 +10,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
 import { useAuth } from '../auth/SessionProvider';
+import { GoogleCalendarTile } from '../gcal/GoogleCalendarTile';
 import { useChat } from '../chat/ChatProvider';
 import { PersonProfile, PasswordSection } from './PersonProfilePage';
 import { CloudPasswordSection } from '../components/CloudPasswordSection';
@@ -221,6 +222,9 @@ function AccountDashboard({ person, onEdit }: { person: Person; onEdit: () => vo
         </div>
 
         <SecurityTile person={person} mode={mode} />
+        {/* Import Kalendarza Google: tylko tryb Supabase (kafelek sam wraca
+            null poza nim). */}
+        <GoogleCalendarTile />
       </div>
 
       <div className="account-hr-head">

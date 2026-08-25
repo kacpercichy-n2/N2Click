@@ -23,6 +23,9 @@ import { useCan } from '../store/useCan';
 import { useOpenTask } from './TaskModal';
 import { useOpenEvent } from './EventModal';
 import { Hourglass, TreePalm } from './icons';
+import { useGoogleCalendar } from '../gcal/GoogleCalendarProvider';
+import { GoogleEventDialog } from '../gcal/GoogleEventDialog';
+import type { GoogleEventOccurrence } from '../gcal/types';
 import { personColor } from '../utils/colors';
 import { clearLiveSyncHold, setLiveSyncHold } from '../utils/liveSyncGate';
 import { useTouchDragGate } from '../utils/useTouchDragGate';
@@ -2959,6 +2962,71 @@ function EventBlockImpl({
 
 const EventBlock = memo(EventBlockImpl);
 
+/**
+ * Kafel wydarzenia z KALENDARZA GOOGLE (warstwa cieniowa, tylko odczyt).
+ * Świadomie NIE jest `EventBlock`: bez przeciągania, bez menu wystąpień, bez
+ * `getState().events` — żadna ścieżka wskaźnika kalendarza nie jest dotykana
+ * (inwariant 7). Maluje się POD spotkaniami N2Hub (kolejność w drzewie,
+ * własny `z-index` niżej w CSS) i nie wchodzi do wspólnego pakowania kolumn,
+ * więc nachodzące spotkanie N2Hub zostaje czytelne na wierzchu. Klik otwiera
+ * dialog szczegółów (maskę „Zajęty" robi już widok bazy).
+ */
+function GoogleEventBlockImpl({
+  occ,
+  onOpen,
+}: {
+  occ: GoogleEventOccurrence;
+  onOpen: (eventId: string) => void;
+}) {
+  const { event } = occ;
+  const allDay = occ.startMinutes === 0 && occ.durationMinutes === DAY_MINUTES;
+  const top = (occ.startMinutes / 60) * HOUR_PX;
+  const height = Math.max(20, (occ.durationMinutes / 60) * HOUR_PX - 2);
+  const span = allDay
+    ? 'cały dzień'
+    : `${formatMinutes(occ.startMinutes)}–${formatMinutes(occ.startMinutes + occ.durationMinutes)}`;
+  const label = `Google: ${event.title}, ${span}. Kliknij, aby zobaczyć szczegóły.`;
+  return (
+    <Tooltip text={label}>
+      <div
+        className={[
+          'week-event-block',
+          'readonly',
+          'gcal',
+          event.access === 'busy' ? 'gcal-busy' : '',
+          occ.durationMinutes <= 15 ? 'h-quarter' : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+        style={{ top, height }}
+        role="button"
+        tabIndex={0}
+        aria-label={label}
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpen(event.id);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onOpen(event.id);
+          }
+        }}
+      >
+        <span className="week-event-title">
+          <span className="gcal-badge" aria-hidden>
+            G
+          </span>{' '}
+          {event.title}
+        </span>
+        <span className="week-event-time">{span}</span>
+      </div>
+    </Tooltip>
+  );
+}
+
+const GoogleEventBlock = memo(GoogleEventBlockImpl);
+
 export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Props) {
   const { openTask, openNewTask } = useOpenTask();
   const { openEvent, openNewEvent } = useOpenEvent();
@@ -3006,6 +3074,13 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
     [openTask],
   );
   const handleOpenEvent = useCallback((eventId: string) => openEvent(eventId), [openEvent]);
+
+  // Warstwa Kalendarza Google: tylko odczyt, poza reduktorem i poza pakowaniem
+  // kolumn. `occurrencesFor` jest stabilne między renderami do zmiany listy.
+  const gcal = useGoogleCalendar();
+  const [gcalOpenId, setGcalOpenId] = useState<string | null>(null);
+  const handleOpenGoogleEvent = useCallback((eventId: string) => setGcalOpenId(eventId), []);
+  const gcalOpenEvent = gcalOpenId !== null ? gcal.eventById(gcalOpenId) : null;
 
   // Jeden region ogłoszeń na kalendarz: wejście w klawiaturową edycję bloku,
   // każdy kolejny cel, kolizja, limit, zapis i cofnięcie — jedyny kanał, którym
@@ -4098,6 +4173,18 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                       />
                     );
                   })}
+                  {/* Wydarzenia z Kalendarza Google: warstwa tylko do odczytu,
+                      renderowana PO spotkaniach N2Hub, ale z niższym z-index —
+                      nie wchodzi do pakowania kolumn ani do żadnej ścieżki
+                      wskaźnika (inwariant 7). Pusta lista => zero węzłów. */}
+                  {gcal.enabled &&
+                    gcal.occurrencesFor(d).map((occ) => (
+                      <GoogleEventBlock
+                        key={`gcal-${occ.event.id}-${d}`}
+                        occ={occ}
+                        onOpen={handleOpenGoogleEvent}
+                      />
+                    ))}
                   {/* Recurring-task occurrences: additive presentational overlay
                       rendered BEFORE the real blocks so they always paint behind
                       them (same paint step, tree order) without touching the
@@ -4791,6 +4878,10 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
         )}
       </AnimatePresence>
       </OverlayLayer>
+      {/* Szczegóły wydarzenia z Kalendarza Google (tylko odczyt). */}
+      {gcalOpenEvent !== null && (
+        <GoogleEventDialog event={gcalOpenEvent} onClose={() => setGcalOpenId(null)} />
+      )}
     </div>
   );
 }

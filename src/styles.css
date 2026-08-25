@@ -3180,6 +3180,87 @@ a.toggle-btn {
 .week-event-block:hover {
   filter: brightness(1.08);
 }
+/* ---------- Kalendarz Google (warstwa tylko do odczytu) ----------
+   Kafel wydarzenia z Google używa geometrii `.week-event-block`, ale własnego
+   koloru i kreskowanej ramki, żeby od razu było widać „to nie jest spotkanie
+   N2Hub". Leży POD spotkaniami N2Hub (z-index -1 względem `.week-event-block`
+   z 0) i nie wchodzi do pakowania kolumn, więc nachodzące spotkanie N2Hub
+   zostaje na wierzchu i czytelne. `gcal-busy` = wiersz zamaskowany widokiem
+   bazy („Zajęty"): przygaszony, bez tytułu do czytania. */
+:root {
+  --gcal-accent: #8ab4f8;
+  --gcal-accent-soft: rgba(138, 180, 248, 0.14);
+}
+.week-event-block.gcal {
+  --event-accent: var(--gcal-accent);
+  --event-accent-soft: var(--gcal-accent-soft);
+  z-index: -1;
+  right: 6px;
+  border-style: dashed;
+  border-left-style: solid;
+}
+.week-event-block.gcal.gcal-busy {
+  opacity: 0.7;
+  border-style: dotted;
+  border-left-style: solid;
+}
+.gcal-badge {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--gcal-accent);
+  color: var(--n2-night);
+  font-family: var(--n2-font-data);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: middle;
+}
+/* Dialog szczegółów wydarzenia z Google. */
+.gcal-dialog {
+  max-width: 440px;
+}
+.gcal-dialog-title {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+  margin: 0;
+  font-size: var(--n2-type-lg);
+}
+.gcal-dialog-description {
+  margin: var(--n2-space-3) 0 0;
+  white-space: pre-wrap;
+  font-size: var(--n2-type-sm);
+  color: var(--n2-text-soft);
+}
+.gcal-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--n2-space-2);
+  margin-top: var(--n2-space-4);
+}
+.gcal-dialog-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+  text-decoration: none;
+}
+/* Kafelek „Kalendarz Google" na stronie konta. */
+.gcal-calendars li {
+  display: flex;
+  align-items: center;
+}
+.gcal-calendar-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin: 0 var(--n2-space-2);
+  border-radius: 50%;
+  background: var(--gcal-accent);
+}
+
 /* Kafelek spotkania z prawem `events.manage` jest PRZECIĄGALNY (2026-08-18):
    ciało przenosi, uchwyty krawędzi zmieniają czas trwania, a każde upuszczenie
    pyta o zgodę na zmianę GLOBALNĄ. `touch-action: none` jak przy `.week-block`
@@ -3593,6 +3674,26 @@ a.toggle-btn {
   top: 2px;
   right: 3px;
   font-size: 11px;
+  line-height: 1;
+  pointer-events: none;
+}
+/* Znacznik wydarzeń z Kalendarza Google w komórce miesiąca: litera „G" w
+   kółku, kolor Google-owego niebieskiego przygaszony do tokenów. Czysto
+   prezentacyjny, treść (tytuły) niesie dymek i nazwa komórki. */
+.month-cell-gcal {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  width: 14px;
+  height: 14px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--gcal-accent);
+  color: var(--n2-night);
+  font-family: var(--n2-font-data);
+  font-size: 9px;
+  font-weight: 700;
   line-height: 1;
   pointer-events: none;
 }

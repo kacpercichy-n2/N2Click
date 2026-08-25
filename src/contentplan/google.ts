@@ -287,12 +287,14 @@ function globals(): GoogleGlobals {
 
 // ---- Leniwe ładowanie skryptów Google --------------------------------------
 
-const GIS_SRC = 'https://accounts.google.com/gsi/client';
+/** Skrypt Google Identity Services — współdzielony z importem Kalendarza
+ *  (`src/gcal/googleConnect.ts`), który używa tego samego klienta OAuth. */
+export const GIS_SRC = 'https://accounts.google.com/gsi/client';
 const GAPI_SRC = 'https://apis.google.com/js/api.js';
 
 /** Jednorazowe wstrzyknięcie `<script>` z dedupem po `data-src` (jak w źródle).
  *  Drugie wywołanie dla tego samego adresu czeka na ten sam element. */
-function loadScript(src: string): Promise<void> {
+export function loadScript(src: string): Promise<void> {
   const doc = globals().document;
   if (doc === undefined) {
     return Promise.reject(new Error('Dysk Google jest dostępny tylko w przeglądarce.'));

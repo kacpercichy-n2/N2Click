@@ -1,9 +1,10 @@
 # Supabase Edge Functions
 
-Dwie funkcje: `provision-account` (zakładanie kont) i `send-notification-emails`
-(opcjonalne dublowanie powiadomień in-app mailem). Obie trzymają się tego samego
-wzorca: czysty, bezzależnościowy `contract.ts` (współdzielony z testami repo) +
-`index.ts` z warstwą I/O w runtime Deno.
+Cztery funkcje: `provision-account` (zakładanie kont), `send-notification-emails`
+(opcjonalne dublowanie powiadomień in-app mailem), `google-calendar-connect`
+i `google-calendar-sync` (import Kalendarza Google). Wszystkie trzymają się tego
+samego wzorca: czysty, bezzależnościowy `contract.ts` (współdzielony z testami
+repo) + `index.ts` z warstwą I/O w runtime Deno.
 
 ## `provision-account`
 
@@ -186,3 +187,84 @@ supabase functions deploy send-notification-emails
 4. Skonfiguruj crona (~5 min) na URL funkcji.
 5. Użytkownicy włączają „Powiadomienia mailowe" w swoim profilu (domyślnie
    wyłączone).
+
+
+## `google-calendar-connect` i `google-calendar-sync`
+
+Import Kalendarza Google **tylko do odczytu** (migracja
+`20260825140000_google_calendar`). Każdy pracownik podpina WŁASNE konto Google
+na stronie konta; jego spotkania trafiają do warstwy cieniowej
+`n2click.google_calendar_events` (nigdy do `events`) i pokazują się w widoku
+Tydzień/Miesiąc obok spotkań N2Hub. Research i decyzje:
+`handoffs/research/google-calendar-import-2026-08-25.md`.
+
+### Jak działa
+
+1. Przeglądarka: GIS w trybie **authorization code** (popup, ten sam klient OAuth
+   `VITE_GOOGLE_CLIENT_ID` co Dysk w Content Planie) zwraca jednorazowy `code`.
+   Zakresy: `calendar.events.readonly`, `calendar.calendarlist.readonly`,
+   `openid email`.
+2. `google-calendar-connect` (JWT użytkownika): wymienia `code` na tokeny kluczem
+   `GOOGLE_CLIENT_SECRET` (`redirect_uri=postmessage`), chowa refresh token w
+   **Vault** przez definera `n2click.google_store_refresh_token` (wykonywalny
+   tylko dla `service_role`), zakłada/odświeża `google_accounts` i od razu woła
+   sync dla tego konta.
+3. `google-calendar-sync`: dla każdego aktywnego konta odświeża access token,
+   pobiera `calendarList` (nowe kalendarze: `primary` domyślnie importowany),
+   a dla wybranych kalendarzy `events.list` — pełny sync w oknie −30/+90 dni,
+   potem przyrostowo `syncToken` (410 => pełny od nowa; co 30 dni okno jest
+   przesuwane). Mapowanie na siatkę 15 min (start w dół, koniec w górę),
+   całodniowe 0/1440, `outOfOffice`/`focusTime` importowane, reszta typów
+   pomijana, uczestnicy dopasowani po e-mailu do `profiles`. Cała decyzyjność w
+   `google-calendar-sync/contract.ts` (testy: `src/gcal/gcalContract.test.ts`).
+4. Wywołanie: **cron** (`pg_cron` co 5 min → `n2click.google_calendar_sync_tick()`
+   → `pg_net` POST z nagłówkiem `x-n2-cron-secret`) albo **użytkownik**
+   („Synchronizuj teraz", JWT => tylko jego konto).
+5. Kto co widzi: widok `n2click.google_calendar_events_visible` maskuje wiersze
+   (właściciel i zaproszeni: szczegóły; reszta: „Zajęty" wg `share_level`
+   konta; prywatne/poufne: tylko właściciel). Klient czyta wyłącznie ten widok.
+
+### Sekrety funkcji
+
+- `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` — zarezerwowane, auto-wstrzykiwane.
+- `GOOGLE_CLIENT_ID` — ten sam identyfikator co `VITE_GOOGLE_CLIENT_ID`.
+- `GOOGLE_CLIENT_SECRET` — sekret klienta OAuth z Google Cloud (Credentials >
+  klient „N2 Content Planner Web" > Client secret). **Nigdy w repo ani w
+  przeglądarce.**
+- `GOOGLE_SYNC_CRON_SECRET` — dowolny losowy ciąg; ten sam trafia do Vault jako
+  `n2click_google_sync_secret`.
+- `GOOGLE_ALLOWED_ORIGIN` (opcjonalny) — origin aplikacji dla CORS.
+
+```bash
+supabase secrets set GOOGLE_CLIENT_ID=866717457340-....apps.googleusercontent.com
+supabase secrets set GOOGLE_CLIENT_SECRET=...redacted...
+supabase secrets set GOOGLE_SYNC_CRON_SECRET="$(openssl rand -hex 32)"
+supabase functions deploy google-calendar-connect
+supabase functions deploy google-calendar-sync --no-verify-jwt
+```
+
+`--no-verify-jwt` jest KONIECZNE dla `google-calendar-sync`: cron woła ją bez
+JWT użytkownika, a funkcja sama sprawdza sekret nagłówka (albo JWT, gdy woła
+użytkownik).
+
+### Krok operatora: Google Cloud i Vault
+
+1. Google Cloud (projekt z klientem „N2 Content Planner Web"): włącz **Google
+   Calendar API**; na ekranie zgody dodaj zakresy
+   `.../auth/calendar.events.readonly` i `.../auth/calendar.calendarlist.readonly`.
+   Consent screen musi być w stanie **In production** (w „Testing" refresh
+   tokeny wygasają po 7 dniach i sync w tle pada). Bez weryfikacji Google
+   użytkownicy zobaczą raz ekran „unverified app" (Advanced > Go to N2Hub);
+   limit 100 użytkowników.
+2. Vault (SQL editor projektu), żeby cron wiedział, dokąd pukać:
+
+```sql
+select vault.create_secret('https://<ref>.supabase.co/functions/v1/google-calendar-sync',
+  'n2click_google_sync_url', 'Adres Edge Function sync (N2Hub)');
+select vault.create_secret('<ta sama wartość co GOOGLE_SYNC_CRON_SECRET>',
+  'n2click_google_sync_secret', 'Sekret nagłówka x-n2-cron-secret');
+```
+
+Bez tych dwóch sekretów zadanie crona jest cichym no-opem (funkcja
+`google_calendar_sync_tick` wychodzi na początku). Migracja włącza `pg_cron`
+i `pg_net` sama (`create extension if not exists`).
