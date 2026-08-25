@@ -53,10 +53,12 @@ const LEASE_SECONDS = 240;
 function corsHeaders(): Record<string, string> {
   const origin = Deno.env.get('GOOGLE_ALLOWED_ORIGIN');
   const headers: Record<string, string> = {
-    'Access-Control-Allow-Headers': 'authorization, content-type, x-n2-cron-secret',
+    'Access-Control-Allow-Headers': 'authorization, content-type, apikey, x-client-info, x-n2-cron-secret',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
   };
-  if (origin) headers['Access-Control-Allow-Origin'] = origin;
+  // Bez jawnego origin odbijamy `*`: autoryzację niesie JWT w nagłówku, a
+  // preflight z localhost i z produkcji musi przejść bez osobnej konfiguracji.
+  headers['Access-Control-Allow-Origin'] = origin ?? '*';
   return headers;
 }
 
