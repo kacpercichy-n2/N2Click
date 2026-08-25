@@ -54,6 +54,9 @@ export function ReactionBar({
   useEffect(() => {
     const first = barRef.current?.querySelector<HTMLButtonElement>('button');
     first?.focus({ preventScroll: true });
+    // Pasek zakotwiczony nad dymkiem może wypaść poza widoczny obszar listy
+    // (długa wiadomość przy górnej krawędzi) — dosuwamy go bez skoku.
+    barRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, []);
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {

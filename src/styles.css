@@ -12799,6 +12799,10 @@ a.toggle-btn {
    `style` z `themeCssVars`), więc podgląd nigdy nie rozjedzie się z motywem. */
 .n2chat-themes {
   position: absolute;
+  /* Nad listą wiadomości: wiersze `.n2chat-msg` są pozycjonowane i późniejsze
+     w drzewie, więc bez z-index malowałyby się NA panelu (zgłoszenie 2026-08-25).
+     Okno ma `isolation: isolate`, więc wartość jest lokalna. */
+  z-index: 3;
   top: 50px;
   left: var(--n2-space-2);
   right: var(--n2-space-2);
@@ -12932,6 +12936,11 @@ a.toggle-btn {
 .n2chat-msg.has-reactions {
   margin-bottom: 12px;
 }
+/* Wiersz z otwartym paskiem wychodzi ponad sąsiadów (późniejsze rodzeństwo jest
+   pozycjonowane i inaczej zakryłoby pasek). */
+.n2chat-msg.is-reacting {
+  z-index: 2;
+}
 .n2chat-react-btn {
   position: absolute;
   top: 50%;
@@ -12981,6 +12990,7 @@ a.toggle-btn {
 /* Pasek szybkich reakcji nad dymkiem, wyrównany do wewnętrznej krawędzi. */
 .n2chat-react-bar {
   position: absolute;
+  z-index: 3;
   bottom: calc(100% + var(--n2-space-1));
   left: 0;
   display: inline-flex;
@@ -12997,6 +13007,17 @@ a.toggle-btn {
   left: auto;
   right: 0;
   transform-origin: bottom right;
+}
+/* WYSOKI dymek (długa wiadomość): „nad dymkiem" bywa poza widocznym obszarem
+   scrolla, więc pasek staje na wysokości przycisku „Zareaguj" (środek dymka),
+   czyli tam, gdzie użytkownik właśnie kliknął. */
+.n2chat-msg.is-tall .n2chat-react-bar {
+  bottom: auto;
+  top: calc(50% - 20px);
+  transform-origin: center left;
+}
+.n2chat-group.is-mine .n2chat-msg.is-tall .n2chat-react-bar {
+  transform-origin: center right;
 }
 .n2chat-react-quick {
   width: 32px;
@@ -13036,6 +13057,7 @@ a.toggle-btn {
    lewy). Obwódka w kolorze tła okna odcina je od dymka pod spodem. */
 .n2chat-reactions {
   position: absolute;
+  z-index: 1;
   bottom: -11px;
   right: var(--n2-space-2);
   display: flex;

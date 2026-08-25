@@ -112,6 +112,8 @@ const COMPOSER_MAX_HEIGHT = 120;
 const LONG_PRESS_MS = 400;
 /** Ruch palca powyżej tego progu to przewijanie, nie przytrzymanie. */
 const LONG_PRESS_SLOP_PX = 8;
+/** Od tej wysokości dymka pasek reakcji staje przy przycisku, nie nad dymkiem. */
+const TALL_BUBBLE_PX = 140;
 
 /**
  * Treść jednego dymka. GIF i „jumbo" emoji rozpoznaje `messageContentKind`,
@@ -192,6 +194,8 @@ export function ChatWindow({
   const [recentEmoji, setRecentEmoji] = useState<readonly string[]>([]);
   /** Id wiadomości z otwartym paskiem reakcji; null = żaden. */
   const [reactionBarFor, setReactionBarFor] = useState<string | null>(null);
+  /** Dymek z otwartym paskiem jest wysoki: pasek staje przy przycisku, nie nad dymkiem. */
+  const [reactionBarTall, setReactionBarTall] = useState(false);
   /** Otwarty picker motywu pod nagłówkiem. */
   const [themeOpen, setThemeOpen] = useState(false);
   const themeTriggerRef = useRef<HTMLButtonElement>(null);
@@ -351,8 +355,13 @@ export function ChatWindow({
 
   // ---- Reakcje ---------------------------------------------------------------
 
-  const openReactionBar = (messageId: string, trigger: HTMLButtonElement | null): void => {
+  const openReactionBar = (
+    messageId: string,
+    trigger: HTMLButtonElement | null,
+    row: HTMLElement | null,
+  ): void => {
     reactTriggerRef.current = trigger;
+    setReactionBarTall((row?.offsetHeight ?? 0) > TALL_BUBBLE_PX);
     setReactionBarFor(messageId);
   };
 
@@ -382,12 +391,13 @@ export function ChatWindow({
   const startLongPress = (event: ReactPointerEvent<HTMLElement>, messageId: string): void => {
     if (event.pointerType !== 'touch') return;
     cancelLongPress();
+    const row = event.currentTarget;
     longPressRef.current = {
       x: event.clientX,
       y: event.clientY,
       timer: setTimeout(() => {
         longPressRef.current = null;
-        openReactionBar(messageId, null);
+        openReactionBar(messageId, null, row);
       }, LONG_PRESS_MS),
     };
   };
@@ -568,7 +578,7 @@ export function ChatWindow({
                     key={message.id}
                     className={`n2chat-msg${groups.length > 0 ? ' has-reactions' : ''}${
                       barOpen ? ' is-reacting' : ''
-                    }`}
+                    }${barOpen && reactionBarTall ? ' is-tall' : ''}`}
                     onPointerDown={
                       message.deleted ? undefined : (event) => startLongPress(event, message.id)
                     }
@@ -607,7 +617,11 @@ export function ChatWindow({
                         onClick={(event) =>
                           barOpen
                             ? setReactionBarFor(null)
-                            : openReactionBar(message.id, event.currentTarget)
+                            : openReactionBar(
+                                message.id,
+                                event.currentTarget,
+                                event.currentTarget.parentElement,
+                              )
                         }
                       >
                         <SmilePlus size={16} aria-hidden />
