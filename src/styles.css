@@ -13190,8 +13190,11 @@ a.toggle-btn {
   /* Pasek reakcji na dotyku: cele 44 px; otwiera go długie przytrzymanie
      dymka, więc przycisk „Zareaguj" znika z krawędzi (przy 320 px nie ma na
      niego miejsca obok dymka). */
+  /* Osiem celów w JEDNYM rzędzie na 360–430 px: 40 px szerokości (wysokość
+     dotykowa 44 px zostaje), bez odstępów => 8×40 + ramka = 326 px. Zawija się
+     dopiero poniżej ~350 px (przegląd Codex 2026-08-25). */
   .n2chat-react-quick {
-    width: 44px;
+    width: 40px;
     height: 44px;
   }
   .n2chat-react-btn {
@@ -13204,7 +13207,9 @@ a.toggle-btn {
     left: 50%;
     right: auto;
     translate: calc(-50% + var(--bar-shift, 0px)) 0;
-    max-width: calc(100vw - 2 * var(--n2-space-4));
+    max-width: calc(100vw - 2 * var(--n2-space-3));
+    gap: 0;
+    padding: 2px;
     flex-wrap: wrap;
     justify-content: center;
     border-radius: var(--n2-radius-md);
