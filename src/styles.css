@@ -13190,12 +13190,18 @@ a.toggle-btn {
   /* Pasek reakcji na dotyku: cele 44 px; otwiera go długie przytrzymanie
      dymka, więc przycisk „Zareaguj" znika z krawędzi (przy 320 px nie ma na
      niego miejsca obok dymka). */
-  /* Osiem celów w JEDNYM rzędzie na 360–430 px: 40 px szerokości (wysokość
-     dotykowa 44 px zostaje), bez odstępów => 8×40 + ramka = 326 px. Zawija się
-     dopiero poniżej ~350 px (przegląd Codex 2026-08-25). */
+  /* Cele dotykowe 44 px (wymóg projektu). Osiem celów to 374 px, więc na
+     telefonach węższych niż 430 px chowamy SIÓDME szybkie emoji (zostaje 6 + „+"
+     = 326 px w jednym rzędzie); schowany znak jest nadal w pełnym pickerze pod
+     „+" (przegląd Codex 2026-08-25). */
   .n2chat-react-quick {
-    width: 40px;
+    width: 44px;
     height: 44px;
+  }
+  @media (max-width: 430px) {
+    .n2chat-react-quick:nth-child(7):not(.n2chat-react-more) {
+      display: none;
+    }
   }
   .n2chat-react-btn {
     display: none;
@@ -13208,8 +13214,6 @@ a.toggle-btn {
     right: auto;
     translate: calc(-50% + var(--bar-shift, 0px)) 0;
     max-width: calc(100vw - 2 * var(--n2-space-3));
-    gap: 0;
-    padding: 2px;
     flex-wrap: wrap;
     justify-content: center;
     border-radius: var(--n2-radius-md);
