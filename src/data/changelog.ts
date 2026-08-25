@@ -90,6 +90,44 @@ export function changelogUnreadCount(
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-08-25-poprawki-czat-kalendarz',
+    dateFrom: '2026-08-25',
+    dateTo: '2026-08-25',
+    summary: 'Poprawki po pierwszych testach reakcji, motywów czatu i Kalendarza Google.',
+    items: [
+      {
+        area: 'Czat',
+        feature: 'Motywy i reakcje widoczne, gdzie trzeba',
+        description:
+          'Panel motywów nie chowa się już pod wiadomościami. Pasek reakcji przy długiej wiadomości staje obok przycisku uśmiechu (a nie nad dymkiem, poza ekranem), a emoji w pasku mają pełny kolor zamiast wyblakłego.',
+      },
+      {
+        area: 'Czat',
+        feature: 'Reakcje na telefonie',
+        description:
+          'Pasek reakcji mieści się w jednym rzędzie na każdym telefonie i nie wychodzi poza ekran. Przyciski zachowują wygodny rozmiar dotykowy; na wąskich ekranach pasek pokazuje mniej emoji, reszta jest pod „+”. Poruszanie się strzałkami po pasku pomija ukryte przyciski.',
+      },
+      {
+        area: 'Czat',
+        feature: 'Bezpieczniejsze zmiany',
+        description:
+          'Wpisu „X ustawia motyw” nie da się edytować ani usunąć jak zwykłej wiadomości. Szybkie klikanie w reakcje i motywy nie gubi już ostatniego wyboru, a spóźnione aktualizacje z serwera nie cofają nowszego stanu.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Kafle z Google naprawdę widać',
+        description:
+          'Wydarzenia z Kalendarza Google pojawiają się w widoku Tydzień; wcześniej po synchronizacji były w bazie, ale rysowały się pod tłem kolumny dnia. Odznaczony kalendarz znika z widoku od razu, a przy udostępnianiu „tylko Zajęty” zespół nie widzi listy uczestników.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Solidniejsza synchronizacja',
+        description:
+          'Import z Google zapisuje wydarzenia dopiero po pobraniu wszystkiego, więc chwilowy błąd sieci nie zostawia pustego kalendarza. Dwie synchronizacje tego samego konta nie biegną naraz, spotkania wielodniowe kończą się o właściwej godzinie ostatniego dnia, a „Synchronizuj teraz” pokazuje prawdziwy błąd zamiast udawać sukces.',
+      },
+    ],
+  },
+  {
     id: '2026-08-25-kalendarz-google',
     dateFrom: '2026-08-25',
     dateTo: '2026-08-25',
