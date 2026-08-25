@@ -8,6 +8,7 @@ import { OrgDataProvider } from './supabase/OrgDataProvider';
 import { CloudSyncProvider } from './supabase/CloudSyncProvider';
 import { AvatarUrlsProvider } from './supabase/AvatarUrlsProvider';
 import { ChatProvider } from './chat/ChatProvider';
+import { GoogleCalendarProvider } from './gcal/GoogleCalendarProvider';
 import { ChatDock } from './chat/ui/ChatDock';
 import { App } from './App';
 import { ConfirmProvider } from './components/ConfirmProvider';
@@ -81,6 +82,11 @@ createRoot(rootEl).render(
                       lokalnym provider nie tworzy ANI klienta Supabase, ANI
                       kanału, a `ChatDock` renderuje `null`. */}
                   <ChatProvider>
+                    {/* Import Kalendarza Google (warstwa cieniowa tylko do odczytu,
+                        tryb Supabase). Poza reduktorem i localStorage; widoki
+                        Tydzień/Miesiąc czytają go hookiem, strona konta ma
+                        kafelek ustawień. W trybie lokalnym nic nie tworzy. */}
+                    <GoogleCalendarProvider>
                     {/* Respect OS "reduce motion" for every animation in the app. */}
                     <MotionConfig reducedMotion="user">
                       {/* JEDYNE miejsce, w którym ładujemy silnik animacji. Cała
@@ -98,6 +104,7 @@ createRoot(rootEl).render(
                         <ChatDock />
                       </LazyMotion>
                     </MotionConfig>
+                    </GoogleCalendarProvider>
                   </ChatProvider>
                 </AvatarUrlsProvider>
               </CloudSyncProvider>

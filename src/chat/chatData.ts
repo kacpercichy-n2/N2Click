@@ -18,14 +18,21 @@ import {
   CHAT_PAGE_SIZE,
   isChatConversationKind,
   isChatMemberRole,
+  isChatMessageKind,
   type ChatConversation,
   type ChatLastMessage,
   type ChatMember,
   type ChatMessage,
   type ChatMessageCursor,
+  type ChatMessageMeta,
   type ChatMessagesPage,
+  type ChatReaction,
+  type ChatReactionEvent,
+  type ChatReactionMap,
   type ChatResult,
+  type ChatThemeChangedEvent,
 } from './types';
+import { CHAT_THEME_ID_PATTERN } from './themes/catalog';
 
 // ---- Granica bazy (wstrzykiwana) --------------------------------------------
 
@@ -70,7 +77,23 @@ export interface ChatDb {
     userId: string,
     atIso: string,
   ): Promise<{ error: ChatDbError | null }>;
+  /** Reakcje wskazanych wiadomości jednej rozmowy (dociąganie po powrocie kanału). */
+  selectReactions(
+    conversationId: string,
+    messageIds: string[],
+  ): Promise<{ rows: ChatRow[]; error: ChatDbError | null }>;
+  /** RPC `chat_set_reaction`: emoji ustawia, null zdejmuje; zwraca pełną listę
+   *  reakcji wiadomości (jsonb) po zmianie. */
+  setReaction(
+    messageId: string,
+    emoji: string | null,
+  ): Promise<{ rows: ChatRow[]; error: ChatDbError | null }>;
+  /** RPC `chat_set_theme`: motyw rozmowy (wspólny) + wiersz systemowy + event. */
+  setTheme(conversationId: string, themeId: string): Promise<{ error: ChatDbError | null }>;
 }
+
+/** Kolumny wiadomości + osadzone reakcje (FK `message_reactions.message_id`). */
+export const MESSAGE_SELECT = '*, message_reactions(user_id, emoji, created_at)';
 
 function toDbError(error: unknown, fallback: string): ChatDbError {
   if (error && typeof error === 'object') {
@@ -99,7 +122,10 @@ export function createSupabaseChatDb(client: SupabaseClient): ChatDb {
     },
     async selectMessages(query) {
       try {
-        let q = client.from('messages').select('*').eq('conversation_id', query.conversationId);
+        let q = client
+          .from('messages')
+          .select(MESSAGE_SELECT)
+          .eq('conversation_id', query.conversationId);
         if (query.orFilter) q = q.or(query.orFilter);
         const { data, error } = await q
           .order('created_at', { ascending: query.ascending })
@@ -150,6 +176,44 @@ export function createSupabaseChatDb(client: SupabaseClient): ChatDb {
           .update({ last_read_at: atIso })
           .eq('conversation_id', conversationId)
           .eq('user_id', userId);
+        if (error) return { error: toDbError(error, 'Błąd zapisu.') };
+        return { error: null };
+      } catch (e) {
+        return { error: toDbError(e, 'Błąd zapisu.') };
+      }
+    },
+    async selectReactions(conversationId, messageIds) {
+      if (messageIds.length === 0) return { rows: [], error: null };
+      try {
+        const { data, error } = await client
+          .from('message_reactions')
+          .select('message_id, user_id, emoji, created_at')
+          .eq('conversation_id', conversationId)
+          .in('message_id', messageIds);
+        if (error) return { rows: [], error: toDbError(error, 'Błąd zapytania.') };
+        return { rows: rows(data), error: null };
+      } catch (e) {
+        return { rows: [], error: toDbError(e, 'Błąd zapytania.') };
+      }
+    },
+    async setReaction(messageId, emoji) {
+      try {
+        const { data, error } = await client.rpc('chat_set_reaction', {
+          p_message_id: messageId,
+          p_emoji: emoji,
+        });
+        if (error) return { rows: [], error: toDbError(error, 'Błąd zapisu.') };
+        return { rows: rows(data), error: null };
+      } catch (e) {
+        return { rows: [], error: toDbError(e, 'Błąd zapisu.') };
+      }
+    },
+    async setTheme(conversationId, themeId) {
+      try {
+        const { error } = await client.rpc('chat_set_theme', {
+          p_conversation_id: conversationId,
+          p_theme_id: themeId,
+        });
         if (error) return { error: toDbError(error, 'Błąd zapisu.') };
         return { error: null };
       } catch (e) {
@@ -216,9 +280,23 @@ export function toChatLastMessage(value: unknown): ChatLastMessage | null {
     id,
     authorId: str(row.author_id),
     body: str(row.body),
+    kind: isChatMessageKind(row.kind) ? row.kind : 'text',
     createdAt,
     deletedAt: nullableStr(row.deleted_at),
   };
+}
+
+/**
+ * Ładunek wiersza systemowego. Nieznany `type` albo brak pól => null — UI
+ * pokaże wtedy zapasowe `body`, zamiast wywracać listę.
+ */
+export function toChatMessageMeta(value: unknown): ChatMessageMeta | null {
+  const meta = asRecord(value);
+  if (!meta || meta.type !== 'theme_changed') return null;
+  const themeId = str(meta.themeId);
+  const actorId = str(meta.actorId);
+  if (themeId === '' || actorId === '') return null;
+  return { type: 'theme_changed', themeId, actorId };
 }
 
 /** Wiersz `chat_overview()` → rozmowa. Zły wiersz => null (pomijamy). */
@@ -235,6 +313,7 @@ export function toChatConversation(row: ChatRow): ChatConversation | null {
     members,
     createdBy: nullableStr(row.created_by),
     lastMessageAt: nullableStr(row.last_message_at),
+    themeId: str(row.theme_id),
     lastMessage: toChatLastMessage(row.last_message),
     unreadCount: count(row.unread_count),
   };
@@ -249,16 +328,97 @@ export function toChatMessage(row: unknown): ChatMessage | null {
   const authorId = str(record.author_id);
   const createdAt = str(record.created_at);
   if (id === '' || conversationId === '' || authorId === '' || createdAt === '') return null;
+  const kind = isChatMessageKind(record.kind) ? record.kind : 'text';
   return {
     id,
     conversationId,
     authorId,
     body: str(record.body),
+    kind,
+    meta: kind === 'system' ? toChatMessageMeta(record.meta) : null,
     createdAt,
     editedAt: nullableStr(record.edited_at),
     deletedAt: nullableStr(record.deleted_at),
     replyTo: nullableStr(record.reply_to),
   };
+}
+
+/** Wiersz `message_reactions` (osadzony albo z select) → reakcja; zły => null. */
+export function toChatReaction(value: unknown): ChatReaction | null {
+  const row = asRecord(value);
+  if (!row) return null;
+  const userId = str(row.user_id);
+  const emoji = str(row.emoji);
+  const createdAt = str(row.created_at);
+  if (userId === '' || emoji === '' || createdAt === '') return null;
+  return { userId, emoji, createdAt };
+}
+
+/**
+ * Reakcje osadzone w wierszach wiadomości (`message_reactions: [...]`). Każda
+ * wiadomość strony dostaje wpis — także pusta lista, bo brak reakcji jest
+ * informacją (ktoś mógł zdjąć ostatnią, zanim strona doszła).
+ */
+export function reactionsFromMessageRows(rows: readonly ChatRow[]): ChatReactionMap {
+  const map: Record<string, ChatReaction[]> = {};
+  for (const row of rows) {
+    const id = str(row.id);
+    if (id === '') continue;
+    map[id] = asArray(row.message_reactions)
+      .map(toChatReaction)
+      .filter((r): r is ChatReaction => r !== null);
+  }
+  return map;
+}
+
+/**
+ * Reakcje z osobnego select po `message_id`. Wiadomości z `messageIds` bez
+ * ani jednego wiersza dostają pustą listę — to dociąganie po powrocie kanału,
+ * więc „nic nie wróciło” znaczy „nie ma reakcji”, nie „nie wiadomo”.
+ */
+export function reactionsFromRows(
+  rows: readonly ChatRow[],
+  messageIds: readonly string[],
+): ChatReactionMap {
+  const map: Record<string, ChatReaction[]> = {};
+  for (const id of messageIds) if (id !== '') map[id] = [];
+  for (const row of rows) {
+    const id = str(row.message_id);
+    const reaction = toChatReaction(row);
+    if (id === '' || !reaction) continue;
+    (map[id] ??= []).push(reaction);
+  }
+  return map;
+}
+
+/**
+ * Zdarzenie `reaction` z kanału rozmowy (`realtime.send` w RPC). Koperta SDK
+ * to `{ type, event, payload }`; ładunek niesie przypisanie osoba → emoji.
+ * Zły ładunek => null (nigdy wyjątek — wyciszyłby cały kanał).
+ */
+export function toChatReactionEvent(raw: unknown): ChatReactionEvent | null {
+  const envelope = asRecord(raw);
+  if (!envelope) return null;
+  const payload = asRecord(envelope.payload) ?? envelope;
+  const messageId = str(payload.messageId);
+  const conversationId = str(payload.conversationId);
+  const userId = str(payload.userId);
+  if (messageId === '' || conversationId === '' || userId === '') return null;
+  const emoji = typeof payload.emoji === 'string' && payload.emoji !== '' ? payload.emoji : null;
+  const createdAt = str(payload.createdAt);
+  return { messageId, conversationId, userId, emoji, createdAt };
+}
+
+/** Zdarzenie `theme_changed` z kanału rozmowy; zły ładunek => null. */
+export function toThemeChangedEvent(raw: unknown): ChatThemeChangedEvent | null {
+  const envelope = asRecord(raw);
+  if (!envelope) return null;
+  const payload = asRecord(envelope.payload) ?? envelope;
+  const conversationId = str(payload.conversationId);
+  const themeId = str(payload.themeId);
+  const actorId = str(payload.actorId);
+  if (conversationId === '' || themeId === '' || actorId === '') return null;
+  return { conversationId, themeId, actorId };
 }
 
 /**
@@ -388,6 +548,7 @@ export async function loadMessagesPage(
     ok: true,
     value: {
       messages,
+      reactions: reactionsFromMessageRows(rows),
       hasMore: rows.length >= limit,
       cursor: oldestCursor ?? (messages.length > 0 ? messageCursor(messages[0]) : null),
     },
@@ -416,10 +577,12 @@ export async function loadMessagesSince(
   conversationId: string,
   cursor: ChatMessageCursor | null,
   limit: number = CHAT_PAGE_SIZE,
-): Promise<ChatResult<ChatMessage[]>> {
+): Promise<ChatResult<{ messages: ChatMessage[]; reactions: ChatReactionMap }>> {
   if (!cursor) {
     const page = await loadMessagesPage(db, conversationId, null, limit);
-    return page.ok ? { ok: true, value: page.value.messages } : page;
+    return page.ok
+      ? { ok: true, value: { messages: page.value.messages, reactions: page.value.reactions } }
+      : page;
   }
   const { rows, error } = await db.selectMessages({
     conversationId,
@@ -428,7 +591,57 @@ export async function loadMessagesSince(
     limit,
   });
   if (error) return { ok: false, error: CHAT_MESSAGES.messages };
-  return { ok: true, value: rows.map(toChatMessage).filter((m): m is ChatMessage => m !== null) };
+  return {
+    ok: true,
+    value: {
+      messages: rows.map(toChatMessage).filter((m): m is ChatMessage => m !== null),
+      reactions: reactionsFromMessageRows(rows),
+    },
+  };
+}
+
+/**
+ * Reakcje wskazanych wiadomości — dociąganie po powrocie kanału. Broadcast
+ * `reaction` nie gwarantuje dostarczenia, a `loadMessagesSince` nadrabia tylko
+ * NOWE wiadomości; reakcje na już wczytanych trzeba odświeżyć osobno.
+ */
+export async function loadReactions(
+  db: ChatDb,
+  conversationId: string,
+  messageIds: readonly string[],
+): Promise<ChatResult<ChatReactionMap>> {
+  const ids = messageIds.filter((id) => id !== '');
+  if (conversationId === '' || ids.length === 0) return { ok: true, value: {} };
+  const { rows, error } = await db.selectReactions(conversationId, ids);
+  if (error) return { ok: false, error: CHAT_MESSAGES.messages };
+  return { ok: true, value: reactionsFromRows(rows, ids) };
+}
+
+/**
+ * Ustawia (emoji) albo zdejmuje (null) własną reakcję. Zwraca autorytatywną
+ * listę reakcji wiadomości po zmianie — provider podmienia nią stan
+ * optymistyczny. `23503` (FK do allowlisty) = znak spoza listy pickera.
+ */
+export async function setReaction(
+  db: ChatDb,
+  messageId: string,
+  emoji: string | null,
+): Promise<ChatResult<ChatReaction[]>> {
+  if (messageId === '') return { ok: false, error: CHAT_MESSAGES.react };
+  if (emoji !== null && (emoji === '' || Array.from(emoji).length > 10)) {
+    return { ok: false, error: CHAT_MESSAGES.reactUnsupported };
+  }
+  const { rows, error } = await db.setReaction(messageId, emoji);
+  if (error) {
+    return {
+      ok: false,
+      error: error.code === '23503' ? CHAT_MESSAGES.reactUnsupported : CHAT_MESSAGES.react,
+    };
+  }
+  return {
+    ok: true,
+    value: rows.map(toChatReaction).filter((r): r is ChatReaction => r !== null),
+  };
 }
 
 /**
@@ -474,4 +687,22 @@ export async function markRead(
   const { error } = await db.updateLastReadAt(conversationId, userId, atIso);
   if (error) return { ok: false, error: CHAT_MESSAGES.markRead };
   return { ok: true, value: atIso };
+}
+
+/**
+ * Zmienia motyw rozmowy (wspólny dla uczestników). Serwer dopisuje wiersz
+ * systemowy i rozsyła `theme_changed`; ten sam motyw jest po stronie serwera
+ * no-opem, więc nie filtrujemy go tutaj.
+ */
+export async function setTheme(
+  db: ChatDb,
+  conversationId: string,
+  themeId: string,
+): Promise<ChatResult<string>> {
+  if (conversationId === '' || !CHAT_THEME_ID_PATTERN.test(themeId)) {
+    return { ok: false, error: CHAT_MESSAGES.theme };
+  }
+  const { error } = await db.setTheme(conversationId, themeId);
+  if (error) return { ok: false, error: CHAT_MESSAGES.theme };
+  return { ok: true, value: themeId };
 }

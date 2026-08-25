@@ -107,6 +107,17 @@ const EXPECTED_POLICIES: Record<string, string[]> = {
   'n2click.conversations': ['select', 'insert'],
   'n2click.conversation_members': ['select', 'insert', 'update', 'delete'],
   'n2click.messages': ['select', 'insert', 'update'],
+  // Reakcje (20260825120000_chat_reactions): klient wyłącznie CZYTA (osadzenie
+  // w select wiadomości); każdy zapis idzie przez RPC `chat_set_reaction`
+  // (security definer), więc brak polityk insert/update/delete jest celowy.
+  'n2click.message_reactions': ['select'],
+  // Kalendarz Google (20260825140000): konto — odczyt/`share_level`/rozłączenie
+  // (DELETE) własnego wiersza; kalendarze — odczyt i przełącznik `selected`;
+  // wydarzenia bazowe — tylko właściciel (zespół czyta widok maskujący).
+  // INSERT i sync robią wyłącznie Edge Functions kluczem service_role.
+  'n2click.google_accounts': ['select', 'update', 'delete'],
+  'n2click.google_calendars': ['select', 'update'],
+  'n2click.google_calendar_events': ['select'],
   // Autoryzacja prywatnych kanałów Broadcast/Presence czatu: SELECT = prawo do
   // odbierania zdarzeń topicu, INSERT = prawo do wysyłania („pisze…”, presence).
   // Tabela jest platformowa i WSPÓLNA dla appek — polityki są permisywne, więc
@@ -277,6 +288,21 @@ describe('konwencja plików migracji', () => {
       // kanonicznym pary (jedna kolejność blokad po obu stronach), każdy
       // wiersz pod własnym handlerem unique_violation.
       '20260824130000_chat_open_direct_member_lock_order.sql',
+      // Reakcje emoji (model Messengera: jedna na osobę i wiadomość): allowlista
+      // `chat_emoji` (FK zamiast regexu), tabela `message_reactions` tylko do
+      // odczytu dla klienta, zapis przez definer `chat_set_reaction`, własny
+      // event `reaction` przez `realtime.send` na kanale rozmowy.
+      '20260825120000_chat_reactions.sql',
+      // Motywy czatu (wspólne dla rozmowy): `conversations.theme_id`,
+      // `messages.kind`/`meta` (wiersz systemowy przez RPC, klient wstawia
+      // tylko `text`), definer `chat_set_theme` z eventem `theme_changed`,
+      // `chat_overview()` odtworzone z `theme_id`.
+      '20260825130000_chat_themes.sql',
+      // Import Kalendarza Google (tylko odczyt): google_accounts (refresh token
+      // w Vault przez definerów tylko dla service_role), google_calendars,
+      // google_calendar_events (warstwa cieniowa, nigdy `events`), widok
+      // maskujący dla zespołu, pg_cron co 5 min -> Edge Function sync.
+      '20260825140000_google_calendar.sql',
     ]);
   });
 

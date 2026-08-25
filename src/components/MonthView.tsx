@@ -33,6 +33,7 @@ import { personColor } from '../utils/colors';
 import { formatDuration } from '../utils/time';
 import { overrunMinutesOnDate } from '../store/timeTracking';
 import { TreePalm } from './icons';
+import { useGoogleCalendar } from '../gcal/GoogleCalendarProvider';
 import { Tooltip } from './Tooltip';
 import { monthCellName, monthFocusIndex, monthGridCommand, monthGridRows } from './monthGrid';
 
@@ -113,6 +114,10 @@ export function MonthView({
     else onShiftMonth(command.delta);
   };
 
+  // Warstwa Kalendarza Google (tylko odczyt): znacznik „G" i tytuły w dymku
+  // komórki; sumy i kropki bez zmian (inwariant 1).
+  const gcal = useGoogleCalendar();
+
   const cells = days.map((d) => {
     // Objętość godzinowa dnia (zgłoszenie 77d10f85): bloki + spotkania +
     // wystąpienia cykliczne (bez urlopów) — ta sama suma, co nagłówki WeekView.
@@ -166,6 +171,11 @@ export function MonthView({
     const eventMarkerRight =
       3 + 18 * ((birthdayNames.length > 0 ? 1 : 0) + (recurTitles.length > 0 ? 1 : 0));
     const vacationMarkerRight = eventMarkerRight + (eventTitles.length > 0 ? 18 : 0);
+    const gcalTitles = gcal.enabled
+      ? Array.from(new Set(gcal.occurrencesFor(d).map((occ) => occ.event.title)))
+      : [];
+    const gcalMarkerRight = vacationMarkerRight + (vacationNames.length > 0 ? 18 : 0);
+    const gcalLabel = gcalTitles.length > 0 ? `Google: ${gcalTitles.join(', ')}` : '';
 
     const birthdayLabel = birthdayNames.length > 0 ? `Urodziny: ${birthdayNames.join(', ')}` : '';
     const recurLabel = recurTitles.length > 0 ? `Cykliczne: ${recurTitles.join(', ')}` : '';
@@ -192,6 +202,7 @@ export function MonthView({
       recurLabel,
       eventLabel,
       vacationLabel,
+      gcalLabel,
     ]
       .filter(Boolean)
       .join('\n');
@@ -209,7 +220,7 @@ export function MonthView({
       // Nadgodziny jadą WŁASNYM polem, nie znacznikiem: `monthCellName` musi
       // wiedzieć, że dzień nie jest pusty, zanim powie „brak pracy”.
       overrunHours: overrunMinutes / 60,
-      markers: [birthdayLabel, recurLabel, eventLabel, vacationLabel],
+      markers: [birthdayLabel, recurLabel, eventLabel, vacationLabel, gcalLabel],
     });
 
     return {
@@ -233,6 +244,8 @@ export function MonthView({
       vacationLabel,
       eventMarkerRight,
       vacationMarkerRight,
+      gcalTitles,
+      gcalMarkerRight,
       cellHint,
       name,
     };
@@ -308,6 +321,15 @@ export function MonthView({
                       aria-hidden
                     >
                       📅
+                    </span>
+                  )}
+                  {cell.gcalTitles.length > 0 && (
+                    <span
+                      className="month-cell-gcal"
+                      style={cell.gcalMarkerRight > 3 ? { right: cell.gcalMarkerRight } : undefined}
+                      aria-hidden
+                    >
+                      G
                     </span>
                   )}
                   {cell.vacationNames.length > 0 && (

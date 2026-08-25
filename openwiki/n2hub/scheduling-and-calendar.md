@@ -62,6 +62,15 @@
   Czysta arytmetyka osi i kolumn w `dayTrackerLayout.ts` (oś 7-19 rozszerzana
   do danych, 56 px/h, siatka 15 min, kolumny dla nachodzących kafli). Klasy CSS
   z prefiksem `tt-`. Stoper i lustro chmury: do zrobienia.
+- `src/gcal/` (2026-08-25) owns the GOOGLE CALENDAR layer: `GoogleCalendarProvider`
+  trzyma wydarzenia z widoku `google_calendar_events_visible` (okno −30/+90
+  dni, odświeżanie co 5 min i po powrocie karty), `gcalData.ts` (pure) mapuje
+  wiersze i rozwija wielodniowe na dni. WeekView renderuje `GoogleEventBlock`
+  (własny, memo, tylko odczyt: bez przeciągania, bez menu, bez
+  `getState().events`, z-index pod `.week-event-block`, poza pakowaniem
+  kolumn — inwariant 7 nietknięty) i `GoogleEventDialog`; MonthView dokłada
+  znacznik „G" + tytuły w dymku/nazwie komórki. Warstwa NIE wchodzi do
+  `calendarEventsForDate`, sum dnia ani kolizji (inwariant 1).
 - `src/components/weekViewLayout.ts` (pure) owns the PRESENTATIONAL working
   window: `WORK_START_HOUR`/`WORK_END_HOUR` (9–17), the default scroll offset and
   the px bounds fed to CSS as `--week-work-top`/`--week-work-bottom`.

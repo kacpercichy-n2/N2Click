@@ -38,6 +38,13 @@ export {
   Smile,
   ImagePlay,
   Plus,
+  // Czat, dymek wiadomości: przycisk „Zareaguj" (hover/fokus na desktopie).
+  SmilePlus,
+  // Czat, nagłówek okna: wybór motywu rozmowy (skiny).
+  Palette,
+  // Kalendarz Google: dialog wydarzenia — link do spotkania i otwarcie w Google.
+  Video,
+  ExternalLink,
   // Czat, stopka popovera: przełącznik pinga dźwiękowego (włączony / wyciszony).
   Volume2,
   VolumeX,

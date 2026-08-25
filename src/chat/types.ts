@@ -24,11 +24,22 @@ export interface ChatMember {
   lastReadAt: string | null;
 }
 
+/** Rodzaj wiersza w `messages`: wiadomość osoby albo wiersz systemowy (RPC). */
+export type ChatMessageKind = 'text' | 'system';
+
+/** Ładunek wiersza systemowego (`messages.meta`). Jeden typ na razie. */
+export type ChatMessageMeta = {
+  type: 'theme_changed';
+  themeId: string;
+  actorId: string;
+};
+
 /** Skrót ostatniej wiadomości renderowany na liście rozmów. */
 export interface ChatLastMessage {
   id: string;
   authorId: string;
   body: string;
+  kind: ChatMessageKind;
   createdAt: string;
   /** Znacznik miękkiego usunięcia; UI pokazuje wtedy „Wiadomość usunięta". */
   deletedAt: string | null;
@@ -44,6 +55,8 @@ export interface ChatConversation {
   createdBy: string | null;
   /** `conversations.last_message_at` — klucz sortowania listy (desc). */
   lastMessageAt: string | null;
+  /** Motyw rozmowy (`conversations.theme_id`); nieznany id => domyślny w UI. */
+  themeId: string;
   lastMessage: ChatLastMessage | null;
   /** Liczba nieprzeczytanych dla ZALOGOWANEGO użytkownika (z `chat_overview`). */
   unreadCount: number;
@@ -54,12 +67,60 @@ export interface ChatMessage {
   conversationId: string;
   authorId: string;
   body: string;
+  /** `system` = wiersz zdarzenia (treść buduje UI z `meta`); brak w wierszu = `text`. */
+  kind: ChatMessageKind;
+  /** Ładunek wiersza systemowego; null dla zwykłej wiadomości. */
+  meta: ChatMessageMeta | null;
   createdAt: string;
   editedAt: string | null;
   deletedAt: string | null;
   /** Id wiadomości, na którą to jest odpowiedź; null gdy brak. */
   replyTo: string | null;
 }
+
+/**
+ * Reakcja emoji JEDNEJ osoby na JEDNĄ wiadomość (`n2click.message_reactions`).
+ * Model Messengera: osoba ma na wiadomości najwyżej jedną reakcję — wybór
+ * innego emoji podmienia, ponowny wybór tego samego zdejmuje.
+ */
+export interface ChatReaction {
+  userId: string;
+  /** Znak emoji dokładnie w postaci z `chatEmoji.ts` (allowlista `chat_emoji`). */
+  emoji: string;
+  createdAt: string;
+}
+
+/** Reakcje otwartej rozmowy: id wiadomości → lista (rosnąco po `createdAt`). */
+export type ChatReactionMap = Readonly<Record<string, readonly ChatReaction[]>>;
+
+/**
+ * Zdarzenie `reaction` z kanału rozmowy (`realtime.send` w RPC
+ * `chat_set_reaction`). Niesie PRZYPISANIE (osoba → emoji), nigdy liczniki:
+ * powtórka, echo własnej zmiany i dowolna kolejność dojścia dają ten sam stan.
+ */
+export interface ChatReactionEvent {
+  messageId: string;
+  conversationId: string;
+  userId: string;
+  /** Nowe emoji; null = reakcja zdjęta. */
+  emoji: string | null;
+  createdAt: string;
+}
+
+/** Jedna „pigułka” pod dymkiem: emoji, liczba i kto (dla etykiety). */
+export interface ChatReactionGroup {
+  emoji: string;
+  count: number;
+  /** Zalogowany jest wśród reagujących (pigułka podświetlona, `aria-pressed`). */
+  mine: boolean;
+  userIds: string[];
+}
+
+/**
+ * Szybki pasek reakcji (7 domyślnych Messengera + „+” w UI). Każdy znak MUSI
+ * być w `EMOJI_CATEGORIES` — pilnuje tego `chatEmoji.test.ts`.
+ */
+export const CHAT_QUICK_REACTIONS: readonly string[] = ['❤️', '😆', '😮', '😢', '😡', '👍', '👎'];
 
 /**
  * Kursor paginacji wiadomości. Porządek listy to `(created_at, id)` — sam
@@ -74,6 +135,8 @@ export interface ChatMessageCursor {
 /** Strona wiadomości: zawsze rosnąco (najstarsza pierwsza), gotowa dla UI. */
 export interface ChatMessagesPage {
   messages: ChatMessage[];
+  /** Reakcje wiadomości tej strony (osadzenie `message_reactions` w select). */
+  reactions: ChatReactionMap;
   /** `true` gdy serwer zwrócił pełną stronę — są starsze wiadomości. */
   hasMore: boolean;
   /** Kursor do pobrania KOLEJNEJ (starszej) strony; null gdy nie ma czego. */
@@ -112,6 +175,9 @@ export const CHAT_MESSAGES = {
   open: 'Nie udało się otworzyć rozmowy.',
   create: 'Nie udało się utworzyć grupy.',
   markRead: 'Nie udało się zapisać odczytu rozmowy.',
+  react: 'Nie udało się zapisać reakcji.',
+  theme: 'Nie udało się zmienić motywu.',
+  reactUnsupported: 'Tego emoji nie da się użyć jako reakcji.',
   emptyBody: 'Wiadomość nie może być pusta.',
   tooLongBody: `Wiadomość może mieć najwyżej ${CHAT_MESSAGE_MAX_LENGTH} znaków.`,
   emptyTitle: 'Podaj nazwę grupy.',
@@ -125,4 +191,15 @@ export function isChatConversationKind(value: unknown): value is ChatConversatio
 
 export function isChatMemberRole(value: unknown): value is ChatMemberRole {
   return value === 'owner' || value === 'member';
+}
+
+export function isChatMessageKind(value: unknown): value is ChatMessageKind {
+  return value === 'text' || value === 'system';
+}
+
+/** Zdarzenie `theme_changed` z kanału rozmowy (`realtime.send` w RPC). */
+export interface ChatThemeChangedEvent {
+  conversationId: string;
+  themeId: string;
+  actorId: string;
 }

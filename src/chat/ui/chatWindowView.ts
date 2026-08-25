@@ -6,6 +6,7 @@ import {
   CHAT_MESSAGE_MAX_LENGTH,
   type ChatConversation,
   type ChatMessage,
+  type ChatReactionGroup,
 } from '../types';
 import {
   conversationTitle,
@@ -15,6 +16,7 @@ import {
   type ChatDirectory,
 } from './chatPeople';
 import { dayKey, formatClock, formatDaySeparator } from './chatTime';
+import { themeById } from '../themes/catalog';
 
 /** Wiadomości tego samego autora w tym oknie czasu sklejają się w jedną grupę. */
 export const MESSAGE_GROUP_WINDOW_MS = 5 * 60 * 1000;
@@ -34,6 +36,8 @@ export interface ChatMessageView {
 
 export type ChatWindowItem =
   | { kind: 'day'; key: string; label: string }
+  /** Wiersz systemowy (np. zmiana motywu): jedna wyśrodkowana linia. */
+  | { kind: 'system'; key: string; id: string; text: string }
   | {
       kind: 'group';
       key: string;
@@ -91,6 +95,20 @@ export function buildWindowItems(input: WindowItemsInput): ChatWindowItem[] {
         key: `day-${day}-${message.id}`,
         label: formatDaySeparator(message.createdAt, input.todayStr),
       });
+    }
+
+    // Wiersz systemowy przerywa grupę: nie ma autora w sensie dymka, a dwie
+    // wiadomości tej samej osoby po obu stronach nie powinny się sklejać.
+    if (message.kind === 'system') {
+      openGroup = null;
+      lastAt = validAt;
+      items.push({
+        kind: 'system',
+        key: `system-${message.id}`,
+        id: message.id,
+        text: systemMessageText(message, input.directory),
+      });
+      continue;
     }
 
     const sameAuthor = openGroup !== null && openGroup.authorId === message.authorId;
@@ -212,8 +230,12 @@ export function isNearBottom(
   return box.scrollHeight - box.scrollTop - box.clientHeight <= slack;
 }
 
-/** Który picker kompozytora jest otwarty; najwyżej jeden, bo dzielą miejsce. */
-export type ComposerPicker = 'none' | 'emoji' | 'gif';
+/**
+ * Który picker kompozytora jest otwarty; najwyżej jeden, bo dzielą miejsce.
+ * `react` = ten sam panel emoji, ale w trybie „wybierz jedno" jako reakcja na
+ * wiadomość wskazaną przez okno (nie wstawia do pola treści).
+ */
+export type ComposerPicker = 'none' | 'emoji' | 'gif' | 'react';
 
 /** Panel, który da się otworzyć (czyli wszystko poza „żaden"). */
 export type ComposerPickerId = Exclude<ComposerPicker, 'none'>;
@@ -234,4 +256,39 @@ export function togglePicker(current: ComposerPicker, which: ComposerPickerId): 
  */
 export function dismissPicker(current: ComposerPicker, which: ComposerPickerId): ComposerPicker {
   return current === which ? 'none' : current;
+}
+
+// ---- Reakcje ----------------------------------------------------------------
+
+/**
+ * Etykieta pigułki reakcji dla czytnika ekranu: nazwa emoji, kto zareagował
+ * (imiona, „Ty” dla zalogowanego) i liczba. Nazwa jest STAŁA niezależnie od
+ * stanu — czy to moja reakcja, niesie `aria-pressed`, nie tekst.
+ */
+export function reactionPillLabel(
+  group: ChatReactionGroup,
+  directory: ChatDirectory,
+  selfId: string | null,
+  labelOf: (emoji: string) => string,
+): string {
+  const names = group.userIds.map((userId) =>
+    userId === selfId ? 'Ty' : personFirstName(directory, userId),
+  );
+  const who = names.length > 0 ? `: ${names.join(', ')}` : '';
+  const count = group.count > 1 ? ` (${group.count})` : '';
+  return `${labelOf(group.emoji)}${who}${count}`;
+}
+
+/**
+ * Polska treść wiersza systemowego z `meta`. Czas teraźniejszy („ustawia")
+ * omija formę rodzajową czasownika — profile nie niosą płci. Brak/nieznane
+ * `meta` => zapasowe `body` z serwera.
+ */
+export function systemMessageText(message: ChatMessage, directory: ChatDirectory): string {
+  const meta = message.meta;
+  if (meta && meta.type === 'theme_changed') {
+    const who = personFirstName(directory, meta.actorId);
+    return `${who} ustawia motyw „${themeById(meta.themeId).name}”`;
+  }
+  return message.body;
 }

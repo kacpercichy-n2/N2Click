@@ -12,6 +12,8 @@ import {
   typingLabel,
   windowSubtitle,
   windowTitle,
+  reactionPillLabel,
+  systemMessageText,
 } from './chatWindowView';
 
 const ME = 'u-me';
@@ -32,6 +34,8 @@ function message(patch: Partial<ChatMessage> & Pick<ChatMessage, 'id' | 'created
     conversationId: 'c1',
     authorId: OLA,
     body: 'Treść',
+    kind: 'text',
+    meta: null,
     editedAt: null,
     deletedAt: null,
     replyTo: null,
@@ -49,6 +53,7 @@ function conversation(patch: Partial<ChatConversation> = {}): ChatConversation {
       { userId: OLA, role: 'member', lastReadAt: null },
     ],
     createdBy: ME,
+    themeId: 'lawenda',
     lastMessageAt: null,
     lastMessage: null,
     unreadCount: 0,
@@ -239,5 +244,79 @@ describe('pickery kompozytora', () => {
     expect(afterSwitch).toBe('gif');
     expect(dismissPicker(afterSwitch, 'emoji')).toBe('gif');
     expect(dismissPicker(togglePicker('gif', 'emoji'), 'gif')).toBe('emoji');
+  });
+});
+
+describe('reactionPillLabel', () => {
+  const directory = buildDirectory([
+    { id: 'u-ola', firstName: 'Ola', lastName: 'Nowak', email: 'ola@n2.pl' },
+    { id: 'u-marek', firstName: 'Marek', lastName: 'Kowal', email: 'marek@n2.pl' },
+  ]);
+  const labelOf = (emoji: string) => (emoji === '👍' ? 'kciuk w gore' : 'emoji');
+
+  it('składa nazwę emoji, imiona (Ty dla zalogowanego) i licznik', () => {
+    expect(
+      reactionPillLabel(
+        { emoji: '👍', count: 3, mine: true, userIds: ['u-ola', 'u-marek', 'u-self'] },
+        directory,
+        'u-self',
+        labelOf,
+      ),
+    ).toBe('kciuk w gore: Ola, Marek, Ty (3)');
+    expect(
+      reactionPillLabel({ emoji: '❤️', count: 1, mine: false, userIds: ['u-ola'] }, directory, 'u-self', labelOf),
+    ).toBe('emoji: Ola');
+  });
+});
+
+describe('wiersze systemowe', () => {
+  const directory = buildDirectory([
+    { id: 'u-ola', firstName: 'Ola', lastName: 'Nowak', email: 'ola@n2.pl' },
+  ]);
+  const system: ChatMessage = {
+    id: 'sys-1',
+    conversationId: 'c1',
+    authorId: 'u-ola',
+    body: 'Zmieniono motyw czatu',
+    kind: 'system',
+    meta: { type: 'theme_changed', themeId: 'las', actorId: 'u-ola' },
+    createdAt: '2026-08-25T10:00:00+00:00',
+    editedAt: null,
+    deletedAt: null,
+    replyTo: null,
+  };
+
+  it('systemMessageText składa polskie zdanie w czasie teraźniejszym (bez formy rodzajowej)', () => {
+    expect(systemMessageText(system, directory)).toBe('Ola ustawia motyw „Las”');
+    expect(systemMessageText({ ...system, meta: null }, directory)).toBe('Zmieniono motyw czatu');
+    // Nieznany motyw (stary klient) spada na domyślną nazwę zamiast pustki.
+    expect(
+      systemMessageText({ ...system, meta: { ...system.meta!, themeId: 'zzz' } }, directory),
+    ).toBe('Ola ustawia motyw „Lawenda”');
+  });
+
+  it('buildWindowItems wstawia wiersz systemowy jako osobny element i przerywa grupę', () => {
+    const text = (id: string, createdAt: string): ChatMessage => ({
+      ...system,
+      id,
+      kind: 'text',
+      meta: null,
+      body: 'Hej',
+      createdAt,
+    });
+    const items = buildWindowItems({
+      messages: [
+        text('m1', '2026-08-25T09:59:00+00:00'),
+        system,
+        text('m2', '2026-08-25T10:00:30+00:00'),
+      ],
+      selfId: 'u-self',
+      directory,
+      isGroup: false,
+      todayStr: '2026-08-25',
+    });
+    expect(items.map((item) => item.kind)).toEqual(['day', 'group', 'system', 'group']);
+    const sys = items[2];
+    expect(sys.kind === 'system' && sys.text).toBe('Ola ustawia motyw „Las”');
   });
 });

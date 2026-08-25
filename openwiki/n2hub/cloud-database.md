@@ -492,6 +492,33 @@ widoki-mostki). Gdzie w tekście pada `public.<tabela>` w kontekście
   a duplikat klucza (`23505`) łapie się handlerem `unique_violation` i traktuje
   jako sukces (wzorzec w RPC `chat_open_direct`).
 
+## Google Calendar import (2026-08-25, migracja 20260825140000)
+
+Warstwa CIENIOWA tylko do odczytu w `n2click`: `google_accounts` (jedno konto
+Google na profil; refresh token w Vault przez definerów
+`google_store_refresh_token`/`google_read_refresh_token` wykonywalnych tylko
+dla `service_role`), `google_calendars` (`selected`, `sync_token`),
+`google_calendar_events` (instancje `singleEvents`, okno −30/+90 dni, siatka
+15 min, klucz `(calendar_id, google_event_id)`). NIGDY nie pisze do `events`.
+RLS bazy = tylko właściciel; zespół czyta widok maskujący
+`google_calendar_events_visible` (właściciel/zaproszeni: szczegóły; reszta:
+„Zajęty" wg `google_accounts.share_level`; prywatne/poufne: tylko właściciel).
+Zapis wyłącznie z Edge Functions `google-calendar-connect`/`google-calendar-sync`
+(`supabase/functions/README.md`); klient ma `update (share_level)` /
+`update (selected)` / `delete` własnych wierszy. `pg_cron` co 5 min woła
+`n2click.google_calendar_sync_tick()` (adres i sekret z Vault). Klient:
+`src/gcal/` (`gcalData.ts` czysty + `GoogleCalendarProvider`), poza reduktorem i
+localStorage.
+
+## Chat reactions and themes (2026-08-25, migracje 20260825120000/130000)
+
+`message_reactions` (PK `(message_id, user_id)`, FK do allowlisty `chat_emoji`
+generowanej z `src/chat/ui/chatEmoji.ts`; zapis tylko przez definer
+`chat_set_reaction`, event `reaction` przez `realtime.send`),
+`conversations.theme_id` (CHECK kształtu, katalog w `src/chat/themes/catalog.ts`),
+`messages.kind`/`meta` (wiersz systemowy wyłącznie z RPC `chat_set_theme`;
+polityka INSERT wymusza `kind = 'text'`), `chat_overview()` zwraca `theme_id`.
+
 ## Rules that change work
 
 - New tables/columns arrive ONLY via a new forward-only migration file +

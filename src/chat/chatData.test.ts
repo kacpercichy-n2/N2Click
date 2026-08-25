@@ -11,11 +11,19 @@ import {
   loadMessagesPage,
   loadMessagesSince,
   loadOverview,
+  loadReactions,
   markRead,
   openDirect,
+  reactionsFromMessageRows,
+  reactionsFromRows,
   sendMessage,
+  setReaction,
+  setTheme,
   toChatConversation,
   toChatMessage,
+  toChatMessageMeta,
+  toChatReactionEvent,
+  toThemeChangedEvent,
   type ChatDb,
   type ChatDbError,
   type ChatMessagesQuery,
@@ -50,6 +58,9 @@ interface FakeCall {
   directs: string[];
   messages: ChatRow[];
   groups: Array<{ title: string; memberIds: string[] }>;
+  reactionQueries: Array<{ conversationId: string; messageIds: string[] }>;
+  reactions: Array<{ messageId: string; emoji: string | null }>;
+  themes: Array<{ conversationId: string; themeId: string }>;
 }
 
 class FakeChatDb implements ChatDb {
@@ -65,6 +76,11 @@ class FakeChatDb implements ChatDb {
   readError: ChatDbError | null = null;
   createdGroupId: string | null = CONV;
   createGroupError: ChatDbError | null = null;
+  reactionRows: ChatRow[] = [];
+  reactionsError: ChatDbError | null = null;
+  setReactionRows: ChatRow[] = [];
+  setReactionError: ChatDbError | null = null;
+  setThemeError: ChatDbError | null = null;
 
   calls: FakeCall = {
     reads: [],
@@ -72,6 +88,9 @@ class FakeChatDb implements ChatDb {
     directs: [],
     messages: [],
     groups: [],
+    reactionQueries: [],
+    reactions: [],
+    themes: [],
   };
 
   private next<T>(list: T[], index: number): T {
@@ -111,6 +130,23 @@ class FakeChatDb implements ChatDb {
     this.calls.reads.push({ conversationId, userId, atIso });
     return { error: this.readError };
   }
+
+  async selectReactions(conversationId: string, messageIds: string[]) {
+    this.calls.reactionQueries.push({ conversationId, messageIds });
+    if (this.reactionsError) return { rows: [], error: this.reactionsError };
+    return { rows: this.reactionRows, error: null };
+  }
+
+  async setReaction(messageId: string, emoji: string | null) {
+    this.calls.reactions.push({ messageId, emoji });
+    if (this.setReactionError) return { rows: [], error: this.setReactionError };
+    return { rows: this.setReactionRows, error: null };
+  }
+
+  async setTheme(conversationId: string, themeId: string) {
+    this.calls.themes.push({ conversationId, themeId });
+    return { error: this.setThemeError };
+  }
 }
 
 // ---- Mapowanie ---------------------------------------------------------------
@@ -140,7 +176,8 @@ describe('mapowanie wierszy', () => {
         { userId: PEER, role: 'member', lastReadAt: null },
       ],
       lastMessageAt: T2,
-      lastMessage: { id: 'm2', authorId: PEER, body: 'Hej', createdAt: T2, deletedAt: null },
+      themeId: '',
+      lastMessage: { id: 'm2', authorId: PEER, body: 'Hej', kind: 'text', createdAt: T2, deletedAt: null },
       unreadCount: 3,
     });
   });
@@ -184,6 +221,8 @@ describe('mapowanie wierszy', () => {
       conversationId: CONV,
       authorId: PEER,
       body: 'Cześć',
+      kind: 'text',
+      meta: null,
       createdAt: T1,
       editedAt: T2,
       deletedAt: T3,
@@ -296,7 +335,7 @@ describe('kursor paginacji', () => {
       ascending: true,
       limit: 50,
     });
-    expect(result.ok && result.value.map((m) => m.id)).toEqual(['m9']);
+    expect(result.ok && result.value.messages.map((m) => m.id)).toEqual(['m9']);
   });
 
   it('loadMessagesSince bez kursora spada do pierwszej strony', async () => {
@@ -304,7 +343,7 @@ describe('kursor paginacji', () => {
     db.messagePages = [[messageRow()]];
     const result = await loadMessagesSince(db, CONV, null);
     expect(db.calls.queries[0].ascending).toBe(false);
-    expect(result.ok && result.value.length).toBe(1);
+    expect(result.ok && result.value.messages.length).toBe(1);
   });
 });
 
@@ -447,5 +486,180 @@ describe('markRead', () => {
       ok: false,
       error: CHAT_MESSAGES.markRead,
     });
+  });
+});
+
+// ---- Reakcje -----------------------------------------------------------------
+
+describe('reakcje: mapowanie', () => {
+  it('reactionsFromMessageRows daje wpis KAŻDEJ wiadomości strony, także pusty', () => {
+    const map = reactionsFromMessageRows([
+      messageRow({
+        id: 'm1',
+        message_reactions: [
+          { user_id: PEER, emoji: '👍', created_at: T1 },
+          { user_id: 'zly', emoji: '', created_at: T1 },
+        ],
+      }),
+      messageRow({ id: 'm2', message_reactions: [] }),
+      messageRow({ id: 'm3' }),
+    ]);
+    expect(map).toEqual({
+      m1: [{ userId: PEER, emoji: '👍', createdAt: T1 }],
+      m2: [],
+      m3: [],
+    });
+  });
+
+  it('reactionsFromRows wypełnia pustą listą wiadomości bez wierszy', () => {
+    const map = reactionsFromRows(
+      [
+        { message_id: 'm1', user_id: PEER, emoji: '❤️', created_at: T1 },
+        { message_id: 'm1', user_id: SELF, emoji: '👍', created_at: T2 },
+        { message_id: 'obca', user_id: SELF, emoji: '👍', created_at: T2 },
+      ],
+      ['m1', 'm2'],
+    );
+    expect(map.m1).toHaveLength(2);
+    expect(map.m2).toEqual([]);
+    expect(map.obca).toHaveLength(1);
+  });
+
+  it('toChatReactionEvent czyta kopertę SDK i ładunek na wierzchu', () => {
+    const payload = {
+      messageId: 'm1',
+      conversationId: CONV,
+      userId: PEER,
+      emoji: '👍',
+      prevEmoji: null,
+      op: 'set',
+      createdAt: T1,
+    };
+    expect(toChatReactionEvent({ type: 'broadcast', event: 'reaction', payload })).toEqual({
+      messageId: 'm1',
+      conversationId: CONV,
+      userId: PEER,
+      emoji: '👍',
+      createdAt: T1,
+    });
+    expect(toChatReactionEvent(payload)?.emoji).toBe('👍');
+    expect(toChatReactionEvent({ payload: { ...payload, emoji: null, op: 'remove' } })?.emoji).toBe(
+      null,
+    );
+    expect(toChatReactionEvent({ payload: { ...payload, messageId: '' } })).toBeNull();
+    expect(toChatReactionEvent('śmieci')).toBeNull();
+  });
+});
+
+describe('reakcje: operacje', () => {
+  it('loadMessagesPage zwraca reakcje osadzone w wierszach', async () => {
+    const db = new FakeChatDb();
+    db.messagePages = [
+      [messageRow({ id: 'm1', message_reactions: [{ user_id: PEER, emoji: '👍', created_at: T1 }] })],
+    ];
+    const page = await loadMessagesPage(db, CONV, null);
+    expect(page.ok && page.value.reactions.m1).toEqual([{ userId: PEER, emoji: '👍', createdAt: T1 }]);
+  });
+
+  it('loadReactions pyta o wskazane wiadomości i pomija puste id', async () => {
+    const db = new FakeChatDb();
+    db.reactionRows = [{ message_id: 'm1', user_id: PEER, emoji: '👍', created_at: T1 }];
+    const result = await loadReactions(db, CONV, ['m1', '', 'm2']);
+    expect(db.calls.reactionQueries).toEqual([{ conversationId: CONV, messageIds: ['m1', 'm2'] }]);
+    expect(result.ok && result.value).toEqual({
+      m1: [{ userId: PEER, emoji: '👍', createdAt: T1 }],
+      m2: [],
+    });
+    expect((await loadReactions(db, CONV, [])).ok).toBe(true);
+    expect(db.calls.reactionQueries).toHaveLength(1);
+  });
+
+  it('setReaction wysyła stan docelowy i mapuje odpowiedź RPC', async () => {
+    const db = new FakeChatDb();
+    db.setReactionRows = [{ user_id: SELF, emoji: '❤️', created_at: T2 }];
+    const set = await setReaction(db, 'm1', '❤️');
+    expect(db.calls.reactions).toEqual([{ messageId: 'm1', emoji: '❤️' }]);
+    expect(set.ok && set.value).toEqual([{ userId: SELF, emoji: '❤️', createdAt: T2 }]);
+    db.setReactionRows = [];
+    const removed = await setReaction(db, 'm1', null);
+    expect(db.calls.reactions[1]).toEqual({ messageId: 'm1', emoji: null });
+    expect(removed.ok && removed.value).toEqual([]);
+  });
+
+  it('setReaction odrzuca zły znak lokalnie i tłumaczy 23503 na polski komunikat', async () => {
+    const db = new FakeChatDb();
+    expect(await setReaction(db, 'm1', '')).toEqual({
+      ok: false,
+      error: CHAT_MESSAGES.reactUnsupported,
+    });
+    expect(await setReaction(db, 'm1', '👍'.repeat(11))).toEqual({
+      ok: false,
+      error: CHAT_MESSAGES.reactUnsupported,
+    });
+    expect(db.calls.reactions).toHaveLength(0);
+    db.setReactionError = { code: '23503', message: 'fk' };
+    expect(await setReaction(db, 'm1', '🦄')).toEqual({
+      ok: false,
+      error: CHAT_MESSAGES.reactUnsupported,
+    });
+    db.setReactionError = { code: '42501', message: 'forbidden' };
+    expect(await setReaction(db, 'm1', '👍')).toEqual({ ok: false, error: CHAT_MESSAGES.react });
+  });
+});
+
+// ---- Motywy ------------------------------------------------------------------
+
+describe('motywy: mapowanie i operacje', () => {
+  it('toChatMessage czyta kind i meta wiersza systemowego, a zwykła wiadomość ma text/null', () => {
+    const system = toChatMessage(
+      messageRow({
+        id: 'sys',
+        kind: 'system',
+        body: 'Zmieniono motyw czatu',
+        meta: { type: 'theme_changed', themeId: 'polnoc', actorId: PEER },
+      }),
+    );
+    expect(system?.kind).toBe('system');
+    expect(system?.meta).toEqual({ type: 'theme_changed', themeId: 'polnoc', actorId: PEER });
+    const plain = toChatMessage(messageRow());
+    expect(plain?.kind).toBe('text');
+    expect(plain?.meta).toBeNull();
+    // Nieznany rodzaj spada do text; meta na zwykłej wiadomości jest ignorowane.
+    expect(toChatMessage(messageRow({ kind: 'cos', meta: { type: 'theme_changed' } }))?.meta).toBeNull();
+  });
+
+  it('toChatMessageMeta odrzuca nieznany typ i niepełne pola', () => {
+    expect(toChatMessageMeta({ type: 'inny', themeId: 'x', actorId: 'y' })).toBeNull();
+    expect(toChatMessageMeta({ type: 'theme_changed', themeId: '', actorId: 'y' })).toBeNull();
+    expect(toChatMessageMeta('{"type":"theme_changed","themeId":"las","actorId":"a"}')).toEqual({
+      type: 'theme_changed',
+      themeId: 'las',
+      actorId: 'a',
+    });
+  });
+
+  it('toChatConversation niesie theme_id (pusty, gdy brak w wierszu)', () => {
+    expect(toChatConversation({ id: CONV, kind: 'direct', theme_id: 'neon' })?.themeId).toBe('neon');
+    expect(toChatConversation({ id: CONV, kind: 'direct' })?.themeId).toBe('');
+  });
+
+  it('toThemeChangedEvent czyta kopertę i odrzuca braki', () => {
+    const payload = { conversationId: CONV, themeId: 'las', actorId: PEER };
+    expect(toThemeChangedEvent({ type: 'broadcast', event: 'theme_changed', payload })).toEqual(
+      payload,
+    );
+    expect(toThemeChangedEvent({ payload: { ...payload, themeId: '' } })).toBeNull();
+    expect(toThemeChangedEvent(null)).toBeNull();
+  });
+
+  it('setTheme waliduje id lokalnie i mapuje błąd na polski komunikat', async () => {
+    const db = new FakeChatDb();
+    expect(await setTheme(db, CONV, 'las')).toEqual({ ok: true, value: 'las' });
+    expect(db.calls.themes).toEqual([{ conversationId: CONV, themeId: 'las' }]);
+    expect(await setTheme(db, CONV, 'Zły Id!')).toEqual({ ok: false, error: CHAT_MESSAGES.theme });
+    expect(await setTheme(db, '', 'las')).toEqual({ ok: false, error: CHAT_MESSAGES.theme });
+    expect(db.calls.themes).toHaveLength(1);
+    db.setThemeError = { code: '42501', message: 'forbidden' };
+    expect(await setTheme(db, CONV, 'las')).toEqual({ ok: false, error: CHAT_MESSAGES.theme });
   });
 });

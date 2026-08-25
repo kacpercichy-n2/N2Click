@@ -3,12 +3,18 @@
 // wiadomości i sygnały „pisze…". Wszystko w node, bez Reacta.
 import { describe, expect, it } from 'vitest';
 import {
+  applyConversationTheme,
   applyIncomingMessage,
   applyMessageUpdate,
+  applyReactionEvent,
   applyTypingSignal,
+  groupReactions,
   markConversationRead,
   mergeMessages,
+  mergeReactions,
   newestMessageCursor,
+  nextReactionIntent,
+  ownReaction,
   oldestMessageCursor,
   pruneTyping,
   removeTyping,
@@ -16,7 +22,7 @@ import {
   totalUnread,
   typingUserIds,
 } from './chatState';
-import type { ChatConversation, ChatMessage } from './types';
+import type { ChatConversation, ChatMessage, ChatReaction, ChatReactionMap } from './types';
 
 const SELF = 'user-self';
 const PEER = 'user-peer';
@@ -34,6 +40,7 @@ function conversation(overrides: Partial<ChatConversation> & { id: string }): Ch
       { userId: PEER, role: 'member', lastReadAt: null },
     ],
     lastMessageAt: null,
+    themeId: 'lawenda',
     lastMessage: null,
     unreadCount: 0,
     ...overrides,
@@ -45,6 +52,8 @@ function message(overrides: Partial<ChatMessage> & { id: string }): ChatMessage 
     conversationId: 'c1',
     authorId: PEER,
     body: 'Cześć',
+    kind: 'text',
+    meta: null,
     createdAt: T2,
     editedAt: null,
     deletedAt: null,
@@ -97,7 +106,7 @@ describe('applyIncomingMessage', () => {
       id: 'm1',
       authorId: PEER,
       body: 'Cześć',
-      createdAt: T3,
+      kind: 'text', createdAt: T3,
       deletedAt: null,
     });
   });
@@ -141,7 +150,7 @@ describe('applyIncomingMessage', () => {
       conversation({
         id: 'c1',
         lastMessageAt: T3,
-        lastMessage: { id: 'm9', authorId: PEER, body: 'Nowsza', createdAt: T3, deletedAt: null },
+        lastMessage: { id: 'm9', authorId: PEER, body: 'Nowsza', kind: 'text', createdAt: T3, deletedAt: null },
       }),
     ];
     const next = applyIncomingMessage(list, message({ id: 'm1', createdAt: T1 }), {
@@ -159,7 +168,7 @@ describe('applyMessageUpdate', () => {
     conversation({
       id: 'c1',
       lastMessageAt: T2,
-      lastMessage: { id: 'm1', authorId: PEER, body: 'Cześć', createdAt: T2, deletedAt: null },
+      lastMessage: { id: 'm1', authorId: PEER, body: 'Cześć', kind: 'text', createdAt: T2, deletedAt: null },
       unreadCount: 2,
     }),
   ];
@@ -170,7 +179,7 @@ describe('applyMessageUpdate', () => {
       id: 'm1',
       authorId: PEER,
       body: '',
-      createdAt: T2,
+      kind: 'text', createdAt: T2,
       deletedAt: T3,
     });
     // Edycja nie jest nową wiadomością — licznik zostaje.
@@ -301,5 +310,101 @@ describe('sygnały „pisze…"', () => {
       { userId: 'user-c', expiresAt: 9000 },
     ];
     expect(typingUserIds(entries, 5000)).toEqual(['user-c']);
+  });
+});
+
+// ---- Reakcje -----------------------------------------------------------------
+
+describe('reakcje', () => {
+  const r = (userId: string, emoji: string, createdAt: string): ChatReaction => ({
+    userId,
+    emoji,
+    createdAt,
+  });
+  const event = (userId: string, emoji: string | null, createdAt = T3) => ({
+    messageId: 'm1',
+    conversationId: 'conv-1',
+    userId,
+    emoji,
+    createdAt,
+  });
+
+  it('mergeReactions podmienia listę wiadomości i zachowuje referencję bez zmian', () => {
+    const base: ChatReactionMap = { m1: [r(PEER, '👍', T1)] };
+    expect(mergeReactions(base, { m1: [r(PEER, '👍', T1)] })).toBe(base);
+    expect(mergeReactions(base, { m2: [] })).toBe(base);
+    const next = mergeReactions(base, { m1: [r(SELF, '❤️', T2), r(PEER, '👍', T1)], m2: [] });
+    expect(next).not.toBe(base);
+    expect(next.m1.map((x) => x.userId)).toEqual([PEER, SELF]);
+    // Nieznana wiadomość z pustą listą nie zaśmieca mapy (`?? []` w widoku).
+    expect(next.m2).toBeUndefined();
+    // Pusta lista dla ZNANEJ wiadomości jest informacją (ktoś zdjął ostatnią).
+    expect(mergeReactions(next, { m1: [] }).m1).toEqual([]);
+  });
+
+  it('applyReactionEvent: ustawia, podmienia, zdejmuje; powtórka = ta sama referencja', () => {
+    const empty: ChatReactionMap = {};
+    const set = applyReactionEvent(empty, event(PEER, '👍'));
+    expect(set.m1).toEqual([r(PEER, '👍', T3)]);
+    expect(applyReactionEvent(set, event(PEER, '👍'))).toBe(set);
+    const replaced = applyReactionEvent(set, event(PEER, '❤️'));
+    expect(replaced.m1).toEqual([r(PEER, '❤️', T3)]);
+    const removed = applyReactionEvent(replaced, event(PEER, null));
+    expect(removed.m1).toEqual([]);
+    expect(applyReactionEvent(removed, event(PEER, null))).toBe(removed);
+    expect(applyReactionEvent(removed, event('', '👍'))).toBe(removed);
+  });
+
+  it('applyReactionEvent ignoruje spóźnione echo starsze niż znany wpis tej osoby', () => {
+    const fresh = applyReactionEvent({}, event(PEER, '❤️', T2));
+    // Starsze „ustaw" i starsze „zdejmij" przegrywają z nowszym stanem.
+    expect(applyReactionEvent(fresh, event(PEER, '👍', T1))).toBe(fresh);
+    expect(applyReactionEvent(fresh, event(PEER, null, T1))).toBe(fresh);
+    // Nowsze zdjęcie działa.
+    expect(applyReactionEvent(fresh, event(PEER, null, T3)).m1).toEqual([]);
+  });
+
+  it('applyReactionEvent trzyma porządek po czasie dodania', () => {
+    const map = applyReactionEvent(
+      applyReactionEvent({}, event(SELF, '👍', T2)),
+      event(PEER, '👍', T1),
+    );
+    expect(map.m1.map((x) => x.userId)).toEqual([PEER, SELF]);
+  });
+
+  it('groupReactions: najliczniejsze pierwsze, remis po najwcześniejszej, flaga mine', () => {
+    const groups = groupReactions(
+      [r(PEER, '❤️', T1), r(SELF, '👍', T2), r('u3', '👍', T3), r('u4', '😆', T1)],
+      SELF,
+    );
+    expect(groups.map((g) => [g.emoji, g.count, g.mine])).toEqual([
+      ['👍', 2, true],
+      ['❤️', 1, false],
+      ['😆', 1, false],
+    ]);
+    expect(groups[0].userIds).toEqual([SELF, 'u3']);
+    expect(groupReactions([], SELF)).toEqual([]);
+  });
+
+  it('ownReaction i nextReactionIntent: to samo zdejmuje, inne podmienia', () => {
+    const list = [r(SELF, '👍', T1), r(PEER, '❤️', T2)];
+    expect(ownReaction(list, SELF)).toBe('👍');
+    expect(ownReaction(list, 'nikt')).toBeNull();
+    expect(ownReaction(list, null)).toBeNull();
+    expect(nextReactionIntent(list, SELF, '👍')).toBeNull();
+    expect(nextReactionIntent(list, SELF, '❤️')).toBe('❤️');
+    expect(nextReactionIntent([], SELF, '😆')).toBe('😆');
+  });
+});
+
+describe('applyConversationTheme', () => {
+  it('podmienia motyw jednej rozmowy; ta sama wartość i obca rozmowa = ta sama referencja', () => {
+    const list = [conversation({ id: 'a' }), conversation({ id: 'b' })];
+    const next = applyConversationTheme(list, 'a', 'las');
+    expect(next).not.toBe(list);
+    expect(next[0].themeId).toBe('las');
+    expect(next[1]).toBe(list[1]);
+    expect(applyConversationTheme(next, 'a', 'las')).toBe(next);
+    expect(applyConversationTheme(next, 'nie-ma', 'las')).toBe(next);
   });
 });
