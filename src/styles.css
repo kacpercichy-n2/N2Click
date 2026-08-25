@@ -12993,6 +12993,12 @@ a.toggle-btn {
   z-index: 3;
   bottom: calc(100% + var(--n2-space-1));
   left: 0;
+  /* Szerokość z TREŚCI, nie z kontenera: wiersz `.n2chat-msg` jest wąski jak
+     dymek, a element absolutny bez `width` kurczyłby się do niego i układał
+     emoji w kilku rzędach (przegląd Codex 2026-08-25). `--bar-shift` ustawia
+     `ReactionBar` po pomiarze, żeby pasek nie wychodził poza listę. */
+  width: max-content;
+  translate: var(--bar-shift, 0px) 0;
   display: inline-flex;
   align-items: center;
   gap: 2px;
@@ -13197,7 +13203,7 @@ a.toggle-btn {
   .n2chat-react-bar {
     left: 50%;
     right: auto;
-    translate: -50% 0;
+    translate: calc(-50% + var(--bar-shift, 0px)) 0;
     max-width: calc(100vw - 2 * var(--n2-space-4));
     flex-wrap: wrap;
     justify-content: center;

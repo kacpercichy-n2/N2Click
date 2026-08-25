@@ -13,7 +13,7 @@
 //     toggle własnej reakcji tym emoji. Wybrane emoji jest dekoracją przy
 //     etykiecie, więc siedzi w `aria-hidden`.
 //   * Animacje tylko `transform`/`opacity`; `useReducedMotion` gasi ruch.
-import { useEffect, useRef, type KeyboardEvent, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, type KeyboardEvent, type RefObject } from 'react';
 import { AnimatePresence, m, useReducedMotion } from 'motion/react';
 import { Plus } from '../../components/icons';
 import { useOverlay } from '../../components/useOverlay';
@@ -48,6 +48,22 @@ export function ReactionBar({
   const barRef = useRef<HTMLDivElement>(null);
 
   useOverlay({ open: true, onClose, overlayRef: barRef, triggerRef });
+
+  // Dosunięcie w poziomie: pasek jest kotwiczony do dymka, a dymek bywa przy
+  // krawędzi listy — bez tego pasek wychodziłby poza okno (overflow hidden).
+  // Jeden odczyt geometrii przed malowaniem, zapis jednej zmiennej CSS.
+  useLayoutEffect(() => {
+    const bar = barRef.current;
+    const list = bar?.closest<HTMLElement>('.n2chat-messages');
+    if (!bar || !list) return;
+    const barRect = bar.getBoundingClientRect();
+    const listRect = list.getBoundingClientRect();
+    const margin = 8;
+    let shift = 0;
+    if (barRect.left < listRect.left + margin) shift = listRect.left + margin - barRect.left;
+    else if (barRect.right > listRect.right - margin) shift = listRect.right - margin - barRect.right;
+    if (shift !== 0) bar.style.setProperty('--bar-shift', `${Math.round(shift)}px`);
+  }, []);
 
   // Fokus wchodzi na pierwszy element paska (długie przytrzymanie na dotyku
   // nie daje fokusa, a klawiatura ma mieć od razu gdzie iść).
