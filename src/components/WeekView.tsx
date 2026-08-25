@@ -4126,6 +4126,21 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                       aria-hidden
                     />
                   )}
+                  {/* Wydarzenia z Kalendarza Google: warstwa tylko do odczytu,
+                      renderowana PRZED spotkaniami N2Hub (kolejność w drzewie =
+                      kolejność malowania przy tym samym z-index), więc spotkanie
+                      N2Hub zawsze leży na wierzchu. Ujemny z-index odpada:
+                      schowałby kafel pod tłem kolumny (kolumna nie tworzy
+                      kontekstu warstw). Nie wchodzi do pakowania kolumn ani do
+                      żadnej ścieżki wskaźnika (inwariant 7). */}
+                  {gcal.enabled &&
+                    gcal.occurrencesFor(d).map((occ) => (
+                      <GoogleEventBlock
+                        key={`gcal-${occ.event.id}-${d}`}
+                        occ={occ}
+                        onOpen={handleOpenGoogleEvent}
+                      />
+                    ))}
                   {/* Spotkania pozostają addytywną warstwą prezentacyjną dla
                       planowania, ale ich własny kafel obsługuje potwierdzane
                       przeciąganie. Render przed blokami zadań zachowuje wspólne
@@ -4173,18 +4188,6 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                       />
                     );
                   })}
-                  {/* Wydarzenia z Kalendarza Google: warstwa tylko do odczytu,
-                      renderowana PO spotkaniach N2Hub, ale z niższym z-index —
-                      nie wchodzi do pakowania kolumn ani do żadnej ścieżki
-                      wskaźnika (inwariant 7). Pusta lista => zero węzłów. */}
-                  {gcal.enabled &&
-                    gcal.occurrencesFor(d).map((occ) => (
-                      <GoogleEventBlock
-                        key={`gcal-${occ.event.id}-${d}`}
-                        occ={occ}
-                        onOpen={handleOpenGoogleEvent}
-                      />
-                    ))}
                   {/* Recurring-task occurrences: additive presentational overlay
                       rendered BEFORE the real blocks so they always paint behind
                       them (same paint step, tree order) without touching the

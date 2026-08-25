@@ -3183,8 +3183,8 @@ a.toggle-btn {
 /* ---------- Kalendarz Google (warstwa tylko do odczytu) ----------
    Kafel wydarzenia z Google używa geometrii `.week-event-block`, ale własnego
    koloru i kreskowanej ramki, żeby od razu było widać „to nie jest spotkanie
-   N2Hub". Leży POD spotkaniami N2Hub (z-index -1 względem `.week-event-block`
-   z 0) i nie wchodzi do pakowania kolumn, więc nachodzące spotkanie N2Hub
+   N2Hub". Leży POD spotkaniami N2Hub (wcześniej w drzewie przy tym samym
+   z-index) i nie wchodzi do pakowania kolumn, więc nachodzące spotkanie N2Hub
    zostaje na wierzchu i czytelne. `gcal-busy` = wiersz zamaskowany widokiem
    bazy („Zajęty"): przygaszony, bez tytułu do czytania. */
 :root {
@@ -3194,7 +3194,10 @@ a.toggle-btn {
 .week-event-block.gcal {
   --event-accent: var(--gcal-accent);
   --event-accent-soft: var(--gcal-accent-soft);
-  z-index: -1;
+  /* Ten sam z-index co spotkania N2Hub; „pod spodem" daje kolejność w drzewie
+     (kafel Google renderuje się przed nimi). Ujemna wartość chowała kafel pod
+     tłem kolumny dnia (zgłoszenie 2026-08-25). */
+  z-index: 0;
   right: 6px;
   border-style: dashed;
   border-left-style: solid;
