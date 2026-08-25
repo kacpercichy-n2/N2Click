@@ -90,6 +90,20 @@ export function changelogUnreadCount(
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-08-25-reakcje-czat',
+    dateFrom: '2026-08-25',
+    dateTo: '2026-08-25',
+    summary: 'Reakcje emoji na wiadomości w czacie — jak w Messengerze.',
+    items: [
+      {
+        area: 'Czat',
+        feature: 'Reakcje emoji',
+        description:
+          'Najedź na wiadomość i kliknij uśmiech (na telefonie przytrzymaj dymek), żeby zareagować jednym z siedmiu emoji albo dowolnym z pełnej listy. Masz jedną reakcję na wiadomość: kolejne emoji ją podmienia, to samo zdejmuje. Reakcje innych widać na żywo pod dymkiem, z liczbą i listą osób po najechaniu.',
+      },
+    ],
+  },
+  {
     id: '2026-08-24-wykonane-a-gotowe',
     dateFrom: '2026-08-24',
     dateTo: '2026-08-24',

@@ -18,11 +18,14 @@ import { useOverlay } from '../../components/useOverlay';
 import { emojiLabel, filterEmoji } from './chatEmoji';
 
 export function ChatEmojiPopover({
+  label = 'Emoji',
   recent,
   triggerRef,
   onClose,
   onPick,
 }: {
+  /** Nazwa dialogu dla czytnika ekranu („Emoji" albo „Wybierz reakcję"). */
+  label?: string;
   /** Ostatnio użyte znaki (pamięć sesji okna rozmowy). */
   recent: readonly string[];
   triggerRef: RefObject<HTMLElement>;
@@ -55,7 +58,7 @@ export function ChatEmojiPopover({
       ref={panelRef}
       className="n2chat-inpop"
       role="dialog"
-      aria-label="Emoji"
+      aria-label={label}
       initial={{ opacity: 0, y: reduceMotion ? 0 : 8 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: reduceMotion ? 0 : 8 }}

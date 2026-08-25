@@ -11,11 +11,16 @@ import {
   loadMessagesPage,
   loadMessagesSince,
   loadOverview,
+  loadReactions,
   markRead,
   openDirect,
+  reactionsFromMessageRows,
+  reactionsFromRows,
   sendMessage,
+  setReaction,
   toChatConversation,
   toChatMessage,
+  toChatReactionEvent,
   type ChatDb,
   type ChatDbError,
   type ChatMessagesQuery,
@@ -50,6 +55,8 @@ interface FakeCall {
   directs: string[];
   messages: ChatRow[];
   groups: Array<{ title: string; memberIds: string[] }>;
+  reactionQueries: Array<{ conversationId: string; messageIds: string[] }>;
+  reactions: Array<{ messageId: string; emoji: string | null }>;
 }
 
 class FakeChatDb implements ChatDb {
@@ -65,6 +72,10 @@ class FakeChatDb implements ChatDb {
   readError: ChatDbError | null = null;
   createdGroupId: string | null = CONV;
   createGroupError: ChatDbError | null = null;
+  reactionRows: ChatRow[] = [];
+  reactionsError: ChatDbError | null = null;
+  setReactionRows: ChatRow[] = [];
+  setReactionError: ChatDbError | null = null;
 
   calls: FakeCall = {
     reads: [],
@@ -72,6 +83,8 @@ class FakeChatDb implements ChatDb {
     directs: [],
     messages: [],
     groups: [],
+    reactionQueries: [],
+    reactions: [],
   };
 
   private next<T>(list: T[], index: number): T {
@@ -110,6 +123,18 @@ class FakeChatDb implements ChatDb {
   async updateLastReadAt(conversationId: string, userId: string, atIso: string) {
     this.calls.reads.push({ conversationId, userId, atIso });
     return { error: this.readError };
+  }
+
+  async selectReactions(conversationId: string, messageIds: string[]) {
+    this.calls.reactionQueries.push({ conversationId, messageIds });
+    if (this.reactionsError) return { rows: [], error: this.reactionsError };
+    return { rows: this.reactionRows, error: null };
+  }
+
+  async setReaction(messageId: string, emoji: string | null) {
+    this.calls.reactions.push({ messageId, emoji });
+    if (this.setReactionError) return { rows: [], error: this.setReactionError };
+    return { rows: this.setReactionRows, error: null };
   }
 }
 
@@ -296,7 +321,7 @@ describe('kursor paginacji', () => {
       ascending: true,
       limit: 50,
     });
-    expect(result.ok && result.value.map((m) => m.id)).toEqual(['m9']);
+    expect(result.ok && result.value.messages.map((m) => m.id)).toEqual(['m9']);
   });
 
   it('loadMessagesSince bez kursora spada do pierwszej strony', async () => {
@@ -304,7 +329,7 @@ describe('kursor paginacji', () => {
     db.messagePages = [[messageRow()]];
     const result = await loadMessagesSince(db, CONV, null);
     expect(db.calls.queries[0].ascending).toBe(false);
-    expect(result.ok && result.value.length).toBe(1);
+    expect(result.ok && result.value.messages.length).toBe(1);
   });
 });
 
@@ -447,5 +472,123 @@ describe('markRead', () => {
       ok: false,
       error: CHAT_MESSAGES.markRead,
     });
+  });
+});
+
+// ---- Reakcje -----------------------------------------------------------------
+
+describe('reakcje: mapowanie', () => {
+  it('reactionsFromMessageRows daje wpis KAŻDEJ wiadomości strony, także pusty', () => {
+    const map = reactionsFromMessageRows([
+      messageRow({
+        id: 'm1',
+        message_reactions: [
+          { user_id: PEER, emoji: '👍', created_at: T1 },
+          { user_id: 'zly', emoji: '', created_at: T1 },
+        ],
+      }),
+      messageRow({ id: 'm2', message_reactions: [] }),
+      messageRow({ id: 'm3' }),
+    ]);
+    expect(map).toEqual({
+      m1: [{ userId: PEER, emoji: '👍', createdAt: T1 }],
+      m2: [],
+      m3: [],
+    });
+  });
+
+  it('reactionsFromRows wypełnia pustą listą wiadomości bez wierszy', () => {
+    const map = reactionsFromRows(
+      [
+        { message_id: 'm1', user_id: PEER, emoji: '❤️', created_at: T1 },
+        { message_id: 'm1', user_id: SELF, emoji: '👍', created_at: T2 },
+        { message_id: 'obca', user_id: SELF, emoji: '👍', created_at: T2 },
+      ],
+      ['m1', 'm2'],
+    );
+    expect(map.m1).toHaveLength(2);
+    expect(map.m2).toEqual([]);
+    expect(map.obca).toHaveLength(1);
+  });
+
+  it('toChatReactionEvent czyta kopertę SDK i ładunek na wierzchu', () => {
+    const payload = {
+      messageId: 'm1',
+      conversationId: CONV,
+      userId: PEER,
+      emoji: '👍',
+      prevEmoji: null,
+      op: 'set',
+      createdAt: T1,
+    };
+    expect(toChatReactionEvent({ type: 'broadcast', event: 'reaction', payload })).toEqual({
+      messageId: 'm1',
+      conversationId: CONV,
+      userId: PEER,
+      emoji: '👍',
+      createdAt: T1,
+    });
+    expect(toChatReactionEvent(payload)?.emoji).toBe('👍');
+    expect(toChatReactionEvent({ payload: { ...payload, emoji: null, op: 'remove' } })?.emoji).toBe(
+      null,
+    );
+    expect(toChatReactionEvent({ payload: { ...payload, messageId: '' } })).toBeNull();
+    expect(toChatReactionEvent('śmieci')).toBeNull();
+  });
+});
+
+describe('reakcje: operacje', () => {
+  it('loadMessagesPage zwraca reakcje osadzone w wierszach', async () => {
+    const db = new FakeChatDb();
+    db.messagePages = [
+      [messageRow({ id: 'm1', message_reactions: [{ user_id: PEER, emoji: '👍', created_at: T1 }] })],
+    ];
+    const page = await loadMessagesPage(db, CONV, null);
+    expect(page.ok && page.value.reactions.m1).toEqual([{ userId: PEER, emoji: '👍', createdAt: T1 }]);
+  });
+
+  it('loadReactions pyta o wskazane wiadomości i pomija puste id', async () => {
+    const db = new FakeChatDb();
+    db.reactionRows = [{ message_id: 'm1', user_id: PEER, emoji: '👍', created_at: T1 }];
+    const result = await loadReactions(db, CONV, ['m1', '', 'm2']);
+    expect(db.calls.reactionQueries).toEqual([{ conversationId: CONV, messageIds: ['m1', 'm2'] }]);
+    expect(result.ok && result.value).toEqual({
+      m1: [{ userId: PEER, emoji: '👍', createdAt: T1 }],
+      m2: [],
+    });
+    expect((await loadReactions(db, CONV, [])).ok).toBe(true);
+    expect(db.calls.reactionQueries).toHaveLength(1);
+  });
+
+  it('setReaction wysyła stan docelowy i mapuje odpowiedź RPC', async () => {
+    const db = new FakeChatDb();
+    db.setReactionRows = [{ user_id: SELF, emoji: '❤️', created_at: T2 }];
+    const set = await setReaction(db, 'm1', '❤️');
+    expect(db.calls.reactions).toEqual([{ messageId: 'm1', emoji: '❤️' }]);
+    expect(set.ok && set.value).toEqual([{ userId: SELF, emoji: '❤️', createdAt: T2 }]);
+    db.setReactionRows = [];
+    const removed = await setReaction(db, 'm1', null);
+    expect(db.calls.reactions[1]).toEqual({ messageId: 'm1', emoji: null });
+    expect(removed.ok && removed.value).toEqual([]);
+  });
+
+  it('setReaction odrzuca zły znak lokalnie i tłumaczy 23503 na polski komunikat', async () => {
+    const db = new FakeChatDb();
+    expect(await setReaction(db, 'm1', '')).toEqual({
+      ok: false,
+      error: CHAT_MESSAGES.reactUnsupported,
+    });
+    expect(await setReaction(db, 'm1', '👍'.repeat(11))).toEqual({
+      ok: false,
+      error: CHAT_MESSAGES.reactUnsupported,
+    });
+    expect(db.calls.reactions).toHaveLength(0);
+    db.setReactionError = { code: '23503', message: 'fk' };
+    expect(await setReaction(db, 'm1', '🦄')).toEqual({
+      ok: false,
+      error: CHAT_MESSAGES.reactUnsupported,
+    });
+    db.setReactionError = { code: '42501', message: 'forbidden' };
+    expect(await setReaction(db, 'm1', '👍')).toEqual({ ok: false, error: CHAT_MESSAGES.react });
   });
 });

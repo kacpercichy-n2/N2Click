@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { CHAT_QUICK_REACTIONS } from '../types';
 import { normalizeQuery } from './chatDockView';
 import {
   EMOJI_CATEGORIES,
@@ -210,5 +211,43 @@ describe('replaceEmoticons', () => {
     expect(replaceEmoticons('godz. 12:30')).toBe('godz. 12:30');
     expect(replaceEmoticons('')).toBe('');
     expect(replaceEmoticons('zwykły tekst')).toBe('zwykły tekst');
+  });
+});
+
+// ---- Reakcje: allowlista w bazie = lista pickera ------------------------------
+
+describe('allowlista reakcji (migracja 20260825120000_chat_reactions)', () => {
+  // Ten sam mechanizm co `src/supabase/migrations.test.ts`: statyczny tekst
+  // migracji przez `import.meta.glob(?raw)`, bez żywego Postgresa.
+  const raw = import.meta.glob('../../../supabase/migrations/20260825120000_chat_reactions.sql', {
+    query: '?raw',
+    import: 'default',
+    eager: true,
+  }) as Record<string, string>;
+  const sql = Object.values(raw)[0] ?? '';
+  const block = sql.slice(sql.indexOf('insert into n2click.chat_emoji'), sql.indexOf('on conflict (char)'));
+  const inDb = new Set([...block.matchAll(/\('([^']+)'\)/g)].map((m) => m[1]));
+  const inPicker = new Set(ALL.map((emoji) => emoji.char));
+
+  it('każdy znak pickera jest w allowliście bazy i odwrotnie', () => {
+    expect([...inPicker].filter((c) => !inDb.has(c))).toEqual([]);
+    expect([...inDb].filter((c) => !inPicker.has(c))).toEqual([]);
+    expect(inDb.size).toBe(inPicker.size);
+  });
+
+  it('szybki pasek reakcji używa wyłącznie znaków z listy (unikalnych, ≤10 punktów kodowych)', () => {
+    expect(new Set(CHAT_QUICK_REACTIONS).size).toBe(CHAT_QUICK_REACTIONS.length);
+    for (const emoji of CHAT_QUICK_REACTIONS) {
+      expect(inPicker.has(emoji), `brak w pickerze: ${emoji}`).toBe(true);
+      expect(Array.from(emoji).length).toBeLessThanOrEqual(10);
+    }
+  });
+
+  it('żaden znak listy nie przekracza limitu CHECK (10 punktów kodowych, 40 bajtów)', () => {
+    for (const { char } of ALL) {
+      expect(Array.from(char).length, char).toBeLessThanOrEqual(10);
+      expect(new TextEncoder().encode(char).length, char).toBeLessThanOrEqual(40);
+      expect(char.includes("'"), char).toBe(false);
+    }
   });
 });

@@ -12,6 +12,7 @@ import {
   typingLabel,
   windowSubtitle,
   windowTitle,
+  reactionPillLabel,
 } from './chatWindowView';
 
 const ME = 'u-me';
@@ -239,5 +240,27 @@ describe('pickery kompozytora', () => {
     expect(afterSwitch).toBe('gif');
     expect(dismissPicker(afterSwitch, 'emoji')).toBe('gif');
     expect(dismissPicker(togglePicker('gif', 'emoji'), 'gif')).toBe('emoji');
+  });
+});
+
+describe('reactionPillLabel', () => {
+  const directory = buildDirectory([
+    { id: 'u-ola', firstName: 'Ola', lastName: 'Nowak', email: 'ola@n2.pl' },
+    { id: 'u-marek', firstName: 'Marek', lastName: 'Kowal', email: 'marek@n2.pl' },
+  ]);
+  const labelOf = (emoji: string) => (emoji === '👍' ? 'kciuk w gore' : 'emoji');
+
+  it('składa nazwę emoji, imiona (Ty dla zalogowanego) i licznik', () => {
+    expect(
+      reactionPillLabel(
+        { emoji: '👍', count: 3, mine: true, userIds: ['u-ola', 'u-marek', 'u-self'] },
+        directory,
+        'u-self',
+        labelOf,
+      ),
+    ).toBe('kciuk w gore: Ola, Marek, Ty (3)');
+    expect(
+      reactionPillLabel({ emoji: '❤️', count: 1, mine: false, userIds: ['u-ola'] }, directory, 'u-self', labelOf),
+    ).toBe('emoji: Ola');
   });
 });

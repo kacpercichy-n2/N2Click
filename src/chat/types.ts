@@ -62,6 +62,50 @@ export interface ChatMessage {
 }
 
 /**
+ * Reakcja emoji JEDNEJ osoby na JEDNĄ wiadomość (`n2click.message_reactions`).
+ * Model Messengera: osoba ma na wiadomości najwyżej jedną reakcję — wybór
+ * innego emoji podmienia, ponowny wybór tego samego zdejmuje.
+ */
+export interface ChatReaction {
+  userId: string;
+  /** Znak emoji dokładnie w postaci z `chatEmoji.ts` (allowlista `chat_emoji`). */
+  emoji: string;
+  createdAt: string;
+}
+
+/** Reakcje otwartej rozmowy: id wiadomości → lista (rosnąco po `createdAt`). */
+export type ChatReactionMap = Readonly<Record<string, readonly ChatReaction[]>>;
+
+/**
+ * Zdarzenie `reaction` z kanału rozmowy (`realtime.send` w RPC
+ * `chat_set_reaction`). Niesie PRZYPISANIE (osoba → emoji), nigdy liczniki:
+ * powtórka, echo własnej zmiany i dowolna kolejność dojścia dają ten sam stan.
+ */
+export interface ChatReactionEvent {
+  messageId: string;
+  conversationId: string;
+  userId: string;
+  /** Nowe emoji; null = reakcja zdjęta. */
+  emoji: string | null;
+  createdAt: string;
+}
+
+/** Jedna „pigułka” pod dymkiem: emoji, liczba i kto (dla etykiety). */
+export interface ChatReactionGroup {
+  emoji: string;
+  count: number;
+  /** Zalogowany jest wśród reagujących (pigułka podświetlona, `aria-pressed`). */
+  mine: boolean;
+  userIds: string[];
+}
+
+/**
+ * Szybki pasek reakcji (7 domyślnych Messengera + „+” w UI). Każdy znak MUSI
+ * być w `EMOJI_CATEGORIES` — pilnuje tego `chatEmoji.test.ts`.
+ */
+export const CHAT_QUICK_REACTIONS: readonly string[] = ['❤️', '😆', '😮', '😢', '😡', '👍', '👎'];
+
+/**
  * Kursor paginacji wiadomości. Porządek listy to `(created_at, id)` — sam
  * `created_at` nie wystarcza, bo dwie wiadomości mogą trafić w ten sam
  * mikrosekundowy znacznik i wtedy strona gubiłaby albo dublowała wiersz.
@@ -74,6 +118,8 @@ export interface ChatMessageCursor {
 /** Strona wiadomości: zawsze rosnąco (najstarsza pierwsza), gotowa dla UI. */
 export interface ChatMessagesPage {
   messages: ChatMessage[];
+  /** Reakcje wiadomości tej strony (osadzenie `message_reactions` w select). */
+  reactions: ChatReactionMap;
   /** `true` gdy serwer zwrócił pełną stronę — są starsze wiadomości. */
   hasMore: boolean;
   /** Kursor do pobrania KOLEJNEJ (starszej) strony; null gdy nie ma czego. */
@@ -112,6 +158,8 @@ export const CHAT_MESSAGES = {
   open: 'Nie udało się otworzyć rozmowy.',
   create: 'Nie udało się utworzyć grupy.',
   markRead: 'Nie udało się zapisać odczytu rozmowy.',
+  react: 'Nie udało się zapisać reakcji.',
+  reactUnsupported: 'Tego emoji nie da się użyć jako reakcji.',
   emptyBody: 'Wiadomość nie może być pusta.',
   tooLongBody: `Wiadomość może mieć najwyżej ${CHAT_MESSAGE_MAX_LENGTH} znaków.`,
   emptyTitle: 'Podaj nazwę grupy.',

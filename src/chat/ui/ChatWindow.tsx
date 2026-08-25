@@ -22,6 +22,13 @@
 //     `<img>`, 1–3 emoji większym stopniem, nowe linie zachowane w CSS.
 //   * Oba pickery (emoji, GIF) są dziećmi kompozytora — jeden naraz, bo dzielą
 //     to samo miejsce nad nim.
+//   * REAKCJE (model Messengera, jedna na osobę): desktop pokazuje przy dymku
+//     przycisk „Zareaguj" na hover/fokus, dotyk otwiera pasek DŁUGIM
+//     PRZYTRZYMANIEM dymka (400 ms, anulowane ruchem > 8 px). „+” w pasku
+//     otwiera ten sam `ChatEmojiPopover` w slocie kompozytora w trybie
+//     „wybierz jedno" (`picker === 'react'`, cel w `reactTargetRef`). Pigułki
+//     pod dymkiem to toggle własnej reakcji tym emoji. Stan i zapis niesie
+//     `ChatProvider.toggleReaction` (optymistycznie + RPC).
 //   * SZKIC JEST WŁASNOŚCIĄ DOKU (`draft` / `onDraftChange`). Skoro
 //     minimalizacja odmontowuje okno, stan lokalny gubiłby wpisany tekst —
 //     `ChatDock` trzyma szkice per rozmowa i oddaje je przy ponownym otwarciu.
@@ -29,16 +36,26 @@
 //     `onDraftRestore`. Odwrotna kolejność (kasowanie po odpowiedzi) zmuszałaby
 //     do zgadywania po treści, co w polu należy do wysyłki — a odpowiedź wraca
 //     i po zamknięciu okna, i po dopisaniu kolejnych słów.
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  Fragment,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import { AnimatePresence, m, useReducedMotion } from 'motion/react';
-import { ChevronDown, ImagePlay, Send, Smile, X } from '../../components/icons';
+import { ChevronDown, ImagePlay, Send, Smile, SmilePlus, X } from '../../components/icons';
 import { todayStr } from '../../utils/dates';
 import { useChat } from '../ChatProvider';
 import { CHAT_MESSAGE_MAX_LENGTH, type ChatConversation } from '../types';
 import { ChatAvatar } from './ChatAvatar';
 import { ChatEmojiPopover } from './ChatEmojiPopover';
 import { ChatGifPopover } from './ChatGifPopover';
-import { insertAtCaret, pushRecentEmoji, replaceEmoticons } from './chatEmoji';
+import { ReactionBar, ReactionPills } from './ChatReactions';
+import { emojiLabel, insertAtCaret, pushRecentEmoji, replaceEmoticons } from './chatEmoji';
+import { groupReactions, ownReaction } from '../chatState';
 import { klipyApiKey } from './chatGifs';
 import {
   conversationInitials,
@@ -59,6 +76,7 @@ import {
   dismissPicker,
   isNearBottom,
   isSendKey,
+  reactionPillLabel,
   togglePicker,
   typingLabel,
   windowSubtitle,
@@ -70,6 +88,11 @@ import { useChatKeyboardInset } from './useChatKeyboardInset';
 
 /** Maksymalna wysokość auto-rosnącego pola treści (potem własny scroll). */
 const COMPOSER_MAX_HEIGHT = 120;
+
+/** Długie przytrzymanie dymka na dotyku otwiera pasek reakcji. */
+const LONG_PRESS_MS = 400;
+/** Ruch palca powyżej tego progu to przewijanie, nie przytrzymanie. */
+const LONG_PRESS_SLOP_PX = 8;
 
 /**
  * Treść jednego dymka. GIF i „jumbo" emoji rozpoznaje `messageContentKind`,
@@ -148,6 +171,16 @@ export function ChatWindow({
   const [picker, setPicker] = useState<ComposerPicker>('none');
   /** Ostatnio użyte emoji — PAMIĘĆ SESJI okna, celowo nie localStorage (D6). */
   const [recentEmoji, setRecentEmoji] = useState<readonly string[]>([]);
+  /** Id wiadomości z otwartym paskiem reakcji; null = żaden. */
+  const [reactionBarFor, setReactionBarFor] = useState<string | null>(null);
+  /** Cel pełnego pickera w trybie reakcji (`picker === 'react'`). */
+  const reactTargetRef = useRef<string | null>(null);
+  /** Przycisk „Zareaguj", który otworzył pasek (powrót fokusa po zamknięciu). */
+  const reactTriggerRef = useRef<HTMLButtonElement | null>(null);
+  /** Trwające długie przytrzymanie na dotyku (timer + punkt startu). */
+  const longPressRef = useRef<{ timer: ReturnType<typeof setTimeout>; x: number; y: number } | null>(
+    null,
+  );
   const windowRef = useRef<HTMLElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -206,8 +239,18 @@ export function ChatWindow({
   // NIE zerujemy: należy do doku i jest już wybrany po rozmowie.
   useEffect(() => {
     setPicker('none');
+    setReactionBarFor(null);
+    reactTargetRef.current = null;
     stickRef.current = true;
   }, [conversation.id]);
+
+  // Sprzątanie timera długiego przytrzymania przy odmontowaniu okna.
+  useEffect(
+    () => () => {
+      if (longPressRef.current !== null) clearTimeout(longPressRef.current.timer);
+    },
+    [],
+  );
 
   // Fokus wchodzi do kompozytora przy otwarciu okna.
   useEffect(() => {
@@ -266,6 +309,64 @@ export function ChatWindow({
     caretRef.current = next.caret;
     onDraftChange(next.value);
     setRecentEmoji((list) => pushRecentEmoji(list, char));
+  };
+
+  // ---- Reakcje ---------------------------------------------------------------
+
+  const openReactionBar = (messageId: string, trigger: HTMLButtonElement | null): void => {
+    reactTriggerRef.current = trigger;
+    setReactionBarFor(messageId);
+  };
+
+  /** Emoji z paska: zapis + zamknięcie paska (jedna reakcja, nie seria). */
+  const pickReaction = (messageId: string, emoji: string): void => {
+    chat.toggleReaction(messageId, emoji);
+    setReactionBarFor(null);
+  };
+
+  /** „+” w pasku: pełny picker w slocie kompozytora, w trybie „wybierz jedno". */
+  const openReactionPicker = (messageId: string): void => {
+    reactTargetRef.current = messageId;
+    setReactionBarFor(null);
+    setPicker('react');
+  };
+
+  const pickReactionFromPicker = (char: string): void => {
+    const target = reactTargetRef.current;
+    reactTargetRef.current = null;
+    setPicker('none');
+    if (target !== null) chat.toggleReaction(target, char);
+    setRecentEmoji((list) => pushRecentEmoji(list, char));
+  };
+
+  // Długie przytrzymanie WYŁĄCZNIE na dotyku: mysz ma przycisk „Zareaguj" na
+  // hover, a przytrzymanie lewego klawisza to zaznaczanie tekstu.
+  const startLongPress = (event: ReactPointerEvent<HTMLElement>, messageId: string): void => {
+    if (event.pointerType !== 'touch') return;
+    cancelLongPress();
+    longPressRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+      timer: setTimeout(() => {
+        longPressRef.current = null;
+        openReactionBar(messageId, null);
+      }, LONG_PRESS_MS),
+    };
+  };
+  const moveLongPress = (event: ReactPointerEvent<HTMLElement>): void => {
+    const pending = longPressRef.current;
+    if (pending === null) return;
+    if (
+      Math.abs(event.clientX - pending.x) > LONG_PRESS_SLOP_PX ||
+      Math.abs(event.clientY - pending.y) > LONG_PRESS_SLOP_PX
+    ) {
+      cancelLongPress();
+    }
+  };
+  const cancelLongPress = (): void => {
+    if (longPressRef.current === null) return;
+    clearTimeout(longPressRef.current.timer);
+    longPressRef.current = null;
   };
 
   /** Wysłanie GIF-a: adres jest CAŁĄ treścią wiadomości, szkic zostaje nietknięty. */
@@ -389,23 +490,79 @@ export function ChatWindow({
               {item.showAuthor && <span className="n2chat-author">{item.authorName}</span>}
               {item.messages.map((message) => {
                 const kind = message.deleted ? 'text' : messageContentKind(message.body);
+                const reactions = chat.reactions[message.id] ?? [];
+                const groups = message.deleted ? [] : groupReactions(reactions, chat.selfId);
+                const barOpen = reactionBarFor === message.id;
                 return (
-                  <p
+                  <div
                     key={message.id}
-                    className={`n2chat-bubble-msg${message.deleted ? ' is-deleted' : ''}${
-                      kind === 'gif' ? ' is-gif' : ''
+                    className={`n2chat-msg${groups.length > 0 ? ' has-reactions' : ''}${
+                      barOpen ? ' is-reacting' : ''
                     }`}
+                    onPointerDown={
+                      message.deleted ? undefined : (event) => startLongPress(event, message.id)
+                    }
+                    onPointerMove={moveLongPress}
+                    onPointerUp={cancelLongPress}
+                    onPointerCancel={cancelLongPress}
+                    onPointerLeave={cancelLongPress}
+                    onContextMenu={(event) => {
+                      // Menu kontekstowe dotyku wyskakuje w trakcie przytrzymania
+                      // i zabiłoby pasek; mysz (prawy klik) zostaje bez zmian.
+                      if (longPressRef.current !== null || barOpen) event.preventDefault();
+                    }}
                   >
-                    {message.deleted ? (
-                      <span className="n2chat-msg-text">{DELETED_MESSAGE_TEXT}</span>
-                    ) : (
-                      <ChatMessageBody body={message.body} kind={kind} />
+                    <p
+                      className={`n2chat-bubble-msg${message.deleted ? ' is-deleted' : ''}${
+                        kind === 'gif' ? ' is-gif' : ''
+                      }`}
+                    >
+                      {message.deleted ? (
+                        <span className="n2chat-msg-text">{DELETED_MESSAGE_TEXT}</span>
+                      ) : (
+                        <ChatMessageBody body={message.body} kind={kind} />
+                      )}
+                      <span className="n2chat-msg-time">
+                        {message.time}
+                        {message.edited && ' (edytowana)'}
+                      </span>
+                    </p>
+                    {!message.deleted && (
+                      <button
+                        type="button"
+                        className="n2chat-react-btn"
+                        aria-label="Zareaguj na wiadomość"
+                        aria-haspopup="true"
+                        aria-expanded={barOpen}
+                        onClick={(event) =>
+                          barOpen
+                            ? setReactionBarFor(null)
+                            : openReactionBar(message.id, event.currentTarget)
+                        }
+                      >
+                        <SmilePlus size={16} aria-hidden />
+                      </button>
                     )}
-                    <span className="n2chat-msg-time">
-                      {message.time}
-                      {message.edited && ' (edytowana)'}
-                    </span>
-                  </p>
+                    <ReactionPills
+                      groups={groups}
+                      labelOf={(group) =>
+                        reactionPillLabel(group, directory, chat.selfId, emojiLabel)
+                      }
+                      onToggle={(emoji) => chat.toggleReaction(message.id, emoji)}
+                    />
+                    <AnimatePresence>
+                      {barOpen && (
+                        <ReactionBar
+                          key="bar"
+                          own={ownReaction(reactions, chat.selfId)}
+                          triggerRef={reactTriggerRef}
+                          onPick={(emoji) => pickReaction(message.id, emoji)}
+                          onMore={() => openReactionPicker(message.id)}
+                          onClose={() => setReactionBarFor(null)}
+                        />
+                      )}
+                    </AnimatePresence>
+                  </div>
                 );
               })}
             </div>
@@ -422,6 +579,16 @@ export function ChatWindow({
               triggerRef={emojiTriggerRef}
               onClose={() => closePicker('emoji')}
               onPick={insertEmoji}
+            />
+          )}
+          {picker === 'react' && (
+            <ChatEmojiPopover
+              key="react"
+              label="Wybierz reakcję"
+              recent={recentEmoji}
+              triggerRef={emojiTriggerRef}
+              onClose={() => closePicker('react')}
+              onPick={pickReactionFromPicker}
             />
           )}
           {picker === 'gif' && gifKey !== '' && (

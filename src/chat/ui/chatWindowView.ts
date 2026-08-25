@@ -6,6 +6,7 @@ import {
   CHAT_MESSAGE_MAX_LENGTH,
   type ChatConversation,
   type ChatMessage,
+  type ChatReactionGroup,
 } from '../types';
 import {
   conversationTitle,
@@ -212,8 +213,12 @@ export function isNearBottom(
   return box.scrollHeight - box.scrollTop - box.clientHeight <= slack;
 }
 
-/** Który picker kompozytora jest otwarty; najwyżej jeden, bo dzielą miejsce. */
-export type ComposerPicker = 'none' | 'emoji' | 'gif';
+/**
+ * Który picker kompozytora jest otwarty; najwyżej jeden, bo dzielą miejsce.
+ * `react` = ten sam panel emoji, ale w trybie „wybierz jedno" jako reakcja na
+ * wiadomość wskazaną przez okno (nie wstawia do pola treści).
+ */
+export type ComposerPicker = 'none' | 'emoji' | 'gif' | 'react';
 
 /** Panel, który da się otworzyć (czyli wszystko poza „żaden"). */
 export type ComposerPickerId = Exclude<ComposerPicker, 'none'>;
@@ -234,4 +239,25 @@ export function togglePicker(current: ComposerPicker, which: ComposerPickerId): 
  */
 export function dismissPicker(current: ComposerPicker, which: ComposerPickerId): ComposerPicker {
   return current === which ? 'none' : current;
+}
+
+// ---- Reakcje ----------------------------------------------------------------
+
+/**
+ * Etykieta pigułki reakcji dla czytnika ekranu: nazwa emoji, kto zareagował
+ * (imiona, „Ty” dla zalogowanego) i liczba. Nazwa jest STAŁA niezależnie od
+ * stanu — czy to moja reakcja, niesie `aria-pressed`, nie tekst.
+ */
+export function reactionPillLabel(
+  group: ChatReactionGroup,
+  directory: ChatDirectory,
+  selfId: string | null,
+  labelOf: (emoji: string) => string,
+): string {
+  const names = group.userIds.map((userId) =>
+    userId === selfId ? 'Ty' : personFirstName(directory, userId),
+  );
+  const who = names.length > 0 ? `: ${names.join(', ')}` : '';
+  const count = group.count > 1 ? ` (${group.count})` : '';
+  return `${labelOf(group.emoji)}${who}${count}`;
 }

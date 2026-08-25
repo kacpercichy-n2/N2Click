@@ -5,10 +5,15 @@ import { describe, expect, it } from 'vitest';
 import {
   applyIncomingMessage,
   applyMessageUpdate,
+  applyReactionEvent,
   applyTypingSignal,
+  groupReactions,
   markConversationRead,
   mergeMessages,
+  mergeReactions,
   newestMessageCursor,
+  nextReactionIntent,
+  ownReaction,
   oldestMessageCursor,
   pruneTyping,
   removeTyping,
@@ -16,7 +21,7 @@ import {
   totalUnread,
   typingUserIds,
 } from './chatState';
-import type { ChatConversation, ChatMessage } from './types';
+import type { ChatConversation, ChatMessage, ChatReaction, ChatReactionMap } from './types';
 
 const SELF = 'user-self';
 const PEER = 'user-peer';
@@ -301,5 +306,80 @@ describe('sygnały „pisze…"', () => {
       { userId: 'user-c', expiresAt: 9000 },
     ];
     expect(typingUserIds(entries, 5000)).toEqual(['user-c']);
+  });
+});
+
+// ---- Reakcje -----------------------------------------------------------------
+
+describe('reakcje', () => {
+  const r = (userId: string, emoji: string, createdAt: string): ChatReaction => ({
+    userId,
+    emoji,
+    createdAt,
+  });
+  const event = (userId: string, emoji: string | null, createdAt = T3) => ({
+    messageId: 'm1',
+    conversationId: 'conv-1',
+    userId,
+    emoji,
+    createdAt,
+  });
+
+  it('mergeReactions podmienia listę wiadomości i zachowuje referencję bez zmian', () => {
+    const base: ChatReactionMap = { m1: [r(PEER, '👍', T1)] };
+    expect(mergeReactions(base, { m1: [r(PEER, '👍', T1)] })).toBe(base);
+    expect(mergeReactions(base, { m2: [] })).toBe(base);
+    const next = mergeReactions(base, { m1: [r(SELF, '❤️', T2), r(PEER, '👍', T1)], m2: [] });
+    expect(next).not.toBe(base);
+    expect(next.m1.map((x) => x.userId)).toEqual([PEER, SELF]);
+    // Nieznana wiadomość z pustą listą nie zaśmieca mapy (`?? []` w widoku).
+    expect(next.m2).toBeUndefined();
+    // Pusta lista dla ZNANEJ wiadomości jest informacją (ktoś zdjął ostatnią).
+    expect(mergeReactions(next, { m1: [] }).m1).toEqual([]);
+  });
+
+  it('applyReactionEvent: ustawia, podmienia, zdejmuje; powtórka = ta sama referencja', () => {
+    const empty: ChatReactionMap = {};
+    const set = applyReactionEvent(empty, event(PEER, '👍'));
+    expect(set.m1).toEqual([r(PEER, '👍', T3)]);
+    expect(applyReactionEvent(set, event(PEER, '👍'))).toBe(set);
+    const replaced = applyReactionEvent(set, event(PEER, '❤️'));
+    expect(replaced.m1).toEqual([r(PEER, '❤️', T3)]);
+    const removed = applyReactionEvent(replaced, event(PEER, null));
+    expect(removed.m1).toEqual([]);
+    expect(applyReactionEvent(removed, event(PEER, null))).toBe(removed);
+    expect(applyReactionEvent(removed, event('', '👍'))).toBe(removed);
+  });
+
+  it('applyReactionEvent trzyma porządek po czasie dodania', () => {
+    const map = applyReactionEvent(
+      applyReactionEvent({}, event(SELF, '👍', T2)),
+      event(PEER, '👍', T1),
+    );
+    expect(map.m1.map((x) => x.userId)).toEqual([PEER, SELF]);
+  });
+
+  it('groupReactions: najliczniejsze pierwsze, remis po najwcześniejszej, flaga mine', () => {
+    const groups = groupReactions(
+      [r(PEER, '❤️', T1), r(SELF, '👍', T2), r('u3', '👍', T3), r('u4', '😆', T1)],
+      SELF,
+    );
+    expect(groups.map((g) => [g.emoji, g.count, g.mine])).toEqual([
+      ['👍', 2, true],
+      ['❤️', 1, false],
+      ['😆', 1, false],
+    ]);
+    expect(groups[0].userIds).toEqual([SELF, 'u3']);
+    expect(groupReactions([], SELF)).toEqual([]);
+  });
+
+  it('ownReaction i nextReactionIntent: to samo zdejmuje, inne podmienia', () => {
+    const list = [r(SELF, '👍', T1), r(PEER, '❤️', T2)];
+    expect(ownReaction(list, SELF)).toBe('👍');
+    expect(ownReaction(list, 'nikt')).toBeNull();
+    expect(ownReaction(list, null)).toBeNull();
+    expect(nextReactionIntent(list, SELF, '👍')).toBeNull();
+    expect(nextReactionIntent(list, SELF, '❤️')).toBe('❤️');
+    expect(nextReactionIntent([], SELF, '😆')).toBe('😆');
   });
 });

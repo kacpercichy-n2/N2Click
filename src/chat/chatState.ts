@@ -13,6 +13,10 @@ import {
   type ChatMember,
   type ChatMessage,
   type ChatMessageCursor,
+  type ChatReaction,
+  type ChatReactionEvent,
+  type ChatReactionGroup,
+  type ChatReactionMap,
 } from './types';
 
 /**
@@ -267,4 +271,129 @@ export function removeTyping(entries: ChatTypingEntry[], userId: string): ChatTy
 /** Identyfikatory piszących (bez wygasłych), gotowe dla UI. */
 export function typingUserIds(entries: ChatTypingEntry[], now: number): string[] {
   return entries.filter((entry) => entry.expiresAt > now).map((entry) => entry.userId);
+}
+
+// ---- Reakcje emoji -----------------------------------------------------------
+//
+// Stan reakcji to mapa `id wiadomości → lista (osoba, emoji, kiedy)`, trzymana
+// OBOK listy wiadomości: broadcast INSERT/UPDATE wiadomości nie niesie reakcji,
+// więc gdyby siedziały w `ChatMessage`, każde echo edycji by je wymazywało.
+// Każda operacja niżej jest idempotentna (powtórka = ta sama referencja).
+
+function sameReaction(a: ChatReaction, b: ChatReaction): boolean {
+  return a.userId === b.userId && a.emoji === b.emoji && a.createdAt === b.createdAt;
+}
+
+function sameReactionList(a: readonly ChatReaction[], b: readonly ChatReaction[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  return a.every((reaction, index) => sameReaction(reaction, b[index]));
+}
+
+/** Porządek listy reakcji: kolejność dodania, potem osoba (jak `order by` w RPC). */
+function compareReactions(a: ChatReaction, b: ChatReaction): number {
+  const byTime = compareTimestamps(a.createdAt, b.createdAt);
+  if (byTime !== 0) return byTime;
+  return a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0;
+}
+
+/**
+ * Scala autorytatywne listy z serwera (strona wiadomości, odpowiedź RPC,
+ * dociągnięcie po powrocie kanału): wiadomość z `incoming` dostaje DOKŁADNIE
+ * podaną listę. Pusta lista też jest informacją (ktoś zdjął ostatnią reakcję).
+ */
+export function mergeReactions(current: ChatReactionMap, incoming: ChatReactionMap): ChatReactionMap {
+  let next: Record<string, readonly ChatReaction[]> | null = null;
+  for (const [messageId, list] of Object.entries(incoming)) {
+    const previous = current[messageId];
+    const sorted = list.slice().sort(compareReactions);
+    if (previous !== undefined && sameReactionList(previous, sorted)) continue;
+    if (previous === undefined && sorted.length === 0) continue;
+    if (next === null) next = { ...current };
+    next[messageId] = sorted;
+  }
+  return next ?? current;
+}
+
+/**
+ * Zdarzenie `reaction` (broadcast) albo optymistyczna zmiana własna: ustawia
+ * lub zdejmuje przypisanie (osoba → emoji) jednej wiadomości. Model Messengera
+ * (jedna reakcja na osobę), więc wpis tej osoby jest zawsze najwyżej jeden.
+ */
+export function applyReactionEvent(current: ChatReactionMap, event: ChatReactionEvent): ChatReactionMap {
+  if (event.messageId === '' || event.userId === '') return current;
+  const list = current[event.messageId] ?? [];
+  const existing = list.find((reaction) => reaction.userId === event.userId);
+  if (event.emoji === null) {
+    if (!existing) return current;
+    const kept = list.filter((reaction) => reaction.userId !== event.userId);
+    return { ...current, [event.messageId]: kept };
+  }
+  if (existing && existing.emoji === event.emoji) return current;
+  const replaced: ChatReaction = {
+    userId: event.userId,
+    emoji: event.emoji,
+    createdAt: event.createdAt,
+  };
+  const others = list.filter((reaction) => reaction.userId !== event.userId);
+  return {
+    ...current,
+    [event.messageId]: [...others, replaced].sort(compareReactions),
+  };
+}
+
+/**
+ * Pigułki pod dymkiem: grupowanie po emoji, najliczniejsze pierwsze, remis
+ * rozstrzyga najwcześniejsza reakcja (stabilnie między renderami).
+ */
+export function groupReactions(
+  list: readonly ChatReaction[],
+  selfId: string | null,
+): ChatReactionGroup[] {
+  const groups = new Map<string, { group: ChatReactionGroup; firstAt: string }>();
+  for (const reaction of list) {
+    const entry = groups.get(reaction.emoji);
+    if (entry) {
+      entry.group.count += 1;
+      entry.group.userIds.push(reaction.userId);
+      if (reaction.userId === selfId) entry.group.mine = true;
+      continue;
+    }
+    groups.set(reaction.emoji, {
+      firstAt: reaction.createdAt,
+      group: {
+        emoji: reaction.emoji,
+        count: 1,
+        mine: reaction.userId === selfId,
+        userIds: [reaction.userId],
+      },
+    });
+  }
+  return Array.from(groups.values())
+    .sort((a, b) => {
+      if (a.group.count !== b.group.count) return b.group.count - a.group.count;
+      const byTime = compareTimestamps(a.firstAt, b.firstAt);
+      if (byTime !== 0) return byTime;
+      return a.group.emoji < b.group.emoji ? -1 : a.group.emoji > b.group.emoji ? 1 : 0;
+    })
+    .map((entry) => entry.group);
+}
+
+/** Aktualne emoji zalogowanego na wiadomości; null gdy brak reakcji. */
+export function ownReaction(list: readonly ChatReaction[], selfId: string | null): string | null {
+  if (selfId === null) return null;
+  return list.find((reaction) => reaction.userId === selfId)?.emoji ?? null;
+}
+
+/**
+ * Stan DOCELOWY po kliknięciu emoji (toggle liczony po stronie klienta): to
+ * samo co obecne => zdejmij (null), inne albo brak => ustaw. RPC dostaje wynik,
+ * nie „przełącz”, więc podwójne kliknięcie nie robi podwójnego przełączenia.
+ */
+export function nextReactionIntent(
+  list: readonly ChatReaction[],
+  selfId: string | null,
+  clicked: string,
+): string | null {
+  return ownReaction(list, selfId) === clicked ? null : clicked;
 }

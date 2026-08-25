@@ -38,6 +38,8 @@ export {
   Smile,
   ImagePlay,
   Plus,
+  // Czat, dymek wiadomości: przycisk „Zareaguj" (hover/fokus na desktopie).
+  SmilePlus,
   // Czat, stopka popovera: przełącznik pinga dźwiękowego (włączony / wyciszony).
   Volume2,
   VolumeX,

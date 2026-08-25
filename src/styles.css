@@ -12624,6 +12624,182 @@ a.toggle-btn {
   opacity: 0.5;
 }
 
+/* ---------- Reakcje emoji przy dymku ----------
+   Model Messengera: jedna reakcja na osobę. Wiersz `.n2chat-msg` jest kotwicą
+   (`position: relative`) dla trzech rzeczy: przycisku „Zareaguj" po ZEWNĘTRZNEJ
+   stronie dymka, pigułek nachodzących na dolny WEWNĘTRZNY róg i paska szybkich
+   emoji nad dymkiem. Wszystko żyje w oknie rozmowy (własna warstwa, overflow
+   hidden), więc bez nowych tokenów z-index. Animacje: `transform`/`opacity`. */
+.n2chat-msg {
+  position: relative;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: inherit;
+}
+/* Pigułki wchodzą 11 px pod dymek — wiersz oddaje to miejsce, żeby nie zasłonić
+   następnego dymka w grupie. */
+.n2chat-msg.has-reactions {
+  margin-bottom: 12px;
+}
+.n2chat-react-btn {
+  position: absolute;
+  top: 50%;
+  right: -32px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-pill);
+  background: var(--n2-surface-strong);
+  color: var(--n2-text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-50%) scale(0.9);
+  transition: opacity var(--n2-transition), transform var(--n2-transition),
+    color var(--n2-transition);
+}
+.n2chat-group.is-mine .n2chat-react-btn {
+  right: auto;
+  left: -32px;
+}
+/* Widoczny na hover wiersza, przy fokusie (klawiatura) i gdy pasek jest otwarty;
+   `:hover` tylko tam, gdzie kursor istnieje — na dotyku otwiera go długie
+   przytrzymanie, a przycisk pozostaje dostępny dla klawiatury. */
+@media (hover: hover) {
+  .n2chat-msg:hover .n2chat-react-btn {
+    opacity: 1;
+    transform: translateY(-50%) scale(1);
+  }
+  .n2chat-react-btn:hover {
+    color: var(--n2-text);
+  }
+}
+.n2chat-msg:focus-within .n2chat-react-btn,
+.n2chat-msg.is-reacting .n2chat-react-btn,
+.n2chat-react-btn[aria-expanded='true'] {
+  opacity: 1;
+  transform: translateY(-50%) scale(1);
+}
+.n2chat-react-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--n2-shadow-focus);
+}
+
+/* Pasek szybkich reakcji nad dymkiem, wyrównany do wewnętrznej krawędzi. */
+.n2chat-react-bar {
+  position: absolute;
+  bottom: calc(100% + var(--n2-space-1));
+  left: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-pill);
+  background: var(--n2-surface-strong);
+  box-shadow: var(--n2-shadow-soft);
+  transform-origin: bottom left;
+}
+.n2chat-group.is-mine .n2chat-react-bar {
+  left: auto;
+  right: 0;
+  transform-origin: bottom right;
+}
+.n2chat-react-quick {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--n2-radius-pill);
+  background: none;
+  color: var(--n2-text-muted);
+  font-size: var(--n2-type-lg);
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--n2-transition), transform var(--n2-transition);
+}
+@media (hover: hover) {
+  .n2chat-react-quick:hover {
+    background: var(--n2-glass-strong);
+    transform: translateY(-2px) scale(1.15);
+  }
+}
+.n2chat-react-quick:focus-visible {
+  outline: none;
+  box-shadow: var(--n2-shadow-focus);
+}
+/* Moja aktualna reakcja w pasku: obwódka, nie sam kolor tła. */
+.n2chat-react-quick.is-own {
+  background: var(--n2-glass-strong);
+  box-shadow: inset 0 0 0 2px var(--n2-lavender);
+}
+.n2chat-react-more {
+  color: var(--n2-text-soft);
+}
+
+/* Pigułki: nachodzą na dolny wewnętrzny róg dymka (u innych prawy, u mnie
+   lewy). Obwódka w kolorze tła okna odcina je od dymka pod spodem. */
+.n2chat-reactions {
+  position: absolute;
+  bottom: -11px;
+  right: var(--n2-space-2);
+  display: flex;
+  gap: 3px;
+}
+.n2chat-group.is-mine .n2chat-reactions {
+  right: auto;
+  left: var(--n2-space-2);
+}
+.n2chat-reaction {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-pill);
+  background: var(--n2-surface-strong);
+  color: var(--n2-text);
+  box-shadow: 0 0 0 2px var(--n2-surface-strong);
+  font-size: var(--n2-type-sm);
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color var(--n2-transition), background var(--n2-transition);
+}
+@media (hover: hover) {
+  .n2chat-reaction:hover {
+    border-color: var(--n2-border-strong);
+  }
+}
+.n2chat-reaction:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--n2-surface-strong), var(--n2-shadow-focus);
+}
+/* Moja reakcja: obwódka lawendy + lekkie tło — stan niesie też `aria-pressed`. */
+.n2chat-reaction.is-mine {
+  border-color: var(--n2-lavender);
+  background: var(--n2-glass-strong);
+}
+.n2chat-reaction-count {
+  font-family: var(--n2-font-data);
+  font-size: var(--n2-type-xs);
+  font-weight: 600;
+  color: var(--n2-text-soft);
+}
+/* „+N" dla reakcji poza trzema widocznymi — informacja, nie przycisk. */
+.n2chat-reaction-rest {
+  cursor: default;
+  font-family: var(--n2-font-data);
+  font-size: var(--n2-type-xs);
+  font-weight: 600;
+  color: var(--n2-text-soft);
+}
+
 /* ---------- Telefon ----------
    Kolumna wchodzi PONAD dolny pasek zakładek (jego wysokość niesie
    `--n2-bottom-nav-h` plus bezpieczny obszar iOS-a), a okno rozmowy zajmuje
@@ -12689,6 +12865,25 @@ a.toggle-btn {
   }
   .n2chat-emoji-grid {
     grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+  }
+  /* Pasek reakcji na dotyku: cele 44 px; otwiera go długie przytrzymanie
+     dymka, więc przycisk „Zareaguj" znika z krawędzi (przy 320 px nie ma na
+     niego miejsca obok dymka). */
+  .n2chat-react-quick {
+    width: 44px;
+    height: 44px;
+  }
+  .n2chat-react-btn {
+    display: none;
+  }
+  .n2chat-react-bar {
+    left: 50%;
+    transform-origin: bottom center;
+  }
+  .n2chat-group.is-mine .n2chat-react-bar {
+    left: 50%;
+    right: auto;
+    transform-origin: bottom center;
   }
   /* Panel pickera nie może zjeść całego okna rozmowy razem z listą wiadomości
      — okno na telefonie bywa niskie, zwłaszcza przy otwartej klawiaturze. */

@@ -40,18 +40,24 @@ import {
   loadMessagesPage,
   loadMessagesSince,
   loadOverview,
+  loadReactions,
   markRead as markReadRow,
   openDirect as openDirectRow,
   sendMessage as sendMessageRow,
+  setReaction as setReactionRow,
   toChatMessage,
+  toChatReactionEvent,
   type ChatDb,
 } from './chatData';
 import {
   applyIncomingMessage,
   applyMessageUpdate,
+  applyReactionEvent,
   markConversationRead,
   mergeMessages,
+  mergeReactions,
   newestMessageCursor,
+  nextReactionIntent,
   pruneTyping,
   removeTyping,
   applyTypingSignal,
@@ -69,12 +75,20 @@ import {
   type ChatConversation,
   type ChatMessage,
   type ChatMessageCursor,
+  type ChatReactionMap,
 } from './types';
 
 /** Zlewanie serii zdarzeń w jedno odświeżenie listy rozmów. */
 const OVERVIEW_REFRESH_DEBOUNCE_MS = 700;
 
 const EMPTY_PRESENCE: ReadonlySet<string> = new Set<string>();
+const EMPTY_REACTIONS: ChatReactionMap = {};
+
+/** Reakcja w locie dla jednej wiadomości + ostatni zamiar czekający w kolejce. */
+interface PendingReaction {
+  /** `undefined` = nic nie czeka; `null` = zdjęcie reakcji. */
+  queued?: string | null;
+}
 
 export interface ChatContextValue {
   /** `true` wyłącznie w trybie Supabase z zalogowanym użytkownikiem. */
@@ -101,6 +115,14 @@ export interface ChatContextValue {
   hasMore: boolean;
   loadOlder: () => void;
   sendMessage: (body: string) => Promise<boolean>;
+  /** Reakcje wiadomości OTWARTEJ rozmowy (id wiadomości → lista). */
+  reactions: ChatReactionMap;
+  /**
+   * Klik w emoji przy wiadomości: to samo co własna reakcja zdejmuje, inne
+   * podmienia, brak ustawia. Optymistycznie od razu, potem RPC; kolejne
+   * kliknięcia w trakcie zapisu czekają jako OSTATNI zamiar.
+   */
+  toggleReaction: (messageId: string, emoji: string) => void;
   markRead: () => void;
   /** Osoby piszące w otwartej rozmowie (bez zalogowanego, z TTL). */
   typingUserIds: string[];
@@ -165,6 +187,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [typing, setTyping] = useState<ChatTypingEntry[]>([]);
+  const [reactions, setReactions] = useState<ChatReactionMap>(EMPTY_REACTIONS);
   const [error, setError] = useState<string | null>(null);
   const [soundEnabled, setSoundEnabledState] = useState<boolean>(readChatSoundEnabled);
 
@@ -176,6 +199,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const openIdRef = useRef<string | null>(openConversationId);
   const conversationsRef = useRef<ChatConversation[]>(conversations);
   const messagesRef = useRef<ChatMessage[]>(messages);
+  const reactionsRef = useRef<ChatReactionMap>(reactions);
   const hasMoreRef = useRef<boolean>(hasMore);
   const soundEnabledRef = useRef<boolean>(soundEnabled);
   /** Czas ostatniego pinga (dławik w `decideChatPing`). */
@@ -186,6 +210,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   openIdRef.current = openConversationId;
   conversationsRef.current = conversations;
   messagesRef.current = messages;
+  reactionsRef.current = reactions;
   hasMoreRef.current = hasMore;
 
   const mountedRef = useRef(true);
@@ -196,6 +221,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const olderCursorRef = useRef<ChatMessageCursor | null>(null);
   const loadingOlderRef = useRef(false);
   const lastTypingSentRef = useRef(0);
+  /** Reakcje w locie (id wiadomości → kolejka); patrz `toggleReaction`. */
+  const pendingReactionsRef = useRef<Map<string, PendingReaction>>(new Map());
 
   useEffect(() => {
     mountedRef.current = true;
@@ -263,6 +290,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       if (!result.ok || !mountedRef.current || openIdRef.current !== conversationId) return;
       if (result.value.messages.length === 0) return;
       setMessages((previous) => mergeMessages(previous, result.value.messages));
+      setReactions((previous) => mergeReactions(previous, result.value.reactions));
       // Stan paginacji ustawiamy tylko, gdy nikt go jeszcze nie ustawił —
       // rozmowa bez kursora nie ma wczytanych starszych stron do ochrony.
       if (olderCursorRef.current === null) {
@@ -282,11 +310,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     for (let page = 0; page < CHAT_CATCHUP_MAX_PAGES; page += 1) {
       const result = await loadMessagesSince(db, conversationId, next);
       if (!result.ok || !mountedRef.current || openIdRef.current !== conversationId) return;
-      if (result.value.length === 0) break;
+      if (result.value.messages.length === 0) break;
       appended = true;
-      setMessages((previous) => mergeMessages(previous, result.value));
-      if (result.value.length < CHAT_PAGE_SIZE) break;
-      const advanced = newestMessageCursor(result.value);
+      setMessages((previous) => mergeMessages(previous, result.value.messages));
+      setReactions((previous) => mergeReactions(previous, result.value.reactions));
+      if (result.value.messages.length < CHAT_PAGE_SIZE) break;
+      const advanced = newestMessageCursor(result.value.messages);
       // Brak postępu kursora = pętla i tak nic nie dołoży; wychodzimy.
       if (!advanced || (next && advanced.id === next.id)) break;
       next = advanced;
@@ -299,6 +328,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       const fresh = await loadMessagesPage(db, conversationId, null);
       if (!fresh.ok || !mountedRef.current || openIdRef.current !== conversationId) return;
       setMessages(fresh.value.messages);
+      setReactions(fresh.value.reactions);
       setHasMore(fresh.value.hasMore);
       olderCursorRef.current = fresh.value.cursor;
       void markReadFor(conversationId);
@@ -306,6 +336,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     }
 
     if (appended) void markReadFor(conversationId);
+
+    // Reakcje na JUŻ WCZYTANYCH wiadomościach: broadcast `reaction` w martwym
+    // oknie socketu przepadł bezgłośnie, a nadrobienie wyżej dociąga tylko
+    // nowe wiadomości. Jedno zapytanie po id wszystkich znanych wiadomości.
+    const known = messagesRef.current.map((message) => message.id);
+    const refreshed = await loadReactions(db, conversationId, known);
+    if (!refreshed.ok || !mountedRef.current || openIdRef.current !== conversationId) return;
+    setReactions((previous) => mergeReactions(previous, refreshed.value));
   }, [markReadFor]);
 
   // ---- Obsługa zdarzeń kanału -------------------------------------------------
@@ -357,6 +395,15 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     [markReadFor, scheduleOverviewRefresh],
   );
 
+  const handleReaction = useCallback((conversationId: string, raw: unknown): void => {
+    // Reakcje trzymamy wyłącznie dla OTWARTEJ rozmowy (lista rozmów ich nie
+    // pokazuje); po otwarciu innej rozmowy stronę i tak czytamy od nowa.
+    if (conversationId !== openIdRef.current) return;
+    const event = toChatReactionEvent(raw);
+    if (!event || event.conversationId !== conversationId) return;
+    setReactions((previous) => applyReactionEvent(previous, event));
+  }, []);
+
   const handleTyping = useCallback((conversationId: string, raw: unknown): void => {
     // „pisze…" pokazujemy wyłącznie w otwartej rozmowie — poza nią sygnał nie ma
     // gdzie się wyrenderować, a trzymanie go tylko rozjeżdżałoby TTL.
@@ -372,7 +419,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         .channel(`chat:conv:${conversationId}`, { config: { private: true } })
         .on('broadcast', { event: 'INSERT' }, (raw: unknown) => handleBroadcast('INSERT', raw))
         .on('broadcast', { event: 'UPDATE' }, (raw: unknown) => handleBroadcast('UPDATE', raw))
-        .on('broadcast', { event: 'typing' }, (raw: unknown) => handleTyping(conversationId, raw));
+        .on('broadcast', { event: 'typing' }, (raw: unknown) => handleTyping(conversationId, raw))
+        .on('broadcast', { event: 'reaction' }, (raw: unknown) =>
+          handleReaction(conversationId, raw),
+        );
       channel.subscribe((status: string) => {
         if (status !== 'SUBSCRIBED') return;
         // KAŻDY `SUBSCRIBED`, także pierwszy: wiadomość nadana między snapshotem
@@ -386,7 +436,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       });
       return channel;
     },
-    [handleBroadcast, handleTyping, scheduleOverviewRefresh, catchUpOpenConversation],
+    [handleBroadcast, handleTyping, handleReaction, scheduleOverviewRefresh, catchUpOpenConversation],
   );
 
   // ---- Cykl życia: klient, presence, pierwsze wczytanie -----------------------
@@ -409,6 +459,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       setHasMore(false);
       setOpenConversationId(null);
       setTyping([]);
+      setReactions(EMPTY_REACTIONS);
       setPresence(EMPTY_PRESENCE);
       setError(null);
       olderCursorRef.current = null;
@@ -516,6 +567,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       setMessagesLoading(false);
       setHasMore(false);
       setTyping([]);
+      setReactions(EMPTY_REACTIONS);
+      pendingReactionsRef.current.clear();
       olderCursorRef.current = null;
       return;
     }
@@ -524,6 +577,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     setMessages([]);
     setTyping([]);
+    setReactions(EMPTY_REACTIONS);
+    pendingReactionsRef.current.clear();
     setMessagesLoading(true);
     olderCursorRef.current = null;
 
@@ -540,6 +595,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       // Efekt zaczyna od `setMessages([])`, więc w zwykłej ścieżce scalenie
       // z pustą listą jest tożsame z podstawieniem wyniku.
       setMessages((previous) => mergeMessages(previous, result.value.messages));
+      setReactions((previous) => mergeReactions(previous, result.value.reactions));
       setHasMore(result.value.hasMore);
       olderCursorRef.current = result.value.cursor;
       void markReadFor(openConversationId);
@@ -632,10 +688,73 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         return;
       }
       setMessages((previous) => mergeMessages(previous, result.value.messages));
+      setReactions((previous) => mergeReactions(previous, result.value.reactions));
       setHasMore(result.value.hasMore);
       olderCursorRef.current = result.value.cursor;
     })();
   }, []);
+
+  /**
+   * Zapis reakcji z KOLEJKĄ per wiadomość: w locie jest najwyżej jedno RPC na
+   * wiadomość, a kliknięcia w trakcie nadpisują wyłącznie „ostatni zamiar".
+   * RPC dostaje stan docelowy (nie „przełącz"), więc kolejność dojścia nie ma
+   * znaczenia. Odpowiedź serwera podmienia listę tylko wtedy, gdy nic już nie
+   * czeka — inaczej cofałaby na moment świeższy stan optymistyczny.
+   */
+  const runReaction = useCallback(
+    async (conversationId: string, messageId: string, intent: string | null): Promise<void> => {
+      const db = dbRef.current;
+      if (!db) return;
+      const pending = pendingReactionsRef.current.get(messageId);
+      if (pending) {
+        pending.queued = intent;
+        return;
+      }
+      pendingReactionsRef.current.set(messageId, {});
+      const result = await setReactionRow(db, messageId, intent);
+      const state = pendingReactionsRef.current.get(messageId);
+      const queued = state?.queued;
+      pendingReactionsRef.current.delete(messageId);
+      if (!mountedRef.current || openIdRef.current !== conversationId) return;
+      if (queued !== undefined) {
+        void runReaction(conversationId, messageId, queued);
+        return;
+      }
+      if (result.ok) {
+        setError(null);
+        setReactions((previous) => mergeReactions(previous, { [messageId]: result.value }));
+        return;
+      }
+      setError(result.error);
+      // Cofnięcie optymistycznej zmiany = prawda serwera, nie zgadywanie.
+      const refreshed = await loadReactions(db, conversationId, [messageId]);
+      if (!refreshed.ok || !mountedRef.current || openIdRef.current !== conversationId) return;
+      setReactions((previous) => mergeReactions(previous, refreshed.value));
+    },
+    [],
+  );
+
+  const toggleReaction = useCallback(
+    (messageId: string, emoji: string): void => {
+      const conversationId = openIdRef.current;
+      const self = selfIdRef.current;
+      if (!conversationId || !self || messageId === '' || emoji === '') return;
+      const message = messagesRef.current.find((entry) => entry.id === messageId);
+      if (!message || message.deletedAt !== null) return;
+      const intent = nextReactionIntent(reactionsRef.current[messageId] ?? [], self, emoji);
+      setReactions((previous) =>
+        applyReactionEvent(previous, {
+          messageId,
+          conversationId,
+          userId: self,
+          emoji: intent,
+          createdAt: new Date().toISOString(),
+        }),
+      );
+      void runReaction(conversationId, messageId, intent);
+    },
+    [runReaction],
+  );
 
   const sendMessage = useCallback(async (body: string): Promise<boolean> => {
     const db = dbRef.current;
@@ -720,6 +839,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       hasMore,
       loadOlder,
       sendMessage,
+      reactions,
+      toggleReaction,
       markRead,
       typingUserIds: typingIds,
       sendTyping,
@@ -745,6 +866,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       hasMore,
       loadOlder,
       sendMessage,
+      reactions,
+      toggleReaction,
       markRead,
       typingIds,
       sendTyping,
