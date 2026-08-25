@@ -78,7 +78,11 @@ export function ReactionBar({
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     const bar = barRef.current;
     if (bar === null) return;
-    const buttons = Array.from(bar.querySelectorAll<HTMLButtonElement>('button'));
+    // Tylko WIDOCZNE przyciski: na wąskim telefonie CSS chowa część szybkich
+    // emoji (`display: none`), a fokus na ukrytym elemencie by przepadł.
+    const buttons = Array.from(bar.querySelectorAll<HTMLButtonElement>('button')).filter(
+      (button) => button.offsetParent !== null,
+    );
     const index = buttons.findIndex((button) => button === document.activeElement);
     let next = -1;
     if (event.key === 'ArrowRight') next = index < buttons.length - 1 ? index + 1 : 0;

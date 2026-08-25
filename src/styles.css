@@ -13203,6 +13203,12 @@ a.toggle-btn {
       display: none;
     }
   }
+  /* 320–359 px (iPhone SE 1. gen.): pięć + „+" = 282 px, wciąż jeden rząd. */
+  @media (max-width: 359px) {
+    .n2chat-react-quick:nth-child(6):not(.n2chat-react-more) {
+      display: none;
+    }
+  }
   .n2chat-react-btn {
     display: none;
   }
