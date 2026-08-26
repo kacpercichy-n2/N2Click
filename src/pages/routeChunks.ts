@@ -38,6 +38,7 @@ const ROUTE_LOADERS = {
   '/admin': () => import('./AdminPage').then((m) => ({ default: m.AdminPage })),
   '/team': () => import('./TeamPage').then((m) => ({ default: m.TeamPage })),
   '/account': () => import('./AccountPage').then((m) => ({ default: m.AccountPage })),
+  '/jedzenie': () => import('./FoodPage').then((m) => ({ default: m.FoodPage })),
 } satisfies Record<string, RouteLoader>;
 
 /** Klucze mapy — jedyne wartości, które przyjmuje `prefetchRoute`. */
@@ -73,3 +74,4 @@ export const TicketsPage = lazy(ROUTE_LOADERS['/zgloszenia']);
 export const AdminPage = lazy(ROUTE_LOADERS['/admin']);
 export const TeamPage = lazy(ROUTE_LOADERS['/team']);
 export const AccountPage = lazy(ROUTE_LOADERS['/account']);
+export const FoodPage = lazy(ROUTE_LOADERS['/jedzenie']);

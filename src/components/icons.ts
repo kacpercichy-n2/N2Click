@@ -110,4 +110,8 @@ export {
   CornerDownRight,
   History,
   Settings2,
+  // Strona „Jedzenie" (/jedzenie): pozycja menu (sztućce) oraz „mniej" w
+  // stepperze sztuk (parą do `Plus`).
+  Utensils,
+  Minus,
 } from 'lucide-react';

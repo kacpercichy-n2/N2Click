@@ -140,6 +140,13 @@
   `searchAll`/palecie (paleta ma tylko szybką akcję nawigacyjną za
   `canContentPlan`). Bramka UX, nie granica bezpieczeństwa — zakres wymusza RLS
   schematu `contentplan`.
+- `/jedzenie` („Jedzenie", ikona `Utensils`, w `NAV` między Zespół a Konto,
+  `src/pages/FoodPage.tsx`) to zamówienia pracownicze z cateringu Błogość.
+  Widoczna dla KAŻDEJ roli, bez bramki w `App.tsx`; w trybie lokalnym albo bez
+  sesji chmury strona sama pokazuje pusty stan („Zamówienia działają tylko po
+  zalogowaniu do chmury"). Dane idą WYŁĄCZNIE przez RPC schematu `blogoapp`
+  (ten sam projekt Supabase), adapter `src/food/foodData.ts`, czysty model
+  `src/food/foodModel.ts`. Kontrakt i zasady: [food-orders.md](food-orders.md).
 - `/team` (Struktura zespołu) is reached via the shared `src/pages/TeamTabs.tsx`
   tab bar (Pracownicy → `/people`, Struktura zespołu → `/team`) rendered on both
   the Zespół (`/people`) and `/team` pages, not from its own nav item. Od

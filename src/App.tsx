@@ -24,6 +24,7 @@ import {
   ContentPlanPage,
   DashboardPage,
   EventsPage,
+  FoodPage,
   KanbanPage,
   PeoplePage,
   PersonProfilePage,
@@ -538,6 +539,9 @@ export function App() {
               <Route path="/workload" element={<WorkloadPage />} />
               {/* Zgłoszenia: widoczne dla każdej roli (zakres wierszy filtruje strona). */}
               <Route path="/zgloszenia" element={<TicketsPage />} />
+              {/* Jedzenie: zamówienia pracownicze (RPC schematu blogoapp), każda rola;
+                  bez sesji chmury strona sama pokazuje pusty stan. */}
+              <Route path="/jedzenie" element={<FoodPage />} />
               <Route
                 path="/admin"
                 element={canAdmin ? <AdminPage /> : <Navigate to="/dashboard" replace />}

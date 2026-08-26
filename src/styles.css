@@ -14332,3 +14332,190 @@ a.toggle-btn {
 .date-cal-foot-btn:hover {
   background: rgba(196, 150, 255, 0.12);
 }
+
+/* ---------- Jedzenie (zamówienia pracownicze, /jedzenie) ----------
+   Reużywa `.page-head`, `.editor-section`, `.field`, `.btn`, `.empty-state`.
+   Własne reguły to tylko układ listy menu, stepper sztuk i pigułka statusu
+   (kolor przez `--sc` + `data-tone`, ten sam mechanizm co `.cp-status-pill`). */
+.food-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--n2-space-4);
+}
+@media (min-width: 1100px) {
+  .food-layout {
+    grid-template-columns: minmax(0, 3fr) minmax(320px, 2fr);
+    align-items: start;
+  }
+}
+.food-date {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+  flex-wrap: wrap;
+}
+.food-date input[type='date'] {
+  width: auto;
+}
+.food-date-label {
+  color: var(--text-muted);
+  font-size: var(--n2-type-sm);
+}
+.food-group + .food-group {
+  margin-top: var(--n2-space-5);
+}
+.food-group-title {
+  margin: 0 0 var(--n2-space-2);
+  font-size: var(--n2-type-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.food-menu-list,
+.food-order-list,
+.food-order-lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.food-menu-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--n2-space-4);
+  padding: 10px 0;
+  border-top: 1px solid var(--n2-border-soft);
+}
+.food-menu-name {
+  min-width: 0;
+  font-weight: 500;
+}
+.food-menu-row[data-selected] .food-menu-name {
+  color: var(--n2-lavender);
+}
+.food-menu-prices {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+.food-price-full {
+  color: var(--n2-text-faint);
+  font-size: var(--n2-type-xs);
+}
+.food-price {
+  font-weight: 700;
+}
+.food-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.food-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-md);
+  background: var(--field-bg);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color var(--n2-transition), background var(--n2-transition);
+}
+.food-step:hover {
+  border-color: var(--n2-border-strong);
+  background: rgba(196, 150, 255, 0.12);
+}
+.food-step:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.food-qty {
+  min-width: 28px;
+  text-align: center;
+  font-family: var(--n2-font-data);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.food-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--n2-space-3);
+  margin-top: var(--n2-space-3);
+  padding: var(--n2-space-3) 0;
+  border-top: 1px solid var(--n2-border-soft);
+}
+.food-summary strong {
+  font-size: var(--n2-type-lg);
+  font-variant-numeric: tabular-nums;
+}
+.food-order {
+  display: grid;
+  gap: 6px;
+  padding: var(--n2-space-3) 0;
+  border-top: 1px solid var(--n2-border-soft);
+}
+.food-order:first-child {
+  padding-top: 0;
+  border-top: none;
+}
+.food-order-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--n2-space-3);
+  flex-wrap: wrap;
+}
+.food-order-lines {
+  color: var(--n2-text-soft);
+  font-size: var(--n2-type-sm);
+}
+.food-order-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--n2-space-3);
+  flex-wrap: wrap;
+  color: var(--text-muted);
+  font-size: var(--n2-type-xs);
+}
+.food-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid color-mix(in srgb, var(--sc) 33%, transparent);
+  border-radius: var(--n2-radius-pill);
+  background: color-mix(in srgb, var(--sc) 10%, transparent);
+  color: var(--sc);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+.food-status[data-tone='pending'] {
+  --sc: var(--n2-warning);
+}
+.food-status[data-tone='success'] {
+  --sc: var(--n2-success);
+}
+.food-status[data-tone='danger'] {
+  --sc: var(--n2-danger);
+}
+.food-status[data-tone='muted'] {
+  --sc: var(--n2-text-soft);
+}
+@media (max-width: 640px) {
+  .food-menu-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .food-stepper {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
+}

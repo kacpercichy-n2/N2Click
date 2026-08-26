@@ -24,6 +24,7 @@ import {
   Gauge,
   Settings,
   CircleUser,
+  Utensils,
 } from './icons';
 
 export type NavItem = [string, string, LucideIcon];
@@ -43,6 +44,10 @@ export const NAV: NavItem[] = [
   ['/timeline', 'Oś czasu', GanttChart],
   ['/workload', 'Obciążenie', Gauge],
   ['/people', 'Zespół', Users],
+  // Jedzenie = zamówienia pracownicze z cateringu Błogość (schemat `blogoapp`
+  // przez RPC). Widoczne dla każdej roli; w trybie lokalnym strona pokazuje
+  // pusty stan, bo bramka wymaga sesji chmury.
+  ['/jedzenie', 'Jedzenie', Utensils],
   // Konto = pełny profil zalogowanego użytkownika (dostępne w OBU trybach);
   // własny adres /people/:id przekierowuje tu (PersonProfilePage).
   ['/account', 'Konto', CircleUser],

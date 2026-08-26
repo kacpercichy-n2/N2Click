@@ -10,6 +10,7 @@ only the linked area pages that the task explicitly names.
 | Pages, modals, navigation and onboarding | [ui-navigation-and-onboarding.md](ui-navigation-and-onboarding.md) | `src/App.tsx`, `src/pages/`, `src/components/TaskModal.tsx`, `src/onboarding/` |
 | Shared UI primitives and rendering performance | [frontend-performance-and-primitives.md](frontend-performance-and-primitives.md) | `src/components/ModalFrame.tsx`, `src/components/modalBackdropSnapshot.ts`, `src/styles.css` |
 | Supabase schema, relations, RLS, migrations | [cloud-database.md](cloud-database.md) | `supabase/migrations/`, `src/supabase/`, `src/auth/` |
+| Jedzenie: zamówienia pracownicze z cateringu (RPC schematu `blogoapp`) | [food-orders.md](food-orders.md) | `src/food/`, `src/pages/FoodPage.tsx` |
 | Tests and browser checks | [testing-and-automation.md](testing-and-automation.md) | `src/**/*.test.ts`, `scripts/` |
 
 ## Reading rule
