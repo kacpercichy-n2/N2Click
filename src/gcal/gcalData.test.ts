@@ -14,11 +14,15 @@ import {
   syncNow,
   toGoogleAccount,
   toGoogleCalendar,
+  buildProfileToPersonMap,
+  resolveEventPeople,
   toGoogleEvent,
+  visibleOccurrences,
   type GcalDb,
   type GcalDbError,
   type GcalRow,
 } from './gcalData';
+import type { Person } from '../types';
 import { GCAL_MESSAGES, type GoogleEvent } from './types';
 
 function eventRow(overrides: Partial<Record<string, unknown>> = {}): GcalRow {
@@ -120,6 +124,85 @@ describe('mapowanie wierszy', () => {
       color: null,
     });
     expect(toGoogleCalendar({ id: 'c' })).toBeNull();
+  });
+});
+
+describe('buildProfileToPersonMap / resolveEventPeople', () => {
+  const person = (id: string, email: string) => ({ id, email } as Person);
+  const people = [person('local-kacper', 'Kacper@N2.pl'), person('uuid-zuzia', 'zuzia@n2.pl')];
+  const profiles = [
+    { id: 'uuid-kacper', email: 'kacper@n2.pl' },
+    { id: 'uuid-zuzia', email: 'zuzia@n2.pl' },
+    { id: 'uuid-nikt', email: 'nikt@n2.pl' },
+  ];
+
+  it('mapuje profil po id, a gdy brak — po e-mailu; obcy profil pomija', () => {
+    const map = buildProfileToPersonMap(profiles, people);
+    expect(map.get('uuid-kacper')).toBe('local-kacper');
+    expect(map.get('uuid-zuzia')).toBe('uuid-zuzia');
+    expect(map.has('uuid-nikt')).toBe(false);
+  });
+
+  it('podmienia właściciela i uczestników na id osób; nieznane id zostają', () => {
+    const map = buildProfileToPersonMap(profiles, people);
+    const ev = toGoogleEvent(
+      eventRow({ owner_profile_id: 'uuid-kacper', attendee_profile_ids: ['uuid-kacper', 'uuid-zuzia', 'uuid-nikt'] }),
+    )!;
+    const [resolved] = resolveEventPeople([ev], map);
+    expect(resolved.ownerProfileId).toBe('local-kacper');
+    expect(resolved.attendeeProfileIds).toEqual(['local-kacper', 'uuid-zuzia', 'uuid-nikt']);
+  });
+
+  it('bez zmian zwraca tę samą tablicę i te same obiekty', () => {
+    const ev = toGoogleEvent(eventRow({ owner_profile_id: 'uuid-zuzia', attendee_profile_ids: ['uuid-zuzia'] }))!;
+    const list = [ev];
+    expect(resolveEventPeople(list, new Map())).toBe(list);
+    expect(resolveEventPeople(list, buildProfileToPersonMap(profiles, people))).toBe(list);
+  });
+
+  it('filtr po lokalnym id osoby trafia cudze wydarzenie po rozwiązaniu', () => {
+    const map = buildProfileToPersonMap(profiles, people);
+    const ev = toGoogleEvent(eventRow({ owner_profile_id: 'uuid-kacper', access: 'busy' }))!;
+    const [resolved] = resolveEventPeople([ev], map);
+    const occ = { event: resolved, date: '2026-08-25', startMinutes: 600, durationMinutes: 30 };
+    expect(visibleOccurrences([occ], new Set(['local-kacper']))).toHaveLength(1);
+    expect(visibleOccurrences([occ], new Set(['uuid-kacper']))).toHaveLength(0);
+  });
+});
+
+describe('visibleOccurrences', () => {
+  const occ = (id: string, owner: string, access: string) => ({
+    event: toGoogleEvent(eventRow({ id, owner_profile_id: owner, access }))!,
+    date: '2026-08-25',
+    startMinutes: 600,
+    durationMinutes: 30,
+  });
+  const own = occ('ev-own', 'p-me', 'owner');
+  const ola = occ('ev-ola', 'p-ola', 'busy');
+  const invited = occ('ev-inv', 'p-marek', 'attendee');
+  const ids = (list: readonly { event: { id: string } }[]) => list.map((o) => o.event.id);
+
+  it('pusty filtr: tylko własne wydarzenia (cudze są odfiltrowane)', () => {
+    expect(ids(visibleOccurrences([own, ola, invited], new Set()))).toEqual(['ev-own']);
+  });
+
+  it('filtr obejmujący właściciela pokazuje jego wydarzenie', () => {
+    expect(ids(visibleOccurrences([own, ola, invited], new Set(['p-ola'])))).toEqual(['ev-own', 'ev-ola']);
+    expect(ids(visibleOccurrences([own, ola, invited], new Set(['p-marek', 'p-ola'])))).toEqual([
+      'ev-own',
+      'ev-ola',
+      'ev-inv',
+    ]);
+  });
+
+  it('bycie zaproszonym nie wystarcza: liczy się właściciel w filtrze', () => {
+    expect(ids(visibleOccurrences([invited], new Set(['p-me'])))).toEqual([]);
+  });
+
+  it('zwraca tę samą tablicę, gdy nic nie odpada (stabilne referencje dla memo)', () => {
+    const only = [own];
+    expect(visibleOccurrences(only, new Set())).toBe(only);
+    expect(visibleOccurrences([], new Set())).toEqual([]);
   });
 });
 

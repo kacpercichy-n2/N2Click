@@ -71,6 +71,19 @@
   kolumn — inwariant 7 nietknięty) i `GoogleEventDialog`; MonthView dokłada
   znacznik „G" + tytuły w dymku/nazwie komórki. Warstwa NIE wchodzi do
   `calendarEventsForDate`, sum dnia ani kolizji (inwariant 1).
+  WŁASNOŚĆ (2026-08-26): wydarzenie Google NALEŻY do właściciela kalendarza
+  (`ownerProfileId`). `occurrencesFor(date, filter)` → `visibleOccurrences`
+  (pure, `gcalData.ts`): własne (`access === 'owner'`) zawsze, cudze tylko gdy
+  filtr osób obejmuje właściciela; pusty filtr = tylko własne (INACZEJ niż
+  spotkania N2Hub, gdzie pusty filtr = wszyscy). Bycie zaproszonym nie
+  wystarcza. Kafel i dymek Miesiąca niosą imię właściciela. Maska „Zajęty"
+  zostaje sprawą widoku bazy; klient decyduje tylko o obecności kafla.
+  ID: widok niesie id PROFILI chmury, a osoba dopasowana po e-mailu przy
+  hydracji zachowuje lokalne id — provider tłumaczy je przez
+  `buildProfileToPersonMap` (po id, potem po e-mailu ze snapshotu
+  `useOrgData`) + `resolveEventPeople`, więc `ownerProfileId` /
+  `attendeeProfileIds` w widokach to już id OSÓB planera. Nie porównuj
+  surowych id profili z filtrem.
 - `src/components/weekViewLayout.ts` (pure) owns the PRESENTATIONAL working
   window: `WORK_START_HOUR`/`WORK_END_HOUR` (9–17), the default scroll offset and
   the px bounds fed to CSS as `--week-work-top`/`--week-work-bottom`.

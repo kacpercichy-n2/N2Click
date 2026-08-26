@@ -9,8 +9,9 @@
 //     w oknie −30/+90 dni wokół dziś (spójnie z oknem syncu serwera), i są
 //     odświeżane co 5 minut oraz po powrocie karty do widoczności. Broadcastu
 //     nie ma: cron serwera i tak jedzie co 5 minut.
-//   * Widoki kalendarza czytają `occurrencesFor(date)` — czysta mapa dzień →
-//     wystąpienia, policzona raz na zmianę listy.
+//   * Widoki kalendarza czytają `occurrencesFor(date, filtrOsób)` — czysta mapa
+//     dzień → wystąpienia, policzona raz na zmianę listy, zawężona do własnych
+//     i do osób z filtra (`visibleOccurrences`).
 //   * Konto/kalendarze/ustawienia wczytujemy LENIWIE (`loadSettings`), dopiero
 //     gdy kafelek na koncie tego zażąda — kalendarz nie potrzebuje tych danych.
 import {
@@ -24,9 +25,12 @@ import {
   type ReactNode,
 } from 'react';
 import { useAuth } from '../auth/SessionProvider';
+import { useSelector } from '../store/AppStore';
+import { useOrgData } from '../supabase/OrgDataProvider';
 import { getSupabaseClient } from '../supabase/client';
 import { addDaysStr, todayStr } from '../utils/dates';
 import {
+  buildProfileToPersonMap,
   connectWithCode,
   createSupabaseGcalDb,
   disconnectAccount as disconnectAccountRow,
@@ -34,9 +38,11 @@ import {
   loadCalendars,
   loadVisibleEvents,
   occurrencesByDate,
+  resolveEventPeople,
   setCalendarSelected as setCalendarSelectedRow,
   setShareLevel as setShareLevelRow,
   syncNow as syncNowRow,
+  visibleOccurrences,
   type GcalDb,
 } from './gcalData';
 import { requestGoogleCalendarCode } from './googleConnect';
@@ -52,13 +58,18 @@ import {
 } from './types';
 
 const NO_OCCURRENCES: GoogleEventOccurrence[] = [];
+const NO_PROFILES: { id: string; email: string }[] = [];
 
 export interface GoogleCalendarContextValue {
   /** `true` wyłącznie w trybie Supabase z zalogowanym użytkownikiem. */
   enabled: boolean;
   selfId: string | null;
-  /** Wystąpienia Google na dany dzień (już zamaskowane przez widok bazy). */
-  occurrencesFor: (date: string) => readonly GoogleEventOccurrence[];
+  /**
+   * Wystąpienia Google na dany dzień (już zamaskowane przez widok bazy),
+   * zawężone filtrem osób: własne zawsze, cudze tylko gdy filtr obejmuje
+   * właściciela kalendarza (patrz `visibleOccurrences`).
+   */
+  occurrencesFor: (date: string, personFilter: ReadonlySet<string>) => readonly GoogleEventOccurrence[];
   /** Wydarzenie po id (dialog szczegółów). */
   eventById: (id: string) => GoogleEvent | null;
   eventsLoading: boolean;
@@ -192,11 +203,22 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
     };
   }, [active, selfId, refreshEvents]);
 
-  const byDate = useMemo(() => occurrencesByDate(events), [events]);
-  const byId = useMemo(() => new Map(events.map((event) => [event.id, event])), [events]);
+  // Id profili chmury → id osób planera (osoba dopasowana po e-mailu przy
+  // hydracji zachowuje LOKALNE id, którym mówią filtr osób i `getPerson`).
+  // `people` przez selektor (nie `useStore`), żeby nie renderować dostawcy
+  // na każdą akcję store'u.
+  const people = useSelector((s) => s.people);
+  const org = useOrgData();
+  const profiles = org.state.status === 'ready' ? org.state.snapshot.profiles : NO_PROFILES;
+  const profileToPerson = useMemo(() => buildProfileToPersonMap(profiles, people), [profiles, people]);
+  const resolvedEvents = useMemo(() => resolveEventPeople(events, profileToPerson), [events, profileToPerson]);
+
+  const byDate = useMemo(() => occurrencesByDate(resolvedEvents), [resolvedEvents]);
+  const byId = useMemo(() => new Map(resolvedEvents.map((event) => [event.id, event])), [resolvedEvents]);
 
   const occurrencesFor = useCallback(
-    (date: string): readonly GoogleEventOccurrence[] => byDate.get(date) ?? NO_OCCURRENCES,
+    (date: string, personFilter: ReadonlySet<string>): readonly GoogleEventOccurrence[] =>
+      visibleOccurrences(byDate.get(date) ?? NO_OCCURRENCES, personFilter),
     [byDate],
   );
   const eventById = useCallback((id: string): GoogleEvent | null => byId.get(id) ?? null, [byId]);

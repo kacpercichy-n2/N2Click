@@ -4,6 +4,8 @@
 // ustawienia, rozłączenie, sync). Zero Reacta, zero SDK w logice — testowalne
 // w node na atrapie (`gcalData.test.ts`), wzór `chat/chatData.ts`.
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { normalizeEmail } from '../auth/profile';
+import type { Person } from '../types';
 import { addDaysStr, isValidDateStr } from '../utils/dates';
 import {
   GCAL_MESSAGES,
@@ -295,6 +297,81 @@ export function occurrencesByDate(
     );
   }
   return map;
+}
+
+/**
+ * Mapa id profilu chmury → id OSOBY w planerze. Widok bazy niesie `auth.users`
+ * id, a osoba dopasowana po e-mailu przy hydracji (`applyCloudPeople`)
+ * ZACHOWUJE lokalne id (stabilne referencje planera) — więc filtr osób,
+ * `getPerson` i `currentUserId` mówią id osoby, nie profilu. Dopasowanie:
+ * najpierw osoba o tym samym id (profil bez pary e-mailowej dostaje id
+ * profilu), potem po znormalizowanym e-mailu profilu. Profil bez osoby nie
+ * trafia do mapy (wołający zostawia surowe id).
+ */
+export function buildProfileToPersonMap(
+  profiles: readonly { id: string; email: string }[],
+  people: readonly Person[],
+): ReadonlyMap<string, string> {
+  const byId = new Set(people.map((p) => p.id));
+  const byEmail = new Map<string, string>();
+  for (const person of people) {
+    const key = normalizeEmail(person.email);
+    if (key !== '' && !byEmail.has(key)) byEmail.set(key, person.id);
+  }
+  const map = new Map<string, string>();
+  for (const profile of profiles) {
+    if (profile.id === '') continue;
+    if (byId.has(profile.id)) {
+      map.set(profile.id, profile.id);
+      continue;
+    }
+    const personId = byEmail.get(normalizeEmail(profile.email));
+    if (personId !== undefined) map.set(profile.id, personId);
+  }
+  return map;
+}
+
+/**
+ * Podmienia `ownerProfileId` / `attendeeProfileIds` na id osób planera wg
+ * mapy z `buildProfileToPersonMap`. Id bez wpisu w mapie zostaje surowe
+ * (dialog pokaże pusty podpis, filtr go nie trafi — bez fałszywego
+ * dopasowania). Zwraca tę samą tablicę, gdy nic się nie zmienia.
+ */
+export function resolveEventPeople(
+  events: readonly GoogleEvent[],
+  profileToPerson: ReadonlyMap<string, string>,
+): readonly GoogleEvent[] {
+  if (profileToPerson.size === 0) return events;
+  const resolve = (id: string): string => profileToPerson.get(id) ?? id;
+  let changed = false;
+  const out = events.map((event) => {
+    const owner = resolve(event.ownerProfileId);
+    const attendees = event.attendeeProfileIds.map(resolve);
+    const sameAttendees = attendees.every((id, i) => id === event.attendeeProfileIds[i]);
+    if (owner === event.ownerProfileId && sameAttendees) return event;
+    changed = true;
+    return { ...event, ownerProfileId: owner, attendeeProfileIds: sameAttendees ? event.attendeeProfileIds : attendees };
+  });
+  return changed ? out : events;
+}
+
+/**
+ * Kto widzi wystąpienie Google w kalendarzu (decyzja 2026-08-26): wydarzenie
+ * NALEŻY do właściciela kalendarza. Właściciel widzi je zawsze; reszta zespołu
+ * tylko wtedy, gdy filtr osób obejmuje właściciela. Pusty filtr (= „wszyscy"
+ * dla spotkań N2Hub) NIE pokazuje cudzych wydarzeń Google — bez świadomego
+ * zawężenia do osoby cudzy kalendarz jest odfiltrowany. Maska szczegółów
+ * („Zajęty") zostaje sprawą widoku bazy; tu decyduje się tylko obecność kafla.
+ */
+export function visibleOccurrences(
+  occurrences: readonly GoogleEventOccurrence[],
+  personFilter: ReadonlySet<string>,
+): readonly GoogleEventOccurrence[] {
+  if (occurrences.length === 0) return occurrences;
+  const visible = occurrences.filter(
+    (occ) => occ.event.access === 'owner' || personFilter.has(occ.event.ownerProfileId),
+  );
+  return visible.length === occurrences.length ? occurrences : visible;
 }
 
 // ---- Operacje -----------------------------------------------------------------

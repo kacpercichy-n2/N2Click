@@ -171,8 +171,16 @@ export function MonthView({
     const eventMarkerRight =
       3 + 18 * ((birthdayNames.length > 0 ? 1 : 0) + (recurTitles.length > 0 ? 1 : 0));
     const vacationMarkerRight = eventMarkerRight + (eventTitles.length > 0 ? 18 : 0);
+    // Własne wydarzenia Google zawsze, cudze tylko gdy filtr obejmuje właściciela.
     const gcalTitles = gcal.enabled
-      ? Array.from(new Set(gcal.occurrencesFor(d).map((occ) => occ.event.title)))
+      ? Array.from(
+          new Set(
+            gcal.occurrencesFor(d, filter).map((occ) => {
+              const owner = getPerson(state, occ.event.ownerProfileId)?.name ?? '';
+              return owner !== '' ? `${occ.event.title} (${owner})` : occ.event.title;
+            }),
+          ),
+        )
       : [];
     const gcalMarkerRight = vacationMarkerRight + (vacationNames.length > 0 ? 18 : 0);
     const gcalLabel = gcalTitles.length > 0 ? `Google: ${gcalTitles.join(', ')}` : '';

@@ -127,8 +127,9 @@ export function GoogleCalendarTile() {
             </select>
           </label>
           <p className="field-hint">
-            Osoby zaproszone na spotkanie widzą jego szczegóły zawsze. Wydarzenia oznaczone w Google jako
-            prywatne widzisz tylko Ty.
+            Twoje wydarzenia z Google pokazują się innym dopiero, gdy zawężą kalendarz do Ciebie w filtrze
+            osób. Osoby zaproszone na spotkanie widzą jego szczegóły zawsze. Wydarzenia oznaczone w Google
+            jako prywatne widzisz tylko Ty.
           </p>
 
           <div className="account-tile-actions">

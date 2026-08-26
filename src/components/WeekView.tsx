@@ -2973,9 +2973,12 @@ const EventBlock = memo(EventBlockImpl);
  */
 function GoogleEventBlockImpl({
   occ,
+  ownerName,
   onOpen,
 }: {
   occ: GoogleEventOccurrence;
+  /** Imię właściciela kalendarza: kafel musi mówić, CZYJ to kalendarz. */
+  ownerName: string;
   onOpen: (eventId: string) => void;
 }) {
   const { event } = occ;
@@ -2985,7 +2988,8 @@ function GoogleEventBlockImpl({
   const span = allDay
     ? 'cały dzień'
     : `${formatMinutes(occ.startMinutes)}–${formatMinutes(occ.startMinutes + occ.durationMinutes)}`;
-  const label = `Google: ${event.title}, ${span}. Kliknij, aby zobaczyć szczegóły.`;
+  const owner = ownerName !== '' ? ` (${ownerName})` : '';
+  const label = `Google${owner}: ${event.title}, ${span}. Kliknij, aby zobaczyć szczegóły.`;
   return (
     <Tooltip text={label}>
       <div
@@ -3019,7 +3023,10 @@ function GoogleEventBlockImpl({
           </span>{' '}
           {event.title}
         </span>
-        <span className="week-event-time">{span}</span>
+        <span className="week-event-time">
+          {span}
+          {ownerName !== '' && ` · ${ownerName}`}
+        </span>
       </div>
     </Tooltip>
   );
@@ -3077,6 +3084,8 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
 
   // Warstwa Kalendarza Google: tylko odczyt, poza reduktorem i poza pakowaniem
   // kolumn. `occurrencesFor` jest stabilne między renderami do zmiany listy.
+  // Wydarzenie NALEŻY do właściciela kalendarza: własne zawsze, cudze tylko
+  // gdy `filter` obejmuje właściciela (decyzja 2026-08-26).
   const gcal = useGoogleCalendar();
   const [gcalOpenId, setGcalOpenId] = useState<string | null>(null);
   const handleOpenGoogleEvent = useCallback((eventId: string) => setGcalOpenId(eventId), []);
@@ -4134,10 +4143,11 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                       kontekstu warstw). Nie wchodzi do pakowania kolumn ani do
                       żadnej ścieżki wskaźnika (inwariant 7). */}
                   {gcal.enabled &&
-                    gcal.occurrencesFor(d).map((occ) => (
+                    gcal.occurrencesFor(d, filter).map((occ) => (
                       <GoogleEventBlock
                         key={`gcal-${occ.event.id}-${d}`}
                         occ={occ}
+                        ownerName={getPerson(state, occ.event.ownerProfileId)?.name ?? ''}
                         onOpen={handleOpenGoogleEvent}
                       />
                     ))}

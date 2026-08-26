@@ -38,6 +38,11 @@ export type GoogleEventAccess = 'owner' | 'attendee' | 'busy';
 /** Wydarzenie z widoku `google_calendar_events_visible` (już zamaskowane). */
 export interface GoogleEvent {
   id: string;
+  /**
+   * Z widoku: id profilu chmury (auth.users). Po `resolveEventPeople` w
+   * providerze: id OSOBY planera (lokalne, gdy osoba dopasowana po e-mailu) —
+   * to nim mówią filtr osób i `getPerson`. Tak samo `attendeeProfileIds`.
+   */
   ownerProfileId: string;
   access: GoogleEventAccess;
   title: string;

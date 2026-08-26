@@ -90,6 +90,20 @@ export function changelogUnreadCount(
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-08-26-kalendarz-google-wlasciciel',
+    dateFrom: '2026-08-26',
+    dateTo: '2026-08-26',
+    summary: 'Wydarzenia z Google należą do właściciela kalendarza i pokazują się jak jego wydarzenia.',
+    items: [
+      {
+        area: 'Kalendarz',
+        feature: 'Cudze wydarzenia z Google tylko po filtrze osoby',
+        description:
+          'Swoje spotkania z Google widzisz zawsze. Spotkania innych osób pojawiają się dopiero, gdy zawęzisz kalendarz do tej osoby w filtrze; bez filtra widzisz tylko swoje. Wcześniej „Zajęty” z cudzego kalendarza lądował u wszystkich i wyglądał jak własny wpis. Kafel i dymek w Miesiącu pokazują teraz imię właściciela.',
+      },
+    ],
+  },
+  {
     id: '2026-08-25-poprawki-czat-kalendarz',
     dateFrom: '2026-08-25',
     dateTo: '2026-08-25',
