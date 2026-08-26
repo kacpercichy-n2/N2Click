@@ -90,6 +90,7 @@ describe('mapowanie', () => {
     expect(toFoodMenu(null, '2026-08-27')).toEqual({
       date: '2026-08-27',
       published: false,
+      official: false,
       employeeDiscountPercent: 0,
       items: [],
     });

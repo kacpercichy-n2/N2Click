@@ -25,6 +25,8 @@ export interface FoodMenuItem {
 export interface FoodMenu {
   date: DateStr;
   published: boolean;
+  /** Menu opublikowane dla kierowców (po wydruku). Przed tym pozycje mogą się jeszcze zmienić. */
+  official: boolean;
   employeeDiscountPercent: number;
   items: FoodMenuItem[];
 }

@@ -284,10 +284,13 @@ export function FoodPage() {
             {menu && !menu.published && (
               <div className="empty-state">
                 <div>
-                  <p className="empty-title">Menu na ten dzień nie jest jeszcze opublikowane</p>
+                  <p className="empty-title">Menu na ten dzień nie jest jeszcze ułożone</p>
                   <p className="empty-hint">Sprawdź później albo wybierz inny dzień.</p>
                 </div>
               </div>
+            )}
+            {menu && menu.published && !menu.official && (
+              <p className="food-draft-note">Menu jeszcze nieopublikowane dla kierowców. Pozycje mogą się zmienić do rana.</p>
             )}
             {menu && menu.published && (
               <>

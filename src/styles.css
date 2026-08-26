@@ -14519,3 +14519,9 @@ a.toggle-btn {
     justify-content: flex-end;
   }
 }
+
+.food-draft-note {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--n2-text-muted, #6b7280);
+}

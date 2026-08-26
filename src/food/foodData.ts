@@ -134,6 +134,7 @@ export function toFoodMenu(raw: unknown, fallbackDate: string): FoodMenu {
   return {
     date: asString(r?.date) ?? fallbackDate,
     published: r?.published === true && items.length > 0,
+    official: r?.official === true,
     employeeDiscountPercent: asNumber(r?.employee_discount_percent) ?? 0,
     items,
   };
