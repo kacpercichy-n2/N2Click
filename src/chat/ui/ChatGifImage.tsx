@@ -11,17 +11,15 @@ import { GIF_AUTO_RETRIES, gifRetryDelay, gifRetrySrc } from './chatGifLoad';
 
 type LoadState = 'loading' | 'loaded' | 'failed';
 
+/** Montuj z `key={url}` — stan prób jest przywiązany do jednego adresu. */
 export function ChatGifImage({ url }: { url: string }) {
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<LoadState>('loading');
   const timerRef = useRef<number | null>(null);
 
-  // Nowy adres (inna wiadomość w tym samym miejscu listy) zeruje próby.
-  useEffect(() => {
-    setAttempt(0);
-    setState('loading');
-  }, [url]);
-
+  // Sprzątanie przy odmontowaniu. Zmiana adresu to NOWA instancja (rodzic
+  // daje `key={url}`), więc próby i zegar poprzedniego GIF-a nie mają jak
+  // przeciec do następnego.
   useEffect(
     () => () => {
       if (timerRef.current !== null) window.clearTimeout(timerRef.current);

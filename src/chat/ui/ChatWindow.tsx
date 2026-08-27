@@ -129,7 +129,7 @@ function ChatMessageBody({ body, kind }: { body: string; kind: ChatContentKind }
         {/* Zastępnik, automatyczne ponowienie i przycisk „Wczytaj ponownie":
             bez tego nieudany `<img>` znikał do zera i zostawał sam znak KLIPY
             (dymek odbiorcy 25.08.2026). */}
-        <ChatGifImage url={url} />
+        <ChatGifImage key={url} url={url} />
         {/* Atrybucja dostawcy przy UDOSTĘPNIONYM wyniku: „API Terms of Use"
             KLIPY każe pokazać znak WSZĘDZIE, gdzie widać ich treść, nie tylko
             w pickerze. Formuła zostaje po angielsku — tak brzmi wymagana. */}
