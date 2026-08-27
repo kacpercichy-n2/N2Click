@@ -67,6 +67,7 @@ import { useChat } from '../ChatProvider';
 import { CHAT_MESSAGE_MAX_LENGTH, CHAT_QUICK_REACTIONS, type ChatConversation } from '../types';
 import { ChatAvatar } from './ChatAvatar';
 import { ChatEmojiPopover } from './ChatEmojiPopover';
+import { ChatGifImage } from './ChatGifImage';
 import { ChatGifPopover } from './ChatGifPopover';
 import { ReactionBar, ReactionPills } from './ChatReactions';
 import { ChatThemePicker } from './ChatThemePicker';
@@ -125,9 +126,10 @@ function ChatMessageBody({ body, kind }: { body: string; kind: ChatContentKind }
     const url = body.trim();
     return (
       <>
-        <a className="n2chat-gif-link" href={url} target="_blank" rel="noopener noreferrer">
-          <img className="n2chat-gif" src={url} loading="lazy" alt="GIF" />
-        </a>
+        {/* Zastępnik, automatyczne ponowienie i przycisk „Wczytaj ponownie":
+            bez tego nieudany `<img>` znikał do zera i zostawał sam znak KLIPY
+            (dymek odbiorcy 25.08.2026). */}
+        <ChatGifImage url={url} />
         {/* Atrybucja dostawcy przy UDOSTĘPNIONYM wyniku: „API Terms of Use"
             KLIPY każe pokazać znak WSZĘDZIE, gdzie widać ich treść, nie tylko
             w pickerze. Formuła zostaje po angielsku — tak brzmi wymagana. */}

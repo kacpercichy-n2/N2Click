@@ -3221,35 +3221,6 @@ a.toggle-btn {
   line-height: 1;
   vertical-align: middle;
 }
-/* Dialog szczegółów wydarzenia z Google. */
-.gcal-dialog {
-  max-width: 440px;
-}
-.gcal-dialog-title {
-  display: flex;
-  align-items: center;
-  gap: var(--n2-space-2);
-  margin: 0;
-  font-size: var(--n2-type-lg);
-}
-.gcal-dialog-description {
-  margin: var(--n2-space-3) 0 0;
-  white-space: pre-wrap;
-  font-size: var(--n2-type-sm);
-  color: var(--n2-text-soft);
-}
-.gcal-dialog-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--n2-space-2);
-  margin-top: var(--n2-space-4);
-}
-.gcal-dialog-actions .btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--n2-space-2);
-  text-decoration: none;
-}
 /* Kafelek „Kalendarz Google" na stronie konta. */
 .gcal-calendars li {
   display: flex;
@@ -9851,6 +9822,100 @@ a.toggle-btn {
 .quick-add-card {
   max-width: 420px;
 }
+/* ---------- Dialog wydarzenia z Google (GoogleEventDialog) ---------- */
+/* Stoi PO skali szerokości `.task-modal-card` (i po mobilnym `@media`), bo
+   wcześniej jego `max-width: 440px` przegrywał kaskadę i karta rozlewała się
+   na 1360 px z treścią w lewym górnym rogu (komentarz toolbara 25.08).
+   Karta jest wąska (podgląd, nie formularz) i ma STAŁĄ wysokość modala:
+   `align-self: stretch` wypełnia viewport modala, a `max-height` z
+   `.task-modal-card` (88dvh / 94dvh na mobile) zostaje sufitem. Szkielet:
+   `.task-modal-head` + `.task-modal-body` (jedyny scroller, rośnie) + stopka
+   akcji przypięta do dołu. */
+.gcal-dialog {
+  max-width: clamp(440px, 30vw, 560px);
+  align-self: stretch;
+}
+.gcal-dialog-title {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+  min-width: 0;
+}
+.gcal-dialog-title .gcal-badge {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  font-size: 11px;
+}
+.gcal-dialog-title-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.gcal-dialog-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-6);
+}
+/* Wiersze faktów: etykieta po lewej, wartość po prawej — jak na koncie, tylko
+   z odstępem rzędu dopasowanym do wąskiej karty. */
+.gcal-dialog-facts {
+  gap: var(--n2-space-3);
+}
+.gcal-dialog-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--n2-space-2);
+  padding-top: var(--n2-space-5);
+  border-top: 1px solid var(--n2-border);
+}
+.gcal-dialog-section-title {
+  margin: 0;
+  font-size: var(--n2-type-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--n2-text-soft);
+}
+.gcal-dialog-description {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--n2-type-sm);
+  line-height: 1.55;
+}
+/* Nota „tylko do odczytu" spada na sam dół przewijanej treści. */
+.gcal-dialog-note {
+  margin: auto 0 0;
+  font-size: var(--n2-type-xs);
+  line-height: 1.5;
+}
+.gcal-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--n2-space-2);
+  padding: var(--n2-space-4) var(--n2-space-6);
+  border-top: 1px solid var(--n2-border);
+  background: var(--n2-panel-soft);
+}
+.gcal-dialog-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+  text-decoration: none;
+}
+@media (max-width: 760px) {
+  .gcal-dialog {
+    max-width: none;
+  }
+  .gcal-dialog-actions {
+    padding: var(--n2-space-3) var(--n2-space-4);
+  }
+  .gcal-dialog-actions .btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+}
 .ticket-filters {
   display: flex;
   align-items: center;
@@ -12620,6 +12685,42 @@ a.toggle-btn {
   max-width: 100%;
   max-height: 220px;
   border-radius: var(--n2-radius-xs);
+}
+/* Na czas wczytywania (bywa 4 MB na LTE) link rezerwuje miejsce i pulsuje jak
+   szkielet listy — dymek nigdy nie jest pusty. Obraz po wczytaniu zdejmuje
+   klasę i sam dyktuje wysokość. Wymiarów nie znamy: wiadomość niesie tylko
+   adres. */
+.n2chat-gif-link.is-loading {
+  min-width: 160px;
+  min-height: 120px;
+  background: var(--n2-glass);
+  animation: n2chat-skeleton-pulse calc(1400ms * var(--n2-motion)) ease-in-out infinite;
+}
+/* Po dwóch nieudanych próbach automatu: krótki komunikat i dwa działania.
+   Dymek `.is-gif` ma minimalną ramkę, więc odstęp wraca tutaj. */
+.n2chat-gif-fallback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--n2-space-1) var(--n2-space-2);
+  padding: var(--n2-space-1) var(--n2-space-2);
+  font-size: var(--n2-type-sm);
+}
+.n2chat-gif-fallback-btn {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.n2chat-gif-fallback-btn:focus-visible {
+  outline: none;
+  border-radius: var(--n2-radius-xs);
+  box-shadow: var(--n2-shadow-focus);
 }
 /* Podpis dostawcy pod obrazkiem (regulamin KLIPY wymaga atrybucji także przy
    udostępnionym wyniku, nie tylko w pickerze). To tekst WYMAGANY UMOWĄ, więc

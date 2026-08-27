@@ -16,8 +16,14 @@
 //     razie nadużycia rotujemy z Partner Panelu. Brak klucza NIE psuje czatu:
 //     przycisk GIF po prostu się nie renderuje.
 //   * Podgląd w siatce bierzemy z warstwy `sm` (zapas `xs`), a do wiadomości
-//     wysyłamy `md` (zapas `hd`) — siatka nie może ciągnąć megabajtów na
-//     kafelek, a dymek ma pokazać coś ostrzejszego niż miniaturę.
+//     wysyłamy `md` — siatka nie może ciągnąć megabajtów na kafelek, a dymek
+//     ma pokazać coś ostrzejszego niż miniaturę. `md` ma jednak LIMIT WAGI
+//     (`SEND_MAX_BYTES`): w praktyce bywa 4 MB przy długich klipach (dwa z
+//     czterech wysłanych do 25.08.2026), a odbiorca na telefonie widział wtedy
+//     pusty dymek z samym znakiem KLIPY. Za ciężkie `md` ustępuje `sm`; gdy
+//     nic się nie mieści, idzie NAJLŻEJSZA warstwa o znanej wadze. Warstwa
+//     bez pola `size` NIE liczy się jako mieszcząca; dopiero bez żadnej wagi
+//     w odpowiedzi wraca dawne `md` → `hd` (innego źródła wagi nie ma).
 //   * Rendition wybieramy CZYTAJĄC `file[tier].gif.url`, nigdy nie zgadując po
 //     końcówce adresu: ta sama warstwa niesie też `webp`/`jpg`/`mp4`/`webm`.
 //   * Parser jest TOLERANCYJNY: odpowiedź to kształt cudzego API (a oficjalne
@@ -40,6 +46,13 @@ export const KLIPY_DEFAULT_PER_PAGE = 24;
 const PER_PAGE_BOUNDS = { search: { min: 8, max: 50 }, trending: { min: 1, max: 50 } };
 
 const KLIPY_KEY_VAR = 'VITE_KLIPY_API_KEY';
+
+/**
+ * Górna waga renditionu wysyłanego do rozmowy. 1,5 MB to kilka sekund na LTE,
+ * ale wciąż poniżej progu, przy którym odbiorca zdąży uznać dymek za pusty;
+ * `sm` tego samego klipu waży zwykle 3–4× mniej.
+ */
+export const SEND_MAX_BYTES = 1_500_000;
 
 /** Klucz KLIPY ze wstrzykniętego rekordu zmiennych; '' = przycisk GIF znika. */
 export function klipyApiKey(env: Record<string, unknown>): string {
@@ -170,6 +183,46 @@ function pickGif(
   return { url: '', width: 0, height: 0 };
 }
 
+/** Warstwa z poprawnym adresem i (opcjonalnie) znaną wagą w bajtach. */
+function sendCandidate(
+  file: Record<string, unknown> | null,
+  tier: KlipyTier,
+): { url: string; size: number } | null {
+  const gif = asRecord(asRecord(file?.[tier])?.gif);
+  const url = asGifUrl(gif?.url);
+  return url === '' ? null : { url, size: asSize(gif?.size) };
+}
+
+/**
+ * Adres do wysłania — GWARANCJA: jeśli API podaje jakąkolwiek wagę, wysyłamy
+ * warstwę o ZNANEJ wadze, nigdy „w ciemno".
+ *
+ *   1. `md`, potem `sm`, o znanej wadze mieszczącej się w limicie.
+ *   2. Gdy żadna się nie mieści: NAJLŻEJSZA warstwa o znanej wadze (także `xs`
+ *      albo `hd`, jeśli akurat są lżejsze) — kafelek nie wypada z pickera
+ *      tylko przez wagę, a mimo to nie idzie nic cięższego, niż jest dostępne.
+ *   3. Dopiero bez ŻADNEJ znanej wagi zostaje dawna kolejność `md` → `hd`;
+ *      poza polem `size` nie mamy skąd znać wagi, a API dopuszcza jego brak.
+ *
+ * Warstwa BEZ wagi nie liczy się jako „mieszcząca się": inaczej `md` bez pola
+ * `size` obok `sm` z wagą 400 kB wysłałoby nieznane megabajty.
+ */
+function pickSendGif(file: Record<string, unknown> | null): { url: string } {
+  for (const tier of ['md', 'sm'] as const) {
+    const candidate = sendCandidate(file, tier);
+    if (candidate !== null && candidate.size > 0 && candidate.size <= SEND_MAX_BYTES) {
+      return candidate;
+    }
+  }
+  let lightest: { url: string; size: number } | null = null;
+  for (const tier of ['xs', 'sm', 'md', 'hd'] as const) {
+    const candidate = sendCandidate(file, tier);
+    if (candidate === null || candidate.size === 0) continue;
+    if (lightest === null || candidate.size < lightest.size) lightest = candidate;
+  }
+  return lightest ?? pickGif(file, ['md', 'hd']);
+}
+
 /**
  * Mapowanie odpowiedzi KLIPY. Koperta to `{ result, data }`, a lista pozycji
  * siedzi w `data.data`; `has_next` steruje doładowaniem kolejnej strony.
@@ -189,7 +242,7 @@ export function parseKlipyResponse(json: unknown): KlipyPage {
     if (slug === '') continue;
     const file = asRecord(record.file);
     const preview = pickGif(file, ['sm', 'xs']);
-    const send = pickGif(file, ['md', 'hd']);
+    const send = pickSendGif(file);
     if (preview.url === '' || send.url === '') continue;
     const title = asText(record.title).trim();
     gifs.push({

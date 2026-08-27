@@ -90,6 +90,31 @@ export function changelogUnreadCount(
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-08-27-czat-gif-wczytywanie',
+    dateFrom: '2026-08-27',
+    dateTo: '2026-08-27',
+    summary: 'GIF-y w czacie nie zostawiają już pustego dymka u odbiorcy.',
+    items: [
+      {
+        area: 'Czat',
+        feature: 'Ponowne wczytanie GIF-a',
+        description:
+          'Gdy obrazek nie dojedzie, aplikacja sama próbuje dwa razy. Potem pokazuje „Wczytaj ponownie" i link do otwarcia w nowej karcie zamiast pustego dymka z samym znakiem KLIPY.',
+      },
+      {
+        area: 'Czat',
+        feature: 'Miejsce na GIF w trakcie wczytywania',
+        description: 'Dymek od razu rezerwuje miejsce i pulsuje, więc widać, że obrazek się ładuje.',
+      },
+      {
+        area: 'Czat',
+        feature: 'Lżejsze GIF-y',
+        description:
+          'Do rozmowy idzie najostrzejsza wersja mieszcząca się w 1,5 MB, a gdy żadna się nie mieści, najlżejsza dostępna. Długie klipy, które ważyły 4 MB, wczytują się szybciej na telefonie.',
+      },
+    ],
+  },
+  {
     id: '2026-08-26-kalendarz-google-wlasciciel',
     dateFrom: '2026-08-26',
     dateTo: '2026-08-26',

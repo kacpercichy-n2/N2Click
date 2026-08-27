@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   KLIPY_BASE,
+  SEND_MAX_BYTES,
   buildKlipySearchUrl,
   buildKlipyShareRequest,
   klipyApiKey,
@@ -27,7 +28,14 @@ const FIXTURE = {
         tags: ['kot', 'praca'],
         file: {
           hd: { gif: { url: 'https://static.klipy.com/abc/hd.gif', width: 800, height: 450 } },
-          md: { gif: { url: 'https://static.klipy.com/abc/md.gif', width: 480, height: 270 } },
+          md: {
+            gif: {
+              url: 'https://static.klipy.com/abc/md.gif',
+              width: 480,
+              height: 270,
+              size: SEND_MAX_BYTES,
+            },
+          },
           sm: {
             gif: {
               url: 'https://static.klipy.com/abc/sm.gif',
@@ -165,6 +173,52 @@ describe('parseKlipyResponse', () => {
     expect(fallback.blurPreview).toBeUndefined();
   });
 
+  it('za ciężkie md ustępuje sm/xs, a gdy nic się nie mieści, idzie NAJLŻEJSZA warstwa', () => {
+    const heavy = (file: Record<string, unknown>) =>
+      parseKlipyResponse({
+        result: true,
+        data: { data: [{ type: 'gif', slug: 'ciezki', file }] },
+      }).gifs[0]?.sendUrl;
+    const md = { gif: { url: 'https://static.klipy.com/h/md.gif', size: 4_000_000 } };
+    const sm = { gif: { url: 'https://static.klipy.com/h/sm.gif', size: 400_000 } };
+    const hd = { gif: { url: 'https://static.klipy.com/h/hd.gif', size: 9_000_000 } };
+    const xs = { gif: { url: 'https://static.klipy.com/h/xs.gif', size: 90_000 } };
+    expect(heavy({ md, sm, hd, xs })).toBe('https://static.klipy.com/h/sm.gif');
+    // md i sm za ciężkie: idzie najlżejsza o znanej wadze, tu xs; kafelek NIE
+    // wypada.
+    const heavySm = { gif: { ...sm.gif, size: 2_000_000 } };
+    expect(heavy({ md, sm: heavySm, hd, xs })).toBe('https://static.klipy.com/h/xs.gif');
+    // …a gdy xs jest cięższe od sm, to sm — decyduje waga, nie nazwa warstwy.
+    expect(heavy({ md, sm: heavySm, hd, xs: { gif: { ...xs.gif, size: 3_000_000 } } })).toBe(
+      'https://static.klipy.com/h/sm.gif',
+    );
+    // Nigdy hd, gdy jest cokolwiek lżejszego.
+    expect(heavy({ md, hd, xs: { gif: { ...xs.gif, size: 5_000_000 } } })).toBe(
+      'https://static.klipy.com/h/md.gif',
+    );
+    // md BEZ wagi obok sm z wagą: idzie sm — warstwa bez `size` nie liczy się
+    // jako mieszcząca, bo mogłaby nieść nieznane megabajty.
+    expect(heavy({ md: { gif: { url: 'https://static.klipy.com/h/md.gif' } }, sm })).toBe(
+      'https://static.klipy.com/h/sm.gif',
+    );
+    // md i sm bez wagi, xs z wagą: jedyna znana waga wygrywa.
+    expect(
+      heavy({
+        md: { gif: { url: 'https://static.klipy.com/h/md.gif' } },
+        sm: { gif: { url: 'https://static.klipy.com/h/sm.gif' } },
+        xs,
+      }),
+    ).toBe('https://static.klipy.com/h/xs.gif');
+    // Bez ŻADNEJ wagi: dawna kolejność md → hd.
+    expect(
+      heavy({
+        md: { gif: { url: 'https://static.klipy.com/h/md.gif' } },
+        hd: { gif: { url: 'https://static.klipy.com/h/hd.gif' } },
+        xs: { gif: { url: 'https://static.klipy.com/h/xs.gif' } },
+      }),
+    ).toBe('https://static.klipy.com/h/md.gif');
+  });
+
   it('odrzuca rendition z OBCEGO hosta, nawet gdy ścieżka kończy się na .gif', () => {
     // Regresja: parser walidował adresy przez `isGifUrl`, które przepuszcza
     // każdą ścieżkę `.gif` niezależnie od hosta — podmieniona odpowiedź API
@@ -185,7 +239,8 @@ describe('parseKlipyResponse', () => {
             slug: 'mieszany',
             file: {
               // Podgląd legalny, wysyłka podmieniona — pozycja musi wypaść
-              // W CAŁOŚCI, bo to `sendUrl` ląduje w bazie.
+              // W CAŁOŚCI, bo to `sendUrl` ląduje w bazie. (Bez pola `size`
+              // `sm` nie jest kandydatem wysyłki, więc nie ma na co zejść.)
               sm: { gif: { url: 'https://static.klipy.com/ok/sm.gif' } },
               md: { gif: { url: 'https://obcy.example/pixel.gif' } },
             },
