@@ -517,13 +517,16 @@ export interface TimeEntry {
    *  (kubełek) nigdy nie ma przekroczenia. */
   overrunMinutes?: number;
   /**
-   * Księgowość „wykonanie → plan" TEGO wpisu: o ile minut urósł (albo powstał)
-   * blok `blockId` i ile z tego zeszło z zasobnika osoby. Skasowanie albo
-   * poprawka wpisu ODWRACA dokładnie to (blok kurczy się / znika, zasobnik
-   * dostaje swoje minuty z powrotem), więc pomyłka nie zostawia śladu w planie.
-   * Klucz obecny tylko, gdy wpis coś dopisał do planu.
+   * Księgowość „wykonanie → plan" TEGO wpisu: lista kawałków — o ile minut
+   * urósł (albo powstał) blok `blockId` i ile z tego zeszło z zasobnika osoby.
+   * Kawałków może być kilka, gdy niepokryte godziny wpisu są rozłączne (wpis
+   * oplatający własny blok). Skasowanie albo poprawka wpisu ODWRACA dokładnie
+   * całość (bloki kurczą się / znikają, zasobnik dostaje swoje minuty z
+   * powrotem), więc pomyłka nie zostawia śladu w planie. Klucz obecny tylko,
+   * gdy wpis coś dopisał do planu. Zapis sprzed 2026-09-01 (pojedynczy obiekt)
+   * naprawia się do listy przy wczytaniu.
    */
-  planGrowth?: { blockId: string; minutes: number; fromBinMinutes: number };
+  planGrowth?: Array<{ blockId: string; minutes: number; fromBinMinutes: number }>;
   createdAt: string; // ISO
 }
 

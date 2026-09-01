@@ -91,6 +91,38 @@ export function planGrowth(
 }
 
 /**
+ * Przedziały zegarowe zalogowanego czasu NIEPOKRYTE żadnym blokiem (unia
+ * `entrySpans` minus unia `blockSpans`), rosnąco. Geometria, nie pula minut —
+ * wynik nie zależy od KOLEJNOŚCI dodawania wpisów, tylko od godzin na zegarze.
+ * Używane przy materializacji wzrostu planu: wzrost ląduje tam, gdzie czas
+ * faktycznie został zalogowany, a plan go nie pokrywa.
+ */
+export function uncoveredEntryGaps(
+  entrySpans: ReadonlyArray<{ startMinutes: number; endMinutes: number }>,
+  blockSpans: ReadonlyArray<{ startMinutes: number; endMinutes: number }>,
+): Array<[number, number]> {
+  const merged: Array<[number, number]> = [];
+  for (const s of [...entrySpans].sort((a, b) => a.startMinutes - b.startMinutes)) {
+    const last = merged[merged.length - 1];
+    if (last !== undefined && s.startMinutes <= last[1]) last[1] = Math.max(last[1], s.endMinutes);
+    else merged.push([s.startMinutes, s.endMinutes]);
+  }
+  const blocks = [...blockSpans].sort((a, b) => a.startMinutes - b.startMinutes);
+  const out: Array<[number, number]> = [];
+  for (const [start, end] of merged) {
+    let cursor = start;
+    for (const b of blocks) {
+      if (b.endMinutes <= cursor || b.startMinutes >= end) continue;
+      if (b.startMinutes > cursor) out.push([cursor, b.startMinutes]);
+      cursor = Math.max(cursor, b.endMinutes);
+      if (cursor >= end) break;
+    }
+    if (cursor < end) out.push([cursor, end]);
+  }
+  return out;
+}
+
+/**
  * Sekwencyjne pokrycie bloków wykonaniem: zalogowane minuty pary wypełniają
  * bloki po kolei od najwcześniejszego. Zwraca minuty przypadające na każdy blok.
  */

@@ -1213,14 +1213,26 @@ export function repairTimeEntries(data: AppData): AppData {
       Number.isInteger(ovRaw) && (ovRaw as number) > 0 && (ovRaw as number) % MINUTE_STEP === 0 && (ovRaw as number) <= e0 - s0
         ? (ovRaw as number)
         : undefined;
-    const pgRaw = e.planGrowth as Record<string, unknown> | undefined;
+    // Zapis sprzed 2026-09-01: pojedynczy obiekt → lista jednoelementowa.
+    const pgRaw = e.planGrowth as unknown;
+    const pgList: unknown[] | undefined = Array.isArray(pgRaw)
+      ? pgRaw
+      : typeof pgRaw === 'object' && pgRaw !== null
+        ? [pgRaw]
+        : undefined;
+    const validPiece = (p: unknown): p is { blockId: string; minutes: number; fromBinMinutes: number } => {
+      const o = p as Record<string, unknown>;
+      return (
+        typeof p === 'object' && p !== null &&
+        str(o.blockId) !== '' &&
+        Number.isInteger(o.minutes) && (o.minutes as number) > 0 && (o.minutes as number) % MINUTE_STEP === 0 &&
+        Number.isInteger(o.fromBinMinutes) && (o.fromBinMinutes as number) >= 0 &&
+        (o.fromBinMinutes as number) <= (o.minutes as number)
+      );
+    };
     const planGrowth =
-      typeof pgRaw === 'object' && pgRaw !== null &&
-      str(pgRaw.blockId) !== '' &&
-      Number.isInteger(pgRaw.minutes) && (pgRaw.minutes as number) > 0 && (pgRaw.minutes as number) % MINUTE_STEP === 0 &&
-      Number.isInteger(pgRaw.fromBinMinutes) && (pgRaw.fromBinMinutes as number) >= 0 &&
-      (pgRaw.fromBinMinutes as number) <= (pgRaw.minutes as number)
-        ? { blockId: str(pgRaw.blockId), minutes: pgRaw.minutes as number, fromBinMinutes: pgRaw.fromBinMinutes as number }
+      pgList !== undefined && pgList.length > 0 && pgList.every(validPiece)
+        ? pgList.map((p) => ({ blockId: str(p.blockId), minutes: p.minutes, fromBinMinutes: p.fromBinMinutes }))
         : undefined;
     const clean: TimeEntry = {
       id, personId, taskId, date, startMinutes: s0, endMinutes: e0, source: src,

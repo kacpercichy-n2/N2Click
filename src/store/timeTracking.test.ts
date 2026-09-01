@@ -20,6 +20,7 @@ import {
   plannedMinutesForTaskPersonDate,
 } from './timeTracking';
 import { isValidTimeRange, findOverlappingEntry, formatMinutesDuration, frecencyScore, freeRemainderRange } from '../utils/timeTracking';
+import { uncoveredEntryGaps } from './timeTrackingSync';
 import type { AppData, Client, Person, Project, Status, Task, TimeEntry, WorkloadEntry } from '../types';
 
 const DAY = '2026-08-13';
@@ -93,6 +94,23 @@ describe('utils/timeTracking', () => {
     const mid = [entry('w1', 't-design', 870, 930)]; // środek zajmuje oba → null
     expect(freeRemainderRange(mid, 'me', DAY, 840, 960, 60)).toBeNull();
     expect(freeRemainderRange([], 'me', DAY, 840, 960, 60)).toEqual([900, 960]);
+  });
+  it('uncoveredEntryGaps: unia wpisów minus bloki, rosnąco; scala nachodzące wpisy', () => {
+    expect(uncoveredEntryGaps([{ startMinutes: 540, endMinutes: 630 }], [{ startMinutes: 570, endMinutes: 600 }])).toEqual([
+      [540, 570],
+      [600, 630],
+    ]);
+    expect(
+      uncoveredEntryGaps(
+        [
+          { startMinutes: 600, endMinutes: 630 },
+          { startMinutes: 570, endMinutes: 615 },
+        ],
+        [{ startMinutes: 600, endMinutes: 630 }],
+      ),
+    ).toEqual([[570, 600]]);
+    expect(uncoveredEntryGaps([{ startMinutes: 540, endMinutes: 600 }], [{ startMinutes: 480, endMinutes: 720 }])).toEqual([]);
+    expect(uncoveredEntryGaps([], [{ startMinutes: 480, endMinutes: 720 }])).toEqual([]);
   });
   it('formatMinutesDuration + frecencyScore', () => {
     expect(formatMinutesDuration(90)).toBe('1h 30m');
@@ -360,6 +378,21 @@ describe('repairTimeEntries', () => {
     const raw = { ...state(), timeEntries: undefined as unknown as TimeEntry[] };
     expect(repairTimeEntries(raw).timeEntries).toEqual([]);
   });
+  it('planGrowth: zapis sprzed 2026-09-01 (pojedynczy obiekt) naprawia się do listy; śmieciowy kawałek zdejmuje całą księgowość', () => {
+    const legacy = { blockId: 'b1', minutes: 30, fromBinMinutes: 0 } as unknown as TimeEntry['planGrowth'];
+    const raw = state({
+      timeEntries: [
+        entry('w1', 't-design', 600, 660, { planGrowth: legacy }),
+        entry('w2', 't-design', 720, 780, { planGrowth: [{ blockId: 'b1', minutes: 30, fromBinMinutes: 0 }] }),
+        entry('w3', 't-design', 840, 900, { planGrowth: [{ blockId: '', minutes: 30, fromBinMinutes: 0 }] }),
+      ],
+    });
+    const fixed = repairTimeEntries(raw);
+    expect(fixed.timeEntries.find((e) => e.id === 'w1')?.planGrowth).toEqual([{ blockId: 'b1', minutes: 30, fromBinMinutes: 0 }]);
+    expect(fixed.timeEntries.find((e) => e.id === 'w2')?.planGrowth).toEqual([{ blockId: 'b1', minutes: 30, fromBinMinutes: 0 }]);
+    expect('planGrowth' in (fixed.timeEntries.find((e) => e.id === 'w3') ?? {})).toBe(false);
+    expect(repairTimeEntries(fixed)).toBe(fixed);
+  });
 });
 
 // ---- Wykonanie ↔ plan (2026-08-19, reguły 1-5 ustalone z Kacprem) ------------
@@ -471,6 +504,172 @@ describe('nadwyżka wykonania: zasobnik → wolne sprzedane → ponad sprzedane'
     const accepted = add(s, 600, 810, true);
     expect(accepted.timeEntries[0].overrunMinutes).toBe(30);
     expect(accepted.workload.find((w) => w.id === 'b1')?.plannedHours).toBe(3); // sprzedanych nie ruszamy
+  });
+  it('powrót do zadania po bloku innego zadania: nadwyżka dostaje NOWY blok w godzinach wpisu, stary nie rośnie w poprzek', () => {
+    // Lustro zgłoszenia z 2026-09-01: plan Agencyjne 9:00-9:30 + Analiza
+    // 9:30-10:15 (inne zadanie). Wpisy: 9:00-9:30 Agencyjne, 9:30-10:15
+    // Analiza, 10:15-10:30 znowu Agencyjne. Stary blok Agencyjne NIE może
+    // urosnąć do 9:00-9:45 (nachodziłby na Analizę) — powstaje nowy blok
+    // 10:15-10:30 (wykonany).
+    const s = state({
+      workload: [
+        block('b-agency', 't-design', 'me', 540, 0.5),
+        block('b-analiza', 't-call-a', 'me', 570, 0.75, 1),
+      ],
+    });
+    let next = add(s, 540, 570);
+    next = reducer(next, { type: 'ADD_TIME_ENTRY', payload: { personId: 'me', taskId: 't-call-a', date: DAY, startMinutes: 570, endMinutes: 615, source: 'manual' } });
+    next = add(next, 615, 630);
+    expect(next.workload.find((w) => w.id === 'b-agency')).toMatchObject({ plannedHours: 0.5, done: true });
+    const created = next.workload.find((w) => w.taskId === 't-design' && w.date === DAY && w.startMinutes === 615);
+    expect(created).toMatchObject({ plannedHours: 0.25, startMinutes: 615, done: true });
+    const lastEntry = next.timeEntries[next.timeEntries.length - 1];
+    expect(lastEntry.planGrowth).toEqual([{ blockId: created?.id, minutes: 15, fromBinMinutes: 0 }]);
+    // Skasowanie wpisu zabiera świeży blok w całości (odwrót księgowości).
+    const back = reducer(next, { type: 'DELETE_TIME_ENTRY', entryId: lastEntry.id });
+    expect(back.workload.find((w) => w.id === created?.id)).toBeUndefined();
+  });
+  it('wpis przylegający do końca bloku pary nadal rozciąga TEN blok', () => {
+    const s = state({ workload: [block('b1', 't-design', 'me', 540, 0.5)] });
+    const first = add(s, 540, 570);
+    const next = add(first, 570, 600);
+    expect(next.workload.find((w) => w.id === 'b1')).toMatchObject({ plannedHours: 1, done: true });
+    expect(next.workload.filter((w) => w.taskId === 't-design' && w.date === DAY)).toHaveLength(1);
+  });
+  it('wpis przed blokiem (przylega do POCZĄTKU) nie wydłuża jego końca: nadwyżka dostaje nowy blok w godzinach wpisu', () => {
+    // Wzrost zawsze wydłuża koniec bloku — praca wykonana PRZED blokiem nie
+    // może więc urosnąć na nim (kłamałaby o godzinach i nachodziła na to, co
+    // stoi w planie za blokiem). Plan 10:00-10:30, wpisy 10:00-10:30 i 9:30-10:00.
+    const s = state({ workload: [block('b1', 't-design', 'me', 600, 0.5)] });
+    const first = add(s, 600, 630);
+    const next = add(first, 570, 600);
+    expect(next.workload.find((w) => w.id === 'b1')).toMatchObject({ plannedHours: 0.5, startMinutes: 600 });
+    const created = next.workload.find((w) => w.taskId === 't-design' && w.date === DAY && w.startMinutes === 570);
+    expect(created).toMatchObject({ plannedHours: 0.5, done: true });
+    const lastEntry = next.timeEntries[next.timeEntries.length - 1];
+    expect(lastEntry.planGrowth).toEqual([{ blockId: created?.id, minutes: 30, fromBinMinutes: 0 }]);
+  });
+  it('umiejscowienie wzrostu NIE zależy od kolejności dodawania wpisów', () => {
+    // Te same dwa wpisy (9:30-10:00 i 10:00-10:30) na plan 10:00-10:30 dają
+    // ten sam plan niezależnie od tego, który wszedł pierwszy: nowy blok
+    // 9:30-10:00, stary nietknięty. Geometria luk, nie „kto przelał plan".
+    const s = state({ workload: [block('b1', 't-design', 'me', 600, 0.5)] });
+    const shape = (d: AppData) =>
+      d.workload
+        .filter((w) => w.taskId === 't-design' && w.date === DAY)
+        .map((w) => ({ startMinutes: w.startMinutes, plannedHours: w.plannedHours }))
+        .sort((a, b) => a.startMinutes - b.startMinutes);
+    const orderA = add(add(s, 600, 630), 570, 600);
+    const orderB = add(add(s, 570, 600), 600, 630);
+    const expected = [
+      { startMinutes: 570, plannedHours: 0.5 },
+      { startMinutes: 600, plannedHours: 0.5 },
+    ];
+    expect(shape(orderA)).toEqual(expected);
+    expect(shape(orderB)).toEqual(expected);
+    // Księgowość wzrostu siedzi na wpisie, KTÓREGO GODZINY wzrost pokrył
+    // (9:30-10:00), niezależnie od tego, który wpis przelał plan — skasowanie
+    // tego wpisu zabiera świeży blok, stary plan zostaje nietknięty.
+    for (const grown of [orderA, orderB]) {
+      const backfill = grown.timeEntries.find((e) => e.startMinutes === 570);
+      expect(backfill?.planGrowth).toEqual([expect.objectContaining({ minutes: 30 })]);
+      const back = reducer(grown, { type: 'DELETE_TIME_ENTRY', entryId: backfill!.id });
+      expect(shape(back)).toEqual([{ startMinutes: 600, plannedHours: 0.5 }]);
+    }
+    // Skasowanie wpisu WYZWALAJĄCEGO (10:00-10:30, bez własnej księgowości)
+    // też przycina dorośnięty plan: kawałek na wpisie 9:30-10:00 znika, plan
+    // wraca do wykonania, zero osieroconego wzrostu.
+    for (const grown of [orderA, orderB]) {
+      const trigger = grown.timeEntries.find((e) => e.startMinutes === 600);
+      expect(trigger?.planGrowth).toBeUndefined();
+      const back = reducer(grown, { type: 'DELETE_TIME_ENTRY', entryId: trigger!.id });
+      expect(shape(back)).toEqual([{ startMinutes: 600, plannedHours: 0.5 }]);
+      expect(back.timeEntries[0].planGrowth).toBeUndefined();
+    }
+    // Wpis „ponad sprzedane" nie maskuje nadmiaru: jego minuty z definicji
+    // nie mają pokrycia w planie, więc przycięcie po skasowaniu wyzwalającego
+    // dalej zdejmuje dorośnięty kawałek.
+    const withOverrun = {
+      ...orderA,
+      timeEntries: [...orderA.timeEntries, entry('w-over', 't-design', 900, 930, { overrunMinutes: 30 })],
+    };
+    const trigger = withOverrun.timeEntries.find((e) => e.startMinutes === 600)!;
+    const back = reducer(withOverrun, { type: 'DELETE_TIME_ENTRY', entryId: trigger.id });
+    expect(shape(back)).toEqual([{ startMinutes: 600, plannedHours: 0.5 }]);
+  });
+  it('luka obejmująca DWA wpisy: każdy dostaje własny blok i własny rekord — skasowanie jednego nie cofa cudzego planu', () => {
+    // Plan 10:30-11:00. Wpisy 9:30-10:00 i 10:00-10:30 (backfill), potem
+    // 10:30-11:00 przelewa plan o 1h. Luka 9:30-10:30 dzieli się po granicach
+    // wpisów: dwa bloki po 30 min, księgowość osobno. Skasowanie wpisu
+    // 9:30-10:00 zabiera tylko JEGO blok.
+    const s = state({ workload: [block('b1', 't-design', 'me', 630, 0.5)] });
+    let next = add(add(s, 570, 600), 600, 630);
+    next = add(next, 630, 660);
+    const blocks = next.workload.filter((w) => w.taskId === 't-design' && w.date === DAY).sort((a, b) => a.startMinutes - b.startMinutes);
+    expect(blocks.map((w) => ({ startMinutes: w.startMinutes, plannedHours: w.plannedHours }))).toEqual([
+      { startMinutes: 570, plannedHours: 0.5 },
+      { startMinutes: 600, plannedHours: 0.5 },
+      { startMinutes: 630, plannedHours: 0.5 },
+    ]);
+    const e1 = next.timeEntries.find((e) => e.startMinutes === 570)!;
+    const e2 = next.timeEntries.find((e) => e.startMinutes === 600)!;
+    expect(e1.planGrowth).toEqual([expect.objectContaining({ minutes: 30 })]);
+    expect(e2.planGrowth).toEqual([expect.objectContaining({ minutes: 30 })]);
+    expect(e1.planGrowth?.[0].blockId).not.toBe(e2.planGrowth?.[0].blockId);
+    const back = reducer(next, { type: 'DELETE_TIME_ENTRY', entryId: e1.id });
+    const left = back.workload.filter((w) => w.taskId === 't-design' && w.date === DAY).sort((a, b) => a.startMinutes - b.startMinutes);
+    expect(left.map((w) => w.startMinutes)).toEqual([600, 630]);
+  });
+  it('wzrost większy niż pojedyncza luka konsumuje luki po kolei, fallback tylko na resztkę bez wolnych minut', () => {
+    // Wpis 9:30-11:00 oplata własny blok 10:00-10:30: luki 9:30-10:00 i
+    // 10:30-11:00 (po 30 min), wzrost 1h. Rozłączne kawałki jednego wpisu to
+    // OSOBNE pozycje listy `planGrowth`: nowy blok 9:30-10:00 plus b1
+    // rozciągnięty do 11:00 — plan pokrywa wykonanie 1:1, zero nakładek, a
+    // skasowanie wpisu cofa dokładnie 1h.
+    const s = state({ workload: [block('b1', 't-design', 'me', 600, 0.5)] });
+    const next = add(s, 570, 660);
+    const blocks = next.workload
+      .filter((w) => w.taskId === 't-design' && w.date === DAY)
+      .sort((a, b) => a.startMinutes - b.startMinutes);
+    expect(blocks.map((w) => ({ startMinutes: w.startMinutes, plannedHours: w.plannedHours }))).toEqual([
+      { startMinutes: 570, plannedHours: 0.5 },
+      { startMinutes: 600, plannedHours: 1 },
+    ]);
+    const e = next.timeEntries[0];
+    expect(e.planGrowth).toEqual([
+      { blockId: blocks[0].id, minutes: 30, fromBinMinutes: 0 },
+      { blockId: 'b1', minutes: 30, fromBinMinutes: 0 },
+    ]);
+    const back = reducer(next, { type: 'DELETE_TIME_ENTRY', entryId: e.id });
+    const left = back.workload.filter((w) => w.taskId === 't-design' && w.date === DAY);
+    expect(left).toHaveLength(1);
+    expect(left[0]).toMatchObject({ id: 'b1', plannedHours: 0.5 });
+  });
+  it('powtórny wzrost na wpisie z księgowością: rekord akumuluje na tym samym bloku, sierota nie powstaje', () => {
+    // Wpis 10:00-12:00 urósł kiedyś o 30 min (rekord na b1) i niesie 60 min
+    // nadwyżki. Po podniesieniu estymaty kolejny wpis wyzwala wzrost, którego
+    // segment ląduje w niepokrytych godzinach PIERWSZEGO wpisu: b1 rośnie
+    // dalej, rekord sumuje się do 60 min — skasowanie wpisu cofa całość.
+    const s = state({
+      workload: [{ ...block('b1', 't-design', 'me', 600, 1), done: true }],
+      timeEntries: [
+        entry('w1', 't-design', 600, 720, { planGrowth: [{ blockId: 'b1', minutes: 30, fromBinMinutes: 0 }], overrunMinutes: 60 }),
+      ],
+    });
+    const next = reducer(s, { type: 'ADD_TIME_ENTRY', payload: { personId: 'me', taskId: 't-design', date: DAY, startMinutes: 840, endMinutes: 870, source: 'manual' } });
+    expect(next.workload.find((w) => w.id === 'b1')?.plannedHours).toBe(1.5);
+    expect(next.workload.filter((w) => w.taskId === 't-design' && w.date === DAY)).toHaveLength(1);
+    const w1 = next.timeEntries.find((e) => e.id === 'w1');
+    expect(w1?.planGrowth).toEqual([{ blockId: 'b1', minutes: 60, fromBinMinutes: 0 }]);
+    const back = reducer(next, { type: 'DELETE_TIME_ENTRY', entryId: 'w1' });
+    expect(back.workload.find((w) => w.id === 'b1')?.plannedHours).toBe(0.5);
+  });
+  it('backfill rana przy pokrytym popołudniu: nowy blok w godzinach rannego wpisu, nie duplikat na bloku', () => {
+    const s = state({ workload: [block('b1', 't-design', 'me', 840, 0.5)] });
+    const next = add(add(s, 840, 870), 540, 570);
+    expect(next.workload.find((w) => w.id === 'b1')).toMatchObject({ plannedHours: 0.5, startMinutes: 840 });
+    const created = next.workload.find((w) => w.taskId === 't-design' && w.date === DAY && w.startMinutes === 540);
+    expect(created).toMatchObject({ plannedHours: 0.5, done: true });
   });
   it('kubełek (bez estymaty) nigdy nie przekracza: blok dopisuje się w godzinach wpisu', () => {
     const s = state();
@@ -590,7 +789,7 @@ describe('odwrót „wykonanie → plan” (kasowanie / poprawka wpisu)', () => 
     const s = state({ workload: [block('b1', 't-design', 'me', 600, 2), bin('bin1', 't-design', 'me', 1)] });
     const grown = add(s, 600, 780); // 3h: blok 2h→3h, zasobnik 1h→0
     const e = grown.timeEntries[0];
-    expect(e.planGrowth).toEqual({ blockId: 'b1', minutes: 60, fromBinMinutes: 60 });
+    expect(e.planGrowth).toEqual([{ blockId: 'b1', minutes: 60, fromBinMinutes: 60 }]);
     const back = reducer(grown, { type: 'DELETE_TIME_ENTRY', entryId: e.id });
     expect(back.workload.find((w) => w.id === 'b1')).toMatchObject({ plannedHours: 2, done: false });
     expect(back.workload.find((w) => w.taskId === 't-design' && w.date === '')?.plannedHours).toBe(1);
@@ -615,7 +814,7 @@ describe('odwrót „wykonanie → plan” (kasowanie / poprawka wpisu)', () => 
     const regrown = reducer(shrunk, { type: 'UPDATE_TIME_ENTRY', entryId: id, taskId: 't-design', startMinutes: 600, endMinutes: 750 }); // 2h 30m
     expect(regrown.workload.find((w) => w.id === 'b1')?.plannedHours).toBe(2.5);
     expect(regrown.workload.find((w) => w.taskId === 't-design' && w.date === '')?.plannedHours).toBe(0.5);
-    expect(regrown.timeEntries[0].planGrowth).toEqual({ blockId: 'b1', minutes: 30, fromBinMinutes: 30 });
+    expect(regrown.timeEntries[0].planGrowth).toEqual([{ blockId: 'b1', minutes: 30, fromBinMinutes: 30 }]);
   });
   it('skasowanie wpisu odznacza blok pokryty wyłącznie tym wpisem', () => {
     const s = state({ workload: [block('b1', 't-design', 'me', 600, 1)] });

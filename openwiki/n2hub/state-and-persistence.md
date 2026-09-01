@@ -516,9 +516,26 @@
   (zadanie, osoba, dzień) ponad plan rośnie w planie jak przy rozciąganiu
   bloku (`planGrowth`): najpierw zasobnik osoby (wiersz maleje/znika, inwariant
   4), potem wolne sprzedane zadania (estymata minus wszystko zaplanowane u
-  wszystkich); dopisuje się do OSTATNIEGO bloku pary tego dnia albo powstaje
-  nowy blok w godzinach wpisu (`done: true`); nakładka na inny blok osoby
-  dopuszczona (świadoma alokacja, fakt nie zamiar). Kubełek (estymata null) ma
+  wszystkich); UMIEJSCOWIENIE wzrostu (2026-09-01) liczy geometria zegarowa,
+  nie „kto przelał plan": `uncoveredEntryGaps` (timeTrackingSync, unia wpisów
+  pary minus datowane bloki osoby) daje luki niezależne od kolejności dodawania
+  wpisów; luki wypełniają się CHRONOLOGICZNIE, kawałek po kawałku, PO
+  GRANICACH WPISÓW — kawałek za końcem bloku pary rozciąga ten blok, inny
+  dostaje NOWY blok w godzinach luki (`done: true`); dopiero resztka bez
+  żadnej wolnej minuty wraca do godzin wpisu wyzwalającego (nakładka jest
+  wtedy faktem, nie artefaktem); księgowość `planGrowth` to LISTA kawałków na
+  wpisie-właścicielu (od 2026-09-01; zapis-obiekt sprzed zmiany naprawia się do
+  listy w `repairTimeEntries`): kawałek przylegający do aktualnego końca bloku
+  z rekordu akumuluje, blok z cudzą księgowością nie rośnie, rozłączne kawałki
+  to osobne pozycje listy — sieroty bez odwrotu nie powstają, a skasowanie
+  jednego wpisu cofa dokładnie swoje, nigdy cudze; po KAŻDYM kasowaniu i
+  poprawce `trimPlanGrowth` przycina plan pary do wykonania BEZ minut „ponad
+  sprzedane" (symetria wzoru z `planGrowth`), WYŁĄCZNIE z kawałków
+  `planGrowth` (LIFO od najpóźniejszego wpisu; plan ręczny nietykalny), więc
+  skasowanie wpisu WYZWALAJĄCEGO wzrost zaksięgowany na innym wpisie też go
+  zdejmuje;
+  nakładka wynikająca z godzin samego wpisu dopuszczona (fakt nie zamiar).
+  Kubełek (estymata null) ma
   pokrycie nieskończone. (3) reszta bez pokrycia = „ponad sprzedane":
   `ADD/UPDATE_TIME_ENTRY` bez `acceptOverrun: true` => TA SAMA referencja (UI
   pyta dialogiem `useConfirm` dokładnie wtedy, bo liczy tym samym `planGrowth`);
