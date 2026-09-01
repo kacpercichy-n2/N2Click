@@ -106,6 +106,40 @@ describe('createExternalStore', () => {
     expect(b.getState()).toEqual({ count: 0 });
   });
 
+  it('actionFor pairs a state REFERENCE with the action that produced it', () => {
+    const initial = { count: 0 };
+    const store = createExternalStore(counterReducer, initial);
+    expect(store.actionFor(initial)).toBeUndefined(); // stan początkowy — nikt go nie wytworzył
+    store.dispatch({ type: 'inc' });
+    const produced = store.getState();
+    expect(store.actionFor(produced)).toEqual({ type: 'inc' });
+    expect(store.actionFor({ count: 1 })).toBeUndefined(); // obcy obiekt, nie z tego sklepu
+  });
+
+  it('a NO-OP dispatch does not re-attribute the current state (echo-loop regression)', () => {
+    // Scenariusz sztormu 2026-09-01: scalenie hydracji wytwarza stan, a no-op
+    // dispatch (np. SETTLE_TRACKED_DAY bez niczego do rozliczenia) wciska się
+    // przed efekt lustra. Pojedynczy slot „ostatniej akcji" był wtedy już
+    // nadpisany; parowanie po referencji musi dalej wskazywać scalenie.
+    const store = createExternalStore(counterReducer, { count: 0 });
+    store.dispatch({ type: 'set', value: 5 });
+    const produced = store.getState();
+    store.dispatch({ type: 'noop' }); // ta sama referencja — nic nie wytworzył
+    store.dispatch({ type: 'set', value: 5 }); // value-equal → też no-op
+    expect(store.getState()).toBe(produced);
+    expect(store.actionFor(produced)).toEqual({ type: 'set', value: 5 });
+  });
+
+  it('actionFor over the REAL app reducer survives a rejected tracker settle', () => {
+    const store = createExternalStore(reducer, emptyData());
+    store.dispatch({ type: 'ADD_DEPARTMENT', name: 'Produkcja' });
+    const produced = store.getState();
+    // Nieistniejąca osoba → reduktor odrzuca (invariant 6, ta sama referencja).
+    store.dispatch({ type: 'SETTLE_TRACKED_DAY', personId: 'nope', date: '2026-09-01', nowMinutes: 600 });
+    expect(store.getState()).toBe(produced);
+    expect(store.actionFor(produced)?.type).toBe('ADD_DEPARTMENT');
+  });
+
   it('drives the REAL app reducer: a rejected command notifies nobody (invariant 6)', () => {
     const initial: AppData = emptyData();
     const store = createExternalStore(reducer, initial);

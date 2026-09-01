@@ -26,7 +26,18 @@
   odrzucony przez reduktor (ta sama referencja, inwariant 6) NIE powiadamia nikogo.
   Kontekst sklepu jest ROZDZIELONY (to nie jest mnożenie providerów): `StateContext`
   (zmienny stan) i `StoreApiContext` (obiekt STAŁY: `dispatch`, `lastActionRef`,
-  `getState`, `subscribe`). `useStore()` składa oba i zachowuje dokładną sygnaturę
+  `getState`, `subscribe`, `actionFor`). TŁUMIENIE ECHA LUSTRA (2026-09-01):
+  `actionFor(state)` zwraca akcję, która wytworzyła DOKŁADNIE tę referencję stanu
+  (WeakMap w `externalStore`; no-op dispatch niczego nie nadpisuje). Lustro chmury
+  rozpoznaje nim własne scalenia hydracji zamiast po `lastActionRef` — pojedynczy
+  slot „ostatniego dispatchu" bywał nadpisany przez no-op `SETTLE_TRACKED_DAY`
+  z trackera (efekty dzieci biegną przed efektem CloudSyncProvider), diff
+  przypisywał deltę hydracji lokalnej akcji i odsyłał ją do chmury; trigger
+  `set_updated_at` + Realtime kręciły z tego wieczną pętlę upsertów `tasks`.
+  Dodatkowo `runHydration` po każdym scaleniu przesuwa bazę diffa
+  (`advanceDiffBase`: `prevRef = getState()`, tylko gdy nic niezmirrowanego nie
+  wisiało). `lastActionRef` zostaje jako zapas dla stanów spoza mapy (stan
+  początkowy). `useStore()` składa oba i zachowuje dokładną sygnaturę
   `{ state, dispatch, lastActionRef }`, więc niezmigrowani konsumenci zachowują się
   bez zmian; nowe wejścia to `useDispatch()` (zero re-renderów), `useStoreApi()`
   (odczyt stanu W HANDLERZE, nie w renderze) i `useSelector(selector, isEqual)`

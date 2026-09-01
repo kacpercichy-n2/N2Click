@@ -13,6 +13,16 @@ export interface ExternalStore<S, A> {
   getState(): S;
   dispatch(action: A): void;
   subscribe(listener: () => void): () => void;
+  /**
+   * Akcja, której reduktor WYTWORZYŁ dokładnie tę referencję stanu — parowanie
+   * po referencji (WeakMap), więc no-op dispatch (ta sama referencja) niczego
+   * nie nadpisuje. Stan początkowy i stany spoza tego sklepu => `undefined`.
+   * Konsument: lustro chmury rozpoznaje po tym własne scalenia hydracji nawet
+   * wtedy, gdy między commit a efekt wciśnie się cudzy no-op dispatch (efekty
+   * dzieci biegną przed efektem providera — pojedynczy „ostatni typ akcji”
+   * bywał już wtedy nadpisany i scalenie wracało do chmury jako echo).
+   */
+  actionFor(state: S): A | undefined;
 }
 
 export function createExternalStore<S, A>(
@@ -21,6 +31,8 @@ export function createExternalStore<S, A>(
 ): ExternalStore<S, A> {
   let state = initial;
   const listeners = new Set<() => void>();
+  // Klucz po referencji stanu; stary stan bez odwołań znika razem z wpisem.
+  const producedBy = new WeakMap<object, A>();
 
   const getState = (): S => state;
 
@@ -28,6 +40,7 @@ export function createExternalStore<S, A>(
     const next = reducer(state, action);
     if (next === state) return; // invariant 6 — a rejected command is a no-op
     state = next;
+    producedBy.set(next as unknown as object, action);
     // Copy before iterating: a listener may unsubscribe (or subscribe) while
     // being notified, and mutating the live Set mid-iteration is a foot-gun.
     for (const listener of [...listeners]) listener();
@@ -40,7 +53,9 @@ export function createExternalStore<S, A>(
     };
   };
 
-  return { getState, dispatch, subscribe };
+  const actionFor = (s: S): A | undefined => producedBy.get(s as unknown as object);
+
+  return { getState, dispatch, subscribe, actionFor };
 }
 
 /**

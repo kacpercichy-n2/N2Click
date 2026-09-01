@@ -17,7 +17,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { usePersistence, useStore } from '../store/AppStore';
+import { usePersistence, useStore, useStoreApi } from '../store/AppStore';
 import { setCloudMirrorHealthy } from '../store/persistGate';
 import { anyLiveSyncHold, shouldDeferBackgroundMerge } from '../utils/liveSyncGate';
 import { reconnectDelayMs } from '../utils/liveChannel';
@@ -139,6 +139,9 @@ const SUPPRESSED = new Set([
 
 export function CloudSyncProvider({ children }: { children: ReactNode }) {
   const { state, dispatch, lastActionRef } = useStore();
+  // `actionFor` — akcja, która wytworzyła KONKRETNĄ referencję stanu, oraz
+  // `getState` — stan zatwierdzony teraz (obie stałe referencyjnie).
+  const { actionFor, getState } = useStoreApi();
   const { retryPersist } = usePersistence();
   const auth = useAuth();
   const org = useOrgData();
@@ -478,10 +481,24 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
         // Autorytatywna hydracja: profile chmury jadą w TYM SAMYM ładunku, żeby
         // reduktor scalił zespół PRZED walidacją encji (osoby bez lokalnej pary
         // e-mailowej dostają wiersz o id profilu chmury w jednej atomowej akcji).
-        dispatch({
-          type: 'MERGE_CLOUD_ENTITIES',
-          payload: { ...result.payload, people: buildCloudPeoplePayload(snap.profiles) },
-        });
+        // Pas i szelki do tłumienia po `actionFor`: baza diffa rusza do przodu
+        // OD RAZU po scaleniu (synchronicznie, zanim jakikolwiek efekt zdąży
+        // diffować), więc delta hydracji nie może wrócić do chmury jako echo
+        // nawet przy egzotycznym sklejeniu commitów. WARUNKOWO: tylko gdy przed
+        // dispatchem nic niezmirrowanego nie wisiało (prevRef == stan sprzed
+        // scalenia) — wiszącą edycję rozliczy efekt lustra po `actionFor`,
+        // a jej diff nie ma prawa zostać połknięty.
+        const advanceDiffBase = (merge: () => void): void => {
+          const before = getState();
+          merge();
+          if (prevRef.current === before) prevRef.current = getState();
+        };
+        advanceDiffBase(() =>
+          dispatch({
+            type: 'MERGE_CLOUD_ENTITIES',
+            payload: { ...result.payload, people: buildCloudPeoplePayload(snap.profiles) },
+          }),
+        );
         // Powiadomienia in-app: OSOBNY loader — nie blokuje reszty syncu ani
         // statusu. Brak tabeli (migracja niezaaplikowana) => `available` z []
         // (podmiana autorytatywna). Błąd PRZEJŚCIOWY => `available: false`:
@@ -489,10 +506,12 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
         // pustką na chwilowym błędzie sieci).
         const notifResult = await loadNotificationsSnapshot(getDb(), maps);
         if (mountedRef.current && notifResult.available) {
-          dispatch({
-            type: 'MERGE_CLOUD_NOTIFICATIONS',
-            payload: { notifications: notifResult.notifications },
-          });
+          advanceDiffBase(() =>
+            dispatch({
+              type: 'MERGE_CLOUD_NOTIFICATIONS',
+              payload: { notifications: notifResult.notifications },
+            }),
+          );
         }
         // Content Plan: OSOBNY schemat i osobny, degradujący się loader — brak
         // schematu/tabel (migracja niezaaplikowana) => `available` z pustymi
@@ -500,10 +519,12 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
         // Nie wpływa na status ani na resztę syncu.
         const contentPlanResult = await loadContentPlanSnapshot(getContentPlanDb());
         if (mountedRef.current && contentPlanResult.available) {
-          dispatch({
-            type: 'MERGE_CLOUD_CONTENT_PLAN',
-            payload: { brands: contentPlanResult.brands, posts: contentPlanResult.posts },
-          });
+          advanceDiffBase(() =>
+            dispatch({
+              type: 'MERGE_CLOUD_CONTENT_PLAN',
+              payload: { brands: contentPlanResult.brands, posts: contentPlanResult.posts },
+            }),
+          );
         }
         setStatus('ready');
         // Odświeżenie w tle nie przechodzi przez krawędź 'hydrating'→'ready',
@@ -532,6 +553,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       userId,
       org.state,
       dispatch,
+      getState,
       getDb,
       getContentPlanDb,
       processQueue,
@@ -844,7 +866,17 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       prevRef.current = state;
       return;
     }
-    const last = lastActionRef.current;
+    // Tłumienie po AKCJI, KTÓRA WYTWORZYŁA ten stan (parowanie po referencji),
+    // nie po ostatnim dispatchu: efekty dzieci biegną PRZED efektem tego
+    // providera, więc np. no-op `SETTLE_TRACKED_DAY` z trackera potrafił
+    // nadpisać `lastActionRef` między commitem scalenia a tym efektem — diff
+    // przypisywał wtedy deltę hydracji lokalnej akcji i odsyłał do chmury
+    // wiersze, które właśnie z niej przyszły. Trigger `set_updated_at` bumpował
+    // datę, Realtime budził hydrację i pętla echa kręciła się bez końca
+    // (sztorm upsertów `tasks`, 2026-09-01). `lastActionRef` zostaje wyłącznie
+    // zapasem dla stanów spoza mapy (stan początkowy).
+    const produced = actionFor(state);
+    const last = produced !== undefined ? produced.type : lastActionRef.current;
     if (last !== null && SUPPRESSED.has(last)) {
       prevRef.current = state;
       return;
@@ -878,7 +910,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     setPending(queueRef.current.length);
     persistOutbox();
     void processQueue();
-  }, [state, active, userId, lastActionRef, processQueue, setPending]);
+  }, [state, active, userId, lastActionRef, actionFor, processQueue, setPending]);
 
   const retry = useCallback(() => {
     if (statusRef.current === 'error') {

@@ -5657,6 +5657,14 @@ export interface StoreApi {
   getState(): AppData;
   /** Notified once per reference-changing dispatch. Returns an unsubscribe. */
   subscribe(listener: () => void): () => void;
+  /**
+   * Akcja, która wytworzyła DOKŁADNIE tę referencję stanu (undefined dla stanu
+   * początkowego). W odróżnieniu od `lastActionRef` (pojedynczy, nadpisywalny
+   * slot „ostatniego dispatchu") to parowanie jest odporne na dispatch, który
+   * wciska się między commit a efekt — lustro chmury rozpoznaje nim własne
+   * scalenia hydracji bez ryzyka echa (patrz CloudSyncProvider).
+   */
+  actionFor(state: AppData): Action | undefined;
 }
 
 // This is a SPLIT of the ONE store context into its changing half (the state)
@@ -5952,6 +5960,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       lastActionRef,
       getState: store.getState,
       subscribe: store.subscribe,
+      actionFor: store.actionFor,
     }),
     [dispatch, store],
   );
@@ -6019,7 +6028,7 @@ export function useDispatch(): React.Dispatch<Action> {
   return api.dispatch;
 }
 
-/** The constant api object (dispatch + lastActionRef + getState + subscribe). */
+/** The constant api object (dispatch + lastActionRef + getState + subscribe + actionFor). */
 export function useStoreApi(): StoreApi {
   const api = useContext(StoreApiContext);
   if (!api) throw new Error('useStoreApi must be used within AppStoreProvider');
