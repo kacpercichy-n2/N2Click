@@ -492,9 +492,17 @@
   bez godzin; `saveTask` dopisuje zadanie NA KOŃCU `tasks`, stąd id),
   `UPDATE_TIME_ENTRY` (nowy zakres/zadanie; zrywa `eventId`, source 'event' →
   'manual'), `DELETE_TIME_ENTRY`. Straże => TA SAMA referencja (inwariant 6):
-  brak osoby/zadania, szkic, zadanie ze statusem `isDone` (inwariant 5 — status
-  jest jedynym znacznikiem zamknięcia), zły dzień/zakres, nachodzenie na inny
-  wpis tej osoby tego dnia („jedna minuta = jedno zajęcie"). Bez wpisów w
+  brak osoby/zadania, szkic, zły dzień/zakres, nachodzenie na inny wpis tej
+  osoby tego dnia („jedna minuta = jedno zajęcie"). Zadanie ze statusem
+  `isDone` PRZYJMUJE czas od 2026-09-02 (zgłoszenie „Odhaczanie tasków w
+  widoku dnia"): wpis powstaje, status zostaje bez zmian w żadną stronę
+  (inwariant 5 — status nadal jest jedynym znacznikiem zamknięcia, tracker go
+  nie przestawia); `trackerSuggestions` pokazuje zamknięte z flagą `closed`
+  (bez premii „dziś w planie", kara −5 w rankingu), `resolveTaskByTitle` daje
+  `closed` dla dokładnie jednego zamkniętego (przyjmuje czas), `ambiguous` dla
+  kilku, a szkic jest niewidoczny (`none`). Wpis innego zadania w godzinach
+  cudzego bloku WCINA ten blok (patrz scheduling-and-calendar,
+  `carvePlanAroundEntry`) — biegnie na początku `materializeTracking`. Bez wpisów w
   dzienniku aktywności. KASKADY: `DELETE_TASK`/`DELETE_PROJECT`/`DELETE_PERSON`
   oraz autorytatywne `MERGE_CLOUD_ENTITIES` i `MERGE_CLOUD_PEOPLE` zabierają
   wpisy bez żywego zadania/osoby (`repairTimeEntries` robi to samo na

@@ -244,6 +244,11 @@ export function TimeTrackerBar({
                     <span className="tt-option-main">
                       <strong>{s.title}</strong>
                       {s.plannedToday ? <span className="tt-tag">dziś w planie</span> : null}
+                      {s.closed ? (
+                        <span className="tt-tag closed" title="Zadanie zamknięte: czas i tak się dopisze, status zostaje">
+                          zamknięte
+                        </span>
+                      ) : null}
                     </span>
                     <span className="tt-option-meta">
                       {s.clientName}
@@ -274,7 +279,7 @@ export function TimeTrackerBar({
                     </span>
                     <span className="tt-option-meta">
                       {resolution.kind === 'closed'
-                        ? 'Zadanie o tej nazwie jest zamknięte. Nowe powstanie w wybranym projekcie.'
+                        ? 'Zadanie o tej nazwie jest zamknięte. „Zapisz” dopisze czas do niego; tu powstanie nowe w wybranym projekcie.'
                         : 'Hub zapyta o projekt. Zostanie w bazie i będzie się podpowiadać.'}
                     </span>
                   </button>

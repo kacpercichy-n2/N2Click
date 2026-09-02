@@ -24,6 +24,8 @@ import { TASK_PRIORITIES } from '../utils/priority';
 import { inclusiveDayCount, isValidDateStr } from '../utils/dates';
 import { DAY_MINUTES, MINUTE_STEP } from '../utils/time';
 import { isoWeekday, normalizeRecurrence } from '../utils/recurrence';
+import { CALENDAR_VIEW_MODES } from '../types';
+import type { CalendarViewMode } from '../types';
 import type {
   TaskDraft,
   ProjectDraft,
@@ -605,6 +607,11 @@ export function sanitizeLastViewFilter(state: AppData, raw: unknown): LastViewFi
     ? asString(obj.planning)
     : '';
   const sort = LIST_SORT_FILTER_VALUES.includes(asString(obj.sort)) ? asString(obj.sort) : '';
+  // Widok kalendarza: klucz obecny WYŁĄCZNIE dla poprawnej wartości (brak =
+  // domyślny), żeby wpisy innych widoków nie dostały pustego pola.
+  const calendarView = (CALENDAR_VIEW_MODES as readonly string[]).includes(asString(obj.calendarView))
+    ? (asString(obj.calendarView) as CalendarViewMode)
+    : undefined;
   return {
     criteria: sanitizeFilterCriteria(state, obj.criteria),
     personIds,
@@ -612,6 +619,7 @@ export function sanitizeLastViewFilter(state: AppData, raw: unknown): LastViewFi
     serviceTypeId: asString(obj.serviceTypeId),
     planning,
     sort,
+    ...(calendarView !== undefined ? { calendarView } : {}),
   };
 }
 
@@ -631,6 +639,7 @@ export function lastViewFilterEqual(a: LastViewFilter, b: LastViewFilter): boole
   if (a.serviceTypeId !== b.serviceTypeId) return false;
   if (a.planning !== b.planning) return false;
   if (a.sort !== b.sort) return false;
+  if ((a.calendarView ?? '') !== (b.calendarView ?? '')) return false;
   if (a.personIds.length !== b.personIds.length) return false;
   for (let i = 0; i < a.personIds.length; i++) {
     if (a.personIds[i] !== b.personIds[i]) return false;

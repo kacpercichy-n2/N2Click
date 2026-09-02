@@ -188,19 +188,30 @@ export interface TrackerSuggestion {
   plannedToday: boolean;
   loggedMinutes: number; // wszystkie osoby i dni
   estimateMinutes: number | null;
+  /** Zadanie ze statusem „zrobione": nadal przyjmuje czas, ale pasek to mówi. */
+  closed: boolean;
 }
 
+/** Zadanie widoczne dla trackera: nie szkic, nie zamaskowane utajnieniem. */
+function taskVisibleForTracker(state: AppData, task: Task): boolean {
+  return !isDraftTask(task) && !isTaskContentMasked(state, task);
+}
+/** Aktywne = widoczne i bez statusu „zrobione". */
 function taskLoggable(state: AppData, task: Task): boolean {
-  return !isDraftTask(task) && !isDoneStatus(state, task.statusId) && !isTaskContentMasked(state, task);
+  return taskVisibleForTracker(state, task) && !isDoneStatus(state, task.statusId);
 }
 
 const fold = (s: string): string =>
   s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/ł/g, 'l');
 
 /**
- * Zadania do paska „Nad czym pracowałeś?": NIE szkice, NIE zrobione, NIE
- * zamaskowane. Kolejność: zaplanowane tego dnia u tej osoby na górze, potem
- * ranking „częstość × świeżość" z WŁASNYCH wpisów tej osoby, potem tytuł.
+ * Zadania do paska „Nad czym pracowałeś?": NIE szkice, NIE zamaskowane.
+ * Zadania „zrobione" TEŻ (2026-09-02, zgłoszenie „Odhaczanie tasków w widoku
+ * dnia"): drobne, powtarzalne zadania („Rozmowa z klientem") bywają zamknięte
+ * ptaszkiem, a nazajutrz znów potrzebne — wracają w podpowiedziach z rankingu
+ * „częstość × świeżość", z flagą `closed` i bez premii „dziś w planie".
+ * Kolejność: zaplanowane tego dnia u tej osoby na górze, potem ranking
+ * frecency z WŁASNYCH wpisów tej osoby (zamknięte z lekką karą), potem tytuł.
  * `query` filtruje po tytule, projekcie i kliencie (bez rozróżniania ogonków).
  */
 export function trackerSuggestions(
@@ -227,7 +238,7 @@ export function trackerSuggestions(
     }
   }
   const rows = state.tasks
-    .filter((t) => taskLoggable(state, t))
+    .filter((t) => taskVisibleForTracker(state, t))
     .map((task) => {
       const project = getProject(state, task.projectId);
       const client = project === undefined ? undefined : getClient(state, project.clientId);
@@ -236,21 +247,24 @@ export function trackerSuggestions(
       const clientName = client?.name ?? '';
       const hay = fold(`${title} ${projectName} ${clientName}`);
       if (q !== '' && !hay.includes(q)) return null;
+      const closed = isDoneStatus(state, task.statusId);
       const u = uses.get(task.id);
       const daysSince = u === undefined ? null : Math.max(0, diffDays(u.last, date));
       const score =
-        (planned.has(task.id) ? 100 : 0) +
+        (planned.has(task.id) && !closed ? 100 : 0) +
         frecencyScore(u?.n ?? 0, daysSince) * 10 +
-        (q !== '' && fold(title).startsWith(q) ? 2 : 0);
+        (q !== '' && fold(title).startsWith(q) ? 2 : 0) -
+        (closed ? 5 : 0);
       return {
         row: {
           task,
           title,
           projectName,
           clientName,
-          plannedToday: planned.has(task.id),
+          plannedToday: planned.has(task.id) && !closed,
           loggedMinutes: loggedMinutesForTask(state, task.id),
           estimateMinutes: task.estimatedHours === null ? null : hoursToMinutes(task.estimatedHours),
+          closed,
         } satisfies TrackerSuggestion,
         score,
       };
@@ -270,18 +284,20 @@ export type TitleResolution =
  * Co oznacza wpisany tytuł bez jawnego wyboru z listy. Porównanie bez ogonków i
  * wielkości liter. „Aktywne" = nie szkic, nie zrobione, nie zamaskowane.
  *   one        — dokładnie jedno aktywne zadanie: czas idzie tam,
- *   ambiguous  — kilka aktywnych (ten sam tytuł w kilku projektach): wybierz z listy,
- *   closed     — same zamknięte: nie przyjmują czasu, ale wolno założyć nowe,
+ *   ambiguous  — kilka pasujących (ten sam tytuł w kilku projektach): wybierz z listy,
+ *   closed     — dokładnie jedno, zamknięte: czas idzie tam (status bez zmian),
+ *                pasek mówi o tym i nadal proponuje założenie nowego,
  *   none       — nic nie pasuje: nowe zadanie po wskazaniu projektu.
  */
 export function resolveTaskByTitle(state: AppData, title: string): TitleResolution {
   const q = fold(title.trim());
   if (q === '') return { kind: 'none' };
-  const matches = state.tasks.filter((t) => fold(t.title) === q && !isTaskContentMasked(state, t));
+  const matches = state.tasks.filter((t) => fold(t.title) === q && taskVisibleForTracker(state, t));
   const active = matches.filter((t) => taskLoggable(state, t));
   if (active.length === 1) return { kind: 'one', task: active[0] };
   if (active.length > 1) return { kind: 'ambiguous', tasks: active };
-  if (matches.length > 0) return { kind: 'closed', task: matches[0] };
+  if (matches.length === 1) return { kind: 'closed', task: matches[0] };
+  if (matches.length > 1) return { kind: 'ambiguous', tasks: matches };
   return { kind: 'none' };
 }
 
@@ -481,4 +497,57 @@ export function clientTimeSummary(state: AppData, personId: string, dates: reado
   return [...byClient.values()]
     .map((c) => ({ ...c, projects: c.projects.sort((a, b) => b.loggedMinutes - a.loggedMinutes) }))
     .sort((a, b) => b.loggedMinutes - a.loggedMinutes || a.clientName.localeCompare(b.clientName, 'pl'));
+}
+
+// ---- „Ile na co" (per zadanie) ----
+
+export interface TaskTimeSummaryRow {
+  taskId: string;
+  title: string;
+  projectName: string;
+  clientName: string;
+  loggedMinutes: number;
+  plannedMinutes: number;
+  closed: boolean;
+}
+
+/**
+ * Sumy osoby za podane dni PER ZADANIE (2026-09-02, zgłoszenie „Podsumowanie
+ * w widoku dnia"): „Agencyjne" logowane trzy razy w ciągu dnia pokazuje się
+ * jako jedna pozycja z sumą. Malejąco po wykonaniu, potem po planie, potem tytuł.
+ */
+export function taskTimeSummary(state: AppData, personId: string, dates: readonly DateStr[]): TaskTimeSummaryRow[] {
+  const set = new Set(dates);
+  const byTask = new Map<string, { logged: number; planned: number }>();
+  const bump = (taskId: string, logged: number, planned: number) => {
+    const cur = byTask.get(taskId) ?? { logged: 0, planned: 0 };
+    cur.logged += logged;
+    cur.planned += planned;
+    byTask.set(taskId, cur);
+  };
+  for (const e of state.timeEntries) {
+    if (e.personId === personId && set.has(e.date)) bump(e.taskId, timeEntryMinutes(e), 0);
+  }
+  for (const w of state.workload) {
+    if (w.personId === personId && !isBinEntry(w) && set.has(w.date)) bump(w.taskId, 0, hoursToMinutes(w.plannedHours));
+  }
+  const out: TaskTimeSummaryRow[] = [];
+  for (const [taskId, s] of byTask) {
+    const task = getTask(state, taskId);
+    if (task === undefined) continue;
+    const project = getProject(state, task.projectId);
+    const client = project === undefined ? undefined : getClient(state, project.clientId);
+    out.push({
+      taskId,
+      title: taskDisplayTitle(state, task),
+      projectName: project === undefined ? '' : projectDisplayName(state, project),
+      clientName: client?.name ?? '',
+      loggedMinutes: s.logged,
+      plannedMinutes: s.planned,
+      closed: isDoneStatus(state, task.statusId),
+    });
+  }
+  return out.sort(
+    (a, b) => b.loggedMinutes - a.loggedMinutes || b.plannedMinutes - a.plannedMinutes || a.title.localeCompare(b.title, 'pl'),
+  );
 }

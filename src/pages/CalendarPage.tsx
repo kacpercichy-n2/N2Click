@@ -12,6 +12,7 @@ import { OverlayLayer, useOverlay } from '../components/useOverlay';
 import { CALENDAR_DAY_PARAM } from '../components/bottomNav';
 import { MOBILE_NAV_QUERY, useMediaQuery } from '../utils/useMediaQuery';
 import { useNowTick } from '../utils/useNowTick';
+import type { CalendarViewMode } from '../types';
 import {
   addDaysStr,
   formatShortWithWeekday,
@@ -26,7 +27,7 @@ import {
 // 'day' = widok „Dzień": plan obok wykonania z paskiem trackera czasu
 // (`DayTrackerView`), tylko na desktopie (telefonowy „Tydzień” i tak pokazuje
 // jeden dzień planu).
-type ViewMode = 'week' | 'day' | 'month';
+type ViewMode = CalendarViewMode;
 
 // Stabilna pusta lista chipów osób (referencja) na czas braku zapamiętanego filtra.
 const EMPTY_PERSON_IDS: string[] = [];
@@ -36,7 +37,10 @@ const CAL_RANGE_LABEL_ID = 'cal-range-label';
 
 export function CalendarPage() {
   const { state, dispatch } = useStore();
-  const [view, setView] = useState<ViewMode>('week');
+  // Ostatni widok jest ZAPAMIĘTANY razem z filtrem osób (`lastFilters.calendar`,
+  // zgłoszenie 2026-09-01 „Zapamiętywanie widoku"): powrót do kalendarza i
+  // przeładowanie otwierają to, co było ostatnio. Domyślnie „Tydzień".
+  const [view, setView] = useState<ViewMode>(() => state.lastFilters.calendar?.calendarView ?? 'week');
   const [anchor, setAnchor] = useState<string>(() => todayStr());
   // Deep-link dnia (`/calendar?dzien=2026-07-25`) — używa go „+N więcej" w pasku
   // tygodnia na Panelu. Parametr USTAWIA kotwicę raz i znika (`replace`), więc
@@ -91,7 +95,7 @@ export function CalendarPage() {
   const personIds = state.lastFilters.calendar?.personIds ?? EMPTY_PERSON_IDS;
   const filter = useMemo(() => new Set(personIds), [personIds]);
 
-  const commitPersonIds = (ids: string[]) =>
+  const commitCalendarFilter = (ids: string[], calendarView: ViewMode) =>
     dispatch({
       type: 'SET_LAST_FILTER',
       view: 'calendar',
@@ -102,8 +106,15 @@ export function CalendarPage() {
         serviceTypeId: '',
         planning: '',
         sort: '',
+        calendarView,
       },
     });
+  const commitPersonIds = (ids: string[]) => commitCalendarFilter(ids, view);
+  // Przełącznik widoku: stan lokalny (natychmiastowy render) + zapis w store.
+  const pickView = (next: ViewMode) => {
+    setView(next);
+    commitCalendarFilter(personIds, next);
+  };
 
   const toggleFilter = (personId: string) => {
     const next = new Set(filter);
@@ -146,7 +157,7 @@ export function CalendarPage() {
 
   const pickDay = (date: string) => {
     setAnchor(date);
-    setView('week');
+    pickView('week');
   };
 
   // Filtry na telefonie i na desktopie to DOKŁADNIE ten sam `FilterBar` z tymi
@@ -259,7 +270,7 @@ export function CalendarPage() {
                   type="button"
                   className={view !== 'month' ? 'toggle-btn active' : 'toggle-btn'}
                   onClick={() => {
-                    setView('week');
+                    pickView('week');
                     setJumpOpen(false);
                   }}
                 >
@@ -269,7 +280,7 @@ export function CalendarPage() {
                   type="button"
                   className={view === 'month' ? 'toggle-btn active' : 'toggle-btn'}
                   onClick={() => {
-                    setView('month');
+                    pickView('month');
                     setJumpOpen(false);
                   }}
                 >
@@ -328,21 +339,21 @@ export function CalendarPage() {
             <button
               type="button"
               className={view === 'day' ? 'toggle-btn active' : 'toggle-btn'}
-              onClick={() => setView('day')}
+              onClick={() => pickView('day')}
             >
               Dzień
             </button>
             <button
               type="button"
               className={view === 'week' ? 'toggle-btn active' : 'toggle-btn'}
-              onClick={() => setView('week')}
+              onClick={() => pickView('week')}
             >
               Tydzień
             </button>
             <button
               type="button"
               className={view === 'month' ? 'toggle-btn active' : 'toggle-btn'}
-              onClick={() => setView('month')}
+              onClick={() => pickView('month')}
             >
               Miesiąc
             </button>

@@ -41,6 +41,7 @@ import {
   loggedMinutesForTaskPersonDate,
   plannedMinutesForPersonDate,
   resolveTaskByTitle,
+  taskTimeSummary,
   timeEntriesForPersonDate,
   unsettledPlanBlocks,
   type DayPlanItem,
@@ -66,6 +67,7 @@ import {
   layoutColumns,
   minuteToPx,
   pxToSnappedMinute,
+  trackerDensityClass,
   type HourRange,
 } from './dayTrackerLayout';
 
@@ -273,7 +275,14 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
   const plannedToday = plannedMinutesForPersonDate(state, personId, date);
   const week = useMemo(() => weekDays(date), [date]);
   const loggedWeek = loggedMinutesForPersonDates(state, personId, week);
-  const clientSums = useMemo(() => clientTimeSummary(state, personId, week), [state, personId, week]);
+  // Podsumowanie boczne (2026-09-02, zgłoszenie „Podsumowanie w widoku dnia"):
+  // grupowanie Projekty | Zadania i zakres Dzień | Tydzień — stan sesyjny,
+  // domyślnie jak dotąd (klienci i projekty, tydzień).
+  const [sideBy, setSideBy] = useState<'projects' | 'tasks'>('projects');
+  const [sideScope, setSideScope] = useState<'day' | 'week'>('week');
+  const scopeDates = useMemo(() => (sideScope === 'day' ? [date] : week), [sideScope, date, week]);
+  const clientSums = useMemo(() => clientTimeSummary(state, personId, scopeDates), [state, personId, scopeDates]);
+  const taskSums = useMemo(() => taskTimeSummary(state, personId, scopeDates), [state, personId, scopeDates]);
   const overruns = useMemo(() => overrunSummary(state, personId, week), [state, personId, week]);
   const dayNorm = person ? Math.max(60, Math.round(person.capacity * 60)) : DEFAULT_DAY_NORM_MINUTES;
 
@@ -325,7 +334,7 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
         say('Napisz, nad czym pracowałeś. Zacznij pisać, hub podpowie z zadań.', 'error');
         return;
       }
-      if (res.kind === 'one') taskId = res.task.id;
+      if (res.kind === 'one' || res.kind === 'closed') taskId = res.task.id;
       else if (res.kind === 'ambiguous') {
         const names = res.tasks
           .map((t) => getClient(state, getProject(state, t.projectId)?.clientId ?? '')?.name ?? '?')
@@ -336,12 +345,7 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
         );
         return;
       } else if (!form.creatingNew) {
-        say(
-          res.kind === 'closed'
-            ? `Zadanie „${res.task.title}” jest zamknięte i nie przyjmuje czasu. Zmień jego status w zadaniu albo wybierz „+ nowe zadanie” z listy.`
-            : `Nie ma takiego zadania. Wybierz je z listy albo „+ nowe zadanie”, żeby je założyć.`,
-          'error',
-        );
+        say('Nie ma takiego zadania. Wybierz je z listy albo „+ nowe zadanie”, żeby je założyć.', 'error');
         return;
       } else {
         if (form.newProjectId === '' || getProject(state, form.newProjectId) === undefined) {
@@ -439,8 +443,9 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
       );
     } else {
       const ov = savedEntry.overrunMinutes ? ` Ponad sprzedane: ${formatMinutesDuration(savedEntry.overrunMinutes)}.` : '';
+      const closedNote = t !== undefined && isDoneStatus(after, t.statusId) ? ' Zadanie jest zamknięte, status bez zmian.' : '';
       say(
-        `Dodane: „${t ? taskDisplayTitle(after, t) : ''}” ma tego dnia ${formatMinutesDuration(today)}, razem ${formatMinutesDuration(total)}${est}.${ov}`,
+        `Dodane: „${t ? taskDisplayTitle(after, t) : ''}” ma tego dnia ${formatMinutesDuration(today)}, razem ${formatMinutesDuration(total)}${est}.${ov}${closedNote}`,
         'ok',
       );
     }
@@ -495,14 +500,30 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
       return;
     }
     const after = storeApi.getState();
-    const linked = after.timeEntries.some((e) => e.source === 'block' && e.blockId === blockId);
+    // Wpisy „z bloku" powstałe TYM kliknięciem: 1:1 z blokiem albo kawałki w
+    // wolnych godzinach (blok częściowo zajęty cudzym wpisem został wcięty).
+    const linked = after.timeEntries
+      .filter(
+        (e) =>
+          e.source === 'block' &&
+          e.date === date &&
+          e.personId === personId &&
+          e.taskId === item.task.id &&
+          e.startMinutes >= item.startMinutes &&
+          e.endMinutes <= item.endMinutes,
+      )
+      .sort((a, b) => a.startMinutes - b.startMinutes);
     const taskNow = getTask(after, item.task.id);
     const closed = taskNow !== undefined && taskNow.statusId !== item.task.statusId;
     if (next) {
+      const ranges = linked.map((e) => `${formatMinutes(e.startMinutes)}-${formatMinutes(e.endMinutes)}`).join(', ');
+      const carved = linked.length > 0 && (linked.length > 1 || linked[0].startMinutes !== item.startMinutes || linked[0].endMinutes !== item.endMinutes);
       say(
-        linked
-          ? `„${item.title}” wykonane: wpis ${formatMinutes(item.startMinutes)}-${formatMinutes(item.endMinutes)} dodany do wykonania.${closed ? ' Zadanie zamknięte: wszystko wykonane.' : ''}`
-          : `„${item.title}” oznaczone jako wykonane, ale te godziny zajmuje już inny wpis, więc wpisu nie dodano.`,
+        linked.length === 0
+          ? `„${item.title}” oznaczone jako wykonane, ale te godziny zajmuje już inny wpis, więc wpisu nie dodano.`
+          : carved
+            ? `„${item.title}” wykonane w wolnych godzinach: wpisy ${ranges}. Plan wcięty wokół innego wpisu, wycięte minuty wróciły do zasobnika.${closed ? ' Zadanie zamknięte: wszystko wykonane.' : ''}`
+            : `„${item.title}” wykonane: wpis ${ranges} dodany do wykonania.${closed ? ' Zadanie zamknięte: wszystko wykonane.' : ''}`,
         'info',
       );
     } else {
@@ -895,20 +916,29 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
               if (item.kind === 'event') {
                 const slot = planLayout.get(`ev-${item.event.id}-${item.startMinutes}`);
                 const counted = item.entry !== undefined;
+                const density = trackerDensityClass(item.endMinutes - item.startMinutes);
                 return (
                   <button
                     key={`ev-${item.event.id}-${item.startMinutes}`}
                     type="button"
-                    className={`tt-plan-item tt-event${counted ? ' counted' : ''}`}
+                    className={`tt-plan-item tt-event${counted ? ' counted' : ''}${density ? ` ${density}` : ''}`}
                     style={columnStyle(item.startMinutes, item.endMinutes, slot)}
                     onClick={() => clickEvent(item)}
                     title={counted ? 'Liczy się jako czas pracy. Kliknij, żeby cofnąć' : 'Byłeś naprawdę? Kliknij, a spotkanie wpadnie do paska'}
                   >
                     <span className="tt-item-title">{item.title}</span>
-                    <span className="tt-item-time">
-                      {formatMinutes(item.startMinutes)}-{formatMinutes(item.endMinutes)} · {formatMinutesDuration(item.endMinutes - item.startMinutes)}
-                    </span>
-                    <span className="tt-item-meta">{counted ? '✓ liczy się' : 'spotkanie, nie liczy się samo'}</span>
+                    {density === 'h-quarter' ? (
+                      <span className="tt-item-time inline">
+                        {formatMinutes(item.startMinutes)}-{formatMinutes(item.endMinutes)}
+                      </span>
+                    ) : (
+                      <span className="tt-item-time">
+                        {formatMinutes(item.startMinutes)}-{formatMinutes(item.endMinutes)} · {formatMinutesDuration(item.endMinutes - item.startMinutes)}
+                      </span>
+                    )}
+                    {density !== 'h-quarter' && density !== 'h-half' ? (
+                      <span className="tt-item-meta">{counted ? '✓ liczy się' : 'spotkanie, nie liczy się samo'}</span>
+                    ) : null}
                   </button>
                 );
               }
@@ -917,11 +947,15 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
               const leftPortion = Math.max(0, item.plannedMinutes - item.portionLogged);
               const leftTask = item.estimateMinutes === null ? null : Math.max(0, item.estimateMinutes - item.taskLogged);
               const over = item.estimateMinutes !== null && item.taskLogged > item.estimateMinutes;
-              const short = item.plannedMinutes <= 30;
+              // Gęstość treści z minut bloku (21 px na kwadrans): kwadrans = jedna
+              // linia, pół godziny = tytuł + godziny, 45 min = + klient/projekt,
+              // godzina = + pasek postępu, dłuższe = pełna treść z tekstem postępu.
+              const density = trackerDensityClass(item.plannedMinutes);
+              const compact = density === 'h-quarter' || density === 'h-half';
               return (
                 <div
                   key={item.block.id}
-                  className={`tt-plan-item tt-block${item.done ? ' done' : ''}${item.taskDone ? ' task-done' : ''}${short ? ' short' : ''}`}
+                  className={`tt-plan-item tt-block${item.done ? ' done' : ''}${item.taskDone ? ' task-done' : ''}${density ? ` ${density}` : ''}`}
                   style={columnStyle(item.startMinutes, item.endMinutes, slot)}
                   title={`${item.title} · ${item.clientName}${item.clientName && item.projectName ? ' · ' : ''}${item.projectName}`}
                 >
@@ -949,21 +983,30 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
                         +{formatMinutesDuration(item.taskLogged - item.estimateMinutes)}
                       </span>
                     ) : null}
+                    {density === 'h-quarter' ? (
+                      <span className="tt-item-time inline">
+                        {formatMinutes(item.startMinutes)}-{formatMinutes(item.endMinutes)}
+                      </span>
+                    ) : null}
                   </div>
-                  {!short ? (
-                    <>
-                      <div className="tt-item-meta">
-                        {item.clientName}
-                        {item.clientName && item.projectName ? ' · ' : ''}
-                        {item.projectName}
+                  {!compact ? (
+                    <div className="tt-item-meta">
+                      {item.clientName}
+                      {item.clientName && item.projectName ? ' · ' : ''}
+                      {item.projectName}
+                    </div>
+                  ) : null}
+                  {density !== 'h-quarter' ? (
+                    <div className="tt-item-time">
+                      {formatMinutes(item.startMinutes)}-{formatMinutes(item.endMinutes)} · {formatMinutesDuration(item.plannedMinutes)}
+                    </div>
+                  ) : null}
+                  {density === '' || density === 'h-hour' ? (
+                    <div className="tt-progress">
+                      <div className="tt-progress-bar">
+                        <i style={{ width: `${pct}%` }} />
                       </div>
-                      <div className="tt-item-time">
-                        {formatMinutes(item.startMinutes)}-{formatMinutes(item.endMinutes)} · {formatMinutesDuration(item.plannedMinutes)}
-                      </div>
-                      <div className="tt-progress">
-                        <div className="tt-progress-bar">
-                          <i style={{ width: `${pct}%` }} />
-                        </div>
+                      {density === '' ? (
                         <div className="tt-progress-text">
                           <span>
                             porcja <b>{formatMinutesDuration(item.portionLogged)}</b> z {formatMinutesDuration(item.plannedMinutes)} · zadanie{' '}
@@ -984,8 +1027,8 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
                                     : ''}
                           </span>
                         </div>
-                      </div>
-                    </>
+                      ) : null}
+                    </div>
                   ) : null}
                 </div>
               );
@@ -1023,10 +1066,11 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
               const client = project ? getClient(state, project.clientId) : undefined;
               const editing = form.editingId === entry.id;
               const minutes = entry.endMinutes - entry.startMinutes;
+              const density = trackerDensityClass(minutes);
               return (
                 <div
                   key={entry.id}
-                  className={`tt-entry${editing ? ' editing' : ''}${entry.source === 'event' ? ' from-event' : ''}${minutes <= 30 ? ' short' : ''}`}
+                  className={`tt-entry${editing ? ' editing' : ''}${entry.source === 'event' ? ' from-event' : ''}${density ? ` ${density}` : ''}`}
                   style={columnStyle(entry.startMinutes, entry.endMinutes)}
                   role="button"
                   tabIndex={0}
@@ -1051,7 +1095,12 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
                     ×
                   </button>
                   <span className="tt-item-title">{t ? taskDisplayTitle(state, t) : 'Zadanie'}</span>
-                  {minutes > 30 ? (
+                  {density === 'h-quarter' ? (
+                    <span className="tt-item-time inline">
+                      {formatMinutes(entry.startMinutes)}-{formatMinutes(entry.endMinutes)}
+                    </span>
+                  ) : null}
+                  {density !== 'h-quarter' && density !== 'h-half' ? (
                     <span className="tt-item-meta">
                       {client?.name ?? ''}
                       {client && project ? ' · ' : ''}
@@ -1059,9 +1108,11 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
                       {entry.source === 'event' ? ' · ze spotkania' : ''}
                     </span>
                   ) : null}
-                  <span className="tt-item-time">
-                    {formatMinutes(entry.startMinutes)}-{formatMinutes(entry.endMinutes)} · {formatMinutesDuration(minutes)}
-                  </span>
+                  {density !== 'h-quarter' ? (
+                    <span className="tt-item-time">
+                      {formatMinutes(entry.startMinutes)}-{formatMinutes(entry.endMinutes)} · {formatMinutesDuration(minutes)}
+                    </span>
+                  ) : null}
                 </div>
               );
             })}
@@ -1106,9 +1157,80 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
               ))}
             </>
           ) : null}
-          <h3 className="tt-side-title">Ile na kogo (tydzień)</h3>
-          {clientSums.length === 0 ? (
-            <p className="tt-side-empty">Nic jeszcze nie zalogowano w tym tygodniu.</p>
+          <div className="tt-side-head">
+            <h3 className="tt-side-title">{sideBy === 'projects' ? 'Ile na kogo' : 'Ile na co'}</h3>
+            <div className="tt-side-segs">
+              <div className="tt-seg" role="group" aria-label="Grupowanie podsumowania">
+                <button
+                  type="button"
+                  className={sideBy === 'projects' ? 'active' : ''}
+                  aria-pressed={sideBy === 'projects'}
+                  onClick={() => setSideBy('projects')}
+                >
+                  Projekty
+                </button>
+                <button
+                  type="button"
+                  className={sideBy === 'tasks' ? 'active' : ''}
+                  aria-pressed={sideBy === 'tasks'}
+                  onClick={() => setSideBy('tasks')}
+                >
+                  Zadania
+                </button>
+              </div>
+              <div className="tt-seg" role="group" aria-label="Zakres podsumowania">
+                <button
+                  type="button"
+                  className={sideScope === 'day' ? 'active' : ''}
+                  aria-pressed={sideScope === 'day'}
+                  onClick={() => setSideScope('day')}
+                >
+                  Dzień
+                </button>
+                <button
+                  type="button"
+                  className={sideScope === 'week' ? 'active' : ''}
+                  aria-pressed={sideScope === 'week'}
+                  onClick={() => setSideScope('week')}
+                >
+                  Tydzień
+                </button>
+              </div>
+            </div>
+          </div>
+          {sideBy === 'tasks' ? (
+            taskSums.length === 0 ? (
+              <p className="tt-side-empty">
+                {sideScope === 'day' ? 'Nic jeszcze nie zalogowano tego dnia.' : 'Nic jeszcze nie zalogowano w tym tygodniu.'}
+              </p>
+            ) : (
+              taskSums.map((row) => {
+                const max = taskSums[0].loggedMinutes || 1;
+                const where = `${row.clientName}${row.clientName && row.projectName ? ' · ' : ''}${row.projectName}`;
+                return (
+                  <div className="tt-task-row" key={row.taskId}>
+                    <div className="tt-client-head">
+                      <span title={where}>
+                        <span className="tt-task-row-title">{row.title}</span>
+                        {row.closed ? <span className="tt-tag closed">zamknięte</span> : null}
+                      </span>
+                      <b>{formatMinutesDuration(row.loggedMinutes)}</b>
+                    </div>
+                    <div className="tt-client-bar">
+                      <i style={{ width: `${(row.loggedMinutes / max) * 100}%` }} />
+                    </div>
+                    <div className="tt-client-project">
+                      <span>{where}</span>
+                      <span>{row.plannedMinutes > 0 ? <small>plan {formatMinutesDuration(row.plannedMinutes)}</small> : null}</span>
+                    </div>
+                  </div>
+                );
+              })
+            )
+          ) : clientSums.length === 0 ? (
+            <p className="tt-side-empty">
+              {sideScope === 'day' ? 'Nic jeszcze nie zalogowano tego dnia.' : 'Nic jeszcze nie zalogowano w tym tygodniu.'}
+            </p>
           ) : (
             clientSums.map((c) => {
               const max = clientSums[0].loggedMinutes || 1;

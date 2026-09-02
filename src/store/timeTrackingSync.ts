@@ -137,6 +137,49 @@ export function portionFill(blocks: readonly WorkloadEntry[], loggedMinutes: num
   return out;
 }
 
+/**
+ * WCIĘCIE: kawałki przedziału bloku po wycięciu przedziału wpisu — głowa
+ * (przed wpisem) i ogon (po wpisie), każdy może nie istnieć, plus liczba
+ * wyciętych minut. Czysta geometria zegarowa: „duży task 9-17, w środku
+ * 15 min rozmowy" daje głowę 9-15 i ogon 15:15-17 (zgłoszenie 2026-09-01).
+ * Brak nakładki => obie części null i 0 minut.
+ */
+export function carveSpan(
+  block: { startMinutes: number; endMinutes: number },
+  cut: { startMinutes: number; endMinutes: number },
+): { head: [number, number] | null; tail: [number, number] | null; cutMinutes: number } {
+  const s = Math.max(block.startMinutes, cut.startMinutes);
+  const e = Math.min(block.endMinutes, cut.endMinutes);
+  if (e <= s) return { head: null, tail: null, cutMinutes: 0 };
+  return {
+    head: s > block.startMinutes ? [block.startMinutes, s] : null,
+    tail: e < block.endMinutes ? [e, block.endMinutes] : null,
+    cutMinutes: e - s,
+  };
+}
+
+/**
+ * Wolne kawałki przedziału [start, end) — minuty NIEzajęte przez żaden z
+ * `occupied` (przedziały mogą nachodzić na siebie i być w dowolnej kolejności).
+ * Rosnąco; pusty wynik, gdy całość jest zajęta.
+ */
+export function freeRangesWithin(
+  start: number,
+  end: number,
+  occupied: ReadonlyArray<{ startMinutes: number; endMinutes: number }>,
+): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  let cursor = start;
+  for (const o of [...occupied].sort((a, b) => a.startMinutes - b.startMinutes)) {
+    if (o.endMinutes <= cursor || o.startMinutes >= end) continue;
+    if (o.startMinutes > cursor) out.push([cursor, o.startMinutes]);
+    cursor = Math.max(cursor, o.endMinutes);
+    if (cursor >= end) break;
+  }
+  if (cursor < end) out.push([cursor, end]);
+  return out;
+}
+
 /** Czy wpis powstały z bloku („wykonane") jest nadal 1:1 z tym blokiem. */
 export function entryMatchesBlock(entry: TimeEntry, block: WorkloadEntry): boolean {
   return (

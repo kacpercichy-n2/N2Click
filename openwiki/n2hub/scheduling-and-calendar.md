@@ -60,8 +60,35 @@
   bramka „dzień śledzony" dotyczy w reduktorze wyłącznie automatu z podanym
   `nowMinutes`; jawne `null` rozlicza też dzień bez wpisów.
   Czysta arytmetyka osi i kolumn w `dayTrackerLayout.ts` (oś 7-19 rozszerzana
-  do danych, 56 px/h, siatka 15 min, kolumny dla nachodzących kafli). Klasy CSS
-  z prefiksem `tt-`. Stoper i lustro chmury: do zrobienia.
+  do danych, 84 px/h od 2026-09-02 = 21 px na kwadrans jak `HOUR_PX` tygodnia,
+  siatka 15 min, kolumny dla nachodzących kafli, `trackerDensityClass` z minut:
+  `h-quarter` jedna linia „○ tytuł … godziny", `h-half` tytuł + godziny,
+  `h-threeq` + klient/projekt, `h-hour` + pasek postępu bez tekstu, dłuższe
+  pełna treść; te same progi dla wpisów wykonania). Klasy CSS z prefiksem
+  `tt-`. PANEL BOCZNY (2026-09-02, zgłoszenie „Podsumowanie w widoku dnia"):
+  przełączniki Projekty | Zadania (`clientTimeSummary` / `taskTimeSummary`) i
+  Dzień | Tydzień (zakres dat), stan sesyjny, domyślnie projekty za tydzień.
+  WCIĘCIE PLANU POD FAKT (2026-09-02, zgłoszenie „duży task w planie a
+  krótki"): wpis INNEGO zadania w godzinach datowanego bloku tej osoby tnie
+  blok na głowę i ogon (`carvePlanAroundEntry` w AppStore, geometria
+  `carveSpan` w timeTrackingSync), wycięte minuty wracają do jednego wiersza
+  zasobnika pary (inwariant 4), głowa zachowuje id, ogon dostaje nowe, oba
+  dziedziczą `done`; wpisy tego samego zadania nie wcinają; jednokierunkowo
+  (kasowanie wpisu nie skleja). Biegnie na początku `materializeTracking`
+  (ADD/UPDATE_TIME_ENTRY), więc blok wzrostu pary ląduje w wycięciu, nie
+  obok. `SET_BLOCK_DONE true` na bloku CZĘŚCIOWO zajętym cudzymi wpisami:
+  wcięcie + wpis „z bloku" w KAŻDYM wolnym kawałku (`freeRangesWithin`);
+  całość zajęta = blok wykonany bez wpisu jak dotąd; odznaczenie kasuje
+  wszystkie wpisy `source 'block'` tego bloku. Zamknięte zadania (status
+  `isDone`) PRZYJMUJĄ czas (patrz state-and-persistence). Kafelki tygodnia
+  są kontenerem szerokości (`container-type: inline-size`): poniżej 150 px
+  znika nazwisko (kropka i czas zostają), poniżej 120 px kwadrans chowa
+  godziny, poniżej 96 px monetę; CSS-only, inwariant 7 nietknięty. Widok
+  kalendarza (Dzień | Tydzień | Miesiąc) jest ZAPAMIĘTANY w
+  `lastFilters.calendar.calendarView` (2026-09-02, zgłoszenie
+  „Zapamiętywanie widoku"; sanityzacja w commandValidation do
+  `CALENDAR_VIEW_MODES`, brak = Tydzień). Stoper i lustro chmury: do
+  zrobienia.
 - `src/gcal/` (2026-08-25) owns the GOOGLE CALENDAR layer: `GoogleCalendarProvider`
   trzyma wydarzenia z widoku `google_calendar_events_visible` (okno −30/+90
   dni, odświeżanie co 5 min i po powrocie karty), `gcalData.ts` (pure) mapuje

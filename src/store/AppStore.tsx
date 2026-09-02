@@ -156,7 +156,15 @@ import {
   snapHours,
 } from '../utils/time';
 import { findOverlappingEntry, isValidTimeRange } from '../utils/timeTracking';
-import { entryMatchesBlock, planGrowth, portionFill, trackingBalance, uncoveredEntryGaps } from './timeTrackingSync';
+import {
+  carveSpan,
+  entryMatchesBlock,
+  freeRangesWithin,
+  planGrowth,
+  portionFill,
+  trackingBalance,
+  uncoveredEntryGaps,
+} from './timeTrackingSync';
 
 // ---- Payload shapes ----
 
@@ -712,10 +720,14 @@ function cleanChecklist(items: ChecklistItem[]): ChecklistItem[] {
     .filter((item) => item.text !== '');
 }
 
-/** Czy zadanie przyjmuje czas: istnieje, nie jest szkicem i nie ma statusu „zrobione". */
+/** Czy zadanie przyjmuje czas: istnieje i nie jest szkicem. Zadanie ze statusem
+ *  „zrobione" TEŻ przyjmuje czas (2026-09-02, zgłoszenie „Odhaczanie tasków w
+ *  widoku dnia"): praca po zamknięciu jest faktem do zapisania, a status zostaje
+ *  bez zmian — inwariant 5: status jest jedynym znacznikiem zamknięcia i nic go
+ *  tu nie przestawia w żadną stronę. */
 function timeEntryTaskAccepts(state: AppData, taskId: string): boolean {
   const task = state.tasks.find((t) => t.id === taskId);
-  return task !== undefined && !isDraftTask(task) && !isDoneStatus(state, task.statusId);
+  return task !== undefined && !isDraftTask(task);
 }
 
 /**
@@ -782,6 +794,82 @@ function addTimeEntry(state: AppData, payload: AddTimeEntryPayload): AppData {
   return materializeTracking({ ...base, timeEntries: [...base.timeEntries, entry] }, entry, growth);
 }
 
+/** Zwrot ćwiartek do JEDNEGO wiersza zasobnika pary (inwariant 4): istniejący
+ *  wiersz rośnie, inaczej powstaje nowy na końcu zasobnika osoby. */
+function returnQuartersToBin(workload: WorkloadEntry[], taskId: string, personId: string, quarters: number): WorkloadEntry[] {
+  if (quarters <= 0) return workload;
+  const bin = workload
+    .filter((w) => w.taskId === taskId && w.personId === personId && isBinEntry(w))
+    .sort((a, b) => a.sortIndex - b.sortIndex)[0];
+  if (bin !== undefined) {
+    return workload.map((w) =>
+      w.id === bin.id ? { ...w, plannedHours: (toQuarters(w.plannedHours) + quarters) * HOURS_STEP } : w,
+    );
+  }
+  return [
+    ...workload,
+    {
+      id: uid(),
+      taskId,
+      personId,
+      date: BIN_DATE,
+      plannedHours: quarters * HOURS_STEP,
+      startMinutes: 0,
+      sortIndex: nextSortIndex(workload, personId, BIN_DATE),
+    },
+  ];
+}
+
+/**
+ * WCIĘCIE planu pod fakt (2026-09-02, zgłoszenie „duży task w planie a krótki"):
+ * wpis `entry` (zadanie T) w godzinach CUDZEGO datowanego bloku (inne zadanie,
+ * ta sama osoba i dzień) tnie ten blok wokół wpisu na głowę i ogon — „duży
+ * task 9-17, w środku 15 min rozmowy" daje trzy bloki: 9-15, rozmowa, 15:15-17.
+ * Wycięte minuty wracają do JEDNEGO wiersza zasobnika pary bloku (inwariant 4):
+ * plan mówi prawdę o godzinach, a sprzedane godziny nie giną (to samo robi
+ * rozliczenie dnia z niewykonaną częścią). Głowa zachowuje id bloku (księgowość
+ * `planGrowth` cudzych wpisów nadal ma cel), ogon dostaje nowe id; oba
+ * dziedziczą `done`. Wpisy TEGO SAMEGO zadania nie wcinają (pokrycie liczy pula
+ * pary). Bez cudzego bloku w godzinach wpisu => TA SAMA referencja. Wcięcie jest
+ * jednokierunkowe: skasowanie wpisu nie skleja bloku z powrotem (plan po fakcie
+ * to zapis historii, nie automat).
+ */
+function carvePlanAroundEntry(state: AppData, entry: TimeEntry): AppData {
+  const { personId, date, taskId, startMinutes, endMinutes } = entry;
+  let workload = state.workload;
+  const touched = new Set<string>();
+  const binBackQ = new Map<string, number>();
+  for (const b of state.workload) {
+    if (b.personId !== personId || b.date !== date || b.taskId === taskId || isBinEntry(b)) continue;
+    const bEnd = b.startMinutes + hoursToMinutes(b.plannedHours);
+    const { head, tail, cutMinutes } = carveSpan(
+      { startMinutes: b.startMinutes, endMinutes: bEnd },
+      { startMinutes, endMinutes },
+    );
+    if (cutMinutes <= 0) continue;
+    touched.add(dayKey(personId, date));
+    binBackQ.set(b.taskId, (binBackQ.get(b.taskId) ?? 0) + toQuarters(cutMinutes / 60));
+    const pieces: WorkloadEntry[] = [];
+    if (head !== null) pieces.push({ ...b, plannedHours: toQuarters((head[1] - head[0]) / 60) * HOURS_STEP });
+    if (tail !== null) {
+      pieces.push({
+        ...b,
+        id: head !== null ? uid() : b.id,
+        startMinutes: tail[0],
+        plannedHours: toQuarters((tail[1] - tail[0]) / 60) * HOURS_STEP,
+        sortIndex: nextSortIndex(workload, personId, date),
+      });
+    }
+    workload = [...workload.filter((w) => w.id !== b.id), ...pieces];
+  }
+  if (touched.size === 0) return state;
+  for (const [pairTaskId, quarters] of binBackQ) {
+    workload = returnQuartersToBin(workload, pairTaskId, personId, quarters);
+    touched.add(dayKey(personId, BIN_DATE));
+  }
+  return { ...state, workload: reindexDays(workload, touched) };
+}
+
 /**
  * Wykonanie → plan (po dodaniu/poprawce wpisu `entry`, z policzonym `growth`):
  *   1. nadwyżka ponad plan pary rośnie w planie jak przy rozciąganiu bloku:
@@ -806,6 +894,10 @@ function materializeTracking(
   entry: TimeEntry,
   growth: { growMinutes: number; fromBinMinutes: number },
 ): AppData {
+  // Fakt przed planem: wpis w godzinach CUDZEGO bloku wcina go (głowa/ogon),
+  // ZANIM policzymy luki — wycięte minuty są wtedy wolne dla wzrostu tej pary,
+  // więc nowy blok „rozmowy" wskakuje dokładnie w wycięcie zamiast nakładać się.
+  state = carvePlanAroundEntry(state, entry);
   const { taskId, personId, date } = entry;
   let workload = state.workload;
   const touched = new Set<string>();
@@ -1148,37 +1240,71 @@ function autoCompleteTask(state: AppData, taskId: string, closeWithoutEstimate =
   };
 }
 
-/** „Wykonane" na bloku = wpis 1:1 w jego godzinach, jeśli te minuty są wolne. */
+/**
+ * „Wykonane" na bloku = wpis 1:1 w jego godzinach, jeśli te minuty są wolne.
+ * Godziny CZĘŚCIOWO zajęte (2026-09-02, zgłoszenie „duży task w planie a
+ * krótki"): cudze wpisy (inne zadanie) WCINAJĄ blok jak przy dodaniu wpisu, a
+ * każdy wolny kawałek godzin bloku dostaje własny wpis „z bloku" swojego kawałka
+ * planu (głowa 9-15 → wpis 9-15, ogon 15:15-17 → wpis 15:15-17). Wpisy TEGO
+ * SAMEGO zadania w godzinach bloku liczą się do pokrycia i nie wcinają. Całość
+ * zajęta => blok wykonany bez własnego wpisu (jak dotąd).
+ */
 function linkEntryForBlock(state: AppData, block: WorkloadEntry): AppData {
   if (isBinEntry(block)) return state;
   const end = block.startMinutes + hoursToMinutes(block.plannedHours);
   if (!isValidTimeRange(block.startMinutes, end)) return state;
   if (!timeEntryTaskAccepts(state, block.taskId)) return state;
-  if (findOverlappingEntry(state.timeEntries, block.personId, block.date, block.startMinutes, end) !== undefined) {
-    return state;
+  const occupied = state.timeEntries.filter(
+    (e) => e.personId === block.personId && e.date === block.date && e.startMinutes < end && e.endMinutes > block.startMinutes,
+  );
+  const free = freeRangesWithin(block.startMinutes, end, occupied);
+  if (free.length === 0) return state;
+  let next = state;
+  for (const foreign of occupied) {
+    if (foreign.taskId !== block.taskId) next = carvePlanAroundEntry(next, foreign);
   }
-  // Wpis z bloku nigdy nie jest nadwyżką: pokrywa dokładnie swój plan.
-  const entry: TimeEntry = {
-    id: uid(),
-    personId: block.personId,
-    taskId: block.taskId,
-    date: block.date,
-    startMinutes: block.startMinutes,
-    endMinutes: end,
-    source: 'block',
-    blockId: block.id,
-    createdAt: nowIso(),
-  };
-  return { ...state, timeEntries: [...state.timeEntries, entry] };
+  // Wpis z bloku nigdy nie jest nadwyżką: pokrywa dokładnie swój plan. Każdy
+  // wolny kawałek wskazuje kawałek planu, w którym leży (głowa = id bloku).
+  const stamp = nowIso();
+  const created: TimeEntry[] = free.map(([startMinutes, endMinutes]) => {
+    const piece = next.workload.find(
+      (w) =>
+        w.taskId === block.taskId &&
+        w.personId === block.personId &&
+        w.date === block.date &&
+        !isBinEntry(w) &&
+        w.startMinutes <= startMinutes &&
+        w.startMinutes + hoursToMinutes(w.plannedHours) >= endMinutes,
+    );
+    return {
+      id: uid(),
+      personId: block.personId,
+      taskId: block.taskId,
+      date: block.date,
+      startMinutes,
+      endMinutes,
+      source: 'block',
+      blockId: piece?.id ?? block.id,
+      createdAt: stamp,
+    };
+  });
+  return { ...next, timeEntries: [...next.timeEntries, ...created] };
 }
 
-/** Odznaczenie bloku kasuje jego wpis „z bloku", o ile nadal jest 1:1 z blokiem. */
+/** Odznaczenie bloku kasuje jego wpisy „z bloku": 1:1 z blokiem ALBO kawałki
+ *  z wolnych godzin (blok częściowo zajęty). Wpis poprawiony ręcznie traci
+ *  `blockId` w UPDATE_TIME_ENTRY, więc nigdy tu nie wpada. */
 function unlinkEntryForBlock(state: AppData, block: WorkloadEntry): AppData {
-  const linked = state.timeEntries.find(
-    (e) => e.source === 'block' && e.blockId === block.id && entryMatchesBlock(e, block),
+  const end = block.startMinutes + hoursToMinutes(block.plannedHours);
+  const linked = state.timeEntries.filter(
+    (e) =>
+      e.source === 'block' &&
+      e.blockId === block.id &&
+      (entryMatchesBlock(e, block) || (e.startMinutes >= block.startMinutes && e.endMinutes <= end)),
   );
-  if (linked === undefined) return state;
-  return { ...state, timeEntries: state.timeEntries.filter((e) => e.id !== linked.id) };
+  if (linked.length === 0) return state;
+  const ids = new Set(linked.map((e) => e.id));
+  return { ...state, timeEntries: state.timeEntries.filter((e) => !ids.has(e.id)) };
 }
 
 /**

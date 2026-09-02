@@ -11,6 +11,7 @@ import {
   loggedMinutesForTaskPersonDate,
   portionLoggedMinutes,
   resolveTaskByTitle,
+  taskTimeSummary,
   timeEntriesForPersonDate,
   trackerSuggestions,
   unsettledPlanBlocks,
@@ -20,7 +21,7 @@ import {
   plannedMinutesForTaskPersonDate,
 } from './timeTracking';
 import { isValidTimeRange, findOverlappingEntry, formatMinutesDuration, frecencyScore, freeRemainderRange } from '../utils/timeTracking';
-import { uncoveredEntryGaps } from './timeTrackingSync';
+import { carveSpan, freeRangesWithin, uncoveredEntryGaps } from './timeTrackingSync';
 import type { AppData, Client, Person, Project, Status, Task, TimeEntry, WorkloadEntry } from '../types';
 
 const DAY = '2026-08-13';
@@ -139,18 +140,24 @@ describe('ADD_TIME_ENTRY', () => {
     expect(next.activity).toHaveLength(0);
     expect('eventId' in next.timeEntries[0]).toBe(false);
   });
-  it('straże => ta sama referencja: osoba, zadanie, szkic, zrobione, data, zakres, źródło, eventId', () => {
+  it('straże => ta sama referencja: osoba, zadanie, szkic, data, zakres, źródło, eventId', () => {
     const s = state();
     expect(add(s, { personId: 'ghost' })).toBe(s);
     expect(add(s, { taskId: 'ghost' })).toBe(s);
     expect(add(s, { taskId: 't-draft' })).toBe(s);
-    expect(add(s, { taskId: 't-done' })).toBe(s);
     expect(add(s, { date: '2026-13-40' })).toBe(s);
     expect(add(s, { startMinutes: 605 })).toBe(s);
     expect(add(s, { startMinutes: 660, endMinutes: 600 })).toBe(s);
     expect(add(s, { source: 'magic' as never })).toBe(s);
     expect(add(s, { eventId: 'k1' })).toBe(s); // eventId tylko przy source 'event'
     expect(add(s, { taskId: undefined })).toBe(s); // ani taskId, ani newTask
+  });
+  it('zadanie „zrobione” TEŻ przyjmuje czas (2026-09-02): wpis powstaje, status zostaje', () => {
+    const s = state();
+    const next = add(s, { taskId: 't-done' });
+    expect(next).not.toBe(s);
+    expect(next.timeEntries[0]).toMatchObject({ taskId: 't-done', startMinutes: 600, endMinutes: 660 });
+    expect(next.tasks.find((t) => t.id === 't-done')?.statusId).toBe('done');
   });
   it('nachodzenie na wpis TEJ SAMEJ osoby tego dnia odrzuca; inna osoba / dzień wolno', () => {
     const s = state({ timeEntries: [entry('w1', 't-design', 600, 660)] });
@@ -195,11 +202,12 @@ describe('UPDATE_TIME_ENTRY / DELETE_TIME_ENTRY', () => {
     expect(next.timeEntries[0]).toMatchObject({ taskId: 't-call-a', startMinutes: 615, endMinutes: 690, source: 'manual' });
     expect('eventId' in next.timeEntries[0]).toBe(false);
   });
-  it('straże: nieznany wpis, zły zakres, zamknięte zadanie, kolizja z INNYM wpisem, brak zmiany', () => {
+  it('straże: nieznany wpis, zły zakres, szkic, kolizja z INNYM wpisem, brak zmiany; zamknięte zadanie przyjmuje', () => {
     const s = state({ timeEntries: [entry('w1', 't-design', 600, 660), entry('w2', 't-design', 720, 780)] });
     expect(reducer(s, { type: 'UPDATE_TIME_ENTRY', entryId: 'ghost', taskId: 't-design', startMinutes: 600, endMinutes: 660 })).toBe(s);
     expect(reducer(s, { type: 'UPDATE_TIME_ENTRY', entryId: 'w1', taskId: 't-design', startMinutes: 600, endMinutes: 605 })).toBe(s);
-    expect(reducer(s, { type: 'UPDATE_TIME_ENTRY', entryId: 'w1', taskId: 't-done', startMinutes: 600, endMinutes: 660 })).toBe(s);
+    expect(reducer(s, { type: 'UPDATE_TIME_ENTRY', entryId: 'w1', taskId: 't-draft', startMinutes: 600, endMinutes: 660 })).toBe(s);
+    expect(reducer(s, { type: 'UPDATE_TIME_ENTRY', entryId: 'w1', taskId: 't-done', startMinutes: 600, endMinutes: 660 }).timeEntries[0].taskId).toBe('t-done');
     expect(reducer(s, { type: 'UPDATE_TIME_ENTRY', entryId: 'w1', taskId: 't-design', startMinutes: 600, endMinutes: 750 })).toBe(s);
     // wpis nie koliduje sam ze sobą
     expect(reducer(s, { type: 'UPDATE_TIME_ENTRY', entryId: 'w1', taskId: 't-design', startMinutes: 615, endMinutes: 705 })).not.toBe(s);
@@ -278,15 +286,21 @@ describe('selektory trackera', () => {
     expect(next.workload.find((w) => w.id === 'b1')?.done).toBe(true); // resyncBlockDone domyka
     expect(loggedMinutesForTaskPersonDate(next, 't-design', 'me', DAY)).toBe(120); // dokładnie plan, zero dubla
   });
-  it('podpowiedzi: bez szkiców i zrobionych; dziś w planie na górze; potem częstość × świeżość', () => {
+  it('podpowiedzi: bez szkiców; zrobione na końcu z flagą closed; dziś w planie na górze; potem częstość × świeżość', () => {
     const s = state({
       workload: [block('b1', 't-call-a', 'me', 600, 1)],
       timeEntries: [entry('w1', 't-call-b', 540, 570, { date: '2026-08-12' }), entry('w2', 't-call-b', 540, 570, { date: '2026-08-11' }), entry('w3', 't-design', 540, 570, { date: '2026-08-01' })],
     });
     const all = trackerSuggestions(s, 'me', DAY, '');
-    expect(all.map((x) => x.task.id)).toEqual(['t-call-a', 't-call-b', 't-design']);
+    expect(all.map((x) => x.task.id)).toEqual(['t-call-a', 't-call-b', 't-design', 't-done']);
     expect(all[0].plannedToday).toBe(true);
-    expect(all.some((x) => x.task.id === 't-done' || x.task.id === 't-draft')).toBe(false);
+    expect(all.map((x) => x.closed)).toEqual([false, false, false, true]);
+    expect(all.some((x) => x.task.id === 't-draft')).toBe(false);
+    // zamknięte, ale często logowane (frecency) wyprzedza aktywne bez wpisów
+    const busy = state({
+      timeEntries: [entry('w1', 't-done', 540, 570, { date: '2026-08-12' }), entry('w2', 't-done', 540, 570, { date: '2026-08-11' })],
+    });
+    expect(trackerSuggestions(busy, 'me', DAY, '')[0]).toMatchObject({ task: { id: 't-done' }, closed: true, plannedToday: false });
     // zapytanie po kliencie, bez ogonków
     expect(trackerSuggestions(s, 'me', DAY, 'wodociagi slupsk').map((x) => x.task.id)).toEqual(['t-call-a', 't-design']);
   });
@@ -294,8 +308,8 @@ describe('selektory trackera', () => {
     const s = state();
     expect(resolveTaskByTitle(s, 'design strony WWW')).toMatchObject({ kind: 'one', task: { id: 't-design' } });
     expect(resolveTaskByTitle(s, 'Rozmowa z klientem').kind).toBe('ambiguous');
-    expect(resolveTaskByTitle(s, 'Zrobione zadanie')).toMatchObject({ kind: 'closed' });
-    expect(resolveTaskByTitle(s, 'Szkic')).toMatchObject({ kind: 'closed' }); // szkic nie przyjmuje czasu
+    expect(resolveTaskByTitle(s, 'Zrobione zadanie')).toMatchObject({ kind: 'closed', task: { id: 't-done' } });
+    expect(resolveTaskByTitle(s, 'Szkic').kind).toBe('none'); // szkic nie przyjmuje czasu i nie jest widoczny
     expect(resolveTaskByTitle(s, 'Nic takiego').kind).toBe('none');
     expect(resolveTaskByTitle(s, '   ').kind).toBe('none');
   });
@@ -410,11 +424,34 @@ describe('para blok-wpis: SET_BLOCK_DONE', () => {
     expect(undone.workload[0].done).toBe(false);
     expect(undone.timeEntries).toHaveLength(0);
   });
-  it('godziny bloku zajęte innym wpisem: blok wykonany, ale bez wpisu (nic nie nachodzi)', () => {
-    const s = state({ workload: [block('b1', 't-design', 'me', 600, 2)], timeEntries: [entry('w1', 't-call-a', 630, 690)] });
+  it('godziny bloku CAŁE zajęte innym wpisem: blok wykonany, ale bez wpisu (nic nie nachodzi)', () => {
+    const s = state({ workload: [block('b1', 't-design', 'me', 600, 2)], timeEntries: [entry('w1', 't-call-a', 600, 720)] });
     const done = reducer(s, { type: 'SET_BLOCK_DONE', entryId: 'b1', done: true });
     expect(done.workload[0].done).toBe(true);
     expect(done.timeEntries).toHaveLength(1);
+  });
+  it('godziny bloku CZĘŚCIOWO zajęte cudzym wpisem (2026-09-02): wcięcie + wpisy w wolnych kawałkach, reszta do zasobnika', () => {
+    const s = state({ workload: [block('b1', 't-design', 'me', 600, 2)], timeEntries: [entry('w1', 't-call-a', 630, 690)] });
+    const done = reducer(s, { type: 'SET_BLOCK_DONE', entryId: 'b1', done: true });
+    const dated = done.workload.filter((w) => w.date === DAY && w.taskId === 't-design').sort((a, b) => a.startMinutes - b.startMinutes);
+    expect(dated.map((w) => [w.startMinutes, w.plannedHours, w.done])).toEqual([[600, 0.5, true], [690, 0.5, true]]);
+    expect(dated[0].id).toBe('b1'); // głowa zachowuje id
+    const bin = done.workload.find((w) => w.taskId === 't-design' && w.date === '');
+    expect(bin?.plannedHours).toBe(1); // wycięta godzina wraca do zasobnika
+    const mine = done.timeEntries.filter((e) => e.taskId === 't-design').sort((a, b) => a.startMinutes - b.startMinutes);
+    expect(mine.map((e) => [e.startMinutes, e.endMinutes, e.source, e.blockId])).toEqual([
+      [600, 630, 'block', 'b1'],
+      [690, 720, 'block', dated[1].id],
+    ]);
+    // odznaczenie głowy kasuje tylko jej wpis
+    const undone = reducer(done, { type: 'SET_BLOCK_DONE', entryId: 'b1', done: false });
+    expect(undone.timeEntries.filter((e) => e.taskId === 't-design')).toHaveLength(1);
+  });
+  it('blok częściowo pokryty WŁASNYM wpisem: kółko dopisuje resztę, bez wcięcia', () => {
+    const s = state({ workload: [block('b1', 't-design', 'me', 600, 2)], timeEntries: [entry('w1', 't-design', 630, 690)] });
+    const done = reducer(s, { type: 'SET_BLOCK_DONE', entryId: 'b1', done: true });
+    expect(done.workload.filter((w) => w.date === DAY)).toHaveLength(1);
+    expect(done.timeEntries.map((e) => [e.startMinutes, e.endMinutes]).sort((a, b) => a[0] - b[0])).toEqual([[600, 630], [630, 690], [690, 720]]);
   });
   it('ręcznie zmieniony wpis z bloku zostaje po odznaczeniu; skasowanie wpisu z bloku odznacza blok', () => {
     const s = state({ workload: [block('b1', 't-design', 'me', 600, 2)] });
@@ -453,11 +490,11 @@ describe('para blok-wpis: SET_BLOCK_DONE', () => {
     const both = reducer(first, { type: 'SET_BLOCK_DONE', entryId: 'b2', done: true });
     expect(both.tasks.find((t) => t.id === 't-call-a')?.statusId).toBe('done');
   });
-  it('ostatni blok zamyka zadanie także bez wpisu 1:1 (godziny bloku zajęte innym wpisem)', () => {
+  it('ostatni blok zamyka zadanie także bez wpisu 1:1 (godziny bloku w całości zajęte innym wpisem)', () => {
     const s = state({
       tasks: [task('t-design', 'p-a', 'Design strony www', { estimatedHours: 2 }), task('t-call-a', 'p-a', 'Rozmowa z klientem', { estimatedHours: null })],
       workload: [block('b1', 't-design', 'me', 600, 2)],
-      timeEntries: [entry('w1', 't-call-a', 630, 690)],
+      timeEntries: [entry('w1', 't-call-a', 600, 720)],
     });
     const done = reducer(s, { type: 'SET_BLOCK_DONE', entryId: 'b1', done: true });
     expect(done.timeEntries).toHaveLength(1); // wpis 1:1 nie powstał (kolizja)
@@ -830,5 +867,112 @@ describe('odwrót „wykonanie → plan” (kasowanie / poprawka wpisu)', () => 
     const back = reducer(noBlock, { type: 'DELETE_TIME_ENTRY', entryId: grown.timeEntries[0].id });
     expect(back.workload.find((w) => w.taskId === 't-design' && w.date === '')).toBeUndefined();
     expect(back.timeEntries).toHaveLength(0);
+  });
+});
+
+describe('wcięcie planu pod fakt (2026-09-02, „duży task w planie a krótki”)', () => {
+  const BIG = task('t-big', 'p-a', 'Wdrożenie sklepu', { estimatedHours: 40 });
+  const base = () =>
+    state({
+      tasks: [BIG, task('t-call-a', 'p-a', 'Rozmowa z klientem', { estimatedHours: null })],
+      workload: [block('b1', 't-big', 'me', 540, 8)], // 9:00-17:00
+    });
+  const dated = (s: AppData, taskId: string) =>
+    s.workload.filter((w) => w.date === DAY && w.taskId === taskId).sort((a, b) => a.startMinutes - b.startMinutes);
+
+  it('carveSpan / freeRangesWithin: czysta geometria', () => {
+    expect(carveSpan({ startMinutes: 540, endMinutes: 1020 }, { startMinutes: 900, endMinutes: 915 })).toEqual({ head: [540, 900], tail: [915, 1020], cutMinutes: 15 });
+    expect(carveSpan({ startMinutes: 540, endMinutes: 1020 }, { startMinutes: 540, endMinutes: 600 })).toEqual({ head: null, tail: [600, 1020], cutMinutes: 60 });
+    expect(carveSpan({ startMinutes: 540, endMinutes: 600 }, { startMinutes: 500, endMinutes: 700 })).toEqual({ head: null, tail: null, cutMinutes: 60 });
+    expect(carveSpan({ startMinutes: 540, endMinutes: 600 }, { startMinutes: 600, endMinutes: 660 })).toEqual({ head: null, tail: null, cutMinutes: 0 });
+    expect(freeRangesWithin(600, 720, [{ startMinutes: 630, endMinutes: 690 }])).toEqual([[600, 630], [690, 720]]);
+    expect(freeRangesWithin(600, 720, [{ startMinutes: 500, endMinutes: 800 }])).toEqual([]);
+    expect(freeRangesWithin(600, 720, [])).toEqual([[600, 720]]);
+  });
+  it('15 min rozmowy w środku bloku 9-17: trzy bloki (9-15, rozmowa, 15:15-17), 15 min do zasobnika', () => {
+    const s = base();
+    const next = reducer(s, {
+      type: 'ADD_TIME_ENTRY',
+      payload: { personId: 'me', taskId: 't-call-a', date: DAY, startMinutes: 900, endMinutes: 915, source: 'manual' },
+    });
+    expect(dated(next, 't-big').map((w) => [w.id, w.startMinutes, w.plannedHours, w.done === true])).toEqual([
+      ['b1', 540, 6, false],
+      [expect.any(String), 915, 1.75, false],
+    ]);
+    expect(dated(next, 't-call-a').map((w) => [w.startMinutes, w.plannedHours, w.done])).toEqual([[900, 0.25, true]]);
+    expect(next.workload.find((w) => w.taskId === 't-big' && w.date === '')?.plannedHours).toBe(0.25);
+    // kolejność dnia po czasie
+    const day = next.workload.filter((w) => w.date === DAY).sort((a, b) => a.sortIndex - b.sortIndex);
+    expect(day.map((w) => w.startMinutes)).toEqual([540, 900, 915]);
+    // kółka na głowie i ogonie dają wpisy w wolnych godzinach: 9-15 i 15:15-17
+    const tail = dated(next, 't-big')[1];
+    const both = reducer(reducer(next, { type: 'SET_BLOCK_DONE', entryId: 'b1', done: true }), { type: 'SET_BLOCK_DONE', entryId: tail.id, done: true });
+    expect(
+      both.timeEntries.filter((e) => e.taskId === 't-big').map((e) => [e.startMinutes, e.endMinutes]).sort((a, b) => a[0] - b[0]),
+    ).toEqual([[540, 900], [915, 1020]]);
+    expect(loggedMinutesForPersonDate(both, 'me', DAY)).toBe(480);
+  });
+  it('wpis na początku bloku: bez głowy, blok przesuwa start i zachowuje id; wpis na cały blok: blok znika do zasobnika', () => {
+    const s = base();
+    const atStart = reducer(s, {
+      type: 'ADD_TIME_ENTRY',
+      payload: { personId: 'me', taskId: 't-call-a', date: DAY, startMinutes: 540, endMinutes: 600, source: 'manual' },
+    });
+    expect(dated(atStart, 't-big').map((w) => [w.id, w.startMinutes, w.plannedHours])).toEqual([['b1', 600, 7]]);
+    const whole = reducer(s, {
+      type: 'ADD_TIME_ENTRY',
+      payload: { personId: 'me', taskId: 't-call-a', date: DAY, startMinutes: 540, endMinutes: 1020, source: 'manual' },
+    });
+    expect(dated(whole, 't-big')).toHaveLength(0);
+    expect(whole.workload.find((w) => w.taskId === 't-big' && w.date === '')?.plannedHours).toBe(8);
+  });
+  it('wpis TEGO SAMEGO zadania nie wcina; wpis innej osoby nie wcina', () => {
+    const s = base();
+    const own = reducer(s, {
+      type: 'ADD_TIME_ENTRY',
+      payload: { personId: 'me', taskId: 't-big', date: DAY, startMinutes: 900, endMinutes: 915, source: 'manual' },
+    });
+    expect(dated(own, 't-big').map((w) => [w.id, w.plannedHours])).toEqual([['b1', 8]]);
+    const other = reducer(s, {
+      type: 'ADD_TIME_ENTRY',
+      payload: { personId: 'other', taskId: 't-call-a', date: DAY, startMinutes: 900, endMinutes: 915, source: 'manual' },
+    });
+    expect(dated(other, 't-big').filter((w) => w.personId === 'me').map((w) => [w.id, w.plannedHours])).toEqual([['b1', 8]]);
+  });
+  it('poprawka wpisu wcina ponownie w nowych godzinach (wcięcie jest jednokierunkowe)', () => {
+    const s = base();
+    const added = reducer(s, {
+      type: 'ADD_TIME_ENTRY',
+      payload: { personId: 'me', taskId: 't-call-a', date: DAY, startMinutes: 900, endMinutes: 915, source: 'manual' },
+    });
+    const id = added.timeEntries[0].id;
+    const moved = reducer(added, { type: 'UPDATE_TIME_ENTRY', entryId: id, taskId: 't-call-a', startMinutes: 960, endMinutes: 975 });
+    expect(dated(moved, 't-big').map((w) => [w.startMinutes, w.plannedHours])).toEqual([[540, 6], [915, 0.75], [975, 0.75]]);
+    expect(dated(moved, 't-call-a').map((w) => [w.startMinutes, w.plannedHours])).toEqual([[960, 0.25]]);
+  });
+});
+
+describe('taskTimeSummary („Ile na co”)', () => {
+  it('sumuje wpisy i plan per zadanie w podanych dniach, malejąco po wykonaniu', () => {
+    const s = state({
+      workload: [block('b1', 't-design', 'me', 600, 2)],
+      timeEntries: [
+        entry('w1', 't-call-a', 540, 570),
+        entry('w2', 't-call-a', 720, 750),
+        entry('w3', 't-design', 600, 660),
+        entry('w4', 't-done', 900, 930),
+        entry('w5', 't-call-a', 540, 600, { date: '2026-08-14' }),
+        entry('w6', 't-call-a', 540, 600, { personId: 'other' }),
+      ],
+    });
+    const rows = taskTimeSummary(s, 'me', [DAY]);
+    // remis wykonania (60 = 60) rozstrzyga plan malejąco
+    expect(rows.map((r) => [r.taskId, r.loggedMinutes, r.plannedMinutes, r.closed])).toEqual([
+      ['t-design', 60, 120, false],
+      ['t-call-a', 60, 0, false],
+      ['t-done', 30, 0, true],
+    ]);
+    expect(taskTimeSummary(s, 'me', [DAY, '2026-08-14'])[0]).toMatchObject({ taskId: 't-call-a', loggedMinutes: 120 });
+    expect(rows[1]).toMatchObject({ title: 'Rozmowa z klientem', clientName: 'Wodociągi Słupsk', projectName: 'Strona www' });
   });
 });

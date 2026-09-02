@@ -291,3 +291,29 @@ describe('shared sanitizers (commandValidation)', () => {
     expect(f.planning).toBe('');
   });
 });
+
+describe('lastFilters.calendar.calendarView (2026-09-02, „Zapamiętywanie widoku”)', () => {
+  const base: LastViewFilter = {
+    criteria: DEFAULT_FILTER_CRITERIA,
+    personIds: [],
+    departmentId: '',
+    serviceTypeId: '',
+    planning: '',
+    sort: '',
+  };
+  it('sanityzacja: poprawny widok zostaje, śmieć i brak => klucz nieobecny', () => {
+    const s = emptyData();
+    expect(sanitizeLastViewFilter(s, { ...base, calendarView: 'day' }).calendarView).toBe('day');
+    expect('calendarView' in sanitizeLastViewFilter(s, { ...base, calendarView: 'year' })).toBe(false);
+    expect('calendarView' in sanitizeLastViewFilter(s, base)).toBe(false);
+  });
+  it('reduktor: zmiana samego widoku to nowy stan; ten sam widok => ta sama referencja', () => {
+    const s0 = emptyData();
+    const s1 = reducer(s0, { type: 'SET_LAST_FILTER', view: 'calendar', filter: { ...base, calendarView: 'day' } });
+    expect(s1).not.toBe(s0);
+    expect(s1.lastFilters.calendar?.calendarView).toBe('day');
+    expect(reducer(s1, { type: 'SET_LAST_FILTER', view: 'calendar', filter: { ...base, calendarView: 'day' } })).toBe(s1);
+    const s2 = reducer(s1, { type: 'SET_LAST_FILTER', view: 'calendar', filter: { ...base, calendarView: 'month' } });
+    expect(s2.lastFilters.calendar?.calendarView).toBe('month');
+  });
+});

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { axisHourRange, layoutColumns, minuteToPx, pxToSnappedMinute } from './dayTrackerLayout';
+import { axisHourRange, layoutColumns, minuteToPx, pxToSnappedMinute, trackerDensityClass } from './dayTrackerLayout';
 
 describe('dayTrackerLayout', () => {
   it('oś: domyślnie 7-19, rozszerza się do danych', () => {
@@ -23,5 +23,15 @@ describe('dayTrackerLayout', () => {
     expect(lay.get('a')).toEqual({ col: 0, cols: 2 });
     expect(lay.get('b')).toEqual({ col: 1, cols: 2 });
     expect(lay.get('c')).toEqual({ col: 0, cols: 1 });
+  });
+});
+
+describe('trackerDensityClass', () => {
+  it('kwadrans / pół godziny / 45 min / godzina / dłużej', () => {
+    expect(trackerDensityClass(15)).toBe('h-quarter');
+    expect(trackerDensityClass(30)).toBe('h-half');
+    expect(trackerDensityClass(45)).toBe('h-threeq');
+    expect(trackerDensityClass(60)).toBe('h-hour');
+    expect(trackerDensityClass(75)).toBe('');
   });
 });

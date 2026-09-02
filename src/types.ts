@@ -781,7 +781,15 @@ export interface LastViewFilter {
   // Sortowanie listy (zgłoszenie 9db56d5a; Zadania/Projekty): '' = domyślny
   // porządek widoku; wartości z LIST_SORT_VALUES (src/pages/listSort.ts).
   sort: string;
+  // Ostatni widok kalendarza (zgłoszenie 2026-09-01 „Zapamiętywanie widoku"):
+  // klucz TYLKO wpisu `calendar`; brak = domyślny „Tydzień". Sanityzowany do
+  // CALENDAR_VIEW_MODES (commandValidation), inne widoki go nie niosą.
+  calendarView?: CalendarViewMode;
 }
+
+/** Tryby przełącznika Dzień | Tydzień | Miesiąc w kalendarzu. */
+export type CalendarViewMode = 'day' | 'week' | 'month';
+export const CALENDAR_VIEW_MODES: readonly CalendarViewMode[] = ['day', 'week', 'month'];
 
 export interface AppData {
   version: number;

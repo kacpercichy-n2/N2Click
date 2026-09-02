@@ -6,7 +6,24 @@ import { DAY_MINUTES, MINUTE_STEP } from '../utils/time';
 /** Domyślne okno osi (godziny); rozszerza się, gdy dane wystają poza nie. */
 export const TRACKER_AXIS_START_HOUR = 7;
 export const TRACKER_AXIS_END_HOUR = 19;
-export const TRACKER_PX_PER_HOUR = 56;
+/** 84 px/h = 21 px na kwadrans, TA SAMA gęstość co siatka tygodnia (HOUR_PX w
+ *  WeekView). Dawne 56 px/h dawało 14 px na kwadrans — kafle 15-45 min ucinały
+ *  tytuł (zgłoszenie 2026-09-01 „Wysokość tasków w kalendarzu"). */
+export const TRACKER_PX_PER_HOUR = 84;
+
+/**
+ * Klasa gęstości treści kafla (plan i wykonanie) z minut — odpowiednik
+ * `blockDensityClass` w WeekView: ≤15 min (21 px) jedna linia „tytuł … godziny",
+ * ≤30 min (42 px) tytuł + godziny, ≤45 min (63 px) tytuł + meta + godziny,
+ * ≤60 min (84 px) bez tekstu postępu, dłuższe = pełna treść. Czysta prezentacja.
+ */
+export function trackerDensityClass(minutes: number): string {
+  if (minutes <= 15) return 'h-quarter';
+  if (minutes <= 30) return 'h-half';
+  if (minutes <= 45) return 'h-threeq';
+  if (minutes <= 60) return 'h-hour';
+  return '';
+}
 
 export interface HourRange {
   startHour: number; // włącznie

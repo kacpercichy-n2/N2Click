@@ -2866,6 +2866,34 @@ a.toggle-btn {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---------- Wąskie kafelki (kolumny równoległe) ----------
+   Kafelek jest własnym kontenerem szerokości: gdy stoi w 2-3 kolumnach obok
+   siebie i ma mniej niż 150 px, nazwisko ustępuje (kropka koloru osoby i czas
+   trwania zostają), poniżej 96 px znika też moneta. Zgłoszenie 2026-09-01
+   „Wysokość tasków w kalendarzu": przy 30-60 min w wąskiej kolumnie wiersz
+   osoby ucinał nazwisko do „Kas…", a godziny bywały niewidoczne. Czysta
+   prezentacja: geometria, uchwyty i handlery bez zmian (inwariant 7). */
+.week-block {
+  container-type: inline-size;
+}
+@container (max-width: 150px) {
+  .week-block-person {
+    display: none;
+  }
+}
+@container (max-width: 120px) {
+  /* Kwadransowy kafelek w wąskiej kolumnie: tytuł ważniejszy niż godziny
+     (były ucinane do „15:" i zasłaniane ✓). Godziny niesie dymek. */
+  .week-block.h-quarter .week-block-time {
+    display: none;
+  }
+}
+@container (max-width: 96px) {
+  .week-block-title .coin {
+    display: none;
+  }
+}
+
 /* ---------- Krótkie kafelki — układ kompaktowy ----------
    Wysokość kafelka jest wierna czasowi (21 px na kwadrans, bez zawyżonego
    minimum), więc czytelność krótkich bloków daje gęstszy układ treści:
@@ -13907,10 +13935,6 @@ a.toggle-btn {
   color: var(--n2-warning);
   font-weight: 600;
 }
-.tt-plan-item.short {
-  padding-top: 3px;
-  padding-bottom: 3px;
-}
 .tt-event {
   display: flex;
   flex-direction: column;
@@ -13954,14 +13978,6 @@ a.toggle-btn {
 }
 .tt-entry.from-event::before {
   background: linear-gradient(var(--event-accent), var(--n2-warning));
-}
-.tt-entry.short,
-.tt-plan-item.short {
-  padding-top: 2px;
-  padding-bottom: 2px;
-}
-.tt-entry.short .tt-item-time {
-  display: none;
 }
 .tt-entry-delete {
   position: absolute;
@@ -14097,6 +14113,98 @@ a.toggle-btn {
   pointer-events: none;
 }
 
+/* --- gęstość krótkich kafli (84 px/h = 21 px na kwadrans, jak siatka tygodnia) ---
+   Klasy z `trackerDensityClass` (dayTrackerLayout.ts), z minut kafla:
+   .h-quarter (≤15 min, 21 px) jedna linia „○ tytuł … godziny",
+   .h-half (30 min, 42 px) tytuł + godziny,
+   .h-threeq (45 min, 63 px) + klient · projekt,
+   .h-hour (60 min, 84 px) + pasek postępu bez tekstu; dłuższe = pełna treść.
+   Zgłoszenie 2026-09-01 „Wysokość tasków w kalendarzu": przy 56 px/h kafle
+   15-45 min ucinały tytuł. Czysta prezentacja, zero zmian w gestach. */
+.tt-plan-item.h-quarter,
+.tt-entry.h-quarter {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-right: 8px;
+}
+.tt-block.h-quarter .tt-item-head {
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 5px;
+}
+.tt-block.h-quarter .tt-tick {
+  width: 14px;
+  height: 14px;
+}
+.tt-block.h-quarter .tt-tick svg {
+  width: 9px;
+  height: 9px;
+}
+.tt-plan-item.h-quarter .tt-item-title,
+.tt-entry.h-quarter .tt-item-title {
+  flex: 1 1 auto;
+  font-size: 12px;
+  line-height: 1.1;
+}
+.tt-item-time.inline {
+  flex: none;
+  margin-left: auto;
+  font-size: 10.5px;
+  transition: padding-right var(--n2-transition);
+}
+.tt-plan-item.h-half,
+.tt-entry.h-half {
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+.tt-block.h-half .tt-tick {
+  width: 16px;
+  height: 16px;
+}
+.tt-block.h-half .tt-tick svg {
+  width: 10px;
+  height: 10px;
+}
+.tt-block.h-half .tt-item-title {
+  font-size: 12.5px;
+}
+.tt-plan-item.h-threeq,
+.tt-entry.h-threeq {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.tt-block.h-threeq .tt-tick {
+  width: 18px;
+  height: 18px;
+}
+.tt-block.h-hour .tt-progress {
+  margin-top: 3px;
+}
+/* Krzyżyk kasowania na kwadransowym wpisie nie może zasłaniać godzin: mniejszy,
+   a godziny robią mu miejsce dopiero, gdy się pokaże (hover / poprawka). */
+.tt-entry.h-quarter .tt-entry-delete,
+.tt-entry.h-half .tt-entry-delete {
+  width: 16px;
+  height: 16px;
+  top: 2px;
+  right: 3px;
+  font-size: 13px;
+}
+.tt-entry.h-quarter:hover .tt-item-time.inline,
+.tt-entry.h-quarter.editing .tt-item-time.inline,
+.tt-entry.h-quarter:focus-within .tt-item-time.inline {
+  padding-right: 16px;
+}
+.tt-entry.h-half:hover .tt-item-title,
+.tt-entry.h-half.editing .tt-item-title,
+.tt-entry.h-half:focus-within .tt-item-title {
+  padding-right: 16px;
+}
+
 /* --- panel boczny --- */
 .tt-side {
   position: sticky;
@@ -14174,6 +14282,78 @@ a.toggle-btn {
   text-transform: uppercase;
   color: var(--n2-lavender);
   font-weight: 700;
+}
+/* Nagłówek podsumowania z przełącznikami Projekty | Zadania i Dzień | Tydzień
+   (zgłoszenie 2026-09-01 „Podsumowanie w widoku dnia"). */
+.tt-side-head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 14px 0 8px;
+}
+.tt-side-head .tt-side-title {
+  margin: 0;
+}
+.tt-side-segs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.tt-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-pill);
+  background: rgba(255, 255, 255, 0.03);
+}
+.tt-seg button {
+  height: 22px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--n2-radius-pill);
+  background: transparent;
+  color: var(--n2-text-muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--n2-transition), color var(--n2-transition);
+}
+.tt-seg button:hover {
+  color: var(--text);
+}
+.tt-seg button.active {
+  background: rgba(143, 69, 255, 0.3);
+  color: var(--text);
+}
+.tt-task-row {
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.tt-task-row:last-of-type {
+  border-bottom: 0;
+}
+.tt-task-row .tt-client-head > span:first-child {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.tt-task-row-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tt-task-row .tt-client-project {
+  padding-left: 0;
+}
+.tt-tag.closed {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--n2-text-muted);
 }
 .tt-side-empty,
 .tt-side-foot {
