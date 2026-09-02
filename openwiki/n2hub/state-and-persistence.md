@@ -579,10 +579,12 @@
   osoby), którego od 2026-09-02 NIKT nie wysyła (decyzja usera: rozliczenie
   zawsze pyta; dawne dispatche co minutę z `CalendarPage` i `DayTrackerView`
   usunięte). `explicit: true` = popout `.tt-settle` w `DayTrackerView`
-  (kandydaci z `unsettledPlanBlocks`): dzień MINIONY (2026-08-20) z
-  `nowMinutes: null` (wszystkie niewykonane bloki, także bez wpisów), DZISIAJ
-  dopiero po końcu dnia pracy osoby (`workEndMinutes` + 15 min) z `nowMinutes`
-  (tylko bloki, które minęły o ≥15 min); „Oddaj do zasobnika" wysyła ten
+  (kandydaci z `unsettledPlanBlocks`): `nowMinutes` = odcięcie z czystej
+  `settleCutoffMinutes` (timeTracking.ts): dzień MINIONY (2026-08-20)
+  `dni × 1440 + zegar` (wszystkie niewykonane bloki, także bez wpisów; wczoraj
+  tuż po północy blok do 24:00 ma jeszcze karencję), DZISIAJ dopiero po końcu
+  dnia pracy osoby (`workEndMinutes`, domyślnie 16:00 przy 8h) + 15 min, tylko
+  bloki, które minęły o ≥15 min; koniec pracy o 24:00 = dzisiaj nie pyta; „Oddaj do zasobnika" wysyła ten
   dispatch; alternatywa
   „Zalicz jako wykonane" idzie przez `SET_BLOCK_DONE` per blok, a dla bloku
   częściowo pokrytego przez `ADD_TIME_ENTRY` na samą resztę

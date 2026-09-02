@@ -13,6 +13,10 @@ export function isTimeEntrySource(v: unknown): v is TimeEntrySource {
 /** Najkrótszy wpis: jeden krok siatki (15 min). */
 export const MIN_TIME_ENTRY_MINUTES = MINUTE_STEP;
 
+/** Karencja rozliczenia: blok „minął", gdy od jego końca upłynęło tyle minut;
+ *  ta sama karencja dzieli koniec dnia pracy od popoutu rozliczenia. */
+export const SETTLE_GRACE_MINUTES = MINUTE_STEP;
+
 /** Czy zakres [start, end) jest poprawnym zakresem wpisu czasu w dobie na siatce 15 min. */
 export function isValidTimeRange(start: unknown, end: unknown): start is number {
   return (

@@ -21,9 +21,9 @@ import {
   personAbsentFromEventOccurrence,
 } from './selectors';
 import { isTaskContentMasked, taskDisplayTitle, eventDisplayTitle, projectDisplayName } from './confidentiality';
-import { hoursToMinutes, isBinEntry } from '../utils/time';
+import { DAY_MINUTES, hoursToMinutes, isBinEntry } from '../utils/time';
 import { diffDays } from '../utils/dates';
-import { frecencyScore, timeEntryMinutes } from '../utils/timeTracking';
+import { SETTLE_GRACE_MINUTES, frecencyScore, timeEntryMinutes } from '../utils/timeTracking';
 
 const sum = (xs: readonly TimeEntry[]): number => xs.reduce((s, e) => s + timeEntryMinutes(e), 0);
 
@@ -176,6 +176,40 @@ export function unsettledPlanBlocks(plan: DayPlanItem[]): DayPlanBlock[] {
   return plan.filter(
     (p): p is DayPlanBlock => p.kind === 'block' && !p.done && p.portionLogged < p.plannedMinutes,
   );
+}
+
+// ---- Rozliczenie dnia: do kiedy plan zostaje nietknięty, co pyta popout ----
+
+/**
+ * Bezwzględne odcięcie rozliczenia w minutach od północy OGLĄDANEGO dnia albo
+ * `null`, gdy dzień jeszcze nie podlega rozliczeniu (decyzja usera 2026-09-02:
+ * rozliczenie zawsze pyta, dzisiaj dopiero po końcu dnia pracy).
+ *   * przyszłość: null;
+ *   * dzień MINIONY: `dni różnicy × 1440 + zegar` — wczoraj tuż po północy blok
+ *     kończący się o 24:00 ma jeszcze karencję (zmiana daty jej nie zabiera);
+ *   * DZISIAJ: zegar, ale dopiero od końca dnia pracy + karencja; koniec pracy
+ *     tak późny, że karencja nie mieści się w dobie (np. 24:00), oznacza „nie
+ *     dzisiaj" — zapyta jako dzień miniony.
+ */
+export function settleCutoffMinutes(
+  date: DateStr,
+  today: DateStr,
+  clockMinutes: number,
+  workEndMinutes: number,
+): number | null {
+  const daysAgo = diffDays(date, today);
+  if (daysAgo < 0) return null;
+  if (daysAgo > 0) return daysAgo * DAY_MINUTES + clockMinutes;
+  const dayEnd = workEndMinutes + SETTLE_GRACE_MINUTES;
+  if (dayEnd >= DAY_MINUTES || clockMinutes < dayEnd) return null;
+  return clockMinutes;
+}
+
+/** Bloki do rozliczenia przy danym odcięciu: niewykonane, bez pełnego pokrycia
+ *  i zakończone co najmniej karencję przed odcięciem. `null` = nic. */
+export function settleDueBlocks(plan: DayPlanItem[], cutoff: number | null): DayPlanBlock[] {
+  if (cutoff === null) return [];
+  return unsettledPlanBlocks(plan).filter((b) => b.endMinutes + SETTLE_GRACE_MINUTES <= cutoff);
 }
 
 // ---- Podpowiedzi paska ----

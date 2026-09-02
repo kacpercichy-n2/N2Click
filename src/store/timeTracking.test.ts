@@ -11,6 +11,8 @@ import {
   loggedMinutesForTaskPersonDate,
   portionLoggedMinutes,
   resolveTaskByTitle,
+  settleCutoffMinutes,
+  settleDueBlocks,
   taskTimeSummary,
   timeEntriesForPersonDate,
   trackerSuggestions,
@@ -876,6 +878,30 @@ describe('odwrót „wykonanie → plan” (kasowanie / poprawka wpisu)', () => 
     const back = reducer(noBlock, { type: 'DELETE_TIME_ENTRY', entryId: grown.timeEntries[0].id });
     expect(back.workload.find((w) => w.taskId === 't-design' && w.date === '')).toBeUndefined();
     expect(back.timeEntries).toHaveLength(0);
+  });
+});
+
+describe('odcięcie rozliczenia: dzisiaj po końcu dnia pracy, karencja przez północ', () => {
+  it('settleCutoffMinutes: przyszłość null; dzisiaj od końca pracy + 15 min; koniec o 24:00 nie dzisiaj', () => {
+    expect(settleCutoffMinutes('2026-08-14', DAY, 1439, 960)).toBeNull(); // jutro
+    expect(settleCutoffMinutes(DAY, DAY, 970, 960)).toBeNull(); // 16:10, koniec pracy 16:00
+    expect(settleCutoffMinutes(DAY, DAY, 975, 960)).toBe(975); // 16:15
+    expect(settleCutoffMinutes(DAY, DAY, 1439, 1440)).toBeNull(); // koniec pracy 24:00
+    expect(settleCutoffMinutes(DAY, DAY, 1439, 1430)).toBeNull(); // 23:50 + 15 nie mieści się w dobie
+  });
+  it('settleCutoffMinutes: wczoraj tuż po północy odcięcie idzie przez północ, starsze dni bez ograniczeń', () => {
+    expect(settleCutoffMinutes('2026-08-12', '2026-08-13', 5, 960)).toBe(1445);
+    expect(settleCutoffMinutes('2026-08-12', '2026-08-13', 15, 960)).toBe(1455);
+    expect(settleCutoffMinutes('2026-08-11', '2026-08-13', 0, 960)).toBe(2880);
+  });
+  it('settleDueBlocks: tylko bloki zakończone ≥ 15 min przed odcięciem; null = nic', () => {
+    const s = state({ workload: [block('b1', 't-design', 'me', 840, 1), block('b2', 't-call-a', 'me', 960, 0.5, 1), block('b3', 't-call-b', 'me', 1380, 1, 2)] }); // 14-15, 16-16:30, 23-24
+    const plan = dayPlanForPerson(s, 'me', DAY);
+    expect(settleDueBlocks(plan, null)).toEqual([]);
+    expect(settleDueBlocks(plan, 975).map((b) => b.block.id)).toEqual(['b1']); // 16:15: 16:30 jeszcze trwa
+    expect(settleDueBlocks(plan, 1005).map((b) => b.block.id)).toEqual(['b1', 'b2']);
+    expect(settleDueBlocks(plan, 1445).map((b) => b.block.id)).toEqual(['b1', 'b2']); // 00:05 nazajutrz: blok do 24:00 ma karencję
+    expect(settleDueBlocks(plan, 1455).map((b) => b.block.id)).toEqual(['b1', 'b2', 'b3']);
   });
 });
 

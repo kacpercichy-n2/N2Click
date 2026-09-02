@@ -155,7 +155,7 @@ import {
   rangesOverlap,
   snapHours,
 } from '../utils/time';
-import { findOverlappingEntry, isValidTimeRange } from '../utils/timeTracking';
+import { SETTLE_GRACE_MINUTES, findOverlappingEntry, isValidTimeRange } from '../utils/timeTracking';
 import {
   carveSpan,
   entryMatchesBlock,
@@ -1397,7 +1397,6 @@ function unlinkEntryForBlock(state: AppData, block: WorkloadEntry): AppData {
  * (wszystkie niewykonane bloki, także bez wpisów), DZISIAJ po końcu dnia
  * pracy z `nowMinutes` (tylko bloki, które już minęły).
  */
-export const SETTLE_GRACE_MINUTES = 15;
 function settleTrackedDay(
   state: AppData,
   personId: string,

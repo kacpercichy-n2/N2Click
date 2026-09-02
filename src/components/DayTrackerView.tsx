@@ -15,7 +15,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { AppData, DateStr, TimeEntry, WorkloadEntry } from '../types';
-import { SETTLE_GRACE_MINUTES, usePersistence, useStoreApi, type Action } from '../store/AppStore';
+import { usePersistence, useStoreApi, type Action } from '../store/AppStore';
+import { defaultWorkEndMinutes } from '../store/storage';
 import { useSaveStatus } from '../utils/useSaveStatus';
 import {
   blocksForPersonDate,
@@ -41,9 +42,10 @@ import {
   loggedMinutesForTaskPersonDate,
   plannedMinutesForPersonDate,
   resolveTaskByTitle,
+  settleCutoffMinutes,
+  settleDueBlocks,
   taskTimeSummary,
   timeEntriesForPersonDate,
-  unsettledPlanBlocks,
   type DayPlanItem,
 } from '../store/timeTracking';
 import {
@@ -228,15 +230,19 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
   // wcięta głowa 9-15 nie ucieka do zasobnika minutę po zalogowaniu rozmowy.
   // Bez bramki „dzień śledzony": blok dodany wstecz na pusty dzień też ma
   // dostać pytanie (jawne rozliczenie działa bez wpisów).
-  const workEnd = person !== undefined && person.workEndMinutes > 0 ? person.workEndMinutes : OFF_HOURS_END;
-  const dayOver = nowMinutes !== null && nowMinutes >= workEnd + SETTLE_GRACE_MINUTES;
-  const pastDue = useMemo(() => {
-    if (date < today) return unsettledPlanBlocks(plan);
-    if (date === today && dayOver && nowMinutes !== null) {
-      return unsettledPlanBlocks(plan).filter((b) => b.endMinutes + SETTLE_GRACE_MINUTES <= nowMinutes);
-    }
-    return [];
-  }, [plan, date, today, dayOver, nowMinutes]);
+  // Koniec dnia pracy z profilu (domyślnie 8:00 + etat, czyli 16:00 przy 8h —
+  // `defaultWorkEndMinutes`); odcięcie liczy czysta `settleCutoffMinutes`
+  // (dzisiaj po końcu pracy, dzień miniony z karencją przez północ).
+  const clockMinutes = now.getHours() * 60 + now.getMinutes();
+  const workEnd =
+    person !== undefined && Number.isFinite(person.workEndMinutes) && person.workEndMinutes > 0
+      ? person.workEndMinutes
+      : defaultWorkEndMinutes(person?.capacity ?? 8);
+  const settleCutoff = useMemo(
+    () => settleCutoffMinutes(date, today, clockMinutes, workEnd),
+    [date, today, clockMinutes, workEnd],
+  );
+  const pastDue = useMemo(() => settleDueBlocks(plan, settleCutoff), [plan, settleCutoff]);
   const settleKey = `${personId}|${date}`;
   const [settleDismissed, setSettleDismissed] = useState<string | null>(null);
 
@@ -605,9 +611,10 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
   };
   const settlePastToBin = () => {
     const minutes = pastDue.reduce((s, item) => s + (item.plannedMinutes - item.portionLogged), 0);
-    // Dzień miniony: wszystko (`null`); dzisiaj: tylko bloki, które już minęły.
+    // To samo odcięcie, które wyliczyło listę: tylko bloki, które już minęły.
+    if (settleCutoff === null) return;
     const ok = commit(
-      { type: 'SETTLE_TRACKED_DAY', personId, date, nowMinutes: date === today ? nowMinutes : null, explicit: true },
+      { type: 'SETTLE_TRACKED_DAY', personId, date, nowMinutes: settleCutoff, explicit: true },
       (after, before) => after.workload !== before.workload,
     );
     say(
