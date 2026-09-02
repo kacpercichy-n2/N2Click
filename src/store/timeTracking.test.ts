@@ -1053,6 +1053,37 @@ describe('RECONCILE_TRACKED_DAY: dane sprzed wcięcia doprowadzone do zasad przy
     expect(loggedMinutesForPersonDate(next, 'me', DAY)).toBe(120);
     expect(reducer(next, { type: 'RECONCILE_TRACKED_DAY', personId: 'me', date: DAY })).toBe(next);
   });
+  it('hydracja w tle przywraca plan sprzed wcięcia: ponowne rozliczenie wcina znowu i przepina wpisy „z bloku”, bez duplikatów', () => {
+    const s = state({
+      tasks: [BIG, task('t-call-a', 'p-a', 'N2Hub fix', { estimatedHours: null })],
+      workload: [{ ...block('b1', 't-big', 'me', 600, 2), done: true }],
+      timeEntries: [entry('w1', 't-call-a', 660, 675)],
+    });
+    const once = reducer(s, { type: 'RECONCILE_TRACKED_DAY', personId: 'me', date: DAY });
+    const tailId = once.workload.filter((w) => w.taskId === 't-big' && w.date === DAY).find((w) => w.id !== 'b1')!.id;
+    // chmura oddaje stary, niepocięty blok; lokalne wpisy zostają
+    const reverted: AppData = { ...once, workload: s.workload };
+    const twice = reducer(reverted, { type: 'RECONCILE_TRACKED_DAY', personId: 'me', date: DAY });
+    const dated = twice.workload.filter((w) => w.taskId === 't-big' && w.date === DAY).sort((a, b) => a.startMinutes - b.startMinutes);
+    expect(dated.map((w) => [w.startMinutes, w.plannedHours, w.done])).toEqual([[600, 1, true], [675, 0.75, true]]);
+    const mine = twice.timeEntries.filter((e) => e.taskId === 't-big').sort((a, b) => a.startMinutes - b.startMinutes);
+    expect(mine).toHaveLength(2); // bez duplikatów
+    expect(mine.map((e) => [e.source, e.blockId])).toEqual([['block', 'b1'], ['block', dated[1].id]]);
+    expect(dated[1].id).not.toBe(tailId); // nowy kawałek, wpis przepięty
+    expect(reducer(twice, { type: 'RECONCILE_TRACKED_DAY', personId: 'me', date: DAY })).toBe(twice);
+    // odznaczenie ogona kasuje TYLKO jego wpis (więź zdrowa)
+    const untick = reducer(twice, { type: 'SET_BLOCK_DONE', entryId: dated[1].id, done: false });
+    expect(untick.timeEntries.filter((e) => e.taskId === 't-big').map((e) => e.startMinutes)).toEqual([600]);
+  });
+  it('wpis „z bloku” bez żadnego bloku, który by go zawierał, staje się wpisem ręcznym (fakt zostaje)', () => {
+    const s = state({
+      workload: [],
+      timeEntries: [entry('w1', 't-design', 600, 660, { source: 'block', blockId: 'ghost' })],
+    });
+    const next = reducer(s, { type: 'RECONCILE_TRACKED_DAY', personId: 'me', date: DAY });
+    expect(next.timeEntries[0]).toMatchObject({ source: 'manual', startMinutes: 600, endMinutes: 660 });
+    expect('blockId' in next.timeEntries[0]).toBe(false);
+  });
   it('nic do zrobienia => ta sama referencja; blok pokryty pulą z innych godzin nie dostaje wpisów', () => {
     const clean = state({ workload: [block('b1', 't-design', 'me', 600, 1)], timeEntries: [entry('w1', 't-design', 600, 660)] });
     expect(reducer(clean, { type: 'RECONCILE_TRACKED_DAY', personId: 'me', date: DAY })).toBe(clean);

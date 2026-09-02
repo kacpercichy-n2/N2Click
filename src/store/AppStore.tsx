@@ -1418,6 +1418,7 @@ function reconcileTrackedDay(state: AppData, personId: string, date: string): Ap
   for (const e of state.timeEntries) {
     if (e.personId === personId && e.date === date) next = carvePlanAroundEntry(next, e);
   }
+  next = healBlockLinks(next, personId, date);
   const doneBlocks = next.workload.filter(
     (w) => w.personId === personId && w.date === date && !isBinEntry(w) && w.done === true,
   );
@@ -1426,6 +1427,38 @@ function reconcileTrackedDay(state: AppData, personId: string, date: string): Ap
     next = linkEntryForBlock(next, b);
   }
   return next;
+}
+
+/**
+ * Więź wpis „z bloku" ↔ blok po hydracji chmury (przegląd Codex 2026-09-02):
+ * odświeżenie w tle może przywrócić plan sprzed wcięcia (albo inny podział),
+ * a lokalne wpisy `source 'block'` zostają z `blockId` kawałka, którego już nie
+ * ma — odznaczenie bloku nie skasowałoby wtedy swojego wpisu. Reguła: więź jest
+ * ważna, gdy blok istnieje i zawiera godziny wpisu; inaczej wpis przepina się
+ * na datowany blok TEGO zadania, który go zawiera, a bez takiego bloku staje
+ * się zwykłym wpisem ręcznym (fakt zostaje, znika tylko odwołanie). Bez zmian
+ * => TA SAMA referencja.
+ */
+function healBlockLinks(state: AppData, personId: string, date: string): AppData {
+  let changed = false;
+  const timeEntries = state.timeEntries.map((e) => {
+    if (e.personId !== personId || e.date !== date || e.source !== 'block') return e;
+    const contains = (w: WorkloadEntry): boolean =>
+      w.taskId === e.taskId &&
+      w.personId === personId &&
+      w.date === date &&
+      !isBinEntry(w) &&
+      w.startMinutes <= e.startMinutes &&
+      w.startMinutes + hoursToMinutes(w.plannedHours) >= e.endMinutes;
+    const linked = state.workload.find((w) => w.id === e.blockId);
+    if (linked !== undefined && contains(linked)) return e;
+    const host = state.workload.find(contains);
+    changed = true;
+    if (host !== undefined) return { ...e, blockId: host.id };
+    const { blockId: _drop, ...rest } = e;
+    return { ...rest, source: 'manual' as const };
+  });
+  return changed ? { ...state, timeEntries } : state;
 }
 
 function settleTrackedDay(

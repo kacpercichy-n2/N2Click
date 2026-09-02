@@ -213,13 +213,19 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
   // sprzed hydracji zostałoby nadpisane przez chmurę, a lokalne wpisy „z bloku"
   // wskazywałyby kawałki, których już nie ma. Przy błędzie hydracji nic nie
   // robimy — stan jest nieświeży. Po przejściu w 'ready' efekt rusza sam.
+  // Zależność od kolekcji: odświeżenie w tle (hydracja bez krawędzi statusu)
+  // podmienia `workload`/`timeEntries`, więc efekt biegnie ponownie i leczy
+  // więzi wpisów „z bloku" (`healBlockLinks`); po własnej zmianie reduktor
+  // odpowiada tą samą referencją, więc nie ma pętli.
   const auth = useAuth();
   const cloud = useCloudSync();
   const dataReady = auth.mode !== 'supabase' || cloud.status === 'ready';
+  const workloadRef = state.workload;
+  const timeEntriesRef = state.timeEntries;
   useEffect(() => {
     if (personId === '' || !dataReady) return;
     dispatch({ type: 'RECONCILE_TRACKED_DAY', personId, date });
-  }, [dispatch, personId, date, dataReady]);
+  }, [dispatch, personId, date, dataReady, workloadRef, timeEntriesRef]);
 
   const say = useCallback((text: string, tone: TrackerStatus['tone']) => {
     setStatus({ text, tone });
