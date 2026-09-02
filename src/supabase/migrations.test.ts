@@ -303,6 +303,7 @@ describe('konwencja plików migracji', () => {
       // google_calendar_events (warstwa cieniowa, nigdy `events`), widok
       // maskujący dla zespołu, pg_cron co 5 min -> Edge Function sync.
       '20260825140000_google_calendar.sql',
+      '20260902160000_google_events_visible_stable_id.sql',
     ]);
   });
 

@@ -37,7 +37,12 @@ export type GoogleEventAccess = 'owner' | 'attendee' | 'busy';
 
 /** Wydarzenie z widoku `google_calendar_events_visible` (już zamaskowane). */
 export interface GoogleEvent {
+  /** Id WIERSZA widoku: zmienia się przy pełnym syncu (kasowanie + wstawienie). */
   id: string;
+  /** Stabilny klucz instancji: `(calendar_id, google_event_id)` przeżywa sync.
+   *  Puste stringi, gdy widok bazy jeszcze nie niesie tych kolumn (stary deploy). */
+  calendarId: string;
+  googleEventId: string;
   /**
    * Z widoku: id profilu chmury (auth.users). Po `resolveEventPeople` w
    * providerze: id OSOBY planera (lokalne, gdy osoba dopasowana po e-mailu) —

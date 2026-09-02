@@ -10,6 +10,7 @@ import {
   loadVisibleEvents,
   dayTrackerOccurrences,
   gcalEntryKey,
+  gcalLegacyEntryKey,
   occurrencesByDate,
   setCalendarSelected,
   setShareLevel,
@@ -30,6 +31,8 @@ import { GCAL_MESSAGES, type GoogleEvent } from './types';
 function eventRow(overrides: Partial<Record<string, unknown>> = {}): GcalRow {
   return {
     id: 'ev-1',
+    calendar_id: 'cal-1',
+    google_event_id: 'g-ev-1',
     owner_profile_id: 'p-ola',
     access: 'attendee',
     title: 'Daily',
@@ -315,8 +318,19 @@ describe('dayTrackerOccurrences (widok Dzień trackera)', () => {
     ]);
     expect(list.map((o) => o.event.id)).toEqual(['early', 'late']);
   });
-  it('gcalEntryKey: prefiks odróżnia wpis z Google od spotkania N2Hub', () => {
-    expect(gcalEntryKey('ev-1')).toBe('gcal:ev-1');
-    expect(gcalEntryKey('ev-1')).not.toBe('ev-1');
+  it('gcalEntryKey: stabilny klucz po (calendar_id, google_event_id), nie po id wiersza', () => {
+    const ev = toGoogleEvent(eventRow({}));
+    expect(ev?.calendarId).toBe('cal-1');
+    expect(ev?.googleEventId).toBe('g-ev-1');
+    expect(gcalEntryKey(ev!)).toBe('gcal:cal-1:g-ev-1');
+    // pełny sync wstawia wiersz od nowa (inne `id`), klucz zostaje ten sam
+    const resynced = toGoogleEvent(eventRow({ id: 'row-2' }));
+    expect(gcalEntryKey(resynced!)).toBe('gcal:cal-1:g-ev-1');
+    expect(gcalLegacyEntryKey(ev!)).toBe('gcal:ev-1');
+  });
+  it('gcalEntryKey: widok bez nowych kolumn (stary deploy) wraca do id wiersza', () => {
+    const ev = toGoogleEvent(eventRow({ calendar_id: undefined, google_event_id: undefined }));
+    expect(ev?.calendarId).toBe('');
+    expect(gcalEntryKey(ev!)).toBe('gcal:ev-1');
   });
 });

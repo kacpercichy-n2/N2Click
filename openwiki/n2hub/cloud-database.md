@@ -508,7 +508,11 @@ Zapis wyłącznie z Edge Functions `google-calendar-connect`/`google-calendar-sy
 `update (selected)` / `delete` własnych wierszy. `pg_cron` co 5 min woła
 `n2click.google_calendar_sync_tick()` (adres i sekret z Vault). Klient:
 `src/gcal/` (`gcalData.ts` czysty + `GoogleCalendarProvider`), poza reduktorem i
-localStorage.
+localStorage. Migracja 20260902160000 (`google_events_visible_stable_id`)
+dopisuje do widoku NA KOŃCU `calendar_id` i `google_event_id`: tracker w widoku
+„Dzień" wiąże wpis czasu ze spotkaniem kluczem `gcal:<calendar_id>:<google_event_id>`
+(`gcalEntryKey`), bo `id` wiersza zmienia się przy pełnym syncu (funkcja
+syncu kasuje i wstawia wiersze kalendarza od nowa).
 
 ## Chat reactions and themes (2026-08-25, migracje 20260825120000/130000)
 

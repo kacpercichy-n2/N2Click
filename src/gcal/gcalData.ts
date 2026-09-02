@@ -235,6 +235,8 @@ export function toGoogleEvent(row: GcalRow): GoogleEvent | null {
     : [];
   return {
     id,
+    calendarId: str(row.calendar_id),
+    googleEventId: str(row.google_event_id),
     ownerProfileId: str(row.owner_profile_id),
     access: isGoogleEventAccess(row.access) ? row.access : 'busy',
     title: str(row.title),
@@ -380,8 +382,25 @@ export function visibleOccurrences(
 /** Prefiks `TimeEntry.eventId` dla wpisu powstałego z wydarzenia Google —
  *  odróżnia je od id spotkań N2Hub w tym samym polu. */
 export const GCAL_ENTRY_PREFIX = 'gcal:';
-export function gcalEntryKey(eventId: string): string {
-  return GCAL_ENTRY_PREFIX + eventId;
+
+/**
+ * Klucz wpisu czasu dla wystąpienia Google. STABILNY: `gcal:<calendar_id>:<google_event_id>`
+ * — id wiersza widoku zmienia się przy pełnym syncu (kasowanie + wstawienie
+ * wierszy kalendarza), więc zaliczone spotkanie „odznaczałoby się" samo po syncu
+ * (przegląd Codex 2026-09-02). Instancje serii mają w Google osobne id, więc
+ * każde wystąpienie ma własny klucz. Gdy widok bazy nie niesie jeszcze tych
+ * kolumn (deploy klienta przed migracją), zostaje klucz po id wiersza.
+ */
+export function gcalEntryKey(event: Pick<GoogleEvent, 'id' | 'calendarId' | 'googleEventId'>): string {
+  return event.calendarId !== '' && event.googleEventId !== ''
+    ? `${GCAL_ENTRY_PREFIX}${event.calendarId}:${event.googleEventId}`
+    : GCAL_ENTRY_PREFIX + event.id;
+}
+
+/** Klucz sprzed migracji widoku (po id wiersza): wpisy zapisane tym kluczem
+ *  nadal liczą się jako zaliczone do najbliższego pełnego syncu. */
+export function gcalLegacyEntryKey(event: Pick<GoogleEvent, 'id'>): string {
+  return GCAL_ENTRY_PREFIX + event.id;
 }
 
 /**

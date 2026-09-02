@@ -41,7 +41,11 @@
   przez czyste `dayTrackerOccurrences` (gcalData.ts: godzinowe, niezerowe, nie
   odrzucone) i stoją w kolumnie planu jako `.tt-event.gcal` z plakietką „G";
   klik = ten sam `clickMeeting` co spotkania N2Hub, wpis dostaje
-  `eventId: gcalEntryKey(id)` (`gcal:<id>`), zaliczone = wpis o tym kluczu.
+  `eventId: gcalEntryKey(event)` = `gcal:<calendar_id>:<google_event_id>`
+  (klucz STABILNY między syncami — id wiersza widoku zmienia się przy pełnym
+  syncu; widok niesie te kolumny od migracji 20260902160000, a klucz po id
+  wiersza z chwili przed migracją nadal liczy się przez `gcalLegacyEntryKey`),
+  zaliczone = wpis o tym kluczu.
   Warstwa nadal cieniowa: poza kolizjami, sumami dnia i wzrostem planu
   (inwariant 1), poza store; w trybie lokalnym pusta. Kółko na kaflu planu
   = `SET_BLOCK_DONE` (ten sam reduktor, co „✓ Oznacz jako wykonane" w menu

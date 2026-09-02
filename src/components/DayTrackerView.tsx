@@ -32,7 +32,7 @@ import { OverlayLayer, useOverlay } from './useOverlay';
 import { projectDisplayName, taskDisplayTitle } from '../store/confidentiality';
 import { useConfirm } from './ConfirmProvider';
 import { useGoogleCalendar } from '../gcal/GoogleCalendarProvider';
-import { dayTrackerOccurrences, gcalEntryKey } from '../gcal/gcalData';
+import { dayTrackerOccurrences, gcalEntryKey, gcalLegacyEntryKey } from '../gcal/gcalData';
 import type { GoogleEventOccurrence } from '../gcal/types';
 import { planGrowth } from '../store/timeTrackingSync';
 import {
@@ -226,8 +226,10 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
   // Wydarzenia Google zalogowanej osoby (2026-09-02, zgłoszenie Kacpra: bez
   // nich w planie była dziura, a meeta nie dało się odhaczyć): warstwa cieniowa
   // providera, NIE store — stoją w kolumnie planu jak spotkania N2Hub i klikają
-  // się tak samo (wpis z `eventId: gcal:<id>`). Nadal poza kolizjami, sumami
-  // dnia i wzrostem planu (inwariant 1): czas liczy się dopiero z wpisu.
+  // się tak samo (wpis z `eventId: gcal:<kalendarz>:<id Google>` — klucz
+  // stabilny między syncami; klucz po id wiersza sprzed migracji widoku nadal
+  // liczy się jako zaliczony). Nadal poza kolizjami, sumami dnia i wzrostem
+  // planu (inwariant 1): czas liczy się dopiero z wpisu.
   const gcal = useGoogleCalendar();
   const gcalEnabled = gcal.enabled;
   const gcalOccurrencesFor = gcal.occurrencesFor;
@@ -235,14 +237,15 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
   const gcalItems = useMemo<DayGcalItem[]>(() => {
     if (!gcalEnabled) return [];
     return dayTrackerOccurrences(gcalOccurrencesFor(date, gcalFilter)).map((occ) => {
-      const key = gcalEntryKey(occ.event.id);
+      const key = gcalEntryKey(occ.event);
+      const legacyKey = gcalLegacyEntryKey(occ.event);
       return {
         key,
         occ,
         title: occ.event.title.trim() !== '' ? occ.event.title : 'Wydarzenie Google',
         startMinutes: occ.startMinutes,
         endMinutes: Math.min(DAY_MINUTES, occ.startMinutes + occ.durationMinutes),
-        entry: entries.find((e) => e.eventId === key),
+        entry: entries.find((e) => e.eventId === key || e.eventId === legacyKey),
       };
     });
   }, [gcalEnabled, gcalOccurrencesFor, date, gcalFilter, entries]);
