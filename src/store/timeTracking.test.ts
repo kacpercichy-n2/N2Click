@@ -813,6 +813,15 @@ describe('SETTLE_TRACKED_DAY: przeszłość = fakty', () => {
     expect(explicit.workload.find((w) => w.id === 'b9')).toBeUndefined();
     expect(explicit.workload.find((w) => w.taskId === 't-design' && w.date === '')?.plannedHours).toBe(2);
   });
+  it('jawne rozliczenie DZISIAJ (explicit + nowMinutes): działa bez wpisów, ale tylko bloki, które się skończyły', () => {
+    const s = state({ workload: [block('b1', 't-design', 'me', 600, 2), block('b2', 't-call-a', 'me', 1080, 1, 1)] }); // 10-12, 18-19
+    // automat bez wpisów: nic (dzień nieśledzony) — i nikt go już nie wysyła
+    expect(reducer(s, { type: 'SETTLE_TRACKED_DAY', personId: 'me', date: DAY, nowMinutes: 1035 })).toBe(s);
+    const next = reducer(s, { type: 'SETTLE_TRACKED_DAY', personId: 'me', date: DAY, nowMinutes: 1035, explicit: true });
+    expect(next.workload.find((w) => w.id === 'b1')).toBeUndefined();
+    expect(next.workload.find((w) => w.id === 'b2')).toMatchObject({ plannedHours: 1 });
+    expect(next.workload.find((w) => w.taskId === 't-design' && w.date === '')?.plannedHours).toBe(2);
+  });
 });
 
 describe('odwrót „wykonanie → plan” (kasowanie / poprawka wpisu)', () => {

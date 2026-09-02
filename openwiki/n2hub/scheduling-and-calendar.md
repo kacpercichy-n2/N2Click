@@ -44,9 +44,14 @@
   `SET_BLOCK_DONE`, nie sam wpis czasu; serii cyklicznych nie domyka). Przekroczenie sprzedanych godzin
   pyta dialogiem (`useConfirm`) przed zapisem; kolejność przełącznika
   Dzień | Tydzień | Miesiąc. Rozliczenie `SETTLE_TRACKED_DAY` (patrz
-  state-and-persistence) biegnie AUTOMATEM wyłącznie dla DZISIAJ (15 min po
-  końcu bloku → zasobnik). Dzień MINIONY (2026-08-20, decyzja usera — rzeczy
-  ustawiane wstecz nie mogą znikać bez pytania): niewykonane bloki
+  state-and-persistence) NIGDY nie biegnie samo (2026-09-02, decyzja usera:
+  dawny automat „15 min po końcu bloku → zasobnik" dla dzisiaj zniknął z
+  `CalendarPage` i `DayTrackerView`). DZISIAJ popout `.tt-settle` pojawia
+  się dopiero po końcu dnia pracy osoby (`workEndMinutes` + 15 min karencji)
+  i wylicza tylko bloki, które już minęły (+15 min); „Oddaj do zasobnika"
+  wysyła `{nowMinutes, explicit: true}`. Do końca dnia pracy plan zostaje
+  nietknięty, nawet gdy wpisy już są. Dzień MINIONY (2026-08-20, decyzja
+  usera — rzeczy ustawiane wstecz nie mogą znikać bez pytania): niewykonane bloki
   (`unsettledPlanBlocks`, timeTracking.ts) czekają w popoucie `.tt-settle` nad
   siatką z trzema wyjściami — „Zalicz jako wykonane" (blok bez pokrycia:
   `SET_BLOCK_DONE`, wpis 1:1 gdzie godziny wolne; blok CZĘŚCIOWO pokryty:
@@ -54,7 +59,7 @@
   `freeRemainderRange`, utils/timeTracking — bo pełny wpis 1:1 zdublowałby
   pokrycie liczone pulą dnia; `resyncBlockDone` domyka blok sam), „Oddaj do
   zasobnika" (jawny dispatch
-  `SETTLE_TRACKED_DAY` z `nowMinutes: null`), „Zostaw plan" (dismiss per
+  `SETTLE_TRACKED_DAY` z `nowMinutes: null, explicit: true`), „Zostaw plan" (dismiss per
   osoba+dzień, stan sesyjny). Popout pokazuje się na KAŻDYM minionym dniu z
   niewykonanym blokiem, także bez wpisów (blok dodany wstecz na pusty dzień) —
   bramka „dzień śledzony" dotyczy w reduktorze wyłącznie automatu z podanym

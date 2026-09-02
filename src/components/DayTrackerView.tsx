@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { AppData, DateStr, TimeEntry, WorkloadEntry } from '../types';
-import { usePersistence, useStoreApi, type Action } from '../store/AppStore';
+import { SETTLE_GRACE_MINUTES, usePersistence, useStoreApi, type Action } from '../store/AppStore';
 import { useSaveStatus } from '../utils/useSaveStatus';
 import {
   blocksForPersonDate,
@@ -220,14 +220,23 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
   const nowMinutes = isTodayStr(date) ? now.getHours() * 60 + now.getMinutes() : null;
   const today = todayStr();
 
-  // Miniony dzień: niewykonane bloki NIE znikają same — czekają w popoucie
-  // rozliczenia na decyzję (zaliczyć / oddać do zasobnika / zostawić). Bez
-  // bramki „dzień śledzony": blok dodany wstecz na pusty dzień też ma dostać
-  // pytanie (jawne rozliczenie z `nowMinutes: null` działa bez wpisów).
-  const pastDue = useMemo(
-    () => (date < today ? unsettledPlanBlocks(plan) : []),
-    [plan, date, today],
-  );
+  // Rozliczenie ZAWSZE pyta, nigdy nie działa samo (decyzja usera
+  // 2026-09-02): dzień MINIONY — wszystkie niewykonane bloki czekają w
+  // popoucie; DZISIAJ — popout dopiero po końcu dnia pracy osoby
+  // (`workEndMinutes` + karencja) i tylko dla bloków, które już się skończyły.
+  // Do końca dnia pracy plan zostaje nietknięty, nawet gdy wpisy już są —
+  // wcięta głowa 9-15 nie ucieka do zasobnika minutę po zalogowaniu rozmowy.
+  // Bez bramki „dzień śledzony": blok dodany wstecz na pusty dzień też ma
+  // dostać pytanie (jawne rozliczenie działa bez wpisów).
+  const workEnd = person !== undefined && person.workEndMinutes > 0 ? person.workEndMinutes : OFF_HOURS_END;
+  const dayOver = nowMinutes !== null && nowMinutes >= workEnd + SETTLE_GRACE_MINUTES;
+  const pastDue = useMemo(() => {
+    if (date < today) return unsettledPlanBlocks(plan);
+    if (date === today && dayOver && nowMinutes !== null) {
+      return unsettledPlanBlocks(plan).filter((b) => b.endMinutes + SETTLE_GRACE_MINUTES <= nowMinutes);
+    }
+    return [];
+  }, [plan, date, today, dayOver, nowMinutes]);
   const settleKey = `${personId}|${date}`;
   const [settleDismissed, setSettleDismissed] = useState<string | null>(null);
 
@@ -596,8 +605,9 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
   };
   const settlePastToBin = () => {
     const minutes = pastDue.reduce((s, item) => s + (item.plannedMinutes - item.portionLogged), 0);
+    // Dzień miniony: wszystko (`null`); dzisiaj: tylko bloki, które już minęły.
     const ok = commit(
-      { type: 'SETTLE_TRACKED_DAY', personId, date, nowMinutes: null },
+      { type: 'SETTLE_TRACKED_DAY', personId, date, nowMinutes: date === today ? nowMinutes : null, explicit: true },
       (after, before) => after.workload !== before.workload,
     );
     say(
@@ -791,18 +801,6 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
     setFocusSignal((n) => n + 1);
   };
 
-  // ---- rozliczenie minionych bloków (automat TYLKO dzisiaj; tik zegara i
-  // `nowMinutes` liczone wyżej, przed pochodnymi popoutu) ----
-  // Automat rozlicza wyłącznie DZISIEJSZE bloki (15 min po końcu → zasobnik).
-  // Dzień MINIONY pyta popoutem (wyżej w JSX): rzeczy ustawiane wstecz nie mogą
-  // znikać bez decyzji użytkownika. Uruchamiane co minutę ORAZ po każdej
-  // zmianie wpisów dnia (pierwszy wpis czyni dzień „śledzonym"). Reduktor
-  // zwraca tę samą referencję, gdy nie ma nic do rozliczenia, więc bez pętli.
-  useEffect(() => {
-    if (personId === '' || nowMinutes === null) return;
-    dispatch({ type: 'SETTLE_TRACKED_DAY', personId, date, nowMinutes });
-  }, [dispatch, personId, date, nowMinutes, entries]);
-
   if (person === undefined) {
     return (
       <section className="tt-empty-state">
@@ -847,14 +845,15 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
       />
 
       {pastDue.length > 0 && settleDismissed !== settleKey ? (
-        <div className="tt-settle" role="region" aria-label="Rozliczenie minionego dnia">
+        <div className="tt-settle" role="region" aria-label="Rozliczenie dnia">
           <div className="tt-settle-text">
             <b>
+              {(date < today ? 'Ten miniony dzień ma' : 'Dzień pracy się skończył:')}{' '}
               {pastDue.length === 1
-                ? 'Ten miniony dzień ma 1 zaplanowany blok bez wykonania.'
+                ? '1 zaplanowany blok bez wykonania.'
                 : blocksNoun(pastDue.length) === 'bloki'
-                  ? `Ten miniony dzień ma ${pastDue.length} zaplanowane bloki bez wykonania.`
-                  : `Ten miniony dzień ma ${pastDue.length} zaplanowanych bloków bez wykonania.`}
+                  ? `${pastDue.length} zaplanowane bloki bez wykonania.`
+                  : `${pastDue.length} zaplanowanych bloków bez wykonania.`}
             </b>
             <span className="tt-settle-list">
               {pastDue

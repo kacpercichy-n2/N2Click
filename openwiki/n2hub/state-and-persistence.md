@@ -574,14 +574,16 @@
   {personId, date, nowMinutes|null}`: niewykonany blok, którego koniec minął
   o ≥15 min (`SETTLE_GRACE_MINUTES`), oddaje niepokrytą część do JEDNEGO
   wiersza zasobnika pary, a sam kurczy się do pokrycia (wtedy `done`) albo
-  znika; zadania „zrobione" pomijane. `nowMinutes` PODANE = automat, działa
-  tylko na dniu śledzonym (≥1 wpis osoby); `null` = jawne rozliczenie z
-  popoutu, działa też na dniu bez wpisów; dispatch AUTOMATEM wyłącznie dla
-  DZISIAJ: z `CalendarPage` (co
-  minutę) i `DayTrackerView` (co minutę i po zmianie wpisów). Dzień MINIONY
-  (2026-08-20) nie rozlicza się sam — `DayTrackerView` pokazuje popout
-  `.tt-settle` (kandydaci z `unsettledPlanBlocks`) i dopiero „Oddaj do
-  zasobnika" wysyła `SETTLE_TRACKED_DAY {nowMinutes: null}`; alternatywa
+  znika; zadania „zrobione" pomijane. `nowMinutes` ogranicza do bloków, które
+  się skończyły; bez `explicit` to automat (tylko dzień śledzony, ≥1 wpis
+  osoby), którego od 2026-09-02 NIKT nie wysyła (decyzja usera: rozliczenie
+  zawsze pyta; dawne dispatche co minutę z `CalendarPage` i `DayTrackerView`
+  usunięte). `explicit: true` = popout `.tt-settle` w `DayTrackerView`
+  (kandydaci z `unsettledPlanBlocks`): dzień MINIONY (2026-08-20) z
+  `nowMinutes: null` (wszystkie niewykonane bloki, także bez wpisów), DZISIAJ
+  dopiero po końcu dnia pracy osoby (`workEndMinutes` + 15 min) z `nowMinutes`
+  (tylko bloki, które minęły o ≥15 min); „Oddaj do zasobnika" wysyła ten
+  dispatch; alternatywa
   „Zalicz jako wykonane" idzie przez `SET_BLOCK_DONE` per blok, a dla bloku
   częściowo pokrytego przez `ADD_TIME_ENTRY` na samą resztę
   (`freeRemainderRange`) — pełny wpis 1:1 zdublowałby pokrycie z puli dnia. Selektory POCHODNE w

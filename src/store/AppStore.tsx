@@ -416,7 +416,7 @@ export type Action =
   // o ≥15 min (`nowMinutes`; `null` = dzień miniony w całości), oddaje
   // niepokrytą część do zasobnika (blok kurczy się do pokrycia albo znika).
   // Bez zmian => TA SAMA referencja.
-  | { type: 'SETTLE_TRACKED_DAY'; personId: string; date: string; nowMinutes: number | null }
+  | { type: 'SETTLE_TRACKED_DAY'; personId: string; date: string; nowMinutes: number | null; explicit?: boolean }
   // Zgłoszenia zespołu („Zgłoszenia”). Kolekcja addytywna, bez powiązań kaskadowych.
   | { type: 'ADD_TICKET'; draft: TicketDraft }
   | { type: 'SAVE_TICKET'; ticketId: string; draft: TicketDraft }
@@ -1390,15 +1390,28 @@ function unlinkEntryForBlock(state: AppData, block: WorkloadEntry): AppData {
  * datowany blok, którego koniec minął o ≥15 min, oddaje niepokrytą część do
  * zasobnika: blok kurczy się do pokrycia (i jest wtedy wykonany) albo znika,
  * a minuty dochodzą do JEDNEGO wiersza zasobnika pary (inwariant 4). Zadania
- * „zrobione" pomijane. `nowMinutes` podane = AUTOMAT (dzisiaj, co minutę) —
- * działa wyłącznie na dniu śledzonym (≥1 wpis osoby). `nowMinutes: null` =
- * JAWNE rozliczenie z popoutu widoku dnia — działa też na dniu bez wpisów
- * (pusty miniony dzień z blokiem dodanym wstecz musi dać się rozliczyć).
+ * „zrobione" pomijane. `nowMinutes` ogranicza do bloków, które się skończyły;
+ * bez `explicit` to automat (tylko dzień śledzony, ≥1 wpis osoby) — od
+ * 2026-09-02 NIKT go nie wysyła (decyzja usera: rozliczenie zawsze pyta).
+ * `explicit: true` = popout widoku dnia: dzień MINIONY z `nowMinutes: null`
+ * (wszystkie niewykonane bloki, także bez wpisów), DZISIAJ po końcu dnia
+ * pracy z `nowMinutes` (tylko bloki, które już minęły).
  */
-const SETTLE_GRACE_MINUTES = 15;
-function settleTrackedDay(state: AppData, personId: string, date: string, nowMinutes: number | null): AppData {
+export const SETTLE_GRACE_MINUTES = 15;
+function settleTrackedDay(
+  state: AppData,
+  personId: string,
+  date: string,
+  nowMinutes: number | null,
+  explicit = false,
+): AppData {
   if (!isValidDateStr(date) || !hasEntity(state, 'person', personId)) return state;
-  if (nowMinutes !== null && !state.timeEntries.some((e) => e.personId === personId && e.date === date)) return state;
+  // Bramka „dzień śledzony" (≥1 wpis) dotyczy wyłącznie automatu. Jawne
+  // rozliczenie z popoutu (`explicit`, decyzja usera 2026-09-02: dzisiaj też
+  // pyta zamiast działać samo) przechodzi bez wpisów, a `nowMinutes` nadal
+  // ogranicza je do bloków, które już się skończyły.
+  if (nowMinutes !== null && !explicit && !state.timeEntries.some((e) => e.personId === personId && e.date === date))
+    return state;
   const blocks = state.workload.filter(
     (w) => w.personId === personId && w.date === date && !isBinEntry(w) && w.done !== true,
   );
@@ -4898,7 +4911,7 @@ export function reducer(state: AppData, action: Action): AppData {
       return resyncBlockDone(trimPlanGrowth(without, w.taskId, w.personId, w.date), w.taskId, w.personId, w.date);
     }
     case 'SETTLE_TRACKED_DAY':
-      return settleTrackedDay(state, action.personId, action.date, action.nowMinutes);
+      return settleTrackedDay(state, action.personId, action.date, action.nowMinutes, action.explicit === true);
     case 'ADD_PERSON': {
       if (!isValidPersonDraft(action.person)) return state;
       const id = uid();

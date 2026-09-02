@@ -11,7 +11,6 @@ import { todayPillVisible } from '../components/dayStrip';
 import { OverlayLayer, useOverlay } from '../components/useOverlay';
 import { CALENDAR_DAY_PARAM } from '../components/bottomNav';
 import { MOBILE_NAV_QUERY, useMediaQuery } from '../utils/useMediaQuery';
-import { useNowTick } from '../utils/useNowTick';
 import type { CalendarViewMode } from '../types';
 import {
   addDaysStr,
@@ -55,22 +54,10 @@ export function CalendarPage() {
     next.delete(CALENDAR_DAY_PARAM);
     setSearchParams(next, { replace: true });
   }, [dayParam, searchParams, setSearchParams]);
-  // Tracker czasu: „przeszłość w kalendarzu = fakty”. Co minutę rozliczamy
-  // DZISIEJSZE minione bloki zalogowanej osoby (15 min po końcu bloku
-  // niepokryta część wraca do zasobnika) — także w widoku tygodnia, żeby
-  // kafelki mówiły prawdę bez wchodzenia w „Dzień”. Reduktor zwraca tę samą
-  // referencję, gdy nie ma nic do rozliczenia (dzień bez wpisów = nietknięty).
-  const nowTick = useNowTick(60_000);
-  const trackedPersonId = state.currentUserId;
-  useEffect(() => {
-    if (trackedPersonId === '') return;
-    dispatch({
-      type: 'SETTLE_TRACKED_DAY',
-      personId: trackedPersonId,
-      date: todayStr(),
-      nowMinutes: nowTick.getHours() * 60 + nowTick.getMinutes(),
-    });
-  }, [dispatch, trackedPersonId, nowTick]);
+  // Tracker czasu: rozliczenie niewykonanych bloków NIGDY nie biegnie samo
+  // (decyzja usera 2026-09-02). Dawny automat „15 min po końcu bloku → zasobnik"
+  // dla dzisiaj zniknął; pyta popout w widoku „Dzień" — dla dnia minionego od
+  // razu, dla dzisiaj po końcu dnia pracy osoby (`DayTrackerView`).
   // Telefon (≤760 px): widok „Tydzień” renderuje JEDEN dzień, a pasek sterowania
   // schodzi do jednego rzędu 56 px. Ten sam hook, co powłoka aplikacji.
   const phone = useMediaQuery(MOBILE_NAV_QUERY);
