@@ -756,6 +756,26 @@ describe('wykonanie ponad plan: przedziały dla kalendarza', () => {
       { personId: 'me', taskId: 't-design', startMinutes: 660, endMinutes: 780 },
     ]);
   });
+  it('nadwyżka siada tam, gdzie wykonanie nie ma planu na zegarze, nie na końcu pokrytego bloku (2026-09-02)', () => {
+    // Zgłoszenie Kacpra: blok 13:00-14:30 i wpis 13:00-14:30 + osobne 15 min o 11:00.
+    // Dawny ogon rysował 14:15-14:30 obok pokrytego bloku; teraz 11:00-11:15.
+    const s = state({
+      workload: [block('b1', 't-design', 'me', 780, 1.5)],
+      timeEntries: [entry('w1', 't-design', 660, 675), entry('w2', 't-design', 780, 870)],
+    });
+    expect(overrunIntervalsForPersonDate(s, 'me', DAY)).toEqual([
+      { personId: 'me', taskId: 't-design', startMinutes: 660, endMinutes: 675 },
+    ]);
+    expect(overrunMinutesOnDate(s, DAY)).toBe(15);
+    // Więcej minut bez planu niż nadwyżki: znacznik dostają NAJPÓŹNIEJSZE z nich.
+    const shifted = state({
+      workload: [block('b1', 't-design', 'me', 540, 1)],
+      timeEntries: [entry('w1', 't-design', 660, 720), entry('w2', 't-design', 780, 840)],
+    });
+    expect(overrunIntervalsForPersonDate(shifted, 'me', DAY)).toEqual([
+      { personId: 'me', taskId: 't-design', startMinutes: 780, endMinutes: 840 },
+    ]);
+  });
   it('zasobnik NIE liczy się jako pokrycie dnia (plan dnia to bloki datowane)', () => {
     const s = state({
       workload: [

@@ -24,6 +24,7 @@ import { isTaskContentMasked, taskDisplayTitle, eventDisplayTitle, projectDispla
 import { DAY_MINUTES, hoursToMinutes, isBinEntry } from '../utils/time';
 import { diffDays } from '../utils/dates';
 import { SETTLE_GRACE_MINUTES, frecencyScore, timeEntryMinutes } from '../utils/timeTracking';
+import { uncoveredEntryGaps } from './timeTrackingSync';
 
 const sum = (xs: readonly TimeEntry[]): number => xs.reduce((s, e) => s + timeEntryMinutes(e), 0);
 
@@ -364,14 +365,20 @@ export interface OverrunInterval {
 /**
  * Wykonanie osoby z danego dnia NIEPOKRYTE planem, jako przedziały zegarowe.
  *
- * JEDNA definicja dla całej warstwy: plan pary (zadanie, osoba, dzień) wypełnia
- * jej wpisy PO KOLEI, od najwcześniejszego (ta sama sekwencja, co
- * `portionFill`/`portionLoggedMinutes`), a ogon, który zostaje, to godziny
- * przepracowane ponad plan. W normalnym przebiegu równa się to sumie
- * `overrunMinutes` wpisów pary — bo nadwyżka z pokryciem najpierw ROŚNIE w
- * planie (`planGrowth`), więc do ogona trafia dokładnie to, co nie miało z czego
- * urosnąć. Liczymy jednak z arytmetyki plan↔wykonanie, nie z zapisanego pola,
- * żeby ręczne skasowanie bloku po fakcie też było widać.
+ * ILE: plan pary (zadanie, osoba, dzień) to pula minut, więc ponad plan jest
+ * `wykonanie − plan` (ta sama arytmetyka, co `portionFill`; w normalnym
+ * przebiegu równa się sumie `overrunMinutes` wpisów pary, bo nadwyżka z
+ * pokryciem najpierw ROŚNIE w planie przez `planGrowth`). Liczymy z arytmetyki
+ * plan↔wykonanie, nie z zapisanego pola, żeby ręczne skasowanie bloku po
+ * fakcie też było widać.
+ *
+ * GDZIE (2026-09-02, zgłoszenie Kacpra: kafelek „ponad plan" stawał obok bloku
+ * pokrytego co do minuty): nadwyżka siada w minutach wpisów NIEpokrytych
+ * zegarowo blokami pary (`uncoveredEntryGaps`, ta sama geometria, co wzrost
+ * planu), od najpóźniejszych — wpis 13:00-14:30 na bloku 13:00-14:30 zostaje
+ * czysty, a osobne 15 min o 11:00 dostaje znacznik u siebie. Minut
+ * niepokrytych nigdy nie brakuje (wpisy pary się nie nakładają, a pokryte ≤
+ * plan); ogon ostatniego wpisu zostaje tylko jako zabezpieczenie.
  *
  * Czysto PREZENTACYJNE (inwariant 1): nic tu nie wchodzi do `dayTotal`,
  * `calendarDayVolume`, kolizji ani przeciążenia.
@@ -393,15 +400,23 @@ export function overrunIntervalsForPersonDate(
     const entries = [...rows].sort(
       (a, b) => a.startMinutes - b.startMinutes || a.id.localeCompare(b.id),
     );
-    let covered = plannedMinutesForTaskPersonDate(state, taskId, personId, date);
-    for (const e of entries) {
-      const minutes = timeEntryMinutes(e);
-      if (covered >= minutes) {
-        covered -= minutes;
-        continue;
-      }
-      out.push({ personId, taskId, startMinutes: e.startMinutes + covered, endMinutes: e.endMinutes });
-      covered = 0;
+    let over = sum(entries) - plannedMinutesForTaskPersonDate(state, taskId, personId, date);
+    if (over <= 0) continue;
+    const blockSpans = blocksForPersonDate(state, personId, date)
+      .filter((b) => b.taskId === taskId && !isBinEntry(b))
+      .map((b) => ({ startMinutes: b.startMinutes, endMinutes: b.startMinutes + hoursToMinutes(b.plannedHours) }));
+    const gaps = uncoveredEntryGaps(entries, blockSpans);
+    for (let i = gaps.length - 1; i >= 0 && over > 0; i--) {
+      const [gapStart, gapEnd] = gaps[i];
+      const take = Math.min(over, gapEnd - gapStart);
+      out.push({ personId, taskId, startMinutes: gapEnd - take, endMinutes: gapEnd });
+      over -= take;
+    }
+    for (let i = entries.length - 1; i >= 0 && over > 0; i--) {
+      const e = entries[i];
+      const take = Math.min(over, timeEntryMinutes(e));
+      out.push({ personId, taskId, startMinutes: e.endMinutes - take, endMinutes: e.endMinutes });
+      over -= take;
     }
   }
   return out.sort(

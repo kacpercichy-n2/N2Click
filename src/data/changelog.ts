@@ -134,6 +134,12 @@ export const CHANGELOG: ChangelogEntry[] = [
       },
       {
         area: 'Kalendarz',
+        feature: 'Znacznik „ponad plan” stoi tam, gdzie była praca bez planu',
+        description:
+          'Gdy zalogujesz więcej niż plan zadania, kreskowany kafelek nadwyżki w Tygodniu i Miesiącu pojawia się przy wpisie, który nie miał planu (np. 15 minut o 11:00), a nie obok bloku wykonanego co do minuty.',
+      },
+      {
+        area: 'Kalendarz',
         feature: 'Rozliczenie dnia pyta, nie działa samo',
         description:
           'Niewykonane bloki z dzisiaj nie wracają już same do zasobnika 15 minut po końcu bloku. Do końca Twojego dnia pracy (godzina z profilu) plan zostaje nietknięty. Potem widok Dzień pokazuje pytanie z trzema wyjściami: zalicz jako wykonane, oddaj do zasobnika albo zostaw plan. Dni minione pytają tak jak dotąd.',
