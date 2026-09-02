@@ -102,13 +102,15 @@
   'ready'`; wcześniejsze rozliczenie nadpisałaby hydracja, zostawiając wpisy
   „z bloku" bez kawałków), lokalnie od razu — idempotentnie wcina cudze bloki wokół istniejących wpisów i daje
   blokom `done` bez żadnego pokrycia (dawne „oznaczone, ale wpisu nie dodano")
-  wpisy „z bloku" w wolnych minutach; między wcięciem a wpisami
-  `healBlockLinks` przepina wpisy `source 'block'` na kawałek TEGO zadania,
-  który je zawiera; bez takiego kawałka wpis zostaje nietknięty (wisząca więź
-  tolerowana, zdjęcie byłoby nieodwracalne przy częściowej hydracji), bo
-  odświeżenie w tle może przywrócić plan sprzed wcięcia; efekt zależy też od `state.workload` /
-  `state.timeEntries`, więc po hydracji biegnie ponownie; ta sama referencja,
-  gdy nie ma nic do zrobienia. Biegnie na początku `materializeTracking`
+  wpisy „z bloku" w wolnych minutach. Więzi wpisów `source 'block'` NIE są
+  przepinane ani zdejmowane (przepięcie na zawierający blok pozwoliłoby jego
+  odznaczeniu skasować cudzy historyczny wpis; zdjęcie jest nieodwracalne przy
+  chwilowej hydracji): wisząca więź po odświeżeniu w tle, które przywróciło
+  plan sprzed wcięcia, jest bierna — wpis zostaje, odznaczenie nowego kawałka
+  go nie rusza, kasuje się krzyżykiem. Efekt zależy też od `state.workload` /
+  `state.timeEntries`, więc po hydracji wcina ponownie (bez duplikatów wpisów,
+  bo `portionLoggedMinutes > 0`); ta sama referencja, gdy nie ma nic do
+  zrobienia. Biegnie na początku `materializeTracking`
   (ADD/UPDATE_TIME_ENTRY), więc blok wzrostu pary ląduje w wycięciu, nie
   obok. `SET_BLOCK_DONE true` na bloku CZĘŚCIOWO zajętym cudzymi wpisami:
   wcięcie + wpis „z bloku" w KAŻDYM wolnym kawałku (`freeRangesWithin`);

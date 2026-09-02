@@ -1403,7 +1403,14 @@ function unlinkEntryForBlock(state: AppData, block: WorkloadEntry): AppData {
  * RECONCILE_TRACKED_DAY (2026-09-02): doprowadza dzień osoby do zasad
  * wcięcia dla danych sprzed nich (zgłoszenie Kacpra: blok 10-12 odhaczony
  * PRZED wdrożeniem, z cudzym wpisem 11:00-11:15 w środku, nie miał wcięcia ani
- * wpisów). Idempotentnie, TA SAMA referencja gdy nie ma nic do zrobienia:
+ * wpisów). Idempotentnie, TA SAMA referencja gdy nie ma nic do zrobienia.
+ * Więzi wpisów „z bloku" NIE są przepinane ani zdejmowane (przegląd Codex
+ * 2026-09-02): przepięcie na zawierający blok pozwoliłoby odznaczeniu tego
+ * bloku skasować cudzy, historyczny wpis; zdjęcie więzi jest nieodwracalne przy
+ * chwilowej, częściowej hydracji. Wisząca więź (po hydracji w tle, która
+ * przywróciła plan sprzed wcięcia) jest bierna: nic jej nie kasuje, wpis
+ * zostaje faktem, a odznaczenie NOWEGO kawałka go nie rusza — zdejmuje się go
+ * krzyżykiem.
  *   1. każdy wpis dnia wcina cudze datowane bloki osoby (`carvePlanAroundEntry`;
  *      bez nakładki nic się nie dzieje);
  *   2. blok `done` BEZ żadnego pokrycia (`portionLoggedMinutes === 0`, czyli
@@ -1418,7 +1425,6 @@ function reconcileTrackedDay(state: AppData, personId: string, date: string): Ap
   for (const e of state.timeEntries) {
     if (e.personId === personId && e.date === date) next = carvePlanAroundEntry(next, e);
   }
-  next = healBlockLinks(next, personId, date);
   const doneBlocks = next.workload.filter(
     (w) => w.personId === personId && w.date === date && !isBinEntry(w) && w.done === true,
   );
@@ -1429,38 +1435,6 @@ function reconcileTrackedDay(state: AppData, personId: string, date: string): Ap
   return next;
 }
 
-/**
- * Więź wpis „z bloku" ↔ blok po hydracji chmury (przegląd Codex 2026-09-02):
- * odświeżenie w tle może przywrócić plan sprzed wcięcia (albo inny podział),
- * a lokalne wpisy `source 'block'` zostają z `blockId` kawałka, którego już nie
- * ma — odznaczenie bloku nie skasowałoby wtedy swojego wpisu. Reguła: więź jest
- * ważna, gdy blok istnieje i zawiera godziny wpisu; inaczej wpis przepina się
- * na datowany blok TEGO zadania, który go zawiera. Bez takiego bloku wpis
- * ZOSTAJE jak jest (wisząca więź jest tolerowana w całym kodzie): częściowa
- * hydracja może na chwilę nie mieć bloku, a zdjęcie więzi byłoby nieodwracalne
- * (przegląd Codex) — gdy blok wróci, więź znów jest ważna. Bez zmian => TA SAMA
- * referencja.
- */
-function healBlockLinks(state: AppData, personId: string, date: string): AppData {
-  let changed = false;
-  const timeEntries = state.timeEntries.map((e) => {
-    if (e.personId !== personId || e.date !== date || e.source !== 'block') return e;
-    const contains = (w: WorkloadEntry): boolean =>
-      w.taskId === e.taskId &&
-      w.personId === personId &&
-      w.date === date &&
-      !isBinEntry(w) &&
-      w.startMinutes <= e.startMinutes &&
-      w.startMinutes + hoursToMinutes(w.plannedHours) >= e.endMinutes;
-    const linked = state.workload.find((w) => w.id === e.blockId);
-    if (linked !== undefined && contains(linked)) return e;
-    const host = state.workload.find(contains);
-    if (host === undefined || host.id === e.blockId) return e;
-    changed = true;
-    return { ...e, blockId: host.id };
-  });
-  return changed ? { ...state, timeEntries } : state;
-}
 
 function settleTrackedDay(
   state: AppData,

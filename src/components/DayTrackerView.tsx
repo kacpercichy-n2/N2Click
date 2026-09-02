@@ -214,9 +214,9 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
   // wskazywałyby kawałki, których już nie ma. Przy błędzie hydracji nic nie
   // robimy — stan jest nieświeży. Po przejściu w 'ready' efekt rusza sam.
   // Zależność od kolekcji: odświeżenie w tle (hydracja bez krawędzi statusu)
-  // podmienia `workload`/`timeEntries`, więc efekt biegnie ponownie i leczy
-  // więzi wpisów „z bloku" (`healBlockLinks`); po własnej zmianie reduktor
-  // odpowiada tą samą referencją, więc nie ma pętli.
+  // podmienia `workload`/`timeEntries`, więc efekt biegnie ponownie i wcina
+  // od nowa; więzi wpisów „z bloku" zostają jak są (patrz reduktor). Po
+  // własnej zmianie reduktor odpowiada tą samą referencją, więc nie ma pętli.
   const auth = useAuth();
   const cloud = useCloudSync();
   const dataReady = auth.mode !== 'supabase' || cloud.status === 'ready';

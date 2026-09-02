@@ -1053,7 +1053,7 @@ describe('RECONCILE_TRACKED_DAY: dane sprzed wcięcia doprowadzone do zasad przy
     expect(loggedMinutesForPersonDate(next, 'me', DAY)).toBe(120);
     expect(reducer(next, { type: 'RECONCILE_TRACKED_DAY', personId: 'me', date: DAY })).toBe(next);
   });
-  it('hydracja w tle przywraca plan sprzed wcięcia: ponowne rozliczenie wcina znowu i przepina wpisy „z bloku”, bez duplikatów', () => {
+  it('hydracja w tle przywraca plan sprzed wcięcia: ponowne rozliczenie wcina znowu bez duplikatów, więzi wpisów zostają jak są', () => {
     const s = state({
       tasks: [BIG, task('t-call-a', 'p-a', 'N2Hub fix', { estimatedHours: null })],
       workload: [{ ...block('b1', 't-big', 'me', 600, 2), done: true }],
@@ -1068,14 +1068,17 @@ describe('RECONCILE_TRACKED_DAY: dane sprzed wcięcia doprowadzone do zasad przy
     expect(dated.map((w) => [w.startMinutes, w.plannedHours, w.done])).toEqual([[600, 1, true], [675, 0.75, true]]);
     const mine = twice.timeEntries.filter((e) => e.taskId === 't-big').sort((a, b) => a.startMinutes - b.startMinutes);
     expect(mine).toHaveLength(2); // bez duplikatów
-    expect(mine.map((e) => [e.source, e.blockId])).toEqual([['block', 'b1'], ['block', dated[1].id]]);
-    expect(dated[1].id).not.toBe(tailId); // nowy kawałek, wpis przepięty
+    // więzi nietknięte: wpis ogona nadal wskazuje stary kawałek (wisząca więź jest bierna)
+    expect(mine.map((e) => [e.source, e.blockId])).toEqual([['block', 'b1'], ['block', tailId]]);
+    expect(dated[1].id).not.toBe(tailId);
     expect(reducer(twice, { type: 'RECONCILE_TRACKED_DAY', personId: 'me', date: DAY })).toBe(twice);
-    // odznaczenie ogona kasuje TYLKO jego wpis (więź zdrowa)
-    const untick = reducer(twice, { type: 'SET_BLOCK_DONE', entryId: dated[1].id, done: false });
-    expect(untick.timeEntries.filter((e) => e.taskId === 't-big').map((e) => e.startMinutes)).toEqual([600]);
+    // odznaczenie NOWEGO ogona nie kasuje cudzego, historycznego wpisu; głowa kasuje swój
+    const untickTail = reducer(twice, { type: 'SET_BLOCK_DONE', entryId: dated[1].id, done: false });
+    expect(untickTail.timeEntries.filter((e) => e.taskId === 't-big')).toHaveLength(2);
+    const untickHead = reducer(twice, { type: 'SET_BLOCK_DONE', entryId: 'b1', done: false });
+    expect(untickHead.timeEntries.filter((e) => e.taskId === 't-big').map((e) => e.startMinutes)).toEqual([675]);
   });
-  it('wpis „z bloku” bez bloku, który by go zawierał, zostaje nietknięty (częściowa hydracja bywa chwilowa; więź wraca z blokiem)', () => {
+  it('wpis „z bloku” ze zwisającą więzią zostaje nietknięty; inny blok tego zadania go nie adoptuje (odznaczenie nie skasuje cudzego czasu)', () => {
     const s = state({
       workload: [],
       timeEntries: [entry('w1', 't-design', 600, 660, { source: 'block', blockId: 'ghost' })],
@@ -1089,6 +1092,13 @@ describe('RECONCILE_TRACKED_DAY: dane sprzed wcięcia doprowadzone do zasad przy
     expect(reducer(back, { type: 'RECONCILE_TRACKED_DAY', personId: 'me', date: DAY })).toBe(back);
     // odznaczenie kasuje wpis, bo więź jest nadal jego
     expect(reducer(back, { type: 'SET_BLOCK_DONE', entryId: 'ghost', done: false }).timeEntries).toHaveLength(0);
+    // inny blok zawierający godziny wpisu NIE przejmuje więzi
+    const other = state({
+      workload: [{ ...block('b9', 't-design', 'me', 540, 3), done: true }],
+      timeEntries: [entry('w1', 't-design', 600, 660, { source: 'block', blockId: 'ghost' })],
+    });
+    expect(reducer(other, { type: 'RECONCILE_TRACKED_DAY', personId: 'me', date: DAY })).toBe(other);
+    expect(reducer(other, { type: 'SET_BLOCK_DONE', entryId: 'b9', done: false }).timeEntries).toHaveLength(1);
   });
   it('nic do zrobienia => ta sama referencja; blok pokryty pulą z innych godzin nie dostaje wpisów', () => {
     const clean = state({ workload: [block('b1', 't-design', 'me', 600, 1)], timeEntries: [entry('w1', 't-design', 600, 660)] });
