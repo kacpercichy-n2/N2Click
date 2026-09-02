@@ -90,6 +90,51 @@ export function changelogUnreadCount(
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-09-02-widok-dnia-zgloszenia',
+    dateFrom: '2026-09-02',
+    dateTo: '2026-09-02',
+    summary:
+      'Widok Dzień po zgłoszeniach zespołu: krótki wpis robi wcięcie w dużym bloku, krótkie kafle są czytelne, zamknięte zadania wracają w podpowiedziach, podsumowanie liczy też po zadaniach, kalendarz pamięta widok, a rozliczenie dnia pyta zamiast działać samo.',
+    items: [
+      {
+        area: 'Kalendarz',
+        feature: 'Krótki wpis robi wcięcie w dużym bloku',
+        description:
+          'Gdy w środku zaplanowanego bloku (np. 9:00 do 17:00) zalogujesz 15 minut innego zadania, blok dzieli się na część przed i po, a wpis siada pomiędzy. Wycięte minuty wracają do zasobnika. Kółko na każdej części dodaje wpis w jej godzinach; wcześniej kółko na takim bloku mówiło „wpisu nie dodano” i dzień miał zalogowane tylko te 15 minut.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Czytelne krótkie kafle w widoku Dzień',
+        description:
+          'Widok Dzień ma tę samą skalę co Tydzień. Kafle 15, 30 i 45 minut pokazują tytuł i godziny zamiast uciętego tekstu, kafel godzinny dostaje pasek postępu. W Tygodniu wąski kafelek stojący obok innego chowa nazwisko (kropka koloru i czas trwania zostają), więc godziny nie znikają.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Zamknięte zadania wracają w podpowiedziach',
+        description:
+          'Wpisując czas, zobaczysz też zadania ze statusem Gotowe, z etykietą „zamknięte”, ułożone według tego, jak często je logujesz. Czas dopisuje się do nich, a status zostaje bez zmian. Wcześniej trzeba było zakładać drugie takie samo zadanie.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Podsumowanie po zadaniach i za sam dzień',
+        description:
+          'W panelu po prawej przełączysz Projekty | Zadania oraz Dzień | Tydzień. Zadanie logowane kilka razy w ciągu dnia widać jako jedną pozycję z sumą.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Kalendarz pamięta widok',
+        description:
+          'Po przeładowaniu i po powrocie z innego panelu kalendarz otwiera się w ostatnim widoku: Dzień, Tydzień albo Miesiąc. Działa też po „Otwórz w kalendarzu” z Obciążenia.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Rozliczenie dnia pyta, nie działa samo',
+        description:
+          'Niewykonane bloki z dzisiaj nie wracają już same do zasobnika 15 minut po końcu bloku. Do końca Twojego dnia pracy (godzina z profilu) plan zostaje nietknięty. Potem widok Dzień pokazuje pytanie z trzema wyjściami: zalicz jako wykonane, oddaj do zasobnika albo zostaw plan. Dni minione pytają tak jak dotąd.',
+      },
+    ],
+  },
+  {
     id: '2026-08-27-czat-gif-wczytywanie',
     dateFrom: '2026-08-27',
     dateTo: '2026-08-27',
