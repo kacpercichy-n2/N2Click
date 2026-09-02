@@ -32,6 +32,8 @@ import { OverlayLayer, useOverlay } from './useOverlay';
 import { projectDisplayName, taskDisplayTitle } from '../store/confidentiality';
 import { useConfirm } from './ConfirmProvider';
 import { useGoogleCalendar } from '../gcal/GoogleCalendarProvider';
+import { useAuth } from '../auth/SessionProvider';
+import { useCloudSync } from '../supabase/CloudSyncProvider';
 import { dayTrackerOccurrences, gcalEntryKey, gcalLegacyEntryKey } from '../gcal/gcalData';
 import type { GoogleEventOccurrence } from '../gcal/types';
 import { planGrowth } from '../store/timeTrackingSync';
@@ -206,11 +208,18 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
   // Otwarcie dnia doprowadza jego dane do zasad wcięcia (dane sprzed
   // 2026-09-02: cudzy wpis w środku bloku bez wcięcia, blok odhaczony bez
   // wpisu). Reduktor jest idempotentny i zwraca tę samą referencję, gdy nie ma
-  // nic do zrobienia, więc bez pętli; tylko przy zmianie osoby/dnia.
+  // nic do zrobienia, więc bez pętli. W trybie chmury DOPIERO po hydracji
+  // (`status === 'ready'`; przegląd Codex 2026-09-02): rozliczenie na stanie
+  // sprzed hydracji zostałoby nadpisane przez chmurę, a lokalne wpisy „z bloku"
+  // wskazywałyby kawałki, których już nie ma. Przy błędzie hydracji nic nie
+  // robimy — stan jest nieświeży. Po przejściu w 'ready' efekt rusza sam.
+  const auth = useAuth();
+  const cloud = useCloudSync();
+  const dataReady = auth.mode !== 'supabase' || cloud.status === 'ready';
   useEffect(() => {
-    if (personId === '') return;
+    if (personId === '' || !dataReady) return;
     dispatch({ type: 'RECONCILE_TRACKED_DAY', personId, date });
-  }, [dispatch, personId, date]);
+  }, [dispatch, personId, date, dataReady]);
 
   const say = useCallback((text: string, tone: TrackerStatus['tone']) => {
     setStatus({ text, tone });
