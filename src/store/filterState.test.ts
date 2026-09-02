@@ -316,4 +316,13 @@ describe('lastFilters.calendar.calendarView (2026-09-02, „Zapamiętywanie wido
     const s2 = reducer(s1, { type: 'SET_LAST_FILTER', view: 'calendar', filter: { ...base, calendarView: 'month' } });
     expect(s2.lastFilters.calendar?.calendarView).toBe('month');
   });
+  it('zapis filtru kalendarza BEZ widoku (np. „Otwórz w kalendarzu” z Obciążenia) zachowuje zapamiętany widok', () => {
+    const s1 = reducer(emptyData(), { type: 'SET_LAST_FILTER', view: 'calendar', filter: { ...base, calendarView: 'day' } });
+    const s2 = reducer(s1, { type: 'SET_LAST_FILTER', view: 'calendar', filter: { ...base, personIds: ['p-1'] } });
+    expect(s2.lastFilters.calendar?.personIds).toEqual(['p-1']);
+    expect(s2.lastFilters.calendar?.calendarView).toBe('day');
+    // inne widoki nie dziedziczą klucza
+    const s3 = reducer(s2, { type: 'SET_LAST_FILTER', view: 'tasks', filter: base });
+    expect('calendarView' in (s3.lastFilters.tasks ?? {})).toBe(false);
+  });
 });

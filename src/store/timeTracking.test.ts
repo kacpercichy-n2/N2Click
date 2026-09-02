@@ -939,6 +939,34 @@ describe('wcięcie planu pod fakt (2026-09-02, „duży task w planie a krótki�
     });
     expect(dated(other, 't-big').filter((w) => w.personId === 'me').map((w) => [w.id, w.plannedHours])).toEqual([['b1', 8]]);
   });
+  it('wzrost planu zaksięgowany na bloku przechodzi po wcięciu na ogon; odwrót kurczy ogon, głowa zostaje (review Codex)', () => {
+    const s = state({
+      tasks: [BIG, task('t-call-a', 'p-a', 'Rozmowa z klientem', { estimatedHours: null })],
+      workload: [block('b1', 't-big', 'me', 540, 1)], // 9:00-10:00 ręcznie
+    });
+    // 2h wykonania 10-12 dokleja się do końca b1 (blok 9-12, rekord na wpisie)
+    const grown = reducer(s, {
+      type: 'ADD_TIME_ENTRY',
+      payload: { personId: 'me', taskId: 't-big', date: DAY, startMinutes: 600, endMinutes: 720, source: 'manual' },
+    });
+    const growthEntry = grown.timeEntries.find((e) => e.taskId === 't-big');
+    // pula: pierwsza godzina wpisu pokrywa plan 1h, nadwyżka 1h rośnie na końcu b1 (blok 9-11)
+    expect(grown.workload.find((w) => w.id === 'b1')?.plannedHours).toBe(2);
+    expect(growthEntry?.planGrowth).toEqual([{ blockId: 'b1', minutes: 60, fromBinMinutes: 0 }]);
+    // rozmowa 9:30-9:45 wcina ręczną część: głowa b1 9:00-9:30, ogon 9:45-11:00
+    const carved = reducer(grown, {
+      type: 'ADD_TIME_ENTRY',
+      payload: { personId: 'me', taskId: 't-call-a', date: DAY, startMinutes: 570, endMinutes: 585, source: 'manual' },
+    });
+    const tail = dated(carved, 't-big')[1];
+    expect(dated(carved, 't-big').map((w) => [w.id, w.startMinutes, w.plannedHours])).toEqual([['b1', 540, 0.5], [tail.id, 585, 1.25]]);
+    // rekord wzrostu wskazuje OGON (wzrost siedzi na końcu bloku), nie głowę
+    expect(carved.timeEntries.find((e) => e.taskId === 't-big')?.planGrowth).toEqual([{ blockId: tail.id, minutes: 60, fromBinMinutes: 0 }]);
+    // kasowanie wpisu 10-12 zdejmuje wzrost z OGONA; głowa (ręczne 30 min) zostaje
+    const gone = reducer(carved, { type: 'DELETE_TIME_ENTRY', entryId: growthEntry!.id });
+    expect(dated(gone, 't-big').map((w) => [w.id, w.startMinutes, w.plannedHours])).toEqual([['b1', 540, 0.5], [tail.id, 585, 0.25]]);
+    expect(gone.workload.find((w) => w.taskId === 't-big' && w.date === '')?.plannedHours).toBe(0.25);
+  });
   it('poprawka wpisu wcina ponownie w nowych godzinach (wcięcie jest jednokierunkowe)', () => {
     const s = base();
     const added = reducer(s, {

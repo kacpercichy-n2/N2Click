@@ -837,6 +837,7 @@ function returnQuartersToBin(workload: WorkloadEntry[], taskId: string, personId
 function carvePlanAroundEntry(state: AppData, entry: TimeEntry): AppData {
   const { personId, date, taskId, startMinutes, endMinutes } = entry;
   let workload = state.workload;
+  let timeEntries = state.timeEntries;
   const touched = new Set<string>();
   const binBackQ = new Map<string, number>();
   for (const b of state.workload) {
@@ -849,25 +850,102 @@ function carvePlanAroundEntry(state: AppData, entry: TimeEntry): AppData {
     if (cutMinutes <= 0) continue;
     touched.add(dayKey(personId, date));
     binBackQ.set(b.taskId, (binBackQ.get(b.taskId) ?? 0) + toQuarters(cutMinutes / 60));
+    const headId = head !== null ? b.id : null;
+    const tailId = tail !== null ? (head !== null ? uid() : b.id) : null;
     const pieces: WorkloadEntry[] = [];
     if (head !== null) pieces.push({ ...b, plannedHours: toQuarters((head[1] - head[0]) / 60) * HOURS_STEP });
-    if (tail !== null) {
+    if (tail !== null && tailId !== null) {
       pieces.push({
         ...b,
-        id: head !== null ? uid() : b.id,
+        id: tailId,
         startMinutes: tail[0],
         plannedHours: toQuarters((tail[1] - tail[0]) / 60) * HOURS_STEP,
         sortIndex: nextSortIndex(workload, personId, date),
       });
     }
     workload = [...workload.filter((w) => w.id !== b.id), ...pieces];
+    timeEntries = repointGrowthAfterCarve(
+      timeEntries,
+      b,
+      headId,
+      head === null ? 0 : head[1] - head[0],
+      tailId,
+      tail === null ? 0 : tail[1] - tail[0],
+      cutMinutes,
+    );
   }
   if (touched.size === 0) return state;
   for (const [pairTaskId, quarters] of binBackQ) {
     workload = returnQuartersToBin(workload, pairTaskId, personId, quarters);
     touched.add(dayKey(personId, BIN_DATE));
   }
-  return { ...state, workload: reindexDays(workload, touched) };
+  return { ...state, workload: reindexDays(workload, touched), timeEntries };
+}
+
+/**
+ * Księgowość wzrostu po wcięciu (review Codex 2026-09-02): rekordy `planGrowth`
+ * wskazujące pocięty blok muszą wskazywać KAWAŁKI, inaczej odwrót (kasowanie
+ * wpisu-właściciela) zdejmowałby pełne minuty wzrostu z samej głowy — gubiąc
+ * ręczny plan głowy i zostawiając dorośnięty ogon. Wzrost dokleja się na
+ * KOŃCU bloku, więc rekordy rozdziela się od końca: najpierw ogon, potem
+ * wycięcie (te minuty przepadają razem z wyciętymi — wróciły do zasobnika),
+ * na końcu głowa; najpóźniejszy wpis i najpóźniejszy kawałek jako pierwsze.
+ * Minuty z zasobnika idą w ślad za minutami (najpierw ogon, potem głowa).
+ * Bez rekordów na ten blok => TA SAMA referencja listy wpisów.
+ */
+function repointGrowthAfterCarve(
+  entries: TimeEntry[],
+  block: WorkloadEntry,
+  headId: string | null,
+  headMinutes: number,
+  tailId: string | null,
+  tailMinutes: number,
+  cutMinutes: number,
+): TimeEntry[] {
+  const owners = entries
+    .map((e, index) => ({ e, index }))
+    .filter(
+      ({ e }) =>
+        e.taskId === block.taskId &&
+        e.personId === block.personId &&
+        e.date === block.date &&
+        (e.planGrowth ?? []).some((p) => p.blockId === block.id),
+    )
+    .sort((a, b) => b.e.startMinutes - a.e.startMinutes);
+  if (owners.length === 0) return entries;
+  let tailRoom = tailMinutes;
+  let cutRoom = cutMinutes;
+  let headRoom = headMinutes;
+  const replaced = new Map<number, TimeEntry>();
+  for (const { e, index } of owners) {
+    const own = e.planGrowth ?? [];
+    const pieces: NonNullable<TimeEntry['planGrowth']> = [];
+    for (let k = own.length - 1; k >= 0; k--) {
+      const p = own[k];
+      if (p.blockId !== block.id) {
+        pieces.unshift(p);
+        continue;
+      }
+      let minutes = p.minutes;
+      let fromBin = p.fromBinMinutes;
+      const toTail = Math.min(minutes, tailRoom);
+      tailRoom -= toTail;
+      minutes -= toTail;
+      const toCut = Math.min(minutes, cutRoom);
+      cutRoom -= toCut;
+      minutes -= toCut;
+      const toHead = Math.min(minutes, headRoom);
+      headRoom -= toHead;
+      const binTail = Math.min(fromBin, toTail);
+      fromBin -= binTail;
+      const binHead = Math.min(fromBin, toHead);
+      if (toHead > 0 && headId !== null) pieces.unshift({ blockId: headId, minutes: toHead, fromBinMinutes: binHead });
+      if (toTail > 0 && tailId !== null) pieces.unshift({ blockId: tailId, minutes: toTail, fromBinMinutes: binTail });
+    }
+    const { planGrowth: _drop, ...rest } = e;
+    replaced.set(index, pieces.length > 0 ? { ...rest, planGrowth: pieces } : rest);
+  }
+  return entries.map((e, index) => replaced.get(index) ?? e);
 }
 
 /**
@@ -5312,8 +5390,15 @@ export function reducer(state: AppData, action: Action): AppData {
       // bieżącego wpisu — no-op zwraca tę samą referencję.
       if (!isFilterViewKey(action.view)) return state;
       if (!isStructuralLastViewFilter(action.filter)) return state;
-      const sanitized = sanitizeLastViewFilter(state, action.filter);
+      const clean = sanitizeLastViewFilter(state, action.filter);
       const current = state.lastFilters[action.view];
+      // Widok kalendarza (Dzień | Tydzień | Miesiąc) przeżywa zapisy, które go
+      // nie niosą (np. „Otwórz w kalendarzu” z Obciążenia pisze sam filtr
+      // osób) — review Codex 2026-09-02. Jawna wartość nadal wygrywa.
+      const sanitized: LastViewFilter =
+        action.view === 'calendar' && clean.calendarView === undefined && current?.calendarView !== undefined
+          ? { ...clean, calendarView: current.calendarView }
+          : clean;
       if (current && lastViewFilterEqual(current, sanitized)) return state;
       return {
         ...state,
