@@ -1035,6 +1035,36 @@ describe('wcięcie planu pod fakt (2026-09-02, „duży task w planie a krótki�
   });
 });
 
+describe('RECONCILE_TRACKED_DAY: dane sprzed wcięcia doprowadzone do zasad przy otwarciu dnia', () => {
+  const BIG = task('t-big', 'p-a', 'BłogoDASH', { estimatedHours: 72 });
+  it('blok odhaczony bez wpisu z cudzym wpisem w środku: wcięcie + wpisy w wolnych minutach; drugi raz = ta sama referencja', () => {
+    const s = state({
+      tasks: [BIG, task('t-call-a', 'p-a', 'N2Hub fix', { estimatedHours: null })],
+      workload: [{ ...block('b1', 't-big', 'me', 600, 2), done: true }], // 10-12, „oznaczone, ale wpisu nie dodano"
+      timeEntries: [entry('w1', 't-call-a', 660, 675)], // 11:00-11:15
+    });
+    const next = reducer(s, { type: 'RECONCILE_TRACKED_DAY', personId: 'me', date: DAY });
+    const dated = next.workload.filter((w) => w.taskId === 't-big' && w.date === DAY).sort((a, b) => a.startMinutes - b.startMinutes);
+    expect(dated.map((w) => [w.id, w.startMinutes, w.plannedHours, w.done])).toEqual([['b1', 600, 1, true], [dated[1].id, 675, 0.75, true]]);
+    expect(next.workload.find((w) => w.taskId === 't-big' && w.date === '')?.plannedHours).toBe(0.25);
+    expect(
+      next.timeEntries.filter((e) => e.taskId === 't-big').map((e) => [e.startMinutes, e.endMinutes, e.source]).sort((a, b) => Number(a[0]) - Number(b[0])),
+    ).toEqual([[600, 660, 'block'], [675, 720, 'block']]);
+    expect(loggedMinutesForPersonDate(next, 'me', DAY)).toBe(120);
+    expect(reducer(next, { type: 'RECONCILE_TRACKED_DAY', personId: 'me', date: DAY })).toBe(next);
+  });
+  it('nic do zrobienia => ta sama referencja; blok pokryty pulą z innych godzin nie dostaje wpisów', () => {
+    const clean = state({ workload: [block('b1', 't-design', 'me', 600, 1)], timeEntries: [entry('w1', 't-design', 600, 660)] });
+    expect(reducer(clean, { type: 'RECONCILE_TRACKED_DAY', personId: 'me', date: DAY })).toBe(clean);
+    const pooled = state({
+      workload: [{ ...block('b1', 't-design', 'me', 600, 1), done: true }],
+      timeEntries: [entry('w1', 't-design', 840, 900)], // 1h po południu pokrywa blok pulą
+    });
+    expect(reducer(pooled, { type: 'RECONCILE_TRACKED_DAY', personId: 'me', date: DAY })).toBe(pooled);
+    expect(reducer(pooled, { type: 'RECONCILE_TRACKED_DAY', personId: 'ghost', date: DAY })).toBe(pooled);
+  });
+});
+
 describe('taskTimeSummary („Ile na co”)', () => {
   it('sumuje wpisy i plan per zadanie w podanych dniach, malejąco po wykonaniu', () => {
     const s = state({

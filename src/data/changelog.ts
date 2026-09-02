@@ -134,6 +134,12 @@ export const CHANGELOG: ChangelogEntry[] = [
       },
       {
         area: 'Kalendarz',
+        feature: 'Stare dni dostają wcięcie przy otwarciu',
+        description:
+          'Wpisy i bloki sprzed tej zmiany też przechodzą na nowe zasady: gdy otworzysz dzień w widoku Dzień, bloki z cudzym wpisem w środku dostają wcięcie, a blok odhaczony wcześniej „bez wpisu” dostaje wpisy w wolnych godzinach.',
+      },
+      {
+        area: 'Kalendarz',
         feature: 'Znacznik „ponad plan” stoi tam, gdzie była praca bez planu',
         description:
           'Gdy zalogujesz więcej niż plan zadania, kreskowany kafelek nadwyżki w widoku Tydzień pojawia się przy wpisie, który nie miał planu (np. 15 minut o 11:00), a nie obok bloku wykonanego co do minuty. Miesiąc pokazuje jak dotąd tylko sumę nadwyżki dnia.',

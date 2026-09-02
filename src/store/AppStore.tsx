@@ -124,6 +124,7 @@ import {
   personVacationOnDate,
   wouldCreateSupervisorCycle,
 } from './selectors';
+import { portionLoggedMinutes } from './timeTracking';
 import { isOccurrenceDate, normalizeEventRsvps, normalizeRecurrence } from '../utils/recurrence';
 import { copyTitle } from '../utils/taskCopyName';
 import { isBoardMember } from './confidentiality';
@@ -417,6 +418,7 @@ export type Action =
   // niepokrytą część do zasobnika (blok kurczy się do pokrycia albo znika).
   // Bez zmian => TA SAMA referencja.
   | { type: 'SETTLE_TRACKED_DAY'; personId: string; date: string; nowMinutes: number | null; explicit?: boolean }
+  | { type: 'RECONCILE_TRACKED_DAY'; personId: string; date: string }
   // Zgłoszenia zespołu („Zgłoszenia”). Kolekcja addytywna, bez powiązań kaskadowych.
   | { type: 'ADD_TICKET'; draft: TicketDraft }
   | { type: 'SAVE_TICKET'; ticketId: string; draft: TicketDraft }
@@ -1397,6 +1399,35 @@ function unlinkEntryForBlock(state: AppData, block: WorkloadEntry): AppData {
  * (wszystkie niewykonane bloki, także bez wpisów), DZISIAJ po końcu dnia
  * pracy z `nowMinutes` (tylko bloki, które już minęły).
  */
+/**
+ * RECONCILE_TRACKED_DAY (2026-09-02): doprowadza dzień osoby do zasad
+ * wcięcia dla danych sprzed nich (zgłoszenie Kacpra: blok 10-12 odhaczony
+ * PRZED wdrożeniem, z cudzym wpisem 11:00-11:15 w środku, nie miał wcięcia ani
+ * wpisów). Idempotentnie, TA SAMA referencja gdy nie ma nic do zrobienia:
+ *   1. każdy wpis dnia wcina cudze datowane bloki osoby (`carvePlanAroundEntry`;
+ *      bez nakładki nic się nie dzieje);
+ *   2. blok `done` BEZ żadnego pokrycia (`portionLoggedMinutes === 0`, czyli
+ *      dawne „oznaczone, ale wpisu nie dodano") dostaje wpisy „z bloku" w
+ *      wolnych minutach (`linkEntryForBlock`) — dokładnie to, co dziś robi
+ *      kółko; blok pokryty pulą z innych godzin zostaje nietknięty.
+ * Wysyłane z `DayTrackerView` przy otwarciu dnia. Nie zmienia statusów zadań.
+ */
+function reconcileTrackedDay(state: AppData, personId: string, date: string): AppData {
+  if (!isValidDateStr(date) || !hasEntity(state, 'person', personId)) return state;
+  let next = state;
+  for (const e of state.timeEntries) {
+    if (e.personId === personId && e.date === date) next = carvePlanAroundEntry(next, e);
+  }
+  const doneBlocks = next.workload.filter(
+    (w) => w.personId === personId && w.date === date && !isBinEntry(w) && w.done === true,
+  );
+  for (const b of doneBlocks) {
+    if (portionLoggedMinutes(next, b) > 0) continue;
+    next = linkEntryForBlock(next, b);
+  }
+  return next;
+}
+
 function settleTrackedDay(
   state: AppData,
   personId: string,
@@ -4911,6 +4942,8 @@ export function reducer(state: AppData, action: Action): AppData {
     }
     case 'SETTLE_TRACKED_DAY':
       return settleTrackedDay(state, action.personId, action.date, action.nowMinutes, action.explicit === true);
+    case 'RECONCILE_TRACKED_DAY':
+      return reconcileTrackedDay(state, action.personId, action.date);
     case 'ADD_PERSON': {
       if (!isValidPersonDraft(action.person)) return state;
       const id = uid();

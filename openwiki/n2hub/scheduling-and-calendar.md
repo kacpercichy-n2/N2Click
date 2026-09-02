@@ -96,7 +96,12 @@
   `carveSpan` w timeTrackingSync), wycięte minuty wracają do jednego wiersza
   zasobnika pary (inwariant 4), głowa zachowuje id, ogon dostaje nowe, oba
   dziedziczą `done`; wpisy tego samego zadania nie wcinają; jednokierunkowo
-  (kasowanie wpisu nie skleja). Biegnie na początku `materializeTracking`
+  (kasowanie wpisu nie skleja). DANE SPRZED WCIĘCIA: `DayTrackerView` przy
+  otwarciu dnia (zmiana osoby/dnia) wysyła `RECONCILE_TRACKED_DAY {personId,
+  date}` — idempotentnie wcina cudze bloki wokół istniejących wpisów i daje
+  blokom `done` bez żadnego pokrycia (dawne „oznaczone, ale wpisu nie dodano")
+  wpisy „z bloku" w wolnych minutach; ta sama referencja, gdy nie ma nic do
+  zrobienia. Biegnie na początku `materializeTracking`
   (ADD/UPDATE_TIME_ENTRY), więc blok wzrostu pary ląduje w wycięciu, nie
   obok. `SET_BLOCK_DONE true` na bloku CZĘŚCIOWO zajętym cudzymi wpisami:
   wcięcie + wpis „z bloku" w KAŻDYM wolnym kawałku (`freeRangesWithin`);

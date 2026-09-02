@@ -203,6 +203,15 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date]);
 
+  // Otwarcie dnia doprowadza jego dane do zasad wcięcia (dane sprzed
+  // 2026-09-02: cudzy wpis w środku bloku bez wcięcia, blok odhaczony bez
+  // wpisu). Reduktor jest idempotentny i zwraca tę samą referencję, gdy nie ma
+  // nic do zrobienia, więc bez pętli; tylko przy zmianie osoby/dnia.
+  useEffect(() => {
+    if (personId === '') return;
+    dispatch({ type: 'RECONCILE_TRACKED_DAY', personId, date });
+  }, [dispatch, personId, date]);
+
   const say = useCallback((text: string, tone: TrackerStatus['tone']) => {
     setStatus({ text, tone });
     if (statusTimer.current !== null) window.clearTimeout(statusTimer.current);
