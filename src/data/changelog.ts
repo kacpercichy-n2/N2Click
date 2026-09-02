@@ -128,6 +128,12 @@ export const CHANGELOG: ChangelogEntry[] = [
       },
       {
         area: 'Kalendarz',
+        feature: 'Spotkania z Google w widoku Dzień',
+        description:
+          'Spotkania z Twojego Kalendarza Google stoją w kolumnie planu z plakietką „G”, więc w dniu nie ma już dziury po meecie. Kliknięcie wrzuca spotkanie do paska: wskaż zadanie i zapisz, a czas się liczy. Drugi klik cofa.',
+      },
+      {
+        area: 'Kalendarz',
         feature: 'Rozliczenie dnia pyta, nie działa samo',
         description:
           'Niewykonane bloki z dzisiaj nie wracają już same do zasobnika 15 minut po końcu bloku. Do końca Twojego dnia pracy (godzina z profilu) plan zostaje nietknięty. Potem widok Dzień pokazuje pytanie z trzema wyjściami: zalicz jako wykonane, oddaj do zasobnika albo zostaw plan. Dni minione pytają tak jak dotąd.',

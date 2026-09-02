@@ -31,6 +31,9 @@ import { useCan } from '../store/useCan';
 import { OverlayLayer, useOverlay } from './useOverlay';
 import { projectDisplayName, taskDisplayTitle } from '../store/confidentiality';
 import { useConfirm } from './ConfirmProvider';
+import { useGoogleCalendar } from '../gcal/GoogleCalendarProvider';
+import { dayTrackerOccurrences, gcalEntryKey } from '../gcal/gcalData';
+import type { GoogleEventOccurrence } from '../gcal/types';
 import { planGrowth } from '../store/timeTrackingSync';
 import {
   clientTimeSummary,
@@ -49,6 +52,7 @@ import {
   type DayPlanItem,
 } from '../store/timeTracking';
 import {
+  DAY_MINUTES,
   HOURS_STEP,
   MINUTE_STEP,
   findFreeStart,
@@ -77,6 +81,27 @@ interface Props {
   state: AppData;
   dispatch: React.Dispatch<Action>;
   date: DateStr;
+}
+
+/** Wydarzenie Google w kolumnie planu (warstwa cieniowa providera, nie store). */
+interface DayGcalItem {
+  /** Klucz `TimeEntry.eventId` (`gcal:<id>`), zarazem id do układu kolumn. */
+  key: string;
+  occ: GoogleEventOccurrence;
+  title: string;
+  startMinutes: number;
+  endMinutes: number;
+  /** Wpis trackera powstały z tego spotkania (klik „byłem"), jeśli istnieje. */
+  entry: TimeEntry | undefined;
+}
+
+/** Spotkanie (N2Hub albo Google) w ręku paska: to, co potrzebuje klik. */
+interface MeetingClick {
+  title: string;
+  startMinutes: number;
+  endMinutes: number;
+  entry: TimeEntry | undefined;
+  eventId: string;
 }
 
 /** Norma dnia do pierścienia: godziny pracy osoby z profilu (domyślnie 8h). */
@@ -198,20 +223,44 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
 
   const plan = useMemo(() => dayPlanForPerson(state, personId, date), [state, personId, date]);
   const entries = useMemo(() => timeEntriesForPersonDate(state, personId, date), [state, personId, date]);
+  // Wydarzenia Google zalogowanej osoby (2026-09-02, zgłoszenie Kacpra: bez
+  // nich w planie była dziura, a meeta nie dało się odhaczyć): warstwa cieniowa
+  // providera, NIE store — stoją w kolumnie planu jak spotkania N2Hub i klikają
+  // się tak samo (wpis z `eventId: gcal:<id>`). Nadal poza kolizjami, sumami
+  // dnia i wzrostem planu (inwariant 1): czas liczy się dopiero z wpisu.
+  const gcal = useGoogleCalendar();
+  const gcalEnabled = gcal.enabled;
+  const gcalOccurrencesFor = gcal.occurrencesFor;
+  const gcalFilter = useMemo(() => new Set([personId]), [personId]);
+  const gcalItems = useMemo<DayGcalItem[]>(() => {
+    if (!gcalEnabled) return [];
+    return dayTrackerOccurrences(gcalOccurrencesFor(date, gcalFilter)).map((occ) => {
+      const key = gcalEntryKey(occ.event.id);
+      return {
+        key,
+        occ,
+        title: occ.event.title.trim() !== '' ? occ.event.title : 'Wydarzenie Google',
+        startMinutes: occ.startMinutes,
+        endMinutes: Math.min(DAY_MINUTES, occ.startMinutes + occ.durationMinutes),
+        entry: entries.find((e) => e.eventId === key),
+      };
+    });
+  }, [gcalEnabled, gcalOccurrencesFor, date, gcalFilter, entries]);
   const range: HourRange = useMemo(
-    () => axisHourRange([...plan, ...entries]),
-    [plan, entries],
+    () => axisHourRange([...plan, ...gcalItems, ...entries]),
+    [plan, gcalItems, entries],
   );
   const planLayout = useMemo(
     () =>
-      layoutColumns(
-        plan.map((p) => ({
+      layoutColumns([
+        ...plan.map((p) => ({
           id: p.kind === 'block' ? p.block.id : `ev-${p.event.id}-${p.startMinutes}`,
           startMinutes: p.startMinutes,
           endMinutes: p.endMinutes,
         })),
-      ),
-    [plan],
+        ...gcalItems.map((g) => ({ id: g.key, startMinutes: g.startMinutes, endMinutes: g.endMinutes })),
+      ]),
+    [plan, gcalItems],
   );
   const axisHeight = (range.endHour - range.startHour) * TRACKER_PX_PER_HOUR;
 
@@ -720,7 +769,9 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
     );
   };
 
-  const clickEvent = (item: Extract<DayPlanItem, { kind: 'event' }>) => {
+  // Jedno kliknięcie dla spotkań N2Hub i Google: zaliczone → kasuje wpis;
+  // wolne godziny → spotkanie ląduje w pasku (tytuł, godziny, `eventId`).
+  const clickMeeting = (item: MeetingClick) => {
     if (item.entry !== undefined) {
       const entryId = item.entry.id;
       const ok = commit(
@@ -749,7 +800,7 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
       text: item.title,
       startMinutes: item.startMinutes,
       endMinutes: item.endMinutes,
-      eventId: item.event.id,
+      eventId: item.eventId,
     });
     setFocusSignal((n) => n + 1);
     say(`Spotkanie „${item.title}” czeka w pasku. Wskaż zadanie (albo załóż nowe) i zapisz, żeby się liczyło.`, 'info');
@@ -910,7 +961,7 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
             <div className="tt-grid-bg" style={{ '--tt-hour': `${TRACKER_PX_PER_HOUR}px` } as React.CSSProperties} />
             <div className="tt-offhours" style={{ top: 0, height: Math.max(0, offTop) }} />
             <div className="tt-offhours" style={{ top: offBottomFrom, bottom: 0 }} />
-            {plan.length === 0 && canPlanFromBin && binRows.length > 0 ? (
+            {plan.length === 0 && gcalItems.length === 0 && canPlanFromBin && binRows.length > 0 ? (
               <div className="tt-plan-empty">
                 <span>Nic nie zaplanowano na ten dzień.</span>
                 <button type="button" className="tt-settle-btn" onClick={(e) => openBinAdd(e.currentTarget)}>
@@ -929,7 +980,15 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
                     type="button"
                     className={`tt-plan-item tt-event${counted ? ' counted' : ''}${density ? ` ${density}` : ''}`}
                     style={columnStyle(item.startMinutes, item.endMinutes, slot)}
-                    onClick={() => clickEvent(item)}
+                    onClick={() =>
+                      clickMeeting({
+                        title: item.title,
+                        startMinutes: item.startMinutes,
+                        endMinutes: item.endMinutes,
+                        entry: item.entry,
+                        eventId: item.event.id,
+                      })
+                    }
                     title={counted ? 'Liczy się jako czas pracy. Kliknij, żeby cofnąć' : 'Byłeś naprawdę? Kliknij, a spotkanie wpadnie do paska'}
                   >
                     <span className="tt-item-title">{item.title}</span>
@@ -1037,6 +1096,52 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
                     </div>
                   ) : null}
                 </div>
+              );
+            })}
+            {gcalItems.map((item) => {
+              const slot = planLayout.get(item.key);
+              const counted = item.entry !== undefined;
+              const density = trackerDensityClass(item.endMinutes - item.startMinutes);
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={`tt-plan-item tt-event gcal${counted ? ' counted' : ''}${density ? ` ${density}` : ''}`}
+                  style={columnStyle(item.startMinutes, item.endMinutes, slot)}
+                  onClick={() =>
+                    clickMeeting({
+                      title: item.title,
+                      startMinutes: item.startMinutes,
+                      endMinutes: item.endMinutes,
+                      entry: item.entry,
+                      eventId: item.key,
+                    })
+                  }
+                  title={
+                    counted
+                      ? 'Spotkanie z Google liczy się jako czas pracy. Kliknij, żeby cofnąć'
+                      : 'Spotkanie z Kalendarza Google. Byłeś naprawdę? Kliknij, a wpadnie do paska'
+                  }
+                >
+                  <span className="tt-item-title">
+                    <span className="gcal-badge" aria-hidden>
+                      G
+                    </span>
+                    {item.title}
+                  </span>
+                  {density === 'h-quarter' ? (
+                    <span className="tt-item-time inline">
+                      {formatMinutes(item.startMinutes)}-{formatMinutes(item.endMinutes)}
+                    </span>
+                  ) : (
+                    <span className="tt-item-time">
+                      {formatMinutes(item.startMinutes)}-{formatMinutes(item.endMinutes)} · {formatMinutesDuration(item.endMinutes - item.startMinutes)}
+                    </span>
+                  )}
+                  {density !== 'h-quarter' && density !== 'h-half' ? (
+                    <span className="tt-item-meta">{counted ? '✓ liczy się' : 'Google, nie liczy się samo'}</span>
+                  ) : null}
+                </button>
               );
             })}
           </div>

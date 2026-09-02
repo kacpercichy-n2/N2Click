@@ -35,7 +35,15 @@
   wzorem `mention-autocomplete`), przeciągnięcie/klik po osi wykonania
   (wypełnia godziny w pasku; gest w refie, `setPointerCapture` w try/catch),
   klik w spotkanie (wypełnia tytuł + godziny + `eventId`; spotkanie NIGDY nie
-  liczy się samo; drugi klik na zaliczonym kasuje wpis). Kółko na kaflu planu
+  liczy się samo; drugi klik na zaliczonym kasuje wpis). WYDARZENIA GOOGLE
+  (2026-09-02, zgłoszenie Kacpra: bez nich w planie była dziura): własne
+  wystąpienia z `useGoogleCalendar().occurrencesFor(date, {osoba})` przechodzą
+  przez czyste `dayTrackerOccurrences` (gcalData.ts: godzinowe, niezerowe, nie
+  odrzucone) i stoją w kolumnie planu jako `.tt-event.gcal` z plakietką „G";
+  klik = ten sam `clickMeeting` co spotkania N2Hub, wpis dostaje
+  `eventId: gcalEntryKey(id)` (`gcal:<id>`), zaliczone = wpis o tym kluczu.
+  Warstwa nadal cieniowa: poza kolizjami, sumami dnia i wzrostem planu
+  (inwariant 1), poza store; w trybie lokalnym pusta. Kółko na kaflu planu
   = `SET_BLOCK_DONE` (ten sam reduktor, co „✓ Oznacz jako wykonane" w menu
   WeekView): blok wykonany + wpis 1:1 w jego godzinach; cofnięcie kasuje wpis.
   Status zadania zmienia się sam przez `autoCompleteTask` (wszystko wykonane,

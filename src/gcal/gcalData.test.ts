@@ -8,6 +8,8 @@ import {
   loadAccount,
   loadCalendars,
   loadVisibleEvents,
+  dayTrackerOccurrences,
+  gcalEntryKey,
   occurrencesByDate,
   setCalendarSelected,
   setShareLevel,
@@ -294,5 +296,27 @@ describe('operacje', () => {
     expect(await syncNow(db)).toEqual({ ok: false, error: GCAL_MESSAGES.sync });
     db.functionError = null;
     expect(await syncNow(db)).toEqual({ ok: true, value: true });
+  });
+});
+
+describe('dayTrackerOccurrences (widok Dzień trackera)', () => {
+  const occ = (over: Partial<Record<string, unknown>>) => {
+    const ev = toGoogleEvent(eventRow(over));
+    if (ev === null) throw new Error('zła atrapa wydarzenia');
+    return { event: ev, date: ev.date, startMinutes: ev.startMinutes, durationMinutes: ev.durationMinutes };
+  };
+  it('tylko godzinowe, niezerowe i nie odrzucone; rosnąco po starcie', () => {
+    const list = dayTrackerOccurrences([
+      occ({ id: 'late', start_minutes: 900 }),
+      occ({ id: 'allday', is_all_day: true, start_minutes: 0, duration_minutes: 1440 }),
+      occ({ id: 'declined', self_response: 'declined' }),
+      { ...occ({ id: 'zero' }), durationMinutes: 0 }, // mapowanie odrzuca <15 min, filtr broni się i tak
+      occ({ id: 'early', start_minutes: 600 }),
+    ]);
+    expect(list.map((o) => o.event.id)).toEqual(['early', 'late']);
+  });
+  it('gcalEntryKey: prefiks odróżnia wpis z Google od spotkania N2Hub', () => {
+    expect(gcalEntryKey('ev-1')).toBe('gcal:ev-1');
+    expect(gcalEntryKey('ev-1')).not.toBe('ev-1');
   });
 });

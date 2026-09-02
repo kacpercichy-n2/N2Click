@@ -13954,6 +13954,23 @@ a.toggle-btn {
   border-color: var(--n2-warning);
   background: rgba(255, 200, 87, 0.1);
 }
+/* Wydarzenie Google w kolumnie planu widoku „Dzień": ten sam kafel co spotkanie
+   N2Hub, akcent Google i plakietka „G" (2026-09-02, zgłoszenie Kacpra: bez
+   nich w planie była dziura). Zaliczone przejmuje kolory `.counted`. */
+.tt-event.gcal {
+  --event-accent: var(--gcal-accent);
+  --event-accent-soft: var(--gcal-accent-soft);
+}
+.tt-event.gcal:not(.counted) {
+  border-color: rgba(138, 180, 248, 0.35);
+}
+.tt-event.gcal:not(.counted):hover {
+  background: rgba(138, 180, 248, 0.24);
+}
+.tt-event .gcal-badge {
+  margin-right: 5px;
+  flex: none;
+}
 .tt-event.counted::before {
   background: var(--n2-warning);
 }

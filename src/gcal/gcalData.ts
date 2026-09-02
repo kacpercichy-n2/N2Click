@@ -7,6 +7,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { normalizeEmail } from '../auth/profile';
 import type { Person } from '../types';
 import { addDaysStr, isValidDateStr } from '../utils/dates';
+import { DAY_MINUTES } from '../utils/time';
 import {
   GCAL_MESSAGES,
   isGoogleAccountStatus,
@@ -372,6 +373,37 @@ export function visibleOccurrences(
     (occ) => occ.event.access === 'owner' || personFilter.has(occ.event.ownerProfileId),
   );
   return visible.length === occurrences.length ? occurrences : visible;
+}
+
+// ---- Widok „Dzień" trackera ----------------------------------------------------
+
+/** Prefiks `TimeEntry.eventId` dla wpisu powstałego z wydarzenia Google —
+ *  odróżnia je od id spotkań N2Hub w tym samym polu. */
+export const GCAL_ENTRY_PREFIX = 'gcal:';
+export function gcalEntryKey(eventId: string): string {
+  return GCAL_ENTRY_PREFIX + eventId;
+}
+
+/**
+ * Wystąpienia Google, które widok „Dzień" trackera stawia w kolumnie planu jako
+ * spotkania do odhaczenia (2026-09-02, zgłoszenie Kacpra: bez nich w planie
+ * była dziura): tylko godzinowe (całodniowe nie mają godzin do zaliczenia),
+ * z niezerowym czasem i nie odrzucone przez zalogowanego; rosnąco po starcie.
+ * Nadal warstwa cieniowa (inwariant 1): kolizje, sumy dnia i wzrost planu nie
+ * czytają tej listy — czas liczy się dopiero z wpisu, który powstaje z kliknięcia.
+ */
+export function dayTrackerOccurrences(
+  occurrences: readonly GoogleEventOccurrence[],
+): GoogleEventOccurrence[] {
+  return occurrences
+    .filter(
+      (occ) =>
+        !occ.event.isAllDay &&
+        occ.durationMinutes > 0 &&
+        !(occ.startMinutes === 0 && occ.durationMinutes >= DAY_MINUTES) &&
+        occ.event.selfResponse !== 'declined',
+    )
+    .sort((a, b) => a.startMinutes - b.startMinutes || a.event.id.localeCompare(b.event.id));
 }
 
 // ---- Operacje -----------------------------------------------------------------
