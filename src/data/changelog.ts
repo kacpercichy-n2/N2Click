@@ -136,7 +136,7 @@ export const CHANGELOG: ChangelogEntry[] = [
         area: 'Kalendarz',
         feature: 'Znacznik „ponad plan” stoi tam, gdzie była praca bez planu',
         description:
-          'Gdy zalogujesz więcej niż plan zadania, kreskowany kafelek nadwyżki w Tygodniu i Miesiącu pojawia się przy wpisie, który nie miał planu (np. 15 minut o 11:00), a nie obok bloku wykonanego co do minuty.',
+          'Gdy zalogujesz więcej niż plan zadania, kreskowany kafelek nadwyżki w widoku Tydzień pojawia się przy wpisie, który nie miał planu (np. 15 minut o 11:00), a nie obok bloku wykonanego co do minuty. Miesiąc pokazuje jak dotąd tylko sumę nadwyżki dnia.',
       },
       {
         area: 'Kalendarz',
