@@ -582,6 +582,7 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
   const toggleBlockDone = (item: Extract<DayPlanItem, { kind: 'block' }>) => {
     const blockId = item.block.id;
     const next = !item.blockDone;
+    const entriesBefore = storeApi.getState().timeEntries.length;
     const ok = commit(
       { type: 'SET_BLOCK_DONE', entryId: blockId, done: next },
       (after) => after.workload.some((w) => w.id === blockId && (w.done === true) === next),
@@ -618,7 +619,16 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
         'info',
       );
     } else {
-      say(`„${item.title}”: blok odznaczony, wpis z tego bloku usunięty.`, 'info');
+      // Komunikat liczy ze skutku: po hydracji w tle wpis w godzinach kawałka
+      // może należeć do wcześniejszego kawałka (wisząca więź) — wtedy nic nie
+      // znika i nie wolno twierdzić, że zniknęło (przegląd Codex 2026-09-02).
+      const removed = entriesBefore - after.timeEntries.length;
+      say(
+        removed > 0
+          ? `„${item.title}”: blok odznaczony, ${removed === 1 ? 'wpis z tego bloku usunięty' : `${removed} wpisy z tego bloku usunięte`}.`
+          : `„${item.title}”: blok odznaczony. Wpis w tych godzinach nie pochodzi z tego bloku, więc zostaje; jeśli trzeba, skasuj go krzyżykiem po prawej.`,
+        'info',
+      );
     }
   };
   // ---- popout rozliczenia minionego dnia (decyzja zamiast automatu) ----
