@@ -103,9 +103,10 @@
   „z bloku" bez kawałków), lokalnie od razu — idempotentnie wcina cudze bloki wokół istniejących wpisów i daje
   blokom `done` bez żadnego pokrycia (dawne „oznaczone, ale wpisu nie dodano")
   wpisy „z bloku" w wolnych minutach; między wcięciem a wpisami
-  `healBlockLinks` przepina wpisy `source 'block'` na kawałek, który je
-  zawiera (albo zdejmuje więź → 'manual'), bo odświeżenie w tle może
-  przywrócić plan sprzed wcięcia; efekt zależy też od `state.workload` /
+  `healBlockLinks` przepina wpisy `source 'block'` na kawałek TEGO zadania,
+  który je zawiera; bez takiego kawałka wpis zostaje nietknięty (wisząca więź
+  tolerowana, zdjęcie byłoby nieodwracalne przy częściowej hydracji), bo
+  odświeżenie w tle może przywrócić plan sprzed wcięcia; efekt zależy też od `state.workload` /
   `state.timeEntries`, więc po hydracji biegnie ponownie; ta sama referencja,
   gdy nie ma nic do zrobienia. Biegnie na początku `materializeTracking`
   (ADD/UPDATE_TIME_ENTRY), więc blok wzrostu pary ląduje w wycięciu, nie

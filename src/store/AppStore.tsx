@@ -1435,9 +1435,11 @@ function reconcileTrackedDay(state: AppData, personId: string, date: string): Ap
  * a lokalne wpisy `source 'block'` zostają z `blockId` kawałka, którego już nie
  * ma — odznaczenie bloku nie skasowałoby wtedy swojego wpisu. Reguła: więź jest
  * ważna, gdy blok istnieje i zawiera godziny wpisu; inaczej wpis przepina się
- * na datowany blok TEGO zadania, który go zawiera, a bez takiego bloku staje
- * się zwykłym wpisem ręcznym (fakt zostaje, znika tylko odwołanie). Bez zmian
- * => TA SAMA referencja.
+ * na datowany blok TEGO zadania, który go zawiera. Bez takiego bloku wpis
+ * ZOSTAJE jak jest (wisząca więź jest tolerowana w całym kodzie): częściowa
+ * hydracja może na chwilę nie mieć bloku, a zdjęcie więzi byłoby nieodwracalne
+ * (przegląd Codex) — gdy blok wróci, więź znów jest ważna. Bez zmian => TA SAMA
+ * referencja.
  */
 function healBlockLinks(state: AppData, personId: string, date: string): AppData {
   let changed = false;
@@ -1453,10 +1455,9 @@ function healBlockLinks(state: AppData, personId: string, date: string): AppData
     const linked = state.workload.find((w) => w.id === e.blockId);
     if (linked !== undefined && contains(linked)) return e;
     const host = state.workload.find(contains);
+    if (host === undefined || host.id === e.blockId) return e;
     changed = true;
-    if (host !== undefined) return { ...e, blockId: host.id };
-    const { blockId: _drop, ...rest } = e;
-    return { ...rest, source: 'manual' as const };
+    return { ...e, blockId: host.id };
   });
   return changed ? { ...state, timeEntries } : state;
 }

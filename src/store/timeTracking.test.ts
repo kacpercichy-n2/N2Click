@@ -1075,14 +1075,20 @@ describe('RECONCILE_TRACKED_DAY: dane sprzed wcięcia doprowadzone do zasad przy
     const untick = reducer(twice, { type: 'SET_BLOCK_DONE', entryId: dated[1].id, done: false });
     expect(untick.timeEntries.filter((e) => e.taskId === 't-big').map((e) => e.startMinutes)).toEqual([600]);
   });
-  it('wpis „z bloku” bez żadnego bloku, który by go zawierał, staje się wpisem ręcznym (fakt zostaje)', () => {
+  it('wpis „z bloku” bez bloku, który by go zawierał, zostaje nietknięty (częściowa hydracja bywa chwilowa; więź wraca z blokiem)', () => {
     const s = state({
       workload: [],
       timeEntries: [entry('w1', 't-design', 600, 660, { source: 'block', blockId: 'ghost' })],
     });
-    const next = reducer(s, { type: 'RECONCILE_TRACKED_DAY', personId: 'me', date: DAY });
-    expect(next.timeEntries[0]).toMatchObject({ source: 'manual', startMinutes: 600, endMinutes: 660 });
-    expect('blockId' in next.timeEntries[0]).toBe(false);
+    expect(reducer(s, { type: 'RECONCILE_TRACKED_DAY', personId: 'me', date: DAY })).toBe(s);
+    // blok wraca (np. dalsza część hydracji) — więź znów ważna, nadal bez zmian
+    const back = state({
+      workload: [{ ...block('ghost', 't-design', 'me', 600, 1), done: true }],
+      timeEntries: [entry('w1', 't-design', 600, 660, { source: 'block', blockId: 'ghost' })],
+    });
+    expect(reducer(back, { type: 'RECONCILE_TRACKED_DAY', personId: 'me', date: DAY })).toBe(back);
+    // odznaczenie kasuje wpis, bo więź jest nadal jego
+    expect(reducer(back, { type: 'SET_BLOCK_DONE', entryId: 'ghost', done: false }).timeEntries).toHaveLength(0);
   });
   it('nic do zrobienia => ta sama referencja; blok pokryty pulą z innych godzin nie dostaje wpisów', () => {
     const clean = state({ workload: [block('b1', 't-design', 'me', 600, 1)], timeEntries: [entry('w1', 't-design', 600, 660)] });
