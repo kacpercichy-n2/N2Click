@@ -890,7 +890,10 @@
   osobisty czas (`adoptEntryAsPersonalTime`, po `materializeTracking`),
   `DELETE_TIME_ENTRY` zdejmuje go, gdy był dokładnie czasem wpisu
   (`releaseEntryPersonalTime`); `gcal:` i nieznane `eventId` przechodzą bez
-  zmian. Semantyka w selektorach: patrz scheduling-and-calendar.
+  zmian. `SET_EVENT_PERSONAL_TIME` odrzuca okno nachodzące na WŁASNY urlop /
+  nieobecność osoby (`personVacationOnDate` + `personHourlyVacationIntervals`);
+  tor trackera tej straży nie ma (wpis czasu jest faktem). Semantyka w
+  selektorach: patrz scheduling-and-calendar.
 - `LeaveKind` (2026-09-15): `CalendarEvent.kind?: 'urlop' | 'nieobecnosc'`;
   `EventDraft.kind`, `NormalizedEventDraft.kind`, strażnik `MERGE_CLOUD_*`,
   `repairEvents` i hydracja przyjmują oba przez `isLeaveKind`; nieobecność
