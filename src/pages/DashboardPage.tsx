@@ -51,6 +51,7 @@ import {
   todayAgendaForPerson,
   unplannedTasksForPerson,
   weekBlocksForPerson,
+  bookedHoursForPersonOnDate,
 } from '../store/selectors';
 import { projectDisplayName, taskDisplayTitle } from '../store/confidentiality';
 import { Avatar } from '../components/Avatar';
@@ -687,7 +688,7 @@ export function DashboardPage() {
             </div>
             <div className="dash-m-week-pills">
               {week.map((d) => {
-                const hours = (weekMap.get(d) ?? []).reduce((sum, w) => sum + w.plannedHours, 0);
+                const hours = bookedHoursForPersonOnDate(state, me.id, d);
                 return (
                   <div
                     key={d}
@@ -898,7 +899,7 @@ export function DashboardPage() {
             {weekendDays.length > 0 && (
               <div className="week-strip-weekend">
                 {weekendDays.map((d) => {
-                  const hours = (weekMap.get(d) ?? []).reduce((sum, w) => sum + w.plannedHours, 0);
+                  const hours = bookedHoursForPersonOnDate(state, me.id, d);
                   return (
                     <Link
                       key={d}

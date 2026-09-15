@@ -24,7 +24,7 @@ import {
 } from './timeTracking';
 import { isValidTimeRange, findOverlappingEntry, formatMinutesDuration, frecencyScore, freeRemainderRange } from '../utils/timeTracking';
 import { carveSpan, freeRangesWithin, uncoveredEntryGaps } from './timeTrackingSync';
-import type { AppData, Client, Person, Project, Status, Task, TimeEntry, WorkloadEntry } from '../types';
+import type { AppData, CalendarEvent, Client, Person, Project, Status, Task, TimeEntry, WorkloadEntry } from '../types';
 
 const DAY = '2026-08-13';
 const CLIENT_A: Client = { id: 'c-a', name: 'Wodociągi Słupsk', archived: false, contactName: '', contactEmail: '', contactPhone: '' };
@@ -1134,5 +1134,72 @@ describe('taskTimeSummary („Ile na co”)', () => {
     ]);
     expect(taskTimeSummary(s, 'me', [DAY, '2026-08-14'])[0]).toMatchObject({ taskId: 't-call-a', loggedMinutes: 120 });
     expect(rows[1]).toMatchObject({ title: 'Rozmowa z klientem', clientName: 'Wodociągi Słupsk', projectName: 'Strona www' });
+  });
+});
+
+describe('wpis ze spotkania o innych godzinach => osobisty czas wystąpienia (2026-09-15)', () => {
+  const meeting = (over: Partial<CalendarEvent> = {}): CalendarEvent => ({
+    id: 'ev-1',
+    title: 'Status',
+    description: '',
+    location: '',
+    meetingUrl: '',
+    date: DAY,
+    startMinutes: 900, // 15:00-16:00
+    durationMinutes: 60,
+    attendeeIds: ['me', 'other'],
+    createdAt: '2026-08-01T00:00:00.000Z',
+    updatedAt: '2026-08-01T00:00:00.000Z',
+    ...over,
+  });
+  const add = (s: AppData, start: number, end: number, over: Partial<AddTimeEntryPayload> = {}) =>
+    reducer(s, {
+      type: 'ADD_TIME_ENTRY',
+      payload: { personId: 'me', taskId: 't-call-a', date: DAY, startMinutes: start, endMinutes: end, source: 'event', eventId: 'ev-1', ...over },
+    });
+
+  it('wpis 15:00-15:15 skraca spotkanie w planie TEJ osoby; plan innych bez zmian', () => {
+    const s0 = state({ events: [meeting()] });
+    const s1 = add(s0, 900, 915);
+    expect(s1.events[0].personalTimes).toEqual([{ date: DAY, personId: 'me', startMinutes: 900, durationMinutes: 15 }]);
+    const mine = dayPlanForPerson(s1, 'me', DAY).find((i) => i.kind === 'event');
+    expect(mine).toMatchObject({ startMinutes: 900, endMinutes: 915 });
+    expect(mine && mine.kind === 'event' ? mine.entry?.id : undefined).toBe(s1.timeEntries[0].id);
+    const theirs = dayPlanForPerson(s1, 'other', DAY).find((i) => i.kind === 'event');
+    expect(theirs).toMatchObject({ startMinutes: 900, endMinutes: 960 });
+  });
+
+  it('wpis dokładnie w godzinach spotkania nie tworzy osobistego czasu; wpis bez eventId też nie', () => {
+    const s0 = state({ events: [meeting()] });
+    expect('personalTimes' in add(s0, 900, 960).events[0]).toBe(false);
+    const manual = reducer(s0, {
+      type: 'ADD_TIME_ENTRY',
+      payload: { personId: 'me', taskId: 't-call-a', date: DAY, startMinutes: 900, endMinutes: 915, source: 'manual' },
+    });
+    expect('personalTimes' in manual.events[0]).toBe(false);
+  });
+
+  it('skasowanie wpisu oddaje planowi czas spotkania (gdy osobisty czas był czasem wpisu)', () => {
+    const s1 = add(state({ events: [meeting()] }), 900, 915);
+    const s2 = reducer(s1, { type: 'DELETE_TIME_ENTRY', entryId: s1.timeEntries[0].id });
+    expect(s2.timeEntries).toHaveLength(0);
+    expect('personalTimes' in s2.events[0]).toBe(false);
+    // Osobisty czas ustawiony INACZEJ (np. przeciągnięciem) zostaje po kasowaniu wpisu.
+    const dragged = reducer(s1, {
+      type: 'SET_EVENT_PERSONAL_TIME',
+      eventId: 'ev-1',
+      date: DAY,
+      personId: 'me',
+      time: { startMinutes: 900, durationMinutes: 30 },
+    });
+    const s3 = reducer(dragged, { type: 'DELETE_TIME_ENTRY', entryId: dragged.timeEntries[0].id });
+    expect(s3.events[0].personalTimes).toEqual([{ date: DAY, personId: 'me', startMinutes: 900, durationMinutes: 30 }]);
+  });
+
+  it('wydarzenie Google (`gcal:`) i nieznane eventId przechodzą bez zmian w wydarzeniach', () => {
+    const s0 = state({ events: [meeting()] });
+    const g = add(s0, 900, 915, { eventId: 'gcal:cal:evt' });
+    expect(g.timeEntries).toHaveLength(1);
+    expect(g.events).toBe(s0.events);
   });
 });

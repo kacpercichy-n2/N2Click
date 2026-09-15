@@ -404,6 +404,23 @@ function eventRow(
     }
     rsvps.push({ date: r.date, personId: profileId, status: r.status });
   }
+  // Osobiste czasy wystąpień (2026-09-15): personId → profil chmury jak wyżej.
+  const personalTimes: Array<{ date: string; personId: string; startMinutes: number; durationMinutes: number }> = [];
+  for (const t of e.personalTimes ?? []) {
+    const profileId =
+      maps.people.get(t.personId) ??
+      (maps.cloudProfileIds.has(t.personId) ? t.personId : undefined);
+    if (profileId === undefined) {
+      diagnostics.push(DIAG.unmappablePerson);
+      continue;
+    }
+    personalTimes.push({
+      date: t.date,
+      personId: profileId,
+      startMinutes: t.startMinutes,
+      durationMinutes: t.durationMinutes,
+    });
+  }
   return {
     id: e.id,
     title: e.title,
@@ -415,6 +432,7 @@ function eventRow(
     duration_minutes: e.durationMinutes,
     attendee_ids: attendeeIds,
     rsvps,
+    personal_times: personalTimes,
     recurrence: e.recurrence ?? null,
     kind: e.kind ?? 'meeting',
     end_date: e.endDate ?? null,

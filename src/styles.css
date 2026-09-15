@@ -3354,6 +3354,17 @@ a.toggle-btn {
   text-decoration: line-through;
   text-decoration-thickness: 1px;
 }
+/* Osobisty czas wystąpienia (2026-09-15): spotkanie trwa u tej osoby inaczej
+   niż w planie serii — lewa krawędź kropkowana i nożyczki przy godzinach. */
+.week-event-block.personal {
+  border-left-style: dotted;
+  border-left-width: 3px;
+}
+.week-event-personal {
+  margin-left: 4px;
+  font-size: var(--n2-type-xs);
+  opacity: 0.85;
+}
 .week-event-title {
   font-size: var(--n2-type-xs);
   font-weight: 600;

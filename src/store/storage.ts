@@ -17,10 +17,13 @@ import type {
   Ticket,
   TimeEntry,
   WorkloadEntry,
+  LeaveKind,
 } from '../types';
 import { isValidDateStr, todayStr } from '../utils/dates';
 import { isTimeEntrySource } from '../utils/timeTracking';
 import { normalizeEventRsvps, normalizeRecurrence } from '../utils/recurrence';
+import { normalizeEventPersonalTimes } from '../utils/eventPersonalTime';
+import { isLeaveKind } from '../utils/leave';
 import { TASK_PRIORITIES } from '../utils/priority';
 import {
   DEFAULT_PROJECT_DOCUMENT_KIND,
@@ -1299,7 +1302,7 @@ export function repairEvents(data: AppData): AppData {
     const date = str(e.date);
     if (id === '' || title === '' || !isValidDateStr(date)) continue;
 
-    const isVacation = e.kind === 'urlop';
+    const isVacation = isLeaveKind(e.kind);
     // Zakres dat PRZED czasami: wielodniowość decyduje o regule czasów.
     const vacationEndDate = isVacation ? canonicalVacationEndDate(e.endDate, date) : undefined;
 
@@ -1354,6 +1357,18 @@ export function repairEvents(data: AppData): AppData {
     const rsvps = recurrence
       ? normalizeEventRsvps(e.rsvps ?? e.absences, recurrence, date)
       : undefined;
+    // Osobiste czasy wystąpień (2026-09-15): kanoniczne względem żywej reguły,
+    // uczestników i czasu bazowego (wpis równy bazowemu znika); nieobecność
+    // nigdy ich nie niesie.
+    const personalTimes = isVacation
+      ? undefined
+      : normalizeEventPersonalTimes(e.personalTimes, {
+          date,
+          startMinutes,
+          durationMinutes,
+          attendeeIds,
+          ...(recurrence ? { recurrence } : {}),
+        });
 
     events.push({
       id,
@@ -1367,7 +1382,8 @@ export function repairEvents(data: AppData): AppData {
       attendeeIds,
       ...(recurrence ? { recurrence } : {}),
       ...(rsvps ? { rsvps } : {}),
-      ...(isVacation ? { kind: 'urlop' as const } : {}),
+      ...(personalTimes ? { personalTimes } : {}),
+      ...(isVacation ? { kind: e.kind as LeaveKind } : {}),
       ...(endDate ? { endDate } : {}),
       // Utajniona treść (forma kanoniczna): klucz wyłącznie jako literalne
       // `true` i NIGDY na urlopie — `false` / śmieci / legacy => nieobecny.

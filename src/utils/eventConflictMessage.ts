@@ -20,7 +20,7 @@ import { formatShortWithWeekday } from './dates';
  * `ScheduleConflict` jest z tym zgodny.
  */
 export interface ConflictLike {
-  kind: 'block' | 'event' | 'urlop' | 'recurrence';
+  kind: 'block' | 'event' | 'urlop' | 'nieobecnosc' | 'recurrence';
   /** Nazwa osoby; '' = nieznana. */
   personName: string;
   /** Tytuł zadania/wydarzenia; '' = nieznany. */
@@ -41,6 +41,7 @@ const KIND_NOUN: Record<ConflictLike['kind'], string> = {
   block: 'zadanie',
   event: 'wydarzenie',
   urlop: 'urlop',
+  nieobecnosc: 'nieobecność',
   recurrence: 'zadanie cykliczne',
 };
 
@@ -85,11 +86,12 @@ export function extraConflictsPhrase(count: number): string {
  */
 function describeOne(c: ConflictLike): string {
   const who = c.personName.trim() === '' ? 'Ta osoba' : c.personName.trim();
-  if (c.kind === 'urlop') {
+  if (c.kind === 'urlop' || c.kind === 'nieobecnosc') {
+    const noun = KIND_NOUN[c.kind];
     if (c.startMinutes === 0 && c.durationMinutes === DAY_MINUTES) {
-      return `${who} ma w tym dniu urlop`;
+      return `${who} ma w tym dniu ${noun}`;
     }
-    return `${who} ma urlop ${formatMinutes(c.startMinutes)}-${formatMinutes(
+    return `${who} ma ${noun} ${formatMinutes(c.startMinutes)}-${formatMinutes(
       c.startMinutes + c.durationMinutes,
     )}`;
   }

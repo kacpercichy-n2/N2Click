@@ -3097,3 +3097,44 @@ describe('cloud outbox persistence', () => {
     });
   });
 });
+
+describe('repairEvents — osobiste czasy wystąpień i nieobecność (2026-09-15)', () => {
+  const MON = '2026-07-06'; // poniedziałek (ISO 1)
+  const withEvents = (events: unknown[]): AppData => ({ ...emptyData(), events } as unknown as AppData);
+  it('kanonikalizuje personalTimes (dzień wystąpienia, uczestnik, czas różny od bazowego) i zdejmuje je z nieobecności', () => {
+    const recurrence = { daysOfWeek: [1], startMinutes: 540, durationMinutes: 60 };
+    const data = withEvents([
+      {
+        id: 'e1',
+        title: 'Cykliczne',
+        date: MON,
+        startMinutes: 540,
+        durationMinutes: 60,
+        attendeeIds: ['p1', 'p2'],
+        recurrence,
+        personalTimes: [
+          { date: MON, personId: 'p1', startMinutes: 540, durationMinutes: 15 },
+          { date: MON, personId: 'p2', startMinutes: 540, durationMinutes: 60 }, // = bazowy
+          { date: '2026-07-07', personId: 'p1', startMinutes: 540, durationMinutes: 15 }, // poza regułą
+          { date: MON, personId: 'p9', startMinutes: 540, durationMinutes: 15 }, // nie-uczestnik
+          'śmieć',
+        ],
+      },
+      {
+        id: 'e2',
+        title: 'Nieobecność',
+        date: MON,
+        startMinutes: 0,
+        durationMinutes: 1440,
+        attendeeIds: ['p1'],
+        kind: 'nieobecnosc',
+        personalTimes: [{ date: MON, personId: 'p1', startMinutes: 540, durationMinutes: 15 }],
+      },
+    ]);
+    const events = repairEvents(data).events;
+    expect(events[0].personalTimes).toEqual([{ date: MON, personId: 'p1', startMinutes: 540, durationMinutes: 15 }]);
+    expect(events[1].kind).toBe('nieobecnosc');
+    expect('personalTimes' in events[1]).toBe(false);
+    expect(events[1]).toMatchObject({ startMinutes: 0, durationMinutes: 1440 });
+  });
+});

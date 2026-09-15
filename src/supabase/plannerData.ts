@@ -29,6 +29,7 @@ import type {
   TaskPriority,
   Ticket,
   WorkloadEntry,
+  LeaveKind,
 } from '../types';
 import { isNotificationType, sanitizeNotificationPayload } from '../utils/notifications';
 import {
@@ -38,6 +39,8 @@ import {
 } from '../contentplan/domain';
 import { isValidDateStr, periodError, MAX_TASK_PERIOD_DAYS } from '../utils/dates';
 import { normalizeEventRsvps, normalizeRecurrence } from '../utils/recurrence';
+import { normalizeEventPersonalTimes } from '../utils/eventPersonalTime';
+import { isLeaveKind } from '../utils/leave';
 import { normalizeProjectDocumentUrl } from '../utils/projectDocuments';
 import {
   canonicalEventRecurrence,
@@ -407,7 +410,7 @@ export async function loadPlannerSnapshot(
     ),
     db.select(
       'events',
-      'id, title, description, location, meeting_url, event_date, start_minutes, duration_minutes, attendee_ids, rsvps, recurrence, kind, end_date, is_confidential, created_at, updated_at',
+      'id, title, description, location, meeting_url, event_date, start_minutes, duration_minutes, attendee_ids, rsvps, personal_times, recurrence, kind, end_date, is_confidential, created_at, updated_at',
     ),
   ]);
 
@@ -739,7 +742,7 @@ export async function loadPlannerSnapshot(
       diagnostics.push(`Wydarzenie „${title}” pominięto — nieprawidłowa data.`);
       continue;
     }
-    const isVacation = row.kind === 'urlop';
+    const isVacation = isLeaveKind(row.kind);
     // Zakres dat PRZED czasami: wielodniowość decyduje o regule czasów.
     const vacationEndDate = isVacation
       ? canonicalVacationEndDate(sqlDateToLocal(row.end_date), date) ?? undefined
@@ -791,6 +794,30 @@ export async function loadPlannerSnapshot(
           date,
         )
       : undefined;
+    // Osobiste czasy wystąpień (kolumna `personal_times`, 20260915120000,
+    // ŁAGODNIE per-pole jak `rsvps`): personId profilu chmury → osoba lokalna
+    // ('' odpada), potem pełna kanonizacja względem żywej reguły/czasów.
+    const personalTimes = isVacation
+      ? undefined
+      : normalizeEventPersonalTimes(
+          (Array.isArray(row.personal_times) ? (row.personal_times as unknown[]) : []).map((item) => {
+            if (typeof item !== 'object' || item === null) return null;
+            const rec = item as Record<string, unknown>;
+            return {
+              date: str(rec.date),
+              personId: personOf(rec.personId),
+              startMinutes: rec.startMinutes,
+              durationMinutes: rec.durationMinutes,
+            };
+          }),
+          {
+            date,
+            startMinutes,
+            durationMinutes,
+            attendeeIds,
+            ...(recurrence ? { recurrence } : {}),
+          },
+        );
     events.push({
       id: str(row.id),
       title,
@@ -803,7 +830,8 @@ export async function loadPlannerSnapshot(
       attendeeIds,
       ...(recurrence ? { recurrence } : {}),
       ...(rsvps ? { rsvps } : {}),
-      ...(isVacation ? { kind: 'urlop' as const } : {}),
+      ...(personalTimes ? { personalTimes } : {}),
+      ...(isVacation ? { kind: row.kind as LeaveKind } : {}),
       ...(endDate ? { endDate } : {}),
       // Utajniona treść (20260805120000): forma kanoniczna — klucz wyłącznie
       // przy literalnym `true` i NIGDY na urlopie (jak w repairEvents).

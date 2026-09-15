@@ -770,3 +770,113 @@ describe('SET_EVENT_RSVP', () => {
     expect('rsvps' in savedOneOff.events[0]).toBe(false);
   });
 });
+
+describe('SET_EVENT_PERSONAL_TIME (osobisty czas wystąpienia, 2026-09-15)', () => {
+  const RECUR = { daysOfWeek: [1, 3], startMinutes: 600, durationMinutes: 60 };
+  const series = () => event({ recurrence: RECUR, attendeeIds: [PA, PB] });
+  const set = (
+    state: AppData,
+    eventId: string,
+    date: string,
+    personId: string,
+    time: { startMinutes: number; durationMinutes: number } | null,
+  ) => reducer(state, { type: 'SET_EVENT_PERSONAL_TIME', eventId, date, personId, time });
+
+  it('zapisuje czas osoby na dzień, nadpisuje go, czas równy bazowemu i null czyszczą (klucz znika)', () => {
+    const state = baseState([series()]);
+    const id = state.events[0].id;
+    const short = set(state, id, WED, PA, { startMinutes: 600, durationMinutes: 15 });
+    expect(short.events[0].personalTimes).toEqual([{ date: WED, personId: PA, startMinutes: 600, durationMinutes: 15 }]);
+    const moved = set(short, id, WED, PA, { startMinutes: 630, durationMinutes: 30 });
+    expect(moved.events[0].personalTimes).toEqual([{ date: WED, personId: PA, startMinutes: 630, durationMinutes: 30 }]);
+    const backToBase = set(moved, id, WED, PA, { startMinutes: 600, durationMinutes: 60 });
+    expect('personalTimes' in backToBase.events[0]).toBe(false);
+    const cleared = set(moved, id, WED, PA, null);
+    expect('personalTimes' in cleared.events[0]).toBe(false);
+    // Czyszczenie czegoś, czego nie ma, to no-op (ta sama referencja).
+    expect(set(state, id, WED, PA, null)).toBe(state);
+  });
+
+  it('działa też dla spotkania JEDNORAZOWEGO (dzień = data wydarzenia) i ogólnofirmowego (każdy)', () => {
+    const oneOff = event({ id: '44444444-4444-4444-8444-444444444444', attendeeIds: [PA] });
+    const company = event({ id: '55555555-5555-4555-8555-555555555555', attendeeIds: [] });
+    const state = baseState([oneOff, company]);
+    const a = set(state, oneOff.id, MON, PA, { startMinutes: 600, durationMinutes: 15 });
+    expect(a.events[0].personalTimes).toEqual([{ date: MON, personId: PA, startMinutes: 600, durationMinutes: 15 }]);
+    const b = set(a, company.id, MON, PB, { startMinutes: 615, durationMinutes: 15 });
+    expect(b.events[1].personalTimes).toEqual([{ date: MON, personId: PB, startMinutes: 615, durationMinutes: 15 }]);
+  });
+
+  it('odrzuca (ta sama referencja): nieznane wydarzenie, urlop, nieznana osoba, nie-uczestnik, zły dzień, złe okno', () => {
+    const oneOff = event({ id: '44444444-4444-4444-8444-444444444444', attendeeIds: [PA] });
+    const vacation = event({
+      id: '55555555-5555-4555-8555-555555555555',
+      kind: 'urlop',
+      startMinutes: 0,
+      durationMinutes: 1440,
+      attendeeIds: [PA],
+    });
+    const state = baseState([series(), oneOff, vacation]);
+    const id = state.events[0].id;
+    const ok = { startMinutes: 600, durationMinutes: 15 };
+    expect(set(state, 'ghost', WED, PA, ok)).toBe(state);
+    expect(set(state, vacation.id, MON, PA, ok)).toBe(state);
+    expect(set(state, id, WED, 'nobody', ok)).toBe(state);
+    expect(set(state, oneOff.id, MON, PB, ok)).toBe(state);
+    expect(set(state, id, '2026-07-07', PA, ok)).toBe(state);
+    expect(set(state, oneOff.id, WED, PA, ok)).toBe(state);
+    expect(set(state, id, WED, PA, { startMinutes: 605, durationMinutes: 15 })).toBe(state);
+    expect(set(state, id, WED, PA, { startMinutes: 1430, durationMinutes: 30 })).toBe(state);
+  });
+
+  it('SAVE_EVENT re-kanonikalizuje: zdjęty uczestnik traci wpis, nowy czas serii równy osobistemu kasuje wpis, reszta zostaje', () => {
+    let state = baseState([series()]);
+    const id = state.events[0].id;
+    state = set(state, id, WED, PA, { startMinutes: 600, durationMinutes: 15 });
+    state = set(state, id, WED, PB, { startMinutes: 630, durationMinutes: 30 });
+    // Seria zmienia czas na 10:00-10:15 (jak osobisty PA) i traci PB.
+    const saved = reducer(state, {
+      type: 'SAVE_EVENT',
+      eventId: id,
+      draft: draft({
+        title: 'Istniejące wydarzenie',
+        startMinutes: 600,
+        durationMinutes: 15,
+        attendeeIds: [PA],
+        recurrence: { daysOfWeek: [1, 3] },
+      }),
+    });
+    expect('personalTimes' in saved.events[0]).toBe(false);
+    // Zmiana, która nie dotyka czasu ani uczestników, zachowuje wpisy.
+    const kept = reducer(state, {
+      type: 'SAVE_EVENT',
+      eventId: id,
+      draft: draft({
+        title: 'Nowa nazwa',
+        startMinutes: 600,
+        durationMinutes: 60,
+        attendeeIds: [PA, PB],
+        recurrence: { daysOfWeek: [1, 3] },
+      }),
+    });
+    expect(kept.events[0].personalTimes).toEqual([
+      { date: WED, personId: PA, startMinutes: 600, durationMinutes: 15 },
+      { date: WED, personId: PB, startMinutes: 630, durationMinutes: 30 },
+    ]);
+  });
+
+  it('osobisty czas widać TYLKO w filtrze tej osoby (calendarEventsForDate), inni widzą czas wydarzenia', () => {
+    let state = baseState([series()]);
+    const id = state.events[0].id;
+    state = set(state, id, WED, PA, { startMinutes: 600, durationMinutes: 15 });
+    const forA = calendarEventsForDate(state, WED, new Set([PA]));
+    expect(forA).toHaveLength(1);
+    expect(forA[0]).toMatchObject({ startMinutes: 600, durationMinutes: 15, personalFor: PA });
+    const forB = calendarEventsForDate(state, WED, new Set([PB]));
+    expect(forB[0]).toMatchObject({ startMinutes: 600, durationMinutes: 60 });
+    expect('personalFor' in forB[0]).toBe(false);
+    const forBoth = calendarEventsForDate(state, WED, new Set([PA, PB]));
+    expect(forBoth[0]).toMatchObject({ startMinutes: 600, durationMinutes: 60 });
+    expect(calendarEventsForDate(state, WED)[0]).toMatchObject({ durationMinutes: 60 });
+  });
+});

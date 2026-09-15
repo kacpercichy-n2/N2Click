@@ -27,7 +27,7 @@ import {
   availableHoursInRange,
   getDepartment,
   getStatus,
-  hoursForPersonOnDate,
+  bookedHoursForPersonOnDate,
   personCapacity,
   personTotalHours,
   personVacationOnDate,
@@ -235,8 +235,10 @@ export function PersonProfile({
   const tasks = state.tasks.filter((t) => taskIds.has(t.id) && t.isDraft !== true);
   const week = weekDays(todayStr());
   const capacity = personCapacity(state, person.id);
+  // Obciążenie tygodnia = bloki + spotkania (2026-09-15), jak nagłówki dni
+  // w kalendarzu i donut na Panelu.
   const weekHours = week.reduce(
-    (s, d) => s + hoursForPersonOnDate(state, person.id, d),
+    (s, d) => s + bookedHoursForPersonOnDate(state, person.id, d),
     0,
   );
   const available = availableHoursInRange(state, person.id, week);
@@ -631,7 +633,7 @@ export function PersonProfile({
         </p>
         <div className="profile-week">
           {week.map((d) => {
-            const h = hoursForPersonOnDate(state, person.id, d);
+            const h = bookedHoursForPersonOnDate(state, person.id, d);
             const over = h > capacity;
             // Palma ZAMIAST wykrzyknika w dzień urlopu (D8) — ten sam podział, co
             // w tabeli obciążenia; pozostałe dni bez zmian.

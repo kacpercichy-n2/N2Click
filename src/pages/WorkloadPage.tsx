@@ -30,6 +30,7 @@ import {
   splitOverloadedDaysByVacation,
   workloadCellDetail,
   type WorkloadCellBlock,
+  personEventHoursOnDate,
 } from '../store/selectors';
 import { Avatar } from '../components/Avatar';
 import { useOpenTask } from '../components/TaskModal';
@@ -387,10 +388,16 @@ export function WorkloadPage() {
 
   // hours[personId][date] for this week, under the current filters.
   const weekEntries = state.workload.filter((w) => daySet.has(w.date) && entryPasses(w));
+  // SPOTKANIA wchodzą do obciążenia (2026-09-15, zgłoszenie „spotkania nie
+  // liczą się do obciążenia per dzień") — ale tylko bez filtra klienta/usługi:
+  // spotkanie nie ma klienta, więc w widoku „godziny dla klienta X" byłoby
+  // obce. Ta sama arytmetyka co `bookedHoursForPersonOnDate`.
+  const meetingsCount = !clientFilter && !serviceFilter;
   const hoursFor = (personId: string, date: string) =>
     weekEntries
       .filter((w) => w.personId === personId && w.date === date)
-      .reduce((s, w) => s + w.plannedHours, 0);
+      .reduce((s, w) => s + w.plannedHours, 0) +
+    (meetingsCount ? personEventHoursOnDate(state, personId, date) : 0);
 
   return (
     <section className="page page-wide">

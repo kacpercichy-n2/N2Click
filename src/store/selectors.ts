@@ -3,6 +3,7 @@ import type {
   ActivityEvent,
   AppData,
   CalendarEvent,
+  LeaveKind,
   Client,
   Comment,
   CommentEntityType,
@@ -37,6 +38,8 @@ import {
 } from '../utils/time';
 import { addDaysStr, isBirthdayOn, isValidDateStr, parseDate } from '../utils/dates';
 import { expandOccurrences, type RecurrenceOccurrence } from '../utils/recurrence';
+import { personalTimeFor } from '../utils/eventPersonalTime';
+import { isLeaveKind } from '../utils/leave';
 import { argsKey, createKeyedCache, createRefCache, filterKey } from './selectorCache';
 import {
   canViewProjectContent,
@@ -456,6 +459,45 @@ export function hoursForPersonOnDate(
   return hoursForPersonOnDateCache(state, argsKey(personId, date));
 }
 
+const personEventHoursOnDateCache = createKeyedCache<number>((state, key) => {
+  const [personId, date] = key.split(' ');
+  const forPerson = new Set([personId]);
+  let hours = 0;
+  for (const occ of calendarEventsForDate(state, date, forPerson)) {
+    if (isLeaveKind(occ.event.kind)) continue;
+    if (personAbsentFromEventOccurrence(occ.event, date, personId)) continue;
+    // Filtr jednej osoby: wystąpienie niesie już jej osobisty czas.
+    hours += occ.durationMinutes / 60;
+  }
+  for (const { occurrence } of recurrenceOccurrencesForDate(state, date, forPerson)) {
+    hours += occurrence.durationMinutes / 60;
+  }
+  return hours;
+});
+
+/**
+ * Godziny SPOTKAŃ osoby tego dnia (spotkania imienne, w których uczestniczy,
+ * ogólnofirmowe, wystąpienia zadań cyklicznych, do których jest przypisana),
+ * bez urlopu/nieobecności i bez wystąpień z odmową („nie biorę udziału");
+ * osobisty czas osoby zastępuje czas wydarzenia. Ta sama arytmetyka, co
+ * `calendarDayVolume` zawężona do jednej osoby.
+ */
+export function personEventHoursOnDate(state: AppData, personId: string, date: DateStr): number {
+  return personEventHoursOnDateCache(state, argsKey(personId, date));
+}
+
+/**
+ * OBCIĄŻENIE osoby w dniu = bloki zadań (`hoursForPersonOnDate`) + spotkania
+ * (`personEventHoursOnDate`). Od 2026-09-15 (zgłoszenie „W panelu nadal
+ * spotkania nie liczą się do obciążenia per dzień") to JEDNA liczba dla
+ * Panelu, tabeli Obciążenia, profilu osoby i przeciążenia — ta sama, którą
+ * pokazuje nagłówek dnia w kalendarzu. Planowanie (zasobnik, kolizje bloków,
+ * `dayTotal`) nadal czyta wyłącznie `WorkloadEntry` (inwariant 1).
+ */
+export function bookedHoursForPersonOnDate(state: AppData, personId: string, date: DateStr): number {
+  return hoursForPersonOnDate(state, personId, date) + personEventHoursOnDate(state, personId, date);
+}
+
 /** A person's total planned hours across every task and date. */
 export function personTotalHours(state: AppData, personId: string): number {
   return state.workload
@@ -600,6 +642,12 @@ export interface CalendarEventOccurrence {
   event: CalendarEvent;
   startMinutes: number;
   durationMinutes: number;
+  /**
+   * Czasy są OSOBISTE tej osoby (filtr JEDNEJ osoby + wpis w
+   * `event.personalTimes` na ten dzień) — różnią się od czasu wydarzenia,
+   * które widzą pozostali. Brak klucza = czas bazowy.
+   */
+  personalFor?: string;
 }
 
 const calendarEventsForDateCache = createKeyedCache<CalendarEventOccurrence[]>((state, key) => {
@@ -607,17 +655,39 @@ const calendarEventsForDateCache = createKeyedCache<CalendarEventOccurrence[]>((
   const out: CalendarEventOccurrence[] = [];
   const personFilter = personFilterFromKey(fk);
   const filterActive = personFilter.size > 0;
+  // Filtr JEDNEJ osoby = „kalendarz tej osoby": wystąpienie spotkania niesie
+  // wtedy jej OSOBISTY czas (`event.personalTimes`, 2026-09-15), jeśli go ma.
+  // Każda ścieżka per-osoba (kolizje, plan dnia, zajętość, godziny osoby)
+  // czyta przez ten filtr, więc osobisty czas wchodzi do nich automatycznie;
+  // filtr wielu osób / brak filtra widzi czas wydarzenia (to, co widzą wszyscy).
+  const solo = personFilter.size === 1 ? Array.from(personFilter)[0] : null;
+  const pushMeeting = (event: CalendarEvent, startMinutes: number, durationMinutes: number) => {
+    if (solo !== null) {
+      const personal = personalTimeFor(event, date, solo);
+      if (personal !== undefined) {
+        out.push({
+          event,
+          startMinutes: personal.startMinutes,
+          durationMinutes: personal.durationMinutes,
+          personalFor: solo,
+        });
+        return;
+      }
+    }
+    out.push({ event, startMinutes, durationMinutes });
+  };
   for (const event of state.events) {
     if (filterActive) {
       const companyWide = event.attendeeIds.length === 0;
       if (!companyWide && !event.attendeeIds.some((id) => personFilter.has(id))) continue;
     }
-    // Urlop rozwija się na CAŁY zakres dat (porównanie stringów yyyy-MM-dd jest
-    // porządkiem chronologicznym). Bez filtrowania po `workDays` — pokazujemy
-    // każdy dzień zakresu, także wolny. Wystąpienie niesie zapisane czasy:
-    // 0/1440 (pełna doba) albo okno godzinowe urlopu jednodniowego — kolizja
-    // w obu wariantach wychodzi z istniejących ścieżek interwałowych.
-    if (event.kind === 'urlop') {
+    // Urlop/nieobecność rozwija się na CAŁY zakres dat (porównanie stringów
+    // yyyy-MM-dd jest porządkiem chronologicznym). Bez filtrowania po
+    // `workDays` — pokazujemy każdy dzień zakresu, także wolny. Wystąpienie
+    // niesie zapisane czasy: 0/1440 (pełna doba) albo okno godzinowe
+    // jednodniowe — kolizja w obu wariantach wychodzi z istniejących ścieżek
+    // interwałowych. Osobisty czas nieobecności nie dotyczy.
+    if (isLeaveKind(event.kind)) {
       if (event.date <= date && date <= (event.endDate ?? event.date)) {
         out.push({
           event,
@@ -628,19 +698,11 @@ const calendarEventsForDateCache = createKeyedCache<CalendarEventOccurrence[]>((
       continue;
     }
     if (event.recurrence === undefined) {
-      if (event.date === date) {
-        out.push({
-          event,
-          startMinutes: event.startMinutes,
-          durationMinutes: event.durationMinutes,
-        });
-      }
+      if (event.date === date) pushMeeting(event, event.startMinutes, event.durationMinutes);
       continue;
     }
     const occurrences = expandOccurrences(event.recurrence, event.date, date, date);
-    for (const occ of occurrences) {
-      out.push({ event, startMinutes: occ.startMinutes, durationMinutes: occ.durationMinutes });
-    }
+    for (const occ of occurrences) pushMeeting(event, occ.startMinutes, occ.durationMinutes);
   }
   return out;
 });
@@ -667,31 +729,26 @@ const calendarDayVolumeCache = createKeyedCache<number>((state, key) => {
   const filterActive = personFilter.size > 0;
   let volume = dayTotalCache(state, key);
   for (const occ of calendarEventsForDateCache(state, key)) {
-    if (occ.event.kind === 'urlop') continue;
+    if (isLeaveKind(occ.event.kind)) continue;
     const attendees = occ.event.attendeeIds;
-    const heads =
+    // Osoby w zakresie: uczestnicy ∩ filtr (imienne) albo cały filtr / cały
+    // zespół (ogólnofirmowe). Każda wnosi SWÓJ czas: odmowa ('no') w TYM
+    // wystąpieniu = 0 (jak dotąd 'yes' i brak odpowiedzi liczą się), a
+    // osobisty czas osoby (2026-09-15) zastępuje czas wydarzenia — skrócone
+    // u siebie spotkanie liczy się jej krócej, reszcie bez zmian.
+    const scope: readonly string[] =
       attendees.length === 0
         ? filterActive
-          ? personFilter.size
-          : state.people.length
+          ? Array.from(personFilter)
+          : state.people.map((p) => p.id)
         : filterActive
-          ? attendees.filter((id) => personFilter.has(id)).length
-          : attendees.length;
-    // Odmowy ('no') w TYM wystąpieniu nie wnoszą godzin — liczymy tylko osoby,
-    // które weszły do `heads` (uczestnik/zespół ∩ filtr, gdy aktywny).
-    // 'yes' i brak odpowiedzi liczą się jak dotąd.
-    let absent = 0;
-    for (const a of occ.event.rsvps ?? []) {
-      if (a.date !== date || a.status !== 'no') continue;
-      const inScope =
-        attendees.length === 0
-          ? filterActive
-            ? personFilter.has(a.personId)
-            : state.people.some((p) => p.id === a.personId)
-          : attendees.includes(a.personId) && (!filterActive || personFilter.has(a.personId));
-      if (inScope) absent += 1;
+          ? attendees.filter((id) => personFilter.has(id))
+          : attendees;
+    for (const personId of scope) {
+      if (personAbsentFromEventOccurrence(occ.event, date, personId)) continue;
+      const personal = personalTimeFor(occ.event, date, personId);
+      volume += (personal === undefined ? occ.durationMinutes : personal.durationMinutes) / 60;
     }
-    volume += (occ.durationMinutes / 60) * Math.max(0, heads - absent);
   }
   for (const { task, occurrence } of recurrenceOccurrencesForDateCache(state, key)) {
     const assignees = assigneeIdsOfTask(state, task.id);
@@ -735,7 +792,7 @@ export function calendarDayVolume(
  */
 export function isFullDayVacation(event: CalendarEvent): boolean {
   return (
-    event.kind === 'urlop' && event.startMinutes === 0 && event.durationMinutes === DAY_MINUTES
+    isLeaveKind(event.kind) && event.startMinutes === 0 && event.durationMinutes === DAY_MINUTES
   );
 }
 
@@ -845,7 +902,7 @@ export function mergeCoversEventOrRecurrence(
 }
 
 /** Co dokładnie zajmuje czas osoby w kolidującym zakresie. */
-export type ScheduleConflictKind = 'block' | 'event' | 'urlop' | 'recurrence';
+export type ScheduleConflictKind = 'block' | 'event' | 'urlop' | 'nieobecnosc' | 'recurrence';
 
 /**
  * Jedna kolidująca pozycja. Nośnik KOMUNIKATU (kto, co, kiedy), nie decyzji —
@@ -924,7 +981,7 @@ export function scheduleConflictsForRange(
         continue;
       }
       out.push({
-        kind: occ.event.kind === 'urlop' ? 'urlop' : 'event',
+        kind: isLeaveKind(occ.event.kind) ? occ.event.kind : 'event',
         personId,
         personName,
         title: occ.event.title,
@@ -997,7 +1054,7 @@ export function eventDraftConflicts(
     startMinutes: number;
     durationMinutes: number;
     attendeeIds: readonly string[];
-    kind?: 'urlop';
+    kind?: LeaveKind;
     /** `null` (kształt draftu z modala) czyta się jak brak zakresu. */
     endDate?: DateStr | null;
     /** Reguła cykliczności draftu; `null`/brak = wydarzenie jednorazowe. */
@@ -1016,7 +1073,7 @@ export function eventDraftConflicts(
   // wymienić: „koliduje w tym i tym terminie z zadaniem tej osoby".
   // Ogólnofirmowe cykliczne liczy się po wszystkich osobach — jak dotąd próg
   // był i pozostaje wyłącznie ostrzegawczy.
-  if (draft.kind !== 'urlop' && draft.recurrence != null) {
+  if (!isLeaveKind(draft.kind) && draft.recurrence != null) {
     const companyWide = draft.attendeeIds.length === 0;
     const personIds = companyWide ? state.people.map((p) => p.id) : draft.attendeeIds;
     const horizonEnd = addDaysStr(draft.date, RECURRING_CONFLICT_HORIZON_DAYS);
@@ -1036,7 +1093,7 @@ export function eventDraftConflicts(
     return { blocking: [], warning };
   }
 
-  if (draft.kind === 'urlop') {
+  if (isLeaveKind(draft.kind)) {
     const warning: ScheduleConflict[] = [];
     const last = draft.endDate ?? draft.date;
     // Cap 92 dni (forma kanoniczna) ogranicza tę pętlę; strażnik `guard` chroni
@@ -1075,8 +1132,8 @@ export function eventDraftConflicts(
   // negocjacji z poziomu kalendarza (symetria z progiem zapisu urlopu, gdzie
   // kierunek „spotkanie w czyjś dzień urlopu" był i pozostaje blokujący).
   return {
-    blocking: conflicts.filter((c) => c.kind === 'urlop'),
-    warning: conflicts.filter((c) => c.kind !== 'urlop'),
+    blocking: conflicts.filter((c) => isLeaveKind(c.kind)),
+    warning: conflicts.filter((c) => !isLeaveKind(c.kind)),
   };
 }
 
@@ -1936,7 +1993,8 @@ export interface PersonDayAvailability {
   isWorkday: boolean;
   /** Hours the person can take on this date (0 on non-workdays). */
   availableHours: number;
-  /** Σ dated planned hours across ALL tasks (bin rows never match a real date). */
+  /** Σ dated planned hours across ALL tasks (bin rows never match a real date)
+   *  PLUS the person's meeting hours that day ({@link bookedHoursForPersonOnDate}). */
   bookedHours: number;
   /** Booked strictly beyond availability — including ANY booking on a 0h day. */
   overbooked: boolean;
@@ -1949,7 +2007,7 @@ export function dayAvailabilityForPerson(
   date: DateStr,
 ): PersonDayAvailability {
   const availableHours = availableHoursOnDate(state, personId, date);
-  const bookedHours = hoursForPersonOnDate(state, personId, date);
+  const bookedHours = bookedHoursForPersonOnDate(state, personId, date);
   return {
     date,
     isWorkday: isPersonWorkday(state, personId, date),

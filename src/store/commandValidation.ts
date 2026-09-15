@@ -4,6 +4,7 @@
 // dangling-reference and malformed-estimate commands before any activity row is
 // appended. Draft types come via a TYPE-ONLY import from AppStore so there is no
 // runtime import cycle (AppStore imports these functions at runtime).
+import { isLeaveKind } from '../utils/leave';
 import type {
   AppData,
   ClientContact,
@@ -14,6 +15,7 @@ import type {
   SavedFilterCriteria,
   TaskPriority,
   TaskRecurrence,
+  LeaveKind,
 } from '../types';
 import {
   isProjectDocumentKind,
@@ -364,8 +366,8 @@ export interface NormalizedEventDraft {
   durationMinutes: number;
   attendeeIds: string[];
   recurrence?: TaskRecurrence;
-  /** Obecne WYŁĄCZNIE dla urlopu (dyskryminator D1). */
-  kind?: 'urlop';
+  /** Obecne WYŁĄCZNIE dla urlopu/nieobecności (dyskryminator D1). */
+  kind?: LeaveKind;
   /** Obecne WYŁĄCZNIE dla urlopu dłuższego niż jeden dzień. */
   endDate?: string;
 }
@@ -393,7 +395,7 @@ export function normalizeEventDraft(
   state: AppData,
   draft: EventDraft,
 ): NormalizedEventDraft | null {
-  const isVacation = draft.kind === 'urlop';
+  const isVacation = isLeaveKind(draft.kind);
   if (draft.kind !== undefined && draft.kind !== null && !isVacation) return null;
 
   const title = draft.title.trim();
@@ -472,7 +474,7 @@ export function normalizeEventDraft(
     durationMinutes,
     attendeeIds,
     ...(recurrence ? { recurrence } : {}),
-    ...(isVacation ? { kind: 'urlop' as const } : {}),
+    ...(isVacation ? { kind: draft.kind as LeaveKind } : {}),
     ...(endDate !== undefined ? { endDate } : {}),
   };
 }

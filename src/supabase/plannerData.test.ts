@@ -1114,3 +1114,50 @@ describe('createSupabaseContentPlanDb — adapter schematu', () => {
     expect(tables).toEqual(['brands']);
   });
 });
+
+describe('events.personal_times — hydracja osobistych czasów wystąpień (20260915120000)', () => {
+  const row = (over: Record<string, unknown> = {}) => ({
+    id: uuid('ev-pt'),
+    title: 'Status',
+    description: '',
+    location: '',
+    meeting_url: '',
+    event_date: '2026-07-06',
+    start_minutes: 600,
+    duration_minutes: 60,
+    attendee_ids: [CLOUD_PA],
+    recurrence: { daysOfWeek: [1, 3], startMinutes: 600, durationMinutes: 60 },
+    kind: 'meeting',
+    end_date: null,
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-02-01T00:00:00.000Z',
+    ...over,
+  });
+
+  it('mapuje personId profilu na osobę i kanonikalizuje (dzień reguły, uczestnik, czas różny od bazowego)', async () => {
+    const db = new FakeSelectDb().seed('events', [
+      row({
+        personal_times: [
+          { date: '2026-07-08', personId: CLOUD_PA, startMinutes: 600, durationMinutes: 15 },
+          { date: '2026-07-08', personId: CLOUD_PA, startMinutes: 600, durationMinutes: 60 }, // duplikat, i tak = bazowy
+          { date: '2026-07-07', personId: CLOUD_PA, startMinutes: 600, durationMinutes: 15 }, // wtorek poza regułą
+          { date: '2026-07-08', personId: 'nie-profil', startMinutes: 600, durationMinutes: 15 },
+        ],
+      }),
+    ]);
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.payload.events![0].personalTimes).toEqual([
+      { date: '2026-07-08', personId: PA, startMinutes: 600, durationMinutes: 15 },
+    ]);
+  });
+
+  it('brak kolumny (baza sprzed migracji) albo pusta lista = brak klucza', async () => {
+    const db = new FakeSelectDb().seed('events', [row(), row({ id: uuid('ev-pt2'), personal_times: [] })]);
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.payload.events!.every((e) => !('personalTimes' in e))).toBe(true);
+  });
+});
