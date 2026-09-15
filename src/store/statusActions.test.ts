@@ -270,3 +270,76 @@ describe('SET_TASK_STATUS', () => {
     expect(reducer(state, { type: 'SET_TASK_STATUS', taskId: 't1', statusId: 'ghost' })).toBe(state);
   });
 });
+
+describe('COMPLETE_TASK (szybkie ukończenie z menu bloku)', () => {
+  const bin = (id: string, taskId: string, personId: string, plannedHours: number) => ({
+    id,
+    taskId,
+    personId,
+    date: '',
+    plannedHours,
+    startMinutes: 0,
+    sortIndex: 0,
+  });
+  const block = (id: string, taskId: string, personId: string, done?: boolean) => ({
+    id,
+    taskId,
+    personId,
+    date: '2026-09-15',
+    plannedHours: 2,
+    startMinutes: 540,
+    sortIndex: 0,
+    ...(done === true ? { done: true } : {}),
+  });
+
+  it('przełącza zadanie na pierwszy AKTYWNY status isDone, kasuje zasobnik zadania, zostawia bloki datowane i dopisuje jeden wpis dziennika', () => {
+    const open = makeStatus({ id: 'open', order: 0 });
+    const doneArchived = makeStatus({ id: 'done-old', order: 1, isDone: true, archived: true });
+    const done = makeStatus({ id: 'done', order: 2, isDone: true });
+    const task = makeTask({ id: 't1', statusId: 'open', updatedAt: '2020-01-01T00:00:00.000Z' });
+    const other = makeTask({ id: 't2', statusId: 'open' });
+    const state = makeState({
+      statuses: [open, doneArchived, done],
+      tasks: [task, other],
+      workload: [bin('b1', 't1', 'p1', 3), block('d1', 't1', 'p1'), bin('b2', 't2', 'p1', 1)],
+    });
+
+    const next = reducer(state, { type: 'COMPLETE_TASK', taskId: 't1' });
+
+    expect(next).not.toBe(state);
+    const closed = next.tasks.find((t) => t.id === 't1')!;
+    expect(closed.statusId).toBe('done');
+    expect(closed.updatedAt).not.toBe('2020-01-01T00:00:00.000Z');
+    expect(next.workload.map((w) => w.id)).toEqual(['d1', 'b2']);
+    expect(next.workload.find((w) => w.id === 'd1')!.done).toBeUndefined();
+    expect(next.activity.length).toBe(state.activity.length + 1);
+    expect(next.activity[next.activity.length - 1].message).toContain('3h');
+  });
+
+  it('bez zasobnika zmienia tylko status (tablica workload zachowuje referencję)', () => {
+    const open = makeStatus({ id: 'open', order: 0 });
+    const done = makeStatus({ id: 'done', order: 1, isDone: true });
+    const state = makeState({
+      statuses: [open, done],
+      tasks: [makeTask({ id: 't1', statusId: 'open' })],
+      workload: [block('d1', 't1', 'p1', true)],
+    });
+    const next = reducer(state, { type: 'COMPLETE_TASK', taskId: 't1' });
+    expect(next.tasks[0].statusId).toBe('done');
+    expect(next.workload).toBe(state.workload);
+  });
+
+  it('odrzuca nieznane zadanie, zadanie już zamknięte i stan bez statusu isDone tą samą referencją', () => {
+    const open = makeStatus({ id: 'open', order: 0 });
+    const done = makeStatus({ id: 'done', order: 1, isDone: true });
+    const withDone = makeState({
+      statuses: [open, done],
+      tasks: [makeTask({ id: 't1', statusId: 'done' })],
+      workload: [bin('b1', 't1', 'p1', 1)],
+    });
+    expect(reducer(withDone, { type: 'COMPLETE_TASK', taskId: 't1' })).toBe(withDone);
+    expect(reducer(withDone, { type: 'COMPLETE_TASK', taskId: 'ghost' })).toBe(withDone);
+    const noDone = makeState({ statuses: [open], tasks: [makeTask({ id: 't1', statusId: 'open' })] });
+    expect(reducer(noDone, { type: 'COMPLETE_TASK', taskId: 't1' })).toBe(noDone);
+  });
+});

@@ -352,6 +352,10 @@ export type Action =
   | { type: 'MOVE_TASK'; taskId: string; dayDelta: number }
   | { type: 'SET_TASK_DATES'; taskId: string; startDate: string; endDate: string }
   | { type: 'SET_TASK_STATUS'; taskId: string; statusId: string }
+  // Szybkie zamknięcie zadania z menu bloku (zgłoszenie „Możliwość szybszego
+  // zamknięcia zadania", 2026-09-15): pierwszy status `isDone` + zasobnik
+  // zadania znika. Bloki datowane i wpisy czasu zostają.
+  | { type: 'COMPLETE_TASK'; taskId: string }
   | { type: 'SET_BLOCK_DONE'; entryId: string; done: boolean }
   | { type: 'REORDER_PROJECT_TASK'; taskId: string; direction: -1 | 1 }
   // Cykliczność zadania: reguła (create / „edytuj wszystkie” / clear) i per-datowy
@@ -4609,6 +4613,44 @@ export function reducer(state: AppData, action: Action): AppData {
           'task',
           action.taskId,
           `przeniósł/przeniosła zadanie do statusu „${status?.name ?? '?'}”`,
+        ),
+      };
+    }
+    case 'COMPLETE_TASK': {
+      // Świadome „ukończ zadanie" (prawy klik na bloku, po potwierdzeniu):
+      // przeciwieństwo `autoCompleteTask`, które ODMAWIA zamknięcia, dopóki coś
+      // zostaje do zrobienia. Tu zostaje nic: status przechodzi na pierwszy
+      // aktywny `isDone`, wiersze ZASOBNIKA zadania (u wszystkich osób) są
+      // odrzucane — sprzedane godziny (`estimatedHours`) to kontrakt i nie
+      // ruszamy ich, a bloki datowane zostają w kalendarzu (done-status
+      // podświetla je przez `blockIsDone`); wpisy czasu nietknięte. Zadanie
+      // nieznane, już zamknięte albo brak statusu `isDone` => TA SAMA
+      // referencja (inwariant 6). Serii cyklicznej dotyczy tak samo jak
+      // „Oznacz całą serię jako zrobioną" (SET_TASK_STATUS).
+      const task = state.tasks.find((t) => t.id === action.taskId);
+      if (task === undefined || isDoneStatus(state, task.statusId)) return state;
+      const doneStatus =
+        activeStatuses(state).find((st) => st.isDone) ?? state.statuses.find((st) => st.isDone);
+      if (doneStatus === undefined) return state;
+      let droppedBinHours = 0;
+      const workload = state.workload.filter((w) => {
+        if (w.taskId !== task.id || !isBinEntry(w)) return true;
+        droppedBinHours += w.plannedHours;
+        return false;
+      });
+      const dropped =
+        droppedBinHours > 0 ? `, odrzucono ${formatDuration(droppedBinHours)} z zasobnika` : '';
+      return {
+        ...state,
+        tasks: state.tasks.map((t) =>
+          t.id === task.id ? { ...t, statusId: doneStatus.id, updatedAt: nowIso() } : t,
+        ),
+        ...(workload.length !== state.workload.length ? { workload } : {}),
+        activity: withActivity(
+          state,
+          'task',
+          task.id,
+          `ukończył(a) zadanie: status „${doneStatus.name}”${dropped}`,
         ),
       };
     }

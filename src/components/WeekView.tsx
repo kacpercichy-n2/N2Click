@@ -59,6 +59,7 @@ import {
   getPerson,
   getProject,
   getTask,
+  activeStatuses,
   growAllowanceHours,
   hoursForPersonOnDate,
   isDoneStatus,
@@ -88,6 +89,7 @@ import { useNowTick } from '../utils/useNowTick';
 import { OverlayLayer, useOverlay } from './useOverlay';
 import { Tooltip } from './Tooltip';
 import { useConfirm } from './ConfirmProvider';
+import { polishCount } from '../utils/polishPlural';
 import type { OverlayRect } from './overlayShell';
 import {
   DAY_MINUTES,
@@ -3038,6 +3040,8 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
   const { openTask, openNewTask } = useOpenTask();
   const { openEvent, openNewEvent } = useOpenEvent();
   const dispatch = useDispatch();
+  // Odczyt ŻYWEGO stanu w handlerach po `await` (dialogi) — nigdy w renderze.
+  const { getState } = useStoreApi();
   const confirm = useConfirm();
   const can = useCan();
   const canEditAny = can('blocks.editAny');
@@ -3597,6 +3601,60 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
     const live = state.workload.find((w) => w.id === menu.entry.id);
     dispatch({ type: 'SET_BLOCK_DONE', entryId: menu.entry.id, done: live?.done !== true });
     setMenu(null);
+  };
+
+  // „Oznacz zadanie jako ukończone" (zgłoszenie „Możliwość szybszego zamknięcia
+  // zadania", 2026-09-15): jedno potwierdzenie i zadanie dostaje status „gotowe"
+  // bez wracania do zasobnika i przepisywania godzin — COMPLETE_TASK odrzuca
+  // resztę zasobnika, bloki w kalendarzu zostają. Menu zamykamy PRZED `await`
+  // (nakładka nie może przeżyć pytania, inwariant 7), a skutki liczymy z ŻYWEGO
+  // stanu w chwili pytania, żeby dialog nie kłamał o godzinach.
+  const doCompleteTask = async () => {
+    if (!menu) return;
+    const taskId = menu.entry.taskId;
+    setMenu(null);
+    const live = getState();
+    const task = getTask(live, taskId);
+    if (task === undefined || isDoneStatus(live, task.statusId)) return;
+    const doneStatus =
+      activeStatuses(live).find((st) => st.isDone) ?? live.statuses.find((st) => st.isDone);
+    if (doneStatus === undefined) {
+      announce('Nie ma statusu „gotowe” — zadania nie da się ukończyć.');
+      return;
+    }
+    let binHours = 0;
+    let openBlocks = 0;
+    for (const w of live.workload) {
+      if (w.taskId !== taskId) continue;
+      if (isBinEntry(w)) binHours += w.plannedHours;
+      else if (w.done !== true) openBlocks += 1;
+    }
+    const consequences = [
+      binHours > 0
+        ? `Niezaplanowane ${formatDuration(binHours)} z zasobnika zostaną odrzucone.`
+        : '',
+      openBlocks > 0
+        ? `${openBlocks} ${polishCount(openBlocks, 'blok w kalendarzu zostaje', 'bloki w kalendarzu zostają', 'bloków w kalendarzu zostaje')} i liczy się jako wykonane.`
+        : '',
+    ]
+      .filter((part) => part !== '')
+      .join(' ');
+    const title = taskDisplayTitle(live, task);
+    const accepted = await confirm({
+      title: `Ukończyć zadanie „${title}”?`,
+      description: `Status zmieni się na „${doneStatus.name}”. System uzna zadanie za zakończone i w pełni wykonane.`,
+      ...(consequences !== '' ? { consequences } : {}),
+      confirmLabel: 'Ukończ zadanie',
+      cancelLabel: 'Anuluj',
+    });
+    if (!accepted) return;
+    const before = getState();
+    dispatch({ type: 'COMPLETE_TASK', taskId });
+    announce(
+      getState() === before
+        ? `Nie udało się ukończyć zadania „${title}” — jest już zamknięte albo zniknęło.`
+        : `Ukończono zadanie „${title}”: status „${doneStatus.name}”.`,
+    );
   };
 
   const doDelete = async () => {
@@ -4406,14 +4464,28 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                       Zadanie ma status „gotowe” — wszystkie bloki są wykonane.
                     </div>
                   ) : (
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="context-menu-item"
-                      onClick={doToggleDone}
-                    >
-                      {menuEntryDone ? 'Odznacz „wykonane”' : '✓ Oznacz jako wykonane'}
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="context-menu-item"
+                        onClick={doToggleDone}
+                      >
+                        {menuEntryDone ? 'Odznacz „wykonane”' : '✓ Oznacz jako wykonane'}
+                      </button>
+                      {/* Szybkie zamknięcie CAŁEGO zadania (status „gotowe") po
+                          potwierdzeniu — bez wracania do zasobnika. */}
+                      {(canManageTasks || menu.entry.personId === state.currentUserId) && (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="context-menu-item"
+                          onClick={() => void doCompleteTask()}
+                        >
+                          ✓✓ Oznacz zadanie jako ukończone…
+                        </button>
+                      )}
+                    </>
                   )}
                 </>
               )}

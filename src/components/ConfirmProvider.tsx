@@ -30,6 +30,7 @@ import {
   type ConfirmEntry,
   type ConfirmOptions,
   type ConfirmQueueState,
+  type ConfirmResult,
 } from './confirmDialog';
 import { useModalShell } from './useModalShell';
 
@@ -38,7 +39,13 @@ export type { ConfirmOptions, ConfirmTone } from './confirmDialog';
 /** `await confirm({...})` → `true` (potwierdzone) albo `false` (anulowane). */
 export type ConfirmFn = (options: ConfirmOptions) => Promise<boolean>;
 
+/** Odpowiedź z trzema wyjściami: `'confirm'`, `'alt'` (trzeci przycisk
+ *  `altLabel`) albo `'cancel'` (Anuluj, Escape, tło, przerwany sygnał). */
+export type ConfirmChoice = 'confirm' | 'alt' | 'cancel';
+export type ConfirmChoiceFn = (options: ConfirmOptions) => Promise<ConfirmChoice>;
+
 const ConfirmContext = createContext<ConfirmFn | null>(null);
+const ConfirmChoiceContext = createContext<ConfirmChoiceFn | null>(null);
 
 /**
  * Hook konsumenta. Rzuca poza dostawcą — dokładnie jak `useStore`; dostawca
@@ -51,6 +58,17 @@ export function useConfirm(): ConfirmFn {
   return ctx;
 }
 
+/**
+ * Wariant z TRZECIM przyciskiem (`altLabel`): ten sam dialog, ta sama kolejka,
+ * tylko odpowiedź rozróżnia obie ścieżki zatwierdzenia. Bez `altLabel` zachowuje
+ * się jak `useConfirm()` (nigdy nie zwraca `'alt'`).
+ */
+export function useConfirmChoice(): ConfirmChoiceFn {
+  const ctx = useContext(ConfirmChoiceContext);
+  if (ctx === null) throw new Error('useConfirmChoice must be used within ConfirmProvider');
+  return ctx;
+}
+
 export function ConfirmProvider({ children }: { children: ReactNode }) {
   // Kolejka żyje w REFIE, bo rozstrzygnięcie obietnicy jest efektem ubocznym i
   // nie może siedzieć w funkcji aktualizującej stan (StrictMode woła ją dwa
@@ -60,7 +78,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   const abortCleanupRef = useRef(new Map<number, () => void>());
   const [, forceRender] = useReducer((n: number) => n + 1, 0);
 
-  const settle = useCallback((id: number, result: boolean) => {
+  const settle = useCallback((id: number, result: ConfirmResult) => {
     const { state, resolved } = resolveConfirm(queueRef.current, id);
     // Nieznane `id` = już rozstrzygnięte (podwójny klik, spóźniony handler).
     if (resolved === null) return;
@@ -71,9 +89,9 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
     resolved.resolve(result);
   }, []);
 
-  const confirm = useCallback<ConfirmFn>(
-    (options) =>
-      new Promise<boolean>((resolve) => {
+  const ask = useCallback(
+    (options: ConfirmOptions) =>
+      new Promise<ConfirmResult>((resolve) => {
         const { signal } = options;
         if (signal?.aborted) {
           resolve(false);
@@ -97,6 +115,13 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
       }),
     [settle],
   );
+  // Boolean dla dotychczasowych wołających: trzeci przycisk bez `useConfirmChoice`
+  // nie ma jak dojechać, więc liczy się jak anulowanie (nigdy jak zgoda).
+  const confirm = useCallback<ConfirmFn>((options) => ask(options).then((r) => r === true), [ask]);
+  const choose = useCallback<ConfirmChoiceFn>(
+    (options) => ask(options).then((r) => (r === 'alt' ? 'alt' : r ? 'confirm' : 'cancel')),
+    [ask],
+  );
 
   // Odmontowanie dostawcy nie może zostawić wiszącego `await confirm(...)`.
   useEffect(
@@ -114,15 +139,17 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
 
   return (
     <ConfirmContext.Provider value={confirm}>
-      {children}
-      {entry !== null && <ConfirmDialog key={entry.id} entry={entry} onSettle={settle} />}
+      <ConfirmChoiceContext.Provider value={choose}>
+        {children}
+        {entry !== null && <ConfirmDialog key={entry.id} entry={entry} onSettle={settle} />}
+      </ConfirmChoiceContext.Provider>
     </ConfirmContext.Provider>
   );
 }
 
 interface DialogProps {
   entry: ConfirmEntry;
-  onSettle: (id: number, result: boolean) => void;
+  onSettle: (id: number, result: ConfirmResult) => void;
 }
 
 /**
@@ -143,6 +170,10 @@ function ConfirmDialog({ entry, onSettle }: DialogProps) {
   const accept = useCallback(() => {
     if (confirmIsBlocked(options, acknowledged)) return;
     onSettle(id, true);
+  }, [id, onSettle, options, acknowledged]);
+  const acceptAlt = useCallback(() => {
+    if (confirmIsBlocked(options, acknowledged)) return;
+    onSettle(id, 'alt');
   }, [id, onSettle, options, acknowledged]);
 
   const description = options.description ?? '';
@@ -200,6 +231,11 @@ function ConfirmDialog({ entry, onSettle }: DialogProps) {
             <button type="button" className="btn ghost" data-autofocus onClick={cancel}>
               {options.cancelLabel ?? DEFAULT_CANCEL_LABEL}
             </button>
+            {options.altLabel !== undefined && options.altLabel !== '' && (
+              <button type="button" className="btn" onClick={acceptAlt} disabled={blocked}>
+                {options.altLabel}
+              </button>
+            )}
             <button
               type="button"
               className={danger ? 'btn danger' : 'btn primary'}

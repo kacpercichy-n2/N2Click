@@ -32,7 +32,17 @@ export interface ConfirmOptions {
   ackLabel?: string;
   /** Anulowanie po stronie wołającego zamyka pytanie i rozstrzyga je jak „Anuluj”. */
   signal?: AbortSignal;
+  /**
+   * DRUGA ścieżka zatwierdzenia (opcjonalny trzeci przycisk między „Anuluj” a
+   * potwierdzeniem). Widoczna wyłącznie dla `useConfirmChoice()`: zwykłe
+   * `useConfirm()` rozstrzyga ją jak anulowanie, bo boolean nie ma jak
+   * przenieść trzeciej odpowiedzi. Użycie: „Tylko u mnie” | „Dla wszystkich”.
+   */
+  altLabel?: string;
 }
+
+/** Rozstrzygnięcie pytania: `true`/`false` jak dotąd, `'alt'` = trzeci przycisk. */
+export type ConfirmResult = boolean | 'alt';
 
 export const DEFAULT_CONFIRM_LABEL = 'Potwierdź';
 export const DEFAULT_CANCEL_LABEL = 'Anuluj';
@@ -117,7 +127,7 @@ export function buildDeleteConsequence(counts: ConfirmConsequences): string {
 export interface ConfirmEntry {
   id: number;
   options: ConfirmOptions;
-  resolve: (result: boolean) => void;
+  resolve: (result: ConfirmResult) => void;
 }
 
 export interface ConfirmQueueState {
@@ -142,7 +152,7 @@ export function activeConfirm(state: ConfirmQueueState): ConfirmEntry | null {
 export function enqueueConfirm(
   state: ConfirmQueueState,
   options: ConfirmOptions,
-  resolve: (result: boolean) => void,
+  resolve: (result: ConfirmResult) => void,
 ): ConfirmQueueState {
   return {
     entries: [...state.entries, { id: state.nextId, options, resolve }],
