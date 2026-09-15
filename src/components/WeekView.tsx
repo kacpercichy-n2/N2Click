@@ -17,12 +17,14 @@ import {
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { AnimatePresence, m } from 'motion/react';
-import type { AppData, Person, Project, Task, WorkloadEntry } from '../types';
+import type { AppData, CalendarEvent, LeaveKind, Person, Project, Task, WorkloadEntry } from '../types';
 import { useDispatch, useStoreApi } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import { useOpenTask } from './TaskModal';
 import { useOpenEvent } from './EventModal';
-import { Hourglass, TreePalm } from './icons';
+import { Hourglass, TreePalm, UserX } from './icons';
+import { baseOccurrenceTimes, personMayPersonalize, personalTimeFor } from '../utils/eventPersonalTime';
+import { isLeaveKind, leaveLabel } from '../utils/leave';
 import { useGoogleCalendar } from '../gcal/GoogleCalendarProvider';
 import { GoogleEventDialog } from '../gcal/GoogleEventDialog';
 import type { GoogleEventOccurrence } from '../gcal/types';
@@ -59,11 +61,12 @@ import {
   getPerson,
   getProject,
   getTask,
+  activeStatuses,
+  scheduleConflictsForRange,
   growAllowanceHours,
   hoursForPersonOnDate,
   isDoneStatus,
   occurrenceIsDone,
-  personAbsentFromEventOccurrence,
   personCapacity,
   personRsvpForEventOccurrence,
   isFullDayVacation,
@@ -87,7 +90,8 @@ import {
 import { useNowTick } from '../utils/useNowTick';
 import { OverlayLayer, useOverlay } from './useOverlay';
 import { Tooltip } from './Tooltip';
-import { useConfirm } from './ConfirmProvider';
+import { useConfirm, useConfirmChoice } from './ConfirmProvider';
+import { polishCount } from '../utils/polishPlural';
 import type { OverlayRect } from './overlayShell';
 import {
   DAY_MINUTES,
@@ -131,8 +135,12 @@ import {
   type BlockKeyboardState,
 } from './calendarBlockKeyboard';
 import {
+  EVENT_DRAG_PERSONAL_LEAVE,
+  EVENT_DRAG_PERSONAL_ONLY_DAY,
   EVENT_DRAG_REDUCER_REJECT,
   EVENT_DRAG_REVOKED,
+  eventPersonalAppliedAnnouncement,
+  type EventDragScope,
   eventBlockAriaLabel,
   eventCancelAnnouncement,
   eventAppliedAnnouncement,
@@ -358,8 +366,8 @@ function dropRejectReason(
       b.companyWide !== true &&
       rangesOverlap(start, end, b.start, b.end),
   );
-  const urlop = hits.find((b) => b.kind === 'urlop');
-  if (urlop) return `${personName} ma w tym dniu urlop.`;
+  const leave = hits.find((b) => b.kind === 'urlop' || b.kind === 'nieobecnosc');
+  if (leave) return `${personName} ma w tym dniu ${leave.kind === 'nieobecnosc' ? 'nieobecność' : 'urlop'}.`;
   if (hits.length > 0) {
     return hits[0].title
       ? `Koliduje ze spotkaniem „${hits[0].title}”.`
@@ -2260,8 +2268,16 @@ interface EventBlockProps {
   /** Wyrenderowane kolumny dnia — źródło szerokości kolumny i celu poziomego. */
   days: string[];
   gridRef: React.RefObject<HTMLDivElement | null>;
-  /** `events.manage`. Bez niego kafelek zostaje dokładnie taki, jak dotąd. */
+  /** Jakakolwiek edycja gestem/klawiaturą (globalna albo osobista). Bez niej
+   *  kafelek zostaje dokładnie taki, jak dotąd. */
   editable: boolean;
+  /** `events.manage` (bez maski): zmiana DLA WSZYSTKICH przez SAVE_EVENT. */
+  globalAllowed: boolean;
+  /** Oglądający jest uczestnikiem (albo spotkanie ogólnofirmowe): zmiana
+   *  TYLKO U SIEBIE przez SET_EVENT_PERSONAL_TIME (2026-09-15). */
+  personalAllowed: boolean;
+  /** Działający użytkownik ('' = brak sesji). */
+  viewerId: string;
   /** Region `aria-live` rodzica — jedyny kanał dla czytnika ekranu. */
   announce: (message: string) => void;
   /** Obserwator „trwa przeciąganie" (arkusz zasobnika w widoku dnia + Escape). */
@@ -2291,6 +2307,9 @@ function EventBlockImpl({
   days,
   gridRef,
   editable,
+  globalAllowed,
+  personalAllowed,
+  viewerId,
   announce,
   onDragActiveChange,
 }: EventBlockProps) {
@@ -2298,9 +2317,9 @@ function EventBlockImpl({
   // Odczyty W CZASIE ZDARZENIA (żywe wydarzenie przy budowie draftu, kolizje) —
   // nigdy w renderze, więc kafelek nie przerysowuje się po cudzej akcji.
   const { getState } = useStoreApi();
-  const confirm = useConfirm();
+  const choose = useConfirmChoice();
 
-  const isVacation = occ.event.kind === 'urlop';
+  const isVacation = isLeaveKind(occ.event.kind);
   const recurring = occ.event.recurrence !== undefined;
   // Urlop nigdy nie jedzie za wskaźnikiem (patrz nagłówek).
   const canDrag = editable && !isVacation;
@@ -2308,6 +2327,13 @@ function EventBlockImpl({
   // `canDrag` z renderu, w którym gest albo dialog wystartował.
   const canDragRef = useRef(canDrag);
   canDragRef.current = canDrag;
+  // Zasięg wybrany w dialogu sprawdzamy po `await` na ŚWIEŻYCH bramkach:
+  // utrata `events.manage` w trakcie pytania nie może przepuścić zmiany dla
+  // wszystkich (a utrata udziału — zmiany osobistej).
+  const globalAllowedRef = useRef(globalAllowed);
+  globalAllowedRef.current = globalAllowed;
+  const personalAllowedRef = useRef(personalAllowed);
+  personalAllowedRef.current = personalAllowed;
 
   // Zapisana pozycja WYSTĄPIENIA — punkt odniesienia każdej projekcji.
   const base: EventDragBase = {
@@ -2497,7 +2523,7 @@ function EventBlockImpl({
       const liveState = getState();
       const live = liveState.events.find((e) => e.id === eventId);
       // Wydarzenie zniknęło w tle (usunięcie, odświeżenie) — nie ma czego zapisać.
-      if (live === undefined || live.kind === 'urlop') {
+      if (live === undefined || isLeaveKind(live.kind)) {
         const reason = 'Wydarzenie już nie istnieje.';
         if (at) showReject(at.x, at.y, reason);
         announce(eventRejectedAnnouncement(reason));
@@ -2518,6 +2544,37 @@ function EventBlockImpl({
         durationMinutes: base.durationMinutes,
       };
       const liveRecurring = live.recurrence !== undefined;
+      // ZASIĘG (2026-09-15, zgłoszenie „Brak możliwości edycji czasu
+      // pojedynczego spotkania"): osobista zmiana tylko w TYM SAMYM dniu i tylko
+      // dla uczestnika (przy ogólnofirmowym: każdego); globalna wymaga
+      // `events.manage`. Oba naraz = dialog z dwoma wyjściami, przycisk główny
+      // to „tylko u mnie" (decyzja Kacpra 2026-09-15).
+      const sameDay = to.date === occDate;
+      let personalOk =
+        personalAllowed && viewerId !== '' && sameDay && personMayPersonalize(live, viewerId);
+      // Kolizje OSOBISTEGO czasu z własnym planem: nieobecność (urlop /
+      // nieobecność) BLOKUJE ścieżkę osobistą (lustro straży reduktora), reszta
+      // to tylko informacja w oknie.
+      const personalConflicts = personalOk
+        ? scheduleConflictsForRange(getState(), [viewerId], occDate, to.startMinutes, to.durationMinutes, {
+            excludeEventId: eventId,
+          })
+        : [];
+      const personalLeave = personalConflicts.find((c) => c.kind === 'urlop' || c.kind === 'nieobecnosc');
+      if (personalLeave !== undefined) personalOk = false;
+      const globalOk = globalAllowed;
+      if (!personalOk && !globalOk) {
+        const reason =
+          personalLeave !== undefined
+            ? EVENT_DRAG_PERSONAL_LEAVE
+            : personalAllowed && !sameDay
+              ? EVENT_DRAG_PERSONAL_ONLY_DAY
+              : EVENT_DRAG_REVOKED;
+        if (at) showReject(at.x, at.y, reason);
+        announce(eventRejectedAnnouncement(reason));
+        return;
+      }
+      let scope: EventDragScope = personalOk && globalOk ? 'choice' : personalOk ? 'personal' : 'global';
       const draftLike = {
         // Pionowa edycja WYSTĄPIENIA nie może przenieść kotwicy serii do
         // aktualnie oglądanego tygodnia. Dla jednorazowego data idzie z kolumny.
@@ -2535,13 +2592,24 @@ function EventBlockImpl({
             }
           : null,
       };
-      const report = eventDraftConflicts(getState(), draftLike, eventId);
+      const report = globalOk
+        ? eventDraftConflicts(getState(), draftLike, eventId)
+        : { blocking: [], warning: [] };
       if (report.blocking.length > 0) {
-        const reason = eventConflictBlockingMessage(report.blocking);
-        if (at) showReject(at.x, at.y, reason);
-        announce(eventRejectedAnnouncement(reason));
-        return;
+        // Zmiana globalna niemożliwa (urlop uczestnika): zostaje wyłącznie
+        // ścieżka osobista, a bez niej odbicie z powodem jak dotąd.
+        if (!personalOk) {
+          const reason = eventConflictBlockingMessage(report.blocking);
+          if (at) showReject(at.x, at.y, reason);
+          announce(eventRejectedAnnouncement(reason));
+          return;
+        }
+        scope = 'personal';
       }
+      const personalConflictSentence =
+        !personalOk || personalConflicts.length === 0
+          ? ''
+          : `U Ciebie koliduje: ${eventConflictConfirmMessage(personalConflicts)}`;
       // Kolizje NIEBLOKUJĄCE wchodzą JEDNYM zdaniem do TEGO SAMEGO okna — drugi
       // dialog nad dialogiem byłby karą za przeciągnięcie kafelka.
       const conflictSentence =
@@ -2556,13 +2624,15 @@ function EventBlockImpl({
       setPending({ ...proj, colWidth });
       confirmController = new AbortController();
       confirmAbortRef.current = confirmController;
-      const accepted = await confirm({
+      const choice = await choose({
         ...eventDragConfirmCopy({
           title: displayTitle,
           from: fromMoment,
           to,
           recurring: liveRecurring,
           conflictSentence,
+          scope,
+          personalConflictSentence,
         }),
         signal: confirmController.signal,
       });
@@ -2572,12 +2642,50 @@ function EventBlockImpl({
       // akceptację, która zdążyła rozstrzygnąć się przed efektem Reacta.
       if (!mountedRef.current) return;
       setPending(null);
-      if (!accepted) {
+      if (choice === 'cancel') {
         announce(
           canDragRef.current
             ? eventCancelAnnouncement(displayTitle)
             : eventRejectedAnnouncement(EVENT_DRAG_REVOKED),
         );
+        return;
+      }
+      // Wybrany zasięg kontra ŚWIEŻE bramki (uprawnienie mogło zniknąć w trakcie
+      // pytania): globalny wymaga `events.manage`, osobisty — udziału.
+      const wantsGlobal = choice === 'alt' || scope === 'global';
+      if (wantsGlobal ? !globalAllowedRef.current : !personalAllowedRef.current) {
+        if (at) showReject(at.x, at.y, EVENT_DRAG_REVOKED);
+        announce(eventRejectedAnnouncement(EVENT_DRAG_REVOKED));
+        return;
+      }
+      // ŚCIEŻKA OSOBISTA: jedna akcja SET_EVENT_PERSONAL_TIME na (dzień, osoba);
+      // odmowa reduktora = ta sama referencja (inwariant 6), kafelek wraca.
+      if (!wantsGlobal) {
+        const beforePersonal = getState();
+        const livePersonal = beforePersonal.events.find((e) => e.id === eventId);
+        if (
+          livePersonal === undefined ||
+          isLeaveKind(livePersonal.kind) ||
+          !canDragRef.current ||
+          isEventContentMasked(beforePersonal, livePersonal)
+        ) {
+          if (at) showReject(at.x, at.y, EVENT_DRAG_REVOKED);
+          announce(eventRejectedAnnouncement(EVENT_DRAG_REVOKED));
+          return;
+        }
+        dispatch({
+          type: 'SET_EVENT_PERSONAL_TIME',
+          eventId,
+          date: occDate,
+          personId: viewerId,
+          time: { startMinutes: to.startMinutes, durationMinutes: to.durationMinutes },
+        });
+        if (getState() === beforePersonal) {
+          if (at) showReject(at.x, at.y, EVENT_DRAG_REDUCER_REJECT);
+          announce(eventRejectedAnnouncement(EVENT_DRAG_REDUCER_REJECT));
+          return;
+        }
+        announce(eventPersonalAppliedAnnouncement(displayTitle, to));
         return;
       }
 
@@ -2586,7 +2694,7 @@ function EventBlockImpl({
       // zapisaną flagę; `recurrence`/`rsvps` re-kanonikalizuje reduktor.
       const postConfirmState = getState();
       const current = postConfirmState.events.find((e) => e.id === eventId);
-      if (current === undefined || current.kind === 'urlop') {
+      if (current === undefined || isLeaveKind(current.kind)) {
         const reason = 'Wydarzenie już nie istnieje.';
         if (at) showReject(at.x, at.y, reason);
         announce(eventRejectedAnnouncement(reason));
@@ -2604,7 +2712,7 @@ function EventBlockImpl({
       const dispatchCurrent = before.events.find((e) => e.id === eventId);
       if (
         dispatchCurrent === undefined ||
-        dispatchCurrent.kind === 'urlop' ||
+        isLeaveKind(dispatchCurrent.kind) ||
         !canDragRef.current ||
         isEventContentMasked(before, dispatchCurrent)
       ) {
@@ -2873,20 +2981,37 @@ function EventBlockImpl({
     ? 'Cały dzień'
     : `${formatMinutes(occ.startMinutes)}-${formatMinutes(occ.startMinutes + occ.durationMinutes)}`;
   const dragHint = canDrag
-    ? ' Przeciągnij, aby przenieść; przeciągnij krawędź, aby zmienić czas trwania. Zmiana wymaga potwierdzenia i obowiązuje wszystkich.'
+    ? ` Przeciągnij, aby przenieść; przeciągnij krawędź, aby zmienić czas trwania. Zmiana wymaga potwierdzenia: ${
+        personalAllowed && globalAllowed
+          ? 'tylko u Ciebie albo dla wszystkich'
+          : personalAllowed
+            ? 'tylko u Ciebie'
+            : 'obowiązuje wszystkich'
+      }.`
     : '';
+  // Osobisty czas: nazwij też czas wydarzenia, żeby było wiadomo, co widzą inni.
+  const personalBase = occ.personalFor === undefined ? null : baseOccurrenceTimes(occ.event, occDate);
+  const personalHint =
+    personalBase === null
+      ? ''
+      : ` Czas zmieniony tylko w tym kalendarzu; u wszystkich ${formatMinutes(personalBase.startMinutes)}-${formatMinutes(
+          personalBase.startMinutes + personalBase.durationMinutes,
+        )}.`;
+  const leaveTitle = isVacation && isLeaveKind(occ.event.kind) ? leaveLabel(occ.event.kind).title : 'Urlop';
   const hint = isVacation
-    ? `Urlop${who === '' ? '' : `: ${who}`}. ${vacationSpan}. Kliknij, aby otworzyć.`
+    ? `${leaveTitle}${who === '' ? '' : `: ${who}`}. ${vacationSpan}. Kliknij, aby otworzyć.`
     : `📅 ${displayTitle} — ${formatMinutes(startMinutes)}–${formatMinutes(
         endMinutes,
-      )}. ${absentForViewer ? 'Nie uczestniczysz w tym wystąpieniu. ' : ''}Kliknij, aby otworzyć wydarzenie.${dragHint}`;
+      )}.${personalHint} ${absentForViewer ? 'Bez udziału w tym wystąpieniu (nie liczy się do godzin). ' : ''}Kliknij, aby otworzyć wydarzenie.${dragHint}`;
   return (
     <>
     <Tooltip text={hint}>
     <div
       className={[
         'week-event-block',
-        isVacation ? 'urlop' : '',
+        isVacation ? occ.event.kind ?? 'urlop' : '',
+        // Osobisty czas wystąpienia (2026-09-15): kropkowana krawędź + nożyczki.
+        occ.personalFor !== undefined ? 'personal' : '',
         // Nieobecność działającego użytkownika: kafel-duch (slot zwolniony,
         // ale widoczny — powrót do udziału tym samym menu).
         absentForViewer ? 'absent' : '',
@@ -2934,7 +3059,12 @@ function EventBlockImpl({
       {isVacation ? (
         <>
           <span className="week-event-title">
-            <TreePalm size={13} aria-hidden /> Urlop
+            {occ.event.kind === 'nieobecnosc' ? (
+              <UserX size={13} aria-hidden />
+            ) : (
+              <TreePalm size={13} aria-hidden />
+            )}{' '}
+            {leaveTitle}
           </span>
           <span className="week-event-time">
             {isFullDayVacation(occ.event) && who !== '' ? who : vacationSpan}
@@ -2945,6 +3075,11 @@ function EventBlockImpl({
           <span className="week-event-title">📅 {displayTitle}</span>
           <span className="week-event-time">
             {formatMinutes(startMinutes)}–{formatMinutes(endMinutes)}
+            {occ.personalFor !== undefined && (
+              <span className="week-event-personal" aria-hidden>
+                ✂
+              </span>
+            )}
           </span>
         </>
       )}
@@ -3038,6 +3173,8 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
   const { openTask, openNewTask } = useOpenTask();
   const { openEvent, openNewEvent } = useOpenEvent();
   const dispatch = useDispatch();
+  // Odczyt ŻYWEGO stanu w handlerach po `await` (dialogi) — nigdy w renderze.
+  const { getState } = useStoreApi();
   const confirm = useConfirm();
   const can = useCan();
   const canEditAny = can('blocks.editAny');
@@ -3046,6 +3183,13 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
   // same permission the read-only TaskModal enforces, so we don't surface it to
   // users who can't create tasks.
   const canManageTasks = can('tasks.manage');
+  // Własny urlop / nieobecność z prawego kliku zgłasza każdy zalogowany
+  // (`events.vacationSelf`, jak przycisk na liście Wydarzeń).
+  const canAddLeave = can('events.vacationSelf') && state.currentUserId !== '';
+  // Oglądający może zmienić czas spotkania TYLKO U SIEBIE (2026-09-15): jest
+  // uczestnikiem imiennym albo spotkanie jest ogólnofirmowe; nieobecności nie.
+  const viewerMayPersonalize = (event: CalendarEvent) =>
+    state.currentUserId !== '' && !isLeaveKind(event.kind) && personMayPersonalize(event, state.currentUserId);
   // Ta sama rola dodaje spotkania i odblokowuje ich potwierdzane
   // przeciąganie/rozciąganie; urlop pozostaje tylko do odczytu.
   const canManageEvents = can('events.manage');
@@ -3237,6 +3381,10 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
     rsvp: 'yes' | 'no' | 'pending';
     /** Jest kogo przełączać: uczestnik imienny albo spotkanie ogólnofirmowe. */
     canToggle: boolean;
+    /** Seria — RSVP i lista odpowiedzi mają sens tylko dla wystąpienia serii. */
+    recurring: boolean;
+    /** Osobisty czas oglądającego na ten dzień (do „Przywróć"); null = brak. */
+    personal: { startMinutes: number; durationMinutes: number } | null;
     /** Lista odpowiedzi na ten dzień (imienne: wszyscy uczestnicy;
      *  ogólnofirmowe: tylko osoby, które odpowiedziały). */
     responses: Array<{ name: string; status: 'yes' | 'no' | 'pending' }>;
@@ -3340,7 +3488,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
   // Right-click on bare grid (not a block — those own their own menu and stop the
   // event) → offer "Dodaj zadanie" at the snapped start under the cursor.
   const openSlotMenu = (date: string, e: React.MouseEvent<HTMLDivElement>) => {
-    if (!canManageTasks && !canManageEvents) return;
+    if (!canManageTasks && !canManageEvents && !canAddLeave) return;
     if ((e.target as HTMLElement).closest('.week-block')) return; // block's own menu
     // Defense-in-depth: an occurrence overlay already stops its own contextmenu,
     // but never let a right-click on it fall through to the slot menu.
@@ -3351,7 +3499,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
     // 8 godzin dnia, gdy ktokolwiek widoczny ma urlop (lewy klik zostaje
     // wejściem w urlop).
     const eventBlock = (e.target as HTMLElement).closest('.week-event-block');
-    if (eventBlock && !eventBlock.classList.contains('urlop')) return;
+    if (eventBlock && !eventBlock.classList.contains('urlop') && !eventBlock.classList.contains('nieobecnosc')) return;
     e.preventDefault();
     const column = e.currentTarget;
     const rect = column.getBoundingClientRect();
@@ -3380,6 +3528,15 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
     if (!slotMenu) return;
     const personId = filter.size === 1 ? [...filter][0] : undefined;
     openNewEvent({ date: slotMenu.date, startMinutes: slotMenu.startMinutes, personId });
+    setSlotMenu(null);
+  };
+
+  // Własny urlop / nieobecność z prawego kliku (2026-09-15, zgłoszenie
+  // „nieobecności"): modal w trybie nieobecności ZALOGOWANEGO, dzień z kolumny,
+  // godzina slotu jako start wariantu godzinowego (pełna doba zostaje domyślna).
+  const addLeaveInSlot = (kind: LeaveKind) => {
+    if (!slotMenu) return;
+    openNewEvent({ date: slotMenu.date, startMinutes: slotMenu.startMinutes, kind });
     setSlotMenu(null);
   };
 
@@ -3425,21 +3582,31 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
   const openEventOccMenu = useCallback(
     (eventId: string, date: string, e: React.MouseEvent) => {
       const event = state.events.find((ev) => ev.id === eventId);
-      if (!event || event.recurrence === undefined || event.kind === 'urlop') return;
+      if (!event || isLeaveKind(event.kind)) return;
       e.preventDefault();
       e.stopPropagation();
       setMenu(null);
       setSlotMenu(null);
       setRecurMenu(null);
       const viewer = state.currentUserId;
+      const recurring = event.recurrence !== undefined;
       const canToggle =
-        viewer !== '' && (event.attendeeIds.length === 0 || event.attendeeIds.includes(viewer));
+        recurring &&
+        viewer !== '' &&
+        (event.attendeeIds.length === 0 || event.attendeeIds.includes(viewer));
+      const personalTime = personalTimeFor(event, date, viewer);
+      const personal =
+        personalTime === undefined
+          ? null
+          : { startMinutes: personalTime.startMinutes, durationMinutes: personalTime.durationMinutes };
       // Lista odpowiedzi NA TEN DZIEŃ: imienne spotkanie pokazuje wszystkich
       // uczestników (także oczekujących); ogólnofirmowe tylko osoby, które
       // odpowiedziały, plus licznik oczekujących (cały zespół byłby za długi).
       const companyWide = event.attendeeIds.length === 0;
       const responses: Array<{ name: string; status: 'yes' | 'no' | 'pending' }> = [];
-      if (companyWide) {
+      if (!recurring) {
+        // Jednorazowe spotkanie: menu służy tylko osobistemu czasowi.
+      } else if (companyWide) {
         for (const r of event.rsvps ?? []) {
           if (r.date !== date) continue;
           const name = getPerson(state, r.personId)?.name ?? '';
@@ -3461,6 +3628,8 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
         date,
         rsvp: personRsvpForEventOccurrence(event, date, viewer),
         canToggle,
+        recurring,
+        personal,
         responses,
         pendingHidden,
         anchor: pointAnchor(e.currentTarget as HTMLElement, e.clientX, e.clientY),
@@ -3479,6 +3648,20 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
       date: eventMenu.date,
       personId: state.currentUserId,
       status: eventMenu.rsvp === status ? null : status,
+    });
+    setEventMenu(null);
+  };
+
+  // „Przywróć czas spotkania": zdejmuje osobisty czas oglądającego na ten dzień
+  // (SET_EVENT_PERSONAL_TIME z `time: null`) — plan wraca do czasu wydarzenia.
+  const eventRestorePersonalTime = () => {
+    if (!eventMenu) return;
+    dispatch({
+      type: 'SET_EVENT_PERSONAL_TIME',
+      eventId: eventMenu.eventId,
+      date: eventMenu.date,
+      personId: state.currentUserId,
+      time: null,
     });
     setEventMenu(null);
   };
@@ -3597,6 +3780,65 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
     const live = state.workload.find((w) => w.id === menu.entry.id);
     dispatch({ type: 'SET_BLOCK_DONE', entryId: menu.entry.id, done: live?.done !== true });
     setMenu(null);
+  };
+
+  // „Oznacz zadanie jako ukończone" (zgłoszenie „Możliwość szybszego zamknięcia
+  // zadania", 2026-09-15): jedno potwierdzenie i zadanie dostaje status „gotowe"
+  // bez wracania do zasobnika i przepisywania godzin — COMPLETE_TASK odrzuca
+  // resztę zasobnika, bloki w kalendarzu zostają. Menu zamykamy PRZED `await`
+  // (nakładka nie może przeżyć pytania, inwariant 7), a skutki liczymy z ŻYWEGO
+  // stanu w chwili pytania, żeby dialog nie kłamał o godzinach.
+  const doCompleteTask = async () => {
+    if (!menu) return;
+    const taskId = menu.entry.taskId;
+    setMenu(null);
+    const live = getState();
+    const task = getTask(live, taskId);
+    if (task === undefined || isDoneStatus(live, task.statusId)) return;
+    const doneStatus =
+      activeStatuses(live).find((st) => st.isDone) ?? live.statuses.find((st) => st.isDone);
+    if (doneStatus === undefined) {
+      announce('Nie ma statusu „gotowe”, więc zadania nie da się ukończyć.');
+      return;
+    }
+    let binHours = 0;
+    let openBlocks = 0;
+    for (const w of live.workload) {
+      if (w.taskId !== taskId) continue;
+      if (isBinEntry(w)) binHours += w.plannedHours;
+      else if (w.done !== true) openBlocks += 1;
+    }
+    const consequences = [
+      binHours > 0
+        ? `Niezaplanowane ${formatDuration(binHours)} z zasobnika zostaną odrzucone.`
+        : '',
+      openBlocks > 0
+        ? `${openBlocks} ${polishCount(
+            openBlocks,
+            'blok w kalendarzu zostaje i liczy się jako wykonany',
+            'bloki w kalendarzu zostają i liczą się jako wykonane',
+            'bloków w kalendarzu zostaje i liczy się jako wykonane',
+          )}.`
+        : '',
+    ]
+      .filter((part) => part !== '')
+      .join(' ');
+    const title = taskDisplayTitle(live, task);
+    const accepted = await confirm({
+      title: `Ukończyć zadanie „${title}”?`,
+      description: `Status zmieni się na „${doneStatus.name}”. System uzna zadanie za zakończone i w pełni wykonane.`,
+      ...(consequences !== '' ? { consequences } : {}),
+      confirmLabel: 'Ukończ zadanie',
+      cancelLabel: 'Anuluj',
+    });
+    if (!accepted) return;
+    const before = getState();
+    dispatch({ type: 'COMPLETE_TASK', taskId });
+    announce(
+      getState() === before
+        ? `Nie udało się ukończyć zadania „${title}”: jest już zamknięte albo zniknęło.`
+        : `Ukończono zadanie „${title}”: status „${doneStatus.name}”.`,
+    );
   };
 
   const doDelete = async () => {
@@ -3827,9 +4069,10 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
       schedWarning = '⚠ Koliduje z innym blokiem tej osoby w tym dniu.';
       schedDisabled = true;
     } else if (personVacationOnDate(state, menu.entry.personId, schedDate) !== null) {
-      // Urlop przed ogólnym komunikatem o wydarzeniu: „koliduje z wydarzeniem"
-      // kazałoby szukać spotkania w kalendarzu, a blokuje CAŁY dzień wolny.
-      schedWarning = '⚠ Ta osoba ma w tym dniu urlop.';
+      // Urlop/nieobecność przed ogólnym komunikatem o wydarzeniu: „koliduje z
+      // wydarzeniem" kazałoby szukać spotkania w kalendarzu, a blokuje CAŁY dzień.
+      const leave = personVacationOnDate(state, menu.entry.personId, schedDate);
+      schedWarning = `⚠ Ta osoba ma w tym dniu ${leave?.kind === 'nieobecnosc' ? 'nieobecność' : 'urlop'}.`;
       schedDisabled = true;
     } else if (
       blockCollidesWithEvent(state, menu.entry.personId, schedDate, schedStartMin, schedHours)
@@ -3944,8 +4187,8 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
       <span id={WEEK_EVENT_KB_HINT_ID} className="sr-only">
         Strzałki w górę i w dół przesuwają wydarzenie co 15 minut, z Shiftem zmieniają czas
         trwania. Strzałki w lewo i w prawo przenoszą je o dzień; wydarzenie cykliczne zostaje w
-        swoim dniu. Enter pyta o potwierdzenie zmiany dla wszystkich, Escape ją cofa. Bez
-        rozpoczętej zmiany Enter otwiera wydarzenie.
+        swoim dniu. Enter otwiera okno z wyborem zasięgu zmiany (tylko u Ciebie albo dla
+        wszystkich), Escape ją cofa. Bez rozpoczętej zmiany Enter otwiera wydarzenie.
       </span>
       {/* Widok dnia: zamiast nagłówka siedmiu kolumn stoi przewijany pasek 7 dat
           wyśrodkowany na kotwicy (nawigacja, nie zakres siatki). */}
@@ -4070,7 +4313,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                   {/* Palma ZAMIAST wykrzyknika w dzień urlopu — imiona są już
                       wyłączone z `overloadNames`, więc nic się nie dubluje. */}
                   {day.vacationNames.length > 0 && (
-                    <Tooltip text={`Urlop: ${day.vacationNames.join(', ')}`}>
+                    <Tooltip text={`Urlop / nieobecność: ${day.vacationNames.join(', ')}`}>
                       <div className="week-col-vacation">
                         <TreePalm size={13} aria-hidden /> {day.vacationNames.join(', ')}
                       </div>
@@ -4125,7 +4368,9 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                     .filter(Boolean)
                     .join(' ')}
                   onContextMenu={
-                    canManageTasks || canManageEvents ? (ev) => openSlotMenu(d, ev) : undefined
+                    canManageTasks || canManageEvents || canAddLeave
+                      ? (ev) => openSlotMenu(d, ev)
+                      : undefined
                   }
                 >
                   {isTodayStr(d) && (
@@ -4168,7 +4413,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                         displayTitle={eventDisplayTitle(state, occ.event)}
                         vacationWindow={day.vacationWindows.get(occ.event.id)}
                         vacationOwner={
-                          occ.event.kind === 'urlop'
+                          isLeaveKind(occ.event.kind)
                             ? getPerson(state, occ.event.attendeeIds[0] ?? '')?.name ?? ''
                             : undefined
                         }
@@ -4176,23 +4421,24 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                         cols={lane?.cols ?? 1}
                         onOpen={handleOpenEvent}
                         occDate={d}
-                        absentForViewer={
-                          state.currentUserId !== '' &&
-                          personAbsentFromEventOccurrence(occ.event, d, state.currentUserId)
-                        }
-                        onOccContextMenu={
-                          occ.event.kind !== 'urlop' && occ.event.recurrence !== undefined
-                            ? openEventOccMenu
-                            : undefined
-                        }
+                        // Perspektywa modelu (filtr jednej osoby albo oglądający):
+                        // duch odmowy stoi poza pakowaniem kolumny (pełna szerokość).
+                        absentForViewer={day.absentEventIds.has(occ.event.id)}
+                        onOccContextMenu={!isLeaveKind(occ.event.kind) ? openEventOccMenu : undefined}
                         dayIndex={dayIndex}
                         days={days}
                         gridRef={gridRef}
                         // Parity with EventModal's `canManage`: a viewer who sees
                         // only the confidential mask must not edit through the tile.
                         editable={
-                          canManageEvents && !isEventContentMasked(state, occ.event)
+                          (canManageEvents || viewerMayPersonalize(occ.event)) &&
+                          !isEventContentMasked(state, occ.event)
                         }
+                        globalAllowed={canManageEvents && !isEventContentMasked(state, occ.event)}
+                        personalAllowed={
+                          viewerMayPersonalize(occ.event) && !isEventContentMasked(state, occ.event)
+                        }
+                        viewerId={state.currentUserId}
                         announce={announce}
                         onDragActiveChange={handleDragActiveChange}
                       />
@@ -4406,14 +4652,28 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                       Zadanie ma status „gotowe” — wszystkie bloki są wykonane.
                     </div>
                   ) : (
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="context-menu-item"
-                      onClick={doToggleDone}
-                    >
-                      {menuEntryDone ? 'Odznacz „wykonane”' : '✓ Oznacz jako wykonane'}
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="context-menu-item"
+                        onClick={doToggleDone}
+                      >
+                        {menuEntryDone ? 'Odznacz „wykonane”' : '✓ Oznacz jako wykonane'}
+                      </button>
+                      {/* Szybkie zamknięcie CAŁEGO zadania (status „gotowe") po
+                          potwierdzeniu — bez wracania do zasobnika. */}
+                      {(canManageTasks || menu.entry.personId === state.currentUserId) && (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="context-menu-item"
+                          onClick={() => void doCompleteTask()}
+                        >
+                          ✓✓ Oznacz zadanie jako ukończone…
+                        </button>
+                      )}
+                    </>
                   )}
                 </>
               )}
@@ -4630,7 +4890,8 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                         </button>
                         {vacation !== null && (
                           <div className="context-menu-hint" id={hintId}>
-                            {p.firstName || p.name} ma w tym dniu urlop.
+                            {p.firstName || p.name} ma w tym dniu{' '}
+                            {vacation.kind === 'nieobecnosc' ? 'nieobecność' : 'urlop'}.
                           </div>
                         )}
                       </Fragment>
@@ -4645,6 +4906,27 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                 >
                   + Dodaj spotkanie ({formatMinutes(slotMenu.startMinutes)})
                 </button>
+              )}
+              {canAddLeave && (
+                <>
+                  <div className="context-menu-sep" role="separator" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="context-menu-item"
+                    onClick={() => addLeaveInSlot('urlop')}
+                  >
+                    <TreePalm size={13} aria-hidden /> Dodaj urlop (Twój)
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="context-menu-item"
+                    onClick={() => addLeaveInSlot('nieobecnosc')}
+                  >
+                    <UserX size={13} aria-hidden /> Dodaj nieobecność (Twoją)
+                  </button>
+                </>
               )}
             </div>
           </m.div>
@@ -4817,7 +5099,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                 📅 {eventMenu.title} —{' '}
                 {format(parseDate(eventMenu.date), 'd MMM yyyy', { locale: pl })}
               </div>
-              {eventMenu.canToggle ? (
+              {!eventMenu.recurring ? null : eventMenu.canToggle ? (
                 <>
                   {/* Klik w aktywną odpowiedź czyści ją (powrót do „oczekuje"). */}
                   <button
@@ -4841,6 +5123,18 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                 </>
               ) : (
                 <div className="context-menu-title">Nie jesteś na liście uczestników</div>
+              )}
+              {eventMenu.personal !== null && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="context-menu-item"
+                  onClick={eventRestorePersonalTime}
+                >
+                  Przywróć czas spotkania u mnie (teraz{' '}
+                  {formatMinutes(eventMenu.personal.startMinutes)}-
+                  {formatMinutes(eventMenu.personal.startMinutes + eventMenu.personal.durationMinutes)})
+                </button>
               )}
               <button
                 type="button"

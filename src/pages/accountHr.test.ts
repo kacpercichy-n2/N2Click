@@ -151,3 +151,19 @@ describe('remainingVacationDays', () => {
     expect(remainingVacationDays(30, DEFAULT_VACATION_ALLOWANCE_DAYS)).toBe(0);
   });
 });
+
+describe('nieobecność (kind nieobecnosc) nie schodzi z limitu urlopu (2026-09-15)', () => {
+  it('personVacationRanges pomija nieobecności, więc limit dni liczy tylko urlopy', () => {
+    const base = {
+      title: 'x', description: '', location: '', meetingUrl: '', startMinutes: 0, durationMinutes: 1440,
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    const events: CalendarEvent[] = [
+      { ...base, id: 'u1', kind: 'urlop', date: '2026-07-06', endDate: '2026-07-07', attendeeIds: ['p1'] },
+      { ...base, id: 'n1', kind: 'nieobecnosc', date: '2026-07-08', endDate: '2026-07-10', attendeeIds: ['p1'] },
+    ];
+    const ranges = personVacationRanges(events, 'p1');
+    expect(ranges).toEqual([{ start: '2026-07-06', end: '2026-07-07' }]);
+    expect(vacationWorkDaysInYear(ranges, [1, 2, 3, 4, 5], 2026)).toBe(2);
+  });
+});

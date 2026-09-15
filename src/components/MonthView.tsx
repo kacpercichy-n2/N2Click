@@ -8,6 +8,7 @@
 // miesiącach i latach). Kotwica miesiąca mieszka w `CalendarPage`, więc zmiana
 // okresu leci do rodzica (`onShiftMonth`/`onShiftYear`) zamiast dublować tu
 // matematykę dat.
+import { isLeaveKind } from '../utils/leave';
 import { useEffect, useRef, useState } from 'react';
 import type { AppData } from '../types';
 import {
@@ -156,13 +157,13 @@ export function MonthView({
     const dayEvents = calendarEventsForDate(state, d, filter);
     const eventTitles = Array.from(
       new Set(
-        dayEvents.filter((oc) => oc.event.kind !== 'urlop').map((oc) => eventDisplayTitle(state, oc.event)),
+        dayEvents.filter((oc) => !isLeaveKind(oc.event.kind)).map((oc) => eventDisplayTitle(state, oc.event)),
       ),
     );
     const vacationNames = Array.from(
       new Set(
         dayEvents
-          .filter((oc) => oc.event.kind === 'urlop')
+          .filter((oc) => isLeaveKind(oc.event.kind))
           .map((oc) => getPerson(state, oc.event.attendeeIds[0] ?? '')?.name ?? '')
           .filter((n) => n !== ''),
       ),
@@ -188,7 +189,7 @@ export function MonthView({
     const birthdayLabel = birthdayNames.length > 0 ? `Urodziny: ${birthdayNames.join(', ')}` : '';
     const recurLabel = recurTitles.length > 0 ? `Cykliczne: ${recurTitles.join(', ')}` : '';
     const eventLabel = eventTitles.length > 0 ? `Wydarzenia: ${eventTitles.join(', ')}` : '';
-    const vacationLabel = vacationNames.length > 0 ? `Urlop: ${vacationNames.join(', ')}` : '';
+    const vacationLabel = vacationNames.length > 0 ? `Urlop / nieobecność: ${vacationNames.join(', ')}` : '';
 
     // Dymek komórki ZBIERA to, co dotąd wisiało na pojedynczych znacznikach:
     // same znaczniki są nieinteraktywne (nie da się na nie najechać sensownie w

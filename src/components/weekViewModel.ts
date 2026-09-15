@@ -36,6 +36,8 @@ import { overrunIntervalsOnDate, type OverrunInterval } from '../store/timeTrack
 import { vacationRenderWindow } from './weekViewLayout';
 import { eventDisplayTitle, taskDisplayTitle } from '../store/confidentiality';
 import { isBinEntry, packDayBlocks } from '../utils/time';
+import { personMayPersonalize, personalTimeFor } from '../utils/eventPersonalTime';
+import { isLeaveKind } from '../utils/leave';
 import { personColor } from '../utils/colors';
 import type { RecurrenceOccurrence } from '../utils/recurrence';
 
@@ -103,8 +105,20 @@ export interface WeekDayModel {
   vacationNames: string[];
   /** Names with a birthday on this day (whole team, filter-independent). */
   birthdayNames: string[];
-  /** Presentational calendar-event occurrences on this day. */
+  /**
+   * Presentational calendar-event occurrences on this day, w PERSPEKTYWIE
+   * (2026-09-15): filtr jednej osoby = jej kalendarz, inaczej kalendarz
+   * oglądającego (`state.currentUserId`) — osobiste czasy tej osoby zastępują
+   * czas wydarzenia (`personalFor`). Duchy odmów tej osoby stoją NA POCZĄTKU
+   * tablicy (malują się pod kaflami dzielącymi kolumnę).
+   */
   events: CalendarEventOccurrence[];
+  /**
+   * Wystąpienia, w których osoba perspektywy „nie bierze udziału": kafel-duch
+   * poza pakowaniem kolumny (sąsiad dostaje pełną szerokość; zgłoszenie
+   * „Nie działa nie biorę udziału", 10.09).
+   */
+  absentEventIds: Set<string>;
   /**
    * Kolumna spotkania we WSPÓLNYM pakowaniu warstwy dnia (klucz = id
    * wydarzenia). URLOP celowo nie ma tu wpisu — zostaje pełnoszerokim tłem
@@ -135,7 +149,7 @@ export interface WeekDayModel {
 export interface BusyInterval {
   start: number;
   end: number;
-  kind: 'event' | 'urlop' | 'recurrence';
+  kind: 'event' | 'urlop' | 'nieobecnosc' | 'recurrence';
   /** Tytuł wydarzenia / urlopu / zadania cyklicznego; '' gdy nieznany. */
   title: string;
   /**
@@ -256,7 +270,7 @@ export function buildEventBusyByPersonDate(
           // Urlop niesie własny rodzaj: bramka upuszczania traktuje go tak samo
           // jak spotkanie (blok nie wchodzi), a przedział 0-1440 zabiera całą
           // dobę, więc żadna godzina nie jest legalnym celem.
-          kind: occ.event.kind === 'urlop' ? 'urlop' : 'event',
+          kind: isLeaveKind(occ.event.kind) ? occ.event.kind : 'event',
           // Utajniona treść: winowajca kolizji nazywa się etykietą maskującą
           // („Wydarzenie #N"), nigdy prawdziwym tytułem, gdy widz nie ma wglądu.
           title: eventDisplayTitle(state, occ.event),
@@ -310,7 +324,40 @@ export function buildWeekModel(
       .map((p) => p.name)
       .filter((n): n is string => Boolean(n));
 
-    const events = calendarEventsForDate(state, date, filter);
+    // PERSPEKTYWA (2026-09-15): filtr JEDNEJ osoby = jej kalendarz (osobiste
+    // czasy przyszły już z selektora), inaczej kalendarz OGLĄDAJĄCEGO — jego
+    // osobiste czasy nakładamy tutaj, bo selektor dla wielu osób daje czas
+    // wydarzenia. Ta sama perspektywa decyduje, czyja odmowa („nie biorę
+    // udziału") zdejmuje kafel z pakowania kolumny.
+    const perspective = filter.size === 1 ? Array.from(filter)[0] : state.currentUserId;
+    const absentEventIds = new Set<string>();
+    const kept: CalendarEventOccurrence[] = [];
+    const ghosts: CalendarEventOccurrence[] = [];
+    for (const raw of calendarEventsForDate(state, date, filter)) {
+      let occ = raw;
+      if (perspective !== '' && !isLeaveKind(raw.event.kind) && personMayPersonalize(raw.event, perspective)) {
+        if (raw.personalFor === undefined) {
+          const personal = personalTimeFor(raw.event, date, perspective);
+          if (personal !== undefined) {
+            occ = {
+              event: raw.event,
+              startMinutes: personal.startMinutes,
+              durationMinutes: personal.durationMinutes,
+              personalFor: perspective,
+            };
+          }
+        }
+        if (personAbsentFromEventOccurrence(raw.event, date, perspective)) {
+          absentEventIds.add(raw.event.id);
+          ghosts.push(occ);
+          continue;
+        }
+      }
+      kept.push(occ);
+    }
+    // Duchy PRZED resztą w DOM: równy z-index, więc kolejność drzewa maluje je
+    // POD kaflami, które dzielą kolumnę; nie wchodzą do pakowania (niżej).
+    const events: CalendarEventOccurrence[] = [...ghosts, ...kept];
 
     // Okno renderu urlopu PEŁNODNIOWEGO: godziny pracy JEGO uczestnika (urlop
     // ma kanonicznie dokładnie jednego), fallback 9:00-17:00 dla
@@ -318,7 +365,7 @@ export function buildWeekModel(
     // stoi w SWOIM oknie — zapisane czasy są wtedy prawdą, nie atrapą.
     const vacationWindows = new Map<string, { start: number; end: number }>();
     for (const occ of events) {
-      if (occ.event.kind !== 'urlop') continue;
+      if (!isLeaveKind(occ.event.kind)) continue;
       if (!isFullDayVacation(occ.event)) {
         vacationWindows.set(occ.event.id, {
           start: occ.startMinutes,
@@ -358,7 +405,7 @@ export function buildWeekModel(
         plannedHours: entry.plannedHours,
       })),
       ...events
-        .filter((occ) => occ.event.kind !== 'urlop')
+        .filter((occ) => !isLeaveKind(occ.event.kind) && !absentEventIds.has(occ.event.id))
         .map((occ) => ({
           kind: 'event' as const,
           eventId: occ.event.id,
@@ -444,6 +491,7 @@ export function buildWeekModel(
       vacationNames,
       birthdayNames,
       events,
+      absentEventIds,
       eventLanes,
       vacationWindows,
       recurrences,

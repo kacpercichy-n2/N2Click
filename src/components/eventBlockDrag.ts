@@ -192,6 +192,18 @@ export const EVENT_DRAG_GLOBAL_SENTENCE =
 /** Dopisek dla wydarzenia cyklicznego: gest rusza CAŁĄ serią, nie wystąpieniem. */
 export const EVENT_DRAG_SERIES_SENTENCE = 'Dotyczy całej serii wydarzenia.';
 
+/** Ścieżka OSOBISTA (2026-09-15): zmiana żyje tylko w kalendarzu działającego. */
+export const EVENT_DRAG_PERSONAL_SENTENCE =
+  'Tylko u mnie: zmiana dotyczy wyłącznie tego dnia i tylko Twojego kalendarza (plan dnia, kolizje, godziny). Pozostali uczestnicy widzą spotkanie bez zmian.';
+
+/** Osobista zmiana nie wchodzi na własny urlop / nieobecność. */
+export const EVENT_DRAG_PERSONAL_LEAVE =
+  'Masz w tym czasie urlop albo nieobecność. Spotkania nie da się tam przenieść tylko u siebie.';
+
+/** Osobista zmiana nie przenosi wystąpienia na inny dzień. */
+export const EVENT_DRAG_PERSONAL_ONLY_DAY =
+  'Zmianę tylko u siebie zrobisz w tym samym dniu. Przeniesienie na inny dzień dotyczy wszystkich.';
+
 /** Termin wystąpienia do zdania: dzień + zakres godzin. */
 export interface EventMoment {
   date: string;
@@ -216,24 +228,40 @@ export function eventDragKind(from: EventMoment, to: EventMoment): 'move' | 'res
   return from.durationMinutes !== to.durationMinutes ? 'resize' : 'move';
 }
 
+/**
+ * Zasięg zmiany: `global` (dotąd jedyny: SAVE_EVENT dla wszystkich), `personal`
+ * (tylko kalendarz działającego, SET_EVENT_PERSONAL_TIME) albo `choice` —
+ * dialog daje oba wyjścia (przycisk główny = tylko u mnie, trzeci = wszyscy).
+ */
+export type EventDragScope = 'global' | 'personal' | 'choice';
+
 export interface EventDragConfirmInput {
   /** Tytuł do pokazania (maska utajnienia liczona przez wołającego). */
   title: string;
   from: EventMoment;
   to: EventMoment;
   recurring: boolean;
-  /** JEDNO zdanie o kolizjach nieblokujących; '' = nie ma o czym mówić. */
+  /** JEDNO zdanie o kolizjach nieblokujących zmiany GLOBALNEJ; '' = brak. */
   conflictSentence?: string;
+  /** Zasięg; brak = `global` (kształt sprzed 2026-09-15). */
+  scope?: EventDragScope;
+  /** JEDNO zdanie o kolizjach osobistego czasu z własnym planem; '' = brak. */
+  personalConflictSentence?: string;
 }
 
-/** Opcje dla `useConfirm()` — kształt `ConfirmOptions` bez importu Reacta. */
+/** Opcje dla `useConfirm()`/`useConfirmChoice()` — kształt `ConfirmOptions` bez importu Reacta. */
 export interface EventDragConfirmCopy {
   title: string;
   description: string;
   consequences: string;
   confirmLabel: string;
   cancelLabel: string;
+  /** Trzeci przycisk (tylko `scope: 'choice'`): zmiana dla wszystkich. */
+  altLabel?: string;
 }
+
+export const EVENT_DRAG_PERSONAL_LABEL = 'Tylko u mnie, ten dzień';
+export const EVENT_DRAG_GLOBAL_LABEL = 'Zmień dla wszystkich';
 
 /**
  * Treść okna potwierdzenia. Tytuł zadaje PYTANIE, opis pokazuje „z … na …",
@@ -243,20 +271,34 @@ export interface EventDragConfirmCopy {
  */
 export function eventDragConfirmCopy(input: EventDragConfirmInput): EventDragConfirmCopy {
   const kind = eventDragKind(input.from, input.to);
-  const consequences = [
+  const scope = input.scope ?? 'global';
+  const globalParts = [
     EVENT_DRAG_GLOBAL_SENTENCE,
     input.recurring ? EVENT_DRAG_SERIES_SENTENCE : '',
     (input.conflictSentence ?? '').trim(),
-  ]
-    .filter((part) => part !== '')
-    .join(' ');
+  ].filter((part) => part !== '');
+  const personalParts = [EVENT_DRAG_PERSONAL_SENTENCE, (input.personalConflictSentence ?? '').trim()].filter(
+    (part) => part !== '',
+  );
+  const consequences =
+    scope === 'global'
+      ? globalParts.join(' ')
+      : scope === 'personal'
+        ? personalParts.join(' ')
+        : [...personalParts, `Dla wszystkich: ${globalParts.join(' ')}`].join(' ');
   return {
     title: kind === 'move' ? 'Przenieść wydarzenie?' : 'Zmienić czas trwania wydarzenia?',
     description: `„${input.title}”: z ${momentPhrase(input.from)} na ${momentPhrase(input.to)}.`,
     consequences,
-    confirmLabel: 'Zmień dla wszystkich',
+    confirmLabel: scope === 'global' ? EVENT_DRAG_GLOBAL_LABEL : EVENT_DRAG_PERSONAL_LABEL,
     cancelLabel: 'Anuluj',
+    ...(scope === 'choice' ? { altLabel: EVENT_DRAG_GLOBAL_LABEL } : {}),
   };
+}
+
+/** Osobista zmiana WESZŁA do stanu — mówi, że dotyczy tylko tego kalendarza. */
+export function eventPersonalAppliedAnnouncement(title: string, to: EventMoment): string {
+  return `Zmieniono tylko u Ciebie: ${title}, ${momentPhrase(to)}.`;
 }
 
 /** Nazwa dostępna kafelka — podąża za WYSTAWIONĄ projekcją, więc nie kłamie. */

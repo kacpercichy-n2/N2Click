@@ -295,6 +295,23 @@ widoki-mostki). Gdzie w tekście pada `public.<tabela>` w kontekście
   parytet z `intervalWeeks`), a `mergeCloudEntities` fail-closuje tylko na
   strukturalnie złym polu. Migracja NIE jest zaaplikowana — to krok operatora
   PRZED wdrożeniem klienta (select hydracji nazywa kolumny wprost).
+- `events.personal_times` + `events_kind_check` (20260915120000, OSOBISTE CZASY
+  WYSTĄPIEŃ I NIEOBECNOŚĆ) — addytywna kolumna `personal_times jsonb not null
+  default '[]'` na `n2click.events`: [{date, personId(uuid profilu),
+  startMinutes, durationMinutes}] per (dzień wystąpienia, osoba), obowiązuje
+  tylko w kalendarzu tej osoby; kanonizacja po stronie klienta
+  (`normalizeEventPersonalTimes`), mapowanie profil↔osoba jak `rsvps`
+  (`eventRow` w cloudMirror, hydracja w plannerData). CHECK `events_kind_check`
+  rozszerzony o `'nieobecnosc'` (drugi rodzaj nieobecności; nie schodzi z
+  limitu urlopu — to decyzja klienta, baza go nie zna). ZERO zmian RLS.
+  Rejestr: plik w liście migracji (`migrations.test.ts`). STAN: ZASTOSOWANA na
+  N2Hub 2026-09-15 przez MCP (przed wdrożeniem gałęzi
+  `fix/zgloszenia-2026-09-15`: hydracja `plannerData` wybiera kolumnę jawnie,
+  więc klient z tej gałęzi bez migracji odrzuciłby cały ładunek wydarzeń;
+  stary klient nowej kolumny nie czyta i nie pisze — kolejność bezpieczna).
+  ZNANE OGRANICZENIE (jak `rsvps`): upsert wysyła CAŁĄ listę `personal_times`,
+  więc dwie osoby zmieniające to samo spotkanie w tym samym oknie odświeżenia
+  mogą sobie nadpisać wpisy; docelowo RPC scalające po (date, personId).
 - `projects.company_id` (20260722120000, spółka WYKONAWCZA projektu) — FK →
   `companies.id`, `on delete set null`, nullable; ZERO zmian polityk RLS i
   publikacji realtime (projects już tam jest). Mirror: `cloudMirror.projectRow`

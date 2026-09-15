@@ -304,6 +304,11 @@ describe('konwencja plików migracji', () => {
       // maskujący dla zespołu, pg_cron co 5 min -> Edge Function sync.
       '20260825140000_google_calendar.sql',
       '20260902160000_google_events_visible_stable_id.sql',
+      // Osobiste czasy wystąpień spotkań (per dzień i osoba) — addytywna
+      // kolumna `personal_times` jsonb na n2click.events; nieobecność jako
+      // drugi rodzaj nieobecności (CHECK `events_kind_check` rozszerzony).
+      // Bez zmian RLS.
+      '20260915120000_events_personal_times_and_absence_kind.sql',
     ]);
   });
 

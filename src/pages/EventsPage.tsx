@@ -2,6 +2,7 @@
 // (przełącznik segmentowy): „Nadchodzące” (domyślny) i „Minione”. Klik wiersza
 // otwiera modal wydarzenia; „+ Dodaj wydarzenie” przy uprawnieniu `events.manage`.
 // Wydarzenia są CZYSTO PREZENTACYJNE — nie tworzą zaplanowanych godzin.
+import { isLeaveKind } from '../utils/leave';
 import { useMemo, useState } from 'react';
 import { useStore } from '../store/AppStore';
 import { isFullDayVacation } from '../store/selectors';
@@ -13,7 +14,7 @@ import { formatMinutes } from '../utils/time';
 import { normalizeProjectDocumentUrl } from '../utils/projectDocuments';
 import { intervalWeeksLabel } from '../utils/recurrence';
 import { useOpenEvent } from '../components/EventModal';
-import { Plus, TreePalm } from '../components/icons';
+import { Plus, TreePalm, UserX } from '../components/icons';
 
 type Mode = 'nadchodzace' | 'minione';
 
@@ -71,6 +72,15 @@ export function EventsPage() {
               <TreePalm size={16} aria-hidden /> Dodaj urlop
             </button>
           )}
+          {canAddVacation && (
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={() => openNewEvent({ kind: 'nieobecnosc' })}
+            >
+              <UserX size={16} aria-hidden /> Dodaj nieobecność
+            </button>
+          )}
           {canManage && (
             <button type="button" className="btn primary" onClick={() => openNewEvent()}>
               <Plus size={16} aria-hidden /> Dodaj wydarzenie
@@ -112,7 +122,7 @@ export function EventsPage() {
           {visible.map((e) => {
             const end = e.startMinutes + e.durationMinutes;
             const recurLabel = recurrenceLabel(e);
-            const isVacation = e.kind === 'urlop';
+            const isVacation = isLeaveKind(e.kind);
             // Utajniona treść: tytuł przez etykietę maskującą, lokalizacja i
             // link spotkania znikają (termin, godziny i osoby zostają).
             const masked = isEventContentMasked(state, e);

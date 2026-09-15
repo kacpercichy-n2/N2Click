@@ -46,6 +46,10 @@
      inaczej niż spotkanie i od razu jako „tu nie planujemy”. */
   --vacation-accent: var(--n2-danger);
   --vacation-accent-soft: var(--n2-danger-soft);
+  /* Nieobecność (2026-09-15): ten sam blok co urlop, bursztynowy akcent —
+     „nie ma mnie, ale to nie urlop" ma wyglądać inaczej niż urlop. */
+  --absence-accent: var(--n2-warning);
+  --absence-accent-soft: var(--n2-warning-soft);
   /* Przygaszenie slotów kalendarza poza oknem godzin agencji (9:00–17:00).
      Wyłącznie prezentacja — te sloty działają normalnie. */
   --week-offhours-tint: rgba(0, 0, 0, 0.34);
@@ -3354,6 +3358,17 @@ a.toggle-btn {
   text-decoration: line-through;
   text-decoration-thickness: 1px;
 }
+/* Osobisty czas wystąpienia (2026-09-15): spotkanie trwa u tej osoby inaczej
+   niż w planie serii — lewa krawędź kropkowana i nożyczki przy godzinach. */
+.week-event-block.personal {
+  border-left-style: dotted;
+  border-left-width: 3px;
+}
+.week-event-personal {
+  margin-left: 4px;
+  font-size: var(--n2-type-xs);
+  opacity: 0.85;
+}
 .week-event-title {
   font-size: var(--n2-type-xs);
   font-weight: 600;
@@ -3393,6 +3408,17 @@ a.toggle-btn {
   align-items: center;
   gap: 4px;
   color: var(--vacation-accent);
+}
+.week-event-block.nieobecnosc {
+  border-color: var(--absence-accent);
+  border-left-color: var(--absence-accent);
+  background: var(--absence-accent-soft);
+}
+.week-event-block.nieobecnosc .week-event-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--absence-accent);
 }
 
 /* ---------- Bin column (Zasobnik: dateless blocks) ---------- */

@@ -30,6 +30,7 @@ import {
   splitOverloadedDaysByVacation,
   workloadCellDetail,
   type WorkloadCellBlock,
+  personEventHoursOnDate,
 } from '../store/selectors';
 import { Avatar } from '../components/Avatar';
 import { useOpenTask } from '../components/TaskModal';
@@ -122,14 +123,19 @@ function BlockRow({
                 const avail = availableHoursOnDate(state, p.id, date);
                 const cur = hoursForPersonOnDate(state, p.id, date);
                 const over = cur + entry.plannedHours > avail;
-                const onVacation = personVacationOnDate(state, p.id, date) !== null;
+                const leave = personVacationOnDate(state, p.id, date);
+                const onVacation = leave !== null;
                 const fits =
                   !onVacation &&
                   findFreeStart(blocksForPersonDate(state, p.id, date), durMin) !== null;
                 return (
                   <option key={p.id} value={p.id}>
                     {p.name} — {formatDuration(cur)}/{formatDuration(avail)} tego dnia{over ? ' ⚠' : ''}
-                    {onVacation ? ' — urlop' : fits ? '' : ' — brak miejsca'}
+                    {leave !== null
+                      ? ` - ${leave.kind === 'nieobecnosc' ? 'nieobecność' : 'urlop'}`
+                      : fits
+                        ? ''
+                        : ' — brak miejsca'}
                   </option>
                 );
               })}
@@ -139,7 +145,7 @@ function BlockRow({
                 targetFits
                   ? null
                   : targetOnVacation
-                    ? 'Ta osoba ma w tym dniu urlop.'
+                    ? 'Ta osoba ma w tym dniu urlop lub nieobecność.'
                     : 'Brak wolnego przedziału czasu w tym dniu u wybranej osoby.'
               }
               id={`wl-move-${entry.id}`}
@@ -387,10 +393,16 @@ export function WorkloadPage() {
 
   // hours[personId][date] for this week, under the current filters.
   const weekEntries = state.workload.filter((w) => daySet.has(w.date) && entryPasses(w));
+  // SPOTKANIA wchodzą do obciążenia (2026-09-15, zgłoszenie „spotkania nie
+  // liczą się do obciążenia per dzień") — ale tylko bez filtra klienta/usługi:
+  // spotkanie nie ma klienta, więc w widoku „godziny dla klienta X" byłoby
+  // obce. Ta sama arytmetyka co `bookedHoursForPersonOnDate`.
+  const meetingsCount = !clientFilter && !serviceFilter;
   const hoursFor = (personId: string, date: string) =>
     weekEntries
       .filter((w) => w.personId === personId && w.date === date)
-      .reduce((s, w) => s + w.plannedHours, 0);
+      .reduce((s, w) => s + w.plannedHours, 0) +
+    (meetingsCount ? personEventHoursOnDate(state, personId, date) : 0);
 
   return (
     <section className="page page-wide">
@@ -504,7 +516,7 @@ export function WorkloadPage() {
                         <span
                           className="workload-vacation-flag"
                           role="img"
-                          aria-label={`Urlop: ${flagDays.vacation
+                          aria-label={`Urlop / nieobecność: ${flagDays.vacation
                             .map(formatRowLabel)
                             .join(', ')}`}
                         >

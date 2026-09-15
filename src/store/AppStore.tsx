@@ -50,6 +50,7 @@ import type {
   WorkloadEntry,
   TimeEntry,
   TimeEntrySource,
+  LeaveKind,
 } from '../types';
 import type { CloudMergePayload } from '../supabase/plannerData';
 import type { CloudPersonMergeRow } from '../supabase/referenceData';
@@ -126,6 +127,15 @@ import {
 } from './selectors';
 import { portionLoggedMinutes } from './timeTracking';
 import { isOccurrenceDate, normalizeEventRsvps, normalizeRecurrence } from '../utils/recurrence';
+import {
+  baseOccurrenceTimes,
+  isValidPersonalWindow,
+  normalizeEventPersonalTimes,
+  personMayPersonalize,
+  personalTimeFor,
+  samePersonalTimes,
+} from '../utils/eventPersonalTime';
+import { isLeaveKind } from '../utils/leave';
 import { copyTitle } from '../utils/taskCopyName';
 import { isBoardMember } from './confidentiality';
 import { ROLE_LABELS } from './permissions';
@@ -245,7 +255,7 @@ export interface EventDraft {
   durationMinutes: number;
   attendeeIds: string[];
   recurrence: unknown | null;
-  kind?: 'urlop';
+  kind?: LeaveKind;
   endDate?: string | null;
   /** Utajnij treść — semantyka i bramka zarządu jak w `TaskDraft.isConfidential`.
    *  Dla urlopu (`kind: 'urlop'`) zawsze ignorowane (flaga zabroniona). */
@@ -352,6 +362,10 @@ export type Action =
   | { type: 'MOVE_TASK'; taskId: string; dayDelta: number }
   | { type: 'SET_TASK_DATES'; taskId: string; startDate: string; endDate: string }
   | { type: 'SET_TASK_STATUS'; taskId: string; statusId: string }
+  // Szybkie zamknięcie zadania z menu bloku (zgłoszenie „Możliwość szybszego
+  // zamknięcia zadania", 2026-09-15): pierwszy status `isDone` + zasobnik
+  // zadania znika. Bloki datowane i wpisy czasu zostają.
+  | { type: 'COMPLETE_TASK'; taskId: string }
   | { type: 'SET_BLOCK_DONE'; entryId: string; done: boolean }
   | { type: 'REORDER_PROJECT_TASK'; taskId: string; direction: -1 | 1 }
   // Cykliczność zadania: reguła (create / „edytuj wszystkie” / clear) i per-datowy
@@ -436,6 +450,17 @@ export type Action =
       date: string;
       personId: string;
       status: 'yes' | 'no' | null;
+    }
+  // OSOBISTY czas wystąpienia spotkania (2026-09-15, zgłoszenie „Brak
+  // możliwości edycji czasu pojedynczego spotkania"): „tylko u mnie, tylko
+  // tego dnia". `time: null` przywraca czas wydarzenia. Jednorazowe i
+  // cykliczne; nieobecności nie.
+  | {
+      type: 'SET_EVENT_PERSONAL_TIME';
+      eventId: string;
+      date: string;
+      personId: string;
+      time: { startMinutes: number; durationMinutes: number } | null;
     }
   // Content Plan — marki i publikacje modułu. Kolekcje ADDYTYWNE; jedyna kaskada
   // to DELETE_CP_BRAND (marka zabiera swoje publikacje). Cała walidacja i
@@ -793,7 +818,8 @@ function addTimeEntry(state: AppData, payload: AddTimeEntryPayload): AppData {
     ...(growth.overrunMinutes > 0 ? { overrunMinutes: growth.overrunMinutes } : {}),
     createdAt: nowIso(),
   };
-  return materializeTracking({ ...base, timeEntries: [...base.timeEntries, entry] }, entry, growth);
+  const tracked = materializeTracking({ ...base, timeEntries: [...base.timeEntries, entry] }, entry, growth);
+  return adoptEntryAsPersonalTime(tracked, entry);
 }
 
 /** Zwrot ćwiartek do JEDNEGO wiersza zasobnika pary (inwariant 4): istniejący
@@ -1285,6 +1311,73 @@ function resyncBlockDone(state: AppData, taskId: string, personId: string, date:
     return w;
   });
   return changed ? { ...state, workload } : state;
+}
+
+/**
+ * Wpisuje (albo czyści przy `time: null`) OSOBISTY czas wystąpienia osoby na
+ * dzień i kanonikalizuje listę (czas równy bazowemu znika). Ta sama lista po
+ * wartości => TA SAMA referencja stanu. Wołający sprawdził już bramki.
+ */
+function withEventPersonalTime(
+  state: AppData,
+  event: CalendarEvent,
+  date: string,
+  personId: string,
+  time: { startMinutes: number; durationMinutes: number } | null,
+): AppData {
+  const without = (event.personalTimes ?? []).filter(
+    (t) => !(t.date === date && t.personId === personId),
+  );
+  const raw = time === null ? without : [...without, { date, personId, ...time }];
+  const personalTimes = normalizeEventPersonalTimes(raw, event, (id) => hasEntity(state, 'person', id));
+  if (samePersonalTimes(personalTimes, event.personalTimes)) return state;
+  return {
+    ...state,
+    events: state.events.map((e) => {
+      if (e.id !== event.id) return e;
+      const { personalTimes: _prev, ...rest } = e;
+      return { ...rest, ...(personalTimes ? { personalTimes } : {}), updatedAt: nowIso() };
+    }),
+  };
+}
+
+/**
+ * Wpis czasu ze spotkania (`eventId`) o INNYCH godzinach niż plan tej osoby =
+ * spotkanie „realnie trwało tyle": plan osoby na ten dzień przyjmuje czas wpisu
+ * jako osobisty (2026-09-15, zgłoszenie „Brak możliwości edycji czasu
+ * pojedynczego spotkania", tor z widoku Dzień). Wydarzenia Google
+ * (`gcal:<id>`) i spotkania, których nie ma w stanie, przechodzą bez zmian.
+ */
+function adoptEntryAsPersonalTime(state: AppData, entry: TimeEntry): AppData {
+  if (entry.eventId === undefined) return state;
+  const event = state.events.find((e) => e.id === entry.eventId);
+  if (event === undefined || isLeaveKind(event.kind)) return state;
+  if (!personMayPersonalize(event, entry.personId)) return state;
+  if (baseOccurrenceTimes(event, entry.date) === null) return state;
+  return withEventPersonalTime(state, event, entry.date, entry.personId, {
+    startMinutes: entry.startMinutes,
+    durationMinutes: entry.endMinutes - entry.startMinutes,
+  });
+}
+
+/**
+ * Skasowany wpis ze spotkania oddaje planowi czas wydarzenia, o ile osobisty
+ * czas był DOKŁADNIE czasem tego wpisu (lustro „cofnięcie = skasowanie wpisu";
+ * osobisty czas ustawiony inaczej, np. przeciągnięciem w tygodniu, zostaje).
+ */
+function releaseEntryPersonalTime(state: AppData, entry: TimeEntry): AppData {
+  if (entry.eventId === undefined) return state;
+  const event = state.events.find((e) => e.id === entry.eventId);
+  if (event === undefined) return state;
+  const personal = personalTimeFor(event, entry.date, entry.personId);
+  if (
+    personal === undefined ||
+    personal.startMinutes !== entry.startMinutes ||
+    personal.durationMinutes !== entry.endMinutes - entry.startMinutes
+  ) {
+    return state;
+  }
+  return withEventPersonalTime(state, event, entry.date, entry.personId, null);
 }
 
 /** Zadanie, w którym nie ma nic do zrobienia (wszystkie bloki wykonane, zasobnik
@@ -4462,9 +4555,9 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
       // pól. Hydracja (`plannerData`) kanonikalizuje je łagodnie WCZEŚNIEJ, więc
       // tutaj może dojechać już tylko realnie zniekształcony ładunek.
       const rec = e as unknown as Record<string, unknown>;
-      if (rec.kind !== undefined && rec.kind !== 'urlop') return state;
+      if (rec.kind !== undefined && !isLeaveKind(rec.kind)) return state;
       if (rec.endDate !== undefined) {
-        if (rec.kind !== 'urlop') return state;
+        if (!isLeaveKind(rec.kind)) return state;
         if (typeof rec.endDate !== 'string' || !isValidDateStr(rec.endDate)) return state;
         if (rec.endDate <= e.date) return state;
       }
@@ -4472,6 +4565,7 @@ function mergeCloudEntities(state: AppData, payload: CloudMergePayload): AppData
       // kanonikalizuje wcześniej (normalizeEventRsvps), tu tylko strażnik
       // struktury jak dla kind/endDate.
       if (rec.rsvps !== undefined && !Array.isArray(rec.rsvps)) return state;
+      if (rec.personalTimes !== undefined && !Array.isArray(rec.personalTimes)) return state;
     }
     const filtered = payload.events.map((e) => {
       const attendeeIds = e.attendeeIds.filter(
@@ -4609,6 +4703,44 @@ export function reducer(state: AppData, action: Action): AppData {
           'task',
           action.taskId,
           `przeniósł/przeniosła zadanie do statusu „${status?.name ?? '?'}”`,
+        ),
+      };
+    }
+    case 'COMPLETE_TASK': {
+      // Świadome „ukończ zadanie" (prawy klik na bloku, po potwierdzeniu):
+      // przeciwieństwo `autoCompleteTask`, które ODMAWIA zamknięcia, dopóki coś
+      // zostaje do zrobienia. Tu zostaje nic: status przechodzi na pierwszy
+      // aktywny `isDone`, wiersze ZASOBNIKA zadania (u wszystkich osób) są
+      // odrzucane — sprzedane godziny (`estimatedHours`) to kontrakt i nie
+      // ruszamy ich, a bloki datowane zostają w kalendarzu (done-status
+      // podświetla je przez `blockIsDone`); wpisy czasu nietknięte. Zadanie
+      // nieznane, już zamknięte albo brak statusu `isDone` => TA SAMA
+      // referencja (inwariant 6). Serii cyklicznej dotyczy tak samo jak
+      // „Oznacz całą serię jako zrobioną" (SET_TASK_STATUS).
+      const task = state.tasks.find((t) => t.id === action.taskId);
+      if (task === undefined || isDoneStatus(state, task.statusId)) return state;
+      const doneStatus =
+        activeStatuses(state).find((st) => st.isDone) ?? state.statuses.find((st) => st.isDone);
+      if (doneStatus === undefined) return state;
+      let droppedBinHours = 0;
+      const workload = state.workload.filter((w) => {
+        if (w.taskId !== task.id || !isBinEntry(w)) return true;
+        droppedBinHours += w.plannedHours;
+        return false;
+      });
+      const dropped =
+        droppedBinHours > 0 ? `, odrzucono ${formatDuration(droppedBinHours)} z zasobnika` : '';
+      return {
+        ...state,
+        tasks: state.tasks.map((t) =>
+          t.id === task.id ? { ...t, statusId: doneStatus.id, updatedAt: nowIso() } : t,
+        ),
+        ...(workload.length !== state.workload.length ? { workload } : {}),
+        activity: withActivity(
+          state,
+          'task',
+          task.id,
+          `ukończył(a) zadanie: status „${doneStatus.name}”${dropped}`,
         ),
       };
     }
@@ -4946,7 +5078,8 @@ export function reducer(state: AppData, action: Action): AppData {
       const without = { ...reverted, timeEntries: reverted.timeEntries.filter((e) => e.id !== action.entryId) };
       // Wpis wyzwalający wzrost zaksięgowany na INNYM wpisie: przycięcie
       // zdejmuje dorośnięty plan pary do poziomu wykonania.
-      return resyncBlockDone(trimPlanGrowth(without, w.taskId, w.personId, w.date), w.taskId, w.personId, w.date);
+      const trimmed = resyncBlockDone(trimPlanGrowth(without, w.taskId, w.personId, w.date), w.taskId, w.personId, w.date);
+      return releaseEntryPersonalTime(trimmed, w);
     }
     case 'SETTLE_TRACKED_DAY':
       return settleTrackedDay(state, action.personId, action.date, action.nowMinutes, action.explicit === true);
@@ -5556,7 +5689,7 @@ export function reducer(state: AppData, action: Action): AppData {
             // Utajnienie tylko od zarządu i NIGDY na urlopie (forma kanoniczna).
             ...(isBoardMember(state) &&
             action.draft.isConfidential === true &&
-            normalized.kind !== 'urlop'
+            !isLeaveKind(normalized.kind)
               ? { isConfidential: true as const }
               : {}),
             createdAt: stamp,
@@ -5582,7 +5715,7 @@ export function reducer(state: AppData, action: Action): AppData {
           // Utajnienie: wartość z draftu tylko od zarządu, brak pola / nie-zarząd
           // zachowuje stan wydarzenia; urlop NIGDY nie niesie flagi.
           const confidential =
-            normalized.kind === 'urlop'
+            isLeaveKind(normalized.kind)
               ? false
               : confidentialAllowed && action.draft.isConfidential !== undefined
                 ? action.draft.isConfidential === true
@@ -5591,9 +5724,25 @@ export function reducer(state: AppData, action: Action): AppData {
           // nowej reguły/kotwicy (zmiana dni tygodnia/until wycina wpisy spoza
           // wystąpień); zdjęcie cykliczności lub urlop = klucz znika.
           const rsvps =
-            normalized.kind === 'urlop' || normalized.recurrence === undefined
+            isLeaveKind(normalized.kind) || normalized.recurrence === undefined
               ? undefined
               : normalizeEventRsvps(e.rsvps, normalized.recurrence, normalized.date);
+          // Osobiste czasy przeżywają edycję RE-KANONIKALIZOWANE względem nowej
+          // reguły, uczestników i czasu bazowego (nowy czas serii równy czyjemuś
+          // osobistemu = ten wpis znika; zdjęty uczestnik traci swój wpis).
+          const personalTimes = isLeaveKind(normalized.kind)
+            ? undefined
+            : normalizeEventPersonalTimes(
+                e.personalTimes,
+                {
+                  date: normalized.date,
+                  startMinutes: normalized.startMinutes,
+                  durationMinutes: normalized.durationMinutes,
+                  attendeeIds: normalized.attendeeIds,
+                  ...(normalized.recurrence ? { recurrence: normalized.recurrence } : {}),
+                },
+                (personId) => hasEntity(state, 'person', personId),
+              );
           const next: CalendarEvent = {
             id: e.id,
             title: normalized.title,
@@ -5606,6 +5755,7 @@ export function reducer(state: AppData, action: Action): AppData {
             attendeeIds: normalized.attendeeIds,
             ...(normalized.recurrence ? { recurrence: normalized.recurrence } : {}),
             ...(rsvps ? { rsvps } : {}),
+            ...(personalTimes ? { personalTimes } : {}),
             ...(normalized.kind ? { kind: normalized.kind } : {}),
             ...(normalized.endDate ? { endDate: normalized.endDate } : {}),
             ...(confidential ? { isConfidential: true as const } : {}),
@@ -5626,7 +5776,7 @@ export function reducer(state: AppData, action: Action): AppData {
       // cykliczności kanonicznie). Nieprawidłowa komenda => ta sama referencja
       // (inwariant 6).
       const event = state.events.find((e) => e.id === action.eventId);
-      if (event === undefined || event.kind === 'urlop' || event.recurrence === undefined) {
+      if (event === undefined || isLeaveKind(event.kind) || event.recurrence === undefined) {
         return state;
       }
       if (action.personId === '' || !state.people.some((p) => p.id === action.personId)) {
@@ -5660,6 +5810,30 @@ export function reducer(state: AppData, action: Action): AppData {
           return { ...rest, ...(rsvps ? { rsvps } : {}), updatedAt: nowIso() };
         }),
       };
+    }
+    case 'SET_EVENT_PERSONAL_TIME': {
+      // Bramki => TA SAMA referencja (inwariant 6): nieznane wydarzenie,
+      // nieobecność, nieznana osoba, osoba spoza listy uczestników (imienne),
+      // dzień bez wystąpienia, okno poza siatką 15 min / poza dobą. Czas równy
+      // bazowemu = wyczyszczenie (forma kanoniczna nie trzyma no-opów).
+      const event = state.events.find((e) => e.id === action.eventId);
+      if (event === undefined || isLeaveKind(event.kind)) return state;
+      if (!hasEntity(state, 'person', action.personId)) return state;
+      if (!personMayPersonalize(event, action.personId)) return state;
+      if (!isValidDateStr(action.date) || baseOccurrenceTimes(event, action.date) === null) return state;
+      if (action.time !== null) {
+        if (!isValidPersonalWindow(action.time.startMinutes, action.time.durationMinutes)) return state;
+        // Własna nieobecność osoby (pełna doba albo okno godzinowe) jest twardą
+        // blokadą także dla osobistego czasu (przegląd Codex 2026-09-15): nie
+        // da się „u siebie" przenieść spotkania na urlop / nieobecność.
+        if (personVacationOnDate(state, action.personId, action.date) !== null) return state;
+        const end = action.time.startMinutes + action.time.durationMinutes;
+        const leaveWindows = personHourlyVacationIntervals(state, action.personId, action.date);
+        if (leaveWindows.some((w) => rangesOverlap(action.time!.startMinutes, end, w.startMinutes, w.endMinutes))) {
+          return state;
+        }
+      }
+      return withEventPersonalTime(state, event, action.date, action.personId, action.time);
     }
     // ---- Content Plan (marki i publikacje modułu) ----
     // Walidacja i normalizacja żyją w `src/contentplan/domain.ts`

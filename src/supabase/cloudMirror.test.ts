@@ -1186,3 +1186,75 @@ describe('diffToCloudOps — zgłoszenia', () => {
     expect(removed.match).toEqual({ id: TICKET });
   });
 });
+
+describe('events.personal_times — zapis osobistych czasów wystąpień (2026-09-15)', () => {
+  const makeEvent = (o: Record<string, unknown> = {}) => ({
+    id: '77777777-7777-4777-8777-777777777777',
+    title: 'Spotkanie',
+    description: '',
+    location: '',
+    meetingUrl: '',
+    date: '2026-07-06',
+    startMinutes: 540,
+    durationMinutes: 60,
+    attendeeIds: [] as string[],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    ...o,
+  });
+  it('mapuje personId na profil chmury; osoba bez konta zostaje lokalna z diagnostyką; brak = pusta tablica', () => {
+    const m = maps();
+    const prev: AppData = { ...localFixture(), events: [] };
+    const withTimes: AppData = {
+      ...localFixture(),
+      events: [
+        makeEvent({
+          attendeeIds: [PA],
+          personalTimes: [
+            { date: '2026-07-06', personId: PA, startMinutes: 600, durationMinutes: 15 },
+            { date: '2026-07-06', personId: 'p-local-only', startMinutes: 615, durationMinutes: 15 },
+          ],
+        }),
+      ],
+    };
+    const res = diffToCloudOps(prev, withTimes, m);
+    const up = res.ops.find((o) => o.table === 'events' && o.kind === 'upsert');
+    expect(up!.row).toMatchObject({
+      personal_times: [{ date: '2026-07-06', personId: CLOUD_PA, startMinutes: 600, durationMinutes: 15 }],
+    });
+    expect(res.diagnostics.length).toBeGreaterThan(0);
+    const plain = diffToCloudOps(prev, { ...localFixture(), events: [makeEvent({ attendeeIds: [PA] })] }, m).ops.find(
+      (o) => o.table === 'events' && o.kind === 'upsert',
+    );
+    expect(plain!.row).toMatchObject({ personal_times: [] });
+  });
+});
+
+describe('events.kind nieobecnosc — zapis (2026-09-15)', () => {
+  it('nieobecność mapuje kind nieobecnosc i end_date zakresu', () => {
+    const m = maps();
+    const prev: AppData = { ...localFixture(), events: [] };
+    const next: AppData = {
+      ...localFixture(),
+      events: [
+        {
+          id: '88888888-8888-4888-8888-888888888888',
+          title: 'Nieobecność',
+          description: '',
+          location: '',
+          meetingUrl: '',
+          date: '2026-07-06',
+          startMinutes: 0,
+          durationMinutes: 1440,
+          attendeeIds: [PA],
+          kind: 'nieobecnosc',
+          endDate: '2026-07-08',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    };
+    const up = diffToCloudOps(prev, next, m).ops.find((o) => o.table === 'events' && o.kind === 'upsert');
+    expect(up!.row).toMatchObject({ kind: 'nieobecnosc', end_date: '2026-07-08', attendee_ids: [CLOUD_PA] });
+  });
+});

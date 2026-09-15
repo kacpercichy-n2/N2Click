@@ -66,6 +66,7 @@ import {
   snapHours,
 } from '../utils/time';
 import { findOverlappingEntry, formatMinutesDuration, freeRemainderRange, isValidTimeRange } from '../utils/timeTracking';
+import { personalTimeFor } from '../utils/eventPersonalTime';
 import { isTodayStr, todayStr, weekDays } from '../utils/dates';
 import { useNowTick } from '../utils/useNowTick';
 import { TimeTrackerBar, type TrackerFormState, type TrackerStatus } from './TimeTrackerBar';
@@ -535,8 +536,22 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
     } else {
       const ov = savedEntry.overrunMinutes ? ` Ponad sprzedane: ${formatMinutesDuration(savedEntry.overrunMinutes)}.` : '';
       const closedNote = t !== undefined && isDoneStatus(after, t.statusId) ? ' Zadanie jest zamknięte, status bez zmian.' : '';
+      // Wpis ze spotkania o innych godzinach niż plan: reduktor wpisał osobisty
+      // czas wystąpienia (tylko u tej osoby) — powiedz to wprost, bo kafel
+      // planu właśnie zmienił długość.
+      const savedEventId = savedEntry.eventId;
+      const personalEvent = savedEventId === undefined ? undefined : after.events.find((e) => e.id === savedEventId);
+      const personal = personalEvent === undefined ? undefined : personalTimeFor(personalEvent, date, personId);
+      const personalNote =
+        personal !== undefined &&
+        personal.startMinutes === savedEntry.startMinutes &&
+        personal.durationMinutes === savedEntry.endMinutes - savedEntry.startMinutes
+          ? ` Spotkanie w Twoim planie trwa teraz ${formatMinutes(personal.startMinutes)}-${formatMinutes(
+              personal.startMinutes + personal.durationMinutes,
+            )} (tylko u Ciebie).`
+          : '';
       say(
-        `Dodane: „${t ? taskDisplayTitle(after, t) : ''}” ma tego dnia ${formatMinutesDuration(today)}, razem ${formatMinutesDuration(total)}${est}.${ov}${closedNote}`,
+        `Dodane: „${t ? taskDisplayTitle(after, t) : ''}” ma tego dnia ${formatMinutesDuration(today)}, razem ${formatMinutesDuration(total)}${est}.${ov}${closedNote}${personalNote}`,
         'ok',
       );
     }
@@ -811,13 +826,27 @@ export function DayTrackerView({ state, dispatch, date }: Props) {
   const clickMeeting = (item: MeetingClick) => {
     if (item.entry !== undefined) {
       const entryId = item.entry.id;
+      // Czy skasowanie zdjęło też osobisty czas wystąpienia (plan wraca do
+      // czasu spotkania)? Liczone z pary stanów wokół commitu.
+      let restoredPlan = false;
       const ok = commit(
         { type: 'DELETE_TIME_ENTRY', entryId },
-        (after) => !after.timeEntries.some((e) => e.id === entryId),
+        (after, before) => {
+          const beforeEvent = before.events.find((e) => e.id === item.eventId);
+          const afterEvent = after.events.find((e) => e.id === item.eventId);
+          restoredPlan =
+            beforeEvent !== undefined &&
+            afterEvent !== undefined &&
+            personalTimeFor(beforeEvent, date, personId) !== undefined &&
+            personalTimeFor(afterEvent, date, personId) === undefined;
+          return !after.timeEntries.some((e) => e.id === entryId);
+        },
       );
       say(
         ok
-          ? `„${item.title}” nie liczy się już jako czas pracy. Te godziny są znowu wolne.`
+          ? `„${item.title}” nie liczy się już jako czas pracy. Te godziny są znowu wolne.${
+              restoredPlan ? ' Plan wraca do czasu spotkania.' : ''
+            }`
           : 'Tego wpisu już nie ma. Widok jest aktualny.',
         ok ? 'info' : 'error',
       );

@@ -7,6 +7,7 @@ import {
   eventDragConfirmCopy,
   eventDragDraftDate,
   eventDragKind,
+  eventPersonalAppliedAnnouncement,
   eventKeyboardReducer,
   eventProjectionChanged,
   projectEventDrag,
@@ -268,5 +269,39 @@ describe('eventBlockAriaLabel', () => {
       'Wydarzenie: Standup, 18 sie (wto) 10:00-11:00.',
     );
     expect(eventBlockAriaLabel('Standup', at, true)).toContain('Przeciągnij');
+  });
+});
+
+describe('eventDragConfirmCopy — zasięg osobisty / wybór (2026-09-15)', () => {
+  const from = { date: '2026-07-08', startMinutes: 600, durationMinutes: 60 };
+  const to = { date: '2026-07-08', startMinutes: 600, durationMinutes: 15 };
+
+  it('scope choice: przycisk główny „tylko u mnie", trzeci „dla wszystkich", oba zdania o skutkach', () => {
+    const copy = eventDragConfirmCopy({ title: 'Status', from, to, recurring: true, scope: 'choice', conflictSentence: 'Koliduje z X.' });
+    expect(copy.confirmLabel).toBe('Tylko u mnie, ten dzień');
+    expect(copy.altLabel).toBe('Zmień dla wszystkich');
+    expect(copy.consequences).toContain('Tylko u mnie:');
+    expect(copy.consequences).toContain('Dla wszystkich: ' + EVENT_DRAG_GLOBAL_SENTENCE);
+    expect(copy.consequences).toContain(EVENT_DRAG_SERIES_SENTENCE);
+    expect(copy.consequences).toContain('Koliduje z X.');
+  });
+
+  it('scope personal: bez trzeciego przycisku i bez zdania globalnego; własna kolizja dopisana', () => {
+    const copy = eventDragConfirmCopy({ title: 'Status', from, to, recurring: true, scope: 'personal', personalConflictSentence: 'U Ciebie koliduje: Y.' });
+    expect(copy.altLabel).toBeUndefined();
+    expect(copy.confirmLabel).toBe('Tylko u mnie, ten dzień');
+    expect(copy.consequences).not.toContain(EVENT_DRAG_GLOBAL_SENTENCE);
+    expect(copy.consequences).toContain('U Ciebie koliduje: Y.');
+  });
+
+  it('brak scope = dotychczasowa kopia globalna', () => {
+    const copy = eventDragConfirmCopy({ title: 'Status', from, to, recurring: false });
+    expect(copy.confirmLabel).toBe('Zmień dla wszystkich');
+    expect(copy.altLabel).toBeUndefined();
+    expect(copy.consequences).toBe(EVENT_DRAG_GLOBAL_SENTENCE);
+  });
+
+  it('eventPersonalAppliedAnnouncement mówi, że zmiana jest tylko u Ciebie', () => {
+    expect(eventPersonalAppliedAnnouncement('Status', to)).toBe('Zmieniono tylko u Ciebie: Status, 8 lip (śro) 10:00-10:15.');
   });
 });

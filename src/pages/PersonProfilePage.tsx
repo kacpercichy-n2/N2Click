@@ -27,7 +27,7 @@ import {
   availableHoursInRange,
   getDepartment,
   getStatus,
-  hoursForPersonOnDate,
+  bookedHoursForPersonOnDate,
   personCapacity,
   personTotalHours,
   personVacationOnDate,
@@ -44,7 +44,7 @@ import type { Person } from '../types';
 import { Avatar } from '../components/Avatar';
 import { QuickAddModal, NEW_OPTION_VALUE } from '../components/QuickAddModal';
 import { Coin } from '../components/Coin';
-import { TreePalm } from '../components/icons';
+import { TreePalm, UserX } from '../components/icons';
 import { StatusBadge } from '../components/StatusBadge';
 import { DEFAULT_CAPACITY, defaultWorkEndMinutes } from '../store/storage';
 import { useOpenTask } from '../components/TaskModal';
@@ -235,8 +235,10 @@ export function PersonProfile({
   const tasks = state.tasks.filter((t) => taskIds.has(t.id) && t.isDraft !== true);
   const week = weekDays(todayStr());
   const capacity = personCapacity(state, person.id);
+  // Obciążenie tygodnia = bloki + spotkania (2026-09-15), jak nagłówki dni
+  // w kalendarzu i donut na Panelu.
   const weekHours = week.reduce(
-    (s, d) => s + hoursForPersonOnDate(state, person.id, d),
+    (s, d) => s + bookedHoursForPersonOnDate(state, person.id, d),
     0,
   );
   const available = availableHoursInRange(state, person.id, week);
@@ -631,11 +633,12 @@ export function PersonProfile({
         </p>
         <div className="profile-week">
           {week.map((d) => {
-            const h = hoursForPersonOnDate(state, person.id, d);
+            const h = bookedHoursForPersonOnDate(state, person.id, d);
             const over = h > capacity;
             // Palma ZAMIAST wykrzyknika w dzień urlopu (D8) — ten sam podział, co
             // w tabeli obciążenia; pozostałe dni bez zmian.
-            const onVacation = over && personVacationOnDate(state, person.id, d) !== null;
+            const leave = over ? personVacationOnDate(state, person.id, d) : null;
+            const onVacation = leave !== null;
             return (
               <div
                 key={d}
@@ -652,9 +655,17 @@ export function PersonProfile({
                   {h === 0 ? '—' : formatDuration(h)}
                   {over &&
                     (onVacation ? (
-                      <span className="workload-vacation-flag" role="img" aria-label="Urlop">
+                      <span
+                        className="workload-vacation-flag"
+                        role="img"
+                        aria-label={leave?.kind === 'nieobecnosc' ? 'Nieobecność' : 'Urlop'}
+                      >
                         {' '}
-                        <TreePalm size={12} aria-hidden />
+                        {leave?.kind === 'nieobecnosc' ? (
+                          <UserX size={12} aria-hidden />
+                        ) : (
+                          <TreePalm size={12} aria-hidden />
+                        )}
                       </span>
                     ) : (
                       ' ⚠'

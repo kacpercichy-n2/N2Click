@@ -484,6 +484,28 @@ export interface EventRsvp {
   status: EventRsvpStatus;
 }
 
+/**
+ * OSOBISTY czas JEDNEGO wystąpienia spotkania dla JEDNEJ osoby (2026-09-15,
+ * zgłoszenie „Brak możliwości edycji czasu pojedynczego spotkania"): spotkanie
+ * trwało u mnie krócej (albo o innej porze) niż w planie serii, a reszta
+ * uczestników nic nie zmienia. Obowiązuje WYŁĄCZNIE w kalendarzu tej osoby:
+ * plan dnia, kolizje, godziny dnia i przeciążenie tej osoby czytają ten czas
+ * zamiast czasu wydarzenia; inni widzą wydarzenie bez zmian. Powstaje z
+ * przeciągnięcia kafla w tygodniu („Tylko u mnie, ten dzień") albo z wpisu
+ * czasu w widoku Dzień o innych godzinach niż plan.
+ */
+export interface EventPersonalTime {
+  date: DateStr; // dzień wystąpienia (jednorazowe: `event.date`)
+  personId: string;
+  startMinutes: number; // siatka 15 min, w dobie
+  durationMinutes: number; // >= 15, start + czas <= 1440
+}
+
+/** Rodzaj NIEOBECNOŚCI w kalendarzu: urlop (schodzi z limitu dni) albo
+ *  nieobecność (nie schodzi; choroba, odbiór godzin, wyjazd służbowy). Obie
+ *  blokują czas osoby tak samo. */
+export type LeaveKind = 'urlop' | 'nieobecnosc';
+
 /** Skąd wziął się wpis czasu: pasek (ręcznie od-do), rysowanie po osi, stoper,
  *  kliknięte spotkanie z kalendarza. Wyłącznie informacyjne. */
 export type TimeEntrySource = 'manual' | 'draw' | 'timer' | 'event' | 'block';
@@ -556,17 +578,30 @@ export interface CalendarEvent {
    * (kolumna `events.rsvps`).
    */
   rsvps?: EventRsvp[];
+  /**
+   * Osobiste czasy wystąpień per (dzień, osoba) — patrz {@link EventPersonalTime}.
+   * FORMA KANONICZNA: klucz obecny wyłącznie przy niepustej liście, nigdy na
+   * urlopie/nieobecności; wpisy z datą będącą realnym dniem wystąpienia
+   * (jednorazowe: `date`; cykliczne: dzień reguły), osoba = uczestnik (dla
+   * ogólnofirmowego dowolna), czas na siatce 15 min w dobie i RÓŻNY od czasu
+   * bazowego wystąpienia (równy = wpis znika), dedup po (date, personId), sort
+   * po dacie, potem osobie. Egzekwowane w reduktorze, `repairEvents` i
+   * hydracji chmury (kolumna `events.personal_times`, 20260915120000).
+   */
+  personalTimes?: EventPersonalTime[];
   /** Dyskryminator rodzaju. BRAK klucza = spotkanie (kanoniczny minimalizm —
    *  `kind: 'meeting'` nigdy nie jest zapisywane lokalnie). Urlop ma DOKŁADNIE
    *  jednego uczestnika, a `recurrence` jest dla niego ZABRONIONE. CZASY:
    *  wielodniowy zawsze `0/1440`; jednodniowy to `0/1440` (pełna doba) albo
    *  okno godzinowe siatki 15 min (zgłoszenie 2026-08-24) — pełnodniowe
    *  przywileje (palma, twarde straże dnia) ma wyłącznie `0/1440`
-   *  (`isFullDayVacation`). */
-  kind?: 'urlop';
-  /** Ostatni dzień zakresu urlopu (włącznie). Klucz obecny WYŁĄCZNIE gdy
-   *  `kind === 'urlop'` i `endDate > date`; zakres `date..endDate` ma najwyżej
-   *  `MAX_VACATION_DAYS` dni (lustro limitu okresu zadania). */
+   *  (`isFullDayVacation`). NIEOBECNOŚĆ (`'nieobecnosc'`, 2026-09-15) ma te
+   *  same reguły co urlop, tylko nie schodzi z limitu dni urlopu. */
+  kind?: LeaveKind;
+  /** Ostatni dzień zakresu urlopu/nieobecności (włącznie). Klucz obecny
+   *  WYŁĄCZNIE gdy `kind` jest nieobecnością i `endDate > date`; zakres
+   *  `date..endDate` ma najwyżej `MAX_VACATION_DAYS` dni (lustro limitu okresu
+   *  zadania). */
   endDate?: DateStr;
   /** Utajniona treść (zarząd): tytuł/opis/lokalizacja/link maskowane dla
    *  wszystkich poza zarządem i JAWNYMI uczestnikami (`attendeeIds: []` nie

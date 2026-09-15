@@ -20,7 +20,7 @@ import { formatShortWithWeekday } from './dates';
  * `ScheduleConflict` jest z tym zgodny.
  */
 export interface ConflictLike {
-  kind: 'block' | 'event' | 'urlop' | 'recurrence';
+  kind: 'block' | 'event' | 'urlop' | 'nieobecnosc' | 'recurrence';
   /** Nazwa osoby; '' = nieznana. */
   personName: string;
   /** Tytuł zadania/wydarzenia; '' = nieznany. */
@@ -41,6 +41,7 @@ const KIND_NOUN: Record<ConflictLike['kind'], string> = {
   block: 'zadanie',
   event: 'wydarzenie',
   urlop: 'urlop',
+  nieobecnosc: 'nieobecność',
   recurrence: 'zadanie cykliczne',
 };
 
@@ -85,11 +86,12 @@ export function extraConflictsPhrase(count: number): string {
  */
 function describeOne(c: ConflictLike): string {
   const who = c.personName.trim() === '' ? 'Ta osoba' : c.personName.trim();
-  if (c.kind === 'urlop') {
+  if (c.kind === 'urlop' || c.kind === 'nieobecnosc') {
+    const noun = KIND_NOUN[c.kind];
     if (c.startMinutes === 0 && c.durationMinutes === DAY_MINUTES) {
-      return `${who} ma w tym dniu urlop`;
+      return `${who} ma w tym dniu ${noun}`;
     }
-    return `${who} ma urlop ${formatMinutes(c.startMinutes)}-${formatMinutes(
+    return `${who} ma ${noun} ${formatMinutes(c.startMinutes)}-${formatMinutes(
       c.startMinutes + c.durationMinutes,
     )}`;
   }
@@ -194,7 +196,10 @@ export function plannedItemsPhrase(count: number): string {
  * przeplanowania, a nie liczba osób: najpierw rejestrujesz urlop, potem
  * porządkujesz kalendarz.
  */
-export function vacationDraftWarningMessage(conflicts: readonly ConflictLike[]): string {
+export function vacationDraftWarningMessage(
+  conflicts: readonly ConflictLike[],
+  kindTitle: string = 'Urlop',
+): string {
   if (conflicts.length === 0) return '';
-  return `W tym okresie masz już ${plannedItemsPhrase(conflicts.length)}. Urlop zapisze się mimo to, pamiętaj o przeplanowaniu.`;
+  return `W tym okresie masz już ${plannedItemsPhrase(conflicts.length)}. ${kindTitle} zapisze się mimo to, pamiętaj o przeplanowaniu.`;
 }
