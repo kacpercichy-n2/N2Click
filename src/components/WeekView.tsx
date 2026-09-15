@@ -3786,7 +3786,12 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
         ? `Niezaplanowane ${formatDuration(binHours)} z zasobnika zostaną odrzucone.`
         : '',
       openBlocks > 0
-        ? `${openBlocks} ${polishCount(openBlocks, 'blok w kalendarzu zostaje', 'bloki w kalendarzu zostają', 'bloków w kalendarzu zostaje')} i liczy się jako wykonane.`
+        ? `${openBlocks} ${polishCount(
+            openBlocks,
+            'blok w kalendarzu zostaje i liczy się jako wykonany',
+            'bloki w kalendarzu zostają i liczą się jako wykonane',
+            'bloków w kalendarzu zostaje i liczy się jako wykonane',
+          )}.`
         : '',
     ]
       .filter((part) => part !== '')
