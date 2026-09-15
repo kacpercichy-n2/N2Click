@@ -17,7 +17,7 @@ import {
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { AnimatePresence, m } from 'motion/react';
-import type { AppData, CalendarEvent, Person, Project, Task, WorkloadEntry } from '../types';
+import type { AppData, CalendarEvent, LeaveKind, Person, Project, Task, WorkloadEntry } from '../types';
 import { useDispatch, useStoreApi } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import { useOpenTask } from './TaskModal';
@@ -365,8 +365,8 @@ function dropRejectReason(
       b.companyWide !== true &&
       rangesOverlap(start, end, b.start, b.end),
   );
-  const urlop = hits.find((b) => b.kind === 'urlop');
-  if (urlop) return `${personName} ma w tym dniu urlop.`;
+  const leave = hits.find((b) => b.kind === 'urlop' || b.kind === 'nieobecnosc');
+  if (leave) return `${personName} ma w tym dniu ${leave.kind === 'nieobecnosc' ? 'nieobecność' : 'urlop'}.`;
   if (hits.length > 0) {
     return hits[0].title
       ? `Koliduje ze spotkaniem „${hits[0].title}”.`
@@ -3156,6 +3156,9 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
   // same permission the read-only TaskModal enforces, so we don't surface it to
   // users who can't create tasks.
   const canManageTasks = can('tasks.manage');
+  // Własny urlop / nieobecność z prawego kliku zgłasza każdy zalogowany
+  // (`events.vacationSelf`, jak przycisk na liście Wydarzeń).
+  const canAddLeave = can('events.vacationSelf') && state.currentUserId !== '';
   // Oglądający może zmienić czas spotkania TYLKO U SIEBIE (2026-09-15): jest
   // uczestnikiem imiennym albo spotkanie jest ogólnofirmowe; nieobecności nie.
   const viewerMayPersonalize = (event: CalendarEvent) =>
@@ -3458,7 +3461,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
   // Right-click on bare grid (not a block — those own their own menu and stop the
   // event) → offer "Dodaj zadanie" at the snapped start under the cursor.
   const openSlotMenu = (date: string, e: React.MouseEvent<HTMLDivElement>) => {
-    if (!canManageTasks && !canManageEvents) return;
+    if (!canManageTasks && !canManageEvents && !canAddLeave) return;
     if ((e.target as HTMLElement).closest('.week-block')) return; // block's own menu
     // Defense-in-depth: an occurrence overlay already stops its own contextmenu,
     // but never let a right-click on it fall through to the slot menu.
@@ -3469,7 +3472,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
     // 8 godzin dnia, gdy ktokolwiek widoczny ma urlop (lewy klik zostaje
     // wejściem w urlop).
     const eventBlock = (e.target as HTMLElement).closest('.week-event-block');
-    if (eventBlock && !eventBlock.classList.contains('urlop')) return;
+    if (eventBlock && !eventBlock.classList.contains('urlop') && !eventBlock.classList.contains('nieobecnosc')) return;
     e.preventDefault();
     const column = e.currentTarget;
     const rect = column.getBoundingClientRect();
@@ -3498,6 +3501,15 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
     if (!slotMenu) return;
     const personId = filter.size === 1 ? [...filter][0] : undefined;
     openNewEvent({ date: slotMenu.date, startMinutes: slotMenu.startMinutes, personId });
+    setSlotMenu(null);
+  };
+
+  // Własny urlop / nieobecność z prawego kliku (2026-09-15, zgłoszenie
+  // „nieobecności"): modal w trybie nieobecności ZALOGOWANEGO, dzień z kolumny,
+  // godzina slotu jako start wariantu godzinowego (pełna doba zostaje domyślna).
+  const addLeaveInSlot = (kind: LeaveKind) => {
+    if (!slotMenu) return;
+    openNewEvent({ date: slotMenu.date, startMinutes: slotMenu.startMinutes, kind });
     setSlotMenu(null);
   };
 
@@ -4025,9 +4037,10 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
       schedWarning = '⚠ Koliduje z innym blokiem tej osoby w tym dniu.';
       schedDisabled = true;
     } else if (personVacationOnDate(state, menu.entry.personId, schedDate) !== null) {
-      // Urlop przed ogólnym komunikatem o wydarzeniu: „koliduje z wydarzeniem"
-      // kazałoby szukać spotkania w kalendarzu, a blokuje CAŁY dzień wolny.
-      schedWarning = '⚠ Ta osoba ma w tym dniu urlop.';
+      // Urlop/nieobecność przed ogólnym komunikatem o wydarzeniu: „koliduje z
+      // wydarzeniem" kazałoby szukać spotkania w kalendarzu, a blokuje CAŁY dzień.
+      const leave = personVacationOnDate(state, menu.entry.personId, schedDate);
+      schedWarning = `⚠ Ta osoba ma w tym dniu ${leave?.kind === 'nieobecnosc' ? 'nieobecność' : 'urlop'}.`;
       schedDisabled = true;
     } else if (
       blockCollidesWithEvent(state, menu.entry.personId, schedDate, schedStartMin, schedHours)
@@ -4268,7 +4281,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                   {/* Palma ZAMIAST wykrzyknika w dzień urlopu — imiona są już
                       wyłączone z `overloadNames`, więc nic się nie dubluje. */}
                   {day.vacationNames.length > 0 && (
-                    <Tooltip text={`Urlop: ${day.vacationNames.join(', ')}`}>
+                    <Tooltip text={`Urlop / nieobecność: ${day.vacationNames.join(', ')}`}>
                       <div className="week-col-vacation">
                         <TreePalm size={13} aria-hidden /> {day.vacationNames.join(', ')}
                       </div>
@@ -4843,7 +4856,8 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                         </button>
                         {vacation !== null && (
                           <div className="context-menu-hint" id={hintId}>
-                            {p.firstName || p.name} ma w tym dniu urlop.
+                            {p.firstName || p.name} ma w tym dniu{' '}
+                            {vacation.kind === 'nieobecnosc' ? 'nieobecność' : 'urlop'}.
                           </div>
                         )}
                       </Fragment>
@@ -4858,6 +4872,27 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                 >
                   + Dodaj spotkanie ({formatMinutes(slotMenu.startMinutes)})
                 </button>
+              )}
+              {canAddLeave && (
+                <>
+                  <div className="context-menu-sep" role="separator" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="context-menu-item"
+                    onClick={() => addLeaveInSlot('urlop')}
+                  >
+                    <TreePalm size={13} aria-hidden /> Dodaj urlop (Twój)
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="context-menu-item"
+                    onClick={() => addLeaveInSlot('nieobecnosc')}
+                  >
+                    <UserX size={13} aria-hidden /> Dodaj nieobecność (Twoją)
+                  </button>
+                </>
               )}
             </div>
           </m.div>

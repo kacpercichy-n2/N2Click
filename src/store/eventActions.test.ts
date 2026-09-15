@@ -880,3 +880,33 @@ describe('SET_EVENT_PERSONAL_TIME (osobisty czas wystąpienia, 2026-09-15)', () 
     expect(calendarEventsForDate(state, WED)[0]).toMatchObject({ durationMinutes: 60 });
   });
 });
+
+describe('nieobecność (kind nieobecnosc, 2026-09-15) — te same reguły co urlop, bez limitu dni', () => {
+  const absenceDraft = (overrides: Partial<EventDraft> = {}): EventDraft =>
+    draft({ title: 'Nieobecność', kind: 'nieobecnosc', startMinutes: 0, durationMinutes: 1440, attendeeIds: [PA], ...overrides });
+
+  it('ADD_EVENT zapisuje formę kanoniczną z kind nieobecnosc (pełna doba, bez reguły)', () => {
+    const state = baseState();
+    const next = reducer(state, { type: 'ADD_EVENT', draft: absenceDraft() });
+    expect(next).not.toBe(state);
+    expect(next.events[0]).toMatchObject({ kind: 'nieobecnosc', startMinutes: 0, durationMinutes: 1440, attendeeIds: [PA] });
+    expect('recurrence' in next.events[0]).toBe(false);
+    // Cykliczna nieobecność i nieobecność bez dokładnie jednej osoby są odrzucane.
+    expect(reducer(state, { type: 'ADD_EVENT', draft: absenceDraft({ recurrence: { daysOfWeek: [1] } }) })).toBe(state);
+    expect(reducer(state, { type: 'ADD_EVENT', draft: absenceDraft({ attendeeIds: [PA, PB] }) })).toBe(state);
+  });
+
+  it('blokuje dzień jak urlop: spotkanie imienne w dzień nieobecności odbija, personVacationOnDate ją zwraca', () => {
+    const withAbsence = reducer(baseState(), { type: 'ADD_EVENT', draft: absenceDraft() });
+    expect(personVacationOnDate(withAbsence, PA, MON)?.kind).toBe('nieobecnosc');
+    const meeting = reducer(withAbsence, { type: 'ADD_EVENT', draft: draft({ attendeeIds: [PA], date: MON }) });
+    expect(meeting).toBe(withAbsence);
+  });
+
+  it('nieobecność godzinowa zachowuje okno; RSVP i osobisty czas są dla niej odrzucane', () => {
+    const hourly = reducer(baseState(), { type: 'ADD_EVENT', draft: absenceDraft({ startMinutes: 540, durationMinutes: 120 }) });
+    expect(hourly.events[0]).toMatchObject({ kind: 'nieobecnosc', startMinutes: 540, durationMinutes: 120 });
+    const id = hourly.events[0].id;
+    expect(reducer(hourly, { type: 'SET_EVENT_PERSONAL_TIME', eventId: id, date: MON, personId: PA, time: { startMinutes: 540, durationMinutes: 15 } })).toBe(hourly);
+  });
+});

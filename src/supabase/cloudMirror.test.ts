@@ -1229,3 +1229,32 @@ describe('events.personal_times — zapis osobistych czasów wystąpień (2026-0
     expect(plain!.row).toMatchObject({ personal_times: [] });
   });
 });
+
+describe('events.kind nieobecnosc — zapis (2026-09-15)', () => {
+  it('nieobecność mapuje kind nieobecnosc i end_date zakresu', () => {
+    const m = maps();
+    const prev: AppData = { ...localFixture(), events: [] };
+    const next: AppData = {
+      ...localFixture(),
+      events: [
+        {
+          id: '88888888-8888-4888-8888-888888888888',
+          title: 'Nieobecność',
+          description: '',
+          location: '',
+          meetingUrl: '',
+          date: '2026-07-06',
+          startMinutes: 0,
+          durationMinutes: 1440,
+          attendeeIds: [PA],
+          kind: 'nieobecnosc',
+          endDate: '2026-07-08',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    };
+    const up = diffToCloudOps(prev, next, m).ops.find((o) => o.table === 'events' && o.kind === 'upsert');
+    expect(up!.row).toMatchObject({ kind: 'nieobecnosc', end_date: '2026-07-08', attendee_ids: [CLOUD_PA] });
+  });
+});

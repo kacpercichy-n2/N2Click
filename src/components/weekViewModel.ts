@@ -149,7 +149,7 @@ export interface WeekDayModel {
 export interface BusyInterval {
   start: number;
   end: number;
-  kind: 'event' | 'urlop' | 'recurrence';
+  kind: 'event' | 'urlop' | 'nieobecnosc' | 'recurrence';
   /** Tytuł wydarzenia / urlopu / zadania cyklicznego; '' gdy nieznany. */
   title: string;
   /**
@@ -270,7 +270,7 @@ export function buildEventBusyByPersonDate(
           // Urlop niesie własny rodzaj: bramka upuszczania traktuje go tak samo
           // jak spotkanie (blok nie wchodzi), a przedział 0-1440 zabiera całą
           // dobę, więc żadna godzina nie jest legalnym celem.
-          kind: occ.event.kind === 'urlop' ? 'urlop' : 'event',
+          kind: isLeaveKind(occ.event.kind) ? occ.event.kind : 'event',
           // Utajniona treść: winowajca kolizji nazywa się etykietą maskującą
           // („Wydarzenie #N"), nigdy prawdziwym tytułem, gdy widz nie ma wglądu.
           title: eventDisplayTitle(state, occ.event),

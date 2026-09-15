@@ -1161,3 +1161,36 @@ describe('events.personal_times — hydracja osobistych czasów wystąpień (202
     expect(result.payload.events!.every((e) => !('personalTimes' in e))).toBe(true);
   });
 });
+
+describe('events.kind nieobecnosc — hydracja (20260915120000)', () => {
+  it('nieobecność hydratuje się z kind nieobecnosc i pełną dobą jak urlop', async () => {
+    const db = new FakeSelectDb().seed('events', [
+      {
+        id: uuid('ev-abs'),
+        title: 'Nieobecność',
+        description: '',
+        location: '',
+        meeting_url: '',
+        event_date: '2026-07-06',
+        start_minutes: 0,
+        duration_minutes: 1440,
+        attendee_ids: [CLOUD_PA],
+        recurrence: null,
+        kind: 'nieobecnosc',
+        end_date: '2026-07-07',
+        created_at: '2026-01-01T00:00:00.000Z',
+        updated_at: '2026-02-01T00:00:00.000Z',
+      },
+    ]);
+    const result = await loadPlannerSnapshot(db, maps(), localFixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.payload.events![0]).toMatchObject({
+      kind: 'nieobecnosc',
+      endDate: '2026-07-07',
+      startMinutes: 0,
+      durationMinutes: 1440,
+      attendeeIds: [PA],
+    });
+  });
+});

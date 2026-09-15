@@ -19,14 +19,42 @@ export function isLeaveEvent(event: { kind?: string }): boolean {
   return isLeaveKind(event.kind);
 }
 
-/** Polskie etykiety rodzaju: mianownik („Urlop") i przypadki do zdań. */
+/** Polskie etykiety rodzaju: mianownik („Urlop"), przypadki i gotowe zdania UI. */
 export function leaveLabel(kind: LeaveKind): {
   title: string; // „Urlop" / „Nieobecność" — także stały tytuł wydarzenia
   lower: string; // „urlop" / „nieobecność"
   genitive: string; // „urlopu" / „nieobecności"
   accusative: string; // „urlop" / „nieobecność"
+  newTitle: string; // „Nowy urlop" / „Nowa nieobecność"
+  editTitle: string; // „Edytuj urlop" / „Edytuj nieobecność"
+  addLabel: string; // „Dodaj urlop" / „Dodaj nieobecność"
+  deleteQuestion: string; // „Usunąć ten urlop?" / „Usunąć tę nieobecność?"
+  deleteLabel: string; // „Usuń urlop" / „Usuń nieobecność"
+  saveFail: string; // „Nie można zapisać urlopu" / „… nieobecności"
 } {
   return kind === 'urlop'
-    ? { title: 'Urlop', lower: 'urlop', genitive: 'urlopu', accusative: 'urlop' }
-    : { title: 'Nieobecność', lower: 'nieobecność', genitive: 'nieobecności', accusative: 'nieobecność' };
+    ? {
+        title: 'Urlop',
+        lower: 'urlop',
+        genitive: 'urlopu',
+        accusative: 'urlop',
+        newTitle: 'Nowy urlop',
+        editTitle: 'Edytuj urlop',
+        addLabel: 'Dodaj urlop',
+        deleteQuestion: 'Usunąć ten urlop?',
+        deleteLabel: 'Usuń urlop',
+        saveFail: 'Nie można zapisać urlopu',
+      }
+    : {
+        title: 'Nieobecność',
+        lower: 'nieobecność',
+        genitive: 'nieobecności',
+        accusative: 'nieobecność',
+        newTitle: 'Nowa nieobecność',
+        editTitle: 'Edytuj nieobecność',
+        addLabel: 'Dodaj nieobecność',
+        deleteQuestion: 'Usunąć tę nieobecność?',
+        deleteLabel: 'Usuń nieobecność',
+        saveFail: 'Nie można zapisać nieobecności',
+      };
 }

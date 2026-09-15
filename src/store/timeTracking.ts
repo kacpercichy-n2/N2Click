@@ -9,6 +9,7 @@
 //     widza nie trafiają do podpowiedzi.
 //   * Zadanie „zrobione" (`Status.isDone`) i szkic nie podpowiadają się — status
 //     jest jedynym znacznikiem zamknięcia (inwariant 5).
+import { isLeaveKind } from '../utils/leave';
 import type { AppData, DateStr, Task, TimeEntry, WorkloadEntry, CalendarEvent } from '../types';
 import {
   blocksForPersonDate,
@@ -152,7 +153,7 @@ export function dayPlanForPerson(state: AppData, personId: string, date: DateStr
   }
   const forPerson = new Set([personId]);
   for (const occ of calendarEventsForDate(state, date, forPerson)) {
-    if (occ.event.kind === 'urlop') continue;
+    if (isLeaveKind(occ.event.kind)) continue;
     if (personAbsentFromEventOccurrence(occ.event, date, personId)) continue;
     out.push({
       kind: 'event',

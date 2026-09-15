@@ -123,14 +123,19 @@ function BlockRow({
                 const avail = availableHoursOnDate(state, p.id, date);
                 const cur = hoursForPersonOnDate(state, p.id, date);
                 const over = cur + entry.plannedHours > avail;
-                const onVacation = personVacationOnDate(state, p.id, date) !== null;
+                const leave = personVacationOnDate(state, p.id, date);
+                const onVacation = leave !== null;
                 const fits =
                   !onVacation &&
                   findFreeStart(blocksForPersonDate(state, p.id, date), durMin) !== null;
                 return (
                   <option key={p.id} value={p.id}>
                     {p.name} — {formatDuration(cur)}/{formatDuration(avail)} tego dnia{over ? ' ⚠' : ''}
-                    {onVacation ? ' — urlop' : fits ? '' : ' — brak miejsca'}
+                    {leave !== null
+                      ? ` — ${leave.kind === 'nieobecnosc' ? 'nieobecność' : 'urlop'}`
+                      : fits
+                        ? ''
+                        : ' — brak miejsca'}
                   </option>
                 );
               })}
@@ -140,7 +145,7 @@ function BlockRow({
                 targetFits
                   ? null
                   : targetOnVacation
-                    ? 'Ta osoba ma w tym dniu urlop.'
+                    ? 'Ta osoba ma w tym dniu urlop lub nieobecność.'
                     : 'Brak wolnego przedziału czasu w tym dniu u wybranej osoby.'
               }
               id={`wl-move-${entry.id}`}
@@ -511,7 +516,7 @@ export function WorkloadPage() {
                         <span
                           className="workload-vacation-flag"
                           role="img"
-                          aria-label={`Urlop: ${flagDays.vacation
+                          aria-label={`Urlop / nieobecność: ${flagDays.vacation
                             .map(formatRowLabel)
                             .join(', ')}`}
                         >

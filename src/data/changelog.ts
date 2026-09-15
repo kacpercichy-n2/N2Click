@@ -90,6 +90,45 @@ export function changelogUnreadCount(
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-09-15-zgloszenia-wrzesien',
+    dateFrom: '2026-09-15',
+    dateTo: '2026-09-15',
+    summary:
+      'Zgłoszenia zespołu z września: spotkanie skrócisz tylko u siebie (z tygodnia albo z widoku Dzień), „nie biorę udziału” zwalnia miejsce obok sąsiada, spotkania liczą się do obciążenia na Panelu, nieobecność obok urlopu (także z prawego kliku) i szybkie ukończenie zadania z menu bloku.',
+    items: [
+      {
+        area: 'Kalendarz',
+        feature: 'Spotkanie krócej tylko u Ciebie',
+        description:
+          'Przeciągnij albo rozciągnij kafel spotkania w tygodniu: dialog pyta „Tylko u mnie, ten dzień” albo „Zmień dla wszystkich”. Wersja „u mnie” zmienia wyłącznie Twój kalendarz tego dnia (plan, kolizje, godziny), reszta uczestników widzi spotkanie bez zmian; taki kafel ma kropkowaną krawędź i nożyczki, a prawy klik przywraca czas spotkania. W widoku Dzień: kliknij spotkanie, popraw godziny w pasku i zapisz, a plan przyjmie tyle, ile naprawdę trwało; skasowanie wpisu przywraca plan.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: '„Nie biorę udziału” zwalnia miejsce',
+        description:
+          'Odmowa w wystąpieniu spotkania zdejmuje jego kafel z podziału kolumny: sąsiednie spotkanie wraca na pełną szerokość, a odmówione zostaje wyszarzonym duchem pod spodem (prawy klik wraca do udziału). Wcześniej duch stał obok na pół szerokości i wyglądało, jakby nic się nie stało.',
+      },
+      {
+        area: 'Panel',
+        feature: 'Spotkania liczą się do obciążenia',
+        description:
+          'Donuty „Dziś” i „Ten tydzień”, pasek „Twój tydzień”, alerty przeciążenia, tabela Obciążenie (bez filtra klienta) i profil osoby liczą godziny spotkań imiennych i ogólnofirmowych oraz wystąpień zadań cyklicznych razem z blokami, tak samo jak nagłówki dni w kalendarzu. Urlop, nieobecność i odmówione wystąpienia nie liczą się; skrócone u Ciebie spotkanie liczy się krócej.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Nieobecność obok urlopu',
+        description:
+          'Nowy rodzaj nieobecności („Nieobecność”: choroba, odbiór godzin, wyjazd) blokuje czas jak urlop, ale nie schodzi z limitu dni urlopu. Dodasz ją z listy Wydarzeń albo prawym klikiem na siatce tygodnia, tak jak zadanie (obok „Dodaj urlop”); godzina kliknięcia podpowiada start wariantu godzinowego. Bursztynowy kafel i ikona osoby zamiast palmy.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Ukończ zadanie z menu bloku',
+        description:
+          'Prawy klik na bloku, pod „Oznacz jako wykonane”, ma „Oznacz zadanie jako ukończone”. Dialog mówi, co się stanie: status „gotowe”, niezaplanowane godziny z zasobnika odrzucone, bloki w kalendarzu zostają jako wykonane. Bez wracania do zasobnika i przepisywania godzin.',
+      },
+    ],
+  },
+  {
     id: '2026-09-02-widok-dnia-zgloszenia',
     dateFrom: '2026-09-02',
     dateTo: '2026-09-02',

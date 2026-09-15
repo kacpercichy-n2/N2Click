@@ -4,6 +4,7 @@
 // nietkniętą. Prefill (data/godzina/osoba) przychodzi rozłącznymi parametrami
 // `wydarzenieData` / `wydarzenieStart` / `wydarzenieOsoba`, żeby nie kolidować z
 // prefillem TaskModala (`date`/`assignee`).
+import { isLeaveKind, leaveLabel } from '../utils/leave';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { AnimatePresence, m } from 'motion/react';
@@ -21,7 +22,7 @@ import {
   recurringConflictWarningMessage,
   vacationDraftWarningMessage,
 } from '../utils/eventConflictMessage';
-import type { CalendarEvent } from '../types';
+import type { CalendarEvent, LeaveKind } from '../types';
 import {
   addDaysStr,
   inclusiveDayCount,
@@ -52,9 +53,10 @@ const PREFILL_OSOBA = 'wydarzenieOsoba';
 /** Rodzaj tworzonego wydarzenia: `urlop` przełącza modal w tryb urlopu. */
 const PREFILL_RODZAJ = 'wydarzenieRodzaj';
 
-/** Stały tytuł urlopu — modal nie zbiera nazwy, a lista/kalendarz mają czym
- *  nazwać wiersz (reduktor nadal wymaga niepustego tytułu). */
-const VACATION_TITLE = 'Urlop';
+/** Stały tytuł nieobecności („Urlop" / „Nieobecność") — modal nie zbiera
+ *  nazwy, a lista/kalendarz mają czym nazwać wiersz (reduktor nadal wymaga
+ *  niepustego tytułu). */
+const leaveTitle = (kind: LeaveKind): string => leaveLabel(kind).title;
 
 /** "HH:MM" <-> minuty od północy (siatka 15 min). */
 function timeToMinutes(value: string): number {
@@ -94,7 +96,7 @@ export function useOpenEvent() {
       date?: string;
       startMinutes?: number;
       personId?: string;
-      kind?: 'urlop';
+      kind?: LeaveKind;
     }) => {
       const params = new URLSearchParams(location.search);
       params.set(EVENT_PARAM, 'new');
@@ -179,7 +181,16 @@ function EventModalShell({ eventParam, prefill, onClose }: ShellProps) {
   const existing = isNew ? undefined : state.events.find((e) => e.id === eventParam);
   const notFound = !isNew && existing === undefined;
   // Tryb urlopu: nowy z parametru rodzaju albo istniejąca encja z `kind`.
-  const isVacation = isNew ? prefill.rodzaj === 'urlop' : existing?.kind === 'urlop';
+  // Rodzaj nieobecności (urlop / nieobecność, 2026-09-15) — `null` = spotkanie.
+  const leaveKind: LeaveKind | null = isNew
+    ? isLeaveKind(prefill.rodzaj)
+      ? prefill.rodzaj
+      : null
+    : existing !== undefined && isLeaveKind(existing.kind)
+      ? existing.kind
+      : null;
+  const isVacation = leaveKind !== null;
+  const leaveText = leaveLabel(leaveKind ?? 'urlop');
   // Bramka edycji (D10): spotkaniami rządzi `events.manage`, a WŁASNY urlop
   // edytuje i usuwa jego właściciel (jedyny uczestnik == zalogowany), nawet bez
   // tego uprawnienia. Pozostali widzą tryb tylko do odczytu.
@@ -250,8 +261,8 @@ function EventModalShell({ eventParam, prefill, onClose }: ShellProps) {
     const eventId = existing.id;
     if (
       await confirm({
-        title: isVacation ? 'Usunąć ten urlop?' : `Usunąć wydarzenie „${existing.title}”?`,
-        confirmLabel: isVacation ? 'Usuń urlop' : 'Usuń wydarzenie',
+        title: isVacation ? leaveText.deleteQuestion : `Usunąć wydarzenie „${existing.title}”?`,
+        confirmLabel: isVacation ? leaveText.deleteLabel : 'Usuń wydarzenie',
         tone: 'danger',
       })
     ) {
@@ -266,10 +277,10 @@ function EventModalShell({ eventParam, prefill, onClose }: ShellProps) {
       ? maskedEventLabel(state, existing.id)
       : isVacation
         ? isNew
-          ? 'Nowy urlop'
+          ? leaveText.newTitle
           : canManage
-            ? 'Edytuj urlop'
-            : 'Urlop'
+            ? leaveText.editTitle
+            : leaveText.title
         : isNew
           ? 'Nowe wydarzenie'
           : canManage
@@ -331,6 +342,7 @@ function EventModalShell({ eventParam, prefill, onClose }: ShellProps) {
                 canManage={canManage}
                 contentMasked={masked}
                 isVacation={isVacation}
+                leaveKind={leaveKind}
                 prefill={prefill}
                 onDirtyChange={handleDirtyChange}
                 onSaved={closeDeliberately}
@@ -350,8 +362,10 @@ interface EditorProps {
   /** Utajniona treść bez wglądu widza: plansza + wyłącznie fakty planistyczne
    *  (data, godziny, uczestnicy) w trybie tylko-do-odczytu. */
   contentMasked: boolean;
-  /** Tryb urlopu (D9): inny zestaw pól, stały tytuł i zakres dat zamiast godzin. */
+  /** Tryb nieobecności (D9): inny zestaw pól, stały tytuł i zakres dat zamiast godzin. */
   isVacation: boolean;
+  /** Rodzaj nieobecności w tym trybie (urlop / nieobecność); null = spotkanie. */
+  leaveKind: LeaveKind | null;
   prefill: EventPrefill;
   onDirtyChange: (dirty: boolean) => void;
   onSaved: () => void;
@@ -424,9 +438,9 @@ function vacationEndDateRule(value: string, startDate: string): string | undefin
   if (value.trim() === '') return undefined;
   if (!isValidDateStr(value)) return 'Podaj poprawną datę.';
   if (!isValidDateStr(startDate)) return undefined; // błąd należy do pola „Od"
-  if (value < startDate) return 'Koniec urlopu nie może być wcześniejszy niż początek.';
+  if (value < startDate) return 'Koniec nie może być wcześniejszy niż początek.';
   if (inclusiveDayCount(startDate, value) > MAX_VACATION_DAYS) {
-    return `Urlop może obejmować najwyżej ${MAX_VACATION_DAYS} dni.`;
+    return `Zakres może obejmować najwyżej ${MAX_VACATION_DAYS} dni.`;
   }
   return undefined;
 }
@@ -436,6 +450,7 @@ function EventEditor({
   canManage,
   contentMasked,
   isVacation,
+  leaveKind,
   prefill,
   onDirtyChange,
   onSaved,
@@ -461,18 +476,21 @@ function EventEditor({
     isVacation &&
     existing !== undefined &&
     !(existing.startMinutes === 0 && existing.durationMinutes === DAY_MINUTES);
+  // Z prawego kliku na siatce (2026-09-15) nieobecność dostaje godzinę slotu
+  // jako start wariantu godzinowego; bez prefillu zostaje 9:00-17:00.
+  const prefillStartMin =
+    prefill.start !== null && Number.isFinite(Number(prefill.start)) ? Number(prefill.start) : null;
   const seedStart = isVacation
     ? existingVacationHourly
       ? existing.startMinutes
-      : 540
-    : existing?.startMinutes ??
-      (prefill.start !== null && Number.isFinite(Number(prefill.start))
-        ? Number(prefill.start)
-        : 540);
+      : prefillStartMin ?? 540
+    : existing?.startMinutes ?? prefillStartMin ?? 540;
   const seedEnd = isVacation
     ? existingVacationHourly
       ? existing.startMinutes + existing.durationMinutes
-      : 1020
+      : prefillStartMin === null
+        ? 1020
+        : Math.min(prefillStartMin + 60, 1440)
     : existing
       ? existing.startMinutes + existing.durationMinutes
       : Math.min(seedStart + 60, 1440);
@@ -621,14 +639,15 @@ function EventEditor({
         startMinutes: from,
         durationMinutes: to - from,
         attendeeIds,
-        kind: 'urlop',
+        kind: leaveKind ?? 'urlop',
         ...(last ? { endDate: last } : {}),
       },
       existing?.id,
     );
-    return vacationDraftWarningMessage(report.warning);
+    return vacationDraftWarningMessage(report.warning, leaveLabel(leaveKind ?? 'urlop').title);
   }, [
     isVacation,
+    leaveKind,
     state,
     date,
     endDate,
@@ -649,7 +668,7 @@ function EventEditor({
     next.endDate = vacationFullDay ? vacationEndDateRule(endDate, date) : undefined;
     next.time = vacationFullDay ? undefined : timeRule(startTime, endTime);
     if (attendeeIds.length !== 1) {
-      next.form = 'Urlop musi mieć dokładnie jedną osobę. Zaloguj się ponownie.';
+      next.form = `${leaveLabel(leaveKind ?? 'urlop').title} musi mieć dokładnie jedną osobę. Zaloguj się ponownie.`;
     }
     if (Object.values(next).some((v) => v !== undefined)) {
       setErrors(next);
@@ -662,7 +681,7 @@ function EventEditor({
     const from = vacationFullDay ? 0 : snapToGrid(timeToMinutes(startTime));
     const to = vacationFullDay ? DAY_MINUTES : snapToGrid(timeToMinutes(endTime));
     const draft: EventDraft = {
-      title: VACATION_TITLE,
+      title: leaveTitle(leaveKind ?? 'urlop'),
       description,
       location: '',
       meetingUrl: '',
@@ -672,12 +691,12 @@ function EventEditor({
       durationMinutes: to - from,
       attendeeIds,
       recurrence: null,
-      kind: 'urlop',
+      kind: leaveKind ?? 'urlop',
       endDate: vacationFullDay && endDate.trim() !== '' ? endDate : null,
     };
 
     if (!isValidEventDraft(state, draft)) {
-      setErrors({ form: 'Nie udało się zapisać urlopu. Sprawdź zakres dat.' });
+      setErrors({ form: `Nie udało się zapisać ${leaveLabel(leaveKind ?? 'urlop').genitive}. Sprawdź zakres dat.` });
       return;
     }
     setErrors({});
@@ -824,7 +843,7 @@ function EventEditor({
     errors.form ??
     (summaryLabels.length > 0
       ? saveErrorSummary(
-          isVacation ? 'Nie można zapisać urlopu' : 'Nie można zapisać wydarzenia',
+          isVacation ? leaveLabel(leaveKind ?? 'urlop').saveFail : 'Nie można zapisać wydarzenia',
           summaryLabels,
         )
       : null);
@@ -915,8 +934,8 @@ function EventEditor({
           </label>
           <p className="field-hint">
             {vacationFullDay
-              ? 'Puste „Do" oznacza urlop jednodniowy. Zajmuje cały dzień.'
-              : 'Urlop godzinowy dotyczy jednego dnia i zajmuje tylko podane godziny.'}
+              ? 'Puste „Do" oznacza jeden dzień. Zajmuje cały dzień.'
+              : 'Wariant godzinowy dotyczy jednego dnia i zajmuje tylko podane godziny.'}
           </p>
         </div>
 
@@ -1007,7 +1026,7 @@ function EventEditor({
         <div className="form-actions">
           {canManage && (
             <button type="submit" className="btn primary">
-              {existing ? 'Zapisz zmiany' : 'Dodaj urlop'}
+              {existing ? 'Zapisz zmiany' : leaveLabel(leaveKind ?? 'urlop').addLabel}
             </button>
           )}
           <button type="button" className="btn ghost" onClick={onCancel}>

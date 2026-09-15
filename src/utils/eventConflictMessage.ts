@@ -196,7 +196,10 @@ export function plannedItemsPhrase(count: number): string {
  * przeplanowania, a nie liczba osób: najpierw rejestrujesz urlop, potem
  * porządkujesz kalendarz.
  */
-export function vacationDraftWarningMessage(conflicts: readonly ConflictLike[]): string {
+export function vacationDraftWarningMessage(
+  conflicts: readonly ConflictLike[],
+  kindTitle: string = 'Urlop',
+): string {
   if (conflicts.length === 0) return '';
-  return `W tym okresie masz już ${plannedItemsPhrase(conflicts.length)}. Urlop zapisze się mimo to, pamiętaj o przeplanowaniu.`;
+  return `W tym okresie masz już ${plannedItemsPhrase(conflicts.length)}. ${kindTitle} zapisze się mimo to, pamiętaj o przeplanowaniu.`;
 }

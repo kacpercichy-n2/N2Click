@@ -387,10 +387,20 @@
   zespół), wystąpienie cykliczne × przypisani do zadania (∩ filtr; bez
   przypisanych = 0). URLOP celowo NIE wchodzi (nieobecność to nie praca).
   `WeekDayModel.empty` = `total === 0` (dzień z samym spotkaniem pokazuje
-  sumę, nie „—"). To zmiana WYŁĄCZNIE pochodnej sumy prezentacyjnej:
-  `dayTotal`, przeciążenie, kolizje, `packDayBlocks` i wszystkie ścieżki
-  planowania nadal czytają wyłącznie `WorkloadEntry` (inwariant 1 dla logiki
-  planowania nietknięty). Testy: `src/store/calendarDayVolume.test.ts`.
+  sumę, nie „—"). To zmiana pochodnej sumy prezentacyjnej:
+  `dayTotal`, kolizje bloków, `packDayBlocks` i ścieżki planowania nadal czytają
+  wyłącznie `WorkloadEntry` (inwariant 1 dla logiki planowania nietknięty).
+  OD 2026-09-15 (zgłoszenie „spotkania nie liczą się do obciążenia per dzień")
+  PRZECIĄŻENIE OSOBY czyta tę samą arytmetykę zawężoną do jednej osoby:
+  `bookedHoursForPersonOnDate` = `hoursForPersonOnDate` +
+  `personEventHoursOnDate` (spotkania osoby bez nieobecności i odmów, z jej
+  osobistym czasem, plus wystąpienia cykliczne przypisane), a
+  `dayAvailabilityForPerson.bookedHours` (Panel: donuty/„Twój tydzień"/alerty,
+  `overloadedPeopleOnDate` w nagłówkach dni i miesiącu, profil osoby) oraz
+  komórki `WorkloadPage` (tylko bez filtra klienta/usługi — spotkanie nie ma
+  klienta) liczą z niej. Per osoba wystąpienie liczy się RAZ (żadnych „heads").
+  Testy: `src/store/calendarDayVolume.test.ts`,
+  `src/store/personalTimes.selectors.test.ts`.
 - WSPÓLNE PAKOWANIE WARSTWY DNIA (2026-08-06, decyzja usera): w trybie tygodnia
   bloki, spotkania (bez urlopu) i wystąpienia cykliczne wchodzą RAZEM do JEDNEGO
   wywołania `packDayBlocks` w `buildWeekModel`, więc dwie rzeczy w tym samym
@@ -547,8 +557,9 @@
   additive `.week-event-block` overlay (solid cyan border + left bar,
   `--event-accent`, 📅), positioned by `startMinutes`, height ∝
   `durationMinutes`, painted BEHIND real task blocks (tree order, `z-index: 0`);
-  events never enter `dayTotal` or overload (into `packDayBlocks` they enter
-  ONLY as layout geometry — see „wspólne pakowanie" above; do WYŚWIETLANEJ sumy
+  events never enter `dayTotal` (od 2026-09-15 WCHODZĄ do przeciążenia OSOBY
+  przez `bookedHoursForPersonOnDate` — patrz „objętość godzinowa" above; into
+  `packDayBlocks` they enter ONLY as layout geometry — see „wspólne pakowanie" above; do WYŚWIETLANEJ sumy
   dnia wchodzą przez `calendarDayVolume` — patrz „objętość godzinowa" above).
   Click/keyboard still opens `EventModal` (`?wydarzenie=<id>`). `openSlotMenu`
   guards `.week-event-block` alongside `.week-recur-block`/`.week-block`, and its
@@ -634,6 +645,70 @@
     `begin` odpuszcza `e.button !== 0`, więc prawy klik nadal otwiera menu RSVP
     wystąpienia. `TimedBlockImpl`, `BinCard`, menu slotu, przeciąganie zasobnika
     i trafianie w wyrenderowaną kolumnę NIE zostały zmienione (inwariant 7).
+
+- OSOBISTY CZAS WYSTĄPIENIA (2026-09-15, zgłoszenie „Brak możliwości edycji
+  czasu pojedynczego spotkania"): `CalendarEvent.personalTimes?:
+  EventPersonalTime[]` ({date, personId, startMinutes, durationMinutes};
+  forma kanoniczna w `utils/eventPersonalTime.ts` —
+  `normalizeEventPersonalTimes`: dzień realnego wystąpienia, uczestnik (przy
+  ogólnofirmowym każdy), okno 15 min, RÓŻNE od czasu bazowego, dedup+sort,
+  pusto = klucz znika; nigdy na nieobecności; wspólna dla reduktora,
+  `repairEvents`, hydracji). Akcja `SET_EVENT_PERSONAL_TIME {eventId, date,
+  personId, time|null}` (`null` = przywróć). SEMANTYKA „tylko u mnie":
+  `calendarEventsForDate` przy filtrze JEDNEJ osoby podstawia jej osobisty
+  czas (`CalendarEventOccurrence.personalFor`), więc wszystkie ścieżki
+  per-osoba (`blockCollidesWithEvent`, `scheduleConflictsForRange`,
+  `mergeCoversEventOrRecurrence`, `buildEventBusyByPersonDate`,
+  `dayPlanForPerson`, `personEventHoursOnDate`) czytają go automatycznie;
+  filtr wielu osób / brak filtra daje czas wydarzenia, a `buildWeekModel`
+  nakłada wtedy czas OGLĄDAJĄCEGO (perspektywa = filtr jednej osoby albo
+  `state.currentUserId`). `calendarDayVolume` sumuje KAŻDEMU jego czas.
+  DWA TORY UI: (1) WeekView — przeciągnięcie/rozciągnięcie kafla spotkania
+  (`EventBlockImpl.requestChange`) otwiera `useConfirmChoice()` z kopią
+  `eventDragConfirmCopy({scope})`: `choice` (główny „Tylko u mnie, ten dzień"
+  + trzeci „Zmień dla wszystkich"), `personal` (bez `events.manage` albo gdy
+  globalna blokuje) lub `global` (zmiana dnia — osobista zmiana nie przenosi
+  wystąpienia na inny dzień, `EVENT_DRAG_PERSONAL_ONLY_DAY`); kafel osobisty
+  ma klasę `.personal` (kropkowana krawędź, nożyczki), prawy klik na KAŻDYM
+  spotkaniu (także jednorazowym) daje „Przywróć czas spotkania u mnie".
+  `editable` kafla = `events.manage` LUB oglądający jest uczestnikiem.
+  (2) Widok Dzień — `ADD_TIME_ENTRY` z `eventId` o godzinach innych niż plan
+  osoby wpisuje osobisty czas (`adoptEntryAsPersonalTime`), `DELETE_TIME_ENTRY`
+  zdejmuje go, gdy był dokładnie czasem wpisu (`releaseEntryPersonalTime`);
+  `UPDATE_TIME_ENTRY` zrywa `eventId` jak dotąd i osobistego czasu nie rusza.
+  Chmura: kolumna `n2click.events.personal_times` (jsonb, 20260915120000),
+  personId ↔ profil jak `rsvps`. Testy: `utils/eventPersonalTime.test.ts`,
+  `store/eventActions.test.ts` (SET_EVENT_PERSONAL_TIME, re-kanonizacja w
+  SAVE_EVENT), `store/timeTracking.test.ts` (tor z widoku Dzień),
+  `store/personalTimes.selectors.test.ts`, `components/weekViewModel.test.ts`,
+  `components/eventBlockDrag.test.ts`.
+- DUCH ODMOWY POZA PAKOWANIEM (2026-09-15, zgłoszenie „Nie działa nie biorę
+  udziału"): wystąpienie, w którym osoba PERSPEKTYWY ma RSVP `no`, trafia do
+  `WeekDayModel.absentEventIds`, nie wchodzi do `packDayBlocks` (sąsiad
+  dostaje pełną kolumnę) i stoi PIERWSZE w `WeekDayModel.events` (równy
+  z-index → maluje się pod resztą). `EventBlock.absentForViewer` czyta z
+  modelu, nie z `currentUserId`. Wcześniej duch zostawał w pakowaniu na pół
+  szerokości z uciętym tytułem, więc odmowa wyglądała na nieskuteczną.
+- NIEOBECNOŚĆ (2026-09-15, zgłoszenie „nieobecności"): drugi rodzaj obok
+  urlopu, `kind: 'nieobecnosc'` (`LeaveKind`, helpery `isLeaveKind` /
+  `leaveLabel` w `utils/leave.ts`). Te same reguły co urlop (jeden
+  uczestnik, bez cykliczności, pełna doba albo okno godzinowe, twarda blokada
+  dnia/okna, palma-zamiennik w przeciążeniu przez `personVacationOnDate`,
+  wyłączenie z objętości dnia), różnice: NIE schodzi z limitu dni
+  (`accountHr` liczy wyłącznie `'urlop'`), etykiety/tytuł „Nieobecność",
+  kafel `.week-event-block.nieobecnosc` (bursztyn, ikona `UserX`).
+  Wejścia: lista Wydarzeń („Dodaj nieobecność") i menu slotu WeekView
+  („Dodaj urlop (Twój)" / „Dodaj nieobecność (Twoją)", bramka
+  `events.vacationSelf`, prefill dnia + godziny slotu jako start wariantu
+  godzinowego). Chmura: CHECK `events_kind_check` rozszerzony
+  (20260915120000). Każde `kind === 'urlop'` o ZAJĘTOŚCI zostało zamienione
+  na `isLeaveKind`; literalne `'urlop'` zostaje tylko tam, gdzie chodzi o
+  limit urlopu albo o etykietę.
+- UKOŃCZ ZADANIE Z MENU BLOKU (2026-09-15, zgłoszenie „Możliwość szybszego
+  zamknięcia zadania"): pozycja „Oznacz zadanie jako ukończone…" pod
+  „Oznacz jako wykonane" (bramka `tasks.manage` albo własny blok) → dialog
+  `useConfirm` ze skutkami liczonymi z żywego stanu → `COMPLETE_TASK`
+  (patrz state-and-persistence).
 
 ## Start here for
 

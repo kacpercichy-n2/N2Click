@@ -871,6 +871,33 @@
 - localStorage migrations, write failures, tab conflicts and recovery UI;
 - selectors, derived planning/completion/overload state.
 
+- COMPLETE_TASK (2026-09-15, zgłoszenie „Możliwość szybszego zamknięcia
+  zadania"): `{taskId}` — świadome przeciwieństwo `autoCompleteTask` (które
+  ODMAWIA zamknięcia, dopóki coś zostaje): zadanie dostaje pierwszy AKTYWNY
+  status `isDone` (fallback: pierwszy `isDone` w ogóle), wiersze ZASOBNIKA
+  zadania u wszystkich osób są odrzucane (godziny sprzedane = kontrakt,
+  nietknięte; bloki datowane zostają, done-status podświetla je przez
+  `blockIsDone`; wpisy czasu nietknięte), jeden wpis dziennika z liczbą
+  odrzuconych godzin. Nieznane / już zamknięte / brak statusu `isDone` => TA
+  SAMA referencja (inwariant 6). Testy: `statusActions.test.ts`.
+- OSOBISTY CZAS WYSTĄPIENIA SPOTKANIA (2026-09-15): `CalendarEvent.personalTimes`
+  (ADDYTYWNE, `DATA_VERSION` zostaje 7; forma kanoniczna
+  `normalizeEventPersonalTimes` na trzech granicach: reduktor
+  `SET_EVENT_PERSONAL_TIME` + re-kanonizacja w `SAVE_EVENT`, `repairEvents`,
+  hydracja `plannerData` z kolumny `events.personal_times`; strażnik
+  struktury w `MERGE_CLOUD_*` jak dla `rsvps`). Tracker: `ADD_TIME_ENTRY` z
+  `eventId` spotkania N2Hub o innych godzinach niż plan osoby wpisuje jej
+  osobisty czas (`adoptEntryAsPersonalTime`, po `materializeTracking`),
+  `DELETE_TIME_ENTRY` zdejmuje go, gdy był dokładnie czasem wpisu
+  (`releaseEntryPersonalTime`); `gcal:` i nieznane `eventId` przechodzą bez
+  zmian. Semantyka w selektorach: patrz scheduling-and-calendar.
+- `LeaveKind` (2026-09-15): `CalendarEvent.kind?: 'urlop' | 'nieobecnosc'`;
+  `EventDraft.kind`, `NormalizedEventDraft.kind`, strażnik `MERGE_CLOUD_*`,
+  `repairEvents` i hydracja przyjmują oba przez `isLeaveKind`; nieobecność
+  ma identyczną formę kanoniczną co urlop (`canonicalVacationTimes`,
+  `canonicalVacationEndDate`, jeden uczestnik, bez `recurrence`, bez
+  `isConfidential`, bez `rsvps`/`personalTimes`).
+
 ## Relevant tests
 
 `src/store/selectorCache.test.ts` (cache hit/miss, invariant-6 interplay,
