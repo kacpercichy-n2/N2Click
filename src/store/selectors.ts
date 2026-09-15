@@ -459,6 +459,32 @@ export function hoursForPersonOnDate(
   return hoursForPersonOnDateCache(state, argsKey(personId, date));
 }
 
+/**
+ * Minuty wystąpienia spotkania [start, end) tego dnia, które osoba ZALOGOWAŁA
+ * wpisem czasu z tego spotkania (`TimeEntry.eventId`). Zalogowany czas jest
+ * już w planie jako blok zadania (`materializeTracking` / `planGrowth`), więc
+ * liczenie go drugi raz jako „godziny spotkania" dublowałoby obciążenie
+ * (przegląd Codex 2026-09-15). Wpisy są lokalne, więc odjęcie działa tam,
+ * gdzie zalogowano; inne przeglądarki widzą sumę bez odjęcia.
+ */
+function loggedMeetingOverlapMinutes(
+  state: AppData,
+  eventId: string,
+  personId: string,
+  date: DateStr,
+  startMinutes: number,
+  endMinutes: number,
+): number {
+  let sum = 0;
+  for (const entry of state.timeEntries) {
+    if (entry.eventId !== eventId || entry.personId !== personId || entry.date !== date) continue;
+    const from = Math.max(startMinutes, entry.startMinutes);
+    const to = Math.min(endMinutes, entry.endMinutes);
+    if (to > from) sum += to - from;
+  }
+  return sum;
+}
+
 const personEventHoursOnDateCache = createKeyedCache<number>((state, key) => {
   const [personId, date] = key.split(' ');
   const forPerson = new Set([personId]);
@@ -466,8 +492,11 @@ const personEventHoursOnDateCache = createKeyedCache<number>((state, key) => {
   for (const occ of calendarEventsForDate(state, date, forPerson)) {
     if (isLeaveKind(occ.event.kind)) continue;
     if (personAbsentFromEventOccurrence(occ.event, date, personId)) continue;
-    // Filtr jednej osoby: wystąpienie niesie już jej osobisty czas.
-    hours += occ.durationMinutes / 60;
+    // Filtr jednej osoby: wystąpienie niesie już jej osobisty czas. Minuty
+    // zalogowane z tego spotkania siedzą już w blokach zadań (nie dublujemy).
+    const end = occ.startMinutes + occ.durationMinutes;
+    const logged = loggedMeetingOverlapMinutes(state, occ.event.id, personId, date, occ.startMinutes, end);
+    hours += Math.max(0, occ.durationMinutes - logged) / 60;
   }
   for (const { occurrence } of recurrenceOccurrencesForDate(state, date, forPerson)) {
     hours += occurrence.durationMinutes / 60;
@@ -747,7 +776,11 @@ const calendarDayVolumeCache = createKeyedCache<number>((state, key) => {
     for (const personId of scope) {
       if (personAbsentFromEventOccurrence(occ.event, date, personId)) continue;
       const personal = personalTimeFor(occ.event, date, personId);
-      volume += (personal === undefined ? occ.durationMinutes : personal.durationMinutes) / 60;
+      const start = personal === undefined ? occ.startMinutes : personal.startMinutes;
+      const duration = personal === undefined ? occ.durationMinutes : personal.durationMinutes;
+      // Minuty zalogowane z tego spotkania są już w `dayTotal` jako bloki zadań.
+      const logged = loggedMeetingOverlapMinutes(state, occ.event.id, personId, date, start, start + duration);
+      volume += Math.max(0, duration - logged) / 60;
     }
   }
   for (const { task, occurrence } of recurrenceOccurrencesForDateCache(state, key)) {
@@ -833,7 +866,7 @@ export function personHourlyVacationIntervals(
   if (personId === '' || !isValidDateStr(date)) return [];
   const out: Array<{ startMinutes: number; endMinutes: number }> = [];
   for (const occ of calendarEventsForDate(state, date, new Set([personId]))) {
-    if (occ.event.kind !== 'urlop' || isFullDayVacation(occ.event)) continue;
+    if (!isLeaveKind(occ.event.kind) || isFullDayVacation(occ.event)) continue;
     out.push({
       startMinutes: occ.startMinutes,
       endMinutes: occ.startMinutes + occ.durationMinutes,

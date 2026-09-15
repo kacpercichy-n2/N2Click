@@ -196,6 +196,10 @@ export const EVENT_DRAG_SERIES_SENTENCE = 'Dotyczy całej serii wydarzenia.';
 export const EVENT_DRAG_PERSONAL_SENTENCE =
   'Tylko u mnie: zmiana dotyczy wyłącznie tego dnia i tylko Twojego kalendarza (plan dnia, kolizje, godziny). Pozostali uczestnicy widzą spotkanie bez zmian.';
 
+/** Osobista zmiana nie wchodzi na własny urlop / nieobecność. */
+export const EVENT_DRAG_PERSONAL_LEAVE =
+  'Masz w tym czasie urlop albo nieobecność. Spotkania nie da się tam przenieść tylko u siebie.';
+
 /** Osobista zmiana nie przenosi wystąpienia na inny dzień. */
 export const EVENT_DRAG_PERSONAL_ONLY_DAY =
   'Zmianę tylko u siebie zrobisz w tym samym dniu. Przeniesienie na inny dzień dotyczy wszystkich.';

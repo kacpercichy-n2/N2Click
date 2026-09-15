@@ -135,6 +135,7 @@ import {
   type BlockKeyboardState,
 } from './calendarBlockKeyboard';
 import {
+  EVENT_DRAG_PERSONAL_LEAVE,
   EVENT_DRAG_PERSONAL_ONLY_DAY,
   EVENT_DRAG_REDUCER_REJECT,
   EVENT_DRAG_REVOKED,
@@ -2326,6 +2327,13 @@ function EventBlockImpl({
   // `canDrag` z renderu, w którym gest albo dialog wystartował.
   const canDragRef = useRef(canDrag);
   canDragRef.current = canDrag;
+  // Zasięg wybrany w dialogu sprawdzamy po `await` na ŚWIEŻYCH bramkach:
+  // utrata `events.manage` w trakcie pytania nie może przepuścić zmiany dla
+  // wszystkich (a utrata udziału — zmiany osobistej).
+  const globalAllowedRef = useRef(globalAllowed);
+  globalAllowedRef.current = globalAllowed;
+  const personalAllowedRef = useRef(personalAllowed);
+  personalAllowedRef.current = personalAllowed;
 
   // Zapisana pozycja WYSTĄPIENIA — punkt odniesienia każdej projekcji.
   const base: EventDragBase = {
@@ -2542,11 +2550,26 @@ function EventBlockImpl({
       // `events.manage`. Oba naraz = dialog z dwoma wyjściami, przycisk główny
       // to „tylko u mnie" (decyzja Kacpra 2026-09-15).
       const sameDay = to.date === occDate;
-      const personalOk =
+      let personalOk =
         personalAllowed && viewerId !== '' && sameDay && personMayPersonalize(live, viewerId);
+      // Kolizje OSOBISTEGO czasu z własnym planem: nieobecność (urlop /
+      // nieobecność) BLOKUJE ścieżkę osobistą (lustro straży reduktora), reszta
+      // to tylko informacja w oknie.
+      const personalConflicts = personalOk
+        ? scheduleConflictsForRange(getState(), [viewerId], occDate, to.startMinutes, to.durationMinutes, {
+            excludeEventId: eventId,
+          })
+        : [];
+      const personalLeave = personalConflicts.find((c) => c.kind === 'urlop' || c.kind === 'nieobecnosc');
+      if (personalLeave !== undefined) personalOk = false;
       const globalOk = globalAllowed;
       if (!personalOk && !globalOk) {
-        const reason = personalAllowed && !sameDay ? EVENT_DRAG_PERSONAL_ONLY_DAY : EVENT_DRAG_REVOKED;
+        const reason =
+          personalLeave !== undefined
+            ? EVENT_DRAG_PERSONAL_LEAVE
+            : personalAllowed && !sameDay
+              ? EVENT_DRAG_PERSONAL_ONLY_DAY
+              : EVENT_DRAG_REVOKED;
         if (at) showReject(at.x, at.y, reason);
         announce(eventRejectedAnnouncement(reason));
         return;
@@ -2583,14 +2606,10 @@ function EventBlockImpl({
         }
         scope = 'personal';
       }
-      // Kolizje OSOBISTEGO czasu z własnym planem: tylko informacja w oknie.
-      const personalConflicts = personalOk
-        ? scheduleConflictsForRange(getState(), [viewerId], occDate, to.startMinutes, to.durationMinutes, {
-            excludeEventId: eventId,
-          })
-        : [];
       const personalConflictSentence =
-        personalConflicts.length === 0 ? '' : `U Ciebie koliduje: ${eventConflictConfirmMessage(personalConflicts)}`;
+        !personalOk || personalConflicts.length === 0
+          ? ''
+          : `U Ciebie koliduje: ${eventConflictConfirmMessage(personalConflicts)}`;
       // Kolizje NIEBLOKUJĄCE wchodzą JEDNYM zdaniem do TEGO SAMEGO okna — drugi
       // dialog nad dialogiem byłby karą za przeciągnięcie kafelka.
       const conflictSentence =
@@ -2631,9 +2650,17 @@ function EventBlockImpl({
         );
         return;
       }
+      // Wybrany zasięg kontra ŚWIEŻE bramki (uprawnienie mogło zniknąć w trakcie
+      // pytania): globalny wymaga `events.manage`, osobisty — udziału.
+      const wantsGlobal = choice === 'alt' || scope === 'global';
+      if (wantsGlobal ? !globalAllowedRef.current : !personalAllowedRef.current) {
+        if (at) showReject(at.x, at.y, EVENT_DRAG_REVOKED);
+        announce(eventRejectedAnnouncement(EVENT_DRAG_REVOKED));
+        return;
+      }
       // ŚCIEŻKA OSOBISTA: jedna akcja SET_EVENT_PERSONAL_TIME na (dzień, osoba);
       // odmowa reduktora = ta sama referencja (inwariant 6), kafelek wraca.
-      if (choice === 'confirm' && scope !== 'global') {
+      if (!wantsGlobal) {
         const beforePersonal = getState();
         const livePersonal = beforePersonal.events.find((e) => e.id === eventId);
         if (
@@ -2967,7 +2994,7 @@ function EventBlockImpl({
   const personalHint =
     personalBase === null
       ? ''
-      : ` Czas zmieniony tylko w tym kalendarzu; u wszystkich ${formatMinutes(personalBase.startMinutes)}–${formatMinutes(
+      : ` Czas zmieniony tylko w tym kalendarzu; u wszystkich ${formatMinutes(personalBase.startMinutes)}-${formatMinutes(
           personalBase.startMinutes + personalBase.durationMinutes,
         )}.`;
   const leaveTitle = isVacation && isLeaveKind(occ.event.kind) ? leaveLabel(occ.event.kind).title : 'Urlop';
@@ -3771,7 +3798,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
     const doneStatus =
       activeStatuses(live).find((st) => st.isDone) ?? live.statuses.find((st) => st.isDone);
     if (doneStatus === undefined) {
-      announce('Nie ma statusu „gotowe” — zadania nie da się ukończyć.');
+      announce('Nie ma statusu „gotowe”, więc zadania nie da się ukończyć.');
       return;
     }
     let binHours = 0;
@@ -3809,7 +3836,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
     dispatch({ type: 'COMPLETE_TASK', taskId });
     announce(
       getState() === before
-        ? `Nie udało się ukończyć zadania „${title}” — jest już zamknięte albo zniknęło.`
+        ? `Nie udało się ukończyć zadania „${title}”: jest już zamknięte albo zniknęło.`
         : `Ukończono zadanie „${title}”: status „${doneStatus.name}”.`,
     );
   };
@@ -4160,8 +4187,8 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
       <span id={WEEK_EVENT_KB_HINT_ID} className="sr-only">
         Strzałki w górę i w dół przesuwają wydarzenie co 15 minut, z Shiftem zmieniają czas
         trwania. Strzałki w lewo i w prawo przenoszą je o dzień; wydarzenie cykliczne zostaje w
-        swoim dniu. Enter pyta o potwierdzenie zmiany dla wszystkich, Escape ją cofa. Bez
-        rozpoczętej zmiany Enter otwiera wydarzenie.
+        swoim dniu. Enter otwiera okno z wyborem zasięgu zmiany (tylko u Ciebie albo dla
+        wszystkich), Escape ją cofa. Bez rozpoczętej zmiany Enter otwiera wydarzenie.
       </span>
       {/* Widok dnia: zamiast nagłówka siedmiu kolumn stoi przewijany pasek 7 dat
           wyśrodkowany na kotwicy (nawigacja, nie zakres siatki). */}
@@ -4341,7 +4368,9 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                     .filter(Boolean)
                     .join(' ')}
                   onContextMenu={
-                    canManageTasks || canManageEvents ? (ev) => openSlotMenu(d, ev) : undefined
+                    canManageTasks || canManageEvents || canAddLeave
+                      ? (ev) => openSlotMenu(d, ev)
+                      : undefined
                   }
                 >
                   {isTodayStr(d) && (
@@ -5103,7 +5132,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
                   onClick={eventRestorePersonalTime}
                 >
                   Przywróć czas spotkania u mnie (teraz{' '}
-                  {formatMinutes(eventMenu.personal.startMinutes)}–
+                  {formatMinutes(eventMenu.personal.startMinutes)}-
                   {formatMinutes(eventMenu.personal.startMinutes + eventMenu.personal.durationMinutes)})
                 </button>
               )}

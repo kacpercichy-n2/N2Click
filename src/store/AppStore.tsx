@@ -5821,8 +5821,17 @@ export function reducer(state: AppData, action: Action): AppData {
       if (!hasEntity(state, 'person', action.personId)) return state;
       if (!personMayPersonalize(event, action.personId)) return state;
       if (!isValidDateStr(action.date) || baseOccurrenceTimes(event, action.date) === null) return state;
-      if (action.time !== null && !isValidPersonalWindow(action.time.startMinutes, action.time.durationMinutes)) {
-        return state;
+      if (action.time !== null) {
+        if (!isValidPersonalWindow(action.time.startMinutes, action.time.durationMinutes)) return state;
+        // Własna nieobecność osoby (pełna doba albo okno godzinowe) jest twardą
+        // blokadą także dla osobistego czasu (przegląd Codex 2026-09-15): nie
+        // da się „u siebie" przenieść spotkania na urlop / nieobecność.
+        if (personVacationOnDate(state, action.personId, action.date) !== null) return state;
+        const end = action.time.startMinutes + action.time.durationMinutes;
+        const leaveWindows = personHourlyVacationIntervals(state, action.personId, action.date);
+        if (leaveWindows.some((w) => rangesOverlap(action.time!.startMinutes, end, w.startMinutes, w.endMinutes))) {
+          return state;
+        }
       }
       return withEventPersonalTime(state, event, action.date, action.personId, action.time);
     }

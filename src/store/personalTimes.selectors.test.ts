@@ -2,12 +2,15 @@
 // objętość dnia per osoba, godziny spotkań osoby, dostępność/przeciążenie.
 import { describe, expect, it } from 'vitest';
 import { emptyData } from './storage';
+import { reducer } from './AppStore';
 import {
   bookedHoursForPersonOnDate,
   calendarDayVolume,
   dayAvailabilityForPerson,
+  hoursForPersonOnDate,
   overloadedPeopleOnDate,
   personEventHoursOnDate,
+  personHourlyVacationIntervals,
   rangeAvailabilityForPerson,
 } from './selectors';
 import type { AppData, CalendarEvent, Person, Project, Status, Task, TaskAssignment, WorkloadEntry } from '../types';
@@ -126,5 +129,35 @@ describe('dayAvailabilityForPerson liczy spotkania do obciążenia (zgłoszenie 
     // Bez spotkania te same 7h mieszczą się w etacie.
     const noMeeting = { ...state, events: [] };
     expect(dayAvailabilityForPerson(noMeeting, 'p1', MON).overbooked).toBe(false);
+  });
+});
+
+describe('poprawki po przeglądzie Codex (2026-09-15)', () => {
+  it('nieobecność godzinowa wchodzi do okien nieobecności (straż INSERT_BLOCK / REASSIGN_ENTRY)', () => {
+    const state = baseState({
+      events: [makeEvent({ id: 'abs', kind: 'nieobecnosc', attendeeIds: ['p1'], startMinutes: 540, durationMinutes: 120 })],
+    });
+    expect(personHourlyVacationIntervals(state, 'p1', MON)).toEqual([{ startMinutes: 540, endMinutes: 660 }]);
+    expect(personHourlyVacationIntervals(state, 'p2', MON)).toEqual([]);
+  });
+
+  it('zalogowane spotkanie nie liczy się podwójnie: blok z wpisu + skrócone wystąpienie = jedna porcja', () => {
+    const state = baseState({
+      events: [makeEvent({ id: 'm', attendeeIds: ['p1'], startMinutes: 600, durationMinutes: 60 })],
+      assignments: [{ id: 'a1', taskId: 't1', personId: 'p1' }],
+    });
+    expect(bookedHoursForPersonOnDate(state, 'p1', MON)).toBe(1);
+    const logged = reducer(state, {
+      type: 'ADD_TIME_ENTRY',
+      payload: { personId: 'p1', taskId: 't1', date: MON, startMinutes: 600, endMinutes: 615, source: 'event', eventId: 'm' },
+    });
+    expect(logged).not.toBe(state);
+    // Wpis dopisał blok 0,25 h (kubełek bez estymaty rośnie), a spotkanie u p1 trwa teraz 15 min,
+    // z czego wszystko jest zalogowane => godziny spotkania 0, obciążenie = sam blok.
+    expect(hoursForPersonOnDate(logged, 'p1', MON)).toBe(0.25);
+    expect(personEventHoursOnDate(logged, 'p1', MON)).toBe(0);
+    expect(bookedHoursForPersonOnDate(logged, 'p1', MON)).toBe(0.25);
+    expect(calendarDayVolume(logged, MON, new Set(['p1']))).toBe(0.25);
+    expect(calendarDayVolume(logged, MON)).toBe(0.25);
   });
 });

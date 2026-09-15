@@ -399,6 +399,12 @@
   `overloadedPeopleOnDate` w nagłówkach dni i miesiącu, profil osoby) oraz
   komórki `WorkloadPage` (tylko bez filtra klienta/usługi — spotkanie nie ma
   klienta) liczą z niej. Per osoba wystąpienie liczy się RAZ (żadnych „heads").
+  BEZ DUBLOWANIA Z TRACKEREM (przegląd Codex 2026-09-15): minuty wystąpienia
+  zalogowane wpisem z tego spotkania (`TimeEntry.eventId`) siedzą już w planie
+  jako blok zadania (`materializeTracking`), więc `loggedMeetingOverlapMinutes`
+  odejmuje je od godzin spotkania w `personEventHoursOnDate` i
+  `calendarDayVolume` (wpisy są lokalne, więc odjęcie widać tam, gdzie
+  zalogowano).
   Testy: `src/store/calendarDayVolume.test.ts`,
   `src/store/personalTimes.selectors.test.ts`.
 - WSPÓLNE PAKOWANIE WARSTWY DNIA (2026-08-06, decyzja usera): w trybie tygodnia
@@ -671,7 +677,11 @@
   wystąpienia na inny dzień, `EVENT_DRAG_PERSONAL_ONLY_DAY`); kafel osobisty
   ma klasę `.personal` (kropkowana krawędź, nożyczki), prawy klik na KAŻDYM
   spotkaniu (także jednorazowym) daje „Przywróć czas spotkania u mnie".
-  `editable` kafla = `events.manage` LUB oglądający jest uczestnikiem.
+  `editable` kafla = `events.manage` LUB oglądający jest uczestnikiem. Własny
+  urlop / nieobecność (pełna doba albo okno) BLOKUJE ścieżkę osobistą w UI
+  (`EVENT_DRAG_PERSONAL_LEAVE`) i w reduktorze (ta sama referencja); wybrany
+  zasięg jest sprawdzany PO `await` na świeżych bramkach (`globalAllowedRef` /
+  `personalAllowedRef`).
   (2) Widok Dzień — `ADD_TIME_ENTRY` z `eventId` o godzinach innych niż plan
   osoby wpisuje osobisty czas (`adoptEntryAsPersonalTime`), `DELETE_TIME_ENTRY`
   zdejmuje go, gdy był dokładnie czasem wpisu (`releaseEntryPersonalTime`);

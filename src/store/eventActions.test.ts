@@ -910,3 +910,19 @@ describe('nieobecność (kind nieobecnosc, 2026-09-15) — te same reguły co ur
     expect(reducer(hourly, { type: 'SET_EVENT_PERSONAL_TIME', eventId: id, date: MON, personId: PA, time: { startMinutes: 540, durationMinutes: 15 } })).toBe(hourly);
   });
 });
+
+describe('SET_EVENT_PERSONAL_TIME kontra własna nieobecność (przegląd Codex 2026-09-15)', () => {
+  it('odrzuca osobisty czas na pełnodniowym urlopie i na oknie nieobecności godzinowej', () => {
+    const meeting = event({ id: '44444444-4444-4444-8444-444444444444', attendeeIds: [PA, PB], date: WED, startMinutes: 600, durationMinutes: 60 });
+    const vacation = event({ id: '55555555-5555-4555-8555-555555555555', kind: 'urlop', date: WED, startMinutes: 0, durationMinutes: 1440, attendeeIds: [PB] });
+    const absence = event({ id: '66666666-6666-4666-8666-666666666666', kind: 'nieobecnosc', date: WED, startMinutes: 720, durationMinutes: 120, attendeeIds: [PA] });
+    const state = baseState([meeting, vacation, absence]);
+    const set = (personId: string, startMinutes: number, durationMinutes: number) =>
+      reducer(state, { type: 'SET_EVENT_PERSONAL_TIME', eventId: meeting.id, date: WED, personId, time: { startMinutes, durationMinutes } });
+    // PB ma cały dzień urlopu: żaden osobisty czas nie przechodzi.
+    expect(set(PB, 600, 15)).toBe(state);
+    // PA: nieobecność 12:00-14:00 — przesunięcie na 12:30 odbija, 10:00-10:15 przechodzi.
+    expect(set(PA, 750, 30)).toBe(state);
+    expect(set(PA, 600, 15).events[0].personalTimes).toEqual([{ date: WED, personId: PA, startMinutes: 600, durationMinutes: 15 }]);
+  });
+});

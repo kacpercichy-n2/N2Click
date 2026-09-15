@@ -132,7 +132,7 @@ function BlockRow({
                   <option key={p.id} value={p.id}>
                     {p.name} — {formatDuration(cur)}/{formatDuration(avail)} tego dnia{over ? ' ⚠' : ''}
                     {leave !== null
-                      ? ` — ${leave.kind === 'nieobecnosc' ? 'nieobecność' : 'urlop'}`
+                      ? ` - ${leave.kind === 'nieobecnosc' ? 'nieobecność' : 'urlop'}`
                       : fits
                         ? ''
                         : ' — brak miejsca'}
