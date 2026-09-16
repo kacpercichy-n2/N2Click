@@ -119,30 +119,73 @@ describe('odłożone zdarzenie Realtime', () => {
   });
 });
 
-describe('rezerwacje rodzin pomocniczych', () => {
-  it('starszy wynik ląduje, gdy jest najświeższym znanym; spóźniony po nowszym odpada', () => {
-    const a = coord.begin();
-    const b = coord.begin();
-    // Wynik A (wyprzedzonego) przychodzi pierwszy — wciąż najświeższy znany.
-    expect(coord.claim('notifications', a)).toBe(true);
-    expect(coord.claim('notifications', b)).toBe(true);
-    // Gdyby A dosłał raz jeszcze (albo przyszedł po B) — cofnąłby B: odpada.
-    expect(coord.claim('notifications', a)).toBe(false);
+describe('rezerwacje rodzin pomocniczych (bilety w kolejności startu fetcha)', () => {
+  it('wynik z fetcha, który wystartował później, wygrywa niezależnie od numeru przebiegu', () => {
+    // Przebieg A (starszy) ma wolne powiadomienia, więc fetch Content Planu
+    // zaczyna PO tym, jak nowszy przebieg B zaczął swój: dane A są świeższe
+    // i muszą wylądować, a spóźniony wynik B nie ma prawa ich cofnąć.
+    coord.begin(); // A
+    coord.begin(); // B
+    const bTicket = coord.openFetch('contentPlan');
+    const aTicket = coord.openFetch('contentPlan');
+    expect(coord.claim('contentPlan', bTicket)).toBe(true);
+    expect(coord.claim('contentPlan', aTicket)).toBe(true);
+    expect(coord.claim('contentPlan', bTicket)).toBe(false);
   });
 
-  it('seria odświeżeń nie głodzi rodziny: każdy pierwszy wynik po ostatnim scaleniu ląduje', () => {
-    const runs = [coord.begin(), coord.begin(), coord.begin()];
-    // Powiadomienia z pierwszego przebiegu docierają, gdy trzeci już ruszył.
-    expect(coord.claim('contentPlan', runs[0]!)).toBe(true);
-    expect(coord.claim('contentPlan', runs[2]!)).toBe(true);
-    expect(coord.claim('contentPlan', runs[1]!)).toBe(false);
+  it('starszy wynik ląduje, gdy jest najświeższym znanym; spóźniony po nowszym odpada', () => {
+    const older = coord.openFetch('notifications');
+    const newer = coord.openFetch('notifications');
+    expect(coord.claim('notifications', older)).toBe(true);
+    expect(coord.claim('notifications', newer)).toBe(true);
+    expect(coord.claim('notifications', older)).toBe(false);
+  });
+
+  it('seria odświeżeń nie głodzi rodziny: pierwszy wynik po ostatnim scaleniu ląduje', () => {
+    const t = [
+      coord.openFetch('notifications'),
+      coord.openFetch('notifications'),
+      coord.openFetch('notifications'),
+    ];
+    // Wynik pierwszego fetcha dociera, gdy trzeci już wystartował.
+    expect(coord.claim('notifications', t[0]!)).toBe(true);
+    expect(coord.claim('notifications', t[2]!)).toBe(true);
+    expect(coord.claim('notifications', t[1]!)).toBe(false);
   });
 
   it('rodziny są niezależne', () => {
-    const a = coord.begin();
-    const b = coord.begin();
-    expect(coord.claim('notifications', b)).toBe(true);
-    expect(coord.claim('contentPlan', a)).toBe(true);
-    expect(coord.claim('notifications', a)).toBe(false);
+    const n1 = coord.openFetch('notifications');
+    const n2 = coord.openFetch('notifications');
+    const c1 = coord.openFetch('contentPlan');
+    expect(coord.claim('notifications', n2)).toBe(true);
+    expect(coord.claim('contentPlan', c1)).toBe(true);
+    expect(coord.claim('notifications', n1)).toBe(false);
+  });
+});
+
+describe('limit czasu przebiegu w locie', () => {
+  it('utknięty przebieg przestaje blokować po limicie; spóźniony wynik odpada po isCurrent', () => {
+    let t = 0;
+    const c = createHydrationCoordinator({ now: () => t, staleAfterMs: 30_000 });
+    const stuck = c.begin();
+    t += 29_999;
+    expect(c.inFlight()).toBe(true);
+    t += 1;
+    expect(c.inFlight()).toBe(false);
+    const fresh = c.begin();
+    expect(c.inFlight()).toBe(true);
+    expect(c.isCurrent(stuck)).toBe(false);
+    // Spóźniony `finally` utkniętego nie zdejmuje flagi spod świeżego.
+    expect(c.release(stuck)).toBe(false);
+    expect(c.inFlight()).toBe(true);
+    expect(c.release(fresh)).toBe(true);
+    expect(c.inFlight()).toBe(false);
+  });
+
+  it('domyślny zegar: świeży przebieg jest w locie do zwolnienia', () => {
+    const run = coord.begin();
+    expect(coord.inFlight()).toBe(true);
+    coord.release(run);
+    expect(coord.inFlight()).toBe(false);
   });
 });

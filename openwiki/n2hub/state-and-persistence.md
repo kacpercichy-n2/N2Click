@@ -109,7 +109,10 @@
   has already drained (empty queue, clean mirror, invisible to the older
   checks), so merging it reverted the fresh edit for one cycle (the
   „wykonane"/COMPLETE_TASK green→blue→green flicker). (b) SERIALIZED RUNS —
-  `begin()` numbers each hydration and raises `inFlight()`; `performLiveSync`
+  `begin()` numbers each hydration and raises `inFlight()` (with a deadline:
+  the planner fetch has no timeout, so a run stuck longer than
+  `DEFAULT_HYDRATION_STALE_MS` = 30 s stops blocking, and once a fresh run
+  begins the stuck run's late result is dropped by `isCurrent`); `performLiveSync`
   parks the Realtime event (`park()`) while a run is in flight (also background
   runs, which never leave `ready`) or when a run started and finished during
   its org refetch (its org snapshot is older: reschedule). A run asks `alive()`
@@ -119,9 +122,12 @@
   `ready` under the newer run; a stale closure whose `userId` no longer
   matches `userIdRef` never starts a run, and `refresh`/`performLiveSync`
   abort when the session epoch changes during the org refetch. Notifications
-  and content plan use per-family monotonic claims instead
-  (`claim(family, run)`): a superseded run's payload still lands when it is
-  the freshest known, a payload arriving after a newer run's is dropped — no
+  and content plan use per-family monotonic claims instead, ticketed at fetch
+  START (`openFetch(family)` right before the load, `claim(family, ticket)`
+  before the dispatch), not by run number, because content plan is fetched
+  after notifications and an older run with slow notifications can start its
+  content-plan fetch later (fresher) than a newer run: the payload of the
+  later-started fetch lands, a payload arriving after it is dropped — no
   reverting and no starvation during a burst of background runs. The flag
   is released (`release(run)`, current run only, idempotent) right AFTER the
   planner merge — not in `finally` — because the auxiliary loaders have no
