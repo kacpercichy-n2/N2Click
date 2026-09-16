@@ -56,6 +56,7 @@ import {
 import { notificationInsertsFromDiff } from './notificationEvents';
 import { buildCloudPeoplePayload, type OrgSnapshot } from './referenceData';
 import { createLiveTracker } from './liveChannelTracker';
+import { createHydrationCoordinator } from './hydrationCoordinator';
 
 export type CloudSyncStatus = 'idle' | 'hydrating' | 'ready' | 'error';
 
@@ -208,26 +209,11 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   // zmieniło” — prawdą pozostaje autorytatywny snapshot (org + planer).
   const [live, setLive] = useState(false);
   const refreshingFromReadyRef = useRef(false);
-  const pendingLiveSyncRef = useRef(false);
-  // EPOKA ZAPISÓW LUSTRA: rośnie przy każdym wypchnięciu lokalnej zmiany do
-  // kolejki chmury (efekt lustra niżej). Hydracja w tle zapamiętuje ją tuż
-  // przed fetchem snapshotu i porównuje przed scaleniem: różnica znaczy, że
-  // snapshot liczono w bazie PRZED zapisem, który od tego czasu wyszedł i
-  // zwykle zdążył się potwierdzić (kolejka pusta, lustro czyste — starsze
-  // straże go nie widziały). Scalenie takiego snapshotu cofało świeżo
-  // odhaczony blok / ukończone zadanie do stanu sprzed kliknięcia, a własne
-  // zdarzenie Realtime przywracało je w następnym przebiegu: migotanie
-  // zielony → niebieski → zielony, czasem „trzeba kliknąć dwa razy” (2026-09-16).
-  const localWriteEpochRef = useRef(0);
-  // SERIALIZACJA HYDRACJI: numer bieżącego przebiegu + flaga „w locie”.
-  // Odświeżenie w tle nie zrzuca statusu do 'hydrating', więc sam status nie
-  // chronił przed DWOMA równoległymi hydracjami; starsza (fetch sprzed zapisu)
-  // potrafiła rozstrzygnąć się PO nowszej i nadpisać jej świeży wynik starym
-  // snapshotem — i tak zostawało aż do kolejnego zdarzenia. Zdarzenie Realtime
-  // w trakcie hydracji jest odkładane (`pendingLiveSyncRef`) i dosynchronizowane
-  // po niej, a przebieg, który przestał być bieżącym, porzuca swój snapshot.
-  const hydrationRunRef = useRef(0);
-  const hydrationInFlightRef = useRef(false);
+  // Koordynator hydracji (czysty, testowalny w node — patrz
+  // hydrationCoordinator.ts): epoka zapisów lustra, numer bieżącego przebiegu
+  // z flagą „w locie” i odłożone zdarzenie Realtime. Instancja per provider,
+  // nigdy singleton modułu (jak externalStore).
+  const [coord] = useState(createHydrationCoordinator);
   const liveSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const liveSyncRef = useRef<() => void>(() => {});
   // Odświeżenie w tle omija krawędź statusu, więc dosynchronizowanie znacznika
@@ -409,10 +395,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       // Kolejka opróżniona bez błędu: kopia do odzysku = stan potwierdzony chmurą.
       if (retiredRef.current) retryPersistRef.current();
       // Zdarzenie Realtime odłożone na czas drenażu kolejki => dosynchronizuj.
-      if (pendingLiveSyncRef.current) {
-        pendingLiveSyncRef.current = false;
-        liveSyncRef.current();
-      }
+      if (coord.takeParked()) liveSyncRef.current();
     } finally {
       processingRef.current = false;
       // W `finally`, bo strażniki zmiany konta wychodzą z pętli przez `return`
@@ -436,7 +419,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
         void processQueue();
       }
     }
-  }, [setPending, persistOutbox, getPinnedAdapters]);
+  }, [setPending, persistOutbox, getPinnedAdapters, coord]);
 
   // Migawka „czy wolno TERAZ zastosować scalenie w tle”. Czyta wyłącznie żywe
   // refy, więc każde wywołanie widzi bieżący świat — wołana ponownie po każdym
@@ -444,7 +427,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   // się w całości w oknie fetcha snapshotu (patrz shouldDeferBackgroundMerge).
   // `writeEpochAtFetch` (tylko w kontroli PO fetchu): epoka zapisów lustra z
   // chwili startu pobierania — różnica od bieżącej znaczy snapshot starszy od
-  // stanu lokalnego (patrz localWriteEpochRef).
+  // stanu lokalnego (patrz hydrationCoordinator.ts).
   const backgroundMergeDeferred = useCallback(
     (writeEpochAtFetch?: number) =>
       shouldDeferBackgroundMerge({
@@ -452,10 +435,9 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
         processing: processingRef.current,
         queuedOps: queueRef.current.length,
         mirrorPending: prevRef.current !== stateRef.current,
-        wroteSinceFetch:
-          writeEpochAtFetch !== undefined && writeEpochAtFetch !== localWriteEpochRef.current,
+        wroteSinceFetch: writeEpochAtFetch !== undefined && coord.wroteSince(writeEpochAtFetch),
       }),
-    [],
+    [coord],
   );
 
   const runHydration = useCallback(
@@ -466,7 +448,11 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       // Odświeżenie ze stanu 'ready' (ręczne lub Realtime): lustro ma już mapy,
       // więc edycje wykonane w oknie hydracji dalej trafiają do kolejki zamiast
       // być pochłaniane i nadpisywane autorytatywnym scaleniem.
-      const fromReady = statusRef.current === 'ready';
+      // Odświeżenie zaczęte w OKNIE innego odświeżenia ze stanu 'ready'
+      // (status już 'hydrating', ale mapy są i edycje idą do kolejki) dziedziczy
+      // tę własność — inaczej drugi „Odśwież” zbijałby flagę i edycje z jego
+      // okna byłyby połykane zamiast lustrowane.
+      const fromReady = statusRef.current === 'ready' || refreshingFromReadyRef.current;
       refreshingFromReadyRef.current = fromReady;
       // BEZSZWOWO: odświeżenie w tle (Realtime) NIE zrzuca statusu do
       // 'hydrating' — inaczej baner „Wczytywanie danych z serwera…” pojawiał
@@ -481,18 +467,36 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       mapsRef.current = maps;
       // Ten przebieg staje się bieżącym; poprzedni (jeśli jeszcze czeka na
       // fetch) rozpozna to po numerze i porzuci swój, starszy snapshot.
-      const run = ++hydrationRunRef.current;
-      hydrationInFlightRef.current = true;
+      const run = coord.begin();
+      // Epoka SESJI z chwili startu: wylogowanie / zmiana konta w trakcie
+      // fetcha znaczy, że wynik należy do poprzedniej tożsamości i nie wolno
+      // go scalić (parytet z drenażem kolejki).
+      const sessionEpoch = sessionEpochRef.current;
+      // Czy ten przebieg wciąż ma prawo dotykać stanu: zamontowany, bieżący
+      // (nikt nowszy nie wystartował) i w tej samej sesji. Pytamy po KAŻDYM
+      // `await` — także po loaderach pomocniczych, żeby porzucony przebieg nie
+      // dosłał starych powiadomień / Content Planu ani nie ustawił 'ready'
+      // pod nowszym.
+      const owns = (): boolean =>
+        mountedRef.current && coord.isCurrent(run) && sessionEpochRef.current === sessionEpoch;
+      // Zwolnienie flagi „w locie” + przeplanowanie odłożonego zdarzenia
+      // Realtime (przy niepustej kolejce zrobi to ogon processQueue po
+      // potwierdzeniu zapisów). Idempotentne; zwalnia tylko bieżący przebieg.
+      const releaseRun = (): void => {
+        if (!coord.release(run)) return;
+        if (queueRef.current.length === 0 && mountedRef.current && coord.takeParked()) {
+          liveSyncRef.current();
+        }
+      };
       try {
         // Epoka zapisów z chwili startu fetcha — porównana PO nim (bramka niżej).
-        const writeEpochAtFetch = localWriteEpochRef.current;
+        const writeEpochAtFetch = coord.writeEpoch();
         const result = await loadPlannerSnapshot(getDb(), maps, stateRef.current);
-        if (!mountedRef.current) return;
         // Nowszy przebieg wystartował w trakcie tego fetcha (ręczne „Odśwież”,
         // ponowienie): jego snapshot jest świeższy i to on scali. Ten porzucamy
         // BEZ przeplanowania — scalenie starszego snapshotu PO nowszym cofałoby
         // to, co nowszy właśnie przyniósł.
-        if (hydrationRunRef.current !== run) return;
+        if (!owns()) return;
         if (!result.ok) {
           setStatus('error');
           setError(result.error);
@@ -536,13 +540,19 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
             payload: { ...result.payload, people: buildCloudPeoplePayload(snap.profiles) },
           }),
         );
+        // Sekcja krytyczna serializacji (fetch + scalenie planera) skończona:
+        // flaga „w locie” schodzi TERAZ, nie w `finally` — loadery pomocnicze
+        // niżej nie mają limitu czasu i jedno niezakończone żądanie trzymałoby
+        // każdą kolejną żywą synchronizację odłożoną na zawsze.
+        releaseRun();
         // Powiadomienia in-app: OSOBNY loader — nie blokuje reszty syncu ani
         // statusu. Brak tabeli (migracja niezaaplikowana) => `available` z []
         // (podmiana autorytatywna). Błąd PRZEJŚCIOWY => `available: false`:
         // NIE dispatchujemy scalenia, zostawiamy poprzedni stan (panel nie miga
         // pustką na chwilowym błędzie sieci).
         const notifResult = await loadNotificationsSnapshot(getDb(), maps);
-        if (mountedRef.current && notifResult.available) {
+        if (!owns()) return;
+        if (notifResult.available) {
           advanceDiffBase(() =>
             dispatch({
               type: 'MERGE_CLOUD_NOTIFICATIONS',
@@ -555,7 +565,8 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
         // kolekcjami, błąd PRZEJŚCIOWY => brak dispatchu (zostaje poprzedni stan).
         // Nie wpływa na status ani na resztę syncu.
         const contentPlanResult = await loadContentPlanSnapshot(getContentPlanDb());
-        if (mountedRef.current && contentPlanResult.available) {
+        if (!owns()) return;
+        if (contentPlanResult.available) {
           advanceDiffBase(() =>
             dispatch({
               type: 'MERGE_CLOUD_CONTENT_PLAN',
@@ -582,21 +593,11 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       } finally {
         // Tylko BIEŻĄCY przebieg zamyka flagi — starszy, porzucony po fetchu,
         // nie może zdjąć „w locie” ani `refreshingFromReady` spod nowszego.
-        if (hydrationRunRef.current === run) {
-          hydrationInFlightRef.current = false;
-          refreshingFromReadyRef.current = false;
-          // Zdarzenie Realtime nadeszło w trakcie tej hydracji => dosynchronizuj
-          // z debounce (po commitcie statusRef jest już 'ready'). Przy niepustej
-          // kolejce zrobi to ogon processQueue, gdy zapisy się potwierdzą.
-          if (
-            pendingLiveSyncRef.current &&
-            queueRef.current.length === 0 &&
-            mountedRef.current
-          ) {
-            pendingLiveSyncRef.current = false;
-            liveSyncRef.current();
-          }
-        }
+        // Zdarzenie Realtime odłożone w trakcie hydracji rusza stąd z debounce
+        // (po commitcie statusRef jest już 'ready'); przy niepustej kolejce
+        // zrobi to ogon processQueue, gdy zapisy się potwierdzą.
+        if (coord.isCurrent(run)) refreshingFromReadyRef.current = false;
+        releaseRun();
       }
     },
     [
@@ -609,6 +610,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       getContentPlanDb,
       processQueue,
       backgroundMergeDeferred,
+      coord,
     ],
   );
 
@@ -624,9 +626,9 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       processingRef.current ||
       queueRef.current.length > 0 ||
       statusRef.current !== 'ready' ||
-      hydrationInFlightRef.current
+      coord.inFlight()
     ) {
-      pendingLiveSyncRef.current = true;
+      coord.park();
       return;
     }
     // Trwa interakcja wrażliwa na stabilność (przeciąganie bloku kalendarza lub
@@ -638,6 +640,11 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       liveSyncRef.current();
       return;
     }
+    // Numer ostatniego przebiegu PRZED fetchem organizacji: jeśli w jego oknie
+    // ruszyła i skończyła się inna hydracja, nasz snapshot organizacji (zespół,
+    // słowniki → mapy id, profile) jest od niej STARSZY — nie hydrujemy na nim,
+    // tylko przeplanowujemy po świeży.
+    const latestRunBefore = coord.latestRun();
     const snap = await orgRefreshRef.current();
     if (!mountedRef.current) return;
     // Fetch organizacji trwał — bramka raz jeszcze, zanim ruszy hydracja
@@ -648,13 +655,18 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       return;
     }
     // Hydracja mogła wystartować w oknie fetcha organizacji (ręczne „Odśwież”):
-    // nie dublujemy jej — odkładamy jak na wejściu.
-    if (hydrationInFlightRef.current) {
-      pendingLiveSyncRef.current = true;
+    // nie dublujemy jej — odkładamy jak na wejściu. Jeśli zdążyła się skończyć,
+    // nasz snapshot organizacji jest starszy od jej wyniku — świeży przebieg.
+    if (coord.inFlight()) {
+      coord.park();
+      return;
+    }
+    if (!coord.isCurrent(latestRunBefore)) {
+      liveSyncRef.current();
       return;
     }
     await runHydration(snap ?? undefined, { background: true });
-  }, [active, runHydration, backgroundMergeDeferred]);
+  }, [active, runHydration, backgroundMergeDeferred, coord]);
 
   const scheduleLiveSync = useCallback(() => {
     if (liveSyncTimerRef.current !== null) clearTimeout(liveSyncTimerRef.current);
@@ -968,14 +980,14 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     }));
     // Lokalna zmiana wychodzi do chmury: podbij epokę zapisów — hydracja w tle,
     // której fetch wystartował wcześniej, rozpozna po niej, że jej snapshot
-    // jest starszy od stanu (patrz localWriteEpochRef).
-    localWriteEpochRef.current += 1;
+    // jest starszy od stanu (patrz hydrationCoordinator.ts).
+    coord.noteLocalWrite();
     queueRef.current.push(...ops, ...contentPlanOps, ...notifOps);
     queueOwnerRef.current = userId;
     setPending(queueRef.current.length);
     persistOutbox();
     void processQueue();
-  }, [state, active, userId, lastActionRef, actionFor, processQueue, setPending]);
+  }, [state, active, userId, lastActionRef, actionFor, processQueue, setPending, coord]);
 
   const retry = useCallback(() => {
     if (statusRef.current === 'error') {

@@ -98,22 +98,31 @@
   EMPTY cloud people payload fail-closes when local people exist (RLS anomaly
   must not wipe the team), the queue is cleared only on sign-out, and edits
   made during a ready-state rehydration keep queueing (maps exist) and are
-  pushed right after the merge. STALE-SNAPSHOT GUARD (2026-09-16): the
-  background merge gate (`shouldDeferBackgroundMerge` in
-  `src/utils/liveSyncGate.ts`) also takes `wroteSinceFetch`. CloudSyncProvider
-  bumps `localWriteEpochRef` whenever the mirror effect enqueues ops and, after
-  `loadPlannerSnapshot`, compares the epoch captured right before the fetch
-  with the current one; a difference means the snapshot was computed BEFORE a
-  local write that has since drained (empty queue, clean mirror — invisible to
-  the older checks), so the merge is deferred by the same debounce instead of
-  reverting the fresh edit for one cycle (the „wykonane"/COMPLETE_TASK
-  green→blue→green flicker). Hydrations are SERIALIZED: `hydrationInFlightRef`
-  makes `performLiveSync` park the event in `pendingLiveSyncRef` (also for
-  background runs, which never leave `ready`), the `finally` of `runHydration`
-  fires the parked sync, and each run carries a number (`hydrationRunRef`); a
-  run that stopped being current after its fetch drops its snapshot without
-  rescheduling (an older snapshot merged AFTER a newer one used to revert the
-  newer result until the next event).
+  pushed right after the merge. HYDRATION COORDINATOR (2026-09-16,
+  `src/supabase/hydrationCoordinator.ts`, pure, tested in
+  `hydrationCoordinator.test.ts`; one instance per provider): (a) STALE-SNAPSHOT
+  GUARD — the mirror effect calls `noteLocalWrite()` whenever it enqueues ops;
+  `runHydration` captures `writeEpoch()` right before `loadPlannerSnapshot` and
+  the post-fetch gate (`shouldDeferBackgroundMerge` in
+  `src/utils/liveSyncGate.ts`, new `wroteSinceFetch`) defers the merge when a
+  write went out since — the snapshot was computed BEFORE a local write that
+  has already drained (empty queue, clean mirror, invisible to the older
+  checks), so merging it reverted the fresh edit for one cycle (the
+  „wykonane"/COMPLETE_TASK green→blue→green flicker). (b) SERIALIZED RUNS —
+  `begin()` numbers each hydration and raises `inFlight()`; `performLiveSync`
+  parks the Realtime event (`park()`) while a run is in flight (also background
+  runs, which never leave `ready`) or when a run started and finished during
+  its org refetch (its org snapshot is older: reschedule). A run asks `owns()`
+  (mounted + `isCurrent(run)` + same session epoch) after EVERY await, so a
+  superseded or signed-out run drops its planner snapshot, its notifications /
+  content-plan payloads and never sets `ready` under the newer run. The flag
+  is released (`release(run)`, current run only, idempotent) right AFTER the
+  planner merge — not in `finally` — because the auxiliary loaders have no
+  timeout and one hung request would park every future live sync; `finally`
+  releases again for early exits and fires the parked event (`takeParked()`,
+  only with an empty queue; otherwise processQueue's tail does it). A refresh
+  started inside another refresh-from-ready inherits `refreshingFromReady`, so
+  edits in that window keep queueing.
 - ZGŁOSZENIA (2026-07-20): kolekcja `tickets` w `AppData` (`Ticket` w
   `src/types.ts`; slugi `kind`/`priority`/`status` + polskie etykiety w
   `src/utils/tickets.ts`). Mutacje: `ADD_TICKET` / `SAVE_TICKET` /
