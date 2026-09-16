@@ -209,14 +209,25 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   // zmieniło” — prawdą pozostaje autorytatywny snapshot (org + planer).
   const [live, setLive] = useState(false);
   const refreshingFromReadyRef = useRef(false);
+  const liveSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const liveSyncRef = useRef<() => void>(() => {});
   // Koordynator hydracji (czysty, testowalny w node — patrz
   // hydrationCoordinator.ts): epoka zapisów lustra, numer bieżącego przebiegu
   // z flagą „w locie” (z limitem czasu — utknięty fetch nie blokuje odświeżeń
   // w nieskończoność), bilety świeżości rodzin pomocniczych i odłożone
-  // zdarzenie Realtime. Instancja per provider, nigdy singleton modułu.
-  const [coord] = useState(createHydrationCoordinator);
-  const liveSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const liveSyncRef = useRef<() => void>(() => {});
+  // zdarzenie Realtime z budzikiem: gdy przebieg utknął ponad limit, a
+  // zdarzenie czeka, koordynator sam je zdejmuje i przeplanowuje sync — bez
+  // czekania na kolejne zdarzenie z zewnątrz (powrót kanału w oknie fetcha
+  // zostawał zaparkowany na zawsze). Instancja per provider, nigdy singleton.
+  const [coord] = useState(() => {
+    const c = createHydrationCoordinator({
+      onStale: () => {
+        if (c.takeParked()) liveSyncRef.current();
+      },
+    });
+    return c;
+  });
+  useEffect(() => () => coord.dispose(), [coord]);
   // Odświeżenie w tle omija krawędź statusu, więc dosynchronizowanie znacznika
   // wycofania wołamy przez ref (wzorzec jak liveSyncRef — definicja niżej).
   const syncRetirementRef = useRef<() => void>(() => {});

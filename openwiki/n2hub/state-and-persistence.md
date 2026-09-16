@@ -112,7 +112,12 @@
   `begin()` numbers each hydration and raises `inFlight()` (with a deadline:
   the planner fetch has no timeout, so a run stuck longer than
   `DEFAULT_HYDRATION_STALE_MS` = 30 s stops blocking, and once a fresh run
-  begins the stuck run's late result is dropped by `isCurrent`); `performLiveSync`
+  begins the stuck run's late result is dropped by `isCurrent`; an event
+  parked behind an in-flight run arms a wake-up at that deadline — injected
+  `schedule`/`cancel`, `onStale` in the provider takes the parked event and
+  reschedules the sync — so a reconnect landing inside a hung fetch recovers
+  without another external event; normal release, `takeParked` and `dispose`
+  cancel it); `performLiveSync`
   parks the Realtime event (`park()`) while a run is in flight (also background
   runs, which never leave `ready`) or when a run started and finished during
   its org refetch (its org snapshot is older: reschedule). A run asks `alive()`

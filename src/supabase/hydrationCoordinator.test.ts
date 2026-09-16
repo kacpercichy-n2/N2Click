@@ -189,3 +189,122 @@ describe('limit czasu przebiegu w locie', () => {
     expect(coord.inFlight()).toBe(false);
   });
 });
+
+// Minimalny fałszywy planer (jak w liveChannelTracker.test.ts).
+function makeClock() {
+  let seq = 0;
+  let now = 0;
+  const timers = new Map<number, { fn: () => void; due: number }>();
+  return {
+    now: () => now,
+    schedule(fn: () => void, ms: number): number {
+      const id = ++seq;
+      timers.set(id, { fn, due: now + ms });
+      return id;
+    },
+    cancel(handle: unknown): void {
+      timers.delete(handle as number);
+    },
+    advance(ms: number): void {
+      now += ms;
+      for (const [id, t] of [...timers]) {
+        if (t.due <= now) {
+          timers.delete(id);
+          t.fn();
+        }
+      }
+    },
+    pending: () => timers.size,
+  };
+}
+
+describe('budzik odłożonego zdarzenia za utkniętym przebiegiem', () => {
+  const STALE = 30_000;
+
+  function make() {
+    const clock = makeClock();
+    let woke = 0;
+    const c = createHydrationCoordinator({
+      now: clock.now,
+      staleAfterMs: STALE,
+      schedule: clock.schedule,
+      cancel: clock.cancel,
+      onStale: () => {
+        woke += 1;
+      },
+    });
+    return { clock, c, woke: () => woke };
+  }
+
+  it('fetch wisi, kanał wraca po 5 s: sync budzi się sam po limicie, bez zdarzenia z zewnątrz', () => {
+    const { clock, c, woke } = make();
+    c.begin();
+    clock.advance(5_000);
+    expect(c.inFlight()).toBe(true);
+    c.park(); // performLiveSync odkłada dosynchronizowanie po powrocie kanału
+    clock.advance(STALE - 5_000 - 1);
+    expect(woke()).toBe(0);
+    clock.advance(1);
+    expect(woke()).toBe(1);
+    // Provider zdejmuje zdarzenie i przeplanowuje; flaga już nie blokuje.
+    expect(c.inFlight()).toBe(false);
+    expect(c.takeParked()).toBe(true);
+    // Świeży przebieg wypiera utknięty.
+    const fresh = c.begin();
+    expect(c.inFlight()).toBe(true);
+    expect(c.isCurrent(fresh)).toBe(true);
+  });
+
+  it('normalne zwolnienie kasuje budzik', () => {
+    const { clock, c, woke } = make();
+    const run = c.begin();
+    c.park();
+    expect(clock.pending()).toBe(1);
+    expect(c.release(run)).toBe(true);
+    expect(clock.pending()).toBe(0);
+    clock.advance(STALE * 2);
+    expect(woke()).toBe(0);
+  });
+
+  it('zdjęcie zdarzenia (ogon drenażu / hydracji) kasuje budzik', () => {
+    const { clock, c, woke } = make();
+    c.begin();
+    c.park();
+    expect(c.takeParked()).toBe(true);
+    expect(clock.pending()).toBe(0);
+    clock.advance(STALE * 2);
+    expect(woke()).toBe(0);
+  });
+
+  it('powtórne park nie mnoży budzików; bez przebiegu w locie budzik nie powstaje', () => {
+    const { clock, c } = make();
+    c.park();
+    expect(clock.pending()).toBe(0);
+    c.begin();
+    c.park();
+    c.park();
+    expect(clock.pending()).toBe(1);
+  });
+
+  it('świeży przebieg ruszył przed limitem utkniętego: budzik czeka na limit świeżego', () => {
+    const { clock, c, woke } = make();
+    c.begin(); // utknięty, start 0
+    clock.advance(5_000);
+    c.park();
+    clock.advance(15_000); // 20 s: ręczne „Odśwież” zaczyna świeży przebieg
+    c.begin();
+    clock.advance(10_000); // 30 s: limit utkniętego — świeży ma jeszcze 20 s
+    expect(woke()).toBe(0);
+    clock.advance(20_000); // 50 s: limit świeżego
+    expect(woke()).toBe(1);
+  });
+
+  it('dispose kasuje budzik', () => {
+    const { clock, c, woke } = make();
+    c.begin();
+    c.park();
+    c.dispose();
+    clock.advance(STALE * 2);
+    expect(woke()).toBe(0);
+  });
+});
