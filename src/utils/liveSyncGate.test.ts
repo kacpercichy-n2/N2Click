@@ -83,4 +83,16 @@ describe('shouldDeferBackgroundMerge', () => {
       shouldDeferBackgroundMerge({ held: true, processing: true, queuedOps: 3, mirrorPending: true }),
     ).toBe(true);
   });
+
+  it('zapis wypchnięty do chmury po starcie fetcha odracza scalenie (snapshot starszy od stanu)', () => {
+    // Prawy klik „wykonane” w oknie pobierania snapshotu: kolejka zdążyła się
+    // opróżnić i lustro jest czyste, ale snapshot liczono przed tym zapisem —
+    // scalenie cofnęłoby blok na chwilę do niebieskiego (migotanie 2026-09-16).
+    expect(shouldDeferBackgroundMerge({ ...clean, wroteSinceFetch: true })).toBe(true);
+  });
+
+  it('brak zapisów od startu fetcha nie odracza; kontrola przed fetchem pomija pole', () => {
+    expect(shouldDeferBackgroundMerge({ ...clean, wroteSinceFetch: false })).toBe(false);
+    expect(shouldDeferBackgroundMerge(clean)).toBe(false);
+  });
 });
