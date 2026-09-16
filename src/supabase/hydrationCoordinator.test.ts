@@ -90,4 +90,59 @@ describe('odłożone zdarzenie Realtime', () => {
   it('bez park nic nie czeka', () => {
     expect(coord.takeParked()).toBe(false);
   });
+
+  it('zwolnienie po scaleniu planera, ponowne odłożenie, zwolnienie w finally: jedno zdjęcie', () => {
+    // Odświeżenie ręczne: pierwsze zwolnienie przeplanowuje odłożone zdarzenie,
+    // performLiveSync odkłada je ponownie (status jeszcze 'hydrating'),
+    // `finally` zwalnia raz jeszcze i zdejmuje je dokładnie raz.
+    const run = coord.begin();
+    coord.park();
+    expect(coord.release(run)).toBe(true);
+    expect(coord.takeParked()).toBe(true);
+    coord.park();
+    expect(coord.release(run)).toBe(true);
+    expect(coord.takeParked()).toBe(true);
+    expect(coord.takeParked()).toBe(false);
+  });
+
+  it('spóźniony finally wyprzedzonego przebiegu nie zdejmuje zdarzenia odłożonego pod nowszy', () => {
+    // A zwalnia po scaleniu planera, B rusza w oknie loaderów pomocniczych A,
+    // zdarzenie zostaje odłożone pod B; `finally` A nie ma prawa go zdjąć.
+    const a = coord.begin();
+    expect(coord.release(a)).toBe(true);
+    const b = coord.begin();
+    coord.park();
+    expect(coord.release(a)).toBe(false);
+    expect(coord.release(b)).toBe(true);
+    expect(coord.takeParked()).toBe(true);
+    expect(coord.takeParked()).toBe(false);
+  });
+});
+
+describe('rezerwacje rodzin pomocniczych', () => {
+  it('starszy wynik ląduje, gdy jest najświeższym znanym; spóźniony po nowszym odpada', () => {
+    const a = coord.begin();
+    const b = coord.begin();
+    // Wynik A (wyprzedzonego) przychodzi pierwszy — wciąż najświeższy znany.
+    expect(coord.claim('notifications', a)).toBe(true);
+    expect(coord.claim('notifications', b)).toBe(true);
+    // Gdyby A dosłał raz jeszcze (albo przyszedł po B) — cofnąłby B: odpada.
+    expect(coord.claim('notifications', a)).toBe(false);
+  });
+
+  it('seria odświeżeń nie głodzi rodziny: każdy pierwszy wynik po ostatnim scaleniu ląduje', () => {
+    const runs = [coord.begin(), coord.begin(), coord.begin()];
+    // Powiadomienia z pierwszego przebiegu docierają, gdy trzeci już ruszył.
+    expect(coord.claim('contentPlan', runs[0]!)).toBe(true);
+    expect(coord.claim('contentPlan', runs[2]!)).toBe(true);
+    expect(coord.claim('contentPlan', runs[1]!)).toBe(false);
+  });
+
+  it('rodziny są niezależne', () => {
+    const a = coord.begin();
+    const b = coord.begin();
+    expect(coord.claim('notifications', b)).toBe(true);
+    expect(coord.claim('contentPlan', a)).toBe(true);
+    expect(coord.claim('notifications', a)).toBe(false);
+  });
 });

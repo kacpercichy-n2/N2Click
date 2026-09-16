@@ -457,6 +457,10 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       const snap =
         overrideSnap ?? (org.state.status === 'ready' ? org.state.snapshot : null);
       if (auth.mode !== 'supabase' || !userId || !snap) return;
+      // Stare domknięcie (kontynuacja po `await` sprzed zmiany konta /
+      // wylogowania) niesie `userId` i zapasowy snapshot organizacji POPRZEDNIEJ
+      // tożsamości — nie wolno mu zacząć przebiegu w nowej sesji.
+      if (userIdRef.current !== userId) return;
       // Odświeżenie ze stanu 'ready' (ręczne lub Realtime): lustro ma już mapy,
       // więc edycje wykonane w oknie hydracji dalej trafiają do kolejki zamiast
       // być pochłaniane i nadpisywane autorytatywnym scaleniem.
@@ -484,13 +488,17 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       // fetcha znaczy, że wynik należy do poprzedniej tożsamości i nie wolno
       // go scalić (parytet z drenażem kolejki).
       const sessionEpoch = sessionEpochRef.current;
-      // Czy ten przebieg wciąż ma prawo dotykać stanu: zamontowany, bieżący
-      // (nikt nowszy nie wystartował) i w tej samej sesji. Pytamy po KAŻDYM
-      // `await` — także po loaderach pomocniczych, żeby porzucony przebieg nie
-      // dosłał starych powiadomień / Content Planu ani nie ustawił 'ready'
-      // pod nowszym.
-      const owns = (): boolean =>
-        mountedRef.current && coord.isCurrent(run) && sessionEpochRef.current === sessionEpoch;
+      // Czy wynik z tego przebiegu wolno jeszcze dotknąć stanu: zamontowany
+      // i ta sama sesja (`alive`), a dla snapshotu planera i statusu 'ready'
+      // dodatkowo bieżący — nikt nowszy nie wystartował (`owns`). Pytamy po
+      // KAŻDYM `await`. Rodziny pomocnicze (powiadomienia, Content Plan)
+      // zamiast `owns` używają rezerwacji per rodzina (`coord.claim`): wynik
+      // wyprzedzonego przebiegu wciąż ląduje, jeśli jest najświeższym znanym,
+      // a spóźniony po nowszym odpada — bez cofania nowszego i bez głodzenia
+      // przy serii odświeżeń w tle.
+      const alive = (): boolean =>
+        mountedRef.current && sessionEpochRef.current === sessionEpoch;
+      const owns = (): boolean => alive() && coord.isCurrent(run);
       // Zwolnienie flagi „w locie” + przeplanowanie odłożonego zdarzenia
       // Realtime (przy niepustej kolejce zrobi to ogon processQueue po
       // potwierdzeniu zapisów). Idempotentne; zwalnia tylko bieżący przebieg.
@@ -564,9 +572,14 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
         // pustką na chwilowym błędzie sieci).
         const notifTicket = notificationsLoadsRef.current.begin();
         const notifResult = await loadNotificationsSnapshot(getDb(), maps);
-        if (!owns()) return;
-        // `claim` na końcu: tylko gdy wynik naprawdę scalamy.
-        if (notifResult.available && notificationsLoadsRef.current.claim(notifTicket)) {
+        if (!alive()) return;
+        // Dwie straże świeżości: rezerwacja koordynatora (przebiegi pełnej
+        // hydracji) i `createLatestWins` (wspólna z lekką ścieżką powiadomień).
+        if (
+          notifResult.available &&
+          coord.claim('notifications', run) &&
+          notificationsLoadsRef.current.claim(notifTicket)
+        ) {
           advanceDiffBase(() =>
             dispatch({
               type: 'MERGE_CLOUD_NOTIFICATIONS',
@@ -579,8 +592,8 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
         // kolekcjami, błąd PRZEJŚCIOWY => brak dispatchu (zostaje poprzedni stan).
         // Nie wpływa na status ani na resztę syncu.
         const contentPlanResult = await loadContentPlanSnapshot(getContentPlanDb());
-        if (!owns()) return;
-        if (contentPlanResult.available) {
+        if (!alive()) return;
+        if (contentPlanResult.available && coord.claim('contentPlan', run)) {
           advanceDiffBase(() =>
             dispatch({
               type: 'MERGE_CLOUD_CONTENT_PLAN',
@@ -588,6 +601,9 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
             }),
           );
         }
+        // Status 'ready' i ogon tła ustawia wyłącznie BIEŻĄCY przebieg — nowszy
+        // (który nas wyprzedził) zrobi to sam po swoim scaleniu.
+        if (!owns()) return;
         setStatus('ready');
         // Odświeżenie w tle nie przechodzi przez krawędź 'hydrating'→'ready',
         // więc efekt na krawędzi statusu nie odpali: świeżą kopię do odzysku
@@ -659,8 +675,12 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     // słowniki → mapy id, profile) jest od niej STARSZY — nie hydrujemy na nim,
     // tylko przeplanowujemy po świeży.
     const latestRunBefore = coord.latestRun();
+    // Epoka sesji sprzed fetcha organizacji: zmiana konta / wylogowanie w jego
+    // oknie unieważnia tę kontynuację (stare domknięcie runHydration ma
+    // zapasowy snapshot organizacji poprzedniego konta).
+    const sessionEpoch = sessionEpochRef.current;
     const snap = await orgRefreshRef.current();
-    if (!mountedRef.current) return;
+    if (!mountedRef.current || sessionEpochRef.current !== sessionEpoch) return;
     // Fetch organizacji trwał — bramka raz jeszcze, zanim ruszy hydracja
     // planera (drugi, dłuższy fetch). Szybkie chwyć–puść karty zasobnika
     // potrafi zacząć się i skończyć w tym oknie.
@@ -920,6 +940,9 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!active) {
       hydratedUserRef.current = null;
+      // Okno odświeżania ze stanu 'ready' nie może przeżyć sesji: następna
+      // hydracja startowa (po ponownym logowaniu) zaczyna od czystej flagi.
+      refreshingFromReadyRef.current = false;
       prevRef.current = stateRef.current;
       // Kolejkę kasujemy TYLKO przy braku sesji (wylogowanie / zmiana konta).
       // Chwilowy brak snapshotu przy tym samym użytkowniku (reload organizacji)
@@ -1078,8 +1101,11 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     // organizacji (zespół/słowniki/avatary), potem hydracja planera na świeżym
     // snapshocie — bez zrzucania org do 'loading' (kolejka i aktywność zostają).
     void (async () => {
+      // Jak w performLiveSync: zmiana konta w oknie fetcha organizacji
+      // unieważnia kontynuację (runHydration sprawdza to też po `userId`).
+      const sessionEpoch = sessionEpochRef.current;
       const snap = await orgRefreshRef.current();
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || sessionEpochRef.current !== sessionEpoch) return;
       await runHydration(snap ?? undefined);
     })();
   }, [runHydration, error]);
