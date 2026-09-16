@@ -25,6 +25,14 @@
 //    ruszyć (drenaż kolejki, hydracja w locie, status poza 'ready'), zdarzenie
 //    czeka; ogon drenażu albo hydracji zdejmuje je i przeplanowuje. Jedno
 //    miejsce na wszystkie odłożone zdarzenia (debounce i tak je zlewa).
+// 4. REZERWACJE rodzin pomocniczych (`claim`) — powiadomienia i Content Plan
+//    ładują się PO zwolnieniu flagi, więc nowszy przebieg może wyprzedzić
+//    starszy w ich oknie. Gdyby wynik wyprzedzonego przebiegu był po prostu
+//    odrzucany, seria odświeżeń w tle (co ~2 s przy powiadomieniach po ~3 s)
+//    głodziłaby te rodziny bez końca. Zamiast tego każda rodzina pamięta numer
+//    przebiegu, który ją ostatnio scalił: starszy wynik wciąż ląduje, jeśli
+//    jest najświeższym znanym, a spóźniony (nowszy już scalił) odpada — bez
+//    cofania nowszego i bez głodzenia.
 
 export interface HydrationCoordinator {
   /** Lokalna zmiana wyszła do kolejki chmury. */
@@ -47,6 +55,13 @@ export interface HydrationCoordinator {
   park(): void;
   /** Zdejmuje odłożone zdarzenie (jeśli było); wołający ma je przeplanować. */
   takeParked(): boolean;
+  /**
+   * Rezerwuje scalenie rodziny pomocniczej dla przebiegu `run`: true, gdy
+   * żaden przebieg o numerze >= `run` jeszcze jej nie scalił (wynik ląduje),
+   * false, gdy nowszy (albo ten sam) już ją scalił — spóźniony wynik cofnąłby
+   * świeższy.
+   */
+  claim(family: string, run: number): boolean;
 }
 
 export function createHydrationCoordinator(): HydrationCoordinator {
@@ -54,6 +69,7 @@ export function createHydrationCoordinator(): HydrationCoordinator {
   let run = 0;
   let flying = false;
   let parked = false;
+  const claimed = new Map<string, number>();
   return {
     noteLocalWrite: () => {
       epoch += 1;
@@ -80,6 +96,11 @@ export function createHydrationCoordinator(): HydrationCoordinator {
       const had = parked;
       parked = false;
       return had;
+    },
+    claim: (family, r) => {
+      if (r <= (claimed.get(family) ?? 0)) return false;
+      claimed.set(family, r);
+      return true;
     },
   };
 }

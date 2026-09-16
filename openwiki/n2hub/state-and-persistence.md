@@ -112,10 +112,17 @@
   `begin()` numbers each hydration and raises `inFlight()`; `performLiveSync`
   parks the Realtime event (`park()`) while a run is in flight (also background
   runs, which never leave `ready`) or when a run started and finished during
-  its org refetch (its org snapshot is older: reschedule). A run asks `owns()`
-  (mounted + `isCurrent(run)` + same session epoch) after EVERY await, so a
-  superseded or signed-out run drops its planner snapshot, its notifications /
-  content-plan payloads and never sets `ready` under the newer run. The flag
+  its org refetch (its org snapshot is older: reschedule). A run asks `alive()`
+  (mounted + same session epoch) after EVERY await and `owns()` (`alive` +
+  `isCurrent(run)`) before the planner merge and before setting `ready`, so a
+  superseded or signed-out run drops its planner snapshot and never sets
+  `ready` under the newer run; a stale closure whose `userId` no longer
+  matches `userIdRef` never starts a run, and `refresh`/`performLiveSync`
+  abort when the session epoch changes during the org refetch. Notifications
+  and content plan use per-family monotonic claims instead
+  (`claim(family, run)`): a superseded run's payload still lands when it is
+  the freshest known, a payload arriving after a newer run's is dropped — no
+  reverting and no starvation during a burst of background runs. The flag
   is released (`release(run)`, current run only, idempotent) right AFTER the
   planner merge — not in `finally` — because the auxiliary loaders have no
   timeout and one hung request would park every future live sync; `finally`
