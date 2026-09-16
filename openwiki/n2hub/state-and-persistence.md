@@ -108,6 +108,22 @@
   zdarzenie pełnej ścieżce. `createLatestWins` (numer pobrania brany przed
   fetchem, w OBU ścieżkach) odrzuca starszą migawkę powiadomień, która doszła
   po nowszej. Testy: `liveSyncRoute.test.ts`.
+  STALE-SNAPSHOT GUARD (2026-09-16): the
+  background merge gate (`shouldDeferBackgroundMerge` in
+  `src/utils/liveSyncGate.ts`) also takes `wroteSinceFetch`. CloudSyncProvider
+  bumps `localWriteEpochRef` whenever the mirror effect enqueues ops and, after
+  `loadPlannerSnapshot`, compares the epoch captured right before the fetch
+  with the current one; a difference means the snapshot was computed BEFORE a
+  local write that has since drained (empty queue, clean mirror — invisible to
+  the older checks), so the merge is deferred by the same debounce instead of
+  reverting the fresh edit for one cycle (the „wykonane"/COMPLETE_TASK
+  green→blue→green flicker). Hydrations are SERIALIZED: `hydrationInFlightRef`
+  makes `performLiveSync` park the event in `pendingLiveSyncRef` (also for
+  background runs, which never leave `ready`), the `finally` of `runHydration`
+  fires the parked sync, and each run carries a number (`hydrationRunRef`); a
+  run that stopped being current after its fetch drops its snapshot without
+  rescheduling (an older snapshot merged AFTER a newer one used to revert the
+  newer result until the next event).
 - ZGŁOSZENIA (2026-07-20): kolekcja `tickets` w `AppData` (`Ticket` w
   `src/types.ts`; slugi `kind`/`priority`/`status` + polskie etykiety w
   `src/utils/tickets.ts`). Mutacje: `ADD_TICKET` / `SAVE_TICKET` /

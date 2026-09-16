@@ -90,6 +90,21 @@ export function changelogUnreadCount(
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-09-16-migotanie-wykonane',
+    dateFrom: '2026-09-16',
+    dateTo: '2026-09-16',
+    summary:
+      'Odhaczony blok i ukończone zadanie zostają zielone od razu: odświeżenie danych z serwera nie cofa już świeżego kliknięcia na chwilę do poprzedniego stanu.',
+    items: [
+      {
+        area: 'Kalendarz',
+        feature: 'Koniec migotania „wykonane”',
+        description:
+          'Prawy klik „wykonane” na bloku albo „Ukończ zadanie” czasem zapalał blok na zielono, po chwili wracał do niebieskiego, a zieleń pojawiała się dopiero po kolejnym ruchu; bywało, że trzeba było kliknąć dwa razy. Powodem było odświeżenie danych z serwera pobrane tuż przed zapisem kliknięcia i nałożone tuż po nim. Teraz takie odświeżenie czeka na wersję, która zna już Twoje kliknięcie, a dwa odświeżenia nie nachodzą na siebie.',
+      },
+    ],
+  },
+  {
     id: '2026-09-15-zgloszenia-wrzesien',
     dateFrom: '2026-09-15',
     dateTo: '2026-09-15',
