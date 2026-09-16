@@ -1,6 +1,7 @@
 // Koordynator hydracji chmury. Czysty i testowalny w node (bez Reacta, bez
-// klienta Supabase) — jak createLiveTracker. Trzyma trzy rzeczy, które
-// CloudSyncProvider musi uzgadniać między asynchronicznymi przebiegami:
+// klienta Supabase, z wstrzykiwanym zegarem) — jak createLiveTracker. Trzyma
+// cztery rzeczy, które CloudSyncProvider musi uzgadniać między
+// asynchronicznymi przebiegami:
 //
 // 1. EPOKĘ ZAPISÓW LUSTRA — rośnie przy każdym wypchnięciu lokalnej zmiany do
 //    kolejki chmury (`noteLocalWrite`). Hydracja w tle zapamiętuje ją tuż
@@ -31,6 +32,13 @@
 //    ruszyć (drenaż kolejki, hydracja w locie, status poza 'ready'), zdarzenie
 //    czeka; ogon drenażu albo hydracji zdejmuje je i przeplanowuje. Jedno
 //    miejsce na wszystkie odłożone zdarzenia (debounce i tak je zlewa).
+//    BUDZIK: zdarzenie odłożone za przebiegiem w locie ma tylko jednego
+//    wybawcę — `release` tego przebiegu. Gdy fetch utknął, nikt go nie zwolni,
+//    a limit czasu sam z siebie nic nie planuje (`inFlight` liczy czas tylko
+//    przy wywołaniu). Dlatego `park` przy przebiegu w locie nastawia budzik na
+//    moment, w którym flaga przestaje blokować: `onStale` woła wtedy providera,
+//    który zdejmuje zdarzenie i przeplanowuje sync — bez czekania na kolejne
+//    zdarzenie z zewnątrz. Normalne zwolnienie i `takeParked` kasują budzik.
 // 4. REZERWACJE rodzin pomocniczych (`openFetch` + `claim`) — powiadomienia
 //    i Content Plan ładują się PO zwolnieniu flagi, więc nowszy przebieg może
 //    wyprzedzić starszy w ich oknie. Gdyby wynik wyprzedzonego przebiegu był
@@ -48,6 +56,14 @@ export interface HydrationCoordinatorOptions {
   now?: () => number;
   /** Po ilu ms przebieg w locie przestaje blokować następne (fetch bez limitu czasu). */
   staleAfterMs?: number;
+  /** Planer budzika (setTimeout w produkcji, fałszywy zegar w testach). */
+  schedule?: (fn: () => void, ms: number) => unknown;
+  cancel?: (handle: unknown) => void;
+  /**
+   * Budzik: przebieg w locie przekroczył limit, a zdarzenie Realtime czeka
+   * odłożone. Wołający ma je zdjąć (`takeParked`) i przeplanować sync.
+   */
+  onStale?: () => void;
 }
 
 export const DEFAULT_HYDRATION_STALE_MS = 30_000;
@@ -72,9 +88,12 @@ export interface HydrationCoordinator {
   inFlight(): boolean;
   /** Zwalnia flagę „w locie” — tylko dla bieżącego przebiegu. Zwraca, czy zwolniono. */
   release(run: number): boolean;
-  /** Odkłada zdarzenie Realtime, którego nie można teraz obsłużyć. */
+  /**
+   * Odkłada zdarzenie Realtime, którego nie można teraz obsłużyć. Przy
+   * przebiegu w locie nastawia budzik na jego limit czasu (patrz `onStale`).
+   */
   park(): void;
-  /** Zdejmuje odłożone zdarzenie (jeśli było); wołający ma je przeplanować. */
+  /** Zdejmuje odłożone zdarzenie (jeśli było) i kasuje budzik; wołający ma je przeplanować. */
   takeParked(): boolean;
   /** Bilet świeżości dla rodziny pomocniczej — wołany tuż przed STARTEM jej fetcha. */
   openFetch(family: string): number;
@@ -84,6 +103,8 @@ export interface HydrationCoordinator {
    * późniejszy (albo ten sam) już ją scalił — spóźniony wynik cofnąłby świeższy.
    */
   claim(family: string, ticket: number): boolean;
+  /** Kasuje budzik (odmontowanie providera). */
+  dispose(): void;
 }
 
 export function createHydrationCoordinator(
@@ -91,13 +112,41 @@ export function createHydrationCoordinator(
 ): HydrationCoordinator {
   const now = opts.now ?? (() => Date.now());
   const staleAfterMs = opts.staleAfterMs ?? DEFAULT_HYDRATION_STALE_MS;
+  const schedule = opts.schedule ?? ((fn, ms) => setTimeout(fn, ms));
+  const cancel = opts.cancel ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
+  const onStale = opts.onStale;
   let epoch = 0;
   let run = 0;
   let flying = false;
   let startedAt = 0;
   let parked = false;
+  let alarm: unknown = null;
   const tickets = new Map<string, number>();
   const claimed = new Map<string, number>();
+
+  const clearAlarm = (): void => {
+    if (alarm === null) return;
+    cancel(alarm);
+    alarm = null;
+  };
+  const isStale = (): boolean => now() - startedAt >= staleAfterMs;
+  // Budzik na moment, w którym bieżący przebieg przestaje blokować.
+  const armAlarm = (): void => {
+    if (alarm !== null || onStale === undefined) return;
+    const wait = Math.max(0, startedAt + staleAfterMs - now());
+    alarm = schedule(() => {
+      alarm = null;
+      if (!parked || !flying) return;
+      // W międzyczasie ruszył świeży przebieg (ręczne „Odśwież”): jego limit
+      // jeszcze nie minął — czekaj na niego.
+      if (!isStale()) {
+        armAlarm();
+        return;
+      }
+      onStale();
+    }, wait);
+  };
+
   return {
     noteLocalWrite: () => {
       epoch += 1;
@@ -112,18 +161,21 @@ export function createHydrationCoordinator(
     },
     latestRun: () => run,
     isCurrent: (r) => r === run,
-    inFlight: () => flying && now() - startedAt < staleAfterMs,
+    inFlight: () => flying && !isStale(),
     release: (r) => {
       if (r !== run) return false;
       flying = false;
+      clearAlarm();
       return true;
     },
     park: () => {
       parked = true;
+      if (flying) armAlarm();
     },
     takeParked: () => {
       const had = parked;
       parked = false;
+      clearAlarm();
       return had;
     },
     openFetch: (family) => {
@@ -136,5 +188,6 @@ export function createHydrationCoordinator(
       claimed.set(family, ticket);
       return true;
     },
+    dispose: clearAlarm,
   };
 }
