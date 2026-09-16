@@ -20,19 +20,37 @@
 //    `await` i wycofuje się bez scalania. Flagę zwalnia WYŁĄCZNIE bieżący
 //    przebieg (`release`), więc spóźniony `finally` starszego nie zdejmie jej
 //    spod nowszego. Zwolnienie jest idempotentne — provider zwalnia zaraz po
-//    scaleniu planera (sekcja krytyczna) i ponownie w `finally`.
+//    scaleniu planera (sekcja krytyczna) i ponownie w `finally`. LIMIT CZASU:
+//    fetch snapshotu nie ma limitu, więc przebieg, który utknął (zerwane
+//    połączenie bez błędu), blokowałby każde następne odświeżenie w tle —
+//    także dosynchronizowanie po powrocie kanału — przy statusie wciąż
+//    'ready'. Po `staleAfterMs` (domyślnie 30 s) `inFlight` przestaje blokować;
+//    gdy ruszy świeży przebieg, spóźniony wynik utkniętego odpada po
+//    `isCurrent`, a jego `release` nie zdejmie flagi spod świeżego.
 // 3. ODŁOŻONE zdarzenie Realtime (`park` / `takeParked`) — gdy sync nie może
 //    ruszyć (drenaż kolejki, hydracja w locie, status poza 'ready'), zdarzenie
 //    czeka; ogon drenażu albo hydracji zdejmuje je i przeplanowuje. Jedno
 //    miejsce na wszystkie odłożone zdarzenia (debounce i tak je zlewa).
-// 4. REZERWACJE rodzin pomocniczych (`claim`) — powiadomienia i Content Plan
-//    ładują się PO zwolnieniu flagi, więc nowszy przebieg może wyprzedzić
-//    starszy w ich oknie. Gdyby wynik wyprzedzonego przebiegu był po prostu
-//    odrzucany, seria odświeżeń w tle (co ~2 s przy powiadomieniach po ~3 s)
-//    głodziłaby te rodziny bez końca. Zamiast tego każda rodzina pamięta numer
-//    przebiegu, który ją ostatnio scalił: starszy wynik wciąż ląduje, jeśli
-//    jest najświeższym znanym, a spóźniony (nowszy już scalił) odpada — bez
-//    cofania nowszego i bez głodzenia.
+// 4. REZERWACJE rodzin pomocniczych (`openFetch` + `claim`) — powiadomienia
+//    i Content Plan ładują się PO zwolnieniu flagi, więc nowszy przebieg może
+//    wyprzedzić starszy w ich oknie. Gdyby wynik wyprzedzonego przebiegu był
+//    po prostu odrzucany, seria odświeżeń w tle (co ~2 s przy powiadomieniach
+//    po ~3 s) głodziłaby te rodziny bez końca. Zamiast tego każda rodzina
+//    wydaje BILET w kolejności STARTU fetcha i pamięta bilet, który ją ostatnio
+//    scalił: wynik z fetcha, który wystartował później, ląduje, a spóźniony
+//    (nowszy fetch już scalił) odpada — bez cofania nowszego i bez głodzenia.
+//    Bilet, nie numer przebiegu: Content Plan startuje po powiadomieniach,
+//    więc STARSZY przebieg z wolnymi powiadomieniami zaczyna fetch Content
+//    Planu później — czyli świeżej — niż nowszy przebieg.
+
+export interface HydrationCoordinatorOptions {
+  /** Zegar (Date.now w produkcji, fałszywy w testach). */
+  now?: () => number;
+  /** Po ilu ms przebieg w locie przestaje blokować następne (fetch bez limitu czasu). */
+  staleAfterMs?: number;
+}
+
+export const DEFAULT_HYDRATION_STALE_MS = 30_000;
 
 export interface HydrationCoordinator {
   /** Lokalna zmiana wyszła do kolejki chmury. */
@@ -47,7 +65,10 @@ export interface HydrationCoordinator {
   latestRun(): number;
   /** Czy przebieg o tym numerze wciąż jest bieżący. */
   isCurrent(run: number): boolean;
-  /** Czy jakaś hydracja jest w locie (między `begin` a `release` bieżącego). */
+  /**
+   * Czy hydracja jest w locie (między `begin` a `release` bieżącego) i nie
+   * przekroczyła limitu czasu — utknięty przebieg przestaje blokować.
+   */
   inFlight(): boolean;
   /** Zwalnia flagę „w locie” — tylko dla bieżącego przebiegu. Zwraca, czy zwolniono. */
   release(run: number): boolean;
@@ -55,20 +76,27 @@ export interface HydrationCoordinator {
   park(): void;
   /** Zdejmuje odłożone zdarzenie (jeśli było); wołający ma je przeplanować. */
   takeParked(): boolean;
+  /** Bilet świeżości dla rodziny pomocniczej — wołany tuż przed STARTEM jej fetcha. */
+  openFetch(family: string): number;
   /**
-   * Rezerwuje scalenie rodziny pomocniczej dla przebiegu `run`: true, gdy
-   * żaden przebieg o numerze >= `run` jeszcze jej nie scalił (wynik ląduje),
-   * false, gdy nowszy (albo ten sam) już ją scalił — spóźniony wynik cofnąłby
-   * świeższy.
+   * Rezerwuje scalenie rodziny dla biletu `ticket`: true, gdy żaden fetch
+   * o bilecie >= `ticket` jeszcze jej nie scalił (wynik ląduje), false, gdy
+   * późniejszy (albo ten sam) już ją scalił — spóźniony wynik cofnąłby świeższy.
    */
-  claim(family: string, run: number): boolean;
+  claim(family: string, ticket: number): boolean;
 }
 
-export function createHydrationCoordinator(): HydrationCoordinator {
+export function createHydrationCoordinator(
+  opts: HydrationCoordinatorOptions = {},
+): HydrationCoordinator {
+  const now = opts.now ?? (() => Date.now());
+  const staleAfterMs = opts.staleAfterMs ?? DEFAULT_HYDRATION_STALE_MS;
   let epoch = 0;
   let run = 0;
   let flying = false;
+  let startedAt = 0;
   let parked = false;
+  const tickets = new Map<string, number>();
   const claimed = new Map<string, number>();
   return {
     noteLocalWrite: () => {
@@ -79,11 +107,12 @@ export function createHydrationCoordinator(): HydrationCoordinator {
     begin: () => {
       run += 1;
       flying = true;
+      startedAt = now();
       return run;
     },
     latestRun: () => run,
     isCurrent: (r) => r === run,
-    inFlight: () => flying,
+    inFlight: () => flying && now() - startedAt < staleAfterMs,
     release: (r) => {
       if (r !== run) return false;
       flying = false;
@@ -97,9 +126,14 @@ export function createHydrationCoordinator(): HydrationCoordinator {
       parked = false;
       return had;
     },
-    claim: (family, r) => {
-      if (r <= (claimed.get(family) ?? 0)) return false;
-      claimed.set(family, r);
+    openFetch: (family) => {
+      const ticket = (tickets.get(family) ?? 0) + 1;
+      tickets.set(family, ticket);
+      return ticket;
+    },
+    claim: (family, ticket) => {
+      if (ticket <= (claimed.get(family) ?? 0)) return false;
+      claimed.set(family, ticket);
       return true;
     },
   };

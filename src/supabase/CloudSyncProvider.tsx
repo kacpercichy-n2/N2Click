@@ -216,8 +216,9 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   const refreshingFromReadyRef = useRef(false);
   // Koordynator hydracji (czysty, testowalny w node — patrz
   // hydrationCoordinator.ts): epoka zapisów lustra, numer bieżącego przebiegu
-  // z flagą „w locie” i odłożone zdarzenie Realtime. Instancja per provider,
-  // nigdy singleton modułu (jak externalStore).
+  // z flagą „w locie” (z limitem czasu — utknięty fetch nie blokuje odświeżeń
+  // w nieskończoność), bilety świeżości rodzin pomocniczych i odłożone
+  // zdarzenie Realtime. Instancja per provider, nigdy singleton modułu.
   const [coord] = useState(createHydrationCoordinator);
   const liveSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const liveSyncRef = useRef<() => void>(() => {});
@@ -492,10 +493,10 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       // i ta sama sesja (`alive`), a dla snapshotu planera i statusu 'ready'
       // dodatkowo bieżący — nikt nowszy nie wystartował (`owns`). Pytamy po
       // KAŻDYM `await`. Rodziny pomocnicze (powiadomienia, Content Plan)
-      // zamiast `owns` używają rezerwacji per rodzina (`coord.claim`): wynik
-      // wyprzedzonego przebiegu wciąż ląduje, jeśli jest najświeższym znanym,
-      // a spóźniony po nowszym odpada — bez cofania nowszego i bez głodzenia
-      // przy serii odświeżeń w tle.
+      // zamiast `owns` używają biletów per rodzina wydawanych na STARCIE
+      // fetcha (`coord.openFetch` + `coord.claim`): wynik fetcha, który
+      // wystartował później, ląduje, a spóźniony odpada — bez cofania nowszego
+      // i bez głodzenia przy serii odświeżeń w tle.
       const alive = (): boolean =>
         mountedRef.current && sessionEpochRef.current === sessionEpoch;
       const owns = (): boolean => alive() && coord.isCurrent(run);
@@ -570,15 +571,16 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
         // (podmiana autorytatywna). Błąd PRZEJŚCIOWY => `available: false`:
         // NIE dispatchujemy scalenia, zostawiamy poprzedni stan (panel nie miga
         // pustką na chwilowym błędzie sieci).
-        const notifTicket = notificationsLoadsRef.current.begin();
+        const notifTicket = coord.openFetch('notifications');
+        const latestTicket = notificationsLoadsRef.current.begin();
         const notifResult = await loadNotificationsSnapshot(getDb(), maps);
         if (!alive()) return;
-        // Dwie straże świeżości: rezerwacja koordynatora (przebiegi pełnej
+        // Dwie straże świeżości: bilet koordynatora (przebiegi pełnej
         // hydracji) i `createLatestWins` (wspólna z lekką ścieżką powiadomień).
         if (
           notifResult.available &&
-          coord.claim('notifications', run) &&
-          notificationsLoadsRef.current.claim(notifTicket)
+          coord.claim('notifications', notifTicket) &&
+          notificationsLoadsRef.current.claim(latestTicket)
         ) {
           advanceDiffBase(() =>
             dispatch({
@@ -591,9 +593,13 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
         // schematu/tabel (migracja niezaaplikowana) => `available` z pustymi
         // kolekcjami, błąd PRZEJŚCIOWY => brak dispatchu (zostaje poprzedni stan).
         // Nie wpływa na status ani na resztę syncu.
+        // Bilet z chwili STARTU tego fetcha, nie numer przebiegu: Content Plan
+        // startuje po powiadomieniach, więc starszy przebieg z wolnymi
+        // powiadomieniami zaczyna go później (świeżej) niż nowszy.
+        const contentPlanTicket = coord.openFetch('contentPlan');
         const contentPlanResult = await loadContentPlanSnapshot(getContentPlanDb());
         if (!alive()) return;
-        if (contentPlanResult.available && coord.claim('contentPlan', run)) {
+        if (contentPlanResult.available && coord.claim('contentPlan', contentPlanTicket)) {
           advanceDiffBase(() =>
             dispatch({
               type: 'MERGE_CLOUD_CONTENT_PLAN',
