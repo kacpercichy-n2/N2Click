@@ -43,6 +43,10 @@
   backfill dryfu.
 - Funkcje pomocnicze `app.*` odwołują się do `core.*`/`n2click.*` — nowa
   funkcja definer NIE może używać `public.*`.
+- `service_role` MUSI mieć USAGE na `app` i EXECUTE na jego funkcjach
+  (20261005085434). Triggery `core.profiles` wołają `app.*` także na ścieżkach
+  serwisowych; bez grantu upsert profilu w provision-account padał 42501
+  „permission denied for schema app” od 2026-07-31 do 2026-10-05.
 - CZŁONKOSTWO APPKI FILTRUJE WIDOK PROFILI (20260803150000 + poprawka
   20260803151000): `n2click.profiles` pokazuje zalogowanym WYŁĄCZNIE profile z
   wpisem `core.app_access(app='n2click')` — placeholderowe konta blogoapp

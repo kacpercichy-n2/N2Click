@@ -386,8 +386,8 @@ export function AdminPage() {
           </button>
         </form>
         <p className="field-hint">
-          Stanowiska z tej listy pojawiają się w profilu osoby obok propozycji
-          wyprowadzonych z działów.
+          Stanowiska z tej listy pojawiają się w profilu osoby i przy zakładaniu
+          konta, obok propozycji wyprowadzonych z działów.
         </p>
       </div>
 

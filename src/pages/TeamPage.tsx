@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useStore } from '../store/AppStore';
-import { roleTitleOptions } from '../utils/roleTitles';
+import { jobTitleSelectOptions } from '../utils/roleTitles';
 import { currentUser as currentUserSel } from '../store/selectors';
 import { useAuth } from '../auth/SessionProvider';
 import { getSupabaseClient } from '../supabase/client';
@@ -367,9 +367,12 @@ function ProvisionSection() {
   const [busy, setBusy] = useState(false);
 
   // Po rozwinięciu formularza pobieramy serwerowe listy działów i menedżerów
-  // (UUID-y wymagane przez endpoint). Polski stan ładowania/błędu.
+  // (UUID-y wymagane przez endpoint). Polski stan ładowania/błędu. Zależność
+  // tylko od `open`: gdyby efekt zależał też od `lists.status`, własne
+  // setLists('loading') odpalałoby cleanup, który anulował pobieranie i
+  // formularz wisiał na „Wczytywanie…”. Każde otwarcie pobiera świeże listy.
   useEffect(() => {
-    if (!open || lists.status !== 'idle') return;
+    if (!open) return;
     let cancelled = false;
     setLists({ status: 'loading' });
     void (async () => {
@@ -406,7 +409,7 @@ function ProvisionSection() {
     return () => {
       cancelled = true;
     };
-  }, [open, lists.status]);
+  }, [open]);
 
   // Potwierdzenie założenia konta montuje się razem ze swoim tekstem — ogłasza
   // je trwały kanał powłoki, sam akapit jest zwykłym hintem.
@@ -523,7 +526,7 @@ function ProvisionSection() {
               onChange={(e) => set('roleTitle', e.target.value)}
             >
               <option value="">—</option>
-              {roleTitleOptions(state.departments, form.roleTitle).map((t) => (
+              {jobTitleSelectOptions(state.jobTitles, state.departments, form.roleTitle).map((t) => (
                 <option key={t} value={t}>
                   {t}
                 </option>
