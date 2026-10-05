@@ -13,7 +13,7 @@ import { buildDeleteConsequence } from '../components/confirmDialog';
 import { ChevronRight } from '../components/icons';
 import { DEFAULT_CAPACITY, defaultWorkEndMinutes } from '../store/storage';
 import { formatDuration, formatMinutes } from '../utils/time';
-import { roleTitleOptions } from '../utils/roleTitles';
+import { jobTitleSelectOptions } from '../utils/roleTitles';
 import {
   END_MINUTE_OPTIONS,
   START_MINUTE_OPTIONS,
@@ -141,7 +141,7 @@ export function PeoplePage() {
             onChange={(e) => set('role', e.target.value)}
           >
             <option value="">—</option>
-            {roleTitleOptions(state.departments, draft.role).map((t) => (
+            {jobTitleSelectOptions(state.jobTitles, state.departments, draft.role).map((t) => (
               <option key={t} value={t}>
                 {t}
               </option>

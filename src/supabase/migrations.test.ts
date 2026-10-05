@@ -309,6 +309,7 @@ describe('konwencja plików migracji', () => {
       // drugi rodzaj nieobecności (CHECK `events_kind_check` rozszerzony).
       // Bez zmian RLS.
       '20260915120000_events_personal_times_and_absence_kind.sql',
+      '20261005085434_service_role_app_schema.sql',
     ]);
   });
 
