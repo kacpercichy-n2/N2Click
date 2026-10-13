@@ -1647,7 +1647,7 @@ describe('SCHEDULE_BIN_PART', () => {
     expect(activityMsg).toContain('w zasobniku pozostało 8h');
   });
 
-  it("target date outside the task period extends it (within the 92-day cap)", () => {
+  it("target date outside the task period extends it (within the 365-day cap)", () => {
     const bin1 = makeEntry({ id: 'bin1', taskId: 't1', personId: 'p1', date: BIN_DATE, startMinutes: 0, plannedHours: 10, sortIndex: 0 });
     const state = makeState({
       tasks: [makeTask({ id: 't1', startDate: '2026-07-06', endDate: '2026-07-08' })],
@@ -1818,7 +1818,7 @@ describe('SCHEDULE_BIN_PART', () => {
     const next = reducer(state, {
       type: 'SCHEDULE_BIN_PART',
       entryId: 'bin1',
-      date: '2027-06-01', // far more than 92 days past startDate
+      date: '2027-12-01', // far more than 365 days past startDate
       startMinutes: 480,
       hours: 2,
     });
@@ -2415,10 +2415,10 @@ describe('INSERT_BLOCK end-of-day fit (PKG-20260713b-placement-tests)', () => {
   });
 });
 
-describe('INSERT_BLOCK 92-day cap (PKG-20260713b-placement-tests)', () => {
+describe('INSERT_BLOCK 365-day cap (PKG-20260713b-placement-tests)', () => {
   it(`rejects a period widen past the ${MAX_TASK_PERIOD_DAYS}-day cap: task dates AND workload stay byte-identical`, () => {
     const startDate = '2026-07-06';
-    const farDate = addDaysStr(startDate, MAX_TASK_PERIOD_DAYS); // 93 days out — exceeds the cap
+    const farDate = addDaysStr(startDate, MAX_TASK_PERIOD_DAYS); // 366 days out — exceeds the cap
     const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: farDate, startMinutes: 480, plannedHours: 2, sortIndex: 0 });
     const state = makeState({
       // t2 (the PICKED task, not the ref's task) has plenty of estimate headroom
@@ -2437,7 +2437,7 @@ describe('INSERT_BLOCK 92-day cap (PKG-20260713b-placement-tests)', () => {
 
   it('a period widen exactly AT the cap succeeds: the period extends and the entry lands (regression that extension itself still works)', () => {
     const startDate = '2026-07-06';
-    const farDate = addDaysStr(startDate, MAX_TASK_PERIOD_DAYS - 1); // 92 days inclusive — exactly at the cap
+    const farDate = addDaysStr(startDate, MAX_TASK_PERIOD_DAYS - 1); // 365 days inclusive — exactly at the cap
     const ref = makeEntry({ id: 'ref1', taskId: 't1', personId: 'p1', date: farDate, startMinutes: 480, plannedHours: 2, sortIndex: 0 });
     const state = makeState({
       tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2', startDate, endDate: startDate, estimatedHours: 100 })],

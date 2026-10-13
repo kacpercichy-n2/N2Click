@@ -2868,7 +2868,7 @@ function insertBlock(state: AppData, payload: InsertBlockPayload): AppData {
   );
   if (spansInsertPoint) return state;
 
-  // Task period must cover ref.date; reject if the widening exceeds the 92-day
+  // Task period must cover ref.date; reject if the widening exceeds the 365-day
   // cap (mirrors setBlockTime). Validated BEFORE any mutation so the action is
   // atomic — the task picker can pick ANY task, so this cannot be skipped.
   const newStartDate = ref.date < task.startDate ? ref.date : task.startDate;
@@ -3077,7 +3077,7 @@ function toQuarters(hours: number): number {
 /**
  * Move/resize one block in time (the timed Week view). Rejects (returns state
  * unchanged) on any invalid input or a same-person time overlap. Extends the
- * task period to cover a new date unless that would exceed the 92-day cap.
+ * task period to cover a new date unless that would exceed the 365-day cap.
  *
  * This is the ONLY budget-enforcing path (mirroring how a same-person time
  * overlap is blocked only here — CLAUDE.md invariant 3). For a task with an
@@ -3419,7 +3419,7 @@ function splitBlock(state: AppData, entryId: string, parts: 2 | 4): AppData {
  * intermediate workload (source row decremented, or filtered out at zero, plus
  * a TEMPORARY same-pair bin sibling carrying the part with a fresh uid) and
  * delegate to the existing `setBlockTime` for that temp entry — inheriting date
- * validity, 15-min grid, day fit, same-person collision, and the 92-day period
+ * validity, 15-min grid, day fit, same-person collision, and the 365-day period
  * cap. `setBlockTime` returns its input unchanged on any violation, so
  * `next === intermediate` detects a rejection and we return the ORIGINAL
  * `state` (house convention: state unchanged, no activity row). The transient

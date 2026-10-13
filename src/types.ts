@@ -196,7 +196,7 @@ export interface Task {
   // Reguła cykliczności (RRULE-lite) + per-datowe wyjątki. Wystąpienia są
   // WYŁĄCZNIE prezentacyjne — nigdy nie tworzą wierszy `WorkloadEntry` ani nie
   // zasilają sum/przeciążenia/kolizji (inwariant 1); mają własną granicę `until`
-  // i nie przechodzą przez limit 92 dni okresu bazowego (inwariant 2). FORMA
+  // i nie przechodzą przez limit 365 dni okresu bazowego (inwariant 2). FORMA
   // KANONICZNA (patrz `TaskRecurrence` i `src/utils/recurrence.ts`): klucz
   // obecny WYŁĄCZNIE gdy istnieje poprawna reguła; NIGDY na szkicu
   // (`isDraft === true`) i NIGDY gdy `startDate` nie jest poprawną datą.

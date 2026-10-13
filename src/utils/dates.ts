@@ -45,7 +45,7 @@ const WEEK_OPTS = { weekStartsOn: 1 as const }; // Monday
 
 /** Canonical cap on a task's inclusive period length (days). The block-time and
  *  task-editor write paths reject anything longer; this is the single home. */
-export const MAX_TASK_PERIOD_DAYS = 92;
+export const MAX_TASK_PERIOD_DAYS = 365;
 
 /**
  * Strict validity for a calendar-date string. True ONLY for a real

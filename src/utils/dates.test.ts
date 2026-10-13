@@ -61,15 +61,15 @@ describe('periodError', () => {
     expect(periodError('2026-07-12', '2026-07-11')).toBe('reversed');
   });
 
-  it("returns 'too-long' for a 93-day span when maxDays is MAX_TASK_PERIOD_DAYS (92)", () => {
+  it("returns 'too-long' for a 366-day span when maxDays is MAX_TASK_PERIOD_DAYS (365)", () => {
     const start = '2026-07-06';
-    const end = addDaysStr(start, 92); // inclusive day count = 93
+    const end = addDaysStr(start, MAX_TASK_PERIOD_DAYS); // inclusive day count = 366
     expect(periodError(start, end, { maxDays: MAX_TASK_PERIOD_DAYS })).toBe('too-long');
   });
 
-  it('returns null for a 92-day span (exactly at the cap) when maxDays is MAX_TASK_PERIOD_DAYS', () => {
+  it('returns null for a 365-day span (exactly at the cap) when maxDays is MAX_TASK_PERIOD_DAYS', () => {
     const start = '2026-07-06';
-    const end = addDaysStr(start, 91); // inclusive day count = 92
+    const end = addDaysStr(start, MAX_TASK_PERIOD_DAYS - 1); // inclusive day count = 365
     expect(periodError(start, end, { maxDays: MAX_TASK_PERIOD_DAYS })).toBeNull();
   });
 

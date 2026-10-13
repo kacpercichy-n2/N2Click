@@ -71,7 +71,7 @@ export interface SaveBlockerInput {
   hasProjects: boolean;
   /** Czy wybrany status istnieje w stanie. */
   statusValid: boolean;
-  /** Wynik `periodError(startDate, endDate, { maxDays: 92 })`. */
+  /** Wynik `periodError(startDate, endDate, { maxDays: MAX_TASK_PERIOD_DAYS })`. */
   period: PeriodError | null;
   /** Czy wszystkie przypisane osoby nadal istnieją. */
   assigneesValid: boolean;

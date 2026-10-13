@@ -203,10 +203,10 @@ describe('SAVE_TASK date guard', () => {
     expect(next.activity.length).toBe(state.activity.length);
   });
 
-  it('rejects a 93-day period (over the MAX_TASK_PERIOD_DAYS cap): same state reference, no new activity row', () => {
+  it('rejects a 366-day period (over the MAX_TASK_PERIOD_DAYS cap): same state reference, no new activity row', () => {
     const state = makeState();
     const start = '2026-07-06';
-    const end = addDaysStr(start, MAX_TASK_PERIOD_DAYS); // inclusive day count = 93
+    const end = addDaysStr(start, MAX_TASK_PERIOD_DAYS); // inclusive day count = 366
     const next = reducer(state, {
       type: 'SAVE_TASK',
       payload: {
@@ -220,10 +220,10 @@ describe('SAVE_TASK date guard', () => {
     expect(next.activity.length).toBe(state.activity.length);
   });
 
-  it('accepts a 92-day period (exactly at the MAX_TASK_PERIOD_DAYS cap): NOT rejected', () => {
+  it('accepts a 365-day period (exactly at the MAX_TASK_PERIOD_DAYS cap): NOT rejected', () => {
     const state = makeState();
     const start = '2026-07-06';
-    const end = addDaysStr(start, MAX_TASK_PERIOD_DAYS - 1); // inclusive day count = 92
+    const end = addDaysStr(start, MAX_TASK_PERIOD_DAYS - 1); // inclusive day count = 365
     const next = reducer(state, {
       type: 'SAVE_TASK',
       payload: {

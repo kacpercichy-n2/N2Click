@@ -361,7 +361,7 @@ function makeReverse(forward: Map<string, string>, restrictTo?: Set<string>) {
  * komunikatem (PLANNER_SNAPSHOT_ERROR). Puste kolekcje są POPRAWNE.
  *
  * Wiersz projektu/zadania niepoprawny lokalnie (złe daty, odwrócony okres,
- * okres zadania > 92 dni) jest WYKLUCZANY z ładunku z diagnostyką — nigdy nie
+ * okres zadania > 365 dni) jest WYKLUCZANY z ładunku z diagnostyką — nigdy nie
  * scalany. Przypisanie z niemapowalnym profilem jest pomijane i liczone w
  * diagnostyce. Nieodwzorowany autor/aktor => '' (bez blokowania wiersza).
  */
