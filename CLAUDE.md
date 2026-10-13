@@ -52,7 +52,7 @@ covered interaction changes; release verification owns the full browser matrix.
 ## Hard invariants
 
 1. Planned hours live only in `WorkloadEntry`; totals are derived.
-2. A task period is at most 92 days; hours use 0.25h and time uses 15-minute
+2. A task period is at most 365 days; hours use 0.25h and time uses 15-minute
    increments.
 3. Overload is a warning. Same-person collision blocks calendar drag/resize and
    automatic placement, but deliberate TaskModal allocation edits may overlap.

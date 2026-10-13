@@ -556,13 +556,13 @@ describe('loadPlannerSnapshot', () => {
     ).toEqual(['2026-07-06', '2026-07-20', '2026-08-03']);
   });
 
-  it('excludes a project with null dates and a task over the 92-day cap', async () => {
+  it('excludes a project with null dates and a task over the 365-day cap', async () => {
     const db = new FakeSelectDb()
       .seed('projects', [
         { id: PR, client_id: null, name: 'Bez dat', description: '', status_id: null, paid: false, start_date: null, end_date: null, department_id: null, service_type_id: null, created_at: '', updated_at: '' },
       ])
       .seed('tasks', [
-        { id: TK, project_id: PR, status_id: null, title: 'Za długie', description: '', start_date: '2026-01-01', end_date: '2026-12-31', estimated_hours: null, priority: 'normal', work_category_id: null, checklist: [], created_at: '', updated_at: '' },
+        { id: TK, project_id: PR, status_id: null, title: 'Za długie', description: '', start_date: '2026-01-01', end_date: '2027-01-01', estimated_hours: null, priority: 'normal', work_category_id: null, checklist: [], created_at: '', updated_at: '' },
       ]);
     const result = await loadPlannerSnapshot(db, maps(), localFixture());
     expect(result.ok).toBe(true);
@@ -573,7 +573,7 @@ describe('loadPlannerSnapshot', () => {
   });
 
   it('filtruje wiersze zależne od pominiętych encji — jedna sierota nie może zatruć całej hydracji', async () => {
-    // Zadanie ponad limitem 92 dni odpada; jego przypisanie, godziny i kamień
+    // Zadanie ponad limitem 365 dni odpada; jego przypisanie, godziny i kamień
     // pominiętego projektu też muszą odpaść, inaczej fail-closed
     // MERGE_CLOUD_ENTITIES odrzuciłby CAŁY payload (trwały, cichy no-op).
     const db = new FakeSelectDb()
@@ -585,7 +585,7 @@ describe('loadPlannerSnapshot', () => {
         { id: uuid('ms-orphan'), project_id: uuid('pr-bad'), name: 'Sierota', milestone_date: '2026-07-10' },
       ])
       .seed('tasks', [
-        { id: TK, project_id: PR, status_id: S1, title: 'Za długie', description: '', start_date: '2026-01-01', end_date: '2026-12-31', estimated_hours: null, priority: 'normal', work_category_id: null, checklist: [], created_at: '', updated_at: '' },
+        { id: TK, project_id: PR, status_id: S1, title: 'Za długie', description: '', start_date: '2026-01-01', end_date: '2027-01-01', estimated_hours: null, priority: 'normal', work_category_id: null, checklist: [], created_at: '', updated_at: '' },
       ])
       .seed('task_assignments', [{ task_id: TK, profile_id: CLOUD_PA }])
       .seed('workload_entries', [

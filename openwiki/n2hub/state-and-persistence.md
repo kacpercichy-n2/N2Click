@@ -250,7 +250,7 @@
   WYŁĄCZNIE w oknie [from..to], defensywny cap 400 dni). Wystąpienia są
   WYŁĄCZNIE prezentacyjne: NIGDY nie tworzą wierszy `WorkloadEntry` ani nie
   zasilają sum/`dayTotal`/przeciążenia/kolizji (inwariant 1); mają własną granicę
-  `until` i nie przechodzą przez limit 92 dni okresu bazowego (inwariant 2).
+  `until` i nie przechodzą przez limit 365 dni okresu bazowego (inwariant 2).
   FORMA KANONICZNA (nośna dla `sameRowValue`/reference-preserving merge,
   egzekwowana na TRZECH granicach — reduktor, `normalizeTaskMeta`, hydracja
   chmury): klucz `recurrence` obecny tylko przy poprawnej regule, NIGDY na szkicu

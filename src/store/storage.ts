@@ -750,7 +750,7 @@ function repairPeriod(
  * nothing, and a fully-valid payload comes back as the SAME object):
  * - Project / Task `startDate`+`endDate`: both invalid → today; exactly one
  *   invalid → copy the valid one; both valid but reversed → swap. (Task periods
- *   are NOT retro-clamped to the 92-day cap — that's write-path only.)
+ *   are NOT retro-clamped to the 365-day cap — that's write-path only.)
  * - Milestone `date` invalid → its project's post-repair `startDate`, or today
  *   when the project no longer exists.
  * - WorkloadEntry `date`: `BIN_DATE` (`''`) stays valid; any other invalid date

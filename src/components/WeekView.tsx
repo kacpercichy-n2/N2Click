@@ -3751,7 +3751,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
     if (!menu) return;
     // insertDisabled (defined below) is the single source of truth — the same
     // value that disables the `Wstaw` button (snapped hours, budget, ripple fit,
-    // 92-day cap) — so the Enter-key path can never dispatch what the button
+    // 365-day cap) — so the Enter-key path can never dispatch what the button
     // would refuse.
     if (insertDisabled) return;
     dispatch({
@@ -4027,7 +4027,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
       const endDate =
         menu.entry.date > insertPickedTask.endDate ? menu.entry.date : insertPickedTask.endDate;
       if (inclusiveDayCount(startDate, endDate) > MAX_TASK_PERIOD_DAYS) {
-        insertWarning = '⚠ Termin zadania przekroczyłby limit 92 dni.';
+        insertWarning = `⚠ Termin zadania przekroczyłby limit ${MAX_TASK_PERIOD_DAYS} dni.`;
       }
     }
   }
@@ -4085,7 +4085,7 @@ export function WeekView({ state, anchor, filter, mode = 'week', onPickDay }: Pr
       const startDate = schedDate < schedTask.startDate ? schedDate : schedTask.startDate;
       const endDate = schedDate > schedTask.endDate ? schedDate : schedTask.endDate;
       if (inclusiveDayCount(startDate, endDate) > MAX_TASK_PERIOD_DAYS) {
-        schedWarning = '⚠ Termin zadania przekroczyłby limit 92 dni.';
+        schedWarning = `⚠ Termin zadania przekroczyłby limit ${MAX_TASK_PERIOD_DAYS} dni.`;
         schedDisabled = true;
       }
     }

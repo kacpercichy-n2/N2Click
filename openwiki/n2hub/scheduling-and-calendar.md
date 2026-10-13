@@ -202,7 +202,7 @@
   jest PEŁNA (filtry klienta/typu usługi zawężają tylko sumy w tabeli), a pusty
   dzień zamyka popover.
 - Time uses 15-minute steps; hours use 0.25-hour steps; a block must fit in one
-  day. A task period is at most 92 days.
+  day. A task period is at most 365 days.
 - Same-person collisions block calendar drag/resize and automatic placement.
   Intentional TaskModal allocation edits may overlap and render side-by-side.
   Od 2026-07-30 „kolizja" obejmuje też WYDARZENIE tej osoby — patrz niżej.
