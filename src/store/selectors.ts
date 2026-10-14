@@ -603,6 +603,36 @@ export function dayTotal(
   return dayTotalCache(state, argsKey(date, filterKey(personFilter)));
 }
 
+// Osoby z prawdziwym blokiem danego zadania tego dnia: taskId → personId.
+const plannedPeopleByTaskOnDateCache = createKeyedCache<Map<string, Set<string>>>((state, date) => {
+  const out = new Map<string, Set<string>>();
+  for (const w of workloadIndex(state.workload).byDate.get(date) ?? EMPTY_ENTRIES) {
+    let people = out.get(w.taskId);
+    if (people === undefined) {
+      people = new Set();
+      out.set(w.taskId, people);
+    }
+    people.add(w.personId);
+  }
+  return out;
+});
+
+/**
+ * Osoby z zakresu, dla których wystąpienie zadania cyklicznego tego dnia jest
+ * nadal podglądem. Prawdziwy blok TEGO zadania tego samego dnia zastępuje
+ * wystąpienie danej osoby (zgłoszenie de042545, 2026-10-14: blok bazowy w dniu
+ * startu i wystąpienie obok niego dublowały godziny, 1h zamiast 0,5h).
+ */
+function uncoveredOccurrencePeople(
+  state: AppData,
+  taskId: string,
+  date: DateStr,
+  scope: readonly string[],
+): readonly string[] {
+  const planned = plannedPeopleByTaskOnDateCache(state, date).get(taskId);
+  return planned === undefined ? scope : scope.filter((id) => !planned.has(id));
+}
+
 const recurrenceOccurrencesForDateCache = createKeyedCache<
   Array<{ task: Task; occurrence: RecurrenceOccurrence }>
 >((state, key) => {
@@ -610,11 +640,17 @@ const recurrenceOccurrencesForDateCache = createKeyedCache<
   const out: Array<{ task: Task; occurrence: RecurrenceOccurrence }> = [];
   const personFilter = personFilterFromKey(fk);
   const filterActive = personFilter.size > 0;
+  const planned = plannedPeopleByTaskOnDateCache(state, date);
   for (const task of state.tasks) {
     if (task.recurrence === undefined || !isPublishedTask(task)) continue;
-    if (filterActive) {
-      const assignees = assigneeIdsOfTask(state, task.id);
-      if (!assignees.some((id) => personFilter.has(id))) continue;
+    const assignees = assigneeIdsOfTask(state, task.id);
+    const scope = filterActive ? assignees.filter((id) => personFilter.has(id)) : assignees;
+    if (filterActive && scope.length === 0) continue;
+    // Każda osoba z zakresu ma już prawdziwy blok tego zadania tego dnia, więc
+    // wystąpienie byłoby duplikatem. Zadanie bez przypisanych chowa je, gdy
+    // ktokolwiek ma blok.
+    if (planned.has(task.id) && uncoveredOccurrencePeople(state, task.id, date, scope).length === 0) {
+      continue;
     }
     const occurrences = expandOccurrences(task.recurrence, task.startDate, date, date);
     for (const occurrence of occurrences) out.push({ task, occurrence });
@@ -785,9 +821,9 @@ const calendarDayVolumeCache = createKeyedCache<number>((state, key) => {
   }
   for (const { task, occurrence } of recurrenceOccurrencesForDateCache(state, key)) {
     const assignees = assigneeIdsOfTask(state, task.id);
-    const heads = filterActive
-      ? assignees.filter((id) => personFilter.has(id)).length
-      : assignees.length;
+    const scope = filterActive ? assignees.filter((id) => personFilter.has(id)) : assignees;
+    // Osoba z prawdziwym blokiem zadania tego dnia liczy się już w `dayTotal`.
+    const heads = uncoveredOccurrencePeople(state, task.id, date, scope).length;
     volume += (occurrence.durationMinutes / 60) * heads;
   }
   return volume;

@@ -287,7 +287,12 @@
   wtedy re-kotwiczy przez `normalizeRecurrence` (reguła przeżywa, wyjątki sprzed
   nowego startu odpadają). `DELETE_TASK` zabiera je z zadaniem; `PUBLISH_*` nie
   tyka (szkic nie może nieść reguły). Selektor prezentacyjny
-  `recurrenceOccurrencesForDate` (filtr jak `entriesForDate`). Pole ADDYTYWNE:
+  `recurrenceOccurrencesForDate` (filtr jak `entriesForDate`). Prawdziwy blok
+  TEGO zadania tego dnia ZASTĘPUJE wystąpienie danej osoby (zgłoszenie
+  de042545, 2026-10-14: blok bazowy w dniu startu + wystąpienie obok dublowały
+  godziny): selektor chowa wystąpienie, gdy każda osoba z zakresu (przypisani ∩
+  filtr) ma taki blok, a `calendarDayVolume` liczy tylko osoby bez bloku
+  (`uncoveredOccurrencePeople`). Reguła i wyjątki w danych bez zmian. Pole ADDYTYWNE:
   `DATA_VERSION` zostaje na 7, legacy bez pola = brak echo-write; w chmurze to
   kolumna jsonb `tasks.recurrence` (patrz cloud-database). Testy:
   `recurrence.test.ts`, `recurrenceActions.test.ts`, rozszerzenia w

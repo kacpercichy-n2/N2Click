@@ -7,7 +7,12 @@
 // Pure selector tests: no React / localStorage — fixtures from emptyData().
 import { describe, expect, it } from 'vitest';
 import { emptyData } from './storage';
-import { calendarDayVolume, dayTotal } from './selectors';
+import {
+  calendarDayVolume,
+  dayTotal,
+  personEventHoursOnDate,
+  recurrenceOccurrencesForDate,
+} from './selectors';
 import type {
   AppData,
   CalendarEvent,
@@ -142,6 +147,53 @@ describe('calendarDayVolume', () => {
       ],
     });
     expect(calendarDayVolume(state, MON)).toBe(0);
+  });
+});
+
+// ---- Blok bazowy zastępuje wystąpienie (zgłoszenie de042545, 2026-10-14) ----
+
+describe('wystąpienie cykliczne w dniu z prawdziwym blokiem zadania', () => {
+  const rule = { daysOfWeek: [1, 2, 3, 4, 5], startMinutes: 540, durationMinutes: 30 };
+  const TUE = '2026-07-07';
+
+  it('dzień startu: blok 0,5h + reguła 0,5h to 0,5h, nie 1h; kolejny dzień bez zmian', () => {
+    const state = baseState({
+      tasks: [makeTask({ id: 't1', recurrence: rule })],
+      assignments: [{ id: 'a1', taskId: 't1', personId: 'p1' }],
+      workload: [entry({ id: 'w1', plannedHours: 0.5, startMinutes: 540 })],
+    });
+    expect(recurrenceOccurrencesForDate(state, MON)).toEqual([]);
+    expect(recurrenceOccurrencesForDate(state, MON, new Set(['p1']))).toEqual([]);
+    expect(calendarDayVolume(state, MON)).toBe(0.5);
+    expect(personEventHoursOnDate(state, 'p1', MON)).toBe(0);
+    expect(recurrenceOccurrencesForDate(state, TUE)).toHaveLength(1);
+    expect(calendarDayVolume(state, TUE)).toBe(0.5);
+  });
+
+  it('blok jednej z dwóch osób: wystąpienie zostaje dla drugiej, godziny bez dubla', () => {
+    const state = baseState({
+      tasks: [makeTask({ id: 't1', recurrence: rule })],
+      assignments: [
+        { id: 'a1', taskId: 't1', personId: 'p1' },
+        { id: 'a2', taskId: 't1', personId: 'p2' },
+      ],
+      workload: [entry({ id: 'w1', plannedHours: 0.5, startMinutes: 540 })],
+    });
+    expect(recurrenceOccurrencesForDate(state, MON)).toHaveLength(1);
+    expect(recurrenceOccurrencesForDate(state, MON, new Set(['p1']))).toEqual([]);
+    expect(recurrenceOccurrencesForDate(state, MON, new Set(['p2']))).toHaveLength(1);
+    expect(calendarDayVolume(state, MON)).toBe(0.5 + 0.5);
+    expect(calendarDayVolume(state, MON, new Set(['p1']))).toBe(0.5);
+  });
+
+  it('blok INNEGO zadania nie chowa wystąpienia', () => {
+    const state = baseState({
+      tasks: [makeTask({ id: 't1', recurrence: rule }), makeTask({ id: 't2' })],
+      assignments: [{ id: 'a1', taskId: 't1', personId: 'p1' }],
+      workload: [entry({ id: 'w1', taskId: 't2', plannedHours: 2, startMinutes: 600 })],
+    });
+    expect(recurrenceOccurrencesForDate(state, MON)).toHaveLength(1);
+    expect(calendarDayVolume(state, MON)).toBe(2 + 0.5);
   });
 });
 
