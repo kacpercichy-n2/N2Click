@@ -419,6 +419,9 @@
   (telefon) zostaje kaskadą `dayStack` — nakładki dostają tam `0/1`.
 - Recurring-task occurrences are PRESENTATIONAL ONLY (invariant 1): WeekView
   renders them as additive `.week-recur-block` overlays (dashed/striped, ⟳),
+  except on a date where a person already has a real block of the SAME task:
+  that block stands in for the person's occurrence (no overlay, no busy slot,
+  no volume; zgłoszenie de042545, rule in `recurrenceOccurrencesForDate`),
   positioned by time and painted BEHIND real blocks; they never enter
   collisions or overload (into `packDayBlocks` they enter ONLY as layout
   geometry — see „wspólne pakowanie" above; do WYŚWIETLANEJ sumy dnia wchodzą
