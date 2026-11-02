@@ -6,11 +6,14 @@
 // samą glue-logikę wokół niego (stan brudny → strażnik nawigacji, wskaźnik
 // zapisu, odznaka powodów blokujących zapis, usuwanie przez wspólny
 // `useDeleteTaskConfirm`). Auto-zapis przychodzi „za darmo" razem z edytorem.
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useStore, usePersistence } from '../store/AppStore';
 import { useCan } from '../store/useCan';
 import { OverflowMenu } from '../components/OverflowMenu';
+import { IconButton } from '../components/IconButton';
+import { X } from '../components/icons';
+import { CopyTaskLinkButton } from '../components/taskCard/TaskCardParts';
 import { SaveStatus } from '../components/SaveStatus';
 import { TaskEditor, useDeleteTaskConfirm, useDuplicateTask } from '../components/TaskModal';
 import type { SaveBlocker } from '../components/taskSaveBlockers';
@@ -43,10 +46,10 @@ export function TaskFullPage() {
   }
   // Klucz na id zadania: przejście na inne zadanie zaczyna edycję od zera,
   // dokładnie jak `key={taskParam}` w modalu.
-  return <TaskFullView key={task.id} taskId={task.id} title={task.title} />;
+  return <TaskFullView key={task.id} taskId={task.id} />;
 }
 
-function TaskFullView({ taskId, title }: { taskId: string; title: string }) {
+function TaskFullView({ taskId }: { taskId: string }) {
   const navigate = useNavigate();
   const canManageTasks = useCan()('tasks.manage');
   const { saveError } = usePersistence();
@@ -79,7 +82,7 @@ function TaskFullView({ taskId, title }: { taskId: string; title: string }) {
   const { status, savedAtLabel, markSaved } = useSaveStatus(dirty, saveError !== null);
 
   // IA-12 — powody blokujące zapis na odznace w nagłówku strony; skok do
-  // przyczyny przychodzi Z edytora (najpierw przełącza zakładkę).
+  // przyczyny przychodzi Z edytora (najpierw otwiera edytor pola).
   const [blockers, setBlockers] = useState<SaveBlocker[]>([]);
   const jumpRef = useRef<(blocker: SaveBlocker) => void>((blocker) => {
     if (blocker.focusId !== null) focusFieldById(blocker.focusId);
@@ -104,56 +107,67 @@ function TaskFullView({ taskId, title }: { taskId: string; title: string }) {
     backToList();
   }, [backToList]);
 
+  // Karta v2: nagłówek (ścieżka Klient > Projekt i tytuł) renderuje edytor;
+  // strona podaje swoje akcje. Bez „Otwórz pełny widok" (już tu jesteśmy).
+  const titleId = useId();
+  const headerActions = (
+    <>
+      <SaveStatus
+        status={status}
+        savedAtLabel={savedAtLabel}
+        announceId="save:task-page"
+        blocked={
+          blockers.length > 0
+            ? {
+                message: blockers[0].message,
+                onJump: () => jumpRef.current(blockers[0]),
+              }
+            : undefined
+        }
+      />
+      <CopyTaskLinkButton path={taskFullViewPath(taskId)} />
+      {canManageTasks && (
+        <OverflowMenu
+          label="Więcej działań"
+          items={[
+            {
+              id: 'duplicate',
+              label: 'Duplikuj zadanie',
+              onSelect: () => {
+                const newId = duplicateTask(taskId);
+                if (newId !== null) navigate(taskFullViewPath(newId));
+              },
+            },
+            {
+              id: 'delete',
+              label: 'Usuń zadanie',
+              danger: true,
+              onSelect: () => {
+                void deleteTask().then((deleted) => {
+                  if (deleted) leaveAfterDelete();
+                });
+              },
+            },
+          ]}
+        />
+      )}
+      <IconButton
+        icon={<X size={18} aria-hidden />}
+        onClick={backToList}
+        label="Wróć do listy zadań"
+      />
+    </>
+  );
+
   return (
-    <section className="page editor">
-      <div className="page-head">
-        <h1>{title}</h1>
-        <div className="page-head-actions">
-          <SaveStatus
-            status={status}
-            savedAtLabel={savedAtLabel}
-            announceId="save:task-page"
-            blocked={
-              blockers.length > 0
-                ? {
-                    message: blockers[0].message,
-                    onJump: () => jumpRef.current(blockers[0]),
-                  }
-                : undefined
-            }
-          />
-          {canManageTasks && (
-            <OverflowMenu
-              label="Więcej działań"
-              items={[
-                {
-                  id: 'duplicate',
-                  label: 'Duplikuj zadanie',
-                  onSelect: () => {
-                    const newId = duplicateTask(taskId);
-                    if (newId !== null) navigate(taskFullViewPath(newId));
-                  },
-                },
-                {
-                  id: 'delete',
-                  label: 'Usuń zadanie',
-                  danger: true,
-                  onSelect: () => {
-                    void deleteTask().then((deleted) => {
-                      if (deleted) leaveAfterDelete();
-                    });
-                  },
-                },
-              ]}
-            />
-          )}
-        </div>
-      </div>
+    <section className="page task-card-page" aria-labelledby={titleId}>
       {/* Pytanie o niezapisane zmiany należy do strażnika routera (zakres
           `task-page`), a nie do lokalnego potwierdzenia: strona żyje na
           ŚCIEŻCE, więc każde wyjście z niej i tak przechodzi przez strażnika. */}
       <TaskEditor
         taskId={taskId}
+        titleId={titleId}
+        headerActions={headerActions}
         onSaved={backToList}
         onCancel={backToList}
         onDirtyChange={handleDirtyChange}
