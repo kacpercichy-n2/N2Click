@@ -35,6 +35,14 @@ describe('attachment file policy', () => {
     expect(imagesFromDrop({ dataTransfer: clipboardData })).toEqual([screenshot, photo]);
     expect(imagesFromClipboard({ clipboardData: null })).toEqual([]);
   });
+  it('leaves text pastes alone but keeps screenshots and copied images', () => {
+    const image = file();
+    const clip = (types: string[]) => ({ clipboardData: { types, files: [image] } as unknown as DataTransfer });
+    expect(imagesFromClipboard(clip(['Files']), new Date(2026, 0, 1, 9, 5)).map(f => f.name)).toEqual(['Zrzut ekranu 09:05']);
+    expect(imagesFromClipboard(clip(['text/plain', 'Files']))).toEqual([]);
+    expect(imagesFromClipboard(clip(['text/html', 'text/plain', 'Files']))).toEqual([]);
+    expect(imagesFromClipboard(clip(['text/html', 'Files']))).toHaveLength(1);
+  });
   it('falls back to DataTransfer items without duplicating files', () => {
     const image = file();
     const dataTransfer = { files: [], items: [{ kind: 'file', getAsFile: () => image }, { kind: 'string', getAsFile: () => null }] } as unknown as DataTransfer;

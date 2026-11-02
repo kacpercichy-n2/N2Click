@@ -57,6 +57,26 @@ try {
   await page.getByRole('button', { name: 'Usuń retry.png' }).click();
   await page.getByTestId('queue-state').filter({ hasText: '0:true:0' }).waitFor();
 
+  // Removing a ready image deletes the uploaded object; clear() (after a send) does not.
+  const removed = () => page.evaluate(() => window.__removed ?? []);
+  await page.waitForFunction(() => (window.__removed ?? []).length === 1); // retry.png removed above
+  assert.deepEqual(await removed(), ['conversation/retry.png']);
+  await input.setInputFiles([png('gone.png')]);
+  await page.getByTestId('queue-state').filter({ hasText: '1:true:1' }).waitFor();
+  await page.getByRole('button', { name: 'Usuń gone.png' }).click();
+  await page.waitForFunction(() => (window.__removed ?? []).length === 2);
+  assert.deepEqual(await removed(), ['conversation/retry.png', 'conversation/gone.png']);
+  await input.setInputFiles([png('kept.png')]);
+  await page.getByTestId('queue-state').filter({ hasText: '1:true:1' }).waitFor();
+  await page.getByRole('button', { name: 'Wyczyść', exact: true }).click();
+  await page.waitForTimeout(100);
+  assert.equal((await removed()).length, 2, 'clear keeps sent objects');
+  // Removing while the upload is still running deletes the object once it lands.
+  await input.setInputFiles([png('early.png')]);
+  await page.getByRole('button', { name: 'Usuń early.png' }).click();
+  await page.waitForFunction(() => (window.__removed ?? []).length === 3);
+  assert.equal((await removed())[2], 'conversation/early.png');
+
   // Limit: 11 files are rejected as a whole.
   await input.setInputFiles(Array.from({ length: 11 }, (_, i) => png(`${i}.png`)));
   await page.getByRole('status').getByText('Możesz dodać maksymalnie 10 obrazów do wiadomości.').waitFor();
@@ -72,6 +92,19 @@ try {
   });
   await page.getByRole('button', { name: /^Usuń Zrzut ekranu \d\d:\d\d$/ }).waitFor();
   await page.getByRole('button', { name: 'Wyczyść', exact: true }).click();
+
+  // Paste with text/plain next to an image (Excel cells): the image is not taken, the text paste stays native.
+  const textPasteHandled = await page.evaluate(() => {
+    const target = document.querySelector('textarea');
+    const data = new DataTransfer();
+    data.setData('text/plain', 'A1\tB1');
+    data.items.add(new File([new Uint8Array([137, 80, 78, 71])], 'image.png', { type: 'image/png' }));
+    const event = new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true });
+    target.focus(); target.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  assert.equal(textPasteHandled, false, 'text paste not prevented');
+  assert.equal(await page.getByTestId('queue-state').textContent(), '0:true:0', 'no image from a text paste');
 
   // Drop: dispatch a drop carrying a file on the composer wrapper.
   await page.evaluate(() => {

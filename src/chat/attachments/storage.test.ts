@@ -8,9 +8,10 @@ function setup() {
   let now = 0;
   const createSignedUrl = vi.fn().mockResolvedValue({ data: { signedUrl: 'signed' }, error: null });
   const upload = vi.fn().mockResolvedValue({ error: null });
-  const from = vi.fn(() => ({ createSignedUrl, upload }));
+  const remove = vi.fn().mockResolvedValue({ error: null });
+  const from = vi.fn(() => ({ createSignedUrl, upload, remove }));
   const adapter = createAttachmentStorage({ storage: { from } } as unknown as SupabaseClient, () => now);
-  return { adapter, createSignedUrl, upload, from, advance: (value: number) => { now += value; } };
+  return { adapter, createSignedUrl, upload, remove, from, advance: (value: number) => { now += value; } };
 }
 describe('injected attachment storage', () => {
   it('deduplicates URL requests and refreshes five minutes before expiry', async () => {
@@ -51,5 +52,15 @@ describe('injected attachment storage', () => {
     vi.mocked(compressAttachment).mockRejectedValue(new Error('private internals'));
     expect(await s.adapter.upload('c', new File(['a'], 'a.png'), vi.fn())).toEqual({ ok: false, error: 'Nie udało się przygotować obrazu. Spróbuj ponownie.' });
     expect(s.upload).not.toHaveBeenCalled();
+  });
+  it('removes one object from the chat bucket and never throws', async () => {
+    const s = setup();
+    expect(await s.adapter.remove('c/a.webp')).toBe(true);
+    expect(s.remove).toHaveBeenCalledWith(['c/a.webp']);
+    expect(s.from).toHaveBeenCalledWith('chat-attachments');
+    s.remove.mockResolvedValueOnce({ error: { message: 'denied' } });
+    expect(await s.adapter.remove('c/a.webp')).toBe(false);
+    s.remove.mockRejectedValueOnce(new Error('offline'));
+    expect(await s.adapter.remove('c/a.webp')).toBe(false);
   });
 });

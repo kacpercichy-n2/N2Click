@@ -31,7 +31,13 @@ function transferFiles(transfer: DataTransfer | null): File[] {
     return file ? [file] : [];
   });
 }
+/**
+ * Images on the clipboard, or [] when the clipboard also carries text/plain: Excel and
+ * Numbers put a picture of the cells next to the text, and the text paste must win.
+ * Screenshots and Chrome "Copy image" (image + text/html only) still yield the image.
+ */
 export function imagesFromClipboard(event: Pick<ClipboardEvent, 'clipboardData'>, now = new Date()): File[] {
+  if (Array.from(event.clipboardData?.types ?? []).includes('text/plain')) return [];
   return transferFiles(event.clipboardData).filter(f => f.type.startsWith('image/')).map(file => {
     if (!/^image\.png$/i.test(file.name)) return file;
     const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;

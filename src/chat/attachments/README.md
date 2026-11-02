@@ -8,23 +8,27 @@ provider (as it does for ModalFrame).
 ## Storage and queue
 
 - `createAttachmentStorage(client, now?)`: injected authenticated SupabaseClient.
-  Returns stable `upload`, `getSignedUrl`, `clearCache`. Memoize per client/session;
+  Returns stable `upload`, `remove`, `getSignedUrl`, `clearCache`. Memoize per client/session;
   recreate on auth identity change. No global client or public URLs.
 - `upload(conversationId, file, onProgress)` returns
   `{ok:true, attachment:ChatAttachment}` or `{ok:false,error:string}`.
   Includes decoding/compression. Progress is coarse: 0 preparing, 0.2 uploading,
   1 complete; not bytes transferred. Upsert is disabled.
+- `remove(path)` deletes one object from the bucket (the policy lets the uploader delete
+  their own objects). Resolves `true`/`false`, never throws.
 - `getSignedUrl(path, {download?:name, refresh?:boolean}?)` returns URL or null.
   Instance-scoped, capped in-memory cache, concurrent request deduplication,
   one-hour TTL and five-minute refresh margin. A thumbnail whose image fails
   to load (expired signature) signs again once with `refresh:true`, then shows
   a retry button. Download uses a separate signed URL with the storage
   download disposition rather than relying on cross-origin `download` alone.
-- `useAttachmentQueue(conversationId, uploader)` returns `pending`, `attachments`
+- `useAttachmentQueue(conversationId, uploader, remover?)` returns `pending`, `attachments`
   (ready results), `allReady`, `error`, `addFiles(files)`, `remove(id)`, `retry(id)`,
   `clear()`, `onPaste(event)`, `onDrop(event)`. Native and React paste/drop events
   work. Empty queue has `allReady:true`; sending still requires body or an image.
-  Any pending/error item makes `allReady:false`. Count includes in-flight files.
+  Pass `storage.remove` as `remover`: removing a `ready` item from the tray (or removing an
+  item whose upload lands afterwards) deletes its object, best effort, errors ignored. `clear()`
+  never deletes, so call it after a successful send. Any pending/error item makes `allReady:false`. Count includes in-flight files.
   Over-limit batches are rejected whole; invalid files are skipped with a Polish
   error. Decoding/upload is serialized to limit canvas memory. Conversation
   changes/unmount/clear invalidate stale results and revoke preview URLs.
@@ -95,8 +99,9 @@ const [dragging, setDragging] = useState(false);
 `validateAttachmentFile` and `validateAttachmentCount` return a Polish error or
 null. `attachmentTargetSize` preserves aspect, rounds to whole pixels, caps the
 long edge at 2560 and does not upscale. `attachmentObjectPath` generates a UUID
-path with extension from actual MIME. `imagesFromClipboard` renames `image.png`
-to `Zrzut ekranu HH:MM`; drop keeps names. Non-images in clipboard/drop are
+path with extension from actual MIME. `imagesFromClipboard` returns `[]` when the clipboard
+carries `text/plain` (Excel and Numbers add a picture of the cells; the text paste wins),
+otherwise it renames `image.png` to `Zrzut ekranu HH:MM`; drop keeps names. Non-images in clipboard/drop are
 ignored, while unsupported image MIME types are rejected by queue validation.
 `compressAttachment` uses canvas WebP at 0.85 and always releases its decode URL.
 GIFs pass through byte-for-byte. If WebP is larger, unavailable or fails to
@@ -116,8 +121,8 @@ Pure imports can use `files.ts` / `types.ts` without loading React or Supabase.
 
 Hosted bucket/RLS behavior is untested against hosted DB. No migration is applied
 by L2. Removal/clear prevents stale queue writes but cannot cancel an already
-started Supabase upload. Uploaded objects removed before sending may remain
-orphaned; retention/deletion is a coordinator/storage lifecycle concern. Client
+started Supabase upload. Objects uploaded and then abandoned another way (conversation change, unmount, closing
+the tab, failed delete) may remain orphaned; that retention is a coordinator/storage concern. Client
 MIME validation is UX validation, not content verification or authorization.
 Wiki unchanged: existing primitive guidance remains accurate; edits are confined
 to L2 ownership. Primary references: Radix Dialog

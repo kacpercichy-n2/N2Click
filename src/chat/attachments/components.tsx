@@ -13,16 +13,22 @@ export interface AttachmentTrayProps {
   onRetry: (id: string) => void;
   error?: string | null;
 }
+// A removed or retried item unmounts the focused button. Hand focus to a neighbour's remove button first.
+function focusNeighbour(button: HTMLElement) {
+  const item = button.closest('li');
+  const next = item?.nextElementSibling ?? item?.previousElementSibling;
+  next?.querySelector<HTMLElement>('.attachment-remove')?.focus();
+}
 export function AttachmentTray({ pending, onRemove, onRetry, error }: AttachmentTrayProps) {
   return <div className="attachment-tray-wrap">
     {pending.length > 0 && <ul className="attachment-tray" aria-label="Załączone obrazy">{pending.map(item => <li key={item.id} className="attachment-pending">
       <img src={item.previewUrl} alt={item.file.name} />
-      <Tooltip text="Usuń obraz"><button type="button" className="attachment-control attachment-remove" aria-label={`Usuń ${item.file.name}`} onClick={() => onRemove(item.id)}><X size={18} /></button></Tooltip>
+      <Tooltip text="Usuń obraz"><button type="button" className="attachment-control attachment-remove" aria-label={`Usuń ${item.file.name}`} onClick={event => { focusNeighbour(event.currentTarget); onRemove(item.id); }}><X size={18} /></button></Tooltip>
       {item.status === 'compressing' || item.status === 'uploading' ? <div className="attachment-progress" role="progressbar" aria-label={`Wysyłanie ${item.file.name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(item.progress * 100)}>
         <svg viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="15" /><circle cx="18" cy="18" r="15" pathLength="100" strokeDasharray={`${item.progress * 100} 100`} /></svg>
         <span>{Math.round(item.progress * 100)}%</span>
       </div> : null}
-      {item.status === 'error' && <div className="attachment-error"><span>{item.error}</span><Tooltip text="Spróbuj ponownie"><button type="button" className="attachment-control" aria-label={`Ponów wysyłanie ${item.file.name}`} onClick={() => onRetry(item.id)}><RotateCw size={18} /></button></Tooltip></div>}
+      {item.status === 'error' && <div className="attachment-error"><span>{item.error}</span><Tooltip text="Spróbuj ponownie"><button type="button" className="attachment-control" aria-label={`Ponów wysyłanie ${item.file.name}`} onClick={event => { event.currentTarget.closest('li')?.querySelector<HTMLElement>('.attachment-remove')?.focus(); onRetry(item.id); }}><RotateCw size={18} /></button></Tooltip></div>}
       <span className="attachment-file-name">{item.file.name}</span>
     </li>)}</ul>}
     <div className="attachment-announcement" role="status" aria-live="polite">{error || pending.filter(item => item.status === 'error').map(item => item.error).join(' ') || (pending.length ? `Gotowe obrazy: ${pending.filter(item => item.status === 'ready').length} z ${pending.length}` : '')}</div>
@@ -62,7 +68,7 @@ function AttachmentThumbnail({ attachment, getSignedUrl, onOpen, extra, single }
     return () => observer.disconnect();
   }, []);
   const image = useSignedImage(attachment.path, getSignedUrl, visible);
-  return <Tooltip text={image.failed ? 'Nie udało się wczytać obrazu. Kliknij, aby ponowić.' : attachment.name}><button ref={ref} type="button" className="attachment-thumbnail" style={single ? { aspectRatio: `${attachment.width || 1} / ${attachment.height || 1}`, maxWidth: attachment.width || undefined } : undefined} aria-label={extra ? `Otwórz ${attachment.name}, jeszcze ${extra} obrazów` : `Otwórz ${attachment.name}`} onClick={event => { if (image.failed) { image.retry(); return; } event.currentTarget.focus(); onOpen(); }}>
+  return <Tooltip text={image.failed ? 'Nie udało się wczytać obrazu. Kliknij, aby ponowić.' : attachment.name}><button ref={ref} type="button" className="attachment-thumbnail" style={single ? { aspectRatio: `${attachment.width || 1} / ${attachment.height || 1}`, maxWidth: attachment.width || undefined } : undefined} aria-label={image.failed ? `Nie udało się wczytać ${attachment.name}. Ponów wczytywanie` : extra ? `Otwórz ${attachment.name}, jeszcze ${extra} obrazów` : `Otwórz ${attachment.name}`} onClick={event => { if (image.failed) { image.retry(); return; } event.currentTarget.focus(); onOpen(); }}>
     {image.url ? <img src={image.url} alt={attachment.name} width={attachment.width} height={attachment.height} loading="lazy" onError={image.fail} /> : <span>{image.failed ? 'Ponów wczytywanie' : 'Wczytywanie obrazu'}</span>}
     {extra > 0 && <span className="attachment-more">+{extra}</span>}
   </button></Tooltip>;

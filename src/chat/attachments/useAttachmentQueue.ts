@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ClipboardEvent as ReactClipboardEvent, DragEvent as ReactDragEvent } from 'react';
 import type { PendingAttachment } from './types';
-import type { AttachmentUploader } from './storage';
+import type { AttachmentRemover, AttachmentUploader } from './storage';
 import { imagesFromClipboard, imagesFromDrop, validateAttachmentCount, validateAttachmentFile } from './files';
 
-export function useAttachmentQueue(conversationId: string, uploader: AttachmentUploader) {
+export function useAttachmentQueue(conversationId: string, uploader: AttachmentUploader, remover?: AttachmentRemover) {
   const [pending, setPending] = useState<PendingAttachment[]>([]);
   const [error, setError] = useState<string | null>(null);
   const entries = useRef<PendingAttachment[]>([]);
   const generation = useRef(0);
+  const removerRef = useRef(remover);
+  removerRef.current = remover;
+  // Best effort: a failed delete only leaves an unreferenced object, nothing the user can act on.
+  const discard = useCallback((path: string) => { try { void removerRef.current?.(path)?.catch(() => undefined); } catch { /* ignored */ } }, []);
   const chain = useRef(Promise.resolve());
   const publish = useCallback((next: PendingAttachment[]) => { entries.current = next; setPending(next); }, []);
   const clear = useCallback(() => {
@@ -36,11 +40,12 @@ export function useAttachmentQueue(conversationId: string, uploader: AttachmentU
       if (!active()) return;
       try {
         const result = await uploader(conversationId, item.file, progress => update({ progress: Math.max(0, Math.min(1, progress)), status: progress >= 0.2 ? 'uploading' : 'compressing' }));
-        if (result.ok) update({ status: 'ready', progress: 1, result: result.attachment, error: null });
+        if (result.ok && version === generation.current && !entries.current.some(entry => entry.id === item.id)) discard(result.attachment.path);
+        else if (result.ok) update({ status: 'ready', progress: 1, result: result.attachment, error: null });
         else update({ status: 'error', error: result.error });
       } catch { update({ status: 'error', error: 'Nie udało się wysłać obrazu. Spróbuj ponownie.' }); }
     });
-  }, [conversationId, uploader, publish]);
+  }, [conversationId, uploader, publish, discard]);
   const addFiles = useCallback((files: Iterable<File> | ArrayLike<File>) => {
     const incoming = Array.from(files);
     const countError = validateAttachmentCount(incoming.length, entries.current.length);
@@ -58,7 +63,8 @@ export function useAttachmentQueue(conversationId: string, uploader: AttachmentU
     const item = entries.current.find(entry => entry.id === id);
     if (item) URL.revokeObjectURL(item.previewUrl);
     publish(entries.current.filter(entry => entry.id !== id));
-  }, [publish]);
+    if (item?.status === 'ready' && item.result) discard(item.result.path);
+  }, [publish, discard]);
   const retry = useCallback((id: string) => {
     const item = entries.current.find(entry => entry.id === id && entry.status === 'error');
     if (!item) return;

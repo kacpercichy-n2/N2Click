@@ -5,6 +5,8 @@ import { attachmentObjectPath, compressAttachment } from './files';
 
 export type AttachmentUploadResult = { ok: true; attachment: ChatAttachment } | { ok: false; error: string };
 export type AttachmentUploader = (conversationId: string, file: File, onProgress: (progress: number) => void) => Promise<AttachmentUploadResult>;
+/** Best-effort delete of one uploaded object. Resolves true when storage accepted the delete. */
+export type AttachmentRemover = (path: string) => Promise<boolean>;
 export type AttachmentUrlGetter = (path: string, options?: { download?: string; refresh?: boolean }) => Promise<string | null>;
 /** Instance cache: never share signatures between clients/sessions. Recreate on auth change. */
 export function createAttachmentStorage(client: SupabaseClient, now = Date.now) {
@@ -42,5 +44,11 @@ export function createAttachmentStorage(client: SupabaseClient, now = Date.now) 
       return { ok: false, error: error instanceof Error && /^(Dozwolone|Plik|Obraz|Nieprawidłowe)/.test(error.message) ? error.message : 'Nie udało się przygotować obrazu. Spróbuj ponownie.' };
     }
   };
-  return { upload, getSignedUrl, clearCache: () => cache.clear() };
+  const remove: AttachmentRemover = async path => {
+    try {
+      const { error } = await client.storage.from(CHAT_ATTACHMENT_BUCKET).remove([path]);
+      return !error;
+    } catch { return false; }
+  };
+  return { upload, remove, getSignedUrl, clearCache: () => cache.clear() };
 }
