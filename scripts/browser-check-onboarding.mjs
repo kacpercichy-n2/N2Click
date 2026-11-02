@@ -2,11 +2,10 @@
 // Usage: node scripts/browser-check-onboarding.mjs [chromium|webkit]
 // Requires the Vite dev server on http://localhost:5173.
 
-import { chromium, webkit } from 'playwright';
+import { chromium, webkit, BASE, launchOptions } from './lib/browser-env.mjs';
 
 const ENGINE = (process.argv[2] || 'chromium').toLowerCase();
 const LAUNCHER = ENGINE === 'webkit' ? webkit : chromium;
-const BASE = 'http://localhost:5173';
 const failures = [];
 
 function check(condition, label) {
@@ -18,12 +17,14 @@ function check(condition, label) {
 }
 
 async function run() {
-  const browser = await LAUNCHER.launch({ headless: true });
+  const browser = await LAUNCHER.launch(launchOptions(LAUNCHER));
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
   try {
     await page.goto(BASE, { waitUntil: 'networkidle' });
     await page.getByRole('button', { name: 'Wczytaj przykładowe dane' }).click();
+    // The store persists asynchronously; reading it before this lands returns null.
+    await page.waitForFunction(() => localStorage.getItem('n2hub.data.v1') !== null, null, { timeout: 10000 });
     const currentUserId = await page.evaluate(() => {
       const data = JSON.parse(localStorage.getItem('n2hub.data.v1'));
       return data.currentUserId;

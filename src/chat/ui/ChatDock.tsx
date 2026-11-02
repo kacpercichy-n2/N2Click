@@ -29,6 +29,7 @@ import { ChatAvatar } from './ChatAvatar';
 import { ChatGroupModal } from './ChatGroupModal';
 import { ChatSearchPopover } from './ChatSearchPopover';
 import { ChatWindow } from './ChatWindow';
+import { dockConversations as filterDockConversations } from '../chatState';
 import { buildDirectory, type ChatPerson } from './chatPeople';
 import {
   buildDockBubbles,
@@ -92,7 +93,12 @@ function ChatDockInner() {
   );
   const directory = useMemo(() => buildDirectory(people), [people]);
 
-  const openId = chat.openConversationId;
+  // Rozmowy zadań żyją w kartach zadań (karta v2), nie w doku.
+  const dockConversations = useMemo(
+    () => filterDockConversations(chat.conversations),
+    [chat.conversations],
+  );
+  const openId = dockConversations.some(c => c.id === chat.openConversationId) ? chat.openConversationId : null;
   useEffect(() => {
     if (openId === null) return;
     setRecentIds((list) => pushRecent(list, openId));
@@ -104,7 +110,7 @@ function ChatDockInner() {
   const bubbles = useMemo(
     () =>
       buildDockBubbles({
-        conversations: chat.conversations,
+        conversations: dockConversations,
         selfId: chat.selfId,
         directory,
         presence: chat.presence,
@@ -116,7 +122,7 @@ function ChatDockInner() {
   );
 
   const openConversation =
-    chat.conversations.find((conversation) => conversation.id === openId) ?? null;
+    dockConversations.find((conversation) => conversation.id === openId) ?? null;
 
   /**
    * MINIMALIZACJA = ZAMKNIĘCIE OKNA (decyzja D1). Klik w AKTYWNY bąbelek (tak

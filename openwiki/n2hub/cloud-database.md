@@ -544,6 +544,108 @@ generowanej z `src/chat/ui/chatEmoji.ts`; zapis tylko przez definer
 `messages.kind`/`meta` (wiersz systemowy wyłącznie z RPC `chat_set_theme`;
 polityka INSERT wymusza `kind = 'text'`), `chat_overview()` zwraca `theme_id`.
 
+## Task conversations, attachments, chat notifications (2026-11-02, migracje 20261102100000..103000)
+
+Karta zadania v2 (`docs/karta-v2/SPEC.md`). Stan: w repo, NIEZAAPLIKOWANE
+(aplikuje koordynator po przeglądzie; kolejność, smoke checki i rollback w
+`docs/karta-v2/L1-DB-NOTES.md`).
+
+- ROZMOWA ZADANIA = rozmowa czatu z `context_type = 'task'`,
+  `context_id = id zadania`, `kind = 'group'` (CHECK `kind` bez zmian, klient
+  rozpoznaje zadanie po kontekście). Unikalny indeks częściowy
+  `conversations_context_unique (context_type, context_id)`; CHECK
+  `conversations_task_context_shape` (group, context_id, bez direct_key).
+  Rozmowę zadania zakłada i uzupełnia członków WYŁĄCZNIE definer
+  `n2click.chat_open_task(p_task_id) -> uuid` (wołający + wykonawcy,
+  idempotentnie, advisory lock per zadanie). Zwykły INSERT rozmowy nie
+  ustawia `context_type` ani `context_id` WCALE (także projekt i klient: bez
+  rezerwacji cudzej tożsamości i bez wyroczni 23505); INSERT członków odrzuca
+  rozmowę zadania.
+- WIDOCZNOŚĆ: `app.chat_can_read_task(task)` = lustro polityki `tasks_select`
+  (has_app + administrator/manager/przypisany + `company_ok_project`). Zmiana
+  `tasks_select` wymaga zmiany tej funkcji. `app.is_conversation_member` dla
+  rozmowy zadania wymaga dodatkowo bieżącego wglądu w zadanie, więc odpięcie
+  od zadania zamyka wiadomości, kanał `chat:conv:<id>`, załączniki i edycję,
+  choć wiersz członkostwa zostaje. `app.chat_user_can_read_task(user, task)` to
+  ta sama reguła liczona z `core.app_access` + `core.profiles` (bez JWT), bez
+  EXECUTE dla klientów (wyrocznia); używają jej triggery i `chat_open_task`.
+  SELECT wiadomości i reakcji pyta `conversation_id in (select
+  app.chat_my_conversation_ids())`: ta sama reguła liczona RAZ na zapytanie
+  (20 tys. wiadomości: 3,6 ms zamiast 2,7 s per wiersz). Nowe polityki SELECT
+  wielu wierszy czatu mają używać tej formy, `is_conversation_member` zostaje
+  dla sprawdzeń jednego wiersza.
+- `messages`: `attachments jsonb` (max 10, `{path, mime, width, height, size,
+  name}`, ścieżka `<conversation_id>/<uuid>.<ext>` sprawdzana triggerem
+  `chat_messages_validate_content` BEFORE INSERT, który NAJPIERW sprawdza
+  członkostwo (42501 przed jakimkolwiek innym błędem), wymaga `reply_to` z tej
+  samej rozmowy, zeruje przypięcie i ustawia `revised_at = created_at`),
+  `mention_ids uuid[]` (max 20; trigger zostawia tylko osoby nazwane w treści
+  jako `@Imię` z `core.profiles.first_name`, bez autora, a w rozmowie zadania
+  tylko z wglądem w zadanie; reszta odpada po cichu), `pinned_at`/`pinned_by`,
+  `revised_at timestamptz not null`. Pusta treść tylko z
+  załącznikiem. Granty kolumnowe UPDATE bez zmian (`body, edited_at,
+  deleted_at`); polityka UPDATE wymaga teraz też członkostwa.
+- REWIZJA: `revised_at` to rewizja do scalania stron i broadcastów, podbijana
+  monotonicznie przez `chat_stamp_message_edit` przy zmianie `body`,
+  `pinned_at` i `deleted_at`. `edited_at` zmienia się WYŁĄCZNIE ze zmianą
+  `body` (etykieta „(edytowana)”). Kasowanie miękkie jest terminalne i zdejmuje
+  przypięcie. Wiersze sprzed migracji dostały `revised_at` = najpóźniejszy z
+  `created_at/edited_at/deleted_at`. Kontrakt klienta: `docs/karta-v2/L1-L3-CONTRACT.md`.
+- REALTIME: hostowany Realtime sprawdza prawo zapisu raz przy dołączeniu
+  (próbny wiersz z samym topic + extension, bez event), więc polityka nie
+  odróżni eventów jednego topicu. Dlatego `chat:conv:<id>` jest tylko do
+  słuchania (zdarzenia z triggerów/definerów), klient nadaje broadcast
+  wyłącznie na `chat:typing:<id>` (event `typing`) i presence wyłącznie na
+  `chat:presence`; `chat:user:<id>` tylko do słuchania.
+- RPC: `chat_set_pin(p_message_id, p_pinned)` (każdy członek, event UPDATE jak
+  edycja, no-op przy braku zmiany), `chat_set_follow(p_conversation_id,
+  p_follow)` (obserwuj = `muted_until` NULL, przestań = `'infinity'`).
+  `chat_overview()` zwraca w `members` także `muted_until`, a w `last_message`
+  `attachments_count`.
+- OBSERWUJĄCY: trigger `chat_messages_auto_members` (AFTER INSERT, tylko rozmowy
+  zadań) dopisuje autora, wspomnianych i wykonawców z wglądem w zadanie;
+  `on conflict do nothing` zachowuje „Przestań obserwować”. W zwykłej grupie
+  wzmianka NIE dopisuje osoby.
+- ODCZYT NA ŻYWO: `chat_members_read` (AFTER UPDATE OF last_read_at) nadaje
+  `realtime.send` event `read` `{conversationId, userId, lastReadAt}` na
+  `chat:conv:<id>`; `chat_members_clamp_last_read` nie pozwala ustawić odczytu
+  w przyszłości.
+- STORAGE: prywatny bucket `chat-attachments` (10 MB, webp/png/jpeg/gif, bez
+  SVG). SELECT i INSERT: `app.chat_attachment_member(name)` (format nazwy +
+  członkostwo), INSERT także `owner_id` = wgrywający; DELETE tylko właściciel;
+  brak UPDATE. Podpisany URL żyje do 1 h także po utracie dostępu.
+- POWIADOMIENIA: `notifications.type` dostaje `task_message` i `task_mention`
+  (kolumna text, bez DDL). Trigger `chat_messages_notify_task` (AFTER INSERT,
+  alfabetycznie po auto_members), odbiorca zawsze z wglądem w zadanie, nigdy
+  autor: `task_mention` jeden wiersz na wzmiankę (także nieobserwujący);
+  `task_message` ZBIORCZY dla obserwujących bez wzmianki: najwyżej jeden
+  nieprzeczytany na (odbiorca, rozmowa), unikalny indeks częściowy
+  `notifications_task_message_unread`; kolejna wiadomość robi `on conflict do
+  update` (`count` + 1, ostatnie `messageId`/`actorId`, świeży `created_at`).
+  „Przeczytany” dla triggera = `read_at` albo `notification:<id>` w
+  `core.profiles.notifications_read_ids` albo `created_at <=
+  notifications_seen_at` (te same źródła co feed); taki wiersz trigger zamyka
+  (`read_at = now()`) i zakłada nowy z `count = 1`. Payload
+  `{taskId, conversationId, messageId, actorId}` (+ `count`), `emailed_at = now()`
+  (funkcja `send-notification-emails` nie zna tych typów). Polityka
+  `notifications_insert` przyjmuje z klienta tylko `task_assigned`,
+  `project_comment`, `bin_item`; `authenticated` nie ma TRUNCATE, DELETE,
+  TRIGGER, REFERENCES. Klient: `notificationsForPerson` mapuje wiersze na wpisy
+  `notification:<id wiersza>` otwierające kartę zadania; zdanie z
+  `taskConversationNotificationTitle` (`src/utils/notifications.ts`).
+- IMPORT: 20261102102000 kopiuje komentarze zadań (`comments.task_id` not null)
+  do rozmów zadań z TYM SAMYM id, autorem, treścią, wzmiankami i `created_at`;
+  bez powiadomień i broadcastów, `comments` nietknięte, pomija komentarze bez
+  autora i z treścią > 4000 znaków (NOTICE). Jeden blok DO, idempotentny.
+  Id komentarza zajęte przez wiadomość spoza rozmowy jego zadania = BŁĄD
+  (cały import cofnięty), nie ciche pominięcie.
+- Każdy z czterech plików zaczyna się od `set local lock_timeout = '5s'`.
+- Test na prawdziwym Postgresie 17: `zsh docs/karta-v2/heavy.sh zsh
+  docs/karta-v2/l1-pgtest/run.sh` (scenariusze, pomiar `timing.sql`, próba
+  zajętego id komentarza).
+- `ON CONFLICT` w tych migracjach działa wyłącznie wewnątrz definerów (bez RLS,
+  jak `chat_set_reaction`); PUŁAPKA wyżej dotyczy zapytań klienta pod RLS.
+
 ## Rules that change work
 
 - New tables/columns arrive ONLY via a new forward-only migration file +
@@ -566,6 +668,9 @@ polityka INSERT wymusza `kind = 'text'`), `chat_overview()` zwraca `theme_id`.
 ## Relevant tests
 
 `src/supabase/migrations.test.ts` (file list + RLS conventions),
+`docs/karta-v2/l1-pgtest/run.sh` (migracje czatu i karty v2 na prawdziwym
+Postgresie 17 z atrapą Supabase: widoczność, wiadomości, powiadomienia, Storage,
+import; `zsh docs/karta-v2/l1-pgtest/run.sh`),
 `referenceData.test.ts` (org snapshot mapping incl. `supervisor_id`),
 `plannerData.test.ts`, `cloudMirror.test.ts`, `dataImport.test.ts`,
 `migrationStatus.test.ts`, `src/auth/session.test.ts`,

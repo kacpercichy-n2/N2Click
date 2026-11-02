@@ -23,12 +23,11 @@
 //
 // Screenshots: reviews/screenshots-20260712-savetask/<engine>-*.png
 
-import { chromium, webkit } from 'playwright';
+import { chromium, webkit, BASE, launchOptions } from './lib/browser-env.mjs';
 import { mkdirSync } from 'node:fs';
 
 const ENGINE = (process.argv[2] || 'chromium').toLowerCase();
 const LAUNCHER = ENGINE === 'webkit' ? webkit : chromium;
-const BASE = 'http://localhost:5173';
 const KEY = 'n2hub.data.v1';
 const SHOTS = 'reviews/screenshots-20260712-savetask';
 mkdirSync(SHOTS, { recursive: true });
@@ -57,6 +56,8 @@ async function seed(page) {
   const loginRow = page.locator('.login-person').first();
   if (await loginRow.isVisible().catch(() => false)) await loginRow.click();
   await page.locator('.app-nav-link').first().waitFor({ timeout: 10000 });
+  // The store persists asynchronously; reading it before this lands returns null.
+  await page.waitForFunction((key) => localStorage.getItem(key) !== null, KEY, { timeout: 10000 });
 }
 
 const readStore = (page) =>
@@ -122,17 +123,31 @@ async function flowMultiBlockSave(browser) {
     const openModal = async () => {
       await page.goto(`${BASE}/tasks?task=${seedInfo.taskId}`, { waitUntil: 'networkidle' });
       await modal.waitFor({ timeout: 10000 });
-      // PKG-20260728-taskmodal-structure: siatka alokacji siedzi teraz w
-      // zakładce „Planowanie" (panele chowa atrybut `hidden`), więc przed
-      // szukaniem `.alloc-grid` trzeba tę zakładkę wybrać.
-      const planningTab = modal.getByRole('tab', { name: 'Planowanie' });
-      if (await planningTab.count()) await planningTab.click();
+      // Karta zadania v2: siatka alokacji to podwidok „Siatka dni".
+      await modal.getByRole('button', { name: 'Siatka dni' }).click();
     };
     // PKG-20260728-taskmodal-details (AT-05): pasy pustych dni zwijają się do
     // JEDNEGO wiersza, więc `nth(<numer dnia okresu>)` przestało wskazywać ten
     // dzień. Wiersz dnia nosi teraz `data-date`, więc celujemy w DATĘ — dzień z
     // godzinami nigdy nie jest zwinięty (zwijają się wyłącznie dni puste).
     // Asercje poniżej są bez zmian.
+    // Karta v2 nie ma „Zapisz i zamknij": komórka zatwierdza się po wyjściu z
+    // pola (Tab), a zapis idzie przez auto-zapis po 900 ms ciszy. Gdy zmiana
+    // ma się zapisać, czekamy na komunikat „Zapisano <godzina>" (stały
+    // timeout bywał za krótki pod obciążeniem); bez zmiany nie ma na co
+    // czekać, więc tylko dajemy auto-zapisowi czas, którego NIE powinien użyć.
+    const commitCell = async ({ expectSave = true } = {}) => {
+      await cell().locator('input.alloc-input').press('Tab');
+      if (expectSave) {
+        await page.waitForFunction(() => /Zapisano \d/.test(document.body.innerText), null, {
+          timeout: 10000,
+        });
+        // localStorage dostaje stan dopiero po PERSIST_COALESCE_MS (1000 ms).
+        await page.waitForTimeout(1500);
+      } else {
+        await page.waitForTimeout(1800);
+      }
+    };
     const cell = () =>
       modal
         .locator(`.alloc-grid tbody tr[data-date="${seedInfo.date}"]`)
@@ -154,8 +169,7 @@ async function flowMultiBlockSave(browser) {
     await page.screenshot({ path: `${SHOTS}/${ENGINE}-c-multiblock-cell.png` });
 
     // --- (d) unchanged save leaves both rows byte-identical (id included) ---
-    await page.getByRole('button', { name: 'Zapisz i zamknij' }).click();
-    await page.waitForTimeout(300);
+    await commitCell({ expectSave: false });
     let store = await readStore(page);
     let pairRows = store.workload.filter(
       (w) =>
@@ -190,8 +204,7 @@ async function flowMultiBlockSave(browser) {
     await openModal();
     const target = totalAfterDup + 1;
     await cell().locator('input.alloc-input').fill(String(target));
-    await page.getByRole('button', { name: 'Zapisz i zamknij' }).click();
-    await page.waitForTimeout(300);
+    await commitCell();
     store = await readStore(page);
     pairRows = store.workload.filter(
       (w) =>
@@ -226,8 +239,7 @@ async function flowMultiBlockSave(browser) {
     );
     await openModal();
     await cell().locator('input.alloc-input').fill('');
-    await page.getByRole('button', { name: 'Zapisz i zamknij' }).click();
-    await page.waitForTimeout(300);
+    await commitCell();
     store = await readStore(page);
     pairRows = store.workload.filter(
       (w) =>
@@ -282,7 +294,7 @@ async function flowMultiBlockSave(browser) {
 }
 
 async function run() {
-  const browser = await LAUNCHER.launch({ headless: true });
+  const browser = await LAUNCHER.launch(launchOptions(LAUNCHER));
   try {
     await flowMultiBlockSave(browser);
   } finally {

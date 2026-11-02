@@ -19,6 +19,7 @@
 //   line. Desktop composition is untouched by this module.
 import type { Notification } from '../types';
 import { formatDuration } from '../utils/time';
+import { notificationMessageCount, taskConversationNotificationTitle } from '../utils/notifications';
 
 /** Dokąd prowadzi klik w powiadomienie: zadanie (modal) albo projekt (route). */
 export type NotificationTarget =
@@ -76,6 +77,20 @@ export function notificationEntry(n: Notification, names: NotificationNames): No
   const projectMeta = names.projectName.trim() || undefined;
   const commentBody = names.commentBody.trim();
   switch (n.type) {
+    case 'task_message':
+    case 'task_mention': {
+      const target: NotificationTarget | undefined = n.payload.taskId
+        ? { kind: 'task', taskId: n.payload.taskId }
+        : undefined;
+      return {
+        id: n.id,
+        title: taskConversationNotificationTitle(n.type, names.actorName, taskTitle, notificationMessageCount(n.payload)),
+        when: projectMeta,
+        target,
+        preview: { who: actor, what: taskTitle, where: projectName },
+        openLabel: openLabelFor(target),
+      };
+    }
     case 'task_assigned': {
       const target: NotificationTarget | undefined = n.payload.taskId
         ? { kind: 'task', taskId: n.payload.taskId }

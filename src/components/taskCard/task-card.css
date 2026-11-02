@@ -1,0 +1,719 @@
+/* Karta zadania v2 „Praca i rozmowa obok siebie" (2026-11-02).
+   Lewa kolumna: tytuł, kafelki 3 x 2, opis, checklista, godziny osób.
+   Prawa kolumna: rozmowa na pełną wysokość (`TaskConversationPane`, linia L3).
+   Układ: >= 1280 px obok siebie, 761 do 1279 px piętrowo (rozmowa pod
+   szczegółami), <= 760 px przełącznik „Szczegóły | Rozmowa".
+   Przewijają się WYŁĄCZNIE lewa kolumna i rozmowa (piętrowo: `.task-sheet-split`).
+   Tylko tokeny `--n2-*`, bez własnych z-indeksów. */
+
+/* ---- Powłoka modala ---------------------------------------------------- */
+.task-modal-card.task-sheet-modal {
+  max-width: min(1320px, 94vw);
+  height: min(840px, 88dvh);
+}
+.task-sheet-modal-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+@media (max-width: 760px) {
+  .task-modal-card.task-sheet-modal {
+    height: calc(94dvh - var(--n2-kb-inset, 0px));
+  }
+}
+
+/* ---- Karta (modal i pełna strona) -------------------------------------- */
+.task-sheet {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.task-sheet [hidden] {
+  display: none !important;
+}
+
+.task-sheet-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--n2-space-2) var(--n2-space-3);
+  padding: var(--n2-space-3) var(--n2-space-4) var(--n2-space-3) var(--n2-space-5);
+  border-bottom: 1px solid var(--n2-border);
+}
+.task-sheet-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+  margin-left: auto;
+}
+.task-sheet-head-link {
+  color: var(--n2-text-soft);
+  text-decoration: none;
+}
+
+.task-sheet-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 18rem;
+}
+.task-sheet-crumb {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  min-width: 0;
+  max-width: 34ch;
+  padding: 0 var(--n2-space-2);
+  border: 1px solid transparent;
+  border-radius: var(--n2-radius-xs);
+  background: none;
+  color: var(--n2-text-soft);
+  font: inherit;
+  font-size: var(--n2-type-sm);
+  cursor: pointer;
+  transition: background var(--n2-transition), color var(--n2-transition);
+}
+/* Pole trafienia >= 44 px bez powiększania belki nagłówka. */
+.task-sheet-crumb::after {
+  content: '';
+  position: absolute;
+  inset: -4px 0;
+}
+.task-sheet-crumb:hover {
+  background: var(--n2-surface-muted);
+  color: var(--n2-text);
+}
+.task-sheet-crumb[aria-expanded='true'] {
+  color: var(--n2-text);
+  border-color: var(--n2-border-strong);
+}
+.task-sheet-crumb[aria-disabled='true'] {
+  cursor: default;
+}
+.task-sheet-crumb[aria-disabled='true']:hover {
+  background: none;
+  color: var(--n2-text-soft);
+}
+.task-sheet-crumb[data-invalid='true'] {
+  border-color: var(--n2-danger);
+}
+.task-sheet-crumb svg {
+  flex: none;
+  display: block;
+}
+.task-sheet-crumb-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-sheet-crumb-sep {
+  flex: none;
+  color: var(--n2-text-muted);
+}
+.task-sheet-crumb-error {
+  margin: var(--n2-space-2) var(--n2-space-5) 0;
+}
+.task-sheet-crumbs-editor {
+  margin: var(--n2-space-3) var(--n2-space-5) 0;
+  padding: var(--n2-space-4);
+  border: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-sm);
+  background: var(--n2-surface-muted);
+}
+.task-sheet-crumbs-actions {
+  margin: var(--n2-space-2) 0 0;
+}
+
+/* ---- Przełącznik telefonu ---------------------------------------------- */
+.task-sheet-segmented {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin: var(--n2-space-3) var(--n2-space-4) 0;
+  padding: 4px;
+  border-radius: var(--n2-radius-pill);
+  background: var(--n2-surface-muted);
+}
+.task-sheet-segment {
+  min-height: 44px;
+  border: 0;
+  border-radius: var(--n2-radius-pill);
+  background: none;
+  color: var(--n2-text-soft);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: background var(--n2-transition), color var(--n2-transition);
+}
+.task-sheet-segment[aria-selected='true'] {
+  background: var(--n2-violet);
+  color: var(--n2-text);
+}
+
+/* ---- Kolumny ----------------------------------------------------------- */
+/* Piętrowo (761 do 1279 px): przewija się cały podział, rozmowa ma stałą
+   wysokość i przewija się w środku. */
+.task-sheet-split {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.task-sheet-main {
+  display: flex;
+  flex-direction: column;
+  padding: var(--n2-space-5) var(--n2-space-6) 0;
+  /* Fokus z listy blokad nie może wylądować pod lepką stopką. */
+  scroll-padding-bottom: 96px;
+}
+/* Formularz rośnie, więc stopka („Utwórz zadanie”, powody blokady) stoi przy
+   dolnej krawędzi kolumny i nie skacze, gdy nad nią pojawi się błąd pola. */
+.task-sheet-main > .task-editor-form {
+  flex: 1 0 auto;
+}
+.task-sheet-side {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  height: min(640px, 75dvh);
+  min-height: 420px;
+  margin-top: var(--n2-space-5);
+  border-top: 1px solid var(--n2-border);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.task-sheet-side > * {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+/* Tryb lokalny: `TaskConversationPane` pokazuje `CommentsPanel`. Panel ma
+   własną kartę (ramka, tło, zaokrąglenie), a tu stoi już w kolumnie karty, więc
+   bez drugiej ramki. */
+.task-sheet-side .comments-panel {
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+@media (min-width: 1280px) {
+  .task-sheet-split {
+    flex-direction: row;
+    overflow: hidden;
+  }
+  .task-sheet-main {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-bottom: var(--n2-space-5);
+  }
+  .task-sheet-side {
+    flex: 0 0 clamp(420px, 40%, 520px);
+    height: auto;
+    min-height: 0;
+    margin-top: 0;
+    border-top: 0;
+    border-left: 1px solid var(--n2-border);
+  }
+}
+
+/* Telefon: jeden panel naraz, każdy przewija się sam. */
+@media (max-width: 760px) {
+  .task-sheet-head {
+    padding: var(--n2-space-2) var(--n2-space-3);
+  }
+  .task-sheet-crumbs {
+    order: 2;
+    flex-basis: 100%;
+  }
+  .task-sheet-crumb-error,
+  .task-sheet-crumbs-editor {
+    margin-left: var(--n2-space-4);
+    margin-right: var(--n2-space-4);
+  }
+  .task-sheet-split {
+    overflow: hidden;
+  }
+  .task-sheet-main {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: var(--n2-space-4) var(--n2-space-4) 0;
+  }
+  .task-sheet-side {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
+    margin-top: var(--n2-space-3);
+  }
+}
+
+/* ---- Pełna strona `/tasks/:id`: ta sama karta bez powłoki modala -------- */
+.task-sheet-page .task-sheet {
+  border: 1px solid var(--n2-border);
+  border-radius: var(--n2-radius-lg);
+  background: var(--n2-panel);
+  overflow: hidden;
+}
+.task-sheet-page .task-sheet-split {
+  overflow: visible;
+}
+@media (min-width: 1280px) {
+  .task-sheet-page .task-sheet {
+    height: calc(100dvh - var(--n2-space-12) * 2);
+    min-height: 560px;
+  }
+  .task-sheet-page .task-sheet-split {
+    overflow: hidden;
+  }
+}
+@media (max-width: 760px) {
+  .task-sheet-page .task-sheet {
+    height: calc(100dvh - var(--n2-bottom-nav-h) - 96px);
+    min-height: 480px;
+  }
+  .task-sheet-page .task-sheet-split {
+    overflow: hidden;
+  }
+}
+
+/* ---- Tytuł i opis: tekst do odczytu, klik = edycja --------------------- */
+.task-sheet-title {
+  margin: 0;
+  font-size: var(--n2-type-xl);
+  font-weight: 650;
+  line-height: var(--n2-line-title);
+  overflow-wrap: anywhere;
+}
+.task-sheet-title-read,
+.task-sheet-desc-read {
+  display: block;
+  width: calc(100% + 2 * var(--n2-space-2));
+  min-height: 44px;
+  margin: 0 calc(-1 * var(--n2-space-2));
+  padding: var(--n2-space-1) var(--n2-space-2);
+  border: 1px solid transparent;
+  border-radius: var(--n2-radius-xs);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: text;
+  transition: background var(--n2-transition), border-color var(--n2-transition);
+}
+.task-sheet-title-read:hover,
+.task-sheet-desc-read:hover {
+  background: var(--n2-surface-muted);
+  border-color: var(--n2-border);
+}
+.task-sheet-title-input {
+  width: 100%;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+}
+.task-sheet-placeholder {
+  color: var(--n2-text-muted);
+  font-weight: 400;
+}
+.task-sheet-desc-text {
+  display: block;
+  margin: 0;
+  color: var(--n2-text-soft);
+  font-size: var(--n2-type-md);
+  line-height: var(--n2-line-body);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.task-sheet-desc-input {
+  display: block;
+  width: 100%;
+  min-height: 5.5rem;
+  resize: vertical;
+  overflow: hidden;
+  font-size: var(--n2-type-md);
+  line-height: var(--n2-line-body);
+}
+.task-sheet-confidential {
+  margin-top: var(--n2-space-3);
+}
+
+/* ---- Kafelki 3 x 2 ----------------------------------------------------- */
+.task-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--n2-space-2);
+  margin: var(--n2-space-4) 0;
+}
+@media (max-width: 560px) {
+  .task-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.task-tile {
+  min-width: 0;
+}
+.task-tile-button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+  min-height: 68px;
+  padding: 10px var(--n2-space-3) 12px;
+  border: 1px solid transparent;
+  border-radius: var(--n2-radius-sm);
+  background: var(--n2-surface-muted);
+  color: var(--n2-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--n2-transition), border-color var(--n2-transition);
+}
+.task-tile-button:hover {
+  background: var(--n2-glass);
+}
+.task-tile-button[aria-expanded='true'] {
+  border-color: var(--n2-border-strong);
+  background: var(--n2-glass);
+}
+.task-tile-button[aria-disabled='true'] {
+  cursor: default;
+}
+.task-tile-button[aria-disabled='true']:hover {
+  background: var(--n2-surface-muted);
+}
+.task-tile[data-invalid='true'] .task-tile-button {
+  border-color: var(--n2-danger);
+}
+.task-tile-error {
+  margin: 4px 0 0;
+}
+.task-tile-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--n2-text-muted);
+  font-size: var(--n2-type-xs);
+  font-weight: 500;
+}
+.task-tile-icon,
+.task-tile-icon svg {
+  display: block;
+}
+.task-tile-value {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: 26px;
+  font-size: var(--n2-type-sm);
+  font-weight: 600;
+  overflow-wrap: break-word;
+}
+.task-tile-people,
+.task-tile-classification {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+  min-width: 0;
+}
+/* Wąski kafelek: chip i dział przechodzą do nowej linii całymi słowami. */
+.task-tile-classification {
+  flex-wrap: wrap;
+  row-gap: 4px;
+  overflow-wrap: break-word;
+}
+.task-tile-avatars {
+  display: flex;
+  flex: none;
+}
+.task-tile-avatars > * + * {
+  margin-left: -6px;
+}
+.task-tile-chip {
+  padding: 2px var(--n2-space-2);
+  border-radius: var(--n2-radius-xs);
+  background: var(--n2-glass);
+  color: var(--n2-text-soft);
+  font-weight: 500;
+}
+
+/* Pasek godzin: kalendarz (fiolet = akcja/plan), zasobnik (lawenda). */
+.task-hours-bar-row {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+  width: 100%;
+}
+.task-hours-bar {
+  display: flex;
+  flex: 1 1 auto;
+  height: 6px;
+  border-radius: var(--n2-radius-pill);
+  background: var(--n2-glass-strong);
+  overflow: hidden;
+}
+.task-hours-bar-calendar {
+  background: var(--n2-violet-soft);
+}
+.task-hours-bar-bin {
+  background: var(--n2-lavender);
+  opacity: 0.55;
+}
+.task-hours-bar[data-over='true'] .task-hours-bar-calendar {
+  background: var(--n2-danger);
+}
+.task-hours-bar-label {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Edytor otwarty z kafelka (disclosure pod siatką) ------------------ */
+.task-tile-editor {
+  margin: 0 0 var(--n2-space-4);
+  padding: var(--n2-space-4);
+  border: 1px solid var(--n2-border-strong);
+  border-radius: var(--n2-radius-sm);
+  background: var(--n2-surface-muted);
+}
+.task-tile-editor:focus {
+  outline: none;
+}
+.task-tile-editor-head {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-3);
+  margin-bottom: var(--n2-space-3);
+}
+.task-tile-editor-title {
+  font-weight: 650;
+}
+.task-tile-editor-hint {
+  color: var(--n2-text-muted);
+  font-size: var(--n2-type-xs);
+}
+.task-tile-editor-head .btn {
+  margin-left: auto;
+}
+.task-tile-editor-note {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+  margin-bottom: var(--n2-space-2);
+}
+.task-tile-editor .field:last-child,
+.task-tile-editor .field-row:last-child {
+  margin-bottom: 0;
+}
+
+.task-help-tip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--n2-text-muted);
+  cursor: help;
+}
+.task-help-tip::after {
+  content: '';
+  position: absolute;
+  inset: -8px;
+}
+.task-help-tip:hover {
+  color: var(--n2-text);
+}
+.task-help-tip svg {
+  display: block;
+}
+
+/* ---- Sekcje lewej kolumny ---------------------------------------------- */
+.task-sheet-section {
+  margin-top: var(--n2-space-6);
+}
+.task-sheet-section h2 {
+  margin: 0 0 var(--n2-space-2);
+  font-size: var(--n2-type-md);
+  font-weight: 650;
+}
+.task-sheet-section-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--n2-space-2) var(--n2-space-3);
+  margin-bottom: var(--n2-space-2);
+}
+.task-sheet-section-head h2 {
+  margin: 0;
+}
+.task-sheet-section-meta,
+.task-sheet-section-head .checklist-count {
+  margin: 0;
+  color: var(--n2-text-muted);
+  font-size: var(--n2-type-sm);
+}
+.task-sheet-grid-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  margin-left: auto;
+  padding: 0 var(--n2-space-2);
+  border: 0;
+  border-radius: var(--n2-radius-xs);
+  background: none;
+  color: var(--n2-lavender);
+  font: inherit;
+  font-size: var(--n2-type-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+.task-sheet-grid-link:hover {
+  background: var(--n2-surface-muted);
+}
+.task-sheet-grid-link svg {
+  display: block;
+}
+.task-sheet-collapsible {
+  margin-top: var(--n2-space-4);
+  border-top: 1px solid var(--n2-border-soft);
+}
+.task-sheet-collapsible .section-toggle {
+  min-height: 44px;
+}
+.task-sheet-toggle-summary {
+  margin-left: auto;
+  color: var(--n2-text-muted);
+  font-size: var(--n2-type-sm);
+  font-weight: 500;
+}
+
+/* Tabela „Godziny osób": linie zamiast ramek (PRODUCT.md: bez siatek komórek). */
+.task-hours-table-wrap {
+  overflow-x: auto;
+}
+.task-hours-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--n2-type-sm);
+  font-variant-numeric: tabular-nums;
+}
+.task-hours-table th,
+.task-hours-table td {
+  padding: var(--n2-space-2);
+  border-bottom: 1px solid var(--n2-border-soft);
+  font-weight: 400;
+  text-align: left;
+  white-space: nowrap;
+}
+.task-hours-table thead th {
+  border-bottom-color: var(--n2-border);
+  color: var(--n2-text-muted);
+  font-size: var(--n2-type-xs);
+  font-weight: 500;
+}
+.task-hours-person {
+  display: flex;
+  align-items: center;
+  gap: var(--n2-space-2);
+}
+.task-hours-bin {
+  color: var(--n2-lavender);
+}
+.task-hours-warn {
+  display: inline-flex;
+  color: var(--n2-warning);
+  border-radius: 50%;
+}
+.task-hours-warn svg {
+  display: block;
+}
+
+/* ---- Podwidok „Siatka dni" --------------------------------------------- */
+.task-sheet-subview-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--n2-space-3);
+  margin-bottom: var(--n2-space-3);
+}
+.task-sheet-subview-head h2 {
+  margin: 0;
+  font-size: var(--n2-type-lg);
+}
+.task-sheet-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+}
+/* Lepki nagłówek siatki potrzebuje własnego scrollportu (dawna reguła S3
+   `.task-modal-body .alloc-wrap`, której karta v2 już nie dziedziczy). */
+.task-sheet .alloc-wrap {
+  max-height: 60vh;
+  overflow: auto;
+  overscroll-behavior: auto;
+}
+
+/* ---- Stopka (tworzenie, szkic, powody blokady) ------------------------- */
+.task-sheet-footer {
+  margin-top: var(--n2-space-5);
+  background: var(--n2-panel);
+}
+
+/* ---- Rozmowa przed utworzeniem zadania --------------------------------- */
+.task-sheet-conversation-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--n2-space-3);
+  padding: var(--n2-space-8) var(--n2-space-6);
+  color: var(--n2-text-muted);
+  text-align: center;
+}
+.task-sheet-conversation-empty p {
+  margin: 0;
+  max-width: 28ch;
+}
+
+/* Checklista: przycisk usuwania pozycji. Na urządzeniach z myszą zostaje
+   ukryty (opacity, nie display, więc dalej łapie fokus z Tab), a pokazuje się
+   po najechaniu na wiersz albo gdy fokus jest w wierszu. Na dotyku i
+   wskaźnikach zgrubnych jest widoczny cały czas. */
+.checklist-row .checklist-delete {
+  flex: none;
+  opacity: 0;
+  transition: opacity var(--n2-transition), background var(--n2-transition),
+    color var(--n2-transition);
+}
+.checklist-row:hover .checklist-delete,
+.checklist-row:focus-within .checklist-delete,
+.checklist-row .checklist-delete:focus-visible {
+  opacity: 1;
+}
+@media (hover: none), (pointer: coarse) {
+  .checklist-row .checklist-delete {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .checklist-row .checklist-delete {
+    transition: none;
+  }
+}

@@ -14,7 +14,10 @@
 //
 // Clean-install prerequisite: Playwright is intentionally NOT a package.json
 // dependency (kept out to keep scheduler installs light), so after `npm ci` it
-// is missing. Install its browsers first:
+// is missing. The checks load it through scripts/lib/browser-env.mjs, which
+// falls back to the npx-cache copy (with Google Chrome for Chromium) when
+// `import 'playwright'` does not resolve. To use the repo-local copy instead,
+// install it and its browsers first:
 //   npm install --no-save playwright@1.61.1 && npx playwright install chromium webkit
 //
 // This runner owns its own preview server: it refuses to start if anything is
@@ -102,8 +105,10 @@ async function main() {
   }
 
   // Prerequisite: Playwright must be importable (browsers installed too).
+  // scripts/lib/browser-env.mjs tries `playwright`, then $PLAYWRIGHT_MODULE,
+  // then the machine-local npx cache copy, and throws if none resolves.
   try {
-    await import('playwright');
+    await import('./lib/browser-env.mjs');
   } catch {
     console.error(
       'Playwright is not available. It is intentionally not a package.json dependency.\n' +

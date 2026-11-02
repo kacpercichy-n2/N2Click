@@ -17,6 +17,7 @@ import {
   type ChatReactionEvent,
   type ChatReactionGroup,
   type ChatReactionMap,
+  type ChatReadEvent,
 } from './types';
 
 /**
@@ -83,10 +84,20 @@ export function applyIncomingMessage(
   const isNewer =
     !conversation.lastMessageAt ||
     compareTimestamps(message.createdAt, conversation.lastMessageAt) >= 0;
+  // Wiadomość nie późniejsza niż nasz znacznik odczytu jest już przeczytana
+  // (powtórka zdarzenia ze starym id nie może podbić licznika).
+  const selfMember = context.selfId
+    ? conversation.members.find((member) => member.userId === context.selfId)
+    : undefined;
+  const alreadyRead =
+    selfMember !== undefined &&
+    selfMember.lastReadAt !== null &&
+    timestampMs(selfMember.lastReadAt) >= timestampMs(message.createdAt);
   const countsAsUnread =
     message.conversationId !== context.openConversationId &&
     message.authorId !== context.selfId &&
-    message.deletedAt === null;
+    message.deletedAt === null &&
+    !alreadyRead;
 
   const next: ChatConversation = {
     ...conversation,
@@ -98,6 +109,7 @@ export function applyIncomingMessage(
           kind: message.kind,
           createdAt: message.createdAt,
           deletedAt: message.deletedAt,
+          attachmentsCount: message.attachments.length,
         }
       : conversation.lastMessage,
     lastMessageAt: isNewer ? message.createdAt : conversation.lastMessageAt,
@@ -195,19 +207,30 @@ export function mergeMessages(existing: ChatMessage[], incoming: ChatMessage[]):
 /**
  * Nowszy wariant tej samej wiadomości. Kasowanie miękkie jest TERMINALNE
  * (modelu „odkasowania" nie ma), więc wariant z `deletedAt` wygrywa zawsze.
- * Poza tym rozstrzyga ŚCIŚLE późniejszy `editedAt`, a REMIS zostawia wariant
- * już posiadany. Remis jest bezpieczny wyłącznie dzięki serwerowej gwarancji:
- * trigger `chat_messages_stamp_edit` (20260813200000) podbija `edited_at`
- * z zegara Postgresa przy KAŻDEJ zmianie `body`, więc identyczna rewizja =
- * identyczna treść — bez tej gwarancji remis był nierozstrzygalny (dowolny
- * wybór cofał edycję starym snapshotem albo ją ignorował). Znaczniki zawsze
- * z Postgresa, więc porównanie leksykalne jest poprawne.
+ * Poza tym rozstrzyga ŚCIŚLE późniejsza rewizja (`messageRevision`), a REMIS
+ * zostawia wariant już posiadany. Remis jest bezpieczny wyłącznie dzięki
+ * serwerowej gwarancji: `revised_at` (BACKLOG 1) podbija baza przy KAŻDEJ
+ * zmianie wiersza (edycja, przypięcie, odpięcie, kasowanie), więc identyczna
+ * rewizja = identyczny wiersz. Znaczniki zawsze z Postgresa, więc porównanie
+ * leksykalne jest poprawne.
  */
 function newerMessageVariant(previous: ChatMessage, incoming: ChatMessage): ChatMessage {
   if (previous.deletedAt !== null || incoming.deletedAt !== null) {
     return previous.deletedAt !== null ? previous : incoming;
   }
-  return (incoming.editedAt ?? '') > (previous.editedAt ?? '') ? incoming : previous;
+  return compareTimestamps(messageRevision(incoming), messageRevision(previous)) > 0
+    ? incoming
+    : previous;
+}
+
+/**
+ * Rewizja wariantu do scalania: `revisedAt`, a przed migracją `revised_at`
+ * (baza bez kolumny) `editedAt` (stary szkic podbijał go też przy przypięciu),
+ * a dla nigdy niezmienionego wiersza `createdAt`. Etykietę „(edytowana)”
+ * wolno brać WYŁĄCZNIE z `editedAt` (zmiana treści), nigdy z rewizji.
+ */
+export function messageRevision(message: ChatMessage): string {
+  return message.revisedAt ?? message.editedAt ?? message.createdAt;
 }
 
 function sameMessage(a: ChatMessage, b: ChatMessage): boolean {
@@ -215,8 +238,26 @@ function sameMessage(a: ChatMessage, b: ChatMessage): boolean {
     a.body === b.body &&
     a.createdAt === b.createdAt &&
     a.editedAt === b.editedAt &&
-    a.deletedAt === b.deletedAt
+    a.deletedAt === b.deletedAt &&
+    a.pinnedAt === b.pinnedAt &&
+    a.pinnedBy === b.pinnedBy &&
+    a.revisedAt === b.revisedAt
   );
+}
+
+/**
+ * Znacznik odczytu: zegar klienta, ale nie wcześniej niż najnowsza wczytana
+ * wiadomość. Zegar urządzenia spóźniony względem serwera zostawiłby inaczej
+ * świeżą wiadomość „nieprzeczytaną” (licznik, „Widziane przez”). Przyszłość
+ * przycina trigger `chat_clamp_last_read` po stronie bazy.
+ */
+export function readWatermark(
+  messages: readonly Pick<ChatMessage, 'createdAt'>[],
+  nowIso: string,
+): string {
+  const newest = messages.length > 0 ? messages[messages.length - 1].createdAt : null;
+  if (newest === null) return nowIso;
+  return Date.parse(newest) > Date.parse(nowIso) ? newest : nowIso;
 }
 
 /** Kursor najnowszej znanej wiadomości — punkt startu nadrabiania luki. */
@@ -422,4 +463,396 @@ export function applyConversationTheme(
   const nextList = list.slice();
   nextList[index] = { ...conversation, themeId };
   return nextList;
+}
+
+// ---- Karta zadania v2 ---------------------------------------------------------
+
+/** Rozmowa zadania (kontekst 'task'); dok jej nie pokazuje. */
+export function isTaskConversation(conversation: ChatConversation): boolean {
+  return conversation.kind === 'task' || conversation.contextType === 'task';
+}
+
+/** Rozmowa zadania o danym id zadania (jedna na zadanie, unikalny indeks L1). */
+export function findTaskConversation(
+  list: readonly ChatConversation[],
+  taskId: string,
+): ChatConversation | null {
+  if (taskId === '') return null;
+  return list.find((c) => isTaskConversation(c) && c.contextId === taskId) ?? null;
+}
+
+/** Nieprzeczytane w rozmowie zadania (odznaka na karcie); 0 gdy rozmowy nie ma. */
+export function taskConversationUnread(
+  list: readonly ChatConversation[],
+  taskId: string,
+): number {
+  return findTaskConversation(list, taskId)?.unreadCount ?? 0;
+}
+
+/** Lista doku: rozmowy zadań zostają w kartach zadań (ta sama referencja, gdy nic nie odpada). */
+export function dockConversations(list: ChatConversation[]): ChatConversation[] {
+  return list.some(isTaskConversation) ? list.filter((c) => !isTaskConversation(c)) : list;
+}
+
+function timestampMs(value: string | null | undefined): number {
+  if (!value) return Number.NEGATIVE_INFINITY;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : Number.NEGATIVE_INFINITY;
+}
+
+/**
+ * Czy osoba należy do rozmowy według ostatniego autorytatywnego składu
+ * (overview albo select członków). Zdarzenia realtime od nie-członków
+ * odrzucamy (R1, znalezisko 1).
+ */
+export function isConversationMember(
+  list: readonly ChatConversation[],
+  conversationId: string,
+  userId: string,
+): boolean {
+  if (conversationId === '' || userId === '') return false;
+  const conversation = list.find((c) => c.id === conversationId);
+  return conversation !== undefined && conversation.members.some((m) => m.userId === userId);
+}
+
+/**
+ * Zdarzenie `read`: przesuwa watermark JEDNEGO członka, wyłącznie do przodu
+ * (spóźnione echo nie cofa). Znaczniki bywają w dwóch formatach ('Z' z klienta,
+ * '+00:00' z Postgresa), więc porównujemy liczbowo, nie leksykalnie.
+ * Brak zmiany => ta sama referencja listy.
+ */
+export function applyReadReceipt(
+  list: ChatConversation[],
+  event: ChatReadEvent,
+): ChatConversation[] {
+  const index = list.findIndex((c) => c.id === event.conversationId);
+  if (index === -1) return list;
+  const conversation = list[index];
+  const memberIndex = conversation.members.findIndex((m) => m.userId === event.userId);
+  if (memberIndex === -1) return list;
+  const member = conversation.members[memberIndex];
+  if (timestampMs(member.lastReadAt) >= timestampMs(event.lastReadAt)) return list;
+  const members = conversation.members.slice();
+  members[memberIndex] = { ...member, lastReadAt: event.lastReadAt };
+  const next = list.slice();
+  next[index] = { ...conversation, members };
+  return next;
+}
+
+/**
+ * Autorytatywny skład jednej rozmowy (osobny select z `muted_until`): podmienia
+ * członków, ale watermarku nie cofa (broadcast `read` mógł dojść wcześniej).
+ */
+export function applyConversationMembers(
+  list: ChatConversation[],
+  conversationId: string,
+  members: readonly ChatMember[],
+): ChatConversation[] {
+  const index = list.findIndex((c) => c.id === conversationId);
+  if (index === -1) return list;
+  const conversation = list[index];
+  const known = new Map(conversation.members.map((m) => [m.userId, m]));
+  const merged = members.map((member) => {
+    const previous = known.get(member.userId);
+    if (previous && timestampMs(previous.lastReadAt) > timestampMs(member.lastReadAt)) {
+      return { ...member, lastReadAt: previous.lastReadAt };
+    }
+    return member;
+  });
+  const same =
+    merged.length === conversation.members.length &&
+    merged.every((m, i) => {
+      const p = conversation.members[i];
+      return (
+        p.userId === m.userId &&
+        p.role === m.role &&
+        p.lastReadAt === m.lastReadAt &&
+        p.mutedUntil === m.mutedUntil
+      );
+    });
+  if (same) return list;
+  const next = list.slice();
+  next[index] = { ...conversation, members: merged };
+  return next;
+}
+
+/**
+ * Świeże overview niesie członków BEZ `muted_until` (stary `chat_overview`),
+ * a osobny select ją zna. Przenosimy znaną wartość, gdy nowa jest nieznana
+ * (`undefined`), żeby każde odświeżenie listy nie przełączało dzwonka.
+ */
+export function carryMemberDetails(
+  previous: readonly ChatConversation[],
+  next: ChatConversation[],
+): ChatConversation[] {
+  if (previous.length === 0) return next;
+  const byId = new Map(previous.map((c) => [c.id, c]));
+  let changed = false;
+  const result = next.map((conversation) => {
+    const old = byId.get(conversation.id);
+    if (!old) return conversation;
+    const oldMembers = new Map(old.members.map((m) => [m.userId, m]));
+    let touched = false;
+    const members = conversation.members.map((member) => {
+      const known = oldMembers.get(member.userId);
+      if (member.mutedUntil !== undefined || known?.mutedUntil === undefined) return member;
+      touched = true;
+      return { ...member, mutedUntil: known.mutedUntil };
+    });
+    if (!touched) return conversation;
+    changed = true;
+    return { ...conversation, members };
+  });
+  return changed ? result : next;
+}
+
+/**
+ * Obserwowanie: wyciszenie bezterminowe (`muted_until` w przyszłości albo
+ * 'infinity') = nie obserwuje. `undefined` (kolumna nieznana) liczymy jako
+ * obserwuje: domyślny stan każdego członka po dołączeniu.
+ */
+export function isFollowing(member: ChatMember | undefined, nowMs: number = Date.now()): boolean {
+  if (!member) return false;
+  const muted = member.mutedUntil;
+  if (muted === undefined || muted === null) return true;
+  if (muted === 'infinity') return false;
+  const until = Date.parse(muted);
+  return !Number.isFinite(until) || until <= nowMs;
+}
+
+/** Obserwujący rozmowę (awatary w nagłówku panelu zadania), kolejność członków. */
+export function followerIds(conversation: ChatConversation, nowMs: number = Date.now()): string[] {
+  return conversation.members.filter((m) => isFollowing(m, nowMs)).map((m) => m.userId);
+}
+
+/** Optymistyczne obserwuj / przestań obserwować dla zalogowanego. */
+export function applyFollowState(
+  list: ChatConversation[],
+  conversationId: string,
+  selfId: string | null,
+  follow: boolean,
+): ChatConversation[] {
+  if (selfId === null) return list;
+  const index = list.findIndex((c) => c.id === conversationId);
+  if (index === -1) return list;
+  const conversation = list[index];
+  const memberIndex = conversation.members.findIndex((m) => m.userId === selfId);
+  if (memberIndex === -1) return list;
+  const member = conversation.members[memberIndex];
+  const mutedUntil = follow ? null : 'infinity';
+  if (member.mutedUntil === mutedUntil) return list;
+  const members = conversation.members.slice();
+  members[memberIndex] = { ...member, mutedUntil };
+  const next = list.slice();
+  next[index] = { ...conversation, members };
+  return next;
+}
+
+/** Członek z watermarkiem widoczny pod wiadomością („Widziane przez”). */
+export interface ChatSeenBy {
+  userId: string;
+  lastReadAt: string;
+}
+
+/**
+ * Seen-by w stylu Messengera: KAŻDY członek (poza zalogowanym) pojawia się
+ * dokładnie raz, pod najnowszą wczytaną wiadomością (nie systemową), którą
+ * przeczytał, czyli `createdAt <= lastReadAt`. Gdy ta wiadomość jest JEGO
+ * własna, awatara nie ma wcale: odpowiedź sama mówi, że widział wcześniejsze
+ * (jak Messenger, który wtedy zdejmuje „Widziane”). Usunięte też się liczą
+ * (placeholder zostaje w liście). Wynik: id wiadomości → osoby.
+ */
+export function seenByMessage(
+  messages: readonly ChatMessage[],
+  members: readonly ChatMember[],
+  selfId: string | null,
+): Record<string, ChatSeenBy[]> {
+  const result: Record<string, ChatSeenBy[]> = {};
+  for (const member of members) {
+    if (member.userId === selfId || member.lastReadAt === null) continue;
+    const readMs = timestampMs(member.lastReadAt);
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (message.kind === 'system') continue;
+      if (timestampMs(message.createdAt) > readMs) continue;
+      if (message.authorId !== member.userId) {
+        (result[message.id] ??= []).push({ userId: member.userId, lastReadAt: member.lastReadAt });
+      }
+      break;
+    }
+  }
+  return result;
+}
+
+/** Przypięte (nieusunięte) wiadomości, najświeżej przypięta pierwsza. */
+export function pinnedMessages(messages: readonly ChatMessage[]): ChatMessage[] {
+  return messages
+    .filter((m) => m.pinnedAt !== null && m.deletedAt === null)
+    .sort((a, b) => timestampMs(b.pinnedAt) - timestampMs(a.pinnedAt));
+}
+
+// ---- Wątki (kilka rozmów żywych naraz: dok + panel zadania) ---------------------
+
+/** Stan jednej wczytanej rozmowy. Provider trzyma mapę id → wątek. */
+export interface ChatThreadState {
+  messages: ChatMessage[];
+  reactions: ChatReactionMap;
+  /** Trwa wczytywanie (pierwsza strona albo starsza). */
+  loading: boolean;
+  /** Pierwsza strona doszła (odróżnia „pusto” od „jeszcze nie wiadomo”). */
+  loaded: boolean;
+  hasMore: boolean;
+  typing: ChatTypingEntry[];
+  /** Polski komunikat nieudanego wczytania; null = w porządku. */
+  error: string | null;
+  /**
+   * Przypięte wiadomości z OSOBNEGO pobrania (`pinned_at is not null`), także
+   * spoza wczytanej strony. Pasek „Przypięte” czyta `threadPins`, które scala
+   * tę listę z `messages` (nowsza rewizja wygrywa).
+   */
+  pinned: ChatMessage[];
+}
+
+export const EMPTY_THREAD: ChatThreadState = Object.freeze({
+  messages: [],
+  reactions: {},
+  loading: false,
+  loaded: false,
+  hasMore: false,
+  typing: [],
+  error: null,
+  pinned: [],
+}) as ChatThreadState;
+
+export type ChatThreadMap = Readonly<Record<string, ChatThreadState>>;
+
+/**
+ * Zmiana jednego wątku. `update` dostaje bieżący wątek; zwrócenie tego samego
+ * obiektu = brak zmiany = ta sama referencja mapy (invariant referencji).
+ * Nieistniejący wątek NIE powstaje (zdarzenie dla rozmowy, której nikt nie
+ * ogląda, nie ma gdzie trafić); do zakładania służy `ensureThread`.
+ */
+export function updateThread(
+  threads: ChatThreadMap,
+  conversationId: string,
+  update: (thread: ChatThreadState) => ChatThreadState,
+): ChatThreadMap {
+  const current = threads[conversationId];
+  if (current === undefined) return threads;
+  const next = update(current);
+  if (next === current) return threads;
+  return { ...threads, [conversationId]: next };
+}
+
+/** Zakłada pusty wątek (w trakcie wczytywania), gdy go nie ma. */
+export function ensureThread(threads: ChatThreadMap, conversationId: string): ChatThreadMap {
+  if (conversationId === '' || threads[conversationId] !== undefined) return threads;
+  return { ...threads, [conversationId]: { ...EMPTY_THREAD, loading: true } };
+}
+
+/** Zostawia wyłącznie wątki z `keep`; nic do usunięcia => ta sama referencja. */
+export function retainThreads(threads: ChatThreadMap, keep: ReadonlySet<string>): ChatThreadMap {
+  const ids = Object.keys(threads);
+  if (ids.every((id) => keep.has(id))) return threads;
+  const next: Record<string, ChatThreadState> = {};
+  for (const id of ids) if (keep.has(id)) next[id] = threads[id];
+  return next;
+}
+
+/** Scalenie wiadomości do wątku (strona, broadcast, echo wysyłki). */
+export function mergeThreadMessages(
+  thread: ChatThreadState,
+  incoming: ChatMessage[],
+): ChatThreadState {
+  const messages = mergeMessages(thread.messages, incoming);
+  const pinned = mergePinned(thread.pinned ?? [], incoming);
+  if (messages === thread.messages && pinned === thread.pinned) return thread;
+  return { ...thread, messages, pinned };
+}
+
+/** Lista przypiętych: znane id i nowe przypięcia; reszta przychodzących odpada. */
+function mergePinned(pinned: ChatMessage[], incoming: readonly ChatMessage[]): ChatMessage[] {
+  const known = new Set(pinned.map((m) => m.id));
+  const relevant = incoming.filter((m) => known.has(m.id) || m.pinnedAt !== null);
+  return relevant.length === 0 ? pinned : mergeMessages(pinned, relevant);
+}
+
+/**
+ * Zdarzenie UPDATE (edycja, usunięcie, przypięcie). Wiadomość STARSZA niż
+ * wczytane okno (są jeszcze starsze strony) nie wchodzi do listy: wisiałaby nad
+ * dziurą, której `loadOlder` nie zasypie. Trafia tylko do listy przypiętych,
+ * jeśli jej dotyczy. Wiadomość nieznana, ale w oknie (zgubiony INSERT), wchodzi.
+ */
+export function mergeThreadUpdate(thread: ChatThreadState, message: ChatMessage): ChatThreadState {
+  const known = thread.messages.some((m) => m.id === message.id);
+  const oldest = thread.messages[0];
+  const beforeWindow =
+    !known && thread.hasMore && oldest !== undefined && compareMessages(message, oldest) < 0;
+  if (!beforeWindow) return mergeThreadMessages(thread, [message]);
+  const pinned = mergePinned(thread.pinned ?? [], [message]);
+  return pinned === thread.pinned ? thread : { ...thread, pinned };
+}
+
+/** Wynik osobnego pobrania przypiętych: zastępuje listę (prawda serwera). */
+export function setThreadPinned(thread: ChatThreadState, pinned: ChatMessage[]): ChatThreadState {
+  // Wariant już znany z wątku może być nowszy niż ten z pobrania.
+  const merged = pinned.map((p) => {
+    const local = thread.messages.find((m) => m.id === p.id);
+    return local ? (mergeMessages([p], [local])[0] ?? p) : p;
+  });
+  return { ...thread, pinned: merged };
+}
+
+/**
+ * Lokalne naniesienie przypięcia po udanym RPC (broadcast mógł przepaść).
+ * Rewizja (`revisedAt`, przed migracją `editedAt`) zostaje stara, a `editedAt`
+ * nie rośnie (przypięcie to nie edycja treści), więc prawdziwy UPDATE z serwera i tak
+ * wygra przy scalaniu.
+ */
+export function applyLocalPin(
+  thread: ChatThreadState,
+  messageId: string,
+  pinnedAt: string | null,
+  pinnedBy: string | null,
+): ChatThreadState {
+  const patch = (m: ChatMessage): ChatMessage =>
+    m.id === messageId && m.deletedAt === null ? { ...m, pinnedAt, pinnedBy } : m;
+  const source =
+    thread.messages.find((m) => m.id === messageId) ??
+    (thread.pinned ?? []).find((m) => m.id === messageId);
+  if (!source || (source.pinnedAt !== null) === (pinnedAt !== null)) return thread;
+  const messages = thread.messages.map(patch);
+  const inPinned = (thread.pinned ?? []).some((m) => m.id === messageId);
+  const pinned = inPinned
+    ? (thread.pinned ?? []).map(patch)
+    : pinnedAt !== null
+      ? [...(thread.pinned ?? []), patch(source)]
+      : thread.pinned ?? [];
+  return { ...thread, messages, pinned };
+}
+
+/** Przypięte do paska: lista osobna scalona z wczytaną stroną. */
+export function threadPins(thread: ChatThreadState): ChatMessage[] {
+  const pinned = thread.pinned ?? [];
+  if (pinned.length === 0) return pinnedMessages(thread.messages);
+  return pinnedMessages(mergeMessages(pinned, thread.messages));
+}
+
+/** Scalenie autorytatywnych reakcji do wątku. */
+export function mergeThreadReactions(
+  thread: ChatThreadState,
+  incoming: ChatReactionMap,
+): ChatThreadState {
+  const reactions = mergeReactions(thread.reactions, incoming);
+  return reactions === thread.reactions ? thread : { ...thread, reactions };
+}
+
+/** Zmiana pól skalarnych wątku; te same wartości => ten sam obiekt. */
+export function patchThread(
+  thread: ChatThreadState,
+  patch: Partial<Pick<ChatThreadState, 'loading' | 'loaded' | 'hasMore' | 'error'>>,
+): ChatThreadState {
+  const keys = Object.keys(patch) as Array<keyof typeof patch>;
+  if (keys.every((key) => thread[key] === patch[key])) return thread;
+  return { ...thread, ...patch };
 }

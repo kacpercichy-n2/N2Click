@@ -58,6 +58,11 @@ function message(overrides: Partial<ChatMessage> & { id: string }): ChatMessage 
     editedAt: null,
     deletedAt: null,
     replyTo: null,
+    attachments: [],
+    mentionIds: [],
+    pinnedAt: null,
+    pinnedBy: null,
+    revisedAt: null,
     ...overrides,
   };
 }
@@ -108,6 +113,7 @@ describe('applyIncomingMessage', () => {
       body: 'Cześć',
       kind: 'text', createdAt: T3,
       deletedAt: null,
+      attachmentsCount: 0,
     });
   });
 

@@ -169,6 +169,8 @@ describe('mapowanie wierszy', () => {
     expect(conversation).toEqual({
       id: CONV,
       kind: 'group',
+      contextType: null,
+      contextId: null,
       title: 'Zespół',
       createdBy: SELF,
       members: [
@@ -227,6 +229,11 @@ describe('mapowanie wierszy', () => {
       editedAt: T2,
       deletedAt: T3,
       replyTo: null,
+      attachments: [],
+      mentionIds: [],
+      pinnedAt: null,
+      pinnedBy: null,
+      revisedAt: null,
     });
   });
 
@@ -452,6 +459,12 @@ describe('sendMessage', () => {
     const db = new FakeChatDb();
     db.insertMessageError = { code: '42501', message: 'denied' };
     expect(await sendMessage(db, CONV, SELF, 'Hej')).toEqual({
+      ok: false,
+      error: 'Nie udało się wysłać wiadomości: brak dostępu do tej rozmowy.',
+    });
+    const unknown = new FakeChatDb();
+    unknown.insertMessageError = { code: '08006', message: 'connection failure' };
+    expect(await sendMessage(unknown, CONV, SELF, 'Hej')).toEqual({
       ok: false,
       error: CHAT_MESSAGES.send,
     });

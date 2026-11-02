@@ -339,3 +339,24 @@ describe('workloadSummaryLine', () => {
     );
   });
 });
+
+it.each(['task_message', 'task_mention'] as const)('maps %s to the task card', (type) => {
+  const entry = notificationEntry({ id: 'n', recipientId: 'r', type,
+    payload: { taskId: 't', actorId: 'a' }, createdAt: '', readAt: '' },
+  { actorName: 'Ola Nowak', taskTitle: 'Key visual', projectName: 'Projekt', commentBody: '' });
+  expect(entry.target).toEqual({ kind: 'task', taskId: 't' });
+  expect(entry.openLabel).toBe('Otwórz zadanie');
+  expect(entry.title).toBe(
+    type === 'task_mention'
+      ? 'Ola Nowak wspomniał(a) Cię w zadaniu: Key visual'
+      : 'Nowa wiadomość od Ola Nowak w zadaniu: Key visual',
+  );
+});
+
+it('zbiorczy task_message pokazuje liczbę nowych wiadomości', () => {
+  const entry = notificationEntry({ id: 'n', recipientId: 'r', type: 'task_message',
+    payload: { taskId: 't', actorId: 'a', count: 3 } as Notification['payload'], createdAt: '', readAt: '' },
+  { actorName: 'Ola Nowak', taskTitle: 'Key visual', projectName: 'Projekt', commentBody: '' });
+  expect(entry.title).toBe('3 nowe wiadomości w zadaniu: Key visual');
+  expect(entry.target).toEqual({ kind: 'task', taskId: 't' });
+});

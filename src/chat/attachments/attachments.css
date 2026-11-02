@@ -1,0 +1,32 @@
+.attachment-tray { display: flex; gap: var(--n2-space-2); padding: var(--n2-space-2); margin: 0; overflow-x: auto; list-style: none; }
+.attachment-pending { position: relative; flex: 0 0 160px; height: 160px; border-radius: var(--n2-radius-sm); background: var(--n2-surface-strong); overflow: hidden; }
+.attachment-pending > img { width: 100%; height: 100%; object-fit: cover; }
+.attachment-control { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; min-width: 44px; min-height: 44px; padding: var(--n2-space-2); border: 0; border-radius: var(--n2-radius-xs); background: var(--n2-surface-strong); color: var(--n2-text); cursor: pointer; text-decoration: none; }
+.attachment-control:hover { background: var(--n2-violet); }
+.attachment-control:focus-visible, .attachment-thumbnail:focus-visible { outline: 3px solid var(--n2-violet-soft); outline-offset: -3px; }
+.attachment-remove { position: absolute; top: 0; right: 0; }
+.attachment-progress { position: absolute; inset: auto auto var(--n2-space-8) var(--n2-space-2); width: 44px; height: 44px; background: var(--n2-surface-strong); border-radius: var(--n2-radius-pill); color: var(--n2-text); }
+.attachment-progress svg { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); fill: none; stroke: var(--n2-text-soft); stroke-width: 2; }
+.attachment-progress circle + circle { stroke: var(--n2-violet-soft); stroke-width: 3; }
+.attachment-progress > span { display: grid; place-items: center; height: 100%; font-size: var(--n2-type-xs); }
+.attachment-file-name { position: absolute; bottom: 0; left: 0; right: 0; padding: var(--n2-space-1); background: var(--n2-surface-strong); color: var(--n2-text); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: var(--n2-type-sm); }
+.attachment-error { position: absolute; inset: 44px 0 24px; display: flex; align-items: center; gap: var(--n2-space-1); padding: var(--n2-space-1); background: var(--n2-surface-strong); color: var(--n2-danger); font-size: var(--n2-type-xs); overflow-y: auto; }
+.attachment-announcement { color: var(--n2-text-soft); font-size: var(--n2-type-sm); padding-inline: var(--n2-space-2); }
+.attachment-announcement:empty { display: none; }
+.attachment-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--n2-space-1); width: min(100%, 420px); }
+.attachment-grid-single { grid-template-columns: minmax(0, 1fr); }
+.attachment-thumbnail { position: relative; aspect-ratio: 1 / 1; display: grid; place-items: center; width: 100%; min-width: 44px; min-height: 44px; max-height: 320px; padding: 0; overflow: hidden; border: 0; border-radius: var(--n2-radius-xs); background: var(--n2-surface-strong); color: var(--n2-text); cursor: pointer; }
+.attachment-thumbnail img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.attachment-thumbnail > span { padding: var(--n2-space-2); }
+.attachment-more { position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--n2-surface-strong) 72%, transparent); font-size: var(--n2-type-xl); }
+.task-modal-card.attachment-lightbox { width: 100%; max-width: none; height: 100dvh; max-height: none; padding: var(--n2-space-4); border-radius: 0; background: var(--n2-text-inverse); color: var(--n2-text); border: 0; }
+.attachment-lightbox-content { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.attachment-lightbox header { display: flex; align-items: center; gap: var(--n2-space-2); }
+.attachment-lightbox header > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.attachment-lightbox-image { display: grid; place-items: center; flex: 1; min-height: 0; overflow: hidden; }
+.attachment-lightbox-image img { width: 100%; height: 100%; object-fit: contain; }
+.attachment-lightbox nav { display: flex; justify-content: center; gap: var(--n2-space-4); }
+.attachment-dropzone { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--n2-space-2); border: 2px dashed var(--n2-violet-soft); border-radius: var(--n2-radius-sm); background: var(--n2-surface-strong); color: var(--n2-text); pointer-events: none; z-index: var(--n2-z-popover); }
+@media (prefers-reduced-motion: reduce) { .attachment-lightbox { transform: none !important; animation: none !important; transition: none !important; } }
+
+.task-modal-viewport:has(> .attachment-lightbox) { padding: 0; z-index: var(--n2-z-confirm); }

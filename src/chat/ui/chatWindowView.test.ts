@@ -39,6 +39,11 @@ function message(patch: Partial<ChatMessage> & Pick<ChatMessage, 'id' | 'created
     editedAt: null,
     deletedAt: null,
     replyTo: null,
+    attachments: [],
+    mentionIds: [],
+    pinnedAt: null,
+    pinnedBy: null,
+    revisedAt: null,
     ...patch,
   };
 }
@@ -284,6 +289,11 @@ describe('wiersze systemowe', () => {
     editedAt: null,
     deletedAt: null,
     replyTo: null,
+    attachments: [],
+    mentionIds: [],
+    pinnedAt: null,
+    pinnedBy: null,
+    revisedAt: null,
   };
 
   it('systemMessageText składa polskie zdanie w czasie teraźniejszym (bez formy rodzajowej)', () => {

@@ -6,6 +6,7 @@
 // Modal grupy NIE jest dzieckiem tego panelu (renderuje go `ChatDock`), bo
 // kliknięcie w portal modala liczy się dla `useOverlay` jako klik na zewnątrz —
 // panel by się zamknął i zabrał modal ze sobą.
+import { dockConversations } from '../chatState';
 import { useMemo, useRef, useState, type RefObject } from 'react';
 import { m, useReducedMotion } from 'motion/react';
 import { Search, Users, Volume2, VolumeX } from '../../components/icons';
@@ -51,7 +52,7 @@ export function ChatSearchPopover({
   const rows = useMemo(
     () =>
       buildConversationRows({
-        conversations: chat.conversations,
+        conversations: dockConversations(chat.conversations),
         selfId: chat.selfId,
         directory,
         presence: chat.presence,

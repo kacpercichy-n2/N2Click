@@ -139,7 +139,7 @@ describe('collectTaskSaveBlockers', () => {
       .map((b) => b.fieldLabel)
       .filter((label): label is string => label !== null);
     expect(saveErrorSummary('Nie można zapisać zadania', labels)).toBe(
-      'Nie można zapisać zadania — popraw 2 pola: Tytuł, Okres.',
+      'Nie można zapisać zadania. Popraw 2 pola: Tytuł, Okres.',
     );
   });
 
