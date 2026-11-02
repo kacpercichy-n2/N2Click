@@ -14,7 +14,9 @@
 //     reakcje wskazanych wiadomości z bazy.
 //   * `theme_changed`: tylko od członka; odświeża overview (tam żyje motyw).
 //   * `typing`: ulotny i nieszkodliwy, zostaje na ładunku, ale tylko od
-//     członka rozmowy kanału i nigdy od siebie.
+//     członka rozmowy kanału i nigdy od siebie. Przychodzi z osobnego kanału
+//     `chat:typing:<id>` (BACKLOG 4, `chatChannels.ts`); `chat:conv:<id>` go
+//     nie słucha.
 //
 // Zero Reacta i SDK: provider wstrzykuje pobrania i odbiorców, testy podają
 // atrapy i ręczny zegar (`chatRealtime.test.ts`).
@@ -62,7 +64,10 @@ export interface ChatRealtimeGateDeps {
 }
 
 export interface ChatRealtimeGate {
-  /** Zdarzenie z kanału `chat:conv:<channelConversationId>`. */
+  /**
+   * Zdarzenie z kanału `chat:conv:<channelConversationId>` albo (tylko
+   * `typing`) `chat:typing:<channelConversationId>`.
+   */
   handle(channelConversationId: string, event: ChatRealtimeEvent, raw: unknown): void;
   /** Wylogowanie / odmontowanie: anuluje timery, wyniki w locie przepadają. */
   dispose(): void;
@@ -291,7 +296,7 @@ export function createChatRealtimeGate(deps: ChatRealtimeGateDeps): ChatRealtime
         case 'typing': {
           const actor = readActor(raw, 'userId');
           if (!actor || actor.userId === '' || actor.userId === deps.selfId()) return;
-          // Sygnał bez rozmowy w ładunku (dzisiejszy nadawca jej nie wysyła)
+          // Sygnał bez rozmowy w ładunku (kontrakt L1 wymaga tylko `userId`)
           // przypisujemy kanałowi; inna rozmowa w ładunku = odrzucony.
           if (actor.conversationId !== '' && actor.conversationId !== channelConversationId) return;
           if (!deps.isMember(channelConversationId, actor.userId)) return;

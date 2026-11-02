@@ -12,7 +12,9 @@
 //   * Ping dźwiękowy (`chatSound.ts`): decyzja w `decideChatPing` przy każdym
 //     INSERT z broadcastu; audio gra tylko po geście użytkownika (autoplay).
 //   * Realtime idzie przez BROADCAST (nie `postgres_changes`): kanał prywatny
-//     `chat:conv:<id>` per rozmowa, multipleksowany po jednym sockecie. Kanały
+//     `chat:conv:<id>` per rozmowa (tylko słuchanie) i `chat:typing:<id>` per
+//     OTWARTA rozmowa (jedyne, co nadajemy: „pisze…”; `chatChannels.ts`,
+//     BACKLOG 4), multipleksowane po jednym sockecie. Kanały
 //     prywatne autoryzuje token warstwy realtime: `client.realtime.setAuth(...)`
 //     MUSI polecieć przed `subscribe` i po każdej rotacji tokenu, inaczej join
 //     odbija się o RLS.
@@ -28,7 +30,7 @@
 //   * Ładunek broadcastu NIE jest źródłem prawdy (R1, znalezisko 1): bramka
 //     `chatRealtime.ts` odrzuca zdarzenia obcych rozmów i nie-członków,
 //     a wiadomości, odczyty i reakcje pobiera z bazy pod RLS. Klient nadaje
-//     sam wyłącznie ulotne `typing`.
+//     sam wyłącznie ulotne `typing`, i to tylko na `chat:typing:<id>`.
 //   * Rozmowy zadań są na liście `conversations` (kanały, nieprzeczytane), ale
 //     dok ich nie pokazuje (`dockConversations`), a `totalUnread` ich nie liczy.
 import {
@@ -43,6 +45,11 @@ import {
 } from 'react';
 import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
 import { useAuth } from '../auth/SessionProvider';
+import {
+  createTypingChannels,
+  subscribeConversationChannel,
+  type ChatTypingChannels,
+} from './chatChannels';
 import { getSupabaseClient } from '../supabase/client';
 import {
   createGroup as createGroupRow,
@@ -242,6 +249,10 @@ function activeKeyOf(openId: string | null, attached: ReadonlyMap<string, number
   return Array.from(ids).sort().join(',');
 }
 
+function splitKey(key: string): string[] {
+  return key === '' ? [] : key.split(',');
+}
+
 export function ChatProvider({ children }: { children: ReactNode }) {
   const auth = useAuth();
 
@@ -284,6 +295,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const channelsRef = useRef<Map<string, RealtimeChannel>>(new Map());
   const presenceChannelRef = useRef<RealtimeChannel | null>(null);
   const selfChannelRef = useRef<RealtimeChannel | null>(null);
+  /** Kanały `chat:typing:<id>` otwartych rozmów (powstają po `setAuth`). */
+  const typingChannelsRef = useRef<ChatTypingChannels | null>(null);
+  /** Klucz otwartych rozmów dla kodu asynchronicznego (patrz `activeKey`). */
+  const activeKeyRef = useRef('');
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Kursor starszej strony per wątek. */
   const olderCursorsRef = useRef<Map<string, ChatMessageCursor | null>>(new Map());
@@ -596,28 +611,23 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     [applyFetchedMessages, changeThread, scheduleOverviewRefresh],
   );
 
+  const forwardToGate = useCallback((conversationId: string, event: ChatRealtimeEvent, raw: unknown): void => {
+    gateRef.current?.handle(conversationId, event, raw);
+  }, []);
+
   const subscribeConversation = useCallback(
     (client: SupabaseClient, conversationId: string): RealtimeChannel => {
-      const forward = (event: ChatRealtimeEvent) => (raw: unknown) =>
-        gateRef.current?.handle(conversationId, event, raw);
-      const channel = client
-        .channel(`chat:conv:${conversationId}`, { config: { private: true } })
-        .on('broadcast', { event: 'INSERT' }, forward('INSERT'))
-        .on('broadcast', { event: 'UPDATE' }, forward('UPDATE'))
-        .on('broadcast', { event: 'read' }, forward('read'))
-        .on('broadcast', { event: 'typing' }, forward('typing'))
-        .on('broadcast', { event: 'reaction' }, forward('reaction'))
-        .on('broadcast', { event: 'theme_changed' }, forward('theme_changed'));
-      channel.subscribe((status: string) => {
+      // Tylko słuchacze: `chat:conv:<id>` jest dla klienta do odczytu
+      // („pisze…” żyje na `chat:typing:<id>`, patrz `chatChannels.ts`).
+      return subscribeConversationChannel(client, conversationId, forwardToGate, (status) => {
         if (status !== 'SUBSCRIBED') return;
         // KAŻDY `SUBSCRIBED`, także pierwszy: wiadomość nadana między snapshotem
         // overview a dojściem joinu wpadłaby w szczelinę.
         scheduleOverviewRefresh();
         if (threadsRef.current[conversationId] !== undefined) void catchUpThread(conversationId);
       });
-      return channel;
     },
-    [scheduleOverviewRefresh, catchUpThread],
+    [forwardToGate, scheduleOverviewRefresh, catchUpThread],
   );
 
   // ---- Cykl życia: klient, presence, pierwsze wczytanie -----------------------
@@ -656,6 +666,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       if (token) await client.realtime.setAuth(token);
       if (cancelled) return;
 
+      // Kanały „pisze…” dopiero po `setAuth` (prywatne). Rozmowy otwarte przed
+      // tą chwilą dołączamy od razu; dalej uzgadnia je efekt wątków.
+      const typingChannels = createTypingChannels(client, forwardToGate);
+      typingChannelsRef.current = typingChannels;
+      typingChannels.reconcile(splitKey(activeKeyRef.current));
+
       const presenceChannel = client
         .channel('chat:presence', {
           config: { private: true, presence: { key: selfId, enabled: true } },
@@ -692,6 +708,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       }
       for (const channel of channelsRef.current.values()) void client.removeChannel(channel);
       channelsRef.current.clear();
+      typingChannelsRef.current?.dispose();
+      typingChannelsRef.current = null;
+      lastTypingSentRef.current.clear();
       if (presenceChannelRef.current) {
         void client.removeChannel(presenceChannelRef.current);
         presenceChannelRef.current = null;
@@ -704,7 +723,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       if (gateRef.current === gate) gateRef.current = null;
       dbRef.current = null;
     };
-  }, [active, selfId, refreshOverview, scheduleOverviewRefresh, createGate]);
+  }, [active, selfId, refreshOverview, scheduleOverviewRefresh, createGate, forwardToGate]);
 
   // Uzgodnienie kanałów z listą rozmów (klucz = ZBIÓR id, nie każda wiadomość).
   const conversationIdsKey = useMemo(
@@ -736,10 +755,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     // `attachedVersion` sygnalizuje zmianę zawartości refa.
     [openConversationId, attachedVersion],
   );
+  activeKeyRef.current = activeKey;
 
   useEffect(() => {
     if (!active) return;
-    const wanted = new Set(activeKey === '' ? [] : activeKey.split(','));
+    const wanted = new Set(splitKey(activeKey));
+    // „Pisze…” słuchamy i nadajemy tylko w otwartych rozmowach.
+    typingChannelsRef.current?.reconcile(wanted);
     const current = threadsRef.current;
     const added = Array.from(wanted).filter((id) => current[id] === undefined);
     for (const id of Object.keys(current)) {
@@ -1119,14 +1141,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     const now = Date.now();
     const last = lastTypingSentRef.current.get(conversationId) ?? 0;
     if (now - last < CHAT_TYPING_THROTTLE_MS) return;
-    const channel = channelsRef.current.get(conversationId);
-    if (!channel) return;
-    lastTypingSentRef.current.set(conversationId, now);
-    void channel.send({
-      type: 'broadcast',
-      event: 'typing',
-      payload: { userId: self, conversationId },
-    });
+    // Wyłącznie `chat:typing:<id>`; nieotwarta rozmowa nie ma kanału, nic nie leci.
+    if (typingChannelsRef.current?.send(conversationId, self)) {
+      lastTypingSentRef.current.set(conversationId, now);
+    }
   }, []);
 
   const refresh = useCallback((): void => {
