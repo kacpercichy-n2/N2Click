@@ -1,7 +1,8 @@
 // Dzwonek powiadomień w wierszu marki sidebara (na lewo od przycisku zwijania).
 // Licznik nieprzeczytanych pochodzi z TEGO SAMEGO pochodnego feedu co kafelek
 // „Powiadomienia" na Panelu i badge karty przeglądarki
-// (selectors.notificationsForPerson, including server task messages) — trzy widoki, jedno źródło liczby.
+// (selectors.notificationsForPerson, także wiersze rozmowy zadania task_message /
+// task_mention z bazy) — trzy widoki, jedno źródło liczby. Klik otwiera kartę zadania.
 // Klik otwiera overlay na wzór palety wyszukiwania (OverlayLayer portal +
 // AnimatePresence + klasy `.gs-*`): lista WYŁĄCZNIE nieprzeczytanych wpisów.
 // Klik wiersza oznacza POJEDYNCZY wpis jako przeczytany

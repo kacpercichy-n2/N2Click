@@ -8,8 +8,10 @@
 // (SELECT own rows, RLS). Dlatego NIGDY nie tworzymy powiadomienia „dla samego
 // siebie" (recipient === actor jest pomijany).
 //
-// task_message/task_mention are emitted only by the messages AFTER INSERT trigger.
-// Task chat never enters AppData.comments, so this diff cannot duplicate them.
+// task_message / task_mention NIE powstają tutaj: pisze je wyłącznie trigger
+// bazy na `n2click.messages` (20261102103000), a polityka INSERT odrzuca te typy
+// z klienta. Rozmowa zadania nie trafia do AppData.comments, więc ten diff ich
+// nie zdubluje.
 //
 // Trzy punkty zaczepienia (najmniej inwazyjne — diff istniejących kolekcji):
 //   (a) task_assigned  — nowa para przypisania (task, osoba), zadanie opublikowane;

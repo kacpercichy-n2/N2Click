@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import {
   NOTIFICATION_WINDOW_DAYS,
   notificationsForPerson,
+  taskConversationNotificationId,
   unreadNotificationCount,
   unreadNotificationCountForPerson,
 } from './selectors';
@@ -15,6 +16,7 @@ import type {
   ActivityEvent,
   AppData,
   Comment,
+  Notification,
   Person,
   Project,
   Task,
@@ -758,42 +760,104 @@ describe('stabilność „przeczytane" przypisania', () => {
   });
 });
 
-describe('server task conversation notifications', () => {
-  function cloudFeed() {
+// ---- Rozmowa zadania (karta v2): wiersze task_message / task_mention ---------
+//
+// Wiersze `notifications` pisze trigger bazy; feed mapuje je per wiersz
+// (id `notification:<id wiersza>`), z tymi samymi regułami „przeczytane” co
+// wpisy pochodne. Stare komentarze dalej zasilają wzmianki z pkt 1.
+describe('powiadomienia z rozmowy zadania (task_message / task_mention)', () => {
+  function row(
+    id: string,
+    type: 'task_message' | 'task_mention',
+    overrides: Partial<Notification> = {},
+  ): Notification {
     return {
-      ...emptyData(), people: [person('zuzia', 'Zuzia'), person('ola', 'Ola Nowak')],
-      tasks: [task('t1')],
-      notifications: [
-        { id: 'msg', recipientId: 'zuzia', type: 'task_message' as const,
-          payload: { taskId: 't1', actorId: 'ola' }, readAt: '', createdAt: RECENT },
-        { id: 'mention', recipientId: 'zuzia', type: 'task_mention' as const,
-          payload: { taskId: 't1', actorId: 'ola' }, readAt: '', createdAt: RECENT },
-      ],
+      id,
+      recipientId: 'zuzia',
+      type,
+      payload: { taskId: 't1', actorId: 'ola' },
+      readAt: '',
+      createdAt: RECENT,
+      ...overrides,
     };
   }
-  it('maps both types into stable task targets and Polish sentences', () => {
+  function cloudFeed(overrides: Partial<AppData> = {}): AppData {
+    return state({
+      people: [person('zuzia', 'Zuzia'), person('ola', 'Ola Nowak')],
+      tasks: [task('t1', { title: 'Key visual' })],
+      notifications: [row('msg', 'task_message'), row('men', 'task_mention', { createdAt: NOW })],
+      ...overrides,
+    });
+  }
+
+  it('mapuje oba typy na zadanie z polskim zdaniem, najnowsze pierwsze', () => {
     const feed = notificationsForPerson(cloudFeed(), 'zuzia', NOW);
-    expect(feed.map(n => [n.id, n.taskId, n.title])).toEqual([
-      ['notification:msg', 't1', 'Ola Nowak napisał(a) w zadaniu: Zadanie t1'],
-      ['notification:mention', 't1', 'Ola Nowak wspomniał(a) Cię w zadaniu: Zadanie t1'],
+    expect(feed.map((n) => [n.id, n.kind, n.taskId, n.entityType, n.title])).toEqual([
+      ['notification:men', 'mention', 't1', 'task', 'Ola Nowak wspomniał(a) Cię w zadaniu: Key visual'],
+      ['notification:msg', 'task_message', 't1', 'task', 'Ola Nowak napisał(a) w zadaniu: Key visual'],
     ]);
+    expect(feed.every((n) => !n.title.includes('—'))).toBe(true);
+    expect(taskConversationNotificationId('msg')).toBe('notification:msg');
   });
-  it('respects row read_at, watermark and individual read IDs', () => {
-    for (const via of ['row', 'watermark', 'id']) {
-      const state = cloudFeed();
-      if (via === 'row') state.notifications[0].readAt = NOW;
-      if (via === 'watermark') state.people[0].notificationsSeenAt = NOW;
-      if (via === 'id') state.people[0].notificationsReadIds = ['notification:msg'];
-      expect(notificationsForPerson(state, 'zuzia', NOW)[0].read).toBe(true);
+
+  it('przeczytane: read_at wiersza, watermark albo zbiór id', () => {
+    const viaRow = cloudFeed({ notifications: [row('msg', 'task_message', { readAt: NOW })] });
+    const viaWatermark = cloudFeed();
+    viaWatermark.people = viaWatermark.people.map((p) =>
+      p.id === 'zuzia' ? { ...p, notificationsSeenAt: NOW } : p,
+    );
+    const viaId = cloudFeed();
+    viaId.people = viaId.people.map((p) =>
+      p.id === 'zuzia' ? { ...p, notificationsReadIds: ['notification:msg'] } : p,
+    );
+    for (const s of [viaRow, viaWatermark, viaId]) {
+      expect(notificationsForPerson(s, 'zuzia', NOW).find((n) => n.id === 'notification:msg')?.read).toBe(true);
     }
+    expect(unreadNotificationCountForPerson(viaId, 'zuzia', NOW)).toBe(1);
   });
-  it('filters other recipients, old rows, own actions and missing task targets', () => {
-    const state = cloudFeed();
-    state.notifications = state.notifications.flatMap(n => [
-      { ...n, recipientId: 'ola' }, { ...n, createdAt: OLD },
-      { ...n, payload: { taskId: 't1', actorId: 'zuzia' } },
-      { ...n, payload: { taskId: 'missing', actorId: 'ola' } },
+
+  it('pomija cudze wiersze, stare, własne, zadania spoza stanu i inne typy', () => {
+    const base = row('x', 'task_message');
+    const s = cloudFeed({
+      notifications: [
+        { ...base, id: 'other', recipientId: 'ola' },
+        { ...base, id: 'old', createdAt: OLD },
+        { ...base, id: 'own', payload: { taskId: 't1', actorId: 'zuzia' } },
+        { ...base, id: 'gone', payload: { taskId: 'missing', actorId: 'ola' } },
+        { ...base, id: 'assigned', type: 'task_assigned' },
+      ],
+    });
+    expect(notificationsForPerson(s, 'zuzia', NOW)).toEqual([]);
+  });
+
+  it('nieznany aktor (niemapowalny profil) => „Ktoś”, wiersz zostaje', () => {
+    const s = cloudFeed({ notifications: [row('anon', 'task_message', { payload: { taskId: 't1' } })] });
+    const [entry] = notificationsForPerson(s, 'zuzia', NOW);
+    expect(entry.title).toBe('Ktoś napisał(a) w zadaniu: Key visual');
+    expect(entry.actorId).toBe('');
+  });
+
+  it('stary komentarz ze wzmianką i wiersz task_mention to dwa różne wpisy (bez sklejania)', () => {
+    const s = cloudFeed({
+      comments: [comment({ id: 'c1', authorId: 'ola', entityId: 't1', mentionIds: ['zuzia'], createdAt: RECENT })],
+      notifications: [row('men', 'task_mention')],
+    });
+    expect(notificationsForPerson(s, 'zuzia', NOW).map((n) => n.id).sort()).toEqual([
+      'mention:c1',
+      'notification:men',
     ]);
-    expect(notificationsForPerson(state, 'zuzia', NOW)).toEqual([]);
+  });
+
+  it('MARK_NOTIFICATION_ENTRY_READ oznacza wiersz rozmowy; ponowne oznaczenie zachowuje referencję', () => {
+    const before = state({
+      currentUserId: 'zuzia',
+      people: [person('zuzia', 'Zuzia'), person('ola', 'Ola Nowak')],
+      tasks: [task('t1', { title: 'Key visual' })],
+      notifications: [row('live', 'task_message', { createdAt: hoursAgo(1) })],
+    });
+    const after = reducer(before, { type: 'MARK_NOTIFICATION_ENTRY_READ', entryId: 'notification:live' });
+    expect(after.people.find((p) => p.id === 'zuzia')!.notificationsReadIds).toEqual(['notification:live']);
+    expect(notificationsForPerson(after, 'zuzia', liveNow())[0].read).toBe(true);
+    expect(reducer(after, { type: 'MARK_NOTIFICATION_ENTRY_READ', entryId: 'notification:live' })).toBe(after);
   });
 });

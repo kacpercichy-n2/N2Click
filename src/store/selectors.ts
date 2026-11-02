@@ -2242,6 +2242,8 @@ export function workloadCellDetail(
 //   1. @-wzmianki — `Comment.mentionIds` zawiera odbiorcę, autor ≠ odbiorca.
 //   2. Przypisania — `TaskAssignment` na odbiorcę dla zadania, które utworzył
 //      ktoś inny (aktor z wpisu „utworzył(a) …" w dzienniku aktywności).
+//   3. Rozmowa zadania — wiersze `notifications` task_message / task_mention
+//      z triggera bazy (tylko chmura; karta zadania v2).
 // Bez tabeli nie ma trwałego stanu „przeczytane"; zamiast tego pokazujemy
 // najświeższe trafne zdarzenia z ostatnich `NOTIFICATION_WINDOW_DAYS` dni.
 
@@ -2256,6 +2258,12 @@ export function assignmentNotificationId(taskId: string, personId: string): stri
   return `assignment:${taskId}:${personId}`;
 }
 
+/** Id wpisu feedu dla powiadomienia z rozmowy zadania: id WIERSZA
+ *  `notifications` (task_message / task_mention), stabilne między urządzeniami. */
+export function taskConversationNotificationId(notificationId: string): string {
+  return `notification:${notificationId}`;
+}
+
 /** One derived notification row for a person. Not persisted; rebuilt per render. */
 export interface PersonNotification {
   // Stabilny per ZDARZENIE źródłowe: `mention:<commentId>` (id komentarza jest
@@ -2266,7 +2274,7 @@ export interface PersonNotification {
   // między urządzeniami).
   id: string;
   kind: NotificationKind;
-  actorId: string; // who caused it (never the recipient, never '')
+  actorId: string; // who caused it (never the recipient; '' only for a server row with an unknown actor)
   actorName: string;
   entityType: CommentEntityType; // 'task' | 'project' — what to open
   entityId: string;
@@ -2410,21 +2418,34 @@ export function notificationsForPerson(
     });
   }
 
-  // Cloud task messages are server-generated; legacy comment/assignment rows above stay derived.
+  // 3. Rozmowa zadania (karta v2): wiersze `notifications` typu task_message /
+  //    task_mention pisze WYŁĄCZNIE trigger bazy (20261102103000). Nowe
+  //    wiadomości zadania nie trafiają do `comments`, więc nie dublują wzmianek
+  //    z pkt 1 (stare komentarze dalej je zasilają). Id wpisu = id wiersza
+  //    (stabilne między urządzeniami); przeczytane jak wyżej (watermark albo
+  //    zbiór id) albo po `read_at` wiersza. Zadanie spoza stanu (brak wglądu,
+  //    usunięte) => wiersz pominięty. Nieznany aktor => „Ktoś”, actorId ''.
   for (const n of state.notifications) {
-    if (n.recipientId !== personId || !withinWindow(n.createdAt)) continue;
     if (n.type !== 'task_message' && n.type !== 'task_mention') continue;
+    if (n.recipientId !== personId || !withinWindow(n.createdAt)) continue;
     const task = getTask(state, n.payload.taskId ?? '');
     if (!task) continue;
     const actorId = n.payload.actorId ?? '';
     if (actorId === personId) continue;
-    const actorName = getPerson(state, actorId)?.name ?? 'Ktoś';
-    const id = `notification:${n.id}`;
+    const actorName = (actorId !== '' ? getPerson(state, actorId)?.name : undefined) ?? 'Ktoś';
+    const id = taskConversationNotificationId(n.id);
+    const verb = n.type === 'task_mention' ? 'wspomniał(a) Cię' : 'napisał(a)';
     out.push({
-      id, kind: n.type === 'task_mention' ? 'mention' : 'task_message',
-      actorId, actorName, entityType: 'task', entityId: task.id, taskId: task.id,
-      title: `${actorName} ${n.type === 'task_mention' ? 'wspomniał(a) Cię' : 'napisał(a)'} w zadaniu: ${taskDisplayTitle(state, task)}`,
-      createdAt: n.createdAt, read: !!n.readAt || isRead(n.createdAt, id),
+      id,
+      kind: n.type === 'task_mention' ? 'mention' : 'task_message',
+      actorId,
+      actorName,
+      entityType: 'task',
+      entityId: task.id,
+      taskId: task.id,
+      title: `${actorName} ${verb} w zadaniu: ${taskDisplayTitle(state, task)}`,
+      createdAt: n.createdAt,
+      read: n.readAt !== '' || isRead(n.createdAt, id),
     });
   }
 
