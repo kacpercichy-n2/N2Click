@@ -1,3 +1,4 @@
+import type { ChatReadEvent } from './types';
 // Czysta redukcja stanu czatu: lista rozmów, lista wiadomości otwartej rozmowy
 // i sygnały „pisze…". Zero Reacta, zero SDK — `ChatProvider` tylko woła te
 // funkcje w `setState`, dzięki czemu cała logika (dedup, przeliczenie
@@ -215,7 +216,8 @@ function sameMessage(a: ChatMessage, b: ChatMessage): boolean {
     a.body === b.body &&
     a.createdAt === b.createdAt &&
     a.editedAt === b.editedAt &&
-    a.deletedAt === b.deletedAt
+    a.deletedAt === b.deletedAt &&
+    a.pinnedAt === b.pinnedAt && a.pinnedBy === b.pinnedBy
   );
 }
 
@@ -422,4 +424,24 @@ export function applyConversationTheme(
   const nextList = list.slice();
   nextList[index] = { ...conversation, themeId };
   return nextList;
+}
+
+export function isTaskConversation(conversation: ChatConversation): boolean {
+  return conversation.kind === 'task' || conversation.contextType === 'task';
+}
+export function applyReadReceipt(conversations: ChatConversation[], event: ChatReadEvent): ChatConversation[] {
+  return conversations.map(c => c.id !== event.conversationId ? c : {
+    ...c, members: c.members.map(m => m.userId !== event.userId || (m.lastReadAt && Date.parse(m.lastReadAt) >= Date.parse(event.lastReadAt)) ? m : { ...m, lastReadAt: event.lastReadAt }),
+  });
+}
+/** Each reader appears once, beneath their newest loaded non-system message. */
+export function seenByMessage(messages: readonly ChatMessage[], members: ChatConversation['members'], selfId: string | null): Record<string, ChatConversation['members']> {
+  const result: Record<string, ChatConversation['members']> = {};
+  for (const member of members) {
+    if (member.userId === selfId || !member.lastReadAt) continue;
+    const at = Date.parse(member.lastReadAt);
+    const message = [...messages].reverse().find(m => m.kind !== 'system' && Date.parse(m.createdAt) <= at);
+    if (message) (result[message.id] ??= []).push(member);
+  }
+  return result;
 }

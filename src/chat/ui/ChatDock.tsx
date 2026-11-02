@@ -1,3 +1,4 @@
+import { isTaskConversation } from '../chatState';
 // Dok czatu w wariancie „bąbelki" (chat heads): pionowa kolumna pływających
 // awatarów w prawym dolnym rogu, okno rozmowy na lewo od niej, popover lupy z
 // wyszukiwarką i modal „Nowa grupa".
@@ -92,7 +93,8 @@ function ChatDockInner() {
   );
   const directory = useMemo(() => buildDirectory(people), [people]);
 
-  const openId = chat.openConversationId;
+  const dockConversations = useMemo(() => chat.conversations.filter(c => !isTaskConversation(c)), [chat.conversations]);
+  const openId = dockConversations.some(c => c.id === chat.openConversationId) ? chat.openConversationId : null;
   useEffect(() => {
     if (openId === null) return;
     setRecentIds((list) => pushRecent(list, openId));
@@ -104,7 +106,7 @@ function ChatDockInner() {
   const bubbles = useMemo(
     () =>
       buildDockBubbles({
-        conversations: chat.conversations,
+        conversations: dockConversations,
         selfId: chat.selfId,
         directory,
         presence: chat.presence,
@@ -116,7 +118,7 @@ function ChatDockInner() {
   );
 
   const openConversation =
-    chat.conversations.find((conversation) => conversation.id === openId) ?? null;
+    dockConversations.find((conversation) => conversation.id === openId) ?? null;
 
   /**
    * MINIMALIZACJA = ZAMKNIĘCIE OKNA (decyzja D1). Klik w AKTYWNY bąbelek (tak

@@ -1,3 +1,4 @@
+import type { ChatAttachment } from './attachments';
 // Typy domenowe modułu czatu (camelCase) — jedyne kształty, które widzi UI.
 //
 // GRANICE:
@@ -11,7 +12,7 @@
 //     formatowanie do UI jest zadaniem widoku.
 
 /** Rodzaj rozmowy: DM dwóch osób albo grupa z tytułem. */
-export type ChatConversationKind = 'direct' | 'group';
+export type ChatConversationKind = 'direct' | 'group' | 'task';
 
 /** Rola uczestnika (`conversation_members.role`). */
 export type ChatMemberRole = 'owner' | 'member';
@@ -22,6 +23,7 @@ export interface ChatMember {
   role: ChatMemberRole;
   /** Watermark „przeczytane" tego uczestnika; null gdy nigdy nie czytał. */
   lastReadAt: string | null;
+  mutedUntil?: string | null;
 }
 
 /** Rodzaj wiersza w `messages`: wiadomość osoby albo wiersz systemowy (RPC). */
@@ -46,6 +48,8 @@ export interface ChatLastMessage {
 }
 
 export interface ChatConversation {
+  contextType?: string | null;
+  contextId?: string | null;
   id: string;
   kind: ChatConversationKind;
   /** Tytuł grupy; DM ma `null` (UI składa nazwę z profili uczestników). */
@@ -76,6 +80,10 @@ export interface ChatMessage {
   deletedAt: string | null;
   /** Id wiadomości, na którą to jest odpowiedź; null gdy brak. */
   replyTo: string | null;
+  attachments?: ChatAttachment[];
+  mentionIds?: string[];
+  pinnedAt?: string | null;
+  pinnedBy?: string | null;
 }
 
 /**
@@ -186,7 +194,7 @@ export const CHAT_MESSAGES = {
 } as const;
 
 export function isChatConversationKind(value: unknown): value is ChatConversationKind {
-  return value === 'direct' || value === 'group';
+  return value === 'direct' || value === 'group' || value === 'task';
 }
 
 export function isChatMemberRole(value: unknown): value is ChatMemberRole {
@@ -202,4 +210,15 @@ export interface ChatThemeChangedEvent {
   conversationId: string;
   themeId: string;
   actorId: string;
+}
+
+export interface ChatSendOptions {
+  replyTo?: string | null;
+  attachments?: ChatAttachment[];
+  mentionIds?: string[];
+}
+export interface ChatReadEvent {
+  conversationId: string;
+  userId: string;
+  lastReadAt: string;
 }

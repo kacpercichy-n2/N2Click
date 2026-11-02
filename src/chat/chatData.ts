@@ -1,3 +1,5 @@
+import type { ChatAttachment } from './attachments';
+import type { ChatReadEvent, ChatSendOptions } from './types';
 // Czysta warstwa danych czatu: granica bazy (wstrzykiwany `ChatDb`), mapowanie
 // wierszy snake_case → typy domenowe i operacje (overview, DM, grupa, strona
 // wiadomości, wysyłka, odczyt). Zero Reacta, zero SDK w logice — testowalne w
@@ -55,6 +57,11 @@ export interface ChatMessagesQuery {
 }
 
 export interface ChatDb {
+  openTaskAtomic?(taskId: string): Promise<{ id: string | null; error: ChatDbError | null }>;
+  updateMessage?(messageId: string, authorId: string, patch: ChatRow): Promise<{ row: ChatRow | null; error: ChatDbError | null }>;
+  setPin?(messageId: string, pinned: boolean): Promise<{ error: ChatDbError | null }>;
+  setFollow?(conversationId: string, follow: boolean): Promise<{ error: ChatDbError | null }>;
+
   /** RPC `chat_overview()` — rozmowy zalogowanego (RLS filtruje po stronie bazy). */
   overview(): Promise<{ rows: ChatRow[]; error: ChatDbError | null }>;
   selectMessages(query: ChatMessagesQuery): Promise<{ rows: ChatRow[]; error: ChatDbError | null }>;
@@ -111,6 +118,30 @@ export function createSupabaseChatDb(client: SupabaseClient): ChatDb {
   const rows = (data: unknown): ChatRow[] =>
     Array.isArray(data) ? (data as unknown as ChatRow[]) : [];
   return {
+    async openTaskAtomic(taskId) {
+      try {
+        const { data, error } = await client.rpc('chat_open_task', { p_task_id: taskId });
+        return { id: typeof data === 'string' ? data : null, error: error ? toDbError(error, 'Błąd zapisu.') : null };
+      } catch (e) { return { id: null, error: toDbError(e, 'Błąd zapisu.') }; }
+    },
+    async updateMessage(messageId, authorId, patch) {
+      try {
+        const { data, error } = await client.from('messages').update(patch).eq('id', messageId).eq('author_id', authorId).is('deleted_at', null).select('*').maybeSingle();
+        return { row: data as ChatRow | null, error: error ? toDbError(error, 'Błąd zapisu.') : null };
+      } catch (e) { return { row: null, error: toDbError(e, 'Błąd zapisu.') }; }
+    },
+    async setPin(messageId, pinned) {
+      try {
+        const { error } = await client.rpc('chat_set_pin', { p_message_id: messageId, p_pinned: pinned });
+        return { error: error ? toDbError(error, 'Błąd zapisu.') : null };
+      } catch (e) { return { error: toDbError(e, 'Błąd zapisu.') }; }
+    },
+    async setFollow(conversationId, follow) {
+      try {
+        const { error } = await client.rpc('chat_set_follow', { p_conversation_id: conversationId, p_follow: follow });
+        return { error: error ? toDbError(error, 'Błąd zapisu.') : null };
+      } catch (e) { return { error: toDbError(e, 'Błąd zapisu.') }; }
+    },
     async overview() {
       try {
         const { data, error } = await client.rpc('chat_overview');
@@ -267,7 +298,7 @@ export function toChatMember(value: unknown): ChatMember | null {
   const userId = str(row.user_id);
   if (userId === '') return null;
   const role = isChatMemberRole(row.role) ? row.role : 'member';
-  return { userId, role, lastReadAt: nullableStr(row.last_read_at) };
+  return { userId, role, lastReadAt: nullableStr(row.last_read_at), ...('muted_until' in row ? { mutedUntil: nullableStr(row.muted_until) } : {}) };
 }
 
 export function toChatLastMessage(value: unknown): ChatLastMessage | null {
@@ -309,6 +340,7 @@ export function toChatConversation(row: ChatRow): ChatConversation | null {
   return {
     id,
     kind: row.kind,
+    ...('context_type' in row ? { contextType: nullableStr(row.context_type), contextId: nullableStr(row.context_id) } : {}),
     title: nullableStr(row.title),
     members,
     createdBy: nullableStr(row.created_by),
@@ -340,6 +372,9 @@ export function toChatMessage(row: unknown): ChatMessage | null {
     editedAt: nullableStr(record.edited_at),
     deletedAt: nullableStr(record.deleted_at),
     replyTo: nullableStr(record.reply_to),
+    ...('attachments' in record ? { attachments: parseAttachments(record.attachments, conversationId) } : {}),
+    ...('mention_ids' in record ? { mentionIds: asArray(record.mention_ids).filter((id): id is string => typeof id === 'string') } : {}),
+    ...('pinned_at' in record ? { pinnedAt: nullableStr(record.pinned_at), pinnedBy: nullableStr(record.pinned_by) } : {}),
   };
 }
 
@@ -655,9 +690,10 @@ export async function sendMessage(
   authorId: string,
   body: string,
   replyTo: string | null = null,
+  options: ChatSendOptions = {},
 ): Promise<ChatResult<ChatMessage>> {
   const clean = body.trim();
-  if (clean === '') return { ok: false, error: CHAT_MESSAGES.emptyBody };
+  if (clean === '' && !options.attachments?.length) return { ok: false, error: CHAT_MESSAGES.emptyBody };
   if (clean.length > CHAT_MESSAGE_MAX_LENGTH) {
     return { ok: false, error: CHAT_MESSAGES.tooLongBody };
   }
@@ -665,7 +701,9 @@ export async function sendMessage(
     conversation_id: conversationId,
     author_id: authorId,
     body: clean,
-    ...(replyTo ? { reply_to: replyTo } : {}),
+    ...((replyTo ?? options.replyTo) ? { reply_to: replyTo ?? options.replyTo } : {}),
+    ...(options.attachments?.length ? { attachments: options.attachments } : {}),
+    ...(options.mentionIds?.length ? { mention_ids: [...new Set(options.mentionIds)] } : {}),
   };
   const { row: inserted, error } = await db.insertMessage(row);
   if (error) return { ok: false, error: CHAT_MESSAGES.send };
@@ -705,4 +743,50 @@ export async function setTheme(
   const { error } = await db.setTheme(conversationId, themeId);
   if (error) return { ok: false, error: CHAT_MESSAGES.theme };
   return { ok: true, value: themeId };
+}
+
+export function parseAttachments(value: unknown, conversationId: string): ChatAttachment[] {
+  return asArray(value).filter((item): item is ChatAttachment => {
+    const a = asRecord(item);
+    return !!a && typeof a.path === 'string' && a.path.startsWith(`${conversationId}/`)
+      && ['image/webp', 'image/png', 'image/jpeg', 'image/gif'].includes(String(a.mime))
+      && ['width', 'height', 'size'].every(key => typeof a[key] === 'number' && Number.isFinite(a[key]) && Number(a[key]) > 0)
+      && typeof a.name === 'string';
+  }).slice(0, 10);
+}
+export function toChatReadEvent(raw: unknown): ChatReadEvent | null {
+  const envelope = asRecord(raw);
+  const payload = asRecord(envelope?.payload) ?? envelope;
+  if (!payload || !str(payload.conversationId) || !str(payload.userId) || !Number.isFinite(Date.parse(str(payload.lastReadAt)))) return null;
+  return { conversationId: str(payload.conversationId), userId: str(payload.userId), lastReadAt: str(payload.lastReadAt) };
+}
+export async function openTaskConversation(db: ChatDb, taskId: string): Promise<ChatResult<string>> {
+  if (!taskId || !db.openTaskAtomic) return { ok: false, error: CHAT_MESSAGES.open };
+  const result = await db.openTaskAtomic(taskId);
+  return result.error || !result.id ? { ok: false, error: CHAT_MESSAGES.open } : { ok: true, value: result.id };
+}
+export async function editMessage(db: ChatDb, messageId: string, authorId: string, body: string): Promise<ChatResult<ChatMessage>> {
+  if (!body.trim()) return { ok: false, error: CHAT_MESSAGES.emptyBody };
+  if (body.trim().length > CHAT_MESSAGE_MAX_LENGTH) return { ok: false, error: CHAT_MESSAGES.tooLongBody };
+  return mutateMessage(db, messageId, authorId, { body: body.trim() });
+}
+export async function deleteMessage(db: ChatDb, messageId: string, authorId: string): Promise<ChatResult<ChatMessage>> {
+  return mutateMessage(db, messageId, authorId, { deleted_at: new Date().toISOString() });
+}
+async function mutateMessage(db: ChatDb, messageId: string, authorId: string, patch: ChatRow): Promise<ChatResult<ChatMessage>> {
+  const fail = { ok: false as const, error: 'Nie udało się zmienić wiadomości.' };
+  if (!db.updateMessage || !messageId || !authorId) return fail;
+  const result = await db.updateMessage(messageId, authorId, patch);
+  const message = toChatMessage(result.row);
+  return result.error || !message ? fail : { ok: true, value: message };
+}
+export async function setPin(db: ChatDb, messageId: string, pinned: boolean): Promise<ChatResult<null>> {
+  if (!db.setPin || !messageId) return { ok: false, error: 'Nie udało się zmienić przypięcia.' };
+  const result = await db.setPin(messageId, pinned);
+  return result.error ? { ok: false, error: 'Nie udało się zmienić przypięcia.' } : { ok: true, value: null };
+}
+export async function setFollow(db: ChatDb, conversationId: string, follow: boolean): Promise<ChatResult<null>> {
+  if (!db.setFollow || !conversationId) return { ok: false, error: 'Nie udało się zmienić obserwowania.' };
+  const result = await db.setFollow(conversationId, follow);
+  return result.error ? { ok: false, error: 'Nie udało się zmienić obserwowania.' } : { ok: true, value: null };
 }

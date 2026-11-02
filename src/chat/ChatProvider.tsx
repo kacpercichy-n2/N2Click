@@ -1,3 +1,6 @@
+import type { ChatSendOptions } from './types';
+import { applyReadReceipt, isTaskConversation } from './chatState';
+import { openTaskConversation as openTaskRow, editMessage as editRow, deleteMessage as deleteRow, setPin as pinRow, setFollow as followRow, toChatReadEvent } from './chatData';
 // Cienki dostawca Reacta dla czatu: spina warstwę danych (`chatData.ts`),
 // czystą redukcję stanu (`chatState.ts`) i kanały Realtime. Cała logika, którą
 // da się wyrazić bez Reacta, mieszka w tamtych dwóch modułach — tutaj zostają
@@ -117,7 +120,12 @@ export interface ChatContextValue {
   /** Są starsze wiadomości do dociągnięcia (`loadOlder`). */
   hasMore: boolean;
   loadOlder: () => void;
-  sendMessage: (body: string) => Promise<boolean>;
+  sendMessage: (body: string, options?: ChatSendOptions) => Promise<boolean>;
+  openTaskConversation: (taskId: string) => Promise<string | null>;
+  editMessage: (messageId: string, body: string) => Promise<boolean>;
+  deleteMessage: (messageId: string) => Promise<boolean>;
+  setPin: (messageId: string, pinned: boolean) => Promise<boolean>;
+  setFollow: (conversationId: string, follow: boolean) => Promise<boolean>;
   /** Reakcje wiadomości OTWARTEJ rozmowy (id wiadomości → lista). */
   reactions: ChatReactionMap;
   /**
@@ -433,6 +441,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         .channel(`chat:conv:${conversationId}`, { config: { private: true } })
         .on('broadcast', { event: 'INSERT' }, (raw: unknown) => handleBroadcast('INSERT', raw))
         .on('broadcast', { event: 'UPDATE' }, (raw: unknown) => handleBroadcast('UPDATE', raw))
+        .on('broadcast', { event: 'read' }, (raw: unknown) => {
+          const event = toChatReadEvent(raw);
+          if (event && event.conversationId === conversationId) setConversations(list => applyReadReceipt(list, event));
+        })
         .on('broadcast', { event: 'typing' }, (raw: unknown) => handleTyping(conversationId, raw))
         .on('broadcast', { event: 'reaction' }, (raw: unknown) =>
           handleReaction(conversationId, raw),
@@ -783,12 +795,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     [runReaction],
   );
 
-  const sendMessage = useCallback(async (body: string): Promise<boolean> => {
+  const sendMessage = useCallback(async (body: string, options: ChatSendOptions = {}): Promise<boolean> => {
     const db = dbRef.current;
     const conversationId = openIdRef.current;
     const self = selfIdRef.current;
     if (!db || !conversationId || !self) return false;
-    const result = await sendMessageRow(db, conversationId, self, body);
+    const result = await sendMessageRow(db, conversationId, self, body, options.replyTo, options);
     if (!result.ok) {
       if (mountedRef.current) setError(result.error);
       return false;
@@ -797,7 +809,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     setError(null);
     // Wstawiamy wiersz zwrócony przez serwer (id i `created_at` są już
     // autorytatywne) — echo broadcastu trafi w dedup po id.
-    setMessages((previous) => mergeMessages(previous, [result.value]));
+    if (openIdRef.current === conversationId) setMessages((previous) => mergeMessages(previous, [result.value]));
     setConversations((list) =>
       applyIncomingMessage(list, result.value, {
         selfId: self,
@@ -806,6 +818,49 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     );
     return true;
   }, []);
+
+  const openTaskConversation = useCallback(async (taskId: string): Promise<string | null> => {
+    const db = dbRef.current;
+    if (!db) return null;
+    const result = await openTaskRow(db, taskId);
+    if (!result.ok) { if (mountedRef.current) setError(result.error); return null; }
+    await refreshOverview();
+    if (mountedRef.current) { setError(null); setOpenConversationId(result.value); }
+    return result.value;
+  }, [refreshOverview]);
+
+  const changeMessage = useCallback(async (messageId: string, body?: string): Promise<boolean> => {
+    const db = dbRef.current;
+    const self = selfIdRef.current;
+    const conversationId = openIdRef.current;
+    const message = messagesRef.current.find(m => m.id === messageId);
+    if (!db || !self || !message || message.authorId !== self || message.deletedAt || message.kind === 'system') return false;
+    const result = body === undefined ? await deleteRow(db, messageId, self) : await editRow(db, messageId, self, body);
+    if (!mountedRef.current) return result.ok;
+    if (!result.ok) { setError(result.error); return false; }
+    setError(null);
+    if (openIdRef.current === conversationId) setMessages(previous => mergeMessages(previous, [result.value]));
+    setConversations(list => applyMessageUpdate(list, result.value));
+    return true;
+  }, []);
+  const editMessage = useCallback((id: string, body: string) => changeMessage(id, body), [changeMessage]);
+  const deleteMessage = useCallback((id: string) => changeMessage(id), [changeMessage]);
+  const setPin = useCallback(async (messageId: string, pinned: boolean): Promise<boolean> => {
+    const db = dbRef.current;
+    if (!db) return false;
+    const result = await pinRow(db, messageId, pinned);
+    if (!result.ok && mountedRef.current) setError(result.error);
+    // The UPDATE broadcast carries the authoritative server revision, including unpin.
+    return result.ok;
+  }, []);
+  const setFollow = useCallback(async (conversationId: string, follow: boolean): Promise<boolean> => {
+    const db = dbRef.current;
+    if (!db) return false;
+    const result = await followRow(db, conversationId, follow);
+    if (!result.ok && mountedRef.current) setError(result.error);
+    if (result.ok) await refreshOverview();
+    return result.ok;
+  }, [refreshOverview]);
 
   /** Ostatni zamiar zmiany motywu per rozmowa (numer żądania). */
   const themeIntentRef = useRef<Map<string, number>>(new Map());
@@ -875,7 +930,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const typingIds = useMemo(() => readTypingUserIds(typing, Date.now()), [typing]);
-  const unread = useMemo(() => sumUnread(conversations), [conversations]);
+  const unread = useMemo(() => sumUnread(conversations.filter(c => !isTaskConversation(c))), [conversations]);
 
   const value = useMemo<ChatContextValue>(
     () => ({
@@ -895,6 +950,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       hasMore,
       loadOlder,
       sendMessage,
+      openTaskConversation, editMessage, deleteMessage, setPin, setFollow,
       reactions,
       toggleReaction,
       setTheme,
@@ -923,6 +979,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       hasMore,
       loadOlder,
       sendMessage,
+      openTaskConversation, editMessage, deleteMessage, setPin, setFollow,
       reactions,
       toggleReaction,
       setTheme,

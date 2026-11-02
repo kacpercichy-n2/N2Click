@@ -1,0 +1,26 @@
+.n2chat-thread { min-height: 0; }
+.n2chat-embedded { display: flex; flex-direction: column; flex: 1; overflow: hidden; position: relative; color: var(--n2-text); }
+.n2chat-embedded .n2chat-messages { flex: 1; min-height: 0; overflow-y: auto; }
+.n2chat-thread button { min-width: 44px; min-height: 44px; }
+.n2chat-thread .n2chat-msg { position: relative; }
+.n2chat-message-actions { display: inline-flex; opacity: 0; }
+.n2chat-msg:hover .n2chat-message-actions, .n2chat-msg:focus-within .n2chat-message-actions { opacity: 1; }
+.n2chat-quote, .n2chat-reply, .n2chat-pins { padding: 8px 12px; border: 0; border-radius: 8px; background: var(--n2-bg-elevated); color: var(--n2-text-soft); text-align: left; }
+.n2chat-quote { display: block; width: 100%; border-left: 2px solid var(--n2-lavender); }
+.n2chat-reply { display: flex; align-items: center; justify-content: space-between; }
+.n2chat-seen { display: flex; justify-content: flex-end; gap: 2px; }
+.n2chat-seen > span { display: inline-flex; align-items: center; min-height: 44px; }
+.n2chat-task-pane { display: flex; flex-direction: column; height: 100%; min-height: 420px; overflow: hidden; }
+.n2chat-task-header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--n2-border); }
+.n2chat-task-header h3 { font-size: 14px; margin: 0; }
+.n2chat-task-header button { min-height: 44px; min-width: 44px; }
+.n2chat-task-followers { display: flex; margin-left: auto; }
+.n2chat-task-history { flex: 1; min-height: 0; overflow: auto; padding: 16px; }
+.n2chat-task-history li { margin-bottom: 12px; }
+.n2chat-task-pane > .comments-panel { overflow: auto; }
+.n2chat-thread-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+@media (hover: none), (pointer: coarse) { .n2chat-message-actions { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .n2chat-thread *, .n2chat-thread *::before, .n2chat-thread *::after { scroll-behavior: auto; transition: none; animation: none; } }
+
+.n2chat-mentions { margin: 0; padding: 4px; list-style: none; max-height: 180px; overflow: auto; background: var(--n2-bg-elevated); }
+.n2chat-mentions [aria-selected="true"] { background: var(--n2-border-strong); }
