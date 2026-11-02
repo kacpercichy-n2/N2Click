@@ -1,7 +1,7 @@
-import { ChatThread } from './ChatThread';
-import type { ComponentProps } from 'react';
+// Powłoka doku: okno rozmowy to `ChatThread` w wariancie `dock` (nagłówek,
+// motyw, minimalizacja). Ten sam wątek służy panelowi rozmowy w karcie zadania.
+import { ChatThread, type ChatThreadProps } from './ChatThread';
 
-/** Dock shell. The thread also serves the task conversation pane. */
-export function ChatWindow(props: Omit<ComponentProps<typeof ChatThread>, 'embedded'>) {
-  return <ChatThread {...props} />;
+export function ChatWindow(props: Omit<ChatThreadProps, 'variant'>) {
+  return <ChatThread {...props} variant="dock" />;
 }

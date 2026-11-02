@@ -169,6 +169,8 @@ describe('mapowanie wierszy', () => {
     expect(conversation).toEqual({
       id: CONV,
       kind: 'group',
+      contextType: null,
+      contextId: null,
       title: 'Zespół',
       createdBy: SELF,
       members: [
@@ -227,6 +229,11 @@ describe('mapowanie wierszy', () => {
       editedAt: T2,
       deletedAt: T3,
       replyTo: null,
+      attachments: [],
+      mentionIds: [],
+      pinnedAt: null,
+      pinnedBy: null,
+      revisedAt: null,
     });
   });
 

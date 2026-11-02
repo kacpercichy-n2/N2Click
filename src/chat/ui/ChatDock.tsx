@@ -1,4 +1,3 @@
-import { isTaskConversation } from '../chatState';
 // Dok czatu w wariancie „bąbelki" (chat heads): pionowa kolumna pływających
 // awatarów w prawym dolnym rogu, okno rozmowy na lewo od niej, popover lupy z
 // wyszukiwarką i modal „Nowa grupa".
@@ -30,6 +29,7 @@ import { ChatAvatar } from './ChatAvatar';
 import { ChatGroupModal } from './ChatGroupModal';
 import { ChatSearchPopover } from './ChatSearchPopover';
 import { ChatWindow } from './ChatWindow';
+import { dockConversations as filterDockConversations } from '../chatState';
 import { buildDirectory, type ChatPerson } from './chatPeople';
 import {
   buildDockBubbles,
@@ -93,7 +93,11 @@ function ChatDockInner() {
   );
   const directory = useMemo(() => buildDirectory(people), [people]);
 
-  const dockConversations = useMemo(() => chat.conversations.filter(c => !isTaskConversation(c)), [chat.conversations]);
+  // Rozmowy zadań żyją w kartach zadań (karta v2), nie w doku.
+  const dockConversations = useMemo(
+    () => filterDockConversations(chat.conversations),
+    [chat.conversations],
+  );
   const openId = dockConversations.some(c => c.id === chat.openConversationId) ? chat.openConversationId : null;
   useEffect(() => {
     if (openId === null) return;

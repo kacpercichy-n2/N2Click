@@ -1,4 +1,3 @@
-import type { ChatReadEvent } from './types';
 // Czysta redukcja stanu czatu: lista rozmów, lista wiadomości otwartej rozmowy
 // i sygnały „pisze…". Zero Reacta, zero SDK — `ChatProvider` tylko woła te
 // funkcje w `setState`, dzięki czemu cała logika (dedup, przeliczenie
@@ -18,6 +17,7 @@ import {
   type ChatReactionEvent,
   type ChatReactionGroup,
   type ChatReactionMap,
+  type ChatReadEvent,
 } from './types';
 
 /**
@@ -208,7 +208,16 @@ function newerMessageVariant(previous: ChatMessage, incoming: ChatMessage): Chat
   if (previous.deletedAt !== null || incoming.deletedAt !== null) {
     return previous.deletedAt !== null ? previous : incoming;
   }
-  return (incoming.editedAt ?? '') > (previous.editedAt ?? '') ? incoming : previous;
+  return messageRevision(incoming) > messageRevision(previous) ? incoming : previous;
+}
+
+/**
+ * Rewizja wariantu: `revisedAt` (gdy L1 doda kolumnę podbijaną przy KAŻDEJ
+ * zmianie, także przypięciu), inaczej `editedAt`. Szkic L1 podbija `edited_at`
+ * przy przypięciu, więc obie drogi dają monotoniczną rewizję.
+ */
+function messageRevision(message: ChatMessage): string {
+  return message.revisedAt ?? message.editedAt ?? '';
 }
 
 function sameMessage(a: ChatMessage, b: ChatMessage): boolean {
@@ -217,7 +226,9 @@ function sameMessage(a: ChatMessage, b: ChatMessage): boolean {
     a.createdAt === b.createdAt &&
     a.editedAt === b.editedAt &&
     a.deletedAt === b.deletedAt &&
-    a.pinnedAt === b.pinnedAt && a.pinnedBy === b.pinnedBy
+    a.pinnedAt === b.pinnedAt &&
+    a.pinnedBy === b.pinnedBy &&
+    a.revisedAt === b.revisedAt
   );
 }
 
@@ -426,22 +437,302 @@ export function applyConversationTheme(
   return nextList;
 }
 
+// ---- Karta zadania v2 ---------------------------------------------------------
+
+/** Rozmowa zadania (kontekst 'task'); dok jej nie pokazuje. */
 export function isTaskConversation(conversation: ChatConversation): boolean {
   return conversation.kind === 'task' || conversation.contextType === 'task';
 }
-export function applyReadReceipt(conversations: ChatConversation[], event: ChatReadEvent): ChatConversation[] {
-  return conversations.map(c => c.id !== event.conversationId ? c : {
-    ...c, members: c.members.map(m => m.userId !== event.userId || (m.lastReadAt && Date.parse(m.lastReadAt) >= Date.parse(event.lastReadAt)) ? m : { ...m, lastReadAt: event.lastReadAt }),
-  });
+
+/** Rozmowa zadania o danym id zadania (jedna na zadanie, unikalny indeks L1). */
+export function findTaskConversation(
+  list: readonly ChatConversation[],
+  taskId: string,
+): ChatConversation | null {
+  if (taskId === '') return null;
+  return list.find((c) => isTaskConversation(c) && c.contextId === taskId) ?? null;
 }
-/** Each reader appears once, beneath their newest loaded non-system message. */
-export function seenByMessage(messages: readonly ChatMessage[], members: ChatConversation['members'], selfId: string | null): Record<string, ChatConversation['members']> {
-  const result: Record<string, ChatConversation['members']> = {};
+
+/** Nieprzeczytane w rozmowie zadania (odznaka na karcie); 0 gdy rozmowy nie ma. */
+export function taskConversationUnread(
+  list: readonly ChatConversation[],
+  taskId: string,
+): number {
+  return findTaskConversation(list, taskId)?.unreadCount ?? 0;
+}
+
+/** Lista doku: rozmowy zadań zostają w kartach zadań (ta sama referencja, gdy nic nie odpada). */
+export function dockConversations(list: ChatConversation[]): ChatConversation[] {
+  return list.some(isTaskConversation) ? list.filter((c) => !isTaskConversation(c)) : list;
+}
+
+function timestampMs(value: string | null | undefined): number {
+  if (!value) return Number.NEGATIVE_INFINITY;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : Number.NEGATIVE_INFINITY;
+}
+
+/**
+ * Zdarzenie `read`: przesuwa watermark JEDNEGO członka, wyłącznie do przodu
+ * (spóźnione echo nie cofa). Znaczniki bywają w dwóch formatach ('Z' z klienta,
+ * '+00:00' z Postgresa), więc porównujemy liczbowo, nie leksykalnie.
+ * Brak zmiany => ta sama referencja listy.
+ */
+export function applyReadReceipt(
+  list: ChatConversation[],
+  event: ChatReadEvent,
+): ChatConversation[] {
+  const index = list.findIndex((c) => c.id === event.conversationId);
+  if (index === -1) return list;
+  const conversation = list[index];
+  const memberIndex = conversation.members.findIndex((m) => m.userId === event.userId);
+  if (memberIndex === -1) return list;
+  const member = conversation.members[memberIndex];
+  if (timestampMs(member.lastReadAt) >= timestampMs(event.lastReadAt)) return list;
+  const members = conversation.members.slice();
+  members[memberIndex] = { ...member, lastReadAt: event.lastReadAt };
+  const next = list.slice();
+  next[index] = { ...conversation, members };
+  return next;
+}
+
+/**
+ * Autorytatywny skład jednej rozmowy (osobny select z `muted_until`): podmienia
+ * członków, ale watermarku nie cofa (broadcast `read` mógł dojść wcześniej).
+ */
+export function applyConversationMembers(
+  list: ChatConversation[],
+  conversationId: string,
+  members: readonly ChatMember[],
+): ChatConversation[] {
+  const index = list.findIndex((c) => c.id === conversationId);
+  if (index === -1) return list;
+  const conversation = list[index];
+  const known = new Map(conversation.members.map((m) => [m.userId, m]));
+  const merged = members.map((member) => {
+    const previous = known.get(member.userId);
+    if (previous && timestampMs(previous.lastReadAt) > timestampMs(member.lastReadAt)) {
+      return { ...member, lastReadAt: previous.lastReadAt };
+    }
+    return member;
+  });
+  const same =
+    merged.length === conversation.members.length &&
+    merged.every((m, i) => {
+      const p = conversation.members[i];
+      return (
+        p.userId === m.userId &&
+        p.role === m.role &&
+        p.lastReadAt === m.lastReadAt &&
+        p.mutedUntil === m.mutedUntil
+      );
+    });
+  if (same) return list;
+  const next = list.slice();
+  next[index] = { ...conversation, members: merged };
+  return next;
+}
+
+/**
+ * Świeże overview niesie członków BEZ `muted_until` (stary `chat_overview`),
+ * a osobny select ją zna. Przenosimy znaną wartość, gdy nowa jest nieznana
+ * (`undefined`), żeby każde odświeżenie listy nie przełączało dzwonka.
+ */
+export function carryMemberDetails(
+  previous: readonly ChatConversation[],
+  next: ChatConversation[],
+): ChatConversation[] {
+  if (previous.length === 0) return next;
+  const byId = new Map(previous.map((c) => [c.id, c]));
+  let changed = false;
+  const result = next.map((conversation) => {
+    const old = byId.get(conversation.id);
+    if (!old) return conversation;
+    const oldMembers = new Map(old.members.map((m) => [m.userId, m]));
+    let touched = false;
+    const members = conversation.members.map((member) => {
+      const known = oldMembers.get(member.userId);
+      if (member.mutedUntil !== undefined || known?.mutedUntil === undefined) return member;
+      touched = true;
+      return { ...member, mutedUntil: known.mutedUntil };
+    });
+    if (!touched) return conversation;
+    changed = true;
+    return { ...conversation, members };
+  });
+  return changed ? result : next;
+}
+
+/**
+ * Obserwowanie: wyciszenie bezterminowe (`muted_until` w przyszłości albo
+ * 'infinity') = nie obserwuje. `undefined` (kolumna nieznana) liczymy jako
+ * obserwuje: domyślny stan każdego członka po dołączeniu.
+ */
+export function isFollowing(member: ChatMember | undefined, nowMs: number = Date.now()): boolean {
+  if (!member) return false;
+  const muted = member.mutedUntil;
+  if (muted === undefined || muted === null) return true;
+  if (muted === 'infinity') return false;
+  const until = Date.parse(muted);
+  return !Number.isFinite(until) || until <= nowMs;
+}
+
+/** Obserwujący rozmowę (awatary w nagłówku panelu zadania), kolejność członków. */
+export function followerIds(conversation: ChatConversation, nowMs: number = Date.now()): string[] {
+  return conversation.members.filter((m) => isFollowing(m, nowMs)).map((m) => m.userId);
+}
+
+/** Optymistyczne obserwuj / przestań obserwować dla zalogowanego. */
+export function applyFollowState(
+  list: ChatConversation[],
+  conversationId: string,
+  selfId: string | null,
+  follow: boolean,
+): ChatConversation[] {
+  if (selfId === null) return list;
+  const index = list.findIndex((c) => c.id === conversationId);
+  if (index === -1) return list;
+  const conversation = list[index];
+  const memberIndex = conversation.members.findIndex((m) => m.userId === selfId);
+  if (memberIndex === -1) return list;
+  const member = conversation.members[memberIndex];
+  const mutedUntil = follow ? null : 'infinity';
+  if (member.mutedUntil === mutedUntil) return list;
+  const members = conversation.members.slice();
+  members[memberIndex] = { ...member, mutedUntil };
+  const next = list.slice();
+  next[index] = { ...conversation, members };
+  return next;
+}
+
+/** Członek z watermarkiem widoczny pod wiadomością („Widziane przez”). */
+export interface ChatSeenBy {
+  userId: string;
+  lastReadAt: string;
+}
+
+/**
+ * Seen-by w stylu Messengera: KAŻDY członek (poza zalogowanym) pojawia się
+ * dokładnie raz, pod najnowszą wczytaną wiadomością (nie systemową), którą
+ * przeczytał, czyli `createdAt <= lastReadAt`. Gdy ta wiadomość jest JEGO
+ * własna, awatara nie ma wcale: odpowiedź sama mówi, że widział wcześniejsze
+ * (jak Messenger, który wtedy zdejmuje „Widziane”). Usunięte też się liczą
+ * (placeholder zostaje w liście). Wynik: id wiadomości → osoby.
+ */
+export function seenByMessage(
+  messages: readonly ChatMessage[],
+  members: readonly ChatMember[],
+  selfId: string | null,
+): Record<string, ChatSeenBy[]> {
+  const result: Record<string, ChatSeenBy[]> = {};
   for (const member of members) {
-    if (member.userId === selfId || !member.lastReadAt) continue;
-    const at = Date.parse(member.lastReadAt);
-    const message = [...messages].reverse().find(m => m.kind !== 'system' && Date.parse(m.createdAt) <= at);
-    if (message) (result[message.id] ??= []).push(member);
+    if (member.userId === selfId || member.lastReadAt === null) continue;
+    const readMs = timestampMs(member.lastReadAt);
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (message.kind === 'system') continue;
+      if (timestampMs(message.createdAt) > readMs) continue;
+      if (message.authorId !== member.userId) {
+        (result[message.id] ??= []).push({ userId: member.userId, lastReadAt: member.lastReadAt });
+      }
+      break;
+    }
   }
   return result;
+}
+
+/** Przypięte (nieusunięte) wiadomości, najświeżej przypięta pierwsza. */
+export function pinnedMessages(messages: readonly ChatMessage[]): ChatMessage[] {
+  return messages
+    .filter((m) => m.pinnedAt !== null && m.deletedAt === null)
+    .sort((a, b) => timestampMs(b.pinnedAt) - timestampMs(a.pinnedAt));
+}
+
+// ---- Wątki (kilka rozmów żywych naraz: dok + panel zadania) ---------------------
+
+/** Stan jednej wczytanej rozmowy. Provider trzyma mapę id → wątek. */
+export interface ChatThreadState {
+  messages: ChatMessage[];
+  reactions: ChatReactionMap;
+  /** Trwa wczytywanie (pierwsza strona albo starsza). */
+  loading: boolean;
+  /** Pierwsza strona doszła (odróżnia „pusto” od „jeszcze nie wiadomo”). */
+  loaded: boolean;
+  hasMore: boolean;
+  typing: ChatTypingEntry[];
+  /** Polski komunikat nieudanego wczytania; null = w porządku. */
+  error: string | null;
+}
+
+export const EMPTY_THREAD: ChatThreadState = Object.freeze({
+  messages: [],
+  reactions: {},
+  loading: false,
+  loaded: false,
+  hasMore: false,
+  typing: [],
+  error: null,
+}) as ChatThreadState;
+
+export type ChatThreadMap = Readonly<Record<string, ChatThreadState>>;
+
+/**
+ * Zmiana jednego wątku. `update` dostaje bieżący wątek; zwrócenie tego samego
+ * obiektu = brak zmiany = ta sama referencja mapy (invariant referencji).
+ * Nieistniejący wątek NIE powstaje (zdarzenie dla rozmowy, której nikt nie
+ * ogląda, nie ma gdzie trafić); do zakładania służy `ensureThread`.
+ */
+export function updateThread(
+  threads: ChatThreadMap,
+  conversationId: string,
+  update: (thread: ChatThreadState) => ChatThreadState,
+): ChatThreadMap {
+  const current = threads[conversationId];
+  if (current === undefined) return threads;
+  const next = update(current);
+  if (next === current) return threads;
+  return { ...threads, [conversationId]: next };
+}
+
+/** Zakłada pusty wątek (w trakcie wczytywania), gdy go nie ma. */
+export function ensureThread(threads: ChatThreadMap, conversationId: string): ChatThreadMap {
+  if (conversationId === '' || threads[conversationId] !== undefined) return threads;
+  return { ...threads, [conversationId]: { ...EMPTY_THREAD, loading: true } };
+}
+
+/** Zostawia wyłącznie wątki z `keep`; nic do usunięcia => ta sama referencja. */
+export function retainThreads(threads: ChatThreadMap, keep: ReadonlySet<string>): ChatThreadMap {
+  const ids = Object.keys(threads);
+  if (ids.every((id) => keep.has(id))) return threads;
+  const next: Record<string, ChatThreadState> = {};
+  for (const id of ids) if (keep.has(id)) next[id] = threads[id];
+  return next;
+}
+
+/** Scalenie wiadomości do wątku (strona, broadcast, echo wysyłki). */
+export function mergeThreadMessages(
+  thread: ChatThreadState,
+  incoming: ChatMessage[],
+): ChatThreadState {
+  const messages = mergeMessages(thread.messages, incoming);
+  return messages === thread.messages ? thread : { ...thread, messages };
+}
+
+/** Scalenie autorytatywnych reakcji do wątku. */
+export function mergeThreadReactions(
+  thread: ChatThreadState,
+  incoming: ChatReactionMap,
+): ChatThreadState {
+  const reactions = mergeReactions(thread.reactions, incoming);
+  return reactions === thread.reactions ? thread : { ...thread, reactions };
+}
+
+/** Zmiana pól skalarnych wątku; te same wartości => ten sam obiekt. */
+export function patchThread(
+  thread: ChatThreadState,
+  patch: Partial<Pick<ChatThreadState, 'loading' | 'loaded' | 'hasMore' | 'error'>>,
+): ChatThreadState {
+  const keys = Object.keys(patch) as Array<keyof typeof patch>;
+  if (keys.every((key) => thread[key] === patch[key])) return thread;
+  return { ...thread, ...patch };
 }

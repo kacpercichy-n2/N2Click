@@ -1,4 +1,3 @@
-import type { ChatAttachment } from './attachments';
 // Typy domenowe modułu czatu (camelCase) — jedyne kształty, które widzi UI.
 //
 // GRANICE:
@@ -11,7 +10,13 @@ import type { ChatAttachment } from './attachments';
 //     kursor) działają leksykograficznie na kanonicznym ISO z serwera, a
 //     formatowanie do UI jest zadaniem widoku.
 
-/** Rodzaj rozmowy: DM dwóch osób albo grupa z tytułem. */
+import type { ChatAttachment } from './attachments';
+
+/**
+ * Rodzaj rozmowy: DM dwóch osób albo grupa z tytułem. Rozmowa zadania ma w
+ * bazie `kind = 'group'` (decyzja L1) i rozpoznaje się ją po kontekście
+ * (`contextType === 'task'`); `'task'` zostaje w unii na wypadek zmiany kontraktu.
+ */
 export type ChatConversationKind = 'direct' | 'group' | 'task';
 
 /** Rola uczestnika (`conversation_members.role`). */
@@ -23,6 +28,11 @@ export interface ChatMember {
   role: ChatMemberRole;
   /** Watermark „przeczytane" tego uczestnika; null gdy nigdy nie czytał. */
   lastReadAt: string | null;
+  /**
+   * Wyciszenie (`conversation_members.muted_until`). W rozmowie zadania to
+   * obserwowanie: null = obserwuje, 'infinity' = przestał. `undefined` = wiersz
+   * nie niósł kolumny (stary `chat_overview`), czyli „nie wiadomo".
+   */
   mutedUntil?: string | null;
 }
 
@@ -48,9 +58,11 @@ export interface ChatLastMessage {
 }
 
 export interface ChatConversation {
-  contextType?: string | null;
-  contextId?: string | null;
   id: string;
+  /** `conversations.context_type` ('task' dla rozmowy zadania); null = zwykły czat. */
+  contextType?: string | null;
+  /** `conversations.context_id` (id zadania); null = zwykły czat. */
+  contextId?: string | null;
   kind: ChatConversationKind;
   /** Tytuł grupy; DM ma `null` (UI składa nazwę z profili uczestników). */
   title: string | null;
@@ -80,10 +92,19 @@ export interface ChatMessage {
   deletedAt: string | null;
   /** Id wiadomości, na którą to jest odpowiedź; null gdy brak. */
   replyTo: string | null;
-  attachments?: ChatAttachment[];
-  mentionIds?: string[];
-  pinnedAt?: string | null;
-  pinnedBy?: string | null;
+  /** Obrazy (`messages.attachments`); pusta lista gdy brak. */
+  attachments: ChatAttachment[];
+  /** Oznaczone osoby (`messages.mention_ids`, chmurowe uuid). */
+  mentionIds: string[];
+  /** Przypięcie (`messages.pinned_at` / `pinned_by`); null = nieprzypięta. */
+  pinnedAt: string | null;
+  pinnedBy: string | null;
+  /**
+   * Rewizja wiersza do scalania wariantów (`messages.revised_at`, gdy L1 ją
+   * doda; do tego czasu null i scalanie używa `editedAt`). Patrz
+   * docs/karta-v2/L3-NEEDS-FROM-L1.md.
+   */
+  revisedAt: string | null;
 }
 
 /**
@@ -188,6 +209,12 @@ export const CHAT_MESSAGES = {
   reactUnsupported: 'Tego emoji nie da się użyć jako reakcji.',
   emptyBody: 'Wiadomość nie może być pusta.',
   tooLongBody: `Wiadomość może mieć najwyżej ${CHAT_MESSAGE_MAX_LENGTH} znaków.`,
+  edit: 'Nie udało się zmienić wiadomości.',
+  remove: 'Nie udało się usunąć wiadomości.',
+  pin: 'Nie udało się zmienić przypięcia.',
+  follow: 'Nie udało się zmienić obserwowania.',
+  attachments: 'Nie udało się dołączyć obrazów.',
+  tooManyAttachments: 'Wiadomość może mieć najwyżej 10 obrazów.',
   emptyTitle: 'Podaj nazwę grupy.',
   noMembers: 'Wybierz co najmniej jedną osobę.',
   selfDirect: 'Nie można rozpocząć rozmowy z samym sobą.',
@@ -212,11 +239,14 @@ export interface ChatThemeChangedEvent {
   actorId: string;
 }
 
+/** Dodatki wysyłki: odpowiedź, obrazy (już wgrane przez L2) i wzmianki. */
 export interface ChatSendOptions {
   replyTo?: string | null;
-  attachments?: ChatAttachment[];
-  mentionIds?: string[];
+  attachments?: readonly ChatAttachment[];
+  mentionIds?: readonly string[];
 }
+
+/** Zdarzenie `read` z kanału rozmowy (trigger `chat_broadcast_read`, L1). */
 export interface ChatReadEvent {
   conversationId: string;
   userId: string;
